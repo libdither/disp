@@ -1,25 +1,20 @@
-use std::fmt;
+mod hash;
+mod data;
 
-use multihash::{Code, MultihashGeneric, MultihashDigest, U64};
-use base58::ToBase58;
-
-#[derive(Debug)]
-pub struct Hash(MultihashGeneric<U64>);
-impl From<&[u8]> for Hash {
-    fn from(data: &[u8]) -> Self {
-        Self(Code::Sha2_256.digest(data))
-    }
-}
-impl fmt::Display for Hash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", ToBase58::to_base58(&self.0.to_bytes()[..]))
-    }
-}
+use hash::Hash;
+use data::Data;
 
 fn main() {
-    let data = "Hello, World!";
-    let hash = Hash::from(data.as_bytes());
+    let mut db = data::Database::default();
 
-    println!("Data: {}", data);
+    let data = Data::new("Hello, World!".as_bytes());
+    println!("Have data: {:x?}", data.as_bytes());
+    let hash = db.add(data);
+    let data = db.get(&hash).unwrap().clone();
+    let hash2 = db.add(data);
+    let data = db.get(&hash2).unwrap();
+    assert_eq!(hash, hash2);
+
+    println!("Data: {}", std::str::from_utf8(data.into()).unwrap());
     println!("Hash: {}", hash);
 }

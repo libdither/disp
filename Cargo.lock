@@ -118,7 +118,17 @@ name = "disp"
 version = "0.1.0"
 dependencies = [
  "base58",
+ "emulator_6502",
  "multihash",
+]
+
+[[package]]
+name = "emulator_6502"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e8b83946072bc6677b2940bb59619480a035a10f63dd3f07f9e45c23a588c50"
+dependencies = [
+ "log",
 ]
 
 [[package]]
@@ -132,6 +142,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex-literal"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ebdb29d2ea9ed0083cd8cece49bbd968021bd99b0849edb4a9a7ee0fdf6a4e0"
+
+[[package]]
 name = "keccak"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -142,6 +158,15 @@ name = "libc"
 version = "0.2.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8521a1b57e76b1ec69af7599e75e38e7b7fad6610f037db8c79b127201b5d119"
+
+[[package]]
+name = "log"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51b9bbe6c47d51fc3e1a9b945965946b4c44142ab8792c50835a980d362c2710"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "multihash"
@@ -284,6 +309,15 @@ dependencies = [
  "quote",
  "syn",
  "unicode-xid",
+]
+
+[[package]]
+name = "test6502"
+version = "0.1.0"
+dependencies = [
+ "disp",
+ "emulator_6502",
+ "hex-literal",
 ]
 
 [[package]]

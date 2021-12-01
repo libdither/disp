@@ -1,18 +1,11 @@
 [package]
-name = "disp"
+name = "test6502"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-base58 = "0.2.0"
+disp = { version = "0.1.0", path = "../.." }
 emulator_6502 = "1.1.0"
-multihash = "0.15.0"
-
-[features]
-
-[workspace]
-members = [
-	"examples/test6502",
-]
+hex-literal = "0.3.4"

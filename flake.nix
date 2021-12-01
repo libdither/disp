@@ -30,6 +30,7 @@
 				vscode-extensions.vadimcn.vscode-lldb
 
 				firejail
+				simplenes
 			];
 			buildInputs = with pkgs; [
 				llvmPkgs.bintools
