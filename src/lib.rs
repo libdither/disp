@@ -1,5 +1,3 @@
-mod hash;
-mod data;
 
 /// Built-in Types for Dither, recognized by the program as a multihash with the digest set to an arbitrary number
 /// Multihash type - 0 as Multihash
@@ -12,5 +10,5 @@ mod data;
 /// Qyte type - <4><Byte><Byte><Byte><Byte> as Type
 /// Eyte type - <8><Byte><Byte><Byte><Byte><Byte><Byte><Byte><Byte> as Type
 
-pub use hash::Hash;
-pub use data::{Data, Database};
+use hashdb::*;
+

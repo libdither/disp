@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 base58 = "0.2.0"
 emulator_6502 = "1.1.0"
+hashdb = { path = "../hashdb" }
 multihash = "0.15.0"
 
 [features]
