@@ -7,9 +7,14 @@ edition = "2021"
 
 [dependencies]
 base58 = "0.2.0"
+bincode = "1.3.3"
+bitvec = { version = "0.22.3", features = ["serde"] }
+bytes = "1.1.0"
 emulator_6502 = "1.1.0"
 hashdb = { path = "../hashdb" }
+lazy_static = "1.4.0"
 multihash = "0.15.0"
+thiserror = "1.0.30"
 
 [features]
 
