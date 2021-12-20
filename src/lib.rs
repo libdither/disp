@@ -1,3 +1,5 @@
+#![feature(iter_intersperse)]
+#![feature(option_result_contains)]
 
 /// Built-in Types for Dither, recognized by the program as a multihash with the digest set to an arbitrary number
 /// Multihash type - 0 as Multihash
@@ -10,5 +12,72 @@
 /// Qyte type - <4><Byte><Byte><Byte><Byte> as Type
 /// Eyte type - <8><Byte><Byte><Byte><Byte><Byte><Byte><Byte><Byte> as Type
 
-use hashdb::*;
+use bitvec::prelude::*;
 
+use hashdb::{Datastore, Hash};
+
+mod lambda_calculus;
+use lambda_calculus::*;
+
+fn setup_boolean_logic(db: &mut Datastore) -> (Hash, Hash, Hash, Hash, Hash) {
+	let id_hash = Expr::lambda(vec![bitvec![0]], &VARIABLE, db);
+
+	let true_hash = Expr::lambda( vec![bitvec![0, 0]], &Expr::lambda(vec![], &VARIABLE, db), db);
+
+	let false_hash = beta_reduce(&Expr::app(&true_hash, &id_hash, db), db).unwrap();
+
+	let not_hash = Expr::lambda(vec![bitvec![0, 0, 0]], 
+		&Expr::app(&Expr::app(&VARIABLE, &false_hash, db),&true_hash, db), db
+	);
+
+	let and_hash = Expr::lambda(vec![bitvec![0, 0, 0, 0]],
+		&Expr::lambda(vec![bitvec![0, 0, 1]],
+			&Expr::app(
+				&Expr::app(&VARIABLE, &VARIABLE, db),
+				&false_hash, db
+			), db, 
+		), db
+	);
+
+	(id_hash, true_hash, false_hash, not_hash, and_hash)
+}
+
+#[test]
+fn test_reduce() {
+	let db = &mut Datastore::new();
+
+	let (id_hash, true_hash, false_hash, not_hash, and_hash) = setup_boolean_logic(db);
+
+	let ii_hash = beta_reduce(&Expr::app(&id_hash, &id_hash, db), db).unwrap();
+	assert_eq!(id_hash, ii_hash);
+
+	assert_eq!(beta_reduce(&Expr::app(&not_hash, &false_hash, db), db).unwrap(), true_hash);
+	assert_eq!(beta_reduce(&Expr::app(&not_hash, &true_hash, db), db).unwrap(), false_hash);
+
+	assert_eq!(beta_reduce(&Expr::app(&Expr::app(&and_hash, &true_hash, db), &true_hash, db), db).unwrap(), true_hash);
+	assert_eq!(beta_reduce(&Expr::app(&Expr::app(&and_hash, &true_hash, db), &false_hash, db), db).unwrap(), false_hash);
+	println!("and false true = false");
+	assert_eq!(beta_reduce(&Expr::app(&Expr::app(&and_hash, &false_hash, db), &true_hash, db), db).unwrap(), false_hash);
+	assert_eq!(beta_reduce(&Expr::app(&Expr::app(&and_hash, &false_hash, db), &false_hash, db), db).unwrap(), false_hash);
+}
+
+fn test_parsing() {
+	let db = &mut Datastore::new();
+
+	let (id_hash, true_hash, false_hash, not_hash, and_hash) = setup_boolean_logic(db);
+
+	let parsed_id_hash = parse_to_expr("(λ[0] x)", db).unwrap().to_hash(db);
+	assert_eq!(parsed_id_hash, id_hash);
+
+	let parsed_true_hash = parse_to_expr("(λ[00] (λ[] x))", db).unwrap().to_hash(db);
+	assert_eq!(parsed_true_hash, true_hash);
+
+	let parsed_false_hash = parse_to_expr("(λ[] (λ[0] x))", db).unwrap().to_hash(db);
+	assert_eq!(parsed_false_hash, false_hash);
+
+	let parsed_not_hash = parse_to_expr("(λ[000] ((x (λ[] (λ[0] x))) (λ[00] (λ[] x))))", db).unwrap().to_hash(db);
+	assert_eq!(parsed_not_hash, not_hash);
+
+	let parsed_and_hash = parse_to_expr("(λ[0000] (λ[001] ((x x) (λ[] (λ[0] x)))))", db).unwrap().to_hash(db);
+	assert_eq!(parsed_and_hash, and_hash);
+}
