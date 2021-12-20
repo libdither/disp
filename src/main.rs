@@ -1,4 +1,5 @@
 #![feature(iter_intersperse)]
+#![feature(option_result_contains)]
 
 use bitvec::prelude::*;
 
@@ -29,7 +30,7 @@ fn main() {
 	println!("I_v2 = {}", parse_hash(&id_hash_2, db).unwrap());
 	assert_eq!(id_hash, id_hash_2);
 
-	let k_hash = Expr::lambda( vec![], &Expr::lambda(vec![bitvec![0, 0]], &VARIABLE, db), db);
+	let k_hash = Expr::lambda( vec![bitvec![0, 0]], &Expr::lambda(vec![], &VARIABLE, db), db);
 	println!("K = {}", parse_hash(&k_hash, db).unwrap());
 	
 	let ki_app_hash = Expr::app(&k_hash, &id_hash, db);
@@ -44,8 +45,13 @@ fn main() {
 	let not_hash = Expr::lambda(vec![bitvec![0, 0, 0]], 
 		&Expr::app(&Expr::app(&VARIABLE, &false_hash, db),&true_hash, db), db
 	);
-
 	println!("(λ[000] ((x KI) K)) = Not = {}", parse_hash(&not_hash, db).unwrap());
+	
+	let not_hash_v2 = parse_to_expr("(λ[000] ((x (λ[] (λ[0] x))) (λ[00] (λ[] x))))", db).map_err(|e|{println!("{}", e); e}).unwrap().to_hash(db);
+	println!("Not_interpreted = {}", parse_hash(&not_hash_v2, db).unwrap());
+	
+	assert_eq!(not_hash, not_hash_v2);
+
 	let reduced_not_hash = beta_reduce(&not_hash, db).unwrap();
 	assert_eq!(not_hash, reduced_not_hash);
 

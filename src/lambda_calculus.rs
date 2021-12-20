@@ -7,7 +7,10 @@ use bytes::{Buf, BufMut};
 
 use hashdb::{Data, Datastore, Hash};
 
-lazy_static!{
+mod parse;
+pub use parse::parse_to_expr;
+
+lazy_static! {
 	pub static ref VARIABLE:     Hash = Hash::from_sha256_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 	pub static ref LAMBDA:      Hash = Hash::from_sha256_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 	pub static ref APPLICATION: Hash = Hash::from_sha256_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
@@ -15,24 +18,22 @@ lazy_static!{
 
 #[derive(Error, Debug)]
 pub enum LambdaError {
-	#[error("Invalid hashtype for Lambda type. got {0} expected {}", LAMBDA.clone())]
-	InvalidLayoutForLambda(Hash),
-	#[error("Invalid hashtype for Lambda type. got {0} expected {}", APPLICATION.clone())]
-	InvalidLayoutForApplication(Hash),
+	// Data -> Hash -> Data interpretation
 	#[error("Invalid hashtype, got {0}")]
 	InvalidLayout(Hash),
 	#[error("Can't convert Variable variant to data, there is no data to serialize")]
 	NoDataForVariable,
-	#[error("Recursion Depth for beta reduction exceeded")]
-	RecursionDepthExceeded,
-	
+	#[error("Error in bincode")]
+	SerdeError(#[from] bincode::Error),
+
+	// Datastore Error
 	#[error("Not in datastore: {0}")]
 	NotInDatastore(Hash),
 
-	#[error("Error in bincode")]
-	SerdeError(#[from] bincode::Error),
+	// Beta Reduction Error
+	#[error("Recursion Depth for beta reduction exceeded")]
+	RecursionDepthExceeded,
 }
-
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Expr {
@@ -42,16 +43,17 @@ pub enum Expr {
 }
 
 impl Expr {
-	pub fn new_lambda(pointers: Vec<BitVec>, expr: Hash) -> Self {
-		Expr::Lambda(expr, pointers)
+	pub fn lambda(pointers: Vec<BitVec>, expr: &Hash, db: &mut Datastore) -> Hash {
+		Expr::Lambda(expr.clone(), pointers).to_hash(db)
 	}
-	pub fn new_application(lambda: Hash, expr: Hash) -> Self {
-		Expr::Application(lambda, expr)
+	pub fn app(lambda: &Hash, expr: &Hash, db: &mut Datastore) -> Hash {
+		Expr::Application(lambda.clone(), expr.clone()).to_hash(db)
 	}
+
 	pub fn to_hash(&self, db: &mut Datastore) -> Hash {
 		match self {
 			Expr::Variable => VARIABLE.clone(),
-			_ => db.add(self.to_data().unwrap())
+			_ => db.add(self.to_data().expect("unreachable: Expr::to_data errors on Expr::Variable which is separately matched"))
 		}
 	}
 	pub fn to_data(&self) -> Result<Data, LambdaError> {
@@ -126,6 +128,7 @@ pub fn format_expr(expr: &Expr, db: &mut Datastore) -> Result<String, LambdaErro
 		},
 	})
 }
+
 pub fn parse_hash(hash: &Hash, db: &mut Datastore) -> Result<String, LambdaError> {
 	format_expr(&Expr::from_hash(hash, db)?, db)
 }
