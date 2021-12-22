@@ -1,8 +1,6 @@
 #![feature(iter_intersperse)]
 #![feature(option_result_contains)]
 
-use bitvec::prelude::*;
-
 use hashdb::*;
 
 mod lambda_calculus;

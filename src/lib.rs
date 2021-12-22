@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 #![feature(iter_intersperse)]
 #![feature(option_result_contains)]
 
@@ -12,28 +14,28 @@
 /// Qyte type - <4><Byte><Byte><Byte><Byte> as Type
 /// Eyte type - <8><Byte><Byte><Byte><Byte><Byte><Byte><Byte><Byte> as Type
 
-use bitvec::prelude::*;
-
-use hashdb::{Datastore, Hash};
+use hashdb::{Datastore};
 
 mod lambda_calculus;
-use lambda_calculus::*;
+use lambda_calculus::{TypedHash, Expr, pointer_helpers::{end, left, right, both}, beta_reduce, parse_to_expr, parse_hash};
 
-fn setup_boolean_logic(db: &mut Datastore) -> (Hash, Hash, Hash, Hash, Hash) {
-	let id_hash = Expr::lambda(vec![bitvec![0]], &VARIABLE, db);
+fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>) {
+	let variable = Expr::var();
 
-	let true_hash = Expr::lambda( vec![bitvec![0, 0]], &Expr::lambda(vec![], &VARIABLE, db), db);
+	let id_hash = Expr::lambda(Some(end(db)), &variable, db);
+
+	let true_hash = Expr::lambda(Some(end(db)), &Expr::lambda(None, &variable, db), db);
 
 	let false_hash = beta_reduce(&Expr::app(&true_hash, &id_hash, db), db).unwrap();
 
-	let not_hash = Expr::lambda(vec![bitvec![0, 0, 0]], 
-		&Expr::app(&Expr::app(&VARIABLE, &false_hash, db),&true_hash, db), db
+	let not_hash = Expr::lambda(Some(left(left(end(db), db), db)), 
+		&Expr::app(&Expr::app(&variable, &false_hash, db), &true_hash, db), db
 	);
 
-	let and_hash = Expr::lambda(vec![bitvec![0, 0, 0, 0]],
-		&Expr::lambda(vec![bitvec![0, 0, 1]],
+	let and_hash = Expr::lambda(Some(left(left(end(db), db), db)),
+		&Expr::lambda(Some(left(right(end(db), db), db)),
 			&Expr::app(
-				&Expr::app(&VARIABLE, &VARIABLE, db),
+				&Expr::app(&variable, &variable, db),
 				&false_hash, db
 			), db, 
 		), db
@@ -66,18 +68,18 @@ fn test_parsing() {
 
 	let (id_hash, true_hash, false_hash, not_hash, and_hash) = setup_boolean_logic(db);
 
-	let parsed_id_hash = parse_to_expr("(λ[0] x)", db).unwrap().to_hash(db);
+	let parsed_id_hash = parse_to_expr("(λ[.] x)", db).unwrap().store(db);
 	assert_eq!(parsed_id_hash, id_hash);
 
-	let parsed_true_hash = parse_to_expr("(λ[00] (λ[] x))", db).unwrap().to_hash(db);
+	let parsed_true_hash = parse_to_expr("(λ[.] (λ[] x))", db).unwrap().store(db);
 	assert_eq!(parsed_true_hash, true_hash);
 
-	let parsed_false_hash = parse_to_expr("(λ[] (λ[0] x))", db).unwrap().to_hash(db);
+	let parsed_false_hash = parse_to_expr("(λ[] (λ[.] x))", db).unwrap().store(db);
 	assert_eq!(parsed_false_hash, false_hash);
 
-	let parsed_not_hash = parse_to_expr("(λ[000] ((x (λ[] (λ[0] x))) (λ[00] (λ[] x))))", db).unwrap().to_hash(db);
+	let parsed_not_hash = parse_to_expr("(λ[<<.] ((x (λ[] (λ[.] x))) (λ[.] (λ[] x))))", db).unwrap().store(db);
 	assert_eq!(parsed_not_hash, not_hash);
 
-	let parsed_and_hash = parse_to_expr("(λ[0000] (λ[001] ((x x) (λ[] (λ[0] x)))))", db).unwrap().to_hash(db);
+	let parsed_and_hash = parse_to_expr("(λ[<<.] (λ[<>.] ((x x) (λ[] (λ[.] x)))))", db).unwrap().store(db);
 	assert_eq!(parsed_and_hash, and_hash);
 }
