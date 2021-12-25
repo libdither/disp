@@ -6,10 +6,12 @@ use hashdb::{Datastore, Hash};
 
 mod expr;
 mod parse;
+mod display;
 mod typed;
 pub use expr::*;
 pub use typed::TypedHash;
 pub use parse::parse_to_expr;
+pub use display::*;
 
 use self::typed::Hashtype;
 
@@ -18,9 +20,7 @@ pub enum LambdaError {
 	// Data -> Hash -> Data interpretation
 	#[error("Invalid hashtype, got {0}")]
 	InvalidLayout(Hash),
-	#[error("Can't convert Variable variant to data, there is no data to serialize")]
-	NoDataForVariable,
-	#[error("Error in bincode")]
+	#[error("Error in bincode deserialization")]
 	SerdeError(#[from] bincode::Error),
 
 	#[error("Format Error")]
@@ -71,24 +71,58 @@ fn recur_replace(replace_in_expr: Expr, replace_pointers: &TypedHash<LambdaPoint
 	}
 }
 
+struct DisplayIter<T: fmt::Display, I: Iterator<Item=T> + Clone>(I);
+
+impl<T: fmt::Display, I: Iterator<Item=T> + Clone> fmt::Display for DisplayIter<T, I> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		for string in self.0.clone() { write!(f, "{}", string)?; }; Ok(())
+	}
+}
+
+// left (dir = false), right (dir = true)
+fn descend_pointer_tree(pointer_tree: TypedHash<LambdaPointer>, dir: bool, db: &mut Datastore) -> Result<Option<TypedHash<LambdaPointer>>, LambdaError> {
+	Ok(match (pointer_tree.resolve(db)?, dir) {
+		(LambdaPointer::Left(l), false) => Some(l),
+		(LambdaPointer::Right(r), true) => Some(r),
+		(LambdaPointer::Both(l, r), right) => if right { Some(r) } else { Some(l) },
+		_ => None,
+	})
+}
+
+// left (dir = false), right (dir = true)
+fn descend_pointer_trees(pointer_trees: &mut Vec<Option<TypedHash<LambdaPointer>>>, dir: bool, db: &mut Datastore) -> Result<(), LambdaError> {
+	for pointer_tree in pointer_trees {
+		*pointer_tree = if let Some(pointer_tree) = pointer_tree {
+			descend_pointer_tree(pointer_tree.clone(), dir, db)?
+		} else { None };
+	}
+	Ok(())
+}
+
 // Beta reduces expression without rehashing
-pub fn partial_beta_reduce(reducing_expr: Expr, pointer_trees: &mut Vec<TypedHash<LambdaPointer>>, depth: usize, db: &mut Datastore) -> Result<Expr, LambdaError> {
+pub fn partial_beta_reduce(reducing_expr: Expr, pointer_trees: &mut Vec<Option<TypedHash<LambdaPointer>>>, depth: usize, db: &mut Datastore) -> Result<Expr, LambdaError> {
 	if depth > 20 { return Err(LambdaError::RecursionDepthExceeded) }
 	let depth = depth + 1;
+	let pad = DisplayIter(std::iter::repeat("    ").take(depth));
 
-	Ok(match reducing_expr {
-		Expr::Var(_) => reducing_expr,
+	let ret = match reducing_expr {
+		Expr::Var(_) => {
+			println!("{}[{}] reducing var {}", pad, depth, reducing_expr.display(db));
+			reducing_expr
+		},
 		Expr::Lam(Lambda { expr, pointers }) => {
+			println!("{}[{}] reducing lam {}", pad, depth, Expr::Lam(Lambda { pointers: pointers.clone(), expr: expr.clone() }).display(db));
+
 			let expr = Expr::from_hash(&expr, db)?;
-			// Add pointers to bitsqueue so that if reduction moves variables, pointers can be updated
+			// Add pointers to pointer_trees so that if reduction moves variables, pointers can be updated
 			let has_pointers = pointers.is_some();
 			if let Some(pointers) = pointers {
-				pointer_trees.push(pointers)
+				pointer_trees.push(Some(pointers))
 			}
 
 			let reduced_expr = partial_beta_reduce(expr, pointer_trees, depth, db)?;
 
-			let pointers = if has_pointers { pointer_trees.pop() } else { None };
+			let pointers = if has_pointers { pointer_trees.pop().expect("unreachable: there should be enough in this queue") } else { None };
 
 			Expr::Lam(Lambda {
 				pointers,
@@ -96,6 +130,7 @@ pub fn partial_beta_reduce(reducing_expr: Expr, pointer_trees: &mut Vec<TypedHas
 			})
 		}
 		Expr::App(Application { function, substitution }) => {
+			println!("{}[{}] reducing app {}", pad, depth, Expr::App(Application { function: function.clone(), substitution: substitution.clone() }).display(db));
 			let function_reduced = partial_beta_reduce(function.resolve(db)?, pointer_trees, depth, db)?;
 			match function_reduced {
 				Expr::Var(_) => Expr::App(Application {
@@ -106,17 +141,20 @@ pub fn partial_beta_reduce(reducing_expr: Expr, pointer_trees: &mut Vec<TypedHas
 					let expr = expr.resolve(db)?;
 					let replacement = Expr::from_hash(&substitution, db)?;
 
+					let expr_d = expr.clone();
+					let replacement_d = replacement.clone();
+
 					let replaced_form = if let Some(pointers) = &pointers {
-						// Debug
-						let mut pointer_tree = String::new();
-						write_lambda_pointers(&mut pointer_tree, pointers, db)?;
-						print!("replace in: {} at [{}] with {}", format_expr(&expr, db)?, pointer_tree, format_expr(&replacement, db)?);
-						let replaced_form = recur_replace(expr, &pointers, replacement, db)?;
-						println!(" = {}", format_expr(&replaced_form, db)?);
-						replaced_form
+						recur_replace(expr, &pointers, replacement, db)?
 					} else {
 						expr
 					};
+
+					use itertools::Itertools;
+					println!("{}Pointer Trees: [{}]", pad, pointer_trees.iter().map(|p|p.display(db)).format(","));
+
+					print!("{}[{}] replace in: {} at [{}] with {}", pad, depth, expr_d.display(db), pointers.display(db), replacement_d.display(db));
+					println!(" = {}", replaced_form.display(db));
 
 					partial_beta_reduce(replaced_form, pointer_trees, depth, db)?
 				},
@@ -126,9 +164,12 @@ pub fn partial_beta_reduce(reducing_expr: Expr, pointer_trees: &mut Vec<TypedHas
 				}
 			}
 		}
-	})
+	};
+	println!("{}[{}] returning reduction: {}", pad, depth, ret.display(db));
+	Ok(ret)
 }
 
 pub fn beta_reduce(hash: &TypedHash<Expr>, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
+	println!("Reducing: {}", hash.display(db));
 	Ok(partial_beta_reduce(hash.resolve(db)?, &mut vec![], 0, db)?.to_hash(db))
 }

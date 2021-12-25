@@ -17,7 +17,7 @@
 use hashdb::{Datastore};
 
 mod lambda_calculus;
-use lambda_calculus::{TypedHash, Expr, pointer_helpers::{end, left, right, both}, beta_reduce, parse_to_expr, parse_hash};
+use lambda_calculus::{TypedHash, Expr, pointer_helpers::{end, left, right, both}, beta_reduce, parse_to_expr};
 
 fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>) {
 	let variable = Expr::var();

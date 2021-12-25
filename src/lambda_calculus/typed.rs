@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize, de::Visitor};
 
 use hashdb::{Hash, Data, Datastore};
 
+use super::DisplayWithDatastore;
+
 #[derive(Clone)]
 pub struct TypedData<'a, T: Hashtype> {
 	data: &'a Data,
@@ -19,7 +21,7 @@ impl<'a, T: Hashtype> TypedData<'a, T> {
 
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TypedHash<T> {
+pub struct TypedHash<T: Hashtype> {
 	hash: Hash,
 	_type: PhantomData<T>
 }
@@ -30,7 +32,7 @@ impl<T: Hashtype> TypedHash<T> {
 	pub unsafe fn from_bytes(bytes: &[u8]) -> TypedHash<T> {
 		Self::from_hash_unchecked(Hash::from_raw_bytes(bytes), PhantomData::<T>::default())
 	}
-	pub unsafe fn cast_type<R>(self) -> TypedHash<R> {
+	pub unsafe fn cast_type<R: Hashtype>(self) -> TypedHash<R> {
 		TypedHash::<R> { hash: self.hash, _type: PhantomData::<R>::default() }
 	}
 	pub fn as_bytes(&self) -> &[u8] { self.hash.as_bytes() }
@@ -41,7 +43,7 @@ impl<T: Hashtype> TypedHash<T> {
 		T::from_hash(self, db)
 	}
 }
-impl<T> Serialize for TypedHash<T> {
+impl<T: Hashtype> Serialize for TypedHash<T> {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
 			S: serde::Serializer {
@@ -70,6 +72,31 @@ impl<'d, T: Hashtype> Deserialize<'d> for TypedHash<T> {
 		unsafe { Ok(Self::from_hash_unchecked(hash, PhantomData::<T>::default())) }
 	}
 }
+impl<T: Hashtype + DisplayWithDatastore> DisplayWithDatastore for TypedHash<T> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
+		match self.resolve(db) {
+			Ok(value) => value.fmt(f, db),
+			Err(_) => write!(f, "<{}>", self.hash),
+		}
+	}
+}
+impl<T: Hashtype + DisplayWithDatastore> DisplayWithDatastore for Option<TypedHash<T>> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
+		match self {
+			Some(thing) => match thing.resolve(db) {
+				Ok(value) => value.fmt(f, db),
+				Err(_) => write!(f, "<{}>", thing.hash),
+			}
+			None => Ok(())
+		}
+	}
+}
+
+/* impl<T: Hashtype> fmt::Display for TypedHash<T> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "<{}>", self.hash)
+	}
+} */
 
 pub trait Hashtype: Sized {
 	type Error;

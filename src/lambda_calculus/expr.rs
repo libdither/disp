@@ -6,7 +6,9 @@ use serde::{Serialize, Deserialize};
 
 use hashdb::{Data, Datastore, Hash};
 
-use super::{LambdaError, typed::{Datatype, Hashtype, TypedHash}};
+use crate::lambda_calculus::DatastoreDisplay;
+
+use super::{DisplayWithDatastore, LambdaError, typed::{Datatype, Hashtype, TypedHash}};
 
 lazy_static! {
 	pub static ref VARIABLE:    Hash = Hash::from_sha256_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -33,6 +35,30 @@ impl Datatype for LambdaPointer {
 	}
 	fn db_error(hash: Hash) -> Self::Error { LambdaError::NotInDatastore(hash) }
 }
+impl DisplayWithDatastore for LambdaPointer {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
+		match self { 
+			LambdaPointer::Left(left) => {
+				write!(f, "<{}", left.display(db))
+			},
+			LambdaPointer::Right(right) => {
+				write!(f, ">{}", right.display(db))
+			},
+			LambdaPointer::Both(left, right) => {
+				write!(f, "({},{})", left.display(db), right.display(db))
+			},
+			LambdaPointer::End => write!(f, "."),
+		}
+	}
+}
+impl DisplayWithDatastore for Option<LambdaPointer>{
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
+		if let Some(pointer) = self {
+			write!(f, "[{}]", DatastoreDisplay(pointer, db))
+		} else { write!(f, "[]") }
+	}
+}
+
 pub mod pointer_helpers {
     use hashdb::Datastore;
 
@@ -45,7 +71,6 @@ pub mod pointer_helpers {
 	pub fn right(p: TypedHash<LambdaPointer>, db: &mut Datastore) -> TypedHash<LambdaPointer> { LambdaPointer::Right(p).to_hash(db) }
 	pub fn both(l: TypedHash<LambdaPointer>, r: TypedHash<LambdaPointer>, db: &mut Datastore) -> TypedHash<LambdaPointer> { LambdaPointer::Both(l, r).to_hash(db) }
 }
-
 	
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variable;
@@ -140,6 +165,19 @@ impl Hashtype for Expr {
 		})
 	}
 }
+impl DisplayWithDatastore for Expr {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
+		match self {
+			Expr::Var(_) => write!(f, "x"),
+			Expr::Lam(Lambda { pointers, expr }) => {
+				write!(f, "(λ[{}] {})", pointers.display(db), expr.display(db))
+			},
+			Expr::App(Application { function, substitution }) => {
+				write!(f, "({} {})", function.display(db), substitution.display(db))
+			},
+		}
+	}
+}
 impl Expr {
 	pub fn var() -> TypedHash<Expr> {
 		unsafe { TypedHash::from_hash_unchecked(VARIABLE.clone(), PhantomData::default()) }
@@ -151,55 +189,4 @@ impl Expr {
 		Expr::App(Application { function: function.clone(), substitution: substitution.clone() }).to_hash(db)
 	}
 	pub fn store(&self, db: &mut Datastore) -> TypedHash<Expr> { self.to_hash(db) }
-}
-
-// TODO: Make this better
-impl fmt::Display for Expr {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{:?}", self)
-	}
-}
-pub fn print_expr(hash: &TypedHash<Expr>, db: &mut Datastore) -> Result<(), LambdaError> {
-	Ok(println!("{}", format_expr(&Expr::from_hash(hash, db)?, db)?))
-}
-pub fn write_lambda_pointers(string: &mut String, pointers: &TypedHash<LambdaPointer>, db: &Datastore) -> Result<(), LambdaError> {
-	use fmt::Write;
-	match &pointers.resolve(db)? { 
-		LambdaPointer::Left(hash) => {
-			write!(string, "<")?;
-			write_lambda_pointers(string, hash, db)?;
-		},
-		LambdaPointer::Right(hash) => {
-			write!(string, ">")?;
-			write_lambda_pointers(string, hash, db)?;
-		}
-		LambdaPointer::Both(left, right) => {
-			write!(string, "(")?;
-			write_lambda_pointers(string, left, db)?;
-			write!(string, ",")?;
-			write_lambda_pointers(string, right, db)?;
-			write!(string, ")")?;
-		}
-		LambdaPointer::End => write!(string, ".")?,
-	}
-	Ok(())
-}
-pub fn format_expr(expr: &Expr, db: &mut Datastore) -> Result<String, LambdaError> {
-	Ok(match expr {
-		Expr::Var(_) => "x".to_owned(),
-		Expr::Lam(Lambda { pointers, expr }) => {
-			let mut pointer_tree = String::new();
-			if let Some(pointers) = pointers { write_lambda_pointers(&mut pointer_tree, pointers, db)? };
-			format!("(λ[{}] {})", pointer_tree, format_expr(&expr.resolve(db).unwrap(), db)?)
-		},
-		Expr::App(Application { function, substitution: _ }) => {
-			let lambda_string = format_expr(&function.resolve(db)?, db)?;
-			let expr_string = format_expr(&Expr::from_hash(function, db)?, db)?;
-			format!("({} {})", lambda_string, expr_string)
-		},
-	})
-}
-
-pub fn parse_hash(hash: &TypedHash<Expr>, db: &mut Datastore) -> Result<String, LambdaError> {
-	format_expr(&Expr::from_hash(hash, db)?, db)
 }
