@@ -140,10 +140,11 @@ pub fn parse_to_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<Expr, Pa
 }
 
 fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) -> Result<Option<LambdaPointer>, ParseError<'a>> {
+	if let Token::CloseSquareBracket = feeder.peek()? { return Ok(None) }
+	
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
 		Token::Period => {
-			feeder.expect_next(Token::CloseSquareBracket)?;
 			Some(LambdaPointer::End)
 		},
 		Token::OpenCarat => {
@@ -153,15 +154,13 @@ fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) ->
 			parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Right(p.to_hash(db)))
 		},
 		Token::OpenParen => {
-			feeder.expect_next(Token::OpenSquareBracket)?;
-			let first = parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Right(p.to_hash(db)));
+			let first = parse_lambda_pointer(feeder, db)?;
 			feeder.expect_next(Token::Comma)?;
-			let second = parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Right(p.to_hash(db)));
-			let ret = first.zip(second).map(|(left, right)|LambdaPointer::Both(left.to_hash(db), right.to_hash(db)));
-			feeder.expect_next(Token::CloseSquareBracket)?;
-			ret
+			let second = parse_lambda_pointer(feeder, db)?;
+			feeder.expect_next(Token::CloseParen)?;
+
+			first.zip(second).map(|(left, right)|LambdaPointer::Both(left.to_hash(db), right.to_hash(db)))
 		},
-		Token::CloseSquareBracket => None,
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?
 	})
 	
@@ -198,6 +197,7 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 		Token::Lambda => {
 			feeder.expect_next(Token::OpenSquareBracket)?;
 			let pointers = parse_lambda_pointer(feeder, db)?.map(|p|p.to_hash(db));
+			feeder.expect_next(Token::CloseSquareBracket)?;
 
 			let arg_expr = parse_tokens(feeder, depth, db)?.to_hash(db);
 			

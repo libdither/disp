@@ -86,6 +86,41 @@ fn test_parsing() {
 	assert_eq!(parsed_and_hash, and_hash);
 }
 
+#[test]
 fn test_factorial() {
+	let db = &mut Datastore::new();
+
+	let zero = parse_to_expr("(λ[] (λ[.] x))", db).unwrap().store(db);
+
+	let one = parse_to_expr("(λ[<.] (λ[>.] (x x)))", db).unwrap().store(db);
+
+	let succ = parse_to_expr("(λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x)))))", db).unwrap().store(db);
+
+	// Succ Zero = One
+	let succ_zero = Expr::app(&succ, &zero, db);
+	assert_eq!(beta_reduce(&succ_zero, db).unwrap(), one);
+
+	let succ_one = beta_reduce(&Expr::app(&succ, &one, db), db).unwrap();
+
+	// Succ Succ Zero = Succ 1
+	assert_eq!(beta_reduce(&Expr::app(&succ, &succ_zero, db), db).unwrap(), succ_one);
+
+	let mult = parse_to_expr("(λ[<<.] (λ[<><.] (λ[<>>.] (λ[>.] ((x (x x)) x)))))", db).unwrap().store(db);
+	/* let mult_expr = mult.resolve(db).unwrap();
+	db.add_with_lookup(mult_expr, vec![Hash::new("mult")], path);
+	//save_expr("mult", mult, db);
+
+	//let result = solve_expr("((mult 1) 2)"); */
+
+	// Mult One Zero = Zero
+	assert_eq!(zero, beta_reduce(&Expr::app(&Expr::app(&mult, &one, db), &zero, db), db).unwrap());
 	
+	// Multi One One = One
+	assert_eq!(one, beta_reduce(&Expr::app(&Expr::app(&mult, &one, db), &one, db), db).unwrap());
+
+	//let add = parse_to_expr("");
+
+	let y_segment = parse_to_expr("(λ[><<(.,.)] (λ[(.,<>.)] (x (λ[>.] (((x x) x) x)))))", db).unwrap().store(db);
+	let y = Expr::app(&y_segment, &y_segment, db);
+
 }
