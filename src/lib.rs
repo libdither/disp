@@ -2,6 +2,7 @@
 
 #![feature(iter_intersperse)]
 #![feature(option_result_contains)]
+#![feature(try_blocks)]
 
 /// Built-in Types for Dither, recognized by the program as a multihash with the digest set to an arbitrary number
 /// Multihash type - 0 as Multihash

@@ -58,6 +58,16 @@ impl DisplayWithDatastore for Option<LambdaPointer>{
 		} else { write!(f, "[]") }
 	}
 }
+/* impl LambdaPointer {
+	pub fn map<F, B>(&self, func: F, db: &mut Datastore) -> Result<B, LambdaError> 
+	where F: Fn(&TypedHash<LambdaPointer>, &mut Datastore) -> Result<B, LambdaError> {
+		Ok(match self {
+			LambdaPointer::Left(l) => func(l, db)?,
+			LambdaPointer::Right(r) => func(r, db)?,
+			LambdaPointer::Both(l, r) => func(r, db)?,
+		})
+	}
+} */
 
 pub mod pointer_helpers {
     use hashdb::Datastore;

@@ -20,10 +20,15 @@ impl<'a, T: Hashtype> TypedData<'a, T> {
 }
 
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct TypedHash<T: Hashtype> {
 	hash: Hash,
 	_type: PhantomData<T>
+}
+impl<T: Hashtype> Clone for TypedHash<T> {
+	fn clone(&self) -> Self {
+		TypedHash { hash: self.hash.clone(), _type: self._type }
+	}
 }
 impl<T: Hashtype> TypedHash<T> {
 	pub unsafe fn from_hash_unchecked(hash: Hash, marker: PhantomData<T>) -> TypedHash<T> {
