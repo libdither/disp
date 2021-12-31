@@ -142,7 +142,10 @@ pub fn parse_to_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<Expr, Pa
 fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) -> Result<Option<LambdaPointer>, ParseError<'a>> {
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
-		Token::Period => Some(LambdaPointer::End),
+		Token::Period => {
+			feeder.expect_next(Token::CloseSquareBracket)?;
+			Some(LambdaPointer::End)
+		},
 		Token::OpenCarat => {
 			parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Left(p.to_hash(db)))
 		},
@@ -158,6 +161,7 @@ fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) ->
 			feeder.expect_next(Token::CloseSquareBracket)?;
 			ret
 		},
+		Token::CloseSquareBracket => None,
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?
 	})
 	
@@ -192,12 +196,14 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 			Expr::Var(Variable)
 		},
 		Token::Lambda => {
+			feeder.expect_next(Token::OpenSquareBracket)?;
 			let pointers = parse_lambda_pointer(feeder, db)?.map(|p|p.to_hash(db));
+
 			let arg_expr = parse_tokens(feeder, depth, db)?.to_hash(db);
 			
 			Expr::Lam(Lambda { pointers, expr: arg_expr } )
 		},
-		Token::Error => { return Err(ParseError::InvalidToken(feeder.location(), next_span, next_token)) }
-		_ => unreachable!()
+		Token::Error => { return Err(ParseError::InvalidToken(feeder.location(), next_span, next_token)) },
+		token => return Err(ParseError::UnexpectedToken(feeder.location(), next_span, token))
 	})
 }

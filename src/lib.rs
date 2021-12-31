@@ -64,6 +64,7 @@ fn test_reduce() {
 	assert_eq!(beta_reduce(&Expr::app(&Expr::app(&and_hash, &false_hash, db), &false_hash, db), db).unwrap(), false_hash);
 }
 
+#[test]
 fn test_parsing() {
 	let db = &mut Datastore::new();
 
@@ -83,4 +84,8 @@ fn test_parsing() {
 
 	let parsed_and_hash = parse_to_expr("(λ[<<.] (λ[<>.] ((x x) (λ[] (λ[.] x)))))", db).unwrap().store(db);
 	assert_eq!(parsed_and_hash, and_hash);
+}
+
+fn test_factorial() {
+	
 }
