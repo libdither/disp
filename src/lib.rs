@@ -17,8 +17,13 @@
 
 use hashdb::{Datastore};
 
-mod lambda_calculus;
-use lambda_calculus::{TypedHash, Expr, pointer_helpers::{end, left, right, both}, beta_reduce, parse_to_expr};
+pub mod lambda_calculus;
+pub mod symbol;
+pub mod parse;
+
+use lambda_calculus::{TypedHash, Expr, pointer_helpers::{end, left, right, both}, beta_reduce, DisplayWithDatastore};
+use symbol::Symbol;
+use parse::{parse_to_expr, parse_reduce};
 
 fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>) {
 	let variable = Expr::var();
@@ -91,10 +96,15 @@ fn test_factorial() {
 	let db = &mut Datastore::new();
 
 	let zero = parse_to_expr("(λ[] (λ[.] x))", db).unwrap().store(db);
+	let symbol = Symbol::new("zero").to_hash(db).untyped().clone();
+	db.add_link(symbol, zero.untyped().clone());
 
 	let one = parse_to_expr("(λ[<.] (λ[>.] (x x)))", db).unwrap().store(db);
 
 	let succ = parse_to_expr("(λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x)))))", db).unwrap().store(db);
+	use lambda_calculus::Hashtype;
+	let symbol = Symbol::new("succ").to_hash(db).untyped().clone();
+	db.add_link(symbol, succ.untyped().clone());
 
 	// Succ Zero = One
 	let succ_zero = Expr::app(&succ, &zero, db);
@@ -106,20 +116,14 @@ fn test_factorial() {
 	assert_eq!(beta_reduce(&Expr::app(&succ, &succ_zero, db), db).unwrap(), succ_one);
 
 	let mult = parse_to_expr("(λ[<<.] (λ[<><.] (λ[<>>.] (λ[>.] ((x (x x)) x)))))", db).unwrap().store(db);
-	/* let mult_expr = mult.resolve(db).unwrap();
-	db.add_with_lookup(mult_expr, vec![Hash::new("mult")], path);
-	//save_expr("mult", mult, db);
+	let symbol = Symbol::new("mult").to_hash(db).untyped().clone();
+	db.add_link(symbol, mult.untyped().clone());
 
-	//let result = solve_expr("((mult 1) 2)"); */
-
-	// Mult One Zero = Zero
-	assert_eq!(zero, beta_reduce(&Expr::app(&Expr::app(&mult, &one, db), &zero, db), db).unwrap());
+	println!("{}", parse_to_expr("((mult 2) 3)", db).unwrap().display(db));
+	assert_eq!(parse_reduce("((mult 0) 0)", db).unwrap(), parse_reduce("0", db).unwrap());
+	assert_eq!(parse_reduce("((mult 0) 1)", db).unwrap(), parse_reduce("0", db).unwrap());
+	assert_eq!(parse_reduce("((mult 2) 3)", db).unwrap(), parse_reduce("6", db).unwrap());
 	
-	// Multi One One = One
-	assert_eq!(one, beta_reduce(&Expr::app(&Expr::app(&mult, &one, db), &one, db), db).unwrap());
-
-	//let add = parse_to_expr("");
-
 	let y_segment = parse_to_expr("(λ[><<(.,.)] (λ[(.,<>.)] (x (λ[>.] (((x x) x) x)))))", db).unwrap().store(db);
 	let y = Expr::app(&y_segment, &y_segment, db);
 

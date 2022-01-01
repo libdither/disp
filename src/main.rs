@@ -4,8 +4,12 @@
 use hashdb::*;
 
 mod lambda_calculus;
+mod symbol;
+mod parse;
 
-use crate::lambda_calculus::{Expr, VARIABLE, beta_reduce, parse_to_expr};
+use crate::lambda_calculus::{Expr, VARIABLE, beta_reduce};
+use symbol::Symbol;
+use parse::{parse_reduce, parse_to_expr};
 
 fn main() {
 	let db = &mut Datastore::new();

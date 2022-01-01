@@ -5,15 +5,14 @@ use thiserror::Error;
 use hashdb::{Data, Datastore, Hash};
 
 mod expr;
-mod parse;
 mod display;
 mod typed;
 pub use expr::*;
 pub use typed::TypedHash;
-pub use parse::parse_to_expr;
 pub use display::*;
 
-use self::{pointer_helpers::left, typed::{Datatype, Hashtype}};
+pub use self::{typed::{Datatype, Hashtype}};
+
 
 #[derive(Error, Debug)]
 pub enum LambdaError {
@@ -228,7 +227,7 @@ fn test_pointer_trees() {
 	let r = &mut ReduceTree::new();
 	println!("start: [{}]", r.display(db));
 
-	let expr = parse_to_expr("(λ[] (λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x))))))", db).unwrap();
+	let expr = crate::parse_to_expr("(λ[] (λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x))))))", db).unwrap();
 	let (pointer_1, expr) = if let Expr::Lam(Lambda { pointers, expr } ) = expr { (pointers, expr.resolve(db).unwrap()) } else { unreachable!() };
 	let (pointer_2, expr) = if let Expr::Lam(Lambda { pointers, expr } ) = expr { (pointers, expr.resolve(db).unwrap()) } else { unreachable!() };
 	let (pointer_3, expr) = if let Expr::Lam(Lambda { pointers, expr } ) = expr { (pointers, expr.resolve(db).unwrap()) } else { unreachable!() };
@@ -302,7 +301,7 @@ fn test_split(r: &mut ReduceTree, db: &mut Datastore) -> Result<(), LambdaError>
 
 // Beta reduces expression without rehashing
 fn partial_beta_reduce(reducing_expr: Expr, reducing_tree: &mut ReduceTree, depth: usize, db: &mut Datastore) -> Result<Expr, LambdaError> {
-	if depth > 20 { return Err(LambdaError::RecursionDepthExceeded) }
+	if depth > 200 { return Err(LambdaError::RecursionDepthExceeded) }
 	let depth = depth + 1;
 
 	struct DisplayIter<T: fmt::Display, I: Iterator<Item=T> + Clone>(I);

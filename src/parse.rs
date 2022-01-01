@@ -2,12 +2,10 @@ use std::{iter::Peekable};
 
 use logos::{Logos, Span};
 use thiserror::Error;
-
 use hashdb::Datastore;
 
-use crate::lambda_calculus::{Application, Lambda, Variable, typed::Hashtype};
-
-use super::{Expr, LambdaPointer};
+use crate::lambda_calculus::{Expr, LambdaPointer, TypedHash, Application, Lambda, Variable, Hashtype, beta_reduce, LambdaError};
+use crate::Symbol;
 
 #[derive(Logos, Debug, PartialEq)]
 pub enum Token {
@@ -43,11 +41,11 @@ pub enum Token {
 	Variable,
 
 	// Or regular expressions.
-	#[regex("[a-zA-Z]+", |lex| lex.slice().to_owned())]
-	Text(String),
+	#[regex("[a-zA-Z]+")]
+	Text,
 
-	/* #[regex("[0-9]+", |lex| lex.slice().parse())]
-	Number(u64), */
+	#[regex("[0-9]+", |lex| lex.slice().parse())]
+	Number(u64),
 	
 	// We can also use this variant to define whitespace,
 	// or any other matches we wish to skip.
@@ -73,7 +71,13 @@ pub enum ParseError<'a> {
 	UnexpectedEndOfStream(Location<'a>),
 
 	#[error("Invalid Token")]
-	InvalidToken(Location<'a>, Span, Token)
+	InvalidToken(Location<'a>, Span, Token),
+
+	#[error("Unknown Symbol: {2}\n{}", .0.display_span(.1))]
+	UnknownSymbol(Location<'a>, Span, &'a str),
+
+	#[error("Number-Encoding functions undefined, must define succ and zero functions\n{}", .0.display_span(.1))]
+	NoNumberFunctions(Location<'a>, Span),
 }
 
 #[derive(Debug)]
@@ -166,6 +170,12 @@ fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) ->
 	
 }
 
+fn lookup_expr(string: &str, db: &mut Datastore) -> Option<TypedHash<Expr>> {
+	let link = Symbol::new(string.to_owned()).to_hash(db).untyped().clone();
+	let expr_hash = db.lookup_link(&link)?;
+	unsafe { Some(TypedHash::from_hash_unchecked(expr_hash, std::marker::PhantomData::default())) }
+}
+
 fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<Expr, ParseError<'a>> {
 	let depth = depth + 1;
 
@@ -203,7 +213,27 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 			
 			Expr::Lam(Lambda { pointers, expr: arg_expr } )
 		},
+		Token::Text => {
+			let string = &feeder.string[next_span.clone()];
+			let expr_hash = lookup_expr(string, db).ok_or(ParseError::UnknownSymbol(feeder.location(), next_span.clone(), string))?;
+			expr_hash.resolve(db).map_err(|_|ParseError::UnknownSymbol(feeder.location(), next_span, string))?
+		},
+		Token::Number(value) => {
+			if value > 1_000_000 { panic!("number is probably too big"); }
+			let zero = lookup_expr("zero", db).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span.clone()))?;
+			let succ = lookup_expr("succ", db).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span))?;
+			let mut acc = zero;
+			for n in 0..value {
+				acc = Expr::app(&succ, &acc, db)
+			}
+			acc.resolve(db).unwrap()
+		},
 		Token::Error => { return Err(ParseError::InvalidToken(feeder.location(), next_span, next_token)) },
-		token => return Err(ParseError::UnexpectedToken(feeder.location(), next_span, token))
+		token => return Err(ParseError::UnexpectedToken(feeder.location(), next_span, token)),
 	})
+}
+
+pub fn parse_reduce(string: &'static str, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
+	let expr = parse_to_expr(&string, db).expect("Failed to parse expression");
+	Ok(beta_reduce(&expr.to_hash(db), db)?)
 }
