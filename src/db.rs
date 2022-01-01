@@ -3,13 +3,14 @@ use std::collections::HashMap;
 
 use crate::{Data, Hash};
 
+#[derive(Default)]
 pub struct Datastore {
 	map: HashMap<Hash, Data>,
 }
 
 impl Datastore {
     pub fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self::default()
     }
 	pub fn add(&mut self, data: Data) -> Hash {
 		let hash = Hash::hash(&data);
@@ -18,6 +19,7 @@ impl Datastore {
 		}  
 		hash
 	}
+
 	pub fn remove(&mut self, hash: &Hash) -> Option<Data> {
 		self.map.remove(hash)
 	}
