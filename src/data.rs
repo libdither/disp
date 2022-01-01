@@ -8,6 +8,9 @@ impl Data {
 	pub fn new(data: &[u8]) -> Self {
 		Self { data: data.to_vec() }
 	}
+	pub fn from_vec(data: Vec<u8>) -> Self {
+		Self { data }
+	}
 	pub fn as_bytes(&self) -> &[u8] {
 		&self.data[..]
 	}
