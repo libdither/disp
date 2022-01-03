@@ -1,11 +1,21 @@
+#![feature(generic_const_exprs)]
+#![feature(adt_const_params)]
+#![feature(const_for)]
+#![feature(const_mut_refs)]
+/* #![feature(associated_types_default)]
+#![feature(generic_associated_types)] */
+/* #![feature(unsize)] */
 
 mod hash;
 mod data;
 mod db;
+// mod typed;
+pub mod hashtype;
 
 pub use db::Datastore;
 pub use hash::Hash;
 pub use data::Data;
+//pub use typed::*;
 
 #[cfg(test)]
 mod tests {

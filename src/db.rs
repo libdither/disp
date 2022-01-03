@@ -13,7 +13,7 @@ impl Datastore {
         Self::default()
     }
 	pub fn add(&mut self, data: Data) -> Hash {
-		let hash = Hash::hash(&data);
+		let hash = Hash::hash(data.as_bytes());
 		if !self.map.contains_key(&hash) {
 			if self.map.insert(hash.clone(), data).is_some() { panic!("There should not already be something in here") };
 		}  
