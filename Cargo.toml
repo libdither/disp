@@ -7,10 +7,13 @@ edition = "2021"
 
 [dependencies]
 base58 = "0.2.0"
+bincode = "1.3.3"
+bytes = "1.1.0"
 digest = "0.10.1"
 multihash = "0.15.0"
 serde = { version = "1.0.133", features = ["derive"] }
 sha3 = "0.10.0"
+thiserror = "1.0.30"
 unsigned-varint = "0.7.1"
 
 [features]

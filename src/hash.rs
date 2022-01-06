@@ -184,9 +184,7 @@ where
 		let hash_type = match C {
 			Code::Sha2_256 => "sha2_256",
 			Code::Sha2_512 => "sha2_512",
-			/* Code::Sha3_256 => "sha3_256",
-			Code::Sha3_512 => "sha3_512",
-			_ => "???" */
+			_ => "???"
 		};
         write!(f, "{}:{}", hash_type, ToBase58::to_base58(self.digest()))
     }

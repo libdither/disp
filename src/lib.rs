@@ -1,15 +1,19 @@
+
+#![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 #![feature(adt_const_params)]
 #![feature(const_for)]
 #![feature(const_mut_refs)]
-/* #![feature(associated_types_default)]
-#![feature(generic_associated_types)] */
-/* #![feature(unsize)] */
+#![feature(unsized_tuple_coercion)]
+#![feature(type_name_of_val)]
+
+#[macro_use]
+extern crate thiserror;
 
 mod hash;
 mod data;
 mod db;
-// mod typed;
+mod typed;
 pub mod hashtype;
 
 pub use db::Datastore;
