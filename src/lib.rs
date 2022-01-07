@@ -16,21 +16,21 @@ mod db;
 mod typed;
 pub mod hashtype;
 
-pub use db::Datastore;
+pub use db::{Datastore, Link};
+pub use hashtype::{Hashtype, TypedHash, HashtypeResolveError};
 pub use hash::Hash;
 pub use data::Data;
 //pub use typed::*;
 
 #[cfg(test)]
 mod tests {
-    use crate::{Data, Datastore, Hash};
+    use crate::{Datastore, Hashtype};
 
     #[test]
     fn test_db() {
-		let mut db = Datastore::new();
-		let data = Data::new(&[01u8, 32u8]);
-        let hash = db.add(data);
-        let hash_2 =  Hash::hash(&[01u8, 32u8]);
-        assert_eq!(hash.as_bytes(), hash_2.as_bytes());
+		let db = &mut Datastore::new();
+		//let data = Data::new(&[01u8, 32u8]);
+        let string = String::from("hello").store(db);
+        assert_eq!(string.as_bytes(), b"hello");
     }
 }

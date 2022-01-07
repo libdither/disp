@@ -1,62 +1,39 @@
+use std::{any::TypeId, marker::PhantomData};
+
+use crate::{Datastore, Hash, db::{DatastoreError, Link}};
+// const RUST_TYPE: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0]);
 
 
-use std::{any::TypeId, marker::PhantomData, ops::Deref, rc::Rc};
-
-use crate::{Datastore, Hash, db::DatastoreError};
-const RUST_TYPE: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0]);
-/// Immutable and Mutable are serialized to `Hash`es
-
-/// Shared reference to a piece of data, serialized to hash
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Link<T: Hashtype> {
-	hash: Rc<Hash>,
-	hashtype: Rc<T>,
-}
-impl<T: Hashtype> Link<T> {
-	pub fn from_rc(hash: Rc<Hash>, hashtype: Rc<T>) -> Link<T> { Link { hash, hashtype } }
-	pub fn hash(&self) -> &TypedHash<T> {
-		let hash = self.hash.deref();
-		hash.into()
-	}
-	pub fn as_ref(&self) -> &T {
-		self.hashtype.as_ref()
-	}
-	/* pub fn new(hash: TypedHash<T>, db: &mut Datastore) -> Link<T> {
-		
-	} */
-}
-impl<T: Hashtype> Deref for Link<T> {
-	type Target = T;
-	fn deref(&self) -> &T {
-		self.hashtype.deref()
-	}
-}
-
-/* use serde::{Serialize, Deserialize};
-impl<T: Hashtype> Serialize for Link<T> {
-	fn serialize(&self) {
-
-	}
-}
- */
 #[derive(Debug, Error)]
 pub enum HashtypeResolveError {
 	#[error("Datastore error: {0}")]
 	DatastoreError(#[from] DatastoreError),
-	#[error("Invalid Hash: {0}")]
-	InvalidHashError(#[from] InvalidHashError),
+	#[error("Invalid Layout: {0}")]
+	InvalidLayout(Hash),
 	#[error("Invalid Link Type: {0:?}")]
 	InvalidLinkType(TypeId),
+	#[error("Reader Error")]
+	ReaderError(#[from] std::io::Error),
+
 	#[error("Deserialization Error")]
 	DeserializeError(#[from] bincode::Error),
-	#[error("Reader Error")]
-	ReaderError(#[from] std::io::Error)
 }
 
 pub trait Hashtype: Sized + 'static {
-	/// Construct from Datastore (calling construct functions of linked data)
-	fn resolve(hash: &TypedHash<Self>, db: &Datastore) -> Result<Self, HashtypeResolveError>;
-	fn hash(&self, db: &mut Datastore) -> TypedHash<Self>;
+	/// Calculate hash and data from type
+	fn hash(&self) -> TypedHash<Self>;
+	/// Create Link from hashtype
+	fn link(self) -> Link<Self> { Link::new(self) }
+	/// Create link and store in db
+	fn store(self, db: &mut Datastore) -> Link<Self> {
+		let mut link = self.link();
+		link.store(db); link
+	}
+
+	/// Construct Type from Datastore (calling construct functions of linked data)
+	fn fetch(hash: &TypedHash<Self>, db: &Datastore) -> Result<Link<Self>, HashtypeResolveError> { db.fetch(hash) }
+	/// List of hashes representing any data that should link to this type
+	fn reverse_links(&self) -> Vec<TypedHash<Self>> { vec![] }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -66,6 +43,9 @@ pub struct TypedHash<T: Hashtype> {
 }
 impl<T: Hashtype> From<Hash> for TypedHash<T> {
 	fn from(hash: Hash) -> Self { Self { hash, _type: PhantomData::<T>::default() } }
+}
+impl<T: Hashtype> Into<Hash> for TypedHash<T> {
+	fn into(self) -> Hash { self.hash }
 }
 impl<T: Hashtype> From<&Hash> for &TypedHash<T> {
 	// Safety: TypedHash and Hash are equivalent
@@ -78,16 +58,14 @@ impl<'a, T: Hashtype> Into<&'a Hash> for &'a TypedHash<T> {
 }
 impl<T: Hashtype> TypedHash<T> {
 	pub fn new(hash: &Hash) -> Self { TypedHash::<T> { hash: hash.clone(), _type: Default::default() } }
-	pub fn cast<R: Hashtype>(self) -> TypedHash<R> { self.untyped().into() }
-	pub fn untyped(self) -> Hash { self.hash }
-	pub fn untyped_ref(&self) -> &Hash { &self.hash }
+	pub fn cast<R: Hashtype>(self) -> TypedHash<R> { self.hash.into() }
 	pub fn as_bytes(&self) -> &[u8] { self.hash.as_bytes() }
-	
-	pub fn resolve<'a>(&self, db: &'a Datastore) -> Result<T, HashtypeResolveError> {
-		T::resolve(self, db)
+	pub fn as_hash(&self) -> &Hash { &self.hash }
+	pub fn resolve<'a>(&self, db: &'a Datastore) -> Result<Link<T>, HashtypeResolveError> {
+		Link::fetch(self, db)
 	}
 }
-
+/* 
 #[derive(Debug, Error)]
 #[error("Invalid hash: {0}")]
 pub struct InvalidHashError(Hash);
@@ -115,58 +93,14 @@ impl<T: PrimitiveHashtype> Hashtype for T {
 	fn resolve(hash: &TypedHash<Self>, _: &Datastore) -> Result<Self, HashtypeResolveError> {
 		Ok(Self::from_hash(hash)?)
 	}
+} */
+
+impl Hashtype for String {
+    fn hash(&self) -> TypedHash<Self> {
+        Hash::hash(&bincode::serialize(self).unwrap()).into()
+    }
+    /* fn resolve(hash: &TypedHash<Self>, db: &Datastore) -> Result<Self, HashtypeResolveError> {
+        Ok(bincode::deserialize(db.get(hash.into())?.as_bytes())?)
+    } */
 }
 
-// /// Implement this type for all rust types that should be serialized into self-defining structures
-/* trait RustHashtype {
-	type FromDataError;
-	fn to_data(&self) -> Data;
-	fn from_data(data: &Data) -> Result<Self, Self::FromDataError>;
-}
-
-impl<T> RustHashtype for T
-where T: Serialize + DeserializeOwned,
-	RustHashtype::FromDataError: From<bincode::Error>,
-{
-	fn to_data(&self) -> Data {
-		Data::from_vec(bincode::serialize(self).unwrap())
-	}
-	fn from_data(data: &Data) -> Result<Self, Self::FromDataError> {
-		Ok(bincode::deserialize(data.as_bytes())?)
-	}
-} */
-
-/* struct RustType<T: RustHashtype> {
-	value: T,
-}
-impl<T: RustHashtype> Hashtype for RustType<T> {
-
-} */
-
-/* #[derive(Debug, Error)]
-enum ParseError {
-	#[error("Failed to read hash")]
-	HashReadError(#[from] std::io::Error),
-	#[error("Unknown Layout")]
-	UnknownLayout(Hash),
-	#[error("Hash not in Datastore")]
-	DatastoreError(#[from] DatastoreError),
-} */
-
-/* fn parse_rusttype_layout(layout: Hash, db: &Datastore) -> Result<&str, ParseError> {
-	let data = &mut db.get(&layout)?.as_bytes();
-	let layout_def = Hash::from_reader(data)?;
-	if layout_def == RUST_TYPE {
-		String::from_utf8_lossy(data)
-	} else {
-		Err(ParseError::UnknownLayout(layout_def))
-	}
-} */
-
-/* fn parse_data(data: &[u8], db: &Datastore) -> Result<RustType<String>, ParseError> {
-	let layout = Hash::from_reader(data)?;
-	Ok(match layout {
-		RUST_TYPE => panic!("do not expect rust type here"),
-		_ => ParseError::UnknownLayout(layout)
-	})
-} */
