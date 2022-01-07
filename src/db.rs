@@ -5,7 +5,7 @@ use crate::{Hash, hashtype::{Hashtype, HashtypeResolveError, TypedHash}};
 
 /// Represents the hashing operation of a specific type, since the only way to create this object is to use a T: Hashtype, the hash field of this type
 /// should always be a valid hash. (i.e. an execution of Hashtype::hash())
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq)]
 pub struct Link<T: Hashtype> {
 	hashtype: Rc<T>,
 	hash: TypedHash<T>,
@@ -15,18 +15,22 @@ impl<T: Hashtype> Link<T> {
 		let hash = hashtype.hash();
 		Self { hashtype: Rc::new(hashtype), hash }
 	}
-	pub fn fetch(hash: &TypedHash<T>, db: &Datastore) -> Result<Link<T>, HashtypeResolveError> { db.fetch(hash) }
-	pub fn store(&mut self, db: &mut Datastore) -> TypedHash<T> { db.store(self) }
 	pub fn hash(&self) -> &TypedHash<T> { &self.hash }
 	
 	pub fn as_ref(&self) -> &T {
 		self.hashtype.as_ref()
 	}
+	//pub fn inner<H: Hashtype + Clone>(link: &Link<H>) -> H { link.hashtype.as_ref().clone() }
 }
 impl<T: Hashtype> Deref for Link<T> {
 	type Target = T;
 	fn deref(&self) -> &T {
 		self.hashtype.deref()
+	}
+}
+impl<T: Hashtype> PartialEq for Link<T> {
+	fn eq(&self, other: &Self) -> bool {
+		self.hash().as_bytes() == other.hash().as_bytes()
 	}
 }
 
@@ -51,14 +55,28 @@ impl Datastore {
     pub fn new() -> Self {
         Self::default()
     }
+	pub fn store_type<T: Hashtype>(&mut self, hashtype: T) -> Link<T> {
+		let hash: Hash = hashtype.hash().into();
+		// Register Reverse Lookup
+		for subhash in hashtype.reverse_links() {
+			self.reverse_lookup.insert(subhash.clone(), hash.clone());
+		}
+
+		let hashtype = Rc::new(hashtype);
+		// Register into map
+		if !self.map.contains_key(&hash) {
+			if self.map.insert(hash.clone(), hashtype.clone()).is_some() { panic!("There should not already be something in here") };
+		}
+		Link { hashtype, hash: hash.into() }
+	}
 	/// Add Data to datastore
-	pub fn store<T: Hashtype>(&mut self, link: &mut Link<T>) -> TypedHash<T> {
+	pub fn store_link<T: Hashtype>(&mut self, link: &mut Link<T>) -> TypedHash<T> {
 		let Link { hash , hashtype } = link;
 		let hash = hash.as_hash().clone();
 
 		// Register Reverse Lookup
 		for subhash in hashtype.reverse_links() {
-			self.reverse_lookup.insert(subhash.into(), hash.clone());
+			self.reverse_lookup.insert(subhash.clone(), hash.clone());
 		}
 		// Register into map
 		if !self.map.contains_key(&hash) {
@@ -108,19 +126,8 @@ fn test_loading() {
 		}
 	}
 
-	let string = StringType { string: "string".to_owned(), linked: None };
-	println!("string typeid: {:?}", string.type_id());
-	let mut string_link = string.clone().link();
-	assert_eq!(string, *string_link);
+	let string = StringType { string: "string".to_owned(), linked: None }.store(db);
+	let string2 = StringType { string: "string2".to_owned(), linked: Some(string.clone()) }.store(db);
 
-	let string_hash = string_link.store(db);
-	assert_eq!(string_hash, *string_link.hash());
-	let mut string2 = StringType { string: "string2".to_owned(), linked: Some(string_link) }.link();
-	let string2_hash = string2.store(db);
-
-	let string2_resolved = string2_hash.resolve(db).unwrap();
-	assert_eq!(string2, string2_resolved);
-
-	let string_resolved = string2_resolved.linked.clone().unwrap();
-	assert_eq!(&string, string_resolved.as_ref());
+	assert_eq!(string2.linked.clone().unwrap().hash(), string.hash());
 }

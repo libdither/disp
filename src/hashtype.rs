@@ -22,18 +22,14 @@ pub enum HashtypeResolveError {
 pub trait Hashtype: Sized + 'static {
 	/// Calculate hash and data from type
 	fn hash(&self) -> TypedHash<Self>;
-	/// Create Link from hashtype
+	/// Create Link from hashtype (this will not deduplicate data unless db.store() is called with the output)
 	fn link(self) -> Link<Self> { Link::new(self) }
-	/// Create link and store in db
-	fn store(self, db: &mut Datastore) -> Link<Self> {
-		let mut link = self.link();
-		link.store(db); link
-	}
-
-	/// Construct Type from Datastore (calling construct functions of linked data)
-	fn fetch(hash: &TypedHash<Self>, db: &Datastore) -> Result<Link<Self>, HashtypeResolveError> { db.fetch(hash) }
+	/// Create link and store in db, or fetch from db if already there
+	fn store(self, db: &mut Datastore) -> Link<Self> { db.store_type(self) }
+	/// Fetch from datastore
+	fn fetch(self, db: &Datastore) -> Result<Link<Self>, HashtypeResolveError> { db.fetch(&self.hash().into()) }
 	/// List of hashes representing any data that should link to this type
-	fn reverse_links(&self) -> Vec<TypedHash<Self>> { vec![] }
+	fn reverse_links(&self) -> Vec<&Hash> { vec![] }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -61,9 +57,7 @@ impl<T: Hashtype> TypedHash<T> {
 	pub fn cast<R: Hashtype>(self) -> TypedHash<R> { self.hash.into() }
 	pub fn as_bytes(&self) -> &[u8] { self.hash.as_bytes() }
 	pub fn as_hash(&self) -> &Hash { &self.hash }
-	pub fn resolve<'a>(&self, db: &'a Datastore) -> Result<Link<T>, HashtypeResolveError> {
-		Link::fetch(self, db)
-	}
+	pub fn fetch<'a>(&self, db: &'a Datastore) -> Result<Link<T>, HashtypeResolveError> { db.fetch(self) }
 }
 /* 
 #[derive(Debug, Error)]

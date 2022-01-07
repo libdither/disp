@@ -127,7 +127,6 @@ where
 		use multihash::MultihashDigest;
 		let mh = mc.digest(data);
 		let mh_slice = mh.digest();
-		println!("slice: {:?}", mh_slice);
 
 		// Safety: mh_slice and structure.digest should always be the same size
 		unsafe {
