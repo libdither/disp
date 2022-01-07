@@ -2,9 +2,9 @@ use std::{iter::Peekable};
 
 use logos::{Logos, Span};
 use thiserror::Error;
-use hashdb::Datastore;
+use hashdb::{Datastore, Hashtype, HashtypeResolveError, Link, TypedHash};
 
-use crate::lambda_calculus::{Expr, LambdaPointer, TypedHash, Application, Lambda, Variable, Hashtype, beta_reduce, LambdaError};
+use crate::lambda_calculus::{Expr, LambdaPointer, beta_reduce, LambdaError};
 use crate::Symbol;
 
 #[derive(Logos, Debug, PartialEq)]
@@ -138,24 +138,24 @@ impl<'a> TokenFeeder<'a> {
 	}
 }
 
-pub fn parse_to_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<Expr, ParseError<'a>> {
+pub fn parse_to_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
 	parse_tokens(feeder, 0, db)
 }
 
-fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) -> Result<Option<LambdaPointer>, ParseError<'a>> {
+fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) -> Result<Option<Link<LambdaPointer>>, ParseError<'a>> {
 	if let Token::CloseSquareBracket = feeder.peek()? { return Ok(None) }
 	
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
 		Token::Period => {
-			Some(LambdaPointer::End)
+			Some(LambdaPointer::End.store(db))
 		},
 		Token::OpenCarat => {
-			parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Left(p.to_hash(db)))
+			parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Left(p).store(db))
 		},
 		Token::CloseCarat => {
-			parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Right(p.to_hash(db)))
+			parse_lambda_pointer(feeder, db)?.map(|p|LambdaPointer::Right(p).store(db))
 		},
 		Token::OpenParen => {
 			let first = parse_lambda_pointer(feeder, db)?;
@@ -163,27 +163,26 @@ fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) ->
 			let second = parse_lambda_pointer(feeder, db)?;
 			feeder.expect_next(Token::CloseParen)?;
 
-			first.zip(second).map(|(left, right)|LambdaPointer::Both(left.to_hash(db), right.to_hash(db)))
+			first.zip(second).map(|(left, right)|LambdaPointer::Both(left, right).store(db))
 		},
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?
 	})
 	
 }
 
-fn lookup_expr(string: &str, db: &mut Datastore) -> Option<TypedHash<Expr>> {
-	let link = Symbol::new(string.to_owned()).to_hash(db).untyped().clone();
-	let expr_hash = db.lookup_link(&link)?;
-	unsafe { Some(TypedHash::from_hash_unchecked(expr_hash, std::marker::PhantomData::default())) }
+fn lookup_expr(string: &str, db: &mut Datastore) -> Option<Link<Expr>> {
+	let symbol: Link<Symbol> = db.lookup(&string.to_owned().hash()).ok()?;
+	Some(symbol.expr())
 }
 
-fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<Expr, ParseError<'a>> {
+fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
 	let depth = depth + 1;
 
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
 		// OpenParen represents new s-expression, should cause recursion
 		Token::OpenParen => {
-			let ret: Expr;
+			let ret: Link<Expr>;
 			if let Token::Lambda = feeder.peek()? {
 				ret = parse_tokens(feeder, depth, db)?
 			} else {
@@ -191,7 +190,7 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 
 				let expr_2 = parse_tokens(feeder, depth, db)?;
 
-				ret = Expr::App(Application { function: expr_1.store(db), substitution: expr_2.store(db) })
+				ret = Expr::Application { function: expr_1, substitution: expr_2 }.store(db)
 			}
 			feeder.expect_next(Token::CloseParen)?;
 			
@@ -202,21 +201,20 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 			return Err(ParseError::UnexpectedToken(feeder.location(), next_span, Token::CloseParen))
 		},
 		Token::Variable => {
-			Expr::Var(Variable)
+			Expr::Variable.store(db)
 		},
 		Token::Lambda => {
 			feeder.expect_next(Token::OpenSquareBracket)?;
-			let pointers = parse_lambda_pointer(feeder, db)?.map(|p|p.to_hash(db));
+			let pointers = parse_lambda_pointer(feeder, db)?;
 			feeder.expect_next(Token::CloseSquareBracket)?;
 
-			let arg_expr = parse_tokens(feeder, depth, db)?.to_hash(db);
+			let arg_expr = parse_tokens(feeder, depth, db)?;
 			
-			Expr::Lam(Lambda { pointers, expr: arg_expr } )
+			Expr::Lambda { pointers, expr: arg_expr }.store(db)
 		},
 		Token::Text => {
 			let string = &feeder.string[next_span.clone()];
-			let expr_hash = lookup_expr(string, db).ok_or(ParseError::UnknownSymbol(feeder.location(), next_span.clone(), string))?;
-			expr_hash.resolve(db).map_err(|_|ParseError::UnknownSymbol(feeder.location(), next_span, string))?
+			lookup_expr(string, db).ok_or(ParseError::UnknownSymbol(feeder.location(), next_span.clone(), string))?
 		},
 		Token::Number(value) => {
 			if value > 1_000_000 { panic!("number is probably too big"); }
@@ -226,14 +224,14 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 			for n in 0..value {
 				acc = Expr::app(&succ, &acc, db)
 			}
-			acc.resolve(db).unwrap()
+			acc
 		},
 		Token::Error => { return Err(ParseError::InvalidToken(feeder.location(), next_span, next_token)) },
 		token => return Err(ParseError::UnexpectedToken(feeder.location(), next_span, token)),
 	})
 }
 
-pub fn parse_reduce(string: &'static str, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
+pub fn parse_reduce(string: &'static str, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
 	let expr = parse_to_expr(&string, db).expect("Failed to parse expression");
-	Ok(beta_reduce(&expr.to_hash(db), db)?)
+	Ok(beta_reduce(&expr, db)?)
 }
