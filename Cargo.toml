@@ -18,6 +18,8 @@ serde = { version = "1.0.132", features = ["derive"] }
 thiserror = "1.0.30"
 
 hashdb = { path = "hashdb/" }
+anyhow = "1.0.52"
+rustyline = "9.1.2"
 
 [features]
 

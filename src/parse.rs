@@ -44,6 +44,9 @@ pub enum Token {
 	#[regex("[a-zA-Z]+")]
 	Text,
 
+	/* #[regex("\"[a-zA-Z]+\"")]
+	String, */
+
 	#[regex("[0-9]+", |lex| lex.slice().parse())]
 	Number(u64),
 	
@@ -78,6 +81,12 @@ pub enum ParseError<'a> {
 
 	#[error("Number-Encoding functions undefined, must define succ and zero functions\n{}", .0.display_span(.1))]
 	NoNumberFunctions(Location<'a>, Span),
+
+	#[error("Expected end of stream, found token: {1:?}\n{}", .0.display_span(.2))]
+	ExpectedEndOfStream(Location<'a>, Token, Span),
+
+	#[error("command: {0}: {1}")]
+	SubcommandError(&'static str, String)
 }
 
 #[derive(Debug)]
@@ -89,12 +98,9 @@ pub struct Location<'a> {
 impl<'a> Location<'a> {
 	fn display_span(&self, span: &Span) -> String {
 		let string = self.string;
-		// Count continuation bytes
-		let num_continuation_bytes = string.bytes().filter(|&b|(b & 0b11000000) == 0b10000000).count();
-		let char_count = string.chars().count();
-		let byte_count = string.bytes().count();
-		println!("{}, {}, {}", num_continuation_bytes, char_count, byte_count);
-		let whitespace_amount = span.start + 1 - num_continuation_bytes;
+		let span_len = span.len();
+
+		let whitespace_amount = self.char_position - span_len;
 		let span_marking = std::iter::repeat(" ").take(whitespace_amount)
 			.chain(std::iter::repeat("^").take(span.len()));
 		format!("{}\n{}", string, span_marking.collect::<String>())
@@ -124,14 +130,19 @@ impl<'a> TokenFeeder<'a> {
 			Err(ParseError::UnexpectedEndOfStream(self.location()))
 		}
 	}
-	pub fn expect_next(&mut self, token: Token) -> Result<(), ParseError<'a>> {
+	pub fn expect_next(&mut self, token: Token) -> Result<Span, ParseError<'a>> {
 		let (next, span) = self.next()?;
-		if next != token { Err(ParseError::WrongToken(self.location(), span, token, next)) } else { Ok(()) }
+		if next != token { Err(ParseError::WrongToken(self.location(), span, token, next)) } else { Ok(span) }
 	}
-	pub fn peek(&mut self) -> Result<&Token, ParseError<'a>> {
+	pub fn expect_end(&mut self) -> Result<(), ParseError<'a>> {
+		if let Some((token, span)) = self.iter.next() {
+			Err(ParseError::ExpectedEndOfStream(self.location(), token, span))
+		} else { Ok(()) }
+	}
+	pub fn peek(&mut self) -> Result<(&Token, &Span), ParseError<'a>> {
 		let location = self.location();
-		if let Some((token, _)) = self.iter.peek() {
-			Ok(token)
+		if let Some((token, span)) = self.iter.peek() {
+			Ok((token, span))
 		} else {
 			Err(ParseError::UnexpectedEndOfStream(location))
 		}
@@ -144,7 +155,7 @@ pub fn parse_to_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<Link<Exp
 }
 
 fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) -> Result<Option<Link<LambdaPointer>>, ParseError<'a>> {
-	if let Token::CloseSquareBracket = feeder.peek()? { return Ok(None) }
+	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok(None) }
 	
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
@@ -182,17 +193,19 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 	Ok(match next_token {
 		// OpenParen represents new s-expression, should cause recursion
 		Token::OpenParen => {
-			let ret: Link<Expr>;
-			if let Token::Lambda = feeder.peek()? {
-				ret = parse_tokens(feeder, depth, db)?
-			} else {
-				let expr_1 = parse_tokens(feeder, depth, db)?;
-
-				let expr_2 = parse_tokens(feeder, depth, db)?;
-
-				ret = Expr::Application { function: expr_1, substitution: expr_2 }.store(db)
-			}
+			let ret = match feeder.peek()?.0 {
+				Token::Lambda => { parse_tokens(feeder, depth, db)? }
+				Token::Text => { parse_tokens(feeder, depth, db)? }
+				_ => {
+					let expr_1 = parse_tokens(feeder, depth, db)?;
+	
+					let expr_2 = parse_tokens(feeder, depth, db)?;
+	
+					Expr::Application { function: expr_1, substitution: expr_2 }.store(db)
+				}
+			};
 			feeder.expect_next(Token::CloseParen)?;
+			if depth == 1 { feeder.expect_end()? }
 			
 			ret
 		},
@@ -214,14 +227,39 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 		},
 		Token::Text => {
 			let string = &feeder.string[next_span.clone()];
-			lookup_expr(string, db).ok_or(ParseError::UnknownSymbol(feeder.location(), next_span.clone(), string))?
+
+			if depth == 2 {
+				match string {
+					"set" => {
+						let span = feeder.expect_next(Token::Text)?;
+						let name = &feeder.string[span];
+
+						let next_expr = parse_tokens(feeder, depth, db)?;
+						let reduced = beta_reduce(&next_expr, db).map_err(|_|ParseError::SubcommandError("set", "failed to beta reduce expr".into()))?;
+						
+						Symbol::new(name, &reduced, db);
+						return Ok(reduced);
+					}
+					_ => {},
+				}
+			}
+			
+			// Assume application
+			let function = lookup_expr(string, db).ok_or(ParseError::UnknownSymbol(feeder.location(), next_span.clone(), string))?;
+			match feeder.peek() {
+				Ok((token, _)) => {
+					if let Token::CloseParen = token { function }
+					else { Expr::Application { function, substitution: parse_tokens(feeder, depth, db)? }.store(db) }
+				},
+				Err(_) => function,
+			}
 		},
 		Token::Number(value) => {
-			if value > 1_000_000 { panic!("number is probably too big"); }
+			if value > 1_000_000 { ParseError::SubcommandError("{integer}", "number is too large (must be less than 1,000,000)".into()); }
 			let zero = lookup_expr("zero", db).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span.clone()))?;
 			let succ = lookup_expr("succ", db).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span))?;
 			let mut acc = zero;
-			for n in 0..value {
+			for _ in 0..value {
 				acc = Expr::app(&succ, &acc, db)
 			}
 			acc
@@ -231,7 +269,7 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 	})
 }
 
-pub fn parse_reduce(string: &'static str, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
+pub fn parse_reduce<'a>(string: &'a str, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
 	let expr = parse_to_expr(&string, db).expect("Failed to parse expression");
 	Ok(beta_reduce(&expr, db)?)
 }
