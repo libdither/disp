@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 
 use hashdb::{Link, Datastore, Hash, Hashtype, HashtypeResolveError, TypedHash};
 
-use crate::lambda_calculus::DatastoreDisplay;
+use crate::{lambda_calculus::DatastoreDisplay, symbol::Symbol};
 
 use super::{DisplayWithDatastore, LambdaError};
 
@@ -136,6 +136,10 @@ impl Hashtype for Expr {
 }
 impl DisplayWithDatastore for Expr {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
+		match db.lookup::<Expr, Symbol>(&self.hash()) {
+			Ok(symbol) => return write!(f, "{}", symbol.name()),
+			Err(_) => {},
+		}
 		match self {
 			Expr::Variable => write!(f, "x"),
 			Expr::Lambda { pointers, expr } => {

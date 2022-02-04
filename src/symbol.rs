@@ -14,6 +14,7 @@ impl Symbol {
     pub fn expr(&self) -> Link<Expr> {
         self.expr.clone()
     }
+    pub fn name(&self) -> &String { &*self.name }
 }
 impl Hashtype for Symbol {
     fn hash(&self) -> TypedHash<Self> {

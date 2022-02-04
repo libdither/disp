@@ -41,7 +41,7 @@ pub enum Token {
 	Variable,
 
 	// Or regular expressions.
-	#[regex("[a-zA-Z]+")]
+	#[regex("[a-zA-Z][a-zA-Z0-9]+")]
 	Text,
 
 	/* #[regex("\"[a-zA-Z]+\"")]
@@ -132,7 +132,7 @@ impl<'a> TokenFeeder<'a> {
 	}
 	pub fn expect_next(&mut self, token: Token) -> Result<Span, ParseError<'a>> {
 		let (next, span) = self.next()?;
-		if next != token { Err(ParseError::WrongToken(self.location(), span, token, next)) } else { Ok(span) }
+		if next != token { Err(ParseError::WrongToken(self.location(), span, next, token)) } else { Ok(span) }
 	}
 	pub fn expect_end(&mut self) -> Result<(), ParseError<'a>> {
 		if let Some((token, span)) = self.iter.next() {

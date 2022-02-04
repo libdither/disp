@@ -326,18 +326,18 @@ fn partial_beta_reduce(reducing_expr: Link<Expr>, reducing_tree: &mut ReduceTree
 
 	let ret = match reducing_expr.as_ref() {
 		Expr::Variable => {
-			println!("{}[{}] reducing var {} -------- [{}]", pad, depth, reducing_expr.display(db), reducing_tree.display(db));
+			//println!("{}[{}] reducing var {} -------- [{}]", pad, depth, reducing_expr.display(db), reducing_tree.display(db));
 			reducing_expr
 		},
 		Expr::Lambda { expr, pointers } => {
-			print!("{}[{}] reducing lam {} -------- [{}] -> ", pad, depth, Expr::Lambda { pointers: pointers.clone(), expr: expr.clone() }.display(db), reducing_tree.display(db));
+			//print!("{}[{}] reducing lam {} -------- [{}] -> ", pad, depth, Expr::Lambda { pointers: pointers.clone(), expr: expr.clone() }.display(db), reducing_tree.display(db));
 
 			// Add pointers to pointer_trees so that if reduction moves variables, pointers can be updated
 			let index = reducing_tree.push_lambda_pointer(&pointers, db)?;
-			println!("[{}]", reducing_tree.display(db));
+			//println!("[{}]", reducing_tree.display(db));
 
 			let reduced_expr = partial_beta_reduce(expr.clone(), reducing_tree, depth, db)?;
-			println!("{}					[{}] -> ", pad, reducing_tree.display(db));
+			//println!("{}					[{}] -> ", pad, reducing_tree.display(db));
 
 			Expr::Lambda {
 				pointers: reducing_tree.pop_lambda_pointer(index, db)?,
@@ -345,7 +345,7 @@ fn partial_beta_reduce(reducing_expr: Link<Expr>, reducing_tree: &mut ReduceTree
 			}.store(db)
 		}
 		Expr::Application { function, substitution } => {
-			println!("{}[{}] reducing app {} -------- [{}]", pad, depth, Expr::Application { function: function.clone(), substitution: substitution.clone() }.display(db), reducing_tree.display(db));
+			//println!("{}[{}] reducing app {} -------- [{}]", pad, depth, Expr::Application { function: function.clone(), substitution: substitution.clone() }.display(db), reducing_tree.display(db));
 			
 			// Descend to subtrees
 			let (mut function_tree, mut substitution_tree) = reducing_tree.split(db)?;
@@ -368,13 +368,13 @@ fn partial_beta_reduce(reducing_expr: Link<Expr>, reducing_tree: &mut ReduceTree
 					let index = reducing_tree.push_lambda_pointer(&pointers, db)?;
 					reducing_tree.1 -= 1; // Needed because all PointerTree::Ends should be replaced in recur_replace
 
-					println!("{}[{}] replace in {}: every {} in [{}] with {}: [{}] → ", pad, depth, expr.display(db), index, reducing_tree.display(db), substitution.display(db), substitution_tree.display(db));
+					//println!("{}[{}] replace in {}: every {} in [{}] with {}: [{}] → ", pad, depth, expr.display(db), index, reducing_tree.display(db), substitution.display(db), substitution_tree.display(db));
 					let replaced_form = if let Some(_) = &pointers {
 						recur_replace(expr.clone(), reducing_tree, index, substitution.clone(), &substitution_tree, db)?
 					} else {
 						expr.clone()
 					};
-					println!("{}{}: [{}]", pad, replaced_form.display(db), reducing_tree.display(db));
+					//println!("{}{}: [{}]", pad, replaced_form.display(db), reducing_tree.display(db));
 
 					//println!("{}Replaced every {} with [{}] in [{}] -> [{}]", pad, index, substitution_tree.display(db), function_tree.display(db), reducing_tree.display(db));
 
@@ -391,11 +391,11 @@ fn partial_beta_reduce(reducing_expr: Link<Expr>, reducing_tree: &mut ReduceTree
 			ret
 		}
 	};
-	println!("{}[{}] returning reduction: {} -------- [{}]", pad, depth, ret.display(db), reducing_tree.display(db));
+	//println!("{}[{}] returning reduction: {} -------- [{}]", pad, depth, ret.display(db), reducing_tree.display(db));
 	Ok(ret)
 }
 
 pub fn beta_reduce(expr: &Link<Expr>, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
-	println!("Reducing: {}", expr.display(db));
+	//println!("Reducing: {}", expr.display(db));
 	Ok(partial_beta_reduce(expr.clone(), &mut ReduceTree::new(), 0, db)?)
 }
