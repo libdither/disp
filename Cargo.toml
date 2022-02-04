@@ -27,3 +27,15 @@ rustyline = "9.1.2"
 members = [
 	"examples/test6502",
 ]
+
+
+[workspace.metadata.nix]
+nativeBuildInputs = [
+	"cargo-edit",
+]
+buildInputs = []
+toolchain = "nightly"
+devshell = {name = "rust-dev-shell" }
+
+[package.metadata.nix]
+build = true
