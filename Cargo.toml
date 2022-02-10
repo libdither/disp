@@ -13,13 +13,14 @@ emulator_6502 = "1.1.0"
 itertools = "0.10.3"
 lazy_static = "1.4.0"
 logos = "0.12.0"
-multihash = "0.15.0"
-serde = { version = "1.0.132", features = ["derive"] }
+multihash = "0.16.1"
+serde = { version = "1.0.136", features = ["derive"] }
 thiserror = "1.0.30"
 
 hashdb = { path = "hashdb/" }
-anyhow = "1.0.52"
+anyhow = "1.0.53"
 rustyline = "9.1.2"
+bytecheck = "0.6.7"
 
 [features]
 
@@ -31,11 +32,15 @@ members = [
 
 [workspace.metadata.nix]
 nativeBuildInputs = [
-	"cargo-edit",
+	# "cargo-edit",
 ]
 buildInputs = []
 toolchain = "nightly"
 devshell = {name = "rust-dev-shell" }
 
 [package.metadata.nix]
+longDescription = """
+disp is an in-development built on top of the calculus of inductive constructions and can compile to to assembly.
+"""
+app = true
 build = true
