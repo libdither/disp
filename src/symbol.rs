@@ -1,38 +1,40 @@
 
-use hashdb::{Data, Datastore, Hash, Hashtype, HashtypeResolveError, Link, TypedHash};
+use std::iter;
 
+use hashdb::{Datastore, DatastoreError, Hash, NativeHashtype, TypedHash, hashtype::LinkIterConstructor};
 use crate::lambda_calculus::Expr;
+
+#[derive(Debug, rkyv::Archive, rkyv::Serialize)]
+#[archive(compare(PartialEq))]
+#[archive_attr(derive(Debug, bytecheck::CheckBytes))]
 pub struct Symbol {
-	name: Link<String>,
-	expr: Link<Expr>,
+	name: TypedHash<String>,
+	expr: TypedHash<Expr>,
 }
-
 impl Symbol {
-	pub fn new(name: impl Into<String>, expr: &Link<Expr>, db: &mut Datastore) -> Link<Self> {
-        Self { name: name.into().store(db), expr: expr.clone() }.store(db)
-    }
-    pub fn expr(&self) -> Link<Expr> {
-        self.expr.clone()
-    }
-    pub fn name(&self) -> &String { &*self.name }
+	pub fn new(name: impl Into<String>, expr: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Symbol> {
+		Self { name: name.into().store(db), expr: expr.clone() }.store(db)
+	}
 }
-impl Hashtype for Symbol {
-    fn hash(&self) -> TypedHash<Self> {
-        use bytes::BufMut;
-        let mut data = Vec::new();
-        data.put(self.name.hash().as_bytes());
-        data.put(self.expr.hash().as_bytes());
-        Hash::hash(&data).into()
-    }
-    /* fn resolve(hash: &TypedHash<Self>, db: &Datastore) -> Result<Self, HashtypeResolveError> {
-        let mut data = db.get(hash)?.as_bytes();
-        Ok(Self {
-            name: Link::resolve(&mut data, db),
-            expr: Link::resolve(&mut data, db),
-        })
-    } */
 
-    fn reverse_links(&self) -> Vec<&Hash> {
-        vec![self.name.hash().into(), self.expr.hash().into()]
-    }
+impl ArchivedSymbol {
+	pub fn expr(&self) -> TypedHash<Expr> {
+		self.expr.clone()
+	}
+	pub fn name<'a>(&self, db: &'a Datastore) -> Result<&'a rkyv::Archived<String>, DatastoreError> { self.name.fetch(db) }
+}
+impl NativeHashtype for Symbol {
+	type LinkIter<'a> = SymbolLinkIter<'a>;
+}
+pub struct SymbolLinkIter<'a> {
+	iter: iter::Chain<iter::Once<&'a Hash>, iter::Once<&'a Hash>>,
+}
+impl<'a> Iterator for SymbolLinkIter<'a> {
+	type Item = &'a Hash;
+	fn next(&mut self) -> Option<Self::Item> { self.iter.next() }
+}
+impl<'a> LinkIterConstructor<'a, Symbol> for SymbolLinkIter<'a> {
+	fn construct(symbol: &'a Symbol) -> Self {
+		SymbolLinkIter { iter: iter::once(symbol.name.as_hash()).chain(iter::once(symbol.name.as_hash())) }
+	}
 }

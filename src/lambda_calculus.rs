@@ -1,8 +1,9 @@
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
 use thiserror::Error;
+use rkyv::{Archive, Serialize};
 
-use hashdb::{Data, Datastore, Hash, Hashtype, HashtypeResolveError, Link, TypedHash};
+use hashdb::{Datastore, DatastoreError, NativeHashtype, TypedHash};
 
 mod expr;
 mod display;
@@ -13,20 +14,12 @@ pub use display::*;
 
 #[derive(Error, Debug)]
 pub enum LambdaError {
-	// Data -> Hash -> Data interpretation
-	#[error("Invalid hashtype, got {0}")]
-	InvalidLayout(Hash),
-
 	#[error("Format Error")]
 	FormatError(#[from] fmt::Error),
 
 	// Datastore Error
-	#[error("Not in datastore: {0}")]
-	NotInDatastore(Hash),
-
-	// Hashtype Error
-	#[error("Failed to resolve hashtype")]
-	HashtypeResolveError(#[from] HashtypeResolveError),
+	#[error("Datastore Error: {0}")]
+	HashtypeResolveError(#[from] DatastoreError),
 
 	// Beta Reduction Error
 	#[error("Recursion Depth for beta reduction exceeded")]
@@ -36,137 +29,105 @@ pub enum LambdaError {
 	PointerTreeMismatch,
 }
 
-/// Takes lambda expression and traverses down the binary tree using bitslices, replacing variables & rehashing.
-fn recur_replace(replace_in_expr: Link<Expr>, replace_in_tree: &mut ReduceTree, index: usize, replacement: Link<Expr>, replacement_tree: &ReduceTree, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
-	Ok(match &*replace_in_expr {
-		// When encounter a variable, replace
-		Expr::Variable => {
+/* #[derive(Clone)]
+pub struct ReplaceTree {
+	pub tree: TypedHash<PointerTree>,
+	pub max_index: u32,
+}
+impl ReplaceTree {
+	pub fn new(tree: TypedHash<PointerTree>, db: &Datastore) -> Result<Self, LambdaError> {
+		Ok(Self { tree, max_index: tree.fetch(db)?.value() })
+	}
+	pub fn split(self, db: &Datastore) -> Result<(Self, Self), LambdaError> {
+		Ok(match self.tree.fetch(db)? {
+			ArchivedPointerTree::None => (self.clone(), self),
+			ArchivedPointerTree::End(val) => Err(LambdaError::PointerTreeMismatch)?,
+			ArchivedPointerTree::Branch(left, right, max_index) => (
+				ReplaceTree { tree: left.clone(), max_index: *max_index },
+				ReplaceTree { tree: right.clone(), max_index: *max_index },
+			)
+		})
+	}
+	pub fn join(self, other: Self, db: &mut Datastore) -> Self {
+		let max_index = u32::max(self.max_index, other.max_index);
+		ReplaceTree { tree: PointerTree::Branch(self.tree, other.tree, max_index).store(db), max_index  }
+	}
+} */
+
+/// Recursively substitute expressions for certain variables
+/// Takes lambda expression, for each variable in Lambda { expr }, if Lambda { tree } index == replace_index, replace subexpr with replacement and subtree with replacement_tree
+fn recur_replace(
+	replace_in_expr: TypedHash<Expr>,
+	replace_in_tree: TypedHash<PointerTree>,
+	replacement: &TypedHash<Expr>,
+	replacement_tree: &TypedHash<PointerTree>,
+	replace_index: u32, db: &mut Datastore) -> Result<(TypedHash<Expr>, TypedHash<PointerTree>), LambdaError>
+{
+	Ok(match replace_in_expr.fetch(db)?.clone() {
+		ArchivedExpr::Variable => {
+			// When encounter a variable and index is correct, replace with replacement
 			// Must be PointerTree::None because replace_in_expr's variables aren't registered in replace_in_tree
-			match *replace_in_tree.0 {
-				PointerTree::Both(_, _) => Err(LambdaError::PointerTreeMismatch)?,
-				PointerTree::End(val) if val == index => {
-					*replace_in_tree = replacement_tree.clone();
-					replacement
-				},
-				_ => replace_in_expr,
+			match replace_in_tree.fetch(db)? {
+				ArchivedPointerTree::Branch(_, _, _) => Err(LambdaError::PointerTreeMismatch)?,
+				// Max variable index is replacement tree
+				ArchivedPointerTree::End(val) if *val == replace_index => (replacement.clone(), replacement_tree.clone()),
+				// Don't replace if replace_in_tree == (End(val) where val != replace_index or None)
+				_ => (replace_in_expr, replace_in_tree),
 			}
 		},
-		// When encounter a lambda, skip
-		Expr::Lambda { pointers, expr } => {
-			let replaced_expr = recur_replace(expr.clone(), replace_in_tree, index, replacement, replacement_tree, db)?;
-			Expr::Lambda { pointers: pointers.clone(), expr: replaced_expr }.store(db)
+		// When encounter a lambda, unwrap, recurse, re-wrap
+		ArchivedExpr::Lambda { tree, index, expr } => {
+			let replace_in_expr = expr.clone();
+			let tree = tree.clone();
+			let index = *index;
+			let (replaced_expr, replaced_tree) = recur_replace(replace_in_expr, replace_in_tree, replacement, replacement_tree, replace_index, db)?;
+			(Expr::Lambda { tree, index, expr: replaced_expr }.store(db), replaced_tree)
 		},
-		// When encounter a function application, check if any of the bit arrays want to go down each path, then go down those paths.
-		Expr::Application { function, substitution } => {
-			let (mut l, mut r) = replace_in_tree.split(db)?;
-			
-			let function = recur_replace(function.clone(), &mut l, index, replacement.clone(), replacement_tree, db)?;
-			let substitution = recur_replace(substitution.clone(), &mut r, index, replacement, replacement_tree, db)?;
+		// When encounter an application in the replacement expression:
+		ArchivedExpr::Application { func, sub } => {
+			// Split into the function and substitution portions of the pointer tree to replace in
+			let (func_tree, subs_tree, max_index) = replace_in_tree.fetch(db)?.split_none()?;
 
-			replace_in_tree.join_into(l, r, db);
+			let (func, sub) = (func.clone(), sub.clone());
+			// Only evaluate if 
+			let (func, sub, replace_tree) = if max_index >= replace_index {
+				let (func, func_tree) = recur_replace(func, func_tree.clone(), replacement, replacement_tree, replace_index, db)?;
+				let (sub, sub_tree) = recur_replace(sub, subs_tree.clone(), replacement, replacement_tree, replace_index, db)?;
+				
+				let replace_tree = PointerTree::join(func_tree, sub_tree, max_index, db);
+				(func, sub, replace_tree)
+			} else { (func, sub, replace_in_tree) };
 
-			Expr::Application { function, substitution }.store(db)
+			(Expr::Application { func, sub }.store(db), replace_tree)
 		}
 	})
 }
 
-#[derive(Clone, Debug)]
-enum PointerTree {
-	None,
-	End(usize),
-	Both(Link<PointerTree>, Link<PointerTree>),
-}
-impl Hashtype for PointerTree {
-	fn hash(&self) -> TypedHash<Self> {
-		use bytes::BufMut;
-		let mut buf = Vec::new();
-		use PointerTree::*;
-		buf.put_u8(match self { None => 0, End(_) => 1, Both(_, _) => 2 });
-		match self {
-			_ => {},
-			End(v) => buf.put_u64(*v as u64),
-			Both(l, r) => {
-				buf.put(l.hash().as_bytes());
-				buf.put(r.hash().as_bytes());
-			},
-		}
-		Hash::hash(&buf).into()
-	}
-	/* fn resolve(hash: &TypedHash<Self>, db: &Datastore) -> Result<Self, hashdb::hashtype::HashtypeResolveError> {
-		use bytes::Buf;
-		let mut data = db.get(hash)?;
-		Ok(match data.get_u8() {
-			0 => PointerTree::None,
-			1 => PointerTree::End(data.get_u64()),
-			2 => PointerTree::Both(Link::resolve(&mut data)?, Link::resolve(&mut data)),
-		})
-	} */
-}
-impl DisplayWithDatastore for PointerTree {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
-		match self { 
-			PointerTree::Both(left, right) => {
-				match (right.is_none(), left.is_none()) {
-					(true, true) => write!(f, "BOTH(NONE, NONE)"),
-					(true, false) => write!(f, "<{}", left.display(db)),
-					(false, true) => write!(f, ">{}", right.display(db)),
-					(false, false) => write!(f, "({},{})", left.display(db), right.display(db)),
-				}
-			},
-			PointerTree::End(v) => write!(f, "{}", v),
-			PointerTree::None => write!(f, "?"),
-		}
-	}
-}
-use lazy_static::lazy_static;
-
-/* lazy_static! {
-	static ref PT_NONE: Link<PointerTree> = PointerTree::None.store(db);
-	static ref PointerTree::None_BOTH: TypedHash<PointerTree> = unsafe { TypedHash::from_hash_unchecked(Hash::hash(PointerTree::Both(PointerTree::None.store(db), PointerTree::None.store(db)).to_data_untyped()), PhantomData::default()) };
-} */
 
 impl PointerTree {
-	fn is_none(&self) -> bool {
-		if let PointerTree::None = self { true } else { false }
-	}
-	fn split(&self, db: &Datastore) -> Result<(Link<Self>, Link<Self>), LambdaError> {
-		Ok(match self {
-			PointerTree::Both(l, r) => (l.clone(), r.clone()),
-			PointerTree::None => (PointerTree::None.link(), PointerTree::None.link()),
-			PointerTree::End(_) => Err(LambdaError::PointerTreeMismatch)?
-		})
-	}
-	fn join(&self, other: &Self, db: &mut Datastore) -> Link<Self> {
-		match (self, other) {
-			(PointerTree::None, PointerTree::None) => PointerTree::None.store(db),
-			(_, _) => {
-				PointerTree::Both(self.clone().store(db), other.clone().store(db)).store(db)
-			}
-		}
-	}
-	fn push_lambda_pointer(&self, pointer: &Link<LambdaPointer>, count: usize, db: &mut Datastore) -> Result<Link<Self>, LambdaError> {
+	/* fn push_lambda_pointer(&self, pointer: &TypedHash<LambdaPointer>, count: usize, db: &mut Datastore) -> Result<TypedHash<Self>, LambdaError> {
 		use PointerTree as PT;
 		Ok(match (self, pointer) {
 			// If PointerTree is None, fill in pointer
 			(PointerTree::None, pointer) => match pointer.as_ref() {
 				LambdaPointer::Left(l) => {
-					PointerTree::Both(PointerTree::None.push_lambda_pointer(l, count, db)?, PointerTree::None.store(db)).store(db)
+					PointerTree::Branch(PointerTree::None.push_lambda_pointer(l, count, db)?, PointerTree::None.store(db)).store(db)
 				},
 				LambdaPointer::Right(r) => {
-					PointerTree::Both(PointerTree::None.store(db), PointerTree::None.push_lambda_pointer(&r, count, db)?).store(db)
+					PointerTree::Branch(PointerTree::None.store(db), PointerTree::None.push_lambda_pointer(&r, count, db)?).store(db)
 				},
 				LambdaPointer::Both(l, r) => {
-					PointerTree::Both(
+					PointerTree::Branch(
 						PointerTree::None.push_lambda_pointer(l, count, db)?,
 						PointerTree::None.push_lambda_pointer(r, count, db)?,
 					).store(db)
 				}
 				LambdaPointer::End => PointerTree::End(count).store(db),
 			},
-			(PointerTree::Both(left, right), pointer) => match pointer.as_ref() {
-				LambdaPointer::Left(l) => PointerTree::Both(left.push_lambda_pointer(l, count, db)?, right.clone()).store(db),
-				LambdaPointer::Right(r) => PointerTree::Both(left.clone(), right.push_lambda_pointer(r, count, db)?).store(db),
-				LambdaPointer::Both(l, r) => PointerTree::Both(
+			(PointerTree::Branch(left, right), pointer) => match pointer.as_ref() {
+				LambdaPointer::Left(l) => PointerTree::Branch(left.push_lambda_pointer(l, count, db)?, right.clone()).store(db),
+				LambdaPointer::Right(r) => PointerTree::Branch(left.clone(), right.push_lambda_pointer(r, count, db)?).store(db),
+				LambdaPointer::Both(l, r) => PointerTree::Branch(
 					left.push_lambda_pointer(l, count, db)?,
 					right.push_lambda_pointer(r, count, db)?
 				).store(db),
@@ -175,14 +136,14 @@ impl PointerTree {
 			(PointerTree::End(_), _) => Err(LambdaError::PointerTreeMismatch)?
 		})
 	}
-	fn pop_lambda_pointer(&self, index: usize, db: &mut Datastore) -> Result<(Link<Self>, Option<Link<LambdaPointer>>), LambdaError> {
+	fn pop_lambda_pointer(&self, index: usize, db: &mut Datastore) -> Result<(TypedHash<Self>, Option<TypedHash<LambdaPointer>>), LambdaError> {
 		Ok(match self {
-			PointerTree::Both(l, r) => {
+			PointerTree::Branch(l, r) => {
 				let (l, lambda_left) = l.pop_lambda_pointer(index, db)?;
 				let (r, lambda_right) = r.pop_lambda_pointer(index, db)?;
 				
 				(
-					if l.is_none() && r.is_none() { PointerTree::None } else { PointerTree::Both(l, r) }.store(db),
+					if l.is_none() && r.is_none() { PointerTree::None } else { PointerTree::Branch(l, r) }.store(db),
 					match (lambda_left, lambda_right) {
 						(Some(l), Some(r)) => Some(LambdaPointer::Both(l, r).store(db)),
 						(Some(l), None) => Some(LambdaPointer::Left(l).store(db)),
@@ -196,13 +157,13 @@ impl PointerTree {
 			} else { (self.clone().store(db), None) },
 			PointerTree::None => (PointerTree::None.store(db), None),
 		})
-	}
+	} */
 }
 
-#[derive(Clone)]
-struct ReduceTree(Link<PointerTree>, usize);
+/* #[derive(Clone)]
+struct ReduceTree(PointerTree, usize);
 impl ReduceTree {
-	fn new() -> Self { Self(PointerTree::None.link(), 0) }
+	fn new() -> Self { Self(PointerTree::None, 0) }
 	fn split(&mut self, db: &Datastore) -> Result<(Self, Self), LambdaError> {
 		let (l, r) = self.0.split(db)?;
 		Ok((ReduceTree(l, self.1), ReduceTree(r, self.1)))
@@ -211,28 +172,28 @@ impl ReduceTree {
 		self.0 = left.0.join(&right.0, db);
 	}
 
-	// Add LambdaPointer to PointerTree, keeping track of how many have been added
-	fn push_lambda_pointer(&mut self, pointer: &Option<Link<LambdaPointer>>, db: &mut Datastore) -> Result<usize, LambdaError> {
+	/* // Add LambdaPointer to PointerTree, keeping track of how many have been added
+	fn push_lambda_pointer(&mut self, pointer: &Option<TypedHash<LambdaPointer>>, db: &mut Datastore) -> Result<usize, LambdaError> {
 		self.1 += 1;
 		if let Some(pointer) = pointer {
 			self.0 = self.0.push_lambda_pointer(pointer, self.1, db)?
 		};
 		Ok(self.1)	
 	}
-	fn pop_lambda_pointer(&mut self, index: usize, db: &mut Datastore) -> Result<Option<Link<LambdaPointer>>, LambdaError> {
+	fn pop_lambda_pointer(&mut self, index: usize, db: &mut Datastore) -> Result<Option<TypedHash<LambdaPointer>>, LambdaError> {
 		if self.1 != index || self.1 == 0 { return Err(LambdaError::PointerTreeMismatch) }
 		let (out, pointer) = self.0.pop_lambda_pointer(index, db)?;
 		self.0 = out;
 		self.1 -= 1; Ok(pointer)
-	}
+	} */
 }
 impl DisplayWithDatastore for ReduceTree {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
 		write!(f, "{}/{}", self.0.display(db), self.1)
 	}
-}
+} */
 
-#[test]
+/* #[test]
 fn test_pointer_trees() {
 	let db = &mut Datastore::new();
 	PointerTree::None.store(db);
@@ -240,10 +201,10 @@ fn test_pointer_trees() {
 	println!("start: [{}]", r.display(db));
 
 	let expr = crate::parse_to_expr("(λ[] (λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x))))))", db).unwrap();
-	let (pointer_1, expr) = if let Expr::Lambda { pointers, expr } = &*expr { (pointers, expr.clone()) } else { unreachable!() };
-	let (pointer_2, expr) = if let Expr::Lambda { pointers, expr } = &*expr { (pointers, expr.clone()) } else { unreachable!() };
-	let (pointer_3, expr) = if let Expr::Lambda { pointers, expr } = &*expr { (pointers, expr.clone()) } else { unreachable!() };
-	let (pointer_4, _expr) = if let Expr::Lambda { pointers, expr }  = &*expr { (pointers, expr.clone()) } else { unreachable!() };
+	let (pointer_1, expr) = if let Expr::Lambda { tree, index, expr } = &*expr { (tree, expr.clone()) } else { unreachable!() };
+	let (pointer_2, expr) = if let Expr::Lambda { tree, index, expr } = &*expr { (tree, expr.clone()) } else { unreachable!() };
+	let (pointer_3, expr) = if let Expr::Lambda { tree, index, expr } = &*expr { (tree, expr.clone()) } else { unreachable!() };
+	let (pointer_4, _expr) = if let Expr::Lambda { tree, index, expr }  = &*expr { (tree, expr.clone()) } else { unreachable!() };
 
 	let index_1 = r.push_lambda_pointer(pointer_1, db).unwrap();
 	println!("add [{}] = [{}]", pointer_1.display(db), r.display(db));
@@ -289,17 +250,17 @@ fn test_pointer_trees() {
 	let r = &mut ReduceTree(PointerTree::End(1).store(db), 0);
 	test_split(r, db).unwrap_err();
 
-	let r = &mut ReduceTree(PointerTree::Both(PointerTree::None.store(db), PointerTree::None.store(db)).store(db), 0);
+	let r = &mut ReduceTree(PointerTree::Branch(PointerTree::None.store(db), PointerTree::None.store(db)).store(db), 0);
 	// test_split(r, db).unwrap(); // This will error
 
-	let r = &mut ReduceTree(PointerTree::Both(PointerTree::End(1).store(db), PointerTree::None.store(db)).store(db), 1);
+	let r = &mut ReduceTree(PointerTree::Branch(PointerTree::End(1).store(db), PointerTree::None.store(db)).store(db), 1);
 	test_split(r, db).unwrap();
 
-	let r = &mut ReduceTree(PointerTree::Both(PointerTree::Both(PointerTree::None.store(db), PointerTree::End(2).store(db)).store(db), PointerTree::End(2).store(db)).store(db), 2);
+	let r = &mut ReduceTree(PointerTree::Branch(PointerTree::Branch(PointerTree::None.store(db), PointerTree::End(2).store(db)).store(db), PointerTree::End(2).store(db)).store(db), 2);
 	test_split(r, db).unwrap();
 }
-
-fn test_split(r: &mut ReduceTree, db: &mut Datastore) -> Result<(), LambdaError> {
+ */
+/* fn test_split(r: &mut ReduceTree, db: &mut Datastore) -> Result<(), LambdaError> {
 	let r_before = r.clone();
 	print!("split [{}] ", r.display(db));
 	let (left, right) = r.split(db).map_err(|e|{println!("err"); e})?;
@@ -309,10 +270,11 @@ fn test_split(r: &mut ReduceTree, db: &mut Datastore) -> Result<(), LambdaError>
 	assert_eq!(r_before.0, r.0);
 	assert_eq!(r_before.1, r.1);
 	Ok(())
-}
+} */
 
-// Beta reduces expression without rehashing
-fn partial_beta_reduce(reducing_expr: Link<Expr>, reducing_tree: &mut ReduceTree, depth: usize, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
+
+/// Reduces reducing_expr and returns TypedHash<Expr>
+fn partial_beta_reduce(reducing_expr: TypedHash<Expr>, reducing_tree: TypedHash<PointerTree>, depth: usize, db: &mut Datastore) -> Result<(TypedHash<Expr>, TypedHash<PointerTree>), LambdaError> {
 	if depth > 200 { return Err(LambdaError::RecursionDepthExceeded) }
 	let depth = depth + 1;
 
@@ -324,78 +286,66 @@ fn partial_beta_reduce(reducing_expr: Link<Expr>, reducing_tree: &mut ReduceTree
 	}
 	let pad = DisplayIter(std::iter::repeat("    ").take(depth));
 
-	let ret = match reducing_expr.as_ref() {
-		Expr::Variable => {
+	let ret = match reducing_expr.fetch(db)? {
+		ArchivedExpr::Variable => {
 			//println!("{}[{}] reducing var {} -------- [{}]", pad, depth, reducing_expr.display(db), reducing_tree.display(db));
-			reducing_expr
+			(reducing_expr, reducing_tree)
 		},
-		Expr::Lambda { expr, pointers } => {
-			//print!("{}[{}] reducing lam {} -------- [{}] -> ", pad, depth, Expr::Lambda { pointers: pointers.clone(), expr: expr.clone() }.display(db), reducing_tree.display(db));
+		ArchivedExpr::Lambda { index, tree, expr } => {
+			//print!("{}[{}] reducing lam {} -------- [{}] -> ", pad, depth, Expr::Lambda { tree: tree.clone(), index: *index, expr: expr.clone() }.display(db), reducing_tree.display(db));
 
-			// Add pointers to pointer_trees so that if reduction moves variables, pointers can be updated
-			let index = reducing_tree.push_lambda_pointer(&pointers, db)?;
-			//println!("[{}]", reducing_tree.display(db));
+			// When Lambda, pass lambda's tree as reducing_tree 
+			let index = *index;
+			let (reduced_expr, reduced_tree) = partial_beta_reduce(expr.clone(), tree.clone(), depth, db)?;
 
-			let reduced_expr = partial_beta_reduce(expr.clone(), reducing_tree, depth, db)?;
-			//println!("{}					[{}] -> ", pad, reducing_tree.display(db));
-
-			Expr::Lambda {
-				pointers: reducing_tree.pop_lambda_pointer(index, db)?,
+			(Expr::Lambda {
+				index,
+				tree: reduced_tree,
 				expr: reduced_expr
-			}.store(db)
+			}.store(db), reducing_tree) // Make sure to return original reducing_tree
 		}
-		Expr::Application { function, substitution } => {
-			//println!("{}[{}] reducing app {} -------- [{}]", pad, depth, Expr::Application { function: function.clone(), substitution: substitution.clone() }.display(db), reducing_tree.display(db));
+		ArchivedExpr::Application { func, sub } => {
+			//println!("{}[{}] reducing app {} -------- [{}]", pad, depth, Expr::Application { func: func.clone(), sub: sub.clone() }.display(db), reducing_tree.display(db));
 			
 			// Descend to subtrees
-			let (mut function_tree, mut substitution_tree) = reducing_tree.split(db)?;
+			let (func_tree, sub_tree, app_index) = reducing_tree.fetch(db)?.split_none()?;
 
-			let function_reduced = partial_beta_reduce(function.clone(), &mut function_tree, depth, db)?;
+			let (func, sub) = (func.clone(), sub.clone());
+			// Reduce function & function tree, if func_tree is None, this should return None for func_tree
+			let (func, func_tree) = partial_beta_reduce(func, func_tree, depth, db)?;
 
-			let ret = match function_reduced.as_ref() {
-				Expr::Variable => {
-					let substitution = partial_beta_reduce(substitution.clone(), &mut substitution_tree, depth, db)?;
+			// Match on beta_reduced func
+			match func.fetch(db)? {
+				ArchivedExpr::Variable => {
+					// If Variable, beta reduce subs & return Application with joined trees
+					let (sub, sub_tree) = partial_beta_reduce(sub.clone(), sub_tree, depth, db)?;
 					
-					reducing_tree.join_into(function_tree, substitution_tree, db);
-
-					Expr::Application {
-						function: Expr::Variable.fetch(db)?,
-						substitution,
-					}.store(db)
+					(Expr::Application {
+						func: Expr::Variable.store(db),
+						sub,
+					}.store(db), PointerTree::join(func_tree, sub_tree, app_index, db))
 				},
-				Expr::Lambda { pointers, expr } => {
-					*reducing_tree = function_tree.clone();
-					let index = reducing_tree.push_lambda_pointer(&pointers, db)?;
-					reducing_tree.1 -= 1; // Needed because all PointerTree::Ends should be replaced in recur_replace
+				ArchivedExpr::Lambda { index, tree, expr } => {
+					// If Lambda, replace in expr with tree at index with subs
+					
+					let (replaced_expr, replaced_tree) = recur_replace(expr.clone(), tree.clone(), &sub, &sub_tree, *index, db)?;
 
-					//println!("{}[{}] replace in {}: every {} in [{}] with {}: [{}] → ", pad, depth, expr.display(db), index, reducing_tree.display(db), substitution.display(db), substitution_tree.display(db));
-					let replaced_form = if let Some(_) = &pointers {
-						recur_replace(expr.clone(), reducing_tree, index, substitution.clone(), &substitution_tree, db)?
-					} else {
-						expr.clone()
-					};
-					//println!("{}{}: [{}]", pad, replaced_form.display(db), reducing_tree.display(db));
-
-					//println!("{}Replaced every {} with [{}] in [{}] -> [{}]", pad, index, substitution_tree.display(db), function_tree.display(db), reducing_tree.display(db));
-
-					partial_beta_reduce(replaced_form, reducing_tree, depth, db)?
+					// Reduce output expr & tree
+					partial_beta_reduce(replaced_expr, replaced_tree, depth, db)?
 				},
-				Expr::Application { function: _, substitution: _ } => {
-					let reduced_substitution = partial_beta_reduce(substitution.clone(), &mut substitution_tree, depth, db)?;
-					
-					reducing_tree.join_into(function_tree, substitution_tree, db);
-					
-					Expr::Application { function: function_reduced, substitution: reduced_substitution }.store(db)
+				ArchivedExpr::Application { .. } => {
+					// Beta reduce sub, return application with joined trees
+					let (sub, sub_tree) = partial_beta_reduce(sub.clone(), sub_tree, depth, db)?;
+					(Expr::Application { func, sub }.store(db), PointerTree::join(func_tree, sub_tree, app_index, db))
 				}
-			};
-			ret
+			}
 		}
 	};
 	//println!("{}[{}] returning reduction: {} -------- [{}]", pad, depth, ret.display(db), reducing_tree.display(db));
 	Ok(ret)
 }
 
-pub fn beta_reduce(expr: &Link<Expr>, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
+pub fn beta_reduce(expr: &TypedHash<Expr>, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
 	//println!("Reducing: {}", expr.display(db));
-	Ok(partial_beta_reduce(expr.clone(), &mut ReduceTree::new(), 0, db)?)
+	Ok(partial_beta_reduce(expr.clone(), PT_NONE.clone(), 0, db)?.0)
 }

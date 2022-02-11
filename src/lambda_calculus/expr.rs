@@ -1,54 +1,31 @@
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
-use bytes::{Buf, BufMut};
-use lazy_static::lazy_static;
-use serde::{Serialize, Deserialize};
+use lazy_static::{lazy_static};
+use rkyv::{Archive, Serialize, option::ArchivedOption};
+use bytecheck::CheckBytes;
+//use serde::{Serialize, Deserialize};
 
-use hashdb::{Link, Datastore, Hash, Hashtype, HashtypeResolveError, TypedHash};
+use hashdb::{Datastore, Hash, NativeHashtype, TypedHash};
 
-use crate::{lambda_calculus::DatastoreDisplay, symbol::Symbol};
+use crate::symbol::Symbol;
 
-use super::{DisplayWithDatastore, LambdaError};
+use super::{DisplayWithDatastore, DisplayWithDatastoreError, DatastoreDisplay, LambdaError};
 
+/* 
 pub const VARIABLE:    Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 pub const LAMBDA:      Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
 pub const APPLICATION: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+ */
+/* #[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize)]
+#[archive_attr(derive(CheckBytes, Debug))]
 pub enum LambdaPointer {
 	End,
-	Left(Link<LambdaPointer>),
-	Right(Link<LambdaPointer>),
-	Both(Link<LambdaPointer>, Link<LambdaPointer>),
+	Left(TypedHash<LambdaPointer>),
+	Right(TypedHash<LambdaPointer>),
+	Both(TypedHash<LambdaPointer>, TypedHash<LambdaPointer>),
 }
-impl Hashtype for LambdaPointer {
-	fn hash(&self) -> TypedHash<Self> {
-		let mut buf = Vec::new();
-		use LambdaPointer::*;
-		buf.put_u8(match self { End => 0, Left(_) => 1, Right(_) => 2, Both(_, _) => 3 });
-		match self {
-			End => {},
-			Left(v) | Right(v) => buf.put(v.hash().as_bytes()),
-			Both(l, r) => {
-				buf.put(l.hash().as_bytes());
-				buf.put(r.hash().as_bytes());
-			}
-		}
-		Hash::hash(&buf).into()
-	}
-	/* fn resolve(hash: &TypedHash<Self>, db: &Datastore) -> Result<Self, HashtypeResolveError> {
-		use bytes::Buf;
-		let mut data = db.get(hash)?;
-		match data.get_u8() {
-			0 => Self::End,
-			1 => Self::Left(Link::resolve(&mut data, db)?),
-			2 => Self::Right(Link::resolve(&mut data, db)?),
-			3 => Self::Both(Link::resolve(&mut data, db)?, Link::resolve(&mut data, db)?),
-			4 => HashtypeResolveError::FormatError("lambda_pointer: invalid u8 value"),
-		}
-	} */
-}
-impl DisplayWithDatastore for Link<LambdaPointer> {
+impl NativeHashtype for LambdaPointer {}
+impl DisplayWithDatastore for TypedHash<LambdaPointer> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
 		match self.as_ref() { 
 			LambdaPointer::Left(left) => {
@@ -64,102 +41,143 @@ impl DisplayWithDatastore for Link<LambdaPointer> {
 		}
 	}
 }
-impl DisplayWithDatastore for Option<Link<LambdaPointer>>{
+impl DisplayWithDatastore for Option<TypedHash<LambdaPointer>>{
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
 		if let Some(pointer) = self {
 			write!(f, "{}", DatastoreDisplay(pointer, db))
 		} else { write!(f, "") }
 	}
-}
+} */
 
 pub mod pointer_helpers {
-    use hashdb::{Datastore, Link, hashtype::{Hashtype, TypedHash}};
+    use hashdb::{Datastore, TypedHash, NativeHashtype};
+    use super::{PointerTree, PT_NONE};
 
-    use super::LambdaPointer;
-
-	pub fn end(db: &mut Datastore) -> Link<LambdaPointer> { LambdaPointer::End.store(db) }
-	pub fn left(p: Link<LambdaPointer>, db: &mut Datastore) -> Link<LambdaPointer> { LambdaPointer::Left(p).store(db) }
-	pub fn right(p: Link<LambdaPointer>, db: &mut Datastore) -> Link<LambdaPointer> { LambdaPointer::Right(p).store(db) }
-	pub fn both(l: Link<LambdaPointer>, r: Link<LambdaPointer>, db: &mut Datastore) -> Link<LambdaPointer> { LambdaPointer::Both(l, r).store(db) }
+	pub fn none(db: &mut Datastore) -> TypedHash<PointerTree> { PT_NONE.clone() }
+	pub fn end(val: u32, db: &mut Datastore) -> TypedHash<PointerTree> { PointerTree::End(val).store(db) }
+	pub fn left(p: TypedHash<PointerTree>, db: &mut Datastore) -> TypedHash<PointerTree> {
+		if let Some(val) = p.fetch(db).unwrap().value() {
+			PointerTree::Branch(p, PT_NONE.clone(), val)
+		} else { PointerTree::None }.store(db)
+	}
+	pub fn right(p: TypedHash<PointerTree>, db: &mut Datastore) -> TypedHash<PointerTree> {
+		if let Some(val) = p.fetch(db).unwrap().value() {
+			PointerTree::Branch(PT_NONE.clone(), p, val)
+		} else { PointerTree::None }.store(db)
+	}
+	pub fn both(l: TypedHash<PointerTree>, r: TypedHash<PointerTree>, db: &mut Datastore) -> TypedHash<PointerTree> {
+		if let Some(val) = l.fetch(db).unwrap().value().map(|v|u32::max(v, r.fetch(db).unwrap().value().unwrap_or(0))) {
+			PointerTree::Branch(l, r, val)
+		} else { PointerTree::None }.store(db)
+	}
 }
 
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Expr {
-	Variable,
-	Lambda { pointers: Option<Link<LambdaPointer>>, expr: Link<Expr> },
-	Application { function: Link<Expr>, substitution: Link<Expr> },
+/// PointerTree represents where the variables are in a Lambda abstraction.
+#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize)]
+#[archive(compare(PartialEq))]
+#[archive_attr(derive(CheckBytes, Debug))]
+pub enum PointerTree {
+	None,
+	End(u32),
+	Branch(TypedHash<PointerTree>, TypedHash<PointerTree>, u32), // u32 represents highest variable abstraction level in this expression
 }
-impl Hashtype for Expr {
-	fn hash(&self) -> TypedHash<Self> {
+lazy_static! {
+	pub static ref PT_NONE: TypedHash<PointerTree> = PointerTree::None.hash();
+	pub static ref PT_BOTH_NONE: TypedHash<PointerTree> = PointerTree::Branch(PT_NONE.clone(), PT_NONE.clone(), 0).hash();
+}
+impl PointerTree {
+	pub fn join(left: TypedHash<PointerTree>, right: TypedHash<PointerTree>, index: u32, db: &mut Datastore) -> TypedHash<PointerTree> {
+		if left == *PT_NONE && right == *PT_NONE {
+			PT_NONE.clone()
+			
+		} else { PointerTree::Branch(left, right, index).store(db) }
+	}
+}
+impl ArchivedPointerTree {
+	pub fn split(&self) -> Result<Option<(&TypedHash<PointerTree>, &TypedHash<PointerTree>, u32)>, LambdaError> {
+		Ok(match self {
+			ArchivedPointerTree::None => None,
+			ArchivedPointerTree::Branch(left, right, val) => Some((left, right, *val)),
+			_ => Err(LambdaError::PointerTreeMismatch)?
+		})
+	}
+	pub fn split_none(&self) -> Result<(TypedHash<PointerTree>, TypedHash<PointerTree>, u32), LambdaError> {
+		Ok(if let Some((left, right, val)) = self.split()?{
+			(left.clone(), right.clone(), val)
+		} else { (PT_NONE.clone(), PT_NONE.clone(), 0) })
+	}
+	pub fn value(&self) -> Option<u32> {
 		match self {
-			Expr::Variable => VARIABLE.into(),
-			Expr::Lambda { pointers, expr } => {
-				let mut buf = Vec::new();
-				buf.put(LAMBDA.as_bytes());
-				buf.put_u8(pointers.is_some() as u8);
-				if let Some(pointers) = pointers {
-					buf.put(pointers.hash().as_bytes());
-				}
-				buf.put(expr.hash().as_bytes());
-				Hash::hash(&buf).into()
-			}
-			Expr::Application { function, substitution } => {
-				let mut buf = Vec::new();
-				buf.put(APPLICATION.as_bytes());
-				buf.put(function.hash().as_bytes());
-				buf.put(substitution.hash().as_bytes());
-				Hash::hash(&buf).into()
-			}
+			ArchivedPointerTree::None => None,
+			ArchivedPointerTree::Branch(_, _, val) => Some(*val),
+			ArchivedPointerTree::End(val) => Some(*val),
 		}
 	}
-	/* fn resolve(hash: &TypedHash<Self>, db: &Datastore) -> Result<Self, HashtypeResolveError> {
-		// Variable doesn't have any data attached to it
-		if hash.into() == VARIABLE { return Ok(Expr::Variable); }
-
-		let data = db.get(hash)?.as_bytes();
-		let layout = Hash::from_reader(&mut data)?;
-		Ok( match layout {
-			_ if layout == LAMBDA => Expr::Lambda {
-				pointers: if data.get_u8() == 1 {
-					Some(Link::resolve(data, db)?)
-				} else { None },
-				expr: Link::resolve(data, db)?,
-			},
-			_ if layout == APPLICATION => Expr::Application {
-				function: Link::resolve(&mut data, db)?,
-				substitution: Link::resolve(&mut data, db)?,
-			},
-			_ => Err(LambdaError::InvalidLayout(layout))?
-		})
-	} */
 }
-impl DisplayWithDatastore for Expr {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> fmt::Result {
-		match db.lookup::<Expr, Symbol>(&self.hash()) {
-			Ok(symbol) => return write!(f, "{}", symbol.name()),
+
+impl NativeHashtype for PointerTree {}
+impl DisplayWithDatastore for TypedHash<PointerTree> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
+		match self.fetch(db).unwrap() { 
+			ArchivedPointerTree::Branch(left, right, _) => {
+				match (right.fetch(db).unwrap() == &PointerTree::None, left.fetch(db).unwrap() == &PointerTree::None) {
+					(true, true) => write!(f, "BOTH(NONE, NONE)")?,
+					(true, false) => write!(f, "<{}", left.display(db))?,
+					(false, true) => write!(f, ">{}", right.display(db))?,
+					(false, false) => write!(f, "({},{})", left.display(db), right.display(db))?,
+				}
+			},
+			ArchivedPointerTree::End(v) => write!(f, "{}", v)?,
+			ArchivedPointerTree::None => write!(f, "?")?,
+		}
+		Ok(())
+	}
+}
+impl DisplayWithDatastore for ArchivedOption<TypedHash<PointerTree>>{
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
+		if let ArchivedOption::Some(pointer) = self {
+			write!(f, "{}", DatastoreDisplay(pointer, db))?
+		} else { write!(f, "")? }
+		Ok(())
+	}
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize)]
+#[archive_attr(derive(CheckBytes, Debug))]
+pub enum Expr {
+	Variable,
+	Lambda { index: u32, tree: TypedHash<PointerTree>, expr: TypedHash<Expr> },
+	Application { func: TypedHash<Expr>, sub: TypedHash<Expr> },
+}
+impl NativeHashtype for Expr {}
+impl DisplayWithDatastore for TypedHash<Expr> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
+		match db.lookup_typed::<Expr, Symbol>(&self) {
+			Ok(symbol) => write!(f, "{}", symbol.fetch(db)?.name(db)?)?,
 			Err(_) => {},
 		}
-		match self {
-			Expr::Variable => write!(f, "x"),
-			Expr::Lambda { pointers, expr } => {
-				write!(f, "(λ[{}] {})", pointers.display(db), expr.display(db))
+		match self.fetch(db)? {
+			ArchivedExpr::Variable => write!(f, "x")?,
+			ArchivedExpr::Lambda { index, tree, expr } => {
+				write!(f, "(λ{}[{}] {})", index, tree.display(db), expr.display(db))?
 			},
-			Expr::Application { function, substitution } => {
-				write!(f, "({} {})", function.display(db), substitution.display(db))
+			ArchivedExpr::Application { func, sub } => {
+				write!(f, "({} {})", func.display(db), sub.display(db))?
 			},
 		}
+		Ok(())
 	}
 }
 impl Expr {
-	pub fn var(db: &mut Datastore) -> Link<Expr> {
+	pub fn var(db: &mut Datastore) -> TypedHash<Expr> {
 		Expr::Variable.store(db)
 	}
-	pub fn lambda(pointers: Option<Link<LambdaPointer>>, expr: &Link<Expr>, db: &mut Datastore) -> Link<Expr> {
-		Expr::Lambda { pointers, expr: expr.clone() }.store(db)
+	pub fn lambda(tree: TypedHash<PointerTree>, index: u32, expr: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Expr> {
+		Expr::Lambda { tree, index, expr: expr.clone() }.store(db)
 	}
-	pub fn app(function: &Link<Expr>, substitution: &Link<Expr>, db: &mut Datastore) -> Link<Expr> {
-		Expr::Application { function: function.clone(), substitution: substitution.clone() }.store(db)
+	pub fn app(function: &TypedHash<Expr>, substitution: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Expr> {
+		Expr::Application { func: function.clone(), sub: substitution.clone() }.store(db)
 	}
 	pub fn store(&self, db: &mut Datastore) -> TypedHash<Expr> { self.store(db) }
 }

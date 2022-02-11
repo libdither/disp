@@ -21,6 +21,7 @@ hashdb = { path = "hashdb/" }
 anyhow = "1.0.53"
 rustyline = "9.1.2"
 bytecheck = "0.6.7"
+rkyv = { version = "0.7.31", features = ["validation"] }
 
 [features]
 
@@ -32,7 +33,7 @@ members = [
 
 [workspace.metadata.nix]
 nativeBuildInputs = [
-	# "cargo-edit",
+	"cargo-edit",
 ]
 buildInputs = []
 toolchain = "nightly"

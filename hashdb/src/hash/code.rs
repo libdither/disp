@@ -44,6 +44,13 @@ impl Code {
 			_ => panic!("hash is not supported by hashdb"),
 		}
 	}
+	pub const fn valid_code(code: usize) -> bool {
+		match code {
+			0x12 => true,
+			0x13 => true,
+			_ => false,
+		}
+	}
 	pub const fn total_len(self) -> usize {
 		calc_varint_len(Self::format_code(self))
 		 + calc_varint_len(Self::digest_len(self))
