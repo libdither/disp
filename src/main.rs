@@ -14,7 +14,7 @@ mod parse;
 
 use crate::lambda_calculus::{beta_reduce, DisplayWithDatastore};
 use symbol::Symbol;
-use parse::parse_to_expr;
+use parse::parse_expr;
 
 fn main() {
 	let db = &mut Datastore::new();
@@ -30,7 +30,7 @@ fn main() {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
 
-				let expr = match parse_to_expr(line.as_str(), db) {
+				let expr = match parse_expr(line.as_str(), db) {
 					Ok(expr) => expr,
 					Err(err) => {println!("failed to parse expression: {}", err); continue},
 				};

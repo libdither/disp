@@ -167,7 +167,7 @@ impl<'a> TokenFeeder<'a> {
 	}
 }
 
-pub fn parse_to_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
+pub fn parse_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
 	parse_tokens(feeder, 0, db)
 }
@@ -181,13 +181,14 @@ fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) ->
 			let num = num as u32;
 			(num, PointerTree::End(num).store(db))
 		},
+		Token::Period => (0, PointerTree::End(0).store(db)),
 		Token::OpenCarat => {
 			let (num, p) = parse_lambda_pointer(feeder, db)?;
-			(num, PointerTree::Branch(p, PT_NONE.clone(), num).store(db))
+			(num, PointerTree::Branch(p, PT_NONE.clone()).store(db))
 		},
 		Token::CloseCarat => {
 			let (num, p) = parse_lambda_pointer(feeder, db)?;
-			(num, PointerTree::Branch(PT_NONE.clone(), p, num).store(db))
+			(num, PointerTree::Branch(PT_NONE.clone(), p).store(db))
 		},
 		Token::OpenParen => {
 			let (first_num, left, ) = parse_lambda_pointer(feeder, db)?;
@@ -196,7 +197,7 @@ fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) ->
 			feeder.expect_next(Token::CloseParen)?;
 			let num = u32::max(first_num, second_num);
 
-			(num, PointerTree::Branch(left, right, num).store(db))
+			(num, PointerTree::Branch(left, right).store(db))
 		},
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?
 	})
@@ -264,9 +265,9 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 		Token::Symbol => {
 			let string = &feeder.string[next_span.clone()];
 
-			println!("Depth: {}, Passed string: {:?}", depth, string);
+			// println!("Depth: {}, Passed string: {:?}", depth, string);
 			if depth == 2 {
-				match string {
+				if let Some(ret) = match string {
 					"set" => {
 						let span = feeder.expect_next(Token::Symbol)?;
 						let name = &feeder.string[span];
@@ -275,25 +276,31 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 						let reduced = beta_reduce(&next_expr, db).map_err(|_|ParseError::SubcommandError("set", "failed to beta reduce expr".into()))?;
 						
 						Symbol::new(name, &reduced, db);
-						return Ok(reduced);
+
+						Some(reduced)
 					}
 					"save" => {
 						let location = feeder.expect_next(Token::String)?;
 						let location = &feeder.string[location];
 						let location = &location[1..location.len()-1];
+						println!("Saving to: {:?}", location);
 						db.save(fs::File::create(location)?)?;
+						Some(Expr::var(db))
 					}
 					"load" => {
 						let location = feeder.expect_next(Token::String)?;
 						let location = &feeder.string[location];
 						let location = &location[1..location.len()-1];
+						println!("Loading from: {:?}", location);
 						db.load(fs::File::open(location)?)?;
+						Some(Expr::var(db))
 					}
 					"clear" => {
 						db.clear();
+						Some(Expr::var(db))
 					}
-					_ => {},
-				}
+					_ => { None },
+				} { return Ok(ret) }
 			}
 			
 			// Assume application
@@ -322,6 +329,6 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 }
 
 pub fn parse_reduce<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
-	let expr = parse_to_expr(&string, db).expect("Failed to parse expression");
+	let expr = parse_expr(&string, db).expect("Failed to parse expression");
 	Ok(beta_reduce(&expr, db)?)
 }

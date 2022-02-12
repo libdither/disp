@@ -24,7 +24,7 @@ pub mod parse;
 
 use lambda_calculus::{Expr, pointer_helpers::{end, left, right, both, none}, beta_reduce, DisplayWithDatastore};
 use symbol::Symbol;
-use parse::{parse_to_expr, parse_reduce};
+use parse::{parse_expr, parse_reduce};
 
 fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>) {
 	let variable = Expr::var(db);
@@ -34,6 +34,7 @@ fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>,
 	let true_hash = Expr::lambda(end(1, db), 1, &variable, db); // Replace 1 and then ignore application
 
 	let false_hash = beta_reduce(&Expr::app(&true_hash, &id_hash, db), db).unwrap(); // (true id) β> false
+	assert_eq!(false_hash, Expr::lambda(end(0, db), 1, &variable, db));
 
 	let not_hash = Expr::lambda(left(left(end(0, db), db), db), 0, 
 		&Expr::app(&Expr::app(&variable, &false_hash, db), &true_hash, db), db
@@ -74,19 +75,19 @@ fn test_parsing() {
 
 	let (id_hash, true_hash, false_hash, not_hash, and_hash) = setup_boolean_logic(db);
 
-	let parsed_id_hash = parse_to_expr("(λ[.] x)", db).unwrap();
+	let parsed_id_hash = parse_expr("(λ0[0] x)", db).unwrap();
 	assert_eq!(parsed_id_hash, id_hash);
 
-	let parsed_true_hash = parse_to_expr("(λ[.] (λ[] x))", db).unwrap();
+	let parsed_true_hash = parse_expr("(λ1[1] x)", db).unwrap();
 	assert_eq!(parsed_true_hash, true_hash);
 
-	let parsed_false_hash = parse_to_expr("(λ[] (λ[.] x))", db).unwrap();
+	let parsed_false_hash = parse_expr("(λ1[0] x)", db).unwrap();
 	assert_eq!(parsed_false_hash, false_hash);
 
-	let parsed_not_hash = parse_to_expr("(λ[<<.] ((x (λ[] (λ[.] x))) (λ[.] (λ[] x))))", db).unwrap();
+	let parsed_not_hash = parse_expr("(λ0[<<0] ((x (λ1[0] x)) (λ1[1] x)))", db).unwrap();
 	assert_eq!(parsed_not_hash, not_hash);
 
-	let parsed_and_hash = parse_to_expr("(λ[<<.] (λ[<>.] ((x x) (λ[] (λ[.] x)))))", db).unwrap();
+	let parsed_and_hash = parse_expr("(λ1[<(1,0)] ((x x) (λ1[0] x)))", db).unwrap();
 	assert_eq!(parsed_and_hash, and_hash);
 }
 
@@ -94,32 +95,34 @@ fn test_parsing() {
 fn test_factorial() {
 	let db = &mut Datastore::new();
 
-	let zero = parse_to_expr("(λ[] (λ[.] x))", db).unwrap();
+	let zero = parse_expr("(λ1[0] x)", db).unwrap();
 	Symbol::new("zero", &zero, db);
 
-	let one = parse_to_expr("(λ[<.] (λ[>.] (x x)))", db).unwrap();
+	let one = parse_expr("(λ1[(1,0)] (x x))", db).unwrap();
 
-	let succ = parse_to_expr("(λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x)))))", db).unwrap();
+	let succ = parse_expr("(λ2[(1,((2,1), 0))] (x ((x x) x)))", db).unwrap();
 	Symbol::new("succ", &succ, db);
 
 	// Succ Zero = One
-	let succ_zero = Expr::app(&succ, &zero, db);
-	assert_eq!(beta_reduce(&succ_zero, db).unwrap(), one);
+	let succ_zero = beta_reduce(&Expr::app(&succ, &zero, db), db).unwrap();
+	assert_eq!(succ_zero, one);
 
 	let succ_one = beta_reduce(&Expr::app(&succ, &one, db), db).unwrap();
 
 	// Succ Succ Zero = Succ 1
 	assert_eq!(beta_reduce(&Expr::app(&succ, &succ_zero, db), db).unwrap(), succ_one);
 
-	let mult = parse_to_expr("(λ[<<.] (λ[<><.] (λ[<>>.] (λ[>.] ((x (x x)) x)))))", db).unwrap();
+	let mult = parse_reduce("(λ[<<.] (λ[<><.] (λ[<>>.] (λ[>.] ((x (x x)) x)))))", db).unwrap();
 	Symbol::new("mult", &mult, db);
 	
-	println!("{}", parse_to_expr("((mult 2) 3)", db).unwrap().display(db));
+	println!("{}", parse_expr("((mult 2) 3)", db).unwrap().display(db));
 	assert_eq!(parse_reduce("((mult 0) 0)", db).unwrap(), parse_reduce("0", db).unwrap());
 	assert_eq!(parse_reduce("((mult 0) 1)", db).unwrap(), parse_reduce("0", db).unwrap());
 	assert_eq!(parse_reduce("((mult 2) 3)", db).unwrap(), parse_reduce("6", db).unwrap());
 	
-	let y_segment = parse_to_expr("(λ[><<(.,.)] (λ[(.,<>.)] (x (λ[>.] (((x x) x) x)))))", db).unwrap();
+	let y_segment = parse_expr("(λ[><<(.,.)] (λ[(.,<>.)] (x (λ[>.] (((x x) x) x)))))", db).unwrap();
 	let y = Expr::app(&y_segment, &y_segment, db);
+
+	//let is_zero = parse_expr("()")
 
 }
