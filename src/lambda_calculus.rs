@@ -103,25 +103,28 @@ fn partial_beta_reduce(reducing_expr: TypedHash<Expr>, reducing_tree: TypedHash<
 			(reducing_expr, reducing_tree)
 		},
 		ArchivedExpr::Lambda { index, tree, expr } => {
-			// println!("{}[{}] reducing lam {} -------- [{}] ", pad, depth, reducing_expr.display(db), reducing_tree.display(db));
+			println!("{}[{}] reducing lam {} -------- [{}] ", pad, depth, reducing_expr.display(db), reducing_tree.display(db));
 
-			// When Lambda, pass lambda's tree as reducing_tree 
+			let expr = expr.clone();
 			let mut index = *index;
-			let (mut reduced_expr, mut reduced_tree) = partial_beta_reduce(expr.clone(), tree.clone(), depth, db)?;
+			let mut reducing_tree = PointerTree::merge(reducing_tree, tree.clone(), db)?;
+
+			// When Lambda, pass lambda's tree as reducing_tree
+			let (mut reduced_expr, mut reduced_tree) = partial_beta_reduce(expr.clone(), reducing_tree, depth, db)?;
 			
 			if let ArchivedExpr::Lambda { index: sub_index, tree, expr } = reduced_expr.fetch(db)? {
 				let tree = tree.clone();
 				let sub_index = *sub_index;
 				let expr = expr.clone();
-				// print!("{}[{}] reducing adjacent lambdas: {} -> ", pad, depth, Expr::lambda(reduced_tree.clone(), index, &reduced_expr, db).display(db));
+				print!("{}[{}] reducing adjacent lambdas: {} -> ", pad, depth, Expr::lambda(reduced_tree.clone(), index, &reduced_expr, db).display(db));
 				index = index + sub_index + 1;
 				reduced_expr = expr.clone();
 				reduced_tree = PointerTree::inc_ends(reduced_tree, index, db)?;
 				reduced_tree = PointerTree::merge(reduced_tree, tree.clone(), db)?;
-				// println!("{}", Expr::lambda(reduced_tree.clone(), index, &reduced_expr, db).display(db));
+				println!("{}", Expr::lambda(reduced_tree.clone(), index, &reduced_expr, db).display(db));
 			}
 
-			// println!("{}					[{}] -> ", pad, reduced_tree.display(db));
+			println!("{}					[{}] -> ", pad, reduced_tree.display(db));
 
 			(Expr::Lambda {
 				index,
@@ -130,7 +133,7 @@ fn partial_beta_reduce(reducing_expr: TypedHash<Expr>, reducing_tree: TypedHash<
 			}.store(db), reducing_tree) // Make sure to return original reducing_tree
 		}
 		ArchivedExpr::Application { func, sub } => {
-			// println!("{}[{}] reducing app {} -------- [{}]", pad, depth, reducing_expr.display(db), reducing_tree.display(db));
+			println!("{}[{}] reducing app {} -------- [{}]", pad, depth, reducing_expr.display(db), reducing_tree.display(db));
 			
 			// Descend to subtrees
 			let (func_tree, sub_tree) = reducing_tree.fetch(db)?.split_none()?;
@@ -151,7 +154,7 @@ fn partial_beta_reduce(reducing_expr: TypedHash<Expr>, reducing_tree: TypedHash<
 					}.store(db), PointerTree::join(func_tree, sub_tree, db))
 				},
 				ArchivedExpr::Lambda { index, tree, expr } => {
-					// print!("{}[{}] replace index {} in {}: [{}] with {}: [{}] → ", pad, depth, index, func.display(db), func_tree.display(db), sub.display(db), sub_tree.display(db));
+					print!("{}[{}] replace index {} in {}: [{}] with {}: [{}] → ", pad, depth, index, func.display(db), func_tree.display(db), sub.display(db), sub_tree.display(db));
 
 					// If Lambda, replace in expr with tree at index with subs
 					
@@ -163,7 +166,7 @@ fn partial_beta_reduce(reducing_expr: TypedHash<Expr>, reducing_tree: TypedHash<
 						replaced_expr = Expr::Lambda { index: index - 1, tree: lambda_tree.clone(), expr: replaced_expr  }.store(db);
 					}
 					
-					// println!("{}: [{}]", replaced_expr.display(db), replaced_tree.display(db));
+					println!("{}: [{}]", replaced_expr.display(db), replaced_tree.display(db));
 
 					//println!("{}Replaced every {} with [{}] in [{}] -> [{}]", pad, index, sub_tree.display(db), func_tree.display(db), reducing_tree.display(db));
 
@@ -178,11 +181,11 @@ fn partial_beta_reduce(reducing_expr: TypedHash<Expr>, reducing_tree: TypedHash<
 			}
 		}
 	};
-	// println!("{}[{}] returning reduction: {} -------- [{}]", pad, depth, ret.0.display(db), ret.1.display(db));
+	println!("{}[{}] returning reduction: {} -------- [{}]", pad, depth, ret.0.display(db), ret.1.display(db));
 	Ok(ret)
 }
 
 pub fn beta_reduce(expr: &TypedHash<Expr>, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
-	// println!("Reducing: {}", expr.display(db));
+	println!("Reducing: {}", expr.display(db));
 	Ok(partial_beta_reduce(expr.clone(), PointerTree::None.store(db), 0, db)?.0)
 }

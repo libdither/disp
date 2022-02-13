@@ -42,7 +42,6 @@ fn main() {
             },
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
-                break
             },
             Err(ReadlineError::Eof) => {
                 println!("CTRL-D");

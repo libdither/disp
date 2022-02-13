@@ -45,7 +45,7 @@ pub enum Token {
 	#[regex("[a-zA-Z][a-zA-Z0-9]+")]
 	Text, */
 
-	#[regex("[a-zA-Z-_][a-zA-Z0-9]+")]
+	#[regex("[a-zA-Z-_][a-zA-Z0-9]*")]
 	Symbol,
 
 	#[regex("\"([a-zA-Z]*)\"")]
@@ -181,6 +181,7 @@ fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) ->
 			let num = num as u32;
 			(num, PointerTree::End(num).store(db))
 		},
+		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { (0, PT_NONE.clone()) }
 		Token::Period => (0, PointerTree::End(0).store(db)),
 		Token::OpenCarat => {
 			let (num, p) = parse_lambda_pointer(feeder, db)?;
