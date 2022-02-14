@@ -85,12 +85,12 @@ impl DisplayWithDatastore for TypedHash<Expr> {
 		}
 		match self.fetch(db)? {
 			ArchivedExpr::Variable => write!(f, "x")?,
-			ArchivedExpr::Lambda { tree, expr } => {
-				// let arena = ReduceArena::new();
-				// let mut tree = arena.index();
-				// let expr = arena.push_lambda(&mut tree, &self, db).unwrap();
+			ArchivedExpr::Lambda { .. } => {
+				let arena = crate::lambda_calculus::ReduceArena::new();
+				let mut index = arena.index();
+				let expr = arena.push_lambda(&mut index, &self, db).unwrap();
 		
-				write!(f, "(λ[{}] {})", tree.display(db), expr.display(db))?
+				write!(f, "(λ{}[{}] {})", index.index, index.tree, expr.display(db))?
 			},
 			ArchivedExpr::Application { func, sub } => {
 				write!(f, "({} {})", func.display(db), sub.display(db))?
@@ -106,10 +106,6 @@ impl Expr {
 		Expr::Variable.store(db)
 	}
 	pub fn lambda(pointer: TypedHash<PointerTree>, expr: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Expr> {
-		/* let arena = ReduceArena::new();
-		let mut tree = arena.none();
-		arena.push_pointer_tree(&mut tree, 0, &pointer, db).unwrap();
-		arena.pop_lambda(tree, &mut index, expr.clone(), db).unwrap() */
 		Expr::Lambda { tree: pointer, expr: expr.clone() }.store(db)
 	}
 	pub fn app(function: &TypedHash<Expr>, substitution: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Expr> {

@@ -5,7 +5,7 @@ use std::{fmt, ptr::NonNull};
 use hashdb::NativeHashtype;
 use typed_arena::Arena;
 
-use crate::{Datastore, TypedHash, lambda_calculus::{ArchivedExpr, ArchivedPointerTree, DisplayWithDatastore, Expr, LambdaError, PT_NONE, PointerTree, pointer_helpers::{both, end, left, right}}};
+use crate::{Datastore, TypedHash, lambda_calculus::{ArchivedExpr, ArchivedPointerTree, DisplayWithDatastore, Expr, LambdaError, PT_NONE, PointerTree}};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum ReplaceTree<'a> {
@@ -64,18 +64,6 @@ impl<'a> ReplaceTree<'a> {
 			_ => PointerTree::None.store(db),
 		})
 	}
-	/* pub fn from_expr(expr: &TypedHash<Expr>, db: &Datastore) -> (ReduceArena<'a>, &'a Self) {
-		let mut arena = ReduceArena::new();
-		let mut tree = arena.none();
-		arena.push_lambda(&mut tree, &expr, 0, db);
-		(arena, tree)
-	}
-	pub fn from_pointer(pointer: &TypedHash<PointerTree>, db: &Datastore) -> (ReduceArena<'a>, &'a Self) {
-		let arena = ReduceArena::new();
-		let mut tree = arena.none();
-		arena.push_pointer_tree(&mut tree, 0, pointer, db);
-		(arena, tree)
-	} */
 }
 
 impl<'a> fmt::Display for ReplaceTree<'a> {
@@ -133,39 +121,29 @@ impl<'a> ReduceArena<'a> {
 		self.arena.alloc(ReplaceTree::join(left, right))
 	}
 	pub fn join_index(&'a self, left: ReplaceIndex<'a>, right: ReplaceIndex<'a>) -> ReplaceIndex<'a> {
-		if left.index != right.index { println!("join index mismatch"); }
-		ReplaceIndex::new(usize::max(left.index, right.index), self.join(left.tree, right.tree))
+		debug_assert_eq!(left.index, right.index);
+		ReplaceIndex::new(left.index, self.join(left.tree, right.tree))
 	}
 	pub fn left(&'a self, tree: &'a ReplaceTree<'a>) -> &'a ReplaceTree<'a> { self.join(tree, self.none()) }
 	pub fn right(&'a self, tree: &'a ReplaceTree<'a>) -> &'a ReplaceTree<'a> { self.join(self.none(), tree) }
-	fn collapse(&'a self, obj: &mut &'a ReplaceTree<'a>) {
-		if let ReplaceTree::Branch(ReplaceTree::None, ReplaceTree::None) = obj {
-			*obj = self.none();
-		}
-	}
-	pub fn index(&'a self) -> ReplaceIndex<'a> {
-		ReplaceIndex { index: 0, tree: self.none() }
-	}
+	pub fn index(&'a self) -> ReplaceIndex<'a> { ReplaceIndex { index: 0, tree: self.none() } }
 
+	/// Push PointerTree onto ReplaceIndex
 	pub fn push_pointer_tree(&'a self, replace_index: &mut ReplaceIndex<'a>, pointer: &TypedHash<PointerTree>, db: &Datastore) -> Result<(), LambdaError> {
-		print!("add [{}] to {} at index {} -> ", pointer.display(db), replace_index, replace_index.index + 1);
 		let ReplaceIndex { index, tree } = replace_index;
 		*index += 1;
 		tree.push_pointer_tree(self, *index, pointer, db)?;
-		println!("{}", replace_index);
 		Ok(())
 	}
-	/// Builds PointerTree from ReplaceTree using certain level
+	/// Pop PointerTree from ReplaceIndex
 	pub fn pop_pointer_tree(&'a self, replace_index: &mut ReplaceIndex<'a>, db: &mut Datastore) -> Result<TypedHash<PointerTree>, LambdaError> {
-		print!("remove index {} from {} -> ", replace_index.index, replace_index);
 		let ReplaceIndex { index, tree } = replace_index;
 		if *index == 0 { return Err(LambdaError::ReduceArenaMismatch) }
 		let ret = tree.pop_pointer_tree(self, *index, db)?;
 		*index -= 1;
-		println!("{}, [{}]", replace_index, ret.display(db));
 		Ok(ret)
 	}
-	// Build ReplaceIndex from Lambda Expression
+	/// Build ReplaceIndex from Lambda Expression
 	pub fn push_lambda<'b>(&'a self, tree: &mut ReplaceIndex<'a>, expr: &'b TypedHash<Expr>, db: &'b Datastore) -> Result<&'b TypedHash<Expr>, LambdaError> {
 		Ok(if let ArchivedExpr::Lambda { tree: pointer_tree, expr} = expr.fetch(db)? {
 			let expr = self.push_lambda(tree, expr, db)?;
@@ -175,9 +153,7 @@ impl<'a> ReduceArena<'a> {
 	}
 	/// Creates nested lambda expression from given ReplaceTree
 	pub fn pop_lambda(&'a self, tree: &mut ReplaceIndex<'a>, expr: TypedHash<Expr>, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
-		print!("pop: {} -> ", tree);
 		let pointer_tree = self.pop_pointer_tree(tree, db)?;
-		println!("{} + {}", tree, pointer_tree.display(db));
 		Ok(if tree.index == 0 { Expr::Lambda { tree: pointer_tree, expr } }
 		else {
 			Expr::Lambda { tree: pointer_tree, expr: self.pop_lambda(tree, expr, db)? }

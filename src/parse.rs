@@ -40,15 +40,11 @@ pub enum Token {
 
 	#[token("x")]
 	Variable,
-/* 
-	// Or regular expressions.
-	#[regex("[a-zA-Z][a-zA-Z0-9]+")]
-	Text, */
 
 	#[regex("[a-zA-Z-_][a-zA-Z0-9]*")]
 	Symbol,
 
-	#[regex("\"([a-zA-Z]*)\"")]
+	#[regex(r#""([^"\\]|\\.)*""#)]
 	String,
 
 	#[regex("[0-9]+", |lex| lex.slice().parse())]
@@ -178,7 +174,7 @@ fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceA
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
 		Token::Number(num) => {
-			arena.end(num as usize + 1)
+			arena.end(num as usize)
 		},
 		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { arena.none() }
 		Token::Period => arena.end(max_level),
@@ -240,7 +236,7 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 				(Token::Number(val), span) => {
 					let loc = feeder.location();
 					feeder.expect_next(Token::OpenSquareBracket)?;
-					(val as usize + 1, span, loc)
+					(val as usize, span, loc)
 				},
 				(Token::OpenSquareBracket, span) => {
 					let loc = feeder.location();
@@ -271,7 +267,11 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 						let name = &feeder.string[span];
 
 						let next_expr = parse_tokens(feeder, depth, db)?;
-						let reduced = beta_reduce(&next_expr, db).map_err(|_|ParseError::SubcommandError("set", "failed to beta reduce expr".into()))?;
+						let reduced = match beta_reduce(&next_expr, db) {
+							Ok(ret) => ret,
+							Err(LambdaError::RecursionDepthExceeded) => { println!("note: this expresion will run for a long time"); next_expr },
+							Err(err) => Err(ParseError::SubcommandError("set", format!("failed to beta reduce expr: {}", err)))?
+						};
 						
 						Symbol::new(name, &reduced, db);
 
