@@ -1,4 +1,4 @@
-
+#![allow(unused)]
 #![allow(incomplete_features)]
 #![allow(const_evaluatable_unchecked)]
 

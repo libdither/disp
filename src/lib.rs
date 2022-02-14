@@ -1,8 +1,5 @@
 #![allow(unused)]
 
-#![feature(iter_intersperse)]
-#![feature(option_result_contains)]
-#![feature(try_blocks)]
 #![feature(generic_associated_types)]
 
 /// Built-in Types for Dither, recognized by the program as a multihash with the digest set to an arbitrary number
@@ -29,22 +26,23 @@ use parse::{parse_expr, parse_reduce};
 fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>) {
 	let variable = Expr::var(db);
 
-	let id_hash = Expr::lambda(end(0, db), 0, &variable, db); // Replace first variable with 0 index with applied value
+	let id_hash = Expr::lambda(end(db), &variable, db);
 
-	let true_hash = Expr::lambda(end(1, db), 1, &variable, db); // Replace 1 and then ignore application
+	let true_hash = Expr::lambda(end(db), &Expr::lambda(none(db), &variable, db), db);
 
-	let false_hash = beta_reduce(&Expr::app(&true_hash, &id_hash, db), db).unwrap(); // (true id) β> false
-	assert_eq!(false_hash, Expr::lambda(end(0, db), 1, &variable, db));
+	let false_hash = beta_reduce(&Expr::app(&true_hash, &id_hash, db), db).unwrap();
 
-	let not_hash = Expr::lambda(left(left(end(0, db), db), db), 0, 
+	let not_hash = Expr::lambda(left(left(end(db), db), db), 
 		&Expr::app(&Expr::app(&variable, &false_hash, db), &true_hash, db), db
 	);
 
-	let and_hash = Expr::lambda(left(both(end(1, db), end(0, db), db), db), 1,
-		&Expr::app(
-			&Expr::app(&variable, &variable, db),
-			&false_hash, db
-		), db, 
+	let and_hash = Expr::lambda(left(left(end(db), db), db),
+		&Expr::lambda(left(right(end(db), db), db),
+			&Expr::app(
+				&Expr::app(&variable, &variable, db),
+				&false_hash, db
+			), db, 
+		), db
 	);
 
 	(id_hash, true_hash, false_hash, not_hash, and_hash)

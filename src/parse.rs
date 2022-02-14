@@ -5,7 +5,7 @@ use logos::{Logos, Span};
 use thiserror::Error;
 use hashdb::{Datastore, DatastoreError, NativeHashtype, TypedHash};
 
-use crate::lambda_calculus::{Expr, LambdaError, PointerTree, beta_reduce, PT_NONE};
+use crate::lambda_calculus::{Expr, LambdaError, ReduceArena, ReplaceIndex, ReplaceTree, beta_reduce};
 use crate::Symbol;
 
 #[derive(Logos, Debug, PartialEq)]
@@ -172,33 +172,28 @@ pub fn parse_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<E
 	parse_tokens(feeder, 0, db)
 }
 
-fn parse_lambda_pointer<'a>(feeder: &mut TokenFeeder<'a>, db: &mut Datastore) -> Result<(u32, TypedHash<PointerTree>), ParseError<'a>> {
-	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok((0, PT_NONE.clone())) }
+fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceArena<'b>, max_level: usize, db: &mut Datastore) -> Result<&'b ReplaceTree<'b>, ParseError<'a>> {
+	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok(arena.none()) }
 	
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
 		Token::Number(num) => {
-			let num = num as u32;
-			(num, PointerTree::End(num).store(db))
+			arena.end(num as usize + 1)
 		},
-		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { (0, PT_NONE.clone()) }
-		Token::Period => (0, PointerTree::End(0).store(db)),
+		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { arena.none() }
+		Token::Period => arena.end(max_level),
 		Token::OpenCarat => {
-			let (num, p) = parse_lambda_pointer(feeder, db)?;
-			(num, PointerTree::Branch(p, PT_NONE.clone()).store(db))
+			arena.left(parse_lambda_pointer(feeder, arena, max_level, db)?)
 		},
 		Token::CloseCarat => {
-			let (num, p) = parse_lambda_pointer(feeder, db)?;
-			(num, PointerTree::Branch(PT_NONE.clone(), p).store(db))
+			arena.right(parse_lambda_pointer(feeder, arena, max_level, db)?)
 		},
 		Token::OpenParen => {
-			let (first_num, left, ) = parse_lambda_pointer(feeder, db)?;
+			let left = parse_lambda_pointer(feeder, arena, max_level, db)?;
 			feeder.expect_next(Token::Comma)?;
-			let (second_num, right) = parse_lambda_pointer(feeder, db)?;
+			let right = parse_lambda_pointer(feeder, arena, max_level, db)?;
 			feeder.expect_next(Token::CloseParen)?;
-			let num = u32::max(first_num, second_num);
-
-			(num, PointerTree::Branch(left, right).store(db))
+			arena.join(left, right)
 		},
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?
 	})
@@ -241,27 +236,29 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 			Expr::Variable.store(db)
 		},
 		Token::Lambda => {
-			let (index, span, loc) = match feeder.next()? {
+			let (max_level, span, _loc) = match feeder.next()? {
 				(Token::Number(val), span) => {
 					let loc = feeder.location();
 					feeder.expect_next(Token::OpenSquareBracket)?;
-					(val as u32, span, loc)
+					(val as usize + 1, span, loc)
 				},
 				(Token::OpenSquareBracket, span) => {
 					let loc = feeder.location();
-					(0, span, loc)
+					(1, span, loc)
 				},
 				(token, span) => Err(ParseError::wrong_token(feeder, span, token, vec![Token::Number(0)]))?,
 			};
 			
-			let (tree_index, tree) = parse_lambda_pointer(feeder, db)?;
-			if index < tree_index { Err(ParseError::LocalError(loc, span, "Lambda Index must be greater than or equal to the highest number in its pointer tree"))? }
+			let arena = ReduceArena::new();
+			let tree = parse_lambda_pointer(feeder, &arena, max_level, db)?;
+			let mut index = ReplaceIndex::new(max_level, tree);
 
 			feeder.expect_next(Token::CloseSquareBracket)?;
 		
 			let arg_expr = parse_tokens(feeder, depth, db)?;
-			
-			Expr::Lambda { index, tree, expr: arg_expr }.store(db)
+
+			arena.pop_lambda(&mut index, arg_expr, db)
+			.map_err(|_|ParseError::LocalError(feeder.location(), span, "ReplaceTree failed to expand to lambda expression"))?
 		},
 		Token::Symbol => {
 			let string = &feeder.string[next_span.clone()];
