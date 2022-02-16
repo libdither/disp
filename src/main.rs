@@ -10,9 +10,9 @@ mod lambda_calculus;
 mod symbol;
 mod parse;
 
-use crate::lambda_calculus::{beta_reduce, DisplayWithDatastore};
+use crate::{lambda_calculus::{beta_reduce, DisplayWithDatastore}};
 use symbol::Symbol;
-use parse::parse_expr;
+use parse::{parse_line};
 
 fn main() {
 	let db = &mut Datastore::new();
@@ -28,15 +28,16 @@ fn main() {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
 
-				let expr = match parse_expr(line.as_str(), db) {
-					Ok(expr) => expr,
+				match parse_line(line.as_str(), db) {
+					Ok(Some(expr)) => {
+                        match beta_reduce(&expr, db) {
+                            Ok(expr) => println!("{}", expr.display(db)),
+                            Err(err) => {println!("failed to reduce expression: {}", err); continue},
+                        };
+                    },
+                    Ok(None) => {},
 					Err(err) => {println!("failed to parse expression: {}", err); continue},
 				};
-				let expr = match beta_reduce(&expr, db) {
-					Ok(expr) => expr,
-					Err(err) => {println!("failed to reduce expression: {}", err); continue},
-				};
-				println!("{}", expr.display(db));
             },
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");

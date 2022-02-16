@@ -8,7 +8,7 @@ use hashdb::{Datastore, DatastoreError, NativeHashtype, TypedHash};
 use crate::lambda_calculus::{Expr, LambdaError, ReduceArena, ReplaceIndex, ReplaceTree, beta_reduce};
 use crate::Symbol;
 
-#[derive(Logos, Debug, PartialEq)]
+#[derive(Logos, Debug, PartialEq, Clone)]
 pub enum Token {
 	// Tokens can be literal strings, of any length.
 	#[token("λ")]
@@ -62,7 +62,7 @@ pub enum Token {
 }
 
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error,)]
 pub enum ParseError<'a> {
 	#[error("Found {found:?}, expected Token(s) {expected:?}\n{}", .loc.display_span(.span))]
 	WrongToken { loc: Location<'a>, span: Span, found: Token, expected: Vec<Token> },
@@ -70,23 +70,20 @@ pub enum ParseError<'a> {
 	#[error("Unexpected token: {2:?}\n{}", .0.display_span(.1))]
 	UnexpectedToken(Location<'a>, Span, Token),
 
+	#[error("Lexer Error: {2:?}\n{}",.0.display_span(.1))]
+	LexerError(Location<'a>, Span, Token),
+
 	#[error("Unexpected end of stream")]
 	UnexpectedEndOfStream(Location<'a>),
 
-	#[error("Invalid Token: {2:?}\n{}", .0.display_span(.1))]
-	InvalidToken(Location<'a>, Span, Token),
-
-	#[error("Unknown Symbol: {2}\n{}", .0.display_span(.1))]
-	UnknownSymbol(Location<'a>, Span, &'a str),
+	#[error("Unknown Symbol: {1}\n{}", .0.display_str(.1))]
+	UnknownSymbol(Location<'a>, &'a str),
 
 	#[error("Number-Encoding functions undefined, must define succ and zero functions\n{}", .0.display_span(.1))]
 	NoNumberFunctions(Location<'a>, Span),
 
-	#[error("Expected end of stream, found token: {1:?}\n{}", .0.display_span(.2))]
-	ExpectedEndOfStream(Location<'a>, Token, Span),
-
 	#[error("Command Error: {0}: {1}")]
-	SubcommandError(&'static str, String),
+	CommandError(&'static str, String),
 
 	#[error("Datastore Error: {0}")]
 	DatastoreError(#[from] DatastoreError),
@@ -111,12 +108,13 @@ pub struct Location<'a> {
 
 impl<'a> Location<'a> {
 	fn display_span(&self, span: &Span) -> String {
-		let string = self.string;
-		let span_len = span.len();
-
-		let whitespace_amount = self.char_position - span_len;
+		let string = &self.string[span.clone()];
+		self.display_str(string)
+	}
+	fn display_str(&self, string: &'a str) -> String {
+		let whitespace_amount = self.char_position - string.len();
 		let span_marking = std::iter::repeat(" ").take(whitespace_amount)
-			.chain(std::iter::repeat("^").take(span.len()));
+			.chain(std::iter::repeat("^").take(string.len()));
 		format!("{}\n{}", string, span_marking.collect::<String>())
 	}
 }
@@ -148,11 +146,6 @@ impl<'a> TokenFeeder<'a> {
 		let (next, span) = self.next()?;
 		if next != token { Err(ParseError::wrong_token(self, span, next, vec![token])) } else { Ok(span) }
 	}
-	pub fn expect_end(&mut self) -> Result<(), ParseError<'a>> {
-		if let Some((token, span)) = self.iter.next() {
-			Err(ParseError::ExpectedEndOfStream(self.location(), token, span))
-		} else { Ok(()) }
-	}
 	pub fn peek(&mut self) -> Result<(&Token, &Span), ParseError<'a>> {
 		let location = self.location();
 		if let Some((token, span)) = self.iter.peek() {
@@ -161,11 +154,15 @@ impl<'a> TokenFeeder<'a> {
 			Err(ParseError::UnexpectedEndOfStream(location))
 		}
 	}
-}
-
-pub fn parse_expr<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
-	let feeder = &mut TokenFeeder::from_string(string);
-	parse_tokens(feeder, 0, db)
+	pub fn test_end_of_expression(&mut self, depth: usize) -> bool {
+		match self.iter.peek() {
+			Some((Token::CloseParen, _)) => {
+				true
+			},
+			None if depth == 0 => true, // Treat end of stream as end of expression if there are no enclosing expressions
+			_ => false,
+		}
+	}
 }
 
 fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceArena<'b>, max_level: usize, db: &mut Datastore) -> Result<&'b ReplaceTree<'b>, ParseError<'a>> {
@@ -200,38 +197,28 @@ fn lookup_expr(string: &str, db: &mut Datastore) -> Result<TypedHash<Expr>, Data
 	let symbol: TypedHash<Symbol> = db.lookup_typed(&string.to_owned().hash())?;
 	Ok(symbol.fetch(db)?.expr())
 }
+fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
+	let string = &feeder.string[span.clone()];
+	lookup_expr(string, db).map_err(|_|ParseError::UnknownSymbol(feeder.location(), string))
+}
 
-fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
-	let depth = depth + 1;
+// Parse Token stream until reach closing parentheses or if depth == 0 & end of stream and return Application expression
+fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: TypedHash<Expr>, depth: usize, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
+	let func = initial;
+	Ok(if !feeder.test_end_of_expression(depth) {
+		let sub = parse_token(feeder, depth, db)?.2;
+		parse_application(feeder, Expr::Application { func, sub }.store(db), depth, db)?
+	} else { func })
+}
 
+// Parse Token stream until reach parentheses or end of stream and return expression, it will not consume the ending parenthses
+fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<(Token, Span, TypedHash<Expr>), ParseError<'a>> {
 	let (next_token, next_span) = feeder.next()?;
-	Ok(match next_token {
-		// OpenParen represents new s-expression, should cause recursion
-		Token::OpenParen => {
-			let ret = match feeder.peek()?.0 {
-				Token::Lambda => { parse_tokens(feeder, depth, db)? }
-				Token::Symbol => { parse_tokens(feeder, depth, db)? }
-				_ => {
-					let expr_1 = parse_tokens(feeder, depth, db)?;
-	
-					let expr_2 = parse_tokens(feeder, depth, db)?;
-	
-					Expr::Application { func: expr_1, sub: expr_2 }.store(db)
-				}
-			};
-			feeder.expect_next(Token::CloseParen)?;
-			if depth == 1 { feeder.expect_end()? }
-			
-			ret
-		},
-		// There shouldn't be any `()` in any expressions passed to parse_tokens
-		Token::CloseParen => {
-			return Err(ParseError::UnexpectedToken(feeder.location(), next_span, Token::CloseParen))
-		},
-		Token::Variable => {
-			Expr::Variable.store(db)
-		},
+	let (token, span) = (next_token.clone(), next_span.clone());
+
+	let expr = match next_token {
 		Token::Lambda => {
+			// Read PointerTree metadata
 			let (max_level, span, _loc) = match feeder.next()? {
 				(Token::Number(val), span) => {
 					let loc = feeder.location();
@@ -245,88 +232,120 @@ fn parse_tokens<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datasto
 				(token, span) => Err(ParseError::wrong_token(feeder, span, token, vec![Token::Number(0)]))?,
 			};
 			
+			// Parse Pointertree expression
 			let arena = ReduceArena::new();
 			let tree = parse_lambda_pointer(feeder, &arena, max_level, db)?;
 			let mut index = ReplaceIndex::new(max_level, tree);
-
 			feeder.expect_next(Token::CloseSquareBracket)?;
-		
-			let arg_expr = parse_tokens(feeder, depth, db)?;
+			
+			// Treat rest of lambda as expression of the same depth (no parentheses required), this allows for same-line lambdas
+			let arg_expr = parse_token(feeder, depth, db)?.2;
+			let arg_expr = parse_application(feeder, arg_expr, depth, db)?;
 
 			arena.pop_lambda(&mut index, arg_expr, db)
 			.map_err(|_|ParseError::LocalError(feeder.location(), span, "ReplaceTree failed to expand to lambda expression"))?
-		},
-		Token::Symbol => {
-			let string = &feeder.string[next_span.clone()];
-
-			// println!("Depth: {}, Passed string: {:?}", depth, string);
-			if depth == 2 {
-				if let Some(ret) = match string {
-					"set" => {
-						let span = feeder.expect_next(Token::Symbol)?;
-						let name = &feeder.string[span];
-
-						let next_expr = parse_tokens(feeder, depth, db)?;
-						let reduced = match beta_reduce(&next_expr, db) {
-							Ok(ret) => ret,
-							Err(LambdaError::RecursionDepthExceeded) => { println!("note: this expresion will run for a long time"); next_expr },
-							Err(err) => Err(ParseError::SubcommandError("set", format!("failed to beta reduce expr: {}", err)))?
-						};
-						
-						Symbol::new(name, &reduced, db);
-
-						Some(reduced)
-					}
-					"save" => {
-						let location = feeder.expect_next(Token::String)?;
-						let location = &feeder.string[location];
-						let location = &location[1..location.len()-1];
-						println!("Saving to: {:?}", location);
-						db.save(fs::File::create(location)?)?;
-						Some(Expr::var(db))
-					}
-					"load" => {
-						let location = feeder.expect_next(Token::String)?;
-						let location = &feeder.string[location];
-						let location = &location[1..location.len()-1];
-						println!("Loading from: {:?}", location);
-						db.load(fs::File::open(location)?)?;
-						Some(Expr::var(db))
-					}
-					"clear" => {
-						db.clear();
-						Some(Expr::var(db))
-					}
-					_ => { None },
-				} { return Ok(ret) }
-			}
-			
-			// Assume application
-			let func = lookup_expr(string, db).map_err(|_|ParseError::UnknownSymbol(feeder.location(), next_span.clone(), string))?;
-			match feeder.peek() {
-				Ok((token, _)) => {
-					if let Token::CloseParen = token { func }
-					else { Expr::Application { func, sub: parse_tokens(feeder, depth, db)? }.store(db) }
-				},
-				Err(_) => func,
-			}
-		},
+		}
+		Token::Symbol => lookup_symbol(feeder, next_span, db)?,
+		Token::Variable => Expr::var(db),
 		Token::Number(value) => {
-			if value > 1_000_000 { ParseError::SubcommandError("{integer}", "number is too large (must be less than 1,000,000)".into()); }
+			if value > 1_000_000 { ParseError::CommandError("{integer}", "number is too large (must be less than 1,000,000)".into()); }
 			let zero = lookup_expr("zero", db).map_err(|_|ParseError::NoNumberFunctions(feeder.location(), next_span.clone()))?;
 			let succ = lookup_expr("succ", db).map_err(|_|ParseError::NoNumberFunctions(feeder.location(), next_span))?;
-			let mut acc = zero;
+			let mut ret = zero;
 			for _ in 0..value {
-				acc = Expr::app(&succ, &acc, db)
+				ret = Expr::app(&succ, &ret, db)
 			}
-			acc
+			ret
+		}
+		Token::OpenParen => { // Parse Subexpression
+			let ret = parse_expr(feeder, depth + 1, db)?;
+			feeder.expect_next(Token::CloseParen)?;
+			ret
 		},
-		Token::Error => { return Err(ParseError::InvalidToken(feeder.location(), next_span, next_token)) },
-		token => return Err(ParseError::UnexpectedToken(feeder.location(), next_span, token)),
+		Token::Error => { return Err(ParseError::LexerError(feeder.location(), next_span, next_token.clone())) },
+		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token.clone()))?
+	};
+	Ok((token, span, expr))
+}
+
+fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
+	let (token, span, expr) = parse_token(feeder, depth, db)?;
+	let ret = match token {
+		Token::Symbol | Token::Variable | Token::Number(_) | Token::OpenParen => parse_application(feeder, expr, depth, db)?,
+		Token::Lambda => expr,
+		_ => Err(ParseError::UnexpectedToken(feeder.location(), span, token))?
+	};
+	Ok(ret)
+}
+
+
+fn parse_command<'a>(feeder: &'a mut TokenFeeder, db: &mut Datastore) -> Result<Option<TypedHash<Expr>>, ParseError<'a>> {
+	let span = feeder.expect_next(Token::Symbol)?;
+	let string = &feeder.string[span.clone()];
+	Ok(match string {
+		"set" => {
+			let span = feeder.expect_next(Token::Symbol)?;
+			let name = &feeder.string[span];
+
+			let next_expr = parse_expr(feeder, 0, db)?;
+			let reduced = match beta_reduce(&next_expr, db) {
+				Ok(ret) => ret,
+				Err(LambdaError::RecursionDepthExceeded) => { println!("warning: this expresion will run for a long time"); next_expr },
+				Err(err) => Err(ParseError::CommandError("set", format!("failed to beta reduce expr: {}", err)))?
+			};
+			
+			Symbol::new(name, &reduced, db);
+
+			Some(reduced)
+		}
+		"save" => {
+			let location = feeder.expect_next(Token::String)?;
+			let location = &feeder.string[location];
+			let location = &location[1..location.len()-1];
+			println!("Saving to: {:?}", location);
+			db.save(fs::File::create(location)?)?;
+			None
+		}
+		"load" => {
+			let location = feeder.expect_next(Token::String)?;
+			let location = &feeder.string[location];
+			let location = &location[1..location.len()-1];
+			println!("Loading from: {:?}", location);
+			db.load(fs::File::open(location)?)?;
+			None
+		}
+		"clear" => {
+			db.clear();
+			None
+		}
+		_ => {
+			let expr = lookup_symbol(feeder, span, db)?;
+			Some(parse_application(feeder, expr, 0, db)?)
+		},
 	})
 }
 
-pub fn parse_reduce<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
-	let expr = parse_expr(&string, db).expect("Failed to parse expression");
-	Ok(beta_reduce(&expr, db)?)
+pub fn parse<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
+	let feeder = &mut TokenFeeder::from_string(string);
+	println!("parsing: {}", string);
+	let expr = parse_expr(feeder, 0, db)?;
+	println!("parsed: {}", crate::lambda_calculus::DisplayWithDatastore::display(&expr, db));
+	Ok(expr)
+}
+
+pub fn parse_reduce<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash<Expr>, ParseError<'a>> {
+	let feeder = &mut TokenFeeder::from_string(string);
+	let expr = parse_expr(feeder, 0, db)?;
+	let expr = beta_reduce(&expr, db).unwrap_or(expr);
+	Ok(expr)
+}
+
+pub fn parse_line<'a>(line: &'a str, db: &mut Datastore) -> Result<Option<TypedHash<Expr>>, ParseError<'a>> {
+	let feeder = &mut TokenFeeder::from_string(line);
+	let (next, span) = feeder.peek()?;
+	Ok(if Token::Symbol == *next {
+		parse_command(feeder, db).ok().flatten()
+	} else {
+		Some(parse_expr(feeder, 0, db)?)
+	})
 }

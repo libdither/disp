@@ -5,7 +5,7 @@ use std::{fmt, ptr::NonNull};
 use hashdb::NativeHashtype;
 use typed_arena::Arena;
 
-use crate::{Datastore, TypedHash, lambda_calculus::{ArchivedExpr, ArchivedPointerTree, DisplayWithDatastore, Expr, LambdaError, PT_NONE, PointerTree}};
+use crate::{Datastore, TypedHash, lambda_calculus::{ArchivedExpr, ArchivedPointerTree, DisplayWithDatastore, Expr, LambdaError, PT_NONE, PointerTree, pointer_helpers::{both, end, left, right}}};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum ReplaceTree<'a> {
@@ -19,7 +19,7 @@ impl<'a> ReplaceTree<'a> {
 		Ok(match self {
 			ReplaceTree::Branch(l, r) => (l, r),
 			ReplaceTree::None => (self, self),
-			ReplaceTree::End(_) => Err(LambdaError::ReduceArenaMismatch)?
+			ReplaceTree::End(_) => Err(LambdaError::PointerTreeMismatch)?
 		})
 	}
 	fn join(left: &'a Self, right: &'a Self) -> Self {
@@ -43,7 +43,7 @@ impl<'a> ReplaceTree<'a> {
 				right.push_pointer_tree(arena, level, r, db)?;
 				arena.join(left, right)
 			}
-			(ReplaceTree::End(_), _) | (_, ArchivedPointerTree::End) => Err(LambdaError::ReduceArenaMismatch)?
+			(ReplaceTree::End(_), _) | (_, ArchivedPointerTree::End) => Err(LambdaError::PointerTreeMismatch)?
 		};
 		Ok(())
 	}
@@ -138,7 +138,7 @@ impl<'a> ReduceArena<'a> {
 	/// Pop PointerTree from ReplaceIndex
 	pub fn pop_pointer_tree(&'a self, replace_index: &mut ReplaceIndex<'a>, db: &mut Datastore) -> Result<TypedHash<PointerTree>, LambdaError> {
 		let ReplaceIndex { index, tree } = replace_index;
-		if *index == 0 { return Err(LambdaError::ReduceArenaMismatch) }
+		if *index == 0 { return Err(LambdaError::PointerTreeMismatch) }
 		let ret = tree.pop_pointer_tree(self, *index, db)?;
 		*index -= 1;
 		Ok(ret)
@@ -168,7 +168,7 @@ fn test_replace_tree() {
 	let r = &mut a.index();
 	println!("start: [{}]", r);
 
-	let lambda = crate::parse_expr("(λ[] (λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x))))))", db).unwrap();
+	let lambda = crate::parse::parse("(λ[] (λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x))))))", db).unwrap();
 	println!("lambda: {}", lambda.display(db));
 	let expr = a.push_lambda(r, &lambda, db).unwrap();
 	println!("after push: {} : {}", expr.display(db), r);

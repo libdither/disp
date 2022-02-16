@@ -60,7 +60,7 @@ impl Datastore {
 		self.map.get(hash).ok_or(DatastoreError::NotInDatastore(hash.clone()))
 	}
 	// Fetch Typed (Archived) Data
-	pub fn fetch<'a, T: NativeHashtype>(&'a self, hash: &TypedHash<T>) -> Result<&Archived<T>, DatastoreError>
+	pub fn fetch<'a, T: NativeHashtype>(&'a self, hash: &TypedHash<T>) -> Result<&'a Archived<T>, DatastoreError>
 	where T::Archived: CheckBytes<DefaultValidator<'a>>
 	{
 		let mhash = hash.as_hash();
@@ -100,7 +100,7 @@ fn test_loading() {
 	let db = &mut Datastore::new();
 
 	// Self-referential type
-	#[derive(PartialEq, Eq, Debug, Clone, rkyv::Archive, rkyv::Serialize)]
+	#[derive(PartialEq, Eq, Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 	#[archive(compare(PartialEq))]
 	// To use the safe API, you have to derive CheckBytes for the archived type
 	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]	

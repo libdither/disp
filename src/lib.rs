@@ -2,17 +2,6 @@
 
 #![feature(generic_associated_types)]
 
-/// Built-in Types for Dither, recognized by the program as a multihash with the digest set to an arbitrary number
-/// Multihash type - 0 as Multihash
-/// Type type - 1 as Multihash
-/// 	Interpreted as <multiformat's unsigned varint><list of hash digests where the hash type and length are defined by the multihash linking type>
-/// Bit type - 2 as Multihash
-/// Basic types
-/// Byte type - <8><Bit><Bit><Bit><Bit><Bit><Bit><Bit><Bit> as Type
-/// Dyte type - <2><Byte><Byte> as Type
-/// Qyte type - <4><Byte><Byte><Byte><Byte> as Type
-/// Eyte type - <8><Byte><Byte><Byte><Byte><Byte><Byte><Byte><Byte> as Type
-
 pub use hashdb::{Data, Datastore, TypedHash};
 
 pub mod lambda_calculus;
@@ -21,7 +10,7 @@ pub mod parse;
 
 use lambda_calculus::{Expr, pointer_helpers::{end, left, right, both, none}, beta_reduce, DisplayWithDatastore};
 use symbol::Symbol;
-use parse::{parse_expr, parse_reduce};
+use parse::{parse, parse_reduce};
 
 fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>) {
 	let variable = Expr::var(db);
@@ -73,19 +62,20 @@ fn test_parsing() {
 
 	let (id_hash, true_hash, false_hash, not_hash, and_hash) = setup_boolean_logic(db);
 
-	let parsed_id_hash = parse_expr("(λ1[1] x)", db).unwrap();
+	let parsed_id_hash = parse("(λ1[1] x)", db).unwrap();
 	assert_eq!(parsed_id_hash, id_hash);
 
-	let parsed_true_hash = parse_expr("(λ2[2] x)", db).unwrap();
+	let parsed_true_hash = parse("(λ2[2] x)", db).unwrap();
 	assert_eq!(parsed_true_hash, true_hash);
 
-	let parsed_false_hash = parse_expr("(λ2[1] x)", db).unwrap();
+	let parsed_false_hash = parse("(λ2[1] x)", db).unwrap();
 	assert_eq!(parsed_false_hash, false_hash);
 
-	let parsed_not_hash = parse_expr("(λ1[<<1] ((x (λ2[1] x)) (λ2[2] x)))", db).unwrap();
+	let parsed_not_hash = parse("(λ1[<<1] ((x (λ2[1] x)) (λ2[2] x)))", db).unwrap();
+	println!("not: {} vs {}", parsed_not_hash.display(db), not_hash.display(db));
 	assert_eq!(parsed_not_hash, not_hash);
 
-	let parsed_and_hash = parse_expr("(λ2[<(2,1)] ((x x) (λ2[1] x)))", db).unwrap();
+	let parsed_and_hash = parse("(λ2[<(2,1)] ((x x) (λ2[1] x)))", db).unwrap();
 	assert_eq!(parsed_and_hash, and_hash);
 }
 
@@ -93,12 +83,12 @@ fn test_parsing() {
 fn test_factorial() {
 	let db = &mut Datastore::new();
 
-	let zero = parse_expr("(λ2[1] x)", db).unwrap();
+	let zero = parse("(λ2[1] x)", db).unwrap();
 	Symbol::new("zero", &zero, db);
 
-	let one = parse_expr("(λ2[(2,1)] (x x))", db).unwrap();
+	let one = parse("(λ2[(2,1)] (x x))", db).unwrap();
 
-	let succ = parse_expr("(λ3[(2,((3,2), 1))] (x ((x x) x)))", db).unwrap();
+	let succ = parse("(λ3[(2,((3,2), 1))] (x ((x x) x)))", db).unwrap();
 	Symbol::new("succ", &succ, db);
 
 	// Succ Zero = One
@@ -110,7 +100,7 @@ fn test_factorial() {
 	// Succ Succ Zero = Succ 1
 	assert_eq!(beta_reduce(&Expr::app(&succ, &succ_zero, db), db).unwrap(), succ_one);
 
-	let mult = parse_reduce("(λ[<<.] (λ[<><.] (λ[<>>.] (λ[>.] ((x (x x)) x)))))", db).unwrap();
+	let mult = parse_reduce("(λ3[(3,(2,1))] (x (x x)))", db).unwrap();
 	Symbol::new("mult", &mult, db);
 
 	let pred = parse_reduce("(λ3[<((3,>>2),1)] (((x (λ2[(1,<2)] (x (x x)))) (λ1[N] x)) (λ1[1] x)))", db).unwrap();
@@ -119,21 +109,19 @@ fn test_factorial() {
 	let iszero = parse_reduce("(λ1[<<1] ((x (λ3[1] x)) (λ2[2] x)))", db).unwrap();
 	Symbol::new("iszero", &iszero, db);
 
-	println!("{}", parse_expr("((mult 2) 3)", db).unwrap().display(db));
+	println!("{}", parse("((mult 2) 3)", db).unwrap().display(db));
 	assert_eq!(parse_reduce("((mult 0) 0)", db).unwrap(), parse_reduce("0", db).unwrap());
 	assert_eq!(parse_reduce("((mult 0) 1)", db).unwrap(), parse_reduce("0", db).unwrap());
 	assert_eq!(parse_reduce("((mult 2) 3)", db).unwrap(), parse_reduce("6", db).unwrap());
 	
-	let y_seg = parse_expr("(λ[><<(.,.)] (λ[(.,<>.)] (x (λ[>.] (((x x) x) x)))))", db).unwrap();
-	let y = beta_reduce(&Expr::app(&y_seg, &y_seg, db), db).unwrap();
-	Symbol::new("Y", &pred, db);
+	let y = parse("(set Y (λ1[(<1,<1)] ( (λ1[>(1,1)] (x (x x))) (λ[>(1,1)] (x (x x))) ) ))", db).unwrap();
 
-	let fact_seg = parse_expr("(λ2[(<>1,(>1,(2,>1)))] (((iszero x) 1) ((mult x) (x (pred x)))) )", db).unwrap();
+	let fact_seg = parse("(λ2[(<>1,(>1,(2,>1)))] (((iszero x) 1) ((mult x) (x (pred x)))) )", db).unwrap();
 	let fact = beta_reduce(&Expr::app(&y, &fact_seg, db), db).unwrap();
 	Symbol::new("factorial", &fact, db);
 
-	assert_eq!(parse_reduce("(fact 2)", db).unwrap(), parse_reduce("2", db).unwrap());
+	assert_eq!(parse_reduce("(factorial 2)", db).unwrap(), parse_reduce("2", db).unwrap());
 
-	//let is_zero = parse_expr("()")
+	//let is_zero = parse("()")
 
 }

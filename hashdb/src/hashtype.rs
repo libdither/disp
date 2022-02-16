@@ -1,6 +1,6 @@
-use std::{fmt, iter, marker::PhantomData};
+use std::{fmt, iter, marker::PhantomData, ops::Deref};
 
-use rkyv::{Archive, Archived, Serialize, ser::{ScratchSpace, Serializer, serializers::AllocSerializer}, validation::validators::DefaultValidator};
+use rkyv::{Archive, Archived, Deserialize, Fallible, Infallible, Serialize, ser::{ScratchSpace, Serializer, serializers::AllocSerializer}, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, Immutable, SerializeWith}};
 
 use bytecheck::CheckBytes;
 use crate::{Data, Datastore, Hash, db::{DatastoreError}};
@@ -49,6 +49,7 @@ pub trait NativeHashtype: fmt::Debug + Archive<Archived: std::fmt::Debug> + Seri
 	type LinkIter<'a>: LinkIterConstructor<'a, Self> = iter::Empty<&'a Hash>; // OH I LOVE GENERICS
 	fn reverse_links<'a>(&'a self) -> Self::LinkIter<'a> { LinkIterConstructor::construct(self) }
 }
+impl NativeHashtype for String {}
 
 pub trait LinkIterConstructor<'a, T: NativeHashtype>: Iterator<Item = &'a Hash> {
 	fn construct(hashtype: &'a T) -> Self;
@@ -110,42 +111,44 @@ impl<T: NativeHashtype> TypedHash<T> {
 	
 }
 /* 
-#[derive(Debug, Error)]
-#[error("Invalid hash: {0}")]
-pub struct InvalidHashError(Hash);
-
-/// Hashtype is a type that can go to an from being a hash
-pub trait PrimitiveHashtype: Sized + 'static {
-	fn to_hash(&self) -> TypedHash<Self>;
-	fn from_hash(hash: &TypedHash<Self>) -> Result<Self, InvalidHashError>;
+// Datastore acts as a custom Serializer / Deserializer for Hashes and Data
+impl<'a> Fallible for &'a Datastore {
+	type Error = DatastoreError;
+}
+impl<'a> Fallible for &'a mut Datastore {
+	type Error = DatastoreError;
+}
+impl<'a> Fallible for Datastore {
+	type Error = DatastoreError;
 }
 
-pub struct RustTypeDef;
-impl PrimitiveHashtype for RustTypeDef {
-	fn to_hash(&self) -> TypedHash<Self> { RUST_TYPE.into() }
-	fn from_hash(hash: &TypedHash<Self>) -> Result<Self, InvalidHashError> {
-		let hash = hash.untyped_ref();
-		if *hash == RUST_TYPE { Ok(RustTypeDef) }
-		else { Err(InvalidHashError(hash.clone()))? }
+/// Wrapper type that serializes NativeHashtype as Hashes
+pub struct Link;
+
+impl<T: NativeHashtype> ArchiveWith<T> for Link {
+	type Archived = Hash;
+
+	type Resolver = Hash;
+
+	unsafe fn resolve_with(field: &T, pos: usize, resolver: Self::Resolver, out: *mut Self::Archived) {
+		resolver.resolve(pos, [(); Hash::len()], out)
+	}
+}
+impl<'a, T: NativeHashtype> SerializeWith<T, Datastore> for Link
+where <T as Archive>::Archived: CheckBytes<DefaultValidator<'a>>
+{
+	fn serialize_with(field: &T, serializer: &mut Datastore) -> Result<Self::Resolver, DatastoreError> {
+		let data = field.archive();
+		Ok(serializer.store(data))
 	}
 }
 
-impl<T: PrimitiveHashtype> Hashtype for T {
-	fn hash(&self, _: &mut Datastore) -> TypedHash<Self> {
-		self.to_hash()
+impl<'a, T: NativeHashtype> DeserializeWith<Hash, T, &'a Datastore> for Link
+where <T as Archive>::Archived: CheckBytes<DefaultValidator<'a>>
+{
+	fn deserialize_with(field: &Hash, deserializer: &mut &'a Datastore) -> Result<T, DatastoreError> {
+		let archived: &'a Archived<T> = deserializer.fetch::<'a, T>(field.into())?;
+		Ok(archived.deserialize(&mut rkyv::Infallible).unwrap())
 	}
-	fn resolve(hash: &TypedHash<Self>, _: &Datastore) -> Result<Self, HashtypeResolveError> {
-		Ok(Self::from_hash(hash)?)
-	}
-} */
-
-impl NativeHashtype for String {
-	
-    /* fn hash(&self) -> TypedHash<Self> {
-        Hash::hash(&bincode::serialize(self).unwrap()).into()
-    } */
-    /* fn resolve(hash: &TypedHash<Self>, db: &Datastore) -> Result<Self, HashtypeResolveError> {
-        Ok(bincode::deserialize(db.get(hash.into())?.as_bytes())?)
-    } */
-}
+}*/
 

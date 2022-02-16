@@ -28,9 +28,6 @@ pub enum LambdaError {
 
 	#[error("Pointer Tree Mismatch, make sure lambda pointer trees match with expressions.")]
 	PointerTreeMismatch,
-
-	#[error("Reduce Tree Mismatch, something seems to be wrong with the reducing algorithm")]
-	ReduceArenaMismatch,
 }
 
 
@@ -100,11 +97,10 @@ fn partial_beta_reduce<'a>(reducing_expr: TypedHash<Expr>, arena: &'a ReduceAren
 			// Split subtrees
 			let (mut func_tree, mut sub_tree) = replace_index.split()?;
 			let (func, sub) = (func.clone(), sub.clone());
-			// Reduce Function
-			let func = partial_beta_reduce(func, arena, &mut func_tree, depth, db)?;
+			let func = partial_beta_reduce(func.clone(), arena, &mut func_tree, depth, db)?;
 
 			match func.fetch(db)? {
-				ArchivedExpr::Variable => {
+				ArchivedExpr::Variable | ArchivedExpr::Application { .. } => {
 					// If Variable, reduce substitution & return Application with joined trees
 					let sub = partial_beta_reduce(sub.clone(), arena, &mut sub_tree, depth, db)?;
 					*replace_index = arena.join_index(func_tree, sub_tree);
@@ -123,12 +119,12 @@ fn partial_beta_reduce<'a>(reducing_expr: TypedHash<Expr>, arena: &'a ReduceAren
 					let depth = depth + 1;
 					partial_beta_reduce(replaced_expr, arena, replace_index, depth, db)?
 				},
-				ArchivedExpr::Application { .. } => {
+				/* ArchivedExpr::Application { .. } => {
 					// Beta reduce sub, return application with joined trees
-					let sub = partial_beta_reduce(sub.clone(), arena, &mut sub_tree, depth, db)?;
+					// let sub = partial_beta_reduce(sub.clone(), arena, &mut sub_tree, depth, db)?;
 					*replace_index = arena.join_index(func_tree, sub_tree);
 					Expr::Application { func, sub }.store(db)
-				}
+				} */
 			}
 		}
 	})
