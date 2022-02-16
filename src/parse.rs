@@ -114,12 +114,11 @@ impl<'a> Location<'a> {
 		self.display(string.len())
 	}
 	fn display(&self, len: usize) -> String {
-		let whitespace_amount = self.char_position - len;
+		let whitespace_amount = self.char_position.saturating_sub(len);
 		let span_marking = std::iter::repeat(" ").take(whitespace_amount)
 			.chain(std::iter::repeat("^").take(len));
 		format!("{}\n{}", self.string, span_marking.collect::<String>())
 	}
-	fn offset(self, offset: usize) -> Self { Self { string: self.string, char_position: self.char_position + offset } }
 }
 
 struct TokenFeeder<'a> {
@@ -142,7 +141,7 @@ impl<'a> TokenFeeder<'a> {
 			self.char_position += span.len();
 			Ok((token, span))
 		} else {
-			Err(ParseError::UnexpectedEndOfStream(self.location().offset(1)))
+			Err(ParseError::UnexpectedEndOfStream(self.location()))
 		}
 	}
 	pub fn expect_next(&mut self, token: Token) -> Result<Span, ParseError<'a>> {
