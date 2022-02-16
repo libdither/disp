@@ -2,6 +2,8 @@
 #![feature(option_result_contains)]
 #![feature(generic_associated_types)]
 
+use std::fs;
+
 use rustyline::{error::ReadlineError, Editor};
 
 use hashdb::*;
@@ -16,6 +18,12 @@ use parse::{parse_line};
 
 fn main() {
 	let db = &mut Datastore::new();
+
+    let load_file = std::env::args().nth(1);
+
+    if let Some(file) = &load_file {
+        db.load(fs::File::open(file).unwrap()).expect("could not load disp file")
+    }
 
 	let mut rl = Editor::<()>::new();
 	println!("Welcome to disp (λ)");
@@ -53,4 +61,8 @@ fn main() {
         }
     }
     rl.save_history(".disp_history").unwrap();
+
+    if let Some(file) = &load_file {
+        db.save(fs::File::create(&file).unwrap()).unwrap()
+    }
 }

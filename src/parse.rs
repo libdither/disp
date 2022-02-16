@@ -73,7 +73,7 @@ pub enum ParseError<'a> {
 	#[error("Lexer Error: {2:?}\n{}",.0.display_span(.1))]
 	LexerError(Location<'a>, Span, Token),
 
-	#[error("Unexpected end of stream")]
+	#[error("Unexpected end of stream:\n{}", .0.display(1))]
 	UnexpectedEndOfStream(Location<'a>),
 
 	#[error("Unknown Symbol: {1}\n{}", .0.display_str(.1))]
@@ -108,15 +108,18 @@ pub struct Location<'a> {
 
 impl<'a> Location<'a> {
 	fn display_span(&self, span: &Span) -> String {
-		let string = &self.string[span.clone()];
-		self.display_str(string)
+		self.display(span.len())
 	}
 	fn display_str(&self, string: &'a str) -> String {
-		let whitespace_amount = self.char_position - string.len();
-		let span_marking = std::iter::repeat(" ").take(whitespace_amount)
-			.chain(std::iter::repeat("^").take(string.len()));
-		format!("{}\n{}", string, span_marking.collect::<String>())
+		self.display(string.len())
 	}
+	fn display(&self, len: usize) -> String {
+		let whitespace_amount = self.char_position - len;
+		let span_marking = std::iter::repeat(" ").take(whitespace_amount)
+			.chain(std::iter::repeat("^").take(len));
+		format!("{}\n{}", self.string, span_marking.collect::<String>())
+	}
+	fn offset(self, offset: usize) -> Self { Self { string: self.string, char_position: self.char_position + offset } }
 }
 
 struct TokenFeeder<'a> {
@@ -139,7 +142,7 @@ impl<'a> TokenFeeder<'a> {
 			self.char_position += span.len();
 			Ok((token, span))
 		} else {
-			Err(ParseError::UnexpectedEndOfStream(self.location()))
+			Err(ParseError::UnexpectedEndOfStream(self.location().offset(1)))
 		}
 	}
 	pub fn expect_next(&mut self, token: Token) -> Result<Span, ParseError<'a>> {
@@ -342,9 +345,12 @@ pub fn parse_reduce<'a>(string: &'a str, db: &mut Datastore) -> Result<TypedHash
 
 pub fn parse_line<'a>(line: &'a str, db: &mut Datastore) -> Result<Option<TypedHash<Expr>>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(line);
-	let (next, span) = feeder.peek()?;
+	let (next, _) = feeder.peek()?;
 	Ok(if Token::Symbol == *next {
-		parse_command(feeder, db).ok().flatten()
+		match parse_command(feeder, db) {
+			Err(err) => {println!("Failed to parse command: {}", err); None}
+			Ok(expr) => expr,
+		}
 	} else {
 		Some(parse_expr(feeder, 0, db)?)
 	})
