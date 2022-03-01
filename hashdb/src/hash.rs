@@ -6,7 +6,7 @@ use std::{fmt, io::Read, mem::ManuallyDrop};
 use base58::ToBase58;
 use multihash::Sha2_256;
 use serde::{Serialize, Deserialize};
-use rkyv::{Archive, ser::{ScratchSpace, Serializer}};
+use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}};
 use bytecheck::CheckBytes;
 
 mod code;
@@ -110,6 +110,11 @@ impl<S: ScratchSpace + Serializer + ?Sized> rkyv::Serialize<S> for Hash {
 		Ok([(); Code::Sha2_256.total_len()])
 	}
 }
+impl<D: ?Sized + Fallible> rkyv::Deserialize<Hash, D> for Archived<Hash> {
+    fn deserialize(&self, deserializer: &mut D) -> Result<Hash, D::Error> {
+        Ok(self.clone())
+    }
+}
 
 impl<S: ?Sized> CheckBytes<S> for Hash {
 	type Error = unsigned_varint::decode::Error;
@@ -119,6 +124,7 @@ impl<S: ?Sized> CheckBytes<S> for Hash {
 		if code.0 == Code::Sha2_256.format_code() { Ok(&*value) } else { Err(unsigned_varint::decode::Error::Insufficient) }
 	}
 }
+
 
 
 
