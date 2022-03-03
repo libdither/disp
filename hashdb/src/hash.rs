@@ -1,9 +1,9 @@
 
 /// This file is a clusterfudge of generic where expressions, hopefully this is made easier in the future...
 
-use std::{fmt, io::Read, mem::ManuallyDrop};
+use std::{fmt, io::Read, mem::ManuallyDrop, str::FromStr};
 
-use base58::ToBase58;
+use base58::{FromBase58, FromBase58Error, ToBase58};
 use multihash::Sha2_256;
 use serde::{Serialize, Deserialize};
 use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}};
@@ -125,6 +125,15 @@ impl<S: ?Sized> CheckBytes<S> for Hash {
 	}
 }
 
+/// FromStr implemente to convert from Base58 encodings
+impl FromStr for Hash {
+    type Err = FromBase58Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let vec = FromBase58::from_base58(s)?;
+		Hash::from_reader(&vec[..]).map_err(|_|FromBase58Error::InvalidBase58Length)
+    }
+}
 
 
 
