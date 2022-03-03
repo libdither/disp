@@ -2,8 +2,6 @@
 /// This file is a clusterfudge of generic where expressions, hopefully this is made easier in the future...
 
 use std::{fmt, io::Read, mem::ManuallyDrop, str::FromStr};
-
-use base58::{FromBase58, FromBase58Error, ToBase58};
 use multihash::Sha2_256;
 use serde::{Serialize, Deserialize};
 use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}};
@@ -51,6 +49,10 @@ impl Hash {
 	// pub fn digest(&self) -> &[u8] { unsafe { &self.structure.digest } }
 }
 
+impl AsRef<[u8]> for Hash {
+    fn as_ref(&self) -> &[u8] { &self.0 }
+}
+
 impl Default for Hash {
 	fn default() -> Self {
 		let multihash = Multihash::<{Code::Sha2_256}>::default();
@@ -66,7 +68,7 @@ impl Serialize for Hash {
 }
 impl fmt::Display for Hash {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{}", ToBase58::to_base58(self.as_bytes()))
+		write!(f, "{}", bs58::encode(self).into_string())
 	}
 }
 
@@ -127,11 +129,12 @@ impl<S: ?Sized> CheckBytes<S> for Hash {
 
 /// FromStr implemente to convert from Base58 encodings
 impl FromStr for Hash {
-    type Err = FromBase58Error;
+    type Err = bs58::decode::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let vec = FromBase58::from_base58(s)?;
-		Hash::from_reader(&vec[..]).map_err(|_|FromBase58Error::InvalidBase58Length)
+		let mut hash = Hash::default();
+		bs58::decode(s).into(&mut hash.0);
+		Ok(hash)
     }
 }
 
@@ -393,7 +396,7 @@ where
 	[(); C.total_len()]: Sized
 {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{}", ToBase58::to_base58(self.as_bytes()))
+		write!(f, "{}", bs58::encode(self.as_bytes()).into_string())
 	}
 }
 impl<const C: Code> fmt::Display for Multihash<C>
@@ -409,7 +412,7 @@ where
 			Code::Sha2_512 => "sha2_512",
 			_ => "???"
 		};
-		write!(f, "{}:{}", hash_type, ToBase58::to_base58(self.digest()))
+		write!(f, "{}:{}", hash_type, bs58::encode(self.digest()).into_string())
 	}
 }
 
