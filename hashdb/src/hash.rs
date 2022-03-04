@@ -12,9 +12,15 @@ mod code;
 mod sha2; */
 use code::{calc_varint_len, Code};
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Hash([u8; Code::Sha2_256.total_len()]);
 //pub type Hash = Multihash<{Code::Sha2_256}>;
+
+impl fmt::Debug for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "Hash({})", self)
+    }
+}
 
 impl Hash {
 	pub fn hash(data: &[u8]) -> Self {
