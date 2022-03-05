@@ -103,25 +103,36 @@ fn test_factorial() {
 	let mult = parse_reduce("(λ3[(3,(2,1))] (x (x x)))", db).unwrap();
 	Symbol::new("mult", &mult, db);
 
+	println!("{}", parse("((mult 2) 3)", db).unwrap().display(db));
+	assert_eq!(parse_reduce("((mult 0) 0)", db).unwrap(), parse_reduce("0", db).unwrap());
+	assert_eq!(parse_reduce("((mult 0) 1)", db).unwrap(), parse_reduce("0", db).unwrap());
+	assert_eq!(parse_reduce("((mult 2) 3)", db).unwrap(), parse_reduce("6", db).unwrap());
+
 	let pred = parse_reduce("(λ3[<((3,>>2),1)] (((x (λ2[(1,<2)] (x (x x)))) (λ1[N] x)) (λ1[1] x)))", db).unwrap();
 	Symbol::new("pred", &pred, db);
 
 	let iszero = parse_reduce("(λ1[<<1] ((x (λ3[1] x)) (λ2[2] x)))", db).unwrap();
 	Symbol::new("iszero", &iszero, db);
 
-	println!("{}", parse("((mult 2) 3)", db).unwrap().display(db));
-	assert_eq!(parse_reduce("((mult 0) 0)", db).unwrap(), parse_reduce("0", db).unwrap());
-	assert_eq!(parse_reduce("((mult 0) 1)", db).unwrap(), parse_reduce("0", db).unwrap());
-	assert_eq!(parse_reduce("((mult 2) 3)", db).unwrap(), parse_reduce("6", db).unwrap());
-	
-	let y = parse("(set Y (λ1[(<1,<1)] ( (λ1[>(1,1)] (x (x x))) (λ[>(1,1)] (x (x x))) ) ))", db).unwrap();
+	let pair = parse_reduce("(λ3[((1,3),2)] ((x x) x))", db).unwrap();
+	Symbol::new("pair", &pair, db);
+	Symbol::new("first", &zero, db);
 
-	let fact_seg = parse("(λ2[(<>1,(>1,(2,>1)))] (((iszero x) 1) ((mult x) (x (pred x)))) )", db).unwrap();
-	let fact = beta_reduce(&Expr::app(&y, &fact_seg, db), db).unwrap();
+	let fact_seg = parse::parse_line("set factseg λ2[(>>2,(>2,1))] pair (succ x) (mult x x)", db).unwrap();
+	let fact = parse("λ1[<<<1] x (λ1[<1] x factseg) (pair 1 1) first", db).unwrap();
 	Symbol::new("factorial", &fact, db);
 
 	assert_eq!(parse_reduce("(factorial 2)", db).unwrap(), parse_reduce("2", db).unwrap());
+	assert_eq!(parse_reduce("(factorial 4)", db).unwrap(), parse_reduce("24", db).unwrap());
 
 	//let is_zero = parse("()")
 
+}
+
+#[test]
+fn test_hashdb() {
+	let db = &mut Datastore::new();
+		//let data = Data::new(&[01u8, 32u8]);
+        let string = hashdb::NativeHashtype::store(String::from("hello"), db);
+        assert_eq!(string.fetch(db).unwrap(), "hello");
 }

@@ -5,7 +5,7 @@ use bytecheck::CheckBytes;
 use rkyv::{Archived, validation::validators::DefaultValidator};
 use serde::{Serialize, Deserialize};
 
-use crate::{Data, Hash, data::DataError, hashtype::{NativeHashtype, TypedHash}};
+use crate::{Data, Hash, data::DataError, hash::TrimHasher, hashtype::{NativeHashtype, TypedHash}};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
@@ -23,8 +23,8 @@ pub enum DatastoreError {
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Datastore {
-	map: HashMap<Hash, Data>,
-	reverse_lookup: HashMap<Hash, Hash>, // Map types to types that link to types
+	map: HashMap<Hash, Data, TrimHasher>,
+	reverse_lookup: HashMap<Hash, Hash, TrimHasher>, // Map types to types that link to types
 }
 
 impl Datastore {

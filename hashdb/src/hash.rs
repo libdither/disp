@@ -1,13 +1,15 @@
 
 /// This file is a clusterfudge of generic where expressions, hopefully this is made easier in the future...
 
-use std::{fmt, io::Read, mem::ManuallyDrop, str::FromStr};
+use std::{fmt, hash, io::Read, mem::ManuallyDrop, str::FromStr};
 use multihash::Sha2_256;
 use serde::{Serialize, Deserialize};
 use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}};
 use bytecheck::CheckBytes;
 
 mod code;
+mod hasher;
+pub use hasher::TrimHasher;
 /* pub mod hasher;
 mod sha2; */
 use code::{calc_varint_len, Code};
