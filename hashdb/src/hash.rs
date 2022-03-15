@@ -7,6 +7,9 @@ use serde::{Serialize, Deserialize};
 use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}};
 use bytecheck::CheckBytes;
 
+#[cfg(feature="async")]
+use futures::{AsyncRead, AsyncReadExt};
+
 mod code;
 mod hasher;
 pub use hasher::TrimHasher;
@@ -42,6 +45,12 @@ impl Hash {
 	pub fn from_reader(mut reader: impl Read) -> std::io::Result<Self> {
 		let mut hash = Self::default();
 		reader.read_exact(&mut hash.0)?;
+		Ok(hash)
+	}
+	#[cfg(feature="async")]
+	pub async fn from_async_reader<A: AsyncRead + Unpin>(mut reader: A) -> std::io::Result<Self> {
+		let mut hash = Self::default();
+		reader.read_exact(&mut hash.0).await?;
 		Ok(hash)
 	}
 	/// Used for defining type primitives
