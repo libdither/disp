@@ -11,12 +11,6 @@ use crate::{symbol::Symbol};
 
 use super::{DisplayWithDatastore, DisplayWithDatastoreError};
 
-/* 
-pub const VARIABLE:    Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-pub const LAMBDA:      Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
-pub const APPLICATION: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
- */
-
 pub mod pointer_helpers {
 	#![allow(unused)]
     use hashdb::{Datastore, TypedHash, NativeHashtype};
@@ -72,9 +66,16 @@ impl DisplayWithDatastore for TypedHash<PointerTree> {
 #[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize)]
 #[archive_attr(derive(CheckBytes, Debug))]
 pub enum Expr {
+	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,
+	/// Create a function
 	Lambda { tree: TypedHash<PointerTree>, expr: TypedHash<Expr> },
+	/// Apply functions to expressions
 	Application { func: TypedHash<Expr>, sub: TypedHash<Expr> },
+	// Type of all types
+	// Type,
+	// Create dependent types
+	// Dependent { tree: TypedHash<PointerTree>, expr: TypedHash<Expr> },
 }
 impl NativeHashtype for Expr {}
 impl DisplayWithDatastore for TypedHash<Expr> {
