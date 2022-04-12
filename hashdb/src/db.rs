@@ -1,11 +1,11 @@
 
-use std::{collections::HashMap, io};
+use std::{collections::HashMap, io, sync::Arc};
 
 use bytecheck::CheckBytes;
-use rkyv::{Archived, validation::validators::DefaultValidator};
+use rkyv::{AlignedVec, Archived, Fallible, ser::{ScratchSpace, Serializer, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch}}, validation::validators::DefaultValidator, with::DeserializeWith};
 use serde::{Serialize, Deserialize};
 
-use crate::{Data, Hash, data::DataError, hash::TrimHasher, hashtype::{NativeHashtype, TypedHash}};
+use crate::{Data, Hash, data::DataError, hash::TrimHasher, hashtype::{HashSerializer, NativeHashtype, TypedHash, HashType}, rkyv_map::Map};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
@@ -28,23 +28,22 @@ pub struct Datastore {
 }
 
 impl Datastore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-	pub fn add<'a, T: NativeHashtype>(&'a mut self, hashtype: T) -> (Hash, &'a Archived<T>)
+	pub fn new() -> Self {
+		Self::default()
+	}
+	/* pub fn add<'a, T: NativeHashtype>(&'a mut self, hashtype: T, serializer: &mut HashSerializer<'a>) -> (TypedHash<T>, &'a Archived<T>)
 	where T::Archived: CheckBytes<DefaultValidator<'a>>
 	{
 		let mut reverse_links = hashtype.reverse_links();
+		let hash = serializer.hash(hashtype).unwrap();
 		
-		let data = hashtype.archive();
-		let hash = data.hash();
-
 		while let Some(subhash) = reverse_links.next() {
-			self.reverse_lookup.insert(subhash.clone(), hash.clone());
+			self.reverse_lookup.insert(*subhash, hash.into());
 		}
+		let data = self.get(&hash.into()).unwrap();
 		
-		(hash.clone(), self.store_data(hash, data).archived::<'a, T>().expect("this should be a type"))
-	}
+		(hash, data.archived::<'a, T>().expect("this should be a type"))
+	} */
 	/// Add Data to Datastore
 	pub fn store(&mut self, data: Data) -> Hash {
 		let hash = data.hash();
@@ -94,6 +93,9 @@ impl Datastore {
 		self.reverse_lookup.clear();
 	}
 }
+impl<'db> Fallible for &'db Datastore {
+	type Error = DatastoreError;
+}
 
 #[test]
 fn test_loading() {
@@ -101,14 +103,21 @@ fn test_loading() {
 
 	// Self-referential type
 	#[derive(PartialEq, Eq, Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-	#[archive(compare(PartialEq))]
 	// To use the safe API, you have to derive CheckBytes for the archived type
-	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]	
-	struct StringType { string: String, linked: Option<TypedHash<StringType>> }
+	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
+	enum StringType {
+		String(String),
+		Link(#[with(HashType<StringType>)] Arc<StringType>, #[with(HashType<StringType>)] Arc<StringType>),
+	}
 	impl NativeHashtype for StringType {}
 
-	let string = StringType { string: "string".to_owned(), linked: None }.store(db);
-	let string2 = StringType { string: "string2".to_owned(), linked: Some(string.clone()) }.store(db);
+	let ser = HashSerializer::new(db);
 
-	assert_eq!(string2.fetch(db).unwrap().linked.as_ref().unwrap(), &string);
+	let string = Arc::new(StringType::String("Hello".into()));
+	let string2 = StringType::Link(string.clone(), string.clone());
+
+	let hash = ser.hash(string2).unwrap();
+	let ret = HashType::<StringType>::deserialize_with(hash, &mut ser.db);
+	
+	assert_eq!(string2, *ret);
 }

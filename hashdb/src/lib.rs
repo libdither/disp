@@ -16,6 +16,7 @@ mod hash;
 mod data;
 mod db;
 pub mod hashtype;
+pub mod rkyv_map;
 
 pub use db::{Datastore, DatastoreError};
 pub use hashtype::{NativeHashtype, TypedHash};
@@ -31,6 +32,6 @@ mod tests {
 		let db = &mut Datastore::new();
 		//let data = Data::new(&[01u8, 32u8]);
 		let string = String::from("hello").store(db);
-		assert_eq!(string.fetch(db).unwrap(), "hello");
+		assert_eq!(*string.fetch(db).unwrap(), "hello");
 	}
 }

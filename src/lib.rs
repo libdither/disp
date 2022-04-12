@@ -132,7 +132,7 @@ fn test_factorial() {
 #[test]
 fn test_hashdb() {
 	let db = &mut Datastore::new();
-		//let data = Data::new(&[01u8, 32u8]);
-        let string = hashdb::NativeHashtype::store(String::from("hello"), db);
-        assert_eq!(string.fetch(db).unwrap(), "hello");
+	//let data = Data::new(&[01u8, 32u8]);
+	let string = hashdb::NativeHashtype::store(String::from("hello"), db);
+	assert_eq!(string.fetch(db).unwrap(), "hello");
 }
