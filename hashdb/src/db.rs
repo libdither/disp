@@ -105,6 +105,7 @@ fn test_loading() {
 	#[derive(PartialEq, Eq, Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 	// To use the safe API, you have to derive CheckBytes for the archived type
 	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
+	// #[archive(bound(deserialize = "__D: for<'d> &'d Datastore"))]
 	enum StringType {
 		String(String),
 		Link(#[with(HashType<StringType>)] Arc<StringType>, #[with(HashType<StringType>)] Arc<StringType>),
@@ -117,7 +118,8 @@ fn test_loading() {
 	let string2 = StringType::Link(string.clone(), string.clone());
 
 	let hash = ser.hash(string2).unwrap();
-	let ret = HashType::<StringType>::deserialize_with(hash, &mut ser.db);
+	// let ret = hash.fetch(ser.db);
+	let ret = HashType::<StringType>::deserialize_with(&hash, &mut &*(ser.db)).unwrap();
 	
-	assert_eq!(string2, *ret);
+	assert_eq!(string2, ret);
 }

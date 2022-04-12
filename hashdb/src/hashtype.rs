@@ -50,6 +50,11 @@ impl<T: NativeHashtype, S: ScratchSpace + Serializer + ?Sized> Serialize<S> for 
 		self.hash.serialize(serializer)
 	}
 }
+impl<T: NativeHashtype, D: Fallible + ?Sized> Deserialize<TypedHash<T>, D> for Archived<TypedHash<T>> {
+	fn deserialize(&self, deserializer: &mut D) -> Result<TypedHash<T>, D::Error> {
+		self.hash.deserialize(deserializer).map(|t: Hash|t.into())
+	}
+}
 
 impl<T: NativeHashtype> From<Hash> for TypedHash<T> {
 	fn from(hash: Hash) -> Self { Self { hash, _type: PhantomData::<T>::default() } }
@@ -79,7 +84,6 @@ impl<T: NativeHashtype> TypedHash<T> {
 	}
 }
 
-
 /// Wrapper type that serializes references to NativeHashtype as Hashes
 #[derive(Default)]
 pub struct HashType<T: NativeHashtype> {
@@ -102,6 +106,7 @@ pub struct HashSerializer<'a> {
 	pointer_map: HashMap<*const (), (Hash, usize)>, // Check for shared pointers to avoid serializing the same object twice
 	pub db: &'a mut Datastore
 }
+
 impl<'db> HashSerializer<'db> {
 	pub fn new(db: &'db mut Datastore) -> Self {
 		Self {
@@ -140,6 +145,7 @@ impl<'db> ScratchSpace for HashSerializer<'db> {
 		Ok(self.scratch.pop_scratch(ptr, layout)?)
 	}
 }
+
 impl<'db> Serializer for HashSerializer<'db> {
 	fn pos(&self) -> usize {
 		self.serializer.pos()
@@ -150,20 +156,20 @@ impl<'db> Serializer for HashSerializer<'db> {
 	}
 }
 
-impl<T: NativeHashtype, B: Borrow<T>> ArchiveWith<B> for HashType<T> {
-    type Archived = Hash;
-    type Resolver = TypedHash<T>;
+impl<T: NativeHashtype> ArchiveWith<Arc<T>> for HashType<T> {
+	type Archived = Hash;
+	type Resolver = TypedHash<T>;
 
-    unsafe fn resolve_with(field: &B, pos: usize, resolver: TypedHash<T>, out: *mut Self::Archived) {
-        resolver.resolve(pos, [(); Hash::len()], out.cast());
-    }
+	unsafe fn resolve_with(field: &Arc<T>, pos: usize, resolver: TypedHash<T>, out: *mut Self::Archived) {
+		resolver.resolve(pos, [(); Hash::len()], out.cast());
+	}
 }
 
 // Serialize reference of T -> Hash of T
 impl<'db, T: NativeHashtype> SerializeWith<Arc<T>, HashSerializer<'db>> for HashType<T> {
-    fn serialize_with(field: &Arc<T>, serializer: &mut HashSerializer<'db>) -> Result<Self::Resolver, HashSerializeError> {
+	fn serialize_with(field: &Arc<T>, serializer: &mut HashSerializer<'db>) -> Result<Self::Resolver, HashSerializeError> {
 		Ok(serializer.hash((*field).borrow())?)
-    }
+	}
 }
 
 /// Deserialize Hash of T -> reference of T
@@ -171,9 +177,9 @@ impl<'db, T: NativeHashtype> DeserializeWith<TypedHash<T>, Arc<T>, &'db Datastor
 where
 	<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'db Datastore>,
 {
-    fn deserialize_with(field: &TypedHash<T>, deserializer: &mut &'db Datastore) -> Result<Arc<T>, DatastoreError> {
-		let archive = deserializer.fetch::<T>(field)?;
+	fn deserialize_with(field: &TypedHash<T>, deserializer: &mut &'db Datastore) -> Result<Arc<T>, DatastoreError> {
+		let archive = (*deserializer).fetch::<T>(field)?;
 		let t = archive.deserialize(deserializer).unwrap();
-        Ok(Arc::new(t))
-    }
+		Ok(Arc::new(t))
+	}
 }
