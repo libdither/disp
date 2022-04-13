@@ -2,6 +2,7 @@
 
 #![feature(generic_associated_types)]
 
+use hashdb::NativeHashtype;
 pub use hashdb::{Data, Datastore, TypedHash};
 
 pub mod lambda_calculus;
@@ -132,7 +133,8 @@ fn test_factorial() {
 #[test]
 fn test_hashdb() {
 	let db = &mut Datastore::new();
+	let ser = &mut db.serializer();
 	//let data = Data::new(&[01u8, 32u8]);
-	let string = hashdb::NativeHashtype::store(String::from("hello"), db);
-	assert_eq!(string.fetch(db).unwrap(), "hello");
+	let string = String::from("Hello").store(ser);
+	assert_eq!(*string.fetch(ser.db).unwrap(), "hello");
 }

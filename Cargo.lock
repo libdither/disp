@@ -257,7 +257,7 @@ dependencies = [
  "logos",
  "moveit",
  "multihash",
- "rkyv",
+ "rkyv 0.7.35",
  "rustyline",
  "serde",
  "thiserror",
@@ -464,7 +464,7 @@ dependencies = [
  "digest",
  "futures",
  "multihash",
- "rkyv",
+ "rkyv 0.7.37",
  "serde",
  "thiserror",
  "unsigned-varint",
@@ -766,7 +766,20 @@ dependencies = [
  "hashbrown",
  "ptr_meta",
  "rend",
- "rkyv_derive",
+ "rkyv_derive 0.7.35",
+ "seahash",
+]
+
+[[package]]
+name = "rkyv"
+version = "0.7.37"
+source = "git+https://github.com/rkyv/rkyv#c9d884242132aa91dfc75dad94e41cde85710d39"
+dependencies = [
+ "bytecheck",
+ "hashbrown",
+ "ptr_meta",
+ "rend",
+ "rkyv_derive 0.7.37",
  "seahash",
 ]
 
@@ -775,6 +788,16 @@ name = "rkyv_derive"
 version = "0.7.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cf557da1f81b8c7e889c59c9c3abaf6978f7feb156b9579e4f8bf6d7a2bada"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "rkyv_derive"
+version = "0.7.37"
+source = "git+https://github.com/rkyv/rkyv#c9d884242132aa91dfc75dad94e41cde85710d39"
 dependencies = [
  "proc-macro2",
  "quote",

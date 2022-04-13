@@ -92,6 +92,9 @@ impl Datastore {
 		self.map.clear();
 		self.reverse_lookup.clear();
 	}
+	pub fn serializer<'s>(&'s mut self) -> HashSerializer<'s> {
+		HashSerializer::new(self)
+	}
 }
 impl<'db> Fallible for &'db Datastore {
 	type Error = DatastoreError;
@@ -108,18 +111,18 @@ fn test_loading() {
 	// #[archive(bound(deserialize = "__D: for<'d> &'d Datastore"))]
 	enum StringType {
 		String(String),
-		Link(#[with(HashType<StringType>)] Arc<StringType>, #[with(HashType<StringType>)] Arc<StringType>),
+		Link(#[with(HashType)] Arc<StringType>, #[with(HashType)] Arc<StringType>),
 	}
 	impl NativeHashtype for StringType {}
 
-	let ser = HashSerializer::new(db);
+	let ser = &mut HashSerializer::new(db);
 
 	let string = Arc::new(StringType::String("Hello".into()));
 	let string2 = StringType::Link(string.clone(), string.clone());
 
-	let hash = ser.hash(string2).unwrap();
-	// let ret = hash.fetch(ser.db);
-	let ret = HashType::<StringType>::deserialize_with(&hash, &mut &*(ser.db)).unwrap();
+	let hash = string2.store(ser);
+	let ret: Arc<StringType> = TypedHash::fetch(&hash, ser.db).unwrap();
+	//let ret = HashType::<StringType>::deserialize_with(&hash, &mut &*(ser.db)).unwrap();
 	
-	assert_eq!(string2, ret);
+	assert_eq!(*ret, string2);
 }

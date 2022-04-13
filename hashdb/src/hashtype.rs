@@ -11,8 +11,8 @@ use crate::{Data, Datastore, Hash, db::{DatastoreError}};
 /// Represents a Rust type with an rykv Archive implementation that can be fetched from a Datastore via its hash
 pub trait NativeHashtype: fmt::Debug + Archive<Archived: std::fmt::Debug> + for<'db> Serialize<HashSerializer<'db>> + Sized + 'static {
 	/// Calculate hash and data from type
-	fn store(&self, db: &mut Datastore) -> TypedHash<Self> {
-		HashSerializer::new(db).hash(self).unwrap()
+	fn store(&self, ser: &mut HashSerializer) -> TypedHash<Self> {
+		ser.hash(self).unwrap()
 	}
 
 	/// List of hashes representing any data that should link to this type
@@ -33,62 +33,70 @@ impl<'a, T: NativeHashtype> LinkIterConstructor<'a, T> for iter::Empty<&'a Hash>
 }
 
 
-#[derive(Debug, PartialEq, Eq, Clone, CheckBytes)]
-pub struct TypedHash<T: NativeHashtype> {
+#[derive(Debug, PartialEq, Eq, CheckBytes, Archive, Serialize, Deserialize)]
+pub struct TypedHash<T> {
 	hash: Hash,
 	_type: PhantomData<T>,
 }
-impl<T: NativeHashtype> Archive for TypedHash<T> {
+impl<T> Clone for TypedHash<T> {
+    fn clone(&self) -> Self {
+        Self { hash: self.hash.clone(), _type: PhantomData::default() }
+    }
+}
+/* impl<T> Archive for TypedHash<T> {
 	type Resolver = [(); Hash::len()];
 	type Archived = TypedHash<T>;
 	unsafe fn resolve(&self, pos: usize, resolver: Self::Resolver, out: *mut Self::Archived) {
 		self.hash.resolve(pos, resolver, out.cast())
 	}
 }
-impl<T: NativeHashtype, S: ScratchSpace + Serializer + ?Sized> Serialize<S> for TypedHash<T> {
+impl<T, S: ScratchSpace + Serializer + ?Sized> Serialize<S> for TypedHash<T> {
 	fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
 		self.hash.serialize(serializer)
 	}
 }
-impl<T: NativeHashtype, D: Fallible + ?Sized> Deserialize<TypedHash<T>, D> for Archived<TypedHash<T>> {
+impl<T, D: Fallible + ?Sized> Deserialize<TypedHash<T>, D> for Archived<TypedHash<T>> {
 	fn deserialize(&self, deserializer: &mut D) -> Result<TypedHash<T>, D::Error> {
 		self.hash.deserialize(deserializer).map(|t: Hash|t.into())
 	}
-}
+} */
 
-impl<T: NativeHashtype> From<Hash> for TypedHash<T> {
+impl<T> From<Hash> for TypedHash<T> {
 	fn from(hash: Hash) -> Self { Self { hash, _type: PhantomData::<T>::default() } }
 }
-impl<T: NativeHashtype> Into<Hash> for TypedHash<T> {
+impl<T> Into<Hash> for TypedHash<T> {
 	fn into(self) -> Hash { self.hash }
 }
-impl<T: NativeHashtype> From<&Hash> for &TypedHash<T> {
+impl<T> From<&Hash> for &TypedHash<T> {
 	// Safety: TypedHash and Hash are equivalent
 	fn from(hash: &Hash) -> Self { unsafe { std::mem::transmute(hash) } }
 }
-impl<'a, T: NativeHashtype> Into<&'a Hash> for &'a TypedHash<T> {
+impl<'a, T> Into<&'a Hash> for &'a TypedHash<T> {
 	fn into(self) -> &'a Hash {
 		&self.hash
 	}
 }
-impl<T: NativeHashtype> TypedHash<T> {
+
+impl<T> TypedHash<T> {
 	pub fn new(hash: &Hash) -> Self { TypedHash::<T> { hash: hash.clone(), _type: Default::default() } }
-	pub fn cast<R: NativeHashtype>(self) -> TypedHash<R> { self.hash.into() }
+	pub fn cast<R: NativeHashtype>(self) -> TypedHash<R> { TypedHash::<R> { hash: self.hash, _type: PhantomData::default() } }
+	// pub fn untyped(self) -> Hash { self.hash }
 	pub fn as_bytes(&self) -> &[u8] { self.hash.as_bytes() }
 	pub fn as_hash(&self) -> &Hash { &self.hash }
-	pub fn fetch<'a>(&self, mut db: &'a Datastore) -> Result<Arc<T>, DatastoreError>
+}
+impl<A> TypedHash<A> {
+	pub fn fetch<'a, T: NativeHashtype>(&self, mut db: &'a Datastore) -> Result<Arc<T>, DatastoreError>
 	where
+		T: Archive<Archived = A>,
 		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'a Datastore>,
 	{
-		HashType::<T>::deserialize_with(self, &mut db)
+		HashType::deserialize_with(self, &mut db)
 	}
 }
 
 /// Wrapper type that serializes references to NativeHashtype as Hashes
 #[derive(Default)]
-pub struct HashType<T: NativeHashtype> {
-	_type: PhantomData<T>,
-}
+pub struct HashType;
 
 
 #[derive(Debug, Error)]
@@ -117,7 +125,9 @@ impl<'db> HashSerializer<'db> {
 		}
 	}
 	/// Hash the data of the passed reference
-	pub fn hash<T: NativeHashtype>(&mut self, hashtype: impl Borrow<T>) -> Result<TypedHash<T>, HashSerializeError> {
+	pub fn hash<T>(&mut self, hashtype: impl Borrow<T>) -> Result<TypedHash<T>, HashSerializeError>
+	where T: Serialize<HashSerializer<'db>>,
+	{
 		let ptr = (hashtype.borrow() as *const T).cast::<()>();
 		Ok(if let Some((hash, _)) = self.pointer_map.get(&ptr) {
 			hash.clone().into()
@@ -156,29 +166,31 @@ impl<'db> Serializer for HashSerializer<'db> {
 	}
 }
 
-impl<T: NativeHashtype> ArchiveWith<Arc<T>> for HashType<T> {
-	type Archived = Hash;
+impl<T: NativeHashtype> ArchiveWith<Arc<T>> for HashType {
+	type Archived = TypedHash<<T as Archive>::Archived>;
 	type Resolver = TypedHash<T>;
 
 	unsafe fn resolve_with(field: &Arc<T>, pos: usize, resolver: TypedHash<T>, out: *mut Self::Archived) {
-		resolver.resolve(pos, [(); Hash::len()], out.cast());
+		resolver.resolve(pos, TypedHashResolver { hash: [(); Hash::len()], _type: Default::default() }, out.cast());
 	}
 }
 
 // Serialize reference of T -> Hash of T
-impl<'db, T: NativeHashtype> SerializeWith<Arc<T>, HashSerializer<'db>> for HashType<T> {
+impl<'db, T: NativeHashtype> SerializeWith<Arc<T>, HashSerializer<'db>> for HashType {
 	fn serialize_with(field: &Arc<T>, serializer: &mut HashSerializer<'db>) -> Result<Self::Resolver, HashSerializeError> {
 		Ok(serializer.hash((*field).borrow())?)
 	}
 }
 
 /// Deserialize Hash of T -> reference of T
-impl<'db, T: NativeHashtype> DeserializeWith<TypedHash<T>, Arc<T>, &'db Datastore> for HashType<T>
+impl<'db, T: NativeHashtype, A> DeserializeWith<TypedHash<A>, Arc<T>, &'db Datastore> for HashType
 where
+	T: Archive<Archived = A>,
 	<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'db Datastore>,
+	
 {
-	fn deserialize_with(field: &TypedHash<T>, deserializer: &mut &'db Datastore) -> Result<Arc<T>, DatastoreError> {
-		let archive = (*deserializer).fetch::<T>(field)?;
+	fn deserialize_with(field: &TypedHash<A>, deserializer: &mut &'db Datastore) -> Result<Arc<T>, DatastoreError> {
+		let archive = (*deserializer).fetch::<T>(&field.clone().cast())?;
 		let t = archive.deserialize(deserializer).unwrap();
 		Ok(Arc::new(t))
 	}
