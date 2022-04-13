@@ -33,6 +33,6 @@ mod tests {
 		let ser = &mut db.serializer();
 		//let data = Data::new(&[01u8, 32u8]);
 		let string = String::from("hello").store(ser);
-		assert_eq!(*string.fetch(ser.db).unwrap(), "hello");
+		assert_eq!(string.fetch(ser.db).unwrap(), "hello");
 	}
 }
