@@ -2,7 +2,7 @@
 use std::{collections::HashMap, io, sync::Arc};
 
 use bytecheck::CheckBytes;
-use rkyv::{AlignedVec, Archived, Fallible, ser::{ScratchSpace, Serializer, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch}}, validation::validators::DefaultValidator, with::DeserializeWith};
+use rkyv::{AlignedVec, Archived, Fallible, ser::{ScratchSpace, Serializer, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch}}, validation::validators::DefaultValidator, with::{DeserializeWith, SerializeWith}};
 use serde::{Serialize, Deserialize};
 
 use crate::{Data, Hash, data::DataError, hash::TrimHasher, hashtype::{HashSerializer, NativeHashtype, TypedHash, HashType}, rkyv_map::Map};
@@ -108,10 +108,10 @@ fn test_loading() {
 	#[derive(PartialEq, Eq, Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 	// To use the safe API, you have to derive CheckBytes for the archived type
 	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
-	// #[archive(bound(deserialize = "__D: for<'d> &'d Datastore"))]
+	#[archive(bound(deserialize = "__D: Fallible, HashType: DeserializeWith<TypedHash<ArchivedStringType>, Arc<StringType>, __D>", serialize = "__S: Serializer, HashType: SerializeWith<Arc<StringType>, __S>"))]
 	enum StringType {
 		String(String),
-		Link(#[with(HashType)] Arc<StringType>, #[with(HashType)] Arc<StringType>),
+		Link(#[with(HashType)] #[omit_bounds] Arc<StringType>, #[with(HashType)] #[omit_bounds] Arc<StringType>),
 	}
 	impl NativeHashtype for StringType {}
 

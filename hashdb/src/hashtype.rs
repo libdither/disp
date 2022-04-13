@@ -38,11 +38,11 @@ pub struct TypedHash<T> {
 	hash: Hash,
 	_type: PhantomData<T>,
 }
-impl<T> Clone for TypedHash<T> {
+/* impl<T> Clone for TypedHash<T> {
     fn clone(&self) -> Self {
         Self { hash: self.hash.clone(), _type: PhantomData::default() }
     }
-}
+} */
 /* impl<T> Archive for TypedHash<T> {
 	type Resolver = [(); Hash::len()];
 	type Archived = TypedHash<T>;
@@ -79,18 +79,19 @@ impl<'a, T> Into<&'a Hash> for &'a TypedHash<T> {
 
 impl<T> TypedHash<T> {
 	pub fn new(hash: &Hash) -> Self { TypedHash::<T> { hash: hash.clone(), _type: Default::default() } }
-	pub fn cast<R: NativeHashtype>(self) -> TypedHash<R> { TypedHash::<R> { hash: self.hash, _type: PhantomData::default() } }
+	pub fn cast<R>(&self) -> &TypedHash<R> { unsafe { std::mem::transmute(self) } }
 	// pub fn untyped(self) -> Hash { self.hash }
 	pub fn as_bytes(&self) -> &[u8] { self.hash.as_bytes() }
 	pub fn as_hash(&self) -> &Hash { &self.hash }
 }
-impl<A> TypedHash<A> {
-	pub fn fetch<'a, T: NativeHashtype>(&self, mut db: &'a Datastore) -> Result<Arc<T>, DatastoreError>
+impl<T: NativeHashtype> TypedHash<T> {
+	pub fn fetch<'a, A>(&self, mut db: &'a Datastore) -> Result<Arc<T>, DatastoreError>
 	where
 		T: Archive<Archived = A>,
-		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'a Datastore>,
+		A: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'a Datastore>,
 	{
-		HashType::deserialize_with(self, &mut db)
+		let archived_hash = self.cast::<A>();
+		HashType::deserialize_with(archived_hash, &mut db)
 	}
 }
 
@@ -186,11 +187,11 @@ impl<'db, T: NativeHashtype> SerializeWith<Arc<T>, HashSerializer<'db>> for Hash
 impl<'db, T: NativeHashtype, A> DeserializeWith<TypedHash<A>, Arc<T>, &'db Datastore> for HashType
 where
 	T: Archive<Archived = A>,
-	<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'db Datastore>,
+	A: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'db Datastore>,
 	
 {
 	fn deserialize_with(field: &TypedHash<A>, deserializer: &mut &'db Datastore) -> Result<Arc<T>, DatastoreError> {
-		let archive = (*deserializer).fetch::<T>(&field.clone().cast())?;
+		let archive = (*deserializer).fetch::<T>(field.cast())?;
 		let t = archive.deserialize(deserializer).unwrap();
 		Ok(Arc::new(t))
 	}

@@ -30,8 +30,9 @@ mod tests {
 	#[test]
 	fn test_db() {
 		let db = &mut Datastore::new();
+		let ser = &mut db.serializer();
 		//let data = Data::new(&[01u8, 32u8]);
-		let string = String::from("hello").store(db);
-		assert_eq!(*string.fetch(db).unwrap(), "hello");
+		let string = String::from("hello").store(ser);
+		assert_eq!(*string.fetch(ser.db).unwrap(), "hello");
 	}
 }
