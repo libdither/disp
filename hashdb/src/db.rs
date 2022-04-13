@@ -96,6 +96,9 @@ impl Datastore {
 		HashSerializer::new(self)
 	}
 }
+impl Fallible for Datastore {
+	type Error = DatastoreError;
+}
 impl<'db> Fallible for &'db Datastore {
 	type Error = DatastoreError;
 }
@@ -108,7 +111,7 @@ fn test_loading() {
 	#[derive(PartialEq, Eq, Debug, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 	// To use the safe API, you have to derive CheckBytes for the archived type
 	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
-	#[archive(bound(deserialize = "__D: Fallible, HashType: DeserializeWith<TypedHash<ArchivedStringType>, Arc<StringType>, __D>", serialize = "__S: Serializer, HashType: SerializeWith<Arc<StringType>, __S>"))]
+	#[archive(bound(deserialize = "__D: Fallible, HashType: DeserializeWith<Hash, Arc<StringType>, __D>", serialize = "__S: Serializer, HashType: SerializeWith<Arc<StringType>, __S>"))]
 	enum StringType {
 		String(String),
 		Link(#[with(HashType)] #[omit_bounds] Arc<StringType>, #[with(HashType)] #[omit_bounds] Arc<StringType>),
@@ -120,8 +123,9 @@ fn test_loading() {
 	let string = Arc::new(StringType::String("Hello".into()));
 	let string2 = StringType::Link(string.clone(), string.clone());
 
-	let hash = string2.store(ser);
-	let ret: Arc<StringType> = TypedHash::fetch(&hash, ser.db).unwrap();
+	let hash: Hash = string2.store(ser).into();
+	let ret: Arc<StringType> = HashType::deserialize_with(&hash, ser.db).unwrap();
+	// let ret: Arc<StringType> = TypedHash::fetch(&hash, ser.db).unwrap();
 	//let ret = HashType::<StringType>::deserialize_with(&hash, &mut &*(ser.db)).unwrap();
 	
 	assert_eq!(*ret, string2);
