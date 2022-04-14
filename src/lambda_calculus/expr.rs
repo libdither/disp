@@ -31,7 +31,7 @@ pub mod pointer_helpers {
 
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
-#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes, Debug))]
 #[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
 pub enum PointerTree {
@@ -47,9 +47,9 @@ lazy_static! {
 impl NativeHashtype for PointerTree {}
 impl DisplayWithDatastore for Link<PointerTree> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
-		match **self { 
+		match self.as_ref() { 
 			PointerTree::Branch(left, right) => {
-				match (*right == PointerTree::None, *left == PointerTree::None) {
+				match (**right == PointerTree::None, **left == PointerTree::None) {
 					(true, true) => write!(f, "BOTH(NONE, NONE)")?,
 					(true, false) => write!(f, "<{}", left.display(db))?,
 					(false, true) => write!(f, ">{}", right.display(db))?,

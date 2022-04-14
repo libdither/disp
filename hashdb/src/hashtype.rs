@@ -14,20 +14,23 @@ pub trait NativeHashtype: fmt::Debug + Archive<Archived: std::fmt::Debug> + for<
 	fn store(&self, ser: &mut HashSerializer) -> TypedHash<Self> {
 		ser.store(self).unwrap().into()
 	}
+	fn calc_hash(&self) -> TypedHash<Self> {
+		self.store(&mut Datastore::new().serializer())
+	}
 
 	/// List of hashes representing any data that should link to this type
-	type LinkIter<'a>: LinkIterConstructor<'a, Self> = iter::Empty<&'a Hash>; // OH I LOVE GENERICS
-	fn reverse_links<'a>(&'a self) -> Self::LinkIter<'a> { LinkIterConstructor::construct(self) }
+	type LinkIter: LinkIterConstructor<Self> = iter::Empty<Hash>; // OH I LOVE GENERICS
+	fn reverse_links(&self) -> Self::LinkIter { LinkIterConstructor::construct(self) }
 }
 impl NativeHashtype for String {}
 impl NativeHashtype for Vec<u8> {}
 
-pub trait LinkIterConstructor<'a, T: NativeHashtype>: Iterator<Item = &'a Hash> {
-	fn construct(hashtype: &'a T) -> Self;
+pub trait LinkIterConstructor<T: NativeHashtype>: Iterator<Item = Hash> {
+	fn construct(hashtype: &T) -> Self;
 }
 
-impl<'a, T: NativeHashtype> LinkIterConstructor<'a, T> for iter::Empty<&'a Hash> {
-	fn construct(_hashtype: &'a T) -> Self {
+impl<'a, T: NativeHashtype> LinkIterConstructor<T> for iter::Empty<Hash> {
+	fn construct(_hashtype: &T) -> Self {
 		iter::empty()
 	}
 }
@@ -90,9 +93,6 @@ pub struct Link<T>(Arc<T>);
 
 impl<T: NativeHashtype> NativeHashtype for Link<T> {}
 impl<T> From<Arc<T>> for Link<T> { fn from(a: Arc<T>) -> Self { Self(a) } }
-/// Super-cool dependently typed version
-/// set-from (a => Link::first a)
-
 impl<T> Link<T> {
 	pub fn new(t: T) -> Link<T> {
 		Link(Arc::new(t))

@@ -196,7 +196,8 @@ fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceA
 }
 
 fn lookup_expr(string: &str, db: &mut Datastore) -> Result<Link<Expr>, DatastoreError> {
-	let symbol: TypedHash<Symbol> = db.lookup_typed(&string.to_owned().store(&mut db.serializer()))?;
+	let string_hash = string.to_owned().store(&mut db.serializer());
+	let symbol: TypedHash<Symbol> = db.lookup_typed(&string_hash)?;
 	Ok(symbol.fetch(db)?.expr)
 }
 fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
@@ -209,7 +210,7 @@ fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: Link<Expr>, dept
 	let func = initial;
 	Ok(if !feeder.test_end_of_expression(depth) {
 		let sub = parse_token(feeder, depth, db)?.2;
-		parse_application(feeder, Expr::Application { func, sub }.store(db), depth, db)?
+		parse_application(feeder, Link::new(Expr::Application { func, sub }), depth, db)?
 	} else { func })
 }
 

@@ -28,7 +28,7 @@ impl<'a> ReplaceTree<'a> {
 	}
 	/// Add PointerTree to ReplaceTree at certain abstraction level
 	fn push_pointer_tree(self: &mut &'a Self, arena: &'a ReduceArena<'a>, level: usize, pointer: &Link<PointerTree>, db: &Datastore) -> Result<(), LambdaError> {
-		*self = match (&self, pointer) {
+		*self = match (&self, pointer.as_ref()) {
 			// If ReplaceTree is None, fill in pointer
 			(tree, PointerTree::None) => tree,
 			(ReplaceTree::None, PointerTree::End) => arena.end(level),
@@ -54,14 +54,14 @@ impl<'a> ReplaceTree<'a> {
 				let left = l.pop_pointer_tree(arena, level, db)?;
 				let right = r.pop_pointer_tree(arena, level, db)?;
 				*self = arena.join(l, r);
-				if left == *PT_NONE && right == *PT_NONE { PointerTree::None.store(db) }
-				else { PointerTree::Branch(left, right).store(db) }
+				if left == *PT_NONE && right == *PT_NONE { Link::new(PointerTree::None) }
+				else { Link::new(PointerTree::Branch(left, right)) }
 			},
 			ReplaceTree::End(count) if level == *count =>  {
 				*self = arena.none();
-				PointerTree::End.store(db)
+				Link::new(PointerTree::End)
 			},
-			_ => PointerTree::None.store(db),
+			_ => Link::new(PointerTree::None),
 		})
 	}
 }
@@ -145,7 +145,7 @@ impl<'a> ReduceArena<'a> {
 	}
 	/// Build ReplaceIndex from Lambda Expression
 	pub fn push_lambda<'b>(&'a self, tree: &mut ReplaceIndex<'a>, expr: &'b Link<Expr>, db: &'b Datastore) -> Result<&'b Link<Expr>, LambdaError> {
-		Ok(if let Expr::Lambda { tree: pointer_tree, expr} = expr {
+		Ok(if let Expr::Lambda { tree: pointer_tree, expr} = expr.as_ref() {
 			let expr = self.push_lambda(tree, expr, db)?;
 			self.push_pointer_tree(tree, pointer_tree, db)?;
 			expr
@@ -154,10 +154,10 @@ impl<'a> ReduceArena<'a> {
 	/// Creates nested lambda expression from given ReplaceTree
 	pub fn pop_lambda(&'a self, tree: &mut ReplaceIndex<'a>, expr: Link<Expr>, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
 		let pointer_tree = self.pop_pointer_tree(tree, db)?;
-		Ok(if tree.index == 0 { Expr::Lambda { tree: pointer_tree, expr } }
+		Ok(if tree.index == 0 { Link::new(Expr::Lambda { tree: pointer_tree, expr }) }
 		else {
-			Expr::Lambda { tree: pointer_tree, expr: self.pop_lambda(tree, expr, db)? }
-		}.store(db))
+			Link::new(Expr::Lambda { tree: pointer_tree, expr: self.pop_lambda(tree, expr, db)? })
+		})
 	}
 }
 

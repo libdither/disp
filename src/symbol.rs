@@ -17,17 +17,20 @@ impl Symbol {
 	}
 }
 impl NativeHashtype for Symbol {
-	type LinkIter<'a> = SymbolLinkIter<'a>;
+	type LinkIter = SymbolLinkIter;
 }
-pub struct SymbolLinkIter<'a> {
-	iter: iter::Chain<iter::Once<&'a Hash>, iter::Once<&'a Hash>>,
+pub struct SymbolLinkIter {
+	iter: iter::Chain<iter::Once<Hash>, iter::Once<Hash>>,
 }
-impl<'a> Iterator for SymbolLinkIter<'a> {
-	type Item = &'a Hash;
+impl Iterator for SymbolLinkIter {
+	type Item = Hash;
 	fn next(&mut self) -> Option<Self::Item> { self.iter.next() }
 }
-impl<'a> LinkIterConstructor<'a, Symbol> for SymbolLinkIter<'a> {
-	fn construct(symbol: &'a Symbol) -> Self {
-		SymbolLinkIter { iter: iter::once(symbol.name.hash()).chain(iter::once(symbol.name.as_hash())) }
+impl LinkIterConstructor<Symbol> for SymbolLinkIter {
+	fn construct(symbol: &Symbol) -> Self {
+		SymbolLinkIter {
+			iter: iter::once(symbol.name.as_ref().calc_hash().into())
+				.chain(iter::once(symbol.expr.as_ref().calc_hash().into()))
+		}
 	}
 }

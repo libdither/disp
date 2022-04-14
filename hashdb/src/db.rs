@@ -25,15 +25,13 @@ pub enum DatastoreError {
 pub struct Datastore {
 	map: HashMap<Hash, Data, TrimHasher>,
 	reverse_lookup: HashMap<Hash, Hash, TrimHasher>, // Map types to types that link to types
-	#[serde(skip)]
-	shared: SharedDeserializeMap,
 }
 
 impl Datastore {
 	pub fn new() -> Self {
 		Self::default()
 	}
-	pub fn register<'a, T: NativeHashtype>(&mut self, mut reverse_links: T::LinkIter<'a>, hash: &Hash) {
+	pub fn register<'a, T: NativeHashtype>(&mut self, mut reverse_links: T::LinkIter, hash: &Hash) {
 		while let Some(subhash) = reverse_links.next() {
 			self.reverse_lookup.insert(subhash.clone(), hash.clone());
 		}
@@ -91,24 +89,8 @@ impl Datastore {
 		HashSerializer::new(self)
 	}
 }
-impl Fallible for Datastore {
-	type Error = DatastoreError;
-}
 impl<'db> Fallible for &'db Datastore {
 	type Error = DatastoreError;
-}
-impl SharedDeserializeRegistry for Datastore {
-    fn get_shared_ptr(&mut self, ptr: *const u8) -> Option<&dyn rkyv::de::SharedPointer> {
-        self.shared.get_shared_ptr(ptr)
-    }
-
-    fn add_shared_ptr(
-        &mut self,
-        ptr: *const u8,
-        shared: Box<dyn rkyv::de::SharedPointer>,
-    ) -> Result<(), Self::Error> {
-        Ok(self.add_shared_ptr(ptr, shared).unwrap())
-    }
 }
 
 #[test]
