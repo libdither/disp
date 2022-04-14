@@ -38,28 +38,11 @@ pub struct TypedHash<T> {
 	hash: Hash,
 	_type: PhantomData<T>,
 }
-/* impl<T> Clone for TypedHash<T> {
+impl<T> Clone for TypedHash<T> {
 	fn clone(&self) -> Self {
 		Self { hash: self.hash.clone(), _type: PhantomData::default() }
 	}
-} */
-/* impl<T> Archive for TypedHash<T> {
-	type Resolver = [(); Hash::len()];
-	type Archived = TypedHash<T>;
-	unsafe fn resolve(&self, pos: usize, resolver: Self::Resolver, out: *mut Self::Archived) {
-		self.hash.resolve(pos, resolver, out.cast())
-	}
 }
-impl<T, S: ScratchSpace + Serializer + ?Sized> Serialize<S> for TypedHash<T> {
-	fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
-		self.hash.serialize(serializer)
-	}
-}
-impl<T, D: Fallible + ?Sized> Deserialize<TypedHash<T>, D> for Archived<TypedHash<T>> {
-	fn deserialize(&self, deserializer: &mut D) -> Result<TypedHash<T>, D::Error> {
-		self.hash.deserialize(deserializer).map(|t: Hash|t.into())
-	}
-} */
 
 impl<T> From<Hash> for TypedHash<T> {
 	fn from(hash: Hash) -> Self { Self { hash, _type: PhantomData::<T>::default() } }

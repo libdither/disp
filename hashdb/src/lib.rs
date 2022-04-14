@@ -16,7 +16,6 @@ mod hash;
 mod data;
 mod db;
 pub mod hashtype;
-pub mod rkyv_map;
 
 pub use db::{Datastore, DatastoreError};
 pub use hashtype::{NativeHashtype, TypedHash, Link, ArchivedLink, DatastoreSerializer, DatastoreDeserializer, HashSerializer};
