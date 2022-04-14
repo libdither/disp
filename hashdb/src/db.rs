@@ -128,15 +128,11 @@ fn test_loading() {
 
 	let ser = &mut HashSerializer::new(db);
 
-	let string = Arc::new(StringType::String("Hello".into()));
-	let string2 = StringType::Link(string.clone().into(), string.clone().into());
+	let string = Link::new(StringType::String("Hello".into()));
+	let string2 = Link::new(StringType::Link(string.clone().into(), string.clone().into()));
 
-	let hash = ser.store(&string2).unwrap();
-	let ret: StringType = (&mut &*ser.db).fetch(&hash).unwrap();
-	//let hash: Hash = string2.serialize(ser).into();
-	//let ret: Arc<StringType> = HashType::deserialize_with(&hash, ser.db).unwrap();
-	// let ret: Arc<StringType> = TypedHash::fetch(&hash, ser.db).unwrap();
-	//let ret = HashType::<StringType>::deserialize_with(&hash, &mut &*(ser.db)).unwrap();
+	let hash = string2.store(ser);
+	let ret: Link<StringType> = hash.fetch(ser.db).unwrap();
 	
-	assert_eq!(ret, string2);
+	assert_eq!(ret.store(ser), string2.store(ser));
 }

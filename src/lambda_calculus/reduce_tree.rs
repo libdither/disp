@@ -5,7 +5,7 @@ use std::{fmt, ptr::NonNull};
 use hashdb::NativeHashtype;
 use typed_arena::Arena;
 
-use crate::{Datastore, TypedHash, lambda_calculus::{ArchivedExpr, ArchivedPointerTree, DisplayWithDatastore, Expr, LambdaError, PT_NONE, PointerTree, pointer_helpers::{both, end, left, right}}};
+use crate::{Datastore, Link, lambda_calculus::{Expr, PointerTree, DisplayWithDatastore, LambdaError, PT_NONE, pointer_helpers::{both, end, left, right}}};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum ReplaceTree<'a> {
@@ -27,28 +27,28 @@ impl<'a> ReplaceTree<'a> {
 		else { ReplaceTree::Branch(left, right) }
 	}
 	/// Add PointerTree to ReplaceTree at certain abstraction level
-	fn push_pointer_tree(self: &mut &'a Self, arena: &'a ReduceArena<'a>, level: usize, pointer: &TypedHash<PointerTree>, db: &Datastore) -> Result<(), LambdaError> {
-		*self = match (&self, pointer.fetch(db)?) {
+	fn push_pointer_tree(self: &mut &'a Self, arena: &'a ReduceArena<'a>, level: usize, pointer: &Link<PointerTree>, db: &Datastore) -> Result<(), LambdaError> {
+		*self = match (&self, pointer) {
 			// If ReplaceTree is None, fill in pointer
-			(tree, ArchivedPointerTree::None) => tree,
-			(ReplaceTree::None, ArchivedPointerTree::End) => arena.end(level),
-			(ReplaceTree::None, ArchivedPointerTree::Branch(l, r)) => {
+			(tree, PointerTree::None) => tree,
+			(ReplaceTree::None, PointerTree::End) => arena.end(level),
+			(ReplaceTree::None, PointerTree::Branch(l, r)) => {
 				let (mut left, mut right) = (arena.none(), arena.none());
 				left.push_pointer_tree(arena, level, l, db)?;
 				right.push_pointer_tree(arena, level, r, db)?;
 				arena.join(left, right)
 			}
-			(ReplaceTree::Branch(mut left, mut right), ArchivedPointerTree::Branch(l, r)) => {
+			(ReplaceTree::Branch(mut left, mut right), PointerTree::Branch(l, r)) => {
 				left.push_pointer_tree(arena, level, l, db)?;
 				right.push_pointer_tree(arena, level, r, db)?;
 				arena.join(left, right)
 			}
-			(ReplaceTree::End(_), _) | (_, ArchivedPointerTree::End) => Err(LambdaError::PointerTreeMismatch)?
+			(ReplaceTree::End(_), _) | (_, PointerTree::End) => Err(LambdaError::PointerTreeMismatch)?
 		};
 		Ok(())
 	}
 	/// Constructs PointerTree from ReplaceTree at certain abstraction level
-	fn pop_pointer_tree(self: &mut &'a Self, arena: &'a ReduceArena<'a>, level: usize, db: &mut Datastore) -> Result<TypedHash<PointerTree>, LambdaError> {
+	fn pop_pointer_tree(self: &mut &'a Self, arena: &'a ReduceArena<'a>, level: usize, db: &mut Datastore) -> Result<Link<PointerTree>, LambdaError> {
 		Ok(match self {
 			ReplaceTree::Branch(mut l, mut r) => {
 				let left = l.pop_pointer_tree(arena, level, db)?;
@@ -129,14 +129,14 @@ impl<'a> ReduceArena<'a> {
 	pub fn index(&'a self) -> ReplaceIndex<'a> { ReplaceIndex { index: 0, tree: self.none() } }
 
 	/// Push PointerTree onto ReplaceIndex
-	pub fn push_pointer_tree(&'a self, replace_index: &mut ReplaceIndex<'a>, pointer: &TypedHash<PointerTree>, db: &Datastore) -> Result<(), LambdaError> {
+	pub fn push_pointer_tree(&'a self, replace_index: &mut ReplaceIndex<'a>, pointer: &Link<PointerTree>, db: &Datastore) -> Result<(), LambdaError> {
 		let ReplaceIndex { index, tree } = replace_index;
 		*index += 1;
 		tree.push_pointer_tree(self, *index, pointer, db)?;
 		Ok(())
 	}
 	/// Pop PointerTree from ReplaceIndex
-	pub fn pop_pointer_tree(&'a self, replace_index: &mut ReplaceIndex<'a>, db: &mut Datastore) -> Result<TypedHash<PointerTree>, LambdaError> {
+	pub fn pop_pointer_tree(&'a self, replace_index: &mut ReplaceIndex<'a>, db: &mut Datastore) -> Result<Link<PointerTree>, LambdaError> {
 		let ReplaceIndex { index, tree } = replace_index;
 		if *index == 0 { return Err(LambdaError::PointerTreeMismatch) }
 		let ret = tree.pop_pointer_tree(self, *index, db)?;
@@ -144,15 +144,15 @@ impl<'a> ReduceArena<'a> {
 		Ok(ret)
 	}
 	/// Build ReplaceIndex from Lambda Expression
-	pub fn push_lambda<'b>(&'a self, tree: &mut ReplaceIndex<'a>, expr: &'b TypedHash<Expr>, db: &'b Datastore) -> Result<&'b TypedHash<Expr>, LambdaError> {
-		Ok(if let ArchivedExpr::Lambda { tree: pointer_tree, expr} = expr.fetch(db)? {
+	pub fn push_lambda<'b>(&'a self, tree: &mut ReplaceIndex<'a>, expr: &'b Link<Expr>, db: &'b Datastore) -> Result<&'b Link<Expr>, LambdaError> {
+		Ok(if let Expr::Lambda { tree: pointer_tree, expr} = expr {
 			let expr = self.push_lambda(tree, expr, db)?;
 			self.push_pointer_tree(tree, pointer_tree, db)?;
 			expr
 		} else { &expr })
 	}
 	/// Creates nested lambda expression from given ReplaceTree
-	pub fn pop_lambda(&'a self, tree: &mut ReplaceIndex<'a>, expr: TypedHash<Expr>, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
+	pub fn pop_lambda(&'a self, tree: &mut ReplaceIndex<'a>, expr: Link<Expr>, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
 		let pointer_tree = self.pop_pointer_tree(tree, db)?;
 		Ok(if tree.index == 0 { Expr::Lambda { tree: pointer_tree, expr } }
 		else {

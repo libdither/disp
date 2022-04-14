@@ -3,7 +3,7 @@
 #![feature(generic_associated_types)]
 
 use hashdb::NativeHashtype;
-pub use hashdb::{Data, Datastore, TypedHash};
+pub use hashdb::{Data, Datastore, Link};
 
 pub mod lambda_calculus;
 pub mod symbol;
@@ -13,7 +13,7 @@ use lambda_calculus::{Expr, pointer_helpers::{end, left, right, both, none}, bet
 use symbol::Symbol;
 use parse::{parse, parse_reduce};
 
-fn setup_boolean_logic(db: &mut Datastore) -> (TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>, TypedHash<Expr>) {
+fn setup_boolean_logic(db: &mut Datastore) -> (Link<Expr>, Link<Expr>, Link<Expr>, Link<Expr>, Link<Expr>) {
 	let variable = Expr::var(db);
 
 	let id_hash = Expr::lambda(end(db), &variable, db);
@@ -136,5 +136,5 @@ fn test_hashdb() {
 	let ser = &mut db.serializer();
 	//let data = Data::new(&[01u8, 32u8]);
 	let string = String::from("Hello").store(ser);
-	assert_eq!(*string.fetch(ser.db).unwrap(), "hello");
+	assert_eq!(string.fetch(ser.db).unwrap(), "hello");
 }

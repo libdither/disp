@@ -1,27 +1,20 @@
 
 use std::iter;
 
-use hashdb::{Datastore, DatastoreError, Hash, NativeHashtype, TypedHash, hashtype::LinkIterConstructor};
+use hashdb::{Datastore, DatastoreError, Hash, NativeHashtype, Link, DatastoreSerializer, DatastoreDeserializer, hashtype::LinkIterConstructor};
 use crate::lambda_calculus::Expr;
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize)]
-#[archive(compare(PartialEq))]
+#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive_attr(derive(Debug, bytecheck::CheckBytes))]
+#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
 pub struct Symbol {
-	name: TypedHash<String>,
-	expr: TypedHash<Expr>,
+	pub name: Link<String>,
+	pub expr: Link<Expr>,
 }
 impl Symbol {
-	pub fn new(name: impl Into<String>, expr: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Symbol> {
-		Self { name: name.into().store(db), expr: expr.clone() }.store(db)
+	pub fn new(name: impl Into<String>, expr: &Link<Expr>, db: &mut Datastore) -> Link<Symbol> {
+		Link::new(Self { name: Link::new(name.into()), expr: expr.clone() })
 	}
-}
-
-impl ArchivedSymbol {
-	pub fn expr(&self) -> TypedHash<Expr> {
-		self.expr.clone()
-	}
-	pub fn name<'a>(&self, db: &'a Datastore) -> Result<&'a rkyv::Archived<String>, DatastoreError> { self.name.fetch(db) }
 }
 impl NativeHashtype for Symbol {
 	type LinkIter<'a> = SymbolLinkIter<'a>;
@@ -35,6 +28,6 @@ impl<'a> Iterator for SymbolLinkIter<'a> {
 }
 impl<'a> LinkIterConstructor<'a, Symbol> for SymbolLinkIter<'a> {
 	fn construct(symbol: &'a Symbol) -> Self {
-		SymbolLinkIter { iter: iter::once(symbol.name.as_hash()).chain(iter::once(symbol.name.as_hash())) }
+		SymbolLinkIter { iter: iter::once(symbol.name.hash()).chain(iter::once(symbol.name.as_hash())) }
 	}
 }

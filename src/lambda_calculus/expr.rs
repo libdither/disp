@@ -1,11 +1,11 @@
 use std::fmt;
 
 use lazy_static::lazy_static;
-use rkyv::{Archive, Serialize};
+use rkyv::{Archive, Serialize, Deserialize};
 use bytecheck::CheckBytes;
 //use serde::{Serialize, Deserialize};
 
-use hashdb::{Datastore, NativeHashtype, TypedHash};
+use hashdb::{Datastore, NativeHashtype, Link, DatastoreSerializer, DatastoreDeserializer};
 
 use crate::{symbol::Symbol};
 
@@ -13,87 +13,88 @@ use super::{DisplayWithDatastore, DisplayWithDatastoreError};
 
 pub mod pointer_helpers {
 	#![allow(unused)]
-    use hashdb::{Datastore, TypedHash, NativeHashtype};
+    use hashdb::{Datastore, Link, NativeHashtype};
     use super::{PointerTree, PT_NONE};
 
-	pub fn none(db: &mut Datastore) -> TypedHash<PointerTree> { PointerTree::None.store(db) }
-	pub fn end(db: &mut Datastore) -> TypedHash<PointerTree> { PointerTree::End.store(db) }
-	pub fn left(p: TypedHash<PointerTree>, db: &mut Datastore) -> TypedHash<PointerTree> {
-		PointerTree::Branch(p, PT_NONE.clone()).store(db)
+	pub fn none(db: &mut Datastore) -> Link<PointerTree> { PT_NONE.clone() }
+	pub fn end(db: &mut Datastore) -> Link<PointerTree> { Link::new(PointerTree::End) }
+	pub fn left(p: Link<PointerTree>, db: &mut Datastore) -> Link<PointerTree> {
+		Link::new(PointerTree::Branch(p, PT_NONE.clone()))
 	}
-	pub fn right(p: TypedHash<PointerTree>, db: &mut Datastore) -> TypedHash<PointerTree> {
-		PointerTree::Branch(PT_NONE.clone(), p).store(db)
+	pub fn right(p: Link<PointerTree>, db: &mut Datastore) -> Link<PointerTree> {
+		Link::new(PointerTree::Branch(PT_NONE.clone(), p))
 	}
-	pub fn both(l: TypedHash<PointerTree>, r: TypedHash<PointerTree>, db: &mut Datastore) -> TypedHash<PointerTree> {
-		PointerTree::Branch(l, r).store(db)
+	pub fn both(l: Link<PointerTree>, r: Link<PointerTree>, db: &mut Datastore) -> Link<PointerTree> {
+		Link::new(PointerTree::Branch(l, r))
 	}
 }
 
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
 #[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize)]
-#[archive(compare(PartialEq))]
 #[archive_attr(derive(CheckBytes, Debug))]
+#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
 pub enum PointerTree {
 	None,
 	End,
-	Branch(TypedHash<PointerTree>, TypedHash<PointerTree>), // u32 represents highest variable abstraction level in this expression
+	Branch(#[omit_bounds] Link<PointerTree>, #[omit_bounds] Link<PointerTree>), // u32 represents highest variable abstraction level in this expression
 }
 lazy_static! {
-	pub static ref PT_NONE: TypedHash<PointerTree> = PointerTree::None.hash();
-	pub static ref PT_BOTH_NONE: TypedHash<PointerTree> = PointerTree::Branch(PT_NONE.clone(), PT_NONE.clone()).hash();
+	pub static ref PT_NONE: Link<PointerTree> = Link::new(PointerTree::None);
+	pub static ref PT_BOTH_NONE: Link<PointerTree> = Link::new(PointerTree::Branch(PT_NONE.clone(), PT_NONE.clone()));
 }
 
 impl NativeHashtype for PointerTree {}
-impl DisplayWithDatastore for TypedHash<PointerTree> {
+impl DisplayWithDatastore for Link<PointerTree> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
-		match self.fetch(db).unwrap() { 
-			ArchivedPointerTree::Branch(left, right) => {
-				match (right.fetch(db).unwrap() == &PointerTree::None, left.fetch(db).unwrap() == &PointerTree::None) {
+		match **self { 
+			PointerTree::Branch(left, right) => {
+				match (*right == PointerTree::None, *left == PointerTree::None) {
 					(true, true) => write!(f, "BOTH(NONE, NONE)")?,
 					(true, false) => write!(f, "<{}", left.display(db))?,
 					(false, true) => write!(f, ">{}", right.display(db))?,
 					(false, false) => write!(f, "({},{})", left.display(db), right.display(db))?,
 				}
 			},
-			ArchivedPointerTree::End => write!(f, ".")?,
-			ArchivedPointerTree::None => {},
+			PointerTree::End => write!(f, ".")?,
+			PointerTree::None => {},
 		}
 		Ok(())
 	}
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes, Debug))]
+#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
 pub enum Expr {
 	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,
 	/// Create a function
-	Lambda { tree: TypedHash<PointerTree>, expr: TypedHash<Expr> },
+	Lambda { tree: Link<PointerTree>, #[omit_bounds] expr: Link<Expr> },
 	/// Apply functions to expressions
-	Application { func: TypedHash<Expr>, sub: TypedHash<Expr> },
+	Application { #[omit_bounds] func: Link<Expr>, #[omit_bounds] sub: Link<Expr> },
 	// Type of all types
 	// Type,
 	// Create dependent types
-	// Dependent { tree: TypedHash<PointerTree>, expr: TypedHash<Expr> },
+	// Dependent { tree: Link<PointerTree>, expr: Link<Expr> },
 }
 impl NativeHashtype for Expr {}
-impl DisplayWithDatastore for TypedHash<Expr> {
+impl DisplayWithDatastore for Link<Expr> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
-		match db.lookup_typed::<Expr, Symbol>(&self) {
-			Ok(symbol) => write!(f, "{}", symbol.fetch(db)?.name(db)?)?,
+		/* match db.lookup_typed::<Expr, Symbol>(&self.store()) {
+			Ok(symbol) => write!(f, "{}", symbol.fetch().name(db)?)?,
 			Err(_) => {},
-		}
-		match self.fetch(db)? {
-			ArchivedExpr::Variable => write!(f, "x")?,
-			ArchivedExpr::Lambda { .. } => {
+		} */
+		match self.as_ref() {
+			Expr::Variable => write!(f, "x")?,
+			Expr::Lambda { .. } => {
 				let arena = crate::lambda_calculus::ReduceArena::new();
 				let mut index = arena.index();
 				let expr = arena.push_lambda(&mut index, &self, db).unwrap();
 		
 				write!(f, "(λ{}[{}] {})", index.index, index.tree, expr.display(db))?
 			},
-			ArchivedExpr::Application { func, sub } => {
+			Expr::Application { func, sub } => {
 				write!(f, "({} {})", func.display(db), sub.display(db))?
 			},
 		}
@@ -103,13 +104,13 @@ impl DisplayWithDatastore for TypedHash<Expr> {
 
 
 impl Expr {
-	pub fn var(db: &mut Datastore) -> TypedHash<Expr> {
-		Expr::Variable.store(db)
+	pub fn var(db: &mut Datastore) -> Link<Expr> {
+		Link::new(Expr::Variable)
 	}
-	pub fn lambda(pointer: TypedHash<PointerTree>, expr: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Expr> {
-		Expr::Lambda { tree: pointer, expr: expr.clone() }.store(db)
+	pub fn lambda(pointer: Link<PointerTree>, expr: &Link<Expr>, db: &mut Datastore) -> Link<Expr> {
+		Link::new(Expr::Lambda { tree: pointer, expr: expr.clone() })
 	}
-	pub fn app(function: &TypedHash<Expr>, substitution: &TypedHash<Expr>, db: &mut Datastore) -> TypedHash<Expr> {
-		Expr::Application { func: function.clone(), sub: substitution.clone() }.store(db)
+	pub fn app(function: &Link<Expr>, substitution: &Link<Expr>, db: &mut Datastore) -> Link<Expr> {
+		Link::new(Expr::Application { func: function.clone(), sub: substitution.clone() })
 	}
 }

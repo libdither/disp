@@ -105,9 +105,28 @@ pub trait DatastoreDeserializer: Fallible<Error: From<DatastoreError>> {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Link<T>(Arc<T>);
 
+impl<T: NativeHashtype> NativeHashtype for Link<T> {}
 impl<T> From<Arc<T>> for Link<T> { fn from(a: Arc<T>) -> Self { Self(a) } }
 /// Super-cool dependently typed version
 /// set-from (a => Link::first a)
+
+impl<T> Link<T> {
+	pub fn new(t: T) -> Link<T> {
+		Link(Arc::new(t))
+	}
+}
+impl<T> Deref for Link<T> {
+	type Target = T;
+
+	fn deref(&self) -> &Self::Target {
+		self.0.deref()
+	}
+}
+impl<T> AsRef<T> for Link<T> {
+    fn as_ref(&self) -> &T {
+        self.0.as_ref()
+    }
+}
 
 #[derive(Debug)]
 pub struct ArchivedLink<T>(Hash, PhantomData<T>);
@@ -140,13 +159,13 @@ where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deser
 	}
 }
 impl<__C: ?Sized, T: NativeHashtype> CheckBytes<__C> for ArchivedLink<T> {
-    type Error = <Hash as CheckBytes<__C>>::Error;
+	type Error = <Hash as CheckBytes<__C>>::Error;
 
-    unsafe fn check_bytes<'a>(value: *const Self, context: &mut __C)
-        -> Result<&'a Self, Self::Error> {
-        let ret = Hash::check_bytes(value.cast(), context)?;
+	unsafe fn check_bytes<'a>(value: *const Self, context: &mut __C)
+		-> Result<&'a Self, Self::Error> {
+		let ret = Hash::check_bytes(value.cast(), context)?;
 		return Ok(&*(ret as *const Hash).cast())
-    }
+	}
 }
 
 #[derive(Debug, Error)]
@@ -169,8 +188,8 @@ pub struct HashSerializer<'a> {
 }
 
 impl<'db> DatastoreSerializer for HashSerializer<'db> {
-    fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, Self::Error> {
-        let ptr = (hashtype as *const T).cast::<()>();
+	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, Self::Error> {
+		let ptr = (hashtype as *const T).cast::<()>();
 		Ok(if let Some((hash, _)) = self.pointer_map.get(&ptr) {
 			hash.clone().into()
 		} else {
@@ -182,7 +201,7 @@ impl<'db> DatastoreSerializer for HashSerializer<'db> {
 			self.db.register::<T>(hashtype.reverse_links(), &hash);
 			hash
 		})
-    }
+	}
 }
 impl<'db> HashSerializer<'db> {
 	pub fn new(db: &'db mut Datastore) -> Self {
@@ -224,12 +243,12 @@ impl<'db> Serializer for HashSerializer<'db> {
 }
 
 impl<'db> DatastoreDeserializer for &'db Datastore {
-    fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<T, DatastoreError>
+	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<T, DatastoreError>
 	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>
 	{
-        let data = Datastore::get(*self, hash.into())?;
+		let data = Datastore::get(*self, hash.into())?;
 		let result = data.archived::<T>()?;
 		let ret = result.deserialize(self)?;
 		Ok(ret)
-    }
+	}
 }

@@ -2,7 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-use hashdb::{Datastore, DatastoreError, NativeHashtype, TypedHash};
+use hashdb::{Datastore, DatastoreError, NativeHashtype, Link};
 
 mod expr;
 mod display;

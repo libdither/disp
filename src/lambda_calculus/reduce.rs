@@ -1,21 +1,21 @@
-use hashdb::{Datastore, NativeHashtype, TypedHash};
+use hashdb::{Datastore, NativeHashtype, Link};
 
 use crate::lambda_calculus::DisplayWithDatastore;
 
-use super::{ArchivedExpr, Expr, LambdaError, ReduceArena, ReplaceIndex, ReplaceTree};
+use super::{Expr, Expr, LambdaError, ReduceArena, ReplaceIndex, ReplaceTree};
 
 /// Recursively substitute expressions for certain variables
 /// Takes lambda expression, for each variable in Lambda { expr }, if Lambda { tree } index == replace_index, replace subexpr with replacement and subtree with replacement_tree
 fn recur_replace<'a>(
-	replace_in_expr: TypedHash<Expr>, // Expr that should be replaced in
+	replace_in_expr: Link<Expr>, // Expr that should be replaced in
 	arena: &'a ReduceArena<'a>,
 	replace_index: &mut ReplaceIndex<'a>,
-	replacement: &TypedHash<Expr>,
+	replacement: &Link<Expr>,
 	replacement_tree: &'a ReplaceTree<'a>,
-	db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError>
+	db: &mut Datastore) -> Result<Link<Expr>, LambdaError>
 {
 	Ok(match replace_in_expr.fetch(db)?.clone() {
-		ArchivedExpr::Variable => {
+		Expr::Variable => {
 			// When encounter a variable and index is correct, replace with replacement
 			// Must be PointerTree::None because replace_in_expr's variables aren't registered in external_tree
 			match replace_index.tree {
@@ -28,14 +28,14 @@ fn recur_replace<'a>(
 			}
 		},
 		// When encounter a lambda, unwrap, recurse, re-wrap
-		ArchivedExpr::Lambda { tree, expr } => {
+		Expr::Lambda { tree, expr } => {
 			let tree = tree.clone();
 			let replaced_expr = recur_replace(expr.clone(), arena, replace_index, replacement, replacement_tree, db)?;
 			
 			Expr::Lambda { tree, expr: replaced_expr }.store(db)
 		},
 		// When encounter an application in the replacement expression:
-		ArchivedExpr::Application { func, sub } => {
+		Expr::Application { func, sub } => {
 			// Split into the function and substitution portions of the pointer tree to replace in
 			let (mut func_index, mut sub_index) = replace_index.split()?;
 
@@ -49,13 +49,13 @@ fn recur_replace<'a>(
 	})
 }
 
-/// Reduces reducing_expr and returns TypedHash<Expr>
-fn partial_beta_reduce<'a>(reducing_expr: TypedHash<Expr>, arena: &'a ReduceArena<'a>, replace_index: &mut ReplaceIndex<'a>, depth: usize, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
+/// Reduces reducing_expr and returns Link<Expr>
+fn partial_beta_reduce<'a>(reducing_expr: Link<Expr>, arena: &'a ReduceArena<'a>, replace_index: &mut ReplaceIndex<'a>, depth: usize, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
 	if depth > 200 { return Err(LambdaError::RecursionDepthExceeded) }
 
 	Ok(match reducing_expr.fetch(db)? {
-		ArchivedExpr::Variable => reducing_expr,
-		ArchivedExpr::Lambda { tree, expr } => {
+		Expr::Variable => reducing_expr,
+		Expr::Lambda { tree, expr } => {
 			arena.push_pointer_tree(replace_index, tree, db)?;
 
 			let reduced_expr = partial_beta_reduce(expr.clone(), arena, replace_index, depth, db)?;
@@ -65,21 +65,21 @@ fn partial_beta_reduce<'a>(reducing_expr: TypedHash<Expr>, arena: &'a ReduceAren
 				expr: reduced_expr
 			}.store(db)
 		}
-		ArchivedExpr::Application { func, sub } => {
+		Expr::Application { func, sub } => {
 			// Split subtrees
 			let (mut func_tree, mut sub_tree) = replace_index.split()?;
 			let (func, sub) = (func.clone(), sub.clone());
 			let func = partial_beta_reduce(func.clone(), arena, &mut func_tree, depth, db)?;
 
 			match func.fetch(db)? {
-				ArchivedExpr::Variable | ArchivedExpr::Application { .. } => {
+				Expr::Variable | Expr::Application { .. } => {
 					// If Variable, reduce substitution & return Application with joined trees
 					let sub = partial_beta_reduce(sub.clone(), arena, &mut sub_tree, depth, db)?;
 					*replace_index = arena.join_index(func_tree, sub_tree);
 
 					Expr::Application { func, sub, }.store(db)
 				},
-				ArchivedExpr::Lambda { tree, expr } => {
+				Expr::Lambda { tree, expr } => {
 					// Replace all tree in expr & reduce the output
 					*replace_index = func_tree;
 					arena.push_pointer_tree(replace_index, tree, db)?;
@@ -91,7 +91,7 @@ fn partial_beta_reduce<'a>(reducing_expr: TypedHash<Expr>, arena: &'a ReduceAren
 					let depth = depth + 1;
 					partial_beta_reduce(replaced_expr, arena, replace_index, depth, db)?
 				},
-				/* ArchivedExpr::Application { .. } => {
+				/* Expr::Application { .. } => {
 					// Beta reduce sub, return application with joined trees
 					// let sub = partial_beta_reduce(sub.clone(), arena, &mut sub_tree, depth, db)?;
 					*replace_index = arena.join_index(func_tree, sub_tree);
@@ -102,7 +102,7 @@ fn partial_beta_reduce<'a>(reducing_expr: TypedHash<Expr>, arena: &'a ReduceAren
 	})
 }
 
-pub fn beta_reduce(expr: &TypedHash<Expr>, db: &mut Datastore) -> Result<TypedHash<Expr>, LambdaError> {
+pub fn beta_reduce(expr: &Link<Expr>, db: &mut Datastore) -> Result<Link<Expr>, LambdaError> {
 	println!("Reducing: {}", expr.display(db));
 	let arena = ReduceArena::new();
 	Ok(partial_beta_reduce(expr.clone(), &arena, &mut arena.index(), 0, db)?)
