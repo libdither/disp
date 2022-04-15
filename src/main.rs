@@ -18,11 +18,12 @@ use parse::{parse_line};
 
 fn main() {
 	let db = &mut Datastore::new();
+    let ser = &mut db.serializer();
 
     let load_file = std::env::args().nth(1);
 
     if let Some(file) = &load_file {
-        db.load(fs::File::open(file).unwrap()).expect("could not load disp file")
+        ser.db.load(fs::File::open(file).unwrap()).expect("could not load disp file")
     }
 
 	let mut rl = Editor::<()>::new();
@@ -36,10 +37,10 @@ fn main() {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
 
-				match parse_line(line.as_str(), db) {
+				match parse_line(line.as_str(), ser) {
 					Ok(Some(expr)) => {
-                        match beta_reduce(&expr, db) {
-                            Ok(expr) => println!("{}", expr.display(db)),
+                        match beta_reduce(&expr, ser.db) {
+                            Ok(expr) => println!("{}", expr.display(ser.db)),
                             Err(err) => {println!("failed to reduce expression: {}", err); continue},
                         };
                     },

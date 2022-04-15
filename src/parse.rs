@@ -282,7 +282,7 @@ fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore
 }
 
 
-fn parse_command<'a>(feeder: &'a mut TokenFeeder, db: &mut Datastore) -> Result<Option<Link<Expr>>, ParseError<'a>> {
+fn parse_command<'a>(feeder: &'a mut TokenFeeder, ser: &mut HashSerializer) -> Result<Option<Link<Expr>>, ParseError<'a>> {
 	let span = feeder.expect_next(Token::Symbol)?;
 	let string = &feeder.string[span.clone()];
 	Ok(match string {
@@ -290,14 +290,14 @@ fn parse_command<'a>(feeder: &'a mut TokenFeeder, db: &mut Datastore) -> Result<
 			let span = feeder.expect_next(Token::Symbol)?;
 			let name = &feeder.string[span];
 
-			let next_expr = parse_expr(feeder, 0, db)?;
-			let reduced = match beta_reduce(&next_expr, db) {
+			let next_expr = parse_expr(feeder, 0, ser.db)?;
+			let reduced = match beta_reduce(&next_expr, ser.db) {
 				Ok(ret) => ret,
 				Err(LambdaError::RecursionDepthExceeded) => { println!("warning: this expresion will run for a long time"); next_expr },
 				Err(err) => Err(ParseError::CommandError("set", format!("failed to beta reduce expr: {}", err)))?
 			};
 			
-			Symbol::new(name, &reduced, db);
+			Symbol::new(name, &reduced, ser);
 
 			Some(reduced)
 		}
@@ -306,7 +306,7 @@ fn parse_command<'a>(feeder: &'a mut TokenFeeder, db: &mut Datastore) -> Result<
 			let location = &feeder.string[location];
 			let location = &location[1..location.len()-1];
 			println!("Saving to: {:?}", location);
-			db.save(fs::File::create(location)?)?;
+			ser.db.save(fs::File::create(location)?)?;
 			None
 		}
 		"load" => {
@@ -314,16 +314,16 @@ fn parse_command<'a>(feeder: &'a mut TokenFeeder, db: &mut Datastore) -> Result<
 			let location = &feeder.string[location];
 			let location = &location[1..location.len()-1];
 			println!("Loading from: {:?}", location);
-			db.load(fs::File::open(location)?)?;
+			ser.db.load(fs::File::open(location)?)?;
 			None
 		}
 		"clear" => {
-			db.clear();
+			ser.db.clear();
 			None
 		}
 		_ => {
-			let expr = lookup_symbol(feeder, span, db)?;
-			Some(parse_application(feeder, expr, 0, db)?)
+			let expr = lookup_symbol(feeder, span, ser.db)?;
+			Some(parse_application(feeder, expr, 0, ser.db)?)
 		},
 	})
 }
@@ -343,15 +343,15 @@ pub fn parse_reduce<'a>(string: &'a str, db: &mut Datastore) -> Result<Link<Expr
 	Ok(expr)
 }
 
-pub fn parse_line<'a>(line: &'a str, db: &mut Datastore) -> Result<Option<Link<Expr>>, ParseError<'a>> {
+pub fn parse_line<'a>(line: &'a str, ser: &mut HashSerializer) -> Result<Option<Link<Expr>>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(line);
 	let (next, _) = feeder.peek()?;
 	Ok(if Token::Symbol == *next {
-		match parse_command(feeder, db) {
+		match parse_command(feeder, ser) {
 			Err(err) => {println!("Failed to parse command: {}", err); None}
 			Ok(expr) => expr,
 		}
 	} else {
-		Some(parse_expr(feeder, 0, db)?)
+		Some(parse_expr(feeder, 0, ser.db)?)
 	})
 }
