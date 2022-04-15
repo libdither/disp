@@ -209,8 +209,8 @@ fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, db: &mut Datastor
 fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: Link<Expr>, depth: usize, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
 	let func = initial;
 	Ok(if !feeder.test_end_of_expression(depth) {
-		let sub = parse_token(feeder, depth, db)?.2;
-		parse_application(feeder, Link::new(Expr::Application { func, sub }), depth, db)?
+		let args = parse_token(feeder, depth, db)?.2;
+		parse_application(feeder, Link::new(Expr::Application { func, args }), depth, db)?
 	} else { func })
 }
 

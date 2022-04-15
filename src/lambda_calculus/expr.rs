@@ -70,9 +70,15 @@ pub enum Expr {
 	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,
 	/// Create a function
-	Lambda { tree: Link<PointerTree>, #[omit_bounds] expr: Link<Expr> },
+	Lambda {
+		tree: Link<PointerTree>,
+		#[omit_bounds] expr: Link<Expr>
+	},
 	/// Apply functions to expressions
-	Application { #[omit_bounds] func: Link<Expr>, #[omit_bounds] sub: Link<Expr> },
+	Application {
+		#[omit_bounds] func: Link<Expr>,
+		#[omit_bounds] args: Link<Expr>
+	},
 	// Type of all types
 	// Type,
 	// Create dependent types
@@ -94,7 +100,7 @@ impl DisplayWithDatastore for Link<Expr> {
 		
 				write!(f, "(λ{}[{}] {})", index.index, index.tree, expr.display(db))?
 			},
-			Expr::Application { func, sub } => {
+			Expr::Application { func, args: sub } => {
 				write!(f, "({} {})", func.display(db), sub.display(db))?
 			},
 		}
@@ -111,6 +117,6 @@ impl Expr {
 		Link::new(Expr::Lambda { tree: pointer, expr: expr.clone() })
 	}
 	pub fn app(function: &Link<Expr>, substitution: &Link<Expr>, db: &mut Datastore) -> Link<Expr> {
-		Link::new(Expr::Application { func: function.clone(), sub: substitution.clone() })
+		Link::new(Expr::Application { func: function.clone(), args: substitution.clone() })
 	}
 }

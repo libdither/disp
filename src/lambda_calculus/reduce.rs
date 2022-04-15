@@ -35,16 +35,16 @@ fn recur_replace<'a>(
 			Link::new(Expr::Lambda { tree, expr: replaced_expr })
 		},
 		// When encounter an application in the replacement expression:
-		Expr::Application { func, sub } => {
+		Expr::Application { func, args } => {
 			// Split into the function and substitution portions of the pointer tree to replace in
 			let (mut func_index, mut sub_index) = replace_index.split()?;
 
-			let (func, sub) = (func.clone(), sub.clone());
+			let (func, sub) = (func.clone(), args.clone());
 			let func = recur_replace(func, arena, &mut func_index, replacement, replacement_tree, db)?;
 			let sub = recur_replace(sub, arena, &mut sub_index, replacement, replacement_tree, db)?;
 
 			*replace_index = arena.join_index(func_index, sub_index);
-			Link::new(Expr::Application { func, sub })
+			Link::new(Expr::Application { func, args: sub })
 		}
 	})
 }
@@ -65,7 +65,7 @@ fn partial_beta_reduce<'a>(reducing_expr: Link<Expr>, arena: &'a ReduceArena<'a>
 				expr: reduced_expr
 			})
 		}
-		Expr::Application { func, sub } => {
+		Expr::Application { func, args: sub } => {
 			// Split subtrees
 			let (mut func_tree, mut sub_tree) = replace_index.split()?;
 			let (func, sub) = (func.clone(), sub.clone());
@@ -77,7 +77,7 @@ fn partial_beta_reduce<'a>(reducing_expr: Link<Expr>, arena: &'a ReduceArena<'a>
 					let sub = partial_beta_reduce(sub.clone(), arena, &mut sub_tree, depth, db)?;
 					*replace_index = arena.join_index(func_tree, sub_tree);
 
-					Link::new(Expr::Application { func, sub, })
+					Link::new(Expr::Application { func, args: sub, })
 				},
 				Expr::Lambda { tree, expr } => {
 					// Replace all tree in expr & reduce the output
