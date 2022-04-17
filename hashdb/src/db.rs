@@ -5,7 +5,7 @@ use bytecheck::CheckBytes;
 use rkyv::{AlignedVec, Archived, Fallible, de::{SharedDeserializeRegistry, deserializers::SharedDeserializeMap}, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch}}, validation::validators::DefaultValidator, with::{DeserializeWith, SerializeWith}};
 use serde::{Serialize, Deserialize};
 
-use crate::{Data, Hash, data::DataError, hash::TrimHasher, hashtype::{ArchivedLink, DatastoreDeserializer, DatastoreSerializer, HashSerializer, Link, NativeHashtype, TypedHash}};
+use crate::{ArchivedLink, Data, DatastoreDeserializer, DatastoreSerializer, Hash, Link, LinkArc, LinkArena, LinkSerializer, LinkType, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher, LinkArcs};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
@@ -85,9 +85,6 @@ impl Datastore {
 		self.map.clear();
 		self.reverse_lookup.clear();
 	}
-	pub fn serializer<'s>(&'s mut self) -> HashSerializer<'s> {
-		HashSerializer::new(self)
-	}
 }
 impl<'db> Fallible for &'db Datastore {
 	type Error = DatastoreError;
@@ -98,23 +95,29 @@ fn test_loading() {
 	let db = &mut Datastore::new();
 
 	// Self-referential type
-	#[derive(Debug, PartialEq, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+	#[derive(Debug, Hash, PartialEq, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 	// To use the safe API, you have to derive CheckBytes for the archived type
 	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
-	#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
+	#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'static, StringType, Arc<StringType>>"))]
 	enum StringType {
 		String(String),
-		Link(#[omit_bounds] Link<StringType>, #[omit_bounds] Link<StringType>),
+		Link(#[omit_bounds] LinkArc<StringType>, #[omit_bounds] LinkArc<StringType>),
 	}
 	impl NativeHashtype for StringType {}
 
-	let ser = &mut HashSerializer::new(db);
+	let ser = &mut LinkSerializer::new();
 
-	let string = Link::new(StringType::String("Hello".into()));
-	let string2 = Link::new(StringType::Link(string.clone().into(), string.clone().into()));
+	let arcs_ser = LinkArcs::new();
+	let string = arcs_ser.add(StringType::String("Hello".into()));
+	let string2 = arcs_ser.add(StringType::Link(string.clone().into(), string.clone().into()));
 
+	let ser = &mut ser.join(db);
 	let hash = string2.store(ser);
-	let ret: Link<StringType> = hash.fetch(ser.db).unwrap();
+
+	let arcs_de = LinkArcs::new();
+	let de = &mut arcs_de.join(db);
+	let ret: StringType = hash.fetch(de).unwrap();
 	
+	let ser = &mut LinkSerializer::new(); let ser = &mut ser.join(db);
 	assert_eq!(ret.store(ser), string2.store(ser));
 }

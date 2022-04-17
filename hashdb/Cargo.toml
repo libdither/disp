@@ -18,6 +18,7 @@ unsigned-varint = "0.7.1"
 derivative = "2.2.0"
 bs58 = "0.4.0"
 futures = { version = "0.3.21", optional = true }
+bumpalo = "3.9.1"
 
 [features]
 async = ["futures"]

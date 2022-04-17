@@ -1,21 +1,22 @@
-use std::{borrow::Borrow, collections::HashMap, fmt, iter, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{any::Any, borrow::Borrow, cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, fmt, hash::Hasher, iter, marker::PhantomData, ops::Deref, sync::Arc};
 
 use bincode::config::NativeEndian;
+use bumpalo::Bump;
 use bytes::buf::Chain;
 use rkyv::{AlignedVec, Archive, Archived, Deserialize, Fallible, Infallible, Resolver, Serialize, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch, SharedSerializeMap, SharedSerializeMapError}}, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, Immutable, SerializeWith, With}};
 
 use bytecheck::CheckBytes;
-use crate::{Data, Datastore, Hash, db::{DatastoreError}};
+use crate::{Data, Datastore, DatastoreDeserializer, DatastoreError, DatastoreLinkSerializer, Hash, LinkSerializer, LinkType, DatastoreSerializer};
 // const RUST_TYPE: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0]);
 
 /// Represents a Rust type with an rykv Archive implementation that can be fetched from a Datastore via its hash
-pub trait NativeHashtype: fmt::Debug + Archive<Archived: std::fmt::Debug> + for<'db> Serialize<HashSerializer<'db>> + Sized + 'static {
+pub trait NativeHashtype: std::hash::Hash + fmt::Debug + Archive<Archived: std::fmt::Debug> + for<'a> Serialize<DatastoreLinkSerializer<'a>> + Serialize<LinkSerializer> + Sized + 'static {
 	/// Calculate hash and data from type
-	fn store(&self, ser: &mut HashSerializer) -> TypedHash<Self> {
-		ser.store(self).unwrap().into()
+	fn store<'a>(&self, db_ser: &mut DatastoreLinkSerializer<'a>) -> TypedHash<Self> {
+		db_ser.store(self).unwrap().into()
 	}
-	fn calc_hash(&self) -> TypedHash<Self> {
-		self.store(&mut Datastore::new().serializer())
+	fn calc_hash(&self, ser: &mut LinkSerializer) -> TypedHash<Self> {
+		ser.hash(self)
 	}
 
 	/// List of hashes representing any data that should link to this type
@@ -71,167 +72,10 @@ impl<T> TypedHash<T> {
 	pub fn as_hash(&self) -> &Hash { &self.hash }
 }
 impl<T: NativeHashtype> TypedHash<T> {
-	pub fn fetch<'db>(&self, mut db: &'db Datastore) -> Result<T, DatastoreError>
+	pub fn fetch<'a, L: LinkType<'a, T>, D: DatastoreDeserializer<'a, T, L>>(&self, db: &mut D) -> Result<T, D::Error>
 	where
-		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, &'db Datastore>,
+		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, D>,
 	{
 		db.fetch(self.into())
-	}
-}
-
-pub trait DatastoreSerializer: Fallible {
-	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, <Self as Fallible>::Error> where T: Serialize<Self>;
-}
-pub trait DatastoreDeserializer: Fallible<Error: From<DatastoreError>> {
-	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<T, <Self as Fallible>::Error>
-	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>;
-}
-
-#[repr(transparent)]
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Link<T>(Arc<T>);
-
-impl<T: NativeHashtype> NativeHashtype for Link<T> {}
-impl<T> From<Arc<T>> for Link<T> { fn from(a: Arc<T>) -> Self { Self(a) } }
-impl<T> Link<T> {
-	pub fn new(t: T) -> Link<T> {
-		Link(Arc::new(t))
-	}
-}
-impl<T> Deref for Link<T> {
-	type Target = T;
-
-	fn deref(&self) -> &Self::Target {
-		self.0.deref()
-	}
-}
-impl<T> AsRef<T> for Link<T> {
-    fn as_ref(&self) -> &T {
-        self.0.as_ref()
-    }
-}
-
-#[derive(Debug)]
-pub struct ArchivedLink<T>(Hash, PhantomData<T>);
-
-impl<T> From<Hash> for ArchivedLink<T> { fn from(hash: Hash) -> Self { Self(hash, PhantomData::default()) } }
-
-impl<'db, T: NativeHashtype> Archive for Link<T> {
-	type Archived = ArchivedLink<T>;
-
-	type Resolver = Hash;
-
-	unsafe fn resolve(&self, pos: usize, resolver: Self::Resolver, out: *mut Self::Archived) {
-		resolver.resolve(pos, [(); Hash::len()], out.cast())
-	}
-}
-impl<'db, T: NativeHashtype, __S: DatastoreSerializer + ?Sized> Serialize<__S> for Link<T>
-where T: Serialize<__S>,
-{
-	fn serialize(&self, serializer: &mut __S) -> Result<Self::Resolver, <__S as Fallible>::Error> {
-		Ok(serializer.store::<T>(self.0.deref())?.into())
-	}
-}
-impl<'db, T: NativeHashtype, __D: DatastoreDeserializer + ?Sized> Deserialize<Link<T>, __D> for ArchivedLink<T>
-where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, __D>,
-{
-	fn deserialize(&self, deserializer: &mut __D) -> Result<Link<T>, <__D as Fallible>::Error> {
-		let hash = &self.0;
-		let t = deserializer.fetch::<T>(hash)?;
-		Ok(Link(Arc::new(t)))
-	}
-}
-impl<__C: ?Sized, T: NativeHashtype> CheckBytes<__C> for ArchivedLink<T> {
-	type Error = <Hash as CheckBytes<__C>>::Error;
-
-	unsafe fn check_bytes<'a>(value: *const Self, context: &mut __C)
-		-> Result<&'a Self, Self::Error> {
-		let ret = Hash::check_bytes(value.cast(), context)?;
-		return Ok(&*(ret as *const Hash).cast())
-	}
-}
-
-#[derive(Debug, Error)]
-pub enum HashSerializeError {
-	#[error("scratch error: {0}")]
-	AllocScratchError(#[from] AllocScratchError),
-	#[error("data store error: {0}")]
-	DatastoreError(#[from] DatastoreError),
-	#[error("shared map error: {0}")]
-	SharedSerializeMapError(#[from] SharedSerializeMapError)
-}
-
-/// Serialize linked objects into hashtypes linked by hashes
-pub struct HashSerializer<'a> {
-	scratch: FallbackScratch<HeapScratch<1024>, AllocScratch>, // Scratch space
-	serializer: AlignedSerializer<AlignedVec>, // Serializer
-	pointer_map: HashMap<*const (), (Hash, usize)>, // Check for shared pointers to avoid serializing the same object twice
-	reverse_links: Vec<Hash>,
-	pub db: &'a mut Datastore,
-}
-
-impl<'db> DatastoreSerializer for HashSerializer<'db> {
-	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, Self::Error> {
-		let ptr = (hashtype as *const T).cast::<()>();
-		Ok(if let Some((hash, _)) = self.pointer_map.get(&ptr) {
-			hash.clone().into()
-		} else {
-			let _pos = self.serialize_value(hashtype)?;
-			let vec = self.get_vec();
-			// Safety: We just serialized this data, therefore it is a valid archive
-			let data = unsafe { Data::new_typed_unsafe::<T>(vec.into()) };
-			let hash = self.db.store(data).into();
-			self.db.register::<T>(hashtype.reverse_links(), &hash);
-			hash
-		})
-	}
-}
-impl<'db> HashSerializer<'db> {
-	pub fn new(db: &'db mut Datastore) -> Self {
-		Self {
-			scratch: Default::default(),
-			serializer: Default::default(),
-			pointer_map: Default::default(),
-			reverse_links: Default::default(),
-			db,
-		}
-	}
-	pub fn get_vec(&mut self) -> AlignedVec {
-		std::mem::take(&mut self.serializer).into_inner()
-	}
-}
-
-impl<'db> Fallible for HashSerializer<'db> {
-	type Error = HashSerializeError;
-}
-
-impl<'db> ScratchSpace for HashSerializer<'db> {
-	unsafe fn push_scratch(&mut self, layout: std::alloc::Layout) -> Result<std::ptr::NonNull<[u8]>, Self::Error> {
-		Ok(self.scratch.push_scratch(layout)?)
-	}
-
-	unsafe fn pop_scratch(&mut self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout) -> Result<(), Self::Error> {
-		Ok(self.scratch.pop_scratch(ptr, layout)?)
-	}
-}
-
-impl<'db> Serializer for HashSerializer<'db> {
-	fn pos(&self) -> usize {
-		self.serializer.pos()
-	}
-
-	fn write(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-		Ok(self.serializer.write(bytes).unwrap())
-	}
-}
-
-impl<'db> DatastoreDeserializer for &'db Datastore {
-	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<T, DatastoreError>
-	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>
-	{
-		let data = Datastore::get(*self, hash.into())?;
-		let result = data.archived::<T>()?;
-		let ret = result.deserialize(self)?;
-		Ok(ret)
 	}
 }

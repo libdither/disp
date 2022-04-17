@@ -2,7 +2,7 @@
 
 #![feature(generic_associated_types)]
 
-use hashdb::{HashSerializer, NativeHashtype};
+use hashdb::{LinkSerializer, NativeHashtype};
 pub use hashdb::{Data, Datastore, Link};
 
 pub mod lambda_calculus;
