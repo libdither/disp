@@ -5,7 +5,7 @@ use bytecheck::CheckBytes;
 use rkyv::{AlignedVec, Archived, Fallible, de::{SharedDeserializeRegistry, deserializers::SharedDeserializeMap}, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch}}, validation::validators::DefaultValidator, with::{DeserializeWith, SerializeWith}};
 use serde::{Serialize, Deserialize};
 
-use crate::{ArchivedLink, Data, DatastoreDeserializer, DatastoreSerializer, Hash, Link, LinkArc, LinkArena, LinkSerializer, LinkType, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher, LinkArcs};
+use crate::{ArchivedLink, Data, DatastoreDeserializer, DatastoreSerializer, Hash, Link, LinkArc, LinkArcs, LinkArena, LinkRef, LinkSerializer, LinkType, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
@@ -66,7 +66,7 @@ impl Datastore {
 	pub fn lookup(&self, hash: &Hash) -> Result<&Hash, DatastoreError> {
 		self.reverse_lookup.get(hash).ok_or(DatastoreError::NotReverseLinked(hash.clone()))
 	}
-	pub fn lookup_typed<'a, F: NativeHashtype, T: NativeHashtype>(&'a self, hash: &TypedHash<F>) -> Result<TypedHash<T>, DatastoreError>
+	pub fn lookup_typed<'a, F: NativeHashtype, T: NativeHashtype + 'a>(&'a self, hash: &TypedHash<F>) -> Result<TypedHash<T>, DatastoreError>
 	where T::Archived: CheckBytes<DefaultValidator<'a>>
 	{
 		let linked_hash = self.lookup(hash.as_hash())?;
@@ -88,36 +88,4 @@ impl Datastore {
 }
 impl<'db> Fallible for &'db Datastore {
 	type Error = DatastoreError;
-}
-
-#[test]
-fn test_loading() {
-	let db = &mut Datastore::new();
-
-	// Self-referential type
-	#[derive(Debug, Hash, PartialEq, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-	// To use the safe API, you have to derive CheckBytes for the archived type
-	#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
-	#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'static, StringType, Arc<StringType>>"))]
-	enum StringType {
-		String(String),
-		Link(#[omit_bounds] LinkArc<StringType>, #[omit_bounds] LinkArc<StringType>),
-	}
-	impl NativeHashtype for StringType {}
-
-	let ser = &mut LinkSerializer::new();
-
-	let arcs_ser = LinkArcs::new();
-	let string = arcs_ser.add(StringType::String("Hello".into()));
-	let string2 = arcs_ser.add(StringType::Link(string.clone().into(), string.clone().into()));
-
-	let ser = &mut ser.join(db);
-	let hash = string2.store(ser);
-
-	let arcs_de = LinkArcs::new();
-	let de = &mut arcs_de.join(db);
-	let ret: StringType = hash.fetch(de).unwrap();
-	
-	let ser = &mut LinkSerializer::new(); let ser = &mut ser.join(db);
-	assert_eq!(ret.store(ser), string2.store(ser));
 }

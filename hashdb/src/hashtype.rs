@@ -6,14 +6,15 @@ use bytes::buf::Chain;
 use rkyv::{AlignedVec, Archive, Archived, Deserialize, Fallible, Infallible, Resolver, Serialize, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch, SharedSerializeMap, SharedSerializeMapError}}, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, Immutable, SerializeWith, With}};
 
 use bytecheck::CheckBytes;
-use crate::{Data, Datastore, DatastoreDeserializer, DatastoreError, DatastoreLinkSerializer, Hash, LinkSerializer, LinkType, DatastoreSerializer};
+use crate::{Data, Datastore, DatastoreDeserializer, DatastoreError, DatastoreLinkSerializer, DatastoreSerializer, Deduplicator, Hash, HashDeserializer, LinkSerializer, LinkType};
 // const RUST_TYPE: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0]);
 
 /// Represents a Rust type with an rykv Archive implementation that can be fetched from a Datastore via its hash
-pub trait NativeHashtype: std::hash::Hash + fmt::Debug + Archive<Archived: std::fmt::Debug> + for<'a> Serialize<DatastoreLinkSerializer<'a>> + Serialize<LinkSerializer> + Sized + 'static {
+pub trait NativeHashtype: std::hash::Hash + fmt::Debug + Archive<Archived: std::fmt::Debug> + for<'a> Serialize<DatastoreLinkSerializer<'a>> + Serialize<LinkSerializer> + Sized {
 	/// Calculate hash and data from type
-	fn store<'a>(&self, db_ser: &mut DatastoreLinkSerializer<'a>) -> TypedHash<Self> {
-		db_ser.store(self).unwrap().into()
+	fn store<'a>(&self, ser: &mut LinkSerializer, db: &mut Datastore) -> TypedHash<Self> {
+		let ser = &mut ser.join(db);
+		ser.store(self).unwrap().into()
 	}
 	fn calc_hash(&self, ser: &mut LinkSerializer) -> TypedHash<Self> {
 		ser.hash(self)
@@ -72,10 +73,11 @@ impl<T> TypedHash<T> {
 	pub fn as_hash(&self) -> &Hash { &self.hash }
 }
 impl<T: NativeHashtype> TypedHash<T> {
-	pub fn fetch<'a, L: LinkType<'a, T>, D: DatastoreDeserializer<'a, T, L>>(&self, db: &mut D) -> Result<T, D::Error>
+	pub fn fetch<'a, Dedup: Deduplicator<'a> + 'a>(&self, db: &'a Datastore, dedup: &'a mut Dedup) -> Result<T, <HashDeserializer<'a, Dedup> as Fallible>::Error>
 	where
-		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, D>,
+		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, HashDeserializer<'a, Dedup>>,
 	{
-		db.fetch(self.into())
+		let de = HashDeserializer { db, dedup };
+		de.fetch(self.into())
 	}
 }
