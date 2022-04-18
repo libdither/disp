@@ -90,7 +90,8 @@ impl<'a> DatastoreSerializer for DatastoreLinkSerializer<'a> {
 			// Safety: We just serialized this data, therefore it is a valid archive
 			let data = unsafe { Data::new(vec.into()) };
 			let hash = self.0.store(data).into();
-			self.0.register::<T>(hashtype.reverse_links(), &hash);
+			let reverse_links = hashtype.reverse_links(self);
+			self.0.register::<T>(reverse_links, &hash);
 			hash
 		})
 	}

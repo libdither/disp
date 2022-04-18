@@ -5,47 +5,42 @@ use rkyv::{Archive, Serialize, Deserialize};
 use bytecheck::CheckBytes;
 //use serde::{Serialize, Deserialize};
 
-use hashdb::{Datastore, NativeHashtype, Link, DatastoreSerializer, DatastoreDeserializer};
+use hashdb::{Datastore, DatastoreDeserializer, DatastoreSerializer, Link, LinkArena, NativeHashtype};
 
 use crate::{symbol::Symbol};
 
 use super::{DisplayWithDatastore, DisplayWithDatastoreError};
 
-pub mod pointer_helpers {
-	#![allow(unused)]
-    use hashdb::{Datastore, Link, NativeHashtype};
-    use super::{PointerTree, PT_NONE};
-
-	pub fn none(db: &mut Datastore) -> Link<PointerTree> { PT_NONE.clone() }
-	pub fn end(db: &mut Datastore) -> Link<PointerTree> { Link::new(PointerTree::End) }
-	pub fn left(p: Link<PointerTree>, db: &mut Datastore) -> Link<PointerTree> {
-		Link::new(PointerTree::Branch(p, PT_NONE.clone()))
-	}
-	pub fn right(p: Link<PointerTree>, db: &mut Datastore) -> Link<PointerTree> {
-		Link::new(PointerTree::Branch(PT_NONE.clone(), p))
-	}
-	pub fn both(l: Link<PointerTree>, r: Link<PointerTree>, db: &mut Datastore) -> Link<PointerTree> {
-		Link::new(PointerTree::Branch(l, r))
-	}
-}
-
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
-#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes, Debug))]
-#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
-pub enum PointerTree {
+#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
+pub enum PointerTree<'a> {
 	None,
 	End,
-	Branch(#[omit_bounds] Link<PointerTree>, #[omit_bounds] Link<PointerTree>), // u32 represents highest variable abstraction level in this expression
+	Branch(#[omit_bounds] Link<'a, PointerTree<'a>>, #[omit_bounds] Link<'a, PointerTree<'a>>), // u32 represents highest variable abstraction level in this expression
 }
-lazy_static! {
-	pub static ref PT_NONE: Link<PointerTree> = Link::new(PointerTree::None);
-	pub static ref PT_BOTH_NONE: Link<PointerTree> = Link::new(PointerTree::Branch(PT_NONE.clone(), PT_NONE.clone()));
+impl<'a> PointerTree<'a> {
+	pub const NONE: Link<'static, PointerTree<'static>> = Link::new(&PointerTree::None);
+	pub const END: Link<'static, PointerTree<'static>> = Link::new(&PointerTree::End);
+	pub fn left(p: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
+		arena.new(PointerTree::Branch(p, PointerTree::none(arena)))
+	}
+	pub fn right(p: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
+		arena.new(PointerTree::Branch(PointerTree::none(arena), p))
+	}
+	pub fn branch(l: Link<'a, PointerTree<'a>>, r: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
+		arena.new(PointerTree::Branch(l, r))
+	}
+	pub fn branch_reduce(l: Link<'a, PointerTree<'a>>, r: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
+		if l == Self::NONE && r == Self::NONE { Self::NONE }
+		else { arena.new(PointerTree::Branch(l, r)) }
+	}
 }
 
-impl NativeHashtype for PointerTree {}
-impl DisplayWithDatastore for Link<PointerTree> {
+impl<'a> NativeHashtype for PointerTree<'a> {}
+impl<'a> DisplayWithDatastore for Link<'a, PointerTree<'a>> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
 		match self.as_ref() { 
 			PointerTree::Branch(left, right) => {
@@ -63,29 +58,29 @@ impl DisplayWithDatastore for Link<PointerTree> {
 	}
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes, Debug))]
-#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
-pub enum Expr {
+#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
+pub enum Expr<'a> {
 	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,
 	/// Create a function
 	Lambda {
-		tree: Link<PointerTree>,
-		#[omit_bounds] expr: Link<Expr>
+		tree: Link<'a, PointerTree<'a>>,
+		#[omit_bounds] expr: Link<'a, Expr<'a>>
 	},
 	/// Apply functions to expressions
 	Application {
-		#[omit_bounds] func: Link<Expr>,
-		#[omit_bounds] args: Link<Expr>
+		#[omit_bounds] func: Link<'a, Expr<'a>>,
+		#[omit_bounds] args: Link<'a, Expr<'a>>
 	},
 	// Type of all types
 	// Type,
 	// Create dependent types
-	// Dependent { tree: Link<PointerTree>, expr: Link<Expr> },
+	// Dependent { tree: Link<'a, PointerTree<'a>>, expr: Link<Expr> },
 }
-impl NativeHashtype for Expr {}
-impl DisplayWithDatastore for Link<Expr> {
+impl<'a> NativeHashtype for Expr<'a> {}
+impl<'a> DisplayWithDatastore for Link<'a, Expr<'a>> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
 		/* match db.lookup_typed::<Expr, Symbol>(&self.store()) {
 			Ok(symbol) => write!(f, "{}", symbol.fetch().name(db)?)?,
@@ -94,7 +89,7 @@ impl DisplayWithDatastore for Link<Expr> {
 		match self.as_ref() {
 			Expr::Variable => write!(f, "x")?,
 			Expr::Lambda { .. } => {
-				let arena = crate::lambda_calculus::ReduceArena::new();
+				let arena = &LinkArena::new();
 				let mut index = arena.index();
 				let expr = arena.push_lambda(&mut index, &self, db).unwrap();
 		
@@ -109,14 +104,12 @@ impl DisplayWithDatastore for Link<Expr> {
 }
 
 
-impl Expr {
-	pub fn var(db: &mut Datastore) -> Link<Expr> {
-		Link::new(Expr::Variable)
+impl<'a> Expr<'a> {
+	pub const VAR: Link<'a, Expr<'a>> = Link::new(&Expr::Variable);
+	pub fn lambda(tree: Link<'a, PointerTree>, expr: Link<'a, Expr<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, Expr<'a>> {
+		arena.add(Expr::Lambda { tree, expr })
 	}
-	pub fn lambda(pointer: Link<PointerTree>, expr: &Link<Expr>, db: &mut Datastore) -> Link<Expr> {
-		Link::new(Expr::Lambda { tree: pointer, expr: expr.clone() })
-	}
-	pub fn app(function: &Link<Expr>, substitution: &Link<Expr>, db: &mut Datastore) -> Link<Expr> {
-		Link::new(Expr::Application { func: function.clone(), args: substitution.clone() })
+	pub fn app(func: Link<'a, Expr<'a>>, args: Link<'a, Expr<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, Expr<'a>> {
+		arena.add(Expr::Application { func, args })
 	}
 }

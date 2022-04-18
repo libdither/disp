@@ -32,12 +32,18 @@ impl<'a> DatastoreDeserializer<'a> for HashDeserializer<'a> {
 }
 pub struct LinkArena<'a> {
 	arena: Bump,
-	map: RefCell<HashMap<u64, *const ()>>,
+	map: RefCell<HashMap<u64, *const ()>>, // Lookup map
+	reverse_lookup: RefCell<HashMap<u64, *const ()>>, // Reverse lookup map
 	p: std::marker::PhantomData<&'a ()>,
 }
 impl<'a> LinkArena<'a> {
 	pub fn new() -> Self {
-		Self { arena: Bump::new(), map: Default::default(), p: Default::default() }
+		Self {
+			arena: Bump::new(),
+			map: Default::default(),
+			reverse_lookup: Default::default(),
+			p: Default::default()
+		}
 	}
 	pub fn alloc<T>(&'a self, val: T) -> &'a T {
 		self.arena.alloc(val)
@@ -60,5 +66,8 @@ impl<'a> LinkArena<'a> {
 	/// Add value to arena and get link
 	pub fn add<T: std::hash::Hash>(&'a self, val: T) -> Link<'a, T> {
 		Link::new(self.alloc_dedup(val))
+	}
+	pub fn add_with_lookups<T: StdHash + NativeHashtype>(&'a self, val: T) -> Link<'a, T> {
+		self.add(val)
 	}
 }

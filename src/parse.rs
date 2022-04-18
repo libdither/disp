@@ -3,9 +3,9 @@ use std::{iter::Peekable};
 
 use logos::{Logos, Span};
 use thiserror::Error;
-use hashdb::{Datastore, DatastoreError, HashSerializer, Link, NativeHashtype, TypedHash};
+use hashdb::{Datastore, DatastoreError, Link, LinkArena, NativeHashtype, TypedHash};
 
-use crate::lambda_calculus::{Expr, LambdaError, ReduceArena, ReplaceIndex, ReplaceTree, beta_reduce};
+use crate::lambda_calculus::{Expr, LambdaError, ReplaceIndex, ReplaceTree, beta_reduce};
 use crate::Symbol;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
@@ -167,7 +167,7 @@ impl<'a> TokenFeeder<'a> {
 	}
 }
 
-fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceArena<'b>, max_level: usize, db: &mut Datastore) -> Result<&'b ReplaceTree<'b>, ParseError<'a>> {
+fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceArena<'b>, max_level: usize, exprs: &'a LinkArena<'a>) -> Result<&'b ReplaceTree<'b>, ParseError<'a>> {
 	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok(arena.none()) }
 	
 	let (next_token, next_span) = feeder.next()?;
@@ -195,27 +195,27 @@ fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceA
 	
 }
 
-fn lookup_expr(string: &str, db: &mut Datastore) -> Result<Link<Expr>, DatastoreError> {
+fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, DatastoreError> {
 	let string_hash = string.to_owned().store(&mut db.serializer());
 	let symbol: TypedHash<Symbol> = db.lookup_typed(&string_hash)?;
 	Ok(symbol.fetch(db)?.expr)
 }
-fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
+fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
 	let string = &feeder.string[span.clone()];
 	lookup_expr(string, db).map_err(|_|ParseError::UnknownSymbol(feeder.location(), string))
 }
 
 // Parse Token stream until reach closing parentheses or if depth == 0 & end of stream and return Application expression
-fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: Link<Expr>, depth: usize, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
+fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: Link<'a, Expr<'a>>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
 	let func = initial;
 	Ok(if !feeder.test_end_of_expression(depth) {
 		let args = parse_token(feeder, depth, db)?.2;
-		parse_application(feeder, Link::new(Expr::Application { func, args }), depth, db)?
+		parse_application(feeder, Expr::app(func, args, exprs), depth, exprs)?
 	} else { func })
 }
 
 // Parse Token stream until reach parentheses or end of stream and return expression, it will not consume the ending parenthses
-fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<(Token, Span, Link<Expr>), ParseError<'a>> {
+fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<(Token, Span, Link<'a, Expr<'a>>), ParseError<'a>> {
 	let (next_token, next_span) = feeder.next()?;
 	let (token, span) = (next_token.clone(), next_span.clone());
 
@@ -271,7 +271,7 @@ fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastor
 	Ok((token, span, expr))
 }
 
-fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
+fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
 	let (token, span, expr) = parse_token(feeder, depth, db)?;
 	let ret = match token {
 		Token::Symbol | Token::Variable | Token::Number(_) | Token::OpenParen => parse_application(feeder, expr, depth, db)?,
@@ -282,7 +282,7 @@ fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, db: &mut Datastore
 }
 
 
-fn parse_command<'a>(feeder: &'a mut TokenFeeder, ser: &mut HashSerializer) -> Result<Option<Link<Expr>>, ParseError<'a>> {
+fn parse_command<'a>(feeder: &'a mut TokenFeeder, ser: &mut HashSerializer) -> Result<Option<Link<'a, Expr<'a>>>, ParseError<'a>> {
 	let span = feeder.expect_next(Token::Symbol)?;
 	let string = &feeder.string[span.clone()];
 	Ok(match string {
@@ -328,7 +328,7 @@ fn parse_command<'a>(feeder: &'a mut TokenFeeder, ser: &mut HashSerializer) -> R
 	})
 }
 
-pub fn parse<'a>(string: &'a str, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
+pub fn parse<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
 	println!("parsing: {}", string);
 	let expr = parse_expr(feeder, 0, db)?;
@@ -336,14 +336,14 @@ pub fn parse<'a>(string: &'a str, db: &mut Datastore) -> Result<Link<Expr>, Pars
 	Ok(expr)
 }
 
-pub fn parse_reduce<'a>(string: &'a str, db: &mut Datastore) -> Result<Link<Expr>, ParseError<'a>> {
+pub fn parse_reduce<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
 	let expr = parse_expr(feeder, 0, db)?;
 	let expr = beta_reduce(&expr, db).unwrap_or(expr);
 	Ok(expr)
 }
 
-pub fn parse_line<'a>(line: &'a str, ser: &mut HashSerializer) -> Result<Option<Link<Expr>>, ParseError<'a>> {
+pub fn parse_line<'a>(line: &'a str, ser: &mut HashSerializer) -> Result<Option<Link<'a, Expr<'a>>>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(line);
 	let (next, _) = feeder.peek()?;
 	Ok(if Token::Symbol == *next {

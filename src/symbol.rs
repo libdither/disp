@@ -1,22 +1,22 @@
 
 use std::iter;
 
-use hashdb::{Datastore, DatastoreDeserializer, DatastoreError, DatastoreSerializer, Hash, HashSerializer, Link, NativeHashtype, hashtype::LinkIterConstructor};
+use hashdb::{Datastore, DatastoreDeserializer, DatastoreError, DatastoreSerializer, Hash, Link, LinkArena, NativeHashtype, hashtype::LinkIterConstructor};
 use crate::lambda_calculus::Expr;
 
-#[derive(Debug, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive_attr(derive(Debug, bytecheck::CheckBytes))]
-#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer"))]
-pub struct Symbol {
-	pub name: Link<String>,
-	pub expr: Link<Expr>,
+#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
+pub struct Symbol<'a> {
+	pub name: Link<'a, String>,
+	pub expr: Link<'a, Expr<'a>>,
 }
-impl Symbol {
-	pub fn new(name: impl Into<String>, expr: &Link<Expr>, ser: &mut HashSerializer) -> Link<Symbol> {
-		Link::new(Self { name: Link::new(name.into()), expr: expr.clone() }).store(ser).fetch(ser.db).unwrap()
+impl<'a> Symbol<'a> {
+	pub fn new(name: impl Into<String>, expr: &Link<'a, Expr<'a>>, exprs: &'a LinkArena<'a>) -> Link<'a, Symbol<'a>> {
+		exprs.add(Self { name: exprs.add(name.into()), expr: expr.clone() })
 	}
 }
-impl NativeHashtype for Symbol {
+impl<'a> NativeHashtype for Symbol<'a> {
 	type LinkIter = SymbolLinkIter;
 }
 pub struct SymbolLinkIter {
@@ -26,11 +26,11 @@ impl Iterator for SymbolLinkIter {
 	type Item = Hash;
 	fn next(&mut self) -> Option<Self::Item> { self.iter.next() }
 }
-impl LinkIterConstructor<Symbol> for SymbolLinkIter {
-	fn construct(symbol: &Symbol) -> Self {
+impl<'a> LinkIterConstructor<Symbol<'a>> for SymbolLinkIter {
+	fn construct(symbol: &Symbol, ser: &mut HashSerializer) -> Self {
 		SymbolLinkIter {
-			iter: iter::once(symbol.name.as_ref().calc_hash().into())
-				.chain(iter::once(symbol.name.as_ref().calc_hash().into()))
+			iter: iter::once(symbol.name.calc_hash(ser).into())
+				.chain(iter::once(symbol.name.calc_hash(ser).into()))
 		}
 	}
 }

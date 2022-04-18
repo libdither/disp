@@ -9,8 +9,13 @@ use crate::{Datastore, DatastoreDeserializer, DatastoreSerializer, Hash, HashDes
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Link<'a, T>(&'a T);
 
-impl<'a, T: NativeHashtype> NativeHashtype for Link<'a, T> {}
+impl<'a, T: PartialEq<T>> PartialEq<T> for Link<'a, T> {
+    fn eq(&self, other: &T) -> bool {
+        self.deref() == other
+    }
+}
 
+impl<'a, T: NativeHashtype> NativeHashtype for Link<'a, T> {}
 
 impl<'a, T> Link<'a, T> {
 	pub fn new(link: &'a T) -> Link<'a, T> {

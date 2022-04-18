@@ -22,17 +22,17 @@ pub trait NativeHashtype: std::hash::Hash + fmt::Debug + Archive<Archived: std::
 
 	/// List of hashes representing any data that should link to this type
 	type LinkIter: LinkIterConstructor<Self> = iter::Empty<Hash>; // OH I LOVE GENERICS
-	fn reverse_links(&self) -> Self::LinkIter { LinkIterConstructor::construct(self) }
+	fn reverse_links(&self, ser: &mut impl DatastoreSerializer) -> Self::LinkIter { LinkIterConstructor::construct(self, ser) }
 }
 impl NativeHashtype for String {}
 impl NativeHashtype for Vec<u8> {}
 
 pub trait LinkIterConstructor<T: NativeHashtype>: Iterator<Item = Hash> {
-	fn construct(hashtype: &T) -> Self;
+	fn construct(hashtype: &T, ser: &mut impl DatastoreSerializer) -> Self;
 }
 
 impl<'a, T: NativeHashtype> LinkIterConstructor<T> for iter::Empty<Hash> {
-	fn construct(_hashtype: &T) -> Self {
+	fn construct(_hashtype: &T, _ser: &mut impl DatastoreSerializer) -> Self {
 		iter::empty()
 	}
 }
