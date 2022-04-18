@@ -3,58 +3,29 @@ use std::{any::Any, borrow::Borrow, cell::RefCell, collections::{HashMap, hash_m
 use bytecheck::CheckBytes;
 use rkyv::{Archive, Deserialize, Fallible, Serialize, validation::validators::DefaultValidator};
 
-use crate::{Datastore, DatastoreDeserializer, DatastoreSerializer, Hash, LinkArena, NativeHashtype};
-
-pub trait LinkType<'a> {
-	type Storage;
-	type Link<V: 'a>: Borrow<V>;
-	fn wrap<V: 'a + StdHash>(val: V, c: &'a mut Self::Storage) -> Self::Link<V>;
-}
-impl<T> LinkType<'static> for Arc<T> {
-	type Storage = ();
-	type Link<V: 'static> = Arc<V>;
-	fn wrap<V: 'static>(val: V, c: &'static mut Self::Storage) -> Self::Link<V> { Arc::new(val) }
-}
-impl<'a, T: StdHash> LinkType<'a> for &'a T {
-	type Storage = LinkArena<'a>;
-	type Link<V: 'a> = &'a V;
-	fn wrap<V: 'a + StdHash>(val: V, c: &'a mut Self::Storage) -> Self::Link<V> { c.alloc_dedup(val) }
-}
+use crate::{Datastore, DatastoreDeserializer, DatastoreSerializer, Hash, HashDeserializer, NativeHashtype};
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct Link<'a, T, L: LinkType<'a>>(L::Link<T>, PhantomData<&'a T>);
+pub struct Link<'a, T>(&'a T);
 
-impl<'a, T: NativeHashtype, L: LinkType<'a> + NativeHashtype> NativeHashtype for Link<'a, T, L>
-where L::Link<T>: StdHash + Debug
-{}
+impl<'a, T: NativeHashtype> NativeHashtype for Link<'a, T> {}
 
 
-pub type LinkArc<T> = Link<'static, T, Arc<T>>;
-
-impl<T> From<Arc<T>> for LinkArc<T> { fn from(a: Arc<T>) -> Self { Self(a, Default::default()) } }
-impl<T> LinkArc<T> {
-	pub fn arc(t: T) -> LinkArc<T> {
-		Link(Arc::new(t), Default::default())
+impl<'a, T> Link<'a, T> {
+	pub fn new(link: &'a T) -> Link<'a, T> {
+		Link(link)
 	}
 }
 
-pub type LinkRef<'a, T> = Link<'a, T, &'a T>;
-
-impl<'a, T, L: LinkType<'a>> Link<'a, T, L> {
-	pub fn new(link: L::Link<T>) -> Link<'a, T, L> {
-		Link(link, Default::default())
-	}
-}
-
-impl<'a, T, L: LinkType<'a>> Deref for Link<'a, T, L> {
+impl<'a, T> Deref for Link<'a, T> {
 	type Target = T;
 
 	fn deref(&self) -> &Self::Target {
 		self.0.borrow()
 	}
 }
-impl<'a, T, L: LinkType<'a>> AsRef<T> for Link<'a, T, L> {
+impl<'a, T> AsRef<T> for Link<'a, T> {
 	fn as_ref(&self) -> &T {
 		self.0.borrow()
 	}
@@ -65,7 +36,7 @@ pub struct ArchivedLink<T>(Hash, PhantomData<T>);
 
 impl<T> From<Hash> for ArchivedLink<T> { fn from(hash: Hash) -> Self { Self(hash, PhantomData::default()) } }
 
-impl<'a, 'db, T: NativeHashtype, L: LinkType<'a>> Archive for Link<'a, T, L> {
+impl<'a, 'db, T: NativeHashtype> Archive for Link<'a, T> {
 	type Archived = ArchivedLink<T>;
 
 	type Resolver = Hash;
@@ -75,20 +46,18 @@ impl<'a, 'db, T: NativeHashtype, L: LinkType<'a>> Archive for Link<'a, T, L> {
 	}
 }
 
-impl<'a, 'db, T: NativeHashtype, L: LinkType<'a>, __S: DatastoreSerializer + ?Sized> Serialize<__S> for Link<'a, T, L>
+impl<'a, 'db, T: NativeHashtype, __S: DatastoreSerializer + ?Sized> Serialize<__S> for Link<'a, T>
 where T: Serialize<__S>,
 {
 	fn serialize(&self, serializer: &mut __S) -> Result<Self::Resolver, <__S as Fallible>::Error> {
 		Ok(serializer.store::<T>(self.0.borrow())?.into())
 	}
 }
-impl<'a, 'db, T: NativeHashtype, L: LinkType<'a>, __D: DatastoreDeserializer<'a, LinkL<T> = L> + ?Sized> Deserialize<Link<'a, T, L>, __D> for ArchivedLink<T>
+impl<'a, T: NativeHashtype, __D: DatastoreDeserializer<'a>> Deserialize<Link<'a, T>, __D> for ArchivedLink<T>
 where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, __D>,
 {
-	fn deserialize(&self, deserializer: &mut __D) -> Result<Link<'a, T, L>, <__D as Fallible>::Error> {
-		let hash = &self.0;
-		let t = deserializer.fetch::<T>(hash)?;
-		Ok(deserializer.alloc(t))
+	fn deserialize(&self, deserializer: &mut __D) -> Result<Link<'a, T>, <__D as Fallible>::Error> {
+		deserializer.fetch::<T>(&self.0)
 	}
 }
 

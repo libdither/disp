@@ -23,15 +23,15 @@ mod link;
 
 pub use db::{Datastore, DatastoreError};
 pub use hashtype::{NativeHashtype, TypedHash};
-pub use link::{Link, ArchivedLink, LinkType, LinkArc, LinkRef};
+pub use link::{Link, ArchivedLink};
 pub use db_ser::{DatastoreSerializer, LinkSerializer, DatastoreLinkSerializer};
-pub use db_de::{DatastoreDeserializer, LinkArcs, LinkArena, Deduplicator, HashDeserializer};
+pub use db_de::{LinkArena, HashDeserializer, DatastoreDeserializer};
 pub use hash::Hash;
 pub use data::Data;
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, DatastoreDeserializer, DatastoreSerializer, Hash, Link, LinkArena, LinkRef, LinkSerializer, NativeHashtype};
+	use crate::{Datastore, DatastoreSerializer, Hash, Link, LinkArena, LinkSerializer, NativeHashtype, DatastoreDeserializer};
 
 	#[test]
 	fn test_db() {
@@ -41,8 +41,8 @@ mod tests {
 			String::from("hello").store(ser, db)
 		};
 		
-		let de = LinkArena::new(); let de = &mut de.join(&mut db);
-		assert_eq!(string.fetch(de).unwrap(), "hello");
+		let arena = LinkArena::new();
+		assert_eq!(*string.fetch(db, &arena).unwrap(), "hello");
 	}
 
 	#[test]
@@ -55,7 +55,7 @@ mod tests {
 		#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
 		enum StringType<'a> {
 			String(String),
-			Link(#[omit_bounds] LinkRef<'a, StringType<'a>>, #[omit_bounds] LinkRef<'a, StringType<'a>>),
+			Link(#[omit_bounds] Link<'a, StringType<'a>>, #[omit_bounds] Link<'a, StringType<'a>>),
 		}
 		impl<'a> NativeHashtype for StringType<'a> {}
 
@@ -70,7 +70,7 @@ mod tests {
 		
 
 		let links_de = LinkArena::new();
-		let ret = hash.fetch(db, links_de).unwrap();
+		let ret = hash.fetch(db, &links_de).unwrap();
 		/* let links_de = LinkArena::new();
 		let de = &mut links_de.join(db);
 		let ret: StringType = hash.fetch(de).unwrap();

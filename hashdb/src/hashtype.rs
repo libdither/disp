@@ -6,7 +6,7 @@ use bytes::buf::Chain;
 use rkyv::{AlignedVec, Archive, Archived, Deserialize, Fallible, Infallible, Resolver, Serialize, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch, SharedSerializeMap, SharedSerializeMapError}}, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, Immutable, SerializeWith, With}};
 
 use bytecheck::CheckBytes;
-use crate::{Data, Datastore, DatastoreDeserializer, DatastoreError, DatastoreLinkSerializer, DatastoreSerializer, Deduplicator, Hash, HashDeserializer, LinkSerializer, LinkType};
+use crate::{Data, Datastore, DatastoreDeserializer, DatastoreError, DatastoreLinkSerializer, DatastoreSerializer, Hash, HashDeserializer, Link, LinkArena, LinkSerializer};
 // const RUST_TYPE: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0]);
 
 /// Represents a Rust type with an rykv Archive implementation that can be fetched from a Datastore via its hash
@@ -73,11 +73,11 @@ impl<T> TypedHash<T> {
 	pub fn as_hash(&self) -> &Hash { &self.hash }
 }
 impl<T: NativeHashtype> TypedHash<T> {
-	pub fn fetch<'a, Dedup: Deduplicator<'a> + 'a>(&self, db: &'a Datastore, dedup: &'a mut Dedup) -> Result<T, <HashDeserializer<'a, Dedup> as Fallible>::Error>
+	pub fn fetch<'a>(&self, db: &'a Datastore, arena: &'a LinkArena<'a>) -> Result<Link<'a, T>, <HashDeserializer<'a> as Fallible>::Error>
 	where
-		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, HashDeserializer<'a, Dedup>>,
+		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, HashDeserializer<'a>>,
 	{
-		let de = HashDeserializer { db, dedup };
+		let de = &mut HashDeserializer { db, arena };
 		de.fetch(self.into())
 	}
 }
