@@ -1,15 +1,13 @@
 use std::fmt;
 
-use lazy_static::lazy_static;
 use rkyv::{Archive, Serialize, Deserialize};
 use bytecheck::CheckBytes;
-//use serde::{Serialize, Deserialize};
 
-use hashdb::{Datastore, DatastoreDeserializer, DatastoreSerializer, Link, LinkArena, NativeHashtype};
+use hashdb::{Datastore, DatastoreDeserializer, DatastoreSerializer, LinkArena, NativeHashtype, HashType};
 
-use crate::{symbol::Symbol};
+use super::ReplaceIndex;
 
-use super::{DisplayWithDatastore, DisplayWithDatastoreError};
+use crate::Symbol;
 
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
@@ -19,36 +17,36 @@ use super::{DisplayWithDatastore, DisplayWithDatastoreError};
 pub enum PointerTree<'a> {
 	None,
 	End,
-	Branch(#[omit_bounds] Link<'a, PointerTree<'a>>, #[omit_bounds] Link<'a, PointerTree<'a>>), // u32 represents highest variable abstraction level in this expression
+	Branch(#[with(HashType)] #[omit_bounds] &'a PointerTree<'a>, #[with(HashType)] #[omit_bounds] &'a PointerTree<'a>), // u32 represents highest variable abstraction level in this expression
 }
 impl<'a> PointerTree<'a> {
-	pub const NONE: Link<'static, PointerTree<'static>> = Link::new(&PointerTree::None);
-	pub const END: Link<'static, PointerTree<'static>> = Link::new(&PointerTree::End);
-	pub fn left(p: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
-		arena.new(PointerTree::Branch(p, PointerTree::none(arena)))
+	pub const NONE: &'static PointerTree<'static> = &PointerTree::None;
+	pub const END: &'static PointerTree<'static> = &PointerTree::End;
+	pub fn left(p: &'a PointerTree<'a>, arena: &'a LinkArena<'a>) -> &'a PointerTree<'a> {
+		arena.add(PointerTree::Branch(p, Self::NONE))
 	}
-	pub fn right(p: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
-		arena.new(PointerTree::Branch(PointerTree::none(arena), p))
+	pub fn right(p: &'a PointerTree<'a>, arena: &'a LinkArena<'a>) -> &'a PointerTree<'a> {
+		arena.add(PointerTree::Branch(Self::NONE, p))
 	}
-	pub fn branch(l: Link<'a, PointerTree<'a>>, r: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
-		arena.new(PointerTree::Branch(l, r))
+	pub fn branch(l: &'a PointerTree<'a>, r: &'a PointerTree<'a>, arena: &'a LinkArena<'a>) -> &'a PointerTree<'a> {
+		arena.add(PointerTree::Branch(l, r))
 	}
-	pub fn branch_reduce(l: Link<'a, PointerTree<'a>>, r: Link<'a, PointerTree<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, PointerTree<'a>> {
+	pub fn branch_reduce(l: &'a PointerTree<'a>, r: &'a PointerTree<'a>, arena: &'a LinkArena<'a>) -> &'a PointerTree<'a> {
 		if l == Self::NONE && r == Self::NONE { Self::NONE }
-		else { arena.new(PointerTree::Branch(l, r)) }
+		else { arena.add(PointerTree::Branch(l, r)) }
 	}
 }
 
 impl<'a> NativeHashtype for PointerTree<'a> {}
-impl<'a> DisplayWithDatastore for Link<'a, PointerTree<'a>> {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
-		match self.as_ref() { 
+impl<'a> fmt::Display for PointerTree<'a> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match *self { 
 			PointerTree::Branch(left, right) => {
-				match (**right == PointerTree::None, **left == PointerTree::None) {
+				match (*right == PointerTree::None, *left == PointerTree::None) {
 					(true, true) => write!(f, "BOTH(NONE, NONE)")?,
-					(true, false) => write!(f, "<{}", left.display(db))?,
-					(false, true) => write!(f, ">{}", right.display(db))?,
-					(false, false) => write!(f, "({},{})", left.display(db), right.display(db))?,
+					(true, false) => write!(f, "<{}", left)?,
+					(false, true) => write!(f, ">{}", right)?,
+					(false, false) => write!(f, "({},{})", left, right)?,
 				}
 			},
 			PointerTree::End => write!(f, ".")?,
@@ -59,44 +57,48 @@ impl<'a> DisplayWithDatastore for Link<'a, PointerTree<'a>> {
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
-#[archive_attr(derive(CheckBytes, Debug))]
+#[archive_attr(derive(CheckBytes))]
 #[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
 pub enum Expr<'a> {
 	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,
 	/// Create a function
 	Lambda {
-		tree: Link<'a, PointerTree<'a>>,
-		#[omit_bounds] expr: Link<'a, Expr<'a>>
+		#[with(HashType)] #[omit_bounds] tree: &'a PointerTree<'a>,
+		#[with(HashType)] #[omit_bounds] expr: &'a Expr<'a>
 	},
 	/// Apply functions to expressions
 	Application {
-		#[omit_bounds] func: Link<'a, Expr<'a>>,
-		#[omit_bounds] args: Link<'a, Expr<'a>>
+		#[with(HashType)] #[omit_bounds] func: &'a Expr<'a>,
+		#[with(HashType)] #[omit_bounds] args: &'a Expr<'a>
 	},
 	// Type of all types
 	// Type,
 	// Create dependent types
-	// Dependent { tree: Link<'a, PointerTree<'a>>, expr: Link<Expr> },
+	// Dependent { tree: &'a PointerTree<'a>, expr: Link<Expr> },
 }
 impl<'a> NativeHashtype for Expr<'a> {}
-impl<'a> DisplayWithDatastore for Link<'a, Expr<'a>> {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>, db: &Datastore) -> Result<(), DisplayWithDatastoreError> {
+impl<'a> fmt::Display for &'a Expr<'a> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		/* match db.lookup_typed::<Expr, Symbol>(&self.store()) {
 			Ok(symbol) => write!(f, "{}", symbol.fetch().name(db)?)?,
 			Err(_) => {},
 		} */
-		match self.as_ref() {
+		match self {
 			Expr::Variable => write!(f, "x")?,
 			Expr::Lambda { .. } => {
-				let arena = &LinkArena::new();
-				let mut index = arena.index();
-				let expr = arena.push_lambda(&mut index, &self, db).unwrap();
-		
-				write!(f, "(λ{}[{}] {})", index.index, index.tree, expr.display(db))?
+				thread_local! {
+					static arena: LinkArena<'static> = LinkArena::new();
+				}
+				arena.with(|reps| {
+					let mut index = ReplaceIndex::DEFAULT;
+					let expr = index.push_lambda(&self, reps).unwrap();
+					write!(f, "(λ{}[{}] {})", index.index, index.tree, expr)
+				})?;
+				
 			},
 			Expr::Application { func, args: sub } => {
-				write!(f, "({} {})", func.display(db), sub.display(db))?
+				write!(f, "({} {})", func, sub)?
 			},
 		}
 		Ok(())
@@ -105,11 +107,11 @@ impl<'a> DisplayWithDatastore for Link<'a, Expr<'a>> {
 
 
 impl<'a> Expr<'a> {
-	pub const VAR: Link<'a, Expr<'a>> = Link::new(&Expr::Variable);
-	pub fn lambda(tree: Link<'a, PointerTree>, expr: Link<'a, Expr<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, Expr<'a>> {
+	pub const VAR: &'static Expr<'static> = &Expr::Variable;
+	pub fn lambda(tree: &'a PointerTree, expr: &'a Expr<'a>, arena: &'a LinkArena<'a>) -> &'a Expr<'a> {
 		arena.add(Expr::Lambda { tree, expr })
 	}
-	pub fn app(func: Link<'a, Expr<'a>>, args: Link<'a, Expr<'a>>, arena: &'a LinkArena<'a>) -> Link<'a, Expr<'a>> {
+	pub fn app(func: &'a Expr<'a>, args: &'a Expr<'a>, arena: &'a LinkArena<'a>) -> &'a Expr<'a> {
 		arena.add(Expr::Application { func, args })
 	}
 }

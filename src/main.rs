@@ -12,19 +12,18 @@ mod lambda_calculus;
 mod symbol;
 mod parse;
 
-use crate::{lambda_calculus::{beta_reduce, DisplayWithDatastore}};
+use crate::{lambda_calculus::beta_reduce};
 use symbol::Symbol;
 use parse::{parse_line};
 
 fn main() {
-	let db = &mut Datastore::new();
-    let ser = &mut db.serializer();
+	let exprs = & LinkArena::new();
 
     let load_file = std::env::args().nth(1);
 
-    if let Some(file) = &load_file {
+    /* if let Some(file) = &load_file {
         ser.db.load(fs::File::open(file).unwrap()).expect("could not load disp file")
-    }
+    } */
 
 	let mut rl = Editor::<()>::new();
 	println!("Welcome to disp (λ)");
@@ -37,10 +36,10 @@ fn main() {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
 
-				match parse_line(line.as_str(), ser) {
+				match parse_line(line.as_str(), exprs) {
 					Ok(Some(expr)) => {
-                        match beta_reduce(&expr, ser.db) {
-                            Ok(expr) => println!("{}", expr.display(ser.db)),
+                        match beta_reduce(&expr, exprs) {
+                            Ok(expr) => println!("{}", expr),
                             Err(err) => {println!("failed to reduce expression: {}", err); continue},
                         };
                     },
@@ -63,7 +62,7 @@ fn main() {
     }
     rl.save_history(".disp_history").unwrap();
 
-    if let Some(file) = &load_file {
+    /* if let Some(file) = &load_file {
         db.save(fs::File::create(&file).unwrap()).unwrap()
-    }
+    } */
 }

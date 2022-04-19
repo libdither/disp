@@ -1,9 +1,11 @@
+use std::borrow::Borrow;
+use std::cell::RefCell;
 use std::fs;
 use std::{iter::Peekable};
 
 use logos::{Logos, Span};
 use thiserror::Error;
-use hashdb::{Datastore, DatastoreError, Link, LinkArena, NativeHashtype, TypedHash};
+use hashdb::{Datastore, DatastoreError, LinkArena, LinkSerializer, NativeHashtype, TypedHash};
 
 use crate::lambda_calculus::{Expr, LambdaError, ReplaceIndex, ReplaceTree, beta_reduce};
 use crate::Symbol;
@@ -62,7 +64,7 @@ pub enum Token {
 }
 
 
-#[derive(Debug, Error,)]
+#[derive(Debug, Error)]
 pub enum ParseError<'a> {
 	#[error("Found {found:?}, expected Token(s) {expected:?}\n{}", .loc.display_span(.span))]
 	WrongToken { loc: Location<'a>, span: Span, found: Token, expected: Vec<Token> },
@@ -167,55 +169,60 @@ impl<'a> TokenFeeder<'a> {
 	}
 }
 
-fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, arena: &'b ReduceArena<'b>, max_level: usize, exprs: &'a LinkArena<'a>) -> Result<&'b ReplaceTree<'b>, ParseError<'a>> {
-	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok(arena.none()) }
+fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, reps: &'b LinkArena<'b>, max_level: usize) -> Result<&'b ReplaceTree<'b>, ParseError<'a>> {
+	use ReplaceTree as RT;
+	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok(ReplaceTree::NONE) }
 	
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
 		Token::Number(num) => {
-			arena.end(num as usize)
+			RT::end(num as usize, reps)
 		},
-		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { arena.none() }
-		Token::Period => arena.end(max_level),
+		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { RT::NONE }
+		Token::Period => RT::end(max_level, reps),
 		Token::OpenCarat => {
-			arena.left(parse_lambda_pointer(feeder, arena, max_level, db)?)
+			RT::left(parse_lambda_pointer(feeder, reps, max_level)?, reps)
 		},
 		Token::CloseCarat => {
-			arena.right(parse_lambda_pointer(feeder, arena, max_level, db)?)
+			RT::right(parse_lambda_pointer(feeder, reps, max_level)?, reps)
 		},
 		Token::OpenParen => {
-			let left = parse_lambda_pointer(feeder, arena, max_level, db)?;
+			let left = parse_lambda_pointer(feeder, reps, max_level)?;
 			feeder.expect_next(Token::Comma)?;
-			let right = parse_lambda_pointer(feeder, arena, max_level, db)?;
+			let right = parse_lambda_pointer(feeder, reps, max_level)?;
 			feeder.expect_next(Token::CloseParen)?;
-			arena.join(left, right)
+			RT::branch(left, right, reps)
 		},
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?
 	})
 	
 }
 
-fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, DatastoreError> {
-	let string_hash = string.to_owned().store(&mut db.serializer());
-	let symbol: TypedHash<Symbol> = db.lookup_typed(&string_hash)?;
-	Ok(symbol.fetch(db)?.expr)
+fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a>> {
+	thread_local! {
+		static SER: RefCell<LinkSerializer> = RefCell::new(LinkSerializer::new());
+	}
+	SER.with(|ser|{
+		let string_hash = string.to_owned().store(&mut *ser.borrow_mut());
+		exprs.lookup(&string_hash)
+	})
 }
-fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
+fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
 	let string = &feeder.string[span.clone()];
-	lookup_expr(string, db).map_err(|_|ParseError::UnknownSymbol(feeder.location(), string))
+	lookup_expr(string, exprs).ok_or(ParseError::UnknownSymbol(feeder.location(), string))
 }
 
 // Parse Token stream until reach closing parentheses or if depth == 0 & end of stream and return Application expression
-fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: Link<'a, Expr<'a>>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
+fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: &'a Expr<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
 	let func = initial;
 	Ok(if !feeder.test_end_of_expression(depth) {
-		let args = parse_token(feeder, depth, db)?.2;
+		let args = parse_token(feeder, depth, exprs)?.2;
 		parse_application(feeder, Expr::app(func, args, exprs), depth, exprs)?
 	} else { func })
 }
 
 // Parse Token stream until reach parentheses or end of stream and return expression, it will not consume the ending parenthses
-fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<(Token, Span, Link<'a, Expr<'a>>), ParseError<'a>> {
+fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<(Token, Span, &'a Expr<'a>), ParseError<'a>> {
 	let (next_token, next_span) = feeder.next()?;
 	let (token, span) = (next_token.clone(), next_span.clone());
 
@@ -236,32 +243,34 @@ fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkAr
 			};
 			
 			// Parse Pointertree expression
-			let arena = ReduceArena::new();
-			let tree = parse_lambda_pointer(feeder, &arena, max_level, db)?;
+			let reps = &LinkArena::new();
+			let tree = parse_lambda_pointer(feeder, reps, max_level)?;
 			let mut index = ReplaceIndex::new(max_level, tree);
 			feeder.expect_next(Token::CloseSquareBracket)?;
 			
 			// Treat rest of lambda as expression of the same depth (no parentheses required), this allows for same-line lambdas
-			let arg_expr = parse_token(feeder, depth, db)?.2;
-			let arg_expr = parse_application(feeder, arg_expr, depth, db)?;
+			let arg_expr = parse_token(feeder, depth, exprs)?.2;
+			let arg_expr = parse_application(feeder, arg_expr, depth, exprs)?;
 
-			arena.pop_lambda(&mut index, arg_expr, db)
-			.map_err(|_|ParseError::LocalError(feeder.location(), span, "ReplaceTree failed to expand to lambda expression"))?
+			let ret = index.pop_lambda(arg_expr, reps, exprs)
+			.map_err(|_|ParseError::LocalError(feeder.location(), span, "ReplaceTree failed to expand to lambda expression"))?;
+			drop(reps);
+			ret
 		}
-		Token::Symbol => lookup_symbol(feeder, next_span, db)?,
-		Token::Variable => Expr::var(db),
+		Token::Symbol => lookup_symbol(feeder, next_span, exprs)?,
+		Token::Variable => Expr::VAR,
 		Token::Number(value) => {
 			if value > 1_000_000 { ParseError::CommandError("{integer}", "number is too large (must be less than 1,000,000)".into()); }
-			let zero = lookup_expr("zero", db).map_err(|_|ParseError::NoNumberFunctions(feeder.location(), next_span.clone()))?;
-			let succ = lookup_expr("succ", db).map_err(|_|ParseError::NoNumberFunctions(feeder.location(), next_span))?;
+			let zero = lookup_expr("zero", exprs).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span.clone()))?;
+			let succ = lookup_expr("succ", exprs).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span))?;
 			let mut ret = zero;
 			for _ in 0..value {
-				ret = Expr::app(&succ, &ret, db)
+				ret = Expr::app(succ, ret, exprs)
 			}
 			ret
 		}
 		Token::OpenParen => { // Parse Subexpression
-			let ret = parse_expr(feeder, depth + 1, db)?;
+			let ret = parse_expr(feeder, depth + 1, exprs)?;
 			feeder.expect_next(Token::CloseParen)?;
 			ret
 		},
@@ -271,10 +280,10 @@ fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkAr
 	Ok((token, span, expr))
 }
 
-fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
-	let (token, span, expr) = parse_token(feeder, depth, db)?;
+fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
+	let (token, span, expr) = parse_token(feeder, depth, exprs)?;
 	let ret = match token {
-		Token::Symbol | Token::Variable | Token::Number(_) | Token::OpenParen => parse_application(feeder, expr, depth, db)?,
+		Token::Symbol | Token::Variable | Token::Number(_) | Token::OpenParen => parse_application(feeder, expr, depth, exprs)?,
 		Token::Lambda => expr,
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), span, token))?
 	};
@@ -282,7 +291,7 @@ fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkAre
 }
 
 
-fn parse_command<'a>(feeder: &'a mut TokenFeeder, ser: &mut HashSerializer) -> Result<Option<Link<'a, Expr<'a>>>, ParseError<'a>> {
+fn parse_command<'a>(feeder: &mut TokenFeeder<'a>, exprs: &'a LinkArena<'a>) -> Result<Option<&'a Expr<'a>>, ParseError<'a>> {
 	let span = feeder.expect_next(Token::Symbol)?;
 	let string = &feeder.string[span.clone()];
 	Ok(match string {
@@ -290,23 +299,23 @@ fn parse_command<'a>(feeder: &'a mut TokenFeeder, ser: &mut HashSerializer) -> R
 			let span = feeder.expect_next(Token::Symbol)?;
 			let name = &feeder.string[span];
 
-			let next_expr = parse_expr(feeder, 0, ser.db)?;
-			let reduced = match beta_reduce(&next_expr, ser.db) {
+			let next_expr = parse_expr(feeder, 0, exprs)?;
+			let reduced = match beta_reduce(&next_expr, exprs) {
 				Ok(ret) => ret,
 				Err(LambdaError::RecursionDepthExceeded) => { println!("warning: this expresion will run for a long time"); next_expr },
 				Err(err) => Err(ParseError::CommandError("set", format!("failed to beta reduce expr: {}", err)))?
 			};
 			
-			Symbol::new(name, &reduced, ser);
+			Symbol::new(name, &reduced, exprs);
 
 			Some(reduced)
 		}
-		"save" => {
+		/* "save" => {
 			let location = feeder.expect_next(Token::String)?;
 			let location = &feeder.string[location];
 			let location = &location[1..location.len()-1];
 			println!("Saving to: {:?}", location);
-			ser.db.save(fs::File::create(location)?)?;
+			db.save(fs::File::create(location)?)?;
 			None
 		}
 		"load" => {
@@ -314,44 +323,44 @@ fn parse_command<'a>(feeder: &'a mut TokenFeeder, ser: &mut HashSerializer) -> R
 			let location = &feeder.string[location];
 			let location = &location[1..location.len()-1];
 			println!("Loading from: {:?}", location);
-			ser.db.load(fs::File::open(location)?)?;
+			db.load(fs::File::open(location)?)?;
 			None
-		}
-		"clear" => {
-			ser.db.clear();
+		} */
+		/* "clear" => {
+			ser.exprs.clear();
 			None
-		}
+		} */
 		_ => {
-			let expr = lookup_symbol(feeder, span, ser.db)?;
-			Some(parse_application(feeder, expr, 0, ser.db)?)
+			let expr = lookup_symbol(feeder, span, exprs)?;
+			Some(parse_application(feeder, expr, 0, exprs)?)
 		},
 	})
 }
 
-pub fn parse<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
+pub fn parse<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
 	println!("parsing: {}", string);
-	let expr = parse_expr(feeder, 0, db)?;
-	println!("parsed: {}", crate::lambda_calculus::DisplayWithDatastore::display(&expr, db));
+	let expr = parse_expr(feeder, 0, exprs)?;
+	println!("parsed: {}", expr);
 	Ok(expr)
 }
 
-pub fn parse_reduce<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<Link<'a, Expr<'a>>, ParseError<'a>> {
+pub fn parse_reduce<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
-	let expr = parse_expr(feeder, 0, db)?;
-	let expr = beta_reduce(&expr, db).unwrap_or(expr);
+	let expr = parse_expr(feeder, 0, exprs)?;
+	let expr = beta_reduce(&expr, exprs).unwrap_or(expr);
 	Ok(expr)
 }
 
-pub fn parse_line<'a>(line: &'a str, ser: &mut HashSerializer) -> Result<Option<Link<'a, Expr<'a>>>, ParseError<'a>> {
+pub fn parse_line<'a>(line: &'a str, exprs: &'a LinkArena<'a>) -> Result<Option<&'a Expr<'a>>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(line);
 	let (next, _) = feeder.peek()?;
 	Ok(if Token::Symbol == *next {
-		match parse_command(feeder, ser) {
+		match parse_command(feeder, exprs) {
 			Err(err) => {println!("Failed to parse command: {}", err); None}
 			Ok(expr) => expr,
 		}
 	} else {
-		Some(parse_expr(feeder, 0, ser.db)?)
+		Some(parse_expr(feeder, 0, exprs)?)
 	})
 }

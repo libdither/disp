@@ -4,7 +4,7 @@ use bumpalo::Bump;
 use bytecheck::CheckBytes;
 use rkyv::{Archive, Deserialize, Fallible, validation::validators::DefaultValidator};
 
-use crate::{Datastore, DatastoreError, Hash, NativeHashtype};
+use crate::{Datastore, DatastoreError, DatastoreSerializer, Hash, NativeHashtype, TypedHash};
 
 pub trait DatastoreDeserializer<'a>: Fallible + Sized {
 	fn get(&'a self) -> &'a HashDeserializer<'a>;
@@ -33,7 +33,7 @@ impl<'a> DatastoreDeserializer<'a> for HashDeserializer<'a> {
 pub struct LinkArena<'a> {
 	arena: Bump,
 	map: RefCell<HashMap<u64, *const ()>>, // Lookup map
-	reverse_lookup: RefCell<HashMap<u64, *const ()>>, // Reverse lookup map
+	reverse_lookup: RefCell<HashMap<Hash, *const ()>>, // Reverse lookup map
 	p: std::marker::PhantomData<&'a ()>,
 }
 impl<'a> LinkArena<'a> {
@@ -64,7 +64,16 @@ impl<'a> LinkArena<'a> {
 	pub fn add<T: std::hash::Hash>(&'a self, val: T) -> &'a T {
 		self.alloc_dedup(val)
 	}
-	pub fn add_with_lookups<T: StdHash + NativeHashtype>(&'a self, val: T) -> &'a T {
-		self.add(val)
+	/// Safety: Yes, this can easily segfault, i'll fix it later
+	pub fn add_with_lookups<T: StdHash + NativeHashtype>(&'a self, val: T, ser: &mut impl DatastoreSerializer) -> &'a T {
+		let ret = self.add(val);
+		for link in ret.reverse_links(ser) {
+			unsafe { self.reverse_lookup.borrow_mut().insert(link, (ret as *const T).cast()) };
+		}
+		ret
+	}
+	/// Safety: Yes, this can easily segfault, make sure you don't add_with_lookups two different objects that link to the same object
+	pub fn lookup<T: NativeHashtype, L: NativeHashtype>(&'a self, hash: &TypedHash<L>) -> Option<&'a T> {
+		self.reverse_lookup.borrow().get(hash.into()).map(|ptr| unsafe { &*(ptr.cast()) })
 	}
 }

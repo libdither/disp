@@ -3,17 +3,17 @@
 #![feature(generic_associated_types)]
 
 use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
-pub use hashdb::{Data, Datastore, Link};
+pub use hashdb::{Data, Datastore};
 
 pub mod lambda_calculus;
 pub mod symbol;
 pub mod parse;
 
-use lambda_calculus::{Expr, PointerTree as PT, beta_reduce, DisplayWithDatastore};
+use lambda_calculus::{Expr, PointerTree as PT, beta_reduce};
 use symbol::Symbol;
 use parse::{parse, parse_reduce};
 
-fn setup_boolean_logic<'a>(exprs: &'a LinkArena<'a>) -> (Link<'a, Expr<'a>>, Link<'a, Expr<'a>>, Link<'a, Expr<'a>>, Link<'a, Expr<'a>>, Link<'a, Expr<'a>>) {
+fn setup_boolean_logic<'a>(exprs: &'a LinkArena<'a>) -> (&'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>) {
 	let id_hash = Expr::lambda(PT::END, &Expr::VAR, exprs);
 
 	let true_hash = Expr::lambda(PT::END, &Expr::lambda(PT::NONE, &Expr::VAR, exprs), exprs);
@@ -71,7 +71,7 @@ fn test_parsing() {
 	assert_eq!(parsed_false_hash, false_hash);
 
 	let parsed_not_hash = parse("(λ1[<<1] ((x (λ2[1] x)) (λ2[2] x)))", exprs).unwrap();
-	println!("not: {} vs {}", parsed_not_hash.display(exprs), not_hash.display(exprs));
+	println!("not: {} vs {}", parsed_not_hash, not_hash);
 	assert_eq!(parsed_not_hash, not_hash);
 
 	let parsed_and_hash = parse("(λ2[<(2,1)] ((x x) (λ2[1] x)))", exprs).unwrap();
@@ -102,7 +102,7 @@ fn test_factorial() {
 	let mult = parse_reduce("(λ3[(3,(2,1))] (x (x x)))", exprs).unwrap();
 	Symbol::new("mult", &mult, exprs);
 
-	println!("{}", parse("((mult 2) 3)", exprs).unwrap().display(exprs));
+	println!("{}", parse("((mult 2) 3)", exprs).unwrap());
 	assert_eq!(parse_reduce("((mult 0) 0)", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
 	assert_eq!(parse_reduce("((mult 0) 1)", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
 	assert_eq!(parse_reduce("((mult 2) 3)", exprs).unwrap(), parse_reduce("6", exprs).unwrap());
@@ -131,7 +131,9 @@ fn test_factorial() {
 #[test]
 fn test_hashdb() {
 	let exprs = &LinkArena::new();
+	let ser = &mut LinkSerializer::new();
+	let db = &mut Datastore::new();
 	//let data = Data::new(&[01u8, 32u8]);
-	let string = String::from("Hello").store(exprs);
-	assert_eq!(string.fetch(exprs).unwrap(), "Hello");
+	let string = String::from("Hello").store(&mut ser.join(db));
+	assert_eq!(string.fetch(&db, exprs).unwrap(), "Hello");
 }

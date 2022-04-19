@@ -2,14 +2,10 @@ use std::fmt;
 
 use thiserror::Error;
 
-use hashdb::{Datastore, DatastoreError, NativeHashtype, Link};
-
 mod expr;
-mod display;
 mod reduce_tree;
 mod reduce;
 pub use expr::*;
-pub use display::*;
 pub use reduce_tree::*;
 pub use reduce::*;
 
@@ -20,7 +16,7 @@ pub enum LambdaError {
 
 	// Datastore Error
 	#[error("Datastore Error: {0}")]
-	HashtypeResolveError(#[from] DatastoreError),
+	HashtypeResolveError(#[from] hashdb::DatastoreError),
 
 	// Beta Reduction Error
 	#[error("Recursion Depth for beta reduction exceeded")]
