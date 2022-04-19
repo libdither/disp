@@ -1,10 +1,10 @@
 ///! ReplaceTrees allow for more easy manipulation of Lambda abstractions during beta reduction and creation
 
-use std::{fmt, ptr::NonNull};
+use std::{fmt};
 
-use hashdb::{LinkArena, NativeHashtype};
+use hashdb::{LinkArena};
 
-use crate::{Datastore, lambda_calculus::{Expr, PointerTree, LambdaError}};
+use crate::{lambda_calculus::{Expr, PointerTree, LambdaError}};
 
 #[derive(Clone, Hash, PartialEq, Debug)]
 pub enum ReplaceTree<'a> {
@@ -162,7 +162,7 @@ fn test_replace_tree() {
 	let r = ReplaceIndex::DEFAULT;
 	test_split(reps, r).unwrap();
 
-	let pts = &LinkArena::new();
+	let _pts = &LinkArena::new();
 	let mut r = ReplaceIndex::DEFAULT;
 	r.push_pointer_tree(&PT::END, reps).unwrap();
 	test_split(reps, r).unwrap_err();
@@ -177,7 +177,7 @@ fn test_replace_tree() {
 	r.push_pointer_tree(&PT::branch(PT::right(PT::END, exprs), PT::END, exprs), reps).unwrap();
 	test_split(reps, r).unwrap();
 }
-
+#[allow(dead_code)]
 fn test_split<'a>(reps: &'a LinkArena<'a>, r: ReplaceIndex<'a>) -> Result<(), LambdaError> {
 	print!("split [{}] ", r);
 	let (left, right) = r.split().map_err(|e|{println!("split err: {}", e); e})?;

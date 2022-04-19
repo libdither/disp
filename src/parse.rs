@@ -1,11 +1,11 @@
-use std::borrow::Borrow;
+
 use std::cell::RefCell;
-use std::fs;
+
 use std::{iter::Peekable};
 
 use logos::{Logos, Span};
 use thiserror::Error;
-use hashdb::{Datastore, DatastoreError, LinkArena, LinkSerializer, NativeHashtype, TypedHash};
+use hashdb::{DatastoreError, LinkArena, LinkSerializer, NativeHashtype};
 
 use crate::lambda_calculus::{Expr, LambdaError, ReplaceIndex, ReplaceTree, beta_reduce};
 use crate::Symbol;
@@ -337,6 +337,7 @@ fn parse_command<'a>(feeder: &mut TokenFeeder<'a>, exprs: &'a LinkArena<'a>) -> 
 	})
 }
 
+#[allow(dead_code)]
 pub fn parse<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
 	println!("parsing: {}", string);
@@ -344,7 +345,7 @@ pub fn parse<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'
 	println!("parsed: {}", expr);
 	Ok(expr)
 }
-
+#[allow(dead_code)]
 pub fn parse_reduce<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
 	let feeder = &mut TokenFeeder::from_string(string);
 	let expr = parse_expr(feeder, 0, exprs)?;

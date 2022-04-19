@@ -3,11 +3,11 @@ use std::fmt;
 use rkyv::{Archive, Serialize, Deserialize};
 use bytecheck::CheckBytes;
 
-use hashdb::{Datastore, DatastoreDeserializer, DatastoreSerializer, LinkArena, NativeHashtype, HashType};
+use hashdb::{DatastoreDeserializer, DatastoreSerializer, LinkArena, NativeHashtype, HashType};
 
 use super::ReplaceIndex;
 
-use crate::Symbol;
+
 
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
@@ -88,9 +88,9 @@ impl<'a> fmt::Display for &'a Expr<'a> {
 			Expr::Variable => write!(f, "x")?,
 			Expr::Lambda { .. } => {
 				thread_local! {
-					static arena: LinkArena<'static> = LinkArena::new();
+					static REPS: LinkArena<'static> = LinkArena::new();
 				}
-				arena.with(|reps| {
+				REPS.with(|reps| {
 					let mut index = ReplaceIndex::DEFAULT;
 					let expr = index.push_lambda(&self, reps).unwrap();
 					write!(f, "(λ{}[{}] {})", index.index, index.tree, expr)

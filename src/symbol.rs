@@ -1,7 +1,7 @@
 
 use std::iter;
 
-use hashdb::{Datastore, DatastoreDeserializer, DatastoreError, DatastoreSerializer, Hash, HashType, LinkArena, NativeHashtype, hashtype::HashIterConstructor};
+use hashdb::{DatastoreDeserializer, DatastoreSerializer, Hash, HashType, LinkArena, NativeHashtype, hashtype::HashIterConstructor};
 use crate::lambda_calculus::Expr;
 
 #[derive(Debug, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]

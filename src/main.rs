@@ -2,7 +2,7 @@
 #![feature(option_result_contains)]
 #![feature(generic_associated_types)]
 
-use std::fs;
+
 
 use rustyline::{error::ReadlineError, Editor};
 
@@ -19,7 +19,7 @@ use parse::{parse_line};
 fn main() {
 	let exprs = & LinkArena::new();
 
-    let load_file = std::env::args().nth(1);
+    let _load_file = std::env::args().nth(1);
 
     /* if let Some(file) = &load_file {
         ser.db.load(fs::File::open(file).unwrap()).expect("could not load disp file")

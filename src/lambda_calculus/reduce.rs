@@ -1,4 +1,4 @@
-use hashdb::{Datastore, NativeHashtype, LinkArena};
+use hashdb::{LinkArena};
 
 use super::{Expr, LambdaError, ReplaceIndex, ReplaceTree};
 
