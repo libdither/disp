@@ -1,13 +1,9 @@
-use std::{any::Any, borrow::Borrow, cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, fmt::{self, Debug}, hash::Hash as StdHash, hash::Hasher, iter, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{ fmt::Debug, hash::{Hash as StdHash}, iter, marker::PhantomData};
 
-use bincode::config::NativeEndian;
-use bumpalo::Bump;
-use bytes::buf::Chain;
-use rkyv::{AlignedVec, Archive, Archived, Deserialize, Fallible, Infallible, Resolver, Serialize, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch, SharedSerializeMap, SharedSerializeMapError}}, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, Immutable, SerializeWith, With}};
+use rkyv::{Archive, Deserialize, Fallible, Serialize, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, SerializeWith}};
 
 use bytecheck::CheckBytes;
-use crate::{Data, Datastore, DatastoreDeserializer, DatastoreError, DatastoreLinkSerializer, DatastoreSerializer, Hash, HashDeserializer, LinkArena, LinkSerializer};
-// const RUST_TYPE: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0]);
+use crate::{Datastore, DatastoreDeserializer, DatastoreSerializer, Hash, HashDeserializer, LinkArena};
 
 /// Represents a Rust type with an rykv Archive implementation that can be fetched from a Datastore via its hash
 pub trait NativeHashtype: StdHash + Debug + Archive + Sized {
@@ -106,7 +102,7 @@ impl<'a, F: NativeHashtype> ArchiveWith<&'a F> for HashType {
 
 	#[inline]
 	unsafe fn resolve_with(
-		field: & &'a F,
+		_field: & &'a F,
 		pos: usize,
 		resolver: Self::Resolver,
 		out: *mut Self::Archived,

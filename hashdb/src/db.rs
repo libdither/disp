@@ -1,11 +1,11 @@
 
-use std::{collections::HashMap, io, sync::Arc};
+use std::{collections::HashMap, io};
 
 use bytecheck::CheckBytes;
-use rkyv::{AlignedVec, Archived, Fallible, de::{SharedDeserializeRegistry, deserializers::SharedDeserializeMap}, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch}}, validation::validators::DefaultValidator, with::{DeserializeWith, SerializeWith}};
+use rkyv::{Fallible, validation::validators::DefaultValidator};
 use serde::{Serialize, Deserialize};
 
-use crate::{Data, DatastoreSerializer, Hash, LinkArena, LinkSerializer, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher};
+use crate::{Data, DatastoreSerializer, Hash, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
@@ -36,7 +36,6 @@ impl Datastore {
 			self.reverse_lookup.insert(subhash.clone(), hash.clone());
 		}
 	}
-
 	/// Add Data to Datastore
 	pub fn store(&mut self, data: Data) -> Hash {
 		let hash = data.hash();
@@ -51,17 +50,6 @@ impl Datastore {
 	pub fn get(&self, hash: &Hash) -> Result<&Data, DatastoreError> {
 		self.map.get(hash).ok_or(DatastoreError::NotInDatastore(hash.clone()))
 	}
-	// Fetch Typed (Archived) Data
-	/* pub fn fetch<'a, T: NativeHashtype>(&'a self, hash: &TypedHash<T>) -> Result<&'a Archived<T>, DatastoreError>
-	where T::Archived: CheckBytes<DefaultValidator<'a>>
-	{
-		let mhash = hash.as_hash();
-		Ok(self.get(mhash)?.archived::<'a, T>()?)
-	} */
-
-	/* pub fn fetch_recursive<'a, T: NativeHashtype>(&'a self, hash: &TypedHash<T>) -> Result<Archived<T>, DatastoreError>{
-		let archived = self.fetch(hash);
-	} */
 	#[inline]
 	pub fn lookup(&self, hash: &Hash) -> Result<&Hash, DatastoreError> {
 		self.reverse_lookup.get(hash).ok_or(DatastoreError::NotReverseLinked(hash.clone()))

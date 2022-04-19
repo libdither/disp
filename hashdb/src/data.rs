@@ -1,4 +1,4 @@
-use std::{any::{TypeId, type_name}, cell::Cell};
+use std::any::type_name;
 
 use rkyv::{Archived, validation::validators::DefaultValidator};
 use bytecheck::CheckBytes;
@@ -38,7 +38,7 @@ impl Data {
 	pub fn assert_type<'a, T: NativeHashtype + 'a>(&'a self) -> Result<(), DataError>
 	where T::Archived: CheckBytes<DefaultValidator<'a>>,
 	{
-		/// Safety: I don't know if this is safe
+		// Safety: I don't know if this is safe
 		rkyv::check_archived_root::<'a, T>(&self.data).map_err(|_|DataError::ArchiveInvalidAsType(type_name::<T>()))?;
 		Ok(())
 	}

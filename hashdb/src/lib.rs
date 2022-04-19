@@ -1,4 +1,3 @@
-#![allow(unused)]
 #![allow(incomplete_features)]
 #![allow(const_evaluatable_unchecked)]
 
@@ -29,11 +28,11 @@ pub use data::Data;
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, DatastoreSerializer, Hash, LinkArena, LinkSerializer, NativeHashtype, DatastoreDeserializer, HashType};
+	use crate::{Datastore, DatastoreSerializer, LinkArena, LinkSerializer, NativeHashtype, DatastoreDeserializer, HashType};
 
 	#[test]
 	fn test_db() {
-		let mut db = &mut Datastore::new();
+		let db = &mut Datastore::new();
 		let ser = &mut LinkSerializer::new();
 		let string = String::from("hello").store(&mut ser.join(db));
 		
@@ -63,15 +62,9 @@ mod tests {
 
 		let ser = &mut LinkSerializer::new();
 		let hash = string2.store(&mut ser.join(db));
-		
 
 		let links_de = LinkArena::new();
 		let ret = hash.fetch(db, &links_de).unwrap();
-		/* let links_de = LinkArena::new();
-		let de = &mut links_de.join(db);
-		let ret: StringType = hash.fetch(de).unwrap();
-		
-		let ser = &mut LinkSerializer::new(); let ser = &mut ser.join(db);
-		assert_eq!(ret.store(ser), string2.store(ser)); */
+		assert_eq!(ret, string2);
 	}
 }

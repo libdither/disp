@@ -1,8 +1,7 @@
-
+#![allow(dead_code)]
 /// This file is a clusterfudge of generic where expressions, hopefully this is made easier in the future...
 
-use std::{fmt, hash, io::Read, mem::ManuallyDrop, str::FromStr};
-use multihash::Sha2_256;
+use std::{fmt, io::Read, mem::ManuallyDrop, str::FromStr};
 use serde::{Serialize, Deserialize};
 use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}};
 use bytecheck::CheckBytes;
@@ -13,8 +12,6 @@ use futures::{AsyncRead, AsyncReadExt};
 mod code;
 mod hasher;
 pub use hasher::TrimHasher;
-/* pub mod hasher;
-mod sha2; */
 use code::{calc_varint_len, Code};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -130,7 +127,7 @@ impl<S: ScratchSpace + Serializer + ?Sized> rkyv::Serialize<S> for Hash {
 	}
 }
 impl<D: ?Sized + Fallible> rkyv::Deserialize<Hash, D> for Archived<Hash> {
-    fn deserialize(&self, deserializer: &mut D) -> Result<Hash, D::Error> {
+    fn deserialize(&self, _deserializer: &mut D) -> Result<Hash, D::Error> {
         Ok(self.clone())
     }
 }
@@ -150,7 +147,7 @@ impl FromStr for Hash {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
 		let mut hash = Hash::default();
-		bs58::decode(s).into(&mut hash.0);
+		bs58::decode(s).into(&mut hash.0)?;
 		Ok(hash)
     }
 }
@@ -392,13 +389,6 @@ where
 		unsafe { reader.read_exact(&mut hash.data)?; }
 		Ok(hash)
 	}
-	/// Used for defining type primitives
-	/* pub const fn const_digest(data: &[u8]) -> Self {
-		let buf: [u8; C.digest_len()];
-		let buf_mut = buf.split_at_mut(data.len()).0;
-		buf_mut.copy_from_slice(data);
-		Self::from_digest(buf)
-	} */
 	pub const fn len() -> usize { C.total_len() }
 	/// Safety: This returns immutable data with no memory pointers
 	pub fn as_bytes(&self) -> &[u8] { unsafe { &self.data } }

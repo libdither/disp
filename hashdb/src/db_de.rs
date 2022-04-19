@@ -1,4 +1,4 @@
-use std::{any::Any, cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::{Hash as StdHash, Hasher}, sync::Arc};
+use std::{cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::{Hash as StdHash, Hasher}};
 
 use bumpalo::Bump;
 use bytecheck::CheckBytes;
@@ -68,7 +68,7 @@ impl<'a> LinkArena<'a> {
 	pub fn add_with_lookups<T: StdHash + NativeHashtype>(&'a self, val: T, ser: &mut impl DatastoreSerializer) -> &'a T {
 		let ret = self.add(val);
 		for link in ret.reverse_links(ser) {
-			unsafe { self.reverse_lookup.borrow_mut().insert(link, (ret as *const T).cast()) };
+			self.reverse_lookup.borrow_mut().insert(link, (ret as *const T).cast());
 		}
 		ret
 	}

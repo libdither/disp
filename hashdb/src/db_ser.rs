@@ -24,7 +24,6 @@ pub struct LinkSerializer {
 	scratch: FallbackScratch<HeapScratch<1024>, AllocScratch>, // Scratch space
 	serializer: AlignedSerializer<AlignedVec>, // Serializer
 	pointer_map: HashMap<*const (), (Hash, usize)>, // Check for shared pointers to avoid serializing the same object twice
-	reverse_links: Vec<Hash>,
 }
 
 impl LinkSerializer {
@@ -33,7 +32,6 @@ impl LinkSerializer {
 			scratch: Default::default(),
 			serializer: Default::default(),
 			pointer_map: Default::default(),
-			reverse_links: Default::default(),
 		}
 	}
 	pub fn get_vec(&mut self) -> AlignedVec {
@@ -72,7 +70,7 @@ impl Serializer for LinkSerializer {
 impl DatastoreSerializer for LinkSerializer {
     fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, Self::Error> where T: Serialize<Self> {
 		let _pos = self.serialize_value(hashtype)?;
-		let data = unsafe { Data::new(self.get_vec().into()) };
+		let data = Data::new(self.get_vec().into());
 		Ok(data.hash())
     }
 }
@@ -88,7 +86,7 @@ impl<'a> DatastoreSerializer for DatastoreLinkSerializer<'a> {
 			let _pos = self.serialize_value(hashtype)?;
 			let vec = self.1.get_vec();
 			// Safety: We just serialized this data, therefore it is a valid archive
-			let data = unsafe { Data::new(vec.into()) };
+			let data = Data::new(vec.into());
 			let hash = self.0.store(data).into();
 			let reverse_links = hashtype.reverse_links(self);
 			self.0.register::<Self, T>(reverse_links, &hash);
