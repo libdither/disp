@@ -5,7 +5,7 @@ use bytecheck::CheckBytes;
 use rkyv::{AlignedVec, Archived, Fallible, de::{SharedDeserializeRegistry, deserializers::SharedDeserializeMap}, ser::{ScratchSpace, Serializer, SharedSerializeRegistry, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, AllocSerializer, FallbackScratch, HeapScratch}}, validation::validators::DefaultValidator, with::{DeserializeWith, SerializeWith}};
 use serde::{Serialize, Deserialize};
 
-use crate::{ArchivedLink, Data, DatastoreSerializer, Hash, Link, LinkArena, LinkSerializer, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher};
+use crate::{Data, DatastoreSerializer, Hash, LinkArena, LinkSerializer, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {

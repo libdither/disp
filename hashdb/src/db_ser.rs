@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use rkyv::{AlignedVec, Fallible, Serialize, ser::{ScratchSpace, Serializer, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, FallbackScratch, HeapScratch, SharedSerializeMapError}}};
 
-use crate::{Data, Datastore, DatastoreError, Hash, Link, NativeHashtype, TypedHash};
+use crate::{Data, Datastore, DatastoreError, Hash, NativeHashtype, TypedHash};
 
 /// Represents a Serializer that serializes to an archive and stores in a Datastore
 pub trait DatastoreSerializer: Fallible + Serializer {

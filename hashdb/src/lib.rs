@@ -19,11 +19,9 @@ mod db;
 pub mod hashtype;
 mod db_ser;
 mod db_de;
-mod link;
 
 pub use db::{Datastore, DatastoreError};
-pub use hashtype::{NativeHashtype, TypedHash};
-pub use link::{Link, ArchivedLink};
+pub use hashtype::{NativeHashtype, TypedHash, HashType};
 pub use db_ser::{DatastoreSerializer, LinkSerializer, DatastoreLinkSerializer};
 pub use db_de::{LinkArena, HashDeserializer, DatastoreDeserializer};
 pub use hash::Hash;
@@ -31,7 +29,7 @@ pub use data::Data;
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, DatastoreSerializer, Hash, Link, LinkArena, LinkSerializer, NativeHashtype, DatastoreDeserializer};
+	use crate::{Datastore, DatastoreSerializer, Hash, LinkArena, LinkSerializer, NativeHashtype, DatastoreDeserializer, HashType};
 
 	#[test]
 	fn test_db() {
@@ -55,13 +53,13 @@ mod tests {
 		#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
 		enum StringType<'a> {
 			String(String),
-			Link(#[omit_bounds] Link<'a, StringType<'a>>, #[omit_bounds] Link<'a, StringType<'a>>),
+			Link(#[with(HashType)] #[omit_bounds] &'a StringType<'a>, #[with(HashType)] #[omit_bounds] &'a StringType<'a>),
 		}
 		impl<'a> NativeHashtype for StringType<'a> {}
 
 		let links = LinkArena::new();
 		let string = links.add(StringType::String("Hello".into()));
-		let string2 = links.add(StringType::Link(string.clone().into(), string.clone().into()));
+		let string2 = links.add(StringType::Link(string, string));
 
 		let db = &mut Datastore::new();
 

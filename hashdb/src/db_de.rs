@@ -4,11 +4,11 @@ use bumpalo::Bump;
 use bytecheck::CheckBytes;
 use rkyv::{Archive, Deserialize, Fallible, validation::validators::DefaultValidator};
 
-use crate::{Datastore, DatastoreError, Hash, Link, NativeHashtype};
+use crate::{Datastore, DatastoreError, Hash, NativeHashtype};
 
 pub trait DatastoreDeserializer<'a>: Fallible + Sized {
 	fn get(&'a self) -> &'a HashDeserializer<'a>;
-	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<Link<'a, T>, <Self as Fallible>::Error>
+	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
 	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>;
 }
 
@@ -21,7 +21,7 @@ impl<'a> Fallible for HashDeserializer<'a> {
 }
 impl<'a> DatastoreDeserializer<'a> for HashDeserializer<'a> {
 	fn get(&'a self) -> &'a HashDeserializer<'a> { self }
-	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<Link<'a, T>, <Self as Fallible>::Error>
+	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
 	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>
 	{
 		let data = Datastore::get(self.db, hash.into())?;
@@ -45,9 +45,6 @@ impl<'a> LinkArena<'a> {
 			p: Default::default()
 		}
 	}
-	pub fn alloc<T>(&'a self, val: T) -> &'a T {
-		self.arena.alloc(val)
-	}
 	pub fn dedup<T: std::hash::Hash>(&self, val: &'a T) -> &'a T {
 		let hasher = &mut DefaultHasher::new();
 		val.hash(hasher);
@@ -64,10 +61,10 @@ impl<'a> LinkArena<'a> {
 		self.dedup(val)
 	}
 	/// Add value to arena and get link
-	pub fn add<T: std::hash::Hash>(&'a self, val: T) -> Link<'a, T> {
-		Link::new(self.alloc_dedup(val))
+	pub fn add<T: std::hash::Hash>(&'a self, val: T) -> &'a T {
+		self.alloc_dedup(val)
 	}
-	pub fn add_with_lookups<T: StdHash + NativeHashtype>(&'a self, val: T) -> Link<'a, T> {
+	pub fn add_with_lookups<T: StdHash + NativeHashtype>(&'a self, val: T) -> &'a T {
 		self.add(val)
 	}
 }
