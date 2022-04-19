@@ -1,15 +1,20 @@
-use std::{cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::{Hash as StdHash, Hasher}};
+use std::{
+	cell::RefCell,
+	collections::{hash_map::DefaultHasher, HashMap},
+	hash::{Hash as StdHash, Hasher},
+};
 
 use bumpalo::Bump;
 use bytecheck::CheckBytes;
-use rkyv::{Archive, Deserialize, Fallible, validation::validators::DefaultValidator};
+use rkyv::{validation::validators::DefaultValidator, Archive, Deserialize, Fallible};
 
 use crate::{Datastore, DatastoreError, DatastoreSerializer, Hash, NativeHashtype, TypedHash};
 
 pub trait DatastoreDeserializer<'a>: Fallible + Sized {
 	fn get(&'a self) -> &'a HashDeserializer<'a>;
 	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
-	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>;
+	where
+		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>;
 }
 
 pub struct HashDeserializer<'a> {
@@ -20,9 +25,12 @@ impl<'a> Fallible for HashDeserializer<'a> {
 	type Error = DatastoreError;
 }
 impl<'a> DatastoreDeserializer<'a> for HashDeserializer<'a> {
-	fn get(&'a self) -> &'a HashDeserializer<'a> { self }
+	fn get(&'a self) -> &'a HashDeserializer<'a> {
+		self
+	}
 	fn fetch<T: NativeHashtype>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
-	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>
+	where
+		<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>> + Deserialize<T, Self>,
 	{
 		let data = Datastore::get(self.db, hash.into())?;
 		let result = data.archived::<T>()?;
@@ -32,7 +40,7 @@ impl<'a> DatastoreDeserializer<'a> for HashDeserializer<'a> {
 }
 pub struct LinkArena<'a> {
 	arena: Bump,
-	map: RefCell<HashMap<u64, *const ()>>, // Lookup map
+	map: RefCell<HashMap<u64, *const ()>>,             // Lookup map
 	reverse_lookup: RefCell<HashMap<Hash, *const ()>>, // Reverse lookup map
 	p: std::marker::PhantomData<&'a ()>,
 }
@@ -42,7 +50,7 @@ impl<'a> LinkArena<'a> {
 			arena: Bump::new(),
 			map: Default::default(),
 			reverse_lookup: Default::default(),
-			p: Default::default()
+			p: Default::default(),
 		}
 	}
 	pub fn dedup<T: std::hash::Hash>(&self, val: &'a T) -> &'a T {

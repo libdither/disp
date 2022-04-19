@@ -1,4 +1,3 @@
-
 // TODO: make this function work for all values of usize
 pub const fn calc_varint_len(count: usize) -> usize {
 	match count {
@@ -7,7 +6,7 @@ pub const fn calc_varint_len(count: usize) -> usize {
 		16384..=2097151 => 3,
 		2097152..=268435455 => 4,
 		268435456..=34359738368 => 5,
-		_ => 10
+		_ => 10,
 	}
 	//let buf: &mut [u8; 10];
 	//unsigned_varint::encode::usize(count, buf).len()
@@ -21,13 +20,9 @@ pub enum Code {
 impl Code {
 	pub const fn hasher(self) -> multihash::Code {
 		match self {
-			Self::Sha2_256 => {
-				multihash::Code::Sha2_256
-			},
-			Self::Sha2_512 => {
-				multihash::Code::Sha2_256
-			}
-			_ => panic!("hash: is not support by hashdb")
+			Self::Sha2_256 => multihash::Code::Sha2_256,
+			Self::Sha2_512 => multihash::Code::Sha2_256,
+			_ => panic!("hash: is not support by hashdb"),
 		}
 	}
 	pub const fn digest_len(self) -> usize {
@@ -52,8 +47,6 @@ impl Code {
 		}
 	}
 	pub const fn total_len(self) -> usize {
-		calc_varint_len(Self::format_code(self))
-		 + calc_varint_len(Self::digest_len(self))
-		 + Self::digest_len(self)
+		calc_varint_len(Self::format_code(self)) + calc_varint_len(Self::digest_len(self)) + Self::digest_len(self)
 	}
 }

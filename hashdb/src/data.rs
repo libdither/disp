@@ -1,8 +1,8 @@
 use std::any::type_name;
 
-use rkyv::{Archived, validation::validators::DefaultValidator};
 use bytecheck::CheckBytes;
-use serde::{Serialize, Deserialize};
+use rkyv::{validation::validators::DefaultValidator, Archived};
+use serde::{Deserialize, Serialize};
 
 use crate::{Hash, NativeHashtype};
 
@@ -24,23 +24,29 @@ impl Data {
 	pub fn new(data: Vec<u8>) -> Self {
 		Self { data }
 	}
-	pub fn as_bytes(&self) -> &[u8] { &self.data }
+	pub fn as_bytes(&self) -> &[u8] {
+		&self.data
+	}
 
 	/// Get Archived<T> if correct format
 	pub fn archived<'a, T: NativeHashtype>(&'a self) -> Result<&Archived<T>, DataError>
-	where T::Archived: CheckBytes<DefaultValidator<'a>>,
+	where
+		T::Archived: CheckBytes<DefaultValidator<'a>>,
 	{
-		Ok(rkyv::check_archived_root::<'a, T>(&self.data).map_err(|_|DataError::ArchiveInvalidAsType(type_name::<T>()))?)
+		Ok(rkyv::check_archived_root::<'a, T>(&self.data).map_err(|_| DataError::ArchiveInvalidAsType(type_name::<T>()))?)
 	}
 	pub unsafe fn archived_unsafe<'a, T: NativeHashtype>(&'a self) -> &Archived<T> {
 		rkyv::archived_root::<T>(self.as_bytes())
 	}
 	pub fn assert_type<'a, T: NativeHashtype + 'a>(&'a self) -> Result<(), DataError>
-	where T::Archived: CheckBytes<DefaultValidator<'a>>,
+	where
+		T::Archived: CheckBytes<DefaultValidator<'a>>,
 	{
 		// Safety: I don't know if this is safe
-		rkyv::check_archived_root::<'a, T>(&self.data).map_err(|_|DataError::ArchiveInvalidAsType(type_name::<T>()))?;
+		rkyv::check_archived_root::<'a, T>(&self.data).map_err(|_| DataError::ArchiveInvalidAsType(type_name::<T>()))?;
 		Ok(())
 	}
-	pub fn hash(&self) -> Hash { Hash::hash(&self.data) }
+	pub fn hash(&self) -> Hash {
+		Hash::hash(&self.data)
+	}
 }

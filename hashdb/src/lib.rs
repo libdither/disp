@@ -1,6 +1,5 @@
 #![allow(incomplete_features)]
 #![allow(const_evaluatable_unchecked)]
-
 #![feature(generic_const_exprs)]
 #![feature(adt_const_params)]
 #![feature(const_mut_refs)]
@@ -12,37 +11,36 @@
 #[macro_use]
 extern crate thiserror;
 
-mod hash;
 mod data;
 mod db;
-pub mod hashtype;
-mod db_ser;
 mod db_de;
+mod db_ser;
+mod hash;
+pub mod hashtype;
 
-pub use db::{Datastore, DatastoreError};
-pub use hashtype::{NativeHashtype, TypedHash, HashType};
-pub use db_ser::{DatastoreSerializer, LinkSerializer, DatastoreLinkSerializer};
-pub use db_de::{LinkArena, HashDeserializer, DatastoreDeserializer};
-pub use hash::Hash;
 pub use data::Data;
+pub use db::{Datastore, DatastoreError};
+pub use db_de::{DatastoreDeserializer, HashDeserializer, LinkArena};
+pub use db_ser::{DatastoreLinkSerializer, DatastoreSerializer, LinkSerializer};
+pub use hash::Hash;
+pub use hashtype::{HashType, NativeHashtype, TypedHash};
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, DatastoreSerializer, LinkArena, LinkSerializer, NativeHashtype, DatastoreDeserializer, HashType};
+	use crate::{Datastore, DatastoreDeserializer, DatastoreSerializer, HashType, LinkArena, LinkSerializer, NativeHashtype};
 
 	#[test]
 	fn test_db() {
 		let db = &mut Datastore::new();
 		let ser = &mut LinkSerializer::new();
 		let string = String::from("hello").store(&mut ser.join(db));
-		
+
 		let arena = LinkArena::new();
 		assert_eq!(*string.fetch(db, &arena).unwrap(), "hello");
 	}
 
 	#[test]
 	fn test_loading() {
-
 		// Self-referential type
 		#[derive(Debug, Hash, PartialEq, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 		// To use the safe API, you have to derive CheckBytes for the archived type
@@ -50,7 +48,14 @@ mod tests {
 		#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
 		enum StringType<'a> {
 			String(String),
-			Link(#[with(HashType)] #[omit_bounds] &'a StringType<'a>, #[with(HashType)] #[omit_bounds] &'a StringType<'a>),
+			Link(
+				#[with(HashType)]
+				#[omit_bounds]
+				&'a StringType<'a>,
+				#[with(HashType)]
+				#[omit_bounds]
+				&'a StringType<'a>,
+			),
 		}
 		impl<'a> NativeHashtype for StringType<'a> {}
 

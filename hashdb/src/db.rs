@@ -1,11 +1,10 @@
-
 use std::{collections::HashMap, io};
 
 use bytecheck::CheckBytes;
-use rkyv::{Fallible, validation::validators::DefaultValidator};
-use serde::{Serialize, Deserialize};
+use rkyv::{validation::validators::DefaultValidator, Fallible};
+use serde::{Deserialize, Serialize};
 
-use crate::{Data, DatastoreSerializer, Hash, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher};
+use crate::{data::DataError, hash::TrimHasher, Data, DatastoreSerializer, Hash, NativeHashtype, TypedHash};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
@@ -55,7 +54,8 @@ impl Datastore {
 		self.reverse_lookup.get(hash).ok_or(DatastoreError::NotReverseLinked(hash.clone()))
 	}
 	pub fn lookup_typed<'a, F: NativeHashtype, T: NativeHashtype + 'a>(&'a self, hash: &TypedHash<F>) -> Result<TypedHash<T>, DatastoreError>
-	where T::Archived: CheckBytes<DefaultValidator<'a>>
+	where
+		T::Archived: CheckBytes<DefaultValidator<'a>>,
 	{
 		let linked_hash = self.lookup(hash.as_hash())?;
 		self.get(linked_hash)?.assert_type::<T>()?;

@@ -1,12 +1,20 @@
 use std::collections::HashMap;
 
-use rkyv::{AlignedVec, Fallible, Serialize, ser::{ScratchSpace, Serializer, serializers::{AlignedSerializer, AllocScratch, AllocScratchError, FallbackScratch, HeapScratch, SharedSerializeMapError}}};
+use rkyv::{
+	ser::{
+		serializers::{AlignedSerializer, AllocScratch, AllocScratchError, FallbackScratch, HeapScratch, SharedSerializeMapError},
+		ScratchSpace, Serializer,
+	},
+	AlignedVec, Fallible, Serialize,
+};
 
 use crate::{Data, Datastore, DatastoreError, Hash, NativeHashtype, TypedHash};
 
 /// Represents a Serializer that serializes to an archive and stores in a Datastore
 pub trait DatastoreSerializer: Fallible + Serializer {
-	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, <Self as Fallible>::Error> where T: Serialize<Self>;
+	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, <Self as Fallible>::Error>
+	where
+		T: Serialize<Self>;
 }
 
 #[derive(Debug, Error)]
@@ -16,14 +24,14 @@ pub enum LinkSerializeError {
 	#[error("data store error: {0}")]
 	DatastoreError(#[from] DatastoreError),
 	#[error("shared map error: {0}")]
-	SharedSerializeMapError(#[from] SharedSerializeMapError)
+	SharedSerializeMapError(#[from] SharedSerializeMapError),
 }
 
 /// Serialize object trees into linked hashes and store into a Datastore
 pub struct LinkSerializer {
 	scratch: FallbackScratch<HeapScratch<1024>, AllocScratch>, // Scratch space
-	serializer: AlignedSerializer<AlignedVec>, // Serializer
-	pointer_map: HashMap<*const (), (Hash, usize)>, // Check for shared pointers to avoid serializing the same object twice
+	serializer: AlignedSerializer<AlignedVec>,                 // Serializer
+	pointer_map: HashMap<*const (), (Hash, usize)>,            // Check for shared pointers to avoid serializing the same object twice
 }
 
 impl LinkSerializer {
@@ -68,11 +76,14 @@ impl Serializer for LinkSerializer {
 	}
 }
 impl DatastoreSerializer for LinkSerializer {
-    fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, Self::Error> where T: Serialize<Self> {
+	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, Self::Error>
+	where
+		T: Serialize<Self>,
+	{
 		let _pos = self.serialize_value(hashtype)?;
 		let data = Data::new(self.get_vec().into());
 		Ok(data.hash())
-    }
+	}
 }
 
 pub struct DatastoreLinkSerializer<'a>(&'a mut Datastore, &'a mut LinkSerializer);
@@ -98,7 +109,6 @@ impl<'a> DatastoreSerializer for DatastoreLinkSerializer<'a> {
 impl<'a> Fallible for DatastoreLinkSerializer<'a> {
 	type Error = LinkSerializeError;
 }
-
 
 impl<'a> ScratchSpace for DatastoreLinkSerializer<'a> {
 	unsafe fn push_scratch(&mut self, layout: std::alloc::Layout) -> Result<std::ptr::NonNull<[u8]>, Self::Error> {

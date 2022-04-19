@@ -1,7 +1,5 @@
 use std::hash::{BuildHasher, Hasher};
 
-
-
 /* /// Hasher trait, hashers implement this, generic over hasher size
 pub trait Hasher<const S: usize> {
 	fn new() -> Self;
@@ -13,7 +11,6 @@ pub trait Hasher<const S: usize> {
 		hasher.finalize()
 	}
 } */
-
 
 /// Hasher that just takes the first 64 bits of whatever is passed and uses that as a hash.
 /// Makes HashMap more efficient when mapping existing hashes to objects.
@@ -32,14 +29,14 @@ impl Hasher for TrimHasher {
 		self.state = unsafe {
 			let byte_ptr = bytes.as_ptr();
 			let ptr = byte_ptr as *const u64; // This could be any type
-			(*ptr).clone() // We clone it so that no matter what type it is, it gets dereferenced. 
+			(*ptr).clone() // We clone it so that no matter what type it is, it gets dereferenced.
 		};
 	}
 }
 impl BuildHasher for TrimHasher {
-    type Hasher = Self;
+	type Hasher = Self;
 
-    fn build_hasher(&self) -> Self::Hasher {
-        self.clone()
-    }
+	fn build_hasher(&self) -> Self::Hasher {
+		self.clone()
+	}
 }
