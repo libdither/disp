@@ -1,11 +1,8 @@
 ///! BindTrees allow for more easy manipulation of Lambda abstractions during beta reduction and creation
-
-
 use std::fmt;
 
-use rkyv::{Archive, Serialize, Deserialize};
 use bytecheck::CheckBytes;
-
+use rkyv::{Archive, Deserialize, Serialize};
 
 use hashdb::{DatastoreDeserializer, DatastoreSerializer, HashType, LinkArena, NativeHashtype};
 
@@ -18,7 +15,14 @@ use super::{Expr, LambdaError};
 pub enum Binding<'a> {
 	None,
 	End,
-	Branch(#[with(HashType)] #[omit_bounds] &'a Binding<'a>, #[with(HashType)] #[omit_bounds] &'a Binding<'a>), // u32 represents highest variable abstraction level in this expression
+	Branch(
+		#[with(HashType)]
+		#[omit_bounds]
+		&'a Binding<'a>,
+		#[with(HashType)]
+		#[omit_bounds]
+		&'a Binding<'a>,
+	), // u32 represents highest variable abstraction level in this expression
 }
 impl<'a> Binding<'a> {
 	pub const NONE: &'static Binding<'static> = &Binding::None;
@@ -33,25 +37,26 @@ impl<'a> Binding<'a> {
 		arena.add(Binding::Branch(l, r))
 	}
 	pub fn branch_reduce(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a LinkArena<'a>) -> &'a Binding<'a> {
-		if l == Self::NONE && r == Self::NONE { Self::NONE }
-		else { arena.add(Binding::Branch(l, r)) }
+		if l == Self::NONE && r == Self::NONE {
+			Self::NONE
+		} else {
+			arena.add(Binding::Branch(l, r))
+		}
 	}
 }
 
 impl<'a> NativeHashtype for Binding<'a> {}
 impl<'a> fmt::Display for Binding<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match *self { 
-			Binding::Branch(left, right) => {
-				match (*right == Binding::None, *left == Binding::None) {
-					(true, true) => write!(f, "BOTH(NONE, NONE)")?,
-					(true, false) => write!(f, "<{}", left)?,
-					(false, true) => write!(f, ">{}", right)?,
-					(false, false) => write!(f, "({},{})", left, right)?,
-				}
+		match *self {
+			Binding::Branch(left, right) => match (*right == Binding::None, *left == Binding::None) {
+				(true, true) => write!(f, "BOTH(NONE, NONE)")?,
+				(true, false) => write!(f, "<{}", left)?,
+				(false, true) => write!(f, ">{}", right)?,
+				(false, false) => write!(f, "({},{})", left, right)?,
 			},
 			Binding::End => write!(f, ".")?,
-			Binding::None => {},
+			Binding::None => {}
 		}
 		Ok(())
 	}
@@ -70,19 +75,28 @@ impl<'a, 'e> BindTree<'a> {
 		Ok(match self {
 			BindTree::Branch(l, r) => (l, r),
 			BindTree::None => (self, self),
-			BindTree::End(_) => Err(LambdaError::BindingMismatch)?
+			BindTree::End(_) => Err(LambdaError::BindingMismatch)?,
 		})
 	}
 	fn branch_new(left: &'a Self, right: &'a Self) -> Self {
-		if let (BindTree::None, BindTree::None) = (left, right) { BindTree::None }
-		else { BindTree::Branch(left, right) }
+		if let (BindTree::None, BindTree::None) = (left, right) {
+			BindTree::None
+		} else {
+			BindTree::Branch(left, right)
+		}
 	}
 	pub fn branch(left: &'a Self, right: &'a Self, reps: &'a LinkArena<'a>) -> &'a Self {
 		reps.add(Self::branch_new(left, right))
 	}
-	pub fn left(&'a self, reps: &'a LinkArena<'a>) -> &'a Self { Self::branch(self, BindTree::NONE, reps) }
-	pub fn right(&'a self, reps: &'a LinkArena<'a>) -> &'a Self { Self::branch(BindTree::NONE, self, reps) }
-	pub fn end(num: usize, reps: &'a LinkArena<'a>) -> &'a Self { reps.add(BindTree::End(num)) }
+	pub fn left(&'a self, reps: &'a LinkArena<'a>) -> &'a Self {
+		Self::branch(self, BindTree::NONE, reps)
+	}
+	pub fn right(&'a self, reps: &'a LinkArena<'a>) -> &'a Self {
+		Self::branch(BindTree::NONE, self, reps)
+	}
+	pub fn end(num: usize, reps: &'a LinkArena<'a>) -> &'a Self {
+		reps.add(BindTree::End(num))
+	}
 	/// Add PointerTree to ReplaceTree at certain abstraction level
 	fn push_binding(self: &mut &'a Self, reps: &'a LinkArena<'a>, level: usize, pointer: &'e Binding<'e>) -> Result<(), LambdaError> {
 		*self = match (*self, pointer) {
@@ -100,7 +114,7 @@ impl<'a, 'e> BindTree<'a> {
 				right.push_binding(reps, level, r)?;
 				Self::branch(left, right, reps)
 			}
-			(BindTree::End(_), _) | (_, Binding::End) => Err(LambdaError::BindingMismatch)?
+			(BindTree::End(_), _) | (_, Binding::End) => Err(LambdaError::BindingMismatch)?,
 		};
 		Ok(())
 	}
@@ -113,11 +127,11 @@ impl<'a, 'e> BindTree<'a> {
 				let right = r.pop_binding(reps, level, ptrs)?;
 				*self = Self::branch(l, r, reps);
 				PT::branch_reduce(left, right, ptrs)
-			},
-			BindTree::End(count) if level == *count =>  {
+			}
+			BindTree::End(count) if level == *count => {
 				*self = Self::NONE;
 				PT::END
-			},
+			}
 			_ => PT::NONE,
 		})
 	}
@@ -141,12 +155,14 @@ impl<'a> fmt::Display for BindTree<'a> {
 #[derive(PartialEq, Debug, Clone)]
 pub struct BindIndex<'a> {
 	pub index: usize,
-	pub tree: &'a BindTree<'a>
+	pub tree: &'a BindTree<'a>,
 }
 
 impl<'a, 'e> BindIndex<'a> {
 	pub const DEFAULT: BindIndex<'a> = BindIndex::new(0, BindTree::NONE);
-	pub const fn new(index: usize, tree: &'a BindTree<'a>) -> Self { Self { index, tree } }
+	pub const fn new(index: usize, tree: &'a BindTree<'a>) -> Self {
+		Self { index, tree }
+	}
 	pub fn split(&self) -> Result<(Self, Self), LambdaError> {
 		let (left, right) = self.tree.split()?;
 		Ok((BindIndex::new(self.index, left), BindIndex::new(self.index, right)))
@@ -165,24 +181,31 @@ impl<'a, 'e> BindIndex<'a> {
 	/// Pop PointerTree from ReplaceIndex
 	pub fn pop_binding(&mut self, reps: &'a LinkArena<'a>, ptrs: &'e LinkArena<'e>) -> Result<&'e Binding<'e>, LambdaError> {
 		let BindIndex { index, tree } = self;
-		if *index == 0 { return Err(LambdaError::BindingMismatch) }
+		if *index == 0 {
+			return Err(LambdaError::BindingMismatch);
+		}
 		let ret = tree.pop_binding(reps, *index, ptrs)?;
 		*index -= 1;
 		Ok(ret)
 	}
 	/// Build ReplaceIndex from Lambda Expression
 	pub fn push_lambda(&mut self, expr: &'a Expr<'a>, reps: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, LambdaError> {
-		Ok(if let Expr::Lambda { tree: pointer_tree, expr} = expr {
+		Ok(if let Expr::Lambda { tree: pointer_tree, expr } = expr {
 			let expr = self.push_lambda(expr, reps)?;
 			self.push_binding(pointer_tree, reps)?;
 			expr
-		} else { &expr })
+		} else {
+			&expr
+		})
 	}
 	/// Creates nested lambda expression from given ReplaceTree
 	pub fn pop_lambda(&mut self, expr: &'e Expr<'e>, reps: &'a LinkArena<'a>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, LambdaError> {
 		let pointer_tree = self.pop_binding(reps, exprs)?;
-		let expr = if self.index == 0 { Expr::lambda(pointer_tree, &expr, exprs) }
-		else { Expr::lambda(pointer_tree, self.pop_lambda(expr, reps, exprs)?, exprs) };
+		let expr = if self.index == 0 {
+			Expr::lambda(pointer_tree, &expr, exprs)
+		} else {
+			Expr::lambda(pointer_tree, self.pop_lambda(expr, reps, exprs)?, exprs)
+		};
 		Ok(expr)
 	}
 }
@@ -231,7 +254,10 @@ fn test_replace_tree() {
 #[allow(dead_code)]
 fn test_split<'a>(reps: &'a LinkArena<'a>, r: BindIndex<'a>) -> Result<(), LambdaError> {
 	print!("split [{}] ", r);
-	let (left, right) = r.split().map_err(|e|{println!("split err: {}", e); e})?;
+	let (left, right) = r.split().map_err(|e| {
+		println!("split err: {}", e);
+		e
+	})?;
 	print!(" - ([{}] [{}])", left, right);
 	let r_after = BindIndex::join(left, right, reps);
 	println!(" = [{}]", r);

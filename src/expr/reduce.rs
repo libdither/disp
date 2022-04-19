@@ -1,18 +1,17 @@
-use hashdb::{LinkArena};
+use hashdb::LinkArena;
 
-use super::{Expr, LambdaError, BindIndex, BindTree};
+use super::{BindIndex, BindTree, Expr, LambdaError};
 
 /// Recursively substitute expressions for certain variables
 /// Takes lambda expression, for each variable in Lambda { expr }, if Lambda { tree } index == replace_index, replace subexpr with replacement and subtree with replacement_tree
 fn recur_replace<'a, 'r>(
-	working_expr: &'a Expr<'a>, // Working Expression
-	reps: &'r LinkArena<'r>, // ReplaceTree Arena
-	replace_index: &mut BindIndex<'r>, // Replace index in ReplaceTree to replace
-	replacement: &&'a Expr<'a>, // Replacement Expr
+	working_expr: &'a Expr<'a>,         // Working Expression
+	reps: &'r LinkArena<'r>,            // ReplaceTree Arena
+	replace_index: &mut BindIndex<'r>,  // Replace index in ReplaceTree to replace
+	replacement: &&'a Expr<'a>,         // Replacement Expr
 	replacement_tree: &'r BindTree<'r>, // Replacement Tree
-	exprs: &'a LinkArena<'a>, // Expr Arena
-) -> Result<&'a Expr<'a>, LambdaError>
-{
+	exprs: &'a LinkArena<'a>,           // Expr Arena
+) -> Result<&'a Expr<'a>, LambdaError> {
 	Ok(match working_expr {
 		Expr::Variable => {
 			// When encounter a variable and index is correct, replace with replacement
@@ -22,17 +21,17 @@ fn recur_replace<'a, 'r>(
 				BindTree::End(val) if *val == replace_index.index => {
 					replace_index.tree = replacement_tree;
 					replacement.clone()
-				},
+				}
 				_ => &working_expr,
 			}
-		},
+		}
 		// When encounter a lambda, unwrap, recurse, re-wrap
 		Expr::Lambda { tree, expr } => {
 			let tree = tree.clone();
 			let replaced_expr = recur_replace(expr.clone(), reps, replace_index, replacement, replacement_tree, exprs)?;
-			
+
 			Expr::lambda(&tree, &replaced_expr, exprs)
-		},
+		}
 		// When encounter an application in the replacement expression:
 		Expr::Application { func, args } => {
 			// Split into the function and substitution portions of the pointer tree to replace in
@@ -50,7 +49,9 @@ fn recur_replace<'a, 'r>(
 
 /// Reduces reducing_expr and returns &'a Expr<'a>
 fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<'r>, replace_index: &mut BindIndex<'r>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, LambdaError> {
-	if depth > 200 { return Err(LambdaError::RecursionDepthExceeded) }
+	if depth > 200 {
+		return Err(LambdaError::RecursionDepthExceeded);
+	}
 
 	Ok(match reducing_expr {
 		Expr::Variable => reducing_expr,
@@ -73,19 +74,19 @@ fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<
 					*replace_index = BindIndex::join(func_tree, sub_tree, reps);
 
 					Expr::app(func, args, exprs)
-				},
+				}
 				Expr::Lambda { tree, expr } => {
 					// Replace all tree in expr & reduce the output
 					*replace_index = func_tree;
 					replace_index.push_binding(tree, reps)?;
 
 					let replaced_expr = recur_replace(expr, reps, replace_index, &sub, &sub_tree.tree, exprs)?;
-					
+
 					replace_index.index -= 1; // All of current index will be replaced in recur_replace, thus this is needed
-					
+
 					let depth = depth + 1;
 					partial_beta_reduce(replaced_expr, reps, replace_index, depth, exprs)?
-				},
+				}
 			}
 		}
 	})

@@ -1,17 +1,16 @@
 #![allow(unused)]
-
 #![feature(generic_associated_types)]
 
-use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 pub use hashdb::{Data, Datastore};
+use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 
 pub mod expr;
-pub mod symbol;
 pub mod parse;
+pub mod symbol;
 
-use expr::{Expr, Binding as PT, beta_reduce};
-use symbol::Symbol;
+use expr::{beta_reduce, Binding as PT, Expr};
 use parse::{parse, parse_reduce};
+use symbol::Symbol;
 
 fn setup_boolean_logic<'a>(exprs: &'a LinkArena<'a>) -> (&'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>) {
 	let id_hash = Expr::lambda(PT::END, &Expr::VAR, exprs);
@@ -20,17 +19,20 @@ fn setup_boolean_logic<'a>(exprs: &'a LinkArena<'a>) -> (&'a Expr<'a>, &'a Expr<
 
 	let false_hash = beta_reduce(&Expr::app(&true_hash, &id_hash, exprs), exprs).unwrap();
 
-	let not_hash = Expr::lambda(PT::left(PT::left(PT::END, exprs), exprs), 
-		&Expr::app(&Expr::app(&Expr::VAR, &false_hash, exprs), &true_hash, exprs), exprs
+	let not_hash = Expr::lambda(
+		PT::left(PT::left(PT::END, exprs), exprs),
+		&Expr::app(&Expr::app(&Expr::VAR, &false_hash, exprs), &true_hash, exprs),
+		exprs,
 	);
 
-	let and_hash = Expr::lambda(PT::left(PT::left(PT::END, exprs), exprs),
-		&Expr::lambda(PT::left(PT::right(PT::END, exprs), exprs),
-			&Expr::app(
-				&Expr::app(&Expr::VAR, &Expr::VAR, exprs),
-				&false_hash, exprs
-			), exprs, 
-		), exprs
+	let and_hash = Expr::lambda(
+		PT::left(PT::left(PT::END, exprs), exprs),
+		&Expr::lambda(
+			PT::left(PT::right(PT::END, exprs), exprs),
+			&Expr::app(&Expr::app(&Expr::VAR, &Expr::VAR, exprs), &false_hash, exprs),
+			exprs,
+		),
+		exprs,
 	);
 
 	(id_hash, true_hash, false_hash, not_hash, and_hash)
@@ -125,7 +127,6 @@ fn test_factorial() {
 	assert_eq!(parse_reduce("(factorial 4)", exprs).unwrap(), parse_reduce("24", exprs).unwrap());
 
 	//let is_zero = parse("()")
-
 }
 
 #[test]

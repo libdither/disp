@@ -1,11 +1,11 @@
 //! Types of Expressions
 
+use bytecheck::CheckBytes;
+use rkyv::{Archive, Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
-use rkyv::{Archive, Serialize, Deserialize};
-use bytecheck::CheckBytes;
 
-use hashdb::{DatastoreDeserializer, DatastoreSerializer, LinkArena, NativeHashtype, HashType};
+use hashdb::{DatastoreDeserializer, DatastoreSerializer, HashType, LinkArena, NativeHashtype};
 
 mod bind;
 mod reduce;
@@ -22,7 +22,6 @@ pub enum LambdaError {
 	BindingMismatch,
 }
 
-
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes))]
 #[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
@@ -31,13 +30,21 @@ pub enum Expr<'a> {
 	Variable,
 	/// Create a function
 	Lambda {
-		#[with(HashType)] #[omit_bounds] tree: &'a Binding<'a>,
-		#[with(HashType)] #[omit_bounds] expr: &'a Expr<'a>
+		#[with(HashType)]
+		#[omit_bounds]
+		tree: &'a Binding<'a>,
+		#[with(HashType)]
+		#[omit_bounds]
+		expr: &'a Expr<'a>,
 	},
 	/// Apply functions to expressions
 	Application {
-		#[with(HashType)] #[omit_bounds] func: &'a Expr<'a>,
-		#[with(HashType)] #[omit_bounds] args: &'a Expr<'a>
+		#[with(HashType)]
+		#[omit_bounds]
+		func: &'a Expr<'a>,
+		#[with(HashType)]
+		#[omit_bounds]
+		args: &'a Expr<'a>,
 	},
 	// Type of all types
 	// Type,
@@ -62,16 +69,12 @@ impl<'a> fmt::Display for &'a Expr<'a> {
 					let expr = index.push_lambda(&self, reps).unwrap();
 					write!(f, "(λ{}[{}] {})", index.index, index.tree, expr)
 				})?;
-				
-			},
-			Expr::Application { func, args: sub } => {
-				write!(f, "({} {})", func, sub)?
-			},
+			}
+			Expr::Application { func, args: sub } => write!(f, "({} {})", func, sub)?,
 		}
 		Ok(())
 	}
 }
-
 
 impl<'a> Expr<'a> {
 	pub const VAR: &'static Expr<'static> = &Expr::Variable;
