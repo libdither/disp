@@ -39,7 +39,7 @@ impl LinkSerializer {
 	pub fn get_vec(&mut self) -> AlignedVec {
 		std::mem::take(&mut self.serializer).into_inner()
 	}
-	pub fn hash<T: NativeHashtype>(&mut self, val: &T) -> TypedHash<T> {
+	pub fn hash<T: NativeHashtype + Serialize<Self>>(&mut self, val: &T) -> TypedHash<T> {
 		self.store(val).unwrap().into()
 	}
 	pub fn join<'a>(&'a mut self, db: &'a mut Datastore) -> DatastoreLinkSerializer<'a> {
@@ -80,7 +80,7 @@ impl DatastoreSerializer for LinkSerializer {
 pub struct DatastoreLinkSerializer<'a>(&'a mut Datastore, &'a mut LinkSerializer);
 
 impl<'a> DatastoreSerializer for DatastoreLinkSerializer<'a> {
-	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, Self::Error> {
+	fn store<T: NativeHashtype + Serialize<Self>>(&mut self, hashtype: &T) -> Result<Hash, Self::Error> {
 		let ptr = (hashtype as *const T).cast::<()>();
 		Ok(if let Some((hash, _)) = self.1.pointer_map.get(&ptr) {
 			hash.clone().into()
@@ -91,7 +91,7 @@ impl<'a> DatastoreSerializer for DatastoreLinkSerializer<'a> {
 			let data = unsafe { Data::new(vec.into()) };
 			let hash = self.0.store(data).into();
 			let reverse_links = hashtype.reverse_links(self);
-			self.0.register::<T>(reverse_links, &hash);
+			self.0.register::<Self, T>(reverse_links, &hash);
 			hash
 		})
 	}

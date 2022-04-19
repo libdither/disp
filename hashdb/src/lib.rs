@@ -34,10 +34,8 @@ mod tests {
 	#[test]
 	fn test_db() {
 		let mut db = &mut Datastore::new();
-		let string = {
-			let ser = &mut LinkSerializer::new();
-			String::from("hello").store(ser, db)
-		};
+		let ser = &mut LinkSerializer::new();
+		let string = String::from("hello").store(&mut ser.join(db));
 		
 		let arena = LinkArena::new();
 		assert_eq!(*string.fetch(db, &arena).unwrap(), "hello");
@@ -64,7 +62,7 @@ mod tests {
 		let db = &mut Datastore::new();
 
 		let ser = &mut LinkSerializer::new();
-		let hash = string2.store(ser, db);
+		let hash = string2.store(&mut ser.join(db));
 		
 
 		let links_de = LinkArena::new();

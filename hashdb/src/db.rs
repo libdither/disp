@@ -31,7 +31,7 @@ impl Datastore {
 	pub fn new() -> Self {
 		Self::default()
 	}
-	pub fn register<'a, T: NativeHashtype>(&mut self, mut reverse_links: T::LinkIter, hash: &Hash) {
+	pub fn register<'a, S: DatastoreSerializer, T: NativeHashtype>(&mut self, mut reverse_links: T::LinkIter<S>, hash: &Hash) {
 		while let Some(subhash) = reverse_links.next() {
 			self.reverse_lookup.insert(subhash.clone(), hash.clone());
 		}

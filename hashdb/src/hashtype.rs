@@ -1,4 +1,4 @@
-use std::{any::Any, borrow::Borrow, cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, fmt, hash::Hasher, iter, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{any::Any, borrow::Borrow, cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, fmt::{self, Debug}, hash::Hash as StdHash, hash::Hasher, iter, marker::PhantomData, ops::Deref, sync::Arc};
 
 use bincode::config::NativeEndian;
 use bumpalo::Bump;
@@ -10,29 +10,30 @@ use crate::{Data, Datastore, DatastoreDeserializer, DatastoreError, DatastoreLin
 // const RUST_TYPE: Hash = Hash::from_digest([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ,0 ,0 ,0]);
 
 /// Represents a Rust type with an rykv Archive implementation that can be fetched from a Datastore via its hash
-pub trait NativeHashtype: std::hash::Hash + fmt::Debug + Archive<Archived: std::fmt::Debug> + for<'a> Serialize<DatastoreLinkSerializer<'a>> + Serialize<LinkSerializer> + Sized {
+pub trait NativeHashtype: StdHash + Debug + Archive + Sized {
 	/// Calculate hash and data from type
-	fn store<'a>(&self, ser: &mut LinkSerializer, db: &mut Datastore) -> TypedHash<Self> {
-		let ser = &mut ser.join(db);
-		ser.store(self).unwrap().into()
-	}
-	fn calc_hash(&self, ser: &mut LinkSerializer) -> TypedHash<Self> {
-		ser.hash(self)
+	fn store<S: DatastoreSerializer>(&self, ser: &mut S) -> TypedHash<Self>
+	where Self: Serialize<S> {
+		ser.store(self).map_err(|_|"failed to serialize").unwrap().into()
 	}
 
 	/// List of hashes representing any data that should link to this type
-	type LinkIter: LinkIterConstructor<Self> = iter::Empty<Hash>; // OH I LOVE GENERICS
-	fn reverse_links(&self, ser: &mut impl DatastoreSerializer) -> Self::LinkIter { LinkIterConstructor::construct(self, ser) }
+	type LinkIter<S: DatastoreSerializer>: HashIterConstructor<S, Self> = iter::Empty<Hash>; // OH I LOVE GENERICS
+	fn reverse_links<S: DatastoreSerializer>(&self, ser: &mut S) -> Self::LinkIter<S> { HashIterConstructor::construct(self, ser) }
 }
+
+/* impl<T> NativeHashtype for T
+where T: StdHash + fmt::Debug + Archive<Archived: fmt::Debug>
+{} */
 impl NativeHashtype for String {}
 impl NativeHashtype for Vec<u8> {}
 
-pub trait LinkIterConstructor<T: NativeHashtype>: Iterator<Item = Hash> {
-	fn construct(hashtype: &T, ser: &mut impl DatastoreSerializer) -> Self;
+pub trait HashIterConstructor<S: DatastoreSerializer, T: NativeHashtype>: Iterator<Item = Hash> {
+	fn construct(hashtype: &T, ser: &mut S) -> Self;
 }
 
-impl<'a, T: NativeHashtype> LinkIterConstructor<T> for iter::Empty<Hash> {
-	fn construct(_hashtype: &T, _ser: &mut impl DatastoreSerializer) -> Self {
+impl<'a, S: DatastoreSerializer, T: NativeHashtype> HashIterConstructor<S, T> for iter::Empty<Hash> {
+	fn construct(_hashtype: &T, _ser: &mut S) -> Self {
 		iter::empty()
 	}
 }
