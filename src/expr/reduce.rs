@@ -1,15 +1,15 @@
 use hashdb::{LinkArena};
 
-use super::{Expr, LambdaError, ReplaceIndex, ReplaceTree};
+use super::{Expr, LambdaError, BindIndex, BindTree};
 
 /// Recursively substitute expressions for certain variables
 /// Takes lambda expression, for each variable in Lambda { expr }, if Lambda { tree } index == replace_index, replace subexpr with replacement and subtree with replacement_tree
 fn recur_replace<'a, 'r>(
 	working_expr: &'a Expr<'a>, // Working Expression
 	reps: &'r LinkArena<'r>, // ReplaceTree Arena
-	replace_index: &mut ReplaceIndex<'r>, // Replace index in ReplaceTree to replace
+	replace_index: &mut BindIndex<'r>, // Replace index in ReplaceTree to replace
 	replacement: &&'a Expr<'a>, // Replacement Expr
-	replacement_tree: &'r ReplaceTree<'r>, // Replacement Tree
+	replacement_tree: &'r BindTree<'r>, // Replacement Tree
 	exprs: &'a LinkArena<'a>, // Expr Arena
 ) -> Result<&'a Expr<'a>, LambdaError>
 {
@@ -18,8 +18,8 @@ fn recur_replace<'a, 'r>(
 			// When encounter a variable and index is correct, replace with replacement
 			// Must be PointerTree::None because replace_in_expr's variables aren't registered in external_tree
 			match replace_index.tree {
-				ReplaceTree::Branch(_, _) => Err(LambdaError::PointerTreeMismatch)?,
-				ReplaceTree::End(val) if *val == replace_index.index => {
+				BindTree::Branch(_, _) => Err(LambdaError::BindingMismatch)?,
+				BindTree::End(val) if *val == replace_index.index => {
 					replace_index.tree = replacement_tree;
 					replacement.clone()
 				},
@@ -42,24 +42,24 @@ fn recur_replace<'a, 'r>(
 			let func = recur_replace(func, reps, &mut func_index, replacement, replacement_tree, exprs)?;
 			let args = recur_replace(sub, reps, &mut sub_index, replacement, replacement_tree, exprs)?;
 
-			*replace_index = ReplaceIndex::join(func_index, sub_index, reps);
+			*replace_index = BindIndex::join(func_index, sub_index, reps);
 			Expr::app(&func, &args, exprs)
 		}
 	})
 }
 
 /// Reduces reducing_expr and returns &'a Expr<'a>
-fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<'r>, replace_index: &mut ReplaceIndex<'r>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, LambdaError> {
+fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<'r>, replace_index: &mut BindIndex<'r>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, LambdaError> {
 	if depth > 200 { return Err(LambdaError::RecursionDepthExceeded) }
 
 	Ok(match reducing_expr {
 		Expr::Variable => reducing_expr,
 		Expr::Lambda { tree, expr } => {
-			replace_index.push_pointer_tree(tree, reps)?;
+			replace_index.push_binding(tree, reps)?;
 
 			let reduced_expr = partial_beta_reduce(expr, reps, replace_index, depth, exprs)?;
 
-			Expr::lambda(replace_index.pop_pointer_tree(reps, exprs)?, reduced_expr, exprs)
+			Expr::lambda(replace_index.pop_binding(reps, exprs)?, reduced_expr, exprs)
 		}
 		Expr::Application { func, args: sub } => {
 			// Split subtrees
@@ -70,14 +70,14 @@ fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<
 				Expr::Variable | Expr::Application { .. } => {
 					// If Variable, reduce substitution & return Application with joined trees
 					let args = partial_beta_reduce(sub.clone(), reps, &mut sub_tree, depth, exprs)?;
-					*replace_index = ReplaceIndex::join(func_tree, sub_tree, reps);
+					*replace_index = BindIndex::join(func_tree, sub_tree, reps);
 
 					Expr::app(func, args, exprs)
 				},
 				Expr::Lambda { tree, expr } => {
 					// Replace all tree in expr & reduce the output
 					*replace_index = func_tree;
-					replace_index.push_pointer_tree(tree, reps)?;
+					replace_index.push_binding(tree, reps)?;
 
 					let replaced_expr = recur_replace(expr, reps, replace_index, &sub, &sub_tree.tree, exprs)?;
 					
@@ -86,12 +86,6 @@ fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<
 					let depth = depth + 1;
 					partial_beta_reduce(replaced_expr, reps, replace_index, depth, exprs)?
 				},
-				/* Expr::Application { .. } => {
-					// Beta reduce sub, return application with joined trees
-					// let sub = partial_beta_reduce(sub.clone(), arena, &mut sub_tree, depth, db)?;
-					*replace_index = arena.join_index(func_tree, sub_tree);
-					Expr::Application { func, sub }
-				} */
 			}
 		}
 	})
@@ -100,5 +94,5 @@ fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<
 pub fn beta_reduce<'a>(expr: &'a Expr<'a>, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, LambdaError> {
 	println!("Reducing: {}", expr);
 	let reps = &LinkArena::new();
-	Ok(partial_beta_reduce(expr, reps, &mut ReplaceIndex::DEFAULT.clone(), 0, exprs)?)
+	Ok(partial_beta_reduce(expr, reps, &mut BindIndex::DEFAULT.clone(), 0, exprs)?)
 }

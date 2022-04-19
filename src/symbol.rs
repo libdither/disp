@@ -2,7 +2,7 @@
 use std::iter;
 
 use hashdb::{DatastoreDeserializer, DatastoreSerializer, Hash, HashType, LinkArena, NativeHashtype, hashtype::HashIterConstructor};
-use crate::lambda_calculus::Expr;
+use crate::expr::Expr;
 
 #[derive(Debug, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive_attr(derive(bytecheck::CheckBytes))]

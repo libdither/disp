@@ -7,7 +7,7 @@ use logos::{Logos, Span};
 use thiserror::Error;
 use hashdb::{DatastoreError, LinkArena, LinkSerializer, NativeHashtype};
 
-use crate::lambda_calculus::{Expr, LambdaError, ReplaceIndex, ReplaceTree, beta_reduce};
+use crate::expr::{Expr, LambdaError, BindIndex, BindTree, beta_reduce};
 use crate::Symbol;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
@@ -169,29 +169,29 @@ impl<'a> TokenFeeder<'a> {
 	}
 }
 
-fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, reps: &'b LinkArena<'b>, max_level: usize) -> Result<&'b ReplaceTree<'b>, ParseError<'a>> {
-	use ReplaceTree as RT;
-	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok(ReplaceTree::NONE) }
+fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, reps: &'b LinkArena<'b>, max_level: usize) -> Result<&'b BindTree<'b>, ParseError<'a>> {
+	use BindTree as BT;
+	if let Token::CloseSquareBracket = feeder.peek()?.0 { return Ok(BindTree::NONE) }
 	
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
 		Token::Number(num) => {
-			RT::end(num as usize, reps)
+			BT::end(num as usize, reps)
 		},
-		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { RT::NONE }
-		Token::Period => RT::end(max_level, reps),
+		Token::Symbol if &feeder.string[next_span.clone()] == "N" => { BT::NONE }
+		Token::Period => BT::end(max_level, reps),
 		Token::OpenCarat => {
-			RT::left(parse_lambda_pointer(feeder, reps, max_level)?, reps)
+			BT::left(parse_lambda_pointer(feeder, reps, max_level)?, reps)
 		},
 		Token::CloseCarat => {
-			RT::right(parse_lambda_pointer(feeder, reps, max_level)?, reps)
+			BT::right(parse_lambda_pointer(feeder, reps, max_level)?, reps)
 		},
 		Token::OpenParen => {
 			let left = parse_lambda_pointer(feeder, reps, max_level)?;
 			feeder.expect_next(Token::Comma)?;
 			let right = parse_lambda_pointer(feeder, reps, max_level)?;
 			feeder.expect_next(Token::CloseParen)?;
-			RT::branch(left, right, reps)
+			BT::branch(left, right, reps)
 		},
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?
 	})
@@ -245,7 +245,7 @@ fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkAr
 			// Parse Pointertree expression
 			let reps = &LinkArena::new();
 			let tree = parse_lambda_pointer(feeder, reps, max_level)?;
-			let mut index = ReplaceIndex::new(max_level, tree);
+			let mut index = BindIndex::new(max_level, tree);
 			feeder.expect_next(Token::CloseSquareBracket)?;
 			
 			// Treat rest of lambda as expression of the same depth (no parentheses required), this allows for same-line lambdas

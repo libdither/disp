@@ -8,13 +8,13 @@ use rustyline::{error::ReadlineError, Editor};
 
 use hashdb::*;
 
-mod lambda_calculus;
+mod expr;
 mod symbol;
 mod parse;
 
-use crate::{lambda_calculus::beta_reduce};
+use crate::expr::beta_reduce;
 use symbol::Symbol;
-use parse::{parse_line};
+use parse::parse_line;
 
 fn main() {
 	let exprs = & LinkArena::new();

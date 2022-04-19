@@ -5,11 +5,11 @@
 use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 pub use hashdb::{Data, Datastore};
 
-pub mod lambda_calculus;
+pub mod expr;
 pub mod symbol;
 pub mod parse;
 
-use lambda_calculus::{Expr, PointerTree as PT, beta_reduce};
+use expr::{Expr, Binding as PT, beta_reduce};
 use symbol::Symbol;
 use parse::{parse, parse_reduce};
 
