@@ -19,7 +19,7 @@ fn recur_replace<'a, 'r>(
 			// When encounter a variable and index is correct, replace with replacement
 			// Must be PointerTree::None because replace_in_expr's variables aren't registered in external_tree
 			match working_bind.tree {
-				BindSubTree::Branch(_, _) => Err(LambdaError::BindingMismatch)?,
+				BindSubTree::Branch(_, _) => Err(LambdaError::UnexpectedBranchInSubstitution)?,
 				BindSubTree::End(val) if *val == working_bind.index => {
 					working_bind.tree = replacement_bind;
 					replacement

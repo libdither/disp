@@ -23,6 +23,9 @@ pub enum LambdaError {
 	#[error("binding level mismatch: make sure variable bindings match with variable positions in expressions and that bindings don't overlap")]
 	BindingLevelMismatch,
 
+	#[error("found variable in expression but binding tree is branching")]
+	UnexpectedBranchInSubstitution,
+
 	#[error("bind error: {0}")]
 	BindError(#[from] BindError)
 }
@@ -133,6 +136,9 @@ impl<'a> Expr<'a> {
 		match self {
 			&Self::Universe(order) => order,
 			Self::Pi { bind: _, bind_type, expr } => { bind_type.smallest_uni().max(expr.smallest_uni()) + 1 }
+			Self::Application { func, args } => { func.smallest_uni().max(args.smallest_uni()) }
+			Self::Lambda { expr, .. } => expr.smallest_uni(),
+			Self::Variable => 0,
 		}
 	}
 }

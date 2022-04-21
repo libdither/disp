@@ -4,7 +4,7 @@ use std::fmt;
 use hashdb::LinkArena;
 use thiserror::Error;
 
-use super::{BindError, BindTypeTree, Binding, Expr};
+use super::{BindError, BindTypeTree, Expr};
 
 #[derive(Debug, Error)]
 pub enum TypeError<'a> {
@@ -56,7 +56,7 @@ impl<'a> fmt::Display for Judgement<'a> {
 }
 
 /// Rule that defines what Judgements are needed to check a term.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Rule<'a> {
 	Var,
 	Universe,
@@ -90,7 +90,7 @@ impl<'a> Judgement<'a> {
 		self.of_type.is_a_type()?;
 		
 		let bind_type = if let BindTypeTree::End(bind_type) = tree { Some(*bind_type) } else { None };
-		match (self.rule, self.term) {
+		match (&self.rule, self.term) {
 			(Rule::Var, Expr::Variable) => {
 				// Rule: Type of Variable can be anything if not bound, otherwise its type must match its binding
 				if let Some(bind_type) = bind_type {
@@ -103,7 +103,7 @@ impl<'a> Judgement<'a> {
 			_ if bind_type.is_some() => { Err(TE::NoVariableToBind) }
 			(Rule::Lambda { judge_expr }, &Expr::Lambda { bind, expr }) => {
 				// Rule: Type of Lambda must be Pi with the binding and expression matching
-				if let &Expr::Pi { bind: pi_bind, bind_type, expr: pi_expr } = self.of_type {
+				if let &Expr::Pi { bind: _, bind_type, expr: pi_expr } = self.of_type {
 					// Make sure judgement of Lambda expression contains the correct term and type
 					if judge_expr.term == expr && judge_expr.of_type == pi_expr {
 						// Make sure that the subexpression checks correctly with added binding
@@ -120,7 +120,7 @@ impl<'a> Judgement<'a> {
 					judge_func.partial_check(func_tree, reps)?;
 					judge_args.partial_check(args_tree, reps)?;
 					// Make sure func is a term that can be applied
-					if let (&Expr::Lambda { expr, .. }, &Expr::Pi { bind_type, expr: out_type, .. }) = (judge_func.term, judge_func.of_type) {
+					if let (&Expr::Lambda { expr: _, .. }, &Expr::Pi { bind_type, expr: _, .. }) = (judge_func.term, judge_func.of_type) {
 						if bind_type == judge_args.of_type {
 							Ok(())
 						} else { Err(TE::UnexpectedArgumentType(bind_type, judge_args.of_type)) }
@@ -137,7 +137,7 @@ impl<'a> Judgement<'a> {
 					Err(TE::InvalidTypeForUniverse(self.of_type))
 				}
 			}
-			(Rule::Pi { judge_expr }, &Expr::Pi { bind, bind_type, expr }) => {
+			(Rule::Pi { judge_expr }, &Expr::Pi { expr, .. }) => {
 				if judge_expr.term == expr {
 					judge_expr.partial_check(tree, reps)?;
 					if let &Expr::Universe(type_order) = self.of_type {
@@ -150,7 +150,7 @@ impl<'a> Judgement<'a> {
 					}
 				} else { Err(TE::MismatchingPiJudgement { found: judge_expr.term, expected: expr }) }
 			}
-			_ => Err(TE::InvalidRuleForTerm(self.rule, self.term))
+			_ => Err(TE::InvalidRuleForTerm(self.rule.clone(), self.term))
 		}
 	}
 }

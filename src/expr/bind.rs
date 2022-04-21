@@ -239,7 +239,7 @@ impl<'a, 'e> BindIndex<'a> {
 		})
 	}
 	/// Creates nested lambda expression from given ReplaceTree
-	pub fn pop_lambda(&mut self, expr: &'e Expr<'e>, reps: &'a LinkArena<'a>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, BindError> {
+	pub fn pop_lambda(&mut self, expr: &'e Expr<'e>, reps: &'a LinkArena<'a>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, LambdaError> {
 		let pointer_tree = self.pop_binding(reps, exprs)?;
 		let expr = if self.index == 0 {
 			Expr::lambda(pointer_tree, &expr, exprs)
