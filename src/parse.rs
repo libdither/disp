@@ -6,7 +6,7 @@ use hashdb::{DatastoreError, LinkArena, LinkSerializer, NativeHashtype};
 use logos::{Logos, Span};
 use thiserror::Error;
 
-use crate::expr::{beta_reduce, BindIndex, BindTree, Expr, LambdaError};
+use crate::expr::{BindIndex, BindSubTree, BindTree, Expr, LambdaError, beta_reduce};
 use crate::Symbol;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
@@ -178,8 +178,8 @@ impl<'a> TokenFeeder<'a> {
 	}
 }
 
-fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, reps: &'b LinkArena<'b>, max_level: usize) -> Result<&'b BindTree<'b>, ParseError<'a>> {
-	use BindTree as BT;
+fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, reps: &'b LinkArena<'b>, max_level: usize) -> Result<&'b BindSubTree<'b>, ParseError<'a>> {
+	use BindSubTree as BT;
 	if let Token::CloseSquareBracket = feeder.peek()?.0 {
 		return Ok(BindTree::NONE);
 	}
