@@ -5,11 +5,12 @@ pub use hashdb::{Data, Datastore};
 use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 
 pub mod expr;
-pub mod parse;
+// pub mod parse;
 pub mod symbol;
+mod parse_new;
 
 use expr::{beta_reduce, Binding as PT, Expr};
-use parse::{parse, parse_reduce};
+pub use parse_new::{parse, parse_reduce};
 use symbol::Symbol;
 
 fn setup_boolean_logic<'a>(exprs: &'a LinkArena<'a>) -> (&'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>) {
@@ -119,7 +120,7 @@ fn test_factorial() {
 	Symbol::new("pair", &pair, exprs);
 	Symbol::new("first", &zero, exprs);
 
-	let fact_seg = parse::parse_line("set factseg λ2[(>>2,(>2,1))] pair (succ x) (mult x x)", exprs).unwrap();
+	// let fact_seg = parse::parse_line("set factseg λ2[(>>2,(>2,1))] pair (succ x) (mult x x)", exprs).unwrap();
 	let fact = parse("λ1[<<<1] x (λ1[<1] x factseg) (pair 1 1) first", exprs).unwrap();
 	Symbol::new("factorial", &fact, exprs);
 

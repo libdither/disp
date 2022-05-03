@@ -25,12 +25,17 @@ rkyv = { version = "0.7", git = "https://github.com/rkyv/rkyv", features = ["val
 typed-arena = "2.0.1"
 derivative = "2.2.0"
 moveit = "0.4.0"
+nom_locate = "4.0.0"
+either = "1.6.1"
+chumsky = "0.8.0"
+smallvec = "1.8.0"
+ariadne = "0.1.5"
 
 [features]
 
 [workspace]
 members = [
-	"examples/test6502",
+	# "examples/test6502",
 ]
 
 

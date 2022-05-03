@@ -73,12 +73,12 @@ impl<'a> NativeHashtype for Expr<'a> {}
 impl<'a> fmt::Display for &'a Expr<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		thread_local! {
-			static REPS: LinkArena<'static> = LinkArena::new();
+			static BINDS: LinkArena<'static> = LinkArena::new();
 		}
 		match self {
 			Expr::Variable => write!(f, "x")?,
 			Expr::Lambda { .. } => {
-				REPS.with(|reps| {
+				BINDS.with(|reps| {
 					let mut index = BindIndex::DEFAULT;
 					let expr = index.push_lambda(&self, reps).unwrap();
 					write!(f, "(λ{}[{}] {})", index.index, index.tree, expr)
@@ -93,7 +93,7 @@ impl<'a> fmt::Display for &'a Expr<'a> {
 				}
 			}
 			Expr::Pi { .. } => {
-				REPS.with(|reps| {
+				BINDS.with(|reps| {
 					let mut index = BindIndex::DEFAULT;
 					let expr = index.push_lambda(&self, reps).unwrap();
 					write!(f, "(Π{}[{}] {})", index.index, index.tree, expr)

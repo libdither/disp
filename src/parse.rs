@@ -1,12 +1,14 @@
 use std::cell::RefCell;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter::Peekable;
 
 use hashdb::{DatastoreError, LinkArena, LinkSerializer, NativeHashtype};
 use logos::{Logos, Span};
+use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::expr::{BindIndex, BindSubTree, BindTree, Expr, LambdaError, beta_reduce};
+use crate::expr::{BindIndex, BindSubTree, BindTree, Binding, Expr, LambdaError, beta_reduce};
 use crate::Symbol;
 
 #[derive(Logos, Debug, PartialEq, Clone)]
@@ -178,27 +180,66 @@ impl<'a> TokenFeeder<'a> {
 	}
 }
 
-fn parse_lambda_pointer<'a, 'b>(feeder: &mut TokenFeeder<'a>, reps: &'b LinkArena<'b>, max_level: usize) -> Result<&'b BindSubTree<'b>, ParseError<'a>> {
-	use BindSubTree as BT;
+struct BindMap<'a> {
+	map: BTreeMap<&'a str, SmallVec<[usize; 2]>>,
+}
+impl<'a> BindMap<'a> {
+	fn is_bound(&self, string: &'a str) -> Option<usize> {
+		self.get_mut(string)?.last()
+	}
+	fn add_bind(&mut self, string: &'a str) -> usize {
+		let ret = self.map.len();
+		let stack = self.map.entry(string).or_insert(SmallVec::new());
+		stack.push(ret);
+		ret
+	}
+	fn remove_bind(&mut self, string: &'a str) -> Option<usize> {
+		let stack = self.get_mut(string)?;
+		let ret = stack.pop();
+		if stack.len() == 0 { self.remove(string) }
+		Some(ret)
+	}
+}
+
+// Parse stuff like: `[x y] (x y)` as Lam(Branch(End, None), Lam(Branch(None, End), App(Var, Var)))
+// Make sure feeder has already consumed first '['
+fn parse_lambda<'a, 'b, 'e>(
+	feeder: &mut TokenFeeder<'a>,
+	depth: usize,
+	exprs: &LinkArena<'e>,
+	bind_map: &mut BindMap,
+	binds: &LinkArena<'b>
+) -> Result<(&'e Expr<'e>, &'b BindSubTree<'b>), ParseError<'a>> {
+	// If end of lambda, parse expr
 	if let Token::CloseSquareBracket = feeder.peek()?.0 {
-		return Ok(BindTree::NONE);
+		feeder.expect_next(Token::CloseSquareBracket);
+		return parse_expr(feeder, depth, exprs, bind_map);
 	}
 
 	let (next_token, next_span) = feeder.next()?;
 	Ok(match next_token {
-		Token::Number(num) => BT::end(num as usize, reps),
-		Token::Symbol if &feeder.string[next_span.clone()] == "N" => BT::NONE,
-		Token::Period => BT::end(max_level, reps),
-		Token::OpenCarat => BT::left(parse_lambda_pointer(feeder, reps, max_level)?, reps),
-		Token::CloseCarat => BT::right(parse_lambda_pointer(feeder, reps, max_level)?, reps),
-		Token::OpenParen => {
-			let left = parse_lambda_pointer(feeder, reps, max_level)?;
-			feeder.expect_next(Token::Comma)?;
-			let right = parse_lambda_pointer(feeder, reps, max_level)?;
-			feeder.expect_next(Token::CloseParen)?;
-			BT::branch(left, right, reps)
+		Token::Symbol => {
+			let (expr, bind_tree) = parse_lambda(feeder, depth, exprs, bind_map);
 		}
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?,
+	})
+}
+
+// Parse Token stream until reach closing parentheses or if depth == 0 & end of stream and return Application expression
+fn parse_application<'a, 'e, 'b>(
+	feeder: &mut TokenFeeder<'a>,
+	initial: &'e Expr<'e>,
+	depth: usize,
+	exprs: &LinkArena<'e>,
+	bind_map: &mut BindMap<'a>,
+	binds: &LinkArena<'b>
+) -> Result<(&'e Expr<'e>, &'b BindSubTree<'b>), ParseError<'a>> {
+	let func = initial;
+	Ok(if !feeder.test_end_of_expression(depth) {
+		let args = parse_token(feeder, depth, exprs, bind_map)?.2;
+		parse_application(feeder, Expr::app(func, args, exprs), depth, exprs, binds)?
+	} else {
+		func
 	})
 }
 
@@ -216,56 +257,27 @@ fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, exprs: &'a LinkAr
 	lookup_expr(string, exprs).ok_or(ParseError::UnknownSymbol(feeder.location(), string))
 }
 
-// Parse Token stream until reach closing parentheses or if depth == 0 & end of stream and return Application expression
-fn parse_application<'a>(feeder: &mut TokenFeeder<'a>, initial: &'a Expr<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
-	let func = initial;
-	Ok(if !feeder.test_end_of_expression(depth) {
-		let args = parse_token(feeder, depth, exprs)?.2;
-		parse_application(feeder, Expr::app(func, args, exprs), depth, exprs)?
-	} else {
-		func
-	})
-}
-
 // Parse Token stream until reach parentheses or end of stream and return expression, it will not consume the ending parenthses
-fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<(Token, Span, &'a Expr<'a>), ParseError<'a>> {
+fn parse_token<'a, 'e>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>, bind_map: &mut BindMap<'a>, binds: &'a LinkArena<'a>) -> Result<(Token, Span, &'e Expr<'e>), ParseError<'a>> {
 	let (next_token, next_span) = feeder.next()?;
 	let (token, span) = (next_token.clone(), next_span.clone());
 
 	let expr = match next_token {
+		Token::OpenSquareBracket => parse_lambda(feeder, depth, exprs, bind_map),
 		Token::Lambda => {
 			// Read PointerTree metadata
-			let (max_level, span, _loc) = match feeder.next()? {
-				(Token::Number(val), span) => {
-					let loc = feeder.location();
-					feeder.expect_next(Token::OpenSquareBracket)?;
-					(val as usize, span, loc)
-				}
-				(Token::OpenSquareBracket, span) => {
-					let loc = feeder.location();
-					(1, span, loc)
-				}
-				(token, span) => Err(ParseError::wrong_token(feeder, span, token, vec![Token::Number(0)]))?,
-			};
-
-			// Parse Pointertree expression
-			let reps = &LinkArena::new();
-			let tree = parse_lambda_pointer(feeder, reps, max_level)?;
-			let mut index = BindIndex::new(max_level, tree);
-			feeder.expect_next(Token::CloseSquareBracket)?;
-
-			// Treat rest of lambda as expression of the same depth (no parentheses required), this allows for same-line lambdas
-			let arg_expr = parse_token(feeder, depth, exprs)?.2;
-			let arg_expr = parse_application(feeder, arg_expr, depth, exprs)?;
-
-			let ret = index
-				.pop_lambda(arg_expr, reps, exprs)
-				.map_err(|_| ParseError::LocalError(feeder.location(), span, "ReplaceTree failed to expand to lambda expression"))?;
-			drop(reps);
-			ret
+			feeder.expect_next(Token::OpenSquareBracket)?;
+			parse_lambda(feeder, depth, exprs, bind_map)?
 		}
-		Token::Symbol => lookup_symbol(feeder, next_span, exprs)?,
-		Token::Variable => Expr::VAR,
+		Token::Symbol => {
+			let string = &feeder.string[next_span];
+			if let Some(index) = bind_map.is_bound(string) {
+				(Expr::VAR, BindSubTree::end(index, binds))
+			} else {
+				(lookup_symbol(feeder, next_span, exprs)?, BindSubTree::NONE)
+			}
+			
+		},
 		Token::Number(value) => {
 			if value > 1_000_000 {
 				ParseError::CommandError("{integer}", "number is too large (must be less than 1,000,000)".into());
@@ -290,10 +302,10 @@ fn parse_token<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkAr
 	Ok((token, span, expr))
 }
 
-fn parse_expr<'a>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
-	let (token, span, expr) = parse_token(feeder, depth, exprs)?;
+fn parse_expr<'a, 'e>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>, bind_map: &mut BindMap<'a>) -> Result<&'e Expr<'e>, ParseError<'a>> {
+	let (token, span, expr) = parse_token(feeder, depth, exprs, bind_map)?;
 	let ret = match token {
-		Token::Symbol | Token::Variable | Token::Number(_) | Token::OpenParen => parse_application(feeder, expr, depth, exprs)?,
+		Token::Symbol | Token::Variable | Token::Number(_) | Token::OpenParen => parse_application(feeder, expr, depth, exprs, bind_map)?,
 		Token::Lambda => expr,
 		_ => Err(ParseError::UnexpectedToken(feeder.location(), span, token))?,
 	};

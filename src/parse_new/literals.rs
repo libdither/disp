@@ -7,7 +7,7 @@ pub struct StringLiteral {
 pub enum StringError<'a> {
 	NoClosingQuote,
 }
-fn parse_String<'a>(stream: impl Iterator<Item=SyntaxNode<'a>>) -> Result<impl Iterator<Item=SyntaxNode<'a>>, ParseError<'a>> {
+fn parse_string<'a>(stream: impl Iterator<Item=SyntaxNode<'a>>) -> Result<impl Iterator<Item=SyntaxNode<'a>>, ParseError<'a>> {
 	Ok(stream.try_map(|s| match s {
 		SyntaxNode::Stream(raw_string) => {
 			let mut string_start = None;
