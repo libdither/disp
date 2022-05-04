@@ -89,7 +89,7 @@ impl<T> TypedHash<T> {
 		}
 	}
 	pub fn cast<R>(&self) -> &TypedHash<R> {
-		unsafe { std::mem::transmute(self) }
+		unsafe { &*(self as *const TypedHash<T>).cast::<TypedHash<R>>() }
 	}
 	pub fn untyped(self) -> Hash {
 		self.hash

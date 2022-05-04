@@ -106,7 +106,6 @@ fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<
 }
 
 pub fn beta_reduce<'a>(expr: &'a Expr<'a>, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, LambdaError> {
-	println!("Reducing: {}", expr);
 	let reps = &LinkArena::new();
 	Ok(partial_beta_reduce(expr, reps, &mut BindIndex::DEFAULT.clone(), 0, exprs)?)
 }

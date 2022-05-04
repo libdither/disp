@@ -1,7 +1,7 @@
 use std::iter;
 
 use crate::expr::Expr;
-use hashdb::{hashtype::HashIterConstructor, DatastoreDeserializer, DatastoreSerializer, Hash, HashType, LinkArena, NativeHashtype};
+use hashdb::{DatastoreDeserializer, DatastoreSerializer, Hash, HashType, LinkArena, LinkSerializer, NativeHashtype, hashtype::HashIterConstructor};
 
 #[derive(Debug, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive_attr(derive(bytecheck::CheckBytes))]
@@ -13,11 +13,12 @@ pub struct Symbol<'a> {
 	pub expr: &'a Expr<'a>,
 }
 impl<'a> Symbol<'a> {
-	pub fn new(name: impl Into<String>, expr: &&'a Expr<'a>, exprs: &'a LinkArena<'a>) -> &'a Symbol<'a> {
-		exprs.add(Self {
-			name: exprs.add(name.into()),
-			expr: expr.clone(),
-		})
+	pub fn new(name: impl Into<String>, expr: &'a Expr<'a>, exprs: &'a LinkArena<'a>, ser: &mut LinkSerializer) -> &'a Symbol<'a> {
+		let name = name.into();
+		exprs.add_with_lookups(Self {
+			name: exprs.add(name),
+			expr,
+		}, ser)
 	}
 }
 impl<'a> NativeHashtype for Symbol<'a> {

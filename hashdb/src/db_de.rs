@@ -41,7 +41,7 @@ impl<'a> DatastoreDeserializer<'a> for HashDeserializer<'a> {
 pub struct LinkArena<'a> {
 	arena: Bump,
 	map: RefCell<HashMap<u64, *const ()>>,             // Lookup map
-	reverse_lookup: RefCell<HashMap<Hash, *const ()>>, // Reverse lookup map
+	reverse_lookup: RefCell<HashMap<Hash, (*const (), &'static str)>>, // Reverse lookup map, str represents object type
 	p: std::marker::PhantomData<&'a ()>,
 }
 impl<'a> LinkArena<'a> {
@@ -75,13 +75,17 @@ impl<'a> LinkArena<'a> {
 	/// Safety: Yes, this can easily segfault, i'll fix it later
 	pub fn add_with_lookups<T: StdHash + NativeHashtype>(&'a self, val: T, ser: &mut impl DatastoreSerializer) -> &'a T {
 		let ret = self.add(val);
+		let mut lookups = self.reverse_lookup.borrow_mut();
 		for link in ret.reverse_links(ser) {
-			self.reverse_lookup.borrow_mut().insert(link, (ret as *const T).cast());
+			lookups.insert(link, ((ret as *const T).cast(), std::any::type_name::<T>()));
 		}
 		ret
 	}
-	/// Safety: Yes, this can easily segfault, make sure you don't add_with_lookups two different objects that link to the same object
+	/// Safety: Yes, this can easily segfault, make sure you don't add_with_lookups two different objects that link to the same object and that you used the correct object
 	pub fn lookup<T: NativeHashtype, L: NativeHashtype>(&'a self, hash: &TypedHash<L>) -> Option<&'a T> {
-		self.reverse_lookup.borrow().get(hash.into()).map(|ptr| unsafe { &*(ptr.cast()) })
+		self.reverse_lookup.borrow().get(hash.into()).map(|(ptr, type_str)| {
+			if type_str == &std::any::type_name::<T>() { Some(unsafe { &*(ptr.cast()) }) }
+			else { None }
+		}).flatten()
 	}
 }

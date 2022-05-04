@@ -84,50 +84,65 @@ fn test_parsing() {
 #[test]
 fn test_factorial() {
 	let exprs = &LinkArena::new();
+	let ser = &mut LinkSerializer::new();
 
 	let zero = parse("[x y] y", exprs).unwrap();
-	Symbol::new("zero", &zero, exprs);
+	Symbol::new("zero", zero, exprs, ser);
+	Symbol::new("false", zero, exprs, ser);
+
+	let true_expr = parse("[x y] x", exprs).unwrap();
+	Symbol::new("true", true_expr, exprs, ser);
 
 	let one = parse("[x y] x y", exprs).unwrap();
 
 	let succ = parse("[n f x] f (n f x)", exprs).unwrap();
-	Symbol::new("succ", &succ, exprs);
+	Symbol::new("succ", succ, exprs, ser);
 
 	// Succ Zero = One
-	let succ_zero = beta_reduce(&Expr::app(&succ, &zero, exprs), exprs).unwrap();
+	let succ_zero = beta_reduce(Expr::app(&succ, &zero, exprs), exprs).unwrap();
 	assert_eq!(succ_zero, one);
 
-	let succ_one = beta_reduce(&Expr::app(&succ, &one, exprs), exprs).unwrap();
+	let succ_one = beta_reduce(Expr::app(&succ, &one, exprs), exprs).unwrap();
 
 	// Succ Succ Zero = Succ 1
-	assert_eq!(beta_reduce(&Expr::app(&succ, &succ_zero, exprs), exprs).unwrap(), succ_one);
+	assert_eq!(beta_reduce(Expr::app(succ, succ_zero, exprs), exprs).unwrap(), succ_one);
 
 	let mult = parse_reduce("[m n f] m (n f)", exprs).unwrap();
-	Symbol::new("mult", &mult, exprs);
+	Symbol::new("mult", mult, exprs, ser);
 
 	println!("{}", parse("mult 2 3", exprs).unwrap());
 	assert_eq!(parse_reduce("mult 0 0", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
 	assert_eq!(parse_reduce("mult 0 1", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
 	assert_eq!(parse_reduce("mult 2 3", exprs).unwrap(), parse_reduce("6", exprs).unwrap());
 
-	/* let pred = parse_reduce("(λ3[<((3,>>2),1)] (((x (λ2[(1,<2)] (x (x x)))) (λ1[N] x)) (λ1[1] x)))", exprs).unwrap();
-	Symbol::new("pred", &pred, exprs);
+	let pred = parse_reduce("[n f x] n ([g h] h (g f)) ([u] x) ([u] u)", exprs).unwrap();
+	Symbol::new("pred", pred, exprs, ser);
 
-	let iszero = parse_reduce("(λ1[<<1] ((x (λ3[1] x)) (λ2[2] x)))", exprs).unwrap();
-	Symbol::new("iszero", &iszero, exprs);
+	assert_eq!(parse_reduce("pred 1", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
+	assert_eq!(parse_reduce("pred 6", exprs).unwrap(), parse_reduce("5", exprs).unwrap());
 
-	let pair = parse_reduce("(λ3[((1,3),2)] ((x x) x))", exprs).unwrap();
-	Symbol::new("pair", &pair, exprs);
-	Symbol::new("first", &zero, exprs);
+	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", exprs).unwrap();
+	Symbol::new("iszero", iszero, exprs, ser);
 
-	// let fact_seg = parse::parse_line("set factseg λ2[(>>2,(>2,1))] pair (succ x) (mult x x)", exprs).unwrap();
-	let fact = parse("λ1[<<<1] x (λ1[<1] x factseg) (pair 1 1) first", exprs).unwrap();
-	Symbol::new("factorial", &fact, exprs);
+	assert_eq!(parse_reduce("iszero 0", exprs).unwrap(), parse_reduce("true", exprs).unwrap());
+	assert_eq!(parse_reduce("iszero 6", exprs).unwrap(), parse_reduce("false", exprs).unwrap());
 
-	assert_eq!(parse_reduce("(factorial 2)", exprs).unwrap(), parse_reduce("2", exprs).unwrap());
-	assert_eq!(parse_reduce("(factorial 4)", exprs).unwrap(), parse_reduce("24", exprs).unwrap()); */
+	let pair = parse_reduce("[x y f] f x y", exprs).unwrap();
+	Symbol::new("pair", pair, exprs, ser);
+	Symbol::new("first", true_expr, exprs, ser);
+	Symbol::new("second", zero, exprs, ser);
 
-	//let is_zero = parse("()")
+	assert_eq!(parse_reduce("(pair 0 1) first", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
+	assert_eq!(parse_reduce("(pair 0 1) second", exprs).unwrap(), parse_reduce("1", exprs).unwrap());
+
+	let fact_seg = parse("[x y] pair (succ x) (mult x y)", exprs).unwrap();
+	Symbol::new("factseg", fact_seg, exprs, ser);
+
+	let fact = parse_reduce("[n] n ([x] x factseg) (pair 1 1) second", exprs).unwrap();
+	Symbol::new("factorial", fact, exprs, ser);
+
+	assert_eq!(parse_reduce("factorial 2", exprs).unwrap(), parse_reduce("2", exprs).unwrap());
+	assert_eq!(parse_reduce("factorial 4", exprs).unwrap(), parse_reduce("24", exprs).unwrap());
 }
 
 #[test]

@@ -4,11 +4,11 @@ use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
 use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 
-use crate::expr::{BindSubTree, Expr};
+use crate::{expr::{BindSubTree, Expr}, symbol::Symbol};
 
 // Represents active bound variables in the course of parsing an expression
 #[derive(Default, Debug)]
-struct BindMap {
+pub struct BindMap {
 	map: RefCell<Vec<String>>,
 }
 impl BindMap {
@@ -35,11 +35,12 @@ fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a
 	}
 	SER.with(|ser| {
 		let string_hash = string.to_owned().store(&mut *ser.borrow_mut());
-		exprs.lookup(&string_hash)
+		let symbol = exprs.lookup::<Symbol, String>(&string_hash)?;
+		Some(symbol.expr)
 	})
 }
 
-fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> {
+fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
 	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
 		let symbol = text::ident().padded().labelled("symbol");
@@ -91,7 +92,7 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 
 
 		// An expression can be a lambda: `[x y]` an application: `x y` or a standalone variable / symbol: `x`
-		lambda.or(application).or(atom).labelled("expression")
+		lambda.or(application).or(atom).padded().labelled("expression")
 	}).then_ignore(end())
 }
 pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
@@ -178,21 +179,32 @@ pub fn parse_reduce<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Ex
 	Ok(crate::beta_reduce(parse(string, exprs)?, exprs)?)
 }
 
-/* pub fn command_parser<'e: 'b, 'b>(string: &str, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b> bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> {
+#[derive(Debug, Clone)]
+pub enum Command<'e> {
+	None,
+	Reduce(&'e Expr<'e>),
+	Set(String, &'e Expr<'e>),
+}
+pub fn command_parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
 	let expr = parser(exprs, binds, bind_map);
 
-	let set = keyword("set").ignore_then(text::ident().padding()).then(expr);
+	let reduce = expr.clone().map(|(expr, _)|Command::Reduce(expr));
+
+	let none = end().to(Command::None);
+
+	let set = keyword("set")
+		.ignore_then(text::ident().padded())
+		.then(expr.clone()).map(|(symbol, (expr, _))| Command::Set(symbol, expr));
+
+	set.or(none).or(reduce).labelled("command")
 }
-
-pub fn parse_line<'e: 'b, 'b>(string: &str, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> Result<&'e Expr<'e>, anyhow::Error> {
-
-} */
 
 #[test]
 fn parse_test() {
 	use crate::expr::Binding;
 
 	let exprs = &LinkArena::new();
+	let ser = &mut LinkSerializer::new();
 	let parsed = parse("[x y] x y", exprs).unwrap();
 	let test = Expr::lambda(Binding::left(Binding::END, exprs),
 	Expr::lambda(Binding::right(Binding::END, exprs),
@@ -206,4 +218,10 @@ fn parse_test() {
 	let parsed = parse_reduce("([x y] x) ([x y] y) ([x y] x)", exprs).unwrap();
 	let parsed_2 = parse("([x y] y)", exprs).unwrap();
 	assert_eq!(parsed, parsed_2);
+
+	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", exprs).unwrap();
+	Symbol::new("iszero", iszero, exprs, ser);
+
+	let test = parse_reduce("iszero ([x y] y)", exprs).unwrap();
+	assert_eq!(test, parse("[x y] x", exprs).unwrap())
 }
