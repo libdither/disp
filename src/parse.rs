@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
 use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 
@@ -41,7 +42,21 @@ fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a
 fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> {
 	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
-		let symbol = text::ident().padded();
+		let symbol = text::ident().padded().labelled("symbol");
+
+		let number = text::int::<_, Simple<char>>(10).padded()
+			.try_map(|s, span|
+				s.parse::<usize>()
+				.map_err(|e| Simple::custom(span, format!("{}", e)))
+			).try_map(|num, span| {
+				match (lookup_expr("zero", exprs), lookup_expr("succ", exprs)) {
+					(Some(zero), Some(succ)) => {
+						let expr = (0..num).into_iter().fold(zero, |acc, _|Expr::app(succ, acc, exprs));
+						Ok((expr, BindSubTree::NONE))
+					}
+					_ => Err(Simple::custom(span, "symbols `zero` and `succ` must be defined to use numbers"))
+				}
+			}).labelled("number");
 
 		// A resolved symbol, variable, or paranthesised expression.
 		let atom = symbol.clone().map(|string| {
@@ -50,34 +65,33 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 			} else if let Some(expr) = lookup_expr(&string, exprs) {
 				(expr, BindSubTree::NONE)
 			} else { (Expr::VAR, BindSubTree::NONE) }
-		}).or(expr.clone().delimited_by(just('('), just(')')).padded());
+		}).labelled("expression")
+    	.or(number)
+		.or(expr.clone().delimited_by(just('('), just(')')).padded());
 
 		// Parse `[x y z] x y z` as `[x] ([y] ([z] x y z))`
 		let lambda = symbol
     		.repeated().at_least(1)
 			.delimited_by(just('['), just(']'))
 			.map(|symbols| {
-				symbols.iter().for_each(|string|{
-					bind_map.push_bind(string);
-				});
-				symbols
-			}).then(expr.clone()).foldr(|bind_symbol, (lam_expr, mut bind_tree)| {
-				if let Some(index) = bind_map.pop_bind(&bind_symbol) {
-					let binding = bind_tree.pop_binding(binds, index, exprs).expect("failed to pop lambda");
-					(Expr::lambda(binding, lam_expr, exprs), bind_tree)
-				} else { panic!("failed to remove bind") }
-			});
+				symbols.iter().map(|string|{
+					bind_map.push_bind(string)
+				}).collect::<Vec<_>>()
+			}).then(expr.clone()).foldr(|bind_index, (lam_expr, mut bind_tree)| {
+				let binding = bind_tree.pop_binding(binds, bind_index, exprs).expect("failed to pop lambda");
+				(Expr::lambda(binding, lam_expr, exprs), bind_tree)
+			}).labelled("lambda");
 		
 		// Parse `x y z` as `((x y) z)`
 		let application = atom.clone()
 			.then(atom.clone().repeated().at_least(1))
 			.foldl(|(func, func_index), (args, args_index)| {
 				(Expr::app(func, args, exprs), BindSubTree::branch(func_index, args_index, binds))
-			});
+			}).labelled("application");
 
 
 		// An expression can be a lambda: `[x y]` an application: `x y` or a standalone variable / symbol: `x`
-		lambda.or(application).or(atom)
+		lambda.or(application).or(atom).labelled("expression")
 	}).then_ignore(end())
 }
 pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
@@ -88,14 +102,76 @@ pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>,
 		match parsed {
 			Ok((expr, _)) => Ok(expr),
 			Err(errors) => {
-				errors.into_iter().for_each(|error| {
-					println!("{error}")
-				});
-				Err(anyhow::anyhow!("parse error"))
+				gen_report(errors).try_for_each(|report|report.print(Source::from(&string)))?;
+				Err(anyhow::anyhow!("Error"))
 			}
 		}
 	}
-	
+}
+
+pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
+	errors.into_iter().map(|e| {
+        let msg = if let chumsky::error::SimpleReason::Custom(msg) = e.reason() {
+            msg.clone()
+        } else {
+            format!(
+                "{}{}, expected {}",
+                if e.found().is_some() {
+                    "Unexpected token"
+                } else {
+                    "Unexpected end of input"
+                },
+                if let Some(label) = e.label() {
+                    format!(" while parsing {}", label)
+                } else {
+                    String::new()
+                },
+                if e.expected().len() == 0 {
+                    "something else".to_string()
+                } else {
+                    e.expected()
+                        .map(|expected| match expected {
+                            Some(expected) => expected.to_string(),
+                            None => "end of input".to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            )
+        };
+
+        let report = Report::build(ReportKind::Error, (), e.span().start)
+            .with_code(3)
+            .with_message(msg)
+            .with_label(
+                Label::new(e.span())
+                    .with_message(match e.reason() {
+                        chumsky::error::SimpleReason::Custom(msg) => msg.clone(),
+                        _ => format!(
+                            "Unexpected {}",
+                            e.found()
+                                .map(|c| format!("token {}", c.fg(Color::Red)))
+                                .unwrap_or_else(|| "end of input".to_string())
+                        ),
+                    })
+                    .with_color(Color::Red),
+            );
+
+        let report = match e.reason() {
+            chumsky::error::SimpleReason::Unclosed { span, delimiter } => report.with_label(
+                Label::new(span.clone())
+                    .with_message(format!(
+                        "Unclosed delimiter {}",
+                        delimiter.fg(Color::Yellow)
+                    ))
+                    .with_color(Color::Yellow),
+            ),
+            chumsky::error::SimpleReason::Unexpected => report,
+            chumsky::error::SimpleReason::Custom(_) => report,
+        };
+
+        report.finish()
+    })
 }
 
 pub fn parse_reduce<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
@@ -103,7 +179,9 @@ pub fn parse_reduce<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Ex
 }
 
 /* pub fn command_parser<'e: 'b, 'b>(string: &str, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b> bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> {
-	let set = keyword(keyword)
+	let expr = parser(exprs, binds, bind_map);
+
+	let set = keyword("set").ignore_then(text::ident().padding()).then(expr);
 }
 
 pub fn parse_line<'e: 'b, 'b>(string: &str, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> Result<&'e Expr<'e>, anyhow::Error> {

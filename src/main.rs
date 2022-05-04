@@ -11,7 +11,7 @@ mod parse;
 mod symbol;
 
 use crate::expr::beta_reduce;
-use parse::parse_line;
+use parse::parse as parse_line;
 
 fn main() {
 	let exprs = &LinkArena::new();
@@ -33,7 +33,7 @@ fn main() {
 			Ok(line) => {
 				rl.add_history_entry(line.as_str());
 
-				match parse_line(line.as_str(), exprs) {
+				match parse_line(line.as_str(), exprs).map(|r|Some(r)) {
 					Ok(Some(expr)) => {
 						match beta_reduce(&expr, exprs) {
 							Ok(expr) => println!("{}", expr),
