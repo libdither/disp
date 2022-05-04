@@ -12,7 +12,6 @@ mod symbol;
 
 use crate::expr::beta_reduce;
 use parse::parse_line;
-use symbol::Symbol;
 
 fn main() {
 	let exprs = &LinkArena::new();

@@ -1,246 +1,31 @@
 use std::cell::RefCell;
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::iter::Peekable;
+use chumsky::{prelude::*, text::keyword};
+use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 
-use hashdb::{DatastoreError, LinkArena, LinkSerializer, NativeHashtype};
-use logos::{Logos, Span};
-use smallvec::SmallVec;
-use thiserror::Error;
+use crate::expr::{BindSubTree, Expr};
 
-use crate::expr::{BindIndex, BindSubTree, BindTree, Binding, Expr, LambdaError, beta_reduce};
-use crate::Symbol;
-
-#[derive(Logos, Debug, PartialEq, Clone)]
-pub enum Token {
-	// Tokens can be literal strings, of any length.
-	#[token("λ")]
-	Lambda,
-
-	#[token("[")]
-	OpenSquareBracket,
-
-	#[token("]")]
-	CloseSquareBracket,
-
-	#[token(".")]
-	Period,
-
-	#[token(",")]
-	Comma,
-
-	#[token("<")]
-	OpenCarat,
-
-	#[token(">")]
-	CloseCarat,
-
-	#[token("(")]
-	OpenParen,
-
-	#[token(")")]
-	CloseParen,
-
-	#[token("x")]
-	Variable,
-
-	#[regex("[a-zA-Z-_][a-zA-Z0-9]*")]
-	Symbol,
-
-	#[regex(r#""([^"\\]|\\.)*""#)]
-	String,
-
-	#[regex("[0-9]+", |lex| lex.slice().parse())]
-	Number(u64),
-
-	// We can also use this variant to define whitespace,
-	// or any other matches we wish to skip.
-	#[regex(r"[ \t\n\f]+", logos::skip)]
-	Space,
-
-	// Logos requires one token variant to handle errors,
-	// it can be named anything you wish.
-	#[error]
-	Error,
+// Represents active bound variables in the course of parsing an expression
+#[derive(Default, Debug)]
+struct BindMap {
+	map: RefCell<Vec<String>>,
 }
-
-#[derive(Debug, Error)]
-pub enum ParseError<'a> {
-	#[error("Found {found:?}, expected Token(s) {expected:?}\n{}", .loc.display_span(.span))]
-	WrongToken { loc: Location<'a>, span: Span, found: Token, expected: Vec<Token> },
-
-	#[error("Unexpected token: {2:?}\n{}", .0.display_span(.1))]
-	UnexpectedToken(Location<'a>, Span, Token),
-
-	#[error("Lexer Error: {2:?}\n{}",.0.display_span(.1))]
-	LexerError(Location<'a>, Span, Token),
-
-	#[error("Unexpected end of stream:\n{}", .0.display(1))]
-	UnexpectedEndOfStream(Location<'a>),
-
-	#[error("Unknown Symbol: {1}\n{}", .0.display_str(.1))]
-	UnknownSymbol(Location<'a>, &'a str),
-
-	#[error("Number-Encoding functions undefined, must define succ and zero functions\n{}", .0.display_span(.1))]
-	NoNumberFunctions(Location<'a>, Span),
-
-	#[error("Command Error: {0}: {1}")]
-	CommandError(&'static str, String),
-
-	#[error("Datastore Error: {0}")]
-	DatastoreError(#[from] DatastoreError),
-
-	#[error("I/O Error: {0}")]
-	IOError(#[from] std::io::Error),
-
-	#[error("Error: {2}\n{}", .0.display_span(.1))]
-	LocalError(Location<'a>, Span, &'static str),
-}
-impl<'a> ParseError<'a> {
-	fn wrong_token(feeder: &mut TokenFeeder<'a>, span: Span, found: Token, expected: Vec<Token>) -> Self {
-		ParseError::WrongToken {
-			loc: feeder.location(),
-			span,
-			found,
-			expected,
-		}
+impl BindMap {
+	// Get binding index for this variable
+	fn bind_index(&self, string: &String) -> Option<usize> {
+		self.map.borrow().iter().enumerate().rev().find(|(index, e)|*e == string).map(|val|val.0 + 1)
 	}
-}
-
-#[derive(Debug)]
-pub struct Location<'a> {
-	string: &'a str,
-	char_position: usize,
-}
-
-impl<'a> Location<'a> {
-	fn display_span(&self, span: &Span) -> String {
-		self.display(span.len())
+	fn push_bind(&self, string: &String) -> usize {
+		let mut map = self.map.borrow_mut();
+		map.push(string.clone());
+		map.len()
 	}
-	fn display_str(&self, string: &'a str) -> String {
-		self.display(string.len())
-	}
-	fn display(&self, len: usize) -> String {
-		let whitespace_amount = self.char_position.saturating_sub(len);
-		let span_marking = std::iter::repeat(" ").take(whitespace_amount).chain(std::iter::repeat("^").take(len));
-		format!("{}\n{}", self.string, span_marking.collect::<String>())
-	}
-}
-
-struct TokenFeeder<'a> {
-	string: &'a str,
-	iter: Peekable<logos::SpannedIter<'a, Token>>,
-	char_position: usize,
-}
-impl<'a> TokenFeeder<'a> {
-	pub fn from_string(string: &'a str) -> Self {
-		let lexer = Token::lexer(string);
-		Self {
-			string,
-			iter: Iterator::peekable(lexer.spanned()),
-			char_position: 0,
-		}
-	}
-	pub fn location(&self) -> Location<'a> {
-		Location {
-			string: self.string,
-			char_position: self.char_position,
-		}
-	}
-	pub fn next(&mut self) -> Result<(Token, Span), ParseError<'a>> {
-		if let Some((token, span)) = Iterator::next(&mut self.iter) {
-			self.char_position += span.len();
-			Ok((token, span))
-		} else {
-			Err(ParseError::UnexpectedEndOfStream(self.location()))
-		}
-	}
-	pub fn expect_next(&mut self, token: Token) -> Result<Span, ParseError<'a>> {
-		let (next, span) = self.next()?;
-		if next != token {
-			Err(ParseError::wrong_token(self, span, next, vec![token]))
-		} else {
-			Ok(span)
-		}
-	}
-	pub fn peek(&mut self) -> Result<(&Token, &Span), ParseError<'a>> {
-		let location = self.location();
-		if let Some((token, span)) = self.iter.peek() {
-			Ok((token, span))
-		} else {
-			Err(ParseError::UnexpectedEndOfStream(location))
-		}
-	}
-	pub fn test_end_of_expression(&mut self, depth: usize) -> bool {
-		match self.iter.peek() {
-			Some((Token::CloseParen, _)) => true,
-			None if depth == 0 => true, // Treat end of stream as end of expression if there are no enclosing expressions
-			_ => false,
-		}
-	}
-}
-
-struct BindMap<'a> {
-	map: BTreeMap<&'a str, SmallVec<[usize; 2]>>,
-}
-impl<'a> BindMap<'a> {
-	fn is_bound(&self, string: &'a str) -> Option<usize> {
-		self.get_mut(string)?.last()
-	}
-	fn add_bind(&mut self, string: &'a str) -> usize {
-		let ret = self.map.len();
-		let stack = self.map.entry(string).or_insert(SmallVec::new());
-		stack.push(ret);
-		ret
-	}
-	fn remove_bind(&mut self, string: &'a str) -> Option<usize> {
-		let stack = self.get_mut(string)?;
-		let ret = stack.pop();
-		if stack.len() == 0 { self.remove(string) }
+	fn pop_bind(&self, string: &String) -> Option<usize> {
+		let mut map = self.map.borrow_mut();
+		let ret = map.len();
+		map.pop()?;
 		Some(ret)
 	}
-}
-
-// Parse stuff like: `[x y] (x y)` as Lam(Branch(End, None), Lam(Branch(None, End), App(Var, Var)))
-// Make sure feeder has already consumed first '['
-fn parse_lambda<'a, 'b, 'e>(
-	feeder: &mut TokenFeeder<'a>,
-	depth: usize,
-	exprs: &LinkArena<'e>,
-	bind_map: &mut BindMap,
-	binds: &LinkArena<'b>
-) -> Result<(&'e Expr<'e>, &'b BindSubTree<'b>), ParseError<'a>> {
-	// If end of lambda, parse expr
-	if let Token::CloseSquareBracket = feeder.peek()?.0 {
-		feeder.expect_next(Token::CloseSquareBracket);
-		return parse_expr(feeder, depth, exprs, bind_map);
-	}
-
-	let (next_token, next_span) = feeder.next()?;
-	Ok(match next_token {
-		Token::Symbol => {
-			let (expr, bind_tree) = parse_lambda(feeder, depth, exprs, bind_map);
-		}
-		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token))?,
-	})
-}
-
-// Parse Token stream until reach closing parentheses or if depth == 0 & end of stream and return Application expression
-fn parse_application<'a, 'e, 'b>(
-	feeder: &mut TokenFeeder<'a>,
-	initial: &'e Expr<'e>,
-	depth: usize,
-	exprs: &LinkArena<'e>,
-	bind_map: &mut BindMap<'a>,
-	binds: &LinkArena<'b>
-) -> Result<(&'e Expr<'e>, &'b BindSubTree<'b>), ParseError<'a>> {
-	let func = initial;
-	Ok(if !feeder.test_end_of_expression(depth) {
-		let args = parse_token(feeder, depth, exprs, bind_map)?.2;
-		parse_application(feeder, Expr::app(func, args, exprs), depth, exprs, binds)?
-	} else {
-		func
-	})
 }
 
 fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a>> {
@@ -252,143 +37,95 @@ fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a
 		exprs.lookup(&string_hash)
 	})
 }
-fn lookup_symbol<'a>(feeder: &mut TokenFeeder<'a>, span: Span, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
-	let string = &feeder.string[span.clone()];
-	lookup_expr(string, exprs).ok_or(ParseError::UnknownSymbol(feeder.location(), string))
+
+fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> {
+	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
+		// A symbol, can be pretty much any string not including whitespace
+		let symbol = text::ident().padded();
+
+		// A resolved symbol, variable, or paranthesised expression.
+		let atom = symbol.clone().map(|string| {
+			if let Some(val) = bind_map.bind_index(&string) {
+				(Expr::VAR, BindSubTree::end(val, binds))
+			} else if let Some(expr) = lookup_expr(&string, exprs) {
+				(expr, BindSubTree::NONE)
+			} else { (Expr::VAR, BindSubTree::NONE) }
+		}).or(expr.clone().delimited_by(just('('), just(')')).padded());
+
+		// Parse `[x y z] x y z` as `[x] ([y] ([z] x y z))`
+		let lambda = symbol
+    		.repeated().at_least(1)
+			.delimited_by(just('['), just(']'))
+			.map(|symbols| {
+				symbols.iter().for_each(|string|{
+					bind_map.push_bind(string);
+				});
+				symbols
+			}).then(expr.clone()).foldr(|bind_symbol, (lam_expr, mut bind_tree)| {
+				if let Some(index) = bind_map.pop_bind(&bind_symbol) {
+					let binding = bind_tree.pop_binding(binds, index, exprs).expect("failed to pop lambda");
+					(Expr::lambda(binding, lam_expr, exprs), bind_tree)
+				} else { panic!("failed to remove bind") }
+			});
+		
+		// Parse `x y z` as `((x y) z)`
+		let application = atom.clone()
+			.then(atom.clone().repeated().at_least(1))
+			.foldl(|(func, func_index), (args, args_index)| {
+				(Expr::app(func, args, exprs), BindSubTree::branch(func_index, args_index, binds))
+			});
+
+
+		// An expression can be a lambda: `[x y]` an application: `x y` or a standalone variable / symbol: `x`
+		lambda.or(application).or(atom)
+	}).then_ignore(end())
 }
-
-// Parse Token stream until reach parentheses or end of stream and return expression, it will not consume the ending parenthses
-fn parse_token<'a, 'e>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>, bind_map: &mut BindMap<'a>, binds: &'a LinkArena<'a>) -> Result<(Token, Span, &'e Expr<'e>), ParseError<'a>> {
-	let (next_token, next_span) = feeder.next()?;
-	let (token, span) = (next_token.clone(), next_span.clone());
-
-	let expr = match next_token {
-		Token::OpenSquareBracket => parse_lambda(feeder, depth, exprs, bind_map),
-		Token::Lambda => {
-			// Read PointerTree metadata
-			feeder.expect_next(Token::OpenSquareBracket)?;
-			parse_lambda(feeder, depth, exprs, bind_map)?
-		}
-		Token::Symbol => {
-			let string = &feeder.string[next_span];
-			if let Some(index) = bind_map.is_bound(string) {
-				(Expr::VAR, BindSubTree::end(index, binds))
-			} else {
-				(lookup_symbol(feeder, next_span, exprs)?, BindSubTree::NONE)
+pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+	let binds = &LinkArena::new();
+	let bind_map = &BindMap::default();
+	{
+		let parsed = parser(exprs, binds, bind_map).parse(string);
+		match parsed {
+			Ok((expr, _)) => Ok(expr),
+			Err(errors) => {
+				errors.into_iter().for_each(|error| {
+					println!("{error}")
+				});
+				Err(anyhow::anyhow!("parse error"))
 			}
-			
-		},
-		Token::Number(value) => {
-			if value > 1_000_000 {
-				ParseError::CommandError("{integer}", "number is too large (must be less than 1,000,000)".into());
-			}
-			let zero = lookup_expr("zero", exprs).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span.clone()))?;
-			let succ = lookup_expr("succ", exprs).ok_or(ParseError::NoNumberFunctions(feeder.location(), next_span))?;
-			let mut ret = zero;
-			for _ in 0..value {
-				ret = Expr::app(succ, ret, exprs)
-			}
-			ret
 		}
-		Token::OpenParen => {
-			// Parse Subexpression
-			let ret = parse_expr(feeder, depth + 1, exprs)?;
-			feeder.expect_next(Token::CloseParen)?;
-			ret
-		}
-		Token::Error => return Err(ParseError::LexerError(feeder.location(), next_span, next_token.clone())),
-		_ => Err(ParseError::UnexpectedToken(feeder.location(), next_span, next_token.clone()))?,
-	};
-	Ok((token, span, expr))
+	}
+	
 }
 
-fn parse_expr<'a, 'e>(feeder: &mut TokenFeeder<'a>, depth: usize, exprs: &'a LinkArena<'a>, bind_map: &mut BindMap<'a>) -> Result<&'e Expr<'e>, ParseError<'a>> {
-	let (token, span, expr) = parse_token(feeder, depth, exprs, bind_map)?;
-	let ret = match token {
-		Token::Symbol | Token::Variable | Token::Number(_) | Token::OpenParen => parse_application(feeder, expr, depth, exprs, bind_map)?,
-		Token::Lambda => expr,
-		_ => Err(ParseError::UnexpectedToken(feeder.location(), span, token))?,
-	};
-	Ok(ret)
+pub fn parse_reduce<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+	Ok(crate::beta_reduce(parse(string, exprs)?, exprs)?)
 }
 
-fn parse_command<'a>(feeder: &mut TokenFeeder<'a>, exprs: &'a LinkArena<'a>) -> Result<Option<&'a Expr<'a>>, ParseError<'a>> {
-	let span = feeder.expect_next(Token::Symbol)?;
-	let string = &feeder.string[span.clone()];
-	Ok(match string {
-		"set" => {
-			let span = feeder.expect_next(Token::Symbol)?;
-			let name = &feeder.string[span];
-
-			let next_expr = parse_expr(feeder, 0, exprs)?;
-			let reduced = match beta_reduce(&next_expr, exprs) {
-				Ok(ret) => ret,
-				Err(LambdaError::RecursionDepthExceeded) => {
-					println!("warning: this expresion will run for a long time");
-					next_expr
-				}
-				Err(err) => Err(ParseError::CommandError("set", format!("failed to beta reduce expr: {}", err)))?,
-			};
-
-			Symbol::new(name, &reduced, exprs);
-
-			Some(reduced)
-		}
-		/* "save" => {
-			let location = feeder.expect_next(Token::String)?;
-			let location = &feeder.string[location];
-			let location = &location[1..location.len()-1];
-			println!("Saving to: {:?}", location);
-			db.save(fs::File::create(location)?)?;
-			None
-		}
-		"load" => {
-			let location = feeder.expect_next(Token::String)?;
-			let location = &feeder.string[location];
-			let location = &location[1..location.len()-1];
-			println!("Loading from: {:?}", location);
-			db.load(fs::File::open(location)?)?;
-			None
-		} */
-		/* "clear" => {
-			ser.exprs.clear();
-			None
-		} */
-		_ => {
-			let expr = lookup_symbol(feeder, span, exprs)?;
-			Some(parse_application(feeder, expr, 0, exprs)?)
-		}
-	})
+/* pub fn command_parser<'e: 'b, 'b>(string: &str, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b> bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> {
+	let set = keyword(keyword)
 }
 
-#[allow(dead_code)]
-pub fn parse<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
-	let feeder = &mut TokenFeeder::from_string(string);
-	println!("parsing: {}", string);
-	let expr = parse_expr(feeder, 0, exprs)?;
-	println!("parsed: {}", expr);
-	Ok(expr)
-}
-#[allow(dead_code)]
-pub fn parse_reduce<'a>(string: &'a str, exprs: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, ParseError<'a>> {
-	let feeder = &mut TokenFeeder::from_string(string);
-	let expr = parse_expr(feeder, 0, exprs)?;
-	let expr = beta_reduce(&expr, exprs).unwrap_or(expr);
-	Ok(expr)
-}
+pub fn parse_line<'e: 'b, 'b>(string: &str, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> Result<&'e Expr<'e>, anyhow::Error> {
 
-pub fn parse_line<'a>(line: &'a str, exprs: &'a LinkArena<'a>) -> Result<Option<&'a Expr<'a>>, ParseError<'a>> {
-	let feeder = &mut TokenFeeder::from_string(line);
-	let (next, _) = feeder.peek()?;
-	Ok(if Token::Symbol == *next {
-		match parse_command(feeder, exprs) {
-			Err(err) => {
-				println!("Failed to parse command: {}", err);
-				None
-			}
-			Ok(expr) => expr,
-		}
-	} else {
-		Some(parse_expr(feeder, 0, exprs)?)
-	})
+} */
+
+#[test]
+fn parse_test() {
+	use crate::expr::Binding;
+
+	let exprs = &LinkArena::new();
+	let parsed = parse("[x y] x y", exprs).unwrap();
+	let test = Expr::lambda(Binding::left(Binding::END, exprs),
+	Expr::lambda(Binding::right(Binding::END, exprs),
+			Expr::app(Expr::VAR, Expr::VAR, exprs),
+		exprs),
+	exprs);
+	assert_eq!(parsed, test);
+
+	assert_eq!(test, parse("[x y] (x y)", exprs).unwrap());
+
+	let parsed = parse_reduce("([x y] x) ([x y] y) ([x y] x)", exprs).unwrap();
+	let parsed_2 = parse("([x y] y)", exprs).unwrap();
+	assert_eq!(parsed, parsed_2);
 }

@@ -264,7 +264,7 @@ fn test_replace_tree() {
 	let mut r = BindIndex::DEFAULT;
 	println!("start: [{}]", r);
 
-	let lambda = crate::parse("(λ[] (λ[><<.] (λ[(.,<>.)] (λ[>>.] (x ((x x) x))))))", exprs).unwrap();
+	let lambda = crate::parse("[x y z w] x (y z) w", exprs).unwrap();
 	println!("lambda: {}", lambda);
 	let expr = r.push_lambda(&lambda, binds).unwrap();
 	println!("after push: {} : {}", expr, r);

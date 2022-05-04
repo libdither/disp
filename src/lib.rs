@@ -7,10 +7,10 @@ use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 pub mod expr;
 // pub mod parse;
 pub mod symbol;
-mod parse_new;
+mod parse;
 
 use expr::{beta_reduce, Binding as PT, Expr};
-pub use parse_new::{parse, parse_reduce};
+pub use parse::{parse, parse_reduce};
 use symbol::Symbol;
 
 fn setup_boolean_logic<'a>(exprs: &'a LinkArena<'a>) -> (&'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>) {
