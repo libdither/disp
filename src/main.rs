@@ -55,7 +55,13 @@ fn main() {
 						println!("{expr}");
 						let reduced = beta_reduce(expr, exprs).unwrap();
 						println!("{reduced}");
-					},
+					}
+					Ok(Command::Load(file)) => {
+
+					}
+					Ok(Command::Save(file)) => {
+						
+					}
 					Err(errors) => {
 						parse::gen_report(errors).try_for_each(|report|report.print(Source::from(&line))).unwrap();
 					}
