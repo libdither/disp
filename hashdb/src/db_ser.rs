@@ -11,7 +11,7 @@ use rkyv::{
 use crate::{Data, Datastore, DatastoreError, Hash, NativeHashtype, TypedHash};
 
 /// Represents a Serializer that serializes to an archive and stores in a Datastore
-pub trait DatastoreSerializer: Fallible + Serializer {
+pub trait DatastoreSerializer: Fallible + Serializer + Sized + ScratchSpace {
 	fn store<T: NativeHashtype>(&mut self, hashtype: &T) -> Result<Hash, <Self as Fallible>::Error>
 	where
 		T: Serialize<Self>;
@@ -99,8 +99,8 @@ impl<'a> DatastoreSerializer for DatastoreLinkSerializer<'a> {
 			// Safety: We just serialized this data, therefore it is a valid archive
 			let data = Data::new(vec.into());
 			let hash = self.0.store(data).into();
-			let reverse_links = hashtype.reverse_links(self);
-			self.0.register::<Self, T>(reverse_links, &hash);
+			let reverse_links = hashtype.reverse_links(self.1);
+			self.0.register::<LinkSerializer, T>(reverse_links, &hash);
 			hash
 		})
 	}

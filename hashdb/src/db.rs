@@ -4,7 +4,7 @@ use bytecheck::CheckBytes;
 use rkyv::{validation::validators::DefaultValidator, Fallible};
 use serde::{Deserialize, Serialize};
 
-use crate::{data::DataError, hash::TrimHasher, Data, DatastoreSerializer, Hash, NativeHashtype, TypedHash};
+use crate::{Data, DatastoreSerializer, Hash, LinkArena, NativeHashtype, TypedHash, data::DataError, hash::TrimHasher};
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
@@ -24,13 +24,14 @@ pub enum DatastoreError {
 pub struct Datastore {
 	map: HashMap<Hash, Data, TrimHasher>,
 	reverse_lookup: HashMap<Hash, Hash, TrimHasher>, // Map types to types that link to types
+	root: Option<(Hash, String)>,
 }
 
 impl Datastore {
 	pub fn new() -> Self {
 		Self::default()
 	}
-	pub fn register<'a, S: DatastoreSerializer, T: NativeHashtype>(&mut self, mut reverse_links: T::LinkIter<S>, hash: &Hash) {
+	pub fn register<'a, S: DatastoreSerializer, T: NativeHashtype>(&mut self, mut reverse_links: T::LinkIter<'a, S>, hash: &Hash) {
 		while let Some(subhash) = reverse_links.next() {
 			self.reverse_lookup.insert(subhash.clone(), hash.clone());
 		}
@@ -68,6 +69,13 @@ impl Datastore {
 	pub fn load(&mut self, reader: impl io::Read) -> Result<(), DatastoreError> {
 		*self = bincode::deserialize_from(reader)?;
 		Ok(())
+	}
+	pub fn set_root<T>(&mut self, hash: TypedHash<T>) {
+		self.root = Some((hash.into(), std::any::type_name::<T>().to_owned()));
+	}
+	pub fn root<T>(&self) -> Option<TypedHash<T>> {
+		let (hash, typename) = self.root.as_ref()?;
+		if typename == std::any::type_name::<T>() { Some(hash.clone().into()) } else { None }
 	}
 	pub fn clear(&mut self) {
 		self.map.clear();

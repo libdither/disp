@@ -6,7 +6,7 @@ use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
 use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 
-use crate::{expr::{BindSubTree, Expr}, symbol::Symbol};
+use crate::{expr::{BindSubTree, Expr}, name::{Name, NamedObject}};
 
 // Represents active bound variables in the course of parsing an expression
 #[derive(Default, Debug)]
@@ -37,15 +37,18 @@ fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a
 	}
 	SER.with(|ser| {
 		let string_hash = string.to_owned().store(&mut *ser.borrow_mut());
-		let symbol = exprs.lookup::<Symbol, String>(&string_hash)?;
-		Some(symbol.expr)
+		let name = exprs.lookup::<Name, String>(&string_hash)?;
+		match name.object {
+			NamedObject::Namespace(_) => None,
+			NamedObject::Expr(expr) => Some(expr)
+		}
 	})
 }
 
 fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
 	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
-		let symbol = text::ident().padded().labelled("symbol");
+		let name = text::ident().padded().labelled("name");
 
 		let number = text::int::<_, Simple<char>>(10).padded()
 			.try_map(|s, span|
@@ -57,12 +60,12 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 						let expr = (0..num).into_iter().fold(zero, |acc, _|Expr::app(succ, acc, exprs));
 						Ok((expr, BindSubTree::NONE))
 					}
-					_ => Err(Simple::custom(span, "symbols `zero` and `succ` must be defined to use numbers"))
+					_ => Err(Simple::custom(span, "names `zero` and `succ` must be defined to use numbers"))
 				}
 			}).labelled("number");
 
 		// A resolved symbol, variable, or paranthesised expression.
-		let atom = symbol.clone().map(|string| {
+		let atom = name.clone().map(|string| {
 			if let Some(val) = bind_map.bind_index(&string) {
 				(Expr::VAR, BindSubTree::end(val, binds))
 			} else if let Some(expr) = lookup_expr(&string, exprs) {
@@ -73,7 +76,7 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 		.or(expr.clone().delimited_by(just('('), just(')')).padded());
 
 		// Parse `[x y z] x y z` as `[x] ([y] ([z] x y z))`
-		let lambda = symbol
+		let lambda = name
     		.repeated().at_least(1)
 			.delimited_by(just('['), just(']'))
 			.map(|symbols| {
@@ -98,6 +101,7 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 		lambda.or(application).or(atom).padded().labelled("expression")
 	}).then_ignore(end())
 }
+// Parse expression
 pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
 	let binds = &LinkArena::new();
 	let bind_map = &BindMap::default();
@@ -113,6 +117,7 @@ pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>,
 	}
 }
 
+/// Generate cool error with ariadne
 pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
 	// Taken from json.rs example on chumsky github
 	errors.into_iter().map(|e| {
@@ -179,10 +184,12 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
     })
 }
 
+/// Parse and reduce a string
 pub fn parse_reduce<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
 	Ok(crate::beta_reduce(parse(string, exprs)?, exprs)?)
 }
 
+/// Commands for cli
 #[derive(Debug, Clone)]
 pub enum Command<'e> {
 	None,
@@ -191,6 +198,7 @@ pub enum Command<'e> {
 	Save(String),
 	Reduce(&'e Expr<'e>),
 }
+/// Parse commands
 pub fn command_parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
 	let expr = parser(exprs, binds, bind_map);
 
@@ -241,7 +249,7 @@ fn parse_test() {
 	assert_eq!(parsed, parsed_2);
 
 	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", exprs).unwrap();
-	Symbol::new("iszero", iszero, exprs, ser);
+	Name::new("iszero", iszero, exprs, ser);
 
 	let test = parse_reduce("iszero ([x y] y)", exprs).unwrap();
 	assert_eq!(test, parse("[x y] x", exprs).unwrap())

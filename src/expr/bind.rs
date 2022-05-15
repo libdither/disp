@@ -55,7 +55,13 @@ impl<'a> Binding<'a> {
 	}
 }
 
-impl<'a> NativeHashtype for Binding<'a> {}
+impl<'a> NativeHashtype for Binding<'a> {
+    type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = std::iter::Empty<hashdb::Hash>;
+
+    fn reverse_links<'s, S: DatastoreSerializer>(&'s self, ser: &'s mut S) -> Self::LinkIter<'s, S> {
+        std::iter::empty()
+    }
+}
 impl<'a> fmt::Display for Binding<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match *self {

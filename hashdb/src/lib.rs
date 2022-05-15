@@ -7,6 +7,8 @@
 #![feature(associated_type_defaults)]
 #![feature(generic_associated_types)]
 #![feature(downcast_unchecked)]
+#![feature(specialization)]
+#![feature(type_alias_impl_trait)]
 
 #[macro_use]
 extern crate thiserror;
@@ -57,7 +59,13 @@ mod tests {
 				&'a StringType<'a>,
 			),
 		}
-		impl<'a> NativeHashtype for StringType<'a> {}
+		impl<'a> NativeHashtype for StringType<'a> {
+			type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = crate::Hash> + 's;
+
+			fn reverse_links<'s, S: DatastoreSerializer>(&'s self, _ser: &'s mut S) -> Self::LinkIter<'s, S> {
+				std::iter::empty()
+			}
+		}
 
 		let links = LinkArena::new();
 		let string = links.add(StringType::String("Hello".into()));

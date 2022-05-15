@@ -1,17 +1,17 @@
 #![allow(unused)]
 #![feature(generic_associated_types)]
+#![feature(type_alias_impl_trait)]
 
 pub use hashdb::{Data, Datastore};
 use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
 
 pub mod expr;
-// pub mod parse;
-pub mod symbol;
+pub mod name;
 mod parse;
 
 use expr::{beta_reduce, Binding as PT, Expr};
 pub use parse::{parse, parse_reduce};
-use symbol::Symbol;
+use name::Name;
 
 fn setup_boolean_logic<'a>(exprs: &'a LinkArena<'a>) -> (&'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>) {
 	let id_hash = Expr::lambda(PT::END, &Expr::VAR, exprs);
@@ -87,16 +87,16 @@ fn test_factorial() {
 	let ser = &mut LinkSerializer::new();
 
 	let zero = parse("[x y] y", exprs).unwrap();
-	Symbol::new("zero", zero, exprs, ser);
-	Symbol::new("false", zero, exprs, ser);
+	Name::new("zero", zero, exprs, ser);
+	Name::new("false", zero, exprs, ser);
 
 	let true_expr = parse("[x y] x", exprs).unwrap();
-	Symbol::new("true", true_expr, exprs, ser);
+	Name::new("true", true_expr, exprs, ser);
 
 	let one = parse("[x y] x y", exprs).unwrap();
 
 	let succ = parse("[n f x] f (n f x)", exprs).unwrap();
-	Symbol::new("succ", succ, exprs, ser);
+	Name::new("succ", succ, exprs, ser);
 
 	// Succ Zero = One
 	let succ_zero = beta_reduce(Expr::app(&succ, &zero, exprs), exprs).unwrap();
@@ -108,7 +108,7 @@ fn test_factorial() {
 	assert_eq!(beta_reduce(Expr::app(succ, succ_zero, exprs), exprs).unwrap(), succ_one);
 
 	let mult = parse_reduce("[m n f] m (n f)", exprs).unwrap();
-	Symbol::new("mult", mult, exprs, ser);
+	Name::new("mult", mult, exprs, ser);
 
 	println!("{}", parse("mult 2 3", exprs).unwrap());
 	assert_eq!(parse_reduce("mult 0 0", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
@@ -116,30 +116,30 @@ fn test_factorial() {
 	assert_eq!(parse_reduce("mult 2 3", exprs).unwrap(), parse_reduce("6", exprs).unwrap());
 
 	let pred = parse_reduce("[n f x] n ([g h] h (g f)) ([u] x) ([u] u)", exprs).unwrap();
-	Symbol::new("pred", pred, exprs, ser);
+	Name::new("pred", pred, exprs, ser);
 
 	assert_eq!(parse_reduce("pred 1", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
 	assert_eq!(parse_reduce("pred 6", exprs).unwrap(), parse_reduce("5", exprs).unwrap());
 
 	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", exprs).unwrap();
-	Symbol::new("iszero", iszero, exprs, ser);
+	Name::new("iszero", iszero, exprs, ser);
 
 	assert_eq!(parse_reduce("iszero 0", exprs).unwrap(), parse_reduce("true", exprs).unwrap());
 	assert_eq!(parse_reduce("iszero 6", exprs).unwrap(), parse_reduce("false", exprs).unwrap());
 
 	let pair = parse_reduce("[x y f] f x y", exprs).unwrap();
-	Symbol::new("pair", pair, exprs, ser);
-	Symbol::new("first", true_expr, exprs, ser);
-	Symbol::new("second", zero, exprs, ser);
+	Name::new("pair", pair, exprs, ser);
+	Name::new("first", true_expr, exprs, ser);
+	Name::new("second", zero, exprs, ser);
 
 	assert_eq!(parse_reduce("(pair 0 1) first", exprs).unwrap(), parse_reduce("0", exprs).unwrap());
 	assert_eq!(parse_reduce("(pair 0 1) second", exprs).unwrap(), parse_reduce("1", exprs).unwrap());
 
 	let fact_seg = parse("[x y] pair (succ x) (mult x y)", exprs).unwrap();
-	Symbol::new("factseg", fact_seg, exprs, ser);
+	Name::new("factseg", fact_seg, exprs, ser);
 
 	let fact = parse_reduce("[n] n ([x] x factseg) (pair 1 1) second", exprs).unwrap();
-	Symbol::new("factorial", fact, exprs, ser);
+	Name::new("factorial", fact, exprs, ser);
 
 	assert_eq!(parse_reduce("factorial 2", exprs).unwrap(), parse_reduce("2", exprs).unwrap());
 	assert_eq!(parse_reduce("factorial 4", exprs).unwrap(), parse_reduce("24", exprs).unwrap());

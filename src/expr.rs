@@ -69,7 +69,33 @@ pub enum Expr<'a> {
 		expr: &'a Expr<'a>
 	},
 }
-impl<'a> NativeHashtype for Expr<'a> {}
+
+/* enum Term {
+	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
+	Variable,
+	/// Create a function
+	Lambda {
+		bind: &'a Binding<'a>,
+		expr: &'a Expr<'a>,
+	},
+	/// Apply functions to expressions
+	Application {
+		func: &'a Expr<'a>,
+		args: &'a Expr<'a>,
+	},
+}
+enum Expr<'a> {
+	Normalized(Term<'a>),
+	Value(Term<'a>)
+} */
+
+impl<'e> NativeHashtype for Expr<'e> {
+	type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = hashdb::Hash> + 's;
+
+	fn reverse_links<'s, S: DatastoreSerializer>(&'s self, ser: &'s mut S) -> Self::LinkIter<'s, S> {
+		std::iter::empty()
+	}
+}
 impl<'a> fmt::Display for &'a Expr<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		thread_local! {

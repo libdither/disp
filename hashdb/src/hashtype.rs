@@ -19,27 +19,33 @@ pub trait NativeHashtype: StdHash + Debug + Archive + Sized {
 		ser.store(self).map_err(|_| "failed to serialize").unwrap().into()
 	}
 
-	/// List of hashes representing any data that should link to this type
-	type LinkIter<S: DatastoreSerializer>: HashIterConstructor<S, Self> = iter::Empty<Hash>; // OH I LOVE GENERICS
-	fn reverse_links<S: DatastoreSerializer>(&self, ser: &mut S) -> Self::LinkIter<S> {
-		HashIterConstructor::construct(self, ser)
-	}
+	type LinkIter<'s, S: DatastoreSerializer>: Iterator<Item = Hash> + 's
+	where S: 's, Self: 's;
+	fn reverse_links<'s, S: DatastoreSerializer>(&'s self, ser: &'s mut S) -> Self::LinkIter<'s, S>;
 }
 
 /* impl<T> NativeHashtype for T
-where T: StdHash + fmt::Debug + Archive<Archived: fmt::Debug>
-{} */
-impl NativeHashtype for String {}
-impl NativeHashtype for Vec<u8> {}
+where T: StdHash + Debug + Archive + Sized
+{
+	type LinkIter<S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = Hash>;
 
-pub trait HashIterConstructor<S: DatastoreSerializer, T: NativeHashtype>: Iterator<Item = Hash> {
-	fn construct(hashtype: &T, ser: &mut S) -> Self;
+	fn reverse_links<'s, S: DatastoreSerializer>(&'s self, _ser: &'s mut S) -> Self::LinkIter<'s, S> {
+        iter::empty::<Hash>()
+    }
+} */
+impl NativeHashtype for String {
+	type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = Hash> + 's;
+
+	fn reverse_links<'s, S: DatastoreSerializer>(&'s self, _ser: &'s mut S) -> Self::LinkIter<'s, S> {
+        iter::empty::<Hash>()
+    }
 }
+impl NativeHashtype for Vec<u8> {
+	type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = Hash> + 's;
 
-impl<'a, S: DatastoreSerializer, T: NativeHashtype> HashIterConstructor<S, T> for iter::Empty<Hash> {
-	fn construct(_hashtype: &T, _ser: &mut S) -> Self {
-		iter::empty()
-	}
+	fn reverse_links<'s, S: DatastoreSerializer>(&'s self, _ser: &'s mut S) -> Self::LinkIter<'s, S> {
+        iter::empty::<Hash>()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, CheckBytes, Archive, Serialize, Deserialize)]
