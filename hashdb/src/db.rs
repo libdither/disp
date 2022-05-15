@@ -70,13 +70,6 @@ impl Datastore {
 		*self = bincode::deserialize_from(reader)?;
 		Ok(())
 	}
-	pub fn set_root<T>(&mut self, hash: TypedHash<T>) {
-		self.root = Some((hash.into(), std::any::type_name::<T>().to_owned()));
-	}
-	pub fn root<T>(&self) -> Option<TypedHash<T>> {
-		let (hash, typename) = self.root.as_ref()?;
-		if typename == std::any::type_name::<T>() { Some(hash.clone().into()) } else { None }
-	}
 	pub fn clear(&mut self) {
 		self.map.clear();
 		self.reverse_lookup.clear();

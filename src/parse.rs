@@ -117,7 +117,7 @@ pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>,
 	}
 }
 
-/// Generate cool error with ariadne
+/// Generate cool errors with ariadne
 pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
 	// Taken from json.rs example on chumsky github
 	errors.into_iter().map(|e| {

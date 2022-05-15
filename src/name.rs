@@ -1,4 +1,4 @@
-use std::{array::IntoIter, iter::{self, Chain, Once}};
+use std::iter;
 
 use rkyv::{Archive, Serialize, Deserialize, with::Map};
 use bytecheck::CheckBytes;
@@ -58,7 +58,7 @@ pub struct Namespace<'e> {
 	items: Vec<&'e Name<'e>>,
 }
 impl<'e> Namespace<'e> {
-	fn add(&mut self, name: &'e Name<'e>) {
+	pub fn add(&mut self, name: &'e Name<'e>) {
 		self.items.push(name);
 	}
 }
