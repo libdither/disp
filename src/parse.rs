@@ -44,11 +44,14 @@ fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a
 		}
 	})
 }
+fn name_parser() -> impl Parser<char, String, Error = Simple<char>> + Clone {
+	text::ident().padded().labelled("name")
+}
 
 fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
 	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
-		let name = text::ident().padded().labelled("name");
+		
 
 		let number = text::int::<_, Simple<char>>(10).padded()
 			.try_map(|s, span|
@@ -65,7 +68,7 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 			}).labelled("number");
 
 		// A resolved symbol, variable, or paranthesised expression.
-		let atom = name.clone().map(|string| {
+		let atom = name_parser().map(|string| {
 			if let Some(val) = bind_map.bind_index(&string) {
 				(Expr::VAR, BindSubTree::end(val, binds))
 			} else if let Some(expr) = lookup_expr(&string, exprs) {
@@ -76,7 +79,7 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 		.or(expr.clone().delimited_by(just('('), just(')')).padded());
 
 		// Parse `[x y z] x y z` as `[x] ([y] ([z] x y z))`
-		let lambda = name
+		let lambda = name_parser()
     		.repeated().at_least(1)
 			.delimited_by(just('['), just(']'))
 			.map(|symbols| {
@@ -192,10 +195,21 @@ pub fn parse_reduce<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Ex
 /// Commands for cli
 #[derive(Debug, Clone)]
 pub enum Command<'e> {
+	// Do nothing
 	None,
+	// Set a name in a namespace to a certain value
 	Set(String, &'e Expr<'e>),
-	Load(String),
-	Save(String),
+	// Load a symbol from a file
+	Load { /* name: String,  */file: String },
+	// Save a symbol to a file, either overwriting or not overwriting the file.
+	Save { /* name: String,  */file: String, overwrite: bool },
+	/// Import names, if none listed, imports all names
+	Use { name: String, items: Vec<String> },
+	/// Clear current namespace
+	Clear,
+	/// List current namespace's names
+	List,
+	// Evaluate passed expression and store output in 
 	Reduce(&'e Expr<'e>),
 }
 /// Parse commands
@@ -206,7 +220,23 @@ pub fn command_parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena
 		.ignore_then(filter(|c| *c != '\\' && *c != '"').repeated())
 		.then_ignore(just('"'))
 		.collect::<String>()
+    	.padded()
 		.labelled("filepath");
+
+
+	/* #[derive(Clone, Copy)]
+	enum Comm { None, Set, List, Clear, Use, Load, Save, Reduce };
+	let command = end().to(Comm::None)
+    	.or(keyword("set").to(Comm::Set))
+    	.or(keyword("list").to(Comm::List))
+    	.or(keyword("clear").to(Comm::Clear))
+    	.or(keyword("use").to(Comm::Use))
+    	.or(keyword("load").to(Comm::Load))
+    	.or(keyword("save").to(Comm::Save))
+    .or(empty().to(Comm::Reduce))
+    	.labelled("command").map(||) */
+	
+	
 
 	end().to(Command::None)
     	.or(
@@ -214,13 +244,14 @@ pub fn command_parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena
 				.ignore_then(text::ident().padded())
 				.then(expr.clone()).map(|(symbol, (expr, _))| Command::Set(symbol, expr))
 		)
+		.or(
+			keyword("list").to(Command::List)
+		)
     	.or(
-			keyword("load")
-			.ignore_then(filepath).map(Command::Load)
+			keyword("load").ignore_then(filepath).map(|file|Command::Load { file })
 		)
 		.or(
-			keyword("save")
-			.ignore_then(filepath).map(Command::Save)
+			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false })
 		)
 		.or(
 			expr.clone().map(|(expr, _)|Command::Reduce(expr))

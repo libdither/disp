@@ -48,7 +48,7 @@ impl LinkSerializer {
 	pub fn hash<T: NativeHashtype + Serialize<Self>>(&mut self, val: &T) -> TypedHash<T> {
 		self.store(val).unwrap().into()
 	}
-	pub fn join<'a>(&'a mut self, db: &'a mut Datastore) -> DatastoreLinkSerializer<'a> {
+	pub fn join<'s, 'a: 's>(&'a mut self, db: &'a mut Datastore) -> DatastoreLinkSerializer<'s> {
 		DatastoreLinkSerializer(db, self)
 	}
 }

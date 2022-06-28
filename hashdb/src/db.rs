@@ -24,7 +24,6 @@ pub enum DatastoreError {
 pub struct Datastore {
 	map: HashMap<Hash, Data, TrimHasher>,
 	reverse_lookup: HashMap<Hash, Hash, TrimHasher>, // Map types to types that link to types
-	root: Option<(Hash, String)>,
 }
 
 impl Datastore {

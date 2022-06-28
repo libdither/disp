@@ -41,7 +41,7 @@ members = [
 
 [workspace.metadata.nix]
 nativeBuildInputs = [
-	"cargo-edit",
+	"cargo-edit", "rust-analyzer"
 ]
 buildInputs = []
 toolchain = "nightly"

@@ -2,6 +2,7 @@
 #![feature(option_result_contains)]
 #![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
+#![feature(try_blocks)]
 
 use std::fs;
 
@@ -12,13 +13,14 @@ use rustyline::{error::ReadlineError, Editor};
 use hashdb::*;
 
 mod expr;
-mod parse;
 mod name;
+mod parse;
 
 use expr::beta_reduce;
 use name::*;
 
-fn main() {
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let exprs = &LinkArena::new();
 	let ser = &mut LinkSerializer::new();
 	let db = &mut Datastore::new();
@@ -39,6 +41,7 @@ fn main() {
 	let bind_map = parse::BindMap::default();
 	let parser = parse::command_parser(exprs, binds, &bind_map);
 
+	// Current namespace of this REPL, contains all the currently accessible names
 	let mut namespace = Namespace::default();
 
 	loop {
@@ -49,7 +52,7 @@ fn main() {
 
 				use parse::Command;
 				match parser.parse(line.as_str()) {
-					Ok(Command::None) => {},
+					Ok(Command::None) => {}
 					Ok(Command::Set(string, expr)) => {
 						println!("{expr}");
 						let reduced = beta_reduce(expr, exprs).unwrap();
@@ -57,22 +60,39 @@ fn main() {
 						let name = Name::new(string, reduced, exprs, ser);
 						namespace.add(name);
 					}
+					Ok(Command::List) => {
+						namespace.items.iter().for_each(|name| println!("{name}"))
+					}
 					Ok(Command::Reduce(expr)) => {
 						println!("{expr}");
 						let reduced = beta_reduce(expr, exprs).unwrap();
 						println!("{reduced}");
 					}
-					Ok(Command::Load(file)) => {
-						db.load(fs::File::open(file).unwrap()).expect("could not load disp file");
-						let root: TypedHash<Namespace> = db.root().expect("could not extract root object from disp file");
-						namespace = root.fetch(db, exprs).expect("Could not parse root Namespace").clone(); // Load namespace into arena
+					Ok(Command::Load { file: filename }) => {
+						let result: Result<(), Box<dyn std::error::Error>> = try {
+							let mut file = fs::File::open(filename)?;
+							let hash: TypedHash<Namespace> = bincode::deserialize_from::<_, Hash>(&mut file)?.into();
+							let mut db = Datastore::new();
+							db.load(&mut file)?;
+							namespace = hash.fetch(&db, exprs)?.clone();
+						};
+						match result { Err(err) => println!("failed to load: {err}"), Ok(_) => {} }
 					}
-					Ok(Command::Save(file)) => {
-						/* let db = namespace.store(ser);
-						fs::File::create(file).unwrap() */
+					Ok(Command::Save { file: filename, overwrite: _ }) => {
+						let saved_hash = {
+							db.clear();
+							namespace.store(&mut ser.join(db))
+						};
+						let mut file = fs::File::create(&filename).unwrap();
+						bincode::serialize_into(&mut file, saved_hash.as_hash())?;
+						db.save(&mut file)?;
+						println!("Saved current namespace to {}", &filename);
 					}
+					Ok(_) => {}
 					Err(errors) => {
-						parse::gen_report(errors).try_for_each(|report|report.print(Source::from(&line))).unwrap();
+						parse::gen_report(errors)
+							.try_for_each(|report| report.print(Source::from(&line)))
+							.unwrap();
 					}
 				}
 			}
@@ -94,4 +114,5 @@ fn main() {
 	/* if let Some(file) = &load_file {
 		db.save(fs::File::create(&file).unwrap()).unwrap()
 	} */
+	Ok(())
 }
