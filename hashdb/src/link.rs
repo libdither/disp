@@ -85,7 +85,7 @@ impl<T> From<Hash> for ArchivedLink<T> {
 	}
 }
 
-impl<__C: ?Sized, T: Archive<Archived: CheckBytes<__C>>> CheckBytes<__C> for ArchivedLink<T> {
+impl<__C: ?Sized, T: ArchiveInterpretable> CheckBytes<__C> for ArchivedLink<T> {
 	type Error = <Hash as CheckBytes<__C>>::Error;
 
 	unsafe fn check_bytes<'a>(value: *const Self, context: &mut __C) -> Result<&'a Self, Self::Error> {
