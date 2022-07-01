@@ -2,8 +2,8 @@
 #![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 
-pub use hashdb::{Data, Datastore};
-use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
+pub use hashdb::{Datastore};
+use hashdb::{LinkArena};
 
 pub mod expr;
 pub mod name;

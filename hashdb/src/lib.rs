@@ -27,12 +27,12 @@ pub use link::{HashType, TypedHash};
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, HashType, LinkArena, store::{ArchiveFetchable, ArchiveInterpretable, ArchiveStorable, ArchiveStore, ArchiveStoreRead, TypeStore}};
+	use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}};
 
 	#[test]
 	fn test_db() {
 		let db = &mut Datastore::new();
-		let string = db.store(String::from("hello"));
+		let string = db.store(&String::from("hello")).unwrap();
 
 		let arena = LinkArena::new();
 		assert_eq!(*string.fetch(db, &arena).unwrap(), "hello");
@@ -44,7 +44,7 @@ mod tests {
 		#[derive(Debug, Hash, PartialEq, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 		// To use the safe API, you have to derive CheckBytes for the archived type
 		#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
-		// #[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: ArchiveStorable"))]
+		#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
 		enum StringType<'a> {
 			String(String),
 			Link(
@@ -56,9 +56,6 @@ mod tests {
 				&'a StringType<'a>,
 			),
 		}
-		impl<'a, S: ArchiveStore> ArchiveStorable<S> for StringType<'a> {}
-		impl<'s, 'a, S: ArchiveStoreRead> ArchiveInterpretable<'s, S> for StringType<'a> {}
-		impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveFetchable<'s, 'a, S, A> for StringType<'a> {}
 		/* impl<'a> NativeHashtype for StringType<'a> {
 			type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = crate::Hash> + 's;
 
@@ -74,7 +71,7 @@ mod tests {
 		let db = &mut Datastore::new();
 
 		// let ser = &mut LinkSerializer::new();
-		let hash = string2.store(db);
+		let hash = string2.store(db).unwrap();
 		// let hash = string2.store(&mut ser.join(db));
 
 		let links_de = LinkArena::new();

@@ -8,8 +8,9 @@
 use std::hash::Hash as StdHash;
 use bytecheck::CheckBytes;
 use rkyv::Fallible;
+use rkyv::ser::Serializer;
 use rkyv::validation::validators::DefaultValidator;
-use rkyv::{Archive, Deserialize, Serialize, ser::Serializer};
+use rkyv::{Archive, Deserialize, Serialize};
 
 mod arena;
 mod db;
@@ -40,71 +41,117 @@ pub trait DataStore: DataStoreRead {
 }
 /// All types that can retrieve a pi ece of data using its multihash.
 pub trait DataStoreRead {
-	type Error;
+	type DataError;
 	/// Get data from table
-	fn get(&self, hash: &Hash) -> Result<&[u8], Self::Error>;
+	fn get(&self, hash: &Hash) -> Result<&[u8], Self::DataError>;
 	/// Check if data is available in table.
 	fn contains(&self, hash: &Hash) -> bool { self.get(hash).is_ok() }
 }
 
 /// Archive object store, extends hash store with functions that can store typed objects using rkyv.
 /// All types that can store ArchiveStorable
-pub trait ArchiveStore: DataStore + ArchiveStoreRead + Sized + Serializer {
+pub trait ArchiveStore: DataStore + ArchiveStoreRead + Serializer {
 	/// Store storable type in table. Returns a typed hash with the archived version of the type.
-	fn store<T: ArchiveStorable<Self>>(&mut self, data: &T) -> Result<TypedHash<Archived<T>>, <Self as Fallible>::Error>;
+	fn store<T: ArchiveStorable<Self>>(&mut self, data: &T) -> Result<TypedHash<T>, <Self as Fallible>::Error>;
 }
 
 /// Retrival functions of an Archive object store. Returns archived and unarchived objects respectively.
-pub trait ArchiveStoreRead: DataStoreRead + Sized {
-	type ArchiveError: From<Self::Error> + 'static;
+pub trait ArchiveStoreRead: DataStoreRead + Sized + Fallible {
 	/// Fetch storable type from table.
-	fn fetch_archive<'s, T: ArchiveInterpretable<'s, Self>>(&'s self, hash: &TypedHash<Archived<T>>) -> Result<&'s Archived<T>, Self::ArchiveError>;
-	/* fn fetch<'s, 'a: 's, A: TypeStore<'a>, T: ArchiveFetchable<'s, 'a, Self, A>>(&'s self, hash: &TypedHash<Archived<T>>, arena: &'a A) -> Result<T, Self::ArchiveError>; */
+	fn fetch_archive<T>(&self, hash: &TypedHash<T>) -> Result<&Archived<T>, Self::Error>
+	where
+		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>> + ArchiveInterpretable;
 }
 
-/* /// A type that encompases an ArchiveStore that can be deserialized from and a TypeStore for things to be registered into.
-pub trait ArchiveDeserializer<'a>: TypeStore<'a> + ArchiveStoreRead {
-	fn fetch<T>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>;
-} */
-
-pub struct ArchiveDeserializer<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> {
-	store: &'s S, pub type_store: &'a A
+/// A type that encompases the functions of an ArchiveStoreRead and a TypeStore so that objects can be deserialized from the ArchiveStore into the TypeStore
+pub trait ArchiveDeserializer<'a>: ArchiveStoreRead + TypeStore<'a> {
+	fn fetch<T: ArchiveFetchable<'a, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
+	where
+		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>;
+	fn fetch_ref<T: ArchiveFetchable<'a, Self> + TypeStorable>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
+	where
+		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>;
 }
-impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> From<(&'s S, &'a A)> for ArchiveDeserializer<'s, 'a, S, A> {
+
+/// A type that is generic over any ArchiveStoreRead and TypeStore and implements ArchiveDeserializer
+pub struct ArchiveToType<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> {
+	store: &'s S,
+	type_store: &'a A
+}
+impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> From<(&'s S, &'a A)> for ArchiveToType<'s, 'a, S, A> {
 	fn from(pair: (&'s S, &'a A)) -> Self {
 		Self { store: pair.0, type_store: pair.1 }
 	}
 }
-impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> Fallible for ArchiveDeserializer<'s, 'a, S, A> {
-	type Error = S::ArchiveError;
+impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> Fallible for ArchiveToType<'s, 'a, S, A> {
+	type Error = S::Error;
 }
-impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveDeserializer<'s, 'a, S, A> {
-	pub fn fetch<T: ArchiveFetchable<'s, 'a, S, A>>(&mut self, hash: &TypedHash<Archived<T>>) -> Result<T, <Self as Fallible>::Error> {
-		let archive: &Archived<T> = self.store.fetch_archive::<T>(hash)?;
+impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> DataStoreRead for ArchiveToType<'s, 'a, S, A> {
+    type DataError = <S as DataStoreRead>::DataError;
+
+    fn get(&self, hash: &Hash) -> Result<&[u8], Self::DataError> {
+        self.store.get(hash)
+    }
+}
+impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveStoreRead for ArchiveToType<'s, 'a, S, A> {
+    fn fetch_archive<'s1, T: ArchiveInterpretable>(&'s1 self, hash: &TypedHash<T>) -> Result<&'s1 Archived<T>, Self::Error>
+	where
+		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>> + ArchiveInterpretable
+	{
+        self.store.fetch_archive::<T>(hash)
+    }
+}
+impl<'s: 'a, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> TypeStore<'a> for ArchiveToType<'s, 'a, S, A> {
+    fn add<T: TypeStorable>(&'a self, val: T) -> &'a T {
+        self.type_store.add(val)
+    }
+}
+impl<'s: 'a, 'a, S: ArchiveStoreRead + 's, A: TypeStore<'a>> ArchiveDeserializer<'a> for ArchiveToType<'s, 'a, S, A> {
+    fn fetch<T: ArchiveFetchable<'a, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
+	where
+		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>
+	{
+        let archive: &Archived<T> = self.store.fetch_archive::<T>(hash)?;
 		Ok(Deserialize::deserialize(archive, self)?)
-	}
-	pub fn fetch_ref<T: ArchiveFetchable<'s, 'a, S, A> + TypeStorable>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error> {
-		let typed_hash: &TypedHash<Archived<T>> = hash.into();
+    }
+
+    fn fetch_ref<T: ArchiveFetchable<'a, Self> + TypeStorable>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
+	where
+		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>> + ArchiveInterpretable
+	{
+        let typed_hash: &TypedHash<T> = hash.into();
 		let item = self.fetch(typed_hash)?;
 		Ok(self.type_store.add(item))
-	}
+    }
 }
 
 /// A type that can be stored in an ArchiveStore using a custom serializer
 pub trait ArchiveStorable<Store: ArchiveStore>: 
 	Serialize<Store> + Sized
 {
-	fn store(&self, db: &mut Store) -> Result<TypedHash<Self::Archived>, <Store as Fallible>::Error> {
+	fn store(&self, db: &mut Store) -> Result<TypedHash<Self>, <Store as Fallible>::Error> {
 		db.store(self)
 	}
 }
 
 /// A type that can be zero-copy deserialized without full deserialization i.e. fetching subobjects from store.
-pub trait ArchiveInterpretable<'s, S: ArchiveStoreRead>:
-	Archive<Archived: CheckBytes<DefaultValidator<'s>>> + Sized
+pub trait ArchiveInterpretable:
+	Archive + Sized
 {}
 
 /// A type that can be fetched in its Archived form from an ArchiveStore for lifetime 's and can be placed into a TypeStore<'a> for lifetime 'a
-pub trait ArchiveFetchable<'s, 'a, S: ArchiveStoreRead + 's, A: TypeStore<'a>>:
-	ArchiveInterpretable<'s, S> + Archive<Archived: Deserialize<Self, ArchiveDeserializer<'s, 'a, S, A>>> + 's
+pub trait ArchiveFetchable<'a, D: ArchiveDeserializer<'a>>:
+	ArchiveInterpretable + Archive<Archived: Deserialize<Self, D>>
+{}
+
+/// Impls for all types
+impl<'a, S: ArchiveStore, T: Serialize<S>> ArchiveStorable<S> for T {}
+impl<T> ArchiveInterpretable for T
+where
+	T: Archive + Sized,
+{}
+
+impl<'a, D: ArchiveDeserializer<'a>, T> ArchiveFetchable<'a, D> for T
+where
+	T: for<'s> ArchiveInterpretable + Archive<Archived: Deserialize<Self, D>>
 {}

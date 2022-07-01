@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 
-use rkyv::{Archive, Deserialize, Fallible, Serialize, with::{ArchiveWith, DeserializeWith, SerializeWith}};
+use rkyv::{Archive, Deserialize, Fallible, Serialize, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, SerializeWith}};
 use bytecheck::CheckBytes;
 
-use crate::{Hash, store::{ArchiveDeserializer, ArchiveFetchable, ArchiveStorable, ArchiveStore, ArchiveStoreRead, TypeStorable, TypeStore}};
+use crate::{Datastore, Hash, LinkArena, store::{ArchiveDeserializer, ArchiveFetchable, ArchiveInterpretable, ArchiveStorable, ArchiveStore, ArchiveStoreRead, ArchiveToType, TypeStorable, TypeStore}};
 
 #[derive(Debug, PartialEq, Eq, CheckBytes, Archive, Serialize, Deserialize)]
 pub struct TypedHash<T> {
@@ -65,15 +65,13 @@ impl<T> TypedHash<T> {
 	}
 }
 
-impl<A> TypedHash<A> {
+impl<T: TypeStorable + ArchiveInterpretable> TypedHash<T> {
 	// Resolve TypedHash using Datastore and add to TypeStore
-	pub fn fetch<'s, 'a: 's, Store, Arena, T>(&self, db: &'s Store, arena: &'a Arena) -> Result<&'a T, <Store as ArchiveStoreRead>::ArchiveError>
+	pub fn fetch<'s: 'a, 'a>(&self, db: &'s Datastore, arena: &'a LinkArena) -> Result<&'a T, <Datastore as Fallible>::Error>
 	where
-		Store: ArchiveStoreRead,
-		Arena: TypeStore<'a> + 'a,
-		T: TypeStorable + ArchiveFetchable<'s, 'a, Store, Arena> + Archive<Archived = A>,
+		T: ArchiveFetchable<'a, ArchiveToType<'s, 'a, Datastore, LinkArena<'a>>> + Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>,
 	{
-		let mut deserializer: ArchiveDeserializer<'s, 'a, Store, Arena> = (db, arena).into();
+		let mut deserializer: ArchiveToType<'s, 'a, Datastore, LinkArena<'a>> = (db, arena).into();
 		Ok(arena.add(deserializer.fetch(self)?))
 	}
 }
@@ -118,15 +116,22 @@ impl<'a, S: ArchiveStore, T: ArchiveStorable<S>> SerializeWith<&'a T, S> for Has
 }
 
 /// impl Deserialize for any With<&'a T, HashType> if T has an archived form which can be deserialized into a TypeStore for some lifetime &'a T. 
-impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a> + 'a, T: ArchiveFetchable<'s, 'a, S, A> + TypeStorable> DeserializeWith<ArchivedLink<T>, &'a T, ArchiveDeserializer<'s, 'a, S, A>> for HashType {
+impl<'a, T: ArchiveFetchable<'a, D> + TypeStorable, D: ArchiveDeserializer<'a>> DeserializeWith<ArchivedLink<T>, &'a T, D> for HashType
+where
+	ArchivedLink<T>: Deserialize<&'a T, D> + for<'v> CheckBytes<DefaultValidator<'v>>,
+	T::Archived: for<'v> CheckBytes<DefaultValidator<'v>>,
+{
 	#[inline]
-	fn deserialize_with(field: &ArchivedLink<T>, deserializer: &mut ArchiveDeserializer<'s, 'a, S, A>) -> Result<&'a T, <ArchiveDeserializer<'s, 'a, S, A> as Fallible>::Error> {
+	fn deserialize_with(field: &ArchivedLink<T>, deserializer: &mut D) -> Result<&'a T, <D as Fallible>::Error> {
 		deserializer.fetch_ref(&field.0)
 	}
 }
 
-impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a> + 'a, T: ArchiveFetchable<'s, 'a, S, A> + TypeStorable> Deserialize<&'a T, ArchiveDeserializer<'s, 'a, S, A>> for ArchivedLink<T> {
-	fn deserialize(&self, deserializer: &mut ArchiveDeserializer<'s, 'a, S, A>) -> Result<&'a T, <ArchiveDeserializer<'s, 'a, S, A> as Fallible>::Error> {
+impl<'a, T: ArchiveFetchable<'a, D> + TypeStorable, D: ArchiveDeserializer<'a>> Deserialize<&'a T, D> for ArchivedLink<T>
+where
+	<T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>>
+{
+	fn deserialize(&self, deserializer: &mut D) -> Result<&'a T, <D as Fallible>::Error> {
 		deserializer.fetch_ref(&self.0)
 	}
 }

@@ -1,6 +1,7 @@
 use std::{collections::HashMap};
 
-use rkyv::{Archived, Fallible, ser::Serializer};
+use bytecheck::CheckBytes;
+use rkyv::{Archive, Archived, Fallible, ser::Serializer, validation::validators::DefaultValidator};
 use serde::{Serialize as SerdeSerialize, Deserialize as SerdeDeserialize};
 
 use crate::{Hash, TypedHash, hash::TrimHasher};
@@ -29,9 +30,9 @@ pub struct Datastore {
 	serializer: LinkSerializer,
 }
 impl DataStoreRead for Datastore {
-	type Error = DatastoreError;
+	type DataError = DatastoreError;
 
-	fn get(&self, hash: &Hash) -> Result<&[u8], Self::Error> {
+	fn get(&self, hash: &Hash) -> Result<&[u8], Self::DataError> {
 		self.map.get(hash).ok_or_else(|| DatastoreError::NotInDatastore(hash.clone())).map(|v|v.as_slice())
 	}
 }
@@ -46,9 +47,9 @@ impl DataStore for Datastore {
 }
 
 impl ArchiveStoreRead for Datastore {
-	type ArchiveError = DatastoreError;
-
-	fn fetch_archive<'db, T: ArchiveInterpretable<'db, Self>>(&'db self, hash: &TypedHash<Archived<T>>) -> Result<&'db Archived<T>, Self::ArchiveError> {
+	fn fetch_archive<T: ArchiveInterpretable>(&self, hash: &TypedHash<T>) -> Result<&Archived<T>, Self::Error>
+	where <T as Archive>::Archived: for<'v> CheckBytes<DefaultValidator<'v>>,
+	{
 		let data = self.get(hash.into())?;
 		rkyv::check_archived_root::<T>(data).map_err(|_|DatastoreError::InvalidArchive(hash.as_hash().clone()))
 	}
@@ -65,7 +66,7 @@ impl Serializer for Datastore {
 impl Fallible for Datastore { type Error = DatastoreError; }
 
 impl ArchiveStore for Datastore {
-	fn store<T: ArchiveStorable<Self>>(&mut self, data: &T) -> Result<TypedHash<Archived<T>>, DatastoreError> {
+	fn store<T: ArchiveStorable<Self>>(&mut self, data: &T) -> Result<TypedHash<T>, DatastoreError> {
 		let _pos = self.serialize_value(data).expect("This should never error");
 		let data = self.serializer.get_vec();
 		let hash = self.add(data.to_vec());
@@ -81,11 +82,13 @@ impl Datastore {
 		hash
 	}
 }
-
-/* impl Datastore {
+impl Datastore {
 	pub fn new() -> Self {
 		Self::default()
 	}
+}
+/* impl Datastore {
+	
 	pub fn register<'a, S: DatastoreSerializer, T: NativeHashtype>(&mut self, mut reverse_links: T::LinkIter<'a, S>, hash: &Hash) {
 		while let Some(subhash) = reverse_links.next() {
 			self.reverse_lookup.insert(subhash.clone(), hash.clone());
