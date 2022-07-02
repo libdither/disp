@@ -4,7 +4,9 @@ use thiserror::Error;
 use bytecheck::CheckBytes;
 use rkyv::{Archive, Deserialize, Serialize};
 
-use hashdb::{DatastoreDeserializer, DatastoreSerializer, HashType, LinkArena, NativeHashtype};
+use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, LinkArena, TypeStore};
+
+use crate::name::Namespace;
 
 use super::{Expr, LambdaError};
 
@@ -21,7 +23,7 @@ pub enum BindError {
 /// PointerTree represents where the variables are in a Lambda abstraction.
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes, Debug))]
-#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
+#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
 pub enum Binding<'a> {
 	None,
 	End,
@@ -53,14 +55,6 @@ impl<'a> Binding<'a> {
 			arena.add(Binding::Branch(l, r))
 		}
 	}
-}
-
-impl<'a> NativeHashtype for Binding<'a> {
-    type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = std::iter::Empty<hashdb::Hash>;
-
-    fn reverse_links<'s, S: DatastoreSerializer>(&'s self, _ser: &'s mut S) -> Self::LinkIter<'s, S> {
-        std::iter::empty()
-    }
 }
 impl<'a> fmt::Display for Binding<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -270,7 +264,7 @@ fn test_replace_tree() {
 	let mut r = BindIndex::DEFAULT;
 	println!("start: [{}]", r);
 
-	let lambda = crate::parse::parse("[x y z w] x (y z) w", exprs).unwrap();
+	let lambda = crate::parse::parse("[x y z w] x (y z) w", &mut Namespace::default(), exprs).unwrap();
 	println!("lambda: {}", lambda);
 	let expr = r.push_lambda(&lambda, binds).unwrap();
 	println!("after push: {} : {}", expr, r);

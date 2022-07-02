@@ -1,8 +1,7 @@
 use std::{collections::HashMap};
 
 use bytecheck::CheckBytes;
-use rkyv::{Archive, Archived, Fallible, ser::Serializer, validation::validators::DefaultValidator};
-use serde::{Serialize as SerdeSerialize, Deserialize as SerdeDeserialize};
+use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}, validation::validators::DefaultValidator, Serialize, Deserialize, with::Skip};
 
 use crate::{Hash, TypedHash, hash::TrimHasher};
 
@@ -22,13 +21,15 @@ pub enum DatastoreError {
 	SerdeError(#[from] bincode::Error), */
 }
 
-#[derive(Default, SerdeSerialize, SerdeDeserialize)]
+#[derive(Default, Archive, Serialize, Deserialize)]
+// #[archive_attr(derive(CheckBytes, Debug))]
 pub struct Datastore {
 	map: HashMap<Hash, Vec<u8>, TrimHasher>,
 	// reverse_lookup: HashMap<Hash, Hash, TrimHasher>, // Map types to types that link to types
-	#[serde(skip)]
+	#[with(Skip)]
 	serializer: LinkSerializer,
 }
+
 impl DataStoreRead for Datastore {
 	type DataError = DatastoreError;
 
@@ -61,6 +62,15 @@ impl Serializer for Datastore {
 
     fn write(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         self.serializer.write(bytes).map_err(|err|DatastoreError::LinkSerializeError(err))
+    }
+}
+impl ScratchSpace for Datastore {
+    unsafe fn push_scratch(&mut self, layout: std::alloc::Layout) -> Result<std::ptr::NonNull<[u8]>, Self::Error> {
+        Ok(self.serializer.push_scratch(layout)?)
+    }
+
+    unsafe fn pop_scratch(&mut self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout) -> Result<(), Self::Error> {
+        Ok(self.serializer.pop_scratch(ptr, layout)?)
     }
 }
 impl Fallible for Datastore { type Error = DatastoreError; }

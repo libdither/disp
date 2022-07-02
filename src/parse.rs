@@ -4,9 +4,9 @@ use std::cell::RefCell;
 
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
-use hashdb::{LinkArena, LinkSerializer, NativeHashtype};
+use hashdb::{LinkArena, Datastore, ArchiveStore, ArchiveStorable};
 
-use crate::{expr::{BindSubTree, Expr}, name::{Name, NamedObject}};
+use crate::{expr::{BindSubTree, Expr}, name::{Name, NamedObject, Namespace}};
 
 // Represents active bound variables in the course of parsing an expression
 #[derive(Default, Debug)]
@@ -31,13 +31,13 @@ impl BindMap {
 	}
 }
 
-fn lookup_expr<'a>(string: &str, exprs: &'a LinkArena<'a>) -> Option<&'a Expr<'a>> {
+fn lookup_expr<'e>(namespace: &Namespace<'e>, string: &str, exprs: &'e LinkArena<'e>) -> Option<&'e Expr<'e>> {
 	thread_local! {
-		static SER: RefCell<LinkSerializer> = RefCell::new(LinkSerializer::new());
+		static DB: RefCell<Datastore> = RefCell::new(Datastore::new());
 	}
-	SER.with(|ser| {
-		let string_hash = string.to_owned().store(&mut *ser.borrow_mut());
-		let name = exprs.lookup::<Name, String>(&string_hash)?;
+	DB.with(|db| {
+		let string_hash = string.to_owned().store(&mut *db.borrow_mut());
+		let name = namespace.items.iter().find(|name|name.string == string)?;
 		match name.object {
 			NamedObject::Namespace(_) => None,
 			NamedObject::Expr(expr) => Some(expr)
@@ -48,7 +48,7 @@ fn name_parser() -> impl Parser<char, String, Error = Simple<char>> + Clone {
 	text::ident().padded().labelled("name")
 }
 
-fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
+fn parser<'e: 'b, 'b>(namespace: &'b Namespace<'e>, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
 	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
 		
@@ -58,7 +58,7 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 				s.parse::<usize>()
 				.map_err(|e| Simple::custom(span, format!("{}", e)))
 			).try_map(|num, span| {
-				match (lookup_expr("zero", exprs), lookup_expr("succ", exprs)) {
+				match (lookup_expr(namespace, "zero", exprs), lookup_expr(namespace, "succ", exprs)) {
 					(Some(zero), Some(succ)) => {
 						let expr = (0..num).into_iter().fold(zero, |acc, _|Expr::app(succ, acc, exprs));
 						Ok((expr, BindSubTree::NONE))
@@ -71,7 +71,7 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 		let atom = name_parser().map(|string| {
 			if let Some(val) = bind_map.bind_index(&string) {
 				(Expr::VAR, BindSubTree::end(val, binds))
-			} else if let Some(expr) = lookup_expr(&string, exprs) {
+			} else if let Some(expr) = lookup_expr(namespace, &string, exprs) {
 				(expr, BindSubTree::NONE)
 			} else { (Expr::VAR, BindSubTree::NONE) }
 		}).labelled("expression")
@@ -105,11 +105,11 @@ fn parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_m
 	}).then_ignore(end())
 }
 // Parse expression
-pub fn parse<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+pub fn parse<'e>(string: &str, namespace: &Namespace<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
 	let binds = &LinkArena::new();
 	let bind_map = &BindMap::default();
 	{
-		let parsed = parser(exprs, binds, bind_map).parse(string);
+		let parsed = parser(namespace, exprs, binds, bind_map).parse(string);
 		match parsed {
 			Ok((expr, _)) => Ok(expr),
 			Err(errors) => {
@@ -188,8 +188,8 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
 }
 
 /// Parse and reduce a string
-pub fn parse_reduce<'e>(string: &str, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
-	Ok(crate::beta_reduce(parse(string, exprs)?, exprs)?)
+pub fn parse_reduce<'e>(string: &str, namespace: &Namespace<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+	Ok(crate::beta_reduce(parse(string, namespace, exprs)?, exprs)?)
 }
 
 /// Commands for cli
@@ -213,8 +213,8 @@ pub enum Command<'e> {
 	Reduce(&'e Expr<'e>),
 }
 /// Parse commands
-pub fn command_parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
-	let expr = parser(exprs, binds, bind_map);
+pub fn command_parser<'e: 'b, 'b>(namespace: &'e mut Namespace<'e>, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
+	let expr = parser(namespace, exprs, binds, bind_map);
 
 	let filepath = just::<_, _, Simple<char>>('"')
 		.ignore_then(filter(|c| *c != '\\' && *c != '"').repeated())
@@ -235,8 +235,6 @@ pub fn command_parser<'e: 'b, 'b>(exprs: &'e LinkArena<'e>, binds: &'b LinkArena
     	.or(keyword("save").to(Comm::Save))
     .or(empty().to(Comm::Reduce))
     	.labelled("command").map(||) */
-	
-	
 
 	end().to(Command::None)
     	.or(
@@ -264,8 +262,9 @@ fn parse_test() {
 	use crate::expr::Binding;
 
 	let exprs = &LinkArena::new();
-	let ser = &mut LinkSerializer::new();
-	let parsed = parse("[x y] x y", exprs).unwrap();
+	let namespace = &mut Namespace::new();
+	let db = &mut Datastore::new();
+	let parsed = parse("[x y] x y", namespace, exprs).unwrap();
 	let test = Expr::lambda(Binding::left(Binding::END, exprs),
 	Expr::lambda(Binding::right(Binding::END, exprs),
 			Expr::app(Expr::VAR, Expr::VAR, exprs),
@@ -273,15 +272,15 @@ fn parse_test() {
 	exprs);
 	assert_eq!(parsed, test);
 
-	assert_eq!(test, parse("[x y] (x y)", exprs).unwrap());
+	assert_eq!(test, parse("[x y] (x y)", namespace, exprs).unwrap());
 
-	let parsed = parse_reduce("([x y] x) ([x y] y) ([x y] x)", exprs).unwrap();
-	let parsed_2 = parse("([x y] y)", exprs).unwrap();
+	let parsed = parse_reduce("([x y] x) ([x y] y) ([x y] x)", namespace, exprs).unwrap();
+	let parsed_2 = parse("([x y] y)", namespace, exprs).unwrap();
 	assert_eq!(parsed, parsed_2);
 
-	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", exprs).unwrap();
-	Name::new("iszero", iszero, exprs, ser);
+	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", namespace, exprs).unwrap();
+	namespace.add("iszero", iszero, exprs);
 
-	let test = parse_reduce("iszero ([x y] y)", exprs).unwrap();
-	assert_eq!(test, parse("[x y] x", exprs).unwrap())
+	let test = parse_reduce("iszero ([x y] y)", namespace, exprs).unwrap();
+	assert_eq!(test, parse("[x y] x", namespace, exprs).unwrap())
 }

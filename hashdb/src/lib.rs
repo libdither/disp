@@ -13,15 +13,11 @@
 #[macro_use]
 extern crate thiserror;
 
-/* mod data;
-mod db;
-mod db_de;
-mod db_ser; */
 mod store;
 mod hash;
 pub mod link;
 
-pub use store::{Datastore, DatastoreError, LinkArena};
+pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, TypeStorable};
 pub use hash::Hash;
 pub use link::{HashType, TypedHash};
 

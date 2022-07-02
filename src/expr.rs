@@ -5,7 +5,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
 
-use hashdb::{DatastoreDeserializer, DatastoreSerializer, HashType, LinkArena, NativeHashtype};
+use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, LinkArena, TypeStore};
 
 mod bind;
 mod reduce;
@@ -32,7 +32,7 @@ pub enum LambdaError {
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes))]
-#[archive(bound(serialize = "__S: DatastoreSerializer", deserialize = "__D: DatastoreDeserializer<'a>"))]
+#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
 pub enum Expr<'a> {
 	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,
@@ -89,13 +89,6 @@ enum Expr<'a> {
 	Value(Term<'a>)
 } */
 
-impl<'e> NativeHashtype for Expr<'e> {
-	type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = hashdb::Hash> + 's;
-
-	fn reverse_links<'s, S: DatastoreSerializer>(&'s self, ser: &'s mut S) -> Self::LinkIter<'s, S> {
-		std::iter::empty()
-	}
-}
 impl<'a> fmt::Display for &'a Expr<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		thread_local! {

@@ -8,7 +8,7 @@
 use std::hash::Hash as StdHash;
 use bytecheck::CheckBytes;
 use rkyv::Fallible;
-use rkyv::ser::Serializer;
+use rkyv::ser::{ScratchSpace, Serializer};
 use rkyv::validation::validators::DefaultValidator;
 use rkyv::{Archive, Deserialize, Serialize};
 
@@ -50,7 +50,7 @@ pub trait DataStoreRead {
 
 /// Archive object store, extends hash store with functions that can store typed objects using rkyv.
 /// All types that can store ArchiveStorable
-pub trait ArchiveStore: DataStore + ArchiveStoreRead + Serializer {
+pub trait ArchiveStore: DataStore + ArchiveStoreRead + Serializer + ScratchSpace {
 	/// Store storable type in table. Returns a typed hash with the archived version of the type.
 	fn store<T: ArchiveStorable<Self>>(&mut self, data: &T) -> Result<TypedHash<T>, <Self as Fallible>::Error>;
 }
@@ -141,7 +141,7 @@ pub trait ArchiveInterpretable:
 
 /// A type that can be fetched in its Archived form from an ArchiveStore for lifetime 's and can be placed into a TypeStore<'a> for lifetime 'a
 pub trait ArchiveFetchable<'a, D: ArchiveDeserializer<'a>>:
-	ArchiveInterpretable + Archive<Archived: Deserialize<Self, D>>
+	ArchiveInterpretable + Archive<Archived: Deserialize<Self, D> + for<'v> CheckBytes<DefaultValidator<'v>>>
 {}
 
 /// Impls for all types
@@ -153,5 +153,5 @@ where
 
 impl<'a, D: ArchiveDeserializer<'a>, T> ArchiveFetchable<'a, D> for T
 where
-	T: for<'s> ArchiveInterpretable + Archive<Archived: Deserialize<Self, D>>
+	T: for<'s> ArchiveInterpretable + Archive<Archived: Deserialize<Self, D> + for<'v> CheckBytes<DefaultValidator<'v>>>
 {}
