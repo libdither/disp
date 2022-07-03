@@ -78,7 +78,7 @@ impl<'e> NamespaceMut<'e> {
 	pub fn store_inner(&self, exprs: &'e LinkArena<'e>) -> &'e Namespace<'e> {
 		exprs.add(self.namespace.borrow().clone())
 	}
-	pub fn extend(&self, namespace: &'e Namespace<'e>) {
+	pub fn extend(&self, namespace: &Namespace<'e>) {
 		self.namespace.borrow_mut().items.extend(&namespace.items);
 	}
 }

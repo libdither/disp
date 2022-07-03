@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use rkyv::{Archive, Deserialize, Fallible, Serialize, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, SerializeWith}};
 use bytecheck::CheckBytes;
 
-use crate::{Datastore, Hash, LinkArena, store::{ArchiveDeserializer, ArchiveFetchable, ArchiveInterpretable, ArchiveStorable, ArchiveStore, ArchiveToType, TypeStorable, TypeStore}};
+use crate::{Hash, store::{ArchiveDeserializer, ArchiveFetchable, ArchiveInterpretable, ArchiveStorable, ArchiveStore, ArchiveToType, TypeStorable, TypeStore}};
 
 #[derive(Debug, PartialEq, Eq, CheckBytes, Archive, Serialize, Deserialize)]
 pub struct TypedHash<T> {
@@ -67,11 +67,13 @@ impl<T> TypedHash<T> {
 
 impl<T: TypeStorable + ArchiveInterpretable> TypedHash<T> {
 	// Resolve TypedHash using Datastore and add to TypeStore
-	pub fn fetch<'s: 'a, 'a>(&self, db: &'s Datastore, arena: &'a LinkArena) -> Result<&'a T, <Datastore as Fallible>::Error>
+	pub fn fetch<'s, 'a: 's, Store, Arena>(&self, db: &'s Store, arena: &'a Arena) -> Result<&'a T, <Store as Fallible>::Error>
 	where
-		T: ArchiveFetchable<'a, ArchiveToType<'s, 'a, Datastore, LinkArena<'a>>> + Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>,
+		Store: ArchiveStore,
+		Arena: TypeStore<'a>,
+		T: ArchiveFetchable<'a, ArchiveToType<'s, 'a, Store, Arena>> + Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>,
 	{
-		let mut deserializer: ArchiveToType<'s, 'a, Datastore, LinkArena<'a>> = (db, arena).into();
+		let mut deserializer: ArchiveToType<'s, 'a, Store, Arena> = (db, arena).into();
 		Ok(arena.add(deserializer.fetch(self)?))
 	}
 }

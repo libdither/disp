@@ -74,8 +74,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							let hash: TypedHash<Namespace> = bincode::deserialize_from::<_, Hash>(&mut file)?.into();
 							let mut db = Datastore::new();
 							db.load(&mut file)?;
-							//let clone = hash.fetch(&db, exprs)?.clone();
-							//namespace.extend(&clone);
+							let clone = hash.fetch(&db, exprs)?.clone();
+							namespace.extend(&clone);
 						};
 						match result { Err(err) => println!("failed to load: {err}"), Ok(_) => {} }
 					}

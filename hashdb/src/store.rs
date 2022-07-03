@@ -25,7 +25,7 @@ use crate::Hash;
 /// Arena Storage in-memory
 /// Good for fast accessing, recursive descent and in-memory manipulations of expressions
 /// All types that store a T in an arena and return a reference to that T that lasts as long as the arena.
-pub trait TypeStore<'a>: 'a {
+pub trait TypeStore<'a> {
 	fn add<T: TypeStorable>(&'a self, val: T) -> &'a T;
 }
 /// All types that can be stored in a LinkArena.
@@ -74,7 +74,7 @@ pub trait ArchiveDeserializer<'a>: ArchiveStoreRead + TypeStore<'a> {
 }
 
 /// A type that is generic over any ArchiveStoreRead and TypeStore and implements ArchiveDeserializer
-pub struct ArchiveToType<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> {
+pub struct ArchiveToType<'s, 'a :'s, S: ArchiveStoreRead, A: TypeStore<'a>> {
 	store: &'s S,
 	type_store: &'a A
 }
@@ -101,12 +101,12 @@ impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveStoreRead for Archive
         self.store.fetch_archive::<T>(hash)
     }
 }
-impl<'s: 'a, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> TypeStore<'a> for ArchiveToType<'s, 'a, S, A> {
+impl<'s, 'a: 's, S: ArchiveStoreRead, A: TypeStore<'a>> TypeStore<'a> for ArchiveToType<'s, 'a, S, A> {
     fn add<T: TypeStorable>(&'a self, val: T) -> &'a T {
         self.type_store.add(val)
     }
 }
-impl<'s: 'a, 'a, S: ArchiveStoreRead + 's, A: TypeStore<'a>> ArchiveDeserializer<'a> for ArchiveToType<'s, 'a, S, A> {
+impl<'s, 'a: 's, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveDeserializer<'a> for ArchiveToType<'s, 'a, S, A> {
     fn fetch<T: ArchiveFetchable<'a, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
 	where
 		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>
@@ -141,7 +141,7 @@ pub trait ArchiveInterpretable:
 
 /// A type that can be fetched in its Archived form from an ArchiveStore for lifetime 's and can be placed into a TypeStore<'a> for lifetime 'a
 pub trait ArchiveFetchable<'a, D: ArchiveDeserializer<'a>>:
-	ArchiveInterpretable + Archive<Archived: Deserialize<Self, D> + for<'v> CheckBytes<DefaultValidator<'v>>>
+	ArchiveInterpretable + Archive<Archived: Deserialize<Self, D> + for<'v> CheckBytes<DefaultValidator<'v>>> + 'a
 {}
 
 /// Impls for all types
@@ -153,5 +153,5 @@ where
 
 impl<'a, D: ArchiveDeserializer<'a>, T> ArchiveFetchable<'a, D> for T
 where
-	T: for<'s> ArchiveInterpretable + Archive<Archived: Deserialize<Self, D> + for<'v> CheckBytes<DefaultValidator<'v>>>
+	T: ArchiveInterpretable + Archive<Archived: Deserialize<Self, D> + for<'v> CheckBytes<DefaultValidator<'v>>> + 'a
 {}
