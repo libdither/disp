@@ -22,7 +22,6 @@ use name::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let exprs = &LinkArena::new();
-	let ser = &mut LinkSerializer::new();
 	let db = &mut Datastore::new();
 
 	let _load_file = std::env::args().nth(1);
@@ -39,10 +38,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	let binds = &LinkArena::new();
 	let bind_map = parse::BindMap::default();
-	let parser = parse::command_parser(exprs, binds, &bind_map);
 
 	// Current namespace of this REPL, contains all the currently accessible names
-	let mut namespace = Namespace::default();
+	let mut namespace = NamespaceMut::default();
+
+	let parser = parse::command_parser(&namespace, exprs, binds, &bind_map);
+
 
 	loop {
 		let readline = rl.readline(">> ");
@@ -57,11 +58,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 						println!("{expr}");
 						let reduced = beta_reduce(expr, exprs).unwrap();
 						println!("{reduced}");
-						let name = Name::new(string, reduced, exprs, ser);
-						namespace.add(name);
+						namespace.add(string, reduced, exprs);
 					}
 					Ok(Command::List) => {
-						namespace.items.iter().for_each(|name| println!("{name}"))
+						namespace.for_each(|name| println!("{name}"))
 					}
 					Ok(Command::Reduce(expr)) => {
 						println!("{expr}");
@@ -74,15 +74,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 							let hash: TypedHash<Namespace> = bincode::deserialize_from::<_, Hash>(&mut file)?.into();
 							let mut db = Datastore::new();
 							db.load(&mut file)?;
-							let clone = hash.fetch(&db, exprs)?.clone();
-							namespace = clone;
+							//let clone = hash.fetch(&db, exprs)?.clone();
+							//namespace.extend(&clone);
 						};
 						match result { Err(err) => println!("failed to load: {err}"), Ok(_) => {} }
 					}
 					Ok(Command::Save { file: filename, overwrite: _ }) => {
 						let saved_hash = {
 							db.clear();
-							namespace.store(&mut ser.join(db))
+							namespace.store_inner(exprs).store(db).unwrap()
 						};
 						let mut file = fs::File::create(&filename).unwrap();
 						bincode::serialize_into(&mut file, saved_hash.as_hash())?;

@@ -1,7 +1,7 @@
-use std::{collections::HashMap};
+use std::{collections::HashMap, io};
 
 use bytecheck::CheckBytes;
-use rkyv::{Archive, Archived, Fallible, ser::{ScratchSpace, Serializer}, validation::validators::DefaultValidator, Serialize, Deserialize, with::Skip};
+use rkyv::{AlignedVec, Archive, Archived, Deserialize, Fallible, Infallible, Serialize, ser::{ScratchSpace, Serializer}, validation::validators::DefaultValidator, with::Skip};
 
 use crate::{Hash, TypedHash, hash::TrimHasher};
 
@@ -22,7 +22,7 @@ pub enum DatastoreError {
 }
 
 #[derive(Default, Archive, Serialize, Deserialize)]
-// #[archive_attr(derive(CheckBytes, Debug))]
+#[archive_attr(derive(CheckBytes, Debug))]
 pub struct Datastore {
 	map: HashMap<Hash, Vec<u8>, TrimHasher>,
 	// reverse_lookup: HashMap<Hash, Hash, TrimHasher>, // Map types to types that link to types
@@ -96,6 +96,21 @@ impl Datastore {
 	pub fn new() -> Self {
 		Self::default()
 	}
+	pub fn save(&self, writer: &mut impl io::Write) -> Result<(), DatastoreError> {
+		let bytes = rkyv::to_bytes::<_, 256>(self).expect("failed to save");
+		writer.write_all(&bytes).unwrap();
+		Ok(())
+	}
+	pub fn load(&mut self, reader: &mut impl io::Read) -> Result<(), DatastoreError> {
+		let mut vec = AlignedVec::new();
+		io::copy(reader, &mut vec).unwrap();
+		let archived = rkyv::check_archived_root::<Self>(&vec[..]).unwrap();
+		*self = archived.deserialize(&mut Infallible).unwrap();
+		Ok(())
+	}
+	pub fn clear(&mut self) {
+		self.map.clear();
+	}
 }
 /* impl Datastore {
 	
@@ -131,17 +146,8 @@ impl Datastore {
 
 		Ok(linked_hash.clone().into())
 	}
-	pub fn save(&self, writer: impl io::Write) -> Result<(), DatastoreError> {
-		Ok(bincode::serialize_into(writer, self)?)
-	}
-	pub fn load(&mut self, reader: impl io::Read) -> Result<(), DatastoreError> {
-		*self = bincode::deserialize_from(reader)?;
-		Ok(())
-	}
-	pub fn clear(&mut self) {
-		self.map.clear();
-		self.reverse_lookup.clear();
-	}
+	
+	
 }
 impl<'db> Fallible for &'db Datastore {
 	type Error = DatastoreError;

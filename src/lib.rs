@@ -13,7 +13,7 @@ use expr::{beta_reduce, Binding as PT, Expr};
 use name::Name;
 pub use parse::{parse, parse_reduce};
 
-use crate::name::Namespace;
+use crate::name::{Namespace, NamespaceMut};
 
 fn setup_boolean_logic<'a>(
 	exprs: &'a LinkArena<'a>,
@@ -99,7 +99,7 @@ fn test_reduce() {
 #[test]
 fn test_parsing() {
 	let exprs = &LinkArena::new();
-	let namespace = &mut Namespace::default();
+	let namespace = &mut NamespaceMut::new();
 
 	let (id_hash, true_hash, false_hash, not_hash, and_hash) = setup_boolean_logic(exprs);
 
@@ -124,7 +124,7 @@ fn test_parsing() {
 fn test_factorial() {
 	let exprs = &LinkArena::new();
 	let db = &mut Datastore::new();
-	let namespace = &mut Namespace::default();
+	let namespace = &mut NamespaceMut::new();
 
 	let zero = parse("[x y] y", namespace, exprs).unwrap();
 	namespace.add("zero", zero, exprs);
