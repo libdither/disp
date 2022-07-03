@@ -1,19 +1,14 @@
-#![allow(unused)]
-#![feature(generic_associated_types)]
-#![feature(type_alias_impl_trait)]
+#![allow(dead_code)]
 
 pub use hashdb::{Datastore};
-use hashdb::{ArchiveStorable, LinkArena, TypeStore};
+use hashdb::{LinkArena};
 
 pub mod expr;
 pub mod name;
 mod parse;
 
 use expr::{beta_reduce, Binding as PT, Expr};
-use name::Name;
 pub use parse::{parse, parse_reduce};
-
-use crate::name::{Namespace, NamespaceMut};
 
 fn setup_boolean_logic<'a>(
 	exprs: &'a LinkArena<'a>,
@@ -98,6 +93,8 @@ fn test_reduce() {
 
 #[test]
 fn test_parsing() {
+	use crate::name::NamespaceMut;
+
 	let exprs = &LinkArena::new();
 	let namespace = &mut NamespaceMut::new();
 
@@ -122,8 +119,9 @@ fn test_parsing() {
 
 #[test]
 fn test_factorial() {
+	use crate::name::NamespaceMut;
+	
 	let exprs = &LinkArena::new();
-	let db = &mut Datastore::new();
 	let namespace = &mut NamespaceMut::new();
 
 	let zero = parse("[x y] y", namespace, exprs).unwrap();
@@ -220,9 +218,10 @@ fn test_factorial() {
 
 #[test]
 fn test_hashdb() {
+	use hashdb::ArchiveStorable;
 	let exprs = &LinkArena::new();
 	let db = &mut Datastore::new();
 	//let data = Data::new(&[01u8, 32u8]);
 	let string = String::from("Hello").store(db).unwrap();
-	assert_eq!(string.fetch(&db, exprs).unwrap(), "Hello");
+	assert_eq!(string.fetch(db, exprs).unwrap(), "Hello");
 }

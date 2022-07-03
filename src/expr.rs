@@ -127,20 +127,20 @@ impl<'a> Expr<'a> {
 	pub const VAR: 	&'static Expr<'static> = &Expr::Variable;
 	pub const UNI0: &'static Expr<'static> = &Expr::Universe(0);
 	pub const UNI1: &'static Expr<'static> = &Expr::Universe(1);
-	pub fn lambda(bind: &'a Binding<'a>, expr: &'a Expr<'a>, arena: &'a LinkArena<'a>) -> &'a Expr<'a> {
+	pub fn lambda(bind: &'a Binding<'a>, expr: &'a Expr<'a>, arena: &'a impl TypeStore<'a>) -> &'a Expr<'a> {
 		arena.add(Expr::Lambda { bind, expr })
 	}
-	pub fn app(func: &'a Expr<'a>, args: &'a Expr<'a>, arena: &'a LinkArena<'a>) -> &'a Expr<'a> {
+	pub fn app(func: &'a Expr<'a>, args: &'a Expr<'a>, arena: &'a impl TypeStore<'a>) -> &'a Expr<'a> {
 		arena.add(Expr::Application { func, args })
 	}
-	pub fn uni(order: usize, arena: &'a LinkArena<'a>) -> &'a Expr<'a> {
+	pub fn uni(order: usize, arena: &'a impl TypeStore<'a>) -> &'a Expr<'a> {
 		match order {
 			0 => Self::UNI0,
 			1 => Self::UNI1,
 			order => arena.add(Expr::Universe(order))
 		}
 	}
-	pub fn pi(bind: &'a Binding<'a>, bind_type: &'a Expr<'a>, expr: &'a Expr<'a>, arena: &'a LinkArena<'a>) -> &'a Expr<'a> {
+	pub fn pi(bind: &'a Binding<'a>, bind_type: &'a Expr<'a>, expr: &'a Expr<'a>, arena: &'a impl TypeStore<'a>) -> &'a Expr<'a> {
 		arena.add(Expr::Pi { bind, bind_type, expr })
 	}
 	/// Return true if this Expr can be used as a type

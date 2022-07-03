@@ -2,14 +2,12 @@ use std::{cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::
 
 use bumpalo::Bump;
 
-use crate::Hash;
-
 use super::{TypeStorable, TypeStore};
 
 pub struct LinkArena<'a> {
 	arena: Bump,
 	map: RefCell<HashMap<u64, *const ()>>, // Lookup map
-	reverse_lookup: RefCell<HashMap<Hash, (*const (), &'static str)>>, // Reverse lookup map, str represents object type
+	// reverse_lookup: RefCell<HashMap<Hash, (*const (), &'static str)>>, // Reverse lookup map, str represents object type
 	p: std::marker::PhantomData<&'a ()>,
 }
 impl<'a> TypeStore<'a> for LinkArena<'a> {
@@ -23,7 +21,6 @@ impl<'a> LinkArena<'a> {
 		Self {
 			arena: Bump::new(),
 			map: Default::default(),
-			reverse_lookup: Default::default(),
 			p: Default::default(),
 		}
 	}

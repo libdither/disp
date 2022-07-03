@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		db.load(fs::File::open(file).unwrap()).expect("could not load disp file")
 	} */
 
-	let mut rl = Editor::<()>::new();
+	let mut rl = Editor::<()>::with_config(rustyline::Config::builder().max_history_size(1000).build());
 	println!("Welcome to disp (λ)");
 	if rl.load_history(".disp_history").is_err() {
 		// println!("No previous history.");
@@ -40,10 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let bind_map = parse::BindMap::default();
 
 	// Current namespace of this REPL, contains all the currently accessible names
-	let mut namespace = NamespaceMut::default();
+	let namespace = NamespaceMut::new();
 
 	let parser = parse::command_parser(&namespace, exprs, binds, &bind_map);
-
 
 	loop {
 		let readline = rl.readline(">> ");

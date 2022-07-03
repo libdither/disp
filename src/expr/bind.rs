@@ -6,7 +6,6 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, LinkArena, TypeStore};
 
-use crate::name::{Namespace, NamespaceMut};
 
 use super::{Expr, LambdaError};
 
@@ -45,10 +44,10 @@ impl<'a> Binding<'a> {
 	pub fn right(p: &'a Binding<'a>, arena: &'a LinkArena<'a>) -> &'a Binding<'a> {
 		arena.add(Binding::Branch(Self::NONE, p))
 	}
-	pub fn branch(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a LinkArena<'a>) -> &'a Binding<'a> {
+	pub fn branch(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
 		arena.add(Binding::Branch(l, r))
 	}
-	pub fn branch_reduce(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a LinkArena<'a>) -> &'a Binding<'a> {
+	pub fn branch_reduce(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
 		if l == Self::NONE && r == Self::NONE {
 			Self::NONE
 		} else {
@@ -94,16 +93,16 @@ impl<'a, 'e, T: StdHash + 'e> BindTree<'a, T> {
 			BindTree::Branch(left, right)
 		}
 	}
-	pub fn branch(left: &'a Self, right: &'a Self, binds: &'a LinkArena<'a>) -> &'a Self {
+	pub fn branch(left: &'a Self, right: &'a Self, binds: &'a impl TypeStore<'a>) -> &'a Self {
 		binds.add(Self::branch_new(left, right))
 	}
-	pub fn left(&'a self, binds: &'a LinkArena<'a>) -> &'a Self {
+	pub fn left(&'a self, binds: &'a impl TypeStore<'a>) -> &'a Self {
 		Self::branch(self, BindTree::NONE, binds)
 	}
-	pub fn right(&'a self, binds: &'a LinkArena<'a>) -> &'a Self {
+	pub fn right(&'a self, binds: &'a impl TypeStore<'a>) -> &'a Self {
 		Self::branch(BindTree::NONE, self, binds)
 	}
-	pub fn end(val: T, binds: &'a LinkArena<'a>) -> &'a Self {
+	pub fn end(val: T, binds: &'a impl TypeStore<'a>) -> &'a Self {
 		binds.add(BindTree::End(val))
 	}
 }
@@ -124,7 +123,7 @@ impl<'a, T: fmt::Display + StdHash> fmt::Display for BindTree<'a, T> {
 pub type BindSubTree<'a> = BindTree<'a, usize>;
 impl<'a, 'e> BindSubTree<'a> {
 	/// Add PointerTree to ReplaceTree at certain abstraction level
-	pub fn push_binding(self: &mut &'a Self, binds: &'a LinkArena<'a>, level: usize, pointer: &'e Binding<'e>) -> Result<(), BindError> {
+	pub fn push_binding(self: &mut &'a Self, binds: &'a impl TypeStore<'a>, level: usize, pointer: &'e Binding<'e>) -> Result<(), BindError> {
 		*self = match (*self, pointer) {
 			// If ReplaceTree is None, fill in pointer
 			(tree, Binding::None) => tree,
@@ -146,7 +145,7 @@ impl<'a, 'e> BindSubTree<'a> {
 		Ok(())
 	}
 	/// Constructs PointerTree from ReplaceTree at certain abstraction level
-	pub fn pop_binding(self: &mut &'a Self, binds: &'a LinkArena<'a>, level: usize, ptrs: &'e LinkArena<'e>) -> Result<&'e Binding<'e>, BindError> {
+	pub fn pop_binding(self: &mut &'a Self, binds: &'a impl TypeStore<'a>, level: usize, ptrs: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, BindError> {
 		use Binding as PT;
 		Ok(match self {
 			BindTree::Branch(mut l, mut r) => {
@@ -167,7 +166,7 @@ impl<'a, 'e> BindSubTree<'a> {
 pub type BindTypeTree<'a, 'e> = BindTree<'a, &'e Expr<'e>>;
 impl<'a, 'e> BindTypeTree<'a, 'e> {
 	// Push Binding and type Expr onto BindTypeTree
-	pub fn push_binding(self: &mut &'a Self, bind: &'e Binding<'e>, bind_type: &'e Expr<'e>, binds: &'a LinkArena<'a>) -> Result<(), BindError> {
+	pub fn push_binding(self: &mut &'a Self, bind: &'e Binding<'e>, bind_type: &'e Expr<'e>, binds: &'a impl TypeStore<'a>) -> Result<(), BindError> {
 		*self = match (*self, bind) {
 			// If ReplaceTree is None, fill in pointer
 			(tree, Binding::None) => tree,
@@ -207,19 +206,19 @@ impl<'a, 'e> BindIndex<'a> {
 		let (left, right) = self.tree.split()?;
 		Ok((BindIndex::new(self.index, left), BindIndex::new(self.index, right)))
 	}
-	pub fn join(left: BindIndex<'a>, right: BindIndex<'a>, binds: &'a LinkArena<'a>) -> BindIndex<'a> {
+	pub fn join(left: BindIndex<'a>, right: BindIndex<'a>, binds: &'a impl TypeStore<'a>) -> BindIndex<'a> {
 		debug_assert_eq!(left.index, right.index);
 		BindIndex::new(left.index, BindTree::branch(left.tree, right.tree, binds))
 	}
 	/// Push PointerTree onto ReplaceIndex
-	pub fn push_binding(&mut self, pointer: &'e Binding<'e>, binds: &'a LinkArena<'a>) -> Result<(), BindError> {
+	pub fn push_binding(&mut self, pointer: &'e Binding<'e>, binds: &'a impl TypeStore<'a>) -> Result<(), BindError> {
 		let BindIndex { index, tree } = self;
 		*index += 1;
 		tree.push_binding(binds, *index, pointer)?;
 		Ok(())
 	}
 	/// Pop PointerTree from ReplaceIndex
-	pub fn pop_binding(&mut self, binds: &'a LinkArena<'a>, ptrs: &'e LinkArena<'e>) -> Result<&'e Binding<'e>, LambdaError> {
+	pub fn pop_binding(&mut self, binds: &'a impl TypeStore<'a>, ptrs: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, LambdaError> {
 		let BindIndex { index, tree } = self;
 		if *index == 0 {
 			return Err(LambdaError::BindingLevelMismatch);
@@ -229,7 +228,7 @@ impl<'a, 'e> BindIndex<'a> {
 		Ok(ret)
 	}
 	/// Build ReplaceIndex from Lambda Expression
-	pub fn push_lambda(&mut self, expr: &'a Expr<'a>, binds: &'a LinkArena<'a>) -> Result<&'a Expr<'a>, BindError> {
+	pub fn push_lambda(&mut self, expr: &'a Expr<'a>, binds: &'a impl TypeStore<'a>) -> Result<&'a Expr<'a>, BindError> {
 		Ok(if let Expr::Lambda { bind: pointer_tree, expr } = expr {
 			let expr = self.push_lambda(expr, binds)?;
 			self.push_binding(pointer_tree, binds)?;
@@ -239,7 +238,8 @@ impl<'a, 'e> BindIndex<'a> {
 		})
 	}
 	/// Creates nested lambda expression from given ReplaceTree
-	pub fn pop_lambda(&mut self, expr: &'e Expr<'e>, binds: &'a LinkArena<'a>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, LambdaError> {
+	#[allow(dead_code)]
+	pub fn pop_lambda(&mut self, expr: &'e Expr<'e>, binds: &'a impl TypeStore<'a>, exprs: &'e impl TypeStore<'e>) -> Result<&'e Expr<'e>, LambdaError> {
 		let pointer_tree = self.pop_binding(binds, exprs)?;
 		let expr = if self.index == 0 {
 			Expr::lambda(pointer_tree, &expr, exprs)
@@ -258,6 +258,8 @@ impl<'a> fmt::Display for BindIndex<'a> {
 
 #[test]
 fn test_replace_tree() {
+	use crate::name::NamespaceMut;
+
 	use Binding as PT;
 	let binds = &LinkArena::new();
 	let exprs = &LinkArena::new();

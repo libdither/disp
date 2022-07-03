@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
-use hashdb::{LinkArena, Datastore, ArchiveStorable};
+use hashdb::{LinkArena, TypeStore};
 
 use crate::{expr::{BindSubTree, Expr}, name::{NamedObject, NamespaceMut}};
 
@@ -31,28 +31,20 @@ impl BindMap {
 	}
 }
 
-fn lookup_expr<'e>(namespace: &NamespaceMut<'e>, string: &str, exprs: &'e LinkArena<'e>) -> Option<&'e Expr<'e>> {
-	thread_local! {
-		static DB: RefCell<Datastore> = RefCell::new(Datastore::new());
+fn lookup_expr<'e, E: TypeStore<'e>>(namespace: &NamespaceMut<'e>, string: &str, _exprs: &'e E) -> Option<&'e Expr<'e>> {
+	let name = namespace.find(|name|name.string == string)?;
+	match name.object {
+		NamedObject::Namespace(_) => None,
+		NamedObject::Expr(expr) => Some(expr)
 	}
-	DB.with(|db| {
-		let string_hash = string.to_owned().store(&mut *db.borrow_mut());
-		let name = namespace.find(|name|name.string == string)?;
-		match name.object {
-			NamedObject::Namespace(_) => None,
-			NamedObject::Expr(expr) => Some(expr)
-		}
-	})
 }
 fn name_parser() -> impl Parser<char, String, Error = Simple<char>> + Clone {
 	text::ident().padded().labelled("name")
 }
 
-fn parser<'e: 'b, 'b>(namespace: &'b NamespaceMut<'e>, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
+fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(namespace: &'b NamespaceMut<'e>, exprs: &'e E, binds: &'b B, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
 	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
-		
-
 		let number = text::int::<_, Simple<char>>(10).padded()
 			.try_map(|s, span|
 				s.parse::<usize>()
@@ -260,10 +252,10 @@ pub fn command_parser<'e: 'b, 'b>(namespace: &'b NamespaceMut<'e>, exprs: &'e Li
 #[test]
 fn parse_test() {
 	use crate::expr::Binding;
+	use hashdb::LinkArena;
 
 	let exprs = &LinkArena::new();
 	let namespace = &mut NamespaceMut::new();
-	let db = &mut Datastore::new();
 	let parsed = parse("[x y] x y", namespace, exprs).unwrap();
 	let test = Expr::lambda(Binding::left(Binding::END, exprs),
 	Expr::lambda(Binding::right(Binding::END, exprs),
