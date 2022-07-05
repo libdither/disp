@@ -44,12 +44,6 @@ fn recur_replace<'a, 'r>(
 			*working_bind = BindIndex::join(func_index, args_index, reps);
 			Expr::app(&func, &args, exprs)
 		}
-		Expr::Universe(_) => working_expr,
-		Expr::Pi { bind, bind_type, expr } => {
-			let replaced_expr = recur_replace(expr, working_bind, replacement, replacement_bind, reps, exprs)?;
-
-			Expr::pi(bind, bind_type, &replaced_expr, exprs)
-		}
 	})
 }
 
@@ -60,7 +54,7 @@ fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<
 	}
 
 	Ok(match reducing_expr {
-		Expr::Variable | Expr::Universe(_) => reducing_expr,
+		Expr::Variable => reducing_expr,
 		Expr::Lambda { bind, expr } => {
 			replace_index.push_binding(bind, reps)?;
 
@@ -94,13 +88,6 @@ fn partial_beta_reduce<'a, 'r>(reducing_expr: &'a Expr<'a>, reps: &'r LinkArena<
 					Expr::app(func, args, exprs)
 				}
 			}
-		}
-		Expr::Pi { bind, bind_type, expr } => {
-			replace_index.push_binding(bind, reps)?;
-
-			let reduced_expr = partial_beta_reduce(expr, reps, replace_index, depth, exprs)?;
-
-			Expr::pi(replace_index.pop_binding(reps, exprs)?, bind_type, reduced_expr, exprs)
 		}
 	})
 }

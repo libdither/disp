@@ -58,27 +58,22 @@ impl<'a> fmt::Display for Judgement<'a> {
 /// Rule that defines what Judgements are needed to check a term.
 #[derive(Debug, Clone)]
 pub enum Rule<'a> {
+	// The type of Expr::Variable must be Expr::Variable
 	Var,
-	Universe,
 	Lambda {
 		judge_expr: &'a Judgement<'a>, // Judgement for the body of the lambda
 	},
 	App {
-		judge_func: &'a Judgement<'a>, // Judgement for the function being applied
-		judge_args: &'a Judgement<'a>, // Judgement for the arguments
-	},
-	Pi {
-		judge_expr: &'a Judgement<'a>,
+		judge_func: &'a Judgement<'a>,
+		judge_args: &'a Judgement<'a>,
 	}
 }
 impl<'a> fmt::Display for Rule<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", match self {
 			Rule::Var => "Var",
-			Rule::Universe => "Universe",
 			Rule::Lambda { .. } => "Lambda",
 			Rule::App { .. } => "App",
-			Rule::Pi { .. } => "Pi",
 		})
     }
 }
@@ -86,13 +81,11 @@ impl<'a> fmt::Display for Rule<'a> {
 impl<'a> Judgement<'a> {
 	pub fn partial_check<'b>(self: &'a Judgement<'a>, mut tree: &'a BindTypeTree<'b, 'a>, reps: &'b LinkArena<'b>) -> Result<(), TypeError> {
 		use TypeError as TE;
-		// All Exprs for the type must be a valid type variant of Expr (Pi or Universe)
-		self.of_type.is_a_type()?;
 		
 		let bind_type = if let BindTypeTree::End(bind_type) = tree { Some(*bind_type) } else { None };
 		match (&self.rule, self.term) {
 			(Rule::Var, Expr::Variable) => {
-				// Rule: Type of Variable can be anything if not bound, otherwise its type must match its binding
+				// Rule: Type of Variable must be Variable, otherwise its type must match its binding
 				if let Some(bind_type) = bind_type {
 					if self.of_type == bind_type { Ok(()) }
 					else { Err(TE::MismatchingVariableBinding) }
@@ -102,10 +95,10 @@ impl<'a> Judgement<'a> {
 			}
 			_ if bind_type.is_some() => { Err(TE::NoVariableToBind) }
 			(Rule::Lambda { judge_expr }, &Expr::Lambda { bind, expr }) => {
-				// Rule: Type of Lambda must be Pi with the binding and expression matching
-				if let &Expr::Pi { bind: _, bind_type, expr: pi_expr } = self.of_type {
+				// Rule: Type of Lambda must be Lambda with the expression matching
+				if let &Expr::Lambda { bind: bind_type, expr: expr_type } = self.of_type {
 					// Make sure judgement of Lambda expression contains the correct term and type
-					if judge_expr.term == expr && judge_expr.of_type == pi_expr {
+					if judge_expr.term == expr && judge_expr.of_type == expr_type {
 						// Make sure that the subexpression checks correctly with added binding
 						tree.push_binding(bind, bind_type, reps)?;
 						judge_expr.partial_check(tree, reps)
@@ -126,29 +119,6 @@ impl<'a> Judgement<'a> {
 						} else { Err(TE::UnexpectedArgumentType(bind_type, judge_args.of_type)) }
 					} else { Err(TE::ExpectedFunctionType(judge_func.term)) }
 				} else { Err(TE::MismatchingApplicationJudgement) }
-			}
-			(Rule::Universe, &Expr::Universe(order)) => {
-				// Rule: Type of Universe must be term's order + 1 
-				if let &Expr::Universe(type_order) = self.of_type {
-					if order + 1 == type_order { Ok(()) }
-					else if order <= type_order { Err(TE::OverlyLargeUniverseOrder(type_order, self.term)) }
-					else { Err(TE::SmallUniverseOrder(type_order, self.term)) }
-				} else {
-					Err(TE::InvalidTypeForUniverse(self.of_type))
-				}
-			}
-			(Rule::Pi { judge_expr }, &Expr::Pi { expr, .. }) => {
-				if judge_expr.term == expr {
-					judge_expr.partial_check(tree, reps)?;
-					if let &Expr::Universe(type_order) = self.of_type {
-						let expected_order = self.term.smallest_uni();
-						if expected_order == type_order { Ok(()) }
-						else if expected_order < type_order { Err(TE::OverlyLargeUniverseOrder(type_order, self.term)) }
-						else { Err(TE::SmallUniverseOrder(type_order, self.term)) }
-					} else {
-						Err(TE::InvalidTypeForUniverse(self.of_type))
-					}
-				} else { Err(TE::MismatchingPiJudgement { found: judge_expr.term, expected: expr }) }
 			}
 			_ => Err(TE::InvalidRuleForTerm(self.rule.clone(), self.term))
 		}
