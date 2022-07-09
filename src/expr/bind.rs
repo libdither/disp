@@ -1,23 +1,13 @@
-///! BindTrees allow for more easy manipulation of Lambda abstractions during beta reduction and creation
-use std::{fmt, hash::Hash as StdHash};
+///! Bindings allow for more easy manipulation of Lambda abstractions during beta reduction and creation
+use std::fmt;
 use thiserror::Error;
-use bytecheck::CheckBytes;
+
 use rkyv::{Archive, Deserialize, Serialize};
+use bytecheck::CheckBytes;
 
-use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, LinkArena, TypeStore};
-
+use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, TypeStorable, TypeStore};
 
 use super::{Expr, LambdaError};
-
-#[derive(Debug, Error)]
-pub enum BindError {
-	#[error("there was already a bound variable in the tree")]
-	TreeAlreadyBound,
-	#[error("attempted to bind variable at branch in bind tree")]
-	InvalidBindLocation,
-	#[error("attempted to split bind tree on leaf")]
-	InvalidSplit,
-}
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
@@ -33,15 +23,15 @@ pub enum Binding<'a> {
 		#[with(HashType)]
 		#[omit_bounds]
 		&'a Binding<'a>,
-	), // u32 represents highest variable abstraction level in this expression
+	),
 }
 impl<'a> Binding<'a> {
 	pub const NONE: &'static Binding<'static> = &Binding::None;
 	pub const END: &'static Binding<'static> = &Binding::End;
-	pub fn left(p: &'a Binding<'a>, arena: &'a LinkArena<'a>) -> &'a Binding<'a> {
+	pub fn left(p: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
 		arena.add(Binding::Branch(p, Self::NONE))
 	}
-	pub fn right(p: &'a Binding<'a>, arena: &'a LinkArena<'a>) -> &'a Binding<'a> {
+	pub fn right(p: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
 		arena.add(Binding::Branch(Self::NONE, p))
 	}
 	pub fn branch(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
@@ -71,19 +61,31 @@ impl<'a> fmt::Display for Binding<'a> {
 	}
 }
 
+/// Errors associated with various operations on `BindTree`s
+#[derive(Debug, Error)]
+pub enum BindTreeError {
+	#[error("there was already a bound variable in the tree")]
+	AlreadyBound,
+	#[error("attempted to bind variable at branch in bind tree")]
+	InvalidBindLocation,
+	#[error("attempted to split bind tree on leaf")]
+	InvalidSplit,
+}
+
+// Associates a type with 
 #[derive(Clone, Hash, PartialEq, Debug)]
-pub enum BindTree<'a, T: StdHash> {
+pub enum BindTree<'a, T: TypeStorable> {
 	None,
 	End(T),
 	Branch(&'a BindTree<'a, T>, &'a BindTree<'a, T>),
 }
-impl<'a, 'e, T: StdHash + 'e> BindTree<'a, T> {
+impl<'a, 'e, T: TypeStorable + 'e> BindTree<'a, T> {
 	pub const NONE: &'e BindTree<'e, T> = &BindTree::None;
-	pub fn split(&'a self) -> Result<(&'a Self, &'a Self), BindError> {
+	pub fn split(&'a self) -> Result<(&'a Self, &'a Self), BindTreeError> {
 		Ok(match self {
 			BindTree::Branch(l, r) => (l, r),
 			BindTree::None => (self, self),
-			BindTree::End(_) => Err(BindError::InvalidSplit)?,
+			BindTree::End(_) => Err(BindTreeError::InvalidSplit)?,
 		})
 	}
 	fn branch_new(left: &'a Self, right: &'a Self) -> Self {
@@ -107,7 +109,7 @@ impl<'a, 'e, T: StdHash + 'e> BindTree<'a, T> {
 	}
 }
 
-impl<'a, T: fmt::Display + StdHash> fmt::Display for BindTree<'a, T> {
+impl<'a, T: fmt::Display + TypeStorable> fmt::Display for BindTree<'a, T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			BindTree::Branch(BindTree::None, right) => write!(f, ">{}", right)?,
@@ -120,10 +122,11 @@ impl<'a, T: fmt::Display + StdHash> fmt::Display for BindTree<'a, T> {
 	}
 }
 
+/// BindTree that can represent multiple lambda abstractions at once
 pub type BindSubTree<'a> = BindTree<'a, usize>;
 impl<'a, 'e> BindSubTree<'a> {
 	/// Add PointerTree to ReplaceTree at certain abstraction level
-	pub fn push_binding(self: &mut &'a Self, binds: &'a impl TypeStore<'a>, level: usize, pointer: &'e Binding<'e>) -> Result<(), BindError> {
+	pub fn push_binding(self: &mut &'a Self, binds: &'a impl TypeStore<'a>, level: usize, pointer: &'e Binding<'e>) -> Result<(), BindTreeError> {
 		*self = match (*self, pointer) {
 			// If ReplaceTree is None, fill in pointer
 			(tree, Binding::None) => tree,
@@ -139,34 +142,34 @@ impl<'a, 'e> BindSubTree<'a> {
 				right.push_binding(binds, level, r)?;
 				Self::branch(left, right, binds)
 			}
-			(BindTree::End(_), _) => return Err(BindError::TreeAlreadyBound),
-			(_, Binding::End) => return Err(BindError::InvalidBindLocation),
+			(BindTree::End(_), _) => return Err(BindTreeError::AlreadyBound),
+			(_, Binding::End) => return Err(BindTreeError::InvalidBindLocation),
 		};
 		Ok(())
 	}
 	/// Constructs PointerTree from ReplaceTree at certain abstraction level
-	pub fn pop_binding(self: &mut &'a Self, binds: &'a impl TypeStore<'a>, level: usize, ptrs: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, BindError> {
-		use Binding as PT;
+	pub fn pop_binding(self: &mut &'a Self, binds: &'a impl TypeStore<'a>, level: usize, ptrs: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, BindTreeError> {
 		Ok(match self {
 			BindTree::Branch(mut l, mut r) => {
 				let left = l.pop_binding(binds, level, ptrs)?;
 				let right = r.pop_binding(binds, level, ptrs)?;
 				*self = Self::branch(l, r, binds);
-				PT::branch_reduce(left, right, ptrs)
+				Binding::branch_reduce(left, right, ptrs)
 			}
 			BindTree::End(count) if level == *count => {
 				*self = Self::NONE;
-				PT::END
+				Binding::END
 			}
-			_ => PT::NONE,
+			_ => Binding::NONE,
 		})
 	}
 }
 
+/// BindTree that can associate an Expr with bound variables
 pub type BindTypeTree<'a, 'e> = BindTree<'a, &'e Expr<'e>>;
 impl<'a, 'e> BindTypeTree<'a, 'e> {
 	// Push Binding and type Expr onto BindTypeTree
-	pub fn push_binding(self: &mut &'a Self, bind: &'e Binding<'e>, bind_type: &'e Expr<'e>, binds: &'a impl TypeStore<'a>) -> Result<(), BindError> {
+	pub fn push_binding(self: &mut &'a Self, bind: &'e Binding<'e>, bind_type: &'e Expr<'e>, binds: &'a impl TypeStore<'a>) -> Result<(), BindTreeError> {
 		*self = match (*self, bind) {
 			// If ReplaceTree is None, fill in pointer
 			(tree, Binding::None) => tree,
@@ -182,14 +185,14 @@ impl<'a, 'e> BindTypeTree<'a, 'e> {
 				right.push_binding(r, bind_type, binds)?;
 				Self::branch(left, right, binds)
 			}
-			(BindTree::End(_), _) => return Err(BindError::TreeAlreadyBound),
-			(_, Binding::End) => return Err(BindError::InvalidBindLocation),
+			(BindTree::End(_), _) => return Err(BindTreeError::AlreadyBound),
+			(_, Binding::End) => return Err(BindTreeError::InvalidBindLocation),
 		};
 		Ok(())
 	}
 }
 
-// Index = 0 means no lambda history (tree should ReplaceTree::None)
+// Index = 0 means no lambda history (tree should BindTree::None)
 // Index > 0 means there is history
 #[derive(PartialEq, Debug, Clone)]
 pub struct BindIndex<'a> {
@@ -202,22 +205,24 @@ impl<'a, 'e> BindIndex<'a> {
 	pub const fn new(index: usize, tree: &'a BindSubTree<'a>) -> Self {
 		Self { index, tree }
 	}
-	pub fn split(&self) -> Result<(Self, Self), BindError> {
+	/// Split on branch of BindTree
+	pub fn split(&self) -> Result<(Self, Self), BindTreeError> {
 		let (left, right) = self.tree.split()?;
 		Ok((BindIndex::new(self.index, left), BindIndex::new(self.index, right)))
 	}
+	// Join two BindIndexs of same index
 	pub fn join(left: BindIndex<'a>, right: BindIndex<'a>, binds: &'a impl TypeStore<'a>) -> BindIndex<'a> {
 		debug_assert_eq!(left.index, right.index);
 		BindIndex::new(left.index, BindTree::branch(left.tree, right.tree, binds))
 	}
-	/// Push PointerTree onto ReplaceIndex
-	pub fn push_binding(&mut self, pointer: &'e Binding<'e>, binds: &'a impl TypeStore<'a>) -> Result<(), BindError> {
+	/// Push Binding onto BindIndex
+	pub fn push_binding(&mut self, pointer: &'e Binding<'e>, binds: &'a impl TypeStore<'a>) -> Result<(), BindTreeError> {
 		let BindIndex { index, tree } = self;
 		*index += 1;
 		tree.push_binding(binds, *index, pointer)?;
 		Ok(())
 	}
-	/// Pop PointerTree from ReplaceIndex
+	/// Pop Binding from BindIndex
 	pub fn pop_binding(&mut self, binds: &'a impl TypeStore<'a>, ptrs: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, LambdaError> {
 		let BindIndex { index, tree } = self;
 		if *index == 0 {
@@ -227,26 +232,22 @@ impl<'a, 'e> BindIndex<'a> {
 		*index -= 1;
 		Ok(ret)
 	}
-	/// Build ReplaceIndex from Lambda Expression
-	pub fn push_lambda(&mut self, expr: &'a Expr<'a>, binds: &'a impl TypeStore<'a>) -> Result<&'a Expr<'a>, BindError> {
+	/// Build BindIndex from nested Lambda expressions
+	pub fn push_lambda(&mut self, expr: &'a Expr<'a>, binds: &'a impl TypeStore<'a>) -> Result<&'a Expr<'a>, BindTreeError> {
 		Ok(if let Expr::Lambda { bind: pointer_tree, expr } = expr {
-			let expr = self.push_lambda(expr, binds)?;
+			let pushed_expr = self.push_lambda(expr, binds)?;
 			self.push_binding(pointer_tree, binds)?;
-			expr
+			pushed_expr
 		} else {
 			&expr
 		})
 	}
-	/// Creates nested lambda expression from given ReplaceTree
+	/// Creates nested Lambda expressions from BindIndex
 	#[allow(dead_code)]
 	pub fn pop_lambda(&mut self, expr: &'e Expr<'e>, binds: &'a impl TypeStore<'a>, exprs: &'e impl TypeStore<'e>) -> Result<&'e Expr<'e>, LambdaError> {
 		let pointer_tree = self.pop_binding(binds, exprs)?;
-		let expr = if self.index == 0 {
-			Expr::lambda(pointer_tree, &expr, exprs)
-		} else {
-			Expr::lambda(pointer_tree, self.pop_lambda(expr, binds, exprs)?, exprs)
-		};
-		Ok(expr)
+		let popped_expr = if self.index == 0 { &expr } else { self.pop_lambda(expr, binds, exprs)? };
+		Ok(Expr::lambda(pointer_tree, popped_expr, exprs))
 	}
 }
 
@@ -259,8 +260,9 @@ impl<'a> fmt::Display for BindIndex<'a> {
 #[test]
 fn test_replace_tree() {
 	use crate::name::NamespaceMut;
+	use hashdb::LinkArena;
 
-	use Binding as PT;
+	use Binding as B;
 	let binds = &LinkArena::new();
 	let exprs = &LinkArena::new();
 	let mut r = BindIndex::DEFAULT;
@@ -280,21 +282,21 @@ fn test_replace_tree() {
 
 	let _pts = &LinkArena::new();
 	let mut r = BindIndex::DEFAULT;
-	r.push_binding(&PT::END, binds).unwrap();
+	r.push_binding(&B::END, binds).unwrap();
 	test_split(binds, r).unwrap_err();
 
 	// let r = &mut ReduceArena(, 0);
 	// test_split(r, db).unwrap(); // This will error
 	let mut r = BindIndex::DEFAULT;
-	r.push_binding(&PT::left(PT::END, exprs), binds).unwrap();
+	r.push_binding(&B::left(B::END, exprs), binds).unwrap();
 	test_split(binds, r).unwrap();
 
 	let mut r = BindIndex::DEFAULT;
-	r.push_binding(&PT::branch(PT::right(PT::END, exprs), PT::END, exprs), binds).unwrap();
+	r.push_binding(&B::branch(B::right(B::END, exprs), B::END, exprs), binds).unwrap();
 	test_split(binds, r).unwrap();
 }
 #[allow(dead_code)]
-fn test_split<'a>(binds: &'a LinkArena<'a>, r: BindIndex<'a>) -> Result<(), BindError> {
+fn test_split<'a>(binds: &'a impl TypeStore<'a>, r: BindIndex<'a>) -> Result<(), BindTreeError> {
 	print!("split [{}] ", r);
 	let (left, right) = r.split().map_err(|e| {
 		println!("split err: {}", e);

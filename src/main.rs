@@ -16,9 +16,7 @@ mod expr;
 mod name;
 mod parse;
 
-use expr::beta_reduce;
 use name::*;
-
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let exprs = &LinkArena::new();
@@ -55,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					Ok(Command::None) => {}
 					Ok(Command::Set(string, expr)) => {
 						println!("{expr}");
-						let reduced = beta_reduce(expr, exprs).unwrap();
+						let reduced = expr.reduce(exprs).unwrap();
 						println!("{reduced}");
 						namespace.add(string, reduced, exprs);
 					}
@@ -64,11 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					}
 					Ok(Command::Reduce(expr)) => {
 						println!("{expr}");
-						let reduced = beta_reduce(expr, exprs).unwrap();
+						let reduced = expr.reduce(exprs).unwrap();
 						println!("{reduced}");
 					}
 					Ok(Command::Load { file: filename }) => {
-						let result: Result<(), Box<dyn std::error::Error>> = try {
+						let result: anyhow::Result<()> = try {
 							let mut file = fs::File::open(filename)?;
 							let hash: TypedHash<Namespace> = bincode::deserialize_from::<_, Hash>(&mut file)?.into();
 							let mut db = Datastore::new();

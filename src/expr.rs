@@ -27,7 +27,7 @@ pub enum LambdaError {
 	UnexpectedBranchInSubstitution,
 
 	#[error("bind error: {0}")]
-	BindError(#[from] BindError)
+	BindError(#[from] BindTreeError)
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
@@ -69,25 +69,6 @@ pub enum Expr<'a> {
 		expr: &'a Expr<'a>
 	},
 }
-
-/* enum Term {
-	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
-	Variable,
-	/// Create a function
-	Lambda {
-		bind: &'a Binding<'a>,
-		expr: &'a Expr<'a>,
-	},
-	/// Apply functions to expressions
-	Application {
-		func: &'a Expr<'a>,
-		args: &'a Expr<'a>,
-	},
-}
-enum Expr<'a> {
-	Normalized(Term<'a>),
-	Value(Term<'a>)
-} */
 
 impl<'a> fmt::Display for &'a Expr<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -181,7 +181,7 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
 
 /// Parse and reduce a string
 pub fn parse_reduce<'e>(string: &str, namespace: &NamespaceMut<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
-	Ok(crate::beta_reduce(parse(string, namespace, exprs)?, exprs)?)
+	Ok(parse(string, namespace, exprs)?.reduce(exprs)?)
 }
 
 /// Commands for cli

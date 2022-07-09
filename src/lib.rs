@@ -7,28 +7,28 @@ pub mod expr;
 pub mod name;
 mod parse;
 
-use expr::{beta_reduce, Binding as PT, Expr};
+use expr::{Binding as B, Expr};
 pub use parse::{parse, parse_reduce};
 
 fn setup_boolean_logic<'a>(
 	exprs: &'a LinkArena<'a>,
 ) -> (&'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>, &'a Expr<'a>) {
-	let id_hash = Expr::lambda(PT::END, &Expr::VAR, exprs);
+	let id_hash = Expr::lambda(B::END, &Expr::VAR, exprs);
 
-	let true_hash = Expr::lambda(PT::END, &Expr::lambda(PT::NONE, &Expr::VAR, exprs), exprs);
+	let true_hash = Expr::lambda(B::END, &Expr::lambda(B::NONE, &Expr::VAR, exprs), exprs);
 
-	let false_hash = beta_reduce(&Expr::app(&true_hash, &id_hash, exprs), exprs).unwrap();
+	let false_hash = Expr::app(&true_hash, &id_hash, exprs).reduce(exprs).unwrap();
 
 	let not_hash = Expr::lambda(
-		PT::left(PT::left(PT::END, exprs), exprs),
+		B::left(B::left(B::END, exprs), exprs),
 		&Expr::app(&Expr::app(&Expr::VAR, &false_hash, exprs), &true_hash, exprs),
 		exprs,
 	);
 
 	let and_hash = Expr::lambda(
-		PT::left(PT::left(PT::END, exprs), exprs),
+		B::left(B::left(B::END, exprs), exprs),
 		&Expr::lambda(
-			PT::left(PT::right(PT::END, exprs), exprs),
+			B::left(B::right(B::END, exprs), exprs),
 			&Expr::app(&Expr::app(&Expr::VAR, &Expr::VAR, exprs), &false_hash, exprs),
 			exprs,
 		),
@@ -44,49 +44,33 @@ fn test_reduce() {
 
 	let (id_hash, true_hash, false_hash, not_hash, and_hash) = setup_boolean_logic(exprs);
 
-	let ii_hash = beta_reduce(&Expr::app(&id_hash, &id_hash, exprs), exprs).unwrap();
+	let ii_hash = Expr::app(&id_hash, &id_hash, exprs).reduce(exprs).unwrap();
 	assert_eq!(id_hash, ii_hash);
 
 	assert_eq!(
-		beta_reduce(&Expr::app(&not_hash, &false_hash, exprs), exprs).unwrap(),
+		Expr::app(&not_hash, &false_hash, exprs).reduce(exprs).unwrap(),
 		true_hash
 	);
 	assert_eq!(
-		beta_reduce(&Expr::app(&not_hash, &true_hash, exprs), exprs).unwrap(),
+		Expr::app(&not_hash, &true_hash, exprs).reduce(exprs).unwrap(),
 		false_hash
 	);
 
 	assert_eq!(
-		beta_reduce(
-			&Expr::app(&Expr::app(&and_hash, &true_hash, exprs), &true_hash, exprs),
-			exprs
-		)
-		.unwrap(),
+		Expr::app(&Expr::app(&and_hash, &true_hash, exprs), &true_hash, exprs).reduce(exprs).unwrap(),
 		true_hash
 	);
 	assert_eq!(
-		beta_reduce(
-			&Expr::app(&Expr::app(&and_hash, &true_hash, exprs), &false_hash, exprs),
-			exprs
-		)
-		.unwrap(),
+		Expr::app(&Expr::app(&and_hash, &true_hash, exprs), &false_hash, exprs).reduce(exprs).unwrap(),
 		false_hash
 	);
 	println!("and false true = false");
 	assert_eq!(
-		beta_reduce(
-			&Expr::app(&Expr::app(&and_hash, &false_hash, exprs), &true_hash, exprs),
-			exprs
-		)
-		.unwrap(),
+		Expr::app(&Expr::app(&and_hash, &false_hash, exprs), &true_hash, exprs).reduce(exprs).unwrap(),
 		false_hash
 	);
 	assert_eq!(
-		beta_reduce(
-			&Expr::app(&Expr::app(&and_hash, &false_hash, exprs), &false_hash, exprs),
-			exprs
-		)
-		.unwrap(),
+		Expr::app(&Expr::app(&and_hash, &false_hash, exprs), &false_hash, exprs).reduce(exprs).unwrap(),
 		false_hash
 	);
 }
@@ -137,13 +121,13 @@ fn test_factorial() {
 	namespace.add("succ", succ, exprs);
 
 	// Succ Zero = One
-	let succ_zero = beta_reduce(Expr::app(&succ, &zero, exprs), exprs).unwrap();
+	let succ_zero = Expr::app(&succ, &zero, exprs).reduce(exprs).unwrap();
 	assert_eq!(succ_zero, one);
 
-	let succ_one = beta_reduce(Expr::app(&succ, &one, exprs), exprs).unwrap();
+	let succ_one = Expr::app(&succ, &one, exprs).reduce(exprs).unwrap();
 
 	// Succ Succ Zero = Succ 1
-	assert_eq!(beta_reduce(Expr::app(succ, succ_zero, exprs), exprs).unwrap(), succ_one);
+	assert_eq!(Expr::app(succ, succ_zero, exprs).reduce(exprs).unwrap(), succ_one);
 
 	let mult = parse_reduce("[m n f] m (n f)", namespace, exprs).unwrap();
 	namespace.add("mult", mult, exprs);

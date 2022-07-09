@@ -4,7 +4,7 @@ use std::fmt;
 use hashdb::LinkArena;
 use thiserror::Error;
 
-use super::{BindError, BindTypeTree, Expr};
+use super::{BindTreeError, BindTypeTree, Expr};
 
 #[derive(Debug, Error)]
 pub enum TypeError<'a> {
@@ -39,7 +39,7 @@ pub enum TypeError<'a> {
 	#[error("mismatched variable binding")]
 	MismatchingVariableBinding,
 	#[error("bind error")]
-	BindError(#[from] BindError),
+	BindError(#[from] BindTreeError),
 }
 
 /// Assertion that a term is typed in a certain context containing dependent Judgements.
