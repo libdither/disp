@@ -107,7 +107,7 @@ impl<'a> Judgement<'a> {
 					// Make sure judgement of Lambda expression contains the correct term and type
 					if judge_expr.term == expr && judge_expr.of_type == pi_expr {
 						// Make sure that the subexpression checks correctly with added binding
-						tree.push_binding(bind, bind_type, reps)?;
+						tree.push_binding(reps, bind_type, bind)?;
 						judge_expr.partial_check(tree, reps)
 					} else { Err(TE::MismatchingLambdaJudgement { found: judge_expr, expected_term: expr, expected_type: pi_expr }) }
 				} else { Err(TE::InvalidTypeForLambda(self.of_type)) }
