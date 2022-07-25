@@ -4,7 +4,10 @@ use std::fmt;
 use hashdb::LinkArena;
 use thiserror::Error;
 
-use super::{BindTreeError, BindTypeTree, Expr};
+use super::{BindTree, BindTreeError, Expr};
+
+/// BindTree that can associate an Expr with bound variables
+pub type BindTypeTree<'a, 'e> = BindTree<'a, &'e Expr<'e>>;
 
 #[derive(Debug, Error)]
 pub enum TypeError<'a> {

@@ -159,9 +159,6 @@ impl<'a, T: fmt::Display + TypeStorable> fmt::Display for BindTree<'a, T> {
 
 /// BindTree that can represent multiple lambda abstractions at once
 pub type BindSubTree<'a> = BindTree<'a, usize>;
-/// BindTree that can associate an Expr with bound variables
-pub type BindTypeTree<'a, 'e> = BindTree<'a, &'e Expr<'e>>;
-
 
 // Index = 0 means no lambda history (tree should BindTree::None)
 // Index > 0 means there is history
