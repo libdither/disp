@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 #![allow(incomplete_features)]
 #![allow(const_evaluatable_unchecked)]
 #![feature(generic_const_exprs)]
@@ -13,17 +15,22 @@
 #[macro_use]
 extern crate thiserror;
 
+#[macro_use]
+extern crate derivative;
+
 mod store;
 mod hash;
 pub mod link;
+mod typed_hash;
 
 pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, TypeStorable};
 pub use hash::Hash;
-pub use link::{HashType, TypedHash};
+pub use link::Link;
+pub use typed_hash::TypedHash;
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}};
+	use crate::{Datastore, Link, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}};
 
 	#[test]
 	fn test_db() {
@@ -37,31 +44,31 @@ mod tests {
 	#[test]
 	fn test_loading() {
 		// Self-referential type
-		#[derive(Debug, Hash, PartialEq, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+		#[derive(Derivative, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+		#[derivative(Debug(bound=""), PartialEq(bound=""), Clone(bound=""), Hash(bound=""))] // Requires Derivative because https://github.com/rust-lang/rust/issues/26925
 		// To use the safe API, you have to derive CheckBytes for the archived type
 		#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
-		#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
-		enum StringType<'a> {
+		#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a, S>"))]
+		enum StringType<'a, S: TypeStore<'a> + 'a> {
 			String(String),
 			Link(
-				#[with(HashType)]
 				#[omit_bounds]
-				&'a StringType<'a>,
-				#[with(HashType)]
+				Link<'a, StringType<'a, S>, S>,
 				#[omit_bounds]
-				&'a StringType<'a>,
+				Link<'a, StringType<'a, S>, S>,
 			),
 		}
-		/* impl<'a> NativeHashtype for StringType<'a> {
-			type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = crate::Hash> + 's;
-
-			fn reverse_links<'s, S: DatastoreSerializer>(&'s self, _ser: &'s mut S) -> Self::LinkIter<'s, S> {
-				std::iter::empty()
+		/* impl<'a, S: TypeStore<'a> + 'a> std::hash::Hash for StringType<'a, S> {
+			fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+				match self {
+					SztringType::String(s) => s.hash(state),
+					StringType::Link(l, r) => (l, r).hash(state)
+				}
 			}
 		} */
 
 		let links = LinkArena::new();
-		let string = links.add(StringType::String("Hello".into()));
+		let string = links.link(StringType::<'_, LinkArena::<'_>>::String("Hello".into()));
 		let string2 = links.add(StringType::Link(string, string));
 
 		let db = &mut Datastore::new();
@@ -72,6 +79,6 @@ mod tests {
 
 		let links_de = LinkArena::new();
 		let ret = hash.fetch(db, &links_de).unwrap();
-		assert_eq!(ret, string2);
+		assert_eq!(&*ret, string2);
 	}
 }

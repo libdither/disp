@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::Hasher};
+use std::{cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::{Hasher, Hash as StdHash}};
 
 use bumpalo::Bump;
 
@@ -10,8 +10,14 @@ pub struct LinkArena<'a> {
 	// reverse_lookup: RefCell<HashMap<Hash, (*const (), &'static str)>>, // Reverse lookup map, str represents object type
 	p: std::marker::PhantomData<&'a ()>,
 }
+// Make sure only types that implement StdHash can be stored in a LinkArena
+/* pub struct LinkArenaBounds;
+impl<T: StdHash> TypeStorableDiscriminator<LinkArenaBounds> for T {}
+ */
+
 impl<'a> TypeStore<'a> for LinkArena<'a> {
-    fn add<T: TypeStorable>(&'a self, val: T) -> &'a T {
+	type Ref<T: 'a + ?Sized> = &'a T;
+    fn add<T: 'a + StdHash>(&'a self, val: T) -> Self::Ref<T> {
         self.alloc_dedup(val)
     }
 }
@@ -24,7 +30,7 @@ impl<'a> LinkArena<'a> {
 			p: Default::default(),
 		}
 	}
-	pub fn dedup<T: std::hash::Hash>(&self, val: &'a T) -> &'a T {
+	pub fn dedup<T: StdHash>(&self, val: &'a T) -> &'a T {
 		let hasher = &mut DefaultHasher::new();
 		val.hash(hasher);
 		let hash = hasher.finish();
@@ -35,7 +41,7 @@ impl<'a> LinkArena<'a> {
 			&*ptr.cast::<T>()
 		}
 	}
-	pub fn alloc_dedup<T: std::hash::Hash>(&'a self, val: T) -> &'a T {
+	pub fn alloc_dedup<T: StdHash>(&'a self, val: T) -> &'a T {
 		let val = self.arena.alloc(val);
 		self.dedup(val)
 	}

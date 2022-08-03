@@ -80,7 +80,8 @@ impl ArchiveStore for Datastore {
 		let _pos = self.serialize_value(data).expect("This should never error");
 		let data = self.serializer.get_vec();
 		let hash = self.add(data.to_vec());
-		Ok(hash.into())
+		// Safety: Just serialized T as hash, TypedHash represents T.
+		Ok(unsafe { TypedHash::new(hash) })
 	}
 }
 
