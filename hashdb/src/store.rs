@@ -5,8 +5,10 @@
 //!  - Simple HashMap which maps Hash to serialized 
 //! Hash Table Storage
 
+use std::fmt;
 use std::hash::Hash as StdHash;
 use std::ops::Deref;
+use std::sync::Arc;
 use bytecheck::CheckBytes;
 use rkyv::Fallible;
 use rkyv::ser::{ScratchSpace, Serializer};
@@ -23,12 +25,68 @@ use rkyv::Archived;
 use crate::{Link, TypedHash};
 use crate::Hash;
 
+pub trait RefFamily<'a> {
+	type Member<T>: Ref<'a, T, Family = Self>;
+}
+
+pub trait Ref<'a, T: 'a + ?Sized>: Sized + Deref<Target = T> {
+	type Family: RefFamily<'a>;
+}
+
+struct BoxFamily;
+impl RefFamily<'static> for BoxFamily {
+	type Member<T> = Box<T>;
+}
+impl<T> Ref<'static, T> for Box<T> {
+	type Family = BoxFamily;
+}
+
+struct ArcFamily;
+impl RefFamily<'static> for ArcFamily {
+	type Member<T> = Arc<T>;
+}
+impl<T> Ref<'static, T> for Arc<T> {
+	type Family = ArcFamily;
+}
+
+struct ReferenceFamily;
+impl<'a> RefFamily<'a> for ReferenceFamily {
+	type Member<T> = &'a T;
+}
+impl<'a, T> Ref<'a, T> for &'a T {
+	type Family = ReferenceFamily;
+}
+
+/* impl<'a, T: StdHash, F: RefFamily> StdHash for F::Member<T> {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+		self.deref().hash(state)
+	}
+}
+impl<'a, T: Clone, F: RefFamily> Clone for F::Member<T> {
+	fn clone(&self) -> Self {
+		self.clone()
+	}
+}
+impl<'a, T: fmt::Debug, F: RefFamily> fmt::Debug for F::Member<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt(f)
+    }
+}
+impl<'a, T: fmt::Debug, F: RefFamily> fmt::Debug for F::Member<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt(f)
+    }
+} */
+
 /// Arena Storage in-memory
 /// Good for fast accessing, recursive descent and in-memory manipulations of expressions
 /// All types that store a T in an arena and return a reference to that T that lasts as long as the arena.
 pub trait TypeStore<'a>: Sized {
 	type StorableBounds = ();
-	type Ref<T: 'a + ?Sized>: Deref<Target = T> + Sized + Clone + Copy + 'a where Self: 'a;
+
+	/// Reference type of this TypeStore, can be &'a T, or Box<T> or Arc<T> etc.
+	type Ref<T>: Ref<'a, T> + where Self: 'a;
+	/// Add type to type store
 	fn add<T: TypeStorable + 'a>(&'a self, val: T) -> Self::Ref<T>;
 	fn link<T: TypeStorable + 'a>(&'a self, val: T) -> Link<'a, T, Self> {
 		Link::new(self.add(val))
@@ -96,10 +154,10 @@ impl<'a, S: ArchiveStoreRead, TS: TypeStore<'a>> From<(&'a S, &'a TS)> for Archi
 	}
 }
 impl<'a, S: ArchiveStoreRead, TS: TypeStore<'a>> Fallible for ArchiveToType<'a, S, TS> {
-    type Error = S::Error;
+	type Error = S::Error;
 }
 impl<'a, S: ArchiveStoreRead, TS: TypeStore<'a>> ArchiveDeserializer<'a, TS> for ArchiveToType<'a, S, TS> {
-    fn fetch<T: ArchiveFetchable<'a, TS, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
+	fn fetch<T: ArchiveFetchable<'a, TS, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
 	where
 		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>
 	{

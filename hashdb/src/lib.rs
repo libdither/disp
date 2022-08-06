@@ -22,15 +22,17 @@ mod store;
 mod hash;
 pub mod link;
 mod typed_hash;
+mod hashtype;
 
 pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, TypeStorable};
 pub use hash::Hash;
 pub use link::Link;
 pub use typed_hash::TypedHash;
+pub use hashtype::HashType;
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, Link, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}};
+	use crate::{Datastore, Link, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}};
 
 	#[test]
 	fn test_db() {
@@ -53,9 +55,11 @@ mod tests {
 			String(String),
 			Link(
 				#[omit_bounds]
-				Link<'a, StringType<'a, S>, S>,
+				#[with(HashType<'a, S, StringType<'a, S>>)]
+				S::Ref<StringType<'a, S>>,
 				#[omit_bounds]
-				Link<'a, StringType<'a, S>, S>,
+				#[with(HashType<'a, S, StringType<'a, S>>)]
+				S::Ref<StringType<'a, S>>,
 			),
 		}
 		/* impl<'a, S: TypeStore<'a> + 'a> std::hash::Hash for StringType<'a, S> {
@@ -68,7 +72,7 @@ mod tests {
 		} */
 
 		let links = LinkArena::new();
-		let string = links.link(StringType::<'_, LinkArena::<'_>>::String("Hello".into()));
+		let string = links.add(StringType::<'_, LinkArena::<'_>>::String("Hello".into()));
 		let string2 = links.add(StringType::Link(string, string));
 
 		let db = &mut Datastore::new();
