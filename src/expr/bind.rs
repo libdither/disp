@@ -9,71 +9,17 @@ use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, TypeStorable, TypeStor
 
 use super::{Expr, LambdaError};
 
-/// PointerTree represents where the variables are in a Lambda abstraction.
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
+// Associates a value with various parts of an `Expr`
+#[derive(Clone, Hash, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(CheckBytes, Debug))]
 #[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
-pub enum Binding<'a> {
-	None,
-	End,
-	Branch(
-		#[with(HashType)] #[omit_bounds] &'a Binding<'a>,
-		#[with(HashType)] #[omit_bounds] &'a Binding<'a>,
-	),
-}
-impl<'a> Binding<'a> {
-	pub const NONE: &'static Binding<'static> = &Binding::None;
-	pub const END: &'static Binding<'static> = &Binding::End;
-	pub fn left(p: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
-		arena.add(Binding::Branch(p, Self::NONE))
-	}
-	pub fn right(p: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
-		arena.add(Binding::Branch(Self::NONE, p))
-	}
-	pub fn branch(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
-		arena.add(Binding::Branch(l, r))
-	}
-	pub fn branch_reduce(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
-		if l == Self::NONE && r == Self::NONE {
-			Self::NONE
-		} else {
-			arena.add(Binding::Branch(l, r))
-		}
-	}
-}
-impl<'a> fmt::Display for Binding<'a> {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match *self {
-			Binding::Branch(left, right) => match (*right == Binding::None, *left == Binding::None) {
-				(true, true) => write!(f, "BOTH(NONE, NONE)")?,
-				(true, false) => write!(f, "<{}", left)?,
-				(false, true) => write!(f, ">{}", right)?,
-				(false, false) => write!(f, "({},{})", left, right)?,
-			},
-			Binding::End => write!(f, ".")?,
-			Binding::None => {}
-		}
-		Ok(())
-	}
-}
-
-/// Errors associated with various operations on `BindTree`s
-#[derive(Debug, Error)]
-pub enum BindTreeError {
-	#[error("there was already a bound variable in the tree")]
-	AlreadyBound,
-	#[error("attempted to bind variable at branch in bind tree")]
-	InvalidBindLocation,
-	#[error("attempted to split bind tree on leaf")]
-	InvalidSplit,
-}
-
-// Associates a value with various parts of an `Expr`
-#[derive(Clone, Hash, PartialEq, Debug)]
 pub enum BindTree<'a, T: TypeStorable> {
 	None,
 	End(T),
-	Branch(&'a BindTree<'a, T>, &'a BindTree<'a, T>),
+	Branch(
+		#[with(HashType)] #[omit_bounds] &'a BindTree<'a, T>,
+		#[with(HashType)] #[omit_bounds] &'a BindTree<'a, T>
+	),
 }
 impl<'a, 'e, T: TypeStorable + 'e> BindTree<'a, T> {
 	pub const NONE: &'e BindTree<'e, T> = &BindTree::None;
@@ -133,7 +79,7 @@ impl<'a, 'e, T: TypeStorable + 'e> BindTree<'a, T> {
 				let left = l.pop_binding(trees, end, binds)?;
 				let right = r.pop_binding(trees, end, binds)?;
 				*self = Self::branch(l, r, trees);
-				Binding::branch_reduce(left, right, binds)
+				Binding::branch(left, right, binds)
 			}
 			BindTree::End(count) if *end == *count => {
 				*self = Self::NONE;
@@ -144,7 +90,7 @@ impl<'a, 'e, T: TypeStorable + 'e> BindTree<'a, T> {
 	}
 }
 
-impl<'a, T: fmt::Display + TypeStorable> fmt::Display for BindTree<'a, T> {
+default impl<'a, T: fmt::Display + TypeStorable> fmt::Display for BindTree<'a, T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			BindTree::Branch(BindTree::None, right) => write!(f, ">{}", right)?,
@@ -155,6 +101,69 @@ impl<'a, T: fmt::Display + TypeStorable> fmt::Display for BindTree<'a, T> {
 		}
 		Ok(())
 	}
+}
+#[derive(Hash, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+struct Empty;
+impl TypeStorable for Empty {}
+impl<'a> fmt::Display for BindTree<'a, Empty> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match *self {
+			Self::Branch(left, right) => match (*right == Binding::None, *left == Binding::None) {
+				(true, true) => write!(f, "BOTH(NONE, NONE)")?,
+				(true, false) => write!(f, "<{}", left)?,
+				(false, true) => write!(f, ">{}", right)?,
+				(false, false) => write!(f, "({},{})", left, right)?,
+			},
+			Self::End(_) => write!(f, ".")?,
+			Self::None => {}
+		}
+		Ok(())
+	}
+}
+
+/// PointerTree represents where the variables are in a Lambda abstraction.
+/* #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
+#[archive_attr(derive(CheckBytes, Debug))]
+#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
+pub enum Binding<'a> {
+	None,
+	End,
+	Branch(
+		#[with(HashType)] #[omit_bounds] &'a Binding<'a>,
+		#[with(HashType)] #[omit_bounds] &'a Binding<'a>,
+	),
+} */
+pub type Binding<'a> = BindTree<'a, Empty>;
+impl<'a> BindTree<'a, Empty> {
+	// pub const NONE: &'static Binding<'static> = &Binding::None;
+	pub const END: &'static Binding<'static> = &Binding::End;
+	/* pub fn left(p: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
+		arena.add(Binding::Branch(p, Self::NONE))
+	}
+	pub fn right(p: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
+		arena.add(Binding::Branch(Self::NONE, p))
+	}
+	pub fn branch(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
+		arena.add(Binding::Branch(l, r))
+	}
+	pub fn branch(l: &'a Binding<'a>, r: &'a Binding<'a>, arena: &'a impl TypeStore<'a>) -> &'a Binding<'a> {
+		if l == Self::NONE && r == Self::NONE {
+			Self::NONE
+		} else {
+			arena.add(Binding::Branch(l, r))
+		}
+	} */
+}
+
+/// Errors associated with various operations on `BindTree`s
+#[derive(Debug, Error)]
+pub enum BindTreeError {
+	#[error("there was already a bound variable in the tree")]
+	AlreadyBound,
+	#[error("attempted to bind variable at branch in bind tree")]
+	InvalidBindLocation,
+	#[error("attempted to split bind tree on leaf")]
+	InvalidSplit,
 }
 
 /// BindTree that can represent multiple lambda abstractions at once
