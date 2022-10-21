@@ -5,10 +5,10 @@
 #![feature(const_mut_refs)]
 #![feature(associated_type_bounds)]
 #![feature(associated_type_defaults)]
-#![feature(generic_associated_types)]
 #![feature(downcast_unchecked)]
 #![feature(specialization)]
 #![feature(type_alias_impl_trait)]
+#![feature(return_position_impl_trait_in_trait)]
 
 #[macro_use]
 extern crate thiserror;
@@ -17,7 +17,7 @@ mod store;
 mod hash;
 pub mod link;
 
-pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, TypeStorable};
+pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, TypeStorable, ReverseLinked};
 pub use hash::Hash;
 pub use link::{HashType, TypedHash};
 

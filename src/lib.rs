@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![feature(return_position_impl_trait_in_trait)]
 
 pub use hashdb::{Datastore};
 use hashdb::{LinkArena};
@@ -77,7 +78,7 @@ fn test_reduce() {
 
 #[test]
 fn test_parsing() {
-	use crate::name::NamespaceMut;
+	use crate::name_old::NamespaceMut;
 
 	let exprs = &LinkArena::new();
 	let namespace = &mut NamespaceMut::new();
@@ -103,7 +104,7 @@ fn test_parsing() {
 
 #[test]
 fn test_factorial() {
-	use crate::name::NamespaceMut;
+	use crate::name_old::NamespaceMut;
 	
 	let exprs = &LinkArena::new();
 	let namespace = &mut NamespaceMut::new();

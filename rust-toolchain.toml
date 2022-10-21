@@ -1,0 +1,2 @@
+[toolchain]
+channel = "nightly" # or whatever channel you are using

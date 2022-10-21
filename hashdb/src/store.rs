@@ -29,9 +29,9 @@ pub trait TypeStore<'a> {
 	fn add<T: TypeStorable>(&'a self, val: T) -> &'a T;
 }
 /// All types that can be stored in a LinkArena.
-pub trait TypeStorable: StdHash {}
+pub trait TypeStorable: StdHash + 'static {}
 
-impl<T: StdHash> TypeStorable for T {}
+impl<T: StdHash + 'static> TypeStorable for T {}
 
 /// All types that can store a piece of data by its multihash.
 pub trait DataStore: DataStoreRead {

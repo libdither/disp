@@ -6,7 +6,7 @@ use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
 use hashdb::{LinkArena, TypeStore};
 
-use crate::{expr::{BindSubTree, Expr}, name::{NamedObject, NamespaceMut}};
+use crate::{expr::{BindSubTree, Expr}, name};
 
 // Represents active bound variables in the course of parsing an expression
 #[derive(Default, Debug)]
@@ -31,18 +31,18 @@ impl BindMap {
 	}
 }
 
-fn lookup_expr<'e, E: TypeStore<'e>>(namespace: &NamespaceMut<'e>, string: &str, _exprs: &'e E) -> Option<&'e Expr<'e>> {
+fn lookup_expr<'e, E: TypeStore<'e>>(namespace: &Context<'e>, string: &str, _exprs: &'e E) -> Option<&'e Expr<'e>> {
 	let name = namespace.find(|name|name.string == string)?;
 	match name.object {
-		NamedObject::Namespace(_) => None,
-		NamedObject::Expr(expr) => Some(expr)
+		ContextItem::Namespace(_) => None,
+		ContextItem::Expr(expr) => Some(expr)
 	}
 }
 fn name_parser() -> impl Parser<char, String, Error = Simple<char>> + Clone {
 	text::ident().padded().labelled("name")
 }
 
-fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(namespace: &'b NamespaceMut<'e>, exprs: &'e E, binds: &'b B, bind_map: &'b BindMap) -> impl Parser<char, (&'e Expr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
+fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(namespace: &'b Context<'e>, exprs: &'e E, binds: &'b B, bind_map: &'b BindMap) -> impl Parser<char, (&'e NamedExpr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
 	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
 		let number = text::int::<_, Simple<char>>(10).padded()
@@ -97,7 +97,7 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(namespace: &'b Namespa
 	}).then_ignore(end())
 }
 // Parse expression
-pub fn parse<'e>(string: &str, namespace: &NamespaceMut<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+pub fn parse<'e>(string: &str, namespace: &Context<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
 	let binds = &LinkArena::new();
 	let bind_map = &BindMap::default();
 	{
@@ -180,7 +180,7 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
 }
 
 /// Parse and reduce a string
-pub fn parse_reduce<'e>(string: &str, namespace: &NamespaceMut<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+pub fn parse_reduce<'e>(string: &str, namespace: &Context<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
 	Ok(parse(string, namespace, exprs)?.reduce(exprs)?)
 }
 
@@ -205,7 +205,7 @@ pub enum Command<'e> {
 	Reduce(&'e Expr<'e>),
 }
 /// Parse commands
-pub fn command_parser<'e: 'b, 'b>(namespace: &'b NamespaceMut<'e>, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
+pub fn command_parser<'e: 'b, 'b>(namespace: &'b Context<'e>, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
 	let expr = parser(namespace, exprs, binds, bind_map);
 
 	let filepath = just::<_, _, Simple<char>>('"')
@@ -255,7 +255,7 @@ fn parse_test() {
 	use hashdb::LinkArena;
 
 	let exprs = &LinkArena::new();
-	let namespace = &mut NamespaceMut::new();
+	let namespace = &mut Context::new();
 	let parsed = parse("[x y] x y", namespace, exprs).unwrap();
 	let test = Expr::lambda(Binding::left(Binding::END, exprs),
 	Expr::lambda(Binding::right(Binding::END, exprs),
