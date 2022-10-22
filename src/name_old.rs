@@ -12,15 +12,15 @@ use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, LinkArena, TypeStore};
 #[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'e>"))]
 enum NameTree<'e> {
 	BoundName {
-		#[with(HashType)] bind: &'e String,
-		#[with(HashType)] name: &'e String,
-		#[with(HashType)] #[omit_bounds] child: &'e NameTree<'e>
+		#[with(WithHashType)] bind: &'e String,
+		#[with(WithHashType)] name: &'e String,
+		#[with(WithHashType)] #[omit_bounds] child: &'e NameTree<'e>
 	},
 	Branch (
-		#[with(HashType)] #[omit_bounds] &'e NameTree<'e>,
-		#[with(HashType)] #[omit_bounds] &'e NameTree<'e>,
+		#[with(WithHashType)] #[omit_bounds] &'e NameTree<'e>,
+		#[with(WithHashType)] #[omit_bounds] &'e NameTree<'e>,
 	),
-	Name(#[with(HashType)] &'e String),
+	Name(#[with(WithHashType)] &'e String),
 	End,
 }
 impl<'e> fmt::Display for NameTree<'e> {
@@ -34,10 +34,10 @@ impl<'e> fmt::Display for NameTree<'e> {
 #[archive_attr(derive(bytecheck::CheckBytes))]
 #[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'e>"))]
 pub struct NamedExpr<'e, T> {
-	#[with(HashType)]
+	#[with(WithHashType)]
 	#[omit_bounds]
 	expr: &'e Expr<'e>,
-	#[with(HashType)]
+	#[with(WithHashType)]
 	#[omit_bounds]
 	name_bind: &'e NameTree<'e>,
 }
@@ -64,12 +64,12 @@ impl<'e> fmt::Display for Named<'e, Expr<'e>> {
 #[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'e>"))]
 pub enum NamedObject<'e> {
 	Namespace(
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		&'e NamedSpace<'e>,
 	),
 	Expr(
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		&'e NamedExpr<'e>
 	),

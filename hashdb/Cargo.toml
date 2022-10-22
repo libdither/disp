@@ -19,6 +19,7 @@ derivative = "2.2"
 bs58 = "0.4"
 futures = { version = "0.3", optional = true }
 bumpalo = "3.10"
+hashdb_derive = { path = "./hashdb_derive" }
 
 [features]
 async = ["futures"]

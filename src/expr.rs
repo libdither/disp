@@ -5,7 +5,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
 
-use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, LinkArena, TypeStore};
+use hashdb::{ArchiveDeserializer, ArchiveStore, WithHashType, LinkArena, TypeStore};
 
 mod bind;
 mod reduce;
@@ -36,19 +36,19 @@ pub enum Expr<'a> {
 	Variable,
 	/// Create a function
 	Lambda {
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		bind: &'a Binding<'a>,
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		expr: &'a Expr<'a>,
 	},
 	/// Apply functions to expressions
 	Application {
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		func: &'a Expr<'a>,
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		args: &'a Expr<'a>,
 	},
@@ -56,13 +56,13 @@ pub enum Expr<'a> {
 	Universe(usize),
 	// Create dependent types
 	Pi {
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		bind: &'a Binding<'a>,
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		bind_type: &'a Expr<'a>,
-		#[with(HashType)]
+		#[with(WithHashType)]
 		#[omit_bounds]
 		expr: &'a Expr<'a>
 	},

@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use rkyv::{Archive, Deserialize, Fallible, Serialize, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, SerializeWith}};
 use bytecheck::CheckBytes;
 
-use crate::{Hash, store::{ArchiveDeserializer, ArchiveFetchable, ArchiveInterpretable, ArchiveStorable, ArchiveStore, ArchiveToType, TypeStorable, TypeStore}};
+use crate::{Hash, store::{ArchiveDeserializer, ArchiveFetchable, ArchiveInterpretable, ArchiveStorable, ArchiveStore, ArchiveToType, HashType, TypeStore}};
 
 #[derive(Debug, PartialEq, Eq, CheckBytes, Archive, Serialize, Deserialize)]
 pub struct TypedHash<T> {
@@ -65,7 +65,7 @@ impl<T> TypedHash<T> {
 	}
 }
 
-impl<T: TypeStorable + ArchiveInterpretable> TypedHash<T> {
+impl<T: HashType + ArchiveInterpretable> TypedHash<T> {
 	// Resolve TypedHash using Datastore and add to TypeStore
 	pub fn fetch<'s, 'a: 's, Store, Arena>(&self, db: &'s Store, arena: &'a Arena) -> Result<&'a T, <Store as Fallible>::Error>
 	where
@@ -96,10 +96,10 @@ impl<__C: ?Sized, T: ArchiveInterpretable> CheckBytes<__C> for ArchivedLink<T> {
 	}
 }
 
-pub struct HashType;
+pub struct WithHashType;
 
 // impl Archive for any With<&'a T, HashType> if T can be archived itself.
-impl<'a, T: Archive> ArchiveWith<&'a T> for HashType {
+impl<'a, T: Archive> ArchiveWith<&'a T> for WithHashType {
 	type Archived = ArchivedLink<T>;
 	type Resolver = Hash;
 
@@ -110,7 +110,7 @@ impl<'a, T: Archive> ArchiveWith<&'a T> for HashType {
 }
 
 // impl Serialize for any With<&'a T, HashType> if Archived<T> can be stored into an ArchiveStore
-impl<'a, S: ArchiveStore, T: ArchiveStorable<S>> SerializeWith<&'a T, S> for HashType {
+impl<'a, S: ArchiveStore, T: ArchiveStorable<S>> SerializeWith<&'a T, S> for WithHashType {
 	#[inline]
 	fn serialize_with(field: &&'a T, serializer: &mut S) -> Result<Self::Resolver, <S as Fallible>::Error> {
 		Ok(serializer.store::<T>(field)?.into())
@@ -118,14 +118,14 @@ impl<'a, S: ArchiveStore, T: ArchiveStorable<S>> SerializeWith<&'a T, S> for Has
 }
 
 /// impl Deserialize for any With<&'a T, HashType> if T has an archived form which can be deserialized into a TypeStore for some lifetime &'a T. 
-impl<'a, T: ArchiveFetchable<'a, D> + TypeStorable, D: ArchiveDeserializer<'a>> DeserializeWith<ArchivedLink<T>, &'a T, D> for HashType {
+impl<'a, T: ArchiveFetchable<'a, D> + HashType, D: ArchiveDeserializer<'a>> DeserializeWith<ArchivedLink<T>, &'a T, D> for WithHashType {
 	#[inline]
 	fn deserialize_with(field: &ArchivedLink<T>, deserializer: &mut D) -> Result<&'a T, <D as Fallible>::Error> {
 		deserializer.fetch_ref(&field.0)
 	}
 }
 
-impl<'a, T: ArchiveFetchable<'a, D> + TypeStorable, D: ArchiveDeserializer<'a>> Deserialize<&'a T, D> for ArchivedLink<T> {
+impl<'a, T: ArchiveFetchable<'a, D> + HashType, D: ArchiveDeserializer<'a>> Deserialize<&'a T, D> for ArchivedLink<T> {
 	fn deserialize(&self, deserializer: &mut D) -> Result<&'a T, <D as Fallible>::Error> {
 		deserializer.fetch_ref(&self.0)
 	}

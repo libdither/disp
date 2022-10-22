@@ -6,24 +6,26 @@
 #![feature(associated_type_bounds)]
 #![feature(associated_type_defaults)]
 #![feature(downcast_unchecked)]
-#![feature(specialization)]
 #![feature(type_alias_impl_trait)]
 #![feature(return_position_impl_trait_in_trait)]
 
 #[macro_use]
 extern crate thiserror;
 
+extern crate hashdb_derive;
+pub use hashdb_derive::*;
+
 mod store;
 mod hash;
 pub mod link;
 
-pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, TypeStorable, ReverseLinked};
+pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueHashTypeId};
 pub use hash::Hash;
-pub use link::{HashType, TypedHash};
+pub use link::{WithHashType, TypedHash};
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}};
+	use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueHashTypeId};
 
 	#[test]
 	fn test_db() {
@@ -32,6 +34,12 @@ mod tests {
 
 		let arena = LinkArena::new();
 		assert_eq!(*string.fetch(db, &arena).unwrap(), "hello");
+	}
+
+	#[hashtype]
+	struct TestStruct<'e> {
+		#[subtype]
+		string: &'e String,
 	}
 
 	#[test]
@@ -44,21 +52,22 @@ mod tests {
 		enum StringType<'a> {
 			String(String),
 			Link(
-				#[with(HashType)]
+				#[with(WithHashType)]
 				#[omit_bounds]
 				&'a StringType<'a>,
-				#[with(HashType)]
+				#[with(WithHashType)]
 				#[omit_bounds]
 				&'a StringType<'a>,
 			),
 		}
-		/* impl<'a> NativeHashtype for StringType<'a> {
-			type LinkIter<'s, S: DatastoreSerializer> where S: 's, Self: 's = impl Iterator<Item = crate::Hash> + 's;
-
-			fn reverse_links<'s, S: DatastoreSerializer>(&'s self, _ser: &'s mut S) -> Self::LinkIter<'s, S> {
+		impl<'a> HashType for StringType<'a> {
+			fn reverse_links(&self) -> impl Iterator<Item = u64> {
 				std::iter::empty()
 			}
-		} */
+			fn unique_id() -> Option<crate::store::UniqueHashTypeId> {
+				None
+			}
+		}
 
 		let links = LinkArena::new();
 		let string = links.add(StringType::String("Hello".into()));

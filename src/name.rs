@@ -4,7 +4,7 @@ use bytecheck::CheckBytes;
 use rkyv::{with::Map, Archive, Deserialize, Serialize};
 
 use crate::expr::{BindTree, Expr};
-use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, LinkArena, ReverseLinked, TypeStore};
+use hashdb::{ArchiveDeserializer, ArchiveStore, WithHashType, LinkArena, HashType, TypeStore};
 
 /// Name of a thing
 #[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
@@ -34,12 +34,12 @@ impl<'e> Context<'e> {
 #[archive_attr(derive(CheckBytes))]
 #[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
 pub struct RevLink<'e, A: 'e, B: 'e> {
-	#[with(HashType)]
+	#[with(WithHashType)]
 	subject: &'e A,
-	#[with(HashType)]
+	#[with(WithHashType)]
 	object: &'e B
 }
-impl<'e, A: 'e, B: 'e> ReverseLinked for RevLink<'e, A, B> {
+impl<'e, A: 'e, B: 'e> HashType for RevLink<'e, A, B> {
     fn reverse_links(&self) -> impl Iterator<Item = u64> {
 		iter::once(self.subject.hash()).chain(iter::once(self.object.hash()))
     }
@@ -53,13 +53,13 @@ type NamedExpr<'e> = Link<'e, Name<'e>, Expr<'e>>;
 #[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'e>"))]
 pub enum NameTree<'e> {
 	Abs {
-		#[with(HashType)] bind: &'e String,
-		#[with(HashType)] #[omit_bounds] expr: &'e NameTree<'e>
+		#[with(WithHashType)] bind: &'e String,
+		#[with(WithHashType)] #[omit_bounds] expr: &'e NameTree<'e>
 	},
 	App (
-		#[with(HashType)] #[omit_bounds] &'e NameTree<'e>,
-		#[with(HashType)] #[omit_bounds] &'e NameTree<'e>,
+		#[with(WithHashType)] #[omit_bounds] &'e NameTree<'e>,
+		#[with(WithHashType)] #[omit_bounds] &'e NameTree<'e>,
 	),
 	Var,
-	NamedExpr(#[with(HashType)] &'e NamedExpr<'e>),
+	NamedExpr(#[with(WithHashType)] &'e NamedExpr<'e>),
 }

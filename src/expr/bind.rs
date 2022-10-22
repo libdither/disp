@@ -5,7 +5,7 @@ use thiserror::Error;
 use rkyv::{Archive, Deserialize, Serialize};
 use bytecheck::CheckBytes;
 
-use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, TypeStorable, TypeStore};
+use hashdb::{ArchiveDeserializer, ArchiveStore, WithHashType, WithHashType, TypeStore};
 
 use super::{Expr, LambdaError};
 
@@ -17,8 +17,8 @@ pub enum Binding<'a> {
 	None,
 	End,
 	Branch(
-		#[with(HashType)] #[omit_bounds] &'a Binding<'a>,
-		#[with(HashType)] #[omit_bounds] &'a Binding<'a>,
+		#[with(WithHashType)] #[omit_bounds] &'a Binding<'a>,
+		#[with(WithHashType)] #[omit_bounds] &'a Binding<'a>,
 	),
 }
 impl<'a> Binding<'a> {
@@ -70,12 +70,12 @@ pub enum BindTreeError {
 
 // Associates a value with various parts of an `Expr`
 #[derive(Clone, Hash, PartialEq, Debug)]
-pub enum BindTree<'a, T: TypeStorable> {
+pub enum BindTree<'a, T: HashType> {
 	None,
 	End(T),
 	Branch(&'a BindTree<'a, T>, &'a BindTree<'a, T>),
 }
-impl<'a, 'e, T: TypeStorable + 'e> BindTree<'a, T> {
+impl<'a, 'e, T: HashType + 'e> BindTree<'a, T> {
 	pub const NONE: &'e BindTree<'e, T> = &BindTree::None;
 	pub fn split(&'a self) -> Result<(&'a Self, &'a Self), BindTreeError> {
 		Ok(match self {
@@ -144,7 +144,7 @@ impl<'a, 'e, T: TypeStorable + 'e> BindTree<'a, T> {
 	}
 }
 
-impl<'a, T: fmt::Display + TypeStorable> fmt::Display for BindTree<'a, T> {
+impl<'a, T: fmt::Display + HashType> fmt::Display for BindTree<'a, T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			BindTree::Branch(BindTree::None, right) => write!(f, ">{}", right)?,

@@ -1,37 +1,27 @@
-use std::{any::TypeId, cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::{Hash as StdHash, Hasher}, iter, marker::PhantomData, rc::Rc};
+use std::{cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::{Hash as StdHash, Hasher}, iter, marker::PhantomData, rc::Rc};
 
 use bumpalo::Bump;
 
-use super::{TypeStorable, TypeStore};
+use super::{HashType, TypeStore, UniqueHashTypeId};
 
 pub struct LinkArena<'a> {
 	arena: Bump,
 	map: RefCell<HashMap<u64, *const ()>>, // Lookup map, takes hash and returns already allocated object
-	reverse_links_map: RefCell<HashMap<(u64, TypeId), Rc<RefCell<Vec<*const ()>>>>>, // Reverse lookup map, str represents object type
+	reverse_links_map: RefCell<HashMap<(u64, UniqueHashTypeId), Rc<RefCell<Vec<*const ()>>>>>, // Reverse lookup map, str represents object type
 	p: std::marker::PhantomData<&'a ()>,
 }
 impl<'a> TypeStore<'a> for LinkArena<'a> {
-    fn add<T: TypeStorable + 'static>(&'a self, val: T) -> &'a T {
+    fn add<T: HashType>(&'a self, val: T) -> &'a T {
         self.alloc(val)
     }
 }
-
-/// Whether an object should add back-links from certain hashes to itself.
-pub trait ReverseLinked {
-	fn reverse_links(&self) -> impl Iterator<Item = u64>;
-}
-default impl<T: StdHash> ReverseLinked for T {
-    fn reverse_links(&self) -> impl Iterator<Item = u64> {
-		iter::empty::<u64>()
-    }
-} 
 
 impl<'a> LinkArena<'a> {
 	pub fn new() -> Self {
 		Self {
 			arena: Bump::new(),
 			map: Default::default(),
-			reverse_links_map: Default::default(),
+			reverse_links_map: RefCell::new(HashMap::new()),
 			p: Default::default(),
 		}
 	}
@@ -50,7 +40,7 @@ impl<'a> LinkArena<'a> {
 		}
 	}
 	/// Return reference to existing allocation if exists, otherwise return new allocation
-	pub fn alloc<T: TypeStorable + ReverseLinked + 'static>(&'a self, val: T) -> &'a T {
+	pub fn alloc<T: HashType + HashType>(&'a self, val: T) -> &'a T {
 		let hash = Self::get_hash(&val);
 
 		if let Some(val) = self.check_for_dup(hash) {
@@ -61,24 +51,30 @@ impl<'a> LinkArena<'a> {
 			self.map.borrow_mut().insert(hash, ptr);
 
 			// Store Reverse Links
-			let mut reverse_links_map = self.reverse_links_map.borrow_mut();
-			for multihash in T::reverse_links(ret) {
-				let entry = reverse_links_map.entry((multihash, TypeId::of::<T>())).or_default();
-				// Note: See safety note in find_reverse_links, ptr points to a T
-				entry.borrow_mut().push(ptr);
+			if let Some(unique_id) = T::unique_id() {
+				let mut reverse_links_map = self.reverse_links_map.borrow_mut();
+				for hash in T::reverse_links(ret) {
+					let entry = reverse_links_map.entry((hash, unique_id)).or_default();
+					// Note: See safety note in find_reverse_links, ptr points to a T
+					entry.borrow_mut().push(ptr);
+				}
 			}
+			
 			ret
 		}
 	}
 	/// Iterate over T's reverse_links that match type `L`
-	pub fn find_reverse_links<T: TypeStorable, L: ReverseLinked + 'static>(&'a self, val: &T) -> Option<impl Iterator<Item = &'a L>> {
-		let hash = Self::get_hash(val);
-		let key = &(hash, TypeId::of::<L>());
-		let links = self.reverse_links_map.borrow().get(key).cloned();
-
-		links.map(|links: Rc<_>| {
-			ReverseLinkIter::<'a, L> { links, index: 0, _phantom: Default::default() }
-		})
+	pub fn find_reverse_links<T: HashType, L: HashType + 'a>(&'a self, val: &T) -> Option<impl Iterator<Item = &'a L>> {
+		if let Some(unique_id) = L::unique_id() {
+			let hash = Self::get_hash(val);
+			let key = &(hash, unique_id);
+			let links = self.reverse_links_map.borrow().get(key).cloned();
+	
+			links.map(|links: Rc<_>| {
+				ReverseLinkIter::<'a, L> { links, index: 0, _phantom: Default::default() }
+			})
+		} else { None }
+		
 	}
 }
 
