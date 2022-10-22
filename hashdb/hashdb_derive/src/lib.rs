@@ -90,11 +90,12 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 		 | Item::Enum(ItemEnum { ident, generics, .. })
 		 | Item::Union(ItemUnion { ident, generics, .. }) => {
 			let lifetime = generics.lifetimes().next().expect("#[hashtype] requires object to have at least one lifetime").clone().lifetime;
+			let deserialize_literal = format!("__D: ArchiveDeserializer<{lifetime}>");
 			(
 				quote! {
 					#[derive(Hash, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 					#[archive_attr(derive(bytecheck::CheckBytes))]
-					#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<#lifetime>"))]
+					#[archive(bound(serialize = "__S: ArchiveStore", deserialize = #deserialize_literal))]
 					#item
 				},
 				ident,
@@ -109,6 +110,7 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 	
     let output = quote! {
 		#derives
+
 		impl HashType for #ident {
 			fn reverse_links(&self) -> impl Iterator<Item = u64> {
 				std::iter::empty::<u64>()
