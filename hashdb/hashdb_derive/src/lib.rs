@@ -48,6 +48,7 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 
 	fn replace_field_attrs(field: &mut Field) {
 		let attrs = &mut field.attrs;
+		// Find #[subtype] and if found, remove it and add relevant annotations
 		if let Some((idx, _)) = attrs.into_iter().enumerate().flat_map(|(idx, attr)| attr.path.get_ident().map(|id|(idx, id))).find(|(_, ident)| &format!("{}", ident) == "subtype") {
 			attrs.remove(idx);
 			attrs.push(parse_quote! {
@@ -75,50 +76,49 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 		_ => unimplemented!()
 	}
 
-	let (derives, ident, hash) = match &item {
-		Item::Type(ItemType { ident, generics, .. }) => {
-			(
-				quote! { #item },
-				ident,
-				if generics.type_params().next().is_none() && generics.const_params().next().is_none() {
-					let hash = get_hash(&item);
-					quote! { Some(#hash) }
-				} else { quote! { None } }
-			)
-		}
+	let derives = match &item {
+		Item::Type(ItemType { ident, generics, .. }) => quote! { #item },
 		Item::Struct(ItemStruct { ident, generics, .. })
 		 | Item::Enum(ItemEnum { ident, generics, .. })
 		 | Item::Union(ItemUnion { ident, generics, .. }) => {
 			let lifetime = generics.lifetimes().next().expect("#[hashtype] requires object to have at least one lifetime").clone().lifetime;
 			let deserialize_literal = format!("__D: ArchiveDeserializer<{lifetime}>");
-			(
-				quote! {
-					#[derive(Hash, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-					#[archive_attr(derive(bytecheck::CheckBytes))]
-					#[archive(bound(serialize = "__S: ArchiveStore", deserialize = #deserialize_literal))]
-					#item
-				},
-				ident,
-				if generics.type_params().next().is_none() && generics.const_params().next().is_none() {
-					let hash = get_hash(&item);
-					quote! { Some(#hash) }
-				} else { quote! { None } }
-			)
+			quote! {
+				#[derive(Hash, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+				#[archive_attr(derive(bytecheck::CheckBytes))]
+				#[archive(bound(serialize = "__S: ArchiveStore", deserialize = #deserialize_literal))]
+				#item
+			}
 		}
 		_ => unimplemented!(),
+	};
+
+	let hashtype_impl = match &item {
+		Item::Type(ItemType { ident, generics, .. })
+		 | Item::Struct(ItemStruct {ident, generics, .. })
+		 | Item::Enum(ItemEnum { ident, generics, .. })
+		 | Item::Union(ItemUnion { ident, generics, .. }) =>{
+			if generics.type_params().next().is_none() && generics.const_params().next().is_none() {
+				let hash = get_hash(&item);
+				quote! {
+					impl #generics HashType for #ident #generics {
+						fn reverse_links(&self) -> impl Iterator<Item = u64> {
+							std::iter::empty::<u64>()
+						}
+						fn unique_id() -> Option<UniqueHashTypeId> {
+							Some(#hash)
+						}
+					}
+				}
+			} else { quote! {  } }
+		 }
+		 _ => unimplemented!()
 	};
 	
     let output = quote! {
 		#derives
 
-		impl HashType for #ident {
-			fn reverse_links(&self) -> impl Iterator<Item = u64> {
-				std::iter::empty::<u64>()
-			}
-			fn unique_id() -> Option<UniqueHashTypeId> {
-				#hash
-			}
-		}
+		#hashtype_impl
     };
 	output.into()
 }

@@ -37,6 +37,7 @@ mod tests {
 	}
 
 	#[hashtype]
+	#[derive(Debug)]
 	struct TestStruct<'e> {
 		#[subtype]
 		string: &'e String,
