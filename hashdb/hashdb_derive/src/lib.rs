@@ -2,8 +2,8 @@
 
 use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}};
 
-use syn::{Attribute, Field, Fields, Generics, Item, ItemEnum, ItemImpl, ItemStruct, ItemType, ItemUnion, Lit, Meta, MetaList, NestedMeta, Token, WhereClause, parse_macro_input, parse_quote, punctuated::Punctuated};
-use quote::quote;
+use syn::{Attribute, Field, Fields, Generics, Ident, Item, ItemEnum, ItemImpl, ItemStruct, ItemType, ItemUnion, Lit, Meta, MetaList, NestedMeta, Token, WhereClause, parse_macro_input, parse_quote, punctuated::Punctuated};
+use quote::{format_ident, quote};
 use proc_macro2::TokenStream;
 use proc_macro::{TokenStream as ProcTokenStream};
 
@@ -46,10 +46,27 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 
 	let mut item = parse_macro_input!(input as Item);
 
-	fn replace_field_attrs(field: &mut Field) {
+
+	fn replace_field_attrs(iter_list: &mut Vec<TokenStream>, idx: usize, field: &mut Field, do_iter_gen: bool) {
 		let attrs = &mut field.attrs;
 		// Find #[subtype] and if found, remove it and add relevant annotations
-		if let Some((idx, _)) = attrs.into_iter().enumerate().flat_map(|(idx, attr)| attr.path.get_ident().map(|id|(idx, id))).find(|(_, ident)| &format!("{}", ident) == "subtype") {
+		if let Some((idx, ident)) = attrs.into_iter().enumerate().flat_map(|(idx, attr)| attr.path.get_ident().map(|id: &Ident|(idx, id))).find(|(_, ident)| {
+			ident == &"subtype" || ident == &"subtype_reverse_link"
+		}) {
+			if ident == &"subtype_reverse_link" && do_iter_gen {
+				let field_ident = field.ident.clone().map(|id|id.to_string()).unwrap_or(idx.to_string());
+				let field_ident = format_ident!("{}", field_ident);
+				iter_list.push(quote! {
+					{
+						use std::hash::{Hasher, Hash};
+						let mut hasher = std::collections::hash_map::DefaultHasher::new();
+						self.#field_ident.hash(&mut hasher);
+						let hash = hasher.finish();
+						std::iter::once(hash)
+					}
+					
+				});
+			}
 			attrs.remove(idx);
 			attrs.push(parse_quote! {
 				#[with(WithHashType)]
@@ -59,17 +76,19 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 			});
 		}
 	}
+	let mut iter_list = Vec::<TokenStream>::new();
+
 	match &mut item {
 		Item::Union(ItemUnion { fields, .. }) | Item::Struct(ItemStruct { fields: Fields::Named(fields), .. }) => {
-			for field in fields.named.iter_mut() { replace_field_attrs(field) }
+			for (idx, field) in fields.named.iter_mut().enumerate() { replace_field_attrs(&mut iter_list, idx, field, true) }
 		}
 		Item::Struct(ItemStruct { fields: Fields::Unnamed(fields), .. }) => {
-			for field in fields.unnamed.iter_mut() { replace_field_attrs(field) }
+			for (idx, field) in fields.unnamed.iter_mut().enumerate() { replace_field_attrs(&mut iter_list, idx, field, true) }
 		}
 		Item::Enum(ItemEnum { variants, .. }) => {
 			for variant in variants {
-				for field in &mut variant.fields {
-					replace_field_attrs(field)
+				for (idx, field) in &mut variant.fields.iter_mut().enumerate() {
+					replace_field_attrs(&mut iter_list, idx, field, false)
 				}
 			}
 		}
@@ -78,9 +97,9 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 
 	let derives = match &item {
 		Item::Type(ItemType { ident, generics, .. }) => quote! { #item },
-		Item::Struct(ItemStruct { ident, generics, .. })
-		 | Item::Enum(ItemEnum { ident, generics, .. })
-		 | Item::Union(ItemUnion { ident, generics, .. }) => {
+		Item::Struct(ItemStruct { generics, .. })
+		 | Item::Enum(ItemEnum { generics, .. })
+		 | Item::Union(ItemUnion { generics, .. }) => {
 			let lifetime = generics.lifetimes().next().expect("#[hashtype] requires object to have at least one lifetime").clone().lifetime;
 			let deserialize_literal = format!("__D: ArchiveDeserializer<{lifetime}>");
 			quote! {
@@ -100,10 +119,15 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 		 | Item::Union(ItemUnion { ident, generics, .. }) =>{
 			if generics.type_params().next().is_none() && generics.const_params().next().is_none() {
 				let hash = get_hash(&item);
+				let iters = iter_list.into_iter().fold(
+					quote! { std::iter::empty() }, |xs, ts| {
+						quote! { #xs.chain(#ts) }
+					}
+				);
 				quote! {
 					impl #generics HashType for #ident #generics {
 						fn reverse_links(&self) -> impl Iterator<Item = u64> {
-							std::iter::empty::<u64>()
+							#iters
 						}
 						fn unique_id() -> Option<UniqueHashTypeId> {
 							Some(#hash)

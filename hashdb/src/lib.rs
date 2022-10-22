@@ -38,36 +38,32 @@ mod tests {
 
 	#[hashtype]
 	#[derive(Debug)]
-	struct TestStruct<'e> {
+	struct TestName<'e> {
 		#[subtype]
 		string: &'e String,
+	}
+
+	#[hashtype]
+	#[derive(Debug)]
+	struct TestStruct<'e> {
+		#[subtype_reverse_link]
+		name: &'e TestName<'e>,
+		number: u64,
 	}
 
 	#[test]
 	fn test_loading() {
 		// Self-referential type
-		#[derive(Debug, Hash, PartialEq, Clone, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-		// To use the safe API, you have to derive CheckBytes for the archived type
-		#[archive_attr(derive(bytecheck::CheckBytes, Debug))]
-		#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
+		#[derive(Debug, Clone)]
+		#[hashtype]
 		enum StringType<'a> {
 			String(String),
 			Link(
-				#[with(WithHashType)]
-				#[omit_bounds]
+				#[subtype]
 				&'a StringType<'a>,
-				#[with(WithHashType)]
-				#[omit_bounds]
+				#[subtype]
 				&'a StringType<'a>,
 			),
-		}
-		impl<'a> HashType for StringType<'a> {
-			fn reverse_links(&self) -> impl Iterator<Item = u64> {
-				std::iter::empty()
-			}
-			fn unique_id() -> Option<crate::store::UniqueHashTypeId> {
-				None
-			}
 		}
 
 		let links = LinkArena::new();
