@@ -27,6 +27,7 @@ pub enum LambdaError {
 }
 
 #[hashtype]
+#[derive(Debug)]
 pub enum Expr<'a> {
 	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,

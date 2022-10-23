@@ -40,15 +40,15 @@ mod tests {
 		pub use super::{WithHashType, HashType, UniqueId, ReverseLinks};
 	}
 
-	#[hashtype]
 	#[derive(Debug)]
+	#[hashtype]
 	struct TestName<'e> {
 		#[subtype]
 		string: &'e String,
 	}
 
-	#[hashtype]
 	#[derive(Debug)]
+	#[hashtype]
 	struct TestStruct<'e> {
 		#[subtype_reverse_link]
 		name: &'e TestName<'e>,

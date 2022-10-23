@@ -8,6 +8,7 @@ use super::{Expr, LambdaError};
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
 #[hashtype]
+#[derive(Debug)]
 pub enum Binding<'a> {
 	None,
 	End,
@@ -64,7 +65,8 @@ pub enum BindTreeError {
 }
 
 // Associates a value with various parts of an `Expr`
-#[derive(Clone, Hash, PartialEq, Debug)]
+#[derive(Clone, Debug)]
+#[hashtype(no_archive)]
 pub enum BindTree<'a, T: HashType> {
 	None,
 	End(T),

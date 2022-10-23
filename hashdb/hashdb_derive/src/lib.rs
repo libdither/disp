@@ -3,9 +3,9 @@
 
 use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}};
 
-use syn::{Attribute, Field, Fields, GenericParam, Generics, Ident, Item, ItemEnum, ItemImpl, ItemStruct, ItemType, ItemUnion, Lit, Meta, MetaList, NestedMeta, Token, Type, WhereClause, parse_macro_input, parse_quote, punctuated::Punctuated};
+use syn::{Attribute, Field, Fields, GenericParam, Generics, Ident, Item, ItemEnum, ItemImpl, ItemStruct, ItemType, ItemUnion, Lit, Meta, MetaList, NestedMeta, Path, Token, Type, WhereClause, parse_macro_input, parse_quote, punctuated::Punctuated};
 use quote::{format_ident, quote};
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use proc_macro::{TokenStream as ProcTokenStream};
 
 
@@ -36,7 +36,18 @@ use proc_macro::{TokenStream as ProcTokenStream};
 /// type Vec2f32 = Vec2<f32>;
 /// ```
 #[proc_macro_attribute]
-pub fn hashtype(_attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStream {
+pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStream {
+	let attr = TokenStream::from(attr);
+	let meta = parse_quote! { hashtype(#attr) };
+	
+	// check if meta is of form `#[hashtype(no_archive)]`
+	let no_archive_derive = if let Meta::List(MetaList { nested, .. }) = meta {
+		if let Some(NestedMeta::Meta(Meta::Path(path))) = nested.iter().next() {
+			path.get_ident().map(|id|id.to_string()) == Some("no_archive".to_string())
+		} else { false }
+	} else { false };
+	// let do_archive_derive = true;
+
 	// Get input item (struct, enum, union, or type alias)
 	let mut item = parse_macro_input!(input as Item);
 
@@ -73,12 +84,14 @@ pub fn hashtype(_attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStre
 				});
 			}
 			attrs.remove(idx);
-			attrs.push(parse_quote! {
-				#[with(hashdb::WithHashType)]
-			});
-			attrs.push(parse_quote! {
-				#[omit_bounds]
-			});
+			if !no_archive_derive {
+				attrs.push(parse_quote! {
+					#[with(hashdb::WithHashType)]
+				});
+				attrs.push(parse_quote! {
+					#[omit_bounds]
+				});
+			}
 		}
 	};
 
@@ -108,14 +121,24 @@ pub fn hashtype(_attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStre
 		 | Item::Union(ItemUnion { generics, .. }) => {
 			let lifetime = generics.lifetimes().next().expect("#[hashtype] requires object to have at least one lifetime").clone().lifetime;
 			let deserialize_literal = format!("__D: ArchiveDeserializer<{lifetime}>");
-			quote! {
-				#[derive(Hash, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-				#[archive_attr(derive(bytecheck::CheckBytes))]
-				#[archive(bound(serialize = "__S: ArchiveStore", deserialize = #deserialize_literal))]
-				#item
+			if !no_archive_derive {
+				quote! {
+					#[derive(Hash, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+					#[archive_attr(derive(bytecheck::CheckBytes))]
+					#[archive(bound(serialize = "__S: ArchiveStore", deserialize = #deserialize_literal))]
+					#item
+				}
+			} else {
+				quote!{
+					#[derive(Hash, PartialEq)]
+					#item
+				}
 			}
 		}
-		_ => quote!{ #item },
+		_ => quote!{
+			#[derive(Hash, PartialEq)]
+			#item
+		},
 	};
 
 	// Generate ReverseLinks impl for struct, enum, or union
@@ -161,18 +184,23 @@ pub fn hashtype(_attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStre
 		 | Item::Enum(ItemEnum { ident, generics, .. })
 		 | Item::Union(ItemUnion { ident, generics, .. }) => {
 			// Impl UniqueId only if there are no type or const params.
-			if generics.type_params().next().is_none() && generics.const_params().next().is_none() {
 				let hash = get_hash(&item);
-				
-				quote! {
-					impl #generics hashdb::UniqueId for #ident #generics {
-						
-						fn unique_id() -> u64 {
-							#hash
-						}
+			let calc_id = generics.type_params().fold(
+				quote! { #hash }, 
+				|acc, val| {
+					let ident = &val.ident;
+					quote! { #acc ^ <#ident as hashdb::UniqueId>::unique_id() }
+				}
+			);
+			let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+			quote! {
+				impl #impl_generics hashdb::UniqueId for #ident #ty_generics #where_clause {
+					fn unique_id() -> u64 {
+						#calc_id
 					}
 				}
-			} else { quote! {  } }
+			}
 		 }
 		 _ => unimplemented!()
 	};

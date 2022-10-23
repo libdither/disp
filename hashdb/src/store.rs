@@ -43,11 +43,13 @@ pub trait UniqueId {
 }
 
 /// Defines a HashType, represents a Rust type with a UniqueId and some set of defined ReverseLinks
-pub trait HashType: StdHash + ReverseLinks + UniqueId + Archive {}
-impl<T: StdHash + ReverseLinks + UniqueId + Archive> HashType for T {}
+pub trait HashType: StdHash + ReverseLinks + UniqueId {}
+impl<T: StdHash + ReverseLinks + UniqueId> HashType for T {}
 
 impl_hashtype_for_many! {
-	u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64,
+	u8, u16, u32, u64, u128, usize,
+	i8, i16, i32, i64, i128, isize,
+	f32, f64,
 	String
 }
 

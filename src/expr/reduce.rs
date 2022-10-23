@@ -45,12 +45,6 @@ impl<'e> Expr<'e> {
 				*bind_index = BindIndex::join(func_bind, args_bind, binds);
 				Expr::app(&func, &args, exprs)
 			}
-			Expr::Universe(_) => self,
-			Expr::Pi { bind, bind_type, expr } => {
-				let replaced_expr = expr.recur_replace(bind_index, replace_expr, replace_bind, binds, exprs)?;
-	
-				Expr::pi(bind, bind_type, &replaced_expr, exprs)
-			}
 		})
 	}
 	
@@ -67,7 +61,7 @@ impl<'e> Expr<'e> {
 		}
 	
 		Ok(match self {
-			Expr::Variable | Expr::Universe(_) => self,
+			Expr::Variable => self,
 			Expr::Lambda { bind, expr } => {
 				bind_index.push_binding(bind, reps)?;
 	
@@ -102,13 +96,6 @@ impl<'e> Expr<'e> {
 						Expr::app(func, args, exprs)
 					}
 				}
-			}
-			Expr::Pi { bind, bind_type, expr } => {
-				bind_index.push_binding(bind, reps)?;
-	
-				let reduced_expr = expr.partial_reduce(bind_index, depth, reps, exprs)?;
-	
-				Expr::pi(bind_index.pop_binding(reps, exprs)?, bind_type, reduced_expr, exprs)
 			}
 		})
 	}

@@ -79,8 +79,6 @@ fn test_reduce() {
 
 #[test]
 fn test_parsing() {
-	use crate::name_old::NamespaceMut;
-
 	let exprs = &LinkArena::new();
 	let namespace = &mut NamespaceMut::new();
 
@@ -105,7 +103,6 @@ fn test_parsing() {
 
 #[test]
 fn test_factorial() {
-	use crate::name_old::NamespaceMut;
 	
 	let exprs = &LinkArena::new();
 	let namespace = &mut NamespaceMut::new();
