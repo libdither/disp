@@ -1,9 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, fmt, iter, marker::PhantomData};
+use std::{marker::PhantomData};
 
 
-use crate::expr::{BindTree, Expr};
-use hashdb::{ArchiveDeserializer, ArchiveStore, WithHashType, LinkArena, HashType, TypeStore, hashtype};
-use rkyv::Archive;
+use crate::expr::{Expr};
+use hashdb::{ArchiveDeserializer, ArchiveStore, LinkArena, HashType, TypeStore, hashtype};
 
 /// Name of a thing
 #[hashtype]

@@ -16,8 +16,10 @@ use rkyv::{Archive, Deserialize, Serialize};
 mod arena;
 mod db;
 mod ser;
+mod rev;
 pub use arena::*;
 pub use db::*;
+pub use rev::*;
 use rkyv::Archived;
 
 use crate::TypedHash;
@@ -27,8 +29,14 @@ use crate::Hash;
 /// Good for fast accessing, recursive descent and in-memory manipulations of expressions
 /// All types that store a T in an arena and return a reference to that T that lasts as long as the arena.
 pub trait TypeStore<'a> {
-	fn add<T: HashType>(&'a self, val: T) -> &'a T;
+	fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T;
 }
+pub trait RevTypeStore<'a>: TypeStore<'a> {
+	fn rev_add<T: RevHashType<'a>>(&'a self, val: T) -> &'a T;
+	type Iter<'i: 'a, L: 'i>: Iterator<Item = &'i L> where Self: 'i;
+	fn links<'i, T: HashType<'a>, L: RevHashType<'a>>(&'i self, val: &T) -> Self::Iter<'i, L>;
+}
+
 /// All types that can be stored in a LinkArena.
 
 /// Type that has fields that implement HashType that may be reverse-linked (i.e. given the value of a field, find the HashType containing it)
@@ -43,13 +51,13 @@ pub trait UniqueId {
 }
 
 /// Defines a HashType, represents a Rust type with a UniqueId and some set of defined ReverseLinks
-pub trait HashType: StdHash + ReverseLinks + UniqueId {}
-impl<T: StdHash + ReverseLinks + UniqueId> HashType for T {}
+pub trait HashType<'a>: StdHash + 'a {}
+impl<'a, T: StdHash + 'a> HashType<'a> for T {}
+
+pub trait RevHashType<'a>: HashType<'a> + ReverseLinks + UniqueId {}
+impl<'a, T: HashType<'a> + ReverseLinks + UniqueId> RevHashType<'a> for T {}
 
 impl_hashtype_for_many! {
-	u8, u16, u32, u64, u128, usize,
-	i8, i16, i32, i64, i128, isize,
-	f32, f64,
 	String
 }
 
@@ -88,7 +96,7 @@ pub trait ArchiveDeserializer<'a>: ArchiveStoreRead + TypeStore<'a> {
 	fn fetch<T: ArchiveFetchable<'a, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
 	where
 		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>;
-	fn fetch_ref<T: ArchiveFetchable<'a, Self> + HashType>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
+	fn fetch_ref<T: ArchiveFetchable<'a, Self> + HashType<'a>>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
 	where
 		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>;
 }
@@ -122,7 +130,7 @@ impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveStoreRead for Archive
     }
 }
 impl<'s, 'a: 's, S: ArchiveStoreRead, A: TypeStore<'a>> TypeStore<'a> for ArchiveToType<'s, 'a, S, A> {
-    fn add<T: HashType>(&'a self, val: T) -> &'a T {
+    fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T {
         self.type_store.add(val)
     }
 }
@@ -135,7 +143,7 @@ impl<'s, 'a: 's, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveDeserializer<'a> 
 		Ok(Deserialize::deserialize(archive, self)?)
     }
 
-    fn fetch_ref<T: ArchiveFetchable<'a, Self> + HashType>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
+    fn fetch_ref<T: ArchiveFetchable<'a, Self> + HashType<'a>>(&mut self, hash: &Hash) -> Result<&'a T, <Self as Fallible>::Error>
 	where
 		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>> + ArchiveInterpretable
 	{

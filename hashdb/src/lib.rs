@@ -19,13 +19,14 @@ mod store;
 mod hash;
 pub mod link;
 
-pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueId, ReverseLinks};
+pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueId, ReverseLinks, RevHashType, RevTypeStore, RevLinkStore, RevLinkArena};
 pub use hash::Hash;
 pub use link::{WithHashType, TypedHash};
 
 #[cfg(test)]
 mod tests {
-	pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueId, ReverseLinks};
+	use crate::{RevLinkArena, RevTypeStore};
+pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueId, ReverseLinks};
 
 	#[test]
 	fn test_db() {
@@ -38,21 +39,6 @@ mod tests {
 
 	mod hashdb {
 		pub use super::{WithHashType, HashType, UniqueId, ReverseLinks};
-	}
-
-	#[derive(Debug)]
-	#[hashtype]
-	struct TestName<'e> {
-		#[subtype]
-		string: &'e String,
-	}
-
-	#[derive(Debug)]
-	#[hashtype]
-	struct TestStruct<'e> {
-		#[subtype_reverse_link]
-		name: &'e TestName<'e>,
-		number: u64,
 	}
 
 	#[test]
@@ -83,5 +69,39 @@ mod tests {
 		let links_de = LinkArena::new();
 		let ret = hash.fetch(db, &links_de).unwrap();
 		assert_eq!(ret, string2);
+	}
+
+	#[test]
+	fn test_reverse_link() {
+		let links = &LinkArena::new();
+		let rev_links = RevLinkArena::new(links);
+
+		{
+			let name = links.add(TestName { string: links.add("Hello".to_owned()) });
+
+			// Store reverse linked
+			rev_links.rev_add(TestStruct { name, number: 42 });
+		};
+
+		let name = links.add(TestName { string: links.add("Hello".to_owned()) });
+
+		let test = rev_links.links::<TestName, TestStruct>(name).next().expect("Should be at least one rev-linked structure here");
+
+		assert_eq!(test.number, 42);
+	}
+
+	#[derive(Debug)]
+	#[hashtype]
+	struct TestName<'e> {
+		#[subtype]
+		string: &'e String,
+	}
+
+	#[derive(Debug)]
+	#[hashtype]
+	struct TestStruct<'e> {
+		#[subtype_reverse_link]
+		name: &'e TestName<'e>,
+		number: u64,
 	}
 }

@@ -65,9 +65,9 @@ impl<T> TypedHash<T> {
 	}
 }
 
-impl<T: HashType + ArchiveInterpretable> TypedHash<T> {
+impl<'s, 'a: 's, T: HashType<'a> + ArchiveInterpretable> TypedHash<T> {
 	// Resolve TypedHash using Datastore and add to TypeStore
-	pub fn fetch<'s, 'a: 's, Store, Arena>(&self, db: &'s Store, arena: &'a Arena) -> Result<&'a T, <Store as Fallible>::Error>
+	pub fn fetch<Store, Arena>(&self, db: &'s Store, arena: &'a Arena) -> Result<&'a T, <Store as Fallible>::Error>
 	where
 		Store: ArchiveStore,
 		Arena: TypeStore<'a>,
@@ -118,14 +118,14 @@ impl<'a, S: ArchiveStore, T: ArchiveStorable<S>> SerializeWith<&'a T, S> for Wit
 }
 
 /// impl Deserialize for any With<&'a T, HashType> if T has an archived form which can be deserialized into a TypeStore for some lifetime &'a T. 
-impl<'a, T: ArchiveFetchable<'a, D> + HashType, D: ArchiveDeserializer<'a>> DeserializeWith<ArchivedLink<T>, &'a T, D> for WithHashType {
+impl<'a, T: ArchiveFetchable<'a, D> + HashType<'a>, D: ArchiveDeserializer<'a>> DeserializeWith<ArchivedLink<T>, &'a T, D> for WithHashType {
 	#[inline]
 	fn deserialize_with(field: &ArchivedLink<T>, deserializer: &mut D) -> Result<&'a T, <D as Fallible>::Error> {
 		deserializer.fetch_ref(&field.0)
 	}
 }
 
-impl<'a, T: ArchiveFetchable<'a, D> + HashType, D: ArchiveDeserializer<'a>> Deserialize<&'a T, D> for ArchivedLink<T> {
+impl<'a, T: ArchiveFetchable<'a, D> + HashType<'a>, D: ArchiveDeserializer<'a>> Deserialize<&'a T, D> for ArchivedLink<T> {
 	fn deserialize(&self, deserializer: &mut D) -> Result<&'a T, <D as Fallible>::Error> {
 		deserializer.fetch_ref(&self.0)
 	}

@@ -65,14 +65,13 @@ pub enum BindTreeError {
 }
 
 // Associates a value with various parts of an `Expr`
-#[derive(Clone, Debug)]
-#[hashtype(no_archive)]
-pub enum BindTree<'a, T: HashType> {
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub enum BindTree<'a, T: HashType<'a>> {
 	None,
 	End(T),
 	Branch(&'a BindTree<'a, T>, &'a BindTree<'a, T>),
 }
-impl<'a, 'e, T: HashType + 'e> BindTree<'a, T> {
+impl<'a, 'e, T: HashType<'a> + 'e> BindTree<'a, T> {
 	pub const NONE: &'e BindTree<'e, T> = &BindTree::None;
 	pub fn split(&'a self) -> Result<(&'a Self, &'a Self), BindTreeError> {
 		Ok(match self {
@@ -141,7 +140,7 @@ impl<'a, 'e, T: HashType + 'e> BindTree<'a, T> {
 	}
 }
 
-impl<'a, T: fmt::Display + HashType> fmt::Display for BindTree<'a, T> {
+impl<'a, T: fmt::Display + HashType<'a>> fmt::Display for BindTree<'a, T> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			BindTree::Branch(BindTree::None, right) => write!(f, ">{}", right)?,

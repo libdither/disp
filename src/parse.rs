@@ -31,7 +31,9 @@ impl BindMap {
 	}
 }
 
-fn lookup_expr<'e, E: TypeStore<'e>>(namespace: &Context<'e>, string: &str, _exprs: &'e E) -> Option<&'e Expr<'e>> {
+// Takes an expression
+fn lookup_link<'e, E: RevTypeStore<'e>>(namespace: &Context<'e>, string: &str, exprs: &'e E) -> Option<&'e Expr<'e>> {
+	
 	let name = namespace.find(|name|name.string == string)?;
 	match name.object {
 		ContextItem::Namespace(_) => None,
