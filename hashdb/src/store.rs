@@ -7,7 +7,7 @@
 
 use std::hash::Hash as StdHash;
 use bytecheck::CheckBytes;
-use hashdb_derive::impl_hashtype_for;
+use hashdb_derive::impl_hashtype_for_many;
 use rkyv::Fallible;
 use rkyv::ser::{ScratchSpace, Serializer};
 use rkyv::validation::validators::DefaultValidator;
@@ -30,16 +30,26 @@ pub trait TypeStore<'a> {
 	fn add<T: HashType>(&'a self, val: T) -> &'a T;
 }
 /// All types that can be stored in a LinkArena.
-pub type UniqueHashTypeId = u64;
-pub trait HashType: StdHash {
+
+/// Type that has fields that implement HashType that may be reverse-linked (i.e. given the value of a field, find the HashType containing it)
+/// Implemented by #[hashtype] macro
+pub trait ReverseLinks {
 	fn reverse_links(&self) -> impl Iterator<Item = u64>;
-	// Unique Id used for ReverseLinks. Only custom types may have unique_id that can be used for reverse_links
-	fn unique_id() -> Option<UniqueHashTypeId>;
 }
 
-impl_hashtype_for!(impl std::string::String {});
+/// Type that has a unique id, implemented by #[hashtype] macro
+pub trait UniqueId {
+	fn unique_id() -> u64;
+}
 
-impl_hashtype_for!(impl<T: StdHash> std::vec::Vec<T> {});
+/// Defines a HashType, represents a Rust type with a UniqueId and some set of defined ReverseLinks
+pub trait HashType: StdHash + ReverseLinks + UniqueId + Archive {}
+impl<T: StdHash + ReverseLinks + UniqueId + Archive> HashType for T {}
+
+impl_hashtype_for_many! {
+	u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64,
+	String
+}
 
 /// All types that can store a piece of data by its multihash.
 pub trait DataStore: DataStoreRead {

@@ -2,23 +2,18 @@
 use std::fmt;
 use thiserror::Error;
 
-use rkyv::{Archive, Deserialize, Serialize};
-use bytecheck::CheckBytes;
-
-use hashdb::{ArchiveDeserializer, ArchiveStore, WithHashType, WithHashType, TypeStore};
+use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, TypeStore, hashtype};
 
 use super::{Expr, LambdaError};
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
-#[archive_attr(derive(CheckBytes, Debug))]
-#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
+#[hashtype]
 pub enum Binding<'a> {
 	None,
 	End,
 	Branch(
-		#[with(WithHashType)] #[omit_bounds] &'a Binding<'a>,
-		#[with(WithHashType)] #[omit_bounds] &'a Binding<'a>,
+		#[subtype] &'a Binding<'a>,
+		#[subtype] &'a Binding<'a>,
 	),
 }
 impl<'a> Binding<'a> {
@@ -226,7 +221,6 @@ impl<'a> fmt::Display for BindIndex<'a> {
 
 #[test]
 fn test_replace_tree() {
-	use crate::name::NamespaceMut;
 	use hashdb::LinkArena;
 
 	use Binding as B;

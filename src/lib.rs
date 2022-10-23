@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![feature(return_position_impl_trait_in_trait)]
+#![feature(associated_type_bounds)]
 
 pub use hashdb::{Datastore};
 use hashdb::{LinkArena};

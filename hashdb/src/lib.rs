@@ -19,13 +19,13 @@ mod store;
 mod hash;
 pub mod link;
 
-pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueHashTypeId};
+pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueId, ReverseLinks};
 pub use hash::Hash;
 pub use link::{WithHashType, TypedHash};
 
 #[cfg(test)]
 mod tests {
-	use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueHashTypeId};
+	pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueId, ReverseLinks};
 
 	#[test]
 	fn test_db() {
@@ -34,6 +34,10 @@ mod tests {
 
 		let arena = LinkArena::new();
 		assert_eq!(*string.fetch(db, &arena).unwrap(), "hello");
+	}
+
+	mod hashdb {
+		pub use super::{WithHashType, HashType, UniqueId, ReverseLinks};
 	}
 
 	#[hashtype]

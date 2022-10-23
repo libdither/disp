@@ -1,65 +1,40 @@
-use std::{cell::RefCell, fmt, iter};
+use std::{cell::RefCell, collections::HashMap, fmt, iter, marker::PhantomData};
 
-use bytecheck::CheckBytes;
-use rkyv::{with::Map, Archive, Deserialize, Serialize};
 
 use crate::expr::{BindTree, Expr};
-use hashdb::{ArchiveDeserializer, ArchiveStore, WithHashType, LinkArena, HashType, TypeStore};
+use hashdb::{ArchiveDeserializer, ArchiveStore, WithHashType, LinkArena, HashType, TypeStore, hashtype};
+use rkyv::Archive;
 
 /// Name of a thing
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
-#[archive_attr(derive(CheckBytes))]
-#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
-pub struct Name {
+#[hashtype]
+pub struct Name<'e> {
 	name: String,
-}
-
-/// A context is some set of things
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
-#[archive_attr(derive(CheckBytes))]
-#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
-pub struct Context<'e> {
-	#[with(Map<HashType>)]
-	#[omit_bounds]
-	pub items: HashMap<String, ContextItem<'e>>,
-}
-impl<'e> Context<'e> {
-	fn new(items: Vec<ContextItem<'e>>) -> Self {
-		Self { items }
-	}
+	_phantom: PhantomData::<&'e ()>
 }
 
 /// Links Names to Exprs through Reverse Links
-#[derive(Clone, Hash, PartialEq, Eq, Debug, Archive, Serialize, Deserialize)]
-#[archive_attr(derive(CheckBytes))]
-#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'a>"))]
-pub struct RevLink<'e, A: 'e, B: 'e> {
-	#[with(WithHashType)]
+#[hashtype]
+pub struct RevLink<'e, A: HashType + 'e, B: HashType + 'e> {
+	#[subtype_reverse_link]
 	subject: &'e A,
-	#[with(WithHashType)]
+	#[subtype_reverse_link]
 	object: &'e B
 }
-impl<'e, A: 'e, B: 'e> HashType for RevLink<'e, A, B> {
-    fn reverse_links(&self) -> impl Iterator<Item = u64> {
-		iter::once(self.subject.hash()).chain(iter::once(self.object.hash()))
-    }
-}
 
-type NamedExpr<'e> = Link<'e, Name<'e>, Expr<'e>>;
+#[hashtype]
+type NamedExpr<'e> = RevLink<'e, Name<'e>, Expr<'e>>;
 
 /// Represents a tree of names
-#[derive(Debug, Hash, Archive, Serialize, Deserialize)]
-#[archive_attr(derive(bytecheck::CheckBytes))]
-#[archive(bound(serialize = "__S: ArchiveStore", deserialize = "__D: ArchiveDeserializer<'e>"))]
+#[hashtype]
 pub enum NameTree<'e> {
 	Abs {
-		#[with(WithHashType)] bind: &'e String,
-		#[with(WithHashType)] #[omit_bounds] expr: &'e NameTree<'e>
+		#[subtype] bind: &'e String,
+		#[subtype] expr: &'e NameTree<'e>
 	},
 	App (
-		#[with(WithHashType)] #[omit_bounds] &'e NameTree<'e>,
-		#[with(WithHashType)] #[omit_bounds] &'e NameTree<'e>,
+		#[subtype] &'e NameTree<'e>,
+		#[subtype] &'e NameTree<'e>,
 	),
 	Var,
-	NamedExpr(#[with(WithHashType)] &'e NamedExpr<'e>),
+	NamedExpr(#[subtype] &'e NamedExpr<'e>),
 }
