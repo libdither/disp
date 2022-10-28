@@ -19,14 +19,14 @@ mod store;
 mod hash;
 pub mod link;
 
-pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueId, ReverseLinks, RevHashType, RevTypeStore, RevLinkStore, RevLinkArena};
+pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueId, ReverseLinks, RevHashType, RevTypeStore, RevLinkStore, RevLinkArena, UniqueHash};
 pub use hash::Hash;
 pub use link::{WithHashType, TypedHash};
 
 #[cfg(test)]
 mod tests {
 	use crate::{RevLinkArena, RevTypeStore};
-pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueId, ReverseLinks};
+pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueId, ReverseLinks, UniqueHash};
 
 	#[test]
 	fn test_db() {
@@ -38,7 +38,7 @@ pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, Archive
 	}
 
 	mod hashdb {
-		pub use super::{WithHashType, HashType, UniqueId, ReverseLinks};
+		pub use super::{WithHashType, HashType, UniqueId, ReverseLinks, UniqueHash};
 	}
 
 	#[test]

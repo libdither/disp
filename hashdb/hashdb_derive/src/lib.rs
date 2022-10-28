@@ -74,9 +74,10 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 				
 				iter_list.push(quote! {
 					{
-						use std::hash::{Hasher, Hash};
+						use std::hash::Hasher;
+						use hashdb::UniqueHash;
 						let mut hasher = std::collections::hash_map::DefaultHasher::new();
-						self.#field_ident.hash(&mut hasher);
+						self.#field_ident.unique_hash(&mut hasher);
 						let hash = hasher.finish();
 						std::iter::once(hash)
 					}

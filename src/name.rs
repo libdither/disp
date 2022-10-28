@@ -1,4 +1,4 @@
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
 
 use crate::expr::{BindTree, Binding, Expr};
@@ -67,9 +67,9 @@ impl<'e: 'b, 'b> SemanticTree<'e> {
 		let syn_tree = links.add(SyntaxTree::App { func: func.syn_tree, args: args.syn_tree });
 		SemanticTree { syn_tree, expr }
 	}
-	pub fn named(name: &'e NamedExpr<'e>, links: &'e impl TypeStore<'e>) -> SemanticTree<'e> {
-		let syn_tree = links.add(SyntaxTree::NamedExpr(name));
-		SemanticTree { syn_tree, expr: name.expr }
+	pub fn named(named_expr: &'e NamedExpr<'e>, links: &'e impl TypeStore<'e>) -> SemanticTree<'e> {
+		let syn_tree = links.add(SyntaxTree::NamedExpr(named_expr));
+		SemanticTree { syn_tree, expr: named_expr.expr }
 	}
 	pub fn parens(inner: SemanticTree<'e>, links: &'e impl TypeStore<'e>) -> SemanticTree<'e> {
 		let syn_tree = links.add(SyntaxTree::Parenthesized(inner.syn_tree));
@@ -89,6 +89,7 @@ impl<'e: 'b, 'b> SemanticTree<'e> {
 			}
 			// Variables must have a bound name
 			(SyntaxTree::Var, Expr::Variable, NameBindTree::End(name)) => write!(f, "{name}")?,
+			(SyntaxTree::Var, Expr::Variable, NameBindTree::None) => write!(f, "*")?,
 			// Functions can be nested either like `[x] [y]` or like `[x y]` depending on whether the expr that binds `y` has `grouping` enabled or not.
 			(SyntaxTree::Abs { bind: name_bind, sub: syn_tree, grouped }, Expr::Lambda { bind, expr }, _) => {
 				// Push binding onto NameBindTree to keep track of bound name

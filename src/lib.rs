@@ -133,7 +133,7 @@ fn test_factorial() {
 	let mult = parse_reduce("[m n f] m (n f)", links).unwrap();
 	NamedExpr::new_linked("mult", mult, links);
 
-	println!("{}", parse("mult 2 3", links).unwrap());
+	// println!("{}", parse("mult 2 3", links).unwrap());
 	assert_eq!(
 		parse_reduce("mult 0 0", links).unwrap(),
 		parse_reduce("0", links).unwrap()

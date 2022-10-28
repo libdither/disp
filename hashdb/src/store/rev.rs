@@ -19,6 +19,7 @@ impl<'a, A: TypeStore<'a>> TypeStore<'a> for RevLinkStore<'a, A> {
 }
 impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {
     fn rev_add<T: RevHashType<'a>>(&'a self, val: T) -> &'a T {
+
         let ret = self.store.add(val);
 		let ptr = (ret as *const T) as *const ();
 		// Store Reverse Links
@@ -28,6 +29,8 @@ impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {
 			// Note: See safety note in find_reverse_links, ptr points to a T
 			entry.borrow_mut().push(ptr);
 		}
+		println!("Added reverse links {:?}", ret);
+
 		ret
     }
 	type Iter<'i: 'a, L: 'i> where Self: 'i = ReverseLinkIter<'i, L>;
@@ -36,7 +39,7 @@ impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {
 		let hash = super::arena::get_hash(val);
 		let key = &(hash, L::unique_id());
 		let links = self.reverse_links_map.borrow().get(key).cloned();
-		// println!("Looking up reverse links!!!");
+		println!("Looking up reverse links for {:?}", val);
 		ReverseLinkIter::<'a, L> { links, index: 0, _phantom: Default::default(), _type: Default::default() }
 	}
 }

@@ -38,12 +38,13 @@ fn lookup<'e, L: RevHashType<'e>>(links: &'e impl RevTypeStore<'e>, object: &'e 
 
 fn lookup_expr<'e>(links: &'e impl RevTypeStore<'e>, string: &str) -> Option<SemanticTree<'e>> {
 	let name = Name::add(links.add(string.to_string()), links);
-	let expr: &'e Expr<'e> = lookup::<Expr>(links, name, |expr| {
+	println!("looking up: {:?}", string);
+	let named_expr: &'e NamedExpr<'e> = lookup::<NamedExpr>(links, name, |expr| {
 		true // Return first expression found
 	})?;
-	lookup::<SemanticTree>(links, expr, |sem| {
-		true
-	}).cloned()
+	println!("found {name:?}");
+
+	Some(SemanticTree::named(named_expr, links))
 }
 
 
@@ -73,12 +74,13 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 
 		// A resolved symbol, variable, or paranthesised expression.
 		let atom = name_parser().try_map(|string, span| {
-			if let Some(val) = bind_map.name_index(&string) {
-				Ok((SemanticTree::VAR, BindSubTree::end(val, binds)))
-			} else if let Some(expr) = lookup_expr(links, &string) { // Check if variable is an expr
-				Ok((expr, BindSubTree::NONE))
-			} else if string == "*" {
+			println!("found name: {:?}", string);
+			if string == "*" { // Check if name is specifically unbound
 				Ok((SemanticTree::VAR, BindSubTree::NONE))
+			} else if let Some(val) = bind_map.name_index(&string) { // Check if name is bound
+				Ok((SemanticTree::VAR, BindSubTree::end(val, binds)))
+			} else if let Some(expr) = lookup_expr(links, &string) { // Check if name is defined
+				Ok((expr, BindSubTree::NONE))
 			} else {
 				Err(Simple::custom(span, "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
 			}
