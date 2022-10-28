@@ -3,7 +3,7 @@
 
 use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}};
 
-use syn::{Attribute, Field, Fields, GenericParam, Generics, Ident, Item, ItemEnum, ItemImpl, ItemStruct, ItemType, ItemUnion, Lit, Meta, MetaList, NestedMeta, Path, Token, Type, WhereClause, parse_macro_input, parse_quote, punctuated::Punctuated};
+use syn::{Attribute, DeriveInput, Field, Fields, GenericParam, Generics, Ident, Item, ItemEnum, ItemImpl, ItemStruct, ItemType, ItemUnion, Lit, Meta, MetaList, NestedMeta, Path, Token, Type, WhereClause, parse_macro_input, parse_quote, punctuated::Punctuated};
 use quote::{format_ident, quote};
 use proc_macro2::{Span, TokenStream};
 use proc_macro::{TokenStream as ProcTokenStream};
@@ -123,7 +123,7 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 			let deserialize_literal = format!("__D: ArchiveDeserializer<{lifetime}>");
 			if !no_archive_derive {
 				quote! {
-					#[derive(Hash, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+					#[derive(Hash, hashdb::UniqueId, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 					#[archive_attr(derive(bytecheck::CheckBytes))]
 					#[archive(bound(serialize = "__S: ArchiveStore", deserialize = #deserialize_literal))]
 					#item
@@ -176,41 +176,12 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 		}
 		_ => TokenStream::new()
 	};
-
-	//
-	let unique_id_impl = match &item {
-		Item::Type(ItemType { ident, generics, .. })
-		 | Item::Struct(ItemStruct {ident, generics, .. })
-		 | Item::Enum(ItemEnum { ident, generics, .. })
-		 | Item::Union(ItemUnion { ident, generics, .. }) => {
-			// Impl UniqueId only if there are no type or const params.
-				let hash = get_hash(&item);
-			let calc_id = generics.type_params().fold(
-				quote! { #hash }, 
-				|acc, val| {
-					let ident = &val.ident;
-					quote! { #acc ^ <#ident as hashdb::UniqueId>::unique_id() }
-				}
-			);
-			let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
-			quote! {
-				impl #impl_generics hashdb::UniqueId for #ident #ty_generics #where_clause {
-					fn unique_id() -> u64 {
-						#calc_id
-					}
-				}
-			}
-		 }
-		 _ => unimplemented!()
-	};
 	
     let output = quote! {
 		#derived_item
 
 		#reverse_links_impl
 
-		#unique_id_impl
     };
 	output.into()
 }
@@ -222,6 +193,33 @@ fn get_hash(hash_object: &impl Hash) -> u64 {
 	hasher.finish()
 }
 
+// UniqueId derive
+#[proc_macro_derive(UniqueId)]
+pub fn unique_hash_derive(input: ProcTokenStream) -> ProcTokenStream {
+	let input = parse_macro_input!(input as DeriveInput);
+	let hash = get_hash(&input);
+	let ident = input.ident;
+	let generics = input.generics;
+
+	// Require Type params to also impl UniqueId
+	let calc_id = generics.type_params().fold(
+		quote! { #hash }, 
+		|acc, val| {
+			let ident = &val.ident;
+			quote! { #acc ^ <#ident as hashdb::UniqueId>::unique_id() }
+		}
+	);
+	let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+	
+	let out = quote! {
+		impl #impl_generics hashdb::UniqueId for #ident #ty_generics #where_clause {
+			fn unique_id() -> u64 {
+				#calc_id
+			}
+		}
+	};
+	out.into()
+}
 
 // return HashType impl for some Data (struct, enum or union)
 fn impl_hashtype(item: &syn::Ident) -> TokenStream {

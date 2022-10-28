@@ -73,7 +73,7 @@ impl<'e> Expr<'e> {
 				// Split subtrees
 				let (mut func_bind, mut args_bind) = bind_index.split()?;
 				// Reduce function tree
-				let func = func.partial_reduce(&mut func_bind, depth, reps, exprs)?;
+				let func: &Expr = func.partial_reduce(&mut func_bind, depth, reps, exprs)?;
 	
 				match func {
 					Expr::Lambda { bind, expr } => {

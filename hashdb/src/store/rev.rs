@@ -36,7 +36,7 @@ impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {
 		let hash = super::arena::get_hash(val);
 		let key = &(hash, L::unique_id());
 		let links = self.reverse_links_map.borrow().get(key).cloned();
-
+		// println!("Looking up reverse links!!!");
 		ReverseLinkIter::<'a, L> { links, index: 0, _phantom: Default::default(), _type: Default::default() }
 	}
 }

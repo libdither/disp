@@ -65,14 +65,14 @@ pub enum BindTreeError {
 }
 
 // Associates a value with various parts of an `Expr`
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, hashdb::UniqueId, PartialEq)]
 pub enum BindTree<'a, T: HashType<'a>> {
 	None,
 	End(T),
 	Branch(&'a BindTree<'a, T>, &'a BindTree<'a, T>),
 }
-impl<'a, 'e, T: HashType<'a> + 'e> BindTree<'a, T> {
-	pub const NONE: &'e BindTree<'e, T> = &BindTree::None;
+impl<'a, T: HashType<'a>> BindTree<'a, T> {
+	pub const NONE: &'a BindTree<'a, T> = &BindTree::None;
 	pub fn split(&'a self) -> Result<(&'a Self, &'a Self), BindTreeError> {
 		Ok(match self {
 			BindTree::Branch(l, r) => (l, r),
@@ -97,7 +97,7 @@ impl<'a, 'e, T: HashType<'a> + 'e> BindTree<'a, T> {
 		trees.add(BindTree::End(val))
 	}
 	/// Add PointerTree to ReplaceTree at certain abstraction level
-	pub fn push_binding(self: &mut &'a Self, trees: &'a impl TypeStore<'a>, end: T, binds: &'e Binding<'e>) -> Result<(), BindTreeError>
+	pub fn push_binding<'e>(self: &mut &'a Self, trees: &'a impl TypeStore<'a>, end: T, binds: &'e Binding<'e>) -> Result<(), BindTreeError>
 		where T: Clone,
 	{
 		*self = match (*self, binds) {
@@ -121,7 +121,7 @@ impl<'a, 'e, T: HashType<'a> + 'e> BindTree<'a, T> {
 		Ok(())
 	}
 	/// Constructs PointerTree from ReplaceTree at certain abstraction level
-	pub fn pop_binding(self: &mut &'a Self, trees: &'a impl TypeStore<'a>, end: &T, binds: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, BindTreeError> 
+	pub fn pop_binding<'e>(self: &mut &'a Self, trees: &'a impl TypeStore<'a>, end: &T, binds: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, BindTreeError> 
 		where T: PartialEq,
 	{
 		Ok(match self {
@@ -222,15 +222,16 @@ impl<'a> fmt::Display for BindIndex<'a> {
 
 #[test]
 fn test_replace_tree() {
-	use hashdb::LinkArena;
+	use hashdb::{LinkArena, RevLinkArena};
 
 	use Binding as B;
 	let trees = &LinkArena::new();
 	let exprs = &LinkArena::new();
+	let links = RevLinkArena::new(exprs);
 	let mut r = BindIndex::DEFAULT;
 	println!("start: [{}]", r);
 
-	let lambda = crate::parse::parse("[x y z w] x (y z) w", &mut NamespaceMut::new(), exprs).unwrap();
+	let lambda = crate::parse::parse("[x y z w] x (y z) w", &links).unwrap().expr;
 	println!("lambda: {}", lambda);
 	let expr = r.push_lambda(&lambda, trees).unwrap();
 	println!("after push: {} : {}", expr, r);

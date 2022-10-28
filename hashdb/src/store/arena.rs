@@ -2,11 +2,11 @@ use std::{cell::RefCell, collections::{HashMap, hash_map::DefaultHasher}, hash::
 
 use bumpalo::Bump;
 
-use super::{HashType, TypeStore};
+use super::{HashType, TypeStore, UniqueHash};
 
-pub fn get_hash<T: StdHash>(val: &T) -> u64 {
+pub fn get_hash<T: UniqueHash>(val: &T) -> u64 {
 	let hasher = &mut DefaultHasher::new();
-	val.hash(hasher);
+	val.unique_hash(hasher);
 	hasher.finish()
 }
 
@@ -31,12 +31,11 @@ impl<'a> LinkArena<'a> {
 	}
 	// Takes a reference to a T returns a T of lifetime 'a if a value was allready allocated
 	fn check_for_dup<T: StdHash>(&self, hash: u64) -> Option<&'a T> {
-		let ptr = self.map.borrow_mut().get(&hash).cloned();
-		// Safety: Only this type can create this hash, theoretically.
-		// WARNING: this may cause UB on hash collision but I can't think of a better implementation at the moment
-		unsafe {
-			ptr.map(|ptr| &*ptr.cast::<T>())
-		}
+		if let Some(&ptr) = self.map.borrow_mut().get(&hash) {
+			// Safety: Only this type can create this hash, theoretically.
+			// WARNING: this may cause UB on hash collision but I can't think of a better implementation at the moment
+			unsafe { Some(&*ptr.cast::<T>()) }
+		} else { None }
 	}
 	/// Return reference to existing allocation if exists, otherwise return new allocation
 	pub fn alloc<T: HashType<'a>>(&'a self, val: T) -> &'a T {
@@ -46,7 +45,7 @@ impl<'a> LinkArena<'a> {
 			val
 		} else {
 			let ret = self.arena.alloc(val) as &T;
-			let ptr = (ret as *const T) as *const ();
+			let ptr = (ret as *const T).cast();
 			self.map.borrow_mut().insert(hash, ptr);
 			
 			ret

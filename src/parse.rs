@@ -1,96 +1,128 @@
 #![allow(dead_code)]
 
-use std::cell::RefCell;
+use std::{cell::RefCell, iter};
 
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
-use hashdb::{LinkArena, TypeStore};
+use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore};
 
-use crate::{expr::{BindSubTree, Expr}, name};
+use crate::{expr::{BindSubTree, Expr}, name::{self, Name, SemanticTree, NamedExpr}};
 
 // Represents active bound variables in the course of parsing an expression
 #[derive(Default, Debug)]
-pub struct BindMap {
-	map: RefCell<Vec<String>>,
+pub struct NameBindStack<'e> {
+	stack: RefCell<Vec<&'e Name<'e>>>,
 }
-impl BindMap {
+impl<'e> NameBindStack<'e> {
 	// Get binding index for this variable
-	fn bind_index(&self, string: &String) -> Option<usize> {
-		self.map.borrow().iter().enumerate().rev().find(|(_, e)|*e == string).map(|val|val.0 + 1)
+	fn name_index(&self, string: &String) -> Option<usize> {
+		self.stack.borrow().iter().enumerate().rev().find(|(_, e)|**e == string).map(|val|val.0 + 1)
 	}
-	fn push_bind(&self, string: &String) -> usize {
-		let mut map = self.map.borrow_mut();
-		map.push(string.clone());
+	fn push_name(&self, string: &'e Name<'e>) -> usize {
+		let mut map = self.stack.borrow_mut();
+		map.push(string);
 		map.len()
 	}
-	fn pop_bind(&self) -> usize {
-		let mut map = self.map.borrow_mut();
-		let ret = map.len();
-		map.pop();
-		ret
+	fn pop_name(&self) -> (usize, Option<&'e Name<'e>>) {
+		let mut map = self.stack.borrow_mut();
+		let len = map.len();
+		let ret = map.pop();
+		(len, ret)
 	}
 }
 
-// Takes an expression
-fn lookup_link<'e, E: RevTypeStore<'e>>(namespace: &Context<'e>, string: &str, exprs: &'e E) -> Option<&'e Expr<'e>> {
-	
-	let name = namespace.find(|name|name.string == string)?;
-	match name.object {
-		ContextItem::Namespace(_) => None,
-		ContextItem::Expr(expr) => Some(expr)
-	}
+/// Find first link of type L registered in RevTypeStore that contains `object` and matches a predicate
+fn lookup<'e, L: RevHashType<'e>>(links: &'e impl RevTypeStore<'e>, object: &'e impl HashType<'e>, predicate: impl Fn(&&'e L) -> bool) -> Option<&'e L> {
+	links.links::<_, L>(object).find(predicate)
 }
+
+fn lookup_expr<'e>(links: &'e impl RevTypeStore<'e>, string: &str) -> Option<SemanticTree<'e>> {
+	let name = Name::add(links.add(string.to_string()), links);
+	let expr: &'e Expr<'e> = lookup::<Expr>(links, name, |expr| {
+		true // Return first expression found
+	})?;
+	lookup::<SemanticTree>(links, expr, |sem| {
+		true
+	}).cloned()
+}
+
+
 fn name_parser() -> impl Parser<char, String, Error = Simple<char>> + Clone {
 	text::ident().padded().labelled("name")
 }
 
-fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(namespace: &'b Context<'e>, exprs: &'e E, binds: &'b B, bind_map: &'b BindMap) -> impl Parser<char, (&'e NamedExpr<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
-	recursive(|expr: Recursive<'b, char, (&'e Expr<'e>, &'b BindSubTree<'b>), Simple<char>>| {
+fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStore<'e, E>, binds: &'b B, bind_map: &'b NameBindStack<'e>) -> impl Parser<char, (SemanticTree<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
+	recursive(|expr: Recursive<'b, char, (SemanticTree<'e>, &'b BindSubTree<'b>), Simple<char>>| {
 		// A symbol, can be pretty much any string not including whitespace
 		let number = text::int::<_, Simple<char>>(10).padded()
 			.try_map(|s, span|
 				s.parse::<usize>()
 				.map_err(|e| Simple::custom(span, format!("{}", e)))
 			).try_map(|num, span| {
-				match (lookup_expr(namespace, "zero", exprs), lookup_expr(namespace, "succ", exprs)) {
+				match (lookup_expr(links, "zero"), lookup_expr(links, "succ")) {
 					(Some(zero), Some(succ)) => {
-						let expr = (0..num).into_iter().fold(zero, |acc, _|Expr::app(succ, acc, exprs));
-						Ok((expr, BindSubTree::NONE))
+						let expr = (0..num).into_iter().fold(zero, |acc, _|SemanticTree::app(succ.clone(), acc, links));
+						Ok((
+							expr,
+							BindSubTree::NONE
+						))
 					}
 					_ => Err(Simple::custom(span, "names `zero` and `succ` must be defined to use numbers"))
 				}
 			}).labelled("number");
 
 		// A resolved symbol, variable, or paranthesised expression.
-		let atom = name_parser().map(|string| {
-			if let Some(val) = bind_map.bind_index(&string) {
-				(Expr::VAR, BindSubTree::end(val, binds))
-			} else if let Some(expr) = lookup_expr(namespace, &string, exprs) {
-				(expr, BindSubTree::NONE)
-			} else { (Expr::VAR, BindSubTree::NONE) }
+		let atom = name_parser().try_map(|string, span| {
+			if let Some(val) = bind_map.name_index(&string) {
+				Ok((SemanticTree::VAR, BindSubTree::end(val, binds)))
+			} else if let Some(expr) = lookup_expr(links, &string) { // Check if variable is an expr
+				Ok((expr, BindSubTree::NONE))
+			} else if string == "*" {
+				Ok((SemanticTree::VAR, BindSubTree::NONE))
+			} else {
+				Err(Simple::custom(span, "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
+			}
 		}).labelled("expression")
     	.or(number)
-		.or(expr.clone().delimited_by(just('('), just(')')).padded());
+		.or(
+			expr.clone().map(|(inner, bind)|(SemanticTree::parens(inner, links), bind))
+			.delimited_by(just('('), just(')')
+		).padded());
 
 		// Parse `[x y z] x y z` as `[x] ([y] ([z] x y z))`
 		let lambda = name_parser()
     		.repeated().at_least(1)
 			.delimited_by(just('['), just(']'))
 			.map(|symbols| {
-				symbols.iter().for_each(|string|{
-					bind_map.push_bind(string);
+				let len = symbols.len();
+				// For each binding (i.e. "x", "y", "z") in parsed `[x y z]`, push onto bind_map
+				symbols.into_iter().for_each(|string|{
+					let string = links.add(string);
+					let name = Name::add(string, links);
+					bind_map.push_name(name);
 				});
-				0..symbols.len()
-			}).then(expr.clone()).foldr(|_, (lam_expr, mut bind_tree)| {
-				let binding = bind_tree.pop_binding(binds, &bind_map.pop_bind(), exprs).expect("failed to pop lambda");
-				(Expr::lambda(binding, lam_expr, exprs), bind_tree)
+				// Return iterator counting down to 0 for each symbol in the bind expression
+				0..len
+			}).then(expr.clone()).foldr(|symbol_idx: usize, (lam_expr, mut bind_tree)| { // Fold right, i.e. [x y] (...) -> Lam(x, Lam(y, ...))
+				// get bind index and bind name
+				let (bind_idx, name_bind) = bind_map.pop_name();
+				// add bind_name 
+				let name_bind = name_bind.expect("expected bound variables").clone();
+				let binding = bind_tree.pop_binding(binds, &bind_idx, links).expect("failed to pop lambda");
+				(
+					SemanticTree::lambda(binding, name_bind, lam_expr, symbol_idx != 0, links),
+					bind_tree
+				)
 			}).labelled("lambda");
 		
 		// Parse `x y z` as `((x y) z)`
 		let application = atom.clone()
 			.then(atom.clone().repeated().at_least(1))
 			.foldl(|(func, func_index), (args, args_index)| {
-				(Expr::app(func, args, exprs), BindSubTree::branch(func_index, args_index, binds))
+				(
+					SemanticTree::app(func, args, links),
+					BindSubTree::branch(func_index, args_index, binds)
+				)
 			}).labelled("application");
 
 
@@ -98,14 +130,14 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(namespace: &'b Context
 		lambda.or(application).or(atom).padded().labelled("expression")
 	}).then_ignore(end())
 }
-// Parse expression
-pub fn parse<'e>(string: &str, namespace: &Context<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+// Parse expression and register name tree
+pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e SemanticTree<'e>, anyhow::Error> {
 	let binds = &LinkArena::new();
-	let bind_map = &BindMap::default();
+	let bind_map = &NameBindStack::default();
 	{
-		let parsed = parser(namespace, exprs, binds, bind_map).parse(string);
+		let parsed = parser(links, binds, bind_map).parse(string);
 		match parsed {
-			Ok((expr, _)) => Ok(expr),
+			Ok((expr, _)) => Ok(links.rev_add(expr)), // Register NameTreeExpr
 			Err(errors) => {
 				gen_report(errors).try_for_each(|report|report.print(Source::from(&string)))?;
 				Err(anyhow::anyhow!("Error"))
@@ -182,8 +214,9 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
 }
 
 /// Parse and reduce a string
-pub fn parse_reduce<'e>(string: &str, namespace: &Context<'e>, exprs: &'e LinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
-	Ok(parse(string, namespace, exprs)?.reduce(exprs)?)
+pub fn parse_reduce<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
+	let nte = parse(string, links)?;
+	Ok(nte.expr.reduce(links)?)
 }
 
 /// Commands for cli
@@ -191,24 +224,24 @@ pub fn parse_reduce<'e>(string: &str, namespace: &Context<'e>, exprs: &'e LinkAr
 pub enum Command<'e> {
 	// Do nothing
 	None,
-	// Set a name in a namespace to a certain value
-	Set(String, &'e Expr<'e>),
+	// Set a name in a links to a certain value
+	Set(String, &'e SemanticTree<'e>),
 	// Load a symbol from a file
 	Load { /* name: String,  */file: String },
 	// Save a symbol to a file, either overwriting or not overwriting the file.
 	Save { /* name: String,  */file: String, overwrite: bool },
 	/// Import names, if none listed, imports all names
 	Use { name: String, items: Vec<String> },
-	/// Clear current namespace
+	/// Clear current links
 	Clear,
-	/// List current namespace's names
+	/// List current links's names
 	List,
 	// Evaluate passed expression and store output in 
-	Reduce(&'e Expr<'e>),
+	Reduce(&'e SemanticTree<'e>),
 }
 /// Parse commands
-pub fn command_parser<'e: 'b, 'b>(namespace: &'b Context<'e>, exprs: &'e LinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b BindMap) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
-	let expr = parser(namespace, exprs, binds, bind_map);
+pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b NameBindStack<'e>) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
+	let expr = parser(links, binds, bind_map);
 
 	let filepath = just::<_, _, Simple<char>>('"')
 		.ignore_then(filter(|c| *c != '\\' && *c != '"').repeated())
@@ -231,22 +264,16 @@ pub fn command_parser<'e: 'b, 'b>(namespace: &'b Context<'e>, exprs: &'e LinkAre
     	.labelled("command").map(||) */
 
 	end().to(Command::None)
-    	.or(
+    	.or(choice((
 			keyword("set")
-				.ignore_then(text::ident().padded())
-				.then(expr.clone()).map(|(symbol, (expr, _))| Command::Set(symbol, expr))
-		)
+			.ignore_then(text::ident().padded())
+			.then(expr.clone()).map(|(symbol, (expr, _))| Command::Set(symbol, links.rev_add(expr))),
+			keyword("list").to(Command::List),
+			keyword("load").ignore_then(filepath).map(|file|Command::Load { file }),
+			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false }),
+		)))
 		.or(
-			keyword("list").to(Command::List)
-		)
-    	.or(
-			keyword("load").ignore_then(filepath).map(|file|Command::Load { file })
-		)
-		.or(
-			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false })
-		)
-		.or(
-			expr.clone().map(|(expr, _)|Command::Reduce(expr))
+			expr.clone().map(|(expr, _)|Command::Reduce(links.rev_add(expr)))
 		)
 		.labelled("command")
 }
@@ -257,24 +284,25 @@ fn parse_test() {
 	use hashdb::LinkArena;
 
 	let exprs = &LinkArena::new();
-	let namespace = &mut Context::new();
-	let parsed = parse("[x y] x y", namespace, exprs).unwrap();
-	let test = Expr::lambda(Binding::left(Binding::END, exprs),
-	Expr::lambda(Binding::right(Binding::END, exprs),
-			Expr::app(Expr::VAR, Expr::VAR, exprs),
+	let links = &RevLinkArena::new(exprs);
+	// let links = &mut Context::new();
+	let parsed = parse("[x y] x y", links).unwrap();
+	let test = Expr::lambda(Binding::left(Binding::END, links),
+	Expr::lambda(Binding::right(Binding::END, links),
+			Expr::app(Expr::VAR, Expr::VAR, links),
 		exprs),
 	exprs);
-	assert_eq!(parsed, test);
+	assert_eq!(parsed.expr, test);
 
-	assert_eq!(test, parse("[x y] (x y)", namespace, exprs).unwrap());
+	assert_eq!(test, parse("[x y] (x y)", links).unwrap().expr);
 
-	let parsed = parse_reduce("([x y] x) ([x y] y) ([x y] x)", namespace, exprs).unwrap();
-	let parsed_2 = parse("([x y] y)", namespace, exprs).unwrap();
-	assert_eq!(parsed, parsed_2);
+	let parsed = parse_reduce("([x y] x) ([x y] y) ([x y] x)", links).unwrap();
+	let parsed_2 = parse("([x y] y)", links,).unwrap();
+	assert_eq!(parsed, parsed_2.expr);
 
-	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", namespace, exprs).unwrap();
-	namespace.add("iszero", iszero, exprs);
+	let iszero = parse_reduce("[n] n ([u] [x y] y) ([x y] x)", links).unwrap();
+	NamedExpr::new_linked("iszero", iszero, links);
 
-	let test = parse_reduce("iszero ([x y] y)", namespace, exprs).unwrap();
-	assert_eq!(test, parse("[x y] x", namespace, exprs).unwrap())
+	let test = parse_reduce("iszero ([x y] y)", links).unwrap();
+	assert_eq!(test, parse("[x y] x", links).unwrap().expr)
 }

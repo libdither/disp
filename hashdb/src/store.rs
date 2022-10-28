@@ -5,7 +5,8 @@
 //!  - Simple HashMap which maps Hash to serialized 
 //! Hash Table Storage
 
-use std::hash::Hash as StdHash;
+use std::any::Any;
+use std::hash::{Hash as StdHash, Hasher};
 use bytecheck::CheckBytes;
 use hashdb_derive::impl_hashtype_for_many;
 use rkyv::Fallible;
@@ -49,16 +50,33 @@ pub trait ReverseLinks {
 pub trait UniqueId {
 	fn unique_id() -> u64;
 }
+impl<'a, T: UniqueId> UniqueId for &'a T {
+    fn unique_id() -> u64 {
+        T::unique_id()
+    }
+}
+
+pub trait UniqueHash: StdHash + UniqueId {
+	fn unique_hash(&self, hasher: &mut impl Hasher);
+}
+impl<T: UniqueId + StdHash> UniqueHash for T {
+    fn unique_hash(&self, hasher: &mut impl Hasher) {
+        hasher.write_u64(Self::unique_id());
+		self.hash(hasher);
+    }
+} 
+
 
 /// Defines a HashType, represents a Rust type with a UniqueId and some set of defined ReverseLinks
-pub trait HashType<'a>: StdHash + 'a {}
-impl<'a, T: StdHash + 'a> HashType<'a> for T {}
+pub trait HashType<'a>: UniqueHash + std::fmt::Debug + 'a {}
+impl<'a, T: UniqueHash + std::fmt::Debug + 'a> HashType<'a> for T {}
 
 pub trait RevHashType<'a>: HashType<'a> + ReverseLinks + UniqueId {}
 impl<'a, T: HashType<'a> + ReverseLinks + UniqueId> RevHashType<'a> for T {}
 
 impl_hashtype_for_many! {
-	String
+	String,
+	usize
 }
 
 /// All types that can store a piece of data by its multihash.

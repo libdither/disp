@@ -28,22 +28,22 @@ pub enum LambdaError {
 
 #[hashtype]
 #[derive(Debug)]
-pub enum Expr<'a> {
+pub enum Expr<'e> {
 	/// By itself, an unbound term, a unit of undefined meaning, ready for construction
 	Variable,
 	/// Create a function
 	Lambda {
-		#[subtype] bind: &'a Binding<'a>,
-		#[subtype] expr: &'a Expr<'a>,
+		#[subtype] bind: &'e Binding<'e>,
+		#[subtype] expr: &'e Expr<'e>,
 	},
 	/// Apply functions to expressions
 	Application {
-		#[subtype] func: &'a Expr<'a>,
-		#[subtype] args: &'a Expr<'a>,
+		#[subtype] func: &'e Expr<'e>,
+		#[subtype] args: &'e Expr<'e>,
 	},
 }
 
-impl<'a> fmt::Display for &'a Expr<'a> {
+impl<'e> fmt::Display for &'e Expr<'e> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		thread_local! {
 			static BINDS: LinkArena<'static> = LinkArena::new();
@@ -63,12 +63,12 @@ impl<'a> fmt::Display for &'a Expr<'a> {
 	}
 }
 
-impl<'a> Expr<'a> {
+impl<'e> Expr<'e> {
 	pub const VAR: 	&'static Expr<'static> = &Expr::Variable;
-	pub fn lambda(bind: &'a Binding<'a>, expr: &'a Expr<'a>, arena: &'a impl TypeStore<'a>) -> &'a Expr<'a> {
+	pub fn lambda(bind: &'e Binding<'e>, expr: &'e Expr<'e>, arena: &'e impl TypeStore<'e>) -> &'e Expr<'e> {
 		arena.add(Expr::Lambda { bind, expr })
 	}
-	pub fn app(func: &'a Expr<'a>, args: &'a Expr<'a>, arena: &'a impl TypeStore<'a>) -> &'a Expr<'a> {
+	pub fn app(func: &'e Expr<'e>, args: &'e Expr<'e>, arena: &'e impl TypeStore<'e>) -> &'e Expr<'e> {
 		arena.add(Expr::Application { func, args })
 	}
 }

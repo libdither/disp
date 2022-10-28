@@ -1,8 +1,8 @@
 #![feature(iter_intersperse)]
 #![feature(option_result_contains)]
-#![feature(generic_associated_types)]
 #![feature(type_alias_impl_trait)]
 #![feature(try_blocks)]
+#![feature(return_position_impl_trait_in_trait)]
 
 use std::fs;
 
@@ -35,12 +35,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	}
 
 	let binds = &LinkArena::new();
-	let bind_map = parse::BindMap::default();
+	let bind_map = parse::NameBindStack::default();
 
 	// Current namespace of this REPL, contains all the currently accessible names
-	let namespace = NamespaceMut::new();
+	let links = &RevLinkArena::new(exprs);
 
-	let parser = parse::command_parser(&namespace, exprs, binds, &bind_map);
+	let parser = parse::command_parser(links, binds, &bind_map);
 
 	loop {
 		let readline = rl.readline(">> ");
@@ -51,21 +51,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				use parse::Command;
 				match parser.parse(line.as_str()) {
 					Ok(Command::None) => {}
-					Ok(Command::Set(string, expr)) => {
-						println!("{expr}");
-						let reduced = expr.reduce(exprs).unwrap();
+					Ok(Command::Set(string, sem)) => {
+						println!("{sem}");
+						let reduced = sem.expr.reduce(exprs).unwrap();
+						
 						println!("{reduced}");
-						namespace.add(string, reduced, exprs);
+						// namespace.add(string, reduced, exprs);
 					}
 					Ok(Command::List) => {
-						namespace.for_each(|name| println!("{name}"))
+						// namespace.for_each(|name| println!("{name}"))
 					}
-					Ok(Command::Reduce(expr)) => {
-						println!("{expr}");
-						let reduced = expr.reduce(exprs).unwrap();
+					Ok(Command::Reduce(sem)) => {
+						println!("{sem}");
+						let reduced = sem.expr.reduce(exprs).unwrap();
 						println!("{reduced}");
 					}
-					Ok(Command::Load { file: filename }) => {
+					/* Ok(Command::Load { file: filename }) => {
 						let result: anyhow::Result<()> = try {
 							let mut file = fs::File::open(filename)?;
 							let hash: TypedHash<Namespace> = bincode::deserialize_from::<_, Hash>(&mut file)?.into();
@@ -85,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 						bincode::serialize_into(&mut file, saved_hash.as_hash())?;
 						db.save(&mut file)?;
 						println!("Saved current namespace to {}", &filename);
-					}
+					} */
 					Ok(_) => {}
 					Err(errors) => {
 						parse::gen_report(errors)
