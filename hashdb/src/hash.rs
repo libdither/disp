@@ -1,174 +1,17 @@
 #![allow(dead_code)]
 use bytecheck::CheckBytes;
-use rkyv::{
-	ser::{ScratchSpace, Serializer},
-	Archive, Archived, Fallible,
-};
+use rkyv::{Archive, Fallible, ser::{ScratchSpace, Serializer}};
 use serde::{Deserialize, Serialize};
 /// This file is a clusterfudge of generic where expressions, hopefully this is made easier in the future...
-use std::{fmt, io::Read, mem::ManuallyDrop, str::FromStr};
+use std::{fmt, io::Read, mem::ManuallyDrop};
 
-#[cfg(feature = "async")]
-use futures::{AsyncRead, AsyncReadExt};
 
 mod code;
 mod hasher;
 use code::{calc_varint_len, Code};
 pub use hasher::TrimHasher;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Hash([u8; Code::Sha2_256.total_len()]);
-//pub type Hash = Multihash<{Code::Sha2_256}>;
-
-impl fmt::Debug for Hash {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "Hash({})", self)
-	}
-}
-
-impl Hash {
-	pub fn hash(data: &[u8]) -> Self {
-		let mhash = Multihash::<{ Code::Sha2_256 }>::hash(data);
-		unsafe { Self(mhash.data) }
-	}
-	pub const fn from_digest(digest: [u8; Code::Sha2_256.digest_len()]) -> Self {
-		// This should be using ..Default::default(), but const traits aren't in rust yet
-		let multihash = Multihash::<{ Code::Sha2_256 }> {
-			structure: ManuallyDrop::new(InternalMultihashStructure {
-				digest,
-				code: gen_varint_const_array::<{ Code::Sha2_256.format_code() }>(),
-				length: gen_varint_const_array::<{ Code::Sha2_256.digest_len() }>(),
-			}),
-		};
-		unsafe { Self(multihash.data) }
-	}
-	pub const fn from_array(array: [u8; Code::Sha2_256.total_len()]) -> Self {
-		Self(array)
-	}
-	pub fn from_reader(mut reader: impl Read) -> std::io::Result<Self> {
-		let mut hash = Self::default();
-		reader.read_exact(&mut hash.0)?;
-		Ok(hash)
-	}
-	#[cfg(feature = "async")]
-	pub async fn from_async_reader<A: AsyncRead + Unpin>(mut reader: A) -> std::io::Result<Self> {
-		let mut hash = Self::default();
-		reader.read_exact(&mut hash.0).await?;
-		Ok(hash)
-	}
-	/// Used for defining type primitives
-	/* pub const fn const_digest(data: &[u8]) -> Self {
-		let buf: [u8; C.digest_len()];
-		let buf_mut = buf.split_at_mut(data.len()).0;
-		buf_mut.copy_from_slice(data);
-		Self::from_digest(buf)
-	} */
-	pub const fn len() -> usize {
-		Code::Sha2_256.total_len()
-	}
-	/// Safety: This returns immutable data with no memory pointers
-	pub fn as_bytes(&self) -> &[u8] {
-		&self.0
-	}
-	// pub fn digest(&self) -> &[u8] { unsafe { &self.structure.digest } }
-}
-
-impl AsRef<[u8]> for Hash {
-	fn as_ref(&self) -> &[u8] {
-		&self.0
-	}
-}
-
-impl Default for Hash {
-	fn default() -> Self {
-		let multihash = Multihash::<{ Code::Sha2_256 }>::default();
-		unsafe { Self(multihash.data) }
-	}
-}
-impl Serialize for Hash {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-	where
-		S: serde::Serializer,
-	{
-		serializer.serialize_bytes(self.as_bytes())
-	}
-}
-impl fmt::Display for Hash {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{}", bs58::encode(self).into_string())
-	}
-}
-
-struct HashVisitor;
-
-impl<'de> serde::de::Visitor<'de> for HashVisitor {
-	type Value = Hash;
-
-	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-		formatter.write_str("an integer between -2^31 and 2^31")
-	}
-	fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-	where
-		E: serde::de::Error,
-	{
-		Ok(Hash::from_reader(v).map_err(|e| serde::de::Error::custom(e))?)
-	}
-}
-
-impl<'de> Deserialize<'de> for Hash {
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-	where
-		D: serde::Deserializer<'de>,
-	{
-		deserializer.deserialize_bytes(HashVisitor)
-	}
-}
-
-impl Archive for Hash {
-	type Archived = Hash;
-	type Resolver = [(); Code::Sha2_256.total_len()];
-
-	#[inline]
-	unsafe fn resolve(&self, pos: usize, resolver: Self::Resolver, out: *mut Self::Archived) {
-		// Treat Multihash<C> as a const-size array of bytes (C.total_len() in size)
-		self.0.resolve(pos, resolver, out.cast());
-	}
-}
-
-impl<S: ScratchSpace + Serializer + ?Sized> rkyv::Serialize<S> for Hash {
-	fn serialize(&self, _serializer: &mut S) -> Result<Self::Resolver, S::Error> {
-		Ok([(); Code::Sha2_256.total_len()])
-	}
-}
-impl<D: ?Sized + Fallible> rkyv::Deserialize<Hash, D> for Archived<Hash> {
-	fn deserialize(&self, _deserializer: &mut D) -> Result<Hash, D::Error> {
-		Ok(self.clone())
-	}
-}
-
-impl<S: ?Sized> CheckBytes<S> for Hash {
-	type Error = unsigned_varint::decode::Error;
-
-	unsafe fn check_bytes<'a>(value: *const Self, _context: &mut S) -> Result<&'a Self, Self::Error> {
-		let code = unsigned_varint::decode::usize(&(*value).0)?;
-		if code.0 == Code::Sha2_256.format_code() {
-			Ok(&*value)
-		} else {
-			Err(unsigned_varint::decode::Error::Insufficient)
-		}
-	}
-}
-
-/// FromStr implemente to convert from Base58 encodings
-impl FromStr for Hash {
-	type Err = bs58::decode::Error;
-
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		let mut hash = Hash::default();
-		bs58::decode(s).into(&mut hash.0)?;
-		Ok(hash)
-	}
-}
+pub type Hash = Multihash<{Code::Sha2_256}>;
 
 #[repr(C)] // For predictable memory layout
 #[derive(PartialEq, Eq, Clone, Hash)]
@@ -274,7 +117,7 @@ where
 	}
 }
 
-/* impl<const C: Code> Serialize for Multihash<C>
+impl<const C: Code> Serialize for Multihash<C>
 where
 	[(); calc_varint_len(C.digest_len())]: Sized,
 	[(); calc_varint_len(C.format_code())]: Sized,
@@ -322,12 +165,9 @@ where
 			D: serde::Deserializer<'de> {
 		deserializer.deserialize_bytes(MultihashVisitor::<C>)
 	}
-} */
+}
 
-// TODO: This throws the compiler bug:
-// "error: internal compiler error: compiler/rustc_middle/src/ty/normalize_erasing_regions.rs:179:90: Failed to normalize <hashdb::hash::Multihash<C> as rkyv::Archive>::Resolver, maybe try to call `try_normalize_erasing_regions` instead"
-// currently working around it by implementing directly on Hash
-/* impl<const C: Code> Archive for Multihash<C>
+impl<const C: Code> Archive for Multihash<C>
 where
 	[(); calc_varint_len(C.digest_len())]: Sized,
 	[(); calc_varint_len(C.format_code())]: Sized,
@@ -356,6 +196,18 @@ where
 	}
 }
 
+impl<const C: Code, D: Fallible + ?Sized> rkyv::Deserialize<Multihash<C>, D> for <Multihash<C> as Archive>::Archived
+where
+	[(); calc_varint_len(C.digest_len())]: Sized,
+	[(); calc_varint_len(C.format_code())]: Sized,
+	[(); C.digest_len()]: Sized,
+	[(); C.total_len()]: Sized
+{
+    fn deserialize(&self, _deserializer: &mut D) -> Result<Multihash<C>, D::Error> {
+        Ok(self.clone())
+    }
+}
+
 impl<S: ?Sized, const C: Code> CheckBytes<S> for Multihash<C>
 where
 	[(); calc_varint_len(C.digest_len())]: Sized,
@@ -369,7 +221,7 @@ where
 		let code = unsigned_varint::decode::usize(&(*value).structure.code)?;
 		if Code::valid_code(code.0) { Ok(&*value) } else { Err(unsigned_varint::decode::Error::Insufficient) }
 	}
-} */
+}
 
 impl<const C: Code> Multihash<C>
 where

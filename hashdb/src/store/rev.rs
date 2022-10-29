@@ -33,6 +33,9 @@ impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {
 
 		ret
     }
+
+	// TODO: Only the deprecated version of this where clause works for some reason.
+	#[allow(deprecated_where_clause_location)]
 	type Iter<'i: 'a, L: 'i> where Self: 'i = ReverseLinkIter<'i, L>;
 
 	fn links<T: HashType<'a>, L: RevHashType<'a>>(&'a self, val: &T) -> Self::Iter<'a, L> {

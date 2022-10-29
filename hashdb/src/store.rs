@@ -5,7 +5,6 @@
 //!  - Simple HashMap which maps Hash to serialized 
 //! Hash Table Storage
 
-use std::any::Any;
 use std::hash::{Hash as StdHash, Hasher};
 use bytecheck::CheckBytes;
 use hashdb_derive::impl_hashtype_for_many;

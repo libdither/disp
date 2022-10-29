@@ -1,5 +1,4 @@
 #![allow(unused_imports)]
-#![feature(proc_macro_quote)]
 
 use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}};
 
