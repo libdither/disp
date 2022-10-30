@@ -1,7 +1,6 @@
 //! Types of Expressions
 
 use std::fmt;
-use thiserror::Error;
 
 use hashdb::{ArchiveDeserializer, ArchiveStore, LinkArena, TypeStore, hashtype};
 

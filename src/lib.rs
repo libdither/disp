@@ -1,6 +1,6 @@
 #![allow(dead_code)]
+#![allow(incomplete_features)]
 #![feature(return_position_impl_trait_in_trait)]
-#![feature(associated_type_bounds)]
 #![feature(generic_const_exprs)]
 
 pub use hashdb::{Datastore};

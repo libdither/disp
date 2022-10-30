@@ -1,7 +1,3 @@
-#![feature(iter_intersperse)]
-#![feature(option_result_contains)]
-#![feature(type_alias_impl_trait)]
-#![feature(try_blocks)]
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(generic_const_exprs)]
 

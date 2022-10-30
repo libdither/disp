@@ -1,12 +1,8 @@
 #![allow(incomplete_features)]
-#![allow(const_evaluatable_unchecked)]
 #![feature(generic_const_exprs)]
 #![feature(adt_const_params)]
 #![feature(const_mut_refs)]
 #![feature(associated_type_bounds)]
-#![feature(associated_type_defaults)]
-#![feature(downcast_unchecked)]
-#![feature(type_alias_impl_trait)]
 #![feature(return_position_impl_trait_in_trait)]
 
 #[macro_use]
@@ -38,7 +34,7 @@ pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, Archive
 	}
 
 	mod hashdb {
-		pub use super::{WithHashType, HashType, UniqueId, ReverseLinks, UniqueHash};
+		pub use super::{WithHashType, HashType, UniqueId, ReverseLinks, UniqueHash, ArchiveDeserializer, ArchiveStore};
 	}
 
 	#[test]
