@@ -1,8 +1,25 @@
 //! This file contains functions to evaluate or beta reduce expressions
+use thiserror::Error;
 
-use hashdb::{LinkArena, TypeStore};
+use hashdb::{LinkArena, RevTypeStore, TypeStore, hashtype};
 
-use super::{BindIndex, BindSubTree, Expr, LambdaError};
+use super::{BindIndex, BindSubTree, BindTreeError, Expr};
+
+#[derive(Error, Debug)]
+pub enum ReduceError {
+	// Beta Reduction Error
+	#[error("recursion depth for beta reduction exceeded")]
+	RecursionDepthExceeded,
+
+	#[error("binding level mismatch: make sure variable bindings match with variable positions in expressions and that bindings don't overlap")]
+	BindingLevelMismatch,
+
+	#[error("found variable in expression but binding tree is branching")]
+	UnexpectedBranchInSubstitution,
+
+	#[error("bind error: {0}")]
+	BindError(#[from] BindTreeError)
+}
 
 /// Recursively substitute expressions for certain variables
 /// Takes lambda expression, for each variable in Lambda { expr }, if Lambda { tree } index == replace_index, replace subexpr with replacement and subtree with replacement_tree
@@ -14,13 +31,13 @@ impl<'e> Expr<'e> {
 		replace_bind: &'r BindSubTree<'r>,	// Bind Tree to replace with
 		binds: &'r impl TypeStore<'r>,		// BindSubTree Arena
 		exprs: &'e impl TypeStore<'e>,		// Expr Arena
-	) -> Result<&'e Expr<'e>, LambdaError> {
+	) -> Result<&'e Expr<'e>, ReduceError> {
 		Ok(match self {
 			Expr::Variable => {
 				// When encounter a variable and index is correct, replace with replacement
 				// Must be BindTree::None because replace_in_expr's variables aren't registered in external_tree
 				match bind_index.tree {
-					BindSubTree::Branch(_, _) => Err(LambdaError::UnexpectedBranchInSubstitution)?,
+					BindSubTree::Branch(_, _) => Err(ReduceError::UnexpectedBranchInSubstitution)?,
 					BindSubTree::End(val) if *val == bind_index.index => {
 						bind_index.tree = replace_bind;
 						replace_expr
@@ -55,9 +72,9 @@ impl<'e> Expr<'e> {
 		depth: usize,
 		reps: &'r impl TypeStore<'r>,
 		exprs: &'e impl TypeStore<'e>
-	) -> Result<&'e Expr<'e>, LambdaError> {
+	) -> Result<&'e Expr<'e>, ReduceError> {
 		if depth > 200 {
-			return Err(LambdaError::RecursionDepthExceeded);
+			return Err(ReduceError::RecursionDepthExceeded);
 		}
 	
 		Ok(match self {
@@ -100,8 +117,23 @@ impl<'e> Expr<'e> {
 		})
 	}
 	
-	pub fn reduce(self: &'e Expr<'e>, exprs: &'e impl TypeStore<'e>) -> Result<&'e Expr<'e>, LambdaError> {
+	pub fn reduce(self: &'e Expr<'e>, exprs: &'e impl TypeStore<'e>) -> Result<&'e Expr<'e>, ReduceError> {
 		let reps = &LinkArena::new();
 		Ok(self.partial_reduce(&mut BindIndex::DEFAULT.clone(), 0, reps, exprs)?)
+	}
+}
+
+#[hashtype]
+#[derive(Debug)]
+pub struct ReduceLink<'e> {
+	expr: &'e Expr<'e>,
+	reduced: &'e Expr<'e>,
+}
+impl<'e> ReduceLink<'e> {
+	fn reduce(expr: &'e Expr<'e>, links: &'e impl RevTypeStore<'e>) -> Result<&'e ReduceLink<'e>, ReduceError> {
+		let reduced = expr.reduce(links)?;
+		Ok(links.rev_add(ReduceLink {
+			expr, reduced
+		}))
 	}
 }
