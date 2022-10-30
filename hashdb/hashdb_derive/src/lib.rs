@@ -120,12 +120,12 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 		 | Item::Enum(ItemEnum { generics, .. })
 		 | Item::Union(ItemUnion { generics, .. }) => {
 			let lifetime = generics.lifetimes().next().expect("#[hashtype] requires object to have at least one lifetime").clone().lifetime;
-			let deserialize_literal = format!("__D: ArchiveDeserializer<{lifetime}>");
+			let deserialize_literal = format!("__D: hashdb::ArchiveDeserializer<{lifetime}>");
 			if !no_archive_derive {
 				quote! {
 					#[derive(Hash, hashdb::UniqueId, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 					#[archive_attr(derive(bytecheck::CheckBytes))]
-					#[archive(bound(serialize = "__S: ArchiveStore", deserialize = #deserialize_literal))]
+					#[archive(bound(serialize = "__S: hashdb::ArchiveStore", deserialize = #deserialize_literal))]
 					#item
 				}
 			} else {

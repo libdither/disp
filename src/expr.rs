@@ -10,22 +10,6 @@ mod reduce;
 pub use bind::*;
 pub use reduce::*;
 
-#[derive(Error, Debug)]
-pub enum LambdaError {
-	// Beta Reduction Error
-	#[error("recursion depth for beta reduction exceeded")]
-	RecursionDepthExceeded,
-
-	#[error("binding level mismatch: make sure variable bindings match with variable positions in expressions and that bindings don't overlap")]
-	BindingLevelMismatch,
-
-	#[error("found variable in expression but binding tree is branching")]
-	UnexpectedBranchInSubstitution,
-
-	#[error("bind error: {0}")]
-	BindError(#[from] BindTreeError)
-}
-
 #[hashtype]
 #[derive(Debug)]
 pub enum Expr<'e> {

@@ -1,17 +1,20 @@
 #![allow(dead_code)]
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(associated_type_bounds)]
+#![feature(generic_const_exprs)]
 
 pub use hashdb::{Datastore};
 use hashdb::{LinkArena, RevLinkArena, TypeStore};
 
 pub mod expr;
 pub mod name;
+pub mod check;
 mod parse;
 
 use expr::{Binding as B, Expr};
 pub use parse::{parse, parse_reduce};
 pub use name::*;
+pub use check::*;
 
 fn setup_boolean_logic<'a>(
 	links: &'a impl TypeStore<'a>,

@@ -3,6 +3,7 @@
 #![feature(type_alias_impl_trait)]
 #![feature(try_blocks)]
 #![feature(return_position_impl_trait_in_trait)]
+#![feature(generic_const_exprs)]
 
 use std::fs;
 
@@ -14,19 +15,21 @@ use hashdb::*;
 
 mod expr;
 mod name;
+mod check;
 mod parse;
 
 use name::*;
+use check::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let exprs = &LinkArena::new();
 	let db = &mut Datastore::new();
 
-	let _load_file = std::env::args().nth(1);
+	let load_file = std::env::args().nth(1);
 
-	/* if let Some(file) = &load_file {
-		db.load(fs::File::open(file).unwrap()).expect("could not load disp file")
-	} */
+	if let Some(file) = &load_file {
+		db.load(&mut fs::File::open(file).unwrap()).expect("could not load disp file")
+	}
 
 	let mut rl = Editor::<()>::with_config(rustyline::Config::builder().max_history_size(1000).build());
 	println!("Welcome to disp (λ)");
@@ -56,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 						let reduced = sem.expr.reduce(exprs).unwrap();
 						
 						println!("{reduced}");
+						NamedExpr::new_linked(&string, reduced, links);
 						// namespace.add(string, reduced, exprs);
 					}
 					Ok(Command::List) => {

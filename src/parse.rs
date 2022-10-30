@@ -74,7 +74,7 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 
 		// A resolved symbol, variable, or paranthesised expression.
 		let atom = name_parser().try_map(|string, span| {
-			println!("found name: {:?}", string);
+			// println!("found name: {:?}", string);
 			if string == "*" { // Check if name is specifically unbound
 				Ok((SemanticTree::VAR, BindSubTree::NONE))
 			} else if let Some(val) = bind_map.name_index(&string) { // Check if name is bound

@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, TypeStore, hashtype};
 
-use super::{Expr, LambdaError};
+use super::{Expr, ReduceError};
 
 /// PointerTree represents where the variables are in a Lambda abstraction.
 #[hashtype]
@@ -188,10 +188,10 @@ impl<'a> BindIndex<'a> {
 		Ok(())
 	}
 	/// Pop Binding from BindIndex
-	pub fn pop_binding<'e>(&mut self, trees: &'a impl TypeStore<'a>, binds: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, LambdaError> {
+	pub fn pop_binding<'e>(&mut self, trees: &'a impl TypeStore<'a>, binds: &'e impl TypeStore<'e>) -> Result<&'e Binding<'e>, ReduceError> {
 		let BindIndex::<'a> { index, tree } = self;
 		if *index == 0 {
-			return Err(LambdaError::BindingLevelMismatch);
+			return Err(ReduceError::BindingLevelMismatch);
 		}
 		let ret = tree.pop_binding(trees, index, binds)?;
 		*index -= 1;
@@ -207,7 +207,7 @@ impl<'a> BindIndex<'a> {
 	}
 	/// Creates nested Lambda expressions from BindIndex
 	#[allow(dead_code)]
-	pub fn pop_lambda<'e>(&mut self, expr: &'e Expr<'e>, trees: &'a impl TypeStore<'a>, exprs: &'e impl TypeStore<'e>) -> Result<&'e Expr<'e>, LambdaError> {
+	pub fn pop_lambda<'e>(&mut self, expr: &'e Expr<'e>, trees: &'a impl TypeStore<'a>, exprs: &'e impl TypeStore<'e>) -> Result<&'e Expr<'e>, ReduceError> {
 		let binds_tree = self.pop_binding(trees, exprs)?;
 		let popped_expr = if self.index == 0 { &expr } else { self.pop_lambda(expr, trees, exprs)? };
 		Ok(Expr::lambda(binds_tree, popped_expr, exprs))
