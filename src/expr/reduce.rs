@@ -126,8 +126,8 @@ impl<'e> Expr<'e> {
 #[hashtype]
 #[derive(Debug)]
 pub struct ReduceLink<'e> {
-	expr: &'e Expr<'e>,
-	reduced: &'e Expr<'e>,
+	#[subtype_reverse_link] expr: &'e Expr<'e>,
+	#[subtype_reverse_link] reduced: &'e Expr<'e>,
 }
 impl<'e> ReduceLink<'e> {
 	fn reduce(expr: &'e Expr<'e>, links: &'e impl RevTypeStore<'e>) -> Result<&'e ReduceLink<'e>, ReduceError> {
