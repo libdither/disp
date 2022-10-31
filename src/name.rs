@@ -158,6 +158,7 @@ pub enum SyntaxTree<'e> {
 	Var,
 	NamedExpr(#[subtype] &'e NamedExpr<'e>),
 	Parenthesized(#[subtype] &'e SyntaxTree<'e>),
+	// Judgement(#[subtype] &'e SyntaxTree<'e>, #[subtype] &'e SyntaxTree<'e>),
 }
 impl<'e> SyntaxTree<'e> {
 	pub const VAR: &'static SyntaxTree<'static> = &SyntaxTree::Var;

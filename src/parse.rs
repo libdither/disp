@@ -38,11 +38,11 @@ fn lookup<'e, L: RevHashType<'e>>(links: &'e impl RevTypeStore<'e>, object: &'e 
 
 fn lookup_expr<'e>(links: &'e impl RevTypeStore<'e>, string: &str) -> Option<SemanticTree<'e>> {
 	let name = Name::add(links.add(string.to_string()), links);
-	println!("looking up: {:?}", string);
+	// println!("looking up: {:?}", string);
 	let named_expr: &'e NamedExpr<'e> = lookup::<NamedExpr>(links, name, |expr| {
 		true // Return first expression found
 	})?;
-	println!("found {name:?}");
+	// println!("found {name:?}");
 
 	Some(SemanticTree::named(named_expr, links))
 }
@@ -130,7 +130,7 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 
 		// An expression can be a lambda: `[x y]` an application: `x y` or a standalone variable / symbol: `x`
 		lambda.or(application).or(atom).padded().labelled("expression")
-	}).then_ignore(end())
+	})
 }
 // Parse expression and register name tree
 pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e SemanticTree<'e>, anyhow::Error> {
@@ -224,10 +224,16 @@ pub fn parse_reduce<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e
 /// Commands for cli
 #[derive(Debug, Clone)]
 pub enum Command<'e> {
-	// Do nothing
+	/// Do nothing
 	None,
-	// Set a name in a links to a certain value
-	Set(String, &'e SemanticTree<'e>),
+	/// Evaluate passed expression and store output in 
+	Reduce(&'e SemanticTree<'e>),
+	/// Set a name in a links to a certain value (`set thing <expr>`)
+	Name(String, &'e SemanticTree<'e>),
+	/// Get the definition of a passed name (`get thing`)
+	Get(String),
+	/// Check an expression using a type-expr
+	Check(&'e SemanticTree<'e>, &'e SemanticTree<'e>),
 	// Load a symbol from a file
 	Load { /* name: String,  */file: String },
 	// Save a symbol to a file, either overwriting or not overwriting the file.
@@ -238,8 +244,6 @@ pub enum Command<'e> {
 	Clear,
 	/// List current links's names
 	List,
-	// Evaluate passed expression and store output in 
-	Reduce(&'e SemanticTree<'e>),
 }
 /// Parse commands
 pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b NameBindStack<'e>) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
@@ -269,13 +273,20 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
     	.or(choice((
 			keyword("set")
 			.ignore_then(text::ident().padded())
-			.then(expr.clone()).map(|(symbol, (expr, _))| Command::Set(symbol, links.rev_add(expr))),
+			.then(expr.clone()).map(|(symbol, (expr, _))| Command::Name(symbol, links.rev_add(expr))),
 			keyword("list").to(Command::List),
 			keyword("load").ignore_then(filepath).map(|file|Command::Load { file }),
 			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false }),
 		)))
 		.or(
-			expr.clone().map(|(expr, _)|Command::Reduce(links.rev_add(expr)))
+			expr.clone().then(end().map(|()|None).or(keyword(":").padded().ignore_then(expr.clone()).map(|e|Some(e))))
+			.map(|((expr, _), option_type)| {
+				if let Some((ty, _)) = option_type {
+					Command::Check(links.rev_add(expr), links.rev_add(ty))
+				} else {
+					Command::Reduce(links.rev_add(expr))
+				}
+			})
 		)
 		.labelled("command")
 }

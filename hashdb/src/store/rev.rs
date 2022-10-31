@@ -29,7 +29,7 @@ impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {
 			// Note: See safety note in find_reverse_links, ptr points to a T
 			entry.borrow_mut().push(ptr);
 		}
-		println!("Added reverse links {:?}", ret);
+		// println!("Added reverse links {:?}", ret);
 
 		ret
     }

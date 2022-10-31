@@ -17,6 +17,8 @@ mod parse;
 use name::*;
 use check::*;
 
+use crate::expr::ReduceLink;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let exprs = &LinkArena::new();
 	let db = &mut Datastore::new();
@@ -50,22 +52,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				use parse::Command;
 				match parser.parse(line.as_str()) {
 					Ok(Command::None) => {}
-					Ok(Command::Set(string, sem)) => {
+					Ok(Command::Name(string, sem)) => {
 						println!("{sem}");
-						let reduced = sem.expr.reduce(exprs).unwrap();
-						
-						println!("{reduced}");
-						NamedExpr::new_linked(&string, reduced, links);
-						// namespace.add(string, reduced, exprs);
-					}
-					Ok(Command::List) => {
-						// namespace.for_each(|name| println!("{name}"))
+						let reduce_link = ReduceLink::create(sem.expr, links).expect("failed to reduce");
+						NamedExpr::new_linked(&string, reduce_link.reduced, links);
 					}
 					Ok(Command::Reduce(sem)) => {
 						println!("{sem}");
 						let reduced = sem.expr.reduce(exprs).unwrap();
 						println!("{reduced}");
 					}
+					Ok(Command::Get(string)) => {
+
+					}
+					Ok(Command::List) => {
+						// namespace.for_each(|name| println!("{name}"))
+					}
+					
 					/* Ok(Command::Load { file: filename }) => {
 						let result: anyhow::Result<()> = try {
 							let mut file = fs::File::open(filename)?;
