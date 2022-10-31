@@ -126,11 +126,11 @@ impl<'e> Expr<'e> {
 #[hashtype]
 #[derive(Debug)]
 pub struct ReduceLink<'e> {
-	#[subtype_reverse_link] expr: &'e Expr<'e>,
-	#[subtype_reverse_link] reduced: &'e Expr<'e>,
+	#[subtype_reverse_link] pub expr: &'e Expr<'e>,
+	#[subtype_reverse_link] pub reduced: &'e Expr<'e>,
 }
 impl<'e> ReduceLink<'e> {
-	fn reduce(expr: &'e Expr<'e>, links: &'e impl RevTypeStore<'e>) -> Result<&'e ReduceLink<'e>, ReduceError> {
+	pub fn create(expr: &'e Expr<'e>, links: &'e impl RevTypeStore<'e>) -> Result<&'e ReduceLink<'e>, ReduceError> {
 		let reduced = expr.reduce(links)?;
 		Ok(links.rev_add(ReduceLink {
 			expr, reduced

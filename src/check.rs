@@ -1,8 +1,8 @@
 use thiserror::Error;
 
-use hashdb::{RevLinkStore, RevTypeStore, hashtype};
+use hashdb::{RevTypeStore, hashtype};
 
-use crate::expr::{Binding, Expr, ReduceError};
+use crate::expr::{Binding, Expr, ReduceError, ReduceLink};
 
 /// A Judgement is a program that is run on another program. 
 #[hashtype]
@@ -57,7 +57,7 @@ fn encode_binding<'e>(
 }
 
 #[derive(Error, Debug)]
-enum TypeCheckError<'e> {
+pub enum TypeCheckError<'e> {
 	#[error("failed to reduce expr: {0}")]
 	ReduceError(#[from] ReduceError),
 	#[error("failed to typecheck, residual: {0}")]
@@ -65,9 +65,9 @@ enum TypeCheckError<'e> {
 }
 
 impl<'e> Judgement<'e> {
-	fn check(expr: &'e Expr<'e>, checker: &'e Expr<'e>, links: &'e impl RevTypeStore<'e>) -> Result<&'e Judgement<'e>, TypeCheckError<'e>> {
-		let expr = expr.reduce(links)?;
-		let checker = checker.reduce(links)?;
+	fn check(expr: &'e ReduceLink<'e>, checker: &'e ReduceLink<'e>, links: &'e impl RevTypeStore<'e>) -> Result<&'e Judgement<'e>, TypeCheckError<'e>> {
+		let expr = expr.reduced;
+		let checker = checker.reduced;
 
 		let residual = Expr::app(checker, expr, links).reduce(links)?;
 		if let &Expr::Variable = residual {

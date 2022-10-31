@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use hashdb::{ArchiveDeserializer, ArchiveStore, LinkArena, TypeStore, hashtype};
+use hashdb::{LinkArena, TypeStore, hashtype};
 
 mod bind;
 mod reduce;

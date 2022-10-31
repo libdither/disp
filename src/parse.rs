@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
-use std::{cell::RefCell, iter};
+use std::{cell::RefCell};
 
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
 use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore};
 
-use crate::{expr::{BindSubTree, Expr}, name::{self, Name, SemanticTree, NamedExpr}};
+use crate::{expr::{BindSubTree, Expr}, name::{Name, SemanticTree, NamedExpr}};
 
 // Represents active bound variables in the course of parsing an expression
 #[derive(Default, Debug)]
@@ -39,7 +39,7 @@ fn lookup<'e, L: RevHashType<'e>>(links: &'e impl RevTypeStore<'e>, object: &'e 
 fn lookup_expr<'e>(links: &'e impl RevTypeStore<'e>, string: &str) -> Option<SemanticTree<'e>> {
 	let name = Name::add(links.add(string.to_string()), links);
 	// println!("looking up: {:?}", string);
-	let named_expr: &'e NamedExpr<'e> = lookup::<NamedExpr>(links, name, |expr| {
+	let named_expr: &'e NamedExpr<'e> = lookup::<NamedExpr>(links, name, |_expr| {
 		true // Return first expression found
 	})?;
 	// println!("found {name:?}");
@@ -279,6 +279,13 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
 			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false }),
 		)))
 		.or(
+			expr.clone().then_ignore(keyword(":").padded()).then(expr.clone()).map(|((expr, _), (ty, _))|Command::Check(links.rev_add(expr), links.rev_add(ty)))
+		)
+		.or(
+			expr.clone().map(|(expr, _)|Command::Reduce(links.rev_add(expr)))
+		)
+		
+		/* .or(
 			expr.clone().then(end().map(|()|None).or(keyword(":").padded().ignore_then(expr.clone()).map(|e|Some(e))))
 			.map(|((expr, _), option_type)| {
 				if let Some((ty, _)) = option_type {
@@ -286,8 +293,8 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
 				} else {
 					Command::Reduce(links.rev_add(expr))
 				}
-			})
-		)
+			}).labelled("reduce")
+		) */
 		.labelled("command")
 }
 

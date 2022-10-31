@@ -2,7 +2,7 @@ use std::fmt;
 
 
 use crate::expr::{BindTree, Binding, Expr};
-use hashdb::{ArchiveDeserializer, ArchiveStore, LinkArena, RevTypeStore, TypeStore, hashtype};
+use hashdb::{LinkArena, RevTypeStore, TypeStore, hashtype};
 
 /// Name of a thing
 #[hashtype]

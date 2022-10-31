@@ -2,7 +2,7 @@
 use std::fmt;
 use thiserror::Error;
 
-use hashdb::{ArchiveDeserializer, ArchiveStore, HashType, TypeStore, hashtype};
+use hashdb::{HashType, TypeStore, hashtype};
 
 use super::{Expr, ReduceError};
 
