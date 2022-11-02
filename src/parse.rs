@@ -49,12 +49,13 @@ fn lookup_expr<'e>(links: &'e impl RevTypeStore<'e>, string: &str) -> Option<Sem
 
 
 fn name_parser() -> impl Parser<char, String, Error = Simple<char>> + Clone {
-	text::ident().padded().labelled("name")
+	just('*').to("*".to_string()).padded().or(text::ident().padded()).labelled("name")
 }
 
 fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStore<'e, E>, binds: &'b B, bind_map: &'b NameBindStack<'e>) -> impl Parser<char, (SemanticTree<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
+	// Parses expression recursively
 	recursive(|expr: Recursive<'b, char, (SemanticTree<'e>, &'b BindSubTree<'b>), Simple<char>>| {
-		// A symbol, can be pretty much any string not including whitespace
+		// A natural number
 		let number = text::int::<_, Simple<char>>(10).padded()
 			.try_map(|s, span|
 				s.parse::<usize>()
@@ -71,27 +72,26 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 					_ => Err(Simple::custom(span, "names `zero` and `succ` must be defined to use numbers"))
 				}
 			}).labelled("number");
-
-		// A resolved symbol, variable, or paranthesised expression.
+		
+		// Parse valid name, number, or paranthesised expression.
 		let atom = name_parser().try_map(|string, span| {
-			// println!("found name: {:?}", string);
 			if string == "*" { // Check if name is specifically unbound
 				Ok((SemanticTree::VAR, BindSubTree::NONE))
 			} else if let Some(val) = bind_map.name_index(&string) { // Check if name is bound
 				Ok((SemanticTree::VAR, BindSubTree::end(val, binds)))
 			} else if let Some(expr) = lookup_expr(links, &string) { // Check if name is defined
 				Ok((expr, BindSubTree::NONE))
-			} else {
+			} else { // Throw error if none of the above
 				Err(Simple::custom(span, "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
 			}
-		}).labelled("expression")
+		})
     	.or(number)
 		.or(
 			expr.clone().map(|(inner, bind)|(SemanticTree::parens(inner, links), bind))
 			.delimited_by(just('('), just(')')
-		).padded());
+		).padded()).labelled("atom");
 
-		// Parse `[x y z] x y z` as `[x] ([y] ([z] x y z))`
+		// Parse lambda binding i.e. `[x y z]` and then recursively parse subexpresion (i.e. `x y z`)
 		let lambda = name_parser()
     		.repeated().at_least(1)
 			.delimited_by(just('['), just(']'))
@@ -117,7 +117,7 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 				)
 			}).labelled("lambda");
 		
-		// Parse `x y z` as `((x y) z)`
+		// Parse consecutive atoms, i.e. `x y z` as left-folded function application
 		let application = atom.clone()
 			.then(atom.clone().repeated().at_least(1))
 			.foldl(|(func, func_index), (args, args_index)| {
@@ -127,10 +127,10 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 				)
 			}).labelled("application");
 
-
-		// An expression can be a lambda: `[x y]` an application: `x y` or a standalone variable / symbol: `x`
+		
+		// An expression can be a lambda: `[x y]` an application: `x y` or an atom (name or nested expression)
 		lambda.or(application).or(atom).padded().labelled("expression")
-	})
+	}).then_ignore(end())
 }
 // Parse expression and register name tree
 pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e SemanticTree<'e>, anyhow::Error> {
@@ -269,6 +269,7 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
     .or(empty().to(Comm::Reduce))
     	.labelled("command").map(||) */
 
+	let expr_test = expr.clone();
 	end().to(Command::None)
     	.or(choice((
 			keyword("set")
@@ -279,7 +280,8 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
 			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false }),
 		)))
 		.or(
-			expr.clone().then_ignore(keyword(":").padded()).then(expr.clone()).map(|((expr, _), (ty, _))|Command::Check(links.rev_add(expr), links.rev_add(ty)))
+			// TODO: This is absolutely terrible, please replace
+			take_until(just(':')).try_map(move |(expr_syms, _), _| expr_test.parse(&expr_syms[..]).map_err(|e|e[0].clone())).then(expr.clone()).map(|((expr, _), (ty, _))|Command::Check(links.rev_add(expr), links.rev_add(ty)))
 		)
 		.or(
 			expr.clone().map(|(expr, _)|Command::Reduce(links.rev_add(expr)))
@@ -325,4 +327,6 @@ fn parse_test() {
 
 	let test = parse_reduce("iszero ([x y] y)", links).unwrap();
 	assert_eq!(test, parse("[x y] x", links).unwrap().expr)
+
+	// Test semicolon detection
 }

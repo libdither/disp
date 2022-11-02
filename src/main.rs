@@ -55,13 +55,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 					Ok(Command::None) => {}
 					Ok(Command::Name(string, sem)) => {
 						println!("{sem}");
-						let reduce_link = ReduceLink::create(sem.expr, links).expect("failed to reduce");
+						let reduce_link = ReduceLink::create(sem.expr, links).expect("failed to set because failed to reduce");
 						NamedExpr::new_linked(&string, reduce_link.reduced, links);
 					}
 					Ok(Command::Reduce(sem)) => {
 						println!("{sem}");
-						let reduced = sem.expr.reduce(exprs).unwrap();
-						println!("{reduced}");
+						let reduce_link = ReduceLink::create(sem.expr, links).expect("failed to reduce");
+						println!("{}", reduce_link.reduced);
+					}
+					Ok(Command::Check(term, ty)) => {
+						println!("Checking {term} : {ty}");
+						let term = ReduceLink::create(term.expr, links).expect("failed to reduce term");
+						let ty = ReduceLink::create(ty.expr, links).expect("failed to reduce type");
+						match Judgement::check(term, ty, links) {
+							Ok(judgement) => println!("Typechecking succeeded"),
+							Err(residual) => println!("Failed to check: {}", residual),
+						}
+
 					}
 					Ok(Command::Get(string)) => {
 
