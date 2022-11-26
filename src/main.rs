@@ -1,6 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(generic_const_exprs)]
+#![feature(try_blocks)]
 
 use std::fs;
 
@@ -80,27 +81,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 						// namespace.for_each(|name| println!("{name}"))
 					}
 					
-					/* Ok(Command::Load { file: filename }) => {
-						let result: anyhow::Result<()> = try {
+					Ok(Command::Load { file: filename }) => {
+						/* let result: anyhow::Result<()> = try {
 							let mut file = fs::File::open(filename)?;
 							let hash: TypedHash<Namespace> = bincode::deserialize_from::<_, Hash>(&mut file)?.into();
 							let mut db = Datastore::new();
 							db.load(&mut file)?;
 							let clone = hash.fetch(&db, exprs)?.clone();
-							namespace.extend(&clone);
+							// namespace.extend(&clone);
 						};
-						match result { Err(err) => println!("failed to load: {err}"), Ok(_) => {} }
+						if let Err(err) = result { println!("failed to load: {err}") } */
 					}
 					Ok(Command::Save { file: filename, overwrite: _ }) => {
-						let saved_hash = {
+						/* let saved_hash = {
 							db.clear();
 							namespace.store_inner(exprs).store(db).unwrap()
 						};
 						let mut file = fs::File::create(&filename).unwrap();
 						bincode::serialize_into(&mut file, saved_hash.as_hash())?;
 						db.save(&mut file)?;
-						println!("Saved current namespace to {}", &filename);
-					} */
+						println!("Saved current namespace to {}", &filename); */
+					}
 					Ok(_) => {}
 					Err(errors) => {
 						parse::gen_report(errors)
