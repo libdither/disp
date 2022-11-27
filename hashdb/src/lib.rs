@@ -21,8 +21,10 @@ pub use link::{WithHashType, TypedHash};
 
 #[cfg(test)]
 mod tests {
-	use crate::{RevLinkArena, RevTypeStore};
-pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueId, ReverseLinks, UniqueHash};
+	use std::io::Cursor;
+
+use crate::{RevLinkArena, RevTypeStore};
+	pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, ArchiveStore, ArchiveDeserializer, TypeStore}, WithHashType, hashtype, UniqueId, ReverseLinks, UniqueHash};
 
 	#[test]
 	fn test_db() {
@@ -38,7 +40,7 @@ pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, Archive
 	}
 
 	#[test]
-	fn test_loading() {
+	fn test_db_linked() {
 		// Self-referential type
 		#[derive(Debug, Clone)]
 		#[hashtype]
@@ -82,6 +84,36 @@ pub use crate::{Datastore, HashType, LinkArena, store::{ArchiveStorable, Archive
 		let name = links.add(TestName { string: links.add("Hello".to_owned()) });
 
 		let test = rev_links.links::<TestName, TestStruct>(name).next().expect("Should be at least one rev-linked structure here");
+
+		assert_eq!(test.number, 42);
+	}
+
+	#[test]
+	fn test_save_load() {
+		let data = {
+			let mut writer = Vec::with_capacity(512);
+			let links = &LinkArena::new();
+			let links = RevLinkArena::new(links);
+	
+			let name = links.add(TestName { string: links.add("hello".to_owned()) });
+			links.rev_add(TestStruct { name, number: 42 });
+
+			links.save(&mut writer).expect("failed to save");
+
+			dbg!(links);
+			writer
+		};
+		let links = &LinkArena::new();
+		let mut links = RevLinkArena::new(links);
+		links.load(&mut Cursor::new(data)).expect("failed to load");
+
+		let name_unfound = links.add(TestName { string: links.add("goodbye".to_owned()) });
+
+		assert_eq!(links.links::<TestName, TestStruct>(name_unfound).next(), None); // No TestStruct found for Name "goodbye"
+
+		let name = links.add(TestName { string: links.add("hello".to_owned()) });
+
+		let test = links.links::<TestName, TestStruct>(name).next().expect("Should be at least one rev-linked structure here");
 
 		assert_eq!(test.number, 42);
 	}

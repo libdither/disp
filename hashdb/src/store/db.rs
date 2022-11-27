@@ -25,7 +25,7 @@ pub enum DatastoreError {
 #[archive_attr(derive(CheckBytes, Debug))]
 pub struct Datastore {
 	map: HashMap<Hash, Vec<u8>, TrimHasher>,
-	// reverse_lookup: HashMap<Hash, Hash, TrimHasher>, // Map types to types that link to types
+	pub links_map: HashMap<(u64, u64), Vec<Hash>>, // Map types to types that link to types
 	#[with(Skip)]
 	serializer: LinkSerializer,
 }

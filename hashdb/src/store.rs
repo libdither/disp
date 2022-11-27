@@ -31,10 +31,14 @@ use crate::Hash;
 pub trait TypeStore<'a> {
 	fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T;
 }
-pub trait RevTypeStore<'a>: TypeStore<'a> {
-	fn rev_add<T: RevHashType<'a>>(&'a self, val: T) -> &'a T;
+pub trait RevTypeStore<'a>: TypeStore<'a> + Sized {
+	fn rev_add<T: RevHashType<'a>>(&'a self, val: T) -> &'a T
+	where T: for<'s> ArchiveFetchable<'a, ArchiveToType<'s, 'a, Datastore, Self>> + ArchiveStorable<Datastore>;
+
 	type Iter<'i: 'a, L: 'i>: Iterator<Item = &'i L> where Self: 'i;
-	fn links<'i, T: HashType<'a>, L: RevHashType<'a>>(&'i self, val: &T) -> Self::Iter<'i, L>;
+	fn links<T: HashType<'a>, L: RevHashType<'a>>(&'a self, val: &T) -> Self::Iter<'a, L> 
+	where
+		L: for<'s> ArchiveFetchable<'a, ArchiveToType<'s, 'a, Datastore, Self>>;
 }
 
 /// All types that can be stored in a LinkArena.
@@ -119,9 +123,9 @@ pub trait ArchiveDeserializer<'a>: ArchiveStoreRead + TypeStore<'a> {
 }
 
 /// A type that is generic over any ArchiveStoreRead and TypeStore and implements ArchiveDeserializer
-pub struct ArchiveToType<'s, 'a :'s, S: ArchiveStoreRead, A: TypeStore<'a>> {
-	store: &'s S,
-	type_store: &'a A
+pub struct ArchiveToType<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> {
+	pub store: &'s S,
+	pub type_store: &'a A
 }
 impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> From<(&'s S, &'a A)> for ArchiveToType<'s, 'a, S, A> {
 	fn from(pair: (&'s S, &'a A)) -> Self {
@@ -146,12 +150,12 @@ impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveStoreRead for Archive
         self.store.fetch_archive::<T>(hash)
     }
 }
-impl<'s, 'a: 's, S: ArchiveStoreRead, A: TypeStore<'a>> TypeStore<'a> for ArchiveToType<'s, 'a, S, A> {
+impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> TypeStore<'a> for ArchiveToType<'s, 'a, S, A> {
     fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T {
         self.type_store.add(val)
     }
 }
-impl<'s, 'a: 's, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveDeserializer<'a> for ArchiveToType<'s, 'a, S, A> {
+impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveDeserializer<'a> for ArchiveToType<'s, 'a, S, A> {
     fn fetch<T: ArchiveFetchable<'a, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
 	where
 		T: Archive<Archived: for<'v> CheckBytes<DefaultValidator<'v>>>
@@ -191,10 +195,8 @@ pub trait ArchiveFetchable<'a, D: ArchiveDeserializer<'a>>:
 
 /// Impls for all types
 impl<'a, S: ArchiveStore, T: Serialize<S>> ArchiveStorable<S> for T {}
-impl<T> ArchiveInterpretable for T
-where
-	T: Archive + Sized,
-{}
+
+impl<T: Archive + Sized> ArchiveInterpretable for T {}
 
 impl<'a, D: ArchiveDeserializer<'a>, T> ArchiveFetchable<'a, D> for T
 where
