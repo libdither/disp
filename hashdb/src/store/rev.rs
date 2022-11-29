@@ -116,11 +116,11 @@ impl<'a, A: TypeStore<'a>> RevLinkStore<'a, A> {
 
 		Ok(())
 	}
-	pub fn save(&self, writer: &mut impl io::Write) -> Result<(), Box<dyn std::error::Error>> {
+	pub fn save(&self, writer: &mut impl io::Write) -> Result<(), DatastoreError> {
 		self.db.borrow().save(writer)?;
 		Ok(())
 	}
-	pub fn load(&mut self, reader: &mut impl io::Read) -> Result<(), Box<dyn std::error::Error>> {
+	pub fn load(&self, reader: &mut impl io::Read) -> Result<(), DatastoreError> {
 		self.db.borrow_mut().load(reader)?;
 
 		Ok(())

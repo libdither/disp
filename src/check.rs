@@ -70,7 +70,7 @@ pub enum TypeCheckError<'e> {
 
 fn lookup_encoding<'e>(string: &'static str, links: &'e impl RevTypeStore<'e>) -> Result<&'e Expr<'e>, TypeCheckError<'e>> {
 	let name = Name::add(links.add(string.to_owned()), links);
-	let mut iter = links.links::<'e, Name<'e>, NamedExpr<'e>>(name);
+	let mut iter = links.links::<Name<'e>, NamedExpr<'e>>(name);
 	let ret = iter.next().map(|ne|ne.expr).ok_or(TypeCheckError::EncodingNotDefined(string));
 	if iter.next().is_some() { return Err(TypeCheckError::EncodingDefinedTooMuch(string)) }
 	ret

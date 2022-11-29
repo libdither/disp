@@ -4,7 +4,7 @@ use std::{cell::RefCell};
 
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
-use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore};
+use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
 
 use crate::{expr::{BindSubTree, Expr}, name::{Name, SemanticTree, NamedExpr}};
 
@@ -32,14 +32,17 @@ impl<'e> NameBindStack<'e> {
 }
 
 /// Find first link of type L registered in RevTypeStore that contains `object` and matches a predicate
-fn lookup<'e, L: RevHashType<'e>>(links: &'e impl RevTypeStore<'e>, object: &'e impl HashType<'e>, predicate: impl Fn(&&'e L) -> bool) -> Option<&'e L> {
+fn lookup<'e, L: RevHashType<'e>, TS: RevTypeStore<'e>>(links: &'e TS, object: &'e impl HashType<'e>, predicate: impl Fn(&&'e L) -> bool) -> Option<&'e L>
+where
+	L: for<'s> ArchiveFetchable<'e, ArchiveToType<'s, 'e, Datastore, TS>> + ArchiveStorable<Datastore>
+{
 	links.links::<_, L>(object).find(predicate)
 }
 
-fn lookup_expr<'e>(links: &'e impl RevTypeStore<'e>, string: &str) -> Option<SemanticTree<'e>> {
+fn lookup_expr<'e, TS: RevTypeStore<'e>>(links: &'e TS, string: &str) -> Option<SemanticTree<'e>> {
 	let name = Name::add(links.add(string.to_string()), links);
 	// println!("looking up: {:?}", string);
-	let named_expr: &'e NamedExpr<'e> = lookup::<NamedExpr>(links, name, |_expr| {
+	let named_expr: &'e NamedExpr<'e> = lookup::<NamedExpr, TS>(links, name, |_expr| {
 		true // Return first expression found
 	})?;
 	// println!("found {name:?}");

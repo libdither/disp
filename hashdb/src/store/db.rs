@@ -9,12 +9,16 @@ use super::{ArchiveInterpretable, ArchiveStorable, ArchiveStore, ArchiveStoreRea
 
 #[derive(Debug, Error)]
 pub enum DatastoreError {
-	#[error("Not in Datastore: {0}")]
+	#[error("not in Datastore: {0}")]
 	NotInDatastore(Hash),
-	#[error("Not a valid rkyv Archive: {0}")]
+	#[error("not a valid rkyv Archive: {0}")]
 	InvalidArchive(Hash),
-	#[error("Failed to serialize Link: {0}")]
-	LinkSerializeError(#[from] LinkSerializeError)
+	#[error("failed to serialize Link: {0}")]
+	LinkSerializeError(#[from] LinkSerializeError),
+
+	#[error("failed to save/load: {0}")]
+	SaveLoadError(Box<dyn std::error::Error>),
+
 	/* #[error("Not Reverse Linked: {0}")]
 	NotReverseLinked(Hash),
 	#[error("Failed to Serialize/Deserialize Datastore: {0}")]
@@ -97,15 +101,15 @@ impl Datastore {
 		Self::default()
 	}
 	pub fn save(&self, writer: &mut impl io::Write) -> Result<(), DatastoreError> {
-		let bytes = rkyv::to_bytes::<_, 256>(self).expect("failed to save");
-		writer.write_all(&bytes).unwrap();
+		let bytes = rkyv::to_bytes::<_, 256>(self).map_err(|e|DatastoreError::SaveLoadError(e.into()))?;
+		writer.write_all(&bytes).map_err(|e|DatastoreError::SaveLoadError(e.into()))?;
 		Ok(())
 	}
 	pub fn load(&mut self, reader: &mut impl io::Read) -> Result<(), DatastoreError> {
 		let mut vec = AlignedVec::new();
-		io::copy(reader, &mut vec).unwrap();
-		let archived = rkyv::check_archived_root::<Self>(&vec[..]).unwrap();
-		*self = archived.deserialize(&mut Infallible).unwrap();
+		io::copy(reader, &mut vec).map_err(|e|DatastoreError::SaveLoadError(e.into()))?;
+		let archived = rkyv::check_archived_root::<Self>(&vec[..]).map_err(|e|DatastoreError::SaveLoadError(e.into()))?;
+		*self = archived.deserialize(&mut Infallible).map_err(|e|DatastoreError::SaveLoadError(e.into()))?;
 		Ok(())
 	}
 	pub fn clear(&mut self) {

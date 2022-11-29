@@ -15,7 +15,7 @@ mod store;
 mod hash;
 pub mod link;
 
-pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueId, ReverseLinks, RevHashType, RevTypeStore, RevLinkStore, RevLinkArena, UniqueHash};
+pub use store::{Datastore, DatastoreError, LinkArena, ArchiveStore, ArchiveDeserializer, ArchiveStorable, ArchiveFetchable, TypeStore, HashType, UniqueId, ReverseLinks, RevHashType, RevTypeStore, RevLinkStore, RevLinkArena, UniqueHash, ArchiveToType};
 pub use hash::Hash;
 pub use link::{WithHashType, TypedHash};
 
