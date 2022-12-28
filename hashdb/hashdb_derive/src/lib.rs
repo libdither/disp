@@ -24,14 +24,14 @@ use proc_macro::{TokenStream as ProcTokenStream};
 /// 
 /// // Derives traits and HashType, Wraps &'a String with WithHashType wrapper for rkyv.
 /// #[hashtype]
-/// struct Name<'a> { #[hashtype] name: &'a String }
+/// struct Name<'a> { #[subtype] name: &'a String }
 /// 
 /// // Derives traits. Derives HashType with reverse linked "name" field.
-/// #[hashtype(reverse_links("name"))]
-/// struct NameList<'a> { name: Name<'a>, #[hashtype] rest: &'a NameList<'a> }
+/// #[hashtype]
+/// struct NameList<'a> { name: Name<'a>, #[subtype_reverse_link] rest: &'a NameList<'a> }
 /// 
 /// // Doesn't derive traits because not struct or enum, derives HashType with reverse linked "first" and "second" fields.
-/// #[hashtype(reverse_links("first", "second"))]
+/// #[hashtype]
 /// type Vec2f32 = Vec2<f32>;
 /// ```
 #[proc_macro_attribute]

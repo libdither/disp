@@ -24,7 +24,8 @@ use crate::expr::ReduceLink;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let exprs = &LinkArena::new();
-	let mut links = &RevLinkArena::new(exprs);
+	let links = &RevLinkArena::new(exprs);
+	let universal = name::Context::universal(links);
 
 	let load_file = std::env::args().nth(1);
 
@@ -55,7 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 						Ok(Command::Name(string, sem)) => {
 							println!("{sem}");
 							let reduce_link = ReduceLink::create(sem.expr, links).with_context(||"failed to set because failed to reduce")?;
-							NamedExpr::new_linked(&string, reduce_link.reduced, links);
+							let expr = NamedExpr::new_linked(&string, reduce_link.reduced, links);
+							universal.link_expr(expr, links);
 						}
 						Ok(Command::Reduce(sem)) => {
 							println!("{sem}");
@@ -70,17 +72,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 								Ok(_judgement) => println!("Typechecking succeeded"),
 								Err(residual) => println!("Failed to check: {}", residual),
 							}
-
 						}
-						Ok(Command::Get(_string)) => {
-
+						Ok(Command::Get(string)) => {
+							let name = Name::add(links.add(string), links);
+							let exprs = links.links::<_, NamedExpr>(name);
+							let mut no_exprs = true;
+							exprs.for_each(|e|{
+								no_exprs = false;
+								if let Some(sem) = links.links::<_, SemanticTree>(e.expr).next() {
+									println!("{name} := {sem} ")
+								} else {
+									println!("{name} := {}", e.expr)
+								}
+							});
+							if no_exprs { println!("No exprs defined for name {name}"); }
 						}
-						Ok(Command::List) => {
-							// let name = Name::add(links.add(""), links)
-							// links.links::<Name, NamedExpr>()
-							// namespace.for_each(|name| println!("{name}"))
+						Ok(Command::List(_names)) => {
+							// let context = links.add(name::Context::new(name));
+							let expr_iter = links.links::<name::Context, ContextExprLink>(universal);
+							for link in expr_iter {
+								let mut semantic_tree_iter = links.links::<expr::Expr, SemanticTree>(link.expr.expr);
+								if let Some(sem) = semantic_tree_iter.next() {
+									println!("{} := {}", link.expr.name, sem);
+								} else {
+									println!("{} := {}", link.expr.name, link.expr.expr);
+								}
+								
+							}
 						}
-						
 						Ok(Command::Load { file: filename }) => {
 							let mut file = fs::File::open(filename)?;
 							links.load(&mut file)?;

@@ -76,7 +76,7 @@ impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {
 
 		let key = &(hash, L::unique_id());
 		let links = self.reverse_links_map.borrow().get(key).cloned();
-		println!("Looking up reverse links for {:?}", val);
+		// println!("Looking up reverse links for {:?}", val);
 		ReverseLinkIter::<'a, L> { links, index: 0, _phantom: Default::default(), _type: Default::default() }
 	}
 }

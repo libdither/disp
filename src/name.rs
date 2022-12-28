@@ -28,6 +28,36 @@ impl<'e> Name<'e> {
 	}
 }
 
+/// Context. Can be reverse-lookuped via contained Name.
+#[hashtype]
+#[derive(Debug)]
+pub struct Context<'e> {
+	#[subtype_reverse_link]
+	name: &'e Name<'e>,
+}
+impl<'e> Context<'e> {
+	// pub const UNIVERSAL_CONTEXT: &'static Context<'static> = &Context { name: &Name { name: &String::from("") } };
+	pub fn universal(links: &'e impl TypeStore<'e>) -> &'e Context<'e> {
+		links.add(Context { name: Name::add(links.add(String::from("")), links) })
+	}
+	pub fn link_expr(&'e self, expr: &'e NamedExpr<'e>, links: &'e impl RevTypeStore<'e>) -> &'e ContextExprLink<'e> {
+		links.rev_add(ContextExprLink { context: self, expr })
+	}
+	pub fn new(name: &'e Name<'e>) -> Context<'e> {
+		Context { name }
+	}
+}
+
+/// ContextExprLink links Context to NamedExpr 
+#[hashtype]
+#[derive(Debug)]
+pub struct ContextExprLink<'e> {
+	#[subtype_reverse_link]
+	pub context: &'e Context<'e>,
+	#[subtype_reverse_link]
+	pub expr: &'e NamedExpr<'e>,
+}
+
 /// Link between Name and Expr
 #[hashtype]
 #[derive(Debug)]

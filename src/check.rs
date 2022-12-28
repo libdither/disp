@@ -62,9 +62,9 @@ pub enum TypeCheckError<'e> {
 	ReduceError(#[from] ReduceError),
 	#[error("failed to typecheck, residual: {0}")]
 	Residual(&'e Expr<'e>),
-	#[error("encoding `{0}` not defined")]
+	#[error("encoding term `{0}` not defined")]
 	EncodingNotDefined(&'static str),
-	#[error("encoding `{0}` defined multiple times")]
+	#[error("encoding term `{0}` defined multiple times")]
 	EncodingDefinedTooMuch(&'static str),
 }
 

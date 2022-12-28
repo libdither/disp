@@ -5,6 +5,7 @@ use std::{cell::RefCell};
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::keyword};
 use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
+use itertools::Itertools;
 
 use crate::{expr::{BindSubTree, Expr}, name::{Name, SemanticTree, NamedExpr}};
 
@@ -246,7 +247,7 @@ pub enum Command<'e> {
 	/// Clear current links
 	Clear,
 	/// List current links's names
-	List,
+	List(Vec<&'e Name<'e>>),
 }
 /// Parse commands
 pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b NameBindStack<'e>) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
@@ -275,10 +276,14 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
 	let expr_test = expr.clone();
 	end().to(Command::None)
     	.or(choice((
-			keyword("set")
-			.ignore_then(text::ident().padded())
+			keyword("set").ignore_then(text::ident().padded())
 			.then(expr.clone()).map(|(symbol, (expr, _))| Command::Name(symbol, links.rev_add(expr))),
-			keyword("list").to(Command::List),
+			keyword("get").ignore_then(text::ident().padded()).map(|name: String| Command::Get(name)),
+			keyword("list").ignore_then(text::ident().padded().repeated()).map(|names: Vec<String>| 
+				Command::List(
+					names.into_iter().map(|name|Name::add(links.add(name), links)).collect_vec()
+				)
+			),
 			keyword("load").ignore_then(filepath).map(|file|Command::Load { file }),
 			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false }),
 		)))
