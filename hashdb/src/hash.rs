@@ -1,9 +1,10 @@
 #![allow(dead_code)]
 use bytecheck::CheckBytes;
+use futures::{AsyncRead, AsyncReadExt};
 use rkyv::{Archive, Fallible, ser::{ScratchSpace, Serializer}};
 use serde::{Deserialize, Serialize};
 /// This file is a clusterfudge of generic where expressions, hopefully this is made easier in the future...
-use std::{fmt, io::Read, mem::ManuallyDrop};
+use std::{fmt, io::Read, mem::ManuallyDrop, default};
 
 
 mod code;
@@ -260,6 +261,13 @@ where
 		let mut hash = Self::default();
 		unsafe {
 			reader.read_exact(&mut hash.data)?;
+		}
+		Ok(hash)
+	}
+	pub async fn from_reader_async(mut reader: impl AsyncRead + Unpin) -> std::io::Result<Self> {
+		let mut hash = Self::default();
+		unsafe {
+			reader.read_exact(&mut hash.data).await?;
 		}
 		Ok(hash)
 	}

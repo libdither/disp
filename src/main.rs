@@ -118,7 +118,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 				if let Err(err) = res {
 					println!("{err}");
 				}
-				
 			}
 			Err(ReadlineError::Interrupted) => {
 				println!("CTRL-C");
