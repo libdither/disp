@@ -4,7 +4,7 @@ use futures::{AsyncRead, AsyncReadExt};
 use rkyv::{Archive, Fallible, ser::{ScratchSpace, Serializer}};
 use serde::{Deserialize, Serialize};
 /// This file is a clusterfudge of generic where expressions, hopefully this is made easier in the future...
-use std::{fmt, io::Read, mem::ManuallyDrop, default};
+use std::{fmt, io::Read, mem::ManuallyDrop, default, str::FromStr};
 
 
 mod code;
@@ -308,6 +308,23 @@ where
 			_ => "???",
 		};
 		write!(f, "{}:{}", hash_type, bs58::encode(self.digest()).into_string())
+	}
+}
+
+/// FromStr implemente to convert from Base58 encodings
+impl<const C: Code> FromStr for Multihash<C> 
+where
+	[(); calc_varint_len(C.digest_len())]: Sized,
+	[(); calc_varint_len(C.format_code())]: Sized,
+	[(); C.digest_len()]: Sized,
+	[(); C.total_len()]: Sized,
+{
+	type Err = bs58::decode::Error;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let mut hash = Multihash::<C>::default();
+		unsafe { bs58::decode(s).into(&mut hash.data)?; }
+		Ok(hash)
 	}
 }
 
