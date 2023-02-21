@@ -1,3 +1,73 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:799b85780464f5bb67b387072a84ffb732bd62dbcc2b535a26228bfcad4dd37b
-size 20912
+context type {
+	// The type of all programs, takes a program and returns `*` (i.e. unbound variable) to signify that typechecking was successful.
+	type := [_] *
+}
+
+context combinators {
+	z := λf.(λx.f (λy.x x y)) (λx.f (λy.x x y))
+}
+
+context type_system {
+	// Pi type is the dependent type constructor. It is the type of all functions.
+	pi_type := [bind bind_type out_type] pair (pair bind bind_type) out_type
+	// App type is the application type constructor. It is the type of application
+	app_type := [left right] pair left right
+	uni := [order] single order
+	uni0 := uni zero
+	uni1 := uni (succ zero)
+
+	check := [expr type] 
+}
+
+context expr {
+	encode {
+		expr := type
+		var := [v l a] v : expr
+		lambda := [bind] [expr] [v l a] l bind expr : expr
+		app := [func] [args] [v l a] a func args : expr
+		
+		binding := type
+		none := [v l a] v : binding
+		branch := [bind] [expr] [v l a] l bind expr : binding
+		end := [n b e] e : binding
+	}
+	
+}
+context bool {
+	context encode church_encoding {
+		bool := type
+		true := [first second] first : bool
+		false := [first second] second : bool
+		if := [bool] [then_expr] [else_expr] bool then_expr else_expr
+	}
+}
+context nat {
+	context encode church_encoding {
+		zero := [f x] x
+		succ := [n] [f x] f (n f x)
+	}
+	context ops {
+		iszero := [n] n ([u] false) (true)
+		add := [m n] [f x] m f (n f x)
+		mult := [m n] [f] m (n f)
+		pred := [n] [f x] n ([g h] h (g f)) ([u] x) ([u] u)
+		factorial := [n] n ([x] x ([x y] pair (succ x) (mult x y))) (pair 1 1) second
+	}
+}
+
+context pair encode church_encoding {
+	pair := [first second] [func] func first second
+	first := [pair] pair true
+	second := [pair] pair true
+}
+context single encode church_encoding {
+	single := [single] [func] func single
+	first := [single] single [x] x
+}
+
+context list encode {
+	nil := [func] func
+	cons := [head tail] [func] func head tail
+	car := first
+	cdr := second
+}
