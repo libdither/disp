@@ -12,19 +12,18 @@ bytes = "1.1.0"
 emulator_6502 = "1.1.0"
 itertools = "0.10.3"
 lazy_static = "1.4.0"
-logos = "0.12.1"
-multihash = "0.16.2"
+multihash = "0.18.1"
 serde = { version = "1.0.139", features = ["derive"] }
 thiserror = "1.0.31"
 
 hashdb = { path = "hashdb/" }
 anyhow = "1.0.58"
-rustyline = "9.1.2"
-bytecheck = "0.6.8"
+rustyline = "11.0.0"
+bytecheck = "0.7.0"
 rkyv = { version = "0.7", features = ["validation"] }
 derivative = "2.2.0"
 either = "1.7.0"
-chumsky = "0.8.0"
+chumsky = { git = "https://github.com/zesterer/chumsky", features = ["nightly"] }
 smallvec = "1.9.0"
 ariadne = "0.1.5"
 

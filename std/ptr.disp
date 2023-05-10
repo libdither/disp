@@ -1,0 +1,18 @@
+
+
+/// Alignment is a system-sized number that is a power of two
+set Alignment {
+    v: Usize
+    p: { v != 0, v & (v - 1) = 0 )
+}
+
+/// Layout of an allocation requires a size and alignment
+set Layout {
+    size: Usize,
+    align: Alignment,
+}
+
+/// Allocator
+set Allocator { T : Type } -> {
+    allocate { Ref[T],  }
+}
