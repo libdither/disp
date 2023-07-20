@@ -1,3 +1,4 @@
 /target
 .disp_history
 /.vscode
+.direnv
