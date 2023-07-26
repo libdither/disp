@@ -23,9 +23,9 @@ bytecheck = "0.7.0"
 rkyv = { version = "0.7", features = ["validation"] }
 derivative = "2.2.0"
 either = "1.7.0"
-chumsky = { git = "https://github.com/zesterer/chumsky", features = ["nightly"] }
+chumsky = { git = "https://github.com/zesterer/chumsky", default-features = false, features = ["nightly"] }
 smallvec = "1.9.0"
-ariadne = "0.1.5"
+ariadne = "0.2.0"
 
 [features]
 
