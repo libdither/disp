@@ -3,7 +3,7 @@
 use std::{cell::RefCell};
 
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
-use chumsky::{prelude::*, text::keyword};
+use chumsky::{prelude::*, text::unicode, extra::Full, recursive::Direct, input::SpannedInput};
 use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
 use itertools::Itertools;
 
@@ -51,19 +51,175 @@ fn lookup_expr<'e, TS: RevTypeStore<'e>>(links: &'e TS, string: &str) -> Option<
 	Some(SemanticTree::named(named_expr, links))
 }
 
-
-fn name_parser() -> impl Parser<char, String, Error = Simple<char>> + Clone {
-	just('*').to("*".to_string()).padded().or(text::ident().padded()).labelled("name")
+#[derive(PartialEq, Debug, Clone)]
+enum Literal {
+	String,
+	Integer,
+	Decimal,
+}
+#[derive(PartialEq, Debug, Clone)]
+enum Bracket {
+	Paren,
+	Square,
+	Curly,
+	Caret,
 }
 
-fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStore<'e, E>, binds: &'b B, bind_map: &'b NameBindStack<'e>) -> impl Parser<char, (SemanticTree<'e>, &'b BindSubTree<'b>), Error = Simple<char>> + Clone {
+#[derive(PartialEq, Debug, Clone)]
+enum Token<'s> {
+	/// Associates a name with being the member of some type (used to defer definition)
+	/// `type`, as in `type thing : Type`
+    TypeDef,
+	/// Associates a name with an expression.
+	/// `let` as in `let thing := 3`
+	LetDef,
+	/// Assign an expression to a name. (In TypeDef it is treated as a "default" definition)
+	/// `:=` as in `let thing := 3`
+	AssignExpr,
+	/// Describes the type of an expression or name.
+	/// `:` as in `type thing : Type`
+	AssignType,
+	/// A constant literal, resolves to an expression.
+	Literal(Literal, &'s str),
+	Boolean(bool),
+
+	OpenBracket(Bracket),
+	ClosedBracket(Bracket),
+
+	/// Identifier
+	Ident(&'s str),
+}
+
+struct LexerState<'src> {
+	buf: Vec<(Token<'src>, SimpleSpan<usize>)>,
+}
+impl<'src> LexerState<'src> {
+	fn new() -> Self { LexerState { buf: Default::default() } }
+	fn parser() -> impl Parser<'src, &'src str, (), extra::State<LexerState<'src>>> {
+		let ident = unicode::ident().padded().map_slice(Token::Ident);
+
+		let string = just('"')
+			.then(any().filter(|c: &char| *c != '"').repeated())
+			.then(just('"'))
+			.map_slice(|s|Token::Literal(Literal::String, s));
+		
+		let tokens = choice((
+			unicode::keyword("type").to(Token::TypeDef),
+			unicode::keyword("let").to(Token::LetDef),
+			just(':').padded().to(Token::AssignType),
+			just(":=").padded().to(Token::AssignExpr),
+		));
+
+		// A token can be a string, a unicode ident, or another fixed token.
+		string
+			.or(ident)
+			.or(tokens)
+			.map_with_state(|token, span, state: &mut LexerState<'src>|state.buf.push((token, span)))
+			.padded()
+			.repeated()
+	} 
+}
+
+type Span = SimpleSpan<usize>;
+type Spanned<T> = (T, Span);
+
+type ParserInput<'tokens, 'src> = SpannedInput<Token<'src>, Span, &'tokens [(Token<'src>, Span)]>;
+
+
+/* pub enum ASTDef<'expr> {
+	/// `let name := thing : Type`
+	LetDef {
+		name: Name<'expr>,
+		val: &'expr ASTVal<'expr>,
+		implied_type: Option<&'expr ASTVal<'expr>>
+	},
+	/// `type name : Type := thing
+	TypeDef {
+		typ: &'expr ASTVal<'expr>,
+		default_name: Name<'expr>,
+		default_val: Option<&'expr ASTVal<'expr>>
+	},
+} */
+
+/// A value is a reference to a previously defined term, a constant literal, term construction, or type construction
+pub enum ASTExpr<'expr> {
+	/// `let <name> := <term> : <type>`
+	/// Requires <name> to be undefined in context, and for <term> and <type> to typecheck correctly
+	LetDef {
+		val: &'expr ASTExpr<'expr>,
+		name: Name<'expr>,
+		implied_type: Option<&'expr ASTExpr<'expr>>,
+	},
+	/// `<name>`
+	Ref(Name<'expr>),
+	/// `true`
+	True,
+	/// `false`
+	False,
+	/// Bool
+	Bool,
+	/// `"<string literal>"`
+	ConstString(&'expr str),
+	/// `'<unicode character>'`
+	Char(&'expr str),
+	/// `<integer or natural>`
+	Integer(i64),
+	/// `<floating point>`
+	Decimal(f64),
+	/// `{ <val>, <val> }`
+	/// Unordered set. Set of terms is the term for a set of types.
+	Set(&'expr [ASTExpr<'expr>]),
+	/// `[ <val>, <val> ]`
+	/// Ordered set. List of terms is a term for a list of types
+	List(&'expr [ASTExpr<'expr>]),
+	/// `<val> <val> -> <val>`
+	/// This is constructed to contain the first two `<val>` in the function
+	ImplicitList(&'expr [ASTExpr<'expr>]),
+	/// `<val> -> <val>`
+	/// A function abstraction
+	Fn { input: &'expr ASTExpr<'expr>, ouput: &'expr ASTExpr<'expr> }
+}
+
+/// This represents a Type
+pub enum ASTType<'expr> {
+	/// Type definition with extra context
+	TypeDef {
+		typ: &'expr ASTType<'expr>,
+		term_name: Option<&'expr Name<'expr>>, // Optionally assign a name for the term
+		term_val: Option<&'expr ASTTerm<'expr>>, // Optionally assign a default value
+	},
+	/// Reference to type definition
+	Ref(Name<'expr>),
+	/// Unordered set type, i.e. `{type thing : Type, type thing2 : Type}`
+	SetType(&'expr [ASTType<'expr>]),
+	/// Ordered set type, i.e. `[Nat, Int, Type]`
+	ListType(&'expr [ASTType<'expr>]),
+	/// Function type, i.e. `Type -> Type`
+	FnType { input: &'expr ASTType<'expr>, output: &'expr ASTType<'expr> },
+
+	/// Type of all types, i.e. `Type`
+	Type,
+}
+
+pub enum AST<'expr> {
+	Val(ASTVal<'expr>),
+}
+
+fn parser<'tokens, 'src: 'tokens, 'expr: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'expr>>(links: &'expr RevLinkStore<'expr, E>, binds: &'b B, bind_map: &'b NameBindStack<'expr>) -> impl Parser<
+	'tokens,
+	ParserInput<'tokens, 'src>, // Input
+	Spanned<(SemanticTree<'expr>, &'b BindSubTree<'b>)>, // Output
+	extra::Err<Rich<'tokens, Token<'src>, Span>>,
+> + Clone {
+	
 	// Parses expression recursively
-	recursive(|expr: Recursive<'b, char, (SemanticTree<'e>, &'b BindSubTree<'b>), Simple<char>>| {
+	recursive(|expr| {
 		// A natural number
-		let number = text::int::<_, Simple<char>>(10).padded()
+		
+		/* let number = text::int::<_, Full<char>>(10).padded()
 			.try_map(|s, span|
 				s.parse::<usize>()
-				.map_err(|e| Simple::custom(span, format!("{}", e)))
+				.map_err(|e| Full::custom(span, format!("{}", e)))
 			).try_map(|num, span| {
 				match (lookup_expr(links, "zero"), lookup_expr(links, "succ")) {
 					(Some(zero), Some(succ)) => {
@@ -73,12 +229,12 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 							BindSubTree::NONE
 						))
 					}
-					_ => Err(Simple::custom(span, "names `zero` and `succ` must be defined to use numbers"))
+					_ => Err(Full::custom(span, "names `zero` and `succ` must be defined to use numbers"))
 				}
-			}).labelled("number");
+			}).labelled("number"); */
 		
 		// Parse valid name, number, or paranthesised expression.
-		let atom = name_parser().try_map(|string, span| {
+		/* let atom = name_parser().try_map(|string, span| {
 			if string == "*" { // Check if name is specifically unbound
 				Ok((SemanticTree::VAR, BindSubTree::NONE))
 			} else if let Some(val) = bind_map.name_index(&string) { // Check if name is bound
@@ -86,10 +242,10 @@ fn parser<'e: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'e>>(links: &'e RevLinkStor
 			} else if let Some(expr) = lookup_expr(links, &string) { // Check if name is defined
 				Ok((expr, BindSubTree::NONE))
 			} else { // Throw error if none of the above
-				Err(Simple::custom(span, "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
+				Err(Full::custom(span, "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
 			}
 		})
-    	.or(number)
+    	.or(number) */
 		.or(
 			expr.clone().map(|(inner, bind)|(SemanticTree::parens(inner, links), bind))
 			.delimited_by(just('('), just(')')
@@ -153,10 +309,10 @@ pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e Semant
 }
 
 /// Generate cool errors with ariadne
-pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
+pub fn gen_report<'a>(errors: impl IntoIterator<Item = Rich<'a, &'a str>>) -> impl Iterator<Item = Report<'a>> {
 	// Taken from json.rs example on chumsky github
 	errors.into_iter().map(|e| {
-        let msg = if let chumsky::error::SimpleReason::Custom(msg) = e.reason() {
+        let msg = if let chumsky::error::Rich::Custom(msg) = e.reason() {
             msg.clone()
         } else {
             format!(
@@ -191,7 +347,7 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
             .with_label(
                 Label::new(e.span())
                     .with_message(match e.reason() {
-                        chumsky::error::SimpleReason::Custom(msg) => msg.clone(),
+                        chumsky::error::Rich::Custom(msg) => msg.clone(),
                         _ => format!(
                             "Unexpected {}",
                             e.found()
@@ -203,7 +359,7 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
             );
 
         let report = match e.reason() {
-            chumsky::error::SimpleReason::Unclosed { span, delimiter } => report.with_label(
+            chumsky::error::Rich::Unclosed { span, delimiter } => report.with_label(
                 Label::new(span.clone())
                     .with_message(format!(
                         "Unclosed delimiter {}",
@@ -211,8 +367,8 @@ pub fn gen_report(errors: Vec<Simple<char>>) -> impl Iterator<Item = Report> {
                     ))
                     .with_color(Color::Yellow),
             ),
-            chumsky::error::SimpleReason::Unexpected => report,
-            chumsky::error::SimpleReason::Custom(_) => report,
+            chumsky::error::Rich::Unexpected => report,
+            chumsky::error::Rich::Custom(_) => report,
         };
 
         report.finish()
@@ -250,11 +406,11 @@ pub enum Command<'e> {
 	List(Vec<&'e Name<'e>>),
 }
 /// Parse commands
-pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b NameBindStack<'e>) -> impl Parser<char, Command<'e>, Error = Simple<char>> + 'b {
+pub fn command_parser<'a, 'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b NameBindStack<'e>) -> impl Parser<'a, &'a str, Command<'e>> + 'b {
 	let expr = parser(links, binds, bind_map);
 
-	let filepath = just::<_, _, Simple<char>>('"')
-		.ignore_then(filter(|c| *c != '\\' && *c != '"').repeated())
+	let filepath = just::<_, _, Full<'a, &'a str>>('"')
+		.ignore_then(any().filter(|c| *c != '\\' && *c != '"').repeated())
 		.then_ignore(just('"'))
 		.collect::<String>()
     	.padded()
@@ -276,10 +432,10 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
 	let expr_test = expr.clone();
 	end().to(Command::None)
     	.or(choice((
-			keyword("set").ignore_then(text::ident().padded())
+			keyword("set").ignore_then(ident().padded())
 			.then(expr.clone()).map(|(symbol, (expr, _))| Command::Name(symbol, links.rev_add(expr))),
-			keyword("get").ignore_then(text::ident().padded()).map(|name: String| Command::Get(name)),
-			keyword("list").ignore_then(text::ident().padded().repeated()).map(|names: Vec<String>| 
+			keyword("get").ignore_then(ident().padded()).map(|name: String| Command::Get(name)),
+			keyword("list").ignore_then(ident().padded().repeated()).map(|names: Vec<String>| 
 				Command::List(
 					names.into_iter().map(|name|Name::add(links.add(name), links)).collect_vec()
 				)
@@ -289,7 +445,7 @@ pub fn command_parser<'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkAr
 		)))
 		.or(
 			// TODO: This is absolutely terrible, please replace
-			take_until(just(':')).try_map(move |(expr_syms, _), _| expr_test.parse(&expr_syms[..]).map_err(|e|e[0].clone())).then(expr.clone()).map(|((expr, _), (ty, _))|Command::Check(links.rev_add(expr), links.rev_add(ty)))
+			any().take_until(just(':')).try_map(move |(expr_syms, _), _| expr_test.parse(&expr_syms[..]).map_err(|e|e[0].clone())).then(expr.clone()).map(|((expr, _), (ty, _))|Command::Check(links.rev_add(expr), links.rev_add(ty)))
 		)
 		.or(
 			expr.clone().map(|(expr, _)|Command::Reduce(links.rev_add(expr)))
