@@ -1,7 +1,6 @@
 use std::{collections::HashMap, io};
 
-use bytecheck::CheckBytes;
-use rkyv::{AlignedVec, Archive, Archived, Deserialize, Fallible, Infallible, Serialize, ser::{ScratchSpace, Serializer}, validation::validators::DefaultValidator, with::Skip};
+use rkyv::{AlignedVec, Archive, Archived, Deserialize, Fallible, Infallible, Serialize, ser::{ScratchSpace, Serializer}, validation::validators::DefaultValidator, with::Skip, CheckBytes};
 
 use crate::{Hash, TypedHash, hash::TrimHasher};
 
@@ -26,7 +25,8 @@ pub enum DatastoreError {
 }
 
 #[derive(Default, Archive, Serialize, Deserialize)]
-#[archive_attr(derive(CheckBytes, Debug))]
+#[archive_attr(derive(Debug))]
+#[archive(check_bytes)]
 pub struct Datastore {
 	map: HashMap<Hash, Vec<u8>, TrimHasher>,
 	pub links_map: HashMap<(u64, u64), Vec<Hash>>, // Map types to types that link to types

@@ -7,7 +7,6 @@ use quote::{format_ident, quote};
 use proc_macro2::{Span, TokenStream};
 use proc_macro::{TokenStream as ProcTokenStream};
 
-
 /// ### `#[hashtype]` Macro
 /// Adds derives for various traits such as `std::hash::Hash` and rkyv traits.
 /// `#[subtype]` attribute markers for marking where a hash should be. (custom serialization logic for rkyv using `#[with(WithHashType)]` attribute)
@@ -124,8 +123,7 @@ pub fn hashtype(attr: ProcTokenStream, input: ProcTokenStream) -> ProcTokenStrea
 			if !no_archive_derive {
 				quote! {
 					#[derive(Hash, hashdb::UniqueId, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-					#[archive_attr(derive(bytecheck::CheckBytes))]
-					#[archive(bound(serialize = "__S: hashdb::ArchiveStore", deserialize = #deserialize_literal))]
+					#[archive(check_bytes, bound(serialize = "__S: hashdb::ArchiveStore", deserialize = #deserialize_literal))]
 					#item
 				}
 			} else {

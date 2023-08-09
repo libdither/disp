@@ -1,3 +1,5 @@
+use std::marker::ConstParamTy;
+
 // TODO: make this function work for all values of usize
 pub const fn calc_varint_len(count: usize) -> usize {
 	match count {
@@ -11,7 +13,7 @@ pub const fn calc_varint_len(count: usize) -> usize {
 	//let buf: &mut [u8; 10];
 	//unsigned_varint::encode::usize(count, buf).len()
 }
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, ConstParamTy)]
 pub enum Code {
 	Sha2_256,
 	Sha2_512,

@@ -19,11 +19,10 @@ thiserror = "1.0.31"
 hashdb = { path = "hashdb/" }
 anyhow = "1.0.58"
 rustyline = "11.0.0"
-bytecheck = "0.7.0"
 rkyv = { version = "0.7", features = ["validation"] }
 derivative = "2.2.0"
 either = "1.7.0"
-chumsky = { git = "https://github.com/zesterer/chumsky", default-features = false, features = ["nightly"] }
+chumsky = { path = "./chumsky", default-features = false, features = ["nightly", "label"] }
 smallvec = "1.9.0"
 ariadne = "0.2.0"
 

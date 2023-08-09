@@ -6,12 +6,11 @@
 //! Hash Table Storage
 
 use std::hash::{Hash as StdHash, Hasher};
-use bytecheck::CheckBytes;
 use hashdb_derive::impl_hashtype_for_many;
 use rkyv::Fallible;
 use rkyv::ser::{ScratchSpace, Serializer};
 use rkyv::validation::validators::DefaultValidator;
-use rkyv::{Archive, Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Serialize, CheckBytes};
 
 mod arena;
 mod db;

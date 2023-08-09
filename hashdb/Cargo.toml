@@ -9,9 +9,8 @@ edition = "2021"
 bincode = "1.3"
 bytes = "1.1"
 digest = "0.10"
-multihash = "0.16"
+multihash = "0.18.1"
 rkyv = { version = "0.7", features = ["validation"] }
-bytecheck = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 unsigned-varint = "0.7"

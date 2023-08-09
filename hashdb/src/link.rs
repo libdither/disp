@@ -1,15 +1,24 @@
 use std::marker::PhantomData;
 
-use rkyv::{Archive, Deserialize, Fallible, Serialize, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, SerializeWith}};
-use bytecheck::CheckBytes;
+use rkyv::{Archive, Deserialize, Fallible, Serialize, validation::validators::DefaultValidator, with::{ArchiveWith, DeserializeWith, SerializeWith}, CheckBytes};
 
 use crate::{Hash, store::{ArchiveDeserializer, ArchiveFetchable, ArchiveInterpretable, ArchiveStorable, ArchiveStore, HashType, TypeStore, ArchiveToType}};
 
-#[derive(Debug, PartialEq, Eq, CheckBytes, Archive, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct TypedHash<T> {
 	hash: Hash,
 	_type: PhantomData<T>,
 }
+
+impl<T, C: ?Sized> CheckBytes<C> for TypedHash<T> {
+    type Error = <Hash as CheckBytes<C>>::Error;
+
+    unsafe fn check_bytes<'a>(value: *const Self, _context: &mut C)
+        -> Result<&'a Self, Self::Error> {
+		Ok(&*value)
+    }
+}
+
 impl<T> Clone for TypedHash<T> {
     fn clone(&self) -> Self {
         Self { hash: self.hash.clone(), _type: Default::default() }
