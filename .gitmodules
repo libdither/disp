@@ -1,0 +1,3 @@
+[submodule "chumsky"]
+	path = chumsky
+	url = https://github.com/zesterer/chumsky
