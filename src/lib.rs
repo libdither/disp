@@ -2,9 +2,9 @@
 #![allow(incomplete_features)]
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(generic_const_exprs)]
+#![feature(type_alias_impl_trait)]
 
-pub use hashdb::{Datastore};
-use hashdb::{LinkArena, RevLinkArena, TypeStore};
+use hashdb::{TypeStore, LinkArena, RevLinkArena};
 
 pub mod expr;
 pub mod name;
