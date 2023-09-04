@@ -24,6 +24,11 @@ impl<'a, A: TypeStore<'a>> TypeStore<'a> for RevLinkStore<'a, A> {
     fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T {
         self.store.add(val)
     }
+
+    fn add_str(&'a self, string: &str) -> &'a str {
+        self.store.add_str(string)
+    }
+	
 }
 
 impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {

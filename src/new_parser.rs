@@ -1,55 +1,11 @@
 #![allow(dead_code)]
 
-use std::{cell::RefCell};
-
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
-use chumsky::{prelude::*, text::unicode, extra::Full, recursive::Direct, input::SpannedInput};
+use chumsky::{prelude::*, text::{unicode, ascii::ident}, extra::{Full, ParserExtra}, recursive::Direct, input::SpannedInput};
 use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
 use itertools::Itertools;
 
 use crate::{expr::{BindSubTree, Expr}, name::{Name, SemanticTree, NamedExpr}};
-
-// Represents active bound variables in the course of parsing an expression
-#[derive(Default, Debug)]
-pub struct NameBindStack<'e> {
-	stack: RefCell<Vec<&'e Name<'e>>>,
-}
-impl<'e> NameBindStack<'e> {
-	// Get binding index for this variable
-	fn name_index(&self, string: &String) -> Option<usize> {
-		self.stack.borrow().iter().enumerate().rev().find(|(_, e)|**e == string).map(|val|val.0 + 1)
-	}
-	fn push_name(&self, string: &'e Name<'e>) -> usize {
-		let mut map = self.stack.borrow_mut();
-		map.push(string);
-		map.len()
-	}
-	fn pop_name(&self) -> (usize, Option<&'e Name<'e>>) {
-		let mut map = self.stack.borrow_mut();
-		let len = map.len();
-		let ret = map.pop();
-		(len, ret)
-	}
-}
-
-/// Find first link of type L registered in RevTypeStore that contains `object` and matches a predicate
-fn lookup<'e, L: RevHashType<'e>, TS: RevTypeStore<'e>>(links: &'e TS, object: &'e impl HashType<'e>, predicate: impl Fn(&&'e L) -> bool) -> Option<&'e L>
-where
-	L: for<'s> ArchiveFetchable<'e, ArchiveToType<'s, 'e, Datastore, TS>> + ArchiveStorable<Datastore>
-{
-	links.links::<_, L>(object).find(predicate)
-}
-
-fn lookup_expr<'e, TS: RevTypeStore<'e>>(links: &'e TS, string: &str) -> Option<SemanticTree<'e>> {
-	let name = Name::add(links.add(string.to_string()), links);
-	// println!("looking up: {:?}", string);
-	let named_expr: &'e NamedExpr<'e> = lookup::<NamedExpr, TS>(links, name, |_expr| {
-		true // Return first expression found
-	})?;
-	// println!("found {name:?}");
-
-	Some(SemanticTree::named(named_expr, links))
-}
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Literal {
@@ -65,7 +21,7 @@ pub enum Bracket {
 	Caret,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+/* #[derive(PartialEq, Debug, Clone)]
 pub enum Token<'s> {
 	/// Associates a name with being the member of some type (used to defer definition)
 	/// `type`, as in `type thing : Type`
@@ -119,176 +75,211 @@ impl<'src> LexerState<'src> {
 			.repeated()
 	} 
 }
+ */
 
-type Span = SimpleSpan<usize>;
+/* type Span = SimpleSpan<usize>;
 type Spanned<T> = (T, Span);
 
 type ParserInput<'tokens, 'src> = SpannedInput<Token<'src>, Span, &'tokens [(Token<'src>, Span)]>;
+ */
 
+/// Identifier
+pub struct Ident<'e>(&'e str);
 
-/* pub enum ASTDef<'expr> {
-	/// `let name := thing : Type`
-	LetDef {
-		name: Name<'expr>,
-		val: &'expr ASTVal<'expr>,
-		implied_type: Option<&'expr ASTVal<'expr>>
-	},
-	/// `type name : Type := thing
-	TypeDef {
-		typ: &'expr ASTVal<'expr>,
-		default_name: Name<'expr>,
-		default_val: Option<&'expr ASTVal<'expr>>
-	},
-} */
-
-/// A value is a reference to a previously defined term, a constant literal, term construction, or type construction
-pub enum ASTExpr<'expr> {
-	/// `let <name> := <term> : <type>`
-	/// Requires <name> to be undefined in context, and for <term> and <type> to typecheck correctly
-	LetDef {
-		val: &'expr ASTExpr<'expr>,
-		name: &'expr Name<'expr>,
-		implied_type: Option<&'expr ASTExpr<'expr>>,
-	},
-	/// `<name>`
-	Ref(&'expr Name<'expr>),
-
-	PrimitiveTerm(PrimitiveTerm<'expr>),
-
-	PrimitiveType(PrimitiveType),
-
-	/// `{ <expr>, <expr> }` or `{ <expr> \n <expr> }`
-	/// Unordered set of expressions
-	Set(&'expr [ASTExpr<'expr>], Separator),
-	/// `[ <expr>, <expr> ]` or `[ <expr> \n <expr> ]`
-	/// Ordered list of expressions
-	List(&'expr [ASTExpr<'expr>], Separator),
-	/// `<val> -> <val>`
-	/// A function abstraction
-	Fn { input: &'expr ASTExpr<'expr>, ouput: &'expr ASTExpr<'expr>, implicit: bool },
+/// `let <name> := <val> : <type>`
+/// `let <name> : <type> := <val>`
+/// Requires <name> to be undefined in context, and for <term> and <type> to typecheck correctly
+pub struct LetDef<'e> {
+	name: Ident<'e>,
+	val: &'e AST<'e>,
+	optional_typ: Option<&'e AST<'e>>,
 }
+
+/// `type <name> : <type>`
+/// Names an undefined term of some type in some context.
+pub struct TypeDef<'e> {
+	name: Ident<'e>,
+	typ: &'e AST<'e>,
+}
+
+/// `func(arg) := thing`
+/// Anonymous definition, usually used for providing typeclass implementations (i.e. partial function definitions)
+pub struct AnonDef<'e> {
+	def: &'e AST<'e>,
+	val: &'e AST<'e>,
+}
+
+/// Separators for sets or lists may be Comma
 pub enum Separator {
 	Comma,
 	Newline,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BitSize {
+	S8, S16, S32, S64, S128, S256,
+}
+impl BitSize {
+	fn check_u64(val: u64) -> BitSize {
+		if (val >> 32) != 0 { BitSize::S64 }
+		else if (val >> 16) != 0 { BitSize::S32 }
+		else if (val >> 8)  != 0 { BitSize::S16 }
+		else { BitSize::S8 }
+	}
+	fn check_i64(val: i64) -> BitSize {
+		if i8::try_from(val).is_ok() { BitSize::S8 }
+		else if i16::try_from(val).is_ok() { BitSize::S16 }
+		else if i32::try_from(val).is_ok() { BitSize::S32 }
+		else { BitSize::S64 }
+	}
+}
+
+/// Primitive Type
+#[derive(Debug, Clone, PartialEq)]
 pub enum PrimitiveType {
 	Bool,
-	U8, U16, U32, U64, U128, Usize,
-	I8, I16, I32, I64, I128, Isize,
-	F32, F64,
+	/// Nat8, Nat16, Nat32, Nat64, Nat
+	Nat(BitSize),
+	/// Int8, Int16, Int32, Int64, Int
+	Int(BitSize),
+	/// Float32, Float64, Float
+	Float(BitSize),
 	String,
 	Char,
 }
-pub enum PrimitiveTerm<'expr> {
+/// Primitive Term
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrimitiveTerm<'e> {
 	Bool(bool),
-	U8(u8), U16(u16), U32(u32), U64(u64), Usize(usize),
-	I8(i8), I16(i16), I32(i32), I64(i64), Isize(isize),
-	F32(f32), F64(f64),
-	String(&'expr str),
+	Nat(u64, BitSize),
+	Int(i64, BitSize),
+	F32(f32),
+	F64(f64),
+	String(&'e str),
 	Char(char),
 }
 
-fn parser<'tokens, 'src: 'tokens, 'expr: 'b, 'b, B: TypeStore<'b>, E: TypeStore<'expr>>(
-	links: &'expr RevLinkStore<'expr, E>,
-	binds: &'b B, bind_map: &'b NameBindStack<'expr>
-) -> impl Parser<
-	'tokens,
-	ParserInput<'tokens, 'src>, // Input
-	Spanned<ASTExpr<'expr>>, // Output
-	extra::Err<Rich<'tokens, Token<'src>, Span>>, // Error type
-> + Clone {
-	
-	// Parses expression recursively
-	recursive(|expr| {
-		// A natural number
-		
-		/* let val = select! {
-			Token => Expr::Value(Value::Null),
-			Token::Bool(x) => Expr::Value(Value::Bool(x)),
-			Token::Num(n) => Expr::Value(Value::Num(n)),
-			Token::Str(s) => Expr::Value(Value::Str(s)),
-		}; */
-		let literal = select! {
-			Token::Literal(lit, string) => match lit {
-				Literal::String => ASTExpr::PrimitiveTerm(PrimitiveTerm::String(()))
-			}
-		};
-		let string = 
-		/* let number = text::int::<_, Full<char>>(10).padded()
-			.try_map(|s, span|
-				s.parse::<usize>()
-				.map_err(|e| Full::custom(span, format!("{}", e)))
-			).try_map(|num, span| {
-				match (lookup_expr(links, "zero"), lookup_expr(links, "succ")) {
-					(Some(zero), Some(succ)) => {
-						let expr = (0..num).into_iter().fold(zero, |acc, _|SemanticTree::app(succ.clone(), acc, links));
-						Ok((
-							expr,
-							BindSubTree::NONE
-						))
-					}
-					_ => Err(Full::custom(span, "names `zero` and `succ` must be defined to use numbers"))
-				}
-			}).labelled("number"); */
-		
-		// Parse valid name, number, or paranthesised expression.
-		/* let atom = name_parser().try_map(|string, span| {
-			if string == "*" { // Check if name is specifically unbound
-				Ok((SemanticTree::VAR, BindSubTree::NONE))
-			} else if let Some(val) = bind_map.name_index(&string) { // Check if name is bound
-				Ok((SemanticTree::VAR, BindSubTree::end(val, binds)))
-			} else if let Some(expr) = lookup_expr(links, &string) { // Check if name is defined
-				Ok((expr, BindSubTree::NONE))
-			} else { // Throw error if none of the above
-				Err(Full::custom(span, "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
-			}
+/// A value is a reference to a previously defined term, a constant literal, term construction, or type construction
+pub enum AST<'e> {
+	LetDef(LetDef<'e>),
+	TypeDef(TypeDef<'e>),
+	AnonDef(AnonDef<'e>),
+	Ident(Ident<'e>),
+	PrimitiveTerm(PrimitiveTerm<'e>),
+	PrimitiveType(PrimitiveType),
+
+	/// `{ <expr>, <expr> }` or `{ <expr> \n <expr> }`
+	/// Unordered set of expressions
+	Set(&'e [&'e AST<'e>], Separator),
+	/// `[ <expr>, <expr> ]` or `[ <expr> \n <expr> ]`
+	/// Ordered list of expressions
+	List(&'e [&'e AST<'e>], Separator),
+	/// `<val> -> <val>`
+	/// A function abstraction
+	Fn { input: &'e AST<'e>, ouput: &'e AST<'e>, implicit: bool },
+	/// `<func> {arg1, arg2}`
+	/// <func> [arg1, arg2]
+	/// <func> (arg1)
+	/// <func> <args>
+	Application { func: &'e AST<'e>, args: &'e AST<'e> },
+	/// `(expr1, expr2, ...)`
+	Grouping(&'e [&'e AST<'e>]),
+}
+
+pub struct CustomState<'e, E: TypeStore<'e> + 'e> {
+	/// Storage for the output of the parser
+	pub links: &'e RevLinkStore<'e, E>,
+}
+type CustomExtra<'s, 'e, E> = extra::Full<Rich<'s, char>, CustomState<'e, E>, ()>;
+
+fn primitive_type<'s, E: ParserExtra<'s, &'s str, Error = EmptyErr>>() -> impl Parser<'s, &'s str, PrimitiveType, E> {
+	ident().try_map(|ident: &str, _| match ident {
+		"Bool" 	=> Ok(PrimitiveType::Bool),
+		"Nat8" 	=> Ok(PrimitiveType::Nat(BitSize::S8)),
+		"Nat16" => Ok(PrimitiveType::Nat(BitSize::S16)),
+		"Nat32" => Ok(PrimitiveType::Nat(BitSize::S32)),
+		"Nat64" => Ok(PrimitiveType::Nat(BitSize::S64)),
+		"Int8" 	=> Ok(PrimitiveType::Int(BitSize::S8)),
+		"Int16" => Ok(PrimitiveType::Int(BitSize::S16)),
+		"Int32" => Ok(PrimitiveType::Int(BitSize::S32)),
+		"Int64" => Ok(PrimitiveType::Int(BitSize::S64)),
+		"Float32" => Ok(PrimitiveType::Float(BitSize::S32)),
+		"Float64" => Ok(PrimitiveType::Float(BitSize::S64)),
+		"String" => Ok(PrimitiveType::String),
+		"Char" => Ok(PrimitiveType::Char),
+		_ => Err(EmptyErr::default()),
+	})
+}
+fn string<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
+	just('"')
+		.ignore_then(none_of('"').repeated())
+		.then_ignore(just('"')).slice()
+		.map_with_state(|s: &'s str, _span, state: &mut CustomState<'e, E>|{
+			PrimitiveTerm::String(state.links.add_str(s))
 		})
-    	.or(number) */
-		/* .or(
-			expr.clone().map(|(inner, bind)|(SemanticTree::parens(inner, links), bind))
-			.delimited_by(just('('), just(')')
-		).padded()).labelled("atom"); */
+}
+fn num<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
+	just('-').repeated()
+	.then(text::int(10))
+	.then(just('.').then(text::digits(10)).or_not())
+	.slice().try_map(|string: &str, span| {
+		if string.contains(".") {
+			match string.parse::<f32>() {
+				Ok(val) => Ok(PrimitiveTerm::F32(val)),
+				Err(_) => match string.parse::<f64>() {
+					Ok(val) => Ok(PrimitiveTerm::F64(val)),
+					Err(_) => Err(Rich::custom(span, "failed to parse Float"))
+				}
+			}
+		} else if string.contains("-") {
+			match string.parse::<i64>() {
+				Ok(val) => Ok(PrimitiveTerm::Int(val, BitSize::check_i64(val))),
+				Err(_) => Err(Rich::custom(span, "failed to parse Int"))
+			}
+		} else {
+			match string.parse::<u64>() {
+				Ok(val) => Ok(PrimitiveTerm::Nat(val, BitSize::check_u64(val))),
+				Err(_) => Err(Rich::custom(span, "failed to parse Nat"))
+			}
+		}
+	})
+}
+#[cfg(test)]
+mod tests {
+    use hashdb::{RevLinkStore, LinkArena};
+	use super::*;
 
-		// Parse lambda binding i.e. `[x y z]` and then recursively parse subexpresion (i.e. `x y z`)
-		let lambda = name_parser()
-    		.repeated().at_least(1)
-			.delimited_by(just('['), just(']'))
-			.map(|symbols| {
-				let len = symbols.len();
-				// For each binding (i.e. "x", "y", "z") in parsed `[x y z]`, push onto bind_map
-				symbols.into_iter().for_each(|string|{
-					let string = links.add(string);
-					let name = Name::add(string, links);
-					bind_map.push_name(name);
-				});
-				// Return iterator counting down to 0 for each symbol in the bind expression
-				0..len
-			}).then(expr.clone()).foldr(|symbol_idx: usize, (lam_expr, mut bind_tree)| { // Fold right, i.e. [x y] (...) -> Lam(x, Lam(y, ...))
-				// get bind index and bind name
-				let (bind_idx, name_bind) = bind_map.pop_name();
-				// add bind_name 
-				let name_bind = name_bind.expect("expected bound variables").clone();
-				let binding = bind_tree.pop_binding(binds, &bind_idx, links).expect("failed to pop lambda");
-				(
-					SemanticTree::lambda(binding, name_bind, lam_expr, symbol_idx != 0, links),
-					bind_tree
-				)
-			}).labelled("lambda");
-		
-		// Parse consecutive atoms, i.e. `x y z` as left-folded function application
-		let application = atom.clone()
-			.then(atom.clone().repeated().at_least(1))
-			.foldl(|(func, func_index), (args, args_index)| {
-				(
-					SemanticTree::app(func, args, links),
-					BindSubTree::branch(func_index, args_index, binds)
-				)
-			}).labelled("application");
+	#[test]
+	fn test_num() {
+		let parse = primitive_type::<extra::Default>().padded().repeated().collect::<Vec<_>>().parse("String Num32 Int32").into_result().unwrap();
+		use PrimitiveType as PT;
+		assert_eq!(parse, vec![PT::String, PT::Nat(BitSize::S32), PT::Int(BitSize::S32)]);
+	}
+}
 
+fn char<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
+	just('\'').ignore_then(none_of('\'')).then_ignore(just('\'')).slice()
+	.try_map(|ch: &str, span| match ch.parse::<char>() {
+		Ok(ch) => Ok(PrimitiveTerm::Char(ch)), Err(e) => Err(Rich::custom(span, e))
+	})
+}
+fn primitive_term<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
+	choice((
+		just("true").to(PrimitiveTerm::Bool(true)),
+		just("false").to(PrimitiveTerm::Bool(false)),
+		string,
+		char,
+		num,
+	))
+}
+
+fn parser<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, AST<'e>, CustomExtra<'s, 'e, E>> {
+
+	/* // Parses expression recursively
+	recursive(|expr| {
 		
-		// An expression can be a lambda: `[x y]` an application: `x y` or an atom (name or nested expression)
-		lambda.or(application).or(atom).padded().labelled("expression")
-	}).then_ignore(end())
+	}).then_ignore(end()) */
+	primitive_term().map(|term|AST::PrimitiveTerm(term))
 }
 // Parse expression and register name tree
 /* pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e SemanticTree<'e>, anyhow::Error> {

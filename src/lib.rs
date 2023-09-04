@@ -3,6 +3,7 @@
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(generic_const_exprs)]
 #![feature(type_alias_impl_trait)]
+#![feature(try_blocks)]
 
 use hashdb::{TypeStore, LinkArena, RevLinkArena};
 
@@ -10,6 +11,7 @@ pub mod expr;
 pub mod name;
 pub mod check;
 mod parse;
+mod new_parser;
 
 use expr::{Binding as B, Expr};
 pub use parse::{parse, parse_reduce};
@@ -208,7 +210,7 @@ fn test_factorial() {
 fn test_hashdb() {
 	use hashdb::ArchiveStorable;
 	let links = &LinkArena::new();
-	let db = &mut Datastore::new();
+	let db = &mut hashdb::Datastore::new();
 	//let data = Data::new(&[01u8, 32u8]);
 	let string = String::from("Hello").store(db).unwrap();
 	assert_eq!(string.fetch(db, links).unwrap(), "Hello");

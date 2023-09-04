@@ -19,6 +19,11 @@ impl<'a> TypeStore<'a> for LinkArena<'a> {
     fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T {
         self.alloc(val)
     }
+
+    fn add_str<'v>(&'a self, string: &'v str) -> &'a str {
+        self.arena.alloc_str(string)
+    }
+	
 }
 
 impl<'a> LinkArena<'a> {
