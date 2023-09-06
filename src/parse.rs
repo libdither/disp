@@ -68,7 +68,7 @@ pub struct ParserState<'e: 'b, 'b, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e>
 type CustomExtra<'i, 'e, 'b, B, E> = extra::Full<Rich<'i, char>, ParserState<'e, 'b, B, E>, ()>;
 type CustomParser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e> = impl Parser<'i, &'i str, (SemanticTree<'e>, &'b BindSubTree<'b>), CustomExtra<'i, 'e, 'b, B, E>> + Clone;
 
-fn parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e>() -> CustomParser<'i, 'e, 'b, B, E> {
+fn expr_parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e>() -> CustomParser<'i, 'e, 'b, B, E> {
 	// Parses expression recursively
 	recursive(|expr: Recursive<Direct<'i, 'i, &'i str, (SemanticTree<'e>, &'b BindSubTree<'b>), CustomExtra<'i, 'e, 'b, B, E>>>| {
 		// A natural number
@@ -102,7 +102,7 @@ fn parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e>
 			}
 		})
     	.or(number)
-		.or(
+		.or( // atom expression that is parenthesized
 			expr.clone().map_with_state(|(inner, bind), _span, state: &mut ParserState<'e, 'b, B, E>|(SemanticTree::parens(inner, state.links), bind))
 			.delimited_by(just('('), just(')')
 		).padded()).labelled("atom");
@@ -126,7 +126,7 @@ fn parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e>
 				// get bind index and bind name
 				let (bind_idx, name_bind) = state.bind_map.pop_name();
 				// add bind_name 
-				let name_bind = name_bind.expect("expected bound variables").clone();
+				let name_bind = name_bind.expect("expected bound variables");
 				let binding = bind_tree.pop_binding(state.binds, &bind_idx, state.links).expect("failed to pop lambda");
 				(
 					SemanticTree::lambda(binding, name_bind, lam_expr, symbol_idx != 0, state.links),
@@ -157,7 +157,7 @@ pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e Semant
 		links, binds, bind_map
 	};
 	{
-		let parsed = parser().parse_with_state(string, &mut state).into_result();
+		let parsed = expr_parser().parse_with_state(string, &mut state).into_result();
 		match parsed {
 			Ok((expr, _)) => Ok(state.links.rev_add(expr)), // Register NameTreeExpr
 			Err(errors) => {
@@ -169,13 +169,22 @@ pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e Semant
 }
 pub fn gen_report<'a>(errors: impl IntoIterator<Item = Rich<'a, char>>) -> impl Iterator<Item = Report<'a>> {
 	errors.into_iter().map(|e| {
+		let msg = match e.reason() {
+			chumsky::error::RichReason::Many(errs) => errs.iter().map(|e|format!("{e}")).join(","),
+			_ => {e.to_string()}
+		};
+
         Report::build(ReportKind::Error, (), e.span().start)
-            .with_message(e.to_string())
+            .with_message(msg)
             .with_label(
                 Label::new(e.span().into_range())
                     .with_message(e.reason().to_string())
                     .with_color(Color::Red),
-            )
+            ).with_labels(e.contexts().map(|(label, span)| {
+				Label::new(span.into_range())
+					.with_message(format!("while parsing this {}", label))
+					.with_color(Color::Yellow)
+			}))
             .finish()
     })
 }
@@ -212,10 +221,12 @@ pub enum Command<'e> {
 }
 /// Parse commands
 pub fn command_parser<'i, 'e: 'i + 'b, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e>() -> impl Parser<'i, &'i str, Command<'e>, CustomExtra<'i, 'e, 'b, B, E>> {
-	let expr = parser();
+	let expr = expr_parser();
 
-	let filepath = any::<'i, &'i str, _>().delimited_by(just('"'), just('"'))
-    .map_slice(|s|s.to_owned()).padded()
+	let filepath = any::<'i, &'i str, _>()
+	.repeated()
+	.collect::<String>()
+	.delimited_by(just('"'), just('"'))
 	.labelled("filepath");
 
 	/* #[derive(Clone, Copy)]
@@ -242,16 +253,16 @@ pub fn command_parser<'i, 'e: 'i + 'b, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeSto
 					names.into_iter().map(|name|Name::add(state.links.add(name.to_owned()), state.links)).collect_vec()
 				)
 			)),
-			keyword("load").ignore_then(filepath).map(|file|Command::Load { file }),
-			keyword("save").ignore_then(filepath).map(|file|Command::Save { file, overwrite: false }),
+			keyword("load").ignore_then(filepath.padded()).map(|file|Command::Load { file }),
+			keyword("save").ignore_then(filepath.padded()).map(|file|Command::Save { file, overwrite: false }),
 		)))
 		/* .or(
 			// TODO: This is absolutely terrible, please replace
 			any().and_is(just(':')).try_map(move |(expr_syms, _), _| expr_test.parse(&expr_syms[..]).map_err(|e|e[0].clone())).then(expr.clone()).map(|((expr, _), (ty, _))|Command::Check(links.rev_add(expr), links.rev_add(ty)))
 		) */
-		.or(
+		/* .or(
 			expr.clone().map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr)))
-		)
+		) */
 		
 		/* .or(
 			expr.clone().then(end().map(|()|None).or(ident(":").padded().ignore_then(expr.clone()).map(|e|Some(e))))

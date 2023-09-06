@@ -26,11 +26,10 @@ impl Hasher for TrimHasher {
 
 	fn write(&mut self, bytes: &[u8]) {
 		debug_assert!(bytes.len() >= 8);
-		self.state = unsafe {
-			let byte_ptr = bytes.as_ptr();
-			let ptr = byte_ptr as *const u64; // This could be any type
-			(*ptr).clone() // We clone it so that no matter what type it is, it gets dereferenced.
-		};
+		let stuff = &bytes[0..8];
+		let mut bytes = [0u8; 8];
+		bytes.copy_from_slice(stuff);
+		self.state = u64::from_be_bytes(bytes);
 	}
 }
 impl BuildHasher for TrimHasher {

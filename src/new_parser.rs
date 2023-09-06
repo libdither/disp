@@ -2,8 +2,7 @@
 
 use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
 use chumsky::{prelude::*, text::{unicode, ascii::ident}, extra::{Full, ParserExtra}, recursive::Direct, input::SpannedInput};
-use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
-use itertools::Itertools;
+use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
 
 use crate::{expr::{BindSubTree, Expr}, name::{Name, SemanticTree, NamedExpr}};
 
@@ -267,9 +266,9 @@ fn primitive_term<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s st
 	choice((
 		just("true").to(PrimitiveTerm::Bool(true)),
 		just("false").to(PrimitiveTerm::Bool(false)),
-		string,
-		char,
-		num,
+		string(),
+		char(),
+		num(),
 	))
 }
 
@@ -311,13 +310,13 @@ pub fn gen_report<'a>(errors: impl IntoIterator<Item = Rich<'a, &'a str>>) -> im
     })
 }
 
-/// Parse and reduce a string
+/* /// Parse and reduce a string
 pub fn parse_reduce<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e Expr<'e>, anyhow::Error> {
 	let nte = parse(string, links)?;
 	Ok(nte.expr.reduce(links)?)
-}
+} */
 
-/// Commands for cli
+/* /// Commands for cli
 #[derive(Debug, Clone)]
 pub enum Command<'e> {
 	/// Do nothing
@@ -343,7 +342,7 @@ pub enum Command<'e> {
 }
 /// Parse commands
 pub fn command_parser<'a, 'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b LinkArena<'b>, bind_map: &'b NameBindStack<'e>) -> impl Parser<'a, &'a str, Command<'e>> + 'b {
-	let expr = parser(links, binds, bind_map);
+	let expr = parser();
 
 	let filepath = just::<_, _, Full<'a, &'a str>>('"')
 		.ignore_then(any().filter(|c| *c != '\\' && *c != '"').repeated())
@@ -398,9 +397,9 @@ pub fn command_parser<'a, 'e: 'b, 'b>(links: &'e RevLinkArena<'e>, binds: &'b Li
 			}).labelled("reduce")
 		) */
 		.labelled("command")
-}
+} */
 
-#[test]
+/* #[test]
 fn parse_test() {
 	use crate::expr::Binding;
 	use hashdb::LinkArena;
@@ -429,4 +428,4 @@ fn parse_test() {
 	assert_eq!(test, parse("[x y] x", links).unwrap().expr)
 
 	// Test semicolon detection
-}
+} */

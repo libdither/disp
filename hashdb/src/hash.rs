@@ -102,7 +102,8 @@ where
 	[(); C.total_len()]: Sized,
 {
 	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-		unsafe { state.write(&self.data) }
+		let data = unsafe { self.data };
+		state.write(&data)
 	}
 }
 impl<const C: Code> Clone for Multihash<C>
