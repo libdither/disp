@@ -26,4 +26,4 @@ Function that takes program with supported types in addition to different transl
 
 ## Implementation Details
 
- - [Deduplication-friendly Lambda term representation](https://dither.link/docs/spec/applications/disp/de-brujin-index-alternative/)
+ - [Deduplication-friendly Lambda term representation](https://dither.link/docs/disp/bind-trees.html)
