@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::{prelude::*, text::unicode::{ident, keyword}, recursive::Direct};
+use chumsky::{prelude::*, text::unicode::{ident, keyword}, recursive::Direct, extra::ParserExtra};
 use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
 use itertools::Itertools;
 
@@ -105,7 +105,7 @@ fn expr_parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> 
 		.or( // atom expression that is parenthesized
 			expr.clone().map_with_state(|(inner, bind), _span, state: &mut ParserState<'e, 'b, B, E>|(SemanticTree::parens(inner, state.links), bind))
 			.delimited_by(just('('), just(')')
-		).padded()).labelled("atom");
+		)).padded().labelled("atom");
 
 		// Parse lambda binding i.e. `[x y z]` and then recursively parse subexpresion (i.e. `x y z`)
 		let lambda = ident().padded()
@@ -219,63 +219,47 @@ pub enum Command<'e> {
 	/// List current links's names
 	List(Vec<&'e Name<'e>>),
 }
+
+fn filepath_parser<'i, E: ParserExtra<'i, &'i str, Error = Rich<'i, char>>>() -> impl Parser<'i, &'i str, &'i str, E> {
+	any::<'i, &'i str, _>()
+	.repeated()
+	.slice()
+	.delimited_by(just('"'), just('"'))
+	.labelled("filepath")
+}
+
 /// Parse commands
 pub fn command_parser<'i, 'e: 'i + 'b, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> + 'e>() -> impl Parser<'i, &'i str, Command<'e>, CustomExtra<'i, 'e, 'b, B, E>> {
 	let expr = expr_parser();
 
-	let filepath = any::<'i, &'i str, _>()
-	.repeated()
-	.collect::<String>()
-	.delimited_by(just('"'), just('"'))
-	.labelled("filepath");
-
 	/* #[derive(Clone, Copy)]
 	enum Comm { None, Set, List, Clear, Use, Load, Save, Reduce };
 	let command = end().to(Comm::None)
-    	.or(ident("set").to(Comm::Set))
-    	.or(ident("list").to(Comm::List))
-    	.or(ident("clear").to(Comm::Clear))
-    	.or(ident("use").to(Comm::Use))
-    	.or(ident("load").to(Comm::Load))
-    	.or(ident("save").to(Comm::Save))
+    	.or(keyword("set").to(Comm::Set))
+    	.or(keyword("list").to(Comm::List))
+    	.or(keyword("clear").to(Comm::Clear))
+    	.or(keyword("use").to(Comm::Use))
+    	.or(keyword("load").to(Comm::Load))
+    	.or(keyword("save").to(Comm::Save))
     .or(empty().to(Comm::Reduce))
     	.labelled("command").map(||) */
 	
 	end().to(Command::None)
     	.or(choice((
-			keyword("set").ignore_then(ident().padded())
+			keyword("set").labelled("set").ignore_then(ident().labelled("set ident").padded())
 			.then(expr.clone()).map_with_state(|(symbol, (expr, _)), _, state| Command::Name(symbol.to_owned(), state.links.rev_add(expr))),
 			
-			keyword("get").ignore_then(ident().padded()).map(|name: &str| Command::Get(name.to_owned())),
+			keyword("get").labelled("get").ignore_then(ident().labelled("get ident").padded()).map(|name: &str| Command::Get(name.to_owned())),
 			
-			keyword("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with_state(|names, _, state: &mut ParserState<'e, 'b, B, E>| 
+			keyword("list").labelled("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with_state(|names, _, state: &mut ParserState<'e, 'b, B, E>| 
 				Command::List(
 					names.into_iter().map(|name|Name::add(state.links.add(name.to_owned()), state.links)).collect_vec()
 				)
 			)),
-			keyword("eval").ignore_then(expr.clone().padded()).map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr))),
-			keyword("load").ignore_then(filepath.padded()).map(|file|Command::Load { file }),
-			keyword("save").ignore_then(filepath.padded()).map(|file|Command::Save { file, overwrite: false }),
-		)))
-		/* .or(
-			// TODO: This is absolutely terrible, please replace
-			any().and_is(just(':')).try_map(move |(expr_syms, _), _| expr_test.parse(&expr_syms[..]).map_err(|e|e[0].clone())).then(expr.clone()).map(|((expr, _), (ty, _))|Command::Check(links.rev_add(expr), links.rev_add(ty)))
-		) */
-		/* .or(
-			expr.clone().map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr)))
-		) */
-		
-		/* .or(
-			expr.clone().then(end().map(|()|None).or(ident(":").padded().ignore_then(expr.clone()).map(|e|Some(e))))
-			.map(|((expr, _), option_type)| {
-				if let Some((ty, _)) = option_type {
-					Command::Check(links.rev_add(expr), links.rev_add(ty))
-				} else {
-					Command::Reduce(links.rev_add(expr))
-				}
-			}).labelled("reduce")
-		) */
-		.labelled("command")
+			keyword("eval").labelled("eval").ignore_then(expr.clone().padded()).map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr))),
+			keyword("load").labelled("load").padded().labelled("load command").ignore_then(filepath_parser().padded()).map(|file|Command::Load { file: file.to_owned() }),
+			keyword("save").ignore_then(filepath_parser().padded()).map(|file|Command::Save { file: file.to_owned(), overwrite: false }),
+		)).labelled("command"))
 }
 
 #[test]
@@ -286,7 +270,7 @@ fn parse_test() {
 	let exprs = &LinkArena::new();
 	let links = &RevLinkArena::new(exprs);
 	// let links = &mut Context::new();
-	let parsed = parse("[x y] x y", links).unwrap();
+	let parsed = parse("[x y] (x y)", links).unwrap();
 	let test = Expr::lambda(Binding::left(Binding::END, links),
 	Expr::lambda(Binding::right(Binding::END, links),
 			Expr::app(Expr::VAR, Expr::VAR, links),

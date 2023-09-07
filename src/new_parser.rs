@@ -249,7 +249,7 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn test_num() {
+	fn test_prim_types() {
 		let parse = primitive_type::<extra::Default>().padded().repeated().collect::<Vec<_>>().parse("String Num32 Int32").into_result().unwrap();
 		use PrimitiveType as PT;
 		assert_eq!(parse, vec![PT::String, PT::Nat(BitSize::S32), PT::Int(BitSize::S32)]);
