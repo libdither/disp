@@ -253,6 +253,7 @@ pub fn command_parser<'i, 'e: 'i + 'b, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeSto
 					names.into_iter().map(|name|Name::add(state.links.add(name.to_owned()), state.links)).collect_vec()
 				)
 			)),
+			keyword("eval").ignore_then(expr.clone().padded()).map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr))),
 			keyword("load").ignore_then(filepath.padded()).map(|file|Command::Load { file }),
 			keyword("save").ignore_then(filepath.padded()).map(|file|Command::Save { file, overwrite: false }),
 		)))
