@@ -292,3 +292,17 @@ fn parse_test() {
 
 	// Test semicolon detection
 }
+
+fn test_label_parse(string: &str) -> ParseResult<&str, Rich<'_, char>> {
+	let parser = keyword::<&str, char, &str, extra::Err<Rich<char>>>("first");
+	parser.labelled("first").parse(string)
+}
+
+#[test]
+fn label_test() {
+	let uses_label = test_label_parse("[first");
+	let incorrect = test_label_parse("firsd");
+	uses_label.errors().for_each(|err|println!("{err}"));
+	incorrect.errors().for_each(|err|println!("{err}"));
+	panic!();
+}
