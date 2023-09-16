@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			Ok(line) => {
 				src_buf.clear(); src_buf.insert_str(0, &line);
 				rl.add_history_entry(src_buf.as_str())?;
-				let res = run_command(&src_buf, &parse::command_parser().labelled("command parser"), &mut parser_state, links, universal)?;
+				let res = run_command(&src_buf, &parse::command_parser(), &mut parser_state, links, universal)?;
 				if let Err(err) = res {
 					println!("{err}");
 				}
@@ -158,5 +158,6 @@ fn run_command<'i, 'e: 'i, 'b: 'i>(
 		};
 	};
 	println!("[time] {:?}", start_time.elapsed());
+
     Ok(res)
 }

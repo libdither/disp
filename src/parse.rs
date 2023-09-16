@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::{prelude::*, text::unicode::{ident, keyword}, recursive::Direct, extra::ParserExtra};
+use chumsky::{prelude::*, text::{unicode::{ident, keyword}, whitespace}, recursive::Direct, extra::ParserExtra};
 use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, RevTypeStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
 use itertools::Itertools;
 
@@ -167,6 +167,18 @@ pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e Semant
 		}
 	}
 }
+pub fn pretty_parse<'i, O: std::fmt::Debug, E: ParserExtra<'i, &'i str, Error = Rich<'i, char>>, P: Parser<'i, &'i str, O, E>>(string: &'i str, parser: P, state: &mut E::State)
+where <E as ParserExtra<'i, &'i str>>::Context: std::default::Default
+{
+	let parsed = parser.parse_with_state(string, state).into_result();
+	match parsed {
+		Ok(out) => println!("parsed: {out:?}"), // Register NameTreeExpr
+		Err(errors) => {
+			gen_report(errors).try_for_each(|report|report.print(Source::from(&string))).unwrap()
+		}
+	}
+}
+
 pub fn gen_report<'a>(errors: impl IntoIterator<Item = Rich<'a, char>>) -> impl Iterator<Item = Report<'a>> {
 	errors.into_iter().map(|e| {
 		let msg = match e.reason() {
@@ -221,11 +233,12 @@ pub enum Command<'e> {
 }
 
 fn filepath_parser<'i, E: ParserExtra<'i, &'i str, Error = Rich<'i, char>>>() -> impl Parser<'i, &'i str, &'i str, E> {
-	any::<'i, &'i str, _>()
+	none_of("\"")
+	//any::<'i, &'i str, _>()
 	.repeated()
 	.slice()
 	.delimited_by(just('"'), just('"'))
-	.labelled("filepath")
+	.labelled("filepath").as_context()
 }
 
 /// Parse commands
@@ -242,24 +255,31 @@ pub fn command_parser<'i, 'e: 'i + 'b, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeSto
     	.or(keyword("load").to(Comm::Load))
     	.or(keyword("save").to(Comm::Save))
     .or(empty().to(Comm::Reduce))
-    	.labelled("command").map(||) */
+    	.labelled("keyword"); */
 	
-	end().to(Command::None)
-    	.or(choice((
-			keyword("set").labelled("set").ignore_then(ident().labelled("set ident").padded())
-			.then(expr.clone()).map_with_state(|(symbol, (expr, _)), _, state| Command::Name(symbol.to_owned(), state.links.rev_add(expr))),
-			
-			keyword("get").labelled("get").ignore_then(ident().labelled("get ident").padded()).map(|name: &str| Command::Get(name.to_owned())),
-			
-			keyword("list").labelled("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with_state(|names, _, state: &mut ParserState<'e, 'b, B, E>| 
-				Command::List(
-					names.into_iter().map(|name|Name::add(state.links.add(name.to_owned()), state.links)).collect_vec()
-				)
-			)),
-			keyword("eval").labelled("eval").ignore_then(expr.clone().padded()).map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr))),
-			keyword("load").labelled("load").padded().labelled("load command").ignore_then(filepath_parser().padded()).map(|file|Command::Load { file: file.to_owned() }),
-			keyword("save").ignore_then(filepath_parser().padded()).map(|file|Command::Save { file: file.to_owned(), overwrite: false }),
-		)).labelled("command"))
+	keyword("set").labelled("set").ignore_then(ident().labelled("set ident").padded()).then(expr.clone()).map_with_state(|(symbol, (expr, _)), _, state| Command::Name(symbol.to_owned(), state.links.rev_add(expr)))
+
+	.or(
+	keyword("get").ignore_then(ident().labelled("get ident").padded()).map(|name: &str| Command::Get(name.to_owned()))
+	)
+
+	.or(
+	keyword("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with_state(|names, _, state: &mut ParserState<'e, 'b, B, E>| 
+		Command::List(
+			names.into_iter().map(|name|Name::add(state.links.add(name.to_owned()), state.links)).collect_vec()
+		)
+	))
+		.or(
+		keyword("eval").ignore_then(expr.clone().padded()).map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr)))
+		)
+	).or(
+		keyword("load").padded().ignore_then(filepath_parser().padded()).map(|file|Command::Load { file: file.to_owned() })
+		.labelled("load").as_context()
+		.or(
+			keyword("save").ignore_then(filepath_parser().padded()).map(|file|Command::Save { file: file.to_owned(), overwrite: false })
+		)
+	).labelled("command").as_context()
+		
 }
 
 #[test]
@@ -295,7 +315,7 @@ fn parse_test() {
 
 fn test_label_parse(string: &str) -> ParseResult<&str, Rich<'_, char>> {
 	let parser = keyword::<&str, char, &str, extra::Err<Rich<char>>>("first");
-	parser.labelled("first").parse(string)
+	parser.labelled("first").as_context().parse(string)
 }
 
 #[test]
@@ -305,4 +325,12 @@ fn label_test() {
 	uses_label.errors().for_each(|err|println!("{err}"));
 	incorrect.errors().for_each(|err|println!("{err}"));
 	panic!();
+}
+
+#[test]
+fn filepath_test() {
+	// let eval = keyword("eval").padded().labelled("keyword").ignore_then(ident()).labelled("eval").as_context();
+	let parser = just("test").then(whitespace().at_least(1)).labelled("keyword").as_context().ignore_then(filepath_parser::<extra::Err<Rich<char>>>()).labelled("command").as_context();
+	pretty_parse("testp test", parser, &mut ());
+	panic!()
 }
