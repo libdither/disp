@@ -231,7 +231,7 @@ fn test_replace_tree() {
 	let mut r = BindIndex::DEFAULT;
 	println!("start: [{}]", r);
 
-	let lambda = crate::parse::parse("[x y z w] x (y z) w", &links).unwrap().expr;
+	let lambda = crate::parse_old::parse("[x y z w] x (y z) w", &links).unwrap().expr;
 	println!("lambda: {}", lambda);
 	let expr = r.push_lambda(&lambda, trees).unwrap();
 	println!("after push: {} : {}", expr, r);

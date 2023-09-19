@@ -10,11 +10,11 @@ use hashdb::{TypeStore, LinkArena, RevLinkArena};
 pub mod expr;
 pub mod name;
 pub mod check;
-mod parse;
-mod new_parser;
+pub mod parse_old;
+pub mod parse;
 
 use expr::{Binding as B, Expr};
-pub use parse::{parse, parse_reduce};
+pub use parse_old::{parse, parse_reduce};
 pub use name::*;
 pub use check::*;
 
