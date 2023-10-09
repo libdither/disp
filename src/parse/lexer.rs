@@ -1,6 +1,8 @@
-use chumsky::{prelude::*, text::unicode, input::SpannedInput};
+use chumsky::{prelude::*, text::unicode, input::SpannedInput, combinator::MapExtra};
 
-use super::Literal;
+use crate::parse::fancy_print_errors;
+
+use super::{Literal, Separator};
 
 /// Types of brackets
 #[derive(PartialEq, Debug, Clone)]
@@ -12,7 +14,7 @@ pub enum BracketType {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-pub enum Token {
+pub enum Token<'s> {
 	/// Associates a name with being the member of some type (used to defer definition)
 	/// `type`, as in `type thing : Type`
     TypeKW,
@@ -26,84 +28,133 @@ pub enum Token {
 	/// `:` as in `type thing : Type`
 	TypeOp,
 	// Other Operation token
-	Op,
+	Op(&'s str),
 	/// A constant literal, resolves to an expression.
-	Literal(Literal),
+	Literal(Literal, &'s str),
 
 	OpenBracket(BracketType),
 	ClosedBracket(BracketType),
 
+	Separator(Separator),
+
 	/// Identifier
-	Ident,
+	Ident(&'s str),
 
 	/// Comment
-	Comment,
+	Comment(&'s str),
 }
 
-struct LexerState {
-	buf: Vec<(Token, SimpleSpan<usize>)>,
+struct LexerState<'s> {
+	buf: Vec<(Token<'s>, SimpleSpan<usize>)>,
 }
-impl LexerState {
+impl<'s> LexerState<'s> {
 	fn new() -> Self { LexerState { buf: Default::default() } }
 }
+type LexerExtra<'i> = extra::Full<Rich<'i, char>, LexerState<'i>, ()>;
 
-fn lexer<'i>() -> impl Parser<'i, &'i str, (), extra::State<LexerState>> {
-
+fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 	let num = text::int(10)
         .ignore_then(just('.').ignore_then(text::digits(10)).to(()).or_not())
-        .map(|opt|Token::Literal(opt.map_or(Literal::Integer, |_|Literal::Integer)));
+        .map_with(|out, extra|Token::Literal(out.map_or(Literal::Integer, |_|Literal::Decimal), extra.slice()));
 	
-	let string = just('"')
-		.then(none_of("\"").repeated())
-		.then(just('"'))
-		.to(Token::Literal(Literal::String));
+	let string = none_of("\"").repeated().delimited_by(just('"'), just('"'))
+		.to_slice().map(|src|Token::Literal(Literal::String, src));
+	// need more complicate char parsing (to deal with unicode stuff, \n, etc.)
+	let char = just('\'').ignore_then(none_of('\'')).then_ignore(just('\'')).to_slice().map(|src|Token::Literal(Literal::Char, src));
 
-	let op = one_of("+*-/!=:").repeated().at_least(1).map_slice(|op| match op{
+	let op = one_of("+*-/!=:").repeated().at_least(1).to_slice().map(|op| match op{
 		":=" => Token::AssignOp,
 		":" => Token::TypeOp,
-		_ => Token::Op,
+		_ => Token::Op(op),
 	});
+
+	// single-character standalone tokens
+	let single = select! {
+        '{' => Token::OpenBracket(BracketType::Curly),
+		'[' => Token::OpenBracket(BracketType::Square),
+		'(' => Token::OpenBracket(BracketType::Paren),
+		'<' => Token::OpenBracket(BracketType::Caret),
+		'}' => Token::ClosedBracket(BracketType::Curly),
+		']' => Token::ClosedBracket(BracketType::Square),
+		')' => Token::ClosedBracket(BracketType::Paren),
+		'>' => Token::ClosedBracket(BracketType::Caret),
+		';' => Token::Separator(Separator::Semicolon),
+		',' => Token::Separator(Separator::Comma),
+    };
 
 	let idents = unicode::ident().map(|ident: &str| match ident {
         "let" => Token::LetKW,
         "type" => Token::TypeKW,
-        "true" => Token::Literal(Literal::Boolean(true)),
-        "false" => Token::Literal(Literal::Boolean(false)),
-        _ => Token::Ident,
+        _ => Token::Ident(ident),
     });
 
 	let comment = just("//")
-        .ignore_then(any().and_is(just('\n').not()).repeated().to(Token::Comment))
+        .ignore_then(any().and_is(just('\n').not()).repeated().to_slice().map(|src|Token::Comment(src)))
         .padded();
 
-	let token = comment.or(num.or(string).or(op).or(idents));
-
+	let token = comment.or(num.or(string.or(char)).or((single.or(op)).or(idents)));
 
 	// A token can be a string, a unicode ident, or another fixed token.
 	token
-		.map_with_span(|tok, span|(tok, span))
+		.map_with(|tok_span, extra: &mut MapExtra<&'i str, LexerExtra<'i>>|{
+			let span = extra.span();
+			extra.state().buf.push((tok_span, span))
+		})
 		.padded()
 		// If we encounter an error, skip and attempt to lex the next character as a token instead
 		.recover_with(skip_then_retry_until(any().ignored(), end()))
-		.map_with_state(|tok_span, _, state: &mut LexerState|state.buf.push(tok_span))
+		.repeated().collect::<()>()
 
 } 
 
-type Span = SimpleSpan<usize>;
-type Spanned<T> = (T, Span);
+pub type Span = SimpleSpan<usize>;
+pub type Spanned<T> = (T, Span);
 
-type ParserInput<'tokens> = SpannedInput<Token, Span, &'tokens [(Token, Span)]>;
+pub type ParserInput<'src, 'tokens> = SpannedInput<Token<'src>, Span, &'tokens [(Token<'src>, Span)]>;
 
-fn test_lexer(string: &str, expected: &[(Token, Option<&str>)]) {
+fn test_lexer(string: &str, expected: &[Token]) {
 	let mut state = LexerState::new();
-	let res = lexer().parse_with_state("input", &mut state);
-	for (i, tok) in expected.iter().enumerate() {
-		assert_eq!(&state.buf[i], tok);
+
+	let res = lexer().parse_with_state(string, &mut state);
+	if res.has_errors() {
+		fancy_print_errors(res.into_errors(), string);
 	}
 	
+	let found = state.buf.into_iter().map(|(tok, tok_str)| tok).collect::<Vec<Token>>();
+
+	assert_eq!(expected, found);
 }
 
 #[test]
 fn num_test() {
-	test_lexer("hello world", $[(Token::Ident, None)])
+	test_lexer("hello world", &[Token::Ident("hello"), Token::Ident("world")]);
+
+	test_lexer("hello let yeet", &[Token::Ident("hello"), Token::LetKW, Token::Ident("yeet")]);
+
+	use Token::{Ident, LetKW, AssignOp, ClosedBracket, OpenBracket, Separator, TypeKW, TypeOp, Op, Literal};
+	use BracketType::*;
+	use self::Separator::*;
+	use self::Literal::*;
+	test_lexer(r#"
+		type thing : Nat;
+
+		let thing := 3;
+
+		let programming_languages_are_cool := true;
+	"#, &[
+		TypeKW, Ident("thing"), TypeOp, Ident("Nat"), Separator(Semicolon), LetKW, Ident("thing"), AssignOp, Literal(Integer, "3"), Separator(Semicolon), LetKW, Ident("programming_languages_are_cool"), AssignOp, Ident("true"), Separator(Semicolon)
+	]);
+	test_lexer(r#"
+		let literals := [3, 3.3, 'λ', "hi there"];
+	"#, &[
+		LetKW, Ident("literals"), AssignOp, OpenBracket(Square), Literal(Integer, "3"), Separator(Comma), Literal(Decimal, "3.3"), Separator(Comma), Literal(Char, "'λ'"), Separator(Comma), Literal(String, "\"hi there\""), ClosedBracket(Square), Separator(Semicolon)
+	]);
+	test_lexer(r#"
+		let List { T : Type } := data {
+			type nil : List(T),
+			type cons : { head : T, tail : List(T) } -> List(T),
+		}
+	"#, &[
+		LetKW, Ident("List"), OpenBracket(Curly), Ident("T"), TypeOp, Ident("Type"), ClosedBracket(Curly), AssignOp, Ident("data"), OpenBracket(Curly), TypeKW, Ident("nil"), TypeOp, Ident("List"), OpenBracket(Paren), Ident("T"), ClosedBracket(Paren), Separator(Comma), TypeKW, Ident("cons"), TypeOp, OpenBracket(Curly), Ident("head"), TypeOp, Ident("T"), Separator(Comma), Ident("tail"), TypeOp, Ident("List"), OpenBracket(Paren), Ident("T"), ClosedBracket(Paren), ClosedBracket(Curly), Op("-"), ClosedBracket(Caret), Ident("List"), OpenBracket(Paren), Ident("T"), ClosedBracket(Paren), Separator(Comma), ClosedBracket(Curly)
+	]);
 }

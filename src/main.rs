@@ -16,12 +16,12 @@ use hashdb::*;
 mod expr;
 mod name;
 mod check;
-mod parse;
+mod parse_old;
 
 use name::*;
 use check::*;
 
-use crate::{expr::ReduceLink, parse::ParserState};
+use crate::{expr::ReduceLink, parse_old::ParserState};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let exprs = &LinkArena::new();
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	}
 
 	let binds = &LinkArena::new();
-	let bind_map = parse::NameBindStack::default();
+	let bind_map = parse_old::NameBindStack::default();
 
 	let mut parser_state = ParserState {
 		links,
@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			Ok(line) => {
 				src_buf.clear(); src_buf.insert_str(0, &line);
 				rl.add_history_entry(src_buf.as_str())?;
-				let res = run_command(&src_buf, &parse::command_parser(), &mut parser_state, links, universal)?;
+				let res = run_command(&src_buf, &parse_old::command_parser(), &mut parser_state, links, universal)?;
 				if let Err(err) = res {
 					println!("{err}");
 				}
@@ -85,14 +85,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_command<'i, 'e: 'i, 'b: 'i>(
 	line: &'i str,
-	parser: &impl Parser<'i, &'i str, parse::Command<'e>, chumsky::extra::Full<chumsky::prelude::Rich<'i, char>, ParserState<'e, 'b, LinkArena<'b>, LinkArena<'e>>, ()>>,
+	parser: &impl Parser<'i, &'i str, parse_old::Command<'e>, chumsky::extra::Full<chumsky::prelude::Rich<'i, char>, ParserState<'e, 'b, LinkArena<'b>, LinkArena<'e>>, ()>>,
 	parser_state: &mut ParserState<'e, 'b, LinkArena<'b>, LinkArena<'e>>,
 	links: &RevLinkStore<'e, LinkArena<'e>>,
 	universal: &name::Context<'_>
 ) -> Result<Result<(), Box<dyn std::error::Error>>, Box<dyn std::error::Error>> {
     let start_time = std::time::Instant::now();
 	let res: Result<(), Box<dyn std::error::Error>> = try {
-		use parse::Command;
+		use parse_old::Command;
 		match parser.parse_with_state(line, parser_state).into_result() {
 			Ok(Command::None) => {}
 			Ok(Command::Name(string, sem)) => {
@@ -152,7 +152,7 @@ fn run_command<'i, 'e: 'i, 'b: 'i>(
 			}
 			Ok(_) => {}
 			Err(errors) => {
-				parse::gen_report(errors)
+				parse_old::gen_report(errors)
 					.try_for_each(|report| report.print(Source::from(&line)))?;
 			}
 		};

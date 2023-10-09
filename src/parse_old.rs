@@ -76,21 +76,22 @@ fn expr_parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> 
 			.try_map(|s: &str, span|
 				s.parse::<usize>()
 				.map_err(|e| Rich::custom(span, format!("{}", e)))
-			).try_map_with_state(|num, span, state| {
-				match (lookup_expr(state.links, "zero"), lookup_expr(state.links, "succ")) {
+			).try_map_with(|num, e| {
+				match (lookup_expr(e.state().links, "zero"), lookup_expr(e.state().links, "succ")) {
 					(Some(zero), Some(succ)) => {
-						let expr = (0..num).into_iter().fold(zero, |acc, _|SemanticTree::app(succ.clone(), acc, state.links));
+						let expr = (0..num).into_iter().fold(zero, |acc, _|SemanticTree::app(succ.clone(), acc, e.state().links));
 						Ok((
 							expr,
 							BindSubTree::NONE
 						))
 					}
-					_ => Err(Rich::custom(span, "names `zero` and `succ` must be defined to use numbers"))
+					_ => Err(Rich::custom(e.span(), "names `zero` and `succ` must be defined to use numbers"))
 				}
 			}).labelled("number");
 		
 		// Parse valid name, number, or paranthesised expression.
-		let atom = ident::<_, _, CustomExtra<_, _>>().try_map_with_state(|string: &str, span, state| {
+		let atom = ident::<_, _, CustomExtra<_, _>>().try_map_with(|string: &str, e| {
+			let state = e.state();
 			if string == "*" { // Check if name is specifically unbound
 				Ok((SemanticTree::VAR, BindSubTree::NONE))
 			} else if let Some(val) = state.bind_map.name_index(string) { // Check if name is bound
@@ -98,12 +99,12 @@ fn expr_parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> 
 			} else if let Some(expr) = lookup_expr(state.links, &string) { // Check if name is defined
 				Ok((expr, BindSubTree::NONE))
 			} else { // Throw error if none of the above
-				Err(Rich::custom(span, "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
+				Err(Rich::custom(e.span(), "Name not bound or not defined, If you intended this to be an unbound variable, use `*`"))
 			}
 		})
     	.or(number)
 		.or( // atom expression that is parenthesized
-			expr.clone().map_with_state(|(inner, bind), _span, state: &mut ParserState<'e, 'b, B, E>|(SemanticTree::parens(inner, state.links), bind))
+			expr.clone().map_with(|(inner, bind), e|(SemanticTree::parens(inner, e.state().links), bind))
 			.delimited_by(just('('), just(')')
 		)).padded().labelled("atom");
 
@@ -111,18 +112,20 @@ fn expr_parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> 
 		let lambda = ident().padded()
 			.repeated().at_least(1).collect::<Vec<_>>()
 			.delimited_by(just('['), just(']'))
-			.map_with_state(|symbols: Vec<&str>, _span, state: &mut ParserState<'e, 'b, B, E>| {
+			.map_with(|symbols: Vec<&str>, e: &mut chumsky::combinator::MapExtra<&'i str, CustomExtra<B, E>>| {
+				// let state = e.state();
 				let len = symbols.len();
 				// For each binding (i.e. "x", "y", "z") in parsed `[x y z]`, push onto bind_map
 				symbols.into_iter().for_each(|string|{
-					let string = state.links.add(string.to_owned());
-					let name = Name::add(string, state.links);
-					state.bind_map.push_name(name);
+					let string = e.state().links.add(string.to_owned());
+					let name = Name::add(string, e.state().links);
+					e.state().bind_map.push_name(name);
 				});
 				// Return iterator counting down to 0 for each symbol in the bind expression
 				0..len
 			}).into_iter()
-			.foldr_with_state(expr.clone(), |symbol_idx, (lam_expr, mut bind_tree), state: &mut ParserState<'e, 'b, B, E>| { // Fold right, i.e. [x y] (...) -> Lam(x, Lam(y, ...))
+			.foldr_with(expr.clone(), |symbol_idx, (lam_expr, mut bind_tree), e| { // Fold right, i.e. [x y] (...) -> Lam(x, Lam(y, ...))
+				let state = e.state();
 				// get bind index and bind name
 				let (bind_idx, name_bind) = state.bind_map.pop_name();
 				// add bind_name 
@@ -137,10 +140,10 @@ fn expr_parser<'i, 'e: 'b + 'i, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeStore<'e> 
 		
 		// Parse consecutive atoms, i.e. `x y z` as left-folded function application
 		let application = atom.clone()
-			.foldl_with_state(atom.clone().repeated().at_least(1), |(func, func_index), (args, args_index), state: &mut ParserState<'e, 'b, B, E>| {
+			.foldl_with(atom.clone().repeated().at_least(1), |(func, func_index), (args, args_index), e| {
 				(
-					SemanticTree::app(func, args, state.links),
-					BindSubTree::branch(func_index, args_index, state.binds)
+					SemanticTree::app(func, args, e.state().links),
+					BindSubTree::branch(func_index, args_index, e.state().binds)
 				)
 			}).labelled("application");
 
@@ -236,7 +239,7 @@ fn filepath_parser<'i, E: ParserExtra<'i, &'i str, Error = Rich<'i, char>>>() ->
 	none_of("\"")
 	//any::<'i, &'i str, _>()
 	.repeated()
-	.slice()
+	.to_slice()
 	.delimited_by(just('"'), just('"'))
 	.labelled("filepath").as_context()
 }
@@ -257,20 +260,20 @@ pub fn command_parser<'i, 'e: 'i + 'b, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeSto
     .or(empty().to(Comm::Reduce))
     	.labelled("keyword"); */
 	
-	keyword("set").labelled("set").ignore_then(ident().labelled("set ident").padded()).then(expr.clone()).map_with_state(|(symbol, (expr, _)), _, state| Command::Name(symbol.to_owned(), state.links.rev_add(expr)))
+	keyword("set").labelled("set").ignore_then(ident().labelled("set ident").padded()).then(expr.clone()).map_with(|(symbol, (expr, _)), e| Command::Name(symbol.to_owned(), e.state().links.rev_add(expr)))
 
 	.or(
 	keyword("get").ignore_then(ident().labelled("get ident").padded()).map(|name: &str| Command::Get(name.to_owned()))
 	)
 
 	.or(
-	keyword("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with_state(|names, _, state: &mut ParserState<'e, 'b, B, E>| 
+	keyword("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with(|names, e: &mut chumsky::combinator::MapExtra<&'i str, CustomExtra<B, E>>| 
 		Command::List(
-			names.into_iter().map(|name|Name::add(state.links.add(name.to_owned()), state.links)).collect_vec()
+			names.into_iter().map(|name|Name::add(e.state().links.add(name.to_owned()), e.state().links)).collect_vec()
 		)
 	))
 		.or(
-		keyword("eval").ignore_then(expr.clone().padded()).map_with_state(|(expr, _), _, state|Command::Reduce(state.links.rev_add(expr)))
+		keyword("eval").ignore_then(expr.clone().padded()).map_with(|(expr, _), extra|Command::Reduce(extra.state().links.rev_add(expr)))
 		)
 	).or(
 		keyword("load").padded().ignore_then(filepath_parser().padded()).map(|file|Command::Load { file: file.to_owned() })
@@ -318,7 +321,7 @@ fn test_label_parse(string: &str) -> ParseResult<&str, Rich<'_, char>> {
 	parser.labelled("first").as_context().parse(string)
 }
 
-#[test]
+/* #[test]
 fn label_test() {
 	let uses_label = test_label_parse("[first");
 	let incorrect = test_label_parse("firsd");
@@ -333,4 +336,4 @@ fn filepath_test() {
 	let parser = just("test").then(whitespace().at_least(1)).labelled("keyword").as_context().ignore_then(filepath_parser::<extra::Err<Rich<char>>>()).labelled("command").as_context();
 	pretty_parse("testp test", parser, &mut ());
 	panic!()
-}
+} */

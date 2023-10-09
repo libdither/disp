@@ -2,51 +2,71 @@
 
 pub mod lexer;
 
-use ariadne::{Color, Label, Report, Fmt, ReportKind, Source};
-use chumsky::{prelude::*, text::{unicode, ascii::ident}, extra::{Full, ParserExtra}, recursive::Direct, input::SpannedInput};
-use hashdb::{HashType, LinkArena, RevHashType, RevLinkArena, RevLinkStore, TypeStore, ArchiveFetchable, Datastore, ArchiveToType, ArchiveStorable};
+use ariadne::{Color, Label, Report, ReportKind};
+use chumsky::{prelude::*, combinator::MapExtra};
+use hashdb::{TypeStore, hashtype};
 
-use crate::{expr::{BindSubTree, Expr}, name::{Name, SemanticTree, NamedExpr}};
+use lexer::{Token, ParserInput, Spanned};
+use rkyv::{Archive, Deserialize, Serialize};
+
+use self::lexer::Span;
 
 /// A Literal expression
-#[derive(PartialEq, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Hash, Archive, Serialize, Deserialize)]
 pub enum Literal {
-	String, // String literal
-	Integer, // Integer literal
-	Decimal, // Decimal literal
-	Boolean(bool), // boolean
+	String, // String literal, "thing"
+	Char, // Char literal, 'λ'
+	Integer, // Integer literal, 123
+	Decimal, // Decimal literal, 123.456
+}
+
+/// Separators for sets or lists may be Comma
+#[derive(Debug, Clone, PartialEq, Hash, Archive, Serialize, Deserialize)]
+pub enum Separator {
+	Comma,
+	Semicolon,
 }
 
 /// Identifier
+#[derive(Debug)]
+#[hashtype]
 pub struct Ident<'e>(&'e str);
+
+// Relation that definitionally equates two objects
+// idt := obj
+#[derive(Debug)]
+#[hashtype]
+pub struct DefRel<'e> {
+	idt: &'e AST<'e>,
+	obj: &'e AST<'e>,
+}
+// relation that associates a type with an object.
+// idt : typ
+#[derive(Debug)]
+#[hashtype]
+pub struct TypRel<'e> {
+	idt: &'e AST<'e>,
+	typ: &'e AST<'e>,
+}
 
 /// `let <name> := <val> : <type>`
 /// `let <name> : <type> := <val>`
 /// Requires <name> to be undefined in context, and for <term> and <type> to typecheck correctly
+#[derive(Debug)]
+#[hashtype]
 pub struct LetDef<'e> {
-	name: Ident<'e>,
-	val: &'e AST<'e>,
-	optional_typ: Option<&'e AST<'e>>,
+	idt: &'e Ident<'e>,
+	def: &'e DefRel<'e>,
+	opt_typ: Option<&'e TypRel<'e>>,
 }
 
 /// `type <name> : <type>`
 /// Names an undefined term of some type in some context.
+#[derive(Debug)]
+#[hashtype]
 pub struct TypeDef<'e> {
-	name: Ident<'e>,
-	typ: &'e AST<'e>,
-}
-
-/// `func(arg) := thing`
-/// Anonymous definition, usually used for providing typeclass implementations (i.e. partial function definitions)
-pub struct AnonDef<'e> {
-	def: &'e AST<'e>,
-	val: &'e AST<'e>,
-}
-
-/// Separators for sets or lists may be Comma
-pub enum Separator {
-	Comma,
-	Newline,
+	name: &'e Ident<'e>,
+	rel: &'e TypRel<'e>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,24 +113,30 @@ pub enum PrimitiveTerm<'e> {
 	Char(char),
 }
 
+/// Literals are technically identifiers, right?
+#[derive(Debug, Clone, PartialEq, Hash, Archive, Serialize, Deserialize)]
+pub enum IdentType {
+	Literal(Literal),
+	Symbol,
+}
+
 /// A value is a reference to a previously defined term, a constant literal, term construction, or type construction
+#[derive(Debug)]
+#[hashtype]
 pub enum AST<'e> {
 	LetDef(LetDef<'e>),
 	TypeDef(TypeDef<'e>),
-	AnonDef(AnonDef<'e>),
-	Ident(Ident<'e>),
-	PrimitiveTerm(PrimitiveTerm<'e>),
-	PrimitiveType(PrimitiveType),
+	Ident(IdentType, &'e Ident<'e>),
 
-	/// `{ <expr>, <expr> }` or `{ <expr> \n <expr> }`
+	/// `{ <expr>, <expr> }` or `{ <expr>;\n <expr> }`
 	/// Unordered set of expressions
 	Set(&'e [&'e AST<'e>], Separator),
-	/// `[ <expr>, <expr> ]` or `[ <expr> \n <expr> ]`
+	/// `[ <expr>, <expr> ]` or `[ <expr>;\n <expr> ]`
 	/// Ordered list of expressions
 	List(&'e [&'e AST<'e>], Separator),
 	/// `<val> -> <val>`
 	/// A function abstraction
-	Fn { input: &'e AST<'e>, ouput: &'e AST<'e>, implicit: bool },
+	Fn { input: &'e AST<'e>, ouput: &'e AST<'e> },
 	/// `<func> {arg1, arg2}`
 	/// <func> [arg1, arg2]
 	/// <func> (arg1)
@@ -120,120 +146,66 @@ pub enum AST<'e> {
 	Grouping(&'e [&'e AST<'e>]),
 }
 
-pub struct CustomState<'e, E: TypeStore<'e> + 'e> {
+pub struct CustomState<'s, 'e, E: TypeStore<'e> + 'e> {
+	pub src: &'s str,
 	/// Storage for the output of the parser
-	pub links: &'e RevLinkStore<'e, E>,
+	pub links: &'e E,
 }
-type CustomExtra<'s, 'e, E> = extra::Full<Rich<'s, char>, CustomState<'e, E>, ()>;
+type CustomExtra<'t, 's, 'e, E> = extra::Full<Rich<'t, Token<'s>, Span>, CustomState<'s, 'e, E>, ()>;
 
-fn primitive_type<'s, E: ParserExtra<'s, &'s str, Error = EmptyErr>>() -> impl Parser<'s, &'s str, PrimitiveType, E> {
-	ident().try_map(|ident: &str, _| match ident {
-		"Bool" 	=> Ok(PrimitiveType::Bool),
-		"Nat8" 	=> Ok(PrimitiveType::Nat(BitSize::S8)),
-		"Nat16" => Ok(PrimitiveType::Nat(BitSize::S16)),
-		"Nat32" => Ok(PrimitiveType::Nat(BitSize::S32)),
-		"Nat64" => Ok(PrimitiveType::Nat(BitSize::S64)),
-		"Int8" 	=> Ok(PrimitiveType::Int(BitSize::S8)),
-		"Int16" => Ok(PrimitiveType::Int(BitSize::S16)),
-		"Int32" => Ok(PrimitiveType::Int(BitSize::S32)),
-		"Int64" => Ok(PrimitiveType::Int(BitSize::S64)),
-		"Float32" => Ok(PrimitiveType::Float(BitSize::S32)),
-		"Float64" => Ok(PrimitiveType::Float(BitSize::S64)),
-		"String" => Ok(PrimitiveType::String),
-		"Char" => Ok(PrimitiveType::Char),
-		_ => Err(EmptyErr::default()),
-	})
-}
-fn string<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
-	just('"')
-		.ignore_then(none_of('"').repeated())
-		.then_ignore(just('"')).slice()
-		.map_with_state(|s: &'s str, _span, state: &mut CustomState<'e, E>|{
-			PrimitiveTerm::String(state.links.add_str(s))
-		})
-}
-fn num<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
-	just('-').repeated()
-	.then(text::int(10))
-	.then(just('.').then(text::digits(10)).or_not())
-	.slice().try_map(|string: &str, span| {
-		if string.contains(".") {
-			match string.parse::<f32>() {
-				Ok(val) => Ok(PrimitiveTerm::F32(val)),
-				Err(_) => match string.parse::<f64>() {
-					Ok(val) => Ok(PrimitiveTerm::F64(val)),
-					Err(_) => Err(Rich::custom(span, "failed to parse Float"))
-				}
-			}
-		} else if string.contains("-") {
-			match string.parse::<i64>() {
-				Ok(val) => Ok(PrimitiveTerm::Int(val, BitSize::check_i64(val))),
-				Err(_) => Err(Rich::custom(span, "failed to parse Int"))
-			}
-		} else {
-			match string.parse::<u64>() {
-				Ok(val) => Ok(PrimitiveTerm::Nat(val, BitSize::check_u64(val))),
-				Err(_) => Err(Rich::custom(span, "failed to parse Nat"))
-			}
-		}
-	})
-}
-#[cfg(test)]
-mod tests {
-    use hashdb::{RevLinkStore, LinkArena};
-	use super::*;
-
-	#[test]
-	fn test_prim_types() {
-		let parse = primitive_type::<extra::Default>().padded().repeated().collect::<Vec<_>>().parse("String Num32 Int32").into_result().unwrap();
-		use PrimitiveType as PT;
-		assert_eq!(parse, vec![PT::String, PT::Nat(BitSize::S32), PT::Int(BitSize::S32)]);
-	}
-}
-
-fn char<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
-	just('\'').ignore_then(none_of('\'')).then_ignore(just('\'')).slice()
-	.try_map(|ch: &str, span| match ch.parse::<char>() {
-		Ok(ch) => Ok(PrimitiveTerm::Char(ch)), Err(e) => Err(Rich::custom(span, e))
-	})
-}
-fn primitive_term<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, PrimitiveTerm<'e>, CustomExtra<'s, 'e, E>> {
-	choice((
-		just("true").to(PrimitiveTerm::Bool(true)),
-		just("false").to(PrimitiveTerm::Bool(false)),
-		string(),
-		char(),
-		num(),
-	))
-}
-
-fn parser<'s, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'s, &'s str, AST<'e>, CustomExtra<'s, 'e, E>> {
-
-	/* // Parses expression recursively
+fn parser<'s: 't, 't, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, Spanned<&'e AST<'e>>, CustomExtra<'t, 's, 'e, E>> {
 	recursive(|expr| {
-		
-	}).then_ignore(end()) */
-	primitive_term().map(|term|AST::PrimitiveTerm(term))
-}
+		let literal = select! {
+			Token::Literal(x, src) = e => {
+				let state: &mut CustomState<E> = e.state();
+				AST::Ident(IdentType::Literal(x), state.links.add(Ident(state.links.add_str(src))))
+			},
+		}.labelled("literal")
+		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|extra.state().links.add(expr));
 
-// Parse expression and register name tree
-/* pub fn parse<'e>(string: &str, links: &'e RevLinkArena<'e>) -> Result<&'e SemanticTree<'e>, anyhow::Error> {
-	let binds = &LinkArena::new();
-	let bind_map = &NameBindStack::default();
-	{
-		let parsed = parser(links, binds, bind_map).parse(string);
-		match parsed {
-			Ok((expr, _)) => Ok(links.rev_add(expr)), // Register NameTreeExpr
-			Err(errors) => {
-				gen_report(errors).try_for_each(|report|report.print(Source::from(&string)))?;
-				Err(anyhow::anyhow!("Error"))
-			}
-		}
-	}
-} */
+		let symbol = select! {
+			Token::Ident(src) = e => {
+				let state: &mut CustomState<E> = e.state();
+				AST::Ident(IdentType::Symbol, state.links.add(Ident(state.links.add_str(src))))
+			},
+		}.labelled("symbol")
+		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|extra.state().links.add(expr));
+
+		/* let set = end();
+		let list = end();
+		let app = end();
+		let abs = end(); */
+
+		let object = literal.or(symbol);
+
+		let def_relation = symbol.then_ignore(just(Token::AssignOp)).then(object.clone()).map_with(|(idt, obj), extra|extra.state().links.add(DefRel { idt, obj }));
+		let typ_relation = symbol.then_ignore(just(Token::TypeOp)).then(object.clone()).map_with(|(idt, typ), extra|extra.state().links.add(TypRel { idt, typ }));
+
+		let let_dec = just(Token::LetKW).ignore_then(def_relation).try_map_with(|rel, extra| match rel.idt {
+			AST::Ident(IdentType::Symbol, idt) => Ok(extra.state().links.add(AST::LetDef(LetDef { idt, def: rel, opt_typ: None }))),
+			_ => Err(Rich::custom(extra.span(), "failed to associate definition relation with let declaration. let declaration requires a identifier in the relation")),
+		});
+		let typ_dec = just(Token::TypeKW).ignore_then(typ_relation).try_map_with(|rel, extra| match rel.idt {
+			AST::Ident(IdentType::Symbol, idt) => Ok(extra.state().links.add(AST::TypeDef(TypeDef { name: idt, rel }))),
+			_ => Err(Rich::custom(extra.span(), "failed to associate type relation with type declaration. type declaration requires a identifier in the relation")),
+		});
+
+		let_dec.or(typ_dec).map_with(|x, extra|(x, extra.span())).or(expr)
+	})
+}
+/// 
+/// parser := { E: impl{TypeStore} } -> {
+/// 	match {
+/// 		Token.Literal
+/// 	}
+/// }
+/// 
+/// 
+/// 
+/// 
 
 /// Generate cool errors with ariadne
-pub fn gen_report<'a>(errors: impl IntoIterator<Item = Rich<'a, &'a str>>) -> impl Iterator<Item = Report<'a>> {
+pub fn gen_reports<'a, I: std::fmt::Display + 'a>(errors: impl IntoIterator<Item = Rich<'a, I>>) -> impl Iterator<Item = Report<'a>> {
 	errors.into_iter().map(|e| {
         Report::build(ReportKind::Error, (), e.span().start)
             .with_message(e.to_string())
@@ -244,4 +216,10 @@ pub fn gen_report<'a>(errors: impl IntoIterator<Item = Rich<'a, &'a str>>) -> im
             )
             .finish()
     })
+}
+/// Use gen_reports to fancy-print errors
+pub fn fancy_print_errors<'a, I: std::fmt::Display + 'a>(errors: Vec<Rich<'a, I>>, source: &str) {
+	let source = ariadne::Source::from(source);
+	let mut reports = gen_reports(errors.into_iter());
+	reports.try_for_each(|rep|rep.eprint(source.clone())).unwrap();
 }
