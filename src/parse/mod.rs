@@ -157,8 +157,8 @@ fn parser<'s: 't, 't, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Parser
 	recursive(|expr| {
 		let literal = select! {
 			Token::Literal(x, src) = e => {
-				let state: &mut CustomState<E> = e.state();
-				AST::Ident(IdentType::Literal(x), state.links.add(Ident(state.links.add_str(src))))
+				//let state: &mut CustomState<E> = e.state();
+				AST::Ident(IdentType::Literal(x), e.state().links.add(Ident(e.state().links.add_str(src))))
 			},
 		}.labelled("literal")
 		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|extra.state().links.add(expr));
