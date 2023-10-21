@@ -4,12 +4,12 @@ pub mod lexer;
 
 use ariadne::{Color, Label, Report, ReportKind};
 use chumsky::{prelude::*, combinator::MapExtra};
-use hashdb::{TypeStore, hashtype};
+use hashdb::{TypeStore, hashtype, LinkArena};
 
 use lexer::{Token, ParserInput, Spanned};
 use rkyv::{Archive, Deserialize, Serialize};
 
-use self::lexer::Span;
+use self::lexer::{Span, LexerState};
 
 /// A Literal expression
 #[derive(Debug, Clone, PartialEq, Hash, Archive, Serialize, Deserialize)]
@@ -32,21 +32,41 @@ pub enum Separator {
 #[hashtype]
 pub struct Ident<'e>(&'e str);
 
-// Relation that definitionally equates two objects
-// idt := obj
+/// Relation that definitionally equates two objects
+/// idt := obj
 #[derive(Debug)]
 #[hashtype]
 pub struct DefRel<'e> {
-	idt: &'e AST<'e>,
-	obj: &'e AST<'e>,
+	idt: Spanned<&'e AST<'e>>,
+	obj: Spanned<&'e AST<'e>>,
 }
-// relation that associates a type with an object.
-// idt : typ
+/// Relation that associates a type with an object.
+/// idt : typ
 #[derive(Debug)]
 #[hashtype]
 pub struct TypRel<'e> {
-	idt: &'e AST<'e>,
-	typ: &'e AST<'e>,
+	idt: Spanned<&'e AST<'e>>,
+	typ: Spanned<&'e AST<'e>>,
+}
+
+/// Relation that associates a semantic parameter to a semantic body
+#[derive(Debug)]
+#[hashtype]
+pub struct FuncRel<'e> {
+	params: Spanned<&'e AST<'e>>, // usually a set
+	body: Spanned<&'e AST<'e>>,
+}
+
+/// Relation that associates a function and an argument
+/// `<func> {arg1, arg2}`
+/// <func> [arg1, arg2]
+/// <func> (arg1)
+/// <func> <args>
+#[derive(Debug)]
+#[hashtype]
+pub struct AppRel<'e> {
+	func: Spanned<&'e AST<'e>>,
+	args: Spanned<&'e AST<'e>>,
 }
 
 /// `let <name> := <val> : <type>`
@@ -55,9 +75,9 @@ pub struct TypRel<'e> {
 #[derive(Debug)]
 #[hashtype]
 pub struct LetDef<'e> {
-	idt: &'e Ident<'e>,
-	def: &'e DefRel<'e>,
-	opt_typ: Option<&'e TypRel<'e>>,
+	idt: Spanned<&'e Ident<'e>>,
+	def: Spanned<&'e DefRel<'e>>,
+	opt_typ: Option<Spanned<&'e TypRel<'e>>>,
 }
 
 /// `type <name> : <type>`
@@ -65,52 +85,8 @@ pub struct LetDef<'e> {
 #[derive(Debug)]
 #[hashtype]
 pub struct TypeDef<'e> {
-	name: &'e Ident<'e>,
-	rel: &'e TypRel<'e>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum BitSize {
-	S8, S16, S32, S64, S128, S256,
-}
-impl BitSize {
-	fn check_u64(val: u64) -> BitSize {
-		if (val >> 32) != 0 { BitSize::S64 }
-		else if (val >> 16) != 0 { BitSize::S32 }
-		else if (val >> 8)  != 0 { BitSize::S16 }
-		else { BitSize::S8 }
-	}
-	fn check_i64(val: i64) -> BitSize {
-		if i8::try_from(val).is_ok() { BitSize::S8 }
-		else if i16::try_from(val).is_ok() { BitSize::S16 }
-		else if i32::try_from(val).is_ok() { BitSize::S32 }
-		else { BitSize::S64 }
-	}
-}
-
-/// Primitive Type
-#[derive(Debug, Clone, PartialEq)]
-pub enum PrimitiveType {
-	Bool,
-	/// Nat8, Nat16, Nat32, Nat64, Nat
-	Nat(BitSize),
-	/// Int8, Int16, Int32, Int64, Int
-	Int(BitSize),
-	/// Float32, Float64, Float
-	Float(BitSize),
-	String,
-	Char,
-}
-/// Primitive Term
-#[derive(Debug, Clone, PartialEq)]
-pub enum PrimitiveTerm<'e> {
-	Bool(bool),
-	Nat(u64, BitSize),
-	Int(i64, BitSize),
-	F32(f32),
-	F64(f64),
-	String(&'e str),
-	Char(char),
+	name: Spanned<&'e Ident<'e>>,
+	rel: Spanned<&'e TypRel<'e>>,
 }
 
 /// Literals are technically identifiers, right?
@@ -130,38 +106,34 @@ pub enum AST<'e> {
 
 	/// `{ <expr>, <expr> }` or `{ <expr>;\n <expr> }`
 	/// Unordered set of expressions
-	Set(&'e [&'e AST<'e>], Separator),
+	Set(&'e [Spanned<&'e AST<'e>>], Separator),
 	/// `[ <expr>, <expr> ]` or `[ <expr>;\n <expr> ]`
 	/// Ordered list of expressions
-	List(&'e [&'e AST<'e>], Separator),
+	List(&'e [Spanned<&'e AST<'e>>], Separator),
 	/// `<val> -> <val>`
 	/// A function abstraction
-	Fn { input: &'e AST<'e>, ouput: &'e AST<'e> },
-	/// `<func> {arg1, arg2}`
-	/// <func> [arg1, arg2]
-	/// <func> (arg1)
-	/// <func> <args>
-	Application { func: &'e AST<'e>, args: &'e AST<'e> },
+	Func(FuncRel<'e>),
+	
+	App(AppRel<'e>),
 	/// `(expr1, expr2, ...)`
-	Grouping(&'e [&'e AST<'e>]),
+	Grouping(&'e [Spanned<&'e AST<'e>>]),
 }
 
-pub struct CustomState<'s, 'e, E: TypeStore<'e> + 'e> {
-	pub src: &'s str,
+pub struct CustomState<'e, E: TypeStore<'e> + 'e> {
 	/// Storage for the output of the parser
 	pub links: &'e E,
 }
-type CustomExtra<'t, 's, 'e, E> = extra::Full<Rich<'t, Token<'s>, Span>, CustomState<'s, 'e, E>, ()>;
+type CustomExtra<'t, 's, 'e, E> = extra::Full<Rich<'t, Token<'s>, Span>, CustomState<'e, E>, ()>;
 
-fn parser<'s: 't, 't, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, Spanned<&'e AST<'e>>, CustomExtra<'t, 's, 'e, E>> {
+fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, Spanned<&'e AST<'e>>, CustomExtra<'t, 's, 'e, E>> {
 	recursive(|expr| {
 		let literal = select! {
 			Token::Literal(x, src) = e => {
-				//let state: &mut CustomState<E> = e.state();
-				AST::Ident(IdentType::Literal(x), e.state().links.add(Ident(e.state().links.add_str(src))))
+				let state: &mut CustomState<E> = e.state();
+				AST::Ident(IdentType::Literal(x), state.links.add(Ident(state.links.add_str(src))))
 			},
 		}.labelled("literal")
-		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|extra.state().links.add(expr));
+		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|(extra.state().links.add(expr), extra.span()));
 
 		let symbol = select! {
 			Token::Ident(src) = e => {
@@ -169,7 +141,9 @@ fn parser<'s: 't, 't, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Parser
 				AST::Ident(IdentType::Symbol, state.links.add(Ident(state.links.add_str(src))))
 			},
 		}.labelled("symbol")
-		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|extra.state().links.add(expr));
+		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|(extra.state().links.add(expr), extra.span()));
+
+		let sequence = expr.repeated().collect::<Vec<Spanned<&AST<'e>>>>();
 
 		/* let set = end();
 		let list = end();
@@ -178,21 +152,77 @@ fn parser<'s: 't, 't, 'e: 's, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Parser
 
 		let object = literal.or(symbol);
 
+		// <expr> := <expr>
 		let def_relation = symbol.then_ignore(just(Token::AssignOp)).then(object.clone()).map_with(|(idt, obj), extra|extra.state().links.add(DefRel { idt, obj }));
+		// <expr> : <expr>
 		let typ_relation = symbol.then_ignore(just(Token::TypeOp)).then(object.clone()).map_with(|(idt, typ), extra|extra.state().links.add(TypRel { idt, typ }));
-
+		// let <ident> := <expr>
 		let let_dec = just(Token::LetKW).ignore_then(def_relation).try_map_with(|rel, extra| match rel.idt {
-			AST::Ident(IdentType::Symbol, idt) => Ok(extra.state().links.add(AST::LetDef(LetDef { idt, def: rel, opt_typ: None }))),
+			(AST::Ident(IdentType::Symbol, idt), idt_span) => Ok(extra.state().links.add(AST::LetDef(LetDef { idt: (idt, idt_span), def: (rel, extra.span()), opt_typ: None }))),
 			_ => Err(Rich::custom(extra.span(), "failed to associate definition relation with let declaration. let declaration requires a identifier in the relation")),
 		});
+		// type <ident> : <expr>
 		let typ_dec = just(Token::TypeKW).ignore_then(typ_relation).try_map_with(|rel, extra| match rel.idt {
-			AST::Ident(IdentType::Symbol, idt) => Ok(extra.state().links.add(AST::TypeDef(TypeDef { name: idt, rel }))),
+			(AST::Ident(IdentType::Symbol, idt), idt_span) => Ok(extra.state().links.add(AST::TypeDef(TypeDef { name: (idt, idt_span), rel: (rel, extra.span()) }))),
 			_ => Err(Rich::custom(extra.span(), "failed to associate type relation with type declaration. type declaration requires a identifier in the relation")),
 		});
 
-		let_dec.or(typ_dec).map_with(|x, extra|(x, extra.span())).or(expr)
+		// an expr can be a
+		let_dec.or(typ_dec).map_with(|x, extra|(x, extra.span()))
 	})
 }
+
+struct ParserState<'s, 'e> {
+	lexer_state: LexerState<'s>,
+	parser_state: CustomState<'e, LinkArena<'e>>,
+}
+impl<'s, 'e> ParserState<'s, 'e> {
+	fn new(links: &'e LinkArena<'e>) -> Self {
+		ParserState {
+			lexer_state: LexerState::new(),
+			parser_state: CustomState { links },
+		}
+	}
+	fn reset(&mut self) {
+		self.lexer_state.reset();
+	}
+}
+
+fn parse<'s, 'e: 's>(src: &'s str, state: &'e mut ParserState<'s, 'e>) -> (Option<Spanned<&'e AST<'e>>>, impl Iterator<Item = Rich<'s, String>>)  {
+	let lexer = self::lexer::lexer();
+	let (lex_success, lex_errs) = lexer.parse_with_state(src, &mut state.lexer_state).into_output_errors();
+
+	let ast_parser = ast_parser();
+	
+	let (spanned_ast, ast_errs) = if lex_success.is_some() {
+		ast_parser.parse_with_state(state.lexer_state.slice().spanned((src.len()..src.len()).into()), &mut state.parser_state).into_output_errors()
+	} else { (None, Vec::new()) };
+
+	(
+		spanned_ast,
+		lex_errs.into_iter()
+			.map(|e| e.map_token(|c| c.to_string()))
+			.chain(
+				ast_errs
+					.into_iter()
+					.map(|e| e.map_token(|tok| tok.to_string())),
+			)
+	)
+}
+
+#[test]
+fn test_parse() {
+	let links = &LinkArena::new();
+	let mut state = ParserState::new(links);
+
+	let src = "let thing := ";
+	let (ast, errs) = parse(src, &mut state);
+	println!("{ast:?}");
+	fancy_print_errors(errs, src);
+
+	panic!("check output");
+}
+
 /// 
 /// parser := { E: impl{TypeStore} } -> {
 /// 	match {
@@ -218,8 +248,8 @@ pub fn gen_reports<'a, I: std::fmt::Display + 'a>(errors: impl IntoIterator<Item
     })
 }
 /// Use gen_reports to fancy-print errors
-pub fn fancy_print_errors<'a, I: std::fmt::Display + 'a>(errors: Vec<Rich<'a, I>>, source: &str) {
+pub fn fancy_print_errors<'a, I: std::fmt::Display + 'a>(errors: impl IntoIterator<Item = Rich<'a, I>>, source: &str) {
 	let source = ariadne::Source::from(source);
-	let mut reports = gen_reports(errors.into_iter());
+	let mut reports = gen_reports(errors);
 	reports.try_for_each(|rep|rep.eprint(source.clone())).unwrap();
 }

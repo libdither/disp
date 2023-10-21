@@ -1,3 +1,5 @@
+use std::fmt;
+
 use chumsky::{prelude::*, text::unicode, input::SpannedInput, combinator::MapExtra};
 
 use crate::parse::fancy_print_errors;
@@ -44,15 +46,52 @@ pub enum Token<'s> {
 	Comment(&'s str),
 }
 
-struct LexerState<'s> {
+impl<'src> fmt::Display for Token<'src> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Token::TypeKW => write!(f, "type"),
+            Token::LetKW => write!(f, "let"),
+            Token::AssignOp => write!(f, ":="),
+            Token::TypeOp => write!(f, ":"),
+            Token::Op(op) => write!(f, "{op}"),
+            Token::Literal(literal, src) => match literal{
+                Literal::String => write!(f, "\"{src}\""),
+                Literal::Char => write!(f, "\'{src}\'"),
+                _ => write!(f, "{src}"),
+            },
+            Token::OpenBracket(typ) => write!(f, "{}", match typ {
+                BracketType::Paren => "(",
+                BracketType::Square => "[",
+                BracketType::Curly => "{",
+                BracketType::Caret => "<",
+            }),
+            Token::ClosedBracket(typ) => write!(f, "{}", match typ {
+                BracketType::Paren => ")",
+                BracketType::Square => "]",
+                BracketType::Curly => "}",
+                BracketType::Caret => ">",
+            }),
+            Token::Separator(typ) => write!(f, "{}", match typ {
+				Separator::Comma => ",",
+				Separator::Semicolon => ";",
+			}),
+            Token::Ident(src) => write!(f, "{src}"),
+            Token::Comment(src) => write!(f, "//{src}"),
+        }
+    }
+}
+
+pub struct LexerState<'s> {
 	buf: Vec<(Token<'s>, SimpleSpan<usize>)>,
 }
 impl<'s> LexerState<'s> {
-	fn new() -> Self { LexerState { buf: Default::default() } }
+	pub fn new() -> Self { LexerState { buf: Default::default() } }
+	pub fn slice(&self) -> &[(Token<'s>, SimpleSpan<usize>)] { &self.buf }
+	pub fn reset(&mut self) { self.buf.clear(); }
 }
 type LexerExtra<'i> = extra::Full<Rich<'i, char>, LexerState<'i>, ()>;
 
-fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
+pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 	let num = text::int(10)
         .ignore_then(just('.').ignore_then(text::digits(10)).to(()).or_not())
         .map_with(|out, extra|Token::Literal(out.map_or(Literal::Integer, |_|Literal::Decimal), extra.slice()));
@@ -120,7 +159,7 @@ fn test_lexer(string: &str, expected: &[Token]) {
 		fancy_print_errors(res.into_errors(), string);
 	}
 	
-	let found = state.buf.into_iter().map(|(tok, tok_str)| tok).collect::<Vec<Token>>();
+	let found = state.buf.into_iter().map(|(tok, _span)| tok).collect::<Vec<Token>>();
 
 	assert_eq!(expected, found);
 }
