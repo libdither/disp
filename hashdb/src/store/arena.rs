@@ -19,10 +19,15 @@ impl<'a> TypeStore<'a> for LinkArena<'a> {
     fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T {
         self.alloc(val)
     }
+	fn add_slice<'v, T: HashType<'a> + Clone>(&'a self, slice: &'v [T]) -> &'a [T] {
+        self.arena.alloc_slice_clone(slice)
+    }
 
     fn add_str<'v>(&'a self, string: &'v str) -> &'a str {
         self.arena.alloc_str(string)
     }
+
+    
 	
 }
 

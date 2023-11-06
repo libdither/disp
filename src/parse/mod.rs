@@ -70,7 +70,9 @@ pub struct AppRel<'e> {
 }
 
 /// `let <name> := <val> : <type>`
+/// 
 /// `let <name> : <type> := <val>`
+/// 
 /// Requires <name> to be undefined in context, and for <term> and <type> to typecheck correctly
 #[derive(Debug)]
 #[hashtype]
@@ -115,8 +117,6 @@ pub enum AST<'e> {
 	Func(FuncRel<'e>),
 	
 	App(AppRel<'e>),
-	/// `(expr1, expr2, ...)`
-	Grouping(&'e [Spanned<&'e AST<'e>>]),
 }
 
 pub struct CustomState<'e, E: TypeStore<'e> + 'e> {
@@ -143,14 +143,31 @@ fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Pa
 		}.labelled("symbol")
 		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|(extra.state().links.add(expr), extra.span()));
 
-		let sequence = expr.repeated().collect::<Vec<Spanned<&AST<'e>>>>();
+		let comma_sequence = expr
+			.separated_by(just(Token::Separator(Separator::Comma))).allow_trailing()
+			.collect::<Vec<Spanned<&AST<'e>>>>().map(|x|(x, Separator::Comma));
+		let semicolon_sequence = expr
+			.separated_by(just(Token::Separator(Separator::Semicolon))).allow_trailing()
+			.collect::<Vec<Spanned<&AST<'e>>>>().map(|x|(x, Separator::Semicolon));
 
-		/* let set = end();
-		let list = end();
-		let app = end();
-		let abs = end(); */
+		let sequence = comma_sequence.or(semicolon_sequence);
 
-		let object = literal.or(symbol);
+		let set = sequence.delimited_by(just(Token::OpenBracket(lexer::BracketType::Curly)), Token::ClosedBracket(lexer::BracketType::Curly))
+			.map_with(|(seq,sep), extra| AST::Set(extra.state().links.add_slice(&seq[..]), sep));
+		
+		let list = sequence.delimited_by(just(Token::OpenBracket(lexer::BracketType::Square)), Token::ClosedBracket(lexer::BracketType::Square))
+		.map_with(|(seq,sep), extra| AST::List(extra.state().links.add_slice(&seq[..]), sep));
+
+		// "thing" OR "{ thing := thing }" OR [ list ]
+		let object = literal.or(symbol).or(set.or(list));
+
+		// (<expr>)
+		let grouping = object.delimited_by(just(Token::OpenBracket(lexer::BracketType::Paren)), just(Token::ClosedBracket(lexer::BracketType::Paren)));
+
+		let app = object.then(object);
+
+		let abs = object.then(just(Token::AbsOp).ignore_then(object).repeated()).foldr();
+		
 
 		// <expr> := <expr>
 		let def_relation = symbol.then_ignore(just(Token::AssignOp)).then(object.clone()).map_with(|(idt, obj), extra|extra.state().links.add(DefRel { idt, obj }));
@@ -188,6 +205,7 @@ impl<'s, 'e> ParserState<'s, 'e> {
 	}
 }
 
+// parse a string given some state
 fn parse<'s, 'e: 's>(src: &'s str, state: &'e mut ParserState<'s, 'e>) -> (Option<Spanned<&'e AST<'e>>>, impl Iterator<Item = Rich<'s, String>>)  {
 	let lexer = self::lexer::lexer();
 	let (lex_success, lex_errs) = lexer.parse_with_state(src, &mut state.lexer_state).into_output_errors();
@@ -221,6 +239,12 @@ fn test_parse() {
 	fancy_print_errors(errs, src);
 
 	panic!("check output");
+
+	let src = r#"
+let thing := {} {} -> ({} -> {
+
+})
+	"#;
 }
 
 /// 

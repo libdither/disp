@@ -29,6 +29,9 @@ pub enum Token<'s> {
 	/// Describes the type of an expression or name.
 	/// `:` as in `type thing : Type`
 	TypeOp,
+	// Describes the creation of an abstraction
+	/// `->` as in `{a: Nat, b: Nat} -> Nat`
+	AbsOp,
 	// Other Operation token
 	Op(&'s str),
 	/// A constant literal, resolves to an expression.
@@ -52,6 +55,7 @@ impl<'src> fmt::Display for Token<'src> {
             Token::TypeKW => write!(f, "type"),
             Token::LetKW => write!(f, "let"),
             Token::AssignOp => write!(f, ":="),
+			Token::AbsOp => write!(f, "->"),
             Token::TypeOp => write!(f, ":"),
             Token::Op(op) => write!(f, "{op}"),
             Token::Literal(literal, src) => match literal{
@@ -104,6 +108,7 @@ pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 	let op = one_of("+*-/!=:").repeated().at_least(1).to_slice().map(|op| match op{
 		":=" => Token::AssignOp,
 		":" => Token::TypeOp,
+		"->" => Token::AbsOp,
 		_ => Token::Op(op),
 	});
 

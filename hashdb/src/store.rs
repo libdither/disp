@@ -29,6 +29,7 @@ use crate::Hash;
 /// All types that store a T in an arena and return a reference to that T that lasts as long as the arena.
 pub trait TypeStore<'a> {
 	fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T;
+	fn add_slice<'v, T: HashType<'a> + Clone>(&'a self, slice: &'v [T]) -> &'a [T];
 	fn add_str<'v>(&'a self, string: &'v str) -> &'a str;
 }
 pub trait RevTypeStore<'a>: TypeStore<'a> + Sized {
@@ -79,7 +80,8 @@ impl<'a, T: HashType<'a> + ReverseLinks + UniqueId> RevHashType<'a> for T {}
 
 impl_hashtype_for_many! {
 	String,
-	usize
+	usize,
+	u8
 }
 
 /// All types that can store a piece of data by its multihash.
@@ -154,11 +156,12 @@ impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> TypeStore<'a> for ArchiveToT
     fn add<T: HashType<'a>>(&'a self, val: T) -> &'a T {
         self.type_store.add(val)
     }
-
+	fn add_slice<'v, T: HashType<'a> + Clone>(&'a self, slice: &'v [T]) -> &'a [T] {
+        self.type_store.add_slice(slice)
+    }
     fn add_str<'v>(&'a self, string: &'v str) -> &'a str {
         self.type_store.add_str(string)
     }
-	
 }
 impl<'s, 'a, S: ArchiveStoreRead, A: TypeStore<'a>> ArchiveDeserializer<'a> for ArchiveToType<'s, 'a, S, A> {
     fn fetch<T: ArchiveFetchable<'a, Self>>(&mut self, hash: &TypedHash<T>) -> Result<T, <Self as Fallible>::Error>
