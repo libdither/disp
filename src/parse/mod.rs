@@ -3,7 +3,7 @@
 pub mod lexer;
 
 use ariadne::{Color, Label, Report, ReportKind};
-use chumsky::{input::MapExtra, prelude::*, primitive::select};
+use chumsky::{combinator::MapExtra, prelude::*, primitive::select};
 use hashdb::{hashtype, HashType, LinkArena, TypeStore};
 
 use lexer::{Token, ParserInput, Spanned};
