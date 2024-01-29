@@ -1,10 +1,9 @@
 #![allow(incomplete_features)]
-#![feature(return_position_impl_trait_in_trait)]
 #![feature(generic_const_exprs)]
 #![feature(try_blocks)]
 #![feature(type_alias_impl_trait)]
 
-use std::fs;
+/* use std::fs;
 
 use anyhow::Context;
 use ariadne::Source;
@@ -16,15 +15,15 @@ use hashdb::*;
 mod expr;
 mod name;
 mod check;
-mod parse_old;
+mod parse;
 
 use name::*;
-use check::*;
+use check::*; */
 
-use crate::{expr::ReduceLink, parse_old::ParserState};
-
+/* use crate::{expr::ReduceLink, parse_old::ParserState};
+ */
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-	let exprs = &LinkArena::new();
+	/* let exprs = &LinkArena::new();
 	let links = &RevLinkArena::new(exprs);
 	let universal = name::Context::universal(links);
 
@@ -159,5 +158,6 @@ fn run_command<'i, 'e: 'i, 'b: 'i>(
 	};
 	println!("[time] {:?}", start_time.elapsed());
 
-    Ok(res)
+    Ok(res) */
+	Ok(())
 }

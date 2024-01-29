@@ -3,8 +3,8 @@
 pub mod lexer;
 
 use ariadne::{Color, Label, Report, ReportKind};
-use chumsky::{prelude::*, combinator::MapExtra};
-use hashdb::{TypeStore, hashtype, LinkArena};
+use chumsky::{combinator::MapExtra, prelude::*, primitive::select};
+use hashdb::{hashtype, HashType, LinkArena, TypeStore};
 
 use lexer::{Token, ParserInput, Spanned};
 use rkyv::{Archive, Deserialize, Serialize};
@@ -37,24 +37,25 @@ pub struct Ident<'e>(&'e str);
 #[derive(Debug)]
 #[hashtype]
 pub struct DefRel<'e> {
-	idt: Spanned<&'e AST<'e>>,
-	obj: Spanned<&'e AST<'e>>,
+	idt: SpannedAST<'e>,
+	obj: SpannedAST<'e>,
 }
 /// Relation that associates a type with an object.
 /// idt : typ
 #[derive(Debug)]
 #[hashtype]
 pub struct TypRel<'e> {
-	idt: Spanned<&'e AST<'e>>,
-	typ: Spanned<&'e AST<'e>>,
+	idt: SpannedAST<'e>,
+	typ: SpannedAST<'e>,
 }
 
-/// Relation that associates a semantic parameter to a semantic body
+/// Relation that denotes a function or type implication
+/// Thing -> Thing
 #[derive(Debug)]
 #[hashtype]
 pub struct FuncRel<'e> {
-	params: Spanned<&'e AST<'e>>, // usually a set
-	body: Spanned<&'e AST<'e>>,
+	arg: SpannedAST<'e>, // usually a set
+	body: SpannedAST<'e>,
 }
 
 /// Relation that associates a function and an argument
@@ -65,8 +66,8 @@ pub struct FuncRel<'e> {
 #[derive(Debug)]
 #[hashtype]
 pub struct AppRel<'e> {
-	func: Spanned<&'e AST<'e>>,
-	args: Spanned<&'e AST<'e>>,
+	func: SpannedAST<'e>,
+	args: SpannedAST<'e>,
 }
 
 /// `let <name> := <val> : <type>`
@@ -77,9 +78,9 @@ pub struct AppRel<'e> {
 #[derive(Debug)]
 #[hashtype]
 pub struct LetDef<'e> {
-	idt: Spanned<&'e Ident<'e>>,
-	def: Spanned<&'e DefRel<'e>>,
-	opt_typ: Option<Spanned<&'e TypRel<'e>>>,
+	idt: Spanned<'e, &'e Ident<'e>>,
+	def: Spanned<'e, &'e DefRel<'e>>,
+	opt_typ: Option<Spanned<'e, &'e TypRel<'e>>>,
 }
 
 /// `type <name> : <type>`
@@ -87,8 +88,8 @@ pub struct LetDef<'e> {
 #[derive(Debug)]
 #[hashtype]
 pub struct TypeDef<'e> {
-	name: Spanned<&'e Ident<'e>>,
-	rel: Spanned<&'e TypRel<'e>>,
+	name: Spanned<'e, &'e Ident<'e>>,
+	rel: Spanned<'e, &'e TypRel<'e>>,
 }
 
 /// Literals are technically identifiers, right?
@@ -97,6 +98,8 @@ pub enum IdentType {
 	Literal(Literal),
 	Symbol,
 }
+
+type SpannedAST<'e> = Spanned<'e, &'e AST<'e>>;
 
 /// A value is a reference to a previously defined term, a constant literal, term construction, or type construction
 #[derive(Debug)]
@@ -108,10 +111,10 @@ pub enum AST<'e> {
 
 	/// `{ <expr>, <expr> }` or `{ <expr>;\n <expr> }`
 	/// Unordered set of expressions
-	Set(&'e [Spanned<&'e AST<'e>>], Separator),
+	Set(&'e [SpannedAST<'e>], Separator),
 	/// `[ <expr>, <expr> ]` or `[ <expr>;\n <expr> ]`
 	/// Ordered list of expressions
-	List(&'e [Spanned<&'e AST<'e>>], Separator),
+	List(&'e [SpannedAST<'e>], Separator),
 	/// `<val> -> <val>`
 	/// A function abstraction
 	Func(FuncRel<'e>),
@@ -125,67 +128,80 @@ pub struct CustomState<'e, E: TypeStore<'e> + 'e> {
 }
 type CustomExtra<'t, 's, 'e, E> = extra::Full<Rich<'t, Token<'s>, Span>, CustomState<'e, E>, ()>;
 
-fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, Spanned<&'e AST<'e>>, CustomExtra<'t, 's, 'e, E>> {
+fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, SpannedAST<'e>, CustomExtra<'t, 's, 'e, E>> {
 	recursive(|expr| {
 		let literal = select! {
-			Token::Literal(x, src) = e => {
+			Token::Literal(typ, src) = e => {
 				let state: &mut CustomState<E> = e.state();
-				AST::Ident(IdentType::Literal(x), state.links.add(Ident(state.links.add_str(src))))
+				AST::Ident(IdentType::Literal(typ), state.links.add(Ident(state.links.add_str(src))))
 			},
-		}.labelled("literal")
-		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|(extra.state().links.add(expr), extra.span()));
+		}.map_with(|item, extra: &mut MapExtra<_, CustomExtra<E>>|Spanned::new(extra.state().links.add(item), extra.span())).labelled("literal");
 
 		let symbol = select! {
 			Token::Ident(src) = e => {
 				let state: &mut CustomState<E> = e.state();
 				AST::Ident(IdentType::Symbol, state.links.add(Ident(state.links.add_str(src))))
 			},
-		}.labelled("symbol")
-		.map_with(|expr, extra: &mut MapExtra<ParserInput, CustomExtra<E>>|(extra.state().links.add(expr), extra.span()));
-
-		let comma_sequence = expr
+		}
+		.map_with(|item, extra: &mut MapExtra<_, CustomExtra<E>>|Spanned::new(extra.state().links.add(item), extra.span())).labelled("symbol");
+	
+		// <expr>, <expr>, ...,
+		let comma_sequence = expr.clone()
 			.separated_by(just(Token::Separator(Separator::Comma))).allow_trailing()
-			.collect::<Vec<Spanned<&AST<'e>>>>().map(|x|(x, Separator::Comma));
-		let semicolon_sequence = expr
+			.collect::<Vec<Spanned<&AST<'e>>>>().map(|x|(x, Separator::Comma)).labelled("comma-separated sequence");
+		// <expr>; <expr>; ...;
+		let semicolon_sequence = expr.clone()
 			.separated_by(just(Token::Separator(Separator::Semicolon))).allow_trailing()
-			.collect::<Vec<Spanned<&AST<'e>>>>().map(|x|(x, Separator::Semicolon));
+			.collect::<Vec<Spanned<&AST<'e>>>>().map(|x|(x, Separator::Semicolon)).labelled("semicolon-separated sequence");
 
-		let sequence = comma_sequence.or(semicolon_sequence);
-
-		let set = sequence.delimited_by(just(Token::OpenBracket(lexer::BracketType::Curly)), Token::ClosedBracket(lexer::BracketType::Curly))
-			.map_with(|(seq,sep), extra| AST::Set(extra.state().links.add_slice(&seq[..]), sep));
+		// <comma_sequence> OR <semicolon_sequence>		
+		let sequence = comma_sequence.or(semicolon_sequence).labelled("sequence");
 		
-		let list = sequence.delimited_by(just(Token::OpenBracket(lexer::BracketType::Square)), Token::ClosedBracket(lexer::BracketType::Square))
-		.map_with(|(seq,sep), extra| AST::List(extra.state().links.add_slice(&seq[..]), sep));
+		// set := { <sequence> }
+		let set = sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Curly)), just(Token::ClosedBracket(lexer::BracketType::Curly)))
+			.map_with(|(seq, sep): (Vec<Spanned<'_, &AST::<'_>>>, Separator), extra: &mut MapExtra<_, CustomExtra<E>>| AST::Set(extra.state().links.add_slice(&seq[..]), sep))
+			.map_with(|item, extra|Spanned::new(extra.state().links.add(item), extra.span())).labelled("set");
+		
+		// list := [ <sequence> ]
+		let list = sequence.delimited_by(just(Token::OpenBracket(lexer::BracketType::Square)), just(Token::ClosedBracket(lexer::BracketType::Square)))
+		.map_with(|(seq,sep), extra: &mut MapExtra<_, CustomExtra<E>>| AST::List(extra.state().links.add_slice(&seq[..]), sep))
+		.map_with(|item, extra|Spanned::new(extra.state().links.add(item), extra.span())).labelled("list");
 
 		// "thing" OR "{ thing := thing }" OR [ list ]
-		let object = literal.or(symbol).or(set.or(list));
-
-		// (<expr>)
-		let grouping = object.delimited_by(just(Token::OpenBracket(lexer::BracketType::Paren)), just(Token::ClosedBracket(lexer::BracketType::Paren)));
-
-		let app = object.then(object);
-
-		let abs = object.then(just(Token::AbsOp).ignore_then(object).repeated()).foldr();
+		let object = literal.or(symbol.clone()).or(set.or(list));
 		
 
+		// (<expr>)
+		/* let grouping = object.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Paren)), just(Token::ClosedBracket(lexer::BracketType::Paren)));
+
+		let object = object.or(grouping);
+
+		let app = object.clone().then(object.clone())
+			.map_with(|(func, args), extra|Spanned::new(extra.state().links.add(AST::App(AppRel { func, args })), extra.span()));
+
+		let abs = object.then_ignore(just(Token::AbsOp)).repeated().foldr_with(object, |item, acc, extra| {
+			Spanned::new(extra.state().links.add(AST::Func(FuncRel { arg: acc, body: item })), extra.span())
+		});
+
+		let object = object.or(app.or(abs)); */
+		
 		// <expr> := <expr>
 		let def_relation = symbol.then_ignore(just(Token::AssignOp)).then(object.clone()).map_with(|(idt, obj), extra|extra.state().links.add(DefRel { idt, obj }));
 		// <expr> : <expr>
 		let typ_relation = symbol.then_ignore(just(Token::TypeOp)).then(object.clone()).map_with(|(idt, typ), extra|extra.state().links.add(TypRel { idt, typ }));
 		// let <ident> := <expr>
-		let let_dec = just(Token::LetKW).ignore_then(def_relation).try_map_with(|rel, extra| match rel.idt {
-			(AST::Ident(IdentType::Symbol, idt), idt_span) => Ok(extra.state().links.add(AST::LetDef(LetDef { idt: (idt, idt_span), def: (rel, extra.span()), opt_typ: None }))),
+		let let_dec = just(Token::LetKW).ignore_then(def_relation).try_map_with(|rel, extra| match rel.idt.tup() {
+			(AST::Ident(IdentType::Symbol, idt), idt_span) => Ok(Spanned::new(extra.state().links.add(AST::LetDef(LetDef { idt: Spanned::new(idt, idt_span.clone()), def: Spanned::new(rel, extra.span()), opt_typ: None })), extra.span())),
 			_ => Err(Rich::custom(extra.span(), "failed to associate definition relation with let declaration. let declaration requires a identifier in the relation")),
 		});
 		// type <ident> : <expr>
-		let typ_dec = just(Token::TypeKW).ignore_then(typ_relation).try_map_with(|rel, extra| match rel.idt {
-			(AST::Ident(IdentType::Symbol, idt), idt_span) => Ok(extra.state().links.add(AST::TypeDef(TypeDef { name: (idt, idt_span), rel: (rel, extra.span()) }))),
+		let typ_dec = just(Token::TypeKW).ignore_then(typ_relation).try_map_with(|rel, extra| match rel.idt.tup() {
+			(AST::Ident(IdentType::Symbol, idt), idt_span) => Ok(Spanned::new(extra.state().links.add(AST::TypeDef(TypeDef { name: Spanned::new(idt, idt_span.clone()), rel: Spanned::new(rel, extra.span()) })), extra.span())),
 			_ => Err(Rich::custom(extra.span(), "failed to associate type relation with type declaration. type declaration requires a identifier in the relation")),
 		});
 
-		// an expr can be a
-		let_dec.or(typ_dec).map_with(|x, extra|(x, extra.span()))
+		// an expr can be a a let or type declaration
+		let_dec.or(typ_dec)
 	})
 }
 
@@ -206,7 +222,7 @@ impl<'s, 'e> ParserState<'s, 'e> {
 }
 
 // parse a string given some state
-fn parse<'s, 'e: 's>(src: &'s str, state: &'e mut ParserState<'s, 'e>) -> (Option<Spanned<&'e AST<'e>>>, impl Iterator<Item = Rich<'s, String>>)  {
+pub fn parse<'s, 'e: 's>(src: &'s str, state: &'e mut ParserState<'s, 'e>) -> (Option<SpannedAST<'e>>, impl Iterator<Item = Rich<'s, String>>)  {
 	let lexer = self::lexer::lexer();
 	let (lex_success, lex_errs) = lexer.parse_with_state(src, &mut state.lexer_state).into_output_errors();
 
@@ -240,11 +256,11 @@ fn test_parse() {
 
 	panic!("check output");
 
-	let src = r#"
+	/* let src = r#"
 let thing := {} {} -> ({} -> {
 
 })
-	"#;
+	"#; */
 }
 
 /// 

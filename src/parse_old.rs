@@ -267,7 +267,7 @@ pub fn command_parser<'i, 'e: 'i + 'b, 'b: 'i, B: TypeStore<'b> + 'b, E: TypeSto
 	)
 
 	.or(
-	keyword("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with(|names, e: &mut chumsky::combinator::MapExtra<&'i str, CustomExtra<B, E>>| 
+	keyword("list").ignore_then(ident().padded().repeated().collect::<Vec<&str>>().map_with(|names, e: &mut MapExtra<&'i str, CustomExtra<B, E>>| 
 		Command::List(
 			names.into_iter().map(|name|Name::add(e.state().links.add(name.to_owned()), e.state().links)).collect_vec()
 		)

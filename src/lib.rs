@@ -1,20 +1,18 @@
 #![allow(dead_code)]
 #![allow(incomplete_features)]
-#![feature(return_position_impl_trait_in_trait)]
 #![feature(generic_const_exprs)]
 #![feature(type_alias_impl_trait)]
 #![feature(try_blocks)]
 
 use hashdb::{TypeStore, LinkArena, RevLinkArena};
 
-pub mod expr;
+/* pub mod expr;
 pub mod name;
-pub mod check;
-pub mod parse_old;
+pub mod check; */
 pub mod parse;
-
+/* 
 use expr::{Binding as B, Expr};
-pub use parse_old::{parse, parse_reduce};
+pub use parse::{parse, parse_reduce};
 pub use name::*;
 pub use check::*;
 
@@ -215,3 +213,4 @@ fn test_hashdb() {
 	let string = String::from("Hello").store(db).unwrap();
 	assert_eq!(string.fetch(db, links).unwrap(), "Hello");
 }
+ */

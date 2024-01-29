@@ -2,3 +2,6 @@
 .disp_history
 /.vscode
 .direnv
+
+# Local patching
+.cargo

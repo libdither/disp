@@ -29,6 +29,9 @@ impl<'a, A: TypeStore<'a>> TypeStore<'a> for RevLinkStore<'a, A> {
         self.store.add_str(string)
     }
 	
+	fn add_slice<T: HashType<'a> + Clone>(&'a self, slice: &[T]) -> &'a [T] {
+		self.store.add_slice(slice)
+	}
 }
 
 impl<'a, A: TypeStore<'a>> RevTypeStore<'a> for RevLinkStore<'a, A> {

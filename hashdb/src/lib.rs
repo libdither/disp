@@ -3,7 +3,6 @@
 #![feature(adt_const_params)]
 #![feature(const_mut_refs)]
 #![feature(associated_type_bounds)]
-#![feature(return_position_impl_trait_in_trait)]
 
 #[macro_use]
 extern crate thiserror;

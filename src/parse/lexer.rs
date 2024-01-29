@@ -1,6 +1,10 @@
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
-use chumsky::{prelude::*, text::unicode, input::SpannedInput, combinator::MapExtra};
+use chumsky::combinator::MapExtra;
+use chumsky::{prelude::*, text::unicode, input::SpannedInput};
+use hashdb::{hashtype, HashType};
+use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
+use rkyv::{Archive, Deserialize, Fallible, Serialize};
 
 use crate::parse::fancy_print_errors;
 
@@ -151,9 +155,94 @@ pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 
 } 
 
-pub type Span = SimpleSpan<usize>;
-pub type Spanned<T> = (T, Span);
+/* trait Isomorphism {
+	type Unarchivable;
+	type Archivable: Archive;
+    const TO_ARCHIVE: fn(&Self::Unarchivable) -> Self::Archivable;
+    const FROM_ARCHIVE: fn(Self::Archivable) -> Self::Unarchivable;
+}
+impl<I: Isomorphism> ArchiveWith<I::Unarchivable> for I {
+    type Archived = I::Archivable;
 
+    type Resolver = <I::Archivable as Archive>::Resolver;
+
+    unsafe fn resolve_with(
+        field: &I::Unarchivable,
+        pos: usize,
+        resolver: Self::Resolver,
+        out: *mut Self::Archived,
+    ) {
+        let archivable = I::TO_ARCHIVE(field);
+		archivable.resolve(pos, (), out);
+    }
+}
+
+pub struct SimpleSpanAsRange<T>;
+impl<T: Archive> Isomorphism for SimpleSpanAsRange<T> {
+	type Unarchivable = SimpleSpan<T>;
+	type Archivable = Range<T>;
+    const TO_ARCHIVE: fn(&SimpleSpan<T>) -> Range<T> = Into::into;
+    const FROM_ARCHIVE: fn(Range<T>) -> SimpleSpan<T> = From::from;
+} */
+
+pub type Span = SimpleSpan<usize>;
+
+/* use rkyv_with::{ArchiveWith, DeserializeWith};
+use rkyv::with::{ArchiveWith, DeserializeWith, With};
+use rkyv::{Archive, Deserialize, Infallible, Serialize};
+#[derive(Archive, ArchiveWith, Deserialize, DeserializeWith)]
+#[archive_with(from(SimpleSpan))]
+pub struct ArchivableSimpleSpan<T> {
+	start: T,
+	end: T,
+	context: (),
+} */
+#[derive(Archive, Serialize, Deserialize)]
+struct LocalSpan {
+	start: u64,
+	end: u64,
+}
+struct SpanArchiver;
+impl ArchiveWith<Span> for SpanArchiver {
+    type Archived = <LocalSpan as Archive>::Archived;
+
+    type Resolver = <LocalSpan as Archive>::Resolver;
+
+    unsafe fn resolve_with(
+        field: &Span,
+        pos: usize,
+        resolver: Self::Resolver,
+        out: *mut Self::Archived,
+    ) {
+
+        LocalSpan { start: field.start as u64, end: field.end as u64 }.resolve(pos, resolver, out);
+    }
+}
+impl<S: Fallible + ?Sized> SerializeWith<Span, S> for SpanArchiver {
+    fn serialize_with(field: &SimpleSpan, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        Ok(LocalSpan { start: field.start as u64, end: field.end as u64 }.serialize(serializer)?)
+    }
+}
+impl<D: Fallible + ?Sized> DeserializeWith<ArchivedLocalSpan, Span, D> for SpanArchiver {
+    fn deserialize_with(field: &ArchivedLocalSpan, deserializer: &mut D) -> Result<Span, <D as Fallible>::Error> {
+        Ok(Span::new(field.start as usize, field.end as usize))
+    }
+}
+
+#[hashtype]
+#[derive(Debug, Clone)]
+pub struct Spanned<'a, T: HashType<'a> + Clone> {
+	pub item: T,
+	#[with(SpanArchiver)]
+	pub span: Span,
+	pub _phantom: PhantomData<&'a ()>,
+}
+impl<'a, T: HashType<'a> + Clone> Spanned<'a, T> {
+	pub fn new(item: T, span: Span) -> Self {
+		Spanned { item, span, _phantom: Default::default() }
+	}
+	pub fn tup(&self) -> (&T, &Span) { (&self.item, &self.span) }
+}
 pub type ParserInput<'src, 'tokens> = SpannedInput<Token<'src>, Span, &'tokens [(Token<'src>, Span)]>;
 
 fn test_lexer(string: &str, expected: &[Token]) {
