@@ -2,9 +2,9 @@
 
 ## Active Tasks
 
- - Finish current Text -> Tokens -> Spanned AST sequence.
+ - Finish current parser (Text -> Tokens -> Spanned AST).
    - Investigate chumsky error
-   - Investigate infinite compile error
+   - Investigate infinite rustc compile error (`rustc_infer::infer::relate::generalize::Generalizer<rustc_infer::infer::relate::generalize::CombineDelegate`)
  - Refactor existing REPL Impl
  - Start working on creating and saving graph structures (ontologies).
 
