@@ -3,8 +3,10 @@
 ## Active Tasks
 
  - Finish current parser (Text -> Tokens -> Spanned AST).
-   - Investigate chumsky error
+   - Investigate chumsky error - PR Submitted
    - Investigate infinite rustc compile error (`rustc_infer::infer::relate::generalize::Generalizer<rustc_infer::infer::relate::generalize::CombineDelegate`)
+     - Doesn't seem to be showing up in newest ver.
+   - See if Recursive::delcare and define might help for mutual recursion case.
  - Refactor existing REPL Impl
  - Start working on creating and saving graph structures (ontologies).
 
