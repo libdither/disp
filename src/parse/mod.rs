@@ -3,7 +3,7 @@
 pub mod lexer;
 
 use ariadne::{Color, Label, Report, ReportKind};
-use chumsky::{combinator::MapExtra, prelude::*, primitive::select};
+use chumsky::{input::MapExtra, prelude::*};
 use hashdb::{hashtype, HashType, LinkArena, TypeStore};
 
 use lexer::{Token, ParserInput, Spanned};
@@ -19,7 +19,6 @@ pub enum Literal {
 	Integer, // Integer literal, 123
 	Decimal, // Decimal literal, 123.456
 }
-
 /// Separators for sets or lists may be Comma
 #[derive(Debug, Clone, PartialEq, Hash, Archive, Serialize, Deserialize)]
 pub enum Separator {
@@ -175,7 +174,7 @@ fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Pa
 		});
 		
 		item */
-		set.or(list).or(app.or(atom))
+		set.or(list).or(atom)
 		
 	})
 }

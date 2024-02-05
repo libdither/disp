@@ -1,6 +1,6 @@
 use std::{fmt, marker::PhantomData};
 
-use chumsky::{combinator::MapExtra, prelude::*, text::unicode, input::SpannedInput};
+use chumsky::{input::MapExtra, prelude::*, text::unicode, input::SpannedInput};
 use hashdb::{hashtype, HashType};
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Deserialize, Fallible, Serialize};
