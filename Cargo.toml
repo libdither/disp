@@ -22,7 +22,7 @@ rustyline = "13.0.0"
 rkyv = { version = "0.7", features = ["validation"] }
 derivative = "2.2.0"
 either = "1.7.0"
-chumsky = { path = "chumsky", features = ["nightly", "label", "pratt", "spill-stack", "regex", "docsrs"] }
+chumsky = { path = "chumsky", features = ["label", "pratt"] }
 smallvec = "1.9.0"
 ariadne = "0.4.0"
 rkyv-with = "0.1.2"
