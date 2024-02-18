@@ -1,11 +1,10 @@
 use std::{fmt, marker::PhantomData};
 
+use chumsky::text::{inline_whitespace, newline, whitespace};
 use chumsky::{input::MapExtra, prelude::*, text::unicode, input::SpannedInput};
 use hashdb::{hashtype, HashType};
 use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 use rkyv::{Archive, Deserialize, Fallible, Serialize};
-
-use crate::parse::fancy_print_errors;
 
 use super::{Literal, Separator};
 
@@ -37,7 +36,7 @@ pub enum Token<'s> {
 	AbsOp,
 	// Other Operation token
 	Op(&'s str),
-	/// A constant literal, resolves to an expression.
+	/// A constant literal identifier, resolves to an expression.
 	Literal(Literal, &'s str),
 
 	OpenBracket(BracketType),
@@ -45,8 +44,8 @@ pub enum Token<'s> {
 
 	Separator(Separator),
 
-	/// Identifier
-	Ident(&'s str),
+	/// Symbolic identifier
+	Symbol(&'s str),
 
 	/// Comment
 	Comment(&'s str),
@@ -80,9 +79,10 @@ impl<'src> fmt::Display for Token<'src> {
             }),
             Token::Separator(typ) => write!(f, "{}", match typ {
 				Separator::Comma => ",",
-				Separator::Semicolon => ";",
+				Separator::CommaNewline => ",\n",
+				Separator::Newline => "\n",
 			}),
-            Token::Ident(src) => write!(f, "{src}"),
+            Token::Symbol(src) => write!(f, "{src}"),
             Token::Comment(src) => write!(f, "//{src}"),
         }
     }
@@ -97,6 +97,21 @@ impl<'s> LexerState<'s> {
 	pub fn reset(&mut self) { self.buf.clear(); }
 }
 type LexerExtra<'i> = extra::Full<Rich<'i, char>, LexerState<'i>, ()>;
+
+pub fn line_end<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
+	just(",").or_not()
+		.then(inline_whitespace().ignore_then(newline()))
+		.map(|(v, _)|if v.is_some() { Token::Separator(Separator::CommaNewline) } else { Token::Separator(Separator::Newline) }).then_ignore(whitespace())
+}
+#[test]
+fn lexer_newline() {
+	assert_eq!(line_end().parse_with_state("\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::Newline));
+}
+#[test]
+fn lexer_comma_newline() {
+	assert_eq!(line_end().parse_with_state(",\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::CommaNewline));
+	assert_eq!(line_end().parse_with_state(", 	\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::CommaNewline));
+}
 
 pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 	let num = text::int(10)
@@ -115,42 +130,46 @@ pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 		_ => Token::Op(op),
 	});
 
-	// single-character standalone tokens
-	let single = select! {
+	// open-tokens ignore whitespace after them
+	let open = select! {
         '{' => Token::OpenBracket(BracketType::Curly),
 		'[' => Token::OpenBracket(BracketType::Square),
 		'(' => Token::OpenBracket(BracketType::Paren),
 		'<' => Token::OpenBracket(BracketType::Caret),
+    }.then_ignore(whitespace::<_, &'i str, LexerExtra<'i>>());
+	// line end tokens
+	let line_end = line_end();
+	// closed tokens
+	let closed = select! {
 		'}' => Token::ClosedBracket(BracketType::Curly),
 		']' => Token::ClosedBracket(BracketType::Square),
 		')' => Token::ClosedBracket(BracketType::Paren),
 		'>' => Token::ClosedBracket(BracketType::Caret),
-		';' => Token::Separator(Separator::Semicolon),
 		',' => Token::Separator(Separator::Comma),
-    };
+	};
+	let singles = open.or(line_end.or(closed));
 
 	let idents = unicode::ident().map(|ident: &str| match ident {
         "let" => Token::LetKW,
         "type" => Token::TypeKW,
-        _ => Token::Ident(ident),
+        _ => Token::Symbol(ident),
     });
 
 	let comment = just("//")
         .ignore_then(any().and_is(just('\n').not()).repeated().to_slice().map(|src|Token::Comment(src)))
         .padded();
 
-	let token = comment.or(num.or(string.or(char)).or((single.or(op)).or(idents)));
+	let token = comment.or(num.or(string.or(char)).or((singles.or(op)).or(idents)));
 
 	// A token can be a string, a unicode ident, or another fixed token.
-	token
+	whitespace().ignore_then(token
 		.map_with(|tok_span, extra: &mut MapExtra<&'i str, LexerExtra<'i>>|{
 			let span = extra.span();
 			extra.state().buf.push((tok_span, span))
 		})
-		.padded()
 		// If we encounter an error, skip and attempt to lex the next character as a token instead
 		.recover_with(skip_then_retry_until(any().ignored(), end()))
-		.repeated().collect::<()>()
+		.repeated().collect::<()>())
 
 } 
 
@@ -223,7 +242,7 @@ impl<S: Fallible + ?Sized> SerializeWith<Span, S> for SpanArchiver {
     }
 }
 impl<D: Fallible + ?Sized> DeserializeWith<ArchivedLocalSpan, Span, D> for SpanArchiver {
-    fn deserialize_with(field: &ArchivedLocalSpan, deserializer: &mut D) -> Result<Span, <D as Fallible>::Error> {
+    fn deserialize_with(field: &ArchivedLocalSpan, _deserializer: &mut D) -> Result<Span, <D as Fallible>::Error> {
         Ok(Span::new(field.start as usize, field.end as usize))
     }
 }
@@ -247,10 +266,10 @@ pub type ParserInput<'src, 'tokens> = SpannedInput<Token<'src>, Span, &'tokens [
 fn test_lexer(string: &str, expected: &[Token]) {
 	let mut state = LexerState::new();
 
-	let res = lexer().parse_with_state(string, &mut state);
-	if res.has_errors() {
+	let _res = lexer().parse_with_state(string, &mut state);
+	/* if res.has_errors() {
 		fancy_print_errors(res.into_errors(), string);
-	}
+	} */
 	
 	let found = state.buf.into_iter().map(|(tok, _span)| tok).collect::<Vec<Token>>();
 
@@ -258,35 +277,37 @@ fn test_lexer(string: &str, expected: &[Token]) {
 }
 
 #[test]
-fn num_test() {
-	test_lexer("hello world", &[Token::Ident("hello"), Token::Ident("world")]);
+fn lexer_tests() {
+	test_lexer("hello world", &[Token::Symbol("hello"), Token::Symbol("world")]);
 
-	test_lexer("hello let yeet", &[Token::Ident("hello"), Token::LetKW, Token::Ident("yeet")]);
+	test_lexer("hello let yeet", &[Token::Symbol("hello"), Token::LetKW, Token::Symbol("yeet")]);
 
-	use Token::{Ident, LetKW, AssignOp, ClosedBracket, OpenBracket, Separator, TypeKW, TypeOp, Op, Literal};
+	use Token::{Symbol, LetKW, AssignOp, ClosedBracket, OpenBracket, Separator, TypeKW, TypeOp, Op, Literal};
 	use BracketType::*;
 	use self::Separator::*;
 	use self::Literal::*;
-	test_lexer(r#"
-		type thing : Nat;
+	let string = 
+	r#"type thing : Nat
 
-		let thing := 3;
+let thing := 3
 
-		let programming_languages_are_cool := true;
-	"#, &[
-		TypeKW, Ident("thing"), TypeOp, Ident("Nat"), Separator(Semicolon), LetKW, Ident("thing"), AssignOp, Literal(Integer, "3"), Separator(Semicolon), LetKW, Ident("programming_languages_are_cool"), AssignOp, Ident("true"), Separator(Semicolon)
+let programming_languages_are_cool := true
+	"#;
+	assert!(string.contains("\n"));
+	test_lexer(string, &[
+		TypeKW, Symbol("thing"), TypeOp, Symbol("Nat"), Separator(Newline), LetKW, Symbol("thing"), AssignOp, Literal(Integer, "3"), Separator(Newline), LetKW, Symbol("programming_languages_are_cool"), AssignOp, Symbol("true"), Separator(Newline)
 	]);
 	test_lexer(r#"
-		let literals := [3, 3.3, 'λ', "hi there"];
+		let literals := [3, 3.3, 'λ', "hi there"]
 	"#, &[
-		LetKW, Ident("literals"), AssignOp, OpenBracket(Square), Literal(Integer, "3"), Separator(Comma), Literal(Decimal, "3.3"), Separator(Comma), Literal(Char, "'λ'"), Separator(Comma), Literal(String, "\"hi there\""), ClosedBracket(Square), Separator(Semicolon)
+		LetKW, Symbol("literals"), AssignOp, OpenBracket(Square), Literal(Integer, "3"), Separator(Comma), Literal(Decimal, "3.3"), Separator(Comma), Literal(Char, "'λ'"), Separator(Comma), Literal(String, "\"hi there\""), ClosedBracket(Square), Separator(Newline)
 	]);
 	test_lexer(r#"
-		let List { T : Type } := data {
-			type nil : List(T),
-			type cons : { head : T, tail : List(T) } -> List(T),
+		List { T : Type } := data {
+			nil : List(T)
+			cons : { head : T, tail : List(T) } -> List(T),
 		}
 	"#, &[
-		LetKW, Ident("List"), OpenBracket(Curly), Ident("T"), TypeOp, Ident("Type"), ClosedBracket(Curly), AssignOp, Ident("data"), OpenBracket(Curly), TypeKW, Ident("nil"), TypeOp, Ident("List"), OpenBracket(Paren), Ident("T"), ClosedBracket(Paren), Separator(Comma), TypeKW, Ident("cons"), TypeOp, OpenBracket(Curly), Ident("head"), TypeOp, Ident("T"), Separator(Comma), Ident("tail"), TypeOp, Ident("List"), OpenBracket(Paren), Ident("T"), ClosedBracket(Paren), ClosedBracket(Curly), Op("-"), ClosedBracket(Caret), Ident("List"), OpenBracket(Paren), Ident("T"), ClosedBracket(Paren), Separator(Comma), ClosedBracket(Curly)
+		Symbol("List"), OpenBracket(Curly), Symbol("T"), TypeOp, Symbol("Type"), ClosedBracket(Curly), AssignOp, Symbol("data"), OpenBracket(Curly), Symbol("nil"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(Newline), Symbol("cons"), TypeOp, OpenBracket(Curly), Symbol("head"), TypeOp, Symbol("T"), Separator(Comma), Symbol("tail"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), ClosedBracket(Curly), Op("-"), ClosedBracket(Caret), Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(CommaNewline), ClosedBracket(Curly), Separator(Newline),
 	]);
 }
