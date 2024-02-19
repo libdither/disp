@@ -163,6 +163,13 @@ fn lexer_test_op() {
 	assert_eq!(lex_op().parse_with_state("->", &mut LexerState::new()).unwrap(), Token::FuncOp);
 	assert_eq!(lex_op().parse_with_state("+", &mut LexerState::new()).unwrap(), Token::Op("+"));
 }
+// single line comment
+fn lex_comment<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
+	just("//")
+        .ignore_then(any().and_is(just('\n').not()).repeated().to_slice().map(|src|Token::Comment(src)))
+        .then_ignore(newline())
+}
+
 
 pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 	// open-tokens ignore whitespace after them
@@ -187,14 +194,10 @@ pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
         "type" => Token::TypeKW,
         _ => Token::Symbol(ident),
     });
+	let literal = lex_number().or(lex_string()).or(lex_char());
+	let single = idents.or(literal).or(lex_op());
 
-	let comment = just("//")
-        .ignore_then(any().and_is(just('\n').not()).repeated().to_slice().map(|src|Token::Comment(src)))
-        .padded();
-
-	let token = comment.or(
-		lex_number().or(lex_string().or(lex_char()).or(lex_op().or(idents))).or(structural)
-	);
+	let token = lex_comment().or(structural).or(single).padded_by(inline_whitespace());
 
 	// A token can be a string, a unicode ident, or another fixed token.
 	whitespace().ignore_then(token
@@ -203,7 +206,7 @@ pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
 			extra.state().buf.push((tok_span, span))
 		})
 		// If we encounter an error, skip and attempt to lex the next character as a token instead
-		.recover_with(skip_then_retry_until(any().ignored(), end()))
+		/* .recover_with(skip_then_retry_until(any().ignored(), end())) */
 		.repeated().collect::<()>())
 
 } 
@@ -301,14 +304,19 @@ pub type ParserInput<'src, 'tokens> = SpannedInput<Token<'src>, Span, &'tokens [
 fn test_lexer(string: &str, expected: &[Token]) {
 	let mut state = LexerState::new();
 
-	let _res = lexer().parse_with_state(string, &mut state);
-	/* if res.has_errors() {
-		fancy_print_errors(res.into_errors(), string);
-	} */
+	let res = lexer().parse_with_state(string, &mut state);
 	
 	let found = state.buf.into_iter().map(|(tok, _span)| tok).collect::<Vec<Token>>();
 
+	let errs = res.into_errors();
+	println!("STRING: {:?}", string);
+	println!("LEX TEST ERRORS: {:?}", errs);
+
 	assert_eq!(expected, found);
+
+	if errs.len() != 0 {
+		assert!(errs.len() == 0);
+	}
 }
 
 #[test]
@@ -317,19 +325,18 @@ fn lexer_tests() {
 
 	test_lexer("hello let yeet", &[Token::Symbol("hello"), Token::LetKW, Token::Symbol("yeet")]);
 
-	use Token::{Symbol, LetKW, AssignOp, ClosedBracket, OpenBracket, Separator, TypeKW, TypeOp, Op, FuncOp, Literal};
+	use Token::{Symbol, LetKW, AssignOp, ClosedBracket, OpenBracket, Separator, TypeKW, TypeOp, FuncOp, Literal};
 	use BracketType::*;
 	use self::Separator::*;
 	use self::Literal::*;
-	let string = 
-	r#"type thing : Nat
+	test_lexer(r#"thing :="#, &[Symbol("thing"), AssignOp]);
+	test_lexer(r#"thing := "hi!""#, &[Symbol("thing"), AssignOp, Literal(String, "hi!")]);
+	test_lexer(r#"type thing : Nat
 
-let thing := 3
-
-let programming_languages_are_cool := true
-	"#;
-	assert!(string.contains("\n"));
-	test_lexer(string, &[
+	let thing := 3
+	
+	let programming_languages_are_cool := true
+		"#, &[
 		TypeKW, Symbol("thing"), TypeOp, Symbol("Nat"), Separator(Newline), LetKW, Symbol("thing"), AssignOp, Literal(Integer, "3"), Separator(Newline), LetKW, Symbol("programming_languages_are_cool"), AssignOp, Symbol("true"), Separator(Newline)
 	]);
 	test_lexer(r#"
@@ -337,6 +344,12 @@ let programming_languages_are_cool := true
 	"#, &[
 		LetKW, Symbol("literals"), AssignOp, OpenBracket(Square), Literal(Integer, "3"), Separator(Comma), Literal(Decimal, "3.3"), Separator(Comma), Literal(Char, "λ"), Separator(Comma), Literal(String, "hi there"), ClosedBracket(Square), Separator(Newline)
 	]);
+	test_lexer(r#"
+	thing := { one := "test", two := "yeet" }
+	"#, &[
+		Symbol("thing"), AssignOp, OpenBracket(Curly), Symbol("one"), AssignOp, Literal(String, "test"), Separator(Comma), Symbol("two"), AssignOp, Literal(String, "yeet"), ClosedBracket(Curly), Separator(Newline)
+	]);
+	
 	test_lexer(r#"
 		List { T : Type } := data {
 			nil : List(T)
