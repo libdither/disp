@@ -33,7 +33,7 @@ pub enum Token<'s> {
 	TypeOp,
 	// Describes the creation of an abstraction
 	/// `->` as in `{a: Nat, b: Nat} -> Nat`
-	AbsOp,
+	FuncOp,
 	// Other Operation token
 	Op(&'s str),
 	/// A constant literal identifier, resolves to an expression.
@@ -57,7 +57,7 @@ impl<'src> fmt::Display for Token<'src> {
             Token::TypeKW => write!(f, "type"),
             Token::LetKW => write!(f, "let"),
             Token::AssignOp => write!(f, ":="),
-			Token::AbsOp => write!(f, "->"),
+			Token::FuncOp => write!(f, "->"),
             Token::TypeOp => write!(f, ":"),
             Token::Op(op) => write!(f, "{op}"),
             Token::Literal(literal, src) => match literal{
@@ -98,56 +98,89 @@ impl<'s> LexerState<'s> {
 }
 type LexerExtra<'i> = extra::Full<Rich<'i, char>, LexerState<'i>, ()>;
 
-pub fn line_end<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
+fn lex_line_end<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
 	just(",").or_not()
 		.then(inline_whitespace().ignore_then(newline()))
 		.map(|(v, _)|if v.is_some() { Token::Separator(Separator::CommaNewline) } else { Token::Separator(Separator::Newline) }).then_ignore(whitespace())
 }
 #[test]
-fn lexer_newline() {
-	assert_eq!(line_end().parse_with_state("\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::Newline));
+fn lexer_test_newline() {
+	assert_eq!(lex_line_end().parse_with_state("\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::Newline));
 }
 #[test]
-fn lexer_comma_newline() {
-	assert_eq!(line_end().parse_with_state(",\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::CommaNewline));
-	assert_eq!(line_end().parse_with_state(", 	\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::CommaNewline));
+fn lexer_test_comma_newline() {
+	assert_eq!(lex_line_end().parse_with_state(",\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::CommaNewline));
+	assert_eq!(lex_line_end().parse_with_state(", 	\n", &mut LexerState::new()).unwrap(), Token::Separator(Separator::CommaNewline));
+}
+
+fn lex_number<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
+	text::int(10)
+        .ignore_then(just('.').ignore_then(text::digits(10)).to(()).or_not())
+        .map_with(|out, extra|Token::Literal(out.map_or(Literal::Integer, |_|Literal::Decimal), extra.slice()))
+}
+#[test]
+fn lexer_test_number_integer() {
+	assert_eq!(lex_number().parse_with_state("123456", &mut LexerState::new()).unwrap(), Token::Literal(Literal::Integer, "123456"));
+}
+#[test]
+fn lexer_test_number_decimal() {
+	assert_eq!(lex_number().parse_with_state("654.321", &mut LexerState::new()).unwrap(), Token::Literal(Literal::Decimal, "654.321"));
+}
+
+// TODO: implement raw & binary string support
+fn lex_string<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
+	just('"')
+        .ignore_then(none_of('"').repeated().to_slice())
+        .then_ignore(just('"'))
+        .map(|src|Token::Literal(Literal::String, src))
+}
+#[test]
+fn lexer_test_string() {
+	assert_eq!(lex_string().parse_with_state(r#""this is a test string""#, &mut LexerState::new()).unwrap(), Token::Literal(Literal::String, "this is a test string"));
+}
+
+// TODO: need more complicate char parsing (to deal with unicode stuff, \n, etc.)
+fn lex_char<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
+	just('\'').ignore_then(none_of('\'').to_slice()).then_ignore(just('\'')).map(|src|Token::Literal(Literal::Char, src))
+}
+#[test]
+fn lexer_test_char() {
+	assert_eq!(lex_char().parse_with_state(r#"'n'"#, &mut LexerState::new()).unwrap(), Token::Literal(Literal::Char, "n"));
+}
+// Note: parse < and > brakcets before parsing lex_op 
+fn lex_op<'i>() -> impl Parser<'i, &'i str, Token<'i>, LexerExtra<'i>> {
+	one_of("~!@#$%^&*-=+|:<>.").repeated().at_least(1).to_slice().map(|op| match op{
+		":=" => Token::AssignOp,
+		":" => Token::TypeOp,
+		"->" => Token::FuncOp,
+		_ => Token::Op(op),
+	})
+}
+#[test]
+fn lexer_test_op() {
+	assert_eq!(lex_op().parse_with_state(":", &mut LexerState::new()).unwrap(), Token::TypeOp);
+	assert_eq!(lex_op().parse_with_state(":=", &mut LexerState::new()).unwrap(), Token::AssignOp);
+	assert_eq!(lex_op().parse_with_state("->", &mut LexerState::new()).unwrap(), Token::FuncOp);
+	assert_eq!(lex_op().parse_with_state("+", &mut LexerState::new()).unwrap(), Token::Op("+"));
 }
 
 pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
-	let num = text::int(10)
-        .ignore_then(just('.').ignore_then(text::digits(10)).to(()).or_not())
-        .map_with(|out, extra|Token::Literal(out.map_or(Literal::Integer, |_|Literal::Decimal), extra.slice()));
-	
-	let string = none_of("\"").repeated().delimited_by(just('"'), just('"'))
-		.to_slice().map(|src|Token::Literal(Literal::String, src));
-	// need more complicate char parsing (to deal with unicode stuff, \n, etc.)
-	let char = just('\'').ignore_then(none_of('\'')).then_ignore(just('\'')).to_slice().map(|src|Token::Literal(Literal::Char, src));
-
-	let op = one_of("+*-/!=:").repeated().at_least(1).to_slice().map(|op| match op{
-		":=" => Token::AssignOp,
-		":" => Token::TypeOp,
-		"->" => Token::AbsOp,
-		_ => Token::Op(op),
-	});
-
 	// open-tokens ignore whitespace after them
 	let open = select! {
         '{' => Token::OpenBracket(BracketType::Curly),
 		'[' => Token::OpenBracket(BracketType::Square),
 		'(' => Token::OpenBracket(BracketType::Paren),
-		'<' => Token::OpenBracket(BracketType::Caret),
     }.then_ignore(whitespace::<_, &'i str, LexerExtra<'i>>());
 	// line end tokens
-	let line_end = line_end();
+	let line_end = lex_line_end();
 	// closed tokens
 	let closed = select! {
 		'}' => Token::ClosedBracket(BracketType::Curly),
 		']' => Token::ClosedBracket(BracketType::Square),
 		')' => Token::ClosedBracket(BracketType::Paren),
-		'>' => Token::ClosedBracket(BracketType::Caret),
 		',' => Token::Separator(Separator::Comma),
 	};
-	let singles = open.or(line_end.or(closed));
+	let structural = open.or(line_end.or(closed));
 
 	let idents = unicode::ident().map(|ident: &str| match ident {
         "let" => Token::LetKW,
@@ -159,7 +192,9 @@ pub fn lexer<'i>() -> impl Parser<'i, &'i str, (), LexerExtra<'i>> {
         .ignore_then(any().and_is(just('\n').not()).repeated().to_slice().map(|src|Token::Comment(src)))
         .padded();
 
-	let token = comment.or(num.or(string.or(char)).or((singles.or(op)).or(idents)));
+	let token = comment.or(
+		lex_number().or(lex_string().or(lex_char()).or(lex_op().or(idents))).or(structural)
+	);
 
 	// A token can be a string, a unicode ident, or another fixed token.
 	whitespace().ignore_then(token
@@ -282,7 +317,7 @@ fn lexer_tests() {
 
 	test_lexer("hello let yeet", &[Token::Symbol("hello"), Token::LetKW, Token::Symbol("yeet")]);
 
-	use Token::{Symbol, LetKW, AssignOp, ClosedBracket, OpenBracket, Separator, TypeKW, TypeOp, Op, Literal};
+	use Token::{Symbol, LetKW, AssignOp, ClosedBracket, OpenBracket, Separator, TypeKW, TypeOp, Op, FuncOp, Literal};
 	use BracketType::*;
 	use self::Separator::*;
 	use self::Literal::*;
@@ -300,7 +335,7 @@ let programming_languages_are_cool := true
 	test_lexer(r#"
 		let literals := [3, 3.3, 'λ', "hi there"]
 	"#, &[
-		LetKW, Symbol("literals"), AssignOp, OpenBracket(Square), Literal(Integer, "3"), Separator(Comma), Literal(Decimal, "3.3"), Separator(Comma), Literal(Char, "'λ'"), Separator(Comma), Literal(String, "\"hi there\""), ClosedBracket(Square), Separator(Newline)
+		LetKW, Symbol("literals"), AssignOp, OpenBracket(Square), Literal(Integer, "3"), Separator(Comma), Literal(Decimal, "3.3"), Separator(Comma), Literal(Char, "λ"), Separator(Comma), Literal(String, "hi there"), ClosedBracket(Square), Separator(Newline)
 	]);
 	test_lexer(r#"
 		List { T : Type } := data {
@@ -308,6 +343,6 @@ let programming_languages_are_cool := true
 			cons : { head : T, tail : List(T) } -> List(T),
 		}
 	"#, &[
-		Symbol("List"), OpenBracket(Curly), Symbol("T"), TypeOp, Symbol("Type"), ClosedBracket(Curly), AssignOp, Symbol("data"), OpenBracket(Curly), Symbol("nil"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(Newline), Symbol("cons"), TypeOp, OpenBracket(Curly), Symbol("head"), TypeOp, Symbol("T"), Separator(Comma), Symbol("tail"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), ClosedBracket(Curly), Op("-"), ClosedBracket(Caret), Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(CommaNewline), ClosedBracket(Curly), Separator(Newline),
+		Symbol("List"), OpenBracket(Curly), Symbol("T"), TypeOp, Symbol("Type"), ClosedBracket(Curly), AssignOp, Symbol("data"), OpenBracket(Curly), Symbol("nil"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(Newline), Symbol("cons"), TypeOp, OpenBracket(Curly), Symbol("head"), TypeOp, Symbol("T"), Separator(Comma), Symbol("tail"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), ClosedBracket(Curly), FuncOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(CommaNewline), ClosedBracket(Curly), Separator(Newline),
 	]);
 }
