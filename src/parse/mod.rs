@@ -143,23 +143,23 @@ fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Pa
 
 	// seq ::= (<item> + "," | <item> + "\n" | item + ",\n")+
 	let item_sequence = item.clone()
-		.separated_by(any().filter(|t|match t {Token::Separator(_) => true, _ => false}))
+		.separated_by(any().filter(|t|match t {Token::Separator(_) => true, _ => false})).allow_trailing()
 		.collect::<Vec<SpannedAST<'e>>>()
 	.map_with(|items, e: &mut MapExtra<_, CustomExtra<E>>| ASTSeq { items: e.state().links.add_slice(&items[..])});
 
-	/* // set := { <sequence> }
+	// set := { <sequence> }
 	let set = item_sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Curly)), just(Token::ClosedBracket(lexer::BracketType::Curly)))
 	.map_with(|seq, extra|Spanned::new(extra.state().links.add(AST::Set(seq)), extra.span())).labelled("set");
 
 	// list := [ <sequence> ]
 	let list = item_sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Square)), just(Token::ClosedBracket(lexer::BracketType::Square)))
-	.map_with(|seq, extra|Spanned::new(extra.state().links.add(AST::List(seq)), extra.span())).labelled("list"); */
+	.map_with(|seq, extra|Spanned::new(extra.state().links.add(AST::List(seq)), extra.span())).labelled("list");
 
 	// (<expr>)
 	// let grouping = expr.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Paren)), just(Token::ClosedBracket(lexer::BracketType::Paren)));
 
-	/* // <app> := <expr> <expr>
-	let app = expr.clone().then(expr.clone())
+	// <app> := <expr> <expr>
+	/* let app = expr.clone().then(expr.clone())
 		.map_with(|(func, args), extra|Spanned::new(extra.state().links.add(AST::App(AppRel { func, args })), extra.span()));
 
 	// <abs> ::= <expr> + ("->" <expr>)?
@@ -167,7 +167,7 @@ fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Pa
 		Spanned::new(extra.state().links.add(AST::Func(FuncRel { arg: acc, body: item })), extra.span())
 	}); */
 
-	expr.define(literal_parser());
+	expr.define(set.or(list).or(literal_parser()));
 
 	let module = item_sequence.clone().map_with(|seq, e|Spanned::new(e.state().links.add(AST::Seq(seq)), e.span()))
 	.recover_with(skip_then_retry_until(any().ignored(), end()));
@@ -192,21 +192,31 @@ impl<'s, 'e> ParserState<'s, 'e> {
 }
 
 // parse a string given some state
-pub fn parse<'s, 'e: 's>(src: &'s str, state: &'e mut ParserState<'s, 'e>) -> (Option<SpannedAST<'e>>, impl Iterator<Item = Rich<'s, String>>)  {
+pub fn parse<'s, 'e: 's>(src: &'s str, state: &'e mut ParserState<'s, 'e>) -> (
+	Option<SpannedAST<'e>>,
+	impl Iterator<Item = Rich<'s, String>>,
+	&'e [(Token<'s>, Span)],
+	impl Iterator<Item = Rich<'s, String>>, // lexer errors
+)  {
+	state.lexer_state.reset();
 	let lexer = self::lexer::lexer();
-	let (lex_success, _) = lexer.parse_with_state(src, &mut state.lexer_state).into_output_errors();
+	let (lex_success, lexer_errs) = lexer.parse_with_state(src, &mut state.lexer_state).into_output_errors();
+	let tokens = state.lexer_state.slice().spanned((src.len()..src.len()).into());
 
 	let ast_parser = ast_parser();
 	
-	let (spanned_ast, ast_errs) = if lex_success.is_some() {
-		ast_parser.parse_with_state(state.lexer_state.slice().spanned((src.len()..src.len()).into()), &mut state.parser_state).into_output_errors()
+	let (spanned_ast, parse_errs) = if lex_success.is_some() {
+		ast_parser.parse_with_state(tokens, &mut state.parser_state).into_output_errors()
 	} else { (None, Vec::new()) };
 
 	(
 		spanned_ast,
-		ast_errs
-			.into_iter()
-			.map(|e| e.map_token(|tok| tok.to_string())),
+        parse_errs
+                .into_iter()
+                .map(|e| e.map_token(|tok| tok.to_string())),
+
+		state.lexer_state.slice(),
+		lexer_errs.into_iter().map(|e| e.map_token(|c| c.to_string())),
 	)
 }
 
@@ -214,32 +224,35 @@ pub fn parse_test(src: &'static str) -> (Option<SpannedAST<'_>>, Option<Vec<Rich
 	let links = &*Box::leak(Box::new(LinkArena::new()));
 	let state = Box::leak(Box::new(ParserState::new(links)));
 
-	let (ast, errs) = parse(src, state);
+	println!("PARSING: {src:?}");
+
+	let (ast, errs, tokens, lex_errs) = parse(src, state);
+
 	let errors = errs.collect::<Vec<Rich<_>>>();
+	let lex_errors = lex_errs.collect::<Vec<Rich<_>>>();
 	
-	
+	println!("TOKENS: {tokens:?}");
+	println!("LEX_ERRS: {lex_errors:?}");
 	println!("AST: {ast:?}");
 	println!("ERRs: {:?}", errors);
-	// fancy_print_errors(errors.into_iter(), src);
+	fancy_print_errors(errors.iter(), src);
 	return (ast, if errors.is_empty() {None} else {Some(errors)})
 }
 
 #[test]
-fn test_parse_error() {
+fn parse_test_error() {
 	parse_test("thing := ").1.unwrap();
 }
 #[test]
-fn test_parse_stmt() {
+fn parse_test_relation() {
 	parse_test(r#"thing := "hi!""#).0.unwrap();
 }
 #[test]
 fn test_parse_function_and_sets() {
 	parse_test(r#"
-	let thing := {} {} -> ({} -> {
-	
-	})
-	"#);
-	panic!("check output");
+	thing := { one := "test", two := "yeet" }
+	"#).0.unwrap();
+	// panic!("check output");
 }
 
 /// 
@@ -254,7 +267,7 @@ fn test_parse_function_and_sets() {
 /// 
 
 /// Generate cool errors with ariadne
-pub fn gen_reports<'a, I: std::fmt::Display + 'a>(errors: impl IntoIterator<Item = Rich<'a, I>>) -> impl Iterator<Item = Report<'a>> {
+pub fn gen_reports<'i, 'a: 'i, I: std::fmt::Display + 'a>(errors: impl Iterator<Item = &'i Rich<'a, I>> + 'i) -> impl Iterator<Item = Report<'a>> + 'i {
 	errors.into_iter().map(|e| {
         Report::build(ReportKind::Error, (), e.span().start)
             .with_message(e.to_string())
@@ -267,7 +280,7 @@ pub fn gen_reports<'a, I: std::fmt::Display + 'a>(errors: impl IntoIterator<Item
     })
 }
 /// Use gen_reports to fancy-print errors
-pub fn fancy_print_errors<'a, I: std::fmt::Display + 'a>(errors: impl IntoIterator<Item = Rich<'a, I>>, source: &str) {
+pub fn fancy_print_errors<'i, 'a: 'i, I: std::fmt::Display + 'a>(errors: impl Iterator<Item = &'i Rich<'a, I>> + 'i, source: &str) {
 	let source = ariadne::Source::from(source);
 	let mut reports = gen_reports(errors);
 	reports.try_for_each(|rep|rep.eprint(source.clone())).unwrap();
