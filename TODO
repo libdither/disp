@@ -2,42 +2,43 @@
 
 ## Active Tasks
 
- - Finish current parser (Text -> Tokens -> Spanned AST).
+ - Parser (Text -> Tokens -> Spanned AST). - MVP DONE
    - Investigate chumsky error - PR Submitted
-   - Investigate infinite rustc compile error (`rustc_infer::infer::relate::generalize::Generalizer<rustc_infer::infer::relate::generalize::CombineDelegate`)
-     - Doesn't seem to be showing up in newest ver.
-   - See if Recursive::delcare and define might help for mutual recursion case.
+     - Other person has different error after PR merged
+   - Figure out how to write parser unit tests. (Look at what rust-lang does)
  - Refactor existing REPL Impl
- - Start working on creating and saving graph structures (ontologies).
+   - Ongoing
+ - Work on creating and saving graph structures (ontologies).
+   - Maybe look into interfacing with a Graph/Relational DB for this?
 
-## Goal Outline
+## Goals Outline
 
 ### Basic Binary Format
  * Zero-copy deserialization parser rkyv for serialization/deserialization
  - AST Format
    - Programming this alongside Praser
  - Separate Semantic and Syntactic Format
- - Ontology-Based Format
+ - Ontology-Based Format (?)
 
 ### Finish Parser
  * Current Syntax Example:
    * ```rust
       /// Vector definition 1
-      let Vec2 := { x: Num, y: Num };
+      Vec2 := { x: Num, y: Num }
       /// Vector definition 2
-      let Vec2_v2 := Array{Num, 2};
+      Vec2_v2 := Array{Num, 2}
       /// Derive an isomorphic relation
-      let _ : Isomorphic{Vec2, Vec2_v2} := iso_derive[Vec2, Vec2_v2][{v -> v.x, v -> v[0]}, {v -> v.y, v -> v[1]}];
+      Isomorphic{Vec2, Vec2_v2} := iso_derive[Vec2, Vec2_v2][{v -> v.x, v -> v[0]}, {v -> v.y, v -> v[1]}]
       /// Vector addition definition 1
-      let add := { lhs: Vec2 } -> ({rhs} -> {
+      add := { lhs: Vec2 } -> ({rhs} -> {
         x := lhs.x + rhs.x,
         y := lhs.y + rhs.y,
-      }): Vec2 -> Vec2 -> Vec2;
+      }): Vec2 -> (Vec2 -> Vec2)
       /// Vector addition definition 2
-      let add_v2 := {lhs: Vec2, rhs: Vec2} -> Vec2 {
+      add_v2 := { lhs: Vec2, rhs: Vec2 } -> Vec2 {
         x := lhs.x + rhs.x,
         y := lhs.y + rhs.y,
-      };
+      }
       /// Prove functional equivalence (TODO)
       let _ : Isomorphic[add, add_v2]
      ```
@@ -48,6 +49,6 @@
 
 ### Interpreter
  * Loading text (.disp) and binary (.dbf) files 
- * Use Ontological Format as a Module-system to parse user REPL commands and query for what specific implementation they are referring to.
-   * Example:
-     * 
+ * Use Ontological Format as a Module-system (i.e. stores definitions).
+ * Parse user commands and interactively ask user for which specific implementation they want (if multiple are in scope).
+ * 
