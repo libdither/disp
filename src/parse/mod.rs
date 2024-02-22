@@ -2,6 +2,8 @@
 
 pub mod lexer;
 
+use std::io::Write;
+
 use ariadne::{Color, Label, Report, ReportKind};
 use chumsky::{input::MapExtra, prelude::*};
 use hashdb::{hashtype, LinkArena, TypeStore};
@@ -119,33 +121,32 @@ fn symbol_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t,
 fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, SpannedAST<'e>, CustomExtra<'t, 's, 'e, E>> + Clone {
 	// An expression
 	let mut expr = Recursive::declare();
+
 	// An item, i.e. of a set or module
-	// <rel> ::= <ident> + (":=" | ":") + <expr> + ((":=" | ":") + <expr>)?
-	let relation = symbol_parser::<E>() // ident
+	// <rel> ::= <ident> + ((":=" | ":") + <expr>)? + ((":=" | ":") + <expr>)?
+	let item = symbol_parser::<E>() // ident
 	.then(just(Token::AssignOp).or(just(Token::TypeOp)) // := or :
-	.then(expr.clone())) // expression
+	.then(expr.clone()).or_not()) // expression
 	.then(
 		just(Token::AssignOp).or(just(Token::TypeOp)).then(expr.clone()).or_not()
 	) // expression
-	.try_map_with(|((idt, def), typ): ((SpannedAST, (Token, SpannedAST)), Option<(Token, SpannedAST)>), e|
+	.try_map_with(|((idt, def), typ): ((SpannedAST, Option<(Token, SpannedAST)>), Option<(Token, SpannedAST)>), e|
 		match (def, typ) {
-			((Token::AssignOp, def), Some((Token::TypeOp, typ))) | ((Token::TypeOp, typ), Some((Token::AssignOp, def))) => Ok(AST::Def { idt, def, typ: Some(typ) }),
-			((Token::AssignOp, def), None) => Ok(AST::Def { idt, def, typ: None }),
-			((Token::TypeOp, typ), None) => Ok(AST::Typ { idt, typ: Some(typ) }),
+			(Some((Token::AssignOp, def)), Some((Token::TypeOp, typ))) | (Some((Token::TypeOp, typ)), Some((Token::AssignOp, def))) => Ok(AST::Def { idt, def, typ: Some(typ) }),
+			(Some((Token::AssignOp, def)), None) => Ok(AST::Def { idt, def, typ: None }),
+			(Some((Token::TypeOp, typ)), None) => Ok(AST::Typ { idt, typ: Some(typ) }),
+			(None, None) => Ok(AST::Typ { idt, typ: None }),
 			_ => panic!("somehow while parsing a relation at {:?}, we've parsed something other than := or :", e.span()),
 		}
 	)
 	.map_with(|ast, e|Spanned::new(e.state().links.add(ast), e.span()))
 	.labelled("relation");
 
-	// <item> ::= <ast_rels> | <ident>
-	let item = relation.labelled("statement");
-
-	// seq ::= (<item> + "," | <item> + "\n" | item + ",\n")+
+	// <sequence> ::= (<item> + ("," | "\n" | ",\n"))*
 	let item_sequence = item.clone()
 		.separated_by(any().filter(|t|match t {Token::Separator(_) => true, _ => false})).allow_trailing()
 		.collect::<Vec<SpannedAST<'e>>>()
-	.map_with(|items, e: &mut MapExtra<_, CustomExtra<E>>| ASTSeq { items: e.state().links.add_slice(&items[..])});
+		.map_with(|items, e: &mut MapExtra<_, CustomExtra<E>>| ASTSeq { items: e.state().links.add_slice(&items[..])});
 
 	// set := { <sequence> }
 	let set = item_sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Curly)), just(Token::ClosedBracket(lexer::BracketType::Curly)))
@@ -155,20 +156,27 @@ fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Pa
 	let list = item_sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Square)), just(Token::ClosedBracket(lexer::BracketType::Square)))
 	.map_with(|seq, extra|Spanned::new(extra.state().links.add(AST::List(seq)), extra.span())).labelled("list");
 
-	// (<expr>)
-	// let grouping = expr.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Paren)), just(Token::ClosedBracket(lexer::BracketType::Paren)));
+	// <atom> := <set> | <list> | <literal> | <symbol> | ( "(" + <expr> + ")" )
+	let atom = set.or(list).or(literal_parser().or(symbol_parser()))
+	.or( // atom expression that is parenthesized
+		expr.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Paren)), just(Token::ClosedBracket(lexer::BracketType::Paren)))
+	).labelled("atomic expression");
 
-	// <app> := <expr> <expr>
-	/* let app = expr.clone().then(expr.clone())
-		.map_with(|(func, args), extra|Spanned::new(extra.state().links.add(AST::App(AppRel { func, args })), extra.span()));
+	// <app> := <atom> + (" " + <atom>)+
+	// Note: use atom instead of direct expr to avoid infinite recursion
+	let app = atom.clone().foldl_with(atom.clone().repeated().at_least(1), |acc, item, extra| {
+		Spanned::new(extra.state().links.add(AST::App(AppRel { func: acc, args: item })), extra.span())
+	});
 
-	// <abs> ::= <expr> + ("->" <expr>)?
-	let abs = expr.clone().then_ignore(just(Token::AbsOp)).repeated().foldr_with(expr.clone(), |item, acc, extra| {
-		Spanned::new(extra.state().links.add(AST::Func(FuncRel { arg: acc, body: item })), extra.span())
-	}); */
+	// <abs> := (<atom> + "->") + <atom>
+	let abs = atom.clone().then_ignore(just(Token::FuncOp)).then(atom.clone()).map_with(|(arg, body), extra| {
+		Spanned::new(extra.state().links.add(AST::Func(FuncRel { arg, body })), extra.span())
+	});
 
-	expr.define(set.or(list).or(literal_parser()));
+	// <expr> := <abs> | <app> | <atom>
+	expr.define(app.or(abs).or(atom).labelled("expression"));
 
+	// <module> := <sequence>
 	let module = item_sequence.clone().map_with(|seq, e|Spanned::new(e.state().links.add(AST::Seq(seq)), e.span()))
 	.recover_with(skip_then_retry_until(any().ignored(), end()));
 
@@ -235,7 +243,7 @@ pub fn parse_test(src: &'static str) -> (Option<SpannedAST<'_>>, Option<Vec<Rich
 	println!("LEX_ERRS: {lex_errors:?}");
 	println!("AST: {ast:?}");
 	println!("ERRs: {:?}", errors);
-	fancy_print_errors(errors.iter(), src);
+	fancy_print_errors(errors.iter(), src, std::io::stdout());
 	return (ast, if errors.is_empty() {None} else {Some(errors)})
 }
 
@@ -246,14 +254,42 @@ fn parse_test_error() {
 #[test]
 fn parse_test_relation() {
 	parse_test(r#"thing := "hi!""#).0.unwrap();
+	parse_test(r#"thing : "hi!""#).0.unwrap();
+	parse_test(r#"thing : Type"#).0.unwrap();
+	parse_test(r#"
+		thing : String := "LOL"
+		thing := "LOL" : String
+	"#).0.unwrap();
 }
 #[test]
-fn test_parse_function_and_sets() {
+fn test_parse_set() {
 	parse_test(r#"
-	thing := { one := "test", two := "yeet" }
+	thing := { one := "test", two := "yeet" : String, }
 	"#).0.unwrap();
-	// panic!("check output");
 }
+
+#[test]
+fn test_parse_application() {
+	parse_test(r#"
+	thing := one two
+	thing := one two three
+	"#).0.unwrap();
+}
+#[test]
+fn test_parse_function() {
+	parse_test(r#"
+	thing := one -> two
+	thing := { one, two } -> three
+	"#).0.unwrap();
+	// should error
+	parse_test(r#"
+	thing := { one, two } -> three four
+	"#).1.unwrap();
+	parse_test(r#"
+	thing := ({ one, two } -> three) -> four
+	"#).0.unwrap();
+}
+
 
 /// 
 /// parser := { E: impl{TypeStore} } -> {
@@ -280,8 +316,10 @@ pub fn gen_reports<'i, 'a: 'i, I: std::fmt::Display + 'a>(errors: impl Iterator<
     })
 }
 /// Use gen_reports to fancy-print errors
-pub fn fancy_print_errors<'i, 'a: 'i, I: std::fmt::Display + 'a>(errors: impl Iterator<Item = &'i Rich<'a, I>> + 'i, source: &str) {
+pub fn fancy_print_errors<'i, 'a: 'i, I: std::fmt::Display + 'a>(errors: impl Iterator<Item = &'i Rich<'a, I>> + 'i, source: &str, mut writer: impl Write) {
 	let source = ariadne::Source::from(source);
-	let mut reports = gen_reports(errors);
-	reports.try_for_each(|rep|rep.eprint(source.clone())).unwrap();
+	let reports = gen_reports(errors);
+	for rep in reports {
+		rep.write_for_stdout(source.clone(), &mut writer).expect("failed to write fancy errors");
+	}
 }
