@@ -5,7 +5,7 @@ pub mod lexer;
 use std::io::Write;
 
 use ariadne::{Color, Label, Report, ReportKind};
-use chumsky::{input::MapExtra, prelude::*};
+use chumsky::{input::MapExtra, prelude::*, recursive::Indirect};
 use hashdb::{hashtype, LinkArena, TypeStore};
 
 use lexer::{Token, ParserInput, Spanned};
@@ -62,7 +62,7 @@ pub enum IdentType {
 	Symbol,
 }
 
-type SpannedAST<'e> = Spanned<'e, &'e AST<'e>>;
+pub type SpannedAST<'e> = Spanned<'e, &'e AST<'e>>;
 
 /// <item>, <item> | <item>; <item>
 #[derive(Debug, Clone)]
@@ -82,7 +82,7 @@ pub enum AST<'e> {
 	Ident(IdentType, &'e Ident<'e>),
 
 	Seq(ASTSeq<'e>),
-	Set(ASTSeq<'e>),
+	Map(ASTSeq<'e>),
 	List(ASTSeq<'e>),
 	/// `<expr> -> <expr>`
 	/// A function abstraction
@@ -118,10 +118,7 @@ fn symbol_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t,
 	.map_with(|item, extra: &mut MapExtra<_, CustomExtra<E>>|Spanned::new(extra.state().links.add(item), extra.span())).labelled("symbol")
 }
 
-fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, SpannedAST<'e>, CustomExtra<'t, 's, 'e, E>> + Clone {
-	// An expression
-	let mut expr = Recursive::declare();
-
+fn seq_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>(expr: impl Parser<'t, ParserInput<'s, 't>, SpannedAST<'e>, CustomExtra<'t, 's, 'e, E>> + Clone) -> impl Parser<'t, ParserInput<'s, 't>, ASTSeq<'e>, CustomExtra<'t, 's, 'e, E>> + Clone {
 	// An item, i.e. of a set or module
 	// <rel> ::= <ident> + ((":=" | ":") + <expr>)? + ((":=" | ":") + <expr>)?
 	let item = symbol_parser::<E>() // ident
@@ -147,6 +144,15 @@ fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Pa
 		.separated_by(any().filter(|t|match t {Token::Separator(_) => true, _ => false})).allow_trailing()
 		.collect::<Vec<SpannedAST<'e>>>()
 		.map_with(|items, e: &mut MapExtra<_, CustomExtra<E>>| ASTSeq { items: e.state().links.add_slice(&items[..])});
+
+	item_sequence
+}
+
+fn expr_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, SpannedAST<'e>, CustomExtra<'t, 's, 'e, E>> + Clone {
+	// An expression
+	let mut expr = Recursive::declare();
+
+	let item_sequence = seq_parser::<E>(expr.clone());
 
 	// set := { <sequence> }
 	let set = item_sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Curly)), just(Token::ClosedBracket(lexer::BracketType::Curly)))
@@ -176,6 +182,11 @@ fn ast_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, Pa
 	// <expr> := <abs> | <app> | <atom>
 	expr.define(app.or(abs).or(atom).labelled("expression"));
 
+	expr
+}
+
+fn file_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, ParserInput<'s, 't>, SpannedAST<'e>, CustomExtra<'t, 's, 'e, E>> + Clone {
+	let item_sequence = seq_parser::<E>(expr_parser::<E>());
 	// <module> := <sequence>
 	let module = item_sequence.clone().map_with(|seq, e|Spanned::new(e.state().links.add(AST::Seq(seq)), e.span()))
 	.recover_with(skip_then_retry_until(any().ignored(), end()));
@@ -211,7 +222,7 @@ pub fn parse<'s, 'e: 's>(src: &'s str, state: &'e mut ParserState<'s, 'e>) -> (
 	let (lex_success, lexer_errs) = lexer.parse_with_state(src, &mut state.lexer_state).into_output_errors();
 	let tokens = state.lexer_state.slice().spanned((src.len()..src.len()).into());
 
-	let ast_parser = ast_parser();
+	let ast_parser = expr_parser();
 	
 	let (spanned_ast, parse_errs) = if lex_success.is_some() {
 		ast_parser.parse_with_state(tokens, &mut state.parser_state).into_output_errors()
