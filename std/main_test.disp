@@ -1,0 +1,3 @@
+main := print (greet "world")
+
+greet := { name: String } -> print ("hello " + name + "!")
