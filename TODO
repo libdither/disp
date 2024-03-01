@@ -1,11 +1,23 @@
 # TODO For Disp
 
+## Week Goal
+ - Extract Evaluatable Structure from Syntax Tree
+
+## 2nd Week Goal
+ - Evaluate Evaluatable Structure
+
+## Month
+ - Type system encodings
+
 ## Active Tasks
 
  - Parser (Text -> Tokens -> Spanned AST). - MVP DONE
    - Investigate chumsky error - PR Submitted
      - Other person has different error after PR merged
    - Figure out how to write parser unit tests. (Look at what rust-lang does)
+ - Create some example files.
+ - Rewrite Expression Evaluation
+ - Implement Type Checking
  - Refactor existing REPL Impl
    - Ongoing
  - Work on creating and saving graph structures (ontologies).
