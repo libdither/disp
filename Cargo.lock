@@ -614,6 +614,7 @@ dependencies = [
  "rkyv-with",
  "rustyline",
  "serde",
+ "slotmap",
  "smallvec",
  "thiserror",
 ]

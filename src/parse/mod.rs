@@ -32,7 +32,7 @@ pub enum Separator {
 /// Identifier
 #[derive(Debug, Clone)]
 #[hashtype]
-pub struct Ident<'e>(&'e str);
+pub struct Ident<'e>(pub &'e str);
 
 /// Relation that denotes a function or type implication
 /// Thing -> Thing

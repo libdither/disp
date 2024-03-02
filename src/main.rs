@@ -3,7 +3,7 @@
 #![feature(try_blocks)]
 #![feature(type_alias_impl_trait)]
 
-/* use std::fs;
+use std::fs;
 
 use anyhow::Context;
 use ariadne::Source;
@@ -18,12 +18,12 @@ mod check;
 mod parse;
 
 use name::*;
-use check::*; */
+use check::*;
 
-/* use crate::{expr::ReduceLink, parse_old::ParserState};
- */
+use crate::{expr::ReduceLink, parse::ParserState};
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-	/* let exprs = &LinkArena::new();
+	let exprs = &LinkArena::new();
 	let links = &RevLinkArena::new(exprs);
 	let universal = name::Context::universal(links);
 
@@ -39,14 +39,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 		// println!("No previous history.");
 	}
 
-	let binds = &LinkArena::new();
-	let bind_map = parse_old::NameBindStack::default();
+	/* let binds = &LinkArena::new();
+	let bind_map = parse::NameBindStack::default();
 
 	let mut parser_state = ParserState {
 		links,
 		binds,
 		bind_map,
-	};
+	}; */
 
 	let mut src_buf = String::new();
 
@@ -91,7 +91,7 @@ fn run_command<'i, 'e: 'i, 'b: 'i>(
 ) -> Result<Result<(), Box<dyn std::error::Error>>, Box<dyn std::error::Error>> {
     let start_time = std::time::Instant::now();
 	let res: Result<(), Box<dyn std::error::Error>> = try {
-		use parse_old::Command;
+		use parse::Command;
 		match parser.parse_with_state(line, parser_state).into_result() {
 			Ok(Command::None) => {}
 			Ok(Command::Name(string, sem)) => {
@@ -151,13 +151,12 @@ fn run_command<'i, 'e: 'i, 'b: 'i>(
 			}
 			Ok(_) => {}
 			Err(errors) => {
-				parse_old::gen_report(errors)
+				parse::gen_reports(errors)
 					.try_for_each(|report| report.print(Source::from(&line)))?;
 			}
 		};
 	};
 	println!("[time] {:?}", start_time.elapsed());
 
-    Ok(res) */
-	Ok(())
+    Ok(res)
 }

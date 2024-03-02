@@ -26,6 +26,7 @@ chumsky = { path = "chumsky", features = ["label", "pratt"] }
 smallvec = "1.9.0"
 ariadne = "0.4.0"
 rkyv-with = "0.1.2"
+slotmap = "1.0.7"
 
 [features]
 

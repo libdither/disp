@@ -6,6 +6,7 @@ use hashdb::{LinkArena, TypeStore, hashtype};
 
 mod bind;
 mod reduce;
+mod extract;
 pub use bind::*;
 pub use reduce::*;
 
