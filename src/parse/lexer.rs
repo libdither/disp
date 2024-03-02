@@ -359,3 +359,18 @@ fn lexer_tests() {
 		Symbol("List"), OpenBracket(Curly), Symbol("T"), TypeOp, Symbol("Type"), ClosedBracket(Curly), AssignOp, Symbol("data"), OpenBracket(Curly), Symbol("nil"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(Newline), Symbol("cons"), TypeOp, OpenBracket(Curly), Symbol("head"), TypeOp, Symbol("T"), Separator(Comma), Symbol("tail"), TypeOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), ClosedBracket(Curly), FuncOp, Symbol("List"), OpenBracket(Paren), Symbol("T"), ClosedBracket(Paren), Separator(CommaNewline), ClosedBracket(Curly), Separator(Newline),
 	]);
 }
+
+
+fn test_label_parse(string: &str) -> ParseResult<&str, Rich<'_, char>> {
+	let parser = text::keyword::<&str, char, &str, extra::Err<Rich<char>>>("first");
+	parser.labelled("first").parse(string)
+}
+
+#[test]
+fn label_test() {
+	let uses_label = test_label_parse("[first");
+	let incorrect = test_label_parse("firsd");
+	uses_label.errors().for_each(|err|println!("{err}"));
+	incorrect.errors().for_each(|err|println!("{err}"));
+	panic!();
+}

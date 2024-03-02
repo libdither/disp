@@ -56,10 +56,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 			Ok(line) => {
 				src_buf.clear(); src_buf.insert_str(0, &line);
 				rl.add_history_entry(src_buf.as_str())?;
-				let res = run_command(&src_buf, &parse_old::command_parser(), &mut parser_state, links, universal)?;
+				/* let res = run_command(&src_buf, &parse_old::command_parser(), &mut parser_state, links, universal)?;
 				if let Err(err) = res {
 					println!("{err}");
-				}
+				} */
 			}
 			Err(ReadlineError::Interrupted) => {
 				println!("CTRL-C");
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	} */
 	Ok(())
 }
-
+/* 
 fn run_command<'i, 'e: 'i, 'b: 'i>(
 	line: &'i str,
 	parser: &impl Parser<'i, &'i str, parse_old::Command<'e>, chumsky::extra::Full<chumsky::prelude::Rich<'i, char>, ParserState<'e, 'b, LinkArena<'b>, LinkArena<'e>>, ()>>,
@@ -160,3 +160,4 @@ fn run_command<'i, 'e: 'i, 'b: 'i>(
 
     Ok(res)
 }
+ */

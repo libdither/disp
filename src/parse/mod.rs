@@ -156,7 +156,7 @@ fn expr_parser<'s: 't, 't, 'e: 't, E: TypeStore<'e> + 'e>() -> impl Parser<'t, P
 
 	// set := { <sequence> }
 	let set = item_sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Curly)), just(Token::ClosedBracket(lexer::BracketType::Curly)))
-	.map_with(|seq, extra|Spanned::new(extra.state().links.add(AST::Set(seq)), extra.span())).labelled("set");
+	.map_with(|seq, extra|Spanned::new(extra.state().links.add(AST::Map(seq)), extra.span())).labelled("set");
 
 	// list := [ <sequence> ]
 	let list = item_sequence.clone().delimited_by(just(Token::OpenBracket(lexer::BracketType::Square)), just(Token::ClosedBracket(lexer::BracketType::Square)))

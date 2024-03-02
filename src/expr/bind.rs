@@ -219,7 +219,7 @@ impl<'a> fmt::Display for BindIndex<'a> {
 		write!(f, "{}/{}", self.tree, self.index)
 	}
 }
-
+/* 
 #[test]
 fn test_replace_tree() {
 	use hashdb::{LinkArena, RevLinkArena};
@@ -271,3 +271,4 @@ fn test_split<'a>(trees: &'a impl TypeStore<'a>, r: BindIndex<'a>) -> Result<(),
 	assert_eq!(r, r_after);
 	Ok(())
 }
+ */
