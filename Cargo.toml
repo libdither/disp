@@ -10,15 +10,15 @@ base58 = "0.2.0"
 bincode = "1.3.3"
 bytes = "1.1.0"
 emulator_6502 = "1.1.0"
-itertools = "0.12.0"
+itertools = "0.13.0"
 lazy_static = "1.4.0"
-multihash = "0.18.1"
+multihash = "0.19.1"
 serde = { version = "1.0.139", features = ["derive"] }
 thiserror = "1.0.31"
 
 hashdb = { path = "hashdb/" }
 anyhow = "1.0.58"
-rustyline = "13.0.0"
+rustyline = "14.0.0"
 rkyv = { version = "0.7", features = ["validation"] }
 derivative = "2.2.0"
 either = "1.7.0"
