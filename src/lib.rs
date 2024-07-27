@@ -10,6 +10,7 @@ use hashdb::{TypeStore, LinkArena, RevLinkArena};
 pub mod name;
 pub mod check; */
 pub mod parse;
+// mod eval;
 /* 
 use expr::{Binding as B, Expr};
 pub use parse::{parse, parse_reduce};
