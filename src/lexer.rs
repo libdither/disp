@@ -1,15 +1,10 @@
+use core::fmt;
 use std::str::FromStr;
 
-use winnow::{ascii::{alphanumeric0, alphanumeric1, digit0, digit1, multispace0}, combinator::{alt, delimited, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, InputError, ParserError, StrContext}, prelude::*, stream::Stream, token::{any, none_of, take}};
-
-enum ParseTree {
-	Number(u64),
-	Ident(String),
-	Assign(Box<ParseTree>, Box<ParseTree>)
-}
+use winnow::{ascii::{alphanumeric1, digit1, multispace0, newline}, combinator::{alt, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, ParserError, StrContext}, prelude::*, token::{any, none_of, take}};
 
 #[derive(Clone, PartialEq, Debug)]
-enum Token {
+pub enum Token {
 	Number(u64),
 	Ident(String),
 	String(String),
@@ -21,6 +16,37 @@ enum Token {
 	ClosedParen,
 	OpenSquareBracket,
 	ClosedSquareBracket,
+    Separator(Separator),
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum Separator {
+    Comma, Newline
+}
+impl fmt::Display for Separator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Separator::Comma => write!(f, ","),
+            Separator::Newline => write!(f, "\n"),
+        }
+    }
+}
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Number(num) => write!(f, "{num}"),
+            Token::Ident(ident) => write!(f, "{ident}"),
+            Token::String(string) => write!(f, "\"{string}\""),
+            Token::AssignOp => write!(f, ":="),
+            Token::TypeOp => write!(f, ":"),
+            Token::OpenCurlyBracket => write!(f, "{{"),
+            Token::ClosedCurlyBracket => write!(f, "}}"),
+            Token::OpenParen => write!(f, "("),
+            Token::ClosedParen => write!(f, ")"),
+            Token::OpenSquareBracket => write!(f, "["),
+            Token::ClosedSquareBracket => write!(f, "]"),
+            Token::Separator(sep) => write!(f, "{sep}"),
+        }
+    }
 }
 
 fn unicode_escape<'i, E: ParserError<&'i str>>(input: &mut &'i str) -> PResult<char, E> {
@@ -105,52 +131,100 @@ fn token(i: &mut &str) -> PResult<Token> {
         '[' => '['.value(Token::OpenSquareBracket),
         ']' => ']'.value(Token::ClosedSquareBracket),
         ':' => alt((":=".value(Token::AssignOp), ":".value(Token::TypeOp))),
-        _ => fail,
+        ',' => ','.value(Token::Separator(Separator::Comma)),
+        _ => alt((newline.value(Token::Separator(Separator::Newline)), fail)),
     }
     .parse_next(i)
 }
 
 #[test]
-fn test_parse_token_number() {
+fn test_lexer_number() {
 	assert_eq!(token.parse_peek("21c"), Ok(("c", Token::Number(21))));
 }
 #[test]
-fn test_parse_token_ident() {
+fn test_lexer_ident() {
 	assert_eq!(token.parse_peek("hi4+"), Ok(("+", Token::Ident("hi4".to_owned()))));
 }
 #[test]
-fn test_parse_token_parens() {
+fn test_lexer_parens() {
 	assert_eq!(token.parse_peek("()a"), Ok((")a", Token::OpenParen)));
 	assert_eq!(token.parse_peek(")(a"), Ok(("(a", Token::ClosedParen)));
 }
 #[test]
-fn test_parse_token_curly() {
+fn test_lexer_curly() {
 	assert_eq!(token.parse_peek("{}a"), Ok(("}a", Token::OpenCurlyBracket)));
 	assert_eq!(token.parse_peek("}{a"), Ok(("{a", Token::ClosedCurlyBracket)));
 }
 #[test]
-fn test_parse_token_square() {
+fn test_lexer_square() {
 	assert_eq!(token.parse_peek("[]a"), Ok(("]a", Token::OpenSquareBracket)));
 	assert_eq!(token.parse_peek("][a"), Ok(("[a", Token::ClosedSquareBracket)));
 }
 #[test]
-fn test_parse_token_string() {
+fn test_lexer_string() {
 	assert_eq!(token.parse_peek(r#""yeetaloni"3"#), Ok(("3", Token::String("yeetaloni".to_owned()))));
 }
 #[test]
-fn test_parse_token_ops() {
+fn test_lexer_ops() {
 	assert_eq!(token.parse_peek(":=:a"), Ok((":a", Token::AssignOp)));
 	assert_eq!(token.parse_peek("::=a"), Ok((":=a", Token::TypeOp)));
 }
 
-fn lexer(i: &mut &str) -> PResult<Vec<Token>> {
+pub fn lexer(i: &mut &str) -> PResult<Vec<Token>> {
     preceded(multispace0, repeat(1.., terminated(token, multispace0))).parse_next(i)
 }
 
 #[test]
-fn test_parse_tokenstream() {
+fn test_lexer_tokenstream() {
     use Token::*;
     assert_eq!(lexer(&mut "(abcabc)"), Ok(vec![OpenParen, Ident("abcabc".to_owned()), ClosedParen]));
 
     assert_eq!(lexer(&mut r#"a := "thing""#), Ok(vec![Token::Ident("a".to_owned()), AssignOp, String("thing".to_owned())]));
 }
+
+impl winnow::stream::ContainsToken<Token> for Token {
+    #[inline(always)]
+    fn contains_token(&self, token: Token) -> bool {
+        *self == token
+    }
+}
+
+impl winnow::stream::ContainsToken<Token> for &'_ [Token] {
+    #[inline]
+    fn contains_token(&self, token: Token) -> bool {
+        self.iter().any(|t| *t == token)
+    }
+}
+
+impl<const LEN: usize> winnow::stream::ContainsToken<Token> for &'_ [Token; LEN] {
+    #[inline]
+    fn contains_token(&self, token: Token) -> bool {
+        self.iter().any(|t| *t == token)
+    }
+}
+
+impl<const LEN: usize> winnow::stream::ContainsToken<Token> for [Token; LEN] {
+    #[inline]
+    fn contains_token(&self, token: Token) -> bool {
+        self.iter().any(|t| *t == token)
+    }
+}
+
+/* impl fmt::Display for &'_ [Token] {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(self.iter().try_for_each(|t|t.fmt(f))?)
+    }
+}
+
+impl<const LEN: usize> fmt::Display for &'_ [Token; LEN] {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
+
+impl<const LEN: usize> winnow::stream::ContainsToken<Token> for [Token; LEN] {
+    #[inline]
+    fn contains_token(&self, token: Token) -> bool {
+        self.iter().any(|t| *t == token)
+    }
+} */
