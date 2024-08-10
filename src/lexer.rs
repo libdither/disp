@@ -1,7 +1,7 @@
 use core::fmt;
 use std::str::FromStr;
 
-use winnow::{ascii::{alphanumeric1, digit1, multispace0, newline}, combinator::{alt, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, ParserError, StrContext}, prelude::*, token::{any, none_of, take}};
+use winnow::{ascii::{alphanumeric1, digit1, multispace0, multispace1, newline}, combinator::{alt, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, ParserError, StrContext}, prelude::*, stream::AsChar, token::{any, none_of, one_of, take, take_while}};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Token {
@@ -122,7 +122,11 @@ fn string<'i, E: ParserError<&'i str> + AddContext<&'i str, StrContext>>(
 fn token(i: &mut &str) -> PResult<Token> {
     dispatch! {peek(any);
         '0'..='9' => digit1.try_map(FromStr::from_str).map(Token::Number),
-		'a'..='z' | 'A'..='Z' => alphanumeric1.map(|s: &str|Token::Ident(s.to_owned())),
+		'a'..='z' | 'A'..='Z' => (
+            one_of(AsChar::is_alphanum),
+            take_while(0.., |c|AsChar::is_alphanum(c) || c == '-' || c == '_'))
+                .take().map(|s: &str|Token::Ident(s.to_owned())
+        ),
 		'"' => string.map(Token::String),
         '(' => '('.value(Token::OpenParen),
         ')' => ')'.value(Token::ClosedParen),

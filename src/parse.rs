@@ -15,7 +15,7 @@ pub enum ParseTree {
     IdentTyping { ident: Box<ParseTree>, typ: Box<ParseTree> },
     /// list or named set (or combination) in term form
     /// { thing1 := "abc" : String, thing2 := 123, 456, "seven" }
-    SetTerm(Vec<ParseTree>),
+    TermSet(Vec<ParseTree>),
     /// list or named set of types
     /// { thing1 : String, thing2 : Number, OtherType }
     SetType(Vec<ParseTree>),
@@ -32,7 +32,7 @@ impl fmt::Display for ParseTree {
                 if let Some(typ) = typ { write!(f, " : {typ}")?; } Ok(())
             },
             ParseTree::IdentTyping { ident, typ } => write!(f, "{ident} : {typ}"),
-            ParseTree::SetTerm(_) => todo!(),
+            ParseTree::TermSet(_) => todo!(),
             ParseTree::SetType(_) => todo!(),
         }
     }
@@ -49,6 +49,13 @@ fn literal(input: &mut &[Token]) -> PResult<ParseTree> {
         .parse_next(input)
 }
 
+fn PTstring(string: &str) -> ParseTree {
+    ParseTree::String(string.to_owned())
+}
+fn PTnum(num: u64) -> ParseTree {
+    ParseTree::Number(num)
+}
+
 // specifically ident
 fn ident(input: &mut &[Token]) -> PResult<ParseTree> {
     any.verify_map(|t|match t {
@@ -58,6 +65,8 @@ fn ident(input: &mut &[Token]) -> PResult<ParseTree> {
         .context(StrContext::Label("ident"))
         .parse_next(input)
 }
+
+fn PTident(string: &str) -> ParseTree { ParseTree::Ident(string.to_owned()) }
 
 #[test]
 fn test_parse_string() {
@@ -87,7 +96,10 @@ fn def(input: &mut &[Token]) -> PResult<ParseTree> {
             _ : one_of(Token::AssignOp)
                 .context(StrContext::Expected(StrContextValue::StringLiteral(":="))),
             def: expr.map(Box::new),
-            typ: opt(preceded(one_of(Token::TypeOp), expr.map(Box::new))),
+            typ: opt(preceded(
+                one_of(Token::TypeOp).context(StrContext::Expected(StrContextValue::StringLiteral(":"))),
+                expr.map(Box::new)
+            )),
         }},
     ).parse_next(input)
 }
@@ -108,8 +120,6 @@ fn typing(input: &mut &[Token]) -> PResult<ParseTree> {
 fn PTassign(ident: ParseTree, expr: ParseTree, typ: Option<ParseTree>) -> ParseTree { ParseTree::IdentAssign { ident: Box::new(ident), def: Box::new(expr), typ: typ.map(Box::new) } }
 
 fn PTtyping(ident: ParseTree, typ: ParseTree) -> ParseTree { ParseTree::IdentTyping { ident: Box::new(ident), typ: Box::new(typ) } }
-
-fn PTident(string: &str) -> ParseTree { ParseTree::Ident(string.to_owned()) }
 
 #[test]
 fn test_parse_def() {
@@ -158,8 +168,51 @@ fn test_parse_typing() {
 }
 
 fn expr_set(input: &mut &[Token]) -> PResult<ParseTree> {
-    delimited(one_of(Token::OpenCurlyBracket), separated(0.., def, one_of(|t|matches!(t, Token::Separator(_)))), one_of(Token::ClosedCurlyBracket)).map(ParseTree::SetTerm).parse_next(input)
+    delimited(
+        one_of(Token::OpenCurlyBracket)
+            .context(StrContext::Expected(StrContextValue::CharLiteral('{'))),
+        separated(
+            0..,
+            alt((def, ident, literal)),
+            one_of(|t|matches!(t, Token::Separator(_)))
+                .context(StrContext::Expected(StrContextValue::CharLiteral(',')))
+                .context(StrContext::Expected(StrContextValue::StringLiteral("\\n")))
+        ),
+        one_of(Token::ClosedCurlyBracket)
+            .context(StrContext::Expected(StrContextValue::CharLiteral('}')))
+    ).map(ParseTree::TermSet).parse_next(input)
 }
+
+fn PTtermset(set: &[ParseTree]) -> ParseTree {
+    ParseTree::TermSet(set.to_owned())
+}
+
+#[test]
+fn test_parse_expr_set() {
+    assert_eq!(
+        expr_set.parse(&mut dbg!(&lexer(&mut 
+            "{ thingy := 123: Number, other_thingy := \"hi\", third_thingy, 456 }"
+        ).unwrap())),
+        Ok(PTtermset(&[
+            PTassign(PTident("thingy"), ParseTree::Number(123), Some(PTident("Number"))),
+            PTassign(PTident("other_thingy"), PTstring("hi"), None),
+            PTident("third_thingy"),
+            PTnum(456),
+        ]))
+    );
+    assert_eq!(
+        expr_set.parse(&mut dbg!(&lexer(&mut 
+            "{ thingy := 123: Number, other_thingy := }"
+        ).unwrap())),
+        Ok(PTtermset(&[
+            PTassign(PTident("thingy"), ParseTree::Number(123), Some(PTident("Number"))),
+            PTassign(PTident("other_thingy"), PTstring("hi"), None),
+            PTident("third_thingy"),
+            PTnum(456),
+        ]))
+    );
+}
+
 fn typ_set(input: &mut &[Token]) -> PResult<ParseTree> {
     delimited(one_of(Token::OpenSquareBracket), separated(0.., typing, one_of(|t|matches!(t, Token::Separator(_)))), one_of(Token::ClosedSquareBracket)).map(ParseTree::SetType).parse_next(input)
 }
