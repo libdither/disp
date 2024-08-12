@@ -18,7 +18,7 @@ pub enum ParseTree {
     TermSet(Vec<ParseTree>),
     /// list or named set of types
     /// { thing1 : String, thing2 : Number, OtherType }
-    SetType(Vec<ParseTree>),
+    TypeSet(Vec<ParseTree>),
 }
 
 impl fmt::Display for ParseTree {
@@ -33,7 +33,7 @@ impl fmt::Display for ParseTree {
             },
             ParseTree::IdentTyping { ident, typ } => write!(f, "{ident} : {typ}"),
             ParseTree::TermSet(_) => todo!(),
-            ParseTree::SetType(_) => todo!(),
+            ParseTree::TypeSet(_) => todo!(),
         }
     }
 }
@@ -134,13 +134,13 @@ fn test_parse_def() {
     );
     // test if invalid ident is caught
     assert_eq!(
-        typing.parse_peek(&mut dbg!(&lexer(&mut "123 : Ident").unwrap())),
+        def.parse_peek(&mut dbg!(&lexer(&mut "123 : Ident").unwrap())),
         dbg!(Err(ErrMode::Backtrack(ContextError::new().add_context(&"", &"".checkpoint(), StrContext::Label("ident")))))
     );
     // test if invalid expr is caught
     assert_eq!(
-        typing.parse_peek(&mut dbg!(&lexer(&mut "ident : :=").unwrap())),
-        dbg!(Err(ErrMode::Backtrack(ContextError::new().add_context(&"", &"".checkpoint(), StrContext::Label("expression")))))
+        def.parse_peek(&mut dbg!(&lexer(&mut "ident : :=").unwrap())),
+        dbg!(Err(ErrMode::Backtrack(ContextError::new().add_context(&"", &"".checkpoint(), StrContext::Expected(StrContextValue::StringLiteral(":="))))))
     );
 }
 
@@ -163,7 +163,7 @@ fn test_parse_typing() {
     // test if invalid expr is caught
     assert_eq!(
         typing.parse_peek(&mut dbg!(&lexer(&mut "ident : :=").unwrap())),
-        dbg!(Err(ErrMode::Backtrack(ContextError::new().add_context(&"", &"".checkpoint(), StrContext::Label("expression")))))
+        dbg!(Err(ErrMode::Backtrack(ContextError::new().add_context(&"", &"".checkpoint(), StrContext::Expected(StrContextValue::CharLiteral('{'))).add_context(&"", &"".checkpoint(), StrContext::Label("expression")))))
     );
 }
 
@@ -211,7 +211,46 @@ fn test_parse_expr_set() {
 }
 
 fn typ_set(input: &mut &[Token]) -> PResult<ParseTree> {
-    delimited(one_of(Token::OpenSquareBracket), separated(0.., typing, one_of(|t|matches!(t, Token::Separator(_)))), one_of(Token::ClosedSquareBracket)).map(ParseTree::SetType).parse_next(input)
+    delimited(
+        one_of(Token::OpenCurlyBracket)
+            .context(StrContext::Expected(StrContextValue::CharLiteral('{'))),
+        separated(
+            0..,
+            alt((typing, ident)),
+            one_of(|t|matches!(t, Token::Separator(_)))
+                .context(StrContext::Expected(StrContextValue::CharLiteral(',')))
+                .context(StrContext::Expected(StrContextValue::StringLiteral("\\n")))
+        ),
+        one_of(Token::ClosedCurlyBracket)
+            .context(StrContext::Expected(StrContextValue::CharLiteral('}')))
+    ).map(ParseTree::TypeSet).parse_next(input)
+}
+
+fn PTtypset(set: &[ParseTree]) -> ParseTree {
+    ParseTree::TypeSet(set.to_owned())
+}
+
+#[test]
+fn test_parse_typ_set() {
+    assert_eq!(
+        typ_set.parse(&mut dbg!(&lexer(&mut 
+            "{ thingy: Number, String, String, lol: Lol }"
+        ).unwrap())),
+        Ok(PTtypset(&[
+            PTtyping(PTident("thingy"), PTident("Number")),
+            PTident("String"),
+            PTident("String"),
+            PTtyping(PTident("lol"), PTident("Lol")),
+        ]))
+    );
+    let lex = dbg!(lexer(&mut 
+        "{ thingy := 123: Number, other_thingy := }"
+    ).unwrap());
+    let parse_res = expr_set.parse(&mut &lex).unwrap_err();
+    assert_eq!(
+        parse_res.inner(),
+        &ContextError::new().add_context(&"", &"".checkpoint(), StrContext::Expected(StrContextValue::CharLiteral('}')))
+    );
 }
 
 
