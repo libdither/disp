@@ -1,6 +1,6 @@
 use core::fmt;
 
-use winnow::{combinator::{self, alt, delimited, fail, opt, preceded, repeat, separated, separated_pair}, error::{AddContext, ContextError, ErrMode, ErrorKind, ParserError, StrContext, StrContextValue}, prelude::*, stream::{Checkpoint, Stream}, token::{any, one_of}};
+use winnow::{combinator::{self, alt, delimited, fail, opt, preceded, repeat, separated, separated_pair}, error::{AddContext, ContextError, ErrMode, ErrorKind, ParseError, ParserError, StrContext, StrContextValue}, prelude::*, stream::{Checkpoint, Stream}, token::{any, one_of}};
 
 use crate::lexer::{lexer, Token};
 
@@ -200,16 +200,13 @@ fn test_parse_expr_set() {
             PTnum(456),
         ]))
     );
+    let lex = dbg!(lexer(&mut 
+        "{ thingy := 123: Number, other_thingy := }"
+    ).unwrap());
+    let parse_res = expr_set.parse(&mut &lex).unwrap_err();
     assert_eq!(
-        expr_set.parse(&mut dbg!(&lexer(&mut 
-            "{ thingy := 123: Number, other_thingy := }"
-        ).unwrap())),
-        Ok(PTtermset(&[
-            PTassign(PTident("thingy"), ParseTree::Number(123), Some(PTident("Number"))),
-            PTassign(PTident("other_thingy"), PTstring("hi"), None),
-            PTident("third_thingy"),
-            PTnum(456),
-        ]))
+        parse_res.inner(),
+        &ContextError::new().add_context(&"", &"".checkpoint(), StrContext::Expected(StrContextValue::CharLiteral('}')))
     );
 }
 
