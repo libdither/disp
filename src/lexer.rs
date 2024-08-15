@@ -1,7 +1,7 @@
 use core::fmt;
 use std::str::FromStr;
 
-use winnow::{ascii::{alphanumeric1, digit1, multispace0, multispace1, newline}, combinator::{alt, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, ParserError, StrContext}, prelude::*, stream::AsChar, token::{any, none_of, one_of, take, take_while}};
+use winnow::{ascii::{alphanumeric1, digit1, multispace0, multispace1, newline}, combinator::{alt, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, ParserError, StrContext}, prelude::*, stream::{AsBStr, AsChar}, token::{any, none_of, one_of, take, take_while}};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Token {
@@ -10,6 +10,8 @@ pub enum Token {
 	String(String),
 	AssignOp,
 	TypeOp,
+    FuncOp,
+    Minus,
 	OpenCurlyBracket,
 	ClosedCurlyBracket,
 	OpenParen,
@@ -38,6 +40,8 @@ impl fmt::Display for Token {
             Token::String(string) => write!(f, "\"{string}\""),
             Token::AssignOp => write!(f, ":="),
             Token::TypeOp => write!(f, ":"),
+            Token::FuncOp => write!(f, "->"),
+            Token::Minus => write!(f, "-"),
             Token::OpenCurlyBracket => write!(f, "{{"),
             Token::ClosedCurlyBracket => write!(f, "}}"),
             Token::OpenParen => write!(f, "("),
@@ -48,6 +52,12 @@ impl fmt::Display for Token {
         }
     }
 }
+
+/* impl AsBStr for &'_[Token] {
+    fn as_bstr(&self) -> &[u8] {
+        todo!()
+    }
+} */
 
 fn unicode_escape<'i, E: ParserError<&'i str>>(input: &mut &'i str) -> PResult<char, E> {
     fn u16_hex<'i, E: ParserError<&'i str>>(input: &mut &'i str) -> PResult<u16, E> {
@@ -135,6 +145,7 @@ fn token(i: &mut &str) -> PResult<Token> {
         '[' => '['.value(Token::OpenSquareBracket),
         ']' => ']'.value(Token::ClosedSquareBracket),
         ':' => alt((":=".value(Token::AssignOp), ":".value(Token::TypeOp))),
+        '-' => alt(("->".value(Token::FuncOp), "-".value(Token::Minus))),
         ',' => ','.value(Token::Separator(Separator::Comma)),
         _ => alt((newline.value(Token::Separator(Separator::Newline)), fail)),
     }
@@ -172,6 +183,8 @@ fn test_lexer_string() {
 fn test_lexer_ops() {
 	assert_eq!(token.parse_peek(":=:a"), Ok((":a", Token::AssignOp)));
 	assert_eq!(token.parse_peek("::=a"), Ok((":=a", Token::TypeOp)));
+	assert_eq!(token.parse_peek("->a"), Ok(("a", Token::FuncOp)));
+	assert_eq!(token.parse_peek("-a"), Ok(("a", Token::Minus)));
 }
 
 pub fn lexer(i: &mut &str) -> PResult<Vec<Token>> {
