@@ -17,15 +17,22 @@ fn main() -> io::Result<()> {
             return Ok(());
         }
     };
+    
     println!("lex: {lex:?}");
-    let tree = match parse::expr.parse(&mut lex.as_slice()) {
-        Ok(tree) => tree,
+    let stmts = match parse::parse_file.parse(&mut lex.as_slice()) {
+        Ok(stmts) => stmts,
         Err(err) => {
             println!("{err:?}");
             return Ok(());
         }
     };
-    println!("tree: {tree}");
+    println!("Program:");
+    println!("{}", program.as_str());
+    println!("Parse:");
+    for (i, tree) in stmts.iter().enumerate() {
+        println!("{i:03} {tree}");
+    }
+    
     // type check it
 
     // run / print output

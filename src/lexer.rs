@@ -1,7 +1,7 @@
 use core::fmt;
 use std::str::FromStr;
 
-use winnow::{ascii::{alphanumeric1, digit1, multispace0, multispace1, newline}, combinator::{alt, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, ParserError, StrContext}, prelude::*, stream::{AsBStr, AsChar}, token::{any, none_of, one_of, take, take_while}};
+use winnow::{ascii::{digit1, multispace1, space0}, combinator::{alt, dispatch, fail, peek, preceded, repeat, separated_pair, terminated}, error::{AddContext, ParserError, StrContext}, prelude::*, stream::AsChar, token::{any, none_of, one_of, take, take_while}};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Token {
@@ -147,7 +147,7 @@ fn token(i: &mut &str) -> PResult<Token> {
         ':' => alt((":=".value(Token::AssignOp), ":".value(Token::TypeOp))),
         '-' => alt(("->".value(Token::FuncOp), "-".value(Token::Minus))),
         ',' => ','.value(Token::Separator(Separator::Comma)),
-        _ => alt((newline.value(Token::Separator(Separator::Newline)), fail)),
+        _ => alt((multispace1.value(Token::Separator(Separator::Newline)), fail)),
     }
     .parse_next(i)
 }
@@ -188,7 +188,7 @@ fn test_lexer_ops() {
 }
 
 pub fn lexer(i: &mut &str) -> PResult<Vec<Token>> {
-    preceded(multispace0, repeat(1.., terminated(token, multispace0))).parse_next(i)
+    preceded(space0, repeat(1.., terminated(token, space0))).parse_next(i)
 }
 
 #[test]
