@@ -1,15 +1,20 @@
 mod parse;
 mod lexer;
+mod lower;
 
+use std::collections::HashMap;
 use std::env;
 use std::io;
 
+use parse::ParseTree;
 use winnow::Parser;
 
 fn main() -> io::Result<()> {
     let filename = env::args().nth(1).expect("Usage: disp <PROGRAM>");
     let program = std::fs::read_to_string(filename)?;
-    // parse it
+
+    // lex string
+    println!("--- LEXING ----");
     let lex = match lexer::lexer.parse(&mut program.as_str()) {
         Ok(lex) => lex,
         Err(err) => {
@@ -17,8 +22,10 @@ fn main() -> io::Result<()> {
             return Ok(());
         }
     };
-    
     println!("lex: {lex:?}");
+
+    // parse tokens
+    println!("--- PARSING ----");
     let stmts = match parse::parse_file.parse(&mut lex.as_slice()) {
         Ok(stmts) => stmts,
         Err(err) => {
@@ -32,11 +39,20 @@ fn main() -> io::Result<()> {
     for (i, tree) in stmts.iter().enumerate() {
         println!("{i:03} {tree}");
     }
+
+    // convert parsetree to semantic tree
+    println!("--- LOWERING ----");
     
-    // type check it
+    
 
-    // run / print output
+    // infer types
 
+    // type check tree
+
+    // evaluate term
+
+    // print output
+    
     /* for line in reader.lines() {
         println!("{}", line?);
     }
