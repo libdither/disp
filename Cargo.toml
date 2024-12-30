@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 itertools = "0.13.0"
-winnow = "0.6.16"
+slotmap = "1.0.7"
+winnow = "0.6.20"
 
 
