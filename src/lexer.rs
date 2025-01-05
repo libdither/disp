@@ -226,22 +226,3 @@ impl<const LEN: usize> winnow::stream::ContainsToken<Token> for [Token; LEN] {
         self.iter().any(|t| *t == token)
     }
 }
-
-/* impl fmt::Display for &'_ [Token] {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(self.iter().try_for_each(|t|t.fmt(f))?)
-    }
-}
-
-impl<const LEN: usize> fmt::Display for &'_ [Token; LEN] {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
-}
-
-impl<const LEN: usize> winnow::stream::ContainsToken<Token> for [Token; LEN] {
-    #[inline]
-    fn contains_token(&self, token: Token) -> bool {
-        self.iter().any(|t| *t == token)
-    }
-} */

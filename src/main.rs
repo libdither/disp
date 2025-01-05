@@ -59,3 +59,14 @@ fn main() -> io::Result<()> {
  */
     Ok(())
 }
+
+
+#[test]
+fn test_lex_and_parse() {
+    let program = r##"
+    main := print "hello world!"
+    main : Unit := (print "hello world")
+    id := x -> x
+
+    "##;
+}

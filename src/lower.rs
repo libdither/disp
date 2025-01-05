@@ -11,7 +11,7 @@ new_key_type! { struct ExprKey; }
 enum ExprTree {
 	Number(u64), // string literal
 	String(String), // 
-	Ref(ExprKey), // 
+	Ref(ExprKey), // refer to a specific typed expression in context
 	Universal(u64), // `Type` in some universe
 	// Sets, Functions, Application
 	Lambda {  }
@@ -27,8 +27,9 @@ struct TypedExpr {
 struct Context {
 	// a given string maps to a unique StackKey
 	idents: HashMap<String, StackKey>,
-	// 
+	// stacks keep track of the scope of a given ident
 	stacks: SlotMap<StackKey, Vec<ExprKey>>,
+	// keep track of all typed expressions
 	exprs: SlotMap<ExprKey, TypedExpr>,
 	pub nat_key: ExprKey, // default built-in Nat
 	pub string_key: ExprKey, // default built-in String
@@ -57,11 +58,12 @@ enum LoweringError {
 pub fn lower(tree: ParseTree, typ: Option<ParseTree>, context: &mut Context) -> Result<TypedExpr, LoweringError> {
 	Ok(match tree {
 		ParseTree::Number(num) => {
-			// check if has type, otherwise assume built-in Nat for typechecker to deal with later
+			// check if has type, otherwise assume `Nat` type as default, for typechecker to reconcile later
 			let typ_expr = if let Some(typ) = typ {
 				// parse type
 				lower(typ, None, context)?.typ
 			} else { ExprTree::Ref(context.nat_key) };
+
 			TypedExpr {
 				term: ExprTree::Number(num),
 				typ: typ_expr // infer default type of number
@@ -73,6 +75,7 @@ pub fn lower(tree: ParseTree, typ: Option<ParseTree>, context: &mut Context) -> 
 				// parse type
 				lower(typ, None, context)?.typ
 			} else { ExprTree::Ref(context.string_key) };
+
 			TypedExpr {
 				term: ExprTree::String(string),
 				typ: typ_expr // infer default type of number
@@ -93,7 +96,10 @@ pub fn lower(tree: ParseTree, typ: Option<ParseTree>, context: &mut Context) -> 
 			if let Some(stack) = context.get_stack_mut(&ident) {
 				// lower 
 				// id already defined, push to vec
-				stack.push(def)
+				// stack.push(def)
+				todo!()
+			} else {
+				todo!()
 			}
 		},
 		ParseTree::AssignIdentType { ident, typ } => todo!(),
