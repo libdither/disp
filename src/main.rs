@@ -40,6 +40,10 @@ fn main() -> io::Result<()> {
         println!("{i:03} {tree}");
     }
 
+    // thing := 3 : Nat
+    // takes_ints { i : Int } -> {...}
+    // takes_ints{thing}
+
     // convert parsetree to semantic tree
     println!("--- LOWERING ----");
     

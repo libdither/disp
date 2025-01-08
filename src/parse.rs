@@ -13,6 +13,7 @@ pub enum ParseTree {
 	Ident(String),
     /// ident := def : Type
     /// ident : Type := def
+    /// ident := def
     AssignIdentExpr { ident: Box<ParseTree>, def: Box<ParseTree>, typ: Option<Box<ParseTree>> },
     /// ident : Type
     AssignIdentType { ident: Box<ParseTree>, typ: Box<ParseTree> },
