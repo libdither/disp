@@ -1,6 +1,8 @@
-mod parse;
+#![feature(iterator_try_collect, try_blocks)]
+
 mod lexer;
 mod lower;
+mod parse;
 
 use std::collections::HashMap;
 use std::env;
@@ -10,64 +12,61 @@ use parse::ParseTree;
 use winnow::Parser;
 
 fn main() -> io::Result<()> {
-    let filename = env::args().nth(1).expect("Usage: disp <PROGRAM>");
-    let program = std::fs::read_to_string(filename)?;
+	let filename = env::args().nth(1).expect("Usage: disp <PROGRAM>");
+	let program = std::fs::read_to_string(filename)?;
 
-    // lex string
-    println!("--- LEXING ----");
-    let lex = match lexer::lexer.parse(&mut program.as_str()) {
-        Ok(lex) => lex,
-        Err(err) => {
-            println!("{err}");
-            return Ok(());
-        }
-    };
-    println!("lex: {lex:?}");
+	// lex string
+	println!("--- LEXING ----");
+	let lex = match lexer::lexer.parse(&mut program.as_str()) {
+		Ok(lex) => lex,
+		Err(err) => {
+			println!("{err}");
+			return Ok(());
+		}
+	};
+	println!("lex: {lex:?}");
 
-    // parse tokens
-    println!("--- PARSING ----");
-    let stmts = match parse::parse_file.parse(&mut lex.as_slice()) {
-        Ok(stmts) => stmts,
-        Err(err) => {
-            println!("{err:?}");
-            return Ok(());
-        }
-    };
-    println!("Program:");
-    println!("{}", program.as_str());
-    println!("Parse:");
-    for (i, tree) in stmts.iter().enumerate() {
-        println!("{i:03} {tree}");
-    }
+	// parse tokens
+	println!("--- PARSING ----");
+	let stmts = match parse::parse_file.parse(&mut lex.as_slice()) {
+		Ok(stmts) => stmts,
+		Err(err) => {
+			println!("{err:?}");
+			return Ok(());
+		}
+	};
+	println!("Program:");
+	println!("{}", program.as_str());
+	println!("Parse:");
+	for (i, tree) in stmts.iter().enumerate() {
+		println!("{i:03} {tree}");
+	}
 
-    // thing := 3 : Nat
-    // takes_ints { i : Int } -> {...}
-    // takes_ints{thing}
+	// thing := 3 : Nat
+	// takes_ints { i : Int } -> {...}
+	// takes_ints{thing}
 
-    // convert parsetree to semantic tree
-    println!("--- LOWERING ----");
-    
-    
+	// convert parsetree to semantic tree
+	println!("--- LOWERING ----");
 
-    // infer types
+	// infer types
 
-    // type check tree
+	// type check tree
 
-    // evaluate term
+	// evaluate term
 
-    // print output
-    
-    /* for line in reader.lines() {
-        println!("{}", line?);
-    }
- */
-    Ok(())
+	// print output
+
+	/* for line in reader.lines() {
+		   println!("{}", line?);
+	   }
+	*/
+	Ok(())
 }
-
 
 #[test]
 fn test_lex_and_parse() {
-    let program = r##"
+	let program = r##"
     main := print "hello world!"
     main : Unit := (print "hello world")
     id := x -> x
