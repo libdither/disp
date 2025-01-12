@@ -4,9 +4,9 @@ mod lexer;
 mod lower;
 mod parse;
 
-use std::collections::HashMap;
 use std::env;
 use std::io;
+use std::io::stdout;
 
 use parse::ParseTree;
 use winnow::Parser;
@@ -15,12 +15,15 @@ fn main() -> io::Result<()> {
 	let filename = env::args().nth(1).expect("Usage: disp <PROGRAM>");
 	let program = std::fs::read_to_string(filename)?;
 
+	println!("Program:");
+	println!("{}", program.as_str());
+
 	// lex string
 	println!("--- LEXING ----");
 	let lex = match lexer::lexer.parse(&mut program.as_str()) {
 		Ok(lex) => lex,
 		Err(err) => {
-			println!("{err}");
+			println!("{}", err.to_string());
 			return Ok(());
 		}
 	};
@@ -35,8 +38,6 @@ fn main() -> io::Result<()> {
 			return Ok(());
 		}
 	};
-	println!("Program:");
-	println!("{}", program.as_str());
 	println!("Parse:");
 	for (i, tree) in stmts.iter().enumerate() {
 		println!("{i:03} {tree}");
@@ -48,6 +49,21 @@ fn main() -> io::Result<()> {
 
 	// convert parsetree to semantic tree
 	println!("--- LOWERING ----");
+	let mut ctx = lower::Context::new();
+	let typed_term = match lower::lower(ParseTree::Set(stmts), &mut ctx) {
+		Ok(typed) => typed,
+		Err(err) => {
+			println!("{err:?}");
+			return Ok(());
+		}
+	};
+	println!("Lowered:");
+	println!(
+		"{:?} : {:?}",
+		ctx.fmt_term(typed_term.term),
+		ctx.fmt_term(typed_term.typ)
+	);
+	println!("{} : {}", ctx.fmt_term(typed_term.term), ctx.fmt_term(typed_term.typ));
 
 	// infer types
 

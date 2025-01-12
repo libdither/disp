@@ -23,8 +23,8 @@ struct AssignIdentExpr {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct ParseTreeArgSetItem {
-	ident: String,
-	typ: Option<Box<ParseTree>>,
+	pub ident: String,
+	pub typ: Option<Box<ParseTree>>,
 }
 #[derive(Clone, PartialEq, Debug)]
 pub enum ParseTreeSetItem {

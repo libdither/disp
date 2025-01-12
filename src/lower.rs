@@ -1,16 +1,21 @@
 #![allow(unused)]
 
-use crate::parse::{ParseTree, ParseTreeSetItem};
+use crate::parse::{ParseTree, ParseTreeArgSetItem, ParseTreeSetItem};
+use core::fmt;
+use itertools::Itertools;
+use slotmap::{new_key_type, SlotMap};
 use std::{
+	cmp::Ordering,
 	collections::HashMap,
 	hash::{Hash, Hasher},
+	rc::Rc,
 };
 use thiserror::Error;
 
 /* new_key_type! { struct StackKey; }
 new_key_type! { struct TermKey; } */
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Hash, Eq)]
 pub enum BuiltinType {
 	Unit,
 	Nat,
@@ -19,7 +24,7 @@ pub enum BuiltinType {
 }
 
 /// Represents both expressions and types.
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Hash, Eq)]
 pub enum Term {
 	UnknownType, // represents a type that is not-yet inferred
 
@@ -29,22 +34,18 @@ pub enum Term {
 	BuiltinTyp(BuiltinType), // default types
 	Uni(usize),              // For managing the hierarchy of types. Type is Uni(0)
 
-	Variable(String), // some variable bound in an expression (not used for func args)
+	Variable(IdentKey), // some variable bound in an expression (not used for func args)
 	// basic constructs
-	Set(Vec<TermHash>), // Association of ident with literal or type
+	Set(Vec<(Option<IdentKey>, TermKey)>), // Association of ident with literal or type
 	// both function and type of function
 	Abs {
-		param: Vec<(String, TermHash)>,
-		body: TermHash,
+		args: Vec<(IdentKey, TermKey)>, // bind name and type
+		body: TermKey,
 	},
 	// application of a function given some argument (usually a set)
 	App {
-		function: TermHash,
-		argument: TermHash,
-	},
-	TypeApp {
-		res: TermHash,
-		func: TermHash,
+		func: TermKey,
+		args: TermKey,
 	},
 }
 
@@ -58,29 +59,188 @@ pub enum Term {
 /// `thing := 3; foo := "bar"`
 /// ExprSet[AssignIdentExpr{thing, 3, None}, AIE{foo, "bar", None}]
 /// Set[("thing", Nat(3)), ("foo", String("bar"))]
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(PartialEq, Debug, Clone, Hash, Eq)]
 pub struct TypedTerm {
-	term: Term,
-	typ: Term,
+	pub term: TermKey,
+	pub typ: TermKey,
 }
-pub type TermHash = u64;
+new_key_type! {pub struct TermKey;}
+new_key_type! {pub struct IdentKey;}
 
 pub struct Context {
-	terms: HashMap<TermHash, TypedTerm>,
+	// cons-hashing for idents and terms
+	pub idents: SlotMap<IdentKey, String>,
+	ident_map: HashMap<String, IdentKey>,
+	pub terms: SlotMap<TermKey, Term>,
+	term_map: HashMap<Term, TermKey>,
 }
 
 impl Context {
 	pub fn new() -> Self {
-		Context { terms: HashMap::new() }
+		Context {
+			idents: SlotMap::with_key(),
+			ident_map: HashMap::new(),
+			terms: SlotMap::with_key(),
+			term_map: HashMap::new(),
+		}
 	}
-	pub fn add_term(&mut self, term: TypedTerm) -> TermHash {
-		use std::hash::BuildHasher;
-		let hasher = self.terms.hasher();
-		let mut hasher = hasher.build_hasher();
-		term.hash(&mut hasher);
-		let hash = hasher.finish();
-		self.terms.insert(hash, term);
-		hash
+	pub fn add_ident(&mut self, ident: String) -> IdentKey {
+		if let Some(key) = self.ident_map.get(&ident) {
+			key.clone()
+		} else {
+			self.idents.insert(ident)
+		}
+	}
+	pub fn add_term(&mut self, term: Term) -> TermKey {
+		if let Some(key) = self.term_map.get(&term) {
+			key.clone()
+		} else {
+			self.terms.insert(term)
+		}
+	}
+	/* pub fn fmt_typed_term(&self, typed: TypedTerm, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let term = typed.term;
+		let typ = typed.typ;
+		if let Some(term) = self.terms.get(term) {
+			write!(f, self.fmt_term(term, f))?;
+		} else {
+			write!(f, "{term:?}")?;
+		}
+		write!(f, " ")?;
+		if let Some(term) = self.terms.get(typ) {
+			write!(f, self.fmt_term(term))?;
+		} else {
+			write!(f, "{typ:?}")?;
+		}
+		Ok(())
+	} */
+	pub fn fmt_term<'c>(&'c self, term: TermKey) -> FormatTerm<'c> {
+		FormatTerm { ctx: self, term }
+	}
+	pub fn fmt_ident<'c>(&'c self, ident: IdentKey) -> FormatIdent<'c> {
+		FormatIdent { ctx: self, ident }
+	}
+}
+pub struct FormatIdent<'c> {
+	ctx: &'c Context,
+	ident: IdentKey,
+}
+impl<'c> fmt::Debug for FormatIdent<'c> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		if let Some(ident) = self.ctx.idents.get(self.ident) {
+			write!(f, "{ident:?}")
+		} else {
+			write!(f, "{:?}", self.ident)
+		}
+	}
+}
+impl<'c> fmt::Display for FormatIdent<'c> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		if let Some(ident) = self.ctx.idents.get(self.ident) {
+			write!(f, "{ident}")
+		} else {
+			write!(f, "{:?}", self.ident)
+		}
+	}
+}
+
+pub struct FormatTerm<'c> {
+	ctx: &'c Context,
+	term: TermKey,
+}
+impl<'c> fmt::Debug for FormatTerm<'c> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		if let Some(term) = self.ctx.terms.get(self.term) {
+			match term {
+				Term::Variable(ident_key) => f
+					.debug_tuple("Variable")
+					.field(&self.ctx.fmt_ident(*ident_key))
+					.finish(),
+				Term::Set(vec) => f
+					.debug_tuple("Set")
+					.field(
+						&vec.iter()
+							.map(|(ident, term)| {
+								(ident.map(|ident| self.ctx.fmt_ident(ident)), self.ctx.fmt_term(*term))
+							})
+							.collect::<Vec<(Option<FormatIdent>, FormatTerm)>>(),
+					)
+					.finish(),
+				Term::Abs { args, body } => f
+					.debug_struct("Abs")
+					.field(
+						"args",
+						&args
+							.iter()
+							.map(|(ident, term)| (self.ctx.fmt_ident(*ident), self.ctx.fmt_term(*term)))
+							.collect::<Vec<(FormatIdent, FormatTerm)>>(),
+					)
+					.field("body", &self.ctx.fmt_term(*body))
+					.finish(),
+				Term::App { func, args } => f
+					.debug_struct("App")
+					.field("func", &self.ctx.fmt_term(*func))
+					.field("args", &self.ctx.fmt_term(*args))
+					.finish(),
+				_ => write!(f, "{:?}", term),
+			}
+		} else {
+			write!(f, "{:?}", self.term)
+		}
+	}
+}
+impl<'c> fmt::Display for FormatTerm<'c> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let ctx = self.ctx;
+		let Some(term) = ctx.terms.get(self.term) else {
+			write!(f, "{:?}", self.term);
+			return Ok(());
+		};
+		match term {
+			Term::UnknownType => write!(f, "?"),
+			Term::Nat(nat) => write!(f, "{nat}"),
+			Term::String(string) => write!(f, "{string:?}"),
+			Term::Bool(bool) => write!(f, "{bool}"),
+			Term::BuiltinTyp(builtin_type) => write!(f, "{builtin_type:?}"),
+			Term::Uni(u) => {
+				if *u == 0 {
+					write!(f, "Type")
+				} else {
+					write!(f, "U{u}")
+				}
+			}
+			Term::Variable(ident_key) => {
+				if let Some(ident) = ctx.idents.get(*ident_key) {
+					write!(f, "{ident}")
+				} else {
+					write!(f, "{ident_key:?}")
+				}
+			}
+			Term::Set(vec) => {
+				write!(f, "{{")?;
+				for (idx, (ident_key, term_key)) in vec.iter().enumerate() {
+					if let Some(key) = ident_key {
+						if let Some(ident) = ctx.idents.get(*key) {
+							write!(f, "{ident}")?
+						} else {
+							write!(f, "{key:?}")?
+						}
+						write!(f, " : ")?
+					}
+					write!(f, "{}, ", ctx.fmt_term(*term_key))?;
+				}
+				write!(f, "}}")
+			}
+			Term::Abs { args, body } => {
+				write!(f, "{{")?;
+				for (idx, (ident_key, typ_key)) in args.iter().enumerate() {
+					write!(f, "{:?} : {}, ", ctx.fmt_ident(*ident_key), ctx.fmt_term(*typ_key))?;
+				}
+				write!(f, "}}");
+				write!(f, " -> {}", ctx.fmt_term(*body))
+			}
+			Term::App { func, args } => write!(f, "({} {})", ctx.fmt_term(*func), ctx.fmt_term(*args)),
+		}
 	}
 }
 
@@ -89,7 +249,7 @@ pub enum LoweringError {
 	#[error("Identifier not found: {0}")]
 	UnknownIdentifier(String),
 	#[error("Type mismatch: expected type {expected:?}, got expression of type {got:?}")]
-	TypeMismatch { expected: TermHash, got: TermHash },
+	TypeMismatch { expected: TermKey, got: TermKey },
 	#[error("Cannot infer type for the expression")]
 	CannotInferType,
 	#[error("Expected a type, but got an expression")]
@@ -108,59 +268,118 @@ pub enum LoweringError {
 pub fn lower(tree: ParseTree, ctx: &mut Context) -> Result<TypedTerm, LoweringError> {
 	match tree {
 		ParseTree::Number(num) => Ok(TypedTerm {
-			term: Term::Nat(num),
-			typ: Term::BuiltinTyp(BuiltinType::Nat),
+			term: ctx.add_term(Term::Nat(num)),
+			typ: ctx.add_term(Term::BuiltinTyp(BuiltinType::Nat)),
 		}),
 		ParseTree::String(string) => Ok(TypedTerm {
-			term: Term::String(string),
-			typ: Term::BuiltinTyp(BuiltinType::String),
+			term: ctx.add_term(Term::String(string)),
+			typ: ctx.add_term(Term::BuiltinTyp(BuiltinType::String)),
 		}),
-		ParseTree::Ident(name) => Ok(TypedTerm {
-			term: Term::Variable(name),
-			typ: Term::UnknownType,
-		}),
+		ParseTree::Ident(name) => {
+			let key = ctx.add_ident(name);
+			Ok(TypedTerm {
+				term: ctx.add_term(Term::Variable(key)),
+				typ: ctx.add_term(Term::UnknownType),
+			})
+		}
 		ParseTree::Set(elems) => {
-			let expr_set: Vec<TermHash> = elems
+			let mut items: Vec<(Option<IdentKey>, TermKey, TermKey)> = elems
 				.into_iter()
 				.map::<Result<_, LoweringError>, _>(|set_item| try {
-					let typed_term = match set_item {
-						ParseTreeSetItem::Atom(atom) => lower(atom, ctx)?,
-						ParseTreeSetItem::AssignIdentExpr { ident, def, typ } => TypedTerm {
-							term: lower(*def, ctx)?.term,
-							typ: if let Some(typ) = typ {
-								lower(*typ, ctx)?.term
-							} else {
-								Term::UnknownType
-							},
-						},
-						ParseTreeSetItem::AssignTypeIdent { ident, typ } => TypedTerm {
-							term: Term::Variable(ident.clone()),
-							typ: lower(*typ, ctx)?.term,
-						},
-					};
-					ctx.add_term(typed_term)
+					match set_item {
+						ParseTreeSetItem::Atom(atom) => {
+							let typed = lower(atom, ctx)?;
+							(None, typed.term, typed.typ)
+						}
+						ParseTreeSetItem::AssignIdentExpr { ident, def, typ } => {
+							let ident = ctx.add_ident(ident);
+							let typed = TypedTerm {
+								term: lower(*def, ctx)?.term,
+								typ: if let Some(typ) = typ {
+									lower(*typ, ctx)?.term
+								} else {
+									ctx.add_term(Term::UnknownType)
+								},
+							};
+							(Some(ident), typed.term, typed.typ)
+						}
+						ParseTreeSetItem::AssignTypeIdent { ident, typ } => {
+							let ident = ctx.add_ident(ident);
+							let typed = TypedTerm {
+								term: ctx.add_term(Term::Variable(ident)),
+								typ: lower(*typ, ctx)?.term,
+							};
+							(Some(ident), typed.term, typed.typ)
+						}
+					}
 				})
 				.try_collect()?;
-			let typ_set: Vec<TermHash> = expr_set
-				.iter()
-				.map(|hash| {
-					ctx.terms
-						.get(hash)
-						.map(|_| hash.clone())
-						.expect("context changed in course of parsing exprset, this shouldn't happen")
-				})
-				.collect();
+			items.sort_by(|a, b| {
+				match (
+					a.0.map(|a| ctx.idents.get(a)).flatten(),
+					b.0.map(|b| ctx.idents.get(b)).flatten(),
+				) {
+					(None, None) => Ordering::Equal,
+					(None, Some(_)) => Ordering::Less,
+					(Some(_), None) => Ordering::Greater,
+					(Some(sa), Some(sb)) => sa.cmp(sb),
+				}
+			});
 			Ok(TypedTerm {
-				term: Term::Set(expr_set),
-				typ: Term::Set(typ_set),
+				term: ctx.add_term(Term::Set(
+					items
+						.iter()
+						.map(|(ident, term, _)| (ident.clone(), term.clone()))
+						.collect(),
+				)),
+				typ: ctx.add_term(Term::Set(
+					items
+						.iter()
+						.map(|(ident, _, typ)| (ident.clone(), typ.clone()))
+						.collect(),
+				)),
 			})
 		}
 		ParseTree::Func { args, body } => {
-			todo!()
+			let mut args: Vec<(IdentKey, TermKey)> = args
+				.into_iter()
+				.map::<Result<_, LoweringError>, _>(|set_item| try {
+					let ParseTreeArgSetItem { ident, typ } = set_item;
+					let ident = ctx.add_ident(ident);
+					let typ = if let Some(typ) = typ {
+						lower(*typ, ctx)?.term
+					} else {
+						ctx.add_term(Term::UnknownType)
+					};
+					(ident, typ)
+				})
+				.try_collect()?;
+			args.sort_by_key(|a| ctx.idents.get(a.0));
+			let typed_body = lower(*body, ctx)?;
+			Ok(TypedTerm {
+				term: ctx.add_term(Term::Abs {
+					args: args.clone(),
+					body: typed_body.term,
+				}),
+				typ: ctx.add_term(Term::Abs {
+					args,
+					body: typed_body.typ,
+				}),
+			})
 		}
 		ParseTree::Apply { func, args } => {
-			todo!()
+			let func = lower(*func, ctx)?;
+			let args = lower(*args, ctx)?;
+			Ok(TypedTerm {
+				term: ctx.add_term(Term::App {
+					func: func.term,
+					args: args.term,
+				}),
+				typ: ctx.add_term(Term::App {
+					func: func.typ,
+					args: args.typ,
+				}),
+			})
 		}
-		_ => todo!(),
 	}
 }
