@@ -1,15 +1,8 @@
-#![allow(unused)]
-
 use crate::parse::{ParseTree, ParseTreeArgSetItem, ParseTreeSetItem};
 use core::fmt;
 use itertools::Itertools;
 use slotmap::{new_key_type, SlotMap};
-use std::{
-	cmp::Ordering,
-	collections::HashMap,
-	hash::{Hash, Hasher},
-	rc::Rc,
-};
+use std::{cmp::Ordering, collections::HashMap, hash::Hash};
 use thiserror::Error;
 
 /* new_key_type! { struct StackKey; }
@@ -26,7 +19,7 @@ pub enum BuiltinType {
 /// Represents both expressions and types.
 #[derive(Clone, Debug, PartialEq, Hash, Eq)]
 pub enum Term {
-	UnknownType, // represents a type that is not-yet inferred
+	UnknownType(HoleKey), // represents a type that is not yet inferred
 
 	Nat(u64),                // number literal
 	String(String),          // string literal
@@ -66,13 +59,24 @@ pub struct TypedTerm {
 }
 new_key_type! {pub struct TermKey;}
 new_key_type! {pub struct IdentKey;}
+new_key_type! {pub struct HoleKey;}
 
 pub struct Context {
 	// cons-hashing for idents and terms
-	pub idents: SlotMap<IdentKey, String>,
-	ident_map: HashMap<String, IdentKey>,
-	pub terms: SlotMap<TermKey, Term>,
-	term_map: HashMap<Term, TermKey>,
+	pub idents: SlotMap<IdentKey, String>,        // idents go here
+	ident_map: HashMap<String, IdentKey>,         // deduplicating idents
+	pub terms: SlotMap<TermKey, Term>,            // terms go here
+	term_map: HashMap<Term, TermKey>,             // deduplicating terms
+	pub holes: SlotMap<HoleKey, Option<TermKey>>, // holes go here
+	pub binds: Vec<TermKey>,                      // lambdas or sets go here while parsing (for ident lookup)
+}
+impl fmt::Debug for Context {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Context")
+			.field("idents", &self.idents)
+			.field("terms", &self.terms)
+			.finish()
+	}
 }
 
 impl Context {
@@ -82,6 +86,8 @@ impl Context {
 			ident_map: HashMap::new(),
 			terms: SlotMap::with_key(),
 			term_map: HashMap::new(),
+			holes: SlotMap::with_key(),
+			binds: Vec::new(),
 		}
 	}
 	pub fn add_ident(&mut self, ident: String) -> IdentKey {
@@ -98,22 +104,13 @@ impl Context {
 			self.terms.insert(term)
 		}
 	}
-	/* pub fn fmt_typed_term(&self, typed: TypedTerm, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let term = typed.term;
-		let typ = typed.typ;
-		if let Some(term) = self.terms.get(term) {
-			write!(f, self.fmt_term(term, f))?;
-		} else {
-			write!(f, "{term:?}")?;
-		}
-		write!(f, " ")?;
-		if let Some(term) = self.terms.get(typ) {
-			write!(f, self.fmt_term(term))?;
-		} else {
-			write!(f, "{typ:?}")?;
-		}
-		Ok(())
-	} */
+	pub fn add_hole(&mut self) -> HoleKey {
+		self.holes.insert(None)
+	}
+	pub fn new_unknown_type(&mut self) -> TermKey {
+		let hole = self.add_hole();
+		self.add_term(Term::UnknownType(hole))
+	}
 	pub fn fmt_term<'c>(&'c self, term: TermKey) -> FormatTerm<'c> {
 		FormatTerm { ctx: self, term }
 	}
@@ -197,7 +194,7 @@ impl<'c> fmt::Display for FormatTerm<'c> {
 			return Ok(());
 		};
 		match term {
-			Term::UnknownType => write!(f, "?"),
+			Term::UnknownType(_) => write!(f, "?"),
 			Term::Nat(nat) => write!(f, "{nat}"),
 			Term::String(string) => write!(f, "{string:?}"),
 			Term::Bool(bool) => write!(f, "{bool}"),
@@ -218,7 +215,7 @@ impl<'c> fmt::Display for FormatTerm<'c> {
 			}
 			Term::Set(vec) => {
 				write!(f, "{{")?;
-				for (idx, (ident_key, term_key)) in vec.iter().enumerate() {
+				for (ident_key, term_key) in vec.iter() {
 					if let Some(key) = ident_key {
 						if let Some(ident) = ctx.idents.get(*key) {
 							write!(f, "{ident}")?
@@ -233,10 +230,10 @@ impl<'c> fmt::Display for FormatTerm<'c> {
 			}
 			Term::Abs { args, body } => {
 				write!(f, "{{")?;
-				for (idx, (ident_key, typ_key)) in args.iter().enumerate() {
+				for (ident_key, typ_key) in args.iter() {
 					write!(f, "{:?} : {}, ", ctx.fmt_ident(*ident_key), ctx.fmt_term(*typ_key))?;
 				}
-				write!(f, "}}");
+				write!(f, "}}")?;
 				write!(f, " -> {}", ctx.fmt_term(*body))
 			}
 			Term::App { func, args } => write!(f, "({} {})", ctx.fmt_term(*func), ctx.fmt_term(*args)),
@@ -277,9 +274,10 @@ pub fn lower(tree: ParseTree, ctx: &mut Context) -> Result<TypedTerm, LoweringEr
 		}),
 		ParseTree::Ident(name) => {
 			let key = ctx.add_ident(name);
+			let hole = ctx.add_hole();
 			Ok(TypedTerm {
 				term: ctx.add_term(Term::Variable(key)),
-				typ: ctx.add_term(Term::UnknownType),
+				typ: ctx.add_term(Term::UnknownType(hole)),
 			})
 		}
 		ParseTree::Set(elems) => {
@@ -298,7 +296,8 @@ pub fn lower(tree: ParseTree, ctx: &mut Context) -> Result<TypedTerm, LoweringEr
 								typ: if let Some(typ) = typ {
 									lower(*typ, ctx)?.term
 								} else {
-									ctx.add_term(Term::UnknownType)
+									let hole = ctx.add_hole();
+									ctx.add_term(Term::UnknownType(hole))
 								},
 							};
 							(Some(ident), typed.term, typed.typ)
@@ -349,7 +348,8 @@ pub fn lower(tree: ParseTree, ctx: &mut Context) -> Result<TypedTerm, LoweringEr
 					let typ = if let Some(typ) = typ {
 						lower(*typ, ctx)?.term
 					} else {
-						ctx.add_term(Term::UnknownType)
+						let hole = ctx.add_hole();
+						ctx.add_term(Term::UnknownType(hole))
 					};
 					(ident, typ)
 				})

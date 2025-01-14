@@ -3,6 +3,7 @@
 mod lexer;
 mod lower;
 mod parse;
+mod verify;
 
 use std::env;
 use std::io;
@@ -19,7 +20,7 @@ fn main() -> io::Result<()> {
 	println!("{}", program.as_str());
 
 	// lex string
-	println!("--- LEXING ----");
+	println!("--- LEXING ---");
 	let lex = match lexer::lexer.parse(&mut program.as_str()) {
 		Ok(lex) => lex,
 		Err(err) => {
@@ -30,7 +31,7 @@ fn main() -> io::Result<()> {
 	println!("lex: {lex:?}");
 
 	// parse tokens
-	println!("--- PARSING ----");
+	println!("--- PARSING ---");
 	let stmts = match parse::parse_file.parse(&mut lex.as_slice()) {
 		Ok(stmts) => stmts,
 		Err(err) => {
@@ -48,12 +49,12 @@ fn main() -> io::Result<()> {
 	// takes_ints{thing}
 
 	// convert parsetree to semantic tree
-	println!("--- LOWERING ----");
+	println!("--- LOWERING ---");
 	let mut ctx = lower::Context::new();
 	let typed_term = match lower::lower(ParseTree::Set(stmts), &mut ctx) {
 		Ok(typed) => typed,
 		Err(err) => {
-			println!("{err:?}");
+			println!("{err}");
 			return Ok(());
 		}
 	};
@@ -66,6 +67,22 @@ fn main() -> io::Result<()> {
 	println!("{} : {}", ctx.fmt_term(typed_term.term), ctx.fmt_term(typed_term.typ));
 
 	// infer types
+	println!("--- INFERRING ---");
+	let typed_term = match verify::verify(typed_term, &mut ctx) {
+		Ok(typed) => typed,
+		Err(err) => {
+			println!("{err}");
+			return Ok(());
+		}
+	};
+
+	println!("Inferred:");
+	println!(
+		"{:?} : {:?}",
+		ctx.fmt_term(typed_term.term),
+		ctx.fmt_term(typed_term.typ)
+	);
+	println!("{} : {}", ctx.fmt_term(typed_term.term), ctx.fmt_term(typed_term.typ));
 
 	// type check tree
 
