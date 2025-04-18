@@ -29,14 +29,15 @@ pub struct ParseTreeArgSetItem {
 #[derive(Clone, PartialEq, Debug)]
 pub enum ParseTreeSetItem {
 	Atom(ParseTree),
-	/// ident := def : Type
-	/// ident : Type := def
-	/// ident := def
+	/// <ident> := <def> : <typ>
+	/// <ident> : <typ> := <def>
+	/// <ident> := <def>
 	AssignIdentExpr {
 		ident: String,
 		def: Box<ParseTree>,
 		typ: Option<Box<ParseTree>>,
 	},
+	/// <ident> : <typ>
 	AssignTypeIdent {
 		ident: String,
 		typ: Box<ParseTree>,
@@ -45,8 +46,11 @@ pub enum ParseTreeSetItem {
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum ParseTree {
+	/// 1,2,3
 	Number(u64),
+	/// "hello"
 	String(String),
+	/// hello
 	Ident(String),
 
 	/// list or named set (or combination) in term form
@@ -102,9 +106,9 @@ impl fmt::Display for ParseTreeSetItem {
 impl fmt::Display for ParseTree {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			ParseTree::Number(num) => write!(f, "{}", num),
-			ParseTree::String(string) => write!(f, "\"{}\"", string),
-			ParseTree::Ident(ident) => write!(f, "{}", ident),
+			ParseTree::Number(num) => write!(f, "{num}"),
+			ParseTree::String(string) => write!(f, "\"{string}\""),
+			ParseTree::Ident(ident) => write!(f, "{ident}"),
 			ParseTree::Set(elems) => write!(f, "{{{}}}", elems.iter().format(", ")),
 			ParseTree::Func { args, body } => {
 				match args.len() {
@@ -260,6 +264,8 @@ fn typ_op(input: &mut &[Token]) -> PResult<()> {
 		.value(())
 		.parse_next(input)
 }
+// <ident> := <expr>
+//
 fn set_item(input: &mut &[Token]) -> PResult<ParseTreeSetItem> {
 	let ident = ident.parse_next(input)?;
 	// parse := or :

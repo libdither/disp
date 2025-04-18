@@ -1,3 +1,9 @@
-main := print "hello world!"
+main := print "hello world!" : {} -> {}
 
-id := x -> x
+id := { x : Int } -> x
+
+array := {
+	main()
+	main()
+	main()
+}

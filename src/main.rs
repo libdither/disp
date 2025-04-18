@@ -1,4 +1,4 @@
-#![feature(iterator_try_collect, try_blocks)]
+#![feature(iterator_try_collect, try_blocks, try_find)]
 
 mod lexer;
 mod lower;
@@ -35,12 +35,13 @@ fn main() -> io::Result<()> {
 	let stmts = match parse::parse_file.parse(&mut lex.as_slice()) {
 		Ok(stmts) => stmts,
 		Err(err) => {
-			println!("{err:?}");
+			println!("{err}");
 			return Ok(());
 		}
 	};
 	println!("Parse:");
 	for (i, tree) in stmts.iter().enumerate() {
+		println!("{i:03} {tree:?}");
 		println!("{i:03} {tree}");
 	}
 
@@ -49,7 +50,7 @@ fn main() -> io::Result<()> {
 	// takes_ints{thing}
 
 	// convert parsetree to semantic tree
-	println!("--- LOWERING ---");
+	/* println!("--- LOWERING ---");
 	let mut ctx = lower::Context::new();
 	let typed_term = match lower::lower(ParseTree::Set(stmts), &mut ctx) {
 		Ok(typed) => typed,
@@ -82,7 +83,7 @@ fn main() -> io::Result<()> {
 		ctx.fmt_term(typed_term.term),
 		ctx.fmt_term(typed_term.typ)
 	);
-	println!("{} : {}", ctx.fmt_term(typed_term.term), ctx.fmt_term(typed_term.typ));
+	println!("{} : {}", ctx.fmt_term(typed_term.term), ctx.fmt_term(typed_term.typ)); */
 
 	// type check tree
 

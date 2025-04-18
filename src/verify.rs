@@ -33,16 +33,7 @@ pub fn verify(typed: TypedTerm, ctx: &mut Context) -> Result<TypedTerm, InferErr
 				Term::BuiltinTyp(_) => Term::Uni(0),
 				Term::Uni(i) => Term::Uni(i + 1),
 				Term::Variable(ident_key) => todo!(), // do lookup
-				Term::Set(vec) => Term::Set(
-					vec.iter()
-						.map(|(i, _)| {
-							(i.clone(), {
-								ctx.add_hole();
-								ctx.add_term(Term::UnknownType(hole))
-							})
-						})
-						.collect(),
-				),
+				Term::Set(vec) => Term::Set(vec.iter().map(|(i, _)| (i.clone(), ctx.new_unknown_type())).collect()),
 				Term::Abs { args, body } => Term::Abs {
 					args,
 					body: verify(
@@ -66,10 +57,7 @@ pub fn verify(typed: TypedTerm, ctx: &mut Context) -> Result<TypedTerm, InferErr
 					args: verify(
 						TypedTerm {
 							term: args,
-							typ: {
-								let hole = ctx.add_hole();
-								ctx.add_term(Term::UnknownType(hole))
-							},
+							typ: ctx.new_unknown_type(),
 						},
 						ctx,
 					)?
