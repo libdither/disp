@@ -3,12 +3,25 @@
 version = 4
 
 [[package]]
+name = "derive_utils"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccfae181bab5ab6c5478b2ccb69e4c68a02f8c3ec72f6616bfec9dbc599d2ee0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "disp"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "iter-enum",
  "itertools",
  "slotmap",
+ "smallvec",
  "thiserror",
  "winnow",
 ]
@@ -39,6 +52,15 @@ checksum = "62f822373a4fe84d4bb149bf54e584a7f4abec90e072ed49cda0edea5b95471f"
 dependencies = [
  "equivalent",
  "hashbrown",
+]
+
+[[package]]
+name = "iter-enum"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c52f2d5e063459674b4735f21870dd911e0d96dbfebb984650068195c2df838"
+dependencies = [
+ "derive_utils",
 ]
 
 [[package]]
@@ -82,6 +104,12 @@ checksum = "dbff4acf519f630b3a3ddcfaea6c06b42174d9a44bc70c620e9ed1649d58b82a"
 dependencies = [
  "version_check",
 ]
+
+[[package]]
+name = "smallvec"
+version = "2.0.0-alpha.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87b96efa4bd6bdd2ff0c6615cc36fc4970cbae63cfd46ddff5cee35a1b4df570"
 
 [[package]]
 name = "syn"

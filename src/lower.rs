@@ -2,6 +2,7 @@ use crate::parse::{ParseTree, ParseTreeArgSetItem, ParseTreeSetItem};
 use core::fmt;
 use itertools::Itertools;
 use slotmap::{new_key_type, SlotMap};
+use smallvec::SmallVec;
 use std::{collections::HashMap, hash::Hash};
 use thiserror::Error;
 
@@ -29,10 +30,10 @@ pub enum Term {
 
 	Variable(IdentKey), // some variable bound in an expression (not used for func args)
 	// basic constructs
-	Set(Vec<(Option<IdentKey>, TermKey)>), // Association of ident with literal or type
+	Set(SmallVec<(Option<IdentKey>, TermKey), 3>), // Association of ident with literal or type
 	// both function and type of function
 	Abs {
-		args: Vec<(IdentKey, TermKey)>, // bind name and type
+		args: SmallVec<(IdentKey, TermKey), 2>, // bind name and type
 		body: TermKey,
 	},
 	// application of a function given some argument (usually a set)
@@ -41,7 +42,6 @@ pub enum Term {
 		args: TermKey,
 	},
 }
-
 /// Type := ?
 /// A := (T : Type) -> List{T} : (Type -> Type)
 /// let Type := Type : ?
@@ -283,58 +283,17 @@ pub enum LoweringError {
 	TypeMismatch { expected: &'static str, got: Term },
 	#[error("Type mismatch: expected type {expected:?}, got expression of type {got:?}")]
 	TypeLookupMismatch { expected: Term, got: Term },
+	#[error("Set type expected ident for set item, but couldn't : {ident:?}")]
+	ExpectedIdentInSet { ident: IdentKey },
+	#[error("Term unification failed: found {found:?} but expected {expected:?}")]
+	TermMismatch { found: Term, expected: Term },
+	#[error("Ident unification failed: found {found:?} but expected {expected:?}")]
+	IdentMismatch { found: IdentKey, expected: IdentKey },
 	#[error("Binding not found in context: {0:?}")]
 	IdentNotBound(IdentKey),
 	#[error("Type binding not found in context for: {0:?}")]
 	IdentNotBoundToType(IdentKey),
 }
-
-// "best guess" infer type from term
-pub fn infer(term: &Term, ctx: &mut Context) -> Option<TermKey> {
-	Some(match term {
-		Term::UnknownType(_) => ctx.new_unknown_type(),
-		Term::Nat(_) => ctx.add_term(Term::BuiltinTyp(BuiltinType::Nat)),
-		Term::String(_) => ctx.add_term(Term::BuiltinTyp(BuiltinType::String)),
-		Term::Bool(_) => ctx.add_term(Term::BuiltinTyp(BuiltinType::Bool)),
-		Term::BuiltinTyp(_) => ctx.add_term(Term::Uni(0)),
-		Term::Uni(i) => ctx.add_term(Term::Uni(i + 1)),
-		Term::Variable(ident_key) => return ctx.find_bind_type(*ident_key),
-		// Test:
-		// {n := 3, l := }
-		// Term::Set(vec) => ctx.add_term(Term::Set(vec.iter().map(|a|))),
-		/* Term::Abs { args, body } => Term::Abs {
-			args: ctx.new_unknown_type(),
-			body: ctx.new_unknown_type(),
-		},
-		Term::App { func, args } => Term::App {
-			func: ctx.new_unknown_type(),
-			args: ctx.new_unknown_type(),
-		}, */
-		_ => None?,
-	})
-}
-
-/* // takes a parse tree and lowers it into a term and potentially a parsed type.
-pub fn lower(tree: ParseTree, ctx: &mut Context) -> Result<(Term, Option<Term>), LoweringError> {
-	Ok(match tree {
-		ParseTree::Number(num) => (Term::Nat(num), None),
-		ParseTree::String(string) => (Term::String(string), None),
-		ParseTree::Ident(name) => (
-			match &name[..] {
-				"true" => Term::Bool(true),
-				"false" => Term::Bool(false),
-				"Bool" => Term::BuiltinTyp(BuiltinType::Bool),
-				"Nat" => Term::BuiltinTyp(BuiltinType::Nat),
-				"String" => Term::BuiltinTyp(BuiltinType::String),
-				_ => Term::Variable(ctx.add_ident(name)),
-			},
-			None,
-		),
-		ParseTree::Set(vec) => todo!(),
-		ParseTree::Func { args, body } => todo!(),
-		ParseTree::Apply { func, args } => todo!(),
-	})
-} */
 
 /* pub fn unify_typ_from_key(
 	typ1: Option<TermKey>,
@@ -395,13 +354,52 @@ pub fn lower_to_key(
 	Ok((ctx.add_term(out.0), ctx.add_term(out.1)))
 }
 
+/// takes two optional terms, if both are Some, check that they are equal and return one of them, otherwise return whichever one is Some(), otherwise return None. If mismatch, return LoweringError::FailedToUnifyTerm
+pub fn unify_term(found_term: Option<Term>, expected_term: Option<Term>) -> Result<Option<Term>, LoweringError> {
+	match (found_term, expected_term) {
+		(None, None) => Ok(None),
+		(Some(term), None) | (None, Some(term)) => Ok(Some(term)),
+		(Some(found), Some(expected)) => {
+			if found == expected {
+				Ok(Some(expected))
+			} else {
+				Err(LoweringError::TermMismatch { found, expected })
+			}
+		}
+	}
+}
+/// does the same thing as unify_term but for idents
+pub fn unify_ident(
+	found_idt: Option<IdentKey>,
+	expected_idt: Option<IdentKey>,
+) -> Result<Option<IdentKey>, LoweringError> {
+	match (found_idt, expected_idt) {
+		(None, None) => Ok(None),
+		(Some(term), None) | (None, Some(term)) => Ok(Some(term)),
+		(Some(found), Some(expected)) => {
+			if found == expected {
+				Ok(Some(expected))
+			} else {
+				Err(LoweringError::IdentMismatch { found, expected })
+			}
+		}
+	}
+}
+
+// lower both term and type sets to a tuple of two terms
 fn lower_set(
 	term_items: Vec<ParseTreeSetItem>,
 	typ_items: Option<Term>,
 	ctx: &mut Context,
 ) -> Result<(Term, Term), LoweringError> {
 	// given a term set, make sure all elements match elements in type set, or infer type set from term set args
-
+	use iter_enum::*;
+	#[derive(Iterator, DoubleEndedIterator, ExactSizeIterator, FusedIterator, Extend)]
+	enum TypeIter<A, B, C> {
+		SetIter(A),
+		Uni(B),
+		None(C),
+	}
 	// first: if type set has types
 	//  - ensure no AssignIdentExpr, as that doesn't really make sense in this context
 	//  - lower the type parsetrees one-by-one, extending context with idents if exist
@@ -409,36 +407,77 @@ fn lower_set(
 	// parse type, get set of expected idents with their associated types, as well as unnamed types.
 	// associated types may be dependent on names in the typ set
 
-	// expected type iterator, either an actual type or
+	// 1. Process the overall expected type `typ_items` if provided.
+	let expected_type_iter: TypeIter<_, _, _> = match typ_items {
+		Some(Term::Set(items)) => TypeIter::SetIter(
+			items
+				.into_iter()
+				.map(|(idt, tk)| Some((idt, ctx.terms.get(tk).expect("termkey should be valid").clone()))),
+		),
+		Some(other_term) => {
+			return Err(LoweringError::TypeMismatch {
+				expected: "Set",
+				got: other_term.clone(),
+			})
+		} // wrong type for set!
+		Some(Term::Uni(n)) => TypeIter::Uni(std::iter::repeat(Some((None, Term::Uni(n))))), // all things should be of type Type
+		None => TypeIter::None(std::iter::repeat(None)), // No overall type hint; rely on inference or inline types.
+	};
 
-	/* let expected_typs = typ_items.into_iter().flatten().map(Some).chain(std::iter::repeat(None)); */
+	// take pairs of ParseTreeSetItem and Option<(Option<IdentKey>, Term)> representing optional expected types and lower to pairs of (Option<IdentKey>, Term)
+	let mut terms = SmallVec::new();
+	let mut typs = SmallVec::new();
+	for pt_item in term_items.into_iter().zip(expected_type_iter) {
+		let res: Result<(Option<IdentKey>, (Term, Term)), LoweringError> = try {
+			match pt_item {
+				(ParseTreeSetItem::Atom(parse_tree), typ) => {
+					// ensure type doesn't have ident for Atom set item variant
+					if let Some(ident) = typ.as_ref().and_then(|t| t.0.clone()) {
+						Err(LoweringError::ExpectedIdentInSet { ident })?
+					}
+					(None, lower(parse_tree, typ.map(|t| t.1), ctx)?)
+				}
+				(
+					ParseTreeSetItem::AssignIdentExpr {
+						ident,
+						def,
+						typ: inner_expected_typ,
+					},
+					outer_expected_typ,
+				) => {
+					// we are assigning an expression to something, this is a definition, we should be able to use the definition via the environment, and check its type
+					// to do this we can lower the def with the typ and then add to the context
+					// we should first lower the typ, and check if the inferred type matches the given type (if any)
+					/*
+					TODO:
+					- Lower given type parsetree
+					- Check against given type
+					- Check against inferred type if Some(_), else use inferred type
+					- Lower term with inferred/expected type
+					- add def to environment and typing context
+					*/
+					let inner_expected_typ = if let Some(typ) = inner_expected_typ {
+						Some(lower(*typ, None, ctx)?.0)
+					} else {
+						None
+					};
+					let outer_expected_idt = outer_expected_typ.as_ref().and_then(|t| t.0.clone());
 
-	/* let mut terms: Vec<(Option<IdentKey>, TermKey)> = Vec::with_capacity(term_items.len());
-	let mut typs: Vec<(Option<IdentKey>, TermKey)> = Vec::with_capacity(elems.len());
-	for (elem, typ) in elems
-		.into_iter()
-		.zip(expected_typs.into_iter().flat_map(|vec| vec.into_iter().map(Some)))
-	{
-		match (elem, typ) {
-			ParseTreeSetItem::Atom(parse_tree) => {
-				let (term, typ) = lower_to_key(parse_tree, None, ctx)?;
-				terms.push((None, term));
-				typs.push((None, typ));
+					let expected_typ = unify_term(inner_expected_typ, outer_expected_typ.map(|t| t.1))?;
+					let expected_idt = unify_ident(Some(ctx.add_ident(ident)), outer_expected_idt)?;
+					(expected_idt, lower(*def, expected_typ, ctx)?)
+				}
+				(ParseTreeSetItem::AssignTypeIdent { ident, typ }, typ_of_typ) => {
+					// we are assigning an ident to a type, so just lower the typ
+					(Some(ctx.add_ident(ident)), lower(*typ, typ_of_typ.map(|t| t.1), ctx)?)
+				}
 			}
-			ParseTreeSetItem::AssignIdentExpr { ident, def, typ } => {
-				let ident = ctx.add_ident(ident);
-				let (term, typ) = lower_to_key(*def, typ.map(|typ| *typ), ctx)?;
-				terms.push((Some(ident), term));
-				typs.push((Some(ident), typ));
-			}
-			ParseTreeSetItem::AssignTypeIdent { ident, typ } => {
-				let ident = ctx.add_ident(ident);
-				let (typ, typ_of_typ) = lower_to_key(*typ, None, ctx)?;
-				terms.push((Some(ident), typ));
-				typs.push((None, typ_of_typ));
-			}
-		}
-	} */
+		};
+		let (idt, (term, typ)) = res?;
+		terms.push((idt, ctx.add_term(term)));
+		typs.push((idt, ctx.add_term(typ)));
+	}
+	Ok((Term::Set(terms), Term::Set(typs)))
 }
 
 /*
@@ -451,13 +490,32 @@ Set {
 	args: [Ident("x")]
 	body: Ident("x")
 	typ: Some(Term::Ident(IdentIdx))
+
+func := { X : Type, x : X } -> ???
+func {X:=Nat, x:=8}
 */
 
+/// Lower Function arguments and body into Term, given optional previously parsed type
+/// What do we have?
+///  - args: some parsed list of function arguments, may have types
+///  - body: some parsetree that contains bound variables and to be parsed needs to have an updated context
+///  - typ: some external type of this function. Should be variant `Term::Func`.
+/// What do we do?
+///  - verify typ is correct variant, extract `args_typ : Option<Vec<(IdentKey, TermKey)>>` and `args_body : Option<TermKey>`
+///  - lower args into `Vec<(IdentKey, Option<TermKey>)>``, sorted by IdentKey
+///  - verify equality with args_typ via iterator, if true,
+///  - extend typing context with args
+///  -
 fn lower_func(
 	args: Vec<ParseTreeArgSetItem>,
 	body: ParseTree,
 	typ: Option<Term>,
+	ctx: &mut Context,
 ) -> Result<(Term, Term), LoweringError> {
+	// What do we have?
+	//  -
+	//  -
+
 	// iterate over args
 	// get list of (IdentKey, Option<Term>)
 	// get iterator over (IdentKey, Option<Term>)
@@ -561,12 +619,7 @@ pub fn lower(term: ParseTree, typ: Option<Term>, ctx: &mut Context) -> Result<(T
 					(Term::BuiltinTyp(_), None | Some(Term::Uni(0))) => Term::Uni(0),
 					(Term::Variable(ident), expected_typ) => {
 						let typ = ctx.find_bind_type_term(ident)?;
-						if let Some(expected) = expected_typ {
-							if expected != typ {
-								return Err(LoweringError::TypeLookupMismatch { expected, got: typ });
-							}
-						}
-						typ
+						unify_term(Some(typ), expected_typ)?.expect("guaranteed to be Some")
 					}
 					(Term::BuiltinTyp(_) | Term::Bool(_), Some(typ)) => {
 						return Err(LoweringError::TypeMismatch {

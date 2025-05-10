@@ -7,3 +7,5 @@ array := {
 	main()
 	main()
 }
+
+Nat : Type

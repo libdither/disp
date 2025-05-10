@@ -67,7 +67,7 @@ pub fn verify(typed: TypedTerm, ctx: &mut Context) -> Result<TypedTerm, InferErr
 			};
 			TypedTerm {
 				term: typed.term,
-				typ: ctx.add_term(typ),
+				typ: ctx.add(typ),
 			}
 		}),
 		(Term::Set(mut terms), Term::Set(mut typs)) => {
@@ -97,7 +97,7 @@ pub fn verify(typed: TypedTerm, ctx: &mut Context) -> Result<TypedTerm, InferErr
 				}
 				Ok(TypedTerm {
 					term: typed.term,
-					typ: ctx.add_term(Term::Set(typs)),
+					typ: ctx.add(Term::Set(typs)),
 				})
 			} else {
 				panic!("set term size and typ size mismatch")

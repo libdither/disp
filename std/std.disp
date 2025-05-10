@@ -1,0 +1,61 @@
+
+
+// Basic syntax (assumptions)
+assume One : Type // One is of type Type 
+assume one : One // assume one is of type One
+assume two : Two
+thing := one // thing is now defined as one, the type is inferred (it can also be declared)
+thing2 := one : One // same thing but with explicit type annotation
+
+// Sets & Dependent Collections
+MySet := { one, two } // A set of values, the types are inferred
+MySet2 := {one, two} : {One, Two} // a set of values type is explicitly denoted
+MyTypeSet := { One, Two } // a set of types, a type inferred
+MyTypeSet2 := {One, Two} : {Type, Type} // type explicitly denoted
+MyTypeSet3 := {One, Two} : Type // can also just use Type
+MySet3 := {one,two} : MyTypeSet1 // duck typing is allowed, MyTypeSet1 just resolves to {One, Two}
+check MySet3 : MySet2 // this typechecks
+
+// Functions & Dependent Functions
+MyFunc := {a : One} -> a // identity function for One, type inferred as `{a : One} -> One`
+check MyFunc{}
+
+my_predicate := {T : Type, }
+
+MyDependentSet := { a : One, b : Two } // a dependent }
+
+
+MySetType  
+{ one : Type, two : Type }
+
+
+// Type = type of types
+
+// Basic Types
+Nat : Type
+1,2,3,4,0 : Nat
+succ : Nat -> Nat
+
+List : Type
+Set : Type
+String : Type
+
+Bool : Type
+true, false : Bool
+
+
+// Defining a struct
+Variable := String
+Literal := Enum {
+	Regular := {Variable},
+	Negated := {Variable}
+}
+Clause := Set{Literal}
+Formula : Type := Set{Clause}
+
+Assignment := {
+	var : Variable, is_decision : Bool
+}
+Assignments := Set{Assignment}
+
+DPLL : { Thing  }

@@ -1,15 +1,13 @@
 #![feature(iterator_try_collect, try_blocks, try_find)]
 
+pub mod eval;
 mod lexer;
 mod lower;
 mod parse;
 mod verify;
 
-use std::env;
-use std::io;
-use std::io::stdout;
+use std::{env, io};
 
-use parse::ParseTree;
 use winnow::Parser;
 
 fn main() -> io::Result<()> {
