@@ -293,6 +293,8 @@ pub enum LoweringError {
 	IdentNotBound(IdentKey),
 	#[error("Type binding not found in context for: {0:?}")]
 	IdentNotBoundToType(IdentKey),
+	#[error("Set was given explicit type, but couldn't find matching type for term {term:?}")]
+	NoCorrespondingTypeInSetFor { term: ParseTreeSetItem },
 }
 
 /* pub fn unify_typ_from_key(
@@ -408,12 +410,8 @@ fn lower_set(
 	// associated types may be dependent on names in the typ set
 
 	// 1. Process the overall expected type `typ_items` if provided.
-	let expected_type_iter: TypeIter<_, _, _> = match typ_items {
-		Some(Term::Set(items)) => TypeIter::SetIter(
-			items
-				.into_iter()
-				.map(|(idt, tk)| Some((idt, ctx.terms.get(tk).expect("termkey should be valid").clone()))),
-		),
+	/* let expected_type_iter: TypeIter<_, _, _> = match typ_items {
+		Some(Term::Set(items)) => TypeIter::SetIter(items.into_iter().map(|(idt, tk)| Some((idt, tk)))),
 		Some(other_term) => {
 			return Err(LoweringError::TypeMismatch {
 				expected: "Set",
@@ -422,14 +420,38 @@ fn lower_set(
 		} // wrong type for set!
 		Some(Term::Uni(n)) => TypeIter::Uni(std::iter::repeat(Some((None, Term::Uni(n))))), // all things should be of type Type
 		None => TypeIter::None(std::iter::repeat(None)), // No overall type hint; rely on inference or inline types.
-	};
+	}; */
 
 	// take pairs of ParseTreeSetItem and Option<(Option<IdentKey>, Term)> representing optional expected types and lower to pairs of (Option<IdentKey>, Term)
 	let mut terms = SmallVec::new();
 	let mut typs = SmallVec::new();
-	for pt_item in term_items.into_iter().zip(expected_type_iter) {
+
+	for (i, term) in term_items.into_iter().enumerate() {
 		let res: Result<(Option<IdentKey>, (Term, Term)), LoweringError> = try {
-			match pt_item {
+			// get expected type
+			let expected_typ = match typ_items {
+				Some(Term::Set(ref items)) => {
+					let expected_typ_key = items
+						.get(i)
+						.ok_or_else(|| LoweringError::NoCorrespondingTypeInSetFor { term: term.clone() })?;
+					Some((
+						expected_typ_key.0,
+						ctx.terms
+							.get(expected_typ_key.1)
+							.expect("ctx should never delete keys")
+							.clone(),
+					))
+				}
+				Some(other_term) => {
+					return Err(LoweringError::TypeMismatch {
+						expected: "Set",
+						got: other_term.clone(),
+					})
+				}
+				None => None,
+			};
+			// check
+			match (term, expected_typ) {
 				(ParseTreeSetItem::Atom(parse_tree), typ) => {
 					// ensure type doesn't have ident for Atom set item variant
 					if let Some(ident) = typ.as_ref().and_then(|t| t.0.clone()) {
