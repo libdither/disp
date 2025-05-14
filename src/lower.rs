@@ -1,5 +1,5 @@
 use crate::{
-	eval::{reduce, Environment},
+	eval::reduce,
 	parse::{ParseTree, ParseTreeArgSetItem, ParseTreeSetItem},
 };
 use core::fmt;
@@ -76,14 +76,12 @@ pub struct Context {
 
 	pub holes: SlotMap<HoleKey, Option<TermKey>>, // holes go here
 	pub binds: IndexMap<IdentKey, TermKey>,       // active while-parsing bindings and globals, maintains ordering
-	pub env: Environment,                         // environment for registering assignments to identifiers
 }
 impl fmt::Debug for Context {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		f.debug_struct("Context")
 			.field("idents", &self.idents)
 			.field("terms", &self.terms)
-			.field("env", &self.env)
 			.finish()
 	}
 }
@@ -95,10 +93,8 @@ impl Context {
 			ident_map: HashMap::new(),
 			terms: SlotMap::with_key(),
 			term_map: HashMap::new(),
-			reduce_map: SlotMap::with_key(),
 			holes: SlotMap::with_key(),
 			binds: IndexMap::new(),
-			env: Environment::default(),
 		}
 	}
 	pub fn add_ident(&mut self, ident: String) -> IdentKey {
@@ -662,7 +658,8 @@ pub fn lower_app(
 	// potential things this reduction could be:
 	// - {1} : Vec{Nat}
 	// -
-	let reduced_app = reduce(ctx.add_term(unreduced_app), ctx, &mut ctx.env);
+	todo!();
+	let reduced_app = reduce(ctx.add_term(unreduced_app), ctx);
 
 	let (func_typ_args, func_typ_body) = match func_typ {
 		Term::Abs { args, body } => (args, body),
@@ -674,26 +671,17 @@ pub fn lower_app(
 		}
 	};
 	// check if we can infer the argument type automatically
-	let (args, args_typ) = if let Ok((args, args_typ)) = lower(*args, None, ctx) {
+	/* let (args, args_typ) = if let Ok((args, args_typ)) = lower(*args, None, ctx) {
 		// options:
 		// - args is a variable -> search for something in func_typ_args that matches variable name first, then variable type
 		// - args is a set -> go through set one by one, matching names first, then typs, then order
 		// - args is something else (constant, function, another application) -> find first typ that matches arg typ
 	} else {
 		// otherwise see if we can
-	};
+	}; */
 
 	// take function and args, infer return type of function
-	Ok((
-		Term::App {
-			func: func.0,
-			args: args.0,
-		},
-		Term::App {
-			func: func.1,
-			args: args.1,
-		},
-	))
+	todo!()
 }
 
 /// Lowers a ParseTree and some already-lowered normalized type (optional) into a tuple of terms representing the parsed term and either an inferred type or initially-passed type

@@ -33,7 +33,7 @@ fn main() -> io::Result<()> {
 	let stmts = match parse::parse_file.parse(&mut lex.as_slice()) {
 		Ok(stmts) => stmts,
 		Err(err) => {
-			println!("{err}");
+			println!("{err:?}");
 			return Ok(());
 		}
 	};

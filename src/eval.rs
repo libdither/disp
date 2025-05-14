@@ -45,35 +45,45 @@ impl Environment {
 	}
 }
 
+pub fn reduce(term: TermKey, ctx: &mut Context) -> Result<TermKey, ReduceError> {
+	reduce_with_env(term, ctx, &mut Environment::default())
+}
+
 // reduce given an environment, should only be called by the reduce function
 fn reduce_with_env(term: TermKey, ctx: &mut Context, env: &mut Environment) -> Result<TermKey, ReduceError> {
-	let term_ref = ctx.terms.get(term).ok_or(ReduceError::UnknownTermKey(term))?;
-	Ok(match term_ref {
+	let term_ref = ctx.terms.get(term).ok_or(ReduceError::UnknownTermKey(term))?.clone();
+	Ok(match &term_ref {
 		Term::UnknownType(_) => return Err(ReduceError::TypeHoleFound), // can't reduce type holes (do we even still need these anymore?)
 		Term::Nat(_) | Term::String(_) | Term::Bool(_) | Term::BuiltinTyp(_) | Term::Uni(_) => term, // irreducibles
-		Term::Variable(ident_key) => ctx.env.lookup(*ident_key).unwrap_or(term), // variables should be replaced with environment assignments, or they are irreducible
+		Term::Variable(ident_key) => env.lookup(*ident_key).unwrap_or(term), // variables should be replaced with environment assignments, or they are irreducible
 		Term::Set(items) => {
-			let items = items.clone();
+			let mut items = items.clone();
 			// reduce set items one-by-one
-			items.iter_mut().try_for_each(|(ident, item)| try {
-				if let Some(ident) = ident {
-					ctx.env.push_var(*ident, *item);
-				}
-				let reduced = reduce_with_env(*item, ctx)?;
-				if *item != reduced {
-					*item = reduced
-				}
+			items.iter_mut().try_for_each(|(ident, item)| {
+				let res: Result<_, _> = try {
+					if let Some(ident) = ident {
+						env.push_var(*ident, *item);
+					}
+					let reduced = reduce_with_env(*item, ctx, env)?;
+					if *item != reduced {
+						*item = reduced
+					}
+				};
+				res
 			})?;
 			ctx.add_term(Term::Set(items))
 		}
 		// the original term is linked to the reduced term for faster future evaluation, for lambdas, just reduce the body
-		Term::Abs { args, body } => ctx.add_reduced_term(
-			term_ref.clone(),
-			Term::Abs {
-				args: args.clone(),
-				body: reduce(*body, ctx)?,
-			},
-		),
+		Term::Abs { args, body } => {
+			let reduced_body = reduce_with_env(*body, ctx, env)?;
+			ctx.add_reduced_term(
+				term_ref.clone(),
+				Term::Abs {
+					args: args.clone(),
+					body: reduced_body,
+				},
+			)
+		}
 		// for applications, we need to reduce the function
 		// TODO
 		// What we need to reduce:
