@@ -13,7 +13,8 @@ pub enum ReduceError {
 	#[error("free variable {0:?} found. can't reduce term with free variables")]
 	FreeVariableFound(IdentKey),
 }
-struct Environment {
+#[derive(Debug, Default)]
+pub struct Environment {
 	pub assignments: SecondaryMap<IdentKey, SmallVec<usize, 2>>, // map ident to stack indices, there may be multiple
 	pub stack: Vec<TermKey>,                                     // execution stack for variable bindings
 }
@@ -44,56 +45,67 @@ impl Environment {
 	}
 }
 
-pub fn reduce(term: TermKey, ctx: &mut Context, env: &mut Environment) -> Result<TermKey, ReduceError> {
-	Ok(match ctx.terms.get(term).ok_or(ReduceError::UnknownTermKey(term))? {
-		Term::UnknownType(_) => return Err(ReduceError::TypeHoleFound),
+// reduce given an environment, should only be called by the reduce function
+fn reduce_with_env(term: TermKey, ctx: &mut Context, env: &mut Environment) -> Result<TermKey, ReduceError> {
+	let term_ref = ctx.terms.get(term).ok_or(ReduceError::UnknownTermKey(term))?;
+	Ok(match term_ref {
+		Term::UnknownType(_) => return Err(ReduceError::TypeHoleFound), // can't reduce type holes (do we even still need these anymore?)
 		Term::Nat(_) | Term::String(_) | Term::Bool(_) | Term::BuiltinTyp(_) | Term::Uni(_) => term, // irreducibles
-		Term::Variable(ident_key) => env.lookup(*ident_key).unwrap_or(term), // variables should be replaced with environment assignments, or they are irreducible
+		Term::Variable(ident_key) => ctx.env.lookup(*ident_key).unwrap_or(term), // variables should be replaced with environment assignments, or they are irreducible
 		Term::Set(items) => {
 			let items = items.clone();
 			// reduce set items one-by-one
 			items.iter_mut().try_for_each(|(ident, item)| try {
 				if let Some(ident) = ident {
-					env.push_var(*ident, *item);
+					ctx.env.push_var(*ident, *item);
 				}
-				let reduced = reduce(*item, ctx, env)?;
+				let reduced = reduce_with_env(*item, ctx)?;
 				if *item != reduced {
 					*item = reduced
 				}
 			})?;
 			ctx.add_term(Term::Set(items))
 		}
-		Term::Abs { args, body } => reduce(*body, ctx, env)?,
-		/// TODO
-		/// What we need to reduce:
-		/// - A function - multiple arguments to satisfy
-		/// - Some arguments - might be a set, might be a value
-		///   - Ideally, if set we should be able to match against idents in set and satisfy them one by one
-		///   - Ideally if not a set, we should be able to figure out which arg it satisfies
-		///   - if its a variable
-		///   - Solution: Need all arg sets to have idents either derived from strings, *or derived from types*
+		// the original term is linked to the reduced term for faster future evaluation, for lambdas, just reduce the body
+		Term::Abs { args, body } => ctx.add_reduced_term(
+			term_ref.clone(),
+			Term::Abs {
+				args: args.clone(),
+				body: reduce(*body, ctx)?,
+			},
+		),
+		// for applications, we need to reduce the function
+		// TODO
+		// What we need to reduce:
+		// - A function - multiple arguments to satisfy
+		// - Some arguments - might be a set, might be a value
+		//   - Ideally, if set we should be able to match against idents in set and satisfy them one by one
+		//   - Ideally if not a set, we should be able to figure out which arg it satisfies
+		//   - if its a variable
+		//   - Solution: Need all arg sets to have idents either derived from strings, *or derived from types*
 		Term::App { func, args } => {
 			// reduce args
-			let args = reduce(*args, ctx, env)?;
+			/* let args = reduce(*args, ctx)?;
 
 			// reduce function
 			let func = ctx
 				.terms
-				.get(reduce(*func, ctx, env)?)
+				.get(reduce(*func, ctx)?)
 				.expect("reduce should return valid term in context");
 			if let Term::Abs { args: func_args, body } = func {
 				// if func is function, reduce body with extended environment
 				// go through arg one by one. if for each one, search for first matching ident,
 				func_args.iter().for_each(|(func_arg, _)| {
 					// args
-					env.push_var(*func_arg, *body);
+					ctx.env.push_var(*func_arg, *body);
 				});
 			} else {
 				ctx.add_term(Term::App {
 					func: ctx.add_term(func.clone()),
 					args,
 				})
-			}
+			} */
+			todo!()
 		}
 	})
 }
