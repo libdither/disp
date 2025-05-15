@@ -112,7 +112,8 @@ pub fn lexer(input: &str) -> Result<Vec<Token>, String> {
 pub enum TreeExpr {
 	Ident(String),
 	Leaf, // Corresponds to the 't' atom
-	App(Box<TreeExpr>, Box<TreeExpr>),
+	Stem(Box<TreeExpr>),
+	Fork(Box<TreeExpr>, Box<TreeExpr>),
 }
 
 impl fmt::Display for TreeExpr {
@@ -120,8 +121,9 @@ impl fmt::Display for TreeExpr {
 		match self {
 			TreeExpr::Ident(s) => write!(f, "{}", s),
 			TreeExpr::Leaf => write!(f, "t"),
+			TreeExpr::Stem(expr) => write!(f, "Stem({})", expr), // Display for Stem
 			// Parenthesize applications for clarity and to show structure
-			TreeExpr::App(lhs, rhs) => write!(f, "({} {})", lhs, rhs),
+			TreeExpr::Fork(lhs, rhs) => write!(f, "({} {})", lhs, rhs),
 		}
 	}
 }
@@ -178,7 +180,18 @@ fn atom_parser(input: &mut &[Token]) -> PResult<TreeExpr> {
 			one_of(Token::OpenParen).context(StrContext::Expected(StrContextValue::CharLiteral('('))),
 			expr_parser, // Recursive call to parse the inner expression E
 			one_of(Token::ClosedParen).context(StrContext::Expected(StrContextValue::CharLiteral(')'))),
-		),
+		)
+		.map(|inner_expr| {
+			// inner_expr is the result of expr_parser on the content within parens
+			if let TreeExpr::Fork(_, _) = inner_expr {
+				// if fork, resolve as fork
+				inner_expr
+				// Specifically (t) -> Stem(Leaf)
+			} else {
+				// otherwise, extra parens means stem
+				TreeExpr::Stem(Box::new(inner_expr))
+			}
+		}),
 	))
 	.context(StrContext::Label("atom"))
 	.parse_next(input)
@@ -193,7 +206,7 @@ pub fn expr_parser(input: &mut &[Token]) -> PResult<TreeExpr> {
 				// If acc is None, this is the first atom.
 				// If acc is Some, this is a subsequent atom, forming an application.
 				if let Some(current_expr) = acc {
-					Some(TreeExpr::App(Box::new(current_expr), Box::new(item)))
+					Some(TreeExpr::Fork(Box::new(current_expr), Box::new(item)))
 				} else {
 					Some(item)
 				}
@@ -215,11 +228,14 @@ mod tests {
 	fn TEIdent(s: &str) -> TreeExpr {
 		TreeExpr::Ident(s.to_string())
 	}
-	fn TETrue() -> TreeExpr {
+	fn TELeaf() -> TreeExpr {
 		TreeExpr::Leaf
 	}
 	fn TEApp(lhs: TreeExpr, rhs: TreeExpr) -> TreeExpr {
-		TreeExpr::App(Box::new(lhs), Box::new(rhs))
+		TreeExpr::Fork(Box::new(lhs), Box::new(rhs))
+	}
+	fn TEStem(expr: TreeExpr) -> TreeExpr {
+		TreeExpr::Stem(Box::new(expr))
 	}
 
 	#[test]
@@ -258,33 +274,49 @@ mod tests {
 
 	#[test]
 	fn test_parse_atom_true() {
+		// Parses 't' keyword
 		let tokens = lexer("t bar").unwrap();
 		let (remaining, parsed) = atom_parser.parse_peek(&tokens[..]).unwrap();
-		assert_eq!(parsed, TETrue());
+		assert_eq!(parsed, TELeaf());
 		assert_eq!(remaining, &[Token::Ident("bar".to_string())][..]);
+	}
+
+	#[test]
+	fn test_parse_atom_stem_leaf() {
+		// Parses '(t)' into Stem(Leaf)
+		let tokens = lexer("(t)").unwrap();
+		let (_remaining, parsed) = atom_parser.parse_peek(&tokens[..]).unwrap();
+		assert_eq!(parsed, TEStem(TELeaf()));
+	}
+
+	#[test]
+	fn test_parse_atom_paren_not_just_t() {
+		// Parses '(ident)' into Ident("ident")
+		let tokens = lexer("(ident)").unwrap();
+		let (_remaining, parsed) = atom_parser.parse_peek(&tokens[..]).unwrap();
+		assert_eq!(parsed, TEStem(TEIdent("ident")));
 	}
 
 	#[test]
 	fn test_parse_atom_paren_expr() {
 		// (foo t) is an atom A of the form (E).
-		// Inner E is "foo t", which parses to App(Ident("foo"), True).
+		// Inner E is "foo t", which parses to App(Ident("foo"), Leaf).
 		let tokens = lexer("(foo t)").unwrap();
 		let (_remaining, parsed) = atom_parser.parse_peek(&tokens[..]).unwrap();
-		assert_eq!(parsed, TEApp(TEIdent("foo"), TETrue()));
+		assert_eq!(parsed, TEApp(TEIdent("foo"), TELeaf()));
 	}
 
 	#[test]
 	fn test_parse_atom_nested_paren_expr() {
 		// ((t) foo)
-		// Outer atom is (E1) where E1 is "(t) foo"
-		// E1 parses to App(A1, A2)
-		// A1 is "(t)", which is an atom (E2) where E2 is "t"
-		// E2 parses to True. So A1 is True.
-		// A2 is "foo", which is an atom Ident("foo").
-		// So E1 parses to App(True, Ident("foo"))
+		// Outer atom is (E1) where E1 is "(t) foo".
+		// expr_parser on "(t) foo" will parse "(t)" as an atom, then "foo" as an atom.
+		// Atom "(t)" becomes Stem(Leaf). Atom "foo" becomes Ident("foo").
+		// E1 becomes App(Stem(Leaf), Ident("foo")).
+		// The delimited map gets App(Stem(Leaf), Ident("foo")), which is not Leaf, so it returns it as is.
 		let tokens = lexer("((t) foo)").unwrap();
 		let (_remaining, parsed) = atom_parser.parse_peek(&tokens[..]).unwrap();
-		assert_eq!(parsed, TEApp(TETrue(), TEIdent("foo")));
+		assert_eq!(parsed, TEApp(TEStem(TELeaf()), TEIdent("foo")));
 	}
 
 	#[test]
@@ -293,10 +325,13 @@ mod tests {
 		assert_eq!(expr_parser.parse(&tokens_id[..]).unwrap(), TEIdent("myIdent"));
 
 		let tokens_t = lexer("t").unwrap();
-		assert_eq!(expr_parser.parse(&tokens_t[..]).unwrap(), TETrue());
+		assert_eq!(expr_parser.parse(&tokens_t[..]).unwrap(), TELeaf());
 
 		let tokens_paren = lexer("(id)").unwrap(); // (E) where E is "id"
-		assert_eq!(expr_parser.parse(&tokens_paren[..]).unwrap(), TEIdent("id"));
+		assert_eq!(expr_parser.parse(&tokens_paren[..]).unwrap(), TEStem(TEIdent("id")));
+
+		let tokens_stem_leaf = lexer("(t)").unwrap(); // (t) -> Stem(Leaf)
+		assert_eq!(expr_parser.parse(&tokens_stem_leaf[..]).unwrap(), TEStem(TELeaf()));
 	}
 
 	#[test]
@@ -321,11 +356,11 @@ mod tests {
 	fn test_expr_parser_mixed_atoms_in_app() {
 		// foo (bar t) baz
 		// A1 = Ident("foo")
-		// A2 = (bar t) -> App(Ident("bar"), True)
+		// A2 = (bar t) -> App(Ident("bar"), Leaf)
 		// A3 = Ident("baz")
 		// Result: App(App(A1, A2), A3)
 		let tokens = lexer("foo (bar t) baz").unwrap();
-		let expected = TEApp(TEApp(TEIdent("foo"), TEApp(TEIdent("bar"), TETrue())), TEIdent("baz"));
+		let expected = TEApp(TEApp(TEIdent("foo"), TEApp(TEIdent("bar"), TELeaf())), TEIdent("baz"));
 		assert_eq!(expr_parser.parse(&tokens[..]).unwrap(), expected);
 	}
 
@@ -345,28 +380,30 @@ mod tests {
 		// ((foo bar) (t id)) t
 		// A_outer1 = ((foo bar) (t id))
 		//   A_outer1 is (E_outer1)
-		//   E_outer1 = (foo bar) (t id) which is App(A_inner1, A_inner2)
+		//   E_outer1 = (foo bar) (t id) which is Fork(A_inner1, A_inner2)
 		//     A_inner1 = (foo bar) -> App(Ident("foo"), Ident("bar"))
-		//     A_inner2 = (t id)    -> App(True, Ident("id"))
-		//   So, A_outer1 = App(App(Ident("foo"), Ident("bar")), App(True, Ident("id")))
-		// A_outer2 = t -> True
+		//     A_inner2 = (t id)    -> App(Leaf, Ident("id"))
+		//   So, E_outer1 = App(App(Ident("foo"), Ident("bar")), App(Leaf, Ident("id")))
+		//   A_outer1 (result of delimited for E_outer1) = E_outer1 because E_outer1 is not Leaf
+		// A_outer2 = t -> Leaf
 		// Result: App(A_outer1, A_outer2)
 		let tokens = lexer("((foo bar) (t id)) t").unwrap();
 		let expected = TEApp(
-			TEApp(TEApp(TEIdent("foo"), TEIdent("bar")), TEApp(TETrue(), TEIdent("id"))),
-			TETrue(),
+			TEApp(TEApp(TEIdent("foo"), TEIdent("bar")), TEApp(TELeaf(), TEIdent("id"))),
+			TELeaf(),
 		);
 		assert_eq!(expr_parser.parse(&tokens[..]).unwrap(), expected);
 	}
 
 	#[test]
 	fn test_display_tree_expr() {
+		// Test Fork display
 		let complex_expr = TEApp(
 			TEApp(
 				TEApp(TEIdent("foo"), TEIdent("bar")), // (foo bar)
-				TEApp(TETrue(), TEIdent("id")),        // (t id)
+				TEApp(TELeaf(), TEIdent("id")),        // (t id)
 			), // ((foo bar) (t id))
-			TETrue(), // t
+			TELeaf(), // t
 		); // (((foo bar) (t id)) t)
 		assert_eq!(complex_expr.to_string(), "(((foo bar) (t id)) t)");
 
@@ -375,6 +412,12 @@ mod tests {
 
 		let left_assoc_app = TEApp(TEApp(TEIdent("a"), TEIdent("b")), TEIdent("c"));
 		assert_eq!(left_assoc_app.to_string(), "((a b) c)");
+
+		// Test Stem display
+		let stem_leaf = TEStem(TELeaf());
+		assert_eq!(stem_leaf.to_string(), "Stem(t)");
+		let stem_ident = TEStem(TEIdent("x"));
+		assert_eq!(stem_ident.to_string(), "Stem(x)");
 	}
 
 	#[test]
@@ -392,6 +435,7 @@ mod tests {
 
 	#[test]
 	fn test_mismatched_open_paren() {
+		// TODO: Fix this test idk why its not giving correct context
 		// Input: "(foo"
 		let tokens = vec![Token::OpenParen, Token::Ident("foo".to_string())];
 		let result = expr_parser.parse(&tokens[..]); // or atom_parser for a more direct test
@@ -399,6 +443,7 @@ mod tests {
 
 		let err = result.unwrap_err();
 		// The error should be "expected ')'" within the "atom" context.
+		println!("err: {:?}", err);
 		assert!(err
 			.inner()
 			.context()

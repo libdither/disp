@@ -46,7 +46,7 @@ fn main() -> io::Result<()> {
 						}
 					}
 					Ok((None, expr)) => {
-						let eval_result = store.lower(expr);
+						let eval_result = store.lower_and_reduce(expr);
 						// handle error and print
 						match eval_result {
 							Ok(reduced) => println!(

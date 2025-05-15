@@ -29,7 +29,7 @@ apply _not _true  (* Leaf      = _false *)
 use slotmap::{new_key_type, SlotMap};
 use std::{collections::HashMap, fmt};
 
-use crate::tree_parse::{self, TreeExpr};
+use crate::tree_parse::TreeExpr;
 
 // TermKey will be our reference to terms in the SlotMap
 new_key_type! { pub struct TreeTermKey; }
@@ -48,7 +48,7 @@ pub struct TermDisplayer<'a> {
 	to_ident: bool,
 }
 impl<'a> TermDisplayer<'a> {
-	fn replace(&self, key: TreeTermKey) -> Self {
+	fn with(&self, key: TreeTermKey) -> Self {
 		Self {
 			key,
 			store: self.store,
@@ -60,17 +60,27 @@ impl<'a> TermDisplayer<'a> {
 impl<'a> fmt::Display for TermDisplayer<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		if self.to_ident {
+			// if we should be looking up idents, lookup ident name and return
 			if let Some(string) = self.store.term_ident.get(&self.key) {
 				return write!(f, "{}", string);
+			} else {
+				write!(
+					f,
+					"[FIL: {}]",
+					Self {
+						key: self.key,
+						store: self.store,
+						to_ident: false
+					}
+				)?;
 			}
 		}
 
 		match self.store.get_term(self.key) {
 			Some(TreeTerm::Leaf) => write!(f, "△"),
-			Some(TreeTerm::Stem(key)) => write!(f, "Stem({})", self.replace(*key)),
+			Some(TreeTerm::Stem(key)) => write!(f, "Stem({})", self.with(key)),
 			Some(TreeTerm::Fork { left, right }) => {
-				// Basic parenthesizing for clarity, could be made smarter
-				write!(f, "({} {})", self.replace(*left), self.replace(*right))
+				write!(f, "({} {})", self.with(left), self.with(right))
 			}
 			None => write!(f, "<invalid_key>"),
 		}
@@ -79,8 +89,9 @@ impl<'a> fmt::Display for TermDisplayer<'a> {
 
 pub struct TermStore {
 	terms: SlotMap<TreeTermKey, TreeTerm>,
+	dedup: HashMap<TreeTerm, TreeTermKey>,    // dedup
 	cache: HashMap<TreeTermKey, TreeTermKey>, // For normalize memoization
-	canonical_leaf: Option<TreeTermKey>,      // To have one canonical Leaf if needed
+	pub leaf: TreeTermKey,                    // To have one canonical Leaf if needed
 	ident_term: HashMap<String, TreeTermKey>,
 	term_ident: HashMap<TreeTermKey, String>,
 }
@@ -95,26 +106,31 @@ pub enum TreeLoweringError {
 
 impl TermStore {
 	pub fn new() -> Self {
-		let mut store = TermStore {
-			terms: SlotMap::with_key(),
+		let mut terms = SlotMap::with_key();
+		let leaf = terms.insert(TreeTerm::Leaf);
+		TermStore {
+			terms,
+			dedup: HashMap::new(),
 			cache: HashMap::new(),
-			canonical_leaf: None,
+			leaf,
 			ident_term: HashMap::new(),
 			term_ident: HashMap::new(),
-		};
-		// Ensure there's a canonical leaf node if we need to refer to "the" Leaf
-		let leaf_key = store.terms.insert(TreeTerm::Leaf);
-		store.canonical_leaf = Some(leaf_key);
-		store
+		}
 	}
 
 	pub fn lower_assign(&mut self, assign: (String, TreeExpr)) -> Result<TreeTermKey, TreeLoweringError> {
 		let ident = assign.0;
 		let term = self.lower(assign.1)?;
+		// let reduced_term = self.reduce(term); // reduce top-level fork
 		// only reduced terms should be recorded with associated ident maps
 		self.ident_term.insert(ident.clone(), term);
 		self.term_ident.insert(term, ident.clone());
 		Ok(term)
+	}
+	pub fn lower_and_reduce(&mut self, expr: TreeExpr) -> Result<TreeTermKey, TreeLoweringError> {
+		let term = self.lower(expr)?;
+		let reduced_term = self.reduce(term);
+		Ok(reduced_term)
 	}
 	pub fn lower(&mut self, expr: TreeExpr) -> Result<TreeTermKey, TreeLoweringError> {
 		match expr {
@@ -125,36 +141,41 @@ impl TermStore {
 					Err(TreeLoweringError::UnknownIdent(ident))
 				}
 			}
-			TreeExpr::Leaf => Ok(self.leaf()),
-			TreeExpr::App(left, right) => {
-				let left_key = self.lower(*left)?;
-				let right_key = self.lower(*right)?;
-				let fork = self.fork(left_key, right_key);
-				Ok(self.reduce(fork))
+			TreeExpr::Leaf => Ok(self.leaf),
+			TreeExpr::Stem(expr) => {
+				let key = self.lower(*expr)?;
+				Ok(self.stem(key))
+			}
+			TreeExpr::Fork(left, right) => {
+				let left = self.lower(*left)?;
+				let right = self.lower(*right)?;
+				let fork = self.fork(left, right);
+				Ok(fork)
 			}
 		}
 	}
 
-	fn get_term(&self, key: TreeTermKey) -> Option<&TreeTerm> {
-		self.terms.get(key)
+	fn get_term(&self, key: TreeTermKey) -> Option<TreeTerm> {
+		self.terms.get(key).cloned()
 	}
 
-	pub fn leaf(&mut self) -> TreeTermKey {
-		// Could return canonical_leaf if we want all leaves to be identical by key
-		// For structural distinction and caching different "instances" of leaves initially,
-		// inserting a new one is fine. Tree calculus's Δ is unique though.
-		// Let's use the canonical one for simplicity, matching the single Δ concept.
-		self.canonical_leaf.unwrap()
+	fn add_term(&mut self, term: TreeTerm) -> TreeTermKey {
+		if let Some(cached_key) = self.dedup.get(&term) {
+			return *cached_key;
+		}
+		let key = self.terms.insert(term.clone());
+		self.dedup.insert(term, key);
+		key
 	}
 
 	pub fn stem(&mut self, key: TreeTermKey) -> TreeTermKey {
-		self.terms.insert(TreeTerm::Stem(key))
+		self.add_term(TreeTerm::Stem(key))
 	}
 
 	pub fn fork(&mut self, left: TreeTermKey, right: TreeTermKey) -> TreeTermKey {
 		// Optional: Interning for branches too for structural sharing
 		// For now, always create a new one. Caching normalize handles redundancy.
-		self.terms.insert(TreeTerm::Fork { left, right })
+		self.add_term(TreeTerm::Fork { left, right })
 	}
 
 	pub fn display_term(&self, key: TreeTermKey, to_ident: bool) -> TermDisplayer<'_> {
@@ -168,6 +189,11 @@ impl TermStore {
 	pub fn reduce(&mut self, term: TreeTermKey) -> TreeTermKey {
 		// lookup to see if already been reduced in past
 		let result = match if let Some(cached_key) = self.cache.get(&term) {
+			println!(
+				"found cache: {} -> {}",
+				self.display_term(term, false),
+				self.display_term(*cached_key, false)
+			);
 			return *cached_key;
 		} else {
 			self.terms.get(term).expect("invalid key").clone()
@@ -197,19 +223,23 @@ impl TermStore {
 			 | Leaf -> a1
 			 | Stem u -> apply a2 u
 			 | Fork (u, v) -> apply (apply a3 u) v
+			 let _not = Fork (Fork (_true, Fork (Leaf, _false)), Leaf)
+
+			 ((true (t false)) t)
 		*/
 		// get result
-		let result_key = match self.get_term(func).cloned() {
-			Some(TreeTerm::Leaf) => self.stem(arg),
-			Some(TreeTerm::Stem(a)) => self.fork(a, arg),
-			Some(TreeTerm::Fork { left: a, right: a3 }) => match self.get_term(a).cloned() {
-				Some(TreeTerm::Leaf) => a3,
+		let result_key = match self.get_term(func) {
+			Some(TreeTerm::Leaf) => self.stem(arg),       // 0a: (t a) => Stem(a)
+			Some(TreeTerm::Stem(a)) => self.fork(a, arg), // 0b: ((t a) b) => (a b)
+			Some(TreeTerm::Fork { left: a, right: a3 }) => match self.get_term(a) {
+				Some(TreeTerm::Leaf) => a3, // ((t a3) arg) => a3
 				Some(TreeTerm::Stem(a1)) => {
+					// (t a) b => (a b)
 					let app1 = self.reduce_fork(a1, arg);
 					let app2 = self.reduce_fork(a3, arg);
 					self.fork(app1, app2)
 				}
-				Some(TreeTerm::Fork { left: a1, right: a2 }) => match self.get_term(arg).cloned() {
+				Some(TreeTerm::Fork { left: a1, right: a2 }) => match self.get_term(arg) {
 					Some(TreeTerm::Leaf) => a1,
 					Some(TreeTerm::Stem(u)) => self.reduce_fork(a2, u),
 					Some(TreeTerm::Fork { left: u, right: v }) => {
@@ -232,16 +262,15 @@ mod tests {
 	#[test]
 	fn test_apply() {
 		let mut s = TermStore::new();
-		let leaf = s.leaf();
-		let _false = s.leaf();
+		let _false = s.leaf;
 		println!("_false: {}", s.display_term(_false, false));
 
 		let _true = s.stem(_false);
 		println!("_true: {}", s.display_term(_true, false));
 
-		let fork_leaf_false = s.fork(leaf, _false);
+		let fork_leaf_false = s.fork(s.leaf, _false);
 		let fork_true_fork_leaf_false = s.fork(_true, fork_leaf_false);
-		let _not = s.fork(fork_true_fork_leaf_false, leaf);
+		let _not = s.fork(fork_true_fork_leaf_false, s.leaf);
 
 		let not_false = s.fork(_not, _false);
 		let app1 = s.reduce(not_false);
