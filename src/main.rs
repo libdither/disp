@@ -4,13 +4,70 @@ pub mod eval;
 mod lexer;
 mod lower;
 mod parse;
-mod verify;
+// mod verify;
+mod tree_eval;
+mod tree_parse;
 
 use std::{env, io};
 
 use winnow::Parser;
 
 fn main() -> io::Result<()> {
+	// REPL loop that parses a string with tree_parse and then pretty-prints the parsed structure using the Display impl:
+	use std::io::BufRead;
+
+	let stdin = io::stdin();
+	let mut reader = stdin.lock();
+
+	let mut store = tree_eval::TermStore::new();
+
+	let mut line = String::new();
+	loop {
+		print!("> ");
+		io::Write::flush(&mut io::stdout()).expect("flush failed");
+		line.clear();
+		if let Ok(_) = reader.read_line(&mut line) {
+			if line.trim().is_empty() {
+				continue;
+			}
+			match tree_parse::lexer(&line) {
+				Ok(tokens) => match tree_parse::parse_line.parse(&tokens[..]) {
+					Ok((Some(ident), expr)) => {
+						let assign_result = store.lower_assign((ident.clone(), expr));
+						// handle error and print
+						match assign_result {
+							Ok(reduced) => println!(
+								"{} := {} := {}",
+								ident,
+								store.display_term(reduced, true),
+								store.display_term(reduced, false)
+							),
+							Err(e) => println!("Lowering Error: {:?}", e),
+						}
+					}
+					Ok((None, expr)) => {
+						let eval_result = store.lower(expr);
+						// handle error and print
+						match eval_result {
+							Ok(reduced) => println!(
+								"Result: {} := {}",
+								store.display_term(reduced, true),
+								store.display_term(reduced, false)
+							),
+							Err(e) => println!("Lowering Error: {:?}", e),
+						}
+					}
+					Err(e) => println!("Parse Error: {:?}", e),
+				},
+				Err(e) => println!("Lex Error: {:?}", e),
+			}
+		}
+	}
+
+	Ok(())
+}
+
+fn main2() -> io::Result<()> {
 	let filename = env::args().nth(1).expect("Usage: disp <PROGRAM>");
 	let program = std::fs::read_to_string(filename)?;
 
