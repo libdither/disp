@@ -7,7 +7,7 @@
   authors: ("Zyan",),
   titlepage: true,
   chapters-on-odd: chapters-on-odd,
-  bibliography: bibliography("thesis.bib"),
+  bibliography: bibliography("research-spring-25.bib"),
   figure-index: (enabled: false, title: "Figures"),
   table-index: (enabled: false, title: "Tables"),
   listing-index: (enabled: false, title: "Code listings"),
@@ -37,27 +37,127 @@ For the first week I speculated on various problems and potential solutions that
 1. Problem: How can we be sure a program does what it's supposed to (correctness), figure out its properties automatically, and even construct a correct program from a high-level description?
   - Idea: "Tridirectional type systems". Develop a type system that works in three ways. Firstly, it can check if a given program matches a given specification (like checking if a proof proves a theorem). Secondly, given a program, it can automatically determine its specification or properties (like figuring out what theorem a proof proves). Thirdly, given a specification, it could potentially construct a program that meets it (like finding a proof for a theorem).
 
-2. Problem: We need a precise, formal language to define the rules and components of our programming system, especially when dealing with complex features like types that depend on computed values.
-  Proposed Solution: Use the language of Category Theory. We can model types as objects and functions (programs) as morphisms (arrows) between them. This provides a well-understood mathematical framework to define the structure, composition rules, and properties of the language elements, bringing mathematical rigor to the language's foundation.
+2. Problem: We need a precise, formal language to define and get intuition behind the rules and components of a programming language, especially when dealing with dependent types (i.e. types that depend on computed values).
+  - Idea: Use Category Theory. We can model types as objects and functions (programs) as morphisms (arrows) between them. Full dependent types can be modeled using something called Categories With Families (CwF).
 
 3. Problem: How can we automatically transform a program to make it run faster or use less memory, without changing what it fundamentally computes?
-  Proposed Solution (Initial Thought): Keep track of different ways program segments can be written while producing the same outcome. Use this knowledge of equivalences to systematically rewrite the program into a functionally identical but more efficient version.
-
-4. Problem: Finding the *absolute best* performing version of a program is hard, as there are countless ways to write it and transformations to apply, with complex trade-offs.
-  Proposed Solution (Advanced): View optimization as searching a vast space of equivalent programs. Apply known, mathematically sound transformation rules (like algebraic identities, but for code) to explore this space. Use efficient data structures to keep track of the many program versions generated. Employ machine learning techniques to intelligently guide this search, learning which transformations are most likely to yield performance improvements based on past experience and predicted outcomes, potentially even fine-tuning the program while it's running.
+  - Rough Idea: Keep track of different ways program segments can be written while producing the same outcome. Use this knowledge of equivalences to systematically rewrite the program into a functionally identical but more efficient version.
+  - More concrete: Use saturating equivalence graphs to keep track of the best program so far, using learned heuristics of what makes a program good + reinforcement learning to figure out which rewrites to make, potentially even combined with live-profiling or various heuristics of various efficiency. @egglog
 
 5. Problem: Can we find deeper mathematical structures to understand programming concepts, particularly different notions of "sameness" (equivalence) between programs or types?
-  Proposed Solution: Explore mathematical structures like simplicial sets, drawn from algebraic topology. These generalize the concepts of categories and provide frameworks (like Homotopy Type Theory) where the notion of equality is more nuanced (e.g., paths in a space). This might offer more sophisticated ways to reason about program equivalence and structure at a foundational level.
+  - Idea: Explore models of $infinity$-category theory via structures like simplicial sets or Homotopy Type Theory. These generalize the concepts of categories to add more nuanced notions of equality at various levels, corresponding the different ways to you write a program of some type or a proof of some theorem as itself a kind of category with internal structure. This might offer more sophisticated ways to reason about program equivalence and structure at a foundational level.
 
 == Week 2
+
+For week two I attempted to wrap my mind around Lean's typing rules. My reflection is that they seem unnecessarily complicated and I want to know how they could be simplified. Ideally, the type system itself should be expressible in the underlying model of computation / calculi.
+
+The typing rules looked at were the following:
+
+$ (Gamma tack.r t : A quad A scripts(=)_(β δ η ζ η) B) / (Gamma tack.r t : B) ("Conv") $
+
+$ (x : U in Gamma) / (Gamma tack.r x : U) ("Var") $
+If variable $x$ is declared with type $U$ in the context $Γ$, then $x$ has type $U$.
+
+$ (Gamma tack.r f : Pi (x: A), B quad Gamma tack.r a : A) / (Gamma tack.r f a : B[a slash x]) ("App") $
+If f is a function from Π(x: A), B (dependent function type) and a has type A, then the application f a has type B where x is substituted with a.
+
+$ (Gamma, x : A tack.r b : B) / (Gamma tack.r lambda (x: A), b : Pi (x: A), B) ("Lam") $
+If in a context extended with x of type A, the term b has type B, then the lambda abstraction λ(x: A), b has the dependent function type Π(x: A), B.
+
+$ () / (Gamma tack.r "Sort" i : "Sort" (i+1)) ("Sort Formation") $
+For any universe level i, Sort i is a valid type, and it belongs to the next higher universe Sort (i+1).
+
+$ () / (Gamma tack.r "Prop" : "Sort" 1) ("Prop Formation") $
+The universe of propositions, Prop, is a valid type and belongs to Sort 1.
+
+$ (Gamma, x : A tack.r P : "Prop") / (Gamma tack.r Pi (x: A), P : "Prop") ("Impredicative Pi") $
+If in a context extended with $x$ of type $A$, $P$ is a proposition, then the dependent function type $Π (x: A)$, $P$ (which represents universal quantification or implication if A is also a proposition) is also a proposition.
+
+$
+  (Gamma tack.r A : "Sort" i quad Gamma, x : A tack.r B : "Sort" i) / (Gamma tack.r Pi (x: A), B : "Sort" i) ("Predicative Pi")
+$
+If $A$ is of sort $i$ and in a context extended with $x : A, B$ is also of sort $i$, then the dependent function type $Π (x: A)$, $B$ is also of sort $i$. This rule is predicative, as the universe level of the function type is the same as the universe level of the argument and return types.
+
+$ ("Inductive type" I "with constructor" c : (...) -> I) / (Gamma tack.r c : (...) -> I) ("Inductive Intro") $
+For each constructor $c$ of an inductive type $I$, there is a constructor‐introduction rule that reflects its type signature. (Simplified representation, single‐constructor case.)
+
+$
+  (Gamma tack.r A : "Type" i quad Gamma tack.r R : A -> A -> "Prop") / (Gamma tack.r "Quot" R : "Type" i) ("Quot Type Formation")
+$
+
+Given a type $A$ and a relation $R$ on $A$, we can form the quotient type $"Quot" R$.
+
+$
+  (Gamma tack.r A : "Type" i quad Gamma tack.r R : A -> A -> "Prop" quad Gamma tack.r a : A) / (Gamma tack.r "Quot"."mk" R space a : "Quot" R) ("Quot Constructor")
+$
+If $a$ is of type $A$, we can lift it to the quotient type $"Quot" R$ using $"Quot"."mk" R$.
+
+$ (Gamma tack.r t : A quad A scripts(=)_(β δ η ζ η) B) / (Gamma tack.r t : B) ("Conv") $
+If a term $t$ has type $A$, and $A$ is definitionally equal to $B$ (via $β$, $δ$, $ι$, $ζ$, $η$ reductions and equivalence), then $t$ also has type $B$.
+
 == Week 3
-== Week 4
+
+In week three I reflected on week two's issue sequence calculus complexity. I broke down the problem of language-building into the following:
+
+- Computational Model
+  - The language you use to represent programs, i.e. the lambda calculus, machine code, intermediate-representations, anything that can represent computation and simulate computational evaluation. This should ideally be Turing-Complete (which means it should be able to represent any possible program, even those that run forever) and be easy to reason about.
+  - Intuitively, a model of computation requires some physical process to "implement" it, so in a sense, a program is a configuration of a physical process that manipulates information.
+- Verification System
+  - In a sense a verification system is just a bunch of other programs you run on programs that resolve to true if a property holds for its input. Types are in some sense _predicate-functions_.
+  - The question now is "what makes a good type system?". Efficiency at representing constraints on a program? How does type inference fit in here?
+
+== Week 4 - Feb 21st - Feb 28th
+
+In week four I started exploring the idea of a system of types-as-predicates.
+
+Intuitively, we start with the idea that a type system (specifically: type checker) can be thought of a function of type: $"Program" times "Type" -> "Bool"$. Then since types are in theory "composable" similar to terms, perhaps we can re-use term composition to where a base type is simply a function.
+
+- A base type is a program of type $"Program" -> "Bool"$.
+- A basic type constructor is something of type $("Program" -> "Bool") times ("Program" -> "Bool") -> ("Program" -> "Bool")$.
+
+I tried to extend this to dependent types, where you have a type that is dependent on a program, i.e. perhaps something of the sort $("Program" -> "Bool") times ("Program" -> ("Program" -> "Bool")) -> ("Program" -> "Bool")$, but I later learned issue comes when dealing with applications and variable lookups, as most lambda terms require environments of some kind.
+
+Week four I also hypothesized as to whether this system could be made in a sense "agnostic" to the underlying computational framework, i.e. where you could potentially "bootstrap" a type system onto any kind of turing-complete (or perhaps even not turing complete?) computation / reduction system. Would it be possible then to write type systems for turing machines? What would that even look like? I explored this idea through simple correpondences between things like the basic Untyped Lambda Calculus (ULC) and versions of ULC where you add extra "base" constructions like natural numbers and relevant functions, which are themselves implementable in the ULC, but in a possibly ungeneralizable sense this makes a different computational model. The question then is how is it best to think about this correspondence, the idea of drawing correspondences between constructions in the language and constructions in the meta-language, and if this correspondence could allow for kind of a continuous chain of intensional (i.e. with respect to the internal structure) transformations between similar computation models (such as ULC and ULC+Natural Numbers) and more different computation models (such as ULC and Turing Machines).
+
+As an aside I also looked into categorical models of eager vs lazy evaluation systems to see if they could be related in the same kind of intentional manner as ULC and ULC+Nat. Supposedly they correspond to Control and Cocontrol categories. @ControlCategories
+
 == Week 5
+
+Week five I continued to explore the types-as-predicates idea, attempting to reconcile it with notions of typing contexts and environments, as well as type inference. I also explored something called "Institution Theory". @institution_theory_iep @goguen1992institutions
+
+First, my idea was to treat types instead as functions of programs _combined with_ typing contexts, i.e. $"Program" times "Context" -> "Bool"$, which more closely reflects the requirements of type checkers to look up variables in some context.
+
+TODO: Talk about institution theory as a further area of research.
+
+
 == Week 6
+
+Week six I really jumped into the weeds and started to think about what would be required to _actually implement_ a types-as-predicates system and I came to realize that, at least with the lambda calculus and how type systems are typically defined, this wouldn't really work too well.
+
+The fundamental issue is that a given type, lets say (e.g. `Nat`) must be able to recognize basic `Nat`s, but also must be able to recognize, for example, the body of a function that returns a `Nat` given the type of the argument of the function. This means it needs to look up the type of variables in a typing context, as well as reason about the components of a function application, which requires inferring the type of the function involved and is non-trivial. For example, imagine trying to check if the following expression is of type `Nat -> Nat`
+
+`{x} -> +(1, x) : Nat -> Nat`
+
+To verify `{x} -> ((+ 1) x) : Nat -> Nat`, we need to verify that `((+ 1) x) : Nat` given a typing context associating `x` with `Nat`. We lookup the type of `x` to be `Nat` and since we require the expression to solve to `Nat`, we need to check that `(+ 1)` is of type `Nat -> Nat`. We repeat the process to check that `+` must be of `Nat -> (Nat -> Nat)`, which we can conclude so long as its type is in the context, and thus we have checked the original statement.
+
+It is I think _technically possible_ to implement this kind of type checking in a types-as-predicates paradigm, but it is unclear the degree that this would actually create the kind of modularity desired, at least with the lambda calculus.
+
+TODO: Elaborate more on why dependent types and type inference make this even harder lol.
+
 == Week 7
+
+Week seven I took a break to work on other projects, and to self-evaluate on what I had done so far. I realized that I was getting too much into theory and that I should probably take a step back to work on implementation and actually try to implement a type checker to see how far I get.
+
 == Week 8
+
+Week 8 I started thinking about type inference, specifically bidirectional type systems where you have both a "checking" function that takes a term and a type (and a context) and verifies that the term is of the type in the context, as well as an "inference" function that simply takes a term and a context and using the primitives in the term tries to infer what the type might be, these procedures when actually implemented are typically mutually recursive (i.e. they call each other). Inference is used to get the type of primitive terms or variables.
+
+
+
 == Week 9
-== Week 9
+
+
+
 == Week 10
 == Week 11
 == Week 12
