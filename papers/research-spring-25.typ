@@ -7,8 +7,10 @@
 #show: nifty-ntnu-thesis.with(
   title: [Spring 2025 Preliminary Research on Disp: A Decentralized Programming Language],
   short-title: [Disp: Decentralized Lisp],
-  authors: ("By: Z",),
+  authors: ("By: Zyan",),
   titlepage: true,
+  date-format: "[year]/[month]/[day]",
+  date: datetime(day: 15, month: 5, year: 2025),
   chapters-on-odd: chapters-on-odd,
   bibliography: bibliography("research-spring-25.bib"),
   figure-index: (enabled: false, title: "Figures"),
@@ -109,7 +111,7 @@ In week three I reflected on week two's issue sequence calculus complexity. I br
   - In a sense a verification system is just a bunch of other programs you run on programs that resolve to true if a property holds for its input. Types are in some sense _predicate-functions_.
   - The question now is "what makes a good type system?". Efficiency at representing constraints on a program? How does type inference fit in here?
 
-== Week 4 - Feb 21st - Feb 28th
+== Week 4
 
 In week four I started exploring the idea of a system of types-as-predicates.
 
