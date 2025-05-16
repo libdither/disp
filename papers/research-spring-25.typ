@@ -1,10 +1,13 @@
 //#import "lib.typ": *
 #import "@preview/nifty-ntnu-thesis:0.1.2": *
 #let chapters-on-odd = false
+
+#show link: underline
+
 #show: nifty-ntnu-thesis.with(
-  title: [Disp: Decentralized Lisp],
+  title: [Spring 2025 Preliminary Research on Disp: A Decentralized Programming Language],
   short-title: [Disp: Decentralized Lisp],
-  authors: ("Zyan",),
+  authors: ("By: Z",),
   titlepage: true,
   chapters-on-odd: chapters-on-odd,
   bibliography: bibliography("research-spring-25.bib"),
@@ -125,10 +128,19 @@ As an aside I also looked into categorical models of eager vs lazy evaluation sy
 
 Week five I continued to explore the types-as-predicates idea, attempting to reconcile it with notions of typing contexts and environments, as well as type inference. I also explored something called "Institution Theory". @institution_theory_iep @goguen1992institutions
 
-First, my idea was to treat types instead as functions of programs _combined with_ typing contexts, i.e. $"Program" times "Context" -> "Bool"$, which more closely reflects the requirements of type checkers to look up variables in some context.
+First, my idea was to treat types instead as functions of programs _combined with_ typing contexts, i.e. $"Program" times "Context" -> "Bool"$, which more closely reflects the requirements of type checkers to look up variables in some context. Base terms would be function that represent variants of the base computational model, e.g. at `Nat` type would recognize instances of `1, 2, 3, 4, ...`
 
-TODO: Talk about institution theory as a further area of research.
-
+Ok the topic of computational models, I also investigated institution theory which sells itself as a framework for constructing logics—which I assume includes type theories. Institution theory is still a bit of an enigma to me but the basics of it is that there are 4 parts (its defined in terms of category theory concepts). I give Propositional Logic as an instance of an institution.
+- A #link("https://en.wikipedia.org/wiki/Category_(mathematics)")[category] of "Signatures" *$"Sig"$*
+  - Ex: sets of propositional variables and functions between these sets. (Equivalent to $"Set"$)
+- A functor $"Sentences" : "Sig" -> "Set"$
+  - Ex: the set of all well-formed propositional formulas formable using some set of variables and some logical connectives ($->, and, or , not$, etc.)
+- A contravariant functor $"Mod" : "Sig" -> "Cat"^"op"$ mapping each signature to a category of its models, and each morphism between two signatures to a functor between models.
+  - Ex:
+    - Given an object $P in "ob"("Sig")$: One gets a category of models. A model in propositional logic is an assignment of variables to true or false, i.e. given a signature $P$, and model $M$ is a function $M : P -> {"True", "False"}$, (which can also be thought of as a subset of a signature $P$ denoting which elements in $P$ were assigned to true). The category of models is simply all such possible models as the objects and subset relations as the morphisms, creating a partially ordered set.
+    - Given a morphism $phi : P -> P^prime in "Sig"$, this creates a functor between two categories of models (i.e. a mapping between two posets of variable assignments).
+- A satisfaction ("truth") relation between sentences $s in "Sen"(P)$ and models $M in "Mod"(P)$ for a given variable set $P$ denoting that $M tack.r.double_P s$ if and only if the variable assignment described by the model $M$ results in the sentence $s$ resolving to true.
+- An satisfaction condition saying that $"Mod"(phi)(M^prime) tack.r.double_P s <-> M^prime tack.r.double_(P^prime) "Sen"(phi)(s)$, basically saying that the truth of sentence in a logical system must be invariant under changes of notation.
 
 == Week 6
 
@@ -142,649 +154,85 @@ To verify `{x} -> ((+ 1) x) : Nat -> Nat`, we need to verify that `((+ 1) x) : N
 
 It is I think _technically possible_ to implement this kind of type checking in a types-as-predicates paradigm, but it is unclear the degree that this would actually create the kind of modularity desired, at least with the lambda calculus.
 
-TODO: Elaborate more on why dependent types and type inference make this even harder lol.
+Where the idea really starts getting tenuous (although perhaps still feasible, it is unclear) is where we get to trying to implement more complicated type systems like dependent types or linear type theories.
 
 == Week 7
 
 Week seven I took a break to work on other projects, and to self-evaluate on what I had done so far. I realized that I was getting too much into theory and that I should probably take a step back to work on implementation and actually try to implement a type checker to see how far I get.
 
+The self-evaluation was primarily about what the ultimate goal of the project is, i.e. what a "decentralized" language would truly look like in practice. As quick illustration of properties of this language I am going for:
+- The syntax of the language should be fully customizable by users of the language, and be parse-able to a flexible and uniform backend representation that encodes term and type structure. This should include the ability to visualize the language through non-textual mediums.
+- Programs written in less-complex type systems (such as the simply typed lambda calculus) should be transpilable automatically into programs in more complex type systems. The reverse case should also be possible, so long as there is a meaningful reverse translation or the program doesn't make use of the more advanced type system's features.
+- The above properties should enable people to use their own versions of the language with minimimal or controllable compatibility issues with other people's versions, enabling truly decentralized language development.
+- The language should come with a decently advanced type system out-of-the-box with support for homotopy type theory for theorem proving, algebraic effects for managing I/O, and linear/affine types for modeling object lifetimes.
+- The language should come with state-of-the-art facilities for generating terms of arbitrary types for use in theorem proving or code generation.
+  - This should also suppoer CEGIS (Counter-Example Guided Inductive Synthesis)
+
+
 == Week 8
 
-Week 8 I started thinking about type inference, specifically bidirectional type systems where you have both a "checking" function that takes a term and a type (and a context) and verifies that the term is of the type in the context, as well as an "inference" function that simply takes a term and a context and using the primitives in the term tries to infer what the type might be, these procedures when actually implemented are typically mutually recursive (i.e. they call each other). Inference is used to get the type of primitive terms or variables.
+Week 8 I started thinking about type inference, specifically bidirectional type systems where you have both a "checking" function that takes a term and a type (and a context) and verifies that the term is of the type in the context, as well as an "inference" function that simply takes a term and a context and using the primitives in the term tries to infer what the type might be, these procedures when actually implemented are typically mutually recursive (i.e. they call each other).
 
+Type inference can:
+- Infer the "default type" of constants like integers or strings or booleans.
+- Look up variables in some typing context to get their type.
+- Look at the function and argument of an application, recursively infer the type of the argument, and then use that to infer the type of the function.
+- Look at a function, and its body, see if the argument of the function is forced to be a value by anything it is used for in the function body, using that inferred argument type, infer the type of the body to infer the type of the whole function. Often times languages require programmers to denote at least the argument type for a function to make it easier (otherwise you may need to keep track of unknown types during inference).
 
+Type checking can:
+- Verify that a term is of a given type, potentially using the inferred type of sub-terms.
+- Check if a constant has the expected type.
+- Look up variables in the typing context and compare their type with the expected type.
+- For applications, recursively check the type of the argument and then use that to check the type of the function.
+- For functions, extend the context with the expected argument type and check the type of the body.
+
+These functions can be combined into something called "bidirectional" type system. While full type inference is feasible in many common type theories, often in $O(n)$ or polynomial time, for complicated systems such as dependent types, type inference is undecidable in general @depTypesInferenceUndecidable. This issue can be solved by combining bottom-up type inference with top-down type checking, where the programmer simply has to give the types for some expressions and everything else can be inferred.
+
+For the implementation of a bidirectional type system, type checking can be combined with the lowering of a parsed syntax tree, resulting in a function like the following:
+
+```rust
+fn lower(parsed_term: ParseTree, expected_type: Option<Term>, ctx: &mut Context) -> Result<(Term, Term), LoweringError> > {
+  // ...
+}
+```
+Where the lowering step does type checking if given an `expected_type = Some(Term)`, otherwise it does type inference if given `expected_type = None`, returning the lowered `Term` and either the `expected_type` passed, or whatever type was inferred from the `parsed_term` and its `ctx: Context`.
 
 == Week 9
 
+Week nine I felt like I understood the basics of bidirectional type theories, but I didn't quite understood how they applied in the case of dependent types where a type might depend on a term. Thus, I found and attempted to understand the paper called "Generic bidirectional typing for dependent type theories" @felicissimo2024genericbidirectionaltypingdependent. This paper unfortunately was not comprehensible at my level—or perhaps I was simply overloaded by the unfamiliar syntax, so I pivoted to thinking about implementation and what high-level functions I'd need to implement, such as `reduce` and `infer` and `check`. (I hadn't quite realized you could join these things together at this point.)
 
 
-== Week 10
-== Week 11
-== Week 12
-== Week 13 (Final)
+== Week 10-12
 
-Pondered
+Week ten through twelve was mostly implementation work. To get an illustration of the kind of work done that was done during these few weeks, here is a non-exhaustive list of implementation challenges I faced.
 
+- Realizing I could merge `infer` and `check` into a single function.
+- Researching various ways to represent partially and fully-typed expressions, and what it even means to have types of types / type hierarchies. I looked into graph-based type checking @verdonck2023graphbased, and even hypergraphs @yasen2017unificationHypergraphs. I eventually settled on a simple recursive approach done in conjunction with type checking/inference while lowering the syntax tree.
+- Actually implementing the `lower` function and all its corresponding sub-variants that needed to be handled.
+  - Figuring out how to lower functions with multiple inputs where later input's types may be dependent on previous inputs in the function, thus requiring careful note of in what order and how the the types are lowered.
+  - Figuring out how to make the `lower` function, and its associated sub-functions (`lower_func`, `lower_set`, `lower_abs`) work both for values and types (that may contain values).
+- Investigating how to do efficient term reduction (i.e. term reduction where you cache the reduced versions of terms). I was having trouble with this as I didn't know what to do in contexts where a variable was assigned to a value outside of the scope of the term being reduced. I thought perhaps I could replace immediately whenever I found any bound expression while lowering a variable with its already-lowered definition, but that seemed unsatisfying for a couple reasons:
+  1. I would loose the ability to reverse the parsed structure and understand the components a given parsed structure was made from, even if the components were more for human interpretability than computer evaluation.
+  2. What about reduction on subterms where the variable is bound to a lambda abstraction? I suppose this wouldn't matter as much since the variables don't have any assignments, they are just free variables, but it still feels like there could be something better.
+  3. How to deal with multiple caches of terms that are alpha-equivalent? This seems like a major problem with my design as it currently is (where identifiers are explicitly included in the representation of terms). I could make a version without identifiers in theory but that would run into (1), reversing the parsed structure for interpretability.
 
-/*
-= Using the Template
-<chap:usage>
-== Thesis Setup
-<sec:setup>
-The document class is initialized by calling
-```typst #show: nifty-ntnu-thesis.with()``` at the beginning of your `.typ` file. Currently it only supports english. The `nifty-ntnu-thesis` function has a number of options you can set, most of which will be described in this document. The rest will be documented in this templates repository.
+== Week 13 (Final Week)
 
-The titlepage at the beginning of this document is a placeholder to be used when writing
-the thesis. This should be removed before handing in the thesis, by settting `titlepage: false`.
-Instead the official NTNU titlepage for the corresponding thesis type
-should be added as described on Innsida.#footnote[see #link("https://innsida.ntnu.no/wiki/-/wiki/English/Finalizing+the+bachelor+and+master+thesis") for bachelor and master, and #link("https://innsida.ntnu.no/wiki/-/wiki/English/Printing+your+thesis")
-  for PhD.]
+Week thirteen was mostly spent working on other projects, finishing up the code and this report. It was also spent getting nerdsniped by a friend. You see, the ultimate goal of this rust implementation of dependent types, beyond simply gaining experience, is to be able to create a strong enough backbone to bootstrap the language interpreter/checker/compiler within itself to harness all the power of dependent types and everything else (formal verification, term inference, etc.) to make the language the best and as modular as can be, make it truly decentralized. One of the core things in this goal is being able to deal with variability in language structures, type theories, computational substrates, etc, without needing too much plumbing to translate code into data and back. So while I was working on the reduction algorithm for lowering, my friend sent me a link to this website: https://treecalcul.us/. The tree calculus is a model of computation that not only has no long-range links / need for variables like the lambda calculus does—at first glance seemingly fixing the issue I was having with term reduction depending on context to be cache-able. It also potentially supplants the need to even have a compiler in the first place, as tree calculus terms can inspect other tree calculus terms by default @jay2020treebook.
 
-== Title, Author, and Date
-<title-author-and-date>
-The title of your thesis should be set by changing the `title` parameter of the template. The title will appear on the titlepage as well as in the running header of the even numbered pages. If the title is too long for the header, you can use `short-title` to set a version for the header.
+I investigated some more and the author seems to be trying to do very similar things to what I'm doing @jay2025arrogance. But the more interesting part is that the tree calculus is self-interpretable by default. You can write type checkers in the language and run them on programs in the language. Same with type inference, static analysis, compilation and likely everything else that needs some kind of _encoding_ of programs to manipulate their structure, can be done natively in the tree calculus, which I think is extraordinarily cool and is what I was going for initially: a customizable programming language that can be modified from within itself.
 
-The authors should be listed with full names in the `authors` parameter. This is an array, with multiple authors separated by a comma. As with the title, you can use `short-author` to set a version for the header.
+= Next Steps
 
-Use `date` to set the date of the document. It will only appear on
-the temporary title page. To keep track of temporary versions, it can be
-a good idea to use `date: datetime.today()` while working on the thesis.
+I plan to at least attempt to finish the type lowering system I've been working on for the past weeks. I've learned much from it but I would at least like to see it compiled.
 
-== Page Layout
-<page-layout>
-The document class is designed to work with twosided printing. This
-means that all chapters start on odd (right hand) pages, and that blank
-pages are inserted where needed to make sure this happens. However,
-since the theses are very often read on displays, the margins are kept
-the same on even and odd pages in order to avoid that the page is
-jumping back and forth upon reading.
-
-By default this is turned off. You can turn it on by setting
-`chapters-on-odd: false` at the top of the file.
-
-== Structuring Elements
-<structuring-elements>
-The standard typst headings are supported, and are set using =.
-
-=== This is a level 3 heading
-<this-is-a-subsection>
-
-==== This is level 4 heading
-<this-is-a-subsubsection>
-
-===== This is a level 5 heading
-<this-is-a-paragraph>
-
-Headings up to level 3 will be included in the table of
-contents, whereas the lower level structuring elements will not appear
-there. Don’t use too many levels of headings; how many are appropriate,
-will depend on the size of the document. Also, don’t use headings too
-frequently.
-
-Make sure that the chapter and section headings are correctly
-capitalised depending on the language of the thesis, e.g.,
-'#emph[Correct Capitalisation of Titles in English];' vs. '#emph[Korrekt
-  staving av titler på norsk];'.
-
-Simple paragraphs are the lowest structuring elements and should be used
-the most. They are made by leaving one (or more) blank line(s) in the
-`.typ` file. In the typeset document they will appear indented and with
-no vertical space between them.
-
-== Lists
-<lists>
-Numbered and unnumbered lists are used just as in regular typst, but are typeset
-somewhat more densely and with other labels. Unnumbered list:
-
-- first item
-
-- second item
-
-  - first subitem
-
-  - second subitem
-
-    - first subsubitem
-
-    - second subsubitem
-
-- last item
-
-Numbered list:
-
-+ first item
-
-+ second item
-
-  + first subitem
-
-  + second subitem
-
-    + first subsubitem
-
-    + second subsubitem
-
-+ last item
-
-
-== Figures
-<figures>
-Figures are added using ```typst #figure()```. An example is shown in
-#link(<fig:mapNTNU>)[2.1];. By default figures are placed in the flow, exactly where it was specified. To change this set the ```placement``` option to either `top`, `bottom`, or `auto`. To add an image, use ```typst #image()``` and set the `height` or `width` to include the graphics file. If the caption consists of a single sentence fragment (incomplete sentence), it should not be punctuated.
-
+After that, I really want to check out the tree calculus more. There is a very real chance it could be a dead-end, but the promise of self-inspectable programming languages is very promising, and I've already managed to code an interpreted in only 2 days (with a little AI help for the parser). It can already do boolean negation!
 
 #figure(
-  image("figures/kart_student.png", width: 50%),
+  image("tree-calculus-negation.png", width: 100%),
   caption: [
-    The map shows the three main campuses of NTNU.
+    We define `true`, `false`, `not`, and then verify that evaluating `not true` resolves `false` and same for `not false` resolving true.
   ],
 )
-<fig:mapNTNU>
 
-For figures compsed of several sub-figures, the `subpar` module has been used. To use it, use the function ```typst #subfigure()```. See #link(<fig:subfig>)[2.2]
-with #link(<sfig:a>)[\[sfig:a\]] for an example.
-
-#subfigure(
-  figure(
-    image("figures/kart_student.png", width: 100%),
-    caption: [First sub-figure],
-  ),
-  <sfig:a>,
-  figure(
-    image("figures/kart_student.png", width: 100%),
-    caption: [Second sub-figure],
-  ),
-  <sfig:b>,
-  columns: (1fr, 1fr),
-  caption: [A figure composed of two sub-figures. It has a long caption in order to demonstrate how that is typeset.
-  ],
-  <fig:subfig>,
-)
-```typst
-#subfigure(
-  figure(image("figures/kart_student.png", width: 100%),
-    caption: [First sub-figure]), <sfig:a>,
-  figure(image("figures/kart_student.png", width: 100%),
-    caption: [Second sub-figure]), <sfig:b>,
-    columns: (1fr, 1fr),
-   caption: [A figure composed of two sub-figures. It has a long caption in order to demonstrate how that is typeset.
-  ],
-<fig:subfig>
-```
-
-== Tables
-<tables>
-Tables are added using ```typst #table()```, wrapped in a ```typst #figure()``` to allow referencing. An example is given in
-@tab:example1. If the caption consists
-of a single sentence fragment (incomplete sentence), it should not be
-punctuated.
-
-
-#figure(
-  table(
-    stroke: none,
-    columns: 2,
-    table.hline(),
-    table.header([*age*], [*IQ*]),
-    table.hline(),
-    [10], [110],
-    [20], [120],
-    [30], [145],
-    [40], [120],
-    [50], [100],
-    table.hline(),
-  ),
-  caption: [A simple, manually formatted example table],
-) <tab:example1>
-Tables can also be automatically generated from CSV files #footnote(link("https://typst.app/docs/reference/data-loading/csv/")).
-
-== Listings
-<listings>
-Code listings are are also wrapped in a ```typst #figure()```. Code listings are defined by using three ``` `backticks` ```. The programming language can also be provided. See the typst documentation for details. The
-code is set with the monospace font, and the font size is reduced to
-allow for code lines up to at least 60 characters without causing line
-breaks. If the caption consists of a single sentence
-fragment (incomplete sentence), it should not be punctuated.
-
-#figure(caption: "Python code in typst")[
-  ```python
-  import numpy as np
-  import matplotlib.pyplot as plt
-
-  x = np.linspace(0, 1)
-  y = np.sin(2 * np.pi * x)
-
-  plt.plot(x, y)
-  plt.show()
-  ```
-]<lst:python>
-#figure(caption: "C++ code in typst")[
-  ```cpp
-  #include <iostream>
-  using namespace std;
-
-  int main()
-  {
-    cout << "Hello, World!" << endl;
-    return 0;
-  }
-  ```]<lst:cpp>
-
-
-== Equations
-<equations>
-Equations are typeset as normally in typst. It is common to consider
-equations part of the surrounding sentences, and include punctuation in
-the equations accordingly, e.g.,
-$ f (x) = integral_1^x 1 / y thin d y = ln x thin . $ <logarithm>
-For more advanced symbols like, e.g., $grad, pdv(x, y)$, the `physica` module is preloaded.
-As you can see, the simple math syntax makes typst very easy to use.
-== Fonts
-<fonts>
-Charter at 11pt with the has been selected as the main font for the thesis template. For code examples, the monospaced font should be used – for this, a scaled
-version of the DejaVu Sans Mono to match the main font is preselected.
-
-== Cross References
-<sec:crossref>
-Cross references are inserted using `=` in typst. For examples on usage, see @sec:crossref in @chap:usage, @tab:example1
-@fig:mapNTNU, @logarithm,
-@lst:cpp and #link(<app:additional>)[Appendix A];.
-
-
-
-== Bibliography
-<bibliography>
-The bibliography is typeset as in standard typst. It is added in the initializing function as such: ```typst bibliography: bibliography("thesis.bib")```.
-With this setup, using `@` will give a number
-only~@landes1951scrutiny, and ```typst #cite(, form: "prose") ``` will give author and number like this: #cite(<landes1951scrutiny>, form: "prose");.
-
-
-== Appendices
-<appendices>
-Additional material that does not fit in the main thesis but may still
-be relevant to share, e.g., raw data from experiments and surveys, code
-listings, additional plots, pre-project reports, project agreements,
-contracts, logs etc., can be put in appendices. Simply issue the command
-```typst #show: appendix``` in the main `.typst` file, and then the following chapters become appendices. See #link(<app:additional>)[Appendix A]
-for an example.
-
-= Thesis Structure
-<thesis-structure>
-The following is lifted more or less directly from the original template.
-
-The structure of the thesis, i.e., which chapters and other document
-elements that should be included, depends on several factors such as the
-study level (bachelor, master, PhD), the type of project it describes
-(development, research, investigation, consulting), and the diversity
-(narrow, broad). Thus, there are no exact rules for how to do it, so
-whatever follows should be taken as guidelines only.
-
-A thesis, like any book or report, can typically be divided into three
-parts: front matter, body matter, and back matter. Of these, the body
-matter is by far the most important one, and also the one that varies
-the most between thesis types.
-
-== Front Matter
-<sec:frontmatter>
-The front matter is everything that comes before the main part of the
-thesis. It is common to use roman page numbers for this part to indicate
-this. The minimum required front matter consists of a title page,
-abstract(s), and a table of contents. A more complete front matter, in a
-typical order, is as follows.
-
-/ Title page\:: #block[
-    The title page should, at minimum, include the thesis title, authors and
-    a date. A more complete title page would also include the name of the
-    study programme, and possibly the thesis supervisor(s). See
-    #link(<sec:setup>)[2.1];.
-  ]
-
-/ Abstracts\:: #block[
-    The abstract should be an extremely condensed version of the thesis.
-    Think one sentence with the main message from each of the chapters of
-    the body matter as a starting point.
-    #cite(<landes1951scrutiny>, form: "prose") have given some very nice
-    instructions on how to write a good abstract. A thesis from a Norwegian
-    Univeristy should contain abstracts in both Norwegian and English
-    irrespectively of the thesis language (typically with the thesis
-    language coming first).
-  ]
-
-/ Dedication\:: #block[
-    If you wish to dedicate the thesis to someone (increasingly common with
-    increasing study level), you may add a separate page with a dedication
-    here. Since a dedication is a personal statement, no template is given.
-    Design it according to your preference.
-  ]
-
-/ Acknowledgements\:: #block[
-    If there is someone who deserves a 'thank you', you may add
-    acknowledgements here. If so, make it an unnumbered chapter.
-  ]
-
-/ Table of contents\:: #block[
-    A table of contents should always be present in a document at the size
-    of a thesis. It is generated automatically using the `outline()`
-    command. The one generated by this document class also contains the
-    front matter and unnumbered chapters.
-  ]
-
-/ List of figures\:: #block[
-    If the thesis contains many figures that the reader might want to refer
-    back to, a list of figures can be included here. It is generated using
-    `outline()`.
-  ]
-
-/ List of tables\:: #block[
-    If the thesis contains many tables that the reader might want to refer
-    back to, a list of tables can be included here. It is generated using
-    `outline()`.
-  ]
-
-/ List of code listings\:: #block[
-    If the thesis contains many code listings that the reader might want to
-    refer back to, a list of code listings can be included here. It is
-    generated using `outline()`.
-  ]
-
-/ Other lists\:: #block[
-    If there are other list you would like to include, this would be a good
-    place. Examples could be lists of definitions, theorems, nomenclature,
-    abbreviations, glossary etc.
-  ]
-
-/ Preface or Foreword\:: #block[
-    A preface or foreword is a good place to make other personal statements
-    that do not fit whithin the body matter. This could be information about
-    the circumstances of the thesis, your motivation for choosing it, or
-    possibly information about an employer or an external company for which
-    it has been written. Add this in the initializing function of this template.
-  ]
-
-== Body Matter
-<body-matter>
-The body matter consists of the main chapters of the thesis. It starts
-the Arabic page numbering with page~1. There is a great diversity in the
-structure chosen for different thesis types. Common to almost all is
-that the first chapter is an introduction, and that the last one is a
-conclusion followed by the bibliography.
-
-=== Development Project
-<sec:development>
-For many bachelor and some master projects in computer science, the main
-task is to develop something, typically a software prototype, for an
-'employer' (e.g., an external company or a research group). A thesis
-describing such a project is typically structured as a software
-development report whith more or less the following chapters:
-
-/ Introduction\:: #block[
-    The introduction of the thesis should take the reader all the way from
-    the big picture and context of the project to the concrete task that has
-    been solved in the thesis. A nice skeleton for a good introduction was
-    given by #cite(<claerbout1991scrutiny>, form: "prose");:
-    #emph[review–claim–agenda];. In the review part, the background of the
-    project is covered. This leads up to your claim, which is typically that
-    some entity (software, device) or knowledge (research questions) is
-    missing and sorely needed. The agenda part briefly summarises how your
-    thesis contributes.
-  ]
-
-/ Requirements\:: #block[
-    The requirements chapter should lead up to a concrete description of
-    both the functional and non-functional requirements for whatever is to
-    be developed at both a high level (use cases) and lower levels (low
-    level use cases, requirements). If a classical waterfall development
-    process is followed, this chapter is the product of the requirement
-    phase. If a more agile model like, e.g., SCRUM is followed, the
-    requirements will appear through the project as, e.g., the user stories
-    developed in the sprint planning meetings.
-  ]
-
-/ Technical design\:: #block[
-    The technical design chapter describes the big picture of the chosen
-    solution. For a software development project, this would typically
-    contain the system arcitechture (client-server, cloud, databases,
-    networking, services etc.); both how it was solved, and, more
-    importantly, why this architecture was chosen.
-  ]
-
-/ Development Process\:: #block[
-    In this chapter, you should describe the process that was followed. It
-    should cover the process model, why it was chosen, and how it was
-    implemented, including tools for project management, documentation etc.
-    Depending on how you write the other chapters, there may be good reasons
-    to place this chapters somewhere else in the thesis.
-  ]
-
-/ Implementation\:: #block[
-    Here you should describe the more technical details of the solution.
-    Which tools were used (programming languages, libraries, IDEs, APIs,
-    frameworks, etc.). It is a good idea to give some code examples. If
-    class diagrams, database models etc. were not presented in the technical
-    design chapter, they can be included here.
-  ]
-
-/ Deployment\:: #block[
-    This chapter should describe how your solution can be deployed on the
-    employer’s system. It should include technical details on how to set it
-    up, as well as discussions on choices made concerning scalability,
-    maintenance, etc.
-  ]
-
-/ Testing and user feedback\:: #block[
-    This chapter should describe how the system was tested during and after
-    development. This would cover everything from unit testing to user
-    testing; black-box vs. white-box; how it was done, what was learned from
-    the testing, and what impact it had on the product and process.
-  ]
-
-/ Discussion\:: #block[
-    Here you should discuss all aspect of your thesis and project. How did
-    the process work? Which choices did you make, and what did you learn
-    from it? What were the pros and cons? What would you have done
-    differently if you were to undertake the same project over again, both
-    in terms of process and product? What are the societal consequences of
-    your work?
-  ]
-
-/ Conclusion\:: #block[
-    The conclusion chapter is usually quite short – a paragraph or two –
-    mainly summarising what was achieved in the project. It should answer
-    the #emph[claim] part of the introduction. It should also say something
-    about what comes next ('future work').
-  ]
-
-/ Bibliography\:: #block[
-    The bibliography should be a list of quality-assured peer-reviewed
-    published material that you have used throughout the work with your
-    thesis. All items in the bibliography should be referenced in the text.
-    The references should be correctly formatted depending on their type
-    (book, journal article, conference publication, thesis etc.). The bibliography should
-    not contain links to arbitrary dynamic web pages where the content is
-    subject to change at any point of time. Such links, if necessary, should
-    rather be included as footnotes throughout the document. The main point
-    of the bibliography is to back up your claims with quality-assured
-    material that future readers will actually be able to retrieve years
-    ahead.
-  ]
-
-=== Research Project
-<sec:resesarch>
-For many master and some bachelor projects in computer science, the main
-task is to gain knew knowledge about something. A thesis describing such
-a project is typically structed as an extended form of a scientific
-paper, following the so-called IMRaD (Introduction, Method, Results, and
-Discussion) model:
-
-/ Introduction\:: #block[
-    See #link(<sec:development>)[3.2.1];.
-  ]
-
-/ Background\:: #block[
-    Research projects should always be based on previous research on the
-    same and/or related topics. This should be described as a background to
-    the thesis with adequate bibliographical references. If the material
-    needed is too voluminous to fit nicely in the review part of the
-    introduction, it can be presented in a separate background chapter.
-  ]
-
-/ Method\:: #block[
-    The method chapter should describe in detail which activities you
-    undertake to answer the research questions presented in the
-    introduction, and why they were chosen. This includes detailed
-    descriptions of experiments, surveys, computations, data analysis,
-    statistical tests etc.
-  ]
-
-/ Results\:: #block[
-    The results chapter should simply present the results of applying the
-    methods presented in the method chapter without further ado. This
-    chapter will typically contain many graphs, tables, etc. Sometimes it is
-    natural to discuss the results as they are presented, combining them
-    into a 'Results and Discussion' chapter, but more often they are kept
-    separate.
-  ]
-
-/ Discussion\:: #block[
-    See #link(<sec:development>)[3.2.1];.
-  ]
-
-/ Conclusion\:: #block[
-    See #link(<sec:development>)[3.2.1];.
-  ]
-
-/ Bibliography\:: #block[
-    See #link(<sec:development>)[3.2.1];.
-  ]
-
-=== Monograph PhD Thesis
-<sec:monograph>
-Traditionally, it has been common to structure a PhD thesis as a single
-book – a #emph[monograph];. If the thesis is in the form of one single
-coherent research project, it can be structured along the lines of
-#link(<sec:resesarch>)[3.2.2];. However, for such a big work that a PhD
-thesis constitutes, the tasks undertaken are often more diverse, and
-thus more naturally split into several smaller research projects as
-follows:
-
-/ Introduction\:: #block[
-    The introduction would serve the same purpose as for a smaller research
-    project described in #link(<sec:development>)[3.2.1];, but would
-    normally be somewhat more extensive. The #emph[agenda] part should
-    inform the reader about the structure of the rest of the document, since
-    this may vary significantly between theses.
-  ]
-
-/ Background\:: #block[
-    Where as background chapters are not necessarily needed in smaller
-    works, they are almost always need in PhD thesis. They may even be split
-    into several chapters if there are significantly different topics to
-    cover. See #link(<sec:resesarch>)[3.2.2];.
-  ]
-
-/ Main chapters\:: #block[
-    Each main chapter can be structured more or less like a scientific
-    paper. Depending on how much is contained in the introduction and
-    background sections, the individual introduction and background sections
-    can be significantly reduced or even omitted completely.
-
-    - (Introduction)
-
-    - (Background)
-
-    - Method
-
-    - Results
-
-    - Discussion
-
-    - Conclusion
-  ]
-
-/ Discussion\:: #block[
-    In addition to the discussions within each of the individual chapters,
-    the contribution of the thesis #emph[as a whole] should be thoroughly
-    discussed here.
-  ]
-
-/ Conclusion\:: #block[
-    In addition to the conclusions of each of the individual chapters, the
-    overall conclusion of the thesis, and how the different parts contribute
-    to it, should be presented here. The conclusion should answer to the
-    research questions set out in the main introduction. See also
-    #link(<sec:development>)[3.2.1];.
-  ]
-
-/ Bibliography\:: #block[
-    See #link(<sec:development>)[3.2.1];.
-  ]
-
-=== Compiled PhD Thesis
-<sec:compiledphd>
-Instead of writing up the PhD thesis as a monograph, compiled PhD theses
-(also known as stapler theses, sandwich theses, integrated theses, PhD
-by published work) consisting of reproductions of already published
-research papers are becoming increasingly common. At least some of the
-papers should already have been accepted for publication at the time of
-submission of the thesis, and thus have been through a real quality
-control by peer review.
-
-/ Introduction\:: #block[
-    See #link(<sec:monograph>)[3.2.3];.
-  ]
-
-/ Background\:: #block[
-    See #link(<sec:monograph>)[3.2.3];.
-  ]
-
-/ Main contributions\:: #block[
-    This chapter should sum up #emph[and integrate] the contribution of the
-    thesis as a whole. It should not merely be a listing of the abstracts of
-    the individual papers – they are already available in the attached
-    papers, and, as such, not needed here.
-  ]
-
-/ Discussion\:: #block[
-    See #link(<sec:monograph>)[3.2.3];.
-  ]
-
-/ Conclusion\:: #block[
-    See #link(<sec:monograph>)[3.2.3];.
-  ]
-
-/ Bibliography\:: #block[
-    See #link(<sec:development>)[3.2.1];.
-  ]
-
-/ Paper I\:: #block[
-    First included paper with main contributions. It can be included
-    verbatim as a PDF. The publishers PDF should be used if the copyright
-    permits it. This should be checked with the SHERPA/RoMEO
-    database#footnote[#link("http://sherpa.ac.uk/romeo/index.php");] or with
-    the publisher. Even when it is no general permission by the publisher,
-    you may write and ask for one.
-  ]
-
-/ Paper II\:: #block[
-    etc.
-  ]
-
-== Back Matter
-<back-matter>
-Material that does not fit elsewhere, but that you would still like to
-share with the readers, can be put in appendices. See
-#link(<app:additional>)[5];.
-
-= Conclusion
-<conclusion>
-You definitely should use the `nifty-ntnu-thesis` typst template for your
-thesis.
-
-#show: appendix.with(chapters-on-odd: chapters-on-odd)
-= Additional Material
-<app:additional>
-Additional material that does not fit in the main thesis but may still
-be relevant to share, e.g., raw data from experiments and surveys, code
-listings, additional plots, pre-project reports, project agreements,
-contracts, logs etc., can be put in appendices. Simply issue the command
-```#show: appendix``` in the main `.typ` file, and make one chapter per appendix. */
+I hope to continue working on this over the summer, continue learning about the tree calculus and how feasible it is for type theory formalization and compilation. Thanks for reading!
