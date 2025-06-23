@@ -63,17 +63,17 @@ impl<'a> fmt::Display for TermDisplayer<'a> {
 			// if we should be looking up idents, lookup ident name and return
 			if let Some(string) = self.store.term_ident.get(&self.key) {
 				return write!(f, "{}", string);
-			} else {
-				write!(
-					f,
-					"[FIL: {}]",
-					Self {
-						key: self.key,
-						store: self.store,
-						to_ident: false
-					}
-				)?;
-			}
+			} /* else {
+				 write!(
+					 f,
+					 "[FIL: {}]",
+					 Self {
+						 key: self.key,
+						 store: self.store,
+						 to_ident: false
+					 }
+				 )?;
+			 } */
 		}
 
 		match self.store.get_term(self.key) {
@@ -89,9 +89,9 @@ impl<'a> fmt::Display for TermDisplayer<'a> {
 
 pub struct TermStore {
 	terms: SlotMap<TreeTermKey, TreeTerm>,
-	dedup: HashMap<TreeTerm, TreeTermKey>,    // dedup
-	cache: HashMap<TreeTermKey, TreeTermKey>, // For normalize memoization
-	pub leaf: TreeTermKey,                    // To have one canonical Leaf if needed
+	dedup: HashMap<TreeTerm, TreeTermKey>,                   // dedup terms
+	cache: HashMap<(TreeTermKey, TreeTermKey), TreeTermKey>, // Cache reduction of two normal trees
+	pub leaf: TreeTermKey,                                   // To have one canonical Leaf if needed
 	ident_term: HashMap<String, TreeTermKey>,
 	term_ident: HashMap<TreeTermKey, String>,
 }
@@ -129,8 +129,10 @@ impl TermStore {
 	}
 	pub fn lower_and_reduce(&mut self, expr: TreeExpr) -> Result<TreeTermKey, TreeLoweringError> {
 		let term = self.lower(expr)?;
-		let reduced_term = self.reduce(term);
-		Ok(reduced_term)
+		Ok(match self.get_term(term).unwrap() {
+			TreeTerm::Fork { left, right } => self.apply(left, right),
+			_ => term,
+		})
 	}
 	pub fn lower(&mut self, expr: TreeExpr) -> Result<TreeTermKey, TreeLoweringError> {
 		match expr {
@@ -185,48 +187,17 @@ impl TermStore {
 			to_ident,
 		}
 	}
-	// reduces a term
-	pub fn reduce(&mut self, term: TreeTermKey) -> TreeTermKey {
-		// lookup to see if already been reduced in past
-		let result = match if let Some(cached_key) = self.cache.get(&term) {
+	fn apply(&mut self, func: TreeTermKey, arg: TreeTermKey) -> TreeTermKey {
+		// check for cached eval
+		if let Some(cached_key) = self.cache.get(&(func, arg)) {
 			println!(
-				"found cache: {} -> {}",
-				self.display_term(term, false),
+				"found cache: apply({}, {}) -> {}",
+				self.display_term(func, false),
+				self.display_term(arg, false),
 				self.display_term(*cached_key, false)
 			);
 			return *cached_key;
-		} else {
-			self.terms.get(term).expect("invalid key").clone()
-		} {
-			TreeTerm::Fork { left, right } => self.reduce_fork(left, right),
-			_ => term,
-		};
-
-		println!(
-			"reducing: {} -> {}",
-			self.display_term(term, false),
-			self.display_term(result, false)
-		);
-		self.cache.insert(term, result);
-		result
-	}
-	fn reduce_fork(&mut self, func: TreeTermKey, arg: TreeTermKey) -> TreeTermKey {
-		/*
-		   let rec apply a b =
-			 match a with
-			 | Leaf -> Stem b
-			 | Stem a -> Fork (a, b)
-			 | Fork (Leaf, a3) -> a3
-			 | Fork (Stem a1, a2) -> apply (apply a1 b) (apply a2 b)
-			 | Fork (Fork (a1, a2), a3) ->
-			 match b with
-			 | Leaf -> a1
-			 | Stem u -> apply a2 u
-			 | Fork (u, v) -> apply (apply a3 u) v
-			 let _not = Fork (Fork (_true, Fork (Leaf, _false)), Leaf)
-
-			 ((true (t false)) t)
-		*/
+		}
 		// get result
 		let result_key = match self.get_term(func) {
 			Some(TreeTerm::Leaf) => self.stem(arg),       // 0a: (t a) => Stem(a)
@@ -235,16 +206,16 @@ impl TermStore {
 				Some(TreeTerm::Leaf) => a3, // ((t a3) arg) => a3
 				Some(TreeTerm::Stem(a1)) => {
 					// (t a) b => (a b)
-					let app1 = self.reduce_fork(a1, arg);
-					let app2 = self.reduce_fork(a3, arg);
+					let app1 = self.apply(a1, arg);
+					let app2 = self.apply(a3, arg);
 					self.fork(app1, app2)
 				}
 				Some(TreeTerm::Fork { left: a1, right: a2 }) => match self.get_term(arg) {
 					Some(TreeTerm::Leaf) => a1,
-					Some(TreeTerm::Stem(u)) => self.reduce_fork(a2, u),
+					Some(TreeTerm::Stem(u)) => self.apply(a2, u),
 					Some(TreeTerm::Fork { left: u, right: v }) => {
-						let app1 = self.reduce_fork(a3, u);
-						self.reduce_fork(app1, v)
+						let app1 = self.apply(a3, u);
+						self.apply(app1, v)
 					}
 					None => panic!("invalid key"),
 				},
@@ -252,6 +223,13 @@ impl TermStore {
 			},
 			None => panic!("invalid key"),
 		};
+
+		println!(
+			"reduced: apply({}, {}) -> {}",
+			self.display_term(func, false),
+			self.display_term(arg, false),
+			self.display_term(result_key, false),
+		);
 		result_key
 	}
 }
@@ -272,11 +250,10 @@ mod tests {
 		let fork_true_fork_leaf_false = s.fork(_true, fork_leaf_false);
 		let _not = s.fork(fork_true_fork_leaf_false, s.leaf);
 
-		let not_false = s.fork(_not, _false);
-		let app1 = s.reduce(not_false);
+		let app1 = s.apply(_not, _false);
 		println!("NOT False: {}", s.display_term(app1, false));
 		assert_eq!(app1, _true);
-		let app2 = s.reduce_fork(_not, _true);
+		let app2 = s.apply(_not, _true);
 		println!("NOT True: {}", s.display_term(app2, false));
 		assert_eq!(app2, _false);
 	}

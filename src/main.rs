@@ -17,9 +17,19 @@ use rustyline_async::{Readline, ReadlineEvent};
 use winnow::Parser;
 
 fn main() -> io::Result<()> {
-	// REPL loop that parses a string with tree_parse and then pretty-prints the parsed structure using the Display impl:
-
 	let mut store = tree_eval::TermStore::new();
+
+	// write some code that if a filename is included in cli, splits the file into lines and adds to store.
+	if let Some(filename) = env::args().nth(1) {
+		let program = std::fs::read_to_string(filename)?;
+		for line in program.lines() {
+			if let Ok(tokens) = tree_parse::lexer(line) {
+				if let Ok((Some(ident), expr)) = tree_parse::parse_line.parse(&tokens[..]) {
+					let _ = store.lower_assign((ident, expr));
+				}
+			}
+		}
+	}
 
 	let (mut rl, mut wr) = Readline::new("> ".to_string()).expect("couldn't create readline");
 
