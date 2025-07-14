@@ -7,6 +7,8 @@ edition = "2021"
 
 [dependencies]
 async-std = "1.13.1"
+clap = { version = "4.5.40", features = ["derive"] }
+egg = "0.10.0"
 indexmap = "2.7.0"
 iter-enum = "1.2.0"
 itertools = "0.13.0"

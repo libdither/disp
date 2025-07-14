@@ -117,6 +117,9 @@ impl TermStore {
 			term_ident: HashMap::new(),
 		}
 	}
+	pub fn iter_idents(&self) -> impl Iterator<Item = (&String, &TreeTermKey)> {
+		self.ident_term.iter()
+	}
 
 	pub fn lower_assign(&mut self, assign: (String, TreeExpr)) -> Result<TreeTermKey, TreeLoweringError> {
 		let ident = assign.0;
