@@ -17,3 +17,7 @@ slotmap = "1.0.7"
 smallvec = "2.0.0-alpha.11"
 thiserror = "2.0.9"
 winnow = "0.6.20"
+
+[[bin]]
+name = "tree_egg"
+path = "src/tree_egg.rs"
