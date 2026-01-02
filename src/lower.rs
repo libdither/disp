@@ -1,6 +1,6 @@
 use crate::{
 	eval::reduce,
-	parse::{ParseTree, ParseTreeArgSetItem, ParseTreeSetItem},
+	// parse::{ParseTree, ParseTreeArgSetItem, ParseTreeSetItem},
 };
 use core::fmt;
 use indexmap::IndexMap;
@@ -45,8 +45,6 @@ pub enum Term {
 		args: TermKey,
 	},
 }
-const SIZE: usize = size_of::<Term>();
-
 /// Type := ?
 /// A := (T : Type) -> List{T} : (Type -> Type)
 /// let Type := Type : ?
@@ -242,7 +240,7 @@ impl<'c> fmt::Display for FormatTerm<'c> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		let ctx = self.ctx;
 		let Some(term) = ctx.terms.get(self.term) else {
-			write!(f, "{:?}", self.term);
+			write!(f, "{:?}", self.term)?;
 			return Ok(());
 		};
 		match term {
