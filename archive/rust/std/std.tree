@@ -1,6 +1,0 @@
-true := (t)
-false := t
-not := ((true  (false t)) t)
-id := ((t t) t)
-
-main := id
