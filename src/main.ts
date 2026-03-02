@@ -1,8 +1,4 @@
-import './app.css'
-import App from './App.svelte'
+#!/usr/bin/env node
+import { runRepl } from "./repl.js"
 
-const app = new App({
-    target: document.getElementById('app')!,
-})
-
-export default app
+runRepl().catch(console.error)
