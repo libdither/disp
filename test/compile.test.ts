@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest"
-import { parseExpr } from "../src/parse.js"
-import { compile } from "../src/compile.js"
+import { parseExpr, parseLine, type SDecl } from "../src/parse.js"
+import { compile, compileAndEval, astToExpr, collapse } from "../src/compile.js"
 import {
   LEAF, stem, fork, treeEqual, applyTree, apply, prettyTree, I, K,
-  type Tree,
+  type Tree, BudgetExhausted,
 } from "../src/tree.js"
 
 // Helper: compile a string expression
@@ -180,5 +180,174 @@ describe("compile - Pi types", () => {
     // Should behave like identity: piTree x = x
     const x = stem(LEAF)
     expect(treeEqual(run(piTree, x), x)).toBe(true)
+  })
+})
+
+describe("compile - bracket abstraction optimization", () => {
+  // Helper to count tree nodes
+  function treeSize(t: Tree): number {
+    if (t.tag === "leaf") return 1
+    if (t.tag === "stem") return 1 + treeSize(t.child)
+    return 1 + treeSize(t.left) + treeSize(t.right)
+  }
+
+  it("eta reduction: {x} -> f x compiles same as f (when f is a def)", () => {
+    const defs = new Map<string, Tree>()
+    const idTree = c("{x} -> x")
+    defs.set("f", idTree)
+    const etaExpanded = c("{x} -> f x", defs)
+    // After eta reduction, {x} -> f x should compile to f's tree
+    expect(treeEqual(etaExpanded, idTree)).toBe(true)
+  })
+
+  it("{x y} -> x compiles to K", () => {
+    const konst = c("{x y} -> x")
+    // K = stem(LEAF). {x y} -> x should compile to K.
+    expect(treeEqual(konst, K)).toBe(true)
+  })
+
+  it("optimized trees are smaller than naive", () => {
+    // S combinator: {f g x} -> f x (g x)
+    const s = c("{f g x} -> f x (g x)")
+    // With optimization, this should be reasonably small
+    // Naive would be much larger
+    const size = treeSize(s)
+    expect(size).toBeLessThan(30)
+  })
+
+  it("compiled true selects first argument", () => {
+    const tru = c("true")
+    const r = LEAF
+    const a = stem(LEAF)
+    const b = fork(LEAF, LEAF)
+    expect(treeEqual(run(tru, r, a, b), a)).toBe(true)
+  })
+
+  it("compiled false selects second argument", () => {
+    const fls = c("false")
+    const r = LEAF
+    const a = stem(LEAF)
+    const b = fork(LEAF, LEAF)
+    expect(treeEqual(run(fls, r, a, b), b)).toBe(true)
+  })
+
+  it("compiled 3 applies s three times", () => {
+    const three = c("3")
+    const r = LEAF
+    const s = I
+    const z = stem(stem(LEAF))
+    const result = run(three, r, s, z)
+    const expected = run(s, run(s, run(s, z)))
+    expect(treeEqual(result, expected)).toBe(true)
+  })
+
+  it("optimization preserves semantics for complex expressions", () => {
+    const add = c("{m n R s z} -> m R s (n R s z)")
+    const zero = c("{R s z} -> z")
+    const succ = c("{n R s z} -> s (n R s z)")
+
+    // Test that add still works correctly
+    const one = run(succ, zero)
+    const two = run(succ, one)
+    const result = run(add, one, one)
+
+    const r = LEAF
+    const s = I
+    const z = stem(stem(LEAF))
+    expect(treeEqual(run(result, r, s, z), run(two, r, s, z))).toBe(true)
+  })
+})
+
+describe("compileAndEval - runtime evaluation", () => {
+  // Helper: build defs from declaration strings
+  function buildDefs(decls: string[]): Map<string, Tree> {
+    const defs = new Map<string, Tree>()
+    for (const d of decls) {
+      const parsed = parseLine(d)
+      if ("name" in parsed) {
+        const decl = parsed as SDecl
+        defs.set(decl.name, compileAndEval(decl.value, defs))
+      }
+    }
+    return defs
+  }
+
+  function ce(input: string, defs?: Map<string, Tree>): Tree {
+    return compileAndEval(parseExpr(input), defs)
+  }
+
+  // Helper: test Church boolean behavior (apply R t f, check result)
+  function testBool(tree: Tree, expected: "true" | "false"): void {
+    const budget = { remaining: 10000 }
+    const r = LEAF
+    const t = stem(LEAF)
+    const f = stem(stem(LEAF))
+    const result = apply(apply(apply(tree, r, budget), t, budget), f, budget)
+    if (expected === "true") {
+      expect(treeEqual(result, t)).toBe(true)
+    } else {
+      expect(treeEqual(result, f)).toBe(true)
+    }
+  }
+
+  // Helper: test Church nat behavior (apply R △ △, count stem depth)
+  function testNat(tree: Tree, expected: number): void {
+    const budget = { remaining: 10000 }
+    const result = apply(apply(apply(tree, LEAF, budget), LEAF, budget), LEAF, budget)
+    let node = result
+    let count = 0
+    while (node.tag === "stem") { count++; node = node.child }
+    expect(count).toBe(expected)
+    expect(node.tag).toBe("leaf")
+  }
+
+  it("not true behaves as false", () => {
+    const defs = buildDefs([
+      "let not := {b R t f} -> b R f t",
+    ])
+    const notTrue = ce("not true", defs)
+    testBool(notTrue, "false")
+  })
+
+  it("not false behaves as true", () => {
+    const defs = buildDefs([
+      "let not := {b R t f} -> b R f t",
+    ])
+    const notFalse = ce("not false", defs)
+    testBool(notFalse, "true")
+  })
+
+  it("add 1 1 behaves as 2", () => {
+    const defs = buildDefs([
+      "let add := {m n R s z} -> m R s (n R s z)",
+    ])
+    const result = ce("add 1 1", defs)
+    testNat(result, 2)
+  })
+
+  it("add with number literals: 1 + 2 = 3", () => {
+    const defs = buildDefs([
+      "let add := {m n R s z} -> m R s (n R s z)",
+    ])
+    const result = ce("add 1 2", defs)
+    testNat(result, 3)
+  })
+
+  it("succ zero has same tree as 1 via compileAndEval", () => {
+    const defs = buildDefs([
+      "let zero := {R s z} -> z",
+      "let succ := {n R s z} -> s (n R s z)",
+    ])
+    const succZero = ce("succ zero", defs)
+    testNat(succZero, 1)
+  })
+
+  it("budget exhaustion throws for large computation with tiny budget", () => {
+    const defs = buildDefs([
+      "let mul := {m n R s z} -> m R (n R s) z",
+    ])
+    expect(() => {
+      compileAndEval(parseExpr("mul 3 (mul 3 (mul 3 3))"), defs, { remaining: 10 })
+    }).toThrow(BudgetExhausted)
   })
 })

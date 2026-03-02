@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   tokenize, parseExpr, parseLine, printExpr, ParseError,
+  recognizeChurchLiteral,
   svar, sapp, slam, spi, stype,
   type SDecl, type SExpr,
 } from "../src/parse.js"
@@ -157,4 +158,100 @@ describe("round-trip", () => {
       expect(ast2).toEqual(ast)
     })
   }
+})
+
+describe("tokenizer - numbers and booleans", () => {
+  it("tokenizes number literal", () => {
+    const tokens = tokenize("42")
+    expect(tokens[0]).toEqual({ tag: "num", value: 42 })
+  })
+
+  it("tokenizes true/false keywords", () => {
+    const tokens = tokenize("true false")
+    expect(tokens[0].tag).toBe("kw_true")
+    expect(tokens[1].tag).toBe("kw_false")
+  })
+
+  it("tokenizes mixed", () => {
+    const tokens = tokenize("not true 3")
+    expect(tokens.map(t => t.tag)).toEqual(["ident", "kw_true", "num", "eof"])
+  })
+})
+
+describe("parser - literals", () => {
+  it("parses true as Church boolean", () => {
+    expect(parseExpr("true")).toEqual(slam(["R", "t", "f"], svar("t")))
+  })
+
+  it("parses false as Church boolean", () => {
+    expect(parseExpr("false")).toEqual(slam(["R", "t", "f"], svar("f")))
+  })
+
+  it("parses 0 as Church zero", () => {
+    expect(parseExpr("0")).toEqual(slam(["R", "s", "z"], svar("z")))
+  })
+
+  it("parses 3 as Church numeral", () => {
+    const expected = slam(["R", "s", "z"],
+      sapp(svar("s"), sapp(svar("s"), sapp(svar("s"), svar("z"))))
+    )
+    expect(parseExpr("3")).toEqual(expected)
+  })
+
+  it("parses literals in application", () => {
+    expect(parseExpr("not true")).toEqual(
+      sapp(svar("not"), slam(["R", "t", "f"], svar("t")))
+    )
+  })
+})
+
+describe("recognizeChurchLiteral", () => {
+  it("recognizes true", () => {
+    expect(recognizeChurchLiteral(slam(["R", "t", "f"], svar("t")))).toBe("true")
+  })
+
+  it("recognizes false", () => {
+    expect(recognizeChurchLiteral(slam(["R", "t", "f"], svar("f")))).toBe("false")
+  })
+
+  it("recognizes 0 as false (structurally identical)", () => {
+    expect(recognizeChurchLiteral(slam(["R", "s", "z"], svar("z")))).toBe("false")
+  })
+
+  it("recognizes 3", () => {
+    const three = slam(["R", "s", "z"],
+      sapp(svar("s"), sapp(svar("s"), sapp(svar("s"), svar("z"))))
+    )
+    expect(recognizeChurchLiteral(three)).toBe("3")
+  })
+
+  it("returns null for non-literal", () => {
+    expect(recognizeChurchLiteral(svar("x"))).toBeNull()
+  })
+})
+
+describe("pretty printer - literals", () => {
+  it("prints true keyword", () => {
+    expect(printExpr(parseExpr("true"))).toBe("true")
+  })
+
+  it("prints false keyword", () => {
+    expect(printExpr(parseExpr("false"))).toBe("false")
+  })
+
+  it("prints number literal", () => {
+    expect(printExpr(parseExpr("3"))).toBe("3")
+  })
+
+  it("round-trips true", () => {
+    const ast = parseExpr("true")
+    const ast2 = parseExpr(printExpr(ast))
+    expect(ast2).toEqual(ast)
+  })
+
+  it("round-trips 5", () => {
+    const ast = parseExpr("5")
+    const ast2 = parseExpr(printExpr(ast))
+    expect(ast2).toEqual(ast)
+  })
 })

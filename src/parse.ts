@@ -34,6 +34,7 @@ export const stype: SExpr = { tag: "stype" }
 
 export type Token =
   | { tag: "ident", value: string }
+  | { tag: "num", value: number }
   | { tag: "lbrace" }   // {
   | { tag: "rbrace" }   // }
   | { tag: "lparen" }   // (
@@ -43,6 +44,8 @@ export type Token =
   | { tag: "coloneq" }  // :=
   | { tag: "kw_let" }
   | { tag: "kw_type" }
+  | { tag: "kw_true" }
+  | { tag: "kw_false" }
   | { tag: "eof" }
 
 export class ParseError extends Error {
@@ -80,6 +83,14 @@ export function tokenize(input: string): Token[] {
     if (input[i] === ')') { tokens.push({ tag: "rparen" }); i++; continue }
     if (input[i] === ':') { tokens.push({ tag: "colon" }); i++; continue }
 
+    // Number literals
+    if (/[0-9]/.test(input[i])) {
+      let start = i
+      while (i < input.length && /[0-9]/.test(input[i])) i++
+      tokens.push({ tag: "num", value: parseInt(input.substring(start, i), 10) })
+      continue
+    }
+
     // Identifiers and keywords
     if (/[a-zA-Z_]/.test(input[i])) {
       let start = i
@@ -87,6 +98,8 @@ export function tokenize(input: string): Token[] {
       const word = input.substring(start, i)
       if (word === "let") tokens.push({ tag: "kw_let" })
       else if (word === "Type") tokens.push({ tag: "kw_type" })
+      else if (word === "true") tokens.push({ tag: "kw_true" })
+      else if (word === "false") tokens.push({ tag: "kw_false" })
       else tokens.push({ tag: "ident", value: word })
       continue
     }
@@ -246,9 +259,10 @@ class Parser {
   private isAtomStart(): boolean {
     const tag = this.peek().tag
     return tag === "ident" || tag === "kw_type" || tag === "lparen"
+      || tag === "num" || tag === "kw_true" || tag === "kw_false"
   }
 
-  // Atom: identifier, Type, or parenthesized expression
+  // Atom: identifier, Type, number, boolean, or parenthesized expression
   private parseAtom(): SExpr {
     const tok = this.peek()
 
@@ -260,6 +274,23 @@ class Parser {
     if (tok.tag === "kw_type") {
       this.advance()
       return stype
+    }
+
+    if (tok.tag === "kw_true") {
+      this.advance()
+      // true = {R t f} -> t
+      return slam(["R", "t", "f"], svar("t"))
+    }
+
+    if (tok.tag === "kw_false") {
+      this.advance()
+      // false = {R t f} -> f
+      return slam(["R", "t", "f"], svar("f"))
+    }
+
+    if (tok.tag === "num") {
+      this.advance()
+      return churchNumeralExpr((tok as { tag: "num", value: number }).value)
     }
 
     if (tok.tag === "lparen") {
@@ -279,6 +310,43 @@ class Parser {
     }
     return this.parseExpr()
   }
+}
+
+// --- Church encoding helpers ---
+
+// Build Church numeral n = {R s z} -> s^n(z)
+function churchNumeralExpr(n: number): SExpr {
+  let body: SExpr = svar("z")
+  for (let i = 0; i < n; i++) {
+    body = sapp(svar("s"), body)
+  }
+  return slam(["R", "s", "z"], body)
+}
+
+// Recognize Church-encoded literals in SExpr for pretty printing
+export function recognizeChurchLiteral(expr: SExpr): string | null {
+  if (expr.tag !== "slam") return null
+  if (expr.params.length !== 3) return null
+
+  const [_r, s, z] = expr.params
+
+  // Check for true: body is just the 2nd param (distinct from all numerals)
+  if (expr.body.tag === "svar" && expr.body.name === s) return "true"
+
+  // Check for Church numeral pattern: s^n(z)
+  let body = expr.body
+  let count = 0
+  while (body.tag === "sapp" && body.func.tag === "svar" && body.func.name === s) {
+    count++
+    body = body.arg
+  }
+  if (body.tag === "svar" && body.name === z) {
+    // 0 is structurally identical to false; prefer "false" for display
+    if (count === 0) return "false"
+    return String(count)
+  }
+
+  return null
 }
 
 // --- Public API ---
@@ -309,6 +377,8 @@ export function printExpr(expr: SExpr): string {
       return `${func} ${arg}`
     }
     case "slam": {
+      const literal = recognizeChurchLiteral(expr)
+      if (literal !== null) return literal
       return `{${expr.params.join(" ")}} -> ${printExpr(expr.body)}`
     }
     case "spi": {
@@ -324,5 +394,6 @@ export function printExpr(expr: SExpr): string {
 
 function printAtom(expr: SExpr): string {
   if (expr.tag === "svar" || expr.tag === "stype") return printExpr(expr)
+  if (expr.tag === "slam" && recognizeChurchLiteral(expr) !== null) return printExpr(expr)
   return `(${printExpr(expr)})`
 }

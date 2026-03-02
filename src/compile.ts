@@ -11,7 +11,7 @@
 //   I = identity combinator
 
 import { type SExpr } from "./parse.js"
-import { type Tree, LEAF, stem, fork, treeApply, I } from "./tree.js"
+import { type Tree, LEAF, stem, fork, treeApply, apply, I } from "./tree.js"
 
 // --- Expr: intermediate representation ---
 
@@ -99,10 +99,15 @@ export function bracketAbstract(name: string, expr: Expr): Expr {
         return kOf(expr)
       }
 
+      // Eta reduction: [x](f x) = f when x not free in f
+      if (!freeInFunc && expr.arg.tag === "fvar" && expr.arg.name === name) {
+        return expr.func
+      }
+
       // S ([x]f) ([x]g)
       const f = bracketAbstract(name, expr.func)
       const g = bracketAbstract(name, expr.arg)
-      return sOf(f, g)
+      return optimizedS(f, g)
     }
   }
 }
@@ -162,6 +167,46 @@ function sOf(f: Expr, g: Expr): Expr {
   return eApp(stemStemF, g)              // fork(stem(collapse(f)), collapse(g))
 }
 
+// --- Optimization helpers ---
+
+// Recognize K(e) = eApp(eTree(stem(LEAF)), e), return the inner e or null
+function isKOf(e: Expr): Expr | null {
+  if (e.tag === "app" && e.func.tag === "tree" && e.func.value.tag === "stem" && e.func.value.child.tag === "leaf") {
+    return e.arg
+  }
+  return null
+}
+
+// Recognize the identity tree I
+function isI(e: Expr): boolean {
+  return e.tag === "tree" && e.value.id === I.id
+}
+
+// Build S(f, g) with optimizations:
+//   S(K p)(K q) = K(p q)  — both constant, apply at compile time
+//   S(K p) I = p           — eta for K-wrapped value
+function optimizedS(f: Expr, g: Expr): Expr {
+  const kf = isKOf(f)
+  const kg = isKOf(g)
+
+  if (kf !== null && kg !== null) {
+    // S(K p)(K q) = K(apply(p, q))
+    // But p and q are Exprs, not Trees. We can only optimize when both are trees.
+    if (kf.tag === "tree" && kg.tag === "tree") {
+      return kOf(eTree(apply(kf.value, kg.value)))
+    }
+    // Otherwise: K(p q) — still saves one abstraction level
+    return kOf(eApp(kf, kg))
+  }
+
+  if (kf !== null && isI(g)) {
+    // S(K p) I = p
+    return kf
+  }
+
+  return sOf(f, g)
+}
+
 // --- Phase 3: Collapse Expr → Tree ---
 
 export function collapse(expr: Expr): Tree {
@@ -175,9 +220,27 @@ export function collapse(expr: Expr): Tree {
   }
 }
 
+// --- Phase 3b: Collapse with eager evaluation ---
+
+export function collapseAndEval(expr: Expr, budget = { remaining: 100000 }): Tree {
+  switch (expr.tag) {
+    case "tree":
+      return expr.value
+    case "fvar":
+      throw new Error(`Free variable in collapse: ${expr.name}`)
+    case "app":
+      return apply(collapseAndEval(expr.func, budget), collapseAndEval(expr.arg, budget), budget)
+  }
+}
+
 // --- Top-level compile ---
 
 export function compile(ast: SExpr, defs: Map<string, Tree> = new Map()): Tree {
   const expr = astToExpr(ast, defs)
   return collapse(expr)
+}
+
+export function compileAndEval(ast: SExpr, defs: Map<string, Tree> = new Map(), budget = { remaining: 100000 }): Tree {
+  const expr = astToExpr(ast, defs)
+  return collapseAndEval(expr, budget)
 }

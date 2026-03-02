@@ -125,22 +125,18 @@ describe("type checker - lambda and application", () => {
 })
 
 describe("type checker - Church booleans", () => {
-  it("checks Church boolean definitions", () => {
+  it("checks Church boolean type for true/false keywords", () => {
     const ctx = declCtx([
       "let Bool : Type := (R : Type) -> R -> R -> R",
-      "let true : Bool := {R t f} -> t",
-      "let false : Bool := {R t f} -> f",
     ])
-    // true and false should have type Bool
-    expect(lookupType(ctx, "true")).not.toBeNull()
-    expect(lookupType(ctx, "false")).not.toBeNull()
+    // true and false keywords should type-check as Bool
+    expect(() => check(ctx, parseExpr("true"), parseExpr("Bool"))).not.toThrow()
+    expect(() => check(ctx, parseExpr("false"), parseExpr("Bool"))).not.toThrow()
   })
 
   it("checks not function", () => {
     expect(() => declCtx([
       "let Bool : Type := (R : Type) -> R -> R -> R",
-      "let true : Bool := {R t f} -> t",
-      "let false : Bool := {R t f} -> f",
       "let not : Bool -> Bool := {b R t f} -> b R f t",
     ])).not.toThrow()
   })
@@ -148,8 +144,6 @@ describe("type checker - Church booleans", () => {
   it("checks and function", () => {
     expect(() => declCtx([
       "let Bool : Type := (R : Type) -> R -> R -> R",
-      "let true : Bool := {R t f} -> t",
-      "let false : Bool := {R t f} -> f",
       "let and : Bool -> Bool -> Bool := {a b R t f} -> a R (b R t f) f",
     ])).not.toThrow()
   })
@@ -205,6 +199,28 @@ describe("type checker - conversion", () => {
     ])
     const termType = infer(ctx, parseExpr("id Type Type"))
     expect(convertibleSExpr(termType, stype, ctx)).toBe(true)
+  })
+})
+
+describe("type checker - literal keywords", () => {
+  it("true has Church boolean type", () => {
+    const boolType = parseExpr("(R : Type) -> R -> R -> R")
+    expect(() => check([], parseExpr("true"), boolType)).not.toThrow()
+  })
+
+  it("false has Church boolean type", () => {
+    const boolType = parseExpr("(R : Type) -> R -> R -> R")
+    expect(() => check([], parseExpr("false"), boolType)).not.toThrow()
+  })
+
+  it("0 has Church nat type", () => {
+    const natType = parseExpr("(R : Type) -> (R -> R) -> R -> R")
+    expect(() => check([], parseExpr("0"), natType)).not.toThrow()
+  })
+
+  it("3 has Church nat type", () => {
+    const natType = parseExpr("(R : Type) -> (R -> R) -> R -> R")
+    expect(() => check([], parseExpr("3"), natType)).not.toThrow()
   })
 })
 
