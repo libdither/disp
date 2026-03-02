@@ -284,8 +284,22 @@ export function checkDecl(
   ctx: Context,
   name: string,
   type: SExpr | null,
-  value: SExpr
+  value: SExpr,
+  isRec = false
 ): { ctx: Context, type: SExpr } {
+  if (isRec) {
+    if (type === null) {
+      throw new TypeError(`Recursive definition '${name}' requires a type annotation`)
+    }
+    const typeOfType = infer(ctx, type)
+    ensureSort(typeOfType, ctx, `Type annotation for ${name}`)
+    // Pre-extend context with name:type but NO value (prevents infinite unfolding)
+    const preCtx = extendCtx(ctx, name, type)
+    check(preCtx, value, type)
+    // Return context with the value so it can be unfolded in later definitions
+    return { ctx: extendCtx(ctx, name, type, value), type }
+  }
+
   if (type !== null) {
     const typeOfType = infer(ctx, type)
     ensureSort(typeOfType, ctx, `Type annotation for ${name}`)

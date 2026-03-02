@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import { parseExpr, parseLine, type SDecl } from "../src/parse.js"
-import { compile, compileAndEval, astToExpr, collapse } from "../src/compile.js"
+import { compile, compileAndEval, compileRecAndEval, astToExpr, collapse } from "../src/compile.js"
 import {
   LEAF, stem, fork, treeEqual, applyTree, apply, prettyTree, I, K,
   type Tree, BudgetExhausted,
@@ -349,5 +349,33 @@ describe("compileAndEval - runtime evaluation", () => {
     expect(() => {
       compileAndEval(parseExpr("mul 3 (mul 3 (mul 3 3))"), defs, { remaining: 10 })
     }).toThrow(BudgetExhausted)
+  })
+})
+
+describe("recursive definitions", () => {
+  it("compileRecAndEval: recursive identity function", () => {
+    const defs = new Map<string, Tree>()
+    const body = parseExpr("{n} -> n")
+    const result = compileRecAndEval("myId", body, defs)
+    const budget = { remaining: 10000 }
+    const applied = apply(result, stem(LEAF), budget)
+    expect(treeEqual(applied, stem(LEAF))).toBe(true)
+  })
+
+  it("compileRecAndEval: function that ignores self-ref", () => {
+    const defs = new Map<string, Tree>()
+    const body = parseExpr("{n} -> 0")
+    const result = compileRecAndEval("constZero", body, defs)
+    const budget = { remaining: 10000 }
+    const applied = apply(result, stem(LEAF), budget)
+    // Should behave like Church zero: applied R s z = z
+    const z = stem(stem(LEAF))
+    const numResult = apply(apply(apply(applied, LEAF, budget), LEAF, budget), LEAF, budget)
+    // Church 0 R s z = z. With R=LEAF, s=LEAF, z=LEAF → result is LEAF
+    let node = numResult
+    let count = 0
+    while (node.tag === "stem") { count++; node = node.child }
+    expect(count).toBe(0)
+    expect(node.tag).toBe("leaf")
   })
 })

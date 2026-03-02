@@ -6,17 +6,18 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { parseLine, printExpr, recognizeChurchLiteral, spi, stype, svar, type SExpr, type SDecl } from "./parse.js"
 import { checkDecl, infer, check, convertibleSExpr, type Context, whnfSExpr, TypeError } from "./typecheck.js"
-import { compile, compileAndEval } from "./compile.js"
+import { compile, compileAndEval, compileRecAndEval } from "./compile.js"
 import { apply, prettyTree, type Tree, LEAF, stem, I, BudgetExhausted } from "./tree.js"
 
 export type ReplState = {
   ctx: Context
   defs: Map<string, Tree>     // compiled definitions
   defExprs: Map<string, SExpr> // source-level definitions (for display)
+  defIsRec: Set<string>       // names defined with 'let rec'
 }
 
 export function initialState(): ReplState {
-  return { ctx: [], defs: new Map(), defExprs: new Map() }
+  return { ctx: [], defs: new Map(), defExprs: new Map(), defIsRec: new Set() }
 }
 
 // Process a single line of input. Returns the output string.
@@ -50,14 +51,20 @@ function isDecl(x: SDecl | SExpr): x is SDecl {
 }
 
 function handleDecl(state: ReplState, decl: SDecl): string {
-  const { name, type, value } = decl
+  const { name, type, value, isRec } = decl
 
   // Type check
-  const result = checkDecl(state.ctx, name, type, value)
+  const result = checkDecl(state.ctx, name, type, value, isRec)
   state.ctx = result.ctx
 
   // Compile and evaluate
-  const compiled = compileAndEval(value, state.defs)
+  let compiled: Tree
+  if (isRec) {
+    compiled = compileRecAndEval(name, value, state.defs)
+    state.defIsRec.add(name)
+  } else {
+    compiled = compileAndEval(value, state.defs)
+  }
   state.defs.set(name, compiled)
   state.defExprs.set(name, value)
 
@@ -304,7 +311,8 @@ function saveFile(state: ReplState, filePath: string): string {
       const valExpr = state.defExprs.get(entry.name)
       if (valExpr) {
         const valStr = printExpr(valExpr)
-        lines.push(`let ${entry.name} : ${typeStr} := ${valStr}`)
+        const recStr = state.defIsRec.has(entry.name) ? "rec " : ""
+        lines.push(`let ${recStr}${entry.name} : ${typeStr} := ${valStr}`)
       }
     }
     fs.writeFileSync(filePath, lines.join("\n") + "\n", "utf-8")

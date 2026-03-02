@@ -224,6 +224,64 @@ describe("type checker - literal keywords", () => {
   })
 })
 
+describe("type checker - records", () => {
+  it("record value checks against record type", () => {
+    const ctx = declCtx([
+      "let A : Type := (R : Type) -> R -> R -> R",
+      "let B : Type := (R : Type) -> R -> R -> R",
+    ])
+    const recordType = parseExpr("{x : A, y : B}")
+    const recordVal = parseExpr("{x := true, y := false}")
+    expect(() => check(ctx, recordVal, recordType)).not.toThrow()
+  })
+
+  it("dependent record {fst : Type, snd : fst}", () => {
+    const recordType = parseExpr("{fst : Type, snd : fst}")
+    // This should be a valid type
+    const typeOfType = infer([], recordType)
+    expect(typeOfType.tag).toBe("stype")
+  })
+})
+
+describe("type checker - coproducts", () => {
+  it("constructor checks against coproduct type", () => {
+    const ctx = declCtx([
+      "let A : Type := (R : Type) -> R -> R -> R",
+      "let B : Type := (R : Type) -> R -> R -> R",
+    ])
+    const copType = parseExpr("<Left : A | Right : B>")
+    // inl : A -> CopType = {a R l r} -> l a
+    const inl = parseExpr("{a R l r} -> l a")
+    const inlType = parseExpr("A -> <Left : A | Right : B>")
+    expect(() => check(ctx, inl, inlType)).not.toThrow()
+  })
+})
+
+describe("type checker - recursive definitions", () => {
+  it("recursive def without type annotation throws", () => {
+    expect(() => checkDecl([], "f", null, parseExpr("{x} -> x"), true))
+      .toThrow(TypeError)
+  })
+
+  it("recursive body can reference own name", () => {
+    // let rec myId : Nat -> Nat := {n} -> n
+    const ctx = declCtx([
+      "let Nat : Type := (R : Type) -> (R -> R) -> R -> R",
+    ])
+    const type = parseExpr("Nat -> Nat")
+    const body = parseExpr("{n} -> n")
+    expect(() => checkDecl(ctx, "myId", type, body, true)).not.toThrow()
+  })
+
+  it("recursive def type-checks with self-reference in body", () => {
+    // let rec f : (A : Type) -> A -> A := {A x} -> f A x
+    // The body references f, which should be available in context during checking
+    const type = parseExpr("(A : Type) -> A -> A")
+    const body = parseExpr("{A x} -> f A x")
+    expect(() => checkDecl([], "f", type, body, true)).not.toThrow()
+  })
+})
+
 // Helper to look up type in context
 function lookupType(ctx: Context, name: string): SExpr | null {
   for (let i = ctx.length - 1; i >= 0; i--) {

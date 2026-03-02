@@ -181,6 +181,92 @@ describe("REPL - type-guided recognition", () => {
   })
 })
 
+describe("REPL - recursive definitions", () => {
+  let state: ReplState
+
+  beforeEach(() => {
+    state = initialState()
+    processLine(state, "let Nat : Type := (R : Type) -> (R -> R) -> R -> R")
+  })
+
+  it("let rec myId : Nat -> Nat := {n} -> n then myId 5 = 5", () => {
+    const result1 = processLine(state, "let rec myId : Nat -> Nat := {n} -> n")
+    expect(result1).not.toContain("Error")
+    expect(result1).toContain("myId")
+    const result2 = processLine(state, "myId 5")
+    expect(result2).toMatch(/^5 : Nat/)
+  })
+
+  it("let rec without type annotation errors", () => {
+    const result = processLine(state, "let rec f := {x} -> x")
+    expect(result).toContain("error")
+  })
+
+  it("save/load round-trip preserves let rec", () => {
+    const fs = require("fs")
+    const os = require("os")
+    const path = require("path")
+    processLine(state, "let rec myId : Nat -> Nat := {n} -> n")
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "disp-rec-"))
+    const filePath = path.join(tmpDir, "rec.disp")
+    processLine(state, `:save ${filePath}`)
+    const content = fs.readFileSync(filePath, "utf-8")
+    expect(content).toContain("let rec myId")
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+})
+
+describe("REPL - records", () => {
+  let state: ReplState
+
+  beforeEach(() => {
+    state = initialState()
+    const preludePath = path.resolve(__dirname, "../prelude.disp")
+    loadFile(state, preludePath)
+  })
+
+  it("record projection works via application", () => {
+    processLine(state, "let myPair : {fst : Nat, snd : Nat} := {fst := 3, snd := 5}")
+    const result = processLine(state, "myPair Nat ({x y} -> x)")
+    expect(result).not.toContain("Error")
+    expect(result).toMatch(/^3/)
+  })
+})
+
+describe("REPL - integration: prelude records and coproducts", () => {
+  let state: ReplState
+
+  beforeEach(() => {
+    state = initialState()
+    const preludePath = path.resolve(__dirname, "../prelude.disp")
+    loadFile(state, preludePath)
+  })
+
+  it("prelude defines Pair, mkPair, fst, snd, Either, inl, inr", () => {
+    for (const name of ["Pair", "mkPair", "fst", "snd", "Either", "inl", "inr"]) {
+      expect(state.defs.has(name)).toBe(true)
+    }
+  })
+
+  it("fst Nat Nat (mkPair Nat Nat 3 5) = 3", () => {
+    const result = processLine(state, "fst Nat Nat (mkPair Nat Nat 3 5)")
+    expect(result).toMatch(/^3 : Nat/)
+  })
+
+  it("snd Nat Nat (mkPair Nat Nat 3 5) = 5", () => {
+    const result = processLine(state, "snd Nat Nat (mkPair Nat Nat 3 5)")
+    expect(result).toMatch(/^5 : Nat/)
+  })
+
+  it("coproduct elimination via application", () => {
+    // inl Nat Nat 42 : Either Nat Nat
+    // eliminate: e Nat ({x} -> x) ({y} -> y)
+    processLine(state, "let e : Either Nat Nat := inl Nat Nat 3")
+    const result = processLine(state, "e Nat ({x} -> x) ({y} -> y)")
+    expect(result).toMatch(/^3/)
+  })
+})
+
 describe("REPL - :ctx command", () => {
   it("shows empty context", () => {
     const state = initialState()

@@ -22,6 +22,7 @@ export type SDecl = {
   name: string
   type: SExpr | null  // null if no annotation
   value: SExpr
+  isRec: boolean
 }
 
 export function svar(name: string): SExpr { return { tag: "svar", name } }
@@ -46,6 +47,10 @@ export type Token =
   | { tag: "kw_type" }
   | { tag: "kw_true" }
   | { tag: "kw_false" }
+  | { tag: "comma" }    // ,
+  | { tag: "langle" }   // <
+  | { tag: "rangle" }   // >
+  | { tag: "pipe" }     // |
   | { tag: "eof" }
 
 export class ParseError extends Error {
@@ -82,6 +87,10 @@ export function tokenize(input: string): Token[] {
     if (input[i] === '(') { tokens.push({ tag: "lparen" }); i++; continue }
     if (input[i] === ')') { tokens.push({ tag: "rparen" }); i++; continue }
     if (input[i] === ':') { tokens.push({ tag: "colon" }); i++; continue }
+    if (input[i] === ',') { tokens.push({ tag: "comma" }); i++; continue }
+    if (input[i] === '<') { tokens.push({ tag: "langle" }); i++; continue }
+    if (input[i] === '>') { tokens.push({ tag: "rangle" }); i++; continue }
+    if (input[i] === '|') { tokens.push({ tag: "pipe" }); i++; continue }
 
     // Number literals
     if (/[0-9]/.test(input[i])) {
@@ -149,6 +158,14 @@ class Parser {
   // let name := value
   parseDecl(): SDecl {
     this.expect("kw_let")
+
+    // Check for 'rec' contextual keyword (just an ident with value "rec")
+    let isRec = false
+    if (this.peek().tag === "ident" && (this.peek() as { tag: "ident", value: string }).value === "rec") {
+      isRec = true
+      this.advance()
+    }
+
     const nameTok = this.expect("ident")
     const name = (nameTok as { tag: "ident", value: string }).value
 
@@ -160,7 +177,7 @@ class Parser {
     this.expect("coloneq")
     const value = this.parseExpr()
 
-    return { name, type, value }
+    return { name, type, value, isRec }
   }
 
   // Parse an expression. Handles arrows (Pi types and non-dependent function types).
@@ -172,10 +189,12 @@ class Parser {
   // (x : A) -> B     — dependent Pi
   // A -> B           — non-dependent function type
   // {params} -> body — lambda
+  // {x : A, y : B}   — record type
+  // {x := a, y := b} — record value
   private parseArrow(): SExpr {
-    // Check for lambda: {params} -> body
+    // Check for brace expression (lambda, record type, or record value)
     if (this.peek().tag === "lbrace") {
-      return this.parseLambda()
+      return this.parseBraceExpr()
     }
 
     // Check for dependent Pi: (name : domain) -> codomain
@@ -227,6 +246,125 @@ class Parser {
     return spi(name, domain, codomain)
   }
 
+  // Disambiguate { ... } — three forms:
+  //   { name : type, ... }   → record type
+  //   { name := expr, ... }  → record value
+  //   { params } -> body     → lambda
+  private parseBraceExpr(): SExpr {
+    const saved = this.pos
+    this.expect("lbrace")
+    if (this.peek().tag === "ident") {
+      const identPos = this.pos
+      this.advance() // consume ident
+      const next = this.peek().tag
+      this.pos = saved // restore
+      if (next === "colon") {
+        return this.parseRecordType()
+      }
+      if (next === "coloneq") {
+        return this.parseRecordValue()
+      }
+    } else {
+      this.pos = saved
+    }
+    return this.parseLambda()
+  }
+
+  // Parse {x : A, y : B} → (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
+  private parseRecordType(): SExpr {
+    this.expect("lbrace")
+    const fields: { name: string, type: SExpr }[] = []
+    while (this.peek().tag !== "rbrace") {
+      if (fields.length > 0) this.expect("comma")
+      const nameTok = this.expect("ident")
+      const name = (nameTok as { tag: "ident", value: string }).value
+      this.expect("colon")
+      const type = this.parseExpr()
+      fields.push({ name, type })
+    }
+    this.expect("rbrace")
+
+    if (fields.length === 0) {
+      throw new ParseError("Record type must have at least one field", this.pos)
+    }
+
+    // Build inner Pi: (x : A) -> (y : B) -> ... -> R$rec
+    let innerPi: SExpr = svar("R$rec")
+    for (let i = fields.length - 1; i >= 0; i--) {
+      innerPi = spi(fields[i].name, fields[i].type, innerPi)
+    }
+
+    // (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
+    return spi("R$rec", stype, spi("_", innerPi, svar("R$rec")))
+  }
+
+  // Parse {x := a, y := b} → {R$rec f$rec} -> f$rec a b
+  private parseRecordValue(): SExpr {
+    this.expect("lbrace")
+    const fields: { name: string, value: SExpr }[] = []
+    while (this.peek().tag !== "rbrace") {
+      if (fields.length > 0) this.expect("comma")
+      const nameTok = this.expect("ident")
+      const _name = (nameTok as { tag: "ident", value: string }).value
+      this.expect("coloneq")
+      const value = this.parseExpr()
+      fields.push({ name: _name, value })
+    }
+    this.expect("rbrace")
+
+    if (fields.length === 0) {
+      throw new ParseError("Record value must have at least one field", this.pos)
+    }
+
+    // Build: {R$rec f$rec} -> f$rec v1 v2 ...
+    let body: SExpr = svar("f$rec")
+    for (const field of fields) {
+      body = sapp(body, field.value)
+    }
+    return slam(["R$rec", "f$rec"], body)
+  }
+
+  // Check if position is at the start of a record (not a lambda)
+  private isRecordStart(): boolean {
+    if (this.peek().tag !== "lbrace") return false
+    const saved = this.pos
+    this.advance() // consume {
+    if (this.peek().tag === "ident") {
+      this.advance() // consume ident
+      const next = this.peek().tag
+      this.pos = saved
+      return next === "colon" || next === "coloneq"
+    }
+    this.pos = saved
+    return false
+  }
+
+  // Parse <Left : A | Right : B> → (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> R$cop
+  private parseCoproductType(): SExpr {
+    this.expect("langle")
+    const variants: { name: string, type: SExpr }[] = []
+    while (this.peek().tag !== "rangle") {
+      if (variants.length > 0) this.expect("pipe")
+      const nameTok = this.expect("ident")
+      const _name = (nameTok as { tag: "ident", value: string }).value
+      this.expect("colon")
+      const type = this.parseExpr()
+      variants.push({ name: _name, type })
+    }
+    this.expect("rangle")
+
+    if (variants.length === 0) {
+      throw new ParseError("Coproduct type must have at least one variant", this.pos)
+    }
+
+    // Build: (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> ... -> R$cop
+    let result: SExpr = svar("R$cop")
+    for (let i = variants.length - 1; i >= 0; i--) {
+      result = spi("_", spi("_", variants[i].type, svar("R$cop")), result)
+    }
+    return spi("R$cop", stype, result)
+  }
+
   // Parse {x y z} -> body  (sugar for nested lambdas)
   private parseLambda(): SExpr {
     this.expect("lbrace")
@@ -258,8 +396,11 @@ class Parser {
 
   private isAtomStart(): boolean {
     const tag = this.peek().tag
-    return tag === "ident" || tag === "kw_type" || tag === "lparen"
+    if (tag === "ident" || tag === "kw_type" || tag === "lparen"
       || tag === "num" || tag === "kw_true" || tag === "kw_false"
+      || tag === "langle") return true
+    if (tag === "lbrace" && this.isRecordStart()) return true
+    return false
   }
 
   // Atom: identifier, Type, number, boolean, or parenthesized expression
@@ -298,6 +439,14 @@ class Parser {
       const expr = this.parseExpr()
       this.expect("rparen")
       return expr
+    }
+
+    if (tok.tag === "lbrace" && this.isRecordStart()) {
+      return this.parseBraceExpr()
+    }
+
+    if (tok.tag === "langle") {
+      return this.parseCoproductType()
     }
 
     throw new ParseError(`Unexpected token: ${tok.tag}`, this.pos)

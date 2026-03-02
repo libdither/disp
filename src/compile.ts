@@ -244,3 +244,68 @@ export function compileAndEval(ast: SExpr, defs: Map<string, Tree> = new Map(), 
   const expr = astToExpr(ast, defs)
   return collapseAndEval(expr, budget)
 }
+
+// --- Fixed-point combinator for recursive definitions ---
+//
+// Strategy: Given `let rec f := body` where body references f,
+// we build a self-applying structure using the omega combinator:
+//
+//   omega = {x} -> body[f := {v} -> x x v]
+//   result = omega omega  (structural, not eager)
+//
+// When result is applied to arg:
+//   omega omega arg
+//   = body[f := {v} -> omega omega v] arg
+//   = body with f behaving as the recursive function
+//
+// The key: omega omega is built with treeApply (structural),
+// NOT apply (eager), so no divergence at definition time.
+
+export function compileRecAndEval(
+  name: string,
+  body: SExpr,
+  defs: Map<string, Tree>,
+  budget = { remaining: 100000 }
+): Tree {
+  // 1. Compile body with `name` free
+  const defsWithoutSelf = new Map(defs)
+  defsWithoutSelf.delete(name)
+  const bodyExpr = astToExpr(body, defsWithoutSelf)
+
+  // If the body doesn't actually reference `name`, no fixpoint needed
+  if (!hasFreeVar(name, bodyExpr)) {
+    return collapseAndEval(bodyExpr, budget)
+  }
+
+  // 2. Build the self-ref thunk: {v} -> x x v
+  //    where x is also a free variable
+  const xVar = eFvar("x$rec")
+  const vVar = eFvar("v$rec")
+  const selfApp = eApp(eApp(xVar, xVar), vVar)
+  const thunk = bracketAbstract("v$rec", selfApp) // {v} -> x x v
+
+  // 3. Substitute name with thunk in bodyExpr
+  const bodyWithThunk = substExpr(name, thunk, bodyExpr)
+
+  // 4. Abstract over x$rec
+  const omega = bracketAbstract("x$rec", bodyWithThunk)
+
+  // 5. Collapse omega structurally (no eager eval)
+  const omegaTree = collapse(omega)
+
+  // 6. Build omega(omega) structurally using treeApply
+  return treeApply(omegaTree, omegaTree)
+}
+
+// Substitute a free variable name with an Expr in an Expr
+function substExpr(name: string, replacement: Expr, expr: Expr): Expr {
+  switch (expr.tag) {
+    case "fvar":
+      return expr.name === name ? replacement : expr
+    case "tree":
+      return expr
+    case "app":
+      return eApp(substExpr(name, replacement, expr.func),
+                  substExpr(name, replacement, expr.arg))
+  }
+}

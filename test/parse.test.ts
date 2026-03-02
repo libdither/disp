@@ -230,6 +230,100 @@ describe("recognizeChurchLiteral", () => {
   })
 })
 
+describe("parser - recursive declarations", () => {
+  it("parses let rec with isRec true", () => {
+    const result = parseLine("let rec f : (A : Type) -> A -> A := {A x} -> x")
+    expect(isDecl(result)).toBe(true)
+    if (isDecl(result)) {
+      expect(result.name).toBe("f")
+      expect(result.isRec).toBe(true)
+      expect(result.type).not.toBeNull()
+    }
+  })
+
+  it("parses let (non-rec) with isRec false", () => {
+    const result = parseLine("let f := Type")
+    expect(isDecl(result)).toBe(true)
+    if (isDecl(result)) {
+      expect(result.isRec).toBe(false)
+    }
+  })
+
+  it("rec is usable as a variable name", () => {
+    const result = parseLine("let x := rec")
+    expect(isDecl(result)).toBe(true)
+    if (isDecl(result)) {
+      expect(result.name).toBe("x")
+      expect(result.isRec).toBe(false)
+      expect(result.value).toEqual(svar("rec"))
+    }
+  })
+})
+
+describe("parser - record types", () => {
+  it("parses {x : A, y : B} as Pi type", () => {
+    const result = parseExpr("{x : A, y : B}")
+    // (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
+    const expected = spi("R$rec", stype,
+      spi("_",
+        spi("x", svar("A"), spi("y", svar("B"), svar("R$rec"))),
+        svar("R$rec")))
+    expect(result).toEqual(expected)
+  })
+
+  it("parses {x := a, y := b} as lambda", () => {
+    const result = parseExpr("{x := a, y := b}")
+    // {R$rec f$rec} -> f$rec a b
+    const expected = slam(["R$rec", "f$rec"],
+      sapp(sapp(svar("f$rec"), svar("a")), svar("b")))
+    expect(result).toEqual(expected)
+  })
+
+  it("{x} -> x still works as lambda", () => {
+    expect(parseExpr("{x} -> x")).toEqual(slam(["x"], svar("x")))
+  })
+
+  it("f {x := a} works as application", () => {
+    const result = parseExpr("f {x := a}")
+    const recordVal = slam(["R$rec", "f$rec"], sapp(svar("f$rec"), svar("a")))
+    expect(result).toEqual(sapp(svar("f"), recordVal))
+  })
+
+  it("single-field record type", () => {
+    const result = parseExpr("{x : A}")
+    const expected = spi("R$rec", stype,
+      spi("_", spi("x", svar("A"), svar("R$rec")), svar("R$rec")))
+    expect(result).toEqual(expected)
+  })
+})
+
+describe("parser - coproduct types", () => {
+  it("parses <Left : A | Right : B> as Pi type", () => {
+    const result = parseExpr("<Left : A | Right : B>")
+    // (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> R$cop
+    const expected = spi("R$cop", stype,
+      spi("_", spi("_", svar("A"), svar("R$cop")),
+        spi("_", spi("_", svar("B"), svar("R$cop")),
+          svar("R$cop"))))
+    expect(result).toEqual(expected)
+  })
+
+  it("parses three-variant coproduct", () => {
+    const result = parseExpr("<A : X | B : Y | C : Z>")
+    const expected = spi("R$cop", stype,
+      spi("_", spi("_", svar("X"), svar("R$cop")),
+        spi("_", spi("_", svar("Y"), svar("R$cop")),
+          spi("_", spi("_", svar("Z"), svar("R$cop")),
+            svar("R$cop")))))
+    expect(result).toEqual(expected)
+  })
+
+  it("coproduct type as atom in application", () => {
+    const result = parseExpr("f <Left : A | Right : B>")
+    expect(result.tag).toBe("sapp")
+  })
+})
+
 describe("pretty printer - literals", () => {
   it("prints true keyword", () => {
     expect(printExpr(parseExpr("true"))).toBe("true")
