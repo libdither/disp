@@ -10,7 +10,7 @@ import {
   buildWrapped, cocCheckDecl, cocCheckRecDecl,
   printEncoded, loadCocPrelude, buildNameMap,
   FST, SND, CHILD, ENC_APP_T, ENC_LAM_T, ENC_PI_T,
-  TERM_CASE, TREE_EQ, ABSTRACT_OUT,
+  TERM_CASE,
   CocError, type Env,
 } from "../src/coc.js"
 import { eTree, eFvar, eApp, bracketAbstract, collapse } from "../src/compile.js"
@@ -999,33 +999,6 @@ describe("Tree-native operations", () => {
     })
   })
 
-  // treeEq and abstractOut are recursive tree programs using the omega combinator.
-  // Their correctness depends on getting the self-reference pattern exactly right.
-  // TODO: debug the omega combinator wiring for these recursive tree programs.
-  describe.skip("treeEq (recursive equality) — WIP", () => {
-    const TRUE = stem(LEAF)
-    const FALSE = fork(LEAF, I)
-
-    it("leaf == leaf → TRUE", () => {
-      const r = apply(apply(TREE_EQ, LEAF), LEAF, { remaining: 1000 })
-      expect(treeEqual(r, TRUE)).toBe(true)
-    })
-
-    it("leaf != stem(leaf) → FALSE", () => {
-      const r = apply(apply(TREE_EQ, LEAF), stem(LEAF), { remaining: 1000 })
-      expect(treeEqual(r, FALSE)).toBe(true)
-    })
-  })
-
-  describe.skip("abstractOut (tree-native bracket abstraction) — WIP", () => {
-    it("abstractOut(target, target) = I (identity)", () => {
-      const target = stem(stem(LEAF))
-      const result = apply(apply(ABSTRACT_OUT, target), target, { remaining: 5000 })
-      const arg = fork(LEAF, stem(LEAF))
-      expect(treeEqual(apply(result, arg), arg)).toBe(true)
-    })
-  })
-
   describe("builtins visible in :ctx", () => {
     it(":ctx shows tree-native builtins", () => {
       const state = initialState()
@@ -1038,8 +1011,6 @@ describe("Tree-native operations", () => {
       expect(ctx).toContain("tEncLam")
       expect(ctx).toContain("tEncPi")
       expect(ctx).toContain("termCase")
-      expect(ctx).toContain("treeEq")
-      expect(ctx).toContain("abstractOut")
     })
   })
 })

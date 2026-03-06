@@ -473,8 +473,6 @@ function treeContains(tree: Tree, target: Tree): boolean {
 
 function exprFork(a: Expr, b: Expr): Expr { return eApp(eApp(eTree(LEAF), a), b) }
 function exprTriage(c: Expr, d: Expr, b: Expr): Expr { return exprFork(exprFork(c, d), b) }
-function exprS(f: Expr, g: Expr): Expr { return eApp(eApp(eTree(LEAF), eApp(eTree(LEAF), f)), g) }
-function exprK(c: Expr): Expr { return eApp(eTree(stem(LEAF)), c) }
 function mkTriage(onLeaf: Tree, onStem: Tree, onFork: Tree): Tree { return fork(fork(onLeaf, onStem), onFork) }
 
 function compileTree(params: string[], body: Expr): Tree {
@@ -516,54 +514,11 @@ export const TERM_CASE: Tree = (() => {
   return compileTree(["onType", "onVar", "onApp", "onLam", "onPi", "term"], body)
 })()
 
-// --- Tree-native equality (recursive via omega combinator) ---
-
-const TRUE_T: Tree = stem(LEAF)       // K: K(t)(f) = t
-const FALSE_T: Tree = fork(LEAF, I)   // K*: K*(t)(f) = f
-
-export const TREE_EQ: Tree = (() => {
-  const self = (p: Expr, q: Expr) => eApp(eApp(eApp(eFvar("x"), eFvar("x")), p), q)
-  const andE = (p: Expr, q: Expr) => eApp(eApp(p, q), eTree(FALSE_T))
-
-  const onLeaf = eApp(exprTriage(eTree(TRUE_T),
-    bracketAbstract("_s1", eTree(FALSE_T)),
-    bracketAbstract("_f1", bracketAbstract("_f2", eTree(FALSE_T)))
-  ), eFvar("b"))
-
-  const onStem = bracketAbstract("ac", eApp(exprTriage(eTree(FALSE_T),
-    bracketAbstract("bc", self(eFvar("ac"), eFvar("bc"))),
-    bracketAbstract("_f1", bracketAbstract("_f2", eTree(FALSE_T)))
-  ), eFvar("b")))
-
-  const onFork = bracketAbstract("al", bracketAbstract("ar", eApp(exprTriage(eTree(FALSE_T),
-    bracketAbstract("_s2", eTree(FALSE_T)),
-    bracketAbstract("bl", bracketAbstract("br",
-      andE(self(eFvar("al"), eFvar("bl")), self(eFvar("ar"), eFvar("br")))
-    ))
-  ), eFvar("b"))))
-
-  const body = eApp(exprTriage(onLeaf, onStem, onFork), eFvar("a"))
-  const omega = compileTree(["x", "a", "b"], body)
-  return treeApply(omega, omega)
-})()
-
-// --- Tree-native bracket abstraction (recursive via omega) ---
-
-export const ABSTRACT_OUT: Tree = (() => {
-  const self = (p: Expr, q: Expr) => eApp(eApp(eApp(eFvar("x"), eFvar("x")), p), q)
-  const K_LEAF = exprK(eTree(LEAF))
-
-  const onStem = bracketAbstract("c", exprS(K_LEAF, self(eFvar("target"), eFvar("c"))))
-  const onFork = bracketAbstract("l", bracketAbstract("r",
-    exprS(exprS(K_LEAF, self(eFvar("target"), eFvar("l"))), self(eFvar("target"), eFvar("r")))))
-
-  const triageOnTree = eApp(exprTriage(exprK(eTree(LEAF)), onStem, onFork), eFvar("tree"))
-  const eqCheck = eApp(eApp(eTree(TREE_EQ), eFvar("tree")), eFvar("target"))
-  const body = eApp(eApp(eqCheck, eTree(I)), triageOnTree)
-
-  const omega = compileTree(["x", "target", "tree"], body)
-  return treeApply(omega, omega)
-})()
+// NOTE: Tree-native recursive operations (treeEq, abstractOut) are deferred.
+// The collapse/apply mismatch makes building recursive tree programs via
+// bracket abstraction non-trivial. The TypeScript implementations (treeEqual,
+// abstractMarkerOut) remain the working versions. These will become tree-native
+// when we implement a proper tree-level fixpoint combinator.
 
 // ============================================================
 // CoC Prelude: Church-encoded Tree and encoding operations
@@ -600,8 +555,6 @@ export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
   { name: "tEncPi",   type: "Tree -> Tree -> Tree", data: ENC_PI_T },
   { name: "termCase", type: "Tree -> (Tree -> Tree) -> (Tree -> Tree -> Tree) -> (Tree -> Tree -> Tree) -> (Tree -> Tree -> Tree) -> Tree -> Tree",
     data: TERM_CASE },
-  { name: "treeEq",   type: "Tree -> Tree -> Bool", data: TREE_EQ },
-  { name: "abstractOut", type: "Tree -> Tree -> Tree", data: ABSTRACT_OUT },
 ]
 
 export function loadCocPrelude(env: Env): Env {
