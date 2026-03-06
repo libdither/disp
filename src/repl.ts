@@ -8,7 +8,7 @@ import { parseLine, printExpr, recognizeChurchLiteral, spi, stype, svar, type SE
 import { checkDecl, infer, check, convertibleSExpr, type Context, whnfSExpr, TypeError } from "./typecheck.js"
 import { compile, compileAndEval, compileRecAndEval } from "./compile.js"
 import { apply, prettyTree, type Tree, LEAF, stem, I, BudgetExhausted } from "./tree.js"
-import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, CocError, loadCocPrelude, buildNameMap, type Env } from "./coc.js"
+import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, convertible, normalize, CocError, loadCocPrelude, buildNameMap, type Env } from "./coc.js"
 
 export type ReplState = {
   ctx: Context
@@ -403,10 +403,63 @@ function handleCocExpr(state: ReplState, expr: SExpr): string {
   const type = unwrapType(wrapped)
 
   const nameMap = buildNameMap(state.cocEnv)
-  const dataStr = printEncoded(data, nameMap)
   const typeStr = printEncoded(type, nameMap)
 
+  // Also compile the expression through the old pipeline for behavioral testing.
+  // The CoC data is an encoded term (encLam/encApp/etc.), not a raw compiled tree.
+  // To recognize Church literals, we need the compiled (raw) tree form.
+  let compiled: Tree | null = null
+  try {
+    // Build a defs map from cocEnv for the old compiler
+    const defs = new Map<string, Tree>()
+    for (const [name, w] of state.cocEnv) {
+      // Only include user-defined values that were compiled, not builtins
+      if (state.defExprs.has(name)) {
+        try { defs.set(name, compileAndEval(state.defExprs.get(name)!, defs)) } catch {}
+      }
+    }
+    compiled = compileAndEval(expr, defs)
+  } catch {}
+
+  if (compiled) {
+    const display = recognizeCocValue(compiled, type, state)
+    if (display) return `${display} : ${typeStr}`
+  }
+
+  // Fall back to name lookup on encoded data
+  const name = nameMap.get(data.id)
+  if (name) return `${name} : ${typeStr}`
+
+  const dataStr = printEncoded(data, nameMap)
   return `${dataStr} : ${typeStr}`
+}
+
+function recognizeCocValue(compiled: Tree, type: Tree, state: ReplState): string | null {
+  const boolEntry = state.cocEnv.get("Bool")
+  const natEntry = state.cocEnv.get("Nat")
+
+  if (boolEntry && convertible(type, unwrapData(boolEntry))) {
+    const result = tryChurchBool(compiled)
+    if (result !== null) return result
+  }
+
+  if (natEntry && convertible(type, unwrapData(natEntry))) {
+    const result = tryChurchNat(compiled)
+    if (result !== null) return result
+  }
+
+  // Name lookup by compiled tree
+  for (const [name, w] of state.cocEnv) {
+    if (unwrapData(w).id === compiled.id) return name
+  }
+
+  // Last resort
+  const boolResult = tryChurchBool(compiled)
+  if (boolResult !== null) return boolResult
+  const natResult = tryChurchNat(compiled)
+  if (natResult !== null) return natResult
+
+  return null
 }
 
 // --- Main REPL loop ---
