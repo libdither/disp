@@ -2,12 +2,12 @@
 // Works on the surface AST (SExpr) with named variables.
 // Type:Type (no universe hierarchy).
 
-import { type SExpr, svar, sapp, slam, spi, stype } from "./parse.js"
+import { type SExpr, type Span, svar, sapp, slam, spi, stype } from "./parse.js"
 
 // --- Type errors ---
 
 export class TypeError extends Error {
-  constructor(msg: string) { super(msg) }
+  constructor(msg: string, public span?: Span) { super(msg) }
 }
 
 // --- Context ---
@@ -201,27 +201,27 @@ export function infer(ctx: Context, term: SExpr): SExpr {
 
     case "svar": {
       const entry = lookupCtx(ctx, term.name)
-      if (!entry) throw new TypeError(`Unbound variable: ${term.name}`)
+      if (!entry) throw new TypeError(`Unbound variable: ${term.name}`, term.pos)
       return entry.type
     }
 
     case "spi": {
       const domType = infer(ctx, term.domain)
-      ensureSort(domType, ctx, `Domain of Pi type`)
+      ensureSort(domType, ctx, `Domain of Pi type`, term.domain.pos)
       const extCtx = term.name === "_" ? ctx : extendCtx(ctx, term.name, term.domain)
       const codType = infer(extCtx, term.codomain)
-      ensureSort(codType, ctx, `Codomain of Pi type`)
+      ensureSort(codType, ctx, `Codomain of Pi type`, term.codomain.pos)
       return codType
     }
 
     case "slam":
-      throw new TypeError(`Cannot infer type of lambda expression. Use a type annotation.`)
+      throw new TypeError(`Cannot infer type of lambda expression. Use a type annotation.`, term.pos)
 
     case "sapp": {
       const funcType = whnfSExpr(infer(ctx, term.func), ctx)
 
       if (funcType.tag !== "spi") {
-        throw new TypeError(`Expected function type, got: ${printType(funcType)}`)
+        throw new TypeError(`Expected function type, got: ${printType(funcType)}`, term.func.pos)
       }
 
       check(ctx, term.arg, funcType.domain)
@@ -236,7 +236,7 @@ export function check(ctx: Context, term: SExpr, expected: SExpr): void {
   if (term.tag === "slam") {
     const piType = whnfSExpr(expected, ctx)
     if (piType.tag !== "spi") {
-      throw new TypeError(`Lambda expression needs function type, got: ${printType(expected)}`)
+      throw new TypeError(`Lambda expression needs function type, got: ${printType(expected)}`, term.pos)
     }
 
     const [param, ...restParams] = term.params
@@ -255,14 +255,14 @@ export function check(ctx: Context, term: SExpr, expected: SExpr): void {
 
   const inferred = infer(ctx, term)
   if (!convertibleSExpr(inferred, expected, ctx)) {
-    throw new TypeError(`Type mismatch: expected ${printType(expected)}, got ${printType(inferred)}`)
+    throw new TypeError(`Type mismatch: expected ${printType(expected)}, got ${printType(inferred)}`, term.pos)
   }
 }
 
-function ensureSort(type: SExpr, ctx: Context, context: string): void {
+function ensureSort(type: SExpr, ctx: Context, context: string, span?: Span): void {
   const nf = whnfSExpr(type, ctx)
   if (nf.tag !== "stype") {
-    throw new TypeError(`${context} must be a type, got: ${printType(type)}`)
+    throw new TypeError(`${context} must be a type, got: ${printType(type)}`, span)
   }
 }
 
@@ -292,7 +292,7 @@ export function checkDecl(
       throw new TypeError(`Recursive definition '${name}' requires a type annotation`)
     }
     const typeOfType = infer(ctx, type)
-    ensureSort(typeOfType, ctx, `Type annotation for ${name}`)
+    ensureSort(typeOfType, ctx, `Type annotation for ${name}`, type.pos)
     // Pre-extend context with name:type but NO value (prevents infinite unfolding)
     const preCtx = extendCtx(ctx, name, type)
     check(preCtx, value, type)
@@ -302,7 +302,7 @@ export function checkDecl(
 
   if (type !== null) {
     const typeOfType = infer(ctx, type)
-    ensureSort(typeOfType, ctx, `Type annotation for ${name}`)
+    ensureSort(typeOfType, ctx, `Type annotation for ${name}`, type.pos)
     check(ctx, value, type)
     // Store the value as a definition so it can be unfolded
     return { ctx: extendCtx(ctx, name, type, value), type }

@@ -4,20 +4,45 @@
 import * as readline from "node:readline"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { parseLine, printExpr, recognizeChurchLiteral, spi, stype, svar, type SExpr, type SDecl } from "./parse.js"
+import { parseLine, printExpr, recognizeChurchLiteral, spi, stype, svar, type SExpr, type SDecl, type Span, ParseError } from "./parse.js"
 import { checkDecl, infer, check, convertibleSExpr, type Context, whnfSExpr, TypeError } from "./typecheck.js"
 import { compile, compileAndEval, compileRecAndEval } from "./compile.js"
 import { apply, prettyTree, type Tree, LEAF, stem, I, BudgetExhausted } from "./tree.js"
+import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, CocError, loadCocPrelude, buildNameMap, type Env } from "./coc.js"
 
 export type ReplState = {
   ctx: Context
   defs: Map<string, Tree>     // compiled definitions
   defExprs: Map<string, SExpr> // source-level definitions (for display)
   defIsRec: Set<string>       // names defined with 'let rec'
+  cocMode: boolean            // whether to use CoC-on-trees pipeline
+  cocEnv: Env                 // CoC environment (name → wrapped tree)
 }
 
 export function initialState(): ReplState {
-  return { ctx: [], defs: new Map(), defExprs: new Map(), defIsRec: new Set() }
+  return { ctx: [], defs: new Map(), defExprs: new Map(), defIsRec: new Set(), cocMode: false, cocEnv: new Map() }
+}
+
+// --- Error formatting ---
+
+function offsetToLineCol(source: string, offset: number): { line: number, col: number } {
+  let line = 1, col = 1
+  for (let i = 0; i < offset && i < source.length; i++) {
+    if (source[i] === '\n') { line++; col = 1 }
+    else col++
+  }
+  return { line, col }
+}
+
+function formatError(source: string, prefix: string, msg: string, span?: Span): string {
+  if (!span) return `${prefix}: ${msg}`
+  const { line, col } = offsetToLineCol(source, span.start)
+  // Find the source line containing the span start
+  const lines = source.split('\n')
+  const srcLine = lines[line - 1] ?? ''
+  const underLen = Math.max(1, Math.min(span.end - span.start, srcLine.length - col + 1))
+  const underline = ' '.repeat(col - 1) + '^'.repeat(underLen)
+  return `${prefix} at ${line}:${col}: ${msg}\n  ${srcLine}\n  ${underline}`
 }
 
 // Process a single line of input. Returns the output string.
@@ -33,13 +58,23 @@ export function processLine(state: ReplState, input: string): string {
   try {
     const parsed = parseLine(trimmed)
 
+    if (state.cocMode) {
+      if (isDecl(parsed)) {
+        return handleCocDecl(state, parsed)
+      } else {
+        return handleCocExpr(state, parsed)
+      }
+    }
+
     if (isDecl(parsed)) {
       return handleDecl(state, parsed)
     } else {
       return handleExpr(state, parsed)
     }
   } catch (e) {
-    if (e instanceof TypeError) return `Type error: ${e.message}`
+    if (e instanceof TypeError) return formatError(trimmed, "Type error", e.message, e.span)
+    if (e instanceof ParseError) return formatError(trimmed, "Parse error", e.message, e.span)
+    if (e instanceof CocError) return `CoC error: ${e.message}`
     if (e instanceof BudgetExhausted) return `Error: evaluation did not terminate`
     if (e instanceof Error) return `Error: ${e.message}`
     return `Error: ${e}`
@@ -147,6 +182,16 @@ function handleCommand(state: ReplState, input: string): string {
 
     case ":ctx":
     case ":context": {
+      if (state.cocMode) {
+        if (state.cocEnv.size === 0) return "(empty context)"
+        const nameMap = buildNameMap(state.cocEnv)
+        const lines: string[] = []
+        for (const [name, wrapped] of state.cocEnv) {
+          const type = unwrapType(wrapped)
+          lines.push(`${name} : ${printEncoded(type, nameMap)}`)
+        }
+        return lines.join("\n")
+      }
       if (state.ctx.length === 0) return "(empty context)"
       return state.ctx.map(e => `${e.name} : ${printExpr(e.type)}`).join("\n")
     }
@@ -163,6 +208,20 @@ function handleCommand(state: ReplState, input: string): string {
       return saveFile(state, rest)
     }
 
+    case ":coc": {
+      state.cocMode = !state.cocMode
+      if (state.cocMode && state.cocEnv.size === 0) {
+        // Load CoC builtins (Tree, leaf, stem, fork, triage, enc*, wrap/unwrap)
+        state.cocEnv = loadCocPrelude(state.cocEnv)
+        // Load user prelude in coc mode if available
+        const preludePath = path.resolve("prelude.disp")
+        if (fs.existsSync(preludePath)) {
+          loadFile(state, preludePath, true)
+        }
+      }
+      return `CoC-on-trees mode ${state.cocMode ? "enabled" : "disabled"}`
+    }
+
     case ":quit":
     case ":q":
       return ":quit"
@@ -176,6 +235,7 @@ function handleCommand(state: ReplState, input: string): string {
         "  :ctx            Show the current context",
         "  :load <file>    Load declarations from a file",
         "  :save <file>    Save declarations to a file",
+        "  :coc            Toggle CoC-on-trees mode",
         "  :quit           Exit the REPL",
         "  :help           Show this help message",
         "",
@@ -286,11 +346,12 @@ export function loadFile(state: ReplState, filePath: string, silent = false): st
     const content = fs.readFileSync(filePath, "utf-8")
     const lines = content.split("\n")
     const results: string[] = []
-    for (const line of lines) {
+    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+      const line = lines[lineNum]
       const result = processLine(state, line)
       if (result) {
-        if (result.startsWith("Error:") || result.startsWith("Type error:")) {
-          return result
+        if (result.includes("error") || result.includes("Error")) {
+          return `${filePath}:${lineNum + 1}: ${result}`
         }
         results.push(result)
       }
@@ -320,6 +381,32 @@ function saveFile(state: ReplState, filePath: string): string {
   } catch (e) {
     return `Error: Could not save to ${filePath}: ${e instanceof Error ? e.message : e}`
   }
+}
+
+// --- CoC-on-trees handlers ---
+
+function handleCocDecl(state: ReplState, decl: SDecl): string {
+  const { name, type, value, isRec } = decl
+  const result = cocCheckDecl(state.cocEnv, name, type, value, isRec)
+  state.cocEnv = result.env
+  state.defExprs.set(name, value)
+  if (isRec) state.defIsRec.add(name)
+
+  const nameMap = buildNameMap(state.cocEnv)
+  const typeStr = printEncoded(result.type, nameMap)
+  return `${name} : ${typeStr}`
+}
+
+function handleCocExpr(state: ReplState, expr: SExpr): string {
+  const wrapped = buildWrapped(expr, state.cocEnv)
+  const data = unwrapData(wrapped)
+  const type = unwrapType(wrapped)
+
+  const nameMap = buildNameMap(state.cocEnv)
+  const dataStr = printEncoded(data, nameMap)
+  const typeStr = printEncoded(type, nameMap)
+
+  return `${dataStr} : ${typeStr}`
 }
 
 // --- Main REPL loop ---

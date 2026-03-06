@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   tokenize, parseExpr, parseLine, printExpr, ParseError,
-  recognizeChurchLiteral,
+  recognizeChurchLiteral, stripPos,
   svar, sapp, slam, spi, stype,
   type SDecl, type SExpr,
 } from "../src/parse.js"
@@ -35,33 +35,33 @@ describe("tokenizer", () => {
 
 describe("parser - atoms and application", () => {
   it("parses identifier", () => {
-    expect(parseExpr("x")).toEqual(svar("x"))
+    expect(stripPos(parseExpr("x"))).toEqual(svar("x"))
   })
 
   it("parses Type", () => {
-    expect(parseExpr("Type")).toEqual(stype)
+    expect(stripPos(parseExpr("Type"))).toEqual(stype)
   })
 
   it("parses application (left-associative)", () => {
-    expect(parseExpr("f x y")).toEqual(sapp(sapp(svar("f"), svar("x")), svar("y")))
+    expect(stripPos(parseExpr("f x y"))).toEqual(sapp(sapp(svar("f"), svar("x")), svar("y")))
   })
 
   it("parses parenthesized expression", () => {
-    expect(parseExpr("f (g x)")).toEqual(sapp(svar("f"), sapp(svar("g"), svar("x"))))
+    expect(stripPos(parseExpr("f (g x)"))).toEqual(sapp(svar("f"), sapp(svar("g"), svar("x"))))
   })
 })
 
 describe("parser - lambda", () => {
   it("parses single-param lambda", () => {
-    expect(parseExpr("{x} -> x")).toEqual(slam(["x"], svar("x")))
+    expect(stripPos(parseExpr("{x} -> x"))).toEqual(slam(["x"], svar("x")))
   })
 
   it("parses multi-param lambda", () => {
-    expect(parseExpr("{x y} -> x")).toEqual(slam(["x", "y"], svar("x")))
+    expect(stripPos(parseExpr("{x y} -> x"))).toEqual(slam(["x", "y"], svar("x")))
   })
 
   it("parses nested lambda body", () => {
-    expect(parseExpr("{x} -> {y} -> x")).toEqual(
+    expect(stripPos(parseExpr("{x} -> {y} -> x"))).toEqual(
       slam(["x"], slam(["y"], svar("x")))
     )
   })
@@ -69,21 +69,21 @@ describe("parser - lambda", () => {
 
 describe("parser - Pi types", () => {
   it("parses dependent Pi", () => {
-    expect(parseExpr("(A : Type) -> A")).toEqual(spi("A", stype, svar("A")))
+    expect(stripPos(parseExpr("(A : Type) -> A"))).toEqual(spi("A", stype, svar("A")))
   })
 
   it("parses non-dependent function type", () => {
-    expect(parseExpr("A -> B")).toEqual(spi("_", svar("A"), svar("B")))
+    expect(stripPos(parseExpr("A -> B"))).toEqual(spi("_", svar("A"), svar("B")))
   })
 
   it("parses right-associative arrows", () => {
-    expect(parseExpr("A -> B -> C")).toEqual(
+    expect(stripPos(parseExpr("A -> B -> C"))).toEqual(
       spi("_", svar("A"), spi("_", svar("B"), svar("C")))
     )
   })
 
   it("parses mixed Pi and arrow", () => {
-    expect(parseExpr("(A : Type) -> A -> A")).toEqual(
+    expect(stripPos(parseExpr("(A : Type) -> A -> A"))).toEqual(
       spi("A", stype, spi("_", svar("A"), svar("A")))
     )
   })
@@ -95,8 +95,8 @@ describe("parser - declarations", () => {
     expect(isDecl(result)).toBe(true)
     if (isDecl(result)) {
       expect(result.name).toBe("id")
-      expect(result.type).toEqual(spi("A", stype, spi("_", svar("A"), svar("A"))))
-      expect(result.value).toEqual(slam(["A", "x"], svar("x")))
+      expect(stripPos(result.type!)).toEqual(spi("A", stype, spi("_", svar("A"), svar("A"))))
+      expect(stripPos(result.value)).toEqual(slam(["A", "x"], svar("x")))
     }
   })
 
@@ -106,7 +106,7 @@ describe("parser - declarations", () => {
     if (isDecl(result)) {
       expect(result.name).toBe("x")
       expect(result.type).toBeNull()
-      expect(result.value).toEqual(stype)
+      expect(stripPos(result.value)).toEqual(stype)
     }
   })
 })
@@ -155,7 +155,7 @@ describe("round-trip", () => {
       const ast = parseExpr(input)
       const output = printExpr(ast)
       const ast2 = parseExpr(output)
-      expect(ast2).toEqual(ast)
+      expect(stripPos(ast2)).toEqual(stripPos(ast))
     })
   }
 })
@@ -163,7 +163,8 @@ describe("round-trip", () => {
 describe("tokenizer - numbers and booleans", () => {
   it("tokenizes number literal", () => {
     const tokens = tokenize("42")
-    expect(tokens[0]).toEqual({ tag: "num", value: 42 })
+    expect(tokens[0].tag).toBe("num")
+    expect((tokens[0] as any).value).toBe(42)
   })
 
   it("tokenizes true/false keywords", () => {
@@ -180,26 +181,26 @@ describe("tokenizer - numbers and booleans", () => {
 
 describe("parser - literals", () => {
   it("parses true as Church boolean", () => {
-    expect(parseExpr("true")).toEqual(slam(["R", "t", "f"], svar("t")))
+    expect(stripPos(parseExpr("true"))).toEqual(slam(["R", "t", "f"], svar("t")))
   })
 
   it("parses false as Church boolean", () => {
-    expect(parseExpr("false")).toEqual(slam(["R", "t", "f"], svar("f")))
+    expect(stripPos(parseExpr("false"))).toEqual(slam(["R", "t", "f"], svar("f")))
   })
 
   it("parses 0 as Church zero", () => {
-    expect(parseExpr("0")).toEqual(slam(["R", "s", "z"], svar("z")))
+    expect(stripPos(parseExpr("0"))).toEqual(slam(["R", "s", "z"], svar("z")))
   })
 
   it("parses 3 as Church numeral", () => {
     const expected = slam(["R", "s", "z"],
       sapp(svar("s"), sapp(svar("s"), sapp(svar("s"), svar("z"))))
     )
-    expect(parseExpr("3")).toEqual(expected)
+    expect(stripPos(parseExpr("3"))).toEqual(expected)
   })
 
   it("parses literals in application", () => {
-    expect(parseExpr("not true")).toEqual(
+    expect(stripPos(parseExpr("not true"))).toEqual(
       sapp(svar("not"), slam(["R", "t", "f"], svar("t")))
     )
   })
@@ -255,7 +256,7 @@ describe("parser - recursive declarations", () => {
     if (isDecl(result)) {
       expect(result.name).toBe("x")
       expect(result.isRec).toBe(false)
-      expect(result.value).toEqual(svar("rec"))
+      expect(stripPos(result.value)).toEqual(svar("rec"))
     }
   })
 })
@@ -268,7 +269,7 @@ describe("parser - record types", () => {
       spi("_",
         spi("x", svar("A"), spi("y", svar("B"), svar("R$rec"))),
         svar("R$rec")))
-    expect(result).toEqual(expected)
+    expect(stripPos(result)).toEqual(expected)
   })
 
   it("parses {x := a, y := b} as lambda", () => {
@@ -276,24 +277,24 @@ describe("parser - record types", () => {
     // {R$rec f$rec} -> f$rec a b
     const expected = slam(["R$rec", "f$rec"],
       sapp(sapp(svar("f$rec"), svar("a")), svar("b")))
-    expect(result).toEqual(expected)
+    expect(stripPos(result)).toEqual(expected)
   })
 
   it("{x} -> x still works as lambda", () => {
-    expect(parseExpr("{x} -> x")).toEqual(slam(["x"], svar("x")))
+    expect(stripPos(parseExpr("{x} -> x"))).toEqual(slam(["x"], svar("x")))
   })
 
   it("f {x := a} works as application", () => {
     const result = parseExpr("f {x := a}")
     const recordVal = slam(["R$rec", "f$rec"], sapp(svar("f$rec"), svar("a")))
-    expect(result).toEqual(sapp(svar("f"), recordVal))
+    expect(stripPos(result)).toEqual(sapp(svar("f"), recordVal))
   })
 
   it("single-field record type", () => {
     const result = parseExpr("{x : A}")
     const expected = spi("R$rec", stype,
       spi("_", spi("x", svar("A"), svar("R$rec")), svar("R$rec")))
-    expect(result).toEqual(expected)
+    expect(stripPos(result)).toEqual(expected)
   })
 })
 
@@ -305,7 +306,7 @@ describe("parser - coproduct types", () => {
       spi("_", spi("_", svar("A"), svar("R$cop")),
         spi("_", spi("_", svar("B"), svar("R$cop")),
           svar("R$cop"))))
-    expect(result).toEqual(expected)
+    expect(stripPos(result)).toEqual(expected)
   })
 
   it("parses three-variant coproduct", () => {
@@ -315,7 +316,7 @@ describe("parser - coproduct types", () => {
         spi("_", spi("_", svar("Y"), svar("R$cop")),
           spi("_", spi("_", svar("Z"), svar("R$cop")),
             svar("R$cop")))))
-    expect(result).toEqual(expected)
+    expect(stripPos(result)).toEqual(expected)
   })
 
   it("coproduct type as atom in application", () => {
@@ -340,12 +341,12 @@ describe("pretty printer - literals", () => {
   it("round-trips true", () => {
     const ast = parseExpr("true")
     const ast2 = parseExpr(printExpr(ast))
-    expect(ast2).toEqual(ast)
+    expect(stripPos(ast2)).toEqual(stripPos(ast))
   })
 
   it("round-trips 5", () => {
     const ast = parseExpr("5")
     const ast2 = parseExpr(printExpr(ast))
-    expect(ast2).toEqual(ast)
+    expect(stripPos(ast2)).toEqual(stripPos(ast))
   })
 })

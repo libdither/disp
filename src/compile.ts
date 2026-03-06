@@ -20,9 +20,9 @@ export type Expr =
   | { tag: "fvar", name: string }
   | { tag: "app", func: Expr, arg: Expr }
 
-function eTree(value: Tree): Expr { return { tag: "tree", value } }
-function eFvar(name: string): Expr { return { tag: "fvar", name } }
-function eApp(func: Expr, arg: Expr): Expr { return { tag: "app", func, arg } }
+export function eTree(value: Tree): Expr { return { tag: "tree", value } }
+export function eFvar(name: string): Expr { return { tag: "fvar", name } }
+export function eApp(func: Expr, arg: Expr): Expr { return { tag: "app", func, arg } }
 
 // --- Phase 1: AST → Expr ---
 

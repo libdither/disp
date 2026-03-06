@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { parseExpr, parseLine, type SDecl, type SExpr, svar, sapp, slam, spi, stype } from "../src/parse.js"
+import { parseExpr, parseLine, stripPos, type SDecl, type SExpr, svar, sapp, slam, spi, stype } from "../src/parse.js"
 import {
   infer, check, checkDecl, TypeError,
   type Context, whnfSExpr, convertibleSExpr, substNamed,
@@ -29,12 +29,12 @@ function declCtx(decls: string[]): Context {
 describe("substNamed", () => {
   it("substitutes variable", () => {
     const result = substNamed("x", svar("x"), stype)
-    expect(result).toEqual(stype)
+    expect(stripPos(result)).toEqual(stype)
   })
 
   it("doesn't substitute different variable", () => {
     const result = substNamed("x", svar("y"), stype)
-    expect(result).toEqual(svar("y"))
+    expect(stripPos(result)).toEqual(svar("y"))
   })
 
   it("respects shadowing in lambda", () => {
@@ -47,7 +47,7 @@ describe("whnfSExpr", () => {
   it("beta reduces application", () => {
     const term = sapp(slam(["x"], svar("x")), stype)
     const result = whnfSExpr(term)
-    expect(result).toEqual(stype)
+    expect(stripPos(result)).toEqual(stype)
   })
 
   it("multi-param lambda applied once", () => {

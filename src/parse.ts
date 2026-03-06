@@ -9,14 +9,18 @@
 //   f x                    application (juxtaposition)
 //   Type                   the sort
 
+// --- Source positions ---
+
+export type Span = { start: number, end: number }
+
 // --- Surface AST ---
 
 export type SExpr =
-  | { tag: "svar", name: string }
-  | { tag: "sapp", func: SExpr, arg: SExpr }
-  | { tag: "slam", params: string[], body: SExpr }
-  | { tag: "spi", name: string, domain: SExpr, codomain: SExpr }
-  | { tag: "stype" }
+  | { tag: "svar", name: string, pos?: Span }
+  | { tag: "sapp", func: SExpr, arg: SExpr, pos?: Span }
+  | { tag: "slam", params: string[], body: SExpr, pos?: Span }
+  | { tag: "spi", name: string, domain: SExpr, codomain: SExpr, pos?: Span }
+  | { tag: "stype", pos?: Span }
 
 export type SDecl = {
   name: string
@@ -25,36 +29,44 @@ export type SDecl = {
   isRec: boolean
 }
 
-export function svar(name: string): SExpr { return { tag: "svar", name } }
-export function sapp(func: SExpr, arg: SExpr): SExpr { return { tag: "sapp", func, arg } }
-export function slam(params: string[], body: SExpr): SExpr { return { tag: "slam", params, body } }
-export function spi(name: string, domain: SExpr, codomain: SExpr): SExpr { return { tag: "spi", name, domain, codomain } }
+export function svar(name: string, pos?: Span): SExpr {
+  return pos ? { tag: "svar", name, pos } : { tag: "svar", name }
+}
+export function sapp(func: SExpr, arg: SExpr, pos?: Span): SExpr {
+  return pos ? { tag: "sapp", func, arg, pos } : { tag: "sapp", func, arg }
+}
+export function slam(params: string[], body: SExpr, pos?: Span): SExpr {
+  return pos ? { tag: "slam", params, body, pos } : { tag: "slam", params, body }
+}
+export function spi(name: string, domain: SExpr, codomain: SExpr, pos?: Span): SExpr {
+  return pos ? { tag: "spi", name, domain, codomain, pos } : { tag: "spi", name, domain, codomain }
+}
 export const stype: SExpr = { tag: "stype" }
 
 // --- Tokenizer ---
 
 export type Token =
-  | { tag: "ident", value: string }
-  | { tag: "num", value: number }
-  | { tag: "lbrace" }   // {
-  | { tag: "rbrace" }   // }
-  | { tag: "lparen" }   // (
-  | { tag: "rparen" }   // )
-  | { tag: "arrow" }    // ->
-  | { tag: "colon" }    // :
-  | { tag: "coloneq" }  // :=
-  | { tag: "kw_let" }
-  | { tag: "kw_type" }
-  | { tag: "kw_true" }
-  | { tag: "kw_false" }
-  | { tag: "comma" }    // ,
-  | { tag: "langle" }   // <
-  | { tag: "rangle" }   // >
-  | { tag: "pipe" }     // |
-  | { tag: "eof" }
+  | { tag: "ident", value: string, pos: Span }
+  | { tag: "num", value: number, pos: Span }
+  | { tag: "lbrace", pos: Span }   // {
+  | { tag: "rbrace", pos: Span }   // }
+  | { tag: "lparen", pos: Span }   // (
+  | { tag: "rparen", pos: Span }   // )
+  | { tag: "arrow", pos: Span }    // ->
+  | { tag: "colon", pos: Span }    // :
+  | { tag: "coloneq", pos: Span }  // :=
+  | { tag: "kw_let", pos: Span }
+  | { tag: "kw_type", pos: Span }
+  | { tag: "kw_true", pos: Span }
+  | { tag: "kw_false", pos: Span }
+  | { tag: "comma", pos: Span }    // ,
+  | { tag: "langle", pos: Span }   // <
+  | { tag: "rangle", pos: Span }   // >
+  | { tag: "pipe", pos: Span }     // |
+  | { tag: "eof", pos: Span }
 
 export class ParseError extends Error {
-  constructor(msg: string, public pos: number) {
+  constructor(msg: string, public span: Span) {
     super(msg)
   }
 }
@@ -75,28 +87,29 @@ export function tokenize(input: string): Token[] {
 
     // Two-character tokens
     if (input[i] === '-' && input[i + 1] === '>') {
-      tokens.push({ tag: "arrow" }); i += 2; continue
+      tokens.push({ tag: "arrow", pos: { start: i, end: i + 2 } }); i += 2; continue
     }
     if (input[i] === ':' && input[i + 1] === '=') {
-      tokens.push({ tag: "coloneq" }); i += 2; continue
+      tokens.push({ tag: "coloneq", pos: { start: i, end: i + 2 } }); i += 2; continue
     }
 
     // Single-character tokens
-    if (input[i] === '{') { tokens.push({ tag: "lbrace" }); i++; continue }
-    if (input[i] === '}') { tokens.push({ tag: "rbrace" }); i++; continue }
-    if (input[i] === '(') { tokens.push({ tag: "lparen" }); i++; continue }
-    if (input[i] === ')') { tokens.push({ tag: "rparen" }); i++; continue }
-    if (input[i] === ':') { tokens.push({ tag: "colon" }); i++; continue }
-    if (input[i] === ',') { tokens.push({ tag: "comma" }); i++; continue }
-    if (input[i] === '<') { tokens.push({ tag: "langle" }); i++; continue }
-    if (input[i] === '>') { tokens.push({ tag: "rangle" }); i++; continue }
-    if (input[i] === '|') { tokens.push({ tag: "pipe" }); i++; continue }
+    const s = i
+    if (input[i] === '{') { tokens.push({ tag: "lbrace", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === '}') { tokens.push({ tag: "rbrace", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === '(') { tokens.push({ tag: "lparen", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === ')') { tokens.push({ tag: "rparen", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === ':') { tokens.push({ tag: "colon", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === ',') { tokens.push({ tag: "comma", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === '<') { tokens.push({ tag: "langle", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === '>') { tokens.push({ tag: "rangle", pos: { start: s, end: s + 1 } }); i++; continue }
+    if (input[i] === '|') { tokens.push({ tag: "pipe", pos: { start: s, end: s + 1 } }); i++; continue }
 
     // Number literals
     if (/[0-9]/.test(input[i])) {
       let start = i
       while (i < input.length && /[0-9]/.test(input[i])) i++
-      tokens.push({ tag: "num", value: parseInt(input.substring(start, i), 10) })
+      tokens.push({ tag: "num", value: parseInt(input.substring(start, i), 10), pos: { start, end: i } })
       continue
     }
 
@@ -105,18 +118,19 @@ export function tokenize(input: string): Token[] {
       let start = i
       while (i < input.length && /[a-zA-Z0-9_']/.test(input[i])) i++
       const word = input.substring(start, i)
-      if (word === "let") tokens.push({ tag: "kw_let" })
-      else if (word === "Type") tokens.push({ tag: "kw_type" })
-      else if (word === "true") tokens.push({ tag: "kw_true" })
-      else if (word === "false") tokens.push({ tag: "kw_false" })
-      else tokens.push({ tag: "ident", value: word })
+      const pos: Span = { start, end: i }
+      if (word === "let") tokens.push({ tag: "kw_let", pos })
+      else if (word === "Type") tokens.push({ tag: "kw_type", pos })
+      else if (word === "true") tokens.push({ tag: "kw_true", pos })
+      else if (word === "false") tokens.push({ tag: "kw_false", pos })
+      else tokens.push({ tag: "ident", value: word, pos })
       continue
     }
 
-    throw new ParseError(`Unexpected character: '${input[i]}'`, i)
+    throw new ParseError(`Unexpected character: '${input[i]}'`, { start: i, end: i + 1 })
   }
 
-  tokens.push({ tag: "eof" })
+  tokens.push({ tag: "eof", pos: { start: i, end: i } })
   return tokens
 }
 
@@ -140,7 +154,7 @@ class Parser {
   private expect(tag: Token["tag"]): Token {
     const tok = this.peek()
     if (tok.tag !== tag) {
-      throw new ParseError(`Expected ${tag}, got ${tok.tag}`, this.pos)
+      throw new ParseError(`Expected ${tag}, got ${tok.tag}`, tok.pos)
     }
     return this.advance()
   }
@@ -151,6 +165,11 @@ class Parser {
       return true
     }
     return false
+  }
+
+  // Span from startPos to the end of the last consumed token
+  private spanFrom(start: Span): Span {
+    return { start: start.start, end: this.tokens[this.pos - 1].pos.end }
   }
 
   // Parse a top-level declaration:
@@ -212,7 +231,8 @@ class Parser {
 
     if (this.match("arrow")) {
       const right = this.parseArrow()
-      return spi("_", left, right)
+      const span: Span = { start: left.pos?.start ?? 0, end: right.pos?.end ?? 0 }
+      return spi("_", left, right, span)
     }
 
     return left
@@ -235,6 +255,7 @@ class Parser {
 
   // Parse (name : domain) -> codomain
   private parsePi(): SExpr {
+    const start = this.peek().pos
     this.expect("lparen")
     const nameTok = this.expect("ident")
     const name = (nameTok as { tag: "ident", value: string }).value
@@ -243,7 +264,7 @@ class Parser {
     this.expect("rparen")
     this.expect("arrow")
     const codomain = this.parseArrow()
-    return spi(name, domain, codomain)
+    return spi(name, domain, codomain, this.spanFrom(start))
   }
 
   // Disambiguate { ... } — three forms:
@@ -272,6 +293,7 @@ class Parser {
 
   // Parse {x : A, y : B} → (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
   private parseRecordType(): SExpr {
+    const start = this.peek().pos
     this.expect("lbrace")
     const fields: { name: string, type: SExpr }[] = []
     while (this.peek().tag !== "rbrace") {
@@ -285,8 +307,10 @@ class Parser {
     this.expect("rbrace")
 
     if (fields.length === 0) {
-      throw new ParseError("Record type must have at least one field", this.pos)
+      throw new ParseError("Record type must have at least one field", this.peek().pos)
     }
+
+    const span = this.spanFrom(start)
 
     // Build inner Pi: (x : A) -> (y : B) -> ... -> R$rec
     let innerPi: SExpr = svar("R$rec")
@@ -295,11 +319,12 @@ class Parser {
     }
 
     // (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
-    return spi("R$rec", stype, spi("_", innerPi, svar("R$rec")))
+    return spi("R$rec", stype, spi("_", innerPi, svar("R$rec")), span)
   }
 
   // Parse {x := a, y := b} → {R$rec f$rec} -> f$rec a b
   private parseRecordValue(): SExpr {
+    const start = this.peek().pos
     this.expect("lbrace")
     const fields: { name: string, value: SExpr }[] = []
     while (this.peek().tag !== "rbrace") {
@@ -313,15 +338,17 @@ class Parser {
     this.expect("rbrace")
 
     if (fields.length === 0) {
-      throw new ParseError("Record value must have at least one field", this.pos)
+      throw new ParseError("Record value must have at least one field", this.peek().pos)
     }
+
+    const span = this.spanFrom(start)
 
     // Build: {R$rec f$rec} -> f$rec v1 v2 ...
     let body: SExpr = svar("f$rec")
     for (const field of fields) {
       body = sapp(body, field.value)
     }
-    return slam(["R$rec", "f$rec"], body)
+    return slam(["R$rec", "f$rec"], body, span)
   }
 
   // Check if position is at the start of a record (not a lambda)
@@ -341,6 +368,7 @@ class Parser {
 
   // Parse <Left : A | Right : B> → (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> R$cop
   private parseCoproductType(): SExpr {
+    const start = this.peek().pos
     this.expect("langle")
     const variants: { name: string, type: SExpr }[] = []
     while (this.peek().tag !== "rangle") {
@@ -354,19 +382,22 @@ class Parser {
     this.expect("rangle")
 
     if (variants.length === 0) {
-      throw new ParseError("Coproduct type must have at least one variant", this.pos)
+      throw new ParseError("Coproduct type must have at least one variant", this.peek().pos)
     }
+
+    const span = this.spanFrom(start)
 
     // Build: (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> ... -> R$cop
     let result: SExpr = svar("R$cop")
     for (let i = variants.length - 1; i >= 0; i--) {
       result = spi("_", spi("_", variants[i].type, svar("R$cop")), result)
     }
-    return spi("R$cop", stype, result)
+    return spi("R$cop", stype, result, span)
   }
 
   // Parse {x y z} -> body  (sugar for nested lambdas)
   private parseLambda(): SExpr {
+    const start = this.peek().pos
     this.expect("lbrace")
     const params: string[] = []
     while (this.peek().tag === "ident") {
@@ -378,10 +409,10 @@ class Parser {
     const body = this.parseArrow()
 
     if (params.length === 0) {
-      throw new ParseError("Lambda must have at least one parameter", this.pos)
+      throw new ParseError("Lambda must have at least one parameter", start)
     }
 
-    return slam(params, body)
+    return slam(params, body, this.spanFrom(start))
   }
 
   // Application: atom atom atom ... (left-associative)
@@ -389,7 +420,8 @@ class Parser {
     let func = this.parseAtom()
     while (this.isAtomStart()) {
       const arg = this.parseAtom()
-      func = sapp(func, arg)
+      const span: Span = { start: func.pos?.start ?? 0, end: arg.pos?.end ?? 0 }
+      func = sapp(func, arg, span)
     }
     return func
   }
@@ -409,36 +441,40 @@ class Parser {
 
     if (tok.tag === "ident") {
       this.advance()
-      return svar((tok as { tag: "ident", value: string }).value)
+      return svar((tok as { tag: "ident", value: string }).value, tok.pos)
     }
 
     if (tok.tag === "kw_type") {
       this.advance()
-      return stype
+      return { tag: "stype", pos: tok.pos }
     }
 
     if (tok.tag === "kw_true") {
       this.advance()
       // true = {R t f} -> t
-      return slam(["R", "t", "f"], svar("t"))
+      return slam(["R", "t", "f"], svar("t"), tok.pos)
     }
 
     if (tok.tag === "kw_false") {
       this.advance()
       // false = {R t f} -> f
-      return slam(["R", "t", "f"], svar("f"))
+      return slam(["R", "t", "f"], svar("f"), tok.pos)
     }
 
     if (tok.tag === "num") {
       this.advance()
-      return churchNumeralExpr((tok as { tag: "num", value: number }).value)
+      return churchNumeralExpr((tok as { tag: "num", value: number }).value, tok.pos)
     }
 
     if (tok.tag === "lparen") {
+      const start = tok.pos
       this.advance()
       const expr = this.parseExpr()
       this.expect("rparen")
-      return expr
+      // Parenthesized expression gets the span of the whole parens
+      const span = this.spanFrom(start)
+      // Propagate the span to the inner expression
+      return { ...expr, pos: span }
     }
 
     if (tok.tag === "lbrace" && this.isRecordStart()) {
@@ -449,7 +485,7 @@ class Parser {
       return this.parseCoproductType()
     }
 
-    throw new ParseError(`Unexpected token: ${tok.tag}`, this.pos)
+    throw new ParseError(`Unexpected token: ${tok.tag}`, tok.pos)
   }
 
   // Parse a single line: either a declaration (starts with 'let') or an expression
@@ -464,12 +500,12 @@ class Parser {
 // --- Church encoding helpers ---
 
 // Build Church numeral n = {R s z} -> s^n(z)
-function churchNumeralExpr(n: number): SExpr {
+function churchNumeralExpr(n: number, pos?: Span): SExpr {
   let body: SExpr = svar("z")
   for (let i = 0; i < n; i++) {
     body = sapp(svar("s"), body)
   }
-  return slam(["R", "s", "z"], body)
+  return slam(["R", "s", "z"], body, pos)
 }
 
 // Recognize Church-encoded literals in SExpr for pretty printing
@@ -496,6 +532,18 @@ export function recognizeChurchLiteral(expr: SExpr): string | null {
   }
 
   return null
+}
+
+// --- Utility: strip positions for test comparisons ---
+
+export function stripPos(expr: SExpr): SExpr {
+  switch (expr.tag) {
+    case "svar": return { tag: "svar", name: expr.name }
+    case "stype": return { tag: "stype" }
+    case "sapp": return { tag: "sapp", func: stripPos(expr.func), arg: stripPos(expr.arg) }
+    case "slam": return { tag: "slam", params: expr.params, body: stripPos(expr.body) }
+    case "spi": return { tag: "spi", name: expr.name, domain: stripPos(expr.domain), codomain: stripPos(expr.codomain) }
+  }
 }
 
 // --- Public API ---
