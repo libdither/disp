@@ -134,6 +134,13 @@ export function tokenize(input: string): Token[] {
   return tokens
 }
 
+// --- Internal synthetic variable names ---
+// These names use a '#' prefix that the tokenizer does not accept as an identifier
+// start character, so they can never collide with user-defined names.
+export const REC_TYPE_VAR = "#R"     // record type: (R : Type) -> ... -> R
+export const REC_FN_VAR   = "#f"     // record value: {R f} -> f v1 v2 ...
+export const COP_TYPE_VAR = "#R"     // coproduct type: (R : Type) -> ... -> R
+
 // --- Parser ---
 
 class Parser {
@@ -313,13 +320,13 @@ class Parser {
     const span = this.spanFrom(start)
 
     // Build inner Pi: (x : A) -> (y : B) -> ... -> R$rec
-    let innerPi: SExpr = svar("R$rec")
+    let innerPi: SExpr = svar(REC_TYPE_VAR)
     for (let i = fields.length - 1; i >= 0; i--) {
       innerPi = spi(fields[i].name, fields[i].type, innerPi)
     }
 
     // (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
-    return spi("R$rec", stype, spi("_", innerPi, svar("R$rec")), span)
+    return spi(REC_TYPE_VAR, stype, spi("_", innerPi, svar(REC_TYPE_VAR)), span)
   }
 
   // Parse {x := a, y := b} → {R$rec f$rec} -> f$rec a b
@@ -344,11 +351,11 @@ class Parser {
     const span = this.spanFrom(start)
 
     // Build: {R$rec f$rec} -> f$rec v1 v2 ...
-    let body: SExpr = svar("f$rec")
+    let body: SExpr = svar(REC_FN_VAR)
     for (const field of fields) {
       body = sapp(body, field.value)
     }
-    return slam(["R$rec", "f$rec"], body, span)
+    return slam([REC_TYPE_VAR, REC_FN_VAR], body, span)
   }
 
   // Check if position is at the start of a record (not a lambda)
@@ -388,11 +395,11 @@ class Parser {
     const span = this.spanFrom(start)
 
     // Build: (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> ... -> R$cop
-    let result: SExpr = svar("R$cop")
+    let result: SExpr = svar(COP_TYPE_VAR)
     for (let i = variants.length - 1; i >= 0; i--) {
-      result = spi("_", spi("_", variants[i].type, svar("R$cop")), result)
+      result = spi("_", spi("_", variants[i].type, svar(COP_TYPE_VAR)), result)
     }
-    return spi("R$cop", stype, result, span)
+    return spi(COP_TYPE_VAR, stype, result, span)
   }
 
   // Parse {x y z} -> body  (sugar for nested lambdas)

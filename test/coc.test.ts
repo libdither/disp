@@ -6,7 +6,7 @@ import {
   wrap, unwrapData, unwrapType, K_SEL, K_STAR_SEL,
   freshMarker, resetMarkerCounter,
   treeToExprReplacing, abstractMarkerOut,
-  whnf, normalize, convertible, convertibleUnderBinder,
+  whnfTree, normalize, convertible, convertibleUnderBinder,
   buildWrapped, cocCheckDecl, cocCheckRecDecl,
   printEncoded, loadCocPrelude, buildNameMap,
   FST, SND, CHILD, ENC_APP_T, ENC_LAM_T, ENC_PI_T,
@@ -212,28 +212,28 @@ describe("Phase 2: Bracket Abstraction Integration", () => {
 describe("Phase 3: WHNF", () => {
   it("Type is in WHNF", () => {
     const t = encType()
-    expect(treeEqual(whnf(t), t)).toBe(true)
+    expect(treeEqual(whnfTree(t), t)).toBe(true)
   })
 
   it("Var is in WHNF", () => {
     const t = encVar(LEAF)
-    expect(treeEqual(whnf(t), t)).toBe(true)
+    expect(treeEqual(whnfTree(t), t)).toBe(true)
   })
 
   it("Lam is in WHNF", () => {
     const t = encLam(LEAF, I)
-    expect(treeEqual(whnf(t), t)).toBe(true)
+    expect(treeEqual(whnfTree(t), t)).toBe(true)
   })
 
   it("Pi is in WHNF", () => {
     const t = encPi(LEAF, I)
-    expect(treeEqual(whnf(t), t)).toBe(true)
+    expect(treeEqual(whnfTree(t), t)).toBe(true)
   })
 
   it("App(Lam(A, I), x) reduces to x (beta reduction)", () => {
     const x = encVar(freshMarker())
     const t = encApp(encLam(LEAF, I), x)
-    const result = whnf(t)
+    const result = whnfTree(t)
     expect(treeEqual(result, x)).toBe(true)
   })
 
@@ -241,7 +241,7 @@ describe("Phase 3: WHNF", () => {
     const x = encVar(freshMarker())
     const y = encVar(freshMarker())
     const t = encApp(x, y)
-    const result = whnf(t)
+    const result = whnfTree(t)
     expect(treeEqual(result, t)).toBe(true)
   })
 
@@ -260,7 +260,7 @@ describe("Phase 3: WHNF", () => {
     // Simpler: just apply twice
     const twiceAbstracted = encLam(LEAF, collapse(bracketAbstract("__unused__", eTree(encLam(LEAF, I)))))
     const t = encApp(encApp(twiceAbstracted, a), b)
-    const result = whnf(t)
+    const result = whnfTree(t)
     expect(treeEqual(result, b)).toBe(true)
   })
 })
@@ -401,7 +401,7 @@ describe("Phase 4: Declarations", () => {
     const result = buildWrapped(parseExpr("id Type"), env)
     const type = unwrapType(result)
     // Should be Type -> Type (non-dependent Pi with domain=Type, codomain=Type)
-    const pi = unPi(whnf(type))
+    const pi = unPi(whnfTree(type))
     expect(pi).not.toBeNull()
     expect(treeEqual(pi!.domain, encType())).toBe(true)
   })
@@ -536,7 +536,7 @@ describe("Phase 6: Full Pipeline", () => {
     const result = buildWrapped(parseExpr("id Type"), env)
     const type = unwrapType(result)
     // Should be a Pi: Type -> Type
-    const pi = unPi(whnf(type))
+    const pi = unPi(whnfTree(type))
     expect(pi).not.toBeNull()
   })
 })
@@ -625,7 +625,7 @@ describe("CoC Prelude", () => {
     const stemType = unwrapType(env.get("stem")!)
     const treeData = unwrapData(env.get("Tree")!)
     // Should be Pi(Tree, Tree)
-    const pi = unPi(whnf(stemType))
+    const pi = unPi(whnfTree(stemType))
     expect(pi).not.toBeNull()
     expect(convertible(pi!.domain, treeData)).toBe(true)
   })
@@ -634,7 +634,7 @@ describe("CoC Prelude", () => {
     const env = loadCocPrelude(new Map())
     const forkType = unwrapType(env.get("fork")!)
     const treeData = unwrapData(env.get("Tree")!)
-    const pi = unPi(whnf(forkType))
+    const pi = unPi(whnfTree(forkType))
     expect(pi).not.toBeNull()
     expect(convertible(pi!.domain, treeData)).toBe(true)
   })
@@ -643,7 +643,7 @@ describe("CoC Prelude", () => {
     const env = loadCocPrelude(new Map())
     const t = unwrapType(env.get("encApp")!)
     const treeData = unwrapData(env.get("Tree")!)
-    const pi = unPi(whnf(t))
+    const pi = unPi(whnfTree(t))
     expect(pi).not.toBeNull()
     expect(convertible(pi!.domain, treeData)).toBe(true)
   })
@@ -652,7 +652,7 @@ describe("CoC Prelude", () => {
     const env = loadCocPrelude(new Map())
     const t = unwrapType(env.get("wrap")!)
     const treeData = unwrapData(env.get("Tree")!)
-    const pi = unPi(whnf(t))
+    const pi = unPi(whnfTree(t))
     expect(pi).not.toBeNull()
     expect(convertible(pi!.domain, treeData)).toBe(true)
   })
@@ -889,7 +889,7 @@ describe("Cross-pipeline equivalence", () => {
     // type should be Type -> Type applied, so the result type is Type
     // Actually id : (A : Type) -> A -> A, so id (Bool -> Bool) : (Bool -> Bool) -> (Bool -> Bool)
     // The type of the result is (Bool -> Bool) -> (Bool -> Bool), which is a Pi type
-    expect(termTag(whnf(type))).toBe("pi")
+    expect(termTag(whnfTree(type))).toBe("pi")
   })
 
   it("not applied to (and true false) = true", () => {

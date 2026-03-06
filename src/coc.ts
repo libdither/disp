@@ -148,16 +148,16 @@ export class CocError extends Error {
   constructor(msg: string) { super(msg) }
 }
 
-export function whnf(t: Tree, budget = { remaining: 10000 }): Tree {
+export function whnfTree(t: Tree, budget = { remaining: 10000 }): Tree {
   if (budget.remaining <= 0) throw new CocError("WHNF budget exhausted")
   const app = unApp(t)
   if (!app) return t
   budget.remaining--
-  const func = whnf(app.func, budget)
+  const func = whnfTree(app.func, budget)
   const lam = unLam(func)
   if (lam) {
     const result = apply(lam.body, app.arg)
-    return whnf(result, budget)
+    return whnfTree(result, budget)
   }
   if (treeEqual(func, app.func)) return t
   return encApp(func, app.arg)
@@ -166,7 +166,7 @@ export function whnf(t: Tree, budget = { remaining: 10000 }): Tree {
 export function normalize(t: Tree, budget = { remaining: 100000 }): Tree {
   if (budget.remaining <= 0) throw new CocError("Normalization budget exhausted")
   budget.remaining--
-  const w = whnf(t, budget)
+  const w = whnfTree(t, budget)
   const tag = termTag(w)
   switch (tag) {
     case "type":
@@ -199,8 +199,8 @@ export function normalize(t: Tree, budget = { remaining: 100000 }): Tree {
 
 export function convertible(a: Tree, b: Tree, budget = { remaining: 10000 }): boolean {
   if (treeEqual(a, b)) return true
-  const aN = whnf(a, budget)
-  const bN = whnf(b, budget)
+  const aN = whnfTree(a, budget)
+  const bN = whnfTree(b, budget)
   if (treeEqual(aN, bN)) return true
   const aTag = termTag(aN)
   const bTag = termTag(bN)
@@ -279,7 +279,7 @@ export function buildWrapped(sexpr: SExpr, env: Env, expectedType?: Tree, budget
         return buildWrapped(singleLam, env, expectedType, budget)
       }
       const param = sexpr.params[0]
-      const piTree = whnf(expectedType, budget)
+      const piTree = whnfTree(expectedType, budget)
       const pi = unPi(piTree)
       if (!pi) throw new CocError(`Lambda needs function type, got non-Pi`)
       const domain = pi.domain
@@ -300,7 +300,7 @@ export function buildWrapped(sexpr: SExpr, env: Env, expectedType?: Tree, budget
       const funcWrapped = buildWrapped(sexpr.func, env, undefined, budget)
       const funcData = unwrapData(funcWrapped)
       const funcType = unwrapType(funcWrapped)
-      const piTree = whnf(funcType, budget)
+      const piTree = whnfTree(funcType, budget)
       const pi = unPi(piTree)
       if (!pi) throw new CocError(`Expected function type in application`)
       const argWrapped = buildWrapped(sexpr.arg, env, pi.domain, budget)
@@ -405,7 +405,7 @@ export function printEncoded(t: Tree, nameMap?: Map<number, string>, budget = { 
 
 function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
   if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
-  const w = whnf(t, budget)
+  const w = whnfTree(t, budget)
   if (nameMap && w.id !== t.id) { const name = nameMap.get(w.id); if (name) return name }
   const tag = termTag(w)
   switch (tag) {

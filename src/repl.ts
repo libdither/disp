@@ -259,36 +259,40 @@ function handleCommand(state: ReplState, input: string): string {
 const BOOL_TYPE = spi("R", stype, spi("_", svar("R"), spi("_", svar("R"), svar("R"))))
 const NAT_TYPE = spi("R", stype, spi("_", spi("_", svar("R"), svar("R")), spi("_", svar("R"), svar("R"))))
 
-// Try to recognize common Church-encoded values, using type to disambiguate
-function recognizeTree(tree: Tree, type: SExpr, state: ReplState): string | null {
-  // Use type to guide recognition — this avoids collisions like id/1 or zero/false
-  const isBool = convertibleSExpr(type, BOOL_TYPE, state.ctx)
-  const isNat = !isBool && convertibleSExpr(type, NAT_TYPE, state.ctx)
-
+// Core recognition: type-guided Church literal check, then name lookup, then last-resort behavioral
+function recognizeChurchValue(
+  tree: Tree, isBool: boolean, isNat: boolean,
+  lookupName: (tree: Tree) => string | null,
+): string | null {
   if (isBool) {
     const result = tryChurchBool(tree)
     if (result !== null) return result
   }
-
   if (isNat) {
     const result = tryChurchNat(tree)
     if (result !== null) return result
   }
-
-  // Fall back to definition name matching (skip Bool/Nat-typed defs to avoid collisions)
-  for (const [name, def] of state.defs) {
-    if (tree.id === def.id) return name
-  }
-
-  // Last resort: behavioral tests if type didn't match known patterns
+  const name = lookupName(tree)
+  if (name) return name
   if (!isBool && !isNat) {
     const boolResult = tryChurchBool(tree)
     if (boolResult !== null) return boolResult
     const natResult = tryChurchNat(tree)
     if (natResult !== null) return natResult
   }
-
   return null
+}
+
+// Try to recognize common Church-encoded values, using type to disambiguate
+function recognizeTree(tree: Tree, type: SExpr, state: ReplState): string | null {
+  const isBool = convertibleSExpr(type, BOOL_TYPE, state.ctx)
+  const isNat = !isBool && convertibleSExpr(type, NAT_TYPE, state.ctx)
+  return recognizeChurchValue(tree, isBool, isNat, (t) => {
+    for (const [name, def] of state.defs) {
+      if (t.id === def.id) return name
+    }
+    return null
+  })
 }
 
 function tryChurchBool(tree: Tree): string | null {
@@ -437,29 +441,14 @@ function handleCocExpr(state: ReplState, expr: SExpr): string {
 function recognizeCocValue(compiled: Tree, type: Tree, state: ReplState): string | null {
   const boolEntry = state.cocEnv.get("Bool")
   const natEntry = state.cocEnv.get("Nat")
-
-  if (boolEntry && convertible(type, unwrapData(boolEntry))) {
-    const result = tryChurchBool(compiled)
-    if (result !== null) return result
-  }
-
-  if (natEntry && convertible(type, unwrapData(natEntry))) {
-    const result = tryChurchNat(compiled)
-    if (result !== null) return result
-  }
-
-  // Name lookup by compiled tree
-  for (const [name, w] of state.cocEnv) {
-    if (unwrapData(w).id === compiled.id) return name
-  }
-
-  // Last resort
-  const boolResult = tryChurchBool(compiled)
-  if (boolResult !== null) return boolResult
-  const natResult = tryChurchNat(compiled)
-  if (natResult !== null) return natResult
-
-  return null
+  const isBool = !!(boolEntry && convertible(type, unwrapData(boolEntry)))
+  const isNat = !isBool && !!(natEntry && convertible(type, unwrapData(natEntry)))
+  return recognizeChurchValue(compiled, isBool, isNat, (t) => {
+    for (const [name, w] of state.cocEnv) {
+      if (unwrapData(w).id === t.id) return name
+    }
+    return null
+  })
 }
 
 // --- Main REPL loop ---

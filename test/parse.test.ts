@@ -3,6 +3,7 @@ import {
   tokenize, parseExpr, parseLine, printExpr, ParseError,
   recognizeChurchLiteral, stripPos,
   svar, sapp, slam, spi, stype,
+  REC_TYPE_VAR, REC_FN_VAR, COP_TYPE_VAR,
   type SDecl, type SExpr,
 } from "../src/parse.js"
 
@@ -265,18 +266,18 @@ describe("parser - record types", () => {
   it("parses {x : A, y : B} as Pi type", () => {
     const result = parseExpr("{x : A, y : B}")
     // (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
-    const expected = spi("R$rec", stype,
+    const expected = spi(REC_TYPE_VAR, stype,
       spi("_",
-        spi("x", svar("A"), spi("y", svar("B"), svar("R$rec"))),
-        svar("R$rec")))
+        spi("x", svar("A"), spi("y", svar("B"), svar(REC_TYPE_VAR))),
+        svar(REC_TYPE_VAR)))
     expect(stripPos(result)).toEqual(expected)
   })
 
   it("parses {x := a, y := b} as lambda", () => {
     const result = parseExpr("{x := a, y := b}")
     // {R$rec f$rec} -> f$rec a b
-    const expected = slam(["R$rec", "f$rec"],
-      sapp(sapp(svar("f$rec"), svar("a")), svar("b")))
+    const expected = slam([REC_TYPE_VAR, REC_FN_VAR],
+      sapp(sapp(svar(REC_FN_VAR), svar("a")), svar("b")))
     expect(stripPos(result)).toEqual(expected)
   })
 
@@ -286,14 +287,14 @@ describe("parser - record types", () => {
 
   it("f {x := a} works as application", () => {
     const result = parseExpr("f {x := a}")
-    const recordVal = slam(["R$rec", "f$rec"], sapp(svar("f$rec"), svar("a")))
+    const recordVal = slam([REC_TYPE_VAR, REC_FN_VAR], sapp(svar(REC_FN_VAR), svar("a")))
     expect(stripPos(result)).toEqual(sapp(svar("f"), recordVal))
   })
 
   it("single-field record type", () => {
     const result = parseExpr("{x : A}")
-    const expected = spi("R$rec", stype,
-      spi("_", spi("x", svar("A"), svar("R$rec")), svar("R$rec")))
+    const expected = spi(REC_TYPE_VAR, stype,
+      spi("_", spi("x", svar("A"), svar(REC_TYPE_VAR)), svar(REC_TYPE_VAR)))
     expect(stripPos(result)).toEqual(expected)
   })
 })
@@ -302,20 +303,20 @@ describe("parser - coproduct types", () => {
   it("parses <Left : A | Right : B> as Pi type", () => {
     const result = parseExpr("<Left : A | Right : B>")
     // (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> R$cop
-    const expected = spi("R$cop", stype,
-      spi("_", spi("_", svar("A"), svar("R$cop")),
-        spi("_", spi("_", svar("B"), svar("R$cop")),
-          svar("R$cop"))))
+    const expected = spi(COP_TYPE_VAR, stype,
+      spi("_", spi("_", svar("A"), svar(COP_TYPE_VAR)),
+        spi("_", spi("_", svar("B"), svar(COP_TYPE_VAR)),
+          svar(COP_TYPE_VAR))))
     expect(stripPos(result)).toEqual(expected)
   })
 
   it("parses three-variant coproduct", () => {
     const result = parseExpr("<A : X | B : Y | C : Z>")
-    const expected = spi("R$cop", stype,
-      spi("_", spi("_", svar("X"), svar("R$cop")),
-        spi("_", spi("_", svar("Y"), svar("R$cop")),
-          spi("_", spi("_", svar("Z"), svar("R$cop")),
-            svar("R$cop")))))
+    const expected = spi(COP_TYPE_VAR, stype,
+      spi("_", spi("_", svar("X"), svar(COP_TYPE_VAR)),
+        spi("_", spi("_", svar("Y"), svar(COP_TYPE_VAR)),
+          spi("_", spi("_", svar("Z"), svar(COP_TYPE_VAR)),
+            svar(COP_TYPE_VAR)))))
     expect(stripPos(result)).toEqual(expected)
   })
 
