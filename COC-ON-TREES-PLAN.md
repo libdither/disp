@@ -1,4 +1,7 @@
-# CoC on Tree Calculus: Implementation Plan
+# CoC on Tree Calculus: Implementation Plan — STATUS: IMPLEMENTED
+
+> This plan has been fully implemented in `src/coc.ts` and `test/coc.test.ts`.
+> Kept as a design reference. See `PLAN.md` for current project status.
 
 ## Motivation
 

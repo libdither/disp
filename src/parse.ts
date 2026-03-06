@@ -576,7 +576,7 @@ export function printExpr(expr: SExpr): string {
     case "svar": return expr.name
     case "stype": return "Type"
     case "sapp": {
-      const func = printExpr(expr.func)
+      const func = needsParensAsFunc(expr.func) ? `(${printExpr(expr.func)})` : printExpr(expr.func)
       const arg = printAtom(expr.arg)
       return `${func} ${arg}`
     }
@@ -594,6 +594,13 @@ export function printExpr(expr: SExpr): string {
       return `(${expr.name} : ${printExpr(expr.domain)}) -> ${printExpr(expr.codomain)}`
     }
   }
+}
+
+// Pi/lambda/arrow in function position of application needs parens
+function needsParensAsFunc(expr: SExpr): boolean {
+  if (expr.tag === "spi") return true
+  if (expr.tag === "slam") return recognizeChurchLiteral(expr) === null
+  return false
 }
 
 function printAtom(expr: SExpr): string {
