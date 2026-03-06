@@ -85,8 +85,6 @@ export const K_SEL: Tree = stem(LEAF)
 export const K_STAR_SEL: Tree = fork(LEAF, I)
 
 export function wrap(data: Tree, type: Tree): Tree {
-  // Church pair: {f} -> f data type
-  // = collapse(bracketAbstract("f", app(app(fvar("f"), tree(data)), tree(type))))
   const expr = eApp(eApp(eFvar("f"), eTree(data)), eTree(type))
   return collapse(bracketAbstract("f", expr))
 }
@@ -104,17 +102,6 @@ export function unwrapType(wrapped: Tree): Tree {
 let markerCounter = 0
 
 export function freshMarker(): Tree {
-  // Use fork(LEAF, stem^n(LEAF)) to avoid collision with encodings.
-  // Encodings use:
-  //   Type = LEAF
-  //   Var = stem(x)
-  //   App = fork(LEAF, fork(...)) -- right is always fork
-  //   Lam = fork(stem(...), ...)
-  //   Pi  = fork(fork(...), ...)
-  // Our markers: fork(LEAF, stem^n(LEAF)) where n >= 0.
-  // fork(LEAF, stem^0(LEAF)) = fork(LEAF, LEAF) -- right is leaf, not fork → not App
-  // fork(LEAF, stem^n(LEAF)) for n>0 -- right is stem, not fork → not App
-  // So these are disjoint from all encodings. ✓
   let t: Tree = LEAF
   for (let i = 0; i < markerCounter; i++) {
     t = stem(t)
@@ -131,33 +118,22 @@ export function resetMarkerCounter(): void {
 // Phase 2: Bracket Abstraction Integration
 // ============================================================
 
-// Convert a tree back to an Expr, replacing occurrences of `target` with a free variable.
-// This is the bridge between tree-encoded terms and bracket abstraction.
 export function treeToExprReplacing(t: Tree, target: Tree, varName: string): Expr {
   if (treeEqual(t, target)) return eFvar(varName)
   if (t.tag === "leaf") return eTree(t)
   if (t.tag === "stem") {
     const child = treeToExprReplacing(t.child, target, varName)
     if (child.tag === "tree" && treeEqual(child.value, t.child)) return eTree(t)
-    // stem(x) = treeApply(LEAF, x)
     return eApp(eTree(LEAF), child)
   }
-  // fork
   const left = treeToExprReplacing(t.left, target, varName)
   const right = treeToExprReplacing(t.right, target, varName)
   if (left.tag === "tree" && treeEqual(left.value, t.left) &&
       right.tag === "tree" && treeEqual(right.value, t.right))
     return eTree(t)
-  // fork(a,b) = treeApply(stem(a), b) = app(app(LEAF, a), b) collapsed via treeApply
-  // But we need this at the Expr level: app(app(tree(LEAF), left), right) won't work
-  // because treeApply(LEAF, x) = stem(x), then treeApply(stem(x), y) = fork(x, y).
-  // So: fork(a, b) = eApp(eApp(eTree(LEAF), left), right)
-  // Collapse: treeApply(treeApply(LEAF, a), b) = treeApply(stem(a), b) = fork(a, b). ✓
   return eApp(eApp(eTree(LEAF), left), right)
 }
 
-// Abstract a marker out of a completed tree, producing a bracket-abstracted tree.
-// When apply()'d to an argument, substitutes the marker with that argument.
 export function abstractMarkerOut(tree: Tree, target: Tree): Tree {
   const name = "__marker__"
   const expr = treeToExprReplacing(tree, target, name)
@@ -172,36 +148,26 @@ export class CocError extends Error {
   constructor(msg: string) { super(msg) }
 }
 
-// WHNF: reduce head beta-redexes on encoded terms.
-// App(Lam(A, body), arg) → apply(body, arg)
 export function whnf(t: Tree, budget = { remaining: 10000 }): Tree {
   if (budget.remaining <= 0) throw new CocError("WHNF budget exhausted")
-
   const app = unApp(t)
   if (!app) return t
-
   budget.remaining--
   const func = whnf(app.func, budget)
   const lam = unLam(func)
   if (lam) {
-    // Beta reduction: apply the bracket-abstracted body to the argument
     const result = apply(lam.body, app.arg)
     return whnf(result, budget)
   }
-
-  // Reconstruct if func changed
   if (treeEqual(func, app.func)) return t
   return encApp(func, app.arg)
 }
 
-// Full normalization (not just WHNF): also normalize under binders and in arguments.
 export function normalize(t: Tree, budget = { remaining: 100000 }): Tree {
   if (budget.remaining <= 0) throw new CocError("Normalization budget exhausted")
   budget.remaining--
-
   const w = whnf(t, budget)
   const tag = termTag(w)
-
   switch (tag) {
     case "type":
     case "var":
@@ -231,20 +197,14 @@ export function normalize(t: Tree, budget = { remaining: 100000 }): Tree {
   }
 }
 
-// Convertibility: check if two encoded terms are convertible.
 export function convertible(a: Tree, b: Tree, budget = { remaining: 10000 }): boolean {
   if (treeEqual(a, b)) return true
-
   const aN = whnf(a, budget)
   const bN = whnf(b, budget)
-
   if (treeEqual(aN, bN)) return true
-
   const aTag = termTag(aN)
   const bTag = termTag(bN)
-
   if (aTag !== bTag) return false
-
   switch (aTag) {
     case "type": return true
     case "var": return treeEqual(unVar(aN)!, unVar(bN)!)
@@ -270,7 +230,6 @@ export function convertible(a: Tree, b: Tree, budget = { remaining: 10000 }): bo
   }
 }
 
-// Compare bracket-abstracted bodies by applying both to a fresh neutral.
 export function convertibleUnderBinder(body1: Tree, body2: Tree, budget = { remaining: 10000 }): boolean {
   const m = freshMarker()
   const neutral = encVar(m)
@@ -289,111 +248,69 @@ export function buildWrapped(sexpr: SExpr, env: Env, expectedType?: Tree, budget
   switch (sexpr.tag) {
     case "stype":
       return wrap(encType(), encType())
-
     case "svar": {
       const wrapped = env.get(sexpr.name)
       if (!wrapped) throw new CocError(`Unbound variable: ${sexpr.name}`)
       return wrapped
     }
-
     case "spi": {
-      // Build domain, ensure it's a type
       const domWrapped = buildWrapped(sexpr.domain, env, encType(), budget)
       const domData = unwrapData(domWrapped)
       const domType = unwrapType(domWrapped)
       ensureIsType(domType, `Domain of Pi type`, budget)
-
-      // Create neutral for the binder
       const m = freshMarker()
       const neutral = encVar(m)
       const binderWrapped = wrap(neutral, domData)
-
-      // Build codomain in extended env
       const extEnv = new Map(env)
-      if (sexpr.name !== "_") {
-        extEnv.set(sexpr.name, binderWrapped)
-      }
+      if (sexpr.name !== "_") extEnv.set(sexpr.name, binderWrapped)
       const codWrapped = buildWrapped(sexpr.codomain, extEnv, encType(), budget)
       const codData = unwrapData(codWrapped)
       const codType = unwrapType(codWrapped)
       ensureIsType(codType, `Codomain of Pi type`, budget)
-
-      // Abstract marker out of codomain
       const abstractedCod = abstractMarkerOut(codData, neutral)
-
       return wrap(encPi(domData, abstractedCod), encType())
     }
-
     case "slam": {
-      // Lambda requires an expected type
       if (!expectedType) throw new CocError("Cannot infer type of lambda expression")
-
-      // Desugar multi-param: {x y} -> body  →  {x} -> {y} -> body
       if (sexpr.params.length > 1) {
         const [first, ...rest] = sexpr.params
         const innerLam: SExpr = { tag: "slam", params: rest, body: sexpr.body }
         const singleLam: SExpr = { tag: "slam", params: [first], body: innerLam }
         return buildWrapped(singleLam, env, expectedType, budget)
       }
-
       const param = sexpr.params[0]
-
-      // WHNF the expected type — must be a Pi
       const piTree = whnf(expectedType, budget)
       const pi = unPi(piTree)
       if (!pi) throw new CocError(`Lambda needs function type, got non-Pi`)
-
       const domain = pi.domain
-
-      // Create neutral for the parameter
       const m = freshMarker()
       const neutral = encVar(m)
       const paramWrapped = wrap(neutral, domain)
-
-      // Compute expected codomain by applying the Pi body to the neutral
       const expectedCod = apply(pi.body, neutral)
-
-      // Build body in extended env
       const extEnv = new Map(env)
       extEnv.set(param, paramWrapped)
       const bodyWrapped = buildWrapped(sexpr.body, extEnv, expectedCod, budget)
       const bodyData = unwrapData(bodyWrapped)
       const bodyType = unwrapType(bodyWrapped)
-
-      // Abstract marker out of body data and type
       const abstractedBody = abstractMarkerOut(bodyData, neutral)
       const abstractedCod = abstractMarkerOut(bodyType, neutral)
-
       return wrap(encLam(domain, abstractedBody), encPi(domain, abstractedCod))
     }
-
     case "sapp": {
-      // Build function
       const funcWrapped = buildWrapped(sexpr.func, env, undefined, budget)
       const funcData = unwrapData(funcWrapped)
       const funcType = unwrapType(funcWrapped)
-
-      // WHNF the function type — must be a Pi
       const piTree = whnf(funcType, budget)
       const pi = unPi(piTree)
       if (!pi) throw new CocError(`Expected function type in application`)
-
-      // Build argument, checking against domain
       const argWrapped = buildWrapped(sexpr.arg, env, pi.domain, budget)
       const argData = unwrapData(argWrapped)
       const argType = unwrapType(argWrapped)
-
-      // Check argument type matches domain
       if (!convertible(argType, pi.domain, budget)) {
         throw new CocError(`Type mismatch in application: argument type doesn't match domain`)
       }
-
-      // Result data: encApp(funcData, argData)
       const resultData = encApp(funcData, argData)
-
-      // Result type: apply codomain body to the argument data
       const resultType = apply(pi.body, argData)
-
       return wrap(resultData, resultType)
     }
   }
@@ -410,44 +327,26 @@ function ensureIsType(typeTree: Tree, context: string, budget = { remaining: 100
 // ============================================================
 
 export function cocCheckDecl(
-  env: Env,
-  name: string,
-  type: SExpr | null,
-  value: SExpr,
-  isRec = false,
-  budget = { remaining: 10000 }
+  env: Env, name: string, type: SExpr | null, value: SExpr,
+  isRec = false, budget = { remaining: 10000 }
 ): { env: Env, type: Tree } {
-  if (isRec) {
-    return cocCheckRecDecl(env, name, type!, value, budget)
-  }
-
+  if (isRec) return cocCheckRecDecl(env, name, type!, value, budget)
   if (type !== null) {
-    // Build the type, ensure it's a Type
     const typeWrapped = buildWrapped(type, env, encType(), budget)
     const typeData = unwrapData(typeWrapped)
-    const typeType = unwrapType(typeWrapped)
-    ensureIsType(typeType, `Type annotation for ${name}`, budget)
-
-    // Build the value, checking against the declared type
+    ensureIsType(unwrapType(typeWrapped), `Type annotation for ${name}`, budget)
     const valWrapped = buildWrapped(value, env, typeData, budget)
     const valData = unwrapData(valWrapped)
-    const valType = unwrapType(valWrapped)
-
-    // Check that inferred type matches declared type
-    if (!convertible(valType, typeData, budget)) {
-      throw new CocError(`Type mismatch for ${name}: declared type doesn't match inferred type`)
+    if (!convertible(unwrapType(valWrapped), typeData, budget)) {
+      throw new CocError(`Type mismatch for ${name}`)
     }
-
-    // Add to env
     const newEnv = new Map(env)
     newEnv.set(name, wrap(valData, typeData))
     return { env: newEnv, type: typeData }
   } else {
-    // No type annotation — infer from value
     const valWrapped = buildWrapped(value, env, undefined, budget)
     const valData = unwrapData(valWrapped)
     const valType = unwrapType(valWrapped)
-
     const newEnv = new Map(env)
     newEnv.set(name, wrap(valData, valType))
     return { env: newEnv, type: valType }
@@ -455,53 +354,29 @@ export function cocCheckDecl(
 }
 
 export function cocCheckRecDecl(
-  env: Env,
-  name: string,
-  type: SExpr,
-  value: SExpr,
+  env: Env, name: string, type: SExpr, value: SExpr,
   budget = { remaining: 10000 }
 ): { env: Env, type: Tree } {
   if (!type) throw new CocError(`Recursive definition '${name}' requires a type annotation`)
-
-  // Build the type
   const typeWrapped = buildWrapped(type, env, encType(), budget)
   const typeData = unwrapData(typeWrapped)
   ensureIsType(unwrapType(typeWrapped), `Type annotation for ${name}`, budget)
-
-  // Pre-extend env with a neutral marker for self-reference
   const selfMarker = freshMarker()
   const selfNeutral = encVar(selfMarker)
   const preEnv = new Map(env)
   preEnv.set(name, wrap(selfNeutral, typeData))
-
-  // Build body in extended env
   const bodyWrapped = buildWrapped(value, preEnv, typeData, budget)
   const bodyData = unwrapData(bodyWrapped)
-
-  // Abstract self-marker out of body data
   const abstractedBody = abstractMarkerOut(bodyData, selfNeutral)
-
-  // Build omega combinator for recursion:
-  // omega = [x] body[self := [v] x x v]
-  // result = treeApply(omega, omega)
   const xMarker = freshMarker()
   const xNeutral = encVar(xMarker)
   const vMarker = freshMarker()
   const vNeutral = encVar(vMarker)
-
-  // Build [v] -> x x v  (self-application thunk)
   const selfApp = apply(apply(xNeutral, xNeutral), vNeutral)
   const thunk = abstractMarkerOut(selfApp, vNeutral)
-
-  // Substitute self-marker in the abstracted body with the thunk
-  // abstractedBody is [self] -> bodyData
-  // We need: [x] -> abstractedBody(thunk)
   const bodyWithThunk = apply(abstractedBody, thunk)
   const omega = abstractMarkerOut(bodyWithThunk, xNeutral)
-
-  // omega omega (structural, not eager)
   const result = treeApply(omega, omega)
-
   const newEnv = new Map(env)
   newEnv.set(name, wrap(result, typeData))
   return { env: newEnv, type: typeData }
@@ -529,47 +404,29 @@ export function printEncoded(t: Tree, nameMap?: Map<number, string>, budget = { 
 }
 
 function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
-  if (nameMap) {
-    const name = nameMap.get(t.id)
-    if (name) return name
-  }
-
+  if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
   const w = whnf(t, budget)
-
-  if (nameMap && w.id !== t.id) {
-    const name = nameMap.get(w.id)
-    if (name) return name
-  }
-
+  if (nameMap && w.id !== t.id) { const name = nameMap.get(w.id); if (name) return name }
   const tag = termTag(w)
-
   switch (tag) {
     case "type": return "Type"
     case "var": {
       const marker = unVar(w)!
-      if (nameMap) {
-        const name = nameMap.get(marker.id)
-        if (name) return name
-      }
+      if (nameMap) { const name = nameMap.get(marker.id); if (name) return name }
       return `?${marker.id}`
     }
     case "app": {
       const a = unApp(w)!
-      const funcStr = printEncodedInner(a.func, nameMap, budget)
-      const argStr = printEncodedAtom(a.arg, nameMap, budget)
-      return `${funcStr} ${argStr}`
+      return `${printEncodedInner(a.func, nameMap, budget)} ${printEncodedAtom(a.arg, nameMap, budget)}`
     }
     case "lam": {
       const l = unLam(w)!
       const varName = freshPrintVar()
       const m = freshMarker()
-      const neutral = encVar(m)
-      // Register the marker in a local extended name map
       const extMap = new Map(nameMap ?? [])
       extMap.set(m.id, varName)
-      const bodyApplied = apply(l.body, neutral)
-      const bodyStr = printEncodedInner(bodyApplied, extMap, budget)
-      return `{${varName}} -> ${bodyStr}`
+      const bodyApplied = apply(l.body, encVar(m))
+      return `{${varName}} -> ${printEncodedInner(bodyApplied, extMap, budget)}`
     }
     case "pi": {
       const p = unPi(w)!
@@ -582,11 +439,9 @@ function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { re
         const varName = freshPrintVar()
         const extMap = new Map(nameMap ?? [])
         extMap.set(m.id, varName)
-        const bodyStr = printEncodedInner(bodyApplied, extMap, budget)
-        return `(${varName} : ${domStr}) -> ${bodyStr}`
+        return `(${varName} : ${domStr}) -> ${printEncodedInner(bodyApplied, extMap, budget)}`
       }
-      const bodyStr = printEncodedInner(bodyApplied, nameMap, budget)
-      return `(${domStr}) -> ${bodyStr}`
+      return `(${domStr}) -> ${printEncodedInner(bodyApplied, nameMap, budget)}`
     }
     default:
       return `<tree:${w.id}>`
@@ -594,10 +449,7 @@ function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { re
 }
 
 function printEncodedAtom(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
-  if (nameMap) {
-    const name = nameMap.get(t.id)
-    if (name) return name
-  }
+  if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
   const tag = termTag(t)
   if (tag === "type" || tag === "var") return printEncodedInner(t, nameMap, budget)
   return `(${printEncodedInner(t, nameMap, budget)})`
@@ -611,33 +463,145 @@ function treeContains(tree: Tree, target: Tree): boolean {
 }
 
 // ============================================================
+// Tree-native core operations (actual tree constants)
+// ============================================================
+//
+// These are TREES, not TypeScript functions. When you apply() them to
+// arguments, tree calculus execution (triage) performs the computation.
+
+// --- Expr-level helpers ---
+
+function exprFork(a: Expr, b: Expr): Expr { return eApp(eApp(eTree(LEAF), a), b) }
+function exprTriage(c: Expr, d: Expr, b: Expr): Expr { return exprFork(exprFork(c, d), b) }
+function exprS(f: Expr, g: Expr): Expr { return eApp(eApp(eTree(LEAF), eApp(eTree(LEAF), f)), g) }
+function exprK(c: Expr): Expr { return eApp(eTree(stem(LEAF)), c) }
+function mkTriage(onLeaf: Tree, onStem: Tree, onFork: Tree): Tree { return fork(fork(onLeaf, onStem), onFork) }
+
+function compileTree(params: string[], body: Expr): Tree {
+  let e = body
+  for (let i = params.length - 1; i >= 0; i--) e = bracketAbstract(params[i], e)
+  return collapse(e)
+}
+
+// --- Primitive tree destructors (single triage, no recursion) ---
+
+// FST: fork(l,r) → l. Fork handler = K.
+export const FST: Tree = mkTriage(LEAF, LEAF, stem(LEAF))
+// SND: fork(l,r) → r. Fork handler = K*.
+export const SND: Tree = mkTriage(LEAF, LEAF, fork(LEAF, I))
+// CHILD: stem(u) → u. Stem handler = I.
+export const CHILD: Tree = mkTriage(LEAF, I, LEAF)
+
+// --- Encoding constructors as tree constants ---
+
+export const ENC_APP_T: Tree = compileTree(["m", "n"],
+  eApp(eTree(stem(LEAF)), exprFork(eFvar("m"), eFvar("n"))))
+export const ENC_LAM_T: Tree = compileTree(["d", "b"],
+  exprFork(eApp(eTree(LEAF), eFvar("d")), eFvar("b")))
+export const ENC_PI_T: Tree = compileTree(["d", "b"],
+  exprFork(exprFork(eFvar("d"), eTree(LEAF)), eFvar("b")))
+
+// --- termCase: 5-way dispatch on encoded CoC terms ---
+
+export const TERM_CASE: Tree = (() => {
+  const appCase = eApp(eApp(eFvar("onApp"), eApp(eTree(FST), eFvar("right"))),
+                                              eApp(eTree(SND), eFvar("right")))
+  const lamCase = bracketAbstract("__d",
+    eApp(eApp(eFvar("onLam"), eFvar("__d")), eFvar("right")))
+  const piCase = bracketAbstract("__dl", bracketAbstract("__",
+    eApp(eApp(eFvar("onPi"), eFvar("__dl")), eFvar("right"))))
+  const innerTriage = eApp(exprTriage(appCase, lamCase, piCase), eFvar("left"))
+  const forkHandler = bracketAbstract("left", bracketAbstract("right", innerTriage))
+  const body = eApp(exprTriage(eFvar("onType"), eFvar("onVar"), forkHandler), eFvar("term"))
+  return compileTree(["onType", "onVar", "onApp", "onLam", "onPi", "term"], body)
+})()
+
+// --- Tree-native equality (recursive via omega combinator) ---
+
+const TRUE_T: Tree = stem(LEAF)       // K: K(t)(f) = t
+const FALSE_T: Tree = fork(LEAF, I)   // K*: K*(t)(f) = f
+
+export const TREE_EQ: Tree = (() => {
+  const self = (p: Expr, q: Expr) => eApp(eApp(eApp(eFvar("x"), eFvar("x")), p), q)
+  const andE = (p: Expr, q: Expr) => eApp(eApp(p, q), eTree(FALSE_T))
+
+  const onLeaf = eApp(exprTriage(eTree(TRUE_T),
+    bracketAbstract("_s1", eTree(FALSE_T)),
+    bracketAbstract("_f1", bracketAbstract("_f2", eTree(FALSE_T)))
+  ), eFvar("b"))
+
+  const onStem = bracketAbstract("ac", eApp(exprTriage(eTree(FALSE_T),
+    bracketAbstract("bc", self(eFvar("ac"), eFvar("bc"))),
+    bracketAbstract("_f1", bracketAbstract("_f2", eTree(FALSE_T)))
+  ), eFvar("b")))
+
+  const onFork = bracketAbstract("al", bracketAbstract("ar", eApp(exprTriage(eTree(FALSE_T),
+    bracketAbstract("_s2", eTree(FALSE_T)),
+    bracketAbstract("bl", bracketAbstract("br",
+      andE(self(eFvar("al"), eFvar("bl")), self(eFvar("ar"), eFvar("br")))
+    ))
+  ), eFvar("b"))))
+
+  const body = eApp(exprTriage(onLeaf, onStem, onFork), eFvar("a"))
+  const omega = compileTree(["x", "a", "b"], body)
+  return treeApply(omega, omega)
+})()
+
+// --- Tree-native bracket abstraction (recursive via omega) ---
+
+export const ABSTRACT_OUT: Tree = (() => {
+  const self = (p: Expr, q: Expr) => eApp(eApp(eApp(eFvar("x"), eFvar("x")), p), q)
+  const K_LEAF = exprK(eTree(LEAF))
+
+  const onStem = bracketAbstract("c", exprS(K_LEAF, self(eFvar("target"), eFvar("c"))))
+  const onFork = bracketAbstract("l", bracketAbstract("r",
+    exprS(exprS(K_LEAF, self(eFvar("target"), eFvar("l"))), self(eFvar("target"), eFvar("r")))))
+
+  const triageOnTree = eApp(exprTriage(exprK(eTree(LEAF)), onStem, onFork), eFvar("tree"))
+  const eqCheck = eApp(eApp(eTree(TREE_EQ), eFvar("tree")), eFvar("target"))
+  const body = eApp(eApp(eqCheck, eTree(I)), triageOnTree)
+
+  const omega = compileTree(["x", "target", "tree"], body)
+  return treeApply(omega, omega)
+})()
+
+// ============================================================
 // CoC Prelude: Church-encoded Tree and encoding operations
 // ============================================================
 
 export const COC_PRELUDE: string[] = [
-  // Church-encoded Tree type
   "let Tree : Type := (R : Type) -> R -> (R -> R) -> (R -> R -> R) -> R",
-
-  // Tree constructors
   "let leaf : Tree := {R c d b} -> c",
   "let stem : Tree -> Tree := {t R c d b} -> d (t R c d b)",
   "let fork : Tree -> Tree -> Tree := {l r R c d b} -> b (l R c d b) (r R c d b)",
-
-  // Church fold (triage/elimination)
   "let triage : (R : Type) -> R -> (R -> R) -> (R -> R -> R) -> Tree -> R := {R c d b t} -> t R c d b",
-
-  // CoC term encoding constructors
   "let encType : Tree := leaf",
   "let encVar : Tree -> Tree := stem",
   "let encApp : Tree -> Tree -> Tree := {m n} -> fork leaf (fork m n)",
   "let encLam : Tree -> Tree -> Tree := {domain body} -> fork (stem domain) body",
   "let encPi : Tree -> Tree -> Tree := {domain body} -> fork (fork domain leaf) body",
-
-  // Wrapped term (Church pair carrying data + type)
   "let Wrapped : Type := (R : Type) -> (Tree -> Tree -> R) -> R",
   "let wrap : Tree -> Tree -> Wrapped := {d t R sel} -> sel d t",
   "let unwrapData : Wrapped -> Tree := {w} -> w Tree ({d t} -> d)",
   "let unwrapType : Wrapped -> Tree := {w} -> w Tree ({d t} -> t)",
+  "let Bool : Type := (R : Type) -> R -> R -> R",
+  "let tt : Bool := {R t f} -> t",
+  "let ff : Bool := {R t f} -> f",
+]
+
+interface TreeBuiltin { name: string; type: string; data: Tree }
+
+export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
+  { name: "tfst",     type: "Tree -> Tree",   data: FST },
+  { name: "tsnd",     type: "Tree -> Tree",   data: SND },
+  { name: "tchild",   type: "Tree -> Tree",   data: CHILD },
+  { name: "tEncApp",  type: "Tree -> Tree -> Tree", data: ENC_APP_T },
+  { name: "tEncLam",  type: "Tree -> Tree -> Tree", data: ENC_LAM_T },
+  { name: "tEncPi",   type: "Tree -> Tree -> Tree", data: ENC_PI_T },
+  { name: "termCase", type: "Tree -> (Tree -> Tree) -> (Tree -> Tree -> Tree) -> (Tree -> Tree -> Tree) -> (Tree -> Tree -> Tree) -> Tree -> Tree",
+    data: TERM_CASE },
+  { name: "treeEq",   type: "Tree -> Tree -> Bool", data: TREE_EQ },
+  { name: "abstractOut", type: "Tree -> Tree -> Tree", data: ABSTRACT_OUT },
 ]
 
 export function loadCocPrelude(env: Env): Env {
@@ -648,10 +612,15 @@ export function loadCocPrelude(env: Env): Env {
     const result = cocCheckDecl(env, sdecl.name, sdecl.type, sdecl.value, sdecl.isRec)
     env = result.env
   }
+  for (const builtin of TREE_NATIVE_BUILTINS) {
+    const typeWrapped = buildWrapped(parseLine(builtin.type) as SExpr, env, encType())
+    const typeData = unwrapData(typeWrapped)
+    env = new Map(env)
+    env.set(builtin.name, wrap(builtin.data, typeData))
+  }
   return env
 }
 
-// Build reverse name map from env (tree id → name) for pretty-printing
 export function buildNameMap(env: Env): Map<number, string> {
   const map = new Map<number, string>()
   for (const [name, wrapped] of env) {
