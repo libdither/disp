@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import * as fs from "node:fs"
-import { runRepl } from "./repl.js"
-import { initialState, processLine, loadFile } from "./repl.js"
+import { runRepl, initialState, loadFile } from "./repl.js"
 
 const file = process.argv[2]
 

@@ -1,29 +1,93 @@
 # Disp
 
-Goals
- - All-purpose: Disp will be able to be used for scripting, shells, and compiled languages.
- - Speed: Disp will be as fast if not faster than Rust, C and adjacent languages, even when writing high-level code.
- - Provably Safe: Disp programs compiled to machinecode will carry proofs of correctness written for a software model of the target CPU.
- - Syntax-agnostic: Anyone from any language should be able to come to Disp without having to re-learn syntax preferences. This can be solved through various syntax variants of disp expressions that reflect the syntax of various languages.
+A dependently-typed programming language built on tree calculus.
 
-Disp is still just a personal project as this stage. It is currently just a simple untyped lambda calculus evaluator and some math functions made using Church Encoding.
+Tree calculus is natively reflective -- terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp uses the Calculus of Constructions (CoC) as its type theory, with CoC terms encoded directly as trees.
 
-To Run:
+## Quick Start
+
 ```shell
-nix develop
-cargo run
-
-load "std.disp"
+npm install
+npx tsx src/main.ts
 ```
 
-## Old Roadmap
+This starts the REPL, which auto-loads `prelude.disp` (Church-encoded Bool, Nat, Pair, Either).
 
-Function that takes an untyped program and infers its type in a two-sort [pure type system](https://en.wikipedia.org/wiki/Pure_type_system) based on the [calculus of inductive constructions](https://en.wikipedia.org/wiki/Calculus_of_inductive_constructions).
+```
+> let id : (A : Type) -> A -> A := {A x} -> x
+id : (A : Type) -> A -> A
 
-Function that takes a typed program and generates a program that replaces inductive types with types that can be easily represented in binary. (i.e. translate Church encoded numbers into unsigned integers).
+> id Bool true
+true : (R : Type) -> R -> R -> R
 
-Function that takes program with supported types in addition to different translation strategies and generates relevant LLVM bytecode. (translation strategies are programs that say: "if I see this function and this type, I should generate this assembly).
+> add 3 4
+7 : (R : Type) -> (R -> R) -> R -> R
 
-## Implementation Details
+> :type not true
+(R : Type) -> R -> R -> R
 
- - [Deduplication-friendly Lambda term representation](https://dither.link/docs/disp/bind-trees.html)
+> :tree {x} -> x
+(tri (tri t t) t)
+```
+
+## Running Tests
+
+```shell
+npm test
+```
+
+## Architecture
+
+```
+src/tree.ts     -- Tree calculus runtime: hash-consed trees, eager evaluation
+src/parse.ts    -- Tokenizer + recursive descent parser -> SExpr
+src/compile.ts  -- SExpr -> Tree via bracket abstraction (S/K/I combinators)
+src/coc.ts      -- CoC-on-trees type checker + tree-native builtins
+src/repl.ts     -- Interactive REPL with commands
+src/main.ts     -- Entry point
+```
+
+**Pipeline**: Parse (source -> SExpr) -> Type Check (CoC-on-trees) -> Compile (bracket abstraction) -> Evaluate (tree calculus)
+
+## Syntax
+
+```
+let name : type := value       -- typed definition
+let rec name : type := value   -- recursive definition
+{x y z} -> body                -- lambda (multi-param sugar)
+(x : A) -> B                   -- dependent function type (Pi)
+A -> B                         -- non-dependent function type
+f x                            -- application
+Type                           -- the universe
+true / false                   -- Church booleans
+0, 1, 2, ...                   -- Church numerals
+{x : A, y : B}                 -- record type (Church-encoded)
+<Left : A | Right : B>         -- coproduct type (Church-encoded)
+```
+
+## REPL Commands
+
+- `:type <expr>` / `:t` -- show the type of an expression
+- `:tree <expr>` -- show the compiled tree calculus form
+- `:ctx` -- show the current context
+- `:load <file>` / `:l` -- load declarations from a file
+- `:save <file>` / `:s` -- save declarations to a file
+- `:help` / `:h` -- show help
+- `:quit` / `:q` -- exit
+
+## Goals
+
+- **All-purpose**: scripting, shells, and compiled languages
+- **Speed**: competitive with Rust/C for high-level code via neural compilation
+- **Provably safe**: programs carry proofs of correctness
+- **Syntax-agnostic**: multiple syntax frontends for the same core
+
+## Design Notes
+
+- **Tree calculus application is eager** -- `apply(f, x)` recursively evaluates. Trees are always in normal form.
+- **Type:Type** -- inconsistent as logic, fine as a programming language. No universe hierarchy.
+- **Church encodings only** -- no inductive types. Booleans, naturals, pairs, etc. are all Church-encoded.
+- **Bracket abstraction** is optimized: eta reduction, S(K p)(K q) = K(p q), S(K p) I = p.
+- **CoC terms are trees** -- the type checker operates on tree-encoded terms. Tree calculus `apply()` IS substitution.
+
+See `PLAN.md` for the full roadmap including neural program synthesis (Phase 2).

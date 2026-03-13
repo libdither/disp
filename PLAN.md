@@ -17,29 +17,28 @@ O(1) equality via hash-consing IDs.
 
 ### Layer 1: The Language — COMPLETE
 
-Two parallel pipelines, both fully working:
+Unified pipeline: parse → type-check (CoC-on-trees) → compile → eval.
 
-**Original pipeline** (parse → typecheck → compile → eval):
 - `src/parse.ts` — Tokenizer + recursive descent parser → SExpr
-- `src/typecheck.ts` — Bidirectional CoC type checker on SExpr (named variables)
 - `src/compile.ts` — SExpr → Tree via bracket abstraction (S/K/I with optimizations)
+- `src/coc.ts` — CoC-on-trees type checker + tree-native builtins
+  - CoC terms encoded directly as trees (Type=leaf, Var=stem, App/Lam/Pi=fork variants)
+  - Bodies bracket-abstracted — tree calculus `apply()` IS substitution
+  - Wrapped values carry (data, type) as Church pairs
+  - `buildWrapped`, `whnf`, `convertible`, `normalize` on tree-encoded terms
+  - Declaration pipeline with recursive definitions via omega combinator
+  - CoC prelude: Church-encoded Tree/leaf/stem/fork/triage, encoding constructors,
+    wrap/unwrap, Bool/tt/ff
+  - Tree-native builtins (injected triage trees): FST, SND, CHILD, ENC_APP_T,
+    ENC_LAM_T, ENC_PI_T, TERM_CASE (5-way dispatch)
+  - Tree-native step functions (all working): treeEqStep, abstractOutStep,
+    whnfStep, convertibleStep, inferStep (full type inference as a tree constant)
+- `src/repl.ts` — REPL with `:load`/`:save`/`:type`/`:tree`/`:ctx`/`:help`
 - Church-encoded booleans/naturals, records, coproducts, recursive definitions
-- REPL with `:load`/`:save`/`:type`/`:tree`/`:ctx`/`:help`, prelude auto-load
-
-**CoC-on-trees pipeline** (`src/coc.ts`, activated via `:coc`):
-- CoC terms encoded directly as trees (Type=leaf, Var=stem, App/Lam/Pi=fork variants)
-- Bodies bracket-abstracted — tree calculus `apply()` IS substitution
-- Wrapped values carry (data, type) as Church pairs
-- `buildWrapped`, `whnf`, `convertible`, `normalize` on tree-encoded terms
-- Declaration pipeline with recursive definitions via omega combinator
-- CoC prelude: Church-encoded Tree/leaf/stem/fork/triage, encoding constructors,
-  wrap/unwrap, Bool/tt/ff
-- Tree-native builtins (injected triage trees): FST, SND, CHILD, ENC_APP_T,
-  ENC_LAM_T, ENC_PI_T, TERM_CASE (5-way dispatch)
-- Church literal recognition in CoC mode (add 3 4 → 7, not true → false)
+- Church literal recognition (add 3 4 → 7, not true → false)
 - Pretty printer with generated binder names and reverse name lookup
 
-**Test suite**: 308 tests across 7 files. Includes 28 cross-pipeline equivalence
+**Test suite**: 292 tests across 6 files. Includes cross-pipeline equivalence
 checks (boolean truth tables, arithmetic, nested expressions).
 
 ### Known Issue: collapse/apply mismatch

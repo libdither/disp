@@ -7,7 +7,8 @@ import * as path from "node:path"
 import { parseLine, printExpr, recognizeChurchLiteral, type SExpr, type SDecl, ParseError } from "./parse.js"
 import { compileAndEval, compileRecAndEval } from "./compile.js"
 import { apply, prettyTree, type Tree, LEAF, stem, I, BudgetExhausted } from "./tree.js"
-import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, convertible, encType, CocError, loadCocPrelude, buildNameMap, COC_PRELUDE, TREE_NATIVE_BUILTINS, type Env } from "./coc.js"
+import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, convertible, encType, CocError, type Env } from "./coc.js"
+import { loadCocPrelude, buildNameMap, COC_PRELUDE, TREE_NATIVE_BUILTINS } from "./tree-native.js"
 
 export type ReplState = {
   cocEnv: Env                   // CoC environment (name → wrapped tree)
@@ -26,7 +27,9 @@ function loadCocPreludeIntoDefs(state: ReplState): void {
           ? compileRecAndEval(sdecl.name, sdecl.value, state.defs)
           : compileAndEval(sdecl.value, state.defs)
         state.defs.set(sdecl.name, compiled)
-      } catch {}
+      } catch (e) {
+        console.error(`Warning: failed to compile prelude definition '${sdecl.name}':`, e instanceof Error ? e.message : e)
+      }
     }
   }
   for (const builtin of TREE_NATIVE_BUILTINS) {
@@ -147,7 +150,10 @@ function handleExpr(state: ReplState, expr: SExpr): string {
   let compiled: Tree | null = null
   try {
     compiled = compileAndEval(expr, state.defs)
-  } catch {}
+  } catch {
+    // Compilation can fail for type-level expressions that don't reduce to trees.
+    // Fall back to displaying the encoded form below.
+  }
 
   if (compiled) {
     const display = recognizeValue(compiled, type, state)

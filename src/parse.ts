@@ -1,5 +1,5 @@
 // Surface syntax parser for Disp.
-// Produces a named-variable AST (not bind-trees — that's ast.ts).
+// Produces a named-variable AST (SExpr) from source text.
 //
 // Syntax:
 //   let id : (A : Type) -> A -> A := {A x} -> x

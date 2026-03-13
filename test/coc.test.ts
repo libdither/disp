@@ -8,11 +8,14 @@ import {
   treeToExprReplacing, abstractMarkerOut,
   whnfTree, normalize, convertible, convertibleUnderBinder,
   buildWrapped, cocCheckDecl, cocCheckRecDecl,
-  printEncoded, loadCocPrelude, buildNameMap,
-  FST, SND, CHILD, ENC_APP_T, ENC_LAM_T, ENC_PI_T,
-  TERM_CASE, TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
+  printEncoded,
   CocError, type Env,
 } from "../src/coc.js"
+import {
+  loadCocPrelude, buildNameMap,
+  FST, SND, CHILD, ENC_APP_T, ENC_LAM_T, ENC_PI_T,
+  TERM_CASE, TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
+} from "../src/tree-native.js"
 import { eTree, eFvar, eApp, bracketAbstract, collapse, collapseAndEval } from "../src/compile.js"
 import { parseExpr, parseLine, type SExpr, type SDecl } from "../src/parse.js"
 
