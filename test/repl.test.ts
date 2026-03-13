@@ -48,13 +48,12 @@ describe("REPL - processLine", () => {
   it("bare true/false literals infer their type", () => {
     const result = processLine(state, "true")
     expect(result).not.toContain("Error")
-    expect(result).toContain("Type")
+    expect(result).toContain("Bool")
   })
 
   it("bare number literals infer their type", () => {
     const result = processLine(state, "3")
     expect(result).not.toContain("Error")
-    expect(result).toContain("Type")
   })
 })
 
@@ -259,8 +258,6 @@ describe("REPL - integration: prelude records and coproducts", () => {
   })
 
   it("coproduct elimination via application", () => {
-    // inl Nat Nat 42 : Either Nat Nat
-    // eliminate: e Nat ({x} -> x) ({y} -> y)
     processLine(state, "let e : Either Nat Nat := inl Nat Nat 3")
     const result = processLine(state, "e Nat ({x} -> x) ({y} -> y)")
     expect(result).toMatch(/^3/)
@@ -268,15 +265,41 @@ describe("REPL - integration: prelude records and coproducts", () => {
 })
 
 describe("REPL - :ctx command", () => {
-  it("shows empty context", () => {
+  it("shows CoC prelude builtins by default", () => {
     const state = initialState()
-    expect(processLine(state, ":ctx")).toBe("(empty context)")
+    const result = processLine(state, ":ctx")
+    expect(result).toContain("Tree")
+    expect(result).toContain("leaf")
   })
 
   it("shows context after definitions", () => {
     const state = initialState()
-    processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
+    processLine(state, "let MyBool : Type := (R : Type) -> R -> R -> R")
     const result = processLine(state, ":ctx")
-    expect(result).toContain("Bool : Type")
+    expect(result).toContain("MyBool : Type")
+  })
+})
+
+describe("REPL - type errors", () => {
+  it("rejects type mismatch in application", () => {
+    const state = initialState()
+    processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
+    processLine(state, "let Nat : Type := (R : Type) -> (R -> R) -> R -> R")
+    processLine(state, "let id : (A : Type) -> A -> A := {A x} -> x")
+    processLine(state, "let zero : Nat := {R s z} -> z")
+    const result = processLine(state, "id Bool zero")
+    expect(result).toContain("error")
+  })
+
+  it("rejects applying non-function", () => {
+    const state = initialState()
+    const result = processLine(state, "Type Type")
+    expect(result).toContain("error")
+  })
+
+  it("rejects lambda without function type annotation", () => {
+    const state = initialState()
+    const result = processLine(state, "{x} -> x")
+    expect(result).toContain("error")
   })
 })

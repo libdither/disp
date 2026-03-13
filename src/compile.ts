@@ -298,7 +298,7 @@ export function compileRecAndEval(
 }
 
 // Substitute a free variable name with an Expr in an Expr
-function substExpr(name: string, replacement: Expr, expr: Expr): Expr {
+export function substExpr(name: string, replacement: Expr, expr: Expr): Expr {
   switch (expr.tag) {
     case "fvar":
       return expr.name === name ? replacement : expr

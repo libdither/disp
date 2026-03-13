@@ -1,26 +1,45 @@
 // Interactive REPL for Disp.
-// Pipeline: parse → type-check → compile → evaluate → print
+// Pipeline: parse → type-check (CoC-on-trees) → compile → evaluate → print
 
 import * as readline from "node:readline"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { parseLine, printExpr, recognizeChurchLiteral, spi, stype, svar, type SExpr, type SDecl, type Span, ParseError } from "./parse.js"
-import { checkDecl, infer, check, convertibleSExpr, type Context, whnfSExpr, TypeError } from "./typecheck.js"
-import { compile, compileAndEval, compileRecAndEval } from "./compile.js"
+import { parseLine, printExpr, recognizeChurchLiteral, type SExpr, type SDecl, ParseError } from "./parse.js"
+import { compileAndEval, compileRecAndEval } from "./compile.js"
 import { apply, prettyTree, type Tree, LEAF, stem, I, BudgetExhausted } from "./tree.js"
-import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, convertible, normalize, CocError, loadCocPrelude, buildNameMap, type Env } from "./coc.js"
+import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, convertible, encType, CocError, loadCocPrelude, buildNameMap, COC_PRELUDE, TREE_NATIVE_BUILTINS, type Env } from "./coc.js"
 
 export type ReplState = {
-  ctx: Context
-  defs: Map<string, Tree>     // compiled definitions
-  defExprs: Map<string, SExpr> // source-level definitions (for display)
-  defIsRec: Set<string>       // names defined with 'let rec'
-  cocMode: boolean            // whether to use CoC-on-trees pipeline
-  cocEnv: Env                 // CoC environment (name → wrapped tree)
+  cocEnv: Env                   // CoC environment (name → wrapped tree)
+  defs: Map<string, Tree>       // compiled definitions (for evaluation)
+  defExprs: Map<string, SExpr>  // source-level definitions (for save/display)
+  defIsRec: Set<string>         // names defined with 'let rec'
+}
+
+function loadCocPreludeIntoDefs(state: ReplState): void {
+  for (const decl of COC_PRELUDE) {
+    const parsed = parseLine(decl)
+    if ("name" in parsed) {
+      const sdecl = parsed as SDecl
+      try {
+        const compiled = sdecl.isRec
+          ? compileRecAndEval(sdecl.name, sdecl.value, state.defs)
+          : compileAndEval(sdecl.value, state.defs)
+        state.defs.set(sdecl.name, compiled)
+      } catch {}
+    }
+  }
+  for (const builtin of TREE_NATIVE_BUILTINS) {
+    state.defs.set(builtin.name, builtin.data)
+  }
 }
 
 export function initialState(): ReplState {
-  return { ctx: [], defs: new Map(), defExprs: new Map(), defIsRec: new Set(), cocMode: false, cocEnv: new Map() }
+  const state: ReplState = { cocEnv: new Map(), defs: new Map(), defExprs: new Map(), defIsRec: new Set() }
+  // Auto-load CoC prelude (Tree, leaf, stem, fork, triage, enc*, wrap/unwrap, builtins)
+  state.cocEnv = loadCocPrelude(state.cocEnv)
+  loadCocPreludeIntoDefs(state)
+  return state
 }
 
 // --- Error formatting ---
@@ -34,10 +53,11 @@ function offsetToLineCol(source: string, offset: number): { line: number, col: n
   return { line, col }
 }
 
+type Span = { start: number, end: number }
+
 function formatError(source: string, prefix: string, msg: string, span?: Span): string {
   if (!span) return `${prefix}: ${msg}`
   const { line, col } = offsetToLineCol(source, span.start)
-  // Find the source line containing the span start
   const lines = source.split('\n')
   const srcLine = lines[line - 1] ?? ''
   const underLen = Math.max(1, Math.min(span.end - span.start, srcLine.length - col + 1))
@@ -58,23 +78,14 @@ export function processLine(state: ReplState, input: string): string {
   try {
     const parsed = parseLine(trimmed)
 
-    if (state.cocMode) {
-      if (isDecl(parsed)) {
-        return handleCocDecl(state, parsed)
-      } else {
-        return handleCocExpr(state, parsed)
-      }
-    }
-
     if (isDecl(parsed)) {
       return handleDecl(state, parsed)
     } else {
       return handleExpr(state, parsed)
     }
   } catch (e) {
-    if (e instanceof TypeError) return formatError(trimmed, "Type error", e.message, e.span)
     if (e instanceof ParseError) return formatError(trimmed, "Parse error", e.message, e.span)
-    if (e instanceof CocError) return `CoC error: ${e.message}`
+    if (e instanceof CocError) return `Type error: ${e.message}`
     if (e instanceof BudgetExhausted) return `Error: evaluation did not terminate`
     if (e instanceof Error) return `Error: ${e.message}`
     return `Error: ${e}`
@@ -88,36 +99,36 @@ function isDecl(x: SDecl | SExpr): x is SDecl {
 function handleDecl(state: ReplState, decl: SDecl): string {
   const { name, type, value, isRec } = decl
 
-  // Type check
-  const result = checkDecl(state.ctx, name, type, value, isRec)
-  state.ctx = result.ctx
+  // Type check via CoC-on-trees
+  const result = cocCheckDecl(state.cocEnv, name, type, value, isRec)
+  state.cocEnv = result.env
+  state.defExprs.set(name, value)
+  if (isRec) state.defIsRec.add(name)
 
   // Compile and evaluate
   let compiled: Tree
   if (isRec) {
     compiled = compileRecAndEval(name, value, state.defs)
-    state.defIsRec.add(name)
   } else {
     compiled = compileAndEval(value, state.defs)
   }
   state.defs.set(name, compiled)
-  state.defExprs.set(name, value)
 
-  const typeStr = printExpr(result.type)
+  const nameMap = buildNameMap(state.cocEnv)
+  const typeStr = printEncoded(result.type, nameMap)
   return `${name} : ${typeStr}`
 }
 
 function handleExpr(state: ReplState, expr: SExpr): string {
-  // Type check — try inference first, fall back for Church literals
-  let type: SExpr
+  // Type check via CoC — try without expected type, fall back for Church literals
+  let wrapped: Tree
   try {
-    type = infer(state.ctx, expr)
+    wrapped = buildWrapped(expr, state.cocEnv)
   } catch (e) {
-    if (e instanceof TypeError && expr.tag === "slam") {
-      const litType = churchLiteralType(expr)
+    if (e instanceof CocError && expr.tag === "slam") {
+      const litType = churchLiteralTypeCoc(expr, state.cocEnv)
       if (litType) {
-        check(state.ctx, expr, litType)
-        type = litType
+        wrapped = buildWrapped(expr, state.cocEnv, litType)
       } else {
         throw e
       }
@@ -126,29 +137,43 @@ function handleExpr(state: ReplState, expr: SExpr): string {
     }
   }
 
-  // Compile and evaluate eagerly
-  const compiled = compileAndEval(expr, state.defs)
+  const data = unwrapData(wrapped)
+  const type = unwrapType(wrapped)
 
-  // Try to recognize the result, using type to disambiguate
-  const display = recognizeTree(compiled, type, state)
-  const typeStr = printExpr(type)
+  const nameMap = buildNameMap(state.cocEnv)
+  const typeStr = printEncoded(type, nameMap)
 
-  if (display) {
-    return `${display} : ${typeStr}`
+  // Compile and evaluate for display
+  let compiled: Tree | null = null
+  try {
+    compiled = compileAndEval(expr, state.defs)
+  } catch {}
+
+  if (compiled) {
+    const display = recognizeValue(compiled, type, state)
+    if (display) return `${display} : ${typeStr}`
+    return `${prettyTree(compiled)} : ${typeStr}`
   }
-  return `${prettyTree(compiled)} : ${typeStr}`
+
+  // Fall back to name lookup on encoded data
+  const name = nameMap.get(data.id)
+  if (name) return `${name} : ${typeStr}`
+
+  const dataStr = printEncoded(data, nameMap)
+  return `${dataStr} : ${typeStr}`
 }
 
-// Return the type for a recognized Church literal, or null
-function churchLiteralType(expr: SExpr): SExpr | null {
+// Build a CoC tree type for a recognized Church literal
+function churchLiteralTypeCoc(expr: SExpr, env: Env): Tree | null {
   const lit = recognizeChurchLiteral(expr)
   if (lit === null) return null
+  let typeExpr: SExpr
   if (lit === "true" || lit === "false") {
-    // (R : Type) -> R -> R -> R
-    return spi("R", stype, spi("_", svar("R"), spi("_", svar("R"), svar("R"))))
+    typeExpr = parseLine("(R : Type) -> R -> R -> R") as SExpr
+  } else {
+    typeExpr = parseLine("(R : Type) -> (R -> R) -> R -> R") as SExpr
   }
-  // Church numeral: (R : Type) -> (R -> R) -> R -> R
-  return spi("R", stype, spi("_", spi("_", svar("R"), svar("R")), spi("_", svar("R"), svar("R"))))
+  return unwrapData(buildWrapped(typeExpr, env, encType()))
 }
 
 function handleCommand(state: ReplState, input: string): string {
@@ -162,8 +187,24 @@ function handleCommand(state: ReplState, input: string): string {
       if (!rest) return "Usage: :type <expr>"
       try {
         const expr = parseLine(rest) as SExpr
-        const type = infer(state.ctx, expr)
-        return printExpr(type)
+        let wrapped: Tree
+        try {
+          wrapped = buildWrapped(expr, state.cocEnv)
+        } catch (e) {
+          if (e instanceof CocError && expr.tag === "slam") {
+            const litType = churchLiteralTypeCoc(expr, state.cocEnv)
+            if (litType) {
+              wrapped = buildWrapped(expr, state.cocEnv, litType)
+            } else {
+              throw e
+            }
+          } else {
+            throw e
+          }
+        }
+        const type = unwrapType(wrapped)
+        const nameMap = buildNameMap(state.cocEnv)
+        return printEncoded(type, nameMap)
       } catch (e) {
         return e instanceof Error ? `Error: ${e.message}` : `Error: ${e}`
       }
@@ -173,7 +214,7 @@ function handleCommand(state: ReplState, input: string): string {
       if (!rest) return "Usage: :tree <expr>"
       try {
         const expr = parseLine(rest) as SExpr
-        const compiled = compile(expr, state.defs)
+        const compiled = compileAndEval(expr, state.defs)
         return prettyTree(compiled)
       } catch (e) {
         return e instanceof Error ? `Error: ${e.message}` : `Error: ${e}`
@@ -182,18 +223,14 @@ function handleCommand(state: ReplState, input: string): string {
 
     case ":ctx":
     case ":context": {
-      if (state.cocMode) {
-        if (state.cocEnv.size === 0) return "(empty context)"
-        const nameMap = buildNameMap(state.cocEnv)
-        const lines: string[] = []
-        for (const [name, wrapped] of state.cocEnv) {
-          const type = unwrapType(wrapped)
-          lines.push(`${name} : ${printEncoded(type, nameMap)}`)
-        }
-        return lines.join("\n")
+      if (state.cocEnv.size === 0) return "(empty context)"
+      const nameMap = buildNameMap(state.cocEnv)
+      const lines: string[] = []
+      for (const [name, w] of state.cocEnv) {
+        const type = unwrapType(w)
+        lines.push(`${name} : ${printEncoded(type, nameMap)}`)
       }
-      if (state.ctx.length === 0) return "(empty context)"
-      return state.ctx.map(e => `${e.name} : ${printExpr(e.type)}`).join("\n")
+      return lines.join("\n")
     }
 
     case ":load":
@@ -206,20 +243,6 @@ function handleCommand(state: ReplState, input: string): string {
     case ":s": {
       if (!rest) return "Usage: :save <file>"
       return saveFile(state, rest)
-    }
-
-    case ":coc": {
-      state.cocMode = !state.cocMode
-      if (state.cocMode && state.cocEnv.size === 0) {
-        // Load CoC builtins (Tree, leaf, stem, fork, triage, enc*, wrap/unwrap)
-        state.cocEnv = loadCocPrelude(state.cocEnv)
-        // Load user prelude in coc mode if available
-        const preludePath = path.resolve("prelude.disp")
-        if (fs.existsSync(preludePath)) {
-          loadFile(state, preludePath, true)
-        }
-      }
-      return `CoC-on-trees mode ${state.cocMode ? "enabled" : "disabled"}`
     }
 
     case ":quit":
@@ -235,7 +258,6 @@ function handleCommand(state: ReplState, input: string): string {
         "  :ctx            Show the current context",
         "  :load <file>    Load declarations from a file",
         "  :save <file>    Save declarations to a file",
-        "  :coc            Toggle CoC-on-trees mode",
         "  :quit           Exit the REPL",
         "  :help           Show this help message",
         "",
@@ -255,15 +277,15 @@ function handleCommand(state: ReplState, input: string): string {
   }
 }
 
-// Canonical type shapes for Church encodings
-const BOOL_TYPE = spi("R", stype, spi("_", svar("R"), spi("_", svar("R"), svar("R"))))
-const NAT_TYPE = spi("R", stype, spi("_", spi("_", svar("R"), svar("R")), spi("_", svar("R"), svar("R"))))
-
 // Core recognition: type-guided Church literal check, then name lookup, then last-resort behavioral
-function recognizeChurchValue(
-  tree: Tree, isBool: boolean, isNat: boolean,
-  lookupName: (tree: Tree) => string | null,
+function recognizeValue(
+  tree: Tree, type: Tree, state: ReplState,
 ): string | null {
+  const boolEntry = state.cocEnv.get("Bool")
+  const natEntry = state.cocEnv.get("Nat")
+  const isBool = !!(boolEntry && convertible(type, unwrapData(boolEntry)))
+  const isNat = !isBool && !!(natEntry && convertible(type, unwrapData(natEntry)))
+
   if (isBool) {
     const result = tryChurchBool(tree)
     if (result !== null) return result
@@ -272,33 +294,26 @@ function recognizeChurchValue(
     const result = tryChurchNat(tree)
     if (result !== null) return result
   }
-  const name = lookupName(tree)
-  if (name) return name
+
+  // Name lookup
+  for (const [name, def] of state.defs) {
+    if (tree.id === def.id) return name
+  }
+
+  // Last-resort behavioral (when type is unknown)
   if (!isBool && !isNat) {
     const boolResult = tryChurchBool(tree)
     if (boolResult !== null) return boolResult
     const natResult = tryChurchNat(tree)
     if (natResult !== null) return natResult
   }
-  return null
-}
 
-// Try to recognize common Church-encoded values, using type to disambiguate
-function recognizeTree(tree: Tree, type: SExpr, state: ReplState): string | null {
-  const isBool = convertibleSExpr(type, BOOL_TYPE, state.ctx)
-  const isNat = !isBool && convertibleSExpr(type, NAT_TYPE, state.ctx)
-  return recognizeChurchValue(tree, isBool, isNat, (t) => {
-    for (const [name, def] of state.defs) {
-      if (t.id === def.id) return name
-    }
-    return null
-  })
+  return null
 }
 
 function tryChurchBool(tree: Tree): string | null {
   try {
     const budget = { remaining: 1000 }
-    // Apply tree to R=LEAF, t=stem(LEAF), f=stem(stem(LEAF))
     const r = LEAF
     const t = stem(LEAF)
     const f = stem(stem(LEAF))
@@ -314,20 +329,8 @@ function tryChurchBool(tree: Tree): string | null {
 function tryChurchNat(tree: Tree): string | null {
   try {
     const budget = { remaining: 1000 }
-    // Apply tree to R=LEAF, s=I (identity), z=LEAF
-    // Then count how many times stem is applied: I^n(LEAF) = LEAF always,
-    // so use a different approach: s = stem, z = LEAF
-    // stem^n(LEAF) gives a tree we can count
     const r = LEAF
-    const s = stem(LEAF) // K: K x y = x. Applied once: K(LEAF) = stem(LEAF)...
-    // Actually, let's use I and count applications
-    // Better: apply tree R s z where s builds a recognizable chain
-    // Use: z = LEAF, s = △ (makes stem)
-    // s(z) = △(LEAF) = stem(LEAF), s(s(z)) = △(stem(LEAF)) = stem(stem(LEAF))
     const result = apply(apply(apply(tree, r, budget), LEAF, budget), LEAF, budget)
-    // △(LEAF) x = stem(x). So s=LEAF means s(z) = stem(z) = stem(LEAF),
-    // s(s(z)) = stem(stem(LEAF)), etc.
-    // Count stem depth
     let node = result
     let count = 0
     while (node.tag === "stem") {
@@ -371,13 +374,15 @@ export function loadFile(state: ReplState, filePath: string, silent = false): st
 function saveFile(state: ReplState, filePath: string): string {
   try {
     const lines: string[] = []
-    for (const entry of state.ctx) {
-      const typeStr = printExpr(entry.type)
-      const valExpr = state.defExprs.get(entry.name)
+    const nameMap = buildNameMap(state.cocEnv)
+    for (const [name, wrapped] of state.cocEnv) {
+      const valExpr = state.defExprs.get(name)
       if (valExpr) {
+        const type = unwrapType(wrapped)
+        const typeStr = printEncoded(type, nameMap)
         const valStr = printExpr(valExpr)
-        const recStr = state.defIsRec.has(entry.name) ? "rec " : ""
-        lines.push(`let ${recStr}${entry.name} : ${typeStr} := ${valStr}`)
+        const recStr = state.defIsRec.has(name) ? "rec " : ""
+        lines.push(`let ${recStr}${name} : ${typeStr} := ${valStr}`)
       }
     }
     fs.writeFileSync(filePath, lines.join("\n") + "\n", "utf-8")
@@ -385,70 +390,6 @@ function saveFile(state: ReplState, filePath: string): string {
   } catch (e) {
     return `Error: Could not save to ${filePath}: ${e instanceof Error ? e.message : e}`
   }
-}
-
-// --- CoC-on-trees handlers ---
-
-function handleCocDecl(state: ReplState, decl: SDecl): string {
-  const { name, type, value, isRec } = decl
-  const result = cocCheckDecl(state.cocEnv, name, type, value, isRec)
-  state.cocEnv = result.env
-  state.defExprs.set(name, value)
-  if (isRec) state.defIsRec.add(name)
-
-  const nameMap = buildNameMap(state.cocEnv)
-  const typeStr = printEncoded(result.type, nameMap)
-  return `${name} : ${typeStr}`
-}
-
-function handleCocExpr(state: ReplState, expr: SExpr): string {
-  const wrapped = buildWrapped(expr, state.cocEnv)
-  const data = unwrapData(wrapped)
-  const type = unwrapType(wrapped)
-
-  const nameMap = buildNameMap(state.cocEnv)
-  const typeStr = printEncoded(type, nameMap)
-
-  // Also compile the expression through the old pipeline for behavioral testing.
-  // The CoC data is an encoded term (encLam/encApp/etc.), not a raw compiled tree.
-  // To recognize Church literals, we need the compiled (raw) tree form.
-  let compiled: Tree | null = null
-  try {
-    // Build a defs map from cocEnv for the old compiler
-    const defs = new Map<string, Tree>()
-    for (const [name, w] of state.cocEnv) {
-      // Only include user-defined values that were compiled, not builtins
-      if (state.defExprs.has(name)) {
-        try { defs.set(name, compileAndEval(state.defExprs.get(name)!, defs)) } catch {}
-      }
-    }
-    compiled = compileAndEval(expr, defs)
-  } catch {}
-
-  if (compiled) {
-    const display = recognizeCocValue(compiled, type, state)
-    if (display) return `${display} : ${typeStr}`
-  }
-
-  // Fall back to name lookup on encoded data
-  const name = nameMap.get(data.id)
-  if (name) return `${name} : ${typeStr}`
-
-  const dataStr = printEncoded(data, nameMap)
-  return `${dataStr} : ${typeStr}`
-}
-
-function recognizeCocValue(compiled: Tree, type: Tree, state: ReplState): string | null {
-  const boolEntry = state.cocEnv.get("Bool")
-  const natEntry = state.cocEnv.get("Nat")
-  const isBool = !!(boolEntry && convertible(type, unwrapData(boolEntry)))
-  const isNat = !isBool && !!(natEntry && convertible(type, unwrapData(natEntry)))
-  return recognizeChurchValue(compiled, isBool, isNat, (t) => {
-    for (const [name, w] of state.cocEnv) {
-      if (unwrapData(w).id === t.id) return name
-    }
-    return null
-  })
 }
 
 // --- Main REPL loop ---

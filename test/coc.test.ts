@@ -10,10 +10,10 @@ import {
   buildWrapped, cocCheckDecl, cocCheckRecDecl,
   printEncoded, loadCocPrelude, buildNameMap,
   FST, SND, CHILD, ENC_APP_T, ENC_LAM_T, ENC_PI_T,
-  TERM_CASE,
+  TERM_CASE, TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
   CocError, type Env,
 } from "../src/coc.js"
-import { eTree, eFvar, eApp, bracketAbstract, collapse } from "../src/compile.js"
+import { eTree, eFvar, eApp, bracketAbstract, collapse, collapseAndEval } from "../src/compile.js"
 import { parseExpr, parseLine, type SExpr, type SDecl } from "../src/parse.js"
 
 function declEnv(decls: string[], env: Env = new Map()): Env {
@@ -545,39 +545,25 @@ describe("Phase 6: Full Pipeline", () => {
 // Phase 5: REPL Integration
 // ============================================================
 
-import { processLine, initialState } from "../src/repl.js"
+import { processLine, initialState, loadFile } from "../src/repl.js"
 
 describe("Phase 5: REPL Integration", () => {
-  it(":coc command toggles mode", () => {
+  it("processLine handles declarations", () => {
     const state = initialState()
-    expect(state.cocMode).toBe(false)
-    const r1 = processLine(state, ":coc")
-    expect(r1).toContain("enabled")
-    expect(state.cocMode).toBe(true)
-    const r2 = processLine(state, ":coc")
-    expect(r2).toContain("disabled")
-    expect(state.cocMode).toBe(false)
-  })
-
-  it("processLine in coc mode handles declarations", () => {
-    const state = initialState()
-    state.cocMode = true
     const r = processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
     expect(r).toContain("Bool")
     expect(r).toContain("Type")
     expect(state.cocEnv.has("Bool")).toBe(true)
   })
 
-  it("processLine in coc mode handles expressions", () => {
+  it("processLine handles expressions", () => {
     const state = initialState()
-    state.cocMode = true
     const r = processLine(state, "Type")
     expect(r).toContain("Type")
   })
 
-  it("coc mode handles multi-def pipeline", () => {
+  it("handles multi-def pipeline", () => {
     const state = initialState()
-    state.cocMode = true
     processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
     processLine(state, "let id : (A : Type) -> A -> A := {A x} -> x")
     const r = processLine(state, "id Bool")
@@ -1011,6 +997,385 @@ describe("Tree-native operations", () => {
       expect(ctx).toContain("tEncLam")
       expect(ctx).toContain("tEncPi")
       expect(ctx).toContain("termCase")
+    })
+  })
+})
+
+// ============================================================
+// Tree-native step functions
+// ============================================================
+
+describe("Tree-native step functions", () => {
+  // --- Helpers ---
+  const budget = { remaining: 100000 }
+  function freshBudget() { return { remaining: 100000 } }
+
+  // Compile a Church numeral as a tree: n f x = f^n(x)
+  function fuel(n: number): Tree {
+    let body: Expr = eFvar("x")
+    for (let i = 0; i < n; i++) body = eApp(eFvar("f"), body)
+    return collapse(bracketAbstract("f", bracketAbstract("x", body)))
+  }
+
+  // TT/FF as trees (Church bools: {R t f} -> t / {R t f} -> f)
+  const TT = collapse(bracketAbstract("R", bracketAbstract("t", bracketAbstract("f", eFvar("t")))))
+  const FF = collapse(bracketAbstract("R", bracketAbstract("t", bracketAbstract("f", eFvar("f")))))
+
+  // base case for treeEq fold: {x y} -> ff
+  const BASE_EQ: Tree = collapse(bracketAbstract("x", bracketAbstract("y", eTree(FF))))
+
+  function mkTreeEq(n: number): (a: Tree, b: Tree) => Tree {
+    const eq = apply(apply(fuel(n), TREE_EQ_STEP), BASE_EQ, freshBudget())
+    return (a, b) => apply(apply(eq, a, freshBudget()), b, freshBudget())
+  }
+
+  // Build whnf with given fuel
+  function mkWhnf(n: number): (t: Tree) => Tree {
+    const w = apply(apply(fuel(n), WHNF_STEP), I, freshBudget()) // base = identity
+    return (t) => apply(w, t, freshBudget())
+  }
+
+  function isTT(t: Tree): boolean { return treeEqual(t, TT) }
+  function isFF(t: Tree): boolean { return treeEqual(t, FF) }
+
+  // --- TREE_EQ_STEP ---
+
+  describe("TREE_EQ_STEP", () => {
+    it("leaf == leaf → TT", () => {
+      const eq = mkTreeEq(5)
+      expect(isTT(eq(LEAF, LEAF))).toBe(true)
+    })
+
+    it("stem(leaf) == stem(leaf) → TT", () => {
+      const eq = mkTreeEq(5)
+      expect(isTT(eq(stem(LEAF), stem(LEAF)))).toBe(true)
+    })
+
+    it("fork(leaf,leaf) == fork(leaf,leaf) → TT", () => {
+      const eq = mkTreeEq(5)
+      expect(isTT(eq(fork(LEAF, LEAF), fork(LEAF, LEAF)))).toBe(true)
+    })
+
+    it("leaf != stem(leaf) → FF", () => {
+      const eq = mkTreeEq(5)
+      expect(isFF(eq(LEAF, stem(LEAF)))).toBe(true)
+    })
+
+    it("stem(leaf) != leaf → FF", () => {
+      const eq = mkTreeEq(5)
+      expect(isFF(eq(stem(LEAF), LEAF))).toBe(true)
+    })
+
+    it("fork(leaf,leaf) != fork(stem(leaf),leaf) → FF", () => {
+      const eq = mkTreeEq(5)
+      expect(isFF(eq(fork(LEAF, LEAF), fork(stem(LEAF), LEAF)))).toBe(true)
+    })
+
+    it("deeper structures: stem(stem(leaf)) == stem(stem(leaf))", () => {
+      const eq = mkTreeEq(10)
+      expect(isTT(eq(stem(stem(LEAF)), stem(stem(LEAF))))).toBe(true)
+    })
+
+    it("fuel=0 always returns FF (base case)", () => {
+      const eq = mkTreeEq(0)
+      expect(isFF(eq(LEAF, LEAF))).toBe(true)
+    })
+  })
+
+  // --- WHNF_STEP ---
+
+  describe("WHNF_STEP", () => {
+    it("Type stays unchanged", () => {
+      const w = mkWhnf(5)
+      expect(treeEqual(w(encType()), encType())).toBe(true)
+    })
+
+    it("Var stays unchanged", () => {
+      const w = mkWhnf(5)
+      const v = encVar(stem(LEAF))
+      expect(treeEqual(w(v), v)).toBe(true)
+    })
+
+    it("Lam stays unchanged", () => {
+      const w = mkWhnf(5)
+      const lam = encLam(LEAF, I)
+      expect(treeEqual(w(lam), lam)).toBe(true)
+    })
+
+    it("Pi stays unchanged", () => {
+      const w = mkWhnf(5)
+      const pi = encPi(LEAF, I)
+      expect(treeEqual(w(pi), pi)).toBe(true)
+    })
+
+    it("App(Lam(_, I), x) beta-reduces to x", () => {
+      const w = mkWhnf(5)
+      const x = encVar(stem(stem(LEAF)))
+      const app = encApp(encLam(LEAF, I), x)
+      expect(treeEqual(w(app), x)).toBe(true)
+    })
+  })
+
+  // --- ABSTRACT_OUT_STEP ---
+
+  describe("ABSTRACT_OUT_STEP", () => {
+    // abstractOutStep : eq -> target -> self -> tree -> Tree
+    // fold: fuel (Tree→Tree) (abstractOutStep eq target) base tree
+    // base = tK = stem(LEAF)
+    function mkAbstractOut(n: number, eqN: number, target: Tree): (tree: Tree) => Tree {
+      const b1 = freshBudget()
+      const eqFn = apply(apply(fuel(eqN), TREE_EQ_STEP), BASE_EQ, b1)
+      const step = apply(apply(ABSTRACT_OUT_STEP, eqFn, b1), target, b1)
+      const abs = apply(apply(fuel(n), step, b1), stem(LEAF), b1)
+      return (tree: Tree) => apply(abs, tree, freshBudget())
+    }
+
+    it("target → I (identity)", () => {
+      const target = stem(LEAF)
+      const abs = mkAbstractOut(5, 5, target)
+      const result = abs(target)
+      // Result should be I — applying to any arg gives that arg
+      const testArg = fork(LEAF, LEAF)
+      expect(treeEqual(apply(result, testArg, freshBudget()), testArg)).toBe(true)
+    })
+
+    it("constant → K(constant)", () => {
+      const target = stem(stem(LEAF))
+      const abs = mkAbstractOut(5, 5, target)
+      const result = abs(LEAF) // abstract target out of LEAF (which doesn't contain target)
+      // K(LEAF) applied to anything gives LEAF
+      const testArg = fork(LEAF, LEAF)
+      expect(treeEqual(apply(result, testArg, freshBudget()), LEAF)).toBe(true)
+    })
+  })
+
+  // --- CONVERTIBLE_STEP ---
+
+  describe("CONVERTIBLE_STEP", () => {
+    const BIG = 2000000
+
+    // Build convertible with given fuels
+    // Each partial application gets a fresh budget since these are eager and expensive
+    function mkConvertible(n: number, whnfN: number, eqN: number): (a: Tree, b: Tree) => Tree {
+      const whnfFn = apply(apply(fuel(whnfN), WHNF_STEP), I, { remaining: BIG })
+      const treeEqFn = apply(apply(fuel(eqN), TREE_EQ_STEP), BASE_EQ, { remaining: BIG })
+      const base = collapse(bracketAbstract("m", bracketAbstract("x", bracketAbstract("y",
+        eTree(FF)))))
+      const step = apply(apply(CONVERTIBLE_STEP, whnfFn, { remaining: BIG }), treeEqFn, { remaining: BIG })
+      const folded = apply(apply(fuel(n), step, { remaining: BIG }), base, { remaining: BIG })
+      const withMarker = apply(folded, LEAF, { remaining: BIG })
+      return (a, b) => {
+        const withA = apply(withMarker, a, { remaining: BIG })
+        return apply(withA, b, { remaining: BIG })
+      }
+    }
+
+    it("Type == Type → TT", () => {
+      const conv = mkConvertible(5, 5, 5)
+      expect(isTT(conv(encType(), encType()))).toBe(true)
+    })
+
+    it("Type != Var(m) → FF", () => {
+      const conv = mkConvertible(5, 5, 5)
+      expect(isFF(conv(encType(), encVar(LEAF)))).toBe(true)
+    })
+
+    it("Var(m) != Type → FF", () => {
+      const conv = mkConvertible(5, 5, 5)
+      expect(isFF(conv(encVar(LEAF), encType()))).toBe(true)
+    })
+
+    it("Var(m) == Var(m) → TT", () => {
+      const conv = mkConvertible(5, 5, 10)
+      const m = stem(LEAF)
+      expect(isTT(conv(encVar(m), encVar(m)))).toBe(true)
+    })
+
+    it("Var(m) != Var(n) → FF", () => {
+      const conv = mkConvertible(5, 5, 10)
+      expect(isFF(conv(encVar(stem(LEAF)), encVar(stem(stem(LEAF)))))).toBe(true)
+    })
+
+    it("App(f,x) == App(f,x) → TT", () => {
+      const conv = mkConvertible(5, 5, 10)
+      const f = encVar(stem(LEAF))
+      const x = encVar(stem(stem(LEAF)))
+      expect(isTT(conv(encApp(f, x), encApp(f, x)))).toBe(true)
+    })
+
+    it("App(f,x) != App(f,y) → FF", () => {
+      const conv = mkConvertible(5, 5, 10)
+      const f = encVar(stem(LEAF))
+      const x = encVar(stem(stem(LEAF)))
+      const y = encVar(stem(stem(stem(LEAF))))
+      expect(isFF(conv(encApp(f, x), encApp(f, y)))).toBe(true)
+    })
+
+    it("Lam(d,b) == Lam(d,b) → TT (early equality)", () => {
+      const conv = mkConvertible(5, 5, 10)
+      const lam = encLam(LEAF, I)
+      expect(isTT(conv(lam, lam))).toBe(true)
+    })
+
+    it("Pi(d,b) == Pi(d,b) → TT (early equality)", () => {
+      const conv = mkConvertible(5, 5, 10)
+      const pi = encPi(LEAF, I)
+      expect(isTT(conv(pi, pi))).toBe(true)
+    })
+
+    it("App(Lam(d, I), x) == x via beta (WHNF)", () => {
+      const conv = mkConvertible(5, 5, 10)
+      const x = encVar(stem(LEAF))
+      const redex = encApp(encLam(LEAF, I), x)
+      expect(isTT(conv(redex, x))).toBe(true)
+    })
+  })
+
+  // --- TYPECHECK / inferStep ---
+
+  describe("TYPECHECK (inferStep)", () => {
+    const BIG = 50_000_000
+
+    // Empty Church list: {r n c} -> n
+    const EMPTY_ENV = collapse(bracketAbstract("r", bracketAbstract("n", bracketAbstract("c", eFvar("n")))))
+
+    // Build infer function: (env, term) -> wrapped
+    // Uses collapseAndEval for absOutFn to avoid collapse/apply mismatch
+    function mkInfer(n: number, whnfN: number, eqN: number, absOutN: number): (env: Tree, term: Tree) => Tree {
+      const b = { remaining: BIG }
+      const whnfFn = apply(apply(fuel(whnfN), WHNF_STEP), I, b)
+      const treeEqFn = apply(apply(fuel(eqN), TREE_EQ_STEP), BASE_EQ, b)
+      const absOutExpr = eApp(
+        eApp(eApp(eTree(fuel(absOutN)),
+          eApp(eApp(eTree(ABSTRACT_OUT_STEP), eTree(treeEqFn)), eFvar("target"))),
+          eTree(stem(LEAF))),
+        eFvar("tree"))
+      const absOutFn = collapseAndEval(bracketAbstract("target", bracketAbstract("tree", absOutExpr)))
+      const step = apply(apply(apply(TYPECHECK, whnfFn, b), absOutFn, b), treeEqFn, b)
+      const base = collapse(bracketAbstract("e", bracketAbstract("t", eTree(LEAF))))
+      const folded = apply(apply(fuel(n), step, b), base, b)
+      return (env, term) => {
+        const b2 = { remaining: BIG }
+        return apply(apply(folded, env, b2), term, b2)
+      }
+    }
+
+    // Helper: build a Church-list env with one entry
+    function mkSingleEnv(marker: Tree, wrapped: Tree): Tree {
+      const entry = fork(marker, wrapped)
+      const envBody = eApp(eApp(eFvar("c"), eTree(entry)),
+        eApp(eApp(eApp(eTree(EMPTY_ENV), eFvar("r")), eFvar("n")), eFvar("c")))
+      return collapse(bracketAbstract("r", bracketAbstract("n", bracketAbstract("c", envBody))))
+    }
+
+    it("Type → wrap(Type, Type)", () => {
+      const infer = mkInfer(3, 3, 10, 10)
+      const result = infer(EMPTY_ENV, encType())
+      const d = apply(result, K_SEL, { remaining: 10000 })
+      const t = apply(result, K_STAR_SEL, { remaining: 10000 })
+      expect(treeEqual(d, encType())).toBe(true)
+      expect(treeEqual(t, encType())).toBe(true)
+    })
+
+    it("Var lookup from env", () => {
+      const infer = mkInfer(3, 3, 10, 10)
+      const marker1 = stem(LEAF)
+      const env = mkSingleEnv(marker1, wrap(encType(), encType()))
+      const result = infer(env, encVar(marker1))
+      const d = apply(result, K_SEL, { remaining: 10000 })
+      const t = apply(result, K_STAR_SEL, { remaining: 10000 })
+      expect(treeEqual(d, encType())).toBe(true)
+      expect(treeEqual(t, encType())).toBe(true)
+    })
+
+    it("Pi(Type, K(Type)) → wrap(Pi(...), Type)", () => {
+      const infer = mkInfer(5, 5, 15, 15)
+      const piTerm = encPi(encType(), fork(LEAF, LEAF))
+      const result = infer(EMPTY_ENV, piTerm)
+      const d = apply(result, K_SEL, { remaining: 10000 })
+      const t = apply(result, K_STAR_SEL, { remaining: 10000 })
+      expect(treeEqual(t, encType())).toBe(true)
+      expect(termTag(d)).toBe("pi")
+    })
+
+    it("Pi(Type, I) — dependent Pi (x:Type) -> x", () => {
+      const infer = mkInfer(5, 5, 15, 15)
+      const piTerm = encPi(encType(), I)
+      const result = infer(EMPTY_ENV, piTerm)
+      const d = apply(result, K_SEL, { remaining: 10000 })
+      const t = apply(result, K_STAR_SEL, { remaining: 10000 })
+      expect(treeEqual(t, encType())).toBe(true)
+      expect(termTag(d)).toBe("pi")
+      expect(treeEqual(unPi(d)!.domain, encType())).toBe(true)
+    })
+
+    it("App(Var(f), Type) where f : Type -> Type", () => {
+      const infer = mkInfer(5, 5, 15, 15)
+      const fMarker = stem(LEAF)
+      const fData = encLam(encType(), fork(LEAF, LEAF))
+      const fType = encPi(encType(), fork(LEAF, LEAF))
+      const env = mkSingleEnv(fMarker, wrap(fData, fType))
+      const term = encApp(encVar(fMarker), encType())
+      const result = infer(env, term)
+      const d = apply(result, K_SEL, { remaining: 100000 })
+      const t = apply(result, K_STAR_SEL, { remaining: 100000 })
+      expect(termTag(d)).toBe("app")
+      expect(treeEqual(t, encType())).toBe(true)
+    })
+
+    it("Lam(Type, I) = {x:Type} -> x infers Pi(Type, K(Type))", () => {
+      const infer = mkInfer(5, 5, 15, 15)
+      const term = encLam(encType(), I)
+      const result = infer(EMPTY_ENV, term)
+      const d = apply(result, K_SEL, { remaining: 100000 })
+      const t = apply(result, K_STAR_SEL, { remaining: 100000 })
+      // data is a Lam with domain=Type, body=I
+      expect(termTag(d)).toBe("lam")
+      const lam = unLam(d)!
+      expect(treeEqual(lam.domain, encType())).toBe(true)
+      expect(treeEqual(lam.body, I)).toBe(true)
+      // type is Pi(Type, K(Type)) = Type -> Type
+      expect(termTag(t)).toBe("pi")
+      const pi = unPi(t)!
+      expect(treeEqual(pi.domain, encType())).toBe(true)
+      expect(treeEqual(pi.body, fork(LEAF, LEAF))).toBe(true)
+    })
+
+    it("App(Lam(Type, I), Type) — beta redex", () => {
+      // Needs more fuel: 2 recursive inferences (Lam + Type) + whnf + absOut
+      const infer = mkInfer(8, 5, 15, 15)
+      const term = encApp(encLam(encType(), I), encType())
+      const result = infer(EMPTY_ENV, term)
+      const d = apply(result, K_SEL, { remaining: 100000 })
+      const t = apply(result, K_STAR_SEL, { remaining: 100000 })
+      expect(termTag(d)).toBe("app")
+      expect(treeEqual(t, encType())).toBe(true)
+    })
+  })
+
+  // --- Prelude integration ---
+
+  describe("Prelude integration", () => {
+    it("treeEq via prelude: tLeaf == tLeaf", () => {
+      const state = initialState()
+      loadFile(state, "prelude.disp", true)
+      const r = processLine(state, "treeEq 5 tLeaf tLeaf")
+      expect(r).toContain("true")
+    })
+
+    it("treeEq via prelude: tLeaf != tStem tLeaf", () => {
+      const state = initialState()
+      loadFile(state, "prelude.disp", true)
+      const r = processLine(state, "treeEq 5 tLeaf (tStem tLeaf)")
+      expect(r).toContain("false")
+    })
+
+    it("tLeaf/tStem/tFork builtins visible", () => {
+      const state = initialState()
+      const ctx = processLine(state, ":ctx")
+      expect(ctx).toContain("tLeaf")
+      expect(ctx).toContain("tStem")
+      expect(ctx).toContain("tFork")
     })
   })
 })
