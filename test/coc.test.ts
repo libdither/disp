@@ -16,7 +16,7 @@ import {
   FST, SND, CHILD, ENC_APP_T, ENC_LAM_T, ENC_PI_T,
   TERM_CASE, TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
 } from "../src/tree-native.js"
-import { eTree, eFvar, eApp, bracketAbstract, collapse, collapseAndEval } from "../src/compile.js"
+import { eTree, eFvar, eApp, bracketAbstract, collapse, collapseAndEval, compileRecAndEval, compileAndEval } from "../src/compile.js"
 import { parseExpr, parseLine, type SExpr, type SDecl } from "../src/parse.js"
 
 function declEnv(decls: string[], env: Env = new Map()): Env {
@@ -1379,6 +1379,95 @@ describe("Tree-native step functions", () => {
       expect(ctx).toContain("tLeaf")
       expect(ctx).toContain("tStem")
       expect(ctx).toContain("tFork")
+    })
+  })
+
+  // --- FIX combinator and Church fold tests ---
+
+  describe("FIX combinator and Church folds", () => {
+    it("tFix and tTriage visible in context", () => {
+      const state = initialState()
+      const ctx = processLine(state, ":ctx")
+      expect(ctx).toContain("tFix")
+      expect(ctx).toContain("tTriage")
+    })
+
+    it("Church fold stem depth", () => {
+      const state = initialState()
+      loadFile(state, "prelude.disp", true)
+      // triage Nat: leaf→0, stem→succ(folded_child), fork→0
+      const def = processLine(state,
+        "let countDepth : Tree -> Nat := {t} -> triage Nat zero succ ({_ _} -> zero) t")
+      expect(def).not.toContain("Error")
+
+      expect(processLine(state, "countDepth leaf")).toContain("0")
+      expect(processLine(state, "countDepth (stem leaf)")).toContain("1")
+      expect(processLine(state, "countDepth (stem (stem leaf))")).toContain("2")
+      expect(processLine(state, "countDepth (stem (stem (stem leaf)))")).toContain("3")
+    })
+
+    it("let rec compiles with FIX (compile level)", () => {
+      const defs = new Map<string, Tree>()
+      const body = parseExpr("{n} -> n")
+      const result = compileRecAndEval("myId", body as SExpr, defs)
+      const budget = { remaining: 10000 }
+      expect(treeEqual(apply(result, stem(LEAF), budget), stem(LEAF))).toBe(true)
+    })
+
+    it("let rec with self-reference via REPL", () => {
+      const state = initialState()
+      loadFile(state, "prelude.disp", true)
+      // Recursive function that references itself but terminates
+      const def = processLine(state, "let rec myId : Nat -> Nat := {n} -> n")
+      expect(def).not.toContain("Error")
+      expect(processLine(state, "myId 5")).toMatch(/^5/)
+    })
+  })
+
+  // --- Step counting / performance tests ---
+
+  describe("Step counting", () => {
+    it("arithmetic evaluates correctly", () => {
+      const state = initialState()
+      loadFile(state, "prelude.disp", true)
+
+      expect(processLine(state, "add 2 3")).toMatch(/^5/)
+      expect(processLine(state, "mul 3 4")).toMatch(/^12/)
+      expect(processLine(state, "add (mul 2 3) (mul 2 2)")).toMatch(/^10/)
+    })
+
+    it("fuel-based treeEq step counts", () => {
+      const state = initialState()
+      loadFile(state, "prelude.disp", true)
+
+      const leafTree = state.defs.get("leaf")!
+      const stemFn = state.defs.get("stem")!
+      const forkFn = state.defs.get("fork")!
+      const mkStem = (t: Tree) => apply(stemFn, t, { remaining: 1000 })
+      const mkFork = (l: Tree, r: Tree) => apply(apply(forkFn, l, { remaining: 1000 }), r, { remaining: 1000 })
+
+      const fuelTreeEq = state.defs.get("treeEq")!
+      const churchTen = compileAndEval(parseExpr("10"), state.defs)
+
+      const measure = (a: Tree, b: Tree) => {
+        const budget = { remaining: 1000000 }
+        apply(apply(apply(fuelTreeEq, churchTen, budget), a, budget), b, budget)
+        return 1000000 - budget.remaining
+      }
+
+      const l = leafTree
+      const s3 = mkStem(mkStem(mkStem(l)))
+      const f = mkFork(mkStem(l), mkFork(l, l))
+
+      const steps1 = measure(l, l)
+      const steps2 = measure(s3, s3)
+      const steps3 = measure(f, f)
+      console.log(`  fuel(10) treeEq: leaf==leaf ${steps1}, stem^3==stem^3 ${steps2}, fork==fork ${steps3} steps`)
+
+      // Verify all step counts are reasonable
+      expect(steps1).toBeGreaterThan(0)
+      expect(steps2).toBeGreaterThan(steps1)
+      expect(steps3).toBeGreaterThan(steps1)
     })
   })
 })

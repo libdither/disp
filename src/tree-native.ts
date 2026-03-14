@@ -9,7 +9,7 @@
 // - CoC prelude definitions and builtin registration
 
 import { type Tree, LEAF, stem, fork, apply, I } from "./tree.js"
-import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval } from "./compile.js"
+import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval, FIX } from "./compile.js"
 import { type SExpr, type SDecl, parseLine } from "./parse.js"
 import {
   encType, K_SEL, K_STAR_SEL,
@@ -42,6 +42,17 @@ export const FST: Tree = mkTriage(LEAF, LEAF, stem(LEAF))
 export const SND: Tree = mkTriage(LEAF, LEAF, fork(LEAF, I))
 // CHILD: stem(u) → u. Stem handler = I.
 export const CHILD: Tree = mkTriage(LEAF, I, LEAF)
+
+// FIX is imported from compile.ts (where it's also used by compileRecAndEval).
+
+// --- TRIAGE: raw tree triage combinator ---
+//
+// triage c d b t: dispatch on tree t
+//   t = leaf       → c
+//   t = stem(u)    → d u
+//   t = fork(u, v) → b u v
+export const TRIAGE: Tree = compileTree(["c", "d", "b"],
+  eApp(eApp(eTree(LEAF), eApp(eApp(eTree(LEAF), eFvar("c")), eFvar("d"))), eFvar("b")))
 
 // --- Encoding constructors as tree constants ---
 
@@ -545,6 +556,12 @@ export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
   { name: "inferStep",
     type: "(Tree -> Tree) -> (Tree -> Tree -> Tree) -> (Tree -> Tree -> Bool) -> (Tree -> Tree -> Tree) -> Tree -> Tree -> Tree",
     data: TYPECHECK },
+  // Lazy fixpoint combinator and raw triage
+  { name: "tFix", type: "(Tree -> Tree) -> Tree", data: FIX },
+  // tTriage is polymorphic in return type: dispatches on raw tree structure.
+  // K(TRIAGE) absorbs the erased R type parameter, then TRIAGE takes c, d, b, t.
+  { name: "tTriage", type: "(R : Type) -> R -> (Tree -> R) -> (Tree -> Tree -> R) -> Tree -> R",
+    data: fork(LEAF, TRIAGE) },
   // Actual tree constructors (not Church-encoded)
   // LEAF is the tree calculus constructor △: apply(LEAF,x)=stem(x), apply(apply(LEAF,x),y)=fork(x,y)
   { name: "tLeaf", type: "Tree", data: LEAF },

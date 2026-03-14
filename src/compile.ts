@@ -248,18 +248,46 @@ export function compileAndEval(ast: SExpr, defs: Map<string, Tree> = new Map(), 
 // --- Fixed-point combinator for recursive definitions ---
 //
 // Strategy: Given `let rec f := body` where body references f,
-// we build a self-applying structure using the omega combinator:
+// we use the lazy FIX combinator (from lambada/tree calculus):
 //
-//   omega = {x} -> body[f := {v} -> x x v]
-//   result = omega omega  (structural, not eager)
+//   fix = \f wait m (\x f (wait m x))
+//   where wait a b c = a b c (but delays a b until c arrives)
+//         m = \x x x (self-application)
 //
-// When result is applied to arg:
-//   omega omega arg
-//   = body[f := {v} -> omega omega v] arg
-//   = body with f behaving as the recursive function
+// When (fix f) is applied to arg:
+//   wait m G arg = m G arg = G G arg = f (fix f) arg
 //
-// The key: omega omega is built with treeApply (structural),
-// NOT apply (eager), so no divergence at definition time.
+// The wait combinator prevents eager divergence of self-application.
+
+// wait a b c = △ (△ a) (△ △ c) b = a b c
+// Extensionally a 3-arg identity, but wait a b does NOT evaluate a b.
+// The application is deferred until the third argument c arrives.
+const WAIT: Tree = (() => {
+  const body = eApp(
+    eApp(
+      eApp(eTree(LEAF), eApp(eTree(LEAF), eFvar("a"))),
+      eApp(eApp(eTree(LEAF), eTree(LEAF)), eFvar("c"))
+    ),
+    eFvar("b")
+  )
+  let e = bracketAbstract("c", body)
+  e = bracketAbstract("b", e)
+  e = bracketAbstract("a", e)
+  return collapseAndEval(e)
+})()
+
+// m = \x x x (self-application: m z = z z)
+const SELF_APP: Tree = collapseAndEval(bracketAbstract("x", eApp(eFvar("x"), eFvar("x"))))
+
+// fix f = wait m (\x f (wait m x))
+export const FIX: Tree = collapseAndEval(bracketAbstract("f",
+  eApp(
+    eApp(eTree(WAIT), eTree(SELF_APP)),
+    bracketAbstract("x", eApp(
+      eFvar("f"),
+      eApp(eApp(eTree(WAIT), eTree(SELF_APP)), eFvar("x"))
+    ))
+  )))
 
 export function compileRecAndEval(
   name: string,
@@ -277,35 +305,9 @@ export function compileRecAndEval(
     return collapseAndEval(bodyExpr, budget)
   }
 
-  // 2. Build the self-ref thunk: {v} -> x x v
-  //    where x is also a free variable
-  const xVar = eFvar("x$rec")
-  const vVar = eFvar("v$rec")
-  const selfApp = eApp(eApp(xVar, xVar), vVar)
-  const thunk = bracketAbstract("v$rec", selfApp) // {v} -> x x v
+  // 2. Bracket-abstract name to get \self -> body
+  const selfFn = bracketAbstract(name, bodyExpr)
 
-  // 3. Substitute name with thunk in bodyExpr
-  const bodyWithThunk = substExpr(name, thunk, bodyExpr)
-
-  // 4. Abstract over x$rec
-  const omega = bracketAbstract("x$rec", bodyWithThunk)
-
-  // 5. Collapse omega structurally (no eager eval)
-  const omegaTree = collapse(omega)
-
-  // 6. Build omega(omega) structurally using treeApply
-  return treeApply(omegaTree, omegaTree)
-}
-
-// Substitute a free variable name with an Expr in an Expr
-function substExpr(name: string, replacement: Expr, expr: Expr): Expr {
-  switch (expr.tag) {
-    case "fvar":
-      return expr.name === name ? replacement : expr
-    case "tree":
-      return expr
-    case "app":
-      return eApp(substExpr(name, replacement, expr.func),
-                  substExpr(name, replacement, expr.arg))
-  }
+  // 3. Apply FIX to the compiled function
+  return apply(FIX, collapseAndEval(selfFn, budget), budget)
 }
