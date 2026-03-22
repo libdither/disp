@@ -8,7 +8,7 @@ import {
 // --- Arbitrary generators for valid Disp syntax ---
 
 const arbIdent: fc.Arbitrary<string> = fc.string({ minLength: 1, maxLength: 4, unit: fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz".split("")) })
-  .filter(s => s !== "let" && s !== "Type" && s !== "true" && s !== "false" && s !== "rec")
+  .filter(s => s !== "let" && s !== "Type" && s !== "Tree" && s !== "true" && s !== "false" && s !== "rec" && s !== "zero" && s !== "succ" && s !== "leaf")
 
 const arbSExpr: fc.Arbitrary<SExpr> = fc.letrec(tie => ({
   expr: fc.oneof(
@@ -96,14 +96,14 @@ describe("fuzz: parser robustness", () => {
   })
 })
 
-// --- Property: Church numeral encoding is consistent ---
+// --- Property: numeral encoding is consistent ---
 
-describe("fuzz: Church numeral round-trip", () => {
+describe("fuzz: numeral round-trip", () => {
   it("number literals round-trip through print", () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 50 }), (n) => {
         const printed = printExpr(parseExpr(String(n)))
-        expect(printed).toBe(n === 0 ? "false" : String(n))
+        expect(printed).toBe(String(n))
       }),
       { numRuns: 51 }
     )

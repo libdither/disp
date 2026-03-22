@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   tokenize, parseExpr, parseLine, printExpr, ParseError,
-  recognizeChurchLiteral, stripPos,
+  recognizeLiteral, stripPos,
   svar, sapp, slam, spi, stype,
   REC_TYPE_VAR, REC_FN_VAR, COP_TYPE_VAR,
   type SDecl, type SExpr,
@@ -181,54 +181,50 @@ describe("tokenizer - numbers and booleans", () => {
 })
 
 describe("parser - literals", () => {
-  it("parses true as Church boolean", () => {
-    expect(stripPos(parseExpr("true"))).toEqual(slam(["R", "t", "f"], svar("t")))
+  it("parses true as svar", () => {
+    expect(stripPos(parseExpr("true"))).toEqual(svar("true"))
   })
 
-  it("parses false as Church boolean", () => {
-    expect(stripPos(parseExpr("false"))).toEqual(slam(["R", "t", "f"], svar("f")))
+  it("parses false as svar", () => {
+    expect(stripPos(parseExpr("false"))).toEqual(svar("false"))
   })
 
-  it("parses 0 as Church zero", () => {
-    expect(stripPos(parseExpr("0"))).toEqual(slam(["R", "s", "z"], svar("z")))
+  it("parses 0 as zero", () => {
+    expect(stripPos(parseExpr("0"))).toEqual(svar("zero"))
   })
 
-  it("parses 3 as Church numeral", () => {
-    const expected = slam(["R", "s", "z"],
-      sapp(svar("s"), sapp(svar("s"), sapp(svar("s"), svar("z"))))
-    )
+  it("parses 3 as succ chain", () => {
+    const expected = sapp(svar("succ"), sapp(svar("succ"), sapp(svar("succ"), svar("zero"))))
     expect(stripPos(parseExpr("3"))).toEqual(expected)
   })
 
   it("parses literals in application", () => {
     expect(stripPos(parseExpr("not true"))).toEqual(
-      sapp(svar("not"), slam(["R", "t", "f"], svar("t")))
+      sapp(svar("not"), svar("true"))
     )
   })
 })
 
-describe("recognizeChurchLiteral", () => {
+describe("recognizeLiteral", () => {
   it("recognizes true", () => {
-    expect(recognizeChurchLiteral(slam(["R", "t", "f"], svar("t")))).toBe("true")
+    expect(recognizeLiteral(svar("true"))).toBe("true")
   })
 
   it("recognizes false", () => {
-    expect(recognizeChurchLiteral(slam(["R", "t", "f"], svar("f")))).toBe("false")
+    expect(recognizeLiteral(svar("false"))).toBe("false")
   })
 
-  it("recognizes 0 as false (structurally identical)", () => {
-    expect(recognizeChurchLiteral(slam(["R", "s", "z"], svar("z")))).toBe("false")
+  it("recognizes zero as 0", () => {
+    expect(recognizeLiteral(svar("zero"))).toBe("0")
   })
 
   it("recognizes 3", () => {
-    const three = slam(["R", "s", "z"],
-      sapp(svar("s"), sapp(svar("s"), sapp(svar("s"), svar("z"))))
-    )
-    expect(recognizeChurchLiteral(three)).toBe("3")
+    const three = sapp(svar("succ"), sapp(svar("succ"), sapp(svar("succ"), svar("zero"))))
+    expect(recognizeLiteral(three)).toBe("3")
   })
 
   it("returns null for non-literal", () => {
-    expect(recognizeChurchLiteral(svar("x"))).toBeNull()
+    expect(recognizeLiteral(svar("x"))).toBeNull()
   })
 })
 

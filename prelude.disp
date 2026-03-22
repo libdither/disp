@@ -1,18 +1,25 @@
-let Bool : Type := (R : Type) -> R -> R -> R
-let not : Bool -> Bool := {b R t f} -> b R f t
-let and : Bool -> Bool -> Bool := {a b R t f} -> a R (b R t f) f
-let or : Bool -> Bool -> Bool := {a b R t f} -> a R t (b R t f)
-let Nat : Type := (R : Type) -> (R -> R) -> R -> R
-let zero : Nat := {R s z} -> z
-let succ : Nat -> Nat := {n R s z} -> s (n R s z)
-let add : Nat -> Nat -> Nat := {m n R s z} -> m R s (n R s z)
-let mul : Nat -> Nat -> Nat := {m n R s z} -> m R (n R s) z
-let treeEq : Nat -> Tree -> Tree -> Bool := {fuel a b} -> fuel (Tree -> Tree -> Bool) treeEqStep ({x y} -> ff) a b
-let abstractOut : Nat -> Nat -> Tree -> Tree -> Tree := {fuel eqFuel target tree} -> fuel (Tree -> Tree) (abstractOutStep (treeEq eqFuel) target) tK tree
-let whnf : Nat -> Tree -> Tree := {fuel t} -> fuel (Tree -> Tree) whnfStep tI t
-let convertible : Nat -> Nat -> Nat -> Tree -> Tree -> Bool := {fuel whnfFuel eqFuel a b} -> fuel (Tree -> Tree -> Tree -> Bool) (convertibleStep (whnf whnfFuel) (treeEq eqFuel)) ({m x y} -> ff) tLeaf a b
-let infer : Nat -> Nat -> Nat -> Tree -> Tree -> Tree := {fuel whnfFuel eqFuel env term} -> fuel (Tree -> Tree -> Tree) (inferStep (whnf whnfFuel) (abstractOut 10 eqFuel) (treeEq eqFuel)) ({e t} -> tLeaf) env term
+-- Boolean operations (tree-encoded: true=leaf, false=stem(leaf))
+let not : Bool -> Bool := {b} -> boolElim Bool false true b
+let and : Bool -> Bool -> Bool := {a b} -> boolElim Bool b false a
+let or : Bool -> Bool -> Bool := {a b} -> boolElim Bool true b a
+
+-- Natural number operations (tree-encoded: zero=leaf, succ(n)=stem(n))
+-- fold: Church-numeral-style iteration over tree-encoded Nat
+let rec fold : Nat -> (R : Type) -> R -> (R -> R) -> R := {n R z s} -> natElim R z ({n'} -> s (fold n' R z s)) n
+let rec add : Nat -> Nat -> Nat := {m n} -> natElim Nat n ({m'} -> succ (add m' n)) m
+let rec mul : Nat -> Nat -> Nat := {m n} -> natElim Nat 0 ({m'} -> add n (mul m' n)) m
+
+-- Step function wrappers (use fold instead of Church numeral application)
+let treeEq : Nat -> Tree -> Tree -> Bool := {fuel a b} -> fold fuel (Tree -> Tree -> Bool) ({x y} -> false) treeEqStep a b
+let abstractOut : Nat -> Nat -> Tree -> Tree -> Tree := {fuel eqFuel target tree} -> fold fuel (Tree -> Tree) tK (abstractOutStep (treeEq eqFuel) target) tree
+let whnf : Nat -> Tree -> Tree := {fuel t} -> fold fuel (Tree -> Tree) tI whnfStep t
+let convertible : Nat -> Nat -> Nat -> Tree -> Tree -> Bool := {fuel whnfFuel eqFuel a b} -> fold fuel (Tree -> Tree -> Tree -> Bool) ({m x y} -> false) (convertibleStep (whnf whnfFuel) (treeEq eqFuel)) tDelta a b
+let infer : Nat -> Nat -> Nat -> Tree -> Tree -> Tree := {fuel whnfFuel eqFuel env term} -> fold fuel (Tree -> Tree -> Tree) ({e t} -> leaf) (inferStep (whnf whnfFuel) (abstractOut 10 eqFuel) (treeEq eqFuel)) env term
+
+-- Polymorphic identity
 let id : (A : Type) -> A -> A := {A x} -> x
+
+-- Records and coproducts (still Church-encoded for typed parameterized containers)
 let Pair : Type -> Type -> Type := {A B} -> {fst : A, snd : B}
 let mkPair : (A : Type) -> (B : Type) -> A -> B -> Pair A B := {A B a b R f} -> f a b
 let fst : (A : Type) -> (B : Type) -> Pair A B -> A := {A B p} -> p A ({x y} -> x)

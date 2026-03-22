@@ -6,6 +6,14 @@ import {
   type Tree, BudgetExhausted,
 } from "../src/tree.js"
 
+// Definitions for tree-encoded literals (true, false, zero, succ)
+const literalDefs = new Map<string, Tree>([
+  ["true", LEAF],
+  ["false", stem(LEAF)],
+  ["zero", LEAF],
+  ["succ", LEAF],  // apply(LEAF, x) = stem(x)
+])
+
 // Helper: compile a string expression
 function c(input: string, defs?: Map<string, Tree>): Tree {
   return compile(parseExpr(input), defs)
@@ -215,30 +223,21 @@ describe("compile - bracket abstraction optimization", () => {
     expect(size).toBeLessThan(30)
   })
 
-  it("compiled true selects first argument", () => {
-    const tru = c("true")
-    const r = LEAF
-    const a = stem(LEAF)
-    const b = fork(LEAF, LEAF)
-    expect(treeEqual(run(tru, r, a, b), a)).toBe(true)
+  it("compiled true is LEAF", () => {
+    const tru = c("true", literalDefs)
+    expect(treeEqual(tru, LEAF)).toBe(true)
   })
 
-  it("compiled false selects second argument", () => {
-    const fls = c("false")
-    const r = LEAF
-    const a = stem(LEAF)
-    const b = fork(LEAF, LEAF)
-    expect(treeEqual(run(fls, r, a, b), b)).toBe(true)
+  it("compiled false is stem(LEAF)", () => {
+    const fls = c("false", literalDefs)
+    expect(treeEqual(fls, stem(LEAF))).toBe(true)
   })
 
-  it("compiled 3 applies s three times", () => {
-    const three = c("3")
-    const r = LEAF
-    const s = I
-    const z = stem(stem(LEAF))
-    const result = run(three, r, s, z)
-    const expected = run(s, run(s, run(s, z)))
-    expect(treeEqual(result, expected)).toBe(true)
+  it("compiled 3 is stem(stem(stem(LEAF)))", () => {
+    const three = c("3", literalDefs)
+    // succ(succ(succ(zero))) = apply(LEAF, apply(LEAF, apply(LEAF, LEAF)))
+    // = stem(stem(stem(LEAF)))
+    expect(treeEqual(three, stem(stem(stem(LEAF))))).toBe(true)
   })
 
   it("optimization preserves semantics for complex expressions", () => {
@@ -259,9 +258,9 @@ describe("compile - bracket abstraction optimization", () => {
 })
 
 describe("compileAndEval - runtime evaluation", () => {
-  // Helper: build defs from declaration strings
+  // Helper: build defs from declaration strings, seeded with literal defs
   function buildDefs(decls: string[]): Map<string, Tree> {
-    const defs = new Map<string, Tree>()
+    const defs = new Map<string, Tree>(literalDefs)
     for (const d of decls) {
       const parsed = parseLine(d)
       if ("name" in parsed) {
@@ -276,70 +275,43 @@ describe("compileAndEval - runtime evaluation", () => {
     return compileAndEval(parseExpr(input), defs)
   }
 
-  // Helper: test Church boolean behavior (apply R t f, check result)
-  function testBool(tree: Tree, expected: "true" | "false"): void {
-    const budget = { remaining: 10000 }
-    const r = LEAF
-    const t = stem(LEAF)
-    const f = stem(stem(LEAF))
-    const result = apply(apply(apply(tree, r, budget), t, budget), f, budget)
-    if (expected === "true") {
-      expect(treeEqual(result, t)).toBe(true)
-    } else {
-      expect(treeEqual(result, f)).toBe(true)
-    }
-  }
-
-  // Helper: test Church nat behavior (apply R △ △, count stem depth)
-  function testNat(tree: Tree, expected: number): void {
-    const budget = { remaining: 10000 }
-    const result = apply(apply(apply(tree, LEAF, budget), LEAF, budget), LEAF, budget)
-    let node = result
+  // Helper: count stem depth (tree-encoded nat = stem^n(LEAF))
+  function stemDepth(tree: Tree): number {
+    let node = tree
     let count = 0
     while (node.tag === "stem") { count++; node = node.child }
-    expect(count).toBe(expected)
     expect(node.tag).toBe("leaf")
+    return count
   }
 
-  it("not true behaves as false", () => {
-    const defs = buildDefs([
-      "let not := {b R t f} -> b R f t",
-    ])
-    const notTrue = ce("not true", defs)
-    testBool(notTrue, "false")
+  it("true compiles to LEAF", () => {
+    const defs = buildDefs([])
+    const result = ce("true", defs)
+    expect(treeEqual(result, LEAF)).toBe(true)
   })
 
-  it("not false behaves as true", () => {
-    const defs = buildDefs([
-      "let not := {b R t f} -> b R f t",
-    ])
-    const notFalse = ce("not false", defs)
-    testBool(notFalse, "true")
+  it("false compiles to stem(LEAF)", () => {
+    const defs = buildDefs([])
+    const result = ce("false", defs)
+    expect(treeEqual(result, stem(LEAF))).toBe(true)
   })
 
-  it("add 1 1 behaves as 2", () => {
-    const defs = buildDefs([
-      "let add := {m n R s z} -> m R s (n R s z)",
-    ])
-    const result = ce("add 1 1", defs)
-    testNat(result, 2)
+  it("1 compiles to stem(LEAF)", () => {
+    const defs = buildDefs([])
+    const result = ce("1", defs)
+    expect(stemDepth(result)).toBe(1)
   })
 
-  it("add with number literals: 1 + 2 = 3", () => {
-    const defs = buildDefs([
-      "let add := {m n R s z} -> m R s (n R s z)",
-    ])
-    const result = ce("add 1 2", defs)
-    testNat(result, 3)
+  it("2 compiles to stem(stem(LEAF))", () => {
+    const defs = buildDefs([])
+    const result = ce("2", defs)
+    expect(stemDepth(result)).toBe(2)
   })
 
   it("succ zero has same tree as 1 via compileAndEval", () => {
-    const defs = buildDefs([
-      "let zero := {R s z} -> z",
-      "let succ := {n R s z} -> s (n R s z)",
-    ])
-    const succZero = ce("succ zero", defs)
-    testNat(succZero, 1)
+    const defs = buildDefs([])
+    const succZero = ce("succ 0", defs)
+    expect(stemDepth(succZero)).toBe(1)
   })
 
   it("budget exhaustion throws for large computation with tiny budget", () => {
@@ -363,19 +335,12 @@ describe("recursive definitions", () => {
   })
 
   it("compileRecAndEval: function that ignores self-ref", () => {
-    const defs = new Map<string, Tree>()
+    const defs = new Map<string, Tree>(literalDefs)
     const body = parseExpr("{n} -> 0")
     const result = compileRecAndEval("constZero", body, defs)
     const budget = { remaining: 10000 }
     const applied = apply(result, stem(LEAF), budget)
-    // Should behave like Church zero: applied R s z = z
-    const z = stem(stem(LEAF))
-    const numResult = apply(apply(apply(applied, LEAF, budget), LEAF, budget), LEAF, budget)
-    // Church 0 R s z = z. With R=LEAF, s=LEAF, z=LEAF → result is LEAF
-    let node = numResult
-    let count = 0
-    while (node.tag === "stem") { count++; node = node.child }
-    expect(count).toBe(0)
-    expect(node.tag).toBe("leaf")
+    // 0 now compiles to LEAF (tree-encoded zero)
+    expect(treeEqual(applied, LEAF)).toBe(true)
   })
 })

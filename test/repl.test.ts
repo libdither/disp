@@ -22,24 +22,23 @@ describe("REPL - processLine", () => {
   })
 
   it("handles declaration", () => {
-    const result = processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
-    expect(result).toBe("Bool : Type")
+    const result = processLine(state, "let MyType : Type := (R : Type) -> R -> R -> R")
+    expect(result).toBe("MyType : Type")
   })
 
   it("handles expression with context", () => {
-    processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
     const result = processLine(state, "Bool")
     expect(result).toContain("Type")
   })
 
   it("handles number literals", () => {
-    const result = processLine(state, "let Nat : Type := (R : Type) -> (R -> R) -> R -> R")
-    expect(result).toBe("Nat : Type")
+    // Nat is already a primitive type; define something that uses it
+    const result = processLine(state, "let myZero : Nat := zero")
+    expect(result).toBe("myZero : Nat")
   })
 
   it("handles true/false keywords in expressions", () => {
-    processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
-    processLine(state, "let not : Bool -> Bool := {b R t f} -> b R f t")
+    processLine(state, "let not : Bool -> Bool := {b} -> boolElim Bool false true b")
     const result = processLine(state, "not true")
     // Should be recognized as something (not an error)
     expect(result).not.toContain("Error")
@@ -74,7 +73,9 @@ describe("REPL - prelude loading", () => {
   it("prelude defines expected names", () => {
     const preludePath = path.resolve(__dirname, "../prelude.disp")
     loadFile(state, preludePath)
-    const expectedNames = ["Bool", "not", "and", "or", "Nat", "zero", "succ", "add", "mul", "id"]
+    // Bool, Nat, zero, succ are now primitives (already in defs before prelude)
+    // Prelude defines not, and, or, add, mul, id, fold, etc.
+    const expectedNames = ["not", "and", "or", "add", "mul", "id", "fold"]
     for (const name of expectedNames) {
       expect(state.defs.has(name)).toBe(true)
     }
@@ -103,26 +104,26 @@ describe("REPL - :load and :save", () => {
 
   it(":load loads a file", () => {
     const filePath = path.join(tmpDir, "test.disp")
-    fs.writeFileSync(filePath, "let Nat : Type := (R : Type) -> (R -> R) -> R -> R\n")
+    fs.writeFileSync(filePath, "let MyNat : Type := (R : Type) -> (R -> R) -> R -> R\n")
     const result = processLine(state, `:load ${filePath}`)
     expect(result).toContain("Loaded")
-    expect(state.defs.has("Nat")).toBe(true)
+    expect(state.defs.has("MyNat")).toBe(true)
   })
 
   it(":save writes declarations", () => {
-    processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
-    processLine(state, "let not : Bool -> Bool := {b R t f} -> b R f t")
+    processLine(state, "let not : Bool -> Bool := {b} -> boolElim Bool false true b")
+    processLine(state, "let myVal : Bool := true")
     const filePath = path.join(tmpDir, "out.disp")
     const result = processLine(state, `:save ${filePath}`)
     expect(result).toContain("Saved 2 definitions")
     const content = fs.readFileSync(filePath, "utf-8")
-    expect(content).toContain("let Bool")
     expect(content).toContain("let not")
+    expect(content).toContain("let myVal")
   })
 
   it("round-trip: save then load produces equivalent context", () => {
-    processLine(state, "let Nat : Type := (R : Type) -> (R -> R) -> R -> R")
-    processLine(state, "let zero : Nat := {R s z} -> z")
+    processLine(state, "let MyNat : Type := (R : Type) -> (R -> R) -> R -> R")
+    processLine(state, "let myZero : MyNat := {R s z} -> z")
     const filePath = path.join(tmpDir, "roundtrip.disp")
     processLine(state, `:save ${filePath}`)
 
@@ -130,8 +131,8 @@ describe("REPL - :load and :save", () => {
     const state2 = initialState()
     const result = processLine(state2, `:load ${filePath}`)
     expect(result).toContain("Loaded")
-    expect(state2.defs.has("Nat")).toBe(true)
-    expect(state2.defs.has("zero")).toBe(true)
+    expect(state2.defs.has("MyNat")).toBe(true)
+    expect(state2.defs.has("myZero")).toBe(true)
   })
 
   it(":load with missing file gives error", () => {
@@ -185,7 +186,7 @@ describe("REPL - recursive definitions", () => {
 
   beforeEach(() => {
     state = initialState()
-    processLine(state, "let Nat : Type := (R : Type) -> (R -> R) -> R -> R")
+    // Nat is now a primitive type, no need to define it
   })
 
   it("let rec myId : Nat -> Nat := {n} -> n then myId 5 = 5", () => {
@@ -283,10 +284,8 @@ describe("REPL - :ctx command", () => {
 describe("REPL - type errors", () => {
   it("rejects type mismatch in application", () => {
     const state = initialState()
-    processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
-    processLine(state, "let Nat : Type := (R : Type) -> (R -> R) -> R -> R")
+    // Bool, Nat, zero are now primitives
     processLine(state, "let id : (A : Type) -> A -> A := {A x} -> x")
-    processLine(state, "let zero : Nat := {R s z} -> z")
     const result = processLine(state, "id Bool zero")
     expect(result).toContain("error")
   })

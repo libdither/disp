@@ -7,14 +7,14 @@
 //   Lam(A, body) = fork(stem(A), body)        -- body is bracket-abstracted
 //   Pi(A, body)  = fork(fork(A, LEAF), body)   -- body is bracket-abstracted
 //
-// Each value is "wrapped" as a Church pair carrying (data, type):
-//   WRAP(data, type) = S(S I (K data))(K type)
-//   unwrapData(w)    = apply(w, K)
-//   unwrapType(w)    = apply(w, K*)
+// Each value is "wrapped" as a fork pair carrying (data, type):
+//   wrap(data, type) = fork(data, type)
+//   unwrapData(w)    = w.left
+//   unwrapType(w)    = w.right
 
 import { type Tree, LEAF, stem, fork, treeEqual, apply, I, treeApply } from "./tree.js"
 import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapse } from "./compile.js"
-import { type SExpr, stype } from "./parse.js"
+import { type SExpr } from "./parse.js"
 
 // ============================================================
 // Phase 1: Encoding Primitives
@@ -76,26 +76,30 @@ export function unPi(t: Tree): { domain: Tree, body: Tree } | null {
   return null
 }
 
-// --- WRAP (Church pair via bracket abstraction) ---
-
-// K selector: stem(LEAF). apply(wrap, K) → data
-export const K_SEL: Tree = stem(LEAF)
-
-// K* selector: fork(LEAF, I). apply(wrap, K*) → type
-export const K_STAR_SEL: Tree = fork(LEAF, I)
+// --- WRAP (fork pair) ---
 
 export function wrap(data: Tree, type: Tree): Tree {
-  const expr = eApp(eApp(eFvar("f"), eTree(data)), eTree(type))
-  return collapse(bracketAbstract("f", expr))
+  return fork(data, type)
 }
 
 export function unwrapData(wrapped: Tree): Tree {
-  return apply(wrapped, K_SEL)
+  if (wrapped.tag !== "fork") throw new CocError("Expected wrapped value (fork pair)")
+  return wrapped.left
 }
 
 export function unwrapType(wrapped: Tree): Tree {
-  return apply(wrapped, K_STAR_SEL)
+  if (wrapped.tag !== "fork") throw new CocError("Expected wrapped value (fork pair)")
+  return wrapped.right
 }
+
+// --- Primitive type constants ---
+// Must not collide with encVar(freshMarker()). Fresh markers are fork(LEAF, stem^n(LEAF)),
+// so encVar(marker) = stem(fork(LEAF, ...)). We use fork(fork(LEAF,LEAF), fork(...)) patterns
+// which are Pi-tagged but that's fine since they're only used in TYPE positions.
+
+export const TREE_TYPE = fork(fork(LEAF, LEAF), fork(LEAF, LEAF))
+export const BOOL_TYPE = fork(fork(LEAF, LEAF), fork(LEAF, stem(LEAF)))
+export const NAT_TYPE  = fork(fork(LEAF, LEAF), fork(stem(LEAF), LEAF))
 
 // --- Fresh markers ---
 
@@ -248,6 +252,8 @@ export function buildWrapped(sexpr: SExpr, env: Env, expectedType?: Tree, budget
   switch (sexpr.tag) {
     case "stype":
       return wrap(encType(), encType())
+    case "stree":
+      return wrap(TREE_TYPE, encType())
     case "svar": {
       const wrapped = env.get(sexpr.name)
       if (!wrapped) throw new CocError(`Unbound variable: ${sexpr.name}`)
@@ -404,8 +410,15 @@ export function printEncoded(t: Tree, nameMap?: Map<number, string>, budget = { 
 }
 
 function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
+  // Recognize primitive type markers
+  if (treeEqual(t, TREE_TYPE)) return "Tree"
+  if (treeEqual(t, BOOL_TYPE)) return "Bool"
+  if (treeEqual(t, NAT_TYPE)) return "Nat"
   if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
   const w = whnfTree(t, budget)
+  if (treeEqual(w, TREE_TYPE)) return "Tree"
+  if (treeEqual(w, BOOL_TYPE)) return "Bool"
+  if (treeEqual(w, NAT_TYPE)) return "Nat"
   if (nameMap && w.id !== t.id) { const name = nameMap.get(w.id); if (name) return name }
   const tag = termTag(w)
   switch (tag) {

@@ -32,6 +32,10 @@ export function astToExpr(ast: SExpr, defs: Map<string, Tree> = new Map()): Expr
       // Type erases to LEAF
       return eTree(LEAF)
 
+    case "stree":
+      // Tree type erases to LEAF (types have no runtime significance)
+      return eTree(LEAF)
+
     case "svar": {
       // Look up in definitions first
       const def = defs.get(ast.name)

@@ -21,6 +21,7 @@ export type SExpr =
   | { tag: "slam", params: string[], body: SExpr, pos?: Span }
   | { tag: "spi", name: string, domain: SExpr, codomain: SExpr, pos?: Span }
   | { tag: "stype", pos?: Span }
+  | { tag: "stree", pos?: Span }
 
 export type SDecl = {
   name: string
@@ -57,6 +58,7 @@ export type Token =
   | { tag: "coloneq", pos: Span }  // :=
   | { tag: "kw_let", pos: Span }
   | { tag: "kw_type", pos: Span }
+  | { tag: "kw_tree", pos: Span }
   | { tag: "kw_true", pos: Span }
   | { tag: "kw_false", pos: Span }
   | { tag: "comma", pos: Span }    // ,
@@ -121,6 +123,7 @@ export function tokenize(input: string): Token[] {
       const pos: Span = { start, end: i }
       if (word === "let") tokens.push({ tag: "kw_let", pos })
       else if (word === "Type") tokens.push({ tag: "kw_type", pos })
+      else if (word === "Tree") tokens.push({ tag: "kw_tree", pos })
       else if (word === "true") tokens.push({ tag: "kw_true", pos })
       else if (word === "false") tokens.push({ tag: "kw_false", pos })
       else tokens.push({ tag: "ident", value: word, pos })
@@ -435,7 +438,7 @@ class Parser {
 
   private isAtomStart(): boolean {
     const tag = this.peek().tag
-    if (tag === "ident" || tag === "kw_type" || tag === "lparen"
+    if (tag === "ident" || tag === "kw_type" || tag === "kw_tree" || tag === "lparen"
       || tag === "num" || tag === "kw_true" || tag === "kw_false"
       || tag === "langle") return true
     if (tag === "lbrace" && this.isRecordStart()) return true
@@ -456,21 +459,24 @@ class Parser {
       return { tag: "stype", pos: tok.pos }
     }
 
+    if (tok.tag === "kw_tree") {
+      this.advance()
+      return { tag: "stree", pos: tok.pos }
+    }
+
     if (tok.tag === "kw_true") {
       this.advance()
-      // true = {R t f} -> t
-      return slam(["R", "t", "f"], svar("t"), tok.pos)
+      return svar("true", tok.pos)
     }
 
     if (tok.tag === "kw_false") {
       this.advance()
-      // false = {R t f} -> f
-      return slam(["R", "t", "f"], svar("f"), tok.pos)
+      return svar("false", tok.pos)
     }
 
     if (tok.tag === "num") {
       this.advance()
-      return churchNumeralExpr((tok as { tag: "num", value: number }).value, tok.pos)
+      return treeNumeralExpr((tok as { tag: "num", value: number }).value, tok.pos)
     }
 
     if (tok.tag === "lparen") {
@@ -504,40 +510,33 @@ class Parser {
   }
 }
 
-// --- Church encoding helpers ---
+// --- Tree-encoded literal helpers ---
 
-// Build Church numeral n = {R s z} -> s^n(z)
-function churchNumeralExpr(n: number, pos?: Span): SExpr {
-  let body: SExpr = svar("z")
+// Build tree-encoded numeral n = succ^n(zero)
+function treeNumeralExpr(n: number, pos?: Span): SExpr {
+  let body: SExpr = svar("zero")
   for (let i = 0; i < n; i++) {
-    body = sapp(svar("s"), body)
+    body = sapp(svar("succ"), body, pos)
   }
-  return slam(["R", "s", "z"], body, pos)
+  return body
 }
 
-// Recognize Church-encoded literals in SExpr for pretty printing
-export function recognizeChurchLiteral(expr: SExpr): string | null {
-  if (expr.tag !== "slam") return null
-  if (expr.params.length !== 3) return null
-
-  const [_r, s, z] = expr.params
-
-  // Check for true: body is just the 2nd param (distinct from all numerals)
-  if (expr.body.tag === "svar" && expr.body.name === s) return "true"
-
-  // Check for Church numeral pattern: s^n(z)
-  let body = expr.body
+// Recognize tree-encoded literals in SExpr for pretty printing
+export function recognizeLiteral(expr: SExpr): string | null {
+  if (expr.tag === "svar") {
+    if (expr.name === "true") return "true"
+    if (expr.name === "false") return "false"
+    if (expr.name === "zero") return "0"
+    if (expr.name === "leaf") return "leaf"
+  }
+  // Count succ/stem applications for numerals
   let count = 0
-  while (body.tag === "sapp" && body.func.tag === "svar" && body.func.name === s) {
+  let e: SExpr = expr
+  while (e.tag === "sapp" && e.func.tag === "svar" && e.func.name === "succ") {
     count++
-    body = body.arg
+    e = e.arg
   }
-  if (body.tag === "svar" && body.name === z) {
-    // 0 is structurally identical to false; prefer "false" for display
-    if (count === 0) return "false"
-    return String(count)
-  }
-
+  if (e.tag === "svar" && e.name === "zero" && count > 0) return String(count)
   return null
 }
 
@@ -547,6 +546,7 @@ export function stripPos(expr: SExpr): SExpr {
   switch (expr.tag) {
     case "svar": return { tag: "svar", name: expr.name }
     case "stype": return { tag: "stype" }
+    case "stree": return { tag: "stree" }
     case "sapp": return { tag: "sapp", func: stripPos(expr.func), arg: stripPos(expr.arg) }
     case "slam": return { tag: "slam", params: expr.params, body: stripPos(expr.body) }
     case "spi": return { tag: "spi", name: expr.name, domain: stripPos(expr.domain), codomain: stripPos(expr.codomain) }
@@ -572,22 +572,22 @@ export function parseLine(input: string): SDecl | SExpr {
 // --- Pretty printer (for round-trip testing) ---
 
 export function printExpr(expr: SExpr): string {
+  const literal = recognizeLiteral(expr)
+  if (literal !== null) return literal
   switch (expr.tag) {
     case "svar": return expr.name
     case "stype": return "Type"
+    case "stree": return "Tree"
     case "sapp": {
       const func = needsParensAsFunc(expr.func) ? `(${printExpr(expr.func)})` : printExpr(expr.func)
       const arg = printAtom(expr.arg)
       return `${func} ${arg}`
     }
     case "slam": {
-      const literal = recognizeChurchLiteral(expr)
-      if (literal !== null) return literal
       return `{${expr.params.join(" ")}} -> ${printExpr(expr.body)}`
     }
     case "spi": {
       if (expr.name === "_") {
-        // Non-dependent function type
         const dom = printAtom(expr.domain)
         return `${dom} -> ${printExpr(expr.codomain)}`
       }
@@ -596,15 +596,15 @@ export function printExpr(expr: SExpr): string {
   }
 }
 
-// Pi/lambda/arrow in function position of application needs parens
 function needsParensAsFunc(expr: SExpr): boolean {
   if (expr.tag === "spi") return true
-  if (expr.tag === "slam") return recognizeChurchLiteral(expr) === null
+  if (expr.tag === "slam") return true
   return false
 }
 
 function printAtom(expr: SExpr): string {
-  if (expr.tag === "svar" || expr.tag === "stype") return printExpr(expr)
-  if (expr.tag === "slam" && recognizeChurchLiteral(expr) !== null) return printExpr(expr)
+  if (expr.tag === "svar" || expr.tag === "stype" || expr.tag === "stree") return printExpr(expr)
+  const literal = recognizeLiteral(expr)
+  if (literal !== null) return literal
   return `(${printExpr(expr)})`
 }

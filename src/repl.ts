@@ -4,11 +4,11 @@
 import * as readline from "node:readline"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { parseLine, printExpr, recognizeChurchLiteral, type SExpr, type SDecl, ParseError } from "./parse.js"
+import { parseLine, printExpr, type SExpr, type SDecl, ParseError } from "./parse.js"
 import { compileAndEval, compileRecAndEval } from "./compile.js"
-import { apply, prettyTree, type Tree, LEAF, stem, I, BudgetExhausted } from "./tree.js"
-import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, convertible, encType, CocError, type Env } from "./coc.js"
-import { loadCocPrelude, buildNameMap, COC_PRELUDE, TREE_NATIVE_BUILTINS } from "./tree-native.js"
+import { prettyTree, type Tree, LEAF, stem, treeEqual, BudgetExhausted } from "./tree.js"
+import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
+import { loadCocPrelude, buildNameMap, COC_PRELUDE, TREE_NATIVE_BUILTINS, PRIMITIVE_BUILTINS } from "./tree-native.js"
 
 export type ReplState = {
   cocEnv: Env                   // CoC environment (name → wrapped tree)
@@ -18,6 +18,17 @@ export type ReplState = {
 }
 
 function loadCocPreludeIntoDefs(state: ReplState): void {
+  // Add primitive type values to defs
+  state.defs.set("Tree", TREE_TYPE)
+  state.defs.set("Bool", BOOL_TYPE)
+  state.defs.set("Nat",  NAT_TYPE)
+
+  // Add primitive builtins to defs
+  for (const builtin of PRIMITIVE_BUILTINS) {
+    state.defs.set(builtin.name, builtin.data)
+  }
+
+  // Compile COC_PRELUDE string definitions
   for (const decl of COC_PRELUDE) {
     const parsed = parseLine(decl)
     if ("name" in parsed) {
@@ -32,6 +43,8 @@ function loadCocPreludeIntoDefs(state: ReplState): void {
       }
     }
   }
+
+  // Add tree-native builtins to defs
   for (const builtin of TREE_NATIVE_BUILTINS) {
     state.defs.set(builtin.name, builtin.data)
   }
@@ -123,22 +136,7 @@ function handleDecl(state: ReplState, decl: SDecl): string {
 }
 
 function handleExpr(state: ReplState, expr: SExpr): string {
-  // Type check via CoC — try without expected type, fall back for Church literals
-  let wrapped: Tree
-  try {
-    wrapped = buildWrapped(expr, state.cocEnv)
-  } catch (e) {
-    if (e instanceof CocError && expr.tag === "slam") {
-      const litType = churchLiteralTypeCoc(expr, state.cocEnv)
-      if (litType) {
-        wrapped = buildWrapped(expr, state.cocEnv, litType)
-      } else {
-        throw e
-      }
-    } else {
-      throw e
-    }
-  }
+  const wrapped = buildWrapped(expr, state.cocEnv)
 
   const data = unwrapData(wrapped)
   const type = unwrapType(wrapped)
@@ -169,19 +167,6 @@ function handleExpr(state: ReplState, expr: SExpr): string {
   return `${dataStr} : ${typeStr}`
 }
 
-// Build a CoC tree type for a recognized Church literal
-function churchLiteralTypeCoc(expr: SExpr, env: Env): Tree | null {
-  const lit = recognizeChurchLiteral(expr)
-  if (lit === null) return null
-  let typeExpr: SExpr
-  if (lit === "true" || lit === "false") {
-    typeExpr = parseLine("(R : Type) -> R -> R -> R") as SExpr
-  } else {
-    typeExpr = parseLine("(R : Type) -> (R -> R) -> R -> R") as SExpr
-  }
-  return unwrapData(buildWrapped(typeExpr, env, encType()))
-}
-
 function handleCommand(state: ReplState, input: string): string {
   const parts = input.split(/\s+/)
   const cmd = parts[0]
@@ -193,21 +178,7 @@ function handleCommand(state: ReplState, input: string): string {
       if (!rest) return "Usage: :type <expr>"
       try {
         const expr = parseLine(rest) as SExpr
-        let wrapped: Tree
-        try {
-          wrapped = buildWrapped(expr, state.cocEnv)
-        } catch (e) {
-          if (e instanceof CocError && expr.tag === "slam") {
-            const litType = churchLiteralTypeCoc(expr, state.cocEnv)
-            if (litType) {
-              wrapped = buildWrapped(expr, state.cocEnv, litType)
-            } else {
-              throw e
-            }
-          } else {
-            throw e
-          }
-        }
+        const wrapped = buildWrapped(expr, state.cocEnv)
         const type = unwrapType(wrapped)
         const nameMap = buildNameMap(state.cocEnv)
         return printEncoded(type, nameMap)
@@ -274,8 +245,10 @@ function handleCommand(state: ReplState, input: string): string {
         "  A -> B                      Function type",
         "  f x                         Application",
         "  Type                        The universe",
-        "  true / false                Church booleans",
-        "  0, 1, 2, ...                Church numerals",
+        "  true / false                Booleans (tree-encoded)",
+        "  0, 1, 2, ...                Natural numbers (tree-encoded)",
+        "  Tree / Bool / Nat           Primitive types",
+        "  leaf / stem / fork          Tree constructors",
       ].join("\n")
 
     default:
@@ -283,73 +256,42 @@ function handleCommand(state: ReplState, input: string): string {
   }
 }
 
-// Core recognition: type-guided Church literal check, then name lookup, then last-resort behavioral
+// Structural recognition of primitive values
 function recognizeValue(
   tree: Tree, type: Tree, state: ReplState,
 ): string | null {
-  const boolEntry = state.cocEnv.get("Bool")
-  const natEntry = state.cocEnv.get("Nat")
-  const isBool = !!(boolEntry && convertible(type, unwrapData(boolEntry)))
-  const isNat = !isBool && !!(natEntry && convertible(type, unwrapData(natEntry)))
-
-  if (isBool) {
-    const result = tryChurchBool(tree)
-    if (result !== null) return result
+  // Primitive Bool (true = LEAF, false = stem(LEAF))
+  if (treeEqual(type, BOOL_TYPE)) {
+    if (treeEqual(tree, LEAF)) return "true"
+    if (treeEqual(tree, stem(LEAF))) return "false"
+    return null
   }
-  if (isNat) {
-    const result = tryChurchNat(tree)
-    if (result !== null) return result
+  // Primitive Nat (zero = LEAF, succ(n) = stem(n))
+  if (treeEqual(type, NAT_TYPE)) {
+    let n = tree, count = 0
+    while (n.tag === "stem") { count++; n = n.child }
+    if (n.tag === "leaf") return String(count)
+    return null
   }
-
+  // Primitive Tree
+  if (treeEqual(type, TREE_TYPE)) {
+    return printTreeValue(tree)
+  }
   // Name lookup
   for (const [name, def] of state.defs) {
     if (tree.id === def.id) return name
   }
-
-  // Last-resort behavioral (when type is unknown)
-  if (!isBool && !isNat) {
-    const boolResult = tryChurchBool(tree)
-    if (boolResult !== null) return boolResult
-    const natResult = tryChurchNat(tree)
-    if (natResult !== null) return natResult
-  }
-
   return null
 }
 
-function tryChurchBool(tree: Tree): string | null {
-  try {
-    const budget = { remaining: 1000 }
-    const r = LEAF
-    const t = stem(LEAF)
-    const f = stem(stem(LEAF))
-    const result = apply(apply(apply(tree, r, budget), t, budget), f, budget)
-    if (result.id === t.id) return "true"
-    if (result.id === f.id) return "false"
-    return null
-  } catch {
-    return null
-  }
+function printTreeValue(t: Tree): string {
+  if (t.tag === "leaf") return "leaf"
+  if (t.tag === "stem") return `stem ${printTreeValueAtom(t.child)}`
+  return `fork ${printTreeValueAtom(t.left)} ${printTreeValueAtom(t.right)}`
 }
 
-function tryChurchNat(tree: Tree): string | null {
-  try {
-    const budget = { remaining: 1000 }
-    const r = LEAF
-    const result = apply(apply(apply(tree, r, budget), LEAF, budget), LEAF, budget)
-    let node = result
-    let count = 0
-    while (node.tag === "stem") {
-      count++
-      node = node.child
-    }
-    if (node.tag === "leaf" && count >= 0) {
-      return String(count)
-    }
-    return null
-  } catch {
-    return null
-  }
+function printTreeValueAtom(t: Tree): string {
+  return t.tag === "leaf" ? "leaf" : `(${printTreeValue(t)})`
 }
 
 // --- File operations ---

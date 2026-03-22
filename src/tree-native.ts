@@ -12,8 +12,9 @@ import { type Tree, LEAF, stem, fork, apply, I } from "./tree.js"
 import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval, FIX } from "./compile.js"
 import { type SExpr, type SDecl, parseLine } from "./parse.js"
 import {
-  encType, K_SEL, K_STAR_SEL,
+  encType,
   wrap, unwrapData, unwrapType,
+  TREE_TYPE, BOOL_TYPE, NAT_TYPE,
   buildWrapped, cocCheckDecl, type Env,
 } from "./coc.js"
 
@@ -22,6 +23,13 @@ import {
 function exprFork(a: Expr, b: Expr): Expr { return eApp(eApp(eTree(LEAF), a), b) }
 function exprTriage(c: Expr, d: Expr, b: Expr): Expr { return exprFork(exprFork(c, d), b) }
 function mkTriage(onLeaf: Tree, onStem: Tree, onFork: Tree): Tree { return fork(fork(onLeaf, onStem), onFork) }
+
+// Bool elimination for tree-encoded bools: true=LEAF, false=stem(LEAF)
+// exprBoolElim(bool, thenBranch, elseBranch) dispatches via triage:
+//   leaf(true) → thenBranch, stem(false) → elseBranch, fork → thenBranch
+function exprBoolElim(bool: Expr, thenBranch: Expr, elseBranch: Expr): Expr {
+  return eApp(exprTriage(thenBranch, bracketAbstract("__be", elseBranch), bracketAbstract("__be1", bracketAbstract("__be2", thenBranch))), bool)
+}
 
 function compileTree(params: string[], body: Expr): Tree {
   let e = body
@@ -78,20 +86,22 @@ export const TERM_CASE: Tree = (() => {
   return compileTree(["onType", "onVar", "onApp", "onLam", "onPi", "term"], body)
 })()
 
-// --- Compiled Bool and logic constants ---
+// --- Tree-encoded Bool constants ---
+// true = LEAF (leaf), false = stem(LEAF) (stem of leaf)
 
-const TT: Tree = compileTree(["R", "t", "f"], eFvar("t"))
-const FF: Tree = compileTree(["R", "t", "f"], eFvar("f"))
-const KFF: Tree = fork(LEAF, FF)        // {_} -> ff  (absorbs 1 arg)
-const KKFF: Tree = fork(LEAF, KFF)      // {_ _} -> ff (absorbs 2 args)
+const TT: Tree = LEAF
+const FF: Tree = stem(LEAF)
+const KFF: Tree = fork(LEAF, FF)        // K(FF): absorbs 1 arg, returns FF
+const KKFF: Tree = fork(LEAF, KFF)      // K(KFF): absorbs 2 args, returns FF
 
-// AND : Bool -> Bool -> Bool (eager — reduces to TT/FF structurally)
-// and a b = a LEAF b FF
-// This forces full evaluation: TT LEAF b FF → b, FF LEAF b FF → FF.
-// Unlike the 5-arg version {a b R t f} -> ..., this produces structurally
-// identical TT/FF trees, which is critical for tree-native comparisons.
+// AND : Bool -> Bool -> Bool (triage-based)
+// triage on a: leaf(true) → b, stem(false) → FF, fork → FF
 const AND: Tree = compileTree(["a", "b"],
-  eApp(eApp(eApp(eFvar("a"), eTree(LEAF)), eFvar("b")), eTree(FF)))
+  eApp(exprTriage(
+    eFvar("b"),
+    bracketAbstract("_", eTree(FF)),
+    bracketAbstract("_", bracketAbstract("_", eTree(FF)))
+  ), eFvar("a")))
 
 // --- treeEqStep: fuel-based structural tree equality ---
 //
@@ -186,8 +196,8 @@ export const ABSTRACT_OUT_STEP: Tree = (() => {
   const triageResult = eApp(exprTriage(leafCase, stemCase, forkCase), eFvar("tree"))
 
   // Branch: isTarget ? I : triageResult
-  // Church bool: isTarget LEAF I triageResult (eager, both branches computed)
-  const body = eApp(eApp(eApp(isTarget, eTree(LEAF)), eTree(I)), triageResult)
+  // Tree-encoded bool dispatch via triage
+  const body = exprBoolElim(isTarget, eTree(I), triageResult)
 
   return compileTree(["eq", "target", "self", "tree"], body)
 })()
@@ -339,7 +349,7 @@ export const CONVERTIBLE_STEP: Tree = (() => {
 
   // After WHNF: check treeEq on normalized terms, else structural compare
   const whnfEq = eApp(eApp(eFvar("treeEqF"), eFvar("aN")), eFvar("bN"))
-  const afterWhnf = eApp(eApp(eApp(whnfEq, eTree(LEAF)), eTree(TT)), structuralCompare)
+  const afterWhnf = exprBoolElim(whnfEq, eTree(TT), structuralCompare)
 
   // Bind aN = whnf(a), bN = whnf(b)
   const withBN = eApp(bracketAbstract("bN", afterWhnf), eApp(eFvar("whnfFn"), eFvar("b")))
@@ -347,7 +357,7 @@ export const CONVERTIBLE_STEP: Tree = (() => {
 
   // Early equality short-circuit
   const earlyEq = eApp(eApp(eFvar("treeEqF"), eFvar("a")), eFvar("b"))
-  const body = eApp(eApp(eApp(earlyEq, eTree(LEAF)), eTree(TT)), withAN)
+  const body = exprBoolElim(earlyEq, eTree(TT), withAN)
 
   return compileTree(["whnfFn", "treeEqF", "self", "marker", "a", "b"], body)
 })()
@@ -371,21 +381,20 @@ export const TYPECHECK: Tree = (() => {
   let uid = 0
   function fresh() { return `__tc${uid++}` }
 
+  // wrap(data, type) = fork(data, type)
   function exprWrap(data: Expr, type: Expr): Expr {
-    const v = fresh()
-    return bracketAbstract(v, eApp(eApp(eFvar(v), data), type))
+    return exprFork(data, type)
   }
-  function exprUnwrapData(w: Expr): Expr { return eApp(w, eTree(K_SEL)) }
-  function exprUnwrapType(w: Expr): Expr { return eApp(w, eTree(K_STAR_SEL)) }
+  // unwrapData = FST (left of fork pair)
+  function exprUnwrapData(w: Expr): Expr { return eApp(eTree(FST), w) }
+  // unwrapType = SND (right of fork pair)
+  function exprUnwrapType(w: Expr): Expr { return eApp(eTree(SND), w) }
 
   function exprEnvLookup(env: Expr, marker: Expr): Expr {
     const entV = fresh(), rstV = fresh()
+    const eqResult = eApp(eApp(eFvar("eq"), eApp(eTree(FST), eFvar(entV))), marker)
     const handler = bracketAbstract(entV, bracketAbstract(rstV,
-      eApp(eApp(eApp(
-        eApp(eApp(eFvar("eq"), eApp(eTree(FST), eFvar(entV))), marker),
-        eTree(LEAF)),
-        eApp(eTree(SND), eFvar(entV))),
-        eFvar(rstV))))
+      exprBoolElim(eqResult, eApp(eTree(SND), eFvar(entV)), eFvar(rstV))))
     return eApp(eApp(eApp(env, eTree(LEAF)), eTree(LEAF)), handler)
   }
 
@@ -510,32 +519,73 @@ export const TYPECHECK: Tree = (() => {
 // CoC Prelude: Church-encoded Tree and encoding operations
 // ============================================================
 
+// COC_PRELUDE: encoding operations and wrap/unwrap (loaded after primitive types are injected)
+// Tree, Bool, Nat, leaf, stem, fork, triage, true, false, zero, succ, boolElim, natElim
+// are all injected as primitives BEFORE this prelude is processed.
 export const COC_PRELUDE: string[] = [
-  "let Tree : Type := (R : Type) -> R -> (R -> R) -> (R -> R -> R) -> R",
-  "let leaf : Tree := {R c d b} -> c",
-  "let stem : Tree -> Tree := {t R c d b} -> d (t R c d b)",
-  "let fork : Tree -> Tree -> Tree := {l r R c d b} -> b (l R c d b) (r R c d b)",
-  "let triage : (R : Type) -> R -> (R -> R) -> (R -> R -> R) -> Tree -> R := {R c d b t} -> t R c d b",
   "let encType : Tree := leaf",
   "let encVar : Tree -> Tree := stem",
   "let encApp : Tree -> Tree -> Tree := {m n} -> fork leaf (fork m n)",
   "let encLam : Tree -> Tree -> Tree := {domain body} -> fork (stem domain) body",
   "let encPi : Tree -> Tree -> Tree := {domain body} -> fork (fork domain leaf) body",
-  "let Wrapped : Type := (R : Type) -> (Tree -> Tree -> R) -> R",
-  "let wrap : Tree -> Tree -> Wrapped := {d t R sel} -> sel d t",
-  "let unwrapData : Wrapped -> Tree := {w} -> w Tree ({d t} -> d)",
-  "let unwrapType : Wrapped -> Tree := {w} -> w Tree ({d t} -> t)",
-  "let Bool : Type := (R : Type) -> R -> R -> R",
-  "let tt : Bool := {R t f} -> t",
-  "let ff : Bool := {R t f} -> f",
+  // wrap/unwrap use fork pairs: wrap = fork, unwrap via tfst/tsnd
+  "let wrap : Tree -> Tree -> Tree := fork",
+  "let unwrapData : Tree -> Tree := tfst",
+  "let unwrapType : Tree -> Tree := tsnd",
 ]
+
+// --- Primitive eliminator data ---
+
+// TRIAGE_DATA: {R c d b t} → triage dispatch (discards R, builds fork(fork(c,d),b), applies to t)
+// K(TRIAGE) absorbs the erased R type parameter, then TRIAGE takes c, d, b, t.
+const TRIAGE_DATA: Tree = fork(LEAF, TRIAGE)
+
+// BOOL_ELIM_DATA: {R x y b} → triage on b: leaf(true)→x, stem(false)→y, fork→x
+const BOOL_ELIM_DATA: Tree = compileTree(["R", "x", "y", "b"],
+  eApp(exprTriage(
+    eFvar("x"),
+    bracketAbstract("_", eFvar("y")),
+    bracketAbstract("_", bracketAbstract("_", eFvar("x")))
+  ), eFvar("b")))
+
+// NAT_ELIM_DATA: {R z s n} → triage on n: leaf(zero)→z, stem(n')→s(n'), fork→z
+const NAT_ELIM_DATA: Tree = compileTree(["R", "z", "s", "n"],
+  eApp(exprTriage(
+    eFvar("z"),
+    bracketAbstract("n_pred", eApp(eFvar("s"), eFvar("n_pred"))),
+    bracketAbstract("_", bracketAbstract("_", eFvar("z")))
+  ), eFvar("n")))
+
+// tDelta: a specific leaf used as initial marker for convertible
+const T_DELTA: Tree = LEAF
 
 interface TreeBuiltin { name: string; type: string; data: Tree }
 
-export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
+// Primitive type constructors, eliminators, and essential builtins (loaded before COC_PRELUDE)
+export const PRIMITIVE_BUILTINS: TreeBuiltin[] = [
+  // Tree primitives
+  { name: "leaf",     type: "Tree",                  data: LEAF },
+  { name: "stem",     type: "Tree -> Tree",          data: LEAF },
+  { name: "fork",     type: "Tree -> Tree -> Tree",  data: LEAF },
+  { name: "triage",   type: "(R : Type) -> R -> (Tree -> R) -> (Tree -> Tree -> R) -> Tree -> R",
+    data: TRIAGE_DATA },
+  // Bool primitives
+  { name: "true",     type: "Bool",                  data: LEAF },
+  { name: "false",    type: "Bool",                  data: stem(LEAF) },
+  { name: "boolElim", type: "(R : Type) -> R -> R -> Bool -> R",
+    data: BOOL_ELIM_DATA },
+  // Nat primitives
+  { name: "zero",     type: "Nat",                   data: LEAF },
+  { name: "succ",     type: "Nat -> Nat",            data: LEAF },
+  { name: "natElim",  type: "(R : Type) -> R -> (Nat -> R) -> Nat -> R",
+    data: NAT_ELIM_DATA },
+  // Tree destructors (needed by COC_PRELUDE wrap/unwrap definitions)
   { name: "tfst",     type: "Tree -> Tree",   data: FST },
   { name: "tsnd",     type: "Tree -> Tree",   data: SND },
   { name: "tchild",   type: "Tree -> Tree",   data: CHILD },
+]
+
+export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
   { name: "tEncApp",  type: "Tree -> Tree -> Tree", data: ENC_APP_T },
   { name: "tEncLam",  type: "Tree -> Tree -> Tree", data: ENC_LAM_T },
   { name: "tEncPi",   type: "Tree -> Tree -> Tree", data: ENC_PI_T },
@@ -556,28 +606,12 @@ export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
   { name: "inferStep",
     type: "(Tree -> Tree) -> (Tree -> Tree -> Tree) -> (Tree -> Tree -> Bool) -> (Tree -> Tree -> Tree) -> Tree -> Tree -> Tree",
     data: TYPECHECK },
-  // Lazy fixpoint combinator and raw triage
   { name: "tFix", type: "(Tree -> Tree) -> Tree", data: FIX },
-  // tTriage is polymorphic in return type: dispatches on raw tree structure.
-  // K(TRIAGE) absorbs the erased R type parameter, then TRIAGE takes c, d, b, t.
-  { name: "tTriage", type: "(R : Type) -> R -> (Tree -> R) -> (Tree -> Tree -> R) -> Tree -> R",
-    data: fork(LEAF, TRIAGE) },
-  // Actual tree constructors (not Church-encoded)
-  // LEAF is the tree calculus constructor △: apply(LEAF,x)=stem(x), apply(apply(LEAF,x),y)=fork(x,y)
-  { name: "tLeaf", type: "Tree", data: LEAF },
-  { name: "tStem", type: "Tree -> Tree", data: LEAF },
-  { name: "tFork", type: "Tree -> Tree -> Tree", data: LEAF },
+  { name: "tDelta", type: "Tree", data: T_DELTA },
 ]
 
-export function loadCocPrelude(env: Env): Env {
-  for (const decl of COC_PRELUDE) {
-    const parsed = parseLine(decl)
-    if (!("isRec" in parsed)) continue
-    const sdecl = parsed as SDecl
-    const result = cocCheckDecl(env, sdecl.name, sdecl.type, sdecl.value, sdecl.isRec)
-    env = result.env
-  }
-  for (const builtin of TREE_NATIVE_BUILTINS) {
+function registerBuiltins(builtins: TreeBuiltin[], env: Env): Env {
+  for (const builtin of builtins) {
     const typeWrapped = buildWrapped(parseLine(builtin.type) as SExpr, env, encType())
     const typeData = unwrapData(typeWrapped)
     env = new Map(env)
@@ -586,10 +620,34 @@ export function loadCocPrelude(env: Env): Env {
   return env
 }
 
-// Names whose tree data collides with CoC term encodings (e.g. tLeaf/tStem/tFork
-// are all LEAF, which is also encType()). Exclude from name map to avoid the
-// printer showing "tLeaf" where it should show "Type".
-const NAME_MAP_SKIP = new Set(["tLeaf", "tStem", "tFork"])
+export function loadCocPrelude(env: Env): Env {
+  // 1. Inject primitive types
+  env = new Map(env)
+  env.set("Tree", wrap(TREE_TYPE, encType()))
+  env.set("Bool", wrap(BOOL_TYPE, encType()))
+  env.set("Nat",  wrap(NAT_TYPE,  encType()))
+
+  // 2. Register primitive builtins (leaf, stem, fork, triage, true, false, etc.)
+  env = registerBuiltins(PRIMITIVE_BUILTINS, env)
+
+  // 3. Process COC_PRELUDE string definitions (encType, encVar, wrap, unwrap, etc.)
+  for (const decl of COC_PRELUDE) {
+    const parsed = parseLine(decl)
+    if (!("isRec" in parsed)) continue
+    const sdecl = parsed as SDecl
+    const result = cocCheckDecl(env, sdecl.name, sdecl.type, sdecl.value, sdecl.isRec)
+    env = result.env
+  }
+
+  // 4. Register tree-native builtins (FST, SND, step functions, etc.)
+  env = registerBuiltins(TREE_NATIVE_BUILTINS, env)
+
+  return env
+}
+
+// Names whose tree data collides with CoC term encodings or other primitives.
+// Exclude from name map to avoid the printer showing wrong names.
+const NAME_MAP_SKIP = new Set(["leaf", "stem", "fork", "true", "zero", "succ", "tDelta", "encType", "encVar", "wrap"])
 
 export function buildNameMap(env: Env): Map<number, string> {
   const map = new Map<number, string>()
