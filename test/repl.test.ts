@@ -427,4 +427,58 @@ describe("REPL - stdlib", () => {
     const result = processLine(state, "sym Bool (not true) false not_true_eq")
     expect(result).not.toContain("error")
   })
+
+  it("not_involution exists", () => {
+    expect(state.cocEnv.has("not_involution")).toBe(true)
+  })
+
+  it("natRec exists", () => {
+    expect(state.cocEnv.has("natRec")).toBe(true)
+  })
+})
+
+describe("REPL - dependent elimination", () => {
+  let state: ReplState
+
+  beforeEach(() => {
+    state = initialState()
+    loadFile(state, path.resolve("prelude.disp"), true)
+    loadFile(state, path.resolve("stdlib.disp"), true)
+  })
+
+  it("boolElimDep type-checks with dependent motive", () => {
+    // Type-checks with a dependent motive (P : Bool -> Type)
+    const r1 = processLine(state, "boolElimDep ({_} -> Nat) 1 0 true")
+    expect(r1).not.toContain("error")
+    expect(r1).toContain("Nat")
+    const r2 = processLine(state, "boolElimDep ({_} -> Nat) 1 0 false")
+    expect(r2).not.toContain("error")
+    expect(r2).toContain("Nat")
+  })
+
+  it("natElimDep type-checks with dependent motive", () => {
+    const r1 = processLine(state, "natElimDep ({_} -> Nat) 0 ({n} -> succ n) 3")
+    expect(r1).not.toContain("error")
+    expect(r1).toContain("Nat")
+    const r2 = processLine(state, "natElimDep ({_} -> Nat) 0 ({n} -> succ n) 0")
+    expect(r2).not.toContain("error")
+    expect(r2).toContain("Nat")
+  })
+
+  it("not_involution applies to true", () => {
+    const result = processLine(state, "not_involution true")
+    expect(result).not.toContain("error")
+  })
+
+  it("not_involution applies to false", () => {
+    const result = processLine(state, "not_involution false")
+    expect(result).not.toContain("error")
+  })
+
+  it("natRec type-checks", () => {
+    // natRec exists and has the right type
+    const result = processLine(state, ":type natRec")
+    expect(result).not.toContain("error")
+    expect(result).toContain("Nat")
+  })
 })

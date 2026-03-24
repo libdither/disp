@@ -557,6 +557,16 @@ export const PRIMITIVE_BUILTINS: TreeBuiltin[] = [
   { name: "tfst",     type: "Tree -> Tree",   data: FST },
   { name: "tsnd",     type: "Tree -> Tree",   data: SND },
   { name: "tchild",   type: "Tree -> Tree",   data: CHILD },
+  // Dependent eliminators (same data as non-dependent, different type signatures)
+  { name: "triageDep",
+    type: "(P : Tree -> Type) -> P leaf -> ((u : Tree) -> P (stem u)) -> ((u : Tree) -> (v : Tree) -> P (fork u v)) -> (t : Tree) -> P t",
+    data: TRIAGE_DATA },
+  { name: "boolElimDep",
+    type: "(P : Bool -> Type) -> P true -> P false -> (b : Bool) -> P b",
+    data: BOOL_ELIM_DATA },
+  { name: "natElimDep",
+    type: "(P : Nat -> Type) -> P 0 -> ((n : Nat) -> P (succ n)) -> (m : Nat) -> P m",
+    data: NAT_ELIM_DATA },
 ]
 
 export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
