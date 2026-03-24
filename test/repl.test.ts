@@ -139,6 +139,23 @@ describe("REPL - :load and :save", () => {
     const result = processLine(state, ":load nonexistent.disp")
     expect(result).toContain("Error")
   })
+
+  it(":load handles multi-line definitions", () => {
+    const filePath = path.join(tmpDir, "multiline.disp")
+    fs.writeFileSync(filePath, [
+      "let myId :",
+      "  (A : Type) ->",
+      "  A -> A :=",
+      "  {A x} -> x",
+      "",
+      "let test : Nat := myId Nat 42",
+    ].join("\n"))
+    const result = processLine(state, `:load ${filePath}`)
+    expect(result).toContain("Loaded")
+    expect(result).toContain("2 definitions")
+    const val = processLine(state, "test")
+    expect(val).toBe("42 : Nat")
+  })
 })
 
 describe("REPL - type-guided recognition", () => {
@@ -300,5 +317,114 @@ describe("REPL - type errors", () => {
     const state = initialState()
     const result = processLine(state, "{x} -> x")
     expect(result).toContain("error")
+  })
+})
+
+describe("REPL - computational equality (delta reduction)", () => {
+  let state: ReplState
+
+  beforeEach(() => {
+    state = initialState()
+    loadFile(state, path.resolve("prelude.disp"), true)
+    processLine(state, "let Eq : (A : Type) -> A -> A -> Type := {A x y} -> (P : A -> Type) -> P x -> P y")
+    processLine(state, "let refl : (A : Type) -> (x : A) -> Eq A x x := {A x P px} -> px")
+  })
+
+  it("not true = false", () => {
+    const result = processLine(state, "let _ : Eq Bool (not true) false := refl Bool false")
+    expect(result).not.toContain("error")
+  })
+
+  it("not false = true", () => {
+    const result = processLine(state, "let _ : Eq Bool (not false) true := refl Bool true")
+    expect(result).not.toContain("error")
+  })
+
+  it("not (not true) = true", () => {
+    const result = processLine(state, "let _ : Eq Bool (not (not true)) true := refl Bool true")
+    expect(result).not.toContain("error")
+  })
+
+  it("add 1 1 = 2", () => {
+    const result = processLine(state, "let _ : Eq Nat (add 1 1) 2 := refl Nat 2")
+    expect(result).not.toContain("error")
+  })
+
+  it("add 2 3 = 5", () => {
+    const result = processLine(state, "let _ : Eq Nat (add 2 3) 5 := refl Nat 5")
+    expect(result).not.toContain("error")
+  })
+
+  it("mul 2 3 = 6", () => {
+    const result = processLine(state, "let _ : Eq Nat (mul 2 3) 6 := refl Nat 6")
+    expect(result).not.toContain("error")
+  })
+
+  it("mul 3 3 = 9", () => {
+    const result = processLine(state, "let _ : Eq Nat (mul 3 3) 9 := refl Nat 9")
+    expect(result).not.toContain("error")
+  })
+
+  it("add 0 n = n", () => {
+    const result = processLine(state, "let _ : Eq Nat (add 0 5) 5 := refl Nat 5")
+    expect(result).not.toContain("error")
+  })
+
+  it("mul 0 n = 0", () => {
+    const result = processLine(state, "let _ : Eq Nat (mul 0 100) 0 := refl Nat 0")
+    expect(result).not.toContain("error")
+  })
+})
+
+describe("REPL - stdlib", () => {
+  let state: ReplState
+
+  beforeEach(() => {
+    state = initialState()
+    loadFile(state, path.resolve("prelude.disp"), true)
+    loadFile(state, path.resolve("stdlib.disp"), true)
+  })
+
+  it("loads stdlib without errors", () => {
+    expect(state.cocEnv.has("compose")).toBe(true)
+    expect(state.cocEnv.has("Eq")).toBe(true)
+    expect(state.cocEnv.has("refl")).toBe(true)
+    expect(state.cocEnv.has("sym")).toBe(true)
+    expect(state.cocEnv.has("trans")).toBe(true)
+    expect(state.cocEnv.has("cong")).toBe(true)
+    expect(state.cocEnv.has("subst")).toBe(true)
+    expect(state.cocEnv.has("List")).toBe(true)
+    expect(state.cocEnv.has("nil")).toBe(true)
+    expect(state.cocEnv.has("cons")).toBe(true)
+    expect(state.cocEnv.has("filter")).toBe(true)
+  })
+
+  it("xor works", () => {
+    expect(processLine(state, "xor true false")).toBe("true : Bool")
+    expect(processLine(state, "xor true true")).toBe("false : Bool")
+  })
+
+  it("implies works", () => {
+    expect(processLine(state, "implies true false")).toBe("false : Bool")
+    expect(processLine(state, "implies false true")).toBe("true : Bool")
+  })
+
+  it("list length works", () => {
+    expect(processLine(state, "length Nat (cons Nat 1 (cons Nat 2 (cons Nat 3 (nil Nat))))")).toBe("3 : Nat")
+  })
+
+  it("list sum works", () => {
+    expect(processLine(state, "sum (cons Nat 10 (cons Nat 20 (cons Nat 30 (nil Nat))))")).toBe("60 : Nat")
+  })
+
+  it("computational proofs type-check", () => {
+    expect(state.cocEnv.has("not_true_eq")).toBe(true)
+    expect(state.cocEnv.has("add_2_3")).toBe(true)
+    expect(state.cocEnv.has("mul_3_3")).toBe(true)
+  })
+
+  it("sym and trans compose with proofs", () => {
+    const result = processLine(state, "sym Bool (not true) false not_true_eq")
+    expect(result).not.toContain("error")
   })
 })

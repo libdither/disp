@@ -4,11 +4,11 @@
 import * as readline from "node:readline"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { parseLine, printExpr, type SExpr, type SDecl, ParseError } from "./parse.js"
+import { parseLine, printExpr, mergeDefinitions, type SExpr, type SDecl, ParseError } from "./parse.js"
 import { compileAndEval, compileRecAndEval } from "./compile.js"
 import { prettyTree, type Tree, LEAF, stem, treeEqual, BudgetExhausted } from "./tree.js"
-import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
-import { loadCocPrelude, buildNameMap, COC_PRELUDE, TREE_NATIVE_BUILTINS, PRIMITIVE_BUILTINS } from "./tree-native.js"
+import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, registerNativeBuiltinId, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
+import { loadPrelude, buildNameMap } from "./prelude.js"
 
 export type ReplState = {
   cocEnv: Env                   // CoC environment (name → wrapped tree)
@@ -17,45 +17,9 @@ export type ReplState = {
   defIsRec: Set<string>         // names defined with 'let rec'
 }
 
-function loadCocPreludeIntoDefs(state: ReplState): void {
-  // Add primitive type values to defs
-  state.defs.set("Tree", TREE_TYPE)
-  state.defs.set("Bool", BOOL_TYPE)
-  state.defs.set("Nat",  NAT_TYPE)
-
-  // Add primitive builtins to defs
-  for (const builtin of PRIMITIVE_BUILTINS) {
-    state.defs.set(builtin.name, builtin.data)
-  }
-
-  // Compile COC_PRELUDE string definitions
-  for (const decl of COC_PRELUDE) {
-    const parsed = parseLine(decl)
-    if ("name" in parsed) {
-      const sdecl = parsed as SDecl
-      try {
-        const compiled = sdecl.isRec
-          ? compileRecAndEval(sdecl.name, sdecl.value, state.defs)
-          : compileAndEval(sdecl.value, state.defs)
-        state.defs.set(sdecl.name, compiled)
-      } catch (e) {
-        console.error(`Warning: failed to compile prelude definition '${sdecl.name}':`, e instanceof Error ? e.message : e)
-      }
-    }
-  }
-
-  // Add tree-native builtins to defs
-  for (const builtin of TREE_NATIVE_BUILTINS) {
-    state.defs.set(builtin.name, builtin.data)
-  }
-}
-
 export function initialState(): ReplState {
-  const state: ReplState = { cocEnv: new Map(), defs: new Map(), defExprs: new Map(), defIsRec: new Set() }
-  // Auto-load CoC prelude (Tree, leaf, stem, fork, triage, enc*, wrap/unwrap, builtins)
-  state.cocEnv = loadCocPrelude(state.cocEnv)
-  loadCocPreludeIntoDefs(state)
-  return state
+  const { cocEnv, defs } = loadPrelude()
+  return { cocEnv, defs, defExprs: new Map(), defIsRec: new Set() }
 }
 
 // --- Error formatting ---
@@ -129,6 +93,10 @@ function handleDecl(state: ReplState, decl: SDecl): string {
     compiled = compileAndEval(value, state.defs)
   }
   state.defs.set(name, compiled)
+  if (isRec) {
+    const encodedData = unwrapData(state.cocEnv.get(name)!)
+    registerNativeBuiltinId(encodedData.id, compiled)
+  }
 
   const nameMap = buildNameMap(state.cocEnv)
   const typeStr = printEncoded(result.type, nameMap)
@@ -299,14 +267,13 @@ function printTreeValueAtom(t: Tree): string {
 export function loadFile(state: ReplState, filePath: string, silent = false): string {
   try {
     const content = fs.readFileSync(filePath, "utf-8")
-    const lines = content.split("\n")
+    const blocks = mergeDefinitions(content)
     const results: string[] = []
-    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-      const line = lines[lineNum]
-      const result = processLine(state, line)
+    for (const block of blocks) {
+      const result = processLine(state, block.text)
       if (result) {
         if (result.includes("error") || result.includes("Error")) {
-          return `${filePath}:${lineNum + 1}: ${result}`
+          return `${filePath}:${block.startLine}: ${result}`
         }
         results.push(result)
       }
@@ -345,10 +312,14 @@ function saveFile(state: ReplState, filePath: string): string {
 export async function runRepl(): Promise<void> {
   const state = initialState()
 
-  // Auto-load prelude if it exists
+  // Auto-load prelude and stdlib if they exist
   const preludePath = path.resolve("prelude.disp")
   if (fs.existsSync(preludePath)) {
     loadFile(state, preludePath, true)
+  }
+  const stdlibPath = path.resolve("stdlib.disp")
+  if (fs.existsSync(stdlibPath)) {
+    loadFile(state, stdlibPath, true)
   }
 
   const rl = readline.createInterface({

@@ -553,6 +553,57 @@ export function stripPos(expr: SExpr): SExpr {
   }
 }
 
+// --- Multi-line definition merging ---
+
+// Groups file content into logical blocks for parsing. Each block is either:
+// - A `let` definition (possibly spanning multiple lines)
+// - A standalone comment line
+// - A standalone expression
+// Continuation lines (not starting with `let`, not comments, not blank) are
+// appended to the current block. The parser already handles multi-line input;
+// this function just bridges the gap between line-oriented file reading and
+// the token-oriented parser.
+export function mergeDefinitions(content: string): { text: string, startLine: number }[] {
+  const lines = content.split("\n")
+  const blocks: { text: string, startLine: number }[] = []
+  let current: { text: string, startLine: number } | null = null
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+
+    // Blank lines end the current block
+    if (!trimmed) {
+      if (current) { blocks.push(current); current = null }
+      continue
+    }
+
+    // Comment lines are standalone blocks
+    if (trimmed.startsWith("--")) {
+      if (current) { blocks.push(current); current = null }
+      blocks.push({ text: lines[i], startLine: i + 1 })
+      continue
+    }
+
+    // `let` starts a new block
+    if (trimmed.startsWith("let ") || trimmed === "let") {
+      if (current) blocks.push(current)
+      current = { text: lines[i], startLine: i + 1 }
+      continue
+    }
+
+    // Continuation line: append to current block, or standalone expression
+    if (current) {
+      current.text += "\n" + lines[i]
+    } else {
+      // Standalone expression (not starting with `let`)
+      current = { text: lines[i], startLine: i + 1 }
+    }
+  }
+
+  if (current) blocks.push(current)
+  return blocks
+}
+
 // --- Public API ---
 
 export function parseExpr(input: string): SExpr {

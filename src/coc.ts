@@ -12,7 +12,7 @@
 //   unwrapData(w)    = w.left
 //   unwrapType(w)    = w.right
 
-import { type Tree, LEAF, stem, fork, treeEqual, apply, I, treeApply } from "./tree.js"
+import { type Tree, LEAF, stem, fork, treeEqual, apply, I, treeApply, BudgetExhausted } from "./tree.js"
 import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapse } from "./compile.js"
 import { type SExpr } from "./parse.js"
 
@@ -145,6 +145,100 @@ export function abstractMarkerOut(tree: Tree, target: Tree): Tree {
 }
 
 // ============================================================
+// Native builtin tracking (for delta reduction in convertibility)
+// ============================================================
+
+// Native builtins are tree constants (like BOOL_ELIM_DATA, NAT_ELIM_DATA) whose
+// internal tree structure may accidentally match the CoC encoding patterns (encApp,
+// encLam, etc.). We track their IDs so evalToNative can avoid decomposing them.
+// For some trees (like recursive definitions), the encoded form (omega combinator)
+// differs from the compiled form (FIX-based). We map encoded IDs to their compiled
+// forms so evalToNative uses the version that works with eager apply().
+const nativeBuiltinIds = new Set<number>()
+const nativeCompiledForms = new Map<number, Tree>()
+
+export function registerNativeBuiltinId(id: number, compiledForm?: Tree): void {
+  nativeBuiltinIds.add(id)
+  if (compiledForm) {
+    nativeCompiledForms.set(id, compiledForm)
+    nativeBuiltinIds.add(compiledForm.id)  // also protect the compiled form from decomposition
+  }
+}
+
+function isNativeBuiltin(t: Tree): boolean {
+  return nativeBuiltinIds.has(t.id)
+}
+
+function getNativeForm(t: Tree): Tree {
+  return nativeCompiledForms.get(t.id) ?? t
+}
+
+// Check if a tree looks like encVar(freshMarker()) — i.e., a free variable.
+// Fresh markers are fork(LEAF, stem^n(LEAF)), so encVar(marker) = stem(fork(LEAF, stem^n(LEAF))).
+function isEncVarMarker(t: Tree): boolean {
+  if (t.tag !== "stem") return false
+  const child = t.child
+  if (child.tag !== "fork" || child.left.tag !== "leaf") return false
+  let r = child.right
+  while (r.tag === "stem") r = r.child
+  return r.tag === "leaf"
+}
+
+// Evaluate a closed encoded term to its native tree form using tree calculus apply().
+// Returns null if the term contains free variables (markers) or exceeds budget.
+// This bridges the gap between the encoded CoC world and the native tree evaluator:
+// encoded applications of builtins (like boolElim, natElim) get evaluated via apply().
+function evalToNative(t: Tree, budget = { remaining: 100000 }): Tree | null {
+  if (budget.remaining <= 0) return null
+  budget.remaining--
+
+  // Don't decompose registered native builtins — their tree structure may
+  // accidentally match encoding patterns (e.g., fork(LEAF, fork(X,Y)) looks like encApp).
+  // Use the compiled form if available (e.g., FIX-based for recursive defs).
+  if (isNativeBuiltin(t)) return getNativeForm(t)
+
+  const app = unApp(t)
+  if (!app) {
+    // Not an encoded application. Check for free variables.
+    if (isEncVarMarker(t)) return null
+    return t
+  }
+
+  // It's encApp(func, arg) — evaluate both sides
+  const funcEvaled = evalToNative(app.func, budget)
+  if (funcEvaled === null) return null
+
+  const argEvaled = evalToNative(app.arg, budget)
+  if (argEvaled === null) return null
+
+  // If func is a genuine encoded lambda (not a native tree whose structure
+  // accidentally matches encLam), beta-reduce via apply(body, arg)
+  if (!isNativeBuiltin(funcEvaled)) {
+    const lam = unLam(funcEvaled)
+    if (lam) {
+      try {
+        const result = apply(lam.body, argEvaled, budget)
+        return evalToNative(result, budget)
+      } catch (e) {
+        if (e instanceof BudgetExhausted) return null
+        throw e
+      }
+    }
+  }
+
+  // func is a native tree (compiled builtin, partial application, etc.) — apply natively.
+  // Register the result so future evalToNative calls won't decompose it either.
+  try {
+    const result = apply(funcEvaled, argEvaled, budget)
+    nativeBuiltinIds.add(result.id)
+    return result
+  } catch (e) {
+    if (e instanceof BudgetExhausted) return null
+    throw e
+  }
+}
+
+// ============================================================
 // Phase 3: WHNF, Convertibility, and Core Building
 // ============================================================
 
@@ -154,11 +248,14 @@ export class CocError extends Error {
 
 export function whnfTree(t: Tree, budget = { remaining: 10000 }): Tree {
   if (budget.remaining <= 0) throw new CocError("WHNF budget exhausted")
+  // Native builtins are opaque values — don't decompose their internal tree structure
+  if (isNativeBuiltin(t)) return t
   const app = unApp(t)
   if (!app) return t
   budget.remaining--
   const func = whnfTree(app.func, budget)
-  const lam = unLam(func)
+  // Don't treat native builtins as encoded lambdas (S combinators look like encLam)
+  const lam = isNativeBuiltin(func) ? null : unLam(func)
   if (lam) {
     const result = apply(lam.body, app.arg)
     return whnfTree(result, budget)
@@ -208,30 +305,40 @@ export function convertible(a: Tree, b: Tree, budget = { remaining: 10000 }): bo
   if (treeEqual(aN, bN)) return true
   const aTag = termTag(aN)
   const bTag = termTag(bN)
-  if (aTag !== bTag) return false
-  switch (aTag) {
-    case "type": return true
-    case "var": return treeEqual(unVar(aN)!, unVar(bN)!)
-    case "app": {
-      const aApp = unApp(aN)!
-      const bApp = unApp(bN)!
-      return convertible(aApp.func, bApp.func, budget) &&
-             convertible(aApp.arg, bApp.arg, budget)
+  if (aTag === bTag) {
+    switch (aTag) {
+      case "type": return true
+      case "var": return treeEqual(unVar(aN)!, unVar(bN)!)
+      case "app": {
+        const aApp = unApp(aN)!
+        const bApp = unApp(bN)!
+        if (convertible(aApp.func, bApp.func, budget) &&
+            convertible(aApp.arg, bApp.arg, budget)) return true
+        break
+      }
+      case "lam": {
+        const aLam = unLam(aN)!
+        const bLam = unLam(bN)!
+        if (convertible(aLam.domain, bLam.domain, budget) &&
+            convertibleUnderBinder(aLam.body, bLam.body, budget)) return true
+        break
+      }
+      case "pi": {
+        const aPi = unPi(aN)!
+        const bPi = unPi(bN)!
+        if (convertible(aPi.domain, bPi.domain, budget) &&
+            convertibleUnderBinder(aPi.body, bPi.body, budget)) return true
+        break
+      }
     }
-    case "lam": {
-      const aLam = unLam(aN)!
-      const bLam = unLam(bN)!
-      if (!convertible(aLam.domain, bLam.domain, budget)) return false
-      return convertibleUnderBinder(aLam.body, bLam.body, budget)
-    }
-    case "pi": {
-      const aPi = unPi(aN)!
-      const bPi = unPi(bN)!
-      if (!convertible(aPi.domain, bPi.domain, budget)) return false
-      return convertibleUnderBinder(aPi.body, bPi.body, budget)
-    }
-    default: return false
   }
+  // Fallback: try native evaluation for closed terms (delta reduction).
+  // This handles cases where builtins (boolElim, natElim, etc.) are stuck
+  // in the encoded world but can be reduced by the tree calculus evaluator.
+  const aEval = evalToNative(aN)
+  const bEval = evalToNative(bN)
+  if (aEval !== null && bEval !== null && treeEqual(aEval, bEval)) return true
+  return false
 }
 
 export function convertibleUnderBinder(body1: Tree, body2: Tree, budget = { remaining: 10000 }): boolean {
@@ -383,6 +490,8 @@ export function cocCheckRecDecl(
   const bodyWithThunk = apply(abstractedBody, thunk)
   const omega = abstractMarkerOut(bodyWithThunk, xNeutral)
   const result = treeApply(omega, omega)
+  // Register as native builtin so evalToNative won't incorrectly decompose it
+  nativeBuiltinIds.add(result.id)
   const newEnv = new Map(env)
   newEnv.set(name, wrap(result, typeData))
   return { env: newEnv, type: typeData }
@@ -409,6 +518,24 @@ export function printEncoded(t: Tree, nameMap?: Map<number, string>, budget = { 
   return result
 }
 
+// Try to display a natively-evaluated tree as a recognizable value.
+// Unlike the encoding-level printer, LEAF here is the data value (true/zero/leaf), not Type.
+function printNativeValue(t: Tree, nameMap?: Map<number, string>): string | null {
+  // Name lookup first (handles false, boolElim, user definitions, etc.)
+  if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
+  // Primitive type markers
+  if (treeEqual(t, TREE_TYPE)) return "Tree"
+  if (treeEqual(t, BOOL_TYPE)) return "Bool"
+  if (treeEqual(t, NAT_TYPE)) return "Nat"
+  // Nat recognition: stem^n(LEAF) → n (only for n >= 1, since LEAF is ambiguous)
+  if (t.tag === "stem") {
+    let n = t, count = 0
+    while (n.tag === "stem") { count++; n = n.child }
+    if (n.tag === "leaf") return String(count)
+  }
+  return null
+}
+
 function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
   // Recognize primitive type markers
   if (treeEqual(t, TREE_TYPE)) return "Tree"
@@ -429,6 +556,12 @@ function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { re
       return `?${marker.id}`
     }
     case "app": {
+      // Try native evaluation — reduces stuck builtin chains like boolElim(Bool,false,true,x)
+      const nativeResult = evalToNative(w, { remaining: 10000 })
+      if (nativeResult !== null) {
+        const display = printNativeValue(nativeResult, nameMap)
+        if (display) return display
+      }
       const a = unApp(w)!
       return `${printEncodedInner(a.func, nameMap, budget)} ${printEncodedAtom(a.arg, nameMap, budget)}`
     }

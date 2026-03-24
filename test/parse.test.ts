@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
   tokenize, parseExpr, parseLine, printExpr, ParseError,
-  recognizeLiteral, stripPos,
+  recognizeLiteral, stripPos, mergeDefinitions,
   svar, sapp, slam, spi, stype,
   REC_TYPE_VAR, REC_FN_VAR, COP_TYPE_VAR,
   type SDecl, type SExpr,
@@ -345,5 +345,53 @@ describe("pretty printer - literals", () => {
     const ast = parseExpr("5")
     const ast2 = parseExpr(printExpr(ast))
     expect(stripPos(ast2)).toEqual(stripPos(ast))
+  })
+})
+
+describe("mergeDefinitions", () => {
+  it("splits single-line definitions", () => {
+    const blocks = mergeDefinitions("let x : Nat := 1\nlet y : Nat := 2")
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].text.trim()).toBe("let x : Nat := 1")
+    expect(blocks[1].text.trim()).toBe("let y : Nat := 2")
+  })
+
+  it("merges continuation lines", () => {
+    const blocks = mergeDefinitions("let f :\n  Nat -> Nat :=\n  {x} -> x")
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].startLine).toBe(1)
+    const parsed = parseLine(blocks[0].text)
+    expect("name" in parsed && parsed.name).toBe("f")
+  })
+
+  it("handles comments between definitions", () => {
+    const blocks = mergeDefinitions("let x := 1\n-- comment\nlet y := 2")
+    expect(blocks).toHaveLength(3)
+    expect(blocks[0].text.trim()).toBe("let x := 1")
+    expect(blocks[1].text.trim()).toBe("-- comment")
+    expect(blocks[2].text.trim()).toBe("let y := 2")
+  })
+
+  it("handles blank lines as separators", () => {
+    const blocks = mergeDefinitions("let x := 1\n\nlet y := 2")
+    expect(blocks).toHaveLength(2)
+  })
+
+  it("handles standalone expressions", () => {
+    const blocks = mergeDefinitions("add 1 2")
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text.trim()).toBe("add 1 2")
+  })
+
+  it("tracks correct startLine", () => {
+    const blocks = mergeDefinitions("-- header\n\nlet x :\n  Nat :=\n  1\n\nlet y := 2")
+    expect(blocks[0].startLine).toBe(1) // comment
+    expect(blocks[1].startLine).toBe(3) // let x (multi-line)
+    expect(blocks[2].startLine).toBe(7) // let y
+  })
+
+  it("continuation after blank doesn't merge", () => {
+    const blocks = mergeDefinitions("let x := 1\n\n  continuation")
+    expect(blocks).toHaveLength(2) // let x, then standalone continuation
   })
 })

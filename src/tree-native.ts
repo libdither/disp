@@ -6,17 +6,10 @@
 // - CoC encoding constructors as trees (ENC_APP_T, ENC_LAM_T, ENC_PI_T)
 // - 5-way term dispatch (TERM_CASE)
 // - Fuel-based step functions (treeEqStep, whnfStep, convertibleStep, inferStep)
-// - CoC prelude definitions and builtin registration
+// - Builtin arrays for prelude registration
 
 import { type Tree, LEAF, stem, fork, apply, I } from "./tree.js"
 import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval, FIX } from "./compile.js"
-import { type SExpr, type SDecl, parseLine } from "./parse.js"
-import {
-  encType,
-  wrap, unwrapData, unwrapType,
-  TREE_TYPE, BOOL_TYPE, NAT_TYPE,
-  buildWrapped, cocCheckDecl, type Env,
-} from "./coc.js"
 
 // --- Expr-level helpers ---
 
@@ -413,7 +406,7 @@ export const TYPECHECK: Tree = (() => {
   }
 
   // Pre-computed wrap(Type, Type) as a concrete tree
-  const WRAP_TYPE_TYPE: Tree = wrap(encType(), encType())
+  const WRAP_TYPE_TYPE: Tree = fork(LEAF, LEAF)  // wrap(encType(), encType()) = fork(LEAF, LEAF)
 
   // --- Build the body with "self" as a free variable ---
   // self(env, term) is the recursive call (fold handles recursion depth)
@@ -515,25 +508,6 @@ export const TYPECHECK: Tree = (() => {
   return compileTree(["whnf", "absOut", "eq", "self", "env", "term"], dispatch)
 })()
 
-// ============================================================
-// CoC Prelude: Church-encoded Tree and encoding operations
-// ============================================================
-
-// COC_PRELUDE: encoding operations and wrap/unwrap (loaded after primitive types are injected)
-// Tree, Bool, Nat, leaf, stem, fork, triage, true, false, zero, succ, boolElim, natElim
-// are all injected as primitives BEFORE this prelude is processed.
-export const COC_PRELUDE: string[] = [
-  "let encType : Tree := leaf",
-  "let encVar : Tree -> Tree := stem",
-  "let encApp : Tree -> Tree -> Tree := {m n} -> fork leaf (fork m n)",
-  "let encLam : Tree -> Tree -> Tree := {domain body} -> fork (stem domain) body",
-  "let encPi : Tree -> Tree -> Tree := {domain body} -> fork (fork domain leaf) body",
-  // wrap/unwrap use fork pairs: wrap = fork, unwrap via tfst/tsnd
-  "let wrap : Tree -> Tree -> Tree := fork",
-  "let unwrapData : Tree -> Tree := tfst",
-  "let unwrapType : Tree -> Tree := tsnd",
-]
-
 // --- Primitive eliminator data ---
 
 // TRIAGE_DATA: {R c d b t} → triage dispatch (discards R, builds fork(fork(c,d),b), applies to t)
@@ -559,7 +533,7 @@ const NAT_ELIM_DATA: Tree = compileTree(["R", "z", "s", "n"],
 // tDelta: a specific leaf used as initial marker for convertible
 const T_DELTA: Tree = LEAF
 
-interface TreeBuiltin { name: string; type: string; data: Tree }
+export interface TreeBuiltin { name: string; type: string; data: Tree }
 
 // Primitive type constructors, eliminators, and essential builtins (loaded before COC_PRELUDE)
 export const PRIMITIVE_BUILTINS: TreeBuiltin[] = [
@@ -579,7 +553,7 @@ export const PRIMITIVE_BUILTINS: TreeBuiltin[] = [
   { name: "succ",     type: "Nat -> Nat",            data: LEAF },
   { name: "natElim",  type: "(R : Type) -> R -> (Nat -> R) -> Nat -> R",
     data: NAT_ELIM_DATA },
-  // Tree destructors (needed by COC_PRELUDE wrap/unwrap definitions)
+  // Tree destructors
   { name: "tfst",     type: "Tree -> Tree",   data: FST },
   { name: "tsnd",     type: "Tree -> Tree",   data: SND },
   { name: "tchild",   type: "Tree -> Tree",   data: CHILD },
@@ -609,52 +583,3 @@ export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
   { name: "tFix", type: "(Tree -> Tree) -> Tree", data: FIX },
   { name: "tDelta", type: "Tree", data: T_DELTA },
 ]
-
-function registerBuiltins(builtins: TreeBuiltin[], env: Env): Env {
-  for (const builtin of builtins) {
-    const typeWrapped = buildWrapped(parseLine(builtin.type) as SExpr, env, encType())
-    const typeData = unwrapData(typeWrapped)
-    env = new Map(env)
-    env.set(builtin.name, wrap(builtin.data, typeData))
-  }
-  return env
-}
-
-export function loadCocPrelude(env: Env): Env {
-  // 1. Inject primitive types
-  env = new Map(env)
-  env.set("Tree", wrap(TREE_TYPE, encType()))
-  env.set("Bool", wrap(BOOL_TYPE, encType()))
-  env.set("Nat",  wrap(NAT_TYPE,  encType()))
-
-  // 2. Register primitive builtins (leaf, stem, fork, triage, true, false, etc.)
-  env = registerBuiltins(PRIMITIVE_BUILTINS, env)
-
-  // 3. Process COC_PRELUDE string definitions (encType, encVar, wrap, unwrap, etc.)
-  for (const decl of COC_PRELUDE) {
-    const parsed = parseLine(decl)
-    if (!("isRec" in parsed)) continue
-    const sdecl = parsed as SDecl
-    const result = cocCheckDecl(env, sdecl.name, sdecl.type, sdecl.value, sdecl.isRec)
-    env = result.env
-  }
-
-  // 4. Register tree-native builtins (FST, SND, step functions, etc.)
-  env = registerBuiltins(TREE_NATIVE_BUILTINS, env)
-
-  return env
-}
-
-// Names whose tree data collides with CoC term encodings or other primitives.
-// Exclude from name map to avoid the printer showing wrong names.
-const NAME_MAP_SKIP = new Set(["leaf", "stem", "fork", "true", "zero", "succ", "tDelta", "encType", "encVar", "wrap"])
-
-export function buildNameMap(env: Env): Map<number, string> {
-  const map = new Map<number, string>()
-  for (const [name, wrapped] of env) {
-    if (NAME_MAP_SKIP.has(name)) continue
-    const data = unwrapData(wrapped)
-    if (!map.has(data.id)) map.set(data.id, name)
-  }
-  return map
-}

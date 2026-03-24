@@ -1,0 +1,117 @@
+-- Standard library for Disp
+-- Loaded after prelude.disp
+
+-- ============================================================
+-- Function combinators
+-- ============================================================
+
+let compose :
+  (A : Type) -> (B : Type) -> (C : Type) ->
+  (B -> C) -> (A -> B) -> A -> C :=
+  {A B C g f x} -> g (f x)
+
+let flip :
+  (A : Type) -> (B : Type) -> (C : Type) ->
+  (A -> B -> C) -> B -> A -> C :=
+  {A B C f b a} -> f a b
+
+-- ============================================================
+-- Bool operations
+-- ============================================================
+
+let xor : Bool -> Bool -> Bool :=
+  {a b} -> boolElim Bool (not b) b a
+
+let implies : Bool -> Bool -> Bool :=
+  {a b} -> boolElim Bool b true a
+
+-- ============================================================
+-- Leibniz equality
+-- ============================================================
+
+let Eq :
+  (A : Type) -> A -> A -> Type :=
+  {A x y} -> (P : A -> Type) -> P x -> P y
+
+let refl :
+  (A : Type) -> (x : A) -> Eq A x x :=
+  {A x P px} -> px
+
+let sym :
+  (A : Type) -> (x : A) -> (y : A) ->
+  Eq A x y -> Eq A y x :=
+  {A x y eq P} -> eq ({z} -> P z -> P x) ({px} -> px)
+
+let trans :
+  (A : Type) -> (x : A) -> (y : A) -> (z : A) ->
+  Eq A x y -> Eq A y z -> Eq A x z :=
+  {A x y z eqxy eqyz P px} -> eqyz P (eqxy P px)
+
+let cong :
+  (A : Type) -> (B : Type) -> (f : A -> B) ->
+  (x : A) -> (y : A) -> Eq A x y -> Eq B (f x) (f y) :=
+  {A B f x y eq P} -> eq ({a} -> P (f a))
+
+let subst :
+  (A : Type) -> (P : A -> Type) ->
+  (x : A) -> (y : A) -> Eq A x y -> P x -> P y :=
+  {A P x y eq px} -> eq P px
+
+-- ============================================================
+-- Computational proofs
+-- ============================================================
+
+-- Note: universal proofs like (b : Bool) -> Eq Bool (not (not b)) b
+-- require dependent elimination, which is not yet available.
+-- For now, we prove equalities on concrete values via refl + delta reduction.
+
+-- Bool proofs
+let not_true_eq : Eq Bool (not true) false := refl Bool false
+let not_false_eq : Eq Bool (not false) true := refl Bool true
+let not_not_true : Eq Bool (not (not true)) true := refl Bool true
+let not_not_false : Eq Bool (not (not false)) false := refl Bool false
+
+-- Nat proofs
+let add_0_0 : Eq Nat (add 0 0) 0 := refl Nat 0
+let add_1_1 : Eq Nat (add 1 1) 2 := refl Nat 2
+let add_2_3 : Eq Nat (add 2 3) 5 := refl Nat 5
+let mul_2_3 : Eq Nat (mul 2 3) 6 := refl Nat 6
+let mul_3_3 : Eq Nat (mul 3 3) 9 := refl Nat 9
+
+-- ============================================================
+-- Church-encoded lists
+-- ============================================================
+
+let List : Type -> Type :=
+  {A} -> (R : Type) -> R -> (A -> R -> R) -> R
+
+let nil : (A : Type) -> List A :=
+  {A R z c} -> z
+
+let cons : (A : Type) -> A -> List A -> List A :=
+  {A x xs R z c} -> c x (xs R z c)
+
+let foldr :
+  (A : Type) -> (R : Type) ->
+  (A -> R -> R) -> R -> List A -> R :=
+  {A R f z xs} -> xs R z f
+
+let map :
+  (A : Type) -> (B : Type) ->
+  (A -> B) -> List A -> List B :=
+  {A B f xs R z c} -> xs R z ({x acc} -> c (f x) acc)
+
+let append :
+  (A : Type) -> List A -> List A -> List A :=
+  {A xs ys R z c} -> xs R (ys R z c) c
+
+let length : (A : Type) -> List A -> Nat :=
+  {A xs} -> foldr A Nat ({_ acc} -> succ acc) 0 xs
+
+let sum : List Nat -> Nat :=
+  {xs} -> foldr Nat Nat add 0 xs
+
+let filter :
+  (A : Type) -> (A -> Bool) -> List A -> List A :=
+  {A pred xs R z c} ->
+    xs R z ({x acc} -> boolElim R (c x acc) acc (pred x))
