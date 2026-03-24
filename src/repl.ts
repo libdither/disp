@@ -7,7 +7,7 @@ import * as path from "node:path"
 import { parseLine, printExpr, mergeDefinitions, type SExpr, type SDecl, ParseError } from "./parse.js"
 import { compileAndEval, compileRecAndEval } from "./compile.js"
 import { prettyTree, type Tree, LEAF, stem, treeEqual, BudgetExhausted } from "./tree.js"
-import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, registerNativeBuiltinId, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
+import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, registerNativeBuiltinId, whnfTree, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
 import { loadPrelude, buildNameMap } from "./prelude.js"
 
 export type ReplState = {
@@ -107,7 +107,12 @@ function handleExpr(state: ReplState, expr: SExpr): string {
   const wrapped = buildWrapped(expr, state.cocEnv)
 
   const data = unwrapData(wrapped)
-  const type = unwrapType(wrapped)
+  const rawType = unwrapType(wrapped)
+
+  // WHNF-reduce the type so dependent return types like `P true` reduce to
+  // primitive type markers (NAT_TYPE, BOOL_TYPE, etc.) for value recognition.
+  let type: Tree
+  try { type = whnfTree(rawType) } catch { type = rawType }
 
   const nameMap = buildNameMap(state.cocEnv)
   const typeStr = printEncoded(type, nameMap)

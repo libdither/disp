@@ -446,23 +446,14 @@ describe("REPL - dependent elimination", () => {
     loadFile(state, path.resolve("stdlib.disp"), true)
   })
 
-  it("boolElimDep type-checks with dependent motive", () => {
-    // Type-checks with a dependent motive (P : Bool -> Type)
-    const r1 = processLine(state, "boolElimDep ({_} -> Nat) 1 0 true")
-    expect(r1).not.toContain("error")
-    expect(r1).toContain("Nat")
-    const r2 = processLine(state, "boolElimDep ({_} -> Nat) 1 0 false")
-    expect(r2).not.toContain("error")
-    expect(r2).toContain("Nat")
+  it("boolElimDep computes like boolElim", () => {
+    expect(processLine(state, "boolElimDep ({_} -> Nat) 1 0 true")).toBe("1 : Nat")
+    expect(processLine(state, "boolElimDep ({_} -> Nat) 1 0 false")).toBe("0 : Nat")
   })
 
-  it("natElimDep type-checks with dependent motive", () => {
-    const r1 = processLine(state, "natElimDep ({_} -> Nat) 0 ({n} -> succ n) 3")
-    expect(r1).not.toContain("error")
-    expect(r1).toContain("Nat")
-    const r2 = processLine(state, "natElimDep ({_} -> Nat) 0 ({n} -> succ n) 0")
-    expect(r2).not.toContain("error")
-    expect(r2).toContain("Nat")
+  it("natElimDep computes like natElim", () => {
+    expect(processLine(state, "natElimDep ({_} -> Nat) 0 ({n} -> succ n) 3")).toBe("3 : Nat")
+    expect(processLine(state, "natElimDep ({_} -> Nat) 0 ({n} -> succ n) 0")).toBe("0 : Nat")
   })
 
   it("not_involution applies to true", () => {
