@@ -70,6 +70,17 @@ export function treeApply(f: Tree, g: Tree): Tree {
   return fork(f, g)
 }
 
+// --- Apply memoization ---
+// apply(f, x) is a pure function: same (f, x) always produces the same result.
+// Hash-consing guarantees tree identity, so (f.id, x.id) is a complete key.
+// Only fork-case results are cached (leaf→stem and stem→fork are O(1)).
+
+const applyMemo = new Map<number, Map<number, Tree>>()
+
+export function clearApplyCache(): void {
+  applyMemo.clear()
+}
+
 // --- apply: tree calculus application (execution) ---
 // This IS the evaluator. Trees are always in normal form.
 // Application follows the 5 triage rules eagerly.
@@ -90,41 +101,56 @@ export class BudgetExhausted extends Error {
 
 export function apply(f: Tree, x: Tree, budget = { remaining: 10000 }): Tree {
   if (budget.remaining <= 0) throw new BudgetExhausted(0)
-  budget.remaining--
 
   if (isLeaf(f)) return stem(x)       // △ applied to x → stem(x)
   if (isStem(f)) return fork(f.child, x) // stem(a) applied to x → fork(a, x)
 
+  // Fork case: check memo cache before evaluating
+  const inner = applyMemo.get(f.id)
+  if (inner) {
+    const cached = inner.get(x.id)
+    if (cached !== undefined) return cached
+  }
+
+  budget.remaining--
+
   // f is fork(a, b)
   const a = f.left
   const b = f.right
+  let result: Tree
 
   if (isLeaf(a)) {
     // Rule 1: △ △ b x → b (K combinator: return first arg)
-    return b
-  }
-  if (isStem(a)) {
+    result = b
+  } else if (isStem(a)) {
     // Rule 2: △ (△ c) b x → c x (b x) (S combinator)
     const c = a.child
     const cx = apply(c, x, budget)
     const bx = apply(b, x, budget)
-    return apply(cx, bx, budget)
+    result = apply(cx, bx, budget)
+  } else {
+    // a is fork(c, d): triage rules
+    const c = a.left
+    const d = a.right
+
+    if (isLeaf(x)) {
+      // Rule 3a: triage leaf → c
+      result = c
+    } else if (isStem(x)) {
+      // Rule 3b: triage stem → d u (where x = stem(u))
+      result = apply(d, x.child, budget)
+    } else {
+      // Rule 3c: x is fork(u, v): triage fork → b u v
+      result = apply(apply(b, x.left, budget), x.right, budget)
+    }
   }
 
-  // a is fork(c, d): triage rules
-  const c = a.left
-  const d = a.right
+  // Store in memo cache
+  let memoInner = applyMemo.get(f.id)
+  if (!memoInner) { memoInner = new Map(); applyMemo.set(f.id, memoInner) }
+  memoInner.set(x.id, result)
 
-  if (isLeaf(x)) {
-    // Rule 3a: triage leaf → c
-    return c
-  }
-  if (isStem(x)) {
-    // Rule 3b: triage stem → d u (where x = stem(u))
-    return apply(d, x.child, budget)
-  }
-  // Rule 3c: x is fork(u, v): triage fork → b u v
-  return apply(apply(b, x.left, budget), x.right, budget)
+  return result
 }
 
 // Convenience wrapper with a simple numeric budget

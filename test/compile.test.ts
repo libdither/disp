@@ -3,7 +3,7 @@ import { parseExpr, parseLine, type SDecl } from "../src/parse.js"
 import { compile, compileAndEval, compileRecAndEval, astToExpr, collapse } from "../src/compile.js"
 import {
   LEAF, stem, fork, treeEqual, applyTree, apply, prettyTree, I, K,
-  type Tree, BudgetExhausted,
+  type Tree, BudgetExhausted, clearApplyCache,
 } from "../src/tree.js"
 
 // Definitions for tree-encoded literals (true, false, zero, succ)
@@ -315,11 +315,13 @@ describe("compileAndEval - runtime evaluation", () => {
   })
 
   it("budget exhaustion throws for large computation with tiny budget", () => {
+    clearApplyCache()
     const defs = buildDefs([
       "let mul := {m n R s z} -> m R (n R s) z",
     ])
     expect(() => {
-      compileAndEval(parseExpr("mul 3 (mul 3 (mul 3 3))"), defs, { remaining: 10 })
+      clearApplyCache()
+      compileAndEval(parseExpr("mul 3 (mul 3 (mul 3 3))"), defs, { remaining: 1 })
     }).toThrow(BudgetExhausted)
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { LEAF, stem, fork, treeEqual, apply, I, prettyTree } from "../src/tree.js"
+import { LEAF, stem, fork, treeEqual, apply, I, prettyTree, clearApplyCache } from "../src/tree.js"
 import {
   encType, encVar, encApp, encLam, encPi,
   termTag, unVar, unApp, unLam, unPi,
@@ -1404,6 +1404,7 @@ describe("Tree-native step functions", () => {
       const churchTen = compileAndEval(parseExpr("10"), state.defs)
 
       const measure = (a: Tree, b: Tree) => {
+        clearApplyCache()
         const budget = { remaining: 1000000 }
         apply(apply(apply(fuelTreeEq, churchTen, budget), a, budget), b, budget)
         return 1000000 - budget.remaining
