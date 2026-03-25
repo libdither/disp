@@ -112,6 +112,15 @@ export function apply(f: Tree, x: Tree, budget = { remaining: 10000 }): Tree {
     if (cached !== undefined) return cached
   }
 
+  // FAST_EQ shortcut: fork(FAST_EQ_MARKER, a) applied to b → O(1) identity check
+  if (f.left.id === FAST_EQ_MARKER.id) {
+    const result = treeEqual(f.right, x) ? LEAF : stem(LEAF)
+    let memoInner = applyMemo.get(f.id)
+    if (!memoInner) { memoInner = new Map(); applyMemo.set(f.id, memoInner) }
+    memoInner.set(x.id, result)
+    return result
+  }
+
   budget.remaining--
 
   // f is fork(a, b)
@@ -125,9 +134,30 @@ export function apply(f: Tree, x: Tree, budget = { remaining: 10000 }): Tree {
   } else if (isStem(a)) {
     // Rule 2: △ (△ c) b x → c x (b x) (S combinator)
     const c = a.child
-    const cx = apply(c, x, budget)
-    const bx = apply(b, x, budget)
-    result = apply(cx, bx, budget)
+    if (isFork(c) && isLeaf(c.left)) {
+      // B combinator fast-path: S(K(f)) g x = f (g x)
+      // c = K(f) = fork(LEAF, f), so c x = f (skip the apply)
+      if (isFork(b) && isLeaf(b.left)) {
+        // S(K f)(K g) x = f g — neither uses x
+        result = apply(c.right, b.right, budget)
+      } else {
+        const gx = apply(b, x, budget)
+        result = apply(c.right, gx, budget)
+      }
+    } else {
+      const cx = apply(c, x, budget)
+      // Speculative K check: if cx is K(v), then apply(cx, bx) = v
+      // Skip computing bx entirely — common in triage-heavy code
+      if (isFork(cx) && isLeaf(cx.left)) {
+        result = cx.right
+      } else if (isFork(b) && isLeaf(b.left)) {
+        // C combinator fast-path: S f (K g) x = (f x) g — skip apply(b,x)
+        result = apply(cx, b.right, budget)
+      } else {
+        const bx = apply(b, x, budget)
+        result = apply(cx, bx, budget)
+      }
+    }
   } else {
     // a is fork(c, d): triage rules
     const c = a.left
@@ -169,6 +199,14 @@ export const K = stem(LEAF)
 //   I(stem(u)):   Rule 3b → apply(LEAF, u) = stem(u)           ✓
 //   I(fork(u,v)): Rule 3c → apply(apply(LEAF, u), v) = fork(u,v) ✓
 export const I = fork(fork(LEAF, LEAF), LEAF)
+
+// --- FAST_EQ: O(1) tree equality via hash-consing identity ---
+// apply(FAST_EQ, a) = fork(FAST_EQ_MARKER, a) via stem rule [O(1)]
+// apply(fork(FAST_EQ_MARKER, a), b) = TT if a.id === b.id, FF otherwise [O(1)]
+// This exposes hash-consing identity to tree programs, replacing the O(n)
+// structural comparison of tree-level treeEq with an O(1) check.
+const FAST_EQ_MARKER = fork(fork(stem(stem(LEAF)), LEAF), stem(stem(LEAF)))
+export const FAST_EQ: Tree = stem(FAST_EQ_MARKER)
 
 // --- Pretty printer ---
 

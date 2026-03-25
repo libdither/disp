@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest"
-import { type Tree, LEAF, stem, fork, apply, isLeaf, isStem, isFork, clearApplyCache } from "../src/tree.js"
+import { type Tree, LEAF, stem, fork, apply, isLeaf, isStem, isFork, clearApplyCache, treeEqual, FAST_EQ } from "../src/tree.js"
 import {
   TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
 } from "../src/tree-native.js"
 import { loadPrelude } from "../src/prelude.js"
 import { initialState, loadFile, processLine } from "../src/repl.js"
-import { encType, encPi, encLam, encApp, encVar } from "../src/coc.js"
-import { compileAndEval } from "../src/compile.js"
+import { encType, encPi, encLam, encApp, encVar, buildWrapped, type Env } from "../src/coc.js"
+import { compileAndEval, bracketAbstract, eTree, eFvar, eApp, collapseAndEval } from "../src/compile.js"
 import { parseExpr } from "../src/parse.js"
 
 // --- Utilities ---
@@ -46,6 +46,9 @@ interface ApplyStats {
  * Instrumented apply that collects statistics.
  * Mirrors the logic of apply() exactly but tracks metrics.
  */
+// FAST_EQ_MARKER is FAST_EQ's child (FAST_EQ = stem(MARKER))
+const FAST_EQ_MARKER_ID = isStem(FAST_EQ) ? FAST_EQ.child.id : -1
+
 function applyInstrumented(
   f: Tree, x: Tree,
   budget: { remaining: number },
@@ -65,6 +68,11 @@ function applyInstrumented(
   if (isLeaf(f)) { stats.leafCalls++; return stem(x) }
   if (isStem(f)) { stats.stemCalls++; return fork(f.child, x) }
 
+  // FAST_EQ shortcut: fork(FAST_EQ_MARKER, a) applied to b → O(1) identity check
+  if (f.left.id === FAST_EQ_MARKER_ID) {
+    return treeEqual(f.right, x) ? LEAF : stem(LEAF)
+  }
+
   const a = f.left
   const b = f.right
 
@@ -75,7 +83,24 @@ function applyInstrumented(
   if (isStem(a)) {
     stats.sCalls++
     const c = a.child
+    if (isFork(c) && isLeaf(c.left)) {
+      // B combinator fast-path: S(K(f)) g x = f (g x)
+      if (isFork(b) && isLeaf(b.left)) {
+        // S(K f)(K g) x = f g
+        return applyInstrumented(c.right, b.right, budget, stats, seen)
+      }
+      const gx = applyInstrumented(b, x, budget, stats, seen)
+      return applyInstrumented(c.right, gx, budget, stats, seen)
+    }
     const cx = applyInstrumented(c, x, budget, stats, seen)
+    if (isFork(cx) && isLeaf(cx.left)) {
+      // Speculative K check: cx is K(v), skip bx
+      return cx.right
+    }
+    if (isFork(b) && isLeaf(b.left)) {
+      // C combinator: S f (K g) x = (f x) g
+      return applyInstrumented(cx, b.right, budget, stats, seen)
+    }
     const bx = applyInstrumented(b, x, budget, stats, seen)
     return applyInstrumented(cx, bx, budget, stats, seen)
   }
@@ -431,6 +456,178 @@ describe("Benchmarks", () => {
         console.log(`    ${c.name.padEnd(25)} FAILED: ${e.message?.slice(0, 60)}`)
       }
     }
+  })
+
+  it("tree-native infer on realistic expressions", () => {
+    const state = initialState()
+    loadFile(state, "prelude.disp", true)
+
+    const inferFn = state.defs.get("infer")!
+    const convFn = state.defs.get("convertible")!
+    const emptyEnv = LEAF
+
+    // Helper: build a Church-list env with N dummy bindings as a Tree
+    // Each entry is fork(marker, wrapped) where wrapped = fork(data, type)
+    function buildChurchEnv(n: number): Tree {
+      // nil = {r n c} -> n
+      const nilExpr = bracketAbstract("_r", bracketAbstract("_n", bracketAbstract("_c", eFvar("_n"))))
+      let env = collapseAndEval(nilExpr)
+
+      for (let i = 0; i < n; i++) {
+        // Create a unique marker and a wrapped value (both Type for simplicity)
+        const marker = fork(LEAF, stem(fork(LEAF, stem(compileAndEval(parseExpr(String(i + 100)), state.defs)))))
+        const entry = fork(marker, fork(LEAF, LEAF)) // fork(marker, wrap(Type, Type))
+
+        // cons(entry, rest) = {r n c} -> c entry (rest r n c)
+        const entryTree = entry
+        const restTree = env
+        const consExpr = bracketAbstract("_r", bracketAbstract("_n", bracketAbstract("_c",
+          eApp(eApp(eFvar("_c"), eTree(entryTree)),
+            eApp(eApp(eApp(eTree(restTree), eFvar("_r")), eFvar("_n")), eFvar("_c"))))))
+        env = collapseAndEval(consExpr)
+      }
+      return env
+    }
+
+    // Helper: build encoded CoC term from surface syntax using TS bootstrap
+    function encodeTerm(source: string, env?: Env): Tree {
+      const sexpr = parseExpr(source)
+      const cocEnv = env ?? state.cocEnv
+      const wrapped = buildWrapped(sexpr, cocEnv)
+      // unwrapData = left of fork pair
+      if (wrapped.tag === "fork") return wrapped.left
+      return wrapped
+    }
+
+    // Helper: run tree-native infer and measure
+    function runInfer(
+      name: string, term: Tree, env: Tree,
+      fuels: [number, number, number], maxSteps = 50_000_000
+    ): { cold: number; warm: number; steps: number; ok: boolean } {
+      const [f1, f2, f3] = fuels.map(n => compileAndEval(parseExpr(String(n)), state.defs))
+      const args = [f1, f2, f3, env, term]
+      try {
+        const runFn = () => {
+          const b = { remaining: maxSteps }
+          let cur = inferFn
+          for (const a of args) cur = apply(cur, a, b)
+        }
+        const t = benchColdWarm(runFn)
+        const m = applyManyMeasured(inferFn, args, maxSteps)
+        return { cold: t.cold, warm: t.warm, steps: m.stepsUsed, ok: true }
+      } catch {
+        return { cold: -1, warm: -1, steps: -1, ok: false }
+      }
+    }
+
+    // === Infer on progressively complex terms (empty env) ===
+    console.log(`\n  === Tree-Native Infer: Term Complexity Scaling ===`)
+    const typeTree = encType()
+    const kType = fork(LEAF, encType())
+    const piTypeType = encPi(encType(), kType)
+
+    // Lam(Type, I) = {x : Type} -> x  (encoded: body is identity = stem constructor)
+    const lamIdSimple = encLam(encType(), LEAF)
+
+    // {A : Type} -> {x : A} -> x (polymorphic id) - need bracket-abstracted body
+    // Use buildWrapped to get the encoding
+    let polyIdTerm: Tree
+    try {
+      // Build in a temporary env with expected type
+      polyIdTerm = encodeTerm("(A : Type) -> A -> A")
+    } catch {
+      polyIdTerm = piTypeType // fallback
+    }
+
+    const termCases: { name: string; term: Tree; fuels: [number, number, number] }[] = [
+      { name: "Type", term: typeTree, fuels: [3, 3, 10] },
+      { name: "Pi(Type, K(Type))", term: piTypeType, fuels: [5, 5, 15] },
+      { name: "Lam(Type, I)", term: lamIdSimple, fuels: [5, 5, 15] },
+      { name: "(A:Type)->A->A", term: polyIdTerm, fuels: [10, 10, 20] },
+    ]
+
+    for (const c of termCases) {
+      const r = runInfer(c.name, c.term, emptyEnv, c.fuels)
+      if (r.ok) {
+        console.log(`    ${c.name.padEnd(25)} cold: ${r.cold.toFixed(3).padStart(8)}ms  warm: ${r.warm.toFixed(3).padStart(8)}ms  steps: ${r.steps}`)
+      } else {
+        console.log(`    ${c.name.padEnd(25)} FAILED (budget or encoding)`)
+      }
+    }
+
+    // === Binder depth scaling ===
+    console.log(`\n  === Tree-Native Infer: Binder Depth Scaling ===`)
+    // 0 binders: Type
+    // 1 binder: {x : Type} -> x
+    // 2 binders: {A : Type} -> {x : A} -> x  (polymorphic id)
+    // 3 binders: {A : Type} -> {B : Type} -> {x : A} -> x
+    // Encoded terms built via TS bootstrap
+    const binderCases: { name: string; source: string; fuels: [number, number, number] }[] = [
+      { name: "0 binders (Type)", source: "Type", fuels: [3, 3, 10] },
+      { name: "1 binder ({x:T}->x)", source: "(x : Type) -> x", fuels: [5, 5, 15] },
+      { name: "2 binders (poly id)", source: "(A : Type) -> A -> A", fuels: [10, 10, 20] },
+      { name: "3 binders", source: "(A : Type) -> (B : Type) -> (f : A -> B) -> A -> B", fuels: [15, 15, 30] },
+    ]
+
+    for (const c of binderCases) {
+      let term: Tree
+      try {
+        term = encodeTerm(c.source)
+      } catch (e: any) {
+        console.log(`    ${c.name.padEnd(30)} ENCODE FAILED: ${e.message?.slice(0, 50)}`)
+        continue
+      }
+      const r = runInfer(c.name, term, emptyEnv, c.fuels)
+      if (r.ok) {
+        console.log(`    ${c.name.padEnd(30)} cold: ${r.cold.toFixed(3).padStart(8)}ms  warm: ${r.warm.toFixed(3).padStart(8)}ms  steps: ${r.steps}`)
+      } else {
+        console.log(`    ${c.name.padEnd(30)} FAILED (budget/timeout)`)
+      }
+    }
+
+    // === Infer with growing env size ===
+    console.log(`\n  === Tree-Native Infer: Env Size Scaling ===`)
+    for (const envSize of [0, 5, 10, 20]) {
+      const env = envSize === 0 ? emptyEnv : buildChurchEnv(envSize)
+      const r = runInfer(`Type (env=${envSize})`, typeTree, env, [5, 5, 15])
+      if (r.ok) {
+        console.log(`    ${ `infer Type (env=${envSize})`.padEnd(30)} cold: ${r.cold.toFixed(3).padStart(8)}ms  warm: ${r.warm.toFixed(3).padStart(8)}ms  steps: ${r.steps}`)
+      } else {
+        console.log(`    ${ `infer Type (env=${envSize})`.padEnd(30)} FAILED`)
+      }
+    }
+
+    // === Convertible on non-trivial types ===
+    console.log(`\n  === Tree-Native Convertible: Complexity Scaling ===`)
+    const boolType = fork(fork(LEAF, stem(LEAF)), LEAF) // BOOL_TYPE marker
+    const natType = fork(fork(LEAF, stem(stem(LEAF))), LEAF) // NAT_TYPE marker
+    const piBoolean = encPi(boolType, fork(LEAF, natType)) // Bool -> Nat (constant)
+
+    const convCases: { name: string; a: Tree; b: Tree; fuels: [number, number, number] }[] = [
+      { name: "Type == Type", a: typeTree, b: typeTree, fuels: [5, 5, 10] },
+      { name: "Pi(T,K(T)) == same", a: piTypeType, b: piTypeType, fuels: [10, 10, 15] },
+      { name: "Pi(Bool,K(Nat)) == same", a: piBoolean, b: piBoolean, fuels: [10, 10, 15] },
+      { name: "Type != Pi", a: typeTree, b: piTypeType, fuels: [10, 10, 15] },
+    ]
+
+    for (const c of convCases) {
+      const [f1, f2, f3] = c.fuels.map(n => compileAndEval(parseExpr(String(n)), state.defs))
+      const args = [f1, f2, f3, c.a, c.b]
+      try {
+        const runConv = () => {
+          const b = { remaining: 50_000_000 }
+          let cur = convFn
+          for (const a of args) cur = apply(cur, a, b)
+        }
+        const t = benchColdWarm(runConv)
+        const m = applyManyMeasured(convFn, args, 50_000_000)
+        console.log(`    ${c.name.padEnd(25)} cold: ${t.cold.toFixed(3).padStart(8)}ms  warm: ${t.warm.toFixed(3).padStart(8)}ms  steps: ${m.stepsUsed}  result: ${isLeaf(m.result) ? "true" : "false"}`)
+      } catch (e: any) {
+        console.log(`    ${c.name.padEnd(25)} FAILED: ${e.message?.slice(0, 60)}`)
+      }
+    }
+
+    expect(true).toBe(true)
   })
 
   it("rule breakdown for representative operation", () => {

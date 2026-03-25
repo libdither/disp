@@ -8,7 +8,7 @@
 // - Fuel-based step functions (treeEqStep, whnfStep, convertibleStep, inferStep)
 // - Builtin arrays for prelude registration
 
-import { type Tree, LEAF, stem, fork, apply, I } from "./tree.js"
+import { type Tree, LEAF, stem, fork, apply, I, FAST_EQ } from "./tree.js"
 import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval, FIX, WAIT } from "./compile.js"
 
 // --- Expr-level helpers ---
@@ -586,4 +586,5 @@ export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
   { name: "tFix", type: "(Tree -> Tree) -> Tree", data: FIX },
   { name: "tDelta", type: "Tree", data: T_DELTA },
   { name: "tWait", type: "(Y : Type) -> (Z : Type) -> (R : Type) -> (Y -> Z -> R) -> Y -> Z -> R", data: TYPED_WAIT },
+  { name: "fastEq", type: "Tree -> Tree -> Bool", data: FAST_EQ },
 ]

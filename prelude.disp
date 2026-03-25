@@ -37,10 +37,22 @@ let rec abstractOut : Nat -> Nat -> Tree -> Tree -> Tree := {fuel eqFuel target 
       tree)
     fuel
 
+-- abstractOutFast: uses O(1) hash-consing identity (fastEq) instead of structural treeEq.
+-- Much faster for type checking where markers are guaranteed unique via hash-consing.
+let rec abstractOutFast : Nat -> Tree -> Tree -> Tree := {fuel target tree} ->
+  natElim Tree
+    (tK tree)
+    ({fuel'} -> abstractOutStep fastEq target
+      (tWait Tree Tree Tree
+        (tWait Nat Tree (Tree -> Tree) abstractOutFast fuel')
+        target)
+      tree)
+    fuel
+
 let rec convertibleRec : Nat -> Nat -> Nat -> Tree -> Tree -> Tree -> Bool := {fuel wF eqF delta a b} ->
   natElim Bool
     false
-    ({fuel'} -> convertibleStep (whnf wF) (treeEq eqF)
+    ({fuel'} -> convertibleStep (whnf wF) fastEq
       (tWait Nat Tree (Tree -> Tree -> Bool)
         (tWait Nat Nat (Tree -> Tree -> Tree -> Bool)
           (tWait Nat Nat (Nat -> Tree -> Tree -> Tree -> Bool) convertibleRec fuel')
@@ -55,7 +67,7 @@ let convertible : Nat -> Nat -> Nat -> Tree -> Tree -> Bool := {fuel wF eqF a b}
 let rec inferRec : Nat -> Nat -> Nat -> Tree -> Tree -> Tree := {fuel wF eqF env term} ->
   natElim Tree
     leaf
-    ({fuel'} -> inferStep (whnf wF) (abstractOut 10 eqF) (treeEq eqF)
+    ({fuel'} -> inferStep (whnf wF) (abstractOutFast 10) fastEq
       (tWait Nat Tree (Tree -> Tree)
         (tWait Nat Nat (Tree -> Tree -> Tree)
           (tWait Nat Nat (Nat -> Tree -> Tree -> Tree) inferRec fuel')
