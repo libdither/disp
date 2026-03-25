@@ -4,7 +4,7 @@ import {
   encType, encVar, encApp, encLam, encPi,
   termTag, unVar, unApp, unLam, unPi,
   wrap, unwrapData, unwrapType,
-  freshMarker, resetMarkerCounter,
+  freshMarker, resetMarkerCounter, clearNativeBuiltins,
   treeToExprReplacing, abstractMarkerOut,
   whnfTree, normalize, convertible, convertibleUnderBinder,
   buildWrapped, cocCheckDecl, cocCheckRecDecl,
@@ -33,6 +33,7 @@ function declEnv(decls: string[], env: Env = new Map()): Env {
 
 beforeEach(() => {
   resetMarkerCounter()
+  clearNativeBuiltins()
 })
 
 // ============================================================

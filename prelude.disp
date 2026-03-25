@@ -9,12 +9,63 @@ let rec fold : Nat -> (R : Type) -> R -> (R -> R) -> R := {n R z s} -> natElim R
 let rec add : Nat -> Nat -> Nat := {m n} -> natElim Nat n ({m'} -> succ (add m' n)) m
 let rec mul : Nat -> Nat -> Nat := {m n} -> natElim Nat 0 ({m'} -> add n (mul m' n)) m
 
--- Step function wrappers (use fold instead of Church numeral application)
-let treeEq : Nat -> Tree -> Tree -> Bool := {fuel a b} -> fold fuel (Tree -> Tree -> Bool) ({x y} -> false) treeEqStep a b
-let abstractOut : Nat -> Nat -> Tree -> Tree -> Tree := {fuel eqFuel target tree} -> fold fuel (Tree -> Tree) tK (abstractOutStep (treeEq eqFuel) target) tree
-let whnf : Nat -> Tree -> Tree := {fuel t} -> fold fuel (Tree -> Tree) tI whnfStep t
-let convertible : Nat -> Nat -> Nat -> Tree -> Tree -> Bool := {fuel whnfFuel eqFuel a b} -> fold fuel (Tree -> Tree -> Tree -> Bool) ({m x y} -> false) (convertibleStep (whnf whnfFuel) (treeEq eqFuel)) tDelta a b
-let infer : Nat -> Nat -> Nat -> Tree -> Tree -> Tree := {fuel whnfFuel eqFuel env term} -> fold fuel (Tree -> Tree -> Tree) ({e t} -> leaf) (inferStep (whnf whnfFuel) (abstractOut 10 eqFuel) (treeEq eqFuel)) env term
+-- Step function wrappers using tFix + tWait for demand-driven recursion.
+-- tWait defers self(fuel') until the step function actually needs to recurse.
+-- Fuel is an upper bound, not a cost multiplier.
+
+let rec treeEq : Nat -> Tree -> Tree -> Bool := {fuel a b} ->
+  natElim Bool
+    false
+    ({fuel'} -> treeEqStep (tWait Nat Tree (Tree -> Bool) treeEq fuel') a b)
+    fuel
+
+let rec whnf : Nat -> Tree -> Tree := {fuel t} ->
+  natElim Tree
+    (tI t)
+    ({fuel'} -> whnfStep (tWait Nat Tree Tree whnf fuel') t)
+    fuel
+
+let rec abstractOut : Nat -> Nat -> Tree -> Tree -> Tree := {fuel eqFuel target tree} ->
+  natElim Tree
+    (tK tree)
+    ({fuel'} -> abstractOutStep (treeEq eqFuel) target
+      (tWait Tree Tree Tree
+        (tWait Nat Tree (Tree -> Tree)
+          (tWait Nat Nat (Tree -> Tree -> Tree) abstractOut fuel')
+          eqFuel)
+        target)
+      tree)
+    fuel
+
+let rec convertibleRec : Nat -> Nat -> Nat -> Tree -> Tree -> Tree -> Bool := {fuel wF eqF delta a b} ->
+  natElim Bool
+    false
+    ({fuel'} -> convertibleStep (whnf wF) (treeEq eqF)
+      (tWait Nat Tree (Tree -> Tree -> Bool)
+        (tWait Nat Nat (Tree -> Tree -> Tree -> Bool)
+          (tWait Nat Nat (Nat -> Tree -> Tree -> Tree -> Bool) convertibleRec fuel')
+          wF)
+        eqF)
+      delta a b)
+    fuel
+
+let convertible : Nat -> Nat -> Nat -> Tree -> Tree -> Bool := {fuel wF eqF a b} ->
+  convertibleRec fuel wF eqF tDelta a b
+
+let rec inferRec : Nat -> Nat -> Nat -> Tree -> Tree -> Tree := {fuel wF eqF env term} ->
+  natElim Tree
+    leaf
+    ({fuel'} -> inferStep (whnf wF) (abstractOut 10 eqF) (treeEq eqF)
+      (tWait Nat Tree (Tree -> Tree)
+        (tWait Nat Nat (Tree -> Tree -> Tree)
+          (tWait Nat Nat (Nat -> Tree -> Tree -> Tree) inferRec fuel')
+          wF)
+        eqF)
+      env term)
+    fuel
+
+let infer : Nat -> Nat -> Nat -> Tree -> Tree -> Tree := {fuel wF eqF env term} ->
+  inferRec fuel wF eqF env term
 
 -- Polymorphic identity
 let id : (A : Type) -> A -> A := {A x} -> x

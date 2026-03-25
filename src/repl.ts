@@ -5,10 +5,10 @@ import * as readline from "node:readline"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { parseLine, printExpr, mergeDefinitions, type SExpr, type SDecl, ParseError } from "./parse.js"
-import { compileAndEval, compileRecAndEval } from "./compile.js"
+import { compileAndEval } from "./compile.js"
 import { prettyTree, type Tree, LEAF, stem, treeEqual, BudgetExhausted } from "./tree.js"
-import { cocCheckDecl, buildWrapped, unwrapData, unwrapType, printEncoded, registerNativeBuiltinId, whnfTree, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
-import { loadPrelude, buildNameMap } from "./prelude.js"
+import { buildWrapped, unwrapData, unwrapType, printEncoded, whnfTree, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
+import { loadPrelude, buildNameMap, processDecl } from "./prelude.js"
 
 export type ReplState = {
   cocEnv: Env                   // CoC environment (name → wrapped tree)
@@ -79,24 +79,10 @@ function isDecl(x: SDecl | SExpr): x is SDecl {
 function handleDecl(state: ReplState, decl: SDecl): string {
   const { name, type, value, isRec } = decl
 
-  // Type check via CoC-on-trees
-  const result = cocCheckDecl(state.cocEnv, name, type, value, isRec)
+  const result = processDecl(name, type, value, isRec, state.cocEnv, state.defs)
   state.cocEnv = result.env
   state.defExprs.set(name, value)
   if (isRec) state.defIsRec.add(name)
-
-  // Compile and evaluate
-  let compiled: Tree
-  if (isRec) {
-    compiled = compileRecAndEval(name, value, state.defs)
-  } else {
-    compiled = compileAndEval(value, state.defs)
-  }
-  state.defs.set(name, compiled)
-  if (isRec) {
-    const encodedData = unwrapData(state.cocEnv.get(name)!)
-    registerNativeBuiltinId(encodedData.id, compiled)
-  }
 
   const nameMap = buildNameMap(state.cocEnv)
   const typeStr = printEncoded(result.type, nameMap)
@@ -273,18 +259,28 @@ export function loadFile(state: ReplState, filePath: string, silent = false): st
   try {
     const content = fs.readFileSync(filePath, "utf-8")
     const blocks = mergeDefinitions(content)
-    const results: string[] = []
+    let count = 0
     for (const block of blocks) {
-      const result = processLine(state, block.text)
-      if (result) {
-        if (result.includes("error") || result.includes("Error")) {
-          return `${filePath}:${block.startLine}: ${result}`
+      const trimmed = block.text.trim()
+      if (!trimmed || trimmed.startsWith("--")) continue
+      try {
+        const parsed = parseLine(trimmed)
+        if (isDecl(parsed)) {
+          handleDecl(state, parsed)
+          count++
         }
-        results.push(result)
+        // Non-declarations in files are silently ignored
+      } catch (e) {
+        const msg = e instanceof ParseError
+          ? formatError(trimmed, "Parse error", e.message, e.span)
+          : e instanceof CocError ? `Type error: ${e.message}`
+          : e instanceof BudgetExhausted ? `Error: evaluation did not terminate`
+          : e instanceof Error ? `Error: ${e.message}` : `Error: ${e}`
+        return `${filePath}:${block.startLine}: ${msg}`
       }
     }
     if (silent) return ""
-    return results.length > 0 ? `Loaded ${filePath} (${results.length} definitions)` : `Loaded ${filePath}`
+    return count > 0 ? `Loaded ${filePath} (${count} definitions)` : `Loaded ${filePath}`
   } catch (e) {
     if (silent) return ""
     return `Error: Could not load ${filePath}: ${e instanceof Error ? e.message : e}`

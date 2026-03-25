@@ -177,6 +177,14 @@ class Parser {
     return false
   }
 
+  private identValue(tok: Token): string {
+    return (tok as { tag: "ident", value: string }).value
+  }
+
+  private numValue(tok: Token): number {
+    return (tok as { tag: "num", value: number }).value
+  }
+
   // Span from startPos to the end of the last consumed token
   private spanFrom(start: Span): Span {
     return { start: start.start, end: this.tokens[this.pos - 1].pos.end }
@@ -190,13 +198,13 @@ class Parser {
 
     // Check for 'rec' contextual keyword (just an ident with value "rec")
     let isRec = false
-    if (this.peek().tag === "ident" && (this.peek() as { tag: "ident", value: string }).value === "rec") {
+    if (this.peek().tag === "ident" && this.identValue(this.peek()) === "rec") {
       isRec = true
       this.advance()
     }
 
     const nameTok = this.expect("ident")
-    const name = (nameTok as { tag: "ident", value: string }).value
+    const name = this.identValue(nameTok)
 
     let type: SExpr | null = null
     if (this.match("colon")) {
@@ -250,25 +258,18 @@ class Parser {
 
   // Check if we're at (name : type) -> ...
   private tryParsePi(): boolean {
-    try {
-      this.expect("lparen")
-      const tok = this.peek()
-      if (tok.tag !== "ident") return false
-      this.advance()
-      if (this.peek().tag !== "colon") return false
-      // It looks like a Pi binding
-      return true
-    } catch {
-      return false
-    }
+    if (this.peek().tag !== "lparen") return false
+    this.advance() // consume (
+    if (this.peek().tag !== "ident") return false
+    this.advance() // consume ident
+    return this.peek().tag === "colon"
   }
 
   // Parse (name : domain) -> codomain
   private parsePi(): SExpr {
     const start = this.peek().pos
     this.expect("lparen")
-    const nameTok = this.expect("ident")
-    const name = (nameTok as { tag: "ident", value: string }).value
+    const name = this.identValue(this.expect("ident"))
     this.expect("colon")
     const domain = this.parseExpr()
     this.expect("rparen")
@@ -282,23 +283,29 @@ class Parser {
   //   { name := expr, ... }  → record value
   //   { params } -> body     → lambda
   private parseBraceExpr(): SExpr {
+    const kind = this.peekBraceKind()
+    if (kind === "record_type") return this.parseRecordType()
+    if (kind === "record_value") return this.parseRecordValue()
+    return this.parseLambda()
+  }
+
+  // Lookahead to determine what a { ... } expression is:
+  //   { name : ... } → record type
+  //   { name := ... } → record value
+  //   { params } -> body → lambda
+  private peekBraceKind(): "record_type" | "record_value" | "lambda" {
     const saved = this.pos
-    this.expect("lbrace")
+    this.advance() // consume {
     if (this.peek().tag === "ident") {
-      const identPos = this.pos
       this.advance() // consume ident
       const next = this.peek().tag
-      this.pos = saved // restore
-      if (next === "colon") {
-        return this.parseRecordType()
-      }
-      if (next === "coloneq") {
-        return this.parseRecordValue()
-      }
-    } else {
       this.pos = saved
+      if (next === "colon") return "record_type"
+      if (next === "coloneq") return "record_value"
+      return "lambda"
     }
-    return this.parseLambda()
+    this.pos = saved
+    return "lambda"
   }
 
   // Parse {x : A, y : B} → (R$rec : Type) -> ((x : A) -> (y : B) -> R$rec) -> R$rec
@@ -308,8 +315,7 @@ class Parser {
     const fields: { name: string, type: SExpr }[] = []
     while (this.peek().tag !== "rbrace") {
       if (fields.length > 0) this.expect("comma")
-      const nameTok = this.expect("ident")
-      const name = (nameTok as { tag: "ident", value: string }).value
+      const name = this.identValue(this.expect("ident"))
       this.expect("colon")
       const type = this.parseExpr()
       fields.push({ name, type })
@@ -339,11 +345,10 @@ class Parser {
     const fields: { name: string, value: SExpr }[] = []
     while (this.peek().tag !== "rbrace") {
       if (fields.length > 0) this.expect("comma")
-      const nameTok = this.expect("ident")
-      const _name = (nameTok as { tag: "ident", value: string }).value
+      const name = this.identValue(this.expect("ident"))
       this.expect("coloneq")
       const value = this.parseExpr()
-      fields.push({ name: _name, value })
+      fields.push({ name, value })
     }
     this.expect("rbrace")
 
@@ -361,19 +366,10 @@ class Parser {
     return slam([REC_TYPE_VAR, REC_FN_VAR], body, span)
   }
 
-  // Check if position is at the start of a record (not a lambda)
   private isRecordStart(): boolean {
     if (this.peek().tag !== "lbrace") return false
-    const saved = this.pos
-    this.advance() // consume {
-    if (this.peek().tag === "ident") {
-      this.advance() // consume ident
-      const next = this.peek().tag
-      this.pos = saved
-      return next === "colon" || next === "coloneq"
-    }
-    this.pos = saved
-    return false
+    const kind = this.peekBraceKind()
+    return kind === "record_type" || kind === "record_value"
   }
 
   // Parse <Left : A | Right : B> → (R$cop : Type) -> (A -> R$cop) -> (B -> R$cop) -> R$cop
@@ -383,11 +379,10 @@ class Parser {
     const variants: { name: string, type: SExpr }[] = []
     while (this.peek().tag !== "rangle") {
       if (variants.length > 0) this.expect("pipe")
-      const nameTok = this.expect("ident")
-      const _name = (nameTok as { tag: "ident", value: string }).value
+      const name = this.identValue(this.expect("ident"))
       this.expect("colon")
       const type = this.parseExpr()
-      variants.push({ name: _name, type })
+      variants.push({ name, type })
     }
     this.expect("rangle")
 
@@ -411,8 +406,7 @@ class Parser {
     this.expect("lbrace")
     const params: string[] = []
     while (this.peek().tag === "ident") {
-      const tok = this.advance() as { tag: "ident", value: string }
-      params.push(tok.value)
+      params.push(this.identValue(this.advance()))
     }
     this.expect("rbrace")
     this.expect("arrow")
@@ -451,7 +445,7 @@ class Parser {
 
     if (tok.tag === "ident") {
       this.advance()
-      return svar((tok as { tag: "ident", value: string }).value, tok.pos)
+      return svar(this.identValue(tok), tok.pos)
     }
 
     if (tok.tag === "kw_type") {
@@ -476,7 +470,7 @@ class Parser {
 
     if (tok.tag === "num") {
       this.advance()
-      return treeNumeralExpr((tok as { tag: "num", value: number }).value, tok.pos)
+      return treeNumeralExpr(this.numValue(tok), tok.pos)
     }
 
     if (tok.tag === "lparen") {

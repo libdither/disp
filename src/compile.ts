@@ -125,46 +125,14 @@ function hasFreeVar(name: string, expr: Expr): boolean {
   }
 }
 
-// K(e): an Expr that, when collapsed and applied to x, returns collapse(e)
-// In tree calculus: K c = fork(LEAF, c)
-// As Expr: app(tree(LEAF), e) → treeApply(LEAF, collapse(e)) = stem(collapse(e))
-// Wait, that gives stem, not K. K c = fork(LEAF, c).
-// Actually treeApply(LEAF, c) = stem(c). But K c applied to x: stem(c) applied to x = fork(c, x).
-// That's NOT K behavior. K c x should return c.
-//
-// K c = fork(LEAF, c). Applied to x: fork(fork(LEAF, c), x) → Rule 1 → c. ✓
-//
-// But how to build fork(LEAF, c) from Expr?
-// We can't use treeApply because treeApply(LEAF, c) = stem(c), not fork(LEAF, c).
-// We need a direct tree construction.
-//
-// Solution: during collapse, handle K and S specially.
-// Or: represent K and S as Expr constructors.
-
-// Actually, let's just represent them as tree constructions directly:
+// K(e) collapses to fork(LEAF, collapse(e)).
+// Built as app(stem(LEAF), e): treeApply(stem(LEAF), collapse(e)) = fork(LEAF, collapse(e)).
 function kOf(e: Expr): Expr {
-  // Result should collapse to fork(LEAF, collapse(e))
-  // We represent this as: apply LEAF to (LEAF applied to e)
-  // No... let's just use a special Expr node.
-  // Actually, the cleanest approach: extend Expr with 'stem' constructor.
-  // But the plan says Expr is just tree/fvar/app.
-  //
-  // Alternative: treeApply(stem(LEAF), collapse(e)) = fork(LEAF, collapse(e)). ✓
-  // So K(e) = app(tree(stem(LEAF)), e). Since stem(LEAF) = K_tree.
-  // collapse: treeApply(K_tree, collapse(e)) = treeApply(stem(LEAF), collapse(e)) = fork(LEAF, collapse(e)). ✓
   return eApp(eTree(stem(LEAF)), e)
 }
 
-// S(f, g): result should collapse to fork(stem(collapse(f)), collapse(g))
-// treeApply(X, collapse(g)) = fork(stem(collapse(f)), collapse(g)) requires X = stem(stem(collapse(f)))
-// treeApply(stem(stem(A)), B) = fork(stem(A), B). ✓
-//
-// So we need to build stem(stem(collapse(f))) as an Expr:
-// stem(X) via treeApply: treeApply(LEAF, X) = stem(X).
-// So stem(collapse(f)) = collapse(app(tree(LEAF), f))
-// And stem(stem(collapse(f))) = collapse(app(tree(LEAF), app(tree(LEAF), f)))
-//
-// S(f, g) = app(app(tree(LEAF), app(tree(LEAF), f)), g)
+// S(f, g) collapses to fork(stem(collapse(f)), collapse(g)).
+// stem via treeApply: treeApply(LEAF, X) = stem(X), so two LEAF applications build stem(stem(f)).
 function sOf(f: Expr, g: Expr): Expr {
   const stemF = eApp(eTree(LEAF), f)     // stem(collapse(f))
   const stemStemF = eApp(eTree(LEAF), stemF) // stem(stem(collapse(f)))
@@ -266,7 +234,7 @@ export function compileAndEval(ast: SExpr, defs: Map<string, Tree> = new Map(), 
 // wait a b c = △ (△ a) (△ △ c) b = a b c
 // Extensionally a 3-arg identity, but wait a b does NOT evaluate a b.
 // The application is deferred until the third argument c arrives.
-const WAIT: Tree = (() => {
+export const WAIT: Tree = (() => {
   const body = eApp(
     eApp(
       eApp(eTree(LEAF), eApp(eTree(LEAF), eFvar("a"))),

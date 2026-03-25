@@ -164,22 +164,10 @@ export function applyTree(f: Tree, x: Tree, maxSteps = 10000): Tree {
 // K = △ △ = stem(LEAF). K b x → b (returns first argument, discards second).
 export const K = stem(LEAF)
 
-// I = fork(LEAF, LEAF) = △ △ △.
-// I x: fork(LEAF, LEAF) is fork(a, b) with a=LEAF → Rule 1: return b = LEAF.
-// Wait, that always returns LEAF, not x. Let me re-derive.
-//
-// Actually, there is no simple "I combinator" tree that returns its argument
-// structurally. But we CAN build one using triage:
-//
-// I = △ (△ △ △) △  (triage: leaf→△, stem→△ u, fork→△ u v)
-//   = fork(fork(LEAF, LEAF), LEAF)
-//
-// I(leaf):    Rule 3a → c = LEAF = △ ✓
-// I(stem(u)): Rule 3b → apply(d, u) = apply(LEAF, u) = stem(u) ✓
-// I(fork(u,v)): Rule 3c → apply(apply(b, u), v) = apply(apply(LEAF, u), v)
-//             = apply(stem(u), v) = fork(u, v) ✓
-//
-// This is the STRUCTURAL identity!
+// Structural identity via triage: I = △ (△ △ △) △ = fork(fork(LEAF, LEAF), LEAF)
+//   I(leaf):      Rule 3a → LEAF = △                           ✓
+//   I(stem(u)):   Rule 3b → apply(LEAF, u) = stem(u)           ✓
+//   I(fork(u,v)): Rule 3c → apply(apply(LEAF, u), v) = fork(u,v) ✓
 export const I = fork(fork(LEAF, LEAF), LEAF)
 
 // --- Pretty printer ---

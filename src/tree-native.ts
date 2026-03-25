@@ -9,7 +9,7 @@
 // - Builtin arrays for prelude registration
 
 import { type Tree, LEAF, stem, fork, apply, I } from "./tree.js"
-import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval, FIX } from "./compile.js"
+import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval, FIX, WAIT } from "./compile.js"
 
 // --- Expr-level helpers ---
 
@@ -17,11 +17,18 @@ function exprFork(a: Expr, b: Expr): Expr { return eApp(eApp(eTree(LEAF), a), b)
 function exprTriage(c: Expr, d: Expr, b: Expr): Expr { return exprFork(exprFork(c, d), b) }
 function mkTriage(onLeaf: Tree, onStem: Tree, onFork: Tree): Tree { return fork(fork(onLeaf, onStem), onFork) }
 
+// Ignore n arguments, then return result. Builds nested bracketAbstract("_", ...).
+function exprIgnore(n: number, result: Expr): Expr {
+  let e = result
+  for (let i = 0; i < n; i++) e = bracketAbstract("_", e)
+  return e
+}
+
 // Bool elimination for tree-encoded bools: true=LEAF, false=stem(LEAF)
 // exprBoolElim(bool, thenBranch, elseBranch) dispatches via triage:
 //   leaf(true) → thenBranch, stem(false) → elseBranch, fork → thenBranch
 function exprBoolElim(bool: Expr, thenBranch: Expr, elseBranch: Expr): Expr {
-  return eApp(exprTriage(thenBranch, bracketAbstract("__be", elseBranch), bracketAbstract("__be1", bracketAbstract("__be2", thenBranch))), bool)
+  return eApp(exprTriage(thenBranch, exprIgnore(1, elseBranch), exprIgnore(2, thenBranch)), bool)
 }
 
 function compileTree(params: string[], body: Expr): Tree {
@@ -34,6 +41,14 @@ function compileTree(params: string[], body: Expr): Tree {
   // reduces all applications, producing trees that behave correctly when later applied.
   return collapseAndEval(e)
 }
+
+// --- TYPED_WAIT: WAIT with 3 erased type args ---
+// tWait : (Y : Type) -> (Z : Type) -> (R : Type) -> (Y -> Z -> R) -> Y -> Z -> R
+// Extensionally: tWait Y Z R a b c = a b c
+// But tWait Y Z R a b does NOT evaluate a b (deferred until c arrives).
+// Implementation: K(K(K(WAIT))) — discards 3 type args, then acts as WAIT.
+const TYPED_WAIT: Tree = compileTree(["Y", "Z", "R", "a", "b", "c"],
+  eApp(eApp(eApp(eTree(WAIT), eFvar("a")), eFvar("b")), eFvar("c")))
 
 // --- Primitive tree destructors (single triage, no recursion) ---
 
@@ -79,6 +94,16 @@ export const TERM_CASE: Tree = (() => {
   return compileTree(["onType", "onVar", "onApp", "onLam", "onPi", "term"], body)
 })()
 
+// Apply TERM_CASE to 5 handlers and a target term.
+function exprTermCase(
+  onType: Expr, onVar: Expr, onApp: Expr, onLam: Expr, onPi: Expr,
+  target: Expr
+): Expr {
+  return eApp(eApp(eApp(eApp(eApp(eApp(
+    eTree(TERM_CASE), onType), onVar), onApp), onLam), onPi),
+    target)
+}
+
 // --- Tree-encoded Bool constants ---
 // true = LEAF (leaf), false = stem(LEAF) (stem of leaf)
 
@@ -92,8 +117,8 @@ const KKFF: Tree = fork(LEAF, KFF)      // K(KFF): absorbs 2 args, returns FF
 const AND: Tree = compileTree(["a", "b"],
   eApp(exprTriage(
     eFvar("b"),
-    bracketAbstract("_", eTree(FF)),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF)))
+    exprIgnore(1, eTree(FF)),
+    exprIgnore(2, eTree(FF))
   ), eFvar("a")))
 
 // --- treeEqStep: fuel-based structural tree equality ---
@@ -219,8 +244,8 @@ export const WHNF_STEP: Tree = (() => {
     eApp(eFvar("self"), eApp(eFvar("lamBody"), eFvar("appArg")))))
   const innerOnPi = bracketAbstract("_pd", bracketAbstract("_pb", stuck))
 
-  const innerDispatch = eApp(eApp(eApp(eApp(eApp(eApp(
-    eTree(TERM_CASE), innerOnType), innerOnVar), innerOnApp), innerOnLam), innerOnPi),
+  const innerDispatch = exprTermCase(
+    innerOnType, innerOnVar, innerOnApp, innerOnLam, innerOnPi,
     eFvar("funcR"))
 
   // App handler: receives func and arg from outer termCase
@@ -233,13 +258,11 @@ export const WHNF_STEP: Tree = (() => {
 
   // Outer termCase: only App does work, rest returns t unchanged
   const onType = eFvar("t")
-  const onVar = bracketAbstract("_m", eFvar("t"))
-  const onLam = bracketAbstract("_d", bracketAbstract("_b", eFvar("t")))
-  const onPi = bracketAbstract("_d", bracketAbstract("_b", eFvar("t")))
+  const onVar = exprIgnore(1, eFvar("t"))
+  const onLam = exprIgnore(2, eFvar("t"))
+  const onPi = exprIgnore(2, eFvar("t"))
 
-  const body = eApp(eApp(eApp(eApp(eApp(eApp(
-    eTree(TERM_CASE), onType), onVar), appHandler), onLam), onPi),
-    eFvar("t"))
+  const body = exprTermCase(onType, onVar, appHandler, onLam, onPi, eFvar("t"))
 
   return compileTree(["self", "t"], body)
 })()
@@ -268,77 +291,49 @@ export const CONVERTIBLE_STEP: Tree = (() => {
       eApp(eFvar(bodyB), neutral))
   }
 
-  // Helper: dispatch on bN using TERM_CASE
-  function termCaseOnBN(
-    onType: Expr,
-    onVar: Expr,
-    onApp: Expr,
-    onLam: Expr,
-    onPi: Expr,
-  ): Expr {
-    return eApp(eApp(eApp(eApp(eApp(eApp(
-      eTree(TERM_CASE), onType), onVar), onApp), onLam), onPi),
-      eFvar("bN"))
-  }
+  // Mismatch constants: ignore args and return FF
+  const ff0 = eTree(FF)
+  const ff1 = exprIgnore(1, ff0)
+  const ff2 = exprIgnore(2, ff0)
 
-  // aN=Type: bN must be Type → TT, all other bN tags → FF
-  const aTypeCase = termCaseOnBN(
-    eTree(TT),
-    bracketAbstract("_", eTree(FF)),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF)))
-  )
+  // aN=Type: bN must be Type → TT, all others → FF
+  const aTypeCase = exprTermCase(eTree(TT), ff1, ff2, ff2, ff2, eFvar("bN"))
 
   // aN=Var(ma): bN must be Var(mb) → treeEq(ma, mb), else FF
-  const aVarCase = bracketAbstract("ma", termCaseOnBN(
-    eTree(FF),
-    bracketAbstract("mb", eApp(eApp(eFvar("treeEqF"), eFvar("ma")), eFvar("mb"))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF)))
-  ))
+  const aVarCase = bracketAbstract("ma", exprTermCase(
+    ff0, bracketAbstract("mb", eApp(eApp(eFvar("treeEqF"), eFvar("ma")), eFvar("mb"))),
+    ff2, ff2, ff2, eFvar("bN")))
 
   // aN=App(fa,xa): bN must be App(fb,xb) → AND(self(marker,fa,fb))(self(marker,xa,xb))
-  const aAppCase = bracketAbstract("fa", bracketAbstract("xa", termCaseOnBN(
-    eTree(FF),
-    bracketAbstract("_", eTree(FF)),
+  const aAppCase = bracketAbstract("fa", bracketAbstract("xa", exprTermCase(
+    ff0, ff1,
     bracketAbstract("fb", bracketAbstract("xb",
       eApp(eApp(eTree(AND),
         eApp(eApp(eApp(eFvar("self"), eFvar("marker")), eFvar("fa")), eFvar("fb"))),
         eApp(eApp(eApp(eFvar("self"), eFvar("marker")), eFvar("xa")), eFvar("xb"))))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF)))
-  )))
+    ff2, ff2, eFvar("bN"))))
 
   // aN=Lam(da,ba): bN must be Lam(db,bb) → AND(self(marker,da,db))(binderCompare(ba,bb))
-  const aLamCase = bracketAbstract("da", bracketAbstract("ba", termCaseOnBN(
-    eTree(FF),
-    bracketAbstract("_", eTree(FF)),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
+  const aLamCase = bracketAbstract("da", bracketAbstract("ba", exprTermCase(
+    ff0, ff1, ff2,
     bracketAbstract("db", bracketAbstract("bb",
       eApp(eApp(eTree(AND),
         eApp(eApp(eApp(eFvar("self"), eFvar("marker")), eFvar("da")), eFvar("db"))),
         binderCompare("ba", "bb")))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF)))
-  )))
+    ff2, eFvar("bN"))))
 
   // aN=Pi(pda,pba): bN must be Pi(pdb,pbb) → AND(self(marker,pda,pdb))(binderCompare(pba,pbb))
-  const aPiCase = bracketAbstract("pda", bracketAbstract("pba", termCaseOnBN(
-    eTree(FF),
-    bracketAbstract("_", eTree(FF)),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
-    bracketAbstract("_", bracketAbstract("_", eTree(FF))),
+  const aPiCase = bracketAbstract("pda", bracketAbstract("pba", exprTermCase(
+    ff0, ff1, ff2, ff2,
     bracketAbstract("pdb", bracketAbstract("pbb",
       eApp(eApp(eTree(AND),
         eApp(eApp(eApp(eFvar("self"), eFvar("marker")), eFvar("pda")), eFvar("pdb"))),
-        binderCompare("pba", "pbb"))))
-  )))
+        binderCompare("pba", "pbb")))),
+    eFvar("bN"))))
 
   // Structural comparison: termCase on aN
-  const structuralCompare = eApp(eApp(eApp(eApp(eApp(eApp(
-    eTree(TERM_CASE), aTypeCase), aVarCase), aAppCase), aLamCase), aPiCase),
-    eFvar("aN"))
+  const structuralCompare = exprTermCase(
+    aTypeCase, aVarCase, aAppCase, aLamCase, aPiCase, eFvar("aN"))
 
   // After WHNF: check treeEq on normalized terms, else structural compare
   const whnfEq = eApp(eApp(eFvar("treeEqF"), eFvar("aN")), eFvar("bN"))
@@ -498,9 +493,7 @@ export const TYPECHECK: Tree = (() => {
   })()
 
   // termCase dispatch
-  const dispatch = eApp(eApp(eApp(eApp(eApp(eApp(
-    eTree(TERM_CASE), typeCase), varCase), appCase), lamCase), piCase),
-    eFvar("term"))
+  const dispatch = exprTermCase(typeCase, varCase, appCase, lamCase, piCase, eFvar("term"))
 
   // Fold-based step: [whnf][absOut][eq][self][env][term] → body
   // Usage: fuel (env→term→wrapped) (inferStep whnf absOut eq) base env term
@@ -518,8 +511,8 @@ const TRIAGE_DATA: Tree = fork(LEAF, TRIAGE)
 const BOOL_ELIM_DATA: Tree = compileTree(["R", "x", "y", "b"],
   eApp(exprTriage(
     eFvar("x"),
-    bracketAbstract("_", eFvar("y")),
-    bracketAbstract("_", bracketAbstract("_", eFvar("x")))
+    exprIgnore(1, eFvar("y")),
+    exprIgnore(2, eFvar("x"))
   ), eFvar("b")))
 
 // NAT_ELIM_DATA: {R z s n} → triage on n: leaf(zero)→z, stem(n')→s(n'), fork→z
@@ -527,7 +520,7 @@ const NAT_ELIM_DATA: Tree = compileTree(["R", "z", "s", "n"],
   eApp(exprTriage(
     eFvar("z"),
     bracketAbstract("n_pred", eApp(eFvar("s"), eFvar("n_pred"))),
-    bracketAbstract("_", bracketAbstract("_", eFvar("z")))
+    exprIgnore(2, eFvar("z"))
   ), eFvar("n")))
 
 // tDelta: a specific leaf used as initial marker for convertible
@@ -592,4 +585,5 @@ export const TREE_NATIVE_BUILTINS: TreeBuiltin[] = [
     data: TYPECHECK },
   { name: "tFix", type: "(Tree -> Tree) -> Tree", data: FIX },
   { name: "tDelta", type: "Tree", data: T_DELTA },
+  { name: "tWait", type: "(Y : Type) -> (Z : Type) -> (R : Type) -> (Y -> Z -> R) -> Y -> Z -> R", data: TYPED_WAIT },
 ]

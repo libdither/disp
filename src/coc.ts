@@ -165,6 +165,12 @@ export function registerNativeBuiltinId(id: number, compiledForm?: Tree): void {
   }
 }
 
+export function clearNativeBuiltins(): void {
+  nativeBuiltinIds.clear()
+  nativeCompiledForms.clear()
+  whnfMemo.clear()
+}
+
 function isNativeBuiltin(t: Tree): boolean {
   return nativeBuiltinIds.has(t.id)
 }
@@ -188,7 +194,7 @@ function isEncVarMarker(t: Tree): boolean {
 // Returns null if the term contains free variables (markers) or exceeds budget.
 // This bridges the gap between the encoded CoC world and the native tree evaluator:
 // encoded applications of builtins (like boolElim, natElim) get evaluated via apply().
-function evalToNative(t: Tree, budget = { remaining: 100000 }): Tree | null {
+export function evalToNative(t: Tree, budget = { remaining: 100000 }): Tree | null {
   if (budget.remaining <= 0) return null
   budget.remaining--
 
@@ -246,7 +252,16 @@ export class CocError extends Error {
   constructor(msg: string) { super(msg) }
 }
 
+// WHNF memoization: whnfTree is deterministic and idempotent, so we cache results.
+const whnfMemo = new Map<number, Tree>()
+
+export function clearWhnfCache(): void {
+  whnfMemo.clear()
+}
+
 export function whnfTree(t: Tree, budget = { remaining: 10000 }): Tree {
+  const cached = whnfMemo.get(t.id)
+  if (cached !== undefined) return cached
   if (budget.remaining <= 0) throw new CocError("WHNF budget exhausted")
   // Native builtins are opaque values — don't decompose their internal tree structure
   if (isNativeBuiltin(t)) return t
@@ -258,10 +273,13 @@ export function whnfTree(t: Tree, budget = { remaining: 10000 }): Tree {
   const lam = isNativeBuiltin(func) ? null : unLam(func)
   if (lam) {
     const result = apply(lam.body, app.arg)
-    return whnfTree(result, budget)
+    const whnf = whnfTree(result, budget)
+    whnfMemo.set(t.id, whnf)
+    return whnf
   }
-  if (treeEqual(func, app.func)) return t
-  return encApp(func, app.arg)
+  const out = treeEqual(func, app.func) ? t : encApp(func, app.arg)
+  whnfMemo.set(t.id, out)
+  return out
 }
 
 export function normalize(t: Tree, budget = { remaining: 100000 }): Tree {
@@ -301,6 +319,7 @@ export function normalize(t: Tree, budget = { remaining: 100000 }): Tree {
 export function convertible(a: Tree, b: Tree, budget = { remaining: 10000 }): boolean {
   if (treeEqual(a, b)) return true
   const aN = whnfTree(a, budget)
+  if (treeEqual(aN, b)) return true
   const bN = whnfTree(b, budget)
   if (treeEqual(aN, bN)) return true
   const aTag = termTag(aN)
@@ -497,114 +516,6 @@ export function cocCheckRecDecl(
   return { env: newEnv, type: typeData }
 }
 
-// ============================================================
-// Phase 5: Pretty Printing
-// ============================================================
-
-let printVarCounter = 0
-const PRINT_VAR_NAMES = "abcdefghijklmnopqrstuvwxyz"
-
-function freshPrintVar(): string {
-  const idx = printVarCounter++
-  if (idx < 26) return PRINT_VAR_NAMES[idx]
-  return `v${idx}`
-}
-
-export function printEncoded(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
-  const savedCounter = printVarCounter
-  printVarCounter = 0
-  const result = printEncodedInner(t, nameMap, budget)
-  printVarCounter = savedCounter
-  return result
-}
-
-// Try to display a natively-evaluated tree as a recognizable value.
-// Unlike the encoding-level printer, LEAF here is the data value (true/zero/leaf), not Type.
-function printNativeValue(t: Tree, nameMap?: Map<number, string>): string | null {
-  // Name lookup first (handles false, boolElim, user definitions, etc.)
-  if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
-  // Primitive type markers
-  if (treeEqual(t, TREE_TYPE)) return "Tree"
-  if (treeEqual(t, BOOL_TYPE)) return "Bool"
-  if (treeEqual(t, NAT_TYPE)) return "Nat"
-  // Nat recognition: stem^n(LEAF) → n (only for n >= 1, since LEAF is ambiguous)
-  if (t.tag === "stem") {
-    let n = t, count = 0
-    while (n.tag === "stem") { count++; n = n.child }
-    if (n.tag === "leaf") return String(count)
-  }
-  return null
-}
-
-function printEncodedInner(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
-  // Recognize primitive type markers
-  if (treeEqual(t, TREE_TYPE)) return "Tree"
-  if (treeEqual(t, BOOL_TYPE)) return "Bool"
-  if (treeEqual(t, NAT_TYPE)) return "Nat"
-  if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
-  const w = whnfTree(t, budget)
-  if (treeEqual(w, TREE_TYPE)) return "Tree"
-  if (treeEqual(w, BOOL_TYPE)) return "Bool"
-  if (treeEqual(w, NAT_TYPE)) return "Nat"
-  if (nameMap && w.id !== t.id) { const name = nameMap.get(w.id); if (name) return name }
-  const tag = termTag(w)
-  switch (tag) {
-    case "type": return "Type"
-    case "var": {
-      const marker = unVar(w)!
-      if (nameMap) { const name = nameMap.get(marker.id); if (name) return name }
-      return `?${marker.id}`
-    }
-    case "app": {
-      // Try native evaluation — reduces stuck builtin chains like boolElim(Bool,false,true,x)
-      const nativeResult = evalToNative(w, { remaining: 10000 })
-      if (nativeResult !== null) {
-        const display = printNativeValue(nativeResult, nameMap)
-        if (display) return display
-      }
-      const a = unApp(w)!
-      return `${printEncodedInner(a.func, nameMap, budget)} ${printEncodedAtom(a.arg, nameMap, budget)}`
-    }
-    case "lam": {
-      const l = unLam(w)!
-      const varName = freshPrintVar()
-      const m = freshMarker()
-      const extMap = new Map(nameMap ?? [])
-      extMap.set(m.id, varName)
-      const bodyApplied = apply(l.body, encVar(m))
-      return `{${varName}} -> ${printEncodedInner(bodyApplied, extMap, budget)}`
-    }
-    case "pi": {
-      const p = unPi(w)!
-      const m = freshMarker()
-      const neutral = encVar(m)
-      const bodyApplied = apply(p.body, neutral)
-      const domStr = printEncodedInner(p.domain, nameMap, budget)
-      const isDep = treeContains(bodyApplied, neutral)
-      if (isDep) {
-        const varName = freshPrintVar()
-        const extMap = new Map(nameMap ?? [])
-        extMap.set(m.id, varName)
-        return `(${varName} : ${domStr}) -> ${printEncodedInner(bodyApplied, extMap, budget)}`
-      }
-      return `(${domStr}) -> ${printEncodedInner(bodyApplied, nameMap, budget)}`
-    }
-    default:
-      return `<tree:${w.id}>`
-  }
-}
-
-function printEncodedAtom(t: Tree, nameMap?: Map<number, string>, budget = { remaining: 10000 }): string {
-  if (nameMap) { const name = nameMap.get(t.id); if (name) return name }
-  const tag = termTag(t)
-  if (tag === "type" || tag === "var") return printEncodedInner(t, nameMap, budget)
-  return `(${printEncodedInner(t, nameMap, budget)})`
-}
-
-function treeContains(tree: Tree, target: Tree): boolean {
-  if (treeEqual(tree, target)) return true
-  if (tree.tag === "leaf") return false
-  if (tree.tag === "stem") return treeContains(tree.child, target)
-  return treeContains(tree.left, target) || treeContains(tree.right, target)
-}
+// Re-export printer from dedicated module for backward compatibility
+export { printEncoded } from "./coc-printer.js"
 

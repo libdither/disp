@@ -269,6 +269,8 @@ describe("Benchmarks", () => {
       // treeEq(fuel, leaf, leaf)
       {
         const m = applyManyMeasured(treeEqFn, [fuelTree, leafTree, leafTree])
+        // Correctness: leaf == leaf should be true (LEAF)
+        expect(isLeaf(m.result), `treeEq(${fuel},leaf,leaf) should be true`).toBe(true)
         const runEq = () => {
           const b = { remaining: 1_000_000 }
           apply(apply(apply(treeEqFn, fuelTree, b), leafTree, b), leafTree, b)
@@ -286,6 +288,8 @@ describe("Benchmarks", () => {
       {
         const s3 = mkStem(mkStem(mkStem(leafTree)))
         const m = applyManyMeasured(treeEqFn, [fuelTree, s3, s3])
+        // Correctness: stem^3 == stem^3 should be true (LEAF)
+        expect(isLeaf(m.result), `treeEq(${fuel},stem³,stem³) should be true`).toBe(true)
         const runEq = () => {
           const b = { remaining: 1_000_000 }
           apply(apply(apply(treeEqFn, fuelTree, b), s3, b), s3, b)

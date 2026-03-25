@@ -31,6 +31,25 @@ function cocPreludePath(): string {
   return fileURLToPath(new URL("../coc-prelude.disp", import.meta.url))
 }
 
+// Process a single declaration: type-check, compile, and register native builtins.
+// Shared by REPL (handleDecl) and prelude loading (loadDeclFile).
+export function processDecl(
+  name: string, type: SExpr | null, value: SExpr, isRec: boolean,
+  env: Env, defs: Map<string, Tree>,
+): { env: Env, type: Tree, compiled: Tree } {
+  const result = cocCheckDecl(env, name, type, value, isRec)
+  env = result.env
+  const compiled = isRec
+    ? compileRecAndEval(name, value, defs)
+    : compileAndEval(value, defs)
+  defs.set(name, compiled)
+  if (isRec) {
+    const encodedData = unwrapData(env.get(name)!)
+    registerNativeBuiltinId(encodedData.id, compiled)
+  }
+  return { env, type: result.type, compiled }
+}
+
 function loadDeclFile(filePath: string, env: Env, defs: Map<string, Tree>): Env {
   const content = fs.readFileSync(filePath, "utf-8")
   for (const block of mergeDefinitions(content)) {
@@ -39,18 +58,8 @@ function loadDeclFile(filePath: string, env: Env, defs: Map<string, Tree>): Env 
     const parsed = parseLine(trimmed)
     if (!("isRec" in parsed)) continue
     const sdecl = parsed as SDecl
-    const result = cocCheckDecl(env, sdecl.name, sdecl.type, sdecl.value, sdecl.isRec)
+    const result = processDecl(sdecl.name, sdecl.type, sdecl.value, sdecl.isRec, env, defs)
     env = result.env
-    const compiled = sdecl.isRec
-      ? compileRecAndEval(sdecl.name, sdecl.value, defs)
-      : compileAndEval(sdecl.value, defs)
-    defs.set(sdecl.name, compiled)
-    // For recursive defs, the encoded form (omega combinator) doesn't work with
-    // eager apply(). Register the compiled form (FIX-based) for evalToNative.
-    if (sdecl.isRec) {
-      const encodedData = unwrapData(env.get(sdecl.name)!)
-      registerNativeBuiltinId(encodedData.id, compiled)
-    }
   }
   return env
 }
