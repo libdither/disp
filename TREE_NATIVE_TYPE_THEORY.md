@@ -1,6 +1,8 @@
 # Tree-Native Type Theory
 
-A dependent type system defined directly over tree calculus terms, eliminating the need for intermediate encodings, markers, or runtime bracket abstraction.
+A dependent type system defined directly over tree calculus terms, where type annotations are embedded into the program tree itself, eliminating the need for intermediate encodings, markers, or runtime bracket abstraction.
+
+**Status**: Prototype verified in `test/tree-native-{typecheck,exhibit,annotated,dependent}.test.ts` (555 tests passing). Checker handles K, S (with type-annotated D), Triage, constructors, polymorphism, dependent types, and recursion. Elaborator adaptation is the remaining engineering task.
 
 ## Motivation
 
@@ -44,19 +46,21 @@ S(S(K(add))(I))(I)
 
 Every S tells us "the argument is used here." Every K tells us "the argument is ignored here." Every triage tells us "pattern-match on the argument." These are exactly the structural features a type checker needs to verify.
 
-**We don't need the encoding layer.** We can type-check the compiled tree directly.
+**We don't need the encoding layer.** We can type-check the compiled tree directly — if we annotate S nodes with the one piece of information that's missing: the intermediate type D.
 
 ### What We Gain
 
-| | CoC Encoding | Direct Tree Typing |
+| | CoC Encoding | Tree-Native (Annotated) |
 |---|---|---|
 | Term representation | 5-way tagged encoding | Raw tree (leaf/stem/fork) |
 | Variable mechanism | Unique marker trees | None needed |
 | Opening a binder | Apply body to marker | Nothing (already open) |
 | Closing a binder | `abstractOut` — O(n) per binder | Nothing (already closed) |
+| Type equality | `convertible` — WHNF + structural compare | `treeEqual` — O(1) hash-consing |
 | Dispatch | 5-way TERM_CASE | 3-way triage (built into tree calculus) |
-| Environment | Church list (O(n) lookup) | None needed |
-| Type checker structure | Complex step function | Nested triage |
+| Environment | Church list (O(n) lookup) | Known-defs map (O(1) lookup) |
+| Type annotations | Separate tree | Embedded at S nodes |
+| Checker interface | `check(program, type, derivation)` | `check(annotated_tree, type)` |
 
 ---
 
@@ -84,26 +88,62 @@ Each category has a natural typing rule.
 
 ### Types as Trees
 
-Types are encoded as trees using a simple scheme:
-
 ```
 Type        = leaf                      The type of types
 Tree        = stem(leaf)                The type of all trees
 Bool        = stem(stem(leaf))          Booleans (leaf=true, stem(leaf)=false)
 Nat         = stem(stem(stem(leaf)))    Naturals (leaf=zero, stem(n)=succ(n))
-Pi(A, B)    = fork(A, B)               Dependent function: B is a tree computing the codomain
-A -> B      = fork(A, fork(leaf, B))    Non-dependent function (special case: B = K(B₀))
+Pi(A, B)    = fork(A, B)               Dependent function: B computes codomain
+A -> B      = fork(A, fork(leaf, B))   Non-dependent: B = K(B₀) returns constant
 ```
 
-Non-dependent function types `A -> B` are a special case of `Pi(A, B)` where `B = K(B₀) = fork(leaf, B₀)`. Applying `B` to any argument returns `B₀` — the codomain doesn't depend on the input.
+Non-dependent `A -> B` is a special case of `Pi(A, B)` where `B = K(B₀)`. `apply(K(B₀), x) = B₀` for all x.
 
-For dependent functions like `(n : Nat) -> Vec n`, `B` is a tree function that computes the codomain from the argument: `apply(B, 3) = Vec 3`.
+For dependent functions like `(n : Nat) -> Vec n`, `B` is a tree function: `apply(B, 3) = Vec 3`.
+
+### The Annotated Tree Format
+
+The type annotations are **embedded directly into the program tree**. Only S nodes carry extra information (the intermediate type D). K, Triage, leaf, and stem are identical in raw and annotated form:
+
+```
+Raw program              Annotated (superimposed)
+────────────             ────────────────────────
+fork(leaf, v)            fork(leaf, ann_v)                    K — IDENTICAL
+fork(stem(c), b)         fork(stem(D), fork(ann_c, ann_b))   S — D in stem slot
+fork(fork(c,d), b)       fork(fork(ann_c, ann_d), ann_b)     Triage — IDENTICAL
+leaf                     leaf                                 IDENTICAL
+stem(a)                  stem(ann_a)                          IDENTICAL
+```
+
+The checker dispatches with **one triage on the left child** — same as for raw programs:
+- `leaf` → K rule
+- `stem(D)` → S rule (D is right there in the stem)
+- `fork(c,d)` → Triage rule
+
+The pure executable program is extractable in O(n):
+```
+extract(fork(stem(D), fork(c, b))) = fork(stem(extract(c)), extract(b))   -- strip D, repack
+extract(fork(leaf, v))             = fork(leaf, extract(v))                -- K: pass through
+extract(fork(fork(c, d), b))       = fork(fork(extract(c), extract(d)), extract(b))  -- Triage: pass through
+```
+
+### Structural Type Theory Correspondence
+
+The annotated tree is a **proof term in structural type theory** with the typing context distributed at contraction points:
+
+| Structural rule | Combinator | Annotation | Context role |
+|---|---|---|---|
+| **Weakening** (discard) | K(v) | None | Argument unused → no context entry |
+| **Contraction** (share) | S(c, b) | D = type of shared value | Argument used multiply → D records its type |
+| **Elimination** (destruct) | Triage(c, d, b) | None | Domain type determines branch types |
+
+In a traditional context `Γ, x : Nat ⊢ add x x : Nat`, the single entry `x : Nat` covers all uses. In the annotated tree, each S node independently records `D = Nat` — the type of the value flowing through that contraction point.
+
+K=weakening and S-involves-contraction are known correspondences (Curry 1963, BCK/BCI logic). The triage=elimination identification and D-as-contraction-witness interpretation are new to tree calculus.
 
 ### The Typing Rules
 
 #### Rule 0: Base Types
-
-Every tree is a valid `Tree`. Subtypes are checked structurally:
 
 ```
 check(t, Tree) = true                           Everything is a tree
@@ -113,90 +153,42 @@ check(leaf, Bool) = true                         leaf = true
 check(stem(leaf), Bool) = true                   stem(leaf) = false
 ```
 
-**Example**: Is `stem(stem(leaf))` a valid `Nat`?
-```
-check(stem(stem(leaf)), Nat)
-  = check(stem(leaf), Nat)          succ(?) — check inner
-  = check(leaf, Nat)                succ(?) — check inner
-  = true                            zero!
-→ stem(stem(leaf)) = succ(succ(zero)) = 2 : Nat  ✓
-```
+#### Rule 1: K — Weakening (Constant Functions)
 
-#### Rule 1: K — Constant Functions
-
-`fork(leaf, v)` is the K combinator: applied to any argument, it returns `v`.
+`fork(leaf, ann_v)` in annotated form. K ignores its argument; the value `v` must have the codomain type.
 
 ```
-K(v) : A -> B    if    v : B
+K(v) : Pi(A, B)    if    v : apply(B, _) for all _ : A
 ```
 
-K ignores its argument entirely, so the codomain must not depend on the argument, and `v` must have the codomain type.
+Non-dependent case (`B = K(B₀)`): just check `v : B₀`.
 
-**Example**: `K(true) : Nat -> Bool`
+Polymorphic case (`A = Type`): introduce abstract type marker α, check `v : apply(B, α)`.
 
-```
-K(true) = fork(leaf, leaf)
+Bool case: exhaustive — check `v : apply(B, true)` and `v : apply(B, false)`.
 
-check(fork(leaf, leaf), Nat -> Bool):
-  K form: check the value (leaf) against the codomain (Bool)
-  check(leaf, Bool) = true   ✓
+#### Rule 2: S — Contraction (Shared Application)
 
-→ K(true) : Nat -> Bool  ✓     (for any n:Nat, K(true)(n) = true : Bool)
-```
-
-**Example**: `flip = K(I) : A -> B -> B`
+`fork(stem(D), fork(ann_c, ann_b))` in annotated form. **D is read directly from the tree.**
 
 ```
-K(I) = fork(leaf, fork(fork(leaf, leaf), leaf))
-
-check(K(I), A -> B -> B):
-  K form: check I against B -> B
-  check(I, B -> B):
-    ...triage rule (see below)...  ✓
-
-→ K(I) : A -> B -> B  ✓        (flip x y = I y = y)
+S(c, b) : Pi(A, B)    if    b : Pi(A, D)
+                             c : Pi(A, x → Pi(D(x), B(x)))
 ```
 
-#### Rule 2: S — Shared Application
+D is the intermediate type: `b` computes a D-value from the argument, `c` takes both and produces the result.
 
-`fork(stem(c), b)` is the S combinator: `S(c, b)(x) = c(x)(b(x))`. Both `c` and `b` receive the argument `x`; `c(x)` is then applied to `b(x)`.
+For non-dependent D and B: `c : A → D₀ → B₀` and `b : A → D₀`.
 
+For dependent S, the checker constructs c's codomain function as a tree:
 ```
-S(c, b) : A -> E    if    c : A -> D -> E    and    b : A -> D
+sCodomain(D, B) = S(S(K(leaf), D), S(K(K), B))
 ```
+where `apply(sCodomain(D, B), x) = Pi(apply(D, x), K(apply(B, x)))`.
 
-Here D is an **intermediate type**: `b` computes a value of type D from the argument, and `c` takes both the argument and this intermediate value to produce the result.
+#### Rule 3: Triage — Elimination (Pattern Matching)
 
-**The challenge**: D doesn't appear in the expected type `A -> E`. It must come from somewhere. In the proof-carrying approach, the program is paired with a **derivation** that records D for each S node. More on this below.
-
-**Example**: `double = S(S(K(add))(I))(I) : Nat -> Nat`
-
-The derivation tells us D = Nat for the outer S. Reading it:
-
-```
-S(S(K(add))(I), I) : Nat -> Nat
-
-Outer S: c = S(K(add))(I), b = I, D = Nat
-  b = I : Nat -> Nat (identity — returns argument unchanged)
-  So D = Nat (b's return type)
-
-  c = S(K(add))(I) must have type Nat -> Nat -> Nat:
-    Inner S: c' = K(add), b' = I, D' = Nat
-      b' = I : Nat -> Nat  ✓
-      c' = K(add): check add against Nat -> Nat -> Nat
-        add : Nat -> Nat -> Nat (from context)  ✓
-      K(add) : Nat -> (Nat -> Nat -> Nat)  ✓
-    S(K(add), I) : Nat -> (Nat -> Nat)  ✓
-    Which is Nat -> Nat -> Nat  ✓
-
-→ S(S(K(add))(I), I) : Nat -> Nat  ✓
-```
-
-Notice what happened: the entire type derivation was structural recursion on the tree. No markers. No environment. No `abstractOut`. Just reading the S/K structure.
-
-#### Rule 3: Triage — Dependent Elimination
-
-`fork(fork(c, d), b)` is the triage combinator: it dispatches on its argument's tag.
+`fork(fork(ann_c, ann_d), ann_b)` in annotated form — identical to raw.
 
 ```
 triage(c, d, b)(leaf)       = c
@@ -204,304 +196,121 @@ triage(c, d, b)(stem(u))    = d(u)
 triage(c, d, b)(fork(u, v)) = b(u)(v)
 ```
 
-This IS the dependent eliminator for Tree. The typing rule depends on what type the argument has:
+Dispatch on the domain type A:
 
-**Eliminating Tree** (the full induction principle):
+**Tree domain** (all three branches):
 ```
-Triage(c, d, b) : Tree -> R    if    c : R
-                                      d : Tree -> R
-                                      b : Tree -> Tree -> R
-```
-
-**Eliminating Nat** (nat values are leaf or stem(n), never fork):
-```
-Triage(c, d, b) : Nat -> R     if    c : R              (zero case)
-                                      d : Nat -> R        (succ case)
+c : apply(B, leaf)
+d : Pi(Tree, stemCodomain(B))      where stemCodomain(B) = S(K(B), leaf)
+b : Pi(Tree, forkCodomain(B))      where forkCodomain(B) = S(K(stem(stem(K(B)))), leaf)
 ```
 
-**Eliminating Bool** (bool values are leaf=true or stem(leaf)=false):
+**Nat domain** (leaf + stem only, no fork nats):
 ```
-Triage(c, d, b) : Bool -> R    if    c : R              (true case)
-                                      apply(d, leaf) : R  (false case)
-```
-
-For Bool, there's only one possible stem value: `stem(leaf) = false`. So the stem handler `d` is evaluated on `leaf` (the inner value of `stem(leaf)`), and we check that the result has type R.
-
-**Example**: `not : Bool -> Bool`
-
-```
-not = fork(fork(stem(leaf), fork(leaf, leaf)), fork(leaf, fork(leaf, stem(leaf))))
-    = Triage(c = false,  d = K(true),  b = K(K(false)))
-
-check(not, Bool -> Bool):
-  Triage form, input type = Bool, return type R = Bool:
-
-  true case:  check(c, Bool) = check(stem(leaf), Bool) = true  ✓
-              (true -> false, and false : Bool)
-
-  false case: check(apply(d, leaf), Bool)
-              d = K(true) = fork(leaf, leaf)
-              apply(fork(leaf, leaf), leaf) = leaf = true
-              check(leaf, Bool) = true  ✓
-              (false -> true, and true : Bool)
-
-→ not : Bool -> Bool  ✓
+c : apply(B, leaf)                  zero case
+d : Pi(Nat, stemCodomain(B))        succ case
 ```
 
-**Example**: `I : Nat -> Nat` (identity preserves Nat)
-
+**Bool domain** (leaf + specific stem):
 ```
-I = fork(fork(leaf, leaf), leaf) = Triage(leaf, leaf, leaf)
+c : apply(B, leaf)                  true case
+apply(d, leaf) : apply(B, stem(leaf))   false case (stem(leaf) = false)
+```
 
-check(I, Nat -> Nat):
-  Triage form, input type = Nat, return type R = Nat:
+**Abstract domain α** (polymorphic — all branches, identity rule):
+```
+If output = input in a branch, the type is preserved (identity rule).
+I = Triage(leaf, leaf, leaf) : α → α works because each branch returns its input.
+```
 
-  zero case: check(leaf, Nat) = true  ✓
-             (zero -> zero = leaf -> leaf)
-
-  succ case: check(leaf, Nat -> Nat)
-             leaf as a function: apply(leaf, n) = stem(n) = succ(n)
-             If n : Nat, then succ(n) : Nat  ✓
-             (succ(n) -> succ(n), preserving Nat)
-
-→ I : Nat -> Nat  ✓
+The dependent codomain helpers are S/K combinators:
+```
+stemCodomain(B)  = S(K(B), leaf)                    computes [u] apply(B, stem(u))
+forkCodomain(B)  = S(K(stem(stem(K(B)))), leaf)     computes [u][v] apply(B, fork(u,v))
+sCodomain(D, B)  = S(S(K(leaf), D), S(K(K), B))     computes [x] Pi(D(x), K(B(x)))
 ```
 
 #### Leaf and Stem as Functions
 
-`leaf` and `stem(a)` can appear in function position:
+```
+leaf : Nat → Nat          stem(n) = succ(n) preserves Nat
+leaf : Tree → Tree         stem(anything) is a tree
+leaf : Bool → Nat          stem maps bools to {1, 2}
+leaf : Bool → Bool         REJECTED — stem(false) = stem(stem(leaf)) ∉ Bool
 
-```
-apply(leaf, x) = stem(x)         leaf is the stem constructor
-apply(stem(a), x) = fork(a, x)   stem(a) is the fork-with-a constructor
-```
-
-Typing:
-```
-leaf : Tree -> Tree                always valid (stem is a tree constructor)
-leaf : Nat -> Nat                  valid because stem(n) = succ(n) preserves Nat
-stem(a) : Tree -> Tree             always valid (fork is a tree constructor)
+stem(leaf) = K : A → (B → A)   fork(leaf, x) = K(x), returns x discarding second arg
 ```
 
-### Dependent Types
+#### Polymorphism — The Identity Rule
 
-For dependent function types `Pi(A, B)` where `B : A -> Type`, the codomain depends on the argument value.
+For `K(I) : Pi(Type, α → α)`: introduce abstract type marker α, check `I : α → α`.
 
-**Dependent Triage**: When checking `Triage(c, d, b) : (t : Tree) -> P(t)`:
-
-```
-c : P(leaf)                                   leaf case, specific return type
-d : (u : Tree) -> P(stem(u))                  stem case, return type depends on u
-b : (u : Tree) -> (v : Tree) -> P(fork(u,v))  fork case, return type depends on u and v
-```
-
-The motive `P` is a tree function. Evaluating `apply(P, leaf)` gives the expected type for the leaf case. Evaluating `apply(P, stem(u))` gives the expected type for the stem case.
-
-**Dependent S**: For `S(c, b) : Pi(A, B)`:
+In each triage branch over an abstract domain, the checker tracks the **input assumption**: the input value has the domain type. If the output equals the input, the type is preserved.
 
 ```
-c : Pi(A, x -> Pi(D(x), B(x)))
-b : Pi(A, D)
+I = Triage(leaf, leaf, leaf) : α → α
+
+leaf branch:  input = leaf : α, output = leaf = input → output : α  ✓
+stem branch:  d = leaf, d(u) = stem(u) = input → output : α         ✓
+fork branch:  b = leaf, b(u)(v) = fork(u,v) = input → output : α    ✓
 ```
 
-Both D and the relationship between D and B can depend on the argument. The derivation carries D as a tree function.
+This handles the polymorphic identity, polymorphic const (`K(K(K))`), and any function that preserves its input.
+
+#### Recursion — FIX Rule
+
+```
+fix(step) : T    if    step : T → T
+```
+
+The step function is checked against `T → T`. The fixed point is registered in a known-definitions context. At check time, the checker looks up `fix(step)` by tree ID and confirms the type matches.
 
 ### The Hierarchy of Power
 
-Each tree calculus evaluation rule corresponds to a type-theoretic capability. Adding rules to the checker progressively increases the power of the type system:
+Each combinator rule corresponds to a type-theoretic capability:
 
-**Base types** (triage on type tag):
-```
-Check membership: "3 : Nat", "true : Bool"
-No functions.
-```
+| Rule | Capability | Structural correspondence |
+|---|---|---|
+| Base types | Membership checking | Type dispatch on stem-chain structure |
+| K | Constant functions | Weakening — discard unused argument |
+| Triage | Pattern matching / elimination | Induction principle for Tree/Nat/Bool |
+| S | Shared arguments / composition | Contraction — use argument multiply |
+| Dependent B | Return type depends on input | Curry-Howard (types as propositions) |
+| Universes | `Type₀ : Type₁ : Type₂ : ...` | Prevents Girard's paradox |
+| Identity types | `Id(A, a, b)` proofs | Hash-consing equality = `fastEq` |
 
-**K rule** (constant functions):
-```
-Check functions that ignore their argument: "K(true) : Nat -> Bool"
-Corresponds to weakening in structural type theory.
-```
-
-**Triage rule** (pattern matching):
-```
-Check functions that dispatch on their argument's tag: "not : Bool -> Bool"
-Corresponds to the induction principle for Tree (and derived types Nat, Bool).
-This is where computation enters the type system.
-```
-
-**S rule** (shared arguments):
-```
-Check functions that use their argument multiple times: "{x} -> add x x : Nat -> Nat"
-Corresponds to contraction in structural type theory.
-Without S, each argument can be used at most once.
-```
-
-**Dependent codomains**:
-```
-Check functions whose return type depends on the input value.
-Pi(Nat, n -> Vec(n)) — "a vector whose length matches the input"
-This is what makes the type system a logic (Curry-Howard).
-```
-
-**Universe hierarchy** (level tracking):
-```
-Type₀ : Type₁ : Type₂ : ...
-Adds a natural number parameter to the checker that tracks universe levels.
-Pi(A : Type_n, B : Type_m) : Type_max(n,m)
-Prevents Girard's paradox (Type : Type is inconsistent).
-```
-
-**Identity types + J eliminator**:
-```
-Id(A, a, b) — the type of proofs that a equals b.
-In tree calculus, identity is hash-consing equality: a.id == b.id.
-J (path induction) is trivially sound since the only proof is refl.
-Nearly free — just a fastEq check.
-```
-
-Each level adds one operation to the type checker and one class of programs becomes verifiable. Everything through identity types maps cleanly to tree calculus operations.
-
-### Where the Pattern Breaks
-
-**Univalence** (equivalence ≃ equality) requires changing what type equality *means*. In tree calculus, type equality is structural identity (same tree). Univalence demands that equivalent types (with bijective functions between them) are considered equal, even when they're different trees. This is a foundational change, not an added operation.
-
-**Higher Inductive Types** (constructors for paths) require identity proofs beyond `refl`. In tree calculus, every tree has a unique normal form, so there's no room for distinct paths between the same endpoints. HITs would need a quotient mechanism layered on top of tree calculus.
+Everything through identity types maps cleanly to tree calculus operations. Univalence and HITs would require mechanisms beyond structural tree identity.
 
 ---
 
 ## Implementation
 
-### Phase 1: K + Triage Checker (No Derivations)
+### Hash-Consing and Memoization
 
-The simplest useful checker handles K forms and triage without needing the S rule or derivations. This already covers:
-- All constants (from a context mapping tree IDs to types)
-- `not : Bool -> Bool` (triage)
-- `I : Nat -> Nat` (triage)
-- `K(v) : A -> B` (any constant function)
+Trees are hash-consed: structurally equal trees share the same ID. This gives:
 
-The checker is a single tree-calculus function built with `compileTree(...)`:
+- **O(1) type equality**: `treeEqual(a, b)` replaces `convertible(a, b)` — no WHNF or structural comparison needed, since trees are always in normal form.
+- **Memoized checking**: cache key `(annotated_tree.id, type.id) → bool`. Sub-expression sharing is automatic — checking the same annotated sub-tree against the same type computes once.
+- **D sharing**: if multiple S nodes use the same intermediate type (e.g., D = K(Nat)), hash-consing ensures D is stored once.
 
+Measured on `double = S(S(K(add), I), I) : Nat → Nat`:
 ```
-check(ctx, tree, type) : Bool
-
-Dispatch on type:
-  leaf         → isValidType(tree)
-  stem(tag)    → checkBaseType(tree, tag)      (Tree/Bool/Nat membership)
-  fork(A, B)   → checkPi(ctx, tree, A, B)      (function types)
-
-checkPi dispatches on tree structure:
-  leaf             → checkLeafAsFn(A, B)        (stem constructor)
-  stem(a)          → checkStemAsFn(a, A, B)     (fork constructor)
-  fork(leaf, v)    → check(ctx, v, apply(B, leaf))     (K rule)
-  fork(fork(c,d),b)→ checkTriage(ctx, c, d, b, A, B)  (elimination)
-  fork(stem(c), b) → false                      (S rule — Phase 2)
+Check calls (actual work): 6
+Cache hits (free):         2
 ```
 
-The triage checker dispatches on the input type A:
-```
-checkTriage(ctx, c, d, b, A, B):
-  R = apply(B, leaf)    (evaluate codomain at a dummy — works for non-dependent B)
+The two `I` nodes (hash-consed, same ID) share the `I : Nat → Nat` check result.
 
-  if A == Tree:
-    check(ctx, c, R) AND check(ctx, d, Tree -> R) AND check(ctx, b, Tree -> Tree -> R)
-  if A == Nat:
-    check(ctx, c, R) AND check(ctx, d, Nat -> R)
-  if A == Bool:
-    check(ctx, c, R) AND check(ctx, apply(d, leaf), R)
-```
+### Overhead of the Annotated Format
 
-The entire checker compiles to a tree constant via nested triage — no TERM_CASE, no markers, no environment.
+| Program | Raw nodes | Annotated nodes | Overhead |
+|---|---|---|---|
+| K(1) | 4 | 4 | +0 (identical) |
+| I (identity) | 5 | 5 | +0 (identical) |
+| S(K(succ), succ) | 6 | 13 | +7 (one D) |
+| double S(S(K(add),I),I) | 26 | 40 | +14 (two D's) |
 
-**Testing strategy**: For each test in `coc.test.ts`, compile the surface expression to a tree, then verify `check(compiled_tree, expected_type) = true`. Compare step counts against the existing TYPECHECK.
-
-### Phase 2: S Rule with Derivations
-
-The S rule requires an intermediate type D that isn't present in the tree or the expected type. The solution: **proof-carrying code**. The compiler emits a derivation tree alongside the program.
-
-A derivation mirrors the program structure:
-
-```
-For K(v):            deriv(v_derivation)
-For S(c, b):         fork(D, fork(c_derivation, b_derivation))
-For Triage(c,d,b):   fork(c_derivation, fork(d_derivation, b_derivation))
-For leaf/constant:   leaf
-```
-
-The extended checker:
-
-```
-check(ctx, tree, type, derivation) : Bool
-```
-
-For the S case:
-```
-fork(stem(c), b) with derivation fork(D, fork(drvC, drvB)):
-  E = apply(B, leaf)
-  check(ctx, b, Pi(A, D), drvB) AND check(ctx, c, Pi(A, x -> Pi(D, E)), drvC)
-```
-
-The compiler (already in TypeScript) knows all intermediate types during bracket abstraction. Emitting derivations is a natural extension of the compilation process — at each step of bracket abstraction, record the types alongside the S/K/I construction:
-
-```
-[x : A] body:
-  If body = x:           emit I,        derivation = leaf
-  If x not in body:      emit K(body),  derivation = derive(body)
-  If body = (f g):       emit S(cf, cg), derivation = fork(D, fork(derive(cf), derive(cg)))
-    where D = return type of cg, cf = [x]f, cg = [x]g
-```
-
-### Phase 3: Dependent Types
-
-The codomain `B` in `Pi(A, B)` becomes a genuine function. The checker evaluates `apply(B, value)` to compute the actual codomain for a specific argument.
-
-For dependent triage with motive `P : A -> Type`:
-```
-Triage(c, d, b) : Pi(A, P)
-
-check c   against apply(P, leaf)
-check d   against Pi(A_inner, u -> apply(P, stem(u)))
-check b   against Pi(A_inner, u -> Pi(A_inner, v -> apply(P, fork(u, v))))
-```
-
-The codomain computation uses the existing tree calculus `apply()` — the evaluator and the type checker share the same reduction machinery.
-
-### Phase 4: Universe Hierarchy
-
-Add a universe level parameter:
-
-```
-check(ctx, tree, type, derivation, level) : Bool
-```
-
-Types are annotated with levels:
-```
-Type_n = fork(leaf, n)     where n is a nat (level)
-```
-
-The Pi rule computes the maximum level:
-```
-Pi(A : Type_n, B : Type_m) : Type_max(n, m)
-```
-
-Universe checking adds one `max` computation and one `≤` comparison per typing rule. Both are trivial tree-calculus functions on nats.
-
-### Phase 5: Identity Types
-
-Identity types leverage hash-consing:
-
-```
-Id(A, a, b) : Type    — the type of proofs that a = b
-
-refl(a) : Id(A, a, a) — the constructor (only exists when a = a)
-
-J : (A : Type) -> (P : (a : A) -> (b : A) -> Id(A,a,b) -> Type) ->
-    ((a : A) -> P(a, a, refl(a))) ->
-    (a : A) -> (b : A) -> (p : Id(A,a,b)) -> P(a, b, p)
-```
-
-In tree calculus, checking `refl(a) : Id(A, a, b)` reduces to `fastEq(a, b)`. The J eliminator pattern-matches on identity proofs — since the only proof is `refl`, J simply returns the base case.
-
-The checker operation: one `fastEq` call per identity type check.
+Only S nodes gain overhead. Cost per S node ≈ `|D|` tree nodes (≈5 for K(Nat)).
 
 ### Architecture
 
@@ -509,27 +318,84 @@ The checker operation: one `fastEq` call per identity type check.
                     ┌──────────────────────────┐
 Surface syntax      │  {x : Nat} -> add x x    │
                     └───────────┬──────────────┘
-                                │ parse
+                                │ parse + elaborate (existing buildWrapped,
+                                │   adapted to emit annotated trees)
                     ┌───────────▼──────────────┐
-AST                 │  Lam("x", Nat, App(...)) │
+Annotated tree      │  fork(stem(K(Nat)),       │
+                    │    fork(                   │
+                    │      fork(stem(K(Nat)),    │  ← D=Nat at each S node
+                    │        fork(K(add), I)),   │
+                    │      I))                   │
+                    │                            │
+                    │  type = Nat → Nat          │
                     └───────────┬──────────────┘
-                                │ bracket abstraction + type-directed derivation
+                                │ check(annotated_tree, type)
                     ┌───────────▼──────────────┐
-Compiled output     │  fork(program, fork(type, derivation))  │
-                    │                          │
-                    │  program = S(S(K(add))(I))(I)           │
-                    │  type    = fork(Nat, fork(leaf, Nat))   │
-                    │  derivation = fork(Nat, fork(...))      │
+Tree-native checker │  ONE triage per node:     │
+                    │    leaf? → K rule          │
+                    │    stem(D)? → S rule       │
+                    │    fork(c,d)? → Triage     │
+                    │  → true / false            │
                     └───────────┬──────────────┘
-                                │ check(program, type, derivation)
+                                │ extract(annotated_tree)
                     ┌───────────▼──────────────┐
-Tree-native checker │  triage on type           │
-                    │  triage on tree structure  │
-                    │  triage on S/K/Triage form │
-                    │  → true / false           │
+Executable program  │  S(S(K(add))(I))(I)       │
                     └──────────────────────────┘
 ```
 
-The checker is a single tree constant, built from nested triages. No TERM_CASE. No markers. No environment. No `abstractOut`. The program, its type, and its derivation are all trees. Checking is evaluation.
+The checker is a single tree constant built from nested triages. Two inputs: annotated tree + type. One output: bool.
 
-This is the GOALS.md vision realized: **"turn type checker into a function that takes a program and returns 1 or 0."** The function is a tree. The program is a tree. The result is leaf (well-typed) or stem(leaf) (ill-typed).
+### What the Checker Handles
+
+| Program class | Status | Requirements |
+|---|---|---|
+| Constants K(v) | Full | None |
+| Pattern match Triage | Full | None |
+| Identity I | Full | None |
+| Constructors leaf/stem | Full | None |
+| Composition S(c,b) | Full | D annotation at S node |
+| Nested S | Full | D per S node |
+| Recursion fix(step) | Full | step : T→T check + context |
+| Polymorphic id/const | Full | Abstract type + identity rule |
+| Ground-type prelude (not, add, mul...) | Full | D annotations + context |
+| Dependent triage (motives) | Full | Codomain helpers |
+| Dependent S | Full | sCodomain(D, B) |
+
+**Partially handled**: polymorphic fold (annotation must track type variable R through S nodes), higher-order args (many S nodes = many D annotations), complex recursion (annotation generation challenge).
+
+**Not handled**: Church-encoded types (Pair, Either — need type declaration system), indexed families (Vec n — need W-types), type inference (need constraint solver).
+
+### Remaining Work
+
+**1. Elaborator Adaptation (~300 LOC)** — the main engineering task.
+
+`buildWrapped` in `coc.ts` currently outputs CoC-encoded terms. It needs to output annotated trees:
+
+- Track types during bracket abstraction to emit D at S nodes
+- Replace `convertible()` with `treeEqual()` (hash-consing equality)
+- Replace `abstractMarkerOut` with direct bracket abstraction into annotated form
+- Markers still used internally during elaboration; output is annotation-only
+
+**2. Tree-Constant Checker** — compile the TypeScript checker prototype to a tree calculus function (like `inferStep` in `tree-native.ts`). This makes the checker self-referential: a tree that verifies other trees.
+
+**3. Prelude Validation** — compile each `prelude.disp` definition to an annotated tree and verify the checker accepts it. This is the integration milestone.
+
+### Prior Art and Novelty
+
+Type checking on S/K/I combinators (simple types) is classical — Curry & Feys 1958, Hindley 1969. The K=weakening and S=contraction correspondences date to Curry 1963 and BCK/BCI logic.
+
+Dependent types on combinators is an active research frontier: Altenkirch et al. (FSCD 2023, "Combinatory Logic and Lambda Calculus Are Equal, Algebraically") work algebraically with categories of families; Zaldivar Aiello (2024) adds an M combinator for SKPi. Neither produces a practical checking algorithm.
+
+**Novel contributions of this design**:
+1. **Dependent type checking as structural dispatch on tree calculus** — the concrete algorithm
+2. **The annotated tree format** — type annotations embedded at S nodes, K/Triage unchanged
+3. **Triage as dependent elimination** with stemCodomain/forkCodomain helpers — tree-calculus-specific
+4. **The structural type theory correspondence** — D as contraction witness, context distributed at S nodes
+5. **Dependent types for tree calculus specifically** — Barry Jay's work only covers simple types / System F
+
+### Validated Test Files
+
+- `test/tree-native-typecheck.test.ts` — core checker prototype (93 tests): K, Triage, S with D annotation, polymorphism, FIX, identity rule
+- `test/tree-native-exhibit.test.ts` — concrete (tree, type, annotation) triples for each program class (27 tests)
+- `test/tree-native-annotated.test.ts` — annotated format, extraction, memoization, context equivalence (35 tests)
+- `test/tree-native-dependent.test.ts` — dependent codomain helpers, dependent triage/S, gap analysis (17 tests)
