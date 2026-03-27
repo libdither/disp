@@ -11,6 +11,7 @@
 // Annotated tree format (D embedded at S nodes):
 //   fork(leaf, ann_v)                      K — unchanged
 //   fork(stem(D), fork(ann_c, ann_b))      S — D in stem slot
+//   fork(stem(T), stem(body))              Ascription — "body has type T, trust it"
 //   fork(fork(ann_c, ann_d), ann_b)        Triage — unchanged
 //   leaf                                   constructor — unchanged
 //   stem(ann_a)                            constructor — unchanged
@@ -36,6 +37,7 @@ export function tnPi(A: Tree, B: Tree): Tree { return fork(A, B) }
 export function annK(annV: Tree): Tree { return fork(LEAF, annV) }
 export function annS(D: Tree, annC: Tree, annB: Tree): Tree { return fork(stem(D), fork(annC, annB)) }
 export function annTriage(annC: Tree, annD: Tree, annB: Tree): Tree { return fork(fork(annC, annD), annB) }
+export function annAscribe(type: Tree, body: Tree): Tree { return fork(stem(type), stem(body)) }
 
 // ============================================================
 // Program extraction (strip D annotations from S nodes)
@@ -50,6 +52,10 @@ export function extract(ann: Tree): Tree {
     return fork(LEAF, extract(ann.right))
   }
   if (isStem(ann.left)) {
+    // Ascription: fork(stem(T), stem(body)) → body (unwrap)
+    if (isStem(ann.right)) {
+      return ann.right.child
+    }
     // Annotated S: fork(stem(D), fork(ann_c, ann_b))
     // → fork(stem(extract(c)), extract(b))
     if (isFork(ann.right)) {
@@ -203,9 +209,12 @@ export function checkAnnotated(
   // Known definition lookup — only for fork-shaped programs (actual combinators).
   // Leaf and stem trees can inhabit multiple types (e.g., LEAF = zero = true = leaf,
   // stem(LEAF) = false = K = succ(zero)), so we never short-circuit on them.
+  // When a known def's registered type matches, accept immediately.
+  // When it doesn't match, fall through to structural checking — the def may be
+  // polymorphic (e.g., I : Tree -> Tree used at Nat -> Nat).
   if (isFork(prog) && isFork(type)) {
     const known = defs.get(prog.id)
-    if (known !== undefined) return treeEqual(known, type)
+    if (known !== undefined && treeEqual(known, type)) return true
   }
 
   // Abstract type — identity rule
@@ -243,6 +252,12 @@ export function checkAnnotated(
              checkAnnotated(defs, annV, apply(B, stem(LEAF)), undefined, depth + 1)
     }
     return checkAnnotated(defs, annV, apply(B, LEAF), undefined, depth + 1)
+  }
+
+  // === Ascription: fork(stem(T), stem(body)) ===
+  if (isStem(ann.left) && isStem(ann.right)) {
+    const ascribedType = ann.left.child
+    return treeEqual(ascribedType, type)
   }
 
   // === S: fork(stem(D), fork(ann_c, ann_b)) ===

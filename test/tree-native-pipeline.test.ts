@@ -23,6 +23,7 @@ import {
   type KnownDefs, checkAnnotated,
 } from "../src/tree-native-checker.js"
 import { convertCocType, annotateTree, nativeCheckDecl } from "../src/tree-native-elaborate.js"
+import { clearPreludeCache } from "../src/prelude.js"
 
 // ============================================================
 // Test setup: build a minimal environment with primitive builtins
@@ -40,6 +41,7 @@ function setupEnv() {
   resetMarkerCounter()
   clearNativeBuiltins()
   clearWhnfCache()
+  clearPreludeCache()
 
   // Inject primitive types
   for (const [name, marker, nativeType] of [

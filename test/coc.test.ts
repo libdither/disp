@@ -16,7 +16,7 @@ import {
   FST, SND, CHILD, ENC_APP_T, ENC_LAM_T, ENC_PI_T,
   TERM_CASE, TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
 } from "../src/tree-native.js"
-import { loadPrelude, buildNameMap } from "../src/prelude.js"
+import { loadCocPrelude, buildNameMap, clearPreludeCache } from "../src/prelude.js"
 import { eTree, eFvar, eApp, bracketAbstract, collapse, collapseAndEval, compileRecAndEval, compileAndEval } from "../src/compile.js"
 import { parseExpr, parseLine, type SExpr, type SDecl } from "../src/parse.js"
 
@@ -34,6 +34,7 @@ function declEnv(decls: string[], env: Env = new Map()): Env {
 beforeEach(() => {
   resetMarkerCounter()
   clearNativeBuiltins()
+  clearPreludeCache()
 })
 
 // ============================================================
@@ -536,7 +537,7 @@ describe("Phase 5: REPL Integration", () => {
     const r = processLine(state, "let Bool : Type := (R : Type) -> R -> R -> R")
     expect(r).toContain("Bool")
     expect(r).toContain("Type")
-    expect(state.cocEnv.has("Bool")).toBe(true)
+    expect(state.nativeEnv.has("Bool")).toBe(true)
   })
 
   it("processLine handles expressions", () => {
@@ -561,11 +562,11 @@ describe("Phase 5: REPL Integration", () => {
 
 describe("CoC Prelude", () => {
   it("loads without errors", () => {
-    expect(() => loadPrelude()).not.toThrow()
+    expect(() => loadCocPrelude()).not.toThrow()
   })
 
   it("defines all expected builtins", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     const expected = [
       "Tree", "Bool", "Nat",
       "leaf", "stem", "fork", "triage",
@@ -580,20 +581,20 @@ describe("CoC Prelude", () => {
   })
 
   it("Tree is a Type", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     const treeType = unwrapType(env.get("Tree")!)
     expect(convertible(treeType, encType())).toBe(true)
   })
 
   it("leaf has type Tree", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     const leafType = unwrapType(env.get("leaf")!)
     const treeData = unwrapData(env.get("Tree")!)
     expect(convertible(leafType, treeData)).toBe(true)
   })
 
   it("stem has type Tree -> Tree", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     const stemType = unwrapType(env.get("stem")!)
     const treeData = unwrapData(env.get("Tree")!)
     // Should be Pi(Tree, Tree)
@@ -603,7 +604,7 @@ describe("CoC Prelude", () => {
   })
 
   it("fork has type Tree -> Tree -> Tree", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     const forkType = unwrapType(env.get("fork")!)
     const treeData = unwrapData(env.get("Tree")!)
     const pi = unPi(whnfTree(forkType))
@@ -612,7 +613,7 @@ describe("CoC Prelude", () => {
   })
 
   it("encApp has type Tree -> Tree -> Tree", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     const t = unwrapType(env.get("encApp")!)
     const treeData = unwrapData(env.get("Tree")!)
     const pi = unPi(whnfTree(t))
@@ -621,7 +622,7 @@ describe("CoC Prelude", () => {
   })
 
   it("wrap has type Tree -> Tree -> Tree", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     const t = unwrapType(env.get("wrap")!)
     const treeData = unwrapData(env.get("Tree")!)
     const pi = unPi(whnfTree(t))
@@ -630,12 +631,12 @@ describe("CoC Prelude", () => {
   })
 
   it("builtins are usable: encApp encType encType type-checks", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     expect(() => buildWrapped(parseExpr("encApp encType encType"), env)).not.toThrow()
   })
 
   it("builtins are usable: wrap encType encType type-checks", () => {
-    const { cocEnv: env } = loadPrelude()
+    const { cocEnv: env } = loadCocPrelude()
     expect(() => buildWrapped(parseExpr("wrap encType encType"), env)).not.toThrow()
   })
 
@@ -663,14 +664,13 @@ describe("CoC Prelude", () => {
     expect(ctx).toContain("stem")
     expect(ctx).toContain("fork")
     expect(ctx).toContain("triage")
-    expect(ctx).toContain("encType")
-    expect(ctx).toContain("encVar")
-    expect(ctx).toContain("encApp")
-    expect(ctx).toContain("encLam")
-    expect(ctx).toContain("encPi")
-    expect(ctx).toContain("wrap")
-    expect(ctx).toContain("unwrapData")
-    expect(ctx).toContain("unwrapType")
+    // CoC-prelude defs (encType, encVar, etc.) are not shown — :ctx uses nativeEnv
+    expect(ctx).toContain("true")
+    expect(ctx).toContain("false")
+    expect(ctx).toContain("boolElim")
+    expect(ctx).toContain("zero")
+    expect(ctx).toContain("succ")
+    expect(ctx).toContain("natElim")
   })
 
   it("user defs build on top of builtins", () => {

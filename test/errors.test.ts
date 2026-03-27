@@ -7,10 +7,12 @@ import {
   encType, encApp, encVar, type Env,
 } from "../src/coc.js"
 import { initialState, processLine } from "../src/repl.js"
+import { loadCocPrelude, clearPreludeCache } from "../src/prelude.js"
 
 beforeEach(() => {
   resetMarkerCounter()
   clearNativeBuiltins()
+  clearPreludeCache()
 })
 
 describe("ParseError", () => {
@@ -55,10 +57,10 @@ describe("CocError", () => {
   })
 
   it("throws on lambda without expected type", () => {
-    const state = initialState()
+    const { cocEnv } = loadCocPrelude()
     expect(() => buildWrapped(
       { tag: "slam", params: ["x"], body: { tag: "svar", name: "x" } },
-      state.cocEnv,
+      cocEnv,
     )).toThrow(CocError)
   })
 

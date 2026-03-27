@@ -386,17 +386,17 @@ describe("REPL - stdlib", () => {
   })
 
   it("loads stdlib without errors", () => {
-    expect(state.cocEnv.has("compose")).toBe(true)
-    expect(state.cocEnv.has("Eq")).toBe(true)
-    expect(state.cocEnv.has("refl")).toBe(true)
-    expect(state.cocEnv.has("sym")).toBe(true)
-    expect(state.cocEnv.has("trans")).toBe(true)
-    expect(state.cocEnv.has("cong")).toBe(true)
-    expect(state.cocEnv.has("subst")).toBe(true)
-    expect(state.cocEnv.has("List")).toBe(true)
-    expect(state.cocEnv.has("nil")).toBe(true)
-    expect(state.cocEnv.has("cons")).toBe(true)
-    expect(state.cocEnv.has("filter")).toBe(true)
+    expect(state.nativeEnv.has("compose")).toBe(true)
+    expect(state.nativeEnv.has("Eq")).toBe(true)
+    expect(state.nativeEnv.has("refl")).toBe(true)
+    expect(state.nativeEnv.has("sym")).toBe(true)
+    expect(state.nativeEnv.has("trans")).toBe(true)
+    expect(state.nativeEnv.has("cong")).toBe(true)
+    expect(state.nativeEnv.has("subst")).toBe(true)
+    expect(state.nativeEnv.has("List")).toBe(true)
+    expect(state.nativeEnv.has("nil")).toBe(true)
+    expect(state.nativeEnv.has("cons")).toBe(true)
+    expect(state.nativeEnv.has("filter")).toBe(true)
   })
 
   it("xor works", () => {
@@ -418,9 +418,9 @@ describe("REPL - stdlib", () => {
   })
 
   it("computational proofs type-check", () => {
-    expect(state.cocEnv.has("not_true_eq")).toBe(true)
-    expect(state.cocEnv.has("add_2_3")).toBe(true)
-    expect(state.cocEnv.has("mul_3_3")).toBe(true)
+    expect(state.nativeEnv.has("not_true_eq")).toBe(true)
+    expect(state.nativeEnv.has("add_2_3")).toBe(true)
+    expect(state.nativeEnv.has("mul_3_3")).toBe(true)
   })
 
   it("sym and trans compose with proofs", () => {
@@ -429,11 +429,11 @@ describe("REPL - stdlib", () => {
   })
 
   it("not_involution exists", () => {
-    expect(state.cocEnv.has("not_involution")).toBe(true)
+    expect(state.nativeEnv.has("not_involution")).toBe(true)
   })
 
   it("natRec exists", () => {
-    expect(state.cocEnv.has("natRec")).toBe(true)
+    expect(state.nativeEnv.has("natRec")).toBe(true)
   })
 })
 

@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { LEAF, stem, fork, treeEqual } from "../src/tree.js"
-import { resetMarkerCounter, clearNativeBuiltins, unwrapData, unwrapType, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "../src/coc.js"
-import { loadPrelude, buildNameMap } from "../src/prelude.js"
+import { resetMarkerCounter, clearNativeBuiltins } from "../src/native-utils.js"
+import { TN_TREE, TN_BOOL, TN_NAT, TN_TYPE } from "../src/tree-native-checker.js"
+import { loadPrelude, clearPreludeCache } from "../src/prelude.js"
 
 beforeEach(() => {
   resetMarkerCounter()
   clearNativeBuiltins()
+  clearPreludeCache()
 })
 
 describe("loadPrelude", () => {
@@ -13,36 +15,38 @@ describe("loadPrelude", () => {
     expect(() => loadPrelude()).not.toThrow()
   })
 
-  it("returns env with primitive types", () => {
-    const { cocEnv } = loadPrelude()
-    expect(cocEnv.has("Tree")).toBe(true)
-    expect(cocEnv.has("Bool")).toBe(true)
-    expect(cocEnv.has("Nat")).toBe(true)
+  it("returns nativeEnv with primitive types", () => {
+    const { nativeEnv } = loadPrelude()
+    expect(nativeEnv.has("Tree")).toBe(true)
+    expect(nativeEnv.has("Bool")).toBe(true)
+    expect(nativeEnv.has("Nat")).toBe(true)
   })
 
-  it("Tree type data is TREE_TYPE", () => {
-    const { cocEnv } = loadPrelude()
-    const treeWrapped = cocEnv.get("Tree")!
-    expect(treeEqual(unwrapData(treeWrapped), TREE_TYPE)).toBe(true)
+  it("Tree native type is TN_TREE", () => {
+    const { nativeEnv } = loadPrelude()
+    const entry = nativeEnv.get("Tree")!
+    expect(treeEqual(entry.tree, TN_TREE)).toBe(true)
+    expect(treeEqual(entry.type, TN_TYPE)).toBe(true)
   })
 
-  it("Bool type data is BOOL_TYPE", () => {
-    const { cocEnv } = loadPrelude()
-    const boolWrapped = cocEnv.get("Bool")!
-    expect(treeEqual(unwrapData(boolWrapped), BOOL_TYPE)).toBe(true)
+  it("Bool native type is TN_BOOL", () => {
+    const { nativeEnv } = loadPrelude()
+    const entry = nativeEnv.get("Bool")!
+    expect(treeEqual(entry.tree, TN_BOOL)).toBe(true)
+    expect(treeEqual(entry.type, TN_TYPE)).toBe(true)
   })
 
-  it("returns env with primitive builtins", () => {
-    const { cocEnv } = loadPrelude()
+  it("returns nativeEnv with primitive builtins", () => {
+    const { nativeEnv } = loadPrelude()
     for (const name of ["leaf", "stem", "fork", "triage", "true", "false", "boolElim", "zero", "succ", "natElim"]) {
-      expect(cocEnv.has(name), `missing primitive: ${name}`).toBe(true)
+      expect(nativeEnv.has(name), `missing primitive: ${name}`).toBe(true)
     }
   })
 
-  it("returns env with tree-native builtins", () => {
-    const { cocEnv } = loadPrelude()
+  it("returns nativeEnv with tree-native builtins", () => {
+    const { nativeEnv } = loadPrelude()
     for (const name of ["tEncApp", "tEncLam", "tEncPi", "termCase", "treeEqStep", "whnfStep", "convertibleStep", "inferStep"]) {
-      expect(cocEnv.has(name), `missing tree-native: ${name}`).toBe(true)
+      expect(nativeEnv.has(name), `missing tree-native: ${name}`).toBe(true)
     }
   })
 
@@ -62,29 +66,25 @@ describe("loadPrelude", () => {
   })
 })
 
-describe("buildNameMap", () => {
-  it("maps tree IDs to names", () => {
-    const { cocEnv } = loadPrelude()
-    const nameMap = buildNameMap(cocEnv)
-    // Should have entries for non-skipped builtins
-    expect(nameMap.size).toBeGreaterThan(0)
+describe("nativeEnv contents", () => {
+  it("has entries for types and builtins", () => {
+    const { nativeEnv } = loadPrelude()
+    expect(nativeEnv.size).toBeGreaterThan(0)
   })
 
-  it("skips colliding names", () => {
-    const { cocEnv } = loadPrelude()
-    const nameMap = buildNameMap(cocEnv)
-    // Names like "leaf", "true", "zero" share LEAF data — should be skipped
-    const names = Array.from(nameMap.values())
-    expect(names).not.toContain("leaf")
-    expect(names).not.toContain("true")
-    expect(names).not.toContain("zero")
+  it("each entry has tree, annTree, and type", () => {
+    const { nativeEnv } = loadPrelude()
+    for (const [name, entry] of nativeEnv) {
+      expect(entry.tree, `${name} missing tree`).toBeDefined()
+      expect(entry.annTree, `${name} missing annTree`).toBeDefined()
+      expect(entry.type, `${name} missing type`).toBeDefined()
+    }
   })
 
-  it("includes non-colliding builtins", () => {
-    const { cocEnv } = loadPrelude()
-    const nameMap = buildNameMap(cocEnv)
-    const names = Array.from(nameMap.values())
-    expect(names).toContain("boolElim")
-    expect(names).toContain("triage")
+  it("type entries have type TN_TYPE", () => {
+    const { nativeEnv } = loadPrelude()
+    for (const name of ["Tree", "Bool", "Nat"]) {
+      expect(treeEqual(nativeEnv.get(name)!.type, TN_TYPE)).toBe(true)
+    }
   })
 })

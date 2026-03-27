@@ -3,11 +3,13 @@ import { type Tree, LEAF, stem, fork, apply, isLeaf, isStem, isFork, clearApplyC
 import {
   TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
 } from "../src/tree-native.js"
-import { loadPrelude } from "../src/prelude.js"
+import { loadPrelude, loadCocPrelude, processDeclCoc } from "../src/prelude.js"
 import { initialState, loadFile, processLine } from "../src/repl.js"
-import { encType, encPi, encLam, encApp, encVar, buildWrapped, type Env } from "../src/coc.js"
-import { compileAndEval, bracketAbstract, eTree, eFvar, eApp, collapseAndEval } from "../src/compile.js"
-import { parseExpr } from "../src/parse.js"
+import { encType, encPi, encLam, encApp, encVar, buildWrapped, cocCheckDecl, unwrapData, type Env } from "../src/coc.js"
+import { compileAndEval, compileRecAndEval, bracketAbstract, eTree, eFvar, eApp, collapseAndEval } from "../src/compile.js"
+import { parseLine, parseExpr, type SExpr, type SDecl } from "../src/parse.js"
+import { convertCocType, annotateTree } from "../src/tree-native-elaborate.js"
+import { type KnownDefs, checkAnnotated } from "../src/tree-native-checker.js"
 
 // --- Utilities ---
 
@@ -461,6 +463,7 @@ describe("Benchmarks", () => {
   it("tree-native infer on realistic expressions", () => {
     const state = initialState()
     loadFile(state, "prelude.disp", true)
+    const { cocEnv: defaultCocEnv } = loadCocPrelude()
 
     const inferFn = state.defs.get("infer")!
     const convFn = state.defs.get("convertible")!
@@ -492,7 +495,7 @@ describe("Benchmarks", () => {
     // Helper: build encoded CoC term from surface syntax using TS bootstrap
     function encodeTerm(source: string, env?: Env): Tree {
       const sexpr = parseExpr(source)
-      const cocEnv = env ?? state.cocEnv
+      const cocEnv = env ?? defaultCocEnv
       const wrapped = buildWrapped(sexpr, cocEnv)
       // unwrapData = left of fork pair
       if (wrapped.tag === "fork") return wrapped.left
@@ -652,5 +655,79 @@ describe("Benchmarks", () => {
     console.log(`    Redundancy:   ${(m.stats.totalCalls / m.stats.uniquePairs).toFixed(1)}x`)
 
     expect(m.stats.totalCalls).toBeGreaterThan(0)
+  })
+})
+
+describe("Native vs CoC type checking", () => {
+  it("compares CoC-only vs native overhead for declarations", () => {
+    const { cocEnv, defs, nativeDefs } = loadCocPrelude()
+    const state = initialState()
+    loadFile(state, "prelude.disp", true)
+
+    const programs: { label: string; source: string }[] = [
+      { label: "id : Nat -> Nat", source: "let id_bench : Nat -> Nat := {x} -> x" },
+      { label: "kTrue : Bool -> Bool", source: "let kTrue_bench : Bool -> Bool := {x} -> true" },
+      { label: "not : Bool -> Bool", source: "let not_bench : Bool -> Bool := {b} -> boolElim Bool false true b" },
+      { label: "add (rec)", source: "let rec add_bench : Nat -> Nat -> Nat := {m n} -> natElim Nat n ({m'} -> succ (add_bench m' n)) m" },
+    ]
+
+    type BenchRow = { name: string; cocCold: string; cocWarm: string; nativeCold: string; nativeWarm: string; checkOk: string }
+    const rows: BenchRow[] = []
+
+    for (const prog of programs) {
+      const parsed = parseLine(prog.source)
+      if (!("name" in parsed)) continue
+      const sdecl = parsed as SDecl
+
+      // CoC-only timing: use processDeclCoc without nativeDefs
+      const cocTiming = benchColdWarm(() => {
+        const envCopy = new Map(cocEnv)
+        const defsCopy = new Map(state.defs)
+        processDeclCoc(sdecl.name, sdecl.type, sdecl.value, sdecl.isRec, envCopy, defsCopy)
+      })
+
+      // Get result for native check
+      const envCopy = new Map(cocEnv)
+      const defsCopy = new Map(state.defs)
+      const result = processDeclCoc(sdecl.name, sdecl.type, sdecl.value, sdecl.isRec, envCopy, defsCopy)
+      const compiled = result.compiled
+
+      // Native overhead (convertCocType + annotateTree + checkAnnotated)
+      // For recursive defs, trust CoC verification (FIX output is opaque)
+      let checkOk = false
+      const nativeTiming = benchColdWarm(() => {
+        const nativeType = convertCocType(result.type)
+        if (sdecl.isRec) {
+          checkOk = true // recursive defs verified by CoC
+        } else {
+          const annotated = annotateTree(compiled, nativeType, state.nativeDefs)
+          checkOk = checkAnnotated(state.nativeDefs, annotated, nativeType)
+        }
+      })
+
+      rows.push({
+        name: prog.label,
+        cocCold: `${cocTiming.cold.toFixed(3)}ms`,
+        cocWarm: `${cocTiming.warm.toFixed(3)}ms`,
+        nativeCold: `${nativeTiming.cold.toFixed(3)}ms`,
+        nativeWarm: `${nativeTiming.warm.toFixed(3)}ms`,
+        checkOk: checkOk ? "✓" : "✗",
+      })
+    }
+
+    // Print table
+    const nameW = Math.max(20, ...rows.map(r => r.name.length))
+    const header = `│ ${"Program".padEnd(nameW)} │ ${"CoC cold".padStart(10)} │ ${"CoC warm".padStart(10)} │ ${"Native cold".padStart(12)} │ ${"Native warm".padStart(12)} │ ${"OK".padStart(3)} │`
+    const sep = header.replace(/[^│\n]/g, "─").replace(/│/g, "┼")
+    console.log(`\n  Native vs CoC Type Checking`)
+    console.log(`  ${sep.replace(/┼/g, "┬").replace(/^─/, "┌").replace(/─$/, "┐")}`)
+    console.log(`  ${header}`)
+    console.log(`  ${sep}`)
+    for (const r of rows) {
+      console.log(`  │ ${r.name.padEnd(nameW)} │ ${r.cocCold.padStart(10)} │ ${r.cocWarm.padStart(10)} │ ${r.nativeCold.padStart(12)} │ ${r.nativeWarm.padStart(12)} │ ${r.checkOk.padStart(3)} │`)
+    }
+    console.log(`  ${sep.replace(/┼/g, "┴").replace(/^─/, "└").replace(/─$/, "┘")}`)
+
+    expect(rows.length).toBe(4)
   })
 })

@@ -15,6 +15,14 @@
 import { type Tree, LEAF, stem, fork, treeEqual, apply, I, treeApply, BudgetExhausted } from "./tree.js"
 import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapse } from "./compile.js"
 import { type SExpr } from "./parse.js"
+import {
+  freshMarker, resetMarkerCounter,
+  registerNativeBuiltinId, clearNativeBuiltins as clearNativeBuiltinState,
+  isNativeBuiltin, getNativeForm,
+} from "./native-utils.js"
+
+// Re-export native-utils so existing imports from coc.js keep working.
+export { freshMarker, resetMarkerCounter, registerNativeBuiltinId, isNativeBuiltin, getNativeForm } from "./native-utils.js"
 
 // ============================================================
 // Phase 1: Encoding Primitives
@@ -101,22 +109,8 @@ export const TREE_TYPE = fork(fork(LEAF, LEAF), fork(LEAF, LEAF))
 export const BOOL_TYPE = fork(fork(LEAF, LEAF), fork(LEAF, stem(LEAF)))
 export const NAT_TYPE  = fork(fork(LEAF, LEAF), fork(stem(LEAF), LEAF))
 
-// --- Fresh markers ---
-
-let markerCounter = 0
-
-export function freshMarker(): Tree {
-  let t: Tree = LEAF
-  for (let i = 0; i < markerCounter; i++) {
-    t = stem(t)
-  }
-  markerCounter++
-  return fork(LEAF, t)
-}
-
-export function resetMarkerCounter(): void {
-  markerCounter = 0
-}
+// Fresh markers and native-builtin tracking are in native-utils.ts.
+// clearNativeBuiltins is wrapped here to also clear the local whnfMemo cache.
 
 // ============================================================
 // Phase 2: Bracket Abstraction Integration
@@ -138,45 +132,54 @@ export function treeToExprReplacing(t: Tree, target: Tree, varName: string): Exp
   return eApp(eApp(eTree(LEAF), left), right)
 }
 
+function treeToExprReplacingIterative(t: Tree, target: Tree, varName: string): Expr {
+  const memo = new Map<number, Expr>()
+  type Frame = { node: Tree; phase: number }
+  const stack: Frame[] = [{ node: t, phase: 0 }]
+
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1]
+    const node = frame.node
+    if (memo.has(node.id)) { stack.pop(); continue }
+    if (treeEqual(node, target)) { memo.set(node.id, eFvar(varName)); stack.pop(); continue }
+    if (node.tag === "leaf") { memo.set(node.id, eTree(node)); stack.pop(); continue }
+    if (node.tag === "stem") {
+      if (frame.phase === 0) { frame.phase = 1; if (!memo.has(node.child.id)) { stack.push({ node: node.child, phase: 0 }); continue } }
+      const child = memo.get(node.child.id)!
+      memo.set(node.id, (child.tag === "tree" && treeEqual(child.value, node.child)) ? eTree(node) : eApp(eTree(LEAF), child))
+      stack.pop(); continue
+    }
+    if (frame.phase === 0) { frame.phase = 1; if (!memo.has(node.left.id)) { stack.push({ node: node.left, phase: 0 }); continue } }
+    if (frame.phase === 1) { frame.phase = 2; if (!memo.has(node.right.id)) { stack.push({ node: node.right, phase: 0 }); continue } }
+    const left = memo.get(node.left.id)!, right = memo.get(node.right.id)!
+    memo.set(node.id, (left.tag === "tree" && treeEqual(left.value, node.left) && right.tag === "tree" && treeEqual(right.value, node.right))
+      ? eTree(node) : eApp(eApp(eTree(LEAF), left), right))
+    stack.pop()
+  }
+  return memo.get(t.id)!
+}
+
 export function abstractMarkerOut(tree: Tree, target: Tree): Tree {
   const name = "__marker__"
-  const expr = treeToExprReplacing(tree, target, name)
-  return collapse(bracketAbstract(name, expr))
+  try {
+    const expr = treeToExprReplacing(tree, target, name)
+    return collapse(bracketAbstract(name, expr))
+  } catch {
+    // Stack overflow on deeply nested trees — fall back to iterative traversal
+    const expr = treeToExprReplacingIterative(tree, target, name)
+    return collapse(bracketAbstract(name, expr))
+  }
 }
 
 // ============================================================
 // Native builtin tracking (for delta reduction in convertibility)
 // ============================================================
-
-// Native builtins are tree constants (like BOOL_ELIM_DATA, NAT_ELIM_DATA) whose
-// internal tree structure may accidentally match the CoC encoding patterns (encApp,
-// encLam, etc.). We track their IDs so evalToNative can avoid decomposing them.
-// For some trees (like recursive definitions), the encoded form (omega combinator)
-// differs from the compiled form (FIX-based). We map encoded IDs to their compiled
-// forms so evalToNative uses the version that works with eager apply().
-const nativeBuiltinIds = new Set<number>()
-const nativeCompiledForms = new Map<number, Tree>()
-
-export function registerNativeBuiltinId(id: number, compiledForm?: Tree): void {
-  nativeBuiltinIds.add(id)
-  if (compiledForm) {
-    nativeCompiledForms.set(id, compiledForm)
-    nativeBuiltinIds.add(compiledForm.id)  // also protect the compiled form from decomposition
-  }
-}
+// State and core functions are in native-utils.ts. This wrapper also clears
+// the local whnfMemo cache since cached WHNF results depend on native IDs.
 
 export function clearNativeBuiltins(): void {
-  nativeBuiltinIds.clear()
-  nativeCompiledForms.clear()
+  clearNativeBuiltinState()
   whnfMemo.clear()
-}
-
-function isNativeBuiltin(t: Tree): boolean {
-  return nativeBuiltinIds.has(t.id)
-}
-
-function getNativeForm(t: Tree): Tree {
-  return nativeCompiledForms.get(t.id) ?? t
 }
 
 // Check if a tree looks like encVar(freshMarker()) — i.e., a free variable.
@@ -236,7 +239,7 @@ export function evalToNative(t: Tree, budget = { remaining: 100000 }): Tree | nu
   // Register the result so future evalToNative calls won't decompose it either.
   try {
     const result = apply(funcEvaled, argEvaled, budget)
-    nativeBuiltinIds.add(result.id)
+    registerNativeBuiltinId(result.id)
     return result
   } catch (e) {
     if (e instanceof BudgetExhausted) return null
@@ -510,7 +513,7 @@ export function cocCheckRecDecl(
   const omega = abstractMarkerOut(bodyWithThunk, xNeutral)
   const result = treeApply(omega, omega)
   // Register as native builtin so evalToNative won't incorrectly decompose it
-  nativeBuiltinIds.add(result.id)
+  registerNativeBuiltinId(result.id)
   const newEnv = new Map(env)
   newEnv.set(name, wrap(result, typeData))
   return { env: newEnv, type: typeData }

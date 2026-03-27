@@ -1,5 +1,5 @@
 // Interactive REPL for Disp.
-// Pipeline: parse → type-check (CoC-on-trees) → compile → evaluate → print
+// Pipeline: parse → type-check (native tree types) → compile → evaluate → print
 
 import * as readline from "node:readline"
 import * as fs from "node:fs"
@@ -7,19 +7,21 @@ import * as path from "node:path"
 import { parseLine, printExpr, mergeDefinitions, type SExpr, type SDecl, ParseError } from "./parse.js"
 import { compileAndEval } from "./compile.js"
 import { prettyTree, type Tree, LEAF, stem, treeEqual, BudgetExhausted } from "./tree.js"
-import { buildWrapped, unwrapData, unwrapType, printEncoded, whnfTree, CocError, type Env, TREE_TYPE, BOOL_TYPE, NAT_TYPE } from "./coc.js"
-import { loadPrelude, buildNameMap, processDecl } from "./prelude.js"
+import { loadPrelude, processDecl } from "./prelude.js"
+import { type KnownDefs, TN_TYPE, TN_TREE, TN_BOOL, TN_NAT } from "./tree-native-checker.js"
+import { type NativeEnv, printNativeType, buildNativeWrapped, collapseTypedExpr, NativeElabError } from "./tree-native-elaborate.js"
 
 export type ReplState = {
-  cocEnv: Env                   // CoC environment (name → wrapped tree)
   defs: Map<string, Tree>       // compiled definitions (for evaluation)
   defExprs: Map<string, SExpr>  // source-level definitions (for save/display)
   defIsRec: Set<string>         // names defined with 'let rec'
+  nativeDefs: KnownDefs         // tree-native type checker known definitions
+  nativeEnv: NativeEnv          // native elaborator environment
 }
 
 export function initialState(): ReplState {
-  const { cocEnv, defs } = loadPrelude()
-  return { cocEnv, defs, defExprs: new Map(), defIsRec: new Set() }
+  const { defs, nativeDefs, nativeEnv } = loadPrelude()
+  return { defs, defExprs: new Map(), defIsRec: new Set(), nativeDefs, nativeEnv }
 }
 
 // --- Error formatting ---
@@ -65,7 +67,7 @@ export function processLine(state: ReplState, input: string): string {
     }
   } catch (e) {
     if (e instanceof ParseError) return formatError(trimmed, "Parse error", e.message, e.span)
-    if (e instanceof CocError) return `Type error: ${e.message}`
+    if (e instanceof NativeElabError) return `Type error: ${e.message}`
     if (e instanceof BudgetExhausted) return `Error: evaluation did not terminate`
     if (e instanceof Error) return `Error: ${e.message}`
     return `Error: ${e}`
@@ -79,51 +81,148 @@ function isDecl(x: SDecl | SExpr): x is SDecl {
 function handleDecl(state: ReplState, decl: SDecl): string {
   const { name, type, value, isRec } = decl
 
-  const result = processDecl(name, type, value, isRec, state.cocEnv, state.defs)
-  state.cocEnv = result.env
+  const result = processDecl(name, type, value, isRec, state.nativeEnv, state.nativeDefs, state.defs)
   state.defExprs.set(name, value)
   if (isRec) state.defIsRec.add(name)
 
-  const nameMap = buildNameMap(state.cocEnv)
-  const typeStr = printEncoded(result.type, nameMap)
-  return `${name} : ${typeStr}`
+  const nameMap = buildNativeNameMap(state.nativeEnv)
+  const typeStr = printNativeType(result.nativeType, nameMap)
+  const warning = result.checkOk === false ? `\n[native] check failed for ${name}` : ""
+  return `${name} : ${typeStr}${warning}`
+}
+
+// Build a name map from nativeEnv (tree ID → name) for type printing
+const NATIVE_NAME_MAP_SKIP = new Set(["leaf", "stem", "fork", "true", "zero", "succ", "tDelta", "encType", "encVar", "wrap"])
+
+function buildNativeNameMap(nativeEnv: NativeEnv): Map<number, string> {
+  const map = new Map<number, string>()
+  for (const [name, { tree }] of nativeEnv) {
+    if (NATIVE_NAME_MAP_SKIP.has(name)) continue
+    if (!map.has(tree.id)) map.set(tree.id, name)
+  }
+  return map
+}
+
+// Structural recognition of primitive values using native type constants
+function recognizeValueNative(
+  tree: Tree, type: Tree, state: ReplState,
+): string | null {
+  if (treeEqual(type, TN_BOOL)) {
+    if (treeEqual(tree, LEAF)) return "true"
+    if (treeEqual(tree, stem(LEAF))) return "false"
+    return null
+  }
+  if (treeEqual(type, TN_NAT)) {
+    let n = tree, count = 0
+    while (n.tag === "stem") { count++; n = n.child }
+    if (n.tag === "leaf") return String(count)
+    return null
+  }
+  if (treeEqual(type, TN_TREE)) {
+    return printTreeValue(tree)
+  }
+  for (const [name, def] of state.defs) {
+    if (tree.id === def.id) return name
+  }
+  return null
+}
+
+// Check if an expression references any definitions whose types are opaque
+// (contain unresolved <type#...> components from Church-encoded types or dependent types).
+function exprUsesOpaqueTypes(expr: SExpr, env: NativeEnv): boolean {
+  function hasOpaque(type: Tree): boolean {
+    // Opaque types are stems that aren't recognized primitives
+    if (type.tag === "stem" && !treeEqual(type, TN_TREE) && !treeEqual(type, TN_BOOL) && !treeEqual(type, TN_NAT))
+      return true
+    if (type.tag === "fork") return hasOpaque(type.left) || hasOpaque(type.right)
+    return false
+  }
+  function check(e: SExpr): boolean {
+    if (e.tag === "svar") {
+      const entry = env.get(e.name)
+      if (entry && hasOpaque(entry.type)) return true
+    }
+    if (e.tag === "sapp") return check(e.func) || check(e.arg)
+    if (e.tag === "slam") return check(e.body)
+    if (e.tag === "spi") return check(e.domain) || check(e.codomain)
+    return false
+  }
+  return check(expr)
 }
 
 function handleExpr(state: ReplState, expr: SExpr): string {
-  const wrapped = buildWrapped(expr, state.cocEnv)
+  let texprResult: { texpr: ReturnType<typeof buildNativeWrapped>["texpr"], type: Tree } | null = null
+  let elabError: NativeElabError | null = null
+  try {
+    texprResult = buildNativeWrapped(expr, state.nativeEnv)
+  } catch (e) {
+    if (e instanceof NativeElabError) {
+      // Fall back to compile-only when any expression in the chain involves
+      // definitions with opaque types (Church-encoded type constructors,
+      // dependent types with unevaluated applications).
+      // Detect this by checking if any definition used in the expression has an
+      // opaque type (non-recognized stem type in nativeEnv).
+      const hasOpaqueDefinitions = exprUsesOpaqueTypes(expr, state.nativeEnv)
+      if (hasOpaqueDefinitions) {
+        elabError = e
+      } else {
+        throw e
+      }
+    } else {
+      throw e
+    }
+  }
 
-  const data = unwrapData(wrapped)
-  const rawType = unwrapType(wrapped)
+  if (texprResult) {
+    const { texpr, type: nativeType } = texprResult
+    const nameMap = buildNativeNameMap(state.nativeEnv)
+    const typeStr = printNativeType(nativeType, nameMap)
 
-  // WHNF-reduce the type so dependent return types like `P true` reduce to
-  // primitive type markers (NAT_TYPE, BOOL_TYPE, etc.) for value recognition.
-  let type: Tree
-  try { type = whnfTree(rawType) } catch { type = rawType }
+    // For type-valued expressions, print the native type tree directly
+    if (treeEqual(nativeType, TN_TYPE)) {
+      const nativeTypeTree = collapseTypedExpr(texpr)
+      const valueStr = printNativeType(nativeTypeTree, nameMap)
+      return `${valueStr} : Type`
+    }
 
-  const nameMap = buildNameMap(state.cocEnv)
-  const typeStr = printEncoded(type, nameMap)
+    let compiled: Tree | null = null
+    try {
+      compiled = compileAndEval(expr, state.defs)
+    } catch {}
 
-  // Compile and evaluate for display
+    if (compiled) {
+      const display = recognizeValueNative(compiled, nativeType, state)
+      if (display) return `${display} : ${typeStr}`
+      return `${prettyTree(compiled)} : ${typeStr}`
+    }
+
+    return `_ : ${typeStr}`
+  }
+
+  // Type elaboration failed — try to compile and evaluate without type info
   let compiled: Tree | null = null
   try {
     compiled = compileAndEval(expr, state.defs)
-  } catch {
-    // Compilation can fail for type-level expressions that don't reduce to trees.
-    // Fall back to displaying the encoded form below.
-  }
+  } catch {}
 
   if (compiled) {
-    const display = recognizeValue(compiled, type, state)
-    if (display) return `${display} : ${typeStr}`
-    return `${prettyTree(compiled)} : ${typeStr}`
+    // Try to recognize the value as a known definition or primitive
+    const nameMap = buildNativeNameMap(state.nativeEnv)
+    // Try each primitive type for display
+    for (const tryType of [TN_BOOL, TN_NAT, TN_TREE]) {
+      const display = recognizeValueNative(compiled, tryType, state)
+      if (display) return `${display} : ${printNativeType(tryType, nameMap)}`
+    }
+    // Check if it matches a named definition
+    for (const [name, def] of state.defs) {
+      if (compiled.id === def.id) return `${name} : Tree`
+    }
+    return `${prettyTree(compiled)} : Tree`
   }
 
-  // Fall back to name lookup on encoded data
-  const name = nameMap.get(data.id)
-  if (name) return `${name} : ${typeStr}`
-
-  const dataStr = printEncoded(data, nameMap)
-  return `${dataStr} : ${typeStr}`
+  // Compilation also failed — report the original type error
+  if (elabError) throw elabError
+  throw new NativeElabError("Cannot type-check or evaluate expression")
 }
 
 function handleCommand(state: ReplState, input: string): string {
@@ -137,10 +236,9 @@ function handleCommand(state: ReplState, input: string): string {
       if (!rest) return "Usage: :type <expr>"
       try {
         const expr = parseLine(rest) as SExpr
-        const wrapped = buildWrapped(expr, state.cocEnv)
-        const type = unwrapType(wrapped)
-        const nameMap = buildNameMap(state.cocEnv)
-        return printEncoded(type, nameMap)
+        const { type: nativeType } = buildNativeWrapped(expr, state.nativeEnv)
+        const nameMap = buildNativeNameMap(state.nativeEnv)
+        return printNativeType(nativeType, nameMap)
       } catch (e) {
         return e instanceof Error ? `Error: ${e.message}` : `Error: ${e}`
       }
@@ -159,12 +257,11 @@ function handleCommand(state: ReplState, input: string): string {
 
     case ":ctx":
     case ":context": {
-      if (state.cocEnv.size === 0) return "(empty context)"
-      const nameMap = buildNameMap(state.cocEnv)
+      if (state.nativeEnv.size === 0) return "(empty context)"
+      const nameMap = buildNativeNameMap(state.nativeEnv)
       const lines: string[] = []
-      for (const [name, w] of state.cocEnv) {
-        const type = unwrapType(w)
-        lines.push(`${name} : ${printEncoded(type, nameMap)}`)
+      for (const [name, { type }] of state.nativeEnv) {
+        lines.push(`${name} : ${printNativeType(type, nameMap)}`)
       }
       return lines.join("\n")
     }
@@ -215,34 +312,6 @@ function handleCommand(state: ReplState, input: string): string {
   }
 }
 
-// Structural recognition of primitive values
-function recognizeValue(
-  tree: Tree, type: Tree, state: ReplState,
-): string | null {
-  // Primitive Bool (true = LEAF, false = stem(LEAF))
-  if (treeEqual(type, BOOL_TYPE)) {
-    if (treeEqual(tree, LEAF)) return "true"
-    if (treeEqual(tree, stem(LEAF))) return "false"
-    return null
-  }
-  // Primitive Nat (zero = LEAF, succ(n) = stem(n))
-  if (treeEqual(type, NAT_TYPE)) {
-    let n = tree, count = 0
-    while (n.tag === "stem") { count++; n = n.child }
-    if (n.tag === "leaf") return String(count)
-    return null
-  }
-  // Primitive Tree
-  if (treeEqual(type, TREE_TYPE)) {
-    return printTreeValue(tree)
-  }
-  // Name lookup
-  for (const [name, def] of state.defs) {
-    if (tree.id === def.id) return name
-  }
-  return null
-}
-
 function printTreeValue(t: Tree): string {
   if (t.tag === "leaf") return "leaf"
   if (t.tag === "stem") return `stem ${printTreeValueAtom(t.child)}`
@@ -273,7 +342,7 @@ export function loadFile(state: ReplState, filePath: string, silent = false): st
       } catch (e) {
         const msg = e instanceof ParseError
           ? formatError(trimmed, "Parse error", e.message, e.span)
-          : e instanceof CocError ? `Type error: ${e.message}`
+          : e instanceof NativeElabError ? `Type error: ${e.message}`
           : e instanceof BudgetExhausted ? `Error: evaluation did not terminate`
           : e instanceof Error ? `Error: ${e.message}` : `Error: ${e}`
         return `${filePath}:${block.startLine}: ${msg}`
@@ -290,12 +359,11 @@ export function loadFile(state: ReplState, filePath: string, silent = false): st
 function saveFile(state: ReplState, filePath: string): string {
   try {
     const lines: string[] = []
-    const nameMap = buildNameMap(state.cocEnv)
-    for (const [name, wrapped] of state.cocEnv) {
+    const nameMap = buildNativeNameMap(state.nativeEnv)
+    for (const [name, { type }] of state.nativeEnv) {
       const valExpr = state.defExprs.get(name)
       if (valExpr) {
-        const type = unwrapType(wrapped)
-        const typeStr = printEncoded(type, nameMap)
+        const typeStr = printNativeType(type, nameMap)
         const valStr = printExpr(valExpr)
         const recStr = state.defIsRec.has(name) ? "rec " : ""
         lines.push(`let ${recStr}${name} : ${typeStr} := ${valStr}`)
