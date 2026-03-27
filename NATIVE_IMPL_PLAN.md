@@ -1,348 +1,285 @@
-# Unified Native Type System Plan
+# Native Type System — Implementation Plan
 
-## Context
+Engineering roadmap for the tree-native type system. Theory is in `TREE_NATIVE_TYPE_THEORY.md`.
 
-The Disp REPL currently uses a hybrid CoC + tree-native pipeline. The native path works but has three structural problems:
-1. **Heuristic annotation** — `annotateTree` guesses D at S nodes, failing 9/22 prelude defs
-2. **CoC entanglement** — `processDecl` always calls `cocCheckDecl`, `handleExpr` falls back to `buildWrapped`
-3. **Environment opacity** — `NativeEnv` stores raw trees; `checkAnnotated` requires `knownDefs` for external lookup
+## Current State (2026-03-27)
 
-This plan merges the goals of the old NATIVE_IMPL_PLAN.md and COC_MIGRATION.md into a single phased migration that:
-- Produces exact D annotations during elaboration (no heuristics)
-- Removes all CoC imports from the hot path (repl.ts, prelude.ts)
-- Makes annotated trees self-contained via ascription nodes + stored annotated forms
-- Keeps `compile.ts` as the trusted compilation backend (risk mitigation)
-- Keeps `coc.ts` for its own tests and tree-encoded step functions
+**Native pipeline is primary.** 619 tests passing. CoC retained only for legacy test backward compatibility.
 
-The end goal is a checker that works as a pure function `(annotatedTree, type) → bool` with no external state — suitable for eventual encoding as a tree program per GOALS.md.
+### Architecture
 
----
-
-## Phase 0: Extract Shared Utilities
-
-Create `src/native-utils.ts` with functions that both systems need but that don't belong in `coc.ts`.
-
-**Move from `src/coc.ts`:**
-- `freshMarker()`, `resetMarkerCounter()`, `markerCounter` state
-- `registerNativeBuiltinId()`, `clearNativeBuiltins()`, `isNativeBuiltin()`, `getNativeForm()`
-- `nativeBuiltinIds` Set, `nativeCompiledForms` Map
-
-**`src/coc.ts`**: Re-export everything from `native-utils.ts` so existing imports work unchanged. Internal callers (`whnfTree`, `evalToNative`, `cocCheckRecDecl`) import from `native-utils.ts`.
-
-**Tests**: Zero breakage — all existing import paths work through re-exports.
-
----
-
-## Phase 1: Add Ascription Node
-
-Add a sixth annotated tree form for wrapping opaque values whose types are known but whose structure can't be checked.
-
-**Format**: `fork(stem(T), stem(body))` — "body has type T, trust it"
-
-This slot is unused: the S form `fork(stem(D), fork(c, b))` requires a fork on the right. A stem on the right is a new case.
-
-**`src/tree-native-checker.ts` changes:**
-
-```typescript
-// New constructor
-export function annAscribe(type: Tree, body: Tree): Tree {
-  return fork(stem(type), stem(body))
-}
-
-// extract(): in the isStem(ann.left) branch, before S:
-if (isStem(ann.right)) {
-  return ann.right.child  // ascription: return raw body
-}
-
-// checkAnnotated(): in the isStem(ann.left) branch, before S:
-if (isStem(ann.right)) {
-  const ascribedType = ann.left.child
-  return treeEqual(ascribedType, type)  // trust if types match
-}
+```
+Parse (src/parse.ts) → Elaborate (src/tree-native-elaborate.ts) → Compile (src/compile.ts) → Check (src/tree-native-checker.ts)
 ```
 
-**Tests**: Add unit tests for annAscribe, extract(ascription), checkAnnotated(ascription). Existing S-node tests unchanged (they use fork on the right).
+| File | Role |
+|------|------|
+| `src/tree-native-checker.ts` | `checkAnnotated(defs, ann, type) → bool`, type constants, codomain helpers |
+| `src/tree-native-elaborate.ts` | `buildNativeWrapped`, `typedBracketAbstract`, `collapseToAnnotated`, `nativeElabDecl` |
+| `src/native-utils.ts` | `freshMarker`, `registerNativeBuiltinId`, `isNativeBuiltin`, cache callbacks |
+| `src/prelude.ts` | `loadPrelude` (native-only), `processDecl` (native with graceful fallback) |
+| `src/repl.ts` | Fully native REPL, no CoC fallback |
+| `src/compile.ts` | Compiler: `astToExpr` + bracket abstraction. Still used as trusted compilation backend |
+| `src/coc.ts` | Legacy. Used by tree-encoded step functions and test backward compat |
 
----
+### What Works
 
-## Phase 2: Extend TypedExpr and NativeEnv
+- All primitive types and builtins type-check natively
+- Simple definitions (not, and, or, add, mul, fold, id) elaborate fully with correct annotated trees
+- Recursive definitions elaborate, abstract self out, verify body at T→T, store FIX as ascription
+- Multi-param lambdas track types correctly through TypedExpr (tI/tK/tS)
+- Polymorphic identity, dependent Pi types, higher-order functions
+- Prelude loads all 22 definitions (graceful fallback for 9 that can't be fully elaborated)
 
-**`src/tree-native-elaborate.ts` — new TypedExpr:**
+### What Doesn't Work
+
+Definitions involving **Church-encoded types** (Pair, Either, records, coproducts) compile and run correctly at runtime but have degraded types in the REPL. The elaborator falls back to `Tree` for their types.
+
+Root cause: the compiler erases Pi type domains (see Phase 1 below).
+
+### TypedExpr
+
+The elaborator's intermediate representation:
+
 ```typescript
-export type TypedExpr =
-  | { tag: "tlit", tree: Tree, annTree: Tree, type: Tree }  // annTree added
+type TypedExpr =
+  | { tag: "tlit", tree: Tree, annTree: Tree, type: Tree }
   | { tag: "tfvar", name: string, type: Tree }
   | { tag: "tapp", func: TypedExpr, arg: TypedExpr, type: Tree }
-  | { tag: "tI", type: Tree }                                // new
-  | { tag: "tK", value: TypedExpr, type: Tree }              // new
-  | { tag: "tS", d: Tree, c: TypedExpr, b: TypedExpr, type: Tree } // new
+  | { tag: "tI", type: Tree }
+  | { tag: "tK", value: TypedExpr, type: Tree }
+  | { tag: "tS", d: Tree, c: TypedExpr, b: TypedExpr, type: Tree }
 ```
 
-**NativeEnv:**
-```typescript
-export type NativeEnv = Map<string, { tree: Tree, annTree: Tree, type: Tree }>
+- `collapseTypedExpr(texpr) → Tree` — raw program
+- `collapseToAnnotated(texpr) → Tree` — annotated tree with D + ascriptions
+- `typedBracketAbstract(name, texpr, type) → { result: TypedExpr, codomain: Tree }` — preserves structure for outer abstractions
+
+### processDecl (Graceful Degradation)
+
+```
+1. Try nativeElabDecl (full type check + annotated tree)
+2. If that fails:
+   a. Compile via compile.ts (always succeeds)
+   b. Try elaborating just the type annotation
+   c. Register with ascription-wrapped compiled tree
+   d. checkOk = false
 ```
 
-For builtins: `annTree = annAscribe(nativeType, rawTree)` (builtins are trusted constants).
-For user defs: `annTree` is the annotated tree from elaboration.
-For bound vars (lambda params): use a separate mechanism (see Phase 4).
+---
 
-**New function — `collapseToAnnotated`:**
+## Phase 1: Preserve Pi Domains in Compilation
+
+**Priority: HIGH. This is the single most impactful change.**
+
+### Problem
+
+`src/compile.ts` lines 59-68 erase Pi type domains:
+
 ```typescript
-function collapseToAnnotated(texpr: TypedExpr): Tree {
-  switch (texpr.tag) {
-    case "tlit": return texpr.annTree
-    case "tfvar": throw new Error(`Free variable leak: ${texpr.name}`)
-    case "tapp": {
-      const f = extract(collapseToAnnotated(texpr.func))
-      const g = extract(collapseToAnnotated(texpr.arg))
-      return annAscribe(texpr.type, apply(f, g))
-    }
-    case "tI": return I
-    case "tK": return annK(collapseToAnnotated(texpr.value))
-    case "tS": return annS(texpr.d, collapseToAnnotated(texpr.c), collapseToAnnotated(texpr.b))
-  }
+case "spi":
+  // Pi types erase to lambdas (domain is dropped)
+  // (x : A) -> B  compiles same as {x} -> B
+  return bracketAbstract(ast.name, astToExpr(ast.codomain, defs))
+```
+
+**Effect**: `Pair := {A B} -> (R : Type) -> (A -> B -> R) -> R` compiles to the equivalent of `{A B R _} -> R` since all Pi domains are dropped. So `Pair Nat Bool` evaluates to `stem(LEAF)` instead of a proper native Pi type `fork(Type, [R] fork(...))`.
+
+The elaborator needs `Pair A B` to decompose as `fork(domain, codomain)` to type-check lambdas whose expected type involves Pair. Without domain info, it falls back to `Tree`.
+
+### Fix
+
+Change the `spi` case in `src/compile.ts` `astToExpr`:
+
+```typescript
+case "spi": {
+  // Pi types as values: fork(domain, [x]codomain) = native Pi encoding
+  const domain = astToExpr(ast.domain, defs)
+  const codomain = ast.name === "_"
+    ? bracketAbstract("_$pi", astToExpr(ast.codomain, defs))
+    : bracketAbstract(ast.name, astToExpr(ast.codomain, defs))
+  // apply(apply(LEAF, domain), codomain) = apply(stem(domain), codomain) = fork(domain, codomain)
+  return eApp(eApp(eTree(LEAF), domain), codomain)
 }
 ```
 
-**Update helpers** — `collapseTypedExpr`, `typedHasFreeVar`, `typedToExpr` gain cases for tI/tK/tS.
+This makes `(A : Type) -> B` compile to `fork(A_tree, [x]B_tree)` which is exactly the native Pi type `fork(A, B)`.
 
-**Migration**: All existing `tlit` constructions get `annTree: tree` initially (identity — no behavior change). Tests updated mechanically.
+### Also needed
+
+- `stree` case: `Tree` currently compiles to `LEAF`. It should compile to `stem(LEAF)` = `TN_TREE`. Without this, definitions that reference `Tree` as a value embed the wrong constant.
+
+  ```typescript
+  case "stree":
+    return eTree(stem(LEAF))  // TN_TREE, not LEAF
+  ```
+
+### Impact
+
+- `Pair Nat Bool` evaluates to `fork(LEAF, [R] fork(fork(Nat, K(fork(Bool, K(R)))), K(R)))` — a valid native Pi type
+- The elaborator can decompose this and type-check `mkPair`, `fst`, `snd` properly
+- All Church-encoded types (records, coproducts) should start working
+- **Compiled trees change** for every type-valued definition. Tests comparing exact tree shapes will need updating.
+- Runtime behavior for value-level code is unaffected (Pi types only appear in type annotations and type-valued defs)
+
+### Testing
+
+Run `npx vitest run`. Expect test failures where compiled type representations changed. The native verification pass rate (currently 7/22 prelude defs passing `checkAnnotated`) should improve. Fix tests to match new representations.
 
 ---
 
-## Phase 3: Rewrite typedBracketAbstract
+## Phase 2: Constant-Motive Coercion
 
-The core fix for multi-param lambdas and exact D annotations.
+### Problem
 
-**New signature:**
-```typescript
-function typedBracketAbstract(
-  varName: string, texpr: TypedExpr, varType: Tree,
-): { result: TypedExpr, codomain: Tree }
+Even after Pi domain preservation, dependent elimination has a type mismatch:
+
+```
+natElim : (M : Nat -> Type) -> M 0 -> ((n:Nat) -> M n -> M (succ n)) -> Nat -> M n
 ```
 
-Returns a **TypedExpr** (not a collapsed Tree), preserving structure for outer abstractions.
+Called as `natElim R z s n` where `R : Type`. The first argument `R` has type `Type` but the domain expects `Nat -> Type`. The native elaborator rejects: `treeEqual(TN_TYPE, fork(TN_NAT, K(TN_TYPE))) → false`.
 
-**Cases:**
+Similarly, `boolElim Bool false true b` passes `Bool : Type` but expects `Bool -> Type`.
 
-| Input | Result | Codomain |
-|-------|--------|----------|
-| `tfvar(varName)` | `tI(Pi(A, K(A)))` | `K(A)` |
-| no free var | `tK(texpr, Pi(A, K(T)))` | `K(T)` |
-| `tapp(f, tfvar(varName))`, name not in f | `f` (eta) | `f.type.right` |
-| `tapp(f, g)` general | `tS(D, [x]f, [x]g, Pi(A, B_result))` | `B_result` |
-| `tK(value)` with free var | decompose to `S(K(K), [x]value)` | computed |
-| `tS(d, c, b)` with free var | decompose to `tapp(tapp(tlit(LEAF), c), b)`, recurse | computed |
-| `tI` | `tK(tI, ...)` (always constant) | `K(T)` |
+### Fix
 
-**Optimizations preserved:**
-- `S(K(p), K(q))` = `K(apply(p, q))` — but wrap result in ascription since apply() is opaque
-- `S(K(p), I)` = `p` — eta reduction
-
-**Multi-param fix**: `{x y} -> add x y`
-- Inner `[y]`: returns TypedExpr `tapp(tlit(ADD), tfvar("x"))` via eta
-- Outer `[x]`: sees `tfvar("x")` inside, general S case fires correctly
-- No more marker-baked-into-tlit bug
-
-**Tests**: Rewrite existing typedBracketAbstract tests. Add multi-param tests: `{x y} -> add x y`, `{x y} -> add x x`, `{x y} -> add y x`, `{f x} -> f x`.
-
----
-
-## Phase 4: Rewrite buildNativeWrapped
-
-**Bound vs definition variables**: Use a `boundVars` map:
+In `buildNativeWrapped`'s `sapp` case, when type-checking the argument against the domain: if the domain is `Pi(A, K(Type))` (= `A -> Type`) and the argument has type `Type`, automatically wrap the argument in `K(arg)`.
 
 ```typescript
-function buildNativeWrapped(
-  sexpr: SExpr, env: NativeEnv, expectedType?: Tree,
-  boundVars?: Map<string, { marker: Tree, type: Tree }>,
-): { texpr: TypedExpr, type: Tree }
-```
-
-**svar case**: If name is in `boundVars`, return `tfvar(name, type)`. Otherwise return `tlit(entry.tree, entry.annTree, entry.type)`.
-
-**slam case**:
-1. Create marker for dependent type computation
-2. Add param to `boundVars` (not to env)
-3. Elaborate body — bound vars become `tfvar`, defs become `tlit` with `annTree`
-4. `substituteMarker` is no longer needed — bound vars are already `tfvar`
-5. `typedBracketAbstract(param, bodyTexpr, A)` → `{ result, codomain }`
-6. Return `result` directly (TypedExpr, not wrapped in tlit)
-
-**sapp case**: Unchanged structurally. The `tapp` carries annotated children.
-
-**spi case**: Unchanged — type-level computation doesn't need annotations.
-
----
-
-## Phase 5: New Declaration Pipeline
-
-**`nativeElabDecl` — non-recursive:**
-```
-1. Elaborate type → nativeType
-2. Elaborate value with expected type → texpr
-3. annTree = collapseToAnnotated(texpr)
-4. compiled = compileAndEval(value, defs)     ← keep compile.ts as trusted backend
-5. checkAnnotated(knownDefs, annTree, nativeType)  ← safety check (should always pass)
-6. Verify: treeEqual(extract(annTree), compiled)   ← oracle check during development
-7. Register in env: { tree: compiled, annTree, type: nativeType }
-8. Register in defs, nativeDefs
-```
-
-**Why keep `compileAndEval`**: Two independent bracket abstraction implementations (Expr-level in compile.ts, TypedExpr-level in typedBracketAbstract) should produce the same trees, but verifying this is safer than trusting it. The oracle check (step 6) catches mismatches. Once verified across all prelude defs, step 4 can optionally be replaced with `extract(annTree)`.
-
-**Recursive:**
-```
-1. Elaborate type → nativeType
-2. Add self as bound variable
-3. Elaborate body → bodyTexpr
-4. typedBracketAbstract(name, bodyTexpr, nativeType) → selfAbstracted
-5. annSelfFn = collapseToAnnotated(selfAbstracted)
-6. compiled = compileRecAndEval(name, value, defs)  ← compile.ts backend
-7. checkAnnotated(knownDefs, annSelfFn, tnArrow(nativeType, nativeType))
-8. Register: { tree: compiled, annTree: annAscribe(nativeType, compiled), type: nativeType }
-```
-
-FIX results are opaque → stored as ascriptions. The body was verified at T→T (step 7).
-
-**Tests**: Oracle comparison `extract(annTree) === compiled` for all 22 prelude defs. The 9 previously-failing defs should now pass annotation + checking.
-
----
-
-## Phase 6: Native-Only registerBuiltins
-
-**`src/prelude.ts` — new registerBuiltins:**
-```typescript
-function registerBuiltins(
-  builtins: TreeBuiltin[],
-  nativeEnv: NativeEnv, nativeDefs: KnownDefs, defs: Map<string, Tree>,
-): void {
-  for (const builtin of builtins) {
-    registerNativeBuiltinId(builtin.data.id)
-    const typeSexpr = parseLine(builtin.type) as SExpr
-    const { texpr } = buildNativeWrapped(typeSexpr, nativeEnv, TN_TYPE)
-    const nativeType = collapseTypedExpr(texpr)
-    nativeDefs.set(builtin.data.id, nativeType)
-    nativeEnv.set(builtin.name, {
-      tree: builtin.data,
-      annTree: annAscribe(nativeType, builtin.data),
-      type: nativeType,
-    })
-    defs.set(builtin.name, builtin.data)
-  }
+// In sapp case, after computing argType:
+if (!treeEqual(argType, A) && treeEqual(argType, TN_TYPE) && isFork(A)) {
+  // Implicit constant motive: wrap Type-valued arg in K for A -> Type domain
+  const argTree = collapseForType(argTexpr, env)
+  const kWrapped: TypedExpr = { tag: "tK", value: argTexpr, type: A }
+  // Continue with kWrapped as the argument
+  ...
 }
 ```
 
-No `buildWrapped`, no `cocEnv`, no `convertCocType`. Builtin type strings are elaborated directly through the native path.
+This matches the common pattern where users pass a type directly as a constant motive.
 
-**Prerequisite**: `buildNativeWrapped` must handle all builtin type strings. These are arrow types and dependent Pi types referencing `Type`, `Tree`, `Bool`, `Nat`, `succ`, etc. — all already supported. Builtins must be registered in dependency order (leaf/stem/fork before triage, true/false before boolElim, etc.).
+### Testing
+
+`natElim R z s n`, `boolElim Bool false true b`, and `fold 5 Nat 0 succ` should all type-check without errors. Prelude definitions using these patterns should elaborate fully.
 
 ---
 
-## Phase 7: Native-Only loadPrelude and processDecl
+## Phase 3: Full Prelude Verification
 
-**New loadPrelude:**
-```typescript
-export function loadPrelude(): {
-  defs: Map<string, Tree>, nativeDefs: KnownDefs, nativeEnv: NativeEnv
-} {
-  const defs = new Map<string, Tree>()
-  const nativeDefs: KnownDefs = new Map()
-  const nativeEnv: NativeEnv = new Map()
+### Goal
 
-  // 1. Primitive types
-  for (const [name, marker] of [["Tree", TN_TREE], ["Bool", TN_BOOL], ["Nat", TN_NAT]]) {
-    nativeDefs.set(marker.id, TN_TYPE)
-    nativeEnv.set(name, { tree: marker, annTree: marker, type: TN_TYPE })
-    defs.set(name, marker)
-  }
+All 22 prelude.disp definitions produce correct annotated trees that pass `checkAnnotated`. This validates the entire native pipeline end-to-end.
 
-  // 2. Primitive builtins
-  registerBuiltins(PRIMITIVE_BUILTINS, nativeEnv, nativeDefs, defs)
+### Approach
 
-  // 3. Tree-native builtins
-  registerBuiltins(TREE_NATIVE_BUILTINS, nativeEnv, nativeDefs, defs)
+1. Run `nativeElabDecl` for each prelude def
+2. Verify `checkAnnotated(nativeDefs, annotated, nativeType) === true` for all 22
+3. Oracle check: `treeEqual(extract(annotated), compiled)` for non-recursive defs
+4. For recursive defs: `checkAnnotated(nativeDefs, annSelfFn, tnArrow(T, T))` passes
 
-  // No coc-prelude.disp! No cocEnv!
-  return { defs, nativeDefs, nativeEnv }
-}
+### Current Status
+
+7/22 pass native verification. After Phases 1-2, expect significant improvement. Target: 22/22.
+
+---
+
+## Phase 4: Unify Compilation Paths
+
+### Goal
+
+Remove `compile.ts` as a separate trusted backend. The elaborator becomes the sole compilation path.
+
+### Prerequisite
+
+Phase 3 must verify `extract(collapseToAnnotated(texpr)) === compileAndEval(value, defs)` for all prelude defs. This confirms the two bracket abstraction implementations (TypedExpr-level and Expr-level) produce identical programs.
+
+### Approach
+
+1. In `processDecl`, replace `compileAndEval(value, defs)` with `extract(collapseToAnnotated(texpr))`
+2. In `nativeElabDecl`, replace `compileAndEval`/`compileRecAndEval` calls with `extract(collapseToAnnotated(...))`
+3. Keep `compile.ts` for the REPL's `:tree` command and standalone compilation, but remove it from the type-checking pipeline
+
+---
+
+## Phase 5: Encode Checker as Tree Constant
+
+### Goal
+
+`checkAnnotated` is a pure function `(annotatedTree, type) → bool`. Compile it to a tree calculus combinator, like `inferStep` in `src/tree-native.ts`. This makes the checker self-referential: a tree that verifies other trees.
+
+### Approach
+
+The existing tree-encoded `inferStep` handles CoC-encoded terms. The new checker needs to handle native-encoded types and the annotated tree format. Key operations to encode:
+
+- 3-way triage dispatch on annotated tree structure (K/S/Triage)
+- `treeEqual` — already O(1) via `fastEq`
+- `apply(B, x)` for dependent codomain evaluation — use existing tree-calculus `apply`
+- `isOfBaseType` — structural check on stem chains
+- Recursion through annotated tree structure — use `tFix` + `tWait`
+
+### Testing
+
+The tree-encoded checker should produce identical results to the TypeScript `checkAnnotated` for all test cases in `test/tree-native-typecheck.test.ts`.
+
+---
+
+## Phase 6: Remove Legacy CoC Code
+
+### Prerequisite
+
+All tests use the native pipeline. No test imports `loadCocPrelude`, `processDeclCoc`, `buildNameMap`, `annotateTree`, `convertCocType`, or `nativeCheckDecl`.
+
+### Remove
+
+From `src/prelude.ts`: `loadCocPrelude`, `processDeclCoc`, `buildNameMap`, `registerBuiltinsCoc`, `loadDeclFileCoc`, `cocPreludePath`, and all imports from `coc.js`.
+
+From `src/tree-native-elaborate.ts`: `annotateTree`, `inferIntermediateType`, `inferGroundType`, `convertCocType`, `convertPiBody`, `nativeCheckDecl`, and all imports from `coc.js`.
+
+File `coc-prelude.disp`: Delete.
+
+Keep `src/coc.ts` and `test/coc.test.ts` for the CoC encoding tests and tree-encoded step functions (these test the tree-as-type-checker infrastructure).
+
+---
+
+## Phase 7: Scoring Functions (GOALS.md)
+
+With a tree-encoded checker, define scoring functions per GOALS.md:
+
+```
+score(program) = typecheck(program) * performance_weight(program) * size_weight(program)
 ```
 
-**New processDecl** (simplified):
-```typescript
-export function processDecl(
-  name: string, type: SExpr | null, value: SExpr, isRec: boolean,
-  nativeEnv: NativeEnv, nativeDefs: KnownDefs, defs: Map<string, Tree>,
-): { nativeType: Tree, compiled: Tree, checkOk: boolean }
-```
-
-No `cocEnv` parameter. No CoC fallback.
-
-**Type data change**: `defs.get("Tree")` returns `TN_TREE = stem(LEAF)` instead of `TREE_TYPE = fork(fork(LEAF,LEAF), fork(LEAF,LEAF))`. This is correct for the native system — the type Tree is represented as stem(LEAF) in the native encoding. Code that manipulates type values at runtime sees the native representation.
-
-**Remove**: `loadDeclFile` for coc-prelude.disp, `cocPreludePath()`, `buildNameMap` (uses CoC unwrapData).
+Where `typecheck` returns 0 or 1, and performance/size weights are tree-encoded metric functions. This is the input to the external optimizer.
 
 ---
 
-## Phase 8: Remove CoC from repl.ts
+## Legacy Code Reference
 
-**Remove from ReplState**: `cocEnv`
+Code retained for test backward compatibility (remove in Phase 6):
 
-**Remove imports**: `buildWrapped`, `unwrapData`, `unwrapType`, `printEncoded`, `whnfTree`, `CocError`, `Env`, `TREE_TYPE`, `BOOL_TYPE`, `NAT_TYPE` from `coc.js`. Import `registerNativeBuiltinId` from `native-utils.js` instead.
+| Function | File | Used By |
+|----------|------|---------|
+| `loadCocPrelude` | `src/prelude.ts` | `test/coc.test.ts`, `test/bench.test.ts`, `test/errors.test.ts` |
+| `processDeclCoc` | `src/prelude.ts` | `test/bench.test.ts`, `test/tree-native-elaborate.test.ts` |
+| `buildNameMap` | `src/prelude.ts` | `test/coc.test.ts` |
+| `annotateTree` | `src/tree-native-elaborate.ts` | `test/tree-native-pipeline.test.ts`, `test/bench.test.ts` |
+| `convertCocType` | `src/tree-native-elaborate.ts` | `test/tree-native-pipeline.test.ts`, `test/tree-native-elaborate.test.ts`, `test/bench.test.ts` |
+| `nativeCheckDecl` | `src/tree-native-elaborate.ts` | `test/tree-native-pipeline.test.ts` |
 
-**handleExpr**: Remove try/catch CoC fallback. Just call `handleExprNative` directly.
+## Test Coverage
 
-**handleCommand `:type`**: Remove CoC fallback (`buildWrapped` → `printEncoded`). Native-only.
-
-**Remove**: `recognizeValue` (CoC version), `buildNameMap` import.
-
-**Update handleDecl**: `processDecl` returns `{ nativeType, compiled, checkOk }` — no `env` to assign to `state.cocEnv`.
-
----
-
-## Phase 9: Cleanup
-
-**Remove from `src/tree-native-elaborate.ts`** (~350 lines):
-- `annotateTree`, `inferIntermediateType`, `inferGroundType` — replaced by elaboration
-- `convertCocType`, `convertPiBody` — no more CoC type conversion needed
-- `nativeCheckDecl` — old CoC-dependent pipeline
-- `substituteMarker` — bound vars use tfvar directly
-- All imports from `coc.ts`: `termTag`, `unPi`, `unVar`, `unLam`, `unApp`, `TREE_TYPE`, `BOOL_TYPE`, `NAT_TYPE`, `whnfTree`, `evalToNative`, `encVar`, `cocCheckDecl`, `type Env`
-
-**Remove from `src/prelude.ts`** (~50 lines):
-- All `coc.ts` imports: `encType`, `wrap`, `unwrapData`, `buildWrapped`, `cocCheckDecl`, `Env`
-- `buildNameMap` (uses `unwrapData`)
-- `cocPreludePath()`
-
-**Move tests**: `test/tree-native-pipeline.test.ts` tests that use `convertCocType`, `annotateTree`, `nativeCheckDecl` → move to `test/coc-pipeline-legacy.test.ts` or rewrite for new pipeline.
-
-**Keep**: `src/coc.ts`, `src/coc-printer.ts`, `test/coc.test.ts` — for the CoC encoding tests and tree-encoded step functions.
-
----
-
-## Critical Files
-
-| File | Changes |
-|------|---------|
-| `src/native-utils.ts` | **New** — freshMarker, registerNativeBuiltinId extracted |
-| `src/tree-native-checker.ts` | Add annAscribe, extend extract + checkAnnotated |
-| `src/tree-native-elaborate.ts` | TypedExpr extension, typedBracketAbstract rewrite, buildNativeWrapped rewrite, new collapseToAnnotated, new nativeElabDecl, remove annotateTree/convertCocType |
-| `src/prelude.ts` | registerBuiltins rewrite, loadPrelude rewrite, processDecl simplification, remove CoC imports |
-| `src/repl.ts` | Remove cocEnv, remove CoC fallback, remove CoC imports |
-| `src/coc.ts` | Re-export from native-utils.ts, otherwise untouched |
-
-## Verification
-
-After each phase: `npx vitest run` — all tests pass (619+).
-
-**Key oracle tests** (Phase 5):
-- For all 22 prelude defs: `extract(annTree) === compileAndEval(value, defs)` — compilation parity
-- For all 22 prelude defs: `checkAnnotated(defs, annTree, type) === true` — annotation correctness (expect 22/22, up from 13/22)
-
-**REPL parity** (Phase 8):
-- Every test in `test/repl.test.ts` produces identical output
-- `printNativeType` already handles dependent Pi with binder names (a, b, c, ...)
-- `recognizeValueNative` matches Bool/Nat/Tree the same way
-
-**End state**: Zero imports from `coc.ts` in repl.ts and prelude.ts. Annotated trees are self-contained proof certificates. The checker can verify any annotated tree without external state (knownDefs is optional memoization).
+| Test file | Tests | Coverage |
+|-----------|-------|---------|
+| `test/tree-native-typecheck.test.ts` | 93 | Core checker |
+| `test/tree-native-exhibit.test.ts` | 27 | (tree, type, annotation) triples |
+| `test/tree-native-annotated.test.ts` | 35 | Annotated format, extraction, memoization |
+| `test/tree-native-dependent.test.ts` | 17 | Dependent codomain helpers |
+| `test/tree-native-pipeline.test.ts` | 101 | CoC→native pipeline (legacy) |
+| `test/tree-native-elaborate.test.ts` | 32 | Native elaborator, TypedExpr |
+| `test/repl.test.ts` | 58 | REPL integration with prelude.disp |
+| `test/prelude.test.ts` | 11 | Prelude loading |
+| `test/coc.test.ts` | 147 | CoC encoding (legacy, keep) |
+| `test/bench.test.ts` | 8 | Benchmarks |
+| `test/errors.test.ts` | 17 | Error handling |
+| Total | 619 | All passing |
