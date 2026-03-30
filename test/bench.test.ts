@@ -3,13 +3,11 @@ import { type Tree, LEAF, stem, fork, apply, isLeaf, isStem, isFork, clearApplyC
 import {
   TREE_EQ_STEP, WHNF_STEP, ABSTRACT_OUT_STEP, CONVERTIBLE_STEP, TYPECHECK,
 } from "../src/tree-native.js"
-import { loadPrelude, loadCocPrelude, processDeclCoc } from "../src/prelude.js"
+import { loadPrelude } from "../src/prelude.js"
 import { initialState, loadFile, processLine } from "../src/repl.js"
-import { encType, encPi, encLam, encApp, encVar, buildWrapped, cocCheckDecl, unwrapData, type Env } from "../src/coc.js"
-import { compileAndEval, compileRecAndEval, bracketAbstract, eTree, eFvar, eApp, collapseAndEval } from "../src/compile.js"
-import { parseLine, parseExpr, type SExpr, type SDecl } from "../src/parse.js"
-import { convertCocType, annotateTree } from "../src/tree-native-elaborate.js"
-import { type KnownDefs, checkAnnotated } from "../src/tree-native-checker.js"
+import { encType, encPi } from "../src/coc.js"
+import { compileAndEval, bracketAbstract, eTree, eFvar, eApp, collapseAndEval } from "../src/compile.js"
+import { parseExpr } from "../src/parse.js"
 
 // --- Utilities ---
 
@@ -463,25 +461,19 @@ describe("Benchmarks", () => {
   it("tree-native infer on realistic expressions", () => {
     const state = initialState()
     loadFile(state, "prelude.disp", true)
-    const { cocEnv: defaultCocEnv } = loadCocPrelude()
 
     const inferFn = state.defs.get("infer")!
     const convFn = state.defs.get("convertible")!
     const emptyEnv = LEAF
 
     // Helper: build a Church-list env with N dummy bindings as a Tree
-    // Each entry is fork(marker, wrapped) where wrapped = fork(data, type)
     function buildChurchEnv(n: number): Tree {
-      // nil = {r n c} -> n
       const nilExpr = bracketAbstract("_r", bracketAbstract("_n", bracketAbstract("_c", eFvar("_n"))))
       let env = collapseAndEval(nilExpr)
 
       for (let i = 0; i < n; i++) {
-        // Create a unique marker and a wrapped value (both Type for simplicity)
         const marker = fork(LEAF, stem(fork(LEAF, stem(compileAndEval(parseExpr(String(i + 100)), state.defs)))))
-        const entry = fork(marker, fork(LEAF, LEAF)) // fork(marker, wrap(Type, Type))
-
-        // cons(entry, rest) = {r n c} -> c entry (rest r n c)
+        const entry = fork(marker, fork(LEAF, LEAF))
         const entryTree = entry
         const restTree = env
         const consExpr = bracketAbstract("_r", bracketAbstract("_n", bracketAbstract("_c",
@@ -490,16 +482,6 @@ describe("Benchmarks", () => {
         env = collapseAndEval(consExpr)
       }
       return env
-    }
-
-    // Helper: build encoded CoC term from surface syntax using TS bootstrap
-    function encodeTerm(source: string, env?: Env): Tree {
-      const sexpr = parseExpr(source)
-      const cocEnv = env ?? defaultCocEnv
-      const wrapped = buildWrapped(sexpr, cocEnv)
-      // unwrapData = left of fork pair
-      if (wrapped.tag === "fork") return wrapped.left
-      return wrapped
     }
 
     // Helper: run tree-native infer and measure
@@ -529,24 +511,9 @@ describe("Benchmarks", () => {
     const kType = fork(LEAF, encType())
     const piTypeType = encPi(encType(), kType)
 
-    // Lam(Type, I) = {x : Type} -> x  (encoded: body is identity = stem constructor)
-    const lamIdSimple = encLam(encType(), LEAF)
-
-    // {A : Type} -> {x : A} -> x (polymorphic id) - need bracket-abstracted body
-    // Use buildWrapped to get the encoding
-    let polyIdTerm: Tree
-    try {
-      // Build in a temporary env with expected type
-      polyIdTerm = encodeTerm("(A : Type) -> A -> A")
-    } catch {
-      polyIdTerm = piTypeType // fallback
-    }
-
     const termCases: { name: string; term: Tree; fuels: [number, number, number] }[] = [
       { name: "Type", term: typeTree, fuels: [3, 3, 10] },
       { name: "Pi(Type, K(Type))", term: piTypeType, fuels: [5, 5, 15] },
-      { name: "Lam(Type, I)", term: lamIdSimple, fuels: [5, 5, 15] },
-      { name: "(A:Type)->A->A", term: polyIdTerm, fuels: [10, 10, 20] },
     ]
 
     for (const c of termCases) {
@@ -555,36 +522,6 @@ describe("Benchmarks", () => {
         console.log(`    ${c.name.padEnd(25)} cold: ${r.cold.toFixed(3).padStart(8)}ms  warm: ${r.warm.toFixed(3).padStart(8)}ms  steps: ${r.steps}`)
       } else {
         console.log(`    ${c.name.padEnd(25)} FAILED (budget or encoding)`)
-      }
-    }
-
-    // === Binder depth scaling ===
-    console.log(`\n  === Tree-Native Infer: Binder Depth Scaling ===`)
-    // 0 binders: Type
-    // 1 binder: {x : Type} -> x
-    // 2 binders: {A : Type} -> {x : A} -> x  (polymorphic id)
-    // 3 binders: {A : Type} -> {B : Type} -> {x : A} -> x
-    // Encoded terms built via TS bootstrap
-    const binderCases: { name: string; source: string; fuels: [number, number, number] }[] = [
-      { name: "0 binders (Type)", source: "Type", fuels: [3, 3, 10] },
-      { name: "1 binder ({x:T}->x)", source: "(x : Type) -> x", fuels: [5, 5, 15] },
-      { name: "2 binders (poly id)", source: "(A : Type) -> A -> A", fuels: [10, 10, 20] },
-      { name: "3 binders", source: "(A : Type) -> (B : Type) -> (f : A -> B) -> A -> B", fuels: [15, 15, 30] },
-    ]
-
-    for (const c of binderCases) {
-      let term: Tree
-      try {
-        term = encodeTerm(c.source)
-      } catch (e: any) {
-        console.log(`    ${c.name.padEnd(30)} ENCODE FAILED: ${e.message?.slice(0, 50)}`)
-        continue
-      }
-      const r = runInfer(c.name, term, emptyEnv, c.fuels)
-      if (r.ok) {
-        console.log(`    ${c.name.padEnd(30)} cold: ${r.cold.toFixed(3).padStart(8)}ms  warm: ${r.warm.toFixed(3).padStart(8)}ms  steps: ${r.steps}`)
-      } else {
-        console.log(`    ${c.name.padEnd(30)} FAILED (budget/timeout)`)
       }
     }
 
@@ -602,14 +539,9 @@ describe("Benchmarks", () => {
 
     // === Convertible on non-trivial types ===
     console.log(`\n  === Tree-Native Convertible: Complexity Scaling ===`)
-    const boolType = fork(fork(LEAF, stem(LEAF)), LEAF) // BOOL_TYPE marker
-    const natType = fork(fork(LEAF, stem(stem(LEAF))), LEAF) // NAT_TYPE marker
-    const piBoolean = encPi(boolType, fork(LEAF, natType)) // Bool -> Nat (constant)
-
     const convCases: { name: string; a: Tree; b: Tree; fuels: [number, number, number] }[] = [
       { name: "Type == Type", a: typeTree, b: typeTree, fuels: [5, 5, 10] },
       { name: "Pi(T,K(T)) == same", a: piTypeType, b: piTypeType, fuels: [10, 10, 15] },
-      { name: "Pi(Bool,K(Nat)) == same", a: piBoolean, b: piBoolean, fuels: [10, 10, 15] },
       { name: "Type != Pi", a: typeTree, b: piTypeType, fuels: [10, 10, 15] },
     ]
 
@@ -658,76 +590,3 @@ describe("Benchmarks", () => {
   })
 })
 
-describe("Native vs CoC type checking", () => {
-  it("compares CoC-only vs native overhead for declarations", () => {
-    const { cocEnv, defs, nativeDefs } = loadCocPrelude()
-    const state = initialState()
-    loadFile(state, "prelude.disp", true)
-
-    const programs: { label: string; source: string }[] = [
-      { label: "id : Nat -> Nat", source: "let id_bench : Nat -> Nat := {x} -> x" },
-      { label: "kTrue : Bool -> Bool", source: "let kTrue_bench : Bool -> Bool := {x} -> true" },
-      { label: "not : Bool -> Bool", source: "let not_bench : Bool -> Bool := {b} -> boolElim Bool false true b" },
-      { label: "add (rec)", source: "let rec add_bench : Nat -> Nat -> Nat := {m n} -> natElim Nat n ({m'} -> succ (add_bench m' n)) m" },
-    ]
-
-    type BenchRow = { name: string; cocCold: string; cocWarm: string; nativeCold: string; nativeWarm: string; checkOk: string }
-    const rows: BenchRow[] = []
-
-    for (const prog of programs) {
-      const parsed = parseLine(prog.source)
-      if (!("name" in parsed)) continue
-      const sdecl = parsed as SDecl
-
-      // CoC-only timing: use processDeclCoc without nativeDefs
-      const cocTiming = benchColdWarm(() => {
-        const envCopy = new Map(cocEnv)
-        const defsCopy = new Map(state.defs)
-        processDeclCoc(sdecl.name, sdecl.type, sdecl.value, sdecl.isRec, envCopy, defsCopy)
-      })
-
-      // Get result for native check
-      const envCopy = new Map(cocEnv)
-      const defsCopy = new Map(state.defs)
-      const result = processDeclCoc(sdecl.name, sdecl.type, sdecl.value, sdecl.isRec, envCopy, defsCopy)
-      const compiled = result.compiled
-
-      // Native overhead (convertCocType + annotateTree + checkAnnotated)
-      // For recursive defs, trust CoC verification (FIX output is opaque)
-      let checkOk = false
-      const nativeTiming = benchColdWarm(() => {
-        const nativeType = convertCocType(result.type)
-        if (sdecl.isRec) {
-          checkOk = true // recursive defs verified by CoC
-        } else {
-          const annotated = annotateTree(compiled, nativeType, state.nativeDefs)
-          checkOk = checkAnnotated(state.nativeDefs, annotated, nativeType)
-        }
-      })
-
-      rows.push({
-        name: prog.label,
-        cocCold: `${cocTiming.cold.toFixed(3)}ms`,
-        cocWarm: `${cocTiming.warm.toFixed(3)}ms`,
-        nativeCold: `${nativeTiming.cold.toFixed(3)}ms`,
-        nativeWarm: `${nativeTiming.warm.toFixed(3)}ms`,
-        checkOk: checkOk ? "✓" : "✗",
-      })
-    }
-
-    // Print table
-    const nameW = Math.max(20, ...rows.map(r => r.name.length))
-    const header = `│ ${"Program".padEnd(nameW)} │ ${"CoC cold".padStart(10)} │ ${"CoC warm".padStart(10)} │ ${"Native cold".padStart(12)} │ ${"Native warm".padStart(12)} │ ${"OK".padStart(3)} │`
-    const sep = header.replace(/[^│\n]/g, "─").replace(/│/g, "┼")
-    console.log(`\n  Native vs CoC Type Checking`)
-    console.log(`  ${sep.replace(/┼/g, "┬").replace(/^─/, "┌").replace(/─$/, "┐")}`)
-    console.log(`  ${header}`)
-    console.log(`  ${sep}`)
-    for (const r of rows) {
-      console.log(`  │ ${r.name.padEnd(nameW)} │ ${r.cocCold.padStart(10)} │ ${r.cocWarm.padStart(10)} │ ${r.nativeCold.padStart(12)} │ ${r.nativeWarm.padStart(12)} │ ${r.checkOk.padStart(3)} │`)
-    }
-    console.log(`  ${sep.replace(/┼/g, "┴").replace(/^─/, "└").replace(/─$/, "┘")}`)
-
-    expect(rows.length).toBe(4)
-  })
-})

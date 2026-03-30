@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import * as fs from "node:fs"
 import { LEAF, stem, fork, apply, treeEqual, I } from "../src/tree.js"
 import { resetMarkerCounter, clearNativeBuiltins } from "../src/native-utils.js"
-import { loadPrelude, loadCocPrelude, processDeclCoc, clearPreludeCache } from "../src/prelude.js"
-import { parseLine, parseExpr, mergeDefinitions, type SExpr, type SDecl } from "../src/parse.js"
+import { loadPrelude, clearPreludeCache } from "../src/prelude.js"
+import { parseLine, parseExpr, type SExpr, type SDecl } from "../src/parse.js"
 import {
   TN_TYPE, TN_TREE, TN_BOOL, TN_NAT,
   tnArrow, type KnownDefs,
@@ -11,7 +10,7 @@ import {
 import {
   buildNativeWrapped, collapseTypedExpr, typedBracketAbstract,
   nativeElabDecl, type NativeEnv, type TypedExpr,
-  convertCocType, printNativeType,
+  printNativeType,
 } from "../src/tree-native-elaborate.js"
 
 // Build a NativeEnv from the prelude
@@ -245,46 +244,6 @@ describe("dependent type elaboration", () => {
     const sexpr = parseExpr("natElim Nat 0 ({n} -> succ n) 3")
     const { type } = buildNativeWrapped(sexpr, env)
     expect(treeEqual(type, TN_NAT)).toBe(true)
-  })
-})
-
-describe("native verification of prelude declarations", () => {
-  it("verifies prelude.disp declarations with native checker", () => {
-    const { cocEnv, defs, nativeDefs, nativeEnv } = loadCocPrelude()
-
-    const preludePath = new URL("../prelude.disp", import.meta.url).pathname
-    const content = fs.readFileSync(preludePath, "utf-8")
-    const blocks = mergeDefinitions(content)
-
-    let env = cocEnv
-    let passed = 0
-    let failed = 0
-    const failures: string[] = []
-
-    for (const block of blocks) {
-      const trimmed = block.text.trim()
-      if (!trimmed || trimmed.startsWith("--")) continue
-      const parsed = parseLine(trimmed)
-      if (!("isRec" in parsed)) continue
-      const sdecl = parsed as any
-
-      const result = processDeclCoc(sdecl.name, sdecl.type, sdecl.value, sdecl.isRec, env, defs, nativeDefs, nativeEnv)
-      env = result.env
-
-      if (result.nativeCheckOk === true) passed++
-      else if (result.nativeCheckOk === false) {
-        failed++
-        failures.push(sdecl.name)
-      }
-      // undefined means native check was skipped (e.g. exception)
-    }
-
-    console.log(`  Native verification: ${passed} passed, ${failed} failed out of ${passed + failed}`)
-    if (failures.length > 0) console.log(`  Failures: ${failures.join(", ")}`)
-
-    // At least 7 of 22 prelude defs should pass native checking
-    // (some fail due to dependent type limitations in the native elaborator)
-    expect(passed).toBeGreaterThanOrEqual(7)
   })
 })
 

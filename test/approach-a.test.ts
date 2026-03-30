@@ -23,61 +23,26 @@ import {
 } from "../src/tree-native-elaborate.js"
 import { parseExpr, parseLine, type SDecl } from "../src/parse.js"
 import { compile, compileAndEval } from "../src/compile.js"
-import {
-  resetMarkerCounter, clearNativeBuiltins, clearWhnfCache,
-  registerNativeBuiltinId, buildWrapped, type Env,
-  encType, wrap, unwrapData, unwrapType,
-  TREE_TYPE, BOOL_TYPE, NAT_TYPE,
-} from "../src/coc.js"
-import { PRIMITIVE_BUILTINS } from "../src/tree-native.js"
-import { convertCocType } from "../src/tree-native-elaborate.js"
-import { clearPreludeCache } from "../src/prelude.js"
+import { resetMarkerCounter, clearNativeBuiltins } from "../src/native-utils.js"
+import { loadPrelude, clearPreludeCache } from "../src/prelude.js"
 
 // ============================================================
-// Setup: minimal environment with primitive builtins
+// Setup: use native prelude
 // ============================================================
 
 let nativeDefs: KnownDefs
 let nativeEnv: NativeEnv
-let cocEnv: Env
 let defs: Map<string, Tree>
 
 function setup() {
-  cocEnv = new Map()
-  defs = new Map()
-  nativeDefs = new Map()
-  nativeEnv = new Map()
-
   resetMarkerCounter()
   clearNativeBuiltins()
-  clearWhnfCache()
   clearPreludeCache()
 
-  // Inject primitive types
-  for (const [name, marker, nativeType] of [
-    ["Tree", TREE_TYPE, TN_TREE],
-    ["Bool", BOOL_TYPE, TN_BOOL],
-    ["Nat",  NAT_TYPE,  TN_NAT],
-  ] as const) {
-    cocEnv = new Map(cocEnv)
-    cocEnv.set(name, wrap(marker, encType()))
-    defs.set(name, marker)
-    nativeEnv.set(name, { tree: marker, annTree: marker, type: TN_TYPE })
-  }
-
-  // Register primitive builtins
-  for (const builtin of PRIMITIVE_BUILTINS) {
-    registerNativeBuiltinId(builtin.data.id)
-    const typeWrapped = buildWrapped(parseLine(builtin.type) as any, cocEnv, encType())
-    const typeData = unwrapData(typeWrapped)
-    cocEnv = new Map(cocEnv)
-    cocEnv.set(builtin.name, wrap(builtin.data, typeData))
-    defs.set(builtin.name, builtin.data)
-
-    const nativeType = convertCocType(typeData)
-    nativeDefs.set(builtin.data.id, nativeType)
-    nativeEnv.set(builtin.name, { tree: builtin.data, annTree: builtin.data, type: nativeType })
-  }
+  const prelude = loadPrelude()
+  defs = prelude.defs
+  nativeDefs = prelude.nativeDefs
+  nativeEnv = prelude.nativeEnv
 }
 
 beforeEach(() => setup())
