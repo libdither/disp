@@ -133,7 +133,14 @@ b : Pi(Tree, forkCodomain(B))
 
 ### Rule 4: Ascription
 
-`fork(stem(T), stem(body))` — trusted wrapper. `check(ascribe(T, body), expectedType) = treeEqual(T, expectedType)`.
+`fork(stem(T), stem(body))` — verified wrapper for known definitions.
+
+```
+check(ascribe(T, body), expectedType) =
+    treeEqual(T, expectedType)  ∧  knownDefs(body.id) = T
+```
+
+Ascriptions are only valid when the body is registered in the known-definitions map with a matching type. This prevents adversarial annotated trees from fabricating type claims. Ascriptions arise from two sources: FIX results (one per recursive definition) and `apply()` results during annotation collapse (registered before checking). For base types (stem-shaped: Tree, Bool, Nat), the checker validates the actual value via `isOfBaseType` before the ascription case is reached, so ascriptions only matter for function types.
 
 ### Rule 5: FIX — Recursion
 

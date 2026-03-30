@@ -182,12 +182,15 @@ describe("compile - with definitions", () => {
 })
 
 describe("compile - Pi types", () => {
-  it("Pi type erases like lambda (domain dropped)", () => {
-    // (A : Type) -> A compiles to {A} -> A basically
+  it("Pi type compiles to fork(domain, codomain)", () => {
+    // (A : Type) -> A compiles to fork(Type, [A]A) = fork(LEAF, I)
     const piTree = c("(A : Type) -> A")
-    // Should behave like identity: piTree x = x
-    const x = stem(LEAF)
-    expect(treeEqual(run(piTree, x), x)).toBe(true)
+    // Should be a fork: Pi(Type, identity)
+    expect(piTree.tag).toBe("fork")
+    if (piTree.tag === "fork") {
+      expect(treeEqual(piTree.left, LEAF)).toBe(true) // domain = Type = LEAF
+      expect(treeEqual(piTree.right, I)).toBe(true)   // codomain = identity
+    }
   })
 })
 

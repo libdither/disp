@@ -33,8 +33,8 @@ export function astToExpr(ast: SExpr, defs: Map<string, Tree> = new Map()): Expr
       return eTree(LEAF)
 
     case "stree":
-      // Tree type erases to LEAF (types have no runtime significance)
-      return eTree(LEAF)
+      // Tree as a type value = stem(LEAF) = TN_TREE in the native type encoding
+      return eTree(stem(LEAF))
 
     case "svar": {
       // Look up in definitions first
@@ -56,16 +56,15 @@ export function astToExpr(ast: SExpr, defs: Map<string, Tree> = new Map()): Expr
       return body
     }
 
-    case "spi":
-      // Pi types erase to lambdas (domain is dropped)
-      // (x : A) -> B  compiles same as {x} -> B
-      // Non-dependent A -> B compiles same as {_} -> B
-      if (ast.name === "_") {
-        // Non-dependent: the codomain doesn't use the variable
-        // Still need to abstract over a dummy variable
-        return bracketAbstract("_$pi", astToExpr(ast.codomain, defs))
-      }
-      return bracketAbstract(ast.name, astToExpr(ast.codomain, defs))
+    case "spi": {
+      // Pi types as values: fork(domain, [x]codomain) = native Pi encoding
+      const domain = astToExpr(ast.domain, defs)
+      const codomain = ast.name === "_"
+        ? bracketAbstract("_$pi", astToExpr(ast.codomain, defs))
+        : bracketAbstract(ast.name, astToExpr(ast.codomain, defs))
+      // apply(apply(LEAF, domain), codomain) = apply(stem(domain), codomain) = fork(domain, codomain)
+      return eApp(eApp(eTree(LEAF), domain), codomain)
+    }
   }
 }
 

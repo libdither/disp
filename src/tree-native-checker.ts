@@ -255,9 +255,15 @@ export function checkAnnotated(
   }
 
   // === Ascription: fork(stem(T), stem(body)) ===
+  // Only trust ascriptions whose body is a known definition registered in defs
+  // with a matching type. This prevents adversarial fabrication of type claims.
   if (isStem(ann.left) && isStem(ann.right)) {
     const ascribedType = ann.left.child
-    return treeEqual(ascribedType, type)
+    if (!treeEqual(ascribedType, type)) return false
+    const body = ann.right.child
+    const knownType = defs.get(body.id)
+    if (knownType !== undefined && treeEqual(knownType, type)) return true
+    return false
   }
 
   // === S: fork(stem(D), fork(ann_c, ann_b)) ===

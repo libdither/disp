@@ -410,18 +410,20 @@ export function collapseTypedExpr(texpr: TypedExpr): Tree {
 
 // --- Collapse TypedExpr to annotated tree (with D annotations + ascriptions) ---
 
-export function collapseToAnnotated(texpr: TypedExpr): Tree {
+export function collapseToAnnotated(texpr: TypedExpr, defs?: KnownDefs): Tree {
   switch (texpr.tag) {
     case "tlit": return texpr.annTree
     case "tfvar": throw new Error(`Free variable leak: ${texpr.name}`)
     case "tapp": {
-      const f = extract(collapseToAnnotated(texpr.func))
-      const g = extract(collapseToAnnotated(texpr.arg))
-      return annAscribe(texpr.type, apply(f, g))
+      const f = extract(collapseToAnnotated(texpr.func, defs))
+      const g = extract(collapseToAnnotated(texpr.arg, defs))
+      const result = apply(f, g)
+      if (defs) defs.set(result.id, texpr.type)
+      return annAscribe(texpr.type, result)
     }
     case "tI": return I
-    case "tK": return annK(collapseToAnnotated(texpr.value))
-    case "tS": return annS(texpr.d, collapseToAnnotated(texpr.c), collapseToAnnotated(texpr.b))
+    case "tK": return annK(collapseToAnnotated(texpr.value, defs))
+    case "tS": return annS(texpr.d, collapseToAnnotated(texpr.c, defs), collapseToAnnotated(texpr.b, defs))
   }
 }
 
@@ -558,15 +560,6 @@ export function typedBracketAbstract(
   // General S case: [x](f g) = S([x]f, [x]g)
   const { result: cResult, codomain: cCod } = typedBracketAbstract(varName, texpr.func, A)
   const { result: bResult, codomain: D } = typedBracketAbstract(varName, texpr.arg, A)
-
-  // S(K(p), K(q)) = K(apply(p, q)) — wrap result in ascription since apply() is opaque
-  if (cResult.tag === "tK" && bResult.tag === "tK") {
-    const pq = apply(collapseTypedExpr(cResult.value), collapseTypedExpr(bResult.value))
-    const pqAnn = annAscribe(texpr.type, pq)
-    const pqExpr: TypedExpr = { tag: "tlit", tree: pq, annTree: pqAnn, type: texpr.type }
-    const cod = fork(LEAF, texpr.type) // K(T)
-    return { result: { tag: "tK", value: pqExpr, type: fork(A, cod) }, codomain: cod }
-  }
 
   // S(K(p), I) = p (eta reduction)
   if (cResult.tag === "tK" && bResult.tag === "tI") {
@@ -712,10 +705,29 @@ export function buildNativeWrapped(
       const { texpr: argTexpr, type: argType } = buildNativeWrapped(sexpr.arg, env, A, boundNames)
 
       // Type check: arg type must match domain.
-      // Allow mismatches when the expected domain is opaque (produced by unevaluated
-      // dependent type applications like P true, P b, etc.). These are stems that
-      // aren't recognized type constants.
       if (!treeEqual(argType, A)) {
+        // Constant-motive coercion: when domain is X -> Type and arg is Type,
+        // wrap the argument in K to produce a constant motive function.
+        // This handles patterns like natElim R z s n where R : Type but
+        // natElim expects (Nat -> Type) as the motive.
+        if (treeEqual(argType, TN_TYPE) && isFork(A)) {
+          const domCod = isNonDep(A.right)
+          if (domCod !== null && treeEqual(domCod, TN_TYPE)) {
+            // Domain is X -> Type, arg is Type → wrap in K
+            const kWrapped: TypedExpr = { tag: "tK", value: argTexpr, type: A }
+            const resultType = isNonDep(B) !== null
+              ? isNonDep(B)!
+              : apply(B, collapseForType(kWrapped, env))
+            return {
+              texpr: { tag: "tapp", func: funcTexpr, arg: kWrapped, type: resultType },
+              type: resultType,
+            }
+          }
+        }
+
+        // Allow mismatches when the expected domain is opaque (produced by unevaluated
+        // dependent type applications like P true, P b, etc.). These are stems that
+        // aren't recognized type constants.
         const isOpaqueExpected = isStem(A) && !treeEqual(A, TN_TREE) && !treeEqual(A, TN_BOOL) && !treeEqual(A, TN_NAT)
         if (!isOpaqueExpected) {
           throw new NativeElabError(`Type mismatch: expected ${printNativeType(A)}, got ${printNativeType(argType)}`)
@@ -769,19 +781,19 @@ export function nativeElabDecl(
 
     // Abstract self out to get a T → T function
     const { result: selfAbstracted } = typedBracketAbstract(name, bodyTexpr, nativeType)
-    const annSelfFn = collapseToAnnotated(selfAbstracted)
+    const annSelfFn = collapseToAnnotated(selfAbstracted, nativeDefs)
 
     // Compile using existing compileRecAndEval (trusted backend)
     const compiled = compileRecAndEval(name, value, compiledDefs)
     compiledDefs.set(name, compiled)
 
+    // Register before checking — ascription verification needs the compiled tree in defs
+    nativeDefs.set(compiled.id, nativeType)
+    registerNativeBuiltinId(compiled.id, compiled)
+
     // Verify the self-abstracted function at T → T
     const selfFnType = tnArrow(nativeType, nativeType)
     const checkOk = checkAnnotated(nativeDefs, annSelfFn, selfFnType)
-
-    // Register
-    nativeDefs.set(compiled.id, nativeType)
-    registerNativeBuiltinId(compiled.id, compiled)
 
     // FIX results are opaque — store as ascription
     const annotated = annAscribe(nativeType, compiled)
@@ -795,17 +807,17 @@ export function nativeElabDecl(
   const { texpr: valueTexpr } = buildNativeWrapped(value, env, nativeType)
 
   // Produce annotated tree from elaboration (exact D annotations)
-  const annotated = collapseToAnnotated(valueTexpr)
+  const annotated = collapseToAnnotated(valueTexpr, nativeDefs)
 
   // Compile using existing compileAndEval (trusted backend)
   const compiled = compileAndEval(value, compiledDefs)
   compiledDefs.set(name, compiled)
 
+  // Register before checking — ascription verification needs the compiled tree in defs
+  nativeDefs.set(compiled.id, nativeType)
+
   // Safety check: annotated tree should verify
   const checkOk = checkAnnotated(nativeDefs, annotated, nativeType)
-
-  // Register
-  nativeDefs.set(compiled.id, nativeType)
 
   // For type definitions, store the native type tree in nativeEnv.
   const treeForEnv = treeEqual(nativeType, TN_TYPE)
