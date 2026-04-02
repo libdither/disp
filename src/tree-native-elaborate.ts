@@ -1,71 +1,73 @@
-// Tree-native elaboration: elaborates surface syntax to TypedExpr with native types,
-// produces annotated trees for verification, and runs the native declaration pipeline.
+// Tree-native elaboration: two-phase pipeline from surface syntax to annotated trees.
+//
+// Phase 1: elaborate(sexpr, env, expectedType?) → TypedExpr
+//   Walks SExpr, resolves names, computes types (evaluating type-level trees
+//   for dependent codomains). Lambdas stay as `lam` nodes. No compilation.
+//
+// Phase 2: compile(typedExpr) → annotated Tree
+//   Bracket-abstracts all lambdas (inside-out), producing combI/combK/combS nodes.
+//   Collapses to annotated tree with D types embedded at S nodes.
 
-import { type Tree, LEAF, stem, fork, apply, treeEqual, I, K, isLeaf, isStem, isFork } from "./tree.js"
-import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapse, collapseAndEval, compileAndEval, compileRecAndEval } from "./compile.js"
+import { type Tree, LEAF, stem, fork, apply, treeEqual, I, isLeaf, isStem, isFork } from "./tree.js"
+import { type Expr, eTree, eFvar, eApp, bracketAbstract, kOf, collapseAndEval, compileRecAndEval } from "./compile.js"
 import { freshMarker, registerNativeBuiltinId } from "./native-utils.js"
 import { type SExpr } from "./parse.js"
 import {
   TN_TYPE, TN_TREE, TN_BOOL, TN_NAT,
-  tnArrow, tnPi,
-  annK, annS, annTriage, annAscribe, extract,
-  isNonDep, stemCodomain, forkCodomain, sCodomain,
+  tnArrow,
+  annK, annS, annAscribe,
+  extract,
+  isNonDep,
   type KnownDefs, checkAnnotated,
 } from "./tree-native-checker.js"
 
 // ============================================================
-// Utility: tree containment + marker abstraction
+// TypedExpr: typed expression tree
 // ============================================================
 
-function treeContains(tree: Tree, target: Tree): boolean {
-  const visited = new Set<number>()
-  const stack: Tree[] = [tree]
-  while (stack.length > 0) {
-    const t = stack.pop()!
-    if (treeEqual(t, target)) return true
-    if (visited.has(t.id)) continue
-    visited.add(t.id)
-    if (isStem(t)) stack.push(t.child)
-    else if (isFork(t)) { stack.push(t.left); stack.push(t.right) }
-  }
-  return false
-}
+// Source-level nodes (produced by elaborate):
+//   tree — resolved constant (builtin, definition, type value)
+//   var  — bound variable (from lambda parameter)
+//   app  — function application (unevaluated)
+//   lam  — lambda abstraction (with explicit parameter type)
+//
+// Combinator nodes (produced by bracket abstraction):
+//   combI — identity combinator [x]x
+//   combK — constant combinator [x]c where x not free in c
+//   combS — sharing combinator [x](f g) where x free in both f and g
+//           carries D (intermediate type) for annotation
 
-function treeToExprReplacingBounded(t: Tree, target: Tree, varName: string, depth: number): Expr | null {
-  if (depth > 500) return null
-  if (treeEqual(t, target)) return eFvar(varName)
-  if (!treeContains(t, target)) return eTree(t)
-  if (isLeaf(t)) return eTree(t)
-  if (isStem(t)) {
-    const child = treeToExprReplacingBounded(t.child, target, varName, depth + 1)
-    if (child === null) return null
-    if (child.tag === "tree" && treeEqual(child.value, t.child)) return eTree(t)
-    return eApp(eTree(LEAF), child)
-  }
-  const left = treeToExprReplacingBounded(t.left, target, varName, depth + 1)
-  if (left === null) return null
-  const right = treeToExprReplacingBounded(t.right, target, varName, depth + 1)
-  if (right === null) return null
-  if (left.tag === "tree" && treeEqual(left.value, t.left) &&
-      right.tag === "tree" && treeEqual(right.value, t.right))
-    return eTree(t)
-  return eApp(eApp(eTree(LEAF), left), right)
-}
+export type TypedExpr =
+  | { tag: "tree",  value: Tree, type: Tree }
+  | { tag: "var",   name: string, type: Tree }
+  | { tag: "app",   func: TypedExpr, arg: TypedExpr, type: Tree }
+  | { tag: "lam",   param: string, domain: Tree, body: TypedExpr, type: Tree }
+  | { tag: "combI", type: Tree }
+  | { tag: "combK", inner: TypedExpr, type: Tree }
+  | { tag: "combS", c: TypedExpr, b: TypedExpr, D: Tree, type: Tree }
 
-function abstractTreeMarker(tree: Tree, marker: Tree): Tree {
-  const name = "__tn_marker__"
-  const expr = treeToExprReplacingBounded(tree, marker, name, 0)
-  if (expr === null) {
-    return fork(LEAF, tree) // K(tree) as conservative fallback
-  }
-  return collapse(bracketAbstract(name, expr))
+function teTree(value: Tree, type: Tree): TypedExpr { return { tag: "tree", value, type } }
+function teVar(name: string, type: Tree): TypedExpr { return { tag: "var", name, type } }
+function teApp(func: TypedExpr, arg: TypedExpr, type: Tree): TypedExpr { return { tag: "app", func, arg, type } }
+function teLam(param: string, domain: Tree, body: TypedExpr, type: Tree): TypedExpr { return { tag: "lam", param, domain, body, type } }
+function teCombI(type: Tree): TypedExpr { return { tag: "combI", type } }
+function teCombK(inner: TypedExpr, type: Tree): TypedExpr { return { tag: "combK", inner, type } }
+function teCombS(c: TypedExpr, b: TypedExpr, D: Tree, type: Tree): TypedExpr { return { tag: "combS", c, b, D, type } }
+
+// ============================================================
+// NativeEnv and errors
+// ============================================================
+
+export type NativeEnv = Map<string, { tree: Tree, annTree: Tree, type: Tree }>
+
+export class NativeElabError extends Error {
+  constructor(msg: string) { super(msg); this.name = "NativeElabError" }
 }
 
 // ============================================================
 // Pretty-print a tree-native type
 // ============================================================
 
-// Unique placeholder tree for binder names in dependent Pi printing
 function depPiPlaceholder(depth: number): Tree {
   let idx: Tree = LEAF
   for (let i = 0; i < depth; i++) idx = stem(idx)
@@ -79,7 +81,6 @@ export function printNativeType(type: Tree, nameMap?: Map<number, string>, depth
   if (treeEqual(type, TN_BOOL)) return "Bool"
   if (treeEqual(type, TN_NAT)) return "Nat"
 
-  // Name lookup (binder names in dependent types, user-defined type names)
   if (nameMap) {
     const name = nameMap.get(type.id)
     if (name) return name
@@ -88,13 +89,11 @@ export function printNativeType(type: Tree, nameMap?: Map<number, string>, depth
   if (isFork(type)) {
     const A = type.left
     const B = type.right
-    // Non-dependent arrow: fork(A, fork(LEAF, B)) = A -> B
     const nd = isNonDep(B)
     if (nd !== null) {
       const domStr = isFork(A) ? `(${printNativeType(A, nameMap, depth)})` : printNativeType(A, nameMap, depth)
       return `${domStr} -> ${printNativeType(nd, nameMap, depth)}`
     }
-    // Dependent Pi: fork(A, B) where B is not K(_)
     const bname = String.fromCharCode(97 + (depth % 26))
     const placeholder = depPiPlaceholder(depth)
     let bodyType: Tree
@@ -114,379 +113,453 @@ export function printNativeType(type: Tree, nameMap?: Map<number, string>, depth
 }
 
 // ============================================================
-// Phase 3: Native Elaborator
+// Safe apply for type-level computation
 // ============================================================
 
-// --- TypedExpr: expressions with types attached ---
-
-export type TypedExpr =
-  | { tag: "tlit", tree: Tree, annTree: Tree, type: Tree }
-  | { tag: "tfvar", name: string, type: Tree }
-  | { tag: "tapp", func: TypedExpr, arg: TypedExpr, type: Tree }
-  | { tag: "tI", type: Tree }
-  | { tag: "tK", value: TypedExpr, type: Tree }
-  | { tag: "tS", d: Tree, c: TypedExpr, b: TypedExpr, type: Tree }
-
-export type NativeEnv = Map<string, { tree: Tree, annTree: Tree, type: Tree }>
-
-// --- Collapse TypedExpr to executable tree ---
-
-export function collapseTypedExpr(texpr: TypedExpr): Tree {
-  switch (texpr.tag) {
-    case "tlit": return texpr.tree
-    case "tfvar": throw new Error(`Free variable in collapseTypedExpr: ${texpr.name}`)
-    case "tapp": return apply(collapseTypedExpr(texpr.func), collapseTypedExpr(texpr.arg))
-    case "tI": return I
-    case "tK": return fork(LEAF, collapseTypedExpr(texpr.value))
-    case "tS": {
-      const c = collapseTypedExpr(texpr.c)
-      const b = collapseTypedExpr(texpr.b)
-      return fork(stem(c), b)
-    }
+function safeApply(f: Tree, x: Tree): Tree {
+  try {
+    return apply(f, x, { remaining: 100000 })
+  } catch {
+    return fork(f, x)
   }
 }
 
-// --- Collapse TypedExpr to annotated tree (with D annotations + ascriptions) ---
+// ============================================================
+// Phase 1: elaborate — SExpr → TypedExpr
+// ============================================================
 
-export function collapseToAnnotated(texpr: TypedExpr, defs?: KnownDefs): Tree {
-  switch (texpr.tag) {
-    case "tlit": return texpr.annTree
-    case "tfvar": throw new Error(`Free variable leak: ${texpr.name}`)
-    case "tapp": {
-      const f = extract(collapseToAnnotated(texpr.func, defs))
-      const g = extract(collapseToAnnotated(texpr.arg, defs))
-      const result = apply(f, g)
-      if (defs) defs.set(result.id, texpr.type)
-      return annAscribe(texpr.type, result)
-    }
-    case "tI": return I
-    case "tK": return annK(collapseToAnnotated(texpr.value, defs))
-    case "tS": return annS(texpr.d, collapseToAnnotated(texpr.c, defs), collapseToAnnotated(texpr.b, defs))
-  }
+// Helper: abstract a marker out of a type-level tree (for Pi codomain functions).
+// Uses Expr bracket abstraction since this is type-level computation, not program compilation.
+function abstractTypeMarker(tree: Tree, marker: Tree): Tree {
+  const name = "__type_marker__"
+  const expr = treeToExprReplacing(tree, marker, name, 0)
+  if (expr === null) return fork(LEAF, tree) // K(tree) fallback
+  return collapseAndEval(bracketAbstract(name, expr))
 }
 
-// --- Collapse TypedExpr for type computation (resolves tfvar via env markers) ---
-
-function collapseForType(texpr: TypedExpr, env: NativeEnv): Tree {
-  if (texpr.tag === "tfvar") {
-    const entry = env.get(texpr.name)
-    if (entry) return entry.tree
-    throw new Error(`Free variable in collapseForType: ${texpr.name}`)
+function treeContains(tree: Tree, target: Tree): boolean {
+  const visited = new Set<number>()
+  const stack: Tree[] = [tree]
+  while (stack.length > 0) {
+    const t = stack.pop()!
+    if (treeEqual(t, target)) return true
+    if (visited.has(t.id)) continue
+    visited.add(t.id)
+    if (isStem(t)) stack.push(t.child)
+    else if (isFork(t)) { stack.push(t.left); stack.push(t.right) }
   }
-  if (texpr.tag === "tapp") {
-    return apply(collapseForType(texpr.func, env), collapseForType(texpr.arg, env))
-  }
-  return collapseTypedExpr(texpr)
+  return false
 }
 
-// --- Check if a free variable appears in a TypedExpr ---
-
-// Check if a TypedExpr contains a tlit whose tree matches the given marker.
-// Used to detect dependency in Pi types when eager evaluation erases the marker
-// from the collapsed tree (e.g., Pair A B where A is a marker).
-function typedContainsMarker(texpr: TypedExpr, marker: Tree): boolean {
-  switch (texpr.tag) {
-    case "tlit": return treeEqual(texpr.tree, marker)
-    case "tfvar": return false
-    case "tapp": return typedContainsMarker(texpr.func, marker) || typedContainsMarker(texpr.arg, marker)
-    case "tI": return false
-    case "tK": return typedContainsMarker(texpr.value, marker)
-    case "tS": return typedContainsMarker(texpr.c, marker) || typedContainsMarker(texpr.b, marker)
+function treeToExprReplacing(t: Tree, target: Tree, varName: string, depth: number): Expr | null {
+  if (depth > 500) return null
+  if (treeEqual(t, target)) return eFvar(varName)
+  if (!treeContains(t, target)) return eTree(t)
+  if (isLeaf(t)) return eTree(t)
+  if (isStem(t)) {
+    const child = treeToExprReplacing(t.child, target, varName, depth + 1)
+    if (child === null) return null
+    if (child.tag === "tree" && treeEqual(child.value, t.child)) return eTree(t)
+    return eApp(eTree(LEAF), child)
   }
+  const left = treeToExprReplacing(t.left, target, varName, depth + 1)
+  if (left === null) return null
+  const right = treeToExprReplacing(t.right, target, varName, depth + 1)
+  if (right === null) return null
+  if (left.tag === "tree" && treeEqual(left.value, t.left) &&
+      right.tag === "tree" && treeEqual(right.value, t.right))
+    return eTree(t)
+  return eApp(eApp(eTree(LEAF), left), right)
 }
 
-function typedHasFreeVar(name: string, texpr: TypedExpr): boolean {
-  switch (texpr.tag) {
-    case "tlit": return false
-    case "tfvar": return texpr.name === name
-    case "tapp": return typedHasFreeVar(name, texpr.func) || typedHasFreeVar(name, texpr.arg)
-    case "tI": return false
-    case "tK": return typedHasFreeVar(name, texpr.value)
-    case "tS": return typedHasFreeVar(name, texpr.c) || typedHasFreeVar(name, texpr.b)
-  }
-}
-
-// --- Convert TypedExpr to Expr (for bracket abstraction) ---
-
-function typedToExpr(texpr: TypedExpr): Expr {
-  switch (texpr.tag) {
-    case "tlit": return eTree(texpr.tree)
-    case "tfvar": return eFvar(texpr.name)
-    case "tapp": return eApp(typedToExpr(texpr.func), typedToExpr(texpr.arg))
-    case "tI": return eTree(I)
-    case "tK": return eApp(eTree(LEAF), typedToExpr(texpr.value))
-    case "tS": return eApp(eApp(eTree(LEAF), typedToExpr(texpr.c)), typedToExpr(texpr.b))
-  }
-}
-
-// Convert TypedExpr to Expr, replacing tlit nodes matching a marker with a free variable.
-// Used to build codomain functions for dependent Pi types where eager evaluation erases the marker.
-function typedToExprReplacingMarker(texpr: TypedExpr, marker: Tree, varName: string): Expr {
-  switch (texpr.tag) {
-    case "tlit":
-      if (treeEqual(texpr.tree, marker)) return eFvar(varName)
-      return eTree(texpr.tree)
-    case "tfvar": return eFvar(texpr.name)
-    case "tapp":
-      return eApp(
-        typedToExprReplacingMarker(texpr.func, marker, varName),
-        typedToExprReplacingMarker(texpr.arg, marker, varName),
-      )
-    case "tI": return eTree(I)
-    case "tK": return eApp(eTree(LEAF), typedToExprReplacingMarker(texpr.value, marker, varName))
-    case "tS":
-      return eApp(
-        eApp(eTree(LEAF), typedToExprReplacingMarker(texpr.c, marker, varName)),
-        typedToExprReplacingMarker(texpr.b, marker, varName),
-      )
-  }
-}
-
-// --- Typed bracket abstraction ---
-
-export function typedBracketAbstract(
-  varName: string, texpr: TypedExpr, varType: Tree,
-): { result: TypedExpr, codomain: Tree } {
-  const A = varType
-
-  // [x] x = I, codomain = K(A)
-  if (texpr.tag === "tfvar" && texpr.name === varName) {
-    const cod = fork(LEAF, A) // K(A)
-    return { result: { tag: "tI", type: fork(A, cod) }, codomain: cod }
-  }
-
-  // [x] c = K(c), codomain = K(type_of_c)
-  if (!typedHasFreeVar(varName, texpr)) {
-    const cod = fork(LEAF, texpr.type) // K(T)
-    return { result: { tag: "tK", value: texpr, type: fork(A, cod) }, codomain: cod }
-  }
-
-  // tI/tK/tS with free vars: decompose to tapp form.
-  // During Phase 3-4 transition, tK/tS from inner abstractions may appear as inputs
-  // to outer abstractions (via multi-param lambdas).
-  if (texpr.tag === "tK") {
-    // tK(v) ≡ tapp(K_combinator, v). K = stem(LEAF).
-    // We know v has the free var. Treat as tapp with a constant func.
-    const kType = fork(texpr.value.type, fork(LEAF, fork(A, fork(LEAF, texpr.value.type))))
-    const kLit: TypedExpr = { tag: "tlit", tree: K, annTree: K, type: kType }
-    const asApp: TypedExpr = { tag: "tapp", func: kLit, arg: texpr.value, type: texpr.type }
-    return typedBracketAbstract(varName, asApp, A)
-  }
-  if (texpr.tag === "tS") {
-    // tS(d, c, b) ≡ tapp(tapp(stem_fn, c), b). stem = LEAF as constructor.
-    // Decompose: fork(stem(c), b) = apply(stem(c), b) = apply(apply(LEAF, c), b)
-    const innerType = fork(texpr.b.type, fork(LEAF, texpr.type))
-    const stemApp: TypedExpr = { tag: "tapp", func: { tag: "tlit", tree: LEAF, annTree: LEAF, type: fork(texpr.c.type, fork(LEAF, innerType)) }, arg: texpr.c, type: innerType }
-    const asApp: TypedExpr = { tag: "tapp", func: stemApp, arg: texpr.b, type: texpr.type }
-    return typedBracketAbstract(varName, asApp, A)
-  }
-
-  // [x] (f g): must be tapp (tlit has no free vars, tfvar was handled above, tI has none)
-  if (texpr.tag !== "tapp") {
-    const cod = fork(LEAF, texpr.type)
-    return { result: { tag: "tK", value: texpr, type: fork(A, cod) }, codomain: cod }
-  }
-
-  // Eta reduction: [x](f x) = f when x not free in f
-  if (!typedHasFreeVar(varName, texpr.func) && texpr.arg.tag === "tfvar" && texpr.arg.name === varName) {
-    if (isFork(texpr.func.type)) {
-      return { result: texpr.func, codomain: texpr.func.type.right }
-    }
-    return { result: texpr.func, codomain: fork(LEAF, texpr.type) }
-  }
-
-  // General S case: [x](f g) = S([x]f, [x]g)
-  const { result: cResult, codomain: cCod } = typedBracketAbstract(varName, texpr.func, A)
-  const { result: bResult, codomain: D } = typedBracketAbstract(varName, texpr.arg, A)
-
-  // S(K(p), I) = p (eta reduction)
-  if (cResult.tag === "tK" && bResult.tag === "tI") {
-    // p = cResult.value. S(K(p), I)(x) = p(x), so codomain = p.type.right
-    const vType = cResult.value.type
-    const cod = isFork(vType) ? vType.right : fork(LEAF, texpr.type)
-    return { result: cResult.value, codomain: cod }
-  }
-
-  // Full S: S(c, b) with D as intermediate type
-  const B = fork(LEAF, texpr.type) // K(resultType) — non-dependent approximation
-  return {
-    result: { tag: "tS", d: D, c: cResult, b: bResult, type: fork(A, sCodomain(D, B)) },
-    codomain: sCodomain(D, B),
-  }
-}
-
-// --- Build native wrapped (elaborate SExpr to TypedExpr + type) ---
-
-export class NativeElabError extends Error {
-  constructor(msg: string) { super(msg); this.name = "NativeElabError" }
-}
-
-export function buildNativeWrapped(
+export function elaborate(
   sexpr: SExpr, env: NativeEnv, expectedType?: Tree,
   boundNames?: Set<string>,
-): { texpr: TypedExpr, type: Tree } {
+): TypedExpr {
   switch (sexpr.tag) {
     case "stype":
-      return { texpr: { tag: "tlit", tree: LEAF, annTree: LEAF, type: TN_TYPE }, type: TN_TYPE }
+      return teTree(LEAF, TN_TYPE)
 
     case "stree":
-      return { texpr: { tag: "tlit", tree: TN_TREE, annTree: TN_TREE, type: TN_TYPE }, type: TN_TYPE }
+      return teTree(TN_TREE, TN_TYPE)
 
     case "svar": {
-      // Special-case primitive type names
-      if (sexpr.name === "Tree") return { texpr: { tag: "tlit", tree: TN_TREE, annTree: TN_TREE, type: TN_TYPE }, type: TN_TYPE }
-      if (sexpr.name === "Bool") return { texpr: { tag: "tlit", tree: TN_BOOL, annTree: TN_BOOL, type: TN_TYPE }, type: TN_TYPE }
-      if (sexpr.name === "Nat") return { texpr: { tag: "tlit", tree: TN_NAT, annTree: TN_NAT, type: TN_TYPE }, type: TN_TYPE }
+      if (sexpr.name === "Tree") return teTree(TN_TREE, TN_TYPE)
+      if (sexpr.name === "Bool") return teTree(TN_BOOL, TN_TYPE)
+      if (sexpr.name === "Nat") return teTree(TN_NAT, TN_TYPE)
 
       const entry = env.get(sexpr.name)
       if (!entry) throw new NativeElabError(`Unbound variable: ${sexpr.name}`)
 
-      // Bound variables produce tfvar (preserves structure for bracket abstraction)
       if (boundNames?.has(sexpr.name)) {
-        return { texpr: { tag: "tfvar", name: sexpr.name, type: entry.type }, type: entry.type }
+        return teVar(sexpr.name, entry.type)
       }
-      return { texpr: { tag: "tlit", tree: entry.tree, annTree: entry.annTree, type: entry.type }, type: entry.type }
+      return teTree(entry.tree, entry.type)
     }
 
     case "spi": {
-      // Elaborate domain (expect Type)
-      const { texpr: domTexpr, type: domType } = buildNativeWrapped(sexpr.domain, env, TN_TYPE, boundNames)
-      if (!treeEqual(domType, TN_TYPE)) throw new NativeElabError("Pi domain must be a type")
-      const domTree = collapseForType(domTexpr, env)
+      const dom = elaborate(sexpr.domain, env, TN_TYPE, boundNames)
+      if (!treeEqual(dom.type, TN_TYPE)) throw new NativeElabError("Pi domain must be a type")
+      const domTree = typeTreeOf(dom)
 
-      // Create marker for binder (type-level computation, goes in env only)
       const m = freshMarker()
       const extEnv = new Map(env)
       if (sexpr.name !== "_") extEnv.set(sexpr.name, { tree: m, annTree: m, type: domTree })
 
-      // Elaborate codomain
-      const { texpr: codTexpr, type: codType } = buildNativeWrapped(sexpr.codomain, extEnv, TN_TYPE, boundNames)
-      if (!treeEqual(codType, TN_TYPE)) throw new NativeElabError("Pi codomain must be a type")
+      const cod = elaborate(sexpr.codomain, extEnv, TN_TYPE, boundNames)
+      if (!treeEqual(cod.type, TN_TYPE)) throw new NativeElabError("Pi codomain must be a type")
+      const codTree = typeTreeOf(cod)
 
-      // Check if codomain depends on the binder.
-      // First try collapsing (eager) and checking for marker in result tree.
-      const codTree = collapseForType(codTexpr, extEnv)
+      // Check dependency
       if (treeContains(codTree, m)) {
-        // Dependent: abstract marker out to get codomain function
-        const codFn = abstractTreeMarker(codTree, m)
+        const codFn = abstractTypeMarker(codTree, m)
         const piTree = fork(domTree, codFn)
-        return { texpr: { tag: "tlit", tree: piTree, annTree: piTree, type: TN_TYPE }, type: TN_TYPE }
+        return teTree(piTree, TN_TYPE)
       }
 
-      // Eager evaluation may have consumed the marker (e.g., Church-encoded type
-      // constructors like Pair applied to type variables, or dependent types like
-      // P applied to values). Check the TypedExpr structure for the marker.
-      if (sexpr.name !== "_" && typedContainsMarker(codTexpr, m)) {
-        // Dependent, but marker was erased by evaluation.
-        // Build codomain function via bracket abstraction on the TypedExpr.
-        const varName = "__pi_binder__"
-        const codExpr = typedToExprReplacingMarker(codTexpr, m, varName)
-        const codFn = collapseAndEval(bracketAbstract(varName, codExpr))
+      // Check Expr-level dependency (marker consumed by evaluation)
+      if (sexpr.name !== "_" && teHasFreeVar(sexpr.name, cod)) {
+        // Build codomain function via Expr bracket abstraction
+        const codExpr = typedExprToExpr(cod)
+        const codFn = collapseAndEval(bracketAbstract(sexpr.name, codExpr))
         const piTree = fork(domTree, codFn)
-        return { texpr: { tag: "tlit", tree: piTree, annTree: piTree, type: TN_TYPE }, type: TN_TYPE }
+        return teTree(piTree, TN_TYPE)
       }
 
-      // Non-dependent: A -> B = fork(A, K(B))
       const arrTree = tnArrow(domTree, codTree)
-      return { texpr: { tag: "tlit", tree: arrTree, annTree: arrTree, type: TN_TYPE }, type: TN_TYPE }
+      return teTree(arrTree, TN_TYPE)
     }
 
     case "slam": {
       if (!expectedType) throw new NativeElabError("Cannot infer type of lambda expression")
 
-      // Desugar multi-param lambda
+      // Desugar multi-param
       if (sexpr.params.length > 1) {
         const [first, ...rest] = sexpr.params
         const innerLam: SExpr = { tag: "slam", params: rest, body: sexpr.body }
         const singleLam: SExpr = { tag: "slam", params: [first], body: innerLam }
-        return buildNativeWrapped(singleLam, env, expectedType, boundNames)
+        return elaborate(singleLam, env, expectedType, boundNames)
       }
 
       const param = sexpr.params[0]
-      // Decompose expected type as Pi(A, B)
       if (!isFork(expectedType)) throw new NativeElabError("Lambda needs function type")
       const A = expectedType.left
       const B = expectedType.right
 
-      // Create a fresh marker for dependent type computation (goes in env)
-      // and add param to boundNames (so svar produces tfvar)
       const m = freshMarker()
       const extEnv = new Map(env)
       extEnv.set(param, { tree: m, annTree: m, type: A })
       const extBound = new Set(boundNames ?? [])
       extBound.add(param)
 
-      // Compute expected body type
-      const bodyExpected = isNonDep(B) !== null ? isNonDep(B)! : apply(B, m)
+      const bodyExpected = isNonDep(B) !== null ? isNonDep(B)! : safeApply(B, m)
+      const body = elaborate(sexpr.body, extEnv, bodyExpected, extBound)
 
-      // Elaborate body — bound vars become tfvar, defs become tlit
-      const { texpr: bodyTexpr } = buildNativeWrapped(sexpr.body, extEnv, bodyExpected, extBound)
-
-      // Bracket-abstract the parameter out (no substituteMarker needed)
-      const { result } = typedBracketAbstract(param, bodyTexpr, A)
-
-      // Adjust the result type to match the expected Pi type
-      const adjusted = { ...result, type: expectedType }
-      return { texpr: adjusted, type: expectedType }
+      return teLam(param, A, body, expectedType)
     }
 
     case "sapp": {
-      // Elaborate function
-      const { texpr: funcTexpr, type: funcType } = buildNativeWrapped(sexpr.func, env, undefined, boundNames)
+      const func = elaborate(sexpr.func, env, undefined, boundNames)
 
-      // Function type must be Pi (fork)
-      if (!isFork(funcType)) throw new NativeElabError("Expected function type in application")
-      const A = funcType.left
-      const B = funcType.right
+      if (!isFork(func.type)) throw new NativeElabError("Expected function type in application")
+      const A = func.type.left
+      const B = func.type.right
 
-      // Elaborate argument against domain
-      const { texpr: argTexpr, type: argType } = buildNativeWrapped(sexpr.arg, env, A, boundNames)
+      const arg = elaborate(sexpr.arg, env, A, boundNames)
 
-      // Type check: arg type must match domain.
-      if (!treeEqual(argType, A)) {
-        // Constant-motive coercion: when domain is X -> Type and arg is Type,
-        // wrap the argument in K to produce a constant motive function.
-        // This handles patterns like natElim R z s n where R : Type but
-        // natElim expects (Nat -> Type) as the motive.
-        if (treeEqual(argType, TN_TYPE) && isFork(A)) {
+      if (!treeEqual(arg.type, A)) {
+        // Constant-motive coercion
+        if (treeEqual(arg.type, TN_TYPE) && isFork(A)) {
           const domCod = isNonDep(A.right)
           if (domCod !== null && treeEqual(domCod, TN_TYPE)) {
-            // Domain is X -> Type, arg is Type → wrap in K
-            const kWrapped: TypedExpr = { tag: "tK", value: argTexpr, type: A }
+            // Wrap in K: the arg becomes K(arg) to match X -> Type domain
+            const kArg = teCombK(arg, A)
             const resultType = isNonDep(B) !== null
               ? isNonDep(B)!
-              : apply(B, collapseForType(kWrapped, env))
-            return {
-              texpr: { tag: "tapp", func: funcTexpr, arg: kWrapped, type: resultType },
-              type: resultType,
-            }
+              : safeApply(B, fork(LEAF, typeTreeOf(arg))) // K(argTree)
+            return teApp(func, kArg, resultType)
           }
         }
 
-        // Allow mismatches when the expected domain is opaque (produced by unevaluated
-        // dependent type applications like P true, P b, etc.). These are stems that
-        // aren't recognized type constants.
         const isOpaqueExpected = isStem(A) && !treeEqual(A, TN_TREE) && !treeEqual(A, TN_BOOL) && !treeEqual(A, TN_NAT)
         if (!isOpaqueExpected) {
-          throw new NativeElabError(`Type mismatch: expected ${printNativeType(A)}, got ${printNativeType(argType)}`)
+          throw new NativeElabError(`Type mismatch: expected ${printNativeType(A)}, got ${printNativeType(arg.type)}`)
         }
-        // Opaque expected type — allow the argument and use it as-is
       }
 
-      // Result type: apply B to the argument value (use collapseForType for bound vars)
+      // For type computation, we need the tree value of the argument
+      // to evaluate dependent codomains: apply(B, argTree)
       const resultType = isNonDep(B) !== null
         ? isNonDep(B)!
-        : apply(B, collapseForType(argTexpr, env))
+        : safeApply(B, typeTreeOf(arg))
 
-      return {
-        texpr: { tag: "tapp", func: funcTexpr, arg: argTexpr, type: resultType },
-        type: resultType,
-      }
+      return teApp(func, arg, resultType)
     }
   }
 }
 
-// --- Native declaration pipeline (standalone, replaces CoC) ---
+// Extract a Tree value from a TypedExpr for type-level computation.
+// For tree nodes, return the value directly. For combinators, build the tree.
+// For vars, they should have been substituted with markers during elaboration — use Expr fallback.
+// For apps, eagerly evaluate. For lams, bracket-abstract via Expr and evaluate.
+function typeTreeOf(te: TypedExpr): Tree {
+  switch (te.tag) {
+    case "tree": return te.value
+    case "var":
+      // During elaboration, vars are mapped to markers in the env.
+      // typeTreeOf is called on elaboration results where vars reference markers.
+      // If we reach here, the var wasn't resolved — shouldn't happen in well-formed programs.
+      return LEAF
+    case "app":
+      return safeApply(typeTreeOf(te.func), typeTreeOf(te.arg))
+    case "lam": {
+      // Convert to Expr, bracket-abstract, and evaluate to get the tree function
+      const bodyExpr = typedExprToExpr(te.body)
+      const abstracted = bracketAbstract(te.param, bodyExpr)
+      return collapseAndEval(abstracted)
+    }
+    case "combI": return I
+    case "combK": return fork(LEAF, typeTreeOf(te.inner))
+    case "combS": return fork(stem(typeTreeOf(te.c)), typeTreeOf(te.b))
+  }
+}
+
+// Check if a TypedExpr contains a free variable reference
+function teHasFreeVar(name: string, te: TypedExpr): boolean {
+  switch (te.tag) {
+    case "tree": return false
+    case "var": return te.name === name
+    case "app": return teHasFreeVar(name, te.func) || teHasFreeVar(name, te.arg)
+    case "lam": return te.param !== name && teHasFreeVar(name, te.body)
+    case "combI": return false
+    case "combK": return teHasFreeVar(name, te.inner)
+    case "combS": return teHasFreeVar(name, te.c) || teHasFreeVar(name, te.b)
+  }
+}
+
+// Convert TypedExpr to Expr (for type-level bracket abstraction in Pi)
+function typedExprToExpr(te: TypedExpr): Expr {
+  switch (te.tag) {
+    case "tree": return eTree(te.value)
+    case "var": return eFvar(te.name)
+    case "app": return eApp(typedExprToExpr(te.func), typedExprToExpr(te.arg))
+    case "lam": return bracketAbstract(te.param, typedExprToExpr(te.body))
+    case "combI": return eTree(I)
+    case "combK": return kOf(typedExprToExpr(te.inner))
+    case "combS": {
+      // S(c, b) as Expr: app(app(LEAF, app(LEAF, c)), b)
+      const cE = typedExprToExpr(te.c)
+      const bE = typedExprToExpr(te.b)
+      const stemC = eApp(eTree(LEAF), cE)
+      const stemStemC = eApp(eTree(LEAF), stemC)
+      return eApp(stemStemC, bE)
+    }
+  }
+}
+
+// ============================================================
+// Phase 2: compile — TypedExpr → annotated Tree
+// ============================================================
+
+// Step 2a: bracket-abstract all lambdas, producing combinator nodes.
+// Processes inside-out: innermost lambdas first.
+
+function compileTypedExpr(te: TypedExpr): TypedExpr {
+  switch (te.tag) {
+    case "tree":
+    case "var":
+    case "combI":
+      return te
+
+    case "combK":
+      return teCombK(compileTypedExpr(te.inner), te.type)
+
+    case "combS":
+      return teCombS(compileTypedExpr(te.c), compileTypedExpr(te.b), te.D, te.type)
+
+    case "app":
+      return teApp(compileTypedExpr(te.func), compileTypedExpr(te.arg), te.type)
+
+    case "lam": {
+      // First compile the body (handles inner lambdas)
+      const compiledBody = compileTypedExpr(te.body)
+      // Then bracket-abstract this lambda's parameter
+      return typedBracketAbstract(te.param, te.domain, compiledBody, te.type)
+    }
+  }
+}
+
+// Typed bracket abstraction: eliminate a named variable, producing combI/combK/combS.
+// Returns a TypedExpr with the given variable removed.
+function typedBracketAbstract(
+  name: string, domain: Tree, body: TypedExpr, piType: Tree
+): TypedExpr {
+  const B = piType.tag === "fork" ? piType.right : fork(LEAF, body.type) // codomain
+
+  switch (body.tag) {
+    case "var":
+      if (body.name === name) {
+        // [x]x = I
+        return teCombI(piType)
+      }
+      // [x]y = K(y)
+      return teCombK(body, piType)
+
+    case "tree":
+      // [x]c = K(c)
+      return teCombK(body, piType)
+
+    case "combI":
+      // I has no free vars → K(I)
+      return teCombK(body, piType)
+
+    case "combK": {
+      // K(e) = apply(stem(LEAF), e) — convert to app and delegate.
+      // This lets the standard app-case handle eta, S(Kp)(Kq), etc.
+      if (!teHasFreeVar(name, body.inner)) {
+        return teCombK(body, piType)
+      }
+      const kTree = teTree(stem(LEAF), tnArrow(body.inner.type, body.type))
+      const asApp = teApp(kTree, body.inner, body.type)
+      return typedBracketAbstract(name, domain, asApp, piType)
+    }
+
+    case "combS": {
+      // S(c, b) = fork(stem(c), b) = apply(apply(LEAF, apply(LEAF, c)), b)
+      // Convert to app chain and delegate to the standard app-case.
+      // This gets eta, S(Kp)(Kq), S(Kp)I optimizations for free.
+      if (!teHasFreeVar(name, body.c) && !teHasFreeVar(name, body.b)) {
+        return teCombK(body, piType)
+      }
+      // Build: app(app(LEAF, app(LEAF, c)), b)
+      // Types are approximate (Tree-level construction) but sufficient for abstraction.
+      const stemC = teApp(teTree(LEAF, TN_TREE), body.c, TN_TREE) // stem(c)
+      const stemStemC = teApp(teTree(LEAF, TN_TREE), stemC, TN_TREE) // stem(stem(c))
+      const asApp = teApp(stemStemC, body.b, body.type)
+      return typedBracketAbstract(name, domain, asApp, piType)
+    }
+
+    case "app": {
+      const freeInFunc = teHasFreeVar(name, body.func)
+      const freeInArg = teHasFreeVar(name, body.arg)
+
+      if (!freeInFunc && !freeInArg) {
+        // [x](f g) where x not in f or g → K(f g)
+        return teCombK(body, piType)
+      }
+
+      // Eta reduction: [x](f x) when x not free in f
+      if (!freeInFunc && body.arg.tag === "var" && body.arg.name === name) {
+        return body.func
+      }
+
+      // S case: [x](f g) = S([x]f, [x]g)
+      // [x]g : Pi(domain, D) where D is the codomain of g's abstracted type
+      // [x]f : Pi(domain, sCodomain(D, B))
+
+      // Compute types for the abstracted sub-expressions
+      const argType = body.arg.type
+      const funcType = body.func.type
+
+      // For [x]g: if g doesn't use x, type is Pi(domain, K(argType))
+      //           if g uses x, we recurse and get the type from the result
+      const absArg = typedBracketAbstract(name, domain, body.arg,
+        fork(domain, freeInArg ? fork(LEAF, argType) : fork(LEAF, argType)))
+      // D is the codomain of absArg's type
+      const D = isFork(absArg.type) ? absArg.type.right : fork(LEAF, argType)
+
+      // For [x]f: type is Pi(domain, sCodomain(D, B))
+      const absFunc = typedBracketAbstract(name, domain, body.func,
+        fork(domain, fork(LEAF, funcType))) // approximate
+
+      // S(Kp)(Kq) = K(pq) optimization
+      if (absFunc.tag === "combK" && absArg.tag === "combK") {
+        // Both are constant — neither uses x. Wrap application in K.
+        return teCombK(teApp(absFunc.inner, absArg.inner, body.type), piType)
+      }
+
+      // S(Kp) I = p optimization (eta)
+      if (absFunc.tag === "combK" && absArg.tag === "combI") {
+        // Verify type compatibility
+        return absFunc.inner
+      }
+
+      return teCombS(absFunc, absArg, D, piType)
+    }
+
+    case "lam":
+      // Should not happen — lams should be compiled before outer abstraction
+      throw new NativeElabError("BUG: lam node during bracket abstraction")
+  }
+}
+
+// Step 2b: collapse combinator TypedExpr to annotated tree.
+// No lam or var nodes should remain.
+
+function collapseAnnotated(te: TypedExpr, nativeDefs?: KnownDefs): Tree {
+  switch (te.tag) {
+    case "tree":
+      return te.value
+    case "combI":
+      return I
+    case "combK":
+      return annK(collapseAnnotated(te.inner, nativeDefs))
+    case "combS":
+      return annS(te.D, collapseAnnotated(te.c, nativeDefs), collapseAnnotated(te.b, nativeDefs))
+    case "app": {
+      // Unevaluated application — result of eta reduction or S(Kp)(Kq)=K(pq).
+      // Evaluate to get the tree value, wrap in ascription.
+      const raw = collapseRaw(te)
+      if (nativeDefs) nativeDefs.set(raw.id, te.type)
+      return annAscribe(te.type, raw)
+    }
+    case "var":
+      throw new NativeElabError("BUG: free variable in collapseAnnotated: " + te.name)
+    case "lam":
+      throw new NativeElabError("BUG: lam node in collapseAnnotated")
+  }
+}
+
+// Collapse to raw tree (for execution)
+function collapseRaw(te: TypedExpr): Tree {
+  switch (te.tag) {
+    case "tree": return te.value
+    case "combI": return I
+    case "combK": return fork(LEAF, collapseRaw(te.inner))
+    case "combS": return fork(stem(collapseRaw(te.c)), collapseRaw(te.b))
+    case "app": return safeApply(collapseRaw(te.func), collapseRaw(te.arg))
+    case "var": throw new NativeElabError("BUG: free variable in collapseRaw: " + te.name)
+    case "lam": throw new NativeElabError("BUG: lam node in collapseRaw")
+  }
+}
+
+// Full compile: TypedExpr → { annotated, compiled }
+// annotated = structural annotation for checking (D at S nodes, K/I pass through)
+// compiled = fully evaluated tree for execution (collapseRaw eagerly evaluates app nodes)
+export function compileTE(te: TypedExpr, nativeDefs?: KnownDefs): { annotated: Tree, compiled: Tree } {
+  const combinators = compileTypedExpr(te)
+  const annotated = collapseAnnotated(combinators, nativeDefs)
+  const compiled = collapseRaw(combinators)
+  return { annotated, compiled }
+}
+
+// ============================================================
+// Backward-compatible buildDirect wrapper
+// ============================================================
+
+// Returns { tree, type } for callers that need type-level tree values.
+// Used by prelude (builtin type elaboration) and REPL (type display).
+export function buildDirect(
+  sexpr: SExpr, env: NativeEnv, expectedType?: Tree,
+  boundNames?: Set<string>,
+): { tree: Tree, type: Tree } {
+  const te = elaborate(sexpr, env, expectedType, boundNames)
+  return { tree: typeTreeOf(te), type: te.type }
+}
+
+// ============================================================
+// Native declaration pipeline
+// ============================================================
 
 export function nativeElabDecl(
   env: NativeEnv,
@@ -500,40 +573,42 @@ export function nativeElabDecl(
   // 1. Elaborate type annotation
   let nativeType: Tree
   if (type) {
-    const { texpr: typeTexpr, type: typeOfType } = buildNativeWrapped(type, env, TN_TYPE)
-    if (!treeEqual(typeOfType, TN_TYPE)) throw new NativeElabError("Type annotation must be a type")
-    nativeType = collapseTypedExpr(typeTexpr)
+    const te = elaborate(type, env, TN_TYPE)
+    if (!treeEqual(te.type, TN_TYPE)) throw new NativeElabError("Type annotation must be a type")
+    nativeType = typeTreeOf(te)
   } else {
     if (isRec) throw new NativeElabError(`Recursive definition '${name}' requires a type annotation`)
     throw new NativeElabError("Type inference not yet supported in native elaborator")
   }
 
   if (isRec) {
-    // Recursive: add self as bound variable, elaborate body, abstract self out
+    // Recursive definitions still use the old compile path for FIX.
+    // The TypedExpr pipeline handles the step function; FIX wraps it.
     const selfMarker = freshMarker()
     const extEnv = new Map(env)
     extEnv.set(name, { tree: selfMarker, annTree: selfMarker, type: nativeType })
-    const boundNames = new Set([name])
 
-    const { texpr: bodyTexpr } = buildNativeWrapped(value, extEnv, nativeType, boundNames)
+    const bodyTE = elaborate(value, extEnv, nativeType)
 
-    // Abstract self out to get a T → T function
-    const { result: selfAbstracted } = typedBracketAbstract(name, bodyTexpr, nativeType)
-    const annSelfFn = collapseToAnnotated(selfAbstracted, nativeDefs)
+    // Abstract self out: compile the body, then bracket-abstract name
+    const compiledBody = compileTypedExpr(bodyTE)
+    const selfFn = typedBracketAbstract(name, nativeType, compiledBody,
+      tnArrow(nativeType, nativeType))
+    const selfFnTree = collapseRaw(selfFn)
 
-    // Compile using existing compileRecAndEval (trusted backend)
+    // Use compileRecAndEval for the actual FIX-wrapped compiled tree
     const compiled = compileRecAndEval(name, value, compiledDefs)
     compiledDefs.set(name, compiled)
 
-    // Register before checking — ascription verification needs the compiled tree in defs
     nativeDefs.set(compiled.id, nativeType)
     registerNativeBuiltinId(compiled.id, compiled)
 
-    // Verify the self-abstracted function at T → T
+    // Verify step function at T → T
     const selfFnType = tnArrow(nativeType, nativeType)
+    nativeDefs.set(selfFnTree.id, selfFnType)
+    const annSelfFn = annAscribe(selfFnType, selfFnTree)
     const checkOk = checkAnnotated(nativeDefs, annSelfFn, selfFnType)
 
-    // FIX results are opaque — store as ascription
     const annotated = annAscribe(nativeType, compiled)
     const newEnv = new Map(env)
     newEnv.set(name, { tree: compiled, annTree: annotated, type: nativeType })
@@ -541,26 +616,18 @@ export function nativeElabDecl(
     return { env: newEnv, nativeType, compiled, annotated, checkOk }
   }
 
-  // Non-recursive: elaborate value with expected type
-  const { texpr: valueTexpr } = buildNativeWrapped(value, env, nativeType)
+  // Non-recursive: use the new TypedExpr pipeline
+  const bodyTE = elaborate(value, env, nativeType)
+  const { annotated, compiled } = compileTE(bodyTE, nativeDefs)
 
-  // Produce annotated tree from elaboration (exact D annotations)
-  const annotated = collapseToAnnotated(valueTexpr, nativeDefs)
-
-  // Compile using existing compileAndEval (trusted backend)
-  const compiled = compileAndEval(value, compiledDefs)
+  // Register the compiled tree (from extract(annotated)) as the canonical form
   compiledDefs.set(name, compiled)
-
-  // Register before checking — ascription verification needs the compiled tree in defs
   nativeDefs.set(compiled.id, nativeType)
 
-  // Safety check: annotated tree should verify
+  // Check the structurally annotated tree
   const checkOk = checkAnnotated(nativeDefs, annotated, nativeType)
 
-  // For type definitions, store the native type tree in nativeEnv.
-  const treeForEnv = treeEqual(nativeType, TN_TYPE)
-    ? collapseTypedExpr(valueTexpr)
-    : compiled
+  const treeForEnv = treeEqual(nativeType, TN_TYPE) ? typeTreeOf(bodyTE) : compiled
 
   const newEnv = new Map(env)
   newEnv.set(name, { tree: treeForEnv, annTree: annotated, type: nativeType })

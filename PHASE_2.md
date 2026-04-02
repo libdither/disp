@@ -395,4 +395,4 @@ Steps 3–7 are iterative improvements, each taking 1–2 weeks. Full pipeline i
 
 4. **How to generate the type curriculum?** Random type generation risks mostly uninhabitable types. Using types of known programs (from the prelude) as starting points, then mutating them, could work better.
 
-5. **When does synthesis move to tree level?** The current plan synthesizes at SExpr level for type-directed search. Tree-level synthesis (building raw △ trees, checking types by running them) is the long-term reflective vision — the type system itself lives in tree calculus, so the synthesizer and checker are the same program. But this requires bootstrapping the type system first (see HIGH-LEVEL-PLAN Phase 5).
+5. **When does synthesis move to tree level?** The current plan synthesizes at SExpr level for type-directed search. Tree-level synthesis (building raw △ trees, checking types by running them) is the long-term reflective vision — the type system itself lives in tree calculus, so the synthesizer and checker are the same program. But this requires bootstrapping the type system first (see PLAN.md Phase 5).

@@ -9,7 +9,7 @@ import { compileAndEval } from "./compile.js"
 import { prettyTree, type Tree, LEAF, stem, treeEqual, BudgetExhausted } from "./tree.js"
 import { loadPrelude, processDecl } from "./prelude.js"
 import { type KnownDefs, TN_TYPE, TN_TREE, TN_BOOL, TN_NAT } from "./tree-native-checker.js"
-import { type NativeEnv, printNativeType, buildNativeWrapped, collapseTypedExpr, NativeElabError } from "./tree-native-elaborate.js"
+import { type NativeEnv, printNativeType, buildDirect, NativeElabError } from "./tree-native-elaborate.js"
 
 export type ReplState = {
   defs: Map<string, Tree>       // compiled definitions (for evaluation)
@@ -151,10 +151,10 @@ function exprUsesOpaqueTypes(expr: SExpr, env: NativeEnv): boolean {
 }
 
 function handleExpr(state: ReplState, expr: SExpr): string {
-  let texprResult: { texpr: ReturnType<typeof buildNativeWrapped>["texpr"], type: Tree } | null = null
+  let elabResult: { tree: Tree, type: Tree } | null = null
   let elabError: NativeElabError | null = null
   try {
-    texprResult = buildNativeWrapped(expr, state.nativeEnv)
+    elabResult = buildDirect(expr, state.nativeEnv)
   } catch (e) {
     if (e instanceof NativeElabError) {
       // Fall back to compile-only when any expression in the chain involves
@@ -173,15 +173,14 @@ function handleExpr(state: ReplState, expr: SExpr): string {
     }
   }
 
-  if (texprResult) {
-    const { texpr, type: nativeType } = texprResult
+  if (elabResult) {
+    const { tree: elabTree, type: nativeType } = elabResult
     const nameMap = buildNativeNameMap(state.nativeEnv)
     const typeStr = printNativeType(nativeType, nameMap)
 
     // For type-valued expressions, print the native type tree directly
     if (treeEqual(nativeType, TN_TYPE)) {
-      const nativeTypeTree = collapseTypedExpr(texpr)
-      const valueStr = printNativeType(nativeTypeTree, nameMap)
+      const valueStr = printNativeType(elabTree, nameMap)
       return `${valueStr} : Type`
     }
 
@@ -236,7 +235,7 @@ function handleCommand(state: ReplState, input: string): string {
       if (!rest) return "Usage: :type <expr>"
       try {
         const expr = parseLine(rest) as SExpr
-        const { type: nativeType } = buildNativeWrapped(expr, state.nativeEnv)
+        const { type: nativeType } = buildDirect(expr, state.nativeEnv)
         const nameMap = buildNativeNameMap(state.nativeEnv)
         return printNativeType(nativeType, nameMap)
       } catch (e) {

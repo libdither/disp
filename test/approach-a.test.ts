@@ -13,16 +13,15 @@ import {
   TN_TYPE, TN_TREE, TN_BOOL, TN_NAT,
   tnArrow, tnPi,
   annK, annS, annTriage, annAscribe, extract,
-  isNonDep, stemCodomain, sCodomain,
+  isNonDep, stemCodomain,
   type KnownDefs, checkAnnotated,
 } from "../src/tree-native-checker.js"
 import {
-  type TypedExpr, type NativeEnv,
-  typedBracketAbstract, collapseToAnnotated, collapseTypedExpr,
-  buildNativeWrapped, nativeElabDecl,
+  type NativeEnv,
+  buildDirect, nativeElabDecl,
 } from "../src/tree-native-elaborate.js"
 import { parseExpr, parseLine, type SDecl } from "../src/parse.js"
-import { compile, compileAndEval } from "../src/compile.js"
+import { compile, compileAndEval, bracketAbstract, eTree, eApp, collapseAndEval } from "../src/compile.js"
 import { resetMarkerCounter, clearNativeBuiltins } from "../src/native-utils.js"
 import { loadPrelude, clearPreludeCache } from "../src/prelude.js"
 
@@ -51,28 +50,14 @@ beforeEach(() => setup())
 // Section 1: S(K(p), K(q)) optimization removal
 // ============================================================
 
-describe("typedBracketAbstract: S(K,K) produces S node, not K(ascribed)", () => {
+describe("bracketAbstract: S(K,K) behavior", () => {
 
-  // Build a tapp(f, g) where neither f nor g contain the variable x.
-  // [x](f g) should produce S(K(f), K(g)) after optimization removal.
-  function makeConstantApp(): TypedExpr {
-    // f = succ (leaf, type Nat→Nat), g = zero (LEAF, type Nat)
-    const f: TypedExpr = { tag: "tlit", tree: LEAF, annTree: LEAF, type: tnArrow(TN_NAT, TN_NAT) }
-    const g: TypedExpr = { tag: "tlit", tree: LEAF, annTree: LEAF, type: TN_NAT }
-    return { tag: "tapp", func: f, arg: g, type: TN_NAT }
-  }
-
-  it("[INVARIANT] [x](f g) with no x produces tK via early return", () => {
-    // When neither f nor g contain the variable, typedBracketAbstract returns K(tapp)
-    // at line 519 (early return) — BEFORE reaching the S decomposition.
-    // The S(K,K) optimization was dead code: this case never reaches it.
-    const texpr = makeConstantApp()
-    const { result } = typedBracketAbstract("x", texpr, TN_BOOL)
-    expect(result.tag).toBe("tK")
-    // The value inside K is the original tapp (not evaluated)
-    if (result.tag === "tK") {
-      expect(result.value.tag).toBe("tapp")
-    }
+  it("[INVARIANT] [x](f g) with no x produces K", () => {
+    // When neither f nor g contain the variable, bracketAbstract returns K(f g)
+    const expr = eApp(eTree(LEAF), eTree(LEAF))
+    const result = collapseAndEval(bracketAbstract("x", expr))
+    // Should be K(apply(LEAF, LEAF)) = K(stem(LEAF)) = fork(LEAF, stem(LEAF))
+    expect(treeEqual(result, fork(LEAF, stem(LEAF)))).toBe(true)
   })
 
   it("[INVARIANT] S(K(f), K(g)) extracts to same program as K(apply(f,g))", () => {
@@ -112,52 +97,25 @@ describe("typedBracketAbstract: S(K,K) produces S node, not K(ascribed)", () => 
   })
 })
 
-describe("collapseToAnnotated: S(K,K) nodes produce annS, not annAscribe", () => {
+describe("Ascription-only annotations: pipeline produces correct programs", () => {
 
-  it("[POST] tS with two tK children collapses to annS (not ascription)", () => {
-    const valA: TypedExpr = { tag: "tlit", tree: LEAF, annTree: LEAF, type: tnArrow(TN_NAT, TN_NAT) }
-    const valB: TypedExpr = { tag: "tlit", tree: LEAF, annTree: LEAF, type: TN_NAT }
-    const d = fork(LEAF, TN_NAT) // K(Nat) — non-dependent intermediate type
-    const texpr: TypedExpr = {
-      tag: "tS",
-      d,
-      c: { tag: "tK", value: valA, type: tnArrow(TN_NAT, sCodomain(d, fork(LEAF, TN_NAT))) },
-      b: { tag: "tK", value: valB, type: tnArrow(TN_NAT, d) },
-      type: tnArrow(TN_NAT, TN_NAT),
-    }
-
-    const ann = collapseToAnnotated(texpr)
-
-    // Should be annS(...), not annAscribe(...)
-    // annS: fork(stem(D), fork(annC, annB))
-    // annAscribe: fork(stem(T), stem(body))
-    expect(isFork(ann)).toBe(true)
-    if (isFork(ann)) {
-      expect(isStem(ann.left)).toBe(true) // stem(D) for S
-      if (isFork(ann.right)) {
-        // right = fork(annC, annB) → S node, not stem(body) → ascription
-        expect(isFork(ann.right)).toBe(true)
-      }
-    }
+  it("[INVARIANT] S(K(f), K(g)) extracts to same program as K(apply(f,g))", () => {
+    // S(K(f), K(g))(x) = f(g) for any x — semantically equivalent to K(f(g))
+    const f = LEAF
+    const g = LEAF
+    const sForm = fork(stem(fork(LEAF, f)), fork(LEAF, g))
+    const kForm = fork(LEAF, apply(f, g))
+    const testArg = stem(stem(LEAF))
+    expect(treeEqual(apply(sForm, testArg), apply(kForm, testArg))).toBe(true)
   })
 
-  it("[INVARIANT] collapseToAnnotated of tS extracts to correct program", () => {
-    // Simple case: S(K(succ), I) = succ
-    const succLit: TypedExpr = { tag: "tlit", tree: LEAF, annTree: LEAF, type: tnArrow(TN_NAT, TN_NAT) }
-    const d = fork(LEAF, TN_NAT) // K(Nat)
-    const texpr: TypedExpr = {
-      tag: "tS",
-      d,
-      c: { tag: "tK", value: succLit, type: tnArrow(TN_NAT, sCodomain(d, fork(LEAF, TN_NAT))) },
-      b: { tag: "tI", type: tnArrow(TN_NAT, d) },
-      type: tnArrow(TN_NAT, TN_NAT),
-    }
-
-    const ann = collapseToAnnotated(texpr)
-    const prog = extract(ann)
-    // S(K(succ), I)(n) = succ(n). Test at n=0 and n=1:
-    expect(treeEqual(apply(prog, LEAF), stem(LEAF))).toBe(true)        // succ(0) = 1
-    expect(treeEqual(apply(prog, stem(LEAF)), stem(stem(LEAF)))).toBe(true)  // succ(1) = 2
+  it("[INVARIANT] nativeElabDecl produces annotated tree that extracts to correct program", () => {
+    const parsed = parseLine("let mySucc : Nat -> Nat := {n} -> succ n") as SDecl
+    const result = nativeElabDecl(nativeEnv, defs, nativeDefs,
+      parsed.name, parsed.type, parsed.value, parsed.isRec)
+    const prog = extract(result.annotated)
+    expect(treeEqual(apply(prog, LEAF), stem(LEAF))).toBe(true)
+    expect(treeEqual(apply(prog, stem(LEAF)), stem(stem(LEAF)))).toBe(true)
   })
 })
 
@@ -264,8 +222,9 @@ describe("Full pipeline: semantics preserved after Approach A", () => {
     )
     // Update state for subsequent declarations
     defs.set(parsed.name, result.compiled)
-    nativeDefs = result.nativeDefs
-    nativeEnv = result.nativeEnv
+    nativeDefs.set(result.compiled.id, result.nativeType)
+    const entry = result.env.get(parsed.name)
+    if (entry) nativeEnv.set(parsed.name, entry)
     return result
   }
 
@@ -403,37 +362,78 @@ describe("Bool triage: checker should not evaluate stem handler", () => {
     expect(checkAnnotated(nativeDefs, ann, type)).toBe(true)
   })
 
-  it("[POST] adversarial triage: stem handler forges ascription on evaluation", () => {
-    // Adversary crafts a stem handler d such that apply(extract(d), LEAF)
-    // produces a tree matching the ascription format fork(stem(T), stem(body)).
-    // The checker should NOT accept this.
-    //
-    // d = K(fork(stem(Nat), stem(LEAF))) — when applied to LEAF, returns fork(stem(Nat), stem(LEAF))
-    // extract(d) = extract(annK(fork(stem(Nat), stem(LEAF)))) = fork(LEAF, fork(stem(Nat), stem(LEAF)))
-    // BUT: fork(stem(Nat), stem(LEAF)) looks like annAscribe(Nat, LEAF) to the checker.
-    //
-    // This is the Bool triage eval bug: the checker currently calls
-    // checkAnnotated(defs, apply(extract(annD), LEAF), Bstem) which passes
-    // the evaluated result (which looks like an ascription) to checkAnnotated.
-    //
-    // After fix: checker should check d STRUCTURALLY as a function, not by evaluating.
-    //
-    // For now, document that this is a known soundness hole.
-    // The fix involves using annApp-style checking internally in the Bool triage case.
+  it("adversarial triage: stem handler forges ascription — now checked structurally", () => {
+    // Adversary crafts d = K(fork(stem(Bool), stem(LEAF))) so that evaluating
+    // d(LEAF) produces fork(stem(Bool), stem(LEAF)) which looks like an ascription.
+    // Old checker: evaluated d(LEAF) and passed result to checkAnnotated, which
+    // misinterpreted it as an ascription node.
+    // Fixed checker: checks d structurally as a function (Bool -> Bool).
+    // K(forgedAscription) : Bool -> Bool requires forgedAscription : Bool.
+    // extract(forgedAscription) = LEAF (ascription unwrap), and LEAF : Bool. So this passes.
     const forgedAscription = fork(stem(TN_BOOL), stem(LEAF))
-    const d = annK(forgedAscription) // K(forgedAscription) — stem handler that returns forged value
-    const ann = annTriage(LEAF, d, LEAF) // triage(leaf, K(forge), leaf) at Bool -> Bool
+    const d = annK(forgedAscription)
+    const ann = annTriage(LEAF, d, LEAF)
     const type = tnArrow(TN_BOOL, TN_BOOL)
+    // This is now safe: d is checked structurally, not by evaluating
+    expect(checkAnnotated(nativeDefs, ann, type)).toBe(true)
+  })
 
-    // Ideal: this should be checkable without trusting the evaluated result
-    // Current behavior may vary; this test documents the concern
-    const result = checkAnnotated(nativeDefs, ann, type)
-    // After Bool triage fix: this should pass ONLY if d is structurally valid
-    // (K(forgedAscription) IS structurally valid if forgedAscription : Bool)
-    // Since forgedAscription = fork(stem(Bool), stem(LEAF)) is NOT a valid Bool
-    // (Bool = LEAF or stem(LEAF)), checking d : Tree -> Bool should verify the
-    // VALUE of forgedAscription, not trust its structure.
-    console.log(`Bool triage adversarial test result: ${result}`)
+  it("adversarial triage: forged ascription is neutralized by extraction", () => {
+    // d = K(annAscribe(Nat, LEAF)) — the ascription claims Nat, but we expect Bool -> Bool.
+    // Old checker: evaluated d(LEAF), got the forged ascription tree, trusted it.
+    // Fixed checker: checks d structurally. K rule extracts inner value.
+    // extract(annAscribe(Nat, LEAF)) = LEAF, and LEAF : Bool (true). So this passes safely.
+    // The forged ascription is irrelevant — the checker checks the extracted program.
+    const forgedWrongType = annAscribe(TN_NAT, LEAF)
+    const d = annK(forgedWrongType)
+    const ann = annTriage(LEAF, d, LEAF)
+    const type = tnArrow(TN_BOOL, TN_BOOL)
+    // Passes because extracted value (LEAF) is a valid Bool — exploit neutralized
+    expect(checkAnnotated(nativeDefs, ann, type)).toBe(true)
+  })
+})
+
+// ============================================================
+// Section 5b: K dependent codomain soundness
+// ============================================================
+
+describe("K dependent codomain: reject unsound domains", () => {
+
+  it("K with dependent B over Bool is accepted (exhaustive — 2 inhabitants)", () => {
+    // K(LEAF) : Pi(Bool, B) where B is dependent
+    // B = triage identity: B(true) = some type, B(false) = same type
+    // Use B = K(Nat) for simplicity — non-dependent actually, but test the Bool path
+    // Better: B that gives Nat for true and Bool for false
+    const B = fork(fork(TN_NAT, annK(TN_BOOL)), LEAF) // triage(Nat, K(Bool), leaf)
+    // K(v) : Pi(Bool, B) requires v : B(true) AND v : B(false)
+    // B(true) = apply(B, LEAF) = Nat, B(false) = apply(B, stem(LEAF)) = Bool
+    // v must be both Nat and Bool. LEAF qualifies (LEAF = zero:Nat = true:Bool)
+    const ann = annK(LEAF)
+    expect(checkAnnotated(nativeDefs, ann, fork(TN_BOOL, B))).toBe(true)
+  })
+
+  it("K with dependent B over Nat is rejected (unsound — infinite domain)", () => {
+    // K(LEAF) : Pi(Nat, B) where B = K(Nat) — even non-dependent case should work
+    // But a DEPENDENT B over Nat can't be exhaustively checked
+    const stemB = stemCodomain(fork(LEAF, TN_NAT)) // [n] Pi(stem(n), K(Nat)) — contrived dependent B
+    const ann = annK(LEAF)
+    // Dependent K over Nat: should be rejected
+    expect(checkAnnotated(nativeDefs, ann, fork(TN_NAT, stemB))).toBe(false)
+  })
+
+  it("K with dependent B over Type is rejected (unsound — can't enumerate types)", () => {
+    // B = some dependent function on Type
+    // Use S(K(leaf), leaf) which gives [x] fork(leaf, x) = [x] K(x)
+    const depB = fork(stem(fork(LEAF, LEAF)), LEAF) // S(K(leaf), leaf)
+    const ann = annK(LEAF)
+    expect(checkAnnotated(nativeDefs, ann, fork(TN_TYPE, depB))).toBe(false)
+  })
+
+  it("K with non-dependent B over any domain still works", () => {
+    // K(v) : Pi(A, K(B0)) — non-dependent is always sound
+    expect(checkAnnotated(nativeDefs, annK(LEAF), tnArrow(TN_NAT, TN_BOOL))).toBe(true)
+    expect(checkAnnotated(nativeDefs, annK(LEAF), tnArrow(TN_TYPE, TN_NAT))).toBe(true)
+    expect(checkAnnotated(nativeDefs, annK(LEAF), tnArrow(TN_TREE, TN_BOOL))).toBe(true)
   })
 })
 
@@ -464,17 +464,11 @@ describe("Registry: tests affected by Approach A", () => {
     expect(true).toBe(true) // placeholder — real test is in tree-native-pipeline.test.ts
   })
 
-  it("[REGISTRY] tree-native-elaborate:146 — [x]c = K(c) test unaffected", () => {
-    // tree-native-elaborate.test.ts line 146:
-    //   typedBracketAbstract("x", tlit(stem(LEAF)), TN_BOOL)
-    //   expect(result.tag).toBe("tK")
-    //
-    // This tests [x]c where c is a SINGLE literal (not an application).
-    // The S(K,K) optimization only fires for tapp nodes.
-    // This test is UNAFFECTED.
-    const texpr: TypedExpr = { tag: "tlit", tree: stem(LEAF), annTree: stem(LEAF), type: TN_NAT }
-    const { result } = typedBracketAbstract("x", texpr, TN_BOOL)
-    expect(result.tag).toBe("tK")
+  it("[REGISTRY] bracketAbstract: [x]c = K(c) still holds", () => {
+    const expr = eTree(stem(LEAF))
+    const result = collapseAndEval(bracketAbstract("x", expr))
+    // K(stem(LEAF)) = fork(LEAF, stem(LEAF))
+    expect(treeEqual(result, fork(LEAF, stem(LEAF)))).toBe(true)
   })
 
   it("[REGISTRY] compile.test.ts optimization tests — UNAFFECTED", () => {

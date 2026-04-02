@@ -89,9 +89,9 @@ K(v) : Pi(A, B)    if    v : apply(B, _) for all _ : A
 
 Non-dependent case (`B = K(B₀)`): just check `v : B₀`.
 
-Polymorphic case (`A = Type`): introduce abstract type marker α, check `v : apply(B, α)`.
-
-Bool case: exhaustive — check `v : apply(B, true)` and `v : apply(B, false)`.
+Dependent codomain: only Bool is sound (2 inhabitants — exhaustive check):
+- Bool case: check `v : apply(B, true)` and `v : apply(B, false)`.
+- All other domains (Type, Nat, Tree): **rejected**. Cannot enumerate inhabitants to verify `v` works for all inputs. No abstract markers needed — this trades completeness for soundness.
 
 ### Rule 2: S — Contraction (Shared Application)
 

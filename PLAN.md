@@ -6,6 +6,8 @@ Disp is a reflective programming language built on tree calculus, paired with a 
 program synthesis engine. Tree calculus is natively reflective — terms ARE data, so the
 type checker, the optimizer, and the programs it produces all inhabit the same universe.
 
+See `GOALS.md` for the full vision: a universal self-improving optimizer via reflective calculus.
+
 ---
 
 ## Status: What's Done
@@ -13,86 +15,125 @@ type checker, the optimizer, and the programs it produces all inhabit the same u
 ### Layer 0: Tree Calculus Runtime — COMPLETE
 
 `src/tree.ts` — Hash-consed binary trees with eager evaluation. 5 triage reduction rules.
-O(1) equality via hash-consing IDs.
+O(1) equality via hash-consing IDs. Apply memoization. FAST_EQ primitive.
 
 ### Layer 1: The Language — COMPLETE
 
-Unified pipeline: parse → type-check (CoC-on-trees) → compile → eval.
+Two-phase pipeline: **elaborate** (SExpr → TypedExpr) then **compile** (TypedExpr → annotated Tree).
 
 - `src/parse.ts` — Tokenizer + recursive descent parser → SExpr
-- `src/compile.ts` — SExpr → Tree via bracket abstraction (S/K/I with optimizations)
-- `src/coc.ts` — CoC-on-trees type checker + tree-native builtins
-  - CoC terms encoded directly as trees (Type=leaf, Var=stem, App/Lam/Pi=fork variants)
-  - Bodies bracket-abstracted — tree calculus `apply()` IS substitution
-  - Wrapped values carry (data, type) as Church pairs
-  - `buildWrapped`, `whnf`, `convertible`, `normalize` on tree-encoded terms
-  - Declaration pipeline with recursive definitions via omega combinator
-  - CoC prelude: Church-encoded Tree/leaf/stem/fork/triage, encoding constructors,
-    wrap/unwrap, Bool/tt/ff
-  - Tree-native builtins (injected triage trees): FST, SND, CHILD, ENC_APP_T,
-    ENC_LAM_T, ENC_PI_T, TERM_CASE (5-way dispatch)
-  - Tree-native step functions (all working): treeEqStep, abstractOutStep,
-    whnfStep, convertibleStep, inferStep (full type inference as a tree constant)
+- `src/tree-native-elaborate.ts` — TypedExpr pipeline: `elaborate` + `compileTE`
+- `src/tree-native-checker.ts` — `checkAnnotated(defs, ann, type)` on annotated trees
+- `src/compile.ts` — Legacy compiler (still used for recursive defs, REPL eval, type-level computation)
+- `src/tree-native.ts` — Tree-native builtins and step functions (TYPECHECK, etc.)
 - `src/repl.ts` — REPL with `:load`/`:save`/`:type`/`:tree`/`:ctx`/`:help`
-- Church-encoded booleans/naturals, records, coproducts, recursive definitions
-- Church literal recognition (add 3 4 → 7, not true → false)
-- Pretty printer with generated binder names and reverse name lookup
+- `src/coc.ts` — Encoding library (used by tree-encoded step functions and bench tests)
 
-**Test suite**: 307 tests across 6 files. Includes cross-pipeline equivalence
-checks (boolean truth tables, arithmetic, nested expressions).
+**Test suite**: 483 tests, 481 passing. 2 `[POST]` aspirational failures (Church-encoded types).
 
-### Recent additions (since initial completion)
+### The TypedExpr Architecture
 
-- **Primitive types**: Tree, Bool, Nat are primitive (tree-encoded), replacing Church encodings.
-  true=LEAF, false=stem(LEAF), zero=LEAF, succ(n)=stem(n). Eliminators: triage, boolElim, natElim.
-- **Dependent eliminators**: triageDep, boolElimDep, natElimDep for dependent pattern matching.
-- **Delta reduction / native eval**: `evalToNative()` bridges CoC encoding and native tree evaluation.
-  `nativeBuiltinIds` set prevents decomposition of compiled combinators that match encoding patterns.
-- **FIX combinator**: Lazy fixpoint via `wait` combinator, replacing omega combinator for recursive defs.
-- **Prelude unification**: `src/prelude.ts` handles all loading — `loadPrelude()`, `registerBuiltins()`,
-  `loadDeclFile()`, `buildNameMap()`.
-- **Collapse/apply mismatch resolved**: `compileTree` in tree-native.ts uses `collapseAndEval` (eager apply)
-  instead of `collapse` (structural treeApply), correctly handling embedded complex tree constants.
+```
+SExpr  ──elaborate──>  TypedExpr  ──compile──>  annotated Tree  ──check──>  bool
+                                       │
+                                       └──>  compiled Tree (for execution)
+```
+
+**Phase 1 — elaborate**: Walks SExpr, resolves names, computes types (evaluating
+type-level trees for dependent codomains). Lambdas stay as `lam` nodes. No compilation.
+
+**Phase 2 — compile**: Bracket-abstracts all lambdas inside-out, producing combI/combK/combS
+nodes with types at every node. D annotations at S nodes come from types naturally.
+Collapses to annotated tree (for checking) and raw tree (for execution).
+
+```typescript
+type TypedExpr =
+  | { tag: "tree",  value: Tree, type: Tree }     // resolved constant
+  | { tag: "var",   name: string, type: Tree }     // bound variable
+  | { tag: "app",   func: TypedExpr, arg: TypedExpr, type: Tree }  // application
+  | { tag: "lam",   param: string, domain: Tree, body: TypedExpr, type: Tree }  // lambda
+  | { tag: "combI", type: Tree }                   // identity [x]x
+  | { tag: "combK", inner: TypedExpr, type: Tree } // constant [x]c
+  | { tag: "combS", c: TypedExpr, b: TypedExpr, D: Tree, type: Tree }  // sharing [x](f g)
+```
+
+Key design: combK/combS cases in bracket abstraction delegate to app-chain form,
+getting S(Kp)(Kq) and eta optimizations for free. No manual formula derivation needed.
 
 ---
 
-## Current Focus: Runtime Optimization
+## Bootstrapping Path
 
-*Goal: make the tree-native type checker fast enough to run interactively in the REPL.*
+*Goal: self-hosted type checker as a tree constant, enabling scoring functions and neural synthesis.*
 
-The tree-native type checker (step functions compiled to tree constants, composed via `fold`)
-is ~5000x slower than the TypeScript bootstrap. See `OPTIMIZATION_INFO.md` for the full
-analysis of the two-level optimization problem (tree programs vs. runtime evaluator).
+### Step 1: Eliminate compile.ts from elaboration path (NEXT)
 
-**Detailed implementation plan**: `~/.claude/plans/toasty-pondering-dolphin.md`
+compile.ts is still used for:
+1. **Recursive definitions** — `compileRecAndEval` wraps step function in FIX
+2. **REPL expression evaluation** — `compileAndEval` for running expressions
+3. **Type-level computation** — `collapseAndEval` + `bracketAbstract` in Pi codomain abstraction
 
-### Phase 1: Runtime optimizations (current)
+To remove (1): implement FIX application in the TypedExpr pipeline — compile the step function
+body via TypedExpr, then apply FIX to the collapsed raw tree.
 
-1. **Benchmarking suite** (`test/bench.test.ts`) — measure tree sizes, total apply steps,
-   unique `(f.id, x.id)` call pairs, wall-clock time. The unique/total ratio reveals
-   the theoretical memoization speedup.
+To remove (2): use `collapseRaw` from TypedExpr for REPL expressions.
 
-2. **Apply memoization** — cache `(f.id, x.id) → result` for fork-case applies in `src/tree.ts`.
-   Pure function + hash-consing = sound memoization with zero invalidation.
-   Expected: significant wall-clock reduction for redundant subcomputations.
+To remove (3): this is legitimate type-level evaluation. Keep Expr-based bracket abstraction
+for type computation only, or implement it on TypedExpr.
 
-3. **Selective S-combinator laziness** — defer `bx` in the S rule until demanded.
-   Localized thunks (created only in S rule, forced before returning from apply).
-   Only if memoization leaves a gap.
+### Step 2: Encode checkAnnotated as a tree constant
 
-### Phase 2: Tree-level optimizations (deferred until Phase 1 measured)
+The checker has no external mutable state besides `defs: KnownDefs`. It dispatches
+on tree structure via triage — exactly what tree calculus does natively.
 
-- B/C combinators as primitive reduction rules (~3x fewer steps per composition)
+Encode as a tree constant following the same pattern as TYPECHECK (in `src/tree-native.ts`):
+build Expr tree with bracket abstraction, compile to tree combinator.
+
+The `defs` map becomes a Church list or balanced tree with FAST_EQ for O(1) lookup.
+`extract()` becomes a recursive tree function. Depth limit becomes fuel-based recursion.
+
+### Step 3: Scoring functions
+
+With a tree-encoded checker:
+```
+score(program) = treeCheck(annotate(program), type) * performance_weight(program) * size_weight(program)
+```
+
+The annotated tree IS the proof certificate. `extract(annotated)` gives the program.
+`treeCheck` verifies it. Scoring combines correctness with size/speed metrics.
+
+### Step 4: Neural synthesis (Phase 2)
+
+MCTS engine searches for annotated trees that maximize the scoring function.
+The search operates on TypedExpr (or SExpr with typed holes), compiling candidates
+to annotated trees for scoring. See `PHASE_2.md` for detailed design.
+
+### Step 5: Self-improvement
+
+The type checker, the annotated tree format, and the optimizer itself are all trees.
+The scoring function can score improvements to any of these components.
+See `GOALS.md` and `category-theory-speculations-plan.md` for the theoretical foundations.
+
+---
+
+## Runtime Optimization
+
+*Goal: make tree-encoded operations fast enough for interactive use.*
+
+The tree-native type checker (step functions compiled to tree constants) is ~5000x slower
+than the TypeScript bootstrap. See `OPTIMIZATION_INFO.md` for the two-level optimization
+analysis (tree programs vs. runtime evaluator).
+
+### Level 1: Runtime optimizations (DONE)
+- Apply memoization — `(f.id, x.id) → result` cache
+- WAIT combinator — demand-driven recursion
+- FAST_EQ — O(1) tree equality via hash-consing
+- B/C/K combinator fast-paths in evaluator
+
+### Level 2: Tree-level optimizations (deferred)
 - Binary fuel encoding (O(log n) vs O(n) dispatch)
 - Balanced tree environments (O(log n) vs O(n) lookup)
 - Specialized 2-way dispatch for WHNF (vs 5-way TERM_CASE)
-
-### Key insight: optimize each level for what it's uniquely positioned to do
-
-The runtime handles **redundancy** (repeated subcomputations via caching).
-The tree programs handle **complexity** (algorithmic cost per unique computation).
-Tree-level memoization is counterproductive — the runtime does it cheaper.
-See `OPTIMIZATION_INFO.md` for details.
 
 ---
 
@@ -116,88 +157,20 @@ TypeScript Process              Python Process
                                    └─ Saves checkpoints
 ```
 
-### Key Design Decisions
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Search structure | AND-OR MCTS | Natural for type inhabitation (AlphaProof) |
-| Synthesis level | SExpr (typed) | Type information guides search; compile to tree only for eval |
-| Action space | Var/App/Lam/Type/Library | Type-directed pruning eliminates ill-typed branches |
-| IPC protocol | stdin/stdout JSON lines | Simplest; IPC is <10% of latency |
-| Tree serialization | Pre-order flat integers | leaf=0, stem=1, fork=2. Compact, unambiguous |
-| Neural encoding | Transformer + tree PE (or random recursive baseline) | Handles depth; hash-consing memoization is the key optimization |
-| Training | Offline file-based (JSONL) + online updates | Simple; validated by Leela/KataGo |
-
 ### Implementation Steps
 
-#### Step 1: Typed holes + exhaustive search (MVP, no ML)
+1. **Typed holes + exhaustive search** (MVP, no ML) — `PartialSExpr`, AND-OR search, type-directed pruning
+2. **Python inference server** — stdin/stdout JSON, random policy/value baseline
+3. **MCTS with neural guidance** — PUCT, virtual loss batching, AND-OR backprop
+4. **Neural network + training** — Transformer or random recursive embedding
+5. **Self-play loop** — type curriculum, ~50% solve rate targeting
+6. **Library learning** — Stitch-like abstraction extraction
 
-Add `PartialSExpr` with typed holes. Implement AND-OR search with iterative deepening.
-Type-check partial terms bidirectionally; prune ill-typed branches.
-
-```typescript
-type PartialSExpr =
-  | { tag: "hole", id: number, type: SExpr, ctx: Context }
-  | { tag: "svar", name: string }
-  | { tag: "sapp", func: PartialSExpr, arg: PartialSExpr }
-  | ... // other SExpr variants
-```
-
-Actions for a hole of type T in context Gamma:
-- `Var(name)` — fill with context variable (check type convertible)
-- `App` — fill with `f x`, creating two child holes
-- `Lam` — fill with `{x} -> body` (requires T to be a Pi type)
-- `Type` — fill with Type (check T convertible with Type)
-- `Library(name)` — fill with a named definition
-
-Score partial terms by `0.9^(remaining_holes)`.
-Benchmark: synthesize `id`, `K`, `not`, `succ`.
-
-**Files**: `src/synth.ts`, `test/synth.test.ts`
-
-#### Step 2: Python inference server
-
-`inference_server.py`: reads JSON from stdin, runs model, writes JSON to stdout.
-TS spawns Python process. Start with random policy (uniform) and constant value (0.5).
-Verify plumbing end-to-end.
-
-Wire format: `{"positions": [[2,1,0,0], ...], "batch_id": 1}` →
-`{"policies": [[0.1, ...], ...], "values": [0.7, ...], "batch_id": 1}`
-
-**Files**: `python/inference_server.py`, `src/bridge.ts`
-
-#### Step 3: MCTS with neural guidance
-
-PUCT selection with policy prior. Virtual loss batching (batch 32).
-AND-OR backpropagation (max at OR, min at AND). Game record writing (JSONL).
-
-**Files**: `src/mcts.ts`, `test/mcts.test.ts`
-
-#### Step 4: Neural network + training
-
-Prototype: pre-order tree encoding + small Transformer (3 layers, d=128, 4 heads).
-Or even simpler: random recursive embedding (no encoder training, only MLP heads).
-
-Training script reads game records, trains policy (MCTS visit counts) +
-value (binary outcome), saves checkpoint.
-
-**Files**: `python/model.py`, `python/train.py`
-
-#### Step 5: Self-play loop
-
-Type curriculum generator (easy → hard, targeting ~50% solve rate).
-Self-play → train → reload cycle. Basic metrics: solve rate vs iteration.
-
-**Files**: `python/selfplay.py`, `src/curriculum.ts`
-
-#### Step 6: Library learning (stretch)
-
-Integrate Stitch for abstraction extraction. Run on solved programs.
-Add discovered abstractions as new actions.
+See `PHASE_2.md` for detailed research and design decisions.
 
 ---
 
-## Future Phases (from HIGH-LEVEL-PLAN.md)
+## Future Phases
 
 ### Phase 3: Self-Play & Library Learning
 - Adaptive difficulty calibration (~50% solve rate)
@@ -210,7 +183,7 @@ Add discovered abstractions as new actions.
 - Neural rewrite search (synthesis engine applied to compilation)
 
 ### Phase 5: Closing the Loop
-- Meta-type τ_meta (score the optimizer on its own improvement)
+- Meta-type tau_meta (score the optimizer on its own improvement)
 - Disp compiler partially written in disp
 - The system proposes and validates its own extensions
 
@@ -221,7 +194,8 @@ Add discovered abstractions as new actions.
 | Document | Content |
 |----------|---------|
 | `GOALS.md` | Core vision — universal self-improving optimizer via reflective calculus |
-| `OPTIMIZATION_INFO.md` | Two-level optimization strategy — runtime vs tree-level, metrics, interactions |
-| `PHASE_2.md` | Detailed research for Phase 2 — search, IPC, neural architecture |
+| `NATIVE_IMPL_PLAN.md` | Engineering status — TypedExpr pipeline, checker, test coverage |
+| `TREE_NATIVE_TYPE_THEORY.md` | Theory — annotated tree format, typing rules, structural correspondence |
+| `OPTIMIZATION_INFO.md` | Two-level optimization strategy — runtime vs tree-level |
+| `PHASE_2.md` | Phase 2 deep-dive — search, IPC, neural architecture |
 | `category-theory-speculations-plan.md` | Categorical foundations — Q-enriched CCC, optimizer as Kan extension |
-| `HIGH-LEVEL-PLAN.md` | Full roadmap through Phase 5 |

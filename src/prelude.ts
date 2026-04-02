@@ -1,14 +1,88 @@
 // Prelude loading: native-only registration of builtins and declaration processing.
 
-import { type Tree } from "./tree.js"
+import { type Tree, LEAF, stem, fork, apply } from "./tree.js"
 import { type SExpr, parseLine } from "./parse.js"
-import { compileAndEval, compileRecAndEval } from "./compile.js"
+import { type Expr, eTree, eFvar, eApp, bracketAbstract, collapseAndEval, compileAndEval, compileRecAndEval } from "./compile.js"
 import { registerNativeBuiltinId, onClearNativeBuiltins } from "./native-utils.js"
 import { PRIMITIVE_BUILTINS, TREE_NATIVE_BUILTINS } from "./tree-native.js"
-import { type KnownDefs, TN_TYPE, TN_TREE, TN_BOOL, TN_NAT, annAscribe } from "./tree-native-checker.js"
-import { nativeElabDecl, type NativeEnv, buildNativeWrapped, collapseTypedExpr, NativeElabError } from "./tree-native-elaborate.js"
+import { type KnownDefs, TN_TYPE, TN_TREE, TN_BOOL, TN_NAT, tnArrow, annAscribe } from "./tree-native-checker.js"
+import { nativeElabDecl, type NativeEnv, buildDirect, NativeElabError } from "./tree-native-elaborate.js"
 
 interface TreeBuiltin { name: string; type: string; data: Tree }
+
+// --- Hand-written dependent eliminator types ---
+// These build proper dependent types as tree values using bracket abstraction.
+// Required because natElim/boolElim/triage and their *Dep variants share data trees,
+// and we need the correct dependent type for constant-motive coercion.
+
+function exprFork(a: Expr, b: Expr): Expr { return eApp(eApp(eTree(LEAF), a), b) }
+
+// S(K(P), LEAF): codomain function mapping n → P(stem(n)) = P(succ(n))
+function exprStemCod(P: Expr): Expr {
+  const KP = exprFork(eTree(LEAF), P)
+  return exprFork(eApp(eTree(LEAF), KP), eTree(LEAF))
+}
+
+// forkCodomain(P): \u. fork(TN_TREE, S(K(P), stem(u)))
+// = S(K(stem(TN_TREE)), S(K(stem(stem(K(P)))), LEAF))
+function exprForkCod(P: Expr): Expr {
+  const KP = exprFork(eTree(LEAF), P)
+  const sKP = eApp(eTree(LEAF), KP)
+  const ssKP = eApp(eTree(LEAF), sKP)
+  const KssKP = exprFork(eTree(LEAF), ssKP)
+  const sKssKP = eApp(eTree(LEAF), KssKP)
+  const innerS = exprFork(sKssKP, eTree(LEAF))
+  const sKsTree = eTree(stem(fork(LEAF, stem(TN_TREE))))
+  return exprFork(sKsTree, innerS)
+}
+
+function exprK(x: Expr): Expr { return exprFork(eTree(LEAF), x) }
+
+// (P : Nat -> Type) -> P(0) -> ((n:Nat) -> P(succ n)) -> (n:Nat) -> P(n)
+function buildNatElimDepType(): Tree {
+  const P = eFvar("P")
+  const P0 = eApp(P, eTree(LEAF))
+  const stepDom = exprFork(eTree(TN_NAT), exprStemCod(P))
+  const resDom = exprFork(eTree(TN_NAT), P)
+  const cod = exprFork(P0, exprK(exprFork(stepDom, exprK(resDom))))
+  return fork(tnArrow(TN_NAT, TN_TYPE), collapseAndEval(bracketAbstract("P", cod)))
+}
+
+// (P : Bool -> Type) -> P(true) -> P(false) -> (b:Bool) -> P(b)
+function buildBoolElimDepType(): Tree {
+  const P = eFvar("P")
+  const Ptrue = eApp(P, eTree(LEAF))
+  const Pfalse = eApp(P, eTree(stem(LEAF)))
+  const resDom = exprFork(eTree(TN_BOOL), P)
+  const cod = exprFork(Ptrue, exprK(exprFork(Pfalse, exprK(resDom))))
+  return fork(tnArrow(TN_BOOL, TN_TYPE), collapseAndEval(bracketAbstract("P", cod)))
+}
+
+// (P : Tree -> Type) -> P(leaf) -> ((u:Tree) -> P(stem u)) -> ((u v:Tree) -> P(fork u v)) -> (t:Tree) -> P(t)
+function buildTriageDepType(): Tree {
+  const P = eFvar("P")
+  const Pleaf = eApp(P, eTree(LEAF))
+  const stemH = exprFork(eTree(TN_TREE), exprStemCod(P))
+  const forkH = exprFork(eTree(TN_TREE), exprForkCod(P))
+  const res = exprFork(eTree(TN_TREE), P)
+  const cod = exprFork(Pleaf, exprK(exprFork(stemH, exprK(exprFork(forkH, exprK(res))))))
+  return fork(tnArrow(TN_TREE, TN_TYPE), collapseAndEval(bracketAbstract("P", cod)))
+}
+
+let _handWrittenTypes: Map<string, Tree> | null = null
+function getHandWrittenTypes(): Map<string, Tree> {
+  if (!_handWrittenTypes) {
+    const natElimType = buildNatElimDepType()
+    const boolElimType = buildBoolElimDepType()
+    const triageType = buildTriageDepType()
+    _handWrittenTypes = new Map([
+      ["natElim", natElimType], ["natElimDep", natElimType],
+      ["boolElim", boolElimType], ["boolElimDep", boolElimType],
+      ["triage", triageType], ["triageDep", triageType],
+    ])
+  }
+  return _handWrittenTypes
+}
 
 // --- Native-only builtin registration ---
 
@@ -16,27 +90,31 @@ function registerBuiltins(
   builtins: TreeBuiltin[],
   nativeEnv: NativeEnv, nativeDefs: KnownDefs, defs: Map<string, Tree>,
 ): void {
+  const handWritten = getHandWrittenTypes()
   for (const builtin of builtins) {
     registerNativeBuiltinId(builtin.data.id)
-    const typeSexpr = parseLine(builtin.type) as SExpr
-    try {
-      const { texpr } = buildNativeWrapped(typeSexpr, nativeEnv, TN_TYPE)
-      const nativeType = collapseTypedExpr(texpr)
-      nativeDefs.set(builtin.data.id, nativeType)
-      nativeEnv.set(builtin.name, {
-        tree: builtin.data,
-        annTree: annAscribe(nativeType, builtin.data),
-        type: nativeType,
-      })
-    } catch {
-      // Skip builtins whose dependent types can't yet be elaborated natively.
-      // They are still registered as native builtin IDs and in defs.
-      nativeEnv.set(builtin.name, {
-        tree: builtin.data,
-        annTree: builtin.data,
-        type: TN_TREE, // fallback: treat as Tree-typed
-      })
+
+    // Use hand-written types for dependent eliminators (fixes data-tree sharing overwrite)
+    const hw = handWritten.get(builtin.name)
+    let nativeType: Tree
+    if (hw) {
+      nativeType = hw
+    } else {
+      const typeSexpr = parseLine(builtin.type) as SExpr
+      try {
+        const result = buildDirect(typeSexpr, nativeEnv, TN_TYPE)
+        nativeType = result.tree
+      } catch {
+        nativeType = TN_TREE // fallback: treat as Tree-typed
+      }
     }
+
+    nativeDefs.set(builtin.data.id, nativeType)
+    nativeEnv.set(builtin.name, {
+      tree: builtin.data,
+      annTree: annAscribe(nativeType, builtin.data),
+      type: nativeType,
+    })
     defs.set(builtin.name, builtin.data)
   }
 }
@@ -76,8 +154,8 @@ export function processDecl(
   let nativeType: Tree = TN_TREE
   if (type) {
     try {
-      const { texpr } = buildNativeWrapped(type, nativeEnv, TN_TYPE)
-      nativeType = collapseTypedExpr(texpr)
+      const typeResult = buildDirect(type, nativeEnv, TN_TYPE)
+      nativeType = typeResult.tree
     } catch (typeErr) {
       if (typeErr instanceof NativeElabError) {
         const msg = typeErr.message

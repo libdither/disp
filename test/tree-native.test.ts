@@ -5,7 +5,13 @@ import {
   ENC_APP_T, ENC_LAM_T, ENC_PI_T,
   TERM_CASE, TREE_EQ_STEP,
 } from "../src/tree-native.js"
-import { encType, encVar, encApp, encLam, encPi } from "../src/coc.js"
+// Inline encoding constructors (formerly from coc.ts)
+import type { Tree } from "../src/tree.js"
+function encType(): Tree { return LEAF }
+function encVar(marker: Tree): Tree { return stem(marker) }
+function encApp(m: Tree, n: Tree): Tree { return fork(LEAF, fork(m, n)) }
+function encLam(domain: Tree, body: Tree): Tree { return fork(stem(domain), body) }
+function encPi(domain: Tree, body: Tree): Tree { return fork(fork(domain, LEAF), body) }
 
 // Helper: apply multiple args
 function applyN(f: Tree, ...args: Tree[]): Tree {

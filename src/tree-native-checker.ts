@@ -16,7 +16,7 @@
 //   leaf                                   constructor — unchanged
 //   stem(ann_a)                            constructor — unchanged
 
-import { type Tree, LEAF, stem, fork, apply, treeEqual, I, K, isLeaf, isStem, isFork } from "./tree.js"
+import { type Tree, LEAF, stem, fork, apply, treeEqual, isLeaf, isStem, isFork } from "./tree.js"
 
 // ============================================================
 // Type constants
@@ -99,29 +99,6 @@ function ultimateCod(t: Tree): Tree {
 }
 
 // ============================================================
-// Abstract type markers (for polymorphism)
-// ============================================================
-
-const abstractIds = new Set<number>()
-let abstractCtr = 0
-
-export function freshAbstract(): Tree {
-  let t: Tree = fork(LEAF, fork(LEAF, LEAF))
-  for (let i = 0; i < abstractCtr; i++) t = fork(t, t)
-  const m = fork(fork(stem(stem(stem(stem(LEAF)))), t), LEAF)
-  abstractCtr++
-  abstractIds.add(m.id)
-  return m
-}
-
-export function isAbstract(t: Tree): boolean { return abstractIds.has(t.id) }
-
-export function resetAbstractCounter(): void {
-  abstractCtr = 0
-  abstractIds.clear()
-}
-
-// ============================================================
 // Dependent codomain helpers
 // ============================================================
 
@@ -192,7 +169,6 @@ export function checkAnnotated(
   defs: KnownDefs,
   ann: Tree,
   type: Tree,
-  inputAssumption?: { value: Tree; type: Tree },
   depth = 0
 ): boolean {
   if (depth > 80) return false
@@ -217,11 +193,6 @@ export function checkAnnotated(
     if (known !== undefined && treeEqual(known, type)) return true
   }
 
-  // Abstract type — identity rule
-  if (isAbstract(type)) {
-    return !!(inputAssumption && treeEqual(prog, inputAssumption.value) && treeEqual(type, inputAssumption.type))
-  }
-
   // Must be a Pi type (fork)
   if (!isFork(type)) return false
 
@@ -238,20 +209,13 @@ export function checkAnnotated(
   if (isLeaf(ann.left)) {
     const annV = ann.right
     const B0 = isNonDep(B)
-    if (B0 !== null) return checkAnnotated(defs, annV, B0, undefined, depth + 1)
-    // Dependent codomain
-    if (treeEqual(A, TN_TYPE) || isAbstract(A)) {
-      return checkAnnotated(defs, annV, apply(B, freshAbstract()), undefined, depth + 1)
-    }
+    if (B0 !== null) return checkAnnotated(defs, annV, B0, depth + 1)
+    // Dependent codomain: only Bool can be checked exhaustively (2 inhabitants)
     if (treeEqual(A, TN_BOOL)) {
-      return checkAnnotated(defs, annV, apply(B, LEAF), undefined, depth + 1) &&
-             checkAnnotated(defs, annV, apply(B, stem(LEAF)), undefined, depth + 1)
+      return checkAnnotated(defs, annV, apply(B, LEAF), depth + 1) &&
+             checkAnnotated(defs, annV, apply(B, stem(LEAF)), depth + 1)
     }
-    if (treeEqual(A, TN_NAT)) {
-      return checkAnnotated(defs, annV, apply(B, LEAF), undefined, depth + 1) &&
-             checkAnnotated(defs, annV, apply(B, stem(LEAF)), undefined, depth + 1)
-    }
-    return checkAnnotated(defs, annV, apply(B, LEAF), undefined, depth + 1)
+    return false
   }
 
   // === Ascription: fork(stem(T), stem(body)) ===
@@ -274,17 +238,17 @@ export function checkAnnotated(
     const annB = ann.right.right
 
     // b : Pi(A, D)
-    if (!checkAnnotated(defs, annB, fork(A, D), undefined, depth + 1)) return false
+    if (!checkAnnotated(defs, annB, fork(A, D), depth + 1)) return false
 
     // c : Pi(A, cCodomain) where cCodomain(x) = Pi(D(x), K(B(x)))
     const B0 = isNonDep(B)
     const D0 = isNonDep(D)
     if (B0 !== null && D0 !== null) {
       // Non-dependent: c : A → D₀ → B₀
-      return checkAnnotated(defs, annC, tnArrow(A, tnArrow(D0, B0)), undefined, depth + 1)
+      return checkAnnotated(defs, annC, tnArrow(A, tnArrow(D0, B0)), depth + 1)
     }
     // Dependent: use sCodomain
-    return checkAnnotated(defs, annC, fork(A, sCodomain(D, B)), undefined, depth + 1)
+    return checkAnnotated(defs, annC, fork(A, sCodomain(D, B)), depth + 1)
   }
 
   // === TRIAGE: fork(fork(ann_c, ann_d), ann_b) ===
@@ -293,51 +257,33 @@ export function checkAnnotated(
   const annB = ann.right
   const B0 = isNonDep(B)
 
-  // Abstract domain
-  if (isAbstract(A)) {
-    const exp = B0 !== null ? B0 : apply(B, LEAF)
-    const pc = extract(annC), pd = extract(annD), pb = extract(annB)
-    const leafOk = treeEqual(pc, LEAF) && isAbstract(exp)
-      ? true : checkAnnotated(defs, annC, exp, { value: LEAF, type: A }, depth + 1)
-    const stemOk = treeEqual(pd, LEAF) && B0 !== null && isAbstract(B0)
-    const forkOk = treeEqual(pb, LEAF) && B0 !== null && isAbstract(B0)
-    return leafOk && stemOk && forkOk
-  }
-
-  // Pi domain (function-type inputs)
-  if (isFork(A) && !treeEqual(A, TN_BOOL) && !treeEqual(A, TN_NAT) && !treeEqual(A, TN_TREE)) {
-    const pc = extract(annC), pd = extract(annD), pb = extract(annB)
-    const leafOk = treeEqual(pc, LEAF) && B0 !== null && treeEqual(B0, A)
-      ? true : checkAnnotated(defs, annC, B0 ?? apply(B, LEAF), { value: LEAF, type: A }, depth + 1)
-    const stemOk = treeEqual(pd, LEAF) && B0 !== null && treeEqual(B0, A)
-    const forkOk = treeEqual(pb, LEAF) && B0 !== null && treeEqual(B0, A)
-    return leafOk && stemOk && forkOk
-  }
-
   // Tree domain
   if (treeEqual(A, TN_TREE)) {
     const Bleaf = B0 !== null ? B0 : apply(B, LEAF)
-    if (!checkAnnotated(defs, annC, Bleaf, undefined, depth + 1)) return false
+    if (!checkAnnotated(defs, annC, Bleaf, depth + 1)) return false
     const stemB = B0 !== null ? fork(LEAF, B0) : stemCodomain(B)
-    if (!checkAnnotated(defs, annD, fork(TN_TREE, stemB), undefined, depth + 1)) return false
+    if (!checkAnnotated(defs, annD, fork(TN_TREE, stemB), depth + 1)) return false
     const forkB = B0 !== null ? fork(LEAF, tnArrow(TN_TREE, B0)) : forkCodomain(B)
-    return checkAnnotated(defs, annB, fork(TN_TREE, forkB), undefined, depth + 1)
+    return checkAnnotated(defs, annB, fork(TN_TREE, forkB), depth + 1)
   }
 
   // Nat domain
   if (treeEqual(A, TN_NAT)) {
     const Bleaf = B0 !== null ? B0 : apply(B, LEAF)
-    if (!checkAnnotated(defs, annC, Bleaf, undefined, depth + 1)) return false
+    if (!checkAnnotated(defs, annC, Bleaf, depth + 1)) return false
     const stemB = B0 !== null ? fork(LEAF, B0) : stemCodomain(B)
-    return checkAnnotated(defs, annD, fork(TN_NAT, stemB), undefined, depth + 1)
+    return checkAnnotated(defs, annD, fork(TN_NAT, stemB), depth + 1)
   }
 
   // Bool domain
   if (treeEqual(A, TN_BOOL)) {
     const Bleaf = B0 !== null ? B0 : apply(B, LEAF)
-    if (!checkAnnotated(defs, annC, Bleaf, undefined, depth + 1)) return false
-    const Bstem = B0 !== null ? B0 : apply(B, stem(LEAF))
-    return checkAnnotated(defs, apply(extract(annD), LEAF), Bstem, undefined, depth + 1)
+    if (!checkAnnotated(defs, annC, Bleaf, depth + 1)) return false
+    // Structural check: annD must be a valid function from Bool's stem arg to Bstem.
+    // Bool's stem branch receives the inner value (LEAF for false=stem(LEAF)),
+    // so annD : Tree -> Bstem (but since false is the only stem-Bool, effectively just Bstem).
+    const stemB = B0 !== null ? fork(LEAF, B0) : stemCodomain(B)
+    return checkAnnotated(defs, annD, fork(TN_BOOL, stemB), depth + 1)
   }
 
   return false

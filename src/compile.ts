@@ -116,7 +116,7 @@ export function bracketAbstract(name: string, expr: Expr): Expr {
 }
 
 // Check if a free variable appears in an Expr
-function hasFreeVar(name: string, expr: Expr): boolean {
+export function hasFreeVar(name: string, expr: Expr): boolean {
   switch (expr.tag) {
     case "fvar": return expr.name === name
     case "tree": return false
@@ -126,7 +126,7 @@ function hasFreeVar(name: string, expr: Expr): boolean {
 
 // K(e) collapses to fork(LEAF, collapse(e)).
 // Built as app(stem(LEAF), e): treeApply(stem(LEAF), collapse(e)) = fork(LEAF, collapse(e)).
-function kOf(e: Expr): Expr {
+export function kOf(e: Expr): Expr {
   return eApp(eTree(stem(LEAF)), e)
 }
 

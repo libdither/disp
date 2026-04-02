@@ -5,7 +5,9 @@ import {
 } from "../src/tree-native.js"
 import { loadPrelude } from "../src/prelude.js"
 import { initialState, loadFile, processLine } from "../src/repl.js"
-import { encType, encPi } from "../src/coc.js"
+// Inline encoding constructors (formerly from coc.ts)
+function encType(): Tree { return LEAF }
+function encPi(domain: Tree, body: Tree): Tree { return fork(fork(domain, LEAF), body) }
 import { compileAndEval, bracketAbstract, eTree, eFvar, eApp, collapseAndEval } from "../src/compile.js"
 import { parseExpr } from "../src/parse.js"
 

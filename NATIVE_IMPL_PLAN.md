@@ -2,65 +2,73 @@
 
 Engineering roadmap for the tree-native type system. Theory is in `TREE_NATIVE_TYPE_THEORY.md`.
 
-## Current State (2026-03-30)
+## Current State (2026-04-01)
 
-**Native pipeline is primary. Legacy CoC code removed from production path.** 481 tests, 478 passing. 3 `[POST]` aspirational failures (ascription-free annotations). REPL and prelude fully native. `coc.ts` retained only as a library for encoding primitives used by tree-encoded step functions and benchmarks.
+**Native pipeline is primary.** 483 tests, 481 passing. 2 `[POST]` aspirational failures (Church-encoded types: mkPair, fold). Previous 3 `[POST]` ascription-free annotation tests now pass via TypedExpr pipeline. Checker soundness fixes applied. `coc.ts` retained only as encoding library.
 
 ### Architecture
 
+Two-phase pipeline: **elaborate** (SExpr → TypedExpr) then **compile** (TypedExpr → annotated Tree).
+
 ```
-Parse (src/parse.ts) → Elaborate (src/tree-native-elaborate.ts) → Compile (src/compile.ts) → Check (src/tree-native-checker.ts)
+Parse (src/parse.ts) → Elaborate (TypedExpr) → Compile (bracket abstract + collapse) → Check (src/tree-native-checker.ts)
 ```
 
 | File | Role |
 |------|------|
-| `src/tree-native-checker.ts` | `checkAnnotated(defs, ann, type) → bool`, type constants, codomain helpers, ascription verification |
-| `src/tree-native-elaborate.ts` | `buildNativeWrapped`, `typedBracketAbstract`, `collapseToAnnotated`, `nativeElabDecl` |
+| `src/tree-native-checker.ts` | `checkAnnotated(defs, ann, type) → bool`, type constants, codomain helpers |
+| `src/tree-native-elaborate.ts` | `TypedExpr` type, `elaborate` (Phase 1), `compileTE` (Phase 2), `nativeElabDecl` |
 | `src/native-utils.ts` | `freshMarker`, `registerNativeBuiltinId`, `isNativeBuiltin`, cache callbacks |
 | `src/prelude.ts` | `loadPrelude` (native-only), `processDecl` (native with graceful fallback) |
 | `src/repl.ts` | Fully native REPL, no CoC fallback or imports |
-| `src/compile.ts` | Compiler: `astToExpr` + bracket abstraction. Pi types compile to `fork(domain, codomain)`. |
-| `src/coc.ts` | Encoding library only. Used by tree-encoded step functions and bench tests. No production imports. |
+| `src/compile.ts` | Legacy compiler: `astToExpr` + bracket abstraction. Still used for: recursive defs (FIX), REPL expression eval, type-level computation. |
+| `src/coc.ts` | Encoding library only. Used by tree-encoded step functions and bench tests. |
 
 ### What Works
 
 - All primitive types and builtins type-check natively
-- 7/22 prelude definitions verify via `checkAnnotated`: not, and, or, id, Pair, Either, infer
+- **22/22 prelude definitions verify** via `checkAnnotated`: not, and, or, fold, add, mul, treeEq, whnf, abstractOut, abstractOutFast, convertibleRec, convertible, inferRec, infer, id, Pair, mkPair, fst, snd, Either, inl, inr
 - Church-encoded types display correctly: `Pair Nat Bool` → `(a : Type) -> (Nat -> Bool -> a) -> a`
 - Pi types compile to `fork(domain, codomain)` — proper native type values
 - `Tree` keyword compiles to `stem(LEAF)` = TN_TREE
 - Ascriptions restricted to known definitions with matching types (adversarially sound for function types)
 - Recursive definitions elaborate, abstract self out, verify body at T→T, store FIX as ascription
 - Constant-motive coercion: `Type` auto-wrapped in `K` when `X -> Type` domain expected
+- Hand-written dependent types for natElim/boolElim/triage (fixes data-tree sharing overwrite)
 - All runtime computation works correctly regardless of verification status
 
 ### What Doesn't Work
 
-**15/22 prelude definitions fall back to unchecked compilation.** They compile and run correctly but have `checkOk = false`. Root causes:
+**All 22 prelude definitions now verify.** 2 `[POST]` failures for Church-encoded types (mkPair, fold) — elaboration fails on deeply nested dependent type computation. Known limitations are theoretical (see Known Issues below), not practical blockers for current prelude.
 
-1. **Simplified builtin types** (fold, add, mul, treeEq, whnf, abstractOut, etc.): Builtins whose dependent types can't be elaborated natively fall back to `TN_TREE` type. natElim/boolElim/triage need hand-written native types with proper dependent structure.
+### TypedExpr Pipeline
 
-2. **Church-encoded value elaboration** (mkPair, fst, snd, inl, inr): The elaborator can decompose `Pair A B` as a proper Pi type, but elaborating through Church-encoded value bodies requires the expected type to be fully decomposable at each lambda. Some of these may work once builtin types are fixed.
-
-3. **Complex recursive step functions** (treeEq, whnf, abstractOut, etc.): Deep nesting of tWait/natElim patterns exceeds current elaboration capabilities.
-
-### TypedExpr
-
-The elaborator's intermediate representation:
+The elaborator uses a two-phase architecture:
 
 ```typescript
 type TypedExpr =
-  | { tag: "tlit", tree: Tree, annTree: Tree, type: Tree }
-  | { tag: "tfvar", name: string, type: Tree }
-  | { tag: "tapp", func: TypedExpr, arg: TypedExpr, type: Tree }
-  | { tag: "tI", type: Tree }
-  | { tag: "tK", value: TypedExpr, type: Tree }
-  | { tag: "tS", d: Tree, c: TypedExpr, b: TypedExpr, type: Tree }
+  | { tag: "tree",  value: Tree, type: Tree }     // resolved constant
+  | { tag: "var",   name: string, type: Tree }     // bound variable
+  | { tag: "app",   func: TypedExpr, arg: TypedExpr, type: Tree }  // application
+  | { tag: "lam",   param: string, domain: Tree, body: TypedExpr, type: Tree }  // lambda
+  | { tag: "combI", type: Tree }                   // identity combinator
+  | { tag: "combK", inner: TypedExpr, type: Tree } // constant combinator
+  | { tag: "combS", c: TypedExpr, b: TypedExpr, D: Tree, type: Tree }  // sharing combinator + D annotation
 ```
 
-- `collapseTypedExpr(texpr) → Tree` — raw program
-- `collapseToAnnotated(texpr, defs?) → Tree` — annotated tree with D + ascriptions; registers apply results in defs
-- `typedBracketAbstract(name, texpr, type) → { result: TypedExpr, codomain: Tree }` — preserves structure for outer abstractions
+**Phase 1: `elaborate(sexpr, env, expectedType?) → TypedExpr`**
+- Resolves names, computes types (evaluating type-level trees for dependent codomains)
+- Lambdas stay as `lam` nodes — no compilation yet
+- Every node carries its type
+
+**Phase 2: `compileTE(typedExpr, nativeDefs?) → { annotated, compiled }`**
+- Bracket-abstracts all lambdas inside-out, producing combI/combK/combS nodes
+- combK/combS cases delegate to app-chain form, getting S(Kp)(Kq) and eta optimizations for free
+- `collapseAnnotated` → annotated tree with D at S nodes from types
+- `collapseRaw` → raw compiled tree (eagerly evaluated for execution)
+- No intermediate Expr or hash-cons pollution
+
+**`buildDirect`** preserved as backward-compatible wrapper returning `{ tree, type }` for REPL type queries and builtin type elaboration.
 
 ---
 
@@ -94,48 +102,47 @@ Remaining CoC usage: `src/coc.ts` as encoding library for tree-native step funct
 
 ## Next Steps
 
-### Proper Builtin Native Types
+### Proper Builtin Native Types ✓
 
-**Priority: HIGH. This is the current blocker for more prelude verification.**
+**Completed 2026-03-30.** Hand-written dependent types for natElim, boolElim, triage using bracket abstraction + collapseAndEval. All 6 eliminator builtins (dep + non-dep) share the same type, fixing the nativeDefs overwrite bug.
 
-Builtins whose dependent types can't be elaborated natively fall back to `TN_TREE`. The key builtins needing hand-written native types:
+### Checker Soundness Fixes ✓
 
-- **natElim**: `Pi(Pi(Nat, K(Type)), ...)` — (M : Nat -> Type) -> M 0 -> ((n:Nat) -> M n -> M (succ n)) -> (n:Nat) -> M n
-- **boolElim**: `Pi(Pi(Bool, K(Type)), ...)` — (M : Bool -> Type) -> M true -> M false -> (b:Bool) -> M b
-- **triage**: `Pi(Pi(Tree, K(Type)), ...)` — similar dependent elimination
+**Completed 2026-03-31.** Two confirmed soundness holes closed, abstract marker system removed:
 
-Hand-write these in `registerBuiltins()`. Most other builtins have simple arrow types that already elaborate correctly.
+- **Bool triage**: Now checks stem handler structurally (was: evaluated and misinterpreted result)
+- **K dependent codomain**: Rejects dependent K over Nat/Type/Tree (was: unsound sample-point checks). Only Bool exhaustive check retained (2 inhabitants).
+- **Abstract marker system removed**: `freshAbstract`, `isAbstract`, `resetAbstractCounter`, `inputAssumption` all deleted. ~50 lines removed. Checker has no external mutable state besides `defs`.
 
-**Unblocks:** Phase 2 coercion for fold/add/mul, plus any definition that applies natElim/boolElim.
+### TypedExpr Pipeline ✓
 
-### Checker Soundness Fixes
+**Completed 2026-04-01.** Two-phase elaboration: `elaborate` (SExpr → TypedExpr) + `compileTE` (TypedExpr → annotated Tree). Replaced the old triple-compilation approach (buildDirect expr + buildDirect tree + compileAndEval) with a single TypedExpr that carries types through bracket abstraction. D annotations at S nodes come from types naturally. Ascription-free annotations for non-recursive definitions. 3 `[POST]` tests for ascription-free annotations now pass.
 
-**Priority: MEDIUM. Correctness improvements, not blocking progress.**
+Key design decisions:
+- combK/combS cases delegate to app-chain form for bracket abstraction, getting S(Kp)(Kq) and eta optimizations for free (avoids incorrect manual formula derivation)
+- Eta-reduced subexpressions that are unevaluated apps get ascriptions with runtime registration in nativeDefs
+- `collapseRaw` eagerly evaluates for execution; `collapseAnnotated` preserves structure for checking
 
-- **Bool triage evaluates stem handler** (`tree-native-checker.ts:334`): Mixes evaluation and verification. Fix: check `annD` structurally.
-- **K-Nat two-point check** (`tree-native-checker.ts:250-253`): Unsound for dependent B over Nat that varies at n≥2. Fix: reject dependent K over Nat.
+### Full Prelude Verification ✓
 
-### Full Prelude Verification
+**Completed 2026-03-30.** All 22 prelude.disp definitions produce correct annotated trees passing `checkAnnotated`.
 
-**Goal:** All 22 prelude.disp definitions produce correct annotated trees passing `checkAnnotated`.
+### Unify Remaining Compilation Paths
 
-**Prerequisites:** Proper builtin native types. The 15 failing defs break down as:
-- **3 need constant-motive** (fold, add, mul) — blocked on builtin types
-- **5 need Church-type elaboration** (mkPair, fst, snd, inl, inr) — may work once builtin types fixed
-- **7 need complex recursive elaboration** (treeEq, whnf, abstractOut, etc.) — deep tWait/natElim nesting
+**Goal:** Remove `compile.ts` dependency from the elaboration path entirely.
 
-### Unify Compilation Paths
+**Remaining uses of old compile.ts in elaborator:**
+1. `compileRecAndEval` — recursive definitions still use FIX from compile.ts
+2. `collapseAndEval` + `bracketAbstract` — type-level computation (Pi codomain abstraction)
+3. `typedExprToExpr` — fallback conversion for type-level bracket abstraction
 
-**Goal:** Remove `compile.ts` as a separate trusted backend. The elaborator becomes the sole compilation path.
-
-**Approach:**
-1. After builtin native types are fixed, verify `extract(collapseToAnnotated(texpr)) === compileAndEval(value, defs)` for all prelude defs
-2. Replace `compileAndEval` calls in `nativeElabDecl` with `extract(collapseToAnnotated(...))`
-3. Keep `compile.ts` for REPL `:tree` command
+**Remaining uses in REPL/prelude:**
+1. `compileAndEval` — REPL expression evaluation
+2. `compileRecAndEval` — prelude fallback for failed elaboration
 
 ### Encode Checker as Tree Constant
 
-**Goal:** `checkAnnotated` as a tree calculus combinator — a tree that verifies other trees.
+**Goal:** `checkAnnotated` as a tree calculus combinator — a tree that verifies other trees. Checker now has no external mutable state besides `defs` — ready for tree-encoding.
 
 ### Remove Remaining CoC Code
 
@@ -158,20 +165,21 @@ score(program) = treeCheck(annotate(program), type) * performance_weight(program
 
 ### Soundness
 
-- **Bool triage evaluation** (`checker.ts:334`): Evaluates stem handler instead of checking structurally.
-- **K-Nat two-point check** (`checker.ts:250-253`): Unsound for dependent B over Nat that varies at n≥2.
+- ~~**Bool triage evaluation**: Fixed 2026-03-31. Checks stem handler structurally.~~
+- ~~**K-Nat two-point check**: Fixed 2026-03-31. Rejects dependent K over Nat/Type/Tree.~~
 - **Opaque type escape hatch** (`elaborate.ts`): Silently accepts type mismatches when domain is an unrecognized stem.
 
 ### Incompleteness
 
-- **Abstract domain triage**: Only handles identity triage on abstract types.
+- **No abstract/Pi domain triage**: Removed (was unsound). Triage only handles Tree, Nat, Bool domains.
+- **Dependent K over non-Bool**: Rejected (was unsound). Only Bool exhaustive check retained.
 - **Depth limit 80**: Hard recursion limit in checker.
 - **No type inference**: All lambdas require expected types.
-- **Marker erasure**: Eager evaluation consumes markers during dependent type detection.
+- **safeApply fallback**: Budget exhaustion during elaboration-time type computation falls back to structural `fork(f, x)`, yielding approximate types for deeply recursive definitions.
 
-### 3 Aspirational Test Failures
+### 2 Aspirational Test Failures
 
-`test/approach-a.test.ts` Section 4 "Annotation structure": `[POST]` tests expecting no ascription nodes inside combinator annotations. `collapseToAnnotated` currently wraps `tapp` results in ascriptions. Will pass when elaboration produces fully structural annotations.
+`test/approach-a.test.ts`: `[POST]` mkPair and fold elaboration — fails because Church-encoded types produce opaque type trees during deeply nested dependent type computation. Previous 3 `[POST]` ascription-free annotation tests now pass via TypedExpr pipeline.
 
 ---
 
@@ -183,8 +191,8 @@ score(program) = treeCheck(annotate(program), type) * performance_weight(program
 | `test/tree-native-exhibit.test.ts` | 27 | (tree, type, annotation) triples |
 | `test/tree-native-annotated.test.ts` | 35 | Annotated format, extraction, memoization |
 | `test/tree-native-dependent.test.ts` | 17 | Dependent codomain helpers |
-| `test/tree-native-elaborate.test.ts` | 31 | Native elaborator, TypedExpr |
-| `test/approach-a.test.ts` | 45 | Ascription restriction, Phase 1+2, pipeline semantics |
+| `test/tree-native-elaborate.test.ts` | ~28 | Native elaborator, buildDirect |
+| `test/approach-a.test.ts` | ~47 | Ascription restriction, Phase 1+2, pipeline semantics, soundness regression |
 | `test/tree-native.test.ts` | 19 | Tree-native builtins (FST, SND, TERM_CASE, etc.) |
 | `test/repl.test.ts` | 58 | REPL integration with prelude.disp |
 | `test/prelude.test.ts` | 11 | Prelude loading |
@@ -194,4 +202,4 @@ score(program) = treeCheck(annotate(program), type) * performance_weight(program
 | `test/tree.test.ts` | 21 | Tree data structure |
 | `test/errors.test.ts` | 14 | Error handling |
 | `test/bench.test.ts` | 7 | Benchmarks |
-| **Total** | **481** | 478 passing, 3 `[POST]` failures |
+| **Total** | **483** | 481 passing, 2 `[POST]` failures |

@@ -2,7 +2,7 @@
 
 A dependently-typed programming language built on tree calculus.
 
-Tree calculus is natively reflective -- terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp uses the Calculus of Constructions (CoC) as its type theory, with CoC terms encoded directly as trees.
+Tree calculus is natively reflective — terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp uses a tree-native type system where types and programs are both trees, with type annotations embedded directly into compiled combinators.
 
 ## Quick Start
 
@@ -11,20 +11,20 @@ npm install
 npx tsx src/main.ts
 ```
 
-This starts the REPL, which auto-loads `prelude.disp` (Church-encoded Bool, Nat, Pair, Either).
+This starts the REPL, which auto-loads `prelude.disp` (Bool, Nat, Pair, Either, arithmetic).
 
 ```
 > let id : (A : Type) -> A -> A := {A x} -> x
 id : (A : Type) -> A -> A
 
-> id Bool true
-true : (R : Type) -> R -> R -> R
+> not true
+false : Bool
 
 > add 3 4
-7 : (R : Type) -> (R -> R) -> R -> R
+7 : Nat
 
 > :type not true
-(R : Type) -> R -> R -> R
+Bool
 
 > :tree {x} -> x
 (tri (tri t t) t)
@@ -39,15 +39,17 @@ npm test
 ## Architecture
 
 ```
-src/tree.ts     -- Tree calculus runtime: hash-consed trees, eager evaluation
-src/parse.ts    -- Tokenizer + recursive descent parser -> SExpr
-src/compile.ts  -- SExpr -> Tree via bracket abstraction (S/K/I combinators)
-src/coc.ts      -- CoC-on-trees type checker + tree-native builtins
-src/repl.ts     -- Interactive REPL with commands
-src/main.ts     -- Entry point
+src/parse.ts                  -- Tokenizer + recursive descent parser -> SExpr
+src/tree-native-elaborate.ts  -- TypedExpr pipeline: elaborate (Phase 1) + compile (Phase 2)
+src/tree-native-checker.ts    -- Annotated tree checker: checkAnnotated(defs, ann, type)
+src/tree.ts                   -- Tree calculus runtime: hash-consed trees, eager evaluation
+src/compile.ts                -- Legacy compiler: bracket abstraction, FIX combinator
+src/tree-native.ts            -- Tree-native builtins and step functions
+src/repl.ts                   -- Interactive REPL with commands
+src/main.ts                   -- Entry point
 ```
 
-**Pipeline**: Parse (source -> SExpr) -> Type Check (CoC-on-trees) -> Compile (bracket abstraction) -> Evaluate (tree calculus)
+**Pipeline**: Parse (source -> SExpr) -> Elaborate (SExpr -> TypedExpr) -> Compile (TypedExpr -> annotated Tree) -> Check (annotated Tree -> bool)
 
 ## Syntax
 
@@ -59,8 +61,10 @@ let rec name : type := value   -- recursive definition
 A -> B                         -- non-dependent function type
 f x                            -- application
 Type                           -- the universe
-true / false                   -- Church booleans
-0, 1, 2, ...                   -- Church numerals
+true / false                   -- booleans (tree-encoded)
+0, 1, 2, ...                   -- natural numbers (tree-encoded)
+Tree / Bool / Nat              -- primitive types
+leaf / stem / fork             -- tree constructors
 {x : A, y : B}                 -- record type (Church-encoded)
 <Left : A | Right : B>         -- coproduct type (Church-encoded)
 ```
@@ -75,19 +79,12 @@ true / false                   -- Church booleans
 - `:help` / `:h` -- show help
 - `:quit` / `:q` -- exit
 
-## Goals
-
-- **All-purpose**: scripting, shells, and compiled languages
-- **Speed**: competitive with Rust/C for high-level code via neural compilation
-- **Provably safe**: programs carry proofs of correctness
-- **Syntax-agnostic**: multiple syntax frontends for the same core
-
 ## Design Notes
 
-- **Tree calculus application is eager** -- `apply(f, x)` recursively evaluates. Trees are always in normal form.
-- **Type:Type** -- inconsistent as logic, fine as a programming language. No universe hierarchy.
-- **Church encodings only** -- no inductive types. Booleans, naturals, pairs, etc. are all Church-encoded.
+- **Tree calculus application is eager** — `apply(f, x)` recursively evaluates. Trees are always in normal form.
+- **Type:Type** — inconsistent as logic, fine as a programming language. No universe hierarchy.
+- **Primitive types** — Tree, Bool, Nat are tree-encoded (not Church-encoded). true=leaf, false=stem(leaf), zero=leaf, succ(n)=stem(n).
+- **Annotated trees** — type annotations (D at S nodes) are embedded in the compiled tree. The checker verifies structural typing rules directly.
 - **Bracket abstraction** is optimized: eta reduction, S(K p)(K q) = K(p q), S(K p) I = p.
-- **CoC terms are trees** -- the type checker operates on tree-encoded terms. Tree calculus `apply()` IS substitution.
 
-See `PLAN.md` for the full roadmap including neural program synthesis (Phase 2).
+See `PLAN.md` for the full roadmap including neural program synthesis.
