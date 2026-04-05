@@ -10,10 +10,10 @@ let ff := leaf leaf
 let triage := {a b c} -> leaf (leaf a b) c
 
 -- Boolean operations
-let and := {a b} -> triage b ({_} -> ff) ({_ _} -> ff) a
-let or := {a b} -> triage tt ({_} -> b) ({_ _} -> tt) a
-let not := {a} -> triage ff ({_} -> tt) ({_ _} -> ff) a
-let isLeaf := triage tt ({_} -> ff) ({_ _} -> ff)
+let and : t_bool -> t_bool -> t_bool := {a b} -> triage b ({_} -> ff) ({_ _} -> ff) a
+let or : t_bool -> t_bool -> t_bool := {a b} -> triage tt ({_} -> b) ({_ _} -> tt) a
+let not : t_bool -> t_bool := {a} -> triage ff ({_} -> tt) ({_ _} -> ff) a
+let isLeaf : t_tree -> t_bool := triage tt ({_} -> ff) ({_ _} -> ff)
 
 -- if-then-else: if b=tt then t, else e
 let ite := {b t e} -> triage t ({_} -> e) ({_ _} -> e) b
@@ -64,13 +64,15 @@ let leafFnCheck := {A B} -> ({B0} -> ite (fastEq B0 ff) ff (ite (isKTrue B0) tt 
 let stemFnCheck := {A B child} -> ({B0} -> ite (fastEq B0 ff) ff (ite (isKTrue B0) tt (ite (fastEq A t_bool) (and (B0 (leaf child leaf)) (B0 (leaf child (leaf leaf)))) ff))) (isNonDep B)
 
 -- === kCheck: K(v) : Pi(A, B) ===
--- Non-dep: check v against B0 using self for recursive checking.
--- self here means: if B0 is a base predicate, run it. If Pi, recurse.
--- For now: just run B0 as a predicate (works for base types).
+-- Non-dep: check v against B0.
+-- If B0 is a known base predicate (t_tree/t_bool/t_nat), run it directly.
+-- Otherwise assume B0 is a Pi type fork(C, D) and recurse with piCheck.
 let kCheck := {self A B annV} ->
   ({B0} ->
     ite (fastEq B0 ff) ff
-    (B0 annV))
+    (ite (or (fastEq B0 t_tree) (or (fastEq B0 t_bool) (fastEq B0 t_nat)))
+      (B0 annV)
+      (triage ff ({_} -> ff) ({bA bB} -> self bA bB annV) B0)))
   (isNonDep B)
 
 

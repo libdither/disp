@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { LEAF, stem, fork, apply, I, K, treeEqual, prettyTree, FAST_EQ } from "../src/tree.js"
-import { bareCompile, bareDeclare, bareLoadFile, BareEnv } from "../src/elaborate.js"
-import { parseLine } from "../src/parse.js"
+import { bareCompile, bareDeclare, bareLoadFile, BareEnv, typedCompileLam, typedLoadFile, TypedEnv } from "../src/elaborate.js"
+import { parseLine, parseExpr } from "../src/parse.js"
 
 // Helper: compile a bare expression with optional env
 function compile(src: string, env: BareEnv = new Map()): ReturnType<typeof apply> {
@@ -287,6 +287,63 @@ describe("types.disp bootstrap", () => {
       it("K(stem(stem(leaf))) : Bool -> Bool REJECTED (not a bool)", () => {
         expect(check(t_bool, kWrap(t_bool), fork(LEAF, stem(stem(LEAF))))).toBe(false)
       })
+    })
+  })
+
+  describe("Typed elaborator (two-pass bootstrap)", () => {
+    // Two-pass loading: bare first, then typed with annotations
+    const tenv = typedLoadFile(source, env)
+    const t_bool = env.get("t_bool")!
+    const t_tree = env.get("t_tree")!
+    const pc = env.get("piCheck")!
+    const kw = (B: Tree) => fork(LEAF, B)
+
+    const check = (A: Tree, B: Tree, ann: Tree) => {
+      try {
+        return treeEqual(apply(apply(apply(pc, A), B), ann, { remaining: 500000 }), TT)
+      } catch { return false }
+    }
+
+    it("typedLoadFile produces TypedEnv", () => {
+      expect(tenv.size).toBeGreaterThan(5)
+      // not should have a type annotation
+      const notEntry = tenv.get("not")!
+      expect(treeEqual(notEntry.type, fork(t_bool, kw(t_bool)))).toBe(true)
+    })
+
+    it("typed `and` has annotated S-nodes", () => {
+      const andEntry = tenv.get("and")!
+      // and with type annotation should be re-compiled with annotations
+      // It should differ from the bare version
+      expect(treeEqual(andEntry.tree, env.get("and")!)).toBe(false)
+    })
+
+    // Helper: compile lambda with typed env from two-pass loading
+    function typedLam(src: string, expectedType: Tree): Tree {
+      const parsed = parseLine(src)
+      if (!("tag" in parsed) || parsed.tag !== "slam") throw new Error("Expected lambda")
+      return typedCompileLam(parsed.params, parsed.body, expectedType, tenv)
+    }
+
+    it("{x} -> not (not x) : Bool -> Bool", () => {
+      const annotated = typedLam("{x} -> not (not x)", fork(t_bool, kw(t_bool)))
+      expect(check(t_bool, kw(t_bool), annotated)).toBe(true)
+    })
+
+    it("{x} -> and x x : Bool -> Bool (inner `and` now annotated)", () => {
+      const annotated = typedLam("{x} -> and x x", fork(t_bool, kw(t_bool)))
+      expect(check(t_bool, kw(t_bool), annotated)).toBe(true)
+    })
+
+    it("{x} -> or x (not x) : Bool -> Bool (inner `or` now annotated)", () => {
+      const annotated = typedLam("{x} -> or x (not x)", fork(t_bool, kw(t_bool)))
+      expect(check(t_bool, kw(t_bool), annotated)).toBe(true)
+    })
+
+    it("annotated tree differs from bare tree", () => {
+      const annotated = typedLam("{x} -> not (not x)", fork(t_bool, kw(t_bool)))
+      const bare = bareCompile(parseLine("{x} -> not (not x)") as any, env)
+      expect(treeEqual(annotated, bare)).toBe(false)
     })
   })
 })
