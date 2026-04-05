@@ -10,10 +10,10 @@ let ff := leaf leaf
 let triage := {a b c} -> leaf (leaf a b) c
 
 -- Boolean operations
-let and : t_bool -> t_bool -> t_bool := {a b} -> triage b ({_} -> ff) ({_ _} -> ff) a
-let or : t_bool -> t_bool -> t_bool := {a b} -> triage tt ({_} -> b) ({_ _} -> tt) a
-let not : t_bool -> t_bool := {a} -> triage ff ({_} -> tt) ({_ _} -> ff) a
-let isLeaf : t_tree -> t_bool := triage tt ({_} -> ff) ({_ _} -> ff)
+let and : Bool -> Bool -> Bool := {a b} -> triage b ({_} -> ff) ({_ _} -> ff) a
+let or : Bool -> Bool -> Bool := {a b} -> triage tt ({_} -> b) ({_ _} -> tt) a
+let not : Bool -> Bool := {a} -> triage ff ({_} -> tt) ({_ _} -> ff) a
+let isLeaf : Tree -> Bool := triage tt ({_} -> ff) ({_ _} -> ff)
 
 -- if-then-else: if b=tt then t, else e
 let ite := {b t e} -> triage t ({_} -> e) ({_ _} -> e) b
@@ -26,9 +26,9 @@ let fix := {f} -> wait selfApplyK ({x} -> f (wait1 selfApplyK x))
 
 -- === Base type predicates ===
 
-let t_tree := {_} -> tt
-let t_bool := triage tt isLeaf ({_ _} -> ff)
-let rec t_nat := triage tt t_nat ({_ _} -> ff)
+let Tree := {_} -> tt
+let Bool := triage tt isLeaf ({_ _} -> ff)
+let rec Nat := triage tt Nat ({_ _} -> ff)
 
 -- === Pi type helpers ===
 
@@ -36,8 +36,8 @@ let rec t_nat := triage tt t_nat ({_ _} -> ff)
 -- WARNING: collides if actual B0 is ff (= stem(leaf)). Acceptable for now.
 let isNonDep := {B} -> triage ff ({_} -> ff) ({left right} -> triage right ({_} -> ff) ({_ _} -> ff) left) B
 
--- isKTrue: check if pred = t_tree (K(true) = fork(leaf, leaf))
-let isKTrue := {pred} -> fastEq pred t_tree
+-- isKTrue: check if pred = Tree (K(true) = fork(leaf, leaf))
+let isKTrue := {pred} -> fastEq pred Tree
 
 -- Extract stem handler from triage-shaped predicate: fork(fork(c, d), b) → d
 -- Returns ff if not triage-shaped.
@@ -54,27 +54,26 @@ let iComb := leaf (leaf leaf leaf) leaf
 -- Then check: does B0 accept stem(x) for all x : A?
 -- Strategy: isKTrue(B0)? → tt. Else extract stem handler, compare with A.
 -- Fallback: enumerate for Bool domain.
-let leafFnCheck := {A B} -> ({B0} -> ite (fastEq B0 ff) ff (ite (isKTrue B0) tt (({sh} -> ite (fastEq sh ff) (ite (fastEq A t_bool) (and (B0 (leaf leaf)) (B0 (leaf (leaf leaf)))) ff) (fastEq sh A)) (triageStemHandler B0)))) (isNonDep B)
+let leafFnCheck := {A B} -> ({B0} -> ite (fastEq B0 ff) ff (ite (isKTrue B0) tt (({sh} -> ite (fastEq sh ff) (ite (fastEq A Bool) (and (B0 (leaf leaf)) (B0 (leaf (leaf leaf)))) ff) (fastEq sh A)) (triageStemHandler B0)))) (isNonDep B)
 
 -- stemFnCheck: does fork(child, -) preserve A → B?
 -- stem(child) applied to x gives fork(child, x).
--- For K(t_tree) codomain: fork is always Tree → accept.
+-- For K(Tree) codomain: fork is always Tree → accept.
 -- For Bool domain: enumerate both values, check B0(fork(child, v)).
 -- Otherwise: reject (can't enumerate infinite domains).
-let stemFnCheck := {A B child} -> ({B0} -> ite (fastEq B0 ff) ff (ite (isKTrue B0) tt (ite (fastEq A t_bool) (and (B0 (leaf child leaf)) (B0 (leaf child (leaf leaf)))) ff))) (isNonDep B)
+let stemFnCheck := {A B child} -> ({B0} -> ite (fastEq B0 ff) ff (ite (isKTrue B0) tt (ite (fastEq A Bool) (and (B0 (leaf child leaf)) (B0 (leaf child (leaf leaf)))) ff))) (isNonDep B)
 
 -- === kCheck: K(v) : Pi(A, B) ===
 -- Non-dep: check v against B0.
--- If B0 is a known base predicate (t_tree/t_bool/t_nat), run it directly.
+-- If B0 is a known base predicate (Tree/Bool/Nat), run it directly.
 -- Otherwise assume B0 is a Pi type fork(C, D) and recurse with piCheck.
 let kCheck := {self A B annV} ->
   ({B0} ->
     ite (fastEq B0 ff) ff
-    (ite (or (fastEq B0 t_tree) (or (fastEq B0 t_bool) (fastEq B0 t_nat)))
+    (ite (or (fastEq B0 Tree) (or (fastEq B0 Bool) (fastEq B0 Nat)))
       (B0 annV)
       (triage ff ({_} -> ff) ({bA bB} -> self bA bB annV) B0)))
   (isNonDep B)
-
 
 -- === sOrAsc: stem(D) case — S node or Ascription ===
 -- For fork(stem(D), fork(annC, annB)): D is intermediate type, check S-node.
@@ -90,7 +89,7 @@ let sOrAsc := {self A B D right} -> triage ff ({_} -> fastEq D (leaf A B)) ({ann
 --   b : Pi(A, K(Pi(A, B))) — fork handler (2 args, curried)
 -- Bool/Nat: no fork inhabitants, so annB unchecked.
 -- Tree: fork handler checked with 2-arg type Pi(A, K(Pi(A, B))).
-let triCheck := {self A B annC annD annB} -> ite (fastEq A t_bool) (and (checkVal (B leaf) annC) (self A B annD)) (ite (fastEq A t_nat) (and (checkVal (B leaf) annC) (self A B annD)) (ite (fastEq A t_tree) (and (checkVal (B leaf) annC) (and (self A B annD) (self A (leaf leaf (leaf A B)) annB))) ff))
+let triCheck := {self A B annC annD annB} -> ite (fastEq A Bool) (and (checkVal (B leaf) annC) (self A B annD)) (ite (fastEq A Nat) (and (checkVal (B leaf) annC) (self A B annD)) (ite (fastEq A Tree) (and (checkVal (B leaf) annC) (and (self A B annD) (self A (leaf leaf (leaf A B)) annB))) ff))
 
 -- === PiCheck ===
 -- Uses fix (demand-driven recursion via WAIT) for safe recursion.

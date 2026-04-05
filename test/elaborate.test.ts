@@ -108,7 +108,7 @@ describe("types.disp bootstrap", () => {
 
   describe("Tree predicate", () => {
     it("accepts everything", () => {
-      const tp = env.get("t_tree")!
+      const tp = env.get("Tree")!
       expect(treeEqual(apply(tp, LEAF), TT)).toBe(true)
       expect(treeEqual(apply(tp, stem(LEAF)), TT)).toBe(true)
       expect(treeEqual(apply(tp, fork(LEAF, LEAF)), TT)).toBe(true)
@@ -117,39 +117,39 @@ describe("types.disp bootstrap", () => {
 
   describe("Bool predicate", () => {
     it("accepts true (leaf)", () => {
-      expect(treeEqual(apply(env.get("t_bool")!, LEAF), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!, LEAF), TT)).toBe(true)
     })
     it("accepts false (stem(leaf))", () => {
-      expect(treeEqual(apply(env.get("t_bool")!, stem(LEAF)), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!, stem(LEAF)), TT)).toBe(true)
     })
     it("rejects stem(stem(leaf))", () => {
-      expect(treeEqual(apply(env.get("t_bool")!, stem(stem(LEAF))), FF)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!, stem(stem(LEAF))), FF)).toBe(true)
     })
     it("rejects fork(leaf, leaf)", () => {
-      expect(treeEqual(apply(env.get("t_bool")!, fork(LEAF, LEAF)), FF)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!, fork(LEAF, LEAF)), FF)).toBe(true)
     })
   })
 
   describe("Nat predicate", () => {
     it("accepts zero (leaf)", () => {
-      expect(treeEqual(apply(env.get("t_nat")!, LEAF), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!, LEAF), TT)).toBe(true)
     })
     it("accepts 1", () => {
-      expect(treeEqual(apply(env.get("t_nat")!, stem(LEAF)), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!, stem(LEAF)), TT)).toBe(true)
     })
     it("accepts 3", () => {
-      expect(treeEqual(apply(env.get("t_nat")!, stem(stem(stem(LEAF)))), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!, stem(stem(stem(LEAF)))), TT)).toBe(true)
     })
     it("rejects fork(leaf, leaf)", () => {
-      expect(treeEqual(apply(env.get("t_nat")!, fork(LEAF, LEAF)), FF)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!, fork(LEAF, LEAF)), FF)).toBe(true)
     })
   })
 
   describe("PiCheck", () => {
     const pc = env.get("piCheck")!
-    const t_nat = env.get("t_nat")!
-    const t_bool = env.get("t_bool")!
-    const t_tree = env.get("t_tree")!
+    const tNat = env.get("Nat")!
+    const tBool = env.get("Bool")!
+    const tTree = env.get("Tree")!
     const iComb = env.get("iComb")!
 
     // Helper: Pi(A, K(B)) non-dependent
@@ -164,37 +164,37 @@ describe("types.disp bootstrap", () => {
 
     describe("Rule 5: I combinator", () => {
       it("I : Nat -> Nat", () => {
-        expect(check(t_nat, kWrap(t_nat), iComb)).toBe(true)
+        expect(check(tNat, kWrap(tNat), iComb)).toBe(true)
       })
       it("I : Bool -> Bool", () => {
-        expect(check(t_bool, kWrap(t_bool), iComb)).toBe(true)
+        expect(check(tBool, kWrap(tBool), iComb)).toBe(true)
       })
       it("I : Tree -> Tree", () => {
-        expect(check(t_tree, kWrap(t_tree), iComb)).toBe(true)
+        expect(check(tTree, kWrap(tTree), iComb)).toBe(true)
       })
     })
 
     describe("Rule 1: K check", () => {
       it("K(zero) : Nat -> Nat", () => {
-        expect(check(t_nat, kWrap(t_nat), fork(LEAF, LEAF))).toBe(true)
+        expect(check(tNat, kWrap(tNat), fork(LEAF, LEAF))).toBe(true)
       })
       it("K(false) : Nat -> Bool", () => {
-        expect(check(t_nat, kWrap(t_bool), fork(LEAF, stem(LEAF)))).toBe(true)
+        expect(check(tNat, kWrap(tBool), fork(LEAF, stem(LEAF)))).toBe(true)
       })
       it("K(fork(leaf,leaf)) : Nat -> Nat REJECTED", () => {
-        expect(check(t_nat, kWrap(t_nat), fork(LEAF, fork(LEAF, LEAF)))).toBe(false)
+        expect(check(tNat, kWrap(tNat), fork(LEAF, fork(LEAF, LEAF)))).toBe(false)
       })
     })
 
     describe("Rule 4: leaf as function", () => {
       it("leaf : Tree -> Tree (K-shaped codomain)", () => {
-        expect(check(t_tree, kWrap(t_tree), LEAF)).toBe(true)
+        expect(check(tTree, kWrap(tTree), LEAF)).toBe(true)
       })
       it("leaf : Bool -> Bool REJECTED", () => {
-        expect(check(t_bool, kWrap(t_bool), LEAF)).toBe(false)
+        expect(check(tBool, kWrap(tBool), LEAF)).toBe(false)
       })
       it("leaf : Bool -> Nat (stem maps Bool to Nat)", () => {
-        expect(check(t_bool, kWrap(t_nat), LEAF)).toBe(true)
+        expect(check(tBool, kWrap(tNat), LEAF)).toBe(true)
       })
     })
 
@@ -205,7 +205,7 @@ describe("types.disp bootstrap", () => {
           fork(stem(LEAF), fork(LEAF, LEAF)),     // fork(false, K(true))
           fork(LEAF, fork(LEAF, stem(LEAF)))       // K(K(false))
         )
-        expect(check(t_bool, kWrap(t_bool), notTree)).toBe(true)
+        expect(check(tBool, kWrap(tBool), notTree)).toBe(true)
       })
     })
 
@@ -215,42 +215,42 @@ describe("types.disp bootstrap", () => {
       const isLeafFn = env.get("isLeaf")!
 
       it("not : Bool -> Bool (compiled)", () => {
-        expect(check(t_bool, kWrap(t_bool), notFn)).toBe(true)
+        expect(check(tBool, kWrap(tBool), notFn)).toBe(true)
       })
 
       it("not : Nat -> Nat (maps {0,1} to {0,1}, both are Nats)", () => {
         // not(0)=ff=1, not(succ(x))=tt=0 — both valid Nats
-        expect(check(t_nat, kWrap(t_nat), notFn)).toBe(true)
+        expect(check(tNat, kWrap(tNat), notFn)).toBe(true)
       })
 
       it("isLeaf : Bool -> Bool", () => {
-        expect(check(t_bool, kWrap(t_bool), isLeafFn)).toBe(true)
+        expect(check(tBool, kWrap(tBool), isLeafFn)).toBe(true)
       })
 
       it("isLeaf : Nat -> Bool", () => {
-        expect(check(t_nat, kWrap(t_bool), isLeafFn)).toBe(true)
+        expect(check(tNat, kWrap(tBool), isLeafFn)).toBe(true)
       })
 
       it("isLeaf : Tree -> Bool", () => {
-        expect(check(t_tree, kWrap(t_bool), isLeafFn)).toBe(true)
+        expect(check(tTree, kWrap(tBool), isLeafFn)).toBe(true)
       })
     })
 
     describe("Higher-order: functions returning functions", () => {
-      // Known limitation: stemFnCheck only accepts K(t_tree) codomain
-      it("K : Tree -> Tree (stemFnCheck accepts K(t_tree))", () => {
-        expect(check(t_tree, kWrap(t_tree), K)).toBe(true)
+      // Known limitation: stemFnCheck only accepts K(tTree) codomain
+      it("K : Tree -> Tree (stemFnCheck accepts K(tTree))", () => {
+        expect(check(tTree, kWrap(tTree), K)).toBe(true)
       })
 
       it("K : Bool -> Tree -> Bool (stemFnCheck enumerates Bool domain)", () => {
-        const innerPi = fork(t_tree, kWrap(t_bool))
-        expect(check(t_bool, kWrap(innerPi), K)).toBe(true)
+        const innerPi = fork(tTree, kWrap(tBool))
+        expect(check(tBool, kWrap(innerPi), K)).toBe(true)
       })
 
       it("K(K(zero)) : Tree -> Tree -> Nat", () => {
-        const innerPi = fork(t_tree, kWrap(t_nat))
+        const innerPi = fork(tTree, kWrap(tNat))
         const kk0 = fork(LEAF, fork(LEAF, LEAF))
-        expect(check(t_tree, kWrap(innerPi), kk0)).toBe(true)
+        expect(check(tTree, kWrap(innerPi), kk0)).toBe(true)
       })
     })
 
@@ -260,32 +260,32 @@ describe("types.disp bootstrap", () => {
       // c is the function itself, not a type annotation. These all fail.
       it("{x} -> and x x : Bool -> Bool REJECTED (unannotated S-node)", () => {
         const fn = bareCompile(parseLine("{x} -> and x x") as any, env)
-        expect(check(t_bool, kWrap(t_bool), fn)).toBe(false)
+        expect(check(tBool, kWrap(tBool), fn)).toBe(false)
       })
 
       it("{x} -> not (not x) : Bool -> Bool REJECTED (unannotated S-node)", () => {
         const fn = bareCompile(parseLine("{x} -> not (not x)") as any, env)
-        expect(check(t_bool, kWrap(t_bool), fn)).toBe(false)
+        expect(check(tBool, kWrap(tBool), fn)).toBe(false)
       })
     })
 
     describe("Negative cases", () => {
       it("and : Bool -> Bool REJECTED (partial application, not a Bool)", () => {
         const andFn = env.get("and")!
-        expect(check(t_bool, kWrap(t_bool), andFn)).toBe(false)
+        expect(check(tBool, kWrap(tBool), andFn)).toBe(false)
       })
 
       it("random fork rejected as Nat -> Nat", () => {
         const junk = fork(stem(stem(LEAF)), fork(LEAF, stem(LEAF)))
-        expect(check(t_nat, kWrap(t_nat), junk)).toBe(false)
+        expect(check(tNat, kWrap(tNat), junk)).toBe(false)
       })
 
       it("K(zero) : Nat -> Nat (LEAF is both true and zero)", () => {
-        expect(check(t_nat, kWrap(t_nat), fork(LEAF, LEAF))).toBe(true)
+        expect(check(tNat, kWrap(tNat), fork(LEAF, LEAF))).toBe(true)
       })
 
       it("K(stem(stem(leaf))) : Bool -> Bool REJECTED (not a bool)", () => {
-        expect(check(t_bool, kWrap(t_bool), fork(LEAF, stem(stem(LEAF))))).toBe(false)
+        expect(check(tBool, kWrap(tBool), fork(LEAF, stem(stem(LEAF))))).toBe(false)
       })
     })
   })
@@ -293,8 +293,8 @@ describe("types.disp bootstrap", () => {
   describe("Typed elaborator (two-pass bootstrap)", () => {
     // Two-pass loading: bare first, then typed with annotations
     const tenv = typedLoadFile(source, env)
-    const t_bool = env.get("t_bool")!
-    const t_tree = env.get("t_tree")!
+    const tBool = env.get("Bool")!
+    const tTree = env.get("Tree")!
     const pc = env.get("piCheck")!
     const kw = (B: Tree) => fork(LEAF, B)
 
@@ -308,7 +308,7 @@ describe("types.disp bootstrap", () => {
       expect(tenv.size).toBeGreaterThan(5)
       // not should have a type annotation
       const notEntry = tenv.get("not")!
-      expect(treeEqual(notEntry.type, fork(t_bool, kw(t_bool)))).toBe(true)
+      expect(treeEqual(notEntry.type, fork(tBool, kw(tBool)))).toBe(true)
     })
 
     it("typed defs keep bare trees (ascription wrapping happens at use site)", () => {
@@ -316,7 +316,7 @@ describe("types.disp bootstrap", () => {
       const andEntry = tenv.get("and")!
       expect(treeEqual(andEntry.tree, env.get("and")!)).toBe(true)
       // Type is recorded
-      expect(treeEqual(andEntry.type, fork(t_bool, kw(fork(t_bool, kw(t_bool)))))).toBe(true)
+      expect(treeEqual(andEntry.type, fork(tBool, kw(fork(tBool, kw(tBool)))))).toBe(true)
     })
 
     // Helper: compile lambda with typed env from two-pass loading
@@ -327,22 +327,22 @@ describe("types.disp bootstrap", () => {
     }
 
     it("{x} -> not (not x) : Bool -> Bool", () => {
-      const annotated = typedLam("{x} -> not (not x)", fork(t_bool, kw(t_bool)))
-      expect(check(t_bool, kw(t_bool), annotated)).toBe(true)
+      const annotated = typedLam("{x} -> not (not x)", fork(tBool, kw(tBool)))
+      expect(check(tBool, kw(tBool), annotated)).toBe(true)
     })
 
     it("{x} -> and x x : Bool -> Bool (inner `and` now annotated)", () => {
-      const annotated = typedLam("{x} -> and x x", fork(t_bool, kw(t_bool)))
-      expect(check(t_bool, kw(t_bool), annotated)).toBe(true)
+      const annotated = typedLam("{x} -> and x x", fork(tBool, kw(tBool)))
+      expect(check(tBool, kw(tBool), annotated)).toBe(true)
     })
 
     it("{x} -> or x (not x) : Bool -> Bool (inner `or` now annotated)", () => {
-      const annotated = typedLam("{x} -> or x (not x)", fork(t_bool, kw(t_bool)))
-      expect(check(t_bool, kw(t_bool), annotated)).toBe(true)
+      const annotated = typedLam("{x} -> or x (not x)", fork(tBool, kw(tBool)))
+      expect(check(tBool, kw(tBool), annotated)).toBe(true)
     })
 
     it("annotated tree differs from bare tree", () => {
-      const annotated = typedLam("{x} -> not (not x)", fork(t_bool, kw(t_bool)))
+      const annotated = typedLam("{x} -> not (not x)", fork(tBool, kw(tBool)))
       const bare = bareCompile(parseLine("{x} -> not (not x)") as any, env)
       expect(treeEqual(annotated, bare)).toBe(false)
     })

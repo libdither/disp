@@ -123,7 +123,7 @@ export function tokenize(input: string): Token[] {
       const pos: Span = { start, end: i }
       if (word === "let") tokens.push({ tag: "kw_let", pos })
       else if (word === "Type") tokens.push({ tag: "kw_type", pos })
-      else if (word === "Tree") tokens.push({ tag: "kw_tree", pos })
+      // Tree is no longer a keyword — it's a regular identifier defined in types.disp
       else if (word === "true") tokens.push({ tag: "kw_true", pos })
       else if (word === "false") tokens.push({ tag: "kw_false", pos })
       else tokens.push({ tag: "ident", value: word, pos })
