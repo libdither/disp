@@ -78,9 +78,10 @@ let kCheck := {self A B annV} ->
 
 -- === sOrAsc: stem(D) case — S node or Ascription ===
 -- For fork(stem(D), fork(annC, annB)): D is intermediate type, check S-node.
--- For fork(stem(T), stem(stem(body))): ascription — trust claimed type T.
--- stem(stem(body)) distinguished from bare stem(x) by double-stem marker.
-let sOrAsc := {self A B D right} -> triage ff ({inner} -> triage ff ({_} -> tt) ({_ _} -> ff) inner) ({annC annB} -> ({D0} -> ({B0} -> ite (fastEq D0 ff) ff (ite (fastEq B0 ff) ff (and (self A D annB) (self A (leaf leaf (leaf D0 (leaf leaf B0))) annC)))) (isNonDep B)) (isNonDep D)) right
+-- For fork(stem(T), stem(body)): ascription — verify claimed type T = Pi(A,B).
+-- Verification distinguishes ascriptions from bare S-nodes: a combinator D won't
+-- equal fork(A,B), but an ascribed type T = fork(A,B) will. O(1) via hash-consing.
+let sOrAsc := {self A B D right} -> triage ff ({_} -> fastEq D (leaf A B)) ({annC annB} -> ({D0} -> ({B0} -> ite (fastEq D0 ff) ff (ite (fastEq B0 ff) ff (and (self A D annB) (self A (leaf leaf (leaf D0 (leaf leaf B0))) annC)))) (isNonDep B)) (isNonDep D)) right
 
 -- === triCheck: Triage node — dispatch on domain ===
 -- For triage(c, d, b) : Pi(A, B):

@@ -251,10 +251,10 @@ function unwrapK(family: Tree): Tree | null {
   return null
 }
 
-/** Wrap a bare tree in ascription format: fork(stem(T), stem(stem(body)))
- *  This tells PiCheck "trust that body : Pi(A, B) where T = Pi(A, B)". */
+/** Wrap a bare tree in ascription format: fork(stem(T), stem(body))
+ *  PiCheck verifies T = expectedPi via O(1) hash-consing equality. */
 function wrapAscription(body: Tree, ty: Tree): Tree {
-  return fork(stem(ty), stem(stem(body)))
+  return fork(stem(ty), stem(body))
 }
 
 // === SExpr → TExpr conversion ===
