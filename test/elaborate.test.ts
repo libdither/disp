@@ -311,11 +311,12 @@ describe("types.disp bootstrap", () => {
       expect(treeEqual(notEntry.type, fork(t_bool, kw(t_bool)))).toBe(true)
     })
 
-    it("typed `and` has annotated S-nodes", () => {
+    it("typed defs keep bare trees (ascription wrapping happens at use site)", () => {
+      // typedLoadFile records types but doesn't re-compile
       const andEntry = tenv.get("and")!
-      // and with type annotation should be re-compiled with annotations
-      // It should differ from the bare version
-      expect(treeEqual(andEntry.tree, env.get("and")!)).toBe(false)
+      expect(treeEqual(andEntry.tree, env.get("and")!)).toBe(true)
+      // Type is recorded
+      expect(treeEqual(andEntry.type, fork(t_bool, kw(fork(t_bool, kw(t_bool)))))).toBe(true)
     })
 
     // Helper: compile lambda with typed env from two-pass loading

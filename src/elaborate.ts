@@ -251,6 +251,12 @@ function unwrapK(family: Tree): Tree | null {
   return null
 }
 
+/** Wrap a bare tree in ascription format: fork(stem(T), stem(stem(body)))
+ *  This tells PiCheck "trust that body : Pi(A, B) where T = Pi(A, B)". */
+function wrapAscription(body: Tree, ty: Tree): Tree {
+  return fork(stem(ty), stem(stem(body)))
+}
+
 // === SExpr → TExpr conversion ===
 
 /** Convert SExpr to typed expression, inferring types from env. */
@@ -266,7 +272,13 @@ function sexprToTExpr(
       if (ft !== undefined) return { tag: "tVar", name: sexpr.name, ty: ft }
       // Check typed env
       const entry = tenv.get(sexpr.name)
-      if (entry) return { tag: "tLit", tree: entry.tree, ty: entry.type }
+      if (entry) {
+        // If the def has a Pi type, wrap in ascription so PiCheck trusts it
+        if (isFork(entry.type)) {
+          return { tag: "tLit", tree: wrapAscription(entry.tree, entry.type), ty: entry.type }
+        }
+        return { tag: "tLit", tree: entry.tree, ty: entry.type }
+      }
       throw new Error(`Unbound typed variable: ${sexpr.name}`)
     }
     case "sapp": {
@@ -516,55 +528,34 @@ export function compileType(sexpr: SExpr, env: BareEnv): Tree {
 
 /** Load types.disp with two passes:
  *  Pass 1 (already done): bareLoadFile → BareEnv
- *  Pass 2: re-compile definitions with type annotations using typed elaboration.
- *  Returns TypedEnv with annotated trees for typed defs, bare trees for untyped.
+ *  Pass 2: record type annotations. Bare trees are kept as-is.
+ *  When used in typed elaboration, definitions with Pi types get
+ *  ascription wrappers automatically (in sexprToTExpr).
  */
 export function typedLoadFile(source: string, bareEnv: BareEnv): TypedEnv {
   const blocks = mergeDefinitions(source)
   const tenv: TypedEnv = new Map()
 
-  // Seed the typed env with all bare definitions (no types)
-  // These will be overwritten as typed versions are compiled
+  // Seed with all bare definitions, default type = opaque
   for (const [name, tree] of bareEnv) {
-    tenv.set(name, { tree, type: stem(LEAF) })  // default type = Tree
+    tenv.set(name, { tree, type: stem(LEAF) })
   }
 
+  // Overwrite with declared types where available
   for (const block of blocks) {
     const trimmed = block.text.trim()
     if (!trimmed || trimmed.startsWith("--")) continue
     const result = parseLine(trimmed)
-    if ("tag" in result) continue  // standalone expression
+    if ("tag" in result) continue
 
     const decl = result
-    if (!decl.type) {
-      // No type annotation — keep bare tree with Tree type
-      continue
-    }
+    if (!decl.type) continue
 
-    // Compile the type annotation using the bare env
-    const declType = compileType(decl.type, bareEnv)
-
-    // Get the bare tree (already compiled in pass 1)
     const bareTree = bareEnv.get(decl.name)
     if (!bareTree) continue
 
-    // Re-compile with typed elaboration if it's a lambda
-    if (decl.value.tag === "slam") {
-      resetCompileBudget()
-      try {
-        const annotatedTree = typedCompileLam(
-          decl.value.params, decl.value.body, declType, tenv
-        )
-        tenv.set(decl.name, { tree: annotatedTree, type: declType })
-      } catch {
-        // Typed compilation failed (e.g. dependent type, missing binding)
-        // Fall back to bare tree
-        tenv.set(decl.name, { tree: bareTree, type: declType })
-      }
-    } else {
-      // Non-lambda: use bare tree, store the type
-      tenv.set(decl.name, { tree: bareTree, type: declType })
-    }
+    const declType = compileType(decl.type, bareEnv)
+    tenv.set(decl.name, { tree: bareTree, type: declType })
   }
 
   return tenv
