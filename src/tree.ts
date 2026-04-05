@@ -28,6 +28,7 @@ export function stem(child: Tree): Tree {
   if (cached) return cached
   const node: Tree = { tag: "stem", child, id: nextId++ }
   stemCache.set(child.id, node)
+  cacheStats.uniqueNodes++
   return node
 }
 
@@ -37,6 +38,7 @@ export function fork(left: Tree, right: Tree): Tree {
   if (cached) return cached
   const node: Tree = { tag: "fork", left, right, id: nextId++ }
   forkCache.set(key, node)
+  cacheStats.uniqueNodes++
   return node
 }
 
@@ -77,6 +79,12 @@ export function treeApply(f: Tree, g: Tree): Tree {
 
 const applyMemo = new Map<number, Map<number, Tree>>()
 
+// --- Cache instrumentation ---
+export const cacheStats = { hits: 0, misses: 0, memoWrites: 0, uniqueNodes: 0 }
+export function resetCacheStats(): void {
+  cacheStats.hits = 0; cacheStats.misses = 0; cacheStats.memoWrites = 0; cacheStats.uniqueNodes = 0
+}
+
 export function clearApplyCache(): void {
   applyMemo.clear()
 }
@@ -99,88 +107,103 @@ export class BudgetExhausted extends Error {
   }
 }
 
-export function apply(f: Tree, x: Tree, budget = { remaining: 10000 }): Tree {
-  if (budget.remaining <= 0) throw new BudgetExhausted(0)
+// Fully iterative apply with explicit continuation stack.
+// No recursive calls — all evaluation driven by the main loop.
 
-  if (isLeaf(f)) return stem(x)       // △ applied to x → stem(x)
-  if (isStem(f)) return fork(f.child, x) // stem(a) applied to x → fork(a, x)
+const enum ContKind { ApplyTo, ApplyResultTo, Memo, SAfterCx }
+type Cont =
+  | { kind: ContKind.ApplyTo, arg: Tree }
+  | { kind: ContKind.ApplyResultTo, func: Tree }
+  | { kind: ContKind.Memo, f: Tree, x: Tree }
+  | { kind: ContKind.SAfterCx, origX: Tree, b: Tree }
 
-  // Fork case: check memo cache before evaluating
-  const inner = applyMemo.get(f.id)
-  if (inner) {
-    const cached = inner.get(x.id)
-    if (cached !== undefined) return cached
-  }
+export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): Tree {
+  let curF = fInit, curX = xInit
+  const stack: Cont[] = []
 
-  // FAST_EQ shortcut: fork(FAST_EQ_MARKER, a) applied to b → O(1) identity check
-  if (f.left.id === FAST_EQ_MARKER.id) {
-    const result = treeEqual(f.right, x) ? LEAF : stem(LEAF)
-    let memoInner = applyMemo.get(f.id)
-    if (!memoInner) { memoInner = new Map(); applyMemo.set(f.id, memoInner) }
-    memoInner.set(x.id, result)
-    return result
-  }
-
-  budget.remaining--
-
-  // f is fork(a, b)
-  const a = f.left
-  const b = f.right
-  let result: Tree
-
-  if (isLeaf(a)) {
-    // Rule 1: △ △ b x → b (K combinator: return first arg)
-    result = b
-  } else if (isStem(a)) {
-    // Rule 2: △ (△ c) b x → c x (b x) (S combinator)
-    const c = a.child
-    if (isFork(c) && isLeaf(c.left)) {
-      // B combinator fast-path: S(K(f)) g x = f (g x)
-      // c = K(f) = fork(LEAF, f), so c x = f (skip the apply)
-      if (isFork(b) && isLeaf(b.left)) {
-        // S(K f)(K g) x = f g — neither uses x
-        result = apply(c.right, b.right, budget)
-      } else {
-        const gx = apply(b, x, budget)
-        result = apply(c.right, gx, budget)
-      }
-    } else {
-      const cx = apply(c, x, budget)
-      // Speculative K check: if cx is K(v), then apply(cx, bx) = v
-      // Skip computing bx entirely — common in triage-heavy code
-      if (isFork(cx) && isLeaf(cx.left)) {
-        result = cx.right
-      } else if (isFork(b) && isLeaf(b.left)) {
-        // C combinator fast-path: S f (K g) x = (f x) g — skip apply(b,x)
-        result = apply(cx, b.right, budget)
-      } else {
-        const bx = apply(b, x, budget)
-        result = apply(cx, bx, budget)
+  // Deliver a result: pop continuations until we find one that needs more work
+  function deliver(result: Tree): Tree | null {
+    while (stack.length > 0) {
+      const c = stack[stack.length - 1]
+      switch (c.kind) {
+        case ContKind.ApplyTo:
+          stack.pop(); curF = result; curX = c.arg; return null  // continue eval
+        case ContKind.ApplyResultTo:
+          stack.pop(); curF = c.func; curX = result; return null
+        case ContKind.Memo:
+          stack.pop()
+          let m = applyMemo.get(c.f.id)
+          if (!m) { m = new Map(); applyMemo.set(c.f.id, m) }
+          m.set(c.x.id, result)
+          cacheStats.memoWrites++
+          break  // keep popping
+        case ContKind.SAfterCx: {
+          stack.pop()
+          const cx = result
+          if (isFork(cx) && isLeaf(cx.left)) {
+            result = cx.right; break  // K(v): result=v, keep popping
+          }
+          if (isFork(c.b) && isLeaf(c.b.left)) {
+            curF = cx; curX = c.b.right; return null  // C fast-path
+          }
+          // General: compute b(origX), then apply cx to it
+          stack.push({ kind: ContKind.ApplyResultTo, func: cx })
+          curF = c.b; curX = c.origX; return null
+        }
       }
     }
-  } else {
-    // a is fork(c, d): triage rules
-    const c = a.left
-    const d = a.right
-
-    if (isLeaf(x)) {
-      // Rule 3a: triage leaf → c
-      result = c
-    } else if (isStem(x)) {
-      // Rule 3b: triage stem → d u (where x = stem(u))
-      result = apply(d, x.child, budget)
-    } else {
-      // Rule 3c: x is fork(u, v): triage fork → b u v
-      result = apply(apply(b, x.left, budget), x.right, budget)
-    }
+    return result  // stack empty, final result
   }
 
-  // Store in memo cache
-  let memoInner = applyMemo.get(f.id)
-  if (!memoInner) { memoInner = new Map(); applyMemo.set(f.id, memoInner) }
-  memoInner.set(x.id, result)
+  while (true) {
+    if (budget.remaining <= 0) throw new BudgetExhausted(0)
 
-  return result
+    // Leaf/Stem: immediate result
+    if (isLeaf(curF)) { const r = deliver(stem(curX)); if (r !== null) return r; continue }
+    if (isStem(curF)) { const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
+
+    // Memo check
+    const mi = applyMemo.get(curF.id)
+    if (mi) { const c = mi.get(curX.id); if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue } }
+    cacheStats.misses++
+
+    // FAST_EQ
+    if (curF.left.id === FAST_EQ_MARKER.id) {
+      const v = treeEqual(curF.right, curX) ? LEAF : stem(LEAF)
+      let m = applyMemo.get(curF.id); if (!m) { m = new Map(); applyMemo.set(curF.id, m) }; m.set(curX.id, v)
+      const r = deliver(v); if (r !== null) return r; continue
+    }
+
+    budget.remaining--
+    if (budget.remaining <= 0) throw new BudgetExhausted(0)
+
+    const a = curF.left, b = curF.right
+    stack.push({ kind: ContKind.Memo, f: curF, x: curX })
+
+    if (isLeaf(a)) {
+      // K rule
+      const r = deliver(b); if (r !== null) return r; continue
+    }
+
+    if (isStem(a)) {
+      const c = a.child
+      if (isFork(c) && isLeaf(c.left)) {
+        if (isFork(b) && isLeaf(b.left)) { curF = c.right; curX = b.right; continue }
+        stack.push({ kind: ContKind.ApplyResultTo, func: c.right })
+        curF = b; continue  // curX unchanged
+      }
+      // General S: compute c(x), then SAfterCx handles the rest
+      stack.push({ kind: ContKind.SAfterCx, origX: curX, b })
+      curF = c; continue  // curX unchanged
+    }
+
+    // Triage
+    const tc = a.left, td = a.right
+    if (isLeaf(curX)) { const r = deliver(tc); if (r !== null) return r; continue }
+    if (isStem(curX)) { curF = td; curX = curX.child; continue }
+    stack.push({ kind: ContKind.ApplyTo, arg: curX.right })
+    curF = b; curX = curX.left; continue
+  }
 }
 
 // Convenience wrapper with a simple numeric budget
