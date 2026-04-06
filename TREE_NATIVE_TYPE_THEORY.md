@@ -368,7 +368,48 @@ vcons 0 c vnil:
 
 ## Ascription Soundness
 
-**Can a wrong ascription introduce unsoundness?** Yes — but damage is bounded to one step:
+Ascriptions are the **only** soundness hole in the type system. Every other rule is self-policing:
+
+- **S-rule D annotations** cannot introduce unsoundness. D is an existential witness — PiCheck checks both `b : Pi(A, D)` and `c : Pi(A, sCodomain(D, B))`. A too-weak D fails the c-check; a too-strong D fails the b-check; a divergent D causes budget exhaustion (check failure). Only a D that accurately describes a valid intermediate type lets both checks pass.
+- **K, Triage, I, leaf/stem rules** all structurally recurse — no trust assumptions.
+
+Ascriptions bypass structural checking entirely. `fork(stem(T), stem(body))` passes if `T = expectedType` via O(1) hash-consing, regardless of what `body` actually does.
+
+### Why ascriptions exist
+
+Some trees are **structurally opaque** to PiCheck:
+
+1. **Bare-compiled definitions**: trees from `types.disp` lack D annotations at S-nodes. PiCheck can't structurally verify them.
+2. **Fixpoints**: `apply(fix, step)` produces combinator structure from `wait`/`selfApplyK` that doesn't match any typing rule.
+
+In both cases, the type is known from external reasoning (the elaborator verified it), but PiCheck can't derive it from the tree's structure.
+
+### The allowlist model
+
+Rather than trusting the elaborator unconditionally, ascriptions can be verified against an **allowlist** — a set of `(body, type_identity)` pairs that enumerate the approved opaque terms.
+
+At ascription sites, PiCheck checks:
+```
+check(ascribe(T, body), expectedType) =
+  treeEqual(T, expectedType)                     -- claimed type matches expected
+  AND allowlistContains(allowlist, body, T)       -- body is approved at type T
+```
+
+The allowlist contains:
+- Base definitions compiled in bare mode (from `types.disp`), each paired with its declared type
+- Fixpoints whose step functions were verified via `step : T → T`
+
+**With PiCheck + allowlist, verification is complete.** D annotations are structurally verified by PiCheck. Ascription bodies are verified against the allowlist. No trust assumptions remain.
+
+The elaborator produces two outputs: the **annotated tree** and the **allowlist** (its certificate). A third party can verify correctness with just PiCheck + the allowlist, without trusting the elaborator. The elaborator becomes a proof assistant, not a trusted component.
+
+### Allowlist as a tree program
+
+The allowlist is a tree-encoded data structure — a parameter to the checker. The extended PiCheck takes three arguments at the top level: `VerifiedCheck(allowlist, A, B)` returns a predicate that checks annotated trees, verifying ascriptions against the allowlist. With FAST_EQ, membership lookup is O(n) with a list encoding, O(log n) with a trie.
+
+### Bounded blast radius (without allowlist)
+
+Even without an allowlist, wrong ascriptions have bounded damage. The next predicate evaluation catches the error:
 
 ```
 -- leaf wrongly ascribed as Nat → Bool:
@@ -382,16 +423,7 @@ boolElim (wrong_succ 3) t f:
   Domain check: apply(Bool, 4) = false ✗    -- CAUGHT
 ```
 
-The next predicate evaluation catches the error. The one exception: a `Tree`-typed context (Tree accepts everything) — but no type-dependent decision is made, so the unsoundness is harmless.
-
-**Why each case is justified:**
-- **Recursive definitions**: the elaborator verifies `step : T → T` structurally. The ascription is justified by induction — if the step preserves the type, the fixed point does too.
-- **Polymorphism**: each concrete use site IS checked. `id Nat 3` verifies `3 : Nat` and the result type.
-- **S(K(p),K(q)) optimization**: mathematically equivalent to the un-optimized form. Could be eliminated by running the codomain predicate on `apply(p, q)`.
-
-**The trust model**: ascriptions are created only by the elaborator, justified by structural reasoning, verified at every use site, bounded in blast radius, and O(1) to check.
-
-**Optional defense-in-depth**: insert runtime result checks after ascribed applications — `apply(codomain_pred, result) = true`. Catches wrong ascriptions immediately.
+The one exception: a `Tree`-typed context (Tree accepts everything) — but no type-dependent decision is made, so the unsoundness is harmless. This bounded-blast-radius property holds regardless of whether an allowlist is used.
 
 ## Bootstrap Architecture
 
@@ -464,4 +496,4 @@ Altenkirch et al. (FSCD 2023) work algebraically with categories of families. Za
 5. **Self-bootstrapping** — predicates and PiCheck compiled by the same pipeline as programs
 6. **Swappable type systems** — different PiCheck trees, shared base predicates
 7. **No abstract variables in checking** — codomain families eliminate variables; predicate inspection reasons about predicates, not hypothetical values
-8. **Bounded-blast-radius ascription** — wrong ascriptions caught at the next predicate evaluation
+8. **Allowlist-verified ascriptions** — opaque terms (bare-compiled defs, fixpoints) verified against an allowlist certificate; D annotations need no external validation (the S-rule is self-policing)
