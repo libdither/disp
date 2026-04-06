@@ -22,6 +22,24 @@ import { SExpr, SDecl, parseLine, mergeDefinitions } from "./parse.js"
 // Used for bare mode where types are unknown.
 const OPAQUE: Tree = stem(LEAF)
 
+// === Environment ===
+// Single unified env: every definition carries its tree and type.
+// Untyped definitions get type = OPAQUE.
+
+export type Env = Map<string, { tree: Tree, type: Tree }>
+
+/** Create an untyped env entry */
+export function entry(tree: Tree): { tree: Tree, type: Tree } {
+  return { tree, type: OPAQUE }
+}
+
+/** Extract bare trees from env (for collapse) */
+function envTrees(env: Env): Map<string, Tree> {
+  const m = new Map<string, Tree>()
+  for (const [k, v] of env) m.set(k, v.tree)
+  return m
+}
+
 // === Expression IR ===
 // Single unified IR for both bare and typed modes.
 // In bare mode: ty = OPAQUE, D = null
@@ -153,23 +171,22 @@ const COMPILE_BUDGET = { remaining: 0 }
 function resetCompileBudget() { COMPILE_BUDGET.remaining = 10_000_000 }
 resetCompileBudget()
 
-function collapse(expr: Expr, env: Map<string, Tree>): Tree {
+function collapse(expr: Expr, trees: Map<string, Tree>): Tree {
   switch (expr.tag) {
     case "lit":
       return expr.tree
     case "var": {
-      const t = env.get(expr.name)
+      const t = trees.get(expr.name)
       if (!t) throw new Error(`Unbound variable: ${expr.name}`)
       return t
     }
     case "k": {
-      // K(body) — try to collapse to fork(LEAF, body)
-      const body = collapse(expr.body, env)
+      const body = collapse(expr.body, trees)
       return fork(LEAF, body)
     }
     case "s": {
-      const f = collapse(expr.left, env)
-      const g = collapse(expr.right, env)
+      const f = collapse(expr.left, trees)
+      const g = collapse(expr.right, trees)
 
       // S(K(p), K(q)) = K(apply(p, q))
       if (isFork(f) && isLeaf(f.left) && isFork(g) && isLeaf(g.left)) {
@@ -188,23 +205,20 @@ function collapse(expr: Expr, env: Map<string, Tree>): Tree {
       return fork(stem(f), g)
     }
     case "app": {
-      return apply(collapse(expr.func, env), collapse(expr.arg, env), COMPILE_BUDGET)
+      return apply(collapse(expr.func, trees), collapse(expr.arg, trees), COMPILE_BUDGET)
     }
   }
 }
 
 // === SExpr → Expr conversion ===
-// Unified: uses TypedEnv when available, BareEnv otherwise.
-// freeTypes maps lambda params to their types (empty in bare mode).
-
-export type BareEnv = Map<string, Tree>
-export type TypedEnv = Map<string, { tree: Tree, type: Tree }>
+// When typed=true, Pi-typed definitions get ascription wrappers at use site.
+// When typed=false (bare mode), definitions are used as-is.
 
 function sexprToExpr(
   sexpr: SExpr,
-  tenv: TypedEnv | null,
-  bareEnv: BareEnv,
+  env: Env,
   freeTypes: Map<string, Tree>,
+  typed: boolean,
 ): Expr {
   switch (sexpr.tag) {
     case "svar": {
@@ -212,25 +226,20 @@ function sexprToExpr(
       const ft = freeTypes.get(sexpr.name)
       if (ft !== undefined) return evar(sexpr.name, ft)
 
-      // Typed env (with ascriptions for Pi-typed defs)
-      if (tenv) {
-        const entry = tenv.get(sexpr.name)
-        if (entry) {
-          if (isFork(entry.type)) {
-            return lit(wrapAscription(entry.tree, entry.type), entry.type)
-          }
-          return lit(entry.tree, entry.type)
+      // Env lookup (with ascriptions for Pi-typed defs in typed mode)
+      const e = env.get(sexpr.name)
+      if (e) {
+        if (typed && isFork(e.type)) {
+          return lit(wrapAscription(e.tree, e.type), e.type)
         }
+        return lit(e.tree, e.type)
       }
 
-      // Bare env fallback
-      const t = bareEnv.get(sexpr.name)
-      if (t) return lit(t)
       return evar(sexpr.name)
     }
     case "sapp": {
-      const func = sexprToExpr(sexpr.func, tenv, bareEnv, freeTypes)
-      const arg = sexprToExpr(sexpr.arg, tenv, bareEnv, freeTypes)
+      const func = sexprToExpr(sexpr.func, env, freeTypes, typed)
+      const arg = sexprToExpr(sexpr.arg, env, freeTypes, typed)
       if (!isFork(func.ty)) {
         // Not a Pi type — opaque function, propagate type
         return app(func, arg, func.ty)
@@ -245,7 +254,7 @@ function sexprToExpr(
     }
     case "slam": {
       // Inner lambda: process body, then bracket-abstract params (bare)
-      const bodyExpr = sexprToExpr(sexpr.body, tenv, bareEnv, freeTypes)
+      const bodyExpr = sexprToExpr(sexpr.body, env, freeTypes, typed)
       let result = bodyExpr
       for (let i = sexpr.params.length - 1; i >= 0; i--) {
         result = abstract(sexpr.params[i], OPAQUE, result)
@@ -261,43 +270,70 @@ function sexprToExpr(
   }
 }
 
-// === Bare mode: compile untyped declarations ===
+// === Compile: SExpr → Tree (bare mode) ===
 
 /** Compile an SExpr to a tree in bare (untyped) mode */
-export function bareCompile(sexpr: SExpr, env: BareEnv): Tree {
-  const expr = sexprToExpr(sexpr, null, env, new Map())
-  return collapse(expr, env)
+export function compile(sexpr: SExpr, env: Env): Tree {
+  resetCompileBudget()
+  const expr = sexprToExpr(sexpr, env, new Map(), false)
+  return collapse(expr, envTrees(env))
 }
 
-/** Process a declaration in bare mode, returns updated env */
-export function bareDeclare(decl: SDecl, env: BareEnv): BareEnv {
+// === Declare: process a declaration, returns updated env ===
+
+/** Process a declaration: compile tree + type annotation in one pass */
+export function declare(decl: SDecl, env: Env): Env {
   const newEnv = new Map(env)
   resetCompileBudget()
+  const trees = envTrees(env)
 
+  let tree: Tree
   if (decl.isRec) {
-    const fixTree = env.get("fix")
+    const fixTree = env.get("fix")?.tree
     if (!fixTree) throw new Error(`Recursive def '${decl.name}' requires 'fix' in env`)
-    const bodyExpr = sexprToExpr(decl.value, null, env, new Map())
+    const bodyExpr = sexprToExpr(decl.value, env, new Map(), false)
     const stepExpr = abstract(decl.name, OPAQUE, bodyExpr)
-    const stepFn = collapse(stepExpr, env)
-    newEnv.set(decl.name, apply(fixTree, stepFn, COMPILE_BUDGET))
+    const stepFn = collapse(stepExpr, trees)
+    tree = apply(fixTree, stepFn, COMPILE_BUDGET)
   } else {
-    newEnv.set(decl.name, bareCompile(decl.value, env))
+    const expr = sexprToExpr(decl.value, env, new Map(), false)
+    tree = collapse(expr, trees)
   }
 
+  const type = decl.type ? compileType(decl.type, env) : OPAQUE
+  newEnv.set(decl.name, { tree, type })
   return newEnv
 }
 
-/** Load a .disp file in bare mode. Returns env with all definitions. */
-export function bareLoadFile(source: string, env: BareEnv = new Map()): BareEnv {
+// === Load file: process all declarations from source ===
+
+/** Load a .disp file. Returns env with all definitions and their type annotations.
+ *  Two-pass internally: pass 1 compiles trees, pass 2 compiles type annotations.
+ *  This handles forward references (e.g., `let f : Bool -> Bool` before `Bool` is defined).
+ */
+export function loadFile(source: string, env: Env = new Map()): Env {
   const blocks = mergeDefinitions(source)
+  const decls: SDecl[] = []
+
+  // Pass 1: compile all trees (type annotations deferred)
   for (const block of blocks) {
     const trimmed = block.text.trim()
     if (!trimmed || trimmed.startsWith("--")) continue
     const result = parseLine(trimmed)
     if ("tag" in result) continue
-    env = bareDeclare(result, env)
+    decls.push(result)
+    env = declare({ ...result, type: null }, env)
   }
+
+  // Pass 2: compile type annotations (all trees now available)
+  for (const decl of decls) {
+    if (!decl.type) continue
+    const existing = env.get(decl.name)
+    if (!existing) continue
+    const type = compileType(decl.type, env)
+    env.set(decl.name, { tree: existing.tree, type })
+  }
+
   return env
 }
 
@@ -311,7 +347,7 @@ export function typedCompileLam(
   params: string[],
   body: SExpr,
   expectedType: Tree,
-  tenv: TypedEnv,
+  env: Env,
 ): Tree {
   resetCompileBudget()
 
@@ -332,12 +368,8 @@ export function typedCompileLam(
     freeTypes.set(params[i], paramTypes[i])
   }
 
-  // Build bare env for collapse
-  const bareEnv: BareEnv = new Map()
-  for (const [name, entry] of tenv) bareEnv.set(name, entry.tree)
-
-  // Convert body to Expr with types
-  const bodyExpr = sexprToExpr(body, tenv, bareEnv, freeTypes)
+  // Convert body to Expr with types (typed=true for ascription wrapping)
+  const bodyExpr = sexprToExpr(body, env, freeTypes, true)
 
   // Chain typed bracket abstractions for all params (inside-out)
   let curExpr = bodyExpr
@@ -345,7 +377,7 @@ export function typedCompileLam(
     curExpr = abstract(params[i], paramTypes[i], curExpr)
   }
 
-  return collapse(curExpr, bareEnv)
+  return collapse(curExpr, envTrees(env))
 }
 
 // === Compile type annotations ===
@@ -355,10 +387,10 @@ export function typedCompileLam(
  *  svar(name)  →  env lookup
  *  Type  →  LEAF
  */
-export function compileType(sexpr: SExpr, env: BareEnv): Tree {
+export function compileType(sexpr: SExpr, env: Env): Tree {
   switch (sexpr.tag) {
     case "svar": {
-      const t = env.get(sexpr.name)
+      const t = env.get(sexpr.name)?.tree
       if (!t) throw new Error(`Unknown type: ${sexpr.name}`)
       return t
     }
@@ -379,36 +411,4 @@ export function compileType(sexpr: SExpr, env: BareEnv): Tree {
     case "slam":
       throw new Error("Lambda in type position not supported")
   }
-}
-
-// === Two-pass typed loading ===
-
-/** Pass 2: record type annotations from source. Bare trees kept as-is.
- *  Definitions with Pi types get ascription wrappers at use site (in sexprToExpr).
- */
-export function typedLoadFile(source: string, bareEnv: BareEnv): TypedEnv {
-  const blocks = mergeDefinitions(source)
-  const tenv: TypedEnv = new Map()
-
-  for (const [name, tree] of bareEnv) {
-    tenv.set(name, { tree, type: OPAQUE })
-  }
-
-  for (const block of blocks) {
-    const trimmed = block.text.trim()
-    if (!trimmed || trimmed.startsWith("--")) continue
-    const result = parseLine(trimmed)
-    if ("tag" in result) continue
-
-    const decl = result
-    if (!decl.type) continue
-
-    const bareTree = bareEnv.get(decl.name)
-    if (!bareTree) continue
-
-    const declType = compileType(decl.type, bareEnv)
-    tenv.set(decl.name, { tree: bareTree, type: declType })
-  }
-
-  return tenv
 }

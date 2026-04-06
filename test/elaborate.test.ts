@@ -2,26 +2,26 @@ import { describe, it, expect } from "vitest"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { LEAF, stem, fork, apply, I, K, treeEqual, prettyTree, FAST_EQ } from "../src/tree.js"
-import { bareCompile, bareDeclare, bareLoadFile, BareEnv, typedCompileLam, typedLoadFile, TypedEnv } from "../src/elaborate.js"
+import { compile, declare, loadFile, Env, entry, typedCompileLam } from "../src/elaborate.js"
 import { parseLine, parseExpr } from "../src/parse.js"
 
 // Helper: compile a bare expression with optional env
-function compile(src: string, env: BareEnv = new Map()): ReturnType<typeof apply> {
+function compileExpr(src: string, env: Env = new Map()): ReturnType<typeof apply> {
   const result = parseLine(src)
   if (!("tag" in result)) throw new Error("Expected expression, got declaration")
-  return bareCompile(result, env)
+  return compile(result, env)
 }
 
 // Helper: declare and return the env
-function declare(src: string, env: BareEnv = new Map()): BareEnv {
+function declStr(src: string, env: Env = new Map()): Env {
   const result = parseLine(src)
   if ("tag" in result) throw new Error("Expected declaration, got expression")
-  return bareDeclare(result, env)
+  return declare(result, env)
 }
 
 // Seed env with leaf + fastEq
-function seedEnv(): BareEnv {
-  return new Map([["leaf", LEAF], ["fastEq", FAST_EQ]])
+function seedEnv(): Env {
+  return new Map([["leaf", entry(LEAF)], ["fastEq", entry(FAST_EQ)]])
 }
 
 const TT = LEAF
@@ -29,26 +29,26 @@ const FF = stem(LEAF)
 
 describe("bare bracket abstraction", () => {
   it("compiles identity: {x} -> x = I", () => {
-    const tree = compile("{x} -> x")
+    const tree = compileExpr("{x} -> x")
     expect(treeEqual(tree, I)).toBe(true)
   })
 
   it("compiles K: {x y} -> x = K", () => {
-    const tree = compile("{x y} -> x")
+    const tree = compileExpr("{x y} -> x")
     expect(treeEqual(tree, K)).toBe(true)
   })
 
   it("compiles S: {x} -> (f x) (g x) uses S combinator", () => {
-    const env: BareEnv = new Map([["f", stem(stem(LEAF))], ["g", stem(stem(stem(LEAF)))]])
-    const tree = compile("{x} -> f x (g x)", env)
+    const env: Env = new Map([["f", entry(stem(stem(LEAF)))], ["g", entry(stem(stem(stem(LEAF))))]])
+    const tree = compileExpr("{x} -> f x (g x)", env)
     const f = stem(stem(LEAF))
     const g = stem(stem(stem(LEAF)))
     expect(treeEqual(tree, fork(stem(f), g))).toBe(true)
   })
 
   it("applies S(K(p), K(q)) optimization", () => {
-    const env: BareEnv = new Map([["p", stem(LEAF)], ["q", stem(stem(LEAF))]])
-    const tree = compile("{x} -> p q", env)
+    const env: Env = new Map([["p", entry(stem(LEAF))], ["q", entry(stem(stem(LEAF)))]])
+    const tree = compileExpr("{x} -> p q", env)
     const pq = apply(stem(LEAF), stem(stem(LEAF)))
     expect(treeEqual(tree, fork(LEAF, pq))).toBe(true)
   })
@@ -56,14 +56,14 @@ describe("bare bracket abstraction", () => {
 
 describe("bare declarations", () => {
   it("compiles simple let", () => {
-    const env = declare("let id := {x} -> x")
-    expect(treeEqual(env.get("id")!, I)).toBe(true)
+    const env = declStr("let id := {x} -> x")
+    expect(treeEqual(env.get("id")!.tree, I)).toBe(true)
   })
 
   it("definitions are available to later defs", () => {
-    let env = declare("let id := {x} -> x")
-    env = declare("let applyId := {x} -> id x", env)
-    expect(treeEqual(env.get("applyId")!, I)).toBe(true)
+    let env = declStr("let id := {x} -> x")
+    env = declStr("let applyId := {x} -> id x", env)
+    expect(treeEqual(env.get("applyId")!.tree, I)).toBe(true)
   })
 })
 
@@ -71,22 +71,22 @@ describe("types.disp bootstrap", () => {
   const typesPath = path.join(import.meta.dirname, "..", "types.disp")
   const source = fs.readFileSync(typesPath, "utf-8")
 
-  const env = bareLoadFile(source, seedEnv())
+  const env = loadFile(source, seedEnv())
 
   it("loads without errors", () => {
     expect(env.size).toBeGreaterThan(5)
   })
 
   it("defines tt = leaf", () => {
-    expect(treeEqual(env.get("tt")!, LEAF)).toBe(true)
+    expect(treeEqual(env.get("tt")!.tree, LEAF)).toBe(true)
   })
 
   it("defines ff = stem(leaf)", () => {
-    expect(treeEqual(env.get("ff")!, stem(LEAF))).toBe(true)
+    expect(treeEqual(env.get("ff")!.tree, stem(LEAF))).toBe(true)
   })
 
   it("triage works: triage(a, b, c)(leaf) = a", () => {
-    const triageTree = env.get("triage")!
+    const triageTree = env.get("triage")!.tree
     const a = stem(stem(LEAF))
     const b = stem(stem(stem(LEAF)))
     const c = fork(LEAF, stem(LEAF))
@@ -99,7 +99,7 @@ describe("types.disp bootstrap", () => {
   })
 
   it("fix produces a working fixed point", () => {
-    const fixTree = env.get("fix")!
+    const fixTree = env.get("fix")!.tree
     const kI = fork(LEAF, I)
     const result = apply(fixTree, kI)
     expect(treeEqual(apply(result, LEAF), LEAF)).toBe(true)
@@ -108,7 +108,7 @@ describe("types.disp bootstrap", () => {
 
   describe("Tree predicate", () => {
     it("accepts everything", () => {
-      const tp = env.get("Tree")!
+      const tp = env.get("Tree")!.tree
       expect(treeEqual(apply(tp, LEAF), TT)).toBe(true)
       expect(treeEqual(apply(tp, stem(LEAF)), TT)).toBe(true)
       expect(treeEqual(apply(tp, fork(LEAF, LEAF)), TT)).toBe(true)
@@ -117,40 +117,40 @@ describe("types.disp bootstrap", () => {
 
   describe("Bool predicate", () => {
     it("accepts true (leaf)", () => {
-      expect(treeEqual(apply(env.get("Bool")!, LEAF), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!.tree, LEAF), TT)).toBe(true)
     })
     it("accepts false (stem(leaf))", () => {
-      expect(treeEqual(apply(env.get("Bool")!, stem(LEAF)), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!.tree, stem(LEAF)), TT)).toBe(true)
     })
     it("rejects stem(stem(leaf))", () => {
-      expect(treeEqual(apply(env.get("Bool")!, stem(stem(LEAF))), FF)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!.tree, stem(stem(LEAF))), FF)).toBe(true)
     })
     it("rejects fork(leaf, leaf)", () => {
-      expect(treeEqual(apply(env.get("Bool")!, fork(LEAF, LEAF)), FF)).toBe(true)
+      expect(treeEqual(apply(env.get("Bool")!.tree, fork(LEAF, LEAF)), FF)).toBe(true)
     })
   })
 
   describe("Nat predicate", () => {
     it("accepts zero (leaf)", () => {
-      expect(treeEqual(apply(env.get("Nat")!, LEAF), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!.tree, LEAF), TT)).toBe(true)
     })
     it("accepts 1", () => {
-      expect(treeEqual(apply(env.get("Nat")!, stem(LEAF)), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!.tree, stem(LEAF)), TT)).toBe(true)
     })
     it("accepts 3", () => {
-      expect(treeEqual(apply(env.get("Nat")!, stem(stem(stem(LEAF)))), TT)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!.tree, stem(stem(stem(LEAF)))), TT)).toBe(true)
     })
     it("rejects fork(leaf, leaf)", () => {
-      expect(treeEqual(apply(env.get("Nat")!, fork(LEAF, LEAF)), FF)).toBe(true)
+      expect(treeEqual(apply(env.get("Nat")!.tree, fork(LEAF, LEAF)), FF)).toBe(true)
     })
   })
 
   describe("PiCheck", () => {
-    const pc = env.get("piCheck")!
-    const tNat = env.get("Nat")!
-    const tBool = env.get("Bool")!
-    const tTree = env.get("Tree")!
-    const iComb = env.get("iComb")!
+    const pc = env.get("piCheck")!.tree
+    const tNat = env.get("Nat")!.tree
+    const tBool = env.get("Bool")!.tree
+    const tTree = env.get("Tree")!.tree
+    const iComb = env.get("iComb")!.tree
 
     // Helper: Pi(A, K(B)) non-dependent
     const kWrap = (B: ReturnType<typeof stem>) => fork(LEAF, B)
@@ -210,9 +210,9 @@ describe("types.disp bootstrap", () => {
     })
 
     describe("Compiled functions from env", () => {
-      const notFn = env.get("not")!
-      const andFn = env.get("and")!
-      const isLeafFn = env.get("isLeaf")!
+      const notFn = env.get("not")!.tree
+      const andFn = env.get("and")!.tree
+      const isLeafFn = env.get("isLeaf")!.tree
 
       it("not : Bool -> Bool (compiled)", () => {
         expect(check(tBool, kWrap(tBool), notFn)).toBe(true)
@@ -259,19 +259,19 @@ describe("types.disp bootstrap", () => {
       // PiCheck extracts D from tree structure, but for S(c,b) = fork(stem(c), b),
       // c is the function itself, not a type annotation. These all fail.
       it("{x} -> and x x : Bool -> Bool REJECTED (unannotated S-node)", () => {
-        const fn = bareCompile(parseLine("{x} -> and x x") as any, env)
+        const fn = compile(parseLine("{x} -> and x x") as any, env)
         expect(check(tBool, kWrap(tBool), fn)).toBe(false)
       })
 
       it("{x} -> not (not x) : Bool -> Bool REJECTED (unannotated S-node)", () => {
-        const fn = bareCompile(parseLine("{x} -> not (not x)") as any, env)
+        const fn = compile(parseLine("{x} -> not (not x)") as any, env)
         expect(check(tBool, kWrap(tBool), fn)).toBe(false)
       })
     })
 
     describe("Negative cases", () => {
       it("and : Bool -> Bool REJECTED (partial application, not a Bool)", () => {
-        const andFn = env.get("and")!
+        const andFn = env.get("and")!.tree
         expect(check(tBool, kWrap(tBool), andFn)).toBe(false)
       })
 
@@ -290,12 +290,11 @@ describe("types.disp bootstrap", () => {
     })
   })
 
-  describe("Typed elaborator (two-pass bootstrap)", () => {
-    // Two-pass loading: bare first, then typed with annotations
-    const tenv = typedLoadFile(source, env)
-    const tBool = env.get("Bool")!
-    const tTree = env.get("Tree")!
-    const pc = env.get("piCheck")!
+  describe("Typed elaborator (single-pass)", () => {
+    // loadFile already records type annotations — no second pass needed
+    const tBool = env.get("Bool")!.tree
+    const tTree = env.get("Tree")!.tree
+    const pc = env.get("piCheck")!.tree
     const kw = (B: Tree) => fork(LEAF, B)
 
     const check = (A: Tree, B: Tree, ann: Tree) => {
@@ -304,26 +303,24 @@ describe("types.disp bootstrap", () => {
       } catch { return false }
     }
 
-    it("typedLoadFile produces TypedEnv", () => {
-      expect(tenv.size).toBeGreaterThan(5)
+    it("loadFile records type annotations", () => {
+      expect(env.size).toBeGreaterThan(5)
       // not should have a type annotation
-      const notEntry = tenv.get("not")!
+      const notEntry = env.get("not")!
       expect(treeEqual(notEntry.type, fork(tBool, kw(tBool)))).toBe(true)
     })
 
-    it("typed defs keep bare trees (ascription wrapping happens at use site)", () => {
-      // typedLoadFile records types but doesn't re-compile
-      const andEntry = tenv.get("and")!
-      expect(treeEqual(andEntry.tree, env.get("and")!)).toBe(true)
+    it("typed defs record types alongside bare trees", () => {
+      const andEntry = env.get("and")!
       // Type is recorded
       expect(treeEqual(andEntry.type, fork(tBool, kw(fork(tBool, kw(tBool)))))).toBe(true)
     })
 
-    // Helper: compile lambda with typed env from two-pass loading
+    // Helper: compile lambda with typed env
     function typedLam(src: string, expectedType: Tree): Tree {
       const parsed = parseLine(src)
       if (!("tag" in parsed) || parsed.tag !== "slam") throw new Error("Expected lambda")
-      return typedCompileLam(parsed.params, parsed.body, expectedType, tenv)
+      return typedCompileLam(parsed.params, parsed.body, expectedType, env)
     }
 
     it("{x} -> not (not x) : Bool -> Bool", () => {
@@ -343,7 +340,7 @@ describe("types.disp bootstrap", () => {
 
     it("annotated tree differs from bare tree", () => {
       const annotated = typedLam("{x} -> not (not x)", fork(tBool, kw(tBool)))
-      const bare = bareCompile(parseLine("{x} -> not (not x)") as any, env)
+      const bare = compile(parseLine("{x} -> not (not x)") as any, env)
       expect(treeEqual(annotated, bare)).toBe(false)
     })
   })
