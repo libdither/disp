@@ -292,14 +292,17 @@ function collapse(expr: Expr, trees: Map<string, Tree>): Tree {
 }
 
 export function extract(tree: Tree): Tree {
+  if (!tree) throw new Error("extract: undefined tree")
   if (isLeaf(tree)) return tree
   if (isStem(tree)) return stem(extract(tree.child))
   const left = tree.left
   const right = tree.right
   if (isLeaf(left)) return fork(LEAF, extract(right))
   if (isStem(left)) {
-    if (isStem(right)) return right.child
+    if (isStem(right)) return right.child  // ascription: unwrap body
     if (isFork(right)) return fork(stem(extract(right.left)), extract(right.right))
+    // stem(D) with leaf right — shouldn't happen in valid annotated trees
+    return fork(left, right)
   }
   return fork(fork(extract(left.left), extract(left.right)), extract(right))
 }
@@ -445,6 +448,32 @@ export function loadFile(source: string, env: Env = new Map()): Env {
   // Build allowlist from all Pi-typed definitions (if allowlistCheck is available)
   if (env.has("allowlistCheck")) {
     env.set(ALLOWLIST_KEY, { tree: buildAllowlist(env), type: OPAQUE })
+  }
+
+  return env
+}
+
+/** Load a typed .disp file. Every declaration must have a type annotation.
+ *  Each definition is compiled and type-checked via the typed pipeline.
+ *  Returns updated env with all definitions verified. */
+export function loadTypedFile(source: string, env: Env): Env {
+  const blocks = mergeDefinitions(source)
+
+  for (const block of blocks) {
+    const trimmed = block.text.trim()
+    if (!trimmed || trimmed.startsWith("--")) continue
+    const result = parseLine(trimmed)
+    if ("tag" in result) continue // skip bare expressions
+    if (!result.type) {
+      // Untyped decls in typed files: compile bare (useful for type aliases)
+      env = declare(result, env)
+      continue
+    }
+    const checkResult = typecheckDeclSource(block.text.trim(), env)
+    if (!checkResult.ok) {
+      throw new Error(`Type error in ${result.name} [${checkResult.stage}]: ${checkResult.message}`)
+    }
+    env = checkResult.env
   }
 
   return env

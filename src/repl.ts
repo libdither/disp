@@ -6,7 +6,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { Tree, LEAF, stem, isLeaf, isStem, isFork, prettyTree, BudgetExhausted, FAST_EQ } from "./tree.js"
 import { parseLine, parseExpr, ParseError } from "./parse.js"
-import { compile, declare, loadFile, Env, entry, typecheckDeclSource, typecheckExprSource } from "./elaborate.js"
+import { compile, declare, loadFile, loadTypedFile, Env, entry, typecheckDeclSource, typecheckExprSource } from "./elaborate.js"
 
 // === Tree display ===
 
@@ -52,8 +52,14 @@ function seedEnv(): Env {
 
 function initState(): ReplState {
   const typesPath = path.join(import.meta.dirname, "..", "types.disp")
-  const source = fs.readFileSync(typesPath, "utf-8")
-  return { env: loadFile(source, seedEnv()) }
+  const preludePath = path.join(import.meta.dirname, "..", "prelude.disp")
+  let env = loadFile(fs.readFileSync(typesPath, "utf-8"), seedEnv())
+  try {
+    env = loadTypedFile(fs.readFileSync(preludePath, "utf-8"), env)
+  } catch {
+    // prelude.disp is optional
+  }
+  return { env }
 }
 
 // === Line evaluation ===

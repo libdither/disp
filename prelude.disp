@@ -1,22 +1,8 @@
--- Boolean operations (tree-encoded: true=leaf, false=stem(leaf))
-let not : Bool -> Bool := {b} -> boolElim Bool false true b
-let and : Bool -> Bool -> Bool := {a b} -> boolElim Bool b false a
-let or : Bool -> Bool -> Bool := {a b} -> boolElim Bool true b a
+-- Prelude: typed standard library for Disp.
+-- Loaded after types.disp. All definitions type-checked.
 
--- Natural number operations (tree-encoded: zero=leaf, succ(n)=stem(n))
--- fold: Church-numeral-style iteration over tree-encoded Nat
-let rec fold : Nat -> (R : Type) -> R -> (R -> R) -> R := {n R z s} -> natElim R z ({n'} -> s (fold n' R z s)) n
-let rec add : Nat -> Nat -> Nat := {m n} -> natElim Nat n ({m'} -> succ (add m' n)) m
-let rec mul : Nat -> Nat -> Nat := {m n} -> natElim Nat 0 ({m'} -> add n (mul m' n)) m
+-- Boolean operations
+let not : Bool -> Bool := {b} -> triage false ({_} -> true) ({_ _} -> false) b
 
 -- Polymorphic identity
 let id : (A : Type) -> A -> A := {A x} -> x
-
--- Records and coproducts (still Church-encoded for typed parameterized containers)
-let Pair : Type -> Type -> Type := {A B} -> {fst : A, snd : B}
-let mkPair : (A : Type) -> (B : Type) -> A -> B -> Pair A B := {A B a b R f} -> f a b
-let fst : (A : Type) -> (B : Type) -> Pair A B -> A := {A B p} -> p A ({x y} -> x)
-let snd : (A : Type) -> (B : Type) -> Pair A B -> B := {A B p} -> p B ({x y} -> y)
-let Either : Type -> Type -> Type := {A B} -> <Left : A | Right : B>
-let inl : (A : Type) -> (B : Type) -> A -> Either A B := {A B a R l r} -> l a
-let inr : (A : Type) -> (B : Type) -> B -> Either A B := {A B b R l r} -> r b

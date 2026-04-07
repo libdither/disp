@@ -30,6 +30,14 @@ let Tree := {_} -> tt
 let Bool := triage tt isLeaf ({_ _} -> ff)
 let rec Nat := triage tt Nat ({_ _} -> ff)
 
+-- === Eliminators ===
+
+-- boolElim R t f b: if b=true then t, else f. R is phantom (for typing only).
+let boolElim : (R : Type) -> R -> R -> Bool -> R := {R t f b} -> triage t ({_} -> f) ({_ _} -> f) b
+
+-- natElim R z s n: fold over Nat. z is base, s is step.
+let rec natElim : (R : Type) -> R -> (Nat -> R -> R) -> Nat -> R := {R z s n} -> triage z ({n'} -> s n' (natElim R z s n')) ({_ _} -> z) n
+
 -- === Pi type helpers ===
 
 -- NONE: sentinel for "not found" in isNonDep. Must not collide with any valid
