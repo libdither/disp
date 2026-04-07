@@ -53,6 +53,27 @@ function specializePiType(rawPiPair: Tree, env: Env): Tree {
   return apply(apply(pp, rawPiPair.left, budget), rawPiPair.right, budget)
 }
 
+// === Allowlist ===
+// Reserved env key for the allowlist tree (list of (body, rawPiPair) pairs).
+const ALLOWLIST_KEY = "__allowlist__"
+
+/** Build allowlist from all Pi-typed env entries.
+ *  Format: fork(fork(body1, ty1), fork(fork(body2, ty2), ... LEAF)) */
+function buildAllowlist(env: Env): Tree {
+  let al: Tree = LEAF
+  for (const [name, e] of env) {
+    if (name.startsWith("__") || !e.piPair) continue
+    const rawPi = fork(e.piPair.domain, e.piPair.codomain)
+    al = fork(fork(e.tree, rawPi), al)
+  }
+  return al
+}
+
+/** Append a (body, rawPiPair) entry to an existing allowlist. */
+function appendAllowlist(al: Tree, body: Tree, rawPi: Tree): Tree {
+  return fork(fork(body, rawPi), al)
+}
+
 /** Extract bare trees from env (for collapse) */
 function envTrees(env: Env): Map<string, Tree> {
   const m = new Map<string, Tree>()
@@ -421,6 +442,11 @@ export function loadFile(source: string, env: Env = new Map()): Env {
     env.set(decl.name, { tree: existing.tree, type, piPair })
   }
 
+  // Build allowlist from all Pi-typed definitions (if allowlistCheck is available)
+  if (env.has("allowlistCheck")) {
+    env.set(ALLOWLIST_KEY, { tree: buildAllowlist(env), type: OPAQUE })
+  }
+
   return env
 }
 
@@ -592,10 +618,22 @@ export type DeclCheckResult =
   | { ok: true, name: string, tree: Tree, type: Tree, env: Env }
   | { ok: false, stage: TypecheckStage, message: string }
 
-/** Check tree against a type predicate. Uniform: apply(type, tree) → tt/ff.
- *  Works for both base types (Nat, Bool) and specialized Pi predicates (from piPred). */
-function checkAgainstType(tree: Tree, typePred: Tree): boolean {
-  return treeEqual(apply(typePred, tree, newCheckBudget()), LEAF)
+/** Check tree against a type predicate + allowlist.
+ *  Phase 1: piPred/base predicate check (structural type correctness).
+ *  Phase 2: allowlistCheck (ascription body verification). */
+function checkAgainstType(tree: Tree, typePred: Tree, env: Env): boolean {
+  // Phase 1: type predicate check
+  if (!treeEqual(apply(typePred, tree, newCheckBudget()), LEAF)) return false
+
+  // Phase 2: allowlist check (if available)
+  const alEntry = env.get(ALLOWLIST_KEY)
+  const alChecker = env.get("allowlistCheck")?.tree
+  if (alEntry && alChecker) {
+    const walker = apply(alChecker, alEntry.tree, newCheckBudget())
+    if (!treeEqual(apply(walker, tree, newCheckBudget()), LEAF)) return false
+  }
+
+  return true
 }
 
 function compileCheckedExpr(sexpr: SExpr, expectedType: Tree, env: Env): Tree {
@@ -631,14 +669,21 @@ export function typecheckExprSource(
     rawType = compileType(expectedTypeExpr, env)
     const piPair = detectPiPair(expectedTypeExpr, rawType, env)
     typePred = piPair ? specializePiType(rawType, env) : rawType
-    // compileCheckedExpr needs the raw Pi pair for typed lambda compilation
     tree = compileCheckedExpr(sexpr, rawType, env)
   } catch (e) {
     return { ok: false, stage: "elaborate", message: (e as Error).message }
   }
 
+  // Pre-add compiled tree to allowlist for ascription-wrapped trees
+  let checkEnv = env
+  if (isFork(rawType)) {
+    checkEnv = new Map(env)
+    const al = checkEnv.get(ALLOWLIST_KEY)?.tree ?? LEAF
+    checkEnv.set(ALLOWLIST_KEY, { tree: appendAllowlist(al, extract(tree), rawType), type: OPAQUE })
+  }
+
   try {
-    if (!checkAgainstType(tree, typePred)) {
+    if (!checkAgainstType(tree, typePred, checkEnv)) {
       return { ok: false, stage: "check", message: "Expression does not satisfy expected type" }
     }
   } catch (e) {
@@ -687,8 +732,19 @@ export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
     return { ok: false, stage: "elaborate", message: (e as Error).message }
   }
 
+  // Pre-add the compiled tree to allowlist before checking, so that
+  // ascription-wrapped trees (from typedCompileLam) can pass allowlistCheck.
+  // The elaborator is the trusted component: if it compiled the tree, it's allowed.
+  let checkEnv = env
+  if (piPair) {
+    checkEnv = new Map(env)
+    const al = checkEnv.get(ALLOWLIST_KEY)?.tree ?? LEAF
+    const rawPi = fork(piPair.domain, piPair.codomain)
+    checkEnv.set(ALLOWLIST_KEY, { tree: appendAllowlist(al, extract(tree), rawPi), type: OPAQUE })
+  }
+
   try {
-    if (!checkAgainstType(tree, typePred)) {
+    if (!checkAgainstType(tree, typePred, checkEnv)) {
       return { ok: false, stage: "check", message: "Declaration value does not satisfy annotation" }
     }
   } catch (e) {
@@ -696,7 +752,14 @@ export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
   }
 
   const newEnv = new Map(env)
-  newEnv.set(parsed.name, { tree: extract(tree), type: typePred, piPair })
+  const extractedTree = extract(tree)
+  newEnv.set(parsed.name, { tree: extractedTree, type: typePred, piPair })
+  // Append to allowlist if Pi-typed
+  if (piPair) {
+    const al = newEnv.get(ALLOWLIST_KEY)?.tree ?? LEAF
+    const rawPi = fork(piPair.domain, piPair.codomain)
+    newEnv.set(ALLOWLIST_KEY, { tree: appendAllowlist(al, extractedTree, rawPi), type: OPAQUE })
+  }
   return { ok: true, name: parsed.name, tree, type: typePred, env: newEnv }
 }
 
@@ -730,10 +793,15 @@ function typecheckRecDecl(
   // Check step : T -> T (the step function must preserve the type)
   if (piPair) {
     try {
-      // Build step type predicate: Pi(rawType, K(rawType)) via piPred
       const stepRawType = fork(rawType, kType(rawType))
       const stepPred = specializePiType(stepRawType, env)
-      if (!checkAgainstType(stepTree, stepPred)) {
+      // Pre-add the recursive placeholder (I at declared type) + step tree to allowlist
+      const checkEnv = new Map(env)
+      const al = checkEnv.get(ALLOWLIST_KEY)?.tree ?? LEAF
+      const rawPi = fork(piPair.domain, piPair.codomain)
+      const al2 = appendAllowlist(appendAllowlist(al, I, rawPi), extract(stepTree), stepRawType)
+      checkEnv.set(ALLOWLIST_KEY, { tree: al2, type: OPAQUE })
+      if (!checkAgainstType(stepTree, stepPred, checkEnv)) {
         return { ok: false, stage: "check", message: "Recursive step does not preserve type" }
       }
     } catch (e) {
@@ -746,5 +814,11 @@ function typecheckRecDecl(
 
   const newEnv = new Map(env)
   newEnv.set(parsed.name, { tree, type: typePred, piPair })
+  // Append fixpoint to allowlist
+  if (piPair) {
+    const al = newEnv.get(ALLOWLIST_KEY)?.tree ?? LEAF
+    const rawPi = fork(piPair.domain, piPair.codomain)
+    newEnv.set(ALLOWLIST_KEY, { tree: appendAllowlist(al, tree, rawPi), type: OPAQUE })
+  }
   return { ok: true, name: parsed.name, tree, type: typePred, env: newEnv }
 }
