@@ -44,6 +44,15 @@ export function entry(tree: Tree): EnvEntry {
   return { tree, type: OPAQUE }
 }
 
+/** Specialize a raw Pi pair into an evaluable predicate via piPred.
+ *  Returns the raw pair unchanged if piPred is not available in env. */
+function specializePiType(rawPiPair: Tree, env: Env): Tree {
+  const pp = env.get("piPred")?.tree
+  if (!pp || !isFork(rawPiPair)) return rawPiPair
+  const budget = { remaining: 500_000 }
+  return apply(apply(pp, rawPiPair.left, budget), rawPiPair.right, budget)
+}
+
 /** Extract bare trees from env (for collapse) */
 function envTrees(env: Env): Map<string, Tree> {
   const m = new Map<string, Tree>()
@@ -268,13 +277,15 @@ function sexprToExpr(
       // Env lookup (with ascriptions for Pi-typed defs in typed mode)
       const e = env.get(sexpr.name)
       if (e) {
+        // Expr ty field uses raw Pi pair (for elaboration: binder peeling, result type extraction).
+        // Env type field stores the specialized predicate (for checking).
+        const exprTy = e.piPair ? fork(e.piPair.domain, e.piPair.codomain) : e.type
         if (typed && e.piPair) {
           // Ascriptions carry the raw Pi pair (type identity), not the type predicate.
           // PiCheck's sOrAsc compares against fork(A, B), so we must use the raw pair.
-          const rawPiPair = fork(e.piPair.domain, e.piPair.codomain)
-          return lit(wrapAscription(e.tree, rawPiPair), e.type)
+          return lit(wrapAscription(e.tree, exprTy), exprTy)
         }
-        return lit(e.tree, e.type)
+        return lit(e.tree, exprTy)
       }
 
       return evar(sexpr.name)
@@ -342,12 +353,12 @@ export function declare(decl: SDecl, env: Env): Env {
     tree = collapse(expr, trees)
   }
 
-  const type = decl.type ? compileType(decl.type, env) : OPAQUE
-  // For Pi types, store the raw pair structure: domain A, codomain family B
-  // where the full Pi pair is fork(A, B). For non-dependent: B = K(codomain).
-  const piPair = (decl.type?.tag === "spi" && isFork(type))
-    ? { domain: type.left, codomain: type.right }
+  const rawType = decl.type ? compileType(decl.type, env) : OPAQUE
+  const piPair = (decl.type?.tag === "spi" && isFork(rawType))
+    ? { domain: rawType.left, codomain: rawType.right }
     : undefined
+  // Specialize Pi types into evaluable predicates via piPred
+  const type = piPair ? specializePiType(rawType, env) : rawType
   newEnv.set(decl.name, { tree, type, piPair })
   return newEnv
 }
@@ -377,11 +388,12 @@ export function loadFile(source: string, env: Env = new Map()): Env {
     if (!decl.type) continue
     const existing = env.get(decl.name)
     if (!existing) continue
-    const type = compileType(decl.type, env)
-    // Extract raw Pi pair components from the compiled type
-    const piPair = (decl.type.tag === "spi" && isFork(type))
-      ? { domain: type.left, codomain: type.right }
+    const rawType = compileType(decl.type, env)
+    const piPair = (decl.type.tag === "spi" && isFork(rawType))
+      ? { domain: rawType.left, codomain: rawType.right }
       : undefined
+    // Specialize Pi types into evaluable predicates via piPred
+    const type = piPair ? specializePiType(rawType, env) : rawType
     env.set(decl.name, { tree: existing.tree, type, piPair })
   }
 
@@ -549,20 +561,10 @@ export type DeclCheckResult =
   | { ok: true, name: string, tree: Tree, type: Tree, env: Env }
   | { ok: false, stage: TypecheckStage, message: string }
 
-function checkAgainstExpectedType(
-  tree: Tree,
-  expectedType: Tree,
-  expectedTypeExpr: SExpr,
-  env: Env,
-): boolean {
-  if (expectedTypeExpr.tag === "spi") {
-    if (!isFork(expectedType)) throw new Error("Expected compiled Pi type")
-    const pc = env.get("piCheck")?.tree
-    if (!pc) throw new Error("Missing piCheck in environment")
-    const budget = newCheckBudget()
-    return treeEqual(apply(apply(apply(pc, expectedType.left, budget), expectedType.right, budget), tree, budget), LEAF)
-  }
-  return treeEqual(apply(expectedType, tree, newCheckBudget()), LEAF)
+/** Check tree against a type predicate. Uniform: apply(type, tree) → tt/ff.
+ *  Works for both base types (Nat, Bool) and specialized Pi predicates (from piPred). */
+function checkAgainstType(tree: Tree, typePred: Tree): boolean {
+  return treeEqual(apply(typePred, tree, newCheckBudget()), LEAF)
 }
 
 function compileCheckedExpr(sexpr: SExpr, expectedType: Tree, env: Env): Tree {
@@ -587,24 +589,30 @@ export function typecheckExprSource(
     return { ok: false, stage: "parse", message: (e as Error).message }
   }
 
-  let expectedType: Tree
+  let rawType: Tree
+  let typePred: Tree
   let tree: Tree
   try {
-    expectedType = compileType(expectedTypeExpr, env)
-    tree = compileCheckedExpr(sexpr, expectedType, env)
+    rawType = compileType(expectedTypeExpr, env)
+    // Specialize Pi types into evaluable predicates
+    const piPair = (expectedTypeExpr.tag === "spi" && isFork(rawType))
+      ? { domain: rawType.left, codomain: rawType.right } : undefined
+    typePred = piPair ? specializePiType(rawType, env) : rawType
+    // compileCheckedExpr needs the raw Pi pair for typed lambda compilation
+    tree = compileCheckedExpr(sexpr, rawType, env)
   } catch (e) {
     return { ok: false, stage: "elaborate", message: (e as Error).message }
   }
 
   try {
-    if (!checkAgainstExpectedType(tree, expectedType, expectedTypeExpr, env)) {
+    if (!checkAgainstType(tree, typePred)) {
       return { ok: false, stage: "check", message: "Expression does not satisfy expected type" }
     }
   } catch (e) {
     return { ok: false, stage: "check", message: (e as Error).message }
   }
 
-  return { ok: true, tree, type: expectedType }
+  return { ok: true, tree, type: typePred }
 }
 
 export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
@@ -623,30 +631,32 @@ export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
     return { ok: false, stage: "elaborate", message: "Typed declaration required" }
   }
 
-  let expectedType: Tree
-  const piPair = (parsed.type.tag === "spi")
-    ? (() => { const t = compileType(parsed.type!, env); return isFork(t) ? { domain: t.left, codomain: t.right } : undefined })()
-    : undefined
-
+  let rawType: Tree
+  let piPair: { domain: Tree, codomain: Tree } | undefined
+  let typePred: Tree
   try {
-    expectedType = compileType(parsed.type, env)
+    rawType = compileType(parsed.type, env)
+    piPair = (parsed.type.tag === "spi" && isFork(rawType))
+      ? { domain: rawType.left, codomain: rawType.right } : undefined
+    typePred = piPair ? specializePiType(rawType, env) : rawType
   } catch (e) {
     return { ok: false, stage: "elaborate", message: (e as Error).message }
   }
 
   if (parsed.isRec) {
-    return typecheckRecDecl(parsed, expectedType, piPair, env)
+    return typecheckRecDecl(parsed, rawType, typePred, piPair, env)
   }
 
   let tree: Tree
   try {
-    tree = compileCheckedExpr(parsed.value, expectedType, env)
+    // compileCheckedExpr needs the raw Pi pair for typed lambda compilation
+    tree = compileCheckedExpr(parsed.value, rawType, env)
   } catch (e) {
     return { ok: false, stage: "elaborate", message: (e as Error).message }
   }
 
   try {
-    if (!checkAgainstExpectedType(tree, expectedType, parsed.type, env)) {
+    if (!checkAgainstType(tree, typePred)) {
       return { ok: false, stage: "check", message: "Declaration value does not satisfy annotation" }
     }
   } catch (e) {
@@ -654,13 +664,14 @@ export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
   }
 
   const newEnv = new Map(env)
-  newEnv.set(parsed.name, { tree: extract(tree), type: expectedType, piPair })
-  return { ok: true, name: parsed.name, tree, type: expectedType, env: newEnv }
+  newEnv.set(parsed.name, { tree: extract(tree), type: typePred, piPair })
+  return { ok: true, name: parsed.name, tree, type: typePred, env: newEnv }
 }
 
 function typecheckRecDecl(
   parsed: SDecl,
-  expectedType: Tree,
+  rawType: Tree,
+  typePred: Tree,
   piPair: { domain: Tree, codomain: Tree } | undefined,
   env: Env,
 ): DeclCheckResult {
@@ -668,14 +679,13 @@ function typecheckRecDecl(
   if (!fixTree) return { ok: false, stage: "elaborate", message: "Recursive def requires 'fix' in env" }
 
   resetCompileBudget()
-  const trees = envTrees(env)
 
   let stepTree: Tree
   try {
     // Build step function by abstracting the recursive name from the body
     // Put the recursive name in env with expected type so typed elaboration can ascription-wrap it
     const tempEnv = new Map(env)
-    tempEnv.set(parsed.name, { tree: I, type: expectedType, piPair })
+    tempEnv.set(parsed.name, { tree: I, type: typePred, piPair })
 
     const bodyExpr = sexprToExpr(parsed.value, tempEnv, new Map(), piPair !== undefined)
     const stepExpr = abstract(parsed.name, OPAQUE, bodyExpr)
@@ -688,18 +698,11 @@ function typecheckRecDecl(
   // Check step : T -> T (the step function must preserve the type)
   if (piPair) {
     try {
-      // For Pi-typed recursive defs, check step against T -> T using PiCheck
-      const stepType = fork(expectedType, kType(expectedType))
-      const pc = env.get("piCheck")?.tree
-      if (pc) {
-        const budget = newCheckBudget()
-        const passes = treeEqual(
-          apply(apply(apply(pc, stepType.left, budget), stepType.right, budget), stepTree, budget),
-          LEAF,
-        )
-        if (!passes) {
-          return { ok: false, stage: "check", message: "Recursive step does not preserve type" }
-        }
+      // Build step type predicate: Pi(rawType, K(rawType)) via piPred
+      const stepRawType = fork(rawType, kType(rawType))
+      const stepPred = specializePiType(stepRawType, env)
+      if (!checkAgainstType(stepTree, stepPred)) {
+        return { ok: false, stage: "check", message: "Recursive step does not preserve type" }
       }
     } catch (e) {
       return { ok: false, stage: "check", message: (e as Error).message }
@@ -710,6 +713,6 @@ function typecheckRecDecl(
   const tree = apply(fixTree, stepTree, COMPILE_BUDGET)
 
   const newEnv = new Map(env)
-  newEnv.set(parsed.name, { tree, type: expectedType, piPair })
-  return { ok: true, name: parsed.name, tree, type: expectedType, env: newEnv }
+  newEnv.set(parsed.name, { tree, type: typePred, piPair })
+  return { ok: true, name: parsed.name, tree, type: typePred, env: newEnv }
 }

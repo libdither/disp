@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { LEAF, stem, FAST_EQ, treeEqual, fork, apply, type Tree } from "../src/tree.js"
+import { LEAF, stem, FAST_EQ, treeEqual, fork, apply, isFork, type Tree } from "../src/tree.js"
 import {
   Env,
   compileType,
@@ -98,19 +98,17 @@ describe("typecheck end-to-end", () => {
       expectExprOk(expr)
     })
 
-    it("stores typed function annotations as raw Pi pairs that work with piCheck", () => {
+    it("stores typed function annotations as specialized predicates that check directly", () => {
       const decl = typecheckDeclSource("let myNot : Bool -> Bool := {x} -> not x", baseEnv())
       expectDeclOk(decl)
 
-      const tBool = decl.env.get("Bool")!.tree
-      // Stored type is the raw Pi pair fork(Bool, K(Bool))
-      const expectedType = fork(tBool, fork(LEAF, tBool))
-      expect(treeEqual(decl.env.get("myNot")!.type, expectedType)).toBe(true)
-      // And piCheck can verify the tree against it
-      const pc = decl.env.get("piCheck")!.tree
-      const b = { remaining: 500_000 }
-      const myNotTree = decl.env.get("myNot")!.tree
-      expect(treeEqual(apply(apply(apply(pc, tBool, b), fork(LEAF, tBool), b), myNotTree, b), LEAF)).toBe(true)
+      const myNotEntry = decl.env.get("myNot")!
+      // Stored type is a specialized predicate (triage-shaped, from piPred)
+      const isTriage = isFork(myNotEntry.type) && isFork(myNotEntry.type.left)
+      expect(isTriage).toBe(true)
+      // The predicate checks annotated trees directly via apply
+      const myNotTree = myNotEntry.tree
+      expect(treeEqual(apply(myNotEntry.type, myNotTree, { remaining: 500_000 }), LEAF)).toBe(true)
     })
 
     it("rejects an invalid base-typed expression at check time", () => {

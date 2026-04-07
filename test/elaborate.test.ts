@@ -429,20 +429,23 @@ describe("types.disp bootstrap", () => {
       return apply(apply(pc, A, budget), B, budget)
     }
 
-    it("loadFile stores type annotations as raw Pi pairs", () => {
+    it("loadFile stores specialized Pi predicates for function annotations", () => {
       expect(env.size).toBeGreaterThan(5)
       const notEntry = env.get("not")!
-      // Stored type is the raw Pi pair fork(Bool, K(Bool))
-      expect(treeEqual(notEntry.type, fork(tBool, kw(tBool)))).toBe(true)
+      // Stored type is a specialized predicate (triage-shaped) from piPred
+      expect(isFork(notEntry.type) && isFork(notEntry.type.left)).toBe(true)
+      // piPair preserves the raw structure for elaboration
+      expect(notEntry.piPair).toBeDefined()
+      expect(treeEqual(fork(notEntry.piPair!.domain, notEntry.piPair!.codomain), fork(tBool, kw(tBool)))).toBe(true)
     })
 
-    it("typed defs store raw Pi pair types alongside bare trees", () => {
+    it("typed defs store specialized predicates alongside bare trees", () => {
       const andEntry = env.get("and")!
-      const andType = fork(tBool, kw(fork(tBool, kw(tBool))))
-      expect(treeEqual(andEntry.type, andType)).toBe(true)
-      // Bare-compiled trees lack D annotations, so piCheck can't verify them structurally.
-      // They need ascription wrapping for piCheck to accept them. This is expected —
-      // the allowlist handles bare-compiled definitions.
+      // Specialized predicate is triage-shaped
+      expect(isFork(andEntry.type) && isFork(andEntry.type.left)).toBe(true)
+      // piPair preserves raw structure
+      const rawAndType = fork(tBool, kw(fork(tBool, kw(tBool))))
+      expect(treeEqual(fork(andEntry.piPair!.domain, andEntry.piPair!.codomain), rawAndType)).toBe(true)
     })
 
     // Helper: compile lambda with typed env
@@ -508,7 +511,9 @@ describe("types.disp bootstrap", () => {
 
       it("accepts a direct ascription when the claimed type matches", () => {
         const notEntry = env.get("not")!
-        const ascribed = fork(stem(notEntry.type), stem(notEntry.tree))
+        // Ascriptions carry the raw Pi pair (type identity), not the specialized predicate
+        const rawPiPair = fork(notEntry.piPair!.domain, notEntry.piPair!.codomain)
+        const ascribed = fork(stem(rawPiPair), stem(notEntry.tree))
         expect(checkOrThrow(tBool, kw(tBool), ascribed)).toBe(true)
       })
 
