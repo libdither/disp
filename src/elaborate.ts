@@ -405,6 +405,8 @@ export function loadFile(source: string, env: Env = new Map()): Env {
 /** Compile a lambda with typed bracket abstraction.
  *  expectedType = Pi(A, K(T)) — determines parameter types.
  *  Returns annotated tree with D at S-nodes + ascriptions for typed refs.
+ *  When a dependent codomain is encountered, remaining params are compiled bare
+ *  and the result is wrapped in an ascription with the expected type.
  */
 export function typedCompileLam(
   params: string[],
@@ -417,16 +419,20 @@ export function typedCompileLam(
   // Peel off Pi layers to get parameter types
   const paramTypes: Tree[] = []
   let curType = expectedType
+  let hasOpaqueParams = false
   for (const param of params) {
-    if (!isFork(curType)) throw new Error(`Expected Pi type for param ${param}`)
+    if (!isFork(curType)) {
+      // After hitting a dependent codomain (or non-Pi type), remaining params are bare
+      paramTypes.push(OPAQUE)
+      hasOpaqueParams = true
+      continue
+    }
     paramTypes.push(curType.left)
     const inner = unwrapK(curType.right)
     if (inner !== null) {
       curType = inner  // Non-dependent: unwrap K
     } else {
-      // Dependent codomain: the raw family is curType.right (not K-wrapped).
-      // D at S-nodes will be K(family), which is non-dependent.
-      // Truly dependent D requires extending sOrAsc in types.disp.
+      // Dependent codomain: can't peel further statically.
       curType = OPAQUE
     }
   }
@@ -440,13 +446,23 @@ export function typedCompileLam(
   // Convert body to Expr with types (typed=true for ascription wrapping)
   const bodyExpr = sexprToExpr(body, env, freeTypes, true)
 
-  // Chain typed bracket abstractions for all params (inside-out)
+  // Chain bracket abstractions for all params (inside-out)
+  // Typed for params with known types, bare for OPAQUE params
   let curExpr = bodyExpr
   for (let i = params.length - 1; i >= 0; i--) {
     curExpr = abstract(params[i], paramTypes[i], curExpr)
   }
 
-  return collapse(curExpr, envTrees(env))
+  const tree = collapse(curExpr, envTrees(env))
+
+  // If inner params were compiled bare (OPAQUE) due to dependent codomains,
+  // PiCheck can't structurally verify them. Wrap in ascription so the
+  // ascription rule (type identity check) handles verification.
+  if (hasOpaqueParams) {
+    return wrapAscription(tree, expectedType)
+  }
+
+  return tree
 }
 
 // === Type-level expression compilation ===
@@ -498,16 +514,6 @@ function sexprToTypeExpr(
     case "stree": return lit(stem(LEAF), OPAQUE)
     case "slam": throw new Error("Lambda in type position not supported")
   }
-}
-
-/** Compile a type SExpr to a tree, with support for type variables in scope */
-function compileTypeWithVars(sexpr: SExpr, env: Env, typeVars: Map<string, Tree>): Tree {
-  if (typeVars.size === 0) return compileType(sexpr, env)
-  resetCompileBudget()
-  // Merge type variables into the tree map so collapse can resolve them
-  const trees = envTrees(env)
-  for (const [k, v] of typeVars) trees.set(k, v)
-  return collapse(sexprToTypeExpr(sexpr, env, typeVars), trees)
 }
 
 // === Compile type annotations ===
