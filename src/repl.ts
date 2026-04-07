@@ -5,8 +5,8 @@ import * as readline from "node:readline"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Tree, LEAF, stem, isLeaf, isStem, isFork, prettyTree, BudgetExhausted, FAST_EQ } from "./tree.js"
-import { parseLine, ParseError } from "./parse.js"
-import { compile, declare, loadFile, Env, entry } from "./elaborate.js"
+import { parseLine, parseExpr, ParseError } from "./parse.js"
+import { compile, declare, loadFile, Env, entry, typecheckDeclSource, typecheckExprSource } from "./elaborate.js"
 
 // === Tree display ===
 
@@ -71,12 +71,24 @@ function evalLine(state: ReplState, input: string): { state: ReplState, output: 
       return { state, output: displayTree(tree) }
     }
     // Declaration
+    if (result.type) {
+      // Typed declaration: typecheck via typed pipeline
+      const checkResult = typecheckDeclSource(trimmed, state.env)
+      if (!checkResult.ok) {
+        return { state, output: `Type error [${checkResult.stage}]: ${checkResult.message}` }
+      }
+      const e = checkResult.env.get(result.name)!
+      return {
+        state: { env: checkResult.env },
+        output: `${result.name} = ${displayTree(e.tree)}  (checked)`,
+      }
+    }
+    // Untyped declaration: bare compilation
     const newEnv = declare(result, state.env)
     const e = newEnv.get(result.name)!
-    const typeHint = isFork(e.type) ? "  (typed)" : ""
     return {
       state: { env: newEnv },
-      output: `${result.name} = ${displayTree(e.tree)}${typeHint}`,
+      output: `${result.name} = ${displayTree(e.tree)}`,
     }
   } catch (e) {
     if (e instanceof ParseError) return { state, output: `Parse error: ${e.message}` }
@@ -135,6 +147,20 @@ function handleCommand(state: ReplState, input: string): { state: ReplState, out
       return { state, output: `${arg} : ${showTree(e.type)}` }
     }
 
+    case ":check": case ":c": {
+      if (!arg) return { state, output: "Usage: :check <expr> : <type>" }
+      const colonIdx = arg.lastIndexOf(":")
+      if (colonIdx <= 0) return { state, output: "Usage: :check <expr> : <type>" }
+      const exprSrc = arg.substring(0, colonIdx).trim()
+      const typeSrc = arg.substring(colonIdx + 1).trim()
+      if (!exprSrc || !typeSrc) return { state, output: "Usage: :check <expr> : <type>" }
+      const result = typecheckExprSource(exprSrc, typeSrc, state.env)
+      if (result.ok) {
+        return { state, output: `OK : ${typeSrc}` }
+      }
+      return { state, output: `Type error [${result.stage}]: ${result.message}` }
+    }
+
     case ":reset": case ":r":
       return { state: initState(), output: "Reset to initial state" }
 
@@ -147,12 +173,13 @@ function handleCommand(state: ReplState, input: string): { state: ReplState, out
 }
 
 const HELP_TEXT = `Commands:
-  :env          List defined names
-  :load <file>  Load a .disp file
-  :tree <expr>  Show raw tree (△ notation)
-  :type <name>  Show type annotation
-  :reset        Reset environment
-  :quit         Exit
+  :env              List defined names
+  :load <file>      Load a .disp file
+  :tree <expr>      Show raw tree (△ notation)
+  :type <name>      Show type annotation
+  :check <e> : <t>  Type-check expression against type
+  :reset            Reset environment
+  :quit             Exit
 
 Enter an expression to evaluate, or a declaration to define:
   not true                        -- evaluate expression
