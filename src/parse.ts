@@ -31,6 +31,7 @@ export type SDecl = {
   type: SExpr | null  // null if no annotation
   value: SExpr
   isRec: boolean
+  isTrust: boolean
 }
 
 export function svar(name: string, pos?: Span): SExpr {
@@ -232,9 +233,12 @@ const span = (a: Span, b: Span): Span => ({ start: a.start, end: b.end })
 const ident = map(tok("ident"), t => ({ name: (t as any).value as string, pos: t.pos }))
 const num = map(tok("num"), t => ({ value: (t as any).value as number, pos: t.pos }))
 
-// "rec" contextual keyword: always succeeds, returns true if consumed "rec"
+// "rec" / "trust" contextual keywords: always succeed, return true if consumed
 const recKw: P<boolean> = pos =>
   _t[pos]?.tag === "ident" && (_t[pos] as any).value === "rec"
+    ? [true, pos + 1] : [false, pos]
+const trustKw: P<boolean> = pos =>
+  _t[pos]?.tag === "ident" && (_t[pos] as any).value === "trust"
     ? [true, pos + 1] : [false, pos]
 
 // Number literal: n → succ^n(zero)
@@ -347,15 +351,16 @@ const arrow: P<SExpr> = or(
 
 const expr: P<SExpr> = arrow
 
-// Declaration: let [rec] name [: type] := value
+// Declaration: let [rec] [trust] name [: type] := value
 const decl: P<SDecl> = parser($ => {
   $(tok("kw_let"))
   const isRec = $(recKw)
+  const isTrust = $(trustKw)
   const name = $(ident)
   const type = $(opt(right(tok("colon"), expr)))
   $(tok("coloneq"))
   const value = $(expr)
-  return { name: name.name, type, value, isRec }
+  return { name: name.name, type, value, isRec, isTrust }
 })
 
 // Top-level line: declaration or expression

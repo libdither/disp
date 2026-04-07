@@ -19,7 +19,7 @@ export type Tree = {
 
 let nextId = 0
 const stemCache = new Map<number, Tree>()
-const forkCache = new Map<string, Tree>()
+const forkCache = new Map<number, Map<number, Tree>>()
 
 export const LEAF: Tree = { tag: "leaf", id: nextId++ }
 
@@ -33,11 +33,16 @@ export function stem(child: Tree): Tree {
 }
 
 export function fork(left: Tree, right: Tree): Tree {
-  const key = `${left.id},${right.id}`
-  const cached = forkCache.get(key)
-  if (cached) return cached
+  let inner = forkCache.get(left.id)
+  if (inner) {
+    const cached = inner.get(right.id)
+    if (cached) return cached
+  } else {
+    inner = new Map()
+    forkCache.set(left.id, inner)
+  }
   const node: Tree = { tag: "fork", left, right, id: nextId++ }
-  forkCache.set(key, node)
+  inner.set(right.id, node)
   cacheStats.uniqueNodes++
   return node
 }

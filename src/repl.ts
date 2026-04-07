@@ -4,9 +4,9 @@
 import * as readline from "node:readline"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { Tree, LEAF, stem, isLeaf, isStem, isFork, prettyTree, BudgetExhausted, FAST_EQ } from "./tree.js"
+import { Tree, LEAF, stem, isLeaf, isStem, isFork, prettyTree, BudgetExhausted } from "./tree.js"
 import { parseLine, parseExpr, ParseError } from "./parse.js"
-import { compile, declare, loadFile, loadTypedFile, Env, entry, typecheckDeclSource, typecheckExprSource } from "./elaborate.js"
+import { compile, declare, loadFile, loadTypedFile, Env, seedEnv, typecheckDeclSource, typecheckExprSource } from "./elaborate.js"
 
 // === Tree display ===
 
@@ -37,18 +37,6 @@ function displayTree(t: Tree): string {
 // === REPL state ===
 
 type ReplState = { env: Env }
-
-function seedEnv(): Env {
-  return new Map([
-    ["leaf", entry(LEAF)],
-    ["fastEq", entry(FAST_EQ)],
-    // Literal support: parser desugars true/false/numbers to these names
-    ["true", entry(LEAF)],           // true = leaf
-    ["false", entry(stem(LEAF))],    // false = stem(leaf)
-    ["zero", entry(LEAF)],           // 0 = leaf
-    ["succ", entry(LEAF)],           // succ(n) = apply(leaf, n) = stem(n)
-  ])
-}
 
 function initState(): ReplState {
   const typesPath = path.join(import.meta.dirname, "..", "types.disp")
@@ -84,9 +72,10 @@ function evalLine(state: ReplState, input: string): { state: ReplState, output: 
         return { state, output: `Type error [${checkResult.stage}]: ${checkResult.message}` }
       }
       const e = checkResult.env.get(result.name)!
+      const label = result.isTrust ? "trusted" : "checked"
       return {
         state: { env: checkResult.env },
-        output: `${result.name} = ${displayTree(e.tree)}  (checked)`,
+        output: `${result.name} = ${displayTree(e.tree)}  (${label})`,
       }
     }
     // Untyped declaration: bare compilation
@@ -190,7 +179,9 @@ const HELP_TEXT = `Commands:
 Enter an expression to evaluate, or a declaration to define:
   not true                        -- evaluate expression
   let double := {x} -> add x x   -- untyped definition
-  let inc : Nat -> Nat := {n} -> succ n  -- typed definition`
+  let inc : Nat -> Nat := {n} -> succ n  -- typed definition
+  let trust and : Bool -> Bool -> Bool := {a b} -> triage b ({_} -> ff) ({_ _} -> ff) a
+                                  -- trusted: skip piCheck, vouch for type`
 
 // === Main loop ===
 

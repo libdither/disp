@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { LEAF, stem, fork, apply, I, K, treeEqual, FAST_EQ, isFork, isStem, type Tree } from "../src/tree.js"
-import { compile, declare, loadFile, Env, entry, typedCompileLam, compileType, extract } from "../src/elaborate.js"
+import { LEAF, stem, fork, apply, I, K, treeEqual, isFork, isStem, type Tree } from "../src/tree.js"
+import { compile, declare, loadFile, Env, entry, seedEnv, typedCompileLam, compileType, extract } from "../src/elaborate.js"
 import { parseLine, parseExpr } from "../src/parse.js"
 
 // Helper: compile a bare expression with optional env
@@ -17,11 +17,6 @@ function declStr(src: string, env: Env = new Map()): Env {
   const result = parseLine(src)
   if ("tag" in result) throw new Error("Expected declaration, got expression")
   return declare(result, env)
-}
-
-// Seed env with leaf + fastEq
-function seedEnv(): Env {
-  return new Map([["leaf", entry(LEAF)], ["fastEq", entry(FAST_EQ)]])
 }
 
 const TT = LEAF
@@ -262,7 +257,7 @@ describe("types.disp bootstrap", () => {
       it("predicate accepts valid ascription", () => {
         const pred = buildPred(tBool, kWrap(tBool))
         const notEntry = env.get("not")!
-        const ascribed = fork(stem(fork(tBool, kWrap(tBool))), stem(notEntry.tree))
+        const ascribed = fork(stem(stem(fork(tBool, kWrap(tBool)))), stem(notEntry.tree))
         expect(treeEqual(apply(pred, ascribed, budget()), TT)).toBe(true)
       })
 
@@ -270,7 +265,7 @@ describe("types.disp bootstrap", () => {
         const pred = buildPred(tBool, kWrap(tBool))
         const notEntry = env.get("not")!
         const wrongType = fork(tTree, kWrap(tTree))
-        const ascribed = fork(stem(wrongType), stem(notEntry.tree))
+        const ascribed = fork(stem(stem(wrongType)), stem(notEntry.tree))
         expect(treeEqual(apply(pred, ascribed, budget()), FF)).toBe(true)
       })
     })
@@ -513,14 +508,14 @@ describe("types.disp bootstrap", () => {
         const notEntry = env.get("not")!
         // Ascriptions carry the raw Pi pair (type identity), not the specialized predicate
         const rawPiPair = fork(notEntry.piPair!.domain, notEntry.piPair!.codomain)
-        const ascribed = fork(stem(rawPiPair), stem(notEntry.tree))
+        const ascribed = fork(stem(stem(rawPiPair)), stem(notEntry.tree))
         expect(checkOrThrow(tBool, kw(tBool), ascribed)).toBe(true)
       })
 
       it("rejects a direct ascription when the claimed type mismatches", () => {
         const notEntry = env.get("not")!
         const wrongType = fork(tTree, kw(tTree))
-        const ascribed = fork(stem(wrongType), stem(notEntry.tree))
+        const ascribed = fork(stem(stem(wrongType)), stem(notEntry.tree))
         expect(checkOrThrow(tBool, kw(tBool), ascribed)).toBe(false)
       })
     })
@@ -559,7 +554,7 @@ describe("types.disp bootstrap", () => {
       expect(treeEqual(extract(triage), fork(fork(extract(c), extract(d)), extract(b)))).toBe(true)
     })
 
-    it("unwraps ascription fork(stem(T), stem(body)) to body without recursing into body", () => {
+    it("unwraps ascription fork(stem(stem(T)), stem(body)) to body without recursing into body", () => {
       // body contains fork(stem(c), fork(x, y)) — a valid bare S-node
       // extract should return body as-is, NOT recurse and misinterpret it
       const c = stem(LEAF)
@@ -567,9 +562,9 @@ describe("types.disp bootstrap", () => {
       const y = stem(stem(LEAF))
       const body = fork(stem(c), fork(x, y))  // looks like annotated S-node if recursed into
       const T = fork(LEAF, fork(LEAF, stem(LEAF)))  // some type
-      const ascription = fork(stem(T), stem(body))
+      const ascription = fork(stem(stem(T)), stem(body))
 
-      // Per theory: extract(fork(stem(T), stem(body))) = body
+      // Per theory: extract(fork(stem(stem(T)), stem(body))) = body
       // Current bug: code does extract(right.child) which recurses into body
       expect(treeEqual(extract(ascription), body)).toBe(true)
     })
@@ -607,7 +602,7 @@ describe("types.disp bootstrap", () => {
       const typesPath = path.join(import.meta.dirname, "..", "types.disp")
       const source = fs.readFileSync(typesPath, "utf-8")
       const extra = `\nlet rec Vec := {n v} -> triage (isLeaf v) ({n'} -> triage ff ({_} -> ff) ({h t} -> Vec n' t) v) ({_ _} -> ff) n\n`
-      const vecSeed: Env = new Map([...seedEnv(), ["zero", entry(LEAF)], ["succ", entry(LEAF)]])
+      const vecSeed = seedEnv()
       const vecEnv = loadFile(source + extra, vecSeed)
       const vecTree = vecEnv.get("Vec")!.tree
       const result = compileType(parseExpr("Vec zero"), vecEnv)
@@ -714,19 +709,19 @@ describe("types.disp bootstrap", () => {
       })
 
       it("accepts a valid ascription when body is in allowlist", () => {
-        const ascribed = fork(stem(notType), stem(notTree))
+        const ascribed = fork(stem(stem(notType)), stem(notTree))
         expect(treeEqual(apply(walker, ascribed, budget()), TT)).toBe(true)
       })
 
       it("rejects an ascription with body NOT in allowlist", () => {
         const malicious = fork(stem(stem(LEAF)), LEAF)  // junk body
-        const ascribed = fork(stem(notType), stem(malicious))
+        const ascribed = fork(stem(stem(notType)), stem(malicious))
         expect(treeEqual(apply(walker, ascribed, budget()), FF)).toBe(true)
       })
 
       it("rejects an ascription with correct body but wrong type", () => {
         const wrongType = fork(tNat, kw(tNat))
-        const ascribed = fork(stem(wrongType), stem(notTree))
+        const ascribed = fork(stem(stem(wrongType)), stem(notTree))
         expect(treeEqual(apply(walker, ascribed, budget()), FF)).toBe(true)
       })
 
@@ -734,16 +729,16 @@ describe("types.disp bootstrap", () => {
         // S-node: fork(stem(D), fork(annC, annB))
         // where annC and annB are valid ascriptions of not
         const D = kw(tBool)  // K(Bool) — intermediate type
-        const annC = fork(stem(notType), stem(notTree))
-        const annB = fork(stem(notType), stem(notTree))
+        const annC = fork(stem(stem(notType)), stem(notTree))
+        const annB = fork(stem(stem(notType)), stem(notTree))
         const sNode = fork(stem(D), fork(annC, annB))
         expect(treeEqual(apply(walker, sNode, budget()), TT)).toBe(true)
       })
 
       it("rejects annotated S-node with forged ascription in sub-term", () => {
         const D = kw(tBool)
-        const forged = fork(stem(notType), stem(fork(stem(stem(LEAF)), LEAF)))  // junk body
-        const annB = fork(stem(notType), stem(notTree))
+        const forged = fork(stem(stem(notType)), stem(fork(stem(stem(LEAF)), LEAF)))  // junk body
+        const annB = fork(stem(stem(notType)), stem(notTree))
         const sNode = fork(stem(D), fork(forged, annB))
         expect(treeEqual(apply(walker, sNode, budget()), FF)).toBe(true)
       })
@@ -751,12 +746,12 @@ describe("types.disp bootstrap", () => {
       it("does NOT recurse into ascription bodies (body is opaque)", () => {
         // Body contains what looks like a forged ascription inside, but
         // the walker shouldn't recurse into it — body is opaque
-        const innerForge = fork(stem(fork(tTree, kw(tTree))), stem(LEAF))
+        const innerForge = fork(stem(stem(fork(tTree, kw(tTree)))), stem(LEAF))
         // Put innerForge as the body of a valid ascription
         // We need innerForge to be in the allowlist for the outer ascription to pass
         const alWithInner = fork(fork(innerForge, notType), fork(fork(notTree, notType), LEAF))
         const walkerWithInner = apply(alCheck, alWithInner, budget())
-        const ascribed = fork(stem(notType), stem(innerForge))
+        const ascribed = fork(stem(stem(notType)), stem(innerForge))
         // Outer ascription: (innerForge, notType) is in allowlist → passes
         // Inner structure of innerForge is NOT walked → irrelevant
         expect(treeEqual(apply(walkerWithInner, ascribed, budget()), TT)).toBe(true)
@@ -775,13 +770,13 @@ describe("types.disp bootstrap", () => {
       }
 
       it("accepts valid ascription of not : Bool -> Bool", () => {
-        const ascribed = fork(stem(notType), stem(notTree))
+        const ascribed = fork(stem(stem(notType)), stem(notTree))
         expect(verifiedCheck(tBool, kw(tBool), ascribed)).toBe(true)
       })
 
       it("rejects forged ascription — passes piCheck but fails allowlistCheck", () => {
         // leaf (succ constructor) wrongly ascribed as Bool -> Bool
-        const forged = fork(stem(notType), stem(LEAF))
+        const forged = fork(stem(stem(notType)), stem(LEAF))
         // piCheck: fastEq(notType, fork(Bool, K(Bool))) → true (type matches)
         const b = budget()
         const pcPasses = treeEqual(apply(apply(apply(pc, tBool, b), kw(tBool), b), forged, b), TT)

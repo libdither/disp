@@ -7,5 +7,7 @@ let not : Bool -> Bool := {b} -> triage false ({_} -> true) ({_ _} -> false) b
 -- Polymorphic identity
 let id : (A : Type) -> A -> A := {A x} -> x
 
--- Multi-param functions (and, or, add, mul) require deeper S-node
--- annotation support. For now, use bare-compiled versions from types.disp.
+-- Multi-param functions using untyped combinators (triage, etc.) can't be
+-- structurally verified by piCheck. Use 'trust' to vouch for their types.
+let trust myAnd : Bool -> Bool -> Bool := {a b} -> triage b ({_} -> ff) ({_ _} -> ff) a
+let trust myOr : Bool -> Bool -> Bool := {a b} -> triage tt ({_} -> b) ({_ _} -> tt) a

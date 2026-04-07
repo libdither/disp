@@ -1,30 +1,21 @@
 import { describe, it, expect } from "vitest"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { LEAF, stem, FAST_EQ, treeEqual, fork, apply, isFork, type Tree } from "../src/tree.js"
+import { LEAF, stem, treeEqual, fork, apply, isFork, type Tree } from "../src/tree.js"
 import {
   Env,
   compileType,
   declare,
   entry,
+  seedEnv,
   loadFile,
+  loadTypedFile,
   typecheckDeclSource,
   typecheckExprSource,
   type ExprCheckResult,
   type DeclCheckResult,
 } from "../src/elaborate.js"
 import { parseExpr, parseLine } from "../src/parse.js"
-
-function seedEnv(): Env {
-  return new Map([
-    ["leaf", entry(LEAF)],
-    ["fastEq", entry(FAST_EQ)],
-    ["true", entry(LEAF)],
-    ["false", entry(stem(LEAF))],
-    ["zero", entry(LEAF)],
-    ["succ", entry(LEAF)],
-  ])
-}
 
 function baseEnv(): Env {
   const typesPath = path.join(import.meta.dirname, "..", "types.disp")
@@ -233,7 +224,7 @@ describe("typecheck end-to-end", () => {
       const tBool = env.get("Bool")!.tree
       const notTree = env.get("not")!.tree
       const rawPiPair = fork(tBool, fork(LEAF, tBool))  // fork(Bool, K(Bool))
-      const ascribed = fork(stem(rawPiPair), stem(notTree))
+      const ascribed = fork(stem(stem(rawPiPair)), stem(notTree))
       const budget = { remaining: 500_000 }
       const result = apply(apply(apply(pc, tBool, budget), fork(LEAF, tBool), budget), ascribed, budget)
       expect(treeEqual(result, LEAF)).toBe(true)
@@ -246,7 +237,7 @@ describe("typecheck end-to-end", () => {
       const tTree = env.get("Tree")!.tree
       const notTree = env.get("not")!.tree
       const wrongPiPair = fork(tTree, fork(LEAF, tTree))  // fork(Tree, K(Tree)) — wrong type
-      const ascribed = fork(stem(wrongPiPair), stem(notTree))
+      const ascribed = fork(stem(stem(wrongPiPair)), stem(notTree))
       const budget = { remaining: 500_000 }
       const result = apply(apply(apply(pc, tBool, budget), fork(LEAF, tBool), budget), ascribed, budget)
       expect(treeEqual(result, LEAF)).toBe(false)
@@ -261,7 +252,7 @@ describe("typecheck end-to-end", () => {
       // succ (leaf) wrongly ascribed as Bool -> Bool
       const wrongPiPair = fork(tBool, fork(LEAF, tBool))
       const succTree = LEAF  // leaf as succ: stem constructor
-      const ascribed = fork(stem(wrongPiPair), stem(succTree))
+      const ascribed = fork(stem(stem(wrongPiPair)), stem(succTree))
       // Check ascribed as Bool -> Bool — the ascription passes (D = fork(Bool, K(Bool)) matches)
       const budget1 = { remaining: 500_000 }
       const ascPasses = apply(apply(apply(pc, tBool, budget1), fork(LEAF, tBool), budget1), ascribed, budget1)
@@ -274,5 +265,19 @@ describe("typecheck end-to-end", () => {
       const result = apply(succTree, stem(LEAF))  // succ(false) = stem(stem(leaf))
       expect(treeEqual(apply(tBool, result, { remaining: 500_000 }), LEAF)).toBe(false)
     })
+  })
+
+  describe("file loading", () => {
+    it("prelude.disp loads and type-checks all definitions", () => {
+      const env = baseEnv()
+      const preludePath = path.join(import.meta.dirname, "..", "prelude.disp")
+      const source = fs.readFileSync(preludePath, "utf-8")
+      const preludeEnv = loadTypedFile(source, env)
+      expect(preludeEnv.size).toBeGreaterThan(env.size)
+      expect(preludeEnv.has("not")).toBe(true)
+      expect(preludeEnv.has("id")).toBe(true)
+    })
+
+    it.todo("stdlib.disp loads and type-checks all definitions — currently blocked: multi-param typed functions (xor, implies) and missing definitions (boolElimDep, natElimDep, add, mul)")
   })
 })
