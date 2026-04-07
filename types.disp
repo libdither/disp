@@ -94,11 +94,80 @@ let triCheck := {self A B annC annD annB} -> ite (fastEq A Bool) (and (checkVal 
 -- === PiCheck ===
 -- Uses fix (demand-driven recursion via WAIT) for safe recursion.
 -- self is already the fixed point — no self-application needed.
--- (Manual self self embeds S(I,I) = omega combinator → diverges at compile time.)
+
+-- forkDispatch: factored fork handler.
+-- self = piCheck (3-arg: self A B ann → check result)
+let forkDispatch := {self A B left right} ->
+  triage (kCheck self A B right)
+         ({D} -> sOrAsc self A B D right)
+         ({annC annD} -> triCheck self A B annC annD right)
+         left
 
 -- rec includes the I-combinator shortcut so recursive calls get it too.
-let rec piCheckBody := {A B ann} -> ({rec} -> triage (leafFnCheck A B) ({child} -> stemFnCheck A B child) ({left right} -> triage (kCheck rec A B right) ({D} -> sOrAsc rec A B D right) ({annC annD} -> triCheck rec A B annC annD right) left) ann) ({A2 B2 ann2} -> triage tt ({_} -> piCheckBody A2 B2 ann2) ({_ _} -> piCheckBody A2 B2 ann2) (and (fastEq ann2 iComb) (fastEq (isNonDep B2) A2)))
+let rec piCheckBody := {A B ann} -> ({rec} -> triage (leafFnCheck A B) ({child} -> stemFnCheck A B child) ({left right} -> forkDispatch rec A B left right) ann) ({A2 B2 ann2} -> triage tt ({_} -> piCheckBody A2 B2 ann2) ({_ _} -> piCheckBody A2 B2 ann2) (and (fastEq ann2 iComb) (fastEq (isNonDep B2) A2)))
 
 -- piCheck: I-combinator shortcut then piCheckBody.
 -- Uses triage for lazy branching (ite evaluates both branches eagerly).
 let piCheck := {A B ann} -> triage tt ({_} -> piCheckBody A B ann) ({_ _} -> piCheckBody A B ann) (and (fastEq ann iComb) (fastEq (isNonDep B) A))
+
+-- piPred: build an evaluable predicate for Pi(A, B).
+-- apply(apply(piPred, A), B) → a 1-arg triage tree that checks annotated trees.
+-- NOT recursive — delegates to 3-arg piCheck for all recursive type-changing calls.
+-- A and B are closed over. No fix needed, so no 2-arg divergence.
+-- This IS the Futamura projection: specializing the checker with (A, B) produces
+-- a residual program (the predicate tree) that is the specialized checker for that type.
+let piPred := {A B} ->
+  leaf (leaf (leafFnCheck A B) ({child} -> stemFnCheck A B child))
+       ({left right} ->
+         triage tt ({_} -> forkDispatch piCheck A B left right) ({_ _} -> forkDispatch piCheck A B left right)
+           (and (fastEq (leaf left right) iComb) (fastEq (isNonDep B) A)))
+
+-- === Allowlist checker ===
+-- Walks annotated tree structure. At each ascription, verifies (body, type)
+-- is in the allowlist. Doesn't understand types — just structural traversal
+-- + FAST_EQ lookups. Orthogonal to piCheck.
+
+-- allowlistContains: check if (body, ty) pair is in a list-encoded allowlist.
+-- Allowlist format: fork(fork(body1, ty1), fork(fork(body2, ty2), ... leaf))
+-- Returns tt if found, ff otherwise.
+let allowlistContains := {al body ty} ->
+  fix ({self remaining} ->
+    triage ff
+      ({_} -> ff)
+      ({entry rest} ->
+        triage ff ({_} -> ff)
+          ({eBody eTy} ->
+            ite (and (fastEq eBody body) (fastEq eTy ty))
+              tt
+              (self rest))
+          entry)
+      remaining)
+  al
+
+-- allowlistCheck: walk annotated tree, verify all ascriptions are in allowlist.
+-- Uses 1-arg fix with allowlist closed over (no 2-arg fix needed).
+-- Dispatches on annotated tree format:
+--   leaf               → tt (base value)
+--   stem(a)            → recurse into a
+--   fork(leaf, v)      → K-node: recurse into v
+--   fork(stem(D), stem(body))    → ASCRIPTION: check (body, D) in allowlist
+--   fork(stem(D), fork(c, b))    → S-NODE: recurse into c and b (D is self-policing)
+--   fork(fork(c, d), b)          → TRIAGE: recurse into c, d, b
+let allowlistCheck := {al} ->
+  fix ({self ann} ->
+    triage
+      tt
+      ({a} -> self a)
+      ({left right} ->
+        triage
+          (self right)
+          ({D} ->
+            triage
+              ff
+              ({body} -> allowlistContains al body D)
+              ({annC annB} -> and (self annC) (self annB))
+              right)
+          ({c d} ->
+            and (self c) (and (self d) (self right)))
+          left)
+      ann)
