@@ -91,6 +91,31 @@ function unwrapK(family: Tree): Tree | null {
   return null
 }
 
+/** Detect Pi pair from type SExpr + compiled tree + env.
+ *  A type is Pi-shaped if:
+ *  1. The SExpr is spi (direct Pi annotation), or
+ *  2. The SExpr is svar resolving to an env entry with piPair (type alias)
+ *  Returns {domain, codomain} or null. */
+function detectPiPair(
+  typeExpr: SExpr | null,
+  compiledType: Tree,
+  env: Env,
+): { domain: Tree, codomain: Tree } | undefined {
+  if (!isFork(compiledType)) return undefined
+  // Direct Pi annotation
+  if (typeExpr?.tag === "spi") {
+    return { domain: compiledType.left, codomain: compiledType.right }
+  }
+  // Type alias: svar that resolves to a Pi-typed definition
+  if (typeExpr?.tag === "svar") {
+    const entry = env.get(typeExpr.name)
+    if (entry?.piPair) {
+      return { domain: compiledType.left, codomain: compiledType.right }
+    }
+  }
+  return undefined
+}
+
 /** Wrap a bare tree in ascription format: fork(stem(T), stem(body))
  *  PiCheck verifies T = expectedPi via O(1) hash-consing equality. */
 function wrapAscription(body: Tree, ty: Tree): Tree {
@@ -354,10 +379,12 @@ export function declare(decl: SDecl, env: Env): Env {
   }
 
   const rawType = decl.type ? compileType(decl.type, env) : OPAQUE
-  const piPair = (decl.type?.tag === "spi" && isFork(rawType))
-    ? { domain: rawType.left, codomain: rawType.right }
-    : undefined
-  // Specialize Pi types into evaluable predicates via piPred
+  let piPair = detectPiPair(decl.type, rawType, env)
+  // If the value is a Pi-shaped tree (fork(A, K(B))) and the annotation is Type,
+  // detect it as a type alias for a Pi type.
+  if (!piPair && treeEqual(rawType, LEAF) && isFork(tree) && unwrapK(tree.right) !== null) {
+    piPair = { domain: tree.left, codomain: tree.right }
+  }
   const type = piPair ? specializePiType(rawType, env) : rawType
   newEnv.set(decl.name, { tree, type, piPair })
   return newEnv
@@ -389,10 +416,7 @@ export function loadFile(source: string, env: Env = new Map()): Env {
     const existing = env.get(decl.name)
     if (!existing) continue
     const rawType = compileType(decl.type, env)
-    const piPair = (decl.type.tag === "spi" && isFork(rawType))
-      ? { domain: rawType.left, codomain: rawType.right }
-      : undefined
-    // Specialize Pi types into evaluable predicates via piPred
+    const piPair = detectPiPair(decl.type, rawType, env)
     const type = piPair ? specializePiType(rawType, env) : rawType
     env.set(decl.name, { tree: existing.tree, type, piPair })
   }
@@ -547,7 +571,8 @@ export function compileType(sexpr: SExpr, env: Env): Tree {
       return fork(domain, codomainFamily)
     }
     case "stype":
-      return LEAF
+      // Type = Tree predicate if available, else LEAF as identity
+      return env.get("Tree")?.tree ?? LEAF
     case "stree":
       return stem(LEAF)
     case "sapp":
@@ -577,6 +602,10 @@ function compileCheckedExpr(sexpr: SExpr, expectedType: Tree, env: Env): Tree {
   if (sexpr.tag === "slam") {
     return typedCompileLam(sexpr.params, sexpr.body, expectedType, env)
   }
+  // Pi/Type expressions in value position (e.g., `let MyFn : Type := Bool -> Bool`)
+  if (sexpr.tag === "spi" || sexpr.tag === "stype" || sexpr.tag === "stree") {
+    return compileType(sexpr, env)
+  }
   return compile(sexpr, env)
 }
 
@@ -600,9 +629,7 @@ export function typecheckExprSource(
   let tree: Tree
   try {
     rawType = compileType(expectedTypeExpr, env)
-    // Specialize Pi types into evaluable predicates
-    const piPair = (expectedTypeExpr.tag === "spi" && isFork(rawType))
-      ? { domain: rawType.left, codomain: rawType.right } : undefined
+    const piPair = detectPiPair(expectedTypeExpr, rawType, env)
     typePred = piPair ? specializePiType(rawType, env) : rawType
     // compileCheckedExpr needs the raw Pi pair for typed lambda compilation
     tree = compileCheckedExpr(sexpr, rawType, env)
@@ -642,8 +669,7 @@ export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
   let typePred: Tree
   try {
     rawType = compileType(parsed.type, env)
-    piPair = (parsed.type.tag === "spi" && isFork(rawType))
-      ? { domain: rawType.left, codomain: rawType.right } : undefined
+    piPair = detectPiPair(parsed.type, rawType, env)
     typePred = piPair ? specializePiType(rawType, env) : rawType
   } catch (e) {
     return { ok: false, stage: "elaborate", message: (e as Error).message }

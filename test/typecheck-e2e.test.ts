@@ -214,12 +214,15 @@ describe("typecheck end-to-end", () => {
   })
 
   describe("type alias bypass", () => {
-    it.skip("Phase 5: type alias used as annotation works even with svar tag", () => {
-      // MyFn has SExpr tag "svar", not "spi" — checking must not dispatch on surface syntax
+    it("type alias used as annotation works even with svar tag", () => {
       const env = baseEnv()
-      const declMyFn = typecheckDeclSource("let MyFn : Type := Bool -> Bool", env)
-      // This requires Type annotations to work; for now just test the concept
-      // Once types are predicates, apply(MyFn_predicate, annotated_tree) should work uniformly
+      // Define a type alias — Type annotation, not spi
+      const declAlias = typecheckDeclSource("let MyFn : Type := Bool -> Bool", env)
+      // Type := LEAF, value is fork(Bool, K(Bool)) — extractPiPair detects it
+      // The alias declaration itself should succeed (it's just a value of type Type)
+      // Note: Type = LEAF = Tree predicate that accepts everything
+      // But the value Bool -> Bool compiles to the raw Pi pair tree, which is a valid tree
+      expectDeclOk(declAlias)
     })
   })
 

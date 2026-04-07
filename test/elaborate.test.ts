@@ -625,12 +625,13 @@ describe("types.disp bootstrap", () => {
     })
 
     it("(A : Type) -> A -> A compiles dependent Pi with bracket-abstracted codomain", () => {
+      const tTree = env.get("Tree")!.tree
       const result = compileType(parseExpr("(A : Type) -> A -> A"), env)
-      // Result should be fork(Type, codomainFamily) where codomainFamily is NOT K-wrapped
+      // Result should be fork(Tree, codomainFamily) where codomainFamily is NOT K-wrapped
       expect(isFork(result)).toBe(true)
       if (!isFork(result)) throw new Error("expected fork")
-      // Domain is Type = LEAF
-      expect(treeEqual(result.left, LEAF)).toBe(true)
+      // Domain is Type = Tree predicate (K(tt) = fork(leaf, leaf))
+      expect(treeEqual(result.left, tTree)).toBe(true)
       // Codomain should NOT be K-wrapped (it's dependent)
       // apply(codomainFamily, Bool) should give Pi(Bool, K(Bool)) = fork(Bool, K(Bool))
       const tBool = env.get("Bool")!.tree
