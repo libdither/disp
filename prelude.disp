@@ -6,3 +6,6 @@ let not : Bool -> Bool := {b} -> triage false ({_} -> true) ({_ _} -> false) b
 
 -- Polymorphic identity
 let id : (A : Type) -> A -> A := {A x} -> x
+
+-- Multi-param functions (and, or, add, mul) require deeper S-node
+-- annotation support. For now, use bare-compiled versions from types.disp.

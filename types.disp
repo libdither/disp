@@ -96,12 +96,18 @@ let kCheck := {self A B annV} ->
       (triage ff ({_} -> ff) ({bA bB} -> self bA bB annV) B0)))
   (isNonDep B)
 
+-- sCodomain: compute c's codomain family for S-rule.
+-- sCodomain(D, B) = S(S(K(leaf), D), S(K(K), B))
+-- apply(sCodomain(D, B), x) = Pi(D(x), K(B(x))) = fork(D(x), K(B(x)))
+-- Works for both dependent and non-dependent D and B.
+let sCodomain := {D B} -> leaf (leaf (leaf (leaf (leaf leaf leaf)) D)) (leaf (leaf (leaf leaf (leaf leaf))) B)
+
 -- === sOrAsc: stem(D) case — S node or Ascription ===
 -- For fork(stem(D), fork(annC, annB)): D is intermediate type, check S-node.
 -- For fork(stem(T), stem(body)): ascription — verify claimed type T = Pi(A,B).
--- Verification distinguishes ascriptions from bare S-nodes: a combinator D won't
--- equal fork(A,B), but an ascribed type T = fork(A,B) will. O(1) via hash-consing.
-let sOrAsc := {self A B D right} -> triage ff ({_} -> fastEq D (leaf A B)) ({annC annB} -> ({D0} -> ({B0} -> ite (fastEq D0 NONE) ff (ite (fastEq B0 NONE) ff (and (self A D annB) (self A (leaf leaf (leaf D0 (leaf leaf B0))) annC)))) (isNonDep B)) (isNonDep D)) right
+-- Non-dependent D/B: use optimized K-wrapped sCodomain.
+-- Dependent D/B: use general sCodomain combinator.
+let sOrAsc := {self A B D right} -> triage ff ({_} -> fastEq D (leaf A B)) ({annC annB} -> ({D0} -> ({B0} -> ite (fastEq D0 NONE) (ite (fastEq B0 NONE) (and (self A D annB) (self A (sCodomain D B) annC)) (and (self A D annB) (self A (sCodomain D B) annC))) (ite (fastEq B0 NONE) (and (self A D annB) (self A (sCodomain D B) annC)) (and (self A (leaf leaf D0) annB) (self A (leaf leaf (leaf D0 (leaf leaf B0))) annC)))) (isNonDep B)) (isNonDep D)) right
 
 -- stemCodomain: [n] B(stem(n)) = S(K(B), leaf). For triage stem handler typing.
 let stemCodomain := {B} -> leaf (leaf leaf B) leaf
