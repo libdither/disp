@@ -1,15 +1,14 @@
 # Elaboration Design
 
-A tree-native architecture for bidirectional elaboration, normalization, conversion, and compilation-to-runtime. Supersedes the current `sexprToExpr`/`typedCompileLam`/`piCheck`-on-SKI pipeline.
+A tree-native architecture for bidirectional elaboration, normalization, conversion, and compilation-to-runtime.
 
-**Status**: design, not yet implemented. The TypeScript elaborator's current behavior is the baseline; this document specifies the architecture we intend to move to.
+**Status**: design, not yet implemented. The repository currently contains only the tree-calculus runtime (`src/tree.ts`); the elaborator, surface parser, and kernel predicates are to be built against this spec.
 
-**Scope**: everything from surface syntax through to the closed SKI tree handed off to the tree-calculus runtime. Focuses on the shape of the elaboration universe and its operations; does not re-derive the existing `TREE_NATIVE_TYPE_THEORY.md` predicates, which remain the basis for base-type checking.
+**Scope**: everything from surface syntax through to the closed SKI tree handed off to the tree-calculus runtime. Focuses on the shape of the elaboration universe and its operations; base-type predicates (Bool, Nat, Tree, and user-defined recognizers) are defined in [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) and consumed here unchanged.
 
 **Companion docs**:
-- `TREE_NATIVE_TYPE_THEORY.md` — the type theory this elaborator targets.
-- `DEVELOPMENT_PHILOSOPHY.md` — load-bearing. Every operation specified here has a tree-calculus encoding by construction; host implementations are optimizations of these specs.
-- `NATIVE_TYPE_THEORY_ISSUES.md` — the open problems this design is intended to resolve.
+- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — the type theory this elaborator targets.
+- [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — load-bearing. Every operation specified here has a tree-calculus encoding by construction; host implementations are optimizations of these specs.
 
 ## Two universes
 
@@ -20,7 +19,7 @@ The system operates in two disjoint tree universes, connected by one directed pa
 
 The bridge is `erase : ElabTree → RuntimeTree`, run once after checking succeeds. Runtime trees never carry annotations, binders, or metavariables — they are pure tree-calculus programs.
 
-This separation resolves the core problem in the current system: the checker operating on bracket-abstracted form has to reverse-engineer binder structure from combinators. In the new design the checker sees binders directly, and bracket abstraction happens *after* checking, as a closed-form compilation.
+This separation avoids the failure mode of checking on bracket-abstracted combinators, where the checker has to reverse-engineer binder structure from S/K/Triage nodes and their annotations. Here the checker sees binders directly, and bracket abstraction happens *after* checking, as a closed-form compilation.
 
 ## Types as predicates, dually represented
 
@@ -33,7 +32,7 @@ The semantic claim "a well-typed value satisfies its type's predicate form" hold
 
 **Predicate evaluation during elaboration is rare and localized.** The checker's hot path — type equality, Pi-codomain instantiation, structural checking under binders, meta solving — operates on tagged forms via `normalize` and `fastEq`. Predicates are invoked only at specific boundaries:
 
-1. **`base(P)` boundary checks** — verifying a non-literal value against a base type or refinement predicate falls back to `apply(P, erase(v))`. The same mechanism as the current `checkAgainstType`.
+1. **`base(P)` boundary checks** — verifying a non-literal value against a base type or refinement predicate falls back to `apply(P, erase(v))`.
 2. **Trust assertions / foreign references** — when an opaque tree claims a type without structural proof, the predicate is run to verify.
 3. **Post-erase runtime** — any `apply(type, value)` at runtime is predicate evaluation by definition.
 
@@ -389,9 +388,9 @@ erase(term) :=
       v                                           -- unwrap: v is already runtime-universe
 ```
 
-`bracket_abstract_runtime` is the existing current-system bracket abstraction, unchanged. It takes a level to abstract and a tree with that level as a free variable, produces an SKI tree with that variable eliminated.
+`bracket_abstract_runtime` is standard SKI bracket abstraction: takes a level to abstract and a tree with that level as a free variable, produces an SKI tree with the variable eliminated.
 
-`tree_apply_constructive` is the non-reducing application (current `treeApply` in `tree.ts`) — it builds the tree structure without evaluation.
+`tree_apply_constructive` is non-reducing application (`treeApply` in `src/tree.ts`) — it builds the tree structure without evaluation.
 
 **Key property**: `erase` is called after `check` succeeds. Inputs are fully-typed, all metas solved, all Pi types instantiable. Erase never encounters an unsolved meta on a well-typed program.
 
@@ -441,7 +440,7 @@ The runtime tree is `I` (the structural identity combinator).
 
 **Surface**: `let compose : (A B C : Type) → (B → C) → (A → B) → A → C := λA B C g f x. g (f x)`
 
-This is the case currently blocked by `NATIVE_TYPE_THEORY_ISSUES.md`'s "nested application of parameters." In the new design, it works because the checker sees explicit binders and types, not combinators.
+This case is the stress test for binder visibility: the body nests applications of two different lambda parameters. It works here because the checker sees explicit binders and types, not bracket-abstracted combinators.
 
 **Elaborated type** (after peeling 3 Type binders):
 ```
@@ -478,38 +477,18 @@ After peeling all 6 binders, ctx = [Type, Type, Type, pi(var(1),var(2)), pi(var(
 
 Checker succeeds. The expression is well-typed.
 
-**Why the current system fails here**: after bracket-abstracting all six binders, the combinator tree has S/K/I structure whose type annotations don't fit the template `piCheck` expects — the inner K-ascriptions produced during re-abstraction claim types that don't equal the outer S-node's derived expected type via `fastEq`. The new design never bracket-abstracts during checking. It checks the explicit-binder form, where `var(3)`, `var(4)`, `var(5)` are directly visible with their declared types, and their application structure is exactly `app(var(3), app(var(4), var(5)))`.
-
 **erase** then bracket-abstracts all six binders, producing a closed SKI tree (the actual `compose` combinator). This tree never participates in type-checking, only in runtime evaluation.
-
-## What this design replaces
-
-Relative to current `src/elaborate.ts` and `types.disp`:
-
-| Current | Replaced by |
-|---|---|
-| `sexprToExpr` threading types as metadata | bidirectional `check`/`infer` producing tagged trees |
-| `typedCompileLam` with Pi-peeling + OPAQUE fallback | `check` with expected types flowing through nested lambdas naturally |
-| `piCheck` reconstructing binder structure from SKI | `normalize` + `fastEq` on explicit-binder forms |
-| `sOrAsc` disambiguating ascription / S-node / AppAnn by shape | single tag dispatch in `normalize` |
-| `sCodomain` combinator simulating codomain application | `subst` substituting a value for a variable in a body |
-| `kCheck` constructor-class representative enumeration | direct `check` of the body under an extended ctx with the binder as pending |
-| OPAQUE sentinel for unknown types | metavariables with identity |
-| Allowlist as a trust escape hatch | metas solved by pattern unification; trust mode stays for bootstrap axioms only |
-| `piCheck` growing with each new wire format | one `normalize` clause per new kind tag |
-
-The existing `types.disp` base predicates (Bool, Nat, Tree, triage, ite, fix, natElim, boolElim) are preserved unchanged. The existing `apply` runtime is unchanged. The existing hash-consing invariant is preserved in both universes.
 
 ## Implementation plan
 
 Following DEVELOPMENT_PHILOSOPHY's "tree-program is the spec, host is an optimization" rule:
 
-1. **Write `normalize` as a tree program** in `types.disp` (or a new `elab.disp`). Small, recursive, one clause per kind. Target: testable on hand-built elaboration trees.
-2. **Write the TypeScript mirror** of `normalize` in `src/elaborate.ts`. Same algorithm, faster via host recursion. Used for the actual elaborator. Cross-validate against the tree-program version on every example.
+1. **Write `normalize` as a tree program** (in a new `elab.disp`). Small, recursive, one clause per kind. Target: testable on hand-built elaboration trees.
+2. **Write the TypeScript mirror** of `normalize` in `src/elaborate.ts`. Same algorithm, faster via host recursion. Cross-validate against the tree-program version on every example.
 3. **Write `unify`** as a tree program + TS mirror. Calls `normalize` and `fastEq`.
-4. **Write bidirectional `check`/`infer`** in TypeScript, consuming `SExpr` and producing tagged trees. The semantics are tree-program-portable but the initial implementation is host-side for iteration speed. The tree-program port is a later milestone.
-5. **Write `erase`** in TypeScript — uses existing bracket abstraction.
-6. **Port the test suite**: each currently-failing case in `NATIVE_TYPE_THEORY_ISSUES.md` becomes a test for the new pipeline.
+4. **Write bidirectional `check`/`infer`** in TypeScript, consuming a surface `SExpr` and producing tagged trees. The semantics are tree-program-portable but the initial implementation is host-side for iteration speed. The tree-program port is a later milestone.
+5. **Write `erase`** in TypeScript — reuses standard SKI bracket abstraction.
+6. **Build a test suite** covering the target cases — `id`, `compose`, length-indexed vectors, and the nested-parameter-application patterns (`f (f x)`, `g (f x)`) that motivate the explicit-binder approach.
 7. **Add synthesis hook**: expose the elaborated-tree grammar as a sampling target for neural search. Every partial elaborated tree with metas is a well-formed synthesis state.
 
 Steps 1 and 3 are *preconditions*, not afterthoughts. They are what makes this design tree-native.
@@ -527,15 +506,15 @@ Steps 1 and 3 are *preconditions*, not afterthoughts. They are what makes this d
 
 This design is on track if:
 
-- Every currently-failing case in `NATIVE_TYPE_THEORY_ISSUES.md` passes with the new pipeline.
-- `types.disp` can be re-expressed (or left as-is) without the `sOrAsc`/`sCodomain`/`kCheck` combinator complexity, because `normalize` + `fastEq` handles what those were simulating.
+- Nested parameter applications (`f (f x)`, `compose`, `flip`, inline triages with multiple parameters) type-check directly without requiring escape hatches.
+- The kernel has no combinator-level disambiguation logic — checking is a single tag dispatch in `normalize` plus `fastEq`.
 - Neural synthesis can be pointed at the elaborated-tree grammar as a sampling target, with every sample structurally well-typed by construction.
 - The tree-program `normalize` and `unify` specs run (slowly) on the test suite, matching the TypeScript implementation bit-for-bit.
-- The kernel trust boundary shrinks: the allowlist mechanism is needed only for bootstrap axioms and `fix`-produced recursive definitions, not for every non-trivial typed expression.
+- The trust boundary is small and well-defined: opaque references need a type claim that's verified against the predicate form, but no ad-hoc allowlist is needed for ordinary definitions.
 
 This design is off track if:
 
 - `normalize` grows additional cross-cutting clauses as new features are added. One clause per kind should be the invariant.
 - Host-language features appear in `check`/`infer` semantics that have no tree encoding. Exceptions for control flow, mutation, and host closures are red flags per `DEVELOPMENT_PHILOSOPHY.md`.
 - Metas proliferate uncontrollably (should be bounded by the number of unresolved holes + implicit-argument insertions).
-- The elaboration-universe tree grammar requires ad-hoc disambiguation of shapes (cautionary tale: `sOrAsc`).
+- The elaboration-universe tree grammar requires ad-hoc disambiguation of shapes. Tags exist so the checker never needs to case-split on raw structure; any clause in `normalize` that does so is a signal the tag scheme is incomplete.

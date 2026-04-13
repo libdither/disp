@@ -6,9 +6,8 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 
 - [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — **load-bearing**. The discipline governing what's allowed in the codebase. Every design decision should be compatible; if it isn't, one of them changes, and changing the philosophy is the harder path.
 - [`GOALS.md`](GOALS.md) — the north star (neural-guided synthesis, self-improving optimizer).
-- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — technical spec of the type theory (as currently implemented).
-- [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md) — proposed redesign of the elaboration pipeline: two universes (elab + runtime), tagged forms with explicit binders, `normalize`-based conversion via `fastEq`, metas as ctx entries. **Not yet implemented.** Intended to resolve the blocked cases below.
-- [`NATIVE_TYPE_THEORY_ISSUES.md`](NATIVE_TYPE_THEORY_ISSUES.md) — open issues and blocked cases.
+- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — core idea: trees as S/K/Triage combinators, types as executable predicates, Pi as partially-applied `PiCheck`, hash-cons identity as type equality.
+- [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md) — operational spec: two universes (elab + runtime), tagged forms with explicit binders, `normalize`-based conversion via `fastEq`, metas as ctx entries, `erase` to SKI after checking.
 
 ## Core discipline, in brief
 
@@ -22,19 +21,15 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 
 ## Code layout
 
-- `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets.
-- `src/elaborate.ts` — elaborator (surface → annotated tree → bare tree). Primary iteration site.
-- `src/parse.ts` — tokenizer + recursive-descent parser → `SExpr`.
-- `src/repl.ts`, `src/main.ts` — REPL and entry point.
-- `types.disp` — type predicates and `piCheck`, compiled in bare mode as bootstrap.
-- `prelude.disp` — standard library (Bool, Nat, arithmetic, eliminators).
-- `test/elaborate.test.ts`, `test/typecheck-e2e.test.ts` — vitest suites.
+- `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets. The only source file.
+- `test/tree.test.ts` — vitest suite covering the runtime.
 
-## Current state (as of 2026-04)
+The elaborator, surface parser, REPL, and kernel predicates were deliberately deleted (commit in git history) and are to be rebuilt against `ELABORATION_DESIGN.md`. Do not resurrect the old shapes.
 
-- **Working**: base predicates (Bool, Nat, Tree), non-dependent Pi, simple dependent Pi, REPL, basic end-to-end type checking.
-- **Blocked**: nested parameter applications (`{f x} -> f (f x)`, `compose`, `flip`, inline triages with multiple parameters). See `NATIVE_TYPE_THEORY_ISSUES.md` for the specific pattern.
-- **Direction** (specified in `ELABORATION_DESIGN.md`, not yet implemented): separate elaboration universe (tagged forms with explicit binders, de Bruijn levels, metas) from runtime universe (bracket-abstracted SKI). Checking happens in the elab universe via `normalize` + `fastEq`. `erase` compiles to SKI only after checking passes. The current `types.disp` complexity (`sOrAsc`, `sCodomain`, cross-wire-format disambiguation) is a symptom of trying to make checker input = runtime output.
+## Current state (as of 2026-04-13)
+
+- **Implemented**: tree calculus runtime (hash-consing, eager `apply`, budgets). Nothing else.
+- **Next**: build the elaboration universe per `ELABORATION_DESIGN.md` — `normalize` first (as a tree program, then TS mirror), then `unify`, then `check`/`infer`, then `erase`, then a new surface parser targeting tagged forms.
 
 ## Testing
 
@@ -44,5 +39,4 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 
 - Prefer editing existing files over creating new ones, especially docs. New top-level docs are a design event, not a casual action.
 - When proposing a new feature or fix, explicitly state its object-language encoding, or explicitly note why that's deferred and what's blocking the encoding work.
-- The `piCheck` predicate should stay small. If a fix for a checking issue involves growing `piCheck`, consider whether the elaborator could produce a better-shaped input instead.
 - Hash-consing is a load-bearing property: `fastEq` is O(1) tree identity, and anything that makes equivalent trees have different structure undermines it.

@@ -2,94 +2,31 @@
 
 A dependently-typed programming language built on tree calculus.
 
-Tree calculus is natively reflective — terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp uses a tree-native type system where types and programs are both trees, with type annotations embedded directly into compiled combinators.
+Tree calculus is natively reflective — terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp's goal is a fully self-hosting dependent type system whose checker lives as an inhabitant of the object language, not just as a host-language function.
+
+**Status**: early. The tree-calculus runtime is implemented. The elaborator, surface parser, and kernel are being rebuilt against [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md); prior prototype code was deleted rather than carried forward.
 
 ## Documentation
 
 - [`GOALS.md`](GOALS.md) — the long-term vision (neural-guided synthesis, self-improving optimizer).
-- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — technical spec of the type theory.
-- [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md) — proposed design for the elaboration pipeline (not yet implemented). Targets the open issues below.
+- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — core idea: trees as S/K/Triage combinators, types as executable predicates, Pi as partially-applied `PiCheck`, hash-cons identity as type equality.
+- [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md) — operational spec: two universes (elab + runtime), tagged forms, `normalize` + `fastEq` conversion, metas as ctx entries, `erase` to SKI after checking.
 - [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — the discipline governing how features are added. Load-bearing — read before making design changes.
-- [`NATIVE_TYPE_THEORY_ISSUES.md`](NATIVE_TYPE_THEORY_ISSUES.md) — open issues and acknowledged limitations.
-
-## Quick Start
-
-```shell
-npm install
-npx tsx src/main.ts
-```
-
-This starts the REPL, which auto-loads `prelude.disp` (Bool, Nat, Pair, Either, arithmetic).
-
-```
-> let id : (A : Type) -> A -> A := {A x} -> x
-id : (A : Type) -> A -> A
-
-> not true
-false : Bool
-
-> add 3 4
-7 : Nat
-
-> :type not true
-Bool
-
-> :tree {x} -> x
-(tri (tri t t) t)
-```
 
 ## Running Tests
 
 ```shell
+npm install
 npm test
 ```
 
-## Architecture
+Currently covers the tree-calculus runtime only.
+
+## Current Code
 
 ```
-src/parse.ts       -- Tokenizer + recursive descent parser -> SExpr
-src/elaborate.ts   -- Elaborator: bracket abstraction, typed compilation, type checking
-src/tree.ts        -- Tree calculus runtime: hash-consed trees, eager evaluation
-src/repl.ts        -- Interactive REPL with commands
-src/main.ts        -- Entry point
+src/tree.ts        -- Tree calculus runtime: hash-consed trees, eager apply, budgets
+test/tree.test.ts  -- Runtime tests
 ```
 
-**Pipeline**: Parse (source -> SExpr) -> Elaborate (SExpr -> TypedExpr) -> Compile (TypedExpr -> annotated Tree) -> Check (annotated Tree -> bool)
-
-## Syntax
-
-```
-let name : type := value       -- typed definition
-let rec name : type := value   -- recursive definition
-{x y z} -> body                -- lambda (multi-param sugar)
-(x : A) -> B                   -- dependent function type (Pi)
-A -> B                         -- non-dependent function type
-f x                            -- application
-Type                           -- the universe
-true / false                   -- booleans (tree-encoded)
-0, 1, 2, ...                   -- natural numbers (tree-encoded)
-Tree / Bool / Nat              -- primitive types
-leaf / stem / fork             -- tree constructors
-{x : A, y : B}                 -- record type (Church-encoded)
-<Left : A | Right : B>         -- coproduct type (Church-encoded)
-```
-
-## REPL Commands
-
-- `:type <expr>` / `:t` -- show the type of an expression
-- `:tree <expr>` -- show the compiled tree calculus form
-- `:ctx` -- show the current context
-- `:load <file>` / `:l` -- load declarations from a file
-- `:save <file>` / `:s` -- save declarations to a file
-- `:help` / `:h` -- show help
-- `:quit` / `:q` -- exit
-
-## Design Notes
-
-- **Tree calculus application is eager** — `apply(f, x)` recursively evaluates. Trees are always in normal form.
-- **Type:Type** — inconsistent as logic, fine as a programming language. No universe hierarchy.
-- **Primitive types** — Tree, Bool, Nat are tree-encoded (not Church-encoded). true=leaf, false=stem(leaf), zero=leaf, succ(n)=stem(n).
-- **Annotated trees** — type annotations (D at S nodes) are embedded in the compiled tree. The checker verifies structural typing rules directly.
-- **Bracket abstraction** is optimized: eta reduction, S(K p)(K q) = K(p q), S(K p) I = p.
-
-See `GOALS.md` for the full long-term vision, including neural program synthesis.
+Surface syntax, elaborator, and kernel are not yet (re)implemented.
