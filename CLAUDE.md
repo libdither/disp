@@ -21,15 +21,26 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 
 ## Code layout
 
-- `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets. The only source file.
-- `test/tree.test.ts` — vitest suite covering the runtime.
-
-The elaborator, surface parser, REPL, and kernel predicates were deliberately deleted (commit in git history) and are to be rebuilt against `ELABORATION_DESIGN.md`. Do not resurrect the old shapes.
+- `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets, `FAST_EQ` primitive.
+- `src/parse.ts` — surface tokenizer/parser/bracket-abstraction. Handles `def`, `test`, `\x.`, juxtaposed application, `t` for leaf. Exposes `fast_eq` as a global to disp programs.
+- `src/run.ts` — driver: load `.disp` file, run `test` declarations, assert tree equality.
+- `examples/*.disp` — tree-native programs implementing the elaborator substrate (see ELABORATION_DESIGN.md "Current state" for inventory).
+- `test/tree.test.ts` + `test/disp.test.ts` — vitest suites.
 
 ## Current state (as of 2026-04-13)
 
-- **Implemented**: tree calculus runtime (hash-consing, eager `apply`, budgets). Nothing else.
-- **Next**: build the elaboration universe per `ELABORATION_DESIGN.md` — `normalize` first (as a tree program, then TS mirror), then `unify`, then `check`/`infer`, then `erase`, then a new surface parser targeting tagged forms.
+**Implemented (substrate)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` (Lam-vs-Pi descent + App via infer + H lookup + conversion). Most of these live tree-side in `examples/*.disp`, host-side only does runtime + parser + test harness. 105 tree-native test cases pass.
+
+**Plan**: 3 phases ahead, see `ELABORATION_DESIGN.md` "Plan" section.
+1. **Types-as-predicates kernel** — refactor so `apply(type, value)` IS the check (per `TREE_NATIVE_TYPE_THEORY.md`). `pred_of` derives the predicate form from the tagged form.
+2. **Surface elaborator** — `\(x : T). body` and `(x : T) → R` syntax; auto-compute bind-trees from term structure; `def name : T = e` triggers check.
+3. **Metavariables** — positional canonical metas + Miller-pattern unification.
+
+**Sharp lessons from the substrate** (must respect when extending — see ELABORATION_DESIGN.md for detail):
+- Recursive-call arg order under `wait`/`fix`: inner-binder-derived arg goes first.
+- Strict-branch deferral: wrap each case as `\u. body` and apply after dispatch.
+- `H` wraps its type, not its binder (departure from `BIND_TREE_NBE_IDEA.md` §3.4).
+- Bind-trees are load-bearing data, not decoration — splice trusts them.
 
 ## Testing
 

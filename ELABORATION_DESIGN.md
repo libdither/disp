@@ -1,520 +1,250 @@
 # Elaboration Design
 
-A tree-native architecture for bidirectional elaboration, normalization, conversion, and compilation-to-runtime.
+The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types are predicates) and `BIND_TREE_NBE_IDEA.md` (bind-trees as the binder substrate). This doc tracks the current state of the implementation and the next three phases planned.
 
-**Status**: design, not yet implemented. The repository currently contains only the tree-calculus runtime (`src/tree.ts`); the elaborator, surface parser, and kernel predicates are to be built against this spec.
-
-**Scope**: everything from surface syntax through to the closed SKI tree handed off to the tree-calculus runtime. Focuses on the shape of the elaboration universe and its operations; base-type predicates (Bool, Nat, Tree, and user-defined recognizers) are defined in [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) and consumed here unchanged.
+**Status**: substrate complete (see "Current state"). Phase 1 next.
 
 **Companion docs**:
-- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — the type theory this elaborator targets.
-- [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — load-bearing. Every operation specified here has a tree-calculus encoding by construction; host implementations are optimizations of these specs.
+- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — types are executable predicates; the kernel call is `apply(type, value)`.
+- [`BIND_TREE_NBE_IDEA.md`](BIND_TREE_NBE_IDEA.md) — bind-trees, canonical hypothesis tokens, structural splice. Implemented; see substrate inventory below.
+- [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — load-bearing. Every component participating in well-typedness must have a tree-calculus encoding before host shortcuts.
 
-## Two universes
+---
 
-The system operates in two disjoint tree universes, connected by one directed pass.
+## Current state (as of 2026-04-13)
 
-- **Elaboration universe.** Tagged trees carrying binders, annotations, metavariables. Manipulated by `normalize`, `unify`, `check`, `infer`. Never executed by tree-calculus `apply`.
-- **Runtime universe.** Closed, bracket-abstracted SKI trees. Manipulated by `apply`. The target of compilation.
+### Substrate (built, in `examples/*.disp`)
 
-The bridge is `erase : ElabTree → RuntimeTree`, run once after checking succeeds. Runtime trees never carry annotations, binders, or metavariables — they are pure tree-calculus programs.
-
-This separation avoids the failure mode of checking on bracket-abstracted combinators, where the checker has to reverse-engineer binder structure from S/K/Triage nodes and their annotations. Here the checker sees binders directly, and bracket abstraction happens *after* checking, as a closed-form compilation.
-
-## Types as predicates, dually represented
-
-`TREE_NATIVE_TYPE_THEORY.md`'s core claim — that types are tree programs that recognize values — is preserved. The refinement introduced by two universes is that types wear different clothes in each:
-
-- **Base types** (`Bool`, `Nat`, `Tree`, and any user-defined recognizer) remain tree programs throughout. In the elaboration universe they appear wrapped as `base(P)` where `P` is the predicate tree. In the runtime universe they are just `P`.
-- **Compound types** (`Pi`, eventually `Sigma`, `Eq`, etc.) have two representations: a tagged structural form during elaboration (`pi(A, body)`), and a predicate form at runtime produced by `erase` (via the existing `piPred` construction from `TREE_NATIVE_TYPE_THEORY.md`). Both describe the same acceptance set; the structural form is ergonomic for the checker, the predicate form is canonical for runtime and synthesis.
-
-The semantic claim "a well-typed value satisfies its type's predicate form" holds in both directions: post-erase types are predicates and satisfied by the erased values; pre-erase tagged types are structurally checked via `normalize` + `fastEq`, which is provably equivalent to predicate satisfaction on the erased forms.
-
-**Predicate evaluation during elaboration is rare and localized.** The checker's hot path — type equality, Pi-codomain instantiation, structural checking under binders, meta solving — operates on tagged forms via `normalize` and `fastEq`. Predicates are invoked only at specific boundaries:
-
-1. **`base(P)` boundary checks** — verifying a non-literal value against a base type or refinement predicate falls back to `apply(P, erase(v))`.
-2. **Trust assertions / foreign references** — when an opaque tree claims a type without structural proof, the predicate is run to verify.
-3. **Post-erase runtime** — any `apply(type, value)` at runtime is predicate evaluation by definition.
-
-This is a deliberate optimization of the existing design, not a retreat from it. Predicates are arbitrary tree programs with potentially unbounded `fix`-recursion; pushing their evaluation to well-defined boundaries keeps the checker's hot path in O(1) `fastEq` and linear-in-size `normalize` territory. The predicate view reasserts itself where it is load-bearing: at runtime, and as the specification target for neural synthesis.
-
-**For synthesis**: the predicate form is the target. A neural model searches for trees `t` satisfying `apply(erased_type, t) = true`. The tagged form of the type exists during elaboration only; synthesis operates on erased predicates. This preserves `GOALS.md`'s framing of types as the specification handed to the optimizer.
-
-## Tag encoding
-
-Every tree in the elaboration universe is a tagged form. A tag has the shape:
-
-```
-tagged(kind, payload)  :=  fork(fork(TAG_ROOT, kind), payload)
-```
-
-where `TAG_ROOT` is a reserved tree shape used to identify "this is an elaboration-universe tree, not a raw value," and `kind` is a small distinct tree identifying which construct this node represents.
-
-**TAG_ROOT** is any fixed tree the elaborator commits to. A concrete choice (to be adopted):
-
-```
-TAG_ROOT := stem(stem(stem(stem(stem(leaf)))))
-```
-
-Any tree starting with `fork(fork(TAG_ROOT, _), _)` is a tagged form. Any other tree appearing in the elaboration universe is a protocol error (the elaborator never emits bare trees).
-
-**Kinds** (distinct shapes, no encoding overlap):
-
-| Kind | Shape | Construct |
+| Layer | Status | File(s) |
 |---|---|---|
-| `KIND_VAR` | `leaf` | variable reference |
-| `KIND_LAM` | `stem(leaf)` | lambda abstraction |
-| `KIND_APP` | `stem(stem(leaf))` | application |
-| `KIND_PI` | `stem(stem(stem(leaf)))` | Pi type |
-| `KIND_ANNOT` | `fork(leaf, leaf)` | type ascription |
-| `KIND_META` | `fork(leaf, stem(leaf))` | metavariable reference |
-| `KIND_BASE` | `fork(leaf, stem(stem(leaf)))` | embedded runtime value |
+| Tree-calc runtime: hash-cons, eager `apply`, budgets, `FAST_EQ` | Done (host) | `src/tree.ts` |
+| Surface parser: `def`, `\x.`, juxtaposed app, `t` for leaf, `test = ` | Done (host) | `src/parse.ts` |
+| Recursion via lambada's `wait`+`fix` | Tree-native | `recursion.disp` |
+| Tagged forms: V, H, App, Lam, Pi (kind tags KV/KH/KA/KL/KP) | Tree-native | `tagged.disp`, `normalize.disp`, `picheck.disp` |
+| Bind-trees: BE, BN, BApp, BLam, BPi (KBA/KBL/KBP) | Tree-native | `splice_full.disp` |
+| `splice` (term × bind-tree × value → term), full dispatch | Tree-native | `splice_full.disp` |
+| `normalize` (full β to fixed point, reduces under binders) | Tree-native | `normalize.disp` |
+| `infer` (H → annotation; App → splice piCodom of recursively-inferred head) | Tree-native | `checking.disp` |
+| `check` (Lam vs Pi descent + App via infer + H lookup + conversion fallback) | Tree-native | `checking.disp` |
 
-Further constructs (`Sigma`, `Eq`, pattern-match, inductive constructors) add new kinds without disturbing existing ones.
+105 tree-native test cases pass across 11 example files. The host-side TS only handles the runtime, the parser, and the test driver — every checker-relevant operation is a tree program.
 
-**Forms**:
+### Sharp lessons earned (must respect when extending)
 
-| Form | Encoding |
-|---|---|
-| `var(ℓ)` | `tagged(KIND_VAR, nat(ℓ))` where `nat` is the unary-stem encoding |
-| `lam(A, body)` | `tagged(KIND_LAM, fork(A, body))` |
-| `app(f, x)` | `tagged(KIND_APP, fork(f, x))` |
-| `pi(A, body)` | `tagged(KIND_PI, fork(A, body))` |
-| `annot(T, v)` | `tagged(KIND_ANNOT, fork(T, v))` |
-| `meta(α)` | `tagged(KIND_META, nat(α))` |
-| `base(v)` | `tagged(KIND_BASE, v)` |
+1. **Recursive-call arg order under `wait`/`fix`.** `rec X Y Z` is safe iff `X` is bound by a lambda *inside* the recursive function. If `X` derives from an outer binder, fix-expansion at compile time eagerly fires `wait` and diverges. Workaround: reorder so the inner-derived arg comes first. See `splice.disp` header.
 
-**Conventions**:
-- Variable ids (`ℓ`) are de Bruijn **levels**: `ℓ = 0` is the outermost binder. Levels are stable under context extension; hash-consing gives alpha-equivalence on closed forms automatically.
-- `lam(A, body)` does not carry a name; the bound variable is referred to by `var(length(ctx))` inside `body`.
-- `pi(A, body)` likewise: no name, body references the binder at its depth.
-- `base(v)` is the only place a raw runtime tree appears inside an elaboration tree.
+2. **Strict branch evaluation.** `triage` evaluates every branch — including the unselected one. To prevent eager `rec` in unselected branches, wrap each branch as `\u. body` and apply *after* dispatch picks one. See `normalize.disp` and `checking.disp`.
 
-## Context
+3. **`H` wraps its type, not its binder.** `BIND_TREE_NBE_IDEA.md` §3.4 has H wrap a binder with `type_of_H` digging four layers; we changed to `mkH ty := tagged(KH, ty)` and `type_of_H := payload`. App-of-H typing needs the type directly; this is the cleaner contract.
 
-A context `ctx` is a snoc-list of entries:
+4. **Bind-trees are load-bearing.** They aren't decoration; `splice` trusts them. A bind-tree that lies about V positions silently corrupts results (we hit this writing test fixtures). The elaborator must compute them from term structure.
 
-```
-ctx  :=  leaf
-      |  fork(ctx_prev, entry)
-```
+### What's deliberately not yet built
 
-Entries are tagged. Two kinds:
+- **Predicate form of types.** `mkPi A B C` is currently inert tagged data; `check` is the predicate that takes a type as an argument. This contradicts `TREE_NATIVE_TYPE_THEORY.md`'s framing where the type *is* the predicate. Phase 1 fixes this.
+- **Surface elaborator.** No `\(x : T). body` syntax, no `(x : T) → R`, no auto-computed bind-trees. Programs are hand-constructed via `mkLam`/`mkPi`/`mkApp`. Phase 2 builds the elaborator.
+- **Metas / unification.** No `_` holes, no implicit args, no inference of omitted types. Phase 3.
+- **Type universe.** No `Type` kind. We're Type:Type and using stand-in atoms (`TyA`, `TyB`); a Type predicate is a one-line addition once we have the kernel form.
 
-```
-entry_binder(A)      :=  fork(ENTRY_BINDER, A)       -- binder: pending, type A
-entry_meta(α, T, s?) :=  fork(ENTRY_META,
-                           fork(nat(α), fork(T, solution)))
-```
+---
 
-where `solution` is either `UNSOLVED` (a sentinel like `leaf`) or `fork(SOLVED, term)`.
+## Plan: three phases
 
-`ENTRY_BINDER` and `ENTRY_META` are distinct tag shapes (e.g., `leaf` and `stem(leaf)`).
+### Phase 1 — Types-as-predicates kernel
 
-**Operations**:
+**Goal**: `check term ty` becomes (semantically) `apply(ty, term)`. A type is a callable predicate that returns TT (`leaf`) or FF (`stem(leaf)`).
 
-- `empty := leaf`
-- `extend(ctx, entry) := fork(ctx, entry)`
-- `length(ctx)`: recursive walk, counts entries. Result is a Nat. The current level is `length(ctx)` — i.e., the level the next extension will occupy.
-- `lookup(ctx, ℓ)`: walk left `length(ctx) - 1 - ℓ` times, take right. Returns the entry at level ℓ. O(depth − ℓ). Adequate for realistic contexts.
+**Why first**: the elaborator's *output target* depends on this. If we elaborate first against tagged-Pi-as-data and then refactor, every emit-site changes. Refactoring the kernel first locks the contract.
 
-**Binder entries** do not carry values — the value of a bound variable during normalization is always the neutral `var(ℓ)` (a tagged stuck form). The entry's purpose is to carry the *type*.
+**Two representations, one source of truth**
 
-**Meta entries** carry type and possibly-solution. Updating a meta is a context operation: walk to the entry, replace its solution field, rebuild the tail.
-
-**Important**: the context is one structure, unifying what conventional elaborators split into "local context" and "metatable." Both kinds of entries live in the same list, distinguished by tag.
-
-## normalize
-
-The core operation. Takes an elaboration-universe term and a context; produces a normal-form elaboration-universe term.
+The bind-tree substrate stays useful — `splice`, structural `fastEq`, accessors. We don't throw it away. We *add* a predicate form derived from it.
 
 ```
-normalize : ElabTree × Ctx → ElabTree
+mkPi A B codom            — tagged form: tagged(KP, fork(fork(A, B), codom)). For splice, fastEq, structural read.
+pred_of (mkPi A B codom)  — closed predicate: \candidate. piCheck A B codom candidate.
 ```
 
-**Definition** (tree-program pseudocode):
+`pred_of` is one-way. The tagged form is canonical (it's what fastEq compares). The predicate form is derived for invocation. Synthesis targets the predicate form (per `GOALS.md`); the elaborator manipulates the tagged form.
+
+**`piCheck` shape**
 
 ```
-normalize(term, ctx) :=
-  dispatch on (kind of term):
-
-    KIND_VAR(ℓ):
-      -- look up in ctx
-      entry = lookup(ctx, ℓ)
-      case entry of:
-        entry_binder(_):
-          term                                 -- stays as a neutral
-        entry_meta(_, _, UNSOLVED):
-          term                                 -- shouldn't happen at KIND_VAR, only at KIND_META
-        entry_meta(_, _, SOLVED(t)):
-          normalize(t, ctx)                    -- substitute solution
-
-    KIND_META(α):
-      entry = lookup(ctx, α)
-      case entry.solution of:
-        UNSOLVED: term                          -- stays as a neutral
-        SOLVED(t): normalize(t, ctx)
-
-    KIND_LAM(A, body):
-      A' = normalize(A, ctx)
-      ctx' = extend(ctx, entry_binder(A'))
-      body' = normalize(body, ctx')
-      lam(A', body')
-
-    KIND_PI(A, body):
-      A' = normalize(A, ctx)
-      ctx' = extend(ctx, entry_binder(A'))
-      body' = normalize(body, ctx')
-      pi(A', body')
-
-    KIND_APP(f, x):
-      f' = normalize(f, ctx)
-      x' = normalize(x, ctx)
-      normalize_app(f', x', ctx)
-
-    KIND_ANNOT(T, v):
-      T' = normalize(T, ctx)
-      v' = normalize(v, ctx)
-      annot(T', v')
-
-    KIND_BASE(v):
-      term                                      -- already terminal
+piCheck A B codom candidate :=
+  if (is_lam candidate):
+    and (fastEq A (lamA candidate))
+        (let H = mkH A in
+         let body' = splice (lamBody candidate) (lamB candidate) H in
+         let codom' = splice codom B H in
+         check body' codom')          -- equivalently: (pred_of codom') body'
+  else if (is_app candidate):
+    -- can't dispatch on App as a "canonical inhabitant" of Pi; defer to infer
+    fastEq (normalize (infer candidate)) (normalize (mkPi A B codom))
+  else if (is_h candidate):
+    -- candidate's annotation must equal the Pi
+    fastEq (normalize (type_of_H candidate)) (normalize (mkPi A B codom))
+  else: FF
 ```
 
+This duplicates the current `check`'s dispatch but baked into Pi. Once Pi is callable, `check term ty := apply (pred_of ty) term`. The external `check` shrinks to a one-line dispatcher (or disappears).
+
+**Atomic types as predicates**
+
+For each atomic type T (currently `TyA`, `TyB`, `TyC`):
 ```
-normalize_app(f, x, ctx) :=
-  if f is lam(A, body):                        -- β-redex
-    body' = subst(body, length-at-f's-binding-depth, x)
-    normalize(body', ctx)
-  else:
-    app(f, x)                                   -- stuck application
-
-subst(term, ℓ, v) :=                            -- replace var(ℓ) with v in term
-  dispatch on (kind of term):
-    KIND_VAR(ℓ'):     if ℓ == ℓ' then v else term
-    KIND_LAM(A, b):   lam(subst(A, ℓ, v), subst(b, ℓ, v))
-    KIND_PI(A, b):    pi(subst(A, ℓ, v), subst(b, ℓ, v))
-    KIND_APP(f, x):   app(subst(f, ℓ, v), subst(x, ℓ, v))
-    KIND_ANNOT(T, w): annot(subst(T, ℓ, v), subst(w, ℓ, v))
-    KIND_META(α):     term                      -- metas don't mention vars directly
-    KIND_BASE(v):     term
+mkAtom id := \candidate. (is_h candidate) && fastEq id (type_of_H candidate)
 ```
+i.e., an atom's predicate accepts H tokens whose annotation is itself.
 
-**Properties**:
+**Synthesis hook (forward-looking, not Phase 1)**: post-erase, the predicate form is what neural search optimizes against. Phase 1 produces the predicate; Phase 2's elaborator emits both forms; an `erase` pass (not Phase 1) strips the tagged scaffolding to leave only the predicate.
 
-1. **Terminates** on well-typed terms in a terminating type theory. With `fix`, terminates under an evaluation budget (as already used in tree-calc `apply`).
-2. **Idempotent**: `normalize(normalize(t, ctx), ctx) = normalize(t, ctx)` (up to hash-cons identity).
-3. **Canonical**: if `t ≡ u` definitionally under `ctx`, then `fastEq(normalize(t, ctx), normalize(u, ctx))`.
-4. **Terminal forms**: after normalization, applications occur only as stuck spines with a variable or unsolved meta at the head; β-redexes never appear.
+**Deliverables**:
+- `examples/predicates.disp`: `pred_of_pi`, `pred_of_atom`, tests covering TT/FF cases for Lam/App/H candidates against various Pis.
+- Refactor `check` to invoke `pred_of`. Keep the structural accessors for splicing/normalization.
+- All 105 existing tests still pass through the new path.
 
-Property 3 is the load-bearing one. It's what makes `fastEq` a complete conversion check on normal forms, eliminating the need for a separate `conv` function.
+**Open question, deferred**: how does the predicate form handle dependent types where the codom is an arbitrary computation? For now, assume codom is a tagged form spliced with the candidate's relevant value; this is what bind-trees + splice already give us. If we hit a case that needs higher-order codom-functions, revisit.
 
-**De Bruijn caveat.** Using *levels* (not indices) means `var(ℓ)` has a stable global meaning. Substituting `v` for `var(ℓ)` does not require renaming other variables. If `v` itself contains free variables, their levels refer to whatever binders currently enclose — the caller is responsible for ensuring scopes align. In practice, `subst` is only called during β-reduction where `v` was elaborated under the same context spine that contains the binder being substituted out, so this works out.
+---
 
-## unify
+### Phase 2 — Surface elaborator
 
-Unification is conversion plus meta-solving. Both sides normalize first; if the resulting trees are hash-cons identical, success. Otherwise, try pattern-fragment meta solving. Otherwise, fail.
+**Goal**: write programs in surface syntax with explicit type annotations; the elaborator emits tagged forms with computed bind-trees and runs the kernel from Phase 1 to check.
 
+**Surface additions** (extends `src/parse.ts`):
+- `\(x : T). body` — annotated lambda.
+- `(x : T) → R` — Pi type with named binder.
+- `A -> B` — non-dependent arrow (sugar for `(_ : A) → B`).
+- `def name : T = e` — definition with declared type. Triggers a check.
+- `Type` — universe (placeholder; for now `Type := mkAtom Type_id` and `Type : Type`).
+
+**Elaboration pass** (new `src/elaborate.ts`, mirroring a future tree-program version):
 ```
-unify : ElabTree × ElabTree × Ctx → Ok(Ctx) | Fail
+elab : SExpr × Env → (TaggedTerm, TaggedType)
 
-unify(t1, t2, ctx) :=
-  n1 = normalize(t1, ctx)
-  n2 = normalize(t2, ctx)
-  if fastEq(n1, n2):
-    return Ok(ctx)
-  case (head-kind n1, head-kind n2):
-    (META-spine α spine, _):
-      try_solve(α, spine, n2, ctx)
-    (_, META-spine α spine):
-      try_solve(α, spine, n1, ctx)
-    (PI A1 body1, PI A2 body2):
-      ctx1 = unify(A1, A2, ctx)
-      -- compare bodies under an extended ctx
-      ctx2 = extend(ctx1, entry_binder(A1))
-      unify(body1, body2, ctx2)
-    (LAM A1 body1, LAM A2 body2):
-      -- η-free comparison: α-normal forms must match structurally
-      ctx1 = unify(A1, A2, ctx)
-      ctx2 = extend(ctx1, entry_binder(A1))
-      unify(body1, body2, ctx2)
-    (APP-spine h1 spine1, APP-spine h2 spine2):
-      if not fastEq(h1, h2): return Fail
-      if length(spine1) != length(spine2): return Fail
-      fold-unify over zip(spine1, spine2)
-    _:
-      Fail
+elab(\(x:T). body, env):
+  T'           = elab T (expecting Type)
+  body', body_type = elab body (env extended with x:T')
+  bindtree     = compute_bind body' x
+  bindtree_T   = compute_bind body_type x          -- for the Pi codom
+  ( mkLam T' bindtree body',
+    mkPi  T' bindtree_T body_type )
+
+elab((x:T) → R, env):
+  T' = elab T
+  R', _ = elab R (env extended)
+  bindtree = compute_bind R' x
+  ( mkPi T' bindtree R', Type )
+
+elab(f x, env):
+  f', f_type = elab f
+  x', x_type = elab x
+  -- check f_type is a Pi; check x_type matches piA; result type = splice piCodom
+  ...
+
+elab(name, env):
+  lookup name in env (locals first, then globals)
 ```
 
-**try_solve** (Miller pattern fragment):
-
+**Bind-tree computation**:
 ```
-try_solve(α, spine, rhs, ctx) :=
-  -- spine is the args the meta was applied to
-  -- pattern: all spine elements must be distinct variables
-  if not all_are_distinct_vars(spine): return Fail
-  -- occurs check
-  if meta α appears in rhs: return Fail
-  -- scope check: free vars of rhs must be a subset of spine
-  if not free_vars(rhs) ⊆ vars_of(spine): return Fail
-  -- solve: abstract rhs over spine
-  solution = bracket_abstract_elab(spine, rhs)
-  ctx' = update_meta(α, solution, ctx)
-  Ok(ctx')
+compute_bind term varName :=
+  case term of:
+    V matching varName       → BE
+    no occurrence of varName → BN
+    App(f, x)                → if either has var, mkBApp (compute_bind f) (compute_bind x); else BN
+    Lam(A, _, body)          → similarly mkBLam (compute_bind A) (compute_bind body); else BN
+    Pi(A, _, codom)          → mkBPi (compute_bind A) (compute_bind codom); else BN
+    other                    → BN
 ```
 
-`bracket_abstract_elab` is bracket abstraction *in the elaboration universe* — it produces a tagged `lam`-form, not a SKI tree. It's a different function from the runtime-universe bracket abstraction used by `erase`. Straightforward recursive definition:
+Implemented host-side initially per philosophy rule 2 (mirror, with planned tree-program port).
 
+**Top-level pipeline** (extends current `runFile`):
+1. Parse `def name : T = e`.
+2. `elab T` against `Type` → `T_tagged`.
+3. `elab e` in env → `(e_tagged, e_type)`.
+4. `check e_tagged T_tagged` (which now invokes `pred_of T_tagged` per Phase 1).
+5. If pass: register `name → (e_tagged, T_tagged)` in globals.
+6. If fail: report mismatch.
+
+**Deliverables**:
+- `src/elaborate.ts` with `elab`, `compute_bind`, `extend_env`.
+- Parser extensions (`src/parse.ts`) for the new surface forms.
+- `examples/programs.disp` rewriting `id`, K, KI, simple App-of-H programs in surface syntax. Each program gets `def name : T = e` form; elaboration produces tagged forms; kernel checks.
+- Cross-validation: the tagged forms produced by elaboration must structurally match what `examples/typing.disp`/`checking.disp` hand-construct.
+
+**Limit**: with no metas, every binder needs an explicit type. `\x. body` with no annotation is rejected (Phase 3 lifts this).
+
+---
+
+### Phase 3 — Metavariables and unification
+
+**Goal**: support `_` holes in surface syntax, implicit args, and bidirectional inference of omitted types via Miller-pattern unification.
+
+This is the genuinely hard phase. The conceptual obstacle (called out earlier): tree calculus has no fresh-name source. Two viable encodings:
+
+**Option A — Positional canonical metas** (recommended)
+- A meta is identified by a tree-encoded *path* into the elaboration state.
+- The elaboration state mirrors the program structure: at every `_` in surface, a meta entry exists at the corresponding position.
+- `mkMeta path := tagged(KM, path)`.
+- `lookup_meta state path → Solved t | Unsolved`.
+- `solve_meta state path t → state'` (structural rebuild; hash-consing makes this cheap).
+- No counter, no fresh-name source. Two metas at the same position would collide; in practice they can't (the program tree has unique positions).
+
+**Option B — Counter via threaded state**
+- Threads an integer (Nat-encoded tree) through every elaboration call.
+- More flexible (metas can be relocated, duplicated) but the state-passing burden is on every operation.
+
+Recommend A. Less power but kernel stays simple, no metatheory creep.
+
+**Components**:
+1. `KM` kind tag; `mkMeta`, `lookup_meta`, `solve_meta` tree-side.
+2. Extend `normalize`: solved meta → expand and re-normalize; unsolved → stuck.
+3. Extend `infer`: `infer (Meta α) := lookup_meta state α → if Solved t then infer t else type-of-meta-entry`.
+4. Extend `check`: at a hole `_`, allocate a meta with the expected type.
+5. `unify t1 t2`: try `fastEq` after normalize; on miss, try Miller pattern fragment (one side is a meta-applied-to-distinct-vars, with occurs check + scope check).
+6. Elaborator hook: `_` in surface → `mkMeta (current_position)`; bidirectional check fills it.
+
+**Trace example to design against**:
 ```
-bracket_abstract_elab(var_level, term) :=
-  -- produce lam(A, term') where term' has var(var_level) replaced by var(new_level)
-  -- A is the type of the abstracted variable, retrieved from ctx
+def id : (A : _) → A → A = \(A : _). \(x : A). x
 ```
+The `_`s become metas. Elaborator allocates `?1` and `?2` (positions). Checking the body `x` against the codom `A` succeeds via H-lookup; checking the surface `\(x : A). x` against the inferred Pi shape constrains `?1 = Type`, `?2 = Type`. Final elaborated form is the same as hand-constructed `id`.
 
-**`unify` never diverges** as long as `normalize` terminates. Each recursive call reduces the structure of one or both sides.
+**Deliverables**:
+- Tree-side: meta encoding, lookup/solve, normalize extension, unify with pattern fragment.
+- Host-side: elaborator extensions for `_`, implicit-arg insertion.
+- `examples/metas.disp` exercising solved/unsolved metas, occurs check, scope check, the polymorphic `id` example end-to-end.
 
-## Bidirectional check and infer
+---
 
-Standard bidirectional elaboration, adapted to tagged forms.
+## Implementation order and gates
 
-```
-check : Ctx × SExpr × ElabTree → ElabTree
-infer : Ctx × SExpr → (ElabTree, ElabTree)     -- (term, type)
-```
+Phase 1 → Phase 2 → Phase 3, sequentially. Within each phase:
 
-**check cases**:
+1. **Tree-program first** (per philosophy rule 1). New operations land in `examples/*.disp`.
+2. **Host mirror** in TS for speed (per rule 2). Each TS function has a tree-program counterpart.
+3. **Cross-validation** in tests (per rule 4). The tree-program version is canonical; if host disagrees, host is wrong.
 
-```
-check(ctx, slam(body), pi(A, codom)):
-  -- expected Pi-type: enter the lambda, check body against codomain
-  ctx' = extend(ctx, entry_binder(A))
-  body_type = normalize(codom, ctx')
-  body' = check(ctx', body, body_type)
-  lam(A, body')
+### Gates
 
-check(ctx, shole, T):
-  -- user wrote _: insert a fresh meta applied to the local scope
-  α = fresh_meta_id()
-  update_ctx(ctx, add entry_meta(α, abstracted(T, ctx), UNSOLVED))
-  meta_applied_to_spine(α, ctx)
+- **End of Phase 1**: `(pred_of (mkPi A B C)) (mkLam A B body)` returns TT iff the structural check would have. All current 105 tests still pass through the predicate form. `pred_of_atom` works on atomic types.
+- **End of Phase 2**: hand-written examples in `typing.disp`/`checking.disp` are reproducible from surface syntax in `examples/programs.disp`. Elaborator output equals hand-constructed reference (hash-cons identity).
+- **End of Phase 3**: polymorphic `id` typeable from surface; one-meta and two-meta unification cases pass; the dependent `(x : A) → x` example works with `_` for `A`.
 
-check(ctx, e, T):
-  -- fallback: infer, then unify
-  (e', T') = infer(ctx, e)
-  ctx' = unify(T, T', ctx)    -- may solve metas in ctx
-  e'
-```
+### Stopping rules
 
-**infer cases**:
+- Any phase that requires a host feature with no declared tree-encoding triggers a redesign or a memo to `DEVELOPMENT_PHILOSOPHY.md` (not silent acceptance).
+- Any phase whose tree-program version exceeds the host version's expressive power signals the host has drifted; reconcile before proceeding.
+- The kernel size (tree representing the predicate kernel) should stabilize after Phase 1 and not grow through Phases 2-3. If it does, something belongs in the elaborator instead.
 
-```
-infer(ctx, svar(name)):
-  -- resolve to a level, produce var(ℓ) and read its type from ctx
-  ℓ = resolve_name(ctx, name)
-  entry = lookup(ctx, ℓ)
-  type = entry.type
-  (var(ℓ), type)
+---
 
-infer(ctx, sapp(f, x)):
-  (f', fT) = infer(ctx, f)
-  fT_norm = normalize(fT, ctx)
-  case fT_norm of:
-    pi(A, codom):
-      x' = check(ctx, x, A)
-      result_type = normalize(subst(codom, current_level, x'), ctx)
-      (app(f', x'), result_type)
-    meta_stuck α spine:
-      -- force the meta to be a Pi: allocate two fresh metas for domain and codomain
-      A_meta = fresh_meta_type(ctx)
-      codom_meta = fresh_meta_type(ctx ++ [A_meta])
-      unify(fT, pi(A_meta, codom_meta), ctx)
-      x' = check(ctx, x, A_meta)
-      result_type = normalize(subst(codom_meta, current_level, x'), ctx)
-      (app(f', x'), result_type)
-    _:
-      Error "applied a non-function"
+## Open questions (for later)
 
-infer(ctx, spi(x_name, A, B)):
-  A' = check(ctx, A, Type)
-  ctx' = extend(ctx, entry_binder(A'))
-  B' = check(ctx', B, Type)
-  (pi(A', B'), Type)
-
-infer(ctx, stype):
-  (base(LEAF), base(LEAF))         -- Type : Type in our setting
-
-infer(ctx, sannot(e, T)):
-  T' = check(ctx, T, Type)
-  e' = check(ctx, e, T')
-  (annot(T', e'), T')
-
-infer(ctx, slam(body)):
-  -- no expected type: create metas for domain and codomain, check body
-  A_meta = fresh_meta_type(ctx)
-  ctx' = extend(ctx, entry_binder(A_meta))
-  (body', B) = infer(ctx', body)
-  (lam(A_meta, body'), pi(A_meta, B))
-```
-
-**Note on `slam` with no expected type**: the domain type becomes a meta and gets solved when the lambda is applied. Kovacs-style.
-
-## erase
-
-Compile an elaboration-universe tree to a closed runtime-universe SKI tree.
-
-```
-erase : ElabTree → RuntimeTree
-```
-
-```
-erase(term) :=
-  dispatch on kind:
-    KIND_VAR(ℓ):
-      error "erase encountered free variable"     -- expected closed input
-    KIND_META(α):
-      case meta α's solution of:
-        SOLVED(t): erase(t)
-        UNSOLVED: error "erase encountered unsolved meta"
-    KIND_LAM(A, body):
-      bracket_abstract_runtime(level_of_this_binder, erase(body))
-    KIND_APP(f, x):
-      tree_apply_constructive(erase(f), erase(x))
-    KIND_PI(A, body):
-      -- type becomes a predicate tree via piPred mechanism from TREE_NATIVE_TYPE_THEORY.md
-      apply(apply(piPred_tree, erase(A)), bracket_abstract_runtime(level, erase(body)))
-    KIND_ANNOT(T, v):
-      erase(v)                                    -- annotations drop at erase time
-    KIND_BASE(v):
-      v                                           -- unwrap: v is already runtime-universe
-```
-
-`bracket_abstract_runtime` is standard SKI bracket abstraction: takes a level to abstract and a tree with that level as a free variable, produces an SKI tree with the variable eliminated.
-
-`tree_apply_constructive` is non-reducing application (`treeApply` in `src/tree.ts`) — it builds the tree structure without evaluation.
-
-**Key property**: `erase` is called after `check` succeeds. Inputs are fully-typed, all metas solved, all Pi types instantiable. Erase never encounters an unsolved meta on a well-typed program.
-
-## Two traced examples
-
-### Example 1: `id`
-
-**Surface**: `let id : (A : Type) → A → A := λA. λx. x`
-
-**Elaborated type**:
-```
-pi(base(LEAF),                    -- A : Type
-   pi(var(0),                     -- (x : A)
-      var(0)))                    -- result A
-```
-
-Levels: A is level 0; the inner pi introduces x at level 1; the result type references level 0 (A).
-
-**Elaborated value** (after check):
-```
-lam(base(LEAF),                   -- λA.
-    lam(var(0),                   -- λx:A.
-        var(1)))                  -- x
-```
-
-A is level 0; x is level 1; the body references level 1 (x).
-
-**check trace**:
-1. `check(∅, λA.λx.x, pi(Type, pi(var(0), var(0))))`
-2. Peel outer: ctx = [binder Type]; check `λx.x` against `pi(var(0), var(0))` (codomain, normalized under ctx)
-3. Peel inner: ctx = [binder Type, binder var(0)]; check `x` against `var(0)` (codomain)
-4. `infer(ctx, x)` → resolve name `x` → level 1 → type is entry[1].type = var(0). Returns `(var(1), var(0))`.
-5. `unify(var(0), var(0), ctx)` → normalize both sides: both are var(0) (binder entries are pending, stay as neutrals). `fastEq` succeeds. ✓
-6. Build up: returns `lam(Type, lam(var(0), var(1)))`.
-
-**erase trace**:
-```
-erase(lam(Type, lam(var(0), var(1))))
-  = bracket_abstract_runtime(0, erase(lam(var(0), var(1))))
-  = bracket_abstract_runtime(0, bracket_abstract_runtime(1, erase(var(1))))
-  = ... → I  (after bracket-abstraction optimizations on an identity body)
-```
-
-The runtime tree is `I` (the structural identity combinator).
-
-### Example 2: `compose`
-
-**Surface**: `let compose : (A B C : Type) → (B → C) → (A → B) → A → C := λA B C g f x. g (f x)`
-
-This case is the stress test for binder visibility: the body nests applications of two different lambda parameters. It works here because the checker sees explicit binders and types, not bracket-abstracted combinators.
-
-**Elaborated type** (after peeling 3 Type binders):
-```
-pi(Type, pi(Type, pi(Type,
-  pi(pi(var(1), var(2)),              -- B → C
-    pi(pi(var(0), var(1)),            -- A → B
-      pi(var(0), var(2)))))))         -- A → C
-```
-
-Levels: A=0, B=1, C=2, g=3, f=4, x=5.
-
-**check trace on the body**:
-
-After peeling all 6 binders, ctx = [Type, Type, Type, pi(var(1),var(2)), pi(var(0),var(1)), var(0)], and we must check `g (f x)` against `var(2)` (= C).
-
-1. `infer(ctx, g (f x))`:
-   - `infer(ctx, g)`: resolve g → level 3 → type `pi(var(1), var(2))`. Normalized: `pi(var(1), var(2))`.
-   - Applied, so expect a Pi. Domain is `var(1)`.
-   - `check(ctx, f x, var(1))`:
-     - `infer(ctx, f x)`:
-       - `infer(ctx, f)`: resolve f → level 4 → type `pi(var(0), var(1))`.
-       - Applied. Domain `var(0)`.
-       - `check(ctx, x, var(0))`:
-         - `infer(ctx, x)` → var(5), type var(0).
-         - `unify(var(0), var(0), ctx)` → fastEq. ✓
-         - Return var(5).
-       - Build `app(var(4), var(5))`. Codomain `var(1)`, no dependency on the bound var. Normalize → var(1).
-       - Return `(app(var(4), var(5)), var(1))`.
-     - `unify(var(1), var(1), ctx)` → fastEq. ✓
-     - Return `app(var(4), var(5))`.
-   - Build `app(var(3), app(var(4), var(5)))`. Codomain `var(2)`. Return type var(2).
-   - Return `(app(var(3), app(var(4), var(5))), var(2))`.
-2. Outer `check` expects `var(2)`. `unify(var(2), var(2), ctx)` → fastEq. ✓
-
-Checker succeeds. The expression is well-typed.
-
-**erase** then bracket-abstracts all six binders, producing a closed SKI tree (the actual `compose` combinator). This tree never participates in type-checking, only in runtime evaluation.
-
-## Implementation plan
-
-Following DEVELOPMENT_PHILOSOPHY's "tree-program is the spec, host is an optimization" rule:
-
-1. **Write `normalize` as a tree program** (in a new `elab.disp`). Small, recursive, one clause per kind. Target: testable on hand-built elaboration trees.
-2. **Write the TypeScript mirror** of `normalize` in `src/elaborate.ts`. Same algorithm, faster via host recursion. Cross-validate against the tree-program version on every example.
-3. **Write `unify`** as a tree program + TS mirror. Calls `normalize` and `fastEq`.
-4. **Write bidirectional `check`/`infer`** in TypeScript, consuming a surface `SExpr` and producing tagged trees. The semantics are tree-program-portable but the initial implementation is host-side for iteration speed. The tree-program port is a later milestone.
-5. **Write `erase`** in TypeScript — reuses standard SKI bracket abstraction.
-6. **Build a test suite** covering the target cases — `id`, `compose`, length-indexed vectors, and the nested-parameter-application patterns (`f (f x)`, `g (f x)`) that motivate the explicit-binder approach.
-7. **Add synthesis hook**: expose the elaborated-tree grammar as a sampling target for neural search. Every partial elaborated tree with metas is a well-formed synthesis state.
-
-Steps 1 and 3 are *preconditions*, not afterthoughts. They are what makes this design tree-native.
-
-## Open questions
-
-1. **η-equality**. Current spec does α- and β- but not η (`λx. f x ≡ f`). If we want η, either bake it into `normalize` (η-expand functions on the way out) or into `unify` (when one side is a lam and the other isn't, η-expand before comparing). Type-directed, so requires propagating expected types through normalize. Deferred until concrete examples require it.
-2. **Definitional unfolding (δ)**. Top-level `let`-definitions: when do they unfold during `normalize`? Options: always unfold (simple, can explode); never unfold (fast, can fail conversions); heuristic unfold (e.g., unfold head-only). Conventional choice: unfold on demand during unify, keep folded for display.
-3. **Irrelevance and universes**. We're Type-in-Type; no universe hierarchy. If/when we add one, `pi(A, body)` gains a universe-level field.
-4. **Inductive types**. Not yet addressed. Each inductive type adds a kind (constructor) and changes `normalize`'s dispatch (ι-reduction on recursors).
-5. **Tag shape collision audit**. The specific `TAG_ROOT` and kind shapes chosen must be audited against base-type value spaces. `Tree` accepts everything, so strictly speaking no tag shape is "impossible" as a base value — but since `base(v)` wraps base values, the grammar prevents confusion within elaboration-universe trees.
-6. **Bind-trees as an alternative to de Bruijn levels**. `dither-spec/disp/bind-trees.md` describes a tree-based binding scheme that avoids integer encodings. This design uses Nat-encoded levels for directness; bind-trees is a plausible future substitution if their sharing properties prove advantageous.
-
-## Success criteria
-
-This design is on track if:
-
-- Nested parameter applications (`f (f x)`, `compose`, `flip`, inline triages with multiple parameters) type-check directly without requiring escape hatches.
-- The kernel has no combinator-level disambiguation logic — checking is a single tag dispatch in `normalize` plus `fastEq`.
-- Neural synthesis can be pointed at the elaborated-tree grammar as a sampling target, with every sample structurally well-typed by construction.
-- The tree-program `normalize` and `unify` specs run (slowly) on the test suite, matching the TypeScript implementation bit-for-bit.
-- The trust boundary is small and well-defined: opaque references need a type claim that's verified against the predicate form, but no ad-hoc allowlist is needed for ordinary definitions.
-
-This design is off track if:
-
-- `normalize` grows additional cross-cutting clauses as new features are added. One clause per kind should be the invariant.
-- Host-language features appear in `check`/`infer` semantics that have no tree encoding. Exceptions for control flow, mutation, and host closures are red flags per `DEVELOPMENT_PHILOSOPHY.md`.
-- Metas proliferate uncontrollably (should be bounded by the number of unresolved holes + implicit-argument insertions).
-- The elaboration-universe tree grammar requires ad-hoc disambiguation of shapes. Tags exist so the checker never needs to case-split on raw structure; any clause in `normalize` that does so is a signal the tag scheme is incomplete.
+1. **η-equivalence**. Currently α/β; no η. May surface in Phase 1 if `pred_of_pi` accepts a non-Lam that's η-equivalent to one. Defer until a concrete example needs it.
+2. **Definitional unfolding (δ)** of top-level defs during normalize. Phase 2 has to decide: always unfold (safe, slow), never unfold (fast, breaks conversion), heuristic.
+3. **Universe hierarchy**. We're Type:Type. If we ever want consistency, add a level field to Pi. Not on the critical path.
+4. **`erase` to runtime SKI tree**. Once predicates and metas are in, we want to compile elaborated trees down to closed runtime trees (per `GOALS.md` and `TREE_NATIVE_TYPE_THEORY.md` synthesis target). Happens after Phase 3.
+5. **Self-hosting the kernel**. The eventual target: the kernel from Phase 1, currently a tree program tested via host harness, should bootstrap — i.e., be parseable by an elaborator written using the kernel that checks itself. Not a Phase 1-3 deliverable but the discipline shouldn't drift away from it.

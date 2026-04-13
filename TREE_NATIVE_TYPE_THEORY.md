@@ -48,36 +48,9 @@ apply(Bool, stem(leaf))      = true
 
 **Termination**. Base predicates (Nat, Bool) terminate by structural recursion. User-defined predicates may diverge; the runtime uses evaluation budgets as a practical bound. Decidability is not guaranteed for arbitrary predicates — the known tradeoff of types-as-programs.
 
-## Pi Types as Partially-Applied Checkers
+## Type Systems as Composable Families of Predicates
 
-A function type is `PiCheck` partially applied to its domain and codomain family:
+Ultimately what a function type `A -> B` or `FunCheck(A,B)(f)` does is takes a program `p`, and through some inspection of the program (maybe by cases, maybe through recursion and then by cases) can somehow ensure that given `A(input) = true`, `B(f(input)) = true`. In theory you can write a 'general purpose' version of this composed type where it just iterates through all trees, notes all of them that satisfy `A`, and then ensure those inputs, when run via the function, satisfy `B` (and typechecking *will terminate* if your domain is finite and your function is terminating!). For most data structures though, this is *way* too infeasible.
 
-```
-Pi(A, B) = apply(apply(PiCheck, A), B)
-```
+In practice, functions have structure, and utilize primitive operators that have known (or assumed to be known) types. 
 
-`A` is a domain predicate. `B` is a codomain family — `apply(B, x)` is the output type for input `x`. Non-dependent `A -> C` is `Pi(A, K(C))`.
-
-`PiCheck` is itself a tree program. Partial application to `A` and `B` eagerly reduces, producing a residual predicate specialized to that Pi type — the **Futamura projection** applied to type checking. `apply(Pi(A,B), v)` returns true/false via the same `apply` used for base types.
-
-This uniformity is load-bearing: base types and compound types share one protocol. The elaborator never needs to case-split on "is this a Pi or a base predicate?" at runtime — both answer `apply`.
-
-## Hash-Consing and O(1) Type Equality
-
-Trees are hash-consed: structurally equal trees share the same id.
-
-- **Type equality is tree identity.** `a.id === b.id` decides equality in O(1), no normalization needed.
-- **Pi types are shared.** `Pi(Nat, K(Nat))` is constructed once; every occurrence of `Nat -> Nat` in the program points to the same tree.
-- **Specialized checkers are shared.** The residual predicate produced by `apply(apply(PiCheck, A), B)` is shared across all uses of that Pi type.
-
-Hash-cons identity as the conversion relation is the property that makes the whole system cheap. Any design change that makes definitionally-equal types have different tree structure — by introducing ad-hoc wire formats, unnormalized forms, or redundant tags — undermines this.
-
-## Prior Art
-
-Type checking S/K/I combinators (simple types) is classical: Curry & Feys 1958, Hindley 1969.
-
-Barry Jay ("Typed Program Analysis without Encodings," PEPM 2025) types tree calculus using structural program types with subtyping. Key difference: Jay's types are inert data in a separate grammar. Here, types are executable predicates in the same language as values — which is what makes dependent types cheap (codomain families compute; executable types make computation free).
-
-Altenkirch et al. (FSCD 2023) work algebraically with categories of families. Zaldivar Aiello (2024) adds an M combinator. Neither produces a practical checking algorithm.
-
-Novel here: types as executable predicates, Pi types as partially-applied checkers sharing one `apply` protocol with base types, hash-cons identity as the conversion relation, and a checker that is itself a tree program — all inside the smallest known Turing-complete calculus (three constructors, five reduction rules).
