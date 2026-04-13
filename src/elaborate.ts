@@ -34,7 +34,10 @@ const OPAQUE: Tree = stem(LEAF)
 export type EnvEntry = {
   tree: Tree,
   type: Tree,
-  piPair?: { domain: Tree, codomain: Tree }
+  piPair?: { domain: Tree, codomain: Tree },
+  annTree?: Tree,  // Annotated tree for verified Pi-typed definitions.
+                   // When present, typed elaboration uses this directly instead of
+                   // ascription-wrapping, so piCheck verifies structurally.
 }
 
 export type Env = Map<string, EnvEntry>
@@ -67,7 +70,7 @@ function specializePiType(rawPiPair: Tree, env: Env): Tree {
 
 // === Allowlist ===
 // Reserved env key for the allowlist tree (list of (body, rawPiPair) pairs).
-const ALLOWLIST_KEY = "__allowlist__"
+export const ALLOWLIST_KEY = "__allowlist__"
 
 /** Build allowlist from all Pi-typed env entries.
  *  Format: fork(fork(body1, ty1), fork(fork(body2, ty2), ... LEAF)) */
@@ -204,8 +207,12 @@ function abstract(name: string, nameType: Tree, expr: Expr): Expr {
       // Convert K(body) to app(K, body) and re-abstract.
       // Give K its correct type at this use: K : body.ty -> expr.ty
       // so D annotations downstream stay accurate.
+      // In typed mode, ascription-wrap K so piCheck uses fastEq (O(1) type
+      // identity check) instead of stemFnCheck (universal quantification over
+      // the domain). K is an axiom scheme: K_{A,B} : A -> B -> A.
       const kTy = typed ? fork(expr.body.ty, kType(expr.ty)) : OPAQUE
-      const asApp: Expr = app(lit(K, kTy), expr.body, expr.ty)
+      const kTree = typed ? wrapAscription(K, kTy) : K
+      const asApp: Expr = app(lit(kTree, kTy), expr.body, expr.ty)
       return abstract(name, nameType, asApp)
     }
 
@@ -215,18 +222,14 @@ function abstract(name: string, nameType: Tree, expr: Expr): Expr {
       if (!fInL && !fInR) return kNode(expr, piTy(expr.ty))
 
       if (expr.D !== null) {
-        if (fInL) {
-          // Variable in left child: preserve annotated structure directly
-          const absL = abstract(name, nameType, expr.left)
-          const absR = fInR ? abstract(name, nameType, expr.right)
-            : kNode(expr.right, piTy(expr.right.ty))
-          const newD = kType(absResultType(absR))
-          return sNode(absL, absR, newD, piTy(expr.ty))
-        }
-        // Variable only in right: convert to app form so extract produces
-        // correct bare S-node structure (adds necessary stem indirection).
-        const asApp = app(app(lit(LEAF), app(lit(LEAF), expr.left)), expr.right)
-        return abstract(name, nameType, asApp)
+        // Preserve annotated S-node structure directly.
+        // K-wrap whichever child doesn't have the variable.
+        const absL = fInL ? abstract(name, nameType, expr.left)
+          : kNode(expr.left, piTy(expr.left.ty))
+        const absR = fInR ? abstract(name, nameType, expr.right)
+          : kNode(expr.right, piTy(expr.right.ty))
+        const newD = kType(absResultType(absR))
+        return sNode(absL, absR, newD, piTy(expr.ty))
       }
 
       // Bare S-node: convert to application form and re-abstract
@@ -274,7 +277,7 @@ function newCheckBudget(): { remaining: number } {
   return { remaining: 500_000 }
 }
 
-function collapse(expr: Expr, trees: Map<string, Tree>, budget: { remaining: number }): Tree {
+function collapse(expr: Expr, trees: Map<string, Tree>, budget: { remaining: number }, typed = false): Tree {
   switch (expr.tag) {
     case "lit":
       return expr.tree
@@ -284,15 +287,17 @@ function collapse(expr: Expr, trees: Map<string, Tree>, budget: { remaining: num
       return t
     }
     case "k": {
-      const body = collapse(expr.body, trees, budget)
+      const body = collapse(expr.body, trees, budget, typed)
       return fork(LEAF, body)
     }
     case "s": {
-      const f = collapse(expr.left, trees, budget)
-      const g = collapse(expr.right, trees, budget)
+      const f = collapse(expr.left, trees, budget, typed)
+      const g = collapse(expr.right, trees, budget, typed)
 
-      // S(K(p), K(q)) = K(apply(p, q))
-      if (isFork(f) && isLeaf(f.left) && isFork(g) && isLeaf(g.left)) {
+      // S(K(p), K(q)) = K(apply(p, q)) — bare mode only.
+      // In typed mode (D !== null), K-wrapped values may contain AppAnn/ascription
+      // nodes that would be destroyed by eager evaluation.
+      if (expr.D === null && isFork(f) && isLeaf(f.left) && isFork(g) && isLeaf(g.left)) {
         return fork(LEAF, apply(f.right, g.right, budget))
       }
       // S(K(p), I) = p
@@ -308,35 +313,54 @@ function collapse(expr: Expr, trees: Map<string, Tree>, budget: { remaining: num
       return fork(stem(f), g)
     }
     case "app": {
-      let f = collapse(expr.func, trees, budget)
-      // Strip ascription wrapping from direct env lookups (lit nodes) in func position.
-      // Ascriptions are annotation format for PiCheck, not executable code.
-      // Only strip from lit-tagged func exprs to avoid false positives on
-      // legitimate trees that happen to match fork(stem(_), stem(_)).
-      if (expr.func.tag === "lit" && isFork(f) && isStem(f.left) && isStem(f.left.child) && isStem(f.right)) {
-        f = f.right.child
+      const f = collapse(expr.func, trees, budget, typed)
+      const g = collapse(expr.arg, trees, budget, typed)
+
+      // Typed mode only: produce AppAnn for Pi-typed functions.
+      // Defers evaluation so piCheck can structurally verify the function
+      // and argument types instead of seeing an opaque bare tree.
+      // Wire format: fork(stem(stem(funcPiType)), fork(ann_f, ann_x))
+      if (typed && isFork(expr.func.ty) && !treeEqual(expr.func.ty, OPAQUE)) {
+        return fork(stem(stem(expr.func.ty)), fork(f, g))
       }
-      return apply(f, collapse(expr.arg, trees, budget), budget)
+
+      // Bare mode: strip ascription wrapping from direct env lookups (lit nodes)
+      // in func position, then eagerly evaluate.
+      let fBare = f
+      if (expr.func.tag === "lit" && isFork(f) && isStem(f.left) && isStem(f.left.child) && isStem(f.right)) {
+        fBare = f.right.child
+      }
+      return apply(fBare, g, budget)
     }
   }
 }
 
-export function extract(tree: Tree): Tree {
+export function extract(tree: Tree, budget: { remaining: number } = { remaining: 10_000_000 }): Tree {
   if (!tree) throw new Error("extract: undefined tree")
   if (isLeaf(tree)) return tree
-  if (isStem(tree)) return stem(extract(tree.child))
+  if (isStem(tree)) return stem(extract(tree.child, budget))
   const left = tree.left
   const right = tree.right
-  if (isLeaf(left)) return fork(LEAF, extract(right))
+  if (isLeaf(left)) return fork(LEAF, extract(right, budget))
   if (isStem(left)) {
-    // Ascription: fork(stem(stem(T)), stem(body)) — double-stem left
-    if (isStem(left.child) && isStem(right)) return right.child
-    // S-node: fork(stem(D), fork(ann_c, ann_b))
-    if (isFork(right)) return fork(stem(extract(right.left)), extract(right.right))
-    // stem(D) with leaf or stem right — bare S-node passthrough
+    const D = left.child
+    // Ascription: fork(stem(stem(T)), stem(body)) — double-stem left, stem right
+    if (isStem(D) && isStem(right)) return right.child
+    // AppAnn: fork(stem(stem(funcPiType)), fork(ann_f, ann_x)) — double-stem left, fork right
+    // Evaluate the deferred application.
+    if (isStem(D) && isFork(right)) {
+      return apply(extract(right.left, budget), extract(right.right, budget), budget)
+    }
+    // Annotated S-node: fork(stem(D), fork(ann_c, ann_b))
+    // D is always fork(LEAF, type) from kType(). Check this to avoid
+    // misidentifying bare S-nodes (fork(stem(f), g)) as annotated ones.
+    if (isFork(D) && isLeaf(D.left) && isFork(right)) {
+      return fork(stem(extract(right.left, budget)), extract(right.right, budget))
+    }
+    // Bare S-node or other stem-left form — passthrough
     return fork(left, right)
   }
-  return fork(fork(extract(left.left), extract(left.right)), extract(right))
+  return fork(fork(extract(left.left, budget), extract(left.right, budget)), extract(right, budget))
 }
 
 // === SExpr → Expr conversion ===
@@ -362,8 +386,13 @@ function sexprToExpr(
         // Env type field stores the specialized predicate (for checking).
         const exprTy = e.piPair ? fork(e.piPair.domain, e.piPair.codomain) : e.type
         if (typed && e.piPair) {
-          // Ascriptions carry the raw Pi pair (type identity), not the type predicate.
-          // PiCheck's sOrAsc compares against fork(A, B), so we must use the raw pair.
+          if (e.annTree) {
+            // Verified definition: use annotated tree directly.
+            // piCheck verifies it structurally — no ascription needed.
+            return lit(e.annTree, exprTy)
+          }
+          // Bootstrap/trusted: ascription-wrap bare tree.
+          // piCheck uses fastEq on the type tag; allowlistCheck verifies the body.
           return lit(wrapAscription(e.tree, exprTy), exprTy)
         }
         return lit(e.tree, exprTy)
@@ -530,12 +559,14 @@ export function loadTypedFile(source: string, env: Env): Env {
  *  When a dependent codomain is encountered, remaining params are compiled bare
  *  and the result is wrapped in an ascription with the expected type.
  */
+export type TypedCompileResult = { tree: Tree, hasOpaqueParams: boolean }
+
 export function typedCompileLam(
   params: string[],
   body: SExpr,
   expectedType: Tree,
   env: Env,
-): Tree {
+): TypedCompileResult {
   const budget = newCompileBudget()
 
   // Peel off Pi layers to get parameter types
@@ -575,16 +606,9 @@ export function typedCompileLam(
     curExpr = abstract(params[i], paramTypes[i], curExpr)
   }
 
-  const tree = collapse(curExpr, envTrees(env), budget)
+  const tree = collapse(curExpr, envTrees(env), budget, true)
 
-  // If inner params were compiled bare (OPAQUE) due to dependent codomains,
-  // PiCheck can't structurally verify them. Wrap in ascription so the
-  // ascription rule (type identity check) handles verification.
-  if (hasOpaqueParams) {
-    return wrapAscription(tree, expectedType)
-  }
-
-  return tree
+  return { tree, hasOpaqueParams }
 }
 
 // === Type-level expression compilation ===
@@ -709,15 +733,17 @@ function checkAgainstType(tree: Tree, typePred: Tree, env: Env): boolean {
   return true
 }
 
-function compileCheckedExpr(sexpr: SExpr, expectedType: Tree, env: Env): Tree {
+type CheckedExprResult = { tree: Tree, hasOpaqueParams: boolean }
+
+function compileCheckedExpr(sexpr: SExpr, expectedType: Tree, env: Env): CheckedExprResult {
   if (sexpr.tag === "slam") {
     return typedCompileLam(sexpr.params, sexpr.body, expectedType, env)
   }
   // Pi/Type expressions in value position (e.g., `let MyFn : Type := Bool -> Bool`)
   if (sexpr.tag === "spi" || sexpr.tag === "stype" || sexpr.tag === "stree") {
-    return compileType(sexpr, env)
+    return { tree: compileType(sexpr, env), hasOpaqueParams: false }
   }
-  return compile(sexpr, env)
+  return { tree: compile(sexpr, env), hasOpaqueParams: false }
 }
 
 export function typecheckExprSource(
@@ -743,7 +769,8 @@ export function typecheckExprSource(
     rawType = compileType(expectedTypeExpr, env)
     const piPair = detectPiPair(expectedTypeExpr, rawType, env)
     typePred = piPair ? specializePiType(rawType, env) : rawType
-    tree = compileCheckedExpr(sexpr, rawType, env)
+    const result = compileCheckedExpr(sexpr, rawType, env)
+    tree = result.tree
     bareTree = sexpr.tag === "slam" ? compile(sexpr, env) : tree
   } catch (e) {
     return { ok: false, stage: "elaborate", message: (e as Error).message }
@@ -820,8 +847,11 @@ export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
 
   let tree: Tree
   let bareTree: Tree
+  let hasOpaqueParams = false
   try {
-    tree = compileCheckedExpr(parsed.value, rawType, env)
+    const result = compileCheckedExpr(parsed.value, rawType, env)
+    tree = result.tree
+    hasOpaqueParams = result.hasOpaqueParams
     bareTree = parsed.value.tag === "slam" ? compile(parsed.value, env) : tree
   } catch (e) {
     return { ok: false, stage: "elaborate", message: (e as Error).message }
@@ -845,13 +875,11 @@ export function typecheckDeclSource(source: string, env: Env): DeclCheckResult {
     return { ok: false, stage: "check", message: (e as Error).message }
   }
 
+  // Store annotated tree so later typed elaboration can use it directly
+  // (piCheck verifies structurally, no ascription needed).
+  const annTree = piPair ? tree : undefined
   const newEnv = new Map(env)
-  newEnv.set(parsed.name, { tree: bareTree, type: typePred, piPair })
-  if (piPair) {
-    const al = newEnv.get(ALLOWLIST_KEY)?.tree ?? LEAF
-    const rawPi = fork(piPair.domain, piPair.codomain)
-    newEnv.set(ALLOWLIST_KEY, { tree: appendAllowlist(al, bareTree, rawPi), type: OPAQUE })
-  }
+  newEnv.set(parsed.name, { tree: bareTree, type: typePred, piPair, annTree })
   return { ok: true, name: parsed.name, tree, type: typePred, env: newEnv }
 }
 
@@ -904,9 +932,10 @@ function typecheckRecDecl(
   // Build fixed point
   const tree = apply(fixTree, stepTree, budget)
 
+  // Recursive defs: fix application destroys annotations, so we can't store annTree.
+  // Add to allowlist so ascription-wrapping works when referenced in typed elaboration.
   const newEnv = new Map(env)
   newEnv.set(parsed.name, { tree, type: typePred, piPair })
-  // Append fixpoint to allowlist
   if (piPair) {
     const al = newEnv.get(ALLOWLIST_KEY)?.tree ?? LEAF
     const rawPi = fork(piPair.domain, piPair.codomain)

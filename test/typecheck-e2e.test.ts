@@ -3,6 +3,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { LEAF, stem, treeEqual, fork, apply, isFork, type Tree } from "../src/tree.js"
 import {
+  ALLOWLIST_KEY,
   Env,
   compileType,
   declare,
@@ -100,6 +101,23 @@ describe("typecheck end-to-end", () => {
       // The predicate checks annotated trees directly via apply
       const myNotTree = myNotEntry.tree
       expect(treeEqual(apply(myNotEntry.type, myNotTree, { remaining: 500_000 }), LEAF)).toBe(true)
+    })
+
+    it("composes verified non-trivial definitions (annotated tree, no ascription)", () => {
+      // double's bare tree is an S-node — different from any bootstrap entry.
+      // This tests that annotated trees enable composability without the allowlist.
+      const d1 = typecheckDeclSource("let double : Bool -> Bool := {x} -> not (not x)", baseEnv())
+      expectDeclOk(d1)
+      const d2 = typecheckDeclSource("let quad : Bool -> Bool := {x} -> double (double x)", d1.env)
+      expectDeclOk(d2)
+    })
+
+    it("composes verified definitions with dependent Pi types", () => {
+      const d1 = typecheckDeclSource("let depId : (A : Type) -> A -> A := {A x} -> x", baseEnv())
+      expectDeclOk(d1)
+      // Use depId inside a typed lambda — its annotated tree should be verified structurally
+      const expr = typecheckExprSource("{x} -> depId Bool x", "Bool -> Bool", d1.env)
+      expect(expr).toMatchObject({ ok: true })
     })
 
     it("rejects an invalid base-typed expression at check time", () => {
@@ -264,6 +282,69 @@ describe("typecheck end-to-end", () => {
       // The next predicate check should catch this
       const result = apply(succTree, stem(LEAF))  // succ(false) = stem(stem(leaf))
       expect(treeEqual(apply(tBool, result, { remaining: 500_000 }), LEAF)).toBe(false)
+    })
+  })
+
+  describe("allowlist invariant: only trust adds entries", () => {
+    /** Count entries in an allowlist (linked list of fork(entry, rest) ending in LEAF) */
+    function allowlistSize(al: Tree): number {
+      let count = 0
+      let cur = al
+      while (isFork(cur)) {
+        count++
+        cur = cur.right
+      }
+      return count
+    }
+
+    function getAllowlist(env: Env): Tree {
+      return env.get(ALLOWLIST_KEY)?.tree ?? LEAF
+    }
+
+    it("baseEnv (types.disp) has 6 bootstrap entries from buildAllowlist", () => {
+      // types.disp is loaded in bare (untyped) mode — its Pi-typed defs (and, or,
+      // not, isLeaf, boolElim, natElim) are added by buildAllowlist as bootstrap
+      // axioms since they weren't structurally verified by piCheck.
+      const env = baseEnv()
+      expect(allowlistSize(getAllowlist(env))).toBe(6)
+    })
+
+    it("verified non-dependent declaration does not grow the allowlist", () => {
+      const env = baseEnv()
+      const before = allowlistSize(getAllowlist(env))
+      const result = typecheckDeclSource("let myNot : Bool -> Bool := {x} -> not x", env)
+      expectDeclOk(result)
+      expect(allowlistSize(getAllowlist(result.env))).toBe(before)
+      // annTree should be stored for structural verification
+      expect(result.env.get("myNot")!.annTree).toBeDefined()
+    })
+
+    it("verified dependent declaration does not grow the allowlist", () => {
+      const env = baseEnv()
+      const before = allowlistSize(getAllowlist(env))
+      const result = typecheckDeclSource("let depId : (A : Type) -> A -> A := {A x} -> x", env)
+      expectDeclOk(result)
+      expect(allowlistSize(getAllowlist(result.env))).toBe(before)
+      // annTree should be stored for structural verification
+      expect(result.env.get("depId")!.annTree).toBeDefined()
+    })
+
+    it("verified recursive declaration grows the allowlist (fix destroys annotations)", () => {
+      const env = baseEnv()
+      const before = allowlistSize(getAllowlist(env))
+      const result = typecheckDeclSource("let rec myId : Bool -> Bool := {x} -> myId x", env)
+      expectDeclOk(result)
+      expect(allowlistSize(getAllowlist(result.env))).toBe(before + 1)
+    })
+
+    it("prelude.disp does not grow allowlist (no trust or rec defs)", () => {
+      const env = baseEnv()
+      const before = allowlistSize(getAllowlist(env))
+      const preludePath = path.join(import.meta.dirname, "..", "prelude.disp")
+      const source = fs.readFileSync(preludePath, "utf-8")
+      const preludeEnv = loadTypedFile(source, env)
+      const after = allowlistSize(getAllowlist(preludeEnv))
+      expect(after).toBe(before)
     })
   })
 

@@ -179,7 +179,9 @@ Non-dependent case (`B = K(B₀)`): check `v : B₀` — recursively apply B₀ 
 
 Dependent codomain over finite domain (Bool): exhaustive check — verify `v : apply(B, true)` and `v : apply(B, false)`.
 
-Dependent codomain over infinite domain (Nat, Tree, Type): **ascription required**.
+Dependent codomain over infinite domain (Nat, Tree, Type): **constructor-class representative check**. Every tree is built from three constructors: `leaf`, `stem`, and `fork`. Evaluate the codomain family B at one representative from each constructor class — `leaf`, `stem(leaf)`, `fork(leaf, leaf)` — and check v against each resulting concrete type. This exploits the fact that tree calculus has exactly three constructors: if a proof obligation holds at a representative of each form, it covers the inductive structure of all trees.
+
+For parametric codomain families (standard polymorphism, where B builds types from its argument without dispatching on it), the checking proof at each representative has the same structure — type equality comparisons reduce to reflexivity (`A = A`). This is the combinator analog of checking under a binder: where lambda calculus introduces a free variable and checks once, tree calculus evaluates the codomain at each constructor class and checks three times, with the same reflexive proof at each.
 
 ### Rule 2: S — Contraction
 
@@ -379,27 +381,28 @@ Ascriptions bypass structural checking entirely. `fork(stem(T), stem(body))` pas
 
 Some trees are **structurally opaque** to PiCheck:
 
-1. **Bare-compiled definitions**: trees from `types.disp` lack D annotations at S-nodes. PiCheck can't structurally verify them.
-2. **Fixpoints**: `apply(fix, step)` produces combinator structure from `wait`/`selfApplyK` that doesn't match any typing rule.
+1. **Bootstrap definitions**: definitions compiled before PiCheck exists lack annotations. PiCheck can't structurally verify them.
+2. **Fixpoints**: `apply(fix, step)` produces combinator structure from the recursion machinery that doesn't match any typing rule.
 
-In both cases, the type is known from external reasoning (the elaborator verified it), but PiCheck can't derive it from the tree's structure.
+In both cases, the type is established by external reasoning, but PiCheck can't derive it from the tree's structure alone.
+
+Note: dependent codomains over infinite domains (polymorphism) do **not** require ascription — the constructor-class representative check (Rule 1) handles them structurally.
 
 ### The allowlist model
 
-Rather than trusting the elaborator unconditionally, ascriptions can be verified against an **allowlist** — a set of `(body, type_identity)` pairs that enumerate the approved opaque terms.
+Ascriptions are verified against an **allowlist** — a set of `(body, type_identity)` pairs enumerating the approved opaque terms.
 
-At ascription sites, PiCheck checks:
 ```
 check(ascribe(T, body), expectedType) =
   treeEqual(T, expectedType)                     -- claimed type matches expected
   AND allowlistContains(allowlist, body, T)       -- body is approved at type T
 ```
 
-The allowlist contains:
-- Base definitions compiled in bare mode (from `types.disp`), each paired with its declared type
+The allowlist contains only genuinely opaque terms:
+- Bootstrap definitions compiled before PiCheck exists
 - Fixpoints whose step functions were verified via `step : T → T`
 
-**With PiCheck + allowlist, verification is complete.** D annotations are structurally verified by PiCheck. Ascription bodies are verified against the allowlist. No trust assumptions remain.
+All other definitions — including polymorphic ones — are verified structurally by PiCheck via their annotated trees and do **not** appear on the allowlist. When a verified definition is referenced inside another typed expression, PiCheck re-verifies its annotated structure directly. The allowlist is a small, auditable trust boundary.
 
 The elaborator produces two outputs: the **annotated tree** and the **allowlist** (its certificate). A third party can verify correctness with just PiCheck + the allowlist, without trusting the elaborator. The elaborator becomes a proof assistant, not a trusted component.
 

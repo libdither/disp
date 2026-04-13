@@ -245,7 +245,7 @@ describe("types.disp bootstrap", () => {
         const pred = buildPred(tBool, kWrap(tBool))
         const annotated = typedCompileLam(
           ["x"], (parseLine("{x} -> not (not x)") as any).body,
-          fork(tBool, fork(LEAF, tBool)), env)
+          fork(tBool, fork(LEAF, tBool)), env).tree
 
         const predResult = treeEqual(apply(pred, annotated, budget()), TT)
         const pcResult = check(tBool, kWrap(tBool), annotated)
@@ -447,7 +447,7 @@ describe("types.disp bootstrap", () => {
     function typedLam(src: string, expectedType: Tree): Tree {
       const parsed = parseLine(src)
       if (!("tag" in parsed) || parsed.tag !== "slam") throw new Error("Expected lambda")
-      return typedCompileLam(parsed.params, parsed.body, expectedType, env)
+      return typedCompileLam(parsed.params, parsed.body, expectedType, env).tree
     }
 
     it("{x} -> not (not x) : Bool -> Bool", () => {
@@ -538,7 +538,9 @@ describe("types.disp bootstrap", () => {
     })
 
     it("strips D from annotated S-node fork(stem(D), fork(c, b))", () => {
-      const D = stem(stem(LEAF))
+      // D must be fork-shaped (from kType()) — real S-nodes always have fork(LEAF, type)
+      // Stem-shaped D is reserved for AppAnn nodes.
+      const D = fork(LEAF, stem(LEAF))
       const c = fork(LEAF, LEAF)
       const b = stem(LEAF)
       const annotated = fork(stem(D), fork(c, b))
@@ -572,7 +574,7 @@ describe("types.disp bootstrap", () => {
     it("round-trip: extract(annotated) executes identically to bare tree", () => {
       const annotated = typedCompileLam(
         ["x"], (parseLine("{x} -> not (not x)") as any).body,
-        fork(env.get("Bool")!.tree, fork(LEAF, env.get("Bool")!.tree)), env)
+        fork(env.get("Bool")!.tree, fork(LEAF, env.get("Bool")!.tree)), env).tree
       const bare = compile(parseLine("{x} -> not (not x)") as any, env)
       const extracted = extract(annotated)
 
@@ -790,7 +792,7 @@ describe("types.disp bootstrap", () => {
         // {x} -> not (not x) : Bool -> Bool
         const annotated = typedCompileLam(
           ["x"], (parseLine("{x} -> not (not x)") as any).body,
-          fork(tBool, kw(tBool)), env)
+          fork(tBool, kw(tBool)), env).tree
 
         // piCheck passes (tested elsewhere)
         // allowlistCheck: walks the annotated tree, finds ascriptions of not, checks allowlist
@@ -806,7 +808,7 @@ describe("types.disp bootstrap", () => {
         // Annotated S-node with wrong D
         const annotated = typedCompileLam(
           ["x"], (parseLine("{x} -> not (not x)") as any).body,
-          fork(tBool, kw(tBool)), env)
+          fork(tBool, kw(tBool)), env).tree
         if (!(isFork(annotated) && isStem(annotated.left))) throw new Error("expected S-node")
         const wrongD = fork(stem(kw(tTree)), annotated.right)
         expect(verifiedCheck(tBool, kw(tBool), wrongD)).toBe(false)

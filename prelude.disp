@@ -1,13 +1,14 @@
 -- Prelude: typed standard library for Disp.
 -- Loaded after types.disp. All definitions type-checked.
 
+-- Typed Bool constants (tt/ff are untyped and carry OPAQUE, which poisons
+-- S-node D annotations in typed bracket abstraction).
+let bTrue : Bool := leaf
+let bFalse : Bool := leaf leaf
+
 -- Boolean operations
 let not : Bool -> Bool := {b} -> triage false ({_} -> true) ({_ _} -> false) b
 
 -- Polymorphic identity
 let id : (A : Type) -> A -> A := {A x} -> x
 
--- Multi-param functions using untyped combinators (triage, etc.) can't be
--- structurally verified by piCheck. Use 'trust' to vouch for their types.
-let trust myAnd : Bool -> Bool -> Bool := {a b} -> triage b ({_} -> ff) ({_ _} -> ff) a
-let trust myOr : Bool -> Bool -> Bool := {a b} -> triage tt ({_} -> b) ({_ _} -> tt) a
