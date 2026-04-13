@@ -22,6 +22,25 @@ The bridge is `erase : ElabTree → RuntimeTree`, run once after checking succee
 
 This separation resolves the core problem in the current system: the checker operating on bracket-abstracted form has to reverse-engineer binder structure from combinators. In the new design the checker sees binders directly, and bracket abstraction happens *after* checking, as a closed-form compilation.
 
+## Types as predicates, dually represented
+
+`TREE_NATIVE_TYPE_THEORY.md`'s core claim — that types are tree programs that recognize values — is preserved. The refinement introduced by two universes is that types wear different clothes in each:
+
+- **Base types** (`Bool`, `Nat`, `Tree`, and any user-defined recognizer) remain tree programs throughout. In the elaboration universe they appear wrapped as `base(P)` where `P` is the predicate tree. In the runtime universe they are just `P`.
+- **Compound types** (`Pi`, eventually `Sigma`, `Eq`, etc.) have two representations: a tagged structural form during elaboration (`pi(A, body)`), and a predicate form at runtime produced by `erase` (via the existing `piPred` construction from `TREE_NATIVE_TYPE_THEORY.md`). Both describe the same acceptance set; the structural form is ergonomic for the checker, the predicate form is canonical for runtime and synthesis.
+
+The semantic claim "a well-typed value satisfies its type's predicate form" holds in both directions: post-erase types are predicates and satisfied by the erased values; pre-erase tagged types are structurally checked via `normalize` + `fastEq`, which is provably equivalent to predicate satisfaction on the erased forms.
+
+**Predicate evaluation during elaboration is rare and localized.** The checker's hot path — type equality, Pi-codomain instantiation, structural checking under binders, meta solving — operates on tagged forms via `normalize` and `fastEq`. Predicates are invoked only at specific boundaries:
+
+1. **`base(P)` boundary checks** — verifying a non-literal value against a base type or refinement predicate falls back to `apply(P, erase(v))`. The same mechanism as the current `checkAgainstType`.
+2. **Trust assertions / foreign references** — when an opaque tree claims a type without structural proof, the predicate is run to verify.
+3. **Post-erase runtime** — any `apply(type, value)` at runtime is predicate evaluation by definition.
+
+This is a deliberate optimization of the existing design, not a retreat from it. Predicates are arbitrary tree programs with potentially unbounded `fix`-recursion; pushing their evaluation to well-defined boundaries keeps the checker's hot path in O(1) `fastEq` and linear-in-size `normalize` territory. The predicate view reasserts itself where it is load-bearing: at runtime, and as the specification target for neural synthesis.
+
+**For synthesis**: the predicate form is the target. A neural model searches for trees `t` satisfying `apply(erased_type, t) = true`. The tagged form of the type exists during elaboration only; synthesis operates on erased predicates. This preserves `GOALS.md`'s framing of types as the specification handed to the optimizer.
+
 ## Tag encoding
 
 Every tree in the elaboration universe is a tagged form. A tag has the shape:

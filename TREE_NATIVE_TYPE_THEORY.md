@@ -2,6 +2,8 @@
 
 A dependent type system for tree calculus where types are executable predicate trees, type checking is predicate evaluation, and the checker itself is a tree program.
 
+> **Status**: describes the **current implementation** as of commit `8840e5a0` (annotated-tree composability). The theoretical framing — types as predicates, hash-cons identity as O(1) equality, bootstrap via allowlist — is stable. The implementation-specific sections (annotated tree format, structural typing rules for S/K/Triage nodes, ascription wire format, dependent-codomain representative check) are targeted for replacement by the architecture in [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md), which separates an elaboration universe (tagged forms with explicit binders) from the runtime universe (bracket-abstracted SKI) and decides conversion via `normalize` + `fastEq` rather than structural inspection of combinator trees. Open issues blocking the current design are tracked in [`NATIVE_TYPE_THEORY_ISSUES.md`](NATIVE_TYPE_THEORY_ISSUES.md); those are the cases the redesign is intended to resolve. Until the redesign lands, this document remains the accurate spec of the running system.
+
 ## Trees as Typed Combinators
 
 In tree calculus, every tree is one of three things:
