@@ -1,0 +1,61 @@
+; Fixed-point recursion via lambada's wait combinator.
+;
+; The trick: lambada uses an eta-delayed self-application that survives tree
+; calculus' eager `apply`. Y/Z combinators don't work because tree calc reduces
+; under the eta-expansion before the argument arrives. `wait` is a 3-ary
+; tree-calc-native frozen value that only fires when the third argument shows up.
+;
+; wait a b c = a b c     (computational meaning)
+; but wait a b is a *value* — fork(stem(a), fork(△,b)) — that doesn't reduce
+; until applied to one more argument.
+;
+; Derivation in tree calc: the body △ (△ a) (△ △ c) b reduces step-by-step to
+; (a b c) via leaf/stem rules culminating in the S-rule on fork(stem(a),...).
+
+def wait = \a b c. t (t a) (t t c) b
+
+; fix is built from wait + self-application:
+;   fix = (\m w f. m (\x. f (w m x))) (\x. x x) wait
+; Reduces to:    fix f = f (wait (\x.xx) (\x. f (wait (\x.xx) x)))
+; The inner `wait (\x.xx) ...` is frozen — fix f returns immediately, and the
+; recursive call only fires once the recursive function applies its self-arg.
+
+def fix = (\m w f. m (\x. f (w m x))) (\x. x x) wait
+
+; --- triage (needed for branching in recursive defs) ---
+def triage = \X Y Z f. t (t X Y) Z f
+
+; --- Test 1: a recursion that terminates immediately ---
+;
+; const_t = fix (\rec n. n) — rec is never called, so the recursive arg stays
+; frozen as a wait-value. Confirms fix doesn't blow up its budget at definition.
+
+def const_t = fix (\rec n. n)
+test const_t t       = t
+test const_t (t t)   = (t t)
+test const_t (t t t) = (t t t)
+
+; --- Test 2: peel a stem-chain, return leaf when it bottoms out ---
+;
+; peel n = if n is leaf, return t; if n is stem(c), recurse on c; if fork, t.
+; Forces the recursive call (`rec c`) to actually fire `wait` and unfreeze.
+
+def peel = fix (\rec n. triage t (\c. rec c) (\l r. t) n)
+
+test peel t                   = t        ; 0 unwraps
+test peel (t t)               = t        ; 1 unwrap:  stem(LEAF) → LEAF → t
+test peel (t (t t))           = t        ; 2 unwraps
+test peel (t (t (t t)))       = t        ; 3 unwraps
+test peel (t (t (t (t t))))   = t        ; 4 unwraps
+
+; --- Test 3: count stems, return a stem-tagged "yes/no" answer ---
+;
+; deep n: if leaf return t; else recurse on stem-child and stem-wrap the result.
+; Verifies the recursive call composes with constructors on the way back.
+
+def deep = fix (\rec n. triage t (\c. t (rec c)) (\l r. t) n)
+
+test deep t             = t                ; 0: t
+test deep (t t)         = (t t)            ; 1: stem(t)
+test deep (t (t t))     = (t (t t))        ; 2: stem(stem(t))
+test deep (t (t (t t))) = (t (t (t t)))    ; 3

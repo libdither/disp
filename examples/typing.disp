@@ -1,0 +1,197 @@
+; What can the checker actually type? Hand-written elaborator output.
+;
+; The "elaborator" we don't have yet would take surface syntax and emit:
+;   - Lam/Pi tagged forms with explicit bind-trees marking V positions
+;   - matching bind-trees on the type side
+;   - all binders fully annotated with their domain types
+;
+; Given that, we can type-check real programs — identity, K, KI, and any
+; program whose body has no `App` (App needs `infer` to thread types through,
+; which we haven't built). Below: hand-elaborated K and friends.
+
+; --- preamble: combinators, splice (full), check ---
+def K_lam = \x y. x
+def I_lam = \x. x
+def triage = \X Y Z f. t (t X Y) Z f
+def wait = \a b c. t (t a) (t t c) b
+def fix = (\m w f. m (\x. f (w m x))) (\x. x x) wait
+
+def fork_left  = \f. triage f (\c. c) (\l r. l) f
+def fork_right = \f. triage f (\c. c) (\l r. r) f
+
+def TAG_ROOT = t (t (t (t (t (t (t t))))))
+def tagged   = \k p. t (t TAG_ROOT k) p
+def kind     = \tg. fork_right (fork_left tg)
+def payload  = \tg. fork_right tg
+
+def KV = t
+def KH = t t
+def KA = t (t t)
+def KL = t (t (t t))
+def KP = t (t (t (t t)))
+
+def V       = tagged KV t
+def mkH     = \binder. tagged KH binder
+def mkApp   = \f x. tagged KA (t f x)
+def appF    = \a. fork_left  (payload a)
+def appX    = \a. fork_right (payload a)
+def mkLam   = \A B body. tagged KL (t (t A B) body)
+def lamA    = \l. fork_left  (fork_left  (payload l))
+def lamB    = \l. fork_right (fork_left  (payload l))
+def lamBody = \l. fork_right (payload l)
+def mkPi    = \A B codom. tagged KP (t (t A B) codom)
+def piA     = \p. fork_left  (fork_left  (payload p))
+def piB     = \p. fork_right (fork_left  (payload p))
+def piCodom = \p. fork_right (payload p)
+
+def bool_then = \yes no b. triage yes (\_. no) (\l r. no) b
+def is_kind = \k tg. fast_eq k (kind tg)
+def is_app = \tg. is_kind KA tg
+def is_lam = \tg. is_kind KL tg
+def is_pi  = \tg. is_kind KP tg
+
+; Bind-tree atoms / constructors
+def BE = t
+def BN = t t
+def KBA = t (t t)
+def KBL = t (t (t t))
+def KBP = t (t (t (t t)))
+def mkBApp = \l r. t KBA (t l r)
+def mkBLam = \bA bBody.  t KBL (t bA bBody)
+def mkBPi  = \bA bCodom. t KBP (t bA bCodom)
+
+; Splice with full bind-tree dispatch (BE/BN/BApp/BLam/BPi).
+def splice_inner = fix (\rec b v term.
+  triage v
+    (\c. term)
+    (\kt pld.
+      (bool_then
+        (\_.
+          mkApp (rec (fork_left  pld) v (appF term))
+                (rec (fork_right pld) v (appX term)))
+        (bool_then
+          (\_.
+            mkLam (rec (fork_left  pld) v (lamA term))
+                  (lamB term)
+                  (rec (fork_right pld) v (lamBody term)))
+          (\_.
+            mkPi  (rec (fork_left  pld) v (piA term))
+                  (piB term)
+                  (rec (fork_right pld) v (piCodom term)))
+          (fast_eq KBL kt))
+        (fast_eq KBA kt))
+      t)
+    b)
+def splice = \term b v. splice_inner b v term
+
+def beta_redex = \app_term.
+  splice (lamBody (appF app_term)) (lamB (appF app_term)) (appX app_term)
+
+def normalize = fix (\rec term.
+  (bool_then
+    (\u.
+      (bool_then
+        (\w. rec (beta_redex (mkApp (rec (appF w)) (rec (appX w)))))
+        (\w. mkApp (rec (appF w)) (rec (appX w)))
+        (is_lam (appF u))) u)
+    (bool_then
+      (\u. mkLam (lamA u) (lamB u) (rec (lamBody u)))
+      (\u. u)
+      (is_lam term))
+    (is_app term)) term)
+
+def and = \a b. bool_then b (t t) a
+
+def check = fix (\rec term ty.
+  (bool_then
+    (\t1.
+      (bool_then
+        (\t2.
+          and
+            (fast_eq (normalize (lamA t1)) (normalize (piA t2)))
+            (rec
+              (splice (lamBody t1) (lamB t1) (mkH (piA t2)))
+              (splice (piCodom t2) (piB t2)  (mkH (piA t2)))))
+        (\t2. fast_eq (normalize t1) (normalize t2))
+        (is_pi ty)) ty)
+    (\t1. fast_eq (normalize t1) (normalize ty))
+    (is_lam term)) term)
+
+def TT = t
+def FF = t t
+
+; --- Stand-in "type atoms": just distinct trees. No Type universe yet. ---
+def TyA = t                  ; "the type A"
+def TyB = t (t t)            ; "the type B" (distinct from TyA)
+def TyC = t (t (t t))        ; "the type C"
+
+; -------------------------------------------------------------------------
+; Test 1: identity `\v. v` checks against `A → A`
+; -------------------------------------------------------------------------
+def id_term = mkLam TyA BE V
+def id_type = mkPi  TyA BE V
+
+test check id_term id_type = TT
+
+; And a wrong type: `\v. v` against `A → B`  (codom doesn't refer to v)
+def id_wrong = mkPi TyA BN TyB
+test check id_term id_wrong = FF
+
+; And domain mismatch: `\v. v` (with TyA) against `B → B`
+def id_typeB = mkPi TyB BE V
+test check id_term id_typeB = FF
+
+; -------------------------------------------------------------------------
+; Test 2: K combinator `\v w. v` checks against `A → B → A`
+;
+; Outer Lam binds v. Body is `\w. v`, an inner Lam.
+;   Outer's bind-tree:  BLam(BN, BE)  — "body is a Lam; v not in inner.A; v at inner.body"
+;   Inner's bind-tree:  BN            — "w not in V (= outer's var)"
+; -------------------------------------------------------------------------
+def K_term = mkLam TyA (mkBLam BN BE) (mkLam TyB BN V)
+def K_type = mkPi  TyA (mkBPi  BN BE) (mkPi  TyB BN V)
+
+test check K_term K_type = TT
+
+; KI: `\v w. w` — analogous, but bind-trees mark INNER var, not outer.
+;   Outer's bind-tree: BN  — outer var not in body (which uses w only)
+;   Inner's bind-tree: BE  — inner body IS w
+def KI_term = mkLam TyA BN (mkLam TyB BE V)
+def KI_type = mkPi  TyA BN (mkPi  TyB BE V)
+
+test check KI_term KI_type = TT
+
+; K with WRONG type: `\v w. v` against `A → B → B`.
+; Note: bind-trees must faithfully describe their term — if we LIE about
+; where V appears, splice happily substitutes anyway and the check passes
+; for the wrong reason. So `A → B → B` honestly has outer-binder UNUSED
+; (BN at outer), and the inner Pi `B → B` has its own var at body (BE).
+def K_wrong = mkPi TyA BN (mkPi TyB BE V)
+test check K_term K_wrong = FF
+
+; KI with WRONG bind-tree on type (claims the outer var appears, but it doesn't)
+def KI_wrong = mkPi TyA BE (mkPi TyB BE V)
+test check KI_term KI_wrong = FF
+
+; -------------------------------------------------------------------------
+; Test 3: const-type `\v. A` checks against `A → A` (returning a fixed type)
+; -------------------------------------------------------------------------
+def const_term = mkLam TyA BN TyA
+def const_type = mkPi  TyA BN TyA
+test check const_term const_type = TT
+
+; -------------------------------------------------------------------------
+; Test 4: 3-arg constant `\v w x. v` against `A → B → C → A`
+; -------------------------------------------------------------------------
+def K3_term = mkLam TyA (mkBLam BN (mkBLam BN BE)) (mkLam TyB BN (mkLam TyC BN V))
+def K3_type = mkPi  TyA (mkBPi  BN (mkBPi  BN BE)) (mkPi  TyB BN (mkPi  TyC BN V))
+test check K3_term K3_type = TT
+
+; -------------------------------------------------------------------------
+; Test 5: a beta-reducing program. `((\v. v) something) : type_of_something`
+;
+; (App lam_id v') reduces to v', so checking it against the type of v'
+; succeeds via the conversion fallback once normalize fires.
+; -------------------------------------------------------------------------
+def some_H = mkH TyA
+test check (mkApp id_term some_H) some_H = TT

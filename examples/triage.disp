@@ -1,0 +1,64 @@
+; Triage — the elimination form for trees. Inspect a tree's shape by case.
+;
+;   triage X Y Z f =
+;     X            if f is leaf
+;     Y c          if f is stem(c)
+;     Z l r        if f is fork(l, r)
+;
+; In tree calculus this is encoded as the value (t (t X Y) Z), to which
+; one applies f. The triage rule fires because the head is a fork-of-fork.
+
+def K = \x y. x
+def I = \x. x
+def true  = \x y. x
+def false = \x y. y
+
+; The triage combinator. Note how it composes naturally.
+def triage = \X Y Z f. t (t X Y) Z f
+
+; --- leaf / stem / fork predicates ---
+
+def is_leaf = \f. triage true        (\c. false) (\l r. false) f
+def is_stem = \f. triage false       (\c. true)  (\l r. false) f
+def is_fork = \f. triage false       (\c. false) (\l r. true)  f
+
+test is_leaf t       = true
+test is_leaf (t t)   = false
+test is_leaf (t t t) = false
+
+test is_stem t       = false
+test is_stem (t t)   = true
+test is_stem (t t t) = false
+
+test is_fork t       = false
+test is_fork (t t)   = false
+test is_fork (t t t) = true
+
+; --- accessors ---
+
+; Stem child: (t X) where X is the child. Extract via triage's stem case.
+def stem_child = \f. triage f (\c. c) (\l r. l) f
+;   leaf case is irrelevant (caller's responsibility); just return f as a
+;   placeholder.
+
+test stem_child (t (t t)) = (t t)        ; stem(stem(LEAF)) → child stem(LEAF)
+
+; Fork left/right.
+def fork_left  = \f. triage f (\c. c) (\l r. l) f
+def fork_right = \f. triage f (\c. c) (\l r. r) f
+
+test fork_left  (t (t t) t)     = (t t)   ; left of fork(stem(LEAF), LEAF)
+test fork_right (t t (t (t t))) = (t (t t))
+
+; --- composition ---
+
+; A tree-native "tag matcher": dispatches on whether a value is a leaf, stem,
+; or fork. Used everywhere in elaborator code that has to react to runtime
+; value shapes (e.g., normalize, splice, unsplice, type_of_H).
+
+def match3 = \onLeaf onStem onFork v.
+  triage onLeaf onStem onFork v
+
+; Equivalent to triage; just sugar.
+test match3 t (\c. t) (\l r. t) t       = t
+test match3 t (\c. t t) (\l r. t) (t t) = (t t)

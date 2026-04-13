@@ -1,0 +1,25 @@
+; Foundational combinators in tree calculus.
+; t denotes the leaf △.
+
+def K = \x y. x
+def I = \x. x
+def S = \f g x. f x (g x)
+
+; K returns its first argument.
+test K t t = t
+test K t (K t t) = t
+
+; I is identity.
+test I t = t
+test I (K t t) = t
+
+; S is the share combinator.
+test S K K t = t       ; S K K x = K x (K x) = x
+test S K I t = t       ; S K I x = K x (I x) = x
+
+; Bracket abstraction is sound: \x. x evaluates as I.
+test (\x. x) t = t
+test (\x. x) (K t t) = t
+
+; \x y. x is K.
+test (\x y. x) t (S K K) = t

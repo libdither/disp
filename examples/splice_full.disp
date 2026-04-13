@@ -1,0 +1,129 @@
+; Full splice that handles BApp, BLam, and BPi bind-tree cases.
+;
+; Bind-tree encoding:
+;   BE                = leaf
+;   BN                = stem(leaf)
+;   BApp(bl, br)      = fork(KBA, fork(bl, br))
+;   BLam(bA, bBody)   = fork(KBL, fork(bA, bBody))
+;   BPi (bA, bCodom)  = fork(KBP, fork(bA, bCodom))
+;
+; KBA/KBL/KBP are distinct stem-depth trees so the fork case dispatches by
+; comparing the kind slot via fast_eq.
+;
+; The recursive call must put an inner-binder-derived value FIRST (the lesson
+; from splice.disp's reorder dance). Here the bind-tree fork-case binders
+; (kind_tg, payload) supply that inner-derived value.
+
+; --- preamble ---
+def K = \x y. x
+def I = \x. x
+def triage = \X Y Z f. t (t X Y) Z f
+def wait = \a b c. t (t a) (t t c) b
+def fix = (\m w f. m (\x. f (w m x))) (\x. x x) wait
+
+def fork_left  = \f. triage f (\c. c) (\l r. l) f
+def fork_right = \f. triage f (\c. c) (\l r. r) f
+
+def TAG_ROOT = t (t (t (t (t (t (t t))))))
+def tagged   = \k p. t (t TAG_ROOT k) p
+def kind     = \tg. fork_right (fork_left tg)
+def payload  = \tg. fork_right tg
+
+def KV = t
+def KH = t t
+def KA = t (t t)
+def KL = t (t (t t))
+def KP = t (t (t (t t)))
+
+def V       = tagged KV t
+def mkH     = \binder. tagged KH binder
+def mkApp   = \f x. tagged KA (t f x)
+def appF    = \a. fork_left  (payload a)
+def appX    = \a. fork_right (payload a)
+def mkLam   = \A B body. tagged KL (t (t A B) body)
+def lamA    = \l. fork_left  (fork_left  (payload l))
+def lamB    = \l. fork_right (fork_left  (payload l))
+def lamBody = \l. fork_right (payload l)
+def mkPi    = \A B codom. tagged KP (t (t A B) codom)
+def piA     = \p. fork_left  (fork_left  (payload p))
+def piB     = \p. fork_right (fork_left  (payload p))
+def piCodom = \p. fork_right (payload p)
+
+def bool_then = \yes no b. triage yes (\_. no) (\l r. no) b
+
+; --- bind-tree atoms and constructors ---
+def BE = t
+def BN = t t
+
+; Distinct kind tags for BApp/BLam/BPi (depth-2/3/4 stem chains).
+def KBA = t (t t)             ; stem(stem(leaf))
+def KBL = t (t (t t))         ; stem(stem(stem(leaf)))
+def KBP = t (t (t (t t)))     ; stem(stem(stem(stem(leaf))))
+
+def mkBApp = \l r. t KBA (t l r)
+def mkBLam = \bA bBody.   t KBL (t bA bBody)
+def mkBPi  = \bA bCodom.  t KBP (t bA bCodom)
+
+def b_kind   = \b. fork_left  b      ; the kind tag (only valid on a fork-shaped bind-tree)
+def b_left   = \b. fork_left  (fork_right b)
+def b_right  = \b. fork_right (fork_right b)
+
+; --- splice with full bind-tree dispatch ---
+
+def splice_inner = fix (\rec b v term.
+  triage v
+    (\c. term)                                       ; BN: term unchanged
+    (\kt pld.                                        ; fork: dispatch on kind tag kt
+      (bool_then
+        ; BApp
+        (\_.
+          mkApp (rec (fork_left  pld) v (appF term))
+                (rec (fork_right pld) v (appX term)))
+        (bool_then
+          ; BLam: recurse into lamA and lamBody; leave inner lamB metadata alone
+          (\_.
+            mkLam (rec (fork_left  pld) v (lamA term))
+                  (lamB term)
+                  (rec (fork_right pld) v (lamBody term)))
+          ; BPi (the only remaining case in this scheme)
+          (\_.
+            mkPi  (rec (fork_left  pld) v (piA term))
+                  (piB term)
+                  (rec (fork_right pld) v (piCodom term)))
+          (fast_eq KBL kt))
+        (fast_eq KBA kt))
+      t)
+    b)
+def splice = \term b v. splice_inner b v term
+
+; --- demos ---
+def Adum = t
+def H1 = mkH t
+
+; Backward compatibility on the BE/BN/BApp cases.
+test splice V                          BE                     H1 = H1
+test splice V                          BN                     H1 = V
+test splice (mkApp V V)                (mkBApp BE BE)         H1 = (mkApp H1 H1)
+test splice (mkApp V V)                (mkBApp BN BE)         H1 = (mkApp V H1)
+test splice (mkApp (mkApp V V) V)      (mkBApp (mkBApp BE BE) BE) H1 = (mkApp (mkApp H1 H1) H1)
+
+; BLam: walk into a Lam; replace V's in lamA and lamBody per inner bind-trees.
+; Term:   Lam(A=V, _, body=V)        — both A and body are V positions
+; Bind:   BLam(BE, BE)               — both V positions get spliced
+def lam_VV = mkLam V BE V             ; Lam with A=V, body=V (inner Bi=BE is metadata, unused by splice)
+test splice lam_VV (mkBLam BE BE) H1 = (mkLam H1 BE H1)
+
+; Splice only into A, leave body's V alone.
+test splice lam_VV (mkBLam BE BN) H1 = (mkLam H1 BE V)
+
+; Splice only into body, leave A's V alone.
+test splice lam_VV (mkBLam BN BE) H1 = (mkLam V BE H1)
+
+; BPi: same idea on a Pi.
+def pi_VV = mkPi V BE V
+test splice pi_VV (mkBPi BE BE) H1 = (mkPi H1 BE H1)
+test splice pi_VV (mkBPi BN BE) H1 = (mkPi V BE H1)
+
+; Mixed: an App whose right side is a Lam.
+def appLam = mkApp V lam_VV
+test splice appLam (mkBApp BE (mkBLam BE BE)) H1 = (mkApp H1 (mkLam H1 BE H1))

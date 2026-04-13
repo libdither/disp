@@ -1,0 +1,85 @@
+; Recursive splice — the substitution primitive of the bind-tree elaborator.
+;
+; splice term b v walks term and the bind-tree b in lockstep:
+;   b = leaf       (BE)   → return v               -- "V goes here, replace it"
+;   b = stem(c)    (BN)   → return term unchanged  -- "V doesn't appear in here"
+;   b = fork(l,r)  (BApp) → term is App(f, x); recurse on (f,l) and (x,r), rebuild
+;
+; --- Critical encoding constraint: arg order ---
+;
+; Naive order `\rec term b v. ... rec (appF term) l v ...` blows up. Why:
+; bracket abstraction over the inner \l r. body sees that `appF term` doesn't
+; mention l/r and K-wraps it. Tree calc is *strict*, so constructing that
+; K-wrap reduces `wait_self (appF term)` eagerly. With term substituted to
+; a value, that fires `wait` at construction time and unfolds splice to a
+; fresh splice on a (different) argument — recursing forever before any
+; runtime test even runs.
+;
+; Workaround: put the inner-binder var FIRST in the recursive call. So we
+; reorder s_reord to take args as (b, v, term) and call `rec l v (appF term)`.
+; Now `l` is the first arg to rec — abstraction over l keeps the call stuck
+; under the inner binder, so wait only fires when l is actually supplied (i.e.
+; at runtime, in the fork case, after triage has decided to take this branch).
+;
+; The user-facing `splice term b v` wraps it so the more natural order works.
+
+; --- preamble: K, I, triage, wait, fix ---
+def K = \x y. x
+def I = \x. x
+def triage = \X Y Z f. t (t X Y) Z f
+def wait = \a b c. t (t a) (t t c) b
+def fix = (\m w f. m (\x. f (w m x))) (\x. x x) wait
+
+def fork_left  = \f. triage f (\c. c) (\l r. l) f
+def fork_right = \f. triage f (\c. c) (\l r. r) f
+
+; --- tagged forms ---
+def TAG_ROOT = t (t (t (t (t (t (t t))))))
+def tagged   = \k p. t (t TAG_ROOT k) p
+def kind     = \tg. fork_right (fork_left tg)
+def payload  = \tg. fork_right tg
+
+; --- term constructors ---
+def KV = t              ; variable kind
+def KH = t t            ; hypothesis kind
+def KA = t (t t)        ; application kind
+
+def V     = tagged KV t                    ; canonical variable token
+def mkH   = \binder. tagged KH binder      ; hypothesis derived from binder
+def mkApp = \f x. tagged KA (t f x)
+def appF  = \a. fork_left  (payload a)
+def appX  = \a. fork_right (payload a)
+
+; --- bind-tree (App-only) ---
+def BE = t
+def BN = t t
+def mkBApp = \l r. t l r
+
+; --- splice (reordered for correct strictness behavior; see header) ---
+def splice_inner = fix (\rec b v term.
+  triage v
+    (\c. term)
+    (\l r. mkApp (rec l v (appF term)) (rec r v (appX term)))
+    b)
+def splice = \term b v. splice_inner b v term
+
+; --- demo hypothesis token ---
+def H1 = mkH t
+
+; Base cases.
+test splice V BE H1 = H1
+test splice V BN H1 = V
+test splice (mkApp V V) BN H1 = (mkApp V V)
+
+; BApp: replace each V according to the per-position bind tree.
+test splice (mkApp V V) (mkBApp BE BE) H1 = (mkApp H1 H1)
+test splice (mkApp V V) (mkBApp BN BE) H1 = (mkApp V H1)
+test splice (mkApp V V) (mkBApp BE BN) H1 = (mkApp H1 V)
+test splice (mkApp V V) (mkBApp BN BN) H1 = (mkApp V V)
+
+; Nested App: depth-2 recursion.
+test splice (mkApp (mkApp V V) V) (mkBApp (mkBApp BE BE) BE) H1 = (mkApp (mkApp H1 H1) H1)
+test splice (mkApp V (mkApp V V)) (mkBApp BN (mkBApp BE BN)) H1 = (mkApp V (mkApp H1 V))
+
+; Depth-3 recursion.
+test splice (mkApp (mkApp V V) (mkApp V V)) (mkBApp (mkBApp BE BN) (mkBApp BN BE)) H1 = (mkApp (mkApp H1 V) (mkApp V H1))
