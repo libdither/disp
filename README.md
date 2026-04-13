@@ -4,6 +4,14 @@ A dependently-typed programming language built on tree calculus.
 
 Tree calculus is natively reflective — terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp uses a tree-native type system where types and programs are both trees, with type annotations embedded directly into compiled combinators.
 
+## Documentation
+
+- [`GOALS.md`](GOALS.md) — the long-term vision (neural-guided synthesis, self-improving optimizer).
+- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — technical spec of the type theory.
+- [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md) — proposed design for the elaboration pipeline (not yet implemented). Targets the open issues below.
+- [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — the discipline governing how features are added. Load-bearing — read before making design changes.
+- [`NATIVE_TYPE_THEORY_ISSUES.md`](NATIVE_TYPE_THEORY_ISSUES.md) — open issues and acknowledged limitations.
+
 ## Quick Start
 
 ```shell
@@ -39,14 +47,11 @@ npm test
 ## Architecture
 
 ```
-src/parse.ts                  -- Tokenizer + recursive descent parser -> SExpr
-src/tree-native-elaborate.ts  -- TypedExpr pipeline: elaborate (Phase 1) + compile (Phase 2)
-src/tree-native-checker.ts    -- Annotated tree checker: checkAnnotated(defs, ann, type)
-src/tree.ts                   -- Tree calculus runtime: hash-consed trees, eager evaluation
-src/compile.ts                -- Legacy compiler: bracket abstraction, FIX combinator
-src/tree-native.ts            -- Tree-native builtins and step functions
-src/repl.ts                   -- Interactive REPL with commands
-src/main.ts                   -- Entry point
+src/parse.ts       -- Tokenizer + recursive descent parser -> SExpr
+src/elaborate.ts   -- Elaborator: bracket abstraction, typed compilation, type checking
+src/tree.ts        -- Tree calculus runtime: hash-consed trees, eager evaluation
+src/repl.ts        -- Interactive REPL with commands
+src/main.ts        -- Entry point
 ```
 
 **Pipeline**: Parse (source -> SExpr) -> Elaborate (SExpr -> TypedExpr) -> Compile (TypedExpr -> annotated Tree) -> Check (annotated Tree -> bool)
@@ -87,4 +92,4 @@ leaf / stem / fork             -- tree constructors
 - **Annotated trees** — type annotations (D at S nodes) are embedded in the compiled tree. The checker verifies structural typing rules directly.
 - **Bracket abstraction** is optimized: eta reduction, S(K p)(K q) = K(p q), S(K p) I = p.
 
-See `PLAN.md` for the full roadmap including neural program synthesis.
+See `GOALS.md` for the full long-term vision, including neural program synthesis.
