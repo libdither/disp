@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest"
 import { runFile } from "../src/run.js"
 
-const EXAMPLES = ["combinators", "data", "triage", "tagged", "recursion", "splice", "normalize", "picheck", "splice_full", "typing", "checking"]
+const EXAMPLES = ["combinators", "data", "triage", "tagged", "recursion", "splice", "normalize", "picheck", "splice_full", "typing", "checking", "predicates", "erase"]
 
 describe("disp examples", () => {
   for (const name of EXAMPLES) {

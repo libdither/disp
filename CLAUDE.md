@@ -29,11 +29,11 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 
 ## Current state (as of 2026-04-13)
 
-**Implemented (substrate)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` (Lam-vs-Pi descent + App via infer + H lookup + conversion). Most of these live tree-side in `examples/*.disp`, host-side only does runtime + parser + test harness. 105 tree-native test cases pass.
+**Implemented (substrate + Phase 1)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` (Lam-vs-Pi descent + App via infer + H lookup + conversion) + `pred_of` (types-as-predicates kernel) + `mkAtom`. Most of these live tree-side in `examples/*.disp`, host-side only does runtime + parser + test harness. 139 tree-native tests pass across 12 example files.
 
-**Plan**: 3 phases ahead, see `ELABORATION_DESIGN.md` "Plan" section.
-1. **Types-as-predicates kernel** — refactor so `apply(type, value)` IS the check (per `TREE_NATIVE_TYPE_THEORY.md`). `pred_of` derives the predicate form from the tagged form.
-2. **Surface elaborator** — `\(x : T). body` and `(x : T) → R` syntax; auto-compute bind-trees from term structure; `def name : T = e` triggers check.
+**Plan**: see `ELABORATION_DESIGN.md` "Plan" section.
+1. ~~**Types-as-predicates kernel**~~ — DONE (`examples/predicates.disp`). `apply(ty, term)` IS the check; `pred_of` derives the callable predicate from the tagged form.
+2. **Surface elaborator** (next) — `\(x : T). body` and `(x : T) → R` syntax; auto-compute bind-trees from term structure; `def name : T = e` triggers check.
 3. **Metavariables** — positional canonical metas + Miller-pattern unification.
 
 **Sharp lessons from the substrate** (must respect when extending — see ELABORATION_DESIGN.md for detail):
@@ -41,6 +41,8 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 - Strict-branch deferral: wrap each case as `\u. body` and apply after dispatch.
 - `H` wraps its type, not its binder (departure from `BIND_TREE_NBE_IDEA.md` §3.4).
 - Bind-trees are load-bearing data, not decoration — splice trusts them.
+- H-comparisons need direct `fast_eq` first, H-unwrap as fallback (Phase 1 lesson).
+- `mkH` carries a freshness marker (`mkH ty lvl`); single-arg form collapses two same-type free hypotheses to identical hash-cons. Descent in `pred_of` threads fork-shaped levels (distinct from leaf/stem hand-constructed markers).
 
 ## Testing
 

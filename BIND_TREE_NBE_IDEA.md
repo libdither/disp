@@ -1,8 +1,9 @@
 # Bind-Tree NbE: A One-Universe Elaboration with Canonical Hypothesis Tokens
 
-**Status (2026-04-13)**: implemented as the substrate. See `ELABORATION_DESIGN.md` "Current state" for the inventory of what's working and "Plan" for what comes next. Two intentional departures from this doc:
+**Status (2026-04-13)**: implemented as the substrate; Phase 1 (types-as-predicates) shipped on top. See `ELABORATION_DESIGN.md` "Current state" for the inventory of what's working and "Plan" for what comes next. Three intentional departures from this doc:
 
-- **`H` wraps its type, not its binder** (vs §3.4). `mkH ty := tagged(KH, ty)`, `type_of_H := payload`. App-of-H typing needs the type directly; the binder-wrapping form forced a four-level dig and didn't compose with `infer`.
+- **`H` wraps its type, not its binder** (vs §3.4). `mkH ty lvl := tagged(KH, fork(ty, lvl))`, `type_of_H := fork_left ∘ payload`. App-of-H typing needs the type directly; the binder-wrapping form forced a four-level dig and didn't compose with `infer`.
+- **`H` carries a freshness marker** (`lvl`) alongside its type (vs §2.3). The canonical-token-from-binder construction `H(binder) := fork(HYP_MARKER, binder)` collapses two free hypotheses of the same type to identical hash-cons identity, which silently breaks depth-2 dependent types like `(x:A) → (y:A) → x` (KI-shape becomes wrongly accepted). The marker — a fork-rooted tree threaded through `pred_of`'s descent (`lvl_start = t t t`, `lvl_next = \l. t l t`) — restores per-binder distinguishability without a global counter or a fresh-name source. Hand-constructed free Hs default to a leaf marker (a separate namespace from descent markers; no collision). See `ELABORATION_DESIGN.md` "Sharp lessons" §6 for the failure mode and `examples/predicates.disp` for the implementation.
 - **Bind-tree fork-shapes use distinct kind tags**, not the kind trees in §3.3 directly. `BApp(l,r) = fork(KBA, fork(l,r))`; same for BLam/BPi. Lets `triage` dispatch on the fork case via a single `fast_eq` on the kind slot.
 
 **Companion docs**: `TREE_NATIVE_TYPE_THEORY.md` (types as predicates, Pi as partial application), `ELABORATION_DESIGN.md` (current state and 3-phase plan), `DEVELOPMENT_PHILOSOPHY.md` (the metacircular discipline this design respects).
@@ -33,21 +34,33 @@ To check a Lam against a Pi, we need to reason about what happens "if a value of
 
 The token `H` is an *inert* tree. When normalization meets `App(H, x)`, no Lam is present on the left, so the application is stuck. This is the neutral behavior of NbE, realized as a tree rather than a semantic value.
 
-### 2.3 Canonical tokens: `H(binder) := fork(HYP_MARKER, binder)`
+### 2.3 Canonical tokens: `H(ty, lvl) := tagged(KH, fork(ty, lvl))`
 
-The token for a binder's hypothesis is a function of the binder itself. Concretely, it is a distinguished tree shape wrapping the binder:
+> **Implemented form** — supersedes the original `H(binder) := fork(HYP_MARKER, binder)` proposal. The change is forced by the depth-2 dependent-type failure described below; see top-of-doc status note for the rationale.
+
+The token for a binder's hypothesis is a tagged tree carrying the binder's domain type and a freshness marker:
 
 ```
-H(binder) := tagged(KIND_HYP, binder)
+mkH ty lvl   := tagged(KH, fork(ty, lvl))
+type_of_H h  := fork_left  (payload h)
+level_of_H h := fork_right (payload h)
 ```
+
+The marker `lvl` lives in two namespaces, one per source:
+
+- **Descent markers** (introduced by `pred_of` opening a Lam-vs-Pi pair) are **fork-rooted**, threaded through the recursion: `lvl_start = t t t` (= `fork(leaf, leaf)`), `lvl_next = \l. fork(l, leaf)`. Each binder depth gets a structurally distinct marker.
+- **Free hypothesis markers** (hand-constructed `Hx = mkH TyA t`, eventually elaborator-minted) are **leaf/stem-rooted**. Two free hypotheses of the same type need different markers to be distinguishable; conventional choice is leaf, stem(leaf), stem(stem(leaf)), ...
+
+Fork-vs-stem root shapes keep the namespaces disjoint. A descent marker can never accidentally equal a hand-constructed one.
 
 Properties:
 
-- **Deterministic.** No global counter. The same binder always produces the same token.
-- **α-canonical.** Two α-equivalent binders are the same tree (bind-trees eliminate the distinction), so they produce the same token. Hash-cons identity works across unrelated checks.
-- **Self-describing.** The token's type is `binder.A` — extract the payload, read the domain type. No ambient context lookup is needed.
-- **Scope-distinct.** Different binders produce different tokens; no accidental aliasing across scopes.
-- **No cycle.** The binder contains `V`s, not tokens; the token wraps the binder. `fork(HYP_MARKER, Lam(A, B, body))` is a finite tree.
+- **No global counter.** Descent markers are pure functions of recursion depth; free markers are minted once at construction.
+- **Per-binder distinct.** Each Lam-vs-Pi descent introduces a marker structurally distinct from every other depth, so canonical tokens at different depths have different hash-cons identities.
+- **Type-bearing.** `type_of_H` is one fork-projection; `infer` reads it directly without context lookup.
+- **No cycle.** The token wraps `(ty, lvl)`, not a binder; `ty` and `lvl` are inert finite trees.
+
+**Why the original `H(binder)` form fails.** Under `H := fork(HYP_MARKER, binder)`, two binders with structurally-identical `(A, B, body)` triples — which is exactly what you get descending into nested `(x:A) → (y:A) → ...` — produce hash-cons-identical tokens. Splicing `H` for `x` and a fresh `H'` for `y` yields the same tree, so a body returning `y` looks identical to a body returning `x`, and KI-shape `\x.\y.y` is wrongly accepted at type `(x:A) → (y:A) → x`. The failure is structural: there's no information in the binder that distinguishes "outer" from "inner" when the binders are α-equivalent. Hence the explicit marker.
 
 ### 2.4 Reify = unsplice
 
@@ -55,7 +68,7 @@ After checking under a binder, we may have a body containing `H`. To produce the
 
 ### 2.5 Why this works
 
-Conversion of dependent types is decided by `fastEq` on normal forms. Normal forms here are trees with `H`-tokens at stuck positions. Two dependent types that should be equal up to conversion are reduced (splice + primitives) until their stuck forms share the same `H`-tokens at the same structural positions. Because tokens are canonical, this coincidence is not a coincidence: it is forced by the shared binder structure.
+Conversion of dependent types is decided by `fastEq` on normal forms. Normal forms here are trees with `H`-tokens at stuck positions. Two dependent types that should be equal up to conversion are reduced (splice + primitives) until their stuck forms share the same `H`-tokens at the same structural positions. Because the marker is a deterministic function of descent depth (or, for free hypotheses, of the construction site), this coincidence is not a coincidence: it is forced by the shared binder structure plus a shared descent.
 
 The level-drift bug does not arise because there are no levels. Re-encountering a stored Lam at a different "depth" changes nothing — its bind-tree is intrinsic, the hypothesis token it produces is intrinsic, and splice operates only on the binder's own tree.
 

@@ -2,7 +2,7 @@
 
 The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types are predicates) and `BIND_TREE_NBE_IDEA.md` (bind-trees as the binder substrate). This doc tracks the current state of the implementation and the next three phases planned.
 
-**Status**: substrate complete (see "Current state"). Phase 1 next.
+**Status**: Phase 1 complete (`examples/predicates.disp`). Phase 2 next.
 
 **Companion docs**:
 - [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — types are executable predicates; the kernel call is `apply(type, value)`.
@@ -26,8 +26,10 @@ The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types ar
 | `normalize` (full β to fixed point, reduces under binders) | Tree-native | `normalize.disp` |
 | `infer` (H → annotation; App → splice piCodom of recursively-inferred head) | Tree-native | `checking.disp` |
 | `check` (Lam vs Pi descent + App via infer + H lookup + conversion fallback) | Tree-native | `checking.disp` |
+| `pred_of` (tagged type → callable predicate; types-as-predicates kernel) | Tree-native | `predicates.disp` |
+| `mkAtom` (atom in already-predicate form, for synthesis) | Tree-native | `predicates.disp` |
 
-105 tree-native test cases pass across 11 example files. The host-side TS only handles the runtime, the parser, and the test driver — every checker-relevant operation is a tree program.
+139 tree-native test cases pass across 12 example files. The host-side TS only handles the runtime, the parser, and the test driver — every checker-relevant operation is a tree program.
 
 ### Sharp lessons earned (must respect when extending)
 
@@ -39,9 +41,12 @@ The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types ar
 
 4. **Bind-trees are load-bearing.** They aren't decoration; `splice` trusts them. A bind-tree that lies about V positions silently corrupts results (we hit this writing test fixtures). The elaborator must compute them from term structure.
 
+5. **H comparisons need both direct and unwrap paths.** Phase 1's `pred_of` initially failed Lam-vs-Pi recursion: after splice, both `cand` and `ty` become the *same* `mkH(A)` token, and direct `fast_eq` is the right comparison. App-of-H, by contrast, has `cand = mkH(A)` against a bare `ty = A`, which needs H-unwrap. The H-case branch must try direct first and fall back to unwrap.
+
+6. **Canonical H tokens collide on type alone.** A two-level dependent type like `(x:A) → (y:A) → x` requires distinguishing the outer `x` from the inner `y` even though both have type `A`. With single-arg `mkH ty`, both descents introduce identical hash-cons-equal tokens, so KI-shape `\x.\y.y` is wrongly accepted. Fix: `mkH ty marker` carries a freshness marker; the descent threads a fork-shaped level (`lvl_start = t t t`, `lvl_next = \l. t l t`) so depth-N tokens are pairwise distinct. Hand-constructed free hypotheses default to leaf-marker; two free Hs of the same type need distinct markers to be distinguishable. **Latent in `checking.disp`'s `check` too** — only `predicates.disp` is fixed, since the existing example tests don't exercise the failing case. Real elaboration (Phase 2) must mint fresh markers.
+
 ### What's deliberately not yet built
 
-- **Predicate form of types.** `mkPi A B C` is currently inert tagged data; `check` is the predicate that takes a type as an argument. This contradicts `TREE_NATIVE_TYPE_THEORY.md`'s framing where the type *is* the predicate. Phase 1 fixes this.
 - **Surface elaborator.** No `\(x : T). body` syntax, no `(x : T) → R`, no auto-computed bind-trees. Programs are hand-constructed via `mkLam`/`mkPi`/`mkApp`. Phase 2 builds the elaborator.
 - **Metas / unification.** No `_` holes, no implicit args, no inference of omitted types. Phase 3.
 - **Type universe.** No `Type` kind. We're Type:Type and using stand-in atoms (`TyA`, `TyB`); a Type predicate is a one-line addition once we have the kernel form.
@@ -50,7 +55,11 @@ The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types ar
 
 ## Plan: three phases
 
-### Phase 1 — Types-as-predicates kernel
+### Phase 1 — Types-as-predicates kernel ✅ DONE
+
+**Status**: implemented in `examples/predicates.disp` (26 tests, all green; 131 total tree-native tests pass). `pred_of` derives a closed predicate from a tagged type; `check term ty := pred_of ty term`. `mkAtom id` produces an already-callable atom predicate (skips the tagged round-trip; useful for synthesis).
+
+The Phase 1 plan below is preserved as the spec. One adjustment landed during implementation: see lesson 5 in "Sharp lessons earned" — the H-case branch must try direct `fast_eq` before falling back to `type_of_H`-unwrap, otherwise Lam-vs-Pi recursion fails on the canonical hypothesis tokens introduced by splice.
 
 **Goal**: `check term ty` becomes (semantically) `apply(ty, term)`. A type is a callable predicate that returns TT (`leaf`) or FF (`stem(leaf)`).
 
@@ -67,26 +76,30 @@ pred_of (mkPi A B codom)  — closed predicate: \candidate. piCheck A B codom ca
 
 `pred_of` is one-way. The tagged form is canonical (it's what fastEq compares). The predicate form is derived for invocation. Synthesis targets the predicate form (per `GOALS.md`); the elaborator manipulates the tagged form.
 
-**`piCheck` shape**
+**`piCheck` shape** (as implemented; differs from the original spec on H-construction — see lesson 6)
 
 ```
-piCheck A B codom candidate :=
+piCheck A B codom candidate level :=
   if (is_lam candidate):
     and (fastEq A (lamA candidate))
-        (let H = mkH A in
+        (let H = mkH A level in                  -- level threaded through descent
          let body' = splice (lamBody candidate) (lamB candidate) H in
          let codom' = splice codom B H in
-         check body' codom')          -- equivalently: (pred_of codom') body'
+         pred_of_lvl codom' body' (lvl_next level))
   else if (is_app candidate):
     -- can't dispatch on App as a "canonical inhabitant" of Pi; defer to infer
-    fastEq (normalize (infer candidate)) (normalize (mkPi A B codom))
+    and (pred_of_lvl (piA (infer (appF candidate))) (appX candidate) level)
+        (fastEq (normalize (infer candidate)) (normalize (mkPi A B codom)))
   else if (is_h candidate):
-    -- candidate's annotation must equal the Pi
-    fastEq (normalize (type_of_H candidate)) (normalize (mkPi A B codom))
+    -- direct fastEq first (canonical-hypothesis case from descent), then unwrap
+    or (fastEq (normalize candidate) (normalize (mkPi A B codom)))
+       (fastEq (normalize (type_of_H candidate)) (normalize (mkPi A B codom)))
   else: FF
 ```
 
-This duplicates the current `check`'s dispatch but baked into Pi. Once Pi is callable, `check term ty := apply (pred_of ty) term`. The external `check` shrinks to a one-line dispatcher (or disappears).
+`pred_of ty cand := pred_of_lvl ty cand lvl_start` where `lvl_start = t t t` (fork-rooted) and `lvl_next = \l. t l t`. Hand-constructed Hs use leaf/stem markers (`Hx = mkH TyA t`); the two namespaces are disjoint so descent and free hypotheses never alias.
+
+Once Pi is callable, `check term ty := apply (pred_of ty) term`. The external `check` shrinks to a one-line dispatcher (or disappears).
 
 **Atomic types as predicates**
 
@@ -94,7 +107,7 @@ For each atomic type T (currently `TyA`, `TyB`, `TyC`):
 ```
 mkAtom id := \candidate. (is_h candidate) && fastEq id (type_of_H candidate)
 ```
-i.e., an atom's predicate accepts H tokens whose annotation is itself.
+i.e., an atom's predicate accepts H tokens whose annotation is itself. (`type_of_H` extracts only the type, not the freshness marker, so `mkAtom TyA` accepts `mkH TyA t`, `mkH TyA (t t)`, etc. equally.)
 
 **Synthesis hook (forward-looking, not Phase 1)**: post-erase, the predicate form is what neural search optimizes against. Phase 1 produces the predicate; Phase 2's elaborator emits both forms; an `erase` pass (not Phase 1) strips the tagged scaffolding to leave only the predicate.
 

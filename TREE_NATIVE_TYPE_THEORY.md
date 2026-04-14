@@ -2,7 +2,7 @@
 
 A dependent type system for tree calculus where types are executable predicate trees and type equality is tree identity.
 
-This document states the core idea. The operational machinery — elaboration universe, checking, conversion, erasure to runtime — is in [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md).
+This document states the core idea. The operational machinery — elaboration universe, checking, conversion, erasure to runtime — is in [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md). The Phase 1 kernel (`pred_of` deriving a callable predicate from a tagged Pi/atom; `apply(ty, term)` IS the check) is implemented tree-side in [`examples/predicates.disp`](examples/predicates.disp).
 
 ## Trees as Combinators
 
