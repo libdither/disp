@@ -562,3 +562,63 @@ def Eq : (A : Type) -> A -> A -> Type
 
 def refl : (A : Type) -> (x : A) -> Eq A x x
          = \(A : Type). \(x : A). \(P : A -> Type). \(p : P x). p
+
+; ===== Definitional-equality reflection ===============
+;
+; Eq A x y is definitionally inhabited when normalize x ≡ normalize y.
+; We can't easily apply `refl` at specific values (the kernel's `infer`
+; treats Lam-application as splice-of-lamBody, which gives the wrong
+; "type" — a consequence of not tracking types of Lam-bound globals).
+; The workaround: inline the Leibniz witness `\P p. p`. The final
+; check `p : P y` where p has type `P x` succeeds via check_atom_or_h's
+; normalize-then-fast_eq when x and y reduce to the same tree.
+
+def id_A : A -> A = \(x : A). x
+
+; id_A Hx ≡ Hx definitionally; the inline witness proves the equality.
+def id_A_reduces : Eq A (id_A Hx) Hx
+                 = \(P : A -> Type). \(p : P (id_A Hx)). p
+
+; Same equality, direction reversed — normalize treats both the same.
+def id_A_reduces_rev : Eq A Hx (id_A Hx)
+                     = \(P : A -> Type). \(p : P Hx). p
+
+; Double-application of id also reduces.
+def id_A_twice : Eq A (id_A (id_A Hx)) Hx
+               = \(P : A -> Type). \(p : P (id_A (id_A Hx))). p
+
+; ===== Church-encoded Bool ============================
+;
+; Bool := (P : Type) -> P -> P -> P. true picks the first branch;
+; false picks the second. This is the smallest non-trivial inductive
+; type expressible without a dedicated inductive framework.
+
+; Binder names avoid single-char `t`/`△` which tokenize as leaves.
+def Bool  : Type = (P : Type) -> P -> P -> P
+def true  : Bool = \(P : Type). \(x : P). \(y : P). x
+def false : Bool = \(P : Type). \(x : P). \(y : P). y
+
+; Reflexivity of Bool equality via inline witness.
+def eq_true_true   : Eq Bool true true
+                   = \(P : Bool -> Type). \(p : P true). p
+def eq_false_false : Eq Bool false false
+                   = \(P : Bool -> Type). \(p : P false). p
+
+; ===== Church-encoded Nat =============================
+;
+; Nat := (P : Type) -> P -> (P -> P) -> P. Numerals encode "apply s
+; to z n times." zero and succ are the constructors.
+
+def Nat  : Type = (P : Type) -> P -> (P -> P) -> P
+def zero : Nat  = \(P : Type). \(z : P). \(s : P -> P). z
+def succ : Nat -> Nat
+         = \(n : Nat). \(P : Type). \(z : P). \(s : P -> P). s (n P z s)
+def one  : Nat = \(P : Type). \(z : P). \(s : P -> P). s z
+def two  : Nat = \(P : Type). \(z : P). \(s : P -> P). s (s z)
+
+; Def-eq reflection limitation: `Eq Nat (succ zero) one` cannot be
+; proved via the inline witness because normalize doesn't re-compute
+; bind-trees after beta-reducing under a binder — `normalize(succ zero)`
+; and `one` are semantically equal but structurally distinct Lam trees.
+; Recovering this needs either a smarter normalize (NbE) or equating
+; modulo alpha+bind-tree-recomputation. Deferred.
