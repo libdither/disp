@@ -69,6 +69,7 @@ export type Surface =
   | { tag: "alam"; x: string; type: Surface; body: Surface }
   | { tag: "pi"; x: string; dom: Surface; cod: Surface }
   | { tag: "arrow"; dom: Surface; cod: Surface }
+  | { tag: "raw"; tree: Tree }
 
 // ===== Fresh-marker source =====
 // Hand-constructed and elaborator-minted markers default to leaf-rooted
@@ -169,5 +170,6 @@ export function elab(s: Surface, env: Env): Tree {
       const cod = elab(s.cod, env)
       return mkPi(dom, BN, cod)
     }
+    case "raw": return s.tree
   }
 }

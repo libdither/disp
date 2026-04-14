@@ -369,6 +369,30 @@ test check U W = FF               ; an atom isn't its own type-of-something-else
 def U_typed : Type = U
 test check U_typed Type = TT
 
+; ===== `raw` escape: build atoms inline at typed-def site ===
+;
+; Without `raw`, `def Foo : Type = mkH Type m` would elaborate the RHS
+; as a tagged App tree (mkH applied to Type and m at the elab layer)
+; rather than the runtime mkH-application's H result. `raw (EXPR)`
+; switches to the untyped grammar, compiles via bracket abstraction,
+; and embeds the resulting runtime tree as a literal — the same path
+; plain `def` uses, just inline.
+
+def m_one = t (t t (t t))
+def m_two = t (t (t t) t)
+def Atom1 : Type = raw (mkH Type m_one)
+def Atom2 : Type = raw (mkH Type m_two)
+test check Atom1 Type = TT
+test check Atom2 Type = TT
+test fast_eq Atom1 Atom2 = FF
+
+; raw also embeds in nested positions (e.g. as Pi domain).
+def Hom_marker = t (t (t t) (t t))
+def hom_atom : Type = raw (mkH Type Hom_marker)
+elab Ty_atom_to_atom = hom_atom -> hom_atom
+def hom_id : hom_atom -> hom_atom = \(x : hom_atom). x
+test check hom_id Ty_atom_to_atom = TT
+
 ; Type-level function: Type -> Type accepts \(A : Type). A.
 def TypeId : Type -> Type = \(A : Type). A
 elab Ty_TypeToType = Type -> Type

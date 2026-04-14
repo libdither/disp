@@ -33,7 +33,7 @@ type Tok =
   | { t: "leaf" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["def", "test", "elab"])
+const KEYWORDS = new Set(["def", "test", "elab", "raw"])
 const PUNCT = ["\\", ".", "(", ")", "=", ":", "->", "→"] as const
 
 export function tokenize(src: string): Tok[] {
@@ -153,6 +153,19 @@ export function parseProgram(src: string): Decl[] {
 
   function parseTypedAtom(): Surface {
     const t = peek()
+    if (t.t === "kw" && t.v === "raw") {
+      // raw (EXPR) — escape into the untyped grammar. EXPR is parsed,
+      // bracket-abstracted, and reduced to a runtime tree; that tree is
+      // embedded as a literal in the surrounding typed term. Lets typed
+      // defs construct atoms-of-Type and other tagged-form values that
+      // require runtime computation (e.g. `mkH Type marker`) without a
+      // separate plain-`def` indirection.
+      eat()
+      expectPunct("(")
+      const sir = parseTerm()
+      expectPunct(")")
+      return { tag: "raw", tree: compile(sir) }
+    }
     if (t.t === "punct" && t.v === "(") {
       // Could be (e), (x : T) -> R, or (x : T) annotation following \
       // For atoms, just (e). Pi syntax is parsed in parseTyped at the term level.
@@ -165,7 +178,8 @@ export function parseProgram(src: string): Decl[] {
     if (t.t === "id") { eat(); return { tag: "var", name: t.v } }
     throw new Error(`parseTypedAtom: unexpected ${JSON.stringify(t)}`)
   }
-  const isTypedAtomStart = (t: Tok) => t.t === "id" || t.t === "leaf" || (t.t === "punct" && t.v === "(")
+  const isTypedAtomStart = (t: Tok) =>
+    t.t === "id" || t.t === "leaf" || (t.t === "punct" && t.v === "(") || (t.t === "kw" && t.v === "raw")
 
   function parseTypedApp(): Surface {
     let head = parseTypedAtom()

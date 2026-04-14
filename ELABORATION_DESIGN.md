@@ -137,6 +137,7 @@ What's deferred to keep Phase 2 minimal:
 
 Closed in this iteration:
 - Tree-program port of `compute_bind` and `replace_marker` (`examples/elab.disp`). The host versions in `src/elaborate.ts` are now formally optimizations of the disp-side functions; per philosophy rule 2 the tree version is canonical.
+- Surface ↔ runtime boundary: `raw (EXPR)` in the typed grammar parses EXPR with the untyped parser, bracket-abstracts to a runtime tree, and embeds the result as a literal in the elaborated form. Lets typed defs construct atoms-of-Type and other tagged-form values requiring runtime computation (e.g. `def Atom1 : Type = raw (mkH Type marker)`) without a separate plain-`def` indirection. Inside lambdas, `raw` only sees runtime globals — typed-bound vars aren't in scope of the untyped parser. That's by design: the boundary is local and explicit, not pervasive.
 
 The Phase 2 plan below is preserved as the spec.
 
