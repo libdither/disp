@@ -23,6 +23,7 @@
 // The conversion to tree happens once, at the end.
 
 import { Tree, LEAF, stem, fork, treeApply, applyTree, treeEqual, isLeaf, isStem, isFork, prettyTree, FAST_EQ } from "./tree.js"
+import { elab as elabSurface, type Surface, type Env as ElabEnv, freshMarker, mkH } from "./elaborate.js"
 
 // ===== Tokens =====
 type Tok =
@@ -32,8 +33,8 @@ type Tok =
   | { t: "leaf" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["def", "test"])
-const PUNCT = ["\\", ".", "(", ")", "="] as const
+const KEYWORDS = new Set(["def", "test", "elab"])
+const PUNCT = ["\\", ".", "(", ")", "=", ":", "->", "→"] as const
 
 export function tokenize(src: string): Tok[] {
   const toks: Tok[] = []
@@ -141,6 +142,91 @@ export function parseProgram(src: string): Decl[] {
     return parseApp()
   }
 
+  // ===== Typed surface parser (for `elab` declarations) =====
+  // Grammar:
+  //   typed   ::= '\(' id ':' typed ')' '.' typed     -- annotated lambda
+  //             | '(' id ':' typed ')' '->' typed     -- dependent Pi
+  //             | arrow
+  //   arrow   ::= app ('->' typed)?                    -- right-assoc non-dep arrow
+  //   app     ::= atom atom*
+  //   atom    ::= '(' typed ')' | id | '△' | 't'
+
+  function parseTypedAtom(): Surface {
+    const t = peek()
+    if (t.t === "punct" && t.v === "(") {
+      // Could be (e), (x : T) -> R, or (x : T) annotation following \
+      // For atoms, just (e). Pi syntax is parsed in parseTyped at the term level.
+      eat()
+      const e = parseTyped()
+      expectPunct(")")
+      return e
+    }
+    if (t.t === "leaf") { eat(); return { tag: "leaf" } }
+    if (t.t === "id") { eat(); return { tag: "var", name: t.v } }
+    throw new Error(`parseTypedAtom: unexpected ${JSON.stringify(t)}`)
+  }
+  const isTypedAtomStart = (t: Tok) => t.t === "id" || t.t === "leaf" || (t.t === "punct" && t.v === "(")
+
+  function parseTypedApp(): Surface {
+    let head = parseTypedAtom()
+    while (isTypedAtomStart(peek())) head = { tag: "app", f: head, x: parseTypedAtom() }
+    return head
+  }
+
+  function parseTypedArrow(): Surface {
+    const left = parseTypedApp()
+    const t = peek()
+    if (t.t === "punct" && (t.v === "->" || t.v === "→")) {
+      eat()
+      const right = parseTyped()
+      return { tag: "arrow", dom: left, cod: right }
+    }
+    return left
+  }
+
+  function parseTyped(): Surface {
+    const t = peek()
+    if (t.t === "punct" && t.v === "\\") return parseTypedLam()
+    if (t.t === "punct" && t.v === "(") {
+      // Could be a dependent Pi `(x : T) -> R`. Look ahead.
+      const save = p
+      eat()  // consume (
+      if (peek().t === "id") {
+        const id = (eat() as { v: string }).v
+        if (peek().t === "punct" && (peek() as { v: string }).v === ":") {
+          eat()  // consume :
+          const T = parseTyped()
+          expectPunct(")")
+          if (peek().t === "punct" && ((peek() as { v: string }).v === "->" || (peek() as { v: string }).v === "→")) {
+            eat()
+            const R = parseTyped()
+            return { tag: "pi", x: id, dom: T, cod: R }
+          }
+          throw new Error(`elab: '(${id} : T)' must be followed by '->'`)
+        }
+      }
+      // Not a Pi; rewind and let parseTypedArrow handle it as a parenthesized expr.
+      p = save
+    }
+    return parseTypedArrow()
+  }
+
+  function parseTypedLam(): Surface {
+    expectPunct("\\")
+    if (!(peek().t === "punct" && (peek() as { v: string }).v === "(")) {
+      throw new Error("elab: '\\' must be followed by '(x : T)'")
+    }
+    eat()  // (
+    if (peek().t !== "id") throw new Error("elab: expected binder name after '\\('")
+    const name = (eat() as { v: string }).v
+    expectPunct(":")
+    const T = parseTyped()
+    expectPunct(")")
+    expectPunct(".")
+    const body = parseTyped()
+    return { tag: "alam", x: name, type: T, body }
+  }
+
   // ===== Compiler =====
 
   const globals = new Map<string, Tree>()
@@ -240,6 +326,18 @@ export function parseProgram(src: string): Decl[] {
       expectPunct("=")
       const sir = parseTerm()
       const tree = compile(sir)
+      globals.set(id.v, tree)
+      decls.push({ kind: "Def", name: id.v, tree })
+    } else if (t.t === "kw" && t.v === "elab") {
+      // elab name = SURFACE_EXPR
+      // Parses with the typed surface grammar; runs the elaborator with the
+      // current globals as the initial environment. Result: a tagged tree
+      // registered as a global like a regular def.
+      const id = eat()
+      if (id.t !== "id") throw new Error("elab: expected name")
+      expectPunct("=")
+      const surface = parseTyped()
+      const tree = elabSurface(surface, new Map(globals))
       globals.set(id.v, tree)
       decls.push({ kind: "Def", name: id.v, tree })
     } else if (t.t === "kw" && t.v === "test") {

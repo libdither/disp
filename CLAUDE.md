@@ -23,18 +23,19 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 
 - `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets, `FAST_EQ` primitive.
 - `src/parse.ts` — surface tokenizer/parser/bracket-abstraction. Handles `def`, `test`, `\x.`, juxtaposed application, `t` for leaf. Exposes `fast_eq` as a global to disp programs.
+- `src/elaborate.ts` — host-side surface elaborator. Mirrors `examples/predicates.disp`'s tagged-form encoding so output is consumable by `pred_of` and `erase`. `compute_bind` walks elaborated body looking for the H-marker introduced by `\(x : T)`; `replaceMarker` swaps tokens for V before emitting `mkLam`/`mkPi`.
 - `src/run.ts` — driver: load `.disp` file, run `test` declarations, assert tree equality.
 - `examples/*.disp` — tree-native programs implementing the elaborator substrate (see ELABORATION_DESIGN.md "Current state" for inventory).
 - `test/tree.test.ts` + `test/disp.test.ts` — vitest suites.
 
 ## Current state (as of 2026-04-13)
 
-**Implemented (substrate + Phase 1)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` (Lam-vs-Pi descent + App via infer + H lookup + conversion) + `pred_of` (types-as-predicates kernel) + `mkAtom`. Most of these live tree-side in `examples/*.disp`, host-side only does runtime + parser + test harness. 139 tree-native tests pass across 12 example files.
+**Implemented (substrate + Phase 1 + Phase 2)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` + `pred_of` (types-as-predicates kernel) + `mkAtom` + `erase` (tagged → bracket-abstracted runtime SKI) + surface elaborator (`\(x : T). body`, `A -> B`, `(x : T) -> R`). Tree-native code in `examples/*.disp`; host-side has runtime, parser, surface elaborator, and test harness. 171 tree-native tests pass across 14 example files.
 
 **Plan**: see `ELABORATION_DESIGN.md` "Plan" section.
 1. ~~**Types-as-predicates kernel**~~ — DONE (`examples/predicates.disp`). `apply(ty, term)` IS the check; `pred_of` derives the callable predicate from the tagged form.
-2. **Surface elaborator** (next) — `\(x : T). body` and `(x : T) → R` syntax; auto-compute bind-trees from term structure; `def name : T = e` triggers check.
-3. **Metavariables** — positional canonical metas + Miller-pattern unification.
+2. ~~**Surface elaborator**~~ — DONE (`src/elaborate.ts` + `examples/elab.disp`). Annotated lambdas, arrows, dependent Pis; auto-computed bind-trees; type-checking via `pred_of` downstream in tests.
+3. **Metavariables** (next) — positional canonical metas + Miller-pattern unification.
 
 **Sharp lessons from the substrate** (must respect when extending — see ELABORATION_DESIGN.md for detail):
 - Recursive-call arg order under `wait`/`fix`: inner-binder-derived arg goes first.

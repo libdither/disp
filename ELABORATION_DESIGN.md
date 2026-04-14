@@ -2,7 +2,7 @@
 
 The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types are predicates) and `BIND_TREE_NBE_IDEA.md` (bind-trees as the binder substrate). This doc tracks the current state of the implementation and the next three phases planned.
 
-**Status**: Phase 1 complete (`examples/predicates.disp`). Phase 2 next.
+**Status**: Phase 1 complete (`examples/predicates.disp`); Phase 2 surface elaborator landed (`src/elaborate.ts` + parser extensions + `examples/elab.disp`). Phase 3 next.
 
 **Companion docs**:
 - [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — types are executable predicates; the kernel call is `apply(type, value)`.
@@ -120,7 +120,23 @@ i.e., an atom's predicate accepts H tokens whose annotation is itself. (`type_of
 
 ---
 
-### Phase 2 — Surface elaborator
+### Phase 2 — Surface elaborator ✅ DONE (subset)
+
+**Status**: shipped in `src/elaborate.ts` + `src/parse.ts` + `examples/elab.disp` (13 tests, plus erase prototype `examples/erase.disp` from earlier). The elaborator handles annotated lambdas, non-dep arrows, and dependent Pis; type-checking is downstream via `pred_of` invoked from disp tests rather than triggered automatically by `def name : T = e`.
+
+What's working:
+- Surface syntax: `\(x : T). body`, `(x : T) -> R`, `A -> B`, plus `elab name = SURFACE_EXPR` top-level.
+- Bind-tree computation: each annotated lambda introduces a fresh `mkH T marker` token in the body; after recursive elaboration, `computeBind` walks the result looking for that token and produces the bind-tree; `replaceMarker` swaps the token for V.
+- Encoding compatibility: `src/elaborate.ts` mirrors `examples/predicates.disp`'s tagged-form layout exactly (same TAG_ROOT, kind tags, payload structure), so elaborator output is structurally equal to hand-constructed forms (modulo H freshness markers minted from a counter).
+- Free hypotheses (`Hf = mkH (Pi A BN A) t`) defined via `def` work inside `elab` bodies because globals resolve as their literal trees.
+
+What's deferred to keep Phase 2 minimal:
+- `def name : T = e` automatic check (currently `elab name = e; test check name Ty = TT`).
+- A real `Type` universe (today: leaf placeholder).
+- Tree-program port of `compute_bind` (host-side only per philosophy rule 2).
+- Metas (Phase 3).
+
+The Phase 2 plan below is preserved as the spec.
 
 **Goal**: write programs in surface syntax with explicit type annotations; the elaborator emits tagged forms with computed bind-trees and runs the kernel from Phase 1 to check.
 

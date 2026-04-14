@@ -1,0 +1,218 @@
+; Phase 2: surface elaborator end-to-end.
+;
+; The host-side elaborator (src/elaborate.ts) parses typed surface
+; syntax — `\(x : T). body`, `(x : T) -> R`, `A -> B` — and emits the
+; tagged forms (mkLam/mkPi/mkApp/mkH) with auto-computed bind-trees that
+; match what predicates.disp consumes. Encoding is identical: same
+; TAG_ROOT, kind tags, layout. So elab output is structurally equal to
+; hand-constructed tagged forms (modulo H freshness markers, which are
+; minted by the elaborator from a counter).
+;
+; This file imports the predicates kernel and verifies that elaborated
+; programs check against elaborated types via pred_of.
+
+; --- preamble (combinators, tagged forms, splice, normalize, infer, pred_of) ---
+def K = \x y. x
+def I = \x. x
+def triage = \X Y Z f. t (t X Y) Z f
+def wait = \a b c. t (t a) (t t c) b
+def fix = (\m w f. m (\x. f (w m x))) (\x. x x) wait
+
+def fork_left  = \f. triage f (\c. c) (\l r. l) f
+def fork_right = \f. triage f (\c. c) (\l r. r) f
+
+def TAG_ROOT = t (t (t (t (t (t (t t))))))
+def tagged   = \k p. t (t TAG_ROOT k) p
+def kind     = \tg. fork_right (fork_left tg)
+def payload  = \tg. fork_right tg
+
+def KV = t
+def KH = t t
+def KA = t (t t)
+def KL = t (t (t t))
+def KP = t (t (t (t t)))
+
+def V         = tagged KV t
+def mkH       = \ty lvl. tagged KH (t ty lvl)
+def type_of_H = \h. fork_left  (payload h)
+
+def mkApp   = \f x. tagged KA (t f x)
+def appF    = \a. fork_left  (payload a)
+def appX    = \a. fork_right (payload a)
+def mkLam   = \A B body. tagged KL (t (t A B) body)
+def lamA    = \l. fork_left  (fork_left  (payload l))
+def lamB    = \l. fork_right (fork_left  (payload l))
+def lamBody = \l. fork_right (payload l)
+def mkPi    = \A B codom. tagged KP (t (t A B) codom)
+def piA     = \p. fork_left  (fork_left  (payload p))
+def piB     = \p. fork_right (fork_left  (payload p))
+def piCodom = \p. fork_right (payload p)
+
+def bool_then = \yes no b. triage yes (\_. no) (\l r. no) b
+def is_kind = \k tg. fast_eq k (kind tg)
+def is_app = \tg. is_kind KA tg
+def is_lam = \tg. is_kind KL tg
+def is_pi  = \tg. is_kind KP tg
+def is_h   = \tg. is_kind KH tg
+
+def and = \a b. bool_then b (t t) a
+def or  = \a b. bool_then t b a
+
+def BE = t
+def BN = t t
+def KBA = t (t t)
+def KBL = t (t (t t))
+def KBP = t (t (t (t t)))
+def mkBApp = \l r. t KBA (t l r)
+def mkBLam = \bA bBody.  t KBL (t bA bBody)
+def mkBPi  = \bA bCodom. t KBP (t bA bCodom)
+
+def splice_inner = fix (\rec b v term.
+  triage v
+    (\c. term)
+    (\kt pld.
+      (bool_then
+        (\_.
+          mkApp (rec (fork_left  pld) v (appF term))
+                (rec (fork_right pld) v (appX term)))
+        (bool_then
+          (\_.
+            mkLam (rec (fork_left  pld) v (lamA term))
+                  (lamB term)
+                  (rec (fork_right pld) v (lamBody term)))
+          (\_.
+            mkPi  (rec (fork_left  pld) v (piA term))
+                  (piB term)
+                  (rec (fork_right pld) v (piCodom term)))
+          (fast_eq KBL kt))
+        (fast_eq KBA kt))
+      t)
+    b)
+def splice = \term b v. splice_inner b v term
+
+def normalize = fix (\rec term.
+  (bool_then
+    (\u.
+      (bool_then
+        (\w. rec (splice (lamBody (appF w)) (lamB (appF w)) (appX w)))
+        (\w. mkApp (rec (appF w)) (rec (appX w)))
+        (is_lam (appF u))) u)
+    (bool_then
+      (\u. mkLam (lamA u) (lamB u) (rec (lamBody u)))
+      (\u. u)
+      (is_lam term))
+    (is_app term)) term)
+
+def infer = fix (\rec term.
+  (bool_then
+    (\u. type_of_H u)
+    (\u.
+      (bool_then
+        (\v. (\f_ty. splice (piCodom f_ty) (piB f_ty) (appX v)) (rec (appF v)))
+        (\v. v)
+        (is_app u)) u)
+    (is_h term)) term)
+
+def TT = t
+def FF = t t
+
+def lvl_start = t t t
+def lvl_next  = \l. t l t
+
+def pred_of_lvl = fix (\rec ty cand level.
+  (bool_then
+    (\c.
+      (bool_then
+        (\u.
+          and (fast_eq (normalize (piA u)) (normalize (lamA c)))
+              (rec
+                (splice (piCodom u) (piB u) (mkH (piA u) level))
+                (splice (lamBody c) (lamB c) (mkH (piA u) level))
+                (lvl_next level)))
+        (\u. FF)
+        (is_pi ty)) ty)
+    (\c.
+      (bool_then
+        (\d.
+          and (rec (piA (infer (appF d))) (appX d) level)
+              (fast_eq (normalize (infer d)) (normalize ty)))
+        (\d.
+          or (fast_eq (normalize d) (normalize ty))
+             ((bool_then
+                 (\e. fast_eq (normalize (type_of_H e)) (normalize ty))
+                 (\_. FF)
+                 (is_h d)) d))
+        (is_app c)) c)
+    (is_lam cand)) cand)
+
+def pred_of = \ty cand. pred_of_lvl ty cand lvl_start
+def check   = \term ty. pred_of ty term
+
+; ===== Type atoms — used as opaque bare-tree types ===
+def A = t
+def B = t (t t)
+def C = t (t (t t))
+
+; ===== Elaborated programs ===========================
+;
+; The `elab` keyword runs the host-side elaborator on the typed surface
+; expression and registers the result as a global tagged tree.
+
+elab id_AA = \(x : A). x
+elab id_BB = \(x : B). x
+
+; \(x : A). \(y : B). x  — K-shape over A, B.
+elab K_AB = \(x : A). \(y : B). x
+
+; \(x : A). \(y : B). y  — KI-shape.
+elab KI_AB = \(x : A). \(y : B). y
+
+; Triple: \(x : A). \(y : B). \(z : C). x.
+elab K3 = \(x : A). \(y : B). \(z : C). x
+
+; ===== Elaborated types =================================
+
+elab Ty_AA = A -> A
+elab Ty_BB = B -> B
+elab Ty_AB_A = A -> B -> A
+elab Ty_AB_B = A -> B -> B
+elab Ty_ABCA = A -> B -> C -> A
+
+; ===== Type-checking via pred_of (the Phase 1 kernel) =======
+
+test check id_AA Ty_AA = TT
+test check id_BB Ty_BB = TT
+test check id_AA Ty_BB = FF       ; A → A doesn't match B → B (different domain)
+
+test check K_AB Ty_AB_A = TT
+test check K_AB Ty_AB_B = FF      ; K returns x:A, not y:B
+test check KI_AB Ty_AB_B = TT
+test check KI_AB Ty_AB_A = FF
+
+elab Ty_ABCB = A -> B -> C -> B
+test check K3 Ty_ABCA = TT
+test check K3 Ty_ABCB = FF
+
+; ===== Dependent Pi (real) ==========================
+;
+; (x : A) -> A is the same as A -> A but constructed via dependent syntax.
+; The bind-tree for the codom is BN (x not used in codom).
+elab Ty_dep_const = (x : A) -> A
+test check id_AA Ty_dep_const = TT     ; same shape as A -> A semantically
+
+; (x : A) -> x  — codom IS the bound var. Pathological but mechanically valid.
+elab Ty_xx = (x : A) -> x
+; \(x : A). x : (x : A) -> x — id has the same shape, accepts both.
+test check id_AA Ty_xx = TT
+
+; ===== Free hypotheses for Apps =====================
+;
+; Apps inside elab refer to globals. To exercise App-of-H, define an H
+; manually (free hypothesis of arrow type) and use it inside elab.
+
+def Hf = mkH (mkPi A BN A) t       ; f : A -> A (manually constructed)
+def Hx = mkH A t                    ; x : A
+
+elab app_fx = Hf Hx
+test check app_fx A = TT            ; (Hf Hx) : A
+test check app_fx B = FF
