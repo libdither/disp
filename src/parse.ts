@@ -23,7 +23,7 @@
 // The conversion to tree happens once, at the end.
 
 import { Tree, LEAF, stem, fork, treeApply, applyTree, treeEqual, isLeaf, isStem, isFork, prettyTree, FAST_EQ } from "./tree.js"
-import { elab as elabSurface, type Surface, type Env as ElabEnv, freshMarker, mkH } from "./elaborate.js"
+import { elab as elabSurface, type Surface, type Env as ElabEnv, freshMarker, mkH, substituteMetas, decodeMetaSolutions } from "./elaborate.js"
 
 // ===== Tokens =====
 type Tok =
@@ -175,7 +175,14 @@ export function parseProgram(src: string): Decl[] {
       return e
     }
     if (t.t === "leaf") { eat(); return { tag: "leaf" } }
-    if (t.t === "id") { eat(); return { tag: "var", name: t.v } }
+    if (t.t === "id") {
+      eat()
+      // `_` is the surface hole marker — desugars to a fresh meta token at
+      // elab time. Distinct from `_foo` (a regular identifier) — only the
+      // bare single underscore triggers the hole path.
+      if (t.v === "_") return { tag: "hole" }
+      return { tag: "var", name: t.v }
+    }
     throw new Error(`parseTypedAtom: unexpected ${JSON.stringify(t)}`)
   }
   const isTypedAtomStart = (t: Tok) =>
@@ -347,14 +354,30 @@ export function parseProgram(src: string): Decl[] {
         const exprS = parseTyped()
         const typeT = elabSurface(typeS, new Map(globals))
         const exprT = elabSurface(exprS, new Map(globals))
-        const checkFn = globals.get("check")
-        if (!checkFn) throw new Error(`def ${id.v}: 'check' must be defined before typed defs`)
-        const res = applyTree(applyTree(checkFn, exprT), typeT, 10_000_000)
-        if (!treeEqual(res, LEAF)) {
-          throw new Error(`def ${id.v}: type check failed (got ${prettyTree(res)})`)
+        // Run pred_of_lvl directly so we get the (bool, state') tuple — the
+        // state's metas slot carries any solutions discovered during checking,
+        // which we then substitute back into the term before storing.
+        const predOfLvl = globals.get("pred_of_lvl")
+        const stateInit = globals.get("state_init")
+        if (!predOfLvl || !stateInit) {
+          throw new Error(`def ${id.v}: 'pred_of_lvl' and 'state_init' must be defined before typed defs`)
         }
-        globals.set(id.v, exprT)
-        decls.push({ kind: "Def", name: id.v, tree: exprT })
+        const resTuple = applyTree(applyTree(applyTree(predOfLvl, typeT), exprT), stateInit, 10_000_000)
+        if (!isFork(resTuple)) {
+          throw new Error(`def ${id.v}: pred_of_lvl returned non-tuple ${prettyTree(resTuple)}`)
+        }
+        const okBit = resTuple.left
+        const finalState = resTuple.right
+        if (!treeEqual(okBit, LEAF)) {
+          throw new Error(`def ${id.v}: type check failed (got ${prettyTree(okBit)})`)
+        }
+        // Pull metas out of finalState (which is `t depth metas`) and
+        // substitute solved metas in the elaborated term before binding.
+        const metasList = isFork(finalState) ? finalState.right : LEAF
+        const solutions = decodeMetaSolutions(metasList)
+        const finalTree = solutions.size > 0 ? substituteMetas(exprT, solutions) : exprT
+        globals.set(id.v, finalTree)
+        decls.push({ kind: "Def", name: id.v, tree: finalTree })
       } else {
         expectPunct("=")
         const sir = parseTerm()

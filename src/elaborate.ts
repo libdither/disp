@@ -26,12 +26,14 @@ const KH = stem(LEAF)
 const KA = stem(stem(LEAF))
 const KL = stem(stem(stem(LEAF)))
 const KP = stem(stem(stem(stem(LEAF))))
+const KM = stem(stem(stem(stem(stem(LEAF)))))
 
 export const V = tagged(KV, LEAF)
 export const mkH = (ty: Tree, lvl: Tree): Tree => tagged(KH, fork(ty, lvl))
 export const mkApp = (f: Tree, x: Tree): Tree => tagged(KA, fork(f, x))
 export const mkLam = (A: Tree, B: Tree, body: Tree): Tree => tagged(KL, fork(fork(A, B), body))
 export const mkPi = (A: Tree, B: Tree, cod: Tree): Tree => tagged(KP, fork(fork(A, B), cod))
+export const mkMeta = (marker: Tree): Tree => tagged(KM, marker)
 
 export const BE = LEAF
 export const BN = stem(LEAF)
@@ -48,6 +50,7 @@ const kindOf = (t: Tree): Tree | null => isTagged(t) ? t.left.right : null
 const isAppT = (t: Tree) => kindOf(t)?.id === KA.id
 const isLamT = (t: Tree) => kindOf(t)?.id === KL.id
 const isPiT  = (t: Tree) => kindOf(t)?.id === KP.id
+const isMetaT = (t: Tree) => kindOf(t)?.id === KM.id
 
 // Accessors (assume tagged form)
 const payload = (t: Tree): Tree => (t as { right: Tree }).right
@@ -70,6 +73,7 @@ export type Surface =
   | { tag: "pi"; x: string; dom: Surface; cod: Surface }
   | { tag: "arrow"; dom: Surface; cod: Surface }
   | { tag: "raw"; tree: Tree }
+  | { tag: "hole" }
 
 // ===== Fresh-marker source =====
 // Hand-constructed and elaborator-minted markers default to leaf-rooted
@@ -118,6 +122,67 @@ function computeBind(term: Tree, token: Tree): Tree {
     return mkBPi(bA, bCod)
   }
   return BN
+}
+
+// Substitute solved metas in a tree. `solutions` maps marker.id → solved value.
+// Recurses into solved values too (a meta solution may itself contain metas).
+// Unsolved metas pass through unchanged.
+export function substituteMetas(term: Tree, solutions: Map<number, Tree>): Tree {
+  if (isMetaT(term)) {
+    const marker = payload(term)
+    const solved = solutions.get(marker.id)
+    if (solved) return substituteMetas(solved, solutions)
+    return term
+  }
+  if (isAppT(term)) return mkApp(substituteMetas(appF_(term), solutions), substituteMetas(appX_(term), solutions))
+  if (isLamT(term)) return mkLam(substituteMetas(lamA_(term), solutions), lamB_(term), substituteMetas(lamBody_(term), solutions))
+  if (isPiT(term)) return mkPi(substituteMetas(piA_(term), solutions), piB_(term), substituteMetas(piCodom_(term), solutions))
+  return term
+}
+
+// Decode the disp-side metas list (from state.metas at end of check) into
+// a marker.id → solved-value map. The list is right-folded structurally:
+// leaf = empty, fork(entry, rest) = cons. Each entry is fork(marker, info)
+// where info = fork(tag, payload) and tag === stem(LEAF) marks Solved.
+//
+// Two-pass to handle meta-to-meta aliases: when the kernel solves
+// `m1 := mkMeta m2` and later `m1 := A`, the entries record both. We
+// collect alias edges separately from concrete solutions, then propagate
+// concretes across alias closures (small fixed-point). Doing this here
+// avoids paying the cost of disp-side chain-following on every check
+// call (which exhausts the SKI reducer's budget).
+const S_TAG = stem(LEAF)
+export function decodeMetaSolutions(metasList: Tree): Map<number, Tree> {
+  const sols = new Map<number, Tree>()
+  const aliases: [number, number][] = []
+  let cur = metasList
+  while (isFork(cur)) {
+    const entry = cur.left
+    const rest = cur.right
+    if (isFork(entry)) {
+      const marker = entry.left
+      const info = entry.right
+      if (isFork(info) && info.left.id === S_TAG.id) {
+        const value = info.right
+        if (isMetaT(value)) {
+          aliases.push([marker.id, payload(value).id])
+        } else if (!sols.has(marker.id)) {
+          sols.set(marker.id, value)
+        }
+      }
+    }
+    cur = rest
+  }
+  // Propagate concrete solutions across alias edges until stable.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [a, b] of aliases) {
+      if (sols.has(a) && !sols.has(b)) { sols.set(b, sols.get(a)!); changed = true }
+      if (sols.has(b) && !sols.has(a)) { sols.set(a, sols.get(b)!); changed = true }
+    }
+  }
+  return sols
 }
 
 // Replace every occurrence of `token` in `term` with `replacement`.
@@ -171,5 +236,6 @@ export function elab(s: Surface, env: Env): Tree {
       return mkPi(dom, BN, cod)
     }
     case "raw": return s.tree
+    case "hole": return mkMeta(freshMarker())
   }
 }

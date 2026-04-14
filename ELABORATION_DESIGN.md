@@ -212,6 +212,12 @@ Implemented host-side initially per philosophy rule 2 (mirror, with planned tree
 
 ### Phase 3 — Metavariables and unification
 
+**Status**: first + second slices landed. State plumbing (`state = (depth, metas)`) ✓; KM tag + `mkMeta marker` + accessors ✓; `_` surface syntax ✓; symmetric `try_unify` (meta on either side, used in Lam-vs-Pi domain match, App's `infer d` vs `ty`, and the H-or-atom else branch via `check_atom_or_h`) ✓; host-side meta-list decoding + `substituteMetas` + alias-edge propagation in `decodeMetaSolutions` ✓. Working trace tests: `id_AA_hole : A -> A = \(x : _). x`, `id_dom_hole : _ -> A = \(x : A). x`, `id_codom_hole : A -> _ = \(x : A). x`, `K_codom_hole : A -> B -> _ = \(x : A). \(y : B). x`, `id_dep_hole : (x : _) -> A = \(x : A). x`, and the meta-to-meta alias `both_metas : _ -> A = \(x : _). x`.
+
+**Sharp lesson from this slice**: tree-side chain-following (`resolve_meta` walking the metas list inside `try_unify`) was correct on paper but exhausted the SKI compiler's reduction budget at parse time — every kernel call paid the cost. Solution: keep kernel `try_unify` immediate (single-level solve), and propagate alias edges (`m1 := mkMeta m2` recorded as alias, not concrete) host-side at decode time via fixed-point. Tree-side chain-following can be reintroduced for self-hosted checking later when the budget model accommodates it.
+
+**Next slices**: implicit-arg insertion (`{A : Type} -> ...`), constraint propagation for `(A : _) → A → A` style polymorphic defs, Miller-pattern unification for higher-order metas (heads applied to bound vars).
+
 **Goal**: support `_` holes in surface syntax, implicit args, and bidirectional inference of omitted types via Miller-pattern unification.
 
 This is the genuinely hard phase. The conceptual obstacle (called out earlier): tree calculus has no fresh-name source. Two viable encodings:
