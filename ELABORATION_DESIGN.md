@@ -122,19 +122,21 @@ i.e., an atom's predicate accepts H tokens whose annotation is itself. (`type_of
 
 ### Phase 2 — Surface elaborator ✅ DONE (subset)
 
-**Status**: shipped in `src/elaborate.ts` + `src/parse.ts` + `examples/elab.disp` (13 tests, plus erase prototype `examples/erase.disp` from earlier). The elaborator handles annotated lambdas, non-dep arrows, and dependent Pis; type-checking is downstream via `pred_of` invoked from disp tests rather than triggered automatically by `def name : T = e`.
+**Status**: shipped in `src/elaborate.ts` + `src/parse.ts` + `examples/elab.disp`. The elaborator handles annotated lambdas, non-dep arrows, and dependent Pis. Typed defs `def NAME : T = EXPR` elaborate both sides and run the user-defined `check` from globals at parse time; an FF result throws a parse-time error.
 
 What's working:
-- Surface syntax: `\(x : T). body`, `(x : T) -> R`, `A -> B`, plus `elab name = SURFACE_EXPR` top-level.
+- Surface syntax: `\(x : T). body`, `(x : T) -> R`, `A -> B`, plus `elab name = SURFACE_EXPR` and `def NAME : T = EXPR` top-level forms.
 - Bind-tree computation: each annotated lambda introduces a fresh `mkH T marker` token in the body; after recursive elaboration, `computeBind` walks the result looking for that token and produces the bind-tree; `replaceMarker` swaps the token for V.
 - Encoding compatibility: `src/elaborate.ts` mirrors `examples/predicates.disp`'s tagged-form layout exactly (same TAG_ROOT, kind tags, payload structure), so elaborator output is structurally equal to hand-constructed forms (modulo H freshness markers minted from a counter).
 - Free hypotheses (`Hf = mkH (Pi A BN A) t`) defined via `def` work inside `elab` bodies because globals resolve as their literal trees.
+- Typed defs run the disp-side `check` (which must be in scope when the `def` parses) and bind the elaborated tagged tree on success. Both positive examples (`def id_AA_typed : A -> A = \(x : A). x`) and negative cases (`def WRONG : A -> A = \(x : B). x` throws) are exercised.
 
 What's deferred to keep Phase 2 minimal:
-- `def name : T = e` automatic check (currently `elab name = e; test check name Ty = TT`).
-- A real `Type` universe (today: leaf placeholder).
-- Tree-program port of `compute_bind` (host-side only per philosophy rule 2).
+- A real `Type` universe with consistency. Today there's a `Type` sentinel H token and Type:Type works via hash-cons short-circuit; atoms inhabiting Type are built with plain `def` as `mkH Type marker` (markers must be hand-managed until Phase 3 supplies a fresh-name source).
 - Metas (Phase 3).
+
+Closed in this iteration:
+- Tree-program port of `compute_bind` and `replace_marker` (`examples/elab.disp`). The host versions in `src/elaborate.ts` are now formally optimizations of the disp-side functions; per philosophy rule 2 the tree version is canonical.
 
 The Phase 2 plan below is preserved as the spec.
 

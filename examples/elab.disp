@@ -216,3 +216,160 @@ def Hx = mkH A t                    ; x : A
 elab app_fx = Hf Hx
 test check app_fx A = TT            ; (Hf Hx) : A
 test check app_fx B = FF
+
+; ===== Typed defs: def NAME : T = EXPR ==============
+;
+; Sugar: elaborate both sides, run `check exprT typeT`. If FF, parse fails.
+; If TT, the elaborated tagged tree is bound as a global (same as `elab`).
+; The negative case (a wrong-typed def) can't be tested at the runFile level
+; because it throws at parse — covered by manual eyeballing only here.
+
+def id_AA_typed : A -> A = \(x : A). x
+test check id_AA_typed Ty_AA = TT       ; same shape as hand-elaborated id
+
+def K_AB_typed : A -> B -> A = \(x : A). \(y : B). x
+test check K_AB_typed Ty_AB_A = TT
+
+def K3_typed : A -> B -> C -> A = \(x : A). \(y : B). \(z : C). x
+test check K3_typed Ty_ABCA = TT
+
+; Dependent Pi form on the type side.
+def id_dep_typed : (x : A) -> A = \(x : A). x
+test check id_dep_typed Ty_dep_const = TT
+
+; ===== Tree-native port: compute_bind and replace_marker =======
+;
+; Host-side mirrors live in src/elaborate.ts. Per philosophy rule 2,
+; every host operation participating in elaboration needs a tree-program
+; counterpart. Both walk a tagged-form term comparing against a token
+; (matched by hash-cons identity) and either produce a bind-tree or
+; rewrite the token to a replacement.
+
+def compute_bind = fix (\rec term token.
+  (bool_then
+    (\_. BE)
+    (\_.
+      (bool_then
+        (\u.
+          ((\bf bx.
+              bool_then BN (mkBApp bf bx)
+                        (and (fast_eq bf BN) (fast_eq bx BN)))
+            (rec (appF u) token) (rec (appX u) token)))
+        (\u.
+          (bool_then
+            (\v.
+              ((\bA bB.
+                  bool_then BN (mkBLam bA bB)
+                            (and (fast_eq bA BN) (fast_eq bB BN)))
+                (rec (lamA v) token) (rec (lamBody v) token)))
+            (\v.
+              (bool_then
+                (\w.
+                  ((\bA bC.
+                      bool_then BN (mkBPi bA bC)
+                                (and (fast_eq bA BN) (fast_eq bC BN)))
+                    (rec (piA w) token) (rec (piCodom w) token)))
+                (\_. BN)
+                (is_pi v)) v)
+            (is_lam u)) u)
+        (is_app term)) term)
+    (fast_eq term token)) t)
+
+def replace_marker = fix (\rec term token replacement.
+  (bool_then
+    (\_. replacement)
+    (\_.
+      (bool_then
+        (\u. mkApp (rec (appF u) token replacement)
+                   (rec (appX u) token replacement))
+        (\u.
+          (bool_then
+            (\v. mkLam (rec (lamA v) token replacement)
+                       (lamB v)
+                       (rec (lamBody v) token replacement))
+            (\v.
+              (bool_then
+                (\w. mkPi (rec (piA w) token replacement)
+                          (piB w)
+                          (rec (piCodom w) token replacement))
+                (\_. v)
+                (is_pi v)) v)
+            (is_lam u)) u)
+        (is_app term)) term)
+    (fast_eq term token)) t)
+
+; ===== Tests for compute_bind and replace_marker =====
+;
+; Use markers from a namespace disjoint from the elaborator's leaf-rooted
+; stem chains. Fork-shaped levels work; here use simple fresh leaf-stem
+; markers chosen to not collide with internal hand-built Hs (Hf, Hx use t).
+
+def cb_tok = mkH A (t (t t) t)
+def cb_other = mkH A (t (t t t) t)
+
+; token alone — BE
+test compute_bind cb_tok cb_tok = BE
+; unrelated H — BN
+test compute_bind cb_other cb_tok = BN
+; App with token in F position only
+test compute_bind (mkApp cb_tok V) cb_tok = mkBApp BE BN
+; App with token in X position only
+test compute_bind (mkApp V cb_tok) cb_tok = mkBApp BN BE
+; App with neither — collapses to BN
+test compute_bind (mkApp V V) cb_tok = BN
+; Lam with token in body
+test compute_bind (mkLam A BN cb_tok) cb_tok = mkBLam BN BE
+; Pi with token in domain
+test compute_bind (mkPi cb_tok BN A) cb_tok = mkBPi BE BN
+; Nested: App ( Lam ... cb_tok ) V
+test compute_bind (mkApp (mkLam A BN cb_tok) V) cb_tok
+  = mkBApp (mkBLam BN BE) BN
+
+; replace_marker swaps token → V
+test replace_marker cb_tok cb_tok V = V
+test replace_marker (mkApp cb_tok V) cb_tok V = mkApp V V
+test replace_marker (mkLam A BN cb_tok) cb_tok V = mkLam A BN V
+test replace_marker (mkPi cb_tok BN A) cb_tok V = mkPi V BN A
+; non-token unchanged
+test replace_marker cb_other cb_tok V = cb_other
+
+; ===== Type universe (placeholder) ===================
+;
+; Per ELABORATION_DESIGN.md open-question 3: we're Type:Type, no
+; consistency. `Type` is a sentinel H token. The kernel needs no
+; special casing — `pred_of Type cand` accepts:
+;   - cand hash-cons-equal Type (the Type:Type case fires this)
+;   - any H whose type_of_H is Type (the standard atom-of-type case)
+;
+; Atoms inhabiting Type are built with plain `def` so the RHS evaluates
+; in the runtime (`mkH` actually applies, producing a tagged H tree).
+; Typed defs `def NAME : Type = EXPR` work when EXPR is a name binding
+; an already-built atom — the elaborator just resolves the var to its
+; global tree before checking.
+;
+; Markers for user-defined atoms must be distinct (no fresh-name source
+; until Phase 3); collisions silently collapse atoms.
+
+def Type_sentinel = t (t t t)
+def Type = mkH Type_sentinel t
+
+; Type:Type via direct hash-cons identity in the H-or-fast-eq branch.
+test check Type Type = TT
+
+def U_marker = t t t
+def V_marker = t t (t t)
+def U = mkH Type U_marker
+def W = mkH Type V_marker
+test fast_eq U W = FF             ; distinct markers → distinct atoms
+test check U Type = TT
+test check W Type = TT
+test check U W = FF               ; an atom isn't its own type-of-something-else
+
+; Typed-def form referencing a pre-built atom.
+def U_typed : Type = U
+test check U_typed Type = TT
+
+; Type-level function: Type -> Type accepts \(A : Type). A.
+def TypeId : Type -> Type = \(A : Type). A
+elab Ty_TypeToType = Type -> Type
+test check TypeId Ty_TypeToType = TT

@@ -30,11 +30,11 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 
 ## Current state (as of 2026-04-13)
 
-**Implemented (substrate + Phase 1 + Phase 2)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` + `pred_of` (types-as-predicates kernel) + `mkAtom` + `erase` (tagged → bracket-abstracted runtime SKI) + surface elaborator (`\(x : T). body`, `A -> B`, `(x : T) -> R`). Tree-native code in `examples/*.disp`; host-side has runtime, parser, surface elaborator, and test harness. 171 tree-native tests pass across 14 example files.
+**Implemented (substrate + Phase 1 + Phase 2)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` + `pred_of` (types-as-predicates kernel) + `mkAtom` + `erase` (tagged → bracket-abstracted runtime SKI) + surface elaborator (`\(x : T). body`, `A -> B`, `(x : T) -> R`) + typed-def ergonomics (`def NAME : T = EXPR` elaborates both sides and runs `check` at parse time) + tree-native `compute_bind`/`replace_marker` (mirror the host elaborator's binder-rewriting) + `Type` universe sentinel (Type:Type via direct hash-cons; atoms inhabit Type via plain-def `mkH Type marker`). Tree-native code in `examples/*.disp`; host-side has runtime, parser, surface elaborator, and test harness. 219 tree-native tests pass across 14 example files.
 
 **Plan**: see `ELABORATION_DESIGN.md` "Plan" section.
 1. ~~**Types-as-predicates kernel**~~ — DONE (`examples/predicates.disp`). `apply(ty, term)` IS the check; `pred_of` derives the callable predicate from the tagged form.
-2. ~~**Surface elaborator**~~ — DONE (`src/elaborate.ts` + `examples/elab.disp`). Annotated lambdas, arrows, dependent Pis; auto-computed bind-trees; type-checking via `pred_of` downstream in tests.
+2. ~~**Surface elaborator**~~ — DONE (`src/elaborate.ts` + `examples/elab.disp`). Annotated lambdas, arrows, dependent Pis; auto-computed bind-trees; type-checking via `pred_of` downstream in tests. `def NAME : T = EXPR` elaborates and checks at parse time, throwing on FF.
 3. **Metavariables** (next) — positional canonical metas + Miller-pattern unification.
 
 **Sharp lessons from the substrate** (must respect when extending — see ELABORATION_DESIGN.md for detail):

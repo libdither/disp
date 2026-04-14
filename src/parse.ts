@@ -323,11 +323,31 @@ export function parseProgram(src: string): Decl[] {
     if (t.t === "kw" && t.v === "def") {
       const id = eat()
       if (id.t !== "id") throw new Error("def: expected name")
-      expectPunct("=")
-      const sir = parseTerm()
-      const tree = compile(sir)
-      globals.set(id.v, tree)
-      decls.push({ kind: "Def", name: id.v, tree })
+      // `def NAME : T = EXPR` — typed form. Elaborates both sides, then runs
+      // the user-defined `check` from globals (must be in scope). Stores the
+      // elaborated tagged tree if check returns TT (LEAF); throws otherwise.
+      if (peek().t === "punct" && (peek() as { v: string }).v === ":") {
+        eat()  // consume :
+        const typeS = parseTyped()
+        expectPunct("=")
+        const exprS = parseTyped()
+        const typeT = elabSurface(typeS, new Map(globals))
+        const exprT = elabSurface(exprS, new Map(globals))
+        const checkFn = globals.get("check")
+        if (!checkFn) throw new Error(`def ${id.v}: 'check' must be defined before typed defs`)
+        const res = applyTree(applyTree(checkFn, exprT), typeT, 10_000_000)
+        if (!treeEqual(res, LEAF)) {
+          throw new Error(`def ${id.v}: type check failed (got ${prettyTree(res)})`)
+        }
+        globals.set(id.v, exprT)
+        decls.push({ kind: "Def", name: id.v, tree: exprT })
+      } else {
+        expectPunct("=")
+        const sir = parseTerm()
+        const tree = compile(sir)
+        globals.set(id.v, tree)
+        decls.push({ kind: "Def", name: id.v, tree })
+      }
     } else if (t.t === "kw" && t.v === "elab") {
       // elab name = SURFACE_EXPR
       // Parses with the typed surface grammar; runs the elaborator with the
