@@ -1,0 +1,18 @@
+; ctxtree backend — implementation stub.
+;
+; See DESIGN.md for the full specification. When implemented, this file
+; will `use "../predicates.disp"` and add ctx_exit_binder + updated
+; normalize_pair on top.
+;
+; Current state: placeholders. Every check_* is FF; wire up once
+; ctx_exit_binder lands.
+
+def backend_name = t (t (t t))
+
+def check_id_nat              = t t
+def check_const               = t t
+def check_id_poly             = t t
+def check_apply_id            = t t
+def check_refl_zero           = t t
+def check_refl_succ_zero_one  = t t
+def reject_kstar_shadowed_dep = t t

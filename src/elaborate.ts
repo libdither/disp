@@ -1,6 +1,6 @@
 // Surface elaborator: typed surface syntax → tagged-form tree.
 //
-// Mirrors the encoding in examples/predicates.disp:
+// Mirrors the encoding in lib/predicates.disp:
 //   tagged forms (V, H, App, Lam, Pi) with explicit binders, type
 //   annotations, and bind-trees. The output is a tagged tree the disp
 //   programs can pred_of-check and erase to runtime.
@@ -16,7 +16,7 @@
 
 import { Tree, LEAF, stem, fork, isLeaf, isStem, isFork } from "./tree.js"
 
-// ===== Tagged-form encoding (mirrors examples/predicates.disp) =====
+// ===== Tagged-form encoding (mirrors lib/predicates.disp) =====
 
 const TAG_ROOT = stem(stem(stem(stem(stem(stem(stem(LEAF)))))))
 const tagged = (k: Tree, p: Tree) => fork(fork(TAG_ROOT, k), p)

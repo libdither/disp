@@ -1,0 +1,26 @@
+; debruijn backend — implementation stub.
+;
+; See DESIGN.md for the full specification.
+;
+; Current state: infrastructure-only. This file exists so the suite
+; harness can verify module-loading works. Actual implementation TBD.
+;
+; When implementing, this file should expose the shared export contract:
+;   check_id_nat, check_const, check_id_poly, check_apply_id,
+;   check_refl_zero, check_refl_succ_zero_one, reject_kstar_shadowed_dep,
+;   backend_name.
+
+; Unique marker for this backend (distinct from other backends' markers).
+; t (t t) = stem(fork(leaf, leaf)) — arbitrary but stable.
+def backend_name = t (t t)
+
+; Placeholders. Every assertion in main.disp's debruijn block will compare
+; against these; they're all FF until implementation lands. The suite will
+; report them as failing, which is the correct state until code exists.
+def check_id_nat              = t t
+def check_const               = t t
+def check_id_poly             = t t
+def check_apply_id            = t t
+def check_refl_zero           = t t
+def check_refl_succ_zero_one  = t t
+def reject_kstar_shadowed_dep = t t

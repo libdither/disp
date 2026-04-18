@@ -3,6 +3,8 @@
 // Surface:
 //   def NAME = EXPR
 //   test EXPR = EXPR
+//   use "path"                 load another .disp file into current scope
+//   { DECLS... }                scoped block — defs/uses visible only inside
 //   ; line comment
 //
 // Term grammar:
@@ -11,6 +13,18 @@
 //   \x y z. body     lambda (desugars to nested \x. \y. \z. body)
 //   f x              application (left-associative juxtaposition)
 //   ( e )            grouping
+//
+// Module system (Rust-flavoured, minimal):
+//   - `use "relative/path.disp"` parses the given file with the CURRENT scope
+//     stack, so its defs appear as locally-bound names. Relative to the
+//     including file's directory.
+//   - `{ ... }` introduces a nested scope. Any `def`/`use` inside is only
+//     visible within the braces. Tests inside the braces still fire (their
+//     compiled trees are closed, so they survive scope exit).
+//   - Lookups walk the scope stack inner-to-outer. Inner definitions shadow.
+//   - No explicit namespacing (`mod`/`as`). Imported names dump into the
+//     current scope. Pick different names if you need to distinguish
+//     implementations in the same scope.
 //
 // Compilation pipeline:
 //   1. Parse surface → SIR (surface IR with named binders).
@@ -22,6 +36,8 @@
 // came from an Application" from "this is the data tree to K-wrap as a literal".
 // The conversion to tree happens once, at the end.
 
+import { readFileSync } from "node:fs"
+import { dirname, resolve as pathResolve } from "node:path"
 import { Tree, LEAF, stem, fork, treeApply, applyTree, treeEqual, isLeaf, isStem, isFork, prettyTree, FAST_EQ } from "./tree.js"
 import { elab as elabSurface, type Surface, type Env as ElabEnv, freshMarker, mkH, substituteMetas, decodeMetaSolutions } from "./elaborate.js"
 
@@ -31,10 +47,11 @@ type Tok =
   | { t: "punct"; v: string }
   | { t: "kw"; v: string }
   | { t: "leaf" }
+  | { t: "str"; v: string }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["def", "test", "elab", "raw"])
-const PUNCT = ["\\", ".", "(", ")", "=", ":", "->", "→"] as const
+const KEYWORDS = new Set(["def", "test", "elab", "raw", "use"])
+const PUNCT = ["\\", ".", "(", ")", "=", ":", "->", "→", "{", "}"] as const
 
 export function tokenize(src: string): Tok[] {
   const toks: Tok[] = []
@@ -43,6 +60,15 @@ export function tokenize(src: string): Tok[] {
     const c = src[i]
     if (/\s/.test(c)) { i++; continue }
     if (c === ";") { while (i < src.length && src[i] !== "\n") i++; continue }
+    if (c === '"') {
+      // Double-quoted string literal. No escapes for now (paths don't need them).
+      let j = i + 1
+      while (j < src.length && src[j] !== '"') j++
+      if (j >= src.length) throw new Error(`tokenize: unterminated string starting at offset ${i}`)
+      toks.push({ t: "str", v: src.slice(i + 1, j) })
+      i = j + 1
+      continue
+    }
     if (c === "△" || (c === "t" && (i + 1 >= src.length || !/[A-Za-z0-9_']/.test(src[i + 1])))) {
       toks.push({ t: "leaf" }); i += c.length; continue
     }
@@ -101,15 +127,55 @@ export type Decl =
   | { kind: "Def"; name: string; tree: Tree }
   | { kind: "Test"; lhs: Tree; rhs: Tree }
 
-export function parseProgram(src: string): Decl[] {
-  const toks = tokenize(src)
-  let p = 0
-  const peek = (): Tok => toks[p]
-  const eat = (): Tok => toks[p++]
-  const expectPunct = (v: string) => {
-    const t = eat()
-    if (t.t !== "punct" || t.v !== v) throw new Error(`expected '${v}' got ${JSON.stringify(t)}`)
+export function parseProgram(src: string, sourcePath?: string): Decl[] {
+  // Scope stack. Frame 0 is the built-in/global frame (primitives like fast_eq).
+  // New frames are pushed on `{` and popped on `}`. `use` parses into the
+  // current top frame, so imports go to whoever's running the use directive.
+  const scopeStack: Map<string, Tree>[] = [new Map()]
+  scopeStack[0].set("fast_eq", FAST_EQ)
+  const decls: Decl[] = []
+  // Track the current file path so `use "rel/path"` resolves relative to
+  // the including file's directory, not the process CWD.
+  const pathStack: string[] = [sourcePath ? pathResolve(sourcePath) : pathResolve(process.cwd(), "<anonymous>")]
+
+  function currentDir(): string {
+    return dirname(pathStack[pathStack.length - 1])
   }
+
+  function lookupGlobal(name: string): Tree | undefined {
+    for (let i = scopeStack.length - 1; i >= 0; i--) {
+      const t = scopeStack[i].get(name)
+      if (t) return t
+    }
+    return undefined
+  }
+
+  function defineGlobal(name: string, tree: Tree): void {
+    scopeStack[scopeStack.length - 1].set(name, tree)
+  }
+
+  // Flat view of all scopes (inner-shadowing-outer) for passing to helpers
+  // that take a Map (like the surface elaborator).
+  function flatGlobals(): Map<string, Tree> {
+    const m = new Map<string, Tree>()
+    for (const frame of scopeStack) {
+      for (const [k, v] of frame.entries()) m.set(k, v)
+    }
+    return m
+  }
+
+  // All parsing logic lives inside `parseSource` so it can recurse
+  // for `use "path"`: each invocation has its own token stream + position,
+  // but they share scopeStack, decls, and pathStack via closure.
+  function parseSource(src: string): void {
+    const toks = tokenize(src)
+    let p = 0
+    const peek = (): Tok => toks[p]
+    const eat = (): Tok => toks[p++]
+    const expectPunct = (v: string) => {
+      const t = eat()
+      if (t.t !== "punct" || t.v !== v) throw new Error(`expected '${v}' got ${JSON.stringify(t)}`)
+    }
 
   function parseAtom(): SIR {
     const t = peek()
@@ -250,15 +316,13 @@ export function parseProgram(src: string): Decl[] {
 
   // ===== Compiler =====
 
-  const globals = new Map<string, Tree>()
-  globals.set("fast_eq", FAST_EQ)
-
   // Step 1: SIR → CIR with globals resolved to lit nodes.
+  // Uses the outer `lookupGlobal` so scoped `use`d defs resolve correctly.
   function sir_to_cir(e: SIR): CIR {
     switch (e.tag) {
       case "leaf": return { tag: "lit", t: LEAF }
       case "var": {
-        const t = globals.get(e.name)
+        const t = lookupGlobal(e.name)
         if (t) return { tag: "lit", t }
         return { tag: "var", name: e.name }   // bound by an enclosing lam
       }
@@ -337,80 +401,117 @@ export function parseProgram(src: string): Decl[] {
     return cir_to_tree(closed)
   }
 
-  // ===== Top-level =====
-  const decls: Decl[] = []
-  while (peek().t !== "eof") {
-    const t = eat()
-    if (t.t === "kw" && t.v === "def") {
-      const id = eat()
-      if (id.t !== "id") throw new Error("def: expected name")
-      // `def NAME : T = EXPR` — typed form. Elaborates both sides, then runs
-      // the user-defined `check` from globals (must be in scope). Stores the
-      // elaborated tagged tree if check returns TT (LEAF); throws otherwise.
-      if (peek().t === "punct" && (peek() as { v: string }).v === ":") {
-        eat()  // consume :
-        const typeS = parseTyped()
-        expectPunct("=")
-        const exprS = parseTyped()
-        const typeT = elabSurface(typeS, new Map(globals))
-        const exprT = elabSurface(exprS, new Map(globals))
-        // Run pred_of_lvl directly so we get the (bool, state') tuple — the
-        // state's metas slot carries any solutions discovered during checking,
-        // which we then substitute back into the term before storing.
-        const predOfLvl = globals.get("pred_of_lvl")
-        const stateInit = globals.get("state_init")
-        const ctxNone = globals.get("ctx_none")
-        if (!predOfLvl || !stateInit || !ctxNone) {
-          throw new Error(`def ${id.v}: 'pred_of_lvl', 'ctx_none', and 'state_init' must be defined before typed defs`)
+    // ===== Top-level / block body =====
+    // terminator: "eof" at the file top level, "}" when parsing a block body.
+    function parseDeclsUntil(terminator: "eof" | "}"): void {
+      while (true) {
+        const t = peek()
+        if (terminator === "eof" && t.t === "eof") return
+        if (terminator === "}" && t.t === "punct" && t.v === "}") return
+
+        // Scoped block: push a fresh frame, parse until matching '}', pop.
+        if (t.t === "punct" && t.v === "{") {
+          eat()
+          scopeStack.push(new Map())
+          try {
+            parseDeclsUntil("}")
+            expectPunct("}")
+          } finally {
+            scopeStack.pop()
+          }
+          continue
         }
-        // pred_of_lvl signature: ty tyCtx cand candCtx state → (bool, state')
-        const resTuple = applyTree(
-          applyTree(applyTree(applyTree(applyTree(predOfLvl, typeT), ctxNone), exprT), ctxNone),
-          stateInit,
-          10_000_000,
-        )
-        if (!isFork(resTuple)) {
-          throw new Error(`def ${id.v}: pred_of_lvl returned non-tuple ${prettyTree(resTuple)}`)
+
+        // File-include: `use "relative/path.disp"` loads the file and
+        // parses it with the current scope stack, so its defs land in the
+        // current (possibly block-scoped) frame. Tests in the loaded file
+        // are appended to the top-level decls list and fire normally.
+        if (t.t === "kw" && t.v === "use") {
+          eat()
+          const pathTok = eat()
+          if (pathTok.t !== "str") {
+            throw new Error(`use: expected quoted path, got ${JSON.stringify(pathTok)}`)
+          }
+          const resolvedPath = pathResolve(currentDir(), pathTok.v)
+          const loadedSrc = readFileSync(resolvedPath, "utf-8")
+          pathStack.push(resolvedPath)
+          try {
+            parseSource(loadedSrc)
+          } finally {
+            pathStack.pop()
+          }
+          continue
         }
-        const okBit = resTuple.left
-        const finalState = resTuple.right
-        if (!treeEqual(okBit, LEAF)) {
-          throw new Error(`def ${id.v}: type check failed (got ${prettyTree(okBit)})`)
+
+        eat()
+        if (t.t === "kw" && t.v === "def") {
+          const id = eat()
+          if (id.t !== "id") throw new Error("def: expected name")
+          // `def NAME : T = EXPR` — typed form. Elaborates both sides, then
+          // runs the user-defined `pred_of_lvl` (must be in scope). Stores
+          // the elaborated tagged tree if check returns TT; throws otherwise.
+          if (peek().t === "punct" && (peek() as { v: string }).v === ":") {
+            eat()  // consume :
+            const typeS = parseTyped()
+            expectPunct("=")
+            const exprS = parseTyped()
+            const env = flatGlobals()
+            const typeT = elabSurface(typeS, env)
+            const exprT = elabSurface(exprS, env)
+            const predOfLvl = lookupGlobal("pred_of_lvl")
+            const stateInit = lookupGlobal("state_init")
+            const ctxNone = lookupGlobal("ctx_none")
+            if (!predOfLvl || !stateInit || !ctxNone) {
+              throw new Error(`def ${id.v}: 'pred_of_lvl', 'ctx_none', and 'state_init' must be defined before typed defs`)
+            }
+            // pred_of_lvl signature: ty tyCtx cand candCtx state → (bool, state')
+            const resTuple = applyTree(
+              applyTree(applyTree(applyTree(applyTree(predOfLvl, typeT), ctxNone), exprT), ctxNone),
+              stateInit,
+              10_000_000,
+            )
+            if (!isFork(resTuple)) {
+              throw new Error(`def ${id.v}: pred_of_lvl returned non-tuple ${prettyTree(resTuple)}`)
+            }
+            const okBit = resTuple.left
+            const finalState = resTuple.right
+            if (!treeEqual(okBit, LEAF)) {
+              throw new Error(`def ${id.v}: type check failed (got ${prettyTree(okBit)})`)
+            }
+            const metasList = isFork(finalState) ? finalState.right : LEAF
+            const solutions = decodeMetaSolutions(metasList)
+            const finalTree = solutions.size > 0 ? substituteMetas(exprT, solutions) : exprT
+            defineGlobal(id.v, finalTree)
+            decls.push({ kind: "Def", name: id.v, tree: finalTree })
+          } else {
+            expectPunct("=")
+            const sir = parseTerm()
+            const tree = compile(sir)
+            defineGlobal(id.v, tree)
+            decls.push({ kind: "Def", name: id.v, tree })
+          }
+        } else if (t.t === "kw" && t.v === "elab") {
+          const id = eat()
+          if (id.t !== "id") throw new Error("elab: expected name")
+          expectPunct("=")
+          const surface = parseTyped()
+          const tree = elabSurface(surface, flatGlobals())
+          defineGlobal(id.v, tree)
+          decls.push({ kind: "Def", name: id.v, tree })
+        } else if (t.t === "kw" && t.v === "test") {
+          const lhs = parseTerm()
+          expectPunct("=")
+          const rhs = parseTerm()
+          decls.push({ kind: "Test", lhs: compile(lhs), rhs: compile(rhs) })
+        } else {
+          throw new Error(`top-level: expected 'def', 'test', 'elab', 'use', or '{', got ${JSON.stringify(t)}`)
         }
-        // Pull metas out of finalState (which is `t depth metas`) and
-        // substitute solved metas in the elaborated term before binding.
-        const metasList = isFork(finalState) ? finalState.right : LEAF
-        const solutions = decodeMetaSolutions(metasList)
-        const finalTree = solutions.size > 0 ? substituteMetas(exprT, solutions) : exprT
-        globals.set(id.v, finalTree)
-        decls.push({ kind: "Def", name: id.v, tree: finalTree })
-      } else {
-        expectPunct("=")
-        const sir = parseTerm()
-        const tree = compile(sir)
-        globals.set(id.v, tree)
-        decls.push({ kind: "Def", name: id.v, tree })
       }
-    } else if (t.t === "kw" && t.v === "elab") {
-      // elab name = SURFACE_EXPR
-      // Parses with the typed surface grammar; runs the elaborator with the
-      // current globals as the initial environment. Result: a tagged tree
-      // registered as a global like a regular def.
-      const id = eat()
-      if (id.t !== "id") throw new Error("elab: expected name")
-      expectPunct("=")
-      const surface = parseTyped()
-      const tree = elabSurface(surface, new Map(globals))
-      globals.set(id.v, tree)
-      decls.push({ kind: "Def", name: id.v, tree })
-    } else if (t.t === "kw" && t.v === "test") {
-      const lhs = parseTerm()
-      expectPunct("=")
-      const rhs = parseTerm()
-      decls.push({ kind: "Test", lhs: compile(lhs), rhs: compile(rhs) })
-    } else {
-      throw new Error(`top-level: expected 'def' or 'test', got ${JSON.stringify(t)}`)
     }
+
+    parseDeclsUntil("eof")
   }
+
+  parseSource(src)
   return decls
 }

@@ -1,0 +1,17 @@
+; semantic backend — implementation stub.
+;
+; See DESIGN.md. Val-domain NbE on raw bracket-abstracted terms. When
+; implemented: vLeaf / vStem / vFork / vNeutral / vPi / vType
+; constructors, do_app with three stuck points, check + conv.
+;
+; Current state: placeholders.
+
+def backend_name = t (t (t (t t)))
+
+def check_id_nat              = t t
+def check_const               = t t
+def check_id_poly             = t t
+def check_apply_id            = t t
+def check_refl_zero           = t t
+def check_refl_succ_zero_one  = t t
+def reject_kstar_shadowed_dep = t t

@@ -9,8 +9,9 @@ import { treeEqual, prettyTree } from "./tree.js"
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string }[] }
 
 export function runFile(path: string): RunResult {
-  const src = readFileSync(resolve(path), "utf-8")
-  const decls = parseProgram(src)
+  const abs = resolve(path)
+  const src = readFileSync(abs, "utf-8")
+  const decls = parseProgram(src, abs)
   const result: RunResult = { defs: 0, tests: 0, passed: 0, failed: [] }
   let testIdx = 0
   for (const d of decls) {
