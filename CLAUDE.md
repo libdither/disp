@@ -25,9 +25,7 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 - `src/parse.ts` — surface tokenizer/parser/bracket-abstraction. Handles `def`, `test`, `\x.`, juxtaposed application, `t` for leaf. Exposes `fast_eq` as a global to disp programs.
 - `src/elaborate.ts` — host-side surface elaborator. Mirrors `lib/predicates.disp`'s tagged-form encoding so output is consumable by `pred_of` and `erase`. `compute_bind` walks elaborated body looking for the H-marker introduced by `\(x : T)`; `replaceMarker` swaps tokens for V before emitting `mkLam`/`mkPi`.
 - `src/run.ts` — driver: load `.disp` file, run `test` declarations, assert tree equality.
-- `lib/predicates.disp` — ctx-tree-threaded `pred_of_lvl` kernel. Defines the tagged-form encoding (KV/KH/KA/KL/KP/KM), bind-trees, splice/compute_bind/replace_marker, ctx-tree primitives, `normalize_pair`, `try_unify_pair`, `pred_of_lvl`. Phase 1 checker plus ctx-tree Phase 5 threading (sans `ctx_exit_binder` — the stale-bindtree gap).
-- `lib/elab.disp` — Phase 2 surface elaborator as tree program plus full Church Nat / Bool / Eq end-to-end tests.
-- `lib/erase.disp` — tagged term → bracket-abstracted runtime SKI. The compile-to-runtime pass.
+- `lib/predicates.disp` — ctx-tree-threaded `pred_of_lvl` kernel. The ctxtree backend `use`s this file as its starting point. Defines the tagged-form encoding (KV/KH/KA/KL/KP/KM), bind-trees, splice/compute_bind/replace_marker, ctx-tree primitives, `normalize_pair`, `try_unify_pair`, `pred_of_lvl`. Phase 1 checker plus ctx-tree Phase 5 threading (sans `ctx_exit_binder` — the stale-bindtree gap).
 - `lib/{debruijn,ctxtree,semantic}/` — competing backend designs (see each `DESIGN.md`) with `impl.disp` stubs.
 - `lib/suite/main.disp` — implementation-agnostic test suite; swaps backends per `{ }` block via `use "path"`.
 - `test/tree.test.ts` + `test/disp.test.ts` — vitest suites.
