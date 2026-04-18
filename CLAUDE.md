@@ -7,6 +7,8 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 - [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — **load-bearing**. The discipline governing what's allowed in the codebase. Every design decision should be compatible; if it isn't, one of them changes, and changing the philosophy is the harder path.
 - [`GOALS.md`](GOALS.md) — the north star (neural-guided synthesis, self-improving optimizer).
 - [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — core idea: trees as S/K/Triage combinators, types as executable predicates, Pi as partially-applied `PiCheck`, hash-cons identity as type equality.
+- [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape of `.disp` source files. Authoritative for anything touching the parser or the AST types in `src/ast.ts`.
+- [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline, name-resolution algorithm, error-reporting contract.
 - `lib/{debruijn,ctxtree,semantic}/DESIGN.md` — three competing backend designs currently being implemented side-by-side. Read whichever one the current task targets.
 
 ## Core discipline, in brief
@@ -22,9 +24,10 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 ## Code layout
 
 - `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets, `FAST_EQ` primitive.
-- `src/parse.ts` — surface tokenizer / parser / bracket-abstraction. Handles `def`, `test`, `elab`, `raw`, `\x.`, juxtaposed application, `t` for leaf. Module system: `use "path"` imports defs from another file into current scope; `{ ... }` blocks introduce scoped frames. Exposes `fast_eq` as a global to disp programs.
-- `src/elaborate.ts` — host-side surface elaborator producing tagged forms (KV/KH/KA/KL/KP/KM) with bind-trees. Mirror of the `lib/predicates.disp` encoding so output is kernel-consumable.
-- `src/run.ts` — driver: load `.disp` file, run `test` declarations, assert tree equality.
+- `src/ast.ts` — surface AST types emitted by the parser and consumed by the elaborator. See `SYNTAX.typ` § "Abstract syntax tree" for the authoritative shape.
+- `src/parse.ts` — surface tokenizer / parser / bracket-abstraction. **Code still implements the pre-revision surface** (`def`, `elab`, `raw`, `\x.`); the spec has moved ahead to `let`/`test`/`use`-only with the braced-binder form. Rewrite to emit `src/ast.ts` per `SYNTAX.typ` is the next work item.
+- `src/elaborate.ts` — host-side surface elaborator producing tagged forms (KV/KH/KA/KL/KP/KM) with bind-trees. Mirror of the `lib/predicates.disp` encoding so output is kernel-consumable. A separate *surface* elaborator that consumes `src/ast.ts` per `COMPILATION.typ` is planned but not yet implemented.
+- `src/run.ts` — driver: load `.disp` file, run `test` declarations, assert tree equality. Under the new spec, `test` is compile-time and this file will evolve into a pure compiler driver.
 - `lib/predicates.disp` — the current ctx-tree-threaded `pred_of_lvl` kernel. The ctxtree backend `use`s this file. Defines tagged-form encoding, bind-trees, splice / compute_bind / replace_marker, ctx-tree primitives (CtxV/CtxApp/CtxLam/CtxPi, ctx_enter_binder, ctx_lam_split_*), `normalize_pair`, `try_unify_pair`, `pred_of_lvl`. Phase 1 checker plus ctx-tree Phase 5 threading — **minus `ctx_exit_binder`**, the stale-bindtree gap.
 - `lib/{debruijn,ctxtree,semantic}/` — three competing backend designs. Each has `DESIGN.md` (spec) and `impl.disp` (stub today, real implementation TBD). See `lib/suite/main.disp` for the shared export contract each backend must satisfy.
 - `lib/suite/main.disp` — implementation-agnostic test suite. Same assertions run against each backend via `{ use "../X/impl.disp"; test ... }` blocks.
@@ -39,6 +42,8 @@ The **ctxtree** backend has a head start: `lib/predicates.disp` already implemen
 The **debruijn** backend is unstarted — classical closure NbE with de Bruijn levels, serves as the correctness oracle.
 
 The **semantic** backend is unstarted — Dybjer/Filinski Val-domain NbE on raw bracket-abstracted SKI. Known blocker: triage-on-neutral (identity `I` applied to a neutral produces a stuck triage, not the neutral). See `lib/semantic/DESIGN.md` for candidate fixes.
+
+**Surface-syntax revision in flight.** `SYNTAX.typ`, `COMPILATION.typ`, and `src/ast.ts` define a revised grammar: `def`→`let`, dropped `elab`/`raw`/`\x.`, three-way record split (RecValue / Block / Binder-as-record-type), compile-time `test`. Parser and surface-elaborator rewrites to match are pending. Until they land, `src/parse.ts` and `src/run.ts` describe the old surface.
 
 ## Sharp lessons from the substrate
 
