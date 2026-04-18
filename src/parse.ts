@@ -359,10 +359,16 @@ export function parseProgram(src: string): Decl[] {
         // which we then substitute back into the term before storing.
         const predOfLvl = globals.get("pred_of_lvl")
         const stateInit = globals.get("state_init")
-        if (!predOfLvl || !stateInit) {
-          throw new Error(`def ${id.v}: 'pred_of_lvl' and 'state_init' must be defined before typed defs`)
+        const ctxNone = globals.get("ctx_none")
+        if (!predOfLvl || !stateInit || !ctxNone) {
+          throw new Error(`def ${id.v}: 'pred_of_lvl', 'ctx_none', and 'state_init' must be defined before typed defs`)
         }
-        const resTuple = applyTree(applyTree(applyTree(predOfLvl, typeT), exprT), stateInit, 10_000_000)
+        // pred_of_lvl signature: ty tyCtx cand candCtx state → (bool, state')
+        const resTuple = applyTree(
+          applyTree(applyTree(applyTree(applyTree(predOfLvl, typeT), ctxNone), exprT), ctxNone),
+          stateInit,
+          10_000_000,
+        )
         if (!isFork(resTuple)) {
           throw new Error(`def ${id.v}: pred_of_lvl returned non-tuple ${prettyTree(resTuple)}`)
         }

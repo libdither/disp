@@ -11,7 +11,13 @@ The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types ar
 
 ---
 
-## Current state (as of 2026-04-13)
+## Current state (as of 2026-04-14)
+
+**Latest slice**: Phase 4 — Pi-as-Type rule + Church-encoded Eq/refl + Church Bool/Nat + def-eq reflection via inline Leibniz witness. See the "Phase 4" section below for what landed, known limitations (stale bind-trees under beta-reduction, `infer` doesn't recover Lam-global types), and sharp lessons. Phase 5 (ctx-tree refactor of `pred_of_lvl` and `normalize`) designed but not built — see that section for the architectural plan and the SKI-typecheck future direction it prepares.
+
+---
+
+## Current state (historical snapshot — pre-Phase-4)
 
 ### Substrate (built, in `examples/*.disp`)
 
@@ -213,6 +219,70 @@ Implemented host-side initially per philosophy rule 2 (mirror, with planned tree
 ### Phase 3 — Metavariables and unification
 
 **Status**: first + second slices landed. State plumbing (`state = (depth, metas)`) ✓; KM tag + `mkMeta marker` + accessors ✓; `_` surface syntax ✓; symmetric `try_unify` (meta on either side, used in Lam-vs-Pi domain match, App's `infer d` vs `ty`, and the H-or-atom else branch via `check_atom_or_h`) ✓; host-side meta-list decoding + `substituteMetas` + alias-edge propagation in `decodeMetaSolutions` ✓. Working trace tests: `id_AA_hole : A -> A = \(x : _). x`, `id_dom_hole : _ -> A = \(x : A). x`, `id_codom_hole : A -> _ = \(x : A). x`, `K_codom_hole : A -> B -> _ = \(x : A). \(y : B). x`, `id_dep_hole : (x : _) -> A = \(x : A). x`, and the meta-to-meta alias `both_metas : _ -> A = \(x : _). x`.
+
+### Phase 4 — Theorem-proving substrate ✅ DONE (first slice)
+
+**Status (as of 2026-04-14)**: Pi-as-Type rule + Church-encoded Eq/refl + Bool/Nat + def-eq reflection demos. Two commits: `267f0f3b` (Pi-as-Type + normalize's outer-App-reducing-to-Lam fix) and `3c1564eb` (Church Bool/Nat).
+
+**What landed**:
+- **Pi-as-Type rule** in `pred_of_lvl` (both `predicates.disp` and `elab.disp`): `cand is Pi → mk_res (fast_eq Type (normalize ty)) state`. Any Pi inhabits the `Type` sentinel. `Type = mkH Type_sentinel t` where `Type_sentinel = t (t t t)` hoisted above `pred_of_lvl`.
+- **Normalize head-reducing fix**: old normalize checked `is_lam(appF)` *before* reducing subparts, so `App(App(Eq, A), x)` where `App(Eq, A)` reduces to a Lam only after inner normalize was missed. New version normalizes appF/appX first, then re-checks; handles `Eq A x x` end-to-end.
+- **Church-encoded equality**: `Eq : (A : Type) -> A -> A -> Type = \A x y. (P : A -> Type) -> P x -> P y` and `refl : (A : Type) -> (x : A) -> Eq A x x = \A x P p. p`. Both typecheck at parse time via the typed-def machinery.
+- **Def-eq reflection** via inline Leibniz witness `\(P : A -> Type). \(p : P u). p : Eq A u v` whenever `u` and `v` reduce to the same tree. Works for redexes *not* trapped under a binder (`id_A (id_A Hx) ≡ Hx`).
+- **Church Bool/Nat**: `Bool = (P : Type) -> P -> P -> P`, `true`/`false`; `Nat = (P : Type) -> P -> (P -> P) -> P`, `zero`/`succ`/`one`/`two`. All check end-to-end.
+
+**Known limitation: `Eq Nat (succ zero) one` fails.** `normalize(succ zero)` beta-reduces correctly but keeps succ's original `lamB` bind-trees in the inner Lams. After reduction, the body matches `one`'s body *structure* but the stored bind-trees still mark V-positions in the (now-vanished) pre-reduction subterms. Hash-cons says "not equal" even though semantically equivalent. This is also a correctness bug, not just a comparison issue: stale bind-trees mean subsequent splice operations would substitute at wrong positions.
+
+**Why applying `refl` to specific values doesn't work either**: kernel's `infer` treats `App(Lam, arg)` as splice-of-lamBody (accidentally same layout as Pi), so `infer(refl A x)` returns refl's *body* specialized, not refl's type. Workaround in this slice: inline the `\P p. p` witness per-site. Proper fix needs either an `annot` wrapper primitive or a typed-global environment.
+
+**Sharp lessons from this slice**:
+- Parse-time typed-def machinery calls `pred_of_lvl` with 10M step budget. Kernel functions compiled via bracket abstraction compound combinator size exponentially with nested `(\x. body) arg` patterns. An early ctx-tree attempt at normalize (see Phase 5 below) blew past the budget on even trivial typed defs (`def id : A -> A = \(x : A). x`).
+- Type sentinel must be defined **before** `pred_of_lvl` in file order (disp resolves names at def time; kernel can't forward-ref).
+- `t` single-char identifier tokenizes as a leaf, not an id. Binder names like `\(t : P). ...` fail; use `x`/`y`/`tt`/etc.
+- `normalize` does **not** descend into Pi codoms; beta-redexes inside a Pi codom reduce only at comparison time (via `check_atom_or_h`/`try_unify`'s fallback `fast_eq (normalize a) (normalize b)` at the leaf).
+
+### Phase 5 — Normalize under binders (via ctx-trees) and pred_of_lvl refactor
+
+**Status**: designed, not built. Two connected pieces.
+
+**Problem**: normalize's stale-bind-tree bug above. Proper fix: refresh bind-trees after reducing under a binder.
+
+**Rejected approach (tried, too expensive)**: tokenize-reabstract per Lam in `normalize`. Mint fresh token, splice body with bindB substituting token, recurse, compute_bind on result, replace_marker tok→V. Correct algorithm but the nested-let-lambda structure (`(\tok. (\tokenized. (\normalized. ...) rec...) splice...) mkH...`) bracket-abstracts to exponentially large S-combinator trees. Fails the 10M-step budget on trivial typechecks.
+
+**Chosen approach (designed, 2026-04-14)**: merged-context tree threaded through normalize + pred_of_lvl.
+
+- A **context tree** is structurally isomorphic to the term. At each V-leaf it carries a binder-ID tag (a fork-depth marker); at non-V positions it's `BApp`/`BLam`/`BPi` with sub-contexts. Each V has exactly one binder, so tags are single-valued per position.
+- **Lam entry**: merge the Lam's `lamB` into the incoming ctx — at BE positions tag with this binder's ID; at BN positions keep the existing outer-binder tag.
+- **Beta reduction**: parallel splice. `splice(body, lamB_y, arg)` on the term side runs in lockstep with `splice(ctx_for_body, lamB_y, ctx_for_arg)` on the context side — same bind-tree guide, same shape, just different payloads.
+- **Lam exit**: walk ctx to collect positions tagged with this binder into a fresh `lamB`; strip that tag (→ BN) to hand the ctx back to the caller.
+
+**Why this is better than tokens**: no fresh-marker generation (tags are structural), term stays read-only (no pollution with check-time tokens), beta-on-ctx is isomorphic to beta-on-term so the same `splice` primitive serves both. SKI bloat *should* be better — `normalize(term, ctx) → (term', ctx')` returns a pair instead of threading three shared-lambda-bound intermediates.
+
+**Implementation order**:
+1. **`pred_of_lvl` refactor first.** Simpler (no reduction to handle), covered by existing 111 tests (47 predicates + 64 elab) which act as regression oracle. Validates the ctx primitives (`ctx_empty`, `ctx_enter_binder`, `splice_ctx` with generic payload) on the easier case before tackling normalize's beta-aware variant.
+2. **Normalize second**, reusing the primitives. Adds ctx-aware beta. Fixes `Eq Nat (succ zero) one` etc.
+
+**Design-time sketch first**: write the ctx-refactored `pred_of_lvl` as host-side TypeScript pseudocode. Validate it passes the existing tests before committing to the disp port (which is where SKI bloat might bite again).
+
+**Connection to future SKI-typecheck**:
+The ctx-tree discipline is architectural preparation for typechecking on bracket-abstracted terms directly. Three properties carry forward:
+
+1. **Read-only term during check.** Current `pred_of_lvl` mints mkH tokens and splices them into the term — destructive. Ctx-based `pred_of_lvl` walks a parallel ctx instead. SKI-typecheck has no way to plant per-check tokens in the term (no binders to plant them at), so read-only is mandatory there.
+2. **Generic structural walker, parametric in leaf content.** The ctx primitives don't need to know what's at leaves — binder-IDs today, expected-types at App positions tomorrow.
+3. **Separation of scoping info from term structure.** Today tokens tie scoping to the term; ctx separates them. Exactly the API shape SKI-typecheck needs.
+
+**What does NOT transfer (keep scoped, don't generalize)**:
+- `ctx_exit_binder` / bindB extraction: tagged-form-specific. SKI has no Lams to close. Keep inside normalize, don't promote.
+- Binder-ID tagging as a cross-codebase concept: bindtree-staleness is a tagged-form disease; don't bake binder-IDs into interfaces that survive past SKI migration.
+- `splice_ctx` taking a bindtree as its guide: in SKI, there's no bindtree. Keep its interface normalize-scoped, not promoted to a general primitive.
+
+**Key insight for the SKI future**: the bindtree isn't really a property of the term — it's a property of the Pi that classifies the term. For `\(x:T). body : (x:T) → codom`, the bindtree in the Pi says where `x` appears in `codom` (the *type* of body), which is what dependent elimination at App sites needs. Bracket abstraction destroys the Lam but preserves the Pi unchanged. Architecturally clean story: **types stay tagged (Pi + bindtree); terms become SKI.** Ctx-tree machinery for `pred_of_lvl` prepares this split — ctx annotates term positions with typing info without relying on Lam constructors in the term.
+
+**Risks flagged for the implementation**:
+- Doubled memory (ctx is O(|term|)); hash-consing helps BN-heavy subtrees but polymorphic programs don't share well. Measure early.
+- Meta solutions need ctx-awareness (a solved meta's term was built in *some* scope). Today mkH-tokens make origin-scope explicit; with ctx it's invisible. Design the meta-solve story ctx-shape-agnostic from the start.
+- Pi's representation is tagged today; SKI future needs it different. Don't deepen the `is_pi`/`piA`/`piB` dependency during the refactor — consume Pi through a small interface that's easy to swap.
+- Conversion checking in SKI is harder than in tagged form (SKI normal forms aren't canonical for the same lambda term). Ctx-tree fix solves *tagged-form* conversion under binders, not SKI conversion. Don't oversell.
 
 **Sharp lesson from this slice**: tree-side chain-following (`resolve_meta` walking the metas list inside `try_unify`) was correct on paper but exhausted the SKI compiler's reduction budget at parse time — every kernel call paid the cost. Solution: keep kernel `try_unify` immediate (single-level solve), and propagate alias edges (`m1 := mkMeta m2` recorded as alias, not concrete) host-side at decode time via fixed-point. Tree-side chain-following can be reintroduced for self-hosted checking later when the budget model accommodates it.
 

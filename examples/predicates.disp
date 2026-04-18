@@ -85,6 +85,121 @@ def mkBApp = \l r. t KBA (t l r)
 def mkBLam = \bA bBody.  t KBL (t bA bBody)
 def mkBPi  = \bA bCodom. t KBP (t bA bCodom)
 
+def and = \a b. bool_then b (t t) a
+def or  = \a b. bool_then t b a
+
+; --- Context-tree (parallel-to-term skeleton carrying V-leaf type info) ---
+;
+; The ctx-tree mirrors the term where it matters: CtxV at V-positions
+; carrying (binderId, type); CtxApp/Lam/Pi at structural nodes; CtxNone
+; elsewhere. `ctx_enter_binder` overlays CtxV's at a bindtree's BE
+; positions — replaces the splice+mkH pattern used by pred_of_lvl.
+;
+; Kind-tag shapes chosen as forks (fork_* prefixes) so they never collide
+; with the stem-chain KV..KM kinds for tagged terms.
+def KCN = t t t                 ; CtxNone kind
+def KCV = t t (t t)             ; CtxV kind
+def KCA = t (t t) t             ; CtxApp kind
+def KCL = t (t t) (t t)         ; CtxLam kind
+def KCP = t (t (t t)) t         ; CtxPi kind
+
+def ctx_none = t KCN t
+; CtxV is now a triple (bid, ty_term, ty_ctx) — the stored type comes
+; with its own resolving ctx so lookup gives a full (term, ctx) pair.
+; This lets us compare types by fast_eq on both components, no mkH
+; flattening needed.
+def mkCtxV   = \bid ty tyC. t KCV (t bid (t ty tyC))
+def mkCtxApp = \f x.        t KCA (t f x)
+def mkCtxLam = \a body.     t KCL (t a body)
+def mkCtxPi  = \a codom.    t KCP (t a codom)
+
+def ctx_kind    = \c. fork_left  c
+def ctx_payload = \c. fork_right c
+def is_ctx_none = \c. fast_eq KCN (ctx_kind c)
+def is_ctx_V    = \c. fast_eq KCV (ctx_kind c)
+def is_ctx_app  = \c. fast_eq KCA (ctx_kind c)
+def is_ctx_lam  = \c. fast_eq KCL (ctx_kind c)
+def is_ctx_pi   = \c. fast_eq KCP (ctx_kind c)
+
+def ctxV_bid     = \c. fork_left  (ctx_payload c)
+def ctxV_ty      = \c. fork_left  (fork_right (ctx_payload c))
+def ctxV_ty_ctx  = \c. fork_right (fork_right (ctx_payload c))
+def ctx_lookup_V = \c. ctxV_ty c
+
+; Projections: if c is a CtxApp/Lam/Pi return its sub-ctx, else ctx_none.
+; Bool branches are deferred via \u to avoid eager evaluation.
+def ctx_app_split_f = \c.
+  (bool_then (\u. fork_left  (ctx_payload c)) (\u. ctx_none) (is_ctx_app c)) t
+def ctx_app_split_x = \c.
+  (bool_then (\u. fork_right (ctx_payload c)) (\u. ctx_none) (is_ctx_app c)) t
+def ctx_lam_split_a = \c.
+  (bool_then (\u. fork_left  (ctx_payload c)) (\u. ctx_none) (is_ctx_lam c)) t
+def ctx_lam_split_body = \c.
+  (bool_then (\u. fork_right (ctx_payload c)) (\u. ctx_none) (is_ctx_lam c)) t
+def ctx_pi_split_a = \c.
+  (bool_then (\u. fork_left  (ctx_payload c)) (\u. ctx_none) (is_ctx_pi c)) t
+def ctx_pi_split_cod = \c.
+  (bool_then (\u. fork_right (ctx_payload c)) (\u. ctx_none) (is_ctx_pi c)) t
+
+; ctx_enter_binder: walk (bindtree b, bodyCtx c) in parallel. At BE
+; (b=leaf), overlay mkCtxV bid ty tyCtx (the type carries its own ctx).
+; At BN (b=stem), keep c. At fork (BApp/BLam/BPi), recurse in parallel.
+def ctx_enter_binder_inner = fix (\rec b c bid ty tyC.
+  triage (mkCtxV bid ty tyC)
+    (\u. c)
+    (\kt pld.
+      (bool_then
+        (\u.
+          mkCtxApp
+            (rec (fork_left  pld) (ctx_app_split_f c) bid ty tyC)
+            (rec (fork_right pld) (ctx_app_split_x c) bid ty tyC))
+        (bool_then
+          (\u.
+            mkCtxLam
+              (rec (fork_left  pld) (ctx_lam_split_a    c) bid ty tyC)
+              (rec (fork_right pld) (ctx_lam_split_body c) bid ty tyC))
+          (\u.
+            mkCtxPi
+              (rec (fork_left  pld) (ctx_pi_split_a   c) bid ty tyC)
+              (rec (fork_right pld) (ctx_pi_split_cod c) bid ty tyC))
+          (fast_eq KBL kt))
+        (fast_eq KBA kt))
+      t)
+    b)
+def ctx_enter_binder = \c b bid ty tyC. ctx_enter_binder_inner b c bid ty tyC
+
+; splice_ctx: structurally parallel to splice, but outputs ctx-tree
+; constructors (mkCtxApp/Lam/Pi) and substitutes v (a ctx) at BE
+; positions. Used by infer's App case to maintain parallel ctx when
+; splicing appX into piCodom.
+def splice_ctx_inner = fix (\rec b c v.
+  triage v
+    (\u. c)
+    (\kt pld.
+      (bool_then
+        (\u.
+          mkCtxApp (rec (fork_left  pld) (ctx_app_split_f c) v)
+                   (rec (fork_right pld) (ctx_app_split_x c) v))
+        (bool_then
+          (\u.
+            mkCtxLam (rec (fork_left  pld) (ctx_lam_split_a    c) v)
+                     (rec (fork_right pld) (ctx_lam_split_body c) v))
+          (\u.
+            mkCtxPi  (rec (fork_left  pld) (ctx_pi_split_a   c) v)
+                     (rec (fork_right pld) (ctx_pi_split_cod c) v))
+          (fast_eq KBL kt))
+        (fast_eq KBA kt))
+      t)
+    b)
+; Short-circuit: if both ctx-body and substitution-ctx are ctx_none, the
+; spliced result is ctx_none (no info to propagate anywhere). Keeps ctxs
+; compact when types are closed (no outer-binder references).
+def splice_ctx = \c b v.
+  (bool_then
+    (\_. ctx_none)
+    (\_. splice_ctx_inner b c v)
+    (and (is_ctx_none c) (is_ctx_none v))) t
+
 def splice_inner = fix (\rec b v term.
   triage v
     (\c. term)
@@ -130,17 +245,95 @@ def normalize = fix (\rec term.
       (is_lam term))
     (is_app term)) term)
 
-def and = \a b. bool_then b (t t) a
-def or  = \a b. bool_then t b a
+; infer (ctx-threaded): H → type_of_H; V → ctx_lookup_V; App → splice
+; appX into piCodom of recursively-inferred head type; else → term as-is.
+; ctx_app_split_f threads ctx into the head recursion so inner V's find
+; their binders.
+; is_v: only the canonical V tree (tagged KV t). is_kind KV is too
+; permissive — atoms like TyA=t and TyB=t(tt) happen to surface KV when
+; fork_left/fork_right walk their non-tagged structure, so we match the
+; full V tree by hash-cons identity instead.
+def is_v = \tg. fast_eq V tg
 
-def infer = fix (\rec term.
+; Pair helpers — (term, ctx) pairs encode a "type together with its own
+; resolving context", so fast_eq on both components gives O(1) type
+; equality without mkH flattening.
+def mkPair  = \a b. t a b
+def pair_t  = \p. fork_left  p
+def pair_c  = \p. fork_right p
+
+; resolve_V_pair: one-step peel. When ctx is CtxV, the term at this
+; position is "the binder's value" — replace with the binder's stored
+; type+ctx. Not recursive — the stored ty_ctx may still point to an
+; outer binder, but at use sites we compare pair-wise (fast_eq on both
+; components), so one peel is enough for structural dispatch.
+def resolve_V_pair = \term ctx.
   (bool_then
-    (\u. type_of_H u)
+    (\_. mkPair (ctxV_ty ctx) (ctxV_ty_ctx ctx))
+    (\_. mkPair term ctx)
+    (is_ctx_V ctx)) t
+
+; infer returns a (term, ctx) pair so splicing and comparison can stay
+; ctx-aware without materializing mkH canonicals.
+; normalize_pair: parallel beta-reduction on (term, ctx) pairs. When
+; reducing an App-of-Lam (beta), splices nx's term into the Lam's body
+; AND splices nx's ctx into the Lam-body's parallel ctx using the same
+; lamB guide. This keeps the ctx synchronized with the reduced term so
+; downstream pair comparisons don't drift.
+def normalize_pair = fix (\rec term ctx.
+  (bool_then
+    (\u.
+      ((\nf_pair.
+        ((\nx_pair.
+          ((\nf_t.
+            ((\nf_c.
+              ((\nx_t.
+                ((\nx_c.
+                  (bool_then
+                    (\_.
+                      rec (splice (lamBody nf_t) (lamB nf_t) nx_t)
+                          (splice_ctx (ctx_lam_split_body nf_c) (lamB nf_t) nx_c))
+                    (\_.
+                      mkPair (mkApp nf_t nx_t) (mkCtxApp nf_c nx_c))
+                    (is_lam nf_t)) t)
+                 (pair_c nx_pair)))
+               (pair_t nx_pair)))
+             (pair_c nf_pair)))
+           (pair_t nf_pair)))
+         (rec (appX u) (ctx_app_split_x ctx))))
+       (rec (appF u) (ctx_app_split_f ctx))))
+    (bool_then
+      (\u.
+        ((\nb_pair.
+          mkPair (mkLam (lamA u) (lamB u) (pair_t nb_pair))
+                 (mkCtxLam (ctx_lam_split_a ctx) (pair_c nb_pair)))
+         (rec (lamBody u) (ctx_lam_split_body ctx))))
+      (\u. mkPair term ctx)
+      (is_lam term))
+    (is_app term)) term)
+
+def infer = fix (\rec term ctx.
+  (bool_then
+    (\u. mkPair (type_of_H u) ctx_none)
     (\u.
       (bool_then
-        (\v. (\f_ty. splice (piCodom f_ty) (piB f_ty) (appX v)) (rec (appF v)))
-        (\v. v)
-        (is_app u)) u)
+        (\_. mkPair (ctxV_ty ctx) (ctxV_ty_ctx ctx))
+        (\_.
+          (bool_then
+            (\v.
+              ((\f_pair.
+                ((\f_t.
+                  ((\f_c.
+                    mkPair (splice     (piCodom f_t) (piB f_t) (appX v))
+                           (splice_ctx (ctx_pi_split_cod f_c)
+                                       (piB f_t)
+                                       (ctx_app_split_x ctx)))
+                   (pair_c f_pair)))
+                 (pair_t f_pair)))
+               (rec (appF v) (ctx_app_split_f ctx))))
+            (\v. mkPair v ctx_none)
+            (is_app u)) u)
+        (is_v u)) u)
     (is_h term)) term)
 
 def TT = t
@@ -207,29 +400,42 @@ def res_state = \r. fork_right r
 ; is much cheaper than threading chain-following through every kernel
 ; call. Tree-side chain-following can be reintroduced later if needed
 ; for self-hosted checking.
-def try_unify = \a b state.
+; try_unify_pair: meta-aware ctx-aware equality on (term, ctx) pairs.
+; Meta branches solve on the term only. Fallback: term equality (up to
+; normalize) AND ctx "agreement" — where agreement allows either side's
+; ctx to be ctx_none (closed term — ctx doesn't apply), else requires
+; fast_eq. This handles the case where ty's ctx is structural (CtxApp/
+; CtxPi reflecting outer bindtree) but normalizes to a closed term;
+; cand's ctx_none still matches logically.
+; try_unify_pair: meta-aware ctx-aware equality. The fast-eq fallback
+; compares terms after normalize. Ctx isn't compared directly — ctxs
+; aren't canonical (same semantic meaning can have multiple structural
+; forms depending on how they were built), so term-normalize + V-branch
+; bid-shortcut carry the discriminating info in practice.
+def try_unify_pair = \a_t a_c b_t b_c state.
   (bool_then
-    (\_. mk_res TT (metas_solve_state (meta_marker a) b state))
+    (\_. mk_res TT (metas_solve_state (meta_marker a_t) b_t state))
     (\_.
       (bool_then
-        (\_. mk_res TT (metas_solve_state (meta_marker b) a state))
-        (\_. mk_res (fast_eq (normalize a) (normalize b)) state)
-        (is_meta b)) t)
-    (is_meta a)) t
+        (\_. mk_res TT (metas_solve_state (meta_marker b_t) a_t state))
+        (\_. mk_res (fast_eq (normalize a_t) (normalize b_t)) state)
+        (is_meta b_t)) t)
+    (is_meta a_t)) t
 
-; check_atom_or_h: H-or-atom-vs-ty rule used in the else branch of
-; pred_of_lvl. Tries direct equality first (Type:Type), then H-route
-; with try_unify (lets ty-meta solve to type_of_H d), else try_unify
-; on d itself (lets ty-meta solve to d for atom-as-type cases).
-def check_atom_or_h = \d ty state.
+; check_atom_or_h_pair: d is the cand term (H, atom, or meta) whose
+; effective ctx is ctx_none (closed). ty_t, ty_c is the resolved
+; expected-type pair. Direct eq path checks fast_eq on both sides.
+; H path compares type_of_H against ty.
+def check_atom_or_h_pair = \d ty_t ty_c state.
   (bool_then
     (\_. mk_res TT state)
     (\_.
       (bool_then
-        (\_. try_unify (type_of_H d) ty state)
-        (\_. try_unify d ty state)
+        (\_. try_unify_pair (type_of_H d) ctx_none ty_t ty_c state)
+        (\_. try_unify_pair d ctx_none ty_t ty_c state)
         (is_h d)) t)
-    (fast_eq (normalize d) (normalize ty))) t
+    (and (fast_eq (normalize d) (normalize ty_t))
+         (fast_eq ctx_none ty_c))) t
 
 ; Type universe: the sentinel for the universe of types. Type:Type
 ; (Girard-inconsistent, but adequate for prototyping theorem proving).
@@ -238,59 +444,131 @@ def check_atom_or_h = \d ty state.
 def Type_sentinel = t (t t t)
 def Type = mkH Type_sentinel t
 
-; pred_of_lvl threads state through the Lam-vs-Pi descent. Returns a
-; (bool, state') pair so future meta-solving can rebuild the context
-; without losing information across recursive calls. Recursion always
-; fires (matches original wastefulness); conjoining is via `and`.
+; pred_of_lvl (ctx-threaded). Signature:
+;   pred_of_lvl ty tyCtx cand candCtx state → (bool, state')
+; Instead of splicing mkH tokens into the term during Lam-vs-Pi descent,
+; it extends a parallel ctx-tree via ctx_enter_binder: at BE positions a
+; fresh CtxV(bid, piA) is overlaid, at BN the outer ctx is preserved.
+; V leaves resolve their type by consulting the ctx. The term stays
+; read-only, which means (a) the hash-cons identity of cand is stable
+; across recursion, and (b) the pattern transfers to SKI-typechecking
+; where there are no binders to plant tokens at.
 ;
 ; Dispatch order:
-;   1. cand is Pi → Pi-as-Type: any Pi inhabits Type. Cheap rule; no
-;      formation check since Type:Type makes it moot anyway.
-;   2. cand is Lam → Lam-vs-Pi descent. ty is normalized first so that
-;      ty-as-App-reducing-to-Pi (e.g. `Eq A x x` with Eq a Lam) still
-;      lets us descend.
-;   3. else → App-elim, H/atom fallback via check_atom_or_h.
-def pred_of_lvl = fix (\rec ty cand state.
-  (bool_then
-    (\_. mk_res (fast_eq Type (normalize ty)) state)
-    (\_.
-      (bool_then
-        (\c.
-          ((\nty.
+;   1. cand is Pi → Pi-as-Type (any Pi inhabits Type).
+;   2. cand is Lam → Lam-vs-Pi descent; extends both sides' ctxs.
+;   3. cand is V  → ctx_lookup_V + try_unify with ty. NEW branch; was
+;      unreachable under the splicing scheme because mkH eliminated V's.
+;   4. cand is App → infer head (with ctx), recurse arg vs piA.
+;   5. else → check_atom_or_h (H annot or atom equality).
+def pred_of_lvl = fix (\rec ty tyCtx cand candCtx state.
+  ((\eff_pair.
+    ((\eff_t.
+      ((\eff_c.
+        (bool_then
+          (\_.
+            mk_res
+              (and (fast_eq Type (normalize eff_t))
+                   (fast_eq ctx_none eff_c))
+              state)
+          (\_.
             (bool_then
-              (\u.
-                ((\new_state.
-                  ((\h.
-                    ((\dom_res.
-                      ((\rec_res.
-                        mk_res
-                          (and (res_bool dom_res) (res_bool rec_res))
-                          (res_state rec_res))
-                       (rec (splice (piCodom u) (piB u) h)
-                            (splice (lamBody c) (lamB c) h)
-                            (res_state dom_res))))
-                     (try_unify (piA u) (lamA c) new_state)))
-                   (mkH (piA u) (state_depth new_state))))
-                 (state_next_depth state)))
-              (\u. mk_res FF state)
-              (is_pi nty)) nty)
-           (normalize ty)))
-        (\c.
-          (bool_then
-            (\d.
-              ((\arg_res.
-                ((\ty_res.
-                  mk_res
-                    (and (res_bool arg_res) (res_bool ty_res))
-                    (res_state ty_res))
-                 (try_unify (infer d) ty (res_state arg_res))))
-               (rec (piA (infer (appF d))) (appX d) state)))
-            (\d. check_atom_or_h d ty state)
-            (is_app c)) c)
-        (is_lam cand)) cand)
-    (is_pi cand)) cand)
+              (\c.
+                ((\nty_pair.
+                  ((\nty_t.
+                    ((\nty_c.
+                      (bool_then
+                        (\u.
+                          ((\new_state.
+                            ((\piA_t.
+                              ((\piA_c.
+                                ((\lamA_t.
+                                  ((\lamA_c.
+                                    ((\dom_res.
+                                      ((\rec_res.
+                                        mk_res
+                                          (and (res_bool dom_res) (res_bool rec_res))
+                                          (res_state rec_res))
+                                       (rec (piCodom u)
+                                            (ctx_enter_binder
+                                              (ctx_pi_split_cod nty_c)
+                                              (piB u)
+                                              (state_depth new_state)
+                                              piA_t piA_c)
+                                            (lamBody c)
+                                            (ctx_enter_binder
+                                              (ctx_lam_split_body candCtx)
+                                              (lamB c)
+                                              (state_depth new_state)
+                                              piA_t piA_c)
+                                            (res_state dom_res))))
+                                     (try_unify_pair piA_t piA_c lamA_t lamA_c new_state)))
+                                   (ctx_lam_split_a candCtx)))
+                                 (lamA c)))
+                               (ctx_pi_split_a nty_c)))
+                             (piA u)))
+                           (state_next_depth state)))
+                        (\u. mk_res FF state)
+                        (is_pi nty_t)) nty_t)
+                     (pair_c nty_pair)))
+                   (pair_t nty_pair)))
+                 (normalize_pair eff_t eff_c)))
+              (\c.
+                (bool_then
+                  (\_.
+                    ; cand is V. Use original (ty, tyCtx) — NOT the
+                    ; resolved eff_pair — so the bid shortcut has access
+                    ; to ty's binder reference. If ty is also V with
+                    ; CtxV pointing to cand's same binder, TT directly;
+                    ; otherwise compare cand's type-pair vs (ty, tyCtx)
+                    ; via try_unify_pair (fast_eq on both components).
+                    (bool_then
+                      (\_.
+                        (bool_then
+                          (\_. mk_res TT state)
+                          (\_.
+                            try_unify_pair
+                              (ctxV_ty candCtx) (ctxV_ty_ctx candCtx)
+                              ty tyCtx state)
+                          (fast_eq (ctxV_bid candCtx) (ctxV_bid tyCtx))) t)
+                      (\_.
+                        try_unify_pair
+                          (ctxV_ty candCtx) (ctxV_ty_ctx candCtx)
+                          ty tyCtx state)
+                      (is_ctx_V tyCtx)) t)
+                  (\_.
+                    (bool_then
+                      (\d.
+                        ((\f_pair.
+                          ((\f_t.
+                            ((\f_c.
+                              ((\arg_res.
+                                ((\inf_pair.
+                                  ((\ty_res.
+                                    mk_res
+                                      (and (res_bool arg_res) (res_bool ty_res))
+                                      (res_state ty_res))
+                                   (try_unify_pair
+                                     (pair_t inf_pair) (pair_c inf_pair)
+                                     ty tyCtx
+                                     (res_state arg_res))))
+                                 (infer d candCtx)))
+                               (rec (piA f_t) (ctx_pi_split_a f_c)
+                                    (appX d) (ctx_app_split_x candCtx)
+                                    state)))
+                             (pair_c f_pair)))
+                           (pair_t f_pair)))
+                         (infer (appF d) (ctx_app_split_f candCtx))))
+                      (\d. check_atom_or_h_pair d eff_t eff_c state)
+                      (is_app c)) c)
+                  (is_v c)) c)
+              (is_lam cand)) cand)
+          (is_pi cand)) cand))
+       (pair_c eff_pair)))
+     (pair_t eff_pair)))
+   (resolve_V_pair ty tyCtx))
 
-def pred_of = \ty cand. res_bool (pred_of_lvl ty cand state_init)
+def pred_of = \ty cand. res_bool (pred_of_lvl ty ctx_none cand ctx_none state_init)
 def check   = \term ty. pred_of ty term
 
 ; --- mkAtom: atoms in already-predicate form ---
@@ -458,8 +736,8 @@ test state_metas (state_next_depth state_init) = metas_empty
 test res_bool  (mk_res TT state_init) = TT
 test res_state (mk_res TT state_init) = state_init
 ; Internal pred_of_lvl returns a tuple; pred_of/check project the bool.
-test res_bool (pred_of_lvl id_type id_term state_init) = TT
-test res_bool (pred_of_lvl K_type id_term state_init) = FF
+test res_bool (pred_of_lvl id_type ctx_none id_term ctx_none state_init) = TT
+test res_bool (pred_of_lvl K_type ctx_none id_term ctx_none state_init) = FF
 
 ; ===== Pi-as-Type rule ================================
 ; Every Pi inhabits Type. Required for Church-encoded Eq and friends.
