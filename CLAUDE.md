@@ -7,7 +7,7 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 - [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — **load-bearing**. The discipline governing what's allowed in the codebase. Every design decision should be compatible; if it isn't, one of them changes, and changing the philosophy is the harder path.
 - [`GOALS.md`](GOALS.md) — the north star (neural-guided synthesis, self-improving optimizer).
 - [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — core idea: trees as S/K/Triage combinators, types as executable predicates, Pi as partially-applied `PiCheck`, hash-cons identity as type equality.
-- [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md) — operational spec: two universes (elab + runtime), tagged forms with explicit binders, `normalize`-based conversion via `fastEq`, metas as ctx entries, `erase` to SKI after checking.
+- `lib/{debruijn,ctxtree,semantic}/DESIGN.md` — three competing backend designs currently being implemented side-by-side. Read whichever one the current task targets.
 
 ## Core discipline, in brief
 
@@ -22,37 +22,44 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 ## Code layout
 
 - `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets, `FAST_EQ` primitive.
-- `src/parse.ts` — surface tokenizer/parser/bracket-abstraction. Handles `def`, `test`, `\x.`, juxtaposed application, `t` for leaf. Exposes `fast_eq` as a global to disp programs.
-- `src/elaborate.ts` — host-side surface elaborator. Mirrors `lib/predicates.disp`'s tagged-form encoding so output is consumable by `pred_of` and `erase`. `compute_bind` walks elaborated body looking for the H-marker introduced by `\(x : T)`; `replaceMarker` swaps tokens for V before emitting `mkLam`/`mkPi`.
+- `src/parse.ts` — surface tokenizer / parser / bracket-abstraction. Handles `def`, `test`, `elab`, `raw`, `\x.`, juxtaposed application, `t` for leaf. Module system: `use "path"` imports defs from another file into current scope; `{ ... }` blocks introduce scoped frames. Exposes `fast_eq` as a global to disp programs.
+- `src/elaborate.ts` — host-side surface elaborator producing tagged forms (KV/KH/KA/KL/KP/KM) with bind-trees. Mirror of the `lib/predicates.disp` encoding so output is kernel-consumable.
 - `src/run.ts` — driver: load `.disp` file, run `test` declarations, assert tree equality.
-- `lib/predicates.disp` — ctx-tree-threaded `pred_of_lvl` kernel. The ctxtree backend `use`s this file as its starting point. Defines the tagged-form encoding (KV/KH/KA/KL/KP/KM), bind-trees, splice/compute_bind/replace_marker, ctx-tree primitives, `normalize_pair`, `try_unify_pair`, `pred_of_lvl`. Phase 1 checker plus ctx-tree Phase 5 threading (sans `ctx_exit_binder` — the stale-bindtree gap).
-- `lib/{debruijn,ctxtree,semantic}/` — competing backend designs (see each `DESIGN.md`) with `impl.disp` stubs.
-- `lib/suite/main.disp` — implementation-agnostic test suite; swaps backends per `{ }` block via `use "path"`.
+- `lib/predicates.disp` — the current ctx-tree-threaded `pred_of_lvl` kernel. The ctxtree backend `use`s this file. Defines tagged-form encoding, bind-trees, splice / compute_bind / replace_marker, ctx-tree primitives (CtxV/CtxApp/CtxLam/CtxPi, ctx_enter_binder, ctx_lam_split_*), `normalize_pair`, `try_unify_pair`, `pred_of_lvl`. Phase 1 checker plus ctx-tree Phase 5 threading — **minus `ctx_exit_binder`**, the stale-bindtree gap.
+- `lib/{debruijn,ctxtree,semantic}/` — three competing backend designs. Each has `DESIGN.md` (spec) and `impl.disp` (stub today, real implementation TBD). See `lib/suite/main.disp` for the shared export contract each backend must satisfy.
+- `lib/suite/main.disp` — implementation-agnostic test suite. Same assertions run against each backend via `{ use "../X/impl.disp"; test ... }` blocks.
 - `test/tree.test.ts` + `test/disp.test.ts` — vitest suites.
 
-## Current state (as of 2026-04-13)
+## Current state (as of 2026-04-18)
 
-**Implemented (substrate + Phase 1 + Phase 2 + Phase 3 first+second slices)**: tree-calc runtime + surface parser + `wait`/`fix` recursion + tagged forms (V/H/App/Lam/Pi/Meta) + bind-trees (BE/BN/BApp/BLam/BPi) + `splice` + `normalize` + `infer` + `check` + `pred_of` (types-as-predicates kernel) + `mkAtom` + `erase` (tagged → bracket-abstracted runtime SKI) + surface elaborator (`\(x : T). body`, `A -> B`, `(x : T) -> R`) + typed-def ergonomics (`def NAME : T = EXPR` elaborates both sides and runs `check` at parse time) + tree-native `compute_bind`/`replace_marker` (mirror the host elaborator's binder-rewriting) + `Type` universe sentinel (Type:Type via direct hash-cons; atoms inhabit Type via plain-def `mkH Type marker`) + `raw (EXPR)` escape (typed surface ↔ runtime) + threaded elaboration state (kernel's `level` is now `state = (depth, metas)`; `pred_of_lvl` returns `(bool, state')`) + meta encoding (KM tag, mkMeta/marker; `_` surface syntax mints a fresh meta) + symmetric `try_unify` (either side may be a Meta) used in Lam-vs-Pi/App/H-or-atom branches → holes in lamA, piA, piCodom, deeper codom, dependent Pi binders, AND the meta-to-meta alias case (`_ -> A = \(x : _). x`) all work; host's `decodeMetaSolutions` propagates concrete solves across alias edges. Tree-native code in `lib/*.disp`; host-side has runtime, parser, surface elaborator, and test harness. The earlier per-concept demo files (combinators/data/triage/tagged/recursion/splice/splice_full/normalize/typing/checking/picheck) were consolidated into `predicates.disp`/`elab.disp` and removed on 2026-04-18.
+Infrastructure phase: three backends have DESIGN.md specs and stub impl.disp files exporting placeholder-FF values for the shared contract (`check_id_nat`, `check_const`, `check_id_poly`, `check_apply_id`, `check_refl_zero`, `check_refl_succ_zero_one`, `reject_kstar_shadowed_dep`, `backend_name`). The suite harness passes 8 assertions per backend × 3 backends + gate tests = 26 tests in `lib/suite/main.disp`.
 
-**Plan**: see `ELABORATION_DESIGN.md` "Plan" section.
-1. ~~**Types-as-predicates kernel**~~ — DONE (`lib/predicates.disp`). `apply(ty, term)` IS the check; `pred_of` derives the callable predicate from the tagged form.
-2. ~~**Surface elaborator**~~ — DONE (`src/elaborate.ts` + `lib/elab.disp`). Annotated lambdas, arrows, dependent Pis; auto-computed bind-trees; type-checking via `pred_of` downstream in tests. `def NAME : T = EXPR` elaborates and checks at parse time, throwing on FF.
-3. **Metavariables** (in progress) — KM tag, `_` surface, symmetric `try_unify`, alias propagation all landed. `_` works in lamA, piA, piCodom, dependent Pi binder, and meta-to-meta alias positions. Next: implicit args (`{A : Type}` syntax + auto-insertion at app sites), constraint propagation for `(A : _) → A → A` style polymorphic defs, Miller-pattern unification (for higher-order metas with bound-var-application heads).
+The **ctxtree** backend has a head start: `lib/predicates.disp` already implements its ctx-tree-threaded Lam-vs-Pi descent. Phase 5 missing piece is `ctx_exit_binder` (extract fresh bind-tree from post-reduction ctx at Lam ascent), which flips the `check_refl_succ_zero_one` litmus test from FF to TT. Spec lives in `lib/ctxtree/DESIGN.md`.
 
-**Sharp lessons from the substrate** (must respect when extending — see ELABORATION_DESIGN.md for detail):
-- Recursive-call arg order under `wait`/`fix`: inner-binder-derived arg goes first.
-- Strict-branch deferral: wrap each case as `\u. body` and apply after dispatch.
-- `H` wraps its type, not its binder (departure from `BIND_TREE_NBE_IDEA.md` §3.4).
-- Bind-trees are load-bearing data, not decoration — splice trusts them.
-- H-comparisons need direct `fast_eq` first, H-unwrap as fallback (Phase 1 lesson).
-- `mkH` carries a freshness marker (`mkH ty lvl`); single-arg form collapses two same-type free hypotheses to identical hash-cons. Descent in `pred_of` threads fork-shaped levels (distinct from leaf/stem hand-constructed markers).
+The **debruijn** backend is unstarted — classical closure NbE with de Bruijn levels, serves as the correctness oracle.
+
+The **semantic** backend is unstarted — Dybjer/Filinski Val-domain NbE on raw bracket-abstracted SKI. Known blocker: triage-on-neutral (identity `I` applied to a neutral produces a stuck triage, not the neutral). See `lib/semantic/DESIGN.md` for candidate fixes.
+
+## Sharp lessons from the substrate
+
+Must respect when extending `lib/predicates.disp` / the ctxtree backend:
+
+- **Recursive-call arg order under `wait`/`fix`**: inner-binder-derived arg goes first. Outer-binder-derived args cause eager `wait` firing and divergence at compile time.
+- **Strict-branch deferral**: `triage` evaluates every branch. Wrap each case as `\u. body` and apply after dispatch to prevent eager recursion.
+- **`H` wraps its type, not its binder.** `mkH ty lvl = tagged(KH, fork(ty, lvl))`. `type_of_H` is one fork-projection. Prior "wrap-the-binder" design was abandoned after the depth-2 dependent type bug.
+- **`mkH` carries a freshness marker (`mkH ty lvl`)**. Single-arg form collapses two same-type free hypotheses to identical hash-cons identity, silently breaking e.g. `(x:A) → (y:A) → x`. Descent threads fork-shaped level markers (`lvl_start = t t t`, `lvl_next = \l. t l t`). Hand-constructed free hypotheses use leaf-rooted markers (disjoint namespace).
+- **Bind-trees are load-bearing data, not decoration.** `splice` trusts them; mismatched bind-trees silently corrupt the term. After a beta that changes body shape, outer bind-trees become stale — this is the gap `ctx_exit_binder` closes.
+- **H-comparisons need direct `fast_eq` first, H-unwrap as fallback.** Two H-tokens with the same type + marker are hash-cons-equal; direct `fast_eq` is cheaper than `type_of_H` extraction.
 
 ## Testing
 
 `npm test` runs the vitest suite.
 
+To run a single `.disp` file directly: `npx tsx src/run.ts path/to/file.disp`.
+
 ## Operating notes
 
 - Prefer editing existing files over creating new ones, especially docs. New top-level docs are a design event, not a casual action.
 - When proposing a new feature or fix, explicitly state its object-language encoding, or explicitly note why that's deferred and what's blocking the encoding work.
-- Hash-consing is a load-bearing property: `fastEq` is O(1) tree identity, and anything that makes equivalent trees have different structure undermines it.
+- Hash-consing is a load-bearing property: `fast_eq` is O(1) tree identity, and anything that makes equivalent trees have different structure undermines it.
+- The backend-comparison framework is the current organizing principle. When proposing design changes, state which backend(s) they affect and whether the suite assertions change.

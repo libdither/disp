@@ -2,7 +2,7 @@
 
 A dependent type system for tree calculus where types are executable predicate trees and type equality is tree identity.
 
-This document states the core idea. The operational machinery — elaboration universe, checking, conversion, erasure to runtime — is in [`ELABORATION_DESIGN.md`](ELABORATION_DESIGN.md). The Phase 1 kernel (`pred_of` deriving a callable predicate from a tagged Pi/atom; `apply(ty, term)` IS the check) is implemented tree-side in [`lib/predicates.disp`](lib/predicates.disp).
+This document states the core idea. The operational machinery — evaluation strategies, conversion, context management — is being prototyped as three competing backends under `lib/{debruijn,ctxtree,semantic}/`, each with its own `DESIGN.md`. The current ctx-tree-threaded kernel (`pred_of` deriving a callable predicate from a tagged Pi/atom; `apply(ty, term)` IS the check) is implemented tree-side in [`lib/predicates.disp`](lib/predicates.disp) and serves as the starting point for the `ctxtree` backend.
 
 ## Trees as Combinators
 

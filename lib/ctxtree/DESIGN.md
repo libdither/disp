@@ -12,8 +12,7 @@ function, `fast_eq` on normal forms gives O(1) conversion.
 
 The only missing piece from the current repo is `ctx_exit_binder`:
 extracting a fresh bind-tree from the post-reduction ctx at Lam ascent.
-Design covered in `MERGED_CONTEXT_PROPOSAL.md` §3; this doc is the
-concise spec for the `impl.disp` port.
+This doc is the concise spec for the `impl.disp` port.
 
 ## What's already built (inherited from `lib/predicates.disp`)
 
@@ -216,7 +215,8 @@ here; after, it should return TT.
 - **Bracket-abstraction target unclear.** After `erase`, tagged forms
   disappear — but ctx-trees presume tagged forms to parallel. The
   SKI-typecheck path (if ever built) needs a different story for
-  neutrals. See `piPred` open question in `BIND_TREE_NBE_IDEA.md §7.5`.
+  neutrals. (Runtime predicate form of Pi — aka `piPred` — remains an
+  open design question if SKI-typechecking ever becomes a goal.)
 - **No η.** Two η-equivalent terms with different bind-trees hash-cons
   to different trees. Adding η-conv requires a separate normalization
   pass at comparison time.
