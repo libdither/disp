@@ -18,7 +18,7 @@ Three NbE-shaped designs are live in the repo:
 
 | Design | Status | Known issue |
 |--------|--------|-------------|
-| Bind-tree NbE (H-tokens + splice) | implemented in `examples/predicates.disp` | stale `lamB` after under-binder β → `Eq Nat (succ zero) one` fails |
+| Bind-tree NbE (H-tokens + splice) | implemented in `lib/predicates.disp` | stale `lamB` after under-binder β → `Eq Nat (succ zero) one` fails |
 | Ctx-tree NbE (parallel term/ctx, Phase 5) | designed in `MERGED_CONTEXT_PROPOSAL.md` | not yet built |
 | Semantic-domain NbE (Dybjer/Filinski-style, Val = Leaf\|Stem\|Fork\|Neutral) | proposal (external research note) | not yet prototyped |
 
@@ -97,7 +97,7 @@ example. Encoding choice:
 
 ## 4. The generic checker
 
-Lives in `examples/check_generic.disp`. Takes a backend record and a term,
+Lives in `lib/check_generic.disp`. Takes a backend record and a term,
 returns an elaborated term. Mirror of `check` in `BIND_TREE_NBE_IDEA.md §4.4`,
 but every eval/app/conv/fresh call routes through the backend:
 
@@ -174,7 +174,7 @@ Each backend is a single `.disp` file that exports one definition named
 `backend`. Layout:
 
 ```
-examples/backends/
+lib/backends/
   bindtree.disp     -- current H-token + splice approach
   ctxtree.disp      -- Phase 5 parallel ctx-tree design
   semantic.disp     -- Dybjer/Filinski semantic-domain (Leaf|Stem|Fork|Neutral)
@@ -304,9 +304,9 @@ in the current file's scope. Parser-only; no runtime work beyond recursive
 `parseProgram`.
 
 ```
-backend bt from "examples/backends/bindtree.disp"
-backend ct from "examples/backends/ctxtree.disp"
-backend sem from "examples/backends/semantic.disp"
+backend bt from "lib/backends/bindtree.disp"
+backend ct from "lib/backends/ctxtree.disp"
+backend sem from "lib/backends/semantic.disp"
 ```
 
 Post-parse, `bt`, `ct`, `sem` are defs pointing to the respective backend
@@ -403,7 +403,7 @@ runtime.
 
 ## 7. Shared test suite
 
-The suite lives in `examples/suite/core.disp` (and later `eq.disp`,
+The suite lives in `lib/suite/core.disp` (and later `eq.disp`,
 `church.disp`, `dependent.disp`, etc.). Structure:
 
 ```
@@ -438,10 +438,10 @@ suite dependent = {
   ...
 }
 
-backend bt  from "examples/backends/bindtree.disp"
-backend ct  from "examples/backends/ctxtree.disp"
-backend sem from "examples/backends/semantic.disp"
-backend cl  from "examples/backends/closure.disp"
+backend bt  from "lib/backends/bindtree.disp"
+backend ct  from "lib/backends/ctxtree.disp"
+backend sem from "lib/backends/semantic.disp"
+backend cl  from "lib/backends/closure.disp"
 
 test_via bt  core_lambda
 test_via ct  core_lambda
@@ -510,25 +510,25 @@ state. Acceptable per the existing precedent.
 
 **Phase B: bindtree backend wrapped.**
 - Extract the current `pred_of_lvl` code path from `predicates.disp` into
-  `examples/backends/bindtree.disp` as a backend record.
+  `lib/backends/bindtree.disp` as a backend record.
 - Port the existing 111 tests to the new `suite` syntax.
 - Run `test_via bt existing_tests`; assert 100% parity with current
   direct-call tests.
 
 **Phase C: closure backend (oracle).**
-- Write `examples/backends/closure.disp` — traditional NbE with explicit
+- Write `lib/backends/closure.disp` — traditional NbE with explicit
   closure trees. Smallest of the three new backends.
 - `test_via cl existing_tests` — assert same pass/fail as `bt`.
 - First cross-validation data point.
 
 **Phase D: semantic backend.**
-- Write `examples/backends/semantic.disp` — Val = {VLeaf, VStem, VFork,
+- Write `lib/backends/semantic.disp` — Val = {VLeaf, VStem, VFork,
   VNeutral}, with `do_app`/`do_app3`/`triage_sem` implementing the five
   tree-calculus rules + three stuck points.
 - `test_via sem existing_tests`; compare with `bt` and `cl`.
 
 **Phase E: ctxtree backend.**
-- Write `examples/backends/ctxtree.disp` — port `ctx_sketch.ts` (the
+- Write `lib/backends/ctxtree.disp` — port `ctx_sketch.ts` (the
   existing whiteboard) into disp, wrap as a backend record.
 - Add the hard suite: `church_equality` including
   `Eq Nat (succ zero) one`.

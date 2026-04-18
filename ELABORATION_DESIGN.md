@@ -2,7 +2,7 @@
 
 The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types are predicates) and `BIND_TREE_NBE_IDEA.md` (bind-trees as the binder substrate). This doc tracks the current state of the implementation and the next three phases planned.
 
-**Status**: Phase 1 complete (`examples/predicates.disp`); Phase 2 surface elaborator landed (`src/elaborate.ts` + parser extensions + `examples/elab.disp`). Phase 3 next.
+**Status**: Phase 1 complete (`lib/predicates.disp`); Phase 2 surface elaborator landed (`src/elaborate.ts` + parser extensions + `lib/elab.disp`). Phase 3 next.
 
 **Companion docs**:
 - [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — types are executable predicates; the kernel call is `apply(type, value)`.
@@ -19,7 +19,7 @@ The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types ar
 
 ## Current state (historical snapshot — pre-Phase-4)
 
-### Substrate (built, in `examples/*.disp`)
+### Substrate (built, in `lib/*.disp`)
 
 | Layer | Status | File(s) |
 |---|---|---|
@@ -63,7 +63,7 @@ The implementation plan that sits between `TREE_NATIVE_TYPE_THEORY.md` (types ar
 
 ### Phase 1 — Types-as-predicates kernel ✅ DONE
 
-**Status**: implemented in `examples/predicates.disp` (26 tests, all green; 131 total tree-native tests pass). `pred_of` derives a closed predicate from a tagged type; `check term ty := pred_of ty term`. `mkAtom id` produces an already-callable atom predicate (skips the tagged round-trip; useful for synthesis).
+**Status**: implemented in `lib/predicates.disp` (26 tests, all green; 131 total tree-native tests pass). `pred_of` derives a closed predicate from a tagged type; `check term ty := pred_of ty term`. `mkAtom id` produces an already-callable atom predicate (skips the tagged round-trip; useful for synthesis).
 
 The Phase 1 plan below is preserved as the spec. One adjustment landed during implementation: see lesson 5 in "Sharp lessons earned" — the H-case branch must try direct `fast_eq` before falling back to `type_of_H`-unwrap, otherwise Lam-vs-Pi recursion fails on the canonical hypothesis tokens introduced by splice.
 
@@ -118,7 +118,7 @@ i.e., an atom's predicate accepts H tokens whose annotation is itself. (`type_of
 **Synthesis hook (forward-looking, not Phase 1)**: post-erase, the predicate form is what neural search optimizes against. Phase 1 produces the predicate; Phase 2's elaborator emits both forms; an `erase` pass (not Phase 1) strips the tagged scaffolding to leave only the predicate.
 
 **Deliverables**:
-- `examples/predicates.disp`: `pred_of_pi`, `pred_of_atom`, tests covering TT/FF cases for Lam/App/H candidates against various Pis.
+- `lib/predicates.disp`: `pred_of_pi`, `pred_of_atom`, tests covering TT/FF cases for Lam/App/H candidates against various Pis.
 - Refactor `check` to invoke `pred_of`. Keep the structural accessors for splicing/normalization.
 - All 105 existing tests still pass through the new path.
 
@@ -128,12 +128,12 @@ i.e., an atom's predicate accepts H tokens whose annotation is itself. (`type_of
 
 ### Phase 2 — Surface elaborator ✅ DONE (subset)
 
-**Status**: shipped in `src/elaborate.ts` + `src/parse.ts` + `examples/elab.disp`. The elaborator handles annotated lambdas, non-dep arrows, and dependent Pis. Typed defs `def NAME : T = EXPR` elaborate both sides and run the user-defined `check` from globals at parse time; an FF result throws a parse-time error.
+**Status**: shipped in `src/elaborate.ts` + `src/parse.ts` + `lib/elab.disp`. The elaborator handles annotated lambdas, non-dep arrows, and dependent Pis. Typed defs `def NAME : T = EXPR` elaborate both sides and run the user-defined `check` from globals at parse time; an FF result throws a parse-time error.
 
 What's working:
 - Surface syntax: `\(x : T). body`, `(x : T) -> R`, `A -> B`, plus `elab name = SURFACE_EXPR` and `def NAME : T = EXPR` top-level forms.
 - Bind-tree computation: each annotated lambda introduces a fresh `mkH T marker` token in the body; after recursive elaboration, `computeBind` walks the result looking for that token and produces the bind-tree; `replaceMarker` swaps the token for V.
-- Encoding compatibility: `src/elaborate.ts` mirrors `examples/predicates.disp`'s tagged-form layout exactly (same TAG_ROOT, kind tags, payload structure), so elaborator output is structurally equal to hand-constructed forms (modulo H freshness markers minted from a counter).
+- Encoding compatibility: `src/elaborate.ts` mirrors `lib/predicates.disp`'s tagged-form layout exactly (same TAG_ROOT, kind tags, payload structure), so elaborator output is structurally equal to hand-constructed forms (modulo H freshness markers minted from a counter).
 - Free hypotheses (`Hf = mkH (Pi A BN A) t`) defined via `def` work inside `elab` bodies because globals resolve as their literal trees.
 - Typed defs run the disp-side `check` (which must be in scope when the `def` parses) and bind the elaborated tagged tree on success. Both positive examples (`def id_AA_typed : A -> A = \(x : A). x`) and negative cases (`def WRONG : A -> A = \(x : B). x` throws) are exercised.
 
@@ -142,7 +142,7 @@ What's deferred to keep Phase 2 minimal:
 - Metas (Phase 3).
 
 Closed in this iteration:
-- Tree-program port of `compute_bind` and `replace_marker` (`examples/elab.disp`). The host versions in `src/elaborate.ts` are now formally optimizations of the disp-side functions; per philosophy rule 2 the tree version is canonical.
+- Tree-program port of `compute_bind` and `replace_marker` (`lib/elab.disp`). The host versions in `src/elaborate.ts` are now formally optimizations of the disp-side functions; per philosophy rule 2 the tree version is canonical.
 - Surface ↔ runtime boundary: `raw (EXPR)` in the typed grammar parses EXPR with the untyped parser, bracket-abstracts to a runtime tree, and embeds the result as a literal in the elaborated form. Lets typed defs construct atoms-of-Type and other tagged-form values requiring runtime computation (e.g. `def Atom1 : Type = raw (mkH Type marker)`) without a separate plain-`def` indirection. Inside lambdas, `raw` only sees runtime globals — typed-bound vars aren't in scope of the untyped parser. That's by design: the boundary is local and explicit, not pervasive.
 
 The Phase 2 plan below is preserved as the spec.
@@ -209,8 +209,8 @@ Implemented host-side initially per philosophy rule 2 (mirror, with planned tree
 **Deliverables**:
 - `src/elaborate.ts` with `elab`, `compute_bind`, `extend_env`.
 - Parser extensions (`src/parse.ts`) for the new surface forms.
-- `examples/programs.disp` rewriting `id`, K, KI, simple App-of-H programs in surface syntax. Each program gets `def name : T = e` form; elaboration produces tagged forms; kernel checks.
-- Cross-validation: the tagged forms produced by elaboration must structurally match what `examples/typing.disp`/`checking.disp` hand-construct.
+- `lib/programs.disp` rewriting `id`, K, KI, simple App-of-H programs in surface syntax. Each program gets `def name : T = e` form; elaboration produces tagged forms; kernel checks.
+- Cross-validation: the tagged forms produced by elaboration must structurally match what `lib/typing.disp`/`checking.disp` hand-construct.
 
 **Limit**: with no metas, every binder needs an explicit type. `\x. body` with no annotation is rejected (Phase 3 lifts this).
 
@@ -323,7 +323,7 @@ The `_`s become metas. Elaborator allocates `?1` and `?2` (positions). Checking 
 **Deliverables**:
 - Tree-side: meta encoding, lookup/solve, normalize extension, unify with pattern fragment.
 - Host-side: elaborator extensions for `_`, implicit-arg insertion.
-- `examples/metas.disp` exercising solved/unsolved metas, occurs check, scope check, the polymorphic `id` example end-to-end.
+- `lib/metas.disp` exercising solved/unsolved metas, occurs check, scope check, the polymorphic `id` example end-to-end.
 
 ---
 
@@ -331,14 +331,14 @@ The `_`s become metas. Elaborator allocates `?1` and `?2` (positions). Checking 
 
 Phase 1 → Phase 2 → Phase 3, sequentially. Within each phase:
 
-1. **Tree-program first** (per philosophy rule 1). New operations land in `examples/*.disp`.
+1. **Tree-program first** (per philosophy rule 1). New operations land in `lib/*.disp`.
 2. **Host mirror** in TS for speed (per rule 2). Each TS function has a tree-program counterpart.
 3. **Cross-validation** in tests (per rule 4). The tree-program version is canonical; if host disagrees, host is wrong.
 
 ### Gates
 
 - **End of Phase 1**: `(pred_of (mkPi A B C)) (mkLam A B body)` returns TT iff the structural check would have. All current 105 tests still pass through the predicate form. `pred_of_atom` works on atomic types.
-- **End of Phase 2**: hand-written examples in `typing.disp`/`checking.disp` are reproducible from surface syntax in `examples/programs.disp`. Elaborator output equals hand-constructed reference (hash-cons identity).
+- **End of Phase 2**: hand-written examples in `typing.disp`/`checking.disp` are reproducible from surface syntax in `lib/programs.disp`. Elaborator output equals hand-constructed reference (hash-cons identity).
 - **End of Phase 3**: polymorphic `id` typeable from surface; one-meta and two-meta unification cases pass; the dependent `(x : A) → x` example works with `_` for `A`.
 
 ### Stopping rules

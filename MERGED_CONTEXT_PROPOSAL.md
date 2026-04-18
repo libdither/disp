@@ -8,7 +8,7 @@ semantically identical Church numerals).
 The user asked to implement this direct-to-tree-calculus, first using it for
 PiCheck (pred_of_lvl), then seeing if it handles `Eq Nat (succ zero) one`.
 Philosophy-compatible: no "host-side first, port later" — the whole thing
-lives in `examples/predicates.disp` / `examples/elab.disp`.
+lives in `lib/predicates.disp` / `lib/elab.disp`.
 
 ## The problem this solves
 
@@ -313,8 +313,8 @@ The proposal is validated when:
 ## Starting point after /compact
 
 Files to work in:
-- `examples/predicates.disp` — add ctx helpers, new normalize, new pred_of_lvl.
-- `examples/elab.disp` — mirror the kernel changes, add the success-criterion tests.
+- `lib/predicates.disp` — add ctx helpers, new normalize, new pred_of_lvl.
+- `lib/elab.disp` — mirror the kernel changes, add the success-criterion tests.
 
 Reference commits:
 - `3c1564eb7085` (Church Bool/Nat/def-eq-reflection) — current HEAD baseline.
