@@ -38,7 +38,7 @@
   Surface grammar and AST of `.disp` source files.\
   #raw("src/parse.ts") implements the grammar;
   #raw("src/ast.ts") defines the AST;
-  #raw("test/parser.test.ts") exercises every production.
+  elaboration and desugaring live in #raw("COMPILATION.typ").
 ]
 #v(1em)
 
@@ -93,47 +93,28 @@ hole token.
 
 = Grammar
 
-The `expr` grammar covers both term and type positions. A braced `{...}`
-form parses into an unresolved member list; the parser commits to one of
-four node kinds based on the shape of the members and on whether a `->`
-immediately follows the closing brace (see § Braced forms).
+The `expr` grammar covers both term and type positions. Three separator
+shorthands are used below:
 
-== Separators
+```ebnf
+COMMA ::= "," | NEWLINE
+SEMI  ::= ";" | NEWLINE
+ARROW ::= "->" | "→"
+```
 
-Two separators are in play, each local to a specific brace shape:
-
-#table(
-  columns: (auto, 1fr, auto),
-  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
-  inset: (x: 6pt, y: 4pt),
-  table.header[*Separator*][*Used in*][*Example*],
-  [`,` or NEWLINE],  [RecType / Binder params (type-position lists)],                  [`{x : A, y : B}`],
-  [`;` or NEWLINE],  [RecValue fields (value-position lists) and top-level programs], [`{x := t; y := t t}`],
-)
-
-Trailing separators are allowed. Mixing `,` and `;` inside the same
-brace shape is a parse error.
+Trailing separators are always allowed.
 
 == Programs and items
 
 #rule(
   "program",
-  "program  ::= item (progSep item)* progSep?
-progSep  ::= \";\" | NEWLINE
-item     ::= let | test | use",
-  "let id = {A} -> {x} -> x
-test id t = t
-use \"lib/predicates.disp\"",
-  note: [An ordered sequence of statements evaluated top-to-bottom in one scope. A trailing separator is allowed.],
+  "program  ::= item (SEMI item)* SEMI?
+item     ::= let | test",
+  "let prelude = use \"lib/predicates.disp\"
+let id = {A} -> {x} -> x
+test id t = t",
+  note: [An ordered sequence of statements in one scope.],
 )
-
-Top-level items are `let`, `test`, `use`. The parser evaluates them in
-order:
-
-- a `let` binds a name into the current scope and records a named
-  compilation target (an export),
-- a `test` becomes a compile-time assertion member of the `Program`,
-- a `use` inlines the items of another file into the current scope.
 
 #rule(
   "let",
@@ -141,76 +122,37 @@ order:
   "let K = {x} -> {y} -> x
 let id : {A : Type} -> A -> A
        = {A} -> {x} -> x",
-  note: [Scoped name binding; visible to subsequent items. With a type ascription, the bound body is wrapped as `Ann(body, T)` — the kernel predicate runs during elaboration.],
+  note: [Scoped name binding; visible to subsequent items.],
 )
-
-`let` is parse-time syntactic sugar that resolves into existing AST
-constructors --- no `Let` node survives. Type annotations, when
-present, are uniformly attached to the value via `Ann(body, T)`;
-`Binder.param.type` is reserved for user-written lambda/Pi binders
-and is always `null` in let-desugarings.
-
-- *Internal* `let x (: T)? = body; rest` (inside a Block) desugars to
-  `App(Binder([{name: "x", type: null}], rest), body')` where `body'`
-  is `Ann(body, T)` if a type was given, otherwise just `body`. The
-  `rest` is whatever follows the `let` within the Block --- tests and
-  the trailing expression are both captured inside the `Binder` body.
-- *Top-level* `let x (: T)? = body` becomes a `Def` node in
-  `Program.members`, whose `body` is `Ann(body, T)` if a type was
-  given, otherwise just `body`.
-
-The parser does not resolve names. `Var` nodes retain their source
-strings; the elaborator walks the AST with a scope stack, resolves
-each `Var` against in-scope binder params and top-level `Def`s, and
-reports unresolved names with their source spans.
-
-Recursive `let` fails naturally at elaboration. `let f = body` desugars
-to `App(Binder([{name: "f"}], rest), body)` --- the binder wraps only
-`rest`, so any `Var f` inside `body` sees the outer scope. If no outer
-`f` exists, the elaborator reports "unresolved `f`." For recursion,
-write an explicit fix combinator.
 
 #rule(
   "test",
   "test     ::= \"test\" expr \"=\" expr",
   "test ({x} -> x) t = t",
-  note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees. Failure is a compile error, same channel as a type error.],
-)
-
-#rule(
-  "use",
-  "use      ::= \"use\" STRING",
-  "use \"../predicates.disp\"",
-  note: [Inlines the items of another file into the current scope. Import cycles are parse-time errors.],
+  note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees.],
 )
 
 == Expressions
 
 #rule(
   "expr",
-  "expr     ::= binder | app ((\"->\" | \"→\") expr)?",
+  "expr     ::= binder | app (ARROW expr)?",
   "{x : A} -> x
 A -> B
 f x",
-  note: [An `app` followed by `->` is sugar for a single-param `binder` with an anonymous param: `A -> B` parses to `Binder([{name: null, type: A}], B)`. `->` and `→` are interchangeable.],
+  note: [An `app` followed by `ARROW` is sugar for a single-param `binder` with an anonymous param: `A -> B` parses to `Binder([{name: null, type: A}], B)`.],
 )
 
 #rule(
   "binder",
-  "binder       ::= binderRecord (\"->\" | \"→\") expr
-binderRecord ::= \"{\" binderParam (\",\" binderParam)* \",\"? \"}\"
-binderParam  ::= binderName (\":\" expr)?
-binderName   ::= IDENT | \"_\"",
+  "binder      ::= \"{\" binderParam (COMMA binderParam)* COMMA? \"}\" ARROW expr
+binderParam ::= (IDENT | \"_\") (\":\" expr)?",
   "{x} -> x                       // inferred type
 {x : Nat} -> x                 // annotated
 {A : Type, x : A} -> x         // multi-param sugar (right-assoc)
 {_ : Nat} -> t                 // anonymous (same as Nat -> t)",
-  note: [Lambda or Pi depending on the expected type (`Type` ⇒ Pi, else lambda). Surface form is identical; elaboration decides. A binder must have at least one param; `{} -> body` is a parse error.],
+  note: [Lambda or Pi depending on expected type (`Type` ⇒ Pi, else lambda). A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn} -> body` desugars right-associatively to `{p1} -> ... -> {pn} -> body`.],
 )
-
-The multi-param sugar `{p1, p2, ..., pn} -> body` desugars
-right-associatively to `{p1} -> {p2} -> ... -> {pn} -> body`, so later
-params and the body see earlier params in scope.
 
 #rule(
   "app",
@@ -223,211 +165,51 @@ F A B",
 #rule(
   "atom",
   "atom      ::= simple (\".\" IDENT)*
-simple    ::= \"(\" annotated \")\"
+simple    ::= \"(\" expr (\":\" expr)? \")\"
             | braced
+            | \"use\" STRING
             | LEAF
             | IDENT
             | \"_\"
-annotated ::= expr (\":\" expr)?",
-  "(A -> B)
-(f x : Nat)                    // parenthesized ascription
-{ x := t; y := t t }           // record value atom
-point.x                        // projection
-point.x.fst                    // chained projection
-Type
-foo
-_",
-  note: [Indivisible expression plus optional `.field` projections; binds tighter than application.],
+braced    ::= recValue | recType | block
+recValue  ::= \"{\" \"}\"
+            | \"{\" namedField (SEMI namedField)* SEMI? \"}\"
+recType   ::= \"{\" typedField (COMMA typedField)* COMMA? \"}\"
+block     ::= \"{\" (stmt SEMI)* expr SEMI? \"}\"
+typedField ::= IDENT \":\" expr
+namedField ::= IDENT (\":\" expr)? \":=\" expr
+stmt       ::= let | test",
+  "(f x : Nat)                    // parenthesized ascription
+{ x := t; y := t t }           // recValue
+{ x : A, y : B }               // recType
+{ let a = t; f a }             // block
+use \"../predicates.disp\"     // loads file, yields a recValue of its defs
+point.x.fst                    // chained projection",
+  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` is an expression that loads and elaborates the referenced file and yields a recValue whose fields are its top-level `let`-bound names.],
 )
 
-`atom` has a postfix `.IDENT` for field projection. It binds tighter
-than application: `f.a b` is `(f.a) b`.
-
-Parenthesized forms accept the `annotated` grammar, so `(e : T)` is the
-only way to write a type ascription in a non-statement position --- bare
-`e : T` outside a `let` or a record field is a parse error.
-
-== Braced forms <braced>
-
-Parsing a `{...}` is a two-step commitment:
-
-1. Parse the members into an unresolved list (each member classified
-   syntactically as a typed field `IDENT : EXPR`, a named field
-   `IDENT (: T)? := EXPR`, or a bare expression).
-2. Peek the next token past `}`. If it is `->` (or `→`), reinterpret as
-   a *Binder*; otherwise, commit to one of the three value shapes via
-   the member-shape rule below.
-
-The four outcomes are mutually exclusive:
-
-#table(
-  columns: (auto, 1fr),
-  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
-  inset: (x: 6pt, y: 4pt),
-  table.header[*Form*][*Admissible member shapes*],
-  [*Binder*],
-    [trailing `->` present; every member is a `binderParam` --- a bare IDENT / `_` optionally followed by `: TYPE`. No `:=`, no non-trivial expressions, no statements.],
-  [*RecType*],
-    [no trailing `->`; one or more typed fields `IDENT : EXPR`. No `:=`, no bare expressions.],
-  [*RecValue*],
-    [no trailing `->`; one or more named fields `IDENT (: T)? := EXPR`. No typed fields, no bare expressions.],
-  [*Block*],
-    [no trailing `->`; zero or more `let` / `test` / `use` statements, followed by exactly one trailing bare expression.],
-)
-
-Statements (`let`, `test`, `use`) appear only in Blocks and at top
-level. RecType and RecValue carry only their respective field kinds.
-For local definitions inside a record, wrap in a Block:
-
-```disp
-let t = { let Size = Nat; {x : Size, y : Size} }
-                         // ^ RecType, built with a local alias
-```
-
-Mixing shapes is a parse error with a targeted message:
-
-- any `:=` member mixed with `NAME : EXPR` or a bare expression,
-- any bare expression before the final member of a Block,
-- trailing `->` on a RecValue, Block, or empty braced form,
-- a statement (`let` / `test` / `use`) inside a RecType or RecValue.
-
-A Block whose `members` list is empty (no tests remaining after `let`
-desugaring) is collapsed to its trailing expression directly by the
-parser --- `Block { members: [], trailing: e }` becomes just `e`.
-
-The empty braced form `{}` is a 0-field RecValue. The elaborator
-interprets it as the Church unit value or unit type based on expected
-type.
-
-=== Disambiguating `{ IDENT }` and `{ IDENT : EXPR }`
-
-`{ x }` has one bare-IDENT member. Taken alone (no `->` follows), it's a
-Block with trailing expression `x`. Followed by `->`, it's a Binder with
-one param `x` of inferred type.
-
-`{ x : Nat }` has one typed-field member. Alone, it's a RecType with one
-field. Followed by `->`, it's a Binder with one param `x : Nat`.
-
-To write a Block whose trailing expression is ascribed (rare in
-practice), parenthesize the ascription: `{ (x : Nat) }`.
-
-=== RecType --- dependent record type
-
-An ordered list of typed fields. Each field's type expression may
-mention the names of earlier fields, giving the form the expressive
-power of a dependent Σ-product. Duplicate field names are a parse
-error.
-
-```disp
-{x : Nat, y : Vec Nat x}       // y's type mentions x
-{A : Type, a : A}              // dependent pair (Σ-style)
-```
-
-=== RecValue --- record value
-
-An ordered list of named fields. Each field may carry an explicit type
-ascription. Fields are evaluated in order, and later fields see earlier
-ones in scope.
-
-```disp
-{ x := t; y := t t }                    // two inferred fields
-{ n : Nat := t; fst : Nat := n }        // second field references first
-```
-
-If a RecValue declares the same field name more than once, only the
-final occurrence is kept; earlier occurrences are shadowed, and the
-projection morphism for the name targets the last position.
-
-```disp
-let p = { x := t; x := t t }
-test p.x = t t                 // last wins
-```
-
-=== Block --- statements with a trailing value
-
-Statements followed by a single trailing bare expression. The block's
-value *is* the trailing expression. `let`s inside the Block are
-desugared at parse time into `App(Binder)` wrappers around the
-remaining members (see `COMPILATION.typ` § let-desugaring); `use`s are
-inlined; only `test` statements survive as `Block.members`.
-
-```disp
-let y = { let a = t
-          let b = t t
-          f a b }
-// desugared: y = App(Binder([{a}], App(Binder([{b}], f a b), t t)), t)
-```
-
-=== Projection
-
-`expr.IDENT` on a RecValue resolves at elaboration time. The compiler
-looks up `IDENT` in the target's record type and emits the positional
-projection morphism. If the target is not a RecValue or lacks the
-field, the program is rejected --- there is no runtime fallback.
-
-=== Encoding
-
-For a RecValue with $n ≥ 1$ fields `f1 := e1; ...; fn := en` of
-(possibly-dependent) types `X_1, ..., X_n`, the corresponding record
-type is the dependent Church product
-
-```disp
-{A : Type} -> ({x1 : X_1, ..., xn : X_n} -> A) -> A
-```
-
-inhabited by `{A} -> {k} -> k e1 ... en`. Projection `.f_i` compiles
-to `{p} -> p ({x_1 : X_1, ..., x_n : X_n} -> x_i)`.
-
-The empty `{}` under the encoding is the Church unit
-`{A : Type} -> A -> A`, inhabited by the polymorphic identity.
+The `braced` alternatives are disjoint by member shape (typed field
+vs. named field vs. statement-plus-expr). A `braced` followed by
+`ARROW` is reparsed as a `binder`: `{x : A}` alone is a recType;
+`{x : A} -> e` is a binder. The empty `{}` is a 0-field recValue
+(Church unit; see `COMPILATION.typ` § Record encoding).
 
 == Associativity and precedence
 
 - `atom` projection `.`: highest, left-associative.
 - `app`: left-associative juxtaposition, looser than `.`.
 - The `->` suffix in `expr` and the `binder` form: right-associative.
-  `a -> b -> c` parses as `a -> (b -> c)`; `{x} -> {y} -> e` nests the
-  inner binder in the outer's body.
+  `a -> b -> c` parses as `a -> (b -> c)`.
 - The binder body (after `->`) is a full `expr`, so
   `{x : A} -> A -> B` parses as `{x : A} -> (A -> B)`.
 
-== Module system
-
-`use "path"` loads another `.disp` file, parsing its items as if they
-appeared in place of the `use` directive. `path` resolves relative to
-the directory of the file containing the `use`. The parser maintains a
-stack of in-progress files and rejects import cycles at parse time.
-
-Any braced form introduces a nested scope. `let`s and `use`d imports
-inside the braces bind only within the braces. Name lookup walks scope
-frames inner-to-outer; inner bindings shadow outer.
-
-```disp
-let x = t
-{
-  let x = t t                  // shadows outer x within this scope
-  test x = t t                 // passes against inner x
-}
-test x = t                     // passes against outer x
-```
-
 = Abstract syntax tree
 
-The parser produces an `ast.Program` value (defined in
-#raw("src/ast.ts")). Each AST node carries a source `Span` for error
-reporting. Spans are not part of the abstract tree: they are stripped
-when the AST is serialized to a tree-calculus term for consumption by a
-disp-hosted elaborator.
-
-Every surface production maps to exactly one AST node kind. The parser
-desugars internal `let`s into `App(Binder)` wrappers and inlines `use`d
-files, so the AST presented to the elaborator contains neither `Let`
-nor `Use` nodes. `Var` nodes retain their source strings; the
-elaborator resolves them against binder params and top-level `Def`s.
+The parser produces a single AST, defined in #raw("src/ast.ts"). Every
+node carries a source `Span` for error reporting.
 
 ```
-Expr ::= Var | Leaf | Hole | App | Proj | Binder
-       | RecValue | Block | Ann
+Expr ::= Var | Leaf | Hole | App | Proj | Binder | RecValue | Ann | Use | Block
 
 Var      { name: string }
 Leaf     { }
@@ -436,104 +218,72 @@ App      { fn: Expr, arg: Expr }
 Proj     { target: Expr, field: string }
 Binder   { params: Param[], body: Expr | null }
 RecValue { members: NamedField[] }
-Block    { members: Stmt[], trailing: Expr }
 Ann      { expr: Expr, type: Expr }
+Use      { path: string }
+Block    { members: Stmt[], trailing: Expr }
 
 Param      { name: string | null, type: Expr | null }
 NamedField { name: string, type: Expr | null, value: Expr }
 
-Stmt ::= Test
+Stmt ::= Let | Test
+Let  { name: string, type: Expr | null, body: Expr }
 Test { lhs: Expr, rhs: Expr }
 
+Program  { members: TopLevel[] }
 TopLevel ::= Def | Test
-Def     { name: string, body: Expr }
-
-Program { members: TopLevel[] }
+Def      { name: string, body: Expr }
 ```
 
-Notes:
+== Shape rules
 
-- `Binder` is a unified node. `body === null` is the record-type reading
-  (a list of typed params with no body, Church-encoded as a product);
-  `body !== null` is a lambda or Pi (decided by elab from expected
-  type). When `body === null`, every `Param` must have a non-null name
-  *and* a non-null type --- record types can't carry holes in either
-  slot.
-- `A -> B` parses directly to `Binder([{name: null, type: A}], B)`;
-  there is no dedicated `Arrow` node.
-- Dependent scoping (fields referring to earlier fields, later binder
-  params referring to earlier ones) is *not* encoded in AST structure.
-  It arises from elaboration walking `members` / `params` in order and
-  extending the context; type expressions contain ordinary `Var` nodes
-  that resolve via lexical scope.
-- Parentheses disappear at parse time. `(e)` produces the same node as
-  `e`; `(e : T)` produces `Ann { expr: e, type: T }`.
-- `Hole` carries no solver state at parse time. The elaborator tags
-  each `Hole` occurrence with a fresh metavariable when it reaches it.
-- `Var.name` is a source string. The parser does not resolve names;
-  the elaborator walks the AST with a scope stack, resolving each
-  `Var` against in-scope binder params and top-level `Def`s. Unresolved
-  names are reported with the `Var`'s span.
+- `Binder.body === null` is a record type --- every `Param` must have
+  non-null `name` and `type`. `body !== null` is a lambda or Pi; params
+  may have null name (`_`) or null type (inferred).
+- `A -> B` parses to `Binder([{name: null, type: A}], B)`; there is no
+  dedicated `Arrow` node.
+- `(e)` produces the same node as `e`; `(e : T)` produces
+  `Ann { expr: e, type: T }`.
+- Dependent scoping (later params / fields referring to earlier ones) is
+  *not* encoded in AST structure. It arises from elaboration walking
+  `params` / `members` in order and extending the context; type
+  expressions contain ordinary `Var` nodes that resolve via lexical
+  scope.
+- `Var.name` references any binder in scope at this position. The
+  parser does not resolve binder-param references; that's the
+  elaborator's job. The parser does inline `let`-bound names, so no
+  surviving `Var` references a `let`.
 
-= Elaboration semantics
+== What the elaborator sees
 
-#let sem(head, body) = [
-  #text(weight: "bold")[#raw(head)] --- #body
-]
+The parser is the driver: it walks the surface AST top-to-bottom and
+calls the backend elaborator on each complete expression. By the time
+the elaborator sees any sub-expression, the statement-kind surface
+nodes (`Let`, `Test`, `Block`, `Def`, `Program`) have been processed
+away, and every `Use` has been replaced by the `RecValue` it yielded.
+The elaborator consumes only the expression kinds
+`Var | Leaf | Hole | App | Proj | Binder | RecValue | Ann`.
 
-#sem("Def { name, body }  (top-level)",
-  [elaborates `body` and registers `name` as a compilation output. If
-   `body` is an `Ann`, the kernel predicate runs against
-   `Ann.type` during elaboration; otherwise no type check.])
+Each non-core node's parser-time behavior, in one line:
 
-#sem("Test { lhs, rhs }",
-  [elaborates both sides *at compile time*; the program is rejected
-   (same channel as a type error) if the resulting trees differ by
-   hash-cons identity.])
+#table(
+  columns: (auto, 1fr),
+  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
+  inset: (x: 6pt, y: 4pt),
+  table.header[*Node*][*Parser-time behavior*],
+  [`Let { name, type, body }`],
+    [binds `name` in the surrounding scope; body is rewritten as `Ann(body, type)` if typed. Within a Block, produces the equivalent shape `App(Binder([{name}], rest), body')`.],
+  [`Use { path }`],
+    [recursively parses and elaborates the referenced file (firing its tests as a side effect), then replaces itself with a `RecValue` whose fields are the file's top-level `let`-bound names. Cycles are parse-time errors.],
+  [`Test { lhs, rhs }`],
+    [calls the elaborator on `lhs` and `rhs` in the current scope, then asserts hash-cons equality of the resulting trees. Fails as a compile error.],
+  [`Block { members, trailing }`],
+    [processes `members` in order (desugaring lets, discharging tests), leaving the Block reduced to `trailing`. Collapses to `trailing` when `members` is empty.],
+  [`Def { name, body }`],
+    [top-level form of a `let`; calls the elaborator on `body` and records the resulting tree in the final name table keyed by `name`.],
+  [`Program { members }`],
+    [the root node. The driver iterates `members` in order, emitting each `Def`'s tree and discharging each `Test`.],
+)
 
-#sem("Binder { params, body !== null }",
-  [lambda or Pi, decided from expected type (`Type` ⇒ Pi, else lambda).
-   Multi-param desugars right-associatively; each param with `type = null`
-   takes a fresh metavariable.])
-
-#sem("Binder { params, body === null }",
-  [a record type. Elaborates to the Church-encoded dependent product
-   over `params`.])
-
-#sem("RecValue { members }",
-  [elaborates to the record type's constructor applied to the field
-   values in source order.])
-
-#sem("Block { members, trailing }",
-  [elaborates `trailing` with `members` (tests) run as compile-time
-   side effects in source order. Only `Test` statements appear in
-   `members` --- `let` was desugared into `App(Binder)` at parse time,
-   and `use` was inlined.])
-
-#sem("Ann { expr, type }",
-  [type-ascribes `expr`. Guides elaboration; does not change the
-   runtime value.])
-
-#sem("Proj { target, field }",
-  [projection by field name. Compiles to the positional projection
-   morphism for `field`'s source-order index in the target's record
-   type.])
-
-#sem("_ (Hole)",
-  [introduces a fresh metavariable for elaboration to solve.])
-
-=== Compile-time `test` under a binder
-
-`test` at the top level of a file runs against fully-elaborated
-(closed) trees on both sides. A `test` nested inside a Block that is
-itself under a binder body (`{x} -> { test f x = g x; x }`) is rejected
-at elaboration: the hypothesis `x` has no concrete value, and
-hash-cons equality on open terms is a type/equality judgement that
-belongs in an `eq` type, not a `test` assertion.
-
-= Compilation
-
-Compilation details --- the parse / elaborate / emit pipeline,
-name-resolution algorithm, error-reporting contract, and `let`
-desugaring rules --- live in `COMPILATION.typ`. This document covers
-only the surface grammar and the AST shape the parser produces.
+See `COMPILATION.typ` for the full parse / elaborate / emit pipeline,
+name-resolution algorithm, `let` desugaring rules, record encoding, and
+error-reporting contract.
