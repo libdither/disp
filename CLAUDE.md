@@ -6,10 +6,11 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 
 - [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — **load-bearing**. The discipline governing what's allowed in the codebase. Every design decision should be compatible; if it isn't, one of them changes, and changing the philosophy is the harder path.
 - [`GOALS.md`](GOALS.md) — the north star (neural-guided synthesis, self-improving optimizer).
-- [`TREE_NATIVE_TYPE_THEORY.md`](TREE_NATIVE_TYPE_THEORY.md) — core idea: trees as S/K/Triage combinators, types as executable predicates, Pi as partially-applied `PiCheck`, hash-cons identity as type equality.
+- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — the semantics the object language commits to: types as predicates, fresh-hypothesis discipline, the evaluator interface, core type constructors, soundness invariants. Authoritative for anything touching the kernel.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape of `.disp` source files. Authoritative for anything touching the parser or the AST types in `src/ast.ts`.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline, name-resolution algorithm, error-reporting contract.
-- `lib/{debruijn,ctxtree,semantic}/DESIGN.md` — three competing backend designs currently being implemented side-by-side. Read whichever one the current task targets.
+- [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — reference notes from the removed prototype kernel: tagged-form encoding, bind trees, splice, context trees, meta substrate, dispatch shapes, general tree-calculus pitfalls. Not prescriptive; read when re-encoding the theory.
+- `lib/{debruijn,ctxtree,semantic}/DESIGN.md` — per-backend NbE strategy notes. Predate the TYPE_THEORY sweep; treat as reference, not current spec.
 
 ## Core discipline, in brief
 
@@ -24,47 +25,45 @@ When in doubt, reread `DEVELOPMENT_PHILOSOPHY.md`.
 ## Code layout
 
 - `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, evaluation budgets, `FAST_EQ` primitive.
-- `src/ast.ts` — surface AST types emitted by the parser and consumed by the elaborator. See `SYNTAX.typ` § "Abstract syntax tree" for the authoritative shape.
-- `src/parse.ts` — surface tokenizer / parser / bracket-abstraction. **Code still implements the pre-revision surface** (`def`, `elab`, `raw`, `\x.`); the spec has moved ahead to `let`/`test`/`use`-only with the braced-binder form. Rewrite to emit `src/ast.ts` per `SYNTAX.typ` is the next work item.
-- `src/elaborate.ts` — host-side surface elaborator producing tagged forms (KV/KH/KA/KL/KP/KM) with bind-trees. Mirror of the `lib/predicates.disp` encoding so output is kernel-consumable. A separate *surface* elaborator that consumes `src/ast.ts` per `COMPILATION.typ` is planned but not yet implemented.
-- `src/run.ts` — driver: load `.disp` file, run `test` declarations, assert tree equality. Under the new spec, `test` is compile-time and this file will evolve into a pure compiler driver.
-- `lib/predicates.disp` — the current ctx-tree-threaded `pred_of_lvl` kernel. The ctxtree backend `use`s this file. Defines tagged-form encoding, bind-trees, splice / compute_bind / replace_marker, ctx-tree primitives (CtxV/CtxApp/CtxLam/CtxPi, ctx_enter_binder, ctx_lam_split_*), `normalize_pair`, `try_unify_pair`, `pred_of_lvl`. Phase 1 checker plus ctx-tree Phase 5 threading — **minus `ctx_exit_binder`**, the stale-bindtree gap.
-- `lib/{debruijn,ctxtree,semantic}/` — three competing backend designs. Each has `DESIGN.md` (spec) and `impl.disp` (stub today, real implementation TBD). See `lib/suite/main.disp` for the shared export contract each backend must satisfy.
-- `lib/suite/main.disp` — implementation-agnostic test suite. Same assertions run against each backend via `{ use "../X/impl.disp"; test ... }` blocks.
-- `test/tree.test.ts` + `test/disp.test.ts` — vitest suites.
+- `src/ast.ts` — surface AST types. **Stale:** still has the `Core`/`Surface` tier split and `Use` in `Stmt`; needs to match the single-tier AST in `SYNTAX.typ` (`Use` is an expression kind; `Stmt = Let | Test`).
+- `src/parse.ts` — surface tokenizer / parser / bracket-abstraction. **Stale:** implements the pre-revision surface (`def`, `elab`, `raw`, `\x.`). Rewrite to the current `SYNTAX.typ` grammar is the next work item.
+- `src/elaborate.ts` — host-side surface elaborator. **Stale:** produced tagged forms for the removed kernel. Will be rewritten alongside `src/parse.ts`.
+- `src/run.ts` — driver: loads a `.disp` file, runs tests. Will evolve into a pure compiler driver per `COMPILATION.typ`.
+- `lib/{debruijn,ctxtree,semantic}/DESIGN.md` — per-backend NbE strategy notes (reference only; see above).
+- `test/tree.test.ts` + `test/disp.test.ts` — vitest suites. `test/parser.test.ts` is an in-progress rewrite against the new grammar.
 
-## Current state (as of 2026-04-18)
+## Current state (as of 2026-04-20)
 
-Infrastructure phase: three backends have DESIGN.md specs and stub impl.disp files exporting placeholder-FF values for the shared contract (`check_id_nat`, `check_const`, `check_id_poly`, `check_apply_id`, `check_refl_zero`, `check_refl_succ_zero_one`, `reject_kstar_shadowed_dep`, `backend_name`). The suite harness passes 8 assertions per backend × 3 backends + gate tests = 26 tests in `lib/suite/main.disp`.
+Just completed a type-theory cleanup sweep. State:
 
-The **ctxtree** backend has a head start: `lib/predicates.disp` already implements its ctx-tree-threaded Lam-vs-Pi descent. Phase 5 missing piece is `ctx_exit_binder` (extract fresh bind-tree from post-reduction ctx at Lam ascent), which flips the `check_refl_succ_zero_one` litmus test from FF to TT. Spec lives in `lib/ctxtree/DESIGN.md`.
+- **`TYPE_THEORY.typ` landed.** Canonical spec for types-as-predicates, the evaluator interface (`apply` / `fresh_hyp` / `eq` / `pred` / `quote`), fresh-hypothesis discipline, core type constructors, worked examples, and soundness invariants.
+- **Old kernel deleted.** `lib/predicates.disp`, all `impl.disp` stubs, and `lib/suite/main.disp` are gone. Algorithmic content preserved in `KERNEL_DESIGN.md` for reference.
+- **Surface-syntax revision landed in docs** (`SYNTAX.typ`, `COMPILATION.typ`). `src/ast.ts`, `src/parse.ts`, `src/elaborate.ts`, `src/run.ts` still reflect the pre-revision design — all flagged stale above.
+- **No working end-to-end toolchain right now.** `npm test` against `src/` runs the old pipeline; nothing compiles against the new spec.
 
-The **debruijn** backend is unstarted — classical closure NbE with de Bruijn levels, serves as the correctness oracle.
-
-The **semantic** backend is unstarted — Dybjer/Filinski Val-domain NbE on raw bracket-abstracted SKI. Known blocker: triage-on-neutral (identity `I` applied to a neutral produces a stuck triage, not the neutral). See `lib/semantic/DESIGN.md` for candidate fixes.
-
-**Surface-syntax revision in flight.** `SYNTAX.typ`, `COMPILATION.typ`, and `src/ast.ts` define a revised grammar: `def`→`let`, dropped `elab`/`raw`/`\x.`, three-way record split (RecValue / Block / Binder-as-record-type), compile-time `test`. Parser and surface-elaborator rewrites to match are pending. Until they land, `src/parse.ts` and `src/run.ts` describe the old surface.
+Next-step order (proposal, not commitment):
+1. Rewrite `src/ast.ts` to match `SYNTAX.typ` (mechanical).
+2. Rewrite `src/parse.ts` to emit the new AST.
+3. Pick an initial backend representation from `KERNEL_DESIGN.md` / per-backend DESIGN.mds; implement against the evaluator interface in `TYPE_THEORY.typ`.
+4. Rebuild the test harness.
 
 ## Sharp lessons from the substrate
 
-Must respect when extending `lib/predicates.disp` / the ctxtree backend:
+General tree-calculus kernel pitfalls that survive the cleanup — apply to any future implementation:
 
-- **Recursive-call arg order under `wait`/`fix`**: inner-binder-derived arg goes first. Outer-binder-derived args cause eager `wait` firing and divergence at compile time.
-- **Strict-branch deferral**: `triage` evaluates every branch. Wrap each case as `\u. body` and apply after dispatch to prevent eager recursion.
-- **`H` wraps its type, not its binder.** `mkH ty lvl = tagged(KH, fork(ty, lvl))`. `type_of_H` is one fork-projection. Prior "wrap-the-binder" design was abandoned after the depth-2 dependent type bug.
-- **`mkH` carries a freshness marker (`mkH ty lvl`)**. Single-arg form collapses two same-type free hypotheses to identical hash-cons identity, silently breaking e.g. `(x:A) → (y:A) → x`. Descent threads fork-shaped level markers (`lvl_start = t t t`, `lvl_next = \l. t l t`). Hand-constructed free hypotheses use leaf-rooted markers (disjoint namespace).
-- **Bind-trees are load-bearing data, not decoration.** `splice` trusts them; mismatched bind-trees silently corrupt the term. After a beta that changes body shape, outer bind-trees become stale — this is the gap `ctx_exit_binder` closes.
-- **H-comparisons need direct `fast_eq` first, H-unwrap as fallback.** Two H-tokens with the same type + marker are hash-cons-equal; direct `fast_eq` is cheaper than `type_of_H` extraction.
+- **Recursive-call arg order under `wait` / `fix`**: inner-binder-derived arg goes first. Outer-binder-derived args cause eager `wait` firing and compile-time divergence.
+- **Strict-branch deferral**: `triage` evaluates every branch eagerly. Wrap each case as `\u. body` and apply after dispatch to prevent eager recursion.
+- **Hash-consing is load-bearing**: `fast_eq` is O(1) tree identity. Anything that makes equivalent trees have different structure undermines the type system's equality.
+
+Encoding-specific lessons (tagged forms, bind trees, H-token conventions, ctx-tree NbE, etc.) moved to `KERNEL_DESIGN.md`.
 
 ## Testing
 
-`npm test` runs the vitest suite.
-
-To run a single `.disp` file directly: `npx tsx src/run.ts path/to/file.disp`.
+`npm test` runs the vitest suite. Currently tests the old pipeline; will need updating as the new parser / elaborator land.
 
 ## Operating notes
 
 - Prefer editing existing files over creating new ones, especially docs. New top-level docs are a design event, not a casual action.
 - When proposing a new feature or fix, explicitly state its object-language encoding, or explicitly note why that's deferred and what's blocking the encoding work.
-- Hash-consing is a load-bearing property: `fast_eq` is O(1) tree identity, and anything that makes equivalent trees have different structure undermines it.
-- The backend-comparison framework is the current organizing principle. When proposing design changes, state which backend(s) they affect and whether the suite assertions change.
+- `fast_eq` is O(1) tree identity; protect hash-cons by not introducing structural variants of semantically-equal trees.
+- When proposing design changes, state which document(s) they affect (`TYPE_THEORY.typ` / `SYNTAX.typ` / `COMPILATION.typ` / a backend DESIGN.md) and whether the theory's invariants move.
