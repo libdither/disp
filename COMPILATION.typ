@@ -11,306 +11,272 @@
 #v(0.5em)
 #align(center)[
   How `.disp` source becomes a set of named tree-calculus terms.\
-  Complementary to #raw("SYNTAX.typ") (surface grammar) and
+  Complementary to #raw("SYNTAX.typ") (surface grammar + AST) and
   the per-backend #raw("lib/*/DESIGN.md") documents.
 ]
 #v(1em)
 
 = Overview
 
-Compilation is three phases with a clean boundary between each. Phase
-outputs are pure data structures; no phase shares mutable state with
-another.
+Compilation is a *single parser-driven walk*: the parser reads source,
+builds surface AST incrementally, and invokes a backend elaborator on
+each complete expression it produces. The elaborator is a pure function
+`Expr → Tree` --- no scope, no statements, no state threaded in or out.
+
+The parser handles every surface-only node (`Let`, `Test`, `Use`,
+`Block`, `Def`, `Program`). The elaborator only sees core expressions
+(`Var | Leaf | Hole | App | Proj | Binder | RecValue | Ann`).
 
 #table(
-  columns: (auto, 1fr, 1fr),
+  columns: (auto, 1fr),
   stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
   inset: (x: 6pt, y: 4pt),
-  table.header[*Phase*][*Input*][*Output*],
-  [Parse],     [source text (`.disp` file)],      [`ast.Program` (AST, no tree terms)],
-  [Elaborate], [`ast.Program`],                    [`Map<name, Tree>` (bound exports) + assertion results],
-  [Emit],      [the elaborated map of trees],      [compiler output; runtime artifact (TBD)],
+  table.header[*Responsibility*][*Owner*],
+  [tokenize, grammar, braced-form disambiguation],       [parser],
+  [loading files for `use` expressions; cycle detection], [parser],
+  [`let` scope, substitution at use sites],              [parser],
+  [compile-time `test` evaluation + comparison],         [parser (calls elab on both sides)],
+  [converting expressions to backend terms],             [elaborator],
+  [metavariable solving, unification, type checks],      [elaborator],
 )
 
-The host-side implementation in #raw("src/parse.ts") and
-#raw("src/elaborate.ts") is a *reference implementation*. The long-term
-target is an elaborator written in disp itself --- a tree-calculus
-program that consumes a tagged-tree encoding of the AST and emits the
-elaborated tree. The tree elaborator is a drop-in replacement for the TS
-one across the same phase boundary.
+The host-side parser in #raw("src/parse.ts") and the backend elaborator
+communicate through a narrow `(e: Expr, expected?: Type) => Tree`
+interface. Each NbE backend in `lib/{debruijn,ctxtree,semantic}/` plugs
+in behind this interface --- the parser doesn't care which.
 
-= Parse
+= Parser
 
 == Responsibilities
 
-- Tokenize per `SYNTAX.typ` § "Lexical structure."
-- Apply the grammar; reject ill-formed input with a span-tagged message.
-- Expand `use "..."` imports by recursive parse. Each in-progress file
-  is held on a stack so cycles become parse-time errors (see § Import
-  cycles).
-- Disambiguate braced forms (RecValue / Block / Binder / record-type
-  Binder) per `SYNTAX.typ` § "Braced forms."
-- Desugar internal `let`s into `App(Binder)` form (see § `let`
-  desugaring). The AST presented to elab contains no `Let` or `Use`
-  nodes.
-- Collapse empty Blocks: `Block { members: [], trailing: e }` becomes
+- Tokenize and apply the grammar per `SYNTAX.typ`.
+- Process statements (`let`, `test`) and items (`let`, `test` at top
+  level) in source order (see § `let` desugaring, § `test` discharge).
+- Load files for `use` expressions, holding a cycle-detection stack
+  (see § Import cycles).
+- Maintain a *name table* mapping every `let`-bound name in scope to
+  its parsed expression, and inline at use sites so the final AST has
+  no `Var` referencing a `let`.
+- Simplify empty Blocks: `Block { members: [], trailing: e }` becomes
   `e`.
-- Reject parse-level shape errors (empty binder `{} -> body`,
-  intermediate bare expressions, `:=`/`:` mixing, etc.).
+- Reject shape errors (empty binder `{} -> body`, `:=`/`:` mixing,
+  duplicate binder params, intermediate bare expressions in a Block,
+  etc.).
 
-== Non-responsibilities
+Non-responsibilities: the parser does *no* tree construction, *no*
+binder-scope resolution (that's the elaborator's job --- `Var` nodes
+referencing binder params stay in the AST), and *no* type checking
+(ascriptions become `Ann` nodes; elab runs the kernel predicate).
 
-- *No name resolution.* Every `Var` node keeps its source string. The
-  elaborator looks up names against the scope stack and top-level
-  `Def` table.
-- *No type checking.* Type ascriptions become `Ann` nodes; elab runs
-  the kernel predicate.
-- *No tree-calculus construction.* The parser's output is AST only.
+== Scope
 
-== Import cycles
+Every braced form and every file introduces a nested scope. `let`s
+inside the braces bind only within the braces. Name lookup walks scope
+frames inner-to-outer; inner bindings shadow outer.
 
-The parser maintains a stack of the absolute paths of files currently
-being parsed. When a `use "P"` is encountered:
-
-1. Resolve `P` to an absolute path relative to the directory of the
-   file containing the `use`.
-2. If the resolved path is already on the stack, emit a parse error
-   with the full cycle path ("`a.disp → b.disp → a.disp`").
-3. Otherwise push, parse recursively, pop.
-
-Parsed-and-popped files may be visited again via independent `use`
-chains --- only active in-progress files participate in cycle detection.
-A simple memoization of parsed files is an optimization, not a
-correctness requirement.
+```disp
+let x = t
+{
+  let x = t t                  // shadows outer x within this scope
+  test x = t t                 // passes against inner x
+}
+test x = t                     // passes against outer x
+```
 
 == `let` desugaring
 
-Every `let` in the source is resolved at parse time:
+Every `let` is resolved at parse time. Type annotations always travel
+on the value via `Ann`; `Binder.param.type` is reserved for
+user-written lambda/Pi parameters and is always `null` in
+let-desugarings.
 
-- *Internal* `let x (: T)? = body; rest` (inside a Block, where `rest`
-  is all members and the trailing expression after the `let`):
-  ```
-  App(
-    Binder([{name: "x", type: null}], rest_as_block_or_expr),
-    body'
-  )
-  ```
-  where `body'` is `Ann(body, T)` if a type was given, else `body`.
-  Successive `let`s in the same Block peel off one at a time, producing
-  nested `App(Binder, ...)` forms.
+*Internal* `let x (: T)? = body; rest` (inside a Block): parse `body`,
+bind `x` in the surrounding scope's name table, then process `rest`
+with `Var x` occurrences inlined. Equivalently:
 
-- *Top-level* `let x (: T)? = body`:
-  `Def { name: "x", body: body' }` where `body'` is `Ann(body, T)` if a
-  type was given, else `body`.
+```
+App(Binder([{name: "x", type: null}], rest_as_expr), body')
+```
 
-Type annotations always travel on the value via `Ann`.
-`Binder.param.type` is reserved for user-written lambda/Pi binder
-parameters and is always `null` in let-desugarings. Elab sees a
-uniform "Ann wraps the body" pattern whether the `let` was internal or
-top-level.
+where `body'` is `Ann(body, T)` if typed else `body`. The parser
+performs the inlining so the elaborator sees a closed expression.
+
+*Top-level* `let x (: T)? = body`: parse `body`, store under `x` in the
+top-level name table, and record a `Def { name: "x", body: body' }` in
+the `Program`. Downstream references inline the same way.
+
+Recursive `let` fails naturally: `Var x` inside `body` looks up the
+*outer* scope (the new `x` binding takes effect only after `body` is
+parsed). An unresolved-name error is reported with a "use a fix
+combinator" hint (see § Error reporting).
+
+== `use` expression
+
+`use "path"` is an atom (see `SYNTAX.typ`) that elaborates by loading
+and running the referenced file. Steps:
+
+1. Resolve `path` to an absolute path relative to the directory of the
+   file containing the `use`.
+2. If the resolved path is on the in-progress stack, emit an import
+   cycle error with the full cycle (`a.disp → b.disp → a.disp`).
+3. Otherwise push, parse the file to completion (discharging its tests
+   and building its `Program`), pop.
+4. Replace the `Use` node with a `RecValue` whose fields are the
+   file's top-level `Def`s in source order.
+
+Parsed-and-popped files may be revisited via independent `use` chains;
+memoizing them is an optimization, not a correctness requirement.
+
+== `test` discharge
+
+`test lhs = rhs` parses both sides, invokes the elaborator on each
+(inheriting the surrounding scope), and compares the resulting trees
+by hash-cons identity. Hash-cons-equal ⇒ discharged; otherwise a
+compile error. After discharge, the `Test` node is removed from its
+enclosing Block / Program.
+
+*Test under a live binder.* A `test` nested inside a Block that is
+itself under a binder body (`{x} -> { test f x = g x; x }`) is
+rejected at parse time: the hypothesis `x` has no concrete value, so
+hash-cons equality on open terms would be a type/equality judgement
+(belongs in an `eq` type), not an assertion.
 
 == Block simplification
 
-After `let` desugaring, a Block may be left with no statements
-(`Test` members gone, `Use` inlined). The parser collapses:
+After `let` / `test` processing, a Block with an empty `members` list
+is collapsed: `Block { members: [], trailing: e } → e`. Discharged
+tests are *not* retained in the reduced Block by default.
+
+= Elaborator
+
+== Contract
 
 ```
-Block { members: [], trailing: e }   →   e
+elab(e: Expr, expected?: Type): Tree
 ```
 
-Blocks that still carry `Test` members are preserved: those tests are
-compile-time side effects that execute in elab.
+- *Input* — an expression with no `Block`, `Let`, `Test`, `Use`,
+  `Def`, or `Program` nodes. Every `Var` refers to a binder param in
+  scope within the passed expression.
+- *Optional expected type* — guides Pi-vs-lambda disambiguation on
+  `Binder` and `Ann` checking.
+- *Output* — a tree-calculus term (TS reference) or a
+  backend-specific value (`debruijn` / `ctxtree` / `semantic`).
+- *Side effects* — none on caller-visible state. The elaborator may
+  mutate an internal metavariable solver, but the return value is a
+  function of inputs plus unification results.
 
-== Parse-time errors
+== Per-node handling
 
-Span-tagged; they carry the file path and offsets of the offending
-token range. Classes:
+- `Leaf` --- returns the tree-calculus leaf.
+- `Var { name }` --- walks the surrounding `Binder`s inner-to-outer;
+  the innermost match wins. Backend-dependent representation
+  (de Bruijn index, bind-tree slot, etc.). An unmatched name is an
+  internal error (should have been caught by the parser).
+- `App { fn, arg }` --- elab both, return `fn(arg)` in the backend.
+- `Binder { params, body !== null }` --- lambda or Pi, decided from
+  expected type (`Type` ⇒ Pi, else lambda). Each `Param` with
+  `type === null` takes a fresh metavariable. Multi-param desugars
+  right-associatively.
+- `Binder { params, body === null }` --- record type. Church-encoded
+  dependent product over `params` (see § Record encoding).
+- `RecValue { members }` --- record type's constructor applied to the
+  field values in source order.
+- `Proj { target, field }` --- elab `target`, consult its record type,
+  emit the positional projection morphism.
+- `Ann { expr, type }` --- elab `type` against `Type`, then elab
+  `expr` against `type` via the kernel predicate `pred_of_lvl`.
+- `Hole` --- fresh metavariable. Solved by unification during kernel
+  runs. An unsolved metavariable at the end of a top-level elab
+  invocation is a compile error.
 
-- *Unexpected token / unterminated string / unknown punctuation* ---
-  standard lexer/parser errors.
-- *Braced-form mixing* --- `:=` with `: ` field, intermediate bare
-  expressions, `->` on an incompatible shape.
-- *Empty binder* --- `{} -> body` is rejected with "a binder must have
-  at least one parameter."
-- *Import cycle* --- reported with the full cycle path.
-- *Duplicate binder param / RecType field name* --- a `Binder` with two
-  `Param`s of the same name is rejected, whether in RecType or lambda/Pi
-  mode. Duplicate field names in a RecValue are *not* an error --- they
-  shadow (last wins).
+== Record encoding
 
-The parser does not issue "unresolved name" errors --- that's elab's
-job.
+For a RecValue with $n ≥ 1$ fields `f1 := e1; ...; fn := en` of
+(possibly-dependent) types `X_1, ..., X_n`, the corresponding record
+type is the dependent Church product
 
-= Elaborate
+```disp
+{A : Type} -> ({x1 : X_1, ..., xn : X_n} -> A) -> A
+```
 
-== Scope and name resolution
+inhabited by `{A} -> {k} -> k e1 ... en`. Projection `.f_i` compiles
+to `{p} -> p ({x_1 : X_1, ..., x_n : X_n} -> x_i)`.
 
-The elaborator maintains two lookup structures:
+The empty `{}` is the Church unit `{A : Type} -> A -> A`, inhabited by
+the polymorphic identity.
 
-- A *top-level name table* mapping each encountered `Def.name` to its
-  elaborated tree. Populated in source order as `Program.members` is
-  walked.
-- A *scope stack* with two kinds of frames:
-  - *Binder-param frames* pushed on entry into a `Binder.body`, carrying
-    the `Param`s of that binder.
-  - *Record-field frames* pushed on entry into a `RecValue`, growing one
-    name at a time as elab walks the fields in order (each field's
-    `value` expression sees earlier field names in scope).
-
-  Blocks do not push a frame --- after `let`-desugaring, a Block is just
-  `Test` members plus a trailing expression, with no new bindings of its
-  own.
-
-Resolving `Var { name }` proceeds:
-
-1. Walk the scope stack inner-to-outer; first matching `Param.name`
-   (binder-param frame) or field name (record-field frame) wins.
-2. If no scope-stack match, consult the top-level name table.
-3. If neither matches, emit an "unresolved name" error (see § Error
-   reporting).
-
-Shadowing is allowed: an inner binder can reuse a name bound by an
-outer scope or by a top-level `Def`.
-
-== `Def` handling
-
-For each `Def { name, body }`:
-
-1. Mark `name` as "currently-being-defined" (for the recursive-let
-   hint; see § Error reporting).
-2. Elaborate `body` under the current scope. If `body` is
-   `Ann(inner, T)`, elaborate `T` first, then elaborate `inner`
-   against `T` via the kernel predicate `pred_of_lvl`.
-3. On success, add `name → elaborated-tree` to the top-level name
-   table.
-4. Clear the "currently-being-defined" mark.
-
-Subsequent `Def`s see the new binding. Order within a file matters.
-
-== `Test` handling
-
-For each `Test { lhs, rhs }`:
-
-1. Elaborate `lhs` and `rhs` under the current scope.
-2. Compare the resulting trees by `FAST_EQ` (hash-cons identity). If
-   equal, the test passes silently; if not, emit a compile error.
-
-Tests inside a `Block` under a binder body are rejected: the binder
-params are free hypotheses with no concrete value, and hash-cons
-equality over open terms is a type-level judgement, not a runtime
-test.
-
-== `Binder` handling
-
-For `Binder { params, body }`:
-
-- If `body === null`: record type. Elab walks `params` in order,
-  elaborating each param's type under the scope extended by preceding
-  params, then emits the Church-encoded dependent product.
-- If `body !== null`: lambda or Pi. Elab decides by expected type
-  (`Type` ⇒ Pi, else lambda). Each `Param` with `type === null` takes
-  a fresh metavariable. Multi-param is desugared right-associatively
-  at elaboration.
-
-== `RecValue` handling
-
-Walk `members` in order, elaborating each field's value under the
-scope extended by preceding fields. Emit the Church-encoded product's
-constructor applied to the field values.
-
-== `Block` handling
-
-Walk `members` (tests) in order, executing each as a compile-time
-assertion. Elaborate `trailing` in the same scope and return it as the
-Block's value.
-
-== Metavariables
-
-`Hole` nodes become fresh metavariables when first encountered. The
-elaborator solves them via unification during kernel-predicate runs.
-Unsolved metas at the end of a `Def`'s elaboration are a compile error
-("could not infer value for `_` at span").
+Duplicate field names in a RecValue are legal: only the final
+occurrence is kept; earlier ones are shadowed, and the projection
+morphism for the name targets the last position. Duplicate field names
+in a RecType are a parse error.
 
 = Error reporting
 
-All compile errors carry source spans from the offending AST node. The
-elaborator categorizes by kind:
+All compile errors carry source spans, inherited from the surface AST.
 
 #table(
   columns: (auto, 1fr),
   stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
   inset: (x: 6pt, y: 4pt),
   table.header[*Kind*][*Source*],
-  [*unresolved name*],      [`Var` with no matching scope entry or top-level Def],
-  [*recursive `let`*],      [`Var` whose name equals a `Def.name` or enclosing `Binder.param` currently being defined; see below],
-  [*type mismatch*],        [kernel predicate `pred_of_lvl` returns FF on a typed `Def` body],
-  [*failed test*],          [`Test` sides disagree by hash-cons identity],
-  [*unsolved metavariable*], [`Hole` without a solution by end of enclosing `Def`],
-  [*test under binder*],    [`Test` inside a `Block` under a live binder body],
-  [*projection mismatch*],  [`Proj.field` not found on target's record type, or target is not a RecValue],
-  [*duplicate binder param*], [two `Param`s in the same `Binder.params` share a name --- rejected in both lambda/Pi and record-type modes at parse time],
+  [*unresolved name*],         [parser: a `Var` whose name matches neither an in-scope `let` nor an enclosing binder param],
+  [*recursive `let`*],          [parser: a `Var` whose name matches a `Def` or `Let` currently being parsed; see below],
+  [*type mismatch*],            [elab: `pred_of_lvl` returns FF on a typed `Def` body or `Ann`],
+  [*failed test*],              [parser: `test`'s two sides elaborate to trees that disagree by hash-cons identity],
+  [*unsolved metavariable*],    [elab: `Hole` without a solution by end of top-level elab invocation],
+  [*test under live binder*],   [parser: a `test` inside a Block surrounded by binder params with no concrete values],
+  [*projection mismatch*],      [elab: `Proj.field` not found on target's record type, or target is not a RecValue],
+  [*duplicate binder param*],   [parser: two `Param`s share a name in the same `Binder.params`],
+  [*import cycle*],             [parser: a `use` transitively references an ancestor file in the parse stack],
+  [*braced-form mixing*],       [parser: `:=` with a `NAME : EXPR` field, intermediate bare expressions, `->` on an incompatible shape],
 )
 
-== Recursive-let hint
+== Recursive-`let` hint
 
-When elab encounters an unresolved `Var { name: n }`:
-
-1. If `n` matches a `Def` currently being elaborated --- "in body of
-   `let n = ...` at the top level."
-2. If `n` matches a `Param` of an enclosing `Binder` whose body is
-   currently being elaborated, AND that `Binder` is the direct child of
-   an `App` --- "in body of `let n = ...` (desugared to App(Binder))."
-
-In either case, append the hint:
+The parser tracks a "currently-being-parsed" set of names (pushed on
+entering a `let` body, popped on exit). When an unresolved
+`Var { name: n }` is produced and `n` is in that set, the error
+attaches:
 
 ```
 note: recursive `let` is not supported. use an explicit fix combinator:
       let n = fix ({n} -> ...)
 ```
 
-Otherwise emit the plain "unresolved name" error.
-
-The "currently-being-defined" set is threaded through the elaborator as
-a stack of names, pushed when elab enters a `Def.body` or
-`App(Binder)`-from-let-desugaring, popped on exit.
-
 == Multi-error reporting
 
-The elaborator collects errors and continues where possible. Name
-resolution errors do not abort elaboration of independent `Def`s ---
-later tests and defs still elaborate, and all errors are reported
-together at the end of the run.
-
-Fatal-ish exceptions: a `Def` whose elaboration diverges (runaway
-reduction, infinite loop in `pred_of_lvl`) hits the evaluation budget
-and raises a single error; subsequent `Def`s still elaborate.
+The parser accumulates errors and continues where possible: a failed
+`test` or an unresolved name does not abort parsing of independent
+`Def`s. Backend-elab errors inside one `Def` abort that `Def`'s
+elaboration, but subsequent `Def`s still attempt to elaborate.
+Diverging elaboration (runaway reduction, infinite `pred_of_lvl`) hits
+the evaluation budget and raises a single error for that `Def`. All
+errors are reported together at the end of the run.
 
 = Emit
 
-The elaborated map of `Def.name → Tree` is the output. The current
-driver (#raw("src/run.ts"), to be renamed) either (a) pretty-prints
-the bindings, (b) writes them to a serialized tree format for
-downstream tools, or (c) both. The vitest suite asserts the bindings
-elaborate without errors.
+The output of compilation is the final name table: each top-level
+`Def.name` mapped to its elaborated tree. The driver prints or
+serializes this map per the caller's needs. The vitest suite asserts
+the map is produced without errors.
 
-There is no runtime test phase: every `Test` was either discharged
-during elaboration or raised as a compile error.
+There is no runtime test phase: every `test` was either discharged
+during parsing or raised as a compile error.
 
 = Reference vs tree-hosted implementation
 
-The host-side elaborator has features that the eventual disp-hosted
-elaborator does not (yet) need to replicate verbatim:
+The host-side implementation (TS parser + TS backend elaborator) is a
+*reference*. The long-term target is the elaborator written in disp
+itself --- a tree-calculus program consuming a tagged-tree encoding of
+the AST and emitting the elaborated tree. Features the TS reference
+has that the disp-hosted elaborator need not replicate verbatim:
 
-- Span tracking --- the tree elaborator consumes a tagged-tree AST
-  without spans; it reports errors by AST structural position, not
-  source offsets. A separate span-lookup side table maps tree-AST
-  positions back to source for user display.
-- Multi-error collection --- the tree elaborator may bail at the first
-  error; batch-error recovery is a TS-only pragmatism.
-- The recursive-let hint, metavar solver, and import resolver are all
-  implementable as pure tree-calculus programs; they are separable
-  modules.
+- *Span tracking* --- the tree elaborator works on span-stripped AST;
+  user-facing error display maps positions back via a side table.
+- *Multi-error accumulation* --- the tree elaborator may bail at the
+  first error.
+- *The parser itself* (tokenizer, grammar, `use` resolution, let
+  inlining) stays TS-side until the disp self-hosting story matures.
 
-When a feature of the reference implementation diverges from what the
-tree elaborator can express, it's marked with a `TODO(tree-host)` in
-the TS source.
+Points of divergence are flagged in the TS source with `TODO(tree-host)`.
