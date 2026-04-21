@@ -35,7 +35,7 @@ is sound, independent of any particular implementation. It is the
 object-language specification: every predicate and invariant here must
 have a declared tree-calculus encoding, per
 #raw("DEVELOPMENT_PHILOSOPHY.md"). The host-side parser and driver are
-not part of the type system — they are I/O layers.
+not part of the type system --- they are I/O layers.
 
 Reading order: §2 gives the core premise (types as predicates), §3
 explains why dependent types force the use of *fresh hypotheses*, §4
@@ -46,25 +46,26 @@ argument from the pieces.
 
 = The core premise: types as predicates
 
-A *type* is a tree-calculus program `T : Tree → Tree` that returns the
-encoded boolean `TT` if its argument inhabits the type and `FF` otherwise.
+A *type* is a Value `T` that behaves as a predicate `Value → Bool`: it
+returns the encoded boolean `TT` if its argument inhabits the type and
+`FF` otherwise.
 
 Type checking is therefore a single operation: *application*.
 
 ```
-  v : T        ≡        T(v) reduces to TT
+  v : T        ≡        apply(T, v)  reduces to  TT
 ```
 
 There is no separate type table, no annotated AST carried through
 compilation, no side-data in the kernel. The elaborator produces two
-trees — a value tree and a type tree — and the kernel asks exactly one
-question: does the type tree, applied to the value tree, reduce to `TT`?
+Values --- a value Value and a type Value --- and the checker asks exactly
+one question: does the type, applied to the value, reduce to `TT`?
 
-*Example — the natural numbers.* Pick an encoding: `Zero := t` (leaf),
+*Example --- the natural numbers.* Pick an encoding: `Zero := t` (leaf),
 `Succ n := fork(t, n)`. Then `Nat` is the predicate
 
 ```disp
-let Nat : Type = fix ({self} -> {n} ->
+let Nat = fix ({self} -> {n} ->
   or (fast_eq n Zero)
      (and (is_fork n)
           (and (fast_eq (first n) t)
@@ -73,22 +74,22 @@ let Nat : Type = fix ({self} -> {n} ->
 
 `Nat Zero` reduces by the left disjunct to `TT`. `Nat (Succ Zero)` takes
 the right disjunct, recurses on `Zero`, returns `TT`. A malformed input
-like `Nat (fork (Succ Zero) Zero)` fails the `first n = t` check (the
-first child is a fork, not the leaf) and returns `FF`. The predicate
-*is* the semantics; there is nothing else to consult.
+like `Nat (fork (Succ Zero) Zero)` fails the `first n = t` check and
+returns `FF`. The predicate *is* the semantics; there is nothing else
+to consult.
 
 *Consequence.* Anything that can be a well-defined tree-calculus
-predicate can be a type: user-defined data types, Pi types, record
-types, equality types, even the universe `Type` itself. The rest of
-this document is about (a) how to write predicates for the interesting
-constructors and (b) why those predicates mean what we want them to
-mean.
+predicate can be a type: user-defined data types, `Pi` types, record
+types, equality types, and the universe family `Type n` itself. The
+rest of this document is about (a) how to write predicates for the
+interesting constructors and (b) why those predicates mean what we
+want them to mean.
 
 = The dependency problem and fresh hypotheses
 
 == What goes wrong for non-dependent function types
 
-Suppose we want to check `f : Nat → Nat`. Naively, a first attempt:
+Suppose we want to check `f : Nat → Nat`. A naive first attempt:
 
 ```disp
 let FunNatNat = {f} ->
@@ -98,20 +99,18 @@ let FunNatNat = {f} ->
   )
 ```
 
-This already fails: there are infinitely many `Nat`s, and we can't
-enumerate them. Even if we could, the above only checks specific
-inputs — the function might behave correctly on the ones we sampled and
-wrong on others. We need a check that is *universal* in the input.
+This fails: there are infinitely many `Nat`s, and sampling specific
+inputs misses misbehavior on unsampled ones. We need a check that is
+*universal* in the input.
 
-The classical move in type theory: check the function against one
-*arbitrary* input and demand the output be of the right type. If the
-check is set up so the function *cannot learn anything* about the input
-except its type, then universal-over-all-of-`A` and holds-for-this-one
-are equivalent.
+The classical move: check the function against one *arbitrary* input
+and demand the output be of the right type. If the check is set up so
+the function *cannot learn anything* about the input except its type,
+then universal-over-all-of-`A` and holds-for-this-one are equivalent.
 
-== The fresh-hypothesis primitive
+== The `fresh_hyp` primitive
 
-Introduce a symbol `a` that stands for "some arbitrary inhabitant of
+Introduce a Value `a` that stands for "some arbitrary inhabitant of
 `A`, about which we commit to nothing." Apply `f` to `a`. Check that
 the result inhabits the codomain.
 
@@ -120,35 +119,22 @@ two properties:
 
 + *Opacity.* Nothing in `f` can pattern-match `a` against a specific
   `A`-inhabitant. If it could, `f` might return different values for
-  different concrete `a`, and our single check would miss the
+  different concrete `a`s, and our single check would miss the
   divergence.
 + *Distinctness.* Two fresh hypotheses introduced under different
-  binders — `{x : A} → {y : A} → x` vs. `... → y` — must be
+  binders --- `{x : A} -> {y : A} -> x` vs. `... -> y` --- must be
   distinguishable from each other. Otherwise both functions check
   identically and the type system conflates them.
 
-Two distinct entities need names:
-
-- `fresh_hyp A` — the *evaluator primitive* that mints a new hypothesis
-  of type `A`. The evaluator tracks binder depth internally; no depth
-  is passed as an argument. Called from the body of `Pi`, `Arrow`, and
-  other type constructors that need to introduce a hypothetical
-  inhabitant.
-- `mkH A lvl` — the *object-language term* produced when a hypothesis
-  is serialized to tree form (via `quote`, §4). Trees are closed and
-  stateless, so the depth must appear explicitly as `lvl`. Any choice
-  of `lvl` encoding is admissible so long as different depths yield
-  different hash-cons identities (distinctness (2)) and the dedicated
-  `KH` tag namespace is recognized by the evaluator's H-hypothesis
-  rule (opacity (1), see §4).
-
-The two are related by `quote (fresh_hyp A) = mkH A L` where `L` is
-whatever the evaluator's notion of current depth is, rendered in
-canonical tree form.
+`fresh_hyp A` is the evaluator primitive that mints such a Value. It
+takes one argument (the stored type) and produces a fresh hypothesis
+Value. The evaluator tracks binder depth internally; the caller does
+not supply an identity. Distinct invocations under distinct binders
+yield `conv`-distinct Values.
 
 == Arrow and Pi, defined
 
-With fresh hypotheses in hand, the non-dependent `A → B` check becomes:
+With `fresh_hyp` in hand, the non-dependent `A → B` check becomes:
 
 ```disp
 let Arrow = {A} -> {B} -> {f} ->
@@ -157,7 +143,8 @@ let Arrow = {A} -> {B} -> {f} ->
 ```
 
 For the *dependent* version `{x : A} -> B x`, `B` is a family
-parametrized by `x`. Same machinery, with `B` applied to the fresh `a`:
+parametrized by `x`. Same machinery, with `B` applied to the fresh
+`a`:
 
 ```disp
 let Pi = {A} -> {B} -> {f} ->
@@ -165,234 +152,296 @@ let Pi = {A} -> {B} -> {f} ->
     (B a) (f a) }
 ```
 
-This is the workhorse predicate of dependent type theory in
-tree-calculus dress. To actually reduce it, we need an evaluator — the
-next section specifies the minimal interface every backend provides.
+The `let`-sugar relies on eager β (call-by-value): `fresh_hyp A` is
+evaluated once, and `a` refers to the same Value in both uses. An
+evaluator that lazily re-invoked `fresh_hyp` at each occurrence would
+produce two distinct hypotheses and silently break the Pi check. §4
+commits to eager β.
 
-= Evaluation — what every evaluator must provide
+This is the workhorse predicate of dependent type theory in
+tree-calculus dress. To actually reduce it, we need an evaluator ---
+§4 specifies the minimal interface every backend provides.
+
+= Evaluation --- what every evaluator must provide
 
 Tree-calculus reduction is confluent: closed terms reduce to unique
 normal forms. Any evaluator that faithfully implements the calculus
 therefore agrees with every other on every reduction. Multiple
 implementations may coexist, differing only in the *data structure
-they use to represent partially-reduced terms* — not in the terms
-themselves, and not in their normal forms.
+they use to represent partially-reduced terms* --- not in the terms
+themselves, and not in their observable behavior.
 
 == What is a Value?
 
-A *Value* is an evaluator's internal representation of a
-(possibly-partially-reduced) term. Treat it as an opaque handle: the
-primitives below consume and produce handles, and `quote` is the only
-way to look inside, returning a canonical tree. Different evaluators
-choose different handle representations — a tree, a closure, a
-domain element — and callers never depend on the choice.
+A *Value* is a tree: the evaluator's representation of a term, possibly
+carrying binder-descent context alongside. Callers treat it as an
+opaque handle: the primitives below consume and produce Values, and the
+reflection primitives are the only way to inspect their shape.
+
+Canonical shape: a Value is a pair `(term, ctx)` where `term` is a
+tagged tree and `ctx` is either a closed marker or a parallel
+context-tree carrying binder info. Closed Values (most types,
+fully-reduced data) have a trivial ctx component; Values introduced
+during binder descent carry a non-trivial ctx.
+
+Backends may internally represent Values differently (e.g., as
+host-level closures with environments); the observable semantics must
+agree with the canonical `(term, ctx)` form. If two backends disagree
+on any observable operation, exactly one of them has a bug.
 
 Three things a Value might represent at any moment:
 
-- A *concrete result* — a tree like `TT`, `Zero`, or `fork TT FF`
-  that has no further reductions to do.
-- A *fresh hypothesis* — an opaque symbolic inhabitant minted under
-  a binder, carrying a stored type. See the `KH` convention below.
-- A *stuck term* — a partial application or a value awaiting more
-  reduction, either because it's waiting on an argument (a function
-  value) or because it's applied to a hypothesis whose structure
-  isn't available (a neutral).
+- A *concrete result* --- a tree like `TT`, `Zero`, or a fully-reduced
+  structure.
+- A *fresh hypothesis* --- an opaque symbolic inhabitant minted under
+  a binder, carrying a stored type.
+- A *stuck term* --- a partial application or a value awaiting more
+  reduction, typically because it's applied to a hypothesis whose
+  structure isn't available.
 
-The primitives below compose on Values without the caller knowing
-which of the three a given handle is. `apply` and `eq` inspect enough
-to proceed; `pred` is the composition that answers type-check
-questions; `quote` is the escape hatch when you need the tree.
+== Primitive interface, two tiers
 
-== The canonical interface
+The evaluator exposes two tiers of primitives. The *Val-level* tier is
+what disp predicates (Pi, Type, user-defined types) call. The
+*tree-level* tier is backend-internal machinery that backends use to
+implement the Val-level primitives; disp predicates SHOULD avoid it
+(guideline, not enforced).
 
-Every evaluator commits to these five operations. Behavior is specified;
-representation is free.
+=== Val-level primitives
 
 #rulebox("apply(f, v) → Value",
-  [Head β-reduction: apply `f` to `v` and reduce just enough that the
-   caller can see what kind of Value came out — a concrete result, a
-   hypothesis, a function waiting for another argument, or a stuck
-   application. Deeper reductions happen on demand as subsequent
-   operations ask for them.
+  [Head β-reduction with eager evaluation: apply `f` to `v`, reducing
+   to normal form. Returns a new Value. Reduction is deterministic;
+   two `apply` calls with the same inputs produce identical Values.
 
-   *H-hypothesis rule.* When the *predicate side* `f` is a fresh
-   hypothesis with stored type `A`, and the *candidate side* `v` is
-   the same hypothesis, `apply` returns `TT`. This is the load-bearing
-   step that makes Pi checks terminate on polymorphic identities. It
-   is a rule about how `apply` treats hypothesis-shaped values on the
-   predicate side, not a separate operation.])
+   *H-hypothesis rule.* When `v` is a hypothesis with stored type `T`
+   and `conv(f, T) = TT`, `apply(f, v)` returns `TT` directly, without
+   reducing `f`'s body. This is the load-bearing rule for Pi-checking
+   under binders: it says a function that receives "some arbitrary
+   inhabitant of `T`" satisfies the predicate `T` on that inhabitant by
+   construction.])
+
+#rulebox("conv(v1, v2) → Bool",
+  [Semantic equality on Values: `TT` iff `v1` and `v2` denote the same
+   term up to reduction (definitional equality). Implementations may
+   specialize: in the canonical `(term, ctx)` form, `conv` coincides
+   with `fast_eq` on both components after normalization. Other
+   representations may need structural recursion.
+
+   `conv` is the equality every disp-level predicate uses. Never
+   `fast_eq` directly (which is backend-internal, tree-level).])
 
 #rulebox("fresh_hyp(A) → Value",
-  [Produces a Value representing "an arbitrary inhabitant of `A` under
-   the current binder." The evaluator tracks binder depth internally;
-   no depth argument is passed. Must satisfy *opacity* (no operation
-   other than `apply`'s H-hypothesis rule can reveal anything about
-   the Value's stored type or structure) and *distinctness*
-   (hypotheses minted under distinct binders are `eq`-unequal).])
+  [Mint a Value representing "an arbitrary inhabitant of `A` under the
+   current binder." One argument (the stored type). The evaluator
+   tracks binder depth internally. Must satisfy *opacity* (no operation
+   other than the H-hypothesis rule reveals the stored type) and
+   *distinctness* (`conv`-distinct under distinct binders).])
 
-#rulebox("eq(v1, v2) → Bool",
-  [Structural equality on Values: `TT` iff `quote v1` and `quote v2`
-   produce hash-cons-equal trees. For terms in normal form this is
-   hash-cons identity of the normal-form trees; for Values containing
-   fresh hypotheses it distinguishes hypotheses minted under distinct
-   binders.])
+#rulebox("is_H(v) → Bool",
+  [`TT` iff `v` is a fresh hypothesis. Partial reflection on
+   introduction mode.])
 
-#rulebox("pred(T, v) → Bool",
-  [`eq(apply(T, v), TT)`. The single operation every type check
-   reduces to.])
+#rulebox("type_of_H(v) → Value",
+  [Partial: requires `is_H(v) = TT`. Returns the stored type a
+   hypothesis was introduced with.])
 
-#rulebox("quote(v) → Tree",
-  [Convert a Value back to its canonical tree form. Applied to a
-   result of `fresh_hyp A`, produces `mkH A L` where `L` is the
-   evaluator's current depth rendered in the canonical level-tree
-   encoding. Used at evaluator boundaries: serializing to another
-   compilation unit, comparing Values produced by different evaluators,
-   or handing a term to a surrounding host driver.])
+#rulebox("identity_of_H(v) → Value",
+  [Partial: requires `is_H(v) = TT`. Returns the evaluator's chosen
+   identity marker (canonically an encoded Nat --- binder depth or
+   fresh counter). Distinct per `fresh_hyp` invocation.])
 
-== Example Value representations
+#rulebox("is_pi(v) → Bool",
+  [`TT` iff `v` is a `Pi` type constructor applied to domain and
+   codomain (as defined in §5). Each backend implements this against
+   its `Pi` representation.])
 
-The canonical form of every Value is a closed tree in the `mkH`
-convention. An evaluator either works with that form directly or
-de-canonicalizes it internally for efficiency, re-canonicalizing at
-`quote`. A few representative choices:
+#rulebox("pi_dom(v), pi_cod(v) → Value",
+  [Partial: require `is_pi(v) = TT`. Extract the domain and codomain
+   of a Pi type.])
 
-#table(
-  columns: (auto, 1fr),
-  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
-  inset: (x: 6pt, y: 4pt),
-  table.header[*Representation*][*Consequences*],
-  [Canonical tree],
-    [Values are already the canonical tree. `apply` is tree
-     application; `eq` is hash-cons identity; `quote` is the identity
-     function. Binder depth lives as an explicit `lvl`-tree argument
-     threaded through the descent.],
-  [Closure + environment],
-    [A Value is a pair of a term and an environment mapping symbolic
-     outer-binder references to Values. `apply` extends the
-     environment; `eq` β-normalizes both sides and compares; `quote`
-     walks the closure, re-emitting `mkH A L` at each free slot.
-     Binder depth is a counter in the evaluator state.],
-  [Algebraic value domain],
-    [A Value is a tagged variant — `VFun`, `VNeu`, `VData`, … — with
-     a dedicated neutral constructor for hypotheses carrying a depth
-     index. `apply` dispatches on the variant; `eq` quotes to a normal
-     form and compares there; `quote` is an explicit readback.],
-)
+#rulebox("is_universe(v) → Bool",
+  [`TT` iff `v` is `Type k` for some `k` (as defined in §5.1). Each
+   backend implements against its universe representation.])
 
-Each representation is an *optimization*. Semantically they are the
-same evaluator; confluence guarantees identical observable behavior.
-If two disagree on a test, exactly one of them has a bug — never a
-design difference.
+#rulebox("universe_rank(v) → Value",
+  [Partial: requires `is_universe(v) = TT`. Returns `k` (an encoded
+   Nat).])
 
-== Fresh-hypothesis discipline is the load-bearing part
+#rulebox("is_registered_base_type(v) → Bool",
+  [`TT` iff `v` is a member of the current universe predicate's
+   closed-over base-type registry. Each `Type n` closes over a specific
+   registry at its definition site (§5.1); this primitive consults
+   the registry of the enclosing `Type`.])
 
-Every evaluator stands or falls on its `fresh_hyp` and its H-hypothesis
-rule in `apply`. If opacity or distinctness fails, the soundness story
-collapses. The canonical tree form `tagged(KH, fork(A, lvl))` is the
-object-language definition; every evaluator must faithfully implement
-its behavior. Any evaluator that re-uses the same hypothesis identity
-under two nested binders, or that lets a `KH`-tagged value be
-structurally inspected by ordinary tree operations, silently breaks
-Pi-checking.
+Plus scalar and boolean helpers (`encode_nat`, `decode_nat`, `lt`,
+`le`, `succ`, `zero`, `TT`, `FF`, `and`, `or`, `not`), encoded in the
+usual way.
 
-The `lvl` carried inside an `mkH` term must be chosen so that distinct
-evaluator depths produce distinct hash-cons identities. One workable
-convention: a fork-shaped marker tree built by `lvl_start = t t t` and
-`lvl_next = {l} -> t l t`, with hand-constructed hypotheses (used in
-test harnesses or primitive definitions) drawn from a disjoint
-leaf-rooted namespace. The specific shapes are one choice among many;
-what matters is that the shapes cannot collide.
+=== Tree-level primitives
+
+These operate on raw trees and are used by backends to implement
+Val-level reflection. Disp predicates SHOULD avoid calling them
+directly: doing so couples the predicate to the backend's internal
+representation.
+
+- `triage`, `is_leaf`, `is_stem`, `is_fork` --- tree shape.
+- `first`, `second` --- fork decomposition.
+- `kind`, `payload` --- tagged-form accessors (backend-specific
+  conventions).
+- `fast_eq` --- O(1) tree hash-cons identity. Backend-internal;
+  `conv` is what disp predicates use.
+
+== Eager β and hash-cons canonicality
+
+Every `apply` call reduces eagerly. `let x = e in body` desugars to
+`(λx. body) e`; the argument is evaluated once and shared. This is
+relied on by predicate bodies like `Pi` that use `let a = fresh_hyp A`.
+
+Canonical construction is preserved across β-reduction: two evaluations
+that should produce the same term produce `conv`-equal Values, and
+ideally identity-equal trees under hash-consing. Backends that can
+guarantee the stronger property (ctxtree-style) get `conv = fast_eq`
+as a performance win; backends that cannot fall back to structural
+recursive comparison.
+
+== Quote and erase
+
+Two boundary operations, not generally used by disp predicates:
+
+- `quote(v) → Tree` --- convert a Value to its canonical closed-tree
+  form. Useful for serialization, debugging, and cross-backend
+  comparison. Canonical for a given Value; the round-trip
+  `apply(quote(v), _)` agrees with `apply(v, _)`.
+- `erase(v) → SKI_Tree` --- strip type-checking machinery (tags,
+  bindtrees, hypothesis markers) to produce a pure tree-calculus term
+  suitable for runtime execution. Specified in #raw("COMPILATION.typ"),
+  not here.
 
 = Core type constructors
 
-Each constructor is defined as a tree-calculus predicate, written in
-disp surface syntax. The actual in-kernel encoding is the
-bracket-abstracted form; helpers like `or`, `and`, `fast_eq`, `fix`,
-`is_fork`, `first`, `second`, `fresh_hyp` live in the prelude.
+Each constructor is defined as a tree-calculus predicate in disp
+surface syntax. Every binding here is *prelude-canonical*: the
+kernel's structural reflection primitives (`is_pi`, `is_universe`,
+etc.) recognize these specific definitions. Users can define their
+own analogous predicates, but such user-defined type-formers are not
+structurally recognized; they participate in the universe hierarchy
+only via the registry (see §5.1).
 
-== The universe `Type`
+== The universe family `Type n`
 
-In the first-cut design, `Type` is a single predicate that accepts any
-tree-calculus term which, when applied to any argument within the
-evaluation budget, reduces to `TT` or `FF`. Structurally this means:
-applied to a probe value, `Type` runs its argument on a fresh
-hypothesis and checks that the result is a boolean.
+`Type` is a rank-indexed family of predicates. `Type n` accepts all
+rank-$≤n$ types; `Type k` (as a value) inhabits `Type (k+1)`. This
+stratification recovers logical consistency --- Girard's paradox, which
+afflicted the earlier `Type : Type` design, does not apply.
 
 ```disp
-let Type : Type = {t} ->
-  { let probe = fresh_hyp Top       // Top = accepts-anything predicate
-    is_bool (t probe) }
+let Type : Nat -> Predicate
+  = fix ({self, n, t} ->
+      or (and (is_universe t)
+              (lt (universe_rank t) n))              // case 1: universe below n
+     (or (and (is_pi t)
+              (and (self n (pi_dom t))
+                   (self n ((pi_cod t) (fresh_hyp (pi_dom t))))))  // case 2: Pi
+     (or (is_registered_base_type t)                 // case 3: registered base
+         (and (is_H t)                               // case 4: cumulative hypothesis
+              (and (is_universe (type_of_H t))
+                   (le (universe_rank (type_of_H t)) n))))))
 ```
 
-where `is_bool b = or (fast_eq b TT) (fast_eq b FF)`. Self-typing
-(`Type : Type`) is logically inconsistent but sufficient for a
-programming language. A stratified hierarchy
-`Type 0, Type 1, …` is a future extension: `Type n` is a fix-pointed
-predicate that accepts base types, Pi types over rank-`n` components,
-and `Type k` iff `k < n`. Universe polymorphism would carry an
-implicit rank metavariable.
+Four admissible shapes:
 
-== `Pi` — dependent function type
++ *Universe below `n`.* `mk_universe k` with `k < n`. Case 1 uses the
+  `is_universe`/`universe_rank` reflection primitives.
++ *Compound type constructor.* A `Pi` whose domain and codomain (under
+  a fresh hypothesis) are themselves rank-$≤n$ types. Records
+  elaborate to `Pi` chains (§5.3); `is_pi` captures them. Other
+  type-formers are not structurally recognized.
++ *Registered base type.* `Nat`, `Bool`, `Unit`, and any user-declared
+  `let X : Type 0 = body` entries. Each `Type n` closes over a specific
+  registry at its definition site; users extend it by declaring new
+  rank-0 types.
++ *Cumulative hypothesis.* A hypothesis `h` whose stored type is itself
+  a universe `Type k` with `k ≤ n`. This is how a hypothetical
+  `{A : Type 0}` participates as a valid rank-1 type: `Type 1 A` fires
+  case 4 via `is_H A`, then `is_universe (type_of_H A) = is_universe
+  (Type 0) = TT`, then `universe_rank (Type 0) = 0 ≤ 1 = TT`.
+
+*Cumulativity* falls out: every case has a `<` or `≤` comparison that
+is monotone in `n`. A value accepted by `Type k` is accepted by
+`Type n` for every `n ≥ k`, without any separate subtyping rule.
+
+*Registry extension.* Every `let X : Type 0 = body` declaration creates
+a *new* `Type` predicate, closed over an extended registry
+`{Nat, Bool, Unit, ..., X}`. Code written after the declaration
+references the new `Type`; code written before is unaffected. This
+makes each extension of the trusted base visible and explicit in the
+program text --- a user cannot silently grow the rank-0 admission set.
+The bootstrap registry is `{Nat, Bool, Unit}`.
+
+*Trust discipline.* The kernel does not structurally validate user
+declarations at rank 0; a malformed `let X : Type 0 = ...` corrupts
+only that user's hierarchy. Soundness of the rank-0 level is the
+user's burden, same as well-foundedness of any `fix`-defined
+predicate.
+
+== `Pi` --- dependent function type
 
 ```disp
-let Pi : {A : Type} -> (A -> Type) -> Type
+let Pi : {A : Type 0} -> (A -> Type 0) -> Type 0     // rank-0 witness
        = {A} -> {B} -> {f} ->
   { let a = fresh_hyp A
     (B a) (f a) }
 ```
 
 `{x : A} -> B` in the surface syntax elaborates to `Pi A ({x} -> B)`.
-Non-dependent `A -> B` is `Pi A ({_} -> B)`.
+Non-dependent `A -> B` is `Pi A ({_} -> B)`. The rank of `Pi A B` is
+the max of the ranks of `A` and `B(a)` for a fresh `a : A`; this falls
+out of `Type`'s case 2 applied recursively.
 
-Note that `Pi` is *itself* a type (inhabits `Type`), because for any
-concrete `A, B`, `Pi A B` is a well-formed predicate.
+`Pi` is *itself* a predicate inhabiting some `Type n` --- specifically,
+the smallest `n` that covers both its domain and codomain. For
+`Pi Nat Nat`, `n = 0`. For `Pi (Type 0) ({A} -> A -> A)`, `n = 1`.
 
-== Record types — dependent products
+== Record types --- Church products over `Pi`
 
-For a `RecType` `{x1 : X1, ..., xn : Xn}`, the predicate is the Church
-product:
-
-For the two-field non-dependent case:
+A `RecType` `{x1 : X1, ..., xn : Xn}` elaborates to a Church product
+--- a specific `Pi`-chain. For the two-field non-dependent case:
 
 ```disp
-// RecType for { x : A, y : B }
+// RecType for { x : A, y : B }  elaborates to
 let Pair = {A} -> {B} -> {r} ->
   r ({v1} -> {v2} -> and (A v1) (B v2))
 ```
 
-For the dependent case `{ x : A, y : B x }`, the consumer threads the
-first field into the second check using the same fresh-hypothesis
-mechanism as `Pi`:
+For dependent fields `{ x : A, y : B x }`:
 
 ```disp
 let DepPair = {A} -> {B} -> {r} ->
   r ({v1} -> {v2} -> and (A v1) ((B v1) v2))
 ```
 
-The general `n`-field RecType `{x1 : X1, ..., xn : Xn}` extends this to
-a Church product where each field may reference earlier ones.
+Because records elaborate to `Pi` chains, they participate in `Type n`
+via `is_pi`; no separate `is_rectype` primitive is required. The empty
+RecType `{}` is the unit predicate (always `TT`).
 
-The empty RecType `{}` is the unit predicate (always `TT`), inhabited
-by the Church unit.
-
-== `Eq` — propositional equality
+== `Eq` --- propositional equality
 
 ```disp
-let Eq : {A : Type} -> A -> A -> Type
-       = {A} -> {a} -> {b} -> fast_eq a b
+let Eq : {A : Type 0} -> A -> A -> Type 0
+       = {A} -> {a} -> {b} -> {_} -> conv a b
 ```
 
-Hash-cons identity as a type. `Eq`'s inhabitants are *irrelevant*: the
-type's TT/FF is determined entirely by `a` and `b`, ignoring the
-candidate witness. `refl : {a : A} -> Eq a a` can be the polymorphic
-unit — the type accepts any value when `a` and `b` reduce to the same
-tree.
+Semantic equality as a type: `Eq A a b` accepts any witness when
+`conv(a, b) = TT`. The trailing `{_} ->` makes the expression a
+predicate awaiting an (irrelevant) witness; `refl : {a : A} -> Eq a a`
+can be the polymorphic unit.
 
-*Caveat.* Definitional equality here is narrow — only hash-cons identity
-of normal forms. Two terms that reduce to the same tree satisfy `Eq`;
-two terms that are "extensionally equal" but structurally different do
-not. Stronger equalities (e.g., function extensionality) would require
-additional predicates not given by the kernel.
+*Note:* `Eq` uses `conv`, not `fast_eq`. Two terms that are
+definitionally equal but structurally different (e.g., pre- and
+post-β-reduction forms in some backends) satisfy `Eq`. Extensional
+equality on functions --- pointwise agreement without structural
+identity --- is strictly stronger and not provided by the kernel.
 
 == Data types
 
@@ -400,234 +449,240 @@ User data types are ordinary predicate lambdas written in surface
 syntax. Examples:
 
 ```disp
-let Nat : Type = fix ({self} -> {n} ->
+let Nat : Type 0 = fix ({self} -> {n} ->
   or (fast_eq n Zero)
      (and (is_fork n)
           (and (fast_eq (first n) t)
                (self (second n)))))
 
-let Bool : Type = {b} -> or (fast_eq b TT) (fast_eq b FF)
+let Bool : Type 0 = {b} -> or (fast_eq b TT) (fast_eq b FF)
 
-let List : {A : Type} -> Type
-        = {A} -> fix ({self} -> {xs} ->
+let List : {A : Type 0} -> Type 0
+         = {A} -> fix ({self} -> {xs} ->
   or (fast_eq xs Nil)
      (and (is_cons xs)
           (and (A (head xs))
                (self (tail xs)))))
 ```
 
-No separate "data declaration" machinery is required: a data type is
-just a predicate the user writes. Well-foundedness of `fix` is the
-user's burden; the kernel enforces an evaluation budget to turn
-divergence into a compile error rather than a hang.
+Data-type bodies legitimately use tree-level primitives (`is_fork`,
+`first`, `fast_eq`) because they pattern-match on concrete encodings,
+not on Val semantics. This is one of the guideline's acknowledged
+exceptions: a predicate defining *what it means to be data* must
+inspect data shape.
+
+A `let Nat : Type 0 = ...` declaration extends the enclosing `Type`'s
+registry (§5.1); subsequent predicates that use `Nat` will find it
+via case 3 of `Type`.
+
+Well-foundedness of `fix` is the user's burden; the kernel enforces an
+evaluation budget to turn divergence into a compile error rather than
+a hang.
 
 = Worked examples
 
 == Example 1: `3 : Nat`
 
-Assume the encoding `3 = Succ (Succ (Succ Zero))`. Apply `Nat` to `3`:
+With `3 = Succ (Succ (Succ Zero))`:
 
 ```
-Nat 3
-= or (fast_eq 3 Zero) (and (is_fork 3) (and (fast_eq (first 3) t) (Nat (second 3))))
-= or FF                (and TT          (and TT                   (Nat 2)))
+apply Nat 3
+= or (fast_eq 3 Zero)
+     (and (is_fork 3) (and (fast_eq (first 3) t) (Nat (second 3))))
+= or FF (and TT (and TT (Nat 2)))
 = Nat 2
 = Nat 1
 = Nat Zero
-= or (fast_eq Zero Zero) ...
 = TT
 ```
 
-The whole check is one application, reducing structurally through the
-predicate. No type-checker state, no AST annotations.
+One application, reducing structurally through the predicate. No
+type-checker state, no AST annotations.
 
-== Example 2: `{x : Nat} -> x : Nat -> Nat`
+== Example 2: `({x : Nat} -> x) : Nat -> Nat`
 
-Surface: `(({x : Nat} -> x) : Nat -> Nat)`. Elaborator produces:
+Value: `{x} -> x`. Type: `Pi Nat ({_} -> Nat)`, which reduces per
+§5.2 to `{f} -> { let a = fresh_hyp Nat; (({_} -> Nat) a) (f a) }`.
 
-- Value: `{x} -> x` (tagged KL, param type `Nat`).
-- Type: `Pi Nat ({_} -> Nat)`, which expands per §5 to a lambda of the
-  form `{f} -> { let a = fresh_hyp Nat; (({_} -> Nat) a) (f a) }`.
-
-Check: apply the type to the value.
+Check:
 
 ```
-Pi Nat ({_} -> Nat) ({x} -> x)
+apply (Pi Nat ({_} -> Nat)) ({x} -> x)
 = { let a = fresh_hyp Nat
     (({_} -> Nat) a) (({x} -> x) a) }
-= Nat a                          // after β on codomain and body
+= apply Nat a                    // after β on codomain and body
 ```
 
-Now `a = fresh_hyp Nat`. Does `Nat a` reduce to `TT`?
-
-This is the interesting case. `a` is a fresh hypothesis — its
-canonical tree form is `mkH Nat L` for the current depth `L`, and it
-lives in the `KH` tag namespace. A naive `Nat` predicate (as written
-above) would reduce `fast_eq a Zero` to `FF`, `is_fork a` to `FF`, and
-return `FF` — rejecting the program.
-
-The H-hypothesis rule (§4, the special case of `apply`) handles this:
-when the predicate side is a hypothesis and the candidate side is the
-same hypothesis — or, more generally, when applying the predicate
-reduces to comparing the hypothesis's stored type `Nat` against itself
-— `apply` returns `TT` directly. Operationally:
-
-```
-Nat a     where a = mkH Nat L     ⟶   TT    (by the H-hypothesis rule)
-```
-
-This built-in rule is what makes fresh hypotheses actually *opaque* —
-`Nat` doesn't need to crack open `a`; the evaluator's treatment of
-`KH`-tagged values under predicate application does the work.
-
-The check therefore succeeds. Good.
+`a` is a hypothesis with stored type `Nat`. The H-hypothesis rule
+fires: `conv(Nat, type_of_H(a)) = conv(Nat, Nat) = TT`, so
+`apply(Nat, a) = TT` directly. The check succeeds.
 
 == Example 3: polymorphic identity
 
-Surface: `let id : {A : Type} -> A -> A = {A} -> {x} -> x`.
+`let id : {A : Type 0} -> A -> A = {A} -> {x} -> x`.
 
-The type elaborates to `Pi Type ({A} -> Pi A ({_} -> A))`. Apply to the
-value `{A} -> {x} -> x`:
+Type: `Pi (Type 0) ({A} -> Pi A ({_} -> A))`.
 
 ```
-Step 1 — outer Pi (evaluator enters a new binder, depth L1):
-  let α = fresh_hyp Type
+Step 1 — outer Pi, depth L1:
+  let α = fresh_hyp (Type 0)
   (({A} -> Pi A ({_} -> A)) α) (({A} -> {x} -> x) α)
 = Pi α ({_} -> α) ({x} -> x)
 
-Step 2 — inner Pi (evaluator enters another binder, depth L2):
+Step 2 — inner Pi, depth L2:
   let a = fresh_hyp α
   (({_} -> α) a) (({x} -> x) a)
-= α a
+= apply α a
 
-Step 3 — H-hypothesis rule: α is the hypothesis from Step 1, `a` is a
-fresh α-typed hypothesis; applying α to `a` matches the stored type,
-⇒ TT.
+Step 3 — H-hypothesis rule: type_of_H(a) = α; conv(α, α) = TT;
+  apply α a = TT.
 ```
 
-Three reduction steps, and the whole polymorphic-identity specification
-is verified. The structure is identical for any Pi type; the `KH` rule
-does the heavy lifting.
+Three reduction steps, and polymorphic-identity is verified.
 
-== Example 4: a program that should be rejected
+== Example 4: cumulativity under a binder
 
-Consider `let bad : {A : Type} -> A -> A = {A} -> {x} -> (x x)`.
-Elaboration produces a well-formed lambda tree; the binder count
-matches the Pi's arity, so elab doesn't complain. The check is what
-catches the error:
+`{A : Type 0} -> A -> A` as a rank-1 type. Check: `apply (Type 1) (Pi (Type 0) ({A} -> Pi A ({_} -> A)))`.
 
 ```
-Step 1 — outer Pi: let α = fresh_hyp Type; reduces to Pi α ({_} -> α) ({x} -> x x)
-Step 2 — inner Pi: let a = fresh_hyp α; reduces to α (a a)
-Step 3 — H-hypothesis rule:
-  `a a` is a fork, not an H-tagged value with stored type α.
-  The KH rule does not fire; predicate α proceeds to its fallback
-  (FF for anything that isn't the specific stored hypothesis).
-= FF
+Type 1 (Pi (Type 0) ({A} -> Pi A ({_} -> A)))
+= case 2 (is_pi = TT):
+  — domain: apply (Type 1) (Type 0)
+    = case 1: is_universe (Type 0) = TT, rank = 0, 0 < 1 = TT ✓
+  — codomain: let A = fresh_hyp (Type 0)
+                apply (Type 1) (Pi A ({_} -> A))
+    = case 2 (is_pi = TT):
+      — domain: apply (Type 1) A
+        = case 1 fails (A is a hypothesis, not mk_universe)
+        = case 4: is_H A = TT, is_universe (Type 0) = TT,
+                  universe_rank (Type 0) = 0, 0 ≤ 1 = TT ✓
+      — codomain: symmetric, TT ✓
 ```
 
-Rejected as expected. The check fails because `a a` isn't the stored
-hypothesis — the only way to produce something `α` accepts is to
-return `a` itself, i.e., to be the identity.
+Case 4 is what makes cumulativity work: a fresh hypothesis whose
+stored type is `Type 0` passes `Type n` for every `n ≥ 0`, without
+a separate subtyping rule.
+
+== Example 5: a program that should be rejected
+
+`let bad : {A : Type 0} -> A -> A = {A} -> {x} -> (x x)`.
+Elaboration is well-formed (binder arity matches); the check rejects:
+
+```
+Step 1 — outer Pi: α = fresh_hyp (Type 0); ⟶ Pi α ({_} -> α) ({x} -> x x)
+Step 2 — inner Pi: a = fresh_hyp α; ⟶ apply α (a a)
+Step 3 — H-hypothesis rule: `a a` is not a hypothesis — the H rule does
+  not fire. α's body proceeds: α was introduced with stored type
+  (Type 0), so its predicate semantics admit rank-0 types. (a a) is
+  neither a universe, nor a Pi, nor a registered base, nor a
+  hypothesis — all cases of α's expansion fail.
+⟶ FF
+```
+
+Rejected. The only way `(x x)` passes is if `x` has a type that
+accepts its own application to itself; the hypothesis `a : α` with α
+abstract provides no such information.
 
 = Soundness
 
-Soundness in this setting: *if compilation produces a tree `top_value`
-and a tree `top_type` and the kernel reports `top_type(top_value) = TT`,
-then `top_value` inhabits the intended semantic type denoted by
-`top_type`.*
+Soundness in this setting: *if compilation produces a Value `top_value`
+and a Value `top_type` and the kernel reports
+`apply(top_type, top_value) = TT`, then `top_value` inhabits the
+intended semantic type denoted by `top_type`.*
 
 Two halves:
 
-- *Type = predicate semantics.* We *define* `v : T` to mean `T(v) = TT`.
-  At this definitional level soundness is trivial: the thing we checked
-  is by definition what it means to inhabit the type.
-- *The predicates mean what we intend.* This is the non-trivial part.
-  We want `Pi` to mean "all functions from A to B[x:=a]" — not some
-  weaker approximation — and `Eq` to mean hash-cons identity of normal
-  forms, etc.
+- *Type = predicate semantics.* We *define* `v : T` to mean
+  `apply(T, v) = TT`. At the definitional level soundness is trivial.
+- *Predicates mean what we intend.* `Pi` should mean "all functions
+  from A to B[x:=a]," `Eq` should mean definitional equality of normal
+  forms, `Type n` should mean "types at rank $≤ n$."
 
-The second half is what must be argued. It rests on three invariants.
+The second half is what must be argued. It rests on four invariants.
 
-== Invariant I — Freshness
+== Invariant I --- Freshness
 
-`fresh_hyp A` must produce a value that
+`fresh_hyp A` produces a Value that
 
-+ is *opaque*: the only operation that reveals its stored type is
-  `apply`'s H-hypothesis rule;
-+ is *distinct*: two hypotheses minted under distinct binders (at
-  distinct evaluator depths) are `eq`-unequal.
++ is *opaque*: the only operation that inspects its stored type is
+  the H-hypothesis rule in `apply`;
++ is *distinct*: hypotheses minted under distinct binders are
+  `conv`-unequal.
 
-(1) is enforced by *convention*, not by a kernel-level guarantee: the
-elaborator does not emit tree-destructuring operations (`first`,
-`second`, `is_fork`, …) that target `KH`-tagged values. In the raw
-tree calculus, a `KH` tree is data like any other and *could* be
-destructured by a hostile predicate; the soundness story depends on
-the elaborator never generating such code. Any hand-written kernel
-primitive that manipulates `KH` must preserve this opacity.
+Opacity is enforced by *convention*: the elaborator does not generate
+tree-destructuring operations targeting hypothesis Values. User
+predicates *may* inspect them (the two-tier guideline is not
+enforced), but doing so is the user's responsibility.
 
-(1) then ensures a function `f` checked against `Pi A B` cannot behave
-differently on concrete `A`-inhabitants than on the fresh hypothesis —
-it has no way to tell them apart. A single check against the fresh
-hypothesis is therefore equivalent to universal quantification. This
-is *parametricity*, enforced by the combination of evaluator opacity
-and elaborator discipline.
+Opacity ensures parametricity: a function `f` checked against `Pi A B`
+has no way to distinguish a concrete `A`-inhabitant from the fresh
+hypothesis, so a single check is equivalent to universal quantification.
 
-(2) ensures type constructors with multiple binders do not conflate
-their parameters. Without distinctness,
-`{x : A} → {y : A} → x` and `{x : A} → {y : A} → y` would accept
-the same set of functions — the type system would become unable to
-distinguish projections.
+Distinctness ensures type constructors with multiple binders do not
+conflate their parameters. Without it, `{x : A} -> {y : A} -> x` and
+`... -> y` would accept the same functions --- the type system could
+not distinguish projections.
 
-Where this invariant is at risk: any evaluator whose internal
-representation collapses distinct binder depths; any kernel primitive
-that lets `KH` values escape their dedicated namespace. Any `lvl`-tree
-convention must keep elaborator-generated and hand-constructed
-hypotheses in disjoint families — if their tree representations
-collided, so would their hash-cons identities.
+== Invariant II --- Semantic equality
 
-== Invariant II — Structural equality
+`conv(v1, v2)` must coincide with tree-calculus hash-cons identity on
+closed normal forms, modulo the canonicalization guarantees each
+backend commits to.
 
-`eq` must coincide with tree-calculus hash-cons identity on closed
-normal forms. This is the unspoofable ground truth the whole edifice
-leans on. `fast_eq` gets this for free from the tree-calculus runtime;
-any backend that quotes to a tree first and compares there inherits it.
+Ctxtree-style backends satisfy this trivially via `conv = fast_eq` on
+(term, ctx) pairs after normalization. Closure-based backends must
+recursively compare structures, introducing fresh neutrals at binders
+and bottoming out at tree-identity comparisons.
 
-Failure mode: a backend optimization that collapses two observably
-different values (e.g., treating all closures with the same body as
-equal regardless of env). That would make the type system accept terms
-it shouldn't.
+Failure mode: a backend that collapses two observably different Values
+(e.g., treating all closures with the same body as equal regardless of
+env). That would make the type system accept terms it shouldn't.
 
-== Invariant III — Predicate faithfulness
+== Invariant III --- Predicate faithfulness
 
-Every type constructor's predicate must, when applied to a value, yield
-`TT` iff the value semantically inhabits the type.
+Every type constructor's predicate must, when applied to a Value,
+yield `TT` iff the value semantically inhabits the type.
 
 By construction:
 
-- `Pi A B` (as defined in §5) is `TT` iff, for the fresh `a : A`,
-  `B(a)` accepts `f(a)`. By Invariant I this is equivalent to "for all
-  `a : A`, `B(a)` accepts `f(a)`." That is the semantic definition of
-  the Pi type.
-- `RecType` is a Church-encoded conjunction of field checks; it is
-  `TT` iff the value is the Church pair of values each inhabiting the
-  corresponding field type.
-- `Eq a b` is `TT` iff `fast_eq a b` — hash-cons identity by
+- `Pi A B` (§5.2) is `TT` iff, for the fresh `a : A`, `B(a)` accepts
+  `f(a)`. By Invariant I this is equivalent to "for all `a : A`, `B(a)`
+  accepts `f(a)`" --- the semantic Pi type.
+- `RecType` is a Church-encoded conjunction of field checks; it is `TT`
+  iff the value is the Church product of inhabitants.
+- `Eq a b` is `TT` iff `conv(a, b) = TT` --- definitional equality by
   definition.
-- `Type` is `TT` iff its argument reduces to a boolean when applied
-  to a fresh hypothesis under the evaluation budget.
+- `Type n` is `TT` on a Value iff the Value fits one of the four
+  admissible shapes (universe below `n`, Pi at rank $≤n$, registered
+  base, cumulative hypothesis). Each clause is structurally well-
+  defined; their disjunction covers the intended universe.
 - User-defined data types are `TT` iff the user's predicate body says
-  so. Soundness of *user* types is the user's burden — if they write a
-  predicate that accepts non-nats as Nats, the system obliges.
+  so. Soundness of user types is the user's burden.
 
-The induction: every type constructor combines sub-predicates via
-predicate-level operations (conjunction, fresh-hypothesis introduction)
-that preserve faithfulness. If the leaves (primitive predicates and
-user-written data-type predicates) are faithful, the whole tree is.
+Every type constructor combines sub-predicates via operations
+(conjunction, fresh-hypothesis introduction, recursive self-application)
+that preserve faithfulness. If the leaves are faithful, the tree is.
+
+== Invariant IV --- Universe well-foundedness
+
+The finite universe hierarchy is strictly well-founded: every Value
+accepted by `Type n` either
+
++ is a compound type-constructor whose components satisfy `Type n` at
+  strictly-reducible positions;
++ is a registered base type at rank 0;
++ is `mk_universe k` for `k < n`, itself satisfying `Type (k+1)` via
+  case 1 --- no self-reference;
++ is a hypothesis whose stored type is a universe at rank $≤n$,
+  traceable to its binder.
+
+Closed false-inhabitants require a cycle in these cases or an
+inhabitant of `False` at a finite rank. Cycles are blocked by the
+inductive definition; `False` (the empty predicate) has no inhabitants
+by construction. Logical consistency holds modulo strong
+normalization (§7, *What soundness does not include*).
 
 == What breaks if any invariant slips
-
-Illustrative table of how things go wrong:
 
 #table(
   columns: (auto, 1fr),
@@ -639,23 +694,27 @@ Illustrative table of how things go wrong:
      different values on real `A`-inhabitants, passing the check for
      types it doesn't actually inhabit.],
   [Distinctness of depths],
-    [`{x : A} → {y : A} → x` and `... → y` become indistinguishable;
+    [`{x : A} -> {y : A} -> x` and `... -> y` become indistinguishable;
      the type system cannot reject a swapped-projection term.],
-  [`eq` is not hash-cons identity],
-    [Either `Eq a b` accepts non-identical terms (accepts bad
-     equalities) or rejects identical ones (rejects valid programs).
-     Either way, the equality type becomes a liability.],
-  [Predicate faithfulness — e.g., a broken `Pi` encoding],
+  [`conv` is not semantic equality],
+    [Either `Eq a b` accepts non-equal terms (accepts bad equalities)
+     or rejects equal ones (rejects valid programs). The equality type
+     becomes a liability.],
+  [Predicate faithfulness --- e.g., a broken `Pi` encoding],
     [A function passes Pi-checking without actually respecting its
      intended type; downstream uses rely on type info that doesn't
      hold.],
+  [Universe well-foundedness --- e.g., a malformed rank-0 declaration],
+    [A user type admitted at rank 0 that is actually type-valued
+     collapses the stratification in that user's hierarchy; Girard-like
+     paradoxes become reachable within that scope.],
 )
 
 Evaluation-budget exhaustion is *not* on this list. When the kernel
-runs out of budget mid-check it raises a compile error — a completeness
-concession, not an unsoundness. The check that *would* have succeeded
-is rejected because the kernel gave up. No wrong answer is ever
-reported as `TT`.
+runs out of budget mid-check it raises a compile error --- a
+completeness concession, not an unsoundness. The check that *would*
+have succeeded is rejected because the kernel gave up. No wrong answer
+is ever reported as `TT`.
 
 == What soundness does *not* include
 
@@ -663,45 +722,43 @@ Deliberately out of scope at this stage:
 
 - *Strong normalization.* The kernel relies on the evaluation budget
   as a finite approximation; a user can write a non-terminating
-  predicate that the kernel flags as error, not as `FF`. A logically
-  consistent system would need a termination argument for any
-  user-writable predicate.
-- *Logical consistency.* `Type : Type` collapses the universe
-  hierarchy; Girard's paradox means there exists a closed term
-  inhabiting `False` (if we define `False` as the empty predicate).
-  Fine for a programming language, fatal for a proof assistant. A
-  rank-stratified `Type n` hierarchy recovers consistency; deferred.
+  predicate that the kernel flags as error, not as `FF`. Logical
+  consistency above is contingent on strong normalization of the
+  tree-calculus terms in play.
 - *Function extensionality.* Two functions that agree on all inputs
   but are structurally different do not satisfy `Eq`. Extensional
   equality, if needed, is a separate predicate.
+- *Transfinite ranks.* `Type n` is indexed by a user-writable `Nat`.
+  Ranks above `ω` (generalizations for libraries that quantify over
+  "any finite universe") are not provided.
 
-Each of these is a choice, not a bug. The soundness story above holds
-on its own terms even under these concessions; we just don't claim
-more than it delivers.
+Each is a choice, not a bug. The soundness story above holds on its
+own terms; we just don't claim more than it delivers.
 
 = Open design questions
 
-- *Universe stratification.* Replace the single `Type : Type`
-  predicate with a rank-indexed family `Type n` such that `Type m`
-  accepts `Type k` iff `k < m`, recovering logical consistency.
-  Universe polymorphism would carry an implicit rank metavariable at
-  each use site.
-- *Extensional equality.* `Eq` is hash-cons identity only. If a use
-  case demands function extensionality (two functions equal when they
-  agree on all inputs), that is a separate predicate — possibly a
-  companion to `Eq` with restricted introduction rules. Deferred
-  until a concrete need.
-- *Cross-evaluator agreement.* When multiple evaluators coexist, their
-  `fresh_hyp`, `eq`, and `quote` must agree on every closed term. A
-  shared test suite that exercises Pi-checking, record projection,
-  and the H-hypothesis rule under each evaluator is the practical
-  cross-check for Invariants I and II.
-- *Canonical `lvl` encoding.* The document specifies only that `lvl`
-  trees must be distinct per depth and in a disjoint namespace from
-  hand-rolled hypotheses. Pinning down *one* encoding simplifies the
-  `quote` contract across evaluators; choosing among the options
-  (fork-shaped markers, nat-shaped markers, pair-with-parity, …) is
-  an open call.
+- *Spine-applied hypotheses.* `is_H` is bare-hypothesis-only: a Value
+  of the form `h t` (hypothesis applied to a concrete argument) fails
+  `is_H` even when `h : A -> Type`. Types like `{A : Nat -> Type 0} ->
+  (n : Nat) -> A n` do not typecheck via the current §5.1 rules.
+  Generalizing to `is_neutral` / `type_of_neutral` (reflection on
+  arbitrary neutrals carrying their inferred types) would resolve
+  this; the cost varies per backend (cheap for closure-based; requires
+  spine-type inference for ctxtree).
+- *Extensional equality.* `Eq` is `conv` only. Function-extensional
+  equality as a companion predicate with restricted introduction rules
+  is deferred until a concrete need.
+- *`is_universe` as derivable vs. primitive.* The current design makes
+  `is_universe` a kernel primitive each backend implements. An
+  alternative would be making `Type k` structurally recognizable in
+  disp alone (via canonical lambda pattern-match). The latter is more
+  purist but depends on canonical-form discipline across β-reduction
+  that not all backends preserve.
+- *Cross-backend Value exchange.* `quote` provides canonical trees,
+  but two backends comparing Values directly must agree on the
+  canonical form. A shared test suite exercising Pi-checking, record
+  projection, and the cumulative-hypothesis rule under each backend is
+  the practical cross-check for Invariants I--IV.
 
 = Glossary
 
@@ -712,46 +769,59 @@ more than it delivers.
   table.header[*Term*][*Meaning*],
   [`t` / `△`], [The tree-calculus leaf. Source syntax: `t`; math
                 notation: `△`.],
-  [`TT` / `FF`], [The encoded booleans. `TT` is truth; `FF` is falsity.
-                  Concrete tree encodings are implementation-defined but
-                  must be hash-cons distinct.],
-  [`fork(a, b)`], [A tree with two children. Written `fork a b` when
-                   used as a value constructor.],
-  [`fast_eq a b`], [Hash-cons identity: returns `TT` iff `a` and `b`
-                    have the same tree-calculus structure. O(1).],
-  [`or`, `and`], [Short-circuiting boolean operators on `TT`/`FF`.
-                  Prelude-defined.],
-  [`fix`], [Fix-point combinator: `fix f = f (fix f)`. Used for
-            recursive predicates. Prelude-defined.],
-  [`mkH A lvl`], [Object-language term for a free hypothesis of type
-                  `A` at depth `lvl`. Lives in the `KH` tag namespace.
-                  See §4 for the `lvl`-tree discipline.],
-  [`KH`, `KL`, `KV`, `KA`, …],
-    [Tagged-form constructors of elaborated terms: `KH` hypothesis,
-     `KL` lambda, `KV` variable reference, `KA` application, etc.
-     The elaborator synthesizes these; the evaluator dispatches on
-     them during reduction.],
-  [`apply(f, v)`], [Evaluator primitive: head β-reduction. Includes
-                    the H-hypothesis rule.],
-  [`fresh_hyp A`], [Evaluator primitive: mint a new hypothesis of
-                    type `A` at the current binder depth.],
-  [`eq(v1, v2)`], [Evaluator primitive: structural equality on values,
-                   coincident with `fast_eq` on their `quote`d trees.],
-  [`pred(T, v)`], [`eq(apply(T, v), TT)` — the single operation every
-                   type check reduces to.],
-  [`quote(v)`], [Evaluator primitive: convert an internal value to
-                 its canonical tree form.],
-  [*opacity*], [Property of fresh hypotheses: elaborator-emitted code
-                never destructures their tree form; only the
-                H-hypothesis rule in `apply` inspects them.],
+  [`TT` / `FF`], [The encoded booleans. Hash-cons distinct.],
+  [`fork(a, b)`], [A tree with two children.],
+  [*Value*], [The evaluator's representation of a term --- canonically
+              a `(term, ctx)` pair. Opaque to callers; manipulated
+              only via the primitive interface (§4).],
+  [`apply(f, v)`], [Val-level primitive: head β-reduction, eager.
+                    Includes the H-hypothesis rule.],
+  [`conv(v1, v2)`], [Val-level primitive: semantic equality. Used by
+                     disp-level predicates for type equality.],
+  [`fresh_hyp A`], [Val-level primitive: mint a hypothesis of type `A`
+                    at the current binder depth. One-argument; the
+                    evaluator tracks depth.],
+  [`is_H`, `type_of_H`, `identity_of_H`],
+    [Val-level reflection on hypotheses.],
+  [`is_pi`, `pi_dom`, `pi_cod`],
+    [Val-level reflection on Pi types (§5.2).],
+  [`is_universe`, `universe_rank`],
+    [Val-level reflection on universe values (§5.1).],
+  [`is_registered_base_type`],
+    [Val-level check of membership in the enclosing `Type`'s closed-over
+     registry of rank-0 types.],
+  [`fast_eq`], [Tree-level primitive: O(1) hash-cons identity.
+                Backend-internal. Disp predicates use `conv` instead.],
+  [`triage`, `is_fork`, `first`, `second`, `kind`, `payload`],
+    [Tree-level primitives for raw tree inspection. Backend-internal;
+     disp predicates use Val-level reflection instead.],
+  [`mk_universe k`], [Informal name for the canonical Value of `Type k`
+                      as a first-class type. `Type k` is the predicate;
+                      `mk_universe k` denotes its Value form. In
+                      practice they are the same Value.],
+  [*opacity*], [Property of fresh hypotheses: only the H-hypothesis
+                rule inspects them (by convention; user predicates
+                may opt out).],
   [*distinctness*], [Property of fresh hypotheses: those minted under
-                     distinct binder depths are `eq`-unequal.],
+                     distinct binder depths are `conv`-unequal.],
+  [*cumulativity*], [Property of `Type n`: a Value accepted by
+                     `Type k` is accepted by `Type n` for every
+                     `n ≥ k`. Falls out of §5.1's four-case definition,
+                     not a separate rule.],
+  [*registry*], [The set of rank-0 types `Type n` closes over at its
+                 definition site. Bootstrap `{Nat, Bool, Unit}`;
+                 extended by `let X : Type 0 = body` declarations.],
   [*hash-consing*], [The tree-calculus runtime's invariant: structurally
-                     equal trees share the same object identity, so
-                     `fast_eq` is pointer-equality.],
+                     equal trees share object identity, so `fast_eq` is
+                     pointer-equality.],
   [*parametricity*], [The consequence of opacity: a function checked
-                      against a Pi can't distinguish concrete
+                      against a Pi cannot distinguish concrete
                       `A`-inhabitants from the fresh hypothesis, so
                       one check is equivalent to universal
                       quantification.],
+  [*prelude-canonical*], [The specific predicate definitions (`Pi`,
+                          `Type`, `Eq`, `Nat`, `Bool`, `Unit`) that the
+                          kernel's structural reflection recognizes.
+                          Users may define analogous predicates, but
+                          they are not recognized structurally.],
 )

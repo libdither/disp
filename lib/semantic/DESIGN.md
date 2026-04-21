@@ -1,320 +1,326 @@
-# semantic: Val-domain NbE on raw bracket-abstracted terms
+# semantic: raw SKI terms + typed-neutral Val domain
 
 ## Purpose
 
-Dybjer/Filinski-style NbE adapted to tree calculus. **No tagged lambdas**
-on the term side — terms are the raw bracket-abstracted SKI trees that
-the runtime already produces. Binders are absent from terms entirely.
-Instead, a parallel Val domain carries type information and neutral
-(stuck) placeholders that make symbolic reasoning possible.
+The **terms-at-check-time-equal-terms-at-run-time** backend. Unlike
+ctxtree and debruijn, semantic does not tag terms — source terms are
+raw bracket-abstracted SKI trees, the same form that executes at
+runtime. No erase step; no compilation from check-form to run-form.
 
-This is the design that most cleanly meets the project's runtime goal
-(terms at check-time = terms at run-time), at the cost of a second
-universe (the Val domain). Unlike `debruijn`, the Val domain here
-mirrors tree calculus structure (Leaf/Stem/Fork + Neutral) rather than
-lambda calculus structure (VLam/VPi/VNeutral), making `apply_sem`
-literally the tree-calc `apply` rules + three stuck points.
+The cost: the spec's canonical `Val = (term, ctx)` shape does not
+apply. semantic uses an overlay Val ADT distinct from terms, with
+self-typed neutrals carrying their inferred types. **`conv != fast_eq`
+in general** because of the triage-on-neutral problem (§*The triage-on-
+neutral problem* below). conv is implemented via structural recursion
+with fresh-neutral introduction at binders.
 
-## Data
+Classification: **experimental backend**. Practical for studying the
+"raw SKI at both check and run" property; not a primary target for
+the kernel until triage-on-neutral is resolved.
 
-### Terms
+## Data representations
 
-```
-Term = raw tree (the output of bracket-abstracting the surface lambda form)
-```
+### Term (raw tree)
 
-No wrapper, no tags, no bind-trees. `(λx. x)` bracket-abstracts to `I`;
-`(λf x. f x)` bracket-abstracts to some S/K form; `succ zero` is just a
-fork tree after bracket abstraction on both sides then application.
-
-The parser already produces these. Nothing new needed on the term side.
-
-### Values
+Terms are raw bracket-abstracted SKI trees. No tags, no wrapping.
 
 ```
-Val ::= vLeaf
-      | vStem(Val)
-      | vFork(Val, Val)
-      | vNeutral(Ne)
-      | vPi(dom_val, codom_val)             -- codom_val is a tree-level closure
-      | vType
-      | vAtom(marker)                        -- Nat, Bool, etc.
+Term = Leaf | Stem(Term) | Fork(Term, Term)
 ```
 
-The first three constructors mirror tree calc (leaf/stem/fork). Eval
-of a Term is a direct Term→Val translation for these constructors.
+Parser output is already in this form after bracket abstraction.
+Surface `{x} -> x` compiles to `I = Fork(Fork(Leaf, Leaf), Leaf)`;
+`{f, x} -> f x` compiles to some S/K composition; etc.
 
-`vPi` and `vType` are added for DTT. `vPi`'s codom is itself a Val
-(specifically, a closure-like Val that can be `do_app`'d to get the
-codomain at a specific argument).
+### Val (overlay ADT, tree-encoded)
 
-### Neutrals
-
-```
-Ne ::= nVar(unique_id, type_val)               -- free var with its type
-     | nApp(head_ne, arg_val)                   -- neutral applied to a value
-     | nTriage(w_val, x_val, y_val, scrut_ne)  -- stuck triage on a neutral
-     | nApp3(stuck_head_ne, y_val, z_val)       -- stuck fork in head position
-```
-
-Key: `nVar` **carries its type**. This is the trick that eliminates the
-context. When you need "what type does this variable have?", you ask
-the neutral directly. No external lookup.
-
-`nTriage` arises when a triage fires on a neutral scrutinee (the three
-branch cases all get recorded; which one fires is undetermined).
-
-`nApp3` arises when a fork's left child is itself neutral, so the
-apply3 dispatch (K/S/triage) can't select a rule.
-
-## Operations
-
-### Semantic application: `do_app(Val, Val) -> Val`
-
-The five tree-calc reduction rules + three stuck points:
+Vals are distinct from terms. They're encoded as tagged trees (like
+ctxtree's terms) but with a different tag family dedicated to the
+value domain:
 
 ```
-do_app vLeaf v               = vStem v                          -- leaf-rule
-do_app (vStem a) v           = vFork a v                         -- stem-rule
-do_app (vFork a b) v         = do_app3 a b v                    -- fork-rule
-do_app (vNeutral n) v        = vNeutral (nApp n v)              -- STUCK (head)
-do_app vPi _ _               = error "applied Pi"               -- typing violation
-do_app vType _               = error "applied Type"
-do_app vAtom _               = error "applied atom"
-
-do_app3 vLeaf y z            = y                                -- K-rule
-do_app3 (vStem c) y z        = do_app (do_app c z) (do_app y z) -- S-rule
-do_app3 (vFork w x) y z      = triage w x y z                   -- F-rule
-do_app3 (vNeutral n) y z     = vNeutral (nApp3 n y z)           -- STUCK (apply3)
-
-triage w x y vLeaf           = w                                -- rule 3a
-triage w x y (vStem u)       = do_app x u                       -- rule 3b
-triage w x y (vFork u v)     = do_app (do_app y u) v            -- rule 3c
-triage w x y (vNeutral n)    = vNeutral (nTriage w x y n)       -- STUCK (triage)
+kind         payload                                       semantic role
+────────────────────────────────────────────────────────────────────────
+VLeaf        —                                             literal leaf value
+VStem        Val                                           one-argument tree value
+VFork        fork(Val, Val)                                two-argument tree value
+VNeutral     Ne                                            stuck term (see below)
+VPi          fork(dom_val, cod_val)                        Pi type
+VType        encoded_nat                                   universe value (Type k)
+VAtom        marker                                        base type constant
 ```
 
-### Eval: `eval_term(Term) -> Val`
-
-Just lift the tree structurally:
-```
-eval_term leaf       = vLeaf
-eval_term (stem a)   = vStem (eval_term a)
-eval_term (fork a b) = vFork (eval_term a) (eval_term b)
-```
-
-No reduction happens during eval. Computation only fires via `do_app`.
-
-### Type of a neutral: `type_of_ne(Ne) -> Val`
+### Ne (neutral, self-typed)
 
 ```
-type_of_ne (nVar _ ty)         = ty
-type_of_ne (nApp n v)          = case type_of_ne n of
-  vPi _ codom_val -> do_app codom_val v
-  _               -> error "applied neutral of non-Pi type"
-type_of_ne (nApp3 _ _ _)       = error "stuck apply3 has no simple type"
-type_of_ne (nTriage _ _ _ _)   = error "stuck triage has no simple type"
+Ne kind     payload                                         semantic role
+────────────────────────────────────────────────────────────────────────
+NVar         fork(unique_id, type_val)                     free var + its type
+NApp         fork(head_ne, arg_val)                        neutral application
+NApp3        fork(fork(stuck_head_ne, y_val), z_val)       stuck fork-in-head
+NTriage      fork(fork(fork(w_val, x_val), y_val), scrut)  stuck triage on neutral
 ```
 
-The last two cases are **real gaps** in the design. In a well-typed
-program, nApp3 and nTriage arise only in very specific places (roughly:
-applications of dependent types that themselves case-analyze their
-argument). Handling them requires either:
-- a type annotation on the neutral at stuck sites, or
-- a rule that triage-on-neutral in well-typed position has a knowable
-  type from context.
+Key: `NVar` carries its inferred type directly. When you need "what's
+this neutral's type," you ask the neutral itself. No external context
+lookup. This is the mechanism that eliminates the context from
+semantic's design.
 
-See "Known open questions" below.
+### Why Val ≠ canonical (term, ctx)
 
-### Conversion: `conv(Val, Val) -> Bool`
+Unlike ctxtree and debruijn, semantic's Val is not `(term, ctx)`. The
+reasons:
 
-Structural on Vals. At vPi, introduce a fresh neutral and compare
-codomains.
+1. Terms are raw SKI, which can't distinguish type forms (Pi, Universe)
+   from data forms (Nat, Bool) structurally — both are just trees.
+2. Overlay Vals introduce the structure the checker needs
+   (Pi/Type/Atom/Neutral) on top of raw terms.
+3. Self-typed neutrals eliminate the need for ctx.
 
-```
-conv vLeaf vLeaf               = TT
-conv (vStem a) (vStem b)       = conv a b
-conv (vFork a1 b1) (vFork a2 b2) = conv a1 a2 && conv b1 b2
-conv vType vType               = TT
-conv (vAtom m1) (vAtom m2)     = fast_eq m1 m2
-conv (vPi d1 c1) (vPi d2 c2)   =
-  conv d1 d2 &&
-  let x = vNeutral (nVar (fresh ()) d1)
-  in conv (do_app c1 x) (do_app c2 x)
-conv (vNeutral n1) (vNeutral n2) = conv_ne n1 n2
-conv _ _                       = FF
+This means semantic does not directly conform to the spec's canonical
+Val shape. Backend implementations must expose operations whose
+observable behavior matches; internal representation differs.
 
-conv_ne (nVar i1 _) (nVar i2 _)     = fast_eq (church i1) (church i2)
-conv_ne (nApp n1 v1) (nApp n2 v2)   = conv_ne n1 n2 && conv v1 v2
-conv_ne (nApp3 h1 y1 z1) (nApp3 h2 y2 z2) = 
-  conv_ne h1 h2 && conv y1 y2 && conv z1 z2
-conv_ne (nTriage w1 x1 y1 n1) (nTriage w2 x2 y2 n2) = 
-  conv w1 w2 && conv x1 x2 && conv y1 y2 && conv_ne n1 n2
-conv_ne _ _                         = FF
-```
+## Primitive implementations
 
-### Check: `check(Term, Val) -> Bool`
+### apply(f, v) → Value
 
-Expected type drives the descent. For vPi, apply both sides to a fresh
-neutral; recurse. For non-Pi, infer the term's type and compare via conv.
+The five tree-calc reduction rules lifted to Val, plus three stuck
+points:
 
 ```
-check t ty = check_v (eval_term t) ty
+apply VLeaf v               = VStem(v)                    -- leaf-rule
+apply (VStem a) v           = VFork(a, v)                 -- stem-rule
+apply (VFork a b) v         = apply3(a, b, v)             -- fork-rule
+apply (VNeutral n) v        = VNeutral(NApp(n, v))        -- STUCK (head)
+apply VPi _                 = error                       -- typing violation
+apply VType _               = error
+apply VAtom _               = error
 
-check_v v (vPi dom codom_clos) =
-  let x = vNeutral (nVar (fresh ()) dom) in
-  let v_applied  = do_app v x in
-  let codom_at_x = do_app codom_clos x in
-  check_v v_applied codom_at_x
+apply3 VLeaf y z            = y                           -- K-rule
+apply3 (VStem c) y z        = apply(apply(c, z), apply(y, z))  -- S-rule
+apply3 (VFork w x) y z      = triage(w, x, y, z)          -- F-rule
+apply3 (VNeutral n) y z     = VNeutral(NApp3(n, y, z))    -- STUCK (apply3)
 
-check_v v vType               = is_type_val v    -- v should be vPi, vAtom, vType
-check_v v (vAtom m)           = ...              -- base-type case; see below
-check_v v (vNeutral _)        = ...              -- shouldn't happen in well-typed
-check_v v ty                  = 
-  case infer_v v of
-    Some ty' -> conv ty ty'
-    None     -> FF
+triage w x y VLeaf          = w                           -- rule 3a
+triage w x y (VStem u)      = apply(x, u)                 -- rule 3b
+triage w x y (VFork u v)    = apply(apply(y, u), v)       -- rule 3c
+triage w x y (VNeutral n)   = VNeutral(NTriage(w, x, y, n))  -- STUCK (triage)
 ```
 
-`infer_v` synthesizes types for Val-level terms:
+**H-hypothesis rule.** When `apply P v` where v is `VNeutral(NVar(id, T))`
+and `conv(P, T) = TT`, short-circuit to `TT`.
+
+### conv(v1, v2) → Bool
+
+Structural recursive comparison. At binders (VPi), introduce a fresh
+neutral and compare codomains. At leaves, compare atomic values.
 
 ```
-infer_v (vNeutral n)          = type_of_ne n
-infer_v vLeaf                 = ???    -- what's the type of leaf?
-infer_v (vStem a)             = ???    
-infer_v (vFork a b)           = ???
-infer_v vType                 = vType
-infer_v (vAtom m)             = lookup_atom_type m
-infer_v (vPi dom cod)         = vType   -- if well-formed
+conv VLeaf VLeaf                   = TT
+conv (VStem a) (VStem b)           = conv(a, b)
+conv (VFork a1 b1) (VFork a2 b2)   = and(conv(a1, a2), conv(b1, b2))
+conv VType VType                   = TT
+conv (VAtom m1) (VAtom m2)         = fast_eq(m1, m2)
+conv (VPi d1 c1) (VPi d2 c2)       =
+  if not(conv(d1, d2)) then FF
+  else let x = fresh_hyp(d1)
+       in conv(apply(c1, x), apply(c2, x))
+conv (VNeutral n1) (VNeutral n2)   = conv_ne(n1, n2)
+conv _ _                           = FF
+
+conv_ne (NVar i1 _) (NVar i2 _)    = fast_eq(i1, i2)
+conv_ne (NApp n1 v1) (NApp n2 v2)  = and(conv_ne(n1, n2), conv(v1, v2))
+conv_ne (NApp3 ...) (NApp3 ...)    = all-three conv + conv_ne
+conv_ne (NTriage w1 x1 y1 n1) (NTriage w2 x2 y2 n2) = 
+  all-four conv/conv_ne
+conv_ne _ _                        = FF
 ```
 
-The `???` cases are where tree-calc clashes with DTT: a bare fork has
-no natural type. Values at base types only make sense when interpreted
-*through* a type predicate. See "Known open questions".
+**Cost**: O(size) in worst case vs. ctxtree/debruijn's O(1). `fast_eq`
+is used only at the atomic leaves (neutral IDs, VAtom markers).
+
+### fresh_hyp(A) → Value
+
+```
+fresh_hyp A = VNeutral(NVar(fresh_id(), A))
+```
+
+Globally-unique `fresh_id()` — each call produces a distinct neutral.
+No depth tracking; the neutral's unique_id is its identity.
+
+### is_H(v), type_of_H(v), identity_of_H(v)
+
+```
+is_H (VNeutral(NVar _ _)) = TT
+is_H _                    = FF
+
+type_of_H (VNeutral(NVar _ type_val)) = type_val
+identity_of_H (VNeutral(NVar id _))   = id
+```
+
+Bare-hypothesis only; NApp/NApp3/NTriage are different-category
+neutrals (spine or stuck).
+
+### is_pi(v), pi_dom(v), pi_cod(v)
+
+```
+is_pi (VPi _ _) = TT
+is_pi _         = FF
+
+pi_dom (VPi d _) = d
+pi_cod (VPi _ c) = c      -- c is already a function (Val → Val)
+```
+
+### is_universe(v), universe_rank(v)
+
+```
+is_universe (VType _) = TT
+is_universe _         = FF
+
+universe_rank (VType k) = k
+```
+
+### is_registered_base_type(v)
+
+Registry closed over by Type predicate; membership check via conv.
+O(n * size) in worst case because conv is structural.
 
 ## The triage-on-neutral problem
 
-This is the deepest issue with the design. Consider the simplest test:
+This is semantic's defining limitation.
+
+Consider the simplest typecheck: `I : Pi A (λ_. A)` where A is a
+hypothesis. `I` as a bracket-abstracted term is
+`Fork(Fork(Leaf, Leaf), Leaf)`. Applying `I` to a neutral `n`:
 
 ```
-check id_term (vPi nat_ty (vPi_close A_neut A_neut))
+apply I n
+= apply (VFork (VFork VLeaf VLeaf) VLeaf) n
+= apply3 (VFork VLeaf VLeaf) VLeaf n
+= triage VLeaf VLeaf VLeaf n              -- since VFork dispatches to triage
+= VNeutral(NTriage(VLeaf, VLeaf, VLeaf, n))    -- STUCK
 ```
 
-where `id_term` bracket-abstracts to `I = fork(fork(leaf, leaf), leaf)`.
-
-At runtime, `apply(I, x) = x` for any concrete tree `x`. But in the
-semantic domain, `do_app (vFork (vFork vLeaf vLeaf) vLeaf) (vNeutral n)`
-reaches the triage rule with scrutinee = vNeutral, and produces
-`vNeutral (nTriage vLeaf vLeaf vLeaf n)`.
-
-This is **not structurally equal** to `vNeutral n`, even though
-extensionally (on any concrete input) it would produce the same value.
-Conversion check on the body of `I : A → A` compares `x_neut` against
-`nTriage vLeaf vLeaf vLeaf x_neut` — fails.
-
-**Candidate fixes:**
-
-1. **η-rule for triage.** Recognize the specific pattern
-   `triage(leaf, leaf, leaf, _)` as extensionally identity, and
-   simplify at semantic-apply time:
-   ```
-   do_app (vFork (vFork vLeaf vLeaf) vLeaf) v = v    -- I applied to v = v
-   ```
-   Requires pattern-matching on the whole I tree shape. Ad-hoc but
-   effective for the identity case.
-
-2. **Generalized η for triage-over-equal-branches.** Recognize
-   `triage(w, w, w, n) ≡ w ⊕ (something)` where `w ≡ x ≡ y`. This
-   is the pattern that identity-in-triage-form has, but it generalizes.
-   Hard to get right (extensional equality isn't syntactic).
-
-3. **Bracket-abstract with a smarter algorithm.** Use an abstraction
-   scheme that produces neutrally-transparent SKI trees when possible.
-   Kiselyov's `tA` / `tE` schemes optimize specific patterns. For
-   example, `λx. x` in some schemes produces `I = tI` as a distinct
-   primitive that `do_app` handles specially. This changes the term
-   rep but preserves the benefit.
-
-4. **Abandon the goal.** Use a lambda-calc semantic domain (VLam/VPi)
-   as in `debruijn`, losing the "terms are raw SKI" property. This is
-   basically admitting the semantic design only works in lambda
-   calculus.
-
-For the initial `impl.disp`, implement approach (1) (I-pattern
-recognition) and see how far it gets. Document failures.
-
-## Shared export contract
-
-Same as the other two:
+But extensionally, `I n = n` for any concrete `n`. The Val
+`NTriage(VLeaf, VLeaf, VLeaf, n)` is structurally different from `n`
+itself. So:
 
 ```
-def check_id_nat               : TT/FF
-def check_const                : TT/FF
-def check_id_poly              : TT/FF
-def check_apply_id             : TT/FF
-def check_refl_zero            : TT/FF
-def check_refl_succ_zero_one   : TT/FF
-def reject_kstar_shadowed_dep  : TT/FF
-def backend_name               : Atom
+conv n (apply I n) = conv n NTriage(...) = FF   -- WRONG; should be TT
 ```
 
-For `check_id_nat`: this is where the triage-on-neutral problem bites
-first. Without the η-rule, this test **fails** even though the program
-is well-typed. Document in `impl.disp`: which tests pass, which fail,
-and why.
+This breaks every check that has I applied to a neutral — i.e., every
+polymorphic-identity check, and much more.
+
+### Candidate fixes
+
+1. **I-pattern recognition.** Special-case in `apply`:
+   `apply (VFork (VFork VLeaf VLeaf) VLeaf) v = v`. Handles exact I.
+   Doesn't generalize.
+2. **η for triage-over-equal-branches.** Recognize
+   `triage(w, x, y, n)` patterns that extensionally simplify. Hard to
+   get right in general.
+3. **Alternative bracket abstraction.** Use an abstraction scheme
+   (Kiselyov's tA/tE) that produces neutral-transparent SKI when
+   possible. Changes what the parser emits.
+4. **Abandon the "terms = SKI" property.** Use tagged terms (become
+   ctxtree or debruijn). Defeats the purpose.
+
+None of these make `conv = fast_eq` achievable in general. semantic's
+fundamental tradeoff: raw SKI as terms costs structural Val
+comparison.
+
+For a working impl, (1) handles `id` at rank 0 and sibling cases; (2)
+is open research. (3) is the most promising long-term but requires
+redesigning the parser's abstraction step.
+
+## Spec conformance checklist
+
+| spec requirement | semantic implementation |
+|---|---|
+| `Val = (term, ctx)` canonical | **NO** — overlay ADT instead |
+| `apply` eager β, deterministic | yes, with triage-on-neutral caveat |
+| `conv` = semantic equality | yes, via structural recursion |
+| `fresh_hyp A` opaque, distinct | yes, via fresh_id() |
+| `is_H` bare-hypothesis only | yes, NVar-only check |
+| H-hypothesis rule in `apply` | yes, conv-check against neutral's type |
+| universe canonical per rank | yes, VType k |
+| Pi canonical per (A, B) | yes, VPi (d, c) |
+| registry closed-over | yes |
+| `conv = fast_eq` | **NO** — structural recursion required |
+
+semantic is **non-conformant** to the canonical `Val = (term, ctx)`
+shape. It conforms behaviorally (operations produce the semantically-
+correct answers) but not structurally. Backends that need structural
+Val exchange (e.g., cross-backend serialization) cannot use
+semantic's Vals directly.
 
 ## What this design gets right
 
-- **Terms are raw bracket-abstracted SKI.** Same representation at
-  check-time and run-time. No erase step, no piPred compilation.
+- **Terms are raw SKI.** Same representation check-time and run-time.
+  No erase step needed.
 - **No context threading.** Neutrals carry their types; the context
-  is implicit in live neutrals' type fields.
-- **Conversion under binders is one line.** Mint fresh neutral, apply
-  both sides, compare. Classical NbE elegance.
-- **Compiled substitution.** Substituting an arg into a body is
-  literally `do_app t arg` — the tree calc's own reduction rules do
-  the substitution work.
+  is implicit in live neutrals.
+- **Compiled substitution.** Substituting an arg into a body is just
+  `apply(t, arg)` — the tree calc's own reduction rules do the work.
+- **Conversion under binders is one line.** Mint fresh neutral,
+  apply both sides, compare.
 
 ## What this design gets wrong
 
-- **Triage-on-neutral.** Stuck neutrals leak structural complexity
-  through operations that should be transparent. Identity isn't
-  identity in the semantic domain. Workarounds are ad-hoc.
-- **Bare values have no type.** `infer_v vLeaf` is undefined — a leaf
-  is an inhabitant of whichever type you want it to inhabit. Need
-  type-directed checking (downward), infer only for neutrals.
-- **Two universes.** Term and Val are distinct. Violates one-universe
-  philosophy. (Mitigation: both are trees; the "two universes" are
-  two tag-families, not two fundamentally different things.)
-- **η not free.** Two η-equivalent functions produce different Vals.
+- **Triage-on-neutral.** The defining flaw. I applied to a neutral
+  produces a stuck form that isn't structurally equal to the
+  neutral. Workarounds are ad-hoc.
+- **Bare values have no type.** `infer_v VLeaf` is undefined — a
+  leaf could inhabit any type. Inference must always be type-driven
+  (check mode) for non-neutral atomic values.
+- **Two universes.** Term and Val are structurally distinct. Mitigation:
+  both are trees; the "two universes" are two tag families, not two
+  fundamentally different things.
+- **No η.** Two η-equivalent functions produce different Vals.
+- **`conv != fast_eq`.** Structural recursion is required. Precludes
+  the O(1) conv property the other backends achieve.
 
 ## Known open questions
 
-1. **Triage-on-neutral**: real blocker. Pick approach (1) for MVP,
-   explore (2)-(4) if that's insufficient.
-2. **Base-type predicates vs vAtom**: `Nat` as a predicate `λn. triage TT self (K(K FF))` breaks when applied to a neutral. Use `vAtom "Nat"` as an opaque marker at check-time, and only invoke the predicate for closed values. Runtime still uses the predicate.
-3. **Atomic value typing**: `vLeaf` has no inherent type. Inference
-   must always be *type-driven* (check mode) for non-neutral
-   atomic values. `infer_v` only handles neutrals and type formers.
-4. **Representing Pi at the term level**: surface `(A:Type) → A → A`
-   bracket-abstracts to what? We likely need to keep Pi tagged at
-   some level (either on the type side only, or as a marked subtree
-   of the raw term). Investigate: can we use the `tPi`-like tag as
-   a special atom that `eval_term` recognizes? If so, terms aren't
-   fully "raw" — they have Pi-shaped atoms. That's probably fine.
+1. **Triage-on-neutral.** Real blocker for polymorphic checks. Pick
+   I-pattern recognition for MVP; invest in approach (3) if semantic
+   becomes a primary target.
+2. **Type representation at term level.** Surface `(A:Type) → A → A`
+   bracket-abstracts to what? Likely need Pi-shaped atom that
+   `eval_term` recognizes. Partially breaks the "raw SKI" claim.
+3. **`infer_v` for atomic values.** VLeaf has no inherent type. Must
+   always be type-driven; infer_v only handles neutrals and type
+   formers.
+4. **Base-type predicates on neutrals.** `Nat (neutral)` wants to
+   return a stuck term, but the canonical Nat predicate would pattern-
+   match on the neutral's structure and return FF. Resolve via H-rule
+   when neutral's type matches predicate.
 
 ## Implementation order
 
-1. Val/Ne constructors as tagged trees. Pick kind codes distinct from
-   those already used in `predicates.disp` (KV/KH/KA/KL/KP/KM).
-2. `do_app`, `do_app3`, `triage` as mutually recursive tree programs
-   (one `fix` over a triple).
-3. `eval_term` — trivial structural lift.
-4. `type_of_ne` — recursive on Ne.
-5. `conv` + `conv_ne` — recursive pair.
-6. `check_v` + `infer_v`.
-7. `check = \t ty. check_v (eval_term t) ty`.
-8. I-pattern recognition in `do_app` to sidestep triage-on-neutral.
-9. Export the shared contract.
-10. Run the suite; document which tests pass (likely: poly id,
-    const, apply, refl_zero; likely-fails without η extensions:
-    anything relying on under-binder triage simplification).
+1. Val/Ne constructors as tagged trees (distinct tag family from
+   ctxtree's).
+2. `apply`, `apply3`, `triage` as mutually-recursive tree programs.
+3. `eval_term` — trivial structural lift from raw term to Val.
+4. `type_of_ne` — recursive on neutral structure.
+5. `conv` + `conv_ne` — structural recursive comparison.
+6. Spec primitives wired to ADT cases.
+7. I-pattern recognition in `apply` to sidestep triage-on-neutral for
+   the simplest case.
+8. Export shared contract; document which tests pass, which fail.
+
+## Relationship to the canonical spec
+
+semantic is the **outlier** backend: it does not conform to
+`Val = (term, ctx)`, and it does not achieve `conv = fast_eq`. This
+is acknowledged and accepted because semantic's different properties
+(raw-SKI terms, no erase step, self-typed neutrals) are valuable for
+studying alternative NbE strategies.
+
+Spec tests that depend on canonical-form conformance (cross-backend
+Val comparison, structural oracle cross-checking) may need semantic-
+specific adapters. Tests that only check spec behavior (Pi-checking,
+universe-typing, cumulativity) should pass unchanged, modulo the
+triage-on-neutral caveat.
