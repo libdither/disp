@@ -30,38 +30,70 @@
 
 = Types as predicates
 
-A *type* is a tree-calculus function. Checking `v : T` is a single
-application on the unmodified tree-calculus runtime:
+A *type* is a predicate: applied to a candidate value, it returns
+`TT` (accepted) or `FF` (rejected). Checking `v : T` is:
 
 ```
-  apply(T, v) = TT
+  napply(T, v) = TT
 ```
 
-There is no separate type table, no annotated AST, no special
-runtime support. The type predicate is an ordinary tree. Applied
-to a candidate value, it reduces to `TT` (accepted) or something
-else (rejected).
+`napply` is a tree-calculus program --- a single raw tree that the
+unmodified runtime executes. It is the *bootstrapping layer* between
+the raw tree-calculus runtime and the type system. Types and values
+are represented as *Vals* (tagged trees) that `napply` knows how to
+evaluate. The raw runtime just runs `napply`; all type-system
+intelligence lives inside it.
 
-For *concrete* data --- checking `3 : Nat` --- the predicate
-pattern-matches on tree structure directly. No extra machinery.
+Why not plain `apply(T, v)`? Because types carry metadata (Pi stores
+its domain and codomain; universes store their rank) that
+`type_of_neutral` needs for spine inference. This metadata is encoded
+as tags inside Vals. Raw `apply` would dispatch on the tag structure
+instead of running the predicate body. `napply` handles both: it
+recognizes tagged forms and dispatches correctly, and falls through
+to raw tree-calculus rules for untagged data.
 
-For *hypothetical* reasoning --- checking `{x : Nat} -> succ x`
-against `Nat -> Nat` --- the predicate needs to introduce a
-symbolic value (hypothesis) and check the function's behavior on it.
-This is where the predicate internally bootstraps a small evaluation
-layer (`napply`) that handles hypotheses. The layer is *library code
-inside the predicate*, not a separate system.
+= `napply` --- the bootstrapping evaluator
 
-Everything that can be a well-defined predicate can be a type:
-`Nat`, `Pi`, `Eq`, `Type n`, user-defined data types.
+`napply` is the single entry point. It is defined as a tree-calculus
+program (via `fix` and `wait`):
 
-= Internal machinery: Vals and `napply`
+```disp
+napply = fix ({self, f, x} ->
+  // H-rule: if x is neutral and its type matches f, accept
+  ited ({_} -> ited ({_} -> TT)
+                    ({_} -> tag_dispatch self f x)
+                    (conv f (type_of_neutral x)))
+       ({_} -> tag_dispatch self f x)
+       (is_neutral x))
+```
 
-When a predicate needs hypothetical reasoning, it works with *Vals*
---- tagged trees that carry hypothesis information alongside normal
-data. The Val encoding is the predicate's internal representation,
-not a system-wide abstraction. `napply` is the evaluator that handles
-both raw trees and tagged Vals seamlessly.
+Where `tag_dispatch` handles each Val kind:
+
+```disp
+tag_dispatch = {self, f, x} ->
+  ited ({_} -> mk_vstuck f x)                    // VHyp → stuck
+       ({_} -> ited ({_} -> mk_vstuck f x)        // VStuck → stuck
+                    ({_} -> ited ({_} -> (vlam_body f) x)  // VLam → apply body
+                                 ({_} -> f x)      // raw data → tree-calc rules
+                                 (is_vlam f))
+                    (is_vstuck f))
+       (is_vhyp f)
+```
+
+All branching uses `ited` (deferred if-then-else) because tree
+calculus evaluates all branches eagerly. `ited` wraps each branch as
+a `{_} -> expr` thunk and forces only the chosen one.
+
+The *H-rule* fires before dispatch: if `x` is a neutral (VHyp or
+VStuck) and `conv(f, type_of_neutral(x)) = TT`, return `TT`
+directly. This is the universal mechanism that makes types-as-predicates
+work for symbolic values --- including hypotheses used as types
+(polymorphic identity).
+
+= Vals
+
+Vals are tagged trees that `napply` operates on. Three tagged forms
+plus untagged data:
 
 == Val kinds
 
@@ -116,43 +148,8 @@ directly. This is the mechanism that makes types-as-predicates work
 for symbolic values.
 
 The H-rule is *universal* --- it fires for every predicate, including
-hypotheses used as types (polymorphic identity). `napply` has no
-knowledge of specific type formers.
-
-== Tag dispatch
-
-After the H-rule:
-
-#table(
-  columns: (auto, 1fr),
-  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
-  inset: (x: 6pt, y: 4pt),
-  table.header[*`f` kind*][*Result*],
-  [`VHyp`],    [`VStuck(f, x)` --- hypothesis in function position, stuck.],
-  [`VStuck`],  [`VStuck(f, x)` --- already stuck, stays stuck.],
-  [`VLam`],    [`body(x)` --- apply the lambda's body to `x`.],
-  [data leaf], [`stem(x)` --- tree-calculus leaf rule.],
-  [data stem], [`fork(child, x)` --- tree-calculus stem rule.],
-  [data fork], [K / S / triage rules in the Val domain.],
-)
-
-All branching in `napply` uses *deferred evaluation* (`ited`): branches
-are `{_} -> expr` thunks applied after dispatch. Without this, strict
-tree calculus eagerly evaluates non-taken branches, causing divergence
-on recursive calls.
-
-== Tree-calculus idioms
-
-*Recursion* uses the `wait` combinator: `wait a b c = a(b)(c)`, but
-`wait(a)(b)` does not evaluate `a(b)` --- it defers until `c` arrives.
-The fixed-point combinator is:
-
-```
-fix f = wait m ({x} -> f (wait m x))   where m = {x} -> x x
-```
-
-Each recursive call unfolds one step, demand-driven. No eager
-divergence.
+hypotheses used as types. `napply` has no knowledge of specific type
+formers.
 
 = Auxiliary operations
 
@@ -215,35 +212,61 @@ metadata (for `type_of_neutral`); terms do not.
 
 == `Type n` --- universe family
 
-`Type n` is a VLam with `UNIV_TAG` metadata carrying rank `n`. Its
-body checks four cases:
+`Type n` is a VLam with `UNIV_TAG` metadata carrying rank `n`:
 
-+ *Universe below n.* `is_universe(t)` and `universe_rank(t) < n`.
-+ *Pi at rank $≤n$.* `is_pi(t)`, domain and codomain (under fresh
-  hypothesis) both satisfy `Type n`.
-+ *Registered base type.* Membership in an ambient registry.
-+ *Cumulative neutral.* `is_neutral(t)` and `type_of_neutral(t)` is
-  a universe with rank $≤n$. This is the one predicate that needs
-  body-level neutral handling beyond the H-rule, because cumulativity
-  requires rank $≤n$, not exact match.
+```disp
+Type n = VLam(
+  meta = fork(UNIV_TAG, n),
+  body = {t} ->
+    // Case 4 first: cumulative neutral (body-level, not H-rule)
+    ited ({_} ->
+           ited ({_} -> le (universe_rank (type_of_neutral t)) n)
+                ({_} -> FF)
+                (is_universe (type_of_neutral t)))
+         ({_} ->
+           // Case 1: universe below n
+           ited ({_} -> lt (universe_rank t) n)
+                ({_} ->
+                  // Case 2: Pi at rank ≤ n
+                  ited ({_} ->
+                         let dom = pi_dom t
+                         and (napply (Type n) dom)
+                             { let a = fresh_hyp dom
+                               napply (Type n) (napply (pi_cod t) a) })
+                       ({_} ->
+                         // Case 3: registered base type
+                         is_registered t)
+                       (is_pi t))
+                (is_universe t))
+         (is_neutral t))
+```
+
+Case 4 (cumulative neutral) is handled in the body, not by the
+H-rule, because cumulativity requires `rank ≤ n` rather than exact
+type match. This is the one predicate with body-level neutral logic.
 
 Cumulativity falls out: every case uses `<` or `≤`, monotone in `n`.
 
 == Data types
 
-Ordinary predicate lambdas. `Nat`:
+Data predicates are VLam with no metadata (`meta = LEAF`). The body
+pattern-matches on tree structure. The H-rule in `napply` intercepts
+neutrals before the body runs, so data predicates never encounter
+hypotheses directly.
 
 ```disp
-Nat = fix ({self, n} ->
-  or (fast_eq n Zero)
-     (and (is_fork n) (and (fast_eq (first n) leaf)
-                           (napply self (second n)))))
+Nat = fix ({self} -> VLam(
+  meta = LEAF,
+  body = {n} ->
+    ited ({_} -> TT)
+         ({_} -> ited ({_} ->
+                        ited ({_} -> napply self (second n))
+                             ({_} -> FF)
+                             (fast_eq (first n) leaf))
+                      ({_} -> FF)
+                      (is_fork n))
+         (fast_eq n Zero)))
 ```
-
-Data predicates use tree-level primitives (`fast_eq`, `is_fork`,
-`first`, `second`) for pattern matching on data encodings. The H-rule
-in `napply` intercepts neutrals before the predicate body runs, so
-data predicates never encounter hypotheses directly.
 
 == `Eq` --- propositional equality
 
@@ -384,3 +407,51 @@ using the NbE API, and emits raw trees.
   [*quote*],       [Convert a closed Val to a raw tree-calculus term (bracket abstraction). One-way, lossy (metadata stripped).],
   [*registry*],    [Ambient set of rank-0 base types recognized by `Type n`.],
 )
+
+= Open problems
+
+== Compilation efficiency
+
+`napply`, type constructors, and their dependencies compile to
+tree-calculus programs of 1000--3000 nodes via bracket abstraction.
+Executing these on the unoptimized runtime requires tens of millions
+of reduction steps per type-check call. η-reduction and K-composition
+help but do not close the gap.
+
+The lambada project's compilation pipeline (with `wait`-based
+recursion, optimized combinator selection, and self-hosted compilation)
+is the reference for practical tree-calculus program execution. Native
+TypeScript fast-paths for `napply` and `conv` are the near-term
+solution, per the development philosophy ("host implementations are
+optimizations").
+
+The design is validated semantically (40/40 TypeScript prototype
+tests). The tree-level foundation works (29+ tests for `napply_simple`,
+tag infrastructure, `wait`+`fix`). The remaining gap is compilation
+quality, not design correctness.
+
+== Structural `conv`
+
+The current implementation uses `conv = fast_eq` (hash-consing
+identity). This suffices when the elaborator constructs types
+deterministically (same source → same tree). Full structural
+comparison (introducing fresh hypotheses for Pi codomain comparison)
+is validated in the TypeScript prototype but not yet as a tree program.
+
+== `apply(T, v) = TT` without `napply`
+
+The current design requires `napply(T, v) = TT` because types are
+VLam (tagged) and raw `apply` dispatches on the tag structure rather
+than running the predicate body. A future design might compile type
+predicates to raw bracket-abstracted combinators (with `napply` logic
+inlined into each predicate's body), eliminating the `napply` entry
+point. This would require either:
+- inlining the H-rule and tag dispatch into every predicate, or
+- a compilation strategy that makes VLam reduce correctly under raw
+  `apply` (e.g., encoding VLam as a combinator whose tree-calc
+  reduction matches `napply`'s dispatch).
+
+The bootstrapping tests (#raw("test/nbe_design.test.ts") §"Raw-predicate
+bootstrapping") validate that the raw/tagged boundary is transparent
+to `napply`. The step from `napply(T, v)` to `apply(T, v)` is an
+encoding question, not a design question.
