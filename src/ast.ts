@@ -1,43 +1,43 @@
-// Surface AST. Produced by src/parse.ts, consumed by src/elaborate.ts.
-// Specification: SYNTAX.typ § "Abstract syntax tree".
+// Surface AST and Core AST. See SYNTAX.typ § "Abstract syntax tree".
 //
-// Shape principles:
-//   * Every node carries a Span. Spans are stripped when the AST is
-//     serialized to a tree-calculus term for the eventual disp-hosted
-//     elaborator — they are a reference-implementation concession for
-//     error messages.
-//   * The parser does not resolve names. Every Var stays a string;
-//     the elaborator walks the AST with a scope and reports unresolved
-//     names.
-//   * Internal `let`s are desugared at parse time to App(Binder):
-//     `let x : T = body; rest` becomes
-//     `App(Binder([{name: "x", type: T}], rest), body)`.
-//     Top-level `let`s remain as `Def` nodes in `Program.members`.
-//     `use` is inlined by the parser; there is no Use node.
-//   * Binder is unified: body === null is a record type; body !== null
-//     is a lambda/Pi.
-//   * `A -> B` parses directly to `Binder([{name: null, type: A}], B)`;
-//     there is no dedicated Arrow node.
-//   * Dependent scoping is not in the AST — it arises from the
-//     elaborator walking params/members in order.
+// Two tiers, in strict-superset relation:
+//
+//   * Core — the contract every backend elaborator consumes. Pure
+//     expressions, no statements, no top-level items, no scope concepts,
+//     no source-only sugar. Every `Var` refers to a binder parameter in
+//     scope at that position; every `Hole` is a fresh metavariable the
+//     elaborator will solve.
+//
+//   * Surface (aliased as `Expr`) — superset of Core. Adds `Block` as
+//     the only surface-only expression kind. Parser also deals in the
+//     surface-only non-expression kinds (`Stmt`, `TopLevel`, `Program`),
+//     which are never reachable from Core.
+//
+// The parser drives a backend elaborator as it walks the surface AST:
+// internal `let`s desugar to `App(Binder)`; `use` inlines; `test`
+// bodies are elaborated immediately and compared by hash-cons identity;
+// `Block { members: [] }` collapses to its trailing. By the time elab
+// sees any sub-expression, it is a pure `Core` value.
 
 export type Span = { start: number; end: number; file: string }
 
-// ─────────────────────────────── Expressions ────────────────────────────
+// ─────────────────────────────── Core AST ───────────────────────────────
+//
+// The elab contract. Every node here is also a valid `Expr` (Surface).
+// No statements, no Def, no Block, no Let/Use/Test.
 
-export type Expr =
-  | Var | Leaf | Hole | App | Proj | Binder
-  | RecValue | Block | Ann
+export type Core =
+  | Var | Leaf | Hole | App | Binder | RecValue | Ann | Proj
 
-export type Var   = { tag: "var";   name: string;                  span: Span }
-export type Leaf  = { tag: "leaf";                                  span: Span }
-export type Hole  = { tag: "hole";                                  span: Span }
-export type App   = { tag: "app";   fn: Expr; arg: Expr;            span: Span }
-export type Proj  = { tag: "proj";  target: Expr; field: string;    span: Span }
+export type Var  = { tag: "var";  name: string;                  span: Span }
+export type Leaf = { tag: "leaf";                                 span: Span }
+export type Hole = { tag: "hole";                                 span: Span }
+export type App  = { tag: "app";  fn: Expr; arg: Expr;            span: Span }
+export type Proj = { tag: "proj"; target: Expr; field: string;    span: Span }
 
 // Unified binder / record-type.
 //   body === null : record type (Church-encoded product). Every Param
-//                   must have non-null name and non-null type.
+//                   must have a non-null name AND a non-null type.
 //   body !== null : lambda or Pi (elaborator decides from expected type).
 //                   Params may have null name (`_`) and null type
 //                   (inferred metavariable).
@@ -48,28 +48,15 @@ export type Binder = {
   span: Span
 }
 
-// `name` = null represents the hole binder `_` (only legal when body !== null).
-// `type` = null represents an omitted type slot (only legal when body !== null).
 export type Param = {
-  name: string | null
-  type: Expr | null
+  name: string | null    // null = hole binder `_` (only legal when body !== null)
+  type: Expr | null      // null = omitted type slot (only legal when body !== null)
   span: Span
 }
 
-// ─────────────────────────────── Braced-value forms ─────────────────────
-
-// Dependent record value. Later fields see earlier ones in scope.
 export type RecValue = {
   tag: "rec_value"
   members: NamedField[]
-  span: Span
-}
-
-// Statements followed by exactly one trailing expression.
-export type Block = {
-  tag: "block"
-  members: Stmt[]
-  trailing: Expr
   span: Span
 }
 
@@ -81,12 +68,8 @@ export type NamedField = {
   span: Span
 }
 
-// ─────────────────────────────── Ann ────────────────────────────────────
-
-// Type ascription. `(e : T)` in source. Top-level `let x : T = e`
-// becomes `Def { name: "x", body: Ann(e, T) }`. Internal typed lets
-// carry their type via the Binder.param.type slot of the desugared
-// `App(Binder, body)` form, not via Ann.
+// Type ascription. `(e : T)` in source. Typed `let NAME : T = e`
+// desugars body to `Ann(e, T)` at parse time.
 export type Ann = {
   tag: "ann"
   expr: Expr
@@ -94,12 +77,38 @@ export type Ann = {
   span: Span
 }
 
-// ─────────────────────────────── Statements ─────────────────────────────
+// ────────────────────────────── Surface AST ─────────────────────────────
 //
-// Only Test survives name-resolution. Let is substituted away at parse
-// time; Use is inlined; there is no `elab` or `raw` in the language.
+// Superset of Core. Adds `Block` (an expression) and the non-expression
+// kinds used only during parsing. Fields typed as `Expr` accept either
+// Core or Block; by elab time, all Blocks are gone.
 
-export type Stmt = Test
+export type Expr = Core | Block
+
+// Statements with a trailing value. `let`s are desugared away before
+// reaching elab; `use`s are inlined; only `Test` members survive an
+// empty-block simplification pass, and a Block with no members collapses
+// to its trailing expression.
+export type Block = {
+  tag: "block"
+  members: Stmt[]
+  trailing: Expr
+  span: Span
+}
+
+// ──────────────────────── Surface-only non-expressions ──────────────────
+//
+// Never reach the elaborator. The parser consumes these directly.
+
+export type Stmt = Let | Test | Use
+
+export type Let = {
+  tag: "let"
+  name: string
+  type: Expr | null    // when set, desugared to Ann(body, type) at parse time
+  body: Expr
+  span: Span
+}
 
 export type Test = {
   tag: "test"
@@ -108,16 +117,21 @@ export type Test = {
   span: Span
 }
 
-// ─────────────────────────────── Program ────────────────────────────────
+export type Use = {
+  tag: "use"
+  path: string
+  span: Span
+}
 
+// Top-level items. A top-level `let` becomes a `Def`; a top-level `test`
+// stays a `Test`; a top-level `use` is inlined by the parser and never
+// appears here.
 export type TopLevel = Def | Test
 
-// Named top-level export. Body may be an Ann when the source had
-// `let name : T = ...`.
 export type Def = {
   tag: "def"
   name: string
-  body: Expr
+  body: Expr    // Ann(body, T) if the source had `let x : T = body`
   span: Span
 }
 
@@ -125,4 +139,14 @@ export type Program = {
   tag: "program"
   members: TopLevel[]
   span: Span
+}
+
+// ─────────────────────────── Type predicates ────────────────────────────
+
+const CORE_TAGS: ReadonlySet<string> = new Set([
+  "var", "leaf", "hole", "app", "binder", "rec_value", "ann", "proj",
+])
+
+export function isCore(e: Expr): e is Core {
+  return CORE_TAGS.has(e.tag)
 }
