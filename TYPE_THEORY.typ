@@ -59,45 +59,36 @@ program (via `fix` and `wait`):
 
 ```disp
 napply = fix ({self, f, x} ->
-  // H-rule: if x is neutral and its type matches f, accept
-  ited ({_} -> ited ({_} -> TT)
-                    ({_} -> tag_dispatch self f x)
-                    (conv f (type_of_neutral x)))
-       ({_} -> tag_dispatch self f x)
-       (is_neutral x))
+  // H-rule: if x is neutral and its type matches f, short-circuit
+  match x
+  | VHyp _ _ | VStuck _ _ ->
+      if conv f (type_of_neutral x) then TT
+      else dispatch self f x
+  | _ -> dispatch self f x)
+
+dispatch = {self, f, x} ->
+  match f
+  | VHyp _ _    -> VStuck f x
+  | VStuck _ _  -> VStuck f x
+  | VLam _ body -> body x
+  | _           -> f x          // raw tree-calculus rules
 ```
 
-Where `tag_dispatch` handles each Val kind:
+The *H-rule* fires first: if `x` is neutral and `conv(f,
+type_of_neutral(x)) = TT`, return `TT` directly. This is the
+universal mechanism that makes types-as-predicates work for symbolic
+values --- including hypotheses used as types.
 
-```disp
-tag_dispatch = {self, f, x} ->
-  ited ({_} -> mk_vstuck f x)                    // VHyp → stuck
-       ({_} -> ited ({_} -> mk_vstuck f x)        // VStuck → stuck
-                    ({_} -> ited ({_} -> (vlam_body f) x)  // VLam → apply body
-                                 ({_} -> f x)      // raw data → tree-calc rules
-                                 (is_vlam f))
-                    (is_vstuck f))
-       (is_vhyp f)
-```
-
-All branching uses `ited` (deferred if-then-else) because tree
-calculus evaluates all branches eagerly. `ited` wraps each branch as
-a `{_} -> expr` thunk and forces only the chosen one.
-
-The *H-rule* fires before dispatch: if `x` is a neutral (VHyp or
-VStuck) and `conv(f, type_of_neutral(x)) = TT`, return `TT`
-directly. This is the universal mechanism that makes types-as-predicates
-work for symbolic values --- including hypotheses used as types
-(polymorphic identity).
+The `match` here is pattern dispatch on Val tags. In tree calculus this
+compiles to deferred triage (each branch wrapped as a thunk, only the
+taken branch forced); see #raw("KERNEL_DESIGN.md") for the `ited`
+encoding.
 
 = Vals
 
-Vals are tagged trees that `napply` operates on. Three tagged forms
-plus untagged data:
+Vals are tagged trees that `napply` operates on.
 
 == Val kinds
-
-Three tagged forms plus untagged data:
 
 #table(
   columns: (auto, 1fr, auto),
@@ -217,28 +208,20 @@ metadata (for `type_of_neutral`); terms do not.
 ```disp
 Type n = VLam(
   meta = fork(UNIV_TAG, n),
-  body = {t} ->
-    // Case 4 first: cumulative neutral (body-level, not H-rule)
-    ited ({_} ->
-           ited ({_} -> le (universe_rank (type_of_neutral t)) n)
-                ({_} -> FF)
-                (is_universe (type_of_neutral t)))
-         ({_} ->
-           // Case 1: universe below n
-           ited ({_} -> lt (universe_rank t) n)
-                ({_} ->
-                  // Case 2: Pi at rank ≤ n
-                  ited ({_} ->
-                         let dom = pi_dom t
-                         and (napply (Type n) dom)
-                             { let a = fresh_hyp dom
-                               napply (Type n) (napply (pi_cod t) a) })
-                       ({_} ->
-                         // Case 3: registered base type
-                         is_registered t)
-                       (is_pi t))
-                (is_universe t))
-         (is_neutral t))
+  body = {t} -> match t
+    | VHyp _ _ | VStuck _ _ ->       // Case 4: cumulative neutral
+        let t_type = type_of_neutral t
+        match t_type
+        | VLam (fork UNIV_TAG k) _ -> le k n
+        | _ -> FF
+    | VLam (fork UNIV_TAG k) _ ->     // Case 1: universe below n
+        lt k n
+    | VLam (fork PI_TAG (fork dom cod)) _ ->  // Case 2: Pi at rank ≤ n
+        and (napply (Type n) dom)
+            { let a = fresh_hyp dom
+              napply (Type n) (napply cod a) }
+    | _ ->                             // Case 3: registered base type
+        is_registered t)
 ```
 
 Case 4 (cumulative neutral) is handled in the body, not by the
@@ -257,15 +240,10 @@ hypotheses directly.
 ```disp
 Nat = fix ({self} -> VLam(
   meta = LEAF,
-  body = {n} ->
-    ited ({_} -> TT)
-         ({_} -> ited ({_} ->
-                        ited ({_} -> napply self (second n))
-                             ({_} -> FF)
-                             (fast_eq (first n) leaf))
-                      ({_} -> FF)
-                      (is_fork n))
-         (fast_eq n Zero)))
+  body = {n} -> match n
+    | leaf         -> TT                     // Zero
+    | fork leaf n' -> napply self n'          // Succ: recurse
+    | _            -> FF))
 ```
 
 == `Eq` --- propositional equality
@@ -399,9 +377,8 @@ using the NbE API, and emits raw trees.
   [`is_neutral`],  [`TT` iff `v` is VHyp or VStuck.],
   [`TT` / `FF`],   [Encoded booleans. `TT = leaf`, `FF = stem(leaf)`.],
   [`H-rule`],      [In `napply`: if `x` is neutral and `conv(f, type_of_neutral(x)) = TT`, return `TT`. Universal, not type-specific.],
-  [`wait`],        [Deferred application: `wait a b c = a(b)(c)` but `wait(a)(b)` does not evaluate `a(b)`.],
-  [`ited`],        [Deferred if-then-else: branches are thunks, only the chosen one is forced.],
-  [`fix`],         [Fixed-point via `wait`. Demand-driven recursion.],
+  [`wait`],        [Deferred application: `wait a b c = a(b)(c)` but `wait(a)(b)` does not evaluate `a(b)`. See #raw("KERNEL_DESIGN.md").],
+  [`fix`],         [Fixed-point via `wait`. Demand-driven recursion. See #raw("KERNEL_DESIGN.md").],
   [`TAG_ROOT`],    [Canonical tree prefix distinguishing tagged Vals from data.],
   [`PI_TAG` / `UNIV_TAG`],[Metadata tags in VLam's `meta` field.],
   [*quote*],       [Convert a closed Val to a raw tree-calculus term (bracket abstraction). One-way, lossy (metadata stripped).],
