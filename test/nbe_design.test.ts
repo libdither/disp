@@ -539,9 +539,7 @@ describe("NbE Design Validation", () => {
 
   describe("Dependent type with indexed families", () => {
     it("{F : Nat -> Type 0} -> {n : Nat} -> F n -> F n", () => {
-      // F : Nat -> Type 0
       const FType = mkArrow(Nat, Type0)
-      // The full type: Pi FType ({F} -> Pi Nat ({n} -> Pi (F n) ({_} -> F n)))
       const fullType = mkPi(FType, {
         tag: "lam", metadata: null,
         body: F => mkPi(Nat, {
@@ -549,7 +547,6 @@ describe("NbE Design Validation", () => {
           body: n => mkArrow(napply(F, n), napply(F, n))
         })
       })
-      // The term: {F} -> {n} -> {x} -> x
       const term: Val = {
         tag: "lam", metadata: null,
         body: _F => ({
@@ -561,6 +558,98 @@ describe("NbE Design Validation", () => {
         })
       }
       expect(check(fullType, term)).toBe(true)
+    })
+  })
+
+  // ==================================================================
+  // Raw-predicate bootstrapping validation
+  //
+  // These tests verify the key property: type predicates are ordinary
+  // functions. The caller does apply(type, value) — no eval, no special
+  // infrastructure. The predicate bootstraps Val-land internally when
+  // it needs hypothetical reasoning.
+  // ==================================================================
+
+  describe("Raw-predicate bootstrapping", () => {
+    it("concrete data: napply handles untagged leaf/fork directly", () => {
+      // Nat predicate applied to raw data — no hypotheses, no H-rule.
+      // napply dispatches via VLam → body, body does raw pattern matching.
+      const result = napply(Nat, Succ(Succ(Zero)))
+      expect(valEq(result, TT)).toBe(true)
+    })
+
+    it("napply mixes raw data and tagged hypotheses seamlessly", () => {
+      // Apply a raw function to a tagged hypothesis.
+      // napply(VLam, VHyp) → body(VHyp). The body receives the hypothesis.
+      const h = freshHyp(Nat)
+      const raw_succ: Val = { tag: "lam", metadata: null, body: (x: Val) => Succ(x) }
+      const result = napply(raw_succ, h)
+      // Result: fork(leaf, h) — raw fork wrapping a tagged hypothesis
+      expect(result.tag).toBe("fork")
+      expect(valEq((result as VFork).left, Zero)).toBe(true)
+      expect((result as VFork).right).toBe(h) // same object
+    })
+
+    it("predicate checks hybrid raw+tagged value", () => {
+      // Nat predicate on fork(leaf, hypothesis) — raw structure with tagged interior
+      const h = freshHyp(Nat)
+      const hybrid = Succ(h) // fork(leaf, VHyp)
+      // Nat pattern-matches the fork: first=leaf ✓, recurse on h.
+      // H-rule fires on h: conv(Nat, type_of_hyp(h)) = conv(Nat, Nat) = TT.
+      expect(check(Nat, hybrid)).toBe(true)
+    })
+
+    it("Pi predicate bootstraps Val-land on a raw function", () => {
+      // Pi receives a raw function (VLam). Internally:
+      // 1. Creates fresh_hyp (tagged)
+      // 2. napply(raw_fn, hyp) — raw fn applied to tagged hyp
+      // 3. Checks result against codomain
+      // 4. Returns TT/FF (raw)
+      // The caller did nothing special — napply handled the boundary.
+      const NatToNat = mkArrow(Nat, Nat)
+      const raw_fn: Val = { tag: "lam", metadata: null, body: x => x }
+      expect(check(NatToNat, raw_fn)).toBe(true)
+    })
+
+    it("hypothesis-as-type: H-rule bridges raw and tagged", () => {
+      // h_A is a hypothesis used AS A TYPE (the predicate).
+      // h_x is a hypothesis of type h_A.
+      // napply(h_A, h_x): H-rule checks conv(h_A, type_of_neutral(h_x)) = conv(h_A, h_A) = TT.
+      // No Val-land bootstrap needed — the H-rule handles it directly.
+      const h_A = freshHyp(mkUniverse(0))
+      const h_x = freshHyp(h_A)
+      expect(valEq(napply(h_A, h_x), TT)).toBe(true)
+    })
+
+    it("stuck application type inferred across raw/tagged boundary", () => {
+      // h_f : Nat -> Nat (tagged hypothesis)
+      // napply(h_f, Zero) where Zero is raw data
+      // Result: VStuck(h_f, Zero) — tagged head, raw arg
+      // type_of_neutral infers: pi_cod(Nat->Nat) applied to Zero = Nat
+      // Then: napply(Nat, stuck) → H-rule: conv(Nat, Nat) = TT
+      const NatToNat = mkArrow(Nat, Nat)
+      const h_f = freshHyp(NatToNat)
+      const stuck = napply(h_f, Zero)
+      expect(stuck.tag).toBe("stuck")
+
+      // The stuck value passes the Nat check via H-rule + type_of_neutral
+      expect(check(Nat, stuck)).toBe(true)
+    })
+
+    it("end-to-end: complex type on raw term, no explicit Val conversion", () => {
+      // Type: (Nat -> Nat) -> Nat -> Nat
+      // Term: {f, x} -> f (f x) — raw function, no annotations
+      // The Pi predicate bootstraps Val-land at each binder,
+      // raw functions seamlessly interact with hypotheses.
+      const type = mkArrow(mkArrow(Nat, Nat), mkArrow(Nat, Nat))
+      const term: Val = {
+        tag: "lam", metadata: null,
+        body: f => ({
+          tag: "lam", metadata: null,
+          body: x => napply(f, napply(f, x))
+        })
+      }
+      expect(check(type, term)).toBe(true)
     })
   })
 })

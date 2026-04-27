@@ -30,26 +30,38 @@
 
 = Types as predicates
 
-A *type* `T` is a value that acts as a predicate. Checking `v : T`
-is a single operation:
+A *type* is a tree-calculus function. Checking `v : T` is a single
+application on the unmodified tree-calculus runtime:
 
 ```
-  napply(T, v) = TT
+  apply(T, v) = TT
 ```
 
-There is no separate type table or annotated AST. The elaborator
-produces two values --- one for the term, one for its type --- and the
-checker asks exactly one question: does the type, applied to the term,
-reduce to `TT`?
+There is no separate type table, no annotated AST, no special
+runtime support. The type predicate is an ordinary tree. Applied
+to a candidate value, it reduces to `TT` (accepted) or something
+else (rejected).
 
-Everything that can be a well-defined predicate can be a type: `Nat`,
-`Pi`, `Eq`, `Type n`, user-defined data types.
+For *concrete* data --- checking `3 : Nat` --- the predicate
+pattern-matches on tree structure directly. No extra machinery.
 
-= The Val domain
+For *hypothetical* reasoning --- checking `{x : Nat} -> succ x`
+against `Nat -> Nat` --- the predicate needs to introduce a
+symbolic value (hypothesis) and check the function's behavior on it.
+This is where the predicate internally bootstraps a small evaluation
+layer (`napply`) that handles hypotheses. The layer is *library code
+inside the predicate*, not a separate system.
 
-Type checking operates on *Vals* --- tagged trees that carry
-structure the checker can reflect on. All Vals are raw trees with a
-conventional encoding.
+Everything that can be a well-defined predicate can be a type:
+`Nat`, `Pi`, `Eq`, `Type n`, user-defined data types.
+
+= Internal machinery: Vals and `napply`
+
+When a predicate needs hypothetical reasoning, it works with *Vals*
+--- tagged trees that carry hypothesis information alongside normal
+data. The Val encoding is the predicate's internal representation,
+not a system-wide abstraction. `napply` is the evaluator that handles
+both raw trees and tagged Vals seamlessly.
 
 == Val kinds
 
