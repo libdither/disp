@@ -281,7 +281,7 @@ const napply_simple = ap(fix_tree, compile(lam("self f x",
 
 const PI_TAG = stem(stem(LEAF))
 const UNIV_TAG = fork(LEAF, stem(LEAF))
-const ERROR_VAL = stem(stem(stem(stem(LEAF))))  // sentinel for type_of_neutral failure
+// (ERROR_VAL removed: CPS ton_check returns FF on failure, no sentinel needed)
 
 // Pi metadata: vlam_meta = fork(PI_TAG, fork(domain, codomain_fn))
 function mkPiMeta(domain: Tree, codomainFn: Tree): Tree {
@@ -323,47 +323,53 @@ const universe_rank = compile(lam("v",
 // type_of_neutral: spine inference
 // ================================================================
 
-// Select-then-apply pattern: branch bodies are compiled as closed functions,
-// selected via ite2 BEFORE shared args (self, napply_fn, v) are applied.
-// This prevents bracket abstraction from evaluating expensive recursive calls
-// inside thunks of non-taken branches (S-combinator forces both sides of
-// [x](f g) even when one side is inside a thunk that should never fire).
+// CPS-style type_of_neutral: instead of returning the inferred type (or an
+// error sentinel), takes a check_fn callback and returns Bool.
+// check_fn is called with the inferred type on success; FF on failure.
+// Eliminates ERROR_VAL and short-circuits on spine inference failure.
+//
+// ton_check(check_fn, v) → Bool
+//   VHyp: check_fn(stored_type)
+//   VStuck: recurse on head with continuation that extracts pi_cod
+//   else: FF
 
-// Branch: v is VHyp → extract stored type
-const ton_vhyp_fn = compile(lam("self napply_fn v",
-  a(lit(vhyp_type), v("v"))))
+// Branch: v is VHyp → call check_fn on stored type
+const ton_vhyp_fn = compile(lam("self napply_fn check_fn v",
+  a(v("check_fn"), a(lit(vhyp_type), v("v")))))
 
-// Branch: v is VStuck → recurse on spine
-// Inner ited is fine: the recursive call self(napply_fn)(vstuck_head(v)) is
-// needed for the condition AND the then-branch, and we're guaranteed v IS
-// vstuck here, so the recursion terminates.
-const ton_vstuck_fn = compile(lam("self napply_fn v",
-  a(lit(ited),
-    thunk(a(a(v("napply_fn"),
-        a(lit(pi_cod_fn), a(a(v("self"), v("napply_fn")), a(lit(vstuck_head), v("v"))))),
-      a(lit(vstuck_arg), v("v")))),
-    thunk(lit(ERROR_VAL)),
-    a(lit(is_pi), a(a(v("self"), v("napply_fn")), a(lit(vstuck_head), v("v")))))
-))
+// Continuation template for VStuck spine inference:
+// {check_fn, napply_fn, arg, head_type} ->
+//   is_pi(head_type) ? check_fn(napply_fn(pi_cod(head_type), arg)) : FF
+// Partially applied to (check_fn, napply_fn, arg) at each recursion step.
+const ton_spine_cont = compile(lam("check_fn napply_fn arg head_type",
+  a(lit(ite2),
+    a(v("check_fn"), a(a(v("napply_fn"), a(lit(pi_cod_fn), v("head_type"))), v("arg"))),
+    lit(FF),
+    a(lit(is_pi), v("head_type")))))
 
-// Branch: v is neither → error
-const ton_error_fn = compile(lam("self napply_fn v", lit(ERROR_VAL)))
+// Branch: v is VStuck → recurse with continuation built from template
+const ton_vstuck_fn = compile(lam("self napply_fn check_fn v",
+  a(a(a(v("self"), v("napply_fn")),
+    a(a(a(lit(ton_spine_cont), v("check_fn")), v("napply_fn")), a(lit(vstuck_arg), v("v")))),
+    a(lit(vstuck_head), v("v")))))
 
-// Non-VHyp dispatch: select vstuck_fn or error_fn, then apply shared args
-const ton_non_vhyp_fn = compile(lam("self napply_fn v",
-  a(a(a(a(lit(ite2), lit(ton_vstuck_fn), lit(ton_error_fn),
+// Branch: v is neither → FF
+const ton_ff_fn = compile(lam("self napply_fn check_fn v", lit(FF)))
+
+// Non-VHyp dispatch: select vstuck or ff, then apply shared args
+const ton_non_vhyp_fn = compile(lam("self napply_fn check_fn v",
+  a(a(a(a(a(lit(ite2), lit(ton_vstuck_fn), lit(ton_ff_fn),
     a(lit(is_vstuck), v("v"))),
-    v("self")), v("napply_fn")), v("v"))))
+    v("self")), v("napply_fn")), v("check_fn")), v("v"))))
 
-// Top-level: select vhyp_fn or non_vhyp_fn, then apply shared args
-const type_of_neutral_core = ap(fix_tree, compile(lam("self napply_fn v",
-  a(a(a(a(lit(ite2), lit(ton_vhyp_fn), lit(ton_non_vhyp_fn),
+// Top-level: select vhyp or non_vhyp, then apply shared args
+const ton_check_core = ap(fix_tree, compile(lam("self napply_fn check_fn v",
+  a(a(a(a(a(lit(ite2), lit(ton_vhyp_fn), lit(ton_non_vhyp_fn),
     a(lit(is_vhyp), v("v"))),
-    v("self")), v("napply_fn")), v("v")))))
+    v("self")), v("napply_fn")), v("check_fn")), v("v")))))
 
-// Deferred partial application via wait
-const type_of_neutral = ap(wait_tree, type_of_neutral_core, napply_simple)
-// wait(ton_core)(napply_simple)(v) = ton_core(napply_simple)(v)
+// Wired via wait: ton_check(check_fn, v) = ton_check_core(napply_simple, check_fn, v)
+const ton_check = ap(wait_tree, ton_check_core, napply_simple)
 
 // ================================================================
 // conv: structural Val equality
@@ -436,22 +442,22 @@ const tag_dispatch = compile(lam("f x",
 // napply with H-rule: select-then-apply to avoid bracket-abstraction
 // evaluating ton_fn(x) when x is not neutral.
 
-// Branch: x IS neutral → check H-rule, fall back to tag_dispatch
-const napply_neutral_fn = compile(lam("conv_fn ton_fn f x",
+// Branch: x IS neutral → check H-rule via ton_check(conv(f), x), fall back to tag_dispatch
+const napply_neutral_fn = compile(lam("conv_fn ton_check_fn f x",
   a(lit(ited),
     thunk(lit(TT)),
     thunk(a(a(lit(tag_dispatch), v("f")), v("x"))),
-    a(a(v("conv_fn"), v("f")), a(a(v("ton_fn"), v("x")))))))
+    a(a(v("ton_check_fn"), a(v("conv_fn"), v("f"))), v("x")))))
 
-// Branch: x is NOT neutral → raw tag dispatch (no type_of_neutral call)
-const napply_raw_fn = compile(lam("conv_fn ton_fn f x",
+// Branch: x is NOT neutral → raw tag dispatch (no type inference)
+const napply_raw_fn = compile(lam("conv_fn ton_check_fn f x",
   a(a(lit(tag_dispatch), v("f")), v("x"))))
 
 // Select branch via ite2 BEFORE applying shared args
-const napply_core = compile(lam("conv_fn ton_fn f x",
+const napply_core = compile(lam("conv_fn ton_check_fn f x",
   a(a(a(a(a(lit(ite2), lit(napply_neutral_fn), lit(napply_raw_fn),
     a(lit(is_neutral), v("x"))),
-    v("conv_fn")), v("ton_fn")), v("f")), v("x"))))
+    v("conv_fn")), v("ton_check_fn")), v("f")), v("x"))))
 
 // Wire up napply WITHOUT compile-time eval (use treeApply for the wrapper)
 // napply f x = napply_core conv type_of_neutral f x
@@ -482,7 +488,7 @@ function compileNoEval(expr: Cir, scope: Record<string, Tree> = {}): Tree {
 
 // Deferred partial application via wait
 const napply_w1 = ap(wait_tree, napply_core, conv)
-const napply_w2 = ap(wait_tree, napply_w1, type_of_neutral)
+const napply_w2 = ap(wait_tree, napply_w1, ton_check)
 const napply = ap(wait_tree, napply_w2)
 
 // ================================================================
@@ -690,12 +696,18 @@ const is_registered = compile(lam("t",
 
 // Type body branches (all take self, rank, t as args after ite2 selection):
 
-// Neutral branch: cumulative check — type_of_neutral(t) must be universe with rank <= n
-const type_neutral_fn = compile(lam("self rank t",
+// Cumulative universe check template:
+// {rank, inferred_type} -> is_universe(inferred_type) ? le(universe_rank(inferred_type), rank) : FF
+const univ_check_template = compile(lam("rank inferred_type",
   a(lit(ite2),
-    a(a(lit(nat_le), a(lit(universe_rank), a(lit(type_of_neutral), v("t")))), v("rank")),
+    a(a(lit(nat_le), a(lit(universe_rank), v("inferred_type"))), v("rank")),
     lit(FF),
-    a(lit(is_universe), a(lit(type_of_neutral), v("t"))))))
+    a(lit(is_universe), v("inferred_type")))))
+
+// Neutral branch: use ton_check with the universe check as continuation
+// ton_check(univ_check_template(rank), t) → Bool
+const type_neutral_fn = compile(lam("self rank t",
+  a(a(lit(ton_check), a(lit(univ_check_template), v("rank"))), v("t"))))
 
 // Universe-below branch: universeRank(t) < rank
 const type_univ_fn = compile(lam("self rank t",
@@ -950,20 +962,46 @@ describe("NbE Tree Programs", () => {
     })
   })
 
-  describe("type_of_neutral", () => {
-    it("bare hyp returns stored type", () => {
+  describe("ton_check (CPS type_of_neutral)", () => {
+    it("bare hyp: check_fn receives stored type", () => {
       const hyp = mkVHyp(Nat_tree, LEAF)
-      expect(treeEqual(ap(type_of_neutral, hyp), Nat_tree)).toBe(true)
+      // Use I as check_fn: returns the type itself (generalizes to any check)
+      expect(treeEqual(ap(ton_check, I, hyp), Nat_tree)).toBe(true)
     })
-    it("stuck app infers from spine", () => {
-      // h_f : Nat -> Nat, applied to h_x : Nat → type should be Nat
+    it("bare hyp: conv check succeeds for matching type", () => {
+      const hyp = mkVHyp(Nat_tree, LEAF)
+      // check_fn = conv(Nat) = fast_eq(Nat). Should return TT.
+      expect(treeEqual(ap(ton_check, ap(conv, Nat_tree), hyp), TT)).toBe(true)
+    })
+    it("bare hyp: conv check fails for non-matching type", () => {
+      const hyp = mkVHyp(Nat_tree, LEAF)
+      expect(treeEqual(ap(ton_check, ap(conv, Bool_tree), hyp), FF)).toBe(true)
+    })
+    it("stuck app: spine inference finds codomain type", () => {
       const NatToNat = buildArrow(Nat_tree, Nat_tree, LEAF)
       const h_f = mkVHyp(NatToNat, LEAF)
       const h_x = mkVHyp(Nat_tree, stem(LEAF))
       const stuck = mkVStuck(h_f, h_x)
-      const inferred = ap(type_of_neutral, stuck)
-      // Should be Nat (the codomain of Nat -> Nat at h_x)
-      expect(treeEqual(inferred, Nat_tree)).toBe(true)
+      // Use I to extract: should be Nat (codomain of Nat->Nat at h_x)
+      expect(treeEqual(ap(ton_check, I, stuck), Nat_tree)).toBe(true)
+    })
+    it("stuck app: conv check succeeds", () => {
+      const NatToNat = buildArrow(Nat_tree, Nat_tree, LEAF)
+      const h_f = mkVHyp(NatToNat, LEAF)
+      const h_x = mkVHyp(Nat_tree, stem(LEAF))
+      const stuck = mkVStuck(h_f, h_x)
+      expect(treeEqual(ap(ton_check, ap(conv, Nat_tree), stuck), TT)).toBe(true)
+    })
+    it("spine failure: non-Pi head returns FF", () => {
+      // h_x : h_A where h_A is VHyp (not Pi). h_x(h_x) → VStuck(h_x, h_x)
+      const h_A = mkVHyp(LEAF, LEAF)
+      const h_x = mkVHyp(h_A, stem(LEAF))
+      const stuck = mkVStuck(h_x, h_x)
+      // type_of_neutral fails: h_x's type is h_A, not Pi → FF
+      expect(treeEqual(ap(ton_check, I, stuck), FF)).toBe(true)
+    })
+    it("non-neutral input returns FF", () => {
+      expect(treeEqual(ap(ton_check, I, LEAF), FF)).toBe(true)
     })
   })
 
@@ -998,8 +1036,9 @@ describe("NbE Tree Programs", () => {
   })
 
   describe("napply with H-rule", () => {
-    it("napply_core with cheap type_of_neutral leaf → stem", () => {
-      const cheapTon = compile(lam("_", lit(LEAF)))
+    it("napply_core with cheap ton_check leaf → stem", () => {
+      // ton_check that always returns FF (no H-rule match)
+      const cheapTon = compile(lam("check_fn v", lit(FF)))
       expect(treeEqual(ap(napply_core, conv, cheapTon, LEAF, LEAF), stem(LEAF))).toBe(true)
     })
     it("leaf → stem (same as simple)", () => {

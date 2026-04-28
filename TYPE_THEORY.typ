@@ -59,21 +59,21 @@ to raw tree-calculus rules for untagged data.
 tree-calculus program wired via `wait`-based partial application:
 
 ```disp
-// Branch: x is neutral → check H-rule, fall back to tag dispatch
-napply_neutral = {conv_fn, ton_fn, f, x} ->
-    if conv_fn f (ton_fn x) then TT
+// Branch: x is neutral → H-rule via ton_check(conv(f), x)
+napply_neutral = {conv_fn, ton_check, f, x} ->
+    if ton_check (conv_fn f) x then TT
     else dispatch f x
 
 // Branch: x is not neutral → tag dispatch only
-napply_raw = {conv_fn, ton_fn, f, x} -> dispatch f x
+napply_raw = {conv_fn, ton_check, f, x} -> dispatch f x
 
 // Core: select branch based on is_neutral(x), then apply shared args
-napply_core = {conv_fn, ton_fn, f, x} ->
+napply_core = {conv_fn, ton_check, f, x} ->
     (if is_neutral x then napply_neutral else napply_raw)
-      conv_fn ton_fn f x
+      conv_fn ton_check f x
 
 // Wire dependencies via wait (deferred partial application)
-napply = wait (wait (wait napply_core conv) type_of_neutral)
+napply = wait (wait (wait napply_core conv) ton_check)
 ```
 
 `napply_core` is *not* recursive --- it does not reference `self`.
@@ -248,27 +248,61 @@ by type constructors that create binders, like Pi). Satisfies:
 The elaborator increments depth at each binder; `fresh_hyp` is
 called with the current depth. No global counter is needed.
 
-== `type_of_neutral(v) → Val`
+== `ton_check(check_fn, v) → Bool`
 
-Spine inference: recursively reads the type from the hypothesis at the
-head of a stuck-application chain.
+CPS-style spine inference: instead of returning the inferred type (or
+an error sentinel), `ton_check` takes a *check function* and calls it
+with the inferred type on success, or returns `FF` on failure.
 
 ```disp
-type_of_neutral = fix {self, napply_fn, v} ->
-    if is_vhyp v then vhyp_type v
+// Continuation template for VStuck spine:
+// extracts pi_cod from head_type, instantiates at arg, passes to check_fn
+ton_spine_cont = {check_fn, napply_fn, arg, head_type} ->
+    if is_pi head_type then
+      check_fn (napply_fn (pi_cod head_type) arg)
+    else FF
+
+ton_check = fix {self, napply_fn, check_fn, v} ->
+    if is_vhyp v then
+      check_fn (vhyp_type v)                       // success: call check_fn
     else if is_vstuck v then
-      let head_type = self napply_fn (vstuck_head v)
-      if is_pi head_type then
-        napply_fn (pi_cod head_type) (vstuck_arg v)
-      else ERROR
-    else ERROR
+      self napply_fn                                // recurse on head
+        (ton_spine_cont check_fn napply_fn (vstuck_arg v))  // continuation
+        (vstuck_head v)
+    else FF                                         // not neutral: fail
 ```
 
-Uses `napply_simple` (tag dispatch without H-rule) to instantiate
-codomains. This avoids circular dependency: `type_of_neutral` feeds
-into `napply`'s H-rule, so it cannot call the full `napply`.
+At each VStuck level, the recursion passes a *continuation* that
+processes the head's inferred type: if it's Pi, extract the codomain,
+instantiate with `napply_simple`, and pass to the outer `check_fn`. If
+not Pi, return `FF`. The recursion bottoms out at VHyp, which calls
+`check_fn` directly on the stored type.
 
-Wired via `wait`: `type_of_neutral = wait(type_of_neutral_core, napply_simple)`.
+Uses `napply_simple` (tag dispatch without H-rule) to instantiate
+codomains. This avoids circular dependency: `ton_check` feeds into
+`napply`'s H-rule, so it cannot call the full `napply`.
+
+Wired via `wait`: `ton_check = wait(ton_check_core, napply_simple)`.
+
+=== No error sentinel needed
+
+Unlike a design that returns the inferred type (requiring an
+`ERROR_VAL` sentinel for failure), the CPS approach short-circuits: if
+spine inference fails at any level, `FF` propagates directly.
+`check_fn` is simply never called. No sentinel value, no risk of
+accidental collision with a real type.
+
+=== H-rule integration
+
+The H-rule in `napply` becomes:
+
+```disp
+ton_check (conv f) x
+```
+
+Where `conv(f) = fast_eq(f)` is the partially-applied equality check.
+If `type_of_neutral` succeeds and the inferred type matches `f`, the
+check function returns `TT`. Otherwise `FF`.
 
 = Type constructors
 
@@ -314,12 +348,14 @@ cases, using select-then-apply for each dispatch level:
 
 ```disp
 Type = {rank} ->
+    // Universe rank check as continuation:
+    univ_check = {rank, inferred_type} ->
+        if is_universe inferred_type then le (universe_rank inferred_type) rank
+        else FF
     let body = fix {self, t} ->
       if is_neutral t then
-        // Case 1: cumulative neutral
-        let t_type = type_of_neutral t
-        if is_universe t_type then le (universe_rank t_type) rank
-        else FF
+        // Case 1: cumulative neutral (via CPS ton_check)
+        ton_check (univ_check rank) t
       else if is_universe t then
         // Case 2: universe below rank
         lt (universe_rank t) rank
@@ -386,36 +422,119 @@ Semantic equality as a type: `Eq A a b` accepts any witness when
 
 ```
 napply(Nat, Succ(Succ(Succ(Zero))))
-→ pattern match: is_fork? yes, first=leaf? yes, recurse on Succ(Succ(Zero))
-→ ... recurse twice more ...
-→ napply(Nat, Zero) → fast_eq Zero Zero → TT
+  Nat is VLam → dispatch calls Nat's body with Succ(Succ(Succ(Zero)))
+  is_tree_fork? yes. fork_left == leaf? yes → Succ case
+  → napply(Nat, Succ(Succ(Zero)))    // recursive via fix
+  → napply(Nat, Succ(Zero))
+  → napply(Nat, Zero)
+  Zero == leaf → TT ✓
 ```
+
+No `type_of_neutral` or H-rule involved --- this is pure data
+checking via Nat's body.
 
 == `{x : Nat} -> x` checked against `Nat -> Nat`
 
 ```
-napply(Pi Nat ({_}->Nat), {x}->x)
-→ a = fresh_hyp(Nat)
-→ napply({x}->x, a) = a
-→ napply(Nat, a)
-→ H-rule: is_neutral(a)? yes. type_of_neutral(a) = Nat.
-  conv(Nat, Nat) = TT → TT
+napply(Pi(Nat, {_}->Nat, depth=0), {x}->x)
+  {x}->x is VLam, not neutral → dispatch calls Pi's body
+  Pi body:
+    h = fresh_hyp(Nat, 0) = VHyp(Nat, 0)
+    result = napply({x}->x, h)
+      {x}->x is VLam → body(h) = h
+    cod = napply({_}->Nat, h)
+      {_}->Nat is VLam → body(h) = Nat
+    napply(Nat, h)
+      H-rule: is_neutral(h)? yes (VHyp)
+      ton_check(conv(Nat), h):
+        h is VHyp → conv(Nat)(Nat) = fast_eq → TT ✓
 ```
 
-== `{f:Nat->Nat, x:Nat} -> f x`
+The H-rule fires because `h` is a hypothesis whose stored type matches
+the predicate. `type_of_neutral` on a bare VHyp is a single-step
+extraction.
+
+== `{f:Nat->Nat, x:Nat} -> f x` --- `type_of_neutral` spine inference
+
+Checked against `Pi(Nat->Nat, {_} -> Pi(Nat, {_} -> Nat))`:
 
 ```
-napply(Pi (Nat->Nat) ({_}->Nat->Nat), term)
-→ h_f = fresh_hyp(Nat->Nat)
-→ napply(term, h_f) = {x}->napply(h_f, x) (inner lambda)
-→ napply(Pi Nat ({_}->Nat), inner_lambda)
-→ h_x = fresh_hyp(Nat)
-→ napply(inner_lambda, h_x) = napply(h_f, h_x) = VStuck(h_f, h_x)
-→ napply(Nat, VStuck(h_f, h_x))
-→ H-rule: type_of_neutral(VStuck(h_f, h_x))
-  = napply(pi_cod(type_of_hyp(h_f)), h_x)
-  = napply({_}->Nat, h_x) = Nat
-  conv(Nat, Nat) = TT → TT
+napply(outer_Pi, term)
+  Pi body:
+    h_f = fresh_hyp(Nat->Nat, 0) = VHyp(Nat->Nat, 0)
+    result = napply(term, h_f)
+      term is VLam → body(h_f) = VLam(_, {x} -> napply(h_f, x))
+    cod = napply({_}->Pi(Nat,{_}->Nat), h_f) = Pi(Nat, {_}->Nat)
+    napply(Pi(Nat, {_}->Nat), inner_term)
+      inner_term is VLam, not neutral → Pi body:
+        h_x = fresh_hyp(Nat, 1) = VHyp(Nat, 1)
+        result = napply(inner_term, h_x)
+          inner body(h_x) = napply(h_f, h_x)
+            h_f is VHyp (neutral) → dispatch: VStuck(h_f, h_x)
+        cod = napply({_}->Nat, h_x) = Nat
+        napply(Nat, VStuck(h_f, h_x))
+          H-rule: is_neutral? yes (VStuck)
+          ton_check(conv(Nat), VStuck(h_f, h_x)):     ← CPS spine inference
+            check_fn = conv(Nat) = fast_eq(Nat)
+            v = VStuck(h_f, h_x), is_vstuck → recurse on head
+            continuation = ton_spine_cont(conv(Nat), napply_simple, h_x)
+            ton_check(napply_simple, continuation, h_f):
+              h_f is VHyp → continuation(Nat->Nat)     ← base: stored type
+              ton_spine_cont:
+                is_pi(Nat->Nat)? yes
+                pi_cod(Nat->Nat) = {_}->Nat
+                napply_simple({_}->Nat, h_x) = Nat     ← instantiate codomain
+                check_fn(Nat) = conv(Nat)(Nat) = TT ✓
+```
+
+This is the core `type_of_neutral` use case: walking the stuck spine
+`VStuck(h_f, h_x)` to discover that `h_f(h_x)` has type `Nat`.
+The recursion bottoms out at `h_f` (a bare VHyp), extracts its Pi type,
+then uses `napply_simple` (tag dispatch, no H-rule) to instantiate
+the codomain at the argument `h_x`.
+
+Note: `type_of_neutral` uses `napply_simple`, not `napply`. This
+avoids circularity (type_of_neutral is called *by* napply's H-rule).
+
+== `Nat : Type 0` --- universe checking
+
+```
+napply(Type 0, Nat)
+  Nat is VLam, not neutral → dispatch calls Type 0's body
+  Type body (rank=0):
+    is_neutral(Nat)? no
+    is_universe(Nat)? no (meta=LEAF, not UNIV_TAG)
+    is_pi(Nat)? no (meta=LEAF, not PI_TAG)
+    is_registered(Nat)? conv(Nat, Nat) = TT → yes ✓
+```
+
+== `Type 0 : Type 1` --- universe stratification
+
+```
+napply(Type 1, Type 0)
+  Type 0 is VLam, not neutral → dispatch calls Type 1's body
+  Type body (rank=1):
+    is_neutral(Type 0)? no
+    is_universe(Type 0)? yes (meta = fork(UNIV_TAG, 0))
+    universe_rank(Type 0) = 0
+    lt(0, 1) = TT ✓
+```
+
+== `Nat -> Nat : Type 0` --- Pi in universe
+
+```
+napply(Type 0, Nat->Nat)
+  Nat->Nat is VLam with PI_TAG, not neutral → dispatch calls Type 0's body
+  Type body (rank=0):
+    is_neutral? no. is_universe? no.
+    is_pi(Nat->Nat)? yes
+    check domain: napply(Type 0, Nat)
+      → is_registered(Nat) → TT ✓
+    check codomain:
+      h = fresh_hyp(Nat, stem(stem(0)))     // depth distinct from Pi's own hyp
+      napply({_}->Nat, h) = Nat             // instantiate codomain
+      napply(Type 0, Nat)
+        → is_registered(Nat) → TT ✓
 ```
 
 == Polymorphic identity
@@ -423,28 +542,62 @@ napply(Pi (Nat->Nat) ({_}->Nat->Nat), term)
 `{A:Type 0, x:A} -> x` checked against `Pi(Type 0, {A}->Pi(A, {_}->A))`:
 
 ```
-→ h_A = fresh_hyp(Type 0)
-→ napply(codomain, h_A) = Pi(h_A, {_}->h_A)
-→ h_x = fresh_hyp(h_A)
-→ napply({x}->x, h_x) = h_x
-→ napply(h_A, h_x)
-→ H-rule: type_of_neutral(h_x) = h_A. conv(h_A, h_A) = TT.
+napply(outer_Pi, poly_id)
+  Pi body:
+    h_A = fresh_hyp(Type 0, 0)          // hypothesis: A : Type 0
+    cod = napply({A}->Pi(A,{_}->A), h_A)
+        = Pi(h_A, {_}->h_A)             // dependent: codomain uses h_A
+    result = napply(poly_id, h_A)
+           = VLam(_, I)                  // {x} -> x
+    napply(Pi(h_A, {_}->h_A), VLam(_, I))
+      Pi body:
+        h_x = fresh_hyp(h_A, 1)         // hypothesis: x : A (abstract type!)
+        result = napply(VLam(_,I), h_x)
+               = I(h_x) = h_x           // identity returns h_x
+        cod = napply({_}->h_A, h_x)
+            = h_A                        // codomain is h_A itself
+        napply(h_A, h_x)                 // check: h_x : h_A
+          H-rule: is_neutral(h_x)? yes
+          ton_check(conv(h_A), h_x):
+            h_x is VHyp → conv(h_A)(h_A) = fast_eq → TT ✓
 ```
 
-The H-rule fires on a *hypothesis used as a type*. This is how
-abstract type variables work.
+The H-rule fires on a *hypothesis used as a type*. `h_A` is both a
+term (the codomain type) and the predicate being applied. Since
+`type_of_neutral(h_x) = h_A` and `conv(h_A, h_A) = TT`, the check
+succeeds. This is how abstract type variables work.
 
-== Rejection: `{A:Type 0, x:A} -> x x`
+== Rejection: `{A:Type 0, x:A} -> x x` --- `type_of_neutral` error path
 
 ```
-→ h_A = fresh_hyp(Type 0), h_x = fresh_hyp(h_A)
-→ napply(h_x, h_x) = VStuck(h_x, h_x)
-→ napply(h_A, VStuck(h_x, h_x))
-→ H-rule: type_of_neutral(VStuck(h_x, h_x)):
-  head_type = h_A. is_pi(h_A)? h_A is VHyp, not Pi. FAIL.
-  → H-rule doesn't fire.
-→ napply(h_A, stuck) = VStuck(h_A, stuck). Not TT. Rejected.
+napply(Pi(Type 0, {A}->Pi(A,{_}->A)), bad_term)
+  Pi body:
+    h_A = fresh_hyp(Type 0, 0)
+    h_x = fresh_hyp(h_A, 1)
+    result = napply(bad_term, h_A)       // produces {x}->napply(x,x)
+    ...eventually reaches:
+    napply({x}->napply(x,x), h_x)
+      = napply(h_x, h_x)                // apply h_x to itself
+      h_x is VHyp (neutral) → dispatch: VStuck(h_x, h_x)
+    napply(h_A, VStuck(h_x, h_x))
+      H-rule: is_neutral? yes
+      ton_check(conv(h_A), VStuck(h_x, h_x)):
+        check_fn = conv(h_A)
+        v = VStuck(h_x, h_x), is_vstuck → recurse on head h_x
+        ton_check(napply_simple, continuation, h_x):
+          h_x is VHyp → continuation(h_A)
+          continuation: is_pi(h_A)? h_A is VHyp, not Pi → FF
+        → FF propagates directly            ← no sentinel needed
+      H-rule does not fire.
+    dispatch: h_A is VHyp → VStuck(h_A, VStuck(h_x, h_x))
+    Result is VStuck, not TT → rejected ✓
 ```
+
+`type_of_neutral` fails because `h_x : h_A` where `h_A` is an opaque
+type variable --- it could be any type, and there is no evidence that
+it is a function type. The `ERROR_VAL` sentinel safely prevents the
+H-rule from firing: it is a stem-chain that can never `conv`-match
+any tagged type.
 
 = Soundness
 
@@ -530,7 +683,7 @@ runtime (`src/tree.ts`), validated by `test/nbe_tree.test.ts`:
   [`napply(f, x)`],[The evaluator. H-rule + tag dispatch + tree-calculus rules.],
   [`conv(a, b)`],  [Semantic equality on Vals. Fast path: `fast_eq`. Structural: recursive with Pi/Universe handling.],
   [`fresh_hyp(A, depth)`],[Create a hypothesis: `mkVHyp(A, depth)`. Pure data construction.],
-  [`type_of_neutral(v)`],[Infer a neutral's type by walking its stuck-application spine.],
+  [`ton_check(check_fn, v)`],[CPS spine inference: calls `check_fn(inferred_type)` on success, returns `FF` on failure. Replaces `type_of_neutral`.],
   [`is_pi`, `pi_dom`, `pi_cod`],[Reflection on VLam metadata. Library functions.],
   [`is_universe`, `universe_rank`],[Reflection on universe metadata.],
   [`is_neutral`],  [`TT` iff `v` is VHyp or VStuck.],
