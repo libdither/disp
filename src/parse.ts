@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
-  Tree, LEAF, stem, fork, applyTree, treeApply, FAST_EQ,
+  Tree, LEAF, stem, fork, applyTree, FAST_EQ,
 } from "./tree.js"
 
 // ───────────────────────────── 1. Tokens ─────────────────────────────────
