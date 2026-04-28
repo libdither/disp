@@ -1,0 +1,942 @@
+// NbE as tree-calculus programs
+// Ported from nbe_tree.test.ts — all components are tree programs
+// running on the unmodified tree.ts runtime.
+
+// ================================================================
+// Fundamental combinators
+// ================================================================
+
+let TT = t
+let FF = t t
+
+// triage(on_leaf, on_stem, on_fork) x:
+//   x=leaf → on_leaf, x=stem(u) → on_stem u, x=fork(u,v) → on_fork u v
+let triage = {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
+
+// ite2(then, else, cond): EAGER — both branches evaluated.
+// cond=TT→then, cond=FF→else
+let ite2 = {then_v, else_v, cond} -> t (t then_v ({_} -> else_v)) t cond
+
+// ited(then_thunk, else_thunk, cond): DEFERRED — branches are {_}->value thunks.
+// Only the chosen branch is forced.
+let ited = {then_thunk, else_thunk, cond} -> t (t then_thunk ({_} -> else_thunk)) t cond t
+
+test ite2 (t t) (t (t t) t) TT = t t
+test ite2 (t t) (t (t t) t) FF = t (t t) t
+
+// pair accessors
+let pair_fst = {p} -> triage t ({x} -> x) ({l, r} -> l) p
+let pair_snd = {p} -> triage t ({x} -> x) ({l, r} -> r) p
+
+test pair_fst (t (t t) t) = t t
+test pair_snd (t (t t) t) = t
+
+// ================================================================
+// Tag infrastructure
+// ================================================================
+
+let TAG_ROOT = t (t (t t)) (t t)
+let KV_LAM = t
+let KV_HYP = t t
+let KV_STUCK = t t t
+let KV_ELIM = t (t t t)           // stuck eliminator
+
+// tagged(kind, payload) = fork(fork(TAG_ROOT, kind), payload)
+let tagged = {kind, payload} -> t (t TAG_ROOT kind) payload
+let mkVLam = {meta, body} -> tagged KV_LAM (t meta body)
+let mkVHyp = {ty, id} -> tagged KV_HYP (t ty id)
+let mkVStuck = {head, arg} -> tagged KV_STUCK (t head arg)
+
+// is_tagged: checks fork(fork(TAG_ROOT, _), _)
+let is_tagged = {x} ->
+  triage
+    FF
+    ({_} -> FF)
+    ({l, r} -> triage FF ({_} -> FF) ({ll, lr} -> fast_eq ll TAG_ROOT) l)
+    x
+
+test is_tagged (mkVHyp t t) = TT
+test is_tagged (mkVLam t ({x} -> x)) = TT
+test is_tagged t = FF
+test is_tagged (t t) = FF
+test is_tagged (t t t) = FF
+
+// tag_kind: t.left.right
+let tag_kind = {x} ->
+  triage t ({x} -> x) ({l, r} -> triage t ({x} -> x) ({ll, lr} -> lr) l) x
+
+// tag_payload: t.right
+let tag_payload = {x} -> triage t ({x} -> x) ({l, r} -> r) x
+
+test tag_kind (mkVLam t ({x} -> x)) = KV_LAM
+test tag_kind (mkVHyp t t) = KV_HYP
+test tag_payload (mkVHyp (t t) t) = t (t t) t
+
+// Kind-specific recognizers
+let mkKindCheck = {kindTag, x} ->
+  ited ({_} -> fast_eq (tag_kind x) kindTag) ({_} -> FF) (is_tagged x)
+
+let is_vhyp = {x} -> mkKindCheck KV_HYP x
+let is_vlam = {x} -> mkKindCheck KV_LAM x
+let is_vstuck = {x} -> mkKindCheck KV_STUCK x
+let is_velim = {x} -> mkKindCheck KV_ELIM x
+let is_neutral = {x} ->
+  ited ({_} -> TT)
+    ({_} -> ited ({_} -> TT) ({_} -> is_velim x) (is_vstuck x))
+    (is_vhyp x)
+
+test is_vhyp (mkVHyp t t) = TT
+test is_vhyp (mkVLam t ({x} -> x)) = FF
+test is_vhyp t = FF
+test is_vlam (mkVLam t ({x} -> x)) = TT
+test is_vlam (mkVHyp t t) = FF
+test is_vstuck (mkVStuck t t) = TT
+test is_vstuck t = FF
+test is_neutral (mkVHyp t t) = TT
+test is_neutral (mkVStuck t t) = TT
+test is_neutral (mkVLam t ({x} -> x)) = FF
+test is_neutral t = FF
+
+// Payload accessors
+let vlam_meta = {x} -> pair_fst (tag_payload x)
+let vlam_body = {x} -> pair_snd (tag_payload x)
+let vhyp_type = vlam_meta
+let vhyp_id = vlam_body
+let vstuck_head = vlam_meta
+let vstuck_arg = vlam_body
+
+test vlam_body (mkVLam t ({x} -> x)) = {x} -> x
+test vlam_meta (mkVLam (t (t t)) ({x} -> x)) = t (t t)
+test vhyp_type (mkVHyp (t t) t) = t t
+
+// mk_vstuck as tree program
+let mk_vstuck_prog = {h, arg} ->
+  t (t TAG_ROOT KV_STUCK) (t h arg)
+
+test mk_vstuck_prog (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
+
+// Stuck eliminator: frozen case-split on a neutral target.
+// Payload: fork(motive, target)
+// The motive is a function: target_type → result_type.
+// type_of_neutral(VStuckElim) = napply(motive, target)
+let mkVStuckElim = {motive, target} -> tagged KV_ELIM (t motive target)
+let velim_motive = {x} -> pair_fst (tag_payload x)
+let velim_target = {x} -> pair_snd (tag_payload x)
+
+// VStuckElim tests deferred to after Nat/Bool are defined
+
+// ================================================================
+// wait + fix: tree-calculus recursion
+// ================================================================
+
+// wait a b c = a(b)(c), but wait(a)(b) does NOT evaluate a(b) eagerly.
+let wait = {a, b, c} -> t (t a) (t t c) b
+
+// Self-applicator and fixed-point combinator
+let m = {x} -> x x
+let fix = {f} -> wait m ({x} -> f (wait m x))
+
+test wait ({x, y} -> x) t (t t) = t
+
+// fix countdown test
+let countdown = fix ({self, n} -> triage t ({c} -> self c) ({l, r} -> self r) n)
+test countdown t = t
+test countdown (t t t) = t
+test countdown (t t (t t t)) = t
+
+// ================================================================
+// napply_simple: tag dispatch, no H-rule
+// ================================================================
+
+// tag_dispatch: dispatch on tagged Val kind
+let tag_dispatch = {f, x} ->
+  ited ({_} -> mk_vstuck_prog f x)
+    ({_} -> ited ({_} -> mk_vstuck_prog f x)
+      ({_} -> ited ({_} -> vlam_body f x)
+        ({_} -> f x)
+        (is_vlam f))
+      (is_vstuck f))
+    (is_vhyp f)
+
+let napply_simple = fix ({self, f, x} ->
+  ited ({_} -> mk_vstuck_prog f x)
+    ({_} -> ited ({_} -> mk_vstuck_prog f x)
+      ({_} -> ited ({_} -> vlam_body f x)
+        ({_} -> f x)
+        (is_vlam f))
+      (is_vstuck f))
+    (is_vhyp f))
+
+test tag_dispatch t t = t t
+test napply_simple t t = t t
+test napply_simple (t t) (t t) = t t (t t)
+// K rule: fork(LEAF, b) x → b
+test napply_simple (t t (t (t t))) t = t (t t)
+// VHyp → VStuck
+test napply_simple (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
+// VStuck → deeper VStuck
+test napply_simple (mkVStuck (mkVHyp t t) t) (t t) = mkVStuck (mkVStuck (mkVHyp t t) t) (t t)
+// VLam body=I → identity
+test napply_simple (mkVLam t ({x} -> x)) (t t) = t t
+// VLam body=K → K(x)
+test napply_simple (mkVLam t ({x, y} -> x)) (t t) = t t (t t)
+// I on data
+test napply_simple ({x} -> x) t = t
+test napply_simple ({x} -> x) (t t) = t t
+test napply_simple ({x} -> x) (t (t t) t) = t (t t) t
+// I on VHyp (triage reconstructs fork)
+test napply_simple ({x} -> x) (mkVHyp (t t) t) = mkVHyp (t t) t
+
+// ================================================================
+// Metadata: Pi and Universe reflection
+// ================================================================
+
+let PI_TAG = t (t t)
+let UNIV_TAG = t t (t t)
+
+let is_pi = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) PI_TAG) FF (is_vlam v)
+let pi_dom = {v} -> pair_fst (pair_snd (vlam_meta v))
+let pi_cod_fn = {v} -> pair_snd (pair_snd (vlam_meta v))
+
+let is_universe = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) UNIV_TAG) FF (is_vlam v)
+let universe_rank = {v} -> pair_snd (vlam_meta v)
+
+// mkVHyp as tree program (same as mkVHyp but named for clarity when used as fresh_hyp)
+let mkVHyp_prog = {ty, id} -> t (t TAG_ROOT KV_HYP) (t ty id)
+let mkVLam_prog = {meta, body} -> t (t TAG_ROOT KV_LAM) (t meta body)
+let fresh_hyp = mkVHyp_prog
+
+test mkVLam_prog (t t) ({x} -> x) = mkVLam (t t) ({x} -> x)
+test mkVHyp_prog t t = mkVHyp t t
+
+// ================================================================
+// type_of_neutral (CPS: ton_check)
+// ================================================================
+
+// ton_check(check_fn, v) → Bool
+// VHyp: check_fn(stored_type)
+// VStuck: recurse on head with continuation
+// else: FF
+
+let ton_vhyp_fn = {self, napply_fn, check_fn, v} -> check_fn (vhyp_type v)
+
+let ton_spine_cont = {check_fn, napply_fn, arg, head_type} ->
+  ite2 (check_fn (napply_fn (pi_cod_fn head_type) arg)) FF (is_pi head_type)
+
+let ton_vstuck_fn = {self, napply_fn, check_fn, v} ->
+  self napply_fn
+    (ton_spine_cont check_fn napply_fn (vstuck_arg v))
+    (vstuck_head v)
+
+let ton_ff_fn = {self, napply_fn, check_fn, v} -> FF
+
+// Branch: v is VStuckElim → type = napply(motive, target), call check_fn on it
+let ton_velim_fn = {self, napply_fn, check_fn, v} ->
+  check_fn (napply_fn (velim_motive v) (velim_target v))
+
+let ton_non_vhyp_fn = {self, napply_fn, check_fn, v} ->
+  ite2 ton_vstuck_fn
+    ({self, napply_fn, check_fn, v} ->
+      ite2 ton_velim_fn ton_ff_fn (is_velim v)
+        self napply_fn check_fn v)
+    (is_vstuck v)
+    self napply_fn check_fn v
+
+let ton_check_core = fix ({self, napply_fn, check_fn, v} ->
+  ite2 ton_vhyp_fn ton_non_vhyp_fn (is_vhyp v)
+    self napply_fn check_fn v)
+
+let ton_check = wait ton_check_core napply_simple
+
+// conv (fast_eq based)
+let conv = {a, b} -> fast_eq a b
+
+// ================================================================
+// napply: full evaluator with H-rule
+// ================================================================
+
+// Branch: x IS neutral → check H-rule, fall back to tag_dispatch
+let napply_neutral_fn = {conv_fn, ton_check_fn, f, x} ->
+  ited ({_} -> TT)
+    ({_} -> tag_dispatch f x)
+    (ton_check_fn (conv_fn f) x)
+
+// Branch: x NOT neutral → raw tag dispatch
+let napply_raw_fn = {conv_fn, ton_check_fn, f, x} ->
+  tag_dispatch f x
+
+// Select branch via ite2, then apply shared args
+let napply_core = {conv_fn, ton_check_fn, f, x} ->
+  ite2 napply_neutral_fn napply_raw_fn (is_neutral x)
+    conv_fn ton_check_fn f x
+
+// Wire up napply with deferred partial application via wait
+let napply = wait (wait (wait napply_core conv) ton_check)
+
+// ================================================================
+// Type constructors
+// ================================================================
+
+// Pi body template: \napply_ref cod_at_hyp hyp f -> napply_ref(cod_at_hyp, napply_ref(f, hyp))
+// Normalized: anything that isn't TT becomes FF. This handles the case where
+// napply(cod, result) produces a stuck term instead of a boolean (e.g. when
+// the codomain type is an abstract hypothesis and the result has the wrong type).
+let pi_body_template = {napply_ref, A, B, f} ->
+  fast_eq (napply_ref A (napply_ref f B)) TT
+
+// mkPi_prog: \domain codFn depth -> VLam(piMeta, pi_body)
+let mkPi_prog = {domain, codFn, depth} ->
+  mkVLam_prog
+    (t PI_TAG (t domain codFn))
+    (pi_body_template napply
+      (napply codFn (mkVHyp_prog domain depth))
+      (mkVHyp_prog domain depth))
+
+// mkArrow_prog: non-dependent A -> B
+let mkArrow_prog = {a_type, b_type, depth} ->
+  mkPi_prog a_type (mkVLam_prog t (t t b_type)) depth
+
+// ================================================================
+// Nat predicate (recursive, select-then-apply)
+// ================================================================
+
+let nat_zero_fn = {self, n} -> TT
+let nat_ff_fn = {self, n} -> FF
+
+let nat_succ_fn = {self, n} -> napply self (pair_snd n)
+
+// is_tree_leaf / is_tree_fork for untagged data
+let is_tree_leaf = {v} ->
+  ite2 FF
+    (triage TT ({_} -> FF) ({l, r} -> FF) v)
+    (is_tagged v)
+
+let is_tree_fork = {v} ->
+  ite2 FF
+    (triage FF ({_} -> FF) ({l, r} -> TT) v)
+    (is_tagged v)
+
+let nat_succ_check_fn = {self, n} ->
+  ite2 nat_succ_fn nat_ff_fn (fast_eq (pair_fst n) t)
+    self n
+
+let nat_non_zero_fn = {self, n} ->
+  ite2 nat_succ_check_fn nat_ff_fn (is_tree_fork n)
+    self n
+
+let nat_body = fix ({self, n} ->
+  ite2 nat_zero_fn nat_non_zero_fn (fast_eq n t)
+    self n)
+
+let Nat = mkVLam t nat_body
+
+test napply Nat t = TT
+test napply Nat (t t t) = TT
+test napply Nat (t t (t t t)) = TT
+test napply Nat FF = FF
+
+// ================================================================
+// Bool predicate
+// ================================================================
+
+let Bool = mkVLam t ({b} -> ite2 TT (fast_eq b FF) (fast_eq b t))
+
+test napply Bool TT = TT
+test napply Bool FF = TT
+test napply Bool (t t t) = FF
+
+// Nat helpers (needed by eliminator tests)
+let zero = t
+let succ = {n} -> t t n
+let one = succ zero
+let two = succ one
+let three = succ two
+let four = succ three
+let five = succ four
+
+test napply Nat zero = TT
+test napply Nat five = TT
+
+// VStuckElim tests (needed Nat/Bool defined first)
+test is_velim (mkVStuckElim Nat (mkVHyp Bool t)) = TT
+test is_neutral (mkVStuckElim Nat (mkVHyp Bool t)) = TT
+test velim_motive (mkVStuckElim Nat (mkVHyp Bool t)) = Nat
+test velim_target (mkVStuckElim Nat (mkVHyp Bool t)) = mkVHyp Bool t
+
+// ================================================================
+// Typed eliminators (neutral-aware recursors)
+// ================================================================
+
+// Bool.rec : motive → t_case → f_case → target → motive(target)
+// When target is neutral, produces VStuckElim(motive, target).
+// When concrete: TT → t_case, FF → f_case.
+let bool_rec = {motive, t_case, f_case, target} ->
+  ited
+    ({_} -> mkVStuckElim motive target)
+    ({_} -> ite2 t_case f_case target)
+    (is_neutral target)
+
+test bool_rec ({_} -> Nat) one zero TT = one
+test bool_rec ({_} -> Nat) one zero FF = zero
+test is_velim (bool_rec ({_} -> Nat) one zero (mkVHyp Bool t)) = TT
+
+// Nat.rec : motive → base → step → target → motive(target)
+// base : motive(zero)
+// step : {n : Nat} → motive(n) → motive(succ(n))
+// When target is neutral, produces VStuckElim(motive, target).
+let nat_rec_body = fix ({self, motive, base, step, target} ->
+  ited
+    ({_} -> mkVStuckElim motive target)
+    ({_} ->
+      ite2
+        ({self, motive, base, step, target} -> base)
+        ({self, motive, base, step, target} ->
+          ite2
+            ({self, motive, base, step, target} ->
+              ite2
+                ({self, motive, base, step, target} ->
+                  step (pair_snd target) (self motive base step (pair_snd target)))
+                ({self, motive, base, step, target} -> base)    // malformed: treat as base
+                (fast_eq (pair_fst target) t)
+                self motive base step target)
+            ({self, motive, base, step, target} -> base)       // not a fork, not zero: treat as base
+            (is_tree_fork target)
+            self motive base step target)
+        (fast_eq target t)
+        self motive base step target)
+    (is_neutral target))
+
+let nat_rec = {motive, base, step, target} ->
+  nat_rec_body motive base step target
+
+test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) zero = TT
+test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) two = TT
+test is_velim (nat_rec ({_} -> Bool) TT ({n, prev} -> prev) (mkVHyp Nat t)) = TT
+
+// ================================================================
+// Eq type (propositional equality)
+// ================================================================
+
+// Eq A x y : Type 0 when A : Type 0 and x, y : A.
+// refl is LEAF (the unique proof of Eq A x x).
+// The predicate checks: p = refl → conv(x, y), neutral p → H-rule, else → FF.
+
+let EQ_TAG = t (t (t t))
+let refl = t
+
+// Eq metadata: fork(EQ_TAG, fork(A, fork(x, y)))
+let is_eq = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) EQ_TAG) FF (is_vlam v)
+let eq_A = {v} -> pair_fst (pair_snd (vlam_meta v))
+let eq_x = {v} -> pair_fst (pair_snd (pair_snd (vlam_meta v)))
+let eq_y = {v} -> pair_snd (pair_snd (pair_snd (vlam_meta v)))
+
+// Eq body: closes over x, y. Applied to candidate proof p.
+let eq_body = {x, y, p} ->
+  ited
+    ({_} -> TT)                              // neutral p: H-rule handles it
+    ({_} -> ited
+      ({_} -> fast_eq x y)                   // p = refl: check conv(x, y)
+      ({_} -> FF)                            // p is non-refl data: reject
+      (fast_eq p t))
+    (is_neutral p)
+
+let mkEq = {A, x, y} ->
+  mkVLam_prog (t EQ_TAG (t A (t x y))) (eq_body x y)
+
+// refl : Eq A x x  (when conv(x, x) = TT)
+test napply (mkEq Nat zero zero) refl = TT
+test napply (mkEq Nat one one) refl = TT
+// refl : Eq Nat 0 1 should fail
+test napply (mkEq Nat zero one) refl = FF
+// Non-refl proof rejected
+test napply (mkEq Nat zero zero) (t t) = FF
+
+// Eq A x y : Type 0  (register Eq as a base type)
+// We need Eq in Type 0. The simplest: add to is_registered.
+// But is_registered is defined later... we'll handle this below.
+
+// J eliminator: the induction principle for Eq.
+// J A x motive base y p : motive y p
+//   motive : (y : A) → Eq A x y → Type
+//   base   : motive x refl
+//   y      : A
+//   p      : Eq A x y
+// When p = refl: return base (since y ≡ x by conv)
+// When p is neutral: produce VStuckElim
+let eq_J = {A, x, motive, base, y, p} ->
+  ited
+    ({_} -> mkVStuckElim (napply (napply motive y) p) p)
+    ({_} -> base)                            // p = refl (or any concrete): return base
+    (is_neutral p)
+
+// subst (transport): P x → Eq A x y → P y
+// Derived: subst A P x y p px = J A x ({y, _} -> P y) px y p
+let eq_subst = {A, P, x, y, p, px} ->
+  ited
+    ({_} -> mkVStuckElim (napply P y) p)
+    ({_} -> px)                              // p = refl → P(x) = P(y), return px
+    (is_neutral p)
+
+// sym: Eq A x y → Eq A y x
+// sym = J A x ({y, _} -> Eq A y x) refl y p
+let eq_sym = {A, x, y, p} ->
+  ited
+    ({_} -> mkVStuckElim (mkEq A y x) p)
+    ({_} -> refl)                            // p = refl → Eq A x x, refl works
+    (is_neutral p)
+
+// cong: (f : A → B) → Eq A x y → Eq B (f x) (f y)
+// cong = J A x ({y, _} -> Eq B (f x) (f y)) refl y p
+let eq_cong = {A, B, f, x, y, p} ->
+  ited
+    ({_} -> mkVStuckElim (mkEq B (napply f x) (napply f y)) p)
+    ({_} -> refl)                            // p = refl → f(x) = f(y) by conv, refl works
+    (is_neutral p)
+
+// ================================================================
+// Eq tests: basic
+// ================================================================
+
+// refl proves zero = zero
+test napply (mkEq Nat zero zero) refl = TT
+
+// Eq Nat zero zero : Type 0 — need to register Eq.
+// For now, test the J eliminator directly:
+
+// J reduces on refl: J Nat 0 M base 0 refl = base
+let test_motive = mkVLam t ({y} -> mkVLam_prog t ({p} -> Nat))  // constant motive: Nat
+test eq_J Nat zero test_motive five zero refl = five
+
+// sym: Eq Nat x x → Eq Nat x x (trivial case)
+test napply (mkEq Nat zero zero) (eq_sym Nat zero zero refl) = TT
+
+// cong succ: Eq Nat 0 0 → Eq Nat 1 1
+let succ_fn = mkVLam t ({n} -> succ n)
+test napply (mkEq Nat one one) (eq_cong Nat Nat succ_fn zero zero refl) = TT
+
+// subst: P(0) → Eq Nat 0 0 → P(0)  (trivial transport)
+test eq_subst Nat Nat zero zero refl five = five
+
+// ================================================================
+// Arithmetic: add and simple proofs
+// ================================================================
+
+// add : Nat → Nat → Nat  (recursive on first arg)
+// add 0 m = m
+// add (S n) m = S (add n m)
+// Test nat_rec computes on concrete values:
+// nat_rec motive base step 0 = base
+test nat_rec (mkVLam t ({_} -> Nat)) (t t t) ({n, p} -> p) zero = t t t
+// nat_rec motive base step 2 = step 1 (step 0 base)
+test nat_rec (mkVLam t ({_} -> Nat)) zero ({n, p} -> succ p) two = two
+
+let nat_motive = mkVLam_prog t ({_} -> Nat)
+
+// ================================================================
+// Arithmetic: add
+// ================================================================
+
+let add_zero_fn = {self, n, m} -> m
+let add_succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
+let add_nonzero_fn = {self, n, m} ->
+  ite2 add_succ_fn add_zero_fn (is_tree_fork n) self n m
+
+let add = fix ({self, n, m} ->
+  ite2 add_zero_fn add_nonzero_fn (fast_eq n t) self n m)
+
+test add zero zero = zero
+test add zero three = three
+test add two three = five
+test add three two = five
+
+// Eq proofs on concrete add results
+test napply (mkEq Nat (add zero zero) zero) refl = TT
+test napply (mkEq Nat (add one zero) one) refl = TT
+test napply (mkEq Nat (add two zero) two) refl = TT
+test napply (mkEq Nat (add three zero) three) refl = TT
+
+// Commutativity on concrete values
+test napply (mkEq Nat (add two three) (add three two)) refl = TT
+test napply (mkEq Nat (add one four) (add four one)) refl = TT
+
+// ================================================================
+// Arrow type checking tests
+// ================================================================
+
+let NatToNat = mkArrow_prog Nat Nat t
+let id_fn = mkVLam t ({x} -> x)
+
+test napply NatToNat id_fn = TT
+test napply NatToNat (mkVLam t ({_} -> t)) = TT
+test napply NatToNat (mkVLam t ({_} -> FF)) = FF
+
+// ================================================================
+// ton_check tests
+// ================================================================
+
+test ton_check ({x} -> x) (mkVHyp Nat t) = Nat
+test ton_check (conv Nat) (mkVHyp Nat t) = TT
+test ton_check (conv Bool) (mkVHyp Nat t) = FF
+
+// Stuck app: spine inference
+test ton_check ({x} -> x) (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = Nat
+test ton_check (conv Nat) (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
+
+// Spine failure: non-Pi head
+test ton_check ({x} -> x) (mkVStuck (mkVHyp (mkVHyp t t) (t t)) (mkVHyp (mkVHyp t t) (t t))) = FF
+
+// Non-neutral
+test ton_check ({x} -> x) t = FF
+
+// ================================================================
+// napply with H-rule tests
+// ================================================================
+
+test napply t t = t t
+test napply (mkVLam t ({x} -> x)) (t t) = t t
+
+// H-rule: hyp with matching type → TT
+test napply Nat (mkVHyp Nat t) = TT
+
+// H-rule: hyp with non-matching type → predicate runs → FF
+test napply Nat (mkVHyp (mkVLam t ({_} -> FF)) t) = FF
+
+// H-rule on stuck app
+test napply Nat (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
+
+// ================================================================
+// Metadata reflection tests
+// ================================================================
+
+let testPi = mkPi_prog Nat (mkVLam t ({_} -> Nat)) t
+test is_pi testPi = TT
+test is_pi Nat = FF
+test is_pi t = FF
+test pi_dom testPi = Nat
+
+// ================================================================
+// Higher-order: stuck apps with type inference
+// ================================================================
+
+// {f:Nat->Nat, x:Nat} -> f x : (Nat->Nat) -> Nat -> Nat
+let inner_body = {f, x} -> napply f x
+let ho_term = mkVLam t ({f} ->
+  t (t TAG_ROOT KV_LAM) (t t (inner_body f)))
+let ho_type = mkArrow_prog NatToNat (mkArrow_prog Nat Nat (t t)) t
+test napply ho_type ho_term = TT
+
+// ================================================================
+// Polymorphic identity (hypothesis-as-type)
+// ================================================================
+
+test napply (mkVHyp t t) (mkVHyp (mkVHyp t t) (t t)) = TT
+
+// ================================================================
+// Tree-program Val constructor tests
+// ================================================================
+
+test mkVHyp_prog Nat t = mkVHyp Nat t
+
+// ================================================================
+// Pi construction tests
+// ================================================================
+
+test is_pi (mkPi_prog Nat (mkVLam t ({_} -> Nat)) t) = TT
+test pi_dom (mkPi_prog Nat (mkVLam t ({_} -> Nat)) t) = Nat
+test napply (mkArrow_prog Nat Nat t) id_fn = TT
+test napply (mkArrow_prog Nat Nat t) (mkVLam t ({_} -> t)) = TT
+test napply (mkArrow_prog Nat Nat t) (mkVLam t ({_} -> FF)) = FF
+
+// ================================================================
+// Nat le/lt
+// ================================================================
+
+let nat_le_zero_fn = {self, a, b} -> TT
+let nat_le_succ_fn = {self, a, b} ->
+  ite2
+    ({self, a, b} -> self (pair_snd a) (pair_snd b))
+    ({self, a, b} -> FF)
+    (is_tree_fork b)
+    self a b
+let nat_le_nonzero_fn = {self, a, b} ->
+  ite2 nat_le_succ_fn ({self, a, b} -> FF) (is_tree_fork a)
+    self a b
+let nat_le = fix ({self, a, b} ->
+  ite2 nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
+    self a b)
+
+let nat_lt = {a, b} -> nat_le (t t a) b
+
+test nat_le t t = TT
+test nat_le t (t t (t t (t t t))) = TT
+test nat_le (t t t) t = FF
+test nat_le (t t (t t t)) (t t (t t (t t t))) = TT
+test nat_le (t t (t t (t t t))) (t t (t t t)) = FF
+test nat_lt t (t t t) = TT
+test nat_lt t t = FF
+test nat_lt (t t t) (t t (t t t)) = TT
+
+// ================================================================
+// Type n (universe predicate)
+// ================================================================
+
+let and = {a, b} -> ite2 b FF a
+
+let is_registered = {x} -> ite2 TT (fast_eq x Bool) (fast_eq x Nat)
+
+let univ_check_template = {rank, inferred_type} ->
+  ite2 (nat_le (universe_rank inferred_type) rank) FF (is_universe inferred_type)
+
+let type_neutral_fn = {self, rank, x} ->
+  ton_check (univ_check_template rank) x
+
+let type_univ_fn = {self, rank, x} ->
+  nat_lt (universe_rank x) rank
+
+let type_pi_fn = {self, rank, x} ->
+  and (self rank (pi_dom x))
+    (self rank (napply (pi_cod_fn x) (mkVHyp_prog (pi_dom x) (t (t rank)))))
+
+let type_registered_fn = {self, rank, x} -> is_registered x
+
+let type_non_neutral_fn = {self, rank, x} ->
+  ite2
+    type_univ_fn
+    ({self, rank, x} ->
+      ite2
+        type_pi_fn
+        ({self, rank, x} ->
+          ite2 type_registered_fn ({self, rank, x} -> FF) (is_registered x)
+            self rank x)
+        (is_pi x)
+        self rank x)
+    (is_universe x)
+    self rank x
+
+let type_body_core = fix ({self, rank, x} ->
+  ite2 type_neutral_fn type_non_neutral_fn (is_neutral x)
+    self rank x)
+
+let mkType = {rank} -> mkVLam (t UNIV_TAG rank) (type_body_core rank)
+
+let Type0 = mkType t
+let Type1 = mkType (t t t)
+let Type2 = mkType (t t (t t t))
+
+test napply Type0 Nat = TT
+test napply Type0 Bool = TT
+test napply Type0 (mkArrow_prog Nat Nat t) = TT
+test napply Type1 Type0 = TT
+test napply Type0 Type0 = FF
+
+// Cumulativity
+test napply Type1 Nat = TT
+test napply Type2 Type0 = TT
+
+// ================================================================
+// Structural conv
+// ================================================================
+
+let conv_fast_fn = {self, a, b} -> TT
+let conv_pi_fn = {self, a, b} ->
+  and (self (pi_dom a) (pi_dom b))
+    (self
+      (napply (pi_cod_fn a) (mkVHyp_prog (pi_dom a) (t (t (t t)))))
+      (napply (pi_cod_fn b) (mkVHyp_prog (pi_dom a) (t (t (t t))))))
+let conv_univ_fn = {self, a, b} ->
+  fast_eq (universe_rank a) (universe_rank b)
+let conv_ff_fn = {self, a, b} -> FF
+
+let conv_not_fast_fn = {self, a, b} ->
+  ite2
+    ({self, a, b} ->
+      ite2 conv_pi_fn ({self, a, b} ->
+        ite2 conv_univ_fn conv_ff_fn
+          (and (is_universe a) (is_universe b))
+          self a b)
+        (and (is_pi a) (is_pi b))
+        self a b)
+    conv_ff_fn
+    (is_tagged a)
+    self a b
+
+let conv_structural = fix ({self, a, b} ->
+  ite2 conv_fast_fn conv_not_fast_fn (fast_eq a b)
+    self a b)
+
+test conv_structural t t = TT
+test conv_structural t (t t) = FF
+test conv_structural Type0 Type0 = TT
+test conv_structural Type0 Type1 = FF
+
+// Same Pi
+let test_codFn = mkVLam t ({_} -> Nat)
+test conv_structural (mkPi_prog Nat test_codFn t) (mkPi_prog Nat test_codFn t) = TT
+// Different Pi domains
+test conv_structural (mkPi_prog Nat test_codFn t) (mkPi_prog Bool test_codFn t) = FF
+
+// ================================================================
+// Integration: full type-checking pipeline
+// ================================================================
+
+// {A:Type 0, x:A} -> x : Pi(Type 0, {A}->Pi(A, {_}->A))
+let polyIdType = mkPi_prog Type0
+  (mkVLam t ({A} -> mkArrow_prog A A (t t)))
+  t
+let polyId = mkVLam t ({_A} -> mkVLam_prog t ({x} -> x))
+test napply polyIdType polyId = TT
+
+// ================================================================
+// Extended integration tests
+// ================================================================
+
+// --- 1. Composition: (Nat->Nat) -> (Nat->Nat) -> Nat -> Nat ---
+// compose f g x = f(g(x))
+let composeType = mkArrow_prog NatToNat
+  (mkArrow_prog NatToNat (mkArrow_prog Nat Nat (t (t (t t)))) (t (t t)))
+  t
+let compose_term = mkVLam t ({f} ->
+  mkVLam_prog t ({g} ->
+    mkVLam_prog t ({x} ->
+      napply f (napply g x))))
+test napply composeType compose_term = TT
+
+// --- 2. Rejection: compose with wrong return type ---
+// Claim f : Nat->Nat but return FF (which is stem(LEAF), not a Nat)
+let bad_compose = mkVLam t ({f} ->
+  mkVLam_prog t ({g} ->
+    mkVLam_prog t ({x} -> FF)))
+test napply composeType bad_compose = FF
+
+// --- 3. Double: (Nat->Nat) -> Nat -> Nat, applies f twice ---
+let doubleType = mkArrow_prog NatToNat (mkArrow_prog Nat Nat (t (t t))) t
+let double_term = mkVLam t ({f} ->
+  mkVLam_prog t ({x} ->
+    napply f (napply f x)))
+test napply doubleType double_term = TT
+
+// --- 4. Const zero: Nat -> Nat -> Nat, ignores second arg ---
+let constType = mkArrow_prog Nat (mkArrow_prog Nat Nat (t (t t))) t
+let const_zero = mkVLam t ({x} ->
+  mkVLam_prog t ({_y} -> x))
+test napply constType const_zero = TT
+
+// --- 5. Polymorphic const: {A, B : Type 0} -> A -> B -> A ---
+let polyConstType = mkPi_prog Type0
+  (mkVLam t ({A} ->
+    mkPi_prog Type0
+      (mkVLam t ({B} ->
+        mkArrow_prog A (mkArrow_prog B A (t (t (t (t t))))) (t (t (t t)))))
+      (t (t t))))
+  t
+let polyConst = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({x} ->
+      mkVLam_prog t ({_y} -> x))))
+test napply polyConstType polyConst = TT
+
+// --- 6. Polymorphic const: wrong impl (returns y instead of x) ---
+let polyConstBad = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({_x} ->
+      mkVLam_prog t ({y} -> y))))
+test napply polyConstType polyConstBad = FF
+
+// --- 7. Flip: {A, B, C : Type 0} -> (A -> B -> C) -> B -> A -> C ---
+let flipType = mkPi_prog Type0
+  (mkVLam t ({A} ->
+    mkPi_prog Type0
+      (mkVLam t ({B} ->
+        mkPi_prog Type0
+          (mkVLam t ({C} ->
+            mkArrow_prog
+              (mkArrow_prog A (mkArrow_prog B C (t (t (t (t (t (t t))))))) (t (t (t (t (t t))))))
+              (mkArrow_prog B (mkArrow_prog A C (t (t (t (t (t (t (t t)))))))) (t (t (t (t (t (t t)))))))
+              (t (t (t (t (t t)))))))
+          (t (t (t t)))))
+      (t (t t))))
+  t
+let flip_term = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({_C} ->
+      mkVLam_prog t ({f} ->
+        mkVLam_prog t ({b} ->
+          mkVLam_prog t ({a} ->
+            napply (napply f a) b))))))
+test napply flipType flip_term = TT
+
+// --- 8. Deeper spine inference: stuck f (g x) where f : Nat->Nat, g : Nat->Nat, x : Nat ---
+// Verifies ton_check handles depth-2 stuck chains.
+let h_g = mkVHyp NatToNat (t (t (t t)))
+let h_x = mkVHyp Nat (t (t (t (t t))))
+let stuck_gx = mkVStuck h_g h_x            // g(x) : Nat
+let h_f = mkVHyp NatToNat (t (t (t (t (t t)))))
+let stuck_fgx = mkVStuck h_f stuck_gx      // f(g(x)) : Nat
+test napply Nat stuck_fgx = TT
+// Wrong type: claim f(g(x)) : Bool  (it's Nat, not Bool)
+test napply Bool stuck_fgx = FF
+
+// --- 9. Universe hierarchy: polyIdType : Type 1 ---
+// Pi(Type 0, {A}->A->A) should live in Type 1
+test napply Type1 polyIdType = TT
+// ... but not in Type 0 (domain is Type 0, which is not : Type 0)
+test napply Type0 polyIdType = FF
+
+// --- 10. Bool -> Nat via typed eliminator ---
+let BoolToNat = mkArrow_prog Bool Nat t
+let bool_to_nat = mkVLam t ({b} ->
+  bool_rec (mkVLam t ({_} -> Nat)) one zero b)
+test napply BoolToNat bool_to_nat = TT
+
+// --- 11. Nat -> Bool via typed eliminator (isZero) ---
+let NatToBool = mkArrow_prog Nat Bool t
+let isZero = mkVLam t ({n} ->
+  nat_rec (mkVLam t ({_} -> Bool)) TT ({n', prev} -> FF) n)
+test napply NatToBool isZero = TT
+// Wrong: return a Nat from Nat->Bool
+let isZeroBad = mkVLam t ({n} ->
+  nat_rec (mkVLam t ({_} -> Nat)) zero ({n', prev} -> succ prev) n)
+test napply NatToBool isZeroBad = FF
+
+// --- 12. Polymorphic apply: {A, B : Type 0} -> (A -> B) -> A -> B ---
+let polyApplyType = mkPi_prog Type0
+  (mkVLam t ({A} ->
+    mkPi_prog Type0
+      (mkVLam t ({B} ->
+        mkArrow_prog (mkArrow_prog A B (t (t (t (t t))))) (mkArrow_prog A B (t (t (t (t (t t)))))) (t (t (t t)))))
+      (t (t t))))
+  t
+let polyApply = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({f} ->
+      mkVLam_prog t ({x} ->
+        napply f x))))
+test napply polyApplyType polyApply = TT
+
+// --- 13. Self-application rejection ---
+let selfAppType = mkPi_prog Type0
+  (mkVLam t ({A} -> mkArrow_prog A A (t (t t))))
+  t
+let selfApp = mkVLam t ({_A} ->
+  mkVLam_prog t ({x} ->
+    napply x x))
+test napply selfAppType selfApp = FF
+
+// --- 14. Church pair at Nat ---
+// pair : Nat -> Nat -> (Nat -> Nat -> Nat) -> Nat
+let pairType = mkArrow_prog Nat
+  (mkArrow_prog Nat
+    (mkArrow_prog (mkArrow_prog Nat (mkArrow_prog Nat Nat (t (t (t (t (t t)))))) (t (t (t (t t)))))
+      Nat
+      (t (t (t (t t)))))
+    (t (t (t t))))
+  t
+let church_pair = mkVLam t ({a} ->
+  mkVLam_prog t ({b} ->
+    mkVLam_prog t ({sel} ->
+      napply (napply sel a) b)))
+test napply pairType church_pair = TT
+
+// Extract first: pair 3 5 K = 3
+let K_fn = mkVLam t ({x, y} -> x)
+test napply (napply (napply (vlam_body church_pair) three) five) K_fn = three

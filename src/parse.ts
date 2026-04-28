@@ -5,22 +5,17 @@
 //
 // Sections:
 //   1. Tokens + tokenizer
-//   2. AST types  (SIR untyped, Surface typed, Item declarations)
+//   2. AST types
 //   3. Parser combinators
 //   4. Grammar productions
-//   5. Bracket abstraction (SIR → Tree)
-//   6. Driver (scope stack, `use`, typed defs, produces Decl[])
+//   5. Bracket abstraction (Expr → Cir → Tree)
+//   6. Driver (scope stack, `use`, produces Decl[])
 
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
-  Tree, LEAF, stem, fork, applyTree, treeEqual, isFork, prettyTree, FAST_EQ,
+  Tree, LEAF, stem, fork, applyTree, treeApply, FAST_EQ,
 } from "./tree.js"
-import {
-  elab as elabSurface, type Surface, substituteMetas, decodeMetaSolutions,
-} from "./elaborate.js"
-
-export type { Surface }
 
 // ───────────────────────────── 1. Tokens ─────────────────────────────────
 
@@ -30,11 +25,12 @@ export type Tok =
   | { t: "kw"; v: string }
   | { t: "leaf" }
   | { t: "str"; v: string }
+  | { t: "nl" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["def", "test", "elab", "raw", "use"])
-// Order matters: longer punctuation first so "->" isn't chopped into "-" ">".
-const PUNCT = ["->", "→", "\\", ".", "(", ")", "=", ":", "{", "}"] as const
+const KEYWORDS = new Set(["let", "test", "use"])
+// Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
+const PUNCT = [":=", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -43,8 +39,21 @@ export function tokenize(src: string): Tok[] {
   let i = 0
   while (i < src.length) {
     const c = src[i]
-    if (/\s/.test(c)) { i++; continue }
-    if (c === ";") { while (i < src.length && src[i] !== "\n") i++; continue }
+    // Newlines are significant (SEMI/COMMA separator).
+    if (c === "\n") { toks.push({ t: "nl" }); i++; continue }
+    if (/[ \t\r]/.test(c)) { i++; continue }
+    // Line comment: //
+    if (c === "/" && i + 1 < src.length && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++
+      continue
+    }
+    // Block comment: /* */
+    if (c === "/" && i + 1 < src.length && src[i + 1] === "*") {
+      i += 2
+      while (i + 1 < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++
+      if (i + 1 >= src.length) throw new Error(`tokenize: unterminated block comment`)
+      i += 2; continue
+    }
     if (c === '"') {
       const j = src.indexOf('"', i + 1)
       if (j < 0) throw new Error(`tokenize: unterminated string at offset ${i}`)
@@ -73,19 +82,25 @@ export function tokenize(src: string): Tok[] {
 
 // ──────────────────────────── 2. AST types ───────────────────────────────
 
-export type Sir =
+export type Expr =
   | { tag: "leaf" }
   | { tag: "var"; name: string }
-  | { tag: "app"; f: Sir; x: Sir }
-  | { tag: "lam"; x: string; body: Sir }
+  | { tag: "hole" }
+  | { tag: "app"; f: Expr; x: Expr }
+  | { tag: "binder"; params: Param[]; body: Expr }
+  | { tag: "ann"; expr: Expr; type: Expr }
+  | { tag: "proj"; target: Expr; field: string }
+  | { tag: "recType"; fields: TypedField[] }
+  | { tag: "recValue"; fields: NamedField[] }
+  | { tag: "use"; path: string }
+
+export type Param = { name: string | null; type: Expr | null }
+export type TypedField = { name: string; type: Expr }
+export type NamedField = { name: string; type: Expr | null; value: Expr }
 
 export type Item =
-  | { tag: "def"; name: string; expr: Sir }
-  | { tag: "deftyped"; name: string; type: Surface; expr: Surface }
-  | { tag: "elab"; name: string; expr: Surface }
-  | { tag: "test"; lhs: Sir; rhs: Sir }
-  | { tag: "use"; path: string }
-  | { tag: "block"; items: Item[] }
+  | { tag: "let"; name: string; type: Expr | null; body: Expr }
+  | { tag: "test"; lhs: Expr; rhs: Expr }
 
 // ───────────────────────── 3. Parser combinators ─────────────────────────
 
@@ -101,8 +116,6 @@ const err = (msg: string, pos: Pos): Res<never> => ({ ok: false, msg, pos })
 const map = <A, B>(p: P<A>, f: (a: A) => B): P<B> =>
   (ts, i) => { const r = p(ts, i); return r.ok ? ok(f(r.v), r.pos) : r }
 
-// seq is variadic with positional destructuring; downstream code uses
-// tuple patterns like ([, x, , T, , , body]) => ...
 const seq = <Ps extends P<unknown>[]>(...ps: Ps): P<{ [K in keyof Ps]: Ps[K] extends P<infer U> ? U : never }> =>
   (ts, i) => {
     const out: unknown[] = []
@@ -115,8 +128,6 @@ const seq = <Ps extends P<unknown>[]>(...ps: Ps): P<{ [K in keyof Ps]: Ps[K] ext
     return ok(out as never, pos)
   }
 
-// alt returns the first alternative that succeeds; on all-failure, returns
-// the failure that got deepest (most informative error).
 const alt = <T>(...ps: P<T>[]): P<T> =>
   (ts, i) => {
     let deepest: Err = { ok: false, msg: "no alternative matched", pos: i }
@@ -162,6 +173,7 @@ const describe = (t: Tok): string => {
     case "punct": return `'${t.v}'`
     case "str": return `string "${t.v}"`
     case "leaf": return "leaf"
+    case "nl": return "newline"
     case "eof": return "end of input"
   }
 }
@@ -173,138 +185,371 @@ const leafP:   P<Tok>     = tokP(t => t.t === "leaf", "leaf")
 const strP:    P<string>  = map(tokP(t => t.t === "str", "string literal"), t => (t as Tok & {v: string}).v)
 const arrowP:  P<Tok>     = alt(punctP("->"), punctP("→"))
 
-// Shorthand constructors used in grammar productions.
-const inParens = <T>(p: P<T>): P<T> => map(seq(punctP("("), p, punctP(")")), ([, v]) => v)
-const inBraces = <T>(p: P<T>): P<T> => map(seq(punctP("{"), p, punctP("}")), ([, v]) => v)
+// Skip newlines (used where newlines are insignificant, e.g. inside parens/braces).
+const skipNl: P<null> = (ts, i) => {
+  while (ts[i].t === "nl") i++
+  return ok(null, i)
+}
+
+// Wrap a parser to skip leading newlines.
+const nl = <T>(p: P<T>): P<T> => (ts, i) => {
+  while (ts[i].t === "nl") i++
+  return p(ts, i)
+}
 
 // ───────────────────────── 4. Grammar productions ────────────────────────
 
-// Untyped term grammar ---------------------------------------------------
+// --- Separator parsers ---
 
-const atom: P<Sir> = lazy(() => alt<Sir>(
-  inParens(term),
-  map(leafP, () => ({ tag: "leaf" })),
-  map(idP,   name => ({ tag: "var", name })),
+// sepBy1(p, sep): one or more `p` separated by `sep`, optional trailing sep.
+function sepBy1<T>(p: P<T>, sep: P<unknown>): P<T[]> {
+  return (ts, i) => {
+    const first = p(ts, i)
+    if (!first.ok) return first
+    const out: T[] = [first.v]
+    let pos = first.pos
+    for (;;) {
+      const s = sep(ts, pos)
+      if (!s.ok) return ok(out, pos)
+      const next = p(ts, s.pos)
+      if (!next.ok) return ok(out, pos) // trailing separator
+      out.push(next.v); pos = next.pos
+    }
+  }
+}
+
+// SEMI = ";" | NEWLINE (consumes one or more)
+const semiP: P<null> = (ts, i) => {
+  if (ts[i].t === "nl" || (ts[i].t === "punct" && (ts[i] as any).v === ";")) {
+    let pos = i + 1
+    while (ts[pos].t === "nl" || (ts[pos].t === "punct" && (ts[pos] as any).v === ";")) pos++
+    return ok(null, pos)
+  }
+  return err(`expected ';' or newline, got ${describe(ts[i])}`, i)
+}
+
+// COMMA = "," (optionally surrounded by newlines) | bare NEWLINE
+const commaP: P<null> = (ts, i) => {
+  let pos = i
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === ",") {
+    pos++
+    while (ts[pos].t === "nl") pos++
+    return ok(null, pos)
+  }
+  if (pos > i) return ok(null, pos) // bare newline(s)
+  return err(`expected ',' or newline, got ${describe(ts[i])}`, i)
+}
+
+// --- Expressions ---
+
+// `_` as a bare token (single underscore, not `_foo`)
+const holeP: P<Expr> = (ts, i) => {
+  if (ts[i].t === "id" && (ts[i] as any).v === "_") return ok({ tag: "hole" }, i + 1)
+  return err(`expected '_', got ${describe(ts[i])}`, i)
+}
+
+const simple: P<Expr> = lazy(() => alt<Expr>(
+  // Parenthesized: ( expr ) or ( expr : expr )
+  map(
+    seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
+    ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
+  ),
+  // Braced: binder, recType, recValue
+  lazy(() => braced),
+  // use STRING
+  map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
+  // leaf
+  map(leafP, (): Expr => ({ tag: "leaf" })),
+  // hole _
+  holeP,
+  // identifier
+  map(idP, (name): Expr => ({ tag: "var", name })),
 ))
 
-const app: P<Sir> = map(
+// atom = simple ("." IDENT)*
+// Newlines before atoms are insignificant — expressions can span lines.
+// Item separation works because keywords (let, test) can't start an atom.
+const atom: P<Expr> = (ts, i) => {
+  while (ts[i].t === "nl") i++
+  const base = simple(ts, i)
+  if (!base.ok) return base
+  let result: Expr = base.v
+  let pos = base.pos
+  // Postfix projections (no newline skip before "." — binds tightly)
+  while (ts[pos].t === "punct" && (ts[pos] as any).v === ".") {
+    pos++
+    const field = idP(ts, pos)
+    if (!field.ok) return field
+    result = { tag: "proj", target: result, field: field.v }
+    pos = field.pos
+  }
+  return ok(result, pos)
+}
+
+// app = atom atom*
+const app: P<Expr> = map(
   seq(atom, many(atom)),
-  ([h, xs]) => xs.reduce<Sir>((f, x) => ({ tag: "app", f, x }), h),
+  ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
 )
 
-const lambda: P<Sir> = map(
-  seq(punctP("\\"), many1(idP), punctP("."), lazy(() => term)),
-  ([, ns, , body]) => ns.reduceRight<Sir>((b, n) => ({ tag: "lam", x: n, body: b }), body),
-)
+// binderParam = (IDENT | "_") (":" expr)?
+const binderParam: P<Param> = (ts, i) => {
+  let pos = i
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t !== "id") return err(`expected identifier or '_', got ${describe(ts[pos])}`, pos)
+  const v = (ts[pos] as any).v as string
+  const name = v === "_" ? null : v
+  pos++
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
+    pos++
+    while (ts[pos].t === "nl") pos++
+    const tyR = expr(ts, pos)
+    if (!tyR.ok) return tyR
+    return ok({ name, type: tyR.v }, tyR.pos)
+  }
+  return ok({ name, type: null }, pos)
+}
 
-const term: P<Sir> = alt(lambda, app)
+// Parse binder contents after "{". Expects params, "}", ARROW, body.
+const binderInner: P<Expr> = (ts, startPos) => {
+  let pos = startPos
+  while (ts[pos].t === "nl") pos++
+  const params = sepBy1(binderParam, commaP)(ts, pos)
+  if (!params.ok) return params
+  pos = params.pos
+  while (ts[pos].t === "nl") pos++
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
+    return err(`expected '}', got ${describe(ts[pos])}`, pos)
+  pos++
+  while (ts[pos].t === "nl") pos++
+  const arr = arrowP(ts, pos)
+  if (!arr.ok) return err(`expected '->' after '}', got ${describe(ts[pos])}`, pos)
+  pos = arr.pos
+  while (ts[pos].t === "nl") pos++
+  const bodyR = expr(ts, pos)
+  if (!bodyR.ok) return bodyR
+  if (params.v.length === 0) return err("binder must have at least one param", startPos)
+  return ok({ tag: "binder" as const, params: params.v, body: bodyR.v }, bodyR.pos)
+}
 
-// Typed term grammar -----------------------------------------------------
+// typedField = IDENT ":" expr
+const typedFieldP: P<TypedField> = (ts, i) => {
+  let pos = i
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
+  const name = (ts[pos] as any).v as string
+  if (name === "_") return err(`recType field cannot be '_'`, pos)
+  pos++
+  while (ts[pos].t === "nl") pos++
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":"))
+    return err(`expected ':', got ${describe(ts[pos])}`, pos)
+  pos++
+  while (ts[pos].t === "nl") pos++
+  const tyR = expr(ts, pos)
+  if (!tyR.ok) return tyR
+  return ok({ name, type: tyR.v }, tyR.pos)
+}
 
-const rawEscape: P<Surface> = map(
-  seq(kwP("raw"), inParens(term)),
-  ([, sir]) => ({ tag: "raw", tree: compileSir(sir) }),
-)
+// Parse recType contents after "{". Expects typed fields, "}".
+const recTypeInner: P<Expr> = (ts, startPos) => {
+  let pos = startPos
+  while (ts[pos].t === "nl") pos++
+  const fields = sepBy1(typedFieldP, commaP)(ts, pos)
+  if (!fields.ok) return fields
+  pos = fields.pos
+  while (ts[pos].t === "nl") pos++
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
+    return err(`expected '}', got ${describe(ts[pos])}`, pos)
+  pos++
+  return ok({ tag: "recType" as const, fields: fields.v }, pos)
+}
 
-const typedAtom: P<Surface> = lazy(() => alt<Surface>(
-  rawEscape,
-  inParens(typed),
-  map(leafP, () => ({ tag: "leaf" })),
-  map(idP,   name => name === "_" ? { tag: "hole" } : { tag: "var", name }),
-))
+// namedField = IDENT (":" expr)? ":=" expr
+const namedFieldP: P<NamedField> = (ts, i) => {
+  let pos = i
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
+  const name = (ts[pos] as any).v as string
+  pos++
+  while (ts[pos].t === "nl") pos++
+  let type: Expr | null = null
+  // ":" expr before ":="
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
+    pos++
+    while (ts[pos].t === "nl") pos++
+    const tyR = expr(ts, pos)
+    if (!tyR.ok) return tyR
+    type = tyR.v
+    pos = tyR.pos
+    while (ts[pos].t === "nl") pos++
+  }
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":="))
+    return err(`expected ':=', got ${describe(ts[pos])}`, pos)
+  pos++
+  while (ts[pos].t === "nl") pos++
+  const valR = expr(ts, pos)
+  if (!valR.ok) return valR
+  return ok({ name, type, value: valR.v }, valR.pos)
+}
 
-const typedApp: P<Surface> = map(
-  seq(typedAtom, many(typedAtom)),
-  ([h, xs]) => xs.reduce<Surface>((f, x) => ({ tag: "app", f, x }), h),
-)
+// Parse recValue contents after "{". Expects named fields, "}".
+const recValueInner: P<Expr> = (ts, startPos) => {
+  let pos = startPos
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
+    return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
+  }
+  const fields = sepBy1(namedFieldP, semiP)(ts, pos)
+  if (!fields.ok) return fields
+  pos = fields.pos
+  // optional trailing semi
+  const s = semiP(ts, pos)
+  if (s.ok) pos = s.pos
+  while (ts[pos].t === "nl") pos++
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
+    return err(`expected '}', got ${describe(ts[pos])}`, pos)
+  pos++
+  return ok({ tag: "recValue" as const, fields: fields.v }, pos)
+}
 
-// `arrow` covers both the non-dependent case `A -> B` and the fall-through
-// where we just have a `tapp`. Dependent Pi is handled separately by `pi`.
-const arrow: P<Surface> = map(
-  seq(typedApp, optional(seq(arrowP, lazy(() => typed)))),
-  ([left, tail]) => tail ? { tag: "arrow", dom: left, cod: tail[1] } : left,
-)
+// Disambiguate braced content after seeing "{".
+// Peek at the first entry to determine: recValue, binder, or recTypeOrBinder.
+const braced: P<Expr> = (ts, i) => {
+  if (!(ts[i].t === "punct" && (ts[i] as any).v === "{"))
+    return err(`expected '{', got ${describe(ts[i])}`, i)
+  let pos = i + 1
+  while (ts[pos].t === "nl") pos++
 
-const pi: P<Surface> = map(
+  // Empty braces → empty recValue
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
+    return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
+  }
+
+  // Block: starts with "let" or "test"
+  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test")) {
+    return err(`block expressions are not yet supported`, pos)
+  }
+
+  const shape = classifyBracedContent(ts, pos)
+  if (shape === "recValue") return recValueInner(ts, pos)
+  if (shape === "binder") return binderInner(ts, pos)
+  // recTypeOrBinder: try binder first (needs "}" then ARROW), fall back to recType.
+  const binderAttempt = binderInner(ts, pos)
+  if (binderAttempt.ok) return binderAttempt
+  return recTypeInner(ts, pos)
+}
+
+// Peek at tokens after "{" to classify the braced content.
+function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | "recTypeOrBinder" {
+  let p = pos
+  while (ts[p].t === "nl") p++
+  if (ts[p].t === "id") {
+    const name = (ts[p] as any).v as string
+    p++
+    while (ts[p].t === "nl") p++
+    if (name === "_") {
+      if (ts[p].t === "punct" && (ts[p] as any).v === ":") return "recTypeOrBinder"
+      return "binder"
+    }
+    if (ts[p].t === "punct" && ((ts[p] as any).v === "}" || (ts[p] as any).v === ",")) return "binder"
+    if (ts[p].t === "punct" && (ts[p] as any).v === ":=") return "recValue"
+    if (ts[p].t === "punct" && (ts[p] as any).v === ":") {
+      // Scan for ":=" at this nesting depth (before "}", ",", ";")
+      let depth = 0
+      let q = p + 1
+      while (q < ts.length && ts[q].t !== "eof") {
+        if (ts[q].t === "punct") {
+          const v = (ts[q] as any).v
+          if (v === "(" || v === "{") depth++
+          else if (v === ")" || v === "}") { if (depth === 0) break; depth-- }
+          else if (depth === 0 && v === ":=") return "recValue"
+          else if (depth === 0 && (v === "," || v === ";")) break
+        }
+        q++
+      }
+      return "recTypeOrBinder"
+    }
+  }
+  return "binder"
+}
+
+// expr = binder | app (ARROW expr)?
+// A standalone binder `{...} -> body` is parsed by `braced` inside `simple`.
+// The ARROW suffix handles `A -> B` sugar.
+const expr: P<Expr> = (ts, i) => {
+  const lhs = app(ts, i)
+  if (!lhs.ok) return lhs
+  const arr = arrowP(ts, lhs.pos)
+  if (!arr.ok) return lhs
+  let pos = arr.pos
+  while (ts[pos].t === "nl") pos++
+  const rhs = expr(ts, pos)
+  if (!rhs.ok) return rhs
+  // A -> B desugars to binder with anonymous param typed A
+  return ok(
+    { tag: "binder" as const, params: [{ name: null, type: lhs.v }], body: rhs.v },
+    rhs.pos,
+  )
+}
+
+// --- Items ---
+
+const letItem: P<Item> = map(
   seq(
-    punctP("("), idP, punctP(":"), lazy(() => typed), punctP(")"),
-    arrowP, lazy(() => typed),
+    kwP("let"), idP,
+    optional(seq(punctP(":"), skipNl, lazy(() => expr))),
+    nl(punctP("=")), skipNl, lazy(() => expr),
   ),
-  ([, x, , dom, , , cod]) => ({ tag: "pi", x, dom, cod }),
-)
-
-const typedLam: P<Surface> = map(
-  seq(
-    punctP("\\"), punctP("("), idP, punctP(":"), lazy(() => typed), punctP(")"),
-    punctP("."), lazy(() => typed),
-  ),
-  ([, , x, , ty, , , body]) => ({ tag: "alam", x, type: ty, body }),
-)
-
-const typed: P<Surface> = alt(typedLam, pi, arrow)
-
-// Items (top-level declarations) -----------------------------------------
-
-const useItem: P<Item> = map(
-  seq(kwP("use"), strP),
-  ([, path]) => ({ tag: "use", path }),
-)
-
-// def NAME ( : T = T | = T )
-const defItem: P<Item> = map(
-  seq(
-    kwP("def"), idP,
-    alt<Item>(
-      // def NAME : T = E
-      map(
-        seq(punctP(":"), typed, punctP("="), typed),
-        ([, T, , E]) => ({ tag: "deftyped", name: "", type: T, expr: E }),
-      ),
-      // def NAME = E
-      map(
-        seq(punctP("="), term),
-        ([, E]) => ({ tag: "def", name: "", expr: E }),
-      ),
-    ),
-  ),
-  ([, name, item]) => ({ ...item, name }),
-)
-
-const elabItem: P<Item> = map(
-  seq(kwP("elab"), idP, punctP("="), typed),
-  ([, name, , expr]) => ({ tag: "elab", name, expr }),
+  ([, name, ann, , , body]) => ({
+    tag: "let" as const,
+    name,
+    type: ann ? ann[2] : null,
+    body,
+  }),
 )
 
 const testItem: P<Item> = map(
-  seq(kwP("test"), term, punctP("="), term),
-  ([, lhs, , rhs]) => ({ tag: "test", lhs, rhs }),
+  seq(kwP("test"), lazy(() => expr), nl(punctP("=")), skipNl, lazy(() => expr)),
+  ([, lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
 )
 
-const blockItem: P<Item> = map(
-  inBraces(many(lazy(() => item))),
-  items => ({ tag: "block", items }),
-)
+const itemP: P<Item> = nl(alt(letItem, testItem))
 
-const item: P<Item> = alt(blockItem, useItem, defItem, testItem, elabItem)
-
-const program: P<Item[]> = many(item)
-
-// Parse a source string into raw items. Pure — no IO, no scope resolution.
-// `use` paths are preserved as strings; the driver resolves them.
+// Parse source into items.
 export function parseItems(src: string): Item[] {
   const toks = tokenize(src)
-  const r = program(toks, 0)
-  if (!r.ok) throw new Error(`parse: ${r.msg}`)
-  if (toks[r.pos].t !== "eof") {
-    throw new Error(`parse: unexpected trailing ${describe(toks[r.pos])}`)
+  const items: Item[] = []
+  let pos = 0
+  while (toks[pos].t === "nl") pos++
+  while (toks[pos].t !== "eof") {
+    const r = itemP(toks, pos)
+    if (!r.ok) throw new Error(`parse: ${r.msg}`)
+    items.push(r.v)
+    pos = r.pos
+    while (toks[pos].t === "nl" || (toks[pos].t === "punct" && (toks[pos] as any).v === ";")) pos++
   }
+  return items
+}
+
+// Parse a single expression.
+export function parseExpr(src: string): Expr {
+  const toks = tokenize(src)
+  let pos = 0
+  while (toks[pos].t === "nl") pos++
+  const r = expr(toks, pos)
+  if (!r.ok) throw new Error(`parse: ${r.msg}`)
+  pos = r.pos
+  while (toks[pos].t === "nl") pos++
+  if (toks[pos].t !== "eof")
+    throw new Error(`parse: unexpected trailing ${describe(toks[pos])}`)
   return r.v
 }
 
 // ──────────────────────── 5. Bracket abstraction ─────────────────────────
 
-// CIR: SIR with explicit S/K/I sentinels. Bracket abstraction works here;
-// cirToTree pattern-matches the sentinels into fork/stem shapes at the end.
+// CIR: intermediate representation with explicit S/K/I sentinels.
 type Cir =
   | { tag: "lit"; t: Tree }
   | { tag: "var"; name: string }
@@ -314,15 +559,11 @@ type Cir =
 
 const S: Cir = { tag: "S" }
 const K: Cir = { tag: "K" }
-const I: Cir = { tag: "I" }
+const I_CIR: Cir = { tag: "I" }
 const cap = (f: Cir, x: Cir): Cir => ({ tag: "app", f, x })
 
 const I_TREE = fork(fork(LEAF, LEAF), LEAF)
 const K_TREE = stem(LEAF)
-// S-tree derivation:
-//   apply(S_TREE, c)           = stem(stem(c))         (S-rule via (S K_LEAF LEAF))
-//   apply(stem(stem(c)), b)    = fork(stem(c), b)      (stem rule)
-//   apply(fork(stem(c), b), x) = apply(apply(c,x), apply(b,x))   (S-rule)
 const S_TREE = fork(stem(fork(LEAF, LEAF)), LEAF)
 
 function containsFree(e: Cir, name: string): boolean {
@@ -337,8 +578,24 @@ function containsFree(e: Cir, name: string): boolean {
 function abstractName(name: string, body: Cir): Cir {
   if (!containsFree(body, name)) return cap(K, body)
   switch (body.tag) {
-    case "var": return I
-    case "app": return cap(cap(S, abstractName(name, body.f)), abstractName(name, body.x))
+    case "var": return I_CIR
+    case "app": {
+      // η-optimization: [x](f x) where x ∉ f → f
+      if (body.x.tag === "var" && body.x.name === name && !containsFree(body.f, name))
+        return body.f
+
+      const af = abstractName(name, body.f)
+      const ax = abstractName(name, body.x)
+
+      // S (K p) I → p  (η-reduction)
+      if (af.tag === "app" && af.f.tag === "K" && ax.tag === "I") return af.x
+
+      // S (K p) (K q) → K (p q)  (K-composition: compile-time eval)
+      if (af.tag === "app" && af.f.tag === "K" && ax.tag === "app" && ax.f.tag === "K")
+        return cap(K, cap(af.x, ax.x))
+
+      return cap(cap(S, af), ax)
+    }
     case "lam": return abstractName(name, abstractName(body.x, body.body))
     case "lit": case "S": case "K": case "I":
       throw new Error("abstract: unreachable (containsFree returned false)")
@@ -369,26 +626,108 @@ function cirToTree(e: Cir): Tree {
   }
 }
 
-// SIR → CIR with globals from `scope` inlined as literals. Unknown names are
-// left as `var` nodes; abstractName will eliminate them if they're bound by
-// an enclosing lam, or cirToTree will throw if they're genuinely free.
-function sirToCir(e: Sir, lookup: (name: string) => Tree | undefined): Cir {
+// Build selector: \x0 x1 ... xn-1. xi (picks the i-th of n arguments)
+function buildSelector(n: number, i: number): Cir {
+  const names = Array.from({ length: n }, (_, j) => `__sel${j}`)
+  let body: Cir = { tag: "var", name: names[i] }
+  for (let j = n - 1; j >= 0; j--) {
+    body = { tag: "lam", x: names[j], body }
+  }
+  return body
+}
+
+function selectorTree(n: number, i: number): Tree {
+  return cirToTree(eliminateLams(buildSelector(n, i)))
+}
+
+// Scope entry: a compiled tree plus optional record field names for projection.
+interface ScopeEntry { tree: Tree; fields?: string[] }
+
+// Expr → Cir, with scope lookup and use-resolution.
+function exprToCir(
+  e: Expr,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+  resolveUse: (path: string) => ScopeEntry,
+): Cir {
+  const lookup = (name: string) => lookupEntry(name)?.tree
   switch (e.tag) {
     case "leaf": return { tag: "lit", t: LEAF }
     case "var": {
-      const t = lookup(e.name)
-      return t ? { tag: "lit", t } : { tag: "var", name: e.name }
+      const entry = lookupEntry(e.name)
+      return entry ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
     }
-    case "app": return { tag: "app", f: sirToCir(e.f, lookup), x: sirToCir(e.x, lookup) }
-    case "lam": return { tag: "lam", x: e.x, body: sirToCir(e.body, lookup) }
+    case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
+    case "app":
+      return { tag: "app",
+        f: exprToCir(e.f, lookupEntry, resolveUse),
+        x: exprToCir(e.x, lookupEntry, resolveUse),
+      }
+    case "ann": return exprToCir(e.expr, lookupEntry, resolveUse) // erase type
+    case "binder": {
+      // Shadow binder params so they don't resolve to scope entries.
+      const paramNames = new Set(e.params.map((p, i) => p.name ?? `_anon${i}`))
+      const shadowedLookup = (name: string): ScopeEntry | undefined =>
+        paramNames.has(name) ? undefined : lookupEntry(name)
+      let body = exprToCir(e.body, shadowedLookup, resolveUse)
+      for (let i = e.params.length - 1; i >= 0; i--) {
+        const name = e.params[i].name ?? `_anon${i}`
+        body = { tag: "lam", x: name, body }
+      }
+      return body
+    }
+    case "recType": throw new Error("recType cannot appear in untyped compilation")
+    case "recValue": {
+      // Church encoding: {x := a; y := b} → \sel. sel a b
+      const fieldCirs = e.fields.map(f => exprToCir(f.value, lookupEntry, resolveUse))
+      const selName = "__sel"
+      let body: Cir = { tag: "var", name: selName }
+      for (const fc of fieldCirs) body = cap(body, fc)
+      return { tag: "lam", x: selName, body }
+    }
+    case "use": {
+      const entry = resolveUse(e.path)
+      return { tag: "lit", t: entry.tree }
+    }
+    case "proj": {
+      // Compile target, then look up field index from target's field metadata.
+      // Target must be a known record (var with fields, or use expression).
+      const fieldNames = resolveExprFields(e.target, lookupEntry, resolveUse)
+      if (!fieldNames)
+        throw new Error(`projection '.${e.field}': target has no known record fields`)
+      const idx = fieldNames.indexOf(e.field)
+      if (idx < 0)
+        throw new Error(`projection '.${e.field}': field not found (available: ${fieldNames.join(", ")})`)
+      const target = exprToCir(e.target, lookupEntry, resolveUse)
+      const sel = buildSelector(fieldNames.length, idx)
+      return cap(target, sel)
+    }
   }
 }
 
-// Compilation context pointer — the parser-combinator-land `raw (EXPR)`
-// production needs to compile the SIR inside. We set this to the current
-// driver state before parsing each item so `rawEscape` can see live scope.
-let currentLookup: (name: string) => Tree | undefined = () => undefined
-const compileSir = (e: Sir): Tree => cirToTree(eliminateLams(sirToCir(e, currentLookup)))
+// Resolve the field names of an expression (for projection).
+function resolveExprFields(
+  e: Expr,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+  resolveUse: (path: string) => ScopeEntry,
+): string[] | undefined {
+  if (e.tag === "var") return lookupEntry(e.name)?.fields
+  if (e.tag === "use") return resolveUse(e.path).fields
+  if (e.tag === "recValue") return e.fields.map(f => f.name)
+  if (e.tag === "proj") {
+    // Nested projection: target.field — would need the inner record's field type
+    // which itself is a record. Not supported yet.
+    return undefined
+  }
+  return undefined
+}
+
+function compileExpr(
+  e: Expr,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+  resolveUse: (path: string) => ScopeEntry,
+): Tree {
+  return cirToTree(eliminateLams(exprToCir(e, lookupEntry, resolveUse)))
+}
 
 // ──────────────────────────── 6. Driver ─────────────────────────────────
 
@@ -397,114 +736,80 @@ export type Decl =
   | { kind: "Test"; lhs: Tree; rhs: Tree }
 
 export function parseProgram(src: string, sourcePath?: string): Decl[] {
-  // Scope stack: frame 0 holds built-ins. Each `{` pushes a new frame.
-  // Name lookup walks inner-to-outer.
-  const stack: Map<string, Tree>[] = [new Map([["fast_eq", FAST_EQ]])]
+  const stack: Map<string, ScopeEntry>[] = [new Map([["fast_eq", { tree: FAST_EQ }]])]
   const decls: Decl[] = []
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
+  const loadedFiles = new Set<string>() // cycle detection
 
-  const lookup = (name: string): Tree | undefined => {
+  const lookupEntry = (name: string): ScopeEntry | undefined => {
     for (let i = stack.length - 1; i >= 0; i--) {
-      const t = stack[i].get(name)
-      if (t !== undefined) return t
+      const e = stack[i].get(name)
+      if (e !== undefined) return e
     }
     return undefined
   }
-  const define = (name: string, tree: Tree) => stack[stack.length - 1].set(name, tree)
-  const flat = (): Map<string, Tree> => {
-    const m = new Map<string, Tree>()
-    for (const frame of stack) for (const [k, v] of frame) m.set(k, v)
-    return m
+  const define = (name: string, entry: ScopeEntry) => stack[stack.length - 1].set(name, entry)
+
+  function resolveUse(path: string): ScopeEntry {
+    const abs = pathResolve(dirStack[dirStack.length - 1], path)
+    if (loadedFiles.has(abs)) throw new Error(`use: circular dependency on ${abs}`)
+    loadedFiles.add(abs)
+    const fileSrc = readFileSync(abs, "utf-8")
+    dirStack.push(dirname(abs))
+    // Push a new scope frame for the used file.
+    stack.push(new Map())
+    const fileDecls: Decl[] = []
+    try {
+      for (const it of parseItems(fileSrc)) {
+        runItem(it, fileDecls)
+      }
+    } finally {
+      const fileScope = stack.pop()!
+      dirStack.pop()
+      loadedFiles.delete(abs)
+    }
+    // Collect the file's top-level defs as a record.
+    const fieldNames: string[] = []
+    const fieldTrees: Tree[] = []
+    for (const d of fileDecls) {
+      if (d.kind === "Def") {
+        fieldNames.push(d.name)
+        fieldTrees.push(d.tree)
+      }
+    }
+    // Church-encode: \sel. sel v1 v2 ... vn
+    const n = fieldTrees.length
+    if (n === 0) return { tree: LEAF, fields: [] }
+    // Build as Cir, then compile
+    const selName = "__use_sel"
+    let body: Cir = { tag: "var", name: selName }
+    for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
+    const cir: Cir = { tag: "lam", x: selName, body }
+    const tree = cirToTree(eliminateLams(cir))
+    return { tree, fields: fieldNames }
   }
 
-  function runItem(it: Item): void {
-    // Make current scope visible to `raw (EXPR)` inside any typed item we
-    // parse while processing sub-items (e.g. a `use`d file).
-    currentLookup = lookup
+  function runItem(it: Item, target: Decl[]): void {
     switch (it.tag) {
-      case "def": {
-        const tree = compileSir(it.expr)
-        define(it.name, tree)
-        decls.push({ kind: "Def", name: it.name, tree })
-        return
-      }
-      case "deftyped": {
-        const env = flat()
-        const typeTree = elabSurface(it.type, env)
-        const exprTree = elabSurface(it.expr, env)
-        const tree = runTypedCheck(it.name, typeTree, exprTree, lookup)
-        define(it.name, tree)
-        decls.push({ kind: "Def", name: it.name, tree })
-        return
-      }
-      case "elab": {
-        const tree = elabSurface(it.expr, flat())
-        define(it.name, tree)
-        decls.push({ kind: "Def", name: it.name, tree })
+      case "let": {
+        const tree = compileExpr(it.body, lookupEntry, resolveUse)
+        // If the body is a use or recValue, track fields.
+        const fields = resolveExprFields(it.body, lookupEntry, resolveUse)
+        define(it.name, { tree, fields })
+        target.push({ kind: "Def", name: it.name, tree })
         return
       }
       case "test": {
-        decls.push({
+        target.push({
           kind: "Test",
-          lhs: compileSir(it.lhs),
-          rhs: compileSir(it.rhs),
+          lhs: compileExpr(it.lhs, lookupEntry, resolveUse),
+          rhs: compileExpr(it.rhs, lookupEntry, resolveUse),
         })
-        return
-      }
-      case "use": {
-        const abs = pathResolve(dirStack[dirStack.length - 1], it.path)
-        const src = readFileSync(abs, "utf-8")
-        dirStack.push(dirname(abs))
-        try {
-          for (const sub of parseItems(src)) runItem(sub)
-        } finally {
-          dirStack.pop()
-        }
-        return
-      }
-      case "block": {
-        stack.push(new Map())
-        try {
-          for (const sub of it.items) runItem(sub)
-        } finally {
-          stack.pop()
-        }
         return
       }
     }
   }
 
-  for (const it of parseItems(src)) runItem(it)
+  for (const it of parseItems(src)) runItem(it, decls)
   return decls
-}
-
-function runTypedCheck(
-  name: string,
-  typeTree: Tree,
-  exprTree: Tree,
-  lookup: (name: string) => Tree | undefined,
-): Tree {
-  const predOfLvl = lookup("pred_of_lvl")
-  const stateInit = lookup("state_init")
-  const ctxNone   = lookup("ctx_none")
-  if (!predOfLvl || !stateInit || !ctxNone) {
-    throw new Error(
-      `def ${name}: typed def needs 'pred_of_lvl', 'ctx_none', and 'state_init' in scope`,
-    )
-  }
-  // pred_of_lvl : ty → tyCtx → cand → candCtx → state → (bool, state')
-  const res = applyTree(
-    applyTree(applyTree(applyTree(applyTree(predOfLvl, typeTree), ctxNone), exprTree), ctxNone),
-    stateInit,
-    10_000_000,
-  )
-  if (!isFork(res)) throw new Error(`def ${name}: pred_of_lvl returned non-tuple ${prettyTree(res)}`)
-  const okBit = res.left
-  const finalState = res.right
-  if (!treeEqual(okBit, LEAF)) {
-    throw new Error(`def ${name}: type check failed (got ${prettyTree(okBit)})`)
-  }
-  const metasList = isFork(finalState) ? finalState.right : LEAF
-  const solutions = decodeMetaSolutions(metasList)
-  return solutions.size > 0 ? substituteMetas(exprTree, solutions) : exprTree
 }
