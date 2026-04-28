@@ -20,17 +20,20 @@ Every component participating in checking, elaboration, or conversion must have 
 ## Code layout
 
 - `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, `FAST_EQ`.
-- `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar: `let`/`test`/`use` items, `{x : A} -> e` binders, `A -> B` arrow sugar, `{x := e}` recValues, `{x : A}` recTypes, `.field` projection. Bracket abstraction with η-reduction + K-composition optimizations.
+- `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar: `let`/`test`/`use`/`open` items, `{x : A} -> e` binders, `A -> B` arrow sugar, `{x := e}` recValues, `{x : A}` recTypes, `.field` projection. Bracket abstraction with η-reduction + K-composition optimizations.
 - `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests.
-- `test/disp.disp` — **Primary test suite** (152 tests). The full NbE pipeline as `.disp` source: combinators, tag infrastructure, napply, type constructors, typed eliminators, Eq type, arithmetic, integration tests.
-- `test/disp.test.ts` — vitest harness that runs `disp.disp` via `runFile`.
-- `test/parser.test.ts` — parser unit tests (58 tests): tokenizer, expressions, items, compilation, errors.
+- `lib/prelude.disp` — fundamental combinators (TT/FF, triage, ite2/ited, pairs, and, wait/fix).
+- `lib/nbe.disp` — NbE infrastructure: tag encoding, Val domain (VLam/VHyp/VStuck/VStuckElim), recognizers, napply (simple + H-rule), ton_check, conv, Pi/Arrow construction.
+- `lib/types.disp` — type definitions: Nat, Bool, Eq, typed eliminators (bool_rec, nat_rec, eq_J), nat_le/lt, Type n, structural conv, add.
+- `lib/*.test.disp` — tests per module (prelude: 8, nbe: 40, types: 103).
+- `test/disp.test.ts` — vitest harness that globs `lib/*.test.disp` and runs each.
+- `test/parser.test.ts` — parser unit tests (58 tests).
 - `test/tree.test.ts` — tree calculus runtime tests (21 tests).
 
 ## Current state (as of 2026-04-28)
 
 - **Parser rewritten to match `SYNTAX.typ`.** New comment syntax (`//`, `/* */`), `let`/`test` items, unified `Expr` AST with binders, recTypes, recValues, use expressions, projections. Church-encoded records with field metadata for projection.
-- **Full NbE pipeline as `.disp` source** (152 tests). All NbE components are tree programs running via the parser: napply (with H-rule), type_of_neutral (CPS ton_check), conv (fast_eq + structural), Pi/Arrow construction, Type n (universe predicate with cumulativity), Nat, Bool, nat_le/lt, fresh_hyp.
+- **Full NbE pipeline as `.disp` source** (151 tests across 3 files). Split into `lib/prelude.disp` (combinators), `lib/nbe.disp` (Val domain, napply, ton_check, conv, Pi/Arrow), `lib/types.disp` (Nat, Bool, Eq, Type n, eliminators, add). Files use `open use "dep.disp"` for dependencies.
 - **Typed eliminators.** `bool_rec` and `nat_rec` are neutral-aware recursors: they check `is_neutral(target)` before dispatching, producing `VStuckElim(motive, target)` when stuck. `type_of_neutral` handles the new neutral form by applying the motive. This solves the triage-on-neutral problem for functions that branch on their arguments.
 - **Eq type implemented.** `mkEq A x y` predicate with EQ_TAG metadata, `refl = LEAF`, J eliminator (`eq_J`), transport (`eq_subst`), symmetry (`eq_sym`), congruence (`eq_cong`).
 - **Arithmetic working.** `add` via select-then-apply + fix. Eq proofs on concrete values including commutativity (`add 2 3 = add 3 2`).
