@@ -1,0 +1,115 @@
+// napply: the NbE evaluator with H-rule.
+// Depends on: prelude.disp
+open use "prelude.disp"
+
+// ================================================================
+// napply_simple: tag dispatch, no H-rule
+// ================================================================
+
+let tag_dispatch = {f, x} ->
+  ited ({_} -> mk_vstuck_prog f x)
+    ({_} -> ited ({_} -> mk_vstuck_prog f x)
+      ({_} -> ited ({_} -> vlam_body f x)
+        ({_} -> f x)
+        (is_vlam f))
+      (is_vstuck f))
+    (is_vhyp f)
+
+let napply_simple = fix ({self, f, x} ->
+  ited ({_} -> mk_vstuck_prog f x)
+    ({_} -> ited ({_} -> mk_vstuck_prog f x)
+      ({_} -> ited ({_} -> vlam_body f x)
+        ({_} -> f x)
+        (is_vlam f))
+      (is_vstuck f))
+    (is_vhyp f))
+
+// ================================================================
+// Metadata: Pi and Universe reflection
+// ================================================================
+
+let PI_TAG = t (t t)
+let UNIV_TAG = t t (t t)
+
+let is_pi = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) PI_TAG) FF (is_vlam v)
+let pi_dom = {v} -> pair_fst (pair_snd (vlam_meta v))
+let pi_cod_fn = {v} -> pair_snd (pair_snd (vlam_meta v))
+
+let is_universe = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) UNIV_TAG) FF (is_vlam v)
+let universe_rank = {v} -> pair_snd (vlam_meta v)
+
+let mkVHyp_prog = {ty, id} -> t (t TAG_ROOT KV_HYP) (t ty id)
+let mkVLam_prog = {meta, body} -> t (t TAG_ROOT KV_LAM) (t meta body)
+let fresh_hyp = mkVHyp_prog
+
+// ================================================================
+// type_of_neutral (CPS: ton_check)
+// ================================================================
+
+let ton_vhyp_fn = {self, napply_fn, check_fn, v} -> check_fn (vhyp_type v)
+
+let ton_spine_cont = {check_fn, napply_fn, arg, head_type} ->
+  ite2 (check_fn (napply_fn (pi_cod_fn head_type) arg)) FF (is_pi head_type)
+
+let ton_vstuck_fn = {self, napply_fn, check_fn, v} ->
+  self napply_fn
+    (ton_spine_cont check_fn napply_fn (vstuck_arg v))
+    (vstuck_head v)
+
+let ton_ff_fn = {self, napply_fn, check_fn, v} -> FF
+
+let ton_velim_fn = {self, napply_fn, check_fn, v} ->
+  check_fn (napply_fn (velim_motive v) (velim_target v))
+
+let ton_non_vhyp_fn = {self, napply_fn, check_fn, v} ->
+  ite2 ton_vstuck_fn
+    ({self, napply_fn, check_fn, v} ->
+      ite2 ton_velim_fn ton_ff_fn (is_velim v)
+        self napply_fn check_fn v)
+    (is_vstuck v)
+    self napply_fn check_fn v
+
+let ton_check_core = fix ({self, napply_fn, check_fn, v} ->
+  ite2 ton_vhyp_fn ton_non_vhyp_fn (is_vhyp v)
+    self napply_fn check_fn v)
+
+let ton_check = wait ton_check_core napply_simple
+
+// conv (fast_eq based)
+let conv = {a, b} -> fast_eq a b
+
+// ================================================================
+// napply: full evaluator with H-rule
+// ================================================================
+
+let napply_neutral_fn = {conv_fn, ton_check_fn, f, x} ->
+  ited ({_} -> TT)
+    ({_} -> tag_dispatch f x)
+    (ton_check_fn (conv_fn f) x)
+
+let napply_raw_fn = {conv_fn, ton_check_fn, f, x} ->
+  tag_dispatch f x
+
+let napply_core = {conv_fn, ton_check_fn, f, x} ->
+  ite2 napply_neutral_fn napply_raw_fn (is_neutral x)
+    conv_fn ton_check_fn f x
+
+let napply = wait (wait (wait napply_core conv) ton_check)
+
+// ================================================================
+// Type constructors: Pi and Arrow
+// ================================================================
+
+// Pi body: normalized to TT/FF via fast_eq
+let pi_body_template = {napply_ref, A, B, f} ->
+  fast_eq (napply_ref A (napply_ref f B)) TT
+
+let mkPi_prog = {domain, codFn, depth} ->
+  mkVLam_prog
+    (t PI_TAG (t domain codFn))
+    (pi_body_template napply
+      (napply codFn (mkVHyp_prog domain depth))
+      (mkVHyp_prog domain depth))
+
+let mkArrow_prog = {a_type, b_type, depth} ->
+  mkPi_prog a_type (mkVLam_prog t (t t b_type)) depth

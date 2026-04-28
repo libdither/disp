@@ -1,0 +1,50 @@
+open use "prelude.disp"
+
+// ite2
+test ite2 (t t) (t (t t) t) TT = t t
+test ite2 (t t) (t (t t) t) FF = t (t t) t
+
+// pair accessors
+test pair_fst (t (t t) t) = t t
+test pair_snd (t (t t) t) = t
+
+// is_tagged
+test is_tagged (mkVHyp t t) = TT
+test is_tagged (mkVLam t ({x} -> x)) = TT
+test is_tagged t = FF
+test is_tagged (t t) = FF
+test is_tagged (t t t) = FF
+
+// tag_kind / tag_payload
+test tag_kind (mkVLam t ({x} -> x)) = KV_LAM
+test tag_kind (mkVHyp t t) = KV_HYP
+test tag_payload (mkVHyp (t t) t) = t (t t) t
+
+// Val recognizers
+test is_vhyp (mkVHyp t t) = TT
+test is_vhyp (mkVLam t ({x} -> x)) = FF
+test is_vhyp t = FF
+test is_vlam (mkVLam t ({x} -> x)) = TT
+test is_vlam (mkVHyp t t) = FF
+test is_vstuck (mkVStuck t t) = TT
+test is_vstuck t = FF
+test is_neutral (mkVHyp t t) = TT
+test is_neutral (mkVStuck t t) = TT
+test is_neutral (mkVLam t ({x} -> x)) = FF
+test is_neutral t = FF
+
+// Payload accessors
+test vlam_body (mkVLam t ({x} -> x)) = {x} -> x
+test vlam_meta (mkVLam (t (t t)) ({x} -> x)) = t (t t)
+test vhyp_type (mkVHyp (t t) t) = t t
+
+// mk_vstuck_prog
+test mk_vstuck_prog (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
+
+// wait + fix
+test wait ({x, y} -> x) t (t t) = t
+
+let countdown = fix ({self, n} -> triage t ({c} -> self c) ({l, r} -> self r) n)
+test countdown t = t
+test countdown (t t t) = t
+test countdown (t t (t t t)) = t

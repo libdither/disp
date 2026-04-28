@@ -1,0 +1,241 @@
+// Type definitions: Nat, Bool, Eq, Type n, typed eliminators, arithmetic.
+// Depends on: prelude.disp, napply.disp
+open use "prelude.disp"
+open use "napply.disp"
+
+// ================================================================
+// Nat predicate (recursive, select-then-apply)
+// ================================================================
+
+let nat_zero_fn = {self, n} -> TT
+let nat_ff_fn = {self, n} -> FF
+let nat_succ_fn = {self, n} -> napply self (pair_snd n)
+
+let nat_succ_check_fn = {self, n} ->
+  ite2 nat_succ_fn nat_ff_fn (fast_eq (pair_fst n) t)
+    self n
+
+let nat_non_zero_fn = {self, n} ->
+  ite2 nat_succ_check_fn nat_ff_fn (is_tree_fork n)
+    self n
+
+let nat_body = fix ({self, n} ->
+  ite2 nat_zero_fn nat_non_zero_fn (fast_eq n t)
+    self n)
+
+let Nat = mkVLam t nat_body
+
+// ================================================================
+// Bool predicate
+// ================================================================
+
+let Bool = mkVLam t ({b} -> ite2 TT (fast_eq b FF) (fast_eq b t))
+
+// ================================================================
+// Nat helpers
+// ================================================================
+
+let zero = t
+let succ = {n} -> t t n
+let one = succ zero
+let two = succ one
+let three = succ two
+let four = succ three
+let five = succ four
+
+// ================================================================
+// Typed eliminators (neutral-aware recursors)
+// ================================================================
+
+let bool_rec = {motive, t_case, f_case, target} ->
+  ited
+    ({_} -> mkVStuckElim motive target)
+    ({_} -> ite2 t_case f_case target)
+    (is_neutral target)
+
+let nat_rec_body = fix ({self, motive, base, step, target} ->
+  ited
+    ({_} -> mkVStuckElim motive target)
+    ({_} ->
+      ite2
+        ({self, motive, base, step, target} -> base)
+        ({self, motive, base, step, target} ->
+          ite2
+            ({self, motive, base, step, target} ->
+              ite2
+                ({self, motive, base, step, target} ->
+                  step (pair_snd target) (self motive base step (pair_snd target)))
+                ({self, motive, base, step, target} -> base)
+                (fast_eq (pair_fst target) t)
+                self motive base step target)
+            ({self, motive, base, step, target} -> base)
+            (is_tree_fork target)
+            self motive base step target)
+        (fast_eq target t)
+        self motive base step target)
+    (is_neutral target))
+
+let nat_rec = {motive, base, step, target} ->
+  nat_rec_body motive base step target
+
+// ================================================================
+// Eq type (propositional equality)
+// ================================================================
+
+let EQ_TAG = t (t (t t))
+let refl = t
+
+let is_eq = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) EQ_TAG) FF (is_vlam v)
+let eq_A = {v} -> pair_fst (pair_snd (vlam_meta v))
+let eq_x = {v} -> pair_fst (pair_snd (pair_snd (vlam_meta v)))
+let eq_y = {v} -> pair_snd (pair_snd (pair_snd (vlam_meta v)))
+
+let eq_body = {x, y, p} ->
+  ited
+    ({_} -> TT)
+    ({_} -> ited
+      ({_} -> fast_eq x y)
+      ({_} -> FF)
+      (fast_eq p t))
+    (is_neutral p)
+
+let mkEq = {A, x, y} ->
+  mkVLam_prog (t EQ_TAG (t A (t x y))) (eq_body x y)
+
+let eq_J = {A, x, motive, base, y, p} ->
+  ited
+    ({_} -> mkVStuckElim (napply (napply motive y) p) p)
+    ({_} -> base)
+    (is_neutral p)
+
+let eq_subst = {A, P, x, y, p, px} ->
+  ited
+    ({_} -> mkVStuckElim (napply P y) p)
+    ({_} -> px)
+    (is_neutral p)
+
+let eq_sym = {A, x, y, p} ->
+  ited
+    ({_} -> mkVStuckElim (mkEq A y x) p)
+    ({_} -> refl)
+    (is_neutral p)
+
+let eq_cong = {A, B, f, x, y, p} ->
+  ited
+    ({_} -> mkVStuckElim (mkEq B (napply f x) (napply f y)) p)
+    ({_} -> refl)
+    (is_neutral p)
+
+// ================================================================
+// Nat le/lt
+// ================================================================
+
+let nat_le_zero_fn = {self, a, b} -> TT
+let nat_le_succ_fn = {self, a, b} ->
+  ite2
+    ({self, a, b} -> self (pair_snd a) (pair_snd b))
+    ({self, a, b} -> FF)
+    (is_tree_fork b)
+    self a b
+let nat_le_nonzero_fn = {self, a, b} ->
+  ite2 nat_le_succ_fn ({self, a, b} -> FF) (is_tree_fork a)
+    self a b
+let nat_le = fix ({self, a, b} ->
+  ite2 nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
+    self a b)
+
+let nat_lt = {a, b} -> nat_le (t t a) b
+
+// ================================================================
+// Type n (universe predicate)
+// ================================================================
+
+let is_registered = {x} -> ite2 TT (fast_eq x Bool) (fast_eq x Nat)
+
+let univ_check_template = {rank, inferred_type} ->
+  ite2 (nat_le (universe_rank inferred_type) rank) FF (is_universe inferred_type)
+
+let type_neutral_fn = {self, rank, x} ->
+  ton_check (univ_check_template rank) x
+
+let type_univ_fn = {self, rank, x} ->
+  nat_lt (universe_rank x) rank
+
+let type_pi_fn = {self, rank, x} ->
+  and (self rank (pi_dom x))
+    (self rank (napply (pi_cod_fn x) (mkVHyp_prog (pi_dom x) (t (t rank)))))
+
+let type_registered_fn = {self, rank, x} -> is_registered x
+
+let type_non_neutral_fn = {self, rank, x} ->
+  ite2
+    type_univ_fn
+    ({self, rank, x} ->
+      ite2
+        type_pi_fn
+        ({self, rank, x} ->
+          ite2 type_registered_fn ({self, rank, x} -> FF) (is_registered x)
+            self rank x)
+        (is_pi x)
+        self rank x)
+    (is_universe x)
+    self rank x
+
+let type_body_core = fix ({self, rank, x} ->
+  ite2 type_neutral_fn type_non_neutral_fn (is_neutral x)
+    self rank x)
+
+let mkType = {rank} -> mkVLam (t UNIV_TAG rank) (type_body_core rank)
+
+let Type0 = mkType t
+let Type1 = mkType (t t t)
+let Type2 = mkType (t t (t t t))
+
+// ================================================================
+// Structural conv
+// ================================================================
+
+let conv_fast_fn = {self, a, b} -> TT
+let conv_pi_fn = {self, a, b} ->
+  and (self (pi_dom a) (pi_dom b))
+    (self
+      (napply (pi_cod_fn a) (mkVHyp_prog (pi_dom a) (t (t (t t)))))
+      (napply (pi_cod_fn b) (mkVHyp_prog (pi_dom a) (t (t (t t))))))
+let conv_univ_fn = {self, a, b} ->
+  fast_eq (universe_rank a) (universe_rank b)
+let conv_ff_fn = {self, a, b} -> FF
+
+let conv_not_fast_fn = {self, a, b} ->
+  ite2
+    ({self, a, b} ->
+      ite2 conv_pi_fn ({self, a, b} ->
+        ite2 conv_univ_fn conv_ff_fn
+          (and (is_universe a) (is_universe b))
+          self a b)
+        (and (is_pi a) (is_pi b))
+        self a b)
+    conv_ff_fn
+    (is_tagged a)
+    self a b
+
+let conv_structural = fix ({self, a, b} ->
+  ite2 conv_fast_fn conv_not_fast_fn (fast_eq a b)
+    self a b)
+
+// ================================================================
+// Arithmetic: add
+// ================================================================
+
+let nat_motive = mkVLam_prog t ({_} -> Nat)
+
+let add_zero_fn = {self, n, m} -> m
+let add_succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
+let add_nonzero_fn = {self, n, m} ->
+  ite2 add_succ_fn add_zero_fn (is_tree_fork n) self n m
+
+let add = fix ({self, n, m} ->
+  ite2 add_zero_fn add_nonzero_fn (fast_eq n t) self n m)
+
+// Common type shorthands
+let NatToNat = mkArrow_prog Nat Nat t
+let id_fn = mkVLam t ({x} -> x)

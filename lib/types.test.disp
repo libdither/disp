@@ -1,0 +1,328 @@
+open use "prelude.disp"
+open use "napply.disp"
+open use "types.disp"
+
+// ================================================================
+// Nat / Bool predicates
+// ================================================================
+
+test napply Nat t = TT
+test napply Nat (t t t) = TT
+test napply Nat (t t (t t t)) = TT
+test napply Nat FF = FF
+test napply Bool TT = TT
+test napply Bool FF = TT
+test napply Bool (t t t) = FF
+test napply Nat zero = TT
+test napply Nat five = TT
+
+// ================================================================
+// VStuckElim
+// ================================================================
+
+test is_velim (mkVStuckElim Nat (mkVHyp Bool t)) = TT
+test is_neutral (mkVStuckElim Nat (mkVHyp Bool t)) = TT
+test velim_motive (mkVStuckElim Nat (mkVHyp Bool t)) = Nat
+test velim_target (mkVStuckElim Nat (mkVHyp Bool t)) = mkVHyp Bool t
+
+// ================================================================
+// Typed eliminators
+// ================================================================
+
+test bool_rec ({_} -> Nat) one zero TT = one
+test bool_rec ({_} -> Nat) one zero FF = zero
+test is_velim (bool_rec ({_} -> Nat) one zero (mkVHyp Bool t)) = TT
+
+test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) zero = TT
+test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) two = TT
+test is_velim (nat_rec ({_} -> Bool) TT ({n, prev} -> prev) (mkVHyp Nat t)) = TT
+
+// nat_rec computes correctly
+test nat_rec (mkVLam t ({_} -> Nat)) (t t t) ({n, p} -> p) zero = t t t
+test nat_rec (mkVLam t ({_} -> Nat)) zero ({n, p} -> succ p) two = two
+
+// ================================================================
+// Eq type
+// ================================================================
+
+test napply (mkEq Nat zero zero) refl = TT
+test napply (mkEq Nat one one) refl = TT
+test napply (mkEq Nat zero one) refl = FF
+test napply (mkEq Nat zero zero) (t t) = FF
+
+// J reduces on refl
+let test_motive = mkVLam t ({y} -> mkVLam_prog t ({p} -> Nat))
+test eq_J Nat zero test_motive five zero refl = five
+
+// sym
+test napply (mkEq Nat zero zero) (eq_sym Nat zero zero refl) = TT
+
+// cong
+let succ_fn = mkVLam t ({n} -> succ n)
+test napply (mkEq Nat one one) (eq_cong Nat Nat succ_fn zero zero refl) = TT
+
+// subst
+test eq_subst Nat Nat zero zero refl five = five
+
+// ================================================================
+// Arithmetic: add
+// ================================================================
+
+test add zero zero = zero
+test add zero three = three
+test add two three = five
+test add three two = five
+
+test napply (mkEq Nat (add zero zero) zero) refl = TT
+test napply (mkEq Nat (add one zero) one) refl = TT
+test napply (mkEq Nat (add two zero) two) refl = TT
+test napply (mkEq Nat (add three zero) three) refl = TT
+
+// Commutativity on concrete values
+test napply (mkEq Nat (add two three) (add three two)) refl = TT
+test napply (mkEq Nat (add one four) (add four one)) refl = TT
+
+// ================================================================
+// Arrow type checking
+// ================================================================
+
+test napply NatToNat id_fn = TT
+test napply NatToNat (mkVLam t ({_} -> t)) = TT
+test napply NatToNat (mkVLam t ({_} -> FF)) = FF
+
+// ================================================================
+// ton_check
+// ================================================================
+
+test ton_check ({x} -> x) (mkVHyp Nat t) = Nat
+test ton_check (conv Nat) (mkVHyp Nat t) = TT
+test ton_check (conv Bool) (mkVHyp Nat t) = FF
+test ton_check ({x} -> x) (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = Nat
+test ton_check (conv Nat) (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
+test ton_check ({x} -> x) (mkVStuck (mkVHyp (mkVHyp t t) (t t)) (mkVHyp (mkVHyp t t) (t t))) = FF
+test ton_check ({x} -> x) t = FF
+
+// ================================================================
+// napply with H-rule
+// ================================================================
+
+test napply Nat (mkVHyp Nat t) = TT
+test napply Nat (mkVHyp (mkVLam t ({_} -> FF)) t) = FF
+test napply Nat (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
+
+// ================================================================
+// Metadata reflection
+// ================================================================
+
+let testPi = mkPi_prog Nat (mkVLam t ({_} -> Nat)) t
+test is_pi testPi = TT
+test is_pi Nat = FF
+test is_pi t = FF
+test pi_dom testPi = Nat
+
+// Val constructors
+test mkVHyp_prog Nat t = mkVHyp Nat t
+
+// Pi construction
+test is_pi (mkPi_prog Nat (mkVLam t ({_} -> Nat)) t) = TT
+test pi_dom (mkPi_prog Nat (mkVLam t ({_} -> Nat)) t) = Nat
+test napply (mkArrow_prog Nat Nat t) id_fn = TT
+test napply (mkArrow_prog Nat Nat t) (mkVLam t ({_} -> t)) = TT
+test napply (mkArrow_prog Nat Nat t) (mkVLam t ({_} -> FF)) = FF
+
+// ================================================================
+// Nat le/lt
+// ================================================================
+
+test nat_le t t = TT
+test nat_le t (t t (t t (t t t))) = TT
+test nat_le (t t t) t = FF
+test nat_le (t t (t t t)) (t t (t t (t t t))) = TT
+test nat_le (t t (t t (t t t))) (t t (t t t)) = FF
+test nat_lt t (t t t) = TT
+test nat_lt t t = FF
+test nat_lt (t t t) (t t (t t t)) = TT
+
+// ================================================================
+// Type n
+// ================================================================
+
+test napply Type0 Nat = TT
+test napply Type0 Bool = TT
+test napply Type0 (mkArrow_prog Nat Nat t) = TT
+test napply Type1 Type0 = TT
+test napply Type0 Type0 = FF
+test napply Type1 Nat = TT
+test napply Type2 Type0 = TT
+
+// ================================================================
+// Structural conv
+// ================================================================
+
+test conv_structural t t = TT
+test conv_structural t (t t) = FF
+test conv_structural Type0 Type0 = TT
+test conv_structural Type0 Type1 = FF
+
+let test_codFn = mkVLam t ({_} -> Nat)
+test conv_structural (mkPi_prog Nat test_codFn t) (mkPi_prog Nat test_codFn t) = TT
+test conv_structural (mkPi_prog Nat test_codFn t) (mkPi_prog Bool test_codFn t) = FF
+
+// ================================================================
+// Integration: full pipeline
+// ================================================================
+
+// Polymorphic identity
+let polyIdType = mkPi_prog Type0
+  (mkVLam t ({A} -> mkArrow_prog A A (t t)))
+  t
+let polyId = mkVLam t ({_A} -> mkVLam_prog t ({x} -> x))
+test napply polyIdType polyId = TT
+
+// Higher-order
+let inner_body = {f, x} -> napply f x
+let ho_term = mkVLam t ({f} ->
+  t (t TAG_ROOT KV_LAM) (t t (inner_body f)))
+let ho_type = mkArrow_prog NatToNat (mkArrow_prog Nat Nat (t t)) t
+test napply ho_type ho_term = TT
+
+// Composition
+let composeType = mkArrow_prog NatToNat
+  (mkArrow_prog NatToNat (mkArrow_prog Nat Nat (t (t (t t)))) (t (t t)))
+  t
+let compose_term = mkVLam t ({f} ->
+  mkVLam_prog t ({g} ->
+    mkVLam_prog t ({x} ->
+      napply f (napply g x))))
+test napply composeType compose_term = TT
+
+let bad_compose = mkVLam t ({f} ->
+  mkVLam_prog t ({g} ->
+    mkVLam_prog t ({x} -> FF)))
+test napply composeType bad_compose = FF
+
+// Double
+let doubleType = mkArrow_prog NatToNat (mkArrow_prog Nat Nat (t (t t))) t
+let double_term = mkVLam t ({f} ->
+  mkVLam_prog t ({x} ->
+    napply f (napply f x)))
+test napply doubleType double_term = TT
+
+// Const
+let constType = mkArrow_prog Nat (mkArrow_prog Nat Nat (t (t t))) t
+let const_zero = mkVLam t ({x} ->
+  mkVLam_prog t ({_y} -> x))
+test napply constType const_zero = TT
+
+// Polymorphic const
+let polyConstType = mkPi_prog Type0
+  (mkVLam t ({A} ->
+    mkPi_prog Type0
+      (mkVLam t ({B} ->
+        mkArrow_prog A (mkArrow_prog B A (t (t (t (t t))))) (t (t (t t)))))
+      (t (t t))))
+  t
+let polyConst = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({x} ->
+      mkVLam_prog t ({_y} -> x))))
+test napply polyConstType polyConst = TT
+
+let polyConstBad = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({_x} ->
+      mkVLam_prog t ({y} -> y))))
+test napply polyConstType polyConstBad = FF
+
+// Flip
+let flipType = mkPi_prog Type0
+  (mkVLam t ({A} ->
+    mkPi_prog Type0
+      (mkVLam t ({B} ->
+        mkPi_prog Type0
+          (mkVLam t ({C} ->
+            mkArrow_prog
+              (mkArrow_prog A (mkArrow_prog B C (t (t (t (t (t (t t))))))) (t (t (t (t (t t))))))
+              (mkArrow_prog B (mkArrow_prog A C (t (t (t (t (t (t (t t)))))))) (t (t (t (t (t (t t)))))))
+              (t (t (t (t (t t)))))))
+          (t (t (t t)))))
+      (t (t t))))
+  t
+let flip_term = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({_C} ->
+      mkVLam_prog t ({f} ->
+        mkVLam_prog t ({b} ->
+          mkVLam_prog t ({a} ->
+            napply (napply f a) b))))))
+test napply flipType flip_term = TT
+
+// Deeper spine inference
+let h_g = mkVHyp NatToNat (t (t (t t)))
+let h_x = mkVHyp Nat (t (t (t (t t))))
+let stuck_gx = mkVStuck h_g h_x
+let h_f = mkVHyp NatToNat (t (t (t (t (t t)))))
+let stuck_fgx = mkVStuck h_f stuck_gx
+test napply Nat stuck_fgx = TT
+test napply Bool stuck_fgx = FF
+
+// Universe hierarchy
+test napply Type1 polyIdType = TT
+test napply Type0 polyIdType = FF
+
+// Bool -> Nat via typed eliminator
+let BoolToNat = mkArrow_prog Bool Nat t
+let bool_to_nat = mkVLam t ({b} ->
+  bool_rec (mkVLam t ({_} -> Nat)) one zero b)
+test napply BoolToNat bool_to_nat = TT
+
+// Nat -> Bool via typed eliminator
+let NatToBool = mkArrow_prog Nat Bool t
+let isZero = mkVLam t ({n} ->
+  nat_rec (mkVLam t ({_} -> Bool)) TT ({n', prev} -> FF) n)
+test napply NatToBool isZero = TT
+
+let isZeroBad = mkVLam t ({n} ->
+  nat_rec (mkVLam t ({_} -> Nat)) zero ({n', prev} -> succ prev) n)
+test napply NatToBool isZeroBad = FF
+
+// Polymorphic apply
+let polyApplyType = mkPi_prog Type0
+  (mkVLam t ({A} ->
+    mkPi_prog Type0
+      (mkVLam t ({B} ->
+        mkArrow_prog (mkArrow_prog A B (t (t (t (t t))))) (mkArrow_prog A B (t (t (t (t (t t)))))) (t (t (t t)))))
+      (t (t t))))
+  t
+let polyApply = mkVLam t ({_A} ->
+  mkVLam_prog t ({_B} ->
+    mkVLam_prog t ({f} ->
+      mkVLam_prog t ({x} ->
+        napply f x))))
+test napply polyApplyType polyApply = TT
+
+// Self-application rejection
+let selfAppType = mkPi_prog Type0
+  (mkVLam t ({A} -> mkArrow_prog A A (t (t t))))
+  t
+let selfApp = mkVLam t ({_A} ->
+  mkVLam_prog t ({x} ->
+    napply x x))
+test napply selfAppType selfApp = FF
+
+// Church pair at Nat
+let pairType = mkArrow_prog Nat
+  (mkArrow_prog Nat
+    (mkArrow_prog (mkArrow_prog Nat (mkArrow_prog Nat Nat (t (t (t (t (t t)))))) (t (t (t (t t)))))
+      Nat
+      (t (t (t (t t)))))
+    (t (t (t t))))
+  t
+let church_pair = mkVLam t ({a} ->
+  mkVLam_prog t ({b} ->
+    mkVLam_prog t ({sel} ->
+      napply (napply sel a) b)))
+test napply pairType church_pair = TT
+
+let K_fn = mkVLam t ({x, y} -> x)
+test napply (napply (napply (vlam_body church_pair) three) five) K_fn = three

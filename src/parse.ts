@@ -28,7 +28,7 @@ export type Tok =
   | { t: "nl" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["let", "test", "use"])
+const KEYWORDS = new Set(["let", "test", "use", "open"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
 const PUNCT = [":=", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
 const IDENT_HEAD = /[A-Za-z_]/
@@ -101,6 +101,7 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 export type Item =
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr }
+  | { tag: "open"; expr: Expr }
 
 // ───────────────────────── 3. Parser combinators ─────────────────────────
 
@@ -515,7 +516,12 @@ const testItem: P<Item> = map(
   ([, lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
 )
 
-const itemP: P<Item> = nl(alt(letItem, testItem))
+const openItem: P<Item> = map(
+  seq(kwP("open"), lazy(() => expr)),
+  ([, expr]) => ({ tag: "open" as const, expr }),
+)
+
+const itemP: P<Item> = nl(alt(openItem, letItem, testItem))
 
 // Parse source into items.
 export function parseItems(src: string): Item[] {
@@ -805,6 +811,25 @@ export function parseProgram(src: string, sourcePath?: string): Decl[] {
           lhs: compileExpr(it.lhs, lookupEntry, resolveUse),
           rhs: compileExpr(it.rhs, lookupEntry, resolveUse),
         })
+        return
+      }
+      case "open": {
+        const tree = compileExpr(it.expr, lookupEntry, resolveUse)
+        const fields = resolveExprFields(it.expr, lookupEntry, resolveUse)
+        if (!fields || fields.length === 0)
+          throw new Error("open: expression has no known record fields")
+        const n = fields.length
+        for (let i = 0; i < n; i++) {
+          const fieldTree = applyTree(tree, selectorTree(n, i), 10_000_000)
+          const name = fields[i]
+          const existing = lookupEntry(name)
+          if (existing) {
+            // Idempotent: skip if same tree (e.g. diamond dependency via open)
+            if (existing.tree.id === fieldTree.id) continue
+            throw new Error(`open: name '${name}' already in scope with different value`)
+          }
+          define(name, { tree: fieldTree })
+        }
         return
       }
     }
