@@ -323,21 +323,44 @@ const universe_rank = compile(lam("v",
 // type_of_neutral: spine inference
 // ================================================================
 
-// type_of_neutral takes napply_fn as ARGUMENT (not embedded literal) to avoid tree blowup
-const type_of_neutral_core = ap(fix_tree, compile(lam("self napply_fn v",
+// Select-then-apply pattern: branch bodies are compiled as closed functions,
+// selected via ite2 BEFORE shared args (self, napply_fn, v) are applied.
+// This prevents bracket abstraction from evaluating expensive recursive calls
+// inside thunks of non-taken branches (S-combinator forces both sides of
+// [x](f g) even when one side is inside a thunk that should never fire).
+
+// Branch: v is VHyp → extract stored type
+const ton_vhyp_fn = compile(lam("self napply_fn v",
+  a(lit(vhyp_type), v("v"))))
+
+// Branch: v is VStuck → recurse on spine
+// Inner ited is fine: the recursive call self(napply_fn)(vstuck_head(v)) is
+// needed for the condition AND the then-branch, and we're guaranteed v IS
+// vstuck here, so the recursion terminates.
+const ton_vstuck_fn = compile(lam("self napply_fn v",
   a(lit(ited),
-    thunk(a(lit(vhyp_type), v("v"))),
-    thunk(a(lit(ited),
-      thunk(a(lit(ited),
-        thunk(a(a(v("napply_fn"),
-            a(lit(pi_cod_fn), a(a(v("self"), v("napply_fn")), a(lit(vstuck_head), v("v"))))),
-          a(lit(vstuck_arg), v("v")))),
-        thunk(lit(ERROR_VAL)),
-        a(lit(is_pi), a(a(v("self"), v("napply_fn")), a(lit(vstuck_head), v("v")))))),
-      thunk(lit(ERROR_VAL)),
-      a(lit(is_vstuck), v("v")))),
-    a(lit(is_vhyp), v("v")))
-)))
+    thunk(a(a(v("napply_fn"),
+        a(lit(pi_cod_fn), a(a(v("self"), v("napply_fn")), a(lit(vstuck_head), v("v"))))),
+      a(lit(vstuck_arg), v("v")))),
+    thunk(lit(ERROR_VAL)),
+    a(lit(is_pi), a(a(v("self"), v("napply_fn")), a(lit(vstuck_head), v("v")))))
+))
+
+// Branch: v is neither → error
+const ton_error_fn = compile(lam("self napply_fn v", lit(ERROR_VAL)))
+
+// Non-VHyp dispatch: select vstuck_fn or error_fn, then apply shared args
+const ton_non_vhyp_fn = compile(lam("self napply_fn v",
+  a(a(a(a(lit(ite2), lit(ton_vstuck_fn), lit(ton_error_fn),
+    a(lit(is_vstuck), v("v"))),
+    v("self")), v("napply_fn")), v("v"))))
+
+// Top-level: select vhyp_fn or non_vhyp_fn, then apply shared args
+const type_of_neutral_core = ap(fix_tree, compile(lam("self napply_fn v",
+  a(a(a(a(lit(ite2), lit(ton_vhyp_fn), lit(ton_non_vhyp_fn),
+    a(lit(is_vhyp), v("v"))),
+    v("self")), v("napply_fn")), v("v")))))
+
 // Deferred partial application via wait
 const type_of_neutral = ap(wait_tree, type_of_neutral_core, napply_simple)
 // wait(ton_core)(napply_simple)(v) = ton_core(napply_simple)(v)
@@ -410,18 +433,25 @@ const tag_dispatch = compile(lam("f x",
     a(lit(is_vhyp), v("f")))
 ))
 
-// napply with H-rule: takes conv_fn and ton_fn as ARGUMENTS
-const napply_core = ap(fix_tree, compile(lam("self conv_fn ton_fn f x",
+// napply with H-rule: select-then-apply to avoid bracket-abstraction
+// evaluating ton_fn(x) when x is not neutral.
+
+// Branch: x IS neutral → check H-rule, fall back to tag_dispatch
+const napply_neutral_fn = compile(lam("conv_fn ton_fn f x",
   a(lit(ited),
-    // THEN (x is neutral): check H-rule
-    thunk(a(lit(ited),
-      thunk(lit(TT)),
-      thunk(a(a(lit(tag_dispatch), v("f")), v("x"))),
-      a(a(v("conv_fn"), v("f")), a(a(v("ton_fn"), v("x")))))),
-    // ELSE (x not neutral): tag dispatch
+    thunk(lit(TT)),
     thunk(a(a(lit(tag_dispatch), v("f")), v("x"))),
-    a(lit(is_neutral), v("x")))
-)))
+    a(a(v("conv_fn"), v("f")), a(a(v("ton_fn"), v("x")))))))
+
+// Branch: x is NOT neutral → raw tag dispatch (no type_of_neutral call)
+const napply_raw_fn = compile(lam("conv_fn ton_fn f x",
+  a(a(lit(tag_dispatch), v("f")), v("x"))))
+
+// Select branch via ite2 BEFORE applying shared args
+const napply_core = compile(lam("conv_fn ton_fn f x",
+  a(a(a(a(a(lit(ite2), lit(napply_neutral_fn), lit(napply_raw_fn),
+    a(lit(is_neutral), v("x"))),
+    v("conv_fn")), v("ton_fn")), v("f")), v("x"))))
 
 // Wire up napply WITHOUT compile-time eval (use treeApply for the wrapper)
 // napply f x = napply_core conv type_of_neutral f x
@@ -454,17 +484,6 @@ function compileNoEval(expr: Cir, scope: Record<string, Tree> = {}): Tree {
 const napply_w1 = ap(wait_tree, napply_core, conv)
 const napply_w2 = ap(wait_tree, napply_w1, type_of_neutral)
 const napply = ap(wait_tree, napply_w2)
-
-// Diagnostic: measure napply call cost
-{
-  const _b = { remaining: 50_000_000 }
-  try {
-    const _r = apply(apply(napply, LEAF, _b), LEAF, _b)
-    console.log("[DIAG] napply(LEAF,LEAF) steps:", 50_000_000 - _b.remaining, "result:", _r.tag)
-  } catch (e: any) {
-    console.log("[DIAG] napply(LEAF,LEAF) FAILED at step", 50_000_000 - _b.remaining)
-  }
-}
 
 // ================================================================
 // Type constructors
@@ -511,7 +530,7 @@ function buildPiVal2(domain: Tree, codomainFn: Tree, depth: Tree): Tree {
   // The napply tree is now wait-based (~3060 nodes). Embedding it in compile(lam(...))
   // triggers compile-time apply on the bracket-abstracted body.
   // Use compileNoEval for the wrapper:
-  const body = compileNoEval(lam("f",
+  const body = compile(lam("f",
     a(a(lit(napply), lit(cod_at_hyp)),
       a(a(lit(napply), v("f")), lit(hyp)))
   ))
@@ -533,25 +552,248 @@ function buildArrow(a_type: Tree, b_type: Tree, depth: Tree): Tree {
 // The body calls napply(Nat, sub_value) for recursion.
 // We use fix to tie the knot.
 
-const Nat_tree: Tree = (() => {
-  return ap(fix_tree, compile(lam("nat_self",
-    a(a(lit(LEAF),
-        a(a(lit(LEAF), lit(TAG_ROOT)), lit(KV_LAM))),
-      a(a(lit(LEAF), lit(LEAF)),
-        lam("n",
-          a(lit(ited),
-            thunk(lit(TT)),
-            thunk(a(lit(ited),
-              thunk(a(lit(ited),
-                thunk(a(a(lit(napply), v("nat_self")), a(lit(fork_right), v("n")))),
-                thunk(lit(FF)),
-                a(a(lit(FAST_EQ), a(lit(fork_left), v("n"))), lit(LEAF)))),
-              thunk(lit(FF)),
-              a(lit(is_tree_fork), v("n")))),
-            a(a(lit(FAST_EQ), v("n")), lit(LEAF)))
-        )))
-  )))
+// Nat predicate: the body is a fix-based recursive function, wrapped in VLam.
+// fix produces the body function; VLam tag is applied outside fix so that
+// Nat_tree IS a VLam (not a wait-encoded fix tree).
+//
+// Select-then-apply pattern avoids bracket abstraction evaluating recursive
+// napply(self, ...) in non-taken branches.
+
+// Branch: n is Zero (LEAF) → TT
+const nat_zero_fn = compile(lam("self n", lit(TT)))
+
+// Branch: n is Succ (fork with first=LEAF) → recurse on predecessor
+const nat_succ_fn = compile(lam("self n",
+  a(a(lit(napply), v("self")), a(lit(fork_right), v("n")))))
+
+// Branch: FF (neither Zero nor valid Succ)
+const nat_ff_fn = compile(lam("self n", lit(FF)))
+
+// Branch: n is a fork with first child = LEAF → Succ, recurse
+const nat_succ_check_fn = compile(lam("self n",
+  a(a(a(lit(ite2), lit(nat_succ_fn), lit(nat_ff_fn),
+    a(a(lit(FAST_EQ), a(lit(fork_left), v("n"))), lit(LEAF))),
+    v("self")), v("n"))))
+
+// Branch: n is not Zero → check is_tree_fork first, then Succ check
+const nat_non_zero_fn = compile(lam("self n",
+  a(a(a(lit(ite2), lit(nat_succ_check_fn), lit(nat_ff_fn),
+    a(lit(is_tree_fork), v("n"))),
+    v("self")), v("n"))))
+
+// Recursive body: fix produces a 2-arg function (self, n)
+const nat_body = ap(fix_tree, compile(lam("self n",
+  a(a(a(lit(ite2), lit(nat_zero_fn), lit(nat_non_zero_fn),
+    a(a(lit(FAST_EQ), v("n")), lit(LEAF))),
+    v("self")), v("n")))))
+
+// Wrap in VLam: Nat_tree is a properly-tagged VLam whose body is nat_body
+const Nat_tree: Tree = mkVLam(LEAF, nat_body)
+
+// ================================================================
+// Tree-program Val constructors
+// ================================================================
+
+// mkVLam as tree program: \meta body -> fork(fork(TAG_ROOT, KV_LAM), fork(meta, body))
+const mkVLam_prog = compile(lam("meta body",
+  a(a(lit(LEAF), a(a(lit(LEAF), lit(TAG_ROOT)), lit(KV_LAM))),
+    a(a(lit(LEAF), v("meta")), v("body")))))
+
+// mkVHyp as tree program: \type id -> fork(fork(TAG_ROOT, KV_HYP), fork(type, id))
+const mkVHyp_prog = compile(lam("type id",
+  a(a(lit(LEAF), a(a(lit(LEAF), lit(TAG_ROOT)), lit(KV_HYP))),
+    a(a(lit(LEAF), v("type")), v("id")))))
+
+// fresh_hyp = mkVHyp_prog (identity from binder depth, threaded by elaborator)
+const fresh_hyp_prog = mkVHyp_prog
+
+// ================================================================
+// Bool predicate
+// ================================================================
+
+// Bool(b) = (b == TT) ? TT : (b == FF) ? TT : FF
+const Bool_tree: Tree = mkVLam(LEAF, compile(lam("b",
+  a(lit(ite2), lit(TT),
+    a(a(lit(FAST_EQ), v("b")), lit(FF)),
+    a(a(lit(FAST_EQ), v("b")), lit(LEAF))))))
+
+// ================================================================
+// Pi construction as tree program
+// ================================================================
+
+// Template: \napply_ref A B f -> napply_ref(A, napply_ref(f, B))
+// Partial application to (napply, cod_at_hyp, hyp) produces the Pi body closure
+const pi_body_template = compile(lam("napply_ref A B f",
+  a(a(v("napply_ref"), v("A")),
+    a(a(v("napply_ref"), v("f")), v("B")))))
+
+// mkPi_prog: \domain codFn depth -> VLam(piMeta, pi_body)
+// Computes cod_at_hyp = napply(codFn, hyp) at construction time,
+// then partial-applies pi_body_template to build the body closure.
+const mkPi_prog = compile(lam("domain codFn depth",
+  a(a(lit(mkVLam_prog),
+    // meta = fork(PI_TAG, fork(domain, codFn))
+    a(a(lit(LEAF), lit(PI_TAG)), a(a(lit(LEAF), v("domain")), v("codFn")))),
+    // body = pi_body_template(napply, napply(codFn, hyp), hyp)
+    a(a(a(lit(pi_body_template), lit(napply)),
+      a(a(lit(napply), v("codFn")),
+        a(a(lit(mkVHyp_prog), v("domain")), v("depth")))),
+      a(a(lit(mkVHyp_prog), v("domain")), v("depth"))))))
+
+// mkArrow_prog: \a_type b_type depth -> mkPi(a_type, VLam(LEAF, K(b_type)), depth)
+// K(b_type) = fork(LEAF, b_type) is the constant codomain function
+const mkArrow_prog = compile(lam("a_type b_type depth",
+  a(a(a(lit(mkPi_prog), v("a_type")),
+    a(a(lit(mkVLam_prog), lit(LEAF)), a(a(lit(LEAF), lit(LEAF)), v("b_type")))),
+    v("depth"))))
+
+// ================================================================
+// Nat comparison (le, lt) for universe rank checking
+// ================================================================
+
+// nat_le: \a b -> a <= b (Nat encoding: Zero=LEAF, Succ(n)=fork(LEAF,n))
+// Zero <= anything = TT
+// Succ(a) <= Zero = FF
+// Succ(a) <= Succ(b) = a <= b
+const nat_le_zero_fn = compile(lam("self a b", lit(TT)))
+const nat_le_succ_fn = compile(lam("self a b",
+  a(a(a(a(lit(ite2),
+    // b is fork (Succ): recurse on predecessors
+    lit(compile(lam("self a b",
+      a(a(a(v("self"), a(lit(fork_right), v("a"))), a(lit(fork_right), v("b"))))))),
+    // b is not fork (Zero or stem): Succ(a) > b → FF
+    lit(compile(lam("self a b", lit(FF)))),
+    a(lit(is_tree_fork), v("b"))),
+    v("self")), v("a")), v("b"))))
+const nat_le_nonzero_fn = compile(lam("self a b",
+  a(a(a(a(lit(ite2), lit(nat_le_succ_fn), lit(compile(lam("self a b", lit(FF)))),
+    a(lit(is_tree_fork), v("a"))),
+    v("self")), v("a")), v("b"))))
+const nat_le = ap(fix_tree, compile(lam("self a b",
+  a(a(a(a(lit(ite2), lit(nat_le_zero_fn), lit(nat_le_nonzero_fn),
+    a(a(lit(FAST_EQ), v("a")), lit(LEAF))),
+    v("self")), v("a")), v("b")))))
+
+// nat_lt: a < b = Succ(a) <= b
+const nat_lt = compile(lam("a b",
+  a(a(lit(nat_le), a(a(lit(LEAF), lit(LEAF)), v("a"))), v("b"))))
+
+// ================================================================
+// Type n (universe predicate) as tree program
+// ================================================================
+
+// Registry: hardcoded for Nat and Bool
+const is_registered = compile(lam("t",
+  a(lit(ite2), lit(TT),
+    a(a(lit(FAST_EQ), v("t")), lit(Bool_tree)),
+    a(a(lit(FAST_EQ), v("t")), lit(Nat_tree)))))
+
+// Type body branches (all take self, rank, t as args after ite2 selection):
+
+// Neutral branch: cumulative check — type_of_neutral(t) must be universe with rank <= n
+const type_neutral_fn = compile(lam("self rank t",
+  a(lit(ite2),
+    a(a(lit(nat_le), a(lit(universe_rank), a(lit(type_of_neutral), v("t")))), v("rank")),
+    lit(FF),
+    a(lit(is_universe), a(lit(type_of_neutral), v("t"))))))
+
+// Universe-below branch: universeRank(t) < rank
+const type_univ_fn = compile(lam("self rank t",
+  a(a(lit(nat_lt), a(lit(universe_rank), v("t"))), v("rank"))))
+
+// Pi-at-rank branch: check domain and codomain against Type(rank)
+// Needs a fresh hyp for codomain checking. Use stem(stem(rank)) as depth
+// to distinguish from hyps created by Pi construction.
+const type_pi_fn = (() => {
+  // and(self(rank, pi_dom(t)), self(rank, napply(pi_cod_fn(t), mkVHyp(pi_dom(t), stem(stem(rank))))))
+  const dom = a(lit(pi_dom), v("t"))
+  const depth = a(a(lit(LEAF), a(lit(LEAF), v("rank"))))  // stem(stem(rank))
+  const hyp = a(a(lit(mkVHyp_prog), dom), depth)
+  const cod_at_hyp = a(a(lit(napply), a(lit(pi_cod_fn), v("t"))), hyp)
+  const check_dom = a(a(v("self"), v("rank")), dom)
+  const check_cod = a(a(v("self"), v("rank")), cod_at_hyp)
+  return compile(lam("self rank t", a(a(lit(and_tree), check_dom), check_cod)))
 })()
+
+// Registered-base branch: is_registered(t)
+const type_registered_fn = compile(lam("self rank t",
+  a(lit(is_registered), v("t"))))
+
+// FF branch
+const type_ff_fn = compile(lam("self rank t", lit(FF)))
+
+// Non-neutral dispatch: universe? Pi? registered? else FF
+const type_non_neutral_fn = compile(lam("self rank t",
+  a(a(a(a(lit(ite2),
+    lit(type_univ_fn),
+    lit(compile(lam("self rank t",
+      a(a(a(a(lit(ite2),
+        lit(type_pi_fn),
+        lit(compile(lam("self rank t",
+          a(a(a(a(lit(ite2), lit(type_registered_fn), lit(type_ff_fn),
+            a(lit(is_registered), v("t"))),
+            v("self")), v("rank")), v("t"))))),
+        a(lit(is_pi), v("t"))),
+        v("self")), v("rank")), v("t"))))),
+    a(lit(is_universe), v("t"))),
+    v("self")), v("rank")), v("t"))))
+
+// Top-level Type body: dispatch on is_neutral(t)
+// Type n uses its own body-level neutral handling (cumulativity needs rank<=n, not exact match)
+const type_body_core = ap(fix_tree, compile(lam("self rank t",
+  a(a(a(a(lit(ite2), lit(type_neutral_fn), lit(type_non_neutral_fn),
+    a(lit(is_neutral), v("t"))),
+    v("self")), v("rank")), v("t")))))
+
+// mkType: \rank -> VLam(fork(UNIV_TAG, rank), type_body(rank))
+// The body is a 1-arg function (takes t), built by partial-applying type_body_core to rank
+function mkType(rank: Tree): Tree {
+  const meta = fork(UNIV_TAG, rank)
+  const body = ap(type_body_core, rank)
+  return mkVLam(meta, body)
+}
+
+const Type0 = mkType(LEAF)           // Type 0 (rank = 0 = LEAF)
+const Type1 = mkType(fork(LEAF, LEAF)) // Type 1 (rank = 1 = Succ(Zero))
+const Type2 = mkType(fork(LEAF, fork(LEAF, LEAF))) // Type 2
+
+// ================================================================
+// Structural conv (with Pi codomain comparison)
+// ================================================================
+
+// conv_structural: recursive, handles Pi/Universe specially, falls back to fast_eq
+const conv_fast_fn = compile(lam("self a b", lit(TT)))
+const conv_pi_fn = compile(lam("self a b",
+  a(a(lit(and_tree),
+    a(a(v("self"), a(lit(pi_dom), v("a"))), a(lit(pi_dom), v("b")))),
+    a(a(v("self"),
+      a(a(lit(napply), a(lit(pi_cod_fn), v("a"))),
+        a(a(lit(mkVHyp_prog), a(lit(pi_dom), v("a"))), lit(stem(stem(stem(LEAF))))))),
+      a(a(lit(napply), a(lit(pi_cod_fn), v("b"))),
+        a(a(lit(mkVHyp_prog), a(lit(pi_dom), v("a"))), lit(stem(stem(stem(LEAF))))))))))
+const conv_univ_fn = compile(lam("self a b",
+  a(a(lit(FAST_EQ), a(lit(universe_rank), v("a"))), a(lit(universe_rank), v("b")))))
+const conv_ff_fn = compile(lam("self a b", lit(FF)))
+
+const conv_not_fast_fn = compile(lam("self a b",
+  a(a(a(a(lit(ite2),
+    // both Pi?
+    lit(compile(lam("self a b",
+      a(a(a(a(lit(ite2), lit(conv_pi_fn), lit(compile(lam("self a b",
+        // both Universe?
+        a(a(a(a(lit(ite2), lit(conv_univ_fn), lit(conv_ff_fn),
+          a(a(lit(and_tree), a(lit(is_universe), v("a"))), a(lit(is_universe), v("b")))),
+          v("self")), v("a")), v("b"))))),
+        a(a(lit(and_tree), a(lit(is_pi), v("a"))), a(lit(is_pi), v("b")))),
+        v("self")), v("a")), v("b"))))),
+    lit(conv_ff_fn),
+    a(lit(is_tagged_prog), v("a"))),
+    v("self")), v("a")), v("b"))))
+
+const conv_structural = ap(fix_tree, compile(lam("self a b",
+  a(a(a(a(lit(ite2), lit(conv_fast_fn), lit(conv_not_fast_fn),
+    a(a(lit(FAST_EQ), v("a")), v("b"))),
+    v("self")), v("a")), v("b")))))
 
 // ================================================================
 // Tests
@@ -562,6 +804,11 @@ describe("NbE Tree Programs", () => {
   describe("ite2", () => {
     it("TT → then", () => expect(treeEqual(ap(ite2, stem(LEAF), fork(LEAF,LEAF), TT), stem(LEAF))).toBe(true))
     it("FF → else", () => expect(treeEqual(ap(ite2, stem(LEAF), fork(LEAF,LEAF), FF), fork(LEAF,LEAF))).toBe(true))
+    it("ited does not force a non-selected divergent branch", () => {
+      const sii = fork(stem(I), I)
+      const diverge = compileNoEval(lam("_", a(lit(sii), lit(sii))))
+      expect(treeEqual(ap(ited, compile(thunk(lit(LEAF))), diverge, TT), LEAF)).toBe(true)
+    })
   })
 
   describe("pair_fst / pair_snd", () => {
@@ -646,6 +893,9 @@ describe("NbE Tree Programs", () => {
   })
 
   describe("napply_simple", () => {
+    it("tag_dispatch leaf → stem", () => {
+      expect(treeEqual(ap(tag_dispatch, LEAF, LEAF), stem(LEAF))).toBe(true)
+    })
     it("leaf → stem", () => {
       expect(treeEqual(ap(napply_simple, LEAF, LEAF), stem(LEAF))).toBe(true)
     })
@@ -748,6 +998,10 @@ describe("NbE Tree Programs", () => {
   })
 
   describe("napply with H-rule", () => {
+    it("napply_core with cheap type_of_neutral leaf → stem", () => {
+      const cheapTon = compile(lam("_", lit(LEAF)))
+      expect(treeEqual(ap(napply_core, conv, cheapTon, LEAF, LEAF), stem(LEAF))).toBe(true)
+    })
     it("leaf → stem (same as simple)", () => {
       expect(treeEqual(ap(napply, LEAF, LEAF), stem(LEAF))).toBe(true)
     })
@@ -812,12 +1066,17 @@ describe("NbE Tree Programs", () => {
     it("{f:Nat->Nat, x:Nat} -> f x : (Nat->Nat) -> Nat -> Nat", () => {
       const NatToNat = buildArrow(Nat_tree, Nat_tree, LEAF)
       const fullType = buildArrow(NatToNat, buildArrow(Nat_tree, Nat_tree, stem(LEAF)), LEAF)
-      // Term: {f} -> {x} -> napply(f, x) = VLam applied to VLam
+      // Term: {f} -> VLam(LEAF, {x} -> napply(f, x))
+      // Inner compile can't see outer "f", so we compile the whole thing as one lambda
+      // and build the nested VLam structure at runtime
+      const inner_body = compile(lam("f x",
+        a(a(lit(napply), v("f")), v("x"))))
+      // term = VLam(LEAF, {f} -> VLam(LEAF, inner_body(f)))
       const term = mkVLam(LEAF, compile(lam("f",
-        lit(mkVLam(LEAF, compile(lam("x",
-          a(a(lit(napply), v("f")), v("x"))
-        ))))
-      )))
+        a(a(lit(LEAF),
+            a(a(lit(LEAF), lit(TAG_ROOT)), lit(KV_LAM))),
+          a(a(lit(LEAF), lit(LEAF)),
+            a(lit(inner_body), v("f")))))))
       expect(treeEqual(ap(napply, fullType, term), TT)).toBe(true)
     })
   })
@@ -829,6 +1088,153 @@ describe("NbE Tree Programs", () => {
       const hyp_x = mkVHyp(hyp_A, stem(LEAF))    // x : A
       // napply(hyp_A, hyp_x): H-rule. type_of_neutral(hyp_x) = hyp_A. conv(hyp_A, hyp_A) = TT.
       expect(treeEqual(ap(napply, hyp_A, hyp_x), TT)).toBe(true)
+    })
+  })
+
+  // ==================================================================
+  // New tree-program components
+  // ==================================================================
+
+  describe("Tree-program Val constructors", () => {
+    it("mkVLam_prog matches mkVLam", () => {
+      const meta = stem(LEAF)
+      expect(treeEqual(ap(mkVLam_prog, meta, I), mkVLam(meta, I))).toBe(true)
+    })
+    it("mkVHyp_prog matches mkVHyp", () => {
+      expect(treeEqual(ap(mkVHyp_prog, Nat_tree, LEAF), mkVHyp(Nat_tree, LEAF))).toBe(true)
+    })
+    it("mkVHyp_prog produces distinct hyps for different depths", () => {
+      const h0 = ap(mkVHyp_prog, Nat_tree, LEAF)
+      const h1 = ap(mkVHyp_prog, Nat_tree, stem(LEAF))
+      expect(treeEqual(h0, h1)).toBe(false)
+    })
+  })
+
+  describe("Bool predicate", () => {
+    it("TT : Bool", () => {
+      expect(treeEqual(ap(napply, Bool_tree, TT), TT)).toBe(true)
+    })
+    it("FF : Bool", () => {
+      expect(treeEqual(ap(napply, Bool_tree, FF), TT)).toBe(true)
+    })
+    it("Succ(Zero) !: Bool", () => {
+      expect(treeEqual(ap(napply, Bool_tree, fork(LEAF, LEAF)), FF)).toBe(true)
+    })
+  })
+
+  describe("Pi construction (tree-level mkPi_prog)", () => {
+    it("mkPi_prog produces a VLam with PI_TAG", () => {
+      const codFn = mkVLam(LEAF, compile(lam("_", lit(Nat_tree))))
+      const pi = ap(mkPi_prog, Nat_tree, codFn, LEAF)
+      expect(treeEqual(ap(is_pi, pi), TT)).toBe(true)
+    })
+    it("mkPi_prog Pi domain matches", () => {
+      const codFn = mkVLam(LEAF, compile(lam("_", lit(Nat_tree))))
+      const pi = ap(mkPi_prog, Nat_tree, codFn, LEAF)
+      expect(treeEqual(ap(pi_dom, pi), Nat_tree)).toBe(true)
+    })
+    it("mkArrow_prog id : Nat -> Nat", () => {
+      const NatToNat = ap(mkArrow_prog, Nat_tree, Nat_tree, LEAF)
+      const id_fn = mkVLam(LEAF, I)
+      expect(treeEqual(ap(napply, NatToNat, id_fn), TT)).toBe(true)
+    })
+    it("mkArrow_prog const Zero : Nat -> Nat", () => {
+      const NatToNat = ap(mkArrow_prog, Nat_tree, Nat_tree, LEAF)
+      const k0 = mkVLam(LEAF, compile(lam("_", lit(LEAF))))
+      expect(treeEqual(ap(napply, NatToNat, k0), TT)).toBe(true)
+    })
+    it("mkArrow_prog const FF !: Nat -> Nat", () => {
+      const NatToNat = ap(mkArrow_prog, Nat_tree, Nat_tree, LEAF)
+      const bad = mkVLam(LEAF, compile(lam("_", lit(FF))))
+      expect(treeEqual(ap(napply, NatToNat, bad), FF)).toBe(true)
+    })
+  })
+
+  describe("Nat le/lt", () => {
+    it("0 <= 0", () => expect(treeEqual(ap(nat_le, LEAF, LEAF), TT)).toBe(true))
+    it("0 <= 3", () => expect(treeEqual(ap(nat_le, LEAF, fork(LEAF, fork(LEAF, fork(LEAF, LEAF)))), TT)).toBe(true))
+    it("1 <= 0 = FF", () => expect(treeEqual(ap(nat_le, fork(LEAF, LEAF), LEAF), FF)).toBe(true))
+    it("2 <= 3", () => {
+      const two = fork(LEAF, fork(LEAF, LEAF))
+      const three = fork(LEAF, fork(LEAF, fork(LEAF, LEAF)))
+      expect(treeEqual(ap(nat_le, two, three), TT)).toBe(true)
+    })
+    it("3 <= 2 = FF", () => {
+      const two = fork(LEAF, fork(LEAF, LEAF))
+      const three = fork(LEAF, fork(LEAF, fork(LEAF, LEAF)))
+      expect(treeEqual(ap(nat_le, three, two), FF)).toBe(true)
+    })
+    it("0 < 1", () => expect(treeEqual(ap(nat_lt, LEAF, fork(LEAF, LEAF)), TT)).toBe(true))
+    it("0 < 0 = FF", () => expect(treeEqual(ap(nat_lt, LEAF, LEAF), FF)).toBe(true))
+    it("1 < 2", () => expect(treeEqual(ap(nat_lt, fork(LEAF, LEAF), fork(LEAF, fork(LEAF, LEAF))), TT)).toBe(true))
+  })
+
+  describe("Type n (universe predicate)", () => {
+    it("Nat : Type 0", () => {
+      expect(treeEqual(ap(napply, Type0, Nat_tree), TT)).toBe(true)
+    })
+    it("Bool : Type 0", () => {
+      expect(treeEqual(ap(napply, Type0, Bool_tree), TT)).toBe(true)
+    })
+    it("Nat -> Nat : Type 0", () => {
+      const NatToNat = ap(mkArrow_prog, Nat_tree, Nat_tree, LEAF)
+      expect(treeEqual(ap(napply, Type0, NatToNat), TT)).toBe(true)
+    })
+    it("Type 0 : Type 1", () => {
+      expect(treeEqual(ap(napply, Type1, Type0), TT)).toBe(true)
+    })
+    it("Type 0 !: Type 0 (no Type-in-Type)", () => {
+      expect(treeEqual(ap(napply, Type0, Type0), FF)).toBe(true)
+    })
+  })
+
+  describe("Cumulativity", () => {
+    it("Nat : Type 1", () => {
+      expect(treeEqual(ap(napply, Type1, Nat_tree), TT)).toBe(true)
+    })
+    it("Type 0 : Type 2", () => {
+      expect(treeEqual(ap(napply, Type2, Type0), TT)).toBe(true)
+    })
+  })
+
+  describe("Structural conv", () => {
+    it("same tree → TT", () => {
+      expect(treeEqual(ap(conv_structural, LEAF, LEAF), TT)).toBe(true)
+    })
+    it("different trees → FF", () => {
+      expect(treeEqual(ap(conv_structural, LEAF, stem(LEAF)), FF)).toBe(true)
+    })
+    it("same Pi → TT (via structural comparison)", () => {
+      const codFn = mkVLam(LEAF, compile(lam("_", lit(Nat_tree))))
+      const pi1 = ap(mkPi_prog, Nat_tree, codFn, LEAF)
+      const pi2 = ap(mkPi_prog, Nat_tree, codFn, LEAF)
+      expect(treeEqual(ap(conv_structural, pi1, pi2), TT)).toBe(true)
+    })
+    it("different Pi domains → FF", () => {
+      const codFn = mkVLam(LEAF, compile(lam("_", lit(Nat_tree))))
+      const pi1 = ap(mkPi_prog, Nat_tree, codFn, LEAF)
+      const pi2 = ap(mkPi_prog, Bool_tree, codFn, LEAF)
+      expect(treeEqual(ap(conv_structural, pi1, pi2), FF)).toBe(true)
+    })
+    it("same Universe → TT", () => {
+      expect(treeEqual(ap(conv_structural, Type0, Type0), TT)).toBe(true)
+    })
+    it("different Universes → FF", () => {
+      expect(treeEqual(ap(conv_structural, Type0, Type1), FF)).toBe(true)
+    })
+  })
+
+  describe("Integration: full type-checking pipeline", () => {
+    it("{A:Type 0, x:A} -> x : Pi(Type 0, {A}->Pi(A, {_}->A))", () => {
+      // Polymorphic identity: build the type using tree-level mkPi
+      const polyIdType = ap(mkPi_prog, Type0,
+        mkVLam(LEAF, compile(lam("A",
+          a(a(a(lit(mkArrow_prog), v("A")), v("A")), lit(stem(LEAF)))))),
+        LEAF)
+      // Term: {A} -> {x} -> x
+      const polyId = mkVLam(LEAF, compile(lam("_A",
+        a(a(lit(mkVLam_prog), lit(LEAF)), lit(I)))))
+      expect(treeEqual(ap(napply, polyIdType, polyId), TT)).toBe(true)
     })
   })
 })

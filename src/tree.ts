@@ -83,6 +83,8 @@ export function treeApply(f: Tree, g: Tree): Tree {
 // Only fork-case results are cached (leaf→stem and stem→fork are O(1)).
 
 const applyMemo = new Map<number, Map<number, Tree>>()
+let applyMemoEntries = 0
+let applyMemoEntryLimit = 500_000
 
 // --- Cache instrumentation ---
 export const cacheStats = { hits: 0, misses: 0, memoWrites: 0, uniqueNodes: 0 }
@@ -92,6 +94,134 @@ export function resetCacheStats(): void {
 
 export function clearApplyCache(): void {
   applyMemo.clear()
+  applyMemoEntries = 0
+}
+
+export function setApplyCacheLimit(entries: number): void {
+  if (!Number.isFinite(entries) || entries < 0) throw new Error("apply cache limit must be a non-negative finite number")
+  applyMemoEntryLimit = entries
+  trimApplyMemo()
+}
+
+export function applyCacheSize(): number {
+  return applyMemoEntries
+}
+
+function memoGet(f: Tree, x: Tree): Tree | undefined {
+  return applyMemo.get(f.id)?.get(x.id)
+}
+
+function memoSet(f: Tree, x: Tree, result: Tree): void {
+  if (applyMemoEntryLimit === 0) return
+  let m = applyMemo.get(f.id)
+  if (!m) { m = new Map(); applyMemo.set(f.id, m) }
+  if (!m.has(x.id)) applyMemoEntries++
+  m.set(x.id, result)
+  cacheStats.memoWrites++
+  trimApplyMemo()
+}
+
+function trimApplyMemo(): void {
+  while (applyMemoEntries > applyMemoEntryLimit) {
+    const firstOuter = applyMemo.keys().next()
+    if (firstOuter.done) { applyMemoEntries = 0; return }
+    const outerKey = firstOuter.value
+    const inner = applyMemo.get(outerKey)
+    if (!inner) { applyMemo.delete(outerKey); continue }
+    const firstInner = inner.keys().next()
+    if (firstInner.done) { applyMemo.delete(outerKey); continue }
+    inner.delete(firstInner.value)
+    applyMemoEntries--
+    if (inner.size === 0) applyMemo.delete(outerKey)
+  }
+}
+
+export type ApplyStats = {
+  calls: number
+  steps: number
+  leafRules: number
+  stemRules: number
+  kRules: number
+  sRules: number
+  triageLeafRules: number
+  triageStemRules: number
+  triageForkRules: number
+  fastEqRules: number
+  memoHits: number
+  memoMisses: number
+  memoWrites: number
+  maxStack: number
+  cacheEntries: number
+  uniqueNodes: number
+}
+
+const applyStats: ApplyStats = {
+  calls: 0,
+  steps: 0,
+  leafRules: 0,
+  stemRules: 0,
+  kRules: 0,
+  sRules: 0,
+  triageLeafRules: 0,
+  triageStemRules: 0,
+  triageForkRules: 0,
+  fastEqRules: 0,
+  memoHits: 0,
+  memoMisses: 0,
+  memoWrites: 0,
+  maxStack: 0,
+  cacheEntries: 0,
+  uniqueNodes: 0,
+}
+let applyTraceLimit = 0
+const applyTrace: string[] = []
+
+export function setApplyTraceLimit(limit: number): void {
+  if (!Number.isFinite(limit) || limit < 0) throw new Error("apply trace limit must be a non-negative finite number")
+  applyTraceLimit = limit
+  applyTrace.length = 0
+}
+
+export function getApplyTrace(): string[] {
+  return [...applyTrace]
+}
+
+function traceApply(event: string, f: Tree, x: Tree, stackDepth: number): void {
+  if (applyTraceLimit === 0) return
+  const fShape = isFork(f) ? `fork:${f.id}/${f.left.id}/${f.right.id}` : `${f.tag}:${f.id}`
+  const xShape = isFork(x) ? `fork:${x.id}/${x.left.id}/${x.right.id}` : `${x.tag}:${x.id}`
+  if (applyTrace.length >= applyTraceLimit) applyTrace.shift()
+  applyTrace.push(`${event} f=${fShape} x=${xShape} stack=${stackDepth}`)
+}
+
+export function resetApplyStats(): void {
+  applyStats.calls = 0
+  applyStats.steps = 0
+  applyStats.leafRules = 0
+  applyStats.stemRules = 0
+  applyStats.kRules = 0
+  applyStats.sRules = 0
+  applyStats.triageLeafRules = 0
+  applyStats.triageStemRules = 0
+  applyStats.triageForkRules = 0
+  applyStats.fastEqRules = 0
+  applyStats.memoHits = 0
+  applyStats.memoMisses = 0
+  applyStats.memoWrites = 0
+  applyStats.maxStack = 0
+  applyStats.cacheEntries = 0
+  applyStats.uniqueNodes = 0
+}
+
+export function getApplyStats(): ApplyStats {
+  return {
+    ...applyStats,
+    memoHits: cacheStats.hits,
+    memoMisses: cacheStats.misses,
+    memoWrites: cacheStats.memoWrites,
+    cacheEntries: applyMemoEntries,
+    uniqueNodes: cacheStats.uniqueNodes,
+  }
 }
 
 // --- apply: tree calculus application (execution) ---
@@ -123,6 +253,7 @@ type Cont =
   | { kind: ContKind.SAfterCx, origX: Tree, b: Tree }
 
 export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): Tree {
+  applyStats.calls++
   let curF = fInit, curX = xInit
   const stack: Cont[] = []
 
@@ -137,10 +268,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
           stack.pop(); curF = c.func; curX = result; return null
         case ContKind.Memo:
           stack.pop()
-          let m = applyMemo.get(c.f.id)
-          if (!m) { m = new Map(); applyMemo.set(c.f.id, m) }
-          m.set(c.x.id, result)
-          cacheStats.memoWrites++
+          memoSet(c.f, c.x, result)
           break  // keep popping
         case ContKind.SAfterCx: {
           stack.pop()
@@ -162,24 +290,28 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
 
   while (true) {
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
+    if (stack.length > applyStats.maxStack) applyStats.maxStack = stack.length
 
     // Leaf/Stem: immediate result
-    if (isLeaf(curF)) { const r = deliver(stem(curX)); if (r !== null) return r; continue }
-    if (isStem(curF)) { const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
+    if (isLeaf(curF)) { traceApply("leaf", curF, curX, stack.length); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
+    if (isStem(curF)) { traceApply("stem", curF, curX, stack.length); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
 
     // Memo check
-    const mi = applyMemo.get(curF.id)
-    if (mi) { const c = mi.get(curX.id); if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue } }
+    const c = memoGet(curF, curX)
+    if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue }
     cacheStats.misses++
 
     // FAST_EQ
     if (curF.left.id === FAST_EQ_MARKER.id) {
+      traceApply("fast_eq", curF, curX, stack.length)
+      applyStats.fastEqRules++
       const v = treeEqual(curF.right, curX) ? LEAF : stem(LEAF)
-      let m = applyMemo.get(curF.id); if (!m) { m = new Map(); applyMemo.set(curF.id, m) }; m.set(curX.id, v)
+      memoSet(curF, curX, v)
       const r = deliver(v); if (r !== null) return r; continue
     }
 
     budget.remaining--
+    applyStats.steps++
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
 
     const a = curF.left, b = curF.right
@@ -187,10 +319,14 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
 
     if (isLeaf(a)) {
       // K rule
+      traceApply("K", curF, curX, stack.length)
+      applyStats.kRules++
       const r = deliver(b); if (r !== null) return r; continue
     }
 
     if (isStem(a)) {
+      traceApply("S", curF, curX, stack.length)
+      applyStats.sRules++
       const c = a.child
       if (isFork(c) && isLeaf(c.left)) {
         if (isFork(b) && isLeaf(b.left)) { curF = c.right; curX = b.right; continue }
@@ -204,8 +340,10 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
 
     // Triage
     const tc = a.left, td = a.right
-    if (isLeaf(curX)) { const r = deliver(tc); if (r !== null) return r; continue }
-    if (isStem(curX)) { curF = td; curX = curX.child; continue }
+    if (isLeaf(curX)) { traceApply("T_leaf", curF, curX, stack.length); applyStats.triageLeafRules++; const r = deliver(tc); if (r !== null) return r; continue }
+    if (isStem(curX)) { traceApply("T_stem", curF, curX, stack.length); applyStats.triageStemRules++; curF = td; curX = curX.child; continue }
+    traceApply("T_fork", curF, curX, stack.length)
+    applyStats.triageForkRules++
     stack.push({ kind: ContKind.ApplyTo, arg: curX.right })
     curF = b; curX = curX.left; continue
   }

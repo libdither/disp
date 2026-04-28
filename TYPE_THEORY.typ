@@ -24,7 +24,8 @@
 #align(center)[
   The semantics the object language commits to.\
   Companion to #raw("SYNTAX.typ") and #raw("COMPILATION.typ").\
-  Reference implementation: #raw("test/nbe_design.test.ts") (33 tests).
+  Reference implementations: #raw("test/nbe_design.test.ts") (40 tests, TypeScript prototype),\
+  #raw("test/nbe_tree.test.ts") (89 tests, tree-calculus programs).
 ]
 #v(1em)
 
@@ -54,35 +55,86 @@ to raw tree-calculus rules for untagged data.
 
 = `napply` --- the bootstrapping evaluator
 
-`napply` is the single entry point. It is defined as a tree-calculus
-program (via `fix` and `wait`):
+`napply` is the single entry point for type checking. It is a
+tree-calculus program wired via `wait`-based partial application:
 
 ```disp
-napply = fix ({self, f, x} ->
-  // H-rule: if x is neutral and its type matches f, short-circuit
-  match x
-  | VHyp _ _ | VStuck _ _ ->
-      if conv f (type_of_neutral x) then TT
-      else dispatch self f x
-  | _ -> dispatch self f x)
+// Branch: x is neutral → check H-rule, fall back to tag dispatch
+napply_neutral = {conv_fn, ton_fn, f, x} ->
+    if conv_fn f (ton_fn x) then TT
+    else dispatch f x
 
-dispatch = {self, f, x} ->
-  match f
-  | VHyp _ _    -> VStuck f x
-  | VStuck _ _  -> VStuck f x
-  | VLam _ body -> body x
-  | _           -> f x          // raw tree-calculus rules
+// Branch: x is not neutral → tag dispatch only
+napply_raw = {conv_fn, ton_fn, f, x} -> dispatch f x
+
+// Core: select branch based on is_neutral(x), then apply shared args
+napply_core = {conv_fn, ton_fn, f, x} ->
+    (if is_neutral x then napply_neutral else napply_raw)
+      conv_fn ton_fn f x
+
+// Wire dependencies via wait (deferred partial application)
+napply = wait (wait (wait napply_core conv) type_of_neutral)
 ```
 
-The *H-rule* fires first: if `x` is neutral and `conv(f,
-type_of_neutral(x)) = TT`, return `TT` directly. This is the
-universal mechanism that makes types-as-predicates work for symbolic
-values --- including hypotheses used as types.
+`napply_core` is *not* recursive --- it does not reference `self`.
+Recursion happens via the raw tree-calculus fallthrough in `dispatch`
+and via `type_of_neutral` (which is `fix`-based). Removing `fix` from
+napply itself avoids unnecessary self-application overhead.
 
-The `match` here is pattern dispatch on Val tags. In tree calculus this
-compiles to deferred triage (each branch wrapped as a thunk, only the
-taken branch forced); see #raw("KERNEL_DESIGN.md") for the `ited`
-encoding.
+The wiring via `wait` curries `conv` and `type_of_neutral` as the
+first two arguments. At call time, `napply(f, x)` expands to
+`napply_core(conv, type_of_neutral, f, x)`.
+
+```disp
+dispatch = {f, x} ->
+    if is_vhyp f    then VStuck f x
+    else if is_vstuck f then VStuck f x
+    else if is_vlam f   then vlam_body(f) x
+    else f x                                  // raw tree-calculus rules
+```
+
+== H-rule (universal, before dispatch)
+
+Before any tag dispatch, `napply` checks: if `x` is a neutral (VHyp
+or VStuck) and `conv(f, type_of_neutral(x)) = TT`, return `TT`
+directly. This is the mechanism that makes types-as-predicates work
+for symbolic values --- including hypotheses used as types.
+
+The H-rule is *universal* --- it fires for every predicate, including
+hypotheses used as types. `napply` has no knowledge of specific type
+formers.
+
+== Select-then-apply compilation pattern
+
+The branching in `napply_core` uses a pattern critical to correct
+tree-calculus compilation. Standard bracket abstraction of
+`ited(thunk_A, thunk_B, cond)` where all three share a free variable
+produces S-combinators that evaluate *both* thunk bodies before
+`ited` can dispatch. This is because `[x](f g) = S([x]f)([x]g)`
+evaluates both sides when applied.
+
+The fix: compile each branch as a *closed function* (no free variables
+shared with the condition), select via `ite2` (eager but the branches
+are constants), then apply shared arguments *after* selection:
+
+```disp
+// WRONG: ited forces both branches during bracket abstraction over x
+{x} -> ited (thunk expensive_with_x) (thunk cheap_with_x) (cond x)
+
+// RIGHT: select closed function, then apply x
+expensive_fn = {x} -> expensive_with_x
+cheap_fn     = {x} -> cheap_with_x
+{x} -> (if cond x then expensive_fn else cheap_fn) x
+```
+
+Since `expensive_fn` and `cheap_fn` are compiled separately (closed
+over no shared variables), bracket abstraction does not touch them.
+K-composition (`S(Kp)(Kq) → K(pq)`) collapses the constant branches
+at compile time.
+
+This pattern is used in `napply_core`, `type_of_neutral`, `Nat`, and
+`Type n`. See #raw("KERNEL_DESIGN.md") for the underlying
+`ited`/`ite2` encoding.
 
 = Vals
 
@@ -116,6 +168,14 @@ Tags use a stem-chain encoding inside a double-fork:
 `tagged(kind, payload) = fork(fork(TAG_ROOT, kind), payload)` where
 `TAG_ROOT` is a fixed canonical tree.
 
+Val constructors are tree programs:
+
+```disp
+mkVLam  = {meta, body} -> fork (fork TAG_ROOT KV_LAM) (fork meta body)
+mkVHyp  = {type, id}   -> fork (fork TAG_ROOT KV_HYP) (fork type id)
+mkVStuck = {head, arg}  -> fork (fork TAG_ROOT KV_STUCK) (fork head arg)
+```
+
 == Metadata
 
 VLam's `meta` field distinguishes type formers. Reflection functions
@@ -146,32 +206,69 @@ formers.
 
 == `conv(a, b) → Bool`
 
-Semantic equality. With hash-consing, `conv = fast_eq` (O(1)) for
-identically-constructed Vals. Structural comparison (introducing fresh
-hypotheses for Pi codomain comparison) is needed only when the same
-type is constructed via different code paths; deterministic elaboration
-avoids this in practice.
+Structural semantic equality. Two levels:
 
-== `fresh_hyp(A) → Val`
+*Fast path:* `fast_eq` via hash-consing (O(1)). Sufficient when the
+elaborator constructs types deterministically (same source → same tree).
 
-Produces a `VHyp` with stored type `A` and a unique identity derived
-from binder depth. Satisfies *opacity* (only the H-rule inspects the
-stored type) and *distinctness* (hypotheses under distinct binders are
-`conv`-unequal).
+*Structural path:* recursive comparison that introduces fresh
+hypotheses at Pi binders:
+
+```disp
+conv = fix {self, a, b} ->
+    if fast_eq a b then TT
+    else if is_pi a && is_pi b then
+      and (self (pi_dom a) (pi_dom b))
+          (let h = fresh_hyp (pi_dom a) depth
+           self (napply (pi_cod a) h) (napply (pi_cod b) h))
+    else if is_universe a && is_universe b then
+      fast_eq (universe_rank a) (universe_rank b)
+    else FF
+```
+
+Both versions are implemented as tree programs. The fast path is
+the default; the structural path is used when types may have been
+constructed by different code paths.
+
+== `fresh_hyp(A, depth) → Val`
+
+Creates a `VHyp` with stored type `A` and identity `depth`:
+
+```disp
+fresh_hyp = {A, depth} -> mkVHyp A depth
+```
+
+This is a pure tree-construction operation --- no mutable state.
+Identity comes from *binder depth*, threaded by the elaborator (or
+by type constructors that create binders, like Pi). Satisfies:
+
+- *Opacity:* only the H-rule inspects the stored type.
+- *Distinctness:* hypotheses at different depths are `conv`-unequal.
+
+The elaborator increments depth at each binder; `fresh_hyp` is
+called with the current depth. No global counter is needed.
 
 == `type_of_neutral(v) → Val`
 
 Spine inference: recursively reads the type from the hypothesis at the
 head of a stuck-application chain.
 
-```
-type_of_neutral(VHyp(T, _))      = T
-type_of_neutral(VStuck(head, arg)) =
-  let head_type = type_of_neutral(head)
-  napply(pi_cod(head_type), arg)
+```disp
+type_of_neutral = fix {self, napply_fn, v} ->
+    if is_vhyp v then vhyp_type v
+    else if is_vstuck v then
+      let head_type = self napply_fn (vstuck_head v)
+      if is_pi head_type then
+        napply_fn (pi_cod head_type) (vstuck_arg v)
+      else ERROR
+    else ERROR
 ```
 
-Uses `napply` (without the H-rule) to instantiate codomains.
+Uses `napply_simple` (tag dispatch without H-rule) to instantiate
+codomains. This avoids circular dependency: `type_of_neutral` feeds
+into `napply`'s H-rule, so it cannot call the full `napply`.
+
+Wired via `wait`: `type_of_neutral = wait(type_of_neutral_core, napply_simple)`.
 
 = Type constructors
 
@@ -184,67 +281,95 @@ logic. `napply` treats them as ordinary lambdas.
 and codomain function `B`:
 
 ```disp
-Pi A B = VLam(
-  meta = fork(PI_TAG, fork(A, B)),
-  body = {f} ->
-    let a = fresh_hyp(A)
-    napply(napply(B, a), napply(f, a)))
+// Template for Pi body: partial application builds the closure
+pi_body_template = {napply_ref, cod_at_hyp, hyp, f} ->
+    napply_ref cod_at_hyp (napply_ref f hyp)
+
+Pi = {domain, codFn, depth} ->
+    let hyp = fresh_hyp domain depth
+    let cod_at_hyp = napply codFn hyp
+    let meta = fork PI_TAG (fork domain codFn)
+    let body = pi_body_template napply cod_at_hyp hyp
+    mkVLam meta body
 ```
 
-`{x : A} -> B` in surface syntax elaborates to `Pi A ({x} -> B)`.
-Non-dependent `A -> B` is `Pi A ({_} -> B)`.
+The body is constructed by *partial application* of `pi_body_template`
+to three arguments (`napply`, `cod_at_hyp`, `hyp`), leaving `f` as
+the free parameter. Tree-calculus partial application produces the
+correctly bracket-abstracted closure.
 
-`is_pi` checks the PI_TAG in `meta`. `pi_dom` and `pi_cod` extract from
-`meta`. These are library functions.
+`{x : A} -> B` in surface syntax elaborates to `Pi A ({x} -> B) depth`.
+Non-dependent `A -> B` is:
 
-Type information flows *top-down*: the predicate supplies `A` to
-`fresh_hyp`. The term `f` carries no type annotations. Only types need
-metadata (for `type_of_neutral`); terms do not.
+```disp
+Arrow = {A, B, depth} -> Pi A (mkVLam LEAF (K B)) depth
+```
+
+Where `K B` is the constant codomain function `{_} -> B`.
 
 == `Type n` --- universe family
 
-`Type n` is a VLam with `UNIV_TAG` metadata carrying rank `n`:
+`Type n` is a VLam with `UNIV_TAG` metadata. The body handles four
+cases, using select-then-apply for each dispatch level:
 
 ```disp
-Type n = VLam(
-  meta = fork(UNIV_TAG, n),
-  body = {t} -> match t
-    | VHyp _ _ | VStuck _ _ ->       // Case 4: cumulative neutral
+Type = {rank} ->
+    let body = fix {self, t} ->
+      if is_neutral t then
+        // Case 1: cumulative neutral
         let t_type = type_of_neutral t
-        match t_type
-        | VLam (fork UNIV_TAG k) _ -> le k n
-        | _ -> FF
-    | VLam (fork UNIV_TAG k) _ ->     // Case 1: universe below n
-        lt k n
-    | VLam (fork PI_TAG (fork dom cod)) _ ->  // Case 2: Pi at rank ≤ n
-        and (napply (Type n) dom)
-            { let a = fresh_hyp dom
-              napply (Type n) (napply cod a) }
-    | _ ->                             // Case 3: registered base type
-        is_registered t)
+        if is_universe t_type then le (universe_rank t_type) rank
+        else FF
+      else if is_universe t then
+        // Case 2: universe below rank
+        lt (universe_rank t) rank
+      else if is_pi t then
+        // Case 3: Pi with components at rank
+        and (self (pi_dom t))
+            (let h = fresh_hyp (pi_dom t) (stem (stem rank))
+             self (napply (pi_cod t) h))
+      else if is_registered t then TT   // Case 4: registered base type
+      else FF
+    mkVLam (fork UNIV_TAG rank) (body rank)
 ```
 
-Case 4 (cumulative neutral) is handled in the body, not by the
+Case 1 (cumulative neutral) is handled in the body, not by the
 H-rule, because cumulativity requires `rank ≤ n` rather than exact
-type match. This is the one predicate with body-level neutral logic.
+type match. This is the only predicate with body-level neutral logic.
 
 Cumulativity falls out: every case uses `<` or `≤`, monotone in `n`.
+
+The `depth` for the Pi case uses `stem(stem(rank))` to ensure
+distinctness from hypotheses created by Pi construction.
 
 == Data types
 
 Data predicates are VLam with no metadata (`meta = LEAF`). The body
-pattern-matches on tree structure. The H-rule in `napply` intercepts
-neutrals before the body runs, so data predicates never encounter
-hypotheses directly.
+is a `fix`-based recursive function wrapped in `mkVLam` externally
+(not inside `fix`) so the result is a properly-tagged VLam:
 
 ```disp
-Nat = fix ({self} -> VLam(
-  meta = LEAF,
-  body = {n} -> match n
-    | leaf         -> TT                     // Zero
-    | fork leaf n' -> napply self n'          // Succ: recurse
-    | _            -> FF))
+Nat = let body = fix {self, n} ->
+        if n == leaf then TT                       // Zero
+        else if is_tree_fork n then
+          if fork_left n == leaf then              // Succ encoding
+            napply self (fork_right n)             // recurse
+          else FF
+        else FF
+      mkVLam LEAF body
+
+Bool = mkVLam LEAF {b} ->
+    if b == TT then TT
+    else if b == FF then TT
+    else FF
 ```
+
+The H-rule in `napply` intercepts neutrals before the body runs, so
+data predicates never encounter hypotheses directly.
+
+The pattern *fix outside VLam* is load-bearing: `fix(f)` produces a
+`wait`-encoded partial, not a VLam. If the VLam construction were
+inside `fix`, tag dispatch would not recognize the result as VLam.
 
 == `Eq` --- propositional equality
 
@@ -360,6 +485,40 @@ The parser and surface syntax are I/O layers, not part of the type
 system. The elaborator is the boundary: it consumes AST, produces Vals
 using the NbE API, and emits raw trees.
 
+The elaborator threads *binder depth* as a parameter. Each Pi binder
+increments depth; `fresh_hyp` receives the current depth. No mutable
+state crosses the elaboration boundary.
+
+= Implementation status
+
+== What is implemented as tree programs (89 tests)
+
+All of the following run as tree-calculus programs on the unmodified
+runtime (`src/tree.ts`), validated by `test/nbe_tree.test.ts`:
+
+- `napply` with H-rule, tag dispatch, raw tree-calculus fallthrough
+- `napply_simple` (tag dispatch without H-rule, used by `type_of_neutral`)
+- `type_of_neutral` (spine inference, `fix`-recursive)
+- `conv` (fast\_eq) and `conv_structural` (recursive Pi/Universe comparison)
+- `fresh_hyp` / `mkVHyp`, `mkVLam`, `mkVStuck` (Val constructors)
+- `Pi` construction (`mkPi_prog`, `mkArrow_prog`) via `pi_body_template`
+- `Type n` universe predicate (all four cases, `fix`-recursive)
+- `Nat` predicate (`fix`-recursive, pattern matching)
+- `Bool` predicate
+- `nat_le`, `nat_lt` (Nat comparison for universe ranks)
+- Tag infrastructure: `is_tagged`, `is_vhyp`/`is_vlam`/`is_vstuck`,
+  `is_neutral`, `vlam_body`/`vlam_meta`, metadata reflection
+- `wait`, `fix`, `ite2`, `ited`
+- Integration: polymorphic identity `{A:Type 0, x:A} -> x` checked
+  against `Pi(Type 0, {A}->Pi(A, {_}->A))` --- all tree programs
+
+== What remains TypeScript-only
+
+- The elaborator (AST walking, depth threading, quoting)
+- Error messages and diagnostics
+- The parser
+- The test harness itself (compiling Cir to trees via bracket abstraction)
+
 = Glossary
 
 #table(
@@ -369,8 +528,8 @@ using the NbE API, and emits raw trees.
   table.header[*Term*][*Meaning*],
   [`Val`],         [A tagged tree in the NbE domain. One of: VLam, VHyp, VStuck, or untagged data.],
   [`napply(f, x)`],[The evaluator. H-rule + tag dispatch + tree-calculus rules.],
-  [`conv(a, b)`],  [Semantic equality on Vals. `fast_eq` with hash-consing.],
-  [`fresh_hyp(A)`],[Create a hypothesis of type `A` at the current binder depth.],
+  [`conv(a, b)`],  [Semantic equality on Vals. Fast path: `fast_eq`. Structural: recursive with Pi/Universe handling.],
+  [`fresh_hyp(A, depth)`],[Create a hypothesis: `mkVHyp(A, depth)`. Pure data construction.],
   [`type_of_neutral(v)`],[Infer a neutral's type by walking its stuck-application spine.],
   [`is_pi`, `pi_dom`, `pi_cod`],[Reflection on VLam metadata. Library functions.],
   [`is_universe`, `universe_rank`],[Reflection on universe metadata.],
@@ -381,39 +540,12 @@ using the NbE API, and emits raw trees.
   [`fix`],         [Fixed-point via `wait`. Demand-driven recursion. See #raw("KERNEL_DESIGN.md").],
   [`TAG_ROOT`],    [Canonical tree prefix distinguishing tagged Vals from data.],
   [`PI_TAG` / `UNIV_TAG`],[Metadata tags in VLam's `meta` field.],
+  [*select-then-apply*],[Compilation pattern: closed branch functions selected by `ite2` before shared args applied. See §2.2.],
   [*quote*],       [Convert a closed Val to a raw tree-calculus term (bracket abstraction). One-way, lossy (metadata stripped).],
   [*registry*],    [Ambient set of rank-0 base types recognized by `Type n`.],
 )
 
 = Open problems
-
-== Compilation efficiency
-
-`napply`, type constructors, and their dependencies compile to
-tree-calculus programs of 1000--3000 nodes via bracket abstraction.
-Executing these on the unoptimized runtime requires tens of millions
-of reduction steps per type-check call. η-reduction and K-composition
-help but do not close the gap.
-
-The lambada project's compilation pipeline (with `wait`-based
-recursion, optimized combinator selection, and self-hosted compilation)
-is the reference for practical tree-calculus program execution. Native
-TypeScript fast-paths for `napply` and `conv` are the near-term
-solution, per the development philosophy ("host implementations are
-optimizations").
-
-The design is validated semantically (40/40 TypeScript prototype
-tests). The tree-level foundation works (29+ tests for `napply_simple`,
-tag infrastructure, `wait`+`fix`). The remaining gap is compilation
-quality, not design correctness.
-
-== Structural `conv`
-
-The current implementation uses `conv = fast_eq` (hash-consing
-identity). This suffices when the elaborator constructs types
-deterministically (same source → same tree). Full structural
-comparison (introducing fresh hypotheses for Pi codomain comparison)
-is validated in the TypeScript prototype but not yet as a tree program.
 
 == `apply(T, v) = TT` without `napply`
 
@@ -432,3 +564,26 @@ The bootstrapping tests (#raw("test/nbe_design.test.ts") §"Raw-predicate
 bootstrapping") validate that the raw/tagged boundary is transparent
 to `napply`. The step from `napply(T, v)` to `apply(T, v)` is an
 encoding question, not a design question.
+
+== B/C combinators
+
+The lambada project's bracket abstraction uses Turner's B and C
+combinators in addition to S, K, I:
+- `B f g x = f (g x)` --- composition, avoids evaluating `f` with `x`
+- `C f g x = f x g` --- flip, avoids evaluating `g` with `x`
+
+These reduce the work done by the S combinator when only one side of
+an application depends on the abstracted variable. The current
+implementation uses only S/K/I with η-reduction and K-composition,
+which achieves correct results but may produce larger intermediate
+trees. Adding B/C would be a compilation improvement, not a semantic
+change.
+
+== Elaborator as tree program
+
+The elaborator (AST → Val, depth threading, `napply` calls, quoting)
+is the remaining frontier for self-hosting. It threads binder depth as
+a Nat parameter through recursive calls --- standard functional
+programming with no mutation. The core loop is: pattern-match on AST
+nodes, construct Vals, call `napply`, recur. All the NbE operations it
+calls are already tree programs.

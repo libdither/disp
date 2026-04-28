@@ -29,17 +29,20 @@ Every component participating in checking, elaboration, or conversion must have 
 - `test/tree.test.ts` — tree calculus runtime tests.
 - `lib/{debruijn,ctxtree,semantic}/DESIGN.md` — per-backend strategy notes. Predate the current design; treat as historical reference.
 
-## Current state (as of 2026-04-27)
+## Current state (as of 2026-04-28)
 
-- **`TYPE_THEORY.typ` rewritten.** Specifies the NbE-based type system: Val domain (VLam, VHyp, VStuck), napply with universal H-rule, type_of_neutral spine inference, Pi/Type/Nat as predicates.
-- **Design validated by two test suites.** `nbe_design.test.ts` (33/33 TypeScript prototype) validates the full architecture. `nbe_tree.test.ts` (29+ tree-level tests) validates the foundation as tree programs.
-- **Tree-level performance wall identified.** Large tree programs (napply with H-rule, type_of_neutral) exceed the unoptimized runtime's step budget. Solution: either the lambada project's optimized compilation pipeline, or native TypeScript fast-paths per the philosophy.
-- **Parser and elaborator still stale.** Rewrite needed.
+- **`TYPE_THEORY.typ` rewritten.** Specifies the NbE-based type system: Val domain (VLam, VHyp, VStuck), napply with universal H-rule, type_of_neutral spine inference, Pi/Type/Nat/Bool as predicates. Documents the select-then-apply compilation pattern.
+- **Design validated by two test suites.** `nbe_design.test.ts` (40 TypeScript prototype tests) validates the full architecture. `nbe_tree.test.ts` (89 tree-level tests) validates the complete NbE pipeline as tree programs.
+- **Full NbE pipeline running as tree programs.** napply (with H-rule), type_of_neutral, conv (fast_eq + structural), Pi construction (mkPi_prog), Type n (universe predicate with 4 cases + cumulativity), Nat, Bool, nat_le/lt, fresh_hyp --- all tree programs. Integration test: polymorphic identity `{A:Type 0, x:A} -> x` type-checks against `Pi(Type 0, {A}->Pi(A, {_}->A))`.
+- **Performance wall resolved.** The bracket-abstraction eagerness bug (S-combinator evaluating thunk bodies in non-taken branches) was fixed by the select-then-apply pattern. All checks complete within the 10M-step budget.
+- **Parser and elaborator still stale.** Rewrite needed. The elaborator is the remaining frontier for self-hosting.
 
 ## Key tree-calculus idioms
 
 - **`wait` for deferred application.** `wait a b c = a(b)(c)` but `wait(a)(b)` doesn't evaluate `a(b)`. Essential for `fix` and partial application.
-- **`ited` for deferred branching.** Branches are `{_} -> expr` thunks; only the chosen one is forced. Required because `triage` evaluates all branches eagerly.
+- **`ited` for deferred branching.** Branches are `{_} -> expr` thunks; only the chosen one is forced. Required because `triage` evaluates all branches eagerly. **Caveat:** bracket abstraction over shared free variables defeats `ited`'s laziness; use select-then-apply pattern instead (see `KERNEL_DESIGN.md`).
+- **Select-then-apply for branching with shared vars.** Compile branches as closed functions, select via `ite2`, apply shared args after selection. Critical for napply, type_of_neutral, Nat, Type n.
+- **Fix outside VLam.** Recursive predicates use `fix` for the body, `mkVLam` wraps externally. `fix` returns wait-encoded partials, not VLams.
 - **Hash-consing is load-bearing.** `conv = fast_eq` is O(1). Deterministic elaboration ensures same type → same tree.
 
 ## Testing
