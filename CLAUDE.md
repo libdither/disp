@@ -57,6 +57,6 @@ Every component participating in checking, elaboration, or conversion must have 
 ## Operating notes
 
 - NbE backends are tree programs, not TypeScript. Host implementations are optimizations only.
-- The reference for the type system is `TYPE_THEORY.typ` + `test/disp.disp`. When they disagree, investigate.
+- The reference for the type system is `TYPE_THEORY.typ` + `lib/*.disp`. When they disagree, investigate.
 - Prefer editing existing files over creating new ones.
 - Binder parameter names shadow scope variables during compilation. Name collisions between scope defs and lambda params are safe but should be avoided for clarity.

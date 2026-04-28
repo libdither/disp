@@ -24,8 +24,8 @@
 #align(center)[
   The semantics the object language commits to.\
   Companion to #raw("SYNTAX.typ") and #raw("COMPILATION.typ").\
-  Reference implementation: #raw("test/disp.disp") (152 tests, tree-calculus programs\
-  running through the parser/driver).
+  Reference implementation: #raw("lib/*.disp") (151 tests across 3 files,\
+  tree-calculus programs running through the parser/driver).
 ]
 #v(1em)
 
@@ -178,6 +178,7 @@ Val constructors are tree programs:
 mkVLam  = {meta, body} -> fork (fork TAG_ROOT KV_LAM) (fork meta body)
 mkVHyp  = {type, id}   -> fork (fork TAG_ROOT KV_HYP) (fork type id)
 mkVStuck = {head, arg}  -> fork (fork TAG_ROOT KV_STUCK) (fork head arg)
+mkVStuckElim = {motive, target} -> fork (fork TAG_ROOT KV_ELIM) (fork motive target)
 ```
 
 == Metadata
@@ -188,23 +189,8 @@ VLam's `meta` field distinguishes type formers. Reflection functions
 
 Pi metadata: `fork(PI_TAG, fork(domain, codomain_fn))`. \
 Universe metadata: `fork(UNIV_TAG, rank)`. \
+Eq metadata: `fork(EQ_TAG, fork(A, fork(x, y)))`. \
 Plain lambda / data predicate: `LEAF` (no metadata).
-
-= The evaluator: `napply`
-
-`napply(f, x)` is the complete evaluator. It handles all Val kinds and
-the five tree-calculus reduction rules. It is a tree-calculus program.
-
-== H-rule (universal, before dispatch)
-
-Before any tag dispatch, `napply` checks: if `x` is a neutral (VHyp
-or VStuck) and `conv(f, type_of_neutral(x)) = TT`, return `TT`
-directly. This is the mechanism that makes types-as-predicates work
-for symbolic values.
-
-The H-rule is *universal* --- it fires for every predicate, including
-hypotheses used as types. `napply` has no knowledge of specific type
-formers.
 
 = Auxiliary operations
 
@@ -711,10 +697,10 @@ state crosses the elaboration boundary.
 
 = Implementation status
 
-== What is implemented as tree programs (152 tests)
+== What is implemented as tree programs (151 tests)
 
 All of the following run as `.disp` source through the parser/driver,
-validated by `test/disp.disp`:
+validated by `lib/*.test.disp`:
 
 - `napply` with H-rule, tag dispatch, raw tree-calculus fallthrough
 - `napply_simple` (tag dispatch without H-rule, used by `type_of_neutral`)
@@ -750,7 +736,7 @@ validated by `test/disp.disp`:
   stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
   inset: (x: 6pt, y: 4pt),
   table.header[*Term*][*Meaning*],
-  [`Val`],         [A tagged tree in the NbE domain. One of: VLam, VHyp, VStuck, or untagged data.],
+  [`Val`],         [A tagged tree in the NbE domain. One of: VLam, VHyp, VStuck, VStuckElim, or untagged data.],
   [`napply(f, x)`],[The evaluator. H-rule + tag dispatch + tree-calculus rules.],
   [`conv(a, b)`],  [Semantic equality on Vals. Fast path: `fast_eq`. Structural: recursive with Pi/Universe handling.],
   [`fresh_hyp(A, depth)`],[Create a hypothesis: `mkVHyp(A, depth)`. Pure data construction.],
@@ -786,7 +772,7 @@ point. This would require either:
   `apply` (e.g., encoding VLam as a combinator whose tree-calc
   reduction matches `napply`'s dispatch).
 
-The tests in #raw("test/disp.disp") validate that the raw/tagged
+The tests in #raw("lib/*.disp") validate that the raw/tagged
 boundary is transparent to `napply`. The step from `napply(T, v)` to `apply(T, v)` is an
 encoding question, not a design question.
 

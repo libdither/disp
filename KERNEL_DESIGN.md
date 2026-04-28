@@ -2,7 +2,7 @@
 
 Practical idioms for implementing the type theory from
 [TYPE_THEORY.typ](TYPE_THEORY.typ) as tree-calculus programs.
-Reference implementation: `test/disp.disp`.
+Reference implementation: `lib/*.disp`.
 
 ## Tag encoding
 
