@@ -1,5 +1,5 @@
 open use "prelude.disp"
-open use "napply.disp"
+open use "nbe.disp"
 open use "types.disp"
 
 // ================================================================

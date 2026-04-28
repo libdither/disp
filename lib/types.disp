@@ -1,7 +1,7 @@
 // Type definitions: Nat, Bool, Eq, Type n, typed eliminators, arithmetic.
-// Depends on: prelude.disp, napply.disp
+// Depends on: prelude.disp, nbe.disp
 open use "prelude.disp"
-open use "napply.disp"
+open use "nbe.disp"
 
 // ================================================================
 // Nat predicate (recursive, select-then-apply)

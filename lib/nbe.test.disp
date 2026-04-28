@@ -1,0 +1,69 @@
+open use "prelude.disp"
+open use "nbe.disp"
+
+// ================================================================
+// Tag infrastructure
+// ================================================================
+
+test is_tagged (mkVHyp t t) = TT
+test is_tagged (mkVLam t ({x} -> x)) = TT
+test is_tagged t = FF
+test is_tagged (t t) = FF
+test is_tagged (t t t) = FF
+
+test tag_kind (mkVLam t ({x} -> x)) = KV_LAM
+test tag_kind (mkVHyp t t) = KV_HYP
+test tag_payload (mkVHyp (t t) t) = t (t t) t
+
+// Val recognizers
+test is_vhyp (mkVHyp t t) = TT
+test is_vhyp (mkVLam t ({x} -> x)) = FF
+test is_vhyp t = FF
+test is_vlam (mkVLam t ({x} -> x)) = TT
+test is_vlam (mkVHyp t t) = FF
+test is_vstuck (mkVStuck t t) = TT
+test is_vstuck t = FF
+test is_neutral (mkVHyp t t) = TT
+test is_neutral (mkVStuck t t) = TT
+test is_neutral (mkVLam t ({x} -> x)) = FF
+test is_neutral t = FF
+
+// Payload accessors
+test vlam_body (mkVLam t ({x} -> x)) = {x} -> x
+test vlam_meta (mkVLam (t (t t)) ({x} -> x)) = t (t t)
+test vhyp_type (mkVHyp (t t) t) = t t
+test mk_vstuck_prog (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
+
+// ================================================================
+// napply_simple
+// ================================================================
+
+test tag_dispatch t t = t t
+test napply_simple t t = t t
+test napply_simple (t t) (t t) = t t (t t)
+test napply_simple (t t (t (t t))) t = t (t t)
+test napply_simple (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
+test napply_simple (mkVStuck (mkVHyp t t) t) (t t) = mkVStuck (mkVStuck (mkVHyp t t) t) (t t)
+test napply_simple (mkVLam t ({x} -> x)) (t t) = t t
+test napply_simple (mkVLam t ({x, y} -> x)) (t t) = t t (t t)
+test napply_simple ({x} -> x) t = t
+test napply_simple ({x} -> x) (t t) = t t
+test napply_simple ({x} -> x) (t (t t) t) = t (t t) t
+test napply_simple ({x} -> x) (mkVHyp (t t) t) = mkVHyp (t t) t
+
+// ================================================================
+// Metadata reflection
+// ================================================================
+
+test mkVLam_prog (t t) ({x} -> x) = mkVLam (t t) ({x} -> x)
+test mkVHyp_prog t t = mkVHyp t t
+
+// ================================================================
+// napply with H-rule
+// ================================================================
+
+test napply t t = t t
+test napply (mkVLam t ({x} -> x)) (t t) = t t
+
+// Hypothesis-as-type
+test napply (mkVHyp t t) (mkVHyp (mkVHyp t t) (t t)) = TT

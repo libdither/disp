@@ -1,6 +1,79 @@
-// napply: the NbE evaluator with H-rule.
+// NbE: tag infrastructure, Val domain, napply, ton_check, conv, Pi/Arrow.
 // Depends on: prelude.disp
 open use "prelude.disp"
+
+// ================================================================
+// Tag infrastructure
+// ================================================================
+
+let TAG_ROOT = t (t (t t)) (t t)
+let KV_LAM = t
+let KV_HYP = t t
+let KV_STUCK = t t t
+let KV_ELIM = t (t t t)           // stuck eliminator
+
+// tagged(kind, payload) = fork(fork(TAG_ROOT, kind), payload)
+let tagged = {kind, payload} -> t (t TAG_ROOT kind) payload
+let mkVLam = {meta, body} -> tagged KV_LAM (t meta body)
+let mkVHyp = {ty, id} -> tagged KV_HYP (t ty id)
+let mkVStuck = {head, arg} -> tagged KV_STUCK (t head arg)
+
+// is_tagged: checks fork(fork(TAG_ROOT, _), _)
+let is_tagged = {x} ->
+  triage
+    FF
+    ({_} -> FF)
+    ({l, r} -> triage FF ({_} -> FF) ({ll, lr} -> fast_eq ll TAG_ROOT) l)
+    x
+
+// tag_kind: t.left.right
+let tag_kind = {x} ->
+  triage t ({x} -> x) ({l, r} -> triage t ({x} -> x) ({ll, lr} -> lr) l) x
+
+// tag_payload: t.right
+let tag_payload = {x} -> triage t ({x} -> x) ({l, r} -> r) x
+
+// Kind-specific recognizers
+let mkKindCheck = {kindTag, x} ->
+  ited ({_} -> fast_eq (tag_kind x) kindTag) ({_} -> FF) (is_tagged x)
+
+let is_vhyp = {x} -> mkKindCheck KV_HYP x
+let is_vlam = {x} -> mkKindCheck KV_LAM x
+let is_vstuck = {x} -> mkKindCheck KV_STUCK x
+let is_velim = {x} -> mkKindCheck KV_ELIM x
+let is_neutral = {x} ->
+  ited ({_} -> TT)
+    ({_} -> ited ({_} -> TT) ({_} -> is_velim x) (is_vstuck x))
+    (is_vhyp x)
+
+// Payload accessors
+let vlam_meta = {x} -> pair_fst (tag_payload x)
+let vlam_body = {x} -> pair_snd (tag_payload x)
+let vhyp_type = vlam_meta
+let vhyp_id = vlam_body
+let vstuck_head = vlam_meta
+let vstuck_arg = vlam_body
+
+// mk_vstuck as tree program
+let mk_vstuck_prog = {h, arg} ->
+  t (t TAG_ROOT KV_STUCK) (t h arg)
+
+// Stuck eliminator: frozen case-split on a neutral target.
+// Payload: fork(motive, target)
+let mkVStuckElim = {motive, target} -> tagged KV_ELIM (t motive target)
+let velim_motive = {x} -> pair_fst (tag_payload x)
+let velim_target = {x} -> pair_snd (tag_payload x)
+
+// Data shape checks (non-tagged trees)
+let is_tree_leaf = {v} ->
+  ite2 FF
+    (triage TT ({_} -> FF) ({l, r} -> FF) v)
+    (is_tagged v)
+
+let is_tree_fork = {v} ->
+  ite2 FF
+    (triage FF ({_} -> FF) ({l, r} -> TT) v)
+    (is_tagged v)
 
 // ================================================================
 // napply_simple: tag dispatch, no H-rule
