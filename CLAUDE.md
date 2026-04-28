@@ -22,8 +22,8 @@ Every component participating in checking, elaboration, or conversion must have 
 - `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, `FAST_EQ`.
 - `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar: `let`/`test`/`use` items, `{x : A} -> e` binders, `A -> B` arrow sugar, `{x := e}` recValues, `{x : A}` recTypes, `.field` projection. Bracket abstraction with η-reduction + K-composition optimizations.
 - `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests.
-- `test/nbe_tree.disp` — **Primary test suite** (152 tests). The full NbE pipeline as `.disp` source: combinators, tag infrastructure, napply, type constructors, typed eliminators, Eq type, arithmetic, integration tests.
-- `test/nbe_tree.test.ts` — vitest harness that runs `nbe_tree.disp` via `runFile`.
+- `test/disp.disp` — **Primary test suite** (152 tests). The full NbE pipeline as `.disp` source: combinators, tag infrastructure, napply, type constructors, typed eliminators, Eq type, arithmetic, integration tests.
+- `test/disp.test.ts` — vitest harness that runs `disp.disp` via `runFile`.
 - `test/parser.test.ts` — parser unit tests (58 tests): tokenizer, expressions, items, compilation, errors.
 - `test/tree.test.ts` — tree calculus runtime tests (21 tests).
 
@@ -49,11 +49,11 @@ Every component participating in checking, elaboration, or conversion must have 
 
 ## Testing
 
-`npm test` runs vitest. `test/nbe_tree.disp` is the primary test suite (152 tests run as `.disp` source). `test/parser.test.ts` (58 tests) and `test/tree.test.ts` (21 tests) cover the host infrastructure.
+`npm test` runs vitest. `test/disp.disp` is the primary test suite (152 tests run as `.disp` source). `test/parser.test.ts` (58 tests) and `test/tree.test.ts` (21 tests) cover the host infrastructure.
 
 ## Operating notes
 
 - NbE backends are tree programs, not TypeScript. Host implementations are optimizations only.
-- The reference for the type system is `TYPE_THEORY.typ` + `test/nbe_tree.disp`. When they disagree, investigate.
+- The reference for the type system is `TYPE_THEORY.typ` + `test/disp.disp`. When they disagree, investigate.
 - Prefer editing existing files over creating new ones.
 - Binder parameter names shadow scope variables during compilation. Name collisions between scope defs and lambda params are safe but should be avoided for clarity.

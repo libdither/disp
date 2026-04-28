@@ -24,8 +24,8 @@
 #align(center)[
   The semantics the object language commits to.\
   Companion to #raw("SYNTAX.typ") and #raw("COMPILATION.typ").\
-  Reference implementations: #raw("test/nbe_design.test.ts") (40 tests, TypeScript prototype),\
-  #raw("test/nbe_tree.test.ts") (89 tests, tree-calculus programs).
+  Reference implementation: #raw("test/disp.disp") (152 tests, tree-calculus programs\
+  running through the parser/driver).
 ]
 #v(1em)
 
@@ -159,6 +159,10 @@ Vals are tagged trees that `napply` operates on.
     [Stuck application --- a hypothesis (or deeper stuck) applied to
      an argument that could not reduce.],
     [`KV_STUCK`],
+  [`VStuckElim(motive, target)`],
+    [Stuck eliminator --- a case split on a neutral `target` that could
+     not dispatch. `motive` determines the return type.],
+    [`KV_ELIM`],
   [data: leaf, stem, fork],
     [Untagged tree data. `Zero = leaf`, `Succ n = fork(leaf, n)`.],
     [none],
@@ -269,6 +273,8 @@ ton_check = fix {self, napply_fn, check_fn, v} ->
       self napply_fn                                // recurse on head
         (ton_spine_cont check_fn napply_fn (vstuck_arg v))  // continuation
         (vstuck_head v)
+    else if is_velim v then
+      check_fn (napply_fn (velim_motive v) (velim_target v))  // motive(target)
     else FF                                         // not neutral: fail
 ```
 
@@ -315,9 +321,12 @@ logic. `napply` treats them as ordinary lambdas.
 and codomain function `B`:
 
 ```disp
-// Template for Pi body: partial application builds the closure
+// Template for Pi body: partial application builds the closure.
+// Normalized: anything not TT becomes FF. Handles the case where
+// napply(cod, result) produces a stuck term (e.g. when the codomain
+// is an abstract hypothesis type and the term has the wrong type).
 pi_body_template = {napply_ref, cod_at_hyp, hyp, f} ->
-    napply_ref cod_at_hyp (napply_ref f hyp)
+    fast_eq (napply_ref cod_at_hyp (napply_ref f hyp)) TT
 
 Pi = {domain, codFn, depth} ->
     let hyp = fresh_hyp domain depth
@@ -409,12 +418,70 @@ inside `fix`, tag dispatch would not recognize the result as VLam.
 
 == `Eq` --- propositional equality
 
+`Eq A x y` is a VLam with `EQ_TAG` metadata carrying `(A, x, y)`. The
+sole constructor is `refl = LEAF` (the simplest possible value).
+
 ```disp
-Eq A a b = {_} -> conv a b
+mkEq = {A, x, y} ->
+    mkVLam (fork EQ_TAG (fork A (fork x y)))
+           ({p} -> if is_neutral p then TT         // H-rule handles it
+                   else if p == LEAF then conv x y  // refl: check x ≡ y
+                   else FF)                         // reject non-refl data
 ```
 
-Semantic equality as a type: `Eq A a b` accepts any witness when
-`conv(a, b) = TT`.
+When `p = refl`: the predicate checks `conv(x, y)`. Hash-consing makes
+this O(1). When `p` is neutral: the H-rule fires (the stored type of
+the hypothesis is `Eq A x y`, which matches the predicate).
+
+=== J eliminator (typed, neutral-aware)
+
+```disp
+// J : A → x → motive → base → y → p → motive(y, p)
+//   motive : (y : A) → Eq A x y → Type
+//   base   : motive(x, refl)
+eq_J = {A, x, motive, base, y, p} ->
+    if is_neutral p then mkVStuckElim (napply (napply motive y) p) p
+    else base                    // p = refl → return base
+```
+
+When `p` is neutral, J freezes as `VStuckElim(motive(y, p), p)`. The
+motive applied to `y` and `p` gives the return type. `type_of_neutral`
+uses this to infer types through J.
+
+Derived operations:
+- `eq_subst A P x y p px = eq_J A x ({y,_}->P y) px y p`
+- `eq_sym A x y p = eq_J A x ({y,_}->Eq A y x) refl y p`
+- `eq_cong A B f x y p = eq_J A x ({y,_}->Eq B (f x) (f y)) refl y p`
+
+=== Typed eliminators --- the general pattern
+
+Raw `triage` on a neutral value produces garbage (the fork structure of
+the tagged hypothesis is misinterpreted as data). *Typed eliminators*
+solve this:
+
+```disp
+// Pattern: check is_neutral BEFORE dispatching, freeze with motive when stuck.
+bool_rec = {motive, t_case, f_case, target} ->
+    if is_neutral target then mkVStuckElim motive target
+    else ite2 t_case f_case target                   // concrete: dispatch
+
+nat_rec = fix {self, motive, base, step, target} ->
+    if is_neutral target then mkVStuckElim motive target
+    else ... pattern match on zero/succ ...           // concrete: recurse
+```
+
+The *motive* is a function from the scrutinee's type to the result type,
+supplied at each elimination site (by the user or elaborator). For
+non-dependent cases, the motive is constant (`{_}->Nat`).
+
+`VStuckElim(motive, target)` is a neutral form. `type_of_neutral`
+handles it by applying the motive: `type = napply(motive, target)`.
+
+This mirrors how Lean/Agda handle stuck case splits: every eliminator
+carries a motive, and stuck eliminators freeze as neutral terms whose
+types are determined by the motive. The key difference: our eliminators
+are ordinary tree programs, not built into the runtime. Any user-defined
+type can follow the same pattern.
 
 = Worked examples
 
@@ -590,14 +657,14 @@ napply(Pi(Type 0, {A}->Pi(A,{_}->A)), bad_term)
         → FF propagates directly            ← no sentinel needed
       H-rule does not fire.
     dispatch: h_A is VHyp → VStuck(h_A, VStuck(h_x, h_x))
-    Result is VStuck, not TT → rejected ✓
+    Pi body normalization: fast_eq(VStuck, TT) = FF → rejected ✓
 ```
 
 `type_of_neutral` fails because `h_x : h_A` where `h_A` is an opaque
 type variable --- it could be any type, and there is no evidence that
-it is a function type. The `ERROR_VAL` sentinel safely prevents the
-H-rule from firing: it is a stem-chain that can never `conv`-match
-any tagged type.
+it is a function type. The CPS `ton_check` returns `FF` because `h_A`
+is not Pi-typed. The stuck result is caught by Pi body normalization
+(`fast_eq(result, TT)`), converting it to an explicit `FF`.
 
 = Soundness
 
@@ -644,33 +711,37 @@ state crosses the elaboration boundary.
 
 = Implementation status
 
-== What is implemented as tree programs (89 tests)
+== What is implemented as tree programs (152 tests)
 
-All of the following run as tree-calculus programs on the unmodified
-runtime (`src/tree.ts`), validated by `test/nbe_tree.test.ts`:
+All of the following run as `.disp` source through the parser/driver,
+validated by `test/disp.disp`:
 
 - `napply` with H-rule, tag dispatch, raw tree-calculus fallthrough
 - `napply_simple` (tag dispatch without H-rule, used by `type_of_neutral`)
-- `type_of_neutral` (spine inference, `fix`-recursive)
+- `ton_check` (CPS spine inference, `fix`-recursive, handles VStuckElim)
 - `conv` (fast\_eq) and `conv_structural` (recursive Pi/Universe comparison)
-- `fresh_hyp` / `mkVHyp`, `mkVLam`, `mkVStuck` (Val constructors)
+- `fresh_hyp` / `mkVHyp`, `mkVLam`, `mkVStuck`, `mkVStuckElim` (Val constructors)
 - `Pi` construction (`mkPi_prog`, `mkArrow_prog`) via `pi_body_template`
 - `Type n` universe predicate (all four cases, `fix`-recursive)
 - `Nat` predicate (`fix`-recursive, pattern matching)
 - `Bool` predicate
+- `Eq` type (`mkEq`, `refl`, `eq_J`, `eq_subst`, `eq_sym`, `eq_cong`)
+- Typed eliminators: `bool_rec`, `nat_rec` (neutral-aware, motive-carrying)
 - `nat_le`, `nat_lt` (Nat comparison for universe ranks)
-- Tag infrastructure: `is_tagged`, `is_vhyp`/`is_vlam`/`is_vstuck`,
+- `add` (recursive via select-then-apply + `fix`)
+- Eq proofs on concrete arithmetic (commutativity of add)
+- Tag infrastructure: `is_tagged`, `is_vhyp`/`is_vlam`/`is_vstuck`/`is_velim`,
   `is_neutral`, `vlam_body`/`vlam_meta`, metadata reflection
 - `wait`, `fix`, `ite2`, `ited`
-- Integration: polymorphic identity `{A:Type 0, x:A} -> x` checked
-  against `Pi(Type 0, {A}->Pi(A, {_}->A))` --- all tree programs
+- Integration: polymorphic identity, polymorphic const (+ rejection),
+  self-application rejection, flip, composition, Church pairs,
+  higher-order functions with spine inference
 
 == What remains TypeScript-only
 
-- The elaborator (AST walking, depth threading, quoting)
+- The elaborator (AST walking, depth threading, motive inference, quoting)
 - Error messages and diagnostics
-- The parser
-- The test harness itself (compiling Cir to trees via bracket abstraction)
+- The parser / bracket abstraction / driver
 
 = Glossary
 
@@ -686,13 +757,15 @@ runtime (`src/tree.ts`), validated by `test/nbe_tree.test.ts`:
   [`ton_check(check_fn, v)`],[CPS spine inference: calls `check_fn(inferred_type)` on success, returns `FF` on failure. Replaces `type_of_neutral`.],
   [`is_pi`, `pi_dom`, `pi_cod`],[Reflection on VLam metadata. Library functions.],
   [`is_universe`, `universe_rank`],[Reflection on universe metadata.],
-  [`is_neutral`],  [`TT` iff `v` is VHyp or VStuck.],
+  [`is_neutral`],  [`TT` iff `v` is VHyp, VStuck, or VStuckElim.],
+  [`VStuckElim(motive, target)`],[Stuck eliminator. Produced by typed eliminators when the scrutinee is neutral. `type_of_neutral` applies motive to target.],
   [`TT` / `FF`],   [Encoded booleans. `TT = leaf`, `FF = stem(leaf)`.],
   [`H-rule`],      [In `napply`: if `x` is neutral and `conv(f, type_of_neutral(x)) = TT`, return `TT`. Universal, not type-specific.],
   [`wait`],        [Deferred application: `wait a b c = a(b)(c)` but `wait(a)(b)` does not evaluate `a(b)`. See #raw("KERNEL_DESIGN.md").],
   [`fix`],         [Fixed-point via `wait`. Demand-driven recursion. See #raw("KERNEL_DESIGN.md").],
   [`TAG_ROOT`],    [Canonical tree prefix distinguishing tagged Vals from data.],
-  [`PI_TAG` / `UNIV_TAG`],[Metadata tags in VLam's `meta` field.],
+  [`PI_TAG` / `UNIV_TAG` / `EQ_TAG`],[Metadata tags in VLam's `meta` field.],
+  [*typed eliminator*],[A neutral-aware recursor (e.g.~`bool_rec`, `nat_rec`, `eq_J`). Checks `is_neutral` before triaging; produces `VStuckElim` when stuck. Carries a motive for type inference.],
   [*select-then-apply*],[Compilation pattern: closed branch functions selected by `ite2` before shared args applied. See §2.2.],
   [*quote*],       [Convert a closed Val to a raw tree-calculus term (bracket abstraction). One-way, lossy (metadata stripped).],
   [*registry*],    [Ambient set of rank-0 base types recognized by `Type n`.],
@@ -713,9 +786,8 @@ point. This would require either:
   `apply` (e.g., encoding VLam as a combinator whose tree-calc
   reduction matches `napply`'s dispatch).
 
-The bootstrapping tests (#raw("test/nbe_design.test.ts") §"Raw-predicate
-bootstrapping") validate that the raw/tagged boundary is transparent
-to `napply`. The step from `napply(T, v)` to `apply(T, v)` is an
+The tests in #raw("test/disp.disp") validate that the raw/tagged
+boundary is transparent to `napply`. The step from `napply(T, v)` to `apply(T, v)` is an
 encoding question, not a design question.
 
 == B/C combinators
