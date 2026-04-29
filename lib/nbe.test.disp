@@ -2,47 +2,46 @@ open use "prelude.disp"
 open use "nbe.disp"
 
 // ================================================================
-// Tag infrastructure
+// Neutral detection (signature-based)
 // ================================================================
 
-test is_tagged (mkVHyp t t) = TT
-test is_tagged t = FF
-test is_tagged (t t) = FF
-test is_tagged (t t t) = FF
-
-test tag_kind (mkVHyp t t) = KV_HYP
-test tag_payload (mkVHyp (t t) t) = t (t t) t
-
-// Val recognizers
-test is_vhyp (mkVHyp t t) = TT
-test is_vhyp t = FF
-test is_vstuck (mkVStuck t t) = TT
-test is_vstuck t = FF
 test is_neutral (mkVHyp t t) = TT
-test is_neutral (mkVStuck t t) = TT
+test is_neutral (mkVHyp (t t) (t t)) = TT
 test is_neutral t = FF
+test is_neutral (t t) = FF
+test is_neutral (t t t) = FF
 
-// Payload accessors
-test vhyp_type (mkVHyp (t t) t) = t t
-test mkVHyp_prog t t = mkVHyp t t
+// Spine accumulation: applying a neutral produces a neutral
+test is_neutral (mkVHyp t t (t t)) = TT
 
-// ================================================================
-// val_apply
-// ================================================================
-
-test val_apply ({x} -> x) t = t
-test val_apply ({x} -> x) (t t) = t t
-test val_apply ({x} -> x) (mkVHyp (t t) t) = mkVHyp (t t) t
-test val_apply (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
-test val_apply (mkVStuck (mkVHyp t t) t) (t t) = mkVStuck (mkVStuck (mkVHyp t t) t) (t t)
-test val_apply t t = t t
-test val_apply (t t) (t t) = t t (t t)
-
-// ================================================================
-// VStuckElim
-// ================================================================
-
-test is_velim (mkVStuckElim t (mkVHyp t t)) = TT
+// VStuckElim is also neutral
 test is_neutral (mkVStuckElim t (mkVHyp t t)) = TT
-test velim_motive (mkVStuckElim t (mkVHyp t t)) = t
-test velim_target (mkVStuckElim t (mkVHyp t t)) = mkVHyp t t
+
+// ================================================================
+// Spine accumulation (raw apply on neutrals)
+// ================================================================
+
+// Applying a hypothesis accumulates the spine
+let h1 = mkVHyp t t
+let stuck1 = h1 (t t)
+let stuck2 = stuck1 (t t t)
+
+// All share the same signature
+test fast_eq (pair_fst h1) (pair_fst stuck1) = TT
+test fast_eq (pair_fst stuck1) (pair_fst stuck2) = TT
+
+// Raw function apply still works
+test ({x} -> x) t = t
+test ({x} -> x) (t t) = t t
+test ({x} -> x) (mkVHyp (t t) t) = mkVHyp (t t) t
+
+// ================================================================
+// Metadata extraction from neutrals
+// ================================================================
+
+// Base hypothesis: meta = fork(HYP_TAG, fork(type, id))
+test fast_eq (pair_fst (type_meta h1)) HYP_TAG = TT
+
+// Spine: meta = fork(inner_meta, arg)
+test fast_eq (pair_fst (type_meta stuck1)) HYP_TAG = FF
+test pair_snd (type_meta stuck1) = t t

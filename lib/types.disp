@@ -185,7 +185,7 @@ let type_univ_fn = {self, meta, x} ->
 
 let type_pi_fn = {self, meta, x} ->
   and (wait self meta (pi_dom x))
-    (wait self meta (pi_cod_fn x (mkVHyp_prog (pi_dom x) (t (t (pair_snd meta))))))
+    (wait self meta (pi_cod_fn x (mkVHyp (pi_dom x) (t (t (pair_snd meta))))))
 
 let type_registered_fn = {self, meta, x} -> is_registered x
 
@@ -221,8 +221,8 @@ let conv_fast_fn = {self, a, b} -> TT
 let conv_pi_fn = {self, a, b} ->
   and (self (pi_dom a) (pi_dom b))
     (self
-      (pi_cod_fn a (mkVHyp_prog (pi_dom a) (t (t (t t)))))
-      (pi_cod_fn b (mkVHyp_prog (pi_dom a) (t (t (t t))))))
+      (pi_cod_fn a (mkVHyp (pi_dom a) (t (t (t t)))))
+      (pi_cod_fn b (mkVHyp (pi_dom a) (t (t (t t))))))
 let conv_univ_fn = {self, a, b} ->
   fast_eq (universe_rank a) (universe_rank b)
 let conv_ff_fn = {self, a, b} -> FF

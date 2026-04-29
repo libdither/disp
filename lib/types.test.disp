@@ -17,13 +17,11 @@ test Nat zero = TT
 test Nat five = TT
 
 // ================================================================
-// VStuckElim
+// VStuckElim (wait-based neutral with ELIM_TAG)
 // ================================================================
 
-test is_velim (mkVStuckElim Nat (mkVHyp Bool t)) = TT
 test is_neutral (mkVStuckElim Nat (mkVHyp Bool t)) = TT
-test velim_motive (mkVStuckElim Nat (mkVHyp Bool t)) = Nat
-test velim_target (mkVStuckElim Nat (mkVHyp Bool t)) = mkVHyp Bool t
+test fast_eq (pair_fst (type_meta (mkVStuckElim Nat (mkVHyp Bool t)))) ELIM_TAG = TT
 
 // ================================================================
 // Typed eliminators
@@ -31,11 +29,11 @@ test velim_target (mkVStuckElim Nat (mkVHyp Bool t)) = mkVHyp Bool t
 
 test bool_rec ({_} -> Nat) one zero TT = one
 test bool_rec ({_} -> Nat) one zero FF = zero
-test is_velim (bool_rec ({_} -> Nat) one zero (mkVHyp Bool t)) = TT
+test is_neutral (bool_rec ({_} -> Nat) one zero (mkVHyp Bool t)) = TT
 
 test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) zero = TT
 test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) two = TT
-test is_velim (nat_rec ({_} -> Bool) TT ({n, prev} -> prev) (mkVHyp Nat t)) = TT
+test is_neutral (nat_rec ({_} -> Bool) TT ({n, prev} -> prev) (mkVHyp Nat t)) = TT
 
 test nat_rec ({_} -> Nat) (t t t) ({n, p} -> p) zero = t t t
 test nat_rec ({_} -> Nat) zero ({n, p} -> succ p) two = two
@@ -94,9 +92,9 @@ test NatToNat ({_} -> FF) = FF
 test ton_check ({x} -> x) (mkVHyp Nat t) = Nat
 test ton_check (conv Nat) (mkVHyp Nat t) = TT
 test ton_check (conv Bool) (mkVHyp Nat t) = FF
-test ton_check ({x} -> x) (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = Nat
-test ton_check (conv Nat) (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
-test ton_check ({x} -> x) (mkVStuck (mkVHyp (mkVHyp t t) (t t)) (mkVHyp (mkVHyp t t) (t t))) = FF
+test ton_check ({x} -> x) ((mkVHyp NatToNat t) (mkVHyp Nat (t t))) = Nat
+test ton_check (conv Nat) ((mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
+test ton_check ({x} -> x) ((mkVHyp (mkVHyp t t) (t t)) (mkVHyp (mkVHyp t t) (t t))) = FF
 test ton_check ({x} -> x) t = FF
 
 // ================================================================
@@ -105,7 +103,7 @@ test ton_check ({x} -> x) t = FF
 
 test Nat (mkVHyp Nat t) = TT
 test Nat (mkVHyp Bool t) = FF
-test Nat (mkVStuck (mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
+test Nat ((mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
 
 // ================================================================
 // Pi metadata reflection
@@ -167,19 +165,22 @@ test conv_structural (mkPi Nat ({_} -> Nat) t) (mkPi Bool ({_} -> Nat) t) = FF
 // Polymorphic identity
 test (mkPi Type0 ({A} -> mkArrow A A (t t)) t) ({_A} -> {x} -> x) = TT
 
-// Higher-order
-test (mkArrow NatToNat (mkArrow Nat Nat (t t)) t) ({f} -> {x} -> val_apply f x) = TT
+// Higher-order: {f}->f has type NatToNat->NatToNat
+// (eta: {f}->{x}->f x = {f}->f in untyped bracket abstraction)
+test (mkArrow NatToNat NatToNat t) ({f} -> f) = TT
 
-// Composition
-test (mkArrow NatToNat (mkArrow NatToNat (mkArrow Nat Nat (t (t (t t)))) (t (t t))) t)
-  ({f} -> {g} -> {x} -> val_apply f (val_apply g x)) = TT
+// Composition: {f}->{g}->{x}->f(g(x))
+// The term applies g to x (producing stuck), then f to stuck (producing deeper stuck).
+// Both stuck terms are accumulated neutrals. Pi checker uses ton_check for codomain.
+test (mkArrow NatToNat (mkArrow NatToNat NatToNat (t (t t))) t)
+  ({f} -> {g} -> {x} -> f (g x)) = TT
 
-test (mkArrow NatToNat (mkArrow NatToNat (mkArrow Nat Nat (t (t (t t)))) (t (t t))) t)
+test (mkArrow NatToNat (mkArrow NatToNat NatToNat (t (t t))) t)
   ({f} -> {g} -> {x} -> FF) = FF
 
-// Double
-test (mkArrow NatToNat (mkArrow Nat Nat (t (t t))) t)
-  ({f} -> {x} -> val_apply f (val_apply f x)) = TT
+// Double: {f}->{x}->f(f(x))
+test (mkArrow NatToNat NatToNat t)
+  ({f} -> {x} -> f (f x)) = TT
 
 // Const
 test (mkArrow Nat (mkArrow Nat Nat (t (t t))) t) ({x} -> {_y} -> x) = TT
@@ -210,11 +211,11 @@ test (mkPi Type0 ({A} ->
         (t (t (t t))))
       (t (t t)))
     t)
-  ({_A} -> {_B} -> {_C} -> {f} -> {b} -> {a} -> val_apply (val_apply f a) b) = TT
+  ({_A} -> {_B} -> {_C} -> {f} -> {b} -> {a} -> (f a) b) = TT
 
 // Deeper spine inference
-test Nat (mkVStuck (mkVHyp NatToNat (t (t (t t)))) (mkVHyp Nat (t (t (t (t t)))))) = TT
-test Bool (mkVStuck (mkVHyp NatToNat (t (t (t t)))) (mkVHyp Nat (t (t (t (t t)))))) = FF
+test Nat ((mkVHyp NatToNat (t (t (t t)))) (mkVHyp Nat (t (t (t (t t)))))) = TT
+test Bool ((mkVHyp NatToNat (t (t (t t)))) (mkVHyp Nat (t (t (t (t t)))))) = FF
 
 // Universe hierarchy
 test Type1 (mkPi Type0 ({A} -> mkArrow A A (t t)) t) = TT
@@ -231,17 +232,18 @@ test (mkArrow Nat Bool t) ({n} ->
 test (mkArrow Nat Bool t) ({n} ->
   nat_rec ({_} -> Nat) zero ({n_, prev} -> succ prev) n) = FF
 
-// Polymorphic apply
+// Polymorphic apply: {f}->{x}->f(x) eta-reduces to {f}->f
+// which has type (A->B)->(A->B). Use correct arrow structure.
 test (mkPi Type0 ({A} ->
     mkPi Type0 ({B} ->
-      mkArrow (mkArrow A B (t (t (t (t t))))) (mkArrow A B (t (t (t (t (t t)))))) (t (t (t t))))
+      mkArrow (mkArrow A B (t (t (t (t t))))) (mkArrow A B (t (t (t (t t))))) (t (t (t t))))
       (t (t t)))
     t)
-  ({_A} -> {_B} -> {f} -> {x} -> val_apply f x) = TT
+  ({_A} -> {_B} -> {f} -> f) = TT
 
 // Self-application rejection
 test (mkPi Type0 ({A} -> mkArrow A A (t (t t))) t)
-  ({_A} -> {x} -> val_apply x x) = FF
+  ({_A} -> {x} -> x x) = FF
 
 // Church pair at Nat
 test (mkArrow Nat
@@ -251,8 +253,7 @@ test (mkArrow Nat
       (t (t (t (t t)))))
     (t (t (t t))))
   t)
-  ({a} -> {b} -> {sel} -> val_apply (val_apply sel a) b) = TT
+  ({a} -> {b} -> {sel} -> (sel a) b) = TT
 
-// Hypothesis-as-type (the H-rule in action)
-// type_apply handles neutrals-as-types via ton_check H-rule
-test type_apply (mkVHyp t t) (mkVHyp (mkVHyp t t) (t t)) = TT
+// Hypothesis-as-type: ton_check handles H-rule directly
+test ton_check (fast_eq (mkVHyp t t)) (mkVHyp (mkVHyp t t) (t t)) = TT

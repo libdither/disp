@@ -4,17 +4,36 @@ Practical idioms for implementing the type theory from
 [TYPE_THEORY.typ](TYPE_THEORY.typ) as tree-calculus programs.
 Reference implementation: `lib/*.disp`.
 
-## Tag encoding
+## Neutrals as accumulators
 
-Tags are used only for neutrals: VHyp, VStuck, VStuckElim.
-Tagged trees: `tagged(kind, payload) = fork(fork(TAG_ROOT, kind), payload)`.
-TAG_ROOT is a fixed canonical tree distinguishable from data.
+All tag infrastructure has been eliminated. No TAG_ROOT, no tag kinds,
+no tag-based pattern matching. Neutrals use a single `accum` handler
+built with `fix` and `wait`:
 
-Recognition: triage twice (outer fork, inner fork), then `fast_eq` on the inner-left
-against TAG_ROOT. Kind extraction: inner-right. Payload: outer-right.
+```
+accum = fix {self, meta, v} -> wait self (fork meta v)
+```
 
-Types do NOT use tags. There is no VLam tag. Types use the wait-based
-encoding described below.
+All neutral forms share `accum` as their handler:
+
+- **VHyp**: `wait(accum)(fork(HYP_TAG, fork(type, id)))` — a hypothesis
+  variable with its type and de Bruijn id in the metadata.
+- **VStuck**: `wait(accum)(fork(inner_meta, arg))` — applying a neutral
+  to a value accumulates the argument into the metadata spine.
+- **VStuckElim**: `wait(accum)(fork(ELIM_TAG, fork(motive, target)))` —
+  a stuck eliminator records the motive and target.
+
+Applying a neutral to a value is just raw `apply`: `apply(neutral, v)`
+triggers `accum(meta)(v)` which produces `wait(accum)(fork(meta, v))` —
+another neutral with the argument accumulated into the spine.
+
+**Recognition**: `is_neutral = fast_eq(pair_fst(x), NEUTRAL_SIG)` — a
+single O(1) check. NEUTRAL_SIG is `stem(accum)`, the constant signature
+shared by all accum-based neutrals.
+
+**ton_check** walks the accumulated metadata spine (nested forks) to
+extract the hypothesis type and verify type membership, instead of
+pattern-matching on tag kinds.
 
 ## wait and fix
 
@@ -143,7 +162,7 @@ at compile time. The runtime evaluates only `cond(x)`, selects one
 function, and applies `x` to it.
 
 This pattern is used in `pi_checker` (avoids ton_check on non-neutrals),
-`type_of_neutral` (avoids recursive spine inference on VHyp inputs),
+`type_of_neutral` (avoids recursive spine walk on VHyp inputs),
 `Nat` checker (avoids recursive calls in the Zero case), and `Type n`
 checker (avoids universe-rank checks on non-universe inputs).
 
@@ -171,44 +190,31 @@ Instead, use `wait` to defer: `wait(fix_fn)(first_arg)` is cheap
 (~12 steps). The fix unfolding happens only when the LAST argument
 arrives. Chain `wait` for multiple pre-applied arguments.
 
-## val_apply (neutral-aware application)
+## Raw apply handles everything
 
-`val_apply(f, x)` replaces the old napply/tag_dispatch for applying
-functions to arguments in term bodies:
+With the accum-based neutral design, there is no need for `val_apply` or
+`type_apply`. Raw `apply` handles all three cases uniformly:
 
-- If `f` is neutral → produce `mkVStuck(f, x)` (stuck application)
-- Otherwise → raw `f(x)` (tree-calculus reduction)
+- **On types** (wait-based): `apply(T, v)` triggers the checker, which
+  includes its own H-rule logic via `fix` + `ton_check`.
+- **On neutrals** (accum-based): `apply(neutral, v)` triggers
+  `accum(meta)(v)`, producing a new neutral with the argument accumulated
+  into the spine.
+- **On raw functions**: normal tree-calculus reduction.
 
-This is used whenever a term-level function is applied to an argument
-and the function might be a neutral (hypothesis variable, stuck term).
-It does NOT handle type-level application — see *type_apply* below.
+For Pi body normalization, the checker branches on `is_neutral(result)`
+after evaluating the codomain on a hypothesis:
+- If the result is neutral → `ton_check` walks it
+- If concrete → raw `apply` checks the result
 
-## type_apply (type-level application with H-rule)
-
-`type_apply(T, v)` applies a type to a value. Two cases:
-
-- **T is a wait-based type** (not neutral): raw `T(v)` works. The wait
-  encoding triggers `checker(metadata)(v)`, which includes its own H-rule
-  logic via `fix` + `ton_check`.
-- **T is neutral** (abstract type variable, e.g. hypothesis `A : Type 0`):
-  raw apply would produce garbage (the neutral is a tagged tree, not a
-  checker). Instead, `ton_check(fast_eq(T))(v)` walks the neutral's spine
-  to determine if `v` has the right type.
-
-```
-type_apply = {T, v} -> ite2 ta_neutral_fn ta_raw_fn (is_neutral T) T v
-```
-
-This arises in Pi checking: `pi_check_fn` evaluates the codomain function
-on a fresh hypothesis, producing a type that might be neutral (if the
-codomain is an abstract type variable). `type_apply` handles both cases.
+This replaces the old `type_apply` indirection with a direct branch.
 
 ## Typed eliminators (neutral-aware recursors)
 
 Raw `triage` on a neutral (VHyp/VStuck/VStuckElim) misinterprets the
-tagged fork structure as data — the triage fork-case destructures the
-tag encoding instead of the value. This produces garbage, not a stuck
-term.
+accum-based wait structure as data — the triage fork-case destructures
+the neutral encoding instead of the value. This produces garbage, not a
+stuck term.
 
 **Fix:** typed eliminators guard with `is_neutral` before dispatching.
 When the target is neutral, they produce `VStuckElim(motive, target)`
@@ -240,14 +246,14 @@ Any user-defined type can follow this pattern:
 
 ## Pi body normalization
 
-Pi's checker returns `fast_eq(type_apply(codFn(hyp), f(hyp)), TT)` —
-anything not TT becomes FF. `type_apply` is used instead of raw apply
-because `codFn(hyp)` might produce a neutral type (when the codomain is
-an abstract type variable). This handles:
+Pi's checker evaluates `codFn(hyp)` and branches on `is_neutral(result)`:
+if neutral, `ton_check` walks the spine; if concrete, raw `apply(result, f(hyp))`
+checks the body. The result is normalized to TT/FF via `fast_eq(X, TT)`.
+This handles:
 
-- Ill-typed returns against abstract hypothesis types (produces VStuck
-  instead of FF → normalized to FF)
-- Self-application rejection (VStuck chain → FF)
+- Ill-typed returns against abstract hypothesis types (produces stuck
+  accumulation instead of FF → normalized to FF)
+- Self-application rejection (stuck chain → FF)
 
 Soundness: `fast_eq(X, TT)` = TT iff X is literally TT (same hash-consed
 node as LEAF). Can never manufacture a false TT. The only path to false
@@ -267,20 +273,16 @@ case in `exprToCir`).
 
 ## Performance status
 
-With select-then-apply and fix-inside-checker, all NbE operations
-(val_apply, type_apply, ton_check, conv, Pi/Type/Nat/Bool checking)
-execute within the 10M-step budget. Typical costs:
+The accum-based neutral design (option C) is 37% faster than the
+previous tagged design (108ms vs 212ms for the full test suite). All
+NbE operations (ton_check, conv, Pi/Type/Nat/Bool checking) execute
+within the 10M-step budget.
 
-- `Nat(Succ(Succ(Zero)))`: ~300 steps
-- `Pi(Nat, id, 0)(id)`: ~500 steps
-- `Type_0(Nat)`: ~200 steps
-- `Type_1(Type_0)`: ~300 steps
-- Polymorphic identity check: ~1000 steps
-
-Pi checking now uses `type_apply` for the codomain check, adding a
-small constant overhead when the codomain is a concrete type (raw apply
-path) and enabling correct handling when it is an abstract type variable
-(ton_check path).
+Key performance wins from eliminating tags:
+- No tag construction/dispatch overhead for neutral creation and recognition
+- `is_neutral` is a single `fast_eq` on the signature (O(1) via hash-consing)
+- Raw `apply` on neutrals triggers `accum` directly — no val_apply indirection
+- Pi codomain check branches on `is_neutral(result)` — no type_apply indirection
 
 The previous performance wall (tens of millions of steps) was caused
 by bracket-abstraction eagerness, not by inherent tree-calculus cost.
