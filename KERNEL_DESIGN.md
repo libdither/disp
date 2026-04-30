@@ -37,7 +37,7 @@ any metadata payload marker.
 single O(1) check. NEUTRAL_SIG is `stem(accum)`, the constant signature
 shared by all accum-based neutrals.
 
-**ton_check** is O(1): just `check_fn(pair_fst(type_meta(v)))` —
+**infer** is O(1): just `check_fn(pair_fst(type_meta(v)))` —
 extracts the stored type directly. No spine walking needed.
 
 ## wait and fix
@@ -84,7 +84,7 @@ Key accessors:
   recognition.
 - **H-rule**: The checker uses `fix` with `wait(self)(meta)` to reconstruct
   its own type for comparison. When a neutral value is applied,
-  `ton_check(fast_eq(wait(self)(meta)))` walks the neutral's spine to verify
+  `infer(fast_eq(wait(self)(meta)))` walks the neutral's spine to verify
   it has the right type. This is the H-rule: `napply(T, hyp) = TT` iff the
   hypothesis was introduced at type T.
 
@@ -92,14 +92,14 @@ Example — Nat:
 
 ```
 nat_checker = fix {self, meta, v} ->
-    if is_neutral v then ton_check (fast_eq (wait self meta)) v
+    if is_neutral v then infer (fast_eq (wait self meta)) v
     else ... check zero/succ structure ...
 
 Nat = wait nat_checker LEAF
 ```
 
 `Nat(Zero)` reduces to `nat_checker(metadata)(Zero)` → TT.
-`Nat(hyp)` reduces to `nat_checker(metadata)(hyp)` → O(1) `ton_check`
+`Nat(hyp)` reduces to `nat_checker(metadata)(hyp)` → O(1) `infer`
 type extraction.
 
 ## Fix inside checker
@@ -148,7 +148,7 @@ abstraction over shared free variables defeats this. When
 `x`, the S-combinator rule `[x](f g) = S([x]f)([x]g)` evaluates both
 `[x]thunk_A` and `[x]thunk_B` *before* `ited` dispatches on `cond`.
 
-This caused checkers to diverge: `ton_check` was evaluated even when
+This caused checkers to diverge: `infer` was evaluated even when
 the value was not neutral.
 
 **Fix:** compile each branch as a *closed function*, select via `ite2`
@@ -169,7 +169,7 @@ K-composition (`S(Kp)(Kq) → K(pq)`) collapses the constant branches
 at compile time. The runtime evaluates only `cond(x)`, selects one
 function, and applies `x` to it.
 
-This pattern is used in `pi_checker` (avoids ton_check on non-neutrals),
+This pattern is used in `pi_checker` (avoids infer on non-neutrals),
 `type_of_neutral` (avoids recursive spine walk on VHyp inputs),
 `Nat` checker (avoids recursive calls in the Zero case), and `Type n`
 checker (avoids universe-rank checks on non-universe inputs).
@@ -204,7 +204,7 @@ With the accum-based neutral design, there is no need for `val_apply` or
 `type_apply`. Raw `apply` handles all three cases uniformly:
 
 - **On types** (wait-based): `apply(T, v)` triggers the checker, which
-  includes its own H-rule logic via `fix` + `ton_check`.
+  includes its own H-rule logic via `fix` + `infer`.
 - **On neutrals** (accum-based): `apply(neutral, v)` triggers
   `accum(meta)(v)`, producing a new neutral with the argument accumulated
   into the spine.
@@ -212,7 +212,7 @@ With the accum-based neutral design, there is no need for `val_apply` or
 
 For Pi body normalization, the checker branches on `is_neutral(result)`
 after evaluating the codomain on a hypothesis:
-- If the result is neutral → `ton_check` walks it
+- If the result is neutral → `infer` walks it
 - If concrete → raw `apply` checks the result
 
 This replaces the old `type_apply` indirection with a direct branch.
@@ -255,7 +255,7 @@ Any user-defined type can follow this pattern:
 ## Pi body normalization
 
 Pi's checker evaluates `codFn(hyp)` and branches on `is_neutral(result)`:
-if neutral, `ton_check` walks the spine; if concrete, raw `apply(result, f(hyp))`
+if neutral, `infer` walks the spine; if concrete, raw `apply(result, f(hyp))`
 checks the body. The result is normalized to TT/FF via `fast_eq(X, TT)`.
 This handles:
 
@@ -283,7 +283,7 @@ case in `exprToCir`).
 
 The accum-based neutral design (option C) is 37% faster than the
 previous tagged design (108ms vs 212ms for the full test suite). All
-NbE operations (ton_check, conv, Pi/Type/Nat/Bool checking) execute
+NbE operations (infer, conv, Pi/Type/Nat/Bool checking) execute
 within the 10M-step budget.
 
 Key performance wins from eliminating tags:

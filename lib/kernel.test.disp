@@ -1,6 +1,16 @@
 open use "prelude.disp"
 open use "kernel.disp"
 
+// Test-only convenience definitions
+let is_nat_type = {x} -> fast_eq x Nat
+let is_bool_type = {x} -> fast_eq x Bool
+let is_registered = {x} -> ite2 TT (is_bool_type x) (is_nat_type x)
+let Type0 = Type 0
+let Type1 = Type 1
+let Type2 = Type 2
+let NatToNat = Arrow Nat Nat 0
+let id_fn = {x} -> x
+
 // ================================================================
 // Neutral detection (signature-based)
 // ================================================================
@@ -48,3 +58,360 @@ test neutral_type h1 = t
 test neutral_type stuck1 = FF
 // Arg is still accessible deeper in the metadata
 test pair_snd (pair_snd (type_meta stuck1)) = t t
+
+// ================================================================
+// Nat / Bool predicates
+// ================================================================
+
+test Nat 0 = TT
+test Nat 1 = TT
+test Nat 2 = TT
+test Nat FF = FF
+test Bool TT = TT
+test Bool FF = TT
+test Bool 1 = FF
+test Nat 5 = TT
+
+// ================================================================
+// VStuckElim (wait-based neutral with ELIM_TAG)
+// ================================================================
+
+test is_neutral (StuckElim Nat (Hyp Bool t)) = TT
+test neutral_type (StuckElim Nat (Hyp Bool t)) = Nat
+test pair_fst (pair_snd (type_meta (StuckElim Nat (Hyp Bool t)))) = ELIM_TAG
+
+// ================================================================
+// Typed eliminators
+// ================================================================
+
+test bool_rec ({_} -> Nat) 1 0 TT = 1
+test bool_rec ({_} -> Nat) 1 0 FF = 0
+test is_neutral (bool_rec ({_} -> Nat) 1 0 (Hyp Bool t)) = TT
+
+test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) 0 = TT
+test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) 2 = TT
+test is_neutral (nat_rec ({_} -> Bool) TT ({n, prev} -> prev) (Hyp Nat t)) = TT
+
+test nat_rec ({_} -> Nat) 1 ({n, p} -> p) 0 = 1
+test nat_rec ({_} -> Nat) 0 ({n, p} -> succ p) 2 = 2
+
+// ================================================================
+// Eq type
+// ================================================================
+
+test (Eq Nat 0 0) refl = TT
+test (Eq Nat 1 1) refl = TT
+test (Eq Nat 0 1) refl = FF
+
+// FF is not a proof of Eq Nat 0 0
+test (Eq Nat 0 0) FF = FF
+
+test eq_J Nat 0 ({y, p} -> Nat) 5 0 refl = 5
+test (Eq Nat 0 0) (eq_sym Nat 0 0 refl) = TT
+test (Eq Nat 1 1) (eq_cong Nat Nat succ 0 0 refl) = TT
+test eq_subst Nat Nat 0 0 refl 5 = 5
+
+// ================================================================
+// Arithmetic: add
+// ================================================================
+
+test add 0 0 = 0
+test add 0 3 = 3
+test add 2 3 = 5
+test add 3 2 = 5
+
+test (Eq Nat (add 0 0) 0) refl = TT
+test (Eq Nat (add 1 0) 1) refl = TT
+test (Eq Nat (add 2 0) 2) refl = TT
+test (Eq Nat (add 3 0) 3) refl = TT
+test (Eq Nat (add 2 3) (add 3 2)) refl = TT
+test (Eq Nat (add 1 4) (add 4 1)) refl = TT
+
+// ================================================================
+// Arrow type checking
+// ================================================================
+
+test NatToNat id_fn = TT
+test NatToNat ({_} -> 0) = TT
+test NatToNat ({_} -> FF) = FF
+
+// ================================================================
+// infer (extract and check neutral's stored type)
+// ================================================================
+
+// n : Nat |- typeOf n = Nat
+test infer ({x} -> x) (Hyp Nat t) = Nat
+
+// n : Nat |- n : Nat
+test infer (conv Nat) (Hyp Nat t) = TT
+
+// n : Nat |- n : Bool
+test infer (conv Bool) (Hyp Nat t) = FF
+
+// f : Nat -> Nat, n : Nat |- typeOf (f n) = Nat
+test infer ({x} -> x) ((Hyp NatToNat t) (Hyp Nat (t t))) = Nat
+
+// f : Nat -> Nat, n : Nat |- f n : Nat
+test infer (conv Nat) ((Hyp NatToNat t) (Hyp Nat (t t))) = TT
+
+// h : nonPi, x : nonPi |- typeOf (h x) = FF
+test infer ({x} -> x) ((Hyp (Hyp t t) (t t)) (Hyp (Hyp t t) (t t))) = FF
+
+// t is not neutral
+test infer ({x} -> x) t = FF
+
+// ================================================================
+// H-rule via raw apply (neutrals checked by type)
+// ================================================================
+
+// n : Nat |- n : Nat
+test Nat (Hyp Nat t) = TT
+
+// b : Bool |- b : Nat
+test Nat (Hyp Bool t) = FF
+
+// f : Nat -> Nat, n : Nat |- f n : Nat
+test Nat ((Hyp NatToNat t) (Hyp Nat (t t))) = TT
+
+// ================================================================
+// Pi metadata reflection
+// ================================================================
+
+test is_pi (Pi Nat ({_} -> Nat) t) = TT
+test is_pi Nat = FF
+test is_pi t = FF
+test pi_dom (Pi Nat ({_} -> Nat) t) = Nat
+test is_pi (Arrow Nat Nat t) = TT
+test pi_dom (Arrow Nat Nat t) = Nat
+
+// ================================================================
+// Nat le/lt
+// ================================================================
+
+test nat_le 0 0 = TT
+test nat_le 0 3 = TT
+test nat_le 1 0 = FF
+test nat_le 2 3 = TT
+test nat_le 2 1 = FF
+test nat_lt 0 1 = TT
+test nat_lt 0 0 = FF
+test nat_lt 1 2 = TT
+
+// ================================================================
+// Type n
+// ================================================================
+
+test Type0 Nat = TT
+test Type0 Bool = TT
+test is_nat_type Nat = TT
+test is_bool_type Bool = TT
+test is_nat_type Bool = FF
+test is_bool_type Nat = FF
+test Type0 t = FF
+test Type0 FF = FF
+
+// Adversarial: a wait-based value with a trivially-accepting checker
+// and Nat-like metadata (LEAF). Must be rejected — only the canonical
+// Nat (built by the kernel's own Q_NAT) is recognized.
+let fakeNat = wait ({_meta, _x} -> TT) t
+test is_nat_type fakeNat = FF
+test Type0 fakeNat = FF
+
+// Same attack against Bool: trivially-accepting checker with Bool-like
+// metadata (stem of LEAF). Canonical identity rejects it.
+let fakeBool = wait ({_meta, _x} -> TT) (t t)
+test is_bool_type fakeBool = FF
+test Type0 fakeBool = FF
+
+test Type0 (Arrow Nat Nat t) = TT
+test Type1 Type0 = TT
+test Type0 Type0 = FF
+test Type1 Nat = TT
+test Type2 Type0 = TT
+test Type0 (Pi Nat ({_x} -> Bool) t) = TT
+test Type0 (Pi Nat ({x} -> x) t) = FF
+test Type0 (Pi FF ({_x} -> Nat) t) = FF
+test Type1 (Pi Type0 ({A} -> Arrow A A (t t)) t) = TT
+test Type0 (Pi Type0 ({A} -> Arrow A A (t t)) t) = FF
+test Type0 (Eq Nat 0 0) = TT
+test Type0 (Eq Nat 0 FF) = FF
+test Type0 (Eq FF 0 0) = FF
+test is_eq (Eq Nat 0 0) = TT
+
+// Adversarial: trivially-accepting checker with Eq-like metadata
+// (fork(A, fork(x, y))). Signature mismatch rejects it.
+let fakeEq = wait ({_meta, _x} -> TT) (t Nat (t 0 0))
+test is_eq fakeEq = FF
+test Type0 fakeEq = FF
+
+// Adversarial: trivially-accepting checker with Universe-like metadata
+// (LEAF for rank). Signature mismatch rejects it.
+let fakeUniverse = wait ({_meta, _x} -> TT) t
+test is_universe fakeUniverse = FF
+test Type0 fakeUniverse = FF
+
+// Adversarial: trivially-accepting checker with Pi-like metadata
+// (fork(dom, fork(depth, codFn))). Signature mismatch rejects it.
+let fakePi = wait ({_meta, _x} -> TT) (t Nat (t t ({_x} -> Bool)))
+test is_pi fakePi = FF
+test Type0 fakePi = FF
+
+// A hypothesis typed with fakePi doesn't get Pi-style accumulation,
+// so applying it to a value doesn't track the codomain type.
+test Bool ((Hyp fakePi t) 0) = FF
+
+// ================================================================
+// Structural conv
+// ================================================================
+
+test conv_structural t t = TT
+test conv_structural t (t t) = FF
+test conv_structural Type0 Type0 = TT
+test conv_structural Type0 Type1 = FF
+test conv_structural (Pi Nat ({_} -> Nat) t) (Pi Nat ({_} -> Nat) t) = TT
+test conv_structural (Pi Nat ({_} -> Nat) t) (Pi Bool ({_} -> Nat) t) = FF
+test conv_structural
+  (Pi Nat ({_x} -> Nat) t)
+  (Arrow Nat Nat t) = TT
+test conv_structural
+  (Arrow Nat Bool t)
+  (Arrow Nat Nat t) = FF
+
+// ================================================================
+// Integration: full pipeline
+// ================================================================
+
+// idPoly : (A : Type0) -> A -> A
+test (Pi Type0 ({A} -> Arrow A A (t t)) t) ({_A} -> {x} -> x) = TT
+
+// idNatToNat : (Nat -> Nat) -> Nat -> Nat
+test (Arrow NatToNat NatToNat t) ({f} -> f) = TT
+
+// composeNat : (Nat -> Nat) -> (Nat -> Nat) -> Nat -> Nat
+test (Arrow NatToNat (Arrow NatToNat NatToNat (t (t t))) t)
+  ({f} -> {g} -> {x} -> f (g x)) = TT
+
+test (Arrow NatToNat (Arrow NatToNat NatToNat (t (t t))) t)
+  ({f} -> {g} -> {x} -> FF) = FF
+
+// doubleApply : (Nat -> Nat) -> Nat -> Nat
+test (Arrow NatToNat NatToNat t)
+  ({f} -> {x} -> f (f x)) = TT
+
+// constNat : Nat -> Nat -> Nat
+test (Arrow Nat (Arrow Nat Nat (t (t t))) t) ({x} -> {_y} -> x) = TT
+
+// constPoly : (A : Type0) -> (B : Type0) -> A -> B -> A
+test (Pi Type0 ({A} ->
+    Pi Type0 ({B} ->
+      Arrow A (Arrow B A (t (t (t (t t))))) (t (t (t t))))
+      (t (t t)))
+    t)
+  ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
+
+// badConstPoly
+test (Pi Type0 ({A} ->
+    Pi Type0 ({B} ->
+      Arrow A (Arrow B A (t (t (t (t t))))) (t (t (t t))))
+      (t (t t)))
+    t)
+  ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
+
+// flip : (A : Type0) -> (B : Type0) -> (C : Type0) -> (A -> B -> C) -> B -> A -> C
+test (Pi Type0 ({A} ->
+    Pi Type0 ({B} ->
+      Pi Type0 ({C} ->
+        Arrow
+          (Arrow A (Arrow B C (t (t (t (t (t (t t))))))) (t (t (t (t (t t))))))
+          (Arrow B (Arrow A C (t (t (t (t (t (t (t t)))))))) (t (t (t (t (t (t t)))))))
+          (t (t (t (t (t t))))))
+        (t (t (t t))))
+      (t (t t)))
+    t)
+  ({_A} -> {_B} -> {_C} -> {f} -> {b} -> {a} -> (f a) b) = TT
+
+// f : Nat -> Nat, x : Nat |- f x : Nat
+test Nat ((Hyp NatToNat (t (t (t t)))) (Hyp Nat (t (t (t (t t)))))) = TT
+
+// f : Nat -> Nat, x : Nat |- f x : Bool
+test Bool ((Hyp NatToNat (t (t (t t)))) (Hyp Nat (t (t (t (t t)))))) = FF
+
+test Type1 (Pi Type0 ({A} -> Arrow A A (t t)) t) = TT
+test Type0 (Pi Type0 ({A} -> Arrow A A (t t)) t) = FF
+
+// boolToNat : Bool -> Nat
+test (Arrow Bool Nat t) ({b} ->
+  bool_rec ({_} -> Nat) 1 0 b) = TT
+
+// natToBool : Nat -> Bool
+test (Arrow Nat Bool t) ({n} ->
+  nat_rec ({_} -> Bool) TT ({n_, prev} -> FF) n) = TT
+
+// badNatToBool : Nat -> Bool (body returns Nat, not Bool)
+test (Arrow Nat Bool t) ({n} ->
+  nat_rec ({_} -> Nat) 0 ({n_, prev} -> succ prev) n) = FF
+
+// applyPoly : (A : Type0) -> (B : Type0) -> (A -> B) -> A -> B
+test (Pi Type0 ({A} ->
+    Pi Type0 ({B} ->
+      Arrow (Arrow A B (t (t (t (t t))))) (Arrow A B (t (t (t (t t))))) (t (t (t t))))
+      (t (t t)))
+    t)
+  ({_A} -> {_B} -> {f} -> f) = TT
+
+// badSelf : (A : Type0) -> A -> A — self-application rejected
+test (Pi Type0 ({A} -> Arrow A A (t (t t))) t)
+  ({_A} -> {x} -> x x) = FF
+
+// pairNat : Nat -> Nat -> (Nat -> Nat -> Nat) -> Nat
+test (Arrow Nat
+  (Arrow Nat
+    (Arrow (Arrow Nat (Arrow Nat Nat (t (t (t (t (t t)))))) (t (t (t (t t)))))
+      Nat
+      (t (t (t (t t)))))
+    (t (t (t t))))
+  t)
+  ({a} -> {b} -> {sel} -> (sel a) b) = TT
+
+// h : H |- h : H
+test infer (fast_eq (Hyp t t)) (Hyp (Hyp t t) (t t)) = TT
+
+// ctxId : (A : Type0) -> (x : A) -> A
+test (Pi Type0 ({A} ->
+    Pi A ({_x} -> A) (t t))
+    t)
+  ({_A} -> {x} -> x) = TT
+
+// ctxConst : (A : Type0) -> (B : Type0) -> A -> B -> A
+test (Pi Type0 ({A} ->
+    Pi Type0 ({B} ->
+      Arrow A (Arrow B A (t (t (t t)))) (t (t t)))
+      (t t))
+    t)
+  ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
+
+// badCtxConst
+test (Pi Type0 ({A} ->
+    Pi Type0 ({B} ->
+      Arrow A (Arrow B A (t (t (t t)))) (t (t t)))
+      (t t))
+    t)
+  ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
+
+// f : (x : Nat) -> Bool, n : Nat |- f n : Bool
+test Bool
+  ((Hyp (Pi Nat ({_x} -> Bool) t) t)
+    (Hyp Nat (t t))) = TT
+
+// f : (x : Nat) -> Bool, n : Nat |- f n : Nat
+test Nat
+  ((Hyp (Pi Nat ({_x} -> Bool) t) t)
+    (Hyp Nat (t t))) = FF
+
+// f : (A : Type0) -> A -> A, n : Nat |- f Nat n : Nat
+test Nat
+  (((Hyp
+      (Pi Type0 ({A} -> Arrow A A (t t)) t)
+      t)
+    Nat)
+    (Hyp Nat (t t))) = TT

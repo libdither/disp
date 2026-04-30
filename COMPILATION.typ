@@ -12,7 +12,7 @@
 #align(center)[
   How `.disp` source becomes a set of named tree-calculus terms.\
   Complementary to #raw("SYNTAX.typ") (surface grammar + AST) and
-  the per-backend #raw("lib/*/DESIGN.md") documents.
+  #raw("TYPE_THEORY.typ") (type system semantics).
 ]
 #v(1em)
 
@@ -40,10 +40,10 @@ The parser handles every surface-only node (`Let`, `Test`, `Use`,
   [metavariable solving, unification, type checks],      [elaborator],
 )
 
-The host-side parser in #raw("src/parse.ts") and the backend elaborator
-communicate through a narrow `(e: Expr, expected?: Type) => Tree`
-interface. Each NbE backend in `lib/{debruijn,ctxtree,semantic}/` plugs
-in behind this interface --- the parser doesn't care which.
+The host-side parser in #raw("src/parse.ts") handles all surface-only
+nodes and compiles expressions to tree-calculus terms via bracket
+abstraction. The elaborator (not yet implemented) will sit between
+parsing and emission, providing type-directed compilation.
 
 = Parser
 

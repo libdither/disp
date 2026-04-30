@@ -1,24 +1,36 @@
 open use "prelude.disp"
 
+// ================================================================
+// Utilities
+// ================================================================
+
 let type_meta = {T} -> pair_snd (pair_snd T)
 let conv = {a, b} -> fast_eq a b
 
 let HYP_TAG = t (t (t t))
 let ELIM_TAG = t (t t t)
 
-let Q_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_accum
-let Q_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_pi
-let Q_NAT = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_nat
-let Q_BOOL = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_bool
-let Q_EQ = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_eq
-let Q_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_type
-let Q_TON = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_ton
-let Q_SIG_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_accum
-let Q_SIG_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_pi
-let Q_SIG_EQ = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_eq
-let Q_SIG_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_type
+// ================================================================
+// Kernel query selectors (Church-encoded dispatch)
+// ================================================================
 
-let raw_tree_fork = {v} ->
+let Q_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_accum
+let Q_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_pi
+let Q_NAT = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_nat
+let Q_BOOL = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_bool
+let Q_EQ = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_eq
+let Q_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_type
+let Q_INFER = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_infer
+let Q_SIG_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_accum
+let Q_SIG_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_pi
+let Q_SIG_EQ = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_eq
+let Q_SIG_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_infer, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_type
+
+// ================================================================
+// Nat arithmetic helpers (no kernel dependency)
+// ================================================================
+
+let is_fork = {v} ->
   triage FF ({_} -> FF) ({l, r} -> TT) v
 
 let nat_le_zero_fn = {self, a, b} -> TT
@@ -26,10 +38,10 @@ let nat_le_succ_fn = {self, a, b} ->
   ite2
     ({self, a, b} -> self (pair_snd a) (pair_snd b))
     ({self, a, b} -> FF)
-    (raw_tree_fork b)
+    (is_fork b)
     self a b
 let nat_le_nonzero_fn = {self, a, b} ->
-  ite2 nat_le_succ_fn ({self, a, b} -> FF) (raw_tree_fork a)
+  ite2 nat_le_succ_fn ({self, a, b} -> FF) (is_fork a)
     self a b
 let nat_le = fix ({self, a, b} ->
   ite2 nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
@@ -37,11 +49,19 @@ let nat_le = fix ({self, a, b} ->
 
 let nat_lt = {a, b} -> nat_le (t t a) b
 
+// ================================================================
+// Kernel component builders
+// ================================================================
+
+// --- CPS signature queries ---
+// Return the checker signature as a CPS function: {check_fn} -> check_fn(signature).
+// Accum uses single wait (it IS the handler); others use double wait (they produce types).
 let q_sig_accum_fn = {ks, query} -> {c} -> c (pair_fst (wait (ks Q_ACCUM) t))
 let q_sig_pi_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_PI) t))
 let q_sig_eq_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_EQ) t))
 let q_sig_type_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_TYPE) t))
 
+// --- Smart accum (type-tracking neutral handler) ---
 let q_accum_pi_fn = {self, meta, v} ->
   wait self
     (t (pair_snd (pair_snd (type_meta (pair_fst meta))) v)
@@ -54,19 +74,24 @@ let q_accum_fn = {ks, query} ->
       (wait ks Q_SIG_PI (fast_eq (pair_fst (pair_fst meta))))
       self meta v)
 
-let q_ton_neutral_fn = {check_fn, v} -> check_fn (pair_fst (type_meta v))
-let q_ton_ff_fn = {check_fn, v} -> FF
-let q_ton_fn = {ks, query} -> {check_fn, v} ->
-  ite2 q_ton_neutral_fn q_ton_ff_fn
+// --- H-rule (shared by all type checkers) ---
+// If v is neutral, check whether its stored type matches this checker's own type.
+let q_h_rule_fn = {ks, query, self, meta, v} ->
+  ks Q_INFER (fast_eq (wait (wait ks query) meta)) v
+
+// --- infer (extract and check neutral's stored type) ---
+let q_infer_neutral_fn = {check_fn, v} -> check_fn (pair_fst (type_meta v))
+let q_infer_ff_fn = {check_fn, v} -> FF
+let q_infer_fn = {ks, query} -> {check_fn, v} ->
+  ite2 q_infer_neutral_fn q_infer_ff_fn
     (wait ks Q_SIG_ACCUM (fast_eq (pair_fst v)))
     check_fn v
 
-let q_pi_h_rule_fn = {ks, query, self, meta, v} ->
-  ks Q_TON (fast_eq (wait (wait ks query) meta)) v
+// --- Pi checker ---
 let q_pi_check_fn = {ks, query, self, meta, v} ->
   ite2
     ({ks, query, self, meta, v} ->
-      ks Q_TON
+      ks Q_INFER
         (fast_eq
           (pair_snd (pair_snd meta)
             (wait (ks Q_ACCUM)
@@ -95,11 +120,12 @@ let q_pi_check_fn = {ks, query, self, meta, v} ->
 let q_pi_fn = {ks, query} ->
   fix ({self, meta, v} ->
     ite2
-      ({ks, query, self, meta, v} -> q_pi_h_rule_fn ks query self meta v)
+      q_h_rule_fn
       ({ks, query, self, meta, v} -> q_pi_check_fn ks query self meta v)
       (wait ks Q_SIG_ACCUM (fast_eq (pair_fst v)))
       ks query self meta v)
 
+// --- Nat checker ---
 let q_nat_zero_fn = {ks, query, self, meta, n} -> TT
 let q_nat_ff_fn = {ks, query, self, meta, n} -> FF
 let q_nat_succ_fn = {ks, query, self, meta, n} -> wait self meta (pair_snd n)
@@ -108,31 +134,27 @@ let q_nat_succ_check_fn = {ks, query, self, meta, n} ->
     ks query self meta n
 let q_nat_non_zero_fn = {ks, query, self, meta, n} ->
   ite2 q_nat_succ_check_fn q_nat_ff_fn
-    (ite2 FF (raw_tree_fork n) (wait ks Q_SIG_ACCUM (fast_eq (pair_fst n))))
+    (ite2 FF (is_fork n) (wait ks Q_SIG_ACCUM (fast_eq (pair_fst n))))
     ks query self meta n
-let q_nat_h_rule_fn = {ks, query, self, meta, n} ->
-  ks Q_TON (fast_eq (wait (wait ks query) meta)) n
 let q_nat_non_neutral_fn = {ks, query, self, meta, n} ->
   ite2 q_nat_zero_fn q_nat_non_zero_fn (fast_eq n t)
     ks query self meta n
 let q_nat_fn = {ks, query} ->
   fix ({self, meta, n} ->
-    ite2 q_nat_h_rule_fn q_nat_non_neutral_fn
+    ite2 q_h_rule_fn q_nat_non_neutral_fn
       (wait ks Q_SIG_ACCUM (fast_eq (pair_fst n)))
       ks query self meta n)
 
-let q_bool_h_rule_fn = {ks, query, self, meta, b} ->
-  ks Q_TON (fast_eq (wait (wait ks query) meta)) b
+// --- Bool checker ---
 let q_bool_check_fn = {ks, query, self, meta, b} ->
   ite2 TT (fast_eq b FF) (fast_eq b t)
 let q_bool_fn = {ks, query} ->
   fix ({self, meta, b} ->
-    ite2 q_bool_h_rule_fn q_bool_check_fn
+    ite2 q_h_rule_fn q_bool_check_fn
       (wait ks Q_SIG_ACCUM (fast_eq (pair_fst b)))
       ks query self meta b)
 
-let q_eq_h_rule_fn = {ks, query, self, meta, p} ->
-  ks Q_TON (fast_eq (wait (wait ks query) meta)) p
+// --- Eq checker ---
 let q_eq_check_fn = {ks, query, self, meta, p} ->
   ited
     ({_} -> fast_eq (pair_fst (pair_snd meta)) (pair_snd (pair_snd meta)))
@@ -140,10 +162,11 @@ let q_eq_check_fn = {ks, query, self, meta, p} ->
     (fast_eq p t)
 let q_eq_fn = {ks, query} ->
   fix ({self, meta, p} ->
-    ite2 q_eq_h_rule_fn q_eq_check_fn
+    ite2 q_h_rule_fn q_eq_check_fn
       (wait ks Q_SIG_ACCUM (fast_eq (pair_fst p)))
       ks query self meta p)
 
+// --- Type n checker ---
 let q_is_nat_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_NAT) t)
 let q_is_bool_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_BOOL) t)
 let q_is_registered_fn = {ks, x} -> ite2 TT (q_is_bool_type_fn ks x) (q_is_nat_type_fn ks x)
@@ -152,7 +175,7 @@ let q_univ_check_template = {ks, rank, inferred_type} ->
     (wait ks Q_SIG_TYPE (fast_eq (pair_fst inferred_type)))
 
 let q_type_neutral_fn = {ks, query, self, meta, x} ->
-  ks Q_TON (q_univ_check_template ks meta) x
+  ks Q_INFER (q_univ_check_template ks meta) x
 let q_type_univ_fn = {ks, query, self, meta, x} ->
   nat_lt (type_meta x) meta
 let q_type_pi_fn = {ks, query, self, meta, x} ->
@@ -195,6 +218,10 @@ let q_type_fn = {ks, query} ->
       (wait ks Q_SIG_ACCUM (fast_eq (pair_fst x)))
       ks query self meta x)
 
+// ================================================================
+// Kernel assembly
+// ================================================================
+
 let kernel = fix ({self, query} ->
   query
     q_accum_fn
@@ -203,55 +230,61 @@ let kernel = fix ({self, query} ->
     q_bool_fn
     q_eq_fn
     q_type_fn
-    q_ton_fn
+    q_infer_fn
     q_sig_accum_fn
     q_sig_pi_fn
     q_sig_eq_fn
     q_sig_type_fn
     self query)
 
+// ================================================================
+// Public API: neutral operations
+// ================================================================
+
 let neutral_type = {v} -> pair_fst (type_meta v)
 let is_neutral = {x} -> wait kernel Q_SIG_ACCUM (fast_eq (pair_fst x))
-let ton_check = wait kernel Q_TON
+let infer = wait kernel Q_INFER
 
 let Hyp = {ty, id} -> wait (kernel Q_ACCUM) (t ty (t HYP_TAG id))
 let StuckElim = {result_type, target} -> wait (kernel Q_ACCUM) (t result_type (t ELIM_TAG target))
-let fresh_hyp = Hyp
+
+// ================================================================
+// Public API: type reflection
+// ================================================================
 
 let is_pi = {v} -> wait kernel Q_SIG_PI (fast_eq (pair_fst v))
 let pi_dom = {v} -> pair_fst (type_meta v)
-let pi_depth = {v} -> pair_fst (pair_snd (type_meta v))
 let pi_cod_fn = {v} -> pair_snd (pair_snd (type_meta v))
 
 let is_universe = {v} -> wait kernel Q_SIG_TYPE (fast_eq (pair_fst v))
 let universe_rank = {v} -> type_meta v
 
+let is_eq = {v} -> wait kernel Q_SIG_EQ (fast_eq (pair_fst v))
+
 let is_tree_fork = {v} ->
-  ite2 FF (raw_tree_fork v) (is_neutral v)
+  ite2 FF (is_fork v) (is_neutral v)
+
+// ================================================================
+// Type constructors
+// ================================================================
 
 let Nat = wait (wait kernel Q_NAT) t
 let Bool = wait (wait kernel Q_BOOL) t
 let Eq = {A, x, y} -> wait (wait kernel Q_EQ) (t A (t x y))
 let Type = {rank} -> wait (wait kernel Q_TYPE) rank
-let Universe = Type
 let Pi = {domain, codFn, depth} -> wait (wait kernel Q_PI) (t domain (t depth codFn))
 let Arrow = {a_type, b_type, depth} -> Pi a_type ({_} -> b_type) depth
+
+// ================================================================
+// Nat data constructors (also used by parser auto-number)
+// ================================================================
+
 let zero = t
 let succ = {n} -> t t n
-let one = succ zero
-let two = succ one
-let three = succ two
-let four = succ three
-let five = succ four
 
-let is_nat_type = {x} -> fast_eq x Nat
-let is_bool_type = {x} -> fast_eq x Bool
-let is_registered = {x} -> ite2 TT (is_bool_type x) (is_nat_type x)
-let Type0 = Type 0
-let Type1 = Type 1
-let Type2 = Type 2
-let NatToNat = Arrow Nat Nat 0
-let id_fn = {x} -> x
+// ================================================================
+// Typed eliminators
+// ================================================================
 
 let bool_rec = {motive, t_case, f_case, target} ->
   ited
@@ -259,7 +292,7 @@ let bool_rec = {motive, t_case, f_case, target} ->
     ({_} -> ite2 t_case f_case target)
     (is_neutral target)
 
-let nat_rec_body = fix ({self, motive, base, step, target} ->
+let nat_rec = fix ({self, motive, base, step, target} ->
   ited
     ({_} -> StuckElim (motive target) target)
     ({_} ->
@@ -281,14 +314,11 @@ let nat_rec_body = fix ({self, motive, base, step, target} ->
         self motive base step target)
     (is_neutral target))
 
-let nat_rec = {motive, base, step, target} ->
-  nat_rec_body motive base step target
+// ================================================================
+// Eq operations
+// ================================================================
 
 let refl = t
-let is_eq = {v} -> wait kernel Q_SIG_EQ (fast_eq (pair_fst v))
-let eq_A = {v} -> pair_fst (type_meta v)
-let eq_x = {v} -> pair_fst (pair_snd (type_meta v))
-let eq_y = {v} -> pair_snd (pair_snd (type_meta v))
 
 let eq_J = {A, x, motive, base, y, p} ->
   ited
@@ -314,6 +344,10 @@ let eq_cong = {A, B, f, x, y, p} ->
     ({_} -> refl)
     (is_neutral p)
 
+// ================================================================
+// Structural conversion
+// ================================================================
+
 let conv_fast_fn = {self, a, b} -> TT
 let conv_pi_fn = {self, a, b} ->
   and (self (pi_dom a) (pi_dom b))
@@ -336,7 +370,10 @@ let conv_structural = fix ({self, a, b} ->
   ite2 conv_fast_fn conv_not_fast_fn (fast_eq a b)
     self a b)
 
-let nat_motive = {_} -> Nat
+// ================================================================
+// Arithmetic
+// ================================================================
+
 let add_zero_fn = {self, n, m} -> m
 let add_succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
 let add_nonzero_fn = {self, n, m} ->

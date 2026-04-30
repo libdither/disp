@@ -36,8 +36,7 @@
 #v(0.5em)
 #align(center)[
   Surface grammar and AST of `.disp` source files.\
-  #raw("src/parse.ts") implements the grammar;
-  #raw("src/ast.ts") defines the AST;
+  #raw("src/parse.ts") implements the grammar and defines the AST;
   elaboration and desugaring live in #raw("COMPILATION.typ").
 ]
 #v(1em)
@@ -205,7 +204,7 @@ vs. named field vs. statement-plus-expr). A `braced` followed by
 
 = Abstract syntax tree
 
-The parser produces a single AST, defined in #raw("src/ast.ts"). Every
+The parser produces a single AST, defined in #raw("src/parse.ts"). Every
 node carries a source `Span` for error reporting.
 
 ```

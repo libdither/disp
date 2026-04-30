@@ -1,2 +1,0 @@
-// Public type-theory surface re-exported from the unified kernel.
-open use "kernel.disp"
