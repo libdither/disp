@@ -177,50 +177,59 @@ As a predicate, `Pi(A, B)` must do exactly this:
 external infrastructure. The point: *the Pi type bootstraps NbE within
 itself*.
 
-== Neutrals
+== What happens when you apply a hypothesis?
 
-The Pi checker creates a hypothesis $h$ and evaluates `f(h)`. The
-result might itself be symbolic --- a *neutral*. There are two kinds:
+The Pi checker creates hypotheses and applies the candidate function
+to them. For simple cases like `{x} -> x`, the result is $h$ itself
+--- a hypothesis carrying its type from creation. The H-rule handles
+it.
 
-*Hypotheses* are the simplest neutrals. `Hyp(Nat, d)` is a fresh
-symbol carrying its type (`Nat`) from creation. When the identity
-function `{x} -> x` is applied to $h$, the result is $h$ itself ---
-still a hypothesis, still carrying `Nat`.
+But consider checking `{f, x} -> f(x)` against
+`(Nat → Nat) → Nat → Nat`. The Pi checker creates:
 
-*Applied neutrals* arise when a neutral is applied to something. If
-the Pi checker creates `h_f : Nat → Nat` and `h_x : Nat`, then
-`h_f(h_x)` produces a new neutral carrying the computed result type.
+```
+  h_f : Nat → Nat
+  h_x : Nat
+```
 
-Both kinds carry their type. Hypotheses get theirs at creation.
-Applied neutrals need theirs computed --- that is hypothesis
-reduction's job.
+The body evaluates to `h_f(h_x)`. Both are hypotheses. `h_f` is not
+a real function --- it is a symbolic placeholder. So what happens when
+you apply it?
 
-== Hypothesis reduction
+In a standard type checker, nothing --- the application is stuck,
+irreducible because the head is a variable. A separate `infer`
+judgment would later walk the spine, look up `h_f`'s type in a
+context, and compute that the result has type `Nat`.
 
-Consider what happens when `h_f(h_x)` is evaluated, where
-`h_f : Nat → Nat` and `h_x : Nat`. In a standard type checker, this
-application would be stuck --- irreducible because the head is a
-variable. A separate `infer` judgment would later walk the spine,
-look up `h_f`'s type in a context, and compute the result type.
+But tree calculus has no stuck terms. Every application reduces.
+Something _will_ run when `h_f` is applied. The question is: what?
 
-In Disp there is no context and no separate inference pass. Instead,
-every neutral carries a *handler* --- `hyp_reduce` --- that fires
-when the neutral is applied.
+== Two interpreters, one `apply`
+
+The answer is that `apply` in Disp runs one of two interpreters,
+depending on what is being applied:
+
+- *Concrete function applied to anything:* the *value interpreter*
+  runs. This is normal tree calculus reduction --- the program
+  executing.
+
+- *Hypothesis applied to anything:* the *type interpreter* runs.
+  Instead of computing a value, it computes the result _type_.
+
+Both use the same `apply`. The handler stored inside the value
+determines which interpreter fires.
 
 #note[
-  *But how does this work?* A hypothesis is literally
+  *How this works concretely:* a hypothesis is
   `wait(hyp_reduce)(metadata)`. When applied to a value `v`, the
-  `wait` rule reduces it to `hyp_reduce(metadata)(v)` --- the handler
-  fires via normal tree calculus reduction. No special mechanism, just
-  `wait`.
+  `wait` rule reduces it to `hyp_reduce(metadata)(v)` --- the type
+  interpreter fires via normal tree calculus reduction. No special
+  mechanism, just `wait`.
 ]
 
-Hypotheses double as type storage _and_ an interpreter: where a
-regular function would compute a value, `hyp_reduce` runs the same
-application in type-space, inferring the result type. When a concrete
-function is applied, normal reduction runs. When a neutral is applied,
-`hyp_reduce` runs instead, doing the same logical work but computing
-types rather than values:
+The type interpreter --- `hyp_reduce` --- reads the hypothesis's
+stored type, checks if it is a Pi, and computes the result type from
+the codomain:
 
 ```
   hyp_reduce(meta, v):
@@ -232,38 +241,44 @@ types rather than values:
     → new neutral with stored type = result_type
 ```
 
-The result is another neutral whose handler is the same `hyp_reduce`.
-So the next application fires it again, tracking the next type. Each
-application reduces fully --- `hyp_reduce` is not recursive within a
-single step --- but the result is always another
-`wait(hyp_reduce)(...)`, ready to track the next one.
+The result is another `wait(hyp_reduce)(...)` --- another hypothesis
+--- whose handler is the same `hyp_reduce`. Apply it again, the type
+interpreter fires again, tracking the next type. Each application
+reduces fully, but the result is always symbolic.
 
 Walking through `h_f(h_x)`:
 + `hyp_reduce` reads `h_f`'s stored type: `Nat → Nat` (a Pi type).
 + Extracts the codomain function: `{_} -> Nat`.
 + Instantiates: `({_} -> Nat)(h_x) = Nat`.
-+ Produces a new neutral with stored type `Nat`.
++ Produces a new hypothesis with stored type `Nat`.
 
 When the Pi checker later inspects the result, the type is already
 there --- `neutral_type(result) = Nat`, O(1). No spine walking, no
 context lookup. The same application that would have been "stuck" in
-a traditional system instead ran the type-level interpreter, and the
-answer was computed as a side effect of evaluation.
+a traditional system ran the type interpreter instead, and the type
+was computed as a side effect of evaluation.
+
+This is the Disp equivalent of bidirectional inference: instead of a
+context mapping variables to types and a recursive `infer` judgment,
+types are embedded in values and maintained by `hyp_reduce` at each
+application.
 
 #note[
   In #raw("lib/kernel.disp"), `hyp_reduce` is currently named `accum`
-  (`q_accum_fn` / `Q_ACCUM`).
+  (`q_accum_fn` / `Q_ACCUM`). Values produced by either interpreter
+  are called *neutrals* --- they share `hyp_reduce`'s signature, which
+  is how `is_neutral` recognizes them (see @encoding).
 ]
 
 == Checking the result
 
-With every neutral knowing its type --- whether stored at creation or
-computed by hypothesis reduction --- the Pi checker has two cases:
+With every neutral knowing its type --- whether from creation or from
+the type interpreter --- the Pi checker has two cases:
 
 *Concrete* (e.g., `{x} -> zero` applied to $h$ returns `zero`):\
 Apply the expected type as a predicate: `B(h)(zero)`. If `TT`, accept.
 
-*Neutral* (hypothesis or applied neutral --- doesn't matter which):\
+*Neutral* (produced by either interpreter --- doesn't matter which):\
 Read the neutral's stored type via `neutral_type`, compare against the
 expected type:
 
@@ -378,22 +393,26 @@ eliminators must check `is_neutral` before pattern-matching --- raw
 `triage` on a `wait(hyp_reduce)(...)` tree would interpret the
 neutral's internal structure as data, producing garbage.
 
-= The unified kernel
+= The bootstrapping problem
 
-== Why a single mutual fixed point?
+We now have all the pieces: types are `wait(checker)(metadata)`,
+signatures identify checkers, `hyp_reduce` tracks types through
+applications. But there is a circular dependency.
 
-Each checker needs to recognize other checkers' signatures:
-- Pi's checker calls `is_neutral` (needs `hyp_reduce`'s signature)
-- Type n's checker calls `is_pi`, `is_eq` (needs their signatures)
-- The `infer` helper calls `is_neutral` (needs `hyp_reduce`'s signature)
+The Pi checker needs to call `is_neutral`, which compares against
+`hyp_reduce`'s signature. The Type checker needs `is_pi` and `is_eq`,
+which compare against _their_ signatures. `hyp_reduce` itself needs
+`is_pi` to decide whether a hypothesis's type is a function type.
 
-Signatures are derived from the checkers themselves. If the Pi
-checker were defined separately, its signature would be a function
-of its own tree. To compare against it, other checkers would need
-to import it. This creates a web of dependencies that ultimately
-requires mutual recursion.
+Signatures are derived from the checkers: `pair_fst(wait(checker)(meta))
+= stem(checker)`. So to know the Pi signature, you need the Pi checker.
+To write the Pi checker, you need the `hyp_reduce` signature. To write
+`hyp_reduce`, you need the Pi signature. Everything depends on
+everything else.
 
-The kernel puts everything into a single `fix`:
+== The kernel: one mutual fixed point
+
+The solution is to put everything into a single `fix`:
 
 ```disp
   kernel = fix ({self, query} ->
@@ -447,7 +466,10 @@ If the neutral's type matches, `fast_eq` returns `TT`. Otherwise `FF`.
 
 = Soundness
 
-The design avoids several pitfalls common to self-hosted type systems.
+Bundling everything into one fixed point isn't just a convenience ---
+it is what makes the type system sound. The kernel is the single
+source of truth for all checker functions, and a type's identity is
+determined by its checker. This makes types unforgeable.
 
 == Why not tags?
 
