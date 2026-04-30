@@ -121,9 +121,9 @@ The current metadata layouts are:
 
 - `Nat`: `t`
 - `Bool`: `t`
-- `Eq A x y`: `t A (t x y)`
+- `Eq A x y`: `make_eq_meta A x y`
 - `Type rank`: `rank`
-- `Pi domain codFn depth`: `t domain (t depth codFn)`
+- `Pi domain codFn depth`: `make_pi_meta domain depth codFn`
 
 Type-former tags are deliberately not used. Tags are forgeable tree
 payloads; checker identity is not.
@@ -131,33 +131,53 @@ payloads; checker identity is not.
 ## Neutrals and hyp_reduce
 
 Neutrals are wait-based values whose handler is `hyp_reduce`.
-Every neutral stores its current type at `pair_fst(metadata)`, which
-makes type extraction O(1):
+Every neutral metadata tree is an annotated payload:
 
 ```disp
-neutral_type = {v} -> pair_fst (type_meta v)
+make_neutral_meta current_type payload = t current_type payload
+neutral_meta_type meta                 = pair_fst meta
+neutral_meta_payload meta              = pair_snd meta
+```
+
+The annotation is the current type, which makes type extraction O(1):
+
+```disp
+neutral_type = {v} -> neutral_meta_type (type_meta v)
 ```
 
 Construction:
 
 ```disp
-Hyp ty id              = wait kernel.hyp_reduce (t ty id)
-StuckElim result target = wait kernel.hyp_reduce (t result target)
+Hyp ty id               = wait kernel.hyp_reduce (make_neutral_meta ty id)
+StuckElim result target = wait kernel.hyp_reduce (make_neutral_meta result target)
 ```
 
-The second metadata field is payload. Its shape is private to the
-constructor; the kernel only relies on the first metadata field being
-the current type.
+The second metadata field is the identity payload. Hypotheses store an
+id there. Neutral applications extend the payload as a spine:
+
+```disp
+extend_neutral_meta old_meta result_type arg =
+  make_neutral_meta result_type (t old_meta arg)
+```
+
+The payload is not needed for type extraction, but it is needed for
+identity: `f 0` and `f 1` must remain different neutrals even when both
+have type `Nat`.
+
+`InvalidType` is the sentinel stored when neutral application cannot
+compute a valid result type because the neutral's current type is not
+Pi. It is currently represented by `FF`, but code should refer to the
+named sentinel.
 
 Applying a neutral triggers `hyp_reduce(meta)(arg)`. It checks whether
 the neutral's current type has the Pi checker signature:
 
 ```disp
-if has_sig ks.pi (pair_fst meta) then
+if has_sig ks.pi (neutral_meta_type meta) then
   result_type = codFn(arg)
-  wait self (t result_type (t meta arg))
+  wait self (extend_neutral_meta meta result_type arg)
 else
-  wait self (t FF (t meta arg))
+  wait self (extend_neutral_meta meta InvalidType arg)
 ```
 
 This is the type-tracking neutral behavior: neutral application
@@ -169,13 +189,13 @@ Every checker first handles neutrals. The shared helper is:
 
 ```disp
 q_h_rule_fn = {ks, raw, query, self, meta, v} ->
-  fast_eq (wait (ks query) meta) (pair_fst (type_meta v))
+  fast_eq (wait (ks query) meta) (neutral_type v)
 ```
 
 The caller already checked that `v` is neutral. The helper:
 
 1. Reconstructs the current type as `wait (ks query) meta`.
-2. Reads the neutral's stored type via `pair_fst(type_meta(v))`.
+2. Reads the neutral's stored type via `neutral_type(v)`.
 3. Accepts exactly when those trees are hash-cons identical.
 
 `ks query` is already delayed because `ks` is the `recq` proxy.

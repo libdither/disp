@@ -49,13 +49,13 @@ test ({x} -> x) (Hyp (t t) t) = Hyp (t t) t
 // Metadata extraction from neutrals
 // ================================================================
 
-// Smart accum: type is always at pair_fst of neutral metadata
-// Base hypothesis: meta = fork(type, id)
+// Type is always at neutral_meta_type(meta); payload preserves identity.
+// Base hypothesis: meta = make_neutral_meta(type, id)
 test neutral_type h1 = t
 
-// Spine: meta = fork(result_type, fork(old_meta, arg))
-// h1 has type t (LEAF), which is not Pi, so result_type = FF
-test neutral_type stuck1 = FF
+// Spine: meta = extend_neutral_meta(old_meta, result_type, arg)
+// h1 has type t (LEAF), which is not Pi, so result_type = InvalidType
+test neutral_type stuck1 = InvalidType
 // Arg is still accessible deeper in the metadata
 test pair_snd (pair_snd (type_meta stuck1)) = t t
 
@@ -175,8 +175,8 @@ test infer ({x} -> x) ((Hyp NatToNat 0) (Hyp Nat 1)) = Nat
 // f : Nat -> Nat, n : Nat |- f n : Nat
 test infer (conv Nat) ((Hyp NatToNat 0) (Hyp Nat 1)) = TT
 
-// h : nonPi, x : nonPi |- typeOf (h x) = FF
-test infer ({x} -> x) ((Hyp (Hyp t t) (t t)) (Hyp (Hyp t t) (t t))) = FF
+// h : nonPi, x : nonPi |- typeOf (h x) = InvalidType
+test infer ({x} -> x) ((Hyp (Hyp t t) (t t)) (Hyp (Hyp t t) (t t))) = InvalidType
 
 // t is not neutral
 test infer ({x} -> x) t = FF

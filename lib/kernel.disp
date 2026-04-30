@@ -17,6 +17,29 @@ let conv = {a, b} -> fast_eq a b
 let checker_sig = {checker} -> pair_fst (wait checker t)
 let has_sig = {checker, v} -> fast_eq (pair_fst v) (checker_sig checker)
 
+// Metadata helpers. These keep the raw tree layout explicit while naming the
+// typed shape we expect to justify later.
+let make_pi_meta = {domain, depth, cod_fn} -> t domain (t depth cod_fn)
+let pi_meta_domain = {meta} -> pair_fst meta
+let pi_meta_depth = {meta} -> pair_fst (pair_snd meta)
+let pi_meta_cod_fn = {meta} -> pair_snd (pair_snd meta)
+
+let make_eq_meta = {A, x, y} -> t A (t x y)
+let eq_meta_type = {meta} -> pair_fst meta
+let eq_meta_lhs = {meta} -> pair_fst (pair_snd meta)
+let eq_meta_rhs = {meta} -> pair_snd (pair_snd meta)
+
+let make_neutral_meta = {current_type, payload} -> t current_type payload
+let neutral_meta_type = {meta} -> pair_fst meta
+let neutral_meta_payload = {meta} -> pair_snd meta
+let neutral_app_payload = {old_meta, arg} -> t old_meta arg
+let extend_neutral_meta = {old_meta, result_type, arg} ->
+  make_neutral_meta result_type (neutral_app_payload old_meta arg)
+
+// Sentinel for invalid neutral application: applying a neutral whose current
+// type is not Pi produces a neutral with this stored type.
+let InvalidType = FF
+
 // ================================================================
 // Kernel record shape
 // ================================================================
@@ -41,18 +64,17 @@ let q_is_neutral = {raw : {hyp_reduce,pi,nat,bool,eq,type}, x} ->
   has_sig raw.hyp_reduce x
 
 // q_make_hyp: construct a hypothesis neutral.
-// Result: wait(hyp_reduce_handler)(fork(type, payload))
-// Metadata layout: pair_fst(meta) = type (used by neutral_type / H-rule).
+// Result: wait(hyp_reduce_handler)(make_neutral_meta(type, payload))
 let q_make_hyp = {raw : {hyp_reduce,pi,nat,bool,eq,type}, ty, depth} ->
-  wait raw.hyp_reduce (t ty depth)
+  wait raw.hyp_reduce (make_neutral_meta ty depth)
 
 // --- H-rule (shared by all type checkers) ---
 // When v is neutral, check if v's stored type matches this checker's own type.
 //   wait(ks(query))(meta) = reconstruct "the type this checker would build with this meta"
-//   pair_fst(type_meta(v)) = v's stored type
+//   neutral_meta_type(type_meta(v)) = v's stored type
 //   fast_eq: do they match?
 let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
-  fast_eq (wait (ks query) meta) (pair_fst (type_meta v))
+  fast_eq (wait (ks query) meta) (neutral_meta_type (type_meta v))
 
 // --- Hypothesis reduction (type interpreter for neutrals) ---
 // Called when a neutral is applied to an argument v.
@@ -60,36 +82,36 @@ let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
 let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query} ->
   fix ({self, meta, v} -> {
     // pi_fn: neutral has Pi type → result_type = codFn(v)
-    //   pair_fst(meta) = neutral's current type (a Pi type)
-    //   type_meta(pi_type) = Pi metadata = fork(dom, fork(depth, codFn))
-    //   pair_snd(pair_snd(type_meta(...))) = codFn
-    //   new metadata = fork(codFn(v), fork(old_meta, arg))
-    let pi_fn = {self, meta, v} -> wait self (t (pair_snd (pair_snd (type_meta (pair_fst meta))) v) (t meta v))
-    // non_pi_fn: neutral has non-Pi type → result_type = FF (unknown)
-    let non_pi_fn = {self, meta, v} -> wait self (t FF (t meta v))
+    //   neutral_meta_type(meta) = neutral's current type (a Pi type)
+    //   pi_meta_cod_fn(type_meta(pi_type)) = codFn
+    //   new metadata = extend_neutral_meta(old_meta, codFn(v), arg)
+    let pi_result_type = {meta, v} -> pi_meta_cod_fn (type_meta (neutral_meta_type meta)) v
+    let pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta (pi_result_type meta v) v)
+    // non_pi_fn: neutral has non-Pi type → result_type = InvalidType
+    let non_pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta InvalidType v)
     // Dispatch: check if the neutral's type has the Pi checker signature
     select pi_fn non_pi_fn
-      (has_sig ks.pi (pair_fst meta))
+      (has_sig ks.pi (neutral_meta_type meta))
       self meta v
   })
 
 // --- Pi checker ---
-// meta = fork(domain, fork(depth, codFn))
+// meta = make_pi_meta(domain, depth, codFn)
 // Creates a hypothesis, applies v to it, checks the result type matches the codomain.
 let q_pi_fn = {ks, raw, query} ->
   fix ({self, meta, v} -> {
     // check_fn: v is concrete — check it against the Pi type
     let check_fn = {ks, raw, query, self, meta, v} -> {
       // Build a hypothesis of the domain type at the given depth
-      let hyp = q_make_hyp raw (pair_fst meta) (pair_fst (pair_snd meta))
+      let hyp = q_make_hyp raw (pi_meta_domain meta) (pi_meta_depth meta)
       // Apply v to the hypothesis to get the result
       let result = v hyp
       // Compute the expected codomain type at this hypothesis
-      let expected = pair_snd (pair_snd meta) hyp
+      let expected = pi_meta_cod_fn meta hyp
       // If result is neutral: check that its inferred type matches the expected type.
       // If result is concrete: run the expected type checker on it directly.
       select
-        ({result, expected} -> fast_eq expected (pair_fst (type_meta result)))
+        ({result, expected} -> fast_eq expected (neutral_meta_type (type_meta result)))
         ({result, expected} -> fast_eq (expected result) TT)
         (q_is_neutral raw result)
         result expected
@@ -131,11 +153,11 @@ let q_bool_fn = {ks, raw, query} ->
 
 // --- Eq checker ---
 // Eq A x y: proof must be refl (leaf). Checks that lhs and rhs are convertible.
-// meta = fork(A, fork(lhs, rhs))
+// meta = make_eq_meta(A, lhs, rhs)
 let q_eq_fn = {ks, raw, query} ->
   fix ({self, meta, p} -> {
     // p is refl (leaf) → check lhs = rhs. p is anything else → FF.
-    let check_fn = {ks, raw, query, self, meta, p} -> select_lazy ({_} -> fast_eq (pair_fst (pair_snd meta)) (pair_snd (pair_snd meta))) ({_} -> FF) (fast_eq p t)
+    let check_fn = {ks, raw, query, self, meta, p} -> select_lazy ({_} -> fast_eq (eq_meta_lhs meta) (eq_meta_rhs meta)) ({_} -> FF) (fast_eq p t)
     select q_h_rule_fn check_fn
       (q_is_neutral raw p)
       ks raw query self meta p
@@ -153,24 +175,24 @@ let q_type_fn = {ks, raw, query} ->
     let univ_check = {ks : {hyp_reduce,pi,nat,bool,eq,type}, rank, ty} ->
       select (nat_le (type_meta ty) rank) FF (has_sig ks.type ty)
     // neutral: extract stored type, check its universe rank
-    let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (pair_fst (type_meta x))
+    let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (neutral_meta_type (type_meta x))
     // universe: check rank(x) < meta
     let univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
     // pi: check domain and codomain are both valid types at this rank
     let pi_fn = {ks, raw, query, self, meta, x} -> {
       let tm = type_meta x
-      let dom = pair_fst tm
-      let cod_fn = pair_snd (pair_snd tm)
+      let dom = pi_meta_domain tm
+      let cod_fn = pi_meta_cod_fn tm
       and (wait self meta dom)
         (wait self meta (cod_fn (q_make_hyp raw dom (t (t meta)))))
     }
     // eq: check A is valid type and lhs/rhs both type-check under A
     let eq_fn = {ks, raw, query, self, meta, x} -> {
       let tm = type_meta x
-      let A = pair_fst tm
+      let A = eq_meta_type tm
       and (wait self meta A)
-        (and (A (pair_fst (pair_snd tm)))
-          (A (pair_snd (pair_snd tm))))
+        (and (A (eq_meta_lhs tm))
+          (A (eq_meta_rhs tm)))
     }
     // dispatch: neutral → rank check, concrete → select_chain over type-former signatures
     select neutral_fn
@@ -213,7 +235,7 @@ let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
 // Public API: neutral operations
 // ================================================================
 
-let neutral_type = {v} -> pair_fst (type_meta v)
+let neutral_type = {v} -> neutral_meta_type (type_meta v)
 let is_neutral = {x} -> has_sig kernel.hyp_reduce x
 
 // infer: checks is_neutral, extracts stored type, applies check_fn.
@@ -221,17 +243,17 @@ let is_neutral = {x} -> has_sig kernel.hyp_reduce x
 let infer = {check_fn, v} -> select_lazy ({_} -> check_fn (neutral_type v)) ({_} -> FF) (is_neutral v)
 
 // Hyp/StuckElim: public API for constructing neutrals (uses the global kernel reference).
-// Both are wait(hyp_reduce_handler)(fork(type, payload)). Metadata layout: pair_fst = type.
-let Hyp = {ty, id} -> wait kernel.hyp_reduce (t ty id)
-let StuckElim = {result_type, target} -> wait kernel.hyp_reduce (t result_type target)
+// Both are wait(hyp_reduce_handler)(make_neutral_meta(type, payload)).
+let Hyp = {ty, id} -> wait kernel.hyp_reduce (make_neutral_meta ty id)
+let StuckElim = {result_type, target} -> wait kernel.hyp_reduce (make_neutral_meta result_type target)
 
 // ================================================================
 // Public API: type reflection
 // ================================================================
 
 let is_pi = {v} -> has_sig kernel_ref.pi v
-let pi_dom = {v} -> pair_fst (type_meta v)
-let pi_cod_fn = {v} -> pair_snd (pair_snd (type_meta v))
+let pi_dom = {v} -> pi_meta_domain (type_meta v)
+let pi_cod_fn = {v} -> pi_meta_cod_fn (type_meta v)
 
 let is_universe = {v} -> has_sig kernel_ref.type v
 let universe_rank = {v} -> type_meta v
@@ -249,9 +271,9 @@ let is_concrete_fork = {v} ->
 
 let Nat = wait kernel_ref.nat t
 let Bool = wait kernel_ref.bool t
-let Eq = {A, x, y} -> wait kernel_ref.eq (t A (t x y))
+let Eq = {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
 let Type = {rank} -> wait kernel_ref.type rank
-let Pi = {domain, codFn, depth} -> wait kernel_ref.pi (t domain (t depth codFn))
+let Pi = {domain, codFn, depth} -> wait kernel_ref.pi (make_pi_meta domain depth codFn)
 let Arrow = {a_type, b_type, depth} -> Pi a_type ({_} -> b_type) depth
 
 // ================================================================

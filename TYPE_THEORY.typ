@@ -177,36 +177,21 @@ As a predicate, `Pi(A, B)` must do exactly this:
 external infrastructure. The point: *the Pi type bootstraps NbE within
 itself*.
 
-== Running the dependent codomain
+== Dependent codomains are programs
 
 `B` is not metadata to be inspected by a meta-level checker. It is an
 ordinary object-language function from values to types. Computing
 `B(x)` is just tree-calculus application.
 
-If `x` is concrete, `B(x)` runs as an ordinary program. It may build a
-type that mentions `x`, compute by pattern matching on `x`, or call
-typed eliminators. For example, a vector-like family could reduce
-`B(zero)` and `B(succ(n))` differently because the argument is real
-data.
+If `x` is concrete, `B(x)` runs like any other program: it may build a
+type containing `x`, branch on `x`, or call eliminators. If `x` is a
+hypothesis, the same application still runs, but operations that try to
+use the hypothesis meet the neutral machinery described below.
 
-If `x` is a hypothesis, `B(x)` still runs as an ordinary program, but
-`x` is a neutral value. Three things can happen:
-
-+ `B` merely embeds `x` in a type, such as `Eq(Nat, x, zero)`. Then
-  the resulting type is concrete type structure whose metadata contains
-  the neutral `x`.
-+ `B` applies `x` as a function. Then `hyp_reduce` fires, using `x`'s
-  stored type to compute the result type of the application.
-+ `B` eliminates or pattern-matches on `x`. Then it must use a typed
-  eliminator (`nat_rec`, `bool_rec`, `eq_J`, ...), not raw tree
-  `triage`. The eliminator sees that `x` is neutral and returns a
-  `StuckElim` neutral whose stored type is the motive applied to `x`.
-
-So dependent type checking does not require a separate substitution
+So dependent type checking does not need a separate substitution
 engine for codomains. The Pi checker creates `h : A`, applies the
 candidate function to `h`, and also applies the codomain function to
-`h`. If the codomain computation gets stuck on `h`, the stuck result is
-itself a typed neutral.
+`h`.
 
 == What happens when you apply a hypothesis?
 
@@ -264,13 +249,22 @@ the codomain:
 
 ```
   hyp_reduce(meta, v):
-    my_type = stored type of this neutral
+    my_type = neutral_meta_type(meta)  // first metadata field
     if my_type is Pi:
       result_type = codFn(v)           // instantiate codomain at arg
     else:
-      result_type = FF                 // not a function type
-    → new neutral with stored type = result_type
+      result_type = InvalidType        // not a function type
+    → wait(hyp_reduce)(extend_neutral_meta(meta, result_type, v))
 ```
+
+That first metadata field is the invariant shared by all neutral
+constructors. `Hyp(A, id)` stores `A` there at creation time.
+Neutral application preserves the invariant by constructing the next
+neutral with the newly computed `result_type` in the same position.
+The payload of that next neutral is `fork(old_meta, v)`: an application
+spine node that preserves identity. It is not used for O(1) type
+extraction, but it prevents different stuck applications with the same
+type, such as `f(0)` and `f(1)`, from collapsing to the same tree.
 
 The result is another `wait(hyp_reduce)(...)` --- another hypothesis
 --- whose handler is the same `hyp_reduce`. Apply it again, the type
@@ -302,6 +296,36 @@ application.
   recognizes them (see @encoding).
 ]
 
+== Running codomains on neutral arguments
+
+Now we can say more precisely what happens inside `B(h)` when `h` is a
+hypothesis. `B` still reduces to a single value. The question is what
+kind of value it computes.
+
++ If `B` merely embeds `h` in a type, such as `Eq(Nat, h, zero)`, then
+  the result is concrete type structure whose metadata contains the
+  neutral `h`.
++ If `B` applies `h` as a function, then `hyp_reduce` fires. If `h`'s
+  stored type is Pi, the application returns a new neutral whose stored
+  type is the Pi codomain instantiated at the argument.
+
+For example:
+
+```
+  B = {f} -> Eq Nat (f zero) zero
+```
+
+If `f` is a neutral of type `Nat -> Nat`, then `f zero` invokes
+`hyp_reduce`, computes result type `Nat`, and returns a neutral carrying
+that type. So `B(f)` reduces to a concrete `Eq` type whose left-hand
+side is a neutral Nat.
+
+There is one more case: `B` may need to eliminate a neutral argument,
+for example by computing a return type with `nat_rec`. That is handled
+by typed eliminators, introduced later. The short version is that raw
+tree pattern matching on a neutral is invalid; typed eliminators detect
+the neutral and return a typed neutral result instead.
+
 == Checking the result
 
 With every neutral knowing its type --- whether from creation or from
@@ -320,6 +344,15 @@ expected type:
 
 The Pi checker doesn't care how the neutral got its type (creation or
 hypothesis reduction). It just reads it and compares.
+
+#note[
+  If `expected` is itself a neutral type, the neutral-result case still
+  works by equality of stored types. The concrete-result case is more
+  limited: applying an unknown neutral type to a concrete value is just
+  another neutral application, not an inspection procedure for that
+  unknown type. In practice, codomains that get stuck are most useful
+  when the checked result is also neutral.
+]
 
 #note[
   The kernel bundles `is_neutral` + type extraction into a shared
@@ -404,7 +437,25 @@ Each check is O(1) via hash-consing.
 
 A neutral is `wait(hyp_reduce)(metadata)`, using the same `wait`
 encoding as types. The metadata stores the neutral's type and its
-identity (hypothesis tag + depth, or application spine).
+identity (hypothesis id/depth, eliminator payload, or application
+spine).
+
+The implementation names this layout instead of scattering raw
+`fork` projections through the kernel:
+
+```disp
+  make_neutral_meta(current_type, payload) = fork(current_type, payload)
+  neutral_meta_type(meta)                  = pair_fst(meta)
+  neutral_meta_payload(meta)               = pair_snd(meta)
+
+  extend_neutral_meta(old_meta, result_type, arg) =
+    make_neutral_meta(result_type, fork(old_meta, arg))
+```
+
+This is a tree today, but conceptually it is an annotated application
+spine. The annotation caches the current type. The payload preserves
+identity: a hypothesis stores its id, and an application stores the
+previous metadata plus the new argument.
 
 Applying a neutral to a value `v` triggers the `wait` rule:
 
@@ -498,13 +549,13 @@ type checkers (Pi, Nat, Bool, Eq):
 
 ```disp
   q_h_rule_fn = {ks, raw, query, self, meta, v} ->
-    fast_eq (wait (ks query) meta) (pair_fst (type_meta v))
+    fast_eq (wait (ks query) meta) (neutral_type v)
 ```
 
 The caller already confirmed `v` is neutral, so the H-rule just:
 - Reconstructs _this checker's own type_ via
   `wait(ks(query))(meta)`.
-- Reads `v`'s stored type via `pair_fst(type_meta(v))`.
+- Reads `v`'s stored type via `neutral_type(v)`.
 - Compares. If they match, `fast_eq` returns `TT`. Otherwise `FF`.
 
 = Soundness
@@ -604,15 +655,16 @@ Zero = `leaf`. Succ(n) = `fork(leaf, n)`. Metadata = `leaf`.
 
 == Pi
 
-Metadata = `fork(domain, fork(depth, codFn))`.
+Metadata = `make_pi_meta(domain, depth, codFn)`, represented today as
+`fork(domain, fork(depth, codFn))`.
 
 ```
-  Pi(A, B, d) = wait(pi_checker)(fork(A, fork(d, B)))
-  pi_checker(meta, v):          // meta = fork(domain, fork(depth, codFn))
+  Pi(A, B, d) = wait(pi_checker)(make_pi_meta(A, d, B))
+  pi_checker(meta, v):
     if is_neutral(v): H-rule
-    let hyp = Hyp(domain, depth)
+    let hyp = Hyp(pi_meta_domain(meta), pi_meta_depth(meta))
     let result = v(hyp)
-    let expected = codFn(hyp)
+    let expected = pi_meta_cod_fn(meta)(hyp)
     if is_neutral(result):
       fast_eq(neutral_type(result), expected)
     else:
@@ -623,13 +675,14 @@ Arrow sugar: `Arrow(A, B, d) = Pi(A, {_} -> B, d)`.
 
 == Eq
 
-Metadata = `fork(A, fork(x, y))`. Sole constructor: `refl = leaf`.
+Metadata = `make_eq_meta(A, x, y)`, represented today as
+`fork(A, fork(x, y))`. Sole constructor: `refl = leaf`.
 
 ```
-  Eq(A, x, y) = wait(eq_checker)(fork(A, fork(x, y)))
+  Eq(A, x, y) = wait(eq_checker)(make_eq_meta(A, x, y))
   eq_checker(meta, p):
     if is_neutral(p): H-rule
-    if p = leaf: fast_eq(x, y)       // refl: check x ≡ y
+    if p = leaf: fast_eq(eq_meta_lhs(meta), eq_meta_rhs(meta))
     else: FF
 ```
 
@@ -676,6 +729,13 @@ term when stuck:
 
 The *motive* maps the scrutinee to the result type. `StuckElim` stores
 `motive(target)` as the result type, so `neutral_type` can read it.
+
+This is where dependent codomains that branch on neutral arguments get
+their type. If `B = {n} -> nat_rec(motive, base, step, n)` and `n` is a
+hypothesis, `B(n)` cannot choose the zero or successor branch. Instead,
+`nat_rec` returns `StuckElim(motive(n), n)`: a neutral value whose
+stored type is the motive instantiated at the neutral scrutinee. If the
+motive returns a universe, that stuck value is itself a neutral type.
 
 Eq operations (`eq_J`, `eq_subst`, `eq_sym`, `eq_cong`) follow the
 same pattern: concrete proof (`refl`) dispatches immediately; neutral
@@ -756,18 +816,18 @@ Checked against `(A : Type 0) → A → A`:
     hyp_reduce fires on h_x(h_x):
       h_x has type h_A
       is h_A a Pi type? no (it's a neutral, not a Pi)
-      → result_type = FF
-    → neutral with stored type FF
+      → result_type = InvalidType
+    → neutral with stored type InvalidType
   Pi checks result:
     expected = h_A
-    neutral_type(result) = FF
-    fast_eq(h_A, FF) = FF             // h_A ≠ FF
+    neutral_type(result) = InvalidType
+    fast_eq(h_A, InvalidType) = FF    // h_A ≠ InvalidType
     → rejected ✓
 ```
 
 Self-application is blocked because `h_A` is an opaque hypothesis,
-not a Pi type. Hypothesis reduction stores `FF`, and the codomain check fails.
-No special-case logic needed.
+not a Pi type. Hypothesis reduction stores `InvalidType`, and the
+codomain check fails. No special-case logic needed.
 
 = Glossary
 
@@ -781,7 +841,8 @@ No special-case logic needed.
   [`fix(f)`], [Fixed-point via `wait`. `fix(f)(x) = f(fix(f))(x)`.],
   [`Hyp(type, id)`], [Create a neutral hypothesis carrying the given type.],
   [`StuckElim(type, target)`], [Stuck eliminator, produced by typed eliminators on neutral scrutinees.],
-  [`neutral_type(v)`], [Read a neutral's stored type. `pair_fst(type_meta(v))`. O(1).],
+  [`neutral_type(v)`], [Read a neutral's stored type. `neutral_meta_type(type_meta(v))`. O(1).],
+  [`InvalidType`], [Sentinel stored as the result type of invalid neutral application. Rejected by `Type n`; currently represented by `FF`.],
   [`is_neutral`], [Signature check: does `v` share `hyp_reduce`'s signature? O(1).],
   [*hypothesis reduction*],
   [A second interpreter embedded in reduction. When a neutral is applied, `hyp_reduce` runs instead of normal evaluation, computing the result type from the codomain. Disp's equivalent of bidirectional inference, distributed across evaluation.],
