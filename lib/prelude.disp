@@ -47,6 +47,24 @@ let fix = {f} -> wait m ({x} -> f (wait m x))
 let rec = {components} -> fix ({self, sel} -> components sel self)
 
 // ================================================================
+// select_chain: flat conditional dispatch
+// ================================================================
+
+// case(cond, handler, rest): build a list of condition→handler pairs.
+// cond = TT/FF, handler = function for select-then-apply, rest = more cases or t (nil).
+let case = {cond, handler, rest} -> t (t cond handler) rest
+
+// select_chain(cases, default): walk cases, return first handler whose condition is TT.
+// Falls back to default if no condition matches. All conditions are evaluated eagerly.
+// Compatible with select-then-apply: select_chain cases default shared_args...
+let select_chain = fix ({self, cases, default} ->
+  triage
+    default
+    ({_} -> default)
+    ({head, tail} -> select (pair_snd head) (self tail default) (pair_fst head))
+    cases)
+
+// ================================================================
 // Tree / Nat helpers
 // ================================================================
 
