@@ -41,8 +41,7 @@ A type is an ordinary function that takes a value and returns `TT`
   T(v) = TT      means "v has type T"
 ```
 
-No external type checker. No meta-level judgment. Just one tree
-applied to another. The type system is a library, not a built-in.
+There is no external type checker, and no meta-level judgment system. The system is simply one tree-calculus tree applied to another, stored in a library file.
 
 This buys us three things:
 
@@ -152,7 +151,8 @@ This handles simple types. Pi is harder.
 == What Pi must check
 
 `Pi(A, B)` is the dependent function type $Pi (x : A) . B (x)$.
-It must verify: "does this function take `A`-inputs to `B`-outputs?"
+It must verify: "does this function take each `A`-input `x` to a
+`B(x)`-output?"
 
 In standard bidirectional type checking, the rule is:
 
@@ -176,6 +176,37 @@ As a predicate, `Pi(A, B)` must do exactly this:
 *This is NbE.* The evaluation happens inside the predicate --- not as
 external infrastructure. The point: *the Pi type bootstraps NbE within
 itself*.
+
+== Running the dependent codomain
+
+`B` is not metadata to be inspected by a meta-level checker. It is an
+ordinary object-language function from values to types. Computing
+`B(x)` is just tree-calculus application.
+
+If `x` is concrete, `B(x)` runs as an ordinary program. It may build a
+type that mentions `x`, compute by pattern matching on `x`, or call
+typed eliminators. For example, a vector-like family could reduce
+`B(zero)` and `B(succ(n))` differently because the argument is real
+data.
+
+If `x` is a hypothesis, `B(x)` still runs as an ordinary program, but
+`x` is a neutral value. Three things can happen:
+
++ `B` merely embeds `x` in a type, such as `Eq(Nat, x, zero)`. Then
+  the resulting type is concrete type structure whose metadata contains
+  the neutral `x`.
++ `B` applies `x` as a function. Then `hyp_reduce` fires, using `x`'s
+  stored type to compute the result type of the application.
++ `B` eliminates or pattern-matches on `x`. Then it must use a typed
+  eliminator (`nat_rec`, `bool_rec`, `eq_J`, ...), not raw tree
+  `triage`. The eliminator sees that `x` is neutral and returns a
+  `StuckElim` neutral whose stored type is the motive applied to `x`.
+
+So dependent type checking does not require a separate substitution
+engine for codomains. The Pi checker creates `h : A`, applies the
+candidate function to `h`, and also applies the codomain function to
+`h`. If the codomain computation gets stuck on `h`, the stuck result is
+itself a typed neutral.
 
 == What happens when you apply a hypothesis?
 
@@ -265,9 +296,10 @@ application.
 
 #note[
   In #raw("lib/kernel.disp"), the type interpreter is
-  `q_hyp_reduce_fn` / `Q_HYP_REDUCE`. Values produced by either interpreter
-  are called *neutrals* --- they share `hyp_reduce`'s signature, which
-  is how `is_neutral` recognizes them (see @encoding).
+  `q_hyp_reduce_fn`, exposed through the kernel record's `hyp_reduce`
+  field. Values produced by either interpreter are called *neutrals* ---
+  they share `hyp_reduce`'s signature, which is how `is_neutral`
+  recognizes them (see @encoding).
 ]
 
 == Checking the result
@@ -415,31 +447,46 @@ everything else.
 The solution is to put everything into a single `fix`:
 
 ```disp
-  kernel = fix ({self, query} ->
-    query
-      q_hyp_reduce_fn q_pi_fn q_nat_fn q_bool_fn q_eq_fn
-      q_type_fn
-      q_sig_hyp_reduce_fn q_sig_pi_fn q_sig_eq_fn q_sig_type_fn
-      self query)
+  kernel : {hyp_reduce, pi, nat, bool, eq, type} = recq {
+    hyp_reduce := q_hyp_reduce_fn
+    pi := q_pi_fn
+    nat := q_nat_fn
+    bool := q_bool_fn
+    eq := q_eq_fn
+    type := q_type_fn
+  }
 ```
 
-Components reference each other through `self` (the kernel itself).
-`query` is a Church-encoded selector: `Q_NAT` picks the Nat checker,
-`Q_PI` picks Pi, etc. Selection is O(1) --- no conditional chain.
+The record is still Church-encoded: field projection supplies a
+selector to the record. `recq` ties the recursive knot and passes each
+component three arguments:
+
+- `ks`, a lazy self proxy where `ks(selector) = wait(kernel)(selector)`.
+  This lets components write ordinary projections like `ks.pi` without
+  forcing recursive field selection too early.
+- `raw`, the actual recursive record, used where handler identity
+  matters (notably `hyp_reduce`).
+- `query`, the selector that picked the current component.
+
+Selection is O(1) and remains tree-level; `recq` is a tree-combinator,
+not a parser macro.
 
 == Constructing types
 
 Types are built with *double wait*:
 
 ```disp
-  Nat  = wait(wait(kernel)(Q_NAT))(leaf)
-  Bool = wait(wait(kernel)(Q_BOOL))(leaf)
-  Pi(A, B, d) = wait(wait(kernel)(Q_PI))(fork(A, fork(d, B)))
+  kernel_ref = {q} -> wait kernel q
+
+  Nat  = wait(kernel_ref.nat)(leaf)
+  Bool = wait(kernel_ref.bool)(leaf)
+  Pi(A, B, d) = wait(kernel_ref.pi)(fork(A, fork(d, B)))
 ```
 
-`wait(kernel)(Q_NAT)` is inert --- it does not evaluate `kernel(Q_NAT)`
-eagerly. The full evaluation happens only when the type is applied to
-a value: `Nat(v) = kernel(Q_NAT)(leaf)(v) = nat_checker(leaf)(v)`.
+`kernel_ref.nat` is `wait(kernel)(nat_selector)`, so it is inert ---
+it does not evaluate `kernel(nat_selector)` eagerly. The full evaluation
+happens only when the type is applied to a value:
+`Nat(v) = kernel(nat_selector)(leaf)(v) = nat_checker(leaf)(v)`.
 
 This deferred construction is essential: it means defining `Nat` at
 module level costs ~2 reduction steps, not thousands.
@@ -450,13 +497,13 @@ Inside the kernel, the H-rule is a shared function used by all four
 type checkers (Pi, Nat, Bool, Eq):
 
 ```disp
-  q_h_rule_fn = {ks, query, self, meta, v} ->
-    fast_eq (wait (wait ks query) meta) (pair_fst (type_meta v))
+  q_h_rule_fn = {ks, raw, query, self, meta, v} ->
+    fast_eq (wait (ks query) meta) (pair_fst (type_meta v))
 ```
 
 The caller already confirmed `v` is neutral, so the H-rule just:
 - Reconstructs _this checker's own type_ via
-  `wait(wait(ks)(query))(meta)`.
+  `wait(ks(query))(meta)`.
 - Reads `v`'s stored type via `pair_fst(type_meta(v))`.
 - Compares. If they match, `fast_eq` returns `TT`. Otherwise `FF`.
 
@@ -483,7 +530,7 @@ This "fake Nat" accepts everything. If the checker trusts the tag,
 == Canonical identity
 
 The current design uses *canonical identity* instead of tags.
-`Nat` is the tree `wait(wait(kernel)(Q_NAT))(leaf)` --- a specific,
+`Nat` is the tree `wait(kernel_ref.nat)(leaf)` --- a specific,
 unique tree node. The kernel is the single source of truth:
 
 ```disp
@@ -737,14 +784,14 @@ No special-case logic needed.
   [`neutral_type(v)`], [Read a neutral's stored type. `pair_fst(type_meta(v))`. O(1).],
   [`is_neutral`], [Signature check: does `v` share `hyp_reduce`'s signature? O(1).],
   [*hypothesis reduction*],
-  [A second interpreter embedded in reduction (`hyp_reduce`, currently `accum` in code). When a neutral is applied, `hyp_reduce` runs instead of normal evaluation, computing the result type from the codomain. Disp's equivalent of bidirectional inference, distributed across evaluation.],
+  [A second interpreter embedded in reduction. When a neutral is applied, `hyp_reduce` runs instead of normal evaluation, computing the result type from the codomain. Disp's equivalent of bidirectional inference, distributed across evaluation.],
 
   [`infer(f, v)`],
   [Kernel helper. Bundles `is_neutral` check + `neutral_type` extraction + callback. Convenience, not a primitive.],
 
   [`H-rule`], [Each checker's first branch: if `v` is neutral and its stored type matches this type, accept.],
   [`signature`], [`pair_fst` of a `wait`-encoded value. Constant per checker; used for recognition.],
-  [`kernel`], [Single mutual `fix` containing all checkers, `hyp_reduce`, and signature queries.],
+  [`kernel`], [Single mutual `fix` containing all checkers and `hyp_reduce`.],
   [*typed eliminator*],
   [Neutral-aware recursor. Checks `is_neutral` before dispatching; freezes as `StuckElim` when stuck.],
 

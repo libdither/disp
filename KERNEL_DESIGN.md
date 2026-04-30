@@ -1,349 +1,342 @@
 # Tree-Calculus Implementation Notes
 
-Practical idioms for implementing the type theory from
-[TYPE_THEORY.typ](TYPE_THEORY.typ) as tree-calculus programs.
-Reference implementation: `lib/*.disp`.
+Practical implementation notes for compiling the type theory in
+[TYPE_THEORY.typ](TYPE_THEORY.typ) into tree-calculus programs.
 
-## Smart accum (type-tracking neutrals)
+`TYPE_THEORY.typ` owns the semantic story: types as predicates, the
+H-rule, soundness, universes, type formers, and eliminators.
+This file owns the engineering story: how `lib/kernel.disp` is shaped,
+where `wait` is required, how strict evaluation interacts with records,
+and which parser/bracket-abstraction details are load-bearing.
 
-Neutrals use a **smart `accum`** handler that tracks types through
-accumulation. Every neutral stores its type at a fixed position in
-metadata, enabling O(1) type extraction.
+Reference implementation:
 
+- `lib/prelude.disp` for tree-level combinators (`wait`, `fix`, `rec`,
+  `recq`, branching helpers, pairs, nat helpers).
+- `lib/kernel.disp` for the recursive-record kernel, neutral handler,
+  type constructors, eliminators, conversion, and arithmetic.
+
+## Kernel Shape
+
+The current kernel is a recursive record, not a bundle of hand-written
+`Q_*` selectors:
+
+```disp
+let kernel : {hyp_reduce,pi,nat,bool,eq,type} = recq {
+  hyp_reduce := q_hyp_reduce_fn;
+  pi := q_pi_fn;
+  nat := q_nat_fn;
+  bool := q_bool_fn;
+  eq := q_eq_fn;
+  type := q_type_fn
+}
+
+let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
+  {q} -> wait kernel q
 ```
-accum = fix {self, meta, v} ->
-  if pair_fst(pair_fst(meta)) has the Pi checker signature then
-    result_type = codFn(v)       // Pi codomain applied to argument
-    wait self (fork(result_type, fork(meta, v)))
-  else
-    wait self (fork(FF, fork(meta, v)))  // unknown type
-```
 
-All neutral forms share `accum` as their handler:
+`kernel` is the actual recursive record. `kernel_ref` is its lazy proxy:
+projecting from `kernel_ref` returns delayed field selection, e.g.
+`kernel_ref.pi = wait kernel pi_selector`.
 
-- **VHyp**: `wait(accum)(fork(type, fork(HYP_TAG, id)))` — type is
-  stored at `pair_fst(metadata)`.
-- **VStuck**: `wait(accum)(fork(result_type, fork(old_meta, arg)))` —
-  smart accum computes result_type from the Pi codomain at each step.
-- **VStuckElim**: `wait(accum)(fork(result_type, fork(ELIM_TAG, target)))` —
-  a stuck eliminator with its result type pre-computed.
+Each component selected through `recq` receives `(ks, raw, query)`:
 
-Applying a neutral to a value triggers smart accum: if the neutral's
-type is Pi, the result type is `codFn(v)`; otherwise FF (unknown).
-The current kernel checks Pi-ness by the Pi checker signature, not by
-any metadata payload marker.
+- `ks`: lazy self proxy, so `ks.field` is cheap and produces delayed
+  self-selection.
+- `raw`: actual recursive record. Use it only when handler identity
+  matters.
+- `query`: the selector that picked the current component. The H-rule
+  uses it to reconstruct the current checker type.
 
-**Recognition**: `is_neutral = fast_eq(pair_fst(x), NEUTRAL_SIG)` — a
-single O(1) check. NEUTRAL_SIG is `stem(accum)`, the constant signature
-shared by all accum-based neutrals.
-
-**infer** is O(1): just `check_fn(pair_fst(type_meta(v)))` —
-extracts the stored type directly. No spine walking needed.
+The only common reason to use `raw` is neutral identity. Neutrals store
+the actual `hyp_reduce` handler signature, so `Hyp`, `StuckElim`, and
+`q_is_neutral` must use `kernel.hyp_reduce` / `raw.hyp_reduce`, not the
+lazy proxy.
 
 ## wait and fix
 
-Tree calculus is strict. The Z combinator diverges. Recursion uses `wait`:
+Tree calculus is strict. Ordinary self-application diverges. Recursion
+uses `wait`:
 
-```
-wait = {a b c} -> △(△ a)(△ △ c) b
-```
-
-`wait(a)(b)` is a one-argument function. Applying to `c` gives `a(b)(c)`.
-The key: `a(b)` is NOT evaluated until `c` arrives.
-
-```
-fix f = wait m ({x} -> f (wait m x))   where m = {x} -> x x
+```disp
+wait = {a, b, c} -> t (t a) (t t c) b
 ```
 
-`fix(f)` is a function. `fix(f)(arg) = f(fix(f))(arg)`. Each call
-unfolds one step, demand-driven.
+`wait(a)(b)` is inert. Applying a third argument gives:
 
-## Wait-based type encoding
-
-Types are `wait(checker)(metadata)`. Applying a type to a value runs the
-checker: `apply(T, v) = checker(metadata)(v)`, which returns TT or FF.
-Type checking is raw tree-calculus reduction — no tag dispatch needed.
-
-Tree structure of `wait(checker)(metadata)`:
-
-```
-fork(stem(X), fork(LEAF, metadata))
+```disp
+wait(a)(b)(c) = a(b)(c)
 ```
 
-Key accessors:
+The fixed-point combinator uses this delayed partial application:
 
-- **Signature**: `pair_fst(T)` = `stem(X)` — constant for all types sharing
-  the same checker function. Two types with the same signature use the same
-  checking logic (e.g. all Pi types share `pi_checker`).
-- **Metadata**: `pair_snd(pair_snd(T))`. Pi stores `fork(domain, fork(depth,
-  codFn))`, Eq stores `fork(A, fork(x, y))`, and Universe stores its rank
-  directly. Type-former tags are not used.
-- **Recognition**: by checker signature for Pi/Universe/Eq, and by canonical
-  identity for registered base types such as Nat and Bool. Raw metadata tags
-  are forgeable, so public predicates and Type formation do not use tag-only
-  recognition.
-- **H-rule**: The checker uses `fix` with `wait(self)(meta)` to reconstruct
-  its own type for comparison. When a neutral value is applied,
-  `infer(fast_eq(wait(self)(meta)))` walks the neutral's spine to verify
-  it has the right type. This is the H-rule: `napply(T, hyp) = TT` iff the
-  hypothesis was introduced at type T.
-
-Example — Nat:
-
-```
-nat_checker = fix {self, meta, v} ->
-    if is_neutral v then infer (fast_eq (wait self meta)) v
-    else ... check zero/succ structure ...
-
-Nat = wait nat_checker LEAF
+```disp
+m = {x} -> x x
+fix = {f} -> wait m ({x} -> f (wait m x))
 ```
 
-`Nat(Zero)` reduces to `nat_checker(metadata)(Zero)` → TT.
-`Nat(hyp)` reduces to `nat_checker(metadata)(hyp)` → O(1) `infer`
-type extraction.
+`fix(f)(arg)` unfolds one step on demand:
 
-## Fix inside checker
-
-Recursive type predicates (Nat, Type n, Pi) use `fix` for the checker
-function itself. The checker is wrapped via `wait(checker)(metadata)`:
-
-```
-Nat = let checker = fix {self, meta, n} -> ...check logic...
-      wait checker LEAF
+```disp
+fix(f)(arg) = f(fix(f))(arg)
 ```
 
-NOT fix-outside with a separate wrapper:
+Use `wait` whenever an eager partial application would unfold a
+recursive value before its real demand argument arrives.
 
-```
-// WRONG: there is no mkVLam to wrap with
-Nat = fix {self} -> mkVLam(LEAF, {n} -> ...uses self...)
-```
+## Signatures
 
-`fix(f)` returns a `wait`-encoded partial application. When used as the
-checker argument to `wait`, this is exactly what we want — `wait` defers
-the fix-unfolding until the value argument arrives. The checker
-reconstructs its own type via `wait(self)(meta)` inside the H-rule branch.
+Types and neutrals are wait-based values. For any wait-based value:
 
-## Deferred branching (select_lazy)
-
-`select(then, else, cond)` evaluates BOTH branches eagerly. In strict
-tree calculus, non-taken branches containing recursive calls diverge.
-
-Fix: `select_lazy(then_thunk, else_thunk, cond)` where branches are
-`{_} -> value` thunks. The chosen thunk is applied to `leaf` after
-dispatch. Non-chosen thunk is never forced.
-
-```
-select_lazy = {t e c} -> fork(fork(t, K(e)), leaf) c leaf
+```disp
+wait(checker)(metadata)
 ```
 
-Use `select_lazy` when branches are expensive or recursive.
-Use `select` with select-then-apply (below) when branches share
-free variables — closures over shared variables defeat `select_lazy`'s
-laziness during bracket abstraction.
+the first projection is the checker signature:
 
-## Select-then-apply (bracket-abstraction laziness fix)
-
-`select_lazy` defers branch evaluation at the *tree level*, but bracket
-abstraction over shared free variables defeats this. When
-`[x](select_lazy thunk_A thunk_B cond)` is compiled and all three depend on
-`x`, the S-combinator rule `[x](f g) = S([x]f)([x]g)` evaluates both
-`[x]thunk_A` and `[x]thunk_B` *before* `select_lazy` dispatches on `cond`.
-
-This caused checkers to diverge: `infer` was evaluated even when
-the value was not neutral.
-
-**Fix:** compile each branch as a *closed function*, select via `select`
-(both branches are constants, so eager selection is free), then apply
-shared arguments *after* selection:
-
+```disp
+checker_sig checker = pair_fst (wait checker t)
+has_sig checker v   = fast_eq (pair_fst v) (checker_sig checker)
 ```
-// BROKEN: bracket abstraction over x evaluates expensive_fn(x)
+
+Signatures are used for recognition:
+
+- `is_neutral(v)` checks `has_sig kernel.hyp_reduce v`.
+- `is_pi(v)` checks `has_sig kernel_ref.pi v`.
+- `is_universe(v)` checks `has_sig kernel_ref.type v`.
+- `is_eq(v)` checks `has_sig kernel_ref.eq v`.
+
+There are no dedicated `sig_*` kernel fields anymore. They were an
+artifact of the older selector-query kernel.
+
+## Metadata
+
+For a wait-based type:
+
+```disp
+type_meta = {T} -> pair_snd (pair_snd T)
+```
+
+The current metadata layouts are:
+
+- `Nat`: `t`
+- `Bool`: `t`
+- `Eq A x y`: `t A (t x y)`
+- `Type rank`: `rank`
+- `Pi domain codFn depth`: `t domain (t depth codFn)`
+
+Type-former tags are deliberately not used. Tags are forgeable tree
+payloads; checker identity is not.
+
+## Neutrals and hyp_reduce
+
+Neutrals are wait-based values whose handler is `hyp_reduce`.
+Every neutral stores its current type at `pair_fst(metadata)`, which
+makes type extraction O(1):
+
+```disp
+neutral_type = {v} -> pair_fst (type_meta v)
+```
+
+Construction:
+
+```disp
+Hyp ty id              = wait kernel.hyp_reduce (t ty id)
+StuckElim result target = wait kernel.hyp_reduce (t result target)
+```
+
+The second metadata field is payload. Its shape is private to the
+constructor; the kernel only relies on the first metadata field being
+the current type.
+
+Applying a neutral triggers `hyp_reduce(meta)(arg)`. It checks whether
+the neutral's current type has the Pi checker signature:
+
+```disp
+if has_sig ks.pi (pair_fst meta) then
+  result_type = codFn(arg)
+  wait self (t result_type (t meta arg))
+else
+  wait self (t FF (t meta arg))
+```
+
+This is the type-tracking neutral behavior: neutral application
+accumulates the argument and updates the stored result type.
+
+## H-Rule Implementation
+
+Every checker first handles neutrals. The shared helper is:
+
+```disp
+q_h_rule_fn = {ks, raw, query, self, meta, v} ->
+  fast_eq (wait (ks query) meta) (pair_fst (type_meta v))
+```
+
+The caller already checked that `v` is neutral. The helper:
+
+1. Reconstructs the current type as `wait (ks query) meta`.
+2. Reads the neutral's stored type via `pair_fst(type_meta(v))`.
+3. Accepts exactly when those trees are hash-cons identical.
+
+`ks query` is already delayed because `ks` is the `recq` proxy.
+
+## Raw Apply Handles Everything
+
+No special `val_apply` or `type_apply` is needed:
+
+- Applying a type runs its checker.
+- Applying a neutral runs `hyp_reduce`.
+- Applying a plain function uses ordinary tree-calculus reduction.
+
+For Pi checking, the candidate function is applied to a fresh neutral
+hypothesis. The result is handled directly:
+
+- If the result is neutral, compare its stored type with the expected
+  codomain.
+- If the result is concrete, apply the expected type predicate to it and
+  normalize the result with `fast_eq(..., TT)`.
+
+## Deferred Branching
+
+`select(then, else, cond)` is eager in both branches. Non-selected
+recursive branches can still unfold.
+
+Use `select_lazy` when the branches are closed thunks:
+
+```disp
+select_lazy = {then_thunk, else_thunk, cond} ->
+  t (t then_thunk ({_} -> else_thunk)) t cond t
+```
+
+Use select-then-apply when the branches share free variables. Bracket
+abstraction over shared variables can defeat `select_lazy`, because the
+compiled S-combinator form builds both branch closures before the
+condition dispatches.
+
+Broken:
+
+```disp
 {x} -> select_lazy ({_} -> expensive x) ({_} -> cheap x) (cond x)
+```
 
-// FIXED: branches are closed, selected before x is applied
+Preferred:
+
+```disp
 expensive_fn = {x} -> expensive x
 cheap_fn     = {x} -> cheap x
 {x} -> (select expensive_fn cheap_fn (cond x)) x
 ```
 
-K-composition (`S(Kp)(Kq) → K(pq)`) collapses the constant branches
-at compile time. The runtime evaluates only `cond(x)`, selects one
-function, and applies `x` to it.
+The selected branch is chosen before the shared argument is applied.
 
-This pattern is used in `pi_checker` (avoids infer on non-neutrals),
-`type_of_neutral` (avoids recursive spine walk on VHyp inputs),
-`Nat` checker (avoids recursive calls in the Zero case), and `Type n`
-checker (avoids universe-rank checks on non-universe inputs).
+## Bracket Abstraction
 
-## Bracket abstraction optimizations
+The parser lowers binders through SKI-style bracket abstraction.
+The essential optimizations are:
 
-Standard `[x]c = Kc`, `[x]x = I`, `[x](f g) = S([x]f)([x]g)` produces
-exponentially large trees. Essential optimizations:
+- Eta reduction: `[x](f x)` where `x` is not free in `f` becomes `f`.
+- K-composition: `S(K p)(K q)` becomes `K(p q)`.
+- Compile-time partial evaluation: `cirToTree` applies closed trees
+  during compilation.
 
-- **η-reduction**: `[x](f x)` where x ∉ f → `f` (not `S(Kf)(I)`)
-- **K-composition**: `S(Kp)(Kq)` → `K(pq)` (enables compile-time eval)
-- **Compile-time partial evaluation**: `cirToTree` applies trees during
-  compilation, producing compact normal forms
+Binder parameters must shadow parser scope entries. Otherwise a binder
+parameter named like an existing `let` would compile to the let-bound
+tree instead of a lambda variable. This masking is in `exprToCir`'s
+`binder` case.
 
-Turner's B/C combinators add per-use overhead in tree calculus (their
-tree encodings are 20-30 nodes) and are a net negative for functions
-with 2-3 variables. They help for 4+ variables.
+## Recursive Records
 
-## Deferred partial application
+Plain `rec`:
 
-Applying a `fix`-based function to its first argument triggers the
-self-application mechanism, which is expensive (thousands of reduction
-steps for large bodies). Avoid module-level partial application.
-
-Instead, use `wait` to defer: `wait(fix_fn)(first_arg)` is cheap
-(~12 steps). The fix unfolding happens only when the LAST argument
-arrives. Chain `wait` for multiple pre-applied arguments.
-
-## Raw apply handles everything
-
-With the accum-based neutral design, there is no need for `val_apply` or
-`type_apply`. Raw `apply` handles all three cases uniformly:
-
-- **On types** (wait-based): `apply(T, v)` triggers the checker, which
-  includes its own H-rule logic via `fix` + `infer`.
-- **On neutrals** (accum-based): `apply(neutral, v)` triggers
-  `accum(meta)(v)`, producing a new neutral with the argument accumulated
-  into the spine.
-- **On raw functions**: normal tree-calculus reduction.
-
-For Pi body normalization, the checker branches on `is_neutral(result)`
-after evaluating the codomain on a hypothesis:
-- If the result is neutral → `infer` walks it
-- If concrete → raw `apply` checks the result
-
-This replaces the old `type_apply` indirection with a direct branch.
-
-## Typed eliminators (neutral-aware recursors)
-
-Raw `triage` on a neutral (VHyp/VStuck/VStuckElim) misinterprets the
-accum-based wait structure as data — the triage fork-case destructures
-the neutral encoding instead of the value. This produces garbage, not a
-stuck term.
-
-**Fix:** typed eliminators guard with `is_neutral` before dispatching.
-When the target is neutral, they produce `VStuckElim(result_type, target)`
-instead of triaging:
-
+```disp
+rec = {components} -> fix ({self, sel} -> components sel self)
 ```
+
+This is fine for small self-referential records:
+
+```disp
+let k : {a, b} = rec {
+  a := {ks, x} -> x;
+  b := {ks : {a, b}, x} -> ks.a x
+}
+```
+
+For dense mutually recursive records such as the kernel, plain `rec`
+passes the actual fixed point as `ks`. Then `ks.field` compiles to eager
+application of the fixed point to a selector, which can cascade through
+other fields at compile time.
+
+Use `recq` for query-style recursive records:
+
+```disp
+recq = {components} ->
+  fix ({self, query} -> components query ({q} -> wait self q) self query)
+```
+
+This keeps ordinary `ks.field` syntax in component bodies while
+preserving delayed self-field selection.
+
+## Typed Eliminators
+
+Raw `triage` on a neutral interprets the neutral's wait-encoded
+structure as data. Eliminators must check `is_neutral` first.
+
+Pattern:
+
+```disp
 bool_rec = {motive, t_case, f_case, target} ->
-    if is_neutral target then StuckElim (motive target) target
-    else ite2 t_case f_case target
-
-nat_rec = fix {self, motive, base, step, target} ->
-    if is_neutral target then StuckElim (motive target) target
-    else ... pattern match on zero/succ ...
+  select_lazy
+    ({_} -> StuckElim (motive target) target)
+    ({_} -> select t_case f_case target)
+    (is_neutral target)
 ```
 
-The **motive** is a raw function from the scrutinee to the result type,
-supplied at each elimination site. `type_of_neutral` handles
-`VStuckElim` by applying the motive: `type = motive(target)`.
+`StuckElim` stores the result type computed at the elimination site.
+It does not store the motive itself. Public `neutral_type` can then
+extract the type in O(1).
 
-This mirrors CIC-style recursors (Lean's `Nat.rec`, Agda's pattern
-matching): every eliminator carries a motive, stuck eliminators freeze
-as neutral terms. Our eliminators are ordinary tree programs, not
-built into the runtime.
+User-defined eliminators should follow the same pattern:
 
-Any user-defined type can follow this pattern:
-1. Define the type predicate (wait-based checker with metadata)
-2. Define a typed eliminator that guards on `is_neutral`
-3. Store the motive in `VStuckElim` for type inference
+1. Define a wait-based type predicate.
+2. Define a neutral-aware eliminator.
+3. When stuck, construct `StuckElim(result_type, target)`.
 
-## Pi body normalization
+## Performance Notes
 
-Pi's checker evaluates `codFn(hyp)` and branches on `is_neutral(result)`:
-if neutral, `infer` walks the spine; if concrete, raw `apply(result, f(hyp))`
-checks the body. The result is normalized to TT/FF via `fast_eq(X, TT)`.
-This handles:
+The current design keeps all kernel tests comfortably within the
+10M-step evaluation budget. Recent `lib/kernel.test.disp` stats after
+the recursive-record cleanup:
 
-- Ill-typed returns against abstract hypothesis types (produces stuck
-  accumulation instead of FF → normalized to FF)
-- Self-application rejection (stuck chain → FF)
-
-Soundness: `fast_eq(X, TT)` = TT iff X is literally TT (same hash-consed
-node as LEAF). Can never manufacture a false TT. The only path to false
-acceptance is unguarded triage on neutrals (Problem B), which typed
-eliminators prevent.
-
-## Binder parameter shadowing
-
-The parser's bracket abstraction resolves scope variables to tree
-literals during Expr → CIR conversion. Binder parameters must shadow
-scope entries — otherwise `{n, m} -> ...m...` resolves `m` to a scope
-tree instead of the lambda variable.
-
-Fix: `exprToCir` masks binder param names from the scope lookup before
-compiling the body. This is checked in `src/parse.ts` (the `binder`
-case in `exprToCir`).
-
-## Performance status
-
-The accum-based neutral design (option C) is 37% faster than the
-previous tagged design (108ms vs 212ms for the full test suite). All
-NbE operations (infer, conv, Pi/Type/Nat/Bool checking) execute
-within the 10M-step budget.
-
-Key performance wins from eliminating tags:
-- No tag construction/dispatch overhead for neutral creation and recognition
-- `is_neutral` is a single `fast_eq` on the signature (O(1) via hash-consing)
-- Raw `apply` on neutrals triggers `accum` directly — no val_apply indirection
-- Pi codomain check branches on `is_neutral(result)` — no type_apply indirection
-
-The previous performance wall (tens of millions of steps) was caused
-by bracket-abstraction eagerness, not by inherent tree-calculus cost.
-The select-then-apply pattern resolved it.
-
-The lambada project's compilation pipeline (B/C combinators,
-self-hosted optimization) would further reduce tree sizes and step
-counts but is not required for correctness.
-
-## rec combinator and self-referential records
-
-`rec = {components} -> fix ({self, sel} -> components sel self)` wraps
-a Church-encoded record into a fixpoint using select-then-apply-self.
-Each component receives `self` (the fixpoint) as first argument when
-selected. Works for simple self-referential records where compile-time
-fixpoint unfolding isn't triggered.
-
-```
-let k : {a, b} = rec { a := {ks, x} -> x; b := {ks, x} -> ks.a x }
-k.a t  →  t
-k.b t  →  t   (field b calls field a via ks.a)
+```text
+tests=142, passed=142
+steps=15767, calls=995, maxStack=249
 ```
 
-The let type annotation `let k : {a, b} = ...` sets field metadata on
-the binding, enabling `k.a` projections regardless of the RHS shape.
+Important performance properties:
 
-## Why Q_* selectors are load-bearing for the kernel
+- Neutral recognition is one signature check.
+- Neutral type extraction is O(1).
+- Raw apply handles types, neutrals, and functions uniformly.
+- `wait` prevents module-level recursive field selection and fixpoint
+  unfolding from happening too early.
+- Select-then-apply avoids bracket-abstraction eagerness in shared-arg
+  branching code.
 
-The kernel uses `wait ks Q_*` extensively inside component functions.
-Projections (`ks.field`) compile to `ks(selector)` — an **eager**
-application. This is safe at runtime (ks is a lambda parameter) but
-catastrophic at compile time (ks = kernel fixpoint).
+## What Belongs Here
 
-The problem: when the public API computes `kernel Q_HYP_REDUCE`, the
-fixpoint unfolds and applies `q_hyp_reduce_fn(kernel)`. If
-`q_hyp_reduce_fn` uses projections like `ks.sig_pi`, the S-combinator
-reduction evaluates `kernel(sig_pi_selector)`, triggering ANOTHER
-fixpoint unfolding. Each component's projections cascade through all
-other components, exhausting the evaluation budget.
+Keep semantic rules and soundness arguments in `TYPE_THEORY.typ`.
+Keep implementation hazards and current tree-calculus idioms here.
 
-The `wait` combinator prevents this cascade. `wait ks Q_SIG_PI` stores
-`ks` and `Q_SIG_PI` as a deferred pair — `ks(Q_SIG_PI)` is NOT
-evaluated until a third argument arrives (at runtime). This breaks the
-compile-time cascade chain.
+Examples of things that belong here:
 
-**Rule:** inside kernel component functions, always use `wait ks Q_*`
-for cross-component references, never `ks.field`. The Q_* selectors
-and `wait`-based deferral are the kernel's lazy evaluation mechanism
-in strict tree calculus.
+- A `wait` placement rule.
+- Why `kernel.hyp_reduce` uses the raw record while type constructors
+  use `kernel_ref`.
+- How parser record metadata affects projection syntax.
+- Bracket-abstraction or strictness pitfalls.
 
-`rec` and projections work well for smaller self-referential records
-where compile-time unfolding doesn't cascade (e.g., records where
-components don't cross-reference each other, or where cross-references
-are shallow).
+Examples of things that should live in `TYPE_THEORY.typ`:
+
+- The meaning of Pi, Eq, Type, and the H-rule.
+- The soundness argument against forged tags.
+- The high-level neutral/type-checking model.

@@ -12,12 +12,17 @@ let type_meta = {T} -> pair_snd (pair_snd T)
 // conv(a, b) = fast_eq(a, b). Named wrapper for partial application: `conv Nat` is a Nat-checker.
 let conv = {a, b} -> fast_eq a b
 
+// Signature of a wait-based checker. For T = wait(checker)(meta),
+// pair_fst(T) is constant for all metadata that uses the same checker.
+let checker_sig = {checker} -> pair_fst (wait checker t)
+let has_sig = {checker, v} -> fast_eq (pair_fst v) (checker_sig checker)
+
 // ================================================================
 // Kernel record shape
 // ================================================================
 // The parser reads these recType annotations as field metadata, so component
-// bodies can write self references as ks.pi / ks.sig_type instead of using
-// hand-written Q_* selector names.
+// bodies can write self references as ks.pi / ks.type instead of using
+// hand-written selector names.
 
 // ================================================================
 // Kernel component builders
@@ -27,31 +32,18 @@ let conv = {a, b} -> fast_eq a b
 //   raw = actual kernel self-reference, used only when handler identity matters
 //   query = the current query selector being dispatched
 
-// --- CPS signature queries ---
-// Each returns a CPS function: {check_fn} -> check_fn(signature).
-// The signature = pair_fst of a wait-based value built from that checker.
-// hyp_reduce uses single wait (it IS the handler); others use double wait (they produce types).
-let q_sig_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, raw : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, query} ->
-  {c} -> c (pair_fst (wait raw.hyp_reduce t))
-let q_sig_pi_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, raw, query} ->
-  {c} -> c (pair_fst (wait ks.pi t))
-let q_sig_eq_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, raw, query} ->
-  {c} -> c (pair_fst (wait ks.eq t))
-let q_sig_type_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, raw, query} ->
-  {c} -> c (pair_fst (wait ks.type t))
-
 // --- Shared kernel helpers ---
 
 // q_is_neutral: check if x has the hyp_reduce checker signature (O(1) via hash-cons).
-// sig_hyp_reduce returns {c}->c(neutral_sig), so this applies
-//   fast_eq(pair_fst(x)) to that signature, checking if x's checker matches.
-let q_is_neutral = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, x} ->
-  ks.sig_hyp_reduce (fast_eq (pair_fst x))
+// Use raw.hyp_reduce, not the lazy proxy, because neutral identity is the
+// actual handler signature stored in Hyp/StuckElim.
+let q_is_neutral = {raw : {hyp_reduce,pi,nat,bool,eq,type}, x} ->
+  has_sig raw.hyp_reduce x
 
 // q_make_hyp: construct a hypothesis neutral.
 // Result: wait(hyp_reduce_handler)(fork(type, payload))
 // Metadata layout: pair_fst(meta) = type (used by neutral_type / H-rule).
-let q_make_hyp = {raw : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, ty, depth} ->
+let q_make_hyp = {raw : {hyp_reduce,pi,nat,bool,eq,type}, ty, depth} ->
   wait raw.hyp_reduce (t ty depth)
 
 // --- H-rule (shared by all type checkers) ---
@@ -65,7 +57,7 @@ let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
 // --- Hypothesis reduction (type interpreter for neutrals) ---
 // Called when a neutral is applied to an argument v.
 // Checks if the neutral's current type is Pi; if so, computes codomain type for the result.
-let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, raw, query} ->
+let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query} ->
   fix ({self, meta, v} -> {
     // pi_fn: neutral has Pi type → result_type = codFn(v)
     //   pair_fst(meta) = neutral's current type (a Pi type)
@@ -77,7 +69,7 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_p
     let non_pi_fn = {self, meta, v} -> wait self (t FF (t meta v))
     // Dispatch: check if the neutral's type has the Pi checker signature
     select pi_fn non_pi_fn
-      (ks.sig_pi (fast_eq (pair_fst (pair_fst meta))))
+      (has_sig ks.pi (pair_fst meta))
       self meta v
   })
 
@@ -99,12 +91,12 @@ let q_pi_fn = {ks, raw, query} ->
       select
         ({result, expected} -> fast_eq expected (pair_fst (type_meta result)))
         ({result, expected} -> fast_eq (expected result) TT)
-        (q_is_neutral ks result)
+        (q_is_neutral raw result)
         result expected
     }
     // Outer dispatch: neutral → H-rule, concrete → check_fn
     select q_h_rule_fn check_fn
-      (q_is_neutral ks v)
+      (q_is_neutral raw v)
       ks raw query self meta v
   })
 
@@ -118,12 +110,12 @@ let q_nat_fn = {ks, raw, query} ->
     // fork with fst=t is succ, else reject
     let succ_check = {ks, raw, query, self, meta, n} -> select succ_fn ({ks, raw, query, self, meta, n} -> FF) (fast_eq (pair_fst n) t) ks raw query self meta n
     // non-zero: must be concrete fork (not neutral) to check succ, else reject
-    let non_zero = {ks, raw, query, self, meta, n} -> select succ_check ({ks, raw, query, self, meta, n} -> FF) (select FF (is_fork n) (q_is_neutral ks n)) ks raw query self meta n
+    let non_zero = {ks, raw, query, self, meta, n} -> select succ_check ({ks, raw, query, self, meta, n} -> FF) (select FF (is_fork n) (q_is_neutral raw n)) ks raw query self meta n
     // concrete: zero (leaf) → TT, else → non-zero chain
     let non_neutral = {ks, raw, query, self, meta, n} -> select ({ks, raw, query, self, meta, n} -> TT) non_zero (fast_eq n t) ks raw query self meta n
     // outer: neutral → H-rule, concrete → dispatch
     select q_h_rule_fn non_neutral
-      (q_is_neutral ks n)
+      (q_is_neutral raw n)
       ks raw query self meta n
   })
 
@@ -133,7 +125,7 @@ let q_bool_fn = {ks, raw, query} ->
   fix ({self, meta, b} -> {
     let check_fn = {ks, raw, query, self, meta, b} -> select TT (fast_eq b FF) (fast_eq b t)
     select q_h_rule_fn check_fn
-      (q_is_neutral ks b)
+      (q_is_neutral raw b)
       ks raw query self meta b
   })
 
@@ -145,7 +137,7 @@ let q_eq_fn = {ks, raw, query} ->
     // p is refl (leaf) → check lhs = rhs. p is anything else → FF.
     let check_fn = {ks, raw, query, self, meta, p} -> select_lazy ({_} -> fast_eq (pair_fst (pair_snd meta)) (pair_snd (pair_snd meta))) ({_} -> FF) (fast_eq p t)
     select q_h_rule_fn check_fn
-      (q_is_neutral ks p)
+      (q_is_neutral raw p)
       ks raw query self meta p
   })
 
@@ -155,11 +147,11 @@ let q_eq_fn = {ks, raw, query} ->
 let q_type_fn = {ks, raw, query} ->
   fix ({self, meta, x} -> {
     // is_registered: check if x is a known base type (Nat or Bool)
-    let is_registered = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, x} ->
+    let is_registered = {ks : {hyp_reduce,pi,nat,bool,eq,type}, x} ->
       select TT (fast_eq x (wait ks.bool t)) (fast_eq x (wait ks.nat t))
     // univ_check: check inferred_type has universe signature and rank <= limit
-    let univ_check = {ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, rank, ty} ->
-      select (nat_le (type_meta ty) rank) FF (ks.sig_type (fast_eq (pair_fst ty)))
+    let univ_check = {ks : {hyp_reduce,pi,nat,bool,eq,type}, rank, ty} ->
+      select (nat_le (type_meta ty) rank) FF (has_sig ks.type ty)
     // neutral: extract stored type, check its universe rank
     let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (pair_fst (type_meta x))
     // universe: check rank(x) < meta
@@ -182,16 +174,16 @@ let q_type_fn = {ks, raw, query} ->
     }
     // dispatch: neutral → rank check, concrete → select_chain over type-former signatures
     select neutral_fn
-      ({ks : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type}, raw, query, self, meta, x} ->
+      ({ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query, self, meta, x} ->
         select_chain
-          (case (ks.sig_type (fast_eq (pair_fst x))) univ_fn
-          (case (ks.sig_pi (fast_eq (pair_fst x))) pi_fn
-          (case (ks.sig_eq (fast_eq (pair_fst x))) eq_fn
+          (case (has_sig ks.type x) univ_fn
+          (case (has_sig ks.pi x) pi_fn
+          (case (has_sig ks.eq x) eq_fn
           (case (is_registered ks x) ({ks, raw, query, self, meta, x} -> TT)
           t))))
           ({ks, raw, query, self, meta, x} -> FF)
           ks raw query self meta x)
-      (q_is_neutral ks x)
+      (q_is_neutral raw x)
       ks raw query self meta x
   })
 
@@ -202,23 +194,19 @@ let q_type_fn = {ks, raw, query} ->
 // component a lazy self-proxy, so component bodies can use ks.field syntax
 // without forcing recursive field selection too early.
 
-let kernel : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type} = recq {
+let kernel : {hyp_reduce,pi,nat,bool,eq,type} = recq {
   hyp_reduce := q_hyp_reduce_fn;
   pi := q_pi_fn;
   nat := q_nat_fn;
   bool := q_bool_fn;
   eq := q_eq_fn;
-  type := q_type_fn;
-  sig_hyp_reduce := q_sig_hyp_reduce_fn;
-  sig_pi := q_sig_pi_fn;
-  sig_eq := q_sig_eq_fn;
-  sig_type := q_sig_type_fn
+  type := q_type_fn
 }
 
 // Public kernel reference with the same lazy-proxy convention that recq passes
 // internally. Type/signature construction uses this delayed view so H-rule
 // reconstruction and public constructors share the same wait-based shape.
-let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,sig_type} =
+let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
   {q} -> wait kernel q
 
 // ================================================================
@@ -226,7 +214,7 @@ let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type,sig_hyp_reduce,sig_pi,sig_eq,si
 // ================================================================
 
 let neutral_type = {v} -> pair_fst (type_meta v)
-let is_neutral = {x} -> kernel_ref.sig_hyp_reduce (fast_eq (pair_fst x))
+let is_neutral = {x} -> has_sig kernel.hyp_reduce x
 
 // infer: checks is_neutral, extracts stored type, applies check_fn.
 // Usage: `infer (conv Nat) v` checks if v's inferred type is Nat.
@@ -241,14 +229,14 @@ let StuckElim = {result_type, target} -> wait kernel.hyp_reduce (t result_type t
 // Public API: type reflection
 // ================================================================
 
-let is_pi = {v} -> kernel_ref.sig_pi (fast_eq (pair_fst v))
+let is_pi = {v} -> has_sig kernel_ref.pi v
 let pi_dom = {v} -> pair_fst (type_meta v)
 let pi_cod_fn = {v} -> pair_snd (pair_snd (type_meta v))
 
-let is_universe = {v} -> kernel_ref.sig_type (fast_eq (pair_fst v))
+let is_universe = {v} -> has_sig kernel_ref.type v
 let universe_rank = {v} -> type_meta v
 
-let is_eq = {v} -> kernel_ref.sig_eq (fast_eq (pair_fst v))
+let is_eq = {v} -> has_sig kernel_ref.eq v
 
 // is_concrete_fork: true if v is a fork AND not a neutral.
 // Use instead of raw is_fork when the value might be neutral.
