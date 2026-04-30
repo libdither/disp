@@ -86,17 +86,16 @@ let q_h_rule_fn = {ks, query, self, meta, v} ->
 // --- Pi checker ---
 // meta = fork(domain, fork(depth, codFn))
 // Compute hyp, result, expected once; then branch on is_neutral(result).
-let q_pi_check_fn = {ks, query, self, meta, v} ->
-  ({hyp} ->
-    ({result, expected} ->
-      ite2
-        ({result, expected} -> fast_eq expected (pair_fst (type_meta result)))
-        ({result, expected} -> fast_eq (expected result) TT)
-        (q_is_neutral ks result)
-        result expected)
-    (v hyp)
-    (pair_snd (pair_snd meta) hyp))
-  (q_make_hyp ks (pair_fst meta) (pair_fst (pair_snd meta)))
+let q_pi_check_fn = {ks, query, self, meta, v} -> {
+  let hyp = q_make_hyp ks (pair_fst meta) (pair_fst (pair_snd meta))
+  let result = v hyp
+  let expected = pair_snd (pair_snd meta) hyp
+  ite2
+    ({result, expected} -> fast_eq expected (pair_fst (type_meta result)))
+    ({result, expected} -> fast_eq (expected result) TT)
+    (q_is_neutral ks result)
+    result expected
+}
 let q_pi_fn = {ks, query} ->
   fix ({self, meta, v} ->
     ite2
