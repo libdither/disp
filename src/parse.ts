@@ -103,7 +103,7 @@ export type Expr =
   | { tag: "use"; path: string }
 
 export type Param = { name: string | null; type: Expr | null }
-export type TypedField = { name: string; type: Expr }
+export type TypedField = { name: string; type: Expr | null }
 export type NamedField = { name: string; type: Expr | null; value: Expr }
 
 export type Item =
@@ -427,6 +427,140 @@ const recValueInner: P<Expr> = (ts, startPos) => {
   return ok({ tag: "recValue" as const, fields: fields.v }, pos)
 }
 
+// Parse block contents after "{" when first token is "let" or "test".
+// Desugars { let x = a; let y = b; expr } to App(Binder([x], App(Binder([y], expr), b)), a).
+const blockInner: P<Expr> = (ts, startPos) => {
+  type BlockLet = { name: string; type: Expr | null; body: Expr }
+  const bindings: BlockLet[] = []
+  let pos = startPos
+
+  // Parse let statements separated by SEMI, then a trailing expression
+  while (true) {
+    while (ts[pos].t === "nl") pos++
+
+    // Try to parse a let statement
+    if (ts[pos].t === "kw" && (ts[pos] as any).v === "let") {
+      pos++ // consume "let"
+      while (ts[pos].t === "nl") pos++
+      if (ts[pos].t !== "id") return err(`expected identifier after 'let', got ${describe(ts[pos])}`, pos)
+      const name = (ts[pos] as any).v as string
+      pos++
+      while (ts[pos].t === "nl") pos++
+
+      // Optional type annotation
+      let type: Expr | null = null
+      if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
+        pos++
+        while (ts[pos].t === "nl") pos++
+        const tyR = expr(ts, pos)
+        if (!tyR.ok) return tyR
+        type = tyR.v
+        pos = tyR.pos
+        while (ts[pos].t === "nl") pos++
+      }
+
+      if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "="))
+        return err(`expected '=' in block let, got ${describe(ts[pos])}`, pos)
+      pos++
+      while (ts[pos].t === "nl") pos++
+
+      const bodyR = expr(ts, pos)
+      if (!bodyR.ok) return bodyR
+      bindings.push({ name, type, body: bodyR.v })
+      pos = bodyR.pos
+
+      // Require SEMI after let statement
+      const s = semiP(ts, pos)
+      if (!s.ok) return err(`expected ';' or newline after block let, got ${describe(ts[pos])}`, pos)
+      pos = s.pos
+      continue
+    }
+
+    if (ts[pos].t === "kw" && (ts[pos] as any).v === "test") {
+      return err(`test inside block expressions is not yet supported`, pos)
+    }
+
+    // Not a let/test → must be the trailing expression
+    break
+  }
+
+  if (bindings.length === 0)
+    return err(`block must contain at least one let binding`, pos)
+
+  // Parse trailing expression
+  const trailR = expr(ts, pos)
+  if (!trailR.ok) return trailR
+  pos = trailR.pos
+
+  // Optional trailing semi
+  const s = semiP(ts, pos)
+  if (s.ok) pos = s.pos
+  while (ts[pos].t === "nl") pos++
+
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
+    return err(`expected '}', got ${describe(ts[pos])}`, pos)
+  pos++
+
+  // Desugar right-to-left: wrap trailing expr in nested App(Binder, body)
+  let result: Expr = trailR.v
+  for (let i = bindings.length - 1; i >= 0; i--) {
+    const b = bindings[i]
+    const val: Expr = b.type
+      ? { tag: "ann", expr: b.body, type: b.type }
+      : b.body
+    result = {
+      tag: "app",
+      f: { tag: "binder", params: [{ name: b.name, type: null }], body: result },
+      x: val,
+    }
+  }
+  return ok(result, pos)
+}
+
+// Parse bare recType: {a, b, c} or {a, b, c : T} (spread type).
+// Fields are comma-separated identifiers with an optional shared type.
+const bareRecTypeInner: P<Expr> = (ts, startPos) => {
+  const names: string[] = []
+  let pos = startPos
+  while (ts[pos].t === "nl") pos++
+
+  // Parse comma-separated identifiers
+  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
+  names.push((ts[pos] as any).v as string)
+  pos++
+
+  while (true) {
+    while (ts[pos].t === "nl") pos++
+    if (ts[pos].t === "punct" && (ts[pos] as any).v === ",") {
+      pos++
+      while (ts[pos].t === "nl") pos++
+      if (ts[pos].t !== "id") break // not another name, stop
+      names.push((ts[pos] as any).v as string)
+      pos++
+    } else break
+  }
+
+  // Optional shared type annotation
+  let sharedType: Expr | null = null
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
+    pos++
+    while (ts[pos].t === "nl") pos++
+    const tyR = expr(ts, pos)
+    if (!tyR.ok) return tyR
+    sharedType = tyR.v
+    pos = tyR.pos
+  }
+
+  while (ts[pos].t === "nl") pos++
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
+    return err(`expected '}', got ${describe(ts[pos])}`, pos)
+  pos++
+
+  const fields: TypedField[] = names.map(name => ({ name, type: sharedType }))
+  return ok({ tag: "recType" as const, fields }, pos)
+}
+
 // Disambiguate braced content after seeing "{".
 // Peek at the first entry to determine: recValue, binder, or recTypeOrBinder.
 const braced: P<Expr> = (ts, i) => {
@@ -442,12 +576,17 @@ const braced: P<Expr> = (ts, i) => {
 
   // Block: starts with "let" or "test"
   if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test")) {
-    return err(`block expressions are not yet supported`, pos)
+    return blockInner(ts, pos)
   }
 
   const shape = classifyBracedContent(ts, pos)
   if (shape === "recValue") return recValueInner(ts, pos)
-  if (shape === "binder") return binderInner(ts, pos)
+  if (shape === "binder") {
+    // Try binder first; fall back to bare recType ({a, b, c} or {a, b, c : T})
+    const binderAttempt = binderInner(ts, pos)
+    if (binderAttempt.ok) return binderAttempt
+    return bareRecTypeInner(ts, pos)
+  }
   // recTypeOrBinder: try binder first (needs "}" then ARROW), fall back to recType.
   const binderAttempt = binderInner(ts, pos)
   if (binderAttempt.ok) return binderAttempt
@@ -661,7 +800,7 @@ function selectorTree(n: number, i: number): Tree {
 // Scope entry: a compiled tree plus optional compile-time record metadata.
 // Field names/trees are parser metadata only; runtime records remain ordinary
 // Church-encoded values.
-interface ScopeEntry { tree: Tree; fields?: string[]; fieldTrees?: Tree[] }
+interface ScopeEntry { tree?: Tree; fields?: string[]; fieldTrees?: Tree[] }
 
 // Expr → Cir, with scope lookup and use-resolution.
 function exprToCir(
@@ -684,7 +823,7 @@ function exprToCir(
     }
     case "var": {
       const entry = lookupEntry(e.name)
-      return entry ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
+      return entry?.tree ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
     }
     case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
     case "app":
@@ -695,9 +834,20 @@ function exprToCir(
     case "ann": return exprToCir(e.expr, lookupEntry, resolveUse) // erase type
     case "binder": {
       // Shadow binder params so they don't resolve to scope entries.
+      // If a param has a recType annotation, carry its field names as metadata
+      // so that projections (e.g. ks.field) work on bound variables.
       const paramNames = new Set(e.params.map((p, i) => p.name ?? `_anon${i}`))
-      const shadowedLookup = (name: string): ScopeEntry | undefined =>
-        paramNames.has(name) ? undefined : lookupEntry(name)
+      const paramEntries = new Map<string, ScopeEntry>()
+      for (let i = 0; i < e.params.length; i++) {
+        const name = e.params[i].name ?? `_anon${i}`
+        if (e.params[i].type?.tag === "recType") {
+          paramEntries.set(name, { fields: (e.params[i].type as any).fields.map((f: any) => f.name) })
+        }
+      }
+      const shadowedLookup = (name: string): ScopeEntry | undefined => {
+        if (paramNames.has(name)) return paramEntries.get(name)
+        return lookupEntry(name)
+      }
       let body = exprToCir(e.body, shadowedLookup, resolveUse)
       for (let i = e.params.length - 1; i >= 0; i--) {
         const name = e.params[i].name ?? `_anon${i}`
@@ -716,7 +866,7 @@ function exprToCir(
     }
     case "use": {
       const entry = resolveUse(e.path)
-      return { tag: "lit", t: entry.tree }
+      return { tag: "lit", t: entry.tree! }
     }
     case "proj": {
       // Compile target, then look up field index from target's field metadata.
@@ -748,6 +898,12 @@ function resolveExprRecord(
   if (e.tag === "use") {
     const entry = resolveUse(e.path)
     return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees } : undefined
+  }
+  // Application where the argument is a binder returning a recValue:
+  // e.g. fix({ks : {...}} -> { f1 := ...; f2 := ... }) → fields from the recValue.
+  // This propagates field metadata through higher-order patterns like fix.
+  if (e.tag === "app" && e.x.tag === "binder" && e.x.body.tag === "recValue") {
+    return { fields: e.x.body.fields.map(f => f.name) }
   }
   if (e.tag === "recValue") {
     return {
@@ -892,7 +1048,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
           const existing = stack[stack.length - 1].get(name)
           if (existing) {
             // Idempotent: skip if same tree (e.g. diamond dependency via open)
-            if (existing.tree.id === fieldTree.id) continue
+            if (existing.tree?.id === fieldTree.id) continue
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
           define(name, { tree: fieldTree })

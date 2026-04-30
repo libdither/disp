@@ -9,7 +9,8 @@
 
 #let note(body) = block(
   breakable: false,
-  above: 0.8em, below: 0.8em,
+  above: 0.8em,
+  below: 0.8em,
   stroke: (left: 2pt + rgb("#cccccc")),
   inset: (left: 1em, y: 0.3em),
   body,
@@ -32,7 +33,7 @@ operation is `apply`. There is no built-in notion of "type." If we
 want dependent types, we need to build them ourselves --- as tree
 programs.
 
-This constraint leads to a striking design: *types are predicates*.
+This constraint produces a natural design: *types are predicates*.
 A type is an ordinary function that takes a value and returns `TT`
 (accepted) or `FF` (rejected). Type checking is function application:
 
@@ -55,8 +56,7 @@ This buys us three things:
 + *Extensibility.* Adding a new type means writing a new predicate
   function. No built-in case analysis needs updating.
 
-The rest of this document explains how to make this idea work ---
-starting from familiar concepts, building up to the full design.
+The rest of this document works through the details.
 
 = Arriving at the design
 
@@ -80,8 +80,8 @@ It takes a value and returns whether that value inhabits `T`.
 
 == The flip: types _are_ the check function
 
-Here is the key observation. `check_T` is a function from values to
-booleans. What if `T` _itself_ were that function?
+`check_T` is a function from values to booleans. What if `T` _itself_
+were that function?
 
 Instead of having a separate checker that knows about `Nat` and
 dispatches:
@@ -116,11 +116,10 @@ Step 3 is the problem. $h$ is an opaque symbol --- it is not `zero`
 or `succ(n)`. The `Nat` predicate cannot pattern-match it. It would
 return `FF`, wrongly rejecting the identity function.
 
-This is the fundamental tension. Types-as-predicates works for concrete
-values but breaks on symbolic ones. Standard NbE solves this by
-keeping type information in the _checker_, not in the values. But in
-our design, the type IS the checker. Where does the symbolic type
-information go?
+That's the tension. Types-as-predicates works for concrete values but
+breaks on symbolic ones. Standard NbE solves this by keeping type
+information in the _checker_, not in the values. But in our design,
+the type IS the checker. Where does the symbolic type information go?
 
 == The H-rule: neutrals carry their types
 
@@ -142,12 +141,11 @@ try to pattern-match --- instead, it reads the stored type and checks:
     otherwise        →  FF
 ```
 
-The H-rule is the "infer" direction of bidirectional checking, embedded
-into every predicate. Each predicate handles both concrete values
-(by pattern matching) and symbolic values (by reading the stored type).
+The H-rule is the neutral case of every predicate. Each predicate
+handles both concrete values (by pattern matching) and symbolic values
+(by reading the stored type).
 
-This is all that's needed for simple types. For `Pi`, things get more
-interesting.
+This handles simple types. Pi is harder.
 
 = Pi --- NbE inside a predicate
 
@@ -175,71 +173,57 @@ As a predicate, `Pi(A, B)` must do exactly this:
     check result against expected
 ```
 
-*This is NbE.* The Pi predicate creates a symbolic value, evaluates
-the function on it, and checks the result. The NbE evaluation is
-happening _inside_ the predicate --- it is not external infrastructure.
+*This is NbE.* The evaluation happens inside the predicate --- not as
+external infrastructure. The point: *the Pi type bootstraps NbE within
+itself*.
 
-This is the central insight of the design: *the Pi type bootstraps NbE
-within itself*. Every function-type check is a miniature evaluation
-session.
+== Neutrals
 
-== Two cases for the result
+The Pi checker creates a hypothesis $h$ and evaluates `f(h)`. The
+result might itself be symbolic --- a *neutral*. There are two kinds:
 
-When `f(h)` returns, the result is either concrete or neutral:
+*Hypotheses* are the simplest neutrals. `Hyp(Nat, d)` is a fresh
+symbol carrying its type (`Nat`) from creation. When the identity
+function `{x} -> x` is applied to $h$, the result is $h$ itself ---
+still a hypothesis, still carrying `Nat`.
 
-*Concrete* (e.g., `{x} -> zero` applied to $h$ returns `zero`):\
-Apply the expected type directly: `B(h)(zero)`. If that returns `TT`,
-accept; otherwise reject.
+*Applied neutrals* arise when a neutral is applied to something. If
+the Pi checker creates `h_f : Nat → Nat` and `h_x : Nat`, then
+`h_f(h_x)` produces a new neutral carrying the computed result type.
 
-*Neutral* (e.g., `{x} -> x` applied to $h$ returns $h$ itself):\
-The result is a symbolic value. We could apply `B(h)` to it (the
-H-rule inside `B(h)` would fire), but there is a more direct path:
-read the result's stored type and compare it against the expected type:
+Both kinds carry their type. Hypotheses get theirs at creation.
+Applied neutrals need theirs computed --- that is hypothesis
+reduction's job.
 
-```
-  infer(fast_eq(expected_type), result)
-```
+== Hypothesis reduction
 
-If the result's stored type matches the expected type, accept.
+Consider what happens when `h_f(h_x)` is evaluated, where
+`h_f : Nat → Nat` and `h_x : Nat`. In a standard type checker, this
+application would be stuck --- irreducible because the head is a
+variable. A separate `infer` judgment would later walk the spine,
+look up `h_f`'s type in a context, and compute the result type.
 
-The `infer` operation is a CPS-style extraction: `infer(check_fn, v)`
-reads `v`'s stored type and passes it to `check_fn`. If `v` is not
-a neutral, it returns `FF`.
+In Disp there is no context and no separate inference pass. Instead,
+every neutral carries a *handler* --- `hyp_reduce` --- that fires
+when the neutral is applied.
 
-= Stuck applications and smart accum
+#note[
+  *But how does this work?* A hypothesis is literally
+  `wait(hyp_reduce)(metadata)`. When applied to a value `v`, the
+  `wait` rule reduces it to `hyp_reduce(metadata)(v)` --- the handler
+  fires via normal tree calculus reduction. No special mechanism, just
+  `wait`.
+]
 
-== The spine problem
-
-Consider checking `{f, x} -> f(x)` against
-`(Nat → Nat) → Nat → Nat`. The Pi checker creates two hypotheses:
-
-```
-  h_f : Nat → Nat
-  h_x : Nat
-```
-
-Then evaluates the body: `h_f(h_x)`. Both are neutrals --- `h_f` is
-a hypothesis and `h_x` is a hypothesis. The application is _stuck_:
-`h_f(h_x)` cannot reduce. It becomes a stuck application, itself a
-neutral.
-
-What type should `h_f(h_x)` have? Since `h_f : Nat → Nat` and
-`h_x : Nat`, the result should have type `Nat`. But who computes this?
-
-== The accumulator
-
-Every neutral has a handler that fires when the neutral is applied.
-In Disp, all neutrals share a single handler called the *accumulator*
-(`accum`). When a neutral is applied to a value, the accumulator:
-
-+ Reads the neutral's stored type.
-+ Checks if the type is a `Pi` type (by comparing signatures).
-+ If yes: computes `codomain_fn(argument)` as the result type.
-+ If no: stores `FF` (unknown type --- any subsequent check will fail).
-+ Produces a new neutral with the computed result type.
+Hypotheses double as type storage _and_ an interpreter: where a
+regular function would compute a value, `hyp_reduce` runs the same
+application in type-space, inferring the result type. When a concrete
+function is applied, normal reduction runs. When a neutral is applied,
+`hyp_reduce` runs instead, doing the same logical work but computing
+types rather than values:
 
 ```
-  accum(meta, v):
+  hyp_reduce(meta, v):
     my_type = stored type of this neutral
     if my_type is Pi:
       result_type = codFn(v)           // instantiate codomain at arg
@@ -248,26 +232,57 @@ In Disp, all neutrals share a single handler called the *accumulator*
     → new neutral with stored type = result_type
 ```
 
-This is *smart accumulation*: the handler tracks types through
-applications. After `h_f(h_x)`, the resulting neutral has stored type
-`({_} -> Nat)(h_x) = Nat`. No spine walking, no post-hoc inference.
-The type is computed on the spot.
+The result is another neutral whose handler is the same `hyp_reduce`.
+So the next application fires it again, tracking the next type. Each
+application reduces fully --- `hyp_reduce` is not recursive within a
+single step --- but the result is always another
+`wait(hyp_reduce)(...)`, ready to track the next one.
 
-== O(1) type inference
+Walking through `h_f(h_x)`:
++ `hyp_reduce` reads `h_f`'s stored type: `Nat → Nat` (a Pi type).
++ Extracts the codomain function: `{_} -> Nat`.
++ Instantiates: `({_} -> Nat)(h_x) = Nat`.
++ Produces a new neutral with stored type `Nat`.
 
-Because smart accum stores the type at each step, `infer` is trivial:
+When the Pi checker later inspects the result, the type is already
+there --- `neutral_type(result) = Nat`, O(1). No spine walking, no
+context lookup. The same application that would have been "stuck" in
+a traditional system instead ran the type-level interpreter, and the
+answer was computed as a side effect of evaluation.
+
+#note[
+  In #raw("lib/kernel.disp"), `hyp_reduce` is currently named `accum`
+  (`q_accum_fn` / `Q_ACCUM`).
+]
+
+== Checking the result
+
+With every neutral knowing its type --- whether stored at creation or
+computed by hypothesis reduction --- the Pi checker has two cases:
+
+*Concrete* (e.g., `{x} -> zero` applied to $h$ returns `zero`):\
+Apply the expected type as a predicate: `B(h)(zero)`. If `TT`, accept.
+
+*Neutral* (hypothesis or applied neutral --- doesn't matter which):\
+Read the neutral's stored type via `neutral_type`, compare against the
+expected type:
 
 ```
-  infer(check_fn, v):
-    if is_neutral(v): check_fn(pair_fst(metadata(v)))
-    else:             FF
+  fast_eq(neutral_type(result), expected_type)
 ```
 
-Just extract `pair_fst` of the metadata. This is O(1) regardless of
-how many applications produced the neutral. There is no spine-walking
-`type_of_neutral` function.
+The Pi checker doesn't care how the neutral got its type (creation or
+hypothesis reduction). It just reads it and compares.
 
-= Encoding types as trees
+#note[
+  The kernel bundles `is_neutral` + type extraction into a shared
+  helper called `infer(check_fn, v)`, which passes the stored type
+  to `check_fn` (or returns `FF` if `v` is not neutral). This is a
+  code-sharing convenience, not a separate concept --- it avoids
+  repeating the neutral-detection branch at each call site.
+]
+
+= Encoding types as trees <encoding>
 
 == `wait` --- deferred evaluation
 
@@ -326,26 +341,51 @@ Every `wait(checker)(metadata)` tree has a constant prefix:
 
 This is the *signature* --- it identifies which checker produced the
 type. All `Nat` values share one signature. All `Pi` types share
-another. Neutrals (which are `wait(accum)(...)`) share the accum
-signature.
+another. Neutrals (which are `wait(hyp_reduce)(...)`) share the
+`hyp_reduce` signature.
 
 Recognition uses `fast_eq` on signatures:
 
 ```
-  is_neutral(x) = fast_eq(pair_fst(x), accum_signature)
+  is_neutral(x) = fast_eq(pair_fst(x), hyp_reduce_signature)
   is_pi(x)      = fast_eq(pair_fst(x), pi_signature)
 ```
 
 Each check is O(1) via hash-consing.
+
+== Neutrals as trees
+
+A neutral is `wait(hyp_reduce)(metadata)`, using the same `wait`
+encoding as types. The metadata stores the neutral's type and its
+identity (hypothesis tag + depth, or application spine).
+
+Applying a neutral to a value `v` triggers the `wait` rule:
+
+```
+  wait(hyp_reduce)(metadata)(v)  =  hyp_reduce(metadata)(v)
+```
+
+This _does_ reduce --- tree calculus has no irreducible terms.
+`hyp_reduce` fires, computes the result type (see hypothesis
+reduction above), and wraps the result back into
+`wait(hyp_reduce)(new_metadata)` --- another neutral. `hyp_reduce` is
+a *trampoline*: every application of a neutral fully reduces, but the
+result is always another neutral. Concrete data never comes out.
+
+This is why `is_neutral` works: all neutrals, whether hypotheses or
+applied neutrals, share `hyp_reduce`'s signature. And it is why typed
+eliminators must check `is_neutral` before pattern-matching --- raw
+`triage` on a `wait(hyp_reduce)(...)` tree would interpret the
+neutral's internal structure as data, producing garbage.
 
 = The unified kernel
 
 == Why a single mutual fixed point?
 
 Each checker needs to recognize other checkers' signatures:
-- Pi's checker calls `is_neutral` (needs accum's signature)
+- Pi's checker calls `is_neutral` (needs `hyp_reduce`'s signature)
 - Type n's checker calls `is_pi`, `is_eq` (needs their signatures)
-- All checkers call `infer` (needs accum's signature)
+- The `infer` helper calls `is_neutral` (needs `hyp_reduce`'s signature)
 
 Signatures are derived from the checkers themselves. If the Pi
 checker were defined separately, its signature would be a function
@@ -400,8 +440,8 @@ Breaking it down:
   type_ from the kernel and its metadata.
 - `fast_eq(that_type)` is a partial application: a function that
   checks if its argument equals this type.
-- `ks Q_INFER` dispatches to the `infer` component, which extracts
-  the neutral's stored type and passes it to `fast_eq`.
+- `ks Q_INFER` dispatches to the `infer` helper, which checks that
+  `v` is neutral, extracts its stored type, and passes it to `fast_eq`.
 
 If the neutral's type matches, `fast_eq` returns `TT`. Otherwise `FF`.
 
@@ -446,7 +486,7 @@ produces a different signature.
 
 Neutrals carry their types, but they cannot forge them. A hypothesis
 is created by `Hyp(type, id)`, which sets the stored type at creation
-time. Smart accum propagates types faithfully --- it reads the existing
+time. Hypothesis reduction propagates types faithfully --- it reads the existing
 type and computes the new one from the Pi codomain. There is no way
 for a neutral to claim a type it was not given.
 
@@ -509,9 +549,9 @@ Metadata = `fork(domain, fork(depth, codFn))`.
     let result = v(hyp)
     let expected = codFn(hyp)
     if is_neutral(result):
-      infer(fast_eq(expected), result)
+      fast_eq(neutral_type(result), expected)
     else:
-      fast_eq(expected(result), TT)
+      fast_eq(expected(result), TT)    // apply type as predicate
 ```
 
 Arrow sugar: `Arrow(A, B, d) = Pi(A, {_} -> B, d)`.
@@ -535,7 +575,7 @@ Metadata = `rank` (a natural number).
 ```
   Type(n) = wait(type_checker)(n)
   type_checker(meta, x):
-    if is_neutral(x): infer(univ_check(n), x)   // cumulative
+    if is_neutral(x): univ_check(n, neutral_type(x))  // cumulative
     if is_universe(x): nat_lt(rank(x), n)        // Type m, m < n
     if is_pi(x):
       and(self(n, pi_dom(x)),
@@ -570,7 +610,7 @@ term when stuck:
 ```
 
 The *motive* maps the scrutinee to the result type. `StuckElim` stores
-`motive(target)` as the result type, so `infer` can extract it later.
+`motive(target)` as the result type, so `neutral_type` can read it.
 
 Eq operations (`eq_J`, `eq_subst`, `eq_sym`, `eq_cong`) follow the
 same pattern: concrete proof (`refl`) dispatches immediately; neutral
@@ -601,13 +641,42 @@ Pure data checking. No hypotheses, no H-rule.
     result = ({x}->x)(h) = h   // apply identity to h
     expected = ({_}->Nat)(h) = Nat
     is_neutral(h)? yes
-      infer(fast_eq(Nat), h)
-        neutral_type(h) = Nat   // stored when h was created
-        fast_eq(Nat, Nat) = TT ✓
+      neutral_type(h) = Nat     // stored when h was created
+      fast_eq(Nat, Nat) = TT ✓
 ```
 
 The H-rule fires because `h` was introduced at type `Nat`, and the
 expected codomain is `Nat`.
+
+== `{f, x} -> f(x)` checked against `(Nat → Nat) → Nat → Nat`
+
+This example shows hypothesis reduction computing a result type.
+
+```
+  Outer Pi: domain = Nat → Nat, codomain = {_} -> Nat → Nat
+    h_f = Hyp(Nat→Nat, d0)           // stored type: Nat → Nat
+    result = ({f,x}->f(x))(h_f)
+           = {x} -> h_f(x)           // a lambda — concrete
+    expected = Nat → Nat
+    is_neutral? no → check {x}->h_f(x) against Nat → Nat
+
+  Inner Pi: domain = Nat, codomain = {_} -> Nat
+    h_x = Hyp(Nat, d1)               // stored type: Nat
+    result = ({x}->h_f(x))(h_x)
+           = h_f(h_x)                // applying neutral to neutral!
+    hyp_reduce fires:
+      h_f has type Nat → Nat (a Pi type)
+      codomain function = {_} -> Nat
+      result_type = ({_}->Nat)(h_x) = Nat
+    → new neutral with stored type Nat
+    expected = ({_}->Nat)(h_x) = Nat
+    is_neutral? yes
+      neutral_type(result) = Nat
+      fast_eq(Nat, Nat) = TT ✓
+```
+
+The type was computed at application time by `hyp_reduce`, not
+inferred after the fact.
 
 == Self-application rejection: `{x} -> x x`
 
@@ -619,21 +688,20 @@ Checked against `(A : Type 0) → A → A`:
   Pi checks x : h_A:
     h_x = Hyp(h_A, d1)               // type is a hypothesis!
   Body: h_x(h_x)
-    smart accum fires on h_x(h_x):
+    hyp_reduce fires on h_x(h_x):
       h_x has type h_A
       is h_A a Pi type? no (it's a neutral, not a Pi)
       → result_type = FF
-    → stuck neutral with stored type FF
+    → neutral with stored type FF
   Pi checks result:
     expected = h_A
-    infer(fast_eq(h_A), result)
-      neutral_type(result) = FF
-      fast_eq(h_A, FF) = FF           // h_A ≠ FF
+    neutral_type(result) = FF
+    fast_eq(h_A, FF) = FF             // h_A ≠ FF
     → rejected ✓
 ```
 
 Self-application is blocked because `h_A` is an opaque hypothesis,
-not a Pi type. Smart accum stores `FF`, and the codomain check fails.
+not a Pi type. Hypothesis reduction stores `FF`, and the codomain check fails.
 No special-case logic needed.
 
 = Glossary
@@ -643,21 +711,28 @@ No special-case logic needed.
   stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
   inset: (x: 6pt, y: 4pt),
   table.header[*Term*][*Meaning*],
-  [`T(v) = TT`],   [Type checking. Apply type to value; raw tree-calculus application.],
-  [`wait(a)(b)`],   [Inert tree. `wait(a)(b)(c) = a(b)(c)`. See #raw("KERNEL_DESIGN.md").],
-  [`fix(f)`],       [Fixed-point via `wait`. `fix(f)(x) = f(fix(f))(x)`.],
-  [`Hyp(type, id)`],[Create a neutral hypothesis carrying the given type.],
-  [`StuckElim(type, target)`],[Stuck eliminator, produced by typed eliminators on neutral scrutinees.],
-  [`infer(f, v)`],  [Extract neutral's stored type, pass to `f`. Returns `FF` if `v` is not neutral.],
-  [`is_neutral`],   [Signature check: does `v` share the accumulator's signature? O(1).],
-  [`smart accum`],  [The neutral handler. Propagates types through application via codomain instantiation.],
-  [`H-rule`],       [Each checker's first branch: if `v` is neutral and its stored type matches this type, accept.],
-  [`signature`],    [`pair_fst` of a `wait`-encoded value. Constant per checker; used for recognition.],
-  [`kernel`],       [Single mutual `fix` containing all checkers, accum, infer, and signature queries.],
-  [*typed eliminator*],[Neutral-aware recursor. Checks `is_neutral` before dispatching; freezes as `StuckElim` when stuck.],
-  [`TT` / `FF`],    [Booleans. `TT = leaf`, `FF = stem(leaf)`.],
-  [`refl`],         [Sole constructor of `Eq A x y`. Equals `leaf`.],
-  [*select-then-apply*],[Compilation pattern for deferred branching. See #raw("KERNEL_DESIGN.md").],
+  [`T(v) = TT`], [Type checking. Apply type to value; raw tree-calculus application.],
+  [`wait(a)(b)`], [Inert tree. `wait(a)(b)(c) = a(b)(c)`. See #raw("KERNEL_DESIGN.md").],
+  [`fix(f)`], [Fixed-point via `wait`. `fix(f)(x) = f(fix(f))(x)`.],
+  [`Hyp(type, id)`], [Create a neutral hypothesis carrying the given type.],
+  [`StuckElim(type, target)`], [Stuck eliminator, produced by typed eliminators on neutral scrutinees.],
+  [`neutral_type(v)`], [Read a neutral's stored type. `pair_fst(type_meta(v))`. O(1).],
+  [`is_neutral`], [Signature check: does `v` share `hyp_reduce`'s signature? O(1).],
+  [*hypothesis reduction*],
+  [A second interpreter embedded in reduction (`hyp_reduce`, currently `accum` in code). When a neutral is applied, `hyp_reduce` runs instead of normal evaluation, computing the result type from the codomain. Disp's equivalent of bidirectional inference, distributed across evaluation.],
+
+  [`infer(f, v)`],
+  [Kernel helper. Bundles `is_neutral` check + `neutral_type` extraction + callback. Convenience, not a primitive.],
+
+  [`H-rule`], [Each checker's first branch: if `v` is neutral and its stored type matches this type, accept.],
+  [`signature`], [`pair_fst` of a `wait`-encoded value. Constant per checker; used for recognition.],
+  [`kernel`], [Single mutual `fix` containing all checkers, `hyp_reduce`, and signature queries.],
+  [*typed eliminator*],
+  [Neutral-aware recursor. Checks `is_neutral` before dispatching; freezes as `StuckElim` when stuck.],
+
+  [`TT` / `FF`], [Booleans. `TT = leaf`, `FF = stem(leaf)`.],
+  [`refl`], [Sole constructor of `Eq A x y`. Equals `leaf`.],
+  [*select-then-apply*], [Compilation pattern for deferred branching. See #raw("KERNEL_DESIGN.md").],
 )
 
 = Open problems

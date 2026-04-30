@@ -229,6 +229,18 @@ describe("parse: expressions", () => {
     )
   })
 
+  it("bare recType (no types)", () => {
+    expect(parseExpr("({a, b, c})")).toEqual(
+      recType([{ name: "a", type: null }, { name: "b", type: null }, { name: "c", type: null }]),
+    )
+  })
+
+  it("bare recType with spread type", () => {
+    expect(parseExpr("({a, b, c : A})")).toEqual(
+      recType([{ name: "a", type: v("A") }, { name: "b", type: v("A") }, { name: "c", type: v("A") }]),
+    )
+  })
+
   it("recType with arrow becomes binder", () => {
     // {x : A} -> x  is a binder, not a recType
     expect(parseExpr("{x : A} -> x")).toEqual(
@@ -444,7 +456,68 @@ describe("parse errors", () => {
     expect(() => parseExpr("use foo")).toThrow()
   })
 
-  it("block braces not yet supported", () => {
-    expect(() => parseExpr("{ let x = t; x }")).toThrow(/block/)
+  it("block without trailing expression", () => {
+    expect(() => parseExpr("{ let x = t }")).toThrow()
+  })
+
+  it("test inside block not yet supported", () => {
+    expect(() => parseExpr("{ test t = t; t }")).toThrow(/test inside block/)
+  })
+})
+
+// ──────────────────────── Block expressions ────────────────────────────
+describe("block expressions", () => {
+  it("single let binding", () => {
+    // { let x = t; x } → App(Binder([x], Var(x)), Leaf)
+    expect(parseExpr("{ let x = t; x }")).toEqual(
+      ap(binder([{ name: "x", type: null }], v("x")), leaf)
+    )
+  })
+
+  it("two let bindings", () => {
+    // { let x = t; let y = t t; y } → App(Binder([x], App(Binder([y], Var(y)), App(Leaf, Leaf))), Leaf)
+    expect(parseExpr("{ let x = t; let y = t t; y }")).toEqual(
+      ap(
+        binder([{ name: "x", type: null }],
+          ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
+        leaf,
+      )
+    )
+  })
+
+  it("let binding with type annotation", () => {
+    // { let x : A = t; x } → App(Binder([x], Var(x)), Ann(Leaf, Var(A)))
+    expect(parseExpr("{ let x : A = t; x }")).toEqual(
+      ap(binder([{ name: "x", type: null }], v("x")), ann(leaf, v("A")))
+    )
+  })
+
+  it("trailing expression uses binding", () => {
+    // { let f = {x} -> x; f t } → App(Binder([f], App(Var(f), Leaf)), Binder([x], Var(x)))
+    expect(parseExpr("{ let f = {x} -> x; f t }")).toEqual(
+      ap(
+        binder([{ name: "f", type: null }], ap(v("f"), leaf)),
+        binder([{ name: "x", type: null }], v("x")),
+      )
+    )
+  })
+
+  it("newline-separated let bindings (newline works between lets)", () => {
+    // Newlines work between consecutive let bindings because `let` is a keyword
+    // and keywords can't start an atom, so the expr parser stops.
+    // A semicolon is needed before the trailing expression since identifiers
+    // ARE valid atoms and the expr parser would consume them greedily.
+    const src = `{
+      let x = t
+      let y = t t;
+      y
+    }`
+    expect(parseExpr(src)).toEqual(
+      ap(
+        binder([{ name: "x", type: null }],
+          ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
+        leaf,
+      )
+    )
   })
 })
