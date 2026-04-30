@@ -264,8 +264,8 @@ types are embedded in values and maintained by `hyp_reduce` at each
 application.
 
 #note[
-  In #raw("lib/kernel.disp"), `hyp_reduce` is currently named `accum`
-  (`q_accum_fn` / `Q_ACCUM`). Values produced by either interpreter
+  In #raw("lib/kernel.disp"), the type interpreter is
+  `q_hyp_reduce_fn` / `Q_HYP_REDUCE`. Values produced by either interpreter
   are called *neutrals* --- they share `hyp_reduce`'s signature, which
   is how `is_neutral` recognizes them (see @encoding).
 ]
@@ -417,9 +417,9 @@ The solution is to put everything into a single `fix`:
 ```disp
   kernel = fix ({self, query} ->
     query
-      q_accum_fn q_pi_fn q_nat_fn q_bool_fn q_eq_fn
-      q_type_fn q_infer_fn
-      q_sig_accum_fn q_sig_pi_fn q_sig_eq_fn q_sig_type_fn
+      q_hyp_reduce_fn q_pi_fn q_nat_fn q_bool_fn q_eq_fn
+      q_type_fn
+      q_sig_hyp_reduce_fn q_sig_pi_fn q_sig_eq_fn q_sig_type_fn
       self query)
 ```
 
@@ -451,18 +451,14 @@ type checkers (Pi, Nat, Bool, Eq):
 
 ```disp
   q_h_rule_fn = {ks, query, self, meta, v} ->
-    ks Q_INFER (fast_eq (wait (wait ks query) meta)) v
+    fast_eq (wait (wait ks query) meta) (pair_fst (type_meta v))
 ```
 
-Breaking it down:
-- `wait(wait(ks)(query))(meta)` reconstructs _this checker's own
-  type_ from the kernel and its metadata.
-- `fast_eq(that_type)` is a partial application: a function that
-  checks if its argument equals this type.
-- `ks Q_INFER` dispatches to the `infer` helper, which checks that
-  `v` is neutral, extracts its stored type, and passes it to `fast_eq`.
-
-If the neutral's type matches, `fast_eq` returns `TT`. Otherwise `FF`.
+The caller already confirmed `v` is neutral, so the H-rule just:
+- Reconstructs _this checker's own type_ via
+  `wait(wait(ks)(query))(meta)`.
+- Reads `v`'s stored type via `pair_fst(type_meta(v))`.
+- Compares. If they match, `fast_eq` returns `TT`. Otherwise `FF`.
 
 = Soundness
 

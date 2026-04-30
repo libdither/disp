@@ -143,7 +143,7 @@ test NatToNat ({_} -> 0) = TT
 test NatToNat ({_} -> FF) = FF
 
 // ================================================================
-// infer (extract and check neutral's stored type)
+// infer (convenience helper: is_neutral + neutral_type + check_fn)
 // ================================================================
 
 // n : Nat |- typeOf n = Nat
