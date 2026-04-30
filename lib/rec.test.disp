@@ -23,6 +23,14 @@ let k2b : {id, double} = rec {id := comp_id; double := comp_dbl}
 test k2b.id t = t
 test k2b.double t = t
 
+// --- recq lazy self-proxy ---
+let qcomp_id = {ks, raw, query, x} -> x
+let qcomp_dbl = {ks : {id, double}, raw, query, x} -> ks.id (ks.id x)
+
+let k2q : {id, double} = recq {id := qcomp_id; double := qcomp_dbl}
+test k2q.id t = t
+test k2q.double t = t
+
 // --- 5-field rec with cross-references ---
 let f1 = {ks : {a,b,c,d,e}, x} -> x
 let f2 = {ks : {a,b,c,d,e}, x} -> ks.a x
