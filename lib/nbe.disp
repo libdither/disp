@@ -11,18 +11,17 @@ let BOOL_TAG = t (t t t)
 let HYP_TAG = t (t (t t))
 let ELIM_TAG = t (t t t)
 
-let type_has_tag = {tag, T} -> fast_eq (pair_fst (type_meta T)) tag
-
-let Q_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_accum
-let Q_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_pi
-let Q_NAT = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_nat
-let Q_BOOL = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_bool
-let Q_EQ = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_eq
-let Q_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_type
-let Q_TON = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_ton
-let Q_SIG_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_sig_accum
-let Q_SIG_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_sig_pi
-let Q_SIG_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_type} -> q_sig_type
+let Q_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_accum
+let Q_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_pi
+let Q_NAT = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_nat
+let Q_BOOL = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_bool
+let Q_EQ = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_eq
+let Q_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_type
+let Q_TON = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_ton
+let Q_SIG_ACCUM = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_accum
+let Q_SIG_PI = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_pi
+let Q_SIG_EQ = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_eq
+let Q_SIG_TYPE = {q_accum, q_pi, q_nat, q_bool, q_eq, q_type, q_ton, q_sig_accum, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_type
 
 let raw_tree_fork = {v} ->
   triage FF ({_} -> FF) ({l, r} -> TT) v
@@ -45,6 +44,7 @@ let nat_lt = {a, b} -> nat_le (t t a) b
 
 let q_sig_accum_fn = {ks, query} -> {c} -> c (pair_fst (wait (ks Q_ACCUM) t))
 let q_sig_pi_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_PI) t))
+let q_sig_eq_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_EQ) t))
 let q_sig_type_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_TYPE) t))
 
 let q_accum_pi_fn = {self, meta, v} ->
@@ -56,7 +56,7 @@ let q_accum_non_pi_fn = {self, meta, v} ->
 let q_accum_fn = {ks, query} ->
   fix ({self, meta, v} ->
     ite2 q_accum_pi_fn q_accum_non_pi_fn
-      (fast_eq (pair_fst (type_meta (pair_fst meta))) PI_TAG)
+      (wait ks Q_SIG_PI (fast_eq (pair_fst (pair_fst meta))))
       self meta v)
 
 let q_ton_neutral_fn = {check_fn, v} -> check_fn (pair_fst (type_meta v))
@@ -149,9 +149,9 @@ let q_eq_fn = {ks, query} ->
       (wait ks Q_SIG_ACCUM (fast_eq (pair_fst p)))
       ks query self meta p)
 
-let q_is_nat_type = {x} -> type_has_tag NAT_TAG x
-let q_is_bool_type = {x} -> type_has_tag BOOL_TAG x
-let q_is_registered = {x} -> ite2 TT (q_is_bool_type x) (q_is_nat_type x)
+let q_is_nat_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_NAT) (t NAT_TAG t))
+let q_is_bool_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_BOOL) (t BOOL_TAG t))
+let q_is_registered_fn = {ks, x} -> ite2 TT (q_is_bool_type_fn ks x) (q_is_nat_type_fn ks x)
 let q_univ_check_template = {ks, rank, inferred_type} ->
   ite2 (nat_le (pair_snd (type_meta inferred_type)) rank) FF
     (wait ks Q_SIG_TYPE (fast_eq (pair_fst inferred_type)))
@@ -168,7 +168,14 @@ let q_type_pi_fn = {ks, query, self, meta, x} ->
         (wait (ks Q_ACCUM)
           (t (pair_fst (pair_snd (type_meta x)))
              (t HYP_TAG (t (t (pair_snd meta))))))))
-let q_type_registered_fn = {ks, query, self, meta, x} -> q_is_registered x
+let q_type_eq_fn = {ks, query, self, meta, x} ->
+  and
+    (wait self meta (pair_fst (pair_snd (type_meta x))))
+    (and
+      (pair_fst (pair_snd (type_meta x))
+        (pair_fst (pair_snd (pair_snd (type_meta x)))))
+      (pair_fst (pair_snd (type_meta x))
+        (pair_snd (pair_snd (pair_snd (type_meta x))))))
 let q_type_non_neutral_fn = {ks, query, self, meta, x} ->
   ite2
     q_type_univ_fn
@@ -176,7 +183,12 @@ let q_type_non_neutral_fn = {ks, query, self, meta, x} ->
       ite2
         q_type_pi_fn
         ({ks, query, self, meta, x} ->
-          ite2 q_type_registered_fn ({ks, query, self, meta, x} -> FF) (q_is_registered x)
+          ite2
+            q_type_eq_fn
+            ({ks, query, self, meta, x} ->
+              ite2 ({ks, query, self, meta, x} -> TT) ({ks, query, self, meta, x} -> FF) (q_is_registered_fn ks x)
+                ks query self meta x)
+            (wait ks Q_SIG_EQ (fast_eq (pair_fst x)))
             ks query self meta x)
         (wait ks Q_SIG_PI (fast_eq (pair_fst x)))
         ks query self meta x)
@@ -199,6 +211,7 @@ let kernel = fix ({self, query} ->
     q_ton_fn
     q_sig_accum_fn
     q_sig_pi_fn
+    q_sig_eq_fn
     q_sig_type_fn
     self query)
 
@@ -236,9 +249,9 @@ let three = succ two
 let four = succ three
 let five = succ four
 
-let is_nat_type = q_is_nat_type
-let is_bool_type = q_is_bool_type
-let is_registered = q_is_registered
+let is_nat_type = {x} -> fast_eq x Nat
+let is_bool_type = {x} -> fast_eq x Bool
+let is_registered = {x} -> ite2 TT (is_bool_type x) (is_nat_type x)
 let Type0 = mkType t
 let Type1 = mkType (t t t)
 let Type2 = mkType (t t (t t t))
@@ -277,7 +290,7 @@ let nat_rec = {motive, base, step, target} ->
   nat_rec_body motive base step target
 
 let refl = t
-let is_eq = {v} -> type_has_tag EQ_TAG v
+let is_eq = {v} -> wait kernel Q_SIG_EQ (fast_eq (pair_fst v))
 let eq_A = {v} -> pair_fst (pair_snd (type_meta v))
 let eq_x = {v} -> pair_fst (pair_snd (pair_snd (type_meta v)))
 let eq_y = {v} -> pair_snd (pair_snd (pair_snd (type_meta v)))

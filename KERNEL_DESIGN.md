@@ -12,7 +12,7 @@ metadata, enabling O(1) type extraction.
 
 ```
 accum = fix {self, meta, v} ->
-  if pair_fst(type_meta(pair_fst(meta))) = PI_TAG then
+  if pair_fst(pair_fst(meta)) has the Pi checker signature then
     result_type = codFn(v)       // Pi codomain applied to argument
     wait self (fork(result_type, fork(meta, v)))
   else
@@ -30,6 +30,8 @@ All neutral forms share `accum` as their handler:
 
 Applying a neutral to a value triggers smart accum: if the neutral's
 type is Pi, the result type is `codFn(v)`; otherwise FF (unknown).
+The current kernel checks Pi-ness by the Pi checker signature, not by
+the forgeable `PI_TAG` metadata payload.
 
 **Recognition**: `is_neutral = fast_eq(pair_fst(x), NEUTRAL_SIG)` — a
 single O(1) check. NEUTRAL_SIG is `stem(accum)`, the constant signature
@@ -73,13 +75,13 @@ Key accessors:
 - **Signature**: `pair_fst(T)` = `stem(X)` — constant for all types sharing
   the same checker function. Two types with the same signature use the same
   checking logic (e.g. all Pi types share `pi_checker`).
-- **Metadata**: `pair_snd(pair_snd(T))` = `fork(TAG, payload)` — the type's
-  identity. TAG distinguishes type formers (PI_TAG, UNIV_TAG, EQ_TAG);
-  payload carries type-specific data (domain, codomain function, rank, etc).
-- **Recognition**: `fast_eq(pair_fst(type_meta(T)), TAG)` — check the
-  metadata tag. No VLam inspection; works uniformly on any wait-based type.
-  Nat and Bool use small `NAT_TAG`/`BOOL_TAG` metadata tags so universe
-  checking can recognize registered base types without reconstructing them.
+- **Metadata**: `pair_snd(pair_snd(T))` = `fork(TAG, payload)`. Tags describe
+  payload shape; they are not trusted as public proof that a value is a real
+  type former.
+- **Recognition**: by checker signature for Pi/Universe/Eq, and by canonical
+  identity for registered base types such as Nat and Bool. Raw metadata tags
+  are forgeable, so public predicates and Type formation do not use tag-only
+  recognition.
 - **H-rule**: The checker uses `fix` with `wait(self)(meta)` to reconstruct
   its own type for comparison. When a neutral value is applied,
   `ton_check(fast_eq(wait(self)(meta)))` walks the neutral's spine to verify

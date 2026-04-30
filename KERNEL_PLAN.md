@@ -503,12 +503,19 @@ Then q_type_fn recognizes them via `fast_eq(pair_fst(type_meta(x)), NAT_TAG)` �
 
 This drops q_type_fn from 5 to 3 kernel_self references (Q_SIG_ACCUM + Q_ACCUM + one for Pi codomain hyp), matching the proven budget of the other checkers. The tags are small constants that don't add architectural complexity.
 
-**Implemented in standalone smart-accum mode (2026-04-29).** `Nat` and `Bool`
-now use `NAT_TAG`/`BOOL_TAG`, and `is_registered` checks metadata tags instead
+**Implemented in standalone smart-accum mode (2026-04-29).** In that
+intermediate version, `Nat` and `Bool` used `NAT_TAG`/`BOOL_TAG`, and
+`is_registered` checked metadata tags instead
 of comparing against reconstructed `Nat`/`Bool` trees. Current verification:
 `npm test` passes, and `npm run disp -- --stats lib/types.test.disp` reports
 about 15k evaluator steps and 9k newly allocated hash-cons nodes for 105
 library tests.
+
+**Superseded in selector-query kernel mode.** This tag-only registered-type
+recognition was useful for getting past the old budget failure, but it is not
+the current trusted design. Nat/Bool recognition is now canonical identity;
+the tags remain only as constructor metadata payloads and adversarial tests
+check that fake `NAT_TAG`/`BOOL_TAG` values are rejected.
 
 **Alternative: precompute Nat/Bool outside the kernel and pass as parameters.** Define q_type_fn as `{ks, q, nat_type, bool_type} -> fix(...)` and partially apply at assembly time. This avoids tags but changes the dispatch interface.
 
@@ -651,7 +658,7 @@ let Q_NAT = {q_accum, q_pi, q_nat, ...} -> q_nat
 
 let kernel = fix ({self, query} ->
   query q_accum_fn q_pi_fn q_nat_fn q_bool_fn q_eq_fn
-        q_type_fn q_ton_fn q_sig_accum_fn q_sig_pi_fn q_sig_type_fn
+        q_type_fn q_ton_fn q_sig_accum_fn q_sig_pi_fn q_sig_eq_fn q_sig_type_fn
         self query)
 ```
 
@@ -663,8 +670,8 @@ Current verification:
 - `npm test` passes.
 - `npm run disp -- --stats --stats-detail lib/nbe.test.disp`: 15/15 tests pass,
   about 21.6k evaluator steps.
-- `npm run disp -- --stats --stats-detail lib/types.test.disp`: 105/105 tests
-  pass, about 30.8k evaluator steps.
+- `npm run disp -- --stats lib/types.test.disp`: 135/135 tests pass, about
+  32.9k evaluator steps.
 
 The previous `Type0(Nat)`/`Type0(Bool)` budget failure is gone. The remaining
 cost is mostly up-front file opening/record projection: opening the unified
@@ -673,13 +680,22 @@ kernel plus the type-level surface. This is acceptable for correctness and is a
 better target for compiler/open-use optimization than the old 10M runtime
 dispatch failure.
 
+Current soundness cleanup:
+- Smart accum recognizes Pi by checker signature, not by forgeable `PI_TAG`.
+- Eq has a signature query (`Q_SIG_EQ`), `is_eq` uses it, and `Type n` checks
+  Eq formation.
+- Nat/Bool registered-type recognition uses canonical identity, not
+  `NAT_TAG`/`BOOL_TAG` tag-only checks.
+- `lib/types.test.disp` includes adversarial fake-tag tests for Nat, Bool, Eq,
+  Universe, and Pi metadata.
+
 ## Previous implementation checklist (kernel attempt #1)
 
 Preserved for reference. Items checked off during the 2026-04-29 attempt:
 
 - [x] Define query constants and HYP_TAG/ELIM_TAG
 - [x] Define nat_le/nat_lt (needed by q_type_fn, no kernel dependency — uses raw triage)
-- [x] Define CPS sig query builders (q_sig_accum_fn, q_sig_pi_fn, q_sig_type_fn)
+- [x] Define CPS sig query builders (q_sig_accum_fn, q_sig_pi_fn, q_sig_eq_fn, q_sig_type_fn)
 - [x] Define q_accum_fn (simple accumulator, keeps HYP_TAG/ELIM_TAG in metadata)
 - [x] Define q_nat_fn, q_bool_fn, q_eq_fn (with H-rule fix: `wait(wait kernel_self query) m`)
 - [x] Define q_pi_fn (with H-rule fix)
@@ -690,4 +706,4 @@ Preserved for reference. Items checked off during the 2026-04-29 attempt:
 - [x] Verified: basic type checks (Nat t = TT, Nat FF = FF, Bool TT = TT) pass through kernel
 - [x] Verified: CPS sig queries work correctly (is_neutral returns TT/FF for neutrals/non-neutrals)
 - [x] **RESOLVED**: q_ton_fn — smart accum eliminates combinator explosion
-- [x] **RESOLVED**: Circularity — smart accum uses PI_TAG, no sig chain needed
+- [x] **RESOLVED**: Circularity — smart accum uses the Pi checker signature via selector query, no metadata-tag trust needed

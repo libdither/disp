@@ -269,6 +269,30 @@ test is_nat_type Bool = FF
 // Nat is not the registered Bool type
 test is_bool_type Nat = FF
 
+// t : Type0
+test Type0 t = FF
+
+// FF : Type0
+test Type0 FF = FF
+
+// fakeNat : malformed type carrying NAT_TAG metadata
+let fakeNat = wait ({_meta, _x} -> TT) (t NAT_TAG t)
+
+// fakeNat is not the registered Nat type
+test is_nat_type fakeNat = FF
+
+// fakeNat : Type0
+test Type0 fakeNat = FF
+
+// fakeBool : malformed type carrying BOOL_TAG metadata
+let fakeBool = wait ({_meta, _x} -> TT) (t BOOL_TAG t)
+
+// fakeBool is not the registered Bool type
+test is_bool_type fakeBool = FF
+
+// fakeBool : Type0
+test Type0 fakeBool = FF
+
 // Nat -> Nat : Type0
 test Type0 (mkArrow Nat Nat t) = TT
 
@@ -291,14 +315,55 @@ test Type0 (mkPi Nat ({_x} -> Bool) t) = TT
 test Type0 (mkPi Nat ({x} -> x) t) = FF
 
 // (x : FF) -> Nat : Type0
-// TODO: should reject once Pi formation validates domains by canonical typehood.
-// test Type0 (mkPi FF ({_x} -> Nat) t) = FF
+test Type0 (mkPi FF ({_x} -> Nat) t) = FF
 
 // (A : Type0) -> A -> A : Type1
 test Type1 (mkPi Type0 ({A} -> mkArrow A A (t t)) t) = TT
 
 // (A : Type0) -> A -> A : Type0
 test Type0 (mkPi Type0 ({A} -> mkArrow A A (t t)) t) = FF
+
+// Eq Nat zero zero : Type0
+test Type0 (mkEq Nat zero zero) = TT
+
+// Eq Nat zero false : Type0
+test Type0 (mkEq Nat zero FF) = FF
+
+// Eq FF zero zero : Type0
+test Type0 (mkEq FF zero zero) = FF
+
+// is_eq (Eq Nat zero zero)
+test is_eq (mkEq Nat zero zero) = TT
+
+// fakeEq : malformed type carrying EQ_TAG metadata
+let fakeEq = wait ({_meta, _x} -> TT) (t EQ_TAG (t Nat (t zero zero)))
+
+// is_eq fakeEq
+test is_eq fakeEq = FF
+
+// fakeEq : Type0
+test Type0 fakeEq = FF
+
+// fakeUniverse : malformed type carrying UNIV_TAG metadata
+let fakeUniverse = wait ({_meta, _x} -> TT) (t UNIV_TAG t)
+
+// is_universe fakeUniverse
+test is_universe fakeUniverse = FF
+
+// fakeUniverse : Type0
+test Type0 fakeUniverse = FF
+
+// fakePi : malformed type carrying PI_TAG metadata
+let fakePi = wait ({_meta, _x} -> TT) (t PI_TAG (t Nat (t t ({_x} -> Bool))))
+
+// is_pi fakePi
+test is_pi fakePi = FF
+
+// fakePi : Type0
+test Type0 fakePi = FF
+
+// f : fakePi, n : Nat |- f n : Bool
+test Bool ((mkVHyp fakePi t) zero) = FF
 
 // ================================================================
 // Structural conv
