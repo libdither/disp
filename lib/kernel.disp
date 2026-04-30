@@ -60,6 +60,10 @@ let q_sig_pi_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_PI) t))
 let q_sig_eq_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_EQ) t))
 let q_sig_type_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_TYPE) t))
 
+// --- Shared kernel helpers ---
+let q_is_neutral = {ks, x} -> wait ks Q_SIG_HYP_REDUCE (fast_eq (pair_fst x))
+let q_make_hyp = {ks, ty, depth} -> wait (ks Q_HYP_REDUCE) (t ty (t HYP_TAG depth))
+
 // --- Hypothesis reduction (type interpreter for neutrals) ---
 let q_hyp_reduce_pi_fn = {self, meta, v} ->
   wait self
@@ -80,41 +84,25 @@ let q_h_rule_fn = {ks, query, self, meta, v} ->
   fast_eq (wait (wait ks query) meta) (pair_fst (type_meta v))
 
 // --- Pi checker ---
+// meta = fork(domain, fork(depth, codFn))
+// Compute hyp, result, expected once; then branch on is_neutral(result).
 let q_pi_check_fn = {ks, query, self, meta, v} ->
-  ite2
-    ({ks, query, self, meta, v} ->
-      fast_eq
-        (pair_snd (pair_snd meta)
-          (wait (ks Q_HYP_REDUCE)
-            (t (pair_fst meta)
-               (t HYP_TAG (pair_fst (pair_snd meta))))))
-        (pair_fst (type_meta
-          (v (wait (ks Q_HYP_REDUCE)
-            (t (pair_fst meta)
-               (t HYP_TAG (pair_fst (pair_snd meta)))))))))
-    ({ks, query, self, meta, v} ->
-      fast_eq
-        (pair_snd (pair_snd meta)
-          (wait (ks Q_HYP_REDUCE)
-            (t (pair_fst meta)
-               (t HYP_TAG (pair_fst (pair_snd meta)))))
-          (v (wait (ks Q_HYP_REDUCE)
-            (t (pair_fst meta)
-               (t HYP_TAG (pair_fst (pair_snd meta)))))))
-        TT)
-    (wait ks Q_SIG_HYP_REDUCE
-      (fast_eq
-        (pair_fst
-          (v (wait (ks Q_HYP_REDUCE)
-            (t (pair_fst meta)
-               (t HYP_TAG (pair_fst (pair_snd meta)))))))))
-    ks query self meta v
+  ({hyp} ->
+    ({result, expected} ->
+      ite2
+        ({result, expected} -> fast_eq expected (pair_fst (type_meta result)))
+        ({result, expected} -> fast_eq (expected result) TT)
+        (q_is_neutral ks result)
+        result expected)
+    (v hyp)
+    (pair_snd (pair_snd meta) hyp))
+  (q_make_hyp ks (pair_fst meta) (pair_fst (pair_snd meta)))
 let q_pi_fn = {ks, query} ->
   fix ({self, meta, v} ->
     ite2
       q_h_rule_fn
       ({ks, query, self, meta, v} -> q_pi_check_fn ks query self meta v)
-      (wait ks Q_SIG_HYP_REDUCE (fast_eq (pair_fst v)))
+      (q_is_neutral ks v)
       ks query self meta v)
 
 // --- Nat checker ---
@@ -126,7 +114,7 @@ let q_nat_succ_check_fn = {ks, query, self, meta, n} ->
     ks query self meta n
 let q_nat_non_zero_fn = {ks, query, self, meta, n} ->
   ite2 q_nat_succ_check_fn q_nat_ff_fn
-    (ite2 FF (is_fork n) (wait ks Q_SIG_HYP_REDUCE (fast_eq (pair_fst n))))
+    (ite2 FF (is_fork n) (q_is_neutral ks n))
     ks query self meta n
 let q_nat_non_neutral_fn = {ks, query, self, meta, n} ->
   ite2 q_nat_zero_fn q_nat_non_zero_fn (fast_eq n t)
@@ -134,7 +122,7 @@ let q_nat_non_neutral_fn = {ks, query, self, meta, n} ->
 let q_nat_fn = {ks, query} ->
   fix ({self, meta, n} ->
     ite2 q_h_rule_fn q_nat_non_neutral_fn
-      (wait ks Q_SIG_HYP_REDUCE (fast_eq (pair_fst n)))
+      (q_is_neutral ks n)
       ks query self meta n)
 
 // --- Bool checker ---
@@ -143,7 +131,7 @@ let q_bool_check_fn = {ks, query, self, meta, b} ->
 let q_bool_fn = {ks, query} ->
   fix ({self, meta, b} ->
     ite2 q_h_rule_fn q_bool_check_fn
-      (wait ks Q_SIG_HYP_REDUCE (fast_eq (pair_fst b)))
+      (q_is_neutral ks b)
       ks query self meta b)
 
 // --- Eq checker ---
@@ -155,7 +143,7 @@ let q_eq_check_fn = {ks, query, self, meta, p} ->
 let q_eq_fn = {ks, query} ->
   fix ({self, meta, p} ->
     ite2 q_h_rule_fn q_eq_check_fn
-      (wait ks Q_SIG_HYP_REDUCE (fast_eq (pair_fst p)))
+      (q_is_neutral ks p)
       ks query self meta p)
 
 // --- Type n checker ---
@@ -175,9 +163,7 @@ let q_type_pi_fn = {ks, query, self, meta, x} ->
     (wait self meta (pair_fst (type_meta x)))
     (wait self meta
       (pair_snd (pair_snd (type_meta x))
-        (wait (ks Q_HYP_REDUCE)
-          (t (pair_fst (type_meta x))
-             (t HYP_TAG (t (t meta)))))))
+        (q_make_hyp ks (pair_fst (type_meta x)) (t (t meta)))))
 let q_type_eq_fn = {ks, query, self, meta, x} ->
   and
     (wait self meta (pair_fst (type_meta x)))
@@ -207,7 +193,7 @@ let q_type_non_neutral_fn = {ks, query, self, meta, x} ->
 let q_type_fn = {ks, query} ->
   fix ({self, meta, x} ->
     ite2 q_type_neutral_fn q_type_non_neutral_fn
-      (wait ks Q_SIG_HYP_REDUCE (fast_eq (pair_fst x)))
+      (q_is_neutral ks x)
       ks query self meta x)
 
 // ================================================================
