@@ -26,29 +26,6 @@ let Q_SIG_EQ = {q_hyp_reduce, q_pi, q_nat, q_bool, q_eq, q_type, q_sig_hyp_reduc
 let Q_SIG_TYPE = {q_hyp_reduce, q_pi, q_nat, q_bool, q_eq, q_type, q_sig_hyp_reduce, q_sig_pi, q_sig_eq, q_sig_type} -> q_sig_type
 
 // ================================================================
-// Nat arithmetic helpers (no kernel dependency)
-// ================================================================
-
-let is_fork = {v} ->
-  triage FF ({_} -> FF) ({l, r} -> TT) v
-
-let nat_le_zero_fn = {self, a, b} -> TT
-let nat_le_succ_fn = {self, a, b} ->
-  ite2
-    ({self, a, b} -> self (pair_snd a) (pair_snd b))
-    ({self, a, b} -> FF)
-    (is_fork b)
-    self a b
-let nat_le_nonzero_fn = {self, a, b} ->
-  ite2 nat_le_succ_fn ({self, a, b} -> FF) (is_fork a)
-    self a b
-let nat_le = fix ({self, a, b} ->
-  ite2 nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
-    self a b)
-
-let nat_lt = {a, b} -> nat_le (t t a) b
-
-// ================================================================
 // Kernel component builders
 // ================================================================
 
@@ -157,20 +134,22 @@ let q_type_neutral_fn = {ks, query, self, meta, x} ->
   q_univ_check_template ks meta (pair_fst (type_meta x))
 let q_type_univ_fn = {ks, query, self, meta, x} ->
   nat_lt (type_meta x) meta
-let q_type_pi_fn = {ks, query, self, meta, x} ->
+let q_type_pi_fn = {ks, query, self, meta, x} -> {
+  let tm = type_meta x    // fork(domain, fork(depth, codFn))
+  let dom = pair_fst tm
+  let cod_fn = pair_snd (pair_snd tm)
   and
-    (wait self meta (pair_fst (type_meta x)))
-    (wait self meta
-      (pair_snd (pair_snd (type_meta x))
-        (q_make_hyp ks (pair_fst (type_meta x)) (t (t meta)))))
-let q_type_eq_fn = {ks, query, self, meta, x} ->
+    (wait self meta dom)
+    (wait self meta (cod_fn (q_make_hyp ks dom (t (t meta)))))
+}
+let q_type_eq_fn = {ks, query, self, meta, x} -> {
+  let tm = type_meta x    // fork(A, fork(lhs, rhs))
+  let A = pair_fst tm
   and
-    (wait self meta (pair_fst (type_meta x)))
-    (and
-      (pair_fst (type_meta x)
-        (pair_fst (pair_snd (type_meta x))))
-      (pair_fst (type_meta x)
-        (pair_snd (pair_snd (type_meta x)))))
+    (wait self meta A)
+    (and (A (pair_fst (pair_snd tm)))
+         (A (pair_snd (pair_snd tm))))
+}
 let q_type_non_neutral_fn = {ks, query, self, meta, x} ->
   ite2
     q_type_univ_fn
@@ -251,13 +230,6 @@ let Eq = {A, x, y} -> wait (wait kernel Q_EQ) (t A (t x y))
 let Type = {rank} -> wait (wait kernel Q_TYPE) rank
 let Pi = {domain, codFn, depth} -> wait (wait kernel Q_PI) (t domain (t depth codFn))
 let Arrow = {a_type, b_type, depth} -> Pi a_type ({_} -> b_type) depth
-
-// ================================================================
-// Nat data constructors (also used by parser auto-number)
-// ================================================================
-
-let zero = t
-let succ = {n} -> t t n
 
 // ================================================================
 // Typed eliminators

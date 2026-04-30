@@ -36,3 +36,29 @@ let wait = {a, b, c} -> t (t a) (t t c) b
 // Self-applicator and fixed-point combinator
 let m = {x} -> x x
 let fix = {f} -> wait m ({x} -> f (wait m x))
+
+// ================================================================
+// Tree / Nat helpers
+// ================================================================
+
+let is_fork = {v} -> triage FF ({_} -> FF) ({l, r} -> TT) v
+
+let nat_le_zero_fn = {self, a, b} -> TT
+let nat_le_succ_fn = {self, a, b} ->
+  ite2
+    ({self, a, b} -> self (pair_snd a) (pair_snd b))
+    ({self, a, b} -> FF)
+    (is_fork b)
+    self a b
+let nat_le_nonzero_fn = {self, a, b} ->
+  ite2 nat_le_succ_fn ({self, a, b} -> FF) (is_fork a)
+    self a b
+let nat_le = fix ({self, a, b} ->
+  ite2 nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
+    self a b)
+
+let nat_lt = {a, b} -> nat_le (t t a) b
+
+// Nat data constructors (also used by parser for numeric literals)
+let zero = t
+let succ = {n} -> t t n
