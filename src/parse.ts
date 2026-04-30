@@ -306,6 +306,103 @@ const app: P<Expr> = map(
   ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
 )
 
+// --- Line-mode parsers (for block-let bodies) ---
+// In line mode, newlines terminate expressions. Braces still group freely.
+// This prevents `let x = a\nb` from parsing `a b` as one expression.
+
+// lineSimple: like simple but binders use lineExpr for their body.
+const lineSimple: P<Expr> = lazy(() => alt<Expr>(
+  map(
+    seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
+    ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
+  ),
+  lazy(() => lineBraced),
+  map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
+  map(leafP, (): Expr => ({ tag: "leaf" })),
+  map(numP, (value): Expr => ({ tag: "num", value })),
+  holeP,
+  map(idP, (name): Expr => ({ tag: "var", name })),
+))
+
+// lineBraced: like braced but binders use lineExpr for their body.
+const lineBraced: P<Expr> = (ts, i) => {
+  if (!(ts[i].t === "punct" && (ts[i] as any).v === "{"))
+    return err(`expected '{', got ${describe(ts[i])}`, i)
+  let pos = i + 1
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}")
+    return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
+  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test"))
+    return blockInner(ts, pos)
+  const shape = classifyBracedContent(ts, pos)
+  if (shape === "recValue") return recValueInner(ts, pos)
+  if (shape === "binder") {
+    const binderAttempt = lineBinderInner(ts, pos)
+    if (binderAttempt.ok) return binderAttempt
+    return bareRecTypeInner(ts, pos)
+  }
+  const binderAttempt = lineBinderInner(ts, pos)
+  if (binderAttempt.ok) return binderAttempt
+  return recTypeInner(ts, pos)
+}
+
+const lineAtom: P<Expr> = (ts, i) => {
+  if (ts[i].t === "nl") return err(`unexpected newline`, i)
+  const base = lineSimple(ts, i)
+  if (!base.ok) return base
+  let result: Expr = base.v
+  let pos = base.pos
+  while (ts[pos].t === "punct" && (ts[pos] as any).v === ".") {
+    pos++
+    const field = idP(ts, pos)
+    if (!field.ok) return field
+    result = { tag: "proj", target: result, field: field.v }
+    pos = field.pos
+  }
+  return ok(result, pos)
+}
+
+// lineApp: first atom may skip newlines; subsequent atoms must stay on line.
+const lineApp: P<Expr> = (ts, i) => {
+  while (ts[i].t === "nl") i++
+  const head = lineSimple(ts, i)
+  if (!head.ok) return head
+  let result: Expr = head.v
+  let pos = head.pos
+  // Projections on head
+  while (ts[pos].t === "punct" && (ts[pos] as any).v === ".") {
+    pos++
+    const field = idP(ts, pos)
+    if (!field.ok) return field
+    result = { tag: "proj", target: result, field: field.v }
+    pos = field.pos
+  }
+  // Continuation atoms: no newline skip
+  while (true) {
+    const arg = lineAtom(ts, pos)
+    if (!arg.ok) break
+    result = { tag: "app", f: result, x: arg.v }
+    pos = arg.pos
+  }
+  return ok(result, pos)
+}
+
+// lineExpr: like expr but uses lineApp. Newlines terminate expressions.
+const lineExpr: P<Expr> = (ts, i) => {
+  const lhs = lineApp(ts, i)
+  if (!lhs.ok) return lhs
+  const arr = arrowP(ts, lhs.pos)
+  if (!arr.ok) return lhs
+  let pos = arr.pos
+  while (ts[pos].t === "nl") pos++
+  const rhs = lineExpr(ts, pos)
+  if (!rhs.ok) return rhs
+  return ok(
+    { tag: "binder" as const, params: [{ name: null, type: lhs.v }], body: rhs.v },
+    rhs.pos,
+  )
+}
+
 // binderParam = (IDENT | "_") (":" expr)?
 const binderParam: P<Param> = (ts, i) => {
   let pos = i
@@ -326,7 +423,8 @@ const binderParam: P<Param> = (ts, i) => {
 }
 
 // Parse binder contents after "{". Expects params, "}", ARROW, body.
-const binderInner: P<Expr> = (ts, startPos) => {
+// bodyParser defaults to expr; lineExpr is used when inside block-let bodies.
+function parseBinder(ts: Tok[], startPos: number, bodyParser: P<Expr> = expr): PResult<Expr> {
   let pos = startPos
   while (ts[pos].t === "nl") pos++
   const params = sepBy1(binderParam, commaP)(ts, pos)
@@ -341,11 +439,13 @@ const binderInner: P<Expr> = (ts, startPos) => {
   if (!arr.ok) return err(`expected '->' after '}', got ${describe(ts[pos])}`, pos)
   pos = arr.pos
   while (ts[pos].t === "nl") pos++
-  const bodyR = expr(ts, pos)
+  const bodyR = bodyParser(ts, pos)
   if (!bodyR.ok) return bodyR
   if (params.v.length === 0) return err("binder must have at least one param", startPos)
   return ok({ tag: "binder" as const, params: params.v, body: bodyR.v }, bodyR.pos)
 }
+const binderInner: P<Expr> = (ts, pos) => parseBinder(ts, pos, expr)
+const lineBinderInner: P<Expr> = (ts, pos) => parseBinder(ts, pos, lineExpr)
 
 // typedField = IDENT ":" expr
 const typedFieldP: P<TypedField> = (ts, i) => {
@@ -464,7 +564,7 @@ const blockInner: P<Expr> = (ts, startPos) => {
       pos++
       while (ts[pos].t === "nl") pos++
 
-      const bodyR = expr(ts, pos)
+      const bodyR = lineExpr(ts, pos)
       if (!bodyR.ok) return bodyR
       bindings.push({ name, type, body: bodyR.v })
       pos = bodyR.pos
@@ -776,8 +876,12 @@ function cirToTree(e: Cir): Tree {
     case "S":   return S_TREE
     case "app": {
       if (e.f.tag === "app" && e.f.f.tag === "S") return fork(stem(cirToTree(e.f.x)), cirToTree(e.x))
+      // Full K application: K(x)(y) → x (drop second arg)
+      if (e.f.tag === "app" && e.f.f.tag === "K") return cirToTree(e.f.x)
       if (e.f.tag === "K") return fork(LEAF, cirToTree(e.x))
       if (e.f.tag === "I") return cirToTree(e.x)
+      // Partial S application: S(x) → stem(stem(x)) so that S(x)(y) = fork(stem(x), y)
+      if (e.f.tag === "S") return stem(stem(cirToTree(e.x)))
       return applyTree(cirToTree(e.f), cirToTree(e.x), 10_000_000)
     }
   }
@@ -848,6 +952,7 @@ function exprToCir(
         if (paramNames.has(name)) return paramEntries.get(name)
         return lookupEntry(name)
       }
+
       let body = exprToCir(e.body, shadowedLookup, resolveUse)
       for (let i = e.params.length - 1; i >= 0; i--) {
         const name = e.params[i].name ?? `_anon${i}`

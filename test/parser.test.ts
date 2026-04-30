@@ -502,14 +502,11 @@ describe("block expressions", () => {
     )
   })
 
-  it("newline-separated let bindings (newline works between lets)", () => {
-    // Newlines work between consecutive let bindings because `let` is a keyword
-    // and keywords can't start an atom, so the expr parser stops.
-    // A semicolon is needed before the trailing expression since identifiers
-    // ARE valid atoms and the expr parser would consume them greedily.
+  it("newline-separated let bindings", () => {
+    // Newlines work as separators between let bindings and before trailing expr.
     const src = `{
       let x = t
-      let y = t t;
+      let y = t t
       y
     }`
     expect(parseExpr(src)).toEqual(
@@ -518,6 +515,63 @@ describe("block expressions", () => {
           ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
         leaf,
       )
+    )
+  })
+
+  it("block as binder body (multi-line)", () => {
+    // { let y = x\n y } as body of {x} -> ...
+    // The newline should separate the let body from the trailing expression.
+    const src = `{x} -> {
+      let y = x
+      y
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }],
+        ap(binder([{ name: "y", type: null }], v("y")), v("x")))
+    )
+  })
+
+  it("binder as block-let body", () => {
+    // let y = {z} -> z inside a block — the binder body should not consume
+    // past the newline into the trailing expression.
+    const src = `{x} -> {
+      let f = {z} -> z
+      f x
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }],
+        ap(
+          binder([{ name: "f", type: null }], ap(v("f"), v("x"))),
+          binder([{ name: "z", type: null }], v("z"))))
+    )
+  })
+
+  it("nested blocks", () => {
+    const src = `{x} -> {
+      let y = {z} -> {
+        let w = z
+        w
+      }
+      y x
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }],
+        ap(
+          binder([{ name: "y", type: null }], ap(v("y"), v("x"))),
+          binder([{ name: "z", type: null }],
+            ap(binder([{ name: "w", type: null }], v("w")), v("z")))))
+    )
+  })
+
+  it("multi-arg application in block-let body stays on line", () => {
+    // let z = x y should parse as App(x, y), not consume the trailing expr
+    const src = `{x, y} -> {
+      let z = x y
+      z
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }, { name: "y", type: null }],
+        ap(binder([{ name: "z", type: null }], v("z")), ap(v("x"), v("y"))))
     )
   })
 })
