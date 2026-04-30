@@ -4,7 +4,7 @@ open use "kernel.disp"
 // Test-only convenience definitions
 let is_nat_type = {x} -> fast_eq x Nat
 let is_bool_type = {x} -> fast_eq x Bool
-let is_registered = {x} -> ite2 TT (is_bool_type x) (is_nat_type x)
+let is_registered = {x} -> select TT (is_bool_type x) (is_nat_type x)
 let Type0 = Type 0
 let Type1 = Type 1
 let Type2 = Type 2
@@ -50,7 +50,7 @@ test ({x} -> x) (Hyp (t t) t) = Hyp (t t) t
 // ================================================================
 
 // Smart accum: type is always at pair_fst of neutral metadata
-// Base hypothesis: meta = fork(type, fork(HYP_TAG, id))
+// Base hypothesis: meta = fork(type, id)
 test neutral_type h1 = t
 
 // Spine: meta = fork(result_type, fork(old_meta, arg))
@@ -73,12 +73,11 @@ test Bool 1 = FF
 test Nat 5 = TT
 
 // ================================================================
-// VStuckElim (wait-based neutral with ELIM_TAG)
+// VStuckElim (stuck eliminator neutral)
 // ================================================================
 
 test is_neutral (StuckElim Nat (Hyp Bool 0)) = TT
 test neutral_type (StuckElim Nat (Hyp Bool 0)) = Nat
-test pair_fst (pair_snd (type_meta (StuckElim Nat (Hyp Bool 0)))) = ELIM_TAG
 
 // ================================================================
 // Typed eliminators

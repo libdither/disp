@@ -50,7 +50,7 @@ let q_hyp_reduce_non_pi_fn = {self, meta, v} ->
   wait self (t FF (t meta v))
 let q_hyp_reduce_fn = {ks, query} ->
   fix ({self, meta, v} ->
-    ite2 q_hyp_reduce_pi_fn q_hyp_reduce_non_pi_fn
+    select q_hyp_reduce_pi_fn q_hyp_reduce_non_pi_fn
       (wait ks Q_SIG_PI (fast_eq (pair_fst (pair_fst meta))))
       self meta v)
 
@@ -67,7 +67,7 @@ let q_pi_check_fn = {ks, query, self, meta, v} -> {
   let hyp = q_make_hyp ks (pair_fst meta) (pair_fst (pair_snd meta))
   let result = v hyp
   let expected = pair_snd (pair_snd meta) hyp
-  ite2
+  select
     ({result, expected} -> fast_eq expected (pair_fst (type_meta result)))
     ({result, expected} -> fast_eq (expected result) TT)
     (q_is_neutral ks result)
@@ -75,7 +75,7 @@ let q_pi_check_fn = {ks, query, self, meta, v} -> {
 }
 let q_pi_fn = {ks, query} ->
   fix ({self, meta, v} ->
-    ite2
+    select
       q_h_rule_fn
       ({ks, query, self, meta, v} -> q_pi_check_fn ks query self meta v)
       (q_is_neutral ks v)
@@ -86,48 +86,48 @@ let q_nat_zero_fn = {ks, query, self, meta, n} -> TT
 let q_nat_ff_fn = {ks, query, self, meta, n} -> FF
 let q_nat_succ_fn = {ks, query, self, meta, n} -> wait self meta (pair_snd n)
 let q_nat_succ_check_fn = {ks, query, self, meta, n} ->
-  ite2 q_nat_succ_fn q_nat_ff_fn (fast_eq (pair_fst n) t)
+  select q_nat_succ_fn q_nat_ff_fn (fast_eq (pair_fst n) t)
     ks query self meta n
 let q_nat_non_zero_fn = {ks, query, self, meta, n} ->
-  ite2 q_nat_succ_check_fn q_nat_ff_fn
-    (ite2 FF (is_fork n) (q_is_neutral ks n))
+  select q_nat_succ_check_fn q_nat_ff_fn
+    (select FF (is_fork n) (q_is_neutral ks n))
     ks query self meta n
 let q_nat_non_neutral_fn = {ks, query, self, meta, n} ->
-  ite2 q_nat_zero_fn q_nat_non_zero_fn (fast_eq n t)
+  select q_nat_zero_fn q_nat_non_zero_fn (fast_eq n t)
     ks query self meta n
 let q_nat_fn = {ks, query} ->
   fix ({self, meta, n} ->
-    ite2 q_h_rule_fn q_nat_non_neutral_fn
+    select q_h_rule_fn q_nat_non_neutral_fn
       (q_is_neutral ks n)
       ks query self meta n)
 
 // --- Bool checker ---
 let q_bool_check_fn = {ks, query, self, meta, b} ->
-  ite2 TT (fast_eq b FF) (fast_eq b t)
+  select TT (fast_eq b FF) (fast_eq b t)
 let q_bool_fn = {ks, query} ->
   fix ({self, meta, b} ->
-    ite2 q_h_rule_fn q_bool_check_fn
+    select q_h_rule_fn q_bool_check_fn
       (q_is_neutral ks b)
       ks query self meta b)
 
 // --- Eq checker ---
 let q_eq_check_fn = {ks, query, self, meta, p} ->
-  ited
+  select_lazy
     ({_} -> fast_eq (pair_fst (pair_snd meta)) (pair_snd (pair_snd meta)))
     ({_} -> FF)
     (fast_eq p t)
 let q_eq_fn = {ks, query} ->
   fix ({self, meta, p} ->
-    ite2 q_h_rule_fn q_eq_check_fn
+    select q_h_rule_fn q_eq_check_fn
       (q_is_neutral ks p)
       ks query self meta p)
 
 // --- Type n checker ---
 let q_is_nat_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_NAT) t)
 let q_is_bool_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_BOOL) t)
-let q_is_registered_fn = {ks, x} -> ite2 TT (q_is_bool_type_fn ks x) (q_is_nat_type_fn ks x)
+let q_is_registered_fn = {ks, x} -> select TT (q_is_bool_type_fn ks x) (q_is_nat_type_fn ks x)
 let q_univ_check_template = {ks, rank, inferred_type} ->
-  ite2 (nat_le (type_meta inferred_type) rank) FF
+  select (nat_le (type_meta inferred_type) rank) FF
     (wait ks Q_SIG_TYPE (fast_eq (pair_fst inferred_type)))
 
 let q_type_neutral_fn = {ks, query, self, meta, x} ->
@@ -151,16 +151,16 @@ let q_type_eq_fn = {ks, query, self, meta, x} -> {
          (A (pair_snd (pair_snd tm))))
 }
 let q_type_non_neutral_fn = {ks, query, self, meta, x} ->
-  ite2
+  select
     q_type_univ_fn
     ({ks, query, self, meta, x} ->
-      ite2
+      select
         q_type_pi_fn
         ({ks, query, self, meta, x} ->
-          ite2
+          select
             q_type_eq_fn
             ({ks, query, self, meta, x} ->
-              ite2 ({ks, query, self, meta, x} -> TT) ({ks, query, self, meta, x} -> FF) (q_is_registered_fn ks x)
+              select ({ks, query, self, meta, x} -> TT) ({ks, query, self, meta, x} -> FF) (q_is_registered_fn ks x)
                 ks query self meta x)
             (wait ks Q_SIG_EQ (fast_eq (pair_fst x)))
             ks query self meta x)
@@ -170,7 +170,7 @@ let q_type_non_neutral_fn = {ks, query, self, meta, x} ->
     ks query self meta x
 let q_type_fn = {ks, query} ->
   fix ({self, meta, x} ->
-    ite2 q_type_neutral_fn q_type_non_neutral_fn
+    select q_type_neutral_fn q_type_non_neutral_fn
       (q_is_neutral ks x)
       ks query self meta x)
 
@@ -199,7 +199,7 @@ let kernel = fix ({self, query} ->
 let neutral_type = {v} -> pair_fst (type_meta v)
 let is_neutral = {x} -> wait kernel Q_SIG_HYP_REDUCE (fast_eq (pair_fst x))
 // infer: convenience helper (not a kernel slot). Checks is_neutral, extracts type, applies check_fn.
-let infer = {check_fn, v} -> ited ({_} -> check_fn (neutral_type v)) ({_} -> FF) (is_neutral v)
+let infer = {check_fn, v} -> select_lazy ({_} -> check_fn (neutral_type v)) ({_} -> FF) (is_neutral v)
 
 let Hyp = {ty, id} -> wait (kernel Q_HYP_REDUCE) (t ty (t HYP_TAG id))
 let StuckElim = {result_type, target} -> wait (kernel Q_HYP_REDUCE) (t result_type (t ELIM_TAG target))
@@ -218,7 +218,7 @@ let universe_rank = {v} -> type_meta v
 let is_eq = {v} -> wait kernel Q_SIG_EQ (fast_eq (pair_fst v))
 
 let is_tree_fork = {v} ->
-  ite2 FF (is_fork v) (is_neutral v)
+  select FF (is_fork v) (is_neutral v)
 
 // ================================================================
 // Type constructors
@@ -236,21 +236,21 @@ let Arrow = {a_type, b_type, depth} -> Pi a_type ({_} -> b_type) depth
 // ================================================================
 
 let bool_rec = {motive, t_case, f_case, target} ->
-  ited
+  select_lazy
     ({_} -> StuckElim (motive target) target)
-    ({_} -> ite2 t_case f_case target)
+    ({_} -> select t_case f_case target)
     (is_neutral target)
 
 let nat_rec = fix ({self, motive, base, step, target} ->
-  ited
+  select_lazy
     ({_} -> StuckElim (motive target) target)
     ({_} ->
-      ite2
+      select
         ({self, motive, base, step, target} -> base)
         ({self, motive, base, step, target} ->
-          ite2
+          select
             ({self, motive, base, step, target} ->
-              ite2
+              select
                 ({self, motive, base, step, target} ->
                   step (pair_snd target) (self motive base step (pair_snd target)))
                 ({self, motive, base, step, target} -> base)
@@ -270,25 +270,25 @@ let nat_rec = fix ({self, motive, base, step, target} ->
 let refl = t
 
 let eq_J = {A, x, motive, base, y, p} ->
-  ited
+  select_lazy
     ({_} -> StuckElim (motive y p) p)
     ({_} -> base)
     (is_neutral p)
 
 let eq_subst = {A, P, x, y, p, px} ->
-  ited
+  select_lazy
     ({_} -> StuckElim (P y) p)
     ({_} -> px)
     (is_neutral p)
 
 let eq_sym = {A, x, y, p} ->
-  ited
+  select_lazy
     ({_} -> StuckElim (Eq A y x) p)
     ({_} -> refl)
     (is_neutral p)
 
 let eq_cong = {A, B, f, x, y, p} ->
-  ited
+  select_lazy
     ({_} -> StuckElim (Eq B (f x) (f y)) p)
     ({_} -> refl)
     (is_neutral p)
@@ -308,15 +308,15 @@ let conv_univ_fn = {self, a, b} ->
 let conv_ff_fn = {self, a, b} -> FF
 
 let conv_not_fast_fn = {self, a, b} ->
-  ite2 conv_pi_fn ({self, a, b} ->
-    ite2 conv_univ_fn conv_ff_fn
+  select conv_pi_fn ({self, a, b} ->
+    select conv_univ_fn conv_ff_fn
       (and (is_universe a) (is_universe b))
       self a b)
     (and (is_pi a) (is_pi b))
     self a b
 
 let conv_structural = fix ({self, a, b} ->
-  ite2 conv_fast_fn conv_not_fast_fn (fast_eq a b)
+  select conv_fast_fn conv_not_fast_fn (fast_eq a b)
     self a b)
 
 // ================================================================
@@ -326,7 +326,7 @@ let conv_structural = fix ({self, a, b} ->
 let add_zero_fn = {self, n, m} -> m
 let add_succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
 let add_nonzero_fn = {self, n, m} ->
-  ite2 add_succ_fn add_zero_fn (is_tree_fork n) self n m
+  select add_succ_fn add_zero_fn (is_tree_fork n) self n m
 
 let add = fix ({self, n, m} ->
-  ite2 add_zero_fn add_nonzero_fn (fast_eq n t) self n m)
+  select add_zero_fn add_nonzero_fn (fast_eq n t) self n m)

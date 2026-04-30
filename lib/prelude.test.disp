@@ -1,8 +1,8 @@
 open use "prelude.disp"
 
-// ite2
-test ite2 (t t) (t (t t) t) TT = t t
-test ite2 (t t) (t (t t) t) FF = t (t t) t
+// select (eager if-then-else)
+test select (t t) (t (t t) t) TT = t t
+test select (t t) (t (t t) t) FF = t (t t) t
 
 // pair accessors
 test pair_fst (t (t t) t) = t t

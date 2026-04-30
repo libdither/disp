@@ -1124,9 +1124,16 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     switch (it.tag) {
       case "let": {
         const tree = compileExpr(it.body, lookupEntry, resolveUse)
-        // If the body is a use or recValue, track compile-time record metadata.
-        const record = resolveExprRecord(it.body, lookupEntry, resolveUse)
-        define(it.name, { tree, fields: record?.fields, fieldTrees: record?.fieldTrees })
+        // Determine compile-time record metadata (field names for projections).
+        // Priority: explicit recType annotation > expression-shape heuristic.
+        let fields: string[] | undefined, fieldTrees: Tree[] | undefined
+        if (it.type?.tag === "recType") {
+          fields = (it.type as any).fields.map((f: any) => f.name)
+        } else {
+          const record = resolveExprRecord(it.body, lookupEntry, resolveUse)
+          fields = record?.fields; fieldTrees = record?.fieldTrees
+        }
+        define(it.name, { tree, fields, fieldTrees })
         target.push({ kind: "Def", name: it.name, tree })
         recordItem("let", it.name)
         return

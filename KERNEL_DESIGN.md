@@ -124,45 +124,47 @@ checker argument to `wait`, this is exactly what we want — `wait` defers
 the fix-unfolding until the value argument arrives. The checker
 reconstructs its own type via `wait(self)(meta)` inside the H-rule branch.
 
-## Deferred branching (ited)
+## Deferred branching (select_lazy)
 
-`ite2(then, else, cond)` evaluates BOTH branches eagerly. In strict
+`select(then, else, cond)` evaluates BOTH branches eagerly. In strict
 tree calculus, non-taken branches containing recursive calls diverge.
 
-Fix: `ited(then_thunk, else_thunk, cond)` where branches are
+Fix: `select_lazy(then_thunk, else_thunk, cond)` where branches are
 `{_} -> value` thunks. The chosen thunk is applied to `leaf` after
 dispatch. Non-chosen thunk is never forced.
 
 ```
-ited = {t e c} -> fork(fork(t, K(e)), leaf) c leaf
+select_lazy = {t e c} -> fork(fork(t, K(e)), leaf) c leaf
 ```
 
-All conditionals in NbE tree programs use `ited`, not `ite2`, with
-one critical caveat: see *Select-then-apply* below.
+Use `select_lazy` when branches are expensive or recursive.
+Use `select` with select-then-apply (below) when branches share
+free variables — closures over shared variables defeat `select_lazy`'s
+laziness during bracket abstraction.
 
 ## Select-then-apply (bracket-abstraction laziness fix)
 
-`ited` defers branch evaluation at the *tree level*, but bracket
+`select_lazy` defers branch evaluation at the *tree level*, but bracket
 abstraction over shared free variables defeats this. When
-`[x](ited thunk_A thunk_B cond)` is compiled and all three depend on
+`[x](select_lazy thunk_A thunk_B cond)` is compiled and all three depend on
 `x`, the S-combinator rule `[x](f g) = S([x]f)([x]g)` evaluates both
-`[x]thunk_A` and `[x]thunk_B` *before* `ited` dispatches on `cond`.
+`[x]thunk_A` and `[x]thunk_B` *before* `select_lazy` dispatches on `cond`.
 
 This caused checkers to diverge: `infer` was evaluated even when
 the value was not neutral.
 
-**Fix:** compile each branch as a *closed function*, select via `ite2`
+**Fix:** compile each branch as a *closed function*, select via `select`
 (both branches are constants, so eager selection is free), then apply
 shared arguments *after* selection:
 
 ```
 // BROKEN: bracket abstraction over x evaluates expensive_fn(x)
-{x} -> ited ({_} -> expensive x) ({_} -> cheap x) (cond x)
+{x} -> select_lazy ({_} -> expensive x) ({_} -> cheap x) (cond x)
 
 // FIXED: branches are closed, selected before x is applied
 expensive_fn = {x} -> expensive x
 cheap_fn     = {x} -> cheap x
-{x} -> (ite2 expensive_fn cheap_fn (cond x)) x
+{x} -> (select expensive_fn cheap_fn (cond x)) x
 ```
 
 K-composition (`S(Kp)(Kq) → K(pq)`) collapses the constant branches
@@ -299,3 +301,49 @@ The select-then-apply pattern resolved it.
 The lambada project's compilation pipeline (B/C combinators,
 self-hosted optimization) would further reduce tree sizes and step
 counts but is not required for correctness.
+
+## rec combinator and self-referential records
+
+`rec = {components} -> fix ({self, sel} -> components sel self)` wraps
+a Church-encoded record into a fixpoint using select-then-apply-self.
+Each component receives `self` (the fixpoint) as first argument when
+selected. Works for simple self-referential records where compile-time
+fixpoint unfolding isn't triggered.
+
+```
+let k : {a, b} = rec { a := {ks, x} -> x; b := {ks, x} -> ks.a x }
+k.a t  →  t
+k.b t  →  t   (field b calls field a via ks.a)
+```
+
+The let type annotation `let k : {a, b} = ...` sets field metadata on
+the binding, enabling `k.a` projections regardless of the RHS shape.
+
+## Why Q_* selectors are load-bearing for the kernel
+
+The kernel uses `wait ks Q_*` extensively inside component functions.
+Projections (`ks.field`) compile to `ks(selector)` — an **eager**
+application. This is safe at runtime (ks is a lambda parameter) but
+catastrophic at compile time (ks = kernel fixpoint).
+
+The problem: when the public API computes `kernel Q_HYP_REDUCE`, the
+fixpoint unfolds and applies `q_hyp_reduce_fn(kernel)`. If
+`q_hyp_reduce_fn` uses projections like `ks.sig_pi`, the S-combinator
+reduction evaluates `kernel(sig_pi_selector)`, triggering ANOTHER
+fixpoint unfolding. Each component's projections cascade through all
+other components, exhausting the evaluation budget.
+
+The `wait` combinator prevents this cascade. `wait ks Q_SIG_PI` stores
+`ks` and `Q_SIG_PI` as a deferred pair — `ks(Q_SIG_PI)` is NOT
+evaluated until a third argument arrives (at runtime). This breaks the
+compile-time cascade chain.
+
+**Rule:** inside kernel component functions, always use `wait ks Q_*`
+for cross-component references, never `ks.field`. The Q_* selectors
+and `wait`-based deferral are the kernel's lazy evaluation mechanism
+in strict tree calculus.
+
+`rec` and projections work well for smaller self-referential records
+where compile-time unfolding doesn't cascade (e.g., records where
+components don't cross-reference each other, or where cross-references
+are shallow).
