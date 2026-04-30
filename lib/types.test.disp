@@ -6,192 +6,361 @@ open use "types.disp"
 // Nat / Bool predicates (raw apply!)
 // ================================================================
 
+// zero : Nat
 test Nat t = TT
+
+// one : Nat
 test Nat (t t t) = TT
+
+// two : Nat
 test Nat (t t (t t t)) = TT
+
+// false : Nat
 test Nat FF = FF
+
+// true : Bool
 test Bool TT = TT
+
+// false : Bool
 test Bool FF = TT
+
+// one : Bool
 test Bool (t t t) = FF
+
+// zero : Nat
 test Nat zero = TT
+
+// five : Nat
 test Nat five = TT
 
 // ================================================================
 // VStuckElim (wait-based neutral with ELIM_TAG)
 // ================================================================
 
+// stuckElim : Neutral
 test is_neutral (mkVStuckElim Nat (mkVHyp Bool t)) = TT
-// Smart accum: result_type at pair_fst, ELIM_TAG deeper
+
+// neutral_type stuckElim = Nat
 test neutral_type (mkVStuckElim Nat (mkVHyp Bool t)) = Nat
+
+// stuckElim metadata is tagged as an eliminator
 test pair_fst (pair_snd (type_meta (mkVStuckElim Nat (mkVHyp Bool t)))) = ELIM_TAG
 
 // ================================================================
 // Typed eliminators
 // ================================================================
 
+// bool_rec Nat one zero true = one
 test bool_rec ({_} -> Nat) one zero TT = one
+
+// bool_rec Nat one zero false = zero
 test bool_rec ({_} -> Nat) one zero FF = zero
+
+// b : Bool |- bool_rec Nat one zero b is neutral
 test is_neutral (bool_rec ({_} -> Nat) one zero (mkVHyp Bool t)) = TT
 
+// nat_rec Bool true step zero = true
 test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) zero = TT
+
+// nat_rec Bool true step two = true
 test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) two = TT
+
+// n : Nat |- nat_rec Bool true step n is neutral
 test is_neutral (nat_rec ({_} -> Bool) TT ({n, prev} -> prev) (mkVHyp Nat t)) = TT
 
+// nat_rec Nat one const zero = one
 test nat_rec ({_} -> Nat) (t t t) ({n, p} -> p) zero = t t t
+
+// nat_rec Nat zero succ two = two
 test nat_rec ({_} -> Nat) zero ({n, p} -> succ p) two = two
 
 // ================================================================
 // Eq type
 // ================================================================
 
+// refl : Eq Nat zero zero
 test (mkEq Nat zero zero) refl = TT
+
+// refl : Eq Nat one one
 test (mkEq Nat one one) refl = TT
+
+// refl : Eq Nat zero one
 test (mkEq Nat zero one) refl = FF
+
+// nonRefl : Eq Nat zero zero
 test (mkEq Nat zero zero) (t t) = FF
 
-// J reduces on refl
+// eq_J Nat zero motive five zero refl = five
 test eq_J Nat zero ({y, p} -> Nat) five zero refl = five
 
-// sym
+// eq_sym refl : Eq Nat zero zero
 test (mkEq Nat zero zero) (eq_sym Nat zero zero refl) = TT
 
-// cong
+// eq_cong succ refl : Eq Nat one one
 test (mkEq Nat one one) (eq_cong Nat Nat succ zero zero refl) = TT
 
-// subst
+// eq_subst Nat Nat zero zero refl five = five
 test eq_subst Nat Nat zero zero refl five = five
 
 // ================================================================
 // Arithmetic: add
 // ================================================================
 
+// add zero zero = zero
 test add zero zero = zero
+
+// add zero three = three
 test add zero three = three
+
+// add two three = five
 test add two three = five
+
+// add three two = five
 test add three two = five
 
+// refl : Eq Nat (add zero zero) zero
 test (mkEq Nat (add zero zero) zero) refl = TT
+
+// refl : Eq Nat (add one zero) one
 test (mkEq Nat (add one zero) one) refl = TT
+
+// refl : Eq Nat (add two zero) two
 test (mkEq Nat (add two zero) two) refl = TT
+
+// refl : Eq Nat (add three zero) three
 test (mkEq Nat (add three zero) three) refl = TT
 
-// Commutativity on concrete values
+// refl : Eq Nat (add two three) (add three two)
 test (mkEq Nat (add two three) (add three two)) refl = TT
+
+// refl : Eq Nat (add one four) (add four one)
 test (mkEq Nat (add one four) (add four one)) refl = TT
 
 // ================================================================
 // Arrow type checking (raw apply!)
 // ================================================================
 
+// id_fn : Nat -> Nat
 test NatToNat id_fn = TT
+
+// constZero : Nat -> Nat
 test NatToNat ({_} -> t) = TT
+
+// constFalse : Nat -> Nat
 test NatToNat ({_} -> FF) = FF
 
 // ================================================================
 // ton_check
 // ================================================================
 
+// n : Nat |- typeOf n = Nat
 test ton_check ({x} -> x) (mkVHyp Nat t) = Nat
+
+// n : Nat |- n : Nat
 test ton_check (conv Nat) (mkVHyp Nat t) = TT
+
+// n : Nat |- n : Bool
 test ton_check (conv Bool) (mkVHyp Nat t) = FF
+
+// f : Nat -> Nat, n : Nat |- typeOf (f n) = Nat
 test ton_check ({x} -> x) ((mkVHyp NatToNat t) (mkVHyp Nat (t t))) = Nat
+
+// f : Nat -> Nat, n : Nat |- f n : Nat
 test ton_check (conv Nat) ((mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
+
+// h : nonPi, x : nonPi |- typeOf (h x) = FF
 test ton_check ({x} -> x) ((mkVHyp (mkVHyp t t) (t t)) (mkVHyp (mkVHyp t t) (t t))) = FF
+
+// t is not neutral
 test ton_check ({x} -> x) t = FF
 
 // ================================================================
 // H-rule via raw apply (neutrals checked by type)
 // ================================================================
 
+// n : Nat |- n : Nat
 test Nat (mkVHyp Nat t) = TT
+
+// b : Bool |- b : Nat
 test Nat (mkVHyp Bool t) = FF
+
+// f : Nat -> Nat, n : Nat |- f n : Nat
 test Nat ((mkVHyp NatToNat t) (mkVHyp Nat (t t))) = TT
 
 // ================================================================
 // Pi metadata reflection
 // ================================================================
 
+// is_pi (Nat -> Nat)
 test is_pi (mkPi Nat ({_} -> Nat) t) = TT
+
+// is_pi Nat
 test is_pi Nat = FF
+
+// is_pi t
 test is_pi t = FF
+
+// pi_dom (Nat -> Nat) = Nat
 test pi_dom (mkPi Nat ({_} -> Nat) t) = Nat
 
 // Pi construction
+// is_pi (Nat -> Nat)
 test is_pi (mkArrow Nat Nat t) = TT
+
+// pi_dom (Nat -> Nat) = Nat
 test pi_dom (mkArrow Nat Nat t) = Nat
+
+// id_fn : Nat -> Nat
 test NatToNat id_fn = TT
+
+// constZero : Nat -> Nat
 test NatToNat ({_} -> t) = TT
+
+// constFalse : Nat -> Nat
 test NatToNat ({_} -> FF) = FF
 
 // ================================================================
 // Nat le/lt
 // ================================================================
 
+// zero <= zero
 test nat_le t t = TT
+
+// zero <= three
 test nat_le t (t t (t t (t t t))) = TT
+
+// one <= zero
 test nat_le (t t t) t = FF
+
+// two <= three
 test nat_le (t t (t t t)) (t t (t t (t t t))) = TT
+
+// two <= one
 test nat_le (t t (t t (t t t))) (t t (t t t)) = FF
+
+// zero < one
 test nat_lt t (t t t) = TT
+
+// zero < zero
 test nat_lt t t = FF
+
+// one < two
 test nat_lt (t t t) (t t (t t t)) = TT
 
 // ================================================================
 // Type n
 // ================================================================
 
+// Nat : Type0
 test Type0 Nat = TT
+
+// Bool : Type0
 test Type0 Bool = TT
+
+// Nat is the registered Nat type
 test is_nat_type Nat = TT
+
+// Bool is the registered Bool type
 test is_bool_type Bool = TT
+
+// Bool is not the registered Nat type
 test is_nat_type Bool = FF
+
+// Nat is not the registered Bool type
 test is_bool_type Nat = FF
+
+// Nat -> Nat : Type0
 test Type0 (mkArrow Nat Nat t) = TT
+
+// Type0 : Type1
 test Type1 Type0 = TT
+
+// Type0 : Type0
 test Type0 Type0 = FF
+
+// Nat : Type1
 test Type1 Nat = TT
+
+// Type0 : Type2
 test Type2 Type0 = TT
+
+// (x : Nat) -> Bool : Type0
+test Type0 (mkPi Nat ({_x} -> Bool) t) = TT
+
+// (x : Nat) -> x : Type0
+test Type0 (mkPi Nat ({x} -> x) t) = FF
+
+// (x : FF) -> Nat : Type0
+// TODO: should reject once Pi formation validates domains by canonical typehood.
+// test Type0 (mkPi FF ({_x} -> Nat) t) = FF
+
+// (A : Type0) -> A -> A : Type1
+test Type1 (mkPi Type0 ({A} -> mkArrow A A (t t)) t) = TT
+
+// (A : Type0) -> A -> A : Type0
+test Type0 (mkPi Type0 ({A} -> mkArrow A A (t t)) t) = FF
 
 // ================================================================
 // Structural conv
 // ================================================================
 
+// conv t t
 test conv_structural t t = TT
+
+// conv t (t t)
 test conv_structural t (t t) = FF
+
+// conv Type0 Type0
 test conv_structural Type0 Type0 = TT
+
+// conv Type0 Type1
 test conv_structural Type0 Type1 = FF
 
+// conv ((x : Nat) -> Nat) ((x : Nat) -> Nat)
 test conv_structural (mkPi Nat ({_} -> Nat) t) (mkPi Nat ({_} -> Nat) t) = TT
+
+// conv ((x : Nat) -> Nat) ((x : Bool) -> Nat)
 test conv_structural (mkPi Nat ({_} -> Nat) t) (mkPi Bool ({_} -> Nat) t) = FF
+
+// conv ((x : Nat) -> Nat) (Nat -> Nat)
+test conv_structural
+  (mkPi Nat ({_x} -> Nat) t)
+  (mkArrow Nat Nat t) = TT
+
+// conv (Nat -> Bool) (Nat -> Nat)
+test conv_structural
+  (mkArrow Nat Bool t)
+  (mkArrow Nat Nat t) = FF
 
 // ================================================================
 // Integration: full pipeline (raw apply everywhere!)
 // ================================================================
 
-// Polymorphic identity
+// idPoly : (A : Type0) -> A -> A
 test (mkPi Type0 ({A} -> mkArrow A A (t t)) t) ({_A} -> {x} -> x) = TT
 
-// Higher-order: {f}->f has type NatToNat->NatToNat
+// idNatToNat : (Nat -> Nat) -> Nat -> Nat
 // (eta: {f}->{x}->f x = {f}->f in untyped bracket abstraction)
 test (mkArrow NatToNat NatToNat t) ({f} -> f) = TT
 
-// Composition: {f}->{g}->{x}->f(g(x))
+// composeNat : (Nat -> Nat) -> (Nat -> Nat) -> Nat -> Nat
 // The term applies g to x (producing stuck), then f to stuck (producing deeper stuck).
 // Both stuck terms are accumulated neutrals. Pi checker uses ton_check for codomain.
 test (mkArrow NatToNat (mkArrow NatToNat NatToNat (t (t t))) t)
   ({f} -> {g} -> {x} -> f (g x)) = TT
 
+// badComposeNat : (Nat -> Nat) -> (Nat -> Nat) -> Nat -> Nat
 test (mkArrow NatToNat (mkArrow NatToNat NatToNat (t (t t))) t)
   ({f} -> {g} -> {x} -> FF) = FF
 
-// Double: {f}->{x}->f(f(x))
+// doubleApply : (Nat -> Nat) -> Nat -> Nat
 test (mkArrow NatToNat NatToNat t)
   ({f} -> {x} -> f (f x)) = TT
 
-// Const
+// constNat : Nat -> Nat -> Nat
 test (mkArrow Nat (mkArrow Nat Nat (t (t t))) t) ({x} -> {_y} -> x) = TT
 
-// Polymorphic const
+// constPoly : (A : Type0) -> (B : Type0) -> A -> B -> A
 test (mkPi Type0 ({A} ->
     mkPi Type0 ({B} ->
       mkArrow A (mkArrow B A (t (t (t (t t))))) (t (t (t t))))
@@ -199,6 +368,7 @@ test (mkPi Type0 ({A} ->
     t)
   ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
 
+// badConstPoly : (A : Type0) -> (B : Type0) -> A -> B -> A
 test (mkPi Type0 ({A} ->
     mkPi Type0 ({B} ->
       mkArrow A (mkArrow B A (t (t (t (t t))))) (t (t (t t))))
@@ -206,7 +376,7 @@ test (mkPi Type0 ({A} ->
     t)
   ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
 
-// Flip
+// flip : (A : Type0) -> (B : Type0) -> (C : Type0) -> (A -> B -> C) -> B -> A -> C
 test (mkPi Type0 ({A} ->
     mkPi Type0 ({B} ->
       mkPi Type0 ({C} ->
@@ -219,26 +389,31 @@ test (mkPi Type0 ({A} ->
     t)
   ({_A} -> {_B} -> {_C} -> {f} -> {b} -> {a} -> (f a) b) = TT
 
-// Deeper spine inference
+// f : Nat -> Nat, x : Nat |- f x : Nat
 test Nat ((mkVHyp NatToNat (t (t (t t)))) (mkVHyp Nat (t (t (t (t t)))))) = TT
+
+// f : Nat -> Nat, x : Nat |- f x : Bool
 test Bool ((mkVHyp NatToNat (t (t (t t)))) (mkVHyp Nat (t (t (t (t t)))))) = FF
 
-// Universe hierarchy
+// (A : Type0) -> A -> A : Type1
 test Type1 (mkPi Type0 ({A} -> mkArrow A A (t t)) t) = TT
+
+// (A : Type0) -> A -> A : Type0
 test Type0 (mkPi Type0 ({A} -> mkArrow A A (t t)) t) = FF
 
-// Bool -> Nat via typed eliminator
+// boolToNat : Bool -> Nat
 test (mkArrow Bool Nat t) ({b} ->
   bool_rec ({_} -> Nat) one zero b) = TT
 
-// Nat -> Bool via typed eliminator
+// natToBool : Nat -> Bool
 test (mkArrow Nat Bool t) ({n} ->
   nat_rec ({_} -> Bool) TT ({n_, prev} -> FF) n) = TT
 
+// badNatToBool : Nat -> Bool
 test (mkArrow Nat Bool t) ({n} ->
   nat_rec ({_} -> Nat) zero ({n_, prev} -> succ prev) n) = FF
 
-// Polymorphic apply: {f}->{x}->f(x) eta-reduces to {f}->f
+// applyPoly : (A : Type0) -> (B : Type0) -> (A -> B) -> A -> B
 // which has type (A->B)->(A->B). Use correct arrow structure.
 test (mkPi Type0 ({A} ->
     mkPi Type0 ({B} ->
@@ -247,11 +422,11 @@ test (mkPi Type0 ({A} ->
     t)
   ({_A} -> {_B} -> {f} -> f) = TT
 
-// Self-application rejection
+// badSelf : (A : Type0) -> A -> A
 test (mkPi Type0 ({A} -> mkArrow A A (t (t t))) t)
   ({_A} -> {x} -> x x) = FF
 
-// Church pair at Nat
+// pairNat : Nat -> Nat -> (Nat -> Nat -> Nat) -> Nat
 test (mkArrow Nat
   (mkArrow Nat
     (mkArrow (mkArrow Nat (mkArrow Nat Nat (t (t (t (t (t t)))))) (t (t (t (t t)))))
@@ -261,5 +436,45 @@ test (mkArrow Nat
   t)
   ({a} -> {b} -> {sel} -> (sel a) b) = TT
 
-// Hypothesis-as-type: ton_check handles H-rule directly
+// h : H |- h : H
 test ton_check (fast_eq (mkVHyp t t)) (mkVHyp (mkVHyp t t) (t t)) = TT
+
+// ctxId : (A : Type0) -> (x : A) -> A
+test (mkPi Type0 ({A} ->
+    mkPi A ({_x} -> A) (t t))
+    t)
+  ({_A} -> {x} -> x) = TT
+
+// ctxConst : (A : Type0) -> (B : Type0) -> A -> B -> A
+test (mkPi Type0 ({A} ->
+    mkPi Type0 ({B} ->
+      mkArrow A (mkArrow B A (t (t (t t)))) (t (t t)))
+      (t t))
+    t)
+  ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
+
+// badCtxConst : (A : Type0) -> (B : Type0) -> A -> B -> A
+test (mkPi Type0 ({A} ->
+    mkPi Type0 ({B} ->
+      mkArrow A (mkArrow B A (t (t (t t)))) (t (t t)))
+      (t t))
+    t)
+  ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
+
+// f : (x : Nat) -> Bool, n : Nat |- f n : Bool
+test Bool
+  ((mkVHyp (mkPi Nat ({_x} -> Bool) t) t)
+    (mkVHyp Nat (t t))) = TT
+
+// f : (x : Nat) -> Bool, n : Nat |- f n : Nat
+test Nat
+  ((mkVHyp (mkPi Nat ({_x} -> Bool) t) t)
+    (mkVHyp Nat (t t))) = FF
+
+// f : (A : Type0) -> A -> A, n : Nat |- f Nat n : Nat
+test Nat
+  (((mkVHyp
+      (mkPi Type0 ({A} -> mkArrow A A (t t)) t)
+      t)
+    Nat)
+    (mkVHyp Nat (t t))) = TT

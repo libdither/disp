@@ -642,6 +642,37 @@ if (size(af.x) > THRESHOLD || size(ax.x) > THRESHOLD) return cap(cap(S, af), ax)
 ```
 would prevent compile-time blowup on large trees while preserving the optimization for small constants. This is orthogonal to B/C combinators and could be tried first as a quick win.
 
+##### Path 3: Selector-query dispatch — IMPLEMENTED
+
+Replace the linear `ite2`/`fast_eq` query chain with Church selectors:
+
+```disp
+let Q_NAT = {q_accum, q_pi, q_nat, ...} -> q_nat
+
+let kernel = fix ({self, query} ->
+  query q_accum_fn q_pi_fn q_nat_fn q_bool_fn q_eq_fn
+        q_type_fn q_ton_fn q_sig_accum_fn q_sig_pi_fn q_sig_type_fn
+        self query)
+```
+
+This keeps the single mutual-kernel authority while removing the linear query
+comparison chain. Implemented in `lib/nbe.disp`; `lib/types.disp` is now a
+re-export layer over the unified selector-query kernel.
+
+Current verification:
+- `npm test` passes.
+- `npm run disp -- --stats --stats-detail lib/nbe.test.disp`: 15/15 tests pass,
+  about 21.6k evaluator steps.
+- `npm run disp -- --stats --stats-detail lib/types.test.disp`: 105/105 tests
+  pass, about 30.8k evaluator steps.
+
+The previous `Type0(Nat)`/`Type0(Bool)` budget failure is gone. The remaining
+cost is mostly up-front file opening/record projection: opening the unified
+`nbe.disp` costs about 20.7k steps because the file now contains the full
+kernel plus the type-level surface. This is acceptable for correctness and is a
+better target for compiler/open-use optimization than the old 10M runtime
+dispatch failure.
+
 ## Previous implementation checklist (kernel attempt #1)
 
 Preserved for reference. Items checked off during the 2026-04-29 attempt:

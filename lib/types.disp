@@ -1,260 +1,46 @@
-// Type definitions: Nat, Bool, Eq, Type n, typed eliminators, arithmetic.
-// Depends on: prelude.disp, nbe.disp
+// Type definitions are implemented by the unified selector-query kernel
+// in nbe.disp. This file re-exports the type-level surface for callers
+// that open types.disp.
 open use "prelude.disp"
 open use "nbe.disp"
 
-// ================================================================
-// Nat predicate (wait-based, H-rule inlined)
-// ================================================================
+let Nat = Nat
+let Bool = Bool
+let zero = zero
+let succ = succ
+let one = one
+let two = two
+let three = three
+let four = four
+let five = five
 
-let nat_zero_fn = {self, meta, n} -> TT
-let nat_ff_fn = {self, meta, n} -> FF
-let nat_succ_fn = {self, meta, n} -> wait self meta (pair_snd n)
+let bool_rec = bool_rec
+let nat_rec_body = nat_rec_body
+let nat_rec = nat_rec
 
-let nat_succ_check_fn = {self, meta, n} ->
-  ite2 nat_succ_fn nat_ff_fn (fast_eq (pair_fst n) t)
-    self meta n
+let refl = refl
+let mkEq = mkEq
+let is_eq = is_eq
+let eq_A = eq_A
+let eq_x = eq_x
+let eq_y = eq_y
+let eq_J = eq_J
+let eq_subst = eq_subst
+let eq_sym = eq_sym
+let eq_cong = eq_cong
 
-let nat_non_zero_fn = {self, meta, n} ->
-  ite2 nat_succ_check_fn nat_ff_fn (is_tree_fork n)
-    self meta n
+let nat_le = nat_le
+let nat_lt = nat_lt
 
-let nat_h_rule_fn = {self, meta, n} ->
-  ton_check (fast_eq (wait self meta)) n
+let is_nat_type = is_nat_type
+let is_bool_type = is_bool_type
+let is_registered = is_registered
+let mkType = mkType
+let Type0 = Type0
+let Type1 = Type1
+let Type2 = Type2
 
-let nat_non_neutral_fn = {self, meta, n} ->
-  ite2 nat_zero_fn nat_non_zero_fn (fast_eq n t)
-    self meta n
-
-let nat_checker = fix ({self, meta, n} ->
-  ite2 nat_h_rule_fn nat_non_neutral_fn (is_neutral n)
-    self meta n)
-
-let Nat = wait nat_checker (t NAT_TAG t)
-
-// ================================================================
-// Bool predicate (wait-based, H-rule inlined)
-// ================================================================
-
-let bool_h_rule_fn = {self, meta, b} ->
-  ton_check (fast_eq (wait self meta)) b
-
-let bool_check_fn = {self, meta, b} ->
-  ite2 TT (fast_eq b FF) (fast_eq b t)
-
-let bool_checker = fix ({self, meta, b} ->
-  ite2 bool_h_rule_fn bool_check_fn (is_neutral b)
-    self meta b)
-
-let Bool = wait bool_checker (t BOOL_TAG t)
-
-// ================================================================
-// Nat helpers
-// ================================================================
-
-let zero = t
-let succ = {n} -> t t n
-let one = succ zero
-let two = succ one
-let three = succ two
-let four = succ three
-let five = succ four
-
-// ================================================================
-// Typed eliminators (neutral-aware recursors)
-// ================================================================
-
-let bool_rec = {motive, t_case, f_case, target} ->
-  ited
-    ({_} -> mkVStuckElim (motive target) target)
-    ({_} -> ite2 t_case f_case target)
-    (is_neutral target)
-
-let nat_rec_body = fix ({self, motive, base, step, target} ->
-  ited
-    ({_} -> mkVStuckElim (motive target) target)
-    ({_} ->
-      ite2
-        ({self, motive, base, step, target} -> base)
-        ({self, motive, base, step, target} ->
-          ite2
-            ({self, motive, base, step, target} ->
-              ite2
-                ({self, motive, base, step, target} ->
-                  step (pair_snd target) (self motive base step (pair_snd target)))
-                ({self, motive, base, step, target} -> base)
-                (fast_eq (pair_fst target) t)
-                self motive base step target)
-            ({self, motive, base, step, target} -> base)
-            (is_tree_fork target)
-            self motive base step target)
-        (fast_eq target t)
-        self motive base step target)
-    (is_neutral target))
-
-let nat_rec = {motive, base, step, target} ->
-  nat_rec_body motive base step target
-
-// ================================================================
-// Eq type (propositional equality, wait-based)
-// ================================================================
-
-let refl = t
-
-// eq_checker: meta = fork(EQ_TAG, fork(A, fork(x, y)))
-let eq_h_rule_fn = {self, meta, p} ->
-  ton_check (fast_eq (wait self meta)) p
-
-let eq_check_fn = {self, meta, p} ->
-  ited
-    ({_} -> fast_eq (pair_fst (pair_snd (pair_snd meta))) (pair_snd (pair_snd (pair_snd meta))))
-    ({_} -> FF)
-    (fast_eq p t)
-
-let eq_checker = fix ({self, meta, p} ->
-  ite2 eq_h_rule_fn eq_check_fn (is_neutral p)
-    self meta p)
-
-let mkEq = {A, x, y} ->
-  wait eq_checker (t EQ_TAG (t A (t x y)))
-
-let is_eq = {v} -> type_has_tag EQ_TAG v
-let eq_A = {v} -> pair_fst (pair_snd (type_meta v))
-let eq_x = {v} -> pair_fst (pair_snd (pair_snd (type_meta v)))
-let eq_y = {v} -> pair_snd (pair_snd (pair_snd (type_meta v)))
-
-let eq_J = {A, x, motive, base, y, p} ->
-  ited
-    ({_} -> mkVStuckElim (motive y p) p)
-    ({_} -> base)
-    (is_neutral p)
-
-let eq_subst = {A, P, x, y, p, px} ->
-  ited
-    ({_} -> mkVStuckElim (P y) p)
-    ({_} -> px)
-    (is_neutral p)
-
-let eq_sym = {A, x, y, p} ->
-  ited
-    ({_} -> mkVStuckElim (mkEq A y x) p)
-    ({_} -> refl)
-    (is_neutral p)
-
-let eq_cong = {A, B, f, x, y, p} ->
-  ited
-    ({_} -> mkVStuckElim (mkEq B (f x) (f y)) p)
-    ({_} -> refl)
-    (is_neutral p)
-
-// ================================================================
-// Nat le/lt
-// ================================================================
-
-let nat_le_zero_fn = {self, a, b} -> TT
-let nat_le_succ_fn = {self, a, b} ->
-  ite2
-    ({self, a, b} -> self (pair_snd a) (pair_snd b))
-    ({self, a, b} -> FF)
-    (is_tree_fork b)
-    self a b
-let nat_le_nonzero_fn = {self, a, b} ->
-  ite2 nat_le_succ_fn ({self, a, b} -> FF) (is_tree_fork a)
-    self a b
-let nat_le = fix ({self, a, b} ->
-  ite2 nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
-    self a b)
-
-let nat_lt = {a, b} -> nat_le (t t a) b
-
-// ================================================================
-// Type n (universe predicate, wait-based)
-// ================================================================
-
-let is_nat_type = {x} -> type_has_tag NAT_TAG x
-let is_bool_type = {x} -> type_has_tag BOOL_TAG x
-let is_registered = {x} -> ite2 TT (is_bool_type x) (is_nat_type x)
-
-// meta = fork(UNIV_TAG, rank). Extract rank via pair_snd.
-let univ_check_template = {rank, inferred_type} ->
-  ite2 (nat_le (universe_rank inferred_type) rank) FF (is_universe inferred_type)
-
-let type_neutral_fn = {self, meta, x} ->
-  ton_check (univ_check_template (pair_snd meta)) x
-
-let type_univ_fn = {self, meta, x} ->
-  nat_lt (universe_rank x) (pair_snd meta)
-
-let type_pi_fn = {self, meta, x} ->
-  and (wait self meta (pi_dom x))
-    (wait self meta (pi_cod_fn x (mkVHyp (pi_dom x) (t (t (pair_snd meta))))))
-
-let type_registered_fn = {self, meta, x} -> is_registered x
-
-let type_non_neutral_fn = {self, meta, x} ->
-  ite2
-    type_univ_fn
-    ({self, meta, x} ->
-      ite2
-        type_pi_fn
-        ({self, meta, x} ->
-          ite2 type_registered_fn ({self, meta, x} -> FF) (is_registered x)
-            self meta x)
-        (is_pi x)
-        self meta x)
-    (is_universe x)
-    self meta x
-
-let type_checker = fix ({self, meta, x} ->
-  ite2 type_neutral_fn type_non_neutral_fn (is_neutral x)
-    self meta x)
-
-let mkType = {rank} -> wait type_checker (t UNIV_TAG rank)
-
-let Type0 = mkType t
-let Type1 = mkType (t t t)
-let Type2 = mkType (t t (t t t))
-
-// ================================================================
-// Structural conv
-// ================================================================
-
-let conv_fast_fn = {self, a, b} -> TT
-let conv_pi_fn = {self, a, b} ->
-  and (self (pi_dom a) (pi_dom b))
-    (self
-      (pi_cod_fn a (mkVHyp (pi_dom a) (t (t (t t)))))
-      (pi_cod_fn b (mkVHyp (pi_dom a) (t (t (t t))))))
-let conv_univ_fn = {self, a, b} ->
-  fast_eq (universe_rank a) (universe_rank b)
-let conv_ff_fn = {self, a, b} -> FF
-
-let conv_not_fast_fn = {self, a, b} ->
-  ite2 conv_pi_fn ({self, a, b} ->
-    ite2 conv_univ_fn conv_ff_fn
-      (and (is_universe a) (is_universe b))
-      self a b)
-    (and (is_pi a) (is_pi b))
-    self a b
-
-let conv_structural = fix ({self, a, b} ->
-  ite2 conv_fast_fn conv_not_fast_fn (fast_eq a b)
-    self a b)
-
-// ================================================================
-// Arithmetic: add
-// ================================================================
-
-let nat_motive = {_} -> Nat
-
-let add_zero_fn = {self, n, m} -> m
-let add_succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
-let add_nonzero_fn = {self, n, m} ->
-  ite2 add_succ_fn add_zero_fn (is_tree_fork n) self n m
-
-let add = fix ({self, n, m} ->
-  ite2 add_zero_fn add_nonzero_fn (fast_eq n t) self n m)
-
-// Common type shorthands
-let NatToNat = mkArrow Nat Nat t
-let id_fn = {x} -> x
+let conv_structural = conv_structural
+let add = add
+let NatToNat = NatToNat
+let id_fn = id_fn
