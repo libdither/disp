@@ -2,68 +2,49 @@ open use "prelude.disp"
 open use "nbe.disp"
 
 // ================================================================
-// Tag infrastructure
+// Neutral detection (signature-based)
 // ================================================================
 
-test is_tagged (mkVHyp t t) = TT
-test is_tagged (mkVLam t ({x} -> x)) = TT
-test is_tagged t = FF
-test is_tagged (t t) = FF
-test is_tagged (t t t) = FF
-
-test tag_kind (mkVLam t ({x} -> x)) = KV_LAM
-test tag_kind (mkVHyp t t) = KV_HYP
-test tag_payload (mkVHyp (t t) t) = t (t t) t
-
-// Val recognizers
-test is_vhyp (mkVHyp t t) = TT
-test is_vhyp (mkVLam t ({x} -> x)) = FF
-test is_vhyp t = FF
-test is_vlam (mkVLam t ({x} -> x)) = TT
-test is_vlam (mkVHyp t t) = FF
-test is_vstuck (mkVStuck t t) = TT
-test is_vstuck t = FF
 test is_neutral (mkVHyp t t) = TT
-test is_neutral (mkVStuck t t) = TT
-test is_neutral (mkVLam t ({x} -> x)) = FF
+test is_neutral (mkVHyp (t t) (t t)) = TT
 test is_neutral t = FF
+test is_neutral (t t) = FF
+test is_neutral (t t t) = FF
 
-// Payload accessors
-test vlam_body (mkVLam t ({x} -> x)) = {x} -> x
-test vlam_meta (mkVLam (t (t t)) ({x} -> x)) = t (t t)
-test vhyp_type (mkVHyp (t t) t) = t t
-test mk_vstuck_prog (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
+// Spine accumulation: applying a neutral produces a neutral
+test is_neutral (mkVHyp t t (t t)) = TT
 
-// ================================================================
-// napply_simple
-// ================================================================
-
-test tag_dispatch t t = t t
-test napply_simple t t = t t
-test napply_simple (t t) (t t) = t t (t t)
-test napply_simple (t t (t (t t))) t = t (t t)
-test napply_simple (mkVHyp t t) (t t) = mkVStuck (mkVHyp t t) (t t)
-test napply_simple (mkVStuck (mkVHyp t t) t) (t t) = mkVStuck (mkVStuck (mkVHyp t t) t) (t t)
-test napply_simple (mkVLam t ({x} -> x)) (t t) = t t
-test napply_simple (mkVLam t ({x, y} -> x)) (t t) = t t (t t)
-test napply_simple ({x} -> x) t = t
-test napply_simple ({x} -> x) (t t) = t t
-test napply_simple ({x} -> x) (t (t t) t) = t (t t) t
-test napply_simple ({x} -> x) (mkVHyp (t t) t) = mkVHyp (t t) t
+// VStuckElim is also neutral
+test is_neutral (mkVStuckElim t (mkVHyp t t)) = TT
 
 // ================================================================
-// Metadata reflection
+// Spine accumulation (raw apply on neutrals)
 // ================================================================
 
-test mkVLam_prog (t t) ({x} -> x) = mkVLam (t t) ({x} -> x)
-test mkVHyp_prog t t = mkVHyp t t
+// Applying a hypothesis accumulates the spine
+let h1 = mkVHyp t t
+let stuck1 = h1 (t t)
+let stuck2 = stuck1 (t t t)
+
+// All share the same signature
+test fast_eq (pair_fst h1) (pair_fst stuck1) = TT
+test fast_eq (pair_fst stuck1) (pair_fst stuck2) = TT
+
+// Raw function apply still works
+test ({x} -> x) t = t
+test ({x} -> x) (t t) = t t
+test ({x} -> x) (mkVHyp (t t) t) = mkVHyp (t t) t
 
 // ================================================================
-// napply with H-rule
+// Metadata extraction from neutrals
 // ================================================================
 
-test napply t t = t t
-test napply (mkVLam t ({x} -> x)) (t t) = t t
+// Smart accum: type is always at pair_fst of neutral metadata
+// Base hypothesis: meta = fork(type, fork(HYP_TAG, id))
+test neutral_type h1 = t
 
-// Hypothesis-as-type
-test napply (mkVHyp t t) (mkVHyp (mkVHyp t t) (t t)) = TT
+// Spine: meta = fork(result_type, fork(old_meta, arg))
+// h1 has type t (LEAF), which is not Pi, so result_type = FF
+test neutral_type stuck1 = FF
+// Arg is still accessible deeper in the metadata
+test pair_snd (pair_snd (type_meta stuck1)) = t t

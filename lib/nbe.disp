@@ -1,188 +1,147 @@
-// NbE: tag infrastructure, Val domain, napply, ton_check, conv, Pi/Arrow.
+// NbE: smart accum (type-tracking neutrals), O(1) ton_check, conv, Pi/Arrow.
+// Types: wait(checker)(metadata) — raw apply(T, v) = TT.
+// Neutrals: wait(accum)(fork(type, payload)) — type stored at fixed position.
+// Smart accum computes result types during accumulation (Pi codomain).
 // Depends on: prelude.disp
 open use "prelude.disp"
 
 // ================================================================
-// Tag infrastructure
+// Wait-based type accessors (must be before accum)
 // ================================================================
 
-let TAG_ROOT = t (t (t t)) (t t)
-let KV_LAM = t
-let KV_HYP = t t
-let KV_STUCK = t t t
-let KV_ELIM = t (t t t)           // stuck eliminator
+// wait(f)(x) = fork(stem(X), fork(LEAF, x))
+// type_meta extracts x from any wait-based value.
+let type_meta = {T} -> pair_snd (pair_snd T)
 
-// tagged(kind, payload) = fork(fork(TAG_ROOT, kind), payload)
-let tagged = {kind, payload} -> t (t TAG_ROOT kind) payload
-let mkVLam = {meta, body} -> tagged KV_LAM (t meta body)
-let mkVHyp = {ty, id} -> tagged KV_HYP (t ty id)
-let mkVStuck = {head, arg} -> tagged KV_STUCK (t head arg)
+let conv = {a, b} -> fast_eq a b
 
-// is_tagged: checks fork(fork(TAG_ROOT, _), _)
-let is_tagged = {x} ->
-  triage
-    FF
-    ({_} -> FF)
-    ({l, r} -> triage FF ({_} -> FF) ({ll, lr} -> fast_eq ll TAG_ROOT) l)
-    x
+// ================================================================
+// Metadata tags for type former recognition
+// ================================================================
 
-// tag_kind: t.left.right
-let tag_kind = {x} ->
-  triage t ({x} -> x) ({l, r} -> triage t ({x} -> x) ({ll, lr} -> lr) l) x
+// Each type former tags its metadata: fork(TAG, payload).
+// Recognition: fast_eq(pair_fst(type_meta(T)), TAG).
 
-// tag_payload: t.right
-let tag_payload = {x} -> triage t ({x} -> x) ({l, r} -> r) x
+let PI_TAG = t (t t)
+let UNIV_TAG = t t (t t)
+let EQ_TAG = t (t (t t))
+let NAT_TAG = t t t t
+let BOOL_TAG = t (t t t)
 
-// Kind-specific recognizers
-let mkKindCheck = {kindTag, x} ->
-  ited ({_} -> fast_eq (tag_kind x) kindTag) ({_} -> FF) (is_tagged x)
+let HYP_TAG = t (t (t t))
+let ELIM_TAG = t (t t t)
 
-let is_vhyp = {x} -> mkKindCheck KV_HYP x
-let is_vlam = {x} -> mkKindCheck KV_LAM x
-let is_vstuck = {x} -> mkKindCheck KV_STUCK x
-let is_velim = {x} -> mkKindCheck KV_ELIM x
-let is_neutral = {x} ->
-  ited ({_} -> TT)
-    ({_} -> ited ({_} -> TT) ({_} -> is_velim x) (is_vstuck x))
-    (is_vhyp x)
+let type_has_tag = {tag, T} -> fast_eq (pair_fst (type_meta T)) tag
 
-// Payload accessors
-let vlam_meta = {x} -> pair_fst (tag_payload x)
-let vlam_body = {x} -> pair_snd (tag_payload x)
-let vhyp_type = vlam_meta
-let vhyp_id = vlam_body
-let vstuck_head = vlam_meta
-let vstuck_arg = vlam_body
+// ================================================================
+// Smart accum: type-tracking neutral handler
+// ================================================================
 
-// mk_vstuck as tree program
-let mk_vstuck_prog = {h, arg} ->
-  t (t TAG_ROOT KV_STUCK) (t h arg)
+// Meta format: fork(current_type, payload)
+//   VHyp:  fork(type, fork(HYP_TAG, id))
+//   Stuck: fork(result_type, fork(old_meta, arg))
+// When applied to v, if current type is Pi, result_type = codFn(v).
+// Otherwise, result_type = FF (unknown → fails type checking).
+// Uses PI_TAG directly — no kernel reference needed.
 
-// Stuck eliminator: frozen case-split on a neutral target.
-// Payload: fork(motive, target)
-let mkVStuckElim = {motive, target} -> tagged KV_ELIM (t motive target)
-let velim_motive = {x} -> pair_fst (tag_payload x)
-let velim_target = {x} -> pair_snd (tag_payload x)
+let accum_pi_fn = {self, meta, v} ->
+  // codFn = pair_snd(pair_snd(pair_snd(type_meta(pair_fst(meta)))))
+  wait self
+    (t (pair_snd (pair_snd (pair_snd (type_meta (pair_fst meta)))) v)
+       (t meta v))
 
-// Data shape checks (non-tagged trees)
+let accum_non_pi_fn = {self, meta, v} ->
+  wait self (t FF (t meta v))
+
+let accum = fix ({self, meta, v} ->
+  ite2 accum_pi_fn accum_non_pi_fn
+    (fast_eq (pair_fst (type_meta (pair_fst meta))) PI_TAG)
+    self meta v)
+
+let mkVHyp = {ty, id} -> wait accum (t ty (t HYP_TAG id))
+let mkVStuckElim = {result_type, target} -> wait accum (t result_type (t ELIM_TAG target))
+let fresh_hyp = mkVHyp
+
+// neutral_type: extract the stored type from a neutral's metadata
+let neutral_type = {v} -> pair_fst (type_meta v)
+
+// is_neutral: signature check (all neutrals share accum handler)
+let NEUTRAL_SIG = pair_fst (wait accum t)
+let is_neutral = {x} -> fast_eq (pair_fst x) NEUTRAL_SIG
+
+// Pi: meta = fork(PI_TAG, fork(domain, fork(depth, codFn)))
+let is_pi = {v} -> type_has_tag PI_TAG v
+let pi_dom = {v} -> pair_fst (pair_snd (type_meta v))
+let pi_depth = {v} -> pair_fst (pair_snd (pair_snd (type_meta v)))
+let pi_cod_fn = {v} -> pair_snd (pair_snd (pair_snd (type_meta v)))
+
+// Universe: meta = fork(UNIV_TAG, rank)
+let is_universe = {v} -> type_has_tag UNIV_TAG v
+let universe_rank = {v} -> pair_snd (type_meta v)
+
+// ================================================================
+// Data shape checks
+// ================================================================
+
 let is_tree_leaf = {v} ->
   ite2 FF
     (triage TT ({_} -> FF) ({l, r} -> FF) v)
-    (is_tagged v)
+    (is_neutral v)
 
 let is_tree_fork = {v} ->
   ite2 FF
     (triage FF ({_} -> FF) ({l, r} -> TT) v)
-    (is_tagged v)
+    (is_neutral v)
 
 // ================================================================
-// napply_simple: tag dispatch, no H-rule
+// ton_check (O(1) type extraction via smart accum)
 // ================================================================
 
-let tag_dispatch = {f, x} ->
-  ited ({_} -> mk_vstuck_prog f x)
-    ({_} -> ited ({_} -> mk_vstuck_prog f x)
-      ({_} -> ited ({_} -> vlam_body f x)
-        ({_} -> f x)
-        (is_vlam f))
-      (is_vstuck f))
-    (is_vhyp f)
+// Smart accum stores the type at pair_fst of every neutral's metadata.
+// ton_check just extracts it — no spine walking needed.
 
-let napply_simple = fix ({self, f, x} ->
-  ited ({_} -> mk_vstuck_prog f x)
-    ({_} -> ited ({_} -> mk_vstuck_prog f x)
-      ({_} -> ited ({_} -> vlam_body f x)
-        ({_} -> f x)
-        (is_vlam f))
-      (is_vstuck f))
-    (is_vhyp f))
+let ton_check_neutral_fn = {check_fn, v} -> check_fn (neutral_type v)
+let ton_check_ff_fn = {check_fn, v} -> FF
+let ton_check = {check_fn, v} ->
+  ite2 ton_check_neutral_fn ton_check_ff_fn (is_neutral v) check_fn v
 
 // ================================================================
-// Metadata: Pi and Universe reflection
+// Pi type constructor
 // ================================================================
 
-let PI_TAG = t (t t)
-let UNIV_TAG = t t (t t)
+// Pi metadata: fork(PI_TAG, fork(domain, fork(depth, codFn)))
+// H-rule: reconstruct self-type via wait(self)(meta), compare with fast_eq.
+// Codomain check: if result is neutral, use ton_check directly.
+// If result is concrete, apply codomain type via raw apply.
+// select-then-apply avoids evaluating both branches.
 
-let is_pi = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) PI_TAG) FF (is_vlam v)
-let pi_dom = {v} -> pair_fst (pair_snd (vlam_meta v))
-let pi_cod_fn = {v} -> pair_snd (pair_snd (vlam_meta v))
+let pi_h_rule_fn = {self, meta, v} ->
+  ton_check (fast_eq (wait self meta)) v
 
-let is_universe = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) UNIV_TAG) FF (is_vlam v)
-let universe_rank = {v} -> pair_snd (vlam_meta v)
+let pi_check_fn = {self, meta, v} ->
+  ite2
+    ({self, meta, v} ->
+      ton_check
+        (fast_eq
+          (pair_snd (pair_snd (pair_snd meta))
+            (mkVHyp (pair_fst (pair_snd meta)) (pair_fst (pair_snd (pair_snd meta))))))
+        (v (mkVHyp (pair_fst (pair_snd meta)) (pair_fst (pair_snd (pair_snd meta))))))
+    ({self, meta, v} ->
+      fast_eq
+        (pair_snd (pair_snd (pair_snd meta))
+          (mkVHyp (pair_fst (pair_snd meta)) (pair_fst (pair_snd (pair_snd meta))))
+          (v (mkVHyp (pair_fst (pair_snd meta)) (pair_fst (pair_snd (pair_snd meta))))))
+        TT)
+    (is_neutral
+      (v (mkVHyp (pair_fst (pair_snd meta)) (pair_fst (pair_snd (pair_snd meta))))))
+    self meta v
 
-let mkVHyp_prog = {ty, id} -> t (t TAG_ROOT KV_HYP) (t ty id)
-let mkVLam_prog = {meta, body} -> t (t TAG_ROOT KV_LAM) (t meta body)
-let fresh_hyp = mkVHyp_prog
+let pi_checker = fix ({self, meta, v} ->
+  ite2 pi_h_rule_fn pi_check_fn (is_neutral v)
+    self meta v)
 
-// ================================================================
-// type_of_neutral (CPS: ton_check)
-// ================================================================
+let mkPi = {domain, codFn, depth} ->
+  wait pi_checker (t PI_TAG (t domain (t depth codFn)))
 
-let ton_vhyp_fn = {self, napply_fn, check_fn, v} -> check_fn (vhyp_type v)
-
-let ton_spine_cont = {check_fn, napply_fn, arg, head_type} ->
-  ite2 (check_fn (napply_fn (pi_cod_fn head_type) arg)) FF (is_pi head_type)
-
-let ton_vstuck_fn = {self, napply_fn, check_fn, v} ->
-  self napply_fn
-    (ton_spine_cont check_fn napply_fn (vstuck_arg v))
-    (vstuck_head v)
-
-let ton_ff_fn = {self, napply_fn, check_fn, v} -> FF
-
-let ton_velim_fn = {self, napply_fn, check_fn, v} ->
-  check_fn (napply_fn (velim_motive v) (velim_target v))
-
-let ton_non_vhyp_fn = {self, napply_fn, check_fn, v} ->
-  ite2 ton_vstuck_fn
-    ({self, napply_fn, check_fn, v} ->
-      ite2 ton_velim_fn ton_ff_fn (is_velim v)
-        self napply_fn check_fn v)
-    (is_vstuck v)
-    self napply_fn check_fn v
-
-let ton_check_core = fix ({self, napply_fn, check_fn, v} ->
-  ite2 ton_vhyp_fn ton_non_vhyp_fn (is_vhyp v)
-    self napply_fn check_fn v)
-
-let ton_check = wait ton_check_core napply_simple
-
-// conv (fast_eq based)
-let conv = {a, b} -> fast_eq a b
-
-// ================================================================
-// napply: full evaluator with H-rule
-// ================================================================
-
-let napply_neutral_fn = {conv_fn, ton_check_fn, f, x} ->
-  ited ({_} -> TT)
-    ({_} -> tag_dispatch f x)
-    (ton_check_fn (conv_fn f) x)
-
-let napply_raw_fn = {conv_fn, ton_check_fn, f, x} ->
-  tag_dispatch f x
-
-let napply_core = {conv_fn, ton_check_fn, f, x} ->
-  ite2 napply_neutral_fn napply_raw_fn (is_neutral x)
-    conv_fn ton_check_fn f x
-
-let napply = wait (wait (wait napply_core conv) ton_check)
-
-// ================================================================
-// Type constructors: Pi and Arrow
-// ================================================================
-
-// Pi body: normalized to TT/FF via fast_eq
-let pi_body_template = {napply_ref, A, B, f} ->
-  fast_eq (napply_ref A (napply_ref f B)) TT
-
-let mkPi_prog = {domain, codFn, depth} ->
-  mkVLam_prog
-    (t PI_TAG (t domain codFn))
-    (pi_body_template napply
-      (napply codFn (mkVHyp_prog domain depth))
-      (mkVHyp_prog domain depth))
-
-let mkArrow_prog = {a_type, b_type, depth} ->
-  mkPi_prog a_type (mkVLam_prog t (t t b_type)) depth
+let mkArrow = {a_type, b_type, depth} ->
+  mkPi a_type ({_} -> b_type) depth

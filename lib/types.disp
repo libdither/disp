@@ -4,32 +4,49 @@ open use "prelude.disp"
 open use "nbe.disp"
 
 // ================================================================
-// Nat predicate (recursive, select-then-apply)
+// Nat predicate (wait-based, H-rule inlined)
 // ================================================================
 
-let nat_zero_fn = {self, n} -> TT
-let nat_ff_fn = {self, n} -> FF
-let nat_succ_fn = {self, n} -> napply self (pair_snd n)
+let nat_zero_fn = {self, meta, n} -> TT
+let nat_ff_fn = {self, meta, n} -> FF
+let nat_succ_fn = {self, meta, n} -> wait self meta (pair_snd n)
 
-let nat_succ_check_fn = {self, n} ->
+let nat_succ_check_fn = {self, meta, n} ->
   ite2 nat_succ_fn nat_ff_fn (fast_eq (pair_fst n) t)
-    self n
+    self meta n
 
-let nat_non_zero_fn = {self, n} ->
+let nat_non_zero_fn = {self, meta, n} ->
   ite2 nat_succ_check_fn nat_ff_fn (is_tree_fork n)
-    self n
+    self meta n
 
-let nat_body = fix ({self, n} ->
+let nat_h_rule_fn = {self, meta, n} ->
+  ton_check (fast_eq (wait self meta)) n
+
+let nat_non_neutral_fn = {self, meta, n} ->
   ite2 nat_zero_fn nat_non_zero_fn (fast_eq n t)
-    self n)
+    self meta n
 
-let Nat = mkVLam t nat_body
+let nat_checker = fix ({self, meta, n} ->
+  ite2 nat_h_rule_fn nat_non_neutral_fn (is_neutral n)
+    self meta n)
+
+let Nat = wait nat_checker (t NAT_TAG t)
 
 // ================================================================
-// Bool predicate
+// Bool predicate (wait-based, H-rule inlined)
 // ================================================================
 
-let Bool = mkVLam t ({b} -> ite2 TT (fast_eq b FF) (fast_eq b t))
+let bool_h_rule_fn = {self, meta, b} ->
+  ton_check (fast_eq (wait self meta)) b
+
+let bool_check_fn = {self, meta, b} ->
+  ite2 TT (fast_eq b FF) (fast_eq b t)
+
+let bool_checker = fix ({self, meta, b} ->
+  ite2 bool_h_rule_fn bool_check_fn (is_neutral b)
+    self meta b)
+
+let Bool = wait bool_checker (t BOOL_TAG t)
 
 // ================================================================
 // Nat helpers
@@ -49,13 +66,13 @@ let five = succ four
 
 let bool_rec = {motive, t_case, f_case, target} ->
   ited
-    ({_} -> mkVStuckElim motive target)
+    ({_} -> mkVStuckElim (motive target) target)
     ({_} -> ite2 t_case f_case target)
     (is_neutral target)
 
 let nat_rec_body = fix ({self, motive, base, step, target} ->
   ited
-    ({_} -> mkVStuckElim motive target)
+    ({_} -> mkVStuckElim (motive target) target)
     ({_} ->
       ite2
         ({self, motive, base, step, target} -> base)
@@ -79,38 +96,42 @@ let nat_rec = {motive, base, step, target} ->
   nat_rec_body motive base step target
 
 // ================================================================
-// Eq type (propositional equality)
+// Eq type (propositional equality, wait-based)
 // ================================================================
 
-let EQ_TAG = t (t (t t))
 let refl = t
 
-let is_eq = {v} -> ite2 (fast_eq (pair_fst (vlam_meta v)) EQ_TAG) FF (is_vlam v)
-let eq_A = {v} -> pair_fst (pair_snd (vlam_meta v))
-let eq_x = {v} -> pair_fst (pair_snd (pair_snd (vlam_meta v)))
-let eq_y = {v} -> pair_snd (pair_snd (pair_snd (vlam_meta v)))
+// eq_checker: meta = fork(EQ_TAG, fork(A, fork(x, y)))
+let eq_h_rule_fn = {self, meta, p} ->
+  ton_check (fast_eq (wait self meta)) p
 
-let eq_body = {x, y, p} ->
+let eq_check_fn = {self, meta, p} ->
   ited
-    ({_} -> TT)
-    ({_} -> ited
-      ({_} -> fast_eq x y)
-      ({_} -> FF)
-      (fast_eq p t))
-    (is_neutral p)
+    ({_} -> fast_eq (pair_fst (pair_snd (pair_snd meta))) (pair_snd (pair_snd (pair_snd meta))))
+    ({_} -> FF)
+    (fast_eq p t)
+
+let eq_checker = fix ({self, meta, p} ->
+  ite2 eq_h_rule_fn eq_check_fn (is_neutral p)
+    self meta p)
 
 let mkEq = {A, x, y} ->
-  mkVLam_prog (t EQ_TAG (t A (t x y))) (eq_body x y)
+  wait eq_checker (t EQ_TAG (t A (t x y)))
+
+let is_eq = {v} -> type_has_tag EQ_TAG v
+let eq_A = {v} -> pair_fst (pair_snd (type_meta v))
+let eq_x = {v} -> pair_fst (pair_snd (pair_snd (type_meta v)))
+let eq_y = {v} -> pair_snd (pair_snd (pair_snd (type_meta v)))
 
 let eq_J = {A, x, motive, base, y, p} ->
   ited
-    ({_} -> mkVStuckElim (napply (napply motive y) p) p)
+    ({_} -> mkVStuckElim (motive y p) p)
     ({_} -> base)
     (is_neutral p)
 
 let eq_subst = {A, P, x, y, p, px} ->
   ited
-    ({_} -> mkVStuckElim (napply P y) p)
+    ({_} -> mkVStuckElim (P y) p)
     ({_} -> px)
     (is_neutral p)
 
@@ -122,7 +143,7 @@ let eq_sym = {A, x, y, p} ->
 
 let eq_cong = {A, B, f, x, y, p} ->
   ited
-    ({_} -> mkVStuckElim (mkEq B (napply f x) (napply f y)) p)
+    ({_} -> mkVStuckElim (mkEq B (f x) (f y)) p)
     ({_} -> refl)
     (is_neutral p)
 
@@ -147,45 +168,48 @@ let nat_le = fix ({self, a, b} ->
 let nat_lt = {a, b} -> nat_le (t t a) b
 
 // ================================================================
-// Type n (universe predicate)
+// Type n (universe predicate, wait-based)
 // ================================================================
 
-let is_registered = {x} -> ite2 TT (fast_eq x Bool) (fast_eq x Nat)
+let is_nat_type = {x} -> type_has_tag NAT_TAG x
+let is_bool_type = {x} -> type_has_tag BOOL_TAG x
+let is_registered = {x} -> ite2 TT (is_bool_type x) (is_nat_type x)
 
+// meta = fork(UNIV_TAG, rank). Extract rank via pair_snd.
 let univ_check_template = {rank, inferred_type} ->
   ite2 (nat_le (universe_rank inferred_type) rank) FF (is_universe inferred_type)
 
-let type_neutral_fn = {self, rank, x} ->
-  ton_check (univ_check_template rank) x
+let type_neutral_fn = {self, meta, x} ->
+  ton_check (univ_check_template (pair_snd meta)) x
 
-let type_univ_fn = {self, rank, x} ->
-  nat_lt (universe_rank x) rank
+let type_univ_fn = {self, meta, x} ->
+  nat_lt (universe_rank x) (pair_snd meta)
 
-let type_pi_fn = {self, rank, x} ->
-  and (self rank (pi_dom x))
-    (self rank (napply (pi_cod_fn x) (mkVHyp_prog (pi_dom x) (t (t rank)))))
+let type_pi_fn = {self, meta, x} ->
+  and (wait self meta (pi_dom x))
+    (wait self meta (pi_cod_fn x (mkVHyp (pi_dom x) (t (t (pair_snd meta))))))
 
-let type_registered_fn = {self, rank, x} -> is_registered x
+let type_registered_fn = {self, meta, x} -> is_registered x
 
-let type_non_neutral_fn = {self, rank, x} ->
+let type_non_neutral_fn = {self, meta, x} ->
   ite2
     type_univ_fn
-    ({self, rank, x} ->
+    ({self, meta, x} ->
       ite2
         type_pi_fn
-        ({self, rank, x} ->
-          ite2 type_registered_fn ({self, rank, x} -> FF) (is_registered x)
-            self rank x)
+        ({self, meta, x} ->
+          ite2 type_registered_fn ({self, meta, x} -> FF) (is_registered x)
+            self meta x)
         (is_pi x)
-        self rank x)
+        self meta x)
     (is_universe x)
-    self rank x
+    self meta x
 
-let type_body_core = fix ({self, rank, x} ->
+let type_checker = fix ({self, meta, x} ->
   ite2 type_neutral_fn type_non_neutral_fn (is_neutral x)
-    self rank x)
+    self meta x)
 
-let mkType = {rank} -> mkVLam (t UNIV_TAG rank) (type_body_core rank)
+let mkType = {rank} -> wait type_checker (t UNIV_TAG rank)
 
 let Type0 = mkType t
 let Type1 = mkType (t t t)
@@ -199,23 +223,18 @@ let conv_fast_fn = {self, a, b} -> TT
 let conv_pi_fn = {self, a, b} ->
   and (self (pi_dom a) (pi_dom b))
     (self
-      (napply (pi_cod_fn a) (mkVHyp_prog (pi_dom a) (t (t (t t)))))
-      (napply (pi_cod_fn b) (mkVHyp_prog (pi_dom a) (t (t (t t))))))
+      (pi_cod_fn a (mkVHyp (pi_dom a) (t (t (t t)))))
+      (pi_cod_fn b (mkVHyp (pi_dom a) (t (t (t t))))))
 let conv_univ_fn = {self, a, b} ->
   fast_eq (universe_rank a) (universe_rank b)
 let conv_ff_fn = {self, a, b} -> FF
 
 let conv_not_fast_fn = {self, a, b} ->
-  ite2
-    ({self, a, b} ->
-      ite2 conv_pi_fn ({self, a, b} ->
-        ite2 conv_univ_fn conv_ff_fn
-          (and (is_universe a) (is_universe b))
-          self a b)
-        (and (is_pi a) (is_pi b))
-        self a b)
-    conv_ff_fn
-    (is_tagged a)
+  ite2 conv_pi_fn ({self, a, b} ->
+    ite2 conv_univ_fn conv_ff_fn
+      (and (is_universe a) (is_universe b))
+      self a b)
+    (and (is_pi a) (is_pi b))
     self a b
 
 let conv_structural = fix ({self, a, b} ->
@@ -226,7 +245,7 @@ let conv_structural = fix ({self, a, b} ->
 // Arithmetic: add
 // ================================================================
 
-let nat_motive = mkVLam_prog t ({_} -> Nat)
+let nat_motive = {_} -> Nat
 
 let add_zero_fn = {self, n, m} -> m
 let add_succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
@@ -237,5 +256,5 @@ let add = fix ({self, n, m} ->
   ite2 add_zero_fn add_nonzero_fn (fast_eq n t) self n m)
 
 // Common type shorthands
-let NatToNat = mkArrow_prog Nat Nat t
-let id_fn = mkVLam t ({x} -> x)
+let NatToNat = mkArrow Nat Nat t
+let id_fn = {x} -> x

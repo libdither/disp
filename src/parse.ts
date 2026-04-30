@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
-  Tree, LEAF, stem, fork, applyTree, FAST_EQ,
+  Tree, LEAF, stem, fork, applyTree, FAST_EQ, getApplyStats, type ApplyStats,
 } from "./tree.js"
 
 // ───────────────────────────── 1. Tokens ─────────────────────────────────
@@ -741,11 +741,26 @@ export type Decl =
   | { kind: "Def"; name: string; tree: Tree }
   | { kind: "Test"; lhs: Tree; rhs: Tree }
 
-export function parseProgram(src: string, sourcePath?: string): Decl[] {
+export type ParseItemStats = {
+  kind: "let" | "test" | "open"
+  name?: string
+  testIndex?: number
+  sourcePath?: string
+  depth: number
+  stats: ApplyStats
+}
+
+export type ParseProgramOptions = {
+  onItem?: (item: ParseItemStats) => void
+}
+
+export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
   const stack: Map<string, ScopeEntry>[] = [new Map([["fast_eq", { tree: FAST_EQ }]])]
   const decls: Decl[] = []
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
+  const sourceStack = [sourcePath ? pathResolve(sourcePath) : undefined]
   const loadedFiles = new Set<string>() // cycle detection
+  let compiledTestIndex = 0
 
   const lookupEntry = (name: string): ScopeEntry | undefined => {
     for (let i = stack.length - 1; i >= 0; i--) {
@@ -762,6 +777,7 @@ export function parseProgram(src: string, sourcePath?: string): Decl[] {
     loadedFiles.add(abs)
     const fileSrc = readFileSync(abs, "utf-8")
     dirStack.push(dirname(abs))
+    sourceStack.push(abs)
     // Push a new scope frame for the used file.
     stack.push(new Map())
     const fileDecls: Decl[] = []
@@ -772,6 +788,7 @@ export function parseProgram(src: string, sourcePath?: string): Decl[] {
     } finally {
       const fileScope = stack.pop()!
       dirStack.pop()
+      sourceStack.pop()
       loadedFiles.delete(abs)
     }
     // Collect the file's top-level defs as a record.
@@ -795,6 +812,17 @@ export function parseProgram(src: string, sourcePath?: string): Decl[] {
     return { tree, fields: fieldNames }
   }
 
+  function recordItem(kind: "let" | "test" | "open", name?: string, testIndex?: number): void {
+    options.onItem?.({
+      kind,
+      name,
+      testIndex,
+      sourcePath: sourceStack[sourceStack.length - 1],
+      depth: sourceStack.length - 1,
+      stats: getApplyStats(),
+    })
+  }
+
   function runItem(it: Item, target: Decl[]): void {
     switch (it.tag) {
       case "let": {
@@ -803,14 +831,17 @@ export function parseProgram(src: string, sourcePath?: string): Decl[] {
         const fields = resolveExprFields(it.body, lookupEntry, resolveUse)
         define(it.name, { tree, fields })
         target.push({ kind: "Def", name: it.name, tree })
+        recordItem("let", it.name)
         return
       }
       case "test": {
+        compiledTestIndex++
         target.push({
           kind: "Test",
           lhs: compileExpr(it.lhs, lookupEntry, resolveUse),
           rhs: compileExpr(it.rhs, lookupEntry, resolveUse),
         })
+        recordItem("test", undefined, compiledTestIndex)
         return
       }
       case "open": {
@@ -830,6 +861,7 @@ export function parseProgram(src: string, sourcePath?: string): Decl[] {
           }
           define(name, { tree: fieldTree })
         }
+        recordItem("open")
         return
       }
     }
