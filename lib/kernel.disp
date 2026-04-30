@@ -170,9 +170,21 @@ let q_type_fn = {ks, query} ->
     // universe: check rank(x) < meta
     let univ_fn = {ks, query, self, meta, x} -> nat_lt (type_meta x) meta
     // pi: check domain and codomain are both valid types at this rank
-    let pi_fn = {ks, query, self, meta, x} -> { let tm = type_meta x; let dom = pair_fst tm; let cod_fn = pair_snd (pair_snd tm); and (wait self meta dom) (wait self meta (cod_fn (q_make_hyp ks dom (t (t meta))))) }
+    let pi_fn = {ks, query, self, meta, x} -> {
+      let tm = type_meta x
+      let dom = pair_fst tm
+      let cod_fn = pair_snd (pair_snd tm)
+      and (wait self meta dom)
+        (wait self meta (cod_fn (q_make_hyp ks dom (t (t meta)))))
+    }
     // eq: check A is valid type and lhs/rhs both type-check under A
-    let eq_fn = {ks, query, self, meta, x} -> { let tm = type_meta x; let A = pair_fst tm; and (wait self meta A) (and (A (pair_fst (pair_snd tm))) (A (pair_snd (pair_snd tm)))) }
+    let eq_fn = {ks, query, self, meta, x} -> {
+      let tm = type_meta x
+      let A = pair_fst tm
+      and (wait self meta A)
+        (and (A (pair_fst (pair_snd tm)))
+          (A (pair_snd (pair_snd tm))))
+    }
     // dispatch: neutral → rank check, concrete → select_chain over type-former signatures
     select neutral_fn
       ({ks, query, self, meta, x} ->
@@ -330,7 +342,11 @@ let eq_cong = {A, B, f, x, y, p} ->
 
 // Deep structural equality: fast_eq first, then compare Pi domains/codomains or universe ranks.
 let conv_structural = fix ({self, a, b} -> {
-  let pi_fn = {self, a, b} -> { let hyp = Hyp (pi_dom a) (t (t (t t))); and (self (pi_dom a) (pi_dom b)) (self (pi_cod_fn a hyp) (pi_cod_fn b hyp)) }
+  let pi_fn = {self, a, b} -> {
+    let hyp = Hyp (pi_dom a) (t (t (t t)))
+    and (self (pi_dom a) (pi_dom b))
+      (self (pi_cod_fn a hyp) (pi_cod_fn b hyp))
+  }
   let univ_fn = {self, a, b} -> fast_eq (universe_rank a) (universe_rank b)
   select ({self, a, b} -> TT)
     ({self, a, b} ->
