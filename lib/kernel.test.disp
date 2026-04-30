@@ -133,6 +133,21 @@ test (Eq Nat (add 3 0) 3) refl = TT
 test (Eq Nat (add 2 3) (add 3 2)) refl = TT
 test (Eq Nat (add 1 4) (add 4 1)) refl = TT
 
+let add_comm = {n} ->
+  nat_rec
+    ({n_} -> Pi Nat ({m} -> Eq Nat (add n_ m) (add m n_)) 1)
+    ({m} -> refl)
+    ({n_, ih} -> {m} -> refl)
+    n
+
+test (Pi Nat ({n} ->
+    Pi Nat ({m} ->
+      Eq Nat (add n m) (add m n))
+      1)
+    0)
+  add_comm = TT
+test (Eq Nat (add 2 3) (add 3 2)) (add_comm 2 3) = TT
+
 // ================================================================
 // Arrow type checking
 // ================================================================
