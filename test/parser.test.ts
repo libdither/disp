@@ -81,6 +81,14 @@ describe("tokenize", () => {
     ])
   })
 
+  it("numeric literals", () => {
+    const toks = tokenize("0 12")
+    expect(toks.filter(t => t.t !== "nl" && t.t !== "eof")).toEqual([
+      { t: "num", v: 0 },
+      { t: "num", v: 12 },
+    ])
+  })
+
   it("treats bare t as leaf, t-prefix as identifier", () => {
     expect(tokenize("t").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "eof" }])
     expect(tokenize("ty").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "ty" }, { t: "eof" }])
@@ -221,6 +229,18 @@ describe("parse: expressions", () => {
     )
   })
 
+  it("bare recType (no types)", () => {
+    expect(parseExpr("({a, b, c})")).toEqual(
+      recType([{ name: "a", type: null }, { name: "b", type: null }, { name: "c", type: null }]),
+    )
+  })
+
+  it("bare recType with spread type", () => {
+    expect(parseExpr("({a, b, c : A})")).toEqual(
+      recType([{ name: "a", type: v("A") }, { name: "b", type: v("A") }, { name: "c", type: v("A") }]),
+    )
+  })
+
   it("recType with arrow becomes binder", () => {
     // {x : A} -> x  is a binder, not a recType
     expect(parseExpr("{x : A} -> x")).toEqual(
@@ -351,6 +371,17 @@ describe("parseProgram (compile + driver)", () => {
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
   })
 
+  it("numeric literals compile through in-scope zero/succ", () => {
+    const decls = parseProgram("let zero = t\nlet succ = {n} -> t t n\ntest 2 = succ (succ zero)")
+    const test = decls.find(d => d.kind === "Test")
+    if (!test || test.kind !== "Test") throw new Error("test")
+    expect(treeEqual(test.lhs, test.rhs)).toBe(true)
+  })
+
+  it("numeric literals require zero and succ in scope", () => {
+    expect(() => parseProgram("test 0 = t")).toThrow(/zero and succ/)
+  })
+
   it("`use` inlines another file's defs via projection", () => {
     const dep = tmpFile("dep.disp", "let y = t t\n")
     const decls = parseProgram(
@@ -369,6 +400,17 @@ describe("parseProgram (compile + driver)", () => {
     const decls = parseProgram(`let m = use "${mainPath}"`, process.cwd() + "/anon.disp")
     // Should not throw (the nested use resolves correctly)
     expect(decls.length).toBeGreaterThan(0)
+  })
+
+  it("`open use` defines and re-exports opened fields", () => {
+    const dep = tmpFile("dep.disp", "let y = t\n")
+    const midPath = join(dep.slice(0, dep.lastIndexOf("/")), "mid.disp")
+    writeFileSync(midPath, `open use "dep.disp"\n`)
+    const decls = parseProgram(`let mid = use "${midPath}"\ntest mid.y = t`, process.cwd() + "/anon.disp")
+    const def = decls.find(d => d.kind === "Def" && d.name === "mid")
+    const test = decls.find(d => d.kind === "Test")
+    if (!def || def.kind !== "Def" || !test || test.kind !== "Test") throw new Error("missing")
+    expect(treeEqual(test.lhs, test.rhs)).toBe(true)
   })
 
   it("recValue Church encoding: field access works", () => {
@@ -414,7 +456,122 @@ describe("parse errors", () => {
     expect(() => parseExpr("use foo")).toThrow()
   })
 
-  it("block braces not yet supported", () => {
-    expect(() => parseExpr("{ let x = t; x }")).toThrow(/block/)
+  it("block without trailing expression", () => {
+    expect(() => parseExpr("{ let x = t }")).toThrow()
+  })
+
+  it("test inside block not yet supported", () => {
+    expect(() => parseExpr("{ test t = t; t }")).toThrow(/test inside block/)
+  })
+})
+
+// ──────────────────────── Block expressions ────────────────────────────
+describe("block expressions", () => {
+  it("single let binding", () => {
+    // { let x = t; x } → App(Binder([x], Var(x)), Leaf)
+    expect(parseExpr("{ let x = t; x }")).toEqual(
+      ap(binder([{ name: "x", type: null }], v("x")), leaf)
+    )
+  })
+
+  it("two let bindings", () => {
+    // { let x = t; let y = t t; y } → App(Binder([x], App(Binder([y], Var(y)), App(Leaf, Leaf))), Leaf)
+    expect(parseExpr("{ let x = t; let y = t t; y }")).toEqual(
+      ap(
+        binder([{ name: "x", type: null }],
+          ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
+        leaf,
+      )
+    )
+  })
+
+  it("let binding with type annotation", () => {
+    // { let x : A = t; x } → App(Binder([x], Var(x)), Ann(Leaf, Var(A)))
+    expect(parseExpr("{ let x : A = t; x }")).toEqual(
+      ap(binder([{ name: "x", type: null }], v("x")), ann(leaf, v("A")))
+    )
+  })
+
+  it("trailing expression uses binding", () => {
+    // { let f = {x} -> x; f t } → App(Binder([f], App(Var(f), Leaf)), Binder([x], Var(x)))
+    expect(parseExpr("{ let f = {x} -> x; f t }")).toEqual(
+      ap(
+        binder([{ name: "f", type: null }], ap(v("f"), leaf)),
+        binder([{ name: "x", type: null }], v("x")),
+      )
+    )
+  })
+
+  it("newline-separated let bindings", () => {
+    // Newlines work as separators between let bindings and before trailing expr.
+    const src = `{
+      let x = t
+      let y = t t
+      y
+    }`
+    expect(parseExpr(src)).toEqual(
+      ap(
+        binder([{ name: "x", type: null }],
+          ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
+        leaf,
+      )
+    )
+  })
+
+  it("block as binder body (multi-line)", () => {
+    // { let y = x\n y } as body of {x} -> ...
+    // The newline should separate the let body from the trailing expression.
+    const src = `{x} -> {
+      let y = x
+      y
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }],
+        ap(binder([{ name: "y", type: null }], v("y")), v("x")))
+    )
+  })
+
+  it("binder as block-let body", () => {
+    // let y = {z} -> z inside a block — the binder body should not consume
+    // past the newline into the trailing expression.
+    const src = `{x} -> {
+      let f = {z} -> z
+      f x
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }],
+        ap(
+          binder([{ name: "f", type: null }], ap(v("f"), v("x"))),
+          binder([{ name: "z", type: null }], v("z"))))
+    )
+  })
+
+  it("nested blocks", () => {
+    const src = `{x} -> {
+      let y = {z} -> {
+        let w = z
+        w
+      }
+      y x
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }],
+        ap(
+          binder([{ name: "y", type: null }], ap(v("y"), v("x"))),
+          binder([{ name: "z", type: null }],
+            ap(binder([{ name: "w", type: null }], v("w")), v("z")))))
+    )
+  })
+
+  it("multi-arg application in block-let body stays on line", () => {
+    // let z = x y should parse as App(x, y), not consume the trailing expr
+    const src = `{x, y} -> {
+      let z = x y
+      z
+    }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }, { name: "y", type: null }],
+        ap(binder([{ name: "z", type: null }], v("z")), ap(v("x"), v("y"))))
+    )
   })
 })

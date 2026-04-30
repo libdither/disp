@@ -1,0 +1,38 @@
+open use "../lib/prelude.disp"
+
+let Q0 = t
+let Q1 = t t
+let Q2 = t t t
+let Q3 = t (t t)
+let Q4 = t t (t t)
+let Q5 = t (t (t t))
+let Q6 = t t t t
+let Q7 = t (t t t)
+let Q8 = t t (t t t)
+let Q9 = t (t (t t t))
+
+let q0_fn = {self, query} -> ite2 t t (fast_eq (pair_fst self) (pair_fst self))
+let q1_fn = {self, query} -> ite2 (t t) (t t) (fast_eq query query)
+let q2_fn = {self, query} -> ite2 (t t t) (t t t) (fast_eq (pair_fst self) (pair_fst self))
+let q3_fn = {self, query} -> ite2 (t (t t)) (t (t t)) (fast_eq query query)
+let q4_fn = {self, query} -> ite2 (t t (t t)) (t t (t t)) (fast_eq (pair_fst self) (pair_fst self))
+let q5_fn = {self, query} -> ite2 (t (t (t t))) (t (t (t t))) (fast_eq query query)
+let q6_fn = {self, query} -> ite2 (t t t t) (t t t t) (fast_eq (pair_fst self) (pair_fst self))
+let q7_fn = {self, query} -> ite2 (t (t t t)) (t (t t t)) (fast_eq query query)
+let q8_fn = {self, query} -> ite2 (t t (t t t)) (t t (t t t)) (fast_eq (pair_fst self) (pair_fst self))
+let q9_fn = {self, query} -> ite2 (t (t (t t t))) (t (t (t t t))) (fast_eq query query)
+
+let k8 = {self, query} -> ite2 q8_fn q9_fn (fast_eq query Q8) self query
+let k7 = {self, query} -> ite2 q7_fn k8 (fast_eq query Q7) self query
+let k6 = {self, query} -> ite2 q6_fn k7 (fast_eq query Q6) self query
+let k5 = {self, query} -> ite2 q5_fn k6 (fast_eq query Q5) self query
+let k4 = {self, query} -> ite2 q4_fn k5 (fast_eq query Q4) self query
+let k3 = {self, query} -> ite2 q3_fn k4 (fast_eq query Q3) self query
+let k2 = {self, query} -> ite2 q2_fn k3 (fast_eq query Q2) self query
+let k1 = {self, query} -> ite2 q1_fn k2 (fast_eq query Q1) self query
+
+let kernel = fix ({self, query} ->
+  ite2 q0_fn k1 (fast_eq query Q0) self query)
+
+test kernel Q0 = t
+test kernel Q9 = t (t (t t t))

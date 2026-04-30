@@ -12,19 +12,21 @@ let FF = t t
 //   x=leaf → on_leaf, x=stem(u) → on_stem u, x=fork(u,v) → on_fork u v
 let triage = {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
 
-// ite2(then, else, cond): EAGER — both branches evaluated.
-// cond=TT→then, cond=FF→else
-let ite2 = {then_v, else_v, cond} -> t (t then_v ({_} -> else_v)) t cond
+// select(then_v, else_v, cond): EAGER — both branches evaluated.
+// cond=TT→then_v, cond=FF→else_v
+// Also used in select-then-apply pattern: select fn1 fn2 cond shared_args...
+let select = {then_v, else_v, cond} -> t (t then_v ({_} -> else_v)) t cond
 
-// ited(then_thunk, else_thunk, cond): DEFERRED — branches are {_}->value thunks.
+// select_lazy(then_thunk, else_thunk, cond): DEFERRED — branches are {_}->value thunks.
 // Only the chosen branch is forced.
-let ited = {then_thunk, else_thunk, cond} -> t (t then_thunk ({_} -> else_thunk)) t cond t
+let select_lazy = {then_thunk, else_thunk, cond} -> t (t then_thunk ({_} -> else_thunk)) t cond t
 
-// pair accessors
+// pair = fork(l, r). pair_fst/pair_snd extract via triage's fork branch.
+// The leaf and stem branches are dead code (pairs are always forks).
 let pair_fst = {p} -> triage t ({x} -> x) ({l, r} -> l) p
 let pair_snd = {p} -> triage t ({x} -> x) ({l, r} -> r) p
 
-let and = {a, b} -> ite2 b FF a
+let and = {a, b} -> select b FF a
 
 // ================================================================
 // wait + fix: tree-calculus recursion
@@ -36,3 +38,56 @@ let wait = {a, b, c} -> t (t a) (t t c) b
 // Self-applicator and fixed-point combinator
 let m = {x} -> x x
 let fix = {f} -> wait m ({x} -> f (wait m x))
+
+// rec: self-referential record combinator.
+// Wraps a Church-encoded record of component functions into a fixpoint
+// using the select-then-apply-self pattern (each component receives `self`
+// as first argument when selected).
+// Usage: let k : {a, b} = rec {a := {ks, x} -> x; b := {ks, x} -> ks.a x}
+let rec = {components} -> fix ({self, sel} -> components sel self)
+
+// ================================================================
+// select_chain: flat conditional dispatch
+// ================================================================
+
+// case(cond, handler, rest): build a list of condition→handler pairs.
+// cond = TT/FF, handler = function for select-then-apply, rest = more cases or t (nil).
+let case = {cond, handler, rest} -> t (t cond handler) rest
+
+// select_chain(cases, default): walk cases, return first handler whose condition is TT.
+// Falls back to default if no condition matches. All conditions are evaluated eagerly.
+// Compatible with select-then-apply: select_chain cases default shared_args...
+let select_chain = fix ({self, cases, default} ->
+  triage
+    default
+    ({_} -> default)
+    ({head, tail} -> select (pair_snd head) (self tail default) (pair_fst head))
+    cases)
+
+// ================================================================
+// Tree / Nat helpers
+// ================================================================
+
+let is_fork = {v} -> triage FF ({_} -> FF) ({l, r} -> TT) v
+
+// nat_le(a, b): true if natural number a <= b
+// Uses select-then-apply with fix for recursive comparison.
+let nat_le_zero_fn = {self, a, b} -> TT
+let nat_le_succ_fn = {self, a, b} ->
+  select
+    ({self, a, b} -> self (pair_snd a) (pair_snd b))
+    ({self, a, b} -> FF)
+    (is_fork b)
+    self a b
+let nat_le_nonzero_fn = {self, a, b} ->
+  select nat_le_succ_fn ({self, a, b} -> FF) (is_fork a)
+    self a b
+let nat_le = fix ({self, a, b} ->
+  select nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
+    self a b)
+
+let nat_lt = {a, b} -> nat_le (t t a) b
+
+// Nat data constructors (also used by parser for numeric literals)
+let zero = t
+let succ = {n} -> t t n

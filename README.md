@@ -22,6 +22,13 @@ npm install
 npm test
 ```
 
+For evaluator/allocation counters on a `.disp` file:
+
+```shell
+npm run disp -- --stats lib/types.test.disp
+npm run disp -- --stats --stats-detail lib/types.test.disp
+```
+
 ## Layout
 
 ```
