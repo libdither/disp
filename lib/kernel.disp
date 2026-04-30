@@ -3,11 +3,6 @@ open use "prelude.disp"
 let type_meta = {T} -> pair_snd (pair_snd T)
 let conv = {a, b} -> fast_eq a b
 
-let PI_TAG = t (t t)
-let UNIV_TAG = t t (t t)
-let EQ_TAG = t (t (t t))
-let NAT_TAG = t t t t
-let BOOL_TAG = t (t t t)
 let HYP_TAG = t (t (t t))
 let ELIM_TAG = t (t t t)
 
@@ -49,7 +44,7 @@ let q_sig_type_fn = {ks, query} -> {c} -> c (pair_fst (wait (wait ks Q_TYPE) t))
 
 let q_accum_pi_fn = {self, meta, v} ->
   wait self
-    (t (pair_snd (pair_snd (pair_snd (type_meta (pair_fst meta)))) v)
+    (t (pair_snd (pair_snd (type_meta (pair_fst meta))) v)
        (t meta v))
 let q_accum_non_pi_fn = {self, meta, v} ->
   wait self (t FF (t meta v))
@@ -73,29 +68,29 @@ let q_pi_check_fn = {ks, query, self, meta, v} ->
     ({ks, query, self, meta, v} ->
       ks Q_TON
         (fast_eq
-          (pair_snd (pair_snd (pair_snd meta))
+          (pair_snd (pair_snd meta)
             (wait (ks Q_ACCUM)
-              (t (pair_fst (pair_snd meta))
-                 (t HYP_TAG (pair_fst (pair_snd (pair_snd meta))))))))
+              (t (pair_fst meta)
+                 (t HYP_TAG (pair_fst (pair_snd meta)))))))
         (v (wait (ks Q_ACCUM)
-          (t (pair_fst (pair_snd meta))
-             (t HYP_TAG (pair_fst (pair_snd (pair_snd meta))))))))
+          (t (pair_fst meta)
+             (t HYP_TAG (pair_fst (pair_snd meta)))))))
     ({ks, query, self, meta, v} ->
       fast_eq
-        (pair_snd (pair_snd (pair_snd meta))
+        (pair_snd (pair_snd meta)
           (wait (ks Q_ACCUM)
-            (t (pair_fst (pair_snd meta))
-               (t HYP_TAG (pair_fst (pair_snd (pair_snd meta))))))
+            (t (pair_fst meta)
+               (t HYP_TAG (pair_fst (pair_snd meta)))))
           (v (wait (ks Q_ACCUM)
-            (t (pair_fst (pair_snd meta))
-               (t HYP_TAG (pair_fst (pair_snd (pair_snd meta))))))))
+            (t (pair_fst meta)
+               (t HYP_TAG (pair_fst (pair_snd meta)))))))
         TT)
     (wait ks Q_SIG_ACCUM
       (fast_eq
         (pair_fst
           (v (wait (ks Q_ACCUM)
-            (t (pair_fst (pair_snd meta))
-               (t HYP_TAG (pair_fst (pair_snd (pair_snd meta))))))))))
+            (t (pair_fst meta)
+               (t HYP_TAG (pair_fst (pair_snd meta)))))))))
     ks query self meta v
 let q_pi_fn = {ks, query} ->
   fix ({self, meta, v} ->
@@ -140,7 +135,7 @@ let q_eq_h_rule_fn = {ks, query, self, meta, p} ->
   ks Q_TON (fast_eq (wait (wait ks query) meta)) p
 let q_eq_check_fn = {ks, query, self, meta, p} ->
   ited
-    ({_} -> fast_eq (pair_fst (pair_snd (pair_snd meta))) (pair_snd (pair_snd (pair_snd meta))))
+    ({_} -> fast_eq (pair_fst (pair_snd meta)) (pair_snd (pair_snd meta)))
     ({_} -> FF)
     (fast_eq p t)
 let q_eq_fn = {ks, query} ->
@@ -149,33 +144,33 @@ let q_eq_fn = {ks, query} ->
       (wait ks Q_SIG_ACCUM (fast_eq (pair_fst p)))
       ks query self meta p)
 
-let q_is_nat_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_NAT) (t NAT_TAG t))
-let q_is_bool_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_BOOL) (t BOOL_TAG t))
+let q_is_nat_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_NAT) t)
+let q_is_bool_type_fn = {ks, x} -> fast_eq x (wait (wait ks Q_BOOL) t)
 let q_is_registered_fn = {ks, x} -> ite2 TT (q_is_bool_type_fn ks x) (q_is_nat_type_fn ks x)
 let q_univ_check_template = {ks, rank, inferred_type} ->
-  ite2 (nat_le (pair_snd (type_meta inferred_type)) rank) FF
+  ite2 (nat_le (type_meta inferred_type) rank) FF
     (wait ks Q_SIG_TYPE (fast_eq (pair_fst inferred_type)))
 
 let q_type_neutral_fn = {ks, query, self, meta, x} ->
-  ks Q_TON (q_univ_check_template ks (pair_snd meta)) x
+  ks Q_TON (q_univ_check_template ks meta) x
 let q_type_univ_fn = {ks, query, self, meta, x} ->
-  nat_lt (pair_snd (type_meta x)) (pair_snd meta)
+  nat_lt (type_meta x) meta
 let q_type_pi_fn = {ks, query, self, meta, x} ->
   and
-    (wait self meta (pair_fst (pair_snd (type_meta x))))
+    (wait self meta (pair_fst (type_meta x)))
     (wait self meta
-      (pair_snd (pair_snd (pair_snd (type_meta x)))
+      (pair_snd (pair_snd (type_meta x))
         (wait (ks Q_ACCUM)
-          (t (pair_fst (pair_snd (type_meta x)))
-             (t HYP_TAG (t (t (pair_snd meta))))))))
+          (t (pair_fst (type_meta x))
+             (t HYP_TAG (t (t meta)))))))
 let q_type_eq_fn = {ks, query, self, meta, x} ->
   and
-    (wait self meta (pair_fst (pair_snd (type_meta x))))
+    (wait self meta (pair_fst (type_meta x)))
     (and
-      (pair_fst (pair_snd (type_meta x))
-        (pair_fst (pair_snd (pair_snd (type_meta x)))))
-      (pair_fst (pair_snd (type_meta x))
-        (pair_snd (pair_snd (pair_snd (type_meta x))))))
+      (pair_fst (type_meta x)
+        (pair_fst (pair_snd (type_meta x))))
+      (pair_fst (type_meta x)
+        (pair_snd (pair_snd (type_meta x)))))
 let q_type_non_neutral_fn = {ks, query, self, meta, x} ->
   ite2
     q_type_univ_fn
@@ -219,28 +214,28 @@ let neutral_type = {v} -> pair_fst (type_meta v)
 let is_neutral = {x} -> wait kernel Q_SIG_ACCUM (fast_eq (pair_fst x))
 let ton_check = wait kernel Q_TON
 
-let mkVHyp = {ty, id} -> wait (kernel Q_ACCUM) (t ty (t HYP_TAG id))
-let mkVStuckElim = {result_type, target} -> wait (kernel Q_ACCUM) (t result_type (t ELIM_TAG target))
-let fresh_hyp = mkVHyp
+let Hyp = {ty, id} -> wait (kernel Q_ACCUM) (t ty (t HYP_TAG id))
+let StuckElim = {result_type, target} -> wait (kernel Q_ACCUM) (t result_type (t ELIM_TAG target))
+let fresh_hyp = Hyp
 
 let is_pi = {v} -> wait kernel Q_SIG_PI (fast_eq (pair_fst v))
-let pi_dom = {v} -> pair_fst (pair_snd (type_meta v))
-let pi_depth = {v} -> pair_fst (pair_snd (pair_snd (type_meta v)))
-let pi_cod_fn = {v} -> pair_snd (pair_snd (pair_snd (type_meta v)))
+let pi_dom = {v} -> pair_fst (type_meta v)
+let pi_depth = {v} -> pair_fst (pair_snd (type_meta v))
+let pi_cod_fn = {v} -> pair_snd (pair_snd (type_meta v))
 
 let is_universe = {v} -> wait kernel Q_SIG_TYPE (fast_eq (pair_fst v))
-let universe_rank = {v} -> pair_snd (type_meta v)
+let universe_rank = {v} -> type_meta v
 
 let is_tree_fork = {v} ->
   ite2 FF (raw_tree_fork v) (is_neutral v)
 
-let Nat = wait (wait kernel Q_NAT) (t NAT_TAG t)
-let Bool = wait (wait kernel Q_BOOL) (t BOOL_TAG t)
-let mkEq = {A, x, y} -> wait (wait kernel Q_EQ) (t EQ_TAG (t A (t x y)))
-let mkType = {rank} -> wait (wait kernel Q_TYPE) (t UNIV_TAG rank)
-let mkPi = {domain, codFn, depth} -> wait (wait kernel Q_PI) (t PI_TAG (t domain (t depth codFn)))
-let mkArrow = {a_type, b_type, depth} -> mkPi a_type ({_} -> b_type) depth
-
+let Nat = wait (wait kernel Q_NAT) t
+let Bool = wait (wait kernel Q_BOOL) t
+let Eq = {A, x, y} -> wait (wait kernel Q_EQ) (t A (t x y))
+let Type = {rank} -> wait (wait kernel Q_TYPE) rank
+let Universe = Type
+let Pi = {domain, codFn, depth} -> wait (wait kernel Q_PI) (t domain (t depth codFn))
+let Arrow = {a_type, b_type, depth} -> Pi a_type ({_} -> b_type) depth
 let zero = t
 let succ = {n} -> t t n
 let one = succ zero
@@ -252,21 +247,21 @@ let five = succ four
 let is_nat_type = {x} -> fast_eq x Nat
 let is_bool_type = {x} -> fast_eq x Bool
 let is_registered = {x} -> ite2 TT (is_bool_type x) (is_nat_type x)
-let Type0 = mkType t
-let Type1 = mkType (t t t)
-let Type2 = mkType (t t (t t t))
-let NatToNat = mkArrow Nat Nat t
+let Type0 = Type 0
+let Type1 = Type 1
+let Type2 = Type 2
+let NatToNat = Arrow Nat Nat 0
 let id_fn = {x} -> x
 
 let bool_rec = {motive, t_case, f_case, target} ->
   ited
-    ({_} -> mkVStuckElim (motive target) target)
+    ({_} -> StuckElim (motive target) target)
     ({_} -> ite2 t_case f_case target)
     (is_neutral target)
 
 let nat_rec_body = fix ({self, motive, base, step, target} ->
   ited
-    ({_} -> mkVStuckElim (motive target) target)
+    ({_} -> StuckElim (motive target) target)
     ({_} ->
       ite2
         ({self, motive, base, step, target} -> base)
@@ -291,31 +286,31 @@ let nat_rec = {motive, base, step, target} ->
 
 let refl = t
 let is_eq = {v} -> wait kernel Q_SIG_EQ (fast_eq (pair_fst v))
-let eq_A = {v} -> pair_fst (pair_snd (type_meta v))
-let eq_x = {v} -> pair_fst (pair_snd (pair_snd (type_meta v)))
-let eq_y = {v} -> pair_snd (pair_snd (pair_snd (type_meta v)))
+let eq_A = {v} -> pair_fst (type_meta v)
+let eq_x = {v} -> pair_fst (pair_snd (type_meta v))
+let eq_y = {v} -> pair_snd (pair_snd (type_meta v))
 
 let eq_J = {A, x, motive, base, y, p} ->
   ited
-    ({_} -> mkVStuckElim (motive y p) p)
+    ({_} -> StuckElim (motive y p) p)
     ({_} -> base)
     (is_neutral p)
 
 let eq_subst = {A, P, x, y, p, px} ->
   ited
-    ({_} -> mkVStuckElim (P y) p)
+    ({_} -> StuckElim (P y) p)
     ({_} -> px)
     (is_neutral p)
 
 let eq_sym = {A, x, y, p} ->
   ited
-    ({_} -> mkVStuckElim (mkEq A y x) p)
+    ({_} -> StuckElim (Eq A y x) p)
     ({_} -> refl)
     (is_neutral p)
 
 let eq_cong = {A, B, f, x, y, p} ->
   ited
-    ({_} -> mkVStuckElim (mkEq B (f x) (f y)) p)
+    ({_} -> StuckElim (Eq B (f x) (f y)) p)
     ({_} -> refl)
     (is_neutral p)
 
@@ -323,8 +318,8 @@ let conv_fast_fn = {self, a, b} -> TT
 let conv_pi_fn = {self, a, b} ->
   and (self (pi_dom a) (pi_dom b))
     (self
-      (pi_cod_fn a (mkVHyp (pi_dom a) (t (t (t t)))))
-      (pi_cod_fn b (mkVHyp (pi_dom a) (t (t (t t))))))
+      (pi_cod_fn a (Hyp (pi_dom a) (t (t (t t)))))
+      (pi_cod_fn b (Hyp (pi_dom a) (t (t (t t))))))
 let conv_univ_fn = {self, a, b} ->
   fast_eq (universe_rank a) (universe_rank b)
 let conv_ff_fn = {self, a, b} -> FF

@@ -81,6 +81,14 @@ describe("tokenize", () => {
     ])
   })
 
+  it("numeric literals", () => {
+    const toks = tokenize("0 12")
+    expect(toks.filter(t => t.t !== "nl" && t.t !== "eof")).toEqual([
+      { t: "num", v: 0 },
+      { t: "num", v: 12 },
+    ])
+  })
+
   it("treats bare t as leaf, t-prefix as identifier", () => {
     expect(tokenize("t").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "eof" }])
     expect(tokenize("ty").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "ty" }, { t: "eof" }])
@@ -351,6 +359,17 @@ describe("parseProgram (compile + driver)", () => {
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
   })
 
+  it("numeric literals compile through in-scope zero/succ", () => {
+    const decls = parseProgram("let zero = t\nlet succ = {n} -> t t n\ntest 2 = succ (succ zero)")
+    const test = decls.find(d => d.kind === "Test")
+    if (!test || test.kind !== "Test") throw new Error("test")
+    expect(treeEqual(test.lhs, test.rhs)).toBe(true)
+  })
+
+  it("numeric literals require zero and succ in scope", () => {
+    expect(() => parseProgram("test 0 = t")).toThrow(/zero and succ/)
+  })
+
   it("`use` inlines another file's defs via projection", () => {
     const dep = tmpFile("dep.disp", "let y = t t\n")
     const decls = parseProgram(
@@ -369,6 +388,17 @@ describe("parseProgram (compile + driver)", () => {
     const decls = parseProgram(`let m = use "${mainPath}"`, process.cwd() + "/anon.disp")
     // Should not throw (the nested use resolves correctly)
     expect(decls.length).toBeGreaterThan(0)
+  })
+
+  it("`open use` defines and re-exports opened fields", () => {
+    const dep = tmpFile("dep.disp", "let y = t\n")
+    const midPath = join(dep.slice(0, dep.lastIndexOf("/")), "mid.disp")
+    writeFileSync(midPath, `open use "dep.disp"\n`)
+    const decls = parseProgram(`let mid = use "${midPath}"\ntest mid.y = t`, process.cwd() + "/anon.disp")
+    const def = decls.find(d => d.kind === "Def" && d.name === "mid")
+    const test = decls.find(d => d.kind === "Test")
+    if (!def || def.kind !== "Def" || !test || test.kind !== "Test") throw new Error("missing")
+    expect(treeEqual(test.lhs, test.rhs)).toBe(true)
   })
 
   it("recValue Church encoding: field access works", () => {

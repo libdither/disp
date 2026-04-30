@@ -31,7 +31,7 @@ All neutral forms share `accum` as their handler:
 Applying a neutral to a value triggers smart accum: if the neutral's
 type is Pi, the result type is `codFn(v)`; otherwise FF (unknown).
 The current kernel checks Pi-ness by the Pi checker signature, not by
-the forgeable `PI_TAG` metadata payload.
+any metadata payload marker.
 
 **Recognition**: `is_neutral = fast_eq(pair_fst(x), NEUTRAL_SIG)` — a
 single O(1) check. NEUTRAL_SIG is `stem(accum)`, the constant signature
@@ -64,10 +64,10 @@ Types are `wait(checker)(metadata)`. Applying a type to a value runs the
 checker: `apply(T, v) = checker(metadata)(v)`, which returns TT or FF.
 Type checking is raw tree-calculus reduction — no tag dispatch needed.
 
-Tree structure of `wait(checker)(fork(TAG, payload))`:
+Tree structure of `wait(checker)(metadata)`:
 
 ```
-fork(stem(X), fork(LEAF, fork(TAG, payload)))
+fork(stem(X), fork(LEAF, metadata))
 ```
 
 Key accessors:
@@ -75,9 +75,9 @@ Key accessors:
 - **Signature**: `pair_fst(T)` = `stem(X)` — constant for all types sharing
   the same checker function. Two types with the same signature use the same
   checking logic (e.g. all Pi types share `pi_checker`).
-- **Metadata**: `pair_snd(pair_snd(T))` = `fork(TAG, payload)`. Tags describe
-  payload shape; they are not trusted as public proof that a value is a real
-  type former.
+- **Metadata**: `pair_snd(pair_snd(T))`. Pi stores `fork(domain, fork(depth,
+  codFn))`, Eq stores `fork(A, fork(x, y))`, and Universe stores its rank
+  directly. Type-former tags are not used.
 - **Recognition**: by checker signature for Pi/Universe/Eq, and by canonical
   identity for registered base types such as Nat and Bool. Raw metadata tags
   are forgeable, so public predicates and Type formation do not use tag-only
@@ -95,7 +95,7 @@ nat_checker = fix {self, meta, v} ->
     if is_neutral v then ton_check (fast_eq (wait self meta)) v
     else ... check zero/succ structure ...
 
-Nat = wait nat_checker (fork(NAT_TAG, LEAF))
+Nat = wait nat_checker LEAF
 ```
 
 `Nat(Zero)` reduces to `nat_checker(metadata)(Zero)` → TT.
@@ -109,7 +109,7 @@ function itself. The checker is wrapped via `wait(checker)(metadata)`:
 
 ```
 Nat = let checker = fix {self, meta, n} -> ...check logic...
-      wait checker (fork(NAT_TAG, LEAF))
+      wait checker LEAF
 ```
 
 NOT fix-outside with a separate wrapper:
@@ -230,11 +230,11 @@ instead of triaging:
 
 ```
 bool_rec = {motive, t_case, f_case, target} ->
-    if is_neutral target then mkVStuckElim (motive target) target
+    if is_neutral target then StuckElim (motive target) target
     else ite2 t_case f_case target
 
 nat_rec = fix {self, motive, base, step, target} ->
-    if is_neutral target then mkVStuckElim (motive target) target
+    if is_neutral target then StuckElim (motive target) target
     else ... pattern match on zero/succ ...
 ```
 

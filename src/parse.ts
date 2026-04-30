@@ -21,6 +21,7 @@ import {
 
 export type Tok =
   | { t: "id"; v: string }
+  | { t: "num"; v: number }
   | { t: "punct"; v: string }
   | { t: "kw"; v: string }
   | { t: "leaf" }
@@ -65,6 +66,12 @@ export function tokenize(src: string): Tok[] {
     if (c === "t" && !(i + 1 < src.length && IDENT_TAIL.test(src[i + 1]))) {
       toks.push({ t: "leaf" }); i++; continue
     }
+    if (/[0-9]/.test(c)) {
+      let j = i + 1
+      while (j < src.length && /[0-9]/.test(src[j])) j++
+      toks.push({ t: "num", v: Number(src.slice(i, j)) })
+      i = j; continue
+    }
     const p = PUNCT.find(p => src.startsWith(p, i))
     if (p) { toks.push({ t: "punct", v: p }); i += p.length; continue }
     if (IDENT_HEAD.test(c)) {
@@ -84,6 +91,7 @@ export function tokenize(src: string): Tok[] {
 
 export type Expr =
   | { tag: "leaf" }
+  | { tag: "num"; value: number }
   | { tag: "var"; name: string }
   | { tag: "hole" }
   | { tag: "app"; f: Expr; x: Expr }
@@ -170,6 +178,7 @@ const tokP = (pred: (t: Tok) => boolean, label: string): P<Tok> =>
 const describe = (t: Tok): string => {
   switch (t.t) {
     case "id": return `identifier '${t.v}'`
+    case "num": return `number '${t.v}'`
     case "kw": return `keyword '${t.v}'`
     case "punct": return `'${t.v}'`
     case "str": return `string "${t.v}"`
@@ -182,6 +191,7 @@ const describe = (t: Tok): string => {
 const punctP = (v: string): P<Tok> => tokP(t => t.t === "punct" && t.v === v, `'${v}'`)
 const kwP    = (v: string): P<Tok> => tokP(t => t.t === "kw" && t.v === v, `'${v}'`)
 const idP:     P<string>  = map(tokP(t => t.t === "id", "identifier"), t => (t as Tok & {v: string}).v)
+const numP:    P<number>  = map(tokP(t => t.t === "num", "number"), t => (t as Tok & {v: number}).v)
 const leafP:   P<Tok>     = tokP(t => t.t === "leaf", "leaf")
 const strP:    P<string>  = map(tokP(t => t.t === "str", "string literal"), t => (t as Tok & {v: string}).v)
 const arrowP:  P<Tok>     = alt(punctP("->"), punctP("→"))
@@ -262,6 +272,8 @@ const simple: P<Expr> = lazy(() => alt<Expr>(
   map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
   // leaf
   map(leafP, (): Expr => ({ tag: "leaf" })),
+  // numeric literal, compiled using in-scope zero/succ
+  map(numP, (value): Expr => ({ tag: "num", value })),
   // hole _
   holeP,
   // identifier
@@ -646,8 +658,10 @@ function selectorTree(n: number, i: number): Tree {
   return cirToTree(eliminateLams(buildSelector(n, i)))
 }
 
-// Scope entry: a compiled tree plus optional record field names for projection.
-interface ScopeEntry { tree: Tree; fields?: string[] }
+// Scope entry: a compiled tree plus optional compile-time record metadata.
+// Field names/trees are parser metadata only; runtime records remain ordinary
+// Church-encoded values.
+interface ScopeEntry { tree: Tree; fields?: string[]; fieldTrees?: Tree[] }
 
 // Expr → Cir, with scope lookup and use-resolution.
 function exprToCir(
@@ -658,6 +672,16 @@ function exprToCir(
   const lookup = (name: string) => lookupEntry(name)?.tree
   switch (e.tag) {
     case "leaf": return { tag: "lit", t: LEAF }
+    case "num": {
+      const zero = lookup("zero")
+      const succ = lookup("succ")
+      if (!zero || !succ) throw new Error(`numeric literal ${e.value}: zero and succ must be in scope`)
+      let result = zero
+      for (let i = 0; i < e.value; i++) {
+        result = applyTree(succ, result, 10_000_000)
+      }
+      return { tag: "lit", t: result }
+    }
     case "var": {
       const entry = lookupEntry(e.name)
       return entry ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
@@ -697,28 +721,40 @@ function exprToCir(
     case "proj": {
       // Compile target, then look up field index from target's field metadata.
       // Target must be a known record (var with fields, or use expression).
-      const fieldNames = resolveExprFields(e.target, lookupEntry, resolveUse)
-      if (!fieldNames)
+      const record = resolveExprRecord(e.target, lookupEntry, resolveUse)
+      if (!record)
         throw new Error(`projection '.${e.field}': target has no known record fields`)
-      const idx = fieldNames.indexOf(e.field)
+      const idx = record.fields.indexOf(e.field)
       if (idx < 0)
-        throw new Error(`projection '.${e.field}': field not found (available: ${fieldNames.join(", ")})`)
+        throw new Error(`projection '.${e.field}': field not found (available: ${record.fields.join(", ")})`)
+      if (record.fieldTrees) return { tag: "lit", t: record.fieldTrees[idx] }
       const target = exprToCir(e.target, lookupEntry, resolveUse)
-      const sel = buildSelector(fieldNames.length, idx)
+      const sel = buildSelector(record.fields.length, idx)
       return cap(target, sel)
     }
   }
 }
 
-// Resolve the field names of an expression (for projection).
-function resolveExprFields(
+// Resolve record metadata known at compile time (for projection/open).
+function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string) => ScopeEntry,
-): string[] | undefined {
-  if (e.tag === "var") return lookupEntry(e.name)?.fields
-  if (e.tag === "use") return resolveUse(e.path).fields
-  if (e.tag === "recValue") return e.fields.map(f => f.name)
+): { fields: string[]; fieldTrees?: Tree[] } | undefined {
+  if (e.tag === "var") {
+    const entry = lookupEntry(e.name)
+    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees } : undefined
+  }
+  if (e.tag === "use") {
+    const entry = resolveUse(e.path)
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees } : undefined
+  }
+  if (e.tag === "recValue") {
+    return {
+      fields: e.fields.map(f => f.name),
+      fieldTrees: e.fields.map(f => compileExpr(f.value, lookupEntry, resolveUse)),
+    }
+  }
   if (e.tag === "proj") {
     // Nested projection: target.field — would need the inner record's field type
     // which itself is a record. Not supported yet.
@@ -809,7 +845,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    return { tree, fields: fieldNames }
+    return { tree, fields: fieldNames, fieldTrees }
   }
 
   function recordItem(kind: "let" | "test" | "open", name?: string, testIndex?: number): void {
@@ -827,9 +863,9 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     switch (it.tag) {
       case "let": {
         const tree = compileExpr(it.body, lookupEntry, resolveUse)
-        // If the body is a use or recValue, track fields.
-        const fields = resolveExprFields(it.body, lookupEntry, resolveUse)
-        define(it.name, { tree, fields })
+        // If the body is a use or recValue, track compile-time record metadata.
+        const record = resolveExprRecord(it.body, lookupEntry, resolveUse)
+        define(it.name, { tree, fields: record?.fields, fieldTrees: record?.fieldTrees })
         target.push({ kind: "Def", name: it.name, tree })
         recordItem("let", it.name)
         return
@@ -845,21 +881,22 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         return
       }
       case "open": {
-        const tree = compileExpr(it.expr, lookupEntry, resolveUse)
-        const fields = resolveExprFields(it.expr, lookupEntry, resolveUse)
-        if (!fields || fields.length === 0)
+        const record = resolveExprRecord(it.expr, lookupEntry, resolveUse)
+        if (!record || record.fields.length === 0)
           throw new Error("open: expression has no known record fields")
-        const n = fields.length
+        const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse)
+        const n = record.fields.length
         for (let i = 0; i < n; i++) {
-          const fieldTree = applyTree(tree, selectorTree(n, i), 10_000_000)
-          const name = fields[i]
-          const existing = lookupEntry(name)
+          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, selectorTree(n, i), 10_000_000)
+          const name = record.fields[i]
+          const existing = stack[stack.length - 1].get(name)
           if (existing) {
             // Idempotent: skip if same tree (e.g. diamond dependency via open)
             if (existing.tree.id === fieldTree.id) continue
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
           define(name, { tree: fieldTree })
+          target.push({ kind: "Def", name, tree: fieldTree })
         }
         recordItem("open")
         return

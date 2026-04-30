@@ -514,8 +514,8 @@ library tests.
 **Superseded in selector-query kernel mode.** This tag-only registered-type
 recognition was useful for getting past the old budget failure, but it is not
 the current trusted design. Nat/Bool recognition is now canonical identity;
-the tags remain only as constructor metadata payloads and adversarial tests
-check that fake `NAT_TAG`/`BOOL_TAG` values are rejected.
+the tags were later removed entirely and adversarial tests now check that
+fake Nat/Bool-shaped values are rejected.
 
 **Alternative: precompute Nat/Bool outside the kernel and pass as parameters.** Define q_type_fn as `{ks, q, nat_type, bool_type} -> fix(...)` and partially apply at assembly time. This avoids tags but changes the dispatch interface.
 
@@ -663,31 +663,30 @@ let kernel = fix ({self, query} ->
 ```
 
 This keeps the single mutual-kernel authority while removing the linear query
-comparison chain. Implemented in `lib/nbe.disp`; `lib/types.disp` is now a
-re-export layer over the unified selector-query kernel.
+comparison chain. Implemented in `lib/kernel.disp`; `lib/types.disp` is now a
+parser-side re-export layer over the unified selector-query kernel.
 
 Current verification:
 - `npm test` passes.
-- `npm run disp -- --stats --stats-detail lib/nbe.test.disp`: 15/15 tests pass,
-  about 21.6k evaluator steps.
+- `npm run disp -- --stats lib/kernel.test.disp`: 15/15 tests pass, about
+  740 evaluator steps.
 - `npm run disp -- --stats lib/types.test.disp`: 135/135 tests pass, about
-  32.9k evaluator steps.
+  10k evaluator steps.
 
 The previous `Type0(Nat)`/`Type0(Bool)` budget failure is gone. The remaining
-cost is mostly up-front file opening/record projection: opening the unified
-`nbe.disp` costs about 20.7k steps because the file now contains the full
-kernel plus the type-level surface. This is acceptable for correctness and is a
-better target for compiler/open-use optimization than the old 10M runtime
-dispatch failure.
+cost was mostly up-front file opening/record projection. Parser-side `open`
+now binds known field trees directly and re-exports them as declarations, so
+opened names no longer require runtime selector projection.
 
 Current soundness cleanup:
-- Smart accum recognizes Pi by checker signature, not by forgeable `PI_TAG`.
+- Smart accum recognizes Pi by checker signature, not by type-former tags.
 - Eq has a signature query (`Q_SIG_EQ`), `is_eq` uses it, and `Type n` checks
   Eq formation.
-- Nat/Bool registered-type recognition uses canonical identity, not
-  `NAT_TAG`/`BOOL_TAG` tag-only checks.
-- `lib/types.test.disp` includes adversarial fake-tag tests for Nat, Bool, Eq,
-  Universe, and Pi metadata.
+- Nat/Bool registered-type recognition uses canonical identity.
+- Type-former tags (`PI_TAG`, `UNIV_TAG`, `EQ_TAG`, `NAT_TAG`, `BOOL_TAG`) have
+  been removed; only neutral metadata tags remain.
+- `lib/types.test.disp` includes adversarial fake-shape tests for Nat, Bool,
+  Eq, Universe, and Pi metadata.
 
 ## Previous implementation checklist (kernel attempt #1)
 
@@ -702,7 +701,7 @@ Preserved for reference. Items checked off during the 2026-04-29 attempt:
 - [x] Define q_type_fn (with tag-free metadata)
 - [x] Assemble kernel dispatch chain (k2..k9, kernel = fix ...)
 - [x] Extract API: is_neutral, is_pi, is_universe via CPS sig queries
-- [x] Type constructors via double-wait: Nat, Bool, mkEq, mkType, mkPi, mkArrow
+- [x] Type constructors via double-wait: Nat, Bool, Eq, Type, Pi, Arrow
 - [x] Verified: basic type checks (Nat t = TT, Nat FF = FF, Bool TT = TT) pass through kernel
 - [x] Verified: CPS sig queries work correctly (is_neutral returns TT/FF for neutrals/non-neutrals)
 - [x] **RESOLVED**: q_ton_fn — smart accum eliminates combinator explosion

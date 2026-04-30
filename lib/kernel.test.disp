@@ -1,28 +1,28 @@
 open use "prelude.disp"
-open use "nbe.disp"
+open use "kernel.disp"
 
 // ================================================================
 // Neutral detection (signature-based)
 // ================================================================
 
-test is_neutral (mkVHyp t t) = TT
-test is_neutral (mkVHyp (t t) (t t)) = TT
+test is_neutral (Hyp t t) = TT
+test is_neutral (Hyp (t t) (t t)) = TT
 test is_neutral t = FF
 test is_neutral (t t) = FF
 test is_neutral (t t t) = FF
 
 // Spine accumulation: applying a neutral produces a neutral
-test is_neutral (mkVHyp t t (t t)) = TT
+test is_neutral (Hyp t t (t t)) = TT
 
 // VStuckElim is also neutral
-test is_neutral (mkVStuckElim t (mkVHyp t t)) = TT
+test is_neutral (StuckElim t (Hyp t t)) = TT
 
 // ================================================================
 // Spine accumulation (raw apply on neutrals)
 // ================================================================
 
 // Applying a hypothesis accumulates the spine
-let h1 = mkVHyp t t
+let h1 = Hyp t t
 let stuck1 = h1 (t t)
 let stuck2 = stuck1 (t t t)
 
@@ -33,7 +33,7 @@ test fast_eq (pair_fst stuck1) (pair_fst stuck2) = TT
 // Raw function apply still works
 test ({x} -> x) t = t
 test ({x} -> x) (t t) = t t
-test ({x} -> x) (mkVHyp (t t) t) = mkVHyp (t t) t
+test ({x} -> x) (Hyp (t t) t) = Hyp (t t) t
 
 // ================================================================
 // Metadata extraction from neutrals
