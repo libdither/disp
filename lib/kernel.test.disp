@@ -8,7 +8,7 @@ let is_registered = {x} -> select TT (is_bool_type x) (is_nat_type x)
 let Type0 = Type 0
 let Type1 = Type 1
 let Type2 = Type 2
-let NatToNat = Arrow Nat Nat 0
+let NatToNat = Arrow Nat Nat
 let id_fn = {x} -> x
 
 // ================================================================
@@ -135,16 +135,14 @@ test (Eq Nat (add 1 4) (add 4 1)) refl = TT
 
 let add_comm = {n} ->
   nat_rec
-    ({n_} -> Pi Nat ({m} -> Eq Nat (add n_ m) (add m n_)) 1)
+    ({n_} -> Pi Nat ({m} -> Eq Nat (add n_ m) (add m n_)))
     ({m} -> refl)
     ({n_, ih} -> {m} -> refl)
     n
 
 test (Pi Nat ({n} ->
     Pi Nat ({m} ->
-      Eq Nat (add n m) (add m n))
-      1)
-    0)
+      Eq Nat (add n m) (add m n))))
   add_comm = TT
 test (Eq Nat (add 2 3) (add 3 2)) (add_comm 2 3) = TT
 
@@ -198,12 +196,12 @@ test Nat ((Hyp NatToNat 0) (Hyp Nat 1)) = TT
 // Pi metadata reflection
 // ================================================================
 
-test is_pi (Pi Nat ({_} -> Nat) 0) = TT
+test is_pi (Pi Nat ({_} -> Nat)) = TT
 test is_pi Nat = FF
 test is_pi t = FF
-test pi_dom (Pi Nat ({_} -> Nat) 0) = Nat
-test is_pi (Arrow Nat Nat 0) = TT
-test pi_dom (Arrow Nat Nat 0) = Nat
+test pi_dom (Pi Nat ({_} -> Nat)) = Nat
+test is_pi (Arrow Nat Nat) = TT
+test pi_dom (Arrow Nat Nat) = Nat
 
 // ================================================================
 // Type n
@@ -231,16 +229,16 @@ let fakeBool = wait ({_meta, _x} -> TT) (t t)
 test is_bool_type fakeBool = FF
 test Type0 fakeBool = FF
 
-test Type0 (Arrow Nat Nat 0) = TT
+test Type0 (Arrow Nat Nat) = TT
 test Type1 Type0 = TT
 test Type0 Type0 = FF
 test Type1 Nat = TT
 test Type2 Type0 = TT
-test Type0 (Pi Nat ({_x} -> Bool) 0) = TT
-test Type0 (Pi Nat ({x} -> x) 0) = FF
-test Type0 (Pi FF ({_x} -> Nat) 0) = FF
-test Type1 (Pi Type0 ({A} -> Arrow A A 1) 0) = TT
-test Type0 (Pi Type0 ({A} -> Arrow A A 1) 0) = FF
+test Type0 (Pi Nat ({_x} -> Bool)) = TT
+test Type0 (Pi Nat ({x} -> x)) = FF
+test Type0 (Pi FF ({_x} -> Nat)) = FF
+test Type1 (Pi Type0 ({A} -> Arrow A A)) = TT
+test Type0 (Pi Type0 ({A} -> Arrow A A)) = FF
 test Type0 (Eq Nat 0 0) = TT
 test Type0 (Eq Nat 0 FF) = FF
 test Type0 (Eq FF 0 0) = FF
@@ -259,8 +257,8 @@ test is_universe fakeUniverse = FF
 test Type0 fakeUniverse = FF
 
 // Adversarial: trivially-accepting checker with Pi-like metadata
-// (fork(dom, fork(depth, codFn))). Signature mismatch rejects it.
-let fakePi = wait ({_meta, _x} -> TT) (t Nat (t 0 ({_x} -> Bool)))
+// (fork(dom, codFn)). Signature mismatch rejects it.
+let fakePi = wait ({_meta, _x} -> TT) (t Nat ({_x} -> Bool))
 test is_pi fakePi = FF
 test Type0 fakePi = FF
 
@@ -276,53 +274,49 @@ test conv_structural t t = TT
 test conv_structural t (t t) = FF
 test conv_structural Type0 Type0 = TT
 test conv_structural Type0 Type1 = FF
-test conv_structural (Pi Nat ({_} -> Nat) 0) (Pi Nat ({_} -> Nat) 0) = TT
-test conv_structural (Pi Nat ({_} -> Nat) 0) (Pi Bool ({_} -> Nat) 0) = FF
+test conv_structural (Pi Nat ({_} -> Nat)) (Pi Nat ({_} -> Nat)) = TT
+test conv_structural (Pi Nat ({_} -> Nat)) (Pi Bool ({_} -> Nat)) = FF
 test conv_structural
-  (Pi Nat ({_x} -> Nat) 0)
-  (Arrow Nat Nat 0) = TT
+  (Pi Nat ({_x} -> Nat))
+  (Arrow Nat Nat) = TT
 test conv_structural
-  (Arrow Nat Bool 0)
-  (Arrow Nat Nat 0) = FF
+  (Arrow Nat Bool)
+  (Arrow Nat Nat) = FF
 
 // ================================================================
 // Integration: full pipeline
 // ================================================================
 
 // idPoly : (A : Type0) -> A -> A
-test (Pi Type0 ({A} -> Arrow A A 1) 0) ({_A} -> {x} -> x) = TT
+test (Pi Type0 ({A} -> Arrow A A)) ({_A} -> {x} -> x) = TT
 
 // idNatToNat : (Nat -> Nat) -> Nat -> Nat
-test (Arrow NatToNat NatToNat 0) ({f} -> f) = TT
+test (Arrow NatToNat NatToNat) ({f} -> f) = TT
 
 // composeNat : (Nat -> Nat) -> (Nat -> Nat) -> Nat -> Nat
-test (Arrow NatToNat (Arrow NatToNat NatToNat 2) 0)
+test (Arrow NatToNat (Arrow NatToNat NatToNat))
   ({f} -> {g} -> {x} -> f (g x)) = TT
 
-test (Arrow NatToNat (Arrow NatToNat NatToNat 2) 0)
+test (Arrow NatToNat (Arrow NatToNat NatToNat))
   ({f} -> {g} -> {x} -> FF) = FF
 
 // doubleApply : (Nat -> Nat) -> Nat -> Nat
-test (Arrow NatToNat NatToNat 0)
+test (Arrow NatToNat NatToNat)
   ({f} -> {x} -> f (f x)) = TT
 
 // constNat : Nat -> Nat -> Nat
-test (Arrow Nat (Arrow Nat Nat 2) 0) ({x} -> {_y} -> x) = TT
+test (Arrow Nat (Arrow Nat Nat)) ({x} -> {_y} -> x) = TT
 
 // constPoly : (A : Type0) -> (B : Type0) -> A -> B -> A
 test (Pi Type0 ({A} ->
     Pi Type0 ({B} ->
-      Arrow A (Arrow B A 4) 3)
-      2)
-    0)
+      Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
 
 // badConstPoly
 test (Pi Type0 ({A} ->
     Pi Type0 ({B} ->
-      Arrow A (Arrow B A 4) 3)
-      2)
-    0)
+      Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
 
 // flip : (A : Type0) -> (B : Type0) -> (C : Type0) -> (A -> B -> C) -> B -> A -> C
@@ -330,12 +324,8 @@ test (Pi Type0 ({A} ->
     Pi Type0 ({B} ->
       Pi Type0 ({C} ->
         Arrow
-          (Arrow A (Arrow B C 6) 5)
-          (Arrow B (Arrow A C 7) 6)
-          5)
-        3)
-      2)
-    0)
+          (Arrow A (Arrow B C))
+          (Arrow B (Arrow A C))))))
   ({_A} -> {_B} -> {_C} -> {f} -> {b} -> {a} -> (f a) b) = TT
 
 // f : Nat -> Nat, x : Nat |- f x : Nat
@@ -344,41 +334,36 @@ test Nat ((Hyp NatToNat 3) (Hyp Nat 4)) = TT
 // f : Nat -> Nat, x : Nat |- f x : Bool
 test Bool ((Hyp NatToNat 3) (Hyp Nat 4)) = FF
 
-test Type1 (Pi Type0 ({A} -> Arrow A A 1) 0) = TT
-test Type0 (Pi Type0 ({A} -> Arrow A A 1) 0) = FF
+test Type1 (Pi Type0 ({A} -> Arrow A A)) = TT
+test Type0 (Pi Type0 ({A} -> Arrow A A)) = FF
 
 // boolToNat : Bool -> Nat
-test (Arrow Bool Nat 0) ({b} ->
+test (Arrow Bool Nat) ({b} ->
   bool_rec ({_} -> Nat) 1 0 b) = TT
 
 // natToBool : Nat -> Bool
-test (Arrow Nat Bool 0) ({n} ->
+test (Arrow Nat Bool) ({n} ->
   nat_rec ({_} -> Bool) TT ({n_, prev} -> FF) n) = TT
 
 // badNatToBool : Nat -> Bool (body returns Nat, not Bool)
-test (Arrow Nat Bool 0) ({n} ->
+test (Arrow Nat Bool) ({n} ->
   nat_rec ({_} -> Nat) 0 ({n_, prev} -> succ prev) n) = FF
 
 // applyPoly : (A : Type0) -> (B : Type0) -> (A -> B) -> A -> B
 test (Pi Type0 ({A} ->
     Pi Type0 ({B} ->
-      Arrow (Arrow A B 4) (Arrow A B 4) 3)
-      2)
-    0)
+      Arrow (Arrow A B) (Arrow A B))))
   ({_A} -> {_B} -> {f} -> f) = TT
 
 // badSelf : (A : Type0) -> A -> A — self-application rejected
-test (Pi Type0 ({A} -> Arrow A A 2) 0)
+test (Pi Type0 ({A} -> Arrow A A))
   ({_A} -> {x} -> x x) = FF
 
 // pairNat : Nat -> Nat -> (Nat -> Nat -> Nat) -> Nat
 test (Arrow Nat
   (Arrow Nat
-    (Arrow (Arrow Nat (Arrow Nat Nat 5) 4)
-      Nat
-      4)
-    3)
-  0)
+    (Arrow (Arrow Nat (Arrow Nat Nat))
+      Nat)))
   ({a} -> {b} -> {sel} -> (sel a) b) = TT
 
 // h : H |- h : H
@@ -386,40 +371,35 @@ test infer (fast_eq (Hyp t t)) (Hyp (Hyp t t) (t t)) = TT
 
 // ctxId : (A : Type0) -> (x : A) -> A
 test (Pi Type0 ({A} ->
-    Pi A ({_x} -> A) 1)
-    0)
+    Pi A ({_x} -> A)))
   ({_A} -> {x} -> x) = TT
 
 // ctxConst : (A : Type0) -> (B : Type0) -> A -> B -> A
 test (Pi Type0 ({A} ->
     Pi Type0 ({B} ->
-      Arrow A (Arrow B A 3) 2)
-      1)
-    0)
+      Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
 
 // badCtxConst
 test (Pi Type0 ({A} ->
     Pi Type0 ({B} ->
-      Arrow A (Arrow B A 3) 2)
-      1)
-    0)
+      Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
 
 // f : (x : Nat) -> Bool, n : Nat |- f n : Bool
 test Bool
-  ((Hyp (Pi Nat ({_x} -> Bool) 0) 0)
+  ((Hyp (Pi Nat ({_x} -> Bool)) 0)
     (Hyp Nat 1)) = TT
 
 // f : (x : Nat) -> Bool, n : Nat |- f n : Nat
 test Nat
-  ((Hyp (Pi Nat ({_x} -> Bool) 0) 0)
+  ((Hyp (Pi Nat ({_x} -> Bool)) 0)
     (Hyp Nat 1)) = FF
 
 // f : (A : Type0) -> A -> A, n : Nat |- f Nat n : Nat
 test Nat
   (((Hyp
-      (Pi Type0 ({A} -> Arrow A A 1) 0)
+      (Pi Type0 ({A} -> Arrow A A))
       0)
     Nat)
     (Hyp Nat 1)) = TT

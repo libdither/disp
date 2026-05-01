@@ -19,10 +19,9 @@ let has_sig = {checker, v} -> fast_eq (pair_fst v) (checker_sig checker)
 
 // Metadata helpers. These keep the raw tree layout explicit while naming the
 // typed shape we expect to justify later.
-let make_pi_meta = {domain, depth, cod_fn} -> t domain (t depth cod_fn)
+let make_pi_meta = {domain, cod_fn} -> t domain cod_fn
 let pi_meta_domain = {meta} -> pair_fst meta
-let pi_meta_depth = {meta} -> pair_fst (pair_snd meta)
-let pi_meta_cod_fn = {meta} -> pair_snd (pair_snd meta)
+let pi_meta_cod_fn = {meta} -> pair_snd meta
 
 let make_eq_meta = {A, x, y} -> t A (t x y)
 let eq_meta_type = {meta} -> pair_fst meta
@@ -64,9 +63,9 @@ let q_is_neutral = {raw : {hyp_reduce,pi,nat,bool,eq,type}, x} ->
   has_sig raw.hyp_reduce x
 
 // q_make_hyp: construct a hypothesis neutral.
-// Result: wait(hyp_reduce_handler)(make_neutral_meta(type, payload))
-let q_make_hyp = {raw : {hyp_reduce,pi,nat,bool,eq,type}, ty, depth} ->
-  wait raw.hyp_reduce (make_neutral_meta ty depth)
+// Result: wait(hyp_reduce_handler)(make_neutral_meta(type, identity))
+let q_make_hyp = {raw : {hyp_reduce,pi,nat,bool,eq,type}, ty, identity} ->
+  wait raw.hyp_reduce (make_neutral_meta ty identity)
 
 // --- H-rule (shared by all type checkers) ---
 // When v is neutral, check if v's stored type matches this checker's own type.
@@ -96,14 +95,14 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query} ->
   })
 
 // --- Pi checker ---
-// meta = make_pi_meta(domain, depth, codFn)
+// meta = make_pi_meta(domain, codFn)
 // Creates a hypothesis, applies v to it, checks the result type matches the codomain.
 let q_pi_fn = {ks, raw, query} ->
   fix ({self, meta, v} -> {
     // check_fn: v is concrete — check it against the Pi type
     let check_fn = {ks, raw, query, self, meta, v} -> {
-      // Build a hypothesis of the domain type at the given depth
-      let hyp = q_make_hyp raw (pi_meta_domain meta) (pi_meta_depth meta)
+      // Build a hypothesis of the domain type; use meta as identity
+      let hyp = q_make_hyp raw (pi_meta_domain meta) meta
       // Apply v to the hypothesis to get the result
       let result = v hyp
       // Compute the expected codomain type at this hypothesis
@@ -184,7 +183,7 @@ let q_type_fn = {ks, raw, query} ->
       let dom = pi_meta_domain tm
       let cod_fn = pi_meta_cod_fn tm
       and (wait self meta dom)
-        (wait self meta (cod_fn (q_make_hyp raw dom (t (t meta)))))
+        (wait self meta (cod_fn (q_make_hyp raw dom tm)))
     }
     // eq: check A is valid type and lhs/rhs both type-check under A
     let eq_fn = {ks, raw, query, self, meta, x} -> {
@@ -273,8 +272,8 @@ let Nat = wait kernel_ref.nat t
 let Bool = wait kernel_ref.bool t
 let Eq = {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
 let Type = {rank} -> wait kernel_ref.type rank
-let Pi = {domain, codFn, depth} -> wait kernel_ref.pi (make_pi_meta domain depth codFn)
-let Arrow = {a_type, b_type, depth} -> Pi a_type ({_} -> b_type) depth
+let Pi = {domain, codFn} -> wait kernel_ref.pi (make_pi_meta domain codFn)
+let Arrow = {a_type, b_type} -> Pi a_type ({_} -> b_type)
 
 // ================================================================
 // Typed eliminators
@@ -354,7 +353,7 @@ let eq_cong = {A, B, f, x, y, p} ->
 // Deep structural equality: fast_eq first, then compare Pi domains/codomains or universe ranks.
 let conv_structural = fix ({self, a, b} -> {
   let pi_fn = {self, a, b} -> {
-    let hyp = Hyp (pi_dom a) (t (t (t t)))
+    let hyp = Hyp (pi_dom a) (type_meta a)
     and (self (pi_dom a) (pi_dom b))
       (self (pi_cod_fn a hyp) (pi_cod_fn b hyp))
   }

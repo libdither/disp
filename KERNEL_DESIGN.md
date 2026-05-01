@@ -123,7 +123,7 @@ The current metadata layouts are:
 - `Bool`: `t`
 - `Eq A x y`: `make_eq_meta A x y`
 - `Type rank`: `rank`
-- `Pi domain codFn depth`: `make_pi_meta domain depth codFn`
+- `Pi domain codFn`: `make_pi_meta domain codFn`
 
 Type-former tags are deliberately not used. Tags are forgeable tree
 payloads; checker identity is not.

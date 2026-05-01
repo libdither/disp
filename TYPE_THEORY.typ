@@ -437,8 +437,7 @@ Each check is O(1) via hash-consing.
 
 A neutral is `wait(hyp_reduce)(metadata)`, using the same `wait`
 encoding as types. The metadata stores the neutral's type and its
-identity (hypothesis id/depth, eliminator payload, or application
-spine).
+identity (hypothesis id, eliminator payload, or application spine).
 
 The implementation names this layout instead of scattering raw
 `fork` projections through the kernel:
@@ -531,7 +530,7 @@ Types are built with *double wait*:
 
   Nat  = wait(kernel_ref.nat)(leaf)
   Bool = wait(kernel_ref.bool)(leaf)
-  Pi(A, B, d) = wait(kernel_ref.pi)(fork(A, fork(d, B)))
+  Pi(A, B) = wait(kernel_ref.pi)(fork(A, B))
 ```
 
 `kernel_ref.nat` is `wait(kernel)(nat_selector)`, so it is inert ---
@@ -655,14 +654,14 @@ Zero = `leaf`. Succ(n) = `fork(leaf, n)`. Metadata = `leaf`.
 
 == Pi
 
-Metadata = `make_pi_meta(domain, depth, codFn)`, represented today as
-`fork(domain, fork(depth, codFn))`.
+Metadata = `make_pi_meta(domain, codFn)`, represented as
+`fork(domain, codFn)`.
 
 ```
-  Pi(A, B, d) = wait(pi_checker)(make_pi_meta(A, d, B))
+  Pi(A, B) = wait(pi_checker)(make_pi_meta(A, B))
   pi_checker(meta, v):
     if is_neutral(v): H-rule
-    let hyp = Hyp(pi_meta_domain(meta), pi_meta_depth(meta))
+    let hyp = Hyp(pi_meta_domain(meta), meta)   // meta itself is identity
     let result = v(hyp)
     let expected = pi_meta_cod_fn(meta)(hyp)
     if is_neutral(result):
@@ -671,7 +670,14 @@ Metadata = `make_pi_meta(domain, depth, codFn)`, represented today as
       fast_eq(expected(result), TT)    // apply type as predicate
 ```
 
-Arrow sugar: `Arrow(A, B, d) = Pi(A, {_} -> B, d)`.
+The hypothesis identity is the Pi type's own metadata. Nested Pi checks
+always produce distinct hypotheses because the inner Pi (produced by
+evaluating the outer's codomain function) has structurally different
+metadata. This eliminates the need for an external depth counter while
+preserving soundness --- two hypotheses collide only if they come from
+the same Pi type, which cannot happen in nested checking.
+
+Arrow sugar: `Arrow(A, B) = Pi(A, {_} -> B)`.
 
 == Eq
 
@@ -697,7 +703,7 @@ Metadata = `rank` (a natural number).
     if is_universe(x): nat_lt(rank(x), n)        // Type m, m < n
     if is_pi(x):
       and(self(n, pi_dom(x)),
-          self(n, codFn(Hyp(pi_dom(x), ...))))
+          self(n, codFn(Hyp(pi_dom(x), pi_meta(x)))))
     if is_eq(x):
       and(self(n, eq_A(x)),
           and(eq_A(x)(eq_x(x)), eq_A(x)(eq_y(x))))
@@ -759,10 +765,10 @@ Pure data checking. No hypotheses, no H-rule.
 == `{x} -> x` checked against `Nat -> Nat`
 
 ```
-  (Arrow Nat Nat d)({x} -> x)
-    pi_checker(fork(Nat, fork(d, {_}->Nat)), {x}->x)
+  (Arrow Nat Nat)({x} -> x)
+    pi_checker(fork(Nat, {_}->Nat), {x}->x)
     is_neutral? no → concrete check
-    h = Hyp(Nat, d)             // fresh hypothesis
+    h = Hyp(Nat, meta)          // meta = fork(Nat, {_}->Nat)
     result = ({x}->x)(h) = h   // apply identity to h
     expected = ({_}->Nat)(h) = Nat
     is_neutral(h)? yes
@@ -779,14 +785,16 @@ This example shows hypothesis reduction computing a result type.
 
 ```
   Outer Pi: domain = Nat → Nat, codomain = {_} -> Nat → Nat
-    h_f = Hyp(Nat→Nat, d0)           // stored type: Nat → Nat
+    meta_outer = fork(Nat→Nat, {_}->Nat→Nat)
+    h_f = Hyp(Nat→Nat, meta_outer)   // stored type: Nat → Nat
     result = ({f,x}->f(x))(h_f)
            = {x} -> h_f(x)           // a lambda — concrete
     expected = Nat → Nat
     is_neutral? no → check {x}->h_f(x) against Nat → Nat
 
   Inner Pi: domain = Nat, codomain = {_} -> Nat
-    h_x = Hyp(Nat, d1)               // stored type: Nat
+    meta_inner = fork(Nat, {_}->Nat)  // different from meta_outer!
+    h_x = Hyp(Nat, meta_inner)       // stored type: Nat
     result = ({x}->h_f(x))(h_x)
            = h_f(h_x)                // applying neutral to neutral!
     hyp_reduce fires:
@@ -801,7 +809,9 @@ This example shows hypothesis reduction computing a result type.
 ```
 
 The type was computed at application time by `hyp_reduce`, not
-inferred after the fact.
+inferred after the fact. Note that `meta_outer ≠ meta_inner` because
+the codomain functions differ --- this guarantees `h_f ≠ h_x` even
+though both have domain `Nat`.
 
 == Self-application rejection: `{x} -> x x`
 
@@ -809,9 +819,11 @@ Checked against `(A : Type 0) → A → A`:
 
 ```
   Pi checks A : Type 0:
-    h_A = Hyp(Type0, d0)
+    meta_A = fork(Type0, {A}->Arrow(A,A))
+    h_A = Hyp(Type0, meta_A)
   Pi checks x : h_A:
-    h_x = Hyp(h_A, d1)               // type is a hypothesis!
+    meta_x = fork(h_A, {_}->h_A)     // codFn applied to h_A → h_A
+    h_x = Hyp(h_A, meta_x)           // type is a hypothesis!
   Body: h_x(h_x)
     hyp_reduce fires on h_x(h_x):
       h_x has type h_A
@@ -872,7 +884,9 @@ not a semantic change.
 
 == Elaborator
 
-The elaborator (AST → typed terms, depth threading, motive inference)
-is the remaining frontier. All kernel operations are tree programs;
-the elaborator would orchestrate them, threading binder depth as a
-Nat parameter.
+The elaborator (AST → typed terms, motive inference) is the remaining
+frontier. All kernel operations are tree programs; the elaborator
+would orchestrate them. Since Pi types derive hypothesis identity from
+their own metadata (no external depth counter needed), the elaborator
+need not thread binder-depth state --- it only needs to compile type
+expressions into kernel predicates and invoke them.

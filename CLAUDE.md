@@ -40,7 +40,7 @@ Every component participating in checking, elaboration, or conversion must have 
 - **Type-tracking neutrals.** Neutrals use the kernel's `hyp_reduce` handler. Metadata stores the current type at `pair_fst`; when a Pi-typed neutral is applied, `hyp_reduce` computes `codFn(v)` as the result type. `infer` is O(1): just extracts the stored type. `is_neutral` is one signature check against `kernel.hyp_reduce`. No val_apply or type_apply — raw `apply` handles types, neutrals, and functions uniformly.
 - **Performance: ~113ms for test suite** (comparable to previous 108ms).
 - **Bracket abstraction optimized.** Three optimizations: η-reduction (`[x](f x) → f`), K-composition (`S(K p)(K q) → K(p q)`), `S(K p)(I) → p`. Binder parameters correctly shadow scope variables.
-- **Elaborator still needed.** The parser compiles to untyped tree calculus (types erased). The elaborator is the remaining frontier: it would supply motives to eliminators, manage hypothesis depths, and support the full typed compilation pipeline.
+- **Elaborator still needed.** The parser compiles to untyped tree calculus (types erased). The elaborator is the remaining frontier: it would supply motives to eliminators and support the full typed compilation pipeline. Pi types derive hypothesis identity from their own metadata, so no external depth counter is needed.
 
 ## Key tree-calculus idioms
 
