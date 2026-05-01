@@ -1,5 +1,6 @@
 open use "prelude.disp"
 open use "kernel.disp"
+open use "math.disp"
 
 // Test-only convenience definitions
 let is_nat_type = {x} -> fast_eq x Nat

@@ -7,10 +7,10 @@ open use "prelude.disp"
 // Extract metadata from a wait-based type: wait(checker)(meta)
 // A wait-based value is fork(fork(checker_sig, handler), meta_pair)
 // where meta_pair = fork(meta_sig, meta). So type_meta = pair_snd(pair_snd(T)).
-let type_meta = {T} -> pair_snd (pair_snd T)
+type_meta := {T} -> pair_snd (pair_snd T)
 
 // conv(a, b) = fast_eq(a, b). Named wrapper for partial application: `conv Nat` is a Nat-checker.
-let conv = {a, b} -> fast_eq a b
+conv := {a, b} -> fast_eq a b
 
 // Signature of a wait-based checker. For T = wait(checker)(meta),
 // pair_fst(T) is constant for all metadata that uses the same checker.
@@ -28,16 +28,16 @@ let eq_meta_type = {meta} -> pair_fst meta
 let eq_meta_lhs = {meta} -> pair_fst (pair_snd meta)
 let eq_meta_rhs = {meta} -> pair_snd (pair_snd meta)
 
-let make_neutral_meta = {current_type, payload} -> t current_type payload
-let neutral_meta_type = {meta} -> pair_fst meta
+make_neutral_meta := {current_type, payload} -> t current_type payload
+neutral_meta_type := {meta} -> pair_fst meta
 let neutral_meta_payload = {meta} -> pair_snd meta
 let neutral_app_payload = {old_meta, arg} -> t old_meta arg
-let extend_neutral_meta = {old_meta, result_type, arg} ->
+extend_neutral_meta := {old_meta, result_type, arg} ->
   make_neutral_meta result_type (neutral_app_payload old_meta arg)
 
 // Sentinel for invalid neutral application: applying a neutral whose current
 // type is not Pi produces a neutral with this stored type.
-let InvalidType = FF
+InvalidType := FF
 
 // ================================================================
 // Kernel record shape
@@ -80,13 +80,13 @@ let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
 // Checks if the neutral's current type is Pi; if so, computes codomain type for the result.
 let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query} ->
   fix ({self, meta, v} -> {
-    // pi_fn: neutral has Pi type → result_type = codFn(v)
+    // pi_fn: neutral has Pi type -> result_type = codFn(v)
     //   neutral_meta_type(meta) = neutral's current type (a Pi type)
     //   pi_meta_cod_fn(type_meta(pi_type)) = codFn
     //   new metadata = extend_neutral_meta(old_meta, codFn(v), arg)
     let pi_result_type = {meta, v} -> pi_meta_cod_fn (type_meta (neutral_meta_type meta)) v
     let pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta (pi_result_type meta v) v)
-    // non_pi_fn: neutral has non-Pi type → result_type = InvalidType
+    // non_pi_fn: neutral has non-Pi type -> result_type = InvalidType
     let non_pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta InvalidType v)
     // Dispatch: check if the neutral's type has the Pi checker signature
     select pi_fn non_pi_fn
@@ -99,7 +99,7 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query} ->
 // Creates a hypothesis, applies v to it, checks the result type matches the codomain.
 let q_pi_fn = {ks, raw, query} ->
   fix ({self, meta, v} -> {
-    // check_fn: v is concrete — check it against the Pi type
+    // check_fn: v is concrete -- check it against the Pi type
     let check_fn = {ks, raw, query, self, meta, v} -> {
       // Build a hypothesis of the domain type; use meta as identity
       let hyp = q_make_hyp raw (pi_meta_domain meta) meta
@@ -115,7 +115,7 @@ let q_pi_fn = {ks, raw, query} ->
         (q_is_neutral raw result)
         result expected
     }
-    // Outer dispatch: neutral → H-rule, concrete → check_fn
+    // Outer dispatch: neutral -> H-rule, concrete -> check_fn
     select q_h_rule_fn check_fn
       (q_is_neutral raw v)
       ks raw query self meta v
@@ -123,7 +123,7 @@ let q_pi_fn = {ks, raw, query} ->
 
 // --- Nat checker ---
 // Nat values: t (zero) or fork(t, n) (succ n). Rejects non-Nat shapes.
-// Decision tree: neutral? → H-rule. zero? → TT. concrete fork with fst=t? → recurse. else → FF.
+// Decision tree: neutral? -> H-rule. zero? -> TT. concrete fork with fst=t? -> recurse. else -> FF.
 let q_nat_fn = {ks, raw, query} ->
   fix ({self, meta, n} -> {
     // succ n: recurse on predecessor
@@ -132,9 +132,9 @@ let q_nat_fn = {ks, raw, query} ->
     let succ_check = {ks, raw, query, self, meta, n} -> select succ_fn ({ks, raw, query, self, meta, n} -> FF) (fast_eq (pair_fst n) t) ks raw query self meta n
     // non-zero: must be concrete fork (not neutral) to check succ, else reject
     let non_zero = {ks, raw, query, self, meta, n} -> select succ_check ({ks, raw, query, self, meta, n} -> FF) (select FF (is_fork n) (q_is_neutral raw n)) ks raw query self meta n
-    // concrete: zero (leaf) → TT, else → non-zero chain
+    // concrete: zero (leaf) -> TT, else -> non-zero chain
     let non_neutral = {ks, raw, query, self, meta, n} -> select ({ks, raw, query, self, meta, n} -> TT) non_zero (fast_eq n t) ks raw query self meta n
-    // outer: neutral → H-rule, concrete → dispatch
+    // outer: neutral -> H-rule, concrete -> dispatch
     select q_h_rule_fn non_neutral
       (q_is_neutral raw n)
       ks raw query self meta n
@@ -155,7 +155,7 @@ let q_bool_fn = {ks, raw, query} ->
 // meta = make_eq_meta(A, lhs, rhs)
 let q_eq_fn = {ks, raw, query} ->
   fix ({self, meta, p} -> {
-    // p is refl (leaf) → check lhs = rhs. p is anything else → FF.
+    // p is refl (leaf) -> check lhs = rhs. p is anything else -> FF.
     let check_fn = {ks, raw, query, self, meta, p} -> select_lazy ({_} -> fast_eq (eq_meta_lhs meta) (eq_meta_rhs meta)) ({_} -> FF) (fast_eq p t)
     select q_h_rule_fn check_fn
       (q_is_neutral raw p)
@@ -193,7 +193,7 @@ let q_type_fn = {ks, raw, query} ->
         (and (A (eq_meta_lhs tm))
           (A (eq_meta_rhs tm)))
     }
-    // dispatch: neutral → rank check, concrete → select_chain over type-former signatures
+    // dispatch: neutral -> rank check, concrete -> select_chain over type-former signatures
     select neutral_fn
       ({ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query, self, meta, x} ->
         select_chain
@@ -215,7 +215,7 @@ let q_type_fn = {ks, raw, query} ->
 // component a lazy self-proxy, so component bodies can use ks.field syntax
 // without forcing recursive field selection too early.
 
-let kernel : {hyp_reduce,pi,nat,bool,eq,type} = recq {
+kernel : {hyp_reduce,pi,nat,bool,eq,type} := recq {
   hyp_reduce := q_hyp_reduce_fn;
   pi := q_pi_fn;
   nat := q_nat_fn;
@@ -234,61 +234,61 @@ let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
 // Public API: neutral operations
 // ================================================================
 
-let neutral_type = {v} -> neutral_meta_type (type_meta v)
-let is_neutral = {x} -> has_sig kernel.hyp_reduce x
+neutral_type := {v} -> neutral_meta_type (type_meta v)
+is_neutral := {x} -> has_sig kernel.hyp_reduce x
 
 // infer: checks is_neutral, extracts stored type, applies check_fn.
 // Usage: `infer (conv Nat) v` checks if v's inferred type is Nat.
-let infer = {check_fn, v} -> select_lazy ({_} -> check_fn (neutral_type v)) ({_} -> FF) (is_neutral v)
+infer := {check_fn, v} -> select_lazy ({_} -> check_fn (neutral_type v)) ({_} -> FF) (is_neutral v)
 
 // Hyp/StuckElim: public API for constructing neutrals (uses the global kernel reference).
 // Both are wait(hyp_reduce_handler)(make_neutral_meta(type, payload)).
-let Hyp = {ty, id} -> wait kernel.hyp_reduce (make_neutral_meta ty id)
-let StuckElim = {result_type, target} -> wait kernel.hyp_reduce (make_neutral_meta result_type target)
+Hyp := {ty, id} -> wait kernel.hyp_reduce (make_neutral_meta ty id)
+StuckElim := {result_type, target} -> wait kernel.hyp_reduce (make_neutral_meta result_type target)
 
 // ================================================================
 // Public API: type reflection
 // ================================================================
 
-let is_pi = {v} -> has_sig kernel_ref.pi v
-let pi_dom = {v} -> pi_meta_domain (type_meta v)
-let pi_cod_fn = {v} -> pi_meta_cod_fn (type_meta v)
+is_pi := {v} -> has_sig kernel_ref.pi v
+pi_dom := {v} -> pi_meta_domain (type_meta v)
+pi_cod_fn := {v} -> pi_meta_cod_fn (type_meta v)
 
-let is_universe = {v} -> has_sig kernel_ref.type v
-let universe_rank = {v} -> type_meta v
+is_universe := {v} -> has_sig kernel_ref.type v
+universe_rank := {v} -> type_meta v
 
-let is_eq = {v} -> has_sig kernel_ref.eq v
+is_eq := {v} -> has_sig kernel_ref.eq v
 
 // is_concrete_fork: true if v is a fork AND not a neutral.
 // Use instead of raw is_fork when the value might be neutral.
-let is_concrete_fork = {v} ->
+is_concrete_fork := {v} ->
   select FF (is_fork v) (is_neutral v)
 
 // ================================================================
 // Type constructors
 // ================================================================
 
-let Nat = wait kernel_ref.nat t
-let Bool = wait kernel_ref.bool t
-let Eq = {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
-let Type = {rank} -> wait kernel_ref.type rank
-let Pi = {domain, codFn} -> wait kernel_ref.pi (make_pi_meta domain codFn)
-let Arrow = {a_type, b_type} -> Pi a_type ({_} -> b_type)
+Nat := wait kernel_ref.nat t
+Bool := wait kernel_ref.bool t
+Eq := {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
+Type := {rank} -> wait kernel_ref.type rank
+Pi := {domain, codFn} -> wait kernel_ref.pi (make_pi_meta domain codFn)
+Arrow := {a_type, b_type} -> Pi a_type ({_} -> b_type)
 
 // ================================================================
 // Typed eliminators
 // ================================================================
 
 // bool_rec: typed eliminator for Bool. Produces StuckElim when target is neutral.
-let bool_rec = {motive, t_case, f_case, target} ->
+bool_rec := {motive, t_case, f_case, target} ->
   select_lazy
     ({_} -> StuckElim (motive target) target)
     ({_} -> select t_case f_case target)
     (is_neutral target)
 
 // nat_rec: typed eliminator for Nat. Produces StuckElim when target is neutral.
-// Concrete dispatch: zero (leaf) → base, succ n (fork(t,n)) → step, other → base
-let nat_rec = fix ({self, motive, base, step, target} ->
+// Concrete dispatch: zero (leaf) -> base, succ n (fork(t,n)) -> step, other -> base
+nat_rec := fix ({self, motive, base, step, target} ->
   select_lazy
     ({_} -> StuckElim (motive target) target)
     ({_} ->
@@ -297,7 +297,7 @@ let nat_rec = fix ({self, motive, base, step, target} ->
         ({self, motive, base, step, target} -> base)
         ({self, motive, base, step, target} ->
           select
-            // concrete fork — check if succ
+            // concrete fork -- check if succ
             ({self, motive, base, step, target} ->
               select
                 // succ n: recurse on predecessor
@@ -306,7 +306,7 @@ let nat_rec = fix ({self, motive, base, step, target} ->
                 ({self, motive, base, step, target} -> base)
                 (fast_eq (pair_fst target) t)
                 self motive base step target)
-            // not a fork (stem) — not a nat
+            // not a fork (stem) -- not a nat
             ({self, motive, base, step, target} -> base)
             (is_concrete_fork target)
             self motive base step target)
@@ -318,29 +318,29 @@ let nat_rec = fix ({self, motive, base, step, target} ->
 // Eq operations
 // ================================================================
 
-let refl = t
+refl := t
 
 // eq_J: J eliminator. base when proof is refl, StuckElim when neutral.
-let eq_J = {A, x, motive, base, y, p} ->
+eq_J := {A, x, motive, base, y, p} ->
   select_lazy
     ({_} -> StuckElim (motive y p) p)
     ({_} -> base)
     (is_neutral p)
 
 // eq_subst: transport along an equality proof
-let eq_subst = {A, P, x, y, p, px} ->
+eq_subst := {A, P, x, y, p, px} ->
   select_lazy
     ({_} -> StuckElim (P y) p)
     ({_} -> px)
     (is_neutral p)
 
-let eq_sym = {A, x, y, p} ->
+eq_sym := {A, x, y, p} ->
   select_lazy
     ({_} -> StuckElim (Eq A y x) p)
     ({_} -> refl)
     (is_neutral p)
 
-let eq_cong = {A, B, f, x, y, p} ->
+eq_cong := {A, B, f, x, y, p} ->
   select_lazy
     ({_} -> StuckElim (Eq B (f x) (f y)) p)
     ({_} -> refl)
@@ -351,7 +351,7 @@ let eq_cong = {A, B, f, x, y, p} ->
 // ================================================================
 
 // Deep structural equality: fast_eq first, then compare Pi domains/codomains or universe ranks.
-let conv_structural = fix ({self, a, b} -> {
+conv_structural := fix ({self, a, b} -> {
   let pi_fn = {self, a, b} -> {
     let hyp = Hyp (pi_dom a) (type_meta a)
     and (self (pi_dom a) (pi_dom b))
@@ -370,14 +370,3 @@ let conv_structural = fix ({self, a, b} -> {
     self a b
 })
 
-// ================================================================
-// Arithmetic
-// ================================================================
-
-// add: Nat addition via select-then-apply + fix.
-// zero + m = m, succ n + m = succ (n + m)
-let add = fix ({self, n, m} -> {
-  let succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
-  let nonzero_fn = {self, n, m} -> select succ_fn ({self, n, m} -> m) (is_concrete_fork n) self n m
-  select ({self, n, m} -> m) nonzero_fn (fast_eq n t) self n m
-})

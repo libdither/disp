@@ -149,46 +149,206 @@ tests are *not* retained in the reduced Block by default.
 
 = Elaborator
 
+== Overview
+
+The elaborator is integrated into the existing parser-driven
+compilation pipeline. It extends `compileExpr` (the function that
+converts `Expr` to `Tree` via bracket abstraction) with a single
+additional parameter: *mode*, which is either `term` or `type`.
+
+In *term mode*, a `Binder` compiles to a lambda (bracket abstraction)
+--- the current behavior. In *type mode*, a `Binder` compiles to a
+`Pi` type that *contains* the lambda as its codomain function. All
+other expression nodes compile identically in both modes.
+
+This design reflects the Curry-Howard correspondence at the
+compilation level: `{x : A} -> B` is simultaneously lambda
+abstraction and Pi formation, differentiated only by mode. The bracket
+abstraction is shared; type mode wraps the result in `Pi(domain, _)`.
+
 == Contract
 
 ```
-elab(e: Expr, expected?: Type): Tree
+compile(e: Expr, mode: "term" | "type"): Tree
 ```
 
-- *Input* — an expression with no `Block`, `Let`, `Test`, `Use`,
-  `Def`, or `Program` nodes. Every `Var` refers to a binder param in
-  scope within the passed expression.
-- *Optional expected type* — guides Pi-vs-lambda disambiguation on
-  `Binder` and `Ann` checking.
-- *Output* — a tree-calculus term (TS reference) or a
-  backend-specific value (`debruijn` / `ctxtree` / `semantic`).
-- *Side effects* — none on caller-visible state. The elaborator may
-  mutate an internal metavariable solver, but the return value is a
-  function of inputs plus unification results.
+- *Input* — a core expression (`Var | Leaf | Hole | App | Proj |
+  Binder | RecValue | Ann`). Surface-only nodes have been processed
+  away by the parser.
+- *Mode* — determines whether binders compile to lambdas or Pi types.
+- *Output* — a tree-calculus term. In type mode, the output is a
+  kernel predicate (a function that accepts values and returns
+  `TT`/`FF`).
+
+== The binder/Pi correspondence
+
+The central insight: for `{x : A} -> B`, bracket abstraction of `B`
+over `x` produces a function `f` where `f(v) = B[x := v]`. This is
+*exactly* what a Pi type's codomain function is.
+
+```
+compile({x : A} -> B, term) = abstract(x, compile(B, term))
+compile({x : A} -> B, type) = Pi(compile(A, type), abstract(x, compile(B, type)))
+```
+
+The lambda IS the codomain function. Pi wraps it with the domain.
+
+For non-dependent arrows (`A -> B`, sugar for `{_ : A} -> B`):
+
+```
+compile(A -> B, term) = K(compile(B, term))
+compile(A -> B, type) = Arrow(compile(A, type), compile(B, type))
+                       = Pi(compile(A, type), K(compile(B, type)))
+```
+
+Multi-param binders desugar right-associatively. Each parameter layer
+wraps the remaining body in `Pi(domain, ...)`:
+
+```
+compile({x : A, y : B} -> C, type)
+  = Pi(compile(A, type), abstract(x,
+      Pi(compile(B, type), abstract(y, compile(C, type)))))
+```
+
+== Mode propagation
+
+Mode determines how binders compile but does not affect other nodes.
+The rules for which sub-expressions get which mode:
+
+#table(
+  columns: (auto, 1fr),
+  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
+  inset: (x: 6pt, y: 4pt),
+  table.header[*Position*][*Mode*],
+  [`Ann.type`],                          [type],
+  [`Ann.expr`],                          [term],
+  [`let` type annotation],               [type],
+  [`let` body],                          [term],
+  [`Binder` param type (in type mode)],  [type],
+  [`Binder` body (in type mode)],        [type],
+  [`Binder` body (in term mode)],        [term],
+  [`App` function and argument],         [inherit from parent],
+  [`RecType` field types],               [type],
+  [everything else],                     [inherit from parent],
+)
+
+Entry points: `let` bodies start in term mode; `let` type annotations
+and `Ann.type` start in type mode. Inside a type-mode binder, both
+the param types and the body stay in type mode (types can contain
+types). Inside a term-mode binder, the body stays in term mode
+(terms contain terms).
 
 == Per-node handling
 
-- `Leaf` --- returns the tree-calculus leaf.
-- `Var { name }` --- walks the surrounding `Binder`s inner-to-outer;
-  the innermost match wins. Backend-dependent representation
-  (de Bruijn index, bind-tree slot, etc.). An unmatched name is an
-  internal error (should have been caught by the parser).
-- `App { fn, arg }` --- elab both, return `fn(arg)` in the backend.
-- `Binder { params, body !== null }` --- lambda or Pi, decided from
-  expected type (`Type` ⇒ Pi, else lambda). Each `Param` with
-  `type === null` takes a fresh metavariable. Multi-param desugars
-  right-associatively.
-- `Binder { params, body === null }` --- record type. Church-encoded
-  dependent product over `params` (see § Record encoding).
-- `RecValue { members }` --- record type's constructor applied to the
-  field values in source order.
-- `Proj { target, field }` --- elab `target`, consult its record type,
-  emit the positional projection morphism.
-- `Ann { expr, type }` --- elab `type` against `Type`, then elab
-  `expr` against `type` via the kernel predicate `pred_of_lvl`.
-- `Hole` --- fresh metavariable. Solved by unification during kernel
-  runs. An unsolved metavariable at the end of a top-level elab
-  invocation is a compile error.
+- `Leaf` --- returns the tree-calculus leaf (both modes).
+- `Num` --- builds `succ(...zero...)` via in-scope constructors (both
+  modes).
+- `Var { name }` --- looks up in scope, returns compiled tree or
+  emits free variable for bracket abstraction (both modes, identical).
+- `App { fn, arg }` --- compile both in the current mode, apply.
+- `Binder` (term mode) --- shadow params, bracket-abstract body.
+  Identical to current behavior.
+- `Binder` (type mode) --- shadow params, compile param type in type
+  mode, bracket-abstract body (compiled in type mode), wrap in
+  `Pi(domain, codFn)`. See § The binder/Pi correspondence.
+- `RecType` --- compile to a kernel record type (see § Record
+  encoding). Only valid in type mode.
+- `RecValue` --- Church-encode fields (both modes, identical to
+  current behavior).
+- `Proj` --- resolve field index from compile-time metadata, emit
+  selector application (both modes, identical).
+- `Ann { expr, type }` --- the checking node. See § Type checking.
+- `Hole` --- not supported in the initial implementation. Future:
+  fresh metavariable solved by unification.
+- `Use` --- resolved by the parser before reaching the elaborator.
+
+== Type checking
+
+At an `Ann` node (`(e : T)`) or a typed `let` (`let x : T = body`):
+
+1. Compile `T` in type mode → `T_tree` (a kernel predicate).
+2. Compile `e`/`body` in term mode → `e_tree` (a value).
+3. Apply: `result = applyTree(T_tree, e_tree, budget)`.
+4. Assert: `FAST_EQ(result, TT)`. If not, report a type error.
+5. Return `e_tree` (the type is erased after checking).
+
+Type checking is function application. The kernel does all the work
+--- the elaborator merely calls it.
+
+Optionally, the elaborator can also verify that `T` is a valid type
+by checking `applyTree(Type_n_tree, T_tree, budget) = TT` for some
+universe level. This is not required for soundness (an ill-formed
+"type" will simply reject everything it's applied to) but produces
+better error messages.
+
+== Trusted definitions <trusted>
+
+Certain kernel definitions must be available to the elaborator as
+known trees so it can construct Pi types, Arrow types, etc. These
+are introduced with the `trust` keyword:
+
+```disp
+trust Pi = {domain, codFn} -> wait kernel_ref.pi (make_pi_meta domain codFn)
+trust Arrow = {a_type, b_type} -> Pi a_type ({_} -> b_type)
+trust Type = {rank} -> wait kernel_ref.type rank
+```
+
+A `trust` binding behaves identically to `let` for scope and
+compilation, but additionally registers the compiled tree under
+its name in the elaborator's *trusted table*. The elaborator uses
+this table to:
+
+- Look up `Pi_tree` when compiling binders in type mode.
+- Look up `Arrow_tree` when compiling non-dependent arrows in type
+  mode.
+- Look up `Type_tree` when verifying that a type annotation is a
+  valid type.
+
+Trusted definitions are ordinary definitions with no special
+runtime semantics. The `trust` keyword is purely a signal to the
+elaborator: "this tree participates in elaboration-time
+construction." It does not bypass any checking or grant elevated
+privileges.
+
+The trusted table is populated by processing `trust` items in source
+order, like `let`. Trusted names from a `use`d file are available
+if that file exports them. The minimal trusted set for type checking
+is:
+
+#table(
+  columns: (auto, 1fr),
+  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
+  inset: (x: 6pt, y: 4pt),
+  table.header[*Name*][*Used for*],
+  [`Pi`],    [type-mode binder compilation: `{x : A} -> B` → `Pi(A, codFn)`],
+  [`Arrow`], [type-mode arrow sugar: `A -> B` → `Arrow(A, B)` (optional; can use `Pi` + K)],
+  [`Type`],  [universe checking: verify `T` is a valid type],
+)
+
+If a binder in type mode is compiled but `Pi` is not in the trusted
+table, the elaborator falls back to term-mode compilation (lambda)
+and emits a warning. This allows files that do not import the kernel
+to still parse without errors --- they just lose type-checking
+capability.
+
+== Interaction with existing compilation
+
+The elaborator extends the existing `compileExpr` / `exprToCir`
+pipeline, not replaces it. The changes are:
+
+1. `compileExpr` gains a `typeMode: boolean` parameter (default
+   `false` for backward compatibility).
+2. The `binder` case in `exprToCir` checks `typeMode` and emits
+   `Pi(domain, lam)` when true.
+3. The `ann` case in `exprToCir` compiles both sides and runs the
+   check instead of erasing.
+4. The driver's `runItem` for typed `let` items compiles the type and
+   checks.
+5. `trust` items are processed like `let` items but additionally
+   register in the trusted table.
+
+The `recType` case currently throws; it will be implemented to
+compile to the kernel's record type encoding (see § Record encoding).
 
 == Record encoding
 
@@ -222,9 +382,9 @@ All compile errors carry source spans, inherited from the surface AST.
   table.header[*Kind*][*Source*],
   [*unresolved name*],         [parser: a `Var` whose name matches neither an in-scope `let` nor an enclosing binder param],
   [*recursive `let`*],          [parser: a `Var` whose name matches a `Def` or `Let` currently being parsed; see below],
-  [*type mismatch*],            [elab: `pred_of_lvl` returns FF on a typed `Def` body or `Ann`],
+  [*type mismatch*],            [elab: type predicate returns FF on a typed `let` body or `Ann`],
   [*failed test*],              [parser: `test`'s two sides elaborate to trees that disagree by hash-cons identity],
-  [*unsolved metavariable*],    [elab: `Hole` without a solution by end of top-level elab invocation],
+  [*unsolved hole*],            [elab: `Hole` not yet supported; compile error],
   [*test under live binder*],   [parser: a `test` inside a Block surrounded by binder params with no concrete values],
   [*projection mismatch*],      [elab: `Proj.field` not found on target's record type, or target is not a RecValue],
   [*duplicate binder param*],   [parser: two `Param`s share a name in the same `Binder.params`],

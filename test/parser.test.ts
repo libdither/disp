@@ -402,14 +402,26 @@ describe("parseProgram (compile + driver)", () => {
     expect(decls.length).toBeGreaterThan(0)
   })
 
-  it("`open use` defines and re-exports opened fields", () => {
+  it("`open use` brings names into scope but does not re-export them", () => {
     const dep = tmpFile("dep.disp", "let y = t\n")
     const midPath = join(dep.slice(0, dep.lastIndexOf("/")), "mid.disp")
+    // mid.disp opens dep but exports nothing (no := fields, legacy let exports dep's y)
     writeFileSync(midPath, `open use "dep.disp"\n`)
+    // In legacy mode (no := fields), open still pushes Defs
     const decls = parseProgram(`let mid = use "${midPath}"\ntest mid.y = t`, process.cwd() + "/anon.disp")
-    const def = decls.find(d => d.kind === "Def" && d.name === "mid")
     const test = decls.find(d => d.kind === "Test")
-    if (!def || def.kind !== "Def" || !test || test.kind !== "Test") throw new Error("missing")
+    if (!test || test.kind !== "Test") throw new Error("missing")
+    expect(treeEqual(test.lhs, test.rhs)).toBe(true)
+  })
+
+  it("`open use` in new-style file does not re-export opened names", () => {
+    const dep = tmpFile("dep.disp", "y := t\n")
+    const midPath = join(dep.slice(0, dep.lastIndexOf("/")), "mid2.disp")
+    // mid2.disp uses new field syntax: open brings y into scope, re-export explicitly
+    writeFileSync(midPath, `open use "dep.disp"\nre_y := y\n`)
+    const decls = parseProgram(`let mid = use "${midPath}"\ntest mid.re_y = t`, process.cwd() + "/anon.disp")
+    const test = decls.find(d => d.kind === "Test")
+    if (!test || test.kind !== "Test") throw new Error("missing")
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
   })
 
@@ -460,8 +472,10 @@ describe("parse errors", () => {
     expect(() => parseExpr("{ let x = t }")).toThrow()
   })
 
-  it("test inside block not yet supported", () => {
-    expect(() => parseExpr("{ test t = t; t }")).toThrow(/test inside block/)
+  it("test inside braced body parses as block with test", () => {
+    // { test t = t; t } is now a valid block expression (test is a side-effect statement)
+    const result = parseExpr("{ test t = t; t }")
+    expect(result).toEqual(leaf) // trailing expression is just `t`
   })
 })
 

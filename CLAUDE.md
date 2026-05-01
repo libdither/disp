@@ -20,7 +20,7 @@ Every component participating in checking, elaboration, or conversion must have 
 ## Code layout
 
 - `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, `FAST_EQ`.
-- `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar: `let`/`test`/`use`/`open` items, `{x : A} -> e` binders, `A -> B` arrow sugar, `{x := e}` recValues, `{x : A}` recTypes, `.field` projection. Bracket abstraction with η-reduction + K-composition optimizations.
+- `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar: unified `recBody` (file bodies and inline `{ ... }` share the same grammar), `name := expr` (exported field), `let name = expr` (private binding), `test`/`open` (side-effects), `{x : A} -> e` binders, `A -> B` arrow sugar, `{x : A}` recTypes, `.field` projection. Bracket abstraction with η-reduction + K-composition optimizations.
 - `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests.
 - `lib/prelude.disp` — fundamental combinators (TT/FF, triage, ite2/ited, pairs, and, wait/fix/recq).
 - `lib/kernel.disp` — recursive-record kernel, type-tracking neutrals, infer, conversion, primitive type constructors, eliminators, and arithmetic.
@@ -31,8 +31,8 @@ Every component participating in checking, elaboration, or conversion must have 
 
 ## Current state (as of 2026-04-30)
 
-- **Parser rewritten to match `SYNTAX.typ`.** New comment syntax (`//`, `/* */`), `let`/`test` items, unified `Expr` AST with binders, recTypes, recValues, use expressions, projections. Church-encoded records with field metadata for projection.
-- **Full kernel pipeline as `.disp` source.** Split into `lib/prelude.disp` (combinators) and `lib/kernel.disp` (recursive-record kernel and type surface). Files use `open use "dep.disp"` for dependencies. Types are `wait(checker)(metadata)` — type checking is raw `apply(T, v) = TT`. Type-former tags have been removed.
+- **Unified program/recValue grammar.** File bodies and inline `{ ... }` share the same `recBody` grammar. `name := expr` exports a field; `let name = expr` is private. `test`/`open` are side-effect statements allowed in both contexts. Expression atoms refuse to consume `IDENT :=` after a newline, preventing accidental field-as-argument parsing.
+- **Full kernel pipeline as `.disp` source.** Split into `lib/prelude.disp` (combinators) and `lib/kernel.disp` (recursive-record kernel and type surface). Files use `open use "dep.disp"` for dependencies; `open` brings names into scope but does not re-export them. Types are `wait(checker)(metadata)` — type checking is raw `apply(T, v) = TT`. Type-former tags have been removed.
 - **Typed eliminators.** `bool_rec` and `nat_rec` are neutral-aware recursors: they check `is_neutral(target)` before dispatching, producing `StuckElim(motive target, target)` when stuck. The stuck term stores the computed result type directly. This solves the triage-on-neutral problem for functions that branch on their arguments.
 - **Eq type implemented.** `Eq A x y` predicate, `refl = LEAF`, J eliminator (`eq_J`), transport (`eq_subst`), symmetry (`eq_sym`), congruence (`eq_cong`).
 - **Arithmetic working.** `add` via select-then-apply + fix. Eq proofs on concrete values including commutativity (`add 2 3 = add 3 2`).
@@ -56,7 +56,7 @@ Every component participating in checking, elaboration, or conversion must have 
 
 ## Testing
 
-`npm test` runs vitest. `lib/*.test.disp` is the primary test suite (178 tests across 3 files). `test/parser.test.ts` (74 tests) and `test/tree.test.ts` (21 tests) cover the host infrastructure.
+`npm test` runs vitest. `lib/*.test.disp` is the primary test suite (178 tests across 3 files). `test/parser.test.ts` (75 tests) and `test/tree.test.ts` (21 tests) cover the host infrastructure.
 
 ## Operating notes
 
@@ -68,3 +68,4 @@ Every component participating in checking, elaboration, or conversion must have 
 - Type-former tags are gone. Neutral metadata payloads are private; code should rely only on the stored type at `pair_fst(metadata)`.
 - Prefer editing existing files over creating new ones.
 - Binder parameter names shadow scope variables during compilation. Name collisions between scope defs and lambda params are safe but should be avoided for clarity.
+- Files with any `name := expr` field use the new export model: only `:=` fields export. Files with only `let`/`test`/`open` use legacy mode where all `let` bindings export (backward compat). Prefer `name := expr` for new code.

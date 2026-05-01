@@ -99,17 +99,23 @@ export type Expr =
   | { tag: "ann"; expr: Expr; type: Expr }
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
-  | { tag: "recValue"; fields: NamedField[] }
+  | { tag: "recValue"; fields: NamedField[]; members?: RecMember[] }
   | { tag: "use"; path: string }
 
 export type Param = { name: string | null; type: Expr | null }
 export type TypedField = { name: string; type: Expr | null }
 export type NamedField = { name: string; type: Expr | null; value: Expr }
 
-export type Item =
+// Unified record body member — shared by file bodies and inline { ... } recValues.
+// "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
+export type RecMember =
+  | { tag: "field"; name: string; type: Expr | null; value: Expr }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr }
   | { tag: "open"; expr: Expr }
+
+// Backward compat alias — parseItems still returns these for now.
+export type Item = RecMember
 
 // ───────────────────────── 3. Parser combinators ─────────────────────────
 
@@ -282,9 +288,34 @@ const simple: P<Expr> = lazy(() => alt<Expr>(
 
 // atom = simple ("." IDENT)*
 // Newlines before atoms are insignificant — expressions can span lines.
-// Item separation works because keywords (let, test) can't start an atom.
+// Item separation works because keywords (let, test, open) can't start an atom,
+// and field definitions (IDENT ":=") are detected via lookahead so expressions
+// don't accidentally consume the start of a field.
 const atom: P<Expr> = (ts, i) => {
+  const hadNewline = ts[i].t === "nl"
   while (ts[i].t === "nl") i++
+  // After crossing a newline, check if we're at the start of a field definition
+  // (IDENT ":=" or IDENT ":" ... ":="). Don't consume it as part of the current expression.
+  if (hadNewline && ts[i].t === "id") {
+    const next = ts[i + 1]
+    if (next?.t === "punct" && (next as any).v === ":=")
+      return err(`field definition, not an atom`, i)
+    // Also check for typed field: IDENT ":" ... ":=" (scan for ":=" before ";" or newline)
+    if (next?.t === "punct" && (next as any).v === ":") {
+      let depth = 0, q = i + 2
+      while (q < ts.length && ts[q].t !== "eof") {
+        if (ts[q].t === "punct") {
+          const v = (ts[q] as any).v
+          if (v === "(" || v === "{") depth++
+          else if (v === ")" || v === "}") { if (depth === 0) break; depth-- }
+          else if (depth === 0 && v === ":=") return err(`typed field definition, not an atom`, i)
+          else if (depth === 0 && (v === ";" || v === "=")) break
+        }
+        if (ts[q].t === "nl" && depth === 0) break
+        q++
+      }
+    }
+  }
   const base = simple(ts, i)
   if (!base.ok) return base
   let result: Expr = base.v
@@ -332,8 +363,8 @@ const lineBraced: P<Expr> = (ts, i) => {
   while (ts[pos].t === "nl") pos++
   if (ts[pos].t === "punct" && (ts[pos] as any).v === "}")
     return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
-  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test"))
-    return blockInner(ts, pos)
+  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open"))
+    return unifiedBracedInner(ts, pos)
   const shape = classifyBracedContent(ts, pos)
   if (shape === "recValue") return recValueInner(ts, pos)
   if (shape === "binder") {
@@ -507,7 +538,11 @@ const namedFieldP: P<NamedField> = (ts, i) => {
   return ok({ name, type, value: valR.v }, valR.pos)
 }
 
-// Parse recValue contents after "{". Expects named fields, "}".
+// Parse recValue contents after "{". Expects named fields (and optionally
+// let/test/open statements), "}".  This is the unified braced body parser.
+// If only let/test/open statements are found and a trailing expression follows,
+// this is a block expression (desugared as before). If any `:=` field exists,
+// it's a recValue with private bindings.
 const recValueInner: P<Expr> = (ts, startPos) => {
   let pos = startPos
   while (ts[pos].t === "nl") pos++
@@ -527,27 +562,30 @@ const recValueInner: P<Expr> = (ts, startPos) => {
   return ok({ tag: "recValue" as const, fields: fields.v }, pos)
 }
 
-// Parse block contents after "{" when first token is "let" or "test".
-// Desugars { let x = a; let y = b; expr } to App(Binder([x], App(Binder([y], expr), b)), a).
-const blockInner: P<Expr> = (ts, startPos) => {
+// Unified braced body parser: handles blocks, recValues with mixed members.
+// Called after "{" is consumed when first token is "let", "test", "open", or IDENT.
+// Parses members (let/test/open/field) separated by SEMI. Then:
+//   - If any `:=` field found → recValue (fields are exports, lets are private stmts)
+//   - If no `:=` field and trailing expr → block (desugar as App(Binder, ...))
+//   - If no `:=` field and no trailing expr → empty recValue
+const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   type BlockLet = { name: string; type: Expr | null; body: Expr }
-  const bindings: BlockLet[] = []
+  const bindings: BlockLet[] = []  // let bindings (for block desugaring)
+  const exportedFields: NamedField[] = []  // field := members
+  const members: RecMember[] = []  // all members for recValue output
   let pos = startPos
 
-  // Parse let statements separated by SEMI, then a trailing expression
   while (true) {
     while (ts[pos].t === "nl") pos++
 
-    // Try to parse a let statement
+    // let statement
     if (ts[pos].t === "kw" && (ts[pos] as any).v === "let") {
-      pos++ // consume "let"
+      pos++
       while (ts[pos].t === "nl") pos++
       if (ts[pos].t !== "id") return err(`expected identifier after 'let', got ${describe(ts[pos])}`, pos)
       const name = (ts[pos] as any).v as string
       pos++
       while (ts[pos].t === "nl") pos++
-
-      // Optional type annotation
       let type: Expr | null = null
       if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
         pos++
@@ -558,50 +596,107 @@ const blockInner: P<Expr> = (ts, startPos) => {
         pos = tyR.pos
         while (ts[pos].t === "nl") pos++
       }
-
       if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "="))
-        return err(`expected '=' in block let, got ${describe(ts[pos])}`, pos)
+        return err(`expected '=' in let, got ${describe(ts[pos])}`, pos)
       pos++
       while (ts[pos].t === "nl") pos++
-
       const bodyR = lineExpr(ts, pos)
       if (!bodyR.ok) return bodyR
       bindings.push({ name, type, body: bodyR.v })
+      members.push({ tag: "let", name, type, body: bodyR.v })
       pos = bodyR.pos
-
-      // Require SEMI after let statement
       const s = semiP(ts, pos)
-      if (!s.ok) return err(`expected ';' or newline after block let, got ${describe(ts[pos])}`, pos)
+      if (!s.ok) return err(`expected ';' or newline after let, got ${describe(ts[pos])}`, pos)
       pos = s.pos
       continue
     }
 
+    // test statement
     if (ts[pos].t === "kw" && (ts[pos] as any).v === "test") {
-      return err(`test inside block expressions is not yet supported`, pos)
+      pos++
+      while (ts[pos].t === "nl") pos++
+      const lhsR = lineExpr(ts, pos)
+      if (!lhsR.ok) return lhsR
+      pos = lhsR.pos
+      while (ts[pos].t === "nl") pos++
+      if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "="))
+        return err(`expected '=' in test, got ${describe(ts[pos])}`, pos)
+      pos++
+      while (ts[pos].t === "nl") pos++
+      const rhsR = lineExpr(ts, pos)
+      if (!rhsR.ok) return rhsR
+      members.push({ tag: "test", lhs: lhsR.v, rhs: rhsR.v })
+      pos = rhsR.pos
+      const s = semiP(ts, pos)
+      if (!s.ok) return err(`expected ';' or newline after test, got ${describe(ts[pos])}`, pos)
+      pos = s.pos
+      continue
     }
 
-    // Not a let/test → must be the trailing expression
+    // open statement
+    if (ts[pos].t === "kw" && (ts[pos] as any).v === "open") {
+      pos++
+      while (ts[pos].t === "nl") pos++
+      const exprR = lineExpr(ts, pos)
+      if (!exprR.ok) return exprR
+      members.push({ tag: "open", expr: exprR.v })
+      pos = exprR.pos
+      const s = semiP(ts, pos)
+      if (!s.ok) return err(`expected ';' or newline after open, got ${describe(ts[pos])}`, pos)
+      pos = s.pos
+      continue
+    }
+
+    // field: IDENT (":" expr)? ":=" lineExpr
+    if (ts[pos].t === "id") {
+      const fieldR = bracedFieldP(ts, pos)
+      if (fieldR.ok) {
+        const f = fieldR.v
+        exportedFields.push({ name: f.name, type: f.type, value: f.value })
+        members.push(f)
+        pos = fieldR.pos
+        // optional SEMI after field
+        const s = semiP(ts, pos)
+        if (s.ok) pos = s.pos
+        continue
+      }
+    }
+
+    // Not a member → trailing expression or closing brace
     break
   }
 
-  if (bindings.length === 0)
-    return err(`block must contain at least one let binding`, pos)
+  while (ts[pos].t === "nl") pos++
 
-  // Parse trailing expression
+  // If we have exported fields → recValue (no trailing expression allowed)
+  if (exportedFields.length > 0) {
+    if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
+      return err(`expected '}', got ${describe(ts[pos])}`, pos)
+    pos++
+    return ok({ tag: "recValue" as const, fields: exportedFields, members } as Expr, pos)
+  }
+
+  // No exported fields: try trailing expression → block, or "}" → empty recValue
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
+    pos++
+    return ok({ tag: "recValue" as const, fields: [], members } as Expr, pos)
+  }
+
+  // Must be a block with trailing expression
+  if (bindings.length === 0 && members.length === 0)
+    return err(`expected '}' or expression, got ${describe(ts[pos])}`, pos)
+
   const trailR = expr(ts, pos)
   if (!trailR.ok) return trailR
   pos = trailR.pos
-
-  // Optional trailing semi
   const s = semiP(ts, pos)
   if (s.ok) pos = s.pos
   while (ts[pos].t === "nl") pos++
-
   if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
     return err(`expected '}', got ${describe(ts[pos])}`, pos)
   pos++
 
-  // Desugar right-to-left: wrap trailing expr in nested App(Binder, body)
+  // Desugar block: right-to-left wrap trailing expr in nested App(Binder, body)
   let result: Expr = trailR.v
   for (let i = bindings.length - 1; i >= 0; i--) {
     const b = bindings[i]
@@ -615,6 +710,33 @@ const blockInner: P<Expr> = (ts, startPos) => {
     }
   }
   return ok(result, pos)
+}
+
+// Field parser for braced context: IDENT (":" expr)? ":=" lineExpr
+const bracedFieldP: P<{ tag: "field"; name: string; type: Expr | null; value: Expr }> = (ts, i) => {
+  let pos = i
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
+  const name = (ts[pos] as any).v as string
+  pos++
+  while (ts[pos].t === "nl") pos++
+  let type: Expr | null = null
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
+    pos++
+    while (ts[pos].t === "nl") pos++
+    const tyR = expr(ts, pos)
+    if (!tyR.ok) return tyR
+    type = tyR.v
+    pos = tyR.pos
+    while (ts[pos].t === "nl") pos++
+  }
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":="))
+    return err(`expected ':=', got ${describe(ts[pos])}`, pos)
+  pos++
+  while (ts[pos].t === "nl") pos++
+  const valR = lineExpr(ts, pos)
+  if (!valR.ok) return valR
+  return ok({ tag: "field" as const, name, type, value: valR.v }, valR.pos)
 }
 
 // Parse bare recType: {a, b, c} or {a, b, c : T} (spread type).
@@ -674,9 +796,9 @@ const braced: P<Expr> = (ts, i) => {
     return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
   }
 
-  // Block: starts with "let" or "test"
-  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test")) {
-    return blockInner(ts, pos)
+  // Unified body: starts with "let", "test", or "open"
+  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open")) {
+    return unifiedBracedInner(ts, pos)
   }
 
   const shape = classifyBracedContent(ts, pos)
@@ -772,7 +894,34 @@ const openItem: P<Item> = map(
   ([, expr]) => ({ tag: "open" as const, expr }),
 )
 
-const itemP: P<Item> = nl(alt(openItem, letItem, testItem))
+// field: IDENT (":" expr)? ":=" expr  — exported record member
+const fieldItem: P<Item> = (ts, i) => {
+  let pos = i
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
+  const name = (ts[pos] as any).v as string
+  pos++
+  while (ts[pos].t === "nl") pos++
+  let type: Expr | null = null
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
+    pos++
+    while (ts[pos].t === "nl") pos++
+    const tyR = expr(ts, pos)
+    if (!tyR.ok) return tyR
+    type = tyR.v
+    pos = tyR.pos
+    while (ts[pos].t === "nl") pos++
+  }
+  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":="))
+    return err(`expected ':=', got ${describe(ts[pos])}`, pos)
+  pos++
+  while (ts[pos].t === "nl") pos++
+  const valR = expr(ts, pos)
+  if (!valR.ok) return valR
+  return ok({ tag: "field" as const, name, type, value: valR.v }, valR.pos)
+}
+
+const itemP: P<Item> = nl(alt(openItem, letItem, testItem, fieldItem))
 
 // Parse source into items.
 export function parseItems(src: string): Item[] {
@@ -962,8 +1111,30 @@ function exprToCir(
     }
     case "recType": throw new Error("recType cannot appear in untyped compilation")
     case "recValue": {
+      // If this recValue has members (let/test/open alongside fields),
+      // process them to build a scoped lookup before compiling fields.
+      let fieldLookup = lookupEntry
+      if (e.members && e.members.length > 0) {
+        const localScope = new Map<string, ScopeEntry>()
+        for (const m of e.members) {
+          if (m.tag === "let") {
+            const tree = compileExpr(m.body, fieldLookup, resolveUse)
+            let fields: string[] | undefined, fieldTrees: Tree[] | undefined
+            if (m.type?.tag === "recType") {
+              fields = (m.type as any).fields.map((f: any) => f.name)
+            } else {
+              const record = resolveExprRecord(m.body, fieldLookup, resolveUse)
+              fields = record?.fields; fieldTrees = record?.fieldTrees
+            }
+            localScope.set(m.name, { tree, fields, fieldTrees })
+            const prevLookup = fieldLookup
+            fieldLookup = (name: string) => localScope.get(name) ?? prevLookup(name)
+          }
+          // test/open in inline recValues: skip for now (tests need driver context)
+        }
+      }
       // Church encoding: {x := a; y := b} → \sel. sel a b
-      const fieldCirs = e.fields.map(f => exprToCir(f.value, lookupEntry, resolveUse))
+      const fieldCirs = e.fields.map(f => exprToCir(f.value, fieldLookup, resolveUse))
       const selName = "__sel"
       let body: Cir = { tag: "var", name: selName }
       for (const fc of fieldCirs) body = cap(body, fc)
@@ -1039,7 +1210,7 @@ export type Decl =
   | { kind: "Test"; lhs: Tree; rhs: Tree }
 
 export type ParseItemStats = {
-  kind: "let" | "test" | "open"
+  kind: "let" | "test" | "open" | "field"
   name?: string
   testIndex?: number
   sourcePath?: string
@@ -1078,9 +1249,14 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     // Push a new scope frame for the used file.
     stack.push(new Map())
     const fileDecls: Decl[] = []
+    const items = parseItems(fileSrc)
+    // Detect whether this file uses the new field syntax.
+    // If any field members exist, only fields export. Otherwise fall back
+    // to legacy mode where all lets export (for backward compat during migration).
+    const hasFields = items.some(it => it.tag === "field")
     try {
-      for (const it of parseItems(fileSrc)) {
-        runItem(it, fileDecls)
+      for (const it of items) {
+        runItem(it, fileDecls, !hasFields)
       }
     } finally {
       const fileScope = stack.pop()!
@@ -1109,7 +1285,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     return { tree, fields: fieldNames, fieldTrees }
   }
 
-  function recordItem(kind: "let" | "test" | "open", name?: string, testIndex?: number): void {
+  function recordItem(kind: "let" | "test" | "open" | "field", name?: string, testIndex?: number): void {
     options.onItem?.({
       kind,
       name,
@@ -1120,21 +1296,33 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     })
   }
 
-  function runItem(it: Item, target: Decl[]): void {
+  function compileBinding(name: string, type: Expr | null | undefined, body: Expr): { tree: Tree; fields?: string[]; fieldTrees?: Tree[] } {
+    const tree = compileExpr(body, lookupEntry, resolveUse)
+    let fields: string[] | undefined, fieldTrees: Tree[] | undefined
+    if (type?.tag === "recType") {
+      fields = (type as any).fields.map((f: any) => f.name)
+    } else {
+      const record = resolveExprRecord(body, lookupEntry, resolveUse)
+      fields = record?.fields; fieldTrees = record?.fieldTrees
+    }
+    define(name, { tree, fields, fieldTrees })
+    return { tree, fields, fieldTrees }
+  }
+
+  function runItem(it: Item, target: Decl[], isExport: boolean): void {
     switch (it.tag) {
-      case "let": {
-        const tree = compileExpr(it.body, lookupEntry, resolveUse)
-        // Determine compile-time record metadata (field names for projections).
-        // Priority: explicit recType annotation > expression-shape heuristic.
-        let fields: string[] | undefined, fieldTrees: Tree[] | undefined
-        if (it.type?.tag === "recType") {
-          fields = (it.type as any).fields.map((f: any) => f.name)
-        } else {
-          const record = resolveExprRecord(it.body, lookupEntry, resolveUse)
-          fields = record?.fields; fieldTrees = record?.fieldTrees
-        }
-        define(it.name, { tree, fields, fieldTrees })
+      case "field": {
+        const { tree } = compileBinding(it.name, it.type, it.value)
         target.push({ kind: "Def", name: it.name, tree })
+        recordItem("field", it.name)
+        return
+      }
+      case "let": {
+        const { tree } = compileBinding(it.name, it.type, it.body)
+        if (isExport) {
+          // Legacy mode: top-level let exports (for files not yet migrated)
+          target.push({ kind: "Def", name: it.name, tree })
+        }
         recordItem("let", it.name)
         return
       }
@@ -1159,12 +1347,14 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
           const name = record.fields[i]
           const existing = stack[stack.length - 1].get(name)
           if (existing) {
-            // Idempotent: skip if same tree (e.g. diamond dependency via open)
             if (existing.tree?.id === fieldTree.id) continue
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
           define(name, { tree: fieldTree })
-          target.push({ kind: "Def", name, tree: fieldTree })
+          if (isExport) {
+            // Legacy mode: open re-exports opened names
+            target.push({ kind: "Def", name, tree: fieldTree })
+          }
         }
         recordItem("open")
         return
@@ -1172,6 +1362,8 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     }
   }
 
-  for (const it of parseItems(src)) runItem(it, decls)
+  const items = parseItems(src)
+  const hasFields = items.some(it => it.tag === "field")
+  for (const it of items) runItem(it, decls, !hasFields)
   return decls
 }
