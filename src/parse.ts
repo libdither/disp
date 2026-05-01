@@ -266,61 +266,11 @@ const holeP: P<Expr> = (ts, i) => {
   return err(`expected '_', got ${describe(ts[i])}`, i)
 }
 
-const simple: P<Expr> = lazy(() => alt<Expr>(
-  // Parenthesized: ( expr ) or ( expr : expr )
-  map(
-    seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
-    ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
-  ),
-  // Braced: binder, recType, recValue
-  lazy(() => braced),
-  // use STRING
-  map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
-  // leaf
-  map(leafP, (): Expr => ({ tag: "leaf" })),
-  // numeric literal, compiled using in-scope zero/succ
-  map(numP, (value): Expr => ({ tag: "num", value })),
-  // hole _
-  holeP,
-  // identifier
-  map(idP, (name): Expr => ({ tag: "var", name })),
-))
-
-// atom = simple ("." IDENT)*
-// Newlines before atoms are insignificant — expressions can span lines.
-// Item separation works because keywords (let, test, open) can't start an atom,
-// and field definitions (IDENT ":=") are detected via lookahead so expressions
-// don't accidentally consume the start of a field.
-const atom: P<Expr> = (ts, i) => {
-  const hadNewline = ts[i].t === "nl"
-  while (ts[i].t === "nl") i++
-  // After crossing a newline, check if we're at the start of a field definition
-  // (IDENT ":=" or IDENT ":" ... ":="). Don't consume it as part of the current expression.
-  if (hadNewline && ts[i].t === "id") {
-    const next = ts[i + 1]
-    if (next?.t === "punct" && (next as any).v === ":=")
-      return err(`field definition, not an atom`, i)
-    // Also check for typed field: IDENT ":" ... ":=" (scan for ":=" before ";" or newline)
-    if (next?.t === "punct" && (next as any).v === ":") {
-      let depth = 0, q = i + 2
-      while (q < ts.length && ts[q].t !== "eof") {
-        if (ts[q].t === "punct") {
-          const v = (ts[q] as any).v
-          if (v === "(" || v === "{") depth++
-          else if (v === ")" || v === "}") { if (depth === 0) break; depth-- }
-          else if (depth === 0 && v === ":=") return err(`typed field definition, not an atom`, i)
-          else if (depth === 0 && (v === ";" || v === "=")) break
-        }
-        if (ts[q].t === "nl" && depth === 0) break
-        q++
-      }
-    }
-  }
-  const base = simple(ts, i)
-  if (!base.ok) return base
-  let result: Expr = base.v
-  let pos = base.pos
-  // Postfix projections (no newline skip before "." — binds tightly)
+// Postfix projections: base ("." IDENT)*  — no newline skip, binds tightly.
+const withProj = (base: P<Expr>): P<Expr> => (ts, i) => {
+  const r = base(ts, i)
+  if (!r.ok) return r
+  let result = r.v, pos = r.pos
   while (ts[pos].t === "punct" && (ts[pos] as any).v === ".") {
     pos++
     const field = idP(ts, pos)
@@ -330,6 +280,57 @@ const atom: P<Expr> = (ts, i) => {
   }
   return ok(result, pos)
 }
+
+// simple/lineSimple differ only in which braced parser they use.
+const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
+  // Parenthesized: ( expr ) or ( expr : expr )
+  map(
+    seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
+    ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
+  ),
+  lazy(bracedP),
+  map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
+  map(leafP, (): Expr => ({ tag: "leaf" })),
+  map(numP, (value): Expr => ({ tag: "num", value })),
+  holeP,
+  map(idP, (name): Expr => ({ tag: "var", name })),
+))
+const simple: P<Expr> = makeSimple(() => braced)
+
+// Check if position starts a field definition (IDENT ":=" or IDENT ":" ... ":=").
+// Used to prevent atoms from consuming field starts after a newline.
+function isFieldStart(ts: Tok[], i: number): boolean {
+  if (ts[i].t !== "id") return false
+  const next = ts[i + 1]
+  if (next?.t === "punct" && (next as any).v === ":=") return true
+  if (!(next?.t === "punct" && (next as any).v === ":")) return false
+  let depth = 0, q = i + 2
+  while (q < ts.length && ts[q].t !== "eof") {
+    if (ts[q].t === "punct") {
+      const v = (ts[q] as any).v
+      if (v === "(" || v === "{") depth++
+      else if (v === ")" || v === "}") { if (depth === 0) break; depth-- }
+      else if (depth === 0 && v === ":=") return true
+      else if (depth === 0 && (v === ";" || v === "=")) break
+    }
+    if (ts[q].t === "nl" && depth === 0) break
+    q++
+  }
+  return false
+}
+
+// atom = simple ("." IDENT)*
+// Newlines before atoms are insignificant — expressions can span lines.
+// Item separation works because keywords (let, test, open) can't start an atom,
+// and field definitions (IDENT ":=") are detected via lookahead so expressions
+// don't accidentally consume the start of a field.
+const atom: P<Expr> = withProj((ts, i) => {
+  const hadNewline = ts[i].t === "nl"
+  while (ts[i].t === "nl") i++
+  if (hadNewline && isFieldStart(ts, i))
+    return err(`field definition, not an atom`, i)
+  return simple(ts, i)
+})
 
 // app = atom atom*
 const app: P<Expr> = map(
@@ -341,75 +342,21 @@ const app: P<Expr> = map(
 // In line mode, newlines terminate expressions. Braces still group freely.
 // This prevents `let x = a\nb` from parsing `a b` as one expression.
 
-// lineSimple: like simple but binders use lineExpr for their body.
-const lineSimple: P<Expr> = lazy(() => alt<Expr>(
-  map(
-    seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
-    ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
-  ),
-  lazy(() => lineBraced),
-  map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
-  map(leafP, (): Expr => ({ tag: "leaf" })),
-  map(numP, (value): Expr => ({ tag: "num", value })),
-  holeP,
-  map(idP, (name): Expr => ({ tag: "var", name })),
-))
+const lineSimple: P<Expr> = makeSimple(() => lineBraced)
 
-// lineBraced: like braced but binders use lineExpr for their body.
-const lineBraced: P<Expr> = (ts, i) => {
-  if (!(ts[i].t === "punct" && (ts[i] as any).v === "{"))
-    return err(`expected '{', got ${describe(ts[i])}`, i)
-  let pos = i + 1
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}")
-    return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
-  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open"))
-    return unifiedBracedInner(ts, pos)
-  const shape = classifyBracedContent(ts, pos)
-  if (shape === "recValue") return recValueInner(ts, pos)
-  if (shape === "binder") {
-    const binderAttempt = lineBinderInner(ts, pos)
-    if (binderAttempt.ok) return binderAttempt
-    return bareRecTypeInner(ts, pos)
-  }
-  const binderAttempt = lineBinderInner(ts, pos)
-  if (binderAttempt.ok) return binderAttempt
-  return recTypeInner(ts, pos)
-}
-
-const lineAtom: P<Expr> = (ts, i) => {
+const lineAtom: P<Expr> = withProj((ts, i) => {
   if (ts[i].t === "nl") return err(`unexpected newline`, i)
-  const base = lineSimple(ts, i)
-  if (!base.ok) return base
-  let result: Expr = base.v
-  let pos = base.pos
-  while (ts[pos].t === "punct" && (ts[pos] as any).v === ".") {
-    pos++
-    const field = idP(ts, pos)
-    if (!field.ok) return field
-    result = { tag: "proj", target: result, field: field.v }
-    pos = field.pos
-  }
-  return ok(result, pos)
-}
+  return lineSimple(ts, i)
+})
 
 // lineApp: first atom may skip newlines; subsequent atoms must stay on line.
 const lineApp: P<Expr> = (ts, i) => {
   while (ts[i].t === "nl") i++
-  const head = lineSimple(ts, i)
+  const head = withProj(lineSimple)(ts, i)
   if (!head.ok) return head
   let result: Expr = head.v
   let pos = head.pos
-  // Projections on head
-  while (ts[pos].t === "punct" && (ts[pos] as any).v === ".") {
-    pos++
-    const field = idP(ts, pos)
-    if (!field.ok) return field
-    result = { tag: "proj", target: result, field: field.v }
-    pos = field.pos
-  }
-  // Continuation atoms: no newline skip
-  while (true) {
+  for (;;) {
     const arg = lineAtom(ts, pos)
     if (!arg.ok) break
     result = { tag: "app", f: result, x: arg.v }
@@ -418,274 +365,150 @@ const lineApp: P<Expr> = (ts, i) => {
   return ok(result, pos)
 }
 
-// lineExpr: like expr but uses lineApp. Newlines terminate expressions.
-const lineExpr: P<Expr> = (ts, i) => {
-  const lhs = lineApp(ts, i)
-  if (!lhs.ok) return lhs
-  const arr = arrowP(ts, lhs.pos)
-  if (!arr.ok) return lhs
-  let pos = arr.pos
-  while (ts[pos].t === "nl") pos++
-  const rhs = lineExpr(ts, pos)
-  if (!rhs.ok) return rhs
-  return ok(
-    { tag: "binder" as const, params: [{ name: null, type: lhs.v }], body: rhs.v },
-    rhs.pos,
-  )
+// makeExpr: arrow-suffix handler shared by expr and lineExpr.
+const makeExpr = (appP: P<Expr>): P<Expr> => {
+  const p: P<Expr> = (ts, i) => {
+    const lhs = appP(ts, i)
+    if (!lhs.ok) return lhs
+    const arr = arrowP(ts, lhs.pos)
+    if (!arr.ok) return lhs
+    let pos = arr.pos
+    while (ts[pos].t === "nl") pos++
+    const rhs = p(ts, pos)
+    if (!rhs.ok) return rhs
+    return ok(
+      { tag: "binder" as const, params: [{ name: null, type: lhs.v }], body: rhs.v },
+      rhs.pos,
+    )
+  }
+  return p
 }
+
+const lineExpr: P<Expr> = makeExpr(lineApp)
 
 // binderParam = (IDENT | "_") (":" expr)?
-const binderParam: P<Param> = (ts, i) => {
-  let pos = i
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t !== "id") return err(`expected identifier or '_', got ${describe(ts[pos])}`, pos)
-  const v = (ts[pos] as any).v as string
-  const name = v === "_" ? null : v
-  pos++
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
-    pos++
-    while (ts[pos].t === "nl") pos++
-    const tyR = expr(ts, pos)
-    if (!tyR.ok) return tyR
-    return ok({ name, type: tyR.v }, tyR.pos)
-  }
-  return ok({ name, type: null }, pos)
-}
+const binderParam: P<Param> = nl(map(
+  seq(idP, optional(seq(nl(punctP(":")), skipNl, lazy(() => expr)))),
+  ([v, ann]) => ({ name: v === "_" ? null : v, type: ann ? ann[2] : null }),
+))
 
-// Parse binder contents after "{". Expects params, "}", ARROW, body.
-// bodyParser defaults to expr; lineExpr is used when inside block-let bodies.
-function parseBinder(ts: Tok[], startPos: number, bodyParser: P<Expr> = expr): PResult<Expr> {
-  let pos = startPos
-  while (ts[pos].t === "nl") pos++
-  const params = sepBy1(binderParam, commaP)(ts, pos)
-  if (!params.ok) return params
-  pos = params.pos
-  while (ts[pos].t === "nl") pos++
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
-    return err(`expected '}', got ${describe(ts[pos])}`, pos)
-  pos++
-  while (ts[pos].t === "nl") pos++
-  const arr = arrowP(ts, pos)
-  if (!arr.ok) return err(`expected '->' after '}', got ${describe(ts[pos])}`, pos)
-  pos = arr.pos
-  while (ts[pos].t === "nl") pos++
-  const bodyR = bodyParser(ts, pos)
-  if (!bodyR.ok) return bodyR
-  if (params.v.length === 0) return err("binder must have at least one param", startPos)
-  return ok({ tag: "binder" as const, params: params.v, body: bodyR.v }, bodyR.pos)
-}
-const binderInner: P<Expr> = (ts, pos) => parseBinder(ts, pos, expr)
-const lineBinderInner: P<Expr> = (ts, pos) => parseBinder(ts, pos, lineExpr)
+// Parse binder: params "}" ARROW body. Parameterized by bodyParser.
+const makeBinderInner = (bodyParser: P<Expr>): P<Expr> => map(
+  seq(sepBy1(binderParam, commaP), nl(punctP("}")), nl(arrowP), skipNl, lazy(() => bodyParser)),
+  ([params, , , , body]) => ({ tag: "binder" as const, params, body }),
+)
+const binderInner: P<Expr> = makeBinderInner(lazy(() => expr))
+const lineBinderInner: P<Expr> = makeBinderInner(lazy(() => lineExpr))
 
 // typedField = IDENT ":" expr
-const typedFieldP: P<TypedField> = (ts, i) => {
-  let pos = i
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
-  const name = (ts[pos] as any).v as string
-  if (name === "_") return err(`recType field cannot be '_'`, pos)
-  pos++
-  while (ts[pos].t === "nl") pos++
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":"))
-    return err(`expected ':', got ${describe(ts[pos])}`, pos)
-  pos++
-  while (ts[pos].t === "nl") pos++
-  const tyR = expr(ts, pos)
-  if (!tyR.ok) return tyR
-  return ok({ name, type: tyR.v }, tyR.pos)
-}
+const typedFieldP: P<TypedField> = nl((ts, i) => {
+  // Reject "_" as a recType field name
+  if (ts[i].t === "id" && (ts[i] as any).v === "_") return err(`recType field cannot be '_'`, i)
+  const r = seq(idP, nl(punctP(":")), skipNl, lazy(() => expr))(ts, i)
+  if (!r.ok) return r
+  const [name, , , type] = r.v
+  return ok({ name, type }, r.pos)
+})
 
 // Parse recType contents after "{". Expects typed fields, "}".
-const recTypeInner: P<Expr> = (ts, startPos) => {
-  let pos = startPos
-  while (ts[pos].t === "nl") pos++
-  const fields = sepBy1(typedFieldP, commaP)(ts, pos)
-  if (!fields.ok) return fields
-  pos = fields.pos
-  while (ts[pos].t === "nl") pos++
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
-    return err(`expected '}', got ${describe(ts[pos])}`, pos)
-  pos++
-  return ok({ tag: "recType" as const, fields: fields.v }, pos)
-}
+const recTypeInner: P<Expr> = map(
+  seq(sepBy1(typedFieldP, commaP), nl(punctP("}"))),
+  ([fields]) => ({ tag: "recType" as const, fields }),
+)
 
-// namedField = IDENT (":" expr)? ":=" expr
-const namedFieldP: P<NamedField> = (ts, i) => {
-  let pos = i
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
-  const name = (ts[pos] as any).v as string
-  pos++
-  while (ts[pos].t === "nl") pos++
-  let type: Expr | null = null
-  // ":" expr before ":="
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
-    pos++
-    while (ts[pos].t === "nl") pos++
-    const tyR = expr(ts, pos)
-    if (!tyR.ok) return tyR
-    type = tyR.v
-    pos = tyR.pos
-    while (ts[pos].t === "nl") pos++
-  }
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":="))
-    return err(`expected ':=', got ${describe(ts[pos])}`, pos)
-  pos++
-  while (ts[pos].t === "nl") pos++
-  const valR = expr(ts, pos)
-  if (!valR.ok) return valR
-  return ok({ name, type, value: valR.v }, valR.pos)
-}
+// field = IDENT (":" expr)? ":=" valParser
+const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr }> =>
+  nl(map(
+    seq(idP,
+      optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
+      nl(punctP(":=")), skipNl, lazy(() => valParser)),
+    ([name, ann, , , value]) => ({
+      tag: "field" as const, name, type: ann ? ann[2] : null, value,
+    }),
+  ))
+const bracedFieldP = makeFieldP(lineExpr)
+const topFieldP = makeFieldP(lazy(() => expr))
 
-// Parse recValue contents after "{". Expects named fields (and optionally
-// let/test/open statements), "}".  This is the unified braced body parser.
-// If only let/test/open statements are found and a trailing expression follows,
-// this is a block expression (desugared as before). If any `:=` field exists,
-// it's a recValue with private bindings.
-const recValueInner: P<Expr> = (ts, startPos) => {
-  let pos = startPos
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
-    return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
-  }
-  const fields = sepBy1(namedFieldP, semiP)(ts, pos)
-  if (!fields.ok) return fields
-  pos = fields.pos
-  // optional trailing semi
+// --- Braced member combinators (let/test/open/field inside { ... }) ---
+// Each parses one member + trailing SEMI, returning a RecMember.
+
+const bracedLetP: P<RecMember> = map(
+  seq(kwP("let"), nl(idP),
+    optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
+    nl(punctP("=")), skipNl, lazy(() => lineExpr), semiP),
+  ([, name, ann, , , body]) => ({
+    tag: "let" as const, name, type: ann ? ann[2] : null, body,
+  }),
+)
+
+const bracedTestP: P<RecMember> = map(
+  seq(kwP("test"), skipNl, lazy(() => lineExpr),
+    nl(punctP("=")), skipNl, lazy(() => lineExpr), semiP),
+  ([, , lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
+)
+
+const bracedOpenP: P<RecMember> = map(
+  seq(kwP("open"), skipNl, lazy(() => lineExpr), semiP),
+  ([, , e]) => ({ tag: "open" as const, expr: e }),
+)
+
+// bracedFieldP already defined above; wrap it as a RecMember with optional SEMI.
+const bracedFieldMemberP: P<RecMember> = (ts, i) => {
+  const r = bracedFieldP(ts, i)
+  if (!r.ok) return r
+  let pos = r.pos
   const s = semiP(ts, pos)
   if (s.ok) pos = s.pos
-  while (ts[pos].t === "nl") pos++
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
-    return err(`expected '}', got ${describe(ts[pos])}`, pos)
-  pos++
-  return ok({ tag: "recValue" as const, fields: fields.v }, pos)
+  return ok(r.v as RecMember, pos)
 }
 
-// Unified braced body parser: handles blocks, recValues with mixed members.
-// Called after "{" is consumed when first token is "let", "test", "open", or IDENT.
-// Parses members (let/test/open/field) separated by SEMI. Then:
+const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedOpenP, bracedFieldMemberP))
+
+// Unified braced body parser: handles blocks, recValues, and mixed members.
+// Parses members (let/test/open/field). Then:
 //   - If any `:=` field found → recValue (fields are exports, lets are private stmts)
 //   - If no `:=` field and trailing expr → block (desugar as App(Binder, ...))
 //   - If no `:=` field and no trailing expr → empty recValue
 const unifiedBracedInner: P<Expr> = (ts, startPos) => {
-  type BlockLet = { name: string; type: Expr | null; body: Expr }
-  const bindings: BlockLet[] = []  // let bindings (for block desugaring)
-  const exportedFields: NamedField[] = []  // field := members
-  const members: RecMember[] = []  // all members for recValue output
-  let pos = startPos
+  const membersR = many(bracedMemberP)(ts, startPos)
+  if (!membersR.ok) return membersR
+  const members = membersR.v
+  let pos = membersR.pos
 
-  while (true) {
-    while (ts[pos].t === "nl") pos++
-
-    // let statement
-    if (ts[pos].t === "kw" && (ts[pos] as any).v === "let") {
-      pos++
-      while (ts[pos].t === "nl") pos++
-      if (ts[pos].t !== "id") return err(`expected identifier after 'let', got ${describe(ts[pos])}`, pos)
-      const name = (ts[pos] as any).v as string
-      pos++
-      while (ts[pos].t === "nl") pos++
-      let type: Expr | null = null
-      if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
-        pos++
-        while (ts[pos].t === "nl") pos++
-        const tyR = expr(ts, pos)
-        if (!tyR.ok) return tyR
-        type = tyR.v
-        pos = tyR.pos
-        while (ts[pos].t === "nl") pos++
-      }
-      if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "="))
-        return err(`expected '=' in let, got ${describe(ts[pos])}`, pos)
-      pos++
-      while (ts[pos].t === "nl") pos++
-      const bodyR = lineExpr(ts, pos)
-      if (!bodyR.ok) return bodyR
-      bindings.push({ name, type, body: bodyR.v })
-      members.push({ tag: "let", name, type, body: bodyR.v })
-      pos = bodyR.pos
-      const s = semiP(ts, pos)
-      if (!s.ok) return err(`expected ';' or newline after let, got ${describe(ts[pos])}`, pos)
-      pos = s.pos
-      continue
-    }
-
-    // test statement
-    if (ts[pos].t === "kw" && (ts[pos] as any).v === "test") {
-      pos++
-      while (ts[pos].t === "nl") pos++
-      const lhsR = lineExpr(ts, pos)
-      if (!lhsR.ok) return lhsR
-      pos = lhsR.pos
-      while (ts[pos].t === "nl") pos++
-      if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "="))
-        return err(`expected '=' in test, got ${describe(ts[pos])}`, pos)
-      pos++
-      while (ts[pos].t === "nl") pos++
-      const rhsR = lineExpr(ts, pos)
-      if (!rhsR.ok) return rhsR
-      members.push({ tag: "test", lhs: lhsR.v, rhs: rhsR.v })
-      pos = rhsR.pos
-      const s = semiP(ts, pos)
-      if (!s.ok) return err(`expected ';' or newline after test, got ${describe(ts[pos])}`, pos)
-      pos = s.pos
-      continue
-    }
-
-    // open statement
-    if (ts[pos].t === "kw" && (ts[pos] as any).v === "open") {
-      pos++
-      while (ts[pos].t === "nl") pos++
-      const exprR = lineExpr(ts, pos)
-      if (!exprR.ok) return exprR
-      members.push({ tag: "open", expr: exprR.v })
-      pos = exprR.pos
-      const s = semiP(ts, pos)
-      if (!s.ok) return err(`expected ';' or newline after open, got ${describe(ts[pos])}`, pos)
-      pos = s.pos
-      continue
-    }
-
-    // field: IDENT (":" expr)? ":=" lineExpr
-    if (ts[pos].t === "id") {
-      const fieldR = bracedFieldP(ts, pos)
-      if (fieldR.ok) {
-        const f = fieldR.v
-        exportedFields.push({ name: f.name, type: f.type, value: f.value })
-        members.push(f)
-        pos = fieldR.pos
-        // optional SEMI after field
-        const s = semiP(ts, pos)
-        if (s.ok) pos = s.pos
-        continue
-      }
-    }
-
-    // Not a member → trailing expression or closing brace
-    break
+  const exportedFields: NamedField[] = []
+  const bindings: { name: string; type: Expr | null; body: Expr }[] = []
+  for (const m of members) {
+    if (m.tag === "field") exportedFields.push({ name: m.name, type: m.type, value: m.value })
+    if (m.tag === "let") bindings.push({ name: m.name, type: m.type, body: m.body })
   }
 
   while (ts[pos].t === "nl") pos++
 
-  // If we have exported fields → recValue (no trailing expression allowed)
+  const hasNonFieldMembers = members.some(m => m.tag !== "field")
+  const membersOrUndef = hasNonFieldMembers ? members : undefined
+
+  // If we have exported fields → recValue
   if (exportedFields.length > 0) {
     if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
       return err(`expected '}', got ${describe(ts[pos])}`, pos)
     pos++
-    return ok({ tag: "recValue" as const, fields: exportedFields, members } as Expr, pos)
+    const rv: Expr = { tag: "recValue", fields: exportedFields }
+    if (membersOrUndef) (rv as any).members = membersOrUndef
+    return ok(rv, pos)
   }
 
-  // No exported fields: try trailing expression → block, or "}" → empty recValue
+  // No exported fields: "}" → empty recValue, or trailing expr → block
   if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
     pos++
-    return ok({ tag: "recValue" as const, fields: [], members } as Expr, pos)
+    const rv: Expr = { tag: "recValue", fields: [] }
+    if (membersOrUndef) (rv as any).members = membersOrUndef
+    return ok(rv, pos)
   }
 
-  // Must be a block with trailing expression
   if (bindings.length === 0 && members.length === 0)
     return err(`expected '}' or expression, got ${describe(ts[pos])}`, pos)
 
+  // Block with trailing expression
   const trailR = expr(ts, pos)
   if (!trailR.ok) return trailR
   pos = trailR.pos
@@ -712,108 +535,55 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   return ok(result, pos)
 }
 
-// Field parser for braced context: IDENT (":" expr)? ":=" lineExpr
-const bracedFieldP: P<{ tag: "field"; name: string; type: Expr | null; value: Expr }> = (ts, i) => {
-  let pos = i
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
-  const name = (ts[pos] as any).v as string
-  pos++
-  while (ts[pos].t === "nl") pos++
-  let type: Expr | null = null
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
-    pos++
-    while (ts[pos].t === "nl") pos++
-    const tyR = expr(ts, pos)
-    if (!tyR.ok) return tyR
-    type = tyR.v
-    pos = tyR.pos
-    while (ts[pos].t === "nl") pos++
-  }
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":="))
-    return err(`expected ':=', got ${describe(ts[pos])}`, pos)
-  pos++
-  while (ts[pos].t === "nl") pos++
-  const valR = lineExpr(ts, pos)
-  if (!valR.ok) return valR
-  return ok({ tag: "field" as const, name, type, value: valR.v }, valR.pos)
-}
 
 // Parse bare recType: {a, b, c} or {a, b, c : T} (spread type).
-// Fields are comma-separated identifiers with an optional shared type.
-const bareRecTypeInner: P<Expr> = (ts, startPos) => {
-  const names: string[] = []
-  let pos = startPos
-  while (ts[pos].t === "nl") pos++
-
-  // Parse comma-separated identifiers
-  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
-  names.push((ts[pos] as any).v as string)
-  pos++
-
-  while (true) {
-    while (ts[pos].t === "nl") pos++
-    if (ts[pos].t === "punct" && (ts[pos] as any).v === ",") {
-      pos++
-      while (ts[pos].t === "nl") pos++
-      if (ts[pos].t !== "id") break // not another name, stop
-      names.push((ts[pos] as any).v as string)
-      pos++
-    } else break
-  }
-
-  // Optional shared type annotation
-  let sharedType: Expr | null = null
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
-    pos++
-    while (ts[pos].t === "nl") pos++
-    const tyR = expr(ts, pos)
-    if (!tyR.ok) return tyR
-    sharedType = tyR.v
-    pos = tyR.pos
-  }
-
-  while (ts[pos].t === "nl") pos++
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
-    return err(`expected '}', got ${describe(ts[pos])}`, pos)
-  pos++
-
-  const fields: TypedField[] = names.map(name => ({ name, type: sharedType }))
-  return ok({ tag: "recType" as const, fields }, pos)
-}
+const bareRecTypeInner: P<Expr> = map(
+  seq(
+    sepBy1(nl(idP), nl(punctP(","))),
+    optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
+    nl(punctP("}")),
+  ),
+  ([names, ann]) => {
+    const sharedType = ann ? ann[2] : null
+    return { tag: "recType" as const, fields: names.map(name => ({ name, type: sharedType })) }
+  },
+)
 
 // Disambiguate braced content after seeing "{".
-// Peek at the first entry to determine: recValue, binder, or recTypeOrBinder.
-const braced: P<Expr> = (ts, i) => {
-  if (!(ts[i].t === "punct" && (ts[i] as any).v === "{"))
-    return err(`expected '{', got ${describe(ts[i])}`, i)
-  let pos = i + 1
-  while (ts[pos].t === "nl") pos++
+// Peek at the first member to determine: recValue/block, binder, or recType.
+// Parameterized by binderParser so braced (normal) and lineBraced share one function.
+function parseBraced(binderParser: P<Expr>): P<Expr> {
+  return (ts, i) => {
+    if (!(ts[i].t === "punct" && (ts[i] as any).v === "{"))
+      return err(`expected '{', got ${describe(ts[i])}`, i)
+    let pos = i + 1
+    while (ts[pos].t === "nl") pos++
 
-  // Empty braces → empty recValue
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
-    return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
-  }
+    // Empty braces → empty recValue
+    if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
+      return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
+    }
 
-  // Unified body: starts with "let", "test", or "open"
-  if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open")) {
-    return unifiedBracedInner(ts, pos)
-  }
+    // Keyword → unified body (let/test/open, possibly mixed with fields)
+    if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open")) {
+      return unifiedBracedInner(ts, pos)
+    }
 
-  const shape = classifyBracedContent(ts, pos)
-  if (shape === "recValue") return recValueInner(ts, pos)
-  if (shape === "binder") {
-    // Try binder first; fall back to bare recType ({a, b, c} or {a, b, c : T})
-    const binderAttempt = binderInner(ts, pos)
+    const shape = classifyBracedContent(ts, pos)
+    if (shape === "recValue") return unifiedBracedInner(ts, pos)
+    if (shape === "binder") {
+      const binderAttempt = binderParser(ts, pos)
+      if (binderAttempt.ok) return binderAttempt
+      return bareRecTypeInner(ts, pos)
+    }
+    // recTypeOrBinder: try binder first (needs "}" then ARROW), fall back to recType.
+    const binderAttempt = binderParser(ts, pos)
     if (binderAttempt.ok) return binderAttempt
-    return bareRecTypeInner(ts, pos)
+    return recTypeInner(ts, pos)
   }
-  // recTypeOrBinder: try binder first (needs "}" then ARROW), fall back to recType.
-  const binderAttempt = binderInner(ts, pos)
-  if (binderAttempt.ok) return binderAttempt
-  return recTypeInner(ts, pos)
 }
+const braced: P<Expr> = parseBraced(binderInner)
+const lineBraced: P<Expr> = parseBraced(lineBinderInner)
 
 // Peek at tokens after "{" to classify the braced content.
 function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | "recTypeOrBinder" {
@@ -852,21 +622,7 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
 // expr = binder | app (ARROW expr)?
 // A standalone binder `{...} -> body` is parsed by `braced` inside `simple`.
 // The ARROW suffix handles `A -> B` sugar.
-const expr: P<Expr> = (ts, i) => {
-  const lhs = app(ts, i)
-  if (!lhs.ok) return lhs
-  const arr = arrowP(ts, lhs.pos)
-  if (!arr.ok) return lhs
-  let pos = arr.pos
-  while (ts[pos].t === "nl") pos++
-  const rhs = expr(ts, pos)
-  if (!rhs.ok) return rhs
-  // A -> B desugars to binder with anonymous param typed A
-  return ok(
-    { tag: "binder" as const, params: [{ name: null, type: lhs.v }], body: rhs.v },
-    rhs.pos,
-  )
-}
+const expr: P<Expr> = makeExpr(app)
 
 // --- Items ---
 
@@ -894,34 +650,7 @@ const openItem: P<Item> = map(
   ([, expr]) => ({ tag: "open" as const, expr }),
 )
 
-// field: IDENT (":" expr)? ":=" expr  — exported record member
-const fieldItem: P<Item> = (ts, i) => {
-  let pos = i
-  while (ts[pos].t === "nl") pos++
-  if (ts[pos].t !== "id") return err(`expected identifier, got ${describe(ts[pos])}`, pos)
-  const name = (ts[pos] as any).v as string
-  pos++
-  while (ts[pos].t === "nl") pos++
-  let type: Expr | null = null
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === ":") {
-    pos++
-    while (ts[pos].t === "nl") pos++
-    const tyR = expr(ts, pos)
-    if (!tyR.ok) return tyR
-    type = tyR.v
-    pos = tyR.pos
-    while (ts[pos].t === "nl") pos++
-  }
-  if (!(ts[pos].t === "punct" && (ts[pos] as any).v === ":="))
-    return err(`expected ':=', got ${describe(ts[pos])}`, pos)
-  pos++
-  while (ts[pos].t === "nl") pos++
-  const valR = expr(ts, pos)
-  if (!valR.ok) return valR
-  return ok({ tag: "field" as const, name, type, value: valR.v }, valR.pos)
-}
-
-const itemP: P<Item> = nl(alt(openItem, letItem, testItem, fieldItem))
+const itemP: P<Item> = nl(alt(openItem, letItem, testItem, topFieldP))
 
 // Parse source into items.
 export function parseItems(src: string): Item[] {
