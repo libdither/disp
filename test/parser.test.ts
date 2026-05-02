@@ -8,9 +8,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import {
-  tokenize, parseItems, parseExpr, parseProgram,
+  tokenize, parseItems, parseExpr,
   type Tok, type Expr, type Item,
 } from "../src/parse.js"
+import { parseProgram } from "../src/compile.js"
 import {
   LEAF, stem, fork, treeEqual, applyTree,
 } from "../src/tree.js"

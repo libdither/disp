@@ -13,7 +13,7 @@ const testFiles = readdirSync(libDir)
 describe("disp", () => {
   for (const file of testFiles) {
     it(file, () => {
-      const r = runFile(join(libDir, file))
+      const r = runFile(join(libDir, file), { debugTypeCheck: true })
       if (r.failed.length > 0) {
         const msgs = r.failed.map(f => `[test ${f.i}] ${f.msg}`).join("\n")
         throw new Error(`${file}:\n${msgs}`)

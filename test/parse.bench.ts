@@ -4,7 +4,8 @@
 import { describe, bench } from "vitest"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { tokenize, parseItems, parseProgram } from "../src/parse.js"
+import { tokenize, parseItems } from "../src/parse.js"
+import { parseProgram } from "../src/compile.js"
 
 const FILES = [
   "lib/prelude.disp",

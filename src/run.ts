@@ -3,19 +3,19 @@
 
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { parseProgram, type ParseItemStats } from "./parse.js"
+import { parseProgram, type ParseItemStats } from "./compile.js"
 import {
   treeEqual, prettyTree,
   clearApplyCache, getApplyStats, resetApplyStats, resetCacheStats,
 } from "./tree.js"
 
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string }[] }
-interface RunOptions { onParseItem?: (item: ParseItemStats) => void }
+interface RunOptions { onParseItem?: (item: ParseItemStats) => void; debugTypeCheck?: boolean }
 
 export function runFile(path: string, options: RunOptions = {}): RunResult {
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
-  const decls = parseProgram(src, abs, { onItem: options.onParseItem })
+  const decls = parseProgram(src, abs, { onItem: options.onParseItem, debugTypeCheck: options.debugTypeCheck })
   const result: RunResult = { defs: 0, tests: 0, passed: 0, failed: [] }
   let testIdx = 0
   for (const d of decls) {

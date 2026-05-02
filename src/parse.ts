@@ -1,21 +1,11 @@
-// Surface → tree calculus. Grammar is documented in SYNTAX.typ; this file
-// implements it with a tiny parser-combinator library, then walks the parsed
-// AST (the driver) to resolve scopes, inline `use`d files, and compile terms
-// via bracket abstraction.
+// Surface grammar for Disp. Documented in SYNTAX.typ; this file
+// implements it with a tiny parser-combinator library.
 //
 // Sections:
 //   1. Tokens + tokenizer
 //   2. AST types
 //   3. Parser combinators
 //   4. Grammar productions
-//   5. Bracket abstraction (Expr → Cir → Tree)
-//   6. Driver (scope stack, `use`, produces Decl[])
-
-import { readFileSync } from "node:fs"
-import { dirname, resolve as pathResolve } from "node:path"
-import {
-  Tree, LEAF, stem, fork, applyTree, FAST_EQ, getApplyStats, type ApplyStats,
-} from "./tree.js"
 
 // ───────────────────────────── 1. Tokens ─────────────────────────────────
 
@@ -29,7 +19,7 @@ export type Tok =
   | { t: "nl" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["let", "test", "use", "open"])
+const KEYWORDS = new Set(["let", "test", "use", "open", "trust"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
 const PUNCT = [":=", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
 const IDENT_HEAD = /[A-Za-z_]/
@@ -108,11 +98,13 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
+// "trust" is like "let" but registers the binding in the elaborator's trusted table.
 export type RecMember =
   | { tag: "field"; name: string; type: Expr | null; value: Expr }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
+  | { tag: "trust"; name: string; type: Expr | null; body: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr }
-  | { tag: "open"; expr: Expr }
+  | { tag: "open"; trust: boolean; expr: Expr }
 
 // Backward compat alias — parseItems still returns these for now.
 export type Item = RecMember
@@ -447,9 +439,23 @@ const bracedTestP: P<RecMember> = map(
   ([, , lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
 )
 
+const bracedTrustP: P<RecMember> = map(
+  seq(kwP("trust"), nl(idP),
+    optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
+    nl(punctP("=")), skipNl, lazy(() => lineExpr), semiP),
+  ([, name, ann, , , body]) => ({
+    tag: "trust" as const, name, type: ann ? ann[2] : null, body,
+  }),
+)
+
 const bracedOpenP: P<RecMember> = map(
   seq(kwP("open"), skipNl, lazy(() => lineExpr), semiP),
-  ([, , e]) => ({ tag: "open" as const, expr: e }),
+  ([, , e]) => ({ tag: "open" as const, trust: false, expr: e }),
+)
+
+const bracedTrustOpenP: P<RecMember> = map(
+  seq(kwP("trust"), kwP("open"), skipNl, lazy(() => lineExpr), semiP),
+  ([, , , e]) => ({ tag: "open" as const, trust: true, expr: e }),
 )
 
 // bracedFieldP already defined above; wrap it as a RecMember with optional SEMI.
@@ -462,7 +468,7 @@ const bracedFieldMemberP: P<RecMember> = (ts, i) => {
   return ok(r.v as RecMember, pos)
 }
 
-const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedOpenP, bracedFieldMemberP))
+const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedTrustOpenP, bracedTrustP, bracedOpenP, bracedFieldMemberP))
 
 // Unified braced body parser: handles blocks, recValues, and mixed members.
 // Parses members (let/test/open/field). Then:
@@ -564,8 +570,8 @@ function parseBraced(binderParser: P<Expr>): P<Expr> {
       return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
     }
 
-    // Keyword → unified body (let/test/open, possibly mixed with fields)
-    if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open")) {
+    // Keyword → unified body (let/test/open/trust, possibly mixed with fields)
+    if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open" || (ts[pos] as any).v === "trust")) {
       return unifiedBracedInner(ts, pos)
     }
 
@@ -645,12 +651,31 @@ const testItem: P<Item> = map(
   ([, lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
 )
 
-const openItem: P<Item> = map(
-  seq(kwP("open"), lazy(() => expr)),
-  ([, expr]) => ({ tag: "open" as const, expr }),
+const trustItem: P<Item> = map(
+  seq(
+    kwP("trust"), idP,
+    optional(seq(punctP(":"), skipNl, lazy(() => expr))),
+    nl(punctP("=")), skipNl, lazy(() => expr),
+  ),
+  ([, name, ann, , , body]) => ({
+    tag: "trust" as const,
+    name,
+    type: ann ? ann[2] : null,
+    body,
+  }),
 )
 
-const itemP: P<Item> = nl(alt(openItem, letItem, testItem, topFieldP))
+const openItem: P<Item> = map(
+  seq(kwP("open"), lazy(() => expr)),
+  ([, expr]) => ({ tag: "open" as const, trust: false, expr }),
+)
+
+const trustOpenItem: P<Item> = map(
+  seq(kwP("trust"), kwP("open"), lazy(() => expr)),
+  ([, , expr]) => ({ tag: "open" as const, trust: true, expr }),
+)
+
+const itemP: P<Item> = nl(alt(trustOpenItem, openItem, letItem, trustItem, testItem, topFieldP))
 
 // Parse source into items.
 export function parseItems(src: string): Item[] {
@@ -682,417 +707,3 @@ export function parseExpr(src: string): Expr {
   return r.v
 }
 
-// ──────────────────────── 5. Bracket abstraction ─────────────────────────
-
-// CIR: intermediate representation with explicit S/K/I sentinels.
-type Cir =
-  | { tag: "lit"; t: Tree }
-  | { tag: "var"; name: string }
-  | { tag: "app"; f: Cir; x: Cir }
-  | { tag: "lam"; x: string; body: Cir }
-  | { tag: "S" } | { tag: "K" } | { tag: "I" }
-
-const S: Cir = { tag: "S" }
-const K: Cir = { tag: "K" }
-const I_CIR: Cir = { tag: "I" }
-const cap = (f: Cir, x: Cir): Cir => ({ tag: "app", f, x })
-
-const I_TREE = fork(fork(LEAF, LEAF), LEAF)
-const K_TREE = stem(LEAF)
-const S_TREE = fork(stem(fork(LEAF, LEAF)), LEAF)
-
-function containsFree(e: Cir, name: string): boolean {
-  switch (e.tag) {
-    case "lit": case "S": case "K": case "I": return false
-    case "var": return e.name === name
-    case "app": return containsFree(e.f, name) || containsFree(e.x, name)
-    case "lam": return e.x === name ? false : containsFree(e.body, name)
-  }
-}
-
-function abstractName(name: string, body: Cir): Cir {
-  if (!containsFree(body, name)) return cap(K, body)
-  switch (body.tag) {
-    case "var": return I_CIR
-    case "app": {
-      // η-optimization: [x](f x) where x ∉ f → f
-      if (body.x.tag === "var" && body.x.name === name && !containsFree(body.f, name))
-        return body.f
-
-      const af = abstractName(name, body.f)
-      const ax = abstractName(name, body.x)
-
-      // S (K p) I → p  (η-reduction)
-      if (af.tag === "app" && af.f.tag === "K" && ax.tag === "I") return af.x
-
-      // S (K p) (K q) → K (p q)  (K-composition: compile-time eval)
-      if (af.tag === "app" && af.f.tag === "K" && ax.tag === "app" && ax.f.tag === "K")
-        return cap(K, cap(af.x, ax.x))
-
-      return cap(cap(S, af), ax)
-    }
-    case "lam": return abstractName(name, abstractName(body.x, body.body))
-    case "lit": case "S": case "K": case "I":
-      throw new Error("abstract: unreachable (containsFree returned false)")
-  }
-}
-
-function eliminateLams(e: Cir): Cir {
-  switch (e.tag) {
-    case "lit": case "var": case "S": case "K": case "I": return e
-    case "app": return cap(eliminateLams(e.f), eliminateLams(e.x))
-    case "lam": return abstractName(e.x, eliminateLams(e.body))
-  }
-}
-
-function cirToTree(e: Cir): Tree {
-  switch (e.tag) {
-    case "lit": return e.t
-    case "var": throw new Error(`cirToTree: unresolved free variable ${e.name}`)
-    case "I":   return I_TREE
-    case "K":   return K_TREE
-    case "S":   return S_TREE
-    case "app": {
-      if (e.f.tag === "app" && e.f.f.tag === "S") return fork(stem(cirToTree(e.f.x)), cirToTree(e.x))
-      // Full K application: K(x)(y) → x (drop second arg)
-      if (e.f.tag === "app" && e.f.f.tag === "K") return cirToTree(e.f.x)
-      if (e.f.tag === "K") return fork(LEAF, cirToTree(e.x))
-      if (e.f.tag === "I") return cirToTree(e.x)
-      // Partial S application: S(x) → stem(stem(x)) so that S(x)(y) = fork(stem(x), y)
-      if (e.f.tag === "S") return stem(stem(cirToTree(e.x)))
-      return applyTree(cirToTree(e.f), cirToTree(e.x), 10_000_000)
-    }
-  }
-}
-
-// Build selector: \x0 x1 ... xn-1. xi (picks the i-th of n arguments)
-function buildSelector(n: number, i: number): Cir {
-  const names = Array.from({ length: n }, (_, j) => `__sel${j}`)
-  let body: Cir = { tag: "var", name: names[i] }
-  for (let j = n - 1; j >= 0; j--) {
-    body = { tag: "lam", x: names[j], body }
-  }
-  return body
-}
-
-function selectorTree(n: number, i: number): Tree {
-  return cirToTree(eliminateLams(buildSelector(n, i)))
-}
-
-// Scope entry: a compiled tree plus optional compile-time record metadata.
-// Field names/trees are parser metadata only; runtime records remain ordinary
-// Church-encoded values.
-interface ScopeEntry { tree?: Tree; fields?: string[]; fieldTrees?: Tree[] }
-
-// Expr → Cir, with scope lookup and use-resolution.
-function exprToCir(
-  e: Expr,
-  lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string) => ScopeEntry,
-): Cir {
-  const lookup = (name: string) => lookupEntry(name)?.tree
-  switch (e.tag) {
-    case "leaf": return { tag: "lit", t: LEAF }
-    case "num": {
-      const zero = lookup("zero")
-      const succ = lookup("succ")
-      if (!zero || !succ) throw new Error(`numeric literal ${e.value}: zero and succ must be in scope`)
-      let result = zero
-      for (let i = 0; i < e.value; i++) {
-        result = applyTree(succ, result, 10_000_000)
-      }
-      return { tag: "lit", t: result }
-    }
-    case "var": {
-      const entry = lookupEntry(e.name)
-      return entry?.tree ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
-    }
-    case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
-    case "app":
-      return { tag: "app",
-        f: exprToCir(e.f, lookupEntry, resolveUse),
-        x: exprToCir(e.x, lookupEntry, resolveUse),
-      }
-    case "ann": return exprToCir(e.expr, lookupEntry, resolveUse) // erase type
-    case "binder": {
-      // Shadow binder params so they don't resolve to scope entries.
-      // If a param has a recType annotation, carry its field names as metadata
-      // so that projections (e.g. ks.field) work on bound variables.
-      const paramNames = new Set(e.params.map((p, i) => p.name ?? `_anon${i}`))
-      const paramEntries = new Map<string, ScopeEntry>()
-      for (let i = 0; i < e.params.length; i++) {
-        const name = e.params[i].name ?? `_anon${i}`
-        if (e.params[i].type?.tag === "recType") {
-          paramEntries.set(name, { fields: (e.params[i].type as any).fields.map((f: any) => f.name) })
-        }
-      }
-      const shadowedLookup = (name: string): ScopeEntry | undefined => {
-        if (paramNames.has(name)) return paramEntries.get(name)
-        return lookupEntry(name)
-      }
-
-      let body = exprToCir(e.body, shadowedLookup, resolveUse)
-      for (let i = e.params.length - 1; i >= 0; i--) {
-        const name = e.params[i].name ?? `_anon${i}`
-        body = { tag: "lam", x: name, body }
-      }
-      return body
-    }
-    case "recType": throw new Error("recType cannot appear in untyped compilation")
-    case "recValue": {
-      // If this recValue has members (let/test/open alongside fields),
-      // process them to build a scoped lookup before compiling fields.
-      let fieldLookup = lookupEntry
-      if (e.members && e.members.length > 0) {
-        const localScope = new Map<string, ScopeEntry>()
-        for (const m of e.members) {
-          if (m.tag === "let") {
-            const tree = compileExpr(m.body, fieldLookup, resolveUse)
-            let fields: string[] | undefined, fieldTrees: Tree[] | undefined
-            if (m.type?.tag === "recType") {
-              fields = (m.type as any).fields.map((f: any) => f.name)
-            } else {
-              const record = resolveExprRecord(m.body, fieldLookup, resolveUse)
-              fields = record?.fields; fieldTrees = record?.fieldTrees
-            }
-            localScope.set(m.name, { tree, fields, fieldTrees })
-            const prevLookup = fieldLookup
-            fieldLookup = (name: string) => localScope.get(name) ?? prevLookup(name)
-          }
-          // test/open in inline recValues: skip for now (tests need driver context)
-        }
-      }
-      // Church encoding: {x := a; y := b} → \sel. sel a b
-      const fieldCirs = e.fields.map(f => exprToCir(f.value, fieldLookup, resolveUse))
-      const selName = "__sel"
-      let body: Cir = { tag: "var", name: selName }
-      for (const fc of fieldCirs) body = cap(body, fc)
-      return { tag: "lam", x: selName, body }
-    }
-    case "use": {
-      const entry = resolveUse(e.path)
-      return { tag: "lit", t: entry.tree! }
-    }
-    case "proj": {
-      // Compile target, then look up field index from target's field metadata.
-      // Target must be a known record (var with fields, or use expression).
-      const record = resolveExprRecord(e.target, lookupEntry, resolveUse)
-      if (!record)
-        throw new Error(`projection '.${e.field}': target has no known record fields`)
-      const idx = record.fields.indexOf(e.field)
-      if (idx < 0)
-        throw new Error(`projection '.${e.field}': field not found (available: ${record.fields.join(", ")})`)
-      if (record.fieldTrees) return { tag: "lit", t: record.fieldTrees[idx] }
-      const target = exprToCir(e.target, lookupEntry, resolveUse)
-      const sel = buildSelector(record.fields.length, idx)
-      return cap(target, sel)
-    }
-  }
-}
-
-// Resolve record metadata known at compile time (for projection/open).
-function resolveExprRecord(
-  e: Expr,
-  lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string) => ScopeEntry,
-): { fields: string[]; fieldTrees?: Tree[] } | undefined {
-  if (e.tag === "var") {
-    const entry = lookupEntry(e.name)
-    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees } : undefined
-  }
-  if (e.tag === "use") {
-    const entry = resolveUse(e.path)
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees } : undefined
-  }
-  // Application where the argument is a binder returning a recValue:
-  // e.g. fix({ks : {...}} -> { f1 := ...; f2 := ... }) → fields from the recValue.
-  // This propagates field metadata through higher-order patterns like fix.
-  if (e.tag === "app" && e.x.tag === "binder" && e.x.body.tag === "recValue") {
-    return { fields: e.x.body.fields.map(f => f.name) }
-  }
-  if (e.tag === "recValue") {
-    return {
-      fields: e.fields.map(f => f.name),
-      fieldTrees: e.fields.map(f => compileExpr(f.value, lookupEntry, resolveUse)),
-    }
-  }
-  if (e.tag === "proj") {
-    // Nested projection: target.field — would need the inner record's field type
-    // which itself is a record. Not supported yet.
-    return undefined
-  }
-  return undefined
-}
-
-function compileExpr(
-  e: Expr,
-  lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string) => ScopeEntry,
-): Tree {
-  return cirToTree(eliminateLams(exprToCir(e, lookupEntry, resolveUse)))
-}
-
-// ──────────────────────────── 6. Driver ─────────────────────────────────
-
-export type Decl =
-  | { kind: "Def"; name: string; tree: Tree }
-  | { kind: "Test"; lhs: Tree; rhs: Tree }
-
-export type ParseItemStats = {
-  kind: "let" | "test" | "open" | "field"
-  name?: string
-  testIndex?: number
-  sourcePath?: string
-  depth: number
-  stats: ApplyStats
-}
-
-export type ParseProgramOptions = {
-  onItem?: (item: ParseItemStats) => void
-}
-
-export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
-  const stack: Map<string, ScopeEntry>[] = [new Map([["fast_eq", { tree: FAST_EQ }]])]
-  const decls: Decl[] = []
-  const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
-  const sourceStack = [sourcePath ? pathResolve(sourcePath) : undefined]
-  const loadedFiles = new Set<string>() // cycle detection
-  let compiledTestIndex = 0
-
-  const lookupEntry = (name: string): ScopeEntry | undefined => {
-    for (let i = stack.length - 1; i >= 0; i--) {
-      const e = stack[i].get(name)
-      if (e !== undefined) return e
-    }
-    return undefined
-  }
-  const define = (name: string, entry: ScopeEntry) => stack[stack.length - 1].set(name, entry)
-
-  function resolveUse(path: string): ScopeEntry {
-    const abs = pathResolve(dirStack[dirStack.length - 1], path)
-    if (loadedFiles.has(abs)) throw new Error(`use: circular dependency on ${abs}`)
-    loadedFiles.add(abs)
-    const fileSrc = readFileSync(abs, "utf-8")
-    dirStack.push(dirname(abs))
-    sourceStack.push(abs)
-    // Push a new scope frame for the used file.
-    stack.push(new Map())
-    const fileDecls: Decl[] = []
-    const items = parseItems(fileSrc)
-    // Detect whether this file uses the new field syntax.
-    // If any field members exist, only fields export. Otherwise fall back
-    // to legacy mode where all lets export (for backward compat during migration).
-    const hasFields = items.some(it => it.tag === "field")
-    try {
-      for (const it of items) {
-        runItem(it, fileDecls, !hasFields)
-      }
-    } finally {
-      const fileScope = stack.pop()!
-      dirStack.pop()
-      sourceStack.pop()
-      loadedFiles.delete(abs)
-    }
-    // Collect the file's top-level defs as a record.
-    const fieldNames: string[] = []
-    const fieldTrees: Tree[] = []
-    for (const d of fileDecls) {
-      if (d.kind === "Def") {
-        fieldNames.push(d.name)
-        fieldTrees.push(d.tree)
-      }
-    }
-    // Church-encode: \sel. sel v1 v2 ... vn
-    const n = fieldTrees.length
-    if (n === 0) return { tree: LEAF, fields: [] }
-    // Build as Cir, then compile
-    const selName = "__use_sel"
-    let body: Cir = { tag: "var", name: selName }
-    for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
-    const cir: Cir = { tag: "lam", x: selName, body }
-    const tree = cirToTree(eliminateLams(cir))
-    return { tree, fields: fieldNames, fieldTrees }
-  }
-
-  function recordItem(kind: "let" | "test" | "open" | "field", name?: string, testIndex?: number): void {
-    options.onItem?.({
-      kind,
-      name,
-      testIndex,
-      sourcePath: sourceStack[sourceStack.length - 1],
-      depth: sourceStack.length - 1,
-      stats: getApplyStats(),
-    })
-  }
-
-  function compileBinding(name: string, type: Expr | null | undefined, body: Expr): { tree: Tree; fields?: string[]; fieldTrees?: Tree[] } {
-    const tree = compileExpr(body, lookupEntry, resolveUse)
-    let fields: string[] | undefined, fieldTrees: Tree[] | undefined
-    if (type?.tag === "recType") {
-      fields = (type as any).fields.map((f: any) => f.name)
-    } else {
-      const record = resolveExprRecord(body, lookupEntry, resolveUse)
-      fields = record?.fields; fieldTrees = record?.fieldTrees
-    }
-    define(name, { tree, fields, fieldTrees })
-    return { tree, fields, fieldTrees }
-  }
-
-  function runItem(it: Item, target: Decl[], isExport: boolean): void {
-    switch (it.tag) {
-      case "field": {
-        const { tree } = compileBinding(it.name, it.type, it.value)
-        target.push({ kind: "Def", name: it.name, tree })
-        recordItem("field", it.name)
-        return
-      }
-      case "let": {
-        const { tree } = compileBinding(it.name, it.type, it.body)
-        if (isExport) {
-          // Legacy mode: top-level let exports (for files not yet migrated)
-          target.push({ kind: "Def", name: it.name, tree })
-        }
-        recordItem("let", it.name)
-        return
-      }
-      case "test": {
-        compiledTestIndex++
-        target.push({
-          kind: "Test",
-          lhs: compileExpr(it.lhs, lookupEntry, resolveUse),
-          rhs: compileExpr(it.rhs, lookupEntry, resolveUse),
-        })
-        recordItem("test", undefined, compiledTestIndex)
-        return
-      }
-      case "open": {
-        const record = resolveExprRecord(it.expr, lookupEntry, resolveUse)
-        if (!record || record.fields.length === 0)
-          throw new Error("open: expression has no known record fields")
-        const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse)
-        const n = record.fields.length
-        for (let i = 0; i < n; i++) {
-          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, selectorTree(n, i), 10_000_000)
-          const name = record.fields[i]
-          const existing = stack[stack.length - 1].get(name)
-          if (existing) {
-            if (existing.tree?.id === fieldTree.id) continue
-            throw new Error(`open: name '${name}' already in scope with different value`)
-          }
-          define(name, { tree: fieldTree })
-          if (isExport) {
-            // Legacy mode: open re-exports opened names
-            target.push({ kind: "Def", name, tree: fieldTree })
-          }
-        }
-        recordItem("open")
-        return
-      }
-    }
-  }
-
-  const items = parseItems(src)
-  const hasFields = items.some(it => it.tag === "field")
-  for (const it of items) runItem(it, decls, !hasFields)
-  return decls
-}

@@ -1,0 +1,33 @@
+// Elaborator tests: exercise type-directed compilation.
+// trust open activates the elaborator's kernel-aware dispatch.
+
+open use "prelude.disp"
+trust open use "kernel.disp"
+
+// Basic: identity on Nat, untyped (should still work as before)
+let id = {x} -> x
+test id t = t
+
+// Typed: identity on Nat with annotation
+// The annotation Pi Nat ({_} -> Nat) should cause the elaborator to
+// check the lambda against the Pi type.
+let nat_id : Pi Nat ({_} -> Nat) = {x} -> x
+test nat_id 0 = 0
+test nat_id 1 = 1
+
+// Arrow sugar: Nat -> Nat
+let nat_id2 : Arrow Nat Nat = {x} -> x
+test nat_id2 0 = 0
+
+// Const function: Nat -> Nat -> Nat (single-param form first)
+let const_fn_inner : Arrow Nat Nat = {y} -> 0
+test const_fn_inner 1 = 0
+
+// Two-param (nested lambdas)
+let const_fn : Arrow Nat (Arrow Nat Nat) = {x} -> {y} -> x
+test const_fn 1 0 = 1
+test const_fn 0 1 = 0
+
+// Type annotation in expression (Ann node)
+let id3 = (({x} -> x) : Arrow Nat Nat)
+test id3 3 = 3
