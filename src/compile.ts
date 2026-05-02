@@ -291,17 +291,13 @@ function abstractTree(h: Tree, body: Tree): Tree {
   if (body.tag === "fork") {
     const l = abstractTree(h, body.left)
     const r = abstractTree(h, body.right)
-    // η-reduction: S (K f) I → f
-    if (l.tag === "fork" && l.left === LEAF && treeEqual(r, I_TREE))
-      return l.right
-    // K-composition: S (K p) (K q) → K (p q)
-    if (l.tag === "fork" && l.left === LEAF &&
-        r.tag === "fork" && r.left === LEAF)
-      return fork(LEAF, fork(l.right, r.right)) // K (p q)
-    return fork(stem(l), r) // S l r
+    // A normal-form fork is data, not necessarily an application that should
+    // reduce as left(right). Rebuild fork(l, r) as (leaf l) r.
+    const stemLeft = fork(stem(fork(LEAF, LEAF)), l) // S (K LEAF) l
+    return fork(stem(stemLeft), r) // S stemLeft r
   }
   if (body.tag === "stem") {
-    // stem(x) = fork(leaf, x), so abstract as S (K leaf) (abstract x)
+    // Rebuild stem(x) as leaf x.
     const inner = abstractTree(h, body.child)
     return fork(stem(fork(LEAF, LEAF)), inner) // S (K LEAF) inner
   }
@@ -344,6 +340,8 @@ interface KernelHelpers {
   piDomain(t: Tree): Tree
   piCodFn(t: Tree): Tree
   makeHyp(type: Tree, id: Tree): Tree
+  univRank(t: Tree): Tree   // extract rank from a Type
+  makeType(rank: Tree): Tree // construct Type(rank)
 }
 
 function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
@@ -392,7 +390,101 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
       if (!make_hyp) throw new Error("makeHyp: make_hyp not trusted")
       return applyTree(applyTree(make_hyp, type, 10_000_000), id, 10_000_000)
     },
+    univRank(t) {
+      const meta = typeMetaTree(t)
+      if (!meta) throw new Error("univRank: not a valid type tree")
+      return meta  // type_meta(Type(rank)) = rank
+    },
+    makeType(rank) {
+      if (!Type) throw new Error("makeType: Type not trusted")
+      return applyTree(Type, rank, 10_000_000)
+    },
   }
+}
+
+// Nat-level max: compare two nat trees. Since nats are Church-like with
+// zero = LEAF, succ(n) = fork(TT, n), we can compare structurally.
+function natTreeToNum(t: Tree): number {
+  let n = 0
+  let cur = t
+  while (cur.tag === "fork") { n++; cur = cur.right }
+  return n
+}
+function natMax(a: Tree, b: Tree): Tree {
+  return natTreeToNum(a) >= natTreeToNum(b) ? a : b
+}
+
+// checkAsType(e, ctx): compile an expression as a type, returning both
+// the compiled tree and the universe it lives in. For binders, this
+// triggers Pi construction. For other expressions, it infers and verifies.
+function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null } {
+  const k = ctx.kernel
+  if (!k) {
+    const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
+    return { tree, universe: null }
+  }
+
+  // Binder → Pi type construction. Infer domain's universe, build Pi.
+  if (e.tag === "binder") {
+    const Type = ctx.trusted.get("Type")
+    const Pi = ctx.trusted.get("Pi")
+    if (!Type || !Pi) {
+      const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
+      return { tree, universe: null }
+    }
+
+    // Process one param, recursing for the rest.
+    const param = e.params[0]
+    if (!param.type) throw new Error("Pi domain requires a type annotation")
+    const paramName = param.name ?? `_anon0`
+
+    // Infer the domain's type to get its universe level
+    const { tree: A_tree, universe: A_univ } = checkAsType(param.type, ctx)
+    const A_level = A_univ && k.isUniverse(A_univ) ? k.univRank(A_univ) : LEAF // default 0
+
+    // Recurse for the inner type (remaining params + body) with the
+    // parameter available as a kernel hypothesis. The resulting codomain
+    // tree may mention that hypothesis; abstractTree turns it into the
+    // Pi codomain function.
+    const innerExpr: Expr = e.params.length > 1
+      ? { tag: "binder", params: e.params.slice(1), body: e.body }
+      : e.body
+
+    const id = fork(A_tree, fork(buildNat(ctx.scopeDepth), buildNat(0)))
+    const hyp = k.makeHyp(A_tree, id)
+    const prevLookup = ctx.lookupEntry
+    const hypEntry: ScopeEntry = { tree: hyp, type: A_tree }
+    ctx.lookupEntry = (name: string) => name === paramName ? hypEntry : prevLookup(name)
+    ctx.scopeDepth++
+    let B_tree: Tree
+    let B_univ: Tree | null
+    try {
+      const checked = checkAsType(innerExpr, ctx)
+      B_tree = checked.tree
+      B_univ = checked.universe
+    } finally {
+      ctx.lookupEntry = prevLookup
+      ctx.scopeDepth--
+    }
+    const B_level = B_univ && k.isUniverse(B_univ) ? k.univRank(B_univ) : LEAF
+
+    // Pi level = max(A_level, B_level)
+    const piLevel = natMax(A_level, B_level)
+
+    const codFn = abstractTree(hyp, B_tree)
+
+    const piTree = applyTree(applyTree(Pi, A_tree, 10_000_000), codFn, 10_000_000)
+    const piUniv = k.makeType(piLevel)
+    return { tree: piTree, universe: piUniv }
+  }
+
+  // Non-binder: infer type and check it's a universe
+  const { tree, type } = infer(e, ctx)
+  if (type !== null && k.isUniverse(type)) {
+    return { tree, universe: type }
+  }
+  // Type is unknown or not a universe — return what we have
+  return { tree, universe: type }
 }
 
 // ─────────────────────── 5c. Elaborator (check/infer) ───────────────────
@@ -444,50 +536,9 @@ function check(e: Expr, expected: Tree | null, ctx: ElabCtx): Tree {
   if (e.tag === "binder") {
     // Case 2: expected is a universe → binder means Pi
     if (k.isUniverse(expected)) {
-      const Pi = ctx.trusted.get("Pi")
-      if (!Pi) throw new Error("Pi not trusted; cannot construct Pi type")
-      if (e.params.length === 0) throw new Error("empty binder in type mode")
-
-      // Build Pi type right-to-left from params.
-      // For {x : A, y : B} -> C, construct Pi(A, {x} -> Pi(B, {y} -> C_tree))
-      // Process right-to-left: compile body first, then wrap each param.
-      function buildPiType(paramIdx: number, outerLookup: (name: string) => ScopeEntry | undefined): Tree {
-        if (paramIdx >= e.params.length) {
-          // Compile the body (codomain) as a type
-          const savedLookup = ctx.lookupEntry
-          ctx.lookupEntry = outerLookup
-          const B_tree = check(e.body, expected, ctx)
-          ctx.lookupEntry = savedLookup
-          return B_tree
-        }
-
-        const param = e.params[paramIdx]
-        if (!param.type) throw new Error("Pi domain requires a type annotation")
-        const paramName = param.name ?? `_anon${paramIdx}`
-
-        // Compile domain as a type
-        const savedLookup = ctx.lookupEntry
-        ctx.lookupEntry = outerLookup
-        const A_tree = check(param.type, expected, ctx)
-        ctx.lookupEntry = savedLookup
-
-        // Build codomain function: compile remaining params + body as a lambda
-        // using the Cir pipeline for correct bracket abstraction
-        const innerExpr: Expr = paramIdx === e.params.length - 1
-          ? e.body
-          : { tag: "binder", params: e.params.slice(paramIdx + 1), body: e.body }
-
-        // Wrap as {paramName} -> innerExpr, compile via Cir to get codFn tree
-        const codLambda: Expr = { tag: "binder", params: [{ name: paramName, type: null }], body: innerExpr }
-
-        // The codomain lambda needs to be compiled with types in scope for
-        // inner params, but the param itself should be free (for abstraction)
-        const codFn = compileExpr(codLambda, outerLookup, ctx.resolveUse)
-
-        return applyTree(applyTree(Pi, A_tree, 10_000_000), codFn, 10_000_000)
-      }
-
-      return assertTypeCheck(buildPiType(0, ctx.lookupEntry), expected, ctx)
+      // Delegate to checkAsType which handles Pi construction with level inference
+      const { tree } = checkAsType(e, ctx)
+      return assertTypeCheck(tree, expected, ctx)
     }
 
     // Case 3: expected is a Pi → binder means lambda
@@ -596,9 +647,9 @@ function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
     }
 
     case "ann": {
-      // Infer T, verify it's a type
-      const { tree: T_tree, type: T_kind } = infer(e.type, ctx)
-      if (k && T_kind !== null && !k.isUniverse(T_kind))
+      // Compile annotation as a type (handles binders → Pi construction).
+      const { tree: T_tree, universe: T_univ } = checkAsType(e.type, ctx)
+      if (k && T_univ !== null && !k.isUniverse(T_univ))
         throw new Error("annotation is not a type")
       const e_tree = check(e.expr, T_tree, ctx)
       return { tree: e_tree, type: T_tree }
@@ -613,22 +664,10 @@ function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
       // If domain annotated, infer a Pi type for the result
       const param = e.params[0]
       if (param?.type) {
-        const { tree: A_tree } = infer(param.type, ctx)
+        const { tree: A_tree } = checkAsType(param.type, ctx)
         const paramName = param.name ?? `_anon0`
         const Pi = ctx.trusted.get("Pi")
         if (Pi) {
-          // Build codomain function by compiling the body wrapped in a lambda
-          // using the Cir pipeline for correct bracket abstraction
-          const innerExpr: Expr = e.params.length > 1
-            ? { tag: "binder", params: e.params.slice(1), body: e.body }
-            : e.body
-          const codLambda: Expr = {
-            tag: "binder",
-            params: [{ name: paramName, type: null }],
-            body: innerExpr,
-          }
-          // The codomain function compiles the body's *type* as a function of the param.
-          // For now, infer the body type with a hypothesis in scope, then build codFn.
           const id = fork(A_tree, fork(buildNat(ctx.scopeDepth), buildNat(0)))
           const hyp = k.makeHyp(A_tree, id)
           const prevLookup = ctx.lookupEntry
@@ -643,14 +682,7 @@ function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
           ctx.scopeDepth--
 
           if (body_type !== null) {
-            // Build codFn: compile {paramName} -> body_type_expr
-            // Since body_type is a tree, we need to make it a constant function
-            // if it doesn't depend on the param, or else build the function properly.
-            // Simple approach: if body_type doesn't contain hyp, codFn = K(body_type)
-            // This handles the common non-dependent case.
-            const codFn = containsTree(hyp, body_type)
-              ? compileExpr(codLambda, ctx.lookupEntry, ctx.resolveUse)  // approximate: recompile
-              : fork(LEAF, body_type)  // K(body_type) — constant codomain
+            const codFn = abstractTree(hyp, body_type)
             const pi = applyTree(applyTree(Pi, A_tree, 10_000_000), codFn, 10_000_000)
             return { tree: lam, type: pi }
           }
@@ -809,9 +841,10 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     const ctx = getElabCtx()
 
     if (type != null && type.tag !== "recType" && ctx.kernel) {
-      // Typed binding with kernel available: infer type annotation, check body
-      const { tree: type_tree, type: type_kind } = infer(type, ctx)
-      if (type_kind !== null && !ctx.kernel.isUniverse(type_kind))
+      // Typed binding with kernel available: compile annotation as a type.
+      // checkAsType handles binders (→ Pi construction) and infers universe levels.
+      const { tree: type_tree, universe } = checkAsType(type, ctx)
+      if (universe !== null && !ctx.kernel.isUniverse(universe))
         throw new Error(`annotation for '${name}' is not a type`)
       tree = check(body, type_tree, ctx)
       inferredType = type_tree
