@@ -599,11 +599,16 @@ produces a different signature.
 
 == Neutral opacity
 
-Neutrals carry their types, but they cannot forge them. A hypothesis
-is created by `Hyp(type, id)`, which sets the stored type at creation
-time. Hypothesis reduction propagates types faithfully --- it reads the existing
-type and computes the new one from the Pi codomain. There is no way
-for a neutral to claim a type it was not given.
+Neutrals carry their types. For the intended internal checker
+invariant, they cannot forge them: a hypothesis is created by
+`Hyp(type, id)`, which sets the stored type at creation time, and
+hypothesis reduction propagates types faithfully by reading the
+existing type and computing the new one from the Pi codomain.
+
+This invariant currently depends on `Hyp` and `StuckElim` being
+treated as checker-internal constructors. If ordinary source code can
+construct those trees directly, the opacity claim fails; see
+#link(<neutral-capability-open-question>)[Open question: neutral capabilities].
 
 == Universe well-foundedness
 
@@ -854,7 +859,9 @@ codomain check fails. No special-case logic needed.
   [`Hyp(type, id)`], [Create a neutral hypothesis carrying the given type.],
   [`StuckElim(type, target)`], [Stuck eliminator, produced by typed eliminators on neutral scrutinees.],
   [`neutral_type(v)`], [Read a neutral's stored type. `neutral_meta_type(type_meta(v))`. O(1).],
-  [`InvalidType`], [Sentinel stored as the result type of invalid neutral application. Rejected by `Type n`; currently represented by `FF`.],
+  [`InvalidType`],
+  [Sentinel stored as the result type of invalid neutral application. Rejected by `Type n`; currently represented by `FF`.],
+
   [`is_neutral`], [Signature check: does `v` share `hyp_reduce`'s signature? O(1).],
   [*hypothesis reduction*],
   [A second interpreter embedded in reduction. When a neutral is applied, `hyp_reduce` runs instead of normal evaluation, computing the result type from the codomain. Disp's equivalent of bidirectional inference, distributed across evaluation.],
@@ -874,6 +881,79 @@ codomain check fails. No special-case logic needed.
 )
 
 = Open problems
+
+== Open question: neutral capabilities <neutral-capability-open-question>
+
+The current public surface exposes `Hyp` and `StuckElim` as ordinary
+definitions in #raw("lib/kernel.disp"). This is useful for testing and
+for writing the first neutral-aware eliminators, but it violates the
+strongest form of the type-system goal:
+
+#quote[
+  A predefined type should be a predicate over raw trees that accepts
+  exactly its valid inhabitants, no matter which raw tree a user can
+  construct.
+]
+
+`StuckElim` is a neutral constructor:
+
+```disp
+  StuckElim(result_type, target)
+    = wait(kernel.hyp_reduce)(make_neutral_meta(result_type, target))
+```
+
+Every checker has an H-rule branch:
+
+```disp
+  if is_neutral(v):
+    fast_eq(neutral_type(v), expected_type)
+```
+
+Therefore, if a user can construct `StuckElim(T, payload)`, they can
+construct a raw tree whose stored neutral type is `T`. The H-rule then
+accepts it at `T`. In particular, closed source could manufacture
+inhabitants such as:
+
+```disp
+  StuckElim Nat t
+  StuckElim Bool t
+  StuckElim (Eq Nat 0 1) t
+```
+
+These are legitimate shapes for *internal* open terms, but not for
+closed user programs. A neutral of type `Nat` is valid when it is a
+hypothesis introduced by the Pi checker in a context `n : Nat`. A stuck
+elimination is valid when a trusted eliminator receives such a
+legitimate neutral scrutinee and cannot choose a concrete branch. It is
+not valid for arbitrary source code to assert the stored type field.
+
+This is the same class of problem that motivated canonical checker
+identity instead of tags. The system rejects fake type checkers by
+requiring canonical kernel signatures, but public neutral constructors
+reintroduce a forgeable capability: the ability to write the
+`neutral_type` metadata that the H-rule trusts.
+
+This violates the development philosophy in two ways:
+
+- *Types as executable predicates over trees.* If `Nat` accepts a
+  user-constructed `StuckElim(Nat, t)`, then `Nat` is no longer a
+  predicate accepting only canonical closed natural numbers. It is a
+  predicate accepting a privileged internal proof object that ordinary
+  source should not be able to build.
+- *Checker as object-language program.* The neutral machinery is part
+  of the checker interpreter, not ordinary program data. Exposing it as
+  a public constructor mixes checker-internal syntax with user terms,
+  making soundness depend on a host-level convention rather than on the
+  tree program's own API boundary.
+
+Several obvious mitigations do *not* solve the raw-tree problem:
+module privacy, parser restrictions, elaborator-only conventions, and
+axiom/trust provenance can prevent ordinary source from naming
+`StuckElim`, but they do not make the unary predicate `T(v)` sound for
+all raw trees if the forgeable neutral shape is still accepted by the
+H-rule. Likewise, replacing `nat_rec` with a generated or W-type-backed
+recursor only solves this issue if it also removes the need for
+user-forgeable typed-neutral trees.
 
 == B/C combinators
 
