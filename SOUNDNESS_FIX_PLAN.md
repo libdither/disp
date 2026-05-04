@@ -1,678 +1,687 @@
-# Soundness Fix Plan: Guarded Public Types
+# Soundness Fix Plan: Guarded Checked Evaluation
 
 ## Goal
 
-Fix the public neutral-forging hole without giving the TypeScript
-elaborator semantic authority.
+Close the neutral-forging hole while keeping semantic authority in the
+object language/kernel, not in the TypeScript elaborator.
 
-The intended boundary is:
+The intended external boundary is:
 
 ```disp
 test (Type n) ParsedType = TT
 test ParsedType ParsedTerm = TT
 ```
 
-`Type n` should reject unguarded/core predicates in source-level type
-positions. A public type should be a canonical guard around a core type
-predicate. The guard scans candidate terms before delegating to the core
-predicate, so forged neutrals cannot reach the H-rule.
+The elaborator should only parse terms/types into trees, insert these
+checks, and know enough universe syntax to choose the requested `Type n`.
+It should not maintain a trusted table of predicates.
 
-## Core Idea
+## Current Hole
 
-Split every type into two layers conceptually:
-
-```disp
-kernel_ref.nat ...           // core predicate
-Nat                           // public predicate = guard core
-
-kernel_ref.pi ...            // core Pi predicate
-Pi                            // public Pi constructor
-```
-
-The core layer should be the existing mutually-recursive kernel layer.
-In other words, the current `q_nat_fn`, `q_bool_fn`, `q_pi_fn`,
-`q_eq_fn`, `q_hyp_reduce_fn`, and universe checker remain tied together
-inside one `kernel` fixed point. The guarded public constructors can be
-ordinary exported definitions built from those kernel components:
+The current kernel treats any tree with the `hyp_reduce` signature as a
+neutral. An adversary can construct such a tree directly:
 
 ```disp
-Nat = guard (wait kernel_ref.nat t)
-
-Pi = {A, B} ->
-  guard
-    (wait kernel_ref.pi
-      (make_pi_meta
-        (unguard A)
-        ({x} -> unguard (B x))))
+let fake_proof : Eq Nat 0 1 =
+  StuckElim (Eq Nat 0 1) t
 ```
 
-So `CoreNat`/`CoreBool` do not need exported names. The core predicates
-are the current kernel-built trees, available internally as inline
-`wait kernel_ref.* ...` expressions or by `unguard`ing a public type.
-The new work is the guard component, scanner, public constructors, and a
-public guarded universe.
-
-The public constructor guards the result and unguards inputs before
-composition:
+or hide construction inside a function checked by `Pi`:
 
 ```disp
-Nat = guard (wait kernel_ref.nat t)
-Bool = guard (wait kernel_ref.bool t)
-
-Eq = {A, x, y} ->
-  guard (wait kernel_ref.eq
-    (make_eq_meta (unguard A) x y))
-
-Pi = {A, B} ->
-  guard (wait kernel_ref.pi
-    (make_pi_meta
-      (unguard A)
-      ({x} -> unguard (B x))))
+let bad : Nat -> Eq Nat 0 1 =
+  {_} -> StuckElim (Eq Nat 0 1) t
 ```
 
-Core predicates keep the current neutral-aware behavior. They still use
-the H-rule and still accept legitimate hypotheses created internally by
-the core Pi checker.
+The existing `Pi` checker applies the candidate function to a freshly
+created hypothesis and then trusts the returned neutral's stored type.
+That is sound only if the returned neutral was created by the checker,
+not by the checked term.
 
-Public guarded predicates reject adversarial closed values before core
-checking:
+## Core Invariant
+
+Use a guarded checked evaluator with this invariant:
+
+```text
+At the public entry point, the checked term contains no neutral roots.
+During checked evaluation, untrusted tree-calculus code may transport,
+drop, duplicate, and embed existing neutrals, but it may not inspect
+protected neutrals and may not construct a new neutral root.
+Only certified kernel handlers may mint new neutral roots.
+```
+
+This avoids a growing `allowed_neutrals` set. Once the public entry scan
+has rejected all pre-existing neutrals, every later neutral must have
+come from a certified handler, provided raw evaluation is prevented from
+building a fresh neutral root.
+
+## Important Design Constraints
+
+This design is viable, but only if these constraints are implemented
+precisely.
+
+1. The entry guard is not enough by itself.
+   A term can assemble `wait kernel.hyp_reduce meta` dynamically. The
+   checked evaluator must reject any raw constructor step that creates a
+   neutral root.
+
+2. K must be allowed to transport neutrals.
+   Bracket abstraction compiles `{x} -> {y} -> x` to K-like code after
+   the outer argument is supplied. Rejecting K returning a neutral would
+   reject ordinary valid dependent functions.
+
+3. K must not be allowed to introduce forged neutrals.
+   This is handled by the entry scan plus the fresh-neutral-construction
+   ban. If `K payload` returns a neutral, that neutral must already have
+   existed in the checked evaluator state.
+
+4. Exact `I` needs special handling.
+   The compiler emits `I = fork(fork(t,t),t)` for `{x} -> x`. Native
+   tree calculus implements this via triage, so a blanket "triage on a
+   neutral fails" rule would reject identity. `checked_apply` should
+   recognize exact `I` and return the argument directly as parametric
+   transport.
+
+5. Internal checks must not re-run the public closed scan.
+   Public guard entry rejects closed forged neutrals. Once a handler
+   mints a hypothesis, recursive internal checks must run under the
+   checked-evaluator invariant, where certified neutrals are allowed to
+   be present.
+
+6. Neutral type variables must be usable as types.
+   In `{A : Type 0} -> A -> A`, `A` is a certified neutral whose stored
+   type is `Type 0`. Constructors such as `Pi`/`Arrow` must accept such
+   certified neutral type predicates internally, even though a closed
+   forged neutral type is rejected at public entry.
+
+7. Recursors and eliminators must become certified handlers.
+   Current `bool_rec`, `nat_rec`, `eq_J`, `eq_subst`, `eq_sym`, and
+   `eq_cong` are raw functions that construct `StuckElim`. Under the
+   checked evaluator that construction must fail unless the eliminator is
+   a certified handler that validates its motive/branches before minting
+   the stuck neutral.
+
+## Tree Predicates
+
+Add trusted kernel helpers for recognizing neutral roots and scanning
+trees. These helpers are part of the checked evaluator, so they may
+inspect raw tree structure.
+
+```disp
+neutral_root raw x =
+  has_sig raw.hyp_reduce x
+
+contains_neutral raw x =
+  if neutral_root raw x:
+    TT
+  else if is_fork x:
+    or (contains_neutral raw (pair_fst x))
+       (contains_neutral raw (pair_snd x))
+  else if is_stem x:
+    contains_neutral raw (stem_child x)
+  else:
+    FF
+
+scan_no_neutral raw x =
+  not (contains_neutral raw x)
+```
+
+`scan_no_neutral` rejects actual completed neutral values. It does not
+need to reject the `hyp_reduce` handler capability merely appearing as a
+subtree. Dynamic construction of a completed neutral is blocked by
+`checked_apply`.
+
+Implementation note: source-level `is_fork`/`pair_fst` use triage.
+The checked evaluator itself can use trusted structural inspection. In a
+native optimization this should be direct tree inspection; in the object
+language spec it can be encoded as a certified scanner.
+
+## Checked Apply
+
+Add a kernel-level checked evaluator:
+
+```disp
+checked_apply : Tree -> Tree -> CheckedResult
+CheckedResult = Ok Tree | Fail
+```
+
+There is no `allowed_neutrals` argument. The invariant is carried by the
+fact that checked evaluation starts from a neutral-free tree and only
+certified handlers can mint neutrals.
+
+### Public Entry
+
+Public guarded predicates enter checked evaluation through:
+
+```disp
+checked_check core v =
+  if scan_no_neutral kernel v:
+    checked_apply core v
+  else:
+    Fail
+```
+
+Internal recursive calls use `checked_apply` directly, not
+`checked_check`, because they may legitimately operate on certified
+hypotheses created by `Pi`, `Type`, or eliminators.
+
+### Certified Dispatch
+
+Before ordinary raw tree application, `checked_apply f x` should detect
+certified wait-based handlers:
+
+```disp
+if has_sig kernel.guard f:        checked_guard_apply f x
+if has_sig kernel.pi f:           checked_pi_apply f x
+if has_sig kernel.nat f:          checked_nat_apply f x
+if has_sig kernel.bool f:         checked_bool_apply f x
+if has_sig kernel.eq f:           checked_eq_apply f x
+if has_sig kernel.core_type f:    checked_core_type_apply f x
+if has_sig kernel.guarded_type f: checked_guarded_type_apply f x
+if has_sig kernel.hyp_reduce f:   checked_hyp_reduce_apply f x
+if has_sig kernel.bool_rec f:     checked_bool_rec_apply f x
+if has_sig kernel.nat_rec f:      checked_nat_rec_apply f x
+if has_sig kernel.eq_J f:         checked_eq_J_apply f x
+```
+
+Certified handlers may inspect neutral metadata and may mint new neutral
+roots. Raw user code may not.
+
+### Raw Rules
+
+The checked raw evaluator mirrors `src/tree.ts` with extra checks:
+
+```text
+checked_apply I x:
+  Ok x
+
+checked_apply leaf x:
+  r = stem(x)
+  fail if neutral_root r
+  Ok r
+
+checked_apply stem(a) x:
+  r = fork(a, x)
+  fail if neutral_root r
+  Ok r
+
+checked_apply fork(leaf, payload) x:
+  Ok payload
+
+checked_apply fork(stem(c), b) x:
+  run the same S-rule evaluation as native apply, using checked_apply
+  for every subapplication
+
+checked_apply fork(fork(tc, td), b) x:
+  raw triage case
+```
+
+For the raw triage case:
+
+```text
+if neutral_root x:
+  Fail
+else if x is leaf:
+  Ok tc
+else if x is stem(c):
+  checked_apply td c
+else if x is fork(l, r):
+  checked_apply (checked_apply b l) r
+```
+
+The exact stack/continuation implementation should match native apply so
+that evaluation order and memoization stay predictable.
+
+### Fast Equality
+
+`fast_eq` is an observer. It must fail if either operand contains a
+neutral anywhere, not only at the root.
+
+```text
+checked_fast_eq a b:
+  if contains_neutral a or contains_neutral b:
+    Fail
+  else:
+    Ok (raw_fast_eq a b)
+```
+
+Certified handlers may still use internal equality for their own
+metadata checks, H-rules, and signature dispatch. The ban is for
+untrusted `fast_eq` executed by checked user code.
+
+### Fresh Neutral Construction Check
+
+The fresh-construction ban applies to raw constructor results, not to
+all returned values. K returning an existing neutral is allowed.
+
+```text
+raw constructor step produced r:
+  if neutral_root r:
+    Fail
+  else:
+    Ok r
+```
+
+This is the point that replaces `allowed_neutrals`. A neutral returned
+by K/I/S transport was already present in the checked state. A neutral
+created by raw `wait kernel.hyp_reduce meta` must pass through a raw
+constructor step whose result is a neutral root, so it fails.
+
+## Guard API
+
+Add `guard` as a kernel component.
 
 ```disp
 guard core =
   wait kernel_ref.guard core
 
-q_guard_fn core v =
-  select_lazy
-    ({_} -> core v)
-    ({_} -> FF)
-    (scan_closed v)
-```
+hasguard T =
+  has_sig kernel_ref.guard T
 
-## Guard API
-
-Add a `guard` component to the kernel fixed point. If universes are
-split as described below, the final record shape is closer to:
-
-```disp
-kernel : {
-  hyp_reduce,
-  pi,
-  nat,
-  bool,
-  eq,
-  core_type,
-  guarded_type,
-  guard
-}
-```
-
-Public helpers:
-
-```disp
-guard : (Tree -> Bool) -> (Tree -> Bool)
-guard core = wait kernel_ref.guard core
-
-hasguard : Tree -> Bool
-hasguard T = has_sig kernel_ref.guard T
-
-unguard : Tree -> Tree
-unguard T =
+unguard_public T =
   select_lazy
     ({_} -> type_meta T)
     ({_} -> InvalidType)
     (hasguard T)
+
+unguard_checked T =
+  select_lazy
+    ({_} -> type_meta T)
+    ({_} ->
+      select_lazy
+        ({_} -> T)
+        ({_} -> InvalidType)
+        (is_neutral T))
+    (hasguard T)
 ```
 
-Use the strict `unguard`: unguarded source predicates become
-`InvalidType`, not themselves. This is what makes:
+`unguard_public` is for closed source-level boundaries. It accepts only
+top-level guarded public types.
+
+`unguard_checked` is for certified kernel handlers running under the
+checked-evaluator invariant. It accepts either a guarded type or a
+certified neutral type variable. A closed forged neutral cannot reach
+this path because public guard entry rejects pre-existing neutrals and
+raw checked evaluation cannot mint them.
+
+The guard handler:
 
 ```disp
-let RawNatAlias = unguard Nat
-let x : RawNatAlias = forged_neutral
+checked_guard_apply guard_value v =
+  let core = type_meta guard_value
+  checked_check core v
 ```
 
-fail once annotations are checked by public `Type n`.
-
-Useful laws:
+So public raw-looking application still has the desired behavior:
 
 ```disp
-hasguard (guard T) = TT
-unguard (guard T) = T
-guard (unguard (guard T)) = guard T
-guard (guard T) = guard T
+Nat v
 ```
 
-The last law holds by defining `guard` to return its input unchanged
-when `hasguard` is already true, or by accepting structural equality
-only up to a `guard` normalization helper.
+means "scan `v` for closed forged neutrals, then checked-evaluate the
+core Nat predicate on `v`."
 
-## Recursive Scanner
+## Type Constructors
 
-The scanner should be a raw-tree traversal with two modes:
+Keep the current mutually recursive kernel predicates as core
+predicates, but export guarded public constructors.
 
 ```disp
-scan_closed x = scan_core empty_allowed x
-scan_allowed allowed x = scan_core allowed x
+Nat =
+  guard (wait kernel_ref.nat t)
+
+Bool =
+  guard (wait kernel_ref.bool t)
+
+Eq = {A, x, y} ->
+  guard
+    (wait kernel_ref.eq
+      (make_eq_meta (unguard_checked A) x y))
+
+Pi = {A, B} ->
+  guard
+    (wait kernel_ref.pi
+      (make_pi_meta
+        (unguard_checked A)
+        ({x} -> unguard_checked (B x))))
+
+Arrow = {A, B} ->
+  Pi A ({_} -> B)
 ```
 
-`scan_closed` is what public guarded predicates use for ordinary source
-terms. `scan_allowed` is used internally when validating type
-expressions under binders, where a freshly-created hypothesis is
-legitimate.
+When these constructors are used in closed parsed types,
+`unguard_checked` behaves like `unguard_public` because there are no
+certified neutral type variables yet. When used under `Type`/`Pi`
+checking, it also allows the checker-created neutral type variables that
+dependent types need.
 
-Pseudocode:
+## Universes
+
+Split the universe checker conceptually into:
 
 ```disp
-scan_core allowed x =
-  if known_good x:
-    TT
-  else if is_neutral x:
-    neutral_allowed allowed x
-  else if is_neutral_capability x:
-    FF
-  else if is_fork x:
-    and (scan_core allowed (pair_fst x))
-        (scan_core allowed (pair_snd x))
+core_type n
+guarded_type n
+```
+
+`core_type n` validates raw/core type predicates:
+
+- core `Nat` and `Bool` live in `Type 0`;
+- core `Eq A x y` lives in the same universe as `A`;
+- core `Pi A B` lives in the max universe of domain/codomain according
+  to the existing hierarchy rule;
+- core `guarded_type m` lives in `core_type (succ m)`;
+- certified neutral type variables are accepted by the H-rule.
+
+`guarded_type n` validates public source-level types:
+
+```disp
+checked_guarded_type_apply (guarded_type n) T =
+  if neutral_root T:
+    checked_h_rule (guarded_type n) T
   else:
-    TT
+    and (hasguard T)
+        (checked_apply (core_type n) (unguard_public T))
 ```
 
-Important ordering:
-
-1. Check `known_good` first, so certified kernel recursors can contain
-   internal neutral constructors without being rejected.
-2. Check actual neutral values next.
-3. Check forbidden neutral-constructor capabilities before descending.
-4. Recurse through ordinary tree structure.
-
-`neutral_allowed` should not trust `neutral_type`. That is the forged
-field. Initially it can be identity-based:
+Public universes are guarded predicates over guarded public types:
 
 ```disp
-neutral_allowed allowed x =
-  allowed_contains allowed (neutral_payload_identity x)
+Type n =
+  guard (wait kernel_ref.guarded_type n)
 ```
 
-For a base public guard, `allowed = empty`, so every neutral value is
-rejected.
-
-For internal type validation under `Pi`, extend the allowlist with the
-fresh hypothesis identity:
+This gives:
 
 ```disp
-h = Hyp (unguard A) pi_meta
-allowed' = allow allowed h
+Type 0 Nat = TT
+Type 0 (Pi Nat ({_} -> Nat)) = TT
+Type 1 (Type 0) = TT
+Type 0 (Type 0) = FF
 ```
 
-## Neutral Capability Detection
+Internal recursive universe checks must use `checked_apply`, not public
+`Type n`, so they can validate codomains containing certified neutral
+type variables.
 
-Detecting neutral values alone is not enough. A checked function can
-contain code that constructs a forged neutral later:
+## Pi Handler
+
+Rewrite `q_pi_fn` so all adversarial applications run through
+`checked_apply`.
+
+Current unsafe shape:
 
 ```disp
-{_} -> StuckElim (unguard (Eq Nat 0 1)) t
+hyp = q_make_hyp raw domain meta
+result = v hyp
+expected = codFn hyp
 ```
 
-At scan time this function is not itself a neutral. If the scanner only
-rejects already-constructed `wait(hyp_reduce)(meta)` values, the
-function passes the public guard, then the core Pi checker applies it to a
-hypothesis and receives the forged neutral.
-
-The minimal capability to reject is not a long blacklist. It is the
-canonical neutral handler/capability:
+Checked shape:
 
 ```disp
-kernel.hyp_reduce
+checked_pi_apply pi_type v =
+  if neutral_root v:
+    checked_h_rule pi_type v
+  else:
+    let hyp = cert_make_hyp domain meta
+    let result = checked_apply v hyp
+    let expected_type = checked_apply codFn hyp
+    if result failed or expected_type failed:
+      FF
+    else if neutral_root result:
+      internal_fast_eq expected_type (neutral_type result)
+    else:
+      checked_apply expected_type result == Ok TT
 ```
 
-More precisely, `scan_core` rejects:
+`cert_make_hyp` is trusted kernel code. It may construct a neutral root.
 
-1. any actual neutral value whose signature is `hyp_reduce`;
-2. any ordinary subtree that is the exact `hyp_reduce` handler, unless
-   that occurrence is inside a `known_good` certified subtree.
+## Hyp Reduce Handler
 
-This catches `Hyp` and `StuckElim` because their compiled trees contain
-the `hyp_reduce` handler. Metadata helpers such as `make_neutral_meta`
-are not dangerous by themselves; they only become a neutral-construction
-capability when paired with `hyp_reduce`.
-
-The cleanest long-term API is still to stop exporting raw neutral
-constructors and raw kernel internals. The scanner is the raw-tree
-backstop: even if a user copies the exact handler tree into a term, the
-public guard rejects it unless it appears inside a certified known-good
-constant.
-
-## Known-Good Subtree Skips
-
-A recursive scan of an ordinary function value will inspect the
-function's code tree. Trusted recursors such as `bool_rec`, `nat_rec`,
-`eq_J`, `eq_subst`, `eq_sym`, and `eq_cong` contain `StuckElim`
-internally, so a naive scan would reject every function that uses them.
-
-Use a kernel-maintained known-good registry:
+`hyp_reduce` remains the certified interpreter for applying a neutral to
+an argument.
 
 ```disp
-known_good x =
-  fast_eq x bool_rec ||
-  fast_eq x nat_rec ||
-  fast_eq x eq_J ||
-  fast_eq x eq_subst ||
-  fast_eq x eq_sym ||
-  fast_eq x eq_cong ||
-  ...
+checked_hyp_reduce_apply neutral arg =
+  let current_type = neutral_type neutral
+  if current_type is Pi:
+    let codFn = pi_cod_fn current_type
+    let result_type = checked_apply codFn arg
+    cert_make_neutral result_type (extend_payload neutral arg)
+  else:
+    cert_make_neutral InvalidType (extend_payload neutral arg)
 ```
 
-This is a content-addressed whitelist: only exact canonical subtrees are
-skipped. User code that directly calls or reconstructs `StuckElim` is
-not skipped.
+This handler is trusted. It may inspect neutral metadata and may mint the
+new stuck application neutral. If computing the codomain fails, return
+`Fail` or mint an `InvalidType` neutral consistently with the current
+kernel policy; prefer `Fail` unless existing tests require `InvalidType`.
 
-However, known-good must not mean "blindly safe." Each known-good
-constant needs a contract:
+## Nat, Bool, Eq Handlers
 
-1. It may construct neutrals only when given an allowed neutral
-   scrutinee/proof.
-2. It must compute the stored neutral result type from its typed
-   eliminator rule, not from an arbitrary user assertion.
-3. It must validate user-supplied motives and branches before returning
-   a stuck neutral.
+The concrete cases are mostly unchanged, but all recursive or dependent
+checks must use checked evaluation.
 
-This turns the skip into a small certified-code mechanism, not a general
-trust escape hatch.
+- If the candidate is neutral, use the H-rule internally.
+- For concrete Nat successor checks, recurse via the certified Nat
+  handler.
+- For Eq proof checking, `refl` still requires internal equality of lhs
+  and rhs. That equality is certified handler logic, not user `fast_eq`.
+- If Eq metadata contains terms that must be checked against `A`, use
+  `checked_apply A x`.
 
-## Recursors Must Become Typed
+## Certified Eliminators
 
-There is a second hole related to neutral-aware eliminators. Today this
-program is accepted:
+Replace raw eliminator definitions with wait-based certified handlers.
+
+Example public shape:
 
 ```disp
-let bogus : Bool -> Eq Nat 0 1 =
+bool_rec = {motive, t_case, f_case, target} ->
+  wait kernel_ref.bool_rec
+    (make_bool_rec_meta motive t_case f_case target)
+```
+
+Handler obligations:
+
+```disp
+checked_bool_rec_apply rec_value _ =
+  read motive, t_case, f_case, target from metadata
+  checked_apply Bool target
+  checked_apply (motive TT) t_case
+  checked_apply (motive FF) f_case
+  if target == TT: Ok t_case
+  if target == FF: Ok f_case
+  if neutral_root target:
+    let result_type = checked_apply motive target
+    checked_apply (Type rank) result_type
+    cert_make_neutral result_type target
+  else:
+    Fail
+```
+
+`nat_rec` similarly validates:
+
+- target checks as Nat;
+- base checks against `motive 0`;
+- step checks against the dependent step type;
+- neutral target produces a certified stuck eliminator only after motive
+  and branch validation.
+
+`eq_J`, `eq_subst`, `eq_sym`, and `eq_cong` must validate their motives,
+proofs, and branches before minting stuck neutral results.
+
+Do not keep these as raw lambdas containing `StuckElim`; checked raw
+evaluation must reject that pattern.
+
+## Public Neutral Constructors
+
+`Hyp` and `StuckElim` should not be part of the normal public trusted
+API after this fix.
+
+Options:
+
+1. Remove them from public exports.
+2. Keep them only under names such as `unsafe_Hyp`/`unsafe_StuckElim`
+   for kernel tests, and ensure public guarded checks reject terms that
+   use them.
+
+The kernel itself should construct neutrals only through certified
+helpers such as `cert_make_hyp` and `cert_make_stuck`.
+
+## Kernel Edit Checklist
+
+1. Add result encodings:
+   `Ok`, `Fail`, `is_ok`, `ok_value`, and boolean helpers for checked
+   handler results.
+
+2. Add trusted structural helpers:
+   `neutral_root`, `contains_neutral`, `scan_no_neutral`, and direct
+   root constructors/checks for wait-based values.
+
+3. Add `checked_apply` as a kernel component or mutually recursive
+   helper. It must implement exact `I`, K, S, triage, fast_eq, and
+   certified handler dispatch.
+
+4. Add `guard`, `hasguard`, `unguard_public`, and `unguard_checked`.
+
+5. Split current `type` into `core_type` and `guarded_type`, or keep
+   the current field name for `core_type` and add a separate
+   `guarded_type` field. Public `Type n` should be guarded
+   `guarded_type n`.
+
+6. Rewrite public constructors:
+   `Nat`, `Bool`, `Eq`, `Pi`, `Arrow`, `Type`.
+
+7. Rewrite `q_pi_fn`, `q_type_fn`, `q_hyp_reduce_fn`, `q_nat_fn`,
+   `q_bool_fn`, and `q_eq_fn` to use checked application at every
+   adversarial boundary.
+
+8. Replace raw eliminators with certified wait handlers:
+   `bool_rec`, `nat_rec`, `eq_J`, `eq_subst`, `eq_sym`, `eq_cong`.
+
+9. Deprecate or rename public `Hyp` and `StuckElim`.
+
+10. Update the elaborator so typed annotations are checked by public
+    `Type n`, and terms are checked by public guarded predicates. The
+    elaborator should no longer need predicate trust beyond loading the
+    single trusted kernel `Type`.
+
+## Required Tests
+
+Reject forged closed neutrals:
+
+```disp
+let fake_proof : Eq Nat 0 1 =
+  StuckElim (Eq Nat 0 1) t
+```
+
+Reject dynamic neutral construction hidden behind K:
+
+```disp
+let bad : Nat -> Eq Nat 0 1 =
+  {_} -> StuckElim (Eq Nat 0 1) t
+```
+
+Reject direct neutral observation:
+
+```disp
+let BadFam = {n} -> select Nat (Eq Nat 0 1) (is_neutral n)
+let bad : Pi Nat BadFam = {n} -> 0
+```
+
+Reject structural neutral observation:
+
+```disp
+let BadFam = {n} -> select Nat (Eq Nat 0 1) (is_fork n)
+let bad : Pi Nat BadFam = {n} -> 0
+```
+
+Reject equality on neutral-containing trees:
+
+```disp
+let BadFam = {n} -> select (Eq Nat 0 1) Nat (fast_eq n 0)
+let bad : Pi Nat BadFam = {n} -> 0
+
+let BadFam2 = {n} -> select (Eq Nat 0 1) Nat (fast_eq (t n 0) (t 0 0))
+let bad2 : Pi Nat BadFam2 = {n} -> 0
+```
+
+Reject unsafe eliminator motives/branches:
+
+```disp
+let bad_bool : Bool -> Eq Nat 0 1 =
   {b} -> bool_rec ({_} -> Eq Nat 0 1) 0 0 b
 ```
 
-When checked under `b : Bool`, `bool_rec` sees a neutral target and
-returns `StuckElim (Eq Nat 0 1) b`. The enclosing `Pi` checker sees a
-neutral with the expected stored type and accepts, without checking the
-concrete `TT`/`FF` branches.
-
-The guard scanner alone does not fix this if `bool_rec` is placed in
-`known_good`. The recursor itself must enforce its typing rule.
-
-Plan for typed `bool_rec`:
+Accept ordinary transport through SKI:
 
 ```disp
-bool_rec = {rank, motive, t_case, f_case, target} -> {
-  let T = motive TT
-  let F = motive FF
-
-  if and (Type rank T)
-     (and (T t_case)
-     (and (Type rank F)
-          (F f_case)))
-  then
-    select_lazy
-      ({_} -> StuckElim (unguard (motive target)) target)
-      ({_} -> select t_case f_case target)
-      (is_neutral target)
-  else
-    InvalidValue
-}
+let id : Nat -> Nat = {x} -> x
+let const : Nat -> Bool -> Nat = {x} -> {_} -> x
+let succ_fn : Nat -> Nat = {x} -> succ x
 ```
 
-Plan for typed `nat_rec`:
+Accept dependent and polymorphic identity:
 
 ```disp
-nat_rec = {rank, motive, base, step, target} -> {
-  let StepType =
-    Pi Nat ({n} ->
-      Pi (motive n) ({_prev} ->
-        motive (succ n)))
-
-  if and (Type rank (motive 0))
-     (and ((motive 0) base)
-          (StepType step))
-  then
-    ... current neutral-aware nat recursion ...
-  else
-    InvalidValue
-}
+let dep_refl : {n : Nat} -> Eq Nat n n = {n} -> refl
+let poly_id : {A : Type 0} -> A -> A = {A} -> {x} -> x
+let type_id : Type 0 -> Type 0 = {A} -> A
 ```
 
-The concrete API may use a different rank-passing shape, but the
-recursor must have enough universe information to validate its motive
-outputs.
-
-If validation fails, return a value that the expected type rejects,
-preferably a neutral carrying `InvalidType` or a named invalid sentinel.
-
-Once recursors self-check their branch contracts, adding their exact
-trees to `known_good` is sound: scanner skip avoids inspecting their
-internal `StuckElim`, while the recursor runtime prevents forged
-stuck-results from being used as proof of impossible branch behavior.
-
-## Dependent Type Functions
-
-Dependent codomains compose guarded public types with core checking:
+Accept certified eliminators:
 
 ```disp
-Pi A B =
-  guard (wait kernel_ref.pi
-    (make_pi_meta
-      (unguard A)
-      ({x} -> unguard (B x))))
+let bool_to_nat : Bool -> Nat =
+  {b} -> bool_rec ({_} -> Nat) 1 0 b
+
+let nat_to_bool : Nat -> Bool =
+  {n} -> nat_rec ({_} -> Bool) TT ({_k, _prev} -> FF) n
 ```
 
-Here `B` is expected to map an inhabitant of `A` to a guarded public
-type.
-
-Type validation must be context-sensitive. For a dependent Pi:
-
-```disp
-Type n (Pi A B)
-```
-
-should:
-
-1. Check `A` as a guarded public type.
-2. Create a legitimate internal hypothesis `h : unguard A`.
-3. Extend the scanner allowlist with `h`.
-4. Check `B h` as a guarded public type under that allowlist.
-5. Store `unguard (B h)` as the core codomain result.
-
-Pseudocode:
-
-```disp
-GuardedTypeWith allowed n (Pi A B) =
-  and (GuardedTypeWith allowed n A)
-    ({ let h = Hyp (unguard A) pi_meta;
-       GuardedTypeWith (allow allowed h) n (B h) })
-```
-
-This is not a new hole by itself. It becomes a hole only if codomain
-functions can branch on `h` using raw tree destructors or unsafe
-recursors and return a type that is valid for the neutral case but wrong
-for concrete cases.
-
-The elegant rule is:
-
-```text
-Dependent type functions may branch on typed values only through
-certified typed eliminators.
-```
-
-That means:
-
-- raw `triage` over a variable from the typing context is not part of
-  the safe dependent type language;
-- certified recursors are known-good scanner skips;
-- certified recursors validate motives and branches before producing
-  stuck eliminators.
-
-If the long-term elaborator really only parses terms/types into trees
-and invokes `Type`, this discipline must live in the object language:
-either in typed recursors as above, or in an explicit elaborated AST
-whose constructors encode eliminator typing rules.
-
-## Universe Structure
-
-Keep two universe notions during migration:
-
-```disp
-kernel_ref.core_type n
-  // current Type n behavior over unguarded/core predicates
-
-GuardedTypeWith allowed n
-  // public/source-facing validator for guarded predicates
-```
-
-Implementation-wise, this likely wants two universe-related kernel
-components:
-
-```disp
-kernel : {
-  hyp_reduce,
-  pi,
-  nat,
-  bool,
-  eq,
-  core_type,
-  guarded_type,
-  guard
-}
-
-Type n = guard (wait kernel_ref.guarded_type n)
-```
-
-`core_type` is the current universe checker generalized over core
-predicates. `guarded_type` is the public/source-facing checker: it
-requires a top-level guard, unwraps with `unguard`, and delegates to
-`core_type`.
-
-Final public `Type` should be guarded:
-
-```disp
-Type n = guard (wait kernel_ref.guarded_type n)
-```
-
-Then:
-
-```disp
-hasguard (Type n) = TT
-(Type n) T = TT
-```
-
-means `T` is a guarded public type of level `n`.
-
-Universe containment remains strict:
-
-```disp
-Type m : Type n    iff    m < n
-```
-
-Operationally, `GuardedTypeWith allowed n T` should:
-
-```disp
-GuardedTypeWith allowed n T =
-  and (scan_core allowed T)
-    (and (hasguard T)
-         (core_type_with allowed n (unguard T)))
-```
-
-`core_type_with` is the current universe checker generalized with an
-allowlist for legitimate internal hypotheses in type metadata.
-
-For universe hierarchy, `core_type` must recognize the core of public
-universes:
-
-```disp
-core_type_with allowed n (wait kernel_ref.guarded_type m) =
-  nat_lt m n
-```
-
-Then:
-
-```disp
-unguard (Type m) = wait kernel_ref.guarded_type m
-(Type n) (Type m) = TT iff m < n
-```
-
-This keeps the public universe guarded while still giving the core
-universe checker a canonical object to recognize.
-
-Recognition examples:
-
-```disp
-GuardedTypeWith allowed 0 Nat = TT
-GuardedTypeWith allowed 0 (unguard Nat) = FF
-
-GuardedTypeWith allowed 0 (Eq Nat 0 0) = TT
-GuardedTypeWith allowed 0 (Eq (unguard Nat) 0 0) = FF
-
-GuardedTypeWith allowed 1 (Type 0) = TT
-GuardedTypeWith allowed 0 (Type 0) = FF
-```
-
-## Kernel Edit Plan
-
-1. Extend the kernel record with `guard` and probably split `type` into
-   `core_type` and `guarded_type`.
-2. Keep the existing kernel fields as the anonymous/core layer. Do not
-   export `CoreNat`, `CoreBool`, etc. unless temporary debug aliases are
-   useful during migration.
-3. Add `guard`, `hasguard`, `unguard`.
-4. Add `scan_core`, `scan_closed`, and known-good registry helpers.
-5. Redefine public `Nat`, `Bool`, `Eq`, `Pi`, and `Arrow` as guarded
-   wrappers around core constructors.
-6. Introduce `GuardedTypeWith` and transitional `GuardedType`.
-7. Redefine public `Type` as a guarded universe once tests pass.
-8. Replace neutral-aware recursors with typed/certified versions, or add
-   typed versions first and migrate library code.
-9. Remove direct public use of `Hyp` and `StuckElim` from normal APIs.
-   Keep test-only or internal names only if scanner rejects their use in
-   checked source terms.
-
-## Test Plan
-
-### Guard Shape
-
-```disp
-test hasguard Nat = TT
-test hasguard Bool = TT
-test hasguard (Eq Nat 0 0) = TT
-test hasguard (Pi Nat ({_} -> Nat)) = TT
-
-test hasguard (unguard Nat) = FF
-test hasguard (unguard Bool) = FF
-
-test unguard (unguard Nat) = InvalidType
-```
-
-### Public Type Validation
+Universe tests:
 
 ```disp
 test (Type 0) Nat = TT
 test (Type 0) Bool = TT
-test (Type 0) (Eq Nat 0 0) = TT
 test (Type 0) (Pi Nat ({_} -> Nat)) = TT
-
-test (Type 0) (unguard Nat) = FF
-test (Type 0) (Eq (unguard Nat) 0 0) = FF
 test (Type 1) (Type 0) = TT
 test (Type 0) (Type 0) = FF
+test (Type 1) (Pi (Type 0) ({A} -> Arrow A A)) = TT
 ```
 
-### Forged Neutrals
+## Performance Plan
 
-```disp
-let forged_nat = Hyp (unguard Nat) 0
-test (unguard Nat) forged_nat = TT  // internal H-rule still works
-test Nat forged_nat = FF            // public guard rejects
+Avoid a linear `allowed_neutrals` set.
 
-let forged_eq = StuckElim (unguard (Eq Nat 0 1)) t
-test (unguard (Eq Nat 0 1)) forged_eq = TT
-test (Eq Nat 0 1) forged_eq = FF
-```
+- `neutral_root` should be O(1) using hash-consed signature checks.
+- `contains_neutral` should memoize per tree id.
+- `scan_no_neutral` should be one public-entry scan of the candidate
+  term/type tree.
+- `fast_eq` only needs a deep neutral scan when user code invokes it.
+- Raw constructor checks are O(1) root checks.
+- Certified handlers may use internal equality and metadata reads
+  directly.
 
-Embedded forged neutrals should also be rejected:
+The expected overhead is proportional to public-entry tree size plus
+user attempts to observe neutral-containing values, not proportional to
+the number of hypotheses created during checking.
 
-```disp
-let pair_with_forged = t forged_nat 0
-test (SomePairType Nat Nat) pair_with_forged = FF
-```
+## Residual Risks
 
-Use an existing or small test pair predicate once pair/record types are
-ready.
+The design should close the known holes if implemented as above. The
+main risks are implementation mistakes:
 
-### Pi Still Works
+- accidentally using raw application where `checked_apply` is required;
+- treating exact `I` as ordinary triage and rejecting identity;
+- letting public `guard` run closed scans during internal recursive
+  checks, which breaks certified neutral type variables;
+- leaving raw `StuckElim`-based recursors in place;
+- allowing user `fast_eq` on trees that contain neutrals below the root;
+- making `unguard_checked` available as a public escape hatch without
+  the public entry scan.
 
-```disp
-test (Pi Nat ({_} -> Nat)) ({x} -> x) = TT
-test (Pi Nat ({_} -> Bool)) ({x} -> x) = FF
-
-test (Pi (Pi Nat ({_} -> Nat)) ({_} -> Nat))
-  ({f} -> f 0) = TT
-```
-
-### Dependent Types
-
-```disp
-test (Type 0) (Pi Nat ({n} -> Eq Nat n n)) = TT
-
-test (Pi Nat ({n} -> Eq Nat n n))
-  ({n} -> refl) = TT
-
-test (Pi (Type 0) ({A} -> Pi A ({_} -> A)))
-  ({A} -> {x} -> x) = TT
-```
-
-Codomain functions containing non-allowed forged neutrals must fail:
-
-```disp
-let bad_cod = {n} -> Eq Nat (StuckElim (unguard Nat) t) n
-test (Type 0) (Pi Nat bad_cod) = FF
-```
-
-### Recursor Branch Soundness
-
-This currently accepts and must reject after typed recursors:
-
-```disp
-test (Pi Bool ({_} -> Eq Nat 0 1))
-  ({b} -> bool_rec 0 ({_} -> Eq Nat 0 1) 0 0 b) = FF
-```
-
-Valid recursor use must still pass:
-
-```disp
-test (Pi Bool ({_} -> Nat))
-  ({b} -> bool_rec 0 ({_} -> Nat) 1 0 b) = TT
-
-test (Pi Nat ({_} -> Bool))
-  ({n} -> nat_rec 0 ({_} -> Bool) TT ({_n, _prev} -> FF) n) = TT
-```
-
-### Elaborator-Level
-
-Add or unskip tests equivalent to:
-
-```disp
-let fake_proof : Eq Nat 0 1 =
-  StuckElim (unguard (Eq Nat 0 1)) t
-```
-
-Expected: reject.
-
-Still accept:
-
-```disp
-let id : Nat -> Nat = {x} -> x
-let dep_refl : {n : Nat} -> Eq Nat n n = {n} -> refl
-let poly_id : {A : Type 0} -> A -> A = {A} -> {x} -> x
-```
-
-## Migration Strategy
-
-1. Add guard helpers while preserving old public names.
-2. Add tests for `guard`, `hasguard`, and `unguard`, but do not flip
-   `Type` yet.
-3. Flip `Nat`, `Bool`, `Eq`, `Pi`, `Arrow` to guarded public
-   constructors.
-4. Update tests that intentionally exercise internals to use
-   `unguard Nat`, `unguard (Pi ...)`, or temporary debug aliases.
-5. Add typed recursor APIs and migrate library code.
-6. Flip public `Type` to guarded universe.
-7. Remove or sharply restrict `trust`; the elaborator should only need a
-   canonical root `Type` during bootstrap.
-
-## Non-Negotiable Invariants
-
-1. Public type positions accept only guarded types.
-2. Public guarded predicates scan candidate values before core checking.
-3. Core predicates remain neutral-aware for internal Pi/NbE behavior.
-4. `unguard` is available to canonical type constructors, but unguarded
-   predicates are rejected by public `Type`.
-5. Known-good scanner skips are exact-subtree skips with contracts, not
-   ambient trust.
-6. Recursors that can produce stuck neutrals must validate their motives
-   and branches.
-7. Dependent codomains are checked under an allowlist containing only the
-   legitimate hypotheses introduced by the checker.
+These should be covered by the required tests before considering the fix
+complete.
