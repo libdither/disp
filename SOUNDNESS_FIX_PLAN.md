@@ -1104,21 +1104,22 @@ q_bool_rec_fn = {ks, raw, query} -> {meta, _trigger} -> {
       TT => Ok f_case
       FF =>
         // certified-neutral case
-        must_ok_any (ks.checked_apply motive target) ({result_type} ->
-          // motive : Bool -> core_type rank, so motive(target) is
-          // already a core type at the right rank. Re-validate via
-          // the *internal* core_type checker — NOT the public Type
-          // rank, because result_type may legitimately contain
-          // certified neutral type variables that the public guard
-          // scan would reject. The rank used here is the eliminator's
-          // ambient rank; we conservatively pick the largest rank
-          // that motive could have produced, which equals the rank
-          // stored in motive's wait-shape if it is a Pi returning
-          // (core_type k); otherwise treat as failure.
+        must_ok_any (ks.checked_apply motive target) ({raw_result_type} -> {
+          // motive : Bool -> Type rank produces a GUARDED type (every
+          // user-accessible type constructor wraps its result in `guard`).
+          // Stuck-elim neutrals must store CORE forms because the kernel's
+          // H-rule reconstructs cores via `wait (ks query) meta`; a guarded
+          // stored type would never hash-cons-match the H-rule's core
+          // reconstruction.
+          //
+          // unguard_checked also accepts certified neutral type variables
+          // for the case where motive's result is itself a stuck neutral
+          // type (e.g., a motive that branches on target via dep elim).
+          let result_type = unguard_checked raw_result_type
           must_ok_any (motive_result_rank motive) ({rank} ->
             must_ok_tt
               (ks.checked_apply (wait ks.core_type rank) result_type)
-              ({u4} -> Ok (cert_make_neutral result_type target))))
+              ({u4} -> Ok (cert_make_neutral result_type target)))})
     }
   }
   )))))
@@ -1139,27 +1140,34 @@ motive_result_rank := {motive} ->
   }
 ```
 
-Three things to call out:
+Four things to call out:
 
-1. `must_ok_tt` vs `must_ok_any` — every predicate check uses
+1. **`unguard_checked` on the motive result is load-bearing.** Without
+   it, every legitimate stuck eliminator fails downstream H-rule checks:
+   the kernel reconstructs core forms (`wait (ks query) meta`), but the
+   stored type from a user motive is guarded. The unguard step is the
+   eliminator-side counterpart to "Pi metadata stores cores" — both keep
+   internal kernel data uniformly in core form.
+2. `must_ok_tt` vs `must_ok_any` — every predicate check uses
    `must_ok_tt` (an `Ok FF` is a validation failure that must
    propagate as `Fail`); every "compute a sub-result and use it" uses
    `must_ok_any`. Mixing these up silently accepts `Ok FF` from a
    predicate, defeating validation.
-2. `wait ks.core_type rank`, **not** `Type rank`. Public `Type rank`
+3. `wait ks.core_type rank`, **not** `Type rank`. Public `Type rank`
    is guarded; calling it on a `result_type` that contains a
    certified neutral type variable would be rejected by the entry
    scan inside `q_guard_fn`. Internal universe checks must use
    `core_type` directly. (See [Universes](#universes).)
-3. Both `tree_eq target TT` and `tree_eq target FF` happen *after*
+4. Both `tree_eq target TT` and `tree_eq target FF` happen *after*
    the Bool validation in step (1). Comparing `target` to a known
    constant via raw `tree_eq` is safe here because step (1) ruled
    out the case where `target` would carry an unobservable neutral.
 
 `nat_rec`, `eq_J`, `eq_subst`, `eq_sym`, `eq_cong` follow the same
 pattern: validate target, validate branches against the motive at the
-relevant points, validate result type via `core_type`, then mint or
-dispatch.
+relevant points, **`unguard_checked` the motive's result before storing
+it** in the stuck neutral, validate the (now core) result type via
+`core_type`, then mint or dispatch.
 
 The current raw versions (lib/kernel.disp:283-347) construct
 `StuckElim` directly and must be deleted. Under `checked_apply`, those
