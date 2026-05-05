@@ -12,7 +12,7 @@ full_set : NatSet :=
   {_} -> TT
 
 singleton_set : Nat -> NatSet :=
-  {needle} -> {x} -> fast_eq needle x
+  {needle} -> {x} -> tree_eq needle x
 
 set_member : NatSet -> Nat -> Bool :=
   {set} -> {x} -> set x

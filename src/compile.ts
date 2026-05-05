@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
-  Tree, LEAF, stem, fork, applyTree, FAST_EQ, treeEqual, prettyTree, getApplyStats, type ApplyStats,
+  Tree, LEAF, stem, fork, applyTree, TREE_EQ, treeEqual, prettyTree, getApplyStats, type ApplyStats,
 } from "./tree.js"
 import {
   parseItems,
@@ -330,7 +330,7 @@ function compileExpr(
 
 // abstractTree(h, body): given a tree `body` containing subtree `h`,
 // produce a tree F such that apply(F, v) = body[h := v].
-// Same algorithm as eliminateLams but on Tree with FAST_EQ for variable check.
+// Same algorithm as eliminateLams but on Tree with TREE_EQ for variable check.
 
 function containsTree(h: Tree, t: Tree): boolean {
   if (treeEqual(h, t)) return true
@@ -804,7 +804,7 @@ export type ParseProgramOptions = {
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
   const trusted: Map<string, Tree> = new Map()
-  const stack: Map<string, ScopeEntry>[] = [new Map([["fast_eq", { tree: FAST_EQ }]])]
+  const stack: Map<string, ScopeEntry>[] = [new Map([["tree_eq", { tree: TREE_EQ }]])]
   const decls: Decl[] = []
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
   const sourceStack = [sourcePath ? pathResolve(sourcePath) : undefined]

@@ -146,7 +146,7 @@ export type ApplyStats = {
   triageLeafRules: number
   triageStemRules: number
   triageForkRules: number
-  fastEqRules: number
+  treeEqRules: number
   memoHits: number
   memoMisses: number
   memoWrites: number
@@ -165,7 +165,7 @@ const applyStats: ApplyStats = {
   triageLeafRules: 0,
   triageStemRules: 0,
   triageForkRules: 0,
-  fastEqRules: 0,
+  treeEqRules: 0,
   memoHits: 0,
   memoMisses: 0,
   memoWrites: 0,
@@ -204,7 +204,7 @@ export function resetApplyStats(): void {
   applyStats.triageLeafRules = 0
   applyStats.triageStemRules = 0
   applyStats.triageForkRules = 0
-  applyStats.fastEqRules = 0
+  applyStats.treeEqRules = 0
   applyStats.memoHits = 0
   applyStats.memoMisses = 0
   applyStats.memoWrites = 0
@@ -301,10 +301,12 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue }
     cacheStats.misses++
 
-    // FAST_EQ
-    if (curF.left.id === FAST_EQ_MARKER.id) {
-      traceApply("fast_eq", curF, curX, stack.length)
-      applyStats.fastEqRules++
+    // TREE_EQ host fast path: O(1) hash-cons identity check.
+    // Canonical spec lives as `tree_eq_spec` in lib/prelude.disp; the host
+    // form (this marker mechanism) must produce identical answers.
+    if (curF.left.id === TREE_EQ_MARKER.id) {
+      traceApply("tree_eq", curF, curX, stack.length)
+      applyStats.treeEqRules++
       const v = treeEqual(curF.right, curX) ? LEAF : stem(LEAF)
       memoSet(curF, curX, v)
       const r = deliver(v); if (r !== null) return r; continue
@@ -366,13 +368,15 @@ export const K = stem(LEAF)
 //   I(fork(u,v)): Rule 3c → apply(apply(LEAF, u), v) = fork(u,v) ✓
 export const I = fork(fork(LEAF, LEAF), LEAF)
 
-// --- FAST_EQ: O(1) tree equality via hash-consing identity ---
-// apply(FAST_EQ, a) = fork(FAST_EQ_MARKER, a) via stem rule [O(1)]
-// apply(fork(FAST_EQ_MARKER, a), b) = TT if a.id === b.id, FF otherwise [O(1)]
-// This exposes hash-consing identity to tree programs, replacing the O(n)
-// structural comparison of tree-level treeEq with an O(1) check.
-const FAST_EQ_MARKER = fork(fork(stem(stem(LEAF)), LEAF), stem(stem(LEAF)))
-export const FAST_EQ: Tree = stem(FAST_EQ_MARKER)
+// --- TREE_EQ: O(1) tree equality via hash-consing identity ---
+// apply(TREE_EQ, a) = fork(TREE_EQ_MARKER, a) via stem rule [O(1)]
+// apply(fork(TREE_EQ_MARKER, a), b) = TT if a.id === b.id, FF otherwise [O(1)]
+//
+// The canonical spec is the recursive triage-based `tree_eq_spec` in
+// lib/prelude.disp; this host form is an optimization that must produce
+// identical answers. Cross-checked by test/tree_eq.test.ts.
+const TREE_EQ_MARKER = fork(fork(stem(stem(LEAF)), LEAF), stem(stem(LEAF)))
+export const TREE_EQ: Tree = stem(TREE_EQ_MARKER)
 
 // --- Pretty printer ---
 

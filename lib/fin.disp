@@ -20,7 +20,7 @@ fin_two_of_three : Fin 3 := 2
 VecNat := {length, xs} ->
   select_lazy
     ({_} -> TT)
-    ({_} -> and (NatList xs) (fast_eq (list_length xs) length))
+    ({_} -> and (NatList xs) (tree_eq (list_length xs) length))
     (is_neutral xs)
 
 vnil : VecNat 0 := nil

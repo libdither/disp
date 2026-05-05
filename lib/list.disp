@@ -20,11 +20,11 @@ NatList := {xs} ->
             ({_} ->
               and (Nat (pair_fst xs))
                 (select TT
-                  (select TT (is_concrete_fork (pair_snd xs)) (fast_eq (pair_snd xs) t))
+                  (select TT (is_concrete_fork (pair_snd xs)) (tree_eq (pair_snd xs) t))
                   (is_neutral (pair_snd xs))))
             ({_} -> FF)
             (is_concrete_fork xs))
-        (fast_eq xs t))
+        (tree_eq xs t))
     (is_neutral xs)
 
 nil : NatList := t
@@ -46,7 +46,7 @@ list_rec := fix ({self, motive, nil_case, cons_case, xs} ->
             ({_} -> cons_case (pair_fst xs) (pair_snd xs) (self motive nil_case cons_case (pair_snd xs)))
             ({_} -> nil_case)
             (is_concrete_fork xs))
-        (fast_eq xs t))
+        (tree_eq xs t))
     (is_neutral xs))
 
 list_length :=

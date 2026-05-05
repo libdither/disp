@@ -3,8 +3,8 @@ open use "kernel.disp"
 open use "math.disp"
 
 // Test-only convenience definitions
-let is_nat_type = {x} -> fast_eq x Nat
-let is_bool_type = {x} -> fast_eq x Bool
+let is_nat_type = {x} -> tree_eq x Nat
+let is_bool_type = {x} -> tree_eq x Bool
 let is_registered = {x} -> select TT (is_bool_type x) (is_nat_type x)
 let Type0 = Type 0
 let Type1 = Type 1
@@ -44,8 +44,8 @@ let stuck1 = h1 (t t)
 let stuck2 = stuck1 (t t t)
 
 // All share the same signature
-test fast_eq (pair_fst h1) (pair_fst stuck1) = TT
-test fast_eq (pair_fst stuck1) (pair_fst stuck2) = TT
+test tree_eq (pair_fst h1) (pair_fst stuck1) = TT
+test tree_eq (pair_fst stuck1) (pair_fst stuck2) = TT
 
 // Raw function apply still works
 test ({x} -> x) t = t
@@ -374,7 +374,7 @@ test (Arrow Nat
   ({a} -> {b} -> {sel} -> (sel a) b) = TT
 
 // h : H |- h : H
-test infer (fast_eq (Hyp t t)) (Hyp (Hyp t t) (t t)) = TT
+test infer (tree_eq (Hyp t t)) (Hyp (Hyp t t) (t t)) = TT
 
 // ctxId : (A : Type0) -> (x : A) -> A
 test (Pi Type0 ({A} ->

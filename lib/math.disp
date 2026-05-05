@@ -10,5 +10,5 @@ open use "kernel.disp"
 add := fix ({self, n, m} -> {
   let succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
   let nonzero_fn = {self, n, m} -> select succ_fn ({self, n, m} -> m) (is_concrete_fork n) self n m
-  select ({self, n, m} -> m) nonzero_fn (fast_eq n t) self n m
+  select ({self, n, m} -> m) nonzero_fn (tree_eq n t) self n m
 })

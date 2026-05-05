@@ -80,6 +80,20 @@ select_chain := fix ({self, cases, default} ->
 
 is_fork := {v} -> triage FF ({_} -> FF) ({l, r} -> TT) v
 
+// tree_eq_spec: canonical recursive structural equality.
+// The host injects an O(1) hash-consing-identity primitive bound to the
+// name `tree_eq`; this spec form is the tree-program implementation of
+// the same predicate. test/tree_eq.test.ts cross-checks them.
+//
+// Recursion: leaf=leaf, stem(ax)=stem(bx) iff ax=bx, fork(ax,ay)=fork(bx,by)
+// iff ax=bx and ay=by; otherwise FF.
+tree_eq_spec := fix ({self, a, b} ->
+  triage
+    (triage TT ({_} -> FF) ({_l, _r} -> FF) b)
+    ({ax} -> triage FF (self ax) ({_l, _r} -> FF) b)
+    ({ax, ay} -> triage FF ({_} -> FF) ({bx, by} -> and (self ax bx) (self ay by)) b)
+    a)
+
 // nat_le(a, b): true if natural number a <= b
 // Uses select-then-apply with fix for recursive comparison.
 let nat_le_zero_fn = {self, a, b} -> TT
@@ -93,7 +107,7 @@ let nat_le_nonzero_fn = {self, a, b} ->
   select nat_le_succ_fn ({self, a, b} -> FF) (is_fork a)
     self a b
 nat_le := fix ({self, a, b} ->
-  select nat_le_zero_fn nat_le_nonzero_fn (fast_eq a t)
+  select nat_le_zero_fn nat_le_nonzero_fn (tree_eq a t)
     self a b)
 
 nat_lt := {a, b} -> nat_le (t t a) b

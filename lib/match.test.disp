@@ -75,7 +75,7 @@ test ({x} -> {
 test (({x} -> match x { TT => 1; FF => 0 }) TT) = 1
 
 // Scrutinee is an application
-let is_zero = {n} -> fast_eq n 0
+let is_zero = {n} -> tree_eq n 0
 test (match (is_zero 0) { TT => 1; FF => 0 }) = 1
 test (match (is_zero 1) { TT => 1; FF => 0 }) = 0
 
