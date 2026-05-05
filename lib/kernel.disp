@@ -59,8 +59,13 @@ InvalidType := FF
 // q_is_neutral: check if x has the hyp_reduce checker signature (O(1) via hash-cons).
 // Use raw.hyp_reduce, not the lazy proxy, because neutral identity is the
 // actual handler signature stored in Hyp/StuckElim.
+//
+// Fork shape is required: pair_fst is implemented via triage, so
+// pair_fst(stem(c)) = c. Without is_fork, stem(canonical_sig) would pass
+// the signature check. Legitimate neutrals are wait-encoded values, which
+// are always forks.
 let q_is_neutral = {raw : {hyp_reduce,pi,nat,bool,eq,type}, x} ->
-  has_sig raw.hyp_reduce x
+  and (is_fork x) (has_sig raw.hyp_reduce x)
 
 // q_make_hyp: construct a hypothesis neutral.
 // Result: wait(hyp_reduce_handler)(make_neutral_meta(type, identity))
@@ -235,7 +240,7 @@ let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
 // ================================================================
 
 neutral_type := {v} -> neutral_meta_type (type_meta v)
-is_neutral := {x} -> has_sig kernel.hyp_reduce x
+is_neutral := {x} -> and (is_fork x) (has_sig kernel.hyp_reduce x)
 
 // infer: checks is_neutral, extracts stored type, applies check_fn.
 // Usage: `infer (conv Nat) v` checks if v's inferred type is Nat.

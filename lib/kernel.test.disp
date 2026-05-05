@@ -22,6 +22,12 @@ test is_neutral t = FF
 test is_neutral (t t) = FF
 test is_neutral (t t t) = FF
 
+// Tightened is_neutral: stem of canonical signature must not be accepted.
+// pair_fst(stem(c)) = c via triage, so without the fork-shape check this
+// would pass the signature test. This regression test pins the tightening.
+let hyp_reduce_sig = pair_fst (Hyp t t)
+test is_neutral (t hyp_reduce_sig) = FF
+
 // Spine accumulation: applying a neutral produces a neutral
 test is_neutral (Hyp t t (t t)) = TT
 
