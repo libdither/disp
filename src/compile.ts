@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
-  Tree, LEAF, stem, fork, applyTree, TREE_EQ, treeEqual, prettyTree, getApplyStats, type ApplyStats,
+  Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
 } from "./tree.js"
 import {
   parseItems,
@@ -330,7 +330,7 @@ function compileExpr(
 
 // abstractTree(h, body): given a tree `body` containing subtree `h`,
 // produce a tree F such that apply(F, v) = body[h := v].
-// Same algorithm as eliminateLams but on Tree with TREE_EQ for variable check.
+// Same algorithm as eliminateLams but on Tree with hash-cons identity for variable check.
 
 function containsTree(h: Tree, t: Tree): boolean {
   if (treeEqual(h, t)) return true
@@ -804,7 +804,7 @@ export type ParseProgramOptions = {
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
   const trusted: Map<string, Tree> = new Map()
-  const stack: Map<string, ScopeEntry>[] = [new Map([["tree_eq", { tree: TREE_EQ }]])]
+  const stack: Map<string, ScopeEntry>[] = [new Map()]
   const decls: Decl[] = []
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
   const sourceStack = [sourcePath ? pathResolve(sourcePath) : undefined]
@@ -923,6 +923,8 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
       case "field": {
         const result = compileBinding(it.name, it.type, it.value)
         target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
+        // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
+        if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
         recordItem("field", it.name)
         return
       }
@@ -932,6 +934,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
           // Legacy mode: top-level let exports (for files not yet migrated)
           target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
         }
+        if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
         recordItem("let", it.name)
         return
       }

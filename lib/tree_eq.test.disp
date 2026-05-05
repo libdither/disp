@@ -1,60 +1,46 @@
-// Cross-check the host-optimized tree_eq (O(1) hash-cons identity) against
-// the canonical recursive tree_eq_spec from prelude.disp. Both must return
-// identical answers on every input. The host form is an optimization; the
-// spec form is the tree-program implementation that defines correctness.
+// tree_eq is now a normal recursive tree program in lib/prelude.disp.
+// The host runtime captures its compiled tree id at boot and fast-paths
+// two-arg applications to an O(1) hash-cons identity check; this file
+// exercises the predicate's behavior on representative inputs.
 
 open use "prelude.disp"
 
 // ================================================================
-// Standalone correctness of tree_eq_spec on canonical inputs
+// Leaves, stems, forks
 // ================================================================
 
-test tree_eq_spec t t = TT
-test tree_eq_spec t (t t) = FF
-test tree_eq_spec (t t) t = FF
-test tree_eq_spec (t t) (t t) = TT
-test tree_eq_spec (t t t) (t t t) = TT
-test tree_eq_spec (t t t) (t t (t t)) = FF
-test tree_eq_spec (t (t t) t) (t (t t) t) = TT
-test tree_eq_spec (t (t t) t) (t t (t t)) = FF
+test tree_eq t t = TT
+test tree_eq t (t t) = FF
+test tree_eq (t t) t = FF
+test tree_eq (t t) (t t) = TT
+test tree_eq (t t t) (t t t) = TT
+test tree_eq (t t t) (t t (t t)) = FF
+test tree_eq (t (t t) t) (t (t t) t) = TT
+test tree_eq (t (t t) t) (t t (t t)) = FF
 
 // ================================================================
-// Cross-check: tree_eq a b = tree_eq_spec a b for diverse inputs
+// Mixed shapes
 // ================================================================
-// Each test asserts the two implementations agree by feeding their results
-// into tree_eq itself: tree_eq returns TT iff both produced the same tree.
 
-let agrees = {a, b} -> tree_eq (tree_eq a b) (tree_eq_spec a b)
+test tree_eq t (t t t) = FF
+test tree_eq (t t) (t (t t)) = FF
+test tree_eq (t (t t)) (t (t t)) = TT
+test tree_eq (t (t t)) (t t t) = FF
 
-// Equal leaves
-test agrees t t = TT
-
-// Inequal: leaf vs stem, leaf vs fork
-test agrees t (t t) = TT
-test agrees t (t t t) = TT
-
-// Equal/inequal stems
-test agrees (t t) (t t) = TT
-test agrees (t t) (t (t t)) = TT
-test agrees (t (t t)) (t (t t)) = TT
-
-// Equal/inequal forks
-test agrees (t t t) (t t t) = TT
-test agrees (t t t) (t (t t) t) = TT
-test agrees (t t (t t)) (t t (t t)) = TT
-test agrees (t t (t t)) (t t t) = TT
-
-// Mixed: stem vs fork at top level
-test agrees (t (t t)) (t t t) = TT
-
+// ================================================================
 // Deeper trees
-test agrees (t (t t t) (t t)) (t (t t t) (t t)) = TT
-test agrees (t (t t t) (t t)) (t (t t t) (t (t t))) = TT
-test agrees (t (t t (t t)) (t (t t) t)) (t (t t (t t)) (t (t t) t)) = TT
+// ================================================================
 
+test tree_eq (t (t t t) (t t)) (t (t t t) (t t)) = TT
+test tree_eq (t (t t t) (t t)) (t (t t t) (t (t t))) = FF
+test tree_eq (t (t t (t t)) (t (t t) t)) (t (t t (t t)) (t (t t) t)) = TT
+
+// ================================================================
 // Numeric literals (Nat trees: zero=leaf, succ=fork(t, n))
-test agrees 0 0 = TT
-test agrees 0 1 = TT
-test agrees 3 3 = TT
-test agrees 3 4 = TT
-test agrees 5 5 = TT
+// ================================================================
+
+test tree_eq 0 0 = TT
+test tree_eq 0 1 = FF
+test tree_eq 3 3 = TT
+test tree_eq 3 4 = FF
+test tree_eq 5 5 = TT

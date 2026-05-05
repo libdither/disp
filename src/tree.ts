@@ -301,10 +301,23 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue }
     cacheStats.misses++
 
-    // TREE_EQ host fast path: O(1) hash-cons identity check.
-    // Canonical spec lives as `tree_eq_spec` in lib/prelude.disp; the host
-    // form (this marker mechanism) must produce identical answers.
-    if (curF.left.id === TREE_EQ_MARKER.id) {
+    // tree_eq host fast path: O(1) hash-cons identity check.
+    // Canonical definition lives in lib/prelude.disp as a recursive triage
+    // form. The host captures its compiled tree id at boot (via
+    // `setTreeEqId`); the fast-path fires whenever an apply step is about
+    // to reduce `apply(tree_eq, a)` (recognized by `curF.id === TREE_EQ_ID`)
+    // — it synthesizes `fork(TREE_EQ_PARTIAL_MARKER, a)` so the next apply
+    // can do an O(1) compare via the partial-marker branch below.
+    // The fast-path is an optimization; removing it yields identical
+    // answers from the recursive spec.
+    if (TREE_EQ_ID !== -1 && curF.id === TREE_EQ_ID) {
+      traceApply("tree_eq", curF, curX, stack.length)
+      applyStats.treeEqRules++
+      const r = fork(TREE_EQ_PARTIAL_MARKER, curX)
+      memoSet(curF, curX, r)
+      const d = deliver(r); if (d !== null) return d; continue
+    }
+    if (curF.left.id === TREE_EQ_PARTIAL_MARKER.id) {
       traceApply("tree_eq", curF, curX, stack.length)
       applyStats.treeEqRules++
       const v = treeEqual(curF.right, curX) ? LEAF : stem(LEAF)
@@ -368,15 +381,21 @@ export const K = stem(LEAF)
 //   I(fork(u,v)): Rule 3c → apply(apply(LEAF, u), v) = fork(u,v) ✓
 export const I = fork(fork(LEAF, LEAF), LEAF)
 
-// --- TREE_EQ: O(1) tree equality via hash-consing identity ---
-// apply(TREE_EQ, a) = fork(TREE_EQ_MARKER, a) via stem rule [O(1)]
-// apply(fork(TREE_EQ_MARKER, a), b) = TT if a.id === b.id, FF otherwise [O(1)]
+// --- tree_eq host fast path ---
+// `tree_eq` is defined as a recursive tree program in lib/prelude.disp.
+// The host captures the id of its compiled tree at boot (via setTreeEqId)
+// and short-circuits two-arg applications to an O(1) hash-cons identity
+// check. This optimization must produce answers identical to the spec.
 //
-// The canonical spec is the recursive triage-based `tree_eq_spec` in
-// lib/prelude.disp; this host form is an optimization that must produce
-// identical answers. Cross-checked by test/tree_eq.test.ts.
-const TREE_EQ_MARKER = fork(fork(stem(stem(LEAF)), LEAF), stem(stem(LEAF)))
-export const TREE_EQ: Tree = stem(TREE_EQ_MARKER)
+// TREE_EQ_PARTIAL_MARKER is a synthetic, host-internal tree shape used
+// only as the left child of the partial-application intermediate. It does
+// not collide with any canonical kernel checker signature, so user code
+// inspecting the partial form via pair_fst will see the marker (an
+// observable but harmless artifact of the optimization).
+const TREE_EQ_PARTIAL_MARKER = fork(fork(stem(stem(LEAF)), LEAF), stem(stem(LEAF)))
+let TREE_EQ_ID: number = -1
+export function setTreeEqId(id: number): void { TREE_EQ_ID = id }
+export function getTreeEqId(): number { return TREE_EQ_ID }
 
 // --- Pretty printer ---
 

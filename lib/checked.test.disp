@@ -1,0 +1,275 @@
+// Tests for the session-1 checked-apply core.
+//
+// Covers: result encoding, must_ok_* CPS helpers, neutral_root /
+// contains_neutral / scan_no_neutral, the constructor checks at every
+// fork-producing rule, and end-to-end checked_check on representative
+// inputs.
+
+open use "prelude.disp"
+open use "kernel.disp"
+open use "checked.disp"
+
+// ================================================================
+// Result encoding
+// ================================================================
+
+test is_ok (Ok 5) = TT
+test is_ok (Ok t) = TT
+test is_ok (Ok FF) = TT
+test is_ok Fail = FF
+
+test ok_value (Ok 5) = 5
+test ok_value (Ok t) = t
+test ok_value (Ok (t t t)) = t t t
+
+// Ok and Fail are tree-distinguishable
+test tree_eq (Ok t) Fail = FF
+
+// is_ok footgun: pair_fst (bare LEAF) = LEAF (via triage's on_leaf branch),
+// so is_ok t = TT even though t was never wrapped via Ok. Same shape collision
+// for any leaf-headed fork. Documented here so handlers in sessions 3-4 always
+// wrap results through Ok rather than relying on accidental shape match.
+test is_ok t = TT
+test ok_value t = t
+
+// ================================================================
+// must_ok_any / must_ok_tt
+// ================================================================
+
+// must_ok_any: success threads payload into k
+test must_ok_any (Ok 5) ({v} -> Ok (succ v)) = Ok 6
+test must_ok_any (Ok TT) ({v} -> Ok v) = Ok TT
+test must_ok_any (Ok FF) ({v} -> Ok v) = Ok FF
+
+// must_ok_any: Fail short-circuits (k never runs)
+test must_ok_any Fail ({v} -> Ok (succ v)) = Fail
+
+// must_ok_tt: success requires Ok TT
+test must_ok_tt (Ok TT) ({u} -> Ok 5) = Ok 5
+
+// must_ok_tt: Ok FF is a validation failure
+test must_ok_tt (Ok FF) ({u} -> Ok 5) = Fail
+
+// must_ok_tt: Fail propagates
+test must_ok_tt Fail ({u} -> Ok 5) = Fail
+
+// Divergence probes
+let loops_div = fix ({self, x} -> self x)
+
+test must_ok_any Fail loops_div = Fail
+test must_ok_tt Fail loops_div = Fail
+test must_ok_tt (Ok FF) loops_div = Fail
+
+// Chain: success → fail → would-diverge. The inner continuation is
+// `{v} -> loops_div v` (η-equivalent to loops_div, but written this way
+// so the compiler doesn't eagerly evaluate at the K body — see the
+// caveat in chain construction below). must_ok_any Fail short-circuits
+// before applying loops_div, propagating Fail outward.
+test (must_ok_tt (Ok TT) ({u1} ->
+      must_ok_any Fail ({v} -> loops_div v))) = Fail
+
+// ================================================================
+// neutral_root, contains_neutral, scan_no_neutral
+// ================================================================
+
+let h = Hyp Nat 0
+
+test neutral_root h = TT
+test neutral_root t = FF
+test neutral_root (t t) = FF
+test neutral_root (t t t) = FF
+
+// Tightened: stem of canonical signature is rejected
+let hyp_reduce_sig = pair_fst h
+test neutral_root (t hyp_reduce_sig) = FF
+
+test contains_neutral t = FF
+test contains_neutral (t t) = FF
+test contains_neutral (t t t) = FF
+test contains_neutral h = TT
+
+// Neutral nested inside concrete fork
+test contains_neutral (t Nat (t h 0)) = TT
+test contains_neutral (t Nat (t 0 0)) = FF
+
+// Neutral inside a stem
+test contains_neutral (t h) = TT
+test contains_neutral (t (t t)) = FF
+
+// Deeper nesting
+test contains_neutral (t (t t (t h t)) t) = TT
+
+test scan_no_neutral t = TT
+test scan_no_neutral 0 = TT
+test scan_no_neutral 5 = TT
+test scan_no_neutral Nat = TT
+test scan_no_neutral h = FF
+test scan_no_neutral (t Nat (t h 0)) = FF
+
+// ================================================================
+// cert_make_neutral / cert_make_hyp / cert_make_stuck
+// ================================================================
+// Kernel-internal helpers; minted via raw apply, produce real neutrals.
+
+test is_neutral (cert_make_neutral Nat 0) = TT
+test is_neutral (cert_make_hyp Nat 0) = TT
+test is_neutral (cert_make_stuck Bool h) = TT
+
+// Stored type is recoverable
+test neutral_type (cert_make_neutral Nat 0) = Nat
+test neutral_type (cert_make_stuck Bool h) = Bool
+
+// ================================================================
+// checked_h_rule
+// ================================================================
+
+test checked_h_rule Nat (Hyp Nat 0) = Ok TT
+test checked_h_rule Nat (Hyp Bool 0) = Ok FF
+test checked_h_rule Bool (Hyp Bool 0) = Ok TT
+
+// ================================================================
+// checked_apply: leaf rule
+// ================================================================
+
+test checked_apply t 0 = Ok (t 0)
+test checked_apply t t = Ok (t t)
+test checked_apply t (t t) = Ok (t (t t))
+
+// ================================================================
+// checked_apply: stem rule (constructor check)
+// ================================================================
+
+// Normal stem: produces fork(a, x) which is not neutral-rooted.
+test checked_apply (t t) 0 = Ok (t t 0)
+test checked_apply (t Nat) 0 = Ok (t Nat 0)
+
+// Adversarial: stem rule must reject construction of a neutral fork.
+// `t hyp_reduce_sig` is a stem of the canonical signature; applying it
+// would produce `fork(hyp_reduce_sig, x)` — a neutral root. The stem
+// rule's constructor check fires and returns Fail.
+test checked_apply (t hyp_reduce_sig) (make_neutral_meta Nat 0) = Fail
+
+// Same attack with a different meta — rejected for any meta.
+test checked_apply (t hyp_reduce_sig) t = Fail
+
+// S-rule transitive check: a lambda body that uses its bound var in
+// multiple positions can't η-reduce, so it compiles to S-form (S Hyp I
+// here). Reduction descends through the S-rule's recursive checked_apply
+// and ultimately a stem step constructs the wait-fork; the stem rule's
+// check fires. Demonstrates fresh-neutral construction inside an S-
+// recursion is still caught at the inner stem step (the structural
+// argument made concrete).
+test checked_apply ({m} -> Hyp m m) t = Fail
+
+// ================================================================
+// checked_apply: K rule
+// ================================================================
+
+// fork(leaf, payload) applied to x returns payload.
+test checked_apply (t t 5) 0 = Ok 5
+test checked_apply (t t Nat) 0 = Ok Nat
+
+// K passes payload through; payload's content is the caller's responsibility
+// (entry scan or earlier rule already cleared it).
+test checked_apply ({_} -> 7) 99 = Ok 7
+
+// ================================================================
+// checked_apply: S rule (transitive constructor check)
+// ================================================================
+
+// Identity built via S: ({x, y} -> y x) compiles through S.
+// Non-adversarial — should succeed.
+test checked_apply ({x} -> x) 5 = Ok 5
+test checked_apply ({x, y} -> x) 5 = Ok ({y} -> 5)
+
+// Composition: ({f, x} -> f x) succ on 0 → 1.
+test checked_apply (({f, x} -> f x) succ) 0 = Ok 1
+
+// ================================================================
+// checked_apply: triage rule
+// ================================================================
+
+// triage on a leaf: returns on_leaf.
+test checked_apply ({v} -> triage 1 ({_} -> 2) ({_l, _r} -> 3) v) t = Ok 1
+
+// triage on a stem: applies on_stem to inner.
+test checked_apply ({v} -> triage 1 ({c} -> succ c) ({_l, _r} -> 3) v) (t 5) = Ok 6
+
+// triage on a fork: applies on_fork to l, r.
+test checked_apply ({v} -> triage 1 ({_} -> 2) ({l, r} -> r) v) (t 7 9) = Ok 9
+
+// Adversarial: triage on a NEUTRAL must fail. This is the rule that
+// blocks reflective is_neutral / is_fork attacks. Note: h is fork-shaped
+// (Hyp builds via wait → fork), so this exercises the triage-fork rule's
+// `neutral_root x` check specifically — not just leaf/stem cases.
+test checked_apply ({v} -> triage 1 ({_} -> 2) ({_l, _r} -> 3) v) h = Fail
+
+// Triage-fork rule: same shape, but the triage's three branches read meta
+// off the neutral. The neutral_root check fires before any branch runs,
+// so the would-be reflective leak is blocked at rule entry.
+test checked_apply ({n} -> triage t ({c} -> c) ({l, r} -> l) n) h = Fail
+
+// ================================================================
+// checked_apply: I-shortcut
+// ================================================================
+
+// Polymorphic identity ({x} -> x) is exactly fork(fork(LEAF, LEAF), LEAF) =
+// canonical I. It must be accepted on a neutral, since that's how Pi
+// checks `id : Nat -> Nat` against a Nat hypothesis.
+test checked_apply ({x} -> x) h = Ok h
+
+// ================================================================
+// checked_check: entry scan
+// ================================================================
+// checked_check scans the term `v` for pre-existing neutrals before
+// invoking checked_apply on (core, v). The `core` is the trusted side
+// (a kernel checker like `Nat` or a Pi predicate) — its embedded
+// neutral-handling capabilities are intentional, and they will be
+// dispatched directly to raw apply by the session-3 dispatcher.
+// (In session 1, checked_apply walks every tree, so smoke tests below
+// use simple user-shaped functions, not actual kernel checkers.)
+
+// Clean inputs pass through.
+test checked_check ({x} -> x) 5 = Ok 5
+test checked_check ({x} -> succ x) 5 = Ok 6
+
+// Forged neutral at top-level rejected by entry scan.
+test checked_check ({x} -> x) h = Fail
+
+// Forged neutral nested inside a fork rejected by entry scan.
+test checked_check ({x} -> x) (t Nat (t h 0)) = Fail
+
+// scan_no_neutral catches LITERAL neutrals embedded in compiled trees.
+// `{_} -> StuckElim (Eq Nat 0 1) t` has both StuckElim args concrete, so
+// compile-time partial evaluation builds the neutral into the function's
+// compiled tree, and the scan sees it.
+test scan_no_neutral ({_} -> StuckElim (Eq Nat 0 1) t) = FF
+
+// Functions that BUILD a neutral dynamically (StuckElim's target arg is
+// the lambda-bound variable, not a compile-time constant) are NOT
+// caught by the static scan — the literal neutral isn't yet in the
+// compiled tree. Dynamic construction is caught at runtime by
+// checked_apply's stem-rule constructor check instead. This test
+// verifies the static-scan limitation.
+test scan_no_neutral ({x} -> StuckElim (Eq Nat 0 1) x) = TT
+
+// Dynamic construction via checked_apply: the function builds a neutral
+// when applied; the stem rule's constructor check fires and Fails.
+test checked_apply ({x} -> StuckElim (Eq Nat 0 1) x) 5 = Fail
+
+// ================================================================
+// Smoke: chained must_ok_* still short-circuits
+// ================================================================
+// CPS chain modeled on handler bodies: each step's failure must propagate
+// without firing later continuations.
+
+let chain_test = {r1, r2, r3} ->
+  must_ok_tt r1 ({u1} ->
+  must_ok_any r2 ({v} ->
+  must_ok_tt r3 ({u3} -> Ok v)))
+
+test chain_test (Ok TT) (Ok 5) (Ok TT) = Ok 5
+test chain_test (Ok FF) (Ok 5) (Ok TT) = Fail
+test chain_test (Ok TT) Fail   (Ok TT) = Fail
+test chain_test (Ok TT) (Ok 5) (Ok FF) = Fail
+test chain_test Fail    (Ok 5) (Ok TT) = Fail

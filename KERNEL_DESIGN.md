@@ -96,7 +96,7 @@ the first projection is the checker signature:
 
 ```disp
 checker_sig checker = pair_fst (wait checker t)
-has_sig checker v   = fast_eq (pair_fst v) (checker_sig checker)
+has_sig checker v   = tree_eq (pair_fst v) (checker_sig checker)
 ```
 
 Signatures are used for recognition:
@@ -189,7 +189,7 @@ Every checker first handles neutrals. The shared helper is:
 
 ```disp
 q_h_rule_fn = {ks, raw, query, self, meta, v} ->
-  fast_eq (wait (ks query) meta) (neutral_type v)
+  tree_eq (wait (ks query) meta) (neutral_type v)
 ```
 
 The caller already checked that `v` is neutral. The helper:
@@ -214,7 +214,7 @@ hypothesis. The result is handled directly:
 - If the result is neutral, compare its stored type with the expected
   codomain.
 - If the result is concrete, apply the expected type predicate to it and
-  normalize the result with `fast_eq(..., TT)`.
+  normalize the result with `tree_eq(..., TT)`.
 
 ## Deferred Branching
 

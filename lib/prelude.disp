@@ -27,6 +27,8 @@ pair_fst := {p} -> triage t ({x} -> x) ({l, r} -> l) p
 pair_snd := {p} -> triage t ({x} -> x) ({l, r} -> r) p
 
 and := {a, b} -> select b FF a
+or  := {a, b} -> select TT b a
+not := {a} -> select FF TT a
 
 // ================================================================
 // wait + fix: tree-calculus recursion
@@ -79,15 +81,22 @@ select_chain := fix ({self, cases, default} ->
 // ================================================================
 
 is_fork := {v} -> triage FF ({_} -> FF) ({l, r} -> TT) v
+is_stem := {v} -> triage FF ({_} -> TT) ({l, r} -> FF) v
+is_leaf := {v} -> triage TT ({_} -> FF) ({l, r} -> FF) v
 
-// tree_eq_spec: canonical recursive structural equality.
-// The host injects an O(1) hash-consing-identity primitive bound to the
-// name `tree_eq`; this spec form is the tree-program implementation of
-// the same predicate. test/tree_eq.test.ts cross-checks them.
-//
+// stem_child: extract the inner of a stem. Caller must check is_stem first;
+// behavior on leaf/fork is unspecified (returns garbage).
+stem_child := {v} -> triage t ({c} -> c) ({l, r} -> l) v
+
+// tree_eq: structural equality on trees.
 // Recursion: leaf=leaf, stem(ax)=stem(bx) iff ax=bx, fork(ax,ay)=fork(bx,by)
 // iff ax=bx and ay=by; otherwise FF.
-tree_eq_spec := fix ({self, a, b} ->
+//
+// The host runtime captures this definition's compiled tree id at boot
+// and uses it to fast-path tree_eq calls to an O(1) hash-cons identity
+// check. The fast-path is an optimization; this recursive form is the
+// canonical specification of the predicate.
+tree_eq := fix ({self, a, b} ->
   triage
     (triage TT ({_} -> FF) ({_l, _r} -> FF) b)
     ({ax} -> triage FF (self ax) ({_l, _r} -> FF) b)
