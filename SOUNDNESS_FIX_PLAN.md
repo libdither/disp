@@ -72,25 +72,34 @@ from observing neutrals' tree structure.
 
 ## `cert_make_neutral`
 
-The certified-minting helper is private to the kernel module:
+The certified-minting helper is private to the kernel module. It
+uses `raw.hyp_reduce` (not `kernel_ref.hyp_reduce`) so that the
+resulting wait-value's signature matches what `is_neutral` /
+`q_is_neutral` test against — see [Bootstrap and Signature
+Conventions](#bootstrap-and-signature-conventions).
+
+Every handler that mints neutrals has access to `raw` (one of the
+three recq-delivered args). Each handler body defines a local alias
+that closes over `raw`, keeping call sites clean:
 
 ```disp
+// At the top of every handler that mints:
 let cert_make_neutral = {ty, payload} ->
-  wait kernel_ref.hyp_reduce (make_neutral_meta ty payload)
+  wait raw.hyp_reduce (make_neutral_meta ty payload)
+let cert_make_hyp     = {domain, identity}     -> cert_make_neutral domain identity
+let cert_make_stuck   = {result_type, target}  -> cert_make_neutral result_type target
 ```
+
+(Why `raw` and not `ks`: `ks.hyp_reduce = wait self hyp_reduce_query`
+has a different stem id from `raw.hyp_reduce`, so `q_is_neutral`
+would not recognize the result. This matches today's `q_make_hyp`
+in `lib/kernel.disp:67` which already uses `raw.hyp_reduce`.)
 
 This is precisely the construction that `checked_apply` rejects when
 evaluated from user code (the inner stem/fork-rule step produces a
 neutral root, which trips the constructor check). It works for the
 kernel because handlers are invoked via raw `apply`, not
 `checked_apply` — the rejection only fires inside `checked_apply`.
-
-The two use sites have aliases for readability:
-
-- `cert_make_hyp domain identity = cert_make_neutral domain identity`
-  for fresh hypotheses minted by Pi/Type checking.
-- `cert_make_stuck result_type target = cert_make_neutral result_type target`
-  for stuck eliminator results.
 
 There is no allowlist entry for `cert_make_*`; they are not callable
 from user code at all. They are not bound to any public name, and
@@ -154,18 +163,41 @@ tree_eq := fix ({self, a, b} ->
 
 Runtime optimization:
 
-- Compile the canonical `tree_eq` once during prelude load. Capture
-  the tree id and bake it into `src/tree.ts` as a constant.
-- In `apply`, when both arguments to `tree_eq` have been supplied,
-  short-circuit to `treeEqual` (hash-cons identity) returning `TT` or
-  `FF`.
-- The marker is the TC term itself, not an arbitrary sentinel.
-  Removing the optimization yields the same answers, just slower.
+- At runtime startup, the prelude loader compiles the canonical
+  `tree_eq` definition (the one in `lib/prelude.disp`) and stores
+  its id in a mutable runtime cell `TREE_EQ_ID`.
+- In `apply`, when `curF` has the partial-application shape
+  `fork(fork(tree_eq_id, _), _)`, short-circuit to `treeEqual`
+  (hash-cons identity) returning `TT` or `FF`.
+- The recognition is by hash-cons id of the canonical tree, not an
+  arbitrary sentinel. Removing the optimization (clearing
+  `TREE_EQ_ID`) yields the same answers, just slower.
 
-**Regression test**: a unit test asserts that compiling the source
-definition produces a tree whose id matches the constant baked into
-`src/tree.ts`. Any change to the canonical definition that shifts
-the id is caught at test time, and the constant gets re-baked.
+Hash-cons ids are deterministic per process but **not** stable
+across runs (they depend on construction order). The fast path is
+keyed off a runtime-captured id, not a baked constant.
+
+**Regression test**:
+
+1. The TC `tree_eq` definition lives in `lib/prelude.disp`.
+2. Add `test/tree_eq_canonical.test.ts` that loads the prelude,
+   constructs a fresh "shadow" `tree_eq` from the same source via a
+   second compile path, and asserts `treeEqual(prelude.tree_eq,
+   shadow_tree_eq)` is true.
+3. The same test exercises the fast path on a few inputs and
+   asserts it returns the same answer as a slow recursive `tree_eq`
+   computed by disabling the fast path (e.g., a debug flag that
+   skips the `TREE_EQ_ID` check).
+
+This catches two failure modes:
+
+- The canonical definition drifts (shadow no longer matches prelude).
+- The fast path lies (returns a different answer from the recursive
+  reduction).
+
+If a future change rewrites `tree_eq` (e.g., for performance), the
+shadow construction in the test must be updated to match. There is
+no baked id to update — the runtime captures the id at startup.
 
 Rename `fast_eq` → `tree_eq` everywhere in `.disp` and `.ts` sources.
 
@@ -228,7 +260,43 @@ Result encoding:
 CheckedResult = Ok Tree | Fail
 Ok := {v} -> t v        // pair(LEAF, v)
 Fail := t (t t)         // pair(stem-leaf, leaf) -- distinguishable from Ok
+
+is_ok    := {r} -> fast_eq (pair_fst r) t        // r matches Ok _
+ok_value := {r} -> pair_snd r                    // valid only when is_ok r
 ```
+
+Two distinct "must succeed" helpers, both continuation-style for
+sequencing inside handler bodies. The difference matters because
+`Ok TT` and `Ok FF` are *both* successful evaluations:
+
+```disp
+// Sub-evaluation must not Fail; the Ok payload is consumed downstream
+// via the continuation and may legitimately be TT or FF or any tree.
+must_ok_any := {r, k} ->
+  select_lazy ({_} -> k (ok_value r)) ({_} -> Fail) (is_ok r)
+
+// Predicate evaluation must succeed AND return TT. Used for "this
+// value really is a Bool", "this branch really inhabits motive(TT)",
+// etc. — anywhere a successful FF would mean "no, validation failed".
+// Continuation takes no useful value (predicate succeeded — the only
+// information was "TT or not"), so it's invoked with t as a unit.
+must_ok_tt := {r, k} ->
+  select_lazy
+    ({_} -> select_lazy ({_} -> k t) ({_} -> Fail) (fast_eq (ok_value r) TT))
+    ({_} -> Fail)
+    (is_ok r)
+```
+
+Handler bodies use `must_ok_tt` for predicate validation (the common
+case) and `must_ok_any` when threading a sub-evaluation result into
+the next step. Mixing these up is a soundness bug: using
+`must_ok_any` where `must_ok_tt` is needed would accept `Ok FF`
+as "checked successfully" and then mint a neutral whose stored type
+came from a value that failed validation.
+
+Both helpers are continuation-style because `Fail` must short-circuit
+the rest of the handler body; without continuations, intermediate
+`Fail` results would have to be threaded by hand at every step.
 
 ### Public Entry
 
@@ -254,28 +322,153 @@ list of recognized signatures is **the security perimeter** — see
 [Dispatch Table](#dispatch-table-as-security-perimeter).
 
 ```disp
-checked_apply f x =
+q_checked_apply_fn = {ks, raw, query} -> fix ({self, f, x} ->
   select_chain
-    (case (has_sig kernel.guard f)        (checked_guard_apply f x)
-    (case (has_sig kernel.pi f)           (checked_pi_apply f x)
-    (case (has_sig kernel.nat f)          (checked_nat_apply f x)
-    (case (has_sig kernel.bool f)         (checked_bool_apply f x)
-    (case (has_sig kernel.eq f)           (checked_eq_apply f x)
-    (case (has_sig kernel.core_type f)    (checked_core_type_apply f x)
-    (case (has_sig kernel.guarded_type f) (checked_guarded_type_apply f x)
-    (case (has_sig kernel.hyp_reduce f)   (checked_hyp_reduce_apply f x)
-    (case (has_sig kernel.bool_rec f)     (checked_bool_rec_apply f x)
-    (case (has_sig kernel.nat_rec f)      (checked_nat_rec_apply f x)
-    (case (has_sig kernel.eq_J f)         (checked_eq_J_apply f x)
-    t)))))))))))
-    checked_raw_apply
-    f x
+    // Neutrals: use raw.hyp_reduce because Hyp/StuckElim store the
+    // raw handler signature (see "Bootstrap and Signature Conventions").
+    (case (has_sig raw.hyp_reduce f)  ({_} -> f x))
+    // Type-formers and eliminators: use ks.X (lazy proxy) because
+    // their public constructors build wait-values via kernel_ref.X,
+    // which has the same hash-cons identity as ks.X.
+    (case (has_sig ks.guard f)        ({_} -> f x))
+    (case (has_sig ks.pi f)           ({_} -> f x))
+    (case (has_sig ks.nat f)          ({_} -> f x))
+    (case (has_sig ks.bool f)         ({_} -> f x))
+    (case (has_sig ks.eq f)           ({_} -> f x))
+    (case (has_sig ks.core_type f)    ({_} -> f x))
+    (case (has_sig ks.guarded_type f) ({_} -> f x))
+    (case (has_sig ks.bool_rec f)     ({_} -> f x))
+    (case (has_sig ks.nat_rec f)      ({_} -> f x))
+    (case (has_sig ks.eq_J f)         ({_} -> f x))
+    // Default: walk apply rules step-by-step.
+    ({_} -> checked_raw_apply self f x))
 ```
+
+`f x` inside a recognized branch is a single raw tree-calculus
+application; the runtime evaluates it via the regular `apply`
+function. This fires the wait-value's checker (`q_pi_fn` etc.) as
+trusted code. The handler body may itself call back into
+`checked_apply` (via `ks.checked_apply`) when it needs to validate
+user-supplied subterms — that is the recursion the dispatcher
+participates in.
 
 Certified handlers may inspect neutral metadata, may use raw
 `tree_eq` internally, and may mint new neutral roots via
 `cert_make_hyp` / `cert_make_stuck`. They are responsible for
 validating all user inputs through `checked_apply` before minting.
+
+**Handler invocation runs via raw `apply`.** When the dispatcher
+selects a handler and writes `f x`, that is raw tree-calculus
+application, *not* a recursive entry into `checked_apply`. Handler
+bodies are trusted code despite being selected from inside the
+checked interpreter. The "rejection of fresh neutral roots" rule
+only fires when reduction happens inside `checked_raw_apply`'s rules
+below — handler bodies bypass that ruleset entirely.
+
+### Shared H-rule helper
+
+Every type checker handles neutrals identically: reconstruct the
+checker's own type via the recq query, hash-cons-compare it to the
+neutral's stored type. This is the existing `q_h_rule_fn` from the
+current kernel, ported as:
+
+```disp
+checked_h_rule self meta v =
+  // Both arguments are kernel-internal:
+  // - `wait (ks query) meta` is the checker reconstructing its own type.
+  // - `neutral_type v` reads from a CERTIFIED neutral (we got here by
+  //   the dispatcher recognizing kernel.hyp_reduce on v).
+  // Raw tree_eq is correct: no user-controlled tree on either side.
+  if tree_eq (wait (ks query) meta) (neutral_type v):
+    Ok TT
+  else:
+    Ok FF
+```
+
+The wrapper returns `Ok TT`/`Ok FF` (predicate result) rather than
+`Fail`, because failing the H-rule is a legitimate "no" answer, not
+an evaluation failure.
+
+### Handler Return Conventions
+
+Two return shapes coexist in the kernel; the convention picks one
+per handler family based on what the public boundary expects:
+
+| Handler family             | Returns           | Why                                         |
+|----------------------------|-------------------|---------------------------------------------|
+| `q_guard_fn`               | bare `TT` / `FF`  | Public predicate boundary; `Nat 1 = TT`     |
+| All other type checkers    | `CheckedResult`   | Composes inside `checked_apply` recursion   |
+| `q_hyp_reduce_fn`          | `CheckedResult`   | Returns `Ok (cert_make_neutral …)`          |
+| Eliminator handlers        | `CheckedResult`   | Wrapper unwraps to bare value (or sentinel) |
+
+**Why `q_guard_fn` is the unwrap point.** The user-facing tests
+(`Nat 1 = TT`) compare against bare `TT`. Public type constructors
+are guarded wait-values (`Nat = wait kernel_ref.guard core_Nat`), so
+any user-mode predicate call dispatches through `q_guard_fn`. Making
+that one handler bare-valued lets every existing predicate test pass
+unchanged. Internal handlers compose through `checked_apply` and
+return `CheckedResult` because their callers (other handlers) want
+the explicit success/failure distinction.
+
+**Eliminator wrapper pattern.** The user-facing eliminator names
+(`bool_rec`, `nat_rec`, `eq_J`, …) are thin wrappers around their
+wait-handlers. The wait-value is inert until applied to one extra
+argument; the wrapper supplies a trigger token (`t` is fine) and
+unwraps the result:
+
+```disp
+bool_rec := {motive, t_case, f_case, target} ->
+  unwrap_value
+    ((wait kernel_ref.bool_rec
+        (make_bool_rec_meta motive t_case f_case target)) t)
+
+unwrap_value := {r} ->
+  select_lazy
+    ({_} -> ok_value r)        // success: return the value the handler computed
+    ({_} -> elim_fail)         // failure: return the sentinel
+    (is_ok r)
+```
+
+`elim_fail` is a kernel-private sentinel. It is `t` for now; any
+downstream use of an `elim_fail` value will likely cause downstream
+type checks to fail loudly, which is the desired behavior. (A more
+informative sentinel — e.g., a wait-value carrying a reason — is a
+future ergonomics improvement, not a correctness one.)
+
+The handler ignores the trigger argument:
+
+```disp
+q_bool_rec_fn = {ks, raw, query} -> {meta, _trigger} ->
+  // ... CheckedResult body, see Certified Eliminators ...
+```
+
+Wrappers run as ordinary user code. Under raw `apply` (a top-level
+`bool_rec` call from a test), the wait-value's checker fires
+directly. Under `checked_apply` (a `bool_rec` call inside a Pi-checked
+body), the dispatcher recognizes `kernel.bool_rec`'s signature and
+routes the same way. Both paths produce `CheckedResult`, and both
+paths feed the same `unwrap_value` step. The user sees a bare value.
+
+**Type-reflection helpers handle the guard transparently.** Helpers
+like `is_pi`, `pi_dom`, `pi_cod_fn`, `is_universe`, `is_eq` are
+public API and currently work on raw wait-values. After the split,
+public types are guarded, so these helpers must look through guard:
+
+```disp
+unguard_or_self T =
+  select_lazy ({_} -> type_meta T) ({_} -> T) (hasguard T)
+
+is_pi      := {T} -> has_sig kernel_ref.pi (unguard_or_self T)
+pi_dom     := {T} -> guard (pi_meta_domain (type_meta (unguard_or_self T)))
+pi_cod_fn  := {T} -> {x} -> guard ((pi_meta_cod_fn (type_meta (unguard_or_self T))) x)
+is_universe := {T} -> has_sig kernel_ref.guarded_type (unguard_or_self T)
+is_eq      := {T} -> has_sig kernel_ref.eq (unguard_or_self T)
+```
+
+`pi_dom` re-wraps the core domain in `guard` because public callers
+expect `pi_dom (Pi Nat (...)) = Nat`, and `Nat` is the guarded form.
+Hash-consing makes `guard core_Nat` and `Nat` identical, so the
+existing test `pi_dom (Pi Nat ({_} -> Nat)) = Nat` keeps passing.
 
 ### Raw Rules
 
@@ -347,6 +540,26 @@ deep `contains_neutral` scan up front, then the runtime fast path on
 neutral-free trees). This is a future optimization, not part of
 correctness. The simpler "let the recursion handle it" path lands
 first.
+
+**Hard correctness requirement on the optimization, if added:**
+
+1. The `contains_neutral` scan must run on **both** arguments before
+   any fast-path call. A neutral in only one side still has to fail.
+2. A neutral-containing argument must produce **`Fail`**, not
+   `Ok FF`. Returning `Ok FF` would let user code distinguish
+   "neutrals are unequal" from "neutrals can't be compared", which
+   is itself a reflective channel — `select X Y (tree_eq n m)` could
+   then branch on neutral structure even though no triage ever
+   touches the neutral.
+3. The fast path is only valid when both arguments pass the scan.
+   The natural place to plug it in is at the top of
+   `checked_apply f x` when `f = fork(fork(tree_eq_marker, a), nothing)`
+   and `x` is the second argument: scan `a` and `x`; on success, call
+   the runtime `treeEqual`; on either-side neutral, return `Fail`.
+
+Promoting this paragraph from a residual risk to an inline contract
+because the optimization is cheap to mis-implement and silently
+unsoundifying when it goes wrong.
 
 Certified handlers use raw `tree_eq` (via the runtime fast path)
 directly. They run via raw `apply`, not `checked_apply`, so the
@@ -422,17 +635,31 @@ neutral type variable. A closed forged neutral cannot reach this
 path because public guard entry rejects pre-existing neutrals and
 raw checked evaluation cannot mint new ones.
 
-The guard handler:
+The guard handler is the public unwrap point — the only handler
+that returns bare `TT`/`FF` rather than `CheckedResult` (see
+[Handler Return Conventions](#handler-return-conventions)):
 
 ```disp
-checked_guard_apply guard_value v =
-  let core = type_meta guard_value
-  checked_check core v
+q_guard_fn = {ks, raw, query} -> {self, core, v} ->
+  // PUBLIC PREDICATE — returns BARE TT/FF.
+  select_lazy
+    ({_} ->
+      // v passed entry scan: run the core predicate via checked_apply
+      // and unwrap CheckedResult to bare TT/FF.
+      let r = ks.checked_apply core v
+      select_lazy
+        ({_} ->
+          select_lazy ({_} -> TT) ({_} -> FF) (tree_eq (ok_value r) TT))
+        ({_} -> FF)
+        (is_ok r))
+    ({_} -> FF)
+    (scan_no_neutral v)
 ```
 
 So public raw-looking application still has the desired behavior:
 `Nat v` means "scan `v` for closed forged neutrals, then
-checked-evaluate the core Nat predicate on `v`."
+checked-evaluate the core Nat predicate on `v`, then unwrap to
+bare TT/FF."
 
 ## Type Constructors
 
@@ -440,14 +667,30 @@ Keep the current mutually recursive kernel predicates as core
 predicates, but export guarded public constructors:
 
 ```disp
-Nat = guard (wait kernel_ref.nat t)
-Bool = guard (wait kernel_ref.bool t)
-Eq = {A, x, y} -> guard (wait kernel_ref.eq
-  (make_eq_meta (unguard_checked A) x y))
-Pi = {A, B} -> guard (wait kernel_ref.pi
-  (make_pi_meta (unguard_checked A) ({x} -> unguard_checked (B x))))
-Arrow = {A, B} -> Pi A ({_} -> B)
+// Cores — wait-values without guard. Used internally; never exposed
+// as a "type" in user-facing code.
+core_Nat   := wait kernel_ref.nat t
+core_Bool  := wait kernel_ref.bool t
+core_Eq    := {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
+core_Pi    := {A, B} -> wait kernel_ref.pi (make_pi_meta A B)
+
+// Public guarded constructors. unguard_checked accepts both guarded
+// public types and certified neutral type variables, which lets
+// closed parsed types and hypothesis-introduced types both work.
+Nat   := guard core_Nat
+Bool  := guard core_Bool
+Eq    := {A, x, y} -> guard (core_Eq (unguard_checked A) x y)
+Pi    := {A, B} -> guard (core_Pi (unguard_checked A) ({x} -> unguard_checked (B x)))
+Arrow := {A, B} -> Pi A ({_} -> B)
 ```
+
+Pi metadata stores the **core** domain and a codomain function
+returning **cores**. This is what makes internal recursive type
+checking work: when the Pi handler does
+`ks.checked_apply expected result`, `expected` is a core type, so
+dispatch goes directly to `q_eq_fn` / `q_nat_fn` / etc. — never
+through `q_guard_fn`, whose entry scan would reject embedded
+certified neutrals.
 
 When these constructors are used in closed parsed types,
 `unguard_checked` behaves like `unguard_public`. When used under
@@ -467,26 +710,102 @@ guarded_type n  // public source-level types (must be guarded)
 in `Type 0`; core Eq A x y lives in the same universe as A; core Pi
 A B lives in max(level A, level B); core `guarded_type m` lives in
 `core_type (succ m)`; certified neutral type variables are accepted
-via the H-rule.
+via a stored-type rank check.
 
 ```disp
-checked_guarded_type_apply (guarded_type n) T =
-  if neutral_root T:
-    checked_h_rule (guarded_type n) T
-  else:
-    and (hasguard T)
-        (checked_apply (core_type n) (unguard_public T))
+q_core_type_fn = {ks, raw, query} -> fix ({self, rank, ty} ->
+  select_lazy
+    ({_} ->
+      // ty is a certified neutral type variable.
+      // Stored type must be `wait ks.core_type k` for some k ≤ rank.
+      let stored = neutral_meta_type (type_meta ty)
+      select_lazy
+        ({_} ->
+          select_lazy
+            ({_} -> Ok TT)
+            ({_} -> Ok FF)
+            (nat_le (type_meta stored) rank))
+        ({_} -> Ok FF)
+        (has_sig ks.core_type stored))
+    ({_} ->
+      // Concrete dispatch on ty's signature.
+      select_chain
+        // ty = wait ks.guarded_type k (universe core)
+        (case (has_sig ks.guarded_type ty)
+          ({_} -> Ok (nat_lt (type_meta ty) rank)))
+        // ty = wait ks.core_type k (defensive — shouldn't appear publicly)
+        (case (has_sig ks.core_type ty)
+          ({_} -> Ok (nat_lt (type_meta ty) rank)))
+        // ty = wait ks.pi (make_pi_meta dom codFn)
+        (case (has_sig ks.pi ty)
+          ({_} -> {
+            let tm = type_meta ty
+            let dom = pi_meta_domain tm
+            let codFn = pi_meta_cod_fn tm
+            must_ok_tt (wait self rank dom) ({_} -> {
+              let hyp = cert_make_hyp dom tm   // raw: mint
+              must_ok_tt (wait self rank (codFn hyp)) ({_} -> Ok TT)})}))
+        // ty = wait ks.eq (make_eq_meta A x y)
+        (case (has_sig ks.eq ty)
+          ({_} -> {
+            let tm = type_meta ty
+            let A = eq_meta_type tm
+            must_ok_tt (wait self rank A) ({_} ->
+            must_ok_tt (ks.checked_apply A (eq_meta_lhs tm)) ({_} ->
+            must_ok_tt (ks.checked_apply A (eq_meta_rhs tm)) ({_} -> Ok TT)))}))
+        // Canonical core Nat / Bool — both live in core_type 0
+        (case (is_registered_base ks ty)
+          ({_} -> Ok TT))
+        // No match
+        ({_} -> Ok FF))
+    (neutral_root ty)))
 
-Type n = guard (wait kernel_ref.guarded_type n)
+is_registered_base := {ks, ty} ->
+  select TT (tree_eq ty (wait ks.bool t)) (tree_eq ty (wait ks.nat t))
 ```
 
-Internal recursive universe checks must use `checked_apply`, not
-public `Type n`, so they can validate codomains containing certified
-neutral type variables.
+```disp
+q_guarded_type_fn = {ks, raw, query} -> {self, rank, T} ->
+  select_lazy
+    ({_} -> checked_h_rule self rank T)
+    ({_} ->
+      // T must be guarded AND its core must be in core_type rank.
+      select_lazy
+        ({_} ->
+          let core = type_meta T   // raw: kernel-recognized guard wait-value
+          ks.checked_apply (wait ks.core_type rank) core)
+        ({_} -> Ok FF)
+        (hasguard T))
+    (neutral_root T))
+
+Type n := guard (wait kernel_ref.guarded_type n)
+```
+
+Internal recursive universe checks must use `ks.checked_apply` on
+core types, not the public `Type n`, so they can validate codomains
+containing certified neutral type variables. The Pi case in
+`q_core_type_fn` mints a fresh `cert_make_hyp` and recurses on the
+codomain at that hypothesis — exactly the same pattern as the
+existing `q_type_fn`.
 
 ## Pi Handler
 
 Rewrite so all adversarial applications run through `checked_apply`.
+
+`fresh_id pi_type` is the identity payload for the hypothesis. Today's
+kernel uses the Pi metadata itself as identity (`lib/kernel.disp:105`:
+`q_make_hyp raw (pi_meta_domain meta) meta`); hash-consing makes that
+metadata stable per Pi binding. The plan uses the same definition,
+just renamed:
+
+```disp
+fresh_id pi_type = type_meta pi_type
+```
+
+No counter is needed and no counter would be safe — the H-rule
+reconstructs the checker's own type via `wait (ks query) meta`, so
+`meta` is exactly the value that must remain hash-cons-stable across
+the binding.
 
 ```disp
 checked_pi_apply pi_type v =
@@ -494,91 +813,251 @@ checked_pi_apply pi_type v =
     checked_h_rule pi_type v
   else:
     let domain = pi_meta_domain (type_meta pi_type)
-    let codFn = pi_meta_cod_fn (type_meta pi_type)
-    let hyp = cert_make_hyp domain (fresh_id pi_type)
-    let result_r = checked_apply v hyp
+    let codFn  = pi_meta_cod_fn (type_meta pi_type)
+    let hyp    = cert_make_hyp domain (fresh_id pi_type)  // raw: kernel-minted neutral
+    let result_r   = checked_apply v hyp
     let expected_r = checked_apply codFn hyp
-    if either is Fail: FF
-    else if neutral_root (ok_value result_r):
-      tree_eq (ok_value expected_r) (neutral_type (ok_value result_r))
-    else:
-      tree_eq (checked_apply (ok_value expected_r) (ok_value result_r)) (Ok TT)
+    must_ok_any result_r ({result} ->
+      must_ok_any expected_r ({expected} ->
+        if neutral_root result:
+          // result is a certified neutral: compare its stored type
+          // (kernel-internal data) against the codomain (also kernel-
+          // built at this point). raw tree_eq is correct.
+          if tree_eq expected (neutral_type result): Ok TT else: Ok FF
+        else:
+          // result is concrete: run the codomain checker on it.
+          checked_apply expected result))
 ```
 
-`cert_make_hyp` is trusted code that may construct a neutral root
-directly via raw `apply`.
+`cert_make_hyp` is trusted code that constructs a neutral root via
+raw `apply` (it expands to `wait kernel.hyp_reduce ...`, which the
+runtime reduces to a fork — uninterceptable from inside
+`checked_apply` because handler bodies don't dispatch through it).
+
+Note that the inner `checked_apply expected result` returns
+`CheckedResult`, which is exactly what the outer `must_ok_any`
+chain expects — the predicate's `Ok TT` / `Ok FF` propagates
+naturally.
 
 ## Hyp Reduce Handler
 
 The certified interpreter for applying a neutral to an argument:
 
 ```disp
-checked_hyp_reduce_apply neutral arg =
-  let current_type = neutral_type neutral
-  if is_pi current_type:
-    let codFn = pi_cod_fn current_type
-    let result_type_r = checked_apply codFn arg
-    if result_type_r is Fail: Fail
-    else: Ok (cert_make_neutral
-      (ok_value result_type_r)
-      (extend_payload (type_meta neutral) arg))
-  else:
-    Ok (cert_make_neutral InvalidType
-      (extend_payload (type_meta neutral) arg))
+q_hyp_reduce_fn = {ks, raw, query} -> fix ({self, meta, arg} -> {
+  let current_type = neutral_meta_type meta   // raw: kernel-built meta
+  select_lazy
+    ({_} ->
+      // current_type has Pi signature: extend with codFn(arg).
+      let codFn = pi_meta_cod_fn (type_meta current_type)
+      must_ok_any (ks.checked_apply codFn arg) ({result_type} ->
+        Ok (cert_make_neutral                  // raw: mint
+          result_type
+          (neutral_app_payload meta arg))))
+    ({_} ->
+      // current_type isn't Pi: result has InvalidType.
+      Ok (cert_make_neutral InvalidType
+        (neutral_app_payload meta arg)))
+    (has_sig ks.pi current_type)
+})
 ```
+
+`current_type` is the neutral's stored type, supplied by
+`cert_make_hyp` (originally a public Pi or core type) or computed by
+a previous step (kernel-controlled). It never originates from raw
+user code, so reading it via raw helpers is safe.
+
+`neutral_app_payload meta arg = t meta arg` is the existing helper
+from `lib/kernel.disp:34`. The payload preserves identity across the
+spine: `f 0` and `f 1` remain different neutrals even when both have
+type `Nat`.
 
 ## Nat, Bool, Eq Handlers
 
-Concrete cases unchanged; recursive/dependent checks all use
-`checked_apply`:
+All three follow the same shape: H-rule on neutral candidate;
+concrete dispatch otherwise; recursive sub-checks via `ks.checked_apply`.
 
-- Neutral candidate → H-rule.
-- Concrete Nat successor → recurse via certified Nat handler.
-- Eq with `refl` → check lhs equal rhs via *internal* `tree_eq` (not
-  user-mode).
-- Eq metadata containing terms requiring check against A → use
-  `checked_apply A x`.
+```disp
+q_nat_fn = {ks, raw, query} -> fix ({self, meta, n} ->
+  select_lazy
+    ({_} -> checked_h_rule self meta n)
+    ({_} ->
+      // Concrete dispatch: leaf=zero | fork(t, n')=succ | else=Ok FF
+      select_lazy
+        ({_} -> Ok TT)                          // n = leaf (zero)
+        ({_} ->
+          select_lazy
+            ({_} ->
+              // n is fork; check pair_fst = t (succ marker)
+              select_lazy
+                ({_} -> wait self meta (pair_snd n))   // recurse on predecessor
+                ({_} -> Ok FF)
+                (tree_eq (pair_fst n) t))
+            ({_} -> Ok FF)
+            (is_fork n))
+        (tree_eq n t))
+    (neutral_root n))
+```
+
+```disp
+q_bool_fn = {ks, raw, query} -> {self, meta, b} ->
+  select_lazy
+    ({_} -> checked_h_rule self meta b)
+    ({_} ->
+      select_lazy
+        ({_} -> Ok TT)                          // b = TT (leaf)
+        ({_} ->
+          select_lazy
+            ({_} -> Ok TT)                      // b = FF (stem of leaf)
+            ({_} -> Ok FF)
+            (tree_eq b FF))
+        (tree_eq b TT))
+    (neutral_root b)
+```
+
+```disp
+q_eq_fn = {ks, raw, query} -> {self, meta, p} ->
+  select_lazy
+    ({_} -> checked_h_rule self meta p)
+    ({_} ->
+      // p must be refl (leaf). Check stored lhs == rhs structurally.
+      select_lazy
+        ({_} ->
+          select_lazy
+            ({_} -> Ok TT)
+            ({_} -> Ok FF)
+            (tree_eq (eq_meta_lhs meta) (eq_meta_rhs meta)))
+        ({_} -> Ok FF)
+        (tree_eq p t))
+    (neutral_root p))
+```
+
+The `tree_eq (eq_meta_lhs meta) (eq_meta_rhs meta)` call merits a
+note. The Eq metadata stores `lhs` and `rhs` as user-supplied terms.
+At the public boundary, the guard's `scan_no_neutral` step has
+already verified those terms contain no forged neutrals. During
+internal Pi/Type checking, they may legitimately contain certified
+neutrals (e.g., `Pi Nat ({n} -> Eq Nat n n)`). Raw `tree_eq` (the
+runtime hash-cons fast path) is correct for both: structurally
+identical trees with embedded certified neutrals share hash-cons
+identity exactly when their neutrals do, which is exactly when they
+are the same dependent term.
 
 ## Certified Eliminators
 
-Replace raw eliminator definitions with wait-based certified
-handlers:
+Metadata layout (4-tuple, same shape pattern as Pi/Eq metadata —
+nested `t` pairs):
 
 ```disp
-bool_rec = {motive, t_case, f_case, target} ->
-  wait kernel_ref.bool_rec
-    (make_bool_rec_meta motive t_case f_case target)
+make_bool_rec_meta := {motive, t_case, f_case, target} ->
+  t motive (t t_case (t f_case target))
+
+bool_rec_meta_motive := {m} -> pair_fst m
+bool_rec_meta_t_case := {m} -> pair_fst (pair_snd m)
+bool_rec_meta_f_case := {m} -> pair_fst (pair_snd (pair_snd m))
+bool_rec_meta_target := {m} -> pair_snd (pair_snd (pair_snd m))
 ```
 
-Handler obligations (illustrative):
+`nat_rec` and `eq_J` use the same nesting style with their own
+field counts (`motive, base, step, target` for `nat_rec`; `A, x,
+motive, base, y, p` for `eq_J`).
+
+User-facing wrapper (per [Handler Return Conventions](#handler-return-conventions)):
 
 ```disp
-checked_bool_rec_apply rec_value _ =
-  let m = read_meta rec_value
-  let motive = m.motive
-  let t_case = m.t_case
-  let f_case = m.f_case
-  let target = m.target
+bool_rec := {motive, t_case, f_case, target} ->
+  unwrap_value
+    ((wait kernel_ref.bool_rec
+        (make_bool_rec_meta motive t_case f_case target)) t)
+```
+
+The trailing `t` is the trigger arg; the handler ignores it and
+dispatches on `meta`. The `unwrap_value` wrapper turns the
+handler's `CheckedResult` into a bare value (or `elim_fail`) for
+user-facing use.
+
+Handler (returns `CheckedResult`; `must_ok_tt` for predicate
+validation, `must_ok_any` to thread a sub-evaluation result):
+
+```disp
+q_bool_rec_fn = {ks, raw, query} -> {meta, _trigger} -> {
+  let motive = bool_rec_meta_motive meta   // raw: kernel-built meta
+  let t_case = bool_rec_meta_t_case meta
+  let f_case = bool_rec_meta_f_case meta
+  let target = bool_rec_meta_target meta
+
   // (1) target is a Bool
-  must_ok (checked_apply Bool target)
+  must_ok_tt (ks.checked_apply core_Bool target) ({_} ->
+
   // (2) branches inhabit motive at TT and FF
-  let tT = checked_apply motive TT
-  let fT = checked_apply motive FF
-  must_ok (checked_apply (ok_value tT) t_case)
-  must_ok (checked_apply (ok_value fT) f_case)
-  // (3) dispatch
-  if tree_eq target TT: Ok t_case
-  else if tree_eq target FF: Ok f_case
-  else if neutral_root target:
-    let result_type_r = checked_apply motive target
-    must_ok (checked_apply (Type rank) (ok_value result_type_r))
-    Ok (cert_make_neutral (ok_value result_type_r) target)
-  else: Fail
+  must_ok_any (ks.checked_apply motive TT) ({tT_type} ->
+  must_ok_any (ks.checked_apply motive FF) ({fT_type} ->
+  must_ok_tt  (ks.checked_apply tT_type t_case) ({_} ->
+  must_ok_tt  (ks.checked_apply fT_type f_case) ({_} ->
+
+  // (3) dispatch on a target that has now been validated as a Bool
+  //     (so it is TT, FF, or a certified neutral with stored type Bool)
+  select_lazy
+    ({_} -> Ok t_case)
+    ({_} -> select_lazy
+      ({_} -> Ok f_case)
+      ({_} ->
+        // certified-neutral case
+        must_ok_any (ks.checked_apply motive target) ({result_type} ->
+          // motive : Bool -> core_type rank, so motive(target) is
+          // already a core type at the right rank. Re-validate via
+          // the *internal* core_type checker — NOT the public Type
+          // rank, because result_type may legitimately contain
+          // certified neutral type variables that the public guard
+          // scan would reject. The rank used here is the eliminator's
+          // ambient rank; we conservatively pick the largest rank
+          // that motive could have produced, which equals the rank
+          // stored in motive's wait-shape if it is a Pi returning
+          // (core_type k); otherwise treat as failure.
+          must_ok_any (motive_result_rank motive) ({rank} ->
+            must_ok_tt
+              (ks.checked_apply (wait ks.core_type rank) result_type)
+              ({_} -> Ok (cert_make_neutral result_type target)))))
+      (tree_eq target FF))
+    (tree_eq target TT)
+  )))))
+}
+
+// Inspect motive : Bool -> core_type k to recover k. If motive isn't
+// a Pi-with-core_type-codomain, return Fail.
+motive_result_rank := {motive} ->
+  select_lazy
+    ({_} -> {
+      let cod = pi_meta_cod_fn (type_meta motive) TT
+      select_lazy
+        ({_} -> Ok (type_meta cod))
+        ({_} -> Fail)
+        (has_sig kernel_ref.core_type cod)})
+    ({_} -> Fail)
+    (has_sig kernel_ref.pi motive)
 ```
+
+Three things to call out:
+
+1. `must_ok_tt` vs `must_ok_any` — every predicate check uses
+   `must_ok_tt` (an `Ok FF` is a validation failure that must
+   propagate as `Fail`); every "compute a sub-result and use it" uses
+   `must_ok_any`. Mixing these up silently accepts `Ok FF` from a
+   predicate, defeating validation.
+2. `wait ks.core_type rank`, **not** `Type rank`. Public `Type rank`
+   is guarded; calling it on a `result_type` that contains a
+   certified neutral type variable would be rejected by the entry
+   scan inside `q_guard_fn`. Internal universe checks must use
+   `core_type` directly. (See [Universes](#universes).)
+3. Both `tree_eq target TT` and `tree_eq target FF` happen *after*
+   the Bool validation in step (1). Comparing `target` to a known
+   constant via raw `tree_eq` is safe here because step (1) ruled
+   out the case where `target` would carry an unobservable neutral.
 
 `nat_rec`, `eq_J`, `eq_subst`, `eq_sym`, `eq_cong` follow the same
 pattern: validate target, validate branches against the motive at the
-relevant points, validate result type, then mint or dispatch.
+relevant points, validate result type via `core_type`, then mint or
+dispatch.
 
 The current raw versions (lib/kernel.disp:283-347) construct
 `StuckElim` directly and must be deleted. Under `checked_apply`, those
@@ -652,7 +1131,11 @@ handlers).
 
 ## Kernel Edit Checklist
 
-1. **Result encoding**: `Ok`, `Fail`, `is_ok`, `ok_value`, `must_ok`.
+1. **Result encoding**: `Ok`, `Fail`, `is_ok`, `ok_value`,
+   `must_ok_any` (sub-evaluation must not fail; payload may be any
+   tree), `must_ok_tt` (predicate evaluation must succeed AND return
+   `TT`). See [Checked Apply](#checked-apply) for definitions; do not
+   collapse into a single `must_ok` helper.
 2. **Tighten `is_neutral`** to require fork shape. Add unit tests for
    `is_neutral (stem sig) = FF`.
 3. **Rename `fast_eq` → `tree_eq`** across all `.disp` and `.ts`
@@ -661,7 +1144,12 @@ handlers).
    compiled tree id (replacing `FAST_EQ_MARKER`).
 4. **Trusted helpers**: `neutral_root`, `contains_neutral`,
    `scan_no_neutral`.
-5. **`checked_apply`** as a TC interpreter with all rules above.
+5. **`checked_apply`** as a TC interpreter with all rules above,
+   added to the kernel `recq` record alongside the existing
+   handlers (see [Kernel Record Shape](#kernel-record-shape)).
+   Define `cert_make_neutral` / `cert_make_hyp` / `cert_make_stuck`
+   as private kernel helpers (not bound to any user-reachable name)
+   and `checked_h_rule` / `fresh_id` per their definitions above.
    Recognize the canonical `I` via `tree_eq f I_canonical` (the
    runtime fast path keeps this O(1)). `tree_eq` itself does *not*
    need explicit recognition in `checked_apply` — its TC reduction
@@ -669,14 +1157,24 @@ handlers).
 6. **Guard API**: `guard`, `hasguard`, `unguard_public`,
    `unguard_checked`.
 7. **Split `type` into `core_type` and `guarded_type`**.
-8. **Rewrite public constructors**: `Nat`, `Bool`, `Eq`, `Pi`,
-   `Arrow`, `Type`.
-9. **Rewrite handlers**: `q_pi_fn`, `q_type_fn`,
-   `q_hyp_reduce_fn`, `q_nat_fn`, `q_bool_fn`, `q_eq_fn` to use
-   checked application at every adversarial boundary. Move to the
-   certified-handler wait shape.
+8. **Rewrite public constructors**: `core_X` cores plus guarded
+   `Nat`, `Bool`, `Eq`, `Pi`, `Arrow`, `Type`. Update reflection
+   helpers (`is_pi`, `pi_dom`, `pi_cod_fn`, `is_universe`, `is_eq`)
+   to look through guard via `unguard_or_self` so existing
+   reflection tests keep passing.
+9. **Rewrite handlers**: `q_guard_fn`, `q_pi_fn`, `q_hyp_reduce_fn`,
+   `q_nat_fn`, `q_bool_fn`, `q_eq_fn`, `q_core_type_fn`,
+   `q_guarded_type_fn`, `q_checked_apply_fn` to use checked
+   application at every adversarial boundary. Concrete sketches in
+   the "Hyp Reduce / Nat, Bool, Eq / Universes / Pi Handler /
+   Certified Dispatch" sections. `q_guard_fn` is the only handler
+   that returns bare `TT`/`FF`; all others return `CheckedResult`.
 10. **Replace raw eliminators** with certified wait handlers:
     `bool_rec`, `nat_rec`, `eq_J`, `eq_subst`, `eq_sym`, `eq_cong`.
+    Each ships a user-facing wrapper that supplies a trigger arg
+    (`t`) and unwraps the resulting `CheckedResult` via
+    `unwrap_value`. Add `make_X_meta` / `X_meta_field` helpers
+    per [Certified Eliminators](#certified-eliminators).
 11. **Remove `Hyp` / `StuckElim`** from the public API (or rename to
     `unsafe_*`).
 12. **Update the elaborator** so typed annotations are checked by
@@ -814,6 +1312,18 @@ Avoid a linear `allowed_neutrals` set.
   on the user-code-only path. Kernel internals (certified handlers)
   stay at native speed.
 
+The 10-50× estimate assumes user code dominated by ordinary apply
+steps. The picture is worse for code dominated by `tree_eq` calls:
+without the fast-path optimization, every user-mode `tree_eq a b`
+runs the full TC recursion, which is O(min(|a|, |b|)) tree steps
+per call — versus O(1) hash-cons identity in the runtime. Once
+`Eq`-heavy proofs land that compare large terms (e.g., normalized
+`add` results), the optional fast path moves from "future
+optimization" to "probably necessary" in practice. Implementers
+should plan to enable it shortly after the simple path lands,
+subject to the correctness contract spelled out in
+[`tree_eq` in Checked Mode](#tree_eq-in-checked-mode).
+
 The expected total overhead is proportional to public-entry tree size
 plus the size of evaluation steps in user code, not proportional to
 the number of hypotheses created during checking.
@@ -841,7 +1351,9 @@ risks are implementation mistakes:
 These should be covered by the [required tests](#required-tests)
 before considering the fix complete.
 
-## Kernel Record Shape
+## Bootstrap and Signature Conventions
+
+### Record shape
 
 The closed kernel record grows from
 `{hyp_reduce, pi, nat, bool, eq, type}` to:
@@ -854,12 +1366,105 @@ The closed kernel record grows from
   core_type             // formerly `type`
   guarded_type          // new — public universe
   bool_rec, nat_rec, eq_J  // new — certified eliminators (formerly raw)
+  checked_apply         // new — the TC interpreter itself
 }
 ```
 
+### Bootstrap
+
+```disp
+kernel := recq {
+  hyp_reduce    := q_hyp_reduce_fn;
+  guard         := q_guard_fn;
+  pi            := q_pi_fn;
+  nat           := q_nat_fn;
+  bool          := q_bool_fn;
+  eq            := q_eq_fn;
+  core_type     := q_core_type_fn;
+  guarded_type  := q_guarded_type_fn;
+  bool_rec      := q_bool_rec_fn;
+  nat_rec       := q_nat_rec_fn;
+  eq_J          := q_eq_J_fn;
+  checked_apply := q_checked_apply_fn
+}
+
+kernel_ref := {q} -> wait kernel q
+checked_apply := kernel.checked_apply       // public re-export
+```
+
+`recq` makes ordering inside the record body irrelevant. Handler
+bodies receive `(ks, raw, query)` and reference other fields via
+`ks.field`, which evaluates to `wait self field_query` — inert until
+applied. The cycle is resolved on demand:
+
+- `q_checked_apply_fn` references `ks.pi`, `ks.nat`, `ks.bool`, … to
+  compute their signatures during dispatch.
+- `q_pi_fn`, `q_nat_fn`, … reference `ks.checked_apply` to validate
+  user-supplied subterms.
+- `q_hyp_reduce_fn` references `ks.pi` to test whether the neutral's
+  stored type is a Pi.
+
+None of these references force evaluation at recq-build time; each
+fires only when a real argument arrives.
+
+### `raw` vs `ks.field` for signatures
+
+Two different signature shapes exist in the kernel. Picking the
+wrong one for a dispatch case silently mismatches every value of
+that family.
+
+| Constructor                      | Signature used by checker      | Use which inside handlers |
+|----------------------------------|--------------------------------|---------------------------|
+| `Hyp ty id` / `StuckElim r tg`   | `kernel.hyp_reduce` (raw)      | `raw.hyp_reduce`          |
+| `Pi A B` / `core_Pi A B`         | `kernel_ref.pi` (proxy)        | `ks.pi`                   |
+| `Nat`, `Bool`, `Eq`, `Type n`    | `kernel_ref.X` (proxy)         | `ks.X`                    |
+| eliminator wait-values           | `kernel_ref.X_rec` (proxy)     | `ks.X_rec`                |
+
+Hypotheses must store the `raw` (actual recq-resolved) handler
+identity because `checked_hyp_reduce_apply` IS the runtime that fires
+when neutrals are applied — there is no proxy indirection at that
+layer. Type formers and eliminators all use the proxy form; the
+public constructors uniformly write `wait kernel_ref.X meta`, so
+inside handlers the matching projection is `ks.X` (which has the
+same hash-cons identity).
+
+This is exactly the convention the existing kernel already uses
+(`q_is_neutral` uses `raw`; `is_pi`/`is_universe`/`is_eq` use
+`kernel_ref`) — the new dispatch table just makes the same two
+flavors explicit.
+
+### Worked dispatch example
+
+`(Pi Nat ({_} -> Nat)) ({x} -> x)`:
+
+1. Raw apply on the outer Pi value. `Pi Nat (…)` is `guard (wait
+   kernel_ref.pi (make_pi_meta core_Nat (…)))`. Outermost is `guard`
+   wait-value; raw apply fires `q_guard_fn` with `(core, v)`, where
+   `core = wait kernel_ref.pi …` and `v = ({x} -> x)`.
+2. `q_guard_fn` runs `scan_no_neutral v` (passes — no embedded
+   neutrals), then `ks.checked_apply core v`.
+3. `q_checked_apply_fn` checks signatures. `pair_fst core =
+   stem(wait kernel pi_query)`. `pair_fst (wait ks.pi t) =
+   stem(wait self pi_query)` = same id (kernel ≡ self under recq).
+   `has_sig ks.pi core = TT`. Dispatch fires: just `core v` via raw
+   apply.
+4. `core v` reduces via raw apply: `(wait kernel_ref.pi meta) v` =
+   `kernel_ref.pi meta v`. recq projection invokes `q_pi_fn` with
+   recq's wrap args, then applies `(meta, v)`. Handler runs.
+5. Handler mints `cert_make_hyp core_Nat meta`, validates body,
+   returns `Ok TT`.
+6. Back in `q_guard_fn`, `is_ok r = TT` and `ok_value r = TT`, so
+   the unwrap returns bare `TT`. Test sees `TT`.
+
+Every cross-field call is `f x` (raw apply); `recq` guarantees
+field selection produces hash-cons-stable trees so signatures match.
+
+### Eliminators as standalone derivations
+
 `eq_subst`, `eq_sym`, `eq_cong` either become additional certified
 handlers in the kernel or are derived combinators built on top of
-`eq_J`. The latter is preferable if it simplifies the perimeter.
+`eq_J`. The latter is preferable if it simplifies the perimeter:
+fewer dispatch-table entries means a smaller security review surface.
 
 ## Out of Scope
 
