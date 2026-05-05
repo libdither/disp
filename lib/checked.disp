@@ -49,28 +49,9 @@ must_ok_tt := {r, k} ->
 // ================================================================
 // Tree predicates
 // ================================================================
-// neutral_root: a fork whose pair_fst is the canonical hyp_reduce signature.
-// Equivalent to is_neutral after the post-tightening fork-shape requirement,
-// re-aliased here for documentation in the checked-apply context.
-neutral_root := is_neutral
-
-// contains_neutral: recursive scan for any neutral-rooted subtree.
-contains_neutral := fix ({self, x} ->
-  match (neutral_root x) {
-    TT => TT
-    FF => match (is_fork x) {
-      TT => or (self (pair_fst x)) (self (pair_snd x))
-      FF => match (is_stem x) {
-        TT => self (stem_child x)
-        FF => FF
-      }
-    }
-  })
-
-// scan_no_neutral: TT iff x is free of any neutral subterm. Used at the
-// public entry boundary (q_guard_fn / checked_check) to reject pre-existing
-// neutrals before checked_apply walks the term.
-scan_no_neutral := {x} -> not (contains_neutral x)
+// neutral_root, contains_neutral, scan_no_neutral now live in kernel.disp
+// (they need is_neutral / kernel.hyp_reduce, so they belong there). They
+// are brought into scope via `open use "kernel.disp"` above.
 
 // ================================================================
 // Certified neutral construction (kernel-internal)

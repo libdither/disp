@@ -64,13 +64,61 @@ InvalidType := FF
 // pair_fst(stem(c)) = c. Without is_fork, stem(canonical_sig) would pass
 // the signature check. Legitimate neutrals are wait-encoded values, which
 // are always forks.
-let q_is_neutral = {raw : {hyp_reduce,pi,nat,bool,eq,type}, x} ->
+let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, x} ->
   and (is_fork x) (has_sig raw.hyp_reduce x)
 
 // q_make_hyp: construct a hypothesis neutral.
 // Result: wait(hyp_reduce_handler)(make_neutral_meta(type, identity))
-let q_make_hyp = {raw : {hyp_reduce,pi,nat,bool,eq,type}, ty, identity} ->
+let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, ty, identity} ->
   wait raw.hyp_reduce (make_neutral_meta ty identity)
+
+// q_contains_neutral / q_scan_no_neutral: private versions of the public
+// scan helpers that take `raw` directly. Used inside handler bodies where
+// the public is_neutral isn't yet bound (forward-reference). Functionally
+// identical to the public scan_no_neutral.
+let q_contains_neutral = fix ({self, raw, x} ->
+  match (q_is_neutral raw x) {
+    TT => TT
+    FF => match (is_fork x) {
+      TT => or (self raw (pair_fst x)) (self raw (pair_snd x))
+      FF => match (is_stem x) {
+        TT => self raw (stem_child x)
+        FF => FF
+      }
+    }
+  })
+
+let q_scan_no_neutral = {raw, x} -> not (q_contains_neutral raw x)
+
+// q_unguard_or_self: peel one layer of guard if present, else return as-is.
+// Used by handlers that may receive either a guarded public type or a core
+// (e.g., q_hyp_reduce_fn checking a hypothesis stored type, q_pi_fn
+// comparing a result's stored type against a core expected type).
+let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, T} ->
+  match (has_sig ks.guard T) {
+    TT => type_meta T
+    FF => T
+  }
+
+// --- Guard handler (public boundary) ---
+// guard core = wait kernel_ref.guard core. The "meta" is the core type.
+// q_guard_fn handles applying a guarded type to a value: run the core
+// predicate. Returns bare TT/FF.
+//
+// Session 2: just a thin wrapper around raw apply on `core v` — no entry
+// scan yet. The reason: without the session-3 dispatcher distinguishing
+// public Nat (guarded) from internal core_Nat invocations, scanning here
+// would reject kernel-minted hypotheses bubbling up through user-defined
+// type predicates (e.g. NatList(fork(hyp, hyp2)) → Nat(hyp) — Nat at user
+// level scans hyp, hyp is a neutral, scan fails). Session 3 wires
+// `ks.checked_apply` for the soundness-relevant scan; session 2 keeps the
+// structural pieces in place so that swap is a single-handler change.
+let q_guard_fn = {ks, raw, query} ->
+  {core, v} ->
+    match (tree_eq (core v) TT) {
+      TT => TT
+      FF => FF
+    }
 
 // --- H-rule (shared by all type checkers) ---
 // When v is neutral, check if v's stored type matches this checker's own type.
@@ -78,24 +126,24 @@ let q_make_hyp = {raw : {hyp_reduce,pi,nat,bool,eq,type}, ty, identity} ->
 //   neutral_meta_type(type_meta(v)) = v's stored type
 //   tree_eq: do they match?
 let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
-  tree_eq (wait (ks query) meta) (neutral_meta_type (type_meta v))
+  tree_eq (wait (ks query) meta) (q_unguard_or_self ks (neutral_meta_type (type_meta v)))
 
 // --- Hypothesis reduction (type interpreter for neutrals) ---
 // Called when a neutral is applied to an argument v.
 // Checks if the neutral's current type is Pi; if so, computes codomain type for the result.
-let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query} ->
+let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query} ->
   fix ({self, meta, v} -> {
-    // pi_fn: neutral has Pi type -> result_type = codFn(v)
-    //   neutral_meta_type(meta) = neutral's current type (a Pi type)
-    //   pi_meta_cod_fn(type_meta(pi_type)) = codFn
-    //   new metadata = extend_neutral_meta(old_meta, codFn(v), arg)
-    let pi_result_type = {meta, v} -> pi_meta_cod_fn (type_meta (neutral_meta_type meta)) v
+    // The neutral's stored type may be either a guarded public Pi (user-
+    // supplied via Hyp NatToNat …) or a core_Pi (kernel-internal). Peel
+    // guard so both shapes dispatch identically. Re-guard the codFn
+    // result so user-facing infer/neutral_type sees a guarded type
+    // (matching the form of the user's original Hyp …).
+    let stored_inner = q_unguard_or_self ks (neutral_meta_type meta)
+    let pi_result_type = {meta, v} -> wait ks.guard (pi_meta_cod_fn (type_meta stored_inner) v)
     let pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta (pi_result_type meta v) v)
-    // non_pi_fn: neutral has non-Pi type -> result_type = InvalidType
     let non_pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta InvalidType v)
-    // Dispatch: check if the neutral's type has the Pi checker signature
     select pi_fn non_pi_fn
-      (has_sig ks.pi (neutral_meta_type meta))
+      (has_sig ks.pi stored_inner)
       self meta v
   })
 
@@ -105,20 +153,23 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query} ->
 let q_pi_fn = {ks, raw, query} ->
   fix ({self, meta, v} -> {
     // check_fn: v is concrete -- check it against the Pi type
-    let check_fn = {ks, raw, query, self, meta, v} -> {
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query, self, meta, v} -> {
       // Build a hypothesis of the domain type; use meta as identity
       let hyp = q_make_hyp raw (pi_meta_domain meta) meta
       // Apply v to the hypothesis to get the result
       let result = v hyp
       // Compute the expected codomain type at this hypothesis
       let expected = pi_meta_cod_fn meta hyp
-      // If result is neutral: check that its inferred type matches the expected type.
+      // If result is neutral: compare stored type to expected after peeling
+      //   guard from both sides. The stored type comes from value-level
+      //   constructors (guarded), the expected from kernel-internal codFn
+      //   (core); peeling normalizes both to cores so tree_eq matches.
       // If result is concrete: run the expected type checker on it directly.
       select
-        ({result, expected} -> tree_eq expected (neutral_meta_type (type_meta result)))
-        ({result, expected} -> tree_eq (expected result) TT)
+        ({ks, result, expected} -> tree_eq (q_unguard_or_self ks expected) (q_unguard_or_self ks (neutral_meta_type (type_meta result))))
+        ({ks, result, expected} -> tree_eq (expected result) TT)
         (q_is_neutral raw result)
-        result expected
+        ks result expected
     }
     // Outer dispatch: neutral -> H-rule, concrete -> check_fn
     select q_h_rule_fn check_fn
@@ -167,22 +218,29 @@ let q_eq_fn = {ks, raw, query} ->
       ks raw query self meta p
   })
 
-// --- Type n checker ---
-// Checks that x is a valid type of rank <= meta (the universe level).
-// Dispatches by type-former signature: Universe, Pi, Eq, or registered base type.
-let q_type_fn = {ks, raw, query} ->
+// --- Core type checker ---
+// Validates that x is a valid CORE type at rank <= meta. Cores are the
+// internal raw predicates (core_Nat, core_Bool, core_Eq, core_Pi) and
+// hypothesis-typed neutrals whose stored type is a universe.
+//
+// Dispatches by type-former signature. Recognizes BOTH ks.core_type and
+// ks.guarded_type as universe signatures: a hypothesis A : Type0 has
+// stored type wait_guarded_type_0 (since unguard_checked Type0 strips the
+// guard layer to expose the guarded_type wait-form), and that hypothesis
+// is a valid type-variable inhabitant of core_type rank when checking Pi
+// codomains.
+let q_core_type_fn = {ks, raw, query} ->
   fix ({self, meta, x} -> {
-    // is_registered: check if x is a known base type (Nat or Bool)
-    let is_registered = {ks : {hyp_reduce,pi,nat,bool,eq,type}, x} ->
+    // is_registered: check if x is a known core base type (core_Nat or core_Bool).
+    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, x} ->
       select TT (tree_eq x (wait ks.bool t)) (tree_eq x (wait ks.nat t))
-    // univ_check: check inferred_type has universe signature and rank <= limit
-    let univ_check = {ks : {hyp_reduce,pi,nat,bool,eq,type}, rank, ty} ->
-      select (nat_le (type_meta ty) rank) FF (has_sig ks.type ty)
-    // neutral: extract stored type, check its universe rank
+    // univ_check: stored type must have a universe signature (core OR guarded)
+    // AND rank ≤ limit.
+    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, rank, ty} ->
+      select (nat_le (type_meta ty) rank) FF (or (has_sig ks.core_type ty) (has_sig ks.guarded_type ty))
     let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (neutral_meta_type (type_meta x))
-    // universe: check rank(x) < meta
-    let univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
-    // pi: check domain and codomain are both valid types at this rank
+    let core_univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
+    let guarded_univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
     let pi_fn = {ks, raw, query, self, meta, x} -> {
       let tm = type_meta x
       let dom = pi_meta_domain tm
@@ -190,7 +248,6 @@ let q_type_fn = {ks, raw, query} ->
       and (wait self meta dom)
         (wait self meta (cod_fn (q_make_hyp raw dom tm)))
     }
-    // eq: check A is valid type and lhs/rhs both type-check under A
     let eq_fn = {ks, raw, query, self, meta, x} -> {
       let tm = type_meta x
       let A = eq_meta_type tm
@@ -198,19 +255,36 @@ let q_type_fn = {ks, raw, query} ->
         (and (A (eq_meta_lhs tm))
           (A (eq_meta_rhs tm)))
     }
-    // dispatch: neutral -> rank check, concrete -> select_chain over type-former signatures
     select neutral_fn
-      ({ks : {hyp_reduce,pi,nat,bool,eq,type}, raw, query, self, meta, x} ->
+      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query, self, meta, x} ->
         select_chain
-          (case (has_sig ks.type x) univ_fn
+          (case (has_sig ks.core_type x) core_univ_fn
+          (case (has_sig ks.guarded_type x) guarded_univ_fn
           (case (has_sig ks.pi x) pi_fn
           (case (has_sig ks.eq x) eq_fn
           (case (is_registered ks x) ({ks, raw, query, self, meta, x} -> TT)
-          t))))
+          t)))))
           ({ks, raw, query, self, meta, x} -> FF)
           ks raw query self meta x)
       (q_is_neutral raw x)
       ks raw query self meta x
+  })
+
+// --- Guarded type checker (public universe) ---
+// Validates that T is a guarded public type at rank <= meta. T must either
+// be a guarded value whose core lives in core_type rank, or a neutral
+// type-variable whose stored type matches this checker's reconstruction
+// (the H-rule).
+//
+// Session 2: uses raw apply on the core_type checker. Session 3 swaps to
+// ks.checked_apply.
+let q_guarded_type_fn = {ks, raw, query} ->
+  fix ({self, rank, T} -> {
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query, self, rank, T} ->
+      select (tree_eq ((wait ks.core_type rank) (type_meta T)) TT) FF (has_sig ks.guard T)
+    select q_h_rule_fn check_fn
+      (q_is_neutral raw T)
+      ks raw query self rank T
   })
 
 // ================================================================
@@ -220,19 +294,21 @@ let q_type_fn = {ks, raw, query} ->
 // component a lazy self-proxy, so component bodies can use ks.field syntax
 // without forcing recursive field selection too early.
 
-kernel : {hyp_reduce,pi,nat,bool,eq,type} := recq {
+kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type} := recq {
   hyp_reduce := q_hyp_reduce_fn;
+  guard := q_guard_fn;
   pi := q_pi_fn;
   nat := q_nat_fn;
   bool := q_bool_fn;
   eq := q_eq_fn;
-  type := q_type_fn
+  core_type := q_core_type_fn;
+  guarded_type := q_guarded_type_fn
 }
 
 // Public kernel reference with the same lazy-proxy convention that recq passes
 // internally. Type/signature construction uses this delayed view so H-rule
 // reconstruction and public constructors share the same wait-based shape.
-let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
+let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type} =
   {q} -> wait kernel q
 
 // ================================================================
@@ -241,6 +317,29 @@ let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
 
 neutral_type := {v} -> neutral_meta_type (type_meta v)
 is_neutral := {x} -> and (is_fork x) (has_sig kernel.hyp_reduce x)
+
+// neutral_root: alias of is_neutral; the name documents intent in scan
+// contexts (we're asking "does this tree's root look like a neutral").
+neutral_root := is_neutral
+
+// contains_neutral: recursive scan for any neutral-rooted subtree.
+// Trusted helper. Runs via raw apply, so triage-on-neutral proceeds
+// normally (it's only checked_apply that bans triage on a neutral).
+contains_neutral := fix ({self, x} ->
+  match (neutral_root x) {
+    TT => TT
+    FF => match (is_fork x) {
+      TT => or (self (pair_fst x)) (self (pair_snd x))
+      FF => match (is_stem x) {
+        TT => self (stem_child x)
+        FF => FF
+      }
+    }
+  })
+
+// scan_no_neutral: TT iff x has no neutral subterm anywhere.
+// Used at the public boundary to reject pre-existing neutrals.
+scan_no_neutral := {x} -> not (contains_neutral x)
 
 // infer: checks is_neutral, extracts stored type, applies check_fn.
 // Usage: `infer (conv Nat) v` checks if v's inferred type is Nat.
@@ -252,17 +351,68 @@ Hyp := {ty, id} -> wait kernel.hyp_reduce (make_neutral_meta ty id)
 StuckElim := {result_type, target} -> wait kernel.hyp_reduce (make_neutral_meta result_type target)
 
 // ================================================================
+// Guard API
+// ================================================================
+// guard wraps a core type as a public type. hasguard recognizes the wrap.
+// unguard_public peels the wrap; unguard_checked also accepts certified
+// neutral type variables (per kernel-internal use during recursive type
+// checking; closed forged neutrals can't reach this path because the
+// public boundary's scan_no_neutral rejects them first).
+
+guard := {core} -> wait kernel_ref.guard core
+hasguard := {T} -> has_sig kernel_ref.guard T
+
+unguard_public := {T} ->
+  match (hasguard T) {
+    TT => type_meta T
+    FF => InvalidType
+  }
+
+// Session 2 form: permissive — accepts guarded types, certified neutrals,
+// AND raw predicates (user-defined types like NatList). The plan's strict
+// form rejects raw predicates entirely; that breaks back-compat for files
+// using non-kernel type predicates as Pi domains. Session 3's checked_apply
+// dispatch is what actually closes that hole; until then this stays
+// permissive so existing typed bindings keep working.
+unguard_checked := {T} ->
+  match (hasguard T) {
+    TT => type_meta T
+    FF => T
+  }
+
+// ================================================================
+// Core type constructors (kernel-internal)
+// ================================================================
+// Cores are wait-values without guard. They are the actual checkers used
+// inside Pi metadata, codomain functions, etc. Never exposed as a "type"
+// in user-facing source code.
+
+core_Nat   := wait kernel_ref.nat t
+core_Bool  := wait kernel_ref.bool t
+core_Eq    := {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
+core_Pi    := {domain, codFn} -> wait kernel_ref.pi (make_pi_meta domain codFn)
+
+// ================================================================
 // Public API: type reflection
 // ================================================================
+// Reflection helpers look through guard so user-level code doesn't have
+// to. unguard_or_self peels guard if present; otherwise returns the value
+// unchanged (so neutral type variables work too).
 
-is_pi := {v} -> has_sig kernel_ref.pi v
-pi_dom := {v} -> pi_meta_domain (type_meta v)
-pi_cod_fn := {v} -> pi_meta_cod_fn (type_meta v)
+unguard_or_self := {T} ->
+  match (hasguard T) {
+    TT => type_meta T
+    FF => T
+  }
 
-is_universe := {v} -> has_sig kernel_ref.type v
-universe_rank := {v} -> type_meta v
+is_pi := {v} -> has_sig kernel_ref.pi (unguard_or_self v)
+pi_dom := {v} -> guard (pi_meta_domain (type_meta (unguard_or_self v)))
+pi_cod_fn := {v, x} -> guard ((pi_meta_cod_fn (type_meta (unguard_or_self v))) x)
 
-is_eq := {v} -> has_sig kernel_ref.eq v
+is_universe := {v} -> has_sig kernel_ref.guarded_type (unguard_or_self v)
+universe_rank := {v} -> type_meta (unguard_or_self v)
+
+is_eq := {v} -> has_sig kernel_ref.eq (unguard_or_self v)
 
 // is_concrete_fork: true if v is a fork AND not a neutral.
 // Use instead of raw is_fork when the value might be neutral.
@@ -270,15 +420,18 @@ is_concrete_fork := {v} ->
   select FF (is_fork v) (is_neutral v)
 
 // ================================================================
-// Type constructors
+// Public type constructors (guarded)
 // ================================================================
+// Public types wrap cores in `guard`. Pi/Eq unguard their type arguments
+// via unguard_checked so the metadata stores cores (lets internal
+// recursive checking dispatch directly, not back through guard).
 
-Nat := wait kernel_ref.nat t
-Bool := wait kernel_ref.bool t
-Eq := {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
-Type := {rank} -> wait kernel_ref.type rank
-Pi := {domain, codFn} -> wait kernel_ref.pi (make_pi_meta domain codFn)
-Arrow := {a_type, b_type} -> Pi a_type ({_} -> b_type)
+Nat   := guard core_Nat
+Bool  := guard core_Bool
+Eq    := {A, x, y} -> guard (core_Eq (unguard_checked A) x y)
+Pi    := {A, B} -> guard (core_Pi (unguard_checked A) ({x} -> unguard_checked (B x)))
+Arrow := {A, B} -> Pi A ({_} -> B)
+Type  := {rank} -> guard (wait kernel_ref.guarded_type rank)
 
 // ================================================================
 // Typed eliminators

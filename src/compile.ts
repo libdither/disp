@@ -399,42 +399,61 @@ interface KernelHelpers {
 }
 
 function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
-  // Derive signatures from trusted type constructors.
-  // Pi(LEAF, {_}->LEAF) gives a sample Pi type; its pair_fst is the Pi signature.
-  // Type(LEAF) gives a sample Type; its pair_fst is the Type signature.
-  // make_hyp(LEAF, LEAF) gives a sample neutral; its pair_fst is the hyp signature.
+  // Derive signatures from trusted type constructors. After session 2 of
+  // the soundness fix, public Pi/Type/Eq are wrapped in `guard`, so the
+  // outer pair_fst of Pi(…) and Type(…) and Eq(…) all return the SAME
+  // guard signature. To recover the actual checker signatures we must
+  // peel the guard layer first via type_meta, then take pair_fst of the
+  // inner core wait-value.
   const Pi = trusted.get("Pi")
   const Type = trusted.get("Type")
   const make_hyp = trusted.get("Hyp") ?? trusted.get("make_hyp")
 
   if (!Pi && !Type && !make_hyp) return null
 
-  // Compute a sample tree and extract its signature (pair_fst).
-  const I_FUNC = I_TREE  // {x} -> x as tree
-  const piSig = Pi ? treePairFst(applyTree(applyTree(Pi, LEAF, 10_000_000), I_FUNC, 10_000_000)) : null
-  const typeSig = Type ? treePairFst(applyTree(Type, LEAF, 10_000_000)) : null
-  const hypSig = make_hyp ? treePairFst(applyTree(applyTree(make_hyp, LEAF, 10_000_000), LEAF, 10_000_000)) : null
+  // Sample-and-peel: build a sample, peel guard if present, then pair_fst
+  // gives the underlying checker signature.
+  const I_FUNC = I_TREE
+  const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, 10_000_000), I_FUNC, 10_000_000) : null
+  const sampleType = Type ? applyTree(Type, LEAF, 10_000_000) : null
+  const sampleHyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, 10_000_000), LEAF, 10_000_000) : null
+
+  // Outer signature = guard signature (same for Pi/Type after guarding).
+  // Inner signature (after peeling type_meta) = the actual checker.
+  const guardSig = samplePi ? treePairFst(samplePi) : (sampleType ? treePairFst(sampleType) : null)
+  const piSigInner = samplePi ? treePairFst(typeMetaTree(samplePi)!) : null
+  const typeSigInner = sampleType ? treePairFst(typeMetaTree(sampleType)!) : null
+  const hypSig = sampleHyp ? treePairFst(sampleHyp) : null
 
   function hasSig(sig: Tree | null, t: Tree): boolean {
     if (!sig) return false
     const tSig = treePairFst(t)
     return tSig !== null && treeEqual(tSig, sig)
   }
+  // Look through guard: if t is guarded, peel; otherwise return t.
+  function unguardOrSelf(t: Tree): Tree {
+    if (guardSig && hasSig(guardSig, t)) {
+      const inner = typeMetaTree(t)
+      return inner ?? t
+    }
+    return t
+  }
 
   return {
-    isUniverse(t) { return hasSig(typeSig, t) },
-    isPi(t) { return hasSig(piSig, t) },
+    isUniverse(t) { return hasSig(typeSigInner, unguardOrSelf(t)) },
+    isPi(t) { return hasSig(piSigInner, unguardOrSelf(t)) },
     isNeutral(t) { return hasSig(hypSig, t) },
     piDomain(t) {
-      const meta = typeMetaTree(t)
+      const inner = unguardOrSelf(t)
+      const meta = typeMetaTree(inner)
       if (!meta) throw new Error("piDomain: not a valid type tree")
-      // pi_meta = make_pi_meta(domain, codFn) = fork(domain, codFn)
       const d = treePairFst(meta)
       if (!d) throw new Error("piDomain: metadata not a pair")
       return d
     },
     piCodFn(t) {
-      const meta = typeMetaTree(t)
+      const inner = unguardOrSelf(t)
+      const meta = typeMetaTree(inner)
       if (!meta) throw new Error("piCodFn: not a valid type tree")
       const c = treePairSnd(meta)
       if (!c) throw new Error("piCodFn: metadata not a pair")
@@ -445,9 +464,10 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
       return applyTree(applyTree(make_hyp, type, 10_000_000), id, 10_000_000)
     },
     univRank(t) {
-      const meta = typeMetaTree(t)
+      const inner = unguardOrSelf(t)
+      const meta = typeMetaTree(inner)
       if (!meta) throw new Error("univRank: not a valid type tree")
-      return meta  // type_meta(Type(rank)) = rank
+      return meta
     },
     makeType(rank) {
       if (!Type) throw new Error("makeType: Type not trusted")

@@ -72,22 +72,56 @@ Implemented in `lib/checked.disp`; tested in `lib/checked.test.disp`
   wrap their multi-line args in `(...)`. Documented in case session 3
   CPS chains hit the same edge.
 
-### Session 2 — guard, type split, public constructors
+### Session 2 — guard, type split, public constructors *(landed)*
 
-Establishes the public boundary. Existing kernel tests should still
-pass after this; behavior just becomes guarded.
+Established the public boundary structurally. All 117 existing tests
+continue to pass.
 
-- [ ] `guard`, `hasguard`, `unguard_public`, `unguard_checked`
-- [ ] `q_guard_fn` (the unique handler returning bare `TT`/`FF`)
-- [ ] Split `q_type_fn` → `q_core_type_fn` + `q_guarded_type_fn`
-- [ ] Core constructors: `core_Nat`, `core_Bool`, `core_Eq`,
-      `core_Pi` (Pi metadata stores cores)
-- [ ] Public guarded constructors: `Nat`, `Bool`, `Eq`, `Pi`,
+- [x] `guard`, `hasguard`, `unguard_public`, `unguard_checked` — see
+      caveat below on `unguard_checked`
+- [x] `q_guard_fn` — see caveat below on the entry scan
+- [x] Split `q_type_fn` → `q_core_type_fn` + `q_guarded_type_fn`
+- [x] Core constructors: `core_Nat`, `core_Bool`, `core_Eq`,
+      `core_Pi` (Pi metadata stores cores via `unguard_checked`)
+- [x] Public guarded constructors: `Nat`, `Bool`, `Eq`, `Pi`,
       `Arrow`, `Type` re-defined via `guard`
-- [ ] Reflection helpers updated to look through guard:
-      `is_pi`/`pi_dom`/`pi_cod_fn`/`is_universe`/`is_eq`
-- [ ] `is_registered_base` keys off `core_Nat`/`core_Bool`
-- [ ] Existing kernel tests pass unchanged
+- [x] Reflection helpers updated to look through guard:
+      `is_pi`/`pi_dom`/`pi_cod_fn`/`is_universe`/`is_eq` plus
+      `unguard_or_self`
+- [x] Kernel record extended: `{hyp_reduce, guard, pi, nat, bool, eq,
+      core_type, guarded_type}` (drops `type`, adds three)
+- [x] TS elaborator's `makeKernelHelpers` updated to peel guard via
+      `typeMetaTree` so `isPi`/`isUniverse` extract the inner core
+      signatures
+- [x] `q_h_rule_fn` and `q_pi_fn`'s neutral comparison peel guard
+      via `q_unguard_or_self` so user-supplied `Hyp Nat _` (guarded)
+      and kernel-internal cores compare correctly
+- [x] `q_hyp_reduce_fn` peels guard from stored type before checking
+      `ks.pi`, and re-guards the codFn result so `infer` keeps
+      returning user-facing guarded types
+- [x] Existing kernel tests pass unchanged
+
+**Two deviations from the original session 2 design, deferred to
+session 3 because the dispatcher is what actually closes the gap:**
+
+1. **`q_guard_fn` skips the entry scan.** Without the dispatcher,
+   every public-typed call goes through `q_guard_fn` — including
+   recursive calls from user-defined predicates like `NatList(fork(hyp,
+   hyp2))` which internally invoke `Nat(hyp)`. Scanning here would
+   reject the kernel-minted `hyp` (a neutral) even though the
+   recursion is legitimate. Session 3's `q_checked_apply_fn` dispatch
+   table routes `core_Nat` directly (no scan) and only scans at the
+   real public entry, restoring the soundness intent.
+2. **`unguard_checked` is permissive.** It accepts guarded types,
+   certified neutrals, AND raw predicates (the design's strict form
+   only accepts the first two). Permissive form keeps user-defined
+   type predicates usable as Pi domains. Session 3's dispatcher is
+   again what enforces the actual restriction.
+
+Both deviations are documented inline in `lib/kernel.disp`. Soundness
+of the fix as a whole still flows from the dispatcher rejection in
+session 3 — session 2 just lands the structural pieces so that
+session 3 is a single-handler change.
 
 ### Session 3 — handlers
 
