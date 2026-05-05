@@ -590,3 +590,66 @@ describe("block expressions", () => {
     )
   })
 })
+
+// ─────────────────────────── match ──────────────────────────────────────
+
+const match = (cond: Expr, thenBody: Expr, elseBody: Expr): Expr =>
+  ({ tag: "match", cond, thenBody, elseBody })
+
+describe("match expression", () => {
+  it("parses basic match with TT and FF arms", () => {
+    const src = `match c { TT => a; FF => b }`
+    expect(parseExpr(src)).toEqual(match(v("c"), v("a"), v("b")))
+  })
+
+  it("accepts FF arm before TT arm", () => {
+    const src = `match c { FF => b; TT => a }`
+    // arms reordered into canonical (cond, then=TT, else=FF) form
+    expect(parseExpr(src)).toEqual(match(v("c"), v("a"), v("b")))
+  })
+
+  it("uses newlines as arm separators", () => {
+    const src = `match c {
+      TT => a
+      FF => b
+    }`
+    expect(parseExpr(src)).toEqual(match(v("c"), v("a"), v("b")))
+  })
+
+  it("scrutinee can be an application", () => {
+    const src = `match (f x) { TT => a; FF => b }`
+    expect(parseExpr(src)).toEqual(match(ap(v("f"), v("x")), v("a"), v("b")))
+  })
+
+  it("arm bodies can be applications", () => {
+    const src = `match c { TT => f x; FF => g y }`
+    expect(parseExpr(src)).toEqual(match(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
+  })
+
+  it("nests inside binders", () => {
+    const src = `{x} -> match x { TT => a; FF => b }`
+    expect(parseExpr(src)).toEqual(
+      binder([{ name: "x", type: null }],
+        match(v("x"), v("a"), v("b"))))
+  })
+
+  it("nests recursively in arms", () => {
+    const src = `match c { TT => match d { TT => a; FF => b }; FF => e }`
+    expect(parseExpr(src)).toEqual(
+      match(v("c"),
+        match(v("d"), v("a"), v("b")),
+        v("e")))
+  })
+
+  it("rejects non-TT/FF arm patterns", () => {
+    expect(() => parseExpr(`match c { foo => a; FF => b }`)).toThrow(/TT.*FF/)
+  })
+
+  it("rejects single arm", () => {
+    expect(() => parseExpr(`match c { TT => a }`)).toThrow(/exactly 2 arms|both TT and FF/)
+  })
+
+  it("rejects duplicate TT arm", () => {
+    expect(() => parseExpr(`match c { TT => a; TT => b }`)).toThrow(/both TT and FF/)
+  })
+})

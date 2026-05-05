@@ -19,9 +19,9 @@ export type Tok =
   | { t: "nl" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["let", "test", "use", "open", "trust"])
+const KEYWORDS = new Set(["let", "test", "use", "open", "trust", "match"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
-const PUNCT = [":=", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
+const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -91,6 +91,7 @@ export type Expr =
   | { tag: "recType"; fields: TypedField[] }
   | { tag: "recValue"; fields: NamedField[]; members?: RecMember[] }
   | { tag: "use"; path: string }
+  | { tag: "match"; cond: Expr; thenBody: Expr; elseBody: Expr }
 
 export type Param = { name: string | null; type: Expr | null }
 export type TypedField = { name: string; type: Expr | null }
@@ -280,6 +281,7 @@ const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
     seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
     ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
   ),
+  lazy(() => matchP),
   lazy(bracedP),
   map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
   map(leafP, (): Expr => ({ tag: "leaf" })),
@@ -407,6 +409,40 @@ const recTypeInner: P<Expr> = map(
   seq(sepBy1(typedFieldP, commaP), nl(punctP("}"))),
   ([fields]) => ({ tag: "recType" as const, fields }),
 )
+
+// match arm: IDENT "=>" expr (where IDENT is "TT" or "FF").
+// Body uses lineExpr so newlines/semicolons separate arms naturally.
+const matchArmP: P<{ pat: "TT" | "FF"; body: Expr }> = nl((ts, i) => {
+  const r = seq(idP, nl(punctP("=>")), skipNl, lazy(() => lineExpr))(ts, i)
+  if (!r.ok) return r
+  const [pat, , , body] = r.v
+  if (pat !== "TT" && pat !== "FF")
+    return err(`match arm pattern must be 'TT' or 'FF', got '${pat}'`, i)
+  return ok({ pat: pat as "TT" | "FF", body }, r.pos)
+})
+
+// match cond { TT => e1 ; FF => e2 }
+// Desugared in compile.ts to closed-branch select-then-apply.
+// Validation errors use r.pos (the deepest matched position) so `alt`'s
+// deepest-wins logic surfaces them instead of falling through to other
+// alternatives.
+const matchP: P<Expr> = (ts, i) => {
+  const r = seq(
+    kwP("match"), skipNl, lazy(() => app),
+    nl(punctP("{")),
+    sepBy1(matchArmP, semiP),
+    nl(punctP("}")),
+  )(ts, i)
+  if (!r.ok) return r
+  const [, , cond, , arms] = r.v
+  if (arms.length !== 2)
+    return err(`match: expected exactly 2 arms (TT and FF), got ${arms.length}`, r.pos)
+  const tt = arms.find(a => a.pat === "TT")
+  const ff = arms.find(a => a.pat === "FF")
+  if (!tt || !ff)
+    return err(`match: must have both TT and FF arms`, r.pos)
+  return ok({ tag: "match" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
+}
 
 // field = IDENT (":" expr)? ":=" valParser
 const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr }> =>

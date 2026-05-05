@@ -219,21 +219,21 @@ trees. Once `is_neutral` is tightened to require fork shape, these
 become natural structural tests:
 
 ```disp
-neutral_root x = and (is_fork x) (tree_eq (pair_fst x) sig)
+neutral_root := {x} -> and (is_fork x) (tree_eq (pair_fst x) sig)
 
 contains_neutral := fix ({self, x} ->
-  select_lazy
-    ({_} -> TT)
-    ({_} -> select_lazy
-      ({_} -> or (self (pair_fst x)) (self (pair_snd x)))
-      ({_} -> select_lazy
-        ({_} -> self (stem_child x))
-        ({_} -> FF)
-        (is_stem x))
-      (is_fork x))
-    (neutral_root x))
+  match (neutral_root x) {
+    TT => TT
+    FF => match (is_fork x) {
+      TT => or (self (pair_fst x)) (self (pair_snd x))
+      FF => match (is_stem x) {
+        TT => self (stem_child x)
+        FF => FF
+      }
+    }
+  })
 
-scan_no_neutral x = not (contains_neutral x)
+scan_no_neutral := {x} -> not (contains_neutral x)
 ```
 
 `scan_no_neutral` rejects actual completed neutral values. It does
@@ -244,6 +244,62 @@ These helpers are themselves TC. They do triage on raw trees, which
 under `checked_apply` would fail on neutrals — but they run at the
 trusted layer (above `checked_apply`), via raw `apply`, so triage on
 neutrals proceeds normally for them.
+
+## Laziness Discipline: `match` and Closed Branches
+
+Tree calculus is strict. The naive way to write conditional branches
+in a checker — `select_lazy ({_} -> heavy_call) ({_} -> Fail) cond` —
+**does not actually delay `heavy_call`** when the thunk's body has
+free variables from the enclosing scope. Bracket abstraction over
+those free vars produces an `S (K K) ...` chain whose runtime S-rule
+reduction eagerly evaluates the body before `select_lazy` ever
+triages on `cond`. The thunk is a thunk only when its body is closed.
+
+The kernel must therefore use **select-then-apply with closed
+branches**: each branch is a function whose parameter list saturates
+its body's free variables, so the branch compiles to a closed tree.
+`select` picks one branch, *then* the trailing arguments are applied
+to whichever was picked — the unselected branch's body never runs.
+
+Writing this by hand is verbose, so the plan uses a `match` keyword
+that desugars to closed-branch select-then-apply with automatic
+free-variable capture. Surface form:
+
+```disp
+match cond {
+  TT => then_body
+  FF => else_body
+}
+```
+
+Desugars to (with `fvs` = union of free vars in either branch, in
+stable insertion order):
+
+```disp
+select
+  ({fvs...} -> then_body)
+  ({fvs...} -> else_body)
+  cond
+  fvs...
+```
+
+The compiler computes `fvs` from each arm's compiled Cir (a name is
+"free" iff it would compile to a `var` rather than a closed `lit`).
+Already-closed top-level names (e.g., `Fail`, `Nat`, prelude defs)
+don't appear in `fvs`. Each arm becomes a closed function value;
+`select` picks one; the trailing apply feeds shared args to the
+chosen one only.
+
+**Every conditional in the kernel below uses `match`, not
+`select_lazy` with thunks.** When you read `match cond { TT => a; FF
+=> b }`, mentally substitute the closed-branch desugaring — that's
+the actual compiled shape, and that's why short-circuiting works.
+
+`select_lazy` is still safe in two narrow cases: both branches are
+closed expressions (no outer free vars), or both branches are O(1)
+operations cheap enough that eager evaluation is acceptable
+(structural `fast_eq`, constant returns). Anything that recurses or
+calls `ks.X` must use `match`.
 
 ## Checked Apply
 
@@ -258,34 +314,49 @@ Result encoding:
 
 ```disp
 CheckedResult = Ok Tree | Fail
-Ok := {v} -> t v        // pair(LEAF, v)
-Fail := t (t t)         // pair(stem-leaf, leaf) -- distinguishable from Ok
+Ok := {v} -> t t v      // pair(LEAF, v) = K v = fork(LEAF, v)
+Fail := t (t t)         // stem(K) -- not a fork-with-leaf-left, distinguishable from Ok
 
 is_ok    := {r} -> fast_eq (pair_fst r) t        // r matches Ok _
 ok_value := {r} -> pair_snd r                    // valid only when is_ok r
+
+// Why `t t v` and not `t v`: pair(l, r) is fork(l, r), so Ok must produce
+// a fork. `t v = stem(v)` is not a fork. `t t v = K v = fork(LEAF, v)` is.
+// With this encoding, pair_fst (Ok v) follows the fork branch of pair_fst's
+// triage and returns LEAF = t, so is_ok (Ok v) = TT regardless of v.
 ```
 
-Two distinct "must succeed" helpers, both continuation-style for
-sequencing inside handler bodies. The difference matters because
-`Ok TT` and `Ok FF` are *both* successful evaluations:
+Two distinct "must succeed" helpers. `Ok TT` and `Ok FF` are *both*
+successful evaluations, so the difference matters:
 
 ```disp
-// Sub-evaluation must not Fail; the Ok payload is consumed downstream
-// via the continuation and may legitimately be TT or FF or any tree.
+// Sub-evaluation must not Fail; the Ok payload is threaded into k
+// and may legitimately be TT or FF or any tree. k must be a closed
+// function (top-level let or {fvs...} -> ... whose params cover its body).
 must_ok_any := {r, k} ->
-  select_lazy ({_} -> k (ok_value r)) ({_} -> Fail) (is_ok r)
+  match (is_ok r) {
+    TT => k (ok_value r)
+    FF => Fail
+  }
 
 // Predicate evaluation must succeed AND return TT. Used for "this
 // value really is a Bool", "this branch really inhabits motive(TT)",
 // etc. — anywhere a successful FF would mean "no, validation failed".
-// Continuation takes no useful value (predicate succeeded — the only
-// information was "TT or not"), so it's invoked with t as a unit.
 must_ok_tt := {r, k} ->
-  select_lazy
-    ({_} -> select_lazy ({_} -> k t) ({_} -> Fail) (fast_eq (ok_value r) TT))
-    ({_} -> Fail)
-    (is_ok r)
+  match (is_ok r) {
+    TT => match (fast_eq (ok_value r) TT) {
+      TT => k t
+      FF => Fail
+    }
+    FF => Fail
+  }
 ```
+
+Both helpers `match` instead of `select_lazy`. The `match` arms have
+free vars (`r`, `k`) — capture handles them; the desugarer lifts
+both arms into closed functions of `(r, k)` and applies `r k` only
+to the chosen one. So when `r` is `Fail`, the success arm's `k (...)`
+is never invoked. **The CPS chain genuinely short-circuits.**
 
 Handler bodies use `must_ok_tt` for predicate validation (the common
 case) and `must_ok_any` when threading a sub-evaluation result into
@@ -294,20 +365,23 @@ the next step. Mixing these up is a soundness bug: using
 as "checked successfully" and then mint a neutral whose stored type
 came from a value that failed validation.
 
-Both helpers are continuation-style because `Fail` must short-circuit
-the rest of the handler body; without continuations, intermediate
-`Fail` results would have to be threaded by hand at every step.
+The continuation `k` passed to `must_ok_*` must itself be a closed
+function. In handler bodies the natural form is an inline lambda
+whose parameter list covers its body; the desugarer treats it as
+closed at compile time. (A `{_} -> body` continuation with outer
+free vars is the broken pattern from the introduction — don't write
+that.)
 
 ### Public Entry
 
 Public guarded predicates enter through:
 
 ```disp
-checked_check core v =
-  select_lazy
-    ({_} -> checked_apply core v)
-    ({_} -> Fail)
-    (scan_no_neutral v)
+checked_check := {core, v} ->
+  match (scan_no_neutral v) {
+    TT => checked_apply core v
+    FF => Fail
+  }
 ```
 
 Internal recursive calls use `checked_apply` directly, not
@@ -323,25 +397,28 @@ list of recognized signatures is **the security perimeter** — see
 
 ```disp
 q_checked_apply_fn = {ks, raw, query} -> fix ({self, f, x} ->
+  // Each branch is `{self, f, x} -> body` — closed function whose
+  // params cover its body. select_chain picks one, applies self/f/x.
+  // Neutrals: use raw.hyp_reduce because Hyp/StuckElim store the
+  // raw handler signature (see "Bootstrap and Signature Conventions").
+  // Type-formers and eliminators: use ks.X (lazy proxy) because
+  // their public constructors build wait-values via kernel_ref.X,
+  // which has the same hash-cons identity as ks.X.
   select_chain
-    // Neutrals: use raw.hyp_reduce because Hyp/StuckElim store the
-    // raw handler signature (see "Bootstrap and Signature Conventions").
-    (case (has_sig raw.hyp_reduce f)  ({_} -> f x))
-    // Type-formers and eliminators: use ks.X (lazy proxy) because
-    // their public constructors build wait-values via kernel_ref.X,
-    // which has the same hash-cons identity as ks.X.
-    (case (has_sig ks.guard f)        ({_} -> f x))
-    (case (has_sig ks.pi f)           ({_} -> f x))
-    (case (has_sig ks.nat f)          ({_} -> f x))
-    (case (has_sig ks.bool f)         ({_} -> f x))
-    (case (has_sig ks.eq f)           ({_} -> f x))
-    (case (has_sig ks.core_type f)    ({_} -> f x))
-    (case (has_sig ks.guarded_type f) ({_} -> f x))
-    (case (has_sig ks.bool_rec f)     ({_} -> f x))
-    (case (has_sig ks.nat_rec f)      ({_} -> f x))
-    (case (has_sig ks.eq_J f)         ({_} -> f x))
+    (case (has_sig raw.hyp_reduce f)  ({self, f, x} -> f x))
+    (case (has_sig ks.guard f)        ({self, f, x} -> f x))
+    (case (has_sig ks.pi f)           ({self, f, x} -> f x))
+    (case (has_sig ks.nat f)          ({self, f, x} -> f x))
+    (case (has_sig ks.bool f)         ({self, f, x} -> f x))
+    (case (has_sig ks.eq f)           ({self, f, x} -> f x))
+    (case (has_sig ks.core_type f)    ({self, f, x} -> f x))
+    (case (has_sig ks.guarded_type f) ({self, f, x} -> f x))
+    (case (has_sig ks.bool_rec f)     ({self, f, x} -> f x))
+    (case (has_sig ks.nat_rec f)      ({self, f, x} -> f x))
+    (case (has_sig ks.eq_J f)         ({self, f, x} -> f x))
     // Default: walk apply rules step-by-step.
-    ({_} -> checked_raw_apply self f x))
+    ({self, f, x} -> checked_raw_apply self f x)
+    self f x)
 ```
 
 `f x` inside a recognized branch is a single raw tree-calculus
@@ -373,16 +450,16 @@ neutral's stored type. This is the existing `q_h_rule_fn` from the
 current kernel, ported as:
 
 ```disp
-checked_h_rule self meta v =
+checked_h_rule := {self, meta, v} ->
   // Both arguments are kernel-internal:
   // - `wait (ks query) meta` is the checker reconstructing its own type.
   // - `neutral_type v` reads from a CERTIFIED neutral (we got here by
   //   the dispatcher recognizing kernel.hyp_reduce on v).
   // Raw tree_eq is correct: no user-controlled tree on either side.
-  if tree_eq (wait (ks query) meta) (neutral_type v):
-    Ok TT
-  else:
-    Ok FF
+  match (tree_eq (wait (ks query) meta) (neutral_type v)) {
+    TT => Ok TT
+    FF => Ok FF
+  }
 ```
 
 The wrapper returns `Ok TT`/`Ok FF` (predicate result) rather than
@@ -423,10 +500,10 @@ bool_rec := {motive, t_case, f_case, target} ->
         (make_bool_rec_meta motive t_case f_case target)) t)
 
 unwrap_value := {r} ->
-  select_lazy
-    ({_} -> ok_value r)        // success: return the value the handler computed
-    ({_} -> elim_fail)         // failure: return the sentinel
-    (is_ok r)
+  match (is_ok r) {
+    TT => ok_value r           // success: return the value the handler computed
+    FF => elim_fail            // failure: return the sentinel
+  }
 ```
 
 `elim_fail` is a kernel-private sentinel. It is `t` for now; any
@@ -455,14 +532,17 @@ public API and currently work on raw wait-values. After the split,
 public types are guarded, so these helpers must look through guard:
 
 ```disp
-unguard_or_self T =
-  select_lazy ({_} -> type_meta T) ({_} -> T) (hasguard T)
+unguard_or_self := {T} ->
+  match (hasguard T) {
+    TT => type_meta T
+    FF => T
+  }
 
-is_pi      := {T} -> has_sig kernel_ref.pi (unguard_or_self T)
-pi_dom     := {T} -> guard (pi_meta_domain (type_meta (unguard_or_self T)))
-pi_cod_fn  := {T} -> {x} -> guard ((pi_meta_cod_fn (type_meta (unguard_or_self T))) x)
+is_pi       := {T} -> has_sig kernel_ref.pi (unguard_or_self T)
+pi_dom      := {T} -> guard (pi_meta_domain (type_meta (unguard_or_self T)))
+pi_cod_fn   := {T, x} -> guard ((pi_meta_cod_fn (type_meta (unguard_or_self T))) x)
 is_universe := {T} -> has_sig kernel_ref.guarded_type (unguard_or_self T)
-is_eq      := {T} -> has_sig kernel_ref.eq (unguard_or_self T)
+is_eq       := {T} -> has_sig kernel_ref.eq (unguard_or_self T)
 ```
 
 `pi_dom` re-wraps the core domain in `guard` because public callers
@@ -603,27 +683,24 @@ handlers must add corresponding adversarial tests under
 ## Guard API
 
 ```disp
-guard core =
-  wait kernel_ref.guard core
+guard := {core} -> wait kernel_ref.guard core
 
-hasguard T =
-  has_sig kernel_ref.guard T
+hasguard := {T} -> has_sig kernel_ref.guard T
 
-unguard_public T =
-  select_lazy
-    ({_} -> type_meta T)
-    ({_} -> InvalidType)
-    (hasguard T)
+unguard_public := {T} ->
+  match (hasguard T) {
+    TT => type_meta T
+    FF => InvalidType
+  }
 
-unguard_checked T =
-  select_lazy
-    ({_} -> type_meta T)
-    ({_} ->
-      select_lazy
-        ({_} -> T)
-        ({_} -> InvalidType)
-        (is_neutral T))
-    (hasguard T)
+unguard_checked := {T} ->
+  match (hasguard T) {
+    TT => type_meta T
+    FF => match (is_neutral T) {
+      TT => T
+      FF => InvalidType
+    }
+  }
 ```
 
 `unguard_public` is for closed source-level boundaries: only
@@ -642,18 +719,21 @@ that returns bare `TT`/`FF` rather than `CheckedResult` (see
 ```disp
 q_guard_fn = {ks, raw, query} -> {self, core, v} ->
   // PUBLIC PREDICATE — returns BARE TT/FF.
-  select_lazy
-    ({_} ->
+  match (scan_no_neutral v) {
+    TT => {
       // v passed entry scan: run the core predicate via checked_apply
       // and unwrap CheckedResult to bare TT/FF.
       let r = ks.checked_apply core v
-      select_lazy
-        ({_} ->
-          select_lazy ({_} -> TT) ({_} -> FF) (tree_eq (ok_value r) TT))
-        ({_} -> FF)
-        (is_ok r))
-    ({_} -> FF)
-    (scan_no_neutral v)
+      match (is_ok r) {
+        TT => match (tree_eq (ok_value r) TT) {
+          TT => TT
+          FF => FF
+        }
+        FF => FF
+      }
+    }
+    FF => FF
+  }
 ```
 
 So public raw-looking application still has the desired behavior:
@@ -714,69 +794,76 @@ via a stored-type rank check.
 
 ```disp
 q_core_type_fn = {ks, raw, query} -> fix ({self, rank, ty} ->
-  select_lazy
-    ({_} ->
+  match (neutral_root ty) {
+    TT => {
       // ty is a certified neutral type variable.
       // Stored type must be `wait ks.core_type k` for some k ≤ rank.
       let stored = neutral_meta_type (type_meta ty)
-      select_lazy
-        ({_} ->
-          select_lazy
-            ({_} -> Ok TT)
-            ({_} -> Ok FF)
-            (nat_le (type_meta stored) rank))
-        ({_} -> Ok FF)
-        (has_sig ks.core_type stored))
-    ({_} ->
-      // Concrete dispatch on ty's signature.
+      match (has_sig ks.core_type stored) {
+        TT => match (nat_le (type_meta stored) rank) {
+          TT => Ok TT
+          FF => Ok FF
+        }
+        FF => Ok FF
+      }
+    }
+    FF =>
+      // Concrete dispatch on ty's signature. select_chain stays here;
+      // each branch is `{ks, raw, query, self, rank, ty} -> body` — the
+      // closed select-then-apply form (see q_pi_fn in current kernel).
       select_chain
-        // ty = wait ks.guarded_type k (universe core)
         (case (has_sig ks.guarded_type ty)
-          ({_} -> Ok (nat_lt (type_meta ty) rank)))
-        // ty = wait ks.core_type k (defensive — shouldn't appear publicly)
+          ({ks, raw, query, self, rank, ty} -> Ok (nat_lt (type_meta ty) rank)))
         (case (has_sig ks.core_type ty)
-          ({_} -> Ok (nat_lt (type_meta ty) rank)))
-        // ty = wait ks.pi (make_pi_meta dom codFn)
+          ({ks, raw, query, self, rank, ty} -> Ok (nat_lt (type_meta ty) rank)))
         (case (has_sig ks.pi ty)
-          ({_} -> {
+          ({ks, raw, query, self, rank, ty} -> {
             let tm = type_meta ty
             let dom = pi_meta_domain tm
             let codFn = pi_meta_cod_fn tm
-            must_ok_tt (wait self rank dom) ({_} -> {
+            must_ok_tt (wait self rank dom) ({u} -> {
               let hyp = cert_make_hyp dom tm   // raw: mint
-              must_ok_tt (wait self rank (codFn hyp)) ({_} -> Ok TT)})}))
-        // ty = wait ks.eq (make_eq_meta A x y)
+              must_ok_tt (wait self rank (codFn hyp)) ({u2} -> Ok TT)})}))
         (case (has_sig ks.eq ty)
-          ({_} -> {
+          ({ks, raw, query, self, rank, ty} -> {
             let tm = type_meta ty
             let A = eq_meta_type tm
-            must_ok_tt (wait self rank A) ({_} ->
-            must_ok_tt (ks.checked_apply A (eq_meta_lhs tm)) ({_} ->
-            must_ok_tt (ks.checked_apply A (eq_meta_rhs tm)) ({_} -> Ok TT)))}))
-        // Canonical core Nat / Bool — both live in core_type 0
+            must_ok_tt (wait self rank A) ({u} ->
+            must_ok_tt (ks.checked_apply A (eq_meta_lhs tm)) ({u2} ->
+            must_ok_tt (ks.checked_apply A (eq_meta_rhs tm)) ({u3} -> Ok TT)))}))
         (case (is_registered_base ks ty)
-          ({_} -> Ok TT))
-        // No match
-        ({_} -> Ok FF))
-    (neutral_root ty)))
+          ({ks, raw, query, self, rank, ty} -> Ok TT))
+        ({ks, raw, query, self, rank, ty} -> Ok FF)
+        ks raw query self rank ty
+  })
 
 is_registered_base := {ks, ty} ->
   select TT (tree_eq ty (wait ks.bool t)) (tree_eq ty (wait ks.nat t))
 ```
 
+Note that `select_chain`'s case branches use **named-parameter
+closed functions** (`{ks, raw, query, self, rank, ty} -> body`)
+rather than `{_} -> body` thunks. This is the same pattern
+`select_chain` already requires in the current `q_type_fn` (see
+`lib/kernel.disp:198-205`): each case is a function whose
+parameter list saturates its body, and the trailing
+`ks raw query self rank ty` applies shared args to the chosen
+branch.
+
 ```disp
 q_guarded_type_fn = {ks, raw, query} -> {self, rank, T} ->
-  select_lazy
-    ({_} -> checked_h_rule self rank T)
-    ({_} ->
+  match (neutral_root T) {
+    TT => checked_h_rule self rank T
+    FF =>
       // T must be guarded AND its core must be in core_type rank.
-      select_lazy
-        ({_} ->
+      match (hasguard T) {
+        TT => {
           let core = type_meta T   // raw: kernel-recognized guard wait-value
-          ks.checked_apply (wait ks.core_type rank) core)
-        ({_} -> Ok FF)
-        (hasguard T))
-    (neutral_root T))
+          ks.checked_apply (wait ks.core_type rank) core
+        }
+        FF => Ok FF
+      }
+  }
 
 Type n := guard (wait kernel_ref.guarded_type n)
 ```
@@ -808,26 +895,41 @@ reconstructs the checker's own type via `wait (ks query) meta`, so
 the binding.
 
 ```disp
-checked_pi_apply pi_type v =
-  if neutral_root v:
-    checked_h_rule pi_type v
-  else:
-    let domain = pi_meta_domain (type_meta pi_type)
-    let codFn  = pi_meta_cod_fn (type_meta pi_type)
-    let hyp    = cert_make_hyp domain (fresh_id pi_type)  // raw: kernel-minted neutral
-    let result_r   = checked_apply v hyp
-    let expected_r = checked_apply codFn hyp
-    must_ok_any result_r ({result} ->
-      must_ok_any expected_r ({expected} ->
-        if neutral_root result:
-          // result is a certified neutral: compare its stored type
-          // (kernel-internal data) against the codomain (also kernel-
-          // built at this point). raw tree_eq is correct.
-          if tree_eq expected (neutral_type result): Ok TT else: Ok FF
-        else:
-          // result is concrete: run the codomain checker on it.
-          checked_apply expected result))
+checked_pi_apply := {pi_type, v} ->
+  match (neutral_root v) {
+    TT => checked_h_rule pi_type v
+    FF => {
+      let domain = pi_meta_domain (type_meta pi_type)
+      let codFn  = pi_meta_cod_fn (type_meta pi_type)
+      let hyp    = cert_make_hyp domain (fresh_id pi_type)  // raw: kernel-minted neutral
+      let result_r   = checked_apply v hyp
+      let expected_r = checked_apply codFn hyp
+      // Each continuation's parameter list saturates its body's free vars,
+      // so each is a closed function (not a {_}-thunk capturing outer scope).
+      must_ok_any result_r ({result} ->
+        must_ok_any expected_r ({expected} ->
+          match (neutral_root result) {
+            // result is a certified neutral: compare its stored type
+            // (kernel-internal data) against the codomain (also kernel-
+            // built at this point). raw tree_eq is correct.
+            TT => match (tree_eq expected (neutral_type result)) {
+              TT => Ok TT
+              FF => Ok FF
+            }
+            // result is concrete: run the codomain checker on it.
+            FF => checked_apply expected result
+          }))
+    }
+  }
 ```
+
+The continuations `({result} -> ...)` and `({expected} -> ...)` use
+their parameters in their bodies, so they're closed functions of
+those parameters from the desugarer's view — `match` inside them
+sees `result` / `expected` as already-bound names and only captures
+what's still free. This is the well-formed CPS pattern:
+continuations always have a real parameter (not `_`), and `match`
+handles the conditional branching.
 
 `cert_make_hyp` is trusted code that constructs a neutral root via
 raw `apply` (it expands to `wait kernel.hyp_reduce ...`, which the
@@ -846,19 +948,20 @@ The certified interpreter for applying a neutral to an argument:
 ```disp
 q_hyp_reduce_fn = {ks, raw, query} -> fix ({self, meta, arg} -> {
   let current_type = neutral_meta_type meta   // raw: kernel-built meta
-  select_lazy
-    ({_} ->
+  match (has_sig ks.pi current_type) {
+    TT => {
       // current_type has Pi signature: extend with codFn(arg).
       let codFn = pi_meta_cod_fn (type_meta current_type)
       must_ok_any (ks.checked_apply codFn arg) ({result_type} ->
         Ok (cert_make_neutral                  // raw: mint
           result_type
-          (neutral_app_payload meta arg))))
-    ({_} ->
+          (neutral_app_payload meta arg)))
+    }
+    FF =>
       // current_type isn't Pi: result has InvalidType.
       Ok (cert_make_neutral InvalidType
-        (neutral_app_payload meta arg)))
-    (has_sig ks.pi current_type)
+        (neutral_app_payload meta arg))
+  }
 })
 ```
 
@@ -879,57 +982,51 @@ concrete dispatch otherwise; recursive sub-checks via `ks.checked_apply`.
 
 ```disp
 q_nat_fn = {ks, raw, query} -> fix ({self, meta, n} ->
-  select_lazy
-    ({_} -> checked_h_rule self meta n)
-    ({_} ->
+  match (neutral_root n) {
+    TT => checked_h_rule self meta n
+    FF =>
       // Concrete dispatch: leaf=zero | fork(t, n')=succ | else=Ok FF
-      select_lazy
-        ({_} -> Ok TT)                          // n = leaf (zero)
-        ({_} ->
-          select_lazy
-            ({_} ->
-              // n is fork; check pair_fst = t (succ marker)
-              select_lazy
-                ({_} -> wait self meta (pair_snd n))   // recurse on predecessor
-                ({_} -> Ok FF)
-                (tree_eq (pair_fst n) t))
-            ({_} -> Ok FF)
-            (is_fork n))
-        (tree_eq n t))
-    (neutral_root n))
+      match (tree_eq n t) {
+        TT => Ok TT                                       // n = leaf (zero)
+        FF => match (is_fork n) {
+          TT => match (tree_eq (pair_fst n) t) {
+            TT => wait self meta (pair_snd n)             // recurse on predecessor
+            FF => Ok FF
+          }
+          FF => Ok FF
+        }
+      }
+  })
 ```
 
 ```disp
 q_bool_fn = {ks, raw, query} -> {self, meta, b} ->
-  select_lazy
-    ({_} -> checked_h_rule self meta b)
-    ({_} ->
-      select_lazy
-        ({_} -> Ok TT)                          // b = TT (leaf)
-        ({_} ->
-          select_lazy
-            ({_} -> Ok TT)                      // b = FF (stem of leaf)
-            ({_} -> Ok FF)
-            (tree_eq b FF))
-        (tree_eq b TT))
-    (neutral_root b)
+  match (neutral_root b) {
+    TT => checked_h_rule self meta b
+    FF => match (tree_eq b TT) {
+      TT => Ok TT                                         // b = TT (leaf)
+      FF => match (tree_eq b FF) {
+        TT => Ok TT                                       // b = FF (stem of leaf)
+        FF => Ok FF
+      }
+    }
+  }
 ```
 
 ```disp
 q_eq_fn = {ks, raw, query} -> {self, meta, p} ->
-  select_lazy
-    ({_} -> checked_h_rule self meta p)
-    ({_} ->
+  match (neutral_root p) {
+    TT => checked_h_rule self meta p
+    FF =>
       // p must be refl (leaf). Check stored lhs == rhs structurally.
-      select_lazy
-        ({_} ->
-          select_lazy
-            ({_} -> Ok TT)
-            ({_} -> Ok FF)
-            (tree_eq (eq_meta_lhs meta) (eq_meta_rhs meta)))
-        ({_} -> Ok FF)
-        (tree_eq p t))
-    (neutral_root p))
+      match (tree_eq p t) {
+        TT => match (tree_eq (eq_meta_lhs meta) (eq_meta_rhs meta)) {
+          TT => Ok TT
+          FF => Ok FF
+        }
+        FF => Ok FF
+      }
+  }
 ```
 
 The `tree_eq (eq_meta_lhs meta) (eq_meta_rhs meta)` call merits a
@@ -986,22 +1083,26 @@ q_bool_rec_fn = {ks, raw, query} -> {meta, _trigger} -> {
   let f_case = bool_rec_meta_f_case meta
   let target = bool_rec_meta_target meta
 
+  // CPS continuations all take a real parameter (named or unit-via-`{u} ->`)
+  // — never `{_} -> body_using_outer_vars`. That keeps each continuation a
+  // non-K abstraction whose body fires only when the continuation is invoked.
+
   // (1) target is a Bool
-  must_ok_tt (ks.checked_apply core_Bool target) ({_} ->
+  must_ok_tt (ks.checked_apply core_Bool target) ({u1} ->
 
   // (2) branches inhabit motive at TT and FF
   must_ok_any (ks.checked_apply motive TT) ({tT_type} ->
   must_ok_any (ks.checked_apply motive FF) ({fT_type} ->
-  must_ok_tt  (ks.checked_apply tT_type t_case) ({_} ->
-  must_ok_tt  (ks.checked_apply fT_type f_case) ({_} ->
+  must_ok_tt  (ks.checked_apply tT_type t_case) ({u2} ->
+  must_ok_tt  (ks.checked_apply fT_type f_case) ({u3} ->
 
   // (3) dispatch on a target that has now been validated as a Bool
   //     (so it is TT, FF, or a certified neutral with stored type Bool)
-  select_lazy
-    ({_} -> Ok t_case)
-    ({_} -> select_lazy
-      ({_} -> Ok f_case)
-      ({_} ->
+  match (tree_eq target TT) {
+    TT => Ok t_case
+    FF => match (tree_eq target FF) {
+      TT => Ok f_case
+      FF =>
         // certified-neutral case
         must_ok_any (ks.checked_apply motive target) ({result_type} ->
           // motive : Bool -> core_type rank, so motive(target) is
@@ -1017,24 +1118,25 @@ q_bool_rec_fn = {ks, raw, query} -> {meta, _trigger} -> {
           must_ok_any (motive_result_rank motive) ({rank} ->
             must_ok_tt
               (ks.checked_apply (wait ks.core_type rank) result_type)
-              ({_} -> Ok (cert_make_neutral result_type target)))))
-      (tree_eq target FF))
-    (tree_eq target TT)
+              ({u4} -> Ok (cert_make_neutral result_type target))))
+    }
+  }
   )))))
 }
 
 // Inspect motive : Bool -> core_type k to recover k. If motive isn't
 // a Pi-with-core_type-codomain, return Fail.
 motive_result_rank := {motive} ->
-  select_lazy
-    ({_} -> {
+  match (has_sig kernel_ref.pi motive) {
+    TT => {
       let cod = pi_meta_cod_fn (type_meta motive) TT
-      select_lazy
-        ({_} -> Ok (type_meta cod))
-        ({_} -> Fail)
-        (has_sig kernel_ref.core_type cod)})
-    ({_} -> Fail)
-    (has_sig kernel_ref.pi motive)
+      match (has_sig kernel_ref.core_type cod) {
+        TT => Ok (type_meta cod)
+        FF => Fail
+      }
+    }
+    FF => Fail
+  }
 ```
 
 Three things to call out:
@@ -1131,11 +1233,23 @@ handlers).
 
 ## Kernel Edit Checklist
 
+0. **Add `match` syntax to the parser/compiler.** New keyword
+   `match`, new punct `=>`, new AST node `{ tag: "match"; cond;
+   thenBody; elseBody }`. Desugarer in `compile.ts` lifts each arm
+   to a closed function (parameter list = union of free vars across
+   arms, computed at Cir level), emits select-then-apply. Gate: the
+   prelude's `select` must be in scope when `match` appears (same
+   discipline as numeric literals requiring `zero`/`succ`). See
+   [Laziness Discipline](#laziness-discipline-match-and-closed-branches).
+   Without this, every kernel rewrite below depends on manually
+   spelling out closed-branch select-then-apply.
 1. **Result encoding**: `Ok`, `Fail`, `is_ok`, `ok_value`,
    `must_ok_any` (sub-evaluation must not fail; payload may be any
    tree), `must_ok_tt` (predicate evaluation must succeed AND return
    `TT`). See [Checked Apply](#checked-apply) for definitions; do not
-   collapse into a single `must_ok` helper.
+   collapse into a single `must_ok` helper. Both helpers use `match`
+   internally; CPS continuations passed to them must take a real
+   parameter (not `_`) so they're non-K abstractions.
 2. **Tighten `is_neutral`** to require fork shape. Add unit tests for
    `is_neutral (stem sig) = FF`.
 3. **Rename `fast_eq` → `tree_eq`** across all `.disp` and `.ts`

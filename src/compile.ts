@@ -44,6 +44,29 @@ function containsFree(e: Cir, name: string): boolean {
   }
 }
 
+// Collect free variable names in a Cir term (in stable insertion order),
+// respecting lambda-bound shadowing. Names already resolved to closed `lit`
+// nodes by exprToCir don't appear (only unresolved `var` nodes are free).
+// Used by the `match` desugarer to lift each arm into a closed function
+// whose parameter list captures exactly the free vars across both arms.
+function collectFreeVars(e: Cir, bound: Set<string>, out: string[], seen: Set<string>): void {
+  switch (e.tag) {
+    case "lit": case "S": case "K": case "I": return
+    case "var":
+      if (!bound.has(e.name) && !seen.has(e.name)) { out.push(e.name); seen.add(e.name) }
+      return
+    case "app":
+      collectFreeVars(e.f, bound, out, seen)
+      collectFreeVars(e.x, bound, out, seen)
+      return
+    case "lam": {
+      const inner = new Set(bound); inner.add(e.x)
+      collectFreeVars(e.body, inner, out, seen)
+      return
+    }
+  }
+}
+
 function abstractName(name: string, body: Cir): Cir {
   if (!containsFree(body, name)) return cap(K, body)
   switch (body.tag) {
@@ -226,6 +249,37 @@ function exprToCir(
       const target = exprToCir(e.target, lookupEntry, resolveUse)
       const sel = buildSelector(record.fields.length, idx)
       return cap(target, sel)
+    }
+    case "match": {
+      // Desugar to closed-branch select-then-apply.
+      // `match cond { TT => e1; FF => e2 }` becomes
+      // `select ({fvs...} -> e1) ({fvs...} -> e2) cond fv1 fv2 ... fvn`
+      // where fvs is the union of free vars across both arms (only names
+      // that aren't already closed top-level lits).
+      const selectEntry = lookupEntry("select")
+      if (!selectEntry?.tree)
+        throw new Error("match: 'select' must be in scope (import prelude)")
+
+      const condCir = exprToCir(e.cond, lookupEntry, resolveUse)
+      const thenCir = exprToCir(e.thenBody, lookupEntry, resolveUse)
+      const elseCir = exprToCir(e.elseBody, lookupEntry, resolveUse)
+
+      const fvs: string[] = []
+      const seen = new Set<string>()
+      collectFreeVars(thenCir, new Set(), fvs, seen)
+      collectFreeVars(elseCir, new Set(), fvs, seen)
+
+      const wrap = (body: Cir): Cir => {
+        let b = body
+        for (let i = fvs.length - 1; i >= 0; i--) b = { tag: "lam", x: fvs[i], body: b }
+        return b
+      }
+      const branchTT = wrap(thenCir)
+      const branchFF = wrap(elseCir)
+
+      let out: Cir = cap(cap(cap({ tag: "lit", t: selectEntry.tree }, branchTT), branchFF), condCir)
+      for (const v of fvs) out = cap(out, { tag: "var", name: v })
+      return out
     }
   }
 }

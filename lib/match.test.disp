@@ -1,0 +1,103 @@
+// Tests for the `match` keyword: select-then-apply desugaring
+// with closed-branch free-variable capture.
+
+open use "prelude.disp"
+
+// ================================================================
+// Basic correctness — closed scrutinees
+// ================================================================
+
+test (match TT { TT => 1; FF => 0 }) = 1
+test (match FF { TT => 1; FF => 0 }) = 0
+
+// ================================================================
+// Free-var capture: arms reference outer binders
+// ================================================================
+
+// Single free var
+test ({x} -> match x { TT => 1; FF => 0 }) TT = 1
+test ({x} -> match x { TT => 1; FF => 0 }) FF = 0
+
+// Multiple free vars; both arms use them
+test ({x, a, b} -> match x { TT => a; FF => b }) TT 5 7 = 5
+test ({x, a, b} -> match x { TT => a; FF => b }) FF 5 7 = 7
+
+// Asymmetric: only one arm uses the free var
+test ({x, a} -> match x { TT => a; FF => 0 }) TT 9 = 9
+test ({x, a} -> match x { TT => a; FF => 0 }) FF 9 = 0
+
+// ================================================================
+// Nested match
+// ================================================================
+
+test (match TT { TT => match FF { TT => 1; FF => 2 }; FF => 3 }) = 2
+test (match FF { TT => 1; FF => match TT { TT => 4; FF => 5 } }) = 4
+
+// Nested with shared free vars across both levels
+test ({x, y} -> match x {
+  TT => match y { TT => 1; FF => 2 }
+  FF => match y { TT => 3; FF => 4 }
+}) TT FF = 2
+
+test ({x, y} -> match x {
+  TT => match y { TT => 1; FF => 2 }
+  FF => match y { TT => 3; FF => 4 }
+}) FF TT = 3
+
+// ================================================================
+// Short-circuit: unselected arm never runs
+// ================================================================
+// `loops y` diverges when applied (infinite recursion via fix).
+// If desugaring is correct (select-then-apply with closed branches),
+// the FF arm's body never fires when x = TT, so the test terminates
+// and returns y. If the desugaring were broken (eager thunks,
+// select_lazy with K-wrap), bracket abstraction over `y` would
+// eagerly evaluate `loops y` and the test would hit budget.
+
+let loops = fix ({self, x} -> self x)
+
+test ({x, y} -> match x { TT => y; FF => loops y }) TT 5 = 5
+
+// Symmetric case: FF selected, TT arm has the divergent body
+test ({x, y} -> match x { TT => loops y; FF => y }) FF 5 = 5
+
+// ================================================================
+// Match composes with other constructs
+// ================================================================
+
+// Inside a let
+test ({x} -> {
+  let r = match x { TT => 10; FF => 20 }
+  r
+}) TT = 10
+
+// As the body of a binder
+test (({x} -> match x { TT => 1; FF => 0 }) TT) = 1
+
+// Scrutinee is an application
+let is_zero = {n} -> fast_eq n 0
+test (match (is_zero 0) { TT => 1; FF => 0 }) = 1
+test (match (is_zero 1) { TT => 1; FF => 0 }) = 0
+
+// ================================================================
+// CPS-style chain (mirrors soundness plan's must_ok_* pattern)
+// ================================================================
+// A continuation `{r} -> body` whose body has outer free vars is the
+// pattern the soundness plan relies on. The continuation must be
+// invoked only when the success branch is selected — otherwise the
+// "Fail short-circuit" property is broken.
+
+let succ_only = {cond, k, x} ->
+  match cond {
+    TT => k x
+    FF => loops x
+  }
+
+// When cond=TT, k is invoked with x.
+test succ_only TT ({y} -> y) 7 = 7
+
+// When cond=FF, the FF arm runs `loops x` which diverges. So the test
+// budget would blow up if we ever reached the FF arm via cond=TT.
+// (This is just succ_only TT, exercising the same code path again
+//  with a richer continuation.)
+test succ_only TT ({y} -> succ y) 4 = 5
