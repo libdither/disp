@@ -187,17 +187,21 @@ test infer ({x} -> x) ((Hyp (Hyp t t) (t t)) (Hyp (Hyp t t) (t t))) = InvalidTyp
 test infer ({x} -> x) t = FF
 
 // ================================================================
-// H-rule via raw apply (neutrals checked by type)
+// H-rule via infer (kernel-internal H-rule mechanism)
 // ================================================================
+// Public types like Nat now reject pre-existing neutrals at the entry
+// scan, so direct `Nat (Hyp Nat 0)` fails (boundary closure). The H-rule
+// itself is exercised through `infer`, which is a kernel-internal helper.
 
-// n : Nat |- n : Nat
-test Nat (Hyp Nat 0) = TT
+test infer (conv Nat) (Hyp Nat 0) = TT
+test infer (conv Nat) (Hyp Bool 0) = FF
+test infer (conv Nat) ((Hyp NatToNat 0) (Hyp Nat 1)) = TT
 
-// b : Bool |- b : Nat
+// Boundary closure: applying public Nat to a Hyp-built tree returns FF
+// (entry scan sees the neutral root and rejects).
+test Nat (Hyp Nat 0) = FF
 test Nat (Hyp Bool 0) = FF
-
-// f : Nat -> Nat, n : Nat |- f n : Nat
-test Nat ((Hyp NatToNat 0) (Hyp Nat 1)) = TT
+test Nat ((Hyp NatToNat 0) (Hyp Nat 1)) = FF
 
 // ================================================================
 // Pi metadata reflection
@@ -335,11 +339,9 @@ test (Pi Type0 ({A} ->
           (Arrow B (Arrow A C))))))
   ({_A} -> {_B} -> {_C} -> {f} -> {b} -> {a} -> (f a) b) = TT
 
-// f : Nat -> Nat, x : Nat |- f x : Nat
-test Nat ((Hyp NatToNat 3) (Hyp Nat 4)) = TT
-
-// f : Nat -> Nat, x : Nat |- f x : Bool
-test Bool ((Hyp NatToNat 3) (Hyp Nat 4)) = FF
+// f : Nat -> Nat, x : Nat |- f x : Nat (kernel-internal H-rule via infer)
+test infer (conv Nat) ((Hyp NatToNat 3) (Hyp Nat 4)) = TT
+test infer (conv Bool) ((Hyp NatToNat 3) (Hyp Nat 4)) = FF
 
 test Type1 (Pi Type0 ({A} -> Arrow A A)) = TT
 test Type0 (Pi Type0 ({A} -> Arrow A A)) = FF
@@ -393,18 +395,16 @@ test (Pi Type0 ({A} ->
       Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
 
-// f : (x : Nat) -> Bool, n : Nat |- f n : Bool
-test Bool
+// f : (x : Nat) -> Bool, n : Nat |- f n : Bool / Nat (via infer)
+test infer (conv Bool)
   ((Hyp (Pi Nat ({_x} -> Bool)) 0)
     (Hyp Nat 1)) = TT
-
-// f : (x : Nat) -> Bool, n : Nat |- f n : Nat
-test Nat
+test infer (conv Nat)
   ((Hyp (Pi Nat ({_x} -> Bool)) 0)
     (Hyp Nat 1)) = FF
 
-// f : (A : Type0) -> A -> A, n : Nat |- f Nat n : Nat
-test Nat
+// f : (A : Type0) -> A -> A, n : Nat |- f Nat n : Nat (via infer)
+test infer (conv Nat)
   (((Hyp
       (Pi Type0 ({A} -> Arrow A A))
       0)

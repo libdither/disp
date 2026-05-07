@@ -443,6 +443,19 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
     isUniverse(t) { return hasSig(typeSigInner, unguardOrSelf(t)) },
     isPi(t) { return hasSig(piSigInner, unguardOrSelf(t)) },
     isNeutral(t) { return hasSig(hypSig, t) },
+    // piDomain / piCodFn return the *unguarded* (core) domain and the
+    // *unapplied* core-returning codFn closure. This intentionally differs
+    // from the disp-side reflection helpers `pi_dom` / `pi_cod_fn` (which
+    // re-guard / apply-and-re-guard for user-facing code). The elaborator
+    // wants the internal forms because:
+    //   - it threads results back into kernel-style raw application
+    //     (`applyTree(codFn, x_tree, ...)`), which matches how q_pi_fn uses
+    //     pi_meta_cod_fn internally — both produce core/unguarded results;
+    //   - reflection helpers (isPi/isUniverse/isNeutral) all unguard before
+    //     comparing signatures, so a guarded vs unguarded result_type
+    //     produces the same answers downstream.
+    // Keep these aligned with q_pi_fn's internal convention, NOT with the
+    // user-facing disp reflection signature.
     piDomain(t) {
       const inner = unguardOrSelf(t)
       const meta = typeMetaTree(inner)
@@ -579,7 +592,7 @@ type ElabCtx = {
 // Gated behind debugTypeCheck — never on in production.
 function assertTypeCheck(tree: Tree, expected: Tree | null, ctx: ElabCtx): Tree {
   if (ctx.debugTypeCheck && expected !== null) {
-    const ok = applyTree(expected, tree, 100_000_000)
+    const ok = applyTree(expected, tree, 10_000_000)
     if (!treeEqual(ok, TT)) {
       throw new Error(
         `defense-in-depth: type check failed\n` +

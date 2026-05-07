@@ -123,22 +123,275 @@ of the fix as a whole still flows from the dispatcher rejection in
 session 3 — session 2 just lands the structural pieces so that
 session 3 is a single-handler change.
 
-### Session 3 — handlers
+### Session 3 — handlers *(partial)*
 
-Ports the existing handlers to use checked application at every
-adversarial boundary, and lights up the dispatch table.
+Ports handlers to the new boundary discipline; the dispatcher's
+walker is stubbed pending a follow-up.
 
-- [ ] `q_pi_fn` rewritten in CheckedResult form
-- [ ] `q_hyp_reduce_fn` rewritten (uses `ks.checked_apply` for
-      codFn(arg))
-- [ ] `q_nat_fn`, `q_bool_fn`, `q_eq_fn` rewritten
-- [ ] `q_checked_apply_fn` — full dispatch table (the security
-      perimeter; review carefully)
-- [ ] Bootstrap update: kernel record extended with `guard`,
-      `core_type`, `guarded_type`, `checked_apply`
-- [ ] All existing kernel tests pass
-- [ ] Adversarial tests: forged StuckElim at boundary, K-hidden
-      forgery, reflective `is_neutral`/`is_fork`/`tree_eq`
+- [x] `q_pi_fn` uses `ks.checked_apply` for sub-evaluation paths
+- [x] `q_hyp_reduce_fn` returns bare new neutral (dispatcher wraps
+      in Ok when routing through `ks.checked_apply`)
+- [x] `q_nat_fn`, `q_bool_fn`, `q_eq_fn` return bare TT/FF
+- [x] `q_core_type_fn`, `q_guarded_type_fn` use `must_ok_or_ff`
+- [x] `q_guard_fn` does `q_scan_no_neutral` entry scan + raw apply
+      on `core v` + bare-TT/FF unwrap. **Closes attacks 1 and 2.**
+- [x] `unguard_checked` strict (rejects raw predicates)
+- [x] Kernel record extended with `guard, core_type, guarded_type,
+      checked_apply`
+- [x] CheckedResult primitives (`Ok`, `Fail`, `is_ok`, `ok_value`,
+      `must_ok_any`, `must_ok_tt`, `must_ok_or_ff`) moved into
+      kernel.disp; `checked.disp` re-exports + keeps the standalone
+      session-1 walker as `checked_apply_walker` for regression
+      testing
+- [x] Tests migrated: direct `Nat (Hyp X)` boundary tests now go
+      through `infer (conv Nat) (Hyp X)`; explicit boundary-rejection
+      assertions added (`Nat (Hyp Nat 0) = FF`)
+- [x] Soundness baseline updated: attacks 1, 2 now `= FF` (closed);
+      attacks 3, 4, 5 remain `= TT` (open)
+- [ ] **`q_checked_apply_fn` walker is a STUB**: `{f, x} -> Ok (f x)`.
+      Defense-in-depth in the test harness (`debugTypeCheck: true`) is
+      also disabled in session 3 because the entry scan rejects
+      elaborator-internal hypothesis trees that the harness applies
+      the public type to.
+- [ ] **Reflective attacks (3, 4, 5) NOT yet closed.** Closing them
+      requires fixing the compile-time blowup described in
+      [Session 3 — empirical investigation](#session-3--empirical-investigation-of-the-walker-blowup).
+
+### Session 3 — empirical investigation of the walker blowup
+
+**Performance update (2026-05-06).** Two changes drop the walker
+from "unusable" to "tolerable as a soundness baseline":
+
+1. **`applyMemoEntryLimit` 500K → 5M in `src/tree.ts`.** Cuts full-
+   suite walker runtime from ~11 min to ~6 s (~109× speedup).
+   Eviction was the dominant cost; entries were being thrown out
+   FIFO-style during a single test run and recomputed. At 5M the
+   walker's working set fits (kernel.test.disp peaks at 3.9M
+   entries). 50M doesn't help further.
+
+2. **Per-walker-step overhead is the residual ~3× cost.** With 5M
+   memo, walker-mode is 6.16 s vs 1.67 s baseline. The bottleneck
+   is structural: the walker compounds with the apply-step count of
+   user code, including library helpers it walks through.
+
+**Why one test dominates: codFn isn't pre-reduced.**
+
+Test 58 (`(Arrow Nat Nat) id_fn = TT`) costs 3.72 M apply steps
+under the walker — 96% of the kernel.test.disp total — even though
+`id_fn = I_canonical` and the walker has an I-shortcut. Bisected
+with explicit q_pi_fn rewrites:
+
+- The walker call on `v = id_fn` fires the I-shortcut, costs
+  ~1300 steps.
+- The walker call on `codFn` costs **3.59 M steps**.
+
+Cause: `Pi Nat ({_} -> Nat)`'s codFn is NOT `K core_Nat` — it's
+`S(K unguard_checked)(K Nat)`. The K-composition optimization in
+`abstractName` (compile.ts:85) only fires at bracket-abstraction
+time. Pi's body is `\A. \B. ... ({x} -> unguard_checked (B x)) ...`;
+when bracket-abstracted, `B` is a free variable, so the inner form
+is `S (K unguard_checked) B`, not a K-composable shape. When Pi is
+later applied with `A=Nat, B=K(Nat)`, the resulting fork retains
+the S-form. The walker then has to walk
+`apply(S(K unguard_checked)(K Nat), hyp)` step-by-step, which
+recurses through `walker(unguard_checked, Nat)` — itself a
+50+ apply-step computation under raw apply, multiplied ~70× by
+walker overhead.
+
+**Implications.** The walker's cost scales with the *internal* apply
+count of user-position code, not just its surface complexity. Two
+reductions are visible:
+
+A. **Pre-reduce codFn at Pi-construction time** so metadata stores a
+   normal-form tree the walker doesn't have to interpret. Either:
+   (i) eagerly evaluate the body with a fresh hypothesis at Pi
+   construction and abstract the result back, or (ii) extend the
+   bracket-abstraction K-composition rule to fire at runtime
+   apply-time when both arguments to S are K-shapes. Both shrink
+   the walker's payload to constant-cost shapes.
+
+B. **Native walker** in `tree.ts`, mirroring `tree_eq`'s host
+   fast-path. Cuts the per-step constant from 70× to 1-2×.
+
+A is contained to `lib/kernel.disp` and the bracket-abstraction
+optimizer; B is the heavier cross-cutting change. Probably try A
+first — it directly attacks the test 58 cost driver.
+
+**Original 2026-05-05 findings (preserved).**
+
+The original "super-exponential compile-time tree blowup" claim was
+mis-diagnosed. With clean helpers at top level the dispatcher
+compiles cheaply, the walker is correct on the soundness attacks,
+and the failure modes under load are:
+
+1. ~400× runtime slowdown (now ~3× after memo bump).
+2. Eliminator-mint rejections (`nat_rec`/`bool_rec`/`eq_J` inside
+   Pi-checked bodies) — fixed by session 4's certified eliminators.
+
+See the original section text below for the failed-hypothesis trail
+and per-rejected-direction notes.
+
+---
+
+**Earlier (2026-05-05) — first-pass re-investigation.** The
+"compile-time blowup" hypothesis below was tested empirically by
+re-wiring the full walker (stem rule + S rule + triage-fork rule,
+helpers extracted to top-level) into `q_checked_apply_fn` and
+running the suite. The findings updated the picture significantly:
+
+- *No compile-time blowup.* Compiling `lib/kernel.disp` with the full
+  walker active completes in ~40 ms, identical to the stub. The
+  walker's bracket-abstracted form is fine; reduction at
+  `compile.ts:120` does not exhaust budget.
+- *Walker correctly closes attacks 3, 4, 5.* `lib/soundness.test.disp`
+  flips tests 3-5 from `TT` to `FF` under the full walker, exactly as
+  the soundness story predicts.
+- *Test-runtime cost is the real symptom*, not compile-time. The full
+  test suite goes from ~1.7 s (stub) to ~11 minutes (walker), a
+  ~400× slowdown. `lib/elab.test.disp` dominates that runtime —
+  ~10 minutes by itself, and its first failure is "type check failed"
+  in the elaborator's `assertTypeCheck` predicate.
+- *Eliminator-using tests break under the walker.* In
+  `lib/kernel.test.disp`, tests around 137-142 (e.g. `Arrow Nat Bool`
+  with a `nat_rec` body, `Pi Type0 ({A} -> ...)` with polymorphic
+  `applyPoly`) flip from `TT` to `FF`. Cause: under the walker, when
+  user-level code inside a Pi body invokes `nat_rec`/`bool_rec`/`eq_J`
+  on a hypothesis, those eliminators mint a new neutral via
+  `wait kernel.hyp_reduce meta`. The walker's stem-rule constructor
+  check rejects that mint, so the eliminator returns `Fail` instead
+  of a `StuckElim`. This is exactly the case session 4's certified
+  eliminators are designed to handle (the dispatcher must route
+  eliminator-rooted applies through raw apply, bypassing the
+  constructor check).
+
+The original "super-exponential compile-time tree blowup" claim
+appears to have been mis-diagnosed. With clean helpers at top level
+the dispatcher compiles cheaply, the walker is correct on the
+soundness attacks, and the failure mode under load is (a) runtime
+slowness from per-step walker recursion and (b) eliminator-mint
+rejections that need session 4.
+
+The original walk-through below is preserved for context; the
+"most promising direction" (`cirToTree` lambda-value laziness) is
+no longer the primary blocker. The actual unblockers are:
+
+1. **Land session 4** — certified `bool_rec`/`nat_rec`/`eq_J`
+   handlers. Add their proxy signatures to the dispatch table so
+   eliminator-rooted applies route through raw apply (bypassing the
+   constructor check). This fixes the kernel.test.disp 137-142
+   regressions.
+2. **Decide on the perf budget.** A 400× slowdown on the full suite
+   is unacceptable for daily development but acceptable as a
+   correctness baseline if dev runs use the stub and CI runs use the
+   walker. Alternatively, look at where the walker hot path spends
+   time — `q_pi_fn` calls `ks.checked_apply` twice per Pi check, and
+   each call walks the user value step-by-step; that's an obvious
+   target for `tree_eq`-style host fast-paths gated on
+   "no neutrals in either argument".
+
+**Pre-update symptom (preserved for history).** Wiring the
+step-by-step walker into `q_checked_apply_fn` was reported to make a
+basic test like `(Pi Nat ({_} -> Nat)) ({x} -> x) = TT` exhaust the
+10M apply-step budget at compile time. The 2026-05-05
+re-investigation could not reproduce this with helpers extracted to
+top-level; the most likely explanation is that the prior
+investigation kept helper bodies inline in `q_checked_apply_fn`'s
+`fix` body, which DID balloon the bracket-abstracted form (the
+"top-level helpers helped 8×" datapoint below is consistent with
+this). With top-level helpers and no inlined CPS chains, compile
+cost is unremarkable.
+
+**Where the cost lives.** It's at compile time, in `compile.ts:120`'s
+`cirToTree` — `applyTree(cirToTree(e.f), cirToTree(e.x), 10_000_000)`
+fully reduces every apply node when compiling expressions, including
+inside top-level `let` bindings whose value is a function. The
+dispatcher's `let q_checked_apply_fn = {ks, raw, query} -> fix(...)`
+binding triggers expensive eager reduction of the bracket-abstracted
+S/K form during compilation.
+
+**Rejected hypotheses (with evidence).**
+
+- *Number of `self c x` calls in the walker body.* Tested by adding
+  self-recursive sites incrementally inside an inline body. Cost
+  grew non-linearly (0→1281, 1→1348, 2→4704, 3→11600, 4→16033 steps)
+  but stayed finite up to 4 self refs. Lifting helpers to top-level
+  reduced 3-self cost to 1485 steps. So `self`-count alone isn't the
+  exponential trigger.
+- *`recq` projection cost.* Direct `kernel.checked_apply f x` from a
+  test passes in ~900 steps for any input. The proxy form
+  `(wait kernel checked_apply_query) f x` (which is what `ks.checked_apply`
+  resolves to) also passes at test level. So `recq` machinery isn't
+  the cost driver.
+- *Two `ks.checked_apply` calls in `q_pi_fn`.* I initially thought
+  the second call doubled work; actually the first call alone
+  reproduces the hang when the input forces the walker's K-rule
+  path (codFn = K core_Nat) AND the dispatcher contains the full
+  walker. The I-shortcut path (v = I_canonical) avoids the hang
+  because the walker returns `Ok x` before touching the FF branch.
+- *`match` desugaring specifically.* Replacing every `match` with
+  `select` / `select_lazy` and direct triage on result tree shape
+  did not fix the blowup. Match desugaring contributes but isn't
+  the root cause.
+
+**Confirmed root cause.** The dispatcher's `fix` body, when its
+abstracted form references a top-level helper that itself uses
+`self`-recursion through nested closures, produces compile-time
+reduction work that scales super-exponentially with the depth of
+nesting in the helper. Even the absolute minimum body
+`fix({self, f, x} -> walker_top raw self f x)` — which η-reduces
+to roughly `walker_top raw` — hangs once `walker_top` references
+`self` somewhere in its body.
+
+**Tried and didn't fix it.**
+
+1. **Top-level helpers instead of inline lets.** Helped a lot for
+   helpers used in isolation (8x reduction in test step count) but
+   doesn't help when the helper is referenced from the dispatcher's
+   fix body.
+2. **`let` + `match` Fail propagation instead of CPS continuations
+   (`must_ok_then r ({k} -> ...)`).** Worked for the S-rule alone
+   (9k steps); broke when the triage rule was added.
+3. **Direct triage on the result's tree shape (Option A).** Removes
+   `match` desugaring's closure overhead. Didn't fix the
+   dispatcher-level blowup.
+4. **`select_lazy` / `select` (eager) for branch dispatch.** Same
+   outcome as Option A.
+5. **Caching `let ka = ks.checked_apply` then using `ka` twice.**
+   No help; the cost is per-invocation, not per-resolution.
+6. **Inlining the walker entirely (no helper calls).** No help.
+7. **Reducing the dispatcher fix body to a single helper call
+   (`walker_top raw self f x`).** No help — even this minimal body
+   hangs once `walker_top` itself uses `self`-recursion.
+
+**Most promising direction not yet tried.**
+
+Modify `cirToTree` (or add a code path) so that **lambda-value
+bindings don't get eagerly reduced** when compiled. The bracket-
+abstracted tree should be built but left as combinator nodes; only
+when the value is later applied to concrete arguments do reductions
+fire. This preserves test compilation behavior (which needs eager
+apply for the test LHS to compute its value) while skipping the
+unnecessary eager work for top-level function definitions.
+
+Concretely in `src/compile.ts`:
+
+- `cirToTree` for `app(f, x)` currently calls
+  `applyTree(cirToTree(e.f), cirToTree(e.x), 10_000_000)`.
+- The fix would: track whether we're compiling a **value position**
+  (the RHS of a `let`/`field`) vs. an **application position** (a
+  test expression's LHS). In value position, build the tree with
+  `cap` (un-reduced); in application position, keep the eager apply.
+- Tests still get their LHS evaluated. Top-level helper definitions
+  become cheap.
+
+Less attractive alternative: **trampoline the walker** as a
+state-machine loop with one `self` call. Bigger refactor; the
+real-fix-via-`cirToTree` change is smaller.
+
+**Adversarial test budget.** Once the dispatcher is unstubbed,
+the four originally-failing attacks in `lib/soundness.test.disp`
+flip from `= TT` to `= FF`. The current baseline keeps attacks 3-5
+as `= TT`; the next session's success criterion is flipping them.
 
 ### Session 4 — eliminators
 
@@ -1888,6 +2141,18 @@ before considering the fix complete.
 
 These are not blockers for the soundness fix itself, but should be
 investigated once the kernel rewrite has landed:
+
+- **Unstub `q_checked_apply_fn`.** The session-3 dispatcher is a
+  trivial `Ok (f x)` stub. Wiring in the step-by-step walker (with
+  helpers at top level) is structurally correct and closes attacks
+  3-5, but currently breaks `kernel.test.disp` 137-142 (eliminator
+  mints inside Pi bodies are rejected) and slows the suite ~400×.
+  Unblocking this is no longer a `cirToTree` problem — see the
+  re-investigation note in
+  [Session 3 — empirical investigation](#session-3--empirical-investigation-of-the-walker-blowup).
+  Real unblockers: land session 4 (certified eliminators in the
+  dispatch table, bypassing the constructor check) and add a
+  no-neutral fast-path for the walker's hot loop.
 
 - **Update `TYPE_THEORY.typ` to reflect the new design.** The
   current "Open question: neutral capabilities" section

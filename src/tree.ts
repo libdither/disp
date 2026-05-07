@@ -84,7 +84,7 @@ export function treeApply(f: Tree, g: Tree): Tree {
 
 const applyMemo = new Map<number, Map<number, Tree>>()
 let applyMemoEntries = 0
-let applyMemoEntryLimit = 500_000
+let applyMemoEntryLimit = 5_000_000
 
 // --- Cache instrumentation ---
 export const cacheStats = { hits: 0, misses: 0, memoWrites: 0, uniqueNodes: 0 }

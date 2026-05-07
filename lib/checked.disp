@@ -1,123 +1,21 @@
-// checked.disp — session 1 of the soundness fix.
+// checked.disp — session 1's standalone walker, kept for soundness-
+// regression testing.
 //
-// Foundational layer: a TC interpreter (`checked_apply`) that evaluates
-// untrusted user code under the no-fresh-neutral-roots invariant. The
-// dispatcher in this file does NOT yet recognize certified handler
-// signatures (that comes in session 3). For session 1 it's a pure
-// step-by-step apply walker with constructor checks at every fork-
-// producing rule, plus the result encoding and trusted-helper toolkit
-// that handler bodies will need.
+// Session 3 moved the canonical CheckedResult primitives (Ok, Fail,
+// must_ok_*) into kernel.disp. The canonical `checked_apply` is now
+// the kernel's dispatcher (currently a stub — see q_checked_apply_fn
+// in lib/kernel.disp). This file keeps the *standalone walker* under
+// the name `checked_apply_walker`, exercised by lib/checked.test.disp
+// to verify the constructor checks at every fork-producing rule.
+//
+// The walker isn't yet wired through the kernel record (the dispatcher
+// would otherwise blow up at compile-time partial evaluation — see the
+// note on q_checked_apply_fn). Once that's resolved, kernel.checked_apply
+// will be replaced with the walker and this file can shrink to a
+// re-export shim.
 
 open use "prelude.disp"
 open use "kernel.disp"
-
-// ================================================================
-// Result encoding
-// ================================================================
-// Ok v   = pair(LEAF, v) = fork(LEAF, v)  — a leaf-headed fork.
-// Fail   = stem(K) = stem(stem(LEAF))     — a stem; pair_fst returns stem(LEAF) ≠ LEAF.
-// is_ok r = TT iff pair_fst r = LEAF (the Ok shape).
-
-Ok   := {v} -> t t v
-Fail := t (t t)
-
-is_ok    := {r} -> tree_eq (pair_fst r) t
-ok_value := {r} -> pair_snd r
-
-// ================================================================
-// CPS continuations
-// ================================================================
-// must_ok_any: r must be Ok _; thread the payload (any tree) into k.
-//   k must be a closed function (parameter list covers its body).
-must_ok_any := {r, k} ->
-  match (is_ok r) {
-    TT => k (ok_value r)
-    FF => Fail
-  }
-
-// must_ok_tt: r must be Ok TT specifically. Used for predicate validation
-// where Ok FF is a "no" answer that should propagate as Fail.
-must_ok_tt := {r, k} ->
-  match (is_ok r) {
-    TT => match (tree_eq (ok_value r) TT) {
-      TT => k t
-      FF => Fail
-    }
-    FF => Fail
-  }
-
-// ================================================================
-// Tree predicates
-// ================================================================
-// neutral_root, contains_neutral, scan_no_neutral now live in kernel.disp
-// (they need is_neutral / kernel.hyp_reduce, so they belong there). They
-// are brought into scope via `open use "kernel.disp"` above.
-
-// ================================================================
-// Certified neutral construction (kernel-internal)
-// ================================================================
-// These helpers mint new neutral roots. They run inside trusted handler
-// bodies via raw apply; they are not invocable through checked_apply
-// because any user expression that tries to evaluate
-// `wait kernel.hyp_reduce meta` step-by-step is rejected at the
-// stem-rule constructor check below.
-//
-// The aliasing to Hyp/StuckElim is intentional: soundness comes from
-// the public boundary going through Type / scan_no_neutral, not from
-// hiding these constructors. (See SOUNDNESS_FIX_PLAN.md
-// §"Public Neutral Constructors".)
-//
-// CRITICAL FOR SESSION 3: handler bodies that call cert_make_* MUST
-// run via raw apply, not checked_apply. The dispatch table in
-// q_checked_apply_fn must recognize each kernel handler's signature
-// (ks.pi, ks.nat, …) and route to raw apply for those — otherwise the
-// handler's own cert_make_* call hits the stem-rule constructor check
-// and Fails. Adding a handler without a dispatch entry is the
-// load-bearing failure mode flagged in SOUNDNESS_FIX_PLAN.md
-// §"Dispatch Table as Security Perimeter": the failure is loud
-// (handler appears broken), but a handler registered without
-// validating its inputs through checked_apply silently breaks
-// soundness instead. Treat dispatch-table edits as the security
-// perimeter.
-
-cert_make_neutral := Hyp                           // wait kernel.hyp_reduce (make_neutral_meta ty payload)
-cert_make_hyp     := {domain, identity} -> Hyp domain identity
-cert_make_stuck   := StuckElim                     // wait kernel.hyp_reduce (make_neutral_meta result_type target)
-
-// fresh_id: the identity payload for a Pi-introduced hypothesis. Today
-// the Pi metadata itself serves as identity; hash-consing makes this
-// stable across the binding.
-fresh_id := {pi_type} -> type_meta pi_type
-
-// checked_h_rule: shared H-rule helper. Caller passes the reconstructed
-// "this checker's own type" (i.e. wait (ks query) meta) and the neutral
-// candidate v. Returns Ok TT if the neutral's stored type matches.
-//
-// Both arguments are kernel-internal: the reconstructed type is built
-// by the handler from its own meta, and v is already established as a
-// certified neutral by the dispatcher. Raw tree_eq is correct.
-checked_h_rule := {self_type, v} ->
-  match (tree_eq self_type (neutral_type v)) {
-    TT => Ok TT
-    FF => Ok FF
-  }
-
-// ================================================================
-// Checked apply: step-by-step TC interpreter with constructor checks
-// ================================================================
-// In session 1, this is the default-only path: every apply step is
-// walked via checked_raw_apply rules. In session 3 a dispatcher will
-// recognize certified handler signatures and route directly to raw
-// apply for those. The constructor-check invariants below are what
-// makes that future routing sound — handler bodies are trusted; user
-// code is not, and user code cannot mint a neutral root through
-// these rules (see SOUNDNESS_FIX_PLAN.md §"Why the constructor checks
-// suffice").
-
-// I_canonical: fork(fork(LEAF, LEAF), LEAF). The polymorphic identity.
-// Recognized as a literal carve-out so identity on a hypothesis is
-// accepted (without the carve-out, triage-on-neutral would reject it).
-let I_canonical = {z} -> z
 
 // Stem rule helper: construct fork(a, x), reject if neutral_root.
 let stem_step = {a, x} -> {
@@ -158,11 +56,8 @@ let s_step = {self, c, b, x} -> {
 // Fork rule (f = fork(a, b)): dispatch on a.
 let fork_step = {self, a, b, x} ->
   triage
-    // a = leaf: K rule.
     (Ok b)
-    // a = stem(c): S rule.
     ({c} -> s_step self c b x)
-    // a = fork(tc, td): triage rule.
     ({tc, td} ->
       match (neutral_root x) {
         TT => Fail
@@ -174,24 +69,34 @@ let fork_step = {self, a, b, x} ->
       })
     a
 
-checked_apply := fix ({self, f, x} ->
+// checked_apply_walker: standalone session-1 walker. Exercises the
+// constructor checks; not wired into the kernel record.
+checked_apply_walker := fix ({self, f, x} ->
   match (tree_eq f I_canonical) {
     TT => Ok x
     FF => (triage
-            // f = leaf: leaf rule, result = stem(x).
             (Ok (t x))
-            // f = stem(a): stem rule.
             ({a} -> stem_step a x)
-            // f = fork(a, b): fork rule.
             ({a, b} -> fork_step self a b x)
             f)
   })
 
-// checked_check: public entry point. Scans v for pre-existing neutral
-// roots, then runs checked_apply on (core, v). Used by q_guard_fn (the
-// boundary handler) and in tests below.
-checked_check := {core, v} ->
+// checked_check_walker: walker entry that scans v first.
+checked_check_walker := {core, v} ->
   match (scan_no_neutral v) {
-    TT => checked_apply core v
+    TT => checked_apply_walker core v
     FF => Fail
+  }
+
+// Aliases for backward-compat with session-1 names.
+cert_make_neutral := Hyp
+cert_make_hyp     := {domain, identity} -> Hyp domain identity
+cert_make_stuck   := StuckElim
+
+fresh_id := {pi_type} -> type_meta pi_type
+
+checked_h_rule := {self_type, v} ->
+  match (tree_eq self_type (neutral_type v)) {
+    TT => Ok TT
+    FF => Ok FF
   }

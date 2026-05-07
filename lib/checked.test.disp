@@ -2,7 +2,7 @@
 //
 // Covers: result encoding, must_ok_* CPS helpers, neutral_root /
 // contains_neutral / scan_no_neutral, the constructor checks at every
-// fork-producing rule, and end-to-end checked_check on representative
+// fork-producing rule, and end-to-end checked_check_walker on representative
 // inputs.
 
 open use "prelude.disp"
@@ -131,47 +131,47 @@ test checked_h_rule Bool (Hyp Bool 0) = Ok TT
 // checked_apply: leaf rule
 // ================================================================
 
-test checked_apply t 0 = Ok (t 0)
-test checked_apply t t = Ok (t t)
-test checked_apply t (t t) = Ok (t (t t))
+test checked_apply_walker t 0 = Ok (t 0)
+test checked_apply_walker t t = Ok (t t)
+test checked_apply_walker t (t t) = Ok (t (t t))
 
 // ================================================================
 // checked_apply: stem rule (constructor check)
 // ================================================================
 
 // Normal stem: produces fork(a, x) which is not neutral-rooted.
-test checked_apply (t t) 0 = Ok (t t 0)
-test checked_apply (t Nat) 0 = Ok (t Nat 0)
+test checked_apply_walker (t t) 0 = Ok (t t 0)
+test checked_apply_walker (t Nat) 0 = Ok (t Nat 0)
 
 // Adversarial: stem rule must reject construction of a neutral fork.
 // `t hyp_reduce_sig` is a stem of the canonical signature; applying it
 // would produce `fork(hyp_reduce_sig, x)` — a neutral root. The stem
 // rule's constructor check fires and returns Fail.
-test checked_apply (t hyp_reduce_sig) (make_neutral_meta Nat 0) = Fail
+test checked_apply_walker (t hyp_reduce_sig) (make_neutral_meta Nat 0) = Fail
 
 // Same attack with a different meta — rejected for any meta.
-test checked_apply (t hyp_reduce_sig) t = Fail
+test checked_apply_walker (t hyp_reduce_sig) t = Fail
 
 // S-rule transitive check: a lambda body that uses its bound var in
 // multiple positions can't η-reduce, so it compiles to S-form (S Hyp I
-// here). Reduction descends through the S-rule's recursive checked_apply
+// here). Reduction descends through the S-rule's recursive checked_apply_walker
 // and ultimately a stem step constructs the wait-fork; the stem rule's
 // check fires. Demonstrates fresh-neutral construction inside an S-
 // recursion is still caught at the inner stem step (the structural
 // argument made concrete).
-test checked_apply ({m} -> Hyp m m) t = Fail
+test checked_apply_walker ({m} -> Hyp m m) t = Fail
 
 // ================================================================
 // checked_apply: K rule
 // ================================================================
 
 // fork(leaf, payload) applied to x returns payload.
-test checked_apply (t t 5) 0 = Ok 5
-test checked_apply (t t Nat) 0 = Ok Nat
+test checked_apply_walker (t t 5) 0 = Ok 5
+test checked_apply_walker (t t Nat) 0 = Ok Nat
 
 // K passes payload through; payload's content is the caller's responsibility
 // (entry scan or earlier rule already cleared it).
-test checked_apply ({_} -> 7) 99 = Ok 7
+test checked_apply_walker ({_} -> 7) 99 = Ok 7
 
 // ================================================================
 // checked_apply: S rule (transitive constructor check)
@@ -179,35 +179,35 @@ test checked_apply ({_} -> 7) 99 = Ok 7
 
 // Identity built via S: ({x, y} -> y x) compiles through S.
 // Non-adversarial — should succeed.
-test checked_apply ({x} -> x) 5 = Ok 5
-test checked_apply ({x, y} -> x) 5 = Ok ({y} -> 5)
+test checked_apply_walker ({x} -> x) 5 = Ok 5
+test checked_apply_walker ({x, y} -> x) 5 = Ok ({y} -> 5)
 
 // Composition: ({f, x} -> f x) succ on 0 → 1.
-test checked_apply (({f, x} -> f x) succ) 0 = Ok 1
+test checked_apply_walker (({f, x} -> f x) succ) 0 = Ok 1
 
 // ================================================================
 // checked_apply: triage rule
 // ================================================================
 
 // triage on a leaf: returns on_leaf.
-test checked_apply ({v} -> triage 1 ({_} -> 2) ({_l, _r} -> 3) v) t = Ok 1
+test checked_apply_walker ({v} -> triage 1 ({_} -> 2) ({_l, _r} -> 3) v) t = Ok 1
 
 // triage on a stem: applies on_stem to inner.
-test checked_apply ({v} -> triage 1 ({c} -> succ c) ({_l, _r} -> 3) v) (t 5) = Ok 6
+test checked_apply_walker ({v} -> triage 1 ({c} -> succ c) ({_l, _r} -> 3) v) (t 5) = Ok 6
 
 // triage on a fork: applies on_fork to l, r.
-test checked_apply ({v} -> triage 1 ({_} -> 2) ({l, r} -> r) v) (t 7 9) = Ok 9
+test checked_apply_walker ({v} -> triage 1 ({_} -> 2) ({l, r} -> r) v) (t 7 9) = Ok 9
 
 // Adversarial: triage on a NEUTRAL must fail. This is the rule that
 // blocks reflective is_neutral / is_fork attacks. Note: h is fork-shaped
 // (Hyp builds via wait → fork), so this exercises the triage-fork rule's
 // `neutral_root x` check specifically — not just leaf/stem cases.
-test checked_apply ({v} -> triage 1 ({_} -> 2) ({_l, _r} -> 3) v) h = Fail
+test checked_apply_walker ({v} -> triage 1 ({_} -> 2) ({_l, _r} -> 3) v) h = Fail
 
 // Triage-fork rule: same shape, but the triage's three branches read meta
 // off the neutral. The neutral_root check fires before any branch runs,
 // so the would-be reflective leak is blocked at rule entry.
-test checked_apply ({n} -> triage t ({c} -> c) ({l, r} -> l) n) h = Fail
+test checked_apply_walker ({n} -> triage t ({c} -> c) ({l, r} -> l) n) h = Fail
 
 // ================================================================
 // checked_apply: I-shortcut
@@ -216,28 +216,28 @@ test checked_apply ({n} -> triage t ({c} -> c) ({l, r} -> l) n) h = Fail
 // Polymorphic identity ({x} -> x) is exactly fork(fork(LEAF, LEAF), LEAF) =
 // canonical I. It must be accepted on a neutral, since that's how Pi
 // checks `id : Nat -> Nat` against a Nat hypothesis.
-test checked_apply ({x} -> x) h = Ok h
+test checked_apply_walker ({x} -> x) h = Ok h
 
 // ================================================================
 // checked_check: entry scan
 // ================================================================
-// checked_check scans the term `v` for pre-existing neutrals before
-// invoking checked_apply on (core, v). The `core` is the trusted side
+// checked_check_walker scans the term `v` for pre-existing neutrals before
+// invoking checked_apply_walker on (core, v). The `core` is the trusted side
 // (a kernel checker like `Nat` or a Pi predicate) — its embedded
 // neutral-handling capabilities are intentional, and they will be
 // dispatched directly to raw apply by the session-3 dispatcher.
-// (In session 1, checked_apply walks every tree, so smoke tests below
+// (In session 1, checked_apply_walker walks every tree, so smoke tests below
 // use simple user-shaped functions, not actual kernel checkers.)
 
 // Clean inputs pass through.
-test checked_check ({x} -> x) 5 = Ok 5
-test checked_check ({x} -> succ x) 5 = Ok 6
+test checked_check_walker ({x} -> x) 5 = Ok 5
+test checked_check_walker ({x} -> succ x) 5 = Ok 6
 
 // Forged neutral at top-level rejected by entry scan.
-test checked_check ({x} -> x) h = Fail
+test checked_check_walker ({x} -> x) h = Fail
 
 // Forged neutral nested inside a fork rejected by entry scan.
-test checked_check ({x} -> x) (t Nat (t h 0)) = Fail
+test checked_check_walker ({x} -> x) (t Nat (t h 0)) = Fail
 
 // scan_no_neutral catches LITERAL neutrals embedded in compiled trees.
 // `{_} -> StuckElim (Eq Nat 0 1) t` has both StuckElim args concrete, so
@@ -255,7 +255,7 @@ test scan_no_neutral ({x} -> StuckElim (Eq Nat 0 1) x) = TT
 
 // Dynamic construction via checked_apply: the function builds a neutral
 // when applied; the stem rule's constructor check fires and Fails.
-test checked_apply ({x} -> StuckElim (Eq Nat 0 1) x) 5 = Fail
+test checked_apply_walker ({x} -> StuckElim (Eq Nat 0 1) x) 5 = Fail
 
 // ================================================================
 // Smoke: chained must_ok_* still short-circuits

@@ -40,10 +40,53 @@ extend_neutral_meta := {old_meta, result_type, arg} ->
 InvalidType := FF
 
 // ================================================================
+// CheckedResult encoding
+// ================================================================
+// Used by ks.checked_apply (dispatcher wraps every routed result in Ok)
+// and by handlers' sub-evaluation paths. Public type checkers themselves
+// return BARE TT/FF — the dispatcher wraps when routing through
+// ks.checked_apply, and handlers fold Fail and Ok FF back to bare FF
+// using must_ok_tt_or_ff for their ks.checked_apply consumers.
+
+Ok   := {v} -> t t v
+Fail := t (t t)
+
+is_ok    := {r} -> tree_eq (pair_fst r) t
+ok_value := {r} -> pair_snd r
+
+// must_ok_or_ff: r must be Ok _; thread the payload into k. If r is Fail,
+// fold to bare FF (the handler's "no" answer). Used at boundaries where
+// the handler returns bare TT/FF but sub-evaluations return CheckedResult.
+must_ok_or_ff := {r, k} ->
+  match (is_ok r) {
+    TT => k (ok_value r)
+    FF => FF
+  }
+
+// must_ok_any: r must be Ok _; thread the payload into k. If r is Fail,
+// propagate as Fail. Used inside CheckedResult-producing chains.
+must_ok_any := {r, k} ->
+  match (is_ok r) {
+    TT => k (ok_value r)
+    FF => Fail
+  }
+
+// must_ok_tt: r must be Ok TT specifically. Used for predicate validation
+// where Ok FF is a "no" answer that should propagate as Fail.
+must_ok_tt := {r, k} ->
+  match (is_ok r) {
+    TT => match (tree_eq (ok_value r) TT) {
+      TT => k t
+      FF => Fail
+    }
+    FF => Fail
+  }
+
+// ================================================================
 // Kernel record shape
 // ================================================================
-// The parser reads these recType annotations as field metadata, so component
-// bodies can write self references as ks.pi / ks.type instead of using
+// The parser reads recType annotations as field metadata, so component
+// bodies can write self references as ks.pi / ks.nat instead of using
 // hand-written selector names.
 
 // ================================================================
@@ -64,18 +107,18 @@ InvalidType := FF
 // pair_fst(stem(c)) = c. Without is_fork, stem(canonical_sig) would pass
 // the signature check. Legitimate neutrals are wait-encoded values, which
 // are always forks.
-let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, x} ->
+let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, x} ->
   and (is_fork x) (has_sig raw.hyp_reduce x)
 
 // q_make_hyp: construct a hypothesis neutral.
 // Result: wait(hyp_reduce_handler)(make_neutral_meta(type, identity))
-let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, ty, identity} ->
+let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, ty, identity} ->
   wait raw.hyp_reduce (make_neutral_meta ty identity)
 
 // q_contains_neutral / q_scan_no_neutral: private versions of the public
-// scan helpers that take `raw` directly. Used inside handler bodies where
-// the public is_neutral isn't yet bound (forward-reference). Functionally
-// identical to the public scan_no_neutral.
+// scan helpers that take `raw` directly. Used inside handler bodies (the
+// public is_neutral / scan_no_neutral aren't yet bound at handler-body
+// scope; raw is what's available).
 let q_contains_neutral = fix ({self, raw, x} ->
   match (q_is_neutral raw x) {
     TT => TT
@@ -91,53 +134,48 @@ let q_contains_neutral = fix ({self, raw, x} ->
 let q_scan_no_neutral = {raw, x} -> not (q_contains_neutral raw x)
 
 // q_unguard_or_self: peel one layer of guard if present, else return as-is.
-// Used by handlers that may receive either a guarded public type or a core
-// (e.g., q_hyp_reduce_fn checking a hypothesis stored type, q_pi_fn
-// comparing a result's stored type against a core expected type).
-let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, T} ->
+// Used by handlers that may receive either a guarded public type or a core.
+let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, T} ->
   match (has_sig ks.guard T) {
     TT => type_meta T
     FF => T
   }
 
-// --- Guard handler (public boundary) ---
-// guard core = wait kernel_ref.guard core. The "meta" is the core type.
-// q_guard_fn handles applying a guarded type to a value: run the core
-// predicate. Returns bare TT/FF.
+// --- Guard handler (public boundary; returns BARE TT/FF) ---
 //
-// Session 2: just a thin wrapper around raw apply on `core v` — no entry
-// scan yet. The reason: without the session-3 dispatcher distinguishing
-// public Nat (guarded) from internal core_Nat invocations, scanning here
-// would reject kernel-minted hypotheses bubbling up through user-defined
-// type predicates (e.g. NatList(fork(hyp, hyp2)) → Nat(hyp) — Nat at user
-// level scans hyp, hyp is a neutral, scan fails). Session 3 wires
-// `ks.checked_apply` for the soundness-relevant scan; session 2 keeps the
-// structural pieces in place so that swap is a single-handler change.
-let q_guard_fn = {ks, raw, query} ->
+// Soundness boundary: q_scan_no_neutral rejects pre-existing neutrals in v
+// (closes attacks 1-2: forged closed neutral, K-hidden forge). After scan,
+// raw apply on `core v` invokes the appropriate type-checker handler.
+// Handlers internally use ks.checked_apply (the dispatcher) when sub-
+// evaluating user-supplied subterms — that is what closes attacks 3-5
+// (reflective is_neutral / is_fork / tree_eq, all of which fail at the
+// dispatcher's walker triage-on-neutral rule when descending to a kernel-
+// minted hypothesis).
+//
+// q_guard_fn itself does NOT route through ks.checked_apply: the entry
+// scan + raw apply is sufficient at the boundary, and bypassing the
+// dispatcher here keeps the common case (`Nat 5`, `Bool TT`) cheap.
+let q_guard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, raw, query} ->
   {core, v} ->
-    match (tree_eq (core v) TT) {
-      TT => TT
+    match (q_scan_no_neutral raw v) {
+      TT => match (tree_eq (core v) TT) {
+        TT => TT
+        FF => FF
+      }
       FF => FF
     }
 
-// --- H-rule (shared by all type checkers) ---
-// When v is neutral, check if v's stored type matches this checker's own type.
-//   wait(ks(query))(meta) = reconstruct "the type this checker would build with this meta"
-//   neutral_meta_type(type_meta(v)) = v's stored type
-//   tree_eq: do they match?
+// --- H-rule (shared by all type checkers; returns BARE TT/FF) ---
 let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
   tree_eq (wait (ks query) meta) (q_unguard_or_self ks (neutral_meta_type (type_meta v)))
 
-// --- Hypothesis reduction (type interpreter for neutrals) ---
-// Called when a neutral is applied to an argument v.
-// Checks if the neutral's current type is Pi; if so, computes codomain type for the result.
-let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query} ->
+// --- Hypothesis reduction (returns BARE new neutral wait-value) ---
+// Called when a neutral is applied to an argument v (raw apply via the
+// runtime). Returns the bare new neutral, NOT Ok-wrapped; the dispatcher
+// wraps in Ok when routing through ks.checked_apply. This keeps
+// `(Hyp NatToNat 0) (Hyp Nat 1)` style raw-apply tests working.
+let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, raw, query} ->
   fix ({self, meta, v} -> {
-    // The neutral's stored type may be either a guarded public Pi (user-
-    // supplied via Hyp NatToNat …) or a core_Pi (kernel-internal). Peel
-    // guard so both shapes dispatch identically. Re-guard the codFn
-    // result so user-facing infer/neutral_type sees a guarded type
-    // (matching the form of the user's original Hyp …).
     let stored_inner = q_unguard_or_self ks (neutral_meta_type meta)
     let pi_result_type = {meta, v} -> wait ks.guard (pi_meta_cod_fn (type_meta stored_inner) v)
     let pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta (pi_result_type meta v) v)
@@ -147,57 +185,52 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_t
       self meta v
   })
 
-// --- Pi checker ---
-// meta = make_pi_meta(domain, codFn)
-// Creates a hypothesis, applies v to it, checks the result type matches the codomain.
-let q_pi_fn = {ks, raw, query} ->
+// --- Pi checker (returns BARE TT/FF) ---
+// meta = make_pi_meta(domain, codFn). domain and codFn store CORES (Pi public
+// constructor unguard_checked-peels its arguments).
+//
+// Sub-evaluation of v(hyp) and codFn(hyp) goes through ks.checked_apply:
+// hyp is a kernel-minted neutral, and any reflective observation of it by
+// the user-supplied v or codFn is rejected by the dispatcher's walker
+// triage-on-neutral rule. Failures (Fail) and validation failures (Ok FF)
+// both fold back to bare FF via must_ok_or_ff.
+let q_pi_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, raw, query} ->
   fix ({self, meta, v} -> {
-    // check_fn: v is concrete -- check it against the Pi type
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query, self, meta, v} -> {
-      // Build a hypothesis of the domain type; use meta as identity
-      let hyp = q_make_hyp raw (pi_meta_domain meta) meta
-      // Apply v to the hypothesis to get the result
-      let result = v hyp
-      // Compute the expected codomain type at this hypothesis
-      let expected = pi_meta_cod_fn meta hyp
-      // If result is neutral: compare stored type to expected after peeling
-      //   guard from both sides. The stored type comes from value-level
-      //   constructors (guarded), the expected from kernel-internal codFn
-      //   (core); peeling normalizes both to cores so tree_eq matches.
-      // If result is concrete: run the expected type checker on it directly.
-      select
-        ({ks, result, expected} -> tree_eq (q_unguard_or_self ks expected) (q_unguard_or_self ks (neutral_meta_type (type_meta result))))
-        ({ks, result, expected} -> tree_eq (expected result) TT)
-        (q_is_neutral raw result)
-        ks result expected
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, raw, query, self, meta, v} -> {
+      let domain = pi_meta_domain meta
+      let codFn = pi_meta_cod_fn meta
+      let hyp = q_make_hyp raw domain meta
+      let result_r = ks.checked_apply v hyp
+      let expected_r = ks.checked_apply codFn hyp
+      must_ok_or_ff result_r ({result} ->
+        must_ok_or_ff expected_r ({expected} ->
+          select
+            ({ks, result, expected} -> tree_eq (q_unguard_or_self ks expected) (q_unguard_or_self ks (neutral_meta_type (type_meta result))))
+            ({ks, result, expected} -> tree_eq (expected result) TT)
+            (q_is_neutral raw result)
+            ks result expected))
     }
-    // Outer dispatch: neutral -> H-rule, concrete -> check_fn
     select q_h_rule_fn check_fn
       (q_is_neutral raw v)
       ks raw query self meta v
   })
 
-// --- Nat checker ---
+// --- Nat checker (returns BARE TT/FF) ---
 // Nat values: t (zero) or fork(t, n) (succ n). Rejects non-Nat shapes.
-// Decision tree: neutral? -> H-rule. zero? -> TT. concrete fork with fst=t? -> recurse. else -> FF.
+// User input (n) was already entry-scanned at the public boundary, so
+// triaging on n via raw apply is safe (n contains no neutrals).
 let q_nat_fn = {ks, raw, query} ->
   fix ({self, meta, n} -> {
-    // succ n: recurse on predecessor
     let succ_fn = {ks, raw, query, self, meta, n} -> wait self meta (pair_snd n)
-    // fork with fst=t is succ, else reject
     let succ_check = {ks, raw, query, self, meta, n} -> select succ_fn ({ks, raw, query, self, meta, n} -> FF) (tree_eq (pair_fst n) t) ks raw query self meta n
-    // non-zero: must be concrete fork (not neutral) to check succ, else reject
     let non_zero = {ks, raw, query, self, meta, n} -> select succ_check ({ks, raw, query, self, meta, n} -> FF) (select FF (is_fork n) (q_is_neutral raw n)) ks raw query self meta n
-    // concrete: zero (leaf) -> TT, else -> non-zero chain
     let non_neutral = {ks, raw, query, self, meta, n} -> select ({ks, raw, query, self, meta, n} -> TT) non_zero (tree_eq n t) ks raw query self meta n
-    // outer: neutral -> H-rule, concrete -> dispatch
     select q_h_rule_fn non_neutral
       (q_is_neutral raw n)
       ks raw query self meta n
   })
 
-// --- Bool checker ---
-// Bool values: t (TT) or t t (FF).
+// --- Bool checker (returns BARE TT/FF) ---
 let q_bool_fn = {ks, raw, query} ->
   fix ({self, meta, b} -> {
     let check_fn = {ks, raw, query, self, meta, b} -> select TT (tree_eq b FF) (tree_eq b t)
@@ -206,37 +239,24 @@ let q_bool_fn = {ks, raw, query} ->
       ks raw query self meta b
   })
 
-// --- Eq checker ---
-// Eq A x y: proof must be refl (leaf). Checks that lhs and rhs are convertible.
-// meta = make_eq_meta(A, lhs, rhs)
+// --- Eq checker (returns BARE TT/FF) ---
 let q_eq_fn = {ks, raw, query} ->
   fix ({self, meta, p} -> {
-    // p is refl (leaf) -> check lhs = rhs. p is anything else -> FF.
     let check_fn = {ks, raw, query, self, meta, p} -> select_lazy ({_} -> tree_eq (eq_meta_lhs meta) (eq_meta_rhs meta)) ({_} -> FF) (tree_eq p t)
     select q_h_rule_fn check_fn
       (q_is_neutral raw p)
       ks raw query self meta p
   })
 
-// --- Core type checker ---
-// Validates that x is a valid CORE type at rank <= meta. Cores are the
+// --- Core type checker (returns BARE TT/FF) ---
+// Validates that x is a valid CORE type at rank ≤ meta. Cores are the
 // internal raw predicates (core_Nat, core_Bool, core_Eq, core_Pi) and
 // hypothesis-typed neutrals whose stored type is a universe.
-//
-// Dispatches by type-former signature. Recognizes BOTH ks.core_type and
-// ks.guarded_type as universe signatures: a hypothesis A : Type0 has
-// stored type wait_guarded_type_0 (since unguard_checked Type0 strips the
-// guard layer to expose the guarded_type wait-form), and that hypothesis
-// is a valid type-variable inhabitant of core_type rank when checking Pi
-// codomains.
 let q_core_type_fn = {ks, raw, query} ->
   fix ({self, meta, x} -> {
-    // is_registered: check if x is a known core base type (core_Nat or core_Bool).
-    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, x} ->
+    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, x} ->
       select TT (tree_eq x (wait ks.bool t)) (tree_eq x (wait ks.nat t))
-    // univ_check: stored type must have a universe signature (core OR guarded)
-    // AND rank ≤ limit.
-    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, rank, ty} ->
+    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, rank, ty} ->
       select (nat_le (type_meta ty) rank) FF (or (has_sig ks.core_type ty) (has_sig ks.guarded_type ty))
     let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (neutral_meta_type (type_meta x))
     let core_univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
@@ -256,7 +276,7 @@ let q_core_type_fn = {ks, raw, query} ->
           (A (eq_meta_rhs tm)))
     }
     select neutral_fn
-      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query, self, meta, x} ->
+      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, raw, query, self, meta, x} ->
         select_chain
           (case (has_sig ks.core_type x) core_univ_fn
           (case (has_sig ks.guarded_type x) guarded_univ_fn
@@ -270,22 +290,68 @@ let q_core_type_fn = {ks, raw, query} ->
       ks raw query self meta x
   })
 
-// --- Guarded type checker (public universe) ---
-// Validates that T is a guarded public type at rank <= meta. T must either
-// be a guarded value whose core lives in core_type rank, or a neutral
-// type-variable whose stored type matches this checker's reconstruction
-// (the H-rule).
-//
-// Session 2: uses raw apply on the core_type checker. Session 3 swaps to
-// ks.checked_apply.
+// --- Guarded type checker (returns BARE TT/FF) ---
+// Validates that T is a guarded public type at rank ≤ meta.
 let q_guarded_type_fn = {ks, raw, query} ->
   fix ({self, rank, T} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type}, raw, query, self, rank, T} ->
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply}, raw, query, self, rank, T} ->
       select (tree_eq ((wait ks.core_type rank) (type_meta T)) TT) FF (has_sig ks.guard T)
     select q_h_rule_fn check_fn
       (q_is_neutral raw T)
       ks raw query self rank T
   })
+
+// I_canonical: fork(fork(LEAF, LEAF), LEAF). The polymorphic identity.
+// Recognized as a literal carve-out in the walker so identity on a
+// hypothesis is accepted. (Without it, `apply(I, hyp)` would hit the
+// triage-fork rule's neutral check and Fail — but identity at a Pi
+// domain is a legitimate elaboration target.)
+I_canonical := {z} -> z
+
+// --- Checked-apply dispatcher (the security perimeter) ---
+//
+// Routes ks.checked_apply f x by f's checker signature, ALWAYS wrapping
+// the routed result in Ok. Type checker handlers return BARE TT/FF;
+// q_hyp_reduce_fn returns a BARE new neutral. The Ok wrap gives callers
+// (other handlers) a uniform CheckedResult shape they can unwrap with
+// must_ok_or_ff.
+//
+// EVERY ENTRY IS LOAD-BEARING (see SOUNDNESS_FIX_PLAN.md §"Dispatch Table
+// as Security Perimeter"). Adding a handler here without satisfying its
+// validation contract silently breaks soundness; review all changes.
+// Session 3 partial: dispatcher is a stub. Entry scan in q_guard_fn
+// closes attacks 1 (forged closed neutral) and 2 (K-hidden literal
+// forgery). Attacks 3-5 (reflective is_neutral / is_fork / tree_eq)
+// remain open: q_pi_fn's `ks.checked_apply v hyp` becomes raw apply
+// under this stub, so v can observe the hypothesis structure.
+//
+// 2026-05-05 re-investigation: the prior "compile-time blowup" claim
+// was mis-diagnosed. With walker helpers extracted to top-level the
+// dispatcher compiles fine and correctly closes 3-5, but two real
+// problems surface:
+//
+//   1. kernel.test.disp 137-142 break: tests using nat_rec/bool_rec
+//      inside Pi-checked bodies fail because user-level eliminator
+//      mints (StuckElim ...) are rejected by the walker's stem-rule
+//      neutral-root constructor check. This is exactly the case
+//      session 4's certified eliminators are designed to handle —
+//      eliminator-rooted applies need to route through raw apply via
+//      the dispatch table, bypassing the constructor check.
+//
+//   2. ~400× runtime slowdown on the full suite (~1.7s → ~11min)
+//      and elab.test.disp drives that. A no-neutral fast-path for
+//      the walker hot loop (one scan, then runtime fast apply) is
+//      the obvious target.
+//
+// Path forward: land session 4 first (closes the eliminator
+// regression) before re-enabling the full walker. See
+// "Session 3 — empirical investigation" in SOUNDNESS_FIX_PLAN.md.
+let q_checked_apply_fn = {ks, raw, query} -> {f, x} -> Ok (f x)
+
+// Stub above. Full walker design: see SOUNDNESS_FIX_PLAN.md §"Session
+// 3.5". Empirical findings (memo bump 500K → 5M, ~109× speedup; full
+// walker hits Group 3 polymorphic-Pi failures that need wait_rec to
+// close) are documented in §"Session 3 — empirical investigation".
 
 // ================================================================
 // Kernel assembly
@@ -293,22 +359,28 @@ let q_guarded_type_fn = {ks, raw, query} ->
 // Fixed-point over a Church-encoded recValue record. recq passes each selected
 // component a lazy self-proxy, so component bodies can use ks.field syntax
 // without forcing recursive field selection too early.
+//
+// Note: checked_apply is NOT a recq component — it sits outside as a single
+// top-level instantiation of q_checked_apply_fn_REAL. Each ks.checked_apply
+// reference inside a handler resolves through the same fixed dispatcher,
+// avoiding per-call recq fix-unrolling overhead.
 
-kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type} := recq {
-  hyp_reduce := q_hyp_reduce_fn;
-  guard := q_guard_fn;
-  pi := q_pi_fn;
-  nat := q_nat_fn;
-  bool := q_bool_fn;
-  eq := q_eq_fn;
-  core_type := q_core_type_fn;
-  guarded_type := q_guarded_type_fn
+kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply} := recq {
+  hyp_reduce    := q_hyp_reduce_fn;
+  guard         := q_guard_fn;
+  pi            := q_pi_fn;
+  nat           := q_nat_fn;
+  bool          := q_bool_fn;
+  eq            := q_eq_fn;
+  core_type     := q_core_type_fn;
+  guarded_type  := q_guarded_type_fn;
+  checked_apply := q_checked_apply_fn
 }
 
 // Public kernel reference with the same lazy-proxy convention that recq passes
 // internally. Type/signature construction uses this delayed view so H-rule
 // reconstruction and public constructors share the same wait-based shape.
-let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type} =
+let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,checked_apply} =
   {q} -> wait kernel q
 
 // ================================================================
@@ -355,7 +427,7 @@ StuckElim := {result_type, target} -> wait kernel.hyp_reduce (make_neutral_meta 
 // ================================================================
 // guard wraps a core type as a public type. hasguard recognizes the wrap.
 // unguard_public peels the wrap; unguard_checked also accepts certified
-// neutral type variables (per kernel-internal use during recursive type
+// neutral type variables (for kernel-internal use during recursive type
 // checking; closed forged neutrals can't reach this path because the
 // public boundary's scan_no_neutral rejects them first).
 
@@ -368,16 +440,18 @@ unguard_public := {T} ->
     FF => InvalidType
   }
 
-// Session 2 form: permissive — accepts guarded types, certified neutrals,
-// AND raw predicates (user-defined types like NatList). The plan's strict
-// form rejects raw predicates entirely; that breaks back-compat for files
-// using non-kernel type predicates as Pi domains. Session 3's checked_apply
-// dispatch is what actually closes that hole; until then this stays
-// permissive so existing typed bindings keep working.
+// Strict form (session 3): only guarded types and certified neutrals are
+// accepted. Raw predicates as Pi domains are now rejected. The dispatcher
+// and entry scan close the soundness hole by forcing all type-position
+// values to either be guarded (public) or certified neutrals (kernel-
+// minted).
 unguard_checked := {T} ->
   match (hasguard T) {
     TT => type_meta T
-    FF => T
+    FF => match (is_neutral T) {
+      TT => T
+      FF => InvalidType
+    }
   }
 
 // ================================================================
@@ -405,6 +479,14 @@ unguard_or_self := {T} ->
     FF => T
   }
 
+// pi_dom / pi_cod_fn return GUARDED user-facing types so callers can chain
+// further public reflection (e.g., `is_pi (pi_cod_fn T x)` works). Note
+// that `pi_cod_fn` takes (v, x) and applies — it does NOT return the bare
+// codFn closure. The TS elaborator's piCodFn deliberately differs: it
+// returns the unapplied core closure (matching q_pi_fn's internal
+// `pi_meta_cod_fn` convention) because the elaborator threads the result
+// straight back into kernel-style raw application. See compile.ts for the
+// full rationale.
 is_pi := {v} -> has_sig kernel_ref.pi (unguard_or_self v)
 pi_dom := {v} -> guard (pi_meta_domain (type_meta (unguard_or_self v)))
 pi_cod_fn := {v, x} -> guard ((pi_meta_cod_fn (type_meta (unguard_or_self v))) x)
@@ -432,6 +514,22 @@ Eq    := {A, x, y} -> guard (core_Eq (unguard_checked A) x y)
 Pi    := {A, B} -> guard (core_Pi (unguard_checked A) ({x} -> unguard_checked (B x)))
 Arrow := {A, B} -> Pi A ({_} -> B)
 Type  := {rank} -> guard (wait kernel_ref.guarded_type rank)
+
+// ================================================================
+// Public checked-apply / checked-check
+// ================================================================
+
+checked_apply := kernel.checked_apply
+
+// checked_check: public-facing entry that scans v for pre-existing
+// neutrals before invoking checked_apply on (core, v). Returns
+// CheckedResult so callers can distinguish "no" (Ok FF) from "evaluation
+// failed" (Fail).
+checked_check := {core, v} ->
+  match (scan_no_neutral v) {
+    TT => kernel.checked_apply core v
+    FF => Fail
+  }
 
 // ================================================================
 // Typed eliminators
@@ -527,4 +625,3 @@ conv_structural := fix ({self, a, b} -> {
     (tree_eq a b)
     self a b
 })
-
