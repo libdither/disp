@@ -1,0 +1,7 @@
+open use "prelude.disp"
+trust open use "kernel.disp"
+
+let bool_rec_init_meta = q_elim_init_meta (succ (succ (succ (succ t))))
+let bool_rec_w = wait kernel_ref.bool_rec bool_rec_init_meta
+
+test bool_rec_w ({_} -> Nat) 1 0 TT = 1

@@ -363,16 +363,13 @@ let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type
       let base = pair_snd (pair_fst acc)
       let motive = pair_snd (pair_fst (pair_fst acc))
       let target = x
+      // Stage 4: add succ recursion via self.
       select_lazy
         ({_} -> q_make_hyp raw (motive target) target)
         ({_} ->
           select_lazy
             ({_} -> base)
-            ({_} ->
-              select_lazy
-                ({_} -> step (pair_snd target) (self meta (pair_snd target)))
-                ({_} -> base)
-                (and (is_fork target) (tree_eq (pair_fst target) t)))
+            ({_} -> step (pair_snd target) (self meta (pair_snd target)))
             (tree_eq target t))
         (q_is_neutral raw target)
     }
@@ -647,13 +644,21 @@ checked_check := {core, v} ->
 // the final application executes the body raw and returns either the
 // concrete branch result or a `wait raw.hyp_reduce ...` neutral.
 
-// Old user-facing eliminator stubs (will be replaced after wiring lands).
-bool_rec := {motive, t_case, f_case, target} ->
-  select_lazy
-    ({_} -> StuckElim (motive target) target)
-    ({_} -> select t_case f_case target)
-    (is_neutral target)
+// bool_rec routed through the kernel handler. Each application is
+// dispatched via has_sig kernel.bool_rec (once the walker is wired) or
+// reduces via the wait/recq chain in raw mode (today). Old StuckElim-
+// minting body is preserved inside `q_bool_rec_fn` and runs raw.
+let bool_rec_init_meta = t (succ (succ (succ (succ t)))) t
+bool_rec := wait kernel_ref.bool_rec bool_rec_init_meta
 
+// nat_rec retained as direct user-level lambda for now: the recursive
+// succ branch fires a `self`-call that compile-time partial evaluation
+// can't bottom out on (eager fix-unfolding chases the chain through
+// the recq even when the outer cond would short-circuit at runtime).
+// Migrating nat_rec to wait-form needs either a compile-time `force`
+// hint, a runtime fast path for fix-recursion, or reformulating succ
+// recursion through self-application of the outer dispatcher (which
+// avoids fix-self in the handler body). Tracking in TYPE_THEORY_V2.typ.
 nat_rec := fix ({self, motive, base, step, target} ->
   select_lazy
     ({_} -> StuckElim (motive target) target)
@@ -682,11 +687,10 @@ nat_rec := fix ({self, motive, base, step, target} ->
 
 refl := t
 
-eq_J := {A, x, motive, base, y, p} ->
-  select_lazy
-    ({_} -> StuckElim (motive y p) p)
-    ({_} -> base)
-    (is_neutral p)
+// eq_J: 6-ary kernel-routed eliminator. Same arity-tracked pattern as
+// bool_rec; final body is non-recursive (Eq has only `refl` constructor).
+let eq_J_init_meta = t (succ (succ (succ (succ (succ (succ t)))))) t
+eq_J := wait kernel_ref.eq_J eq_J_init_meta
 
 // eq_subst: transport along an equality proof
 eq_subst := {A, P, x, y, p, px} ->
