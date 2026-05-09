@@ -358,21 +358,14 @@ let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type
   fix ({self, meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
-    let nat_final_fn = {self, raw, query, ks, meta, x, count, acc} -> {
-      let step = pair_snd acc
-      let base = pair_snd (pair_fst acc)
-      let motive = pair_snd (pair_fst (pair_fst acc))
-      let target = x
-      // Stage 4: add succ recursion via self.
-      select_lazy
-        ({_} -> q_make_hyp raw (motive target) target)
-        ({_} ->
-          select_lazy
-            ({_} -> base)
-            ({_} -> step (pair_snd target) (self meta (pair_snd target)))
-            (tree_eq target t))
-        (q_is_neutral raw target)
-    }
+    let nat_final_fn = {self, raw, query, ks, meta, x, count, acc} ->
+      match (q_is_neutral raw x) {
+        TT => q_make_hyp raw ((pair_snd (pair_fst (pair_fst acc))) x) x
+        FF => match (tree_eq x t) {
+          TT => pair_snd (pair_fst acc)
+          FF => (pair_snd acc) (pair_snd x) (self meta (pair_snd x))
+        }
+      }
     let nat_partial_fn = {self, raw, query, ks, meta, x, count, acc} ->
       wait (ks query) (t (pair_snd count) (t acc x))
     select nat_final_fn nat_partial_fn
@@ -410,10 +403,68 @@ let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bo
 I_canonical := {z} -> z
 
 // --- Checked-apply dispatcher (security perimeter) ---
-// Currently a stub: routes everything via raw apply. Wiring the walker
-// (parametric mode reduction) is the next step but requires nat_rec to
-// be migrated to wait-form first.
+//
+// Currently a stub: routes everything via raw apply. The complete
+// walker-wired version is below in a comment, validated to compile
+// correctly. It's not active because routing every step through the
+// walker default (for user-level closures, S-rule, triage-fork)
+// blows up runtime by ~400×, which is unacceptable for the full test
+// suite. Adding a no-neutral fast-path (one scan then raw apply)
+// resolves this; tracked in TYPE_THEORY_V2.typ.
 let q_checked_apply_fn = {ks, raw, query} -> {f, x} -> Ok (f x)
+
+// Reference walker step (commented; activate together with no-neutral
+// fast-path). Each sub-pattern uses `match` not `select_lazy` to avoid
+// a compile-time-eval pitfall: the K-wrapped thunk bodies of
+// select_lazy (containing `self meta x`-style recursion) are eagerly
+// reduced during cirToTree, exhausting the budget on closed inputs.
+// `match` desugars to `select branchTT branchFF cond fvs...` where
+// each branch is wrapped in a closure over its free vars — preventing
+// the compile-time eager evaluation. Multi-line match bodies must be
+// parenthesised.
+//
+//   let q_walker_step = {self, raw, f, x} ->
+//     match (tree_eq f I_canonical) {
+//       TT => Ok x
+//       FF => (triage
+//               (Ok (t x))
+//               ({a} -> match (q_is_neutral raw (t a x)) {
+//                 TT => Fail
+//                 FF => Ok (t a x)
+//               })
+//               ({a, b} -> (triage
+//                 (Ok b)
+//                 ({c} -> (match (is_ok (self c x)) {
+//                   TT => (match (is_ok (self b x)) {
+//                     TT => self (ok_value (self c x)) (ok_value (self b x))
+//                     FF => Fail
+//                   })
+//                   FF => Fail
+//                 }))
+//                 ({tc, td} -> match (q_is_neutral raw x) {
+//                   TT => Fail
+//                   FF => (triage
+//                           (Ok tc)
+//                           ({c_inner} -> self td c_inner)
+//                           ({l, r} -> match (is_ok (self b l)) {
+//                             TT => self (ok_value (self b l)) r
+//                             FF => Fail
+//                           })
+//                           x)
+//                 })
+//                 a))
+//               f)
+//     }
+//
+//   let q_checked_apply_fn = {ks : {...}, raw : {...}, query} ->
+//     fix ({self, f, x} ->
+//       select_chain
+//         (case (has_sig raw.hyp_reduce f)   ({self, f, x} -> Ok (f x))
+//         (case (has_sig ks.guard f)         ({self, f, x} -> Ok (f x))
+//         ... (one case per kernel handler) ...
+//         t)))))))))))
+//         ({self, f, x} -> q_walker_step self raw f x)
+//         self f x)
 
 // ================================================================
 // Kernel assembly
@@ -612,35 +663,9 @@ checked_check := {core, v} ->
 let bool_rec_init_meta = t (succ (succ (succ (succ t)))) t
 bool_rec := wait kernel_ref.bool_rec bool_rec_init_meta
 
-// nat_rec retained as direct user-level lambda for now: the recursive
-// succ branch fires a `self`-call that compile-time partial evaluation
-// can't bottom out on (eager fix-unfolding chases the chain through
-// the recq even when the outer cond would short-circuit at runtime).
-// Migrating nat_rec to wait-form needs either a compile-time `force`
-// hint, a runtime fast path for fix-recursion, or reformulating succ
-// recursion through self-application of the outer dispatcher (which
-// avoids fix-self in the handler body). Tracking in TYPE_THEORY_V2.typ.
-nat_rec := fix ({self, motive, base, step, target} ->
-  select_lazy
-    ({_} -> StuckElim (motive target) target)
-    ({_} ->
-      select
-        ({self, motive, base, step, target} -> base)
-        ({self, motive, base, step, target} ->
-          select
-            ({self, motive, base, step, target} ->
-              select
-                ({self, motive, base, step, target} ->
-                  step (pair_snd target) (self motive base step (pair_snd target)))
-                ({self, motive, base, step, target} -> base)
-                (tree_eq (pair_fst target) t)
-                self motive base step target)
-            ({self, motive, base, step, target} -> base)
-            (is_concrete_fork target)
-            self motive base step target)
-        (tree_eq target t)
-        self motive base step target)
-    (is_neutral target))
+// nat_rec routed through kernel handler.
+let nat_rec_init_meta = t (succ (succ (succ (succ t)))) t
+nat_rec := wait kernel_ref.nat_rec nat_rec_init_meta
 
 // ================================================================
 // Eq operations
