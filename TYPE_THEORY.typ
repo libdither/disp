@@ -220,6 +220,7 @@ is out of scope for this version of the kernel; see
     [Bool],       [`kernel.bool`],          [`q_bool_fn`],          [`bool_rec`],
     [Eq],         [`kernel.eq`],            [`q_eq_fn`],            [`eq_J`],
     [Ord],        [`kernel.ord`],           [`q_ord_fn`],           [`ord_rec`],
+    [`OrdLt k`],  [`kernel.ord_lt_type`],   [`q_ord_lt_type_fn`],   [`ord_rec` (via Ord)],
     [Universe (core)],   [`kernel.core_type`],     [`q_core_type_fn`],     [`wait_rec`],
     [Universe (guarded)],[`kernel.guarded_type`],  [`q_guarded_type_fn`],  [`wait_rec`],
     [Hypothesis], [`kernel.hyp_reduce` (raw)], [`q_hyp_reduce_fn`], [(none --- kernel-only)],
@@ -446,6 +447,13 @@ not introduce a universe shift.
 
 == Polymorphic-universe functions <poly-universe>
 
+Polymorphic-rank functions come in two flavors: *unbounded* and
+*bounded*. The kernel handles them differently --- unbounded gets
+stuck `pi_rank`; bounded gets closed `pi_rank` derivable from the
+bound.
+
+=== Unbounded polymorphism: stuck `pi_rank`
+
 A function `{r : Ord} → Type r → Type r` mathematically lives in
 $"Type" omega$: $sup_(r:"Ord") "succ_ord" r = omega$. But the
 *kernel* does not compute closed $omega$ for `pi_rank` of such a
@@ -463,33 +471,64 @@ type --- it produces a *stuck Ord*. Here's why.
 + Combines via `ord_max 0_ord (succ_ord r_hyp)` --- one closed,
   one stuck → returns *stuck Ord*.
 
-So polymorphic-rank types have *stuck `pi_rank`* in the kernel.
-Mathematically the rank is $omega$; computing $omega$ closedly
-would require recognising "supremum over Ord of $alpha + 1$ is
-$omega$," which is a meta-theoretic identity not derivable from
-structural recursion.
+So unbounded polymorphic-rank types have *stuck `pi_rank`* in the
+kernel. Mathematically the rank is $omega$; computing $omega$
+closedly would require recognising "supremum over Ord of
+$alpha + 1$ is $omega$," which is a meta-theoretic identity not
+derivable from structural recursion.
+
+This is consistent with @soundness-not-completeness: the kernel
+provides correct stuck propagation as the floor, and lets users
+opt into bounded levels (below) when they want closed answers.
+
+=== Bounded polymorphism: closed `pi_rank` via `OrdLt k`
+
+A function `{r : OrdLt omega} → Type r → Type r` is the bounded
+form: the polymorphic rank `r` is constrained to be strictly less
+than $omega$. Here `pi_rank` *can* compute closed $omega$:
+
++ Walks the Pi: dom = `OrdLt omega`, codFn = `{r} → Type r`.
++ Computes `cod_at_canonical_hyp = codFn(r_hyp)` where `r_hyp`
+  has stored type `OrdLt omega`. The kernel knows
+  `ord_lt r_hyp omega = TT` from the stored bound.
++ Recurses: `pi_rank Ord = 0_ord` (Ord lives in Type 0;
+  `OrdLt k` also lives in Type 0 since it's just a predicate
+  refining Ord), and `pi_rank (Type r_hyp) = succ_ord r_hyp`.
++ Combines via `ord_max 0_ord (succ_ord r_hyp)`. The kernel's
+  augmented comparison consults `r_hyp`'s stored bound: from
+  `r_hyp < omega` and `omega = omega_plus 1 0_ord` (a closed
+  limit ordinal), it derives `succ_ord r_hyp < omega`
+  structurally, hence `ord_max 0_ord (succ_ord r_hyp)` <
+  `omega`. The whole expression is bounded by $omega$.
++ Conclusion: `pi_rank` returns `omega` (the bound), closed.
+
+Tests at the polymorphic level work for bounded forms:
+`(Type omega) ({r} -> ...) = TT` passes if the polymorphic
+function genuinely inhabits `Type omega`.
 
 #note[
-  *Why not bake in supremum reasoning?* Computing
-  `sup_{α : Ord} f(α)` for arbitrary `f` is uncomputable.
-  Ordinal theory gives clean supremum identities only for
-  *normal functions* (continuous, monotonically increasing).
-  Recognising "this codFn body is a normal function" requires
-  pattern-matching on syntax --- brittle, heuristic, and a
-  meta-language feature. The bounded-levels approach (TTBFL)
-  bakes the rank into the level's type, sidestepping the
-  question; we rejected that for complexity reasons. So we
-  accept stuck `pi_rank` for polymorphic types.
+  *How the kernel derives "succ_ord r_hyp < omega" from "r_hyp <
+  omega":* `ord_lt`'s handler, when invoked on a hypothesis-
+  typed Ord with a bound stored type (`OrdLt k'`), consults the
+  bound. If the comparison's right side is a closed limit
+  ordinal $omega = "omega_plus" 1 "0_ord"$, and the bound
+  asserts `r_hyp < omega`, then `succ_ord r_hyp` (which equals
+  `omega_plus 0_ord r_hyp`, a CNF expression with leading
+  exponent 0) is structurally $< omega$ regardless of `r_hyp`'s
+  specific finite value. This is one specific kernel-built
+  identity, not a general supremum-reasoning engine.
 
-  *Practical implication.* Polymorphic library code is
-  *usable* (instantiating to closed ranks produces closed
-  `pi_rank`) but not *publicly testable at the polymorphic
-  level*. A test like `(Type omega) ({r} -> ...) = TT` won't
-  pass because `pi_rank` returns stuck, not $omega$. Users
-  instantiate at concrete ranks for tests.
+  Other limit ordinals ($omega + omega$, $omega^2$, etc.) admit
+  similar identities. The kernel's bound-consulting logic
+  enumerates them as needed; users who want bounded levels at
+  custom ordinals provide the comparison primitive's identity
+  rules.
 ]
 
-Closed ranks are computed exactly. For instance:
+=== Closed (non-polymorphic) ranks
+
+Closed ranks are computed exactly with no special handling. For
+instance:
 - `pi_rank (Pi Nat ({_} -> Nat))` = `ord_max 0_ord 0_ord` = `0_ord`.
 - `pi_rank (Pi (Type 0) ({_} -> Type 0))` = `ord_max 1 1` = `1`.
 - `pi_rank (Pi (Type 0) ({A} -> A))` = `ord_max 1 0` = `1`.
@@ -501,18 +540,26 @@ specific closed `k` works seamlessly.
 
 `ord_lt`, `ord_le`, `ord_max` are kernel-registered primitives.
 Their handlers receive two `Ord` arguments (validated as Ord by
-the dispatcher routing). Three cases:
+the dispatcher routing). Four cases, in order:
 
-+ Both arguments concrete: compute concretely, return `Ok TT` /
-  `Ok FF` / `Ok ord_value`.
-+ Either argument is a hypothesis (raw neutral): mint a stuck
-  result of the appropriate type. For `ord_lt`/`ord_le`: return
-  `Ok (cert_make_stuck Bool stuck_meta)` where `stuck_meta`
-  encodes the operation tag and both args. For `ord_max`: return
++ Both arguments concrete (closed CNF): compute concretely,
+  return `Ok TT` / `Ok FF` / `Ok ord_value`.
++ One argument is a hypothesis with `OrdLt k` stored type and
+  the comparison is derivable from the bound: return concrete
+  result. For example, `ord_lt r_hyp omega` where
+  `r_hyp : OrdLt omega` returns `Ok TT` (the bound directly
+  asserts this). `ord_le (succ_ord r_hyp) omega` for the same
+  bound also returns `Ok TT` via the kernel-built identity
+  "$x < omega ==> "succ_ord" x ≤ omega$" for canonical limit
+  $omega$.
++ Either argument is a hypothesis (raw neutral) and the bound
+  doesn't determine the answer: mint a stuck result. For
+  `ord_lt`/`ord_le`: return
+  `Ok (cert_make_stuck Bool stuck_meta)`. For `ord_max`: return
   `Ok (cert_make_stuck Ord stuck_meta)`.
-+ One argument is itself a stuck-Ord (a previously-deferred
-  comparison embedded as a value): recurse into the stuck
-  structure if possible, otherwise propagate stuck.
++ One argument is itself a stuck-Ord (previously-deferred
+  result): recurse into the stuck structure if possible,
+  otherwise propagate stuck.
 
 The `stuck_meta` encoding tags the operation: `(LtTag, a, b)`,
 `(LeTag, a, b)`, `(MaxTag, a, b)`. This ensures distinct
@@ -520,6 +567,23 @@ operations on the same arguments produce distinct stuck-Bools.
 Without tagging, `Eq Bool (ord_lt 5 r) (ord_le 4 r)` would
 hash-cons-equal under the runtime `tree_eq` fast path even when
 they're semantically distinct.
+
+#note[
+  *Bound-consulting is what gives bounded levels their power.*
+  Without case 2, the kernel would treat hypothesis-typed Ord
+  values uniformly (always stuck on comparison), and bounded
+  levels would buy nothing over unbounded. The bound-consulting
+  case is where the comparison handler reads the hypothesis's
+  stored type, recognises an `OrdLt k`-shape stored type, and
+  uses the bound to derive concrete answers.
+
+  The kernel ships with bound-consulting identities for canonical
+  limit ordinals ($omega$, $omega + 1$, $omega dot n$, $omega^2$,
+  $omega^omega$, etc., up to $epsilon.alt_0$). Adding more
+  identities is mechanical (one new structural rule per limit
+  ordinal). Identities for non-canonical bounds (e.g., user-
+  defined ordinal expressions) fall through to stuck.
+]
 
 == Subject reduction <subject-reduction>
 
@@ -589,6 +653,7 @@ q_checked_apply_fn = {ks, raw, query} -> fix ({self, f, x} ->
     (case (has_sig ks.bool f)         ({_, f, x} -> Ok (f x)))
     (case (has_sig ks.eq f)           ({_, f, x} -> Ok (f x)))
     (case (has_sig ks.ord f)          ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.ord_lt_type f)  ({_, f, x} -> Ok (f x)))
     (case (has_sig ks.core_type f)    ({_, f, x} -> Ok (f x)))
     (case (has_sig ks.guarded_type f) ({_, f, x} -> Ok (f x)))
     (case (has_sig ks.bool_rec f)     ({_, f, x} -> f x))
@@ -895,6 +960,44 @@ references the other; either can be defined first in
 `kernel.disp` (subject to `recq` lazy resolution of cross-field
 references).
 
+== OrdLt k (bounded ordinals)
+
+*Signature*: `kernel.ord_lt_type`. *Checker*: `q_ord_lt_type_fn`.
+
+`OrdLt k` is the type of ordinals strictly less than `k`. It is
+a refinement predicate over `Ord`:
+
+```
+q_ord_lt_type_fn meta v = and (Ord v) (ord_lt v k)
+```
+
+where `meta = k` (the bound). The checker validates that `v` is
+an Ord *and* `v < k`. Both checks may produce stuck results;
+under stuck propagation, the conjunction is stuck.
+
+*Public constructor*: `OrdLt = {k} -> guard (wait kernel_ref.ord_lt_type k)`.
+
+*Universe*: `OrdLt k` lives in `Type 0` for any `k` (it is just a
+refinement of `Ord`, no rank shift).
+
+*Eliminator*: none directly. To case-split on an `OrdLt k`
+value, treat it as an `Ord` (the underlying tree is identical)
+and use `ord_rec`.
+
+*Use as Pi domain*: when `Pi (OrdLt k) codFn` is checked, the
+hypothesis has stored type `OrdLt k`. The kernel's comparison
+primitives (`ord_lt`, `ord_le`) consult this stored bound when
+running on the hypothesis, deriving concrete answers in many
+cases. See @poly-universe for the polymorphic-rank application.
+
+*Convention*: `Ord` and `OrdLt` are not interchangeable as type
+constructors. A function `{r : Ord} -> ...` quantifies over all
+ordinals (unbounded, stuck `pi_rank`). A function
+`{r : OrdLt omega} -> ...` quantifies over countable ordinals
+below $omega$ (i.e., natural numbers, in CNF terms), with
+closed `pi_rank` derivable. Users pick the form that matches
+their needs.
+
 == Universe (Type k)
 
 *Signatures*: `kernel.core_type` and `kernel.guarded_type`.
@@ -1183,8 +1286,9 @@ bindings via `let`. The following must be private (declared with
 
 The following must be public (`:=`):
 
-- `Nat`, `Bool`, `Eq`, `Pi`, `Arrow`, `Ord`, `Type`, `omega` and
-  related ordinal helpers --- guarded type constructors.
+- `Nat`, `Bool`, `Eq`, `Pi`, `Arrow`, `Ord`, `OrdLt`, `Type`,
+  `omega` and related ordinal helpers --- guarded type
+  constructors.
 - `bool_rec`, `nat_rec`, `eq_J`, `ord_rec`, `wait_rec` --- user
   eliminator wrappers.
 - `Hyp`, `StuckElim` --- public neutral constructors (callable
@@ -1396,15 +1500,35 @@ Bumping past $epsilon.alt_0$ would require:
 
 Each is mechanical. Defer until a use case demands.
 
-== Bounded levels (TTBFL adoption)
+== Bound-consulting identities for non-canonical ordinals
+
+The kernel's `ord_lt`/`ord_le` handlers consult `OrdLt k` bounds
+on hypothesis-typed Ord values to derive concrete answers, but
+only for canonical limit ordinals where the structural identity
+is known ($omega$, $omega + 1$, $omega dot n$, $omega^2$, etc.).
+Comparisons against non-canonical bounds (e.g., user-defined
+ordinal expressions) fall through to stuck.
+
+Future work:
++ Catalog the canonical limit ordinals up to $epsilon.alt_0$ and
+  enumerate their bound-consulting identities in a single
+  kernel-internal table.
++ Allow user-defined identities (with kernel-verified
+  monotonicity proofs) so non-canonical bounds can also produce
+  closed answers.
+
+This extension is purely additive --- existing programs are
+unaffected; new programs gain power.
+
+== Data-driven level computation (TTBFL `lub`)
 
 If a future use case demands `lub : List (Σℓ. Type ℓ) → Ord` ---
-data-driven level computation --- the kernel must adopt
-TTBFL-style bounded levels (`r : Ord< k`). This would require:
-+ A new universe-of-levels predicate `Level< : Ord -> Type 0`.
-+ Trans and Cumul rules in the universe checker
-  (non--syntax-directed search).
-+ Updating the elaborator to thread bounds.
+a runtime function that computes a level from a data structure of
+types-at-various-levels --- the kernel must adopt TTBFL's full
+bounded-level machinery (Trans and Cumul rules,
+non--syntax-directed universe checking). The current `OrdLt k`
+predicate is sufficient for *static* bounded polymorphism but
+does not provide *dynamic* level computation from data.
 
 This is a substantial extension. Avoid until the use case
 forces it.
