@@ -17,6 +17,117 @@ test ParsedType ParsedTerm = TT
 The elaborator parses, picks the requested universe, and inserts these
 checks. It owns no trusted predicate table.
 
+## Framework
+
+The kernel is a **parametricity-preserving framework + a registry of
+trusted primitives**, not a fixed type theory. Every implementation
+section below is an instance of the same shape; the framework view
+both names the shape and constrains what counts as a valid
+implementation.
+
+### The two reduction modes
+
+The TC evaluator runs in one of two reduction modes selected per
+application:
+
+- **Raw mode** — full TC reduction, including triage as reflection.
+  Used for trusted (kernel-handler) code.
+- **Parametric mode** — TC reduction with two extra rules:
+  (a) **triage on a neutral fails**, (b) **fork-formation that
+  produces a neutral root fails**. Used for user-position code
+  during type checking.
+
+The dispatcher (`q_checked_apply_fn`) selects the mode by inspecting
+the function being applied: kernel-recognized signatures route through
+raw apply; everything else runs the parametric rules.
+
+These two extra rules encode parametricity operationally:
+hypotheses are opaque tokens for universal quantification, so
+user code may not (a) inspect their structure or (b) synthesize new
+ones indistinguishable from kernel-minted ones. Without (a) you can't
+write reflective families that branch on neutralness. Without (b) you
+can't smuggle forged tokens through the parametric layer.
+
+Note that rule (b) is **enforced at one point**: the stem-rule's
+constructor check rejects fork-formation whose `pair_fst` matches the
+canonical hypothesis signature. The S-rule and triage-fork rule do
+not perform direct constructor checks — they rely on transitive
+recursion through `checked_apply`, where the inner step that
+ultimately constructs the fork hits the stem-rule check. So rule (b)
+is one explicit check, not three; the structural-induction argument
+in [Why the constructor checks suffice](#why-the-constructor-checks-suffice-structural-argument)
+makes this precise.
+
+`guard`'s entry scan is the **static** analog of (b): values entering
+parametric mode at the public boundary must contain no pre-existing
+neutral roots that the kernel didn't mint. The walker's fork-formation
+rule is the **dynamic** analog: neutral roots cannot be synthesized
+during evaluation. Both are necessary; they catch different timescales
+of the same forgery class.
+
+### Trusted primitives
+
+A **trusted primitive** is a triple `(signature, checker, eliminator)`
+registered with the framework:
+
+- **signature** — a hash-cons-stable tree id used by the dispatcher
+  to recognize "this is one of mine, run in raw mode."
+- **checker** — the predicate that validates a value as belonging
+  to this type. Kernel-trusted code; runs in raw mode after dispatch.
+- **eliminator** — the user-callable face. Lets user-position code
+  case-analyze on concrete instances and defers via
+  `StuckElim (motive target) target` on neutrals.
+
+Existing entries:
+
+| Primitive       | Signature                   | Checker              | Eliminator              |
+|-----------------|-----------------------------|----------------------|-------------------------|
+| Pi              | `kernel.pi`                 | `q_pi_fn`            | function application + `q_hyp_reduce_fn` |
+| Nat             | `kernel.nat`                | `q_nat_fn`            | `nat_rec` (session 3.5+4)   |
+| Bool            | `kernel.bool`               | `q_bool_fn`           | `bool_rec` (session 3.5+4)  |
+| Eq              | `kernel.eq`                 | `q_eq_fn`             | `eq_J` (session 3.5+4)      |
+| Universe (rank) | `kernel.guarded_type`       | `q_guarded_type_fn`   | `wait_rec` (session 3.5+4)  |
+| Core type       | `kernel.core_type`          | `q_core_type_fn`      | (kernel-internal; same role as wait_rec for cores) |
+| Hypothesis      | `kernel.hyp_reduce` (`raw`) | `q_hyp_reduce_fn`     | (no user eliminator — that would be reflection) |
+| Guard layer     | `kernel.guard`              | `q_guard_fn`          | (boundary, not user-side) |
+
+All four eliminators in session 3.5+4 land together — their absence
+today is the incompleteness gap that the walker's parametric rules
+expose as "polymorphic Pi rejected" / "select_lazy on
+neutral_test breaks."
+
+### The dispatcher is a registry-fold
+
+Concretely `q_checked_apply_fn`'s `select_chain` is a fold over the
+registry's signatures: for each entry, check `has_sig entry.sig f`;
+on match, route through raw apply; otherwise apply parametric rules.
+`q_core_type_fn` is the same fold with per-entry validators instead
+of raw apply. `wait_rec` is the same fold exposed to user-position
+with neutral-deferral. The "Dispatch Table as Security Perimeter"
+section below names this fold from the security-review angle; the
+framework view names it from the structural angle. They're the same
+object.
+
+### Universes as recursion depth in the registry's checker
+
+The "rank" parameter to `q_core_type_fn` is the index in a recursive
+verification: rank 0 are the base type-formers (Nat, Bool, plus Pi/Eq
+whose components are at rank 0); rank n+1 additionally accepts
+`Type k` for `k < n+1` (i.e., the rank-k universe internalized as a
+value). One handler, parameterized. Universe polymorphism is
+first-class via Pi over the rank-type's domain. The current rank-type
+is `Nat`, capping the hierarchy below ω; extending the hierarchy means
+swapping the rank-type for a richer ordinal notation, which is one
+parameter to the framework — see "Out of Scope."
+
+### What the framework does not commit to
+
+- **Open registry.** The registry is closed at recq-build time.
+  User-extensible registration is `KERNEL_EXTENSIBILITY_PLAN.md`'s
+  scope, not this plan's.
+- **Higher universes.** Rank stays Nat. Type ω+ requires generalizing
+  the rank-type, also out of scope here.
+
 ## Implementation Chunks
 
 Implementation is split across 5 sessions, each ending in a green
@@ -226,7 +337,7 @@ and the failure modes under load are:
 
 1. ~400× runtime slowdown (now ~3× after memo bump).
 2. Eliminator-mint rejections (`nat_rec`/`bool_rec`/`eq_J` inside
-   Pi-checked bodies) — fixed by session 4's certified eliminators.
+   Pi-checked bodies) — fixed by session 3.5+4's certified eliminators.
 
 See the original section text below for the failed-hypothesis trail
 and per-rejected-direction notes.
@@ -259,7 +370,7 @@ running the suite. The findings updated the picture significantly:
   on a hypothesis, those eliminators mint a new neutral via
   `wait kernel.hyp_reduce meta`. The walker's stem-rule constructor
   check rejects that mint, so the eliminator returns `Fail` instead
-  of a `StuckElim`. This is exactly the case session 4's certified
+  of a `StuckElim`. This is exactly the case session 3.5+4's certified
   eliminators are designed to handle (the dispatcher must route
   eliminator-rooted applies through raw apply, bypassing the
   constructor check).
@@ -269,17 +380,17 @@ appears to have been mis-diagnosed. With clean helpers at top level
 the dispatcher compiles cheaply, the walker is correct on the
 soundness attacks, and the failure mode under load is (a) runtime
 slowness from per-step walker recursion and (b) eliminator-mint
-rejections that need session 4.
+rejections that need session 3.5+4.
 
 The original walk-through below is preserved for context; the
 "most promising direction" (`cirToTree` lambda-value laziness) is
 no longer the primary blocker. The actual unblockers are:
 
-1. **Land session 4** — certified `bool_rec`/`nat_rec`/`eq_J`
+1. **Land session 3.5+4** — certified `bool_rec`/`nat_rec`/`eq_J`/`wait_rec`
    handlers. Add their proxy signatures to the dispatch table so
    eliminator-rooted applies route through raw apply (bypassing the
    constructor check). This fixes the kernel.test.disp 137-142
-   regressions.
+   regressions and the polymorphic-Pi rejections (121-129) together.
 2. **Decide on the perf budget.** A 400× slowdown on the full suite
    is unacceptable for daily development but acceptable as a
    correctness baseline if dev runs use the stub and CI runs use the
@@ -393,452 +504,538 @@ the four originally-failing attacks in `lib/soundness.test.disp`
 flip from `= TT` to `= FF`. The current baseline keeps attacks 3-5
 as `= TT`; the next session's success criterion is flipping them.
 
-### Session 3.5 — `wait_rec` and type-level eliminator discipline
+### Session 3.5+4 — Eliminator framework
 
-**Why this session exists.** The session 3 empirical work surfaced a
-class of failures (kernel.test.disp 121-129, 137, 141, 142;
-elab.test.disp's typed bindings against multi-arg arithmetic) that
-session 4's value-type eliminators (`bool_rec`/`nat_rec`/`eq_J`) do
-NOT close. The root cause: type-level utilities (`unguard_checked`,
-`hasguard`, `is_pi`, `pi_dom`, …) decompose wait-values via raw
-`triage`, which the walker rejects when invoked from user-position
-code on a hypothesis. Polymorphic Pi bodies like `{A} -> Arrow A A`
-trigger this rejection because `Arrow` calls `Pi`, which calls
-`unguard_checked A` with `A := hyp_A`.
+**Why these are one session.** The previous draft separated `wait_rec`
+(type-level eliminator, 3.5) from `bool_rec`/`nat_rec`/`eq_J`
+(value-level eliminators, 4) and claimed they were independently
+landable. Investigation showed they aren't: the existing eliminator
+implementations use `select_lazy ({_} -> StuckElim …) ({_} -> …)
+(is_neutral target)`, which post-migration produces garbage if
+`is_neutral` returns `StuckElim Bool target` instead of `TT/FF`. The
+patterns must migrate together. From the framework view (see
+"Framework" above) all four eliminators are entries in the same
+registry — the eliminator column populated for Bool, Nat, Eq, and the
+type universe. The session lands them simultaneously.
 
-The principled fix is the same shape as session 4: replace raw
-decomposition with a certified eliminator. For Nat, that's
-`nat_rec`. For wait-values (= types), that's `wait_rec`. Once
-`wait_rec` exists and the public type-level utilities migrate to
-use it, the walker's "no raw triage on neutrals" rule becomes
-*completable* — every legitimate decomposition has an eliminator
-alternative.
+**What it closes.** The session-3 empirical investigation surfaced two
+classes of regression that the stub dispatcher hides:
 
-This session can land independently of session 4 (no eliminator
-dependencies) but is most naturally landed alongside it: the
-dispatch table grows by a few entries either way, and the migration
-discipline is identical.
+- *Polymorphic Pi rejected.* kernel.test.disp 121-129 and similar:
+  `{A} -> Arrow A A` calls `Pi`, which calls `unguard_checked A` with
+  `A := hyp_A`. Without `wait_rec`, that's a raw triage on a neutral
+  → walker rejection.
+- *Eliminator-mint rejection.* kernel.test.disp 137, 141, 142 and
+  `add_comm`: `nat_rec`/`bool_rec`/`eq_J` inside Pi-checked bodies
+  mint StuckElims; without certified handlers in the dispatch table,
+  the walker's stem-rule constructor check rejects them.
 
-#### Design: `wait_rec` API
+Both close once the four eliminators land as registry entries and
+the corresponding user-position code migrates to use them.
 
-Closed-form dispatch over the kernel's known wait-value signatures.
-The kernel currently knows: `pi`, `nat`, `bool`, `eq`, `core_type`,
-`guarded_type`, `guard`, plus the `hyp_reduce` neutral case.
+#### Step A — Refactor dispatcher to registry-fold form
+
+Pure refactor. No behavioral change. Same observable test surface.
+
+The current `q_checked_apply_fn` is a stub `{f, x} -> Ok (f x)`.
+The full version's `select_chain` over hardcoded signatures (see
+"Certified Dispatch") is **the registry fold viewed from the
+dispatch angle**. Refactor it so the entry list is a top-level
+data structure rather than inlined cases:
 
 ```disp
-wait_rec : (motive    : WaitVal -> Type)
-        -> (on_pi     : (dom, codFn) -> motive target)
-        -> (on_nat    : motive target)
-        -> (on_bool   : motive target)
-        -> (on_eq     : (A, x, y) -> motive target)
-        -> (on_core_univ    : rank -> motive target)
-        -> (on_guarded_univ : rank -> motive target)
-        -> (on_guard  : core -> motive target)
-        -> (on_default: tree -> motive target)
-        -> (target    : WaitVal)
-        -> motive target
+let dispatch_entries = {ks, raw} ->
+  case (has_sig ks.pi)            ({f, x} -> f x)
+  (case (has_sig ks.guard)        ({f, x} -> f x)
+  (case (has_sig ks.nat)          ({f, x} -> f x)
+  (case (has_sig ks.bool)         ({f, x} -> f x)
+  (case (has_sig ks.eq)           ({f, x} -> f x)
+  (case (has_sig ks.core_type)    ({f, x} -> f x)
+  (case (has_sig ks.guarded_type) ({f, x} -> f x)
+  (case (q_is_neutral raw)        ({f, x} -> f x)
+  t))))))))
 ```
 
-The neutral case is implicit: when `target` is a hypothesis or
-StuckElim, `wait_rec` returns `StuckElim (motive target) target`
-without firing any branch. This mirrors `nat_rec`'s behavior on
-Nat-typed neutrals.
+`q_checked_apply_fn` becomes a fold over this list:
 
-`on_default` covers signatures that aren't in the kernel's enum —
-e.g., a wait-value constructed from user code with a fresh
-checker. The default's safest behavior is to return `InvalidType`
-(= FF), but the design allows the user to specify; the migrated
-utilities below all return InvalidType.
+```disp
+let q_checked_apply_fn = {ks, raw, query} ->
+  fix ({self, f, x} ->
+    select_chain (dispatch_entries ks raw f) (parametric_apply self) f x)
+```
 
-The metadata accessors (`dom`, `codFn`, `A`, `x`, `y`, `rank`,
-`core`) are unpacked at dispatch time from the target's
-`type_meta`. The handler doesn't see the wait-value's tree
-structure — only the typed metadata. This is what makes wait_rec
-parametricity-preserving: the user's branch can compute over
-`dom`, `codFn`, etc. as values of their declared types, but
-cannot triage on the *target* itself.
+`q_core_type_fn` already select_chain's over the same signatures
+with per-entry validators rather than raw apply; expose its case
+list as `core_type_entries` for symmetry.
 
-#### Implementation: `q_wait_rec_fn`
+This step ends in green tests with the dispatcher still effectively
+stubbed (the `parametric_apply` default just falls through to raw
+apply for now). The refactor is the scaffolding that step B and C
+plug into.
 
-Parallel to `q_nat_rec_fn`. Lives in the kernel record, dispatched
-through the dispatch table:
+#### Step B — Land four eliminator entries simultaneously
+
+Add to the kernel record (in lockstep): `wait_rec`, `bool_rec`,
+`nat_rec`, `eq_J`. Each is a `(signature, checker, eliminator,
+metadata-accessors)` tuple expressed as a kernel field.
+
+Each eliminator follows the same shape:
+
+1. **Meta-packing wrapper** that bundles user args into a
+   `wait kernel_ref.<name>_rec meta` value, applied to the target
+   as trigger. (This must be a wait-value — closure-based wrappers
+   fail under the walker; see "Why the wrapper must be a wait-value"
+   below.)
+2. **Handler** that runs as trusted code via raw apply: checks
+   `q_is_neutral raw target` first; on neutral, returns
+   `Ok (StuckElim (motive target) target)`; on concrete, dispatches
+   to the user-supplied branch.
+3. **Dispatcher entry** that recognizes the wait-value's signature
+   and routes through raw apply.
+
+The four entries land together because:
+
+- The migrated `is_neutral` (returning `StuckElim Bool target` for
+  neutrals instead of TT) breaks `select_lazy ... is_neutral target`
+  patterns that exist in `bool_rec`, `nat_rec`, `eq_J`,
+  `eq_subst`, `eq_sym`, `eq_cong`, `infer`, and
+  `is_concrete_fork`. Each of these gets rewritten to use the
+  appropriate certified eliminator (or `q_is_neutral raw` for kernel-
+  internal use). All rewrites must happen at once because they cross-
+  reference each other.
+
+- Performance-wise, all four go through the same dispatcher
+  signature check; the dispatch table grows by four entries (one
+  per `*_rec` signature) regardless of order.
+
+- Bootstrap is symmetric: each handler references `q_is_neutral raw`
+  + metadata accessors; each wrapper builds a wait-value with the
+  corresponding `kernel_ref.X_rec` signature; the order between the
+  four doesn't matter as long as all are present before
+  user-position migration starts.
+
+#### Step C — Migrate utilities and eliminator-callers
+
+After step B, all four eliminator wait-values exist. Now rewrite the
+remaining user-position raw-decomposition sites in lockstep:
+
+**Type-level utilities** (use `wait_rec`):
+- `hasguard` (motive Bool, on_guard → TT)
+- `unguard_or_self` (motive core_Type0, on_guard → core; else → T)
+- `unguard_checked` (motive core_Type0, on_guard → core; else → InvalidType)
+- `is_pi`, `is_eq`, `is_universe` (motive Bool; recurse into on_guard)
+- `pi_dom`, `pi_cod_fn`, `universe_rank` (motive core_Type0 / Nat;
+  see "Rank caveat" below)
+- `is_neutral` migrates last, after the eliminator-using callers
+  no longer thread it through `select_lazy`.
+
+**Eliminator-using callers** (use the appropriate `*_rec`):
+- `bool_rec`, `nat_rec`, `eq_J` raw forms get replaced by the
+  certified-handler-backed forms at the same path.
+- `eq_subst`, `eq_sym`, `eq_cong` derive from `eq_J`.
+- `is_concrete_fork` either drops (no longer needed) or gets
+  rewritten via `wait_rec`'s neutral-deferral.
+
+`infer` does NOT migrate. It is used only in `lib/kernel.test.disp`
+to validate kernel-internal neutral handling; it stays raw alongside
+`neutral_type`. See the post-migration-list note below.
+
+**Kernel-internal helpers stay raw.** `q_is_neutral`, `q_unguard_or_self`,
+`q_contains_neutral`, `q_scan_no_neutral`, `q_make_hyp` are invoked
+from inside handler bodies (raw apply, not walker) and operate on
+known-shape inputs; routing them through wait_rec adds gratuitous
+dispatch cost and creates bootstrap cycles. They keep using raw
+triage / signature checks.
+
+**Migration list (final):**
+
+| Utility            | Migrate? | Motive            | Notes                                        |
+|--------------------|----------|-------------------|----------------------------------------------|
+| `hasguard`         | yes      | `core_Bool`       |                                              |
+| `unguard_or_self`  | yes      | `core_Type0`      | recursive (use `fix`)                        |
+| `unguard_checked`  | yes      | `core_Type0`      | recursive; semantic change for neutrals      |
+| `is_pi`            | yes      | `core_Bool`       | recursive on_guard (use `fix`)               |
+| `is_eq`            | yes      | `core_Bool`       | recursive on_guard (use `fix`)               |
+| `is_universe`      | yes      | `core_Bool`       | recursive on_guard (use `fix`)               |
+| `pi_dom`           | yes      | `core_Type0`      | recursive; rank caveat                       |
+| `pi_cod_fn`        | yes      | `core_Type0`      | recursive; rank caveat                       |
+| `universe_rank`    | yes      | `core_Nat`        | recursive on_guard                           |
+| `is_neutral`       | yes      | `core_Bool`       | last to migrate                              |
+| `neutral_type`     | **no**   | —                 | doesn't fit wait_rec (no `on_neutral` hook)  |
+| `infer`            | **no**   | —                 | test-only helper (see note below)            |
+
+`neutral_type` and `infer` are both dropped from the migration list.
+wait_rec's neutral case is hardcoded `StuckElim (motive target)
+target` — there is no user-supplied `on_neutral` branch — so it
+cannot expose the stored type from a neutral, which is exactly the
+reflection capability the soundness fix bans. `neutral_type` stays
+as raw `neutral_meta_type (type_meta v)`. `infer` is currently used
+only in `lib/kernel.test.disp` as a test-only convenience for
+inspecting kernel-internal neutral metadata; it stays raw and
+kernel-internal, never reaches user-position code through the
+walker, and therefore needs no migration.
+
+#### Wrapper meta layout
+
+The wrapper must build a `wait kernel_ref.<name>_rec meta` wait-value;
+a closure form (`unwrap_value (kernel.wait_rec motive ... target)`)
+fails under the walker because `kernel.X` resolves to a closure (no
+signature), so the dispatcher's `has_sig` checks miss, the curried
+applies hit walker rules step-by-step, and `q_is_neutral raw target`
+inside the handler triages on `target` from user-position (see
+"Why the wrapper must be a wait-value" below).
+
+Pattern (target as trigger — gives stable wait-value identity for
+hash-cons reuse):
+
+```disp
+let make_wait_rec_meta = {motive, on_pi, on_nat, on_bool, on_eq,
+                          on_core_univ, on_guarded_univ, on_guard, on_default} ->
+  t motive
+    (t (t on_pi on_nat)
+       (t (t on_bool on_eq)
+          (t (t on_core_univ on_guarded_univ)
+             (t on_guard on_default))))
+
+let wait_rec_meta_motive          = {m} -> pair_fst m
+let wait_rec_meta_on_pi           = {m} -> pair_fst (pair_fst (pair_snd m))
+let wait_rec_meta_on_nat          = {m} -> pair_snd (pair_fst (pair_snd m))
+let wait_rec_meta_on_bool         = {m} -> pair_fst (pair_fst (pair_snd (pair_snd m)))
+let wait_rec_meta_on_eq           = {m} -> pair_snd (pair_fst (pair_snd (pair_snd m)))
+let wait_rec_meta_on_core_univ    = {m} -> pair_fst (pair_fst (pair_snd (pair_snd (pair_snd m))))
+let wait_rec_meta_on_guarded_univ = {m} -> pair_snd (pair_fst (pair_snd (pair_snd (pair_snd m))))
+let wait_rec_meta_on_guard        = {m} -> pair_fst (pair_snd (pair_snd (pair_snd (pair_snd m))))
+let wait_rec_meta_on_default      = {m} -> pair_snd (pair_snd (pair_snd (pair_snd (pair_snd m))))
+
+wait_rec := {motive, on_pi, on_nat, on_bool, on_eq, on_core_univ,
+             on_guarded_univ, on_guard, on_default, target} ->
+  unwrap_value
+    ((wait kernel_ref.wait_rec
+        (make_wait_rec_meta motive on_pi on_nat on_bool on_eq
+                            on_core_univ on_guarded_univ on_guard on_default))
+     target)
+```
+
+Handler unpacks via the accessors:
 
 ```disp
 let q_wait_rec_fn = {ks, raw, query} ->
-  fix ({self, motive, on_pi, on_nat, on_bool, on_eq,
-        on_core_univ, on_guarded_univ, on_guard, on_default, target} ->
+  fix ({self, meta, target} ->
+    let motive          = wait_rec_meta_motive meta in
+    let on_pi           = wait_rec_meta_on_pi meta in
+    let on_nat          = wait_rec_meta_on_nat meta in
+    // ... extract all branches from meta ...
     select_lazy
-      ({_} -> StuckElim (motive target) target)
+      ({_} -> Ok (StuckElim (motive target) target))
       ({_} ->
-        let m = type_meta target
+        let m = type_meta target in
         select_chain
-          (case (has_sig ks.pi target)            ({_} -> on_pi (pi_meta_domain m) (pi_meta_cod_fn m)))
-          (case (has_sig ks.nat target)           ({_} -> on_nat))
-          (case (has_sig ks.bool target)          ({_} -> on_bool))
-          (case (has_sig ks.eq target)            ({_} -> on_eq (eq_meta_type m) (eq_meta_lhs m) (eq_meta_rhs m)))
-          (case (has_sig ks.core_type target)     ({_} -> on_core_univ m))
-          (case (has_sig ks.guarded_type target)  ({_} -> on_guarded_univ m))
-          (case (has_sig ks.guard target)         ({_} -> on_guard m))
-          ({_} -> on_default target))
+          (case (has_sig ks.pi target)            ({_} -> Ok (on_pi (pi_meta_domain m) (pi_meta_cod_fn m))))
+          (case (has_sig ks.nat target)           ({_} -> Ok on_nat))
+          (case (has_sig ks.bool target)          ({_} -> Ok on_bool))
+          (case (has_sig ks.eq target)            ({_} -> Ok (on_eq (eq_meta_type m) (eq_meta_lhs m) (eq_meta_rhs m))))
+          (case (has_sig ks.core_type target)     ({_} -> Ok (on_core_univ m)))
+          (case (has_sig ks.guarded_type target)  ({_} -> Ok (on_guarded_univ m)))
+          (case (has_sig ks.guard target)         ({_} -> Ok (on_guard m)))
+          ({_} -> Ok (on_default target)))
       (q_is_neutral raw target))
 ```
 
-The dispatcher gets a new entry for `wait_rec` that routes calls
-through raw apply. User wrapper:
+Handler returns CheckedResult; the wrapper's `unwrap_value` produces
+either the value or `elim_fail`. `bool_rec`/`nat_rec`/`eq_J` follow
+the same pattern with smaller meta tuples.
+
+#### Motive convention
+
+**Motives must be core wait-values, not guarded.** The StuckElim's
+stored type is `motive target`; that value re-enters kernel
+validation (q_core_type_fn → neutral_fn → univ_check), which checks
+signatures via `has_sig ks.core_type` / `has_sig ks.guarded_type`.
+A guarded form (`Type 0 = guard (wait kernel.guarded_type 0)`) has
+`kernel.guard` signature and would be rejected. The core form
+(`wait kernel.guarded_type 0`) has `kernel.guarded_type` signature
+and is accepted at any rank ≥ 1.
+
+Helpers:
 
 ```disp
-wait_rec := {motive, on_pi, on_nat, on_bool, on_eq, on_core_univ,
-             on_guarded_univ, on_guard, on_default, target} ->
-  unwrap_value (kernel.wait_rec
-    motive on_pi on_nat on_bool on_eq
-    on_core_univ on_guarded_univ on_guard on_default target)
+let motive_Type0 = {_} -> wait kernel_ref.guarded_type 0
+let motive_Bool  = {_} -> wait kernel_ref.bool t
+let motive_Nat   = {_} -> wait kernel_ref.nat t
 ```
 
-Mirrors session 4's planned wrapper pattern. The `unwrap_value`
-helper distinguishes "real result" from `elim_fail` (the sentinel
-for handler-internal failures, e.g., bad motive type). Same shape
-as `bool_rec`/`nat_rec`/`eq_J`.
+Every migrated utility uses one of these (or its own analog).
 
-#### Migration: type-level utilities
+#### Recursive utilities use `fix`
 
-Eleven public utilities currently use raw decomposition. Each
-gets a one-liner rewrite:
+Migrated utilities with `on_guard → recurse` branches (`is_pi`,
+`is_eq`, `is_universe`, `pi_dom`, `pi_cod_fn`, `universe_rank`,
+`unguard_or_self`, `unguard_checked`) need explicit `fix` because
+disp's `name :=` binding doesn't support let-rec self-reference.
+Pattern:
 
 ```disp
-hasguard := {T} -> wait_rec
-  ({_} -> Bool)
-  ({_, _} -> FF)              // on_pi
-  FF                          // on_nat
-  FF                          // on_bool
-  ({_, _, _} -> FF)           // on_eq
-  ({_} -> FF)                 // on_core_univ
-  ({_} -> FF)                 // on_guarded_univ
-  ({_} -> TT)                 // on_guard: yes
-  ({_} -> FF)                 // on_default
-  T
-
-unguard_or_self := {T} -> wait_rec
-  ({_} -> WaitVal)
-  ({d, c} -> T)               // on_pi: T as-is
-  T                           // on_nat
-  ...                         // each non-guard branch returns T
-  ({core} -> core)            // on_guard: peel
-  ({_} -> T)                  // on_default
-  T
-
-unguard_checked := {T} -> wait_rec
-  ({_} -> WaitVal)
-  ({d, c} -> InvalidType)     // on_pi: not guarded
-  InvalidType                 // on_nat
-  ...
-  ({core} -> core)             // on_guard: peel
-  ({_} -> InvalidType)         // on_default
-  T
-// neutral case: q_wait_rec_fn returns StuckElim WaitVal target
-//   so unguard_checked of a neutral = StuckElim (a typed neutral)
-//   — semantically equivalent to today's "return target as-is"
-//   modulo wrapping, which downstream code must handle.
-
-is_pi   := {T} -> wait_rec ({_} -> Bool) ({_, _} -> TT) FF FF ({_, _, _} -> FF) ({_} -> FF) ({_} -> FF) ({core} -> is_pi core) ({_} -> FF) T
-is_eq   := {T} -> wait_rec ({_} -> Bool) ({_, _} -> FF) FF FF ({_, _, _} -> TT) ({_} -> FF) ({_} -> FF) ({core} -> is_eq core) ({_} -> FF) T
-is_universe := {T} -> wait_rec ({_} -> Bool) ({_, _} -> FF) FF FF ({_, _, _} -> FF) ({_} -> TT) ({_} -> TT) ({core} -> is_universe core) ({_} -> FF) T
-
-pi_dom    := {T} -> wait_rec ({_} -> WaitVal) ({d, _} -> guard d) InvalidType ... ({core} -> pi_dom core) ... T
-pi_cod_fn := {T, x} -> wait_rec ({_} -> WaitVal) ({_, c} -> guard (c x)) InvalidType ... T
-universe_rank := {T} -> wait_rec ({_} -> Nat) ({_, _} -> 0) 0 0 ({_, _, _} -> 0) ({r} -> r) ({r} -> r) ({core} -> universe_rank core) ({_} -> 0) T
-
-is_neutral := {T} -> wait_rec ({_} -> Bool) ({_, _} -> FF) FF FF ({_, _, _} -> FF) ({_} -> FF) ({_} -> FF) ({_} -> FF) ({_} -> FF) T
-// is_neutral T:
-//   target = neutral → StuckElim Bool target (NOT TT — this is the key
-//     parametricity gain: user can't extract "is this a neutral?" as a
-//     concrete Bool, because the answer for neutrals is itself a Stuck.)
-//   target = anything else → FF
+is_pi := fix ({self, T} ->
+  wait_rec
+    motive_Bool
+    ({_, _} -> TT)            // on_pi
+    FF FF                     // on_nat, on_bool
+    ({_, _, _} -> FF)         // on_eq
+    ({_} -> FF) ({_} -> FF)   // on_core_univ, on_guarded_univ
+    ({core} -> self core)     // on_guard: peel and recurse
+    ({_} -> FF)               // on_default
+    T)
 ```
 
-**Critical for soundness: kernel-internal helpers stay raw.**
-`q_unguard_or_self`, `q_is_neutral`, `q_contains_neutral`,
-`q_scan_no_neutral`, `q_make_hyp` are invoked exclusively via raw
-apply from inside kernel handler bodies — never through the
-walker, never from user-position code. They MUST keep using raw
-triage / signature checks; routing them through wait_rec would
-add gratuitous dispatch cost and create circular bootstrap
-ordering. The migration target is the *public* utilities listed
-above.
+The plan's earlier draft showed `({core} -> is_pi core)` in the
+on_guard branch; the `fix`/`self` form is the disp-correct version.
+
+#### Rank caveat for `pi_dom` / `pi_cod_fn`
+
+A Pi's domain may live at any `Type rank` ≥ 0. With motive
+`core_Type0`, the StuckElim returned for a neutral target claims
+the domain is in Type 0 — wrong for higher-universe Pis (e.g.,
+`Pi (Type 0) ...`'s dom = Type 0 lives in Type 1, not Type 0). Three
+options, in order of preference:
+
+1. **Accept motive lossiness.** The motive is only consulted when
+   the target is a neutral, which is rare for `pi_dom`/`pi_cod_fn`
+   in practice (most usage is on concrete Pi values, where the
+   motive is unused). If a downstream caller needs the actual
+   universe, they can check via `Type n` directly. Ship with this.
+2. **Add a rank parameter.** `pi_dom rank T` and `pi_cod_fn rank T x`,
+   with motive parameterized by `rank`. Cleaner type-theoretically
+   but changes the public API.
+3. **Defer the issue.** Leave `pi_dom`/`pi_cod_fn` out of the
+   migration list and keep them raw. Polymorphic-Pi tests don't
+   rely on these utilities working on hypothesis-typed Pis, so this
+   is safe — but the parametricity discipline is then incomplete
+   for higher-universe code.
+
+**Default: option 1.** Ship with motive `core_Type0` and document
+the lossiness. Revisit if real downstream code hits the limitation.
 
 #### Soundness analysis
 
-**Property 1: `wait_rec` preserves walker parametricity.** The
-walker's invariant is: user-position code cannot triage on a
-neutral. `wait_rec` is invoked through the dispatcher (routed to
-raw apply on signature match) so user code calling `wait_rec`
-doesn't fire the walker's triage-on-neutral check inside the
-eliminator body. Inside the handler:
+**Property 1: Eliminators preserve walker parametricity.** The
+walker bans triage on neutrals in user-position code. Each eliminator
+is dispatcher-routed (signature match → raw apply on the wait-value),
+so the handler body runs as trusted code, and its internal
+`q_is_neutral raw target` and `has_sig ks.X target` are safe (raw
+mode, not walker mode). For non-neutral targets, the handler
+applies the user's branch with metadata accessors that return typed
+values; the user's branch then runs under the walker, which
+enforces parametricity at any further reflective sites. For neutral
+targets, no user branch fires; the result is a typed StuckElim that
+downstream walker calls treat opaquely.
 
-- For non-neutral target: the dispatch picks one branch, applies
-  the user's handler with metadata accessors that return *typed*
-  values (cores, ranks, etc.). The user's handler runs under the
-  walker, which may itself reject if the handler reflectively
-  inspects its argument — but that's the same parametricity
-  enforcement we already have at any other walker-routed call site.
+**Property 2: `is_neutral` becomes self-defending.** Today's
+`is_neutral hyp = TT` is a reflection primitive. After migration:
+`is_neutral hyp` returns `StuckElim Bool hyp`. Any downstream
+`select X Y (is_neutral hyp)` either runs under the walker (which
+fails on the StuckElim's tree shape via the triage-on-neutral rule)
+or under raw apply outside a Pi check (where there's no live attack
+because the neutral wasn't kernel-minted in a checked context). The
+attack vector closes.
 
-- For neutral target: returns `StuckElim (motive target) target`.
-  No user branch fires. The result is a Bool/Type/etc-typed
-  neutral that downstream walker calls treat opaquely.
+**Property 3: Signature exhaustiveness is load-bearing.** wait_rec's
+on_default fires for unrecognized signatures. Adding a new type
+former (e.g., Sigma) without updating wait_rec means migrated
+utilities return InvalidType for it — *safe* (legitimate types get
+rejected) but *incomplete* (new former unusable until lockstep
+update). For the closed-form kernel this plan targets, that's three
+diffs per new signature: kernel record field, q_wait_rec_fn case,
+migrated-utility branches. KERNEL_EXTENSIBILITY_PLAN.md generalizes
+this.
 
-**Property 2: `is_neutral` becomes safe to expose.** Today's
-`is_neutral hyp = TT` is a reflection primitive: it leaks "this is
-a neutral" as a concrete Bool. After migration:
-`is_neutral neutral_target` returns `StuckElim Bool target` —
-itself a neutral. User code's downstream `tree_eq (is_neutral T) TT`
-would walk through the `tree_eq` body, hit the StuckElim's tree
-shape, and the walker would Fail at the triage-on-neutral check
-inside `tree_eq`'s recursive descent. So the reflection attempt
-is rejected dynamically. The is_neutral attack vector closes.
+**Property 4: Closure-based wrappers are unsound under the walker.**
+The wrapper's `unwrap_value (kernel.X_rec args)` form curries through
+walker rules; the resulting handler body's `q_is_neutral raw target`
+triages on a neutral from user-position. The wait-value-bundled
+wrapper avoids this by getting signature recognition before any
+walker step touches the handler internals.
 
-**Property 3: Signature exhaustiveness is load-bearing.** The
-on_default branch fires when target's signature isn't recognized.
-If the kernel adds a new type former (e.g., Sigma) without
-updating wait_rec, the new type's wait-values fall to on_default
-and migrated utilities return InvalidType for them. This is
-*safe* (worst case: legitimate types get rejected) but
-*incomplete* (the new former isn't usable until wait_rec
-extends). This is a structural commitment: wait_rec is closed
-over the kernel's signature enum, and adding a signature
-requires lockstep updates in:
+**Property 5: The on_guard recursive case bottoms out.** Guards
+don't nest (`guard (guard core)` is malformed: Pi/Eq/etc. construct
+guarded values from cores, never from already-guarded values). One
+unwrap is enough; on_default catches malformed inputs.
 
-1. The kernel record's field set.
-2. `q_wait_rec_fn`'s `select_chain` cases.
-3. The migrated utilities' branch handlers.
+#### Why the wrapper must be a wait-value
 
-For the closed-form kernel this plan targets, that's three diffs
-per new signature. The KERNEL_EXTENSIBILITY_PLAN.md refactor
-(out of scope here) would generalize this to a registration
-mechanism.
+Guard's entry scan only catches *static* forgeries — neutral-rooted
+subtrees in the static tree of v. *Dynamic* synthesis (user code
+that constructs a fresh `wait kernel.hyp_reduce ...` at apply time)
+happens via the TC stem rule producing a fork-rooted-at-handler-
+signature value; the walker's fork-formation rule catches that step.
+The two rules operate at different timescales; both are necessary.
 
-**Property 4: The `on_guard` recursive case.** Several utilities
-recurse: `is_pi`'s `on_guard` calls `is_pi` on the unwrapped
-core. This recursion bottoms out because guards don't nest
-(`guard (guard core)` is malformed — Pi/Eq/etc. construct
-guarded values from cores, never from already-guarded values).
-The `on_default` branch catches malformed inputs.
+Concrete dynamic-synthesis attack scenario, illustrating why guard
+alone is insufficient: a user-supplied closure
+`{x} -> wait kernel.hyp_reduce (make_neutral_meta (Eq Nat 0 1) x)`
+passes the entry scan (its static tree contains no fully-formed
+wait-value rooted at hyp_reduce — bracket abstraction leaves the
+wait-value's meta open). Inside a Pi check, `q_pi_fn` applies the
+closure to a hypothesis; reduction produces a fresh
+`wait kernel.hyp_reduce …` value with a forged stored type. Without
+the walker's fork-formation rule firing on the stem-rule step that
+constructs the outer fork, this forged neutral enters scope.
 
-#### Interaction with session 4
+A closure-based wrapper would hit the walker's stem/triage rules at
+each curried application step, with `q_is_neutral raw target` (a
+triage on target) eventually firing in user-position. The
+wait-value-bundled wrapper bypasses this: dispatcher signature
+recognition fires *before* any application of the handler body, so
+the body runs in raw mode and its internal triages are safe.
 
-Session 4 adds `q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn` as
-certified handlers. Session 3.5 adds `q_wait_rec_fn`. All four
-share the dispatcher routing pattern: signature recognition →
-raw apply → handler body that produces either a real result or
-a StuckElim on neutral targets. The dispatcher's `select_chain`
-grows by four entries (one per eliminator).
+#### Performance
 
-**Combined dispatcher cases (post-3.5 + post-4):**
-
-```disp
-let cases =
-  case (has_sig ks.pi f)         (q_pi_dispatch_case)
-  (case (has_sig ks.nat f)       (q_nat_dispatch_case)
-  (case (has_sig ks.bool f)      (q_bool_dispatch_case)
-  (case (has_sig ks.eq f)        (q_eq_dispatch_case)
-  (case (has_sig ks.guard f)     (q_guard_dispatch_case)
-  (case (has_sig ks.core_type f) (q_core_type_dispatch_case)
-  (case (has_sig ks.guarded_type f) (q_guarded_type_dispatch_case)
-  (case (has_sig ks.bool_rec f)  (q_bool_rec_dispatch_case)
-  (case (has_sig ks.nat_rec f)   (q_nat_rec_dispatch_case)
-  (case (has_sig ks.eq_J f)      (q_eq_J_dispatch_case)
-  (case (has_sig ks.wait_rec f)  (q_wait_rec_dispatch_case)
-  (case (q_is_neutral raw f)     (q_hyp_dispatch_case)
-  t)))))))))))
-```
-
-Twelve dispatch entries total. Profile-driven reordering (most
-common first) is a session-5+ optimization.
-
-**Migration interaction.** Once session 4 lands, math.disp's
-`add` (currently using `is_concrete_fork`/`pair_snd`) gets
-rewritten to use `nat_rec`. Once session 3.5 lands, the public
-type-level utilities use `wait_rec`. With both done, the kernel
-has no raw-triage user-position code paths, and the walker can
-go live without the Group 3 regressions documented in the
-empirical investigation.
-
-**Ordering recommendation.** Land 3.5 first if the goal is
-"close polymorphic Pi"; land 4 first if the goal is "close
-add_comm and proof tests." Both before unstubbing the
-dispatcher (which requires both to avoid regressions). If
-landing them together, the natural order is:
-
-1. Add `wait_rec` handler + dispatcher entry (no migration yet).
-2. Migrate type-level utilities one-by-one, running the test
-   suite after each (with stub dispatcher — utilities should
-   give identical results under raw apply).
-3. Add session 4 eliminator handlers + dispatcher entries.
-4. Migrate math.disp's `add` and similar to use eliminators.
-5. Unstub the dispatcher with the full walker.
-6. Run regression suite. Confirm 121-129, 137, 141, 142, 134,
-   135, 56, elab.test.disp all pass.
-
-Each step ends in a green test suite (until step 5, which may
-require step 6's regression review).
-
-#### Performance concerns
-
-**Cost per `wait_rec` call** (post-migration utilities). Today's
-`unguard_checked T` is roughly: `match (hasguard T) { TT => peel;
-FF => match (is_neutral T) { ... } }` ≈ 2 signature checks + a
-match dispatch ≈ ~10-15 raw apply steps. Through `wait_rec`:
-dispatcher routing (1 signature check to recognize
-`kernel.wait_rec`) + raw apply on q_wait_rec_fn (signature
-dispatch via `select_chain`) ≈ 8-12 cases × signature comparison
-+ branch apply ≈ ~30-50 raw apply steps. Roughly 3× per call.
+**Cost per eliminator call.** Today's `unguard_checked T` is ~10-15
+raw apply steps (signature check + match dispatch). Migrated:
+dispatcher routing (1 sig check) + raw apply on q_wait_rec_fn (8
+signature comparisons + branch apply) ≈ 30-50 apply steps. ~3× per
+call.
 
 **System impact.** Type-level utilities are called ubiquitously
-inside the kernel and by user-typed code. Profiling expectation:
-maybe 1.5-2× slowdown on the full suite from migration alone,
-before any walker work. Memo bump (already landed) absorbs
-re-evaluation costs. Net effect: walker-mode test runtime goes
-from ~6s (current) to maybe ~10-15s post-migration. Still
-acceptable.
+inside the kernel. Profiling expectation: ~2× slowdown from
+migration alone, before walker work. With the 5M memo bump (already
+landed), walker mode goes from ~6s (current stub) to ~8-10s
+post-migration.
+
+**No dev/CI split.** Earlier drafts proposed keeping the stubbed
+dispatcher under a flag for daily dev and only enabling the walker
+in CI. That is rejected: a stubbed dispatcher is unsound, so devs
+would write proofs that pass locally and fail in CI for soundness
+reasons (or worse, the flag accidentally ships to production). Both
+local and CI runs use the live walker. If the post-migration runtime
+exceeds an acceptable budget, the perf escape hatch is a native
+walker in `tree.ts`, not a stub.
+
+**Native walker as the perf escape hatch.** Mirroring `tree_eq`'s
+host fast-path: capture the dispatcher's compiled tree id at boot,
+and have the runtime's `apply` recognize it and execute the walker
+rules natively. Cuts the per-step constant from ~70× to ~1-2×.
+Larger refactor than the in-language optimizations below, but it is
+the only escape hatch that scales with arbitrary user code.
 
 **Mitigations if perf becomes a problem.**
 
-1. **Inline the most common signature paths.** The host runtime
-   could fast-path `apply(wait_rec, ...)` similar to `tree_eq`'s
-   fast path: capture wait_rec's tree id, recognize `apply(wait_rec, motive)`
-   as a partial-application marker, and short-circuit subsequent
-   applications to a native dispatch. Only worth doing if
-   profiling shows wait_rec on the hot path.
-
-2. **Profile-driven `select_chain` reordering** in
-   `q_wait_rec_fn`. Put the most-common signature first. Easy
-   change, modest payoff.
-
-3. **Memoize utility results.** `unguard_checked T` for any
-   given T always returns the same value. The host's apply memo
-   already covers this if the wait_rec tree id stays stable.
-   Memo bump (5M, already landed) gives headroom.
+1. **Native walker** in `tree.ts` (escape hatch — see above).
+2. Profile-driven `select_chain` reordering in `q_wait_rec_fn` (most
+   common signature first). Easy change, modest payoff.
+3. Pre-reduce codFn at Pi-construction time so metadata stores
+   normal-form trees (orthogonal optimization, cited in the
+   session-3 empirical investigation; helps regardless of
+   migration).
 
 **What this does NOT fix.** Test 58's specific blowup
-(`(Arrow Nat Nat) id_fn`) is rooted in `codFn` not being
-pre-reduced — `S(K unguard_checked)(K Nat)` instead of
-`K core_Nat`. Migrating `unguard_checked` to wait_rec doesn't
-shrink that expression; it only changes which utility runs at
-each step. The pre-reduction discussion in §"Empirical
-investigation" still applies as a separate optimization, and
-becomes more attractive once session 3.5's discipline is
-established (the migrated utilities are still expensive on
-the hot path; pre-reducing eliminates them entirely from
-codFn metadata).
+(`(Arrow Nat Nat) id_fn`) is rooted in `codFn` not being pre-reduced
+— `S(K unguard_checked)(K Nat)` instead of `K core_Nat`. Migration
+doesn't shrink that expression; it changes which utility runs at
+each step. Pre-reduction is a separate optimization that becomes
+more attractive once the eliminator discipline is in place.
 
 #### Risks and open questions
 
-- **Bootstrap ordering.** `wait_rec` is a public function calling
-  `kernel.wait_rec` (a recq projection). The migrated utilities
-  use `wait_rec`. The kernel record is constructed before the
-  public utilities. As long as the record's `wait_rec` field is
-  defined and the utilities are below the record definition,
-  this should work — same pattern as `Pi`, `Eq`, etc. today.
-  Specific care: the recq projection must not require any
-  utility being migrated, or we'd have a cycle. Mitigation:
-  audit the kernel record's dependencies before migration.
+- **Bootstrap ordering.** The kernel record gains four eliminator
+  fields; the public wrappers must come after `kernel_ref` and
+  before any migrated utility. recq makes intra-record references
+  lazy, so `q_wait_rec_fn` referencing `ks.pi`/`ks.nat`/etc. is
+  fine. Specific care: the migrated utilities cannot recursively
+  rely on themselves through wait_rec without `fix`.
 
-- **Metadata accessor signatures.** The `on_pi` handler receives
-  `(dom, codFn)`. Today's `pi_meta_domain` and `pi_meta_cod_fn`
-  return cores (unguarded). With `wait_rec`'s on_pi, the
-  user's handler sees these cores. If user code wants to use
-  them as types, they need to re-guard. The migrated
-  utilities know to do this (e.g., `pi_dom`'s on_pi returns
-  `guard d`). This is a documentation responsibility, not a
-  soundness gap, but it's a footgun.
+- **recType signature widening.** ~12 `{ks : {hyp_reduce, ...}}`
+  annotation sites in kernel.disp need updating to include
+  `wait_rec`, `bool_rec`, `nat_rec`, `eq_J`. Mechanical but
+  error-prone — easy to miss one and get a silent selector mismatch.
 
 - **`InvalidType` semantics.** Several migrated utilities return
-  `InvalidType = FF` for non-applicable signatures. Downstream
-  code distinguishes "the value doesn't have this property"
-  (legitimate FF) from "the input was malformed" (also FF).
-  Today's code conflates these. After migration, the
-  conflation continues — wait_rec doesn't change it. Worth
-  considering an `Option`-style return for a future cleanup,
-  but out of scope for 3.5.
+  `InvalidType = FF` for non-applicable signatures. Downstream code
+  conflates "the value doesn't have this property" (legitimate FF)
+  with "the input was malformed" (also FF). wait_rec doesn't change
+  this; consider an `Option` return for a future cleanup.
 
-- **Wait_rec on a target containing a neutral subterm but not
-  rooted at a neutral.** E.g., `core_Eq core_Nat hyp 0`. The
-  target's signature is `kernel.eq` (not hyp_reduce), so
-  `q_is_neutral raw target = FF`. wait_rec dispatches to
-  on_eq, which receives `(core_Nat, hyp, 0)`. The user's
-  handler then operates on a hyp value. If the handler does
-  something non-parametric with hyp, the walker rejects at
-  that point. **This is correct behavior** — wait_rec doesn't
-  defend against deeper-down reflection; the walker does.
-  The on_eq handler is expected to be parametric in its
-  arguments.
+- **wait_rec on a target containing a neutral subterm but not
+  rooted at a neutral.** E.g., `core_Eq core_Nat hyp 0`. Target's
+  signature is `kernel.eq` (not hyp_reduce); `q_is_neutral raw
+  target = FF`. wait_rec dispatches to on_eq with `(core_Nat, hyp,
+  0)`. The user's handler then operates on hyp. If non-parametric,
+  the walker rejects at that point. **Correct behavior** —
+  wait_rec doesn't defend against deeper-down reflection; the
+  walker does.
 
-- **Reading the literal `kernel.wait_rec` from user code.**
-  Someone could write `wait kernel.wait_rec my_meta` to forge
-  a wait_rec-shaped value. The walker's stem-rule constructor
-  check rejects this (same as it rejects forging any
-  kernel-handler signature). No new attack surface.
+- **Reading literal `kernel.<name>_rec`.** A user could write
+  `wait kernel.wait_rec my_meta` to forge an eliminator-shaped
+  value. The walker's stem-rule constructor check rejects this
+  (same as it rejects forging any kernel-handler signature). No
+  new attack surface.
 
 #### Acceptance criteria
 
-- [ ] `q_wait_rec_fn` defined and added to kernel record.
-- [ ] Dispatcher entry for `kernel.wait_rec` routes to raw apply.
-- [ ] User wrapper `wait_rec` defined.
-- [ ] Eleven type-level utilities migrated:
-      `hasguard`, `unguard_or_self`, `unguard_checked`,
-      `is_pi`, `is_eq`, `is_universe`,
-      `pi_dom`, `pi_cod_fn`, `universe_rank`,
-      `is_neutral`, `neutral_type`.
-- [ ] Existing kernel.test.disp tests still pass with migrated
-      utilities (under stub dispatcher — same observable
-      semantics on non-neutrals, StuckElim on neutrals).
-- [ ] New tests:
-      - `wait_rec` on each signature: target as concrete value
-        produces correct branch result.
-      - `wait_rec` on hyp produces `StuckElim (motive target) target`.
-      - `is_neutral hyp` produces a Bool-typed neutral (not TT).
-      - Polymorphic Pi tests (kernel.test.disp 121-129) pass
-        once the walker is also live.
-- [ ] Performance regression check: full suite under stub
-      dispatcher within 2× current baseline (~3.5s).
-- [ ] Documentation: kernel.disp comments at each migration
-      site noting "uses wait_rec — see SOUNDNESS_FIX_PLAN.md
-      §Session 3.5 for design."
+- [ ] Step A: dispatcher refactored to take `dispatch_entries` as
+      data; full test suite green; ~zero perf delta.
+- [ ] Step B: four eliminator entries land:
+  - [ ] `q_wait_rec_fn` defined; dispatcher entry added; user
+        wrapper `wait_rec` defined as wait-value-bundled form.
+  - [ ] `q_bool_rec_fn` / `q_nat_rec_fn` / `q_eq_J_fn` defined;
+        dispatcher entries added; wrappers defined.
+  - [ ] `eq_subst` / `eq_sym` / `eq_cong` derived from `eq_J`.
+  - [ ] `elim_fail` sentinel defined as `wait kernel_ref.elim_fail t`
+        with a dedicated kernel record entry; verified that no
+        checker accepts it (test: `Bool elim_fail = FF`,
+        `Nat elim_fail = FF`, `(Type 0) elim_fail = FF`).
+- [ ] Step C: utilities and eliminator-callers migrated:
+  - [ ] Migration list (above) complete except `neutral_type`
+        (not migrated) and `is_neutral` (migrated last).
+  - [ ] `infer` rewritten via `wait_rec` (not via `is_neutral`).
+  - [ ] `bool_rec`/`nat_rec`/`eq_J` raw forms replaced by certified
+        forms.
+- [ ] Tests:
+  - [ ] `wait_rec` on each signature (concrete value): correct
+        branch result.
+  - [ ] `wait_rec` on hyp: produces `StuckElim (motive target) target`.
+  - [ ] `is_neutral hyp` produces a Bool-typed neutral (not TT).
+  - [ ] **wait_rec called inside a Pi-checked body under the live
+        walker**: returns expected result for concrete and stuck
+        cases. (This is the test the prior plan missed; it
+        verifies the wait-value-bundled wrapper actually survives
+        walker scrutiny.)
+  - [ ] Polymorphic Pi tests (kernel.test.disp 121-129) pass.
+  - [ ] `add_comm` continues to type-check.
+  - [ ] Soundness attacks 3-5 in `lib/soundness.test.disp` flip
+        from `= TT` to `= FF` once the dispatcher unstubs.
+- [ ] Performance: walker mode within ~2× of stub baseline (~6s →
+      ~10-12s acceptable).
+- [ ] Documentation: kernel.disp comments at each migration site
+      noting "uses wait_rec / bool_rec / nat_rec / eq_J — see
+      SOUNDNESS_FIX_PLAN.md §Session 3.5+4 for design."
 
-### Session 4 — eliminators
+### Session 5 — TS elaborator + cleanup
 
-Replaces raw eliminators with certified handlers. This is the
-session most prone to subtle bugs (CPS chains, motive unguarding).
+Updates the existing TypeScript elaborator (`src/compile.ts`,
+`check` / `infer` / `assertTypeCheck` / `makeKernelHelpers`,
+~line 580+) to the new public boundary and updates the type-theory
+doc.
 
-- [ ] Metadata helpers: `make_bool_rec_meta` and accessors;
-      analogous for nat_rec, eq_J
-- [ ] `q_bool_rec_fn` (with unguard-in-all-branches discipline,
-      universe-rank consistency check)
-- [ ] `q_nat_rec_fn` (motive expected type from `rank`, step case
-      under `pred : Nat` hypothesis)
-- [ ] `q_eq_J_fn`
-- [ ] User wrappers: `bool_rec`/`nat_rec`/`eq_J` calling
-      `unwrap_value`; `elim_fail` sentinel
-- [ ] `eq_subst`/`eq_sym`/`eq_cong` derived from `eq_J`
-- [ ] Update existing tests to add `rank` arg; add bad-motive,
-      bad-rank, bad-branch tests
-- [ ] `add_comm` and `nat_rec`-using proofs continue to type-check
-
-### Session 5 — elaborator + cleanup
-
-Wires the elaborator to the new public boundary and updates the
-type-theory doc.
-
-- [ ] Elaborator emits `checked_check`-shaped tests at the public
-      boundary
-- [ ] Elaborator synthesizes explicit `rank` for typed eliminator
-      calls
+- [ ] `makeKernelHelpers` reads the new rank field from Pi metadata
+      (see "Pi rank parameterization" below) and threads it through
+      `piDomain` / `piCodFn` / `isUniverse`.
+- [ ] Elaborator synthesizes explicit `rank` arguments at every
+      typed eliminator call site (`bool_rec`, `nat_rec`, `eq_J`).
+      The elaborator already tracks universe levels via `isUniverse`
+      / `piCodFn`; threading the level through is a small addition.
+- [ ] Public-boundary tests continue to emit `test (Type n) X = TT`
+      and `test X v = TT` shapes; these now route through `q_guard_fn`
+      which performs the entry scan automatically. No new test syntax
+      needed.
 - [ ] Required adversarial tests under `lib/soundness.test.disp`
-      (or alongside `lib/kernel.test.disp`)
+      (or alongside `lib/kernel.test.disp`).
 - [ ] Update `TYPE_THEORY.typ`: rewrite the "Open question: neutral
-      capabilities" section to reflect provenance-based soundness;
-      update glossary entries for `Hyp`/`StuckElim`
+      capabilities" section (`TYPE_THEORY.typ:885-956`) to reflect
+      provenance-based soundness; update glossary entries for
+      `Hyp`/`StuckElim`.
 - [ ] Address the post-impl follow-ups in
       [Post-Implementation Follow-ups](#post-implementation-follow-ups)
-      that became blockers (none expected)
+      that became blockers (none expected).
 
 ## Current Hole
 
@@ -1304,19 +1501,37 @@ q_checked_apply_fn = {ks, raw, query} -> fix ({self, f, x} ->
   // Type-formers and eliminators: use ks.X (lazy proxy) because
   // their public constructors build wait-values via kernel_ref.X,
   // which has the same hash-cons identity as ks.X.
+  //
+  // PER-HANDLER RETURN-SHAPE CONVENTION (security-review surface).
+  // Each branch's body either wraps the raw apply result with `Ok`
+  // (when the handler returns a bare TT/FF/neutral) or returns it
+  // directly (when the handler already returns CheckedResult).
+  // Pick the right form per handler and document it inline. Mixing
+  // them up double-wraps (`Ok (Ok TT)`) and silently changes the
+  // semantics of every must_ok_* downstream.
+  //
+  //   bare-returning handlers: q_pi_fn, q_nat_fn, q_bool_fn,
+  //                            q_eq_fn, q_core_type_fn,
+  //                            q_guarded_type_fn (TT/FF),
+  //                            q_hyp_reduce_fn (new neutral)
+  //   CheckedResult-returning handlers: q_bool_rec_fn, q_nat_rec_fn,
+  //                            q_eq_J_fn, q_wait_rec_fn
+  //   Boundary: q_guard_fn — bare TT/FF, the public unwrap point.
+  //   Walker default: returns CheckedResult directly.
   select_chain
-    (case (has_sig raw.hyp_reduce f)  ({self, f, x} -> f x))
-    (case (has_sig ks.guard f)        ({self, f, x} -> f x))
-    (case (has_sig ks.pi f)           ({self, f, x} -> f x))
-    (case (has_sig ks.nat f)          ({self, f, x} -> f x))
-    (case (has_sig ks.bool f)         ({self, f, x} -> f x))
-    (case (has_sig ks.eq f)           ({self, f, x} -> f x))
-    (case (has_sig ks.core_type f)    ({self, f, x} -> f x))
-    (case (has_sig ks.guarded_type f) ({self, f, x} -> f x))
+    (case (has_sig raw.hyp_reduce f)  ({self, f, x} -> Ok (f x)))
+    (case (has_sig ks.guard f)        ({self, f, x} -> Ok (f x)))
+    (case (has_sig ks.pi f)           ({self, f, x} -> Ok (f x)))
+    (case (has_sig ks.nat f)          ({self, f, x} -> Ok (f x)))
+    (case (has_sig ks.bool f)         ({self, f, x} -> Ok (f x)))
+    (case (has_sig ks.eq f)           ({self, f, x} -> Ok (f x)))
+    (case (has_sig ks.core_type f)    ({self, f, x} -> Ok (f x)))
+    (case (has_sig ks.guarded_type f) ({self, f, x} -> Ok (f x)))
     (case (has_sig ks.bool_rec f)     ({self, f, x} -> f x))
     (case (has_sig ks.nat_rec f)      ({self, f, x} -> f x))
     (case (has_sig ks.eq_J f)         ({self, f, x} -> f x))
-    // Default: walk apply rules step-by-step.
+    (case (has_sig ks.wait_rec f)     ({self, f, x} -> f x))
+    // Default: walk apply rules step-by-step (returns CheckedResult).
     ({self, f, x} -> checked_raw_apply self f x)
     self f x)
 ```
@@ -1371,12 +1586,12 @@ an evaluation failure.
 Two return shapes coexist in the kernel; the convention picks one
 per handler family based on what the public boundary expects:
 
-| Handler family             | Returns           | Why                                         |
-|----------------------------|-------------------|---------------------------------------------|
-| `q_guard_fn`               | bare `TT` / `FF`  | Public predicate boundary; `Nat 1 = TT`     |
-| All other type checkers    | `CheckedResult`   | Composes inside `checked_apply` recursion   |
-| `q_hyp_reduce_fn`          | `CheckedResult`   | Returns `Ok (cert_make_neutral …)`          |
-| Eliminator handlers        | `CheckedResult`   | Wrapper unwraps to bare value (or sentinel) |
+| Handler family             | Returns           | Dispatcher branch | Why                                         |
+|----------------------------|-------------------|-------------------|---------------------------------------------|
+| `q_guard_fn`               | bare `TT` / `FF`  | `Ok (f x)`        | Public predicate boundary; `Nat 1 = TT`     |
+| Type checkers (`q_pi_fn`, `q_nat_fn`, `q_bool_fn`, `q_eq_fn`, `q_core_type_fn`, `q_guarded_type_fn`) | bare `TT` / `FF` | `Ok (f x)`        | Match current code; dispatcher wraps to CheckedResult for chained `must_ok_*`. |
+| `q_hyp_reduce_fn`          | bare new neutral  | `Ok (f x)`        | Result is the neutral wait-value; dispatcher wraps. |
+| Eliminator handlers (`q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`, `q_wait_rec_fn`) | `CheckedResult`   | `f x` (no wrap)   | Body internally chains `must_ok_*`; wrapping would double-wrap. |
 
 **Why `q_guard_fn` is the unwrap point.** The user-facing tests
 (`Nat 1 = TT`) compare against bare `TT`. Public type constructors
@@ -1406,11 +1621,30 @@ unwrap_value := {r} ->
   }
 ```
 
-`elim_fail` is a kernel-private sentinel. It is `t` for now; any
-downstream use of an `elim_fail` value will likely cause downstream
-type checks to fail loudly, which is the desired behavior. (A more
-informative sentinel — e.g., a wait-value carrying a reason — is a
-future ergonomics improvement, not a correctness one.)
+`elim_fail` is a kernel-private sentinel: a wait-value with a
+dedicated `kernel.elim_fail` signature.
+
+```disp
+elim_fail := wait kernel_ref.elim_fail t
+```
+
+Add `elim_fail` to the kernel record. It needs no checker handler
+(or registers a no-op handler that always returns `Ok FF`); the
+crucial property is that no other checker (`q_nat_fn`, `q_bool_fn`,
+`q_eq_fn`, universe checkers, …) accepts a value with this
+signature. So any downstream `(Bool elim_fail)`, `(Nat elim_fail)`,
+`(Type 0) elim_fail`, etc. returns `FF` — failures propagate loudly.
+
+**Why not `t` (or `FF`).** Both leak: `t = leaf = 0` is a valid
+`Nat` (zero) and `tree_eq t TT = TT` so it's treated as `Bool TT`;
+`FF = stem(t)` reads as `Bool FF`. Either makes a failed `bool_rec`
+silently typecheck against a Bool-returning context. The dedicated
+signature makes failure structurally distinguishable from every
+legitimate value.
+
+A future ergonomics improvement is to embed a reason in the
+metadata (`wait kernel_ref.elim_fail (encode_reason …)`); this is
+optional, since the signature alone is enough for soundness.
 
 The handler ignores the trigger argument:
 
@@ -1514,6 +1748,17 @@ anywhere in its structure, the recursion eventually descends to a
 triage on that neutral, which fails under `checked_apply`'s
 triage-on-neutral rule. The user gets `Fail` exactly when they
 should.
+
+**Positive design constraint on user code.** Under the walker,
+`tree_eq a b` where either side contains a neutral returns `Fail`,
+not `FF`. This means user-position code cannot use `tree_eq` to
+*compare* values that may be hypotheses — `if tree_eq lhs rhs then
+... else ...` doesn't have a meaningful "false" branch when one
+side is opaque. This is the parametricity contract made operational:
+attack 5 (`select X Y (tree_eq n m)` to branch on neutral structure)
+closes precisely because `tree_eq` cannot return a meaningful Bool
+on neutral arguments. User code that needs propositional equality
+on dependent terms must use `Eq A x y` and the H-rule, not `tree_eq`.
 
 `checked_apply` may *optionally* short-circuit `tree_eq` calls (one
 deep `contains_neutral` scan up front, then the runtime fast path on
@@ -2560,7 +2805,7 @@ investigated once the kernel rewrite has landed:
   Unblocking this is no longer a `cirToTree` problem — see the
   re-investigation note in
   [Session 3 — empirical investigation](#session-3--empirical-investigation-of-the-walker-blowup).
-  Real unblockers: land session 4 (certified eliminators in the
+  Real unblockers: land session 3.5+4 (certified eliminators in the
   dispatch table, bypassing the constructor check) and add a
   no-neutral fast-path for the walker's hot loop.
 
@@ -2615,6 +2860,8 @@ The closed kernel record grows from
   core_type             // formerly `type`
   guarded_type          // new — public universe
   bool_rec, nat_rec, eq_J  // new — certified eliminators (formerly raw)
+  wait_rec              // new — type-level eliminator (registry case-split)
+  elim_fail             // new — sentinel signature for failed eliminators
   checked_apply         // new — the TC interpreter itself
 }
 ```
@@ -2634,6 +2881,9 @@ kernel := recq {
   bool_rec      := q_bool_rec_fn;
   nat_rec       := q_nat_rec_fn;
   eq_J          := q_eq_J_fn;
+  wait_rec      := q_wait_rec_fn;
+  elim_fail     := q_elim_fail_fn;     // no-op handler; presence of
+                                       // signature is what matters
   checked_apply := q_checked_apply_fn
 }
 
@@ -2682,6 +2932,17 @@ This is exactly the convention the existing kernel already uses
 `kernel_ref`) — the new dispatch table just makes the same two
 flavors explicit.
 
+**Implementer warning (load-bearing).** This table must be
+reproduced as a comment block at the top of `q_checked_apply_fn`
+in code, not just in this design doc. Writing
+`has_sig ks.hyp_reduce f` instead of `has_sig raw.hyp_reduce f`
+silently breaks neutral recognition: `ks.hyp_reduce` is a
+`wait self hyp_reduce_query` proxy with a different stem id from
+`raw.hyp_reduce`, so the dispatcher never recognizes legitimate
+neutrals. Failure mode is silent unsoundness — every neutral falls
+through to the parametric default and reflective attacks are no
+longer caught at the dispatch level.
+
 ### Worked dispatch example
 
 `(Pi Nat ({_} -> Nat)) ({x} -> x)`:
@@ -2723,3 +2984,20 @@ parametric kernel where users can register new type handlers is a
 separate refactor — see [`KERNEL_EXTENSIBILITY_PLAN.md`](KERNEL_EXTENSIBILITY_PLAN.md).
 The order is: land soundness on the closed kernel first (with the
 dispatch-table contract written down), then extend.
+
+**Polymorphic universe rank is also out of scope** for this plan.
+Eliminators take an explicit closed `rank : Nat`; the elaborator
+must resolve `rank` to a concrete value at every typed-eliminator
+call site (and at every Pi-construction site once #4 lands).
+Programs that quantify over a universe-rank hypothesis (e.g.,
+`{r : Nat} -> {A : Type r} -> ...`) currently fail under the walker
+because `q_core_type_fn` performs raw `nat_lt` on a neutral rank.
+
+Supporting polymorphic rank requires generalizing the rank-type to
+something with stuck comparison semantics — concretely, an *ordinal*
+type whose `<` operation can return `Ok TT` / `Ok FF` / a stuck
+comparison neutral, plus an `ord_rec` eliminator for case-splitting
+on the ordinal. Universe checks would treat stuck comparisons as
+deferred constraints. This is its own design effort (call it
+`UNIVERSE_POLYMORPHISM_PLAN.md`), parallel to extensibility, not
+part of soundness.

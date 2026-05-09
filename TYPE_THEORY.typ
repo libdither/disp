@@ -19,954 +19,1449 @@
 #align(center, text(22pt, weight: "bold")[Disp Type Theory])
 #v(0.3em)
 #align(center)[
-  The semantics of the Disp object language.\
-  Reference implementation: #raw("lib/kernel.disp") (146 tests).\
-  Tree-calculus idioms: #raw("KERNEL_DESIGN.md").
+  Authoritative reference for the Disp object-language semantics.\
+  Companion: #raw("TYPE_THEORY_INTRO.typ") (motivational walkthrough).\
+  Implementation: #raw("lib/kernel.disp"). Idioms: #raw("KERNEL_DESIGN.md").
 ]
 #v(1em)
 
-= Why types as predicates?
-
-Disp is built on tree calculus: a minimal foundation where every
-program and every piece of data is a binary tree, and the only
-operation is `apply`. There is no built-in notion of "type." If we
-want dependent types, we need to build them ourselves --- as tree
-programs.
-
-This constraint produces a natural design: *types are predicates*.
-A type is an ordinary function that takes a value and returns `TT`
-(accepted) or `FF` (rejected). Type checking is function application:
-
-```
-  T(v) = TT      means "v has type T"
-```
-
-There is no external type checker, and no meta-level judgment system. The system is simply one tree-calculus tree applied to another, stored in a library file.
-
-This buys us three things:
-
-+ *Self-hosting.* The type checker is itself a tree program. It can
-  type-check itself, optimize itself, and be reasoned about in the
-  object language.
-
-+ *Simplicity.* There is one operation (`apply`) and one representation
-  (trees). Types, terms, and the checker share the same substrate.
-
-+ *Extensibility.* Adding a new type means writing a new predicate
-  function. No built-in case analysis needs updating.
-
-The rest of this document works through the details.
-
-= Arriving at the design
-
-== Starting point: bidirectional type checking
-
-In a standard dependently-typed language, the type checker has two
-modes:
-
-- *Check:* given a term `e` and a type `T`, verify `e : T`.
-- *Infer:* given a term `e`, compute its type.
-
-Both modes operate on *values* --- terms evaluated to head-normal
-form via NbE (normalization by evaluation). The check mode for a
-specific type `T` is a function:
-
-```
-  check_T(v) → TT or FF
-```
-
-It takes a value and returns whether that value inhabits `T`.
-
-== The flip: types _are_ the check function
-
-`check_T` is a function from values to booleans. What if `T` _itself_
-were that function?
-
-Instead of having a separate checker that knows about `Nat` and
-dispatches:
-
-```
-  check(v, Nat) = ... match on Nat, call the Nat-checking logic ...
-```
-
-...make `Nat` itself the checking logic:
-
-```
-  Nat(zero)     = TT      // zero is a natural
-  Nat(succ(n))  = Nat(n)  // succ of a nat is a nat
-  Nat(anything) = FF      // everything else is rejected
-```
-
-For concrete data, this is straightforward. `Nat` is a recursive
-function that pattern-matches on the value. `Bool` checks for `TT`
-or `FF`. These are ordinary programs.
-
-== The problem: what about symbolic values?
-
-In NbE-based type checking, you frequently need to check terms _under
-binders_. To check `{x : Nat} -> x` against `Nat -> Nat`, a standard
-checker:
-
-+ Creates a fresh hypothesis $h$ of type `Nat` (a symbolic value).
-+ Evaluates the body with $h$ substituted for `x`, producing $h$.
-+ Checks that $h$ has type `Nat`.
-
-Step 3 is the problem. $h$ is an opaque symbol --- it is not `zero`
-or `succ(n)`. The `Nat` predicate cannot pattern-match it. It would
-return `FF`, wrongly rejecting the identity function.
-
-That's the tension. Types-as-predicates works for concrete values but
-breaks on symbolic ones. Standard NbE solves this by keeping type
-information in the _checker_, not in the values. But in our design,
-the type IS the checker. Where does the symbolic type information go?
-
-== The H-rule: neutrals carry their types
-
-The solution is the *H-rule* (hypothesis rule): make every symbolic
-value carry the type it was introduced at.
-
-When we create a hypothesis $h$ of type `Nat`, we store `Nat` inside
-$h$. When a type predicate encounters a symbolic value, it does not
-try to pattern-match --- instead, it reads the stored type and checks:
-"does this symbolic value's type match me?"
-
-```
-  Nat(h):
-    is h a neutral?  →  does h's stored type equal Nat?
-                         yes → TT (accept)
-                         no  → FF (reject)
-    is h zero?       →  TT
-    is h succ(n)?    →  Nat(n)
-    otherwise        →  FF
-```
-
-The H-rule is the neutral case of every predicate. Each predicate
-handles both concrete values (by pattern matching) and symbolic values
-(by reading the stored type).
-
-This handles simple types. Pi is harder.
-
-= Pi --- NbE inside a predicate
-
-== What Pi must check
-
-`Pi(A, B)` is the dependent function type $Pi (x : A) . B (x)$.
-It must verify: "does this function take each `A`-input `x` to a
-`B(x)`-output?"
-
-In standard bidirectional type checking, the rule is:
-
-```
-  Γ ⊢ f : Π(x : A). B(x)
-  ─────────────────────────────────────
-  Let h = fresh hypothesis of type A
-  Check: f(h) : B(h)     in context Γ, h : A
-```
-
-As a predicate, `Pi(A, B)` must do exactly this:
-
-```
-  Pi(A, B)(f):
-    h  = new hypothesis with stored type A
-    result = f(h)                      // apply candidate to hypothesis
-    expected = B(h)                    // compute expected return type
-    check result against expected
-```
-
-*This is NbE.* The evaluation happens inside the predicate --- not as
-external infrastructure. The point: *the Pi type bootstraps NbE within
-itself*.
-
-== Dependent codomains are programs
-
-`B` is not metadata to be inspected by a meta-level checker. It is an
-ordinary object-language function from values to types. Computing
-`B(x)` is just tree-calculus application.
-
-If `x` is concrete, `B(x)` runs like any other program: it may build a
-type containing `x`, branch on `x`, or call eliminators. If `x` is a
-hypothesis, the same application still runs, but operations that try to
-use the hypothesis meet the neutral machinery described below.
-
-So dependent type checking does not need a separate substitution
-engine for codomains. The Pi checker creates `h : A`, applies the
-candidate function to `h`, and also applies the codomain function to
-`h`.
-
-== What happens when you apply a hypothesis?
-
-The Pi checker creates hypotheses and applies the candidate function
-to them. For simple cases like `{x} -> x`, the result is $h$ itself
---- a hypothesis carrying its type from creation. The H-rule handles
-it.
-
-But consider checking `{f, x} -> f(x)` against
-`(Nat → Nat) → Nat → Nat`. The Pi checker creates:
-
-```
-  h_f : Nat → Nat
-  h_x : Nat
-```
-
-The body evaluates to `h_f(h_x)`. Both are hypotheses. `h_f` is not
-a real function --- it is a symbolic placeholder. So what happens when
-you apply it?
-
-In a standard type checker, nothing --- the application is stuck,
-irreducible because the head is a variable. A separate `infer`
-judgment would later walk the spine, look up `h_f`'s type in a
-context, and compute that the result has type `Nat`.
-
-But tree calculus has no stuck terms. Every application reduces.
-Something _will_ run when `h_f` is applied. The question is: what?
-
-== Two interpreters, one `apply`
-
-The answer is that `apply` in Disp runs one of two interpreters,
-depending on what is being applied:
-
-- *Concrete function applied to anything:* the *value interpreter*
-  runs. This is normal tree calculus reduction --- the program
-  executing.
-
-- *Hypothesis applied to anything:* the *type interpreter* runs.
-  Instead of computing a value, it computes the result _type_.
-
-Both use the same `apply`. The handler stored inside the value
-determines which interpreter fires.
-
 #note[
-  *How this works concretely:* a hypothesis is
-  `wait(hyp_reduce)(metadata)`. When applied to a value `v`, the
-  `wait` rule reduces it to `hyp_reduce(metadata)(v)` --- the type
-  interpreter fires via normal tree calculus reduction. No special
-  mechanism, just `wait`.
+  *Status.* This document specifies the post-soundness-fix design,
+  including parametric checked evaluation, certified eliminators, and
+  ordinal-ranked universes. Some sections describe behaviour not yet
+  in `main`; the implementation tracking is in
+  #raw("SOUNDNESS_FIX_PLAN.md"). Where this document and the
+  reference implementation disagree, this document is authoritative
+  and the implementation is a bug.
 ]
 
-The type interpreter --- `hyp_reduce` --- reads the hypothesis's
-stored type, checks if it is a Pi, and computes the result type from
-the codomain:
+= Overview
 
-```
-  hyp_reduce(meta, v):
-    my_type = neutral_meta_type(meta)  // first metadata field
-    if my_type is Pi:
-      result_type = codFn(v)           // instantiate codomain at arg
-    else:
-      result_type = InvalidType        // not a function type
-    → wait(hyp_reduce)(extend_neutral_meta(meta, result_type, v))
-```
+Disp is a dependently-typed language built on tree calculus. There
+is no built-in type system, no built-in checker, no built-in
+notion of "well-formed term." All of those are tree programs that
+the runtime executes via a single primitive operation, `apply`.
 
-That first metadata field is the invariant shared by all neutral
-constructors. `Hyp(A, id)` stores `A` there at creation time.
-Neutral application preserves the invariant by constructing the next
-neutral with the newly computed `result_type` in the same position.
-The payload of that next neutral is `fork(old_meta, v)`: an application
-spine node that preserves identity. It is not used for O(1) type
-extraction, but it prevents different stuck applications with the same
-type, such as `f(0)` and `f(1)`, from collapsing to the same tree.
+The language commits to four interlocking ideas:
 
-The result is another `wait(hyp_reduce)(...)` --- another hypothesis
---- whose handler is the same `hyp_reduce`. Apply it again, the type
-interpreter fires again, tracking the next type. Each application
-reduces fully, but the result is always symbolic.
++ *Types as predicates.* A type is a function from values to
+  `TT`/`FF`. Type checking is function application:
+  `T(v) = TT` means "$v$ has type $T$."
 
-Walking through `h_f(h_x)`:
-+ `hyp_reduce` reads `h_f`'s stored type: `Nat → Nat` (a Pi type).
-+ Extracts the codomain function: `{_} -> Nat`.
-+ Instantiates: `({_} -> Nat)(h_x) = Nat`.
-+ Produces a new hypothesis with stored type `Nat`.
++ *Wait-encoded types.* A type is structurally
+  `wait(checker)(metadata)`. The checker's hash-cons identity is
+  the type-former tag; the metadata carries parameters.
 
-When the Pi checker later inspects the result, the type is already
-there --- `neutral_type(result) = Nat`, O(1). No spine walking, no
-context lookup. The same application that would have been "stuck" in
-a traditional system ran the type interpreter instead, and the type
-was computed as a side effect of evaluation.
++ *Hypothesis carry their types.* Open terms (variables under a
+  binder) are represented as opaque "neutral" trees that store
+  their type internally. Type-checking under a binder reduces to
+  hash-cons-identity comparison of stored types against expected
+  types --- the *H-rule*.
 
-This is the Disp equivalent of bidirectional inference: instead of a
-context mapping variables to types and a recursive `infer` judgment,
-types are embedded in values and maintained by `hyp_reduce` at each
-application.
++ *Parametric checked evaluation.* User-supplied terms are
+  evaluated under a non-standard reduction discipline that bans
+  reflection on hypotheses (`triage` on a neutral fails) and
+  forging of hypothesis tokens (`stem` rule rejects construction
+  of fork-shaped values with the kernel's hypothesis signature).
+
+== Soundness, not completeness <soundness-not-completeness>
+
+The kernel guarantees *soundness*: if a test `T(v) = TT` passes,
+then `v` genuinely inhabits `T` per the semantics. The kernel
+does NOT guarantee *completeness*: many true type-membership
+facts may not be derivable as `TT`, because tree-calculus
+predicates are arbitrary computation and many meta-properties
+(rank computation for polymorphic types, supremum reasoning,
+function equivalence) are uncomputable in general.
+
+The programmer takes responsibility for *definability*. If you
+write a type whose membership test:
+
+- *Diverges* on some input: the runtime exhausts apply budget
+  and fails. Test reports `FF` (or runtime error).
+- *Returns stuck* (because some operation depends on a
+  hypothesis): the test fails the `= TT` assertion at the public
+  boundary. Instantiate and re-test.
+- *Returns FF* concretely: the test fails normally.
+
+In every case the failure mode is "this test does not pass," not
+"this unsound term type-checked." Soundness is preserved across
+all of these.
+
+This stance simplifies a lot:
+- *Polymorphic-rank types* have stuck `pi_rank`. That is
+  correct: the kernel cannot decide "supremum over Ord of
+  $alpha + 1$ is $omega$," and it does not need to. Polymorphic
+  library code is testable at concrete instantiations.
+- *Subject reduction* holds because reductions on stuck values
+  follow the same rules as reductions on closed values. Stuck
+  propagation is referentially transparent.
+- *Bounded-level systems* (TTBFL-style) and *normal-function
+  recognition* (sup-reasoning heuristics) are not needed. Stuck
+  propagation covers what they would.
+- *User-defined predicates* can be arbitrarily complex. The
+  kernel makes no demand that they be decidable; only that they
+  return `TT`/`FF`/`Fail`/stuck-Bool correctly.
+
+The contract is: *if your type's predicate eventually says `TT`,
+the value really does inhabit it*. What the predicate does
+internally --- iterate, defer, or refuse to terminate --- is the
+programmer's problem.
+
+The first three give us a usable type system. The fourth gives us
+soundness: ordinary tree-calculus reduction has no notion of
+"don't peek inside hypothesis," so a checker that runs user code
+via raw `apply` admits forgery. Checked evaluation is the rule
+set that closes those holes while keeping closed-program semantics
+identical to raw evaluation.
+
+= Framework
+
+== Two reduction modes
+
+The runtime evaluator runs a single `apply` operation. Each
+application chooses one of two reduction modes:
+
+- *Raw mode.* Standard tree-calculus reduction. Triage is full
+  reflection (it can match on any tree, including neutrals). Used
+  for trusted code: the kernel's own handler bodies, kernel-built
+  metadata operations, ordinary user code outside any type-check
+  context.
+
+- *Parametric mode* (also called *checked* or *walker* mode).
+  Tree-calculus reduction with two restrictions:
+  + *Triage on a neutral fails.* If the value being triaged on is
+    a kernel-minted hypothesis, the application fails (returns
+    `Fail` rather than reducing).
+  + *Fork-formation rejecting neutral roots.* If the `stem` rule
+    would produce a fork whose left component is the canonical
+    hypothesis-handler signature, the application fails.
+
+Parametric mode encodes operationally what parametricity says
+declaratively: hypotheses are opaque tokens for universal
+quantification, and user code (a) cannot inspect their structure
+and (b) cannot synthesize new ones indistinguishable from
+kernel-minted ones.
+
+The dispatcher (`q_checked_apply_fn`) selects between the two modes
+per application by inspecting the function being applied:
+kernel-recognized signatures route through raw apply; everything
+else runs the parametric rules.
 
 #note[
-  In #raw("lib/kernel.disp"), the type interpreter is
-  `q_hyp_reduce_fn`, exposed through the kernel record's `hyp_reduce`
-  field. Values produced by either interpreter are called *neutrals* ---
-  they share `hyp_reduce`'s signature, which is how `is_neutral`
-  recognizes them (see @encoding).
+  Rule (b) is enforced at *one* point: the `stem` rule's
+  constructor check. The S rule and triage-fork rule do not
+  perform direct constructor checks --- they delegate to recursive
+  `checked_apply` calls, where the inner step that ultimately
+  constructs the fork hits the stem-rule check. So rule (b) is
+  one explicit check, not three; the structural-induction
+  argument in @soundness-theorem makes this precise.
 ]
 
-== Running codomains on neutral arguments
+=== Soundness carve-out vs performance carve-out <soundness-carve-out>
 
-Now we can say more precisely what happens inside `B(h)` when `h` is a
-hypothesis. `B` still reduces to a single value. The question is what
-kind of value it computes.
+Two different kinds of "exception to the standard rules" exist in
+the framework. They have different correctness contracts and
+should not be conflated.
 
-+ If `B` merely embeds `h` in a type, such as `Eq(Nat, h, zero)`, then
-  the result is concrete type structure whose metadata contains the
-  neutral `h`.
-+ If `B` applies `h` as a function, then `hyp_reduce` fires. If `h`'s
-  stored type is Pi, the application returns a new neutral whose stored
-  type is the Pi codomain instantiated at the argument.
+A *soundness carve-out* is a parametric-mode rule that exists
+specifically to make the type system *expressible*. Removing it
+would break legitimate programs. The only soundness carve-out
+currently is the *I-shortcut*: $apply(I, x) -> x$, special-cased
+because $I = "fork(fork(LEAF, LEAF), LEAF)"$ is structurally a
+triage shape and a strict triage-on-neutral rule would reject
+identity on a hypothesis. Polymorphic identity is a legitimate
+program, so the walker carves out exactly this case.
 
-For example:
+A *performance carve-out* is a runtime fast path that produces
+*observably identical* results to the in-language reduction.
+`tree_eq` uses one (the host captures its compiled tree id and
+short-circuits via hash-cons identity). A future "native walker"
+in `tree.ts` would be another. Performance carve-outs are
+optional --- removing them yields the same answers, just slower.
 
+The contract for soundness carve-outs is "the language admits
+this program"; the contract for performance carve-outs is "this
+optimization observably equals the spec." A soundness carve-out
+is part of the language definition; a performance carve-out is
+not. Performance carve-outs should be added reactively (when
+profiling shows a specific shape is the bottleneck), not
+preemptively.
+
+== Trusted primitives
+
+A *trusted primitive* is a four-tuple `(signature, checker,
+eliminator, identity)` registered with the framework:
+
+- *signature* --- a hash-cons-stable tree id used by the
+  dispatcher to recognize "this is one of mine, run in raw mode."
+- *checker* --- the kernel handler that validates a value as
+  belonging to this type. Runs in raw mode after dispatch.
+- *eliminator* --- the user-callable face that lets parametric-mode
+  code case-analyze on concrete instances and defers via
+  `cert_make_stuck` on neutrals.
+- *identity* --- the kernel-private mint capability for
+  constructing canonical instances (for type-formers) or stuck
+  results (for eliminators).
+
+The registry is closed at boot time. User-extensible registration
+is out of scope for this version of the kernel; see
+#raw("KERNEL_EXTENSIBILITY_PLAN.md").
+
+#figure(
+  table(
+    columns: 4,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Primitive*], [*Signature*], [*Checker*], [*Eliminator*],
+    [Pi],         [`kernel.pi`],            [`q_pi_fn`],            [Pi-application + `q_hyp_reduce_fn`],
+    [Nat],        [`kernel.nat`],           [`q_nat_fn`],           [`nat_rec`],
+    [Bool],       [`kernel.bool`],          [`q_bool_fn`],          [`bool_rec`],
+    [Eq],         [`kernel.eq`],            [`q_eq_fn`],            [`eq_J`],
+    [Ord],        [`kernel.ord`],           [`q_ord_fn`],           [`ord_rec`],
+    [Universe (core)],   [`kernel.core_type`],     [`q_core_type_fn`],     [`wait_rec`],
+    [Universe (guarded)],[`kernel.guarded_type`],  [`q_guarded_type_fn`],  [`wait_rec`],
+    [Hypothesis], [`kernel.hyp_reduce` (raw)], [`q_hyp_reduce_fn`], [(none --- kernel-only)],
+    [Guard layer],[`kernel.guard`],         [`q_guard_fn`],         [(boundary, not user-side)],
+    [Elim sentinel],[`kernel.elim_fail`],   [(no-op; always FF)],   [(none)],
+    [Ord comparisons],[`kernel.ord_lt`, `kernel.ord_le`, `kernel.ord_max`], [primitives], [(none --- direct invocation)],
+  ),
+  caption: [Trusted primitives in the kernel registry.],
+)
+
+The dispatcher is a fold over this registry: for each entry, check
+`has_sig entry.sig f`; on match, route through raw apply; otherwise
+apply the parametric rules. `q_core_type_fn`'s signature dispatch
+is the same fold with per-entry validators instead of raw apply.
+`wait_rec` is the same fold exposed to user position with
+neutral-deferral. The dispatcher, the universe checker, and
+`wait_rec` are three views of one structural object: a pattern
+match over the registry's signatures.
+
+=== Reflection helpers vs kernel primitives
+
+The kernel record above contains only what's *load-bearing for
+type-checking*: the dispatcher, the type-former checkers, the
+hypothesis machinery, the public boundary, and the eliminator
+handlers. Reflection helpers --- `pi_rank`, `pi_dom`, `pi_cod_fn`,
+`universe_rank`, `is_pi`, `is_universe`, `is_eq`, `hasguard` ---
+are *user-callable tree programs* defined in `kernel.disp` on top
+of `wait_rec`. They are not kernel record fields. The kernel
+itself never invokes them: type-checking dispatches on signatures
+directly via `has_sig`, and rank checks happen via `ord_le`
+during recursive predicate evaluation, not via explicit rank
+computation.
+
+Helpers ship in `kernel.disp` for convenience: most user code that
+inspects types wants `is_pi T` rather than rolling its own
+`wait_rec` invocation. But helpers are equivalent in trust to any
+other user code --- they run under the walker (parametric mode)
+when invoked from user position, and through the
+parametricity-respecting `wait_rec` interface when crossing the
+neutral barrier.
+
+== The public boundary
+
+Public types are *guarded* wait-values: `wait kernel.guard core`
+where `core` is a kernel-internal predicate (e.g.,
+`wait kernel.nat t`). `Nat`, `Bool`, `Eq`, `Pi`, `Type n` are all
+guarded.
+
+`q_guard_fn` is the *only* checker that returns bare `TT`/`FF` (so
+that `Nat 5 = TT` works as a literal test). It performs two
+operations:
+
++ Run `scan_no_neutral` on the value. Pre-existing neutral roots
+  in the input are rejected.
++ Run `checked_apply core v` to validate the value against the
+  underlying core predicate. The result is a `CheckedResult` (see
+  @checkedresult); `q_guard_fn` unwraps `Ok TT` to bare `TT`,
+  everything else (`Ok FF`, `Ok stuck-bool`, `Fail`) to bare `FF`.
+
+The entry scan is the *static* analog of the parametric-mode
+fork-formation rule: values entering at the public boundary cannot
+contain pre-existing neutrals that the kernel didn't mint.
+Together, the static scan and the dynamic walker cover both
+timescales of forgery: pre-built attacks and runtime construction.
+
+Cores are kernel-private (declared with `let` in `kernel.disp`).
+User code cannot name them directly --- the public surface is
+guarded predicates only. This is load-bearing: a publicly-named
+core would let user code bypass `q_guard_fn` and feed forged
+neutrals directly to the bare-checker handler.
+
+= CheckedResult <checkedresult>
+
+The walker and certified handlers communicate via the
+`CheckedResult` discriminated tree:
+
+```disp
+CheckedResult = Ok tree | Fail
+Ok   = {v} -> t t v        // pair(LEAF, v) = fork(LEAF, v)
+Fail = t (t t)             // stem(K)
 ```
-  B = {f} -> Eq Nat (f zero) zero
+
+`is_ok r` distinguishes the two; `ok_value r` extracts the payload
+when `is_ok r = TT`.
+
+The `tree` payload of `Ok` may itself be:
+- `TT` --- predicate succeeded.
+- `FF` --- predicate concretely rejected.
+- A *stuck-bool* (`cert_make_stuck Bool stuck_meta`) --- the
+  predicate's outcome is deferred because some operation involved
+  a hypothesis. Used for polymorphic universe ranks; see
+  @universes.
+- An arbitrary tree value (e.g., a new neutral from
+  `q_hyp_reduce_fn`).
+
+This single sum is enough to express every outcome the framework
+needs: `Fail` is the parametric-mode rejection ("user code did
+something disallowed"); `Ok TT` / `Ok FF` are concrete predicate
+answers; `Ok stuck-bool` is a deferred predicate answer.
+
+== Composition helpers
+
+CPS continuations chain CheckedResult-producing operations:
+
+```disp
+must_ok_any  := {r, k} -> if is_ok r then k (ok_value r) else Fail
+must_ok_tt   := {r, k} -> if is_ok r ∧ ok_value r = TT then k t else Fail
+must_ok_concrete_tt := {r, k_concrete, k_stuck} ->
+  if is_ok r then
+    if ok_value r = TT then k_concrete t
+    else if is_neutral (ok_value r) then k_stuck (ok_value r)
+    else Fail   // concrete FF
+  else Fail
 ```
 
-If `f` is a neutral of type `Nat -> Nat`, then `f zero` invokes
-`hyp_reduce`, computes result type `Nat`, and returns a neutral carrying
-that type. So `B(f)` reduces to a concrete `Eq` type whose left-hand
-side is a neutral Nat.
+`must_ok_any` threads any `Ok` payload into the continuation.
+`must_ok_tt` requires the payload to be exactly `TT`. The
+*concrete* variant distinguishes three cases: concrete `TT`,
+stuck (a neutral payload), or anything else (concrete `FF` or
+`Fail`).
 
-There is one more case: `B` may need to eliminate a neutral argument,
-for example by computing a return type with `nat_rec`. That is handled
-by typed eliminators, introduced later. The short version is that raw
-tree pattern matching on a neutral is invalid; typed eliminators detect
-the neutral and return a typed neutral result instead.
+Continuations passed to these helpers must be closed functions
+(parameter list saturates the body's free variables). A
+`{_} -> body_using_outer_vars` continuation is *not* a thunk in
+tree calculus --- bracket abstraction over outer free vars produces
+an `S(K K) ...` chain that evaluates eagerly. Use `{x} -> ...`
+where `x` actually appears in the body, or use `match` (which
+desugars to closed-arm select-then-apply with proper free-variable
+capture).
 
-== Checking the result
+== Handler return convention
 
-With every neutral knowing its type --- whether from creation or from
-the type interpreter --- the Pi checker has two cases:
+| Handler family | Returns | Dispatcher branch |
+|---|---|---|
+| `q_guard_fn` (public boundary) | bare `TT`/`FF` | `Ok (f x)` |
+| All type-checker handlers (`q_pi_fn`, `q_nat_fn`, `q_bool_fn`, `q_eq_fn`, `q_core_type_fn`, `q_guarded_type_fn`, `q_ord_fn`) | `CheckedResult` | `f x` (no wrap) |
+| `q_hyp_reduce_fn` | bare new neutral | `Ok (f x)` |
+| Eliminator handlers (`q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`, `q_ord_rec_fn`, `q_wait_rec_fn`) | `CheckedResult` | `f x` (no wrap) |
+| Walker default | `CheckedResult` | (recursive call) |
 
-*Concrete* (e.g., `{x} -> zero` applied to $h$ returns `zero`):\
-Apply the expected type as a predicate: `B(h)(zero)`. If `TT`, accept.
+Every type-checker handler returns CheckedResult internally so
+that stuck-bools and Fail propagate uniformly through must_ok_*
+chains. The bare-returning handlers are exactly two:
+`q_guard_fn` (public boundary) and `q_hyp_reduce_fn` (wrapped by
+the dispatcher into `Ok new_neutral`).
 
-*Neutral* (produced by either interpreter --- doesn't matter which):\
-Read the neutral's stored type via `neutral_type`, compare against the
-expected type:
+Mixing this convention up is an unsoundness-class bug: wrapping a
+handler that already returns CheckedResult double-wraps to
+`Ok (Ok TT)`, and downstream `must_ok_tt` sees `is_ok = TT` and
+`ok_value = Ok TT ≠ TT` --- it Fails when it shouldn't. The
+dispatch table comment in `kernel.disp` is the canonical place to
+document each handler's convention.
 
-```
-  fast_eq(neutral_type(result), expected_type)
-```
+= Universes and Ord
 
-The Pi checker doesn't care how the neutral got its type (creation or
-hypothesis reduction). It just reads it and compares.
+== Why Ord, not Nat
+
+Universe ranks in Disp are values of an inductive ordinal type `Ord`,
+not `Nat`. The reason is *polymorphism with subject reduction*: a
+function like `{r : Ord} → Type r → Type r` has a hypothesis-typed
+rank `r` whose universe comparisons must defer until `r` is
+instantiated. In Disp's parametric mode, raw `nat_lt` on a
+hypothesis Nat fails (correctly --- it would otherwise be a
+reflective channel). Universe-checking needs to defer rather than
+fail. So we use a separate type `Ord` whose comparison primitives
+(`ord_lt`, `ord_le`, `ord_max`) are kernel handlers that mint
+*stuck-bool* results when arguments contain hypotheses, rather
+than failing outright.
+
+`Ord` is structurally a *Cantor normal form* (CNF) tree --- a
+sum-of-omega-powers expression. Every ordinal below $epsilon.alt_0$
+has exactly one CNF tree, so hash-cons identity on Ord values
+matches ordinal equality. Constructors:
+
+- `0_ord : Ord`
+- `omega_plus : Ord -> Ord -> Ord` --- $omega^alpha + beta$ with
+  invariant `leading_exp β ≤ α`.
+
+Examples:
+
+- $0 = "0_ord"$
+- $1 = omega^0 + 0 = "omega_plus 0_ord 0_ord"$
+- $omega = omega^1 + 0$
+- $omega + 1 = omega^1 + omega^0$
+- $omega dot 3 = omega^1 + omega^1 + omega^1 = omega + omega + omega$
+- $omega^2 = omega^("omega_plus 0_ord 0_ord") + 0$
+
+Closed below-ω ordinals (`0_ord`, `succ_ord 0_ord`, etc., where
+`succ_ord α = omega_plus 0_ord α`) share tree shapes with Nat
+values: source-level `Type 0`, `Type 1` compile unchanged. The
+`Ord` checker validates the CNF invariant; not every tree shape
+is a valid Ord.
 
 #note[
-  If `expected` is itself a neutral type, the neutral-result case still
-  works by equality of stored types. The concrete-result case is more
-  limited: applying an unknown neutral type to a concrete value is just
-  another neutral application, not an inspection procedure for that
-  unknown type. In practice, codomains that get stuck are most useful
-  when the checked result is also neutral.
+  *Why CNF, not Brouwer trees.* The Brouwer-tree variant of Ord
+  uses `lim_ord : (Nat → Ord) → Ord` as a constructor. It is
+  predicatively well-formed (Kraus--Forsberg--Xu MFCS 2021,
+  `Brw : U₀`) but non-canonical: many trees represent the same
+  ordinal (`lim_ord (λn. n)` and `lim_ord (λn. 2n)` are both
+  $omega$), so hash-cons identity is finer than ordinal equality.
+  CNF gives canonical encodings, which matters because the kernel
+  uses hash-cons identity for universe checks. Two structurally
+  distinct Pi types with the "same" ordinal rank under Brouwer
+  trees would be at different universes per the kernel; CNF
+  eliminates this anomaly.
+
+  The cost: CNF has no general `lim_ord f` for arbitrary `f` ---
+  computing the supremum of an arbitrary function is not
+  algorithmic. This restricts expressible ordinals to those
+  reachable via `0_ord`, `succ_ord`, `omega_plus`, `+`, and `max`.
+  This is sufficient for universe ranks of polymorphic functions,
+  which only ever produce specific ordinals like
+  $omega$, $omega + 1$, $omega^2$ from the syntactic structure of
+  the function type (see @poly-universe).
 ]
+
+== Where Ord lives
+
+`Ord` lives in `Type 0`. CNF Ord is an inductive type whose
+constructors (`0_ord`, `omega_plus`) take only `Ord` recursively,
+so predicativity holds at `Type 0`. The CNF invariant
+(`leading_exp β ≤ α`) is checked by `Ord`'s predicate; it does
+not introduce a universe shift.
+
+== Polymorphic-universe functions <poly-universe>
+
+A function `{r : Ord} → Type r → Type r` mathematically lives in
+$"Type" omega$: $sup_(r:"Ord") "succ_ord" r = omega$. But the
+*kernel* does not compute closed $omega$ for `pi_rank` of such a
+type --- it produces a *stuck Ord*. Here's why.
+
+`pi_rank` is structural recursion via `wait_rec`. For
+`{r : Ord} → Type r`:
+
++ Walks the Pi: dom = `Ord`, codFn = `{r} → Type r`.
++ Computes `cod_at_canonical_hyp = codFn(r_hyp) = Type r_hyp`,
+  where `r_hyp = cert_make_hyp Ord meta`.
++ Recurses: `pi_rank Ord = 0_ord` and
+  `pi_rank (Type r_hyp) = succ_ord r_hyp`. The latter is a
+  syntactic CNF tree containing a hypothesis (form 2 below).
++ Combines via `ord_max 0_ord (succ_ord r_hyp)` --- one closed,
+  one stuck → returns *stuck Ord*.
+
+So polymorphic-rank types have *stuck `pi_rank`* in the kernel.
+Mathematically the rank is $omega$; computing $omega$ closedly
+would require recognising "supremum over Ord of $alpha + 1$ is
+$omega$," which is a meta-theoretic identity not derivable from
+structural recursion.
 
 #note[
-  The kernel bundles `is_neutral` + type extraction into a shared
-  helper called `infer(check_fn, v)`, which passes the stored type
-  to `check_fn` (or returns `FF` if `v` is not neutral). This is a
-  code-sharing convenience, not a separate concept --- it avoids
-  repeating the neutral-detection branch at each call site.
+  *Why not bake in supremum reasoning?* Computing
+  `sup_{α : Ord} f(α)` for arbitrary `f` is uncomputable.
+  Ordinal theory gives clean supremum identities only for
+  *normal functions* (continuous, monotonically increasing).
+  Recognising "this codFn body is a normal function" requires
+  pattern-matching on syntax --- brittle, heuristic, and a
+  meta-language feature. The bounded-levels approach (TTBFL)
+  bakes the rank into the level's type, sidestepping the
+  question; we rejected that for complexity reasons. So we
+  accept stuck `pi_rank` for polymorphic types.
+
+  *Practical implication.* Polymorphic library code is
+  *usable* (instantiating to closed ranks produces closed
+  `pi_rank`) but not *publicly testable at the polymorphic
+  level*. A test like `(Type omega) ({r} -> ...) = TT` won't
+  pass because `pi_rank` returns stuck, not $omega$. Users
+  instantiate at concrete ranks for tests.
 ]
 
-= Encoding types as trees <encoding>
-
-== `wait` --- deferred evaluation
-
-Tree calculus is strict: every application is evaluated immediately.
-The standard fixed-point combinator $Y f = f (Y (f))$ diverges because
-$Y (f)$ tries to evaluate itself eagerly.
-
-The solution is `wait`:
-
-```
-  wait(a)(b)    is inert (just tree data)
-  wait(a)(b)(c) = a(b)(c)   (evaluates a(b) only when c arrives)
-```
-
-`wait` defers evaluation until a third argument arrives. This is the
-key building block for recursion (`fix`) and for type encoding.
-
-== Types are `wait(checker)(metadata)`
-
-A type is built as:
-
-```
-  wait(checker)(metadata)
-```
-
-This is an inert tree. When applied to a value `v`:
-
-```
-  wait(checker)(metadata)(v)  =  checker(metadata)(v)
-```
-
-The checker function receives its own metadata (domain, codomain,
-rank, etc.) and the candidate value, then returns `TT` or `FF`.
-
-== `fix` --- recursion via `wait`
-
-Recursive checkers (Nat, Type n, Pi) use `fix`:
-
-```
-  fix(f) = wait m ({x} -> f(wait m x))     where m = {x} -> x x
-  fix(f)(arg) = f(fix(f))(arg)              // unfolds one step
-```
-
-`fix(f)` is itself a `wait`-encoded value. When used as a checker's
-first argument to `wait`, this gives exactly the right structure:
-`wait(fix(checker_body))(metadata)` is a type whose checker can call
-itself recursively.
-
-== Signatures
-
-Every `wait(checker)(metadata)` tree has a constant prefix:
-
-```
-  pair_fst(wait(checker)(metadata)) = stem(checker)
-```
-
-This is the *signature* --- it identifies which checker produced the
-type. All `Nat` values share one signature. All `Pi` types share
-another. Neutrals (which are `wait(hyp_reduce)(...)`) share the
-`hyp_reduce` signature.
-
-Recognition uses `fast_eq` on signatures:
-
-```
-  is_neutral(x) = fast_eq(pair_fst(x), hyp_reduce_signature)
-  is_pi(x)      = fast_eq(pair_fst(x), pi_signature)
-```
-
-Each check is O(1) via hash-consing.
-
-== Neutrals as trees
-
-A neutral is `wait(hyp_reduce)(metadata)`, using the same `wait`
-encoding as types. The metadata stores the neutral's type and its
-identity (hypothesis id, eliminator payload, or application spine).
-
-The implementation names this layout instead of scattering raw
-`fork` projections through the kernel:
-
-```disp
-  make_neutral_meta(current_type, payload) = fork(current_type, payload)
-  neutral_meta_type(meta)                  = pair_fst(meta)
-  neutral_meta_payload(meta)               = pair_snd(meta)
-
-  extend_neutral_meta(old_meta, result_type, arg) =
-    make_neutral_meta(result_type, fork(old_meta, arg))
-```
-
-This is a tree today, but conceptually it is an annotated application
-spine. The annotation caches the current type. The payload preserves
-identity: a hypothesis stores its id, and an application stores the
-previous metadata plus the new argument.
-
-Applying a neutral to a value `v` triggers the `wait` rule:
-
-```
-  wait(hyp_reduce)(metadata)(v)  =  hyp_reduce(metadata)(v)
-```
-
-This _does_ reduce --- tree calculus has no irreducible terms.
-`hyp_reduce` fires, computes the result type (see hypothesis
-reduction above), and wraps the result back into
-`wait(hyp_reduce)(new_metadata)` --- another neutral. `hyp_reduce` is
-a *trampoline*: every application of a neutral fully reduces, but the
-result is always another neutral. Concrete data never comes out.
-
-This is why `is_neutral` works: all neutrals, whether hypotheses or
-applied neutrals, share `hyp_reduce`'s signature. And it is why typed
-eliminators must check `is_neutral` before pattern-matching --- raw
-`triage` on a `wait(hyp_reduce)(...)` tree would interpret the
-neutral's internal structure as data, producing garbage.
-
-= The bootstrapping problem
-
-We now have all the pieces: types are `wait(checker)(metadata)`,
-signatures identify checkers, `hyp_reduce` tracks types through
-applications. But there is a circular dependency.
-
-The Pi checker needs to call `is_neutral`, which compares against
-`hyp_reduce`'s signature. The Type checker needs `is_pi` and `is_eq`,
-which compare against _their_ signatures. `hyp_reduce` itself needs
-`is_pi` to decide whether a hypothesis's type is a function type.
-
-Signatures are derived from the checkers: `pair_fst(wait(checker)(meta))
-= stem(checker)`. So to know the Pi signature, you need the Pi checker.
-To write the Pi checker, you need the `hyp_reduce` signature. To write
-`hyp_reduce`, you need the Pi signature. Everything depends on
-everything else.
-
-== The kernel: one mutual fixed point
-
-The solution is to put everything into a single `fix`:
-
-```disp
-  kernel : {hyp_reduce, pi, nat, bool, eq, type} = recq {
-    hyp_reduce := q_hyp_reduce_fn
-    pi := q_pi_fn
-    nat := q_nat_fn
-    bool := q_bool_fn
-    eq := q_eq_fn
-    type := q_type_fn
-  }
-```
-
-The record is still Church-encoded: field projection supplies a
-selector to the record. `recq` ties the recursive knot and passes each
-component three arguments:
-
-- `ks`, a lazy self proxy where `ks(selector) = wait(kernel)(selector)`.
-  This lets components write ordinary projections like `ks.pi` without
-  forcing recursive field selection too early.
-- `raw`, the actual recursive record, used where handler identity
-  matters (notably `hyp_reduce`).
-- `query`, the selector that picked the current component.
-
-Selection is O(1) and remains tree-level; `recq` is a tree-combinator,
-not a parser macro.
-
-== Constructing types
-
-Types are built with *double wait*:
-
-```disp
-  kernel_ref = {q} -> wait kernel q
-
-  Nat  = wait(kernel_ref.nat)(leaf)
-  Bool = wait(kernel_ref.bool)(leaf)
-  Pi(A, B) = wait(kernel_ref.pi)(fork(A, B))
-```
-
-`kernel_ref.nat` is `wait(kernel)(nat_selector)`, so it is inert ---
-it does not evaluate `kernel(nat_selector)` eagerly. The full evaluation
-happens only when the type is applied to a value:
-`Nat(v) = kernel(nat_selector)(leaf)(v) = nat_checker(leaf)(v)`.
-
-This deferred construction is essential: it means defining `Nat` at
-module level costs ~2 reduction steps, not thousands.
-
-== The H-rule, concretely
-
-Inside the kernel, the H-rule is a shared function used by all four
-type checkers (Pi, Nat, Bool, Eq):
-
-```disp
-  q_h_rule_fn = {ks, raw, query, self, meta, v} ->
-    fast_eq (wait (ks query) meta) (neutral_type v)
-```
-
-The caller already confirmed `v` is neutral, so the H-rule just:
-- Reconstructs _this checker's own type_ via
-  `wait(ks(query))(meta)`.
-- Reads `v`'s stored type via `neutral_type(v)`.
-- Compares. If they match, `fast_eq` returns `TT`. Otherwise `FF`.
-
-= Soundness
-
-Bundling everything into one fixed point isn't just a convenience ---
-it is what makes the type system sound. The kernel is the single
-source of truth for all checker functions, and a type's identity is
-determined by its checker. This makes types unforgeable.
-
-== Why not tags?
-
-An earlier design used tags: types were `fork(fork(TAG, kind), payload)`,
-and the checker dispatched on `kind`. The problem: tags are just tree
-patterns. Anyone can construct a tree with the right tag shape:
-
-```disp
-  fake_nat = fork(fork(TAG_ROOT, KV_LAM), fork(LEAF, {_ } -> TT))
-```
-
-This "fake Nat" accepts everything. If the checker trusts the tag,
-`fake_nat(anything) = TT` and soundness is broken.
-
-== Canonical identity
-
-The current design uses *canonical identity* instead of tags.
-`Nat` is the tree `wait(kernel_ref.nat)(leaf)` --- a specific,
-unique tree node. The kernel is the single source of truth:
-
-```disp
-  is_nat_type(x) = fast_eq(x, Nat)     // tree identity, O(1)
-```
-
-An adversarial value `wait({_,_} -> TT)(leaf)` has a different
-checker function, therefore a different `stem(checker)` prefix,
-therefore a different tree. `fast_eq` rejects it. The identity of a
-type is determined by its checker function, which is unforgeable.
-
-Type-former recognition (e.g., `is_pi`) uses *signature* checks:
-`fast_eq(pair_fst(x), pi_signature)`. The Pi signature is derived
-from the kernel's own Pi checker. A fake Pi with a different checker
-produces a different signature.
-
-== Neutral opacity
-
-Neutrals carry their types. For the intended internal checker
-invariant, they cannot forge them: a hypothesis is created by
-`Hyp(type, id)`, which sets the stored type at creation time, and
-hypothesis reduction propagates types faithfully by reading the
-existing type and computing the new one from the Pi codomain.
-
-This invariant currently depends on `Hyp` and `StuckElim` being
-treated as checker-internal constructors. If ordinary source code can
-construct those trees directly, the opacity claim fails; see
-#link(<neutral-capability-open-question>)[Open question: neutral capabilities].
-
-== Universe well-foundedness
-
-`Type n` uses strict `<` for containment: `Type m : Type n` iff
-`m < n`. No `Type : Type`, no cycles.
-
-Budget exhaustion (the evaluation step limit) is a completeness
-concession, not an unsoundness. A check that exceeds the budget is
-rejected, never falsely accepted.
-
-= Reference: type formers
+Closed ranks are computed exactly. For instance:
+- `pi_rank (Pi Nat ({_} -> Nat))` = `ord_max 0_ord 0_ord` = `0_ord`.
+- `pi_rank (Pi (Type 0) ({_} -> Type 0))` = `ord_max 1 1` = `1`.
+- `pi_rank (Pi (Type 0) ({A} -> A))` = `ord_max 1 0` = `1`.
+
+These are the cases where universe polymorphism via `Type k` for
+specific closed `k` works seamlessly.
+
+== Stuck comparisons
+
+`ord_lt`, `ord_le`, `ord_max` are kernel-registered primitives.
+Their handlers receive two `Ord` arguments (validated as Ord by
+the dispatcher routing). Three cases:
+
++ Both arguments concrete: compute concretely, return `Ok TT` /
+  `Ok FF` / `Ok ord_value`.
++ Either argument is a hypothesis (raw neutral): mint a stuck
+  result of the appropriate type. For `ord_lt`/`ord_le`: return
+  `Ok (cert_make_stuck Bool stuck_meta)` where `stuck_meta`
+  encodes the operation tag and both args. For `ord_max`: return
+  `Ok (cert_make_stuck Ord stuck_meta)`.
++ One argument is itself a stuck-Ord (a previously-deferred
+  comparison embedded as a value): recurse into the stuck
+  structure if possible, otherwise propagate stuck.
+
+The `stuck_meta` encoding tags the operation: `(LtTag, a, b)`,
+`(LeTag, a, b)`, `(MaxTag, a, b)`. This ensures distinct
+operations on the same arguments produce distinct stuck-Bools.
+Without tagging, `Eq Bool (ord_lt 5 r) (ord_le 4 r)` would
+hash-cons-equal under the runtime `tree_eq` fast path even when
+they're semantically distinct.
+
+== Subject reduction <subject-reduction>
+
+Disp's universe polymorphism uses unbounded `r : Ord` with
+stuck-comparison semantics. Subject reduction follows because:
+
++ Levels are ordinary terms in `Ord`, evaluated under the same
+  rules as any other value.
++ Stuck `Ord` values (form 2 or 3 of @ord-forms) propagate
+  through reductions and comparisons consistently with closed
+  values --- they are referentially transparent.
++ Universe checks `Type k` are `apply` operations, not
+  side-conditions; substitution cannot turn a "valid" check
+  into an "invalid" one because there are no rules gated on
+  side-conditions.
+
+Compare to BCDE (arXiv 2212.03284), whose SR breaks at
+*constraint-indexed products* `[α < β] N type` --- formation
+gated on `α < β` being loop-free, which substitution can violate.
+Disp has no such construct. Compare to TTBFL (arXiv 2502.20485),
+which fixes SR by baking bounds into level types
+(`r : Ord< k`); their `Trans` and `Cumul` rules are
+non--syntax-directed, conflicting with Disp's
+"type-checking is one apply" invariant. Disp avoids both
+problems by accepting stuck propagation rather than chasing
+closed-form completeness (per @soundness-not-completeness).
 
 #note[
-  The pseudocode below uses simplified notation. The actual
-  implementation in #raw("lib/kernel.disp") uses select-then-apply
-  patterns (see #raw("KERNEL_DESIGN.md")) for correct compilation
-  under bracket abstraction.
+  *No data-driven level computation.* Disp does not provide
+  `lub : List (Σℓ. Type ℓ) → Ord` --- a function that takes a
+  runtime list of types-at-various-levels and computes their
+  supremum. This is the only restriction relative to TTBFL, and
+  it is consistent with the soundness-not-completeness stance:
+  the kernel does not promise to compute new levels from
+  runtime data. If a use case demands this, monomorphize at
+  elaboration time.
 ]
 
-== Nat
+= Dispatcher and walker
 
-Zero = `leaf`. Succ(n) = `fork(leaf, n)`. Metadata = `leaf`.
+== The dispatcher
 
+`q_checked_apply_fn` (the dispatcher, exported as `checked_apply`)
+routes every application through one of two paths:
+
++ *Signature-recognized*: if `f`'s signature matches a registered
+  kernel handler, the dispatcher invokes the handler via raw
+  apply: `f x` runs in raw mode, the handler trusts `f` and
+  validates `x` internally.
++ *Default*: otherwise, the dispatcher walks the apply structure
+  step-by-step under parametric mode. This is `checked_raw_apply`
+  --- the *walker*.
+
+Both paths return `CheckedResult`. The signature-recognized path
+either wraps the bare handler result in `Ok` (for handlers that
+return bare values --- type checkers, `q_hyp_reduce_fn`) or
+returns the handler's `CheckedResult` directly (for handlers that
+return `CheckedResult` --- eliminators).
+
+```disp
+q_checked_apply_fn = {ks, raw, query} -> fix ({self, f, x} ->
+  select_chain
+    (case (has_sig raw.hyp_reduce f)  ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.guard f)        ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.pi f)           ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.nat f)          ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.bool f)         ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.eq f)           ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.ord f)          ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.core_type f)    ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.guarded_type f) ({_, f, x} -> Ok (f x)))
+    (case (has_sig ks.bool_rec f)     ({_, f, x} -> f x))
+    (case (has_sig ks.nat_rec f)      ({_, f, x} -> f x))
+    (case (has_sig ks.eq_J f)         ({_, f, x} -> f x))
+    (case (has_sig ks.ord_rec f)      ({_, f, x} -> f x))
+    (case (has_sig ks.wait_rec f)     ({_, f, x} -> f x))
+    (case (has_sig ks.ord_lt f)       ({_, f, x} -> f x))
+    (case (has_sig ks.ord_le f)       ({_, f, x} -> f x))
+    (case (has_sig ks.ord_max f)      ({_, f, x} -> f x))
+    (case (has_sig ks.elim_fail f)    ({_, f, x} -> Ok FF))
+    // Default: walker
+    ({self, f, x} -> checked_raw_apply self f x)
+    self f x)
 ```
-  Nat = wait(nat_checker)(leaf)
-  nat_checker(meta, n):
-    if is_neutral(n): H-rule
-    if n = leaf: TT                           // zero
-    if is_fork(n) and not is_neutral(n):      // exclude neutrals
-      if pair_fst(n) = leaf:
-        nat_checker(meta, pair_snd(n))        // succ → recurse
-      else: FF
-    else: FF
+
+== The walker (`checked_raw_apply`)
+
+The walker mirrors the five raw apply rules, with two parametric
+restrictions inserted: triage on a neutral fails; stem-rule
+fork-formation rejects neutral roots.
+
+```text
+checked_raw_apply self I x:                       // I-shortcut
+  Ok x
+
+checked_raw_apply self LEAF x:
+  Ok (stem x)                                     // stems are
+                                                  // never neutrals
+
+checked_raw_apply self (stem a) x:                // stem rule
+  let r = fork a x
+  if neutral_root r: Fail                         // (b)
+  else: Ok r
+
+checked_raw_apply self (fork LEAF payload) x:    // K rule
+  Ok payload
+
+checked_raw_apply self (fork (stem c) b) x:      // S rule
+  must_ok_any (self c x) ({cx} ->
+    must_ok_any (self b x) ({bx} ->
+      self cx bx))
+
+checked_raw_apply self (fork (fork tc td) b) x:  // triage rule
+  if neutral_root x: Fail                        // (a)
+  else if x is LEAF: Ok tc
+  else if x is stem c: self td c
+  else if x is fork l r:
+    must_ok_any (self b l) ({bl} ->
+      self bl r)
 ```
 
-== Bool
+The two parametric extensions are at the stem rule (rule (b),
+fork-formation rejecting neutral roots) and the triage rule (rule
+(a), triage on neutral fails). The S rule and triage-fork case do
+not perform direct constructor checks: they recurse via `self`,
+and the inner step that ultimately constructs a fork hits the
+stem-rule check.
 
-`TT = leaf`, `FF = stem(leaf)`. Metadata = `leaf`.
+== Soundness theorem <soundness-theorem>
 
-```
-  Bool = wait(bool_checker)(leaf)
-  bool_checker(meta, b):
-    if is_neutral(b): H-rule
-    if b = leaf: TT       // TT
-    if b = FF: TT         // FF
-    else: FF
-```
+#note[
+  *Theorem (Provenance soundness).* Under `checked_apply`, no
+  rule of `checked_raw_apply` can produce a fork whose `pair_fst`
+  matches the canonical `kernel.hyp_reduce` signature unless that
+  fork was either (a) already present in the input that passed
+  the public-boundary entry scan, or (b) the result of an earlier
+  registered-handler call (which mints via raw `apply`, not
+  `checked_raw_apply`).
+]
+
+*Proof sketch.* By structural induction on the rules of
+`checked_raw_apply`.
+
+Fork-producing rules:
+
++ *Stem rule.* Explicitly checks `neutral_root r` on the
+  constructed fork; returns `Fail` if matched. Direct check.
+
++ *S rule.* The result is the value of a recursive `self c x`,
+  `self b x`, then `self cx bx`. Any fork produced inside those
+  recursive calls is constructed (and therefore checked) by
+  *its* stem/S/triage rule. By induction, no neutral-shaped fork
+  escapes.
+
++ *Triage-fork rule.* Same shape: result is recursive
+  `self b l`, then `self bl r`.
+
+Fork-passing rules:
+
+4. *K rule.* The payload is either an original input (caught by
+   the public-boundary entry scan) or the result of a prior
+   `checked_apply` call (already checked). Never a freshly-
+   constructed neutral.
+
+5. *Triage-leaf, triage-stem.* Same provenance argument.
+
+6. *I-shortcut.* Returns its argument unchanged. Same as K.
+
+Non-fork-producing rules:
+
+7. *Leaf rule.* Produces a stem. Stems are never fork-shaped
+   neutrals (post-`is_neutral` tightening).
+
+*Base case.* The public-boundary entry to `checked_apply` (via
+`q_guard_fn`) runs `scan_no_neutral` on the user's value.
+Internal recursive entries from registered handlers may pass
+certified neutrals (built via `cert_make_*`), but those neutrals
+were minted by raw `apply` from inside a handler body and did not
+transit `checked_raw_apply`.
+
+*Conclusion.* The only neutral-signed forks reachable via
+`checked_apply`'s rules are (a) certified neutrals minted by
+trusted handlers, or (b) any pre-existing neutral that got past
+the entry scan --- which would be a bug in `scan_no_neutral`,
+not in the constructor checks. ∎
+
+#note[
+  *cert_make_hyp / cert_make_stuck are kernel-private.* The
+  helpers that mint neutrals (`cert_make_hyp ty id` and
+  `cert_make_stuck T payload`) are `let`-bound in `kernel.disp`
+  and not exported. Even if a user could name them, calling them
+  from user position would route through the dispatcher's walker
+  default, where the inner `wait raw.hyp_reduce ...`
+  construction hits the stem-rule's neutral-root check and
+  fails. So the soundness theorem is robust against accidental
+  exposure: privacy is the convention, but the walker is the
+  enforcement.
+]
+
+== Soundness carve-out: I-shortcut
+
+`I = fork(fork(LEAF, LEAF), LEAF)` is structurally a triage
+shape. Without the I-shortcut, `apply(I, hyp)` would hit the
+triage rule's neutral check and `Fail` --- but identity on a
+hypothesis is a legitimate program. The walker carves out
+`apply(I, x) = Ok x` directly, recognized via
+`tree_eq f I_canonical`. The runtime `tree_eq` fast path makes
+this O(1).
+
+This is the *only* soundness carve-out in the walker. Other
+desirable shortcuts (K, S, triage on closed values) are not
+carve-outs --- they fall out from the rules without modification.
+
+== Performance carve-outs
+
+Performance carve-outs are runtime fast paths in `tree.ts` that
+produce *observably identical* results to the in-language
+walker. None are required for correctness; they exist when
+profiling shows specific bottlenecks.
+
+The current candidate is a *native walker* in `tree.ts`,
+mirroring the host `tree_eq` fast path: the runtime captures the
+dispatcher's compiled tree id at boot and routes calls through
+native dispatch logic. Cuts the per-step constant from the
+in-language walker's ~70× to ~1-2× over raw apply. Add when
+profiling demands it.
+
+= Type formers
 
 == Pi
 
-Metadata = `make_pi_meta(domain, codFn)`, represented as
-`fork(domain, codFn)`.
+*Signature*: `kernel.pi`. *Checker*: `q_pi_fn`.
 
-```
-  Pi(A, B) = wait(pi_checker)(make_pi_meta(A, B))
-  pi_checker(meta, v):
-    if is_neutral(v): H-rule
-    let hyp = Hyp(pi_meta_domain(meta), meta)   // meta itself is identity
-    let result = v(hyp)
-    let expected = pi_meta_cod_fn(meta)(hyp)
-    if is_neutral(result):
-      fast_eq(neutral_type(result), expected)
-    else:
-      fast_eq(expected(result), TT)    // apply type as predicate
+Pi metadata: `make_pi_meta(domain, codFn)` where `domain` is a
+core type and `codFn : domain → core_type`. The public
+constructor `Pi A B` unguards both arguments via
+`unguard_checked` so metadata stores cores.
+
+*Public constructor*:
+```disp
+Pi    := {A, B} -> guard (core_Pi (unguard_checked A) ({x} -> unguard_checked (B x)))
+Arrow := {A, B} -> Pi A ({_} -> B)
 ```
 
-The hypothesis identity is the Pi type's own metadata. Nested Pi checks
-always produce distinct hypotheses because the inner Pi (produced by
-evaluating the outer's codomain function) has structurally different
-metadata. This eliminates the need for an external depth counter while
-preserving soundness --- two hypotheses collide only if they come from
-the same Pi type, which cannot happen in nested checking.
+*Checking* `Pi A B v`:
++ If `v` is a hypothesis: H-rule (compare stored type to
+  reconstructed `wait (ks query) meta`).
++ Otherwise: mint a hypothesis `hyp = cert_make_hyp domain meta`,
+  evaluate `result = ks.checked_apply v hyp` and `expected =
+  ks.checked_apply codFn hyp`, then either compare H-rule (if
+  result is neutral) or `ks.checked_apply expected result` (if
+  result is concrete).
 
-Arrow sugar: `Arrow(A, B) = Pi(A, {_} -> B)`.
+*Application of a Pi-typed neutral*: handled by `q_hyp_reduce_fn`
+(see below). When `(Hyp PiType id) v` is evaluated, the handler
+extends the neutral's spine with `v` and computes the result type
+as `pi_meta_cod_fn(PiType_meta) v`.
+
+== Nat
+
+*Signature*: `kernel.nat`. *Checker*: `q_nat_fn`.
+
+Nat values: `0_nat = LEAF` and `succ_nat n = fork(LEAF, n)`. The
+checker is a recursive predicate testing for these shapes. The
+H-rule fires on hypothesis-typed values.
+
+*Public constructor*: `Nat = guard core_Nat`. No metadata.
+
+*Eliminator*: `nat_rec rank motive base step target`. See @elims.
+
+== Bool
+
+*Signature*: `kernel.bool`. *Checker*: `q_bool_fn`.
+
+Bool values: `TT = LEAF` and `FF = stem(LEAF)`. Two-way check.
+H-rule on hypothesis-typed values.
+
+*Public constructor*: `Bool = guard core_Bool`. No metadata.
+
+*Eliminator*: `bool_rec rank motive t_case f_case target`. See @elims.
 
 == Eq
 
-Metadata = `make_eq_meta(A, x, y)`, represented today as
-`fork(A, fork(x, y))`. Sole constructor: `refl = leaf`.
+*Signature*: `kernel.eq`. *Checker*: `q_eq_fn`.
 
-```
-  Eq(A, x, y) = wait(eq_checker)(make_eq_meta(A, x, y))
-  eq_checker(meta, p):
-    if is_neutral(p): H-rule
-    if p = leaf: fast_eq(eq_meta_lhs(meta), eq_meta_rhs(meta))
-    else: FF
-```
+Eq metadata: `make_eq_meta(A, x, y)` where `A` is the type, `x`
+and `y` are values. The checker validates that the proof argument
+is `refl = LEAF` and that `tree_eq x y = TT` (under the H-rule:
+hash-cons identity matches propositional equality for closed
+values).
 
-== Type n (universes)
+*Public constructor*: `Eq A x y = guard (core_Eq (unguard_checked A) x y)`.
+*Constructor*: `refl = LEAF`.
 
-Metadata = `rank` (a natural number).
+*Tree-equality under raw vs walker.* `q_eq_fn`'s body calls
+`tree_eq` on the metadata's `lhs` and `rhs`. Because the handler
+runs in raw mode (after dispatcher routing), this `tree_eq` uses
+the host runtime's hash-cons fast path --- O(1) identity
+comparison. User-position `tree_eq` calls run under the walker,
+which descends recursively and fails on hypothesis-containing
+inputs (this is what closes the reflective `tree_eq` attack).
+The same source-level `tree_eq` definition behaves differently
+in the two modes; this is by design and is the correct
+soundness-vs-performance split.
 
-```
-  Type(n) = wait(type_checker)(n)
-  type_checker(meta, x):
-    if is_neutral(x): univ_check(n, neutral_type(x))  // cumulative
-    if is_universe(x): nat_lt(rank(x), n)        // Type m, m < n
-    if is_pi(x):
-      and(self(n, pi_dom(x)),
-          self(n, codFn(Hyp(pi_dom(x), pi_meta(x)))))
-    if is_eq(x):
-      and(self(n, eq_A(x)),
-          and(eq_A(x)(eq_x(x)), eq_A(x)(eq_y(x))))
-    if is_registered(x): TT                      // Nat, Bool
-    else: FF
-```
+*Eliminator*: `eq_J rank A_rank A x motive base y p`. Path
+induction. See @elims.
 
-= Typed eliminators
+== Ord
 
-Raw `triage` (tree calculus pattern matching) on a neutral interprets
-the neutral's internal `wait`-structure as data, producing garbage.
-Typed eliminators check `is_neutral` first and freeze as a neutral
-term when stuck:
+*Signature*: `kernel.ord`. *Checker*: `q_ord_fn`.
+
+Ord values are CNF trees. The checker validates:
+- `0_ord = LEAF`, or
+- `omega_plus α β` shape with the leading-exponent invariant.
+
+*Public constructor*: `Ord = guard core_Ord`. No metadata.
+
+*Three forms of Ord values* <ord-forms>. Anywhere `k : Ord`
+appears (e.g., `Type k`, `succ_ord k`, an `ord_lt` argument),
+`k` may be in any of three forms:
+
++ *Closed CNF*: `0_ord`, `omega`, `omega_plus 1 0_ord`. A closed
+  tree with no hypothesis anywhere. Operations on closed Ords
+  evaluate concretely.
+
++ *Syntactic CNF with embedded hypothesis*: e.g.,
+  `succ_ord r_hyp = omega_plus 0_ord r_hyp` where `r_hyp` is a
+  hypothesis. The outer `pair_fst` is the CNF constructor's tree,
+  not `kernel.hyp_reduce` --- so this is *not itself a neutral*,
+  but it contains one. The Ord checker on this value defers
+  (returns `Ok stuck_bool`) because it cannot fully verify the
+  CNF invariant without knowing the hypothesis's structure.
+
++ *Stuck Ord*: `cert_make_stuck Ord meta`. A wait-rooted
+  neutral with stored type `Ord`, produced when an operation
+  like `ord_max` cannot decide. The Ord checker accepts it via
+  the H-rule (signature match against canonical Ord checker).
+
+All three forms are valid `Ord` values in the sense that
+`Ord k = TT` (for forms 1 and 3) or `Ord k = stuck_bool` (for
+form 2). Comparisons (`ord_lt`, `ord_le`, `ord_max`) on a
+non-closed form propagate stuck.
+
+*Below-ω convenience*: source-level Nat literals (`0`, `1`, `2`)
+compile to canonical Nat trees, which are also valid Ord trees
+(they happen to be CNF for finite ordinals). So `Type 0`, `Type 1`
+work as expected.
+
+*Above-ω naming*: Disp does not provide source-level syntax for
+limit ordinals beyond Nat literals. Users who need `ω`, `ω+1`,
+`ω^2`, etc. import library-defined helpers in `lib/ord.disp`:
 
 ```disp
-  bool_rec(motive, t_case, f_case, target):
-    if is_neutral(target):
-      StuckElim(motive(target), target)
-    else:
-      if target = TT: t_case
-      else: f_case
-
-  nat_rec(motive, base, step, target):
-    if is_neutral(target):
-      StuckElim(motive(target), target)
-    else:
-      ... zero/succ pattern match with recursion ...
+omega       := omega_plus 1 0_ord                  // ω
+omega_plus_one := omega_plus 1 (omega_plus 0_ord 0_ord)  // ω+1
+omega_squared  := omega_plus omega 0_ord                 // ω^2
 ```
 
-The *motive* maps the scrutinee to the result type. `StuckElim` stores
-`motive(target)` as the result type, so `neutral_type` can read it.
+If frequent use justifies it, the parser can later add
+syntactic shortcuts (`Type ω`, `Type ω+1`). For now, library
+functions suffice.
 
-This is where dependent codomains that branch on neutral arguments get
-their type. If `B = {n} -> nat_rec(motive, base, step, n)` and `n` is a
-hypothesis, `B(n)` cannot choose the zero or successor branch. Instead,
-`nat_rec` returns `StuckElim(motive(n), n)`: a neutral value whose
-stored type is the motive instantiated at the neutral scrutinee. If the
-motive returns a universe, that stuck value is itself a neutral type.
+*Eliminator*: `ord_rec rank motive zero_case omega_plus_case target`.
+Two cases (matching CNF's two constructors). See @elims.
 
-Eq operations (`eq_J`, `eq_subst`, `eq_sym`, `eq_cong`) follow the
-same pattern: concrete proof (`refl`) dispatches immediately; neutral
-proof freezes as `StuckElim`.
+*Bootstrap*: `q_ord_fn` (the Ord checker) and `q_ord_rec_fn`
+(the Ord eliminator) are independent kernel record fields. The
+Ord checker validates CNF structure by raw triage on the value's
+tree shape, not via `ord_rec`. The Ord eliminator dispatches on
+the value via raw triage in its own handler body. Neither
+references the other; either can be defined first in
+`kernel.disp` (subject to `recq` lazy resolution of cross-field
+references).
 
-= Worked examples
+== Universe (Type k)
 
-== `3 : Nat`
+*Signatures*: `kernel.core_type` and `kernel.guarded_type`.
+*Checkers*: `q_core_type_fn` and `q_guarded_type_fn`.
 
-```
-  Nat(succ(succ(succ(zero))))
-    nat_checker(leaf, fork(leaf, fork(leaf, fork(leaf, leaf))))
-    is_neutral? no. n = leaf? no.
-    is_fork and pair_fst = leaf? yes → recurse on pair_snd
-    ... recurse on 2, then 1, then 0 ...
-    n = leaf → TT ✓
-```
+Universe metadata: a single Ord value (the rank).
 
-Pure data checking. No hypotheses, no H-rule.
+`core_type rank` accepts core types (kernel-internal): `core_Nat`,
+`core_Bool`, `core_Eq`, `core_Pi`, `core_Ord`, `wait
+ks.core_type k` for `k < rank`, `wait ks.guarded_type k` for
+`k < rank`, and certified neutral type variables whose stored
+type is a universe of rank ≤ rank.
 
-== `{x} -> x` checked against `Nat -> Nat`
+`guarded_type rank` accepts public types: `T = guard core` where
+`q_core_type_fn rank core = TT`.
 
-```
-  (Arrow Nat Nat)({x} -> x)
-    pi_checker(fork(Nat, {_}->Nat), {x}->x)
-    is_neutral? no → concrete check
-    h = Hyp(Nat, meta)          // meta = fork(Nat, {_}->Nat)
-    result = ({x}->x)(h) = h   // apply identity to h
-    expected = ({_}->Nat)(h) = Nat
-    is_neutral(h)? yes
-      neutral_type(h) = Nat     // stored when h was created
-      fast_eq(Nat, Nat) = TT ✓
-```
+*Public constructor*: `Type k = guard (wait kernel_ref.guarded_type k)`.
+The argument `k` must be an Ord; the elaborator typically
+threads `0_ord`, `succ_ord 0_ord`, etc., from source-level
+numeric literals.
 
-The H-rule fires because `h` was introduced at type `Nat`, and the
-expected codomain is `Nat`.
+*Source-level conventions.* Source-level `Type 0`, `Type 1`,
+`Type omega` are always written with explicit ranks. Bare
+`Type` (no rank) is a parser error, not a default to `Type 0`.
+Rationale: making the rank explicit avoids ambiguity now and
+leaves room for a future universe-inference elaborator to
+synthesize ranks at use sites (à la Coq's implicit universe
+polymorphism), which would conflict with a `Type = Type 0`
+default. When such an elaborator lands, source-level `Type`
+without a rank can become an inference variable.
 
-== `{f, x} -> f(x)` checked against `(Nat → Nat) → Nat → Nat`
+*Rank check via stuck comparison*: when checking universe
+membership, `q_core_type_fn` calls `ord_le rank_target rank_param`.
+If both ranks are concrete, the result is `Ok TT` / `Ok FF`. If
+either is a hypothesis-typed Ord, the result is
+`Ok (cert_make_stuck Bool stuck_meta)`. Stuck Bools propagate up
+through universe checks; at the public boundary they fail any
+`= TT` test (since they're not literally `TT`), so polymorphic-rank
+programs require concrete instantiation at test sites.
 
-This example shows hypothesis reduction computing a result type.
+= Eliminators <elims>
 
-```
-  Outer Pi: domain = Nat → Nat, codomain = {_} -> Nat → Nat
-    meta_outer = fork(Nat→Nat, {_}->Nat→Nat)
-    h_f = Hyp(Nat→Nat, meta_outer)   // stored type: Nat → Nat
-    result = ({f,x}->f(x))(h_f)
-           = {x} -> h_f(x)           // a lambda — concrete
-    expected = Nat → Nat
-    is_neutral? no → check {x}->h_f(x) against Nat → Nat
+All eliminators take an explicit `rank : Ord` argument so the
+kernel can construct the motive's expected type internally
+without trusting user-supplied type metadata. Each eliminator is
+a kernel record entry with a wait-value-bundled wrapper for user
+position.
 
-  Inner Pi: domain = Nat, codomain = {_} -> Nat
-    meta_inner = fork(Nat, {_}->Nat)  // different from meta_outer!
-    h_x = Hyp(Nat, meta_inner)       // stored type: Nat
-    result = ({x}->h_f(x))(h_x)
-           = h_f(h_x)                // applying neutral to neutral!
-    hyp_reduce fires:
-      h_f has type Nat → Nat (a Pi type)
-      codomain function = {_} -> Nat
-      result_type = ({_}->Nat)(h_x) = Nat
-    → new neutral with stored type Nat
-    expected = ({_}->Nat)(h_x) = Nat
-    is_neutral? yes
-      neutral_type(result) = Nat
-      fast_eq(Nat, Nat) = TT ✓
-```
+#note[
+  *Motive parameter's universe.* For an eliminator over a target
+  type `A : Type A_rank` with motive returning `Type rank`, the
+  motive parameter itself has type `A → Type rank`, which lives
+  in `Type (max A_rank (succ_ord rank))`. This is one universe
+  above what the motive *produces*. The kernel constructs this
+  expected type internally from `A_rank` and `rank` (both
+  user-supplied) and validates the user's motive against it.
+  Users do not write the motive's type; they only write the
+  motive value and the two ranks.
 
-The type was computed at application time by `hyp_reduce`, not
-inferred after the fact. Note that `meta_outer ≠ meta_inner` because
-the codomain functions differ --- this guarantees `h_f ≠ h_x` even
-though both have domain `Nat`.
+  For `bool_rec` and `nat_rec`, `A_rank = 0_ord` (Bool and Nat
+  both live in Type 0), so the motive's type is just
+  `Type (succ_ord rank)`. Only `eq_J` exposes `A_rank` as an
+  explicit argument because Eq's `A` parameter can be at any rank.
+]
 
-== Self-application rejection: `{x} -> x x`
+== bool_rec
 
-Checked against `(A : Type 0) → A → A`:
-
-```
-  Pi checks A : Type 0:
-    meta_A = fork(Type0, {A}->Arrow(A,A))
-    h_A = Hyp(Type0, meta_A)
-  Pi checks x : h_A:
-    meta_x = fork(h_A, {_}->h_A)     // codFn applied to h_A → h_A
-    h_x = Hyp(h_A, meta_x)           // type is a hypothesis!
-  Body: h_x(h_x)
-    hyp_reduce fires on h_x(h_x):
-      h_x has type h_A
-      is h_A a Pi type? no (it's a neutral, not a Pi)
-      → result_type = InvalidType
-    → neutral with stored type InvalidType
-  Pi checks result:
-    expected = h_A
-    neutral_type(result) = InvalidType
-    fast_eq(h_A, InvalidType) = FF    // h_A ≠ InvalidType
-    → rejected ✓
+```disp
+bool_rec : (rank : Ord) →
+           (motive : Bool → Type rank) →
+           (t_case : motive TT) →
+           (f_case : motive FF) →
+           (target : Bool) →
+           motive target
 ```
 
-Self-application is blocked because `h_A` is an opaque hypothesis,
-not a Pi type. Hypothesis reduction stores `InvalidType`, and the
-codomain check fails. No special-case logic needed.
+Handler: validates `rank : Ord`, `target : Bool`,
+`motive : Bool → Type rank`, `t_case : motive TT`,
+`f_case : motive FF`. Dispatches on target structurally; on
+hypothesis target, mints `cert_make_stuck (motive target) target`.
 
-= Glossary
+== nat_rec
 
-#table(
-  columns: (auto, 1fr),
-  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
-  inset: (x: 6pt, y: 4pt),
-  table.header[*Term*][*Meaning*],
-  [`T(v) = TT`], [Type checking. Apply type to value; raw tree-calculus application.],
-  [`wait(a)(b)`], [Inert tree. `wait(a)(b)(c) = a(b)(c)`. See #raw("KERNEL_DESIGN.md").],
-  [`fix(f)`], [Fixed-point via `wait`. `fix(f)(x) = f(fix(f))(x)`.],
-  [`Hyp(type, id)`], [Create a neutral hypothesis carrying the given type.],
-  [`StuckElim(type, target)`], [Stuck eliminator, produced by typed eliminators on neutral scrutinees.],
-  [`neutral_type(v)`], [Read a neutral's stored type. `neutral_meta_type(type_meta(v))`. O(1).],
-  [`InvalidType`],
-  [Sentinel stored as the result type of invalid neutral application. Rejected by `Type n`; currently represented by `FF`.],
+```disp
+nat_rec : (rank : Ord) →
+          (motive : Nat → Type rank) →
+          (base : motive 0) →
+          (step : (k : Nat) → motive k → motive (succ k)) →
+          (target : Nat) →
+          motive target
+```
 
-  [`is_neutral`], [Signature check: does `v` share `hyp_reduce`'s signature? O(1).],
-  [*hypothesis reduction*],
-  [A second interpreter embedded in reduction. When a neutral is applied, `hyp_reduce` runs instead of normal evaluation, computing the result type from the codomain. Disp's equivalent of bidirectional inference, distributed across evaluation.],
+Same shape; dispatches on `0` / `succ k` / hypothesis.
 
-  [`infer(f, v)`],
-  [Kernel helper. Bundles `is_neutral` check + `neutral_type` extraction + callback. Convenience, not a primitive.],
+== eq_J
 
-  [`H-rule`], [Each checker's first branch: if `v` is neutral and its stored type matches this type, accept.],
-  [`signature`], [`pair_fst` of a `wait`-encoded value. Constant per checker; used for recognition.],
-  [`kernel`], [Single mutual `fix` containing all checkers and `hyp_reduce`.],
-  [*typed eliminator*],
-  [Neutral-aware recursor. Checks `is_neutral` before dispatching; freezes as `StuckElim` when stuck.],
+```disp
+eq_J : (rank : Ord) →
+       (A_rank : Ord) →
+       (A : Type A_rank) →
+       (x : A) →
+       (motive : (y : A) → Eq A x y → Type rank) →
+       (base : motive x refl) →
+       (y : A) →
+       (p : Eq A x y) →
+       motive y p
+```
 
-  [`TT` / `FF`], [Booleans. `TT = leaf`, `FF = stem(leaf)`.],
-  [`refl`], [Sole constructor of `Eq A x y`. Equals `leaf`.],
-  [*select-then-apply*], [Compilation pattern for deferred branching. See #raw("KERNEL_DESIGN.md").],
+Two ranks: `A_rank` is the universe of the equated type; `rank`
+is the universe of motive's codomain. They are independent.
+`Eq A x y` itself lives in `Type A_rank` (Eq inherits its
+universe from `A`). The motive's parameter type
+`(y : A) → Eq A x y → Type rank` lives in
+`Type (max A_rank (succ_ord rank))`.
+
+#note[
+  *Equality at different type levels.* Disp's narrow Eq
+  (`refl`-only, hash-cons identity) supports equalities at any
+  universe rank uniformly:
+
+  - `Eq Nat 0 0` (A_rank = 0): finite arithmetic.
+  - `Eq (Type 0) Nat Bool` (A_rank = 1): equality between types.
+    Inhabited iff the trees are identical --- so structurally
+    distinct types are propositionally distinct.
+  - `Eq (Type 1) (Type 0) (Type 0)` (A_rank = 2): equality of
+    universes.
+
+  This is forward-compatible with HoTT: a future extension that
+  inhabits `Eq (Type k) X Y` with equivalences (univalence) does
+  not change `eq_J`'s signature, only its eliminator behavior at
+  type-valued targets. Until then, type-level equality is
+  structural.
+]
+
+Path induction. On `p = refl`, `y = x`, returns `base`. On
+hypothesis `p`, mints `cert_make_stuck (motive y p) p`.
+
+== ord_rec
+
+```disp
+ord_rec : (rank : Ord) →
+          (motive : Ord → Type rank) →
+          (zero_case : motive 0_ord) →
+          (omega_plus_case : (α : Ord) → motive α →
+                            (β : Ord) → motive β →
+                            motive (omega_plus α β)) →
+          (target : Ord) →
+          motive target
+```
+
+Two cases matching CNF's constructors. The
+`omega_plus_case` receives both `α` and `β` plus their inductive
+hypotheses. On hypothesis target, mints
+`cert_make_stuck (motive target) target`.
+
+#note[
+  Programs that pattern-match on specific ordinal shapes (e.g.,
+  detect "is this $omega$?") write them in terms of `ord_rec` plus
+  comparisons. The kernel does not provide a per-shape predicate
+  for each ordinal; users derive one if needed.
+]
+
+== wait_rec
+
+`wait_rec` is the registry-fold reflection eliminator: case-split
+on a value's type-former signature.
+
+```disp
+wait_rec : (motive : Type 0 → Type rank) →
+           (on_pi : (dom : Type 0) →
+                    (codFn : dom → Type 0) →
+                    (cod_at_hyp : Type 0) →
+                    motive (Pi dom codFn)) →
+           (on_nat : motive Nat) →
+           (on_bool : motive Bool) →
+           (on_eq : (A : Type 0) → (x : A) → (y : A) →
+                    motive (Eq A x y)) →
+           (on_ord : motive Ord) →
+           (on_core_univ : (k : Ord) → motive (wait ks.core_type k)) →
+           (on_guarded_univ : (k : Ord) → motive (wait ks.guarded_type k)) →
+           (on_guard : (core : Type 0) → motive (guard core)) →
+           (on_default : (T : Type 0) → motive T) →
+           (target : Type 0) →
+           motive target
+```
+
+The `on_pi` branch exposes both `codFn` (for direct application
+to user-supplied values) and `cod_at_canonical_hyp` (for
+universe-rank computation that needs to evaluate the codomain at
+a hypothesis). The kernel handler computes
+`cod_at_canonical_hyp = codFn (cert_make_hyp dom meta)` once per
+invocation, regardless of whether the user touches it.
+
+On hypothesis target, mints `cert_make_stuck (motive target) target`.
+
+User-facing reflection helpers (`pi_rank`, `pi_dom`, `pi_cod_fn`,
+`is_pi`, `is_universe`, `is_eq`, `hasguard`, `unguard_or_self`,
+`unguard_checked`, `universe_rank`) are tree programs defined on
+top of `wait_rec`. They live in `kernel.disp` for convenience but
+are not kernel record entries.
+
+= Implementation invariants
+
+These are invariants the implementation must respect. Violating
+any of them is a soundness-class bug.
+
+== Raw vs `ks.field` for signatures
+
+Two different signature shapes exist in the kernel; picking the
+wrong one for a dispatch case silently mismatches every value of
+that family.
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Constructor*], [*Signature stored in value*], [*Use which inside handlers*],
+    [`Hyp ty id` / `StuckElim r tg`],   [`raw.hyp_reduce` (raw)],   [`raw.hyp_reduce`],
+    [`Pi A B` / `core_Pi A B`],         [`kernel_ref.pi` (proxy)],  [`ks.pi`],
+    [`Nat`, `Bool`, `Eq`, `Ord`, `Type k`], [`kernel_ref.X` (proxy)], [`ks.X`],
+    [Eliminator wait-values],           [`kernel_ref.X_rec` (proxy)], [`ks.X_rec`],
+    [`elim_fail` sentinel],             [`kernel_ref.elim_fail`],   [`ks.elim_fail`],
+  ),
 )
+
+Hypotheses must store the `raw` (actual recq-resolved) handler
+identity because `q_hyp_reduce_fn` IS the runtime that fires
+when neutrals are applied --- there is no proxy indirection at
+that layer. Type formers and eliminators all use the proxy form;
+the public constructors uniformly write `wait kernel_ref.X meta`,
+so inside handlers the matching projection is `ks.X` (which has
+the same hash-cons identity).
+
+#note[
+  *Implementer warning.* This table must be reproduced as a
+  comment block at the top of `q_checked_apply_fn` in code.
+  Writing `has_sig ks.hyp_reduce f` instead of
+  `has_sig raw.hyp_reduce f` silently breaks neutral
+  recognition: every neutral falls through to the parametric
+  default and reflective attacks are no longer caught at the
+  dispatch level. Failure mode is silent unsoundness.
+]
+
+== Handler return convention
+
+The dispatcher's per-branch wrapping convention (which is shown
+explicitly in the `select_chain` body in §5.1) must match the
+handler's actual return shape. Mismatches double-wrap or
+under-wrap, breaking `must_ok_*` chains downstream.
+
+Every entry in the dispatch table must be accompanied by a
+comment listing the handler's return convention (bare or
+CheckedResult) and a brief note on what the handler validates.
+
+== `recq` laziness for handler interdependence
+
+Handlers reference each other via `ks.X` projections, which
+resolve to `wait self X_query` --- inert until applied. This
+means cyclic references between handlers (e.g., `q_pi_fn` calls
+`ks.checked_apply`; `q_checked_apply_fn` references `ks.pi` for
+signature matching) are resolved on demand, not at recq-build
+time.
+
+Implementer obligations:
+- Never force `ks.X` evaluation at top level (e.g., don't write
+  `let cached_pi = ks.pi` in module scope --- it's already lazy
+  and forcing it serves no purpose).
+- Field references inside `fix` bodies are also lazy. Mutual
+  recursion between handlers is resolved via the recq projection
+  at apply time.
+
+== Public/private boundary
+
+`kernel.disp` files declare exports via `:=` and private
+bindings via `let`. The following must be private (declared with
+`let`):
+
+- `core_Nat`, `core_Bool`, `core_Eq`, `core_Pi`, `core_Ord`,
+  `core_Type` --- the unguarded type checkers.
+- `cert_make_hyp`, `cert_make_stuck`, `cert_make_neutral` ---
+  the neutral-minting helpers.
+- `q_*_fn` handler bodies (the kernel record's checker
+  implementations).
+
+The following must be public (`:=`):
+
+- `Nat`, `Bool`, `Eq`, `Pi`, `Arrow`, `Ord`, `Type`, `omega` and
+  related ordinal helpers --- guarded type constructors.
+- `bool_rec`, `nat_rec`, `eq_J`, `ord_rec`, `wait_rec` --- user
+  eliminator wrappers.
+- `Hyp`, `StuckElim` --- public neutral constructors (callable
+  but rejected at the public boundary's entry scan, per §2.3).
+- Reflection helpers (`is_pi`, `pi_dom`, etc.).
+- `checked_apply` --- public re-export of the dispatcher.
+
+== `match` and closed-arm desugaring
+
+Tree calculus is strict: thunks `({_} -> body)` capturing outer
+free vars do NOT delay evaluation. The `match` keyword in source
+code desugars to closed-arm select-then-apply with automatic
+free-variable capture. Implementations must use `match` (or the
+hand-written closed-arm pattern) for any conditional whose
+branches reference outer scope variables.
+
+The `must_ok_*` helpers internally use `match`, so CPS chains
+that look like `must_ok_any r ({result} -> ...)` are
+short-circuiting *only* if the continuation `{result} -> ...`
+has a real parameter (not `_`) that appears in the body.
+Continuations with `_` parameters and outer free vars do NOT
+short-circuit.
+
+== Hash-cons identity is load-bearing
+
+Type equality is `tree_eq T1 T2` via the runtime's hash-cons
+identity check (O(1)). For this to give meaningful answers:
+- Same type must compile to the same tree.
+- Bracket abstraction must be deterministic.
+- Type-former metadata must use canonical pair-encodings.
+
+If two structurally-equal types compile to different trees,
+`Eq Type X Y` would be `FF` even when `X` and `Y` are "the same
+type." This is the structural side of the soundness fix:
+hash-cons identity defines propositional type equality.
+
+= Worked examples <worked-examples>
+
+== `(Pi Nat ({_} -> Nat)) ({x} -> x) = TT`
+
+Trace through the public test of the polymorphic identity at type
+`Nat → Nat`.
+
++ Source `Pi Nat ({_} -> Nat)` compiles to
+  `guard (wait kernel_ref.pi (make_pi_meta core_Nat ({_} -> core_Nat)))`.
++ Source `({x} -> x)` compiles to `I_canonical`.
++ Test framework evaluates `(Pi Nat (...)) ({x} -> x)`. Under raw
+  apply, this is direct application of the guard wait-value to
+  the identity.
++ Raw apply fires `q_guard_fn` with `(core, v)` where
+  `core = wait kernel_ref.pi ...` and `v = I_canonical`.
++ `q_guard_fn` runs `scan_no_neutral I_canonical`. I_canonical is
+  `fork(fork(LEAF, LEAF), LEAF)` --- no neutrals. Passes.
++ `q_guard_fn` calls `ks.checked_apply core v`, dispatching:
+  - `pair_fst core` = `pair_fst (wait kernel_ref.pi meta)` = the
+    Pi signature. Matches `has_sig ks.pi`.
+  - Routes to `Ok (core v)` --- raw apply on `core v`.
++ `core v` reduces to `q_pi_fn (kernel.pi_query) (meta, v)`.
++ Handler body: `q_pi_fn` recognizes `q_is_neutral raw v = FF`
+  (v is concrete), so runs the check_fn branch.
++ Check_fn: extracts `domain = core_Nat`, `codFn = ({_} -> core_Nat)`,
+  mints `hyp = cert_make_hyp core_Nat meta`.
++ `result_r = ks.checked_apply v hyp` = `ks.checked_apply I_canonical hyp`.
+  Dispatcher: `I_canonical`'s signature is just `fork(fork(LEAF,
+  LEAF), LEAF)` --- no kernel signature matches. Routes to walker
+  default. Walker hits I-shortcut: `Ok hyp`.
++ `expected_r = ks.checked_apply codFn hyp` = `ks.checked_apply ({_} -> core_Nat) hyp`.
+  Dispatcher: codFn is a K-form returning core_Nat. Walker reduces
+  to `core_Nat`. Returns `Ok core_Nat`.
++ Both `Ok`-extracted: `result = hyp` (a neutral), `expected = core_Nat`.
++ `q_is_neutral raw result = TT`, so compare `expected` with
+  `neutral_type result` via `tree_eq`. `neutral_type hyp = core_Nat`
+  (the stored type at mint time). `tree_eq core_Nat core_Nat = TT`.
+  Returns `Ok TT`.
++ Back in `q_guard_fn`: `is_ok r = TT`, `ok_value r = TT`. Returns
+  bare `TT`.
++ Test framework sees `TT`, asserts equality, passes.
+
+#note[
+  *What's load-bearing in this trace.* The I-shortcut in the
+  walker is essential --- without it, applying `I` to a hypothesis
+  would hit the triage rule's neutral check and fail. The
+  `tree_eq core_Nat core_Nat` step relies on the kernel-built
+  `core_Nat` being hash-cons-equal to itself (deterministic
+  compilation + canonical metadata). The `q_is_neutral raw`
+  check uses `raw.hyp_reduce` (the actual handler tree), not
+  `ks.hyp_reduce` (the proxy) --- mismatching here would silently
+  treat all neutrals as non-neutrals.
+]
+
+== Rejecting forged neutral: `(Type 0) (Hyp Nat 0) = FF`
+
+A user attempting to forge a Nat-typed neutral.
+
++ Source `Hyp Nat 0` compiles to
+  `wait kernel.hyp_reduce (make_neutral_meta Nat 0)`.
++ Source `Type 0` compiles to `guard (wait kernel_ref.guarded_type 0_ord)`.
++ Test evaluates `(Type 0) (Hyp Nat 0)`. Raw apply fires
+  `q_guard_fn` with `(core, v)` where `v = Hyp Nat 0`.
++ `q_guard_fn` runs `scan_no_neutral v`. `v` IS a neutral
+  (`pair_fst v = kernel.hyp_reduce`). `scan_no_neutral` returns
+  `FF`. `q_guard_fn` returns bare `FF`.
++ Test sees `FF`, fails the `= TT` assertion as expected.
+
+#note[
+  The entry scan at `q_guard_fn` is what catches this attack.
+  Without the scan, the dispatcher would route `core v` (where
+  `v` is a forged neutral) through the universe checker, which
+  would run the H-rule and check stored Nat against expected
+  Type --- but stored is "Nat" while expected is "Type 0", so it
+  would actually reject anyway. The double defense (entry scan
+  AND H-rule) gives both a fast-fail at the boundary and a deep
+  check inside.
+]
+
+== Rejecting reflective family: `(Pi Nat BadFam) ({n} -> 0) = FF`
+
+The `is_neutral` reflection attack.
+
++ `BadFam = {n} -> select Nat (Eq Nat 0 1) (is_neutral n)`.
++ `Pi Nat BadFam` is constructed normally.
++ Test evaluates the Pi-check on the function `({n} -> 0)`.
++ `q_guard_fn` runs entry scan; passes.
++ Routes through dispatcher; `q_pi_fn` runs.
++ Mints `hyp_n = cert_make_hyp core_Nat meta`.
++ `result_r = ks.checked_apply ({n} -> 0) hyp_n`. Walker mode:
+  the function reduces, hyp_n is a value of Nat type. Walker
+  reduces `({n} -> 0) hyp_n` to `0` (K-rule). Returns `Ok 0`.
++ `expected_r = ks.checked_apply BadFam hyp_n`. Walker mode:
+  BadFam reduces to `select Nat (Eq Nat 0 1) (is_neutral hyp_n)`.
+  Walker dispatches step-by-step. Eventually hits
+  `is_neutral hyp_n`, which is `(triage on hyp_n's tree
+  structure)`. Walker's triage-on-neutral rule fires:
+  `Fail`. `expected_r = Fail`.
++ `q_pi_fn` sees `Fail` from `expected_r`, returns `FF`.
++ `q_guard_fn` returns bare `FF`. Test fails.
+
+#note[
+  This is the reflective attack closed by the walker. Under raw
+  apply (the previous sound-but-incorrect kernel), `is_neutral
+  hyp_n` would return `TT` and `BadFam hyp_n` would reduce to
+  `Eq Nat 0 1`, matching the stored Pi codomain --- the Pi check
+  would pass! Then `bad 0` would type-check as `Eq Nat 0 1`,
+  which is unsound. The walker's triage-on-neutral rule
+  intercepts the reflective `is_neutral` call and refuses the
+  observation, propagating Fail upward.
+]
 
 = Open problems
 
-== Open question: neutral capabilities <neutral-capability-open-question>
+These are extensions and unresolved questions for future work.
+None blocks the closed-kernel implementation specified above.
 
-The current public surface exposes `Hyp` and `StuckElim` as ordinary
-definitions in #raw("lib/kernel.disp"). This is useful for testing and
-for writing the first neutral-aware eliminators, but it violates the
-strongest form of the type-system goal:
+== HoTT extensions
 
-#quote[
-  A predefined type should be a predicate over raw trees that accepts
-  exactly its valid inhabitants, no matter which raw tree a user can
-  construct.
-]
+The current kernel uses MLTT-style narrow `Eq`: only `refl`
+inhabits `Eq A x y`, and refl-evidence requires hash-cons
+identity of `x` and `y`. For `Eq (Type k) X Y`, this is
+*structural type equality* --- two distinct trees are
+propositionally distinct even when mathematically equivalent.
 
-`StuckElim` is a neutral constructor:
+A future HoTT evolution would:
+- Inhabit `Eq (Type k) X Y` with *equivalences* (univalence).
+- Add path constructors to inductive types (HITs), allowing
+  e.g. ordinal bisimilarity to be propositionally provable.
+- Generalize `eq_J` to handle path-constructor cases.
 
-```disp
-  StuckElim(result_type, target)
-    = wait(kernel.hyp_reduce)(make_neutral_meta(result_type, target))
-```
+The current `eq_J` signature (with explicit `A_rank`) is already
+forward-compatible: HoTT extensions would change the
+*eliminator's behavior* at type-valued targets, not the
+signature.
 
-Every checker has an H-rule branch:
+The kernel infrastructure that supports HoTT later: nothing in
+the current design precludes adding path constructors to
+inductive types. The wait-encoded checker for `Eq` would gain
+additional cases for non-refl inhabitants, dispatched on the
+proof's tree shape. Migration would be additive.
 
-```disp
-  if is_neutral(v):
-    fast_eq(neutral_type(v), expected_type)
-```
+== Universe inference at the elaborator
 
-Therefore, if a user can construct `StuckElim(T, payload)`, they can
-construct a raw tree whose stored neutral type is `T`. The H-rule then
-accepts it at `T`. In particular, closed source could manufacture
-inhabitants such as:
+Current source surface requires explicit universe ranks:
+`Type 0`, `Type omega`, etc. Bare `Type` is a parser error.
 
-```disp
-  StuckElim Nat t
-  StuckElim Bool t
-  StuckElim (Eq Nat 0 1) t
-```
+A future elaborator could synthesize ranks at use sites:
+- Source `Type` becomes a fresh universe variable.
+- Constraints accumulate as the term is checked
+  (`Type ≥ Type rank_of_X` for each use).
+- The elaborator solves for the minimum consistent rank.
 
-These are legitimate shapes for *internal* open terms, but not for
-closed user programs. A neutral of type `Nat` is valid when it is a
-hypothesis introduced by the Pi checker in a context `n : Nat`. A stuck
-elimination is valid when a trusted eliminator receives such a
-legitimate neutral scrutinee and cannot choose a concrete branch. It is
-not valid for arbitrary source code to assert the stored type field.
+This is Coq-style implicit universe polymorphism. It would
+remove the source-level rank annotations users currently must
+write but adds elaborator complexity. Out of scope for the
+initial kernel; orthogonal to soundness.
 
-This is the same class of problem that motivated canonical checker
-identity instead of tags. The system rejects fake type checkers by
-requiring canonical kernel signatures, but public neutral constructors
-reintroduce a forgeable capability: the ability to write the
-`neutral_type` metadata that the H-rule trusts.
+== Higher universes (beyond $epsilon.alt_0$)
 
-This violates the development philosophy in two ways:
+Disp's CNF Ord can name ordinals up to $epsilon.alt_0$ via
+`0_ord`, `omega_plus`, and the algebraic operations. Higher
+ordinals (Bachmann--Howard, $Gamma_0$, etc.) require richer
+constructors --- e.g., `phi : Ord -> Ord -> Ord` (Veblen
+function) or ordinal-indexed limits.
 
-- *Types as executable predicates over trees.* If `Nat` accepts a
-  user-constructed `StuckElim(Nat, t)`, then `Nat` is no longer a
-  predicate accepting only canonical closed natural numbers. It is a
-  predicate accepting a privileged internal proof object that ordinary
-  source should not be able to build.
-- *Checker as object-language program.* The neutral machinery is part
-  of the checker interpreter, not ordinary program data. Exposing it as
-  a public constructor mixes checker-internal syntax with user terms,
-  making soundness depend on a host-level convention rather than on the
-  tree program's own API boundary.
+Disp's universe hierarchy is bounded by Ord's expressiveness.
+Bumping past $epsilon.alt_0$ would require:
++ Adding new Ord constructors.
++ Updating `q_ord_fn` to validate the new shapes.
++ Updating `ord_lt`, `ord_le`, `ord_max` to compare.
++ Updating `ord_rec` to dispatch on the new constructors.
 
-Several obvious mitigations do *not* solve the raw-tree problem:
-module privacy, parser restrictions, elaborator-only conventions, and
-axiom/trust provenance can prevent ordinary source from naming
-`StuckElim`, but they do not make the unary predicate `T(v)` sound for
-all raw trees if the forgeable neutral shape is still accepted by the
-H-rule. Likewise, replacing `nat_rec` with a generated or W-type-backed
-recursor only solves this issue if it also removes the need for
-user-forgeable typed-neutral trees.
+Each is mechanical. Defer until a use case demands.
 
-== B/C combinators
+== Bounded levels (TTBFL adoption)
 
-The bracket abstraction uses S, K, I with η-reduction and
-K-composition. Turner's B and C combinators would reduce tree sizes
-for functions with 4+ variables. This is a compilation improvement,
-not a semantic change.
+If a future use case demands `lub : List (Σℓ. Type ℓ) → Ord` ---
+data-driven level computation --- the kernel must adopt
+TTBFL-style bounded levels (`r : Ord< k`). This would require:
++ A new universe-of-levels predicate `Level< : Ord -> Type 0`.
++ Trans and Cumul rules in the universe checker
+  (non--syntax-directed search).
++ Updating the elaborator to thread bounds.
 
-== Elaborator
+This is a substantial extension. Avoid until the use case
+forces it.
 
-The elaborator (AST → typed terms, motive inference) is the remaining
-frontier. All kernel operations are tree programs; the elaborator
-would orchestrate them. Since Pi types derive hypothesis identity from
-their own metadata (no external depth counter needed), the elaborator
-need not thread binder-depth state --- it only needs to compile type
-expressions into kernel predicates and invoke them.
+== Native walker for performance
+
+The in-language dispatcher walks each apply step under
+parametric mode at ~70× the cost of raw apply. A native
+implementation in `tree.ts` mirroring the host `tree_eq`
+fast-path would cut this to ~1-2×.
+
+Native walker is a *performance carve-out* (per @soundness-carve-out),
+not a soundness one: it must produce observably identical
+results to the in-language walker. Add when profiling demands.
+
+== Kernel extensibility
+
+The current kernel has a *closed* registry of trusted
+primitives. User code cannot register new type-formers,
+eliminators, or comparison primitives.
+
+Lifting this to an open registry --- where user-defined types
+can carry checkers and eliminators that the kernel routes to
+correctly --- is a separate refactor. See
+`KERNEL_EXTENSIBILITY_PLAN.md`. Soundness for an open registry
+requires carefully bounding what user-registered handlers can
+do (specifically: when can they mint neutrals?).
+
+== Polymorphic-rank function tests
+
+Polymorphic library code has stuck `pi_rank` and cannot be
+publicly tested at the polymorphic level (per @poly-universe).
+Users instantiate at concrete ranks for tests. This is
+consistent with @soundness-not-completeness but means the test
+surface is "closed instantiations" rather than "polymorphic
+schemas."
+
+If usability demands polymorphic-level testing, options:
++ Publish a polymorphic-rank test convention (e.g.,
+  "polymorphic library functions test against
+  $omega$, $omega + 1$, $omega^2$ in turn").
++ Add a `test_polymorphic` predicate that quantifies over
+  representative ranks and verifies stuck propagation. This
+  would be implemented as user code, not a kernel primitive.
++ Adopt TTBFL bounded levels (above) so polymorphic-rank types
+  have closed bounds.
+
+For now: closed-instantiation tests are sufficient.
+
+== Match desugaring efficiency
+
+The `match` desugarer captures union-of-arms free variables and
+re-captures at every nesting level. Deeply nested handlers
+(e.g., the eliminator handlers' must_ok_* CPS chains) compile
+to N closures of size O(N × |fvs|), potentially producing
+surprisingly large compiled trees.
+
+A future improvement: bracket-abstraction-aware desugaring that
+doesn't re-capture already-bound names. This is a compile-time
+optimization with no soundness implications.
