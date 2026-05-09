@@ -1,0 +1,136 @@
+// Investigation 3: how does Type k work under data-as-eliminator?
+//
+// Question: should Type k itself be encoded data-as-eliminator?
+//
+// Conclusion before experiment: NO. Types have two roles —
+//   (1) Predicate: T v = TT iff v : T. Kernel checks this via apply.
+//   (2) Reflection: wait_rec dispatches on T's signature.
+// Data-as-eliminator handles role (2) — the type's own structure
+// can act as a dispatcher when given a motive and cases. But role (1)
+// is the universe checker's job, and it operates on tree-structural
+// recognition: "v is one of the canonical type-formers at rank ≤ k".
+//
+// Under data-as-eliminator, constructors get specific tree shapes
+// (Scott-encoded TTs has tree id X, Nat zero has tree id Y, etc.).
+// The Type k predicate validates against these canonical shapes
+// AND against the type-former registry. This is unchanged from the
+// previous design — only the SHAPES of the canonical values change.
+
+open use "prelude.disp"
+
+// =================================================================
+// Setup: Scott-encoded constructors
+// =================================================================
+
+TTs := {tc, fc} -> tc
+FFs := {tc, fc} -> fc
+zero_s := {z, s} -> z
+succ_s := {n} -> {z, s} -> s n
+
+let one_s = succ_s zero_s
+
+// =================================================================
+// Predicate role: Bool checker as a tree-structural recognizer
+// =================================================================
+// Bool v = TT iff v is TTs or FFs (canonical tree-shape match).
+// This is the predicate role, unchanged from the previous design.
+
+is_scott_bool := {v} -> or (tree_eq v TTs) (tree_eq v FFs)
+
+test is_scott_bool TTs = TT
+test is_scott_bool FFs = TT
+test is_scott_bool t = FF       // raw LEAF — not a Scott Bool
+test is_scott_bool (t t) = FF   // raw stem — not a Scott Bool
+test is_scott_bool zero_s = FF  // Scott zero — not a Scott Bool
+
+// =================================================================
+// Predicate role: Nat checker recursively recognizes structure
+// =================================================================
+// In Scott encoding, succ_s n has the shape {z, s} -> s n. We can
+// recognize this by applying it to test functions that distinguish
+// the two constructor cases.
+//
+// Approach: apply v to (canary_zero, canary_succ). If it returns
+// canary_zero, v was zero_s. If it returns (canary_succ predecessor),
+// recurse on predecessor.
+
+let canary_zero = t        // unique tree
+let canary_succ = {n} -> t t n  // succ-marker shape
+
+is_scott_nat := fix ({self, v} ->
+  match (is_fork (v canary_zero canary_succ)) {
+    TT => self (pair_snd (v canary_zero canary_succ))
+    FF => tree_eq (v canary_zero canary_succ) canary_zero
+  })
+
+test is_scott_nat zero_s = TT
+test is_scott_nat one_s = TT
+test is_scott_nat (succ_s one_s) = TT
+test is_scott_nat (succ_s (succ_s (succ_s one_s))) = TT
+test is_scott_nat TTs = FF  // not a nat
+
+// =================================================================
+// Reflection role: wait_rec-style dispatch on type-former
+// =================================================================
+// "Given a value, what type-former is it?" This is the reflection
+// role. We dispatch via has_sig comparisons (or, in checked code,
+// via wait_rec).
+//
+// Below: has_sig-based simple recognition. In real code we'd use
+// hash-cons signatures, but here we just match the canonical bodies.
+
+let TTs_canonical = TTs
+let FFs_canonical = FFs
+
+is_TTs := {v} -> tree_eq v TTs_canonical
+is_FFs := {v} -> tree_eq v FFs_canonical
+
+test is_TTs TTs = TT
+test is_TTs FFs = FF
+test is_FFs FFs = TT
+
+// =================================================================
+// Type k recognition: check if v is a recognized type-former
+// =================================================================
+// The kernel's Type k predicate says: "v is one of the type-formers
+// in the registry, at rank ≤ k." Under data-as-eliminator, the
+// registry contents may have different canonical shapes (Scott-
+// encoded constructors), but the recognition logic is unchanged.
+
+// Imagine the registry has Bool_T and Nat_T (each a wait-form).
+// A simple Type 0 checker recognizes either:
+let bool_type_body = {self, motive, tc, fc, target} -> motive target
+let nat_type_body = {self, motive, z, s, target} -> motive target
+let Bool_T = wait bool_type_body t
+let Nat_T = wait nat_type_body t
+
+is_type_zero := {v} -> or (tree_eq v Bool_T) (tree_eq v Nat_T)
+
+test is_type_zero Bool_T = TT
+test is_type_zero Nat_T = TT
+test is_type_zero TTs = FF       // value, not type
+test is_type_zero zero_s = FF
+
+// =================================================================
+// CONCLUSION
+// =================================================================
+// Type k stays as a kernel-recognized primitive checker. Its logic:
+//
+//   Type k v = TT iff v is in the registry of type-formers at rank ≤ k
+//
+// The registry contents change with data-as-eliminator (constructors
+// have Scott shapes, types are wait-forms over their eliminator body),
+// but the Type k checker's structure is unchanged. is_pi, is_nat,
+// is_eq, is_universe etc. continue to dispatch via has_sig.
+//
+// Bound tracking via OrdLt also stays — the comparison handlers
+// (ord_lt, ord_le, ord_max) consult stored types from hypothesis-
+// typed Ord values, exactly as before. The bound algebra (succ_in,
+// op_bound_omega_plus, etc.) is library code.
+//
+// Data-as-eliminator changes: constructors / eliminators / Eq's
+// hash-cons-equality semantics (now automatic from encoding).
+// It does NOT change: Type k checker, Pi checker, ord comparison
+// handlers, walker, dispatcher, hyp_reduce.
+
+test t = t  // trivial sanity

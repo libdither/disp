@@ -1,0 +1,124 @@
+// Investigation: can a wait-encoded recursive Bool be made to work
+// with hyp_reduce? The key trick: have wait_body produce a Pi when
+// applied, and have hyp_reduce unfold the wait one step before
+// checking the Pi signature.
+
+open use "prelude.disp"
+trust open use "kernel.disp"
+
+let Type_0 = Type 0
+
+// =================================================================
+// Define a recursive Bool type via wait
+// =================================================================
+// Bool = wait body t. body's body is intended to produce a Pi-typed
+// value when self is filled in.
+//
+// For non-dependent (uniform) Bool: body self = Pi A. A -> A -> A
+// (same as SimpleBool, but with the self-ref placeholder unused).
+
+let bool_body_uniform = {self} -> Pi Type_0 ({A} -> Pi A ({_} -> Pi A ({_} -> A)))
+let Bool_wait = wait bool_body_uniform t
+
+// Question: is Bool_wait Pi-shaped (so has_sig kernel.pi recognizes it)?
+test is_pi Bool_wait = FF  // wait, NOT Pi at outer
+
+// Apply wait one step: Bool_wait applied to a value.
+// wait a b c = a b c, so wait body t v = body t v.
+// body t v = (Pi Type_0 (...)) checked against v? No — body returns a TYPE,
+// not a checker. body t = Pi Type_0 ({A} -> ...).
+
+// What does Bool_wait reduce to when "fully applied"? Not relevant
+// for type-checking; we just want is_pi to see Pi.
+
+// Alternative encoding: don't wrap in wait if no recursion needed.
+let Bool_direct = Pi Type_0 ({A} -> Pi A ({_} -> Pi A ({_} -> A)))
+test is_pi Bool_direct = TT
+
+// CONCLUSION 1: a wait-form Bool's outer signature is wait, not Pi.
+// has_sig won't recognize it. To make hyp_reduce work on wait-form
+// types, we'd need either:
+//   (a) Unfold the wait before signature check (kernel mod).
+//   (b) Make Bool literally a Pi (no wait), which only works for
+//       non-recursive types.
+
+// =================================================================
+// Test: when Bool_wait is applied (as if it were a value), what
+// does it reduce to?
+// =================================================================
+// wait a b c = a b c. So Bool_wait some_arg = body t some_arg.
+// body = {self} -> Pi Type_0 ({A} -> ...).
+// body t = Pi Type_0 ({A} -> ...) (with self=t, but self isn't used
+// in the body, so body t = Pi Type_0 ({A} -> ...)).
+// body t some_arg = (Pi Type_0 ({A} -> ...)) some_arg = checking
+// some_arg against this Pi type, returns TT/FF.
+
+test (wait bool_body_uniform t) ({A, ct, cf} -> ct) = TT
+
+// So Bool_wait acts as a checker when applied to a value. But for
+// the purpose of being a STORED TYPE on a hypothesis, Bool_wait
+// is just an opaque tree shape.
+
+// =================================================================
+// Key question: can we get a Hyp typed at Bool_wait to behave like
+// a Pi-typed hypothesis?
+// =================================================================
+
+let bh_wait = Hyp Bool_wait 0
+test is_neutral bh_wait = TT
+
+// Apply bh_wait to Nat. Does hyp_reduce recognize Bool_wait as Pi?
+// Per the current kernel: NO, because is_pi Bool_wait = FF.
+let bh_wait_at_nat = bh_wait Nat
+test is_neutral bh_wait_at_nat = TT
+
+// What's the stored type? Should be InvalidType (or under the new
+// design: hyp_reduce should have returned Fail).
+test neutral_type bh_wait_at_nat = InvalidType
+
+// CONCLUSION 2: under the existing kernel, wait-encoded types are
+// NOT recognized as Pi-equivalent. hyp_reduce fails.
+
+// =================================================================
+// Alternative architecture: kernel hyp_reduce unfolds wait once
+// =================================================================
+// If hyp_reduce, before checking has_sig, did one apply step on the
+// stored type to unfold wait, it would see the Pi inside. This is
+// a modest kernel modification.
+//
+// Cost: one extra apply per hyp_reduce when stored type is wait-form.
+// Modest.
+//
+// But: how does the kernel know "this stored type is a wait-form
+// that should be unfolded"? It can't apply blindly — applying a
+// closed Pi type to nothing would just leave it as-is. Applying a
+// wait-form unfolds to its body.
+//
+// In tree calculus: apply(wait body t, x) = body t x. For a wait
+// not yet applied to a 3rd arg, applying gives the body's result.
+//
+// Maybe the kernel could try: if has_sig fails, check is the stored
+// type a wait shape (3-arg pattern), if so unfold once and re-check.
+//
+// This is doable but adds complexity to the kernel's hyp_reduce.
+
+// =================================================================
+// PRACTICAL CONCLUSION
+// =================================================================
+// (1) Church-encoded Bool/Nat (literal Pi, non-recursive type for
+//     uniform-codomain eliminators) WORKS with existing kernel.
+// (2) wait-encoded recursive types do NOT work with existing
+//     kernel (hyp_reduce doesn't unfold wait). Would need kernel
+//     modification.
+// (3) For non-dependent / uniform-codomain elimination, data-as-
+//     eliminator works as advertised. For fully-dependent
+//     elimination (motive : T -> Type with motive varying per case),
+//     either kernel modification or keep kernel-registered eliminators.
+//
+// Eq is the awkward case: dependent motive is essential for
+// transport/substitution proofs. Either:
+//   - Add wait-unfolding to hyp_reduce (modest kernel change).
+//   - Keep eq_J as kernel-registered (current design, partial loss
+//     of data-as-eliminator architectural elegance).
+
+test t = t

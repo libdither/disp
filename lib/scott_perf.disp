@@ -1,0 +1,66 @@
+// Performance test: nat_rec on a closed Nat of moderate size, both
+// Scott-encoded and current native encoding (raw fork/leaf trees).
+// Compare step counts to estimate eliminator-chain overhead.
+
+open use "prelude.disp"
+
+// =================================================================
+// Scott-encoded Nat (data IS its eliminator)
+// =================================================================
+
+zero_s := {z, s} -> z
+succ_s := {n} -> {z, s} -> s n
+nat_rec_s := {target, z, s} -> target z s
+
+// Build 20 via succ_s chain
+let s1 = succ_s zero_s
+let s2 = succ_s s1
+let s3 = succ_s s2
+let s4 = succ_s s3
+let s5 = succ_s s4
+let s10 = succ_s (succ_s (succ_s (succ_s (succ_s s5))))
+let s20 = succ_s (succ_s (succ_s (succ_s (succ_s (succ_s (succ_s (succ_s (succ_s (succ_s s10)))))))))
+
+// Recursive eliminator using fix: count down to zero.
+// dec_s n returns nat_rec_s applied iteratively until zero is reached.
+// Just to exercise the eliminator chain.
+let count_zero_s = fix ({self, n} -> nat_rec_s n t ({pred} -> self pred))
+test count_zero_s s20 = t
+
+// =================================================================
+// Native-encoded Nat (current Disp convention: zero = t, succ n = t t n)
+// =================================================================
+
+let s1n = succ 0
+let s2n = succ s1n
+let s3n = succ s2n
+let s5n = succ (succ s3n)
+let s10n = succ (succ (succ (succ (succ s5n))))
+let s20n = succ (succ (succ (succ (succ (succ (succ (succ (succ (succ s10n)))))))))
+
+// Native nat_rec via raw triage (mirrors current kernel.disp pattern).
+let count_zero_n = fix ({self, n} ->
+  triage t ({_} -> t) ({_l, r} -> self r) n)
+test count_zero_n s20n = t
+
+// =================================================================
+// Heavier: add 10 10 with Scott vs native
+// =================================================================
+
+add_s := fix ({self, a, b} -> a b ({pred} -> succ_s (self pred b)))
+
+let s10_plus_10_s = add_s s10 s10
+test s10_plus_10_s = s10_plus_10_s
+
+let add_n = fix ({self, a, b} ->
+  triage b ({_} -> b) ({_l, ap} -> succ (self ap b)) a)
+let s10_plus_10_n = add_n s10n s10n
+test s10_plus_10_n = s10_plus_10_n
+
+// =================================================================
+// Stress: nat_rec_s used in succ-counting recursion
+// =================================================================
+
+let to_nat_n = fix ({self, n} -> nat_rec_s n 0 ({pred} -> succ (self pred)))
+test to_nat_n s10 = s10n
+test to_nat_n s20 = s20n

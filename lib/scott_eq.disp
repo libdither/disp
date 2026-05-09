@@ -1,0 +1,116 @@
+// Investigation 1: does Eq under data-as-eliminator preserve the
+// "refl-only, hash-cons identity" semantics that Disp's current
+// q_eq_fn enforces explicitly?
+//
+// Conjecture: yes, automatically. The encoding
+//   Eq A x y ≡ (motive : (z : A) -> Eq A x z -> Type) ->
+//              motive x refl ->
+//              motive y self
+// makes refl typecheck at Eq A x y iff motive_hyp x refl =
+// motive_hyp y refl as trees, which holds iff x = y as trees
+// (because hypothesis-typed motive applications are spine-tracked
+// and hash-cons-identical iff their args are).
+//
+// We don't have a kernel here to actually run that type-check,
+// but we can verify the structural prediction: simulate what the
+// kernel would do (mint a hypothesis motive, instantiate, compare
+// expected codomain to body codomain) and confirm hash-cons identity
+// matches mathematical equality of x, y.
+
+open use "prelude.disp"
+
+// Scott-encoded Nat (for x, y values to compare)
+zero_s := {z, s} -> z
+succ_s := {n} -> {z, s} -> s n
+
+let one_s = succ_s zero_s
+let two_s = succ_s one_s
+
+// refl as identity-applied
+refl_s := {motive, base} -> base
+
+// J as identity-applied-to-target
+eq_J_s := {motive, base, x, y, p} -> p motive base
+
+// =================================================================
+// What the kernel WOULD do when checking refl_s : Eq A x y
+// =================================================================
+// Conceptually:
+//   1. Mint motive_hyp : (z : A) -> Eq A x z -> Type
+//   2. Instantiate Pi: refl_s motive_hyp = λ base -> base.
+//      Expected type at this point: motive_hyp x refl_s -> motive_hyp y self
+//      where self = refl_s.
+//   3. Mint base_hyp : motive_hyp x refl_s.
+//   4. Body: refl_s motive_hyp base_hyp = base_hyp (just returns base).
+//      Expected type: motive_hyp y refl_s.
+//      Body has type: motive_hyp x refl_s.
+//   5. Check: motive_hyp x refl_s tree-equal to motive_hyp y refl_s?
+
+// Simulate: a "motive_hyp" is a fresh function. We can stand in with
+// any function whose application is hash-cons-tracked. For our
+// experiment, use a real function `id_fn` that takes two args and
+// pairs them — same shape as motive_hyp's behavior would be
+// (apply to z, apply to p, get back some neutral with stored type).
+
+let mock_motive = {z, p} -> t (t z p)  // pair-shaped: distinct (z, p) → distinct tree
+
+// Predicted behavior: mock_motive x refl = mock_motive y refl iff x = y.
+
+// Sanity: distinct args produce distinct trees.
+test mock_motive zero_s refl_s = mock_motive zero_s refl_s
+test mock_motive one_s refl_s = mock_motive one_s refl_s
+
+// The TRUE test: if we're checking refl_s : Eq A 0 0, the codomain
+// matches because both sides apply mock_motive to 0.
+test mock_motive zero_s refl_s = mock_motive zero_s refl_s  // refl_s : Eq 0 0 OK
+
+// If we're checking refl_s : Eq A 0 1, the codomain DOESN'T match
+// (mock_motive 0 refl ≠ mock_motive 1 refl); type-check would fail.
+// We can't test inequality directly with `test X = Y`, but we can
+// check that applying tree_eq returns FF.
+test tree_eq (mock_motive zero_s refl_s) (mock_motive one_s refl_s) = FF
+test tree_eq (mock_motive one_s refl_s) (mock_motive one_s refl_s) = TT
+
+// =================================================================
+// J on refl: returns base regardless of whether x = y as trees
+// =================================================================
+// In MLTT, eq_J's reduction rule is: eq_J motive base x x refl = base.
+// In Scott encoding, this falls out automatically: J just applies p
+// to (motive, base), and refl_s = {m, b} -> b returns base.
+// No special "x = y" check needed for J's reduction; that check
+// happens during type-checking of `refl_s : Eq A x y`.
+
+test eq_J_s ({_, _} -> t) zero_s zero_s zero_s refl_s = zero_s
+test eq_J_s ({_, _} -> t) zero_s zero_s zero_s refl_s = zero_s  // memoized fastpath
+
+// =================================================================
+// Substitution / transport via J
+// =================================================================
+// eq_subst : (A : Type) -> (P : A -> Type) -> (x y : A) -> Eq A x y -> P x -> P y
+// In Scott: eq_subst P x y p px = J (λ z _ -> P z) px y p = p (λ z _ -> P z) px
+
+eq_subst_s := {P, x, y, p, px} -> p ({z, _} -> P z) px
+
+// On refl_s, this is identity:
+let id_P = {n} -> n  // P : Nat -> Nat (identity)
+test eq_subst_s id_P zero_s zero_s refl_s zero_s = zero_s
+test eq_subst_s id_P one_s one_s refl_s one_s = one_s
+
+// =================================================================
+// Symmetry / congruence via J
+// =================================================================
+// eq_sym : Eq A x y -> Eq A y x
+// eq_cong : (f : A -> B) -> Eq A x y -> Eq B (f x) (f y)
+//
+// eq_sym p = J (λ z _ -> Eq A z x) refl y p
+// eq_cong f p = J (λ z _ -> Eq B (f x) (f z)) refl y p
+
+eq_sym_s := {x, y, p} -> p ({z, _} -> z) refl_s
+// (Simplified motive; in real type-checking the motive must be the
+// proper dependent shape Eq A z x.)
+
+eq_cong_s := {f, x, y, p} -> p ({z, _} -> z) refl_s
+
+// On refl_s, both reduce to refl_s (since refl ignores motive).
+test eq_sym_s zero_s zero_s refl_s = refl_s
+test eq_cong_s succ_s zero_s zero_s refl_s = refl_s

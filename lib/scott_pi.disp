@@ -1,0 +1,136 @@
+// Investigation 2: Pi as data-as-eliminator? Recursive type knot?
+//
+// Two questions:
+// (a) Should Pi itself be encoded data-as-eliminator, like Bool/Nat?
+// (b) For inductive types whose definition references themselves
+//     (like Bool ≡ (motive : Bool -> Type) -> ...), how does
+//     wait/recq handle the knot?
+//
+// Conclusions before experiment:
+// (a) NO. Pi is the universal mechanism; encoding it via itself is
+//     circular and adds no value. Pi's eliminator IS function
+//     application — it's already built into the runtime. We don't
+//     need a Pi_rec wrapping function application.
+// (b) Standard: wait body t. The body returns the unfolded type;
+//     wait keeps it inert until applied. Each unfold step is one
+//     Pi-checker call. Hash-cons identity stable.
+
+open use "prelude.disp"
+
+// =================================================================
+// Demonstrate Pi DOES NOT need data-as-eliminator
+// =================================================================
+// Pi values are functions. To "eliminate" them, you apply them.
+// A Pi_rec wrapper would just be:
+//   Pi_rec : (motive : Pi A B -> Type) -> (case : (f : Pi A B) -> motive f) -> (target : Pi A B) -> motive target
+//   Pi_rec motive case target = case target
+// Trivial. The "elimination" of a Pi value is the function-call.
+// Application IS Pi's eliminator, baked into the runtime's apply rules.
+
+let id_fn = {x} -> x
+let const_fn = {x, y} -> x
+
+// "Eliminating" id_fn means applying it to an argument.
+test id_fn t = t
+test id_fn (t t) = t t
+
+// "Eliminating" const_fn means applying it to two args.
+test const_fn t (t t) = t
+
+// There is no need for Pi_rec; apply is the eliminator.
+
+// =================================================================
+// Recursive type knot via wait
+// =================================================================
+// Conceptually, Bool's type is:
+//   Bool ≡ (motive : Bool -> Type 0) -> motive TT -> motive FF -> motive self
+// The Bool inside the motive's domain refers back to Bool itself.
+// We encode this via wait:
+
+zero_s := {z, s} -> z
+succ_s := {n} -> {z, s} -> s n
+TTs := {tc, fc} -> tc
+FFs := {tc, fc} -> fc
+
+// bool_type_body takes self (the recursively-defined type) and the
+// inputs (motive, t_case, f_case, target) and computes the expected
+// codomain. For our experiment, we're not actually type-checking;
+// we're just verifying the recursive structure stabilizes.
+let bool_type_body = {self, motive, tc, fc, target} -> motive target
+
+// Bool_T is a wait-form. Hash-cons identity stable.
+let Bool_T = wait bool_type_body t
+
+test Bool_T = wait bool_type_body t
+
+// Apply Bool_T: this should partial-reduce, exposing motive target.
+// Bool_T motive tc fc target = motive target  (after wait unfolds)
+test Bool_T ({_} -> t) TTs FFs TTs = t  // motive _ = t for any input
+
+// Use a motive that returns input unchanged: applied to TTs gives TTs.
+test Bool_T ({x} -> x) TTs FFs TTs = TTs
+test Bool_T ({x} -> x) TTs FFs FFs = FFs
+
+// =================================================================
+// Recursive Nat type via wait
+// =================================================================
+// Nat ≡ (motive : Nat -> Type 0) ->
+//        motive zero ->
+//        ((k : Nat) -> motive k -> motive (succ k)) ->
+//        motive self
+// Same shape as Bool, two cases.
+
+let nat_type_body = {self, motive, z_case, s_case, target} -> motive target
+let Nat_T = wait nat_type_body t
+
+test Nat_T = wait nat_type_body t
+
+// "Apply" Nat_T to a motive that ignores its input:
+test Nat_T ({_} -> t) zero_s ({_, _} -> t t) zero_s = t
+test Nat_T ({_} -> t) zero_s ({_, _} -> t t) (succ_s zero_s) = t
+
+// Apply Nat_T with a motive that returns the target: we get back the target.
+test Nat_T ({x} -> x) zero_s ({_, _} -> t t) zero_s = zero_s
+let one_s = succ_s zero_s
+test Nat_T ({x} -> x) zero_s ({_, _} -> t t) one_s = one_s
+
+// =================================================================
+// Mutual reference: Eq's type body references A : Type
+// =================================================================
+// Eq A x y ≡ (motive : (z : A) -> Eq A x z -> Type 0) ->
+//             motive x refl ->
+//             motive y self
+// The motive's domain involves Eq A x z — recursive in Eq.
+//
+// Same wait-encoding pattern works. The motive is a Pi over A and Eq;
+// wait holds the recursive reference until the type is applied.
+
+let eq_type_body = {self, A, x, y, motive, base, target} -> motive y target
+let Eq_T = wait eq_type_body t
+
+let refl_s = {motive, base} -> base
+test Eq_T = wait eq_type_body t
+
+// Apply Eq_T to the components:
+// Expected: Eq_T A x y motive base self = motive y self.
+// With motive that returns its first arg, we get back y.
+test Eq_T t zero_s zero_s ({z, _} -> z) refl_s refl_s = zero_s
+test Eq_T t zero_s one_s ({z, _} -> z) refl_s refl_s = one_s
+
+// =================================================================
+// CRITICAL: do recursive types compose via wait without divergence?
+// =================================================================
+// A polymorphic identity at type Pi (T : Type 0) -> Pi T -> T:
+//   poly_id ≡ (T : Type 0) -> (x : T) -> T
+// In Scott form, applying poly_id to Bool_T and a value:
+//   poly_id Bool_T TTs = TTs
+
+let poly_id = {T, x} -> x
+test poly_id Bool_T TTs = TTs
+test poly_id Nat_T zero_s = zero_s
+test poly_id Nat_T (succ_s (succ_s zero_s)) = succ_s (succ_s zero_s)
+
+// Mixing recursive types: a function that takes a Bool and returns a Nat.
+let bool_to_nat = {b} -> b zero_s (succ_s zero_s)
+test bool_to_nat TTs = zero_s
+test bool_to_nat FFs = succ_s zero_s

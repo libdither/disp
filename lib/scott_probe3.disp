@@ -1,0 +1,38 @@
+// Probe 3: focus on Bool_template hypotheses and walker behavior
+open use "prelude.disp"
+open use "kernel.disp"
+open use "checked.disp"
+
+let Type_0 = Type 0
+
+let bool_pkg : {bool_template, bool_self_ref} = recq {
+  bool_template := {ks : {bool_template, bool_self_ref}, raw, query} ->
+    {target} ->
+      Pi (Pi ks.bool_self_ref ({_} -> Type_0)) ({m} ->
+      Pi (m TT) ({_} ->
+      Pi (m FF) ({_} ->
+        m target))) ;
+  bool_self_ref := {ks : {bool_template, bool_self_ref}, raw, query} ->
+    wait ({_} -> ks.bool_template t) t
+}
+let Bool_template = bool_pkg.bool_template
+
+let bh = Hyp (Bool_template 0) 0
+
+// Sanity
+test is_neutral bh = TT
+test is_ok (Ok bh) = TT
+test ok_value (Ok bh) = bh
+
+// Walker on identity
+let id_fn = {x} -> x
+test tree_eq id_fn I_canonical = TT
+
+let p = checked_apply_walker id_fn bh
+test is_ok p = TT
+test ok_value p = bh
+test tree_eq p (Ok bh) = TT
+
+// Walker on is_neutral bh — should Fail
+let p_isn = checked_apply_walker is_neutral bh
+test tree_eq p_isn Fail = TT

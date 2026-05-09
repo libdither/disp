@@ -1,0 +1,137 @@
+// Investigation: per-value Pi types. To get truly-dependent motive,
+// the eliminator type needs to reference the specific value being
+// eliminated. For a hypothesis h : Bool, the result of applying
+// h to (motive, ct, cf) should have type motive(h).
+//
+// Approach: parameterize Bool's type by the target value. The
+// "Bool type" is actually a family Bool : Tree -> Type. To mint a
+// hypothesis, we instantiate the family at the hypothesis identity.
+
+open use "prelude.disp"
+trust open use "kernel.disp"
+
+let Type_0 = Type 0
+
+// =================================================================
+// Bool as a family parameterized by target value
+// =================================================================
+// bool_template target = Pi (motive : Pi self_ref ({_} -> Type_0)) ({m} ->
+//                         Pi (m TT) ({_} ->
+//                         Pi (m FF) ({_} ->
+//                           m target)))
+//
+// Each "Bool" instance is a per-target Pi type. To "be of type Bool",
+// a value v inhabits bool_template v.
+
+let bool_pkg : {bool_template, self_ref} = recq {
+  bool_template := {ks : {bool_template, self_ref}, raw, query} ->
+    {target} ->
+      Pi (Pi ks.self_ref ({_} -> Type_0)) ({m} ->
+      Pi (m TT) ({_} ->
+      Pi (m FF) ({_} ->
+        m target))) ;
+  self_ref := {ks : {bool_template, self_ref}, raw, query} ->
+    // self_ref is the "the type Bool" used in motive's domain.
+    // Conceptually a wait-form referencing bool_template applied to
+    // a generic placeholder. Concrete shape doesn't matter for
+    // motive's type-checking purposes.
+    wait ({_} -> ks.bool_template t) t
+}
+
+let Bool_template = bool_pkg.bool_template
+
+// =================================================================
+// Per-value Pi: each hypothesis gets its own typed instance
+// =================================================================
+
+// Mint a hypothesis at Bool with identity h_id and per-value type:
+let mint_bool_hyp = {h_id} -> Hyp (Bool_template h_id) h_id
+
+let bh_0 = mint_bool_hyp 0
+let bh_1 = mint_bool_hyp 1
+
+// Both are neutrals
+test is_neutral bh_0 = TT
+test is_neutral bh_1 = TT
+
+// They have DIFFERENT stored types (per-value)
+test tree_eq (neutral_type bh_0) (neutral_type bh_1) = FF
+
+// The stored type for bh_0 is Bool_template 0, which IS a Pi
+test is_pi (neutral_type bh_0) = TT
+test is_pi (neutral_type bh_1) = TT
+
+// =================================================================
+// Apply the hypothesis: hyp_reduce should fire
+// =================================================================
+
+let dep_motive = {b} -> Nat  // simple uniform motive for now
+let bh_0_at_m = bh_0 dep_motive
+test is_neutral bh_0_at_m = TT
+
+// Apply more args
+let bh_0_full = bh_0 dep_motive 5 7
+test is_neutral bh_0_full = TT
+
+// What's the final stored type? It should be `dep_motive 0` =
+// dep_motive applied to h_id (the hypothesis identity).
+// dep_motive ignores its arg, returns Nat. So stored type = Nat.
+test neutral_type bh_0_full = Nat
+
+// =================================================================
+// Truly dependent motive
+// =================================================================
+// motive : (b : Bool) -> Type_0 with motive (mint_bool_hyp 5) =
+//   varies per value.
+//
+// For a closed motive that depends on its arg structurally:
+//   {b} -> b Type_0 Nat Bool
+// applied to b uses b as an eliminator over Type_0, returning Nat or Bool.
+
+// For our hypothesis bh_0, applied to dep_motive:
+let dep_motive_2 = {b} -> b Type_0 Nat Bool
+let bh_0_at_dm = bh_0 dep_motive_2
+test is_neutral bh_0_at_dm = TT
+
+// Final stored type should be `dep_motive_2 0` = 0 Type_0 Nat Bool
+// = applying 0 (which is LEAF) to args. 0 = LEAF, which when triaged
+// returns the on_leaf branch. But this is raw apply, so 0 Type_0 = ?
+// In tree calculus, LEAF x = stem(x). So 0 Type_0 = stem(Type_0).
+// Continue: stem(Type_0) Nat = fork(Type_0, Nat). And then apply Bool.
+//
+// This is gibberish — we're not in a context where 0 acts as a Bool
+// eliminator (it's a Nat literal).
+//
+// What we WANT: bh_0 to act like "an unknown Bool", and when applied
+// to dep_motive_2, the result type would be "stuck on bh_0".
+//
+// Per-value Pi construction: stored type = dep_motive_2 0
+// = (apply chain involving 0). Since 0 = LEAF, this gives some tree.
+// Whatever that tree is, the kernel stores it.
+
+let bh_0_full_dep = bh_0 dep_motive_2 5 7
+test is_neutral bh_0_full_dep = TT
+// The stored type is dep_motive_2 applied to the hypothesis's identity (0).
+// This is what the per-value Pi gives us.
+
+// =================================================================
+// CONCLUSION
+// =================================================================
+// Per-value Pi types via parameterized template work. The kernel's
+// existing hyp_reduce handles them correctly because the outer form
+// is literal Pi.
+//
+// The "target" placeholder in the Pi codomain is the hypothesis
+// identity (passed at mint time). For uniform motive (motive ignores
+// its arg), the per-value distinction doesn't matter — same result
+// regardless of identity.
+//
+// For truly dependent motive, the result type is computed by applying
+// the motive to the hypothesis identity. This may produce nonsensical
+// trees if the motive's body uses raw apply on the identity (since
+// the identity is just a tree, not a meaningful Bool value).
+//
+// HOWEVER: if the motive is itself "data-as-eliminator-aware" (e.g.,
+// uses bool_rec internally), it would defer correctly via stuck.
+// The complications are confined to motive design, not kernel design.
+test t = t

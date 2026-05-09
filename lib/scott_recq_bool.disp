@@ -1,0 +1,106 @@
+// Investigation: encode dependent-motive Bool via mutual recursion
+// (recq), keeping the OUTER form as a literal Pi so the existing
+// kernel hyp_reduce recognizes it.
+//
+// Idea: Bool's outer form is Pi (literal). The recursive self-
+// reference (motive's domain "Bool") is a wait-form that lazily
+// resolves via a recq projection. This way:
+//   - Bool's pair_fst = kernel.pi (recognized).
+//   - The Pi's metadata mentions a wait-form for self-reference.
+//   - hyp_reduce fires on Bool-typed hypotheses naturally.
+
+open use "prelude.disp"
+trust open use "kernel.disp"
+
+let Type_0 = Type 0
+
+// =================================================================
+// Attempt: mutually recursive Bool definition via recq
+// =================================================================
+// We need:
+//   Bool_outer = Pi (Pi self_ref ({_} -> Type_0)) ({m} -> ...)
+//   self_ref  = wait (lazy reference to Bool_outer) t
+
+let bool_pkg : {Bool_outer, self_ref} = recq {
+  Bool_outer := {ks : {Bool_outer, self_ref}, raw, query} ->
+    Pi (Pi ks.self_ref ({_} -> Type_0)) ({m} ->
+    Pi (m TT) ({_} ->
+    Pi (m FF) ({_} ->
+      m FF))) ;
+  self_ref := {ks : {Bool_outer, self_ref}, raw, query} ->
+    wait ({_} -> ks.Bool_outer) t
+}
+
+let Bool_dep = bool_pkg.Bool_outer
+
+// Is Bool_dep recognized as Pi?
+test is_pi Bool_dep = TT
+
+// Hypothesis at Bool_dep
+let bh = Hyp Bool_dep 0
+test is_neutral bh = TT
+
+// Apply hypothesis to a motive.
+let dummy_motive = {b} -> Nat
+let bh_at_motive = bh dummy_motive
+test is_neutral bh_at_motive = TT
+
+// What's the new stored type? Should be the Pi codomain instantiated
+// at dummy_motive: Pi (dummy_motive TT) ({_} -> Pi (dummy_motive FF) ({_} -> dummy_motive FF)).
+// dummy_motive applied to anything returns Nat. So:
+//   Pi Nat ({_} -> Pi Nat ({_} -> Nat))
+let expected_after_motive = Pi Nat ({_} -> Pi Nat ({_} -> Nat))
+test neutral_type bh_at_motive = expected_after_motive
+
+// Continue applying.
+let bh_full = bh dummy_motive 5 7
+test is_neutral bh_full = TT
+test neutral_type bh_full = Nat
+
+// =================================================================
+// CRITICAL: does the eliminator (identity-applied) work?
+// =================================================================
+
+let bool_rec_dep = {motive, ct, cf, target} -> target motive ct cf
+
+// On Hyp target:
+let stuck = bool_rec_dep dummy_motive 5 7 bh
+test is_neutral stuck = TT
+test neutral_type stuck = Nat
+
+// =================================================================
+// Try with a fully-dependent motive
+// =================================================================
+// motive : Bool -> Type 0 with motive TT = Nat, motive FF = Bool.
+// In Disp, we can write this as:
+//   {b} -> select Nat Bool b
+// This evaluates b (Bool value) and returns Nat or Bool.
+//
+// For closed b = TT (LEAF): select Nat Bool TT = Nat.
+// For closed b = FF (stem(LEAF)): select Nat Bool FF = Bool.
+// For hypothesis b: select would TRIAGE on b, which fails under
+// walker. So this motive can't be applied to a hypothesis target.
+//
+// Under data-as-eliminator, b is a function. select doesn't work.
+// We'd write motive differently:
+//   {b} -> b Type_0 Nat Bool
+// Where b is its own eliminator: b applied to (motive_type, ct, cf)
+// returns one of them.
+//
+// For closed Church-style TT = {A, ct, cf} -> ct, applied to (Type_0, Nat, Bool) = Nat.
+// For hypothesis Bool b, applying b to (Type_0, Nat, Bool) fires hyp_reduce three
+// times, returning a stuck neutral with stored type derived from b's Pi structure.
+
+// Given Bool_dep IS a Pi, this should work.
+let dep_motive = {b} -> b Type_0 Nat Bool
+
+// On closed Church-encoded values:
+let TTs = {A, ct, cf} -> ct
+let FFs = {A, ct, cf} -> cf
+
+// But wait: our Bool_dep is the DEPENDENT-motive Pi structure
+// (motive : Pi self_ref ({_} -> Type_0)), not the Church-style
+// (motive : Type_0). So TTs/FFs as Church-encoded values may not
+// inhabit Bool_dep. Let me check.
+
+test Bool_dep TTs = TT  // Does TTs typecheck against Bool_dep?
