@@ -1,13 +1,12 @@
-// Tests for the session-1 checked-apply core.
+// Tests for the parametric walker (`checked_apply_walker`).
 //
-// Covers: result encoding, must_ok_* CPS helpers, neutral_root /
+// Covers: CheckedResult encoding, must_ok_* CPS helpers, neutral_root /
 // contains_neutral / scan_no_neutral, the constructor checks at every
-// fork-producing rule, and end-to-end checked_check_walker on representative
-// inputs.
+// fork-producing rule, end-to-end checked_check_walker on representative
+// inputs, and DAE soundness properties (data-as-eliminator soundness).
 
 open use "prelude.disp"
 open use "kernel.disp"
-open use "checked.disp"
 
 // ================================================================
 // Result encoding
@@ -273,3 +272,97 @@ test chain_test (Ok FF) (Ok 5) (Ok TT) = Fail
 test chain_test (Ok TT) Fail   (Ok TT) = Fail
 test chain_test (Ok TT) (Ok 5) (Ok FF) = Fail
 test chain_test Fail    (Ok 5) (Ok TT) = Fail
+
+// ================================================================
+// Data-as-eliminator (DAE) soundness properties
+// ================================================================
+// These tests assert that the walker correctly rejects reflective
+// attacks on hypothesis values minted via the DAE encoding (per-value
+// Pi templates via recq), and that closed eliminations and hypothesis
+// applications continue to work via raw apply / hyp_reduce.
+//
+// The DAE encoding here uses a per-value Bool template:
+//   bool_template target = Pi (Pi self_ref ({_} -> Type 0)) ({m} ->
+//     Pi (m TT) ({_} -> Pi (m FF) ({_} -> m target)))
+// where self_ref is a wait-form that lazily resolves to bool_template
+// applied to a placeholder. The recq encoding ensures the outer form
+// remains a literal Pi so the kernel's existing hyp_reduce machinery
+// fires on hypothesis-typed Bool values.
+
+let Type_0 = Type 0
+
+let bool_pkg : {bool_template, bool_self_ref} = recq {
+  bool_template := {ks : {bool_template, bool_self_ref}, raw, query} ->
+    {target} ->
+      Pi (Pi ks.bool_self_ref ({_} -> Type_0)) ({m} ->
+      Pi (m TT) ({_} ->
+      Pi (m FF) ({_} ->
+        m target))) ;
+  bool_self_ref := {ks : {bool_template, bool_self_ref}, raw, query} ->
+    wait ({_} -> ks.bool_template t) t
+}
+let Bool_template = bool_pkg.bool_template
+
+let TTs = {motive, ct, cf} -> ct
+let FFs = {motive, ct, cf} -> cf
+let bool_rec_dae = {motive, ct, cf, target} -> target motive ct cf
+let mint_bool_hyp = {h_id} -> Hyp (Bool_template h_id) h_id
+
+let bh = mint_bool_hyp 0
+
+// Walker rejects reflective predicates on hypotheses:
+test tree_eq (checked_apply_walker is_neutral bh) Fail = TT
+test tree_eq (checked_apply_walker is_fork bh) Fail = TT
+test tree_eq (checked_apply_walker is_stem bh) Fail = TT
+test tree_eq (checked_apply_walker is_leaf bh) Fail = TT
+test tree_eq (checked_apply_walker pair_fst bh) Fail = TT
+test tree_eq (checked_apply_walker (tree_eq bh) TTs) Fail = TT
+
+// Walker accepts identity on a hypothesis (I-shortcut).
+let id_fn = {x} -> x
+test tree_eq (checked_apply_walker id_fn bh) (Ok bh) = TT
+
+// Hypothesis application via raw apply works (the full dispatcher
+// would route through q_hyp_reduce_fn; here we exercise raw apply
+// directly to confirm the Pi-template-based stuck propagation).
+let some_motive = {b} -> Nat
+let p_app_raw = bh some_motive
+test is_neutral p_app_raw = TT
+let p_app_full = bh some_motive 5 7
+test is_neutral p_app_full = TT
+test neutral_type p_app_full = Nat
+
+// Closed bool_rec_dae elimination via raw apply.
+let closed_motive = {b} -> Nat
+let closed_elim = bool_rec_dae closed_motive 5 7 TTs
+test closed_elim = 5
+
+// bool_rec_dae on a hypothesis target: hyp_reduce fires through the
+// Pi-template spine, producing a neutral with motive-derived type.
+let stuck_elim = bool_rec_dae closed_motive 5 7 bh
+test is_neutral stuck_elim = TT
+
+// Static scan detects literal Hyp embedded in closed bodies.
+let bad_bool_fn = {_} -> Hyp (Bool_template 0) t
+test contains_neutral bad_bool_fn = TT
+
+// Direct forged neutral is detected (the public boundary's entry scan
+// would also reject it, but the static scan catches it cheaply too).
+let forged = Hyp (Bool_template 0) t
+test contains_neutral forged = TT
+test is_neutral forged = TT
+
+// Walker rejects motives that use raw triage to introspect their target.
+let bad_motive = {b} -> select Nat Bool (is_fork b)
+test tree_eq (checked_apply_walker bad_motive bh) Fail = TT
+
+// Walker rejects functions that introspect via is_neutral on their arg.
+let introspecting_fn = {x} -> select Nat Bool (is_neutral x)
+test tree_eq (checked_apply_walker introspecting_fn bh) Fail = TT
+
+// Walker rejects DAE "constructors" that introspect their motive — even
+// when the motive is a hypothesis (during type-checking).
+let fake_TT = {motive, ct, cf} -> select ct cf (is_neutral motive)
+let motive_hyp = Hyp (Pi Bool ({_} -> Type_0)) 7
+let walker_fake_app = checked_apply_walker fake_TT motive_hyp
+test tree_eq walker_fake_app Fail = TT

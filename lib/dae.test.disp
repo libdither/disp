@@ -1,0 +1,110 @@
+// Tests for the data-as-eliminator (DAE) library types.
+//
+// Verifies:
+//   1. Each `T_template` has Pi as its outer signature (so hyp_reduce
+//      fires on T-typed hypotheses without kernel changes).
+//   2. Constructors and eliminators reduce as expected for closed
+//      values.
+//   3. Hypothesis minting via `mint_T_hyp` produces valid neutrals
+//      whose stored type is a per-value Pi.
+//   4. Eliminators applied to hypothesis targets propagate stuck via
+//      the standard hyp_reduce spine extension (no StuckElim minting
+//      needed — the result is just a neutral with the motive-derived
+//      stored type).
+
+open use "prelude.disp"
+trust open use "kernel.disp"
+open use "dae.disp"
+
+// ================================================================
+// Bool DAE
+// ================================================================
+
+// Per-value template at TT_dae and FF_dae produces literal Pi types.
+test is_pi (Bool_template TT_dae) = TT
+test is_pi (Bool_template FF_dae) = TT
+
+// Closed Scott constructors discriminate.
+test bool_rec_dae ({_} -> Nat) 1 0 TT_dae = 1
+test bool_rec_dae ({_} -> Nat) 1 0 FF_dae = 0
+
+// Identity bool function via DAE (Mendler-style on closed values).
+let dae_id = {b} -> bool_rec_dae ({_} -> Bool) TT FF b
+test dae_id TT_dae = TT
+test dae_id FF_dae = FF
+
+// Hypothesis Bool: stored type is Bool_template at the hypothesis identity.
+let bh = mint_bool_hyp 0
+test is_neutral bh = TT
+test is_pi (neutral_type bh) = TT
+
+// Distinct identities produce distinct stored types.
+let bh_1 = mint_bool_hyp 1
+test tree_eq (neutral_type bh) (neutral_type bh_1) = FF
+
+// Applying the hypothesis fires hyp_reduce; spine extends through
+// the per-value Pi chain, accumulating motive/ct/cf args.
+let const_motive = {b} -> Nat
+let bh_full = bh const_motive 5 7
+test is_neutral bh_full = TT
+test neutral_type bh_full = Nat
+
+// bool_rec_dae on hypothesis target: identity-applied, falls through
+// to raw `target motive ct cf`, fires hyp_reduce per the line above.
+let stuck = bool_rec_dae const_motive 5 7 bh
+test is_neutral stuck = TT
+test neutral_type stuck = Nat
+
+// ================================================================
+// Nat DAE
+// ================================================================
+
+test is_pi (Nat_template zero_dae) = TT
+test is_pi (Nat_template (succ_dae zero_dae)) = TT
+
+// Closed Scott Nats reduce via nat_rec_dae.
+test nat_rec_dae ({_} -> Bool) TT ({k, prev} -> prev) zero_dae = TT
+test nat_rec_dae ({_} -> Bool) TT ({k, prev} -> prev) (succ_dae zero_dae) = TT
+test nat_rec_dae ({_} -> Nat) 1 ({k, p} -> p) zero_dae = 1
+test nat_rec_dae ({_} -> Nat) 0 ({k, p} -> succ p) (succ_dae (succ_dae zero_dae)) = 2
+
+// Hypothesis Nat: stored type is Nat_template at identity.
+let nh = mint_nat_hyp 0
+test is_neutral nh = TT
+test is_pi (neutral_type nh) = TT
+
+// Applying the hypothesis through case args fires hyp_reduce; final
+// stored type is `motive nh = Nat` for a constant motive.
+let nh_full = nh const_motive 0 ({k, prev} -> prev)
+test is_neutral nh_full = TT
+test neutral_type nh_full = Nat
+
+// ================================================================
+// Eq DAE
+// ================================================================
+
+// Per-value Eq template at concrete (A, x, y, refl_dae) is Pi.
+test is_pi (Eq_template Nat 0 0 refl_dae) = TT
+
+// J on refl reduces to base case (motive is 1-arg per V2 §4.7).
+test eq_J_dae ({p} -> Nat) 5 0 0 refl_dae = 5
+test eq_J_dae ({p} -> Nat) 7 1 1 refl_dae = 7
+
+// Substitution along refl is identity.
+test eq_subst_dae ({n} -> Nat) 0 0 refl_dae 5 = 5
+
+// Symmetry / congruence on refl reduce to refl.
+test eq_sym_dae 0 0 refl_dae = refl_dae
+test eq_cong_dae succ 0 0 refl_dae = refl_dae
+
+// Hypothesis Eq: stored type is per-value template at identity.
+let eh = mint_eq_hyp Nat 0 0 0
+test is_neutral eh = TT
+test is_pi (neutral_type eh) = TT
+
+// J applied to a hypothesis proof: the hypothesis fires hyp_reduce
+// once for the motive arg, then once for the base-case arg. Final
+// stored type is `motive h_id` per the per-value Pi.
+let eh_full = eh ({p} -> Nat) 5
+test is_neutral eh_full = TT
+test neutral_type eh_full = Nat

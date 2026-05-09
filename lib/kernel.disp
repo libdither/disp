@@ -625,3 +625,106 @@ conv_structural := fix ({self, a, b} -> {
     (tree_eq a b)
     self a b
 })
+
+// ================================================================
+// Standalone parametric walker
+// ================================================================
+// `checked_apply_walker` is the parametric-mode reduction discipline
+// from TYPE_THEORY_V2.typ §6 implemented as a self-contained recursive
+// function. It mirrors the five raw apply rules with two parametric
+// restrictions: triage on a neutral fails, and stem-rule fork-formation
+// rejects neutral roots.
+//
+// The walker is exposed here for adversarial-soundness regression
+// testing. It is NOT yet wired through `q_checked_apply_fn` (which is
+// still a stub: `Ok (f x)`). Wiring requires data-as-eliminator
+// migration first — see TYPE_THEORY_V2.typ §4 — because today's
+// eliminators (`bool_rec`, `nat_rec`, `eq_J`) mint StuckElim values
+// that the walker's stem-rule constructor check correctly rejects.
+
+// Stem rule helper: construct fork(a, x), reject if neutral_root.
+let stem_step = {a, x} -> {
+  let r = t a x
+  match (neutral_root r) {
+    TT => Fail
+    FF => Ok r
+  }
+}
+
+// Triage-on-x helper used inside the triage-fork-rule
+// (f = fork(fork(tc, td), b)) after we've already excluded neutral_root x.
+let triage_x_leaf = {self, b, tc, td} -> Ok tc
+let triage_x_stem = {self, b, tc, td, c_inner} -> self td c_inner
+let triage_x_fork = {self, b, tc, td, l, r} -> {
+  let bl = self b l
+  match (is_ok bl) {
+    TT => self (ok_value bl) r
+    FF => Fail
+  }
+}
+
+// S-rule helper: f = fork(stem(c), b).
+let s_step = {self, c, b, x} -> {
+  let cx = self c x
+  match (is_ok cx) {
+    TT => {
+      let bx = self b x
+      match (is_ok bx) {
+        TT => self (ok_value cx) (ok_value bx)
+        FF => Fail
+      }
+    }
+    FF => Fail
+  }
+}
+
+// Fork rule (f = fork(a, b)): dispatch on a.
+let fork_step = {self, a, b, x} ->
+  triage
+    (Ok b)
+    ({c} -> s_step self c b x)
+    ({tc, td} ->
+      match (neutral_root x) {
+        TT => Fail
+        FF => (triage
+                (triage_x_leaf self b tc td)
+                ({c_inner} -> triage_x_stem self b tc td c_inner)
+                ({l, r} -> triage_x_fork self b tc td l r)
+                x)
+      })
+    a
+
+// checked_apply_walker: standalone walker. Exercises the constructor
+// checks at every fork-producing rule. Soundness carve-out: I-shortcut
+// (apply(I, x) = x) is recognised via tree_eq fast path so identity on
+// a hypothesis is accepted. This is the only soundness carve-out per
+// TYPE_THEORY_V2.typ §6.3.
+checked_apply_walker := fix ({self, f, x} ->
+  match (tree_eq f I_canonical) {
+    TT => Ok x
+    FF => (triage
+            (Ok (t x))
+            ({a} -> stem_step a x)
+            ({a, b} -> fork_step self a b x)
+            f)
+  })
+
+// checked_check_walker: walker entry that scans v first.
+checked_check_walker := {core, v} ->
+  match (scan_no_neutral v) {
+    TT => checked_apply_walker core v
+    FF => Fail
+  }
+
+// Aliases for adversarial-test ergonomics (session-1 names).
+cert_make_neutral := Hyp
+cert_make_hyp     := {domain, identity} -> Hyp domain identity
+cert_make_stuck   := StuckElim
+
+fresh_id := {pi_type} -> type_meta pi_type
+
+checked_h_rule := {self_type, v} ->
+  match (tree_eq self_type (neutral_type v)) {
+    TT => Ok TT
+    FF => Ok FF
+  }

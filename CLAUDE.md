@@ -6,7 +6,8 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 
 - [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — **load-bearing**. The discipline governing what's allowed in the codebase.
 - [`GOALS.md`](GOALS.md) — the north star (neural-guided synthesis, self-improving optimizer).
-- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — the semantics the object language commits to. Types as predicates, wait-based type encoding, the H-rule, type constructors, soundness invariants. Authoritative for anything touching the kernel.
+- [`TYPE_THEORY_V2.typ`](TYPE_THEORY_V2.typ) — **authoritative** type-theory spec. Data-as-eliminator architecture: inductive types are encoded as recq-based per-value Pi templates, constructors are Scott-style closures, eliminators are identity-applied to target. The kernel registers only Pi, Type, Ord, OrdLt, ord_lt/le/max as primitives. Where this document and the implementation disagree, the document is authoritative.
+- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — the prior-design spec (Bool/Nat/Eq as kernel-registered checkers, certified eliminators with StuckElim). The current `lib/kernel.disp` still implements this design; migration to V2 is in progress.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape. Authoritative for the parser.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
 - [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms: `hyp_reduce`, wait/fix/recq, deferred branching, bracket abstraction optimizations, performance notes.
@@ -23,13 +24,25 @@ Every component participating in checking, elaboration, or conversion must have 
 - `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar: unified `recBody` (file bodies and inline `{ ... }` share the same grammar), `name := expr` (exported field), `let name = expr` (private binding), `test`/`open` (side-effects), `{x : A} -> e` binders, `A -> B` arrow sugar, `{x : A}` recTypes, `.field` projection. Bracket abstraction with η-reduction + K-composition optimizations.
 - `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests.
 - `lib/prelude.disp` — fundamental combinators (TT/FF, triage, ite2/ited, pairs, and, wait/fix/recq).
-- `lib/kernel.disp` — recursive-record kernel, type-tracking neutrals, infer, conversion, primitive type constructors, eliminators, and arithmetic.
+- `lib/kernel.disp` — recursive-record kernel, type-tracking neutrals, infer, conversion, primitive type constructors, eliminators, and arithmetic. Also hosts the standalone parametric walker (`checked_apply_walker`) and the CheckedResult helpers; the walker is not yet wired through `q_checked_apply_fn`, which remains the raw-apply stub.
+- `lib/dae.disp` — V2 data-as-eliminator library types (`Bool_template`, `Nat_template`, `Eq_template`) with Scott-style constructors (`TT_dae`, `FF_dae`, `zero_dae`, `succ_dae`, `refl_dae`) and identity-applied eliminators (`bool_rec_dae`, `nat_rec_dae`, `eq_J_dae`). Additive — does not replace the kernel-registered Bool/Nat/Eq checkers yet.
 - `lib/*.test.disp` — tests per module.
 - `test/disp.test.ts` — vitest harness that globs `lib/*.test.disp` and runs each.
-- `test/parser.test.ts` — parser unit tests (74 tests).
+- `test/parser.test.ts` — parser unit tests (85 tests).
 - `test/tree.test.ts` — tree calculus runtime tests (21 tests).
 
-## Current state (as of 2026-04-30)
+## V2 migration in progress
+
+The kernel is being migrated from the prior `TYPE_THEORY.typ` design (kernel-registered Bool/Nat/Eq checkers, certified eliminators that mint `StuckElim`) to the V2 data-as-eliminator architecture in `TYPE_THEORY_V2.typ`. Status:
+
+- ✅ Walker (`checked_apply_walker`) consolidated into `kernel.disp`. Adversarial tests in `lib/walker.test.disp` validate that triage-on-neutral, reflective predicates on hypotheses, and stem-rule fork-formation with neutral roots are all rejected.
+- ✅ DAE library (`lib/dae.disp`) with `Bool_template`, `Nat_template`, `Eq_template`, Scott constructors, identity-applied eliminators, and per-value hypothesis minting. Validated by 33 tests in `lib/dae.test.disp` covering closed reductions, hypothesis application via hyp_reduce, and stuck-type tracking.
+- ⏳ Wire walker into `q_checked_apply_fn`. Blocked on eliminator migration: today's `bool_rec`/`nat_rec`/`eq_J` mint `StuckElim` values, which the walker's stem-rule constructor check correctly rejects. Switching eliminators (and constructors) to DAE form removes this rejection.
+- ⏳ Replace kernel-level Bool/Nat/Eq checkers with Pi-checking against the per-value templates in `lib/dae.disp`. Drop `q_bool_fn`, `q_nat_fn`, `q_eq_fn` from the kernel record.
+- ⏳ Add `Ord` / `OrdLt` (library DAE types) and `q_ord_lt_fn` / `q_ord_le_fn` / `q_ord_max_fn` kernel comparison primitives. Re-base universe ranks on `Ord`.
+- ⏳ Update `src/compile.ts` `makeKernelHelpers` for new metadata layouts.
+
+## Current state (as of 2026-05-09)
 
 - **Unified program/recValue grammar.** File bodies and inline `{ ... }` share the same `recBody` grammar. `name := expr` exports a field; `let name = expr` is private. `test`/`open` are side-effect statements allowed in both contexts. Expression atoms refuse to consume `IDENT :=` after a newline, preventing accidental field-as-argument parsing.
 - **Full kernel pipeline as `.disp` source.** Split into `lib/prelude.disp` (combinators) and `lib/kernel.disp` (recursive-record kernel and type surface). Files use `open use "dep.disp"` for dependencies; `open` brings names into scope but does not re-export them. Types are `wait(checker)(metadata)` — type checking is raw `apply(T, v) = TT`. Type-former tags have been removed.
