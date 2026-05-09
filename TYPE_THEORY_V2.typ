@@ -706,6 +706,62 @@ The CNF invariant (`leading_exp β ≤ α`) is a library-level
 predicate over `omega_plus α β` constructions; it's checked by
 the public `Ord` wrapper, not enforced at construction.
 
+=== Three forms of Ord values <ord-forms>
+
+Anywhere `k : Ord` appears, `k` may be in any of three forms:
+
++ *Closed CNF Scott closure*: `0_ord`, `omega`,
+  `omega_plus 1 0_ord`. A closed data-as-eliminator value (per
+  the encoding above). All arguments to `omega_plus` are
+  themselves closed Ord values. Operations evaluate concretely
+  by applying the closure to case handlers.
+
++ *Scott closure containing a hypothesis*: e.g.,
+  `succ_ord r_hyp` where `r_hyp` is a hypothesis-typed Ord.
+  Per the data-as-eliminator encoding, this expands to a
+  closure that, when applied to case handlers, eventually
+  applies the hypothesis itself. That application fires
+  `hyp_reduce`, producing a stuck result. The closure is not
+  itself a neutral (its outer signature is the Scott closure
+  shape, not `kernel.hyp_reduce`), but it propagates stuck on
+  use.
+
++ *Hypothesis Ord*: `Hyp (Ord_template h_id) h_id`, minted by
+  `cert_make_ord_hyp`. Has stored type `Ord_template h_id`
+  (a per-value Pi). The Ord predicate accepts it via the H-rule.
+
+All three forms are valid `Ord` values: `Ord k = TT` for forms 1
+and 3 (form 3 via the H-rule), or `Ord k = stuck_bool` for
+form 2 (the closure's stuck propagation reaches the predicate
+check). Comparisons (`ord_lt`, `ord_le`, `ord_max`) on a
+non-closed form propagate stuck.
+
+== Library type summary
+
+The standard library types defined via the encoding above:
+
+#figure(
+  table(
+    columns: 4,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Type*], [*Constructors*], [*Eliminator*], [*Encoding section*],
+    [`Bool`],     [`TT`, `FF`],                  [`bool_rec`], [§4.5],
+    [`Nat`],      [`zero` (= `0`), `succ`],      [`nat_rec`],  [§4.6],
+    [`Eq A x y`], [`refl`],                      [`eq_J`],     [§4.7],
+    [`Ord`],      [`0_ord`, `omega_plus`],       [`ord_rec`],  [§4.8],
+    [`OrdLt k`],  [(refinement of `Ord`)],       [(via `ord_rec`)], [§4.8],
+  ),
+  caption: [Standard library inductive types under data-as-eliminator.],
+)
+
+Standard derived helpers built on these (`add`, `mul`, `pred`,
+`is_zero` for Nat; `eq_subst`, `eq_sym`, `eq_cong` for Eq;
+`succ_ord`, `omega`, `omega_squared` for Ord) are conventional
+library code in `lib/`. They are not kernel-relevant and are
+documented in their respective module headers.
+
 = Universes and Ord
 
 == Why Ord, not Nat
@@ -743,36 +799,6 @@ identifier resolution to the canonical Ord constructors.
 constructors take only `Ord` recursively, so predicativity holds
 at `Type 0`. The CNF invariant (`leading_exp β ≤ α`) is checked
 by `Ord`'s predicate; it does not introduce a universe shift.
-
-== Three forms of Ord values <ord-forms>
-
-Anywhere `k : Ord` appears, `k` may be in any of three forms:
-
-+ *Closed CNF Scott closure*: `0_ord`, `omega`,
-  `omega_plus 1 0_ord`. A closed data-as-eliminator value (per
-  the §4 encoding). All arguments to `omega_plus` are themselves
-  closed Ord values. Operations evaluate concretely by applying
-  the closure to case handlers.
-
-+ *Scott closure containing a hypothesis*: e.g.,
-  `succ_ord r_hyp` where `r_hyp` is a hypothesis-typed Ord.
-  Per the data-as-eliminator encoding, this expands to a
-  closure that, when applied to case handlers, eventually
-  applies the hypothesis itself. That application fires
-  `hyp_reduce`, producing a stuck result. The closure is not
-  itself a neutral (its outer signature is the Scott closure
-  shape, not `kernel.hyp_reduce`), but it propagates stuck on
-  use.
-
-+ *Hypothesis Ord*: `Hyp (Ord_template h_id) h_id`, minted by
-  `cert_make_ord_hyp`. Has stored type `Ord_template h_id`
-  (a per-value Pi). The Ord predicate accepts it via the H-rule.
-
-All three forms are valid `Ord` values: `Ord k = TT` for forms 1
-and 3 (form 3 via the H-rule), or `Ord k = stuck_bool` for
-form 2 (the closure's stuck propagation reaches the predicate
-check). Comparisons (`ord_lt`, `ord_le`, `ord_max`) on a
-non-closed form propagate stuck.
 
 == Polymorphic-universe functions <poly-universe>
 
@@ -1276,48 +1302,6 @@ bound-consulting identities are enumerated in a comment block in
 `kernel.disp`. Each identity is reviewable as a structural
 pattern match in the handler, and ships with its own targeted
 soundness test.
-
-= Library types (data-as-eliminator)
-
-The §4 worked examples (Bool, Nat, Eq, Ord) define these types
-fully. This section names the user-facing surface and
-type-specific helpers.
-
-== Bool
-
-User-facing: `Bool`, `TT`, `FF`, `bool_rec`. Encoding in §4.5.
-
-== Nat
-
-User-facing: `Nat`, `zero` (also written `0`), `succ`,
-`nat_rec`. Recursive helpers built on `nat_rec` + `fix`:
-- `add`, `mul`, `pred`, `is_zero`
-- `add_zero_l`, `add_zero_r`, `add_comm` (proofs about `add`)
-
-Encoding in §4.6.
-
-== Eq
-
-User-facing: `Eq A x y`, `refl`, `eq_J`. Standard derived
-helpers:
-- `eq_subst : (A, P, x, y) → Eq A x y → P x → P y`
-- `eq_sym : (A, x, y) → Eq A x y → Eq A y x`
-- `eq_cong : (A, B, f, x, y) → Eq A x y → Eq B (f x) (f y)`
-
-Encoding in §4.7. Hash-cons-identity equality semantics drops
-out of the encoding automatically; no kernel-level Eq predicate
-or eliminator needed.
-
-== Ord, OrdLt
-
-User-facing: `Ord`, `0_ord`, `omega_plus`, `succ_ord`,
-`omega_plus_one`, `omega_squared`, ..., `ord_rec`. Encoding in
-§4.8.
-
-Bounded variant: `OrdLt k` --- ordinals strictly less than `k`.
-Library predicate: `OrdLt k v = (Ord v) ∧ (ord_lt v k)`.
-Hypotheses typed at `OrdLt k` carry `k` accessible to the
-kernel comparison handlers for bound-consulting.
 
 = Implementation invariants
 
