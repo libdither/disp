@@ -8,11 +8,12 @@ the handler list is a value users can extend. Adding a new type
 (`List`, `Vec`, `Sigma`, ...) becomes "register a handler", not "edit
 `lib/kernel.disp`".
 
-This plan presupposes that
-[`SOUNDNESS_FIX_PLAN.md`](SOUNDNESS_FIX_PLAN.md) has landed and that
-the dispatch-table-as-security-perimeter contract is in place. The
-extensibility refactor is about lifting that contract from a fixed
-list to a parameterized one without weakening it.
+This plan presupposes that the closed-kernel design specified in
+[`TYPE_THEORY.typ`](TYPE_THEORY.typ) has landed (parametric checked
+evaluation, dispatcher-as-security-perimeter, OrdLt-based bounded
+universe polymorphism, certified eliminators). The extensibility
+refactor lifts that contract from a fixed list to a parameterized
+one without weakening it.
 
 ## Why parametric
 
