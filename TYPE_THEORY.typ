@@ -167,7 +167,7 @@ should not be conflated.
 A *soundness carve-out* is a parametric-mode rule that exists
 specifically to make the type system *expressible*. Removing it
 would break legitimate programs. The only soundness carve-out
-currently is the *I-shortcut*: $apply(I, x) -> x$, special-cased
+currently is the *I-shortcut*: $"apply"(I, x) -> x$, special-cased
 because $I = "fork(fork(LEAF, LEAF), LEAF)"$ is structurally a
 triage shape and a strict triage-on-neutral rule would reject
 identity on a hypothesis. Polymorphic identity is a legitimate
@@ -312,7 +312,7 @@ The `tree` payload of `Ok` may itself be:
 - A *stuck-bool* (`cert_make_stuck Bool stuck_meta`) --- the
   predicate's outcome is deferred because some operation involved
   a hypothesis. Used for polymorphic universe ranks; see
-  @universes.
+  @poly-universe.
 - An arbitrary tree value (e.g., a new neutral from
   `q_hyp_reduce_fn`).
 
@@ -362,7 +362,7 @@ capture).
 | Walker default | `CheckedResult` | (recursive call) |
 
 Every type-checker handler returns CheckedResult internally so
-that stuck-bools and Fail propagate uniformly through must_ok_*
+that stuck-bools and Fail propagate uniformly through `must_ok_*`
 chains. The bare-returning handlers are exactly two:
 `q_guard_fn` (public boundary) and `q_hyp_reduce_fn` (wrapped by
 the dispatcher into `Ok new_neutral`).
@@ -903,9 +903,10 @@ Ord values are CNF trees. The checker validates:
 
 *Public constructor*: `Ord = guard core_Ord`. No metadata.
 
-*Three forms of Ord values* <ord-forms>. Anywhere `k : Ord`
-appears (e.g., `Type k`, `succ_ord k`, an `ord_lt` argument),
-`k` may be in any of three forms:
+=== Three forms of Ord values <ord-forms>
+
+Anywhere `k : Ord` appears (e.g., `Type k`, `succ_ord k`, an
+`ord_lt` argument), `k` may be in any of three forms:
 
 + *Closed CNF*: `0_ord`, `omega`, `omega_plus 1 0_ord`. A closed
   tree with no hypothesis anywhere. Operations on closed Ords
@@ -1582,7 +1583,7 @@ For now: closed-instantiation tests are sufficient.
 
 The `match` desugarer captures union-of-arms free variables and
 re-captures at every nesting level. Deeply nested handlers
-(e.g., the eliminator handlers' must_ok_* CPS chains) compile
+(e.g., the eliminator handlers' `must_ok_*` CPS chains) compile
 to N closures of size O(N × |fvs|), potentially producing
 surprisingly large compiled trees.
 
