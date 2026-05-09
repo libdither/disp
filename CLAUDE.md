@@ -38,12 +38,19 @@ The kernel is being migrated from the prior `TYPE_THEORY.typ` design (kernel-reg
 - ✅ Walker (`checked_apply_walker`) consolidated into `kernel.disp`. Adversarial tests in `lib/walker.test.disp` validate that triage-on-neutral, reflective predicates on hypotheses, and stem-rule fork-formation with neutral roots are all rejected.
 - ✅ DAE library (`lib/dae.disp`) with `Bool_template`, `Nat_template`, `Eq_template`, Scott constructors, identity-applied eliminators, and per-value hypothesis minting. Validated by 33 tests in `lib/dae.test.disp` covering closed reductions, hypothesis application via hyp_reduce, and stuck-type tracking.
 - ✅ Eliminator handlers (`q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`) added to the kernel record. Each is arity-tracked: meta = `(remaining-count, accumulated-args)`; partial applications return a wait-form with the same `kernel.X_rec` signature so the dispatcher routes every step through the handler. The eliminator body runs in raw mode, so its is-neutral / StuckElim minting is safe.
-- ✅ `bool_rec` and `eq_J` switched to wait-form (`wait kernel_ref.X_rec init_meta`). Routed through their kernel handlers; old StuckElim-minting bodies live inside the handlers.
-- ⏳ `nat_rec` is held back on the old fix-based definition. Compile-time partial evaluation enters infinite recursion on the `self meta (pair_snd target)` succ-branch even for closed targets where the outer cond would short-circuit at runtime. Likely fix: route succ recursion through the dispatcher (`ks.nat_rec`/`raw.nat_rec`) instead of fix-self, or add a runtime fast path for fix-recursion.
-- ⏳ Wire the walker into `q_checked_apply_fn` (replace the `Ok (f x)` stub). Blocked on `nat_rec`'s migration to wait-form: today's old-style `nat_rec` mints StuckElim from inside its body, which the walker's stem-rule constructor check correctly rejects when called inside Pi-checked code (`pred : Nat -> Nat`, `is_zero`, etc. in `lib/nat.disp`). Once `nat_rec` is wait-form-routed, the walker can be wired without breakage.
+- ✅ `bool_rec`, `nat_rec`, and `eq_J` all switched to wait-form (`wait kernel_ref.X_rec init_meta`). Routed through their kernel handlers; StuckElim-minting bodies live inside the handlers and run in raw mode. nat_rec's recursive succ-branch uses `match` (not `select_lazy`) — see "parser/compiler workarounds" below.
+- ✅ Walker dispatcher fully implemented and validated to compile (see commented reference in `lib/kernel.disp`). Currently disabled because the in-language walker imposes ~400× runtime overhead. Wiring becomes practical once a no-neutral fast-path is added (one entry-scan, then bypass walker for closed sub-trees).
+- ⏳ Add a no-neutral fast-path so the walker can be wired without runtime regression.
 - ⏳ Replace kernel-level Bool/Nat/Eq checkers with Pi-checking against the per-value templates in `lib/dae.disp`. Drop `q_bool_fn`, `q_nat_fn`, `q_eq_fn` from the kernel record.
 - ⏳ Add `Ord` / `OrdLt` (library DAE types) and `q_ord_lt_fn` / `q_ord_le_fn` / `q_ord_max_fn` kernel comparison primitives. Re-base universe ranks on `Ord`.
 - ⏳ Update `src/compile.ts` `makeKernelHelpers` for new metadata layouts.
+
+## Parser / compiler workarounds (V2 migration)
+
+Two issues surfaced during walker wiring that affect any kernel-level code involving recursion or multi-line conditional dispatch:
+
+- **Match arm bodies are single-line.** A multi-line match arm body like `FF => triage \n (arg1) \n (arg2)` only parses `triage` because the arm body uses `lineExpr`. Wrap multi-line content in parens to make it one atom: `FF => (triage \n (arg1) \n (arg2))`. Same workaround applies to multi-line let bodies.
+- **`select_lazy` + self-recursion blows the compile-time budget.** A thunk `{_} -> self meta (pair_snd x)` compiles to `K body`. After outer bracket abstraction, `cirToTree`'s reduction of the closed combinator eagerly evaluates internal apps via `applyTree` (10M-step budget). For self-referential expressions, this fires fix-unfolding at compile time even though runtime semantics would short-circuit via `select_lazy`'s lazy thunk dispatch. **Workaround**: use `match` instead of `select_lazy` for bodies containing recursive calls. `match` desugars to `select branchTT branchFF cond fvs...` where each branch is wrapped in a closure over its free vars, side-stepping the eager K-body evaluation.
 
 ## Current state (as of 2026-05-09)
 
