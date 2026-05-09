@@ -357,20 +357,31 @@ capture).
 |---|---|---|
 | `q_guard_fn` (public boundary) | bare `TT`/`FF` | `Ok (f x)` |
 | All type-checker handlers (`q_pi_fn`, `q_nat_fn`, `q_bool_fn`, `q_eq_fn`, `q_core_type_fn`, `q_guarded_type_fn`, `q_ord_fn`) | `CheckedResult` | `f x` (no wrap) |
-| `q_hyp_reduce_fn` | bare new neutral | `Ok (f x)` |
+| `q_hyp_reduce_fn` | `CheckedResult` (`Ok new_neutral` if stored type is Pi; `Fail` otherwise) | `f x` (no wrap) |
 | Eliminator handlers (`q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`, `q_ord_rec_fn`, `q_wait_rec_fn`) | `CheckedResult` | `f x` (no wrap) |
 | Walker default | `CheckedResult` | (recursive call) |
 
-Every type-checker handler returns CheckedResult internally so
-that stuck-bools and Fail propagate uniformly through `must_ok_*`
-chains. The bare-returning handlers are exactly two:
-`q_guard_fn` (public boundary) and `q_hyp_reduce_fn` (wrapped by
-the dispatcher into `Ok new_neutral`).
+Every handler returns `CheckedResult` so that stuck-bools, `Fail`,
+and `Ok` propagate uniformly through `must_ok_*` chains. The only
+exception is `q_guard_fn`, which terminates the public boundary
+and produces bare `TT`/`FF` so source-level tests like `Nat 5 = TT`
+work as raw equality.
+
+`q_hyp_reduce_fn` (the runtime that fires when neutrals are
+applied) inspects the neutral's stored type. If that type has
+the Pi signature, it computes `result_type = codFn(arg)`, extends
+the neutral's spine with `arg`, and returns `Ok new_neutral`. If
+the stored type is anything else, applying the neutral makes no
+semantic sense (you can't apply a `Nat`-typed value to anything),
+so the handler returns `Fail` directly. There is no
+"`InvalidType`" sentinel: a deferred-failure stored in metadata
+adds a sentinel without buying anything --- the failure surfaces
+sooner via `Fail`, with localised debugging.
 
 Mixing this convention up is an unsoundness-class bug: wrapping a
-handler that already returns CheckedResult double-wraps to
+handler that already returns `CheckedResult` double-wraps to
 `Ok (Ok TT)`, and downstream `must_ok_tt` sees `is_ok = TT` and
-`ok_value = Ok TT ≠ TT` --- it Fails when it shouldn't. The
+`ok_value = Ok TT ≠ TT` --- it `Fail`s when it shouldn't. The
 dispatch table comment in `kernel.disp` is the canonical place to
 document each handler's convention.
 
@@ -577,39 +588,78 @@ they're semantically distinct.
   stored type, recognises an `OrdLt k`-shape stored type, and
   uses the bound to derive concrete answers.
 
-  The kernel ships with bound-consulting identities for canonical
-  limit ordinals ($omega$, $omega + 1$, $omega dot n$, $omega^2$,
-  $omega^omega$, etc., up to $epsilon.alt_0$). Adding more
-  identities is mechanical (one new structural rule per limit
-  ordinal). Identities for non-canonical bounds (e.g., user-
-  defined ordinal expressions) fall through to stuck.
+  Each bound-consulting identity is part of the trusted base.
+  New identities are added one at a time, each as its own kernel-
+  design event with its own targeted soundness test --- not
+  bundled with feature work. The set of supported identities must
+  be enumerated in one auditable location (a comment block in
+  `kernel.disp`) so users can answer "what bound-consulting do I
+  get with `OrdLt k`?" without reading handler source.
+
+  *Recognition fragility.* Identities recognise canonical limit
+  ordinals via `tree_eq` against their canonical CNF tree (e.g.,
+  `omega_plus 1 0_ord` for $omega$). Surface-syntax shortcuts or
+  derived expressions that should equal the canonical form must
+  hash-cons-equal exactly; otherwise they fall through to stuck
+  silently. If the parser ever gains an `omega` keyword or a
+  canonicalisation step, the identity table must be re-checked
+  against the new canonical form.
 ]
 
 == Subject reduction <subject-reduction>
 
-Disp's universe polymorphism uses unbounded `r : Ord` with
-stuck-comparison semantics. Subject reduction follows because:
+The conventional MLTT subject reduction statement
+("if $Gamma tack M : T$ and $M --> M'$ then $Gamma tack M' : T$")
+presupposes a judgment with explicit contexts and an open-term
+reduction relation. Disp has neither at the language level.
+Type-checking is `apply(T, M)` reducing to `TT`; hypotheses exist
+only inside the kernel (minted by `cert_make_hyp` during
+under-binder analysis), not as syntactic free variables that the
+programmer manipulates. The right Disp form of subject reduction is:
 
-+ Levels are ordinary terms in `Ord`, evaluated under the same
-  rules as any other value.
-+ Stuck `Ord` values (form 2 or 3 of @ord-forms) propagate
-  through reductions and comparisons consistently with closed
-  values --- they are referentially transparent.
-+ Universe checks `Type k` are `apply` operations, not
-  side-conditions; substitution cannot turn a "valid" check
-  into an "invalid" one because there are no rules gated on
-  side-conditions.
+#note[
+  *Theorem (Subject reduction, Disp form).* For closed `M` admitted
+  by the public boundary, if `apply(T, M) -->* TT` under raw apply,
+  then for any `M -->* M'` under raw apply, `apply(T, M') -->* TT`.
+]
 
-Compare to BCDE (arXiv 2212.03284), whose SR breaks at
-*constraint-indexed products* `[α < β] N type` --- formation
-gated on `α < β` being loop-free, which substitution can violate.
-Disp has no such construct. Compare to TTBFL (arXiv 2502.20485),
-which fixes SR by baking bounds into level types
-(`r : Ord< k`); their `Trans` and `Cumul` rules are
-non--syntax-directed, conflicting with Disp's
-"type-checking is one apply" invariant. Disp avoids both
-problems by accepting stuck propagation rather than chasing
-closed-form completeness (per @soundness-not-completeness).
+*Proof.* Tree calculus is confluent under raw apply. `apply(T, M)`
+and `apply(T, M')` reach the same normal form; by hypothesis it is
+`TT`. ∎
+
+The walker does not enter this argument. The walker is a *static
+admissibility filter on `M`*: it decides whether `M` is admitted at
+the public boundary. Walker reductions are a subset of raw
+reductions (the walker refuses some, changes none), so any walker-
+reduction sequence is also a raw-reduction sequence. Once `M` is
+admitted, all subsequent reductions are governed by raw apply,
+where SR is a confluence corollary, not a separate theorem.
+
+Disp avoids the elaborate SR machinery of comparable systems
+because it has no side-conditions to maintain across substitution.
+BCDE (arXiv 2212.03284) loses SR at *constraint-indexed products*
+`[α < β] N type` --- formation gated on `α < β` being loop-free,
+which substitution can violate. TTBFL (arXiv 2502.20485) recovers
+SR by baking bounds into level types (`r : Ord< k`) and adding
+non--syntax-directed `Trans`/`Cumul` rules. Disp has neither
+construct: typing is `apply(T, M)` and there are no rules gated on
+predicates over the typing context.
+
+#note[
+  *Why "under-binder SR" is not a meaningful question in Disp.*
+  Hypotheses are kernel-internal artifacts produced during
+  predicate evaluation, not syntactic objects in the surface
+  language. There is no programmer-visible judgment of the form
+  "$Gamma tack M : T$" with $Gamma$ ranging over hypothesis sets;
+  there is only `apply(T, M)` on closed `M`. The conventional
+  open-term SR question therefore does not apply.
+
+  This is a structural simplification, not a limitation: anything
+  that would be expressed via open-term SR in MLTT is expressed in
+  Disp by checking closed instantiations. Polymorphic library code
+  (with stuck `pi_rank`) is testable at concrete instantiations,
+  per @soundness-not-completeness.
+]
 
 #note[
   *No data-driven level computation.* Disp does not provide
@@ -1164,7 +1214,23 @@ hypotheses. On hypothesis target, mints
 == wait_rec
 
 `wait_rec` is the registry-fold reflection eliminator: case-split
-on a value's type-former signature.
+on a value's type-former signature. It is the *only* way to do
+parametricity-respecting reflection from inside checked code:
+
+- Inspecting a type's signature naively (`tree_eq (pair_fst T)
+  sig`) raw-triages on `T`. Under the walker, that fails when `T`
+  is a hypothesis (a polymorphic type variable) --- correct
+  parametric behaviour, but it leaves no way to inspect *closed*
+  type-formers from checked code without losing the polymorphic
+  case.
+- `wait_rec` runs in raw mode (it is a registered handler), so it
+  has the privilege to detect "is this target a hypothesis" and
+  stuck-defer via `cert_make_stuck` when it is. For closed targets
+  it dispatches structurally on the type-former signature.
+- It is also the only primitive with the privilege to mint a
+  fresh hypothesis (`cert_make_hyp dom meta`) and apply the user's
+  codFn at it. This is what `pi_rank`-style structural recursion
+  over Pi types needs --- ordinary user code cannot do it.
 
 ```disp
 wait_rec : (motive : Type 0 → Type rank) →
@@ -1179,11 +1245,18 @@ wait_rec : (motive : Type 0 → Type rank) →
            (on_ord : motive Ord) →
            (on_core_univ : (k : Ord) → motive (wait ks.core_type k)) →
            (on_guarded_univ : (k : Ord) → motive (wait ks.guarded_type k)) →
-           (on_guard : (core : Type 0) → motive (guard core)) →
            (on_default : (T : Type 0) → motive T) →
            (target : Type 0) →
            motive target
 ```
+
+*Auto-unguarding.* The handler's first step is `unguard_or_self
+target`. All public types are guarded (`Nat = guard core_Nat`,
+etc.); requiring every caller to unguard manually would be tedious
+and error-prone. The handler unguards once internally and then
+dispatches on the inner core's signature. There is no `on_guard`
+branch --- guard is structural wrapping, not a type-former in its
+own right.
 
 The `on_pi` branch exposes both `codFn` (for direct application
 to user-supplied values) and `cod_at_canonical_hyp` (for
@@ -1194,16 +1267,83 @@ invocation, regardless of whether the user touches it.
 
 On hypothesis target, mints `cert_make_stuck (motive target) target`.
 
+=== Two reflection APIs
+
+Reflection on type values comes in two flavours, with different
+parametricity properties:
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*API*], [*Behaviour on hypothesis target*], [*Use case*],
+    [`has_sig sig v`], [Fail under walker (raw triage on neutral)], [Kernel internals, elaborator (host code), closed-type recognition where parametric inspection is not required],
+    [`wait_rec` and helpers built on it], [`Ok` stuck-bool / stuck-result via `cert_make_stuck`], [User-facing reflection that should compose under stuck propagation; structural recursion that needs codomain access (`pi_rank`)],
+  ),
+  caption: [Two reflection APIs.],
+)
+
+For closed targets the two APIs agree. They diverge on
+hypothesis targets: `has_sig` cannot give a useful answer (and
+walker correctly refuses to fabricate one), while `wait_rec`
+defers via stuck-bool. Stuck propagation lets a wait_rec-based
+`is_pi T` appear inside a larger expression that mostly
+type-checks, with the "we don't know" pushed to the public
+boundary.
+
 User-facing reflection helpers (`pi_rank`, `pi_dom`, `pi_cod_fn`,
 `is_pi`, `is_universe`, `is_eq`, `hasguard`, `unguard_or_self`,
 `unguard_checked`, `universe_rank`) are tree programs defined on
 top of `wait_rec`. They live in `kernel.disp` for convenience but
-are not kernel record entries.
+are not kernel record entries. Kernel-internal code (handler
+bodies) and the host elaborator may use `has_sig` directly when
+they know inputs are closed and don't need stuck-propagation
+ergonomics.
 
 = Implementation invariants
 
 These are invariants the implementation must respect. Violating
 any of them is a soundness-class bug.
+
+== Handlers must dispatch `is_neutral` first <handler-is-neutral-first>
+
+Type-checker handlers (`q_pi_fn`, `q_nat_fn`, `q_bool_fn`,
+`q_eq_fn`, `q_ord_fn`, `q_core_type_fn`, `q_guarded_type_fn`)
+run in raw mode after the dispatcher routes to them. Raw mode
+permits raw triage on the candidate value, which is necessary
+to inspect concrete tree shapes (e.g., is this Nat tree `LEAF`
+or `fork(LEAF, _)`?). But raw triage on a *neutral* interprets
+the neutral's wait-encoded structure as data --- a reflective
+attack channel.
+
+#note[
+  *Invariant (Handler dispatch).* For every type-checker handler
+  `q_X_fn`: the first operation in the handler body MUST be
+  `is_neutral v`. If `v` is neutral, dispatch via the H-rule
+  (`q_h_rule_fn`). Raw triage on `v`'s structure is permitted
+  *only* in the non-neutral branch.
+]
+
+Skipping this dispatch in any single handler admits raw triage
+on hypotheses, which is unsound at the level of the soundness
+theorem in @soundness-theorem. Handler bodies should follow the
+template:
+
+```disp
+q_X_fn = {ks, raw, query} -> {self, meta, v} ->
+  match (q_is_neutral raw v) {
+    TT => q_h_rule_fn ks raw query self meta v
+    FF => /* concrete-shape body using raw triage on v */
+  }
+```
+
+Add a comment template at every handler site referencing this
+invariant. The shared `q_h_rule_fn` reconstructs the current
+checker's type via `wait (ks query) meta` and compares to
+`neutral_type v` --- this is the H-rule's hash-cons-identity
+admission rule.
 
 == Raw vs `ks.field` for signatures
 
@@ -1451,22 +1591,32 @@ identity of `x` and `y`. For `Eq (Type k) X Y`, this is
 *structural type equality* --- two distinct trees are
 propositionally distinct even when mathematically equivalent.
 
-A future HoTT evolution would:
-- Inhabit `Eq (Type k) X Y` with *equivalences* (univalence).
-- Add path constructors to inductive types (HITs), allowing
-  e.g. ordinal bisimilarity to be propositionally provable.
-- Generalize `eq_J` to handle path-constructor cases.
+This is sufficient for current goals (proof-of-equality on
+concrete terms, structural reasoning at the type level). It is
+*not* a stepping stone to HoTT, and the spec should not pretend
+otherwise. Migration to HoTT would require:
 
-The current `eq_J` signature (with explicit `A_rank`) is already
-forward-compatible: HoTT extensions would change the
-*eliminator's behavior* at type-valued targets, not the
-signature.
+- A new `Eq` *checker* that recognizes equivalence-shaped proofs
+  (univalence) and path-constructor inhabitants (HITs), not just
+  `refl = LEAF`. The current `q_eq_fn`'s "`tree_eq x y = TT`"
+  test is anti-univalence: it equates exactly the structurally-
+  identical, which is precisely the relation HoTT refines.
+- Abandoning hash-cons identity as the basis for definitional
+  equality on type-valued terms. HoTT wants higher equalities to
+  live as data; collapsing them to hash-cons identity erases
+  exactly the structure HoTT cares about.
+- Generalising `eq_J` to dispatch on the proof's structure, not
+  just its `refl` case.
 
-The kernel infrastructure that supports HoTT later: nothing in
-the current design precludes adding path constructors to
-inductive types. The wait-encoded checker for `Eq` would gain
-additional cases for non-refl inhabitants, dispatched on the
-proof's tree shape. Migration would be additive.
+The current `eq_J` *signature* (with explicit `A_rank`) is
+sufficiently general to admit a HoTT-style eliminator without
+changing the type, but the underlying machinery (checker, refl
+representation, definitional equality) would be a substantial
+rewrite. Migration is not additive.
+
+If HoTT becomes a goal, the right move is to plan it as a
+separate kernel design --- not to hold the current kernel
+hostage to forward-compatibility constraints that buy little.
 
 == Universe inference at the elaborator
 

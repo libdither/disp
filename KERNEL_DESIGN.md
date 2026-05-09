@@ -164,24 +164,26 @@ The payload is not needed for type extraction, but it is needed for
 identity: `f 0` and `f 1` must remain different neutrals even when both
 have type `Nat`.
 
-`InvalidType` is the sentinel stored when neutral application cannot
-compute a valid result type because the neutral's current type is not
-Pi. It is currently represented by `FF`, but code should refer to the
-named sentinel.
-
 Applying a neutral triggers `hyp_reduce(meta)(arg)`. It checks whether
-the neutral's current type has the Pi checker signature:
+the neutral's current type has the Pi checker signature, and returns a
+`CheckedResult`:
 
 ```disp
 if has_sig ks.pi (neutral_meta_type meta) then
   result_type = codFn(arg)
-  wait self (extend_neutral_meta meta result_type arg)
+  Ok (wait self (extend_neutral_meta meta result_type arg))
 else
-  wait self (extend_neutral_meta meta InvalidType arg)
+  Fail
 ```
 
-This is the type-tracking neutral behavior: neutral application
-accumulates the argument and updates the stored result type.
+If the stored type is non-Pi, applying the neutral has no semantic
+meaning (you can't apply a Nat-typed value to anything), so the handler
+returns `Fail` directly. There is no `InvalidType` sentinel: a deferred
+failure stored in metadata buys nothing — the failure surfaces sooner
+via `Fail`, with localised debugging.
+
+The dispatcher invokes `q_hyp_reduce_fn` without wrapping (it returns
+`CheckedResult` directly, like the type-checker handlers).
 
 ## H-Rule Implementation
 
