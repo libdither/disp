@@ -409,50 +409,11 @@ let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bo
 // domain is a legitimate elaboration target.)
 I_canonical := {z} -> z
 
-// --- Checked-apply dispatcher (the security perimeter) ---
-//
-// Routes ks.checked_apply f x by f's checker signature, ALWAYS wrapping
-// the routed result in Ok. Type checker handlers return BARE TT/FF;
-// q_hyp_reduce_fn returns a BARE new neutral. The Ok wrap gives callers
-// (other handlers) a uniform CheckedResult shape they can unwrap with
-// must_ok_or_ff.
-//
-// EVERY ENTRY IS LOAD-BEARING (see SOUNDNESS_FIX_PLAN.md §"Dispatch Table
-// as Security Perimeter"). Adding a handler here without satisfying its
-// validation contract silently breaks soundness; review all changes.
-// Session 3 partial: dispatcher is a stub. Entry scan in q_guard_fn
-// closes attacks 1 (forged closed neutral) and 2 (K-hidden literal
-// forgery). Attacks 3-5 (reflective is_neutral / is_fork / tree_eq)
-// remain open: q_pi_fn's `ks.checked_apply v hyp` becomes raw apply
-// under this stub, so v can observe the hypothesis structure.
-//
-// 2026-05-05 re-investigation: the prior "compile-time blowup" claim
-// was mis-diagnosed. With walker helpers extracted to top-level the
-// dispatcher compiles fine and correctly closes 3-5, but two real
-// problems surface:
-//
-//   1. kernel.test.disp 137-142 break: tests using nat_rec/bool_rec
-//      inside Pi-checked bodies fail because user-level eliminator
-//      mints (StuckElim ...) are rejected by the walker's stem-rule
-//      neutral-root constructor check. This is exactly the case
-//      session 4's certified eliminators are designed to handle —
-//      eliminator-rooted applies need to route through raw apply via
-//      the dispatch table, bypassing the constructor check.
-//
-//   2. ~400× runtime slowdown on the full suite (~1.7s → ~11min)
-//      and elab.test.disp drives that. A no-neutral fast-path for
-//      the walker hot loop (one scan, then runtime fast apply) is
-//      the obvious target.
-//
-// Path forward: land session 4 first (closes the eliminator
-// regression) before re-enabling the full walker. See
-// "Session 3 — empirical investigation" in SOUNDNESS_FIX_PLAN.md.
+// --- Checked-apply dispatcher (security perimeter) ---
+// Currently a stub: routes everything via raw apply. Wiring the walker
+// (parametric mode reduction) is the next step but requires nat_rec to
+// be migrated to wait-form first.
 let q_checked_apply_fn = {ks, raw, query} -> {f, x} -> Ok (f x)
-
-// Stub above. Full walker design: see SOUNDNESS_FIX_PLAN.md §"Session
-// 3.5". Empirical findings (memo bump 500K → 5M, ~109× speedup; full
-// walker hits Group 3 polymorphic-Pi failures that need wait_rec to
-// close) are documented in §"Session 3 — empirical investigation".
 
 // ================================================================
 // Kernel assembly
