@@ -375,15 +375,16 @@ recognises it without modification.
 
 For an inductive type T with constructors $c_1, ..., c_n$, the
 type, constructors, and eliminator are encoded by a single
-`recq` package:
+`recq` package. The per-value template `T_template target` is the
+specific eliminator-Pi at a given target value:
 
 ```disp
 let T_pkg : {T_template, T_self_ref} = recq {
   T_template := {ks, raw, query} -> {target} ->
     Pi (Pi ks.T_self_ref ({_} -> Type k)) ({m} ->
-    Pi ((m c_1) | uncurried over c_1's args) ({_} ->
+    Pi (case_type_for c_1) ({_} ->
     ...
-    Pi ((m c_n) | uncurried over c_n's args) ({_} ->
+    Pi (case_type_for c_n) ({_} ->
       m target))) ;
   T_self_ref := {ks, raw, query} ->
     wait ({_} -> ks.T_template t) t
@@ -391,19 +392,89 @@ let T_pkg : {T_template, T_self_ref} = recq {
 let T_template = T_pkg.T_template
 ```
 
-`T_template target` is the *per-value* eliminator type at a
-specific target value: a literal Pi expression whose outer form
-is `kernel.pi`. The recursive self-reference inside the motive's
-domain (`ks.T_self_ref`) is a `wait`-form that lazily resolves
-to `ks.T_template t` --- breaking the recursion through `recq`
-without affecting the outer Pi signature.
+Each `case_type_for c_i` depends on c_i's arity and whether its
+arguments are inductive (recursive in T) or non-inductive. The
+shape rules are below.
 
-Constructors are Scott-style closures:
+=== Case-type rules per constructor arity
+
+For a constructor `c_i` taking arguments $a_1 : A_1, ..., a_k :
+A_k$ (each $A_j$ either some external type or `T_self_ref`), the
+case-type is built by Pi-quantifying over each argument and
+returning `m (c_i a_1 ... a_k)`. Inductive arguments
+(those of type `T_self_ref`) get an additional Pi for the
+inductive hypothesis `m a_j`.
+
+*0-argument constructor* (e.g., `TT`, `FF`, `0_ord`, `refl`,
+`zero`):
+```
+case_type_for TT  =  m TT
+case_type_for FF  =  m FF
+case_type_for refl  =  m refl
+```
+A single Pi codomain term, no additional Pi-quantification.
+
+*1-argument non-inductive constructor* (a hypothetical
+`wrap_nat : Nat -> Wrapper` with `Wrapper` not recursive in
+itself via this arg):
+```
+case_type_for (wrap_nat n)  =  Pi Nat ({n} -> m (wrap_nat n))
+```
+
+*1-argument inductive constructor* (e.g., `succ` for Nat: takes
+a Nat, recurses):
+```
+case_type_for (succ n)  =  Pi T_self_ref ({n} ->
+                           Pi (m n) ({_} ->
+                             m (succ n)))
+```
+Note the *inductive hypothesis* `m n`: when defining the case
+handler, the user receives both the predecessor `n` and the
+inductive sub-result `m n` (the result of recursively eliminating
+on `n`).
+
+*2-argument inductive constructor* (e.g., `omega_plus` for Ord:
+takes two Ord values, both recursive):
+```
+case_type_for (omega_plus α β)  =
+  Pi T_self_ref ({α} ->
+  Pi T_self_ref ({β} ->
+  Pi (m α) ({_} ->
+  Pi (m β) ({_} ->
+    m (omega_plus α β)))))
+```
+One Pi per argument, then one Pi per inductive hypothesis, then
+the result.
+
+*General rule.* For `c_i a_1 ... a_k`:
++ Pi-quantify over each argument's domain.
++ For each argument that's of type `T_self_ref`, Pi-quantify
+  over its inductive hypothesis (`m a_j`).
++ Codomain is `m (c_i a_1 ... a_k)`.
+
+Constructors are Scott-style closures that select their case and
+apply it to the constructor's args (and inductive sub-results
+where applicable):
 
 ```disp
-c_i a_1 ... a_k := {motive, case_1, ..., case_n} ->
-  case_i a_1 ... a_k
+// 0-arg
+TT := {motive, case_t, case_f} -> case_t
+
+// 1-arg inductive (Nat's succ)
+succ := {n} -> {motive, case_z, case_s} ->
+  case_s n (n motive case_z case_s)
+
+// 2-arg inductive (Ord's omega_plus)
+omega_plus := {α, β} -> {motive, case_z, case_op} ->
+  case_op α β
+          (α motive case_z case_op)
+          (β motive case_z case_op)
 ```
+
+Note how each inductive sub-result is computed by recursively
+applying the value to its motive and case handlers --- this is
+the Mendler-style flavour of Scott encoding, where the
+recursive sub-result is provided alongside the predecessor.
 
 The eliminator is identity-applied to the target:
 
@@ -528,6 +599,48 @@ the encoding doesn't introduce new attack vectors:
   routes through `checked_apply_walker` (the actual walker) and
   asserts rejection. The DAE architecture preserves the soundness
   guarantees of the previous design.
+]
+
+== Universe placement
+
+Inductive types under data-as-eliminator live *one universe
+above* their motive's return type. Concretely:
+
+```
+Bool_template target ≡ Pi (Pi self_ref ({_} -> Type 0)) ({m} -> ...)
+```
+
+The motive's domain `Pi self_ref ({_} -> Type 0)` is a Pi
+returning `Type 0`, so by predicativity it lives in `Type 1`.
+The outer Pi over the motive then lives in `Type 1` too. So
+`Bool_template target : Type 1` --- not `Type 0`.
+
+The same holds for all other DAE-encoded types:
+`Nat_template target : Type 1`, `Eq_template ... target : Type 1`,
+`Ord_template target : Type 1`. Function types over inductives
+inherit the bump: `Pi Bool ({_} -> Nat) : Type 1` rather than
+`Type 0`.
+
+#note[
+  *This is a real ergonomic difference from MLTT/Coq/Agda,*
+  where Bool, Nat, etc. are primitive inductives in `Set` /
+  `Type 0`. Programmers writing Disp need to remember that
+  inductives sit at `Type 1` minimum. Universe-polymorphic
+  library code that previously could quantify
+  `{T : Type 0}` now needs `{T : Type 1}` to range over
+  inductives.
+
+  Why the bump is intrinsic: data-as-eliminator requires values
+  to be polymorphic eliminator closures. The polymorphic
+  quantification over the motive's codomain (`Type 0` here) puts
+  the type one level above. Universe-polymorphic
+  `Bool_template k target : Type (k+1)` parameterises the bump
+  but doesn't escape it.
+
+  Workarounds that *would* escape the bump
+  (impredicative `Type 0`, primitive inductives, cumulativity)
+  are architectural changes deferred to future work. See
+  @universe-bump-future.
 ]
 
 == Constructor canonicality and shape overlap
@@ -1568,6 +1681,42 @@ existing `q_pi_fn` convention). This is unique per binder by
 construction. As long as binder construction is deterministic
 and metadata is canonical, no collisions. Worth a sanity test
 in IMPLEMENTATION_PLAN's Phase 1.
+
+== Inductives at `Type 0` (escaping the universe bump) <universe-bump-future>
+
+Per §4.4: data-as-eliminator inductive types live one universe
+above their motive's range, so Bool / Nat / Eq / Ord all sit at
+`Type 1` rather than `Type 0`. This is intrinsic to the encoding.
+
+Three architectural changes would deliver "small" inductives at
+`Type 0`:
+
++ *Impredicative `Type 0`.* Allow types in `Type 0` to be defined
+  by quantifying over `Type 0` itself. Restores Bool : Type 0
+  for Scott encodings. Cost: significant universe-system change;
+  impredicativity has known interactions with proof-irrelevance,
+  definitional equality, and other features. Not a localised fix.
+
++ *Primitive inductive types* (Coq/Agda style). Treat Bool/Nat/Eq
+  as kernel-recognised type-formers with constructors having
+  specific tree shapes (the previous Disp design). Bool : Type 0
+  because elimination doesn't require values to be polymorphic
+  functions. Cost: kernel record grows back; per-type checkers
+  and eliminators reappear; cert_make_stuck for hypothesis
+  targets returns. Loses architectural unity.
+
++ *Cumulativity* (`Type 0 ⊆ Type 1 ⊆ ...`). Values in `Type 0`
+  are also in `Type 1`. Doesn't lower Bool's universe but lets
+  user code written for `Type 0` accept `Type 1` values
+  implicitly. Cost: introduces non-syntax-directed rules
+  (search-style coercion), conflicts with Disp's
+  "type-checking is one apply" invariant.
+
+For the closed-kernel implementation, the universe bump is
+accepted. None of these workarounds are scoped for v1. If user
+demand surfaces strongly, primitive inductives are the most
+contained workaround --- they restore the previous design's
+universe placement at the cost of architectural simplicity.
 
 == HoTT extensions
 
