@@ -84,3 +84,62 @@ mint_ord_hyp := {h_id} -> Hyp (Ord_template h_id) h_id
 
 succ_ord := {alpha} -> omega_plus zero_ord alpha
 omega    := omega_plus (succ_ord zero_ord) zero_ord
+
+// ================================================================
+// Closed comparisons (library — no kernel routing yet)
+// ================================================================
+// ord_lt / ord_le / ord_max work on closed CNF Ord values via Scott
+// eliminator probing. Each probe applies the Ord value to specific
+// case handlers that extract structure: zero gives back a zero
+// marker; omega_plus α β gives back α (or β) for component access.
+//
+// Hypothesis-typed Ord support (bound-consulting per V2 §5.5)
+// requires kernel-handler routing — deferred. For closed inputs
+// the library form is sufficient and the walker walks through.
+
+let ord_is_zero = {ord} ->
+  ord ({_} -> Bool) TT ({a, b, ra, rb} -> FF)
+let ord_lead = {ord} ->
+  ord ({_} -> Bool) zero_ord ({a, b, ra, rb} -> a)
+let ord_tail = {ord} ->
+  ord ({_} -> Bool) zero_ord ({a, b, ra, rb} -> b)
+
+// ord_lt α β: lexicographic compare on (lead, tail).
+//   0   < 0           → FF
+//   0   < omega_plus  → TT
+//   ω+_ < 0           → FF
+//   omega_plus α₁ β₁ < omega_plus α₂ β₂  →
+//     α₁ < α₂                              → TT
+//     α₁ > α₂ (i.e., α₂ < α₁)              → FF
+//     α₁ = α₂ (neither <)                  → β₁ < β₂
+ord_lt := fix ({self, alpha, beta} ->
+  match (ord_is_zero alpha) {
+    TT => match (ord_is_zero beta) {
+      TT => FF
+      FF => TT
+    }
+    FF => match (ord_is_zero beta) {
+      TT => FF
+      FF => match (self (ord_lead alpha) (ord_lead beta)) {
+        TT => TT
+        FF => match (self (ord_lead beta) (ord_lead alpha)) {
+          TT => FF
+          FF => self (ord_tail alpha) (ord_tail beta)
+        }
+      }
+    }
+  })
+
+// ord_le α β  ≡  ord_lt α β ∨ α = β  (structural equality via tree_eq).
+ord_le := {alpha, beta} ->
+  match (ord_lt alpha beta) {
+    TT => TT
+    FF => tree_eq alpha beta
+  }
+
+// ord_max α β  ≡  α  if  β < α,  else β.
+ord_max := {alpha, beta} ->
+  match (ord_lt beta alpha) {
+    TT => alpha
+    FF => beta
+  }

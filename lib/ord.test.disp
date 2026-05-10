@@ -81,3 +81,38 @@ test neutral_type stuck_or = Nat
 test ord_rec ({_} -> Bool) TT ({a, b, ra, rb} -> FF) zero_ord = TT
 test ord_rec ({_} -> Bool) TT ({a, b, ra, rb} -> FF) (omega_plus zero_ord zero_ord) = FF
 test ord_rec ({_} -> Bool) TT ({a, b, ra, rb} -> FF) omega = FF
+
+// ================================================================
+// Closed comparisons (ord_lt / ord_le / ord_max)
+// ================================================================
+
+let one_o = succ_ord zero_ord
+let two_o = succ_ord one_o
+
+// 0 < 0 = FF
+test ord_lt zero_ord zero_ord = FF
+// 0 < 1 = TT
+test ord_lt zero_ord one_o = TT
+// 1 < 0 = FF
+test ord_lt one_o zero_ord = FF
+// 1 < 1 = FF
+test ord_lt one_o one_o = FF
+// 0 < ω = TT
+test ord_lt zero_ord omega = TT
+// 1 < ω = TT (1 = ω^0 + 0, ω = ω^1 + 0; lead 0 < 1)
+test ord_lt one_o omega = TT
+// ω < ω = FF
+test ord_lt omega omega = FF
+
+// ord_le
+test ord_le zero_ord zero_ord = TT  // equal
+test ord_le zero_ord one_o = TT     // less
+test ord_le one_o zero_ord = FF     // greater
+test ord_le omega omega = TT
+
+// ord_max
+test ord_max zero_ord zero_ord = zero_ord
+test ord_max zero_ord one_o = one_o
+test ord_max one_o zero_ord = one_o
+test ord_max omega zero_ord = omega
+test ord_max omega one_o = omega
