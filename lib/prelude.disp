@@ -4,22 +4,39 @@
 // ================================================================
 // Fundamental combinators
 // ================================================================
+//
+// Bool is Scott-encoded per spec §4.5: a value is its own eliminator,
+// taking a motive and one case-handler per constructor and dispatching
+// to the matching case.
+//
+// Compiled tree shapes (after bracket abstraction + η):
+//   TT = K K       = fork(LEAF, stem(LEAF))
+//   FF = K (K I)   = fork(LEAF, fork(LEAF, fork(fork(LEAF, LEAF), LEAF)))
+//
+// The host's tree_eq fast-path (src/tree.ts) returns these exact shapes
+// so a tree-level identity test still matches predicate semantics.
 
-TT := t
-FF := t t
+TT := {m, ct, cf} -> ct
+FF := {m, ct, cf} -> cf
 
 // triage(on_leaf, on_stem, on_fork) x:
 //   x=leaf -> on_leaf, x=stem(u) -> on_stem u, x=fork(u,v) -> on_fork u v
 triage := {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
 
-// select(then_v, else_v, cond): EAGER -- both branches evaluated.
-// cond=TT->then_v, cond=FF->else_v
-// Also used in select-then-apply pattern: select fn1 fn2 cond shared_args...
-select := {then_v, else_v, cond} -> t (t then_v ({_} -> else_v)) t cond
+// select(then_v, else_v, cond): apply the Scott Bool as its own
+// eliminator. The motive `t` is irrelevant for the value-level
+// dispatch; we pass it as a placeholder. Both branches are values
+// (no laziness) — for deferred branches use `select_lazy`.
+//
+// Also used in select-then-apply: select fn1 fn2 cond shared_args ...
+// Scott Bool has fixed arity 3 (motive, ct, cf); supplying further
+// args after dispatch applies them to the chosen branch.
+select := {then_v, else_v, cond} -> cond t then_v else_v
 
-// select_lazy(then_thunk, else_thunk, cond): DEFERRED -- branches are {_}->value thunks.
-// Only the chosen branch is forced.
-select_lazy := {then_thunk, else_thunk, cond} -> t (t then_thunk ({_} -> else_thunk)) t cond t
+// select_lazy(then_thunk, else_thunk, cond): DEFERRED — branches are
+// {_}->value thunks. Only the chosen branch is forced (by applying
+// the trailing `t`); the discarded branch is built but not invoked.
+select_lazy := {then_thunk, else_thunk, cond} -> cond t then_thunk else_thunk t
 
 // pair = fork(l, r). pair_fst/pair_snd extract via triage's fork branch.
 // The leaf and stem branches are dead code (pairs are always forks).

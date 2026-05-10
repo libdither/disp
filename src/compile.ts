@@ -11,6 +11,7 @@ import { dirname, resolve as pathResolve } from "node:path"
 import {
   Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
   setNativeDispatcherTreeId, getNativeDispatcherTreeId, setNativeKernelSig, setNativeICanonicalId,
+  SCOTT_TT,
 } from "./tree.js"
 import {
   parseItems,
@@ -497,11 +498,11 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
 // tree.ts. Once the dispatcher tree id and at least the hyp_reduce
 // signature are registered, the native fast-path activates; until then
 // it is dormant and apply runs the in-language stub.
-// V2 dispatcher list (per V2 §6.1): only kernel-primitive type-formers
+// Dispatcher list (per spec §6.1): only kernel-primitive type-formers
 // and the unguard handler. Bool/Nat/Eq predicates are no longer
 // routed; their applications fall through to the walker. The
 // handlers remain in the recq record (q_core_type_fn uses them
-// internally for is_registered) but they're not part of the V2
+// internally for is_registered) but they're not part of the
 // dispatcher's signature recognition list.
 const NATIVE_SIG_NAMES = new Set([
   "kernel_hyp_reduce_sig",
@@ -617,8 +618,10 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
 
 // ─────────────────────── 5c. Elaborator (check/infer) ───────────────────
 
-// TT = LEAF (△) — the boolean true in tree calculus. FF = stem(LEAF) (△△).
-const TT = LEAF
+// Scott-encoded Bool: TT = K K = fork(LEAF, K), FF = K (K I) per spec §4.5.
+// Imported from tree.ts so the host's tree_eq fast-path and the elaborator's
+// predicate validation agree on the canonical shapes.
+const TT = SCOTT_TT
 
 type ElabCtx = {
   lookupEntry: (name: string) => ScopeEntry | undefined
@@ -974,7 +977,11 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
       const { tree: type_tree, universe } = checkAsType(type, ctx)
       if (universe !== null && !ctx.kernel.isUniverse(universe))
         throw new Error(`annotation for '${name}' is not a type`)
-      tree = check(body, type_tree, ctx)
+      try {
+        tree = check(body, type_tree, ctx)
+      } catch (e: any) {
+        throw new Error(`type check failed for '${name}': ${e.message}`)
+      }
       inferredType = type_tree
     } else {
       // Untyped or no kernel — use existing compileExpr path

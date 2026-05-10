@@ -332,7 +332,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (curF.left.id === TREE_EQ_PARTIAL_MARKER.id) {
       traceApply("tree_eq", curF, curX, stack.length)
       applyStats.treeEqRules++
-      const v = treeEqual(curF.right, curX) ? LEAF : stem(LEAF)
+      const v = treeEqual(curF.right, curX) ? SCOTT_TT : SCOTT_FF
       memoSet(curF, curX, v)
       const r = deliver(v); if (r !== null) return r; continue
     }
@@ -397,6 +397,14 @@ export const K = stem(LEAF)
 //   I(stem(u)):   Rule 3b → apply(LEAF, u) = stem(u)           ✓
 //   I(fork(u,v)): Rule 3c → apply(apply(LEAF, u), v) = fork(u,v) ✓
 export const I = fork(fork(LEAF, LEAF), LEAF)
+
+// Scott-encoded Bool constants (per spec §4.5). These are the exact
+// hash-cons-identity trees produced when the prelude compiles
+// `TT := {m,ct,cf} -> ct` (= K K) and `FF := {m,ct,cf} -> cf`
+// (= K (K I)). Captured here so the tree_eq fast-path can return them
+// directly without needing a runtime hook from compile.ts.
+export const SCOTT_TT = fork(LEAF, K)               // K K
+export const SCOTT_FF = fork(LEAF, fork(LEAF, I))   // K (K I)
 
 // --- Native walker / dispatcher fast path ---
 // The kernel's `q_checked_apply_fn` is the security perimeter: it routes
@@ -486,7 +494,7 @@ function nativeDispatch(f: Tree, x: Tree, budget: { remaining: number }): Tree {
 }
 
 function nativeWalkerStep(f: Tree, x: Tree, budget: { remaining: number }): Tree {
-  // I-shortcut (only soundness carve-out per V2 §6.3).
+  // I-shortcut (only soundness carve-out per §6.3).
   if (NATIVE_I_CANONICAL_ID !== -1 && f.id === NATIVE_I_CANONICAL_ID) {
     return nativeOk(x)
   }

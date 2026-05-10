@@ -237,9 +237,14 @@ let q_nat_fn = {ks, raw, query} ->
   })
 
 // --- Bool checker (returns BARE TT/FF) ---
+// Recognises Scott-encoded TT/FF (per spec §4.5). `tree_eq b TT` and
+// `tree_eq b FF` compare against whatever Scott shape the prelude's
+// TT/FF compile to — hash-cons-equal regardless of source-level form.
+// (Future: drop in favour of Pi-checking against `Bool_template v`
+// once the elaborator can mint per-value-template hypotheses.)
 let q_bool_fn = {ks, raw, query} ->
   fix ({self, meta, b} -> {
-    let check_fn = {ks, raw, query, self, meta, b} -> select TT (tree_eq b FF) (tree_eq b t)
+    let check_fn = {ks, raw, query, self, meta, b} -> select TT (tree_eq b FF) (tree_eq b TT)
     select q_h_rule_fn check_fn
       (q_is_neutral raw b)
       ks raw query self meta b
@@ -822,7 +827,7 @@ checked_h_rule := {self_type, v} ->
 // projected, the actual handler closure). Pi / library types and
 // eliminators use `kernel_ref.X` (the lazy proxy). The two yield
 // different `pair_fst`s, so each sig must match the form its
-// constructor uses (per V2 §7 "Raw vs ks.field for signatures").
+// constructor uses (per spec §7 "Raw vs ks.field for signatures").
 
 kernel_hyp_reduce_sig   := pair_fst (wait kernel.hyp_reduce t)
 kernel_guard_sig        := pair_fst (wait kernel_ref.guard t)
