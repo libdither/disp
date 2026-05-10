@@ -423,16 +423,27 @@ is the kernel primitive that *does* allow a hypothesis to escape with
 a derived stored type — but only inside a controlled eliminator
 pattern.
 
+Each library eliminator is constructed as
+`wait kernel_ref.eliminator_frame (init_meta_arity_N dispatcher)`,
+where `dispatcher` is the type-former's case-dispatching tree
+(a closed function `motive -> cases -> target -> result`). The
+dispatcher is stored directly in the metadata; no kernel-side
+registry or signature lookup is required.
+
+Meta layout: `pair count (pair dispatcher acc)`:
+- `count` — remaining arity, decremented per application; the final
+  application is recognised when `count = succ t`.
+- `dispatcher` — fixed slot, written at construction, never mutated.
+- `acc` — left-leaning pair tree of accumulated args; nil = `t`.
+
 ```
 q_eliminator_frame_fn := \{ks, raw, query\} -> \{meta, x\} -> \{
-  // Arity-tracked accumulator over (motive, cases..., target).
-  let count = pair_fst meta
-  let acc = pair_snd meta
+  let count      = pair_fst meta
+  let dispatcher = pair_fst (pair_snd meta)
+  let acc        = pair_snd (pair_snd meta)
   let final_fn = \{...\} -> \{
-    let dispatcher_sig = pair_snd acc
-    let dispatcher = recover_dispatcher dispatcher_sig
     let motive = ... // extract from acc
-    let cases = ...  // extract from acc
+    let cases  = ... // extract from acc
     let target = x
     select_lazy
       (\{_\} -> q_make_hyp raw (motive target) target)
@@ -440,9 +451,15 @@ q_eliminator_frame_fn := \{ks, raw, query\} -> \{meta, x\} -> \{
                  (dispatcher motive cases) target)
       (q_is_neutral raw target)
   \}
-  let partial_fn = ... // accumulator for partial application
-  ...
+  let partial_fn = \{...\} ->
+    wait (ks query)
+      (pair (pred count) (pair dispatcher (pair acc x)))
+  select final_fn partial_fn (tree_eq count (t t t))
+    raw query ks meta x count dispatcher acc
 \}
+
+init_meta_arity_N := \{dispatcher\} ->
+  pair (succ^N t) (pair dispatcher t)
 ```
 
 The dispatcher's invocation goes through `ks.checked_apply` (parametric
@@ -461,6 +478,21 @@ hypothesis-typed subterms of the closed target.
   This is a soundness obligation that didn't exist in the previous
   per-type kernel-handler design (where eliminator handlers ran fully
   raw and could triage freely).
+]
+
+#note[
+  *Dispatcher correctness is library responsibility.* The kernel does
+  not validate that the dispatcher returns a value matching the motive
+  for the supplied constructor. A miswritten dispatcher (e.g., one
+  that always returns `base` regardless of `target`) yields a
+  type-mismatched value but does not break soundness — the public
+  boundary's predicate evaluation runs concretely on the result and
+  returns FF if the type doesn't match. No kernel-side registry of
+  blessed dispatchers is needed; storing the dispatcher directly in
+  metadata is sufficient. The parametric-mode invocation prevents the
+  dispatcher from synthesising hypothesis-tainted values that would
+  pass the public-boundary scan; everything else is the library
+  author's obligation.
 ]
 
 = Worked library types
@@ -517,7 +549,7 @@ Bool := guard (wait kernel_ref.predicate_frame
                     (\{_\} -> zero_ord))))) // rank_fn = const 0
 
 bool_rec := wait kernel_ref.eliminator_frame
-  (init_meta_arity_4 bool_dispatcher_sig)
+  (init_meta_arity_4 bool_dispatcher)
 ```
 
 Bool's case handlers (`ct`, `cf`) are returned as values, not invoked.
@@ -550,7 +582,7 @@ Nat := guard (wait kernel_ref.predicate_frame
         (pair t (pair t (\{_\} -> zero_ord)))))
 
 nat_rec := wait kernel_ref.eliminator_frame
-  (init_meta_arity_4 nat_dispatcher_sig)
+  (init_meta_arity_4 nat_dispatcher)
 ```
 
 Per the library invariant from §4.7: `step k ih` runs under parametric
