@@ -107,13 +107,19 @@ must_ok_tt := {r, k} ->
 // pair_fst(stem(c)) = c. Without is_fork, stem(canonical_sig) would pass
 // the signature check. Legitimate neutrals are wait-encoded values, which
 // are always forks.
-let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, x} ->
+let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, x} ->
   and (is_fork x) (has_sig raw.hyp_reduce x)
 
 // q_make_hyp: construct a hypothesis neutral.
 // Result: wait(hyp_reduce_handler)(make_neutral_meta(type, identity))
-let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, ty, identity} ->
+let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, ty, identity} ->
   wait raw.hyp_reduce (make_neutral_meta ty identity)
+
+// q_hasguard: check if T is a guarded public type. Same as `hasguard`
+// (defined post-kernel-record) but takes ks directly so it can be used
+// inside handler bodies before the kernel record exists.
+let q_hasguard = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, T} ->
+  has_sig ks.guard T
 
 // q_contains_neutral / q_scan_no_neutral: private versions of the public
 // scan helpers that take `raw` directly. Used inside handler bodies (the
@@ -135,7 +141,7 @@ let q_scan_no_neutral = {raw, x} -> not (q_contains_neutral raw x)
 
 // q_unguard_or_self: peel one layer of guard if present, else return as-is.
 // Used by handlers that may receive either a guarded public type or a core.
-let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, T} ->
+let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, T} ->
   match (has_sig ks.guard T) {
     TT => type_meta T
     FF => T
@@ -155,7 +161,7 @@ let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded
 // q_guard_fn itself does NOT route through ks.checked_apply: the entry
 // scan + raw apply is sufficient at the boundary, and bypassing the
 // dispatcher here keeps the common case (`Nat 5`, `Bool TT`) cheap.
-let q_guard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query} ->
+let q_guard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
   {core, v} ->
     match (q_scan_no_neutral raw v) {
       TT => match (tree_eq (core v) TT) {
@@ -174,7 +180,7 @@ let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
 // runtime). Returns the bare new neutral, NOT Ok-wrapped; the dispatcher
 // wraps in Ok when routing through ks.checked_apply. This keeps
 // `(Hyp NatToNat 0) (Hyp Nat 1)` style raw-apply tests working.
-let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query} ->
+let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
   fix ({self, meta, v} -> {
     let stored_inner = q_unguard_or_self ks (neutral_meta_type meta)
     let pi_result_type = {meta, v} -> wait ks.guard (pi_meta_cod_fn (type_meta stored_inner) v)
@@ -194,9 +200,9 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_t
 // the user-supplied v or codFn is rejected by the dispatcher's walker
 // triage-on-neutral rule. Failures (Fail) and validation failures (Ok FF)
 // both fold back to bare FF via must_ok_or_ff.
-let q_pi_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query} ->
+let q_pi_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
   fix ({self, meta, v} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query, self, meta, v} -> {
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query, self, meta, v} -> {
       let domain = pi_meta_domain meta
       let codFn = pi_meta_cod_fn meta
       let hyp = q_make_hyp raw domain meta
@@ -254,9 +260,9 @@ let q_eq_fn = {ks, raw, query} ->
 // hypothesis-typed neutrals whose stored type is a universe.
 let q_core_type_fn = {ks, raw, query} ->
   fix ({self, meta, x} -> {
-    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, x} ->
+    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, x} ->
       select TT (tree_eq x (wait ks.bool t)) (tree_eq x (wait ks.nat t))
-    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, rank, ty} ->
+    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, rank, ty} ->
       select (nat_le (type_meta ty) rank) FF (or (has_sig ks.core_type ty) (has_sig ks.guarded_type ty))
     let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (neutral_meta_type (type_meta x))
     let core_univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
@@ -276,7 +282,7 @@ let q_core_type_fn = {ks, raw, query} ->
           (A (eq_meta_rhs tm)))
     }
     select neutral_fn
-      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query, self, meta, x} ->
+      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query, self, meta, x} ->
         select_chain
           (case (has_sig ks.core_type x) core_univ_fn
           (case (has_sig ks.guarded_type x) guarded_univ_fn
@@ -294,7 +300,7 @@ let q_core_type_fn = {ks, raw, query} ->
 // Validates that T is a guarded public type at rank ≤ meta.
 let q_guarded_type_fn = {ks, raw, query} ->
   fix ({self, rank, T} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query, self, rank, T} ->
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query, self, rank, T} ->
       select (tree_eq ((wait ks.core_type rank) (type_meta T)) TT) FF (has_sig ks.guard T)
     select q_h_rule_fn check_fn
       (q_is_neutral raw T)
@@ -327,7 +333,7 @@ let q_guarded_type_fn = {ks, raw, query} ->
 let q_elim_init_meta = {arity} -> t arity t
 
 // --- bool_rec (4-ary: motive, t_case, f_case, target) ---
-let q_bool_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query} ->
+let q_bool_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
   {meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
@@ -354,7 +360,7 @@ let q_bool_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_typ
 // target IS a succ, and the stuck branch is only forced when target is a
 // hypothesis. Eager `select` would evaluate every branch on every call,
 // causing unbounded recursion on closed nats and blowing the budget.
-let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query} ->
+let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
   fix ({self, meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
@@ -374,7 +380,7 @@ let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type
   })
 
 // --- eq_J (6-ary: A, x_lhs, motive, base, y, proof) ---
-let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply}, raw, query} ->
+let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
   {meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
@@ -394,6 +400,32 @@ let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bo
       (tree_eq count (t t t))
       raw query ks meta x count acc
   }
+
+// --- Unguard handler (walker-safe type-form normaliser) ---
+//
+// `unguard_checked T` peels a `guard` wrapper if T is a guarded type,
+// returns T as-is if T is a kernel-minted hypothesis, and returns
+// `InvalidType` otherwise. The body uses `hasguard T` (which triages
+// T's `pair_fst`), so calling it on a hypothesis under the walker
+// would be rejected as reflection.
+//
+// The fix mirrors the eliminator pattern: register `unguard` as a
+// kernel handler with its own signature. `unguard_checked` becomes a
+// wait-form whose application dispatches via the kernel signature
+// route — handler runs raw, its triage-on-neutral is safe. User code
+// that legitimately constructs polymorphic types (`Pi (Type k) ({A} ->
+// Arrow A A)`-style) walks fine because the walker hands off
+// `unguard_checked A_hyp` to the handler instead of stepping into
+// its body.
+let q_unguard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+  {meta, T} ->
+    match (q_hasguard ks T) {
+      TT => type_meta T
+      FF => match (q_is_neutral raw T) {
+        TT => T
+        FF => InvalidType
+      }
+    }
 
 // I_canonical: fork(fork(LEAF, LEAF), LEAF). The polymorphic identity.
 // Recognized as a literal carve-out in the walker so identity on a
@@ -432,7 +464,7 @@ let q_checked_apply_fn = {ks, raw, query} ->
 // reference inside a handler resolves through the same fixed dispatcher,
 // avoiding per-call recq fix-unrolling overhead.
 
-kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply} := recq {
+kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply} := recq {
   hyp_reduce    := q_hyp_reduce_fn;
   guard         := q_guard_fn;
   pi            := q_pi_fn;
@@ -444,13 +476,14 @@ kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_re
   bool_rec      := q_bool_rec_fn;
   nat_rec       := q_nat_rec_fn;
   eq_J          := q_eq_J_fn;
+  unguard       := q_unguard_fn;
   checked_apply := q_checked_apply_fn
 }
 
 // Public kernel reference with the same lazy-proxy convention that recq passes
 // internally. Type/signature construction uses this delayed view so H-rule
 // reconstruction and public constructors share the same wait-based shape.
-let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,checked_apply} =
+let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply} =
   {q} -> wait kernel q
 
 // ================================================================
@@ -515,14 +548,12 @@ unguard_public := {T} ->
 // and entry scan close the soundness hole by forcing all type-position
 // values to either be guarded (public) or certified neutrals (kernel-
 // minted).
-unguard_checked := {T} ->
-  match (hasguard T) {
-    TT => type_meta T
-    FF => match (is_neutral T) {
-      TT => T
-      FF => InvalidType
-    }
-  }
+// Routed through `kernel.unguard` so calls like `unguard_checked A_hyp`
+// (when A_hyp is hypothesis-typed during Pi-checking) dispatch to the
+// q_unguard_fn handler running raw — keeping the body's triage-on-T
+// safe under parametric mode. The init meta is `t` (LEAF); q_unguard_fn
+// ignores it and dispatches on T alone.
+unguard_checked := wait kernel_ref.unguard t
 
 // ================================================================
 // Core type constructors (kernel-internal)
@@ -806,4 +837,5 @@ kernel_guarded_type_sig := pair_fst (wait kernel_ref.guarded_type t)
 kernel_bool_rec_sig     := pair_fst (wait kernel_ref.bool_rec t)
 kernel_nat_rec_sig      := pair_fst (wait kernel_ref.nat_rec t)
 kernel_eq_J_sig         := pair_fst (wait kernel_ref.eq_J t)
+kernel_unguard_sig      := pair_fst (wait kernel_ref.unguard t)
 kernel_I_canonical      := I_canonical

@@ -509,6 +509,7 @@ const NATIVE_SIG_NAMES = new Set([
   "kernel_bool_rec_sig",
   "kernel_nat_rec_sig",
   "kernel_eq_J_sig",
+  "kernel_unguard_sig",
 ])
 function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
   if (name === "checked_apply" && getNativeDispatcherTreeId() === -1) {
