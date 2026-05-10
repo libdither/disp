@@ -1,4 +1,4 @@
-// Tests for the Ord library (V2 §4.8 / §5).
+// Tests for the Ord library (§4.8 / §5).
 //
 // Verifies:
 //   1. Per-value template is Pi-shaped (hyp_reduce will fire

@@ -18,21 +18,28 @@ Reference implementation:
 
 ## Kernel Shape
 
-The current kernel is a recursive record, not a bundle of hand-written
-`Q_*` selectors:
+The kernel is a recursive record:
 
 ```disp
-let kernel : {hyp_reduce,pi,nat,bool,eq,type} = recq {
-  hyp_reduce := q_hyp_reduce_fn;
-  pi := q_pi_fn;
-  nat := q_nat_fn;
-  bool := q_bool_fn;
-  eq := q_eq_fn;
-  type := q_type_fn
+kernel : {hyp_reduce, guard, pi, nat, bool, eq,
+          core_type, guarded_type,
+          bool_rec, nat_rec, eq_J, unguard, checked_apply} := recq {
+  hyp_reduce    := q_hyp_reduce_fn;
+  guard         := q_guard_fn;
+  pi            := q_pi_fn;
+  nat           := q_nat_fn;
+  bool          := q_bool_fn;
+  eq            := q_eq_fn;
+  core_type     := q_core_type_fn;
+  guarded_type  := q_guarded_type_fn;
+  bool_rec      := q_bool_rec_fn;
+  nat_rec       := q_nat_rec_fn;
+  eq_J          := q_eq_J_fn;
+  unguard       := q_unguard_fn;
+  checked_apply := q_checked_apply_fn
 }
 
-let kernel_ref : {hyp_reduce,pi,nat,bool,eq,type} =
-  {q} -> wait kernel q
+let kernel_ref = {q} -> wait kernel q
 ```
 
 `kernel` is the actual recursive record. `kernel_ref` is its lazy proxy:
@@ -298,30 +305,40 @@ recq = {components} ->
 This keeps ordinary `ks.field` syntax in component bodies while
 preserving delayed self-field selection.
 
-## Typed Eliminators
+## Eliminators (kernel-routed wait-forms)
 
 Raw `triage` on a neutral interprets the neutral's wait-encoded
-structure as data. Eliminators must check `is_neutral` first.
+structure as data. Eliminators handle this by routing through kernel
+handlers — their bodies run in raw mode where reflection is safe.
 
-Pattern:
+The user-facing eliminator is a wait-form:
 
 ```disp
-bool_rec = {motive, t_case, f_case, target} ->
-  select_lazy
-    ({_} -> StuckElim (motive target) target)
-    ({_} -> select t_case f_case target)
-    (is_neutral target)
+bool_rec := wait kernel_ref.bool_rec init_meta
 ```
 
-`StuckElim` stores the result type computed at the elimination site.
-It does not store the motive itself. Public `neutral_type` can then
-extract the type in O(1).
+Each application is recognised by the dispatcher (signature
+`kernel.bool_rec`) and routed through `q_bool_rec_fn`, which is an
+arity-tracked accumulator handler:
 
-User-defined eliminators should follow the same pattern:
+- Initial meta: `(remaining-count, accumulated-args)`.
+- Each application decrements count, appends arg.
+- When count hits 1, the final arg is consumed and the body executes
+  in raw mode — performing tree-shape dispatch (LEAF / fork(t,n) for
+  Nat, etc.) and minting `StuckElim` for hypothesis targets.
 
-1. Define a wait-based type predicate.
-2. Define a neutral-aware eliminator.
-3. When stuck, construct `StuckElim(result_type, target)`.
+`StuckElim result_type target` = `wait kernel.hyp_reduce
+(make_neutral_meta result_type target)` — a neutral whose stored type
+is the eliminator's computed result type. Used internally by the
+handler bodies; user code should not mint this directly (the walker's
+stem-rule constructor check rejects user-side neutral fork
+construction).
+
+The DAE library in `lib/dae.disp` provides identity-applied
+eliminators (`bool_rec_dae motive ct cf target = target motive ct cf`)
+that work for Scott-encoded values without kernel routing — for those,
+hypothesis-application fires `hyp_reduce` naturally through the
+per-value Pi template.
 
 ## Performance Notes
 

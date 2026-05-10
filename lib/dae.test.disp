@@ -86,7 +86,7 @@ test neutral_type nh_full = Nat
 // Per-value Eq template at concrete (A, x, y, refl_dae) is Pi.
 test is_pi (Eq_template Nat 0 0 refl_dae) = TT
 
-// J on refl reduces to base case (motive is 1-arg per V2 §4.7).
+// J on refl reduces to base case (motive is 1-arg per §4.7).
 test eq_J_dae ({p} -> Nat) 5 0 0 refl_dae = 5
 test eq_J_dae ({p} -> Nat) 7 1 1 refl_dae = 7
 

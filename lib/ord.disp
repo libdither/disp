@@ -1,5 +1,5 @@
 // Ord — ordinals up to ε₀ via Cantor normal form (CNF), encoded
-// data-as-eliminator per TYPE_THEORY_V2.typ §4.8.
+// data-as-eliminator per TYPE_THEORY.typ §4.8.
 //
 // Constructors:
 //   zero_ord                        — the ordinal zero
@@ -12,13 +12,13 @@
 //   succ_ord α = ω^0 + α = α + 1   (note: post-fix succession)
 //   omega      = ω^1 + 0           (the smallest infinite ordinal)
 //
-// Universe ranks are values of Ord, not Nat (V2 §5.1) — once
+// Universe ranks are values of Ord, not Nat (§5.1) — once
 // q_core_type_fn is updated to use ord_lt/ord_le instead of
 // nat_lt/nat_le, polymorphic-rank functions become expressible.
 //
 // This file ships ONLY the type / constructors / eliminator / a
 // few canonical limits. Kernel comparison primitives (ord_lt /
-// ord_le / ord_max with bound-consulting identities per V2 §5.5)
+// ord_le / ord_max with bound-consulting identities per §5.5)
 // are deferred to a separate kernel-handler addition.
 
 open use "prelude.disp"
@@ -79,7 +79,7 @@ mint_ord_hyp := {h_id} -> Hyp (Ord_template h_id) h_id
 //   omega      = ω^1 + 0   (the first limit ordinal)
 //
 // Closure under successor / bounded omega_plus is the basis for
-// the bound-consulting identities (V2 §5.5) that the comparison
+// the bound-consulting identities (§5.5) that the comparison
 // primitives will use.
 
 succ_ord := {alpha} -> omega_plus zero_ord alpha
@@ -93,7 +93,7 @@ omega    := omega_plus (succ_ord zero_ord) zero_ord
 // case handlers that extract structure: zero gives back a zero
 // marker; omega_plus α β gives back α (or β) for component access.
 //
-// Hypothesis-typed Ord support (bound-consulting per V2 §5.5)
+// Hypothesis-typed Ord support (bound-consulting per §5.5)
 // requires kernel-handler routing — deferred. For closed inputs
 // the library form is sufficient and the walker walks through.
 

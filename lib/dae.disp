@@ -1,4 +1,4 @@
-// Data-as-eliminator (DAE) encodings per TYPE_THEORY_V2.typ §4.
+// Data-as-eliminator (DAE) encodings per TYPE_THEORY.typ §4.
 //
 // Each inductive type is encoded as a `recq`-based pair:
 //   - `T_template target`: a per-value Pi expressing "what it means to
@@ -23,7 +23,7 @@
 // This module is additive: it does NOT replace the kernel-registered
 // `Bool` / `Nat` / `Eq` checkers (`q_bool_fn`, `q_nat_fn`, `q_eq_fn`).
 // Those still drive existing tests. Migration to DAE-only is tracked
-// in TYPE_THEORY_V2.typ — the staged work is to replace them with
+// in TYPE_THEORY.typ — the staged work is to replace them with
 // these templates and Pi-checking, then drop the kernel handlers.
 
 open use "prelude.disp"
