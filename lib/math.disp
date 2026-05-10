@@ -5,10 +5,14 @@ open use "kernel.disp"
 // Arithmetic
 // ================================================================
 
-// add: Nat addition via select-then-apply + fix.
-// zero + m = m, succ n + m = succ (n + m)
-add := fix ({self, n, m} -> {
-  let succ_fn = {self, n, m} -> succ (self (pair_snd n) m)
-  let nonzero_fn = {self, n, m} -> select succ_fn ({self, n, m} -> m) (is_concrete_fork n) self n m
-  select ({self, n, m} -> m) nonzero_fn (tree_eq n t) self n m
-})
+// add: Nat addition via nat_rec (kernel-routed eliminator).
+//   zero + m = m
+//   succ n + m = succ (add n m)
+// nat_rec's step receives (predecessor, recursive_result) Mendler-style,
+// so `succ ih` is `succ (add pred m)`. Going through nat_rec — instead
+// of raw triage on `n`'s tree shape — keeps the body walker-safe: when
+// Pi-checked at `Nat -> Nat -> Nat`, the kernel mints a hypothesis for
+// `n`; nat_rec's handler runs raw and produces a stuck neutral via
+// hyp_reduce, rather than triaging on the hypothesis (which would be
+// rejected by parametric mode).
+add := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n

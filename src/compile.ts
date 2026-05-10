@@ -511,11 +511,7 @@ const NATIVE_SIG_NAMES = new Set([
   "kernel_eq_J_sig",
 ])
 function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
-  // Activation-of-native-fast-path is gated: see V2 §… commit log.
-  // Disabled until kernel arithmetic migrates to nat_rec / DAE form
-  // so it passes parametric mode without falling through to the
-  // walker's reflective-rejection branches.
-  if (false && name === "checked_apply" && getNativeDispatcherTreeId() === -1) {
+  if (name === "checked_apply" && getNativeDispatcherTreeId() === -1) {
     setNativeDispatcherTreeId(tree.id)
     return
   }
