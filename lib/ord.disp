@@ -1,0 +1,86 @@
+// Ord — ordinals up to ε₀ via Cantor normal form (CNF), encoded
+// data-as-eliminator per TYPE_THEORY_V2.typ §4.8.
+//
+// Constructors:
+//   zero_ord                        — the ordinal zero
+//   omega_plus α β               — ω^α + β (with leading_exp β ≤ α
+//                                  for canonical CNF; not enforced
+//                                  by the constructor itself, see
+//                                  the public Ord predicate)
+//
+// Derived helpers:
+//   succ_ord α = ω^0 + α = α + 1   (note: post-fix succession)
+//   omega      = ω^1 + 0           (the smallest infinite ordinal)
+//
+// Universe ranks are values of Ord, not Nat (V2 §5.1) — once
+// q_core_type_fn is updated to use ord_lt/ord_le instead of
+// nat_lt/nat_le, polymorphic-rank functions become expressible.
+//
+// This file ships ONLY the type / constructors / eliminator / a
+// few canonical limits. Kernel comparison primitives (ord_lt /
+// ord_le / ord_max with bound-consulting identities per V2 §5.5)
+// are deferred to a separate kernel-handler addition.
+
+open use "prelude.disp"
+trust open use "kernel.disp"
+
+let Type_0 = Type 0
+
+// ================================================================
+// Ord template (recq) — outer form is Pi so hyp_reduce fires
+// uniformly on Ord-typed hypotheses.
+// ================================================================
+//
+// The motive's domain is `ord_self_ref`: a wait-form that lazily
+// resolves to `ord_template t`. The recq encoding ensures the
+// outer form of `Ord_template target` is a literal Pi.
+
+zero_ord := {motive, case_z, case_op} -> case_z
+omega_plus := {alpha, beta} -> {motive, case_z, case_op} ->
+  case_op alpha beta
+          (alpha motive case_z case_op)
+          (beta motive case_z case_op)
+
+let ord_pkg : {ord_template, ord_self_ref} = recq {
+  ord_template := {ks : {ord_template, ord_self_ref}, raw, query} ->
+    {target} ->
+      Pi (Pi ks.ord_self_ref ({_} -> Type_0)) ({m} ->
+      Pi (m zero_ord) ({_} ->
+      Pi (Pi ks.ord_self_ref ({alpha} ->
+          Pi ks.ord_self_ref ({beta} ->
+          Pi (m alpha) ({_} ->
+          Pi (m beta) ({_} ->
+            m (omega_plus alpha beta)))))) ({_} ->
+        m target))) ;
+  ord_self_ref := {ks : {ord_template, ord_self_ref}, raw, query} ->
+    wait ({_} -> ks.ord_template t) t
+}
+
+Ord_template := ord_pkg.ord_template
+
+// ================================================================
+// Eliminator (identity-applied per DAE convention)
+// ================================================================
+// ord_rec motive case_z case_op target  →  target motive case_z case_op
+//
+// Closed CNF Ord values dispatch via Scott-style application. For
+// hypothesis-typed Ord, application fires hyp_reduce naturally
+// through the Pi-template's chain; the result is a stuck neutral
+// with motive-derived stored type.
+ord_rec := {motive, case_z, case_op, target} -> target motive case_z case_op
+
+mint_ord_hyp := {h_id} -> Hyp (Ord_template h_id) h_id
+
+// ================================================================
+// Canonical Ord values
+// ================================================================
+//
+//   succ_ord α = ω^0 + α   (the ordinal successor of α)
+//   omega      = ω^1 + 0   (the first limit ordinal)
+//
+// Closure under successor / bounded omega_plus is the basis for
+// the bound-consulting identities (V2 §5.5) that the comparison
+// primitives will use.
+
+succ_ord := {alpha} -> omega_plus zero_ord alpha
+omega    := omega_plus (succ_ord zero_ord) zero_ord

@@ -1,0 +1,83 @@
+// Tests for the Ord library (V2 §4.8 / §5).
+//
+// Verifies:
+//   1. Per-value template is Pi-shaped (hyp_reduce will fire
+//      naturally on Ord-typed hypotheses).
+//   2. Constructors reduce as expected via the identity-applied
+//      eliminator.
+//   3. succ_ord / omega derived helpers compute correctly.
+//   4. Hypothesis minting produces valid neutrals whose stored
+//      type is a per-value Pi.
+//   5. Application of an Ord hypothesis fires hyp_reduce — spine
+//      extends with motive-derived stored type.
+
+open use "prelude.disp"
+trust open use "kernel.disp"
+open use "math.disp"
+open use "ord.disp"
+
+// ================================================================
+// Per-value template is Pi-shaped
+// ================================================================
+
+test is_pi (Ord_template zero_ord) = TT
+test is_pi (Ord_template omega) = TT
+
+// ================================================================
+// Closed Scott Ords reduce via ord_rec
+// ================================================================
+
+// ord_rec on zero_ord → case_z
+test ord_rec ({_} -> Nat) 0 ({a, b, ra, rb} -> succ rb) zero_ord = 0
+
+// ord_rec on omega_plus zero_ord zero_ord = ω^0 + 0 = succ_ord zero_ord (= 1 as ordinal)
+let one_ord = succ_ord zero_ord
+test ord_rec ({_} -> Nat) 0 ({a, b, ra, rb} -> succ rb) one_ord = 1
+
+// ord_rec on omega — counts levels of omega_plus nesting.
+// omega = omega_plus (succ_ord zero_ord) zero_ord. Applying ord_rec:
+//   case_op alpha beta ra rb  where alpha = succ_ord zero_ord, beta = zero_ord,
+//                                  ra = ord_rec on alpha = 1,
+//                                  rb = ord_rec on beta = 0.
+//   Returns succ rb = succ 0 = 1.  Hmm — counting only the OUTER beta.
+// For "ordinal as a count of nesting", a different motive would
+// be needed. The test below just checks the eliminator dispatches
+// the op-case and produces a Nat result.
+test ord_rec ({_} -> Nat) 0 ({a, b, ra, rb} -> succ (add ra rb)) one_ord = 1
+
+// ================================================================
+// Hypothesis minting and application
+// ================================================================
+
+let ord_h = mint_ord_hyp 0
+test is_neutral ord_h = TT
+test is_pi (neutral_type ord_h) = TT
+
+// Distinct identities → distinct stored types
+let ord_h2 = mint_ord_hyp 1
+test tree_eq (neutral_type ord_h) (neutral_type ord_h2) = FF
+
+// Applying the hypothesis through the case args fires hyp_reduce;
+// final stored type = motive ord_h (with constant motive returning
+// Nat, that's just Nat).
+let const_motive = {a} -> Nat
+let ord_h_full = ord_h const_motive 0 ({a, b, ra, rb} -> succ rb)
+test is_neutral ord_h_full = TT
+test neutral_type ord_h_full = Nat
+
+// ord_rec on a hypothesis Ord: identity-applied — `ord_h motive ...`,
+// fires hyp_reduce per the line above. Result is a stuck neutral.
+let stuck_or = ord_rec const_motive 0 ({a, b, ra, rb} -> succ rb) ord_h
+test is_neutral stuck_or = TT
+test neutral_type stuck_or = Nat
+
+// ================================================================
+// Identity-applied eliminator distinguishes constructors via Scott
+// dispatch.
+// ================================================================
+// For closed targets, ord_rec returns case_z for zero_ord, case_op (with
+// recursed args) for omega_plus.
+
+test ord_rec ({_} -> Bool) TT ({a, b, ra, rb} -> FF) zero_ord = TT
+test ord_rec ({_} -> Bool) TT ({a, b, ra, rb} -> FF) (omega_plus zero_ord zero_ord) = FF
+test ord_rec ({_} -> Bool) TT ({a, b, ra, rb} -> FF) omega = FF
