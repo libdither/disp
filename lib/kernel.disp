@@ -787,16 +787,23 @@ checked_h_rule := {self_type, v} ->
 // These trusted exports give the host a stable handle on each.
 // `checker_sig X = pair_fst (wait X t)` — a constant tree determined
 // purely by X; identical to what `has_sig X v` compares against.
+//
+// Important: which `X` to wait against depends on how user-facing
+// values are constructed. Hyp uses `kernel.hyp_reduce` (eagerly
+// projected, the actual handler closure). Pi / library types and
+// eliminators use `kernel_ref.X` (the lazy proxy). The two yield
+// different `pair_fst`s, so each sig must match the form its
+// constructor uses (per V2 §7 "Raw vs ks.field for signatures").
 
 kernel_hyp_reduce_sig   := pair_fst (wait kernel.hyp_reduce t)
-kernel_guard_sig        := pair_fst (wait kernel.guard t)
-kernel_pi_sig           := pair_fst (wait kernel.pi t)
-kernel_nat_sig          := pair_fst (wait kernel.nat t)
-kernel_bool_sig         := pair_fst (wait kernel.bool t)
-kernel_eq_sig           := pair_fst (wait kernel.eq t)
-kernel_core_type_sig    := pair_fst (wait kernel.core_type t)
-kernel_guarded_type_sig := pair_fst (wait kernel.guarded_type t)
-kernel_bool_rec_sig     := pair_fst (wait kernel.bool_rec t)
-kernel_nat_rec_sig      := pair_fst (wait kernel.nat_rec t)
-kernel_eq_J_sig         := pair_fst (wait kernel.eq_J t)
+kernel_guard_sig        := pair_fst (wait kernel_ref.guard t)
+kernel_pi_sig           := pair_fst (wait kernel_ref.pi t)
+kernel_nat_sig          := pair_fst (wait kernel_ref.nat t)
+kernel_bool_sig         := pair_fst (wait kernel_ref.bool t)
+kernel_eq_sig           := pair_fst (wait kernel_ref.eq t)
+kernel_core_type_sig    := pair_fst (wait kernel_ref.core_type t)
+kernel_guarded_type_sig := pair_fst (wait kernel_ref.guarded_type t)
+kernel_bool_rec_sig     := pair_fst (wait kernel_ref.bool_rec t)
+kernel_nat_rec_sig      := pair_fst (wait kernel_ref.nat_rec t)
+kernel_eq_J_sig         := pair_fst (wait kernel_ref.eq_J t)
 kernel_I_canonical      := I_canonical
