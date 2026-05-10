@@ -404,67 +404,21 @@ I_canonical := {z} -> z
 
 // --- Checked-apply dispatcher (security perimeter) ---
 //
-// Currently a stub: routes everything via raw apply. The complete
-// walker-wired version is below in a comment, validated to compile
-// correctly. It's not active because routing every step through the
-// walker default (for user-level closures, S-rule, triage-fork)
-// blows up runtime by ~400×, which is unacceptable for the full test
-// suite. Adding a no-neutral fast-path (one scan then raw apply)
-// resolves this; tracked in TYPE_THEORY_V2.typ.
-let q_checked_apply_fn = {ks, raw, query} -> {f, x} -> Ok (f x)
-
-// Reference walker step (commented; activate together with no-neutral
-// fast-path). Each sub-pattern uses `match` not `select_lazy` to avoid
-// a compile-time-eval pitfall: the K-wrapped thunk bodies of
-// select_lazy (containing `self meta x`-style recursion) are eagerly
-// reduced during cirToTree, exhausting the budget on closed inputs.
-// `match` desugars to `select branchTT branchFF cond fvs...` where
-// each branch is wrapped in a closure over its free vars — preventing
-// the compile-time eager evaluation. Multi-line match bodies must be
-// parenthesised.
+// Stub-with-unique-shape: routes everything via raw apply but the
+// `fix` wrap gives the dispatcher's compiled tree a unique signature
+// (the bare `{f, x} -> Ok (f x)` body would η-reduce to the generic
+// `S(K K)` combinator, colliding with unrelated user code and causing
+// the host's native fast-path to mis-fire).
 //
-//   let q_walker_step = {self, raw, f, x} ->
-//     match (tree_eq f I_canonical) {
-//       TT => Ok x
-//       FF => (triage
-//               (Ok (t x))
-//               ({a} -> match (q_is_neutral raw (t a x)) {
-//                 TT => Fail
-//                 FF => Ok (t a x)
-//               })
-//               ({a, b} -> (triage
-//                 (Ok b)
-//                 ({c} -> (match (is_ok (self c x)) {
-//                   TT => (match (is_ok (self b x)) {
-//                     TT => self (ok_value (self c x)) (ok_value (self b x))
-//                     FF => Fail
-//                   })
-//                   FF => Fail
-//                 }))
-//                 ({tc, td} -> match (q_is_neutral raw x) {
-//                   TT => Fail
-//                   FF => (triage
-//                           (Ok tc)
-//                           ({c_inner} -> self td c_inner)
-//                           ({l, r} -> match (is_ok (self b l)) {
-//                             TT => self (ok_value (self b l)) r
-//                             FF => Fail
-//                           })
-//                           x)
-//                 })
-//                 a))
-//               f)
-//     }
-//
-//   let q_checked_apply_fn = {ks : {...}, raw : {...}, query} ->
-//     fix ({self, f, x} ->
-//       select_chain
-//         (case (has_sig raw.hyp_reduce f)   ({self, f, x} -> Ok (f x))
-//         (case (has_sig ks.guard f)         ({self, f, x} -> Ok (f x))
-//         ... (one case per kernel handler) ...
-//         t)))))))))))
-//         ({self, f, x} -> q_walker_step self raw f x)
-//         self f x)
+// The host runtime registers this dispatcher's tree id and intercepts
+// `apply(checked_apply, …)` to run a native parametric walker in TS.
+// The in-language version below is currently a stub — the real V2
+// dispatcher (signature recognition + walker default) will replace it
+// once `add`, `pred`, `is_zero`, etc. are migrated from raw triage to
+// `nat_rec`-based bodies that pass parametric mode (task #3 / DAE
+// migration).
+let q_checked_apply_fn = {ks, raw, query} ->
+  fix ({self, f, x} -> Ok (f x))
 
 // ================================================================
 // Kernel assembly
@@ -823,3 +777,26 @@ checked_h_rule := {self_type, v} ->
     TT => Ok TT
     FF => Ok FF
   }
+
+// ================================================================
+// Native walker registration anchors
+// ================================================================
+// The host runtime (src/tree.ts) implements a native fast-path for the
+// dispatcher and parametric walker. To wire it, the host needs each
+// kernel handler's checker signature plus the I-canonical tree id.
+// These trusted exports give the host a stable handle on each.
+// `checker_sig X = pair_fst (wait X t)` — a constant tree determined
+// purely by X; identical to what `has_sig X v` compares against.
+
+kernel_hyp_reduce_sig   := pair_fst (wait kernel.hyp_reduce t)
+kernel_guard_sig        := pair_fst (wait kernel.guard t)
+kernel_pi_sig           := pair_fst (wait kernel.pi t)
+kernel_nat_sig          := pair_fst (wait kernel.nat t)
+kernel_bool_sig         := pair_fst (wait kernel.bool t)
+kernel_eq_sig           := pair_fst (wait kernel.eq t)
+kernel_core_type_sig    := pair_fst (wait kernel.core_type t)
+kernel_guarded_type_sig := pair_fst (wait kernel.guarded_type t)
+kernel_bool_rec_sig     := pair_fst (wait kernel.bool_rec t)
+kernel_nat_rec_sig      := pair_fst (wait kernel.nat_rec t)
+kernel_eq_J_sig         := pair_fst (wait kernel.eq_J t)
+kernel_I_canonical      := I_canonical

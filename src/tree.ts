@@ -292,6 +292,18 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
     if (stack.length > applyStats.maxStack) applyStats.maxStack = stack.length
 
+    // Native dispatcher fast-path: fires on `apply(checked_apply, f)`.
+    // Must precede the leaf/stem rule because `checked_apply` compiles
+    // to a stem (S (K Ok)) — without this the stem rule preempts.
+    if (DISPATCHER_TREE_ID !== -1 && curF.id === DISPATCHER_TREE_ID) {
+      const r = fork(DISPATCHER_PARTIAL_MARKER, curX)
+      const d = deliver(r); if (d !== null) return d; continue
+    }
+    if (curF.tag === "fork" && curF.left.id === DISPATCHER_PARTIAL_MARKER.id) {
+      const result = nativeDispatch(curF.right, curX, budget)
+      const d = deliver(result); if (d !== null) return d; continue
+    }
+
     // Leaf/Stem: immediate result
     if (isLeaf(curF)) { traceApply("leaf", curF, curX, stack.length); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
     if (isStem(curF)) { traceApply("stem", curF, curX, stack.length); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
@@ -324,6 +336,11 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
       memoSet(curF, curX, v)
       const r = deliver(v); if (r !== null) return r; continue
     }
+
+    // Native dispatcher fast-path: `apply(checked_apply, f)` synthesizes
+    // a partial-marker form, then `apply(marker, x)` runs nativeDispatch
+    // (signature recognition + parametric walker) in TS — orders of
+    // magnitude faster than executing the in-language fix-form chain.
 
     budget.remaining--
     applyStats.steps++
@@ -380,6 +397,135 @@ export const K = stem(LEAF)
 //   I(stem(u)):   Rule 3b → apply(LEAF, u) = stem(u)           ✓
 //   I(fork(u,v)): Rule 3c → apply(apply(LEAF, u), v) = fork(u,v) ✓
 export const I = fork(fork(LEAF, LEAF), LEAF)
+
+// --- Native walker / dispatcher fast path ---
+// The kernel's `q_checked_apply_fn` is the security perimeter: it routes
+// each application via signature recognition (matching kernel handlers
+// run raw) or the parametric walker (default). The in-language version
+// is correct but ~400× slower than raw apply, because every apply step
+// traverses the recq dispatcher chain.
+//
+// This native implementation runs the same dispatch + parametric rules
+// in TypeScript, returning bit-identical CheckedResults. Wired by
+// compile.ts after kernel.disp loads:
+//   - setNativeDispatcherTreeId(checked_apply.id)
+//   - setNativeKernelSig("hyp_reduce", kernel_hyp_reduce_sig.id)
+//   - ... one call per kernel handler signature
+//   - setNativeICanonicalId(I_canonical.id)
+//
+// Until those are registered the fast-path is dormant and apply runs
+// the in-language stub (currently `Ok (f x)` from kernel.disp).
+
+let DISPATCHER_TREE_ID: number = -1
+const DISPATCHER_PARTIAL_MARKER = fork(fork(stem(stem(stem(LEAF))), LEAF), stem(stem(stem(LEAF))))
+
+const nativeKernelSigs = new Map<string, number>()
+let HYP_REDUCE_SIG_ID: number = -1
+let NATIVE_I_CANONICAL_ID: number = -1
+
+export function setNativeDispatcherTreeId(id: number): void { DISPATCHER_TREE_ID = id }
+export function getNativeDispatcherTreeId(): number { return DISPATCHER_TREE_ID }
+
+export function setNativeKernelSig(name: string, sigTreeId: number): void {
+  nativeKernelSigs.set(name, sigTreeId)
+  if (name === "hyp_reduce") HYP_REDUCE_SIG_ID = sigTreeId
+}
+export function setNativeICanonicalId(id: number): void { NATIVE_I_CANONICAL_ID = id }
+
+export function clearNativeDispatcher(): void {
+  DISPATCHER_TREE_ID = -1
+  HYP_REDUCE_SIG_ID = -1
+  NATIVE_I_CANONICAL_ID = -1
+  nativeKernelSigs.clear()
+}
+
+// CheckedResult constructors (mirror lib/kernel.disp):
+//   Ok v = `t t v`        = fork(LEAF, v)
+//   Fail = `t (t t)`      = stem(stem(LEAF))
+//   is_ok r              = treeEqual(pair_fst r, LEAF) — true iff r = fork(LEAF, _)
+const NATIVE_FAIL = stem(stem(LEAF))
+function nativeOk(v: Tree): Tree { return fork(LEAF, v) }
+function nativeIsOk(r: Tree): boolean { return r.tag === "fork" && r.left.tag === "leaf" }
+function nativeOkValue(r: Tree): Tree {
+  // r = Ok v = fork(LEAF, v); pair_snd r = v.
+  return r.tag === "fork" ? r.right : LEAF
+}
+
+// pair_fst native (matches lib/prelude.disp):
+//   pair_fst LEAF       = LEAF      (triage on_leaf branch)
+//   pair_fst (stem c)   = c         (on_stem applied to inner c)
+//   pair_fst (fork l r) = l         (on_fork applied to (l, r))
+function nativePairFst(p: Tree): Tree {
+  if (p.tag === "leaf") return LEAF
+  if (p.tag === "stem") return p.child
+  return p.left
+}
+
+// is_neutral native: fork-shaped value with kernel.hyp_reduce signature.
+function nativeIsNeutralRoot(v: Tree): boolean {
+  if (HYP_REDUCE_SIG_ID === -1) return false
+  return v.tag === "fork" && v.left.id === HYP_REDUCE_SIG_ID
+}
+
+// Native dispatcher: signature check first, walker default last.
+// Returns a Tree that is either nativeOk(value) or NATIVE_FAIL.
+function nativeDispatch(f: Tree, x: Tree, budget: { remaining: number }): Tree {
+  // hyp_reduce gets first-priority signature check (most frequent).
+  if (HYP_REDUCE_SIG_ID !== -1 && nativePairFst(f).id === HYP_REDUCE_SIG_ID) {
+    return nativeOk(apply(f, x, budget))
+  }
+  // Other kernel handlers route raw too.
+  const fSig = nativePairFst(f).id
+  for (const sigId of nativeKernelSigs.values()) {
+    if (sigId === fSig && sigId !== HYP_REDUCE_SIG_ID) {
+      return nativeOk(apply(f, x, budget))
+    }
+  }
+  // Default: parametric walker.
+  return nativeWalkerStep(f, x, budget)
+}
+
+function nativeWalkerStep(f: Tree, x: Tree, budget: { remaining: number }): Tree {
+  // I-shortcut (only soundness carve-out per V2 §6.3).
+  if (NATIVE_I_CANONICAL_ID !== -1 && f.id === NATIVE_I_CANONICAL_ID) {
+    return nativeOk(x)
+  }
+  // Triage f.
+  if (f.tag === "leaf") {
+    // Leaf rule: apply(LEAF, x) = stem(x). Stems are never neutrals.
+    return nativeOk(stem(x))
+  }
+  if (f.tag === "stem") {
+    // Stem rule: apply(stem(c), x) = fork(c, x). Reject if neutral-rooted.
+    const r = fork(f.child, x)
+    if (nativeIsNeutralRoot(r)) return NATIVE_FAIL
+    return nativeOk(r)
+  }
+  // Fork f = fork(a, b). Triage on a to pick K / S / triage rule.
+  const a = f.left, b = f.right
+  if (a.tag === "leaf") {
+    // K rule: apply(fork(LEAF, b), x) = b.
+    return nativeOk(b)
+  }
+  if (a.tag === "stem") {
+    // S rule: apply(fork(stem(c), b), x) = apply(apply(c, x), apply(b, x)).
+    const c = a.child
+    const cx = nativeDispatch(c, x, budget)
+    if (!nativeIsOk(cx)) return NATIVE_FAIL
+    const bx = nativeDispatch(b, x, budget)
+    if (!nativeIsOk(bx)) return NATIVE_FAIL
+    return nativeDispatch(nativeOkValue(cx), nativeOkValue(bx), budget)
+  }
+  // a = fork(tc, td) — triage rule on x.
+  const tc = a.left, td = a.right
+  if (nativeIsNeutralRoot(x)) return NATIVE_FAIL
+  if (x.tag === "leaf") return nativeOk(tc)
+  if (x.tag === "stem") return nativeDispatch(td, x.child, budget)
+  // x = fork(l, r): apply(fork(fork(tc, td), b), fork(l, r)) = apply(apply(b, l), r).
+  const bl = nativeDispatch(b, x.left, budget)
+  if (!nativeIsOk(bl)) return NATIVE_FAIL
+  return nativeDispatch(nativeOkValue(bl), x.right, budget)
+}
 
 // --- tree_eq host fast path ---
 // `tree_eq` is defined as a recursive tree program in lib/prelude.disp.

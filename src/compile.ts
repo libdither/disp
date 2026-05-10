@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
   Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
+  setNativeDispatcherTreeId, getNativeDispatcherTreeId, setNativeKernelSig, setNativeICanonicalId,
 } from "./tree.js"
 import {
   parseItems,
@@ -489,6 +490,46 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
   }
 }
 
+// Native dispatcher / kernel-signature registration anchors.
+// kernel.disp exports a small block of `:=` constants whose values are
+// the canonical signatures the host needs to recognise. When we see one
+// of those names being defined, we forward the resulting tree id to
+// tree.ts. Once the dispatcher tree id and at least the hyp_reduce
+// signature are registered, the native fast-path activates; until then
+// it is dormant and apply runs the in-language stub.
+const NATIVE_SIG_NAMES = new Set([
+  "kernel_hyp_reduce_sig",
+  "kernel_guard_sig",
+  "kernel_pi_sig",
+  "kernel_nat_sig",
+  "kernel_bool_sig",
+  "kernel_eq_sig",
+  "kernel_core_type_sig",
+  "kernel_guarded_type_sig",
+  "kernel_bool_rec_sig",
+  "kernel_nat_rec_sig",
+  "kernel_eq_J_sig",
+])
+function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
+  // Activation-of-native-fast-path is gated: see V2 §… commit log.
+  // Disabled until kernel arithmetic migrates to nat_rec / DAE form
+  // so it passes parametric mode without falling through to the
+  // walker's reflective-rejection branches.
+  if (false && name === "checked_apply" && getNativeDispatcherTreeId() === -1) {
+    setNativeDispatcherTreeId(tree.id)
+    return
+  }
+  if (name === "kernel_I_canonical") {
+    setNativeICanonicalId(tree.id)
+    return
+  }
+  if (NATIVE_SIG_NAMES.has(name)) {
+    // Strip "kernel_" prefix and trailing "_sig" to get the handler key.
+    const key = name.slice("kernel_".length, name.length - "_sig".length)
+    setNativeKernelSig(key, tree.id)
+  }
+}
+
 // Nat-level max: compare two nat trees. Since nats are Church-like with
 // zero = LEAF, succ(n) = fork(TT, n), we can compare structurally.
 function natTreeToNum(t: Tree): number {
@@ -958,6 +999,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
         // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
+        registerNativeDispatcherAnchor(it.name, result.tree)
         recordItem("field", it.name)
         return
       }
