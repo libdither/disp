@@ -39,36 +39,35 @@ let bad_pi = {_} -> StuckElim (Eq Nat 0 1) t
 test (Pi Nat ({_} -> Eq Nat 0 1)) bad_pi = FF
 
 // ================================================================
-// Attack 3 — reflective is_neutral family [STILL OPEN]
+// Attack 3 — reflective is_neutral family [REJECTED by walker]
 // ================================================================
 // BadFam is "Nat if the argument is a hypothesis, else Eq Nat 0 1".
-// During Pi checking the argument IS a hypothesis. Without the
-// dispatcher's walker, q_pi_fn's `ks.checked_apply v hyp` is just raw
-// apply, so `is_neutral hyp` returns TT and BadFam(hyp) = Nat. The Pi
-// check accepts. At any concrete call site BadFam(0) = Eq Nat 0 1, but
-// `bad_fn 0 = 0`, which is not refl — UNSOUND.
+// During Pi checking the argument IS a hypothesis. With the native
+// walker active, q_pi_fn's `ks.checked_apply BadFam hyp` runs BadFam
+// under parametric mode; `is_neutral hyp` triages on hyp via pair_fst,
+// which the walker rejects (triage-on-neutral rule). Pi check returns
+// FF — attack correctly defeated.
 
 let BadFam = {n} -> select Nat (Eq Nat 0 1) (is_neutral n)
 let bad_fn = {n} -> 0
-test (Pi Nat BadFam) bad_fn = TT
+test (Pi Nat BadFam) bad_fn = FF
 
 // ================================================================
-// Attack 4 — reflective tree_eq family [STILL OPEN]
+// Attack 4 — reflective tree_eq family [REJECTED by walker]
 // ================================================================
 // Same shape as attack 3 but uses tree_eq instead of is_neutral.
-// Without the walker, raw tree_eq descends into the hypothesis structure.
+// tree_eq triages both args; for hyp argument, walker rejects.
 
 let BadFam2 = {n} -> select (Eq Nat 0 1) Nat (tree_eq n 0)
-test (Pi Nat BadFam2) ({n} -> 0) = TT
+test (Pi Nat BadFam2) ({n} -> 0) = FF
 
 // ================================================================
-// Attack 5 — reflective is_fork family [STILL OPEN]
+// Attack 5 — reflective is_fork family [REJECTED by walker]
 // ================================================================
-// Hypotheses are fork-shaped wait values, so `is_fork hyp = TT`.
-// Same root cause as attack 3.
+// is_fork uses triage on its arg; for hyp the walker rejects.
 
 let BadFam3 = {n} -> select Nat (Eq Nat 0 1) (is_fork n)
-test (Pi Nat BadFam3) ({n} -> 0) = TT
+test (Pi Nat BadFam3) ({n} -> 0) = FF
 
 // ================================================================
 // Guard-layer baseline (session 2, still holds)
