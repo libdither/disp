@@ -497,13 +497,16 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
 // tree.ts. Once the dispatcher tree id and at least the hyp_reduce
 // signature are registered, the native fast-path activates; until then
 // it is dormant and apply runs the in-language stub.
+// V2 dispatcher list (per V2 §6.1): only kernel-primitive type-formers
+// and the unguard handler. Bool/Nat/Eq predicates are no longer
+// routed; their applications fall through to the walker. The
+// handlers remain in the recq record (q_core_type_fn uses them
+// internally for is_registered) but they're not part of the V2
+// dispatcher's signature recognition list.
 const NATIVE_SIG_NAMES = new Set([
   "kernel_hyp_reduce_sig",
   "kernel_guard_sig",
   "kernel_pi_sig",
-  "kernel_nat_sig",
-  "kernel_bool_sig",
-  "kernel_eq_sig",
   "kernel_core_type_sig",
   "kernel_guarded_type_sig",
   "kernel_bool_rec_sig",
