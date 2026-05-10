@@ -51,10 +51,10 @@
   predicate-application through one mechanism without making any
   type-former a kernel special case.
 
-  There is a single library `Universe` (no `Type k` stratification).
-  Universe-polymorphic Pi-checking works because Universe's
+  There is a single library `Type` (no `Type k` stratification).
+  Type-polymorphic Pi-checking works because Type's
   codomain_fn does H-rule directly via `Return`. Russell-style
-  paradoxes (including the universe-self-typing `Universe : Universe`)
+  paradoxes (including the universe-self-typing `Type : Type`)
   diverge per the soundness story; they don't synthesize proofs of
   False.
 
@@ -213,7 +213,7 @@ Slots:
   recognizer function. Stored so other library code can dispatch by
   type-former identity if needed.
 - *params.* Type-former-specific data. For Pi: `pair A B`. For Eq:
-  `make_eq_meta A x y`. For parameterless types (Bool, Nat, Universe,
+  `make_eq_meta A x y`. For parameterless types (Bool, Nat, Type,
   False): the constituent fields directly or the LEAF sentinel `t`.
 - *codomain_fn.* Either the LEAF sentinel `t` (T is non-applicable
   as a function), or a function `meta -> arg -> Action`. See §3.4.
@@ -273,7 +273,7 @@ application; extend the hypothesis's spine with `new_stored_type`."
 Used by Pi-like types whose codomain is itself a type.
 
 `Return value` says: "this application is predicate application;
-the result is `value` directly." Used by Universe-like predicate
+the result is `value` directly." Used by Type-like predicate
 types whose codomain_fn does the H-rule check inline.
 
 `hyp_reduce` (§4.1) dispatches on the Action tag.
@@ -292,7 +292,7 @@ types whose codomain_fn does the H-rule check inline.
   codomain_fn to put in their type's metadata; the kernel runs
   whatever they declare in raw mode.
 
-  This is what lets `Universe`'s codomain_fn perform the H-rule
+  This is what lets `Type`'s codomain_fn perform the H-rule
   directly without needing a separate kernel primitive — see §5.
 ]
 
@@ -337,7 +337,7 @@ The two Action cases serve different type-former classes:
   a Pi-typed hypothesis to an argument produces a new neutral whose
   stored type is the codomain at that argument).
 - *Return* yields the value directly with no spine extension, used by
-  Universe (where applying a Universe-typed hypothesis is a
+  Type (where applying a Type-typed hypothesis is a
   predicate-application whose result is the H-rule answer, not a new
   neutral).
 
@@ -612,20 +612,20 @@ type.
 For *closed* Pi-checks, `expected_core result` invokes the codomain's
 predicate routinely.
 
-For *universe-polymorphic* Pi-checks (e.g.,
-`Pi Universe (\{A\} -> Pi A (\{_\} -> A)) poly_id`):
+For *type-polymorphic* Pi-checks (e.g.,
+`Pi Type (\{A\} -> Pi A (\{_\} -> A)) poly_id`):
 
-+ Outer pi_recognizer mints `A_hyp : Universe`.
++ Outer pi_recognizer mints `A_hyp : Type`.
 + Inner pi_recognizer mints `x_hyp : A_hyp`.
 + Inner check `expected_core x_hyp` becomes `apply A_hyp x_hyp`.
-+ Routes via hyp_reduce → Universe's codomain_fn → H-rule. Returns
++ Routes via hyp_reduce → Type's codomain_fn → H-rule. Returns
   `Return TT` because `stored(x_hyp) = A_hyp = self_as_hyp`.
 + hyp_reduce returns TT directly (Action `Return TT`).
 + Inner pi_recognizer's body sees TT, propagates upward.
 + Outer Pi-check accepts.
 
-So universe-polymorphic theorems are provable as closed terms,
-without Pi being a kernel primitive. The H-rule lives in Universe's
+So type-polymorphic theorems are provable as closed terms,
+without Pi being a kernel primitive. The H-rule lives in Type's
 codomain_fn (§5), where the `Return` Action lets it bypass spine
 extension.
 
@@ -698,17 +698,17 @@ Eq := \{A, x, y\} -> guard (wait kernel_ref.predicate_frame
         (pair (make_eq_meta A x y) t)))
 ```
 
-== Universe
+== Type
 
 ```
-let universe_recognizer = \{_, v\} ->
+let type_recognizer = \{_, v\} ->
   // v is a "type" iff it's structurally a guarded predicate_frame wait-form
   match (has_sig kernel_ref.guard v) \{
     TT => has_sig kernel_ref.predicate_frame (type_meta v)
     FF => FF
   \}
 
-let universe_codomain_fn = \{meta, v\} -> \{
+let type_codomain_fn = \{meta, v\} -> \{
   let self_as_hyp = wait kernel.hyp_reduce meta
   match (q_is_neutral raw v) \{
     TT =>
@@ -721,28 +721,28 @@ let universe_codomain_fn = \{meta, v\} -> \{
   \}
 \}
 
-Universe := guard (wait kernel_ref.predicate_frame
-  (pair universe_recognizer_sig
-        (pair t universe_codomain_fn)))
+Type := guard (wait kernel_ref.predicate_frame
+  (pair type_recognizer_sig
+        (pair t type_codomain_fn)))
 ```
 
-`Universe v = TT` iff v is structurally a guarded predicate_frame
+`Type v = TT` iff v is structurally a guarded predicate_frame
 wait-form. All library type-formers (Pi, Bool, Nat, Eq, False,
-Sigma, Universe itself) qualify.
+Sigma, Type itself) qualify.
 
-For a hypothesis `Hyp Universe id` (a "type variable"):
+For a hypothesis `Hyp Type id` (a "type variable"):
 - `predicate_frame`'s H-rule on its own treats this hyp as inhabiting
-  `Universe` (stored type matches T).
+  `Type` (stored type matches T).
 - Applying the hypothesis to a value goes through hyp_reduce, which
-  invokes `universe_codomain_fn`. For hypothesis arguments matching
+  invokes `type_codomain_fn`. For hypothesis arguments matching
   this type-variable's identity, returns TT (H-rule); for non-matching
   hypothesis arguments, FF; for closed arguments, stuck-Bool (the
   actual type the hypothesis represents is unknown, so membership
   can't be decided concretely).
 
 #note[
-  *Universe : Universe.* Universe is itself a guarded predicate_frame
-  wait-form, so `Universe Universe = TT`. Russell-style paradoxes
+  *Type : Type.* Type is itself a guarded predicate_frame
+  wait-form, so `Type Type = TT`. Russell-style paradoxes
   (e.g., `R := \{T\} -> not (T T)`; `R R`) exist as well-formed
   expressions but diverge when applied — the apply budget catches
   them as failure. Disp's "soundness via divergence-as-failure"
@@ -753,7 +753,7 @@ For a hypothesis `Hyp Universe id` (a "type variable"):
 
 #note[
   *Closed-value case returns stuck-Bool.* When `apply A_hyp closed_v`
-  is evaluated and `closed_v` is not a hypothesis, Universe's
+  is evaluated and `closed_v` is not a hypothesis, Type's
   codomain_fn can't decide membership without knowing what type
   A_hyp actually represents (it's still hypothetical). It returns
   stuck-Bool. This propagates upward; at the public boundary,
@@ -761,8 +761,8 @@ For a hypothesis `Hyp Universe id` (a "type variable"):
 
   This is the right behavior for unsound constructions (functions
   that don't preserve typing). For *legitimate* polymorphic functions
-  used at concrete instantiations, the user instantiates Universe
-  with a specific type before testing — at that point Universe isn't
+  used at concrete instantiations, the user instantiates Type
+  with a specific type before testing — at that point Type isn't
   a hypothesis, the recognizer runs concretely, and stuck-Bool
   doesn't arise.
 ]
@@ -935,7 +935,7 @@ Codomain_fns run in raw mode (invoked from inside hyp_reduce). They
 are library-trusted code, but their privilege is delegated through
 the metadata layout — library authors choose what to put in
 codomain_fn slots; the kernel runs whatever they declare in raw
-mode. Universe's codomain_fn relies on this for its H-rule
+mode. Type's codomain_fn relies on this for its H-rule
 implementation (§5.5 / §8).
 
 == Logical consistency at the public boundary
@@ -994,15 +994,15 @@ computation that either terminates with TT, terminates with FF, or
 fails to terminate. Failure-to-terminate is observably distinct from
 TT and is treated as failure at the public boundary.
 
-= Universe-polymorphic Pi via Universe's codomain_fn
+= Type-polymorphic Pi via Type's codomain_fn
 
-The polymorphic identity check `Pi Universe (\{A\} -> Pi A (\{_\} -> A))
-poly_id` succeeds at the public boundary because Universe's
+The polymorphic identity check `Pi Type (\{A\} -> Pi A (\{_\} -> A))
+poly_id` succeeds at the public boundary because Type's
 codomain_fn (§5) does H-rule directly via the `Return` Action,
 bypassing the spine-extension default that Pi-typed hypotheses use.
 
 Specifically, the inner check `apply A_hyp x_hyp` invokes hyp_reduce.
-hyp_reduce reads Universe's codomain_fn, evaluates it on
+hyp_reduce reads Type's codomain_fn, evaluates it on
 `(meta, x_hyp)`. The codomain_fn does
 `tree_eq stored(x_hyp) self_as_hyp` (the H-rule), gets TT, returns
 `Return TT`. hyp_reduce returns TT directly (Action `Return TT`).
@@ -1010,7 +1010,7 @@ hyp_reduce reads Universe's codomain_fn, evaluates it on
 The Pi-recognizer thus sees TT as the membership-check result and
 propagates it upward. The polymorphic Pi-check accepts. Pi remains a
 library type, not a kernel primitive — the H-rule capability lives
-in Universe's codomain_fn, made accessible to kernel-routed
+in Type's codomain_fn, made accessible to kernel-routed
 hyp_reduce by the Action protocol.
 
 The codomain_fn's reflective operations (`q_is_neutral`,
@@ -1035,7 +1035,7 @@ design is a substantial refactor:
   `q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`, `q_pi_fn`).
 + Drop the universe-rank machinery (`q_core_type_fn`,
   `q_guarded_type_fn`) and the Ord-as-rank coupling.
-+ Reimplement Pi, Bool, Nat, Eq, Universe, Ord as library types
++ Reimplement Pi, Bool, Nat, Eq, Type, Ord as library types
   using predicate_frame / eliminator_frame.
 + Implement Action helpers (`Extend`, `Return`, `is_extend`,
   `is_return`) and `q_contains_via_open_path` (for bind_hyp's
