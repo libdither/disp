@@ -444,11 +444,9 @@ I_canonical := {z} -> z
 //
 // The host runtime registers this dispatcher's tree id and intercepts
 // `apply(checked_apply, …)` to run a native parametric walker in TS.
-// The in-language version below is currently a stub — the real V2
+// The in-language version below is currently a stub — the spec's full
 // dispatcher (signature recognition + walker default) will replace it
-// once `add`, `pred`, `is_zero`, etc. are migrated from raw triage to
-// `nat_rec`-based bodies that pass parametric mode (task #3 / DAE
-// migration).
+// once the DAE migration is complete.
 let q_checked_apply_fn = {ks, raw, query} ->
   fix ({self, f, x} -> Ok (f x))
 
@@ -710,7 +708,7 @@ conv_structural := fix ({self, a, b} -> {
 // Standalone parametric walker
 // ================================================================
 // `checked_apply_walker` is the parametric-mode reduction discipline
-// from TYPE_THEORY_V2.typ §6 implemented as a self-contained recursive
+// from `TYPE_THEORY.typ` §6 implemented as a self-contained recursive
 // function. It mirrors the five raw apply rules with two parametric
 // restrictions: triage on a neutral fails, and stem-rule fork-formation
 // rejects neutral roots.
@@ -718,7 +716,7 @@ conv_structural := fix ({self, a, b} -> {
 // The walker is exposed here for adversarial-soundness regression
 // testing. It is NOT yet wired through `q_checked_apply_fn` (which is
 // still a stub: `Ok (f x)`). Wiring requires data-as-eliminator
-// migration first — see TYPE_THEORY_V2.typ §4 — because today's
+// migration first — see `TYPE_THEORY.typ` §4 — because today's
 // eliminators (`bool_rec`, `nat_rec`, `eq_J`) mint StuckElim values
 // that the walker's stem-rule constructor check correctly rejects.
 
@@ -778,7 +776,7 @@ let fork_step = {self, a, b, x} ->
 // checks at every fork-producing rule. Soundness carve-out: I-shortcut
 // (apply(I, x) = x) is recognised via tree_eq fast path so identity on
 // a hypothesis is accepted. This is the only soundness carve-out per
-// TYPE_THEORY_V2.typ §6.3.
+// `TYPE_THEORY.typ` §6.3.
 checked_apply_walker := fix ({self, f, x} ->
   match (tree_eq f I_canonical) {
     TT => Ok x
