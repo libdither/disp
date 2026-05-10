@@ -1,13 +1,17 @@
 # Tree-Calculus Implementation Notes
 
-Practical implementation notes for compiling the type theory in
-[TYPE_THEORY.typ](TYPE_THEORY.typ) into tree-calculus programs.
+Practical implementation notes for the **current** kernel in
+`lib/kernel.disp`. These describe what the codebase looks like today,
+not the unified design target in [`TYPE_THEORY.typ`](TYPE_THEORY.typ);
+the implementation has not yet migrated to that design.
 
 `TYPE_THEORY.typ` owns the semantic story: types as predicates, the
 H-rule, soundness, universes, type formers, and eliminators.
-This file owns the engineering story: how `lib/kernel.disp` is shaped,
-where `wait` is required, how strict evaluation interacts with records,
-and which parser/bracket-abstraction details are load-bearing.
+This file owns the engineering story: how the current `lib/kernel.disp`
+is shaped, where `wait` is required, how strict evaluation interacts
+with records, and which parser/bracket-abstraction details are
+load-bearing. As the migration proceeds, sections here will be revised
+or removed.
 
 Reference implementation:
 
