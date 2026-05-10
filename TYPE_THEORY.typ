@@ -44,6 +44,24 @@
   hypothesis is reachable via a non-neutral path. See §4.6 for the
   bind_hyp specification and §9 for the soundness argument.
 
+  `hyp_reduce` consults the stored type's `codomain_fn` slot, which
+  returns a tagged `Action`: `Extend new_stored_type` (for
+  function-typed hypotheses) or `Return value` (for predicate-typed
+  hypotheses). This unifies function-application and
+  predicate-application through one mechanism without making any
+  type-former a kernel special case.
+
+  There is a single library `Universe` (no `Type k` stratification).
+  Universe-polymorphic Pi-checking works because Universe's
+  codomain_fn does H-rule directly via `Return`. Russell-style
+  paradoxes (including the universe-self-typing `Universe : Universe`)
+  diverge per the soundness story; they don't synthesize proofs of
+  False.
+
+  Termination guarantees on user-defined types are not provided by
+  ranks; users opt in via the `Total T` library construction (§5)
+  by supplying a measure and a decreasing-recursion witness.
+
   The current implementation does NOT yet match this spec (it has
   per-type kernel handlers per the previous data-as-eliminator
   design). The migration plan is in §10. Where the implementation
@@ -75,10 +93,10 @@ Five commitments govern the design:
   kernel's hypothesis signature fails.
 
 + *Generic library type-formers.* Inductive types declare a recognizer
-  (`Tree -> Bool` predicate body) and optional metadata (rank function,
-  codomain function). The kernel's `predicate_frame` wraps the
-  recognizer with H-rule handling for hypothesis inputs. The kernel
-  doesn't grow with library types.
+  (`Tree -> Bool` predicate body) and optional metadata (codomain
+  function). The kernel's `predicate_frame` wraps the recognizer with
+  H-rule handling for hypothesis inputs. The kernel doesn't grow with
+  library types.
 
 + *Soundness via three runtime mechanisms, plus False's definition.*
   Public-boundary scan, stem-rule fork rejection, and walker triage
@@ -93,7 +111,7 @@ then v inhabits T per T's predicate*. The kernel does not guarantee:
 
 - Termination of user predicates (apply budget catches divergence;
   divergence does not synthesize TT).
-- Semantic correctness of user-supplied recognizers, rank functions,
+- Semantic correctness of user-supplied recognizers, codomain_fns,
   or case dispatchers (the kernel runs them as-is).
 - Detection of paradoxical type definitions (Russell, Girard, etc.).
 
@@ -183,27 +201,22 @@ Every library type-former T has the structural form:
 T_params := guard (wait kernel_ref.predicate_frame T_meta)
 ```
 
-with `T_meta` a four-tuple:
+with `T_meta` a 3-tuple:
 
 ```
 T_meta := pair recognizer_sig
-              (pair params
-                    (pair codomain_fn
-                          rank_fn))
+              (pair params codomain_fn)
 ```
 
 Slots:
 - *recognizer_sig.* Hash-cons-stable signature of the type-former's
-  recognizer function. Used by `Type k`'s recognizer (and any other
-  consumer that dispatches on type-former identity).
+  recognizer function. Stored so other library code can dispatch by
+  type-former identity if needed.
 - *params.* Type-former-specific data. For Pi: `pair A B`. For Eq:
-  `make_eq_meta A x y`. For parameterless types (Bool, Nat, Type k):
-  the constituent fields directly.
-- *codomain_fn.* For Pi-like applicable types, a function
-  `arg -> new_stored_type`. For non-applicable types (Bool, Nat, Eq,
-  Type, False, etc.), the LEAF sentinel `t`.
-- *rank_fn.* A function returning the type-former's universe rank as
-  Ord. Used by `Type k`'s recognizer for rank-based universe checks.
+  `make_eq_meta A x y`. For parameterless types (Bool, Nat, Universe,
+  False): the constituent fields directly or the LEAF sentinel `t`.
+- *codomain_fn.* Either the LEAF sentinel `t` (T is non-applicable
+  as a function), or a function `meta -> arg -> Action`. See §3.4.
 
 == Hash-cons stability
 
@@ -239,29 +252,97 @@ The recognizer must NOT:
 
 The recognizer's result is a Bool (TT, FF, or stuck-Bool).
 
+== Action protocol (codomain_fn return values)
+
+The `codomain_fn` slot, when not the LEAF sentinel, is a function
+`meta -> arg -> Action`, where `Action` is a tagged value:
+
+```
+Extend := \{new_stored_type\} -> pair extend_tag new_stored_type
+Return := \{value\}            -> pair return_tag value
+
+is_extend := \{action\} -> tree_eq (pair_fst action) extend_tag
+is_return := \{action\} -> tree_eq (pair_fst action) return_tag
+```
+
+`extend_tag` and `return_tag` are distinct constant trees fixed at
+boot.
+
+`Extend new_stored_type` says: "this application is function
+application; extend the hypothesis's spine with `new_stored_type`."
+Used by Pi-like types whose codomain is itself a type.
+
+`Return value` says: "this application is predicate application;
+the result is `value` directly." Used by Universe-like predicate
+types whose codomain_fn does the H-rule check inline.
+
+`hyp_reduce` (§4.1) dispatches on the Action tag.
+
+#note[
+  *Codomain_fn runs raw.* It's invoked from inside `hyp_reduce`,
+  which is itself a kernel handler running raw mode. So codomain_fn
+  can use reflection (triage on neutrals, read stored types from
+  hypothesis metadata) — operations the walker would reject in
+  user-untrusted contexts.
+
+  This is the privilege boundary: user-untrusted code (recognizers,
+  case dispatchers) runs under the walker; library-trusted code
+  (codomain_fns) runs raw via hyp_reduce. The trust is delegated
+  through the metadata layout. Library authors choose what
+  codomain_fn to put in their type's metadata; the kernel runs
+  whatever they declare in raw mode.
+
+  This is what lets `Universe`'s codomain_fn perform the H-rule
+  directly without needing a separate kernel primitive — see §5.
+]
+
 = Per-primitive specifications
 
 == `hyp_reduce`
 
 When `apply(neutral, x)` evaluates, the dispatcher routes to
 `hyp_reduce`. The handler reads the neutral's stored type metadata,
-extracts the codomain function from the type's `codomain_fn` slot, and
-either extends the spine or returns `InvalidType`:
+extracts the codomain_fn (§3.4), and dispatches on the Action it
+returns:
 
 ```
 q_hyp_reduce_fn := \{ks, raw, query\} -> fix (\{self, meta, v\} -> \{
   let stored = q_unguard_or_self ks (neutral_meta_type meta)
-  let cod_fn = pair_fst (pair_snd (pair_snd (type_meta stored)))
+  let cod_fn = pair_snd (pair_snd (type_meta stored))
   match (tree_eq cod_fn t) \{
-    TT => wait self (extend_neutral_meta meta InvalidType v)
-    FF => wait self (extend_neutral_meta meta
-                       (wait kernel_ref.guard (cod_fn v)) v)
+    TT =>
+      // Sentinel: type is non-applicable. Extend with InvalidType.
+      wait self (extend_neutral_meta meta InvalidType v)
+    FF => \{
+      let action = cod_fn meta v
+      match (is_extend action) \{
+        TT =>
+          let new_stored = pair_snd action
+          wait self (extend_neutral_meta meta
+                       (wait kernel_ref.guard new_stored) v)
+        FF => match (is_return action) \{
+          TT => pair_snd action   // return value directly
+          FF =>
+            // Malformed action: defensive InvalidType.
+            wait self (extend_neutral_meta meta InvalidType v)
+        \}
+      \}
+    \}
   \}
 \})
 ```
 
-The codomain_fn slot convention is part of the library type-former
-protocol (§3.1).
+The two Action cases serve different type-former classes:
+- *Extend* extends the hypothesis's spine, used by Pi (where applying
+  a Pi-typed hypothesis to an argument produces a new neutral whose
+  stored type is the codomain at that argument).
+- *Return* yields the value directly with no spine extension, used by
+  Universe (where applying a Universe-typed hypothesis is a
+  predicate-application whose result is the H-rule answer, not a new
+  neutral).
+
+The codomain_fn convention is part of the library type-former
+protocol (§3.1, §3.4).
 
 == `guard`
 
@@ -404,16 +485,18 @@ because triage on neutrals is rejected by the walker.
 
 #note[
   *What this enables.* bind_hyp's body can return any value of any
-  type, including `Bool`, `Ord`, `Nat`, etc. Pi's `rank_fn` can
-  compute polymorphic codomain rank by `bind_hyp A (\{h\} -> rank_of (B h))`
-  — the result is an Ord (possibly stuck-Ord containing `h` inside
-  a neutral wrapper), which the escape check accepts.
+  type, including `Bool`, `Ord`, `Nat`, etc. A library `Total` proof
+  for an inductive type T can use `bind_hyp T (\{h\} -> measure h)`
+  to express a measure of T's elements; the result is an Ord that
+  may contain `h` inside a kernel-minted neutral (e.g., a stuck-Ord
+  produced by ord_lt on hypothesis-typed Ord arguments), which the
+  escape check accepts.
 
   The earlier "body returns Bool" restriction was a workable
   approximation but was both too strict (rejected legitimate
-  Ord-returning rank computations) and too loose (relied on caller
-  patterns rather than enforcing safety at the kernel level). The
-  escape check is the more precise property.
+  non-Bool returns) and too loose (relied on caller patterns rather
+  than enforcing safety at the kernel level). The escape check is
+  the more precise property.
 ]
 
 == `eliminator_frame`
@@ -510,27 +593,41 @@ let pi_recognizer = \{params, v\} -> \{
 \}
 let pi_recognizer_sig = checker_sig pi_recognizer
 
+let pi_codomain_fn = \{meta, arg\} -> \{
+  let stored = wait kernel.hyp_reduce meta
+  let params = pair_fst (pair_snd (type_meta stored))
+  let B = pair_snd params
+  Extend (B arg)
+\}
+
 Pi := \{A, B\} -> guard (wait kernel_ref.predicate_frame
   (pair pi_recognizer_sig
-        (pair (pair A B)
-              (pair (\{arg\} -> B arg)            // codomain_fn = B
-                    (pi_rank_fn (pair A B))))))   // rank_fn (see §9)
+        (pair (pair A B) pi_codomain_fn)))
 ```
 
-The codomain_fn slot lets `hyp_reduce` extend a Pi-typed hypothesis's
-spine when it's applied: `apply(Hyp (Pi A B) id, x)` reads `B` from
-metadata and computes the new stored type as `B x`.
+The codomain_fn returns `Extend (B arg)`, telling `hyp_reduce` to
+extend a Pi-typed hypothesis's spine with `B arg` as the new stored
+type.
 
-The rank_fn computes Pi's universe rank, recursing through the
-codomain via `bind_hyp` (now sound thanks to the escape check):
+For *closed* Pi-checks, `expected_core result` invokes the codomain's
+predicate routinely.
 
-```
-let pi_rank_fn = \{params\} ->
-  let A = pair_fst params
-  let B = pair_snd params
-  ord_max (rank_of A)
-          (bind_hyp A (\{h\} -> rank_of (B h)))
-```
+For *universe-polymorphic* Pi-checks (e.g.,
+`Pi Universe (\{A\} -> Pi A (\{_\} -> A)) poly_id`):
+
++ Outer pi_recognizer mints `A_hyp : Universe`.
++ Inner pi_recognizer mints `x_hyp : A_hyp`.
++ Inner check `expected_core x_hyp` becomes `apply A_hyp x_hyp`.
++ Routes via hyp_reduce → Universe's codomain_fn → H-rule. Returns
+  `Return TT` because `stored(x_hyp) = A_hyp = self_as_hyp`.
++ hyp_reduce returns TT directly (Action `Return TT`).
++ Inner pi_recognizer's body sees TT, propagates upward.
++ Outer Pi-check accepts.
+
+So universe-polymorphic theorems are provable as closed terms,
+without Pi being a kernel primitive. The H-rule lives in Universe's
+codomain_fn (§5), where the `Return` Action lets it bypass spine
+extension.
 
 == Bool
 
@@ -544,9 +641,7 @@ let bool_dispatcher = \{motive, cases, target\} ->
 
 Bool := guard (wait kernel_ref.predicate_frame
   (pair bool_recognizer_sig
-        (pair t                             // no params
-              (pair t                       // codomain_fn = sentinel
-                    (\{_\} -> zero_ord))))) // rank_fn = const 0
+        (pair t t)))   // no params; codomain_fn = sentinel
 
 bool_rec := wait kernel_ref.eliminator_frame
   (init_meta_arity_4 bool_dispatcher)
@@ -578,8 +673,7 @@ let nat_dispatcher = fix (\{self, motive, cases, target\} -> \{
 \})
 
 Nat := guard (wait kernel_ref.predicate_frame
-  (pair nat_recognizer_sig
-        (pair t (pair t (\{_\} -> zero_ord)))))
+  (pair nat_recognizer_sig (pair t t)))
 
 nat_rec := wait kernel_ref.eliminator_frame
   (init_meta_arity_4 nat_dispatcher)
@@ -601,43 +695,77 @@ let eq_recognizer = \{params, v\} -> \{
 
 Eq := \{A, x, y\} -> guard (wait kernel_ref.predicate_frame
   (pair eq_recognizer_sig
-        (pair (make_eq_meta A x y)
-              (pair t (\{_\} -> zero_ord)))))
+        (pair (make_eq_meta A x y) t)))
 ```
 
-== Type k (universe)
+== Universe
 
 ```
-let type_k_recognizer = fix (\{self, k, v\} -> \{
-  // Peel guard, dispatch on inner predicate_frame's recognizer_sig
+let universe_recognizer = \{_, v\} ->
+  // v is a "type" iff it's structurally a guarded predicate_frame wait-form
   match (has_sig kernel_ref.guard v) \{
-    TT => \{
-      let inner = type_meta v
-      match (has_sig kernel_ref.predicate_frame inner) \{
-        TT => \{
-          let inner_meta = type_meta inner
-          let inner_rank_fn = pair_snd (pair_snd (pair_snd inner_meta))
-          let inner_params = pair_fst (pair_snd inner_meta)
-          let inner_rank = inner_rank_fn inner_params
-          ord_lt inner_rank k
-        \}
-        FF => FF
-      \}
-    \}
+    TT => has_sig kernel_ref.predicate_frame (type_meta v)
     FF => FF
   \}
-\})
 
-Type := \{k\} -> guard (wait kernel_ref.predicate_frame
-  (pair type_k_recognizer_sig
-        (pair k
-              (pair t
-                    (\{_\} -> succ_ord k)))))
+let universe_codomain_fn = \{meta, v\} -> \{
+  let self_as_hyp = wait kernel.hyp_reduce meta
+  match (q_is_neutral raw v) \{
+    TT =>
+      // H-rule: does v's stored type match this hypothesis?
+      Return (tree_eq (q_unguard_or_self ks (neutral_meta_type (type_meta v)))
+                       self_as_hyp)
+    FF =>
+      // Closed v: can't decide without the actual type.
+      Return (cert_make_stuck Bool stuck_meta)
+  \}
+\}
+
+Universe := guard (wait kernel_ref.predicate_frame
+  (pair universe_recognizer_sig
+        (pair t universe_codomain_fn)))
 ```
 
-By reading rank_fn from the metadata, `Type k` doesn't need to enumerate
-known type-formers. New library type-formers participate by declaring
-their own rank_fn — no edit to `Type k`'s recognizer required.
+`Universe v = TT` iff v is structurally a guarded predicate_frame
+wait-form. All library type-formers (Pi, Bool, Nat, Eq, False,
+Sigma, Universe itself) qualify.
+
+For a hypothesis `Hyp Universe id` (a "type variable"):
+- `predicate_frame`'s H-rule on its own treats this hyp as inhabiting
+  `Universe` (stored type matches T).
+- Applying the hypothesis to a value goes through hyp_reduce, which
+  invokes `universe_codomain_fn`. For hypothesis arguments matching
+  this type-variable's identity, returns TT (H-rule); for non-matching
+  hypothesis arguments, FF; for closed arguments, stuck-Bool (the
+  actual type the hypothesis represents is unknown, so membership
+  can't be decided concretely).
+
+#note[
+  *Universe : Universe.* Universe is itself a guarded predicate_frame
+  wait-form, so `Universe Universe = TT`. Russell-style paradoxes
+  (e.g., `R := \{T\} -> not (T T)`; `R R`) exist as well-formed
+  expressions but diverge when applied — the apply budget catches
+  them as failure. Disp's "soundness via divergence-as-failure"
+  stance applies: divergence is observably distinct from TT, so
+  paradoxes don't synthesize proofs of False. Stratification is not
+  needed for soundness in Disp.
+]
+
+#note[
+  *Closed-value case returns stuck-Bool.* When `apply A_hyp closed_v`
+  is evaluated and `closed_v` is not a hypothesis, Universe's
+  codomain_fn can't decide membership without knowing what type
+  A_hyp actually represents (it's still hypothetical). It returns
+  stuck-Bool. This propagates upward; at the public boundary,
+  stuck-Bool fails the scan and the test reports FF.
+
+  This is the right behavior for unsound constructions (functions
+  that don't preserve typing). For *legitimate* polymorphic functions
+  used at concrete instantiations, the user instantiates Universe
+  with a specific type before testing — at that point Universe isn't
+  a hypothesis, the recognizer runs concretely, and stuck-Bool
+  doesn't arise.
+]
 
 == False
 
@@ -645,8 +773,9 @@ their own rank_fn — no edit to `Type k`'s recognizer required.
 let false_recognizer = \{_, _\} -> FF
 
 False := guard (wait kernel_ref.predicate_frame
-  (pair false_recognizer_sig
-        (pair t (pair t (\{_\} -> zero_ord)))))
+  (pair false_recognizer_sig (pair t t)))
+
+Not := \{P\} -> Pi P (\{_\} -> False)
 ```
 
 `False v = FF` for all closed `v`. For hypothesis `v` with stored type
@@ -680,9 +809,9 @@ let forall_recognizer = \{params, v\} -> \{
 \}
 ```
 
-Each gets the standard 4-tuple metadata wrapping. Sigma and Refinement
-don't need bind_hyp (closed dispatch). Forall does (it quantifies over
-A).
+Each gets the standard 3-tuple metadata wrapping with sentinel
+codomain_fn. Sigma and Refinement don't need bind_hyp (closed
+dispatch). Forall does (it quantifies over A).
 
 Forall's body returns `(P hyp) v` — a Bool resulting from applying
 P-at-hyp's predicate to v. The escape check examines this Bool:
@@ -695,6 +824,91 @@ P-at-hyp's predicate to v. The escape check examines this Bool:
 In practice, `(P hyp) v` produces Bool values that don't expose hyp
 in user-extractable positions; legitimate Forall recognizers pass
 the escape check.
+
+== `wf_fix` and `Total`
+
+`wf_fix` is a library combinator for measure-bounded recursion. It
+wraps the recursive parameter so it can only be invoked on
+strictly-smaller-measure inputs:
+
+```
+// wf_fix : (T -> M) -> ((T -> Bool) -> (T -> Bool)) -> (T -> Bool)
+//
+// `measure` maps inputs to a well-founded type M (Nat, Ord, ...).
+// `body` takes `rec` and `v`; rec invocations on inputs whose
+// measure is not strictly less than measure(v) return Fail.
+
+wf_fix := \{measure, body\} ->
+  fix (\{self, v\} ->
+    let bounded_self = \{v_inner\} ->
+      match (lt_in_M (measure v_inner) (measure v)) \{
+        TT => self v_inner
+        FF => Fail
+      \}
+    body bounded_self v)
+```
+
+`lt_in_M` is the strict-less-than for the measure type. For Nat
+measures: `nat_lt`. For Ord measures: `ord_lt`. Library helpers per
+type.
+
+Predicates defined via `wf_fix` are total by construction: recursion
+is bounded by a strictly-decreasing measure into a well-founded type.
+
+Two flavors of `Total` for asserting predicate totality:
+
+```
+// Structural: Total T iff T's recognizer was built via wf_fix.
+let total_recognizer = \{_, T\} ->
+  let inner = type_meta T
+  let recognizer = pair_fst (type_meta inner)
+  has_sig kernel_ref.wf_fix recognizer
+
+Total := guard (wait kernel_ref.predicate_frame
+  (pair total_recognizer_sig (pair t t)))
+```
+
+```
+// Constructive: TotalWith T inhabited by (measure, decreasing_proof).
+TotalWith := \{T\} ->
+  Sigma (Tree -> Ord) (\{measure\} ->
+    Pi Tree (\{v\} ->
+      // proof that recursive calls of T's body on input v
+      // produce values v' with ord_lt (measure v') (measure v)
+      ...))
+```
+
+`Total` is the "trust the syntactic discipline" variant; `TotalWith`
+is "show me an explicit termination proof." Library authors pick
+based on need.
+
+Termination guarantees in Disp are opt-in. Users who care about
+"my type-checker won't loop" supply Total proofs and pass them
+through the type system. Users who don't care write whatever
+predicates they want; divergence-as-failure handles soundness.
+
+== `Ord` (library inductive)
+
+`Ord` is an ordinary library inductive defined via `predicate_frame`
++ `eliminator_frame`. It is *not* a kernel concern under this
+design — there is no universe-rank machinery that uses Ord. Library
+code that wants ordinal arithmetic, well-founded measures, or
+stuck-comparing rank arithmetic pulls Ord in.
+
+```
+Ord := guard (wait kernel_ref.predicate_frame
+  (pair ord_recognizer_sig (pair t t)))
+```
+
+`ord_lt`, `ord_le`, `ord_max` are library functions defined via
+`eliminator_frame`. They handle stuck-Ord values via the
+eliminator_frame's stuck-mint behavior (when the target is
+hypothesis-typed, the eliminator mints a stuck of the motive's
+codomain type).
+
+Used by `TotalWith` proofs over inductives whose measures aren't
+expressible as Nat (e.g., when measures involve hypothesis-typed
+values that need stuck propagation).
 
 = Soundness arguments
 
@@ -712,10 +926,17 @@ This rests on:
   under parametric mode, preventing user code from inspecting a
   hypothesis's structure.
 
-These mechanisms apply uniformly to user-defined recognizers,
-dispatchers, and rank functions. All user code under
-`predicate_frame` or `eliminator_frame` runs through `ks.checked_apply`,
-which routes through the walker.
+These mechanisms apply uniformly to user-defined recognizers and
+case dispatchers. All user code under `predicate_frame` or
+`eliminator_frame` runs through `ks.checked_apply`, which routes
+through the walker.
+
+Codomain_fns run in raw mode (invoked from inside hyp_reduce). They
+are library-trusted code, but their privilege is delegated through
+the metadata layout — library authors choose what to put in
+codomain_fn slots; the kernel runs whatever they declare in raw
+mode. Universe's codomain_fn relies on this for its H-rule
+implementation (§5.5 / §8).
 
 == Logical consistency at the public boundary
 
@@ -773,125 +994,54 @@ computation that either terminates with TT, terminates with FF, or
 fails to terminate. Failure-to-terminate is observably distinct from
 TT and is treated as failure at the public boundary.
 
-= Resolved: bind_hyp with arbitrary return types via the escape check
+= Universe-polymorphic Pi via Universe's codomain_fn
 
-An earlier draft of this spec restricted bind_hyp's body to return
-`Bool`, motivated by the fact that the H-rule for `predicate_frame`
-can lie when applied to a hypothesis-typed value of an uninhabited
-type (the weirder attack). That restriction was both too strict
-(rejected legitimate Ord-returning rank computations) and too loose
-(was enforced only by caller convention, not at the kernel level).
+The polymorphic identity check `Pi Universe (\{A\} -> Pi A (\{_\} -> A))
+poly_id` succeeds at the public boundary because Universe's
+codomain_fn (§5) does H-rule directly via the `Return` Action,
+bypassing the spine-extension default that Pi-typed hypotheses use.
 
-The escape check (§4.6) resolves both problems by directly catching
-the soundness-violating pattern: a hypothesis reachable via a
-non-neutral path in bind_hyp's return value. Body return type is
-unrestricted; the kernel rejects the precise constructions that
-would propagate the H-rule lie.
+Specifically, the inner check `apply A_hyp x_hyp` invokes hyp_reduce.
+hyp_reduce reads Universe's codomain_fn, evaluates it on
+`(meta, x_hyp)`. The codomain_fn does
+`tree_eq stored(x_hyp) self_as_hyp` (the H-rule), gets TT, returns
+`Return TT`. hyp_reduce returns TT directly (Action `Return TT`).
 
-== Pi's rank_fn (now expressible)
+The Pi-recognizer thus sees TT as the membership-check result and
+propagates it upward. The polymorphic Pi-check accepts. Pi remains a
+library type, not a kernel primitive — the H-rule capability lives
+in Universe's codomain_fn, made accessible to kernel-routed
+hyp_reduce by the Action protocol.
 
-Pi's rank computation can use bind_hyp directly:
-
-```
-let pi_rank_fn = \{params\} ->
-  let A = pair_fst params
-  let B = pair_snd params
-  ord_max (rank_of A)
-          (bind_hyp A (\{h\} -> rank_of (B h)))
-```
-
-Tracing each case:
-
-- *Closed A and closed B with closed codomain rank.* `B h` evaluates
-  with hyp h substituted. For a constant codomain `B = \{_\} -> Type 0`,
-  `B h = Type 0`, `rank_of (Type 0) = 1` (a closed Ord). bind_hyp's
-  result = 1, which doesn't contain h. Escape check passes.
-- *Closed A, polymorphic-rank codomain.* `B h` produces a type
-  containing h. `rank_of (B h)` produces a stuck-Ord whose metadata
-  references h, but the stuck-Ord itself is a kernel-minted neutral.
-  Escape check stops at the neutral wrapper — h is walled off.
-  bind_hyp accepts; the stuck-Ord propagates through `ord_max` as
-  expected.
-- *Polymorphic A.* Similar — h has stored type referencing some outer
-  hypothesis-typed thing. The escape check still works structurally:
-  it looks for THIS bind_hyp's hypothesis identity, which is fresh
-  per call site.
-
-Pi's complete library definition:
-
-```
-Pi := \{A, B\} -> guard (wait kernel_ref.predicate_frame
-  (pair pi_recognizer_sig
-        (pair (pair A B)
-              (pair (\{arg\} -> B arg)            // codomain_fn
-                    (pi_rank_fn (pair A B))))))   // rank_fn
-```
-
-== Why this is sound
-
-The escape check ensures that:
-
-+ Hypotheses minted by bind_hyp can be used inside body's evaluation
-  (passed to type predicates, applied as functions, used in Ord
-  computations) but cannot escape into bind_hyp's caller as
-  user-extractable values.
-+ Hypotheses can be embedded inside kernel-minted neutrals (stuck-Bool,
-  stuck-Ord, extended Pi-spines from `apply hyp x`) without escape
-  detection, because user code cannot extract them from those
-  positions under parametric mode.
-+ The H-rule lie (predicate_frame returning TT for an uninhabited
-  type's hypothesis) cannot propagate beyond bind_hyp, because the
-  bind_hyp'd hypothesis is exactly what the lie operates on, and
-  the escape check rejects its propagation through user-extractable
-  paths.
-
-These three properties together close the soundness gap that the
-Bool-restriction was an approximation of.
-
-= Open issue: `Type k` and the rank_fn slot
-
-`Type k`'s recognizer reads `rank_fn` from the type-former's metadata
-and applies it to the params. This relies on every library
-type-former conforming to the 4-tuple metadata convention.
-
-If a future library type-former forgets to include `rank_fn`, or
-includes one that lies (e.g., always returns 0), the consequences
-are:
-
-- *Forgotten `rank_fn`.* Reading the absent slot returns
-  `t` (LEAF, the implicit default). `t` applied to params is — well,
-  not well-defined. Either way, `ord_lt result k` produces some
-  Bool/stuck. Worst case, the type is treated as "rank 0" or
-  "indeterminate rank." Soundness preserved (no false TT for closed
-  proofs of uninhabited types).
-- *Lying `rank_fn`.* Universe-polymorphic code that quantifies over
-  the lied-about rank may misbehave. But closed values still need
-  their predicates to return TT; False's predicate doesn't lie.
-  Soundness preserved.
-
-The kernel does not enforce rank_fn correctness. Library authors are
-responsible. Tooling can lint for missing rank_fn slots.
+The codomain_fn's reflective operations (`q_is_neutral`,
+`neutral_meta_type`) are safe because hyp_reduce runs in raw mode;
+they're privileged through the kernel's dispatch routing, not
+through any user-untrusted reflection.
 
 = Migration plan (informational)
 
 The current implementation has per-type kernel handlers
 (`q_pi_fn`, `q_bool_fn`, `q_nat_fn`, `q_eq_fn`,
 `q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`) and corresponding
-recq fields. Migrating to the unified design is a substantial refactor:
+recq fields, plus rank-graded universe machinery
+(`q_core_type_fn`, `q_guarded_type_fn`). Migrating to the unified
+design is a substantial refactor:
 
-+ Add `q_predicate_frame_fn`, `q_bind_hyp_fn`, `q_eliminator_frame_fn`
-  to the kernel record.
++ Add `q_predicate_frame_fn`, `q_bind_hyp_fn`,
+  `q_eliminator_frame_fn` to the kernel record.
++ Update `q_hyp_reduce_fn` to dispatch on Action tags (Extend /
+  Return) per §4.1.
 + Drop the per-type handlers (`q_bool_fn`, `q_nat_fn`, `q_eq_fn`,
-  `q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`,
-  `q_pi_fn`).
-+ Update `q_core_type_fn` / `q_guarded_type_fn` to use the rank_fn
-  slot, OR move them to library code entirely.
-+ Reimplement Pi, Bool, Nat, Eq, Type k, Ord as library types using
-  predicate_frame/eliminator_frame.
-+ Update test sites (currently ~120 disp tests) for new tree shapes
-  where they assert against specific representations.
-+ Implement the bind_hyp escape check (`q_contains_via_open_path`)
-  per §4.6.
+  `q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`, `q_pi_fn`).
++ Drop the universe-rank machinery (`q_core_type_fn`,
+  `q_guarded_type_fn`) and the Ord-as-rank coupling.
++ Reimplement Pi, Bool, Nat, Eq, Universe, Ord as library types
+  using predicate_frame / eliminator_frame.
++ Implement Action helpers (`Extend`, `Return`, `is_extend`,
+  `is_return`) and `q_contains_via_open_path` (for bind_hyp's
+  escape check).
++ Implement `wf_fix` and `Total` library constructions.
++ Update test sites (currently ~120 disp tests) where they assert
+  against specific representations.
 
-The migration is not undertaken in this document; this spec describes
-the target end-state.
+This document describes the target end-state.
