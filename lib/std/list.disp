@@ -3,39 +3,55 @@ trust open use "../kernel/prelude.disp"
 open use "nat/arith.disp"
 open use "nat/ops.disp"
 
-// Nat lists use the tree shape:
-//   nil = t
-//   cons head tail = t head tail
-// The predicate is neutral-permissive so it can act as a lightweight custom
-// type in Pi checks until user-defined inductive type checkers are kernelized.
+// Lists parameterised by element type `A`. Tree shape:
+//   nil           = t                     (LEAF)
+//   cons head xs  = t head xs             (fork(head, xs))
+//
+// The predicate is neutral-permissive (NatList-style) so `List A` can
+// appear under Pi binders. The recursion uses `fix` so the predicate
+// fully checks every element, not just the head.
+//
+// Bracket-abstraction caveat: top-level `name := fix(...)` is safe, but
+// `name := fix(...) arg` or `name := list_map succ` pre-applies the
+// fix-form at compile time and trips cirToTree's eager reduction
+// (CLAUDE.md self-recursion workaround). Partial-applied fix-bindings
+// belong at call sites, not as top-level definitions.
 
-NatList := {xs} ->
-  select_lazy
-    ({_} -> TT)
-    ({_} ->
-      select_lazy
-        ({_} -> TT)
-        ({_} ->
-          select_lazy
-            ({_} ->
-              and (Nat (pair_fst xs))
-                (select TT
-                  (select TT (is_concrete_fork (pair_snd xs)) (tree_eq (pair_snd xs) t))
-                  (is_neutral (pair_snd xs))))
-            ({_} -> FF)
-            (is_concrete_fork xs))
-        (tree_eq xs t))
-    (is_neutral xs)
+// Recursive structural check. The `fix` is placed *inside* the outer
+// binder over (A, xs) so partial application `List A` doesn't trigger
+// fix-unfolding at compile time. `match` (not `select_lazy`) wraps the
+// recursive branch per CLAUDE.md's self-recursion workaround.
+List := {A, xs} ->
+  fix ({self, ys} ->
+    select_lazy
+      ({_} -> TT)
+      ({_} ->
+        match (tree_eq ys t) {
+          TT => TT
+          FF => match (is_concrete_fork ys) {
+            TT => and (A (pair_fst ys)) (self (pair_snd ys))
+            FF => FF
+          }
+        })
+      (is_neutral ys))
+    xs
+
+NatList := List Nat
 
 nil : NatList := t
 
+cons := {head, tail} -> t head tail
+
 list_cons : Nat -> NatList -> NatList :=
-  {head} -> {tail} -> t head tail
+  {head} -> {tail} -> cons head tail
 
-singleton : Nat -> NatList :=
-  {x} -> list_cons x nil
+singleton := {x} -> cons x nil
 
-list_rec := fix ({self, motive, nil_case, cons_case, xs} ->
+// list_rec motive nil_case cons_case xs
+// Neutral targets produce StuckElim (motive xs).
+// Internal `xs`-first binder order avoids the bracket-abstraction
+// η-on-innermost-binder edge case (see list_map note).
+let list_rec_inner = fix ({self, xs, motive, nil_case, cons_case} ->
   select_lazy
     ({_} -> StuckElim (motive xs) xs)
     ({_} ->
@@ -43,11 +59,12 @@ list_rec := fix ({self, motive, nil_case, cons_case, xs} ->
         ({_} -> nil_case)
         ({_} ->
           select_lazy
-            ({_} -> cons_case (pair_fst xs) (pair_snd xs) (self motive nil_case cons_case (pair_snd xs)))
+            ({_} -> cons_case (pair_fst xs) (pair_snd xs) (self (pair_snd xs) motive nil_case cons_case))
             ({_} -> nil_case)
             (is_concrete_fork xs))
         (tree_eq xs t))
     (is_neutral xs))
+list_rec := {motive, nil_case, cons_case, xs} -> list_rec_inner xs motive nil_case cons_case
 
 list_length :=
   fix ({self, xs} ->
@@ -55,12 +72,39 @@ list_length :=
 
 list_append :=
   fix ({self, xs, ys} ->
-    triage ys ({_} -> ys) ({head, tail} -> list_cons head (self tail ys)) xs)
+    triage ys ({_} -> ys) ({head, tail} -> cons head (self tail ys)) xs)
 
+// Generic map. The internal recursion is `(xs, f)`-ordered to dodge a
+// bracket-abstraction edge case: when the innermost fix binder appears
+// as the trailing arg of the body's last application, η-reduction
+// produces a tree that doesn't terminate under compile-time partial
+// application. The user-facing wrapper restores the natural
+// `(f, xs)` argument order.
+let list_map_inner = fix ({self, xs, f} ->
+  triage nil ({_} -> nil) ({head, tail} -> cons (f head) (self tail f)) xs)
+list_map := {f, xs} -> list_map_inner xs f
+
+// Self-contained succ-map. Avoids `list_map succ` partial application
+// at top-level (which would unfold the fix at compile time).
 list_map_succ :=
   fix ({self, xs} ->
-    triage nil ({_} -> nil) ({head, tail} -> list_cons (succ head) (self tail)) xs)
+    triage nil ({_} -> nil) ({head, tail} -> cons (succ head) (self tail)) xs)
 
 list_head_or :=
   {default} -> {xs} ->
     triage default ({_} -> default) ({head, _tail} -> head) xs
+
+list_tail_or :=
+  {default} -> {xs} ->
+    triage default ({_} -> default) ({_head, tail} -> tail) xs
+
+// Same bracket-abstraction quirk as list_map: the inner fix binder
+// order is xs-first so the trailing arg of `triage ... xs` isn't the
+// innermost binder. The user-facing wrappers restore natural arg order.
+let list_foldl_inner = fix ({self, xs, f, acc} ->
+  triage acc ({_} -> acc) ({head, tail} -> self tail f (f acc head)) xs)
+list_foldl := {f, acc, xs} -> list_foldl_inner xs f acc
+
+let list_foldr_inner = fix ({self, xs, f, init} ->
+  triage init ({_} -> init) ({head, tail} -> f head (self tail f init)) xs)
+list_foldr := {f, init, xs} -> list_foldr_inner xs f init

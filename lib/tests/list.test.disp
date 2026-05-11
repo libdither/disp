@@ -20,3 +20,18 @@ test list_head_or 9 nil = 9
 test list_head_or 9 xs = 1
 test list_map_succ xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
 
+// Generic List A: parameterised by element type.
+test List Bool nil = TT
+test List Bool (cons TT (cons FF nil)) = TT
+test List Bool (cons 5 nil) = FF
+test List Nat (cons 1 (cons TT nil)) = FF
+
+// list_map applied to a simple closed function.
+test list_map ({n} -> succ n) xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
+
+// list_tail_or / list_foldl
+test list_tail_or nil xs = list_cons 2 (list_cons 3 nil)
+test list_tail_or nil nil = nil
+test list_foldl ({a, h} -> succ a) 0 xs = 3
+
+

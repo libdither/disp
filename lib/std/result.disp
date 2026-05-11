@@ -1,0 +1,105 @@
+open use "../prelude.disp"
+trust open use "../kernel/prelude.disp"
+
+// Result E A — success-or-error value.
+//
+// Tree representation:
+//   ok v   = t (t (t t)) v        (fork(stem(stem(LEAF)), v))
+//   err e  = t (t t t) e          (fork(fork(LEAF, LEAF), e))
+//
+// Both constructors are 1-ary forks. Tags `t (t t)` and `t t t` are
+// chosen to be distinct from existing library constructor shapes
+// (Nat succ uses tag LEAF; Option some uses tag stem(LEAF)).
+//
+// Neutral-permissive: the predicate returns TT on hypotheses so
+// Result E A may appear in Pi-typed signatures.
+
+let ok_tag  = t (t t)
+let err_tag = t t t
+
+ok  := {v} -> t ok_tag v
+err := {e} -> t err_tag e
+
+Result := {E, A, r} ->
+  select_lazy
+    ({_} -> TT)
+    ({_} ->
+      select_lazy
+        ({_} ->
+          match (tree_eq (pair_fst r) ok_tag) {
+            TT => A (pair_snd r)
+            FF => match (tree_eq (pair_fst r) err_tag) {
+              TT => E (pair_snd r)
+              FF => FF
+            }
+          })
+        ({_} -> FF)
+        (is_concrete_fork r))
+    (is_neutral r)
+
+is_ok_result  := {r} -> and (is_fork r) (tree_eq (pair_fst r) ok_tag)
+is_err_result := {r} -> and (is_fork r) (tree_eq (pair_fst r) err_tag)
+
+// result_rec motive on_ok on_err r
+result_rec := {motive, on_ok, on_err, r} ->
+  select_lazy
+    ({_} -> StuckElim (motive r) r)
+    ({_} ->
+      triage
+        on_ok
+        ({_} -> on_ok)
+        ({tag, payload} ->
+          match (tree_eq tag ok_tag) {
+            TT => on_ok payload
+            FF => on_err payload
+          })
+        r)
+    (is_neutral r)
+
+// Map over the success branch.
+result_map := {f, r} ->
+  triage
+    r
+    ({_} -> r)
+    ({tag, payload} ->
+      match (tree_eq tag ok_tag) {
+        TT => ok (f payload)
+        FF => r
+      })
+    r
+
+// Map over the error branch.
+result_map_err := {g, r} ->
+  triage
+    r
+    ({_} -> r)
+    ({tag, payload} ->
+      match (tree_eq tag err_tag) {
+        TT => err (g payload)
+        FF => r
+      })
+    r
+
+// Monadic bind on the success branch.
+result_and_then := {r, k} ->
+  triage
+    r
+    ({_} -> r)
+    ({tag, payload} ->
+      match (tree_eq tag ok_tag) {
+        TT => k payload
+        FF => r
+      })
+    r
+
+// Unwrap with default — collapses err to default.
+result_unwrap_or := {default, r} ->
+  triage
+    default
+    ({_} -> default)
+    ({tag, payload} ->
+      match (tree_eq tag ok_tag) {
+        TT => payload
+        FF => default
+      })
+    r

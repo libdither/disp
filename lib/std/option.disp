@@ -1,0 +1,77 @@
+open use "../prelude.disp"
+trust open use "../kernel/prelude.disp"
+
+// Option A — optional value.
+//
+// Tree representation:
+//   none    = t                          (LEAF)
+//   some v  = t (t t) v                  (fork(stem(LEAF), v))
+//
+// The tag `t t` (= stem(LEAF)) is chosen so the some-shape doesn't
+// collide with `succ n = t t n = fork(LEAF, n)` (Nat) — handy when
+// debugging `Option Nat` values.
+
+none := t
+some := {v} -> t (t t) v
+
+let some_tag = t t
+
+Option := {A, opt} ->
+  select_lazy
+    ({_} -> TT)
+    ({_} ->
+      select_lazy
+        ({_} -> TT)
+        ({_} ->
+          select_lazy
+            ({_} ->
+              and (tree_eq (pair_fst opt) some_tag) (A (pair_snd opt)))
+            ({_} -> FF)
+            (is_concrete_fork opt))
+        (tree_eq opt none))
+    (is_neutral opt)
+
+is_none := {opt} -> tree_eq opt none
+is_some := {opt} -> not (is_none opt)
+
+// option_rec motive on_none on_some opt
+// On a closed value, dispatches; on a neutral, returns StuckElim.
+option_rec := {motive, on_none, on_some, opt} ->
+  select_lazy
+    ({_} -> StuckElim (motive opt) opt)
+    ({_} ->
+      triage
+        on_none
+        ({_} -> on_none)
+        ({_tag, v} -> on_some v)
+        opt)
+    (is_neutral opt)
+
+option_map := {f, opt} ->
+  triage
+    none
+    ({_} -> none)
+    ({_tag, v} -> some (f v))
+    opt
+
+// Monadic bind: chain a function returning Option.
+option_and_then := {opt, k} ->
+  triage
+    none
+    ({_} -> none)
+    ({_tag, v} -> k v)
+    opt
+
+option_unwrap_or := {default, opt} ->
+  triage
+    default
+    ({_} -> default)
+    ({_tag, v} -> v)
+    opt
+
+option_or := {opt_a, opt_b} ->
+  triage
+    opt_b
+    ({_} -> opt_b)
+    ({_tag, _v} -> opt_a)
+    opt_a

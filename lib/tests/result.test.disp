@@ -1,0 +1,48 @@
+open use "../prelude.disp"
+trust open use "../kernel/prelude.disp"
+open use "../std/nat/ops.disp"
+open use "../std/result.disp"
+
+// Constructors distinguishable
+test is_ok_result (ok 7) = TT
+test is_err_result (ok 7) = FF
+test is_ok_result (err 9) = FF
+test is_err_result (err 9) = TT
+
+// Result Bool Nat: error is Bool, success is Nat
+test Result Bool Nat (ok 0) = TT
+test Result Bool Nat (ok 5) = TT
+test Result Bool Nat (err TT) = TT
+test Result Bool Nat (err FF) = TT
+
+// Type mismatches
+test Result Bool Nat (ok TT) = FF
+test Result Bool Nat (err 3) = FF
+
+// Bad shapes
+test Result Nat Nat t = FF
+test Result Nat Nat (t t) = FF
+
+// result_rec dispatches by branch
+test result_rec ({_} -> Nat) ({v} -> succ v) ({e} -> 0) (ok 4) = 5
+test result_rec ({_} -> Nat) ({v} -> succ v) ({e} -> 0) (err TT) = 0
+
+// result_map / result_map_err
+test result_map succ (ok 4) = ok 5
+test result_map succ (err 9) = err 9
+test result_map_err succ (ok 4) = ok 4
+test result_map_err succ (err 9) = err 10
+
+// result_and_then
+let succ_ok = {n} -> ok (succ n)
+test result_and_then (ok 5) succ_ok = ok 6
+test result_and_then (err FF) succ_ok = err FF
+
+// result_unwrap_or
+test result_unwrap_or 99 (ok 5) = 5
+test result_unwrap_or 99 (err TT) = 99
+
+// Under a Pi binder
+let or_zero : Result Bool Nat -> Nat = {r} -> result_unwrap_or 0 r
+test or_zero (ok 8) = 8
+test or_zero (err TT) = 0

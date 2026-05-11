@@ -1,0 +1,54 @@
+open use "../prelude.disp"
+trust open use "../kernel/prelude.disp"
+open use "../std/nat/ops.disp"
+open use "../std/option.disp"
+
+// Constructors are distinct
+test is_none none = TT
+test is_some none = FF
+test is_some (some 7) = TT
+test is_none (some 7) = FF
+
+// Option Nat accepts/rejects
+test Option Nat none = TT
+test Option Nat (some 0) = TT
+test Option Nat (some 42) = TT
+test Option Nat (some TT) = FF
+// A bare fork that isn't `some _` (no `t t` tag) is rejected
+test Option Nat (t t 5) = FF
+
+// Option Bool
+test Option Bool (some TT) = TT
+test Option Bool (some FF) = TT
+test Option Bool none = TT
+test Option Bool (some 3) = FF
+
+// option_rec dispatches the right branch
+test option_rec ({_} -> Nat) 0 ({v} -> succ v) none = 0
+test option_rec ({_} -> Nat) 0 ({v} -> succ v) (some 4) = 5
+
+// option_map
+test option_map succ none = none
+test option_map succ (some 4) = some 5
+
+// option_and_then
+let some_pred = {n} ->
+  match (is_zero n) {
+    TT => none
+    FF => some (pred n)
+  }
+test option_and_then (some 5) some_pred = some 4
+test option_and_then (some 0) some_pred = none
+test option_and_then none some_pred = none
+
+// option_unwrap_or / option_or
+test option_unwrap_or 99 none = 99
+test option_unwrap_or 99 (some 5) = 5
+test option_or (some 1) (some 2) = some 1
+test option_or none (some 2) = some 2
+test option_or none none = none
+
+// Under a Pi binder — exercises is_neutral permissiveness.
+let first_or_zero : Option Nat -> Nat = {o} -> option_unwrap_or 0 o
+test first_or_zero (some 8) = 8
+test first_or_zero none = 0

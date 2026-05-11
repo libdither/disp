@@ -1,0 +1,26 @@
+open use "../prelude.disp"
+trust open use "../kernel/prelude.disp"
+
+// Typed pair predicate over the existing fork-as-pair representation
+// (`t a b = fork(a, b)`). Prelude's `pair_fst` / `pair_snd` extractors
+// are the canonical accessors; `Pair A B` adds a type predicate so
+// pairs can appear in Pi-typed signatures.
+//
+// Neutral-permissive (NatList-style): a hypothesis-typed value passes
+// the predicate, so `Pair A B` is safe to use inside type-mode binders.
+
+pair := {a, b} -> t a b
+
+Pair := {A, B, p} ->
+  select_lazy
+    ({_} -> TT)
+    ({_} ->
+      select_lazy
+        ({_} -> and (A (pair_fst p)) (B (pair_snd p)))
+        ({_} -> FF)
+        (is_concrete_fork p))
+    (is_neutral p)
+
+pair_map_fst := {f, p} -> pair (f (pair_fst p)) (pair_snd p)
+pair_map_snd := {g, p} -> pair (pair_fst p) (g (pair_snd p))
+pair_swap := {p} -> pair (pair_snd p) (pair_fst p)

@@ -1,0 +1,29 @@
+open use "../prelude.disp"
+trust open use "../kernel/prelude.disp"
+open use "../std/pair.disp"
+
+// Constructors and accessors
+test pair_fst (pair 1 2) = 1
+test pair_snd (pair 1 2) = 2
+
+// Pair predicate accepts well-typed pairs
+test Pair Nat Nat (pair 0 0) = TT
+test Pair Nat Nat (pair 3 7) = TT
+test Pair Nat Bool (pair 1 TT) = TT
+test Pair Bool Nat (pair FF 5) = TT
+
+// Rejects ill-typed contents
+test Pair Bool Nat (pair 1 5) = FF
+
+// Rejects non-fork shapes (leaf, stem)
+test Pair Nat Nat t = FF
+test Pair Nat Nat (t t) = FF
+
+// Helpers
+test pair_map_fst succ (pair 1 9) = pair 2 9
+test pair_map_snd succ (pair 1 9) = pair 1 10
+test pair_swap (pair 1 9) = pair 9 1
+
+// Pair under a Pi binder — exercises is_neutral permissiveness.
+let snd_of_nats : Pair Nat Nat -> Nat = {p} -> pair_snd p
+test snd_of_nats (pair 4 7) = 7
