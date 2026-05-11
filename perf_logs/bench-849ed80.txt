@@ -1,0 +1,125 @@
+==================================================================
+Perf snapshot — 2026-05-11T11:44:09-04:00
+Commit benched: 849ed80 (parent: 8fa87a9)
+Changes: K-rule memo skip + continuation pooling + innerMap caching
+Node: v24.14.1
+==================================================================
+
+### 1. vitest bench (npm run bench)
+
+Benchmarking is an experimental feature.
+Breaking changes might not follow SemVer, please pin Vitest's version when using it.
+ RUN  v1.6.1 /home/zyansheep/Projects/disp
+ ✓ test/apply.bench.ts > apply (cold cache) 6316ms
+     name                                    hz     min      max    mean     p75     p99     p995     p999      rme  samples
+   · I LEAF (identity triage)      3,161,117.21  0.0002   6.7773  0.0003  0.0002  0.0014   0.0024   0.0045   ±7.68%  1580559
+   · tree_eq T T (fast-path TT)    2,156,548.28  0.0003   9.5606  0.0005  0.0003  0.0022   0.0025   0.0055  ±11.00%  1078275
+   · tree_eq 3 5 (fast-path FF)    2,350,959.24  0.0003   7.9344  0.0004  0.0003  0.0007   0.0011   0.0029  ±11.76%  1175480
+   · add 3 5 (nat_rec eliminator)      2,113.09  0.3456  14.8196  0.4732  0.4167  1.0976  10.1728  13.2969  ±11.78%     1057   slowest
+   · succ 0 (single fork build)    5,562,550.97  0.0001   0.8218  0.0002  0.0002  0.0004   0.0006   0.0016   ±0.62%  2781276   fastest
+ ✓ test/apply.bench.ts > apply (warm cache) 11553ms
+     name                   hz     min     max    mean     p75     p99    p995    p999     rme  samples
+   · I LEAF       8,862,210.97  0.0001  0.3020  0.0001  0.0001  0.0002  0.0003  0.0009  ±0.55%  4431106   fastest
+   · tree_eq T T  7,883,945.92  0.0001  0.5522  0.0001  0.0001  0.0003  0.0003  0.0008  ±0.42%  3941973
+   · tree_eq 3 5  7,627,382.66  0.0001  0.4401  0.0001  0.0001  0.0003  0.0004  0.0009  ±0.42%  3813692
+   · add 3 5      7,607,375.28  0.0001  0.3611  0.0001  0.0001  0.0003  0.0004  0.0009  ±0.40%  3803688   slowest
+   · succ 0       8,537,359.32  0.0001  0.5243  0.0001  0.0001  0.0002  0.0003  0.0008  ±0.68%  4268680
+ ✓ test/parse.bench.ts > tokenize 5451ms
+     name                                hz     min     max    mean     p75     p99    p995    p999     rme  samples
+   · lib/prelude.disp              9,933.61  0.0922  0.9167  0.1007  0.0970  0.2088  0.2349  0.6071  ±0.83%     4967
+   · lib/kernel/handlers.disp      2,316.00  0.3989  1.9193  0.4318  0.4182  0.7659  0.8046  1.7567  ±1.23%     1158   slowest
+   · lib/kernel/utils.disp        13,736.21  0.0672  0.7358  0.0728  0.0702  0.1420  0.2214  0.4435  ±0.74%     6869
+   · lib/kernel/walker.disp       15,914.58  0.0575  0.5453  0.0628  0.0609  0.1115  0.1973  0.3792  ±0.67%     7958
+   · lib/types/ord.disp           10,232.38  0.0888  0.7300  0.0977  0.0934  0.2227  0.2657  0.5686  ±0.80%     5117
+   · lib/std/list.disp            10,289.40  0.0897  0.9519  0.0972  0.0946  0.2229  0.2488  0.4156  ±0.73%     5145
+   · lib/tests/prelude.test.disp  36,316.75  0.0251  0.3664  0.0275  0.0266  0.0477  0.1235  0.1801  ±0.56%    18159   fastest
+   · lib/tests/kernel.test.disp    2,540.72  0.3640  1.3238  0.3936  0.3807  0.6975  0.8886  1.2377  ±1.06%     1271
+   · lib/tests/rec.test.disp       9,677.56  0.0957  0.7813  0.1033  0.1004  0.2077  0.2726  0.6496  ±0.81%     4839
+ ✓ test/parse.bench.ts > parseItems 5454ms
+     name                               hz     min     max    mean     p75     p99    p995    p999     rme  samples
+   · lib/prelude.disp             2,158.26  0.3971  1.8446  0.4633  0.4521  0.8272  1.0644  1.3215  ±1.29%     1080
+   · lib/kernel/handlers.disp       616.98  1.3941  3.0845  1.6208  1.7157  2.7691  3.0750  3.0845  ±1.72%      309
+   · lib/kernel/utils.disp        3,251.46  0.2667  1.7476  0.3076  0.3022  0.5304  0.6386  1.4393  ±1.22%     1626
+   · lib/kernel/walker.disp       3,561.90  0.2370  1.3613  0.2807  0.2747  0.5347  0.5929  1.3204  ±1.22%     1781
+   · lib/types/ord.disp           2,229.09  0.3722  9.9766  0.4486  0.4208  0.9021  1.6619  2.0828  ±4.17%     1115
+   · lib/std/list.disp            2,104.81  0.4138  1.8059  0.4751  0.4671  0.8295  0.9296  1.7998  ±1.33%     1053
+   · lib/tests/prelude.test.disp  4,875.11  0.1795  1.1804  0.2051  0.2016  0.4484  0.5033  1.0663  ±1.06%     2438   fastest
+   · lib/tests/kernel.test.disp     386.43  2.2559  4.6815  2.5878  2.6831  4.2067  4.6815  4.6815  ±2.04%      194   slowest
+   · lib/tests/rec.test.disp      1,947.68  0.4411  1.4099  0.5134  0.5088  0.9096  1.0820  1.4099  ±1.16%      974
+ ✓ test/parse.bench.ts > parseProgram 23332ms
+     name                               hz      min      max     mean      p75      p99     p995     p999     rme  samples
+   · lib/prelude.disp             1,694.78   0.5146   1.8833   0.5900   0.5848   0.9906   1.1173   1.8833  ±1.30%      848   fastest
+   · lib/kernel/handlers.disp       133.99   6.8030   9.1531   7.4633   7.7583   9.1531   9.1531   9.1531  ±1.88%       67
+   · lib/kernel/utils.disp          948.96   0.9101   2.8150   1.0538   1.0531   1.6887   1.8542   2.8150  ±1.43%      475
+   · lib/kernel/walker.disp         101.42   8.9861  14.4433   9.8603   9.9737  14.4433  14.4433  14.4433  ±3.02%       51
+   · lib/types/ord.disp            25.3003  37.5092  41.6982  39.5252  40.3492  41.6982  41.6982  41.6982  ±1.79%       13
+   · lib/std/list.disp              2.3440   421.63   437.81   426.62   428.32   437.81   437.81   437.81  ±1.02%       10   slowest
+   · lib/tests/prelude.test.disp  1,073.89   0.7902   2.4207   0.9312   0.9419   1.2757   2.2083   2.4207  ±1.30%      537
+   · lib/tests/kernel.test.disp     6.2315   158.56   164.50   160.48   161.45   164.50   164.50   164.50  ±0.88%       10
+   · lib/tests/rec.test.disp        788.33   1.1391   2.7074   1.2685   1.2595   2.1809   2.6832   2.7074  ±1.44%      395
+ BENCH  Summary
+  succ 0 (single fork build) - test/apply.bench.ts > apply (cold cache)
+    1.76x faster than I LEAF (identity triage)
+    2.37x faster than tree_eq 3 5 (fast-path FF)
+    2.58x faster than tree_eq T T (fast-path TT)
+    2632.42x faster than add 3 5 (nat_rec eliminator)
+  I LEAF - test/apply.bench.ts > apply (warm cache)
+    1.04x faster than succ 0
+    1.12x faster than tree_eq T T
+    1.16x faster than tree_eq 3 5
+    1.16x faster than add 3 5
+  lib/tests/prelude.test.disp - test/parse.bench.ts > tokenize
+    2.28x faster than lib/kernel/walker.disp
+    2.64x faster than lib/kernel/utils.disp
+    3.53x faster than lib/std/list.disp
+    3.55x faster than lib/types/ord.disp
+    3.66x faster than lib/prelude.disp
+    3.75x faster than lib/tests/rec.test.disp
+    14.29x faster than lib/tests/kernel.test.disp
+    15.68x faster than lib/kernel/handlers.disp
+  lib/tests/prelude.test.disp - test/parse.bench.ts > parseItems
+    1.37x faster than lib/kernel/walker.disp
+    1.50x faster than lib/kernel/utils.disp
+    2.19x faster than lib/types/ord.disp
+    2.26x faster than lib/prelude.disp
+    2.32x faster than lib/std/list.disp
+    2.50x faster than lib/tests/rec.test.disp
+    7.90x faster than lib/kernel/handlers.disp
+    12.62x faster than lib/tests/kernel.test.disp
+  lib/prelude.disp - test/parse.bench.ts > parseProgram
+    1.58x faster than lib/tests/prelude.test.disp
+    1.79x faster than lib/kernel/utils.disp
+    2.15x faster than lib/tests/rec.test.disp
+    12.65x faster than lib/kernel/handlers.disp
+    16.71x faster than lib/kernel/walker.disp
+    66.99x faster than lib/types/ord.disp
+    271.97x faster than lib/tests/kernel.test.disp
+    723.03x faster than lib/std/list.disp
+
+==================================================================
+### 2. vitest run (npm test) — full test suite
+
+ RUN  v1.6.1 /home/zyansheep/Projects/disp
+ ✓ test/tree.test.ts  (21 tests) 7ms
+ ↓ test/trust.test.ts  (20 tests | 20 skipped)
+ ✓ test/parser.test.ts  (85 tests) 32ms
+ ✓ test/disp.test.ts  (21 tests) 18560ms
+ Test Files  3 passed | 1 skipped (4)
+      Tests  127 passed | 20 skipped (147)
+   Start at  11:45:04
+   Duration  18.98s (transform 229ms, setup 0ms, collect 383ms, tests 18.60s, environment 4ms, prepare 269ms)
+
+==================================================================
+### 3. --stats kernel.test.disp
+
+defs: 173, tests: 146, passed: 146, failed: 0
+stats: steps=91844, calls=10184, maxStack=1049, uniqueNodes=81389, memoEntries=85548
+rules: K=8333, S=73807, triage=9704, treeEq=2037, leaf=12265, stem=32645
+memo: hits=45497, misses=93881, writes=85548
+
+### 4. --stats nat.test.disp
+
+defs: 166, tests: 15, passed: 15, failed: 0
+stats: steps=14173, calls=34992, maxStack=213, uniqueNodes=13859, memoEntries=9758
+rules: K=4433, S=9468, triage=272, treeEq=18, leaf=4293, stem=7039
+memo: hits=29009, misses=14191, writes=9758
