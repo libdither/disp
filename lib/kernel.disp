@@ -40,6 +40,24 @@ extend_neutral_meta := {old_meta, result_type, arg} ->
 InvalidType := FF
 
 // ================================================================
+// Action protocol (per spec §3.4)
+// ================================================================
+// codomain_fn returns a tagged Action: Extend new_stored_type or
+// Return value. hyp_reduce dispatches on the tag.
+//
+// extend_tag = t (LEAF). return_tag = t t (stem). These are distinct
+// closed trees fixed at boot; their hash-cons ids drive is_extend /
+// is_return discrimination.
+extend_tag := t
+return_tag := t t
+
+Extend := {v} -> t extend_tag v
+Return := {v} -> t return_tag v
+
+is_extend := {action} -> tree_eq (pair_fst action) extend_tag
+is_return := {action} -> tree_eq (pair_fst action) return_tag
+
+// ================================================================
 // CheckedResult encoding
 // ================================================================
 // Used by ks.checked_apply (dispatcher wraps every routed result in Ok)
@@ -82,6 +100,16 @@ must_ok_tt := {r, k} ->
     FF => Fail
   }
 
+// must_ok_or_self: r is Ok v → return v as-is; Fail → return Fail tree.
+// Used by eliminator_frame's non-hypothesis branch where the result of
+// the dispatcher's body is any value (not necessarily a Bool), so we
+// can't fold to FF — we propagate the raw value or the raw Fail tree.
+let must_ok_or_self = {r} ->
+  match (is_ok r) {
+    TT => ok_value r
+    FF => Fail
+  }
+
 // ================================================================
 // Kernel record shape
 // ================================================================
@@ -107,18 +135,18 @@ must_ok_tt := {r, k} ->
 // pair_fst(stem(c)) = c. Without is_fork, stem(canonical_sig) would pass
 // the signature check. Legitimate neutrals are wait-encoded values, which
 // are always forks.
-let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, x} ->
+let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, x} ->
   and (is_fork x) (has_sig raw.hyp_reduce x)
 
 // q_make_hyp: construct a hypothesis neutral.
 // Result: wait(hyp_reduce_handler)(make_neutral_meta(type, identity))
-let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, ty, identity} ->
+let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, ty, identity} ->
   wait raw.hyp_reduce (make_neutral_meta ty identity)
 
 // q_hasguard: check if T is a guarded public type. Same as `hasguard`
 // (defined post-kernel-record) but takes ks directly so it can be used
 // inside handler bodies before the kernel record exists.
-let q_hasguard = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, T} ->
+let q_hasguard = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, T} ->
   has_sig ks.guard T
 
 // q_contains_neutral / q_scan_no_neutral: private versions of the public
@@ -141,7 +169,7 @@ let q_scan_no_neutral = {raw, x} -> not (q_contains_neutral raw x)
 
 // q_unguard_or_self: peel one layer of guard if present, else return as-is.
 // Used by handlers that may receive either a guarded public type or a core.
-let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, T} ->
+let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, T} ->
   match (has_sig ks.guard T) {
     TT => type_meta T
     FF => T
@@ -161,7 +189,7 @@ let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded
 // q_guard_fn itself does NOT route through ks.checked_apply: the entry
 // scan + raw apply is sufficient at the boundary, and bypassing the
 // dispatcher here keeps the common case (`Nat 5`, `Bool TT`) cheap.
-let q_guard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+let q_guard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {core, v} ->
     match (q_scan_no_neutral raw v) {
       TT => match (tree_eq (core v) TT) {
@@ -180,13 +208,46 @@ let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
 // runtime). Returns the bare new neutral, NOT Ok-wrapped; the dispatcher
 // wraps in Ok when routing through ks.checked_apply. This keeps
 // `(Hyp NatToNat 0) (Hyp Nat 1)` style raw-apply tests working.
-let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   fix ({self, meta, v} -> {
     let stored_inner = q_unguard_or_self ks (neutral_meta_type meta)
+    let cod_fn = pair_snd (pair_snd (type_meta stored_inner))
+    // Legacy Pi path (existing q_pi_fn-typed hypotheses).
     let pi_result_type = {meta, v} -> wait ks.guard (pi_meta_cod_fn (type_meta stored_inner) v)
-    let pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta (pi_result_type meta v) v)
-    let non_pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta InvalidType v)
-    select pi_fn non_pi_fn
+    let legacy_pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta (pi_result_type meta v) v)
+    // Action-protocol path (predicate_frame-typed hypotheses).
+    // If codomain_fn slot is sentinel (LEAF), applying this hypothesis
+    // is invalid → extend with InvalidType. Otherwise invoke
+    // cod_fn(ks, raw, meta, v) → Action, dispatch.
+    let invalid_fn = {self, meta, v} -> wait self (extend_neutral_meta meta InvalidType v)
+    let action_extend_fn = {self, meta, v, action} ->
+      wait self (extend_neutral_meta meta (wait ks.guard (pair_snd action)) v)
+    // Parser workaround: multi-line `select ... \n  (...)\n  ...`
+    // inside a `let X = ... -> body` binding gets the body extended
+    // past the next `let` declaration, causing parse failure
+    // ("expected identifier, got '('"). Wrap such multi-line selects
+    // in parens to force them as a single atom.
+    let action_return_or_invalid = {self, meta, v, action} -> (
+      select ({self, meta, v, action} -> pair_snd action)
+        ({self, meta, v, action} -> wait self (extend_neutral_meta meta InvalidType v))
+        (is_return action)
+        self meta v action)
+    let action_dispatch = {self, meta, v, action} -> (
+      select action_extend_fn
+        action_return_or_invalid
+        (is_extend action)
+        self meta v action)
+    let action_path_fire = {self, meta, v} ->
+      action_dispatch self meta v (cod_fn ks raw meta v)
+    let action_path = {self, meta, v} -> (
+      select invalid_fn action_path_fire
+        (tree_eq cod_fn t)
+        self meta v)
+    let pf_branch = {self, meta, v} -> (
+      select action_path invalid_fn
+        (has_sig ks.predicate_frame stored_inner)
+        self meta v)
+    select legacy_pi_fn pf_branch
       (has_sig ks.pi stored_inner)
       self meta v
   })
@@ -200,9 +261,9 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_t
 // the user-supplied v or codFn is rejected by the dispatcher's walker
 // triage-on-neutral rule. Failures (Fail) and validation failures (Ok FF)
 // both fold back to bare FF via must_ok_or_ff.
-let q_pi_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+let q_pi_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   fix ({self, meta, v} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query, self, meta, v} -> {
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, meta, v} -> {
       let domain = pi_meta_domain meta
       let codFn = pi_meta_cod_fn meta
       let hyp = q_make_hyp raw domain meta
@@ -259,15 +320,155 @@ let q_eq_fn = {ks, raw, query} ->
       ks raw query self meta p
   })
 
+// --- Escape check for bind_hyp (per spec §4.6) ---
+// q_contains_via_open_path walks `result` looking for `hyp`. Returns TT
+// if hyp is reachable via a non-neutral path (fork/stem decomposition
+// through non-neutral roots). Returns FF if hyp is walled off inside
+// a kernel-minted neutral (e.g., a stuck-Bool whose metadata contains
+// hyp — user code under the walker can't extract through that).
+let q_contains_via_open_path = fix ({self, raw, result, hyp} ->
+  match (tree_eq result hyp) {
+    TT => TT
+    FF => match (q_is_neutral raw result) {
+      TT => FF
+      FF => match (is_fork result) {
+        TT => (or (self raw (pair_fst result) hyp) (self raw (pair_snd result) hyp))
+        FF => match (is_stem result) {
+          TT => self raw (stem_child result) hyp
+          FF => FF
+        }
+      }
+    }
+  })
+
+// --- Generic bind_hyp (per spec §4.6) ---
+// Mints a fresh hypothesis with stored type = domain (the first arg).
+// Invokes body (the second arg) on the hypothesis through ks.checked_apply,
+// so the body runs under the parametric walker.
+//
+// Escape check: if the minted hyp is reachable in the body's result via
+// a non-neutral path, returns Fail. This prevents the hypothesis from
+// being smuggled into a context where it could be exploited via
+// predicate_frame's H-rule.
+//
+// Meta layout: pair count acc.
+//   count starts at succ^2 t; final fires when count = succ t.
+//   acc = LEAF initially; after 1st app (domain) becomes (t t domain).
+let q_bind_hyp_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+  {meta, x} -> {
+    let count = pair_fst meta
+    let acc = pair_snd meta
+    let final_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, meta, x, count, acc} -> {
+      let domain = pair_snd acc
+      let body = x
+      let hyp_id = t domain body
+      let hyp = q_make_hyp raw domain hyp_id
+      let result_r = ks.checked_apply body hyp
+      match (is_ok result_r) {
+        TT => {
+          let result = ok_value result_r
+          match (q_contains_via_open_path raw result hyp) {
+            TT => Fail
+            FF => result
+          }
+        }
+        FF => Fail
+      }
+    }
+    let partial_fn = {ks, raw, query, meta, x, count, acc} ->
+      wait (ks query) (t (pair_snd count) (t acc x))
+    select final_fn partial_fn
+      (tree_eq count (t t t))
+      ks raw query meta x count acc
+  }
+
+// --- Generic eliminator_frame (per spec §4.7) ---
+// Wraps a closed case dispatcher with stuck-mint for hypothesis targets.
+// Meta layout: pair count (pair dispatcher acc).
+//   count       — remaining arity, decrements per application;
+//                 final fires when count = succ t = (t t t).
+//   dispatcher  — closed case-dispatcher tree (immutable). Signature
+//                 `{motive, cases, target} -> result`. Cases are
+//                 dispatcher-specific (e.g., `pair ct cf` for Bool;
+//                 `pair base step` for Nat).
+//   acc         — left-leaning pair of accumulated args (LEAF = empty).
+//
+// Final application:
+//   - If target is a hypothesis: mint a stuck neutral with stored type
+//     `motive target` (motive runs raw inside the handler — it must be
+//     well-typed against `Pi T (\{_\} -> Type)`; library responsibility
+//     per spec §4.7).
+//   - Otherwise: invoke `dispatcher motive cases target` through
+//     ks.checked_apply so the dispatcher's body runs under the
+//     parametric walker.
+//
+// Partial applications stay in wait-form, accumulating args + decrementing
+// count, preserving the dispatcher slot.
+let q_eliminator_frame_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+  {meta, x} -> {
+    let count = pair_fst meta
+    let dispatcher = pair_fst (pair_snd meta)
+    let acc = pair_snd (pair_snd meta)
+    let final_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, meta, x, count, dispatcher, acc} -> {
+      let cases = pair_snd acc
+      let motive = pair_snd (pair_fst acc)
+      let target = x
+      select_lazy
+        ({_} -> q_make_hyp raw (motive target) target)
+        ({_} -> must_ok_or_self (ks.checked_apply (dispatcher motive cases) target))
+        (q_is_neutral raw target)
+    }
+    let partial_fn = {ks, raw, query, meta, x, count, dispatcher, acc} ->
+      wait (ks query) (t (pair_snd count) (t dispatcher (t acc x)))
+    select final_fn partial_fn
+      (tree_eq count (t t t))
+      ks raw query meta x count dispatcher acc
+  }
+
+// --- Generic predicate_frame (per spec §4.5; returns BARE TT/FF) ---
+// Wraps a user-supplied recognizer with H-rule for hypothesis inputs.
+// meta layout: pair recognizer (pair params codomain_fn_or_sentinel)
+// recognizer signature: \{params, v\} -> Bool (returns bare TT/FF).
+//
+// For hypothesis v: H-rule via q_h_rule_fn (compares stored type
+// against self-as-type reconstructed from meta).
+//
+// For non-hypothesis v: invoke recognizer through ks.checked_apply
+// so the recognizer body runs under the parametric walker. The
+// recognizer's bare TT/FF result is folded through must_ok_or_ff
+// (Fail → FF for predicate evaluation).
+//
+// `recognizer params` is one raw apply inside the handler (curries
+// recognizer with its params); the resulting v-arity-1 function is
+// then invoked under the walker via ks.checked_apply. This matches
+// q_pi_fn's idiom for routing user-supplied subterms through the
+// dispatcher.
+let q_predicate_frame_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+  fix ({self, meta, v} -> {
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, meta, v} -> {
+      let recognizer = pair_fst meta
+      let params = pair_fst (pair_snd meta)
+      let result_r = ks.checked_apply (recognizer params) v
+      must_ok_or_ff result_r ({result} -> result)
+    }
+    select q_h_rule_fn check_fn
+      (q_is_neutral raw v)
+      ks raw query self meta v
+  })
+
 // --- Core type checker (returns BARE TT/FF) ---
 // Validates that x is a valid CORE type at rank ≤ meta. Cores are the
 // internal raw predicates (core_Nat, core_Bool, core_Eq, core_Pi) and
 // hypothesis-typed neutrals whose stored type is a universe.
 let q_core_type_fn = {ks, raw, query} ->
   fix ({self, meta, x} -> {
-    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, x} ->
-      select TT (tree_eq x (wait ks.bool t)) (tree_eq x (wait ks.nat t))
-    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, rank, ty} ->
+    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, x} -> (
+      // Recognize: legacy core_Bool/core_Nat shapes, OR any
+      // predicate_frame-formed library type (Bool/Nat post-migration,
+      // Bool_pf/Nat_pf/Pi_pf/Type_pf etc).
+      or (select TT (tree_eq x (wait ks.bool t)) (tree_eq x (wait ks.nat t)))
+         (has_sig ks.predicate_frame x))
+    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, rank, ty} ->
       select (nat_le (type_meta ty) rank) FF (or (has_sig ks.core_type ty) (has_sig ks.guarded_type ty))
     let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (neutral_meta_type (type_meta x))
     let core_univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
@@ -287,7 +488,7 @@ let q_core_type_fn = {ks, raw, query} ->
           (A (eq_meta_rhs tm)))
     }
     select neutral_fn
-      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query, self, meta, x} ->
+      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, meta, x} ->
         select_chain
           (case (has_sig ks.core_type x) core_univ_fn
           (case (has_sig ks.guarded_type x) guarded_univ_fn
@@ -305,7 +506,7 @@ let q_core_type_fn = {ks, raw, query} ->
 // Validates that T is a guarded public type at rank ≤ meta.
 let q_guarded_type_fn = {ks, raw, query} ->
   fix ({self, rank, T} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query, self, rank, T} ->
+    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, rank, T} ->
       select (tree_eq ((wait ks.core_type rank) (type_meta T)) TT) FF (has_sig ks.guard T)
     select q_h_rule_fn check_fn
       (q_is_neutral raw T)
@@ -338,7 +539,7 @@ let q_guarded_type_fn = {ks, raw, query} ->
 let q_elim_init_meta = {arity} -> t arity t
 
 // --- bool_rec (4-ary: motive, t_case, f_case, target) ---
-let q_bool_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+let q_bool_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
@@ -365,7 +566,7 @@ let q_bool_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_typ
 // target IS a succ, and the stuck branch is only forced when target is a
 // hypothesis. Eager `select` would evaluate every branch on every call,
 // causing unbounded recursion on closed nats and blowing the budget.
-let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   fix ({self, meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
@@ -385,7 +586,7 @@ let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type
   })
 
 // --- eq_J (6-ary: A, x_lhs, motive, base, y, proof) ---
-let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
@@ -422,7 +623,7 @@ let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bo
 // Arrow A A)`-style) walks fine because the walker hands off
 // `unguard_checked A_hyp` to the handler instead of stepping into
 // its body.
-let q_unguard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply}, raw, query} ->
+let q_unguard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {meta, T} ->
     match (q_hasguard ks T) {
       TT => type_meta T
@@ -467,26 +668,29 @@ let q_checked_apply_fn = {ks, raw, query} ->
 // reference inside a handler resolves through the same fixed dispatcher,
 // avoiding per-call recq fix-unrolling overhead.
 
-kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply} := recq {
-  hyp_reduce    := q_hyp_reduce_fn;
-  guard         := q_guard_fn;
-  pi            := q_pi_fn;
-  nat           := q_nat_fn;
-  bool          := q_bool_fn;
-  eq            := q_eq_fn;
-  core_type     := q_core_type_fn;
-  guarded_type  := q_guarded_type_fn;
-  bool_rec      := q_bool_rec_fn;
-  nat_rec       := q_nat_rec_fn;
-  eq_J          := q_eq_J_fn;
-  unguard       := q_unguard_fn;
-  checked_apply := q_checked_apply_fn
+kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp} := recq {
+  hyp_reduce      := q_hyp_reduce_fn;
+  guard           := q_guard_fn;
+  pi              := q_pi_fn;
+  nat             := q_nat_fn;
+  bool            := q_bool_fn;
+  eq              := q_eq_fn;
+  core_type       := q_core_type_fn;
+  guarded_type    := q_guarded_type_fn;
+  bool_rec        := q_bool_rec_fn;
+  nat_rec         := q_nat_rec_fn;
+  eq_J            := q_eq_J_fn;
+  unguard          := q_unguard_fn;
+  checked_apply    := q_checked_apply_fn;
+  predicate_frame  := q_predicate_frame_fn;
+  eliminator_frame := q_eliminator_frame_fn;
+  bind_hyp         := q_bind_hyp_fn
 }
 
 // Public kernel reference with the same lazy-proxy convention that recq passes
 // internally. Type/signature construction uses this delayed view so H-rule
 // reconstruction and public constructors share the same wait-based shape.
-let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply} =
+let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp} =
   {q} -> wait kernel q
 
 // ================================================================
@@ -583,17 +787,8 @@ unguard_or_self := {T} ->
     FF => T
   }
 
-// pi_dom / pi_cod_fn return GUARDED user-facing types so callers can chain
-// further public reflection (e.g., `is_pi (pi_cod_fn T x)` works). Note
-// that `pi_cod_fn` takes (v, x) and applies — it does NOT return the bare
-// codFn closure. The TS elaborator's piCodFn deliberately differs: it
-// returns the unapplied core closure (matching q_pi_fn's internal
-// `pi_meta_cod_fn` convention) because the elaborator threads the result
-// straight back into kernel-style raw application. See compile.ts for the
-// full rationale.
-is_pi := {v} -> has_sig kernel_ref.pi (unguard_or_self v)
-pi_dom := {v} -> guard (pi_meta_domain (type_meta (unguard_or_self v)))
-pi_cod_fn := {v, x} -> guard ((pi_meta_cod_fn (type_meta (unguard_or_self v))) x)
+// is_pi / pi_dom / pi_cod_fn defined below, after pi_pf_recognizer is
+// in scope (migration step D moved Pi to predicate_frame).
 
 is_universe := {v} -> has_sig kernel_ref.guarded_type (unguard_or_self v)
 universe_rank := {v} -> type_meta (unguard_or_self v)
@@ -612,12 +807,213 @@ is_concrete_fork := {v} ->
 // via unguard_checked so the metadata stores cores (lets internal
 // recursive checking dispatch directly, not back through guard).
 
-Nat   := guard core_Nat
-Bool  := guard core_Bool
+// Bool is now defined via predicate_frame (migration step A).
+// Recognizer matches Scott TT/FF; meta is `pair recognizer (pair t t)`
+// (no params, no codomain_fn).
+bool_pf_recognizer := {_, v} -> or (tree_eq v TT) (tree_eq v FF)
+let bool_pf_recognizer_sig = checker_sig bool_pf_recognizer
+let bool_pf_meta = t bool_pf_recognizer (t t t)
+Bool := guard (wait kernel_ref.predicate_frame bool_pf_meta)
+Bool_pf := Bool  // alias for backward compat
+
+// Nat is now defined via predicate_frame (migration step B).
+//
+// The recursive case (fork: succ k) checks the predecessor k via the
+// public-form Nat predicate (`wait pred_frame meta`), not via direct
+// self-recursion. This routes hypothesis-typed predecessors through
+// predicate_frame's H-rule (matching the spec §5.3 `Nat r` convention),
+// so `Pi Nat (\{_\} -> Nat)` accepts `succ`-like functions that produce
+// `t t hyp_nat` when applied to a Nat hypothesis.
+//
+// `self_recog` is fix-self (= the recognizer itself); we construct the
+// meta and the inner core inline using `self_recog`, avoiding the
+// forward-reference problem.
+nat_pf_recognizer := fix ({self_recog, params, v} -> {
+  let nat_inner = wait kernel_ref.predicate_frame (t self_recog (t t t))
+  match (is_leaf v) {
+    TT => TT
+    FF => match (is_fork v) {
+      TT => and (is_leaf (pair_fst v)) (nat_inner (pair_snd v))
+      FF => FF
+    }
+  }
+})
+let nat_pf_recognizer_sig = checker_sig nat_pf_recognizer
+let nat_pf_meta = t nat_pf_recognizer (t t t)
+Nat := guard (wait kernel_ref.predicate_frame nat_pf_meta)
+Nat_pf := Nat  // alias for backward compat
+
 Eq    := {A, x, y} -> guard (core_Eq (unguard_checked A) x y)
-Pi    := {A, B} -> guard (core_Pi (unguard_checked A) ({x} -> unguard_checked (B x)))
-Arrow := {A, B} -> Pi A ({_} -> B)
-Type  := {rank} -> guard (wait kernel_ref.guarded_type rank)
+// Type / Pi / Arrow are defined after Type_pf / Pi_pf (below) —
+// migration steps D and E. Legacy Type kept as Type_legacy for
+// any explicit rank-using code.
+Type_legacy := {rank} -> guard (wait kernel_ref.guarded_type rank)
+
+// ================================================================
+// Eliminator-frame bool_rec (migration step 2; per spec §5.2)
+// ================================================================
+// bool_rec_ef defined as a 3-ary eliminator_frame wait-form. The
+// dispatcher takes (motive, cases, target) where cases = pair ct cf;
+// dispatch is `select ct cf target` (Scott Bool elimination).
+//
+// User-facing wrapper (`bool_rec_ef_user`) exposes the 4-ary call
+// shape `bool_rec_ef_user motive ct cf target` for compatibility
+// with existing test patterns; the internal eliminator_frame call
+// receives a packed cases pair.
+
+bool_dispatcher := {motive, cases, target} ->
+  select (pair_fst cases) (pair_snd cases) target
+
+// Init meta: count=succ^3 t (3 args: motive, cases, target),
+// dispatcher slot, empty acc (LEAF).
+let bool_rec_ef_init_meta = t (succ (succ (succ t))) (t bool_dispatcher t)
+bool_rec_ef_inner := wait kernel_ref.eliminator_frame bool_rec_ef_init_meta
+
+// 4-ary user-facing wrapper (compatibility shim).
+bool_rec_ef := {motive, ct, cf, target} ->
+  bool_rec_ef_inner motive (t ct cf) target
+
+// ================================================================
+// Eliminator-frame nat_rec (migration step C; per spec §5.3)
+// ================================================================
+// nat_dispatcher: 3-ary (motive, cases, target). For closed target,
+// recurses via self on the predecessor; for hypothesis target, the
+// eliminator_frame handler mints a stuck-typed neutral instead.
+//
+// Match-based recursion (not select_lazy) per CLAUDE.md workarounds:
+// self-referential recursive calls in select_lazy blow the compile-
+// time budget through eager K-body evaluation.
+nat_dispatcher := fix ({self, motive, cases, target} -> {
+  let base = pair_fst cases
+  let step = pair_snd cases
+  match (tree_eq target t) {
+    TT => base
+    FF => (step (pair_snd target) (self motive cases (pair_snd target)))
+  }
+})
+
+let nat_rec_ef_init_meta = t (succ (succ (succ t))) (t nat_dispatcher t)
+nat_rec_ef_inner := wait kernel_ref.eliminator_frame nat_rec_ef_init_meta
+
+// 4-ary user-facing wrapper (compatibility shim).
+nat_rec_ef := {motive, base, step, target} ->
+  nat_rec_ef_inner motive (t base step) target
+
+// ================================================================
+// Bind-hyp public wait-form
+// ================================================================
+// Init meta: count = succ^2 t = (t t (t t t)), acc = LEAF.
+// After 1st app (domain): count = succ t = (t t t), acc = (t t domain).
+// 2nd app (body): final fires; mints hyp, runs body, escape-checks.
+let bind_hyp_init_meta = t (succ (succ t)) t
+bind_hyp := wait kernel_ref.bind_hyp bind_hyp_init_meta
+
+// ================================================================
+// Predicate-frame Pi (migration step 4; per spec §5.1)
+// ================================================================
+// Pi_pf defined as a library type via predicate_frame + bind_hyp.
+// Recognizer mints a hypothesis of the domain type via bind_hyp,
+// applies the candidate v to it, and checks the result against
+// the codomain type B(hyp).
+//
+// Meta layout: pair recognizer (pair params codomain_fn).
+//   params = pair A B   (A = guarded domain; B unguard-wrapping codomain).
+//   codomain_fn = pi_pf_codomain_fn (returns Extend (B arg)).
+
+// Recognizer: receives params = pair A_core B_core_returning, where
+// both A and B's image are already pre-unguarded at construction time.
+// So bind_hyp's hyp gets stored type = A_core; B hyp returns a core
+// directly (no extra unguard needed).
+pi_pf_recognizer := {params, v} -> {
+  let A = pair_fst params
+  let B = pair_snd params
+  bind_hyp A ({hyp} -> {
+    let result = v hyp
+    let expected_core = B hyp
+    expected_core result
+  })
+}
+let pi_pf_recognizer_sig = checker_sig pi_pf_recognizer
+
+// Codomain function: extracts B from the hypothesis's stored type's
+// meta, returns Extend (B arg). B arg is already a core (per the
+// construction convention above); hyp_reduce's Extend action handler
+// wraps it in `wait ks.guard` to produce the new stored type.
+pi_pf_codomain_fn := {ks, raw, neutral_meta, arg} -> {
+  let stored_type = q_unguard_or_self ks (neutral_meta_type neutral_meta)
+  let T_meta = type_meta stored_type
+  let params = pair_fst (pair_snd T_meta)
+  let B = pair_snd params
+  Extend (B arg)
+}
+
+Pi_pf := {A, B} -> guard (wait kernel_ref.predicate_frame
+  (t pi_pf_recognizer
+     (t (t (unguard_checked A) ({x} -> unguard_checked (B x)))
+        pi_pf_codomain_fn)))
+
+Arrow_pf := {A, B} -> Pi_pf A ({_} -> B)
+
+// Public Pi / Arrow are now the predicate-frame versions
+// (migration step D). Legacy `core_Pi` and `q_pi_fn` handler are
+// unused but retained until the recq record is restructured.
+Pi    := Pi_pf
+Arrow := Arrow_pf
+
+// Pi reflection helpers — operate on predicate_frame Pi shape.
+// Meta layout: t pi_pf_recognizer (t (t A B) pi_pf_codomain_fn) where
+// A is the unguarded domain and B is the unguard-wrapping codomain.
+is_pi := {v} ->
+  tree_eq (pair_fst (type_meta (unguard_or_self v))) pi_pf_recognizer
+pi_dom := {v} ->
+  guard (pair_fst (pair_fst (pair_snd (type_meta (unguard_or_self v)))))
+pi_cod_fn := {v, x} ->
+  guard ((pair_snd (pair_fst (pair_snd (type_meta (unguard_or_self v))))) x)
+
+// ================================================================
+// Predicate-frame Type (migration step 5; per spec §5.5)
+// ================================================================
+// Type defined as a library type via predicate_frame, using the
+// Return action variant of the codomain_fn to do H-rule directly
+// (bypassing the spine-extension default that Pi-typed hypotheses
+// would otherwise use). This is what enables type-polymorphic
+// Pi-checks to succeed.
+//
+// Recognizer: v is a "type" iff v is structurally a guarded
+// predicate_frame wait-form. All library type-formers qualify.
+//
+// Codomain_fn: applying a Type-typed hypothesis (a "type variable")
+// to a value triggers H-rule against the hypothesis itself, not
+// spine extension. For closed arguments, returns Return TT (since
+// Type-typed hypotheses represent universal types; concrete
+// inhabitation checks can't be made without knowing which type
+// the hypothesis represents — Return TT propagates as acceptance
+// rather than minting an InvalidType-typed stuck).
+
+type_pf_recognizer := {_, v} ->
+  match (has_sig kernel_ref.guard v) {
+    TT => has_sig kernel_ref.predicate_frame (type_meta v)
+    FF => FF
+  }
+let type_pf_recognizer_sig = checker_sig type_pf_recognizer
+
+// Use `kernel.hyp_reduce` (eager projection) rather than
+// `kernel_ref.hyp_reduce` (lazy proxy via wait). Hyp / q_make_hyp
+// use kernel.hyp_reduce, so for self_as_hyp to hash-cons-match the
+// actual hypothesis tree, we must use the same form.
+type_pf_codomain_fn := {ks, raw, neutral_meta, v} -> {
+  let self_as_hyp = wait kernel.hyp_reduce neutral_meta
+  let stored_v = q_unguard_or_self ks (neutral_meta_type (type_meta v))
+  Return (tree_eq stored_v self_as_hyp)
+}
+
+Type_pf := guard (wait kernel_ref.predicate_frame
+  (t type_pf_recognizer (t t type_pf_codomain_fn)))
+
+// Public Type is the predicate-frame version (migration step D/E).
+// The rank argument is now vestigial — all ranks alias to Type_pf
+// (universe stratification has been dropped; see TYPE_THEORY.typ §1).
+Type := {_rank} -> Type_pf
 
 // ================================================================
 // Public checked-apply / checked-check
@@ -644,16 +1040,11 @@ checked_check := {core, v} ->
 // the final application executes the body raw and returns either the
 // concrete branch result or a `wait raw.hyp_reduce ...` neutral.
 
-// bool_rec routed through the kernel handler. Each application is
-// dispatched via has_sig kernel.bool_rec (once the walker is wired) or
-// reduces via the wait/recq chain in raw mode (today). Old StuckElim-
-// minting body is preserved inside `q_bool_rec_fn` and runs raw.
-let bool_rec_init_meta = t (succ (succ (succ (succ t)))) t
-bool_rec := wait kernel_ref.bool_rec bool_rec_init_meta
-
-// nat_rec routed through kernel handler.
-let nat_rec_init_meta = t (succ (succ (succ (succ t)))) t
-nat_rec := wait kernel_ref.nat_rec nat_rec_init_meta
+// bool_rec / nat_rec now route through the generic eliminator_frame
+// (migration step C). Legacy q_bool_rec_fn / q_nat_rec_fn handlers
+// are unused but retained in the recq record for now.
+bool_rec := bool_rec_ef
+nat_rec := nat_rec_ef
 
 // ================================================================
 // Eq operations
@@ -840,5 +1231,8 @@ kernel_guarded_type_sig := pair_fst (wait kernel_ref.guarded_type t)
 kernel_bool_rec_sig     := pair_fst (wait kernel_ref.bool_rec t)
 kernel_nat_rec_sig      := pair_fst (wait kernel_ref.nat_rec t)
 kernel_eq_J_sig         := pair_fst (wait kernel_ref.eq_J t)
-kernel_unguard_sig      := pair_fst (wait kernel_ref.unguard t)
-kernel_I_canonical      := I_canonical
+kernel_unguard_sig         := pair_fst (wait kernel_ref.unguard t)
+kernel_predicate_frame_sig  := pair_fst (wait kernel_ref.predicate_frame t)
+kernel_eliminator_frame_sig := pair_fst (wait kernel_ref.eliminator_frame t)
+kernel_bind_hyp_sig         := pair_fst (wait kernel_ref.bind_hyp t)
+kernel_I_canonical          := I_canonical

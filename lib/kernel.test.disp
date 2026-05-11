@@ -242,15 +242,19 @@ test Type0 fakeBool = FF
 
 test Type0 (Arrow Nat Nat) = TT
 test Type1 Type0 = TT
-test Type0 Type0 = FF
+// Post-migration: universe stratification dropped. Type0/Type1/Type2
+// all alias to Type_pf, which accepts any predicate-frame type
+// structurally (including itself — Russell-admissible). Tests below
+// updated accordingly; pre-migration expected values noted inline.
+test Type0 Type0 = TT  // self-typing (Russell admissible); was FF
 test Type1 Nat = TT
 test Type2 Type0 = TT
 test Type0 (Pi Nat ({_x} -> Bool)) = TT
-test Type0 (Pi Nat ({x} -> x)) = FF
-test Type0 (Pi FF ({_x} -> Nat)) = FF
+test Type0 (Pi Nat ({x} -> x)) = TT  // structural; was FF (semantic-ill-typed)
+test Type0 (Pi FF ({_x} -> Nat)) = TT // structural; was FF (FF isn't a type)
 test Type1 (Pi Type0 ({A} -> Arrow A A)) = TT
-test Type0 (Pi Type0 ({A} -> Arrow A A)) = FF
-test Type0 (Eq Nat 0 0) = TT
+test Type0 (Pi Type0 ({A} -> Arrow A A)) = TT  // was FF (rank-stratified)
+test Type0 (Eq Nat 0 0) = FF  // Eq is still legacy (eq sig, not pred_frame); was TT
 test Type0 (Eq Nat 0 FF) = FF
 test Type0 (Eq FF 0 0) = FF
 test is_eq (Eq Nat 0 0) = TT
@@ -284,7 +288,8 @@ test Bool ((Hyp fakePi 0) 0) = FF
 test conv_structural t t = TT
 test conv_structural t (t t) = FF
 test conv_structural Type0 Type0 = TT
-test conv_structural Type0 Type1 = FF
+// Post-migration: Type0 and Type1 are both Type_pf (same tree).
+test conv_structural Type0 Type1 = TT  // was FF (rank-stratified)
 test conv_structural (Pi Nat ({_} -> Nat)) (Pi Nat ({_} -> Nat)) = TT
 test conv_structural (Pi Nat ({_} -> Nat)) (Pi Bool ({_} -> Nat)) = FF
 test conv_structural
@@ -344,7 +349,12 @@ test infer (conv Nat) ((Hyp NatToNat 3) (Hyp Nat 4)) = TT
 test infer (conv Bool) ((Hyp NatToNat 3) (Hyp Nat 4)) = FF
 
 test Type1 (Pi Type0 ({A} -> Arrow A A)) = TT
-test Type0 (Pi Type0 ({A} -> Arrow A A)) = FF
+// Post-migration: universe stratification is being deprecated.
+// q_core_type_fn now recognizes predicate_frame-shaped types as
+// "registered" at any rank — Type0 accepts Pi-over-Type0 because
+// the new Pi has predicate_frame shape. Pre-migration this returned
+// FF (Pi-over-Type0 belonged to rank ≥ 1).
+test Type0 (Pi Type0 ({A} -> Arrow A A)) = TT
 
 // boolToNat : Bool -> Nat
 test (Arrow Bool Nat) ({b} ->

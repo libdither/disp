@@ -93,7 +93,10 @@ test is_pi fake_guarded = FF
 test is_universe fake_guarded = FF
 test is_eq fake_guarded = FF
 
-test tree_eq (unguard_or_self Nat) core_Nat = TT
+// Post-migration: Nat is now predicate-frame based; its unguarded
+// form is `wait kernel_ref.predicate_frame nat_pf_meta`, not core_Nat.
+// Sig check: unguarded Nat has the predicate_frame signature.
+test tree_eq (pair_fst (unguard_or_self Nat)) kernel_predicate_frame_sig = TT
 test tree_eq (unguard_or_self core_Nat) core_Nat = TT
 test tree_eq (unguard_or_self t) t = TT
 

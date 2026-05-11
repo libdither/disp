@@ -1,0 +1,48 @@
+open use "prelude.disp"
+open use "kernel.disp"
+
+// ================================================================
+// Predicate-frame Pi (migration step 4)
+// ================================================================
+// Pi_pf := guard (wait kernel_ref.predicate_frame (recognizer, (params, codomain_fn)))
+// Validates that the recognizer mints a hypothesis via bind_hyp, applies
+// the candidate v, and checks the result against the codomain.
+
+// Identity at Bool → Bool: accepted.
+let id_fn = {x} -> x
+test Pi_pf Bool ({_} -> Bool) id_fn = TT
+
+// Identity at Nat → Nat: accepted.
+test Pi_pf Nat ({_} -> Nat) id_fn = TT
+
+// Constant function {_} -> 0 at Bool → Nat: accepted (always returns Nat 0).
+let const_zero = {b} -> 0
+test Pi_pf Bool ({_} -> Nat) const_zero = TT
+
+// Identity at Bool → Nat: rejected (returns Bool hyp, not Nat).
+test Pi_pf Bool ({_} -> Nat) id_fn = FF
+
+// Public boundary rejects hypothesis input.
+let pi_hyp = Hyp (Pi_pf Bool ({_} -> Nat)) 0
+test Pi_pf Bool ({_} -> Nat) pi_hyp = FF
+
+// Identity sanity.
+test hasguard (Pi_pf Bool ({_} -> Nat)) = TT
+test tree_eq (pair_fst (type_meta (Pi_pf Bool ({_} -> Nat)))) kernel_predicate_frame_sig = TT
+
+// Composition: a function that returns a hypothesis's stuck-typed result.
+// const_one : Bool -> Nat. const_two : Nat -> Nat.
+let const_one = {_} -> 1
+let const_two = {_} -> 2
+test Pi_pf Bool ({_} -> Nat) const_one = TT
+test Pi_pf Nat ({_} -> Nat) const_two = TT
+
+// Pi-typed hypothesis applied to value: hyp_reduce mints a new neutral
+// with stored type = codomain (B arg). Verify via Action protocol path
+// rather than the legacy q_pi_fn path.
+let pi_pf_hyp = Hyp (Pi_pf Nat ({_} -> Bool)) 0
+test is_neutral pi_pf_hyp = TT
+// Applying pi_pf_hyp to a Nat should extend the spine with stored type Bool.
+test is_neutral (pi_pf_hyp 5) = TT
+// The minted neutral's stored type is the codomain Bool.
+test neutral_type (pi_pf_hyp 5) = Bool

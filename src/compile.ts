@@ -401,30 +401,41 @@ interface KernelHelpers {
 }
 
 function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
-  // Derive signatures from trusted type constructors. After session 2 of
-  // the soundness fix, public Pi/Type/Eq are wrapped in `guard`, so the
-  // outer pair_fst of Pi(…) and Type(…) and Eq(…) all return the SAME
-  // guard signature. To recover the actual checker signatures we must
-  // peel the guard layer first via type_meta, then take pair_fst of the
-  // inner core wait-value.
+  // Post-migration: public Pi/Bool/Nat/Type are all predicate_frame
+  // wait-forms. Their outer signature (after unguarding) is the SAME
+  // predicate_frame signature; what distinguishes them is the
+  // *recognizer* stored in `pair_fst meta`. We derive the recognizer
+  // identifier for Pi and Type by sampling and inspecting metadata.
   const Pi = trusted.get("Pi")
   const Type = trusted.get("Type")
   const make_hyp = trusted.get("Hyp") ?? trusted.get("make_hyp")
 
   if (!Pi && !Type && !make_hyp) return null
 
-  // Sample-and-peel: build a sample, peel guard if present, then pair_fst
-  // gives the underlying checker signature.
+  // Sample-and-peel: build a sample, peel guard if present, then take
+  // pair_fst of the inner meta to get the recognizer identity.
   const I_FUNC = I_TREE
   const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, 10_000_000), I_FUNC, 10_000_000) : null
   const sampleType = Type ? applyTree(Type, LEAF, 10_000_000) : null
   const sampleHyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, 10_000_000), LEAF, 10_000_000) : null
 
-  // Outer signature = guard signature (same for Pi/Type after guarding).
-  // Inner signature (after peeling type_meta) = the actual checker.
   const guardSig = samplePi ? treePairFst(samplePi) : (sampleType ? treePairFst(sampleType) : null)
-  const piSigInner = samplePi ? treePairFst(typeMetaTree(samplePi)!) : null
-  const typeSigInner = sampleType ? treePairFst(typeMetaTree(sampleType)!) : null
+  // For predicate-frame types, the *recognizer* (pair_fst of meta)
+  // identifies the type-former. We peel two wait layers:
+  //   1. typeMetaTree(sample) — peels guard → wait pred_frame meta.
+  //   2. typeMetaTree(...) again — peels pred_frame → meta.
+  // pair_fst of meta = the recognizer (pi_pf_recognizer /
+  // type_pf_recognizer) which discriminates between Pi/Type/Bool/Nat
+  // type-formers (all of which share the predicate_frame outer sig).
+  function recognizerOf(sample: Tree | null): Tree | null {
+    if (!sample) return null
+    const outer = typeMetaTree(sample)
+    if (!outer) return null
+    const inner = typeMetaTree(outer)
+    return inner ? treePairFst(inner) : null
+  }
+  const piRecognizer = recognizerOf(samplePi)
+  const typeRecognizer = recognizerOf(sampleType)
   const hypSig = sampleHyp ? treePairFst(sampleHyp) : null
 
   function hasSig(sig: Tree | null, t: Tree): boolean {
@@ -440,53 +451,65 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
     }
     return t
   }
+  // Discriminate a predicate-frame type by its recognizer identity.
+  // For t = guard (wait pred_frame meta):
+  //   unguardOrSelf t → wait pred_frame meta
+  //   typeMetaTree(...) → meta
+  //   pair_fst meta → recognizer
+  function recognizerMatches(recognizer: Tree | null, t: Tree): boolean {
+    if (!recognizer) return false
+    const meta = typeMetaTree(unguardOrSelf(t))
+    if (!meta) return false
+    const r = treePairFst(meta)
+    return r !== null && treeEqual(r, recognizer)
+  }
 
   return {
-    isUniverse(t) { return hasSig(typeSigInner, unguardOrSelf(t)) },
-    isPi(t) { return hasSig(piSigInner, unguardOrSelf(t)) },
+    isUniverse(t) { return recognizerMatches(typeRecognizer, t) },
+    isPi(t) { return recognizerMatches(piRecognizer, t) },
     isNeutral(t) { return hasSig(hypSig, t) },
-    // piDomain / piCodFn return the *unguarded* (core) domain and the
-    // *unapplied* core-returning codFn closure. This intentionally differs
-    // from the disp-side reflection helpers `pi_dom` / `pi_cod_fn` (which
-    // re-guard / apply-and-re-guard for user-facing code). The elaborator
-    // wants the internal forms because:
-    //   - it threads results back into kernel-style raw application
-    //     (`applyTree(codFn, x_tree, ...)`), which matches how q_pi_fn uses
-    //     pi_meta_cod_fn internally — both produce core/unguarded results;
-    //   - reflection helpers (isPi/isUniverse/isNeutral) all unguard before
-    //     comparing signatures, so a guarded vs unguarded result_type
-    //     produces the same answers downstream.
-    // Keep these aligned with q_pi_fn's internal convention, NOT with the
-    // user-facing disp reflection signature.
+    // Pi's predicate-frame layout: guard (wait pred_frame meta) where
+    //   meta = t recognizer (t (t A B) cod_fn).
+    //   piDomain : pair_fst (pair_fst (pair_snd meta)) = A (unguarded).
+    //   piCodFn  : pair_snd (pair_fst (pair_snd meta)) = B (unguard-wrapping).
+    // Peel: t → unguardOrSelf → typeMetaTree → meta.
     piDomain(t) {
       const inner = unguardOrSelf(t)
       const meta = typeMetaTree(inner)
       if (!meta) throw new Error("piDomain: not a valid type tree")
-      const d = treePairFst(meta)
-      if (!d) throw new Error("piDomain: metadata not a pair")
+      const metaSnd = treePairSnd(meta)
+      if (!metaSnd) throw new Error("piDomain: metadata not a pair")
+      const params = treePairFst(metaSnd)
+      if (!params) throw new Error("piDomain: params slot missing")
+      const d = treePairFst(params)
+      if (!d) throw new Error("piDomain: A slot missing")
       return d
     },
     piCodFn(t) {
       const inner = unguardOrSelf(t)
       const meta = typeMetaTree(inner)
       if (!meta) throw new Error("piCodFn: not a valid type tree")
-      const c = treePairSnd(meta)
-      if (!c) throw new Error("piCodFn: metadata not a pair")
+      const metaSnd = treePairSnd(meta)
+      if (!metaSnd) throw new Error("piCodFn: metadata not a pair")
+      const params = treePairFst(metaSnd)
+      if (!params) throw new Error("piCodFn: params slot missing")
+      const c = treePairSnd(params)
+      if (!c) throw new Error("piCodFn: B slot missing")
       return c
     },
     makeHyp(type, id) {
       if (!make_hyp) throw new Error("makeHyp: make_hyp not trusted")
       return applyTree(applyTree(make_hyp, type, 10_000_000), id, 10_000_000)
     },
-    univRank(t) {
-      const inner = unguardOrSelf(t)
-      const meta = typeMetaTree(inner)
-      if (!meta) throw new Error("univRank: not a valid type tree")
-      return meta
+    univRank(_t) {
+      // Universes are no longer rank-stratified (migration step E).
+      // Return LEAF as a vestigial value.
+      return LEAF
     },
-    makeType(rank) {
+    makeType(_rank) {
+      // Rank arg is ignored; Type is universal now.
       if (!Type) throw new Error("makeType: Type not trusted")
-      return applyTree(Type, rank, 10_000_000)
+      return applyTree(Type, LEAF, 10_000_000)
     },
   }
 }
@@ -507,13 +530,22 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
 const NATIVE_SIG_NAMES = new Set([
   "kernel_hyp_reduce_sig",
   "kernel_guard_sig",
-  "kernel_pi_sig",
+  // Pi is now predicate_frame (migration step D); kernel_pi_sig
+  // is no longer in the dispatch list.
   "kernel_core_type_sig",
   "kernel_guarded_type_sig",
-  "kernel_bool_rec_sig",
-  "kernel_nat_rec_sig",
+  // bool_rec / nat_rec migrated to eliminator_frame; their sigs are
+  // no longer routed. Eq_J still uses its kernel handler.
   "kernel_eq_J_sig",
   "kernel_unguard_sig",
+  "kernel_predicate_frame_sig",
+  "kernel_eliminator_frame_sig",
+  "kernel_bind_hyp_sig",
+  // Migration transition: Eq still uses the kernel-handler core form
+  // (Eq's tree_eq-on-hypothesis interaction is being redesigned —
+  // tracked in TYPE_THEORY review issue #2). Bool and Nat are now
+  // predicate_frame.
+  "kernel_eq_sig",
 ])
 function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
   if (name === "checked_apply" && getNativeDispatcherTreeId() === -1) {
