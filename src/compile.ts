@@ -530,22 +530,15 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
 const NATIVE_SIG_NAMES = new Set([
   "kernel_hyp_reduce_sig",
   "kernel_guard_sig",
-  // Pi is now predicate_frame (migration step D); kernel_pi_sig
-  // is no longer in the dispatch list.
-  "kernel_core_type_sig",
-  "kernel_guarded_type_sig",
-  // bool_rec / nat_rec migrated to eliminator_frame; their sigs are
-  // no longer routed. Eq_J still uses its kernel handler.
-  "kernel_eq_J_sig",
   "kernel_unguard_sig",
   "kernel_predicate_frame_sig",
   "kernel_eliminator_frame_sig",
   "kernel_bind_hyp_sig",
-  // Migration transition: Eq still uses the kernel-handler core form
-  // (Eq's tree_eq-on-hypothesis interaction is being redesigned —
-  // tracked in TYPE_THEORY review issue #2). Bool and Nat are now
-  // predicate_frame.
+  // Eq still uses the kernel-handler core form (migration pending —
+  // see TYPE_THEORY review issue #2 on Eq's tree_eq-on-hypothesis
+  // interaction). Eq_J similarly.
   "kernel_eq_sig",
+  "kernel_eq_J_sig",
 ])
 function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
   if (name === "checked_apply" && getNativeDispatcherTreeId() === -1) {

@@ -19,10 +19,6 @@ let has_sig = {checker, v} -> tree_eq (pair_fst v) (checker_sig checker)
 
 // Metadata helpers. These keep the raw tree layout explicit while naming the
 // typed shape we expect to justify later.
-let make_pi_meta = {domain, cod_fn} -> t domain cod_fn
-let pi_meta_domain = {meta} -> pair_fst meta
-let pi_meta_cod_fn = {meta} -> pair_snd meta
-
 let make_eq_meta = {A, x, y} -> t A (t x y)
 let eq_meta_type = {meta} -> pair_fst meta
 let eq_meta_lhs = {meta} -> pair_fst (pair_snd meta)
@@ -135,18 +131,18 @@ let must_ok_or_self = {r} ->
 // pair_fst(stem(c)) = c. Without is_fork, stem(canonical_sig) would pass
 // the signature check. Legitimate neutrals are wait-encoded values, which
 // are always forks.
-let q_is_neutral = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, x} ->
+let q_is_neutral = {raw : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, x} ->
   and (is_fork x) (has_sig raw.hyp_reduce x)
 
 // q_make_hyp: construct a hypothesis neutral.
 // Result: wait(hyp_reduce_handler)(make_neutral_meta(type, identity))
-let q_make_hyp = {raw : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, ty, identity} ->
+let q_make_hyp = {raw : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, ty, identity} ->
   wait raw.hyp_reduce (make_neutral_meta ty identity)
 
 // q_hasguard: check if T is a guarded public type. Same as `hasguard`
 // (defined post-kernel-record) but takes ks directly so it can be used
 // inside handler bodies before the kernel record exists.
-let q_hasguard = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, T} ->
+let q_hasguard = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, T} ->
   has_sig ks.guard T
 
 // q_contains_neutral / q_scan_no_neutral: private versions of the public
@@ -169,7 +165,7 @@ let q_scan_no_neutral = {raw, x} -> not (q_contains_neutral raw x)
 
 // q_unguard_or_self: peel one layer of guard if present, else return as-is.
 // Used by handlers that may receive either a guarded public type or a core.
-let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, T} ->
+let q_unguard_or_self = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, T} ->
   match (has_sig ks.guard T) {
     TT => type_meta T
     FF => T
@@ -189,7 +185,7 @@ let q_unguard_or_self = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded
 // q_guard_fn itself does NOT route through ks.checked_apply: the entry
 // scan + raw apply is sufficient at the boundary, and bypassing the
 // dispatcher here keeps the common case (`Nat 5`, `Bool TT`) cheap.
-let q_guard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+let q_guard_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {core, v} ->
     match (q_scan_no_neutral raw v) {
       TT => match (tree_eq (core v) TT) {
@@ -208,17 +204,14 @@ let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
 // runtime). Returns the bare new neutral, NOT Ok-wrapped; the dispatcher
 // wraps in Ok when routing through ks.checked_apply. This keeps
 // `(Hyp NatToNat 0) (Hyp Nat 1)` style raw-apply tests working.
-let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   fix ({self, meta, v} -> {
     let stored_inner = q_unguard_or_self ks (neutral_meta_type meta)
     let cod_fn = pair_snd (pair_snd (type_meta stored_inner))
-    // Legacy Pi path (existing q_pi_fn-typed hypotheses).
-    let pi_result_type = {meta, v} -> wait ks.guard (pi_meta_cod_fn (type_meta stored_inner) v)
-    let legacy_pi_fn = {self, meta, v} -> wait self (extend_neutral_meta meta (pi_result_type meta v) v)
     // Action-protocol path (predicate_frame-typed hypotheses).
     // If codomain_fn slot is sentinel (LEAF), applying this hypothesis
     // is invalid → extend with InvalidType. Otherwise invoke
-    // cod_fn(ks, raw, meta, v) → Action, dispatch.
+    // cod_fn(ks, raw, meta, v) → Action, dispatch on Extend / Return.
     let invalid_fn = {self, meta, v} -> wait self (extend_neutral_meta meta InvalidType v)
     let action_extend_fn = {self, meta, v, action} ->
       wait self (extend_neutral_meta meta (wait ks.guard (pair_snd action)) v)
@@ -243,72 +236,9 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_t
       select invalid_fn action_path_fire
         (tree_eq cod_fn t)
         self meta v)
-    let pf_branch = {self, meta, v} -> (
-      select action_path invalid_fn
-        (has_sig ks.predicate_frame stored_inner)
-        self meta v)
-    select legacy_pi_fn pf_branch
-      (has_sig ks.pi stored_inner)
+    select action_path invalid_fn
+      (has_sig ks.predicate_frame stored_inner)
       self meta v
-  })
-
-// --- Pi checker (returns BARE TT/FF) ---
-// meta = make_pi_meta(domain, codFn). domain and codFn store CORES (Pi public
-// constructor unguard_checked-peels its arguments).
-//
-// Sub-evaluation of v(hyp) and codFn(hyp) goes through ks.checked_apply:
-// hyp is a kernel-minted neutral, and any reflective observation of it by
-// the user-supplied v or codFn is rejected by the dispatcher's walker
-// triage-on-neutral rule. Failures (Fail) and validation failures (Ok FF)
-// both fold back to bare FF via must_ok_or_ff.
-let q_pi_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
-  fix ({self, meta, v} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, meta, v} -> {
-      let domain = pi_meta_domain meta
-      let codFn = pi_meta_cod_fn meta
-      let hyp = q_make_hyp raw domain meta
-      let result_r = ks.checked_apply v hyp
-      let expected_r = ks.checked_apply codFn hyp
-      must_ok_or_ff result_r ({result} ->
-        must_ok_or_ff expected_r ({expected} ->
-          select
-            ({ks, result, expected} -> tree_eq (q_unguard_or_self ks expected) (q_unguard_or_self ks (neutral_meta_type (type_meta result))))
-            ({ks, result, expected} -> tree_eq (expected result) TT)
-            (q_is_neutral raw result)
-            ks result expected))
-    }
-    select q_h_rule_fn check_fn
-      (q_is_neutral raw v)
-      ks raw query self meta v
-  })
-
-// --- Nat checker (returns BARE TT/FF) ---
-// Nat values: t (zero) or fork(t, n) (succ n). Rejects non-Nat shapes.
-// User input (n) was already entry-scanned at the public boundary, so
-// triaging on n via raw apply is safe (n contains no neutrals).
-let q_nat_fn = {ks, raw, query} ->
-  fix ({self, meta, n} -> {
-    let succ_fn = {ks, raw, query, self, meta, n} -> wait self meta (pair_snd n)
-    let succ_check = {ks, raw, query, self, meta, n} -> select succ_fn ({ks, raw, query, self, meta, n} -> FF) (tree_eq (pair_fst n) t) ks raw query self meta n
-    let non_zero = {ks, raw, query, self, meta, n} -> select succ_check ({ks, raw, query, self, meta, n} -> FF) (select FF (is_fork n) (q_is_neutral raw n)) ks raw query self meta n
-    let non_neutral = {ks, raw, query, self, meta, n} -> select ({ks, raw, query, self, meta, n} -> TT) non_zero (tree_eq n t) ks raw query self meta n
-    select q_h_rule_fn non_neutral
-      (q_is_neutral raw n)
-      ks raw query self meta n
-  })
-
-// --- Bool checker (returns BARE TT/FF) ---
-// Recognises Scott-encoded TT/FF (per spec §4.5). `tree_eq b TT` and
-// `tree_eq b FF` compare against whatever Scott shape the prelude's
-// TT/FF compile to — hash-cons-equal regardless of source-level form.
-// (Future: drop in favour of Pi-checking against `Bool_template v`
-// once the elaborator can mint per-value-template hypotheses.)
-let q_bool_fn = {ks, raw, query} ->
-  fix ({self, meta, b} -> {
-    let check_fn = {ks, raw, query, self, meta, b} -> select TT (tree_eq b FF) (tree_eq b TT)
-    select q_h_rule_fn check_fn
-      (q_is_neutral raw b)
-      ks raw query self meta b
   })
 
 // --- Eq checker (returns BARE TT/FF) ---
@@ -354,11 +284,11 @@ let q_contains_via_open_path = fix ({self, raw, result, hyp} ->
 // Meta layout: pair count acc.
 //   count starts at succ^2 t; final fires when count = succ t.
 //   acc = LEAF initially; after 1st app (domain) becomes (t t domain).
-let q_bind_hyp_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+let q_bind_hyp_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
-    let final_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, meta, x, count, acc} -> {
+    let final_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, meta, x, count, acc} -> {
       let domain = pair_snd acc
       let body = x
       let hyp_id = t domain body
@@ -404,12 +334,12 @@ let q_bind_hyp_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_typ
 //
 // Partial applications stay in wait-form, accumulating args + decrementing
 // count, preserving the dispatcher slot.
-let q_eliminator_frame_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+let q_eliminator_frame_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {meta, x} -> {
     let count = pair_fst meta
     let dispatcher = pair_fst (pair_snd meta)
     let acc = pair_snd (pair_snd meta)
-    let final_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, meta, x, count, dispatcher, acc} -> {
+    let final_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, meta, x, count, dispatcher, acc} -> {
       let cases = pair_snd acc
       let motive = pair_snd (pair_fst acc)
       let target = x
@@ -443,9 +373,9 @@ let q_eliminator_frame_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,gua
 // then invoked under the walker via ks.checked_apply. This matches
 // q_pi_fn's idiom for routing user-supplied subterms through the
 // dispatcher.
-let q_predicate_frame_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+let q_predicate_frame_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   fix ({self, meta, v} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, meta, v} -> {
+    let check_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, meta, v} -> {
       let recognizer = pair_fst meta
       let params = pair_fst (pair_snd meta)
       let result_r = ks.checked_apply (recognizer params) v
@@ -456,137 +386,11 @@ let q_predicate_frame_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guar
       ks raw query self meta v
   })
 
-// --- Core type checker (returns BARE TT/FF) ---
-// Validates that x is a valid CORE type at rank ≤ meta. Cores are the
-// internal raw predicates (core_Nat, core_Bool, core_Eq, core_Pi) and
-// hypothesis-typed neutrals whose stored type is a universe.
-let q_core_type_fn = {ks, raw, query} ->
-  fix ({self, meta, x} -> {
-    let is_registered = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, x} -> (
-      // Recognize: legacy core_Bool/core_Nat shapes, OR any
-      // predicate_frame-formed library type (Bool/Nat post-migration,
-      // Bool_pf/Nat_pf/Pi_pf/Type_pf etc).
-      or (select TT (tree_eq x (wait ks.bool t)) (tree_eq x (wait ks.nat t)))
-         (has_sig ks.predicate_frame x))
-    let univ_check = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, rank, ty} ->
-      select (nat_le (type_meta ty) rank) FF (or (has_sig ks.core_type ty) (has_sig ks.guarded_type ty))
-    let neutral_fn = {ks, raw, query, self, meta, x} -> univ_check ks meta (neutral_meta_type (type_meta x))
-    let core_univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
-    let guarded_univ_fn = {ks, raw, query, self, meta, x} -> nat_lt (type_meta x) meta
-    let pi_fn = {ks, raw, query, self, meta, x} -> {
-      let tm = type_meta x
-      let dom = pi_meta_domain tm
-      let cod_fn = pi_meta_cod_fn tm
-      and (wait self meta dom)
-        (wait self meta (cod_fn (q_make_hyp raw dom tm)))
-    }
-    let eq_fn = {ks, raw, query, self, meta, x} -> {
-      let tm = type_meta x
-      let A = eq_meta_type tm
-      and (wait self meta A)
-        (and (A (eq_meta_lhs tm))
-          (A (eq_meta_rhs tm)))
-    }
-    select neutral_fn
-      ({ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, meta, x} ->
-        select_chain
-          (case (has_sig ks.core_type x) core_univ_fn
-          (case (has_sig ks.guarded_type x) guarded_univ_fn
-          (case (has_sig ks.pi x) pi_fn
-          (case (has_sig ks.eq x) eq_fn
-          (case (is_registered ks x) ({ks, raw, query, self, meta, x} -> TT)
-          t)))))
-          ({ks, raw, query, self, meta, x} -> FF)
-          ks raw query self meta x)
-      (q_is_neutral raw x)
-      ks raw query self meta x
-  })
-
-// --- Guarded type checker (returns BARE TT/FF) ---
-// Validates that T is a guarded public type at rank ≤ meta.
-let q_guarded_type_fn = {ks, raw, query} ->
-  fix ({self, rank, T} -> {
-    let check_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query, self, rank, T} ->
-      select (tree_eq ((wait ks.core_type rank) (type_meta T)) TT) FF (has_sig ks.guard T)
-    select q_h_rule_fn check_fn
-      (q_is_neutral raw T)
-      ks raw query self rank T
-  })
-
 // ================================================================
-// Eliminator handlers (kernel-routed via wait-form signatures)
+// eq_J: legacy 6-ary kernel-routed eliminator (kept until Eq migrates)
 // ================================================================
-// Each eliminator is encoded as `wait kernel_ref.X_rec init_meta`. The
-// dispatcher recognises the signature and routes every application
-// through the corresponding handler, so the eliminator's body — which
-// uses raw `is_neutral target` and mints `StuckElim` — runs in raw
-// mode (not under the walker), avoiding the parametric-mode rejection
-// of the constructor check.
-//
-// Meta encoding (per eliminator): pair (remaining, accumulated).
-//   remaining: tree-Nat counting down from the eliminator's arity.
-//             succ encoded as `t t n` per prelude convention.
-//   accumulated: left-leaning pair tree of args; nil = `t` (LEAF).
-//
-// Each application decrements `remaining` and appends `x` to
-// `accumulated`. When `remaining = succ t` (i.e., one arg left), x is
-// the final arg and the handler executes the original body.
-//
-// Handlers return BARE results (the wait-form for partial applications,
-// the body's tree for the final apply); the dispatcher Ok-wraps. This
-// matches the convention used by q_pi_fn / q_hyp_reduce_fn.
-
-let q_elim_init_meta = {arity} -> t arity t
-
-// --- bool_rec (4-ary: motive, t_case, f_case, target) ---
-let q_bool_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
-  {meta, x} -> {
-    let count = pair_fst meta
-    let acc = pair_snd meta
-    let bool_final_fn = {raw, query, ks, meta, x, count, acc} -> {
-      let cf = pair_snd acc
-      let ct = pair_snd (pair_fst acc)
-      let motive = pair_snd (pair_fst (pair_fst acc))
-      let target = x
-      select_lazy
-        ({_} -> q_make_hyp raw (motive target) target)
-        ({_} -> select ct cf target)
-        (q_is_neutral raw target)
-    }
-    let bool_partial_fn = {raw, query, ks, meta, x, count, acc} ->
-      wait (ks query) (t (pair_snd count) (t acc x))
-    select bool_final_fn bool_partial_fn
-      (tree_eq count (t t t))
-      raw query ks meta x count acc
-  }
-
-// --- nat_rec (4-ary: motive, base, step, target) ---
-// Handles current tree-shape Nat: target = t (zero) or fork(t, n) (succ n).
-// Uses select_lazy so the recursive succ branch is only forced when the
-// target IS a succ, and the stuck branch is only forced when target is a
-// hypothesis. Eager `select` would evaluate every branch on every call,
-// causing unbounded recursion on closed nats and blowing the budget.
-let q_nat_rec_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
-  fix ({self, meta, x} -> {
-    let count = pair_fst meta
-    let acc = pair_snd meta
-    let nat_final_fn = {self, raw, query, ks, meta, x, count, acc} ->
-      match (q_is_neutral raw x) {
-        TT => q_make_hyp raw ((pair_snd (pair_fst (pair_fst acc))) x) x
-        FF => match (tree_eq x t) {
-          TT => pair_snd (pair_fst acc)
-          FF => (pair_snd acc) (pair_snd x) (self meta (pair_snd x))
-        }
-      }
-    let nat_partial_fn = {self, raw, query, ks, meta, x, count, acc} ->
-      wait (ks query) (t (pair_snd count) (t acc x))
-    select nat_final_fn nat_partial_fn
-      (tree_eq count (t t t))
-      self raw query ks meta x count acc
-  })
-
 // --- eq_J (6-ary: A, x_lhs, motive, base, y, proof) ---
-let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+let q_eq_J_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {meta, x} -> {
     let count = pair_fst meta
     let acc = pair_snd meta
@@ -623,7 +427,7 @@ let q_eq_J_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bo
 // Arrow A A)`-style) walks fine because the walker hands off
 // `unguard_checked A_hyp` to the handler instead of stepping into
 // its body.
-let q_unguard_fn = {ks : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
+let q_unguard_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp}, raw, query} ->
   {meta, T} ->
     match (q_hasguard ks T) {
       TT => type_meta T
@@ -668,18 +472,11 @@ let q_checked_apply_fn = {ks, raw, query} ->
 // reference inside a handler resolves through the same fixed dispatcher,
 // avoiding per-call recq fix-unrolling overhead.
 
-kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp} := recq {
-  hyp_reduce      := q_hyp_reduce_fn;
-  guard           := q_guard_fn;
-  pi              := q_pi_fn;
-  nat             := q_nat_fn;
-  bool            := q_bool_fn;
-  eq              := q_eq_fn;
-  core_type       := q_core_type_fn;
-  guarded_type    := q_guarded_type_fn;
-  bool_rec        := q_bool_rec_fn;
-  nat_rec         := q_nat_rec_fn;
-  eq_J            := q_eq_J_fn;
+kernel : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp} := recq {
+  hyp_reduce       := q_hyp_reduce_fn;
+  guard            := q_guard_fn;
+  eq               := q_eq_fn;
+  eq_J             := q_eq_J_fn;
   unguard          := q_unguard_fn;
   checked_apply    := q_checked_apply_fn;
   predicate_frame  := q_predicate_frame_fn;
@@ -690,7 +487,7 @@ kernel : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_re
 // Public kernel reference with the same lazy-proxy convention that recq passes
 // internally. Type/signature construction uses this delayed view so H-rule
 // reconstruction and public constructors share the same wait-based shape.
-let kernel_ref : {hyp_reduce,guard,pi,nat,bool,eq,core_type,guarded_type,bool_rec,nat_rec,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp} =
+let kernel_ref : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,predicate_frame,eliminator_frame,bind_hyp} =
   {q} -> wait kernel q
 
 // ================================================================
@@ -769,10 +566,9 @@ unguard_checked := wait kernel_ref.unguard t
 // inside Pi metadata, codomain functions, etc. Never exposed as a "type"
 // in user-facing source code.
 
-core_Nat   := wait kernel_ref.nat t
-core_Bool  := wait kernel_ref.bool t
+// Only Eq still uses the legacy kernel-handler core form (Eq
+// migration is pending; see TYPE_THEORY review issue #2).
 core_Eq    := {A, x, y} -> wait kernel_ref.eq (make_eq_meta A x y)
-core_Pi    := {domain, codFn} -> wait kernel_ref.pi (make_pi_meta domain codFn)
 
 // ================================================================
 // Public API: type reflection
@@ -787,11 +583,9 @@ unguard_or_self := {T} ->
     FF => T
   }
 
-// is_pi / pi_dom / pi_cod_fn defined below, after pi_pf_recognizer is
-// in scope (migration step D moved Pi to predicate_frame).
-
-is_universe := {v} -> has_sig kernel_ref.guarded_type (unguard_or_self v)
-universe_rank := {v} -> type_meta (unguard_or_self v)
+// is_pi / pi_dom / pi_cod_fn / is_universe / universe_rank defined
+// below, after pi_pf_recognizer and type_pf_recognizer are in scope
+// (migration step D/E moved Pi/Type to predicate_frame).
 
 is_eq := {v} -> has_sig kernel_ref.eq (unguard_or_self v)
 
@@ -845,9 +639,7 @@ Nat_pf := Nat  // alias for backward compat
 
 Eq    := {A, x, y} -> guard (core_Eq (unguard_checked A) x y)
 // Type / Pi / Arrow are defined after Type_pf / Pi_pf (below) —
-// migration steps D and E. Legacy Type kept as Type_legacy for
-// any explicit rank-using code.
-Type_legacy := {rank} -> guard (wait kernel_ref.guarded_type rank)
+// migration steps D and E.
 
 // ================================================================
 // Eliminator-frame bool_rec (migration step 2; per spec §5.2)
@@ -907,6 +699,18 @@ nat_rec_ef := {motive, base, step, target} ->
 // 2nd app (body): final fires; mints hyp, runs body, escape-checks.
 let bind_hyp_init_meta = t (succ (succ t)) t
 bind_hyp := wait kernel_ref.bind_hyp bind_hyp_init_meta
+
+// ================================================================
+// Public constructors for library type-formers
+// ================================================================
+// External files (e.g., lib/ord.disp) can't project kernel_ref
+// directly (the recType field metadata doesn't survive `open use`).
+// These helpers expose the wait-form construction for predicate_frame
+// and eliminator_frame so library types can be defined outside this
+// file.
+
+predicate_frame_form := {meta} -> wait kernel_ref.predicate_frame meta
+eliminator_frame_form := {meta} -> wait kernel_ref.eliminator_frame meta
 
 // ================================================================
 // Predicate-frame Pi (migration step 4; per spec §5.1)
@@ -1014,6 +818,13 @@ Type_pf := guard (wait kernel_ref.predicate_frame
 // The rank argument is now vestigial — all ranks alias to Type_pf
 // (universe stratification has been dropped; see TYPE_THEORY.typ §1).
 Type := {_rank} -> Type_pf
+
+// is_universe / universe_rank reflect on the predicate-frame Type
+// shape. universe_rank is now vestigial (returns LEAF) since
+// universes aren't stratified.
+is_universe := {v} ->
+  tree_eq (pair_fst (type_meta (unguard_or_self v))) type_pf_recognizer
+universe_rank := {_v} -> t
 
 // ================================================================
 // Public checked-apply / checked-check
@@ -1220,18 +1031,11 @@ checked_h_rule := {self_type, v} ->
 // different `pair_fst`s, so each sig must match the form its
 // constructor uses (per spec §7 "Raw vs ks.field for signatures").
 
-kernel_hyp_reduce_sig   := pair_fst (wait kernel.hyp_reduce t)
-kernel_guard_sig        := pair_fst (wait kernel_ref.guard t)
-kernel_pi_sig           := pair_fst (wait kernel_ref.pi t)
-kernel_nat_sig          := pair_fst (wait kernel_ref.nat t)
-kernel_bool_sig         := pair_fst (wait kernel_ref.bool t)
-kernel_eq_sig           := pair_fst (wait kernel_ref.eq t)
-kernel_core_type_sig    := pair_fst (wait kernel_ref.core_type t)
-kernel_guarded_type_sig := pair_fst (wait kernel_ref.guarded_type t)
-kernel_bool_rec_sig     := pair_fst (wait kernel_ref.bool_rec t)
-kernel_nat_rec_sig      := pair_fst (wait kernel_ref.nat_rec t)
-kernel_eq_J_sig         := pair_fst (wait kernel_ref.eq_J t)
-kernel_unguard_sig         := pair_fst (wait kernel_ref.unguard t)
+kernel_hyp_reduce_sig       := pair_fst (wait kernel.hyp_reduce t)
+kernel_guard_sig            := pair_fst (wait kernel_ref.guard t)
+kernel_eq_sig               := pair_fst (wait kernel_ref.eq t)
+kernel_eq_J_sig             := pair_fst (wait kernel_ref.eq_J t)
+kernel_unguard_sig          := pair_fst (wait kernel_ref.unguard t)
 kernel_predicate_frame_sig  := pair_fst (wait kernel_ref.predicate_frame t)
 kernel_eliminator_frame_sig := pair_fst (wait kernel_ref.eliminator_frame t)
 kernel_bind_hyp_sig         := pair_fst (wait kernel_ref.bind_hyp t)
