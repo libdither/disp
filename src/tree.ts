@@ -246,51 +246,103 @@ export class BudgetExhausted extends Error {
 // No recursive calls — all evaluation driven by the main loop.
 
 const enum ContKind { ApplyTo, ApplyResultTo, Memo, SAfterCx }
-type Cont =
-  | { kind: ContKind.ApplyTo, arg: Tree }
-  | { kind: ContKind.ApplyResultTo, func: Tree }
-  | { kind: ContKind.Memo, f: Tree, x: Tree }
-  | { kind: ContKind.SAfterCx, origX: Tree, b: Tree }
+
+// One stable shape for all continuation kinds (V8 keeps a single hidden
+// class). Only the fields relevant to the kind are read.
+//
+// `innerMap` is cached on Memo frames so memoSet on unwind doesn't have
+// to re-do `applyMemo.get(f.id)` — the outer-map lookup we already did
+// at the memoGet check is reused.
+interface ContSlot {
+  kind: number
+  f: Tree
+  x: Tree
+  arg: Tree
+  func: Tree
+  origX: Tree
+  b: Tree
+  innerMap: Map<number, Tree> | null
+}
+
+// Module-level continuation stack — preallocated slots, reused across all
+// apply() calls (including recursive ones via nativeDispatch). Each
+// apply() captures stackTop at entry and only pops down to that
+// `baseTop`, so nested calls don't interfere. No per-push allocation:
+// pushes overwrite slot fields in place.
+const STACK_INITIAL_CAP = 4096
+const stack: ContSlot[] = []
+let stackTop = 0
+function fillSlots(n: number): void {
+  // Slots are populated lazily so they share a single hidden class created
+  // from the first writes. Initialize with placeholder LEAF children to
+  // pin the shape at construction time.
+  for (let i = 0; i < n; i++) {
+    stack.push({ kind: 0, f: LEAF, x: LEAF, arg: LEAF, func: LEAF, origX: LEAF, b: LEAF, innerMap: null })
+  }
+}
+fillSlots(STACK_INITIAL_CAP)
+function ensureStackSlot(): void {
+  if (stackTop >= stack.length) fillSlots(stack.length)
+}
 
 export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): Tree {
   applyStats.calls++
   let curF = fInit, curX = xInit
-  const stack: Cont[] = []
+  const baseTop = stackTop  // isolation: only pop frames pushed by THIS call
 
   // Deliver a result: pop continuations until we find one that needs more work
   function deliver(result: Tree): Tree | null {
-    while (stack.length > 0) {
-      const c = stack[stack.length - 1]
-      switch (c.kind) {
-        case ContKind.ApplyTo:
-          stack.pop(); curF = result; curX = c.arg; return null  // continue eval
-        case ContKind.ApplyResultTo:
-          stack.pop(); curF = c.func; curX = result; return null
-        case ContKind.Memo:
-          stack.pop()
-          memoSet(c.f, c.x, result)
-          break  // keep popping
-        case ContKind.SAfterCx: {
-          stack.pop()
-          const cx = result
-          if (isFork(cx) && isLeaf(cx.left)) {
-            result = cx.right; break  // K(v): result=v, keep popping
-          }
-          if (isFork(c.b) && isLeaf(c.b.left)) {
-            curF = cx; curX = c.b.right; return null  // C fast-path
-          }
-          // General: compute b(origX), then apply cx to it
-          stack.push({ kind: ContKind.ApplyResultTo, func: cx })
-          curF = c.b; curX = c.origX; return null
-        }
+    while (stackTop > baseTop) {
+      const i = stackTop - 1
+      const slot = stack[i]
+      const kind = slot.kind
+      if (kind === ContKind.ApplyTo) {
+        const arg = slot.arg
+        stackTop = i
+        curF = result; curX = arg; return null  // continue eval
       }
+      if (kind === ContKind.ApplyResultTo) {
+        const func = slot.func
+        stackTop = i
+        curF = func; curX = result; return null
+      }
+      if (kind === ContKind.Memo) {
+        const sf = slot.f, sx = slot.x
+        let m = slot.innerMap
+        stackTop = i
+        // Inline memoSet, using the innerMap captured at memoGet time
+        // to skip a redundant applyMemo.get(sf.id) lookup.
+        if (applyMemoEntryLimit !== 0) {
+          if (!m) { m = new Map(); applyMemo.set(sf.id, m) }
+          if (!m.has(sx.id)) applyMemoEntries++
+          m.set(sx.id, result)
+          cacheStats.memoWrites++
+          if (applyMemoEntries > applyMemoEntryLimit) trimApplyMemo()
+        }
+        continue  // keep popping
+      }
+      // SAfterCx
+      const sb = slot.b, sOrigX = slot.origX
+      stackTop = i
+      const cx = result
+      if (isFork(cx) && isLeaf(cx.left)) {
+        result = cx.right; continue  // K(v): result=v, keep popping
+      }
+      if (isFork(sb) && isLeaf(sb.left)) {
+        curF = cx; curX = sb.right; return null  // C fast-path
+      }
+      // General: compute b(origX), then apply cx to it
+      ensureStackSlot()
+      const next = stack[stackTop++]
+      next.kind = ContKind.ApplyResultTo; next.func = cx
+      curF = sb; curX = sOrigX; return null
     }
-    return result  // stack empty, final result
+    return result  // stack empty (for this call), final result
   }
 
   while (true) {
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
-    if (stack.length > applyStats.maxStack) applyStats.maxStack = stack.length
+    if (stackTop > applyStats.maxStack) applyStats.maxStack = stackTop
 
     // Native dispatcher fast-path: fires on `apply(checked_apply, f)`.
     // Must precede the leaf/stem rule because `checked_apply` compiles
@@ -305,11 +357,13 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     }
 
     // Leaf/Stem: immediate result
-    if (isLeaf(curF)) { traceApply("leaf", curF, curX, stack.length); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
-    if (isStem(curF)) { traceApply("stem", curF, curX, stack.length); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
+    if (isLeaf(curF)) { traceApply("leaf", curF, curX, stackTop); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
+    if (isStem(curF)) { traceApply("stem", curF, curX, stackTop); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
 
-    // Memo check
-    const c = memoGet(curF, curX)
+    // Memo check (inlined so we can capture the inner map for memoSet
+    // reuse if this turns out to be a miss).
+    const innerMap = applyMemo.get(curF.id)
+    const c = innerMap?.get(curX.id)
     if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue }
     cacheStats.misses++
 
@@ -323,14 +377,14 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     // The fast-path is an optimization; removing it yields identical
     // answers from the recursive spec.
     if (TREE_EQ_ID !== -1 && curF.id === TREE_EQ_ID) {
-      traceApply("tree_eq", curF, curX, stack.length)
+      traceApply("tree_eq", curF, curX, stackTop)
       applyStats.treeEqRules++
       const r = fork(TREE_EQ_PARTIAL_MARKER, curX)
       memoSet(curF, curX, r)
       const d = deliver(r); if (d !== null) return d; continue
     }
     if (curF.left.id === TREE_EQ_PARTIAL_MARKER.id) {
-      traceApply("tree_eq", curF, curX, stack.length)
+      traceApply("tree_eq", curF, curX, stackTop)
       applyStats.treeEqRules++
       const v = treeEqual(curF.right, curX) ? SCOTT_TT : SCOTT_FF
       memoSet(curF, curX, v)
@@ -347,36 +401,53 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
 
     const a = curF.left, b = curF.right
-    stack.push({ kind: ContKind.Memo, f: curF, x: curX })
 
+    // K rule is O(1) and produces a value constant in curX (just b).
+    // Caching (curF, curX) -> b would mostly pollute the cache with
+    // entries that won't repeat. Skip the Memo frame entirely.
     if (isLeaf(a)) {
-      // K rule
-      traceApply("K", curF, curX, stack.length)
+      traceApply("K", curF, curX, stackTop)
       applyStats.kRules++
       const r = deliver(b); if (r !== null) return r; continue
     }
 
+    // Push Memo frame (in-place; no allocation). Carry the innerMap
+    // captured during memoGet so the unwind-time memoSet skips a Map.get.
+    ensureStackSlot()
+    {
+      const s = stack[stackTop++]
+      s.kind = ContKind.Memo; s.f = curF; s.x = curX; s.innerMap = innerMap ?? null
+    }
+
     if (isStem(a)) {
-      traceApply("S", curF, curX, stack.length)
+      traceApply("S", curF, curX, stackTop)
       applyStats.sRules++
       const c = a.child
       if (isFork(c) && isLeaf(c.left)) {
         if (isFork(b) && isLeaf(b.left)) { curF = c.right; curX = b.right; continue }
-        stack.push({ kind: ContKind.ApplyResultTo, func: c.right })
+        ensureStackSlot()
+        const s = stack[stackTop++]
+        s.kind = ContKind.ApplyResultTo; s.func = c.right
         curF = b; continue  // curX unchanged
       }
       // General S: compute c(x), then SAfterCx handles the rest
-      stack.push({ kind: ContKind.SAfterCx, origX: curX, b })
+      ensureStackSlot()
+      const s = stack[stackTop++]
+      s.kind = ContKind.SAfterCx; s.origX = curX; s.b = b
       curF = c; continue  // curX unchanged
     }
 
     // Triage
     const tc = a.left, td = a.right
-    if (isLeaf(curX)) { traceApply("T_leaf", curF, curX, stack.length); applyStats.triageLeafRules++; const r = deliver(tc); if (r !== null) return r; continue }
-    if (isStem(curX)) { traceApply("T_stem", curF, curX, stack.length); applyStats.triageStemRules++; curF = td; curX = curX.child; continue }
-    traceApply("T_fork", curF, curX, stack.length)
+    if (isLeaf(curX)) { traceApply("T_leaf", curF, curX, stackTop); applyStats.triageLeafRules++; const r = deliver(tc); if (r !== null) return r; continue }
+    if (isStem(curX)) { traceApply("T_stem", curF, curX, stackTop); applyStats.triageStemRules++; curF = td; curX = curX.child; continue }
+    traceApply("T_fork", curF, curX, stackTop)
     applyStats.triageForkRules++
-    stack.push({ kind: ContKind.ApplyTo, arg: curX.right })
+    ensureStackSlot()
+    {
+      const s = stack[stackTop++]
+      s.kind = ContKind.ApplyTo; s.arg = curX.right
+    }
     curF = b; curX = curX.left; continue
   }
 }
