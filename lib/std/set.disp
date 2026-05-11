@@ -1,0 +1,34 @@
+open use "../prelude.disp"
+trust open use "../kernel.disp"
+
+// Decidable Nat sets as predicates.
+
+NatSet : Type 0 := Nat -> Bool
+
+empty_set : NatSet :=
+  {_} -> FF
+
+full_set : NatSet :=
+  {_} -> TT
+
+singleton_set : Nat -> NatSet :=
+  {needle} -> {x} -> tree_eq needle x
+
+set_member : NatSet -> Nat -> Bool :=
+  {set} -> {x} -> set x
+
+set_union : NatSet -> NatSet -> NatSet :=
+  {a} -> {b} -> {x} ->
+    bool_rec ({_} -> Bool) TT (b x) (a x)
+
+set_inter : NatSet -> NatSet -> NatSet :=
+  {a} -> {b} -> {x} ->
+    bool_rec ({_} -> Bool) (b x) FF (a x)
+
+set_complement : NatSet -> NatSet :=
+  {a} -> {x} ->
+    bool_rec ({_} -> Bool) FF TT (a x)
+
+set_insert : Nat -> NatSet -> NatSet :=
+  {x} -> {set} -> set_union (singleton_set x) set
+

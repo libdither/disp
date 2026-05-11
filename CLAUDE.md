@@ -25,18 +25,29 @@ Every component participating in checking, elaboration, or conversion must have 
 - `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests.
 - `src/compile.ts` — elaborator: typed bindings, kernel-helpers, native dispatcher / signature anchor registration.
 
-### Library (`.disp` files in `lib/`)
+### Library layout (`.disp` files in `lib/`)
 - `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix/recq, tree_eq, nat_le).
-- `kernel.disp` — recursive-record kernel (current implementation): `q_pi_fn`, `q_hyp_reduce_fn`, `q_guard_fn`, `q_core_type_fn`, `q_guarded_type_fn`, `q_unguard_fn`, eliminator handlers (`q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`), the dispatcher stub, public type constructors (`Pi`, `Arrow`, `Type`, `Bool`, `Nat`, `Eq`), `Hyp`/`StuckElim`, eliminator wrappers, signature anchors for the host fast-path.
-- `dae.disp` — data-as-eliminator library types: `Bool_template` / `Nat_template` / `Eq_template` (recq-encoded per-value Pi templates), Scott constructors `TT_dae` / `FF_dae` / `zero_dae` / `succ_dae` / `refl_dae`, identity-applied eliminators `bool_rec_dae` / `nat_rec_dae` / `eq_J_dae`, hypothesis minting via per-value templates (`mint_bool_hyp` etc.).
-- `ord.disp` — ordinal type up to ε₀: `zero_ord` / `omega_plus` constructors, `ord_rec` eliminator, `succ_ord` / `omega` derived helpers, `mint_ord_hyp`, closed comparisons `ord_lt` / `ord_le` / `ord_max`.
-- `math.disp` — `add` (via `nat_rec` for walker safety).
-- `nat.disp` — `pred`, `is_zero`, equality proofs (`add_zero_l/r`, `add_comm`, etc.).
-- `list.disp`, `set.disp`, `fin.disp` — additional library types.
-- `*.test.disp` — tests per module.
+- `kernel.disp` — back-compat shim: legacy-mode (all `let`), opens the kernel + types subfiles so `open use "kernel.disp"` keeps working unchanged. Hosts `conv_structural` (cross-cuts Pi + Type).
+- `kernel/` — the trusted center:
+  - `utils.disp` — metadata accessors, signatures, Action protocol (`Extend`/`Return`), CheckedResult (`Ok`/`Fail`), `must_ok_*`.
+  - `handlers.disp` — all `q_*_fn` primitive handlers, recq kernel record, `kernel_ref` proxy, public neutral / guard API (`Hyp`, `StuckElim`, `guard`, `unguard_checked`, `predicate_frame_form`, `eliminator_frame_form`, `core_Eq`, …), signature anchors for host fast-path.
+  - `walker.disp` — standalone `checked_apply_walker` (reference impl of the parametric walker; native fast-path in `src/tree.ts` is the runtime version).
+- `types/` — library type definitions:
+  - `bool.disp` — Bool + bool_rec (predicate_frame + eliminator_frame).
+  - `nat.disp` — Nat + nat_rec.
+  - `pi.disp` — Pi/Arrow + bind_hyp wait-form + is_pi / pi_dom / pi_cod_fn.
+  - `type.disp` — Type universe + is_universe.
+  - `eq.disp` — Eq + refl + eq_J + eq_subst / eq_sym / eq_cong (still legacy kernel-handler-based until tree_eq-on-hypothesis spec resolves).
+  - `ord.disp` — Ord (predicate_frame + eliminator_frame): zero_ord/omega_plus constructors (tagged), ord_rec, succ_ord/omega, comparisons.
+- `std/` — standard library built on `types/`:
+  - `nat/arith.disp` — `add` (was `math.disp`).
+  - `nat/ops.disp` — `pred`, `is_zero`, `double`, equality proofs (was `nat.disp`).
+  - `list.disp`, `set.disp`, `fin.disp` — additional library types.
+- `legacy/dae.disp` — data-as-eliminator pre-migration library (kept as reference; not used by the unified design).
+- `tests/` — all `*.test.disp` files, flat layout. Test runner globs recursively.
 
-### Tests
-- `test/disp.test.ts` — vitest harness that globs `lib/*.test.disp`.
+### Host tests
+- `test/disp.test.ts` — vitest harness; recursively globs `lib/tests/**/*.test.disp`.
 - `test/parser.test.ts` — parser unit tests.
 - `test/tree.test.ts` — tree calculus runtime tests.
 

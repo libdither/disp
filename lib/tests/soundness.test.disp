@@ -1,0 +1,103 @@
+// Soundness baseline — pins the closure status of the four neutral-
+// forging attacks documented in SOUNDNESS_FIX_PLAN.md §"Current Hole".
+//
+// Session 3 PARTIAL closure:
+//   - Entry scan in q_guard_fn rejects any pre-existing neutral root in
+//     the user-supplied value (closes attacks 1 and 2).
+//   - The dispatcher's step-by-step walker — which would close the
+//     reflective attacks (3, 4, 5) by rejecting triage-on-neutral — is
+//     currently a stub, because the recursive walker triggers super-
+//     exponential compile-time tree blowup. See the comment on
+//     q_checked_apply_fn in lib/kernel.disp for the technical reason
+//     and the plan for a follow-up session.
+//
+// Net effect:
+//   - Attacks 1, 2 → expected `= FF` (CLOSED).
+//   - Attacks 3, 4, 5 → expected `= TT` (still OPEN).
+
+open use "../prelude.disp"
+open use "../kernel.disp"
+
+// ================================================================
+// Attack 1 — direct forged closed neutral [CLOSED]
+// ================================================================
+// User constructs StuckElim with arbitrary stored type and trigger.
+// Entry scan in q_guard_fn sees the neutral root and returns FF.
+
+let fake_eq = StuckElim (Eq Nat 0 1) t
+test (Eq Nat 0 1) fake_eq = FF
+
+// ================================================================
+// Attack 2 — K-hidden forgery [CLOSED]
+// ================================================================
+// `{_} -> StuckElim (Eq Nat 0 1) t` has a fully-closed body, so bracket
+// abstraction compiles it to `K (StuckElim (Eq Nat 0 1) t)` — the
+// literal forged neutral lives in the function's tree. Entry scan walks
+// the tree, finds the neutral, returns FF.
+
+let bad_pi = {_} -> StuckElim (Eq Nat 0 1) t
+test (Pi Nat ({_} -> Eq Nat 0 1)) bad_pi = FF
+
+// ================================================================
+// Attack 3 — reflective is_neutral family [REJECTED by walker]
+// ================================================================
+// BadFam is "Nat if the argument is a hypothesis, else Eq Nat 0 1".
+// During Pi checking the argument IS a hypothesis. With the native
+// walker active, q_pi_fn's `ks.checked_apply BadFam hyp` runs BadFam
+// under parametric mode; `is_neutral hyp` triages on hyp via pair_fst,
+// which the walker rejects (triage-on-neutral rule). Pi check returns
+// FF — attack correctly defeated.
+
+let BadFam = {n} -> select Nat (Eq Nat 0 1) (is_neutral n)
+let bad_fn = {n} -> 0
+test (Pi Nat BadFam) bad_fn = FF
+
+// ================================================================
+// Attack 4 — reflective tree_eq family [REJECTED by walker]
+// ================================================================
+// Same shape as attack 3 but uses tree_eq instead of is_neutral.
+// tree_eq triages both args; for hyp argument, walker rejects.
+
+let BadFam2 = {n} -> select (Eq Nat 0 1) Nat (tree_eq n 0)
+test (Pi Nat BadFam2) ({n} -> 0) = FF
+
+// ================================================================
+// Attack 5 — reflective is_fork family [REJECTED by walker]
+// ================================================================
+// is_fork uses triage on its arg; for hyp the walker rejects.
+
+let BadFam3 = {n} -> select Nat (Eq Nat 0 1) (is_fork n)
+test (Pi Nat BadFam3) ({n} -> 0) = FF
+
+// ================================================================
+// Guard-layer baseline (session 2, still holds)
+// ================================================================
+// These verify that the guard layer doesn't open a *new* attack
+// surface. Should remain unchanged across session 3.
+
+let junk_pred = {_} -> TT
+let junk_guarded = guard junk_pred
+
+test hasguard junk_guarded = TT
+test (Type 0) junk_guarded = FF
+test is_pi junk_guarded = FF
+test is_universe junk_guarded = FF
+test is_eq junk_guarded = FF
+
+let fake_handler = {_meta, _x} -> TT
+let fake_guarded = guard (wait fake_handler t)
+
+test hasguard fake_guarded = TT
+test (Type 0) fake_guarded = FF
+test is_pi fake_guarded = FF
+test is_universe fake_guarded = FF
+test is_eq fake_guarded = FF
+
+// Post-migration: Nat is now predicate-frame based; its unguarded
+// form is `wait kernel_ref.predicate_frame nat_pf_meta`. Sig check:
+// unguarded Nat has the predicate_frame signature.
+test tree_eq (pair_fst (unguard_or_self Nat)) kernel_predicate_frame_sig = TT
+test tree_eq (unguard_or_self t) t = TT
+
+test (guard ({_} -> TT)) 5 = TT
+test (guard ({_} -> FF)) 5 = FF

@@ -1,0 +1,57 @@
+open use "../prelude.disp"
+open use "../kernel.disp"
+
+// ================================================================
+// Predicate-frame Type (migration step 5)
+// ================================================================
+// Type_pf := guard (wait kernel_ref.predicate_frame (type_recognizer, (t, codomain_fn)))
+// Recognizer identifies guarded predicate_frame wait-forms.
+// Codomain_fn uses Return action for H-rule.
+
+// All library type-formers built via predicate_frame qualify.
+test Type_pf Bool_pf = TT
+test Type_pf Nat_pf = TT
+test Type_pf (Pi_pf Bool ({_} -> Nat)) = TT
+
+// Non-types rejected (closed Bool / Nat values).
+test Type_pf TT = FF
+test Type_pf 5 = FF
+
+// Type_pf qualifies as a type (Type_pf : Type_pf — Russell admissible).
+test Type_pf Type_pf = TT
+
+// Public boundary rejects pre-existing neutrals (Type_pf-typed hyp).
+let type_hyp = Hyp Type_pf 0
+test Type_pf type_hyp = FF
+
+// Identity sanity.
+test hasguard Type_pf = TT
+test tree_eq (pair_fst (type_meta Type_pf)) kernel_predicate_frame_sig = TT
+
+// Polymorphic-Pi smoke: applying a Type-typed hypothesis to a
+// Type_pf-typed hypothesis triggers Type's codomain_fn (H-rule).
+// Two distinct Type-typed hypotheses give different identities.
+let A_hyp = Hyp Type_pf 0
+let B_hyp = Hyp Type_pf 1
+let x_of_A = Hyp A_hyp t
+let y_of_B = Hyp B_hyp t
+
+// A_hyp applied to x_of_A: through hyp_reduce → Type_pf's codomain_fn
+// → H-rule. stored(x_of_A) = A_hyp; self_as_hyp = A_hyp. Match → TT.
+test A_hyp x_of_A = TT
+
+// A_hyp applied to y_of_B: stored(y_of_B) = B_hyp, doesn't match A_hyp. FF.
+test A_hyp y_of_B = FF
+
+// ================================================================
+// Polymorphic Pi via Type_pf as domain (spec §7)
+// ================================================================
+// `Pi_pf Type_pf ({A} -> Pi_pf A ({_} -> A)) id_fn` should accept
+// the polymorphic identity. The chain:
+//   - Outer Pi-recognizer mints A_hyp : Type_pf.
+//   - Inner Pi-recognizer mints x_hyp : A_hyp.
+//   - Inner body: `A_hyp (id_fn A_hyp x_hyp)` = `A_hyp x_hyp`.
+//   - This routes via hyp_reduce → Type_pf's codomain_fn → H-rule (TT).
+//   - Inner recognizer returns TT; outer accepts.
+let poly_id = {A, x} -> x
+test Pi_pf Type_pf ({A} -> Pi_pf A ({_} -> A)) poly_id = TT

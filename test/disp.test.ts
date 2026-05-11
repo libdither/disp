@@ -5,10 +5,20 @@ import { readdirSync } from "node:fs"
 import { join } from "node:path"
 import { runFile } from "../src/run.js"
 
-const libDir = join(import.meta.dirname, "..", "lib")
-const testFiles = readdirSync(libDir)
-  .filter(f => f.endsWith(".test.disp"))
-  .sort()
+const testsDir = join(import.meta.dirname, "..", "lib", "tests")
+
+// Recursively find all .test.disp files under lib/tests/.
+function findTestFiles(dir: string, rel = ""): string[] {
+  const entries = readdirSync(dir, { withFileTypes: true })
+  const out: string[] = []
+  for (const e of entries) {
+    const p = rel ? `${rel}/${e.name}` : e.name
+    if (e.isDirectory()) out.push(...findTestFiles(join(dir, e.name), p))
+    else if (e.name.endsWith(".test.disp")) out.push(p)
+  }
+  return out
+}
+const testFiles = findTestFiles(testsDir).sort()
 
 describe("disp", () => {
   for (const file of testFiles) {
@@ -19,7 +29,7 @@ describe("disp", () => {
       // trees may contain certified-neutral hypotheses that the scan
       // rejects. Re-enable once session 5 routes the elaborator through
       // kernel-internal checking that bypasses the public boundary.
-      const r = runFile(join(libDir, file), { debugTypeCheck: false })
+      const r = runFile(join(testsDir, file), { debugTypeCheck: false })
       if (r.failed.length > 0) {
         const msgs = r.failed.map(f => `[test ${f.i}] ${f.msg}`).join("\n")
         throw new Error(`${file}:\n${msgs}`)

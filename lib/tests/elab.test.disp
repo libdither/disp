@@ -1,0 +1,194 @@
+// Elaborator tests: exercise type-directed compilation with defense-in-depth.
+// trust open activates the elaborator's kernel-aware dispatch.
+// All typed bindings are verified by the kernel's type predicates at compile time.
+
+open use "../prelude.disp"
+trust open use "../kernel.disp"
+open use "../std/nat/arith.disp"
+
+// ================================================================
+// Arrow types (non-dependent Pi)
+// ================================================================
+
+let nat_id : Nat -> Nat = {x} -> x
+test nat_id 0 = 0
+test nat_id 5 = 5
+
+let bool_id : Bool -> Bool = {x} -> x
+test bool_id TT = TT
+test bool_id FF = FF
+
+let always_zero : Nat -> Nat = {_} -> 0
+test always_zero 42 = 0
+
+// Two arguments (nested arrows)
+let const_fn : Nat -> Nat -> Nat = {x} -> {y} -> x
+test const_fn 1 0 = 1
+test const_fn 0 1 = 0
+
+// Three arguments
+let choose_first : Nat -> Nat -> Nat -> Nat = {x} -> {y} -> {z} -> x
+test choose_first 3 2 1 = 3
+
+let choose_third : Nat -> Nat -> Nat -> Nat = {_} -> {_} -> {z} -> z
+test choose_third 3 2 1 = 1
+
+// Mixed base types across arrows
+let nat_to_bool_to_nat : Nat -> Bool -> Nat = {n} -> {_} -> n
+test nat_to_bool_to_nat 5 TT = 5
+
+// ================================================================
+// Explicit Pi constructor (backward compat with verbose form)
+// ================================================================
+
+let pi_id : Pi Nat ({_} -> Nat) = {x} -> x
+test pi_id 0 = 0
+
+// Arrow and explicit Pi produce identical types
+let arrow_nn : Nat -> Nat = {x} -> x
+let pi_nn : Pi Nat ({_} -> Nat) = {x} -> x
+test arrow_nn 3 = pi_nn 3
+
+// ================================================================
+// Dependent Pi binder syntax in annotations
+// ================================================================
+
+let dep_sugar : {_ : Nat} -> Nat = {x} -> x
+test dep_sugar 7 = 7
+
+let dep_refl : {n : Nat} -> Eq Nat n n = {n} -> refl
+test dep_refl 2 = t
+
+let poly_id : {A : Type 0} -> A -> A = {A} -> {x} -> x
+test poly_id Nat 4 = 4
+test poly_id Bool TT = TT
+
+// ================================================================
+// Ann nodes (inline type annotations)
+// ================================================================
+
+let ann_id = (({x} -> x) : Nat -> Nat)
+test ann_id 3 = 3
+
+let ann_const = (({x} -> {_} -> x) : Nat -> Bool -> Nat)
+test ann_const 7 FF = 7
+
+let ann_zero = (0 : Nat)
+test ann_zero = 0
+
+// Double annotation (nested Ann nodes)
+let double_ann = ((({x} -> x) : Nat -> Nat) : Nat -> Nat)
+test double_ann 9 = 9
+
+// Lambda returning annotated expression
+let ret_ann : Nat -> Nat = {x} -> (x : Nat)
+test ret_ann 3 = 3
+
+// ================================================================
+// Universe levels
+// ================================================================
+
+// Type 0 -> Type 0 lives in Type 1 (correctly inferred)
+let type_id : Type 0 -> Type 0 = {A} -> A
+test type_id Nat = Nat
+test type_id Bool = Bool
+test type_id (Arrow Nat Nat) = Arrow Nat Nat
+
+// ================================================================
+// Higher-order functions (Pi types with function domains)
+// ================================================================
+
+let apply_fn : (Nat -> Nat) -> Nat -> Nat = {f} -> {x} -> f x
+test apply_fn ({x} -> x) 5 = 5
+test apply_fn ({x} -> add x 1) 4 = 5
+
+let compose : (Nat -> Nat) -> (Nat -> Nat) -> Nat -> Nat = {f} -> {g} -> {x} -> f (g x)
+
+let flip : (Nat -> Nat -> Nat) -> Nat -> Nat -> Nat = {f} -> {x} -> {y} -> f y x
+test flip const_fn 1 2 = 2
+
+let wrap : (Nat -> Nat) -> Nat -> Nat = {f} -> {x} -> f x
+test wrap ({x} -> add x 1) 0 = 1
+
+// ================================================================
+// Arithmetic with type annotations
+// ================================================================
+
+let typed_add : Nat -> Nat -> Nat = add
+test typed_add 2 3 = 5
+
+let typed_succ : Nat -> Nat = succ
+test typed_succ 0 = 1
+
+// Partially applied arithmetic
+let add3 : Nat -> Nat = add 3
+test add3 0 = 3
+test add3 4 = 7
+
+// ================================================================
+// Eq type annotations
+// ================================================================
+
+let refl_proof : Eq Nat 0 0 = refl
+test refl_proof = t
+
+let refl_one : Eq Nat 1 1 = refl
+test refl_one = t
+
+// Eq with computed values
+let add_refl : Eq Nat (add 2 3) 5 = refl
+test add_refl = t
+
+// Commutativity proof
+let comm_2_3 : Eq Nat (add 2 3) (add 3 2) = refl
+test comm_2_3 = t
+
+// ================================================================
+// Bool elimination (must use bool_rec for typed lambdas)
+// ================================================================
+
+// Note: lambdas using `select`/`triage` directly on a Bool argument
+// fail the Pi checker because select doesn't produce StuckElim on neutrals.
+// Use bool_rec for correct typed Bool elimination:
+let bool_to_nat : Bool -> Nat = {b} -> bool_rec ({_} -> Nat) 1 0 b
+test bool_to_nat TT = 1
+test bool_to_nat FF = 0
+
+let bool_not : Bool -> Bool = {b} -> bool_rec ({_} -> Bool) FF TT b
+test bool_not TT = FF
+test bool_not FF = TT
+
+// ================================================================
+// Edge cases
+// ================================================================
+
+// Typed literals
+let typed_zero : Nat = 0
+test typed_zero = 0
+
+let typed_tt : Bool = TT
+test typed_tt = TT
+
+let big : Nat = 10
+test big = 10
+
+// Untyped still works alongside typed
+let untyped_id = {x} -> x
+test untyped_id t = t
+
+// Typed and untyped produce same result
+let typed_id : Nat -> Nat = {x} -> x
+test typed_id 5 = untyped_id 5
+
+// Typed non-lambda bindings
+let five : Nat = 5
+test five = 5
+
+let sum : Nat = add 2 3
+test sum = 5
+
+// Church-style booleans as Nat -> Nat -> Nat
+let church_true : Nat -> Nat -> Nat = {x} -> {_} -> x
+let church_false : Nat -> Nat -> Nat = {_} -> {y} -> y
+test church_true 1 0 = 1
+test church_false 1 0 = 0

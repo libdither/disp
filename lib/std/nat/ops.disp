@@ -1,0 +1,51 @@
+open use "../../prelude.disp"
+trust open use "../../kernel.disp"
+open use "arith.disp"
+
+// Standard Nat helpers and proof terms. Functions that branch on a Nat use
+// nat_rec so Pi checking sees StuckElim instead of raw triage on hypotheses.
+
+one : Nat := 1
+two : Nat := 2
+three : Nat := 3
+
+pred : Nat -> Nat :=
+  {n} -> nat_rec ({_} -> Nat) 0 ({k, _prev} -> k) n
+
+is_zero : Nat -> Bool :=
+  {n} -> nat_rec ({_} -> Bool) TT ({_k, _prev} -> FF) n
+
+double : Nat -> Nat :=
+  {n} -> add n n
+
+add1 : Nat -> Nat :=
+  {n} -> add n 1
+
+add_zero_l : {n : Nat} -> Eq Nat (add 0 n) n :=
+  {n} -> refl
+
+add_zero_r : {n : Nat} -> Eq Nat (add n 0) n :=
+  {n} ->
+    nat_rec
+      ({k} -> Eq Nat (add k 0) k)
+      refl
+      ({k, ih} -> eq_cong Nat Nat succ (add k 0) k ih)
+      n
+
+add_succ_r : {n : Nat} -> Eq Nat (add n 1) (succ n) :=
+  {n} ->
+    nat_rec
+      ({k} -> Eq Nat (add k 1) (succ k))
+      refl
+      ({k, _ih} -> refl)
+      n
+
+// Explicit Pi form keeps this proof on the kernel-accepted path while the
+// elaborator's nested dependent-sugar body checking is still being tightened.
+add_comm : Pi Nat ({n} -> Pi Nat ({m} -> Eq Nat (add n m) (add m n))) :=
+  {n} ->
+    nat_rec
+      ({n_} -> Pi Nat ({m} -> Eq Nat (add n_ m) (add m n_)))
+      ({m} -> refl)
+      ({n_, _ih} -> {m} -> refl)
+      n

@@ -1,0 +1,48 @@
+open use "../prelude.disp"
+open use "../kernel.disp"
+
+// ================================================================
+// Eliminator-frame bool_rec (migration step 2)
+// ================================================================
+// bool_rec_ef := wait kernel_ref.eliminator_frame init_meta
+// Validates that the new generic eliminator_frame handler dispatches
+// correctly: closed targets run through the dispatcher; hypothesis
+// targets mint a stuck-typed neutral with motive's codomain.
+
+// Closed targets: dispatcher selects between cases.
+test bool_rec_ef ({_} -> Nat) 1 0 TT = 1
+test bool_rec_ef ({_} -> Nat) 1 0 FF = 0
+
+// Hypothesis target: mints a stuck neutral with stored type = motive target.
+let bool_hyp = Hyp Bool 0
+test is_neutral (bool_rec_ef ({_} -> Nat) 1 0 bool_hyp) = TT
+
+// The minted stuck has stored type Nat (= motive bool_hyp).
+test neutral_type (bool_rec_ef ({_} -> Nat) 1 0 bool_hyp) = Nat
+
+// Multiple distinct hypotheses produce distinct stucks (different ids).
+let bool_hyp_1 = Hyp Bool 1
+test tree_eq
+  (bool_rec_ef ({_} -> Nat) 1 0 bool_hyp)
+  (bool_rec_ef ({_} -> Nat) 1 0 bool_hyp_1) = FF
+
+// Different motives on same hypothesis produce different stored types.
+let stuck_nat = bool_rec_ef ({_} -> Nat) 1 0 bool_hyp
+let stuck_bool = bool_rec_ef ({_} -> Bool) TT FF bool_hyp
+test neutral_type stuck_nat = Nat
+test neutral_type stuck_bool = Bool
+
+// Different cases on same hyp+motive produce same stuck (target+motive
+// drive identity; cases only matter for the closed dispatch path).
+let stuck_a = bool_rec_ef ({_} -> Nat) 5 9 bool_hyp
+let stuck_b = bool_rec_ef ({_} -> Nat) 1 0 bool_hyp
+test tree_eq stuck_a stuck_b = TT
+
+// Boolean negation via bool_rec_ef.
+let bool_not_ef = {b} -> bool_rec_ef ({_} -> Bool) FF TT b
+test bool_not_ef TT = FF
+test bool_not_ef FF = TT
+
+// Identity sanity: bool_rec_ef has the eliminator_frame signature
+// (after the wrapper unfolds).
+test tree_eq (pair_fst bool_rec_ef_inner) kernel_eliminator_frame_sig = TT

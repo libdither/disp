@@ -1,0 +1,34 @@
+// Eq — propositional equality. Still uses the legacy kernel-handler
+// (q_eq_fn / q_eq_J_fn) until the tree_eq-on-hypothesis spec issue
+// resolves (TYPE_THEORY review issue #2). After that lands, Eq
+// migrates to predicate_frame like Bool/Nat/Pi/Type.
+
+open use "../prelude.disp"
+open use "../kernel/utils.disp"
+open use "../kernel/handlers.disp"
+
+let Eq = {A, x, y} -> guard (core_Eq (unguard_checked A) x y)
+
+let refl = t
+
+// eq_J: 6-ary kernel-routed eliminator.
+let eq_J_init_meta = t (succ (succ (succ (succ (succ (succ t)))))) t
+let eq_J = wait kernel_ref.eq_J eq_J_init_meta
+
+let eq_subst = {A, P, x, y, p, px} ->
+  select_lazy
+    ({_} -> StuckElim (P y) p)
+    ({_} -> px)
+    (is_neutral p)
+
+let eq_sym = {A, x, y, p} ->
+  select_lazy
+    ({_} -> StuckElim (Eq A y x) p)
+    ({_} -> refl)
+    (is_neutral p)
+
+let eq_cong = {A, B, f, x, y, p} ->
+  select_lazy
+    ({_} -> StuckElim (Eq B (f x) (f y)) p)
+    ({_} -> refl)
+    (is_neutral p)

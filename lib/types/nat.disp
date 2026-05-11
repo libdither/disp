@@ -1,0 +1,50 @@
+// Nat — predicate-frame natural numbers in tree-Nat shape:
+//   zero = `t` (LEAF), succ n = `t t n` = fork(t, n).
+//
+// The recognizer is self-referential via fix-self so hypothesis
+// subterms in forks route through the inner core's H-rule (matching
+// the spec §5.3 `Nat r` convention). Without this, `Pi Nat ({_} ->
+// Nat)`-checking would reject succ-like functions that produce
+// `t t hyp_nat` when applied to a Nat hypothesis.
+
+open use "../prelude.disp"
+open use "../kernel/utils.disp"
+open use "../kernel/handlers.disp"
+
+let nat_pf_recognizer = fix ({self_recog, params, v} -> {
+  let nat_inner = predicate_frame_form (t self_recog (t t t))
+  match (is_leaf v) {
+    TT => TT
+    FF => match (is_fork v) {
+      TT => and (is_leaf (pair_fst v)) (nat_inner (pair_snd v))
+      FF => FF
+    }
+  }
+})
+let nat_pf_recognizer_sig = checker_sig nat_pf_recognizer
+let nat_pf_meta = t nat_pf_recognizer (t t t)
+let Nat = guard (predicate_frame_form nat_pf_meta)
+let Nat_pf = Nat  // alias for backward compat
+
+// Eliminator-frame nat_rec.
+// nat_dispatcher: 3-ary (motive, cases=pair base step, target).
+// Match-based recursion (not select_lazy) per CLAUDE.md workarounds:
+// self-referential recursive calls in select_lazy blow the compile-
+// time budget through eager K-body evaluation.
+let nat_dispatcher = fix ({self, motive, cases, target} -> {
+  let base = pair_fst cases
+  let step = pair_snd cases
+  match (tree_eq target t) {
+    TT => base
+    FF => (step (pair_snd target) (self motive cases (pair_snd target)))
+  }
+})
+
+let nat_rec_ef_init_meta = t (succ (succ (succ t))) (t nat_dispatcher t)
+let nat_rec_ef_inner = eliminator_frame_form nat_rec_ef_init_meta
+
+// 4-ary user-facing wrapper (motive, base, step, target).
+let nat_rec_ef = {motive, base, step, target} ->
+  nat_rec_ef_inner motive (t base step) target
+
+let nat_rec = nat_rec_ef

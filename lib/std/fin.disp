@@ -1,0 +1,33 @@
+open use "../prelude.disp"
+trust open use "../kernel.disp"
+open use "list.disp"
+
+// Finite naturals and length-indexed Nat lists. These are lightweight
+// predicates over existing encodings rather than kernel-registered types.
+
+Fin := {limit, value} ->
+  select_lazy
+    ({_} -> TT)
+    ({_} -> and (Nat value) (nat_lt value limit))
+    (is_neutral value)
+
+fin0 : {n : Nat} -> Fin (succ n) :=
+  {_n} -> 0
+
+fin_one_of_three : Fin 3 := 1
+fin_two_of_three : Fin 3 := 2
+
+VecNat := {length, xs} ->
+  select_lazy
+    ({_} -> TT)
+    ({_} -> and (NatList xs) (tree_eq (list_length xs) length))
+    (is_neutral xs)
+
+vnil : VecNat 0 := nil
+
+vsingleton : Nat -> VecNat 1 :=
+  {x} -> singleton x
+
+vappend :=
+  {n} -> {m} -> {xs} -> {ys} -> list_append xs ys
+

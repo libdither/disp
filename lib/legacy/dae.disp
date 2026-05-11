@@ -1,0 +1,107 @@
+// Data-as-eliminator (DAE) encodings per TYPE_THEORY.typ §4.
+//
+// Each inductive type is encoded as a `recq`-based pair:
+//   - `T_template target`: a per-value Pi expressing "what it means to
+//     be a value of type T whose target is this specific tree".
+//   - `T_self_ref`: a wait-form that lazily resolves to the recursive
+//     application of `T_template` for use in the motive's domain. The
+//     wait-form preserves the outer Pi shape so the kernel's existing
+//     `q_pi_fn` / `q_hyp_reduce_fn` recognise hypothesis-typed values
+//     of T uniformly.
+//
+// Constructors are Scott-style closures: they take case-handlers and
+// project the right one. Eliminators are identity-applied to the
+// target — the target IS its own eliminator.
+//
+// Hypothesis minting uses the per-value template:
+//   `mint_T_hyp h_id = Hyp (T_template h_id) h_id`
+// so each hypothesis stores its own per-value Pi type. Applying a
+// hypothesis fires `hyp_reduce` and extends the spine through the
+// Pi-template's chain — same path as any Pi-typed neutral. No special
+// "stuck eliminator" sentinel is needed.
+//
+// This module is additive: it does NOT replace the kernel-registered
+// `Bool` / `Nat` / `Eq` checkers (`q_bool_fn`, `q_nat_fn`, `q_eq_fn`).
+// Those still drive existing tests. Migration to DAE-only is tracked
+// in TYPE_THEORY.typ — the staged work is to replace them with
+// these templates and Pi-checking, then drop the kernel handlers.
+
+open use "../prelude.disp"
+trust open use "../kernel.disp"
+
+let Type_0 = Type 0
+
+// ================================================================
+// Bool as DAE
+// ================================================================
+
+TT_dae := {motive, ct, cf} -> ct
+FF_dae := {motive, ct, cf} -> cf
+
+let bool_pkg : {bool_template, bool_self_ref} = recq {
+  bool_template := {ks : {bool_template, bool_self_ref}, raw, query} ->
+    {target} ->
+      Pi (Pi ks.bool_self_ref ({_} -> Type_0)) ({m} ->
+      Pi (m TT_dae) ({_} ->
+      Pi (m FF_dae) ({_} ->
+        m target))) ;
+  bool_self_ref := {ks : {bool_template, bool_self_ref}, raw, query} ->
+    wait ({_} -> ks.bool_template t) t
+}
+
+Bool_template := bool_pkg.bool_template
+
+bool_rec_dae := {motive, ct, cf, target} -> target motive ct cf
+
+mint_bool_hyp := {h_id} -> Hyp (Bool_template h_id) h_id
+
+// ================================================================
+// Nat as DAE (Mendler-flavoured: succ recurses on its predecessor
+// inline, so `nat_rec_dae` is identity-applied without an explicit fix)
+// ================================================================
+
+zero_dae := {motive, cz, cs} -> cz
+succ_dae := {n} -> {motive, cz, cs} -> cs n (n motive cz cs)
+
+let nat_pkg : {nat_template, nat_self_ref} = recq {
+  nat_template := {ks : {nat_template, nat_self_ref}, raw, query} ->
+    {target} ->
+      Pi (Pi ks.nat_self_ref ({_} -> Type_0)) ({m} ->
+      Pi (m zero_dae) ({_} ->
+      Pi (Pi ks.nat_self_ref ({k} ->
+          Pi (m k) ({_} -> m (succ_dae k)))) ({_} ->
+        m target))) ;
+  nat_self_ref := {ks : {nat_template, nat_self_ref}, raw, query} ->
+    wait ({_} -> ks.nat_template t) t
+}
+
+Nat_template := nat_pkg.nat_template
+
+nat_rec_dae := {motive, base, step, target} -> target motive base step
+
+mint_nat_hyp := {h_id} -> Hyp (Nat_template h_id) h_id
+
+// ================================================================
+// Eq as DAE
+// ================================================================
+
+refl_dae := {motive, c_refl} -> c_refl
+
+let eq_pkg : {eq_template, eq_self_ref} = recq {
+  eq_template := {ks : {eq_template, eq_self_ref}, raw, query} ->
+    {A, x, y, target} ->
+      Pi (Pi ks.eq_self_ref ({_} -> Type_0)) ({m} ->
+      Pi (m refl_dae) ({_} ->
+        m target)) ;
+  eq_self_ref := {ks : {eq_template, eq_self_ref}, raw, query} ->
+    wait ({_} -> ks.eq_template t t t t) t
+}
+
+Eq_template := eq_pkg.eq_template
+
+eq_J_dae := {motive, base_case, x, y, p} -> p motive base_case
+eq_subst_dae := {P, x, y, p, px} -> p ({z, _} -> P z) px
+eq_sym_dae := {x, y, p} -> p ({z, _} -> z) refl_dae
+eq_cong_dae := {f, x, y, p} -> p ({z, _} -> z) refl_dae
+
+mint_eq_hyp := {A, x, y, h_id} -> Hyp (Eq_template A x y h_id) h_id

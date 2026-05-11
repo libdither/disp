@@ -1,0 +1,53 @@
+open use "../prelude.disp"
+open use "../kernel.disp"
+
+// ================================================================
+// Predicate-frame Bool (migration step 1)
+// ================================================================
+// Bool_pf := guard (wait kernel_ref.predicate_frame bool_pf_meta)
+// Validates that the new generic predicate_frame handler dispatches
+// correctly: closed values run through the recognizer (Scott TT/FF
+// match); hypothesis values trigger the H-rule.
+
+// Closed-value recognition: TT and FF are accepted.
+test Bool_pf TT = TT
+test Bool_pf FF = TT
+
+// Non-Bool closed values rejected.
+test Bool_pf t = FF
+test Bool_pf (t t) = FF
+test Bool_pf (t t t) = FF
+
+// Recognizer is the Scott-shape matcher; arbitrary trees fail.
+let some_pair = t t (t t t)
+test Bool_pf some_pair = FF
+
+// Public boundary rejects any pre-existing neutral, including
+// Bool_pf-typed hypotheses. The H-rule is only reachable through
+// internal type-checking (e.g., recursive Pi-checking); the public
+// guard's scan_no_neutral catches hypothesis values first.
+let bool_pf_hyp = Hyp Bool_pf t
+test Bool_pf bool_pf_hyp = FF
+let nat_hyp = Hyp Nat t
+test Bool_pf nat_hyp = FF
+
+// H-rule reachable via the inner core (bypasses guard scan). The
+// core is the wait-form `wait kernel_ref.predicate_frame bool_pf_meta`.
+let bool_pf_core = type_meta Bool_pf
+test bool_pf_core bool_pf_hyp = TT
+test bool_pf_core nat_hyp = FF
+
+// Closed values still recognised through the inner core.
+test bool_pf_core TT = TT
+test bool_pf_core FF = TT
+test bool_pf_core t = FF
+
+// Identity sanity: Bool_pf is a valid public type (guarded).
+test hasguard Bool_pf = TT
+
+// Post-migration: Bool IS the predicate-frame Bool. Bool_pf is now
+// an alias for Bool (kept for backward-compat with this test file).
+test tree_eq Bool_pf Bool = TT
+
+// Type-formers themselves: Bool_pf has the predicate_frame signature.
+test tree_eq (pair_fst (type_meta Bool_pf)) kernel_predicate_frame_sig = TT

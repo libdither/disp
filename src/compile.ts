@@ -291,14 +291,14 @@ function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string) => ScopeEntry,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[] } | undefined {
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldInnerFields?: (string[] | undefined)[]; fieldInnerTrees?: (Tree[] | undefined)[] } | undefined {
   if (e.tag === "var") {
     const entry = lookupEntry(e.name)
     return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes } : undefined
   }
   if (e.tag === "use") {
-    const entry = resolveUse(e.path)
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes } : undefined
+    const entry = resolveUse(e.path) as any
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldInnerFields: entry.fieldInnerFields, fieldInnerTrees: entry.fieldInnerTrees } : undefined
   }
   // Application where the argument is a binder returning a recValue:
   // e.g. fix({ks : {...}} -> { f1 := ...; f2 := ... }) → fields from the recValue.
@@ -857,7 +857,7 @@ function buildNat(n: number): Tree {
 // ──────────────────────────── 6. Driver ─────────────────────────────────
 
 export type Decl =
-  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null }
+  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; fields?: string[]; fieldTrees?: Tree[] }
   | { kind: "Test"; lhs: Tree; rhs: Tree }
 
 export type ParseItemStats = {
@@ -917,15 +917,22 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
       sourceStack.pop()
       loadedFiles.delete(abs)
     }
-    // Collect the file's top-level defs as a record.
+    // Collect the file's top-level defs as a record. Each field can
+    // itself be a record (carrying nested fields metadata) — those
+    // propagate so that downstream `kernel.hyp_reduce`-style projections
+    // work across `open use` boundaries.
     const fieldNames: string[] = []
     const fieldTrees: Tree[] = []
     const fieldTypes: (Tree | null)[] = []
+    const fieldInnerFields: (string[] | undefined)[] = []
+    const fieldInnerTrees: (Tree[] | undefined)[] = []
     for (const d of fileDecls) {
       if (d.kind === "Def") {
         fieldNames.push(d.name)
         fieldTrees.push(d.tree)
         fieldTypes.push(d.type ?? null)
+        fieldInnerFields.push(d.fields)
+        fieldInnerTrees.push(d.fieldTrees)
       }
     }
     // Church-encode: \sel. sel v1 v2 ... vn
@@ -937,7 +944,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    return { tree, fields: fieldNames, fieldTrees, fieldTypes }
+    return { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldInnerFields, fieldInnerTrees }
   }
 
   function recordItem(kind: "let" | "test" | "open" | "field" | "trust", name?: string, testIndex?: number): void {
@@ -998,7 +1005,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     switch (it.tag) {
       case "field": {
         const result = compileBinding(it.name, it.type, it.value)
-        target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
+        target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
         // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
         registerNativeDispatcherAnchor(it.name, result.tree)
@@ -1009,7 +1016,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         const result = compileBinding(it.name, it.type, it.body)
         if (isExport) {
           // Legacy mode: top-level let exports (for files not yet migrated)
-          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
+          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
         }
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
         recordItem("let", it.name)
@@ -1019,7 +1026,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         const result = compileBinding(it.name, it.type, it.body)
         trusted.set(it.name, result.tree)
         if (isExport) {
-          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
+          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
         }
         recordItem("trust", it.name)
         return
@@ -1049,13 +1056,19 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
           const fieldType = record.fieldTypes?.[i] ?? null
-          define(name, { tree: fieldTree, type: fieldType })
+          // Propagate inner-field metadata if this field is itself
+          // a record-typed binding (e.g., the kernel recq record).
+          // Without this, `kernel.hyp_reduce` projection wouldn't work
+          // across `open use` boundaries.
+          const innerFields = (record as any).fieldInnerFields?.[i] as string[] | undefined
+          const innerTrees = (record as any).fieldInnerTrees?.[i] as Tree[] | undefined
+          define(name, { tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })
           if (it.trust) {
             trusted.set(name, fieldTree)
           }
           if (isExport) {
-            // Legacy mode: open re-exports opened names
-            target.push({ kind: "Def", name, tree: fieldTree })
+            // Legacy mode: open re-exports opened names (with inner-field metadata).
+            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })
           }
         }
         recordItem("open")

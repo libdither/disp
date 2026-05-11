@@ -1,0 +1,22 @@
+open use "../prelude.disp"
+trust open use "../kernel.disp"
+open use "../std/nat/arith.disp"
+open use "../std/list.disp"
+
+let xs = list_cons 1 (list_cons 2 (list_cons 3 nil))
+let ys = list_cons 4 (list_cons 5 nil)
+
+test NatList nil = TT
+test NatList xs = TT
+test NatList (t FF nil) = FF
+
+test singleton 7 = list_cons 7 nil
+test list_length nil = 0
+test list_length xs = 3
+test list_length (list_append xs ys) = 5
+test list_length (list_map_succ xs) = 3
+
+test list_head_or 9 nil = 9
+test list_head_or 9 xs = 1
+test list_map_succ xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
+
