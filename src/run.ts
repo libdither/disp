@@ -60,14 +60,14 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       )
       console.log(
         `rules: K=${s.kRules}, S=${s.sRules}, triage=${s.triageLeafRules + s.triageStemRules + s.triageForkRules}, ` +
-        `fastEq=${s.fastEqRules}, leaf=${s.leafRules}, stem=${s.stemRules}`,
+        `treeEq=${s.treeEqRules}, leaf=${s.leafRules}, stem=${s.stemRules}`,
       )
       console.log(`memo: hits=${s.memoHits}, misses=${s.memoMisses}, writes=${s.memoWrites}`)
     }
     if (showStatsDetail) {
       let prev = {
         steps: 0, calls: 0, uniqueNodes: 0, memoWrites: 0,
-        kRules: 0, sRules: 0, triageLeafRules: 0, triageStemRules: 0, triageForkRules: 0, fastEqRules: 0,
+        kRules: 0, sRules: 0, triageLeafRules: 0, triageStemRules: 0, triageForkRules: 0, treeEqRules: 0,
       }
       const deltas: string[] = []
       for (const item of itemStats) {
@@ -80,7 +80,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
         deltas.push(
           `item: ${source} ${label} steps=${s.steps - prev.steps}, calls=${s.calls - prev.calls}, ` +
           `uniqueNodes=${s.uniqueNodes - prev.uniqueNodes}, memoWrites=${s.memoWrites - prev.memoWrites}, ` +
-          `S=${s.sRules - prev.sRules}, K=${s.kRules - prev.kRules}, triage=${triage}, fastEq=${s.fastEqRules - prev.fastEqRules}`,
+          `S=${s.sRules - prev.sRules}, K=${s.kRules - prev.kRules}, triage=${triage}, treeEq=${s.treeEqRules - prev.treeEqRules}`,
         )
         prev = s
       }
