@@ -1,5 +1,5 @@
 open use "../prelude.disp"
-open use "../kernel.disp"
+open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
 // Test-only convenience definitions

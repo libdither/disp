@@ -1,5 +1,5 @@
 open use "../prelude.disp"
-open use "../kernel.disp"
+open use "../kernel/prelude.disp"
 
 // ================================================================
 // Predicate-frame Type (migration step 5)

@@ -16,7 +16,7 @@
 //   - Attacks 3, 4, 5 → expected `= TT` (still OPEN).
 
 open use "../prelude.disp"
-open use "../kernel.disp"
+open use "../kernel/prelude.disp"
 
 // ================================================================
 // Attack 1 — direct forged closed neutral [CLOSED]

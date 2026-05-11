@@ -8,7 +8,7 @@
 //   5. Closed comparisons (ord_lt / ord_le / ord_max).
 
 open use "../prelude.disp"
-trust open use "../kernel.disp"
+trust open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../types/ord.disp"
 

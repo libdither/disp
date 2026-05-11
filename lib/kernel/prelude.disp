@@ -1,0 +1,35 @@
+// kernel/prelude.disp — bundle for code building on top of the kernel.
+//
+// Re-exports the kernel substrate (utils, handlers, walker) and the
+// library type-formers (Bool, Nat, Pi, Type, Eq, Ord) plus the
+// cross-type-former conv_structural helper. This is the canonical
+// "I want to use the type system" entry point.
+//
+// File mode: legacy (only `let`/`open use` items), so every `open use`
+// re-exports its names. Consumers writing
+//
+//     open use "../kernel/prelude.disp"
+//
+// see the full kernel + types surface in scope.
+//
+// If you want just the kernel handlers and primitive operations
+// (e.g., to define a new library type-former), import the kernel
+// substrate directly:
+//
+//     open use "../kernel/utils.disp"
+//     open use "../kernel/handlers.disp"
+//
+// If you want only the language primitives (TT/FF/triage/select/...),
+// use `../prelude.disp` at the lib root.
+
+open use "../prelude.disp"
+open use "utils.disp"
+open use "handlers.disp"
+open use "walker.disp"
+open use "../types/bool.disp"
+open use "../types/nat.disp"
+open use "../types/pi.disp"
+open use "../types/type.disp"
+open use "../types/eq.disp"
+open use "../types/ord.disp"
+open use "../types/conv.disp"

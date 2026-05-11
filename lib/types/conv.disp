@@ -1,0 +1,30 @@
+// Structural conversion — deep equality on type trees.
+//
+// Lives in types/ rather than kernel/ because it cross-cuts Pi and
+// Type reflection helpers (is_pi / pi_dom / pi_cod_fn / is_universe
+// / universe_rank), both library types.
+
+open use "../prelude.disp"
+open use "../kernel/utils.disp"
+open use "../kernel/handlers.disp"
+open use "pi.disp"
+open use "type.disp"
+
+let conv_structural = fix ({self, a, b} -> {
+  let pi_fn = {self, a, b} -> {
+    let hyp = Hyp (pi_dom a) (type_meta a)
+    and (self (pi_dom a) (pi_dom b))
+      (self (pi_cod_fn a hyp) (pi_cod_fn b hyp))
+  }
+  let univ_fn = {self, a, b} -> tree_eq (universe_rank a) (universe_rank b)
+  select ({self, a, b} -> TT)
+    ({self, a, b} ->
+      select pi_fn ({self, a, b} ->
+        select univ_fn ({self, a, b} -> FF)
+          (and (is_universe a) (is_universe b))
+          self a b)
+        (and (is_pi a) (is_pi b))
+        self a b)
+    (tree_eq a b)
+    self a b
+})

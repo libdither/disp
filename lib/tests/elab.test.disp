@@ -3,7 +3,7 @@
 // All typed bindings are verified by the kernel's type predicates at compile time.
 
 open use "../prelude.disp"
-trust open use "../kernel.disp"
+trust open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
 // ================================================================

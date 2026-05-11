@@ -15,7 +15,9 @@
 //   mint_ord_hyp — construct an Ord-typed hypothesis
 
 open use "../prelude.disp"
-trust open use "../kernel.disp"
+open use "../kernel/utils.disp"
+trust open use "../kernel/handlers.disp"
+open use "bool.disp"
 open use "../std/nat/arith.disp"
 
 // ================================================================

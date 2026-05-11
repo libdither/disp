@@ -1,5 +1,5 @@
 open use "../prelude.disp"
-open use "../kernel.disp"
+open use "../kernel/prelude.disp"
 
 // ================================================================
 // Eliminator-frame bool_rec (migration step 2)

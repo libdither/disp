@@ -27,24 +27,24 @@ Every component participating in checking, elaboration, or conversion must have 
 
 ### Library layout (`.disp` files in `lib/`)
 - `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix/recq, tree_eq, nat_le).
-- `kernel.disp` — back-compat shim: legacy-mode (all `let`), opens the kernel + types subfiles so `open use "kernel.disp"` keeps working unchanged. Hosts `conv_structural` (cross-cuts Pi + Type).
 - `kernel/` — the trusted center:
+  - `prelude.disp` — canonical entry point: opens `utils` + `handlers` + `walker` + every type in `types/`. Files that build on the type system do `open use "../kernel/prelude.disp"`.
   - `utils.disp` — metadata accessors, signatures, Action protocol (`Extend`/`Return`), CheckedResult (`Ok`/`Fail`), `must_ok_*`.
   - `handlers.disp` — all `q_*_fn` primitive handlers, recq kernel record, `kernel_ref` proxy, public neutral / guard API (`Hyp`, `StuckElim`, `guard`, `unguard_checked`, `predicate_frame_form`, `eliminator_frame_form`, `core_Eq`, …), signature anchors for host fast-path.
   - `walker.disp` — standalone `checked_apply_walker` (reference impl of the parametric walker; native fast-path in `src/tree.ts` is the runtime version).
-- `types/` — library type definitions:
+- `types/` — library type definitions. Files import `kernel/utils.disp` + `kernel/handlers.disp` (not `kernel/prelude.disp`, to avoid the import cycle through `kernel/prelude.disp → types/*.disp`).
   - `bool.disp` — Bool + bool_rec (predicate_frame + eliminator_frame).
   - `nat.disp` — Nat + nat_rec.
   - `pi.disp` — Pi/Arrow + bind_hyp wait-form + is_pi / pi_dom / pi_cod_fn.
   - `type.disp` — Type universe + is_universe.
   - `eq.disp` — Eq + refl + eq_J + eq_subst / eq_sym / eq_cong (still legacy kernel-handler-based until tree_eq-on-hypothesis spec resolves).
   - `ord.disp` — Ord (predicate_frame + eliminator_frame): zero_ord/omega_plus constructors (tagged), ord_rec, succ_ord/omega, comparisons.
-- `std/` — standard library built on `types/`:
-  - `nat/arith.disp` — `add` (was `math.disp`).
+  - `conv.disp` — `conv_structural` (deep equality on type trees; cross-cuts Pi + Type).
+- `std/` — standard library built on `types/`. Files import `kernel/prelude.disp` for the full surface.
+  - `nat/arith.disp` — `add` (was `math.disp`). Imports `kernel/utils` + `kernel/handlers` + `types/nat` (not the full prelude — cycles through ord.disp → arith.disp).
   - `nat/ops.disp` — `pred`, `is_zero`, `double`, equality proofs (was `nat.disp`).
   - `list.disp`, `set.disp`, `fin.disp` — additional library types.
-- `legacy/dae.disp` — data-as-eliminator pre-migration library (kept as reference; not used by the unified design).
-- `tests/` — all `*.test.disp` files, flat layout. Test runner globs recursively.
+- `tests/` — all `*.test.disp` files. Test runner globs recursively under `tests/`.
 
 ### Host tests
 - `test/disp.test.ts` — vitest harness; recursively globs `lib/tests/**/*.test.disp`.

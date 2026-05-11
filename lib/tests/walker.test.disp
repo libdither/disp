@@ -6,7 +6,7 @@
 // inputs, and DAE soundness properties (data-as-eliminator soundness).
 
 open use "../prelude.disp"
-open use "../kernel.disp"
+open use "../kernel/prelude.disp"
 
 // ================================================================
 // Result encoding
