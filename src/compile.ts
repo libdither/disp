@@ -396,8 +396,6 @@ interface KernelHelpers {
   piDomain(t: Tree): Tree
   piCodFn(t: Tree): Tree
   makeHyp(type: Tree, id: Tree): Tree
-  univRank(t: Tree): Tree   // extract rank from a Type
-  makeType(rank: Tree): Tree // construct Type(rank)
 }
 
 function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
@@ -501,16 +499,6 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
       if (!make_hyp) throw new Error("makeHyp: make_hyp not trusted")
       return applyTree(applyTree(make_hyp, type, 10_000_000), id, 10_000_000)
     },
-    univRank(_t) {
-      // Universes are no longer rank-stratified (migration step E).
-      // Return LEAF as a vestigial value.
-      return LEAF
-    },
-    makeType(_rank) {
-      // Rank arg is ignored; Type is universal now.
-      if (!Type) throw new Error("makeType: Type not trusted")
-      return applyTree(Type, LEAF, 10_000_000)
-    },
   }
 }
 
@@ -556,18 +544,6 @@ function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
   }
 }
 
-// Nat-level max: compare two nat trees. Since nats are Church-like with
-// zero = LEAF, succ(n) = fork(TT, n), we can compare structurally.
-function natTreeToNum(t: Tree): number {
-  let n = 0
-  let cur = t
-  while (cur.tag === "fork") { n++; cur = cur.right }
-  return n
-}
-function natMax(a: Tree, b: Tree): Tree {
-  return natTreeToNum(a) >= natTreeToNum(b) ? a : b
-}
-
 // checkAsType(e, ctx): compile an expression as a type, returning both
 // the compiled tree and the universe it lives in. For binders, this
 // triggers Pi construction. For other expressions, it infers and verifies.
@@ -578,7 +554,7 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
     return { tree, universe: null }
   }
 
-  // Binder → Pi type construction. Infer domain's universe, build Pi.
+  // Binder → Pi type construction.
   if (e.tag === "binder") {
     const Type = ctx.trusted.get("Type")
     const Pi = ctx.trusted.get("Pi")
@@ -592,9 +568,7 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
     if (!param.type) throw new Error("Pi domain requires a type annotation")
     const paramName = param.name ?? `_anon0`
 
-    // Infer the domain's type to get its universe level
-    const { tree: A_tree, universe: A_univ } = checkAsType(param.type, ctx)
-    const A_level = A_univ && k.isUniverse(A_univ) ? k.univRank(A_univ) : LEAF // default 0
+    const { tree: A_tree } = checkAsType(param.type, ctx)
 
     // Recurse for the inner type (remaining params + body) with the
     // parameter available as a kernel hypothesis. The resulting codomain
@@ -611,24 +585,20 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
     ctx.lookupEntry = (name: string) => name === paramName ? hypEntry : prevLookup(name)
     ctx.scopeDepth++
     let B_tree: Tree
-    let B_univ: Tree | null
     try {
       const checked = checkAsType(innerExpr, ctx)
       B_tree = checked.tree
-      B_univ = checked.universe
     } finally {
       ctx.lookupEntry = prevLookup
       ctx.scopeDepth--
     }
-    const B_level = B_univ && k.isUniverse(B_univ) ? k.univRank(B_univ) : LEAF
-
-    // Pi level = max(A_level, B_level)
-    const piLevel = natMax(A_level, B_level)
 
     const codFn = abstractTree(hyp, B_tree)
 
     const piTree = applyTree(applyTree(Pi, A_tree, 10_000_000), codFn, 10_000_000)
-    const piUniv = k.makeType(piLevel)
+    // Universe stratification dropped — every Pi lives in the single
+    // Type, not Type k. The sample-style call here is equivalent.
+    const piUniv = applyTree(Type, LEAF, 10_000_000)
     return { tree: piTree, universe: piUniv }
   }
 

@@ -208,37 +208,29 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,eq,eq_J,unguard,checked_apply,pred
   fix ({self, meta, v} -> {
     let stored_inner = q_unguard_or_self ks (neutral_meta_type meta)
     let cod_fn = pair_snd (pair_snd (type_meta stored_inner))
-    // Action-protocol path (predicate_frame-typed hypotheses).
-    // If codomain_fn slot is sentinel (LEAF), applying this hypothesis
-    // is invalid → extend with InvalidType. Otherwise invoke
-    // cod_fn(ks, raw, meta, v) → Action, dispatch on Extend / Return.
-    let invalid_fn = {self, meta, v} -> wait self (extend_neutral_meta meta InvalidType v)
-    let action_extend_fn = {self, meta, v, action} ->
-      wait self (extend_neutral_meta meta (wait ks.guard (pair_snd action)) v)
-    // Parser workaround: multi-line `select ... \n  (...)\n  ...`
-    // inside a `let X = ... -> body` binding gets the body extended
-    // past the next `let` declaration, causing parse failure
-    // ("expected identifier, got '('"). Wrap such multi-line selects
-    // in parens to force them as a single atom.
-    let action_return_or_invalid = {self, meta, v, action} -> (
-      select ({self, meta, v, action} -> pair_snd action)
-        ({self, meta, v, action} -> wait self (extend_neutral_meta meta InvalidType v))
-        (is_return action)
-        self meta v action)
-    let action_dispatch = {self, meta, v, action} -> (
-      select action_extend_fn
-        action_return_or_invalid
-        (is_extend action)
-        self meta v action)
-    let action_path_fire = {self, meta, v} ->
-      action_dispatch self meta v (cod_fn ks raw meta v)
-    let action_path = {self, meta, v} -> (
-      select invalid_fn action_path_fire
-        (tree_eq cod_fn t)
-        self meta v)
-    select action_path invalid_fn
-      (has_sig ks.predicate_frame stored_inner)
-      self meta v
+    let invalid_result = wait self (extend_neutral_meta meta InvalidType v)
+    // Action dispatcher: cod_fn ks raw meta v returns an Action
+    // (Extend new_stored | Return value). Extend re-guards and
+    // appends to the hypothesis spine; Return yields the value
+    // directly; malformed Actions fall back to InvalidType.
+    let dispatch_action = {action} ->
+      match (is_extend action) {
+        TT => wait self (extend_neutral_meta meta (wait ks.guard (pair_snd action)) v)
+        FF => match (is_return action) {
+          TT => pair_snd action
+          FF => invalid_result
+        }
+      }
+    // Outer dispatch: stored type must be a predicate_frame type
+    // with a non-sentinel codomain_fn; otherwise the hypothesis is
+    // non-applicable (e.g., Bool, Nat) and we extend with InvalidType.
+    match (has_sig ks.predicate_frame stored_inner) {
+      FF => invalid_result
+      TT => match (tree_eq cod_fn t) {
+        TT => invalid_result
+        FF => dispatch_action (cod_fn ks raw meta v)
+      }
+    }
   })
 
 // --- Eq checker (returns BARE TT/FF) ---
