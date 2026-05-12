@@ -43,7 +43,7 @@ test (Pi Nat ({_} -> Eq Nat 0 1)) bad_pi = FF
 // ================================================================
 // BadFam is "Nat if the argument is a hypothesis, else Eq Nat 0 1".
 // During Pi checking the argument IS a hypothesis. With the native
-// walker active, q_pi_fn's `ks.checked_apply BadFam hyp` runs BadFam
+// walker active, Pi's recognizer runs `BadFam hyp`
 // under parametric mode; `is_neutral hyp` triages on hyp via pair_fst,
 // which the walker rejects (triage-on-neutral rule). Pi check returns
 // FF — attack correctly defeated.

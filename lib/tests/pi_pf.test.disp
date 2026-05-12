@@ -39,7 +39,7 @@ test Pi_pf Nat ({_} -> Nat) const_two = TT
 
 // Pi-typed hypothesis applied to value: hyp_reduce mints a new neutral
 // with stored type = codomain (B arg). Verify via Action protocol path
-// rather than the legacy q_pi_fn path.
+// rather than any Pi-specific kernel handler.
 let pi_pf_hyp = Hyp (Pi_pf Nat ({_} -> Bool)) 0
 test is_neutral pi_pf_hyp = TT
 // Applying pi_pf_hyp to a Nat should extend the spine with stored type Bool.
