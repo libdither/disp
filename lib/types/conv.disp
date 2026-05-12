@@ -10,7 +10,7 @@ open use "../kernel/handlers.disp"
 open use "pi.disp"
 open use "type.disp"
 
-let conv_structural = fix ({self, a, b} -> {
+conv_structural := fix ({self, a, b} -> {
   let pi_fn = {self, a, b} -> {
     let hyp = Hyp (pi_dom a) (type_meta a)
     and (self (pi_dom a) (pi_dom b))

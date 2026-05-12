@@ -282,19 +282,17 @@ test chain_test Fail    (Ok 5) (Ok TT) = Fail
 // applications continue to work via raw apply / hyp_reduce.
 //
 // The DAE encoding here uses a per-value Bool template:
-//   bool_template target = Pi (Pi self_ref ({_} -> Type 0)) ({m} ->
+//   bool_template target = Pi (Pi self_ref ({_} -> Type)) ({m} ->
 //     Pi (m TT) ({_} -> Pi (m FF) ({_} -> m target)))
 // where self_ref is a wait-form that lazily resolves to bool_template
 // applied to a placeholder. The recq encoding ensures the outer form
 // remains a literal Pi so the kernel's existing hyp_reduce machinery
 // fires on hypothesis-typed Bool values.
 
-let Type_0 = Type 0
-
 let bool_pkg : {bool_template, bool_self_ref} = recq {
   bool_template := {ks : {bool_template, bool_self_ref}, raw, query} ->
     {target} ->
-      Pi (Pi ks.bool_self_ref ({_} -> Type_0)) ({m} ->
+      Pi (Pi ks.bool_self_ref ({_} -> Type)) ({m} ->
       Pi (m TT) ({_} ->
       Pi (m FF) ({_} ->
         m target))) ;
@@ -363,6 +361,6 @@ test tree_eq (checked_apply_walker introspecting_fn bh) Fail = TT
 // Walker rejects DAE "constructors" that introspect their motive — even
 // when the motive is a hypothesis (during type-checking).
 let fake_TT = {motive, ct, cf} -> select ct cf (is_neutral motive)
-let motive_hyp = Hyp (Pi Bool ({_} -> Type_0)) 7
+let motive_hyp = Hyp (Pi Bool ({_} -> Type)) 7
 let walker_fake_app = checked_apply_walker fake_TT motive_hyp
 test tree_eq walker_fake_app Fail = TT

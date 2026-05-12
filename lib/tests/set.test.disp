@@ -1,5 +1,5 @@
 open use "../prelude.disp"
-trust open use "../kernel/prelude.disp"
+open use "../kernel/prelude.disp"
 open use "../std/set.disp"
 
 let odds = set_union (singleton_set 1) (singleton_set 3)

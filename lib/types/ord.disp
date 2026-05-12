@@ -16,7 +16,7 @@
 
 open use "../prelude.disp"
 open use "../kernel/utils.disp"
-trust open use "../kernel/handlers.disp"
+open use "../kernel/handlers.disp"
 open use "bool.disp"
 open use "../std/nat/arith.disp"
 

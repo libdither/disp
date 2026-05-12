@@ -147,6 +147,8 @@ interface ScopeEntry {
   fields?: string[]
   fieldTrees?: Tree[]
   fieldTypes?: (Tree | null)[]  // per-field types for open
+  fieldInnerFields?: (string[] | undefined)[]
+  fieldInnerTrees?: (Tree[] | undefined)[]
 }
 
 // Expr → Cir, with scope lookup and use-resolution.
@@ -386,8 +388,9 @@ function checkerSig(checker: Tree): Tree {
   return sig
 }
 
-// Kernel query helpers. All require a trusted table populated with kernel refs.
-// When trusted table is empty, all return false/null — elaborator falls back to untyped.
+// Kernel query helpers. These are discovered from ordinary scope after
+// imports. A file that opens kernel/prelude.disp gets Pi, Type, Hyp, Nat,
+// etc. without a separate keyword-level trust channel.
 
 interface KernelHelpers {
   isUniverse(t: Tree): boolean
@@ -398,15 +401,15 @@ interface KernelHelpers {
   makeHyp(type: Tree, id: Tree): Tree
 }
 
-function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
+function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined): KernelHelpers | null {
   // Post-migration: public Pi/Bool/Nat/Type are all predicate_frame
   // wait-forms. Their outer signature (after unguarding) is the SAME
   // predicate_frame signature; what distinguishes them is the
   // *recognizer* stored in `pair_fst meta`. We derive the recognizer
   // identifier for Pi and Type by sampling and inspecting metadata.
-  const Pi = trusted.get("Pi")
-  const Type = trusted.get("Type")
-  const make_hyp = trusted.get("Hyp") ?? trusted.get("make_hyp")
+  const Pi = lookupEntry("Pi")?.tree
+  const Type = lookupEntry("Type")?.tree
+  const make_hyp = lookupEntry("Hyp")?.tree ?? lookupEntry("make_hyp")?.tree
 
   if (!Pi && !Type && !make_hyp) return null
 
@@ -414,7 +417,7 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
   // pair_fst of the inner meta to get the recognizer identity.
   const I_FUNC = I_TREE
   const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, 10_000_000), I_FUNC, 10_000_000) : null
-  const sampleType = Type ? applyTree(Type, LEAF, 10_000_000) : null
+  const sampleType = Type ?? null
   const sampleHyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, 10_000_000), LEAF, 10_000_000) : null
 
   const guardSig = samplePi ? treePairFst(samplePi) : (sampleType ? treePairFst(sampleType) : null)
@@ -496,7 +499,7 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
       return c
     },
     makeHyp(type, id) {
-      if (!make_hyp) throw new Error("makeHyp: make_hyp not trusted")
+      if (!make_hyp) throw new Error("makeHyp: make_hyp not in scope")
       return applyTree(applyTree(make_hyp, type, 10_000_000), id, 10_000_000)
     },
   }
@@ -509,12 +512,10 @@ function makeKernelHelpers(trusted: Map<string, Tree>): KernelHelpers | null {
 // tree.ts. Once the dispatcher tree id and at least the hyp_reduce
 // signature are registered, the native fast-path activates; until then
 // it is dormant and apply runs the in-language stub.
-// Dispatcher list (per spec §6.1): only kernel-primitive type-formers
-// and the unguard handler. Bool/Nat/Eq predicates are no longer
-// routed; their applications fall through to the walker. The
-// handlers remain in the recq record (q_core_type_fn uses them
-// internally for is_registered) but they're not part of the
-// dispatcher's signature recognition list.
+// Dispatcher list (per spec §6.1): only kernel primitives route raw.
+// Bool/Nat/Eq predicates are ordinary predicate_frame types and their
+// applications fall through to the walker unless they hit the generic
+// predicate_frame signature.
 const NATIVE_SIG_NAMES = new Set([
   "kernel_hyp_reduce_sig",
   "kernel_guard_sig",
@@ -522,11 +523,6 @@ const NATIVE_SIG_NAMES = new Set([
   "kernel_predicate_frame_sig",
   "kernel_eliminator_frame_sig",
   "kernel_bind_hyp_sig",
-  // Eq still uses the kernel-handler core form (migration pending —
-  // see TYPE_THEORY review issue #2 on Eq's tree_eq-on-hypothesis
-  // interaction). Eq_J similarly.
-  "kernel_eq_sig",
-  "kernel_eq_J_sig",
 ])
 function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
   if (name === "checked_apply" && getNativeDispatcherTreeId() === -1) {
@@ -556,8 +552,8 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
 
   // Binder → Pi type construction.
   if (e.tag === "binder") {
-    const Type = ctx.trusted.get("Type")
-    const Pi = ctx.trusted.get("Pi")
+    const Type = ctx.lookupEntry("Type")?.tree
+    const Pi = ctx.lookupEntry("Pi")?.tree
     if (!Type || !Pi) {
       const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
       return { tree, universe: null }
@@ -598,7 +594,7 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
     const piTree = applyTree(applyTree(Pi, A_tree, 10_000_000), codFn, 10_000_000)
     // Universe stratification dropped — every Pi lives in the single
     // Type, not Type k. The sample-style call here is equivalent.
-    const piUniv = applyTree(Type, LEAF, 10_000_000)
+    const piUniv = Type
     return { tree: piTree, universe: piUniv }
   }
 
@@ -622,7 +618,6 @@ type ElabCtx = {
   lookupEntry: (name: string) => ScopeEntry | undefined
   resolveUse: (path: string) => ScopeEntry
   kernel: KernelHelpers | null
-  trusted: Map<string, Tree>
   scopeDepth: number
   debugTypeCheck: boolean
 }
@@ -792,7 +787,7 @@ function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
       if (param?.type) {
         const { tree: A_tree } = checkAsType(param.type, ctx)
         const paramName = param.name ?? `_anon0`
-        const Pi = ctx.trusted.get("Pi")
+        const Pi = ctx.lookupEntry("Pi")?.tree
         if (Pi) {
           const id = fork(A_tree, fork(buildNat(ctx.scopeDepth), buildNat(0)))
           const hyp = k.makeHyp(A_tree, id)
@@ -823,7 +818,7 @@ function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
 
     case "num": {
       const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-      const Nat = ctx.trusted.get("Nat")
+      const Nat = ctx.lookupEntry("Nat")?.tree
       return { tree, type: Nat ?? null }
     }
 
@@ -861,7 +856,7 @@ export type Decl =
   | { kind: "Test"; lhs: Tree; rhs: Tree }
 
 export type ParseItemStats = {
-  kind: "let" | "test" | "open" | "field" | "trust"
+  kind: "let" | "test" | "open" | "field"
   name?: string
   testIndex?: number
   sourcePath?: string
@@ -875,7 +870,6 @@ export type ParseProgramOptions = {
 }
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
-  const trusted: Map<string, Tree> = new Map()
   const stack: Map<string, ScopeEntry>[] = [new Map()]
   const decls: Decl[] = []
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
@@ -947,7 +941,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     return { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldInnerFields, fieldInnerTrees }
   }
 
-  function recordItem(kind: "let" | "test" | "open" | "field" | "trust", name?: string, testIndex?: number): void {
+  function recordItem(kind: "let" | "test" | "open" | "field", name?: string, testIndex?: number): void {
     options.onItem?.({
       kind,
       name,
@@ -962,8 +956,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     return {
       lookupEntry,
       resolveUse,
-      kernel: makeKernelHelpers(trusted),
-      trusted,
+      kernel: makeKernelHelpers(lookupEntry),
       scopeDepth: stack.length,
       debugTypeCheck: options.debugTypeCheck ?? false,
     }
@@ -1022,15 +1015,6 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         recordItem("let", it.name)
         return
       }
-      case "trust": {
-        const result = compileBinding(it.name, it.type, it.body)
-        trusted.set(it.name, result.tree)
-        if (isExport) {
-          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
-        }
-        recordItem("trust", it.name)
-        return
-      }
       case "test": {
         compiledTestIndex++
         target.push({
@@ -1063,9 +1047,6 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
           const innerFields = (record as any).fieldInnerFields?.[i] as string[] | undefined
           const innerTrees = (record as any).fieldInnerTrees?.[i] as Tree[] | undefined
           define(name, { tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })
-          if (it.trust) {
-            trusted.set(name, fieldTree)
-          }
           if (isExport) {
             // Legacy mode: open re-exports opened names (with inner-field metadata).
             target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })

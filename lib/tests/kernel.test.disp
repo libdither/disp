@@ -6,9 +6,6 @@ open use "../std/nat/arith.disp"
 let is_nat_type = {x} -> tree_eq x Nat
 let is_bool_type = {x} -> tree_eq x Bool
 let is_registered = {x} -> select TT (is_bool_type x) (is_nat_type x)
-let Type0 = Type 0
-let Type1 = Type 1
-let Type2 = Type 2
 let NatToNat = Arrow Nat Nat
 let id_fn = {x} -> x
 
@@ -215,67 +212,67 @@ test is_pi (Arrow Nat Nat) = TT
 test pi_dom (Arrow Nat Nat) = Nat
 
 // ================================================================
-// Type n
+// Type
 // ================================================================
 
-test Type0 Nat = TT
-test Type0 Bool = TT
+test Type Nat = TT
+test Type Bool = TT
 test is_nat_type Nat = TT
 test is_bool_type Bool = TT
 test is_nat_type Bool = FF
 test is_bool_type Nat = FF
-test Type0 t = FF
-test Type0 FF = FF
+test Type t = FF
+test Type FF = FF
 
 // Adversarial: a wait-based value with a trivially-accepting checker
 // and Nat-like metadata (LEAF). Must be rejected — only the canonical
 // Nat (built by the kernel's own Q_NAT) is recognized.
 let fakeNat = wait ({_meta, _x} -> TT) t
 test is_nat_type fakeNat = FF
-test Type0 fakeNat = FF
+test Type fakeNat = FF
 
 // Same attack against Bool: trivially-accepting checker with Bool-like
 // metadata (stem of LEAF). Canonical identity rejects it.
 let fakeBool = wait ({_meta, _x} -> TT) (t t)
 test is_bool_type fakeBool = FF
-test Type0 fakeBool = FF
+test Type fakeBool = FF
 
-test Type0 (Arrow Nat Nat) = TT
-test Type1 Type0 = TT
-// Post-migration: universe stratification dropped. Type0/Type1/Type2
+test Type (Arrow Nat Nat) = TT
+test Type Type = TT
+// Post-migration: universe stratification dropped. Type/Type/Type
 // all alias to Type_pf, which accepts any predicate-frame type
 // structurally (including itself — Russell-admissible). Tests below
 // updated accordingly; pre-migration expected values noted inline.
-test Type0 Type0 = TT  // self-typing (Russell admissible); was FF
-test Type1 Nat = TT
-test Type2 Type0 = TT
-test Type0 (Pi Nat ({_x} -> Bool)) = TT
-test Type0 (Pi Nat ({x} -> x)) = TT  // structural; was FF (semantic-ill-typed)
-test Type0 (Pi FF ({_x} -> Nat)) = TT // structural; was FF (FF isn't a type)
-test Type1 (Pi Type0 ({A} -> Arrow A A)) = TT
-test Type0 (Pi Type0 ({A} -> Arrow A A)) = TT  // was FF (rank-stratified)
-test Type0 (Eq Nat 0 0) = FF  // Eq is still legacy (eq sig, not pred_frame); was TT
-test Type0 (Eq Nat 0 FF) = FF
-test Type0 (Eq FF 0 0) = FF
+test Type Type = TT  // self-typing (Russell admissible); was FF
+test Type Nat = TT
+test Type Type = TT
+test Type (Pi Nat ({_x} -> Bool)) = TT
+test Type (Pi Nat ({x} -> x)) = TT  // structural; was FF (semantic-ill-typed)
+test Type (Pi FF ({_x} -> Nat)) = TT // structural; was FF (FF isn't a type)
+test Type (Pi Type ({A} -> Arrow A A)) = TT
+test Type (Pi Type ({A} -> Arrow A A)) = TT
+test Type (Eq Nat 0 0) = TT
+test Type (Eq Nat 0 FF) = TT
+test Type (Eq FF 0 0) = TT
 test is_eq (Eq Nat 0 0) = TT
 
 // Adversarial: trivially-accepting checker with Eq-like metadata
 // (fork(A, fork(x, y))). Signature mismatch rejects it.
 let fakeEq = wait ({_meta, _x} -> TT) (t Nat (t 0 0))
 test is_eq fakeEq = FF
-test Type0 fakeEq = FF
+test Type fakeEq = FF
 
 // Adversarial: trivially-accepting checker with Universe-like metadata
 // (LEAF for rank). Signature mismatch rejects it.
 let fakeUniverse = wait ({_meta, _x} -> TT) t
 test is_universe fakeUniverse = FF
-test Type0 fakeUniverse = FF
+test Type fakeUniverse = FF
 
 // Adversarial: trivially-accepting checker with Pi-like metadata
 // (fork(dom, codFn)). Signature mismatch rejects it.
 let fakePi = wait ({_meta, _x} -> TT) (t Nat ({_x} -> Bool))
 test is_pi fakePi = FF
-test Type0 fakePi = FF
+test Type fakePi = FF
 
 // A hypothesis typed with fakePi doesn't get Pi-style accumulation,
 // so applying it to a value doesn't track the codomain type.
@@ -287,9 +284,9 @@ test Bool ((Hyp fakePi 0) 0) = FF
 
 test conv_structural t t = TT
 test conv_structural t (t t) = FF
-test conv_structural Type0 Type0 = TT
-// Post-migration: Type0 and Type1 are both Type_pf (same tree).
-test conv_structural Type0 Type1 = TT  // was FF (rank-stratified)
+test conv_structural Type Type = TT
+// Post-migration: Type and Type are both Type_pf (same tree).
+test conv_structural Type Type = TT  // was FF (rank-stratified)
 test conv_structural (Pi Nat ({_} -> Nat)) (Pi Nat ({_} -> Nat)) = TT
 test conv_structural (Pi Nat ({_} -> Nat)) (Pi Bool ({_} -> Nat)) = FF
 test conv_structural
@@ -303,8 +300,8 @@ test conv_structural
 // Integration: full pipeline
 // ================================================================
 
-// idPoly : (A : Type0) -> A -> A
-test (Pi Type0 ({A} -> Arrow A A)) ({_A} -> {x} -> x) = TT
+// idPoly : (A : Type) -> A -> A
+test (Pi Type ({A} -> Arrow A A)) ({_A} -> {x} -> x) = TT
 
 // idNatToNat : (Nat -> Nat) -> Nat -> Nat
 test (Arrow NatToNat NatToNat) ({f} -> f) = TT
@@ -323,22 +320,22 @@ test (Arrow NatToNat NatToNat)
 // constNat : Nat -> Nat -> Nat
 test (Arrow Nat (Arrow Nat Nat)) ({x} -> {_y} -> x) = TT
 
-// constPoly : (A : Type0) -> (B : Type0) -> A -> B -> A
-test (Pi Type0 ({A} ->
-    Pi Type0 ({B} ->
+// constPoly : (A : Type) -> (B : Type) -> A -> B -> A
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
       Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
 
 // badConstPoly
-test (Pi Type0 ({A} ->
-    Pi Type0 ({B} ->
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
       Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
 
-// flip : (A : Type0) -> (B : Type0) -> (C : Type0) -> (A -> B -> C) -> B -> A -> C
-test (Pi Type0 ({A} ->
-    Pi Type0 ({B} ->
-      Pi Type0 ({C} ->
+// flip : (A : Type) -> (B : Type) -> (C : Type) -> (A -> B -> C) -> B -> A -> C
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
+      Pi Type ({C} ->
         Arrow
           (Arrow A (Arrow B C))
           (Arrow B (Arrow A C))))))
@@ -348,13 +345,13 @@ test (Pi Type0 ({A} ->
 test infer (conv Nat) ((Hyp NatToNat 3) (Hyp Nat 4)) = TT
 test infer (conv Bool) ((Hyp NatToNat 3) (Hyp Nat 4)) = FF
 
-test Type1 (Pi Type0 ({A} -> Arrow A A)) = TT
+test Type (Pi Type ({A} -> Arrow A A)) = TT
 // Post-migration: universe stratification is being deprecated.
 // q_core_type_fn now recognizes predicate_frame-shaped types as
-// "registered" at any rank — Type0 accepts Pi-over-Type0 because
+// "registered" at any rank — Type accepts Pi-over-Type because
 // the new Pi has predicate_frame shape. Pre-migration this returned
-// FF (Pi-over-Type0 belonged to rank ≥ 1).
-test Type0 (Pi Type0 ({A} -> Arrow A A)) = TT
+// FF (Pi-over-Type belonged to rank ≥ 1).
+test Type (Pi Type ({A} -> Arrow A A)) = TT
 
 // boolToNat : Bool -> Nat
 test (Arrow Bool Nat) ({b} ->
@@ -368,14 +365,14 @@ test (Arrow Nat Bool) ({n} ->
 test (Arrow Nat Bool) ({n} ->
   nat_rec ({_} -> Nat) 0 ({n_, prev} -> succ prev) n) = FF
 
-// applyPoly : (A : Type0) -> (B : Type0) -> (A -> B) -> A -> B
-test (Pi Type0 ({A} ->
-    Pi Type0 ({B} ->
+// applyPoly : (A : Type) -> (B : Type) -> (A -> B) -> A -> B
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
       Arrow (Arrow A B) (Arrow A B))))
   ({_A} -> {_B} -> {f} -> f) = TT
 
-// badSelf : (A : Type0) -> A -> A — self-application rejected
-test (Pi Type0 ({A} -> Arrow A A))
+// badSelf : (A : Type) -> A -> A — self-application rejected
+test (Pi Type ({A} -> Arrow A A))
   ({_A} -> {x} -> x x) = FF
 
 // pairNat : Nat -> Nat -> (Nat -> Nat -> Nat) -> Nat
@@ -388,20 +385,20 @@ test (Arrow Nat
 // h : H |- h : H
 test infer (tree_eq (Hyp t t)) (Hyp (Hyp t t) (t t)) = TT
 
-// ctxId : (A : Type0) -> (x : A) -> A
-test (Pi Type0 ({A} ->
+// ctxId : (A : Type) -> (x : A) -> A
+test (Pi Type ({A} ->
     Pi A ({_x} -> A)))
   ({_A} -> {x} -> x) = TT
 
-// ctxConst : (A : Type0) -> (B : Type0) -> A -> B -> A
-test (Pi Type0 ({A} ->
-    Pi Type0 ({B} ->
+// ctxConst : (A : Type) -> (B : Type) -> A -> B -> A
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
       Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
 
 // badCtxConst
-test (Pi Type0 ({A} ->
-    Pi Type0 ({B} ->
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
       Arrow A (Arrow B A))))
   ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
 
@@ -413,10 +410,10 @@ test infer (conv Nat)
   ((Hyp (Pi Nat ({_x} -> Bool)) 0)
     (Hyp Nat 1)) = FF
 
-// f : (A : Type0) -> A -> A, n : Nat |- f Nat n : Nat (via infer)
+// f : (A : Type) -> A -> A, n : Nat |- f Nat n : Nat (via infer)
 test infer (conv Nat)
   (((Hyp
-      (Pi Type0 ({A} -> Arrow A A))
+      (Pi Type ({A} -> Arrow A A))
       0)
     Nat)
     (Hyp Nat 1)) = TT

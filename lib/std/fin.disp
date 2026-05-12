@@ -1,5 +1,5 @@
 open use "../prelude.disp"
-trust open use "../kernel/prelude.disp"
+open use "../kernel/prelude.disp"
 open use "list.disp"
 
 // Finite naturals and length-indexed Nat lists. These are lightweight

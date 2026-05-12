@@ -1,33 +1,54 @@
-// Eq — propositional equality. Still uses the legacy kernel-handler
-// (q_eq_fn / q_eq_J_fn) until the tree_eq-on-hypothesis spec issue
-// resolves (TYPE_THEORY review issue #2). After that lands, Eq
-// migrates to predicate_frame like Bool/Nat/Pi/Type.
+// Eq — propositional equality as an ordinary predicate_frame type.
+//
+// The recognizer accepts exactly `refl` when the two endpoints are
+// structurally equal. Hypothesis inputs use predicate_frame's generic
+// H-rule, so Eq no longer needs a dedicated kernel handler.
 
 open use "../prelude.disp"
 open use "../kernel/utils.disp"
 open use "../kernel/handlers.disp"
 
-let Eq = {A, x, y} -> guard (core_Eq (unguard_checked A) x y)
+refl := t
 
-let refl = t
+let eq_pf_recognizer = {params, proof} ->
+  and (tree_eq proof refl) (tree_eq (eq_meta_lhs params) (eq_meta_rhs params))
 
-// eq_J: 6-ary kernel-routed eliminator.
-let eq_J_init_meta = t (succ (succ (succ (succ (succ (succ t)))))) t
-let eq_J = wait kernel_ref.eq_J eq_J_init_meta
+Eq := {A, x, y} ->
+  guard (predicate_frame_form
+    (t eq_pf_recognizer (t (make_eq_meta (unguard_checked A) x y) t)))
 
-let eq_subst = {A, P, x, y, p, px} ->
+Eq_pf := Eq
+
+is_eq := {v} ->
+  tree_eq (pair_fst (type_meta (unguard_or_self v))) eq_pf_recognizer
+
+// Equality eliminator via the generic eliminator_frame.
+// User-facing arity: (A, x, motive, base, y, proof).
+// The generic frame sees only (motive-for-proof, cases, proof):
+//   - non-neutral refl: dispatcher returns base;
+//   - neutral proof: frame mints StuckElim (motive y proof) proof.
+let eq_J_dispatcher = {motive_for_proof, cases, proof} ->
+  pair_fst cases
+
+let eq_J_init_meta = t (succ (succ (succ t))) (t eq_J_dispatcher t)
+let eq_J_inner = eliminator_frame_form eq_J_init_meta
+
+eq_J := {A, x, motive, base, y, proof} ->
+  eq_J_inner ({p} -> motive y p) (t base y) proof
+
+eq_subst := {A, P, x, y, p, px} ->
   select_lazy
     ({_} -> StuckElim (P y) p)
     ({_} -> px)
     (is_neutral p)
 
-let eq_sym = {A, x, y, p} ->
+eq_sym := {A, x, y, p} ->
   select_lazy
     ({_} -> StuckElim (Eq A y x) p)
     ({_} -> refl)
     (is_neutral p)
 
-let eq_cong = {A, B, f, x, y, p} ->
+eq_cong := {A, B, f, x, y, p} ->
   select_lazy
     ({_} -> StuckElim (Eq B (f x) (f y)) p)
     ({_} -> refl)

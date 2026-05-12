@@ -18,7 +18,7 @@ open use "../kernel/handlers.disp"
 // count = succ t, acc = (t t domain). 2nd app (body): final fires;
 // mints hyp, runs body, escape-checks.
 let bind_hyp_init_meta = t (succ (succ t)) t
-let bind_hyp = wait kernel_ref.bind_hyp bind_hyp_init_meta
+bind_hyp := wait kernel_ref.bind_hyp bind_hyp_init_meta
 
 let pi_pf_recognizer = {params, v} -> {
   let A = pair_fst params
@@ -39,20 +39,20 @@ let pi_pf_codomain_fn = {ks, raw, neutral_meta, arg} -> {
   Extend (B arg)
 }
 
-let Pi_pf = {A, B} -> guard (predicate_frame_form
+Pi_pf := {A, B} -> guard (predicate_frame_form
   (t pi_pf_recognizer
      (t (t (unguard_checked A) ({x} -> unguard_checked (B x)))
         pi_pf_codomain_fn)))
 
-let Arrow_pf = {A, B} -> Pi_pf A ({_} -> B)
+Arrow_pf := {A, B} -> Pi_pf A ({_} -> B)
 
-let Pi    = Pi_pf
-let Arrow = Arrow_pf
+Pi    := Pi_pf
+Arrow := Arrow_pf
 
 // Pi reflection helpers. Meta layout: t recognizer (t (t A B) cod_fn).
-let is_pi = {v} ->
+is_pi := {v} ->
   tree_eq (pair_fst (type_meta (unguard_or_self v))) pi_pf_recognizer
-let pi_dom = {v} ->
+pi_dom := {v} ->
   guard (pair_fst (pair_fst (pair_snd (type_meta (unguard_or_self v)))))
-let pi_cod_fn = {v, x} ->
+pi_cod_fn := {v, x} ->
   guard ((pair_snd (pair_fst (pair_snd (type_meta (unguard_or_self v))))) x)

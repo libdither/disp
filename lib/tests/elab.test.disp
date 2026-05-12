@@ -1,9 +1,9 @@
 // Elaborator tests: exercise type-directed compilation with defense-in-depth.
-// trust open activates the elaborator's kernel-aware dispatch.
+// Opening the kernel prelude activates the elaborator's kernel-aware dispatch.
 // All typed bindings are verified by the kernel's type predicates at compile time.
 
 open use "../prelude.disp"
-trust open use "../kernel/prelude.disp"
+open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
 // ================================================================
@@ -59,7 +59,7 @@ test dep_sugar 7 = 7
 let dep_refl : {n : Nat} -> Eq Nat n n = {n} -> refl
 test dep_refl 2 = t
 
-let poly_id : {A : Type 0} -> A -> A = {A} -> {x} -> x
+let poly_id : {A : Type} -> A -> A = {A} -> {x} -> x
 test poly_id Nat 4 = 4
 test poly_id Bool TT = TT
 
@@ -85,11 +85,11 @@ let ret_ann : Nat -> Nat = {x} -> (x : Nat)
 test ret_ann 3 = 3
 
 // ================================================================
-// Universe levels
+// Universe
 // ================================================================
 
-// Type 0 -> Type 0 lives in Type 1 (correctly inferred)
-let type_id : Type 0 -> Type 0 = {A} -> A
+// Type -> Type lives in Type (correctly inferred)
+let type_id : Type -> Type = {A} -> A
 test type_id Nat = Nat
 test type_id Bool = Bool
 test type_id (Arrow Nat Nat) = Arrow Nat Nat

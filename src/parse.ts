@@ -19,7 +19,7 @@ export type Tok =
   | { t: "nl" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["let", "test", "use", "open", "trust", "match"])
+const KEYWORDS = new Set(["let", "test", "use", "open", "match"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
 const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
 const IDENT_HEAD = /[A-Za-z_]/
@@ -99,13 +99,11 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
-// "trust" is like "let" but registers the binding in the elaborator's trusted table.
 export type RecMember =
   | { tag: "field"; name: string; type: Expr | null; value: Expr }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
-  | { tag: "trust"; name: string; type: Expr | null; body: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr }
-  | { tag: "open"; trust: boolean; expr: Expr }
+  | { tag: "open"; expr: Expr }
 
 // Backward compat alias — parseItems still returns these for now.
 export type Item = RecMember
@@ -194,6 +192,15 @@ const numP:    P<number>  = map(tokP(t => t.t === "num", "number"), t => (t as T
 const leafP:   P<Tok>     = tokP(t => t.t === "leaf", "leaf")
 const strP:    P<string>  = map(tokP(t => t.t === "str", "string literal"), t => (t as Tok & {v: string}).v)
 const arrowP:  P<Tok>     = alt(punctP("->"), punctP("→"))
+
+function duplicateName(fields: { name: string }[]): string | null {
+  const seen = new Set<string>()
+  for (const f of fields) {
+    if (seen.has(f.name)) return f.name
+    seen.add(f.name)
+  }
+  return null
+}
 
 // Skip newlines (used where newlines are insignificant, e.g. inside parens/braces).
 const skipNl: P<null> = (ts, i) => {
@@ -405,10 +412,14 @@ const typedFieldP: P<TypedField> = nl((ts, i) => {
 })
 
 // Parse recType contents after "{". Expects typed fields, "}".
-const recTypeInner: P<Expr> = map(
-  seq(sepBy1(typedFieldP, commaP), nl(punctP("}"))),
-  ([fields]) => ({ tag: "recType" as const, fields }),
-)
+const recTypeInner: P<Expr> = (ts, i) => {
+  const r = seq(sepBy1(typedFieldP, commaP), nl(punctP("}")))(ts, i)
+  if (!r.ok) return r
+  const [fields] = r.v
+  const dup = duplicateName(fields)
+  if (dup) return err(`duplicate record field '${dup}'`, i)
+  return ok({ tag: "recType" as const, fields }, r.pos)
+}
 
 // match arm: IDENT "=>" expr (where IDENT is "TT" or "FF").
 // Body uses lineExpr so newlines/semicolons separate arms naturally.
@@ -475,23 +486,9 @@ const bracedTestP: P<RecMember> = map(
   ([, , lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
 )
 
-const bracedTrustP: P<RecMember> = map(
-  seq(kwP("trust"), nl(idP),
-    optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
-    nl(punctP("=")), skipNl, lazy(() => lineExpr), semiP),
-  ([, name, ann, , , body]) => ({
-    tag: "trust" as const, name, type: ann ? ann[2] : null, body,
-  }),
-)
-
 const bracedOpenP: P<RecMember> = map(
   seq(kwP("open"), skipNl, lazy(() => lineExpr), semiP),
-  ([, , e]) => ({ tag: "open" as const, trust: false, expr: e }),
-)
-
-const bracedTrustOpenP: P<RecMember> = map(
-  seq(kwP("trust"), kwP("open"), skipNl, lazy(() => lineExpr), semiP),
-  ([, , , e]) => ({ tag: "open" as const, trust: true, expr: e }),
+  ([, , e]) => ({ tag: "open" as const, expr: e }),
 )
 
 // bracedFieldP already defined above; wrap it as a RecMember with optional SEMI.
@@ -504,7 +501,7 @@ const bracedFieldMemberP: P<RecMember> = (ts, i) => {
   return ok(r.v as RecMember, pos)
 }
 
-const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedTrustOpenP, bracedTrustP, bracedOpenP, bracedFieldMemberP))
+const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedOpenP, bracedFieldMemberP))
 
 // Unified braced body parser: handles blocks, recValues, and mixed members.
 // Parses members (let/test/open/field). Then:
@@ -520,7 +517,11 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   const exportedFields: NamedField[] = []
   const bindings: { name: string; type: Expr | null; body: Expr }[] = []
   for (const m of members) {
-    if (m.tag === "field") exportedFields.push({ name: m.name, type: m.type, value: m.value })
+    if (m.tag === "field") {
+      if (exportedFields.some(f => f.name === m.name))
+        return err(`duplicate exported field '${m.name}'`, startPos)
+      exportedFields.push({ name: m.name, type: m.type, value: m.value })
+    }
     if (m.tag === "let") bindings.push({ name: m.name, type: m.type, body: m.body })
   }
 
@@ -579,17 +580,19 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
 
 
 // Parse bare recType: {a, b, c} or {a, b, c : T} (spread type).
-const bareRecTypeInner: P<Expr> = map(
-  seq(
+const bareRecTypeInner: P<Expr> = (ts, i) => {
+  const r = seq(
     sepBy1(nl(idP), nl(punctP(","))),
     optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
     nl(punctP("}")),
-  ),
-  ([names, ann]) => {
-    const sharedType = ann ? ann[2] : null
-    return { tag: "recType" as const, fields: names.map(name => ({ name, type: sharedType })) }
-  },
-)
+  )(ts, i)
+  if (!r.ok) return r
+  const [names, ann] = r.v
+  const fields = names.map(name => ({ name, type: ann ? ann[2] : null }))
+  const dup = duplicateName(fields)
+  if (dup) return err(`duplicate record field '${dup}'`, i)
+  return ok({ tag: "recType" as const, fields }, r.pos)
+}
 
 // Disambiguate braced content after seeing "{".
 // Peek at the first member to determine: recValue/block, binder, or recType.
@@ -606,8 +609,8 @@ function parseBraced(binderParser: P<Expr>): P<Expr> {
       return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
     }
 
-    // Keyword → unified body (let/test/open/trust, possibly mixed with fields)
-    if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open" || (ts[pos] as any).v === "trust")) {
+    // Keyword → unified body (let/test/open, possibly mixed with fields)
+    if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open")) {
       return unifiedBracedInner(ts, pos)
     }
 
@@ -687,41 +690,28 @@ const testItem: P<Item> = map(
   ([, lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
 )
 
-const trustItem: P<Item> = map(
-  seq(
-    kwP("trust"), idP,
-    optional(seq(punctP(":"), skipNl, lazy(() => expr))),
-    nl(punctP("=")), skipNl, lazy(() => expr),
-  ),
-  ([, name, ann, , , body]) => ({
-    tag: "trust" as const,
-    name,
-    type: ann ? ann[2] : null,
-    body,
-  }),
-)
-
 const openItem: P<Item> = map(
   seq(kwP("open"), lazy(() => expr)),
-  ([, expr]) => ({ tag: "open" as const, trust: false, expr }),
+  ([, expr]) => ({ tag: "open" as const, expr }),
 )
 
-const trustOpenItem: P<Item> = map(
-  seq(kwP("trust"), kwP("open"), lazy(() => expr)),
-  ([, , expr]) => ({ tag: "open" as const, trust: true, expr }),
-)
-
-const itemP: P<Item> = nl(alt(trustOpenItem, openItem, letItem, trustItem, testItem, topFieldP))
+const itemP: P<Item> = nl(alt(openItem, letItem, testItem, topFieldP))
 
 // Parse source into items.
 export function parseItems(src: string): Item[] {
   const toks = tokenize(src)
   const items: Item[] = []
+  const exportedNames = new Set<string>()
   let pos = 0
   while (toks[pos].t === "nl") pos++
   while (toks[pos].t !== "eof") {
     const r = itemP(toks, pos)
     if (!r.ok) throw new Error(`parse: ${r.msg}`)
+    if (r.v.tag === "field") {
+      if (exportedNames.has(r.v.name))
+        throw new Error(`parse: duplicate exported field '${r.v.name}'`)
+      exportedNames.add(r.v.name)
+    }
     items.push(r.v)
     pos = r.pos
     while (toks[pos].t === "nl" || (toks[pos].t === "punct" && (toks[pos] as any).v === ";")) pos++
@@ -742,4 +732,3 @@ export function parseExpr(src: string): Expr {
     throw new Error(`parse: unexpected trailing ${describe(toks[pos])}`)
   return r.v
 }
-

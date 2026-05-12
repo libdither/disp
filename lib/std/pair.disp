@@ -1,5 +1,5 @@
 open use "../prelude.disp"
-trust open use "../kernel/prelude.disp"
+open use "../kernel/prelude.disp"
 
 // Typed pair predicate over the existing fork-as-pair representation
 // (`t a b = fork(a, b)`). Prelude's `pair_fst` / `pair_snd` extractors

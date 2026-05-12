@@ -1,9 +1,9 @@
 open use "../prelude.disp"
-trust open use "../kernel/prelude.disp"
+open use "../kernel/prelude.disp"
 
 // Decidable Nat sets as predicates.
 
-NatSet : Type 0 := Nat -> Bool
+NatSet : Type := Nat -> Bool
 
 empty_set : NatSet :=
   {_} -> FF
