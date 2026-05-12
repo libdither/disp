@@ -18,43 +18,170 @@
 #align(center, text(22pt, weight: "bold")[Cubical Integration Proposal])
 #v(0.3em)
 #align(center)[
-  Design exploration for adding cubical-flavored transport to Disp,
-  built on the unified-design kernel.
+  Design exploration for cubical-flavored transport in Disp, framed
+  as library extensions over the existing seven-handler kernel.
 ]
 #v(1em)
 
 #note[
   *Status.* Exploratory proposal. Builds on `TYPE_THEORY.typ`'s unified
-  design (7 kernel primitives). Sketches a path to cubical-style
-  transport via Option B (parallel `path_apply` handler) and identifies
-  what would be required beyond Option B to reach full cubical
-  (intervals, Glue, higher paths).
+  design (7 kernel primitives). Argues that `transp`, `hcomp`, `Glue`,
+  and the interval `I` can all be implemented as library constructions
+  using existing kernel mechanisms — `predicate_frame`, `hyp_reduce`'s
+  Action protocol, `eliminator_frame`'s stuck-mint, the walker's
+  parametricity — *without adding a new kernel handler*. The kernel
+  stays at seven primitives; the library grows by a metadata slot, two
+  type formers, and two dispatcher functions.
 
-  Not authoritative. The goal is to map out the design space concretely,
-  not commit to implementation.
+  Not authoritative. The goal is to map the design space concretely
+  and identify what falls out of existing structure versus what needs
+  fundamentally new kernel capability.
 ]
 
 = Motivation
 
-The unified design's kernel (`TYPE_THEORY.typ`) handles propositional
+== The one-sentence pitch
+
+*Cubical adds a symbolic-execution layer over an "interval" that makes
+isomorphisms compute definitionally — so iso roundtrip reduces to
+`refl` structurally, instead of producing propositional proofs you have
+to thread by hand.*
+
+That's the practical core. Everything else — the De Morgan algebra,
+`Glue`, partial elements, the ∞-groupoid story — is machinery in
+service of that goal. For Disp specifically, this is exactly the
+capability the optimizer roadmap needs: representation-independence as
+a *computational* fact rather than a manually-discharged proof
+obligation.
+
+== Why current Disp can't deliver this
+
+Disp's existing design (`TYPE_THEORY.typ`) handles propositional
 equality via intensional `Eq` and the H-rule on stuck-Eq values. For
 representation-independence and definitional equivalence of types,
 this leaves a gap:
 
-- Iso-roundtrip is propositional (via weak Pi) but not definitional.
-- Equivalent types are not interchangeable computationally.
-- Transport along equivalences must be threaded explicitly.
+- *Iso-roundtrip is propositional, not definitional.* Given
+  `f : A -> B` and `g : B -> A` with `g (f x) = x` provable, the
+  type system treats `g (f x)` and `x` as distinct values. Conversion
+  (`tree_eq`) returns `FF`. To use the equality, you thread the proof
+  through every site.
 
-Cubical TT addresses these by making transport reduce structurally on
-type formers. The hypothesis here: Disp's existing `hyp_reduce` +
-`codomain_fn` dispatch pattern is structurally identical to cubical's
-`transp` + per-type-former rules. A parallel kernel primitive
-(`path_apply`) with the same dispatch pattern can deliver cubical's
-structural transport while leaving the rest of the kernel untouched.
+- *Equivalent types are not interchangeable computationally.* Two
+  equivalent types `A ≃ B` are different trees; no operation lets you
+  transparently move values between them.
 
-This document specifies that parallel primitive (Option B), then
-discusses what additional pieces (interval, Glue, higher paths) would
-be required to reach full cubical.
+- *Transport along equivalences must be threaded explicitly.*
+  `f : A -> X` does not type-check on `b : B` even when `A ≃ B`;
+  the conversion is yours to manage.
+
+These follow from Pi being *weak* in the standard type-theoretic
+sense — function types without judgmental η-equality, where pointwise
+equality only gives propositional equality.
+
+== What cubical changes
+
+Cubical replaces propositional equality of values (`Eq A x y`) with
+*paths* — functions from a special "interval" type `I` to `A`, with
+the endpoints being `x` and `y` by computation. Equality becomes a
+function shape rather than an inductive datatype. Three consequences:
+
++ *Function extensionality is free.* Pointwise-equal functions are
+  path-equal by a one-line construction (`funext h := λi a. h a i`).
+  No axiom, no propositional indirection.
+
++ *Univalence is derivable, not axiomatic.* The type former `Glue`
+  lets you construct `Path Type A B` from an equivalence `A ≃ B`. The
+  resulting path *computes*: transport along it applies the
+  equivalence, structurally reducing to a tree that's tree-eq-identical
+  to the right answer.
+
++ *Iso-roundtrip is refl-checkable.* For ua-mediated equivalences,
+  `transp (sym (ua e)) (transp (ua e) x)` reduces — by the per-type
+  rules — to a tree structurally equal to `x`. Conversion via `tree_eq`
+  returns `TT`. Definitional, not propositional.
+
+The mechanism is symbolic execution over interval variables: paths
+are functions of an abstract `i : I` that thread through type-formers
+without being inspected. The walker's parametricity discipline (no
+triage on neutrals) is mechanically the same constraint, already in
+place — which is why this fits Disp's existing kernel without
+modification.
+
+== Three orthogonal benefits, in decreasing relevance to Disp
+
+While "iso-roundtrip is definitional" is the headline, cubical
+delivers two further capabilities worth flagging:
+
++ *(Primary)* Univalence-mediated representation independence. Direct
+  payoff for synthesizer/optimizer goals.
++ *(Secondary)* Free function extensionality. Useful in any
+  parametric/equivalence reasoning, even when no isos are involved.
++ *(Tertiary)* Higher inductive types — types whose constructors
+  include equational laws. The route to "optimizer rewrites baked into
+  the type" for synthesizer search-space collapse.
+
+What's *not* on this list, and is safely deferrable: higher-dimensional
+path reasoning (paths between paths between paths, ∞-groupoid
+structure, synthetic homotopy theory). These are research-grade
+capabilities; nothing in Disp's roadmap demands them.
+
+== Why this fits Disp's existing kernel
+
+An earlier draft of this document proposed adding a new kernel handler
+(`path_apply`) parallel to `hyp_reduce` to mediate transport. *That
+addition is unnecessary.* On closer inspection of Disp's existing
+primitives, `transp`/`hcomp`/`Glue` fit cleanly into the
+library-dispatch pattern already used by `predicate_frame` and
+`eliminator_frame`, with `StuckElim` providing the universal fallback
+for cases that cannot structurally reduce.
+
+This document specifies that library design (§3-§7), then investigates
+what evaluating a type-family `P : I → Type` at abstract `i` would
+require, and where the genuine walls are (§8). The unification of
+`transp` and `hcomp` into a single `comp` primitive, and the addition
+of `Partial` cofibration machinery, is investigated in §10.
+
+= The structural insight
+
+Look at what `transp`, `hcomp`, and `Glue` need to do operationally:
+
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Operation*], [*Shape*],
+    [`transp P x`],
+      [Dispatch on `P`'s head type-former; recurse component-wise;
+       fallback to a stuck.],
+    [`hcomp φ sides base`],
+      [Dispatch on the target type's head former; recurse component-wise;
+       fallback to a stuck.],
+    [`Glue B [φ ↦ (T, e)]`],
+      [Library type with non-trivial recognizer; codomain_fn that reads
+       the normalized φ-formula.],
+  ),
+  caption: [Structure of the three cubical operations.],
+)
+
+The shape — *dispatch on type-former, recurse structurally, stuck-fallback* —
+is the same shape Disp already uses for `predicate_frame` (recognizer
+dispatch with H-rule fallback) and `eliminator_frame` (case dispatcher
+with stuck-mint fallback). Cubical operations are not new in kind; they
+are new instances of an existing pattern.
+
+#note[
+  *`StuckElim` is already Disp's transport mechanism.* When an
+  eliminator fires on a hypothesis target, the kernel mints
+  `StuckElim (motive target) target` — a value of the motive's type,
+  opaque, identified by the target. That is structurally identical to
+  "transport produces a value of the codomain type, opaque, identified
+  by the source value." Paths become *additional kinds of evidence*
+  that can either reduce structurally (when the target type's
+  `transp_fn` recognizes the path's shape) or get stuck.
+]
 
 = Background: shared dispatch pattern
 
@@ -62,478 +189,1223 @@ be required to reach full cubical.
 
 When `apply(neutral, v)` evaluates, the dispatcher routes to
 `hyp_reduce`. The handler reads the neutral's stored type's
-`codomain_fn` and dispatches on the returned `Action` (`Extend` or
-`Return`):
+`codomain_fn` slot and dispatches on the returned `Action`
+(`Extend` / `Return`). Each library type-former contributes its own
+`codomain_fn` in its metadata. The kernel handler is a thin
+dispatcher; the per-former logic lives in the library.
 
-```
-q_hyp_reduce_fn := \{ks, raw, query\} -> fix (\{self, meta, v\} -> \{
-  let stored = q_unguard_or_self ks (neutral_meta_type meta)
-  let cod_fn = pair_snd (pair_snd (type_meta stored))
-  let action = cod_fn meta v
-  match (is_extend action) \{
-    TT => extend_spine
-    FF => match (is_return action) \{
-      TT => return_value
-      FF => InvalidType
-    \}
-  \}
-\})
-```
-
-Each library type-former contributes its own `codomain_fn` in its
-metadata. The kernel handler is a thin dispatcher. The `codomain_fn`
-runs in raw mode (per spec §3.4), so it can introspect neutrals freely.
-
-== Cubical's pattern — `transp` + per-type-former rules
-
-Cubical's `transp` does structurally analogous work:
-
-```
-transp : (P : I -> Type) -> (φ : I) -> P 0 -> P 1
-```
-
-It dispatches on `P`'s outer type former and applies the per-former rule:
+== Cubical's pattern — per-type-former transport rules
 
 ```
 transp (λi. Nat) φ x                  = x   -- non-dependent: identity
 transp (λi. A i × B i) φ (a, b)       = (transp ... a, transp ... b)
 transp (λi. (a : A i) -> B i a) φ f   = λa. transp ... (f (transp_back ...))
-transp (λi. Path (A i) (x i) (y i)) φ p = <path composition>
 transp (λi. Glue ...) φ x             = <equivalence-mediated conversion>
 ```
 
-Per-type-former rules. Same dispatch pattern as `codomain_fn`: read a
+Per-type-former rules. Same dispatch shape as `codomain_fn`: look up a
 type-specific function, apply it.
 
-== The parallel
+== The new framing
 
-Both kernels solve the same shape of problem:
+In the previous draft, this parallel motivated a new kernel handler
+(`path_apply`). The new framing keeps the parallel but locates it at
+the library layer: each library type's metadata gains a `transp_fn`
+slot, and `transp` is a library function that reads it. No kernel
+addition.
 
-- A reduction on some value, where behavior is type-former-specific.
-- A kernel dispatcher that reads metadata and applies the rule.
-- Type-former-specific rules supplied by library code.
-
-The operations differ (`hyp_reduce` extends a spine or returns a value;
-`transp` produces a transported value), but the *mechanism* is
-identical.
-
-= Option B — `path_apply` parallel primitive
-
-== The handler
-
-Add a new kernel primitive `path_apply`, parallel to `hyp_reduce`:
-
-```
-q_path_apply_fn := \{ks, raw, query\} -> \{meta, x\} -> \{
-  // meta encodes the path: (source_type, target_type, journey)
-  let A = pair_fst (pair_fst meta)
-  let B = pair_snd (pair_fst meta)
-  let journey = pair_snd meta
-
-  // Dispatch via the source type's transp_fn
-  let A_transp_fn = read_transp_fn A
-  A_transp_fn (journey, x)
-\}
-```
-
-`path_apply` runs in raw mode (kernel handler). Type-former-specific
-`transp_fn` values run inside it, also in raw mode. The handler is
-structurally identical to `hyp_reduce`: read a dispatch function from
-metadata, apply it.
-
-== `Path A B` as a library wait-form
-
-```
-make_type_path : (A : Type) -> (B : Type) -> Journey -> Path A B
-make_type_path A B journey := wait kernel_ref.path_apply
-  (pair (pair A B) journey)
-```
-
-`Path A B` values have `path_apply`'s signature. Applying a path to a
-value `x` is dispatched by the kernel's signature recognizer, routed to
-`path_apply`, which performs the transport.
-
-== Journey encoding
-
-The journey is the path's structural content. Variants:
-
-- `refl_journey` — identity transport.
-- `iso_journey (to : A -> B) (from : B -> A)` — iso-induced.
-- `compose_journey (p : Path A B) (q : Path B C)` — composed paths.
-- `parametric_journey (inner : Path X Y)` — used by container types
-  (List, Pair, etc.) whose transport recurses via the inner path.
-
-Each variant is a tagged value the kernel recognizes. New journey
-kinds can be added as library extensions; the kernel just routes them
-through `transp_fn`.
+= Library design
 
 == Metadata extension
 
-Each library type-former gains a new metadata slot `transp_fn`:
+Each library type-former's metadata grows from a 3-tuple to a 4-tuple:
 
 ```
 T_meta := pair recognizer_sig
               (pair params
                     (pair codomain_fn       // existing: for hyp_reduce
-                          transp_fn))        // NEW: for path_apply
+                          transp_fn))        // NEW: for library transp
 ```
 
-Per-type-former `transp_fn` values:
+`transp_fn` is either:
+- The LEAF sentinel `t` (T does not participate in structural
+  transport; `transp` falls back to `StuckElim`).
+- A function `(P, x, journey) -> transported_value` that
+  knows how this type former composes under transport.
+
+The slot is read by the library `transp` function, never by the
+kernel. The kernel handlers are unchanged.
+
+== Per-type-former `transp_fn` values
+
+First, the helpers `transp_fill` (forward fill of a trajectory along a
+type-path) and `transp_back` (transport along the reversed path):
 
 ```
-Bool.transp_fn := \{journey, x\} -> x
-Nat.transp_fn  := \{journey, x\} -> x
+transp_fill := \{P, i, x\} -> transp (\{j\} -> apply P (i I_and j)) x
+transp_back := \{P, y\} -> transp (\{i\} -> apply P (I_inv i)) y
+transp_fill_back := \{P, i, y\} ->
+  transp (\{j\} -> apply P (i I_or (I_inv j))) y
+```
 
-Pi.transp_fn := \{journey, f\} -> \arg ->
-  let dom_path = source_journey journey
-  let cod_path = target_journey journey
-  apply cod_path (f (apply (inv_journey dom_path) arg))
+Per-type rules:
 
-List.transp_fn := fix (\{self, journey, xs\} ->
+```
+// Discrete: identity (only reached when fast path doesn't trigger).
+Bool.transp_fn  := \{self, P, x\} -> x
+Nat.transp_fn   := \{self, P, x\} -> x
+False.transp_fn := \{self, P, x\} -> x
+
+// Pair: component-wise recursion.
+Pair.transp_fn := \{self, P, x\} -> \{
+  let A_path = \{i\} -> pair_fst (params_of (apply P i))
+  let B_path = \{i\} -> pair_snd (params_of (apply P i))
+  pair (self A_path (pair_fst x))
+       (self B_path (pair_snd x))
+\}
+
+// Sigma: dependent second component via a-trajectory.
+Sigma.transp_fn := \{self, P, x\} -> \{
+  let A_path = \{i\} -> pair_fst (params_of (apply P i))
+  let B_fn   = \{i\} -> pair_snd (params_of (apply P i))
+  let a0     = pair_fst x
+  let b0     = pair_snd x
+  let a_traj = \{i\} -> transp_fill A_path i a0
+  let a1     = a_traj I_one
+  let B_path = \{i\} -> apply (B_fn i) (a_traj i)
+  pair a1 (self B_path b0)
+\}
+
+// Pi (general dependent): contravariant in A, covariant in B,
+// threading a-trajectory through B.
+Pi.transp_fn := \{self, P, f\} -> \{
+  let A_path  = \{i\} -> pi_dom (apply P i)
+  let B_fn_at = \{i\} -> pi_cod (apply P i)
+  \{a1\} -> \{
+    let a0     = transp_back A_path a1
+    let a_traj = \{i\} -> transp_fill_back A_path (I_inv i) a1
+    let B_path = \{i\} -> apply (B_fn_at i) (a_traj i)
+    self B_path (apply f a0)
+  \}
+\}
+
+// Eq: refl at the new endpoints (requires endpoint paths to coincide).
+Eq.transp_fn := \{self, P, p\} -> \{
+  let A_path = \{i\} -> eq_carrier (apply P i)
+  let x_path = \{i\} -> eq_lhs (apply P i)
+  refl (A_path I_one) (x_path I_one)
+\}
+
+// List: recurse on the value's structure.
+List.transp_fn := fix (\{loop, self, P, xs\} -> \{
+  let A_path = \{i\} -> list_elem_type (apply P i)
   match (is_nil xs) \{
     TT => nil
-    FF => cons (apply (inner_journey journey) (head xs))
-               (self journey (tail xs))
-  \})
+    FF => cons (self A_path (list_head xs))
+               (loop self P (list_tail xs))
+  \}
+\})
 
-Eq.transp_fn := <path composition formula>
+// Type: closed types transport as themselves; non-trivial only via Glue.
+Type.transp_fn := \{self, P, X\} -> X
 ```
 
-For non-dependent types: transport is identity. For dependent types:
-structural recursion via the journey's inner components.
+For non-dependent (discrete) types: identity transport. For structural
+types: recurse component-wise. For dependent types: thread an
+`a`-trajectory built via `transp_fill_back`. For Glue, see §5.6.
 
-== Hash-cons stability
-
-Path construction is deterministic in inputs:
+== The `transp` library function
 
 ```
-make_type_path A B refl_journey   -- same tree for given (A, B)
+transp := fix (\{self, P, x\} -> \{
+  let T0 = apply P I_zero
+  let T1 = apply P I_one
+  // Fast path: constant family → identity transport.
+  match (tree_eq T0 T1) \{
+    TT => x
+    FF => \{
+      // Dispatch on T0's transp_fn slot.
+      let tfn = transp_fn_of T0
+      match (tree_eq tfn t) \{
+        TT => StuckElim T1 (pair P x)   // sentinel: stuck
+        FF => apply tfn (pair self (pair P x))
+      \}
+    \}
+  \}
+\})
 ```
 
-Two structurally-identical paths share hash-cons identity. Conv via
-`tree_eq` on paths is O(1). The H-rule reconstruction for path-typed
-hypotheses works analogously to existing predicate_frame H-rule.
+The dispatcher reads the target type's `transp_fn` from metadata. If
+present, it invokes it (passing `self` so the rule can recurse via
+`transp`). If absent (sentinel `t`), it produces a stuck. Each
+library type opts in by populating its slot.
 
-== Inverse-pair collapse
+#note[
+  *Why metadata, not a library switch.* Each type former carries its
+  own transport rule, so new types extend the system without modifying
+  a central function. This matches the metadata-driven philosophy of
+  the unified design: `codomain_fn`, `transp_fn`, and (potentially)
+  future slots all live on the type, dispatched by the kernel or
+  library by reading metadata.
+]
 
-For `transport_back p (transport p x)` to reduce to `x` definitionally,
-`path_apply` checks for inverse-journey patterns:
+== `I` — the De Morgan algebra
 
-- `transport p x` evaluates via `path_apply`, may produce a stuck if
-  `x` is hypothesis-typed.
-- `transport_back p (that_stuck)` evaluates via `path_apply` with
-  inverse journey. Before producing another stuck, checks the inner
-  stuck's journey identity. If it matches the inverse of the current
-  journey, collapse to the inner hypothesis.
+`I` is a library type whose elements are formulas in the free De Morgan
+algebra over a set of names. Variables are kernel-minted neutrals of
+stored type `I`. Constants and operations are tagged trees:
 
-This is the `TypePath`-style stuck-collapse mechanism from previous
-discussions, integrated into `path_apply`.
+```
+let tag_zero = stem t
+let tag_one  = stem (stem t)
+let tag_and  = stem (stem (stem t))
+let tag_or   = stem (stem (stem (stem t)))
+let tag_inv  = stem (stem (stem (stem (stem t))))
 
-== Soundness
+let I_zero = pair tag_zero t
+let I_one  = pair tag_one  t
 
-`path_apply` runs in raw mode. Per-type-former `transp_fn` values are
-library-supplied; the kernel runs them as-is.
+let I_and = \{a, b\} -> pair tag_and (pair a b)
+let I_or  = \{a, b\} -> pair tag_or  (pair a b)
+let I_inv = \{a\}    -> pair tag_inv a
 
-Library authors are responsible for correctness of `transp_fn`. A
-miswritten rule produces type-mismatched transports, caught at the
-public boundary by predicate evaluation on the result. The trust model
-matches the existing `codomain_fn`: kernel-routed, library-supplied,
-weakly verified.
+let I_recognizer = \{_, v\} ->
+  select_lazy
+    (\{_\} -> TT)                                       // I_zero or I_one
+    (\{_\} -> select_lazy
+      (\{_\} -> dispatch_op v)                          // tagged op
+      (\{_\} -> FF)
+      (is_concrete_fork v))
+    (or (tree_eq v I_zero) (tree_eq v I_one))
 
-The journey field is verified at path construction time (per Disp's
-weak Pi). Specifically, `iso_journey` requires proofs of the
-roundtrip laws; `compose_journey` requires the two paths to type-line-
-up correctly.
+I := guard (predicate_frame_form
+  (t I_recognizer_sig (t t t)))
+```
 
-= What Option B delivers
+The recognizer recurses via `I (pair_fst body)`, so I-typed neutral
+subterms (variables in formulas) route through `predicate_frame`'s
+H-rule. Walker-safe: tags are tree-eq'd, no triage on neutrals.
+
+A library function `I_normalize` reduces formulas to a canonical form
+(DNF, say). Two I-formulas are De-Morgan-equal iff their normalized
+trees are hash-cons-identical. Conversion stays O(1) on normalized
+inputs.
+
+== `Path` and `PathP` as aliases over `Pi I`
+
+`Path A x y` and `PathP A x y` do not need to be separate library
+types. They are one-line aliases for `Pi I`:
+
+```
+Path  := \{A, _, _\} -> Pi I (\{_\} -> A)
+PathP := \{A, _, _\} -> Pi I A
+```
+
+The endpoint arguments are *documentation only* — discarded in the
+body. After elaboration, `Path A x y` is just `Pi I (\{_\} -> A)`,
+and `PathP A x y` is `Pi I A` (dependent codomain). Endpoint values
+are recovered by applying paths to `I_zero` and `I_one`; the walker's
+discipline (no triage on `i`) ensures the boundary values are
+whatever the function returns at the endpoints.
+
+Why this works:
+
+- *No separate `path_recognizer`.* The Pi-recognizer already handles
+  "for every `i : I`, `f i : A`" via `bind_hyp I (\{i\} -> A (f i))`.
+  That body check IS the path's body-well-typedness check.
+- *No separate `path_transp_fn`.* `Pi.transp_fn` dispatches uniformly
+  on the codomain; paths are the special case where the domain is `I`.
+- *No boundary-check kernel slot.* The "boundaries hold at the
+  endpoints" property is purely *computational* — by the walker's
+  discipline, the only paths constructible are those whose endpoints
+  are the function's values at `I_zero` and `I_one`. No assertion
+  needed.
+
+Core operations become one-liners over the alias:
+
+```
+refl   := \{A, x, i\} -> x
+cong   := \{A, B, f, p, i\} -> f (p i)
+sym    := \{A, p, i\} -> p (I_inv i)
+funext := \{A, B, h, i, a\} -> h a i
+```
+
+None of these reference endpoint values; they all operate on the
+underlying `Pi I` function shape.
+
+When a theorem needs to *assert* specific endpoints (e.g., "this is a
+path from `x` to `y`"), use a propositional helper rather than a
+type-level check:
+
+```
+endpoints := \{A, f, x, y\} ->
+  Sigma (Eq A (f I_zero) x) (\{_\} -> Eq A (f I_one) y)
+```
+
+The proof obligation is moved from type-level to propositional. This
+covers the rare cases where named endpoints actually matter (path
+composition compatibility, `J`'s motive); the rest of cubical operates
+purely on the function shape.
+
+== `hcomp` as a library function
+
+Real cubical `hcomp` takes a partial element `u : (i : I) -> Partial φ A`.
+For Stages 1–2 without `Partial` (see §10 for the full design), we use
+a stripped-down 2-face variant that handles path composition and
+component-wise structural recursion:
+
+```
+TwoSides := \{T : Type\} -> Type
+TwoSides T := Sigma (Pi I (\{_\} -> T))
+              (\{_\} -> Pi I (\{_\} -> T))
+
+hcomp : \{T : Type, sides : TwoSides T, base : T\} -> T
+hcomp := \{T, sides, base\} -> \{
+  let hfn = hcomp_fn_of T
+  match (tree_eq hfn t) \{
+    TT => StuckElim T (pair sides base)
+    FF => apply hfn (pair sides base)
+  \}
+\}
+
+// Filling: give the entire trajectory, not just the top face.
+hfill : \{T : Type, sides : TwoSides T, base : T\} -> Pi I (\{_\} -> T)
+hfill := \{T, sides, base, i\} ->
+  hcomp T
+    (pair (\{j\} -> apply (pair_fst sides) (i I_and j))
+          (\{j\} -> apply (pair_snd sides) (i I_and j)))
+    base
+```
+
+Per-type rules:
+
+```
+// Discrete: identity on base.
+Bool.hcomp_fn  := \{sides, base\} -> base
+Nat.hcomp_fn   := \{sides, base\} -> base
+False.hcomp_fn := \{sides, base\} -> base
+
+// Pair: component-wise.
+Pair.hcomp_fn := \{sides, base\} -> \{
+  let A = pair_fst (params_of (type_of base))
+  let B = pair_snd (params_of (type_of base))
+  let left_A  = \{i\} -> pair_fst (apply (pair_fst sides) i)
+  let left_B  = \{i\} -> pair_snd (apply (pair_fst sides) i)
+  let right_A = \{i\} -> pair_fst (apply (pair_snd sides) i)
+  let right_B = \{i\} -> pair_snd (apply (pair_snd sides) i)
+  pair
+    (hcomp A (pair left_A right_A) (pair_fst base))
+    (hcomp B (pair left_B right_B) (pair_snd base))
+\}
+
+// Pi: pointwise hcomp.
+Pi.hcomp_fn := \{sides, base\} -> \{
+  let A    = pi_dom (type_of base)
+  let B_fn = pi_cod (type_of base)
+  \{a\} -> \{
+    let B_at_a    = apply B_fn a
+    let left_at   = \{i\} -> apply (apply (pair_fst sides) i) a
+    let right_at  = \{i\} -> apply (apply (pair_snd sides) i) a
+    hcomp B_at_a (pair left_at right_at) (apply base a)
+  \}
+\}
+
+// Sigma: fill first component first, transport second through its
+// trajectory (uses transp; would be cleaner with comp — see §10).
+Sigma.hcomp_fn := \{sides, base\} -> \{
+  let A    = pair_fst (params_of (type_of base))
+  let B_fn = pair_snd (params_of (type_of base))
+  let left_fst  = \{i\} -> pair_fst (apply (pair_fst sides) i)
+  let right_fst = \{i\} -> pair_fst (apply (pair_snd sides) i)
+  let fst_fill  = hfill A (pair left_fst right_fst) (pair_fst base)
+  let new_fst   = apply fst_fill I_one
+  let left_snd  = \{i\} -> pair_snd (apply (pair_fst sides) i)
+  let right_snd = \{i\} -> pair_snd (apply (pair_snd sides) i)
+  let snd_transported = transp (\{i\} -> apply B_fn (apply fst_fill i))
+                               (pair_snd base)
+  pair new_fst
+       (hcomp (apply B_fn new_fst) (pair left_snd right_snd) snd_transported)
+\}
+```
+
+Path composition falls out as a 4-line `hcomp` application:
+
+```
+compose_path : \{A : Type, x, y, z : A,
+                p : Path A x y, q : Path A y z\} -> Path A x z
+compose_path := \{A, x, y, z, p, q, i\} ->
+  hcomp A
+    (pair (\{_\} -> x)   // left wall: constant at x (refl x)
+          q)             // right wall: q
+    (apply p i)          // base: p i
+```
+
+== `Glue2` as a library type
+
+Real cubical `Glue B [φ ↦ (T, e)]` takes a partial element system
+`(T, e)`. Stages 1–3 without full `Partial` machinery use `Glue2`, a
+2-face version parameterized by the interval position, sufficient for
+`ua`. The full `Partial`-based design is deferred to §10.
+
+```
+// Glue2: parameterized by base B, two face-types T_zero, T_one, two
+// equivalences, and an interval position i.
+//   at i = I_zero: reduces to T_zero
+//   at i = I_one:  reduces to T_one
+//   strictly between: a "glued" type pairing B with partial T-info
+
+let glue2_recognizer = \{params, v\} -> \{
+  let B      = glue2_B params
+  let T_zero = glue2_T_zero params
+  let T_one  = glue2_T_one params
+  let i      = glue2_i params
+  match (tree_eq i I_zero) \{
+    TT => apply T_zero v
+    FF => match (tree_eq i I_one) \{
+      TT => apply T_one v
+      FF => apply B (pair_fst v)   // strictly between: check B-component
+    \}
+  \}
+\}
+
+let glue2_transp_fn = \{self, P, v\} -> \{
+  let B_path = \{i\} -> glue2_B (params_of (apply P i))
+  let i_at   = \{j\} -> glue2_i (params_of (apply P j))
+  let P0_params = params_of (apply P I_zero)
+  let P1_params = params_of (apply P I_one)
+  match (tree_eq (i_at I_zero) I_zero) \{
+    TT => \{
+      // Source at i=0 face: v inhabits T_zero
+      let b_src = apply (equiv_fwd (glue2_e_zero P0_params)) v
+      let b_dst = self B_path b_src
+      match (tree_eq (i_at I_one) I_zero) \{
+        TT => apply (equiv_bwd (glue2_e_zero P1_params)) b_dst
+        FF => match (tree_eq (i_at I_one) I_one) \{
+          TT => apply (equiv_bwd (glue2_e_one P1_params)) b_dst
+          FF => StuckElim (apply P I_one) (pair P v)
+        \}
+      \}
+    \}
+    FF => match (tree_eq (i_at I_zero) I_one) \{
+      TT => \{
+        // Source at i=1 face: v inhabits T_one
+        let b_src = apply (equiv_fwd (glue2_e_one P0_params)) v
+        let b_dst = self B_path b_src
+        match (tree_eq (i_at I_one) I_zero) \{
+          TT => apply (equiv_bwd (glue2_e_zero P1_params)) b_dst
+          FF => match (tree_eq (i_at I_one) I_one) \{
+            TT => apply (equiv_bwd (glue2_e_one P1_params)) b_dst
+            FF => StuckElim (apply P I_one) (pair P v)
+          \}
+        \}
+      \}
+      FF => StuckElim (apply P I_one) (pair P v)  // mid-region: stuck
+    \}
+  \}
+\}
+
+Glue2 := \{B, T_zero, T_one, e_zero, e_one, i\} ->
+  guard (wait kernel_ref.predicate_frame
+    (pair glue2_recognizer_sig
+          (pair (pair B (pair T_zero (pair T_one
+                  (pair e_zero (pair e_one i)))))
+                (pair t (pair glue2_transp_fn glue2_hcomp_fn)))))
+
+ua := \{A, B, e, i\} -> Glue2 B A B e (id_equiv B) i
+// Endpoints check:
+//   ua A B e I_zero = Glue2 B A B e id I_zero -> recognizer collapses to A ✓
+//   ua A B e I_one  = Glue2 B A B e id I_one  -> recognizer collapses to B ✓
+```
+
+`Glue2`'s recognizer reads `i` and dispatches via `tree_eq` against
+endpoints — no triage on `i` itself, walker-safe. Its `transp_fn`
+handles the equivalence-mediated case-analysis at faces. Mid-region
+transport (when both endpoints' `i` are strictly between `I_zero` and
+`I_one`) is left stuck pending the full `Partial`-based design.
+
+== HIT eliminator machinery
+
+HITs require eliminators that reduce on path-typed constructors. The
+`eliminator_frame` pattern extends naturally — the dispatcher recognizes
+tagged path constructors and routes to user-supplied path-cases.
+
+Example: the circle `S1`.
+
+```
+// Tagged constructors
+s1_base_tag := stem t
+s1_loop_tag := stem (stem t)
+
+S1_base := pair s1_base_tag t
+S1_loop := \{i\} -> pair s1_loop_tag i  // Pi I (\{_\} -> S1)
+
+// Note: S1_loop I_zero = pair s1_loop_tag I_zero, structurally distinct
+// from S1_base. The boundary equality (loop I_zero ≡ base) is enforced
+// propositionally by the recognizer's expectations on eliminator cases.
+
+s1_recognizer := \{_, v\} -> \{
+  let tag = pair_fst v
+  match (tree_eq tag s1_base_tag) \{
+    TT => TT
+    FF => match (tree_eq tag s1_loop_tag) \{
+      TT => I_recognizer t (pair_snd v)   // payload must be I-valued
+      FF => FF
+    \}
+  \}
+\}
+
+S1 := guard (wait kernel_ref.predicate_frame
+  (pair s1_recognizer_sig (pair t t)))
+
+// Eliminator dispatcher: cases are (base_case, loop_case).
+// loop_case : Pi I (\{_\} -> C) with boundary loop_case I_zero ≡ base_case.
+s1_dispatcher := \{motive, cases, target\} -> \{
+  let base_case = pair_fst cases
+  let loop_case = pair_snd cases
+  let tag = pair_fst target
+  match (tree_eq tag s1_base_tag) \{
+    TT => base_case
+    FF => match (tree_eq tag s1_loop_tag) \{
+      TT => apply loop_case (pair_snd target)
+      FF => StuckElim (apply motive target) (pair cases target)
+    \}
+  \}
+\}
+
+S1_rec := wait kernel_ref.eliminator_frame
+  (init_meta_arity_3 s1_dispatcher)
+```
+
+For HITs with higher-dimensional constructors (squares, cubes), the
+dispatcher pattern extends: more tags, more cases, with each higher
+case demanding a higher-dimensional path in the result type. The
+kernel machinery is unchanged; only the per-HIT dispatcher grows.
+
+*Boundary obligation.* The user-supplied `loop_case` must satisfy
+`loop_case I_zero ≡ base_case` and `loop_case I_one ≡ base_case`
+(propositionally, via `Eq`). The recognizer does not enforce this; it
+is a library obligation tracked at the eliminator's construction site.
+For HITs where boundaries hold *definitionally* (e.g., constant loop
+cases), this is automatic.
+
+= What the library design delivers
 
 == Capabilities
 
-+ *Definitional iso roundtrip.* `transport_back p (transport p x) ≡ x`
-  via stuck-collapse.
++ *Definitional iso roundtrip.* `transport_back p (transport p x) ⇝ x`
+  via library normalization on stuck identities. `transport p_inv
+  (transport p x)` produces `StuckElim A (p_inv, StuckElim B (p, x))`,
+  which a library normalizer recognizes by hash-cons pattern and
+  collapses to `x`.
 
-+ *Structural transport on type formers.* Transport on `List`, `Pi`,
-  `Pair`, etc. recurses through structure automatically.
++ *Structural transport on type formers.* Each library type opts in by
+  populating its `transp_fn`. `transp` recurses via the slot.
 
-+ *Type-level equivalence as equality* (limited form). `ua_path iso`
-  gives a path between types; transport along it converts values via
-  the iso. Not full univalence (no Glue), but the practical computational
-  effect is the same for iso-based equivalences.
++ *Univalence as a definable theorem.* `ua e` constructs a Glue-based
+  path; transport along it reduces via `Glue.transp_fn`, which applies
+  the equivalence.
 
-+ *Library-defined path composition* with kernel-mediated reduction.
-  `compose_path p q` is a value; transport along it composes the
-  transports.
++ *Representation independence in practice.* Functions over
+  `List BoolTree` work on `List BoolScott` via transport, with
+  `List.transp_fn` recursing element-wise.
 
-+ *Representation-independence in practice.* Functions over `List
-  BoolTree` work on `List BoolScott` via transport, with the kernel
-  doing the element-wise conversion.
++ *No kernel growth.* The seven primitives remain seven. Cubical is
+  added entirely at the library layer.
 
 == Limitations
 
-+ *No abstract intervals.* Paths have fixed endpoints. There's no way
-  to abstract over `i : I` and reason about parametric paths.
++ *Endpoint-only path evaluation.* `transp` evaluates `P` at `I_zero`
+  and `I_one`, then dispatches on the shared head former. Paths whose
+  intermediate behavior matters are not captured.
 
-+ *No path induction (J eliminator).* Without abstract intervals,
-  cubical's `J` eliminator can't be defined; you can use specific paths
-  but can't quantify over them.
++ *Walker constraints on path bodies.* Path bodies cannot triage on
+  their `i`-argument. Bodies must use `i` only via I-operations or by
+  passing it as data to I-consuming type formers (Glue, etc.). This
+  matches cubical's discipline but excludes some classical-looking
+  definitions.
 
-+ *No univalence-as-theorem.* `ua_path iso` works because we built it
-  to apply the iso; but there's no internal theorem that *every*
-  equivalence yields a path. The connection is by library construction,
-  not by kernel computation.
++ *Conversion modulo De Morgan.* `tree_eq` compares trees structurally,
+  not modulo lattice equalities. Library smart constructors must
+  normalize their I-arguments (`Glue (I_normalize phi) ...`) so that
+  hash-cons identity captures De-Morgan equivalence.
 
-+ *No higher paths.* Paths between paths can be iterated
-  (`Path (Path A x y) p q`) but have no computational content beyond
-  Option B's first-order transport.
-
-= What's missing for full cubical
-
-== Adding interval variables
-
-Cubical's `I` is a type with two distinguished inhabitants (`i0`, `i1`),
-plus abstract interval variables that can be bound. Path is
-`(i : I) -> A` with boundary conditions `p i0 ≡ x ∧ p i1 ≡ y`.
-
-#note[
-  *What's actually new isn't `i0`/`i1` — it's the abstract variable.*
-  Option B already handles "paths between specific types A and B"
-  without an interval. The journey encodes the endpoints implicitly.
-
-  What Option B *can't* express is a binder over a path's interval
-  position: `\\i. some-expression-using-i`. This requires `I` to be a
-  type whose values include hypothesis-like abstract variables. The
-  constants `i0`/`i1` are then specific values that can substitute
-  for those variables and reduce.
-
-  So the kernel addition is "a type with both opaque (hypothesis-like)
-  and substitutable (specific-value) inhabitants" — a new kind of
-  binder.
-]
-
-What's needed beyond Option B:
-
-+ *Interval primitive.* A new kernel-recognized type `I` with:
-  - Two distinguished constants: `i0`, `i1`.
-  - A binding mechanism for abstract interval variables, analogous to
-    `bind_hyp` but typed at `I`.
-
-+ *Boundary check as a definitional invariant.* When type-checking a
-  path proof `p : (i : I) -> A` against `Path A x y`, the kernel must
-  verify `p i0 ≡ x ∧ p i1 ≡ y` by substitution and structural
-  comparison. This is a new kind of kernel invariant beyond what
-  `predicate_frame` currently checks.
-
-+ *Path-as-function unification.* `Path A x y` becomes the type
-  `(i : I) -> A` with boundary `p i0 = x ∧ p i1 = y`. Option B's
-  `Path A B` becomes a refinement that pins endpoints.
-
-+ *Connection operations.* `i ∧ j`, `i ∨ j`, `~ i` — the De Morgan
-  operations on intervals, used in transport-of-Pi and Glue formulas.
-
-*Kernel additions:* one new type primitive (`I`) with abstract binder
-plus boundary-check semantics. Bounded but architecturally distinct
-from existing primitives.
-
-== Adding Glue (with `hcomp`)
-
-`Glue B [φ ↦ (T, e)]` is the type that is `B` everywhere except where
-`φ : I` holds, where it equals `T` with equivalence `e : T ≃ B`. It's
-what makes univalence reduce computationally — `transp (ua e) x`
-reduces because `ua e` is internally a Glue type whose transport is
-defined to apply `e`.
-
-#note[
-  *Glue and `hcomp` come together.* Glue's transport rule is *defined*
-  using `hcomp` (homogeneous composition) — there's no way to add Glue
-  without also adding `hcomp`. So practically, Stage 3 and Stage 4
-  are a single conceptual addition split only by what they enable:
-  Glue gives univalence-as-computation; `hcomp` enables higher
-  composition. You can't have one without the other.
-
-  This is a correction to the staging — they should be considered
-  together.
-]
-
-What's needed:
-
-+ *`hcomp` primitive.* Homogeneous composition: takes a partial path
-  filling and a base, produces a composed path. Required by Glue's
-  transport rule.
-
-+ *Glue type primitive.* A new kernel-recognized type former with its
-  own predicate and per-type metadata.
-
-+ *Glue's transport rule.* The most complex of the cubical transport
-  rules:
-  ```
-  transp (λi. Glue B_i [φ_i ↦ (T_i, e_i)]) ψ x  =  ...
-  ```
-  Case analysis on whether `φ` holds at the path's endpoints, applying
-  the equivalence where appropriate, plus `hcomp` to fill in.
-
-+ *Univalence as a definitional theorem.* With Glue, `ua : (A ≃ B) ->
-  Path Type A B` is defined as
-  `\\i -> Glue B [i = i0 ↦ (A, e), i = i1 ↦ (B, id_equiv)]`.
-  Univalence reduces computationally.
-
-#note[
-  *Practical implication for Disp.* Option B's `iso_journey` already
-  gives transport-along-an-iso for representation-independence use
-  cases. The thing Glue *adds* is "every equivalence (not just iso)
-  yields a path in the type universe, and transport reduces" — a
-  theoretical strengthening more than a practical one.
-
-  For Disp's stated goals (representation independence, optimizer
-  rewrites, synthesizer search-space collapse), Option B's iso paths
-  appear to cover the practical use cases. Glue's incremental value
-  is mostly for HoTT-style formal mathematics, not for the
-  applications described in `GOALS.md`.
-]
-
-*Kernel additions:* two new primitives (Glue and `hcomp`), plus the
-transport rule and `ua` derivation. The most invasive piece.
-
-== Higher paths — emerges with Stage 3
-
-Paths between paths: `Path (Path A x y) p q`. Cubical handles these
-uniformly via the same path-as-function-from-`I` machinery once `I`
-and `hcomp` are in place.
-
-What's needed:
-
-+ *Iterated path types.* With the interval, `Path (Path A x y) p q`
-  becomes `(i : I) -> (j : I) -> A` with appropriate boundary
-  conditions. No new primitive needed; just iteration of Stage 2's
-  Path machinery.
-
-+ *Higher transport rules.* Per-type-former transport rules for
-  iterated paths. These extend Option B's `transp_fn` to handle nested
-  path types — library extensions, not kernel changes.
-
-+ *`hcomp` is already present* from Stage 3 (Glue requires it).
-
-For most practical programming, higher paths are not needed (most
-types are h-sets). Once Stage 3 is in place, higher paths are
-essentially free — iteration of existing machinery plus per-type
-library rules.
-
-*Kernel additions beyond Stage 3:* none (the `hcomp` primitive is
-already present). Higher path usage is library-level extension.
++ *No higher inductive types directly.* HITs require constructor laws
+  that are themselves paths; absent the abstract-i machinery (§8),
+  HITs are out of scope for this design.
 
 = Staged implementation plan
 
-A possible incremental path:
-
-== Stage 0 — no changes (current Disp)
+== Stage 0 — current Disp
 
 Isos are library records. Conversion is explicit. Iso roundtrip is
 propositional via weak Pi.
 
-== Stage 1 — Option B core
+== Stage 1 — Library transport with metadata `transp_fn`
 
-Add `path_apply` kernel handler. Add `transp_fn` metadata slot.
-Implement per-type-former rules for common types (Bool, Nat, Pi, Sigma,
-List, Eq). Library `Path` type with constructors (`refl`, `ua`,
-`compose`, `inv`) and transport operations.
+Extend metadata layout to include `transp_fn`. Implement `transp`
+library function. Add `transp_fn` to Bool, Nat, Pi, Sigma, Pair, List,
+Eq, Type. Define `Path`/`PathP` as aliases over `Pi I` (see §5.4 —
+no separate library type needed). Define `refl`, `cong`, `sym`,
+`funext` as one-liners over `Pi I`.
 
-*Capability:* structural transport via library-defined paths. Iso-
-roundtrip is definitional via stuck-collapse. Refactoring across
-equivalent types is computational.
+*Capability:* structural transport via paths-as-functions.
+`refl`/`cong`/`sym`/`funext` fall out trivially. Definitional iso
+roundtrip via stuck-identity normalization (library-level rewrite).
 
-*Still missing:* abstract interval reasoning, univalence-as-computation,
-higher paths.
+*Kernel work:* metadata layout convention update; the seven handlers
+are unchanged. Sweep test sites that assert specific metadata shapes.
 
-== Stage 2 — interval and parametric paths
+== Stage 2 — `I` and `hcomp`
 
-Add `I` type as kernel primitive. Add endpoint reduction. Generalize
-Path to be `(i : I) -> A` with boundary conditions.
+Define `I` as a `predicate_frame`-based library type with De-Morgan
+operations and `I_normalize`. Add `hcomp_fn` slot (or fold into a
+single dispatch slot — see "Open questions"). Implement `hcomp` library
+function with per-type rules.
 
-*Capability:* parametric reasoning about abstract paths. Path induction
-(the `J` eliminator) for non-trivial paths. Functions that take paths
-as arguments.
+*Capability:* path composition via hcomp. Connections (`i ∧ j`, etc.)
+as data. Paths in I itself.
 
-*Still missing:* univalence-as-computation, higher paths.
+*Kernel work:* none. Metadata extension only.
 
-== Stage 3 — Glue + `hcomp` (together)
+== Stage 3 — `Glue` and univalence
 
-Add Glue and `hcomp` primitives (they're inseparable — Glue's transport
-rule uses `hcomp`). Define `ua` via Glue. Univalence as a definitional
-theorem.
+Define `Glue` as a `predicate_frame`-based library type. Implement
+`Glue.transp_fn` (uses `hcomp` internally). Define `ua : A ≃ B → Path
+Type A B`.
 
-*Capability:* equivalences ARE paths, definitionally. Univalent
-categories. Full cubical-style reasoning about type equivalence. Higher
-paths become usable as a side effect (iteration of Path + `hcomp`).
+*Capability:* univalence as a derivable theorem. Transport along
+`ua e` reduces via Glue's rule. Equivalence-as-equality
+computationally.
 
-*Practical implication:* Stage 1's iso paths already cover
-representation-independence; Stage 3 mostly adds theoretical power
-(univalence as theorem, synthetic homotopy). Significant kernel
-investment for primarily theoretical gain.
+*Kernel work:* none. Library type addition.
 
-= Trade-offs
+== Stage 4 — abstract-i evaluation
 
-#table(
-  columns: 4,
-  stroke: 0.4pt + gray,
-  align: left,
-  inset: 6pt,
-  [*Stage*], [*Kernel additions*], [*Capability gained*], [*Use cases*],
-  [0], [None], [None], [Manual iso threading],
-  [1], [`path_apply` + `transp_fn` slot], [Structural transport, def. iso roundtrip], [Representation independence, optimizer rewrites, synthesizer search-space collapse],
-  [2], [`I` primitive with abstract binder, boundary check], [Abstract paths, J eliminator, parametric reasoning], [Path induction proofs, formal reasoning about paths],
-  [3], [Glue + `hcomp` (together)], [Univalence-as-computation, higher paths], [HoTT-style proofs, synthetic homotopy theory],
+The genuinely new capability: type-family inspection at abstract `i`.
+See §8 for what this requires. Likely a sibling walker variant with
+relaxed parametricity for I-typed neutrals.
+
+*Capability:* full cubical computation including non-endpoint-decidable
+type families. Higher inductive types become tractable.
+
+*Kernel work:* substantial — a new reduction discipline.
+
+= Open questions
+
+== One metadata slot or many?
+
+`transp_fn`, `hcomp_fn`, and any future operation-fn are all "library
+dispatcher hooks." Two layouts to consider:
+
++ *Multiple slots.* Each operation gets its own metadata slot. Clean
+  separation; metadata grows linearly with operations.
+
++ *Single dispatch table.* One metadata slot holds a record
+  `\{transp_fn, hcomp_fn, ...\}`. Closed for extension at the metadata
+  layout level; types implement the record.
+
+The single-table approach scales better but couples metadata layout to
+a moving target. The per-slot approach is concrete but means library
+type definitions become longer over time. The current code uses the
+3-tuple `(recognizer_sig, params, codomain_fn)`; extending to a record
+of named fields would be a one-time refactor.
+
+Recommendation: start with multiple slots (4-tuple at Stage 1, 5-tuple
+at Stage 2), revisit at Stage 3 if the slot count exceeds five.
+
+== `tree_eq`-based conversion versus normalized conversion
+
+Disp's commitment is `conv = tree_eq`, O(1). Once I-formulas appear in
+type metadata, this requires smart constructors to normalize on
+construction so that `Glue B phi1 T e` and `Glue B phi2 T e` (with
+`phi1` and `phi2` De-Morgan-equivalent) produce the same tree.
+
+This is achievable but adds a normalization step to every smart
+constructor that takes I-arguments. The alternative is a
+conversion-modulo-De-Morgan check, which breaks the O(1) property.
+
+Recommendation: normalize on construction. Pay the cost at type-build
+time, keep conversion O(1).
+
+== Path bodies that produce types
+
+Type-valued paths (`Path Type A B`) are central to univalence. The body
+of such a path returns a Type, which is itself a wait-form. Walker
+discipline applies: the body cannot triage on `i`, but it can produce
+types whose metadata contains `i` as data. Glue is precisely such a
+construction — `\i. Glue B [phi(i) ↦ (T, e)]` is walker-safe iff
+`phi` is a closed combinator on I that doesn't triage on its
+argument. This works.
+
+= Abstract-i evaluation — what would it actually require
+
+This section investigates evaluating `P : I → Type` at an abstract `i`
+and inspecting the result. The investigation reveals that the walker
+already allows much more than expected, and the genuine wall is
+elsewhere than initially thought.
+
+== What "abstract i" means
+
+`P : I → Type` can be evaluated three ways:
+
+- *Closed evaluation*: `P I_zero`, `P I_one` — fully concrete results.
+- *Closed-substitution evaluation*: `P (some_closed_I_value)` — for
+  any closed I-formula. Reduces to a concrete tree.
+- *Hypothesis evaluation*: applying `P` to an I-typed neutral. Runs
+  under the walker; result is a tree containing the neutral as data.
+
+Stages 1-3 use only the first two forms. Abstract-i evaluation means
+making the third form productive — inspecting `P i` for a hypothesis
+`i` to make decisions the closed forms cannot.
+
+== What the walker already allows (and it is more than expected)
+
+Trace `apply(P, i_h)` where `i_h = Hyp I id` and
+`P = \{i\} -> Pair (A_path i) (B_path i)`:
+
++ Dispatcher routes by signature on `P`. P has no kernel signature →
+  walker.
++ Walker enters fork rule on `P`'s compiled tree, S-rule cascade,
+  eventually reaches the Pair-constructor closure applied to
+  `(A_path i_h, B_path i_h)`.
++ `Pair_constructor = \{a, b\} -> pair Pair_sig (pair a b)` — a closed
+  combinator with no triage on its arguments.
++ Result: `pair Pair_sig (pair A_result B_result)` where `A_result`
+  and `B_result` are trees containing `i_h` as data.
+
+The result's outer root is `Pair_sig` — closed. Triage on it (e.g.,
+`pair_fst`) is fine: walker rejects triage on neutral-rooted values,
+and `Pair_sig` is not a neutral.
+
+The neutral `i_h` flows through metadata but never becomes a root. The
+walker's parametricity constraint — *no triage on a tree whose root is
+a kernel-minted neutral* — is exactly the cubical discipline
+("path bodies must not branch on intervals"). It matches what abstract-i
+evaluation needs, mechanically enforced.
+
+Operations that work under the walker at abstract `i`:
+
++ *Reading the outer signature*: `pair_fst (P i_h) = Pair_sig`. Closed.
++ *Reading metadata*: `pair_snd (P i_h)` returns a fork with closed
+  root. Traverse further while reading closed sub-roots.
++ *Threading `i_h` through closed combinators*: I-operations like
+  `I_or i_h I_zero` build forks with closed tags as roots, never
+  triaging on `i_h`.
++ *Returning types with `i_h` in metadata*: `Glue B [phi(i_h) ↦ ...]`
+  is a wait-form with `Glue_sig` root — closed.
+
+This means *`transp`'s structural recursion can read `P i_h` for
+abstract `i_h` for every type former whose metadata is laid out
+inertly in `i_h`.* Stages 1-3 do not actually require closed-endpoint
+evaluation — they could evaluate at abstract `i_h` and get the same
+dispatch information.
+
+== What actually breaks
+
+Four cases worth examining:
+
+*Case 1 — substitution-into-evaluated trees.* I initially thought
+`transp` needs to "substitute `I_zero` for `i` in an already-evaluated
+`P i_h`." It does not. Closed substitution is just another
+application: `apply(P, I_zero)` reduces fully concretely. `transp` has
+`P` in hand and can call it at any I-value at any time. Substitution
+into already-evaluated terms is never needed.
+
+*Case 2 — lattice-equality conversion.* Two types `Glue B (I_or i
+I_zero) T e` and `Glue B i T e` differ structurally but are
+De-Morgan-equal. `tree_eq` distinguishes them. The fix: smart
+constructors normalize their I-arguments on construction. `Glue B phi
+T e := guarded_glue B (I_normalize phi) T e`. After normalization,
+hash-cons identity captures lattice equality. Library hygiene, no
+kernel change.
+
+*Case 3 — parametric reasoning over paths.* `Pi (Path A x y) (\{p\}
+-> body using p)` mints `p_h` as a hypothesis of stored type
+`Path A x y`. If body invokes `transp p_h x`, the dispatch tries to
+read a `transp_fn` from `p_h`'s metadata — but `p_h` is opaque; no
+metadata to read. Result: `transp p_h x ⇝ StuckElim B (p_h, x)`,
+which is *correct*: under an abstract path, transport is opaque.
+Downstream rules can match this stuck shape when `p_h` becomes
+concrete.
+
+*Case 4 — late firing of stuck identities under substitution.* This
+is the genuine wall.
+
+Consider `J : (P : (b : A) -> Path A x b -> Type) -> P x refl -> (b :
+A) -> (p : Path A x b) -> P b p`. To define `J`, given a hypothesis
+`p_h : Path A x b_h`, we must produce a value of `P b_h p_h`.
+Cubical's `J` reduces `J P base x refl ⇝ base` when the path is
+`refl`. In Disp's stuck framework:
+
+```
+J P base b_h p_h ⇝ StuckElim (P b_h p_h) (J_id, base)
+```
+
+This is typeable. But when later `p_h` becomes `refl` (e.g., via Eq's
+H-rule or other substitution), the stuck's identity contains `p_h` as
+a hash-cons-frozen subterm. There is *no operation in the current
+kernel that re-fires the stuck's computation with the new value of
+`p_h`*. The stuck remains opaque forever.
+
+Cubical handles this by having the J-reduction encoded as part of the
+*reduction relation on paths*: when a path reduces to `refl`, every
+J-application on that path reduces too. This is "late firing" — a
+deferred computation that re-runs when its dependency becomes concrete.
+
+Tree calculus has no late firing. Hash-cons identity is structural: a
+tree containing `p_h` does not auto-update when `p_h` reduces. The
+only way to "update" is to re-build the tree with the new value, which
+requires knowing where `p_h` appears and what to recompute — which is
+exactly what late firing would do, if it existed.
+
+== The genuine wall: deferred firing under concretization
+
+The structural problem is not "abstract i" per se. It is:
+
+#note[
+  *Stuck identities are frozen.* `StuckElim T id` is a kernel-minted
+  neutral whose hash-cons identity depends on `id`. When `id` contains
+  a hypothesis `p_h`, the stuck's identity is fixed. Later
+  concretization of `p_h` (via H-rule or library reduction) produces a
+  *new* concrete value for `p_h`, but no operation traverses
+  pre-existing stucks to recompute them with the new `p_h`.
+
+  Cubical's reduction relation has built-in propagation of
+  concretization through the term graph. Tree calculus's only
+  reduction is application: re-applying an already-applied term
+  requires re-running the application, which means re-traversing the
+  whole computation.
+]
+
+What's needed is a kernel-level notion of *late-firing stuck*:
+
+```
+LateStuck T id late_fn := stuck-typed neutral whose identity is `id`,
+  but which carries a closed combinator `late_fn` such that, when `id`
+  is later concretized to a value v, the stuck's "real" reduction is
+  `late_fn v`.
+```
+
+When the kernel observes that `id` has reduced to a concrete value
+(via some triggering mechanism — possibly hash-cons-id-change tracking
+or explicit "fire" calls), it replaces the stuck with `late_fn v`.
+
+This is genuinely new kernel structure, but it is *one* extension with
+clear local semantics — not a sibling walker variant.
+
+== A revised Stage 4 — late-firing stucks
+
+```
+StuckElim_late : T -> id -> late_fn -> Tree
+  -- Produces a stuck of stored type T, identity id, with deferred rule
+  -- late_fn that fires when id concretizes.
+
+fire_stuck : stuck -> concrete_id_value -> Tree
+  -- If stuck is a LateStuck whose id matches concrete_id_value's id,
+  -- returns late_fn concrete_id_value. Otherwise identity.
+```
+
+The kernel addition: one new constructor (`LateStuck`), one operation
+(`fire_stuck`). The reduction discipline is unchanged; the walker is
+unchanged. The new structure is purely additive.
+
+Library use:
+
+- `J`'s implementation: `J P base b_h p_h := StuckElim_late (P b_h p_h)
+  p_h (\{p_concrete\} -> if p_concrete = refl then base else ...)`.
+- When `p_h` later reduces to `refl` (via Eq's H-rule firing on the
+  path's type), the library `fire_stuck` traversal hits the late-rule
+  and reduces.
+
+This is *not* full cubical — it does not give abstract-i triage. But
+it does enable `J` over paths, HIT-like patterns with constructor laws,
+and equivalence-mediated transport that needs to fire when the
+equivalence becomes definitionally `refl`. These are the practical
+wins beyond Stage 1-3.
+
+== Two stages instead of one
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Stage*], [*Kernel addition*], [*Capability*],
+    [4. Late-firing stucks],
+      [`LateStuck` constructor + `fire_stuck` operation. Additive; no
+       walker change.],
+      [`J` eliminator over paths. HIT constructor laws.
+       Equivalence-fires-to-refl reduction.],
+    [5. Full abstract-i],
+      [New reduction discipline for I-typed hypotheses (parametric
+       value carrier, substitution as kernel primitive).],
+      [Abstract-i triage. Full path induction including non-endpoint
+       cases. Synthetic homotopy theory.],
+  ),
+  caption: [Refined post-Stage-3 staging.],
+)
+
+Stage 4 (late-firing) is a small, local addition that delivers the
+genuinely practical wins missing from Stages 1-3. Stage 5 is the
+research-grade addition that delivers the theoretical completeness.
+
+For Disp's stated goals (synthesizer search-space collapse, optimizer
+rewrites, representation independence), Stages 1-3 cover the bulk of
+practical wins. Stage 4 unlocks `J` and HIT-style patterns where the
+optimizer benefits from "this computation fires when the path becomes
+concrete." Stage 5 is open research, justified only if a use case
+demands abstract-i reasoning.
+
+= `comp` unification and `Partial` machinery
+
+The library design in §5 uses `transp` and `hcomp` as separate
+operations with separate metadata slots. Real CCHM cubical packages
+them as a single primitive `comp` that does both — and the proper
+specification of `hcomp` (and `Glue`'s mid-region transport) requires
+the `Partial` machinery this section sketches.
+
+== `comp` as the unified primitive
+
+The CCHM signature:
+
+```
+comp : (A : Pi I (\{_\} -> Type))
+       -> (phi : I)
+       -> (u : Pi I (\{i\} -> Partial phi (apply A i)))
+       -> (u0 : apply A I_zero)
+       -> apply A I_one
+```
+
+Read informally: given a *varying* type family `A`, a cofibration `phi`,
+side data `u` filling `phi`-faces of the cube, and a base `u0` at
+`i = I_zero`, produce a value at `i = I_one` that agrees with `u I_one`
+on `phi`.
+
+This generalizes both:
+
+```
+transp A x       = comp A I_zero (empty-side-system) x
+hcomp T u u0     = comp (\{_\} -> T) phi u u0
+```
+
+`transp` is `comp` over a varying family with no sides; `hcomp` is
+`comp` over a constant family with sides. The reduction rules for `comp`
+on each type former subsume both.
+
+=== Unified per-type rule
+
+With `comp` as primitive, each type former exposes a single `comp_fn`
+slot replacing the separate `transp_fn` and `hcomp_fn`:
+
+```
+T_meta := pair recognizer_sig
+              (pair params
+                    (pair codomain_fn comp_fn))   // 4-tuple, not 5
+```
+
+Per-type rules (sketched, full versions below):
+
+```
+Bool.comp_fn := \{self, A, phi, u, u0\} -> u0
+Nat.comp_fn  := \{self, A, phi, u, u0\} -> u0
+// Discrete: identity on base. Side system u is dispatched to but
+// never matters since values can't change inside the type.
+
+Pair.comp_fn := \{self, A, phi, u, u0\} -> \{
+  let A_path = \{i\} -> pair_fst (params_of (apply A i))
+  let B_path = \{i\} -> pair_snd (params_of (apply A i))
+  let u_fst  = \{i\} -> partial_map pair_fst (apply u i)
+  let u_snd  = \{i\} -> partial_map pair_snd (apply u i)
+  pair (self A_path phi u_fst (pair_fst u0))
+       (self B_path phi u_snd (pair_snd u0))
+\}
+
+Pi.comp_fn := \{self, A, phi, u, u0\} -> \{
+  let A_dom  = \{i\} -> pi_dom (apply A i)
+  let B_at   = \{i\} -> pi_cod (apply A i)
+  \{a1\} -> \{
+    let a_traj = \{i\} -> transp_fill_back A_dom (I_inv i) a1
+    let a0     = a_traj I_zero
+    let B_path = \{i\} -> apply (B_at i) (a_traj i)
+    let u_at_a = \{i\} -> partial_map (\{f\} -> apply f (a_traj i)) (apply u i)
+    self B_path phi u_at_a (apply u0 a0)
+  \}
+\}
+
+Sigma.comp_fn := \{self, A, phi, u, u0\} -> \{
+  let A_path = \{i\} -> pair_fst (params_of (apply A i))
+  let B_fn   = \{i\} -> pair_snd (params_of (apply A i))
+  let u_fst  = \{i\} -> partial_map pair_fst (apply u i)
+  let fst_fill = \{i\} ->
+    self (\{j\} -> A_path (i I_and j)) phi
+         (\{j\} -> partial_restrict u_fst (i I_and j))
+         (pair_fst u0)
+  let new_fst = fst_fill I_one
+  let B_path = \{i\} -> apply (B_fn i) (fst_fill i)
+  let u_snd  = \{i\} -> partial_map pair_snd (apply u i)
+  pair new_fst (self B_path phi u_snd (pair_snd u0))
+\}
+```
+
+Sigma's rule shows the payoff: with separate `transp` + `hcomp`, the
+first-component fill and the second-component transport are separate
+steps that need explicit coherence; with unified `comp`, the
+first-component fill *is* the trajectory, and the second-component lives
+in a type computed *along that trajectory* in one operation.
+
+=== Trade-offs of `comp` unification
+
+*Pros:*
+- *One slot, simpler metadata.* The 5-tuple (with separate `transp_fn`
+  and `hcomp_fn`) collapses back to 4-tuple.
+- *Cleaner dependent cases.* Sigma, Pi, and any future dependent type
+  former need only one rule that handles both transport and composition
+  coherently.
+- *Matches CCHM.* The literature's primary primitive is `comp`; a Disp
+  implementation aligning with CCHM is easier to verify against
+  published soundness proofs.
+- *`hcomp` and `transp` as derived.* Both become library functions over
+  `comp`, not separate dispatchers:
+  ```
+  transp := \{P, x\} -> comp P I_zero (\{_\} -> empty_partial) x
+  hcomp  := \{T, sides, base\} ->
+    comp (\{_\} -> T) (boundary_phi) (sides_to_partial sides) base
+  ```
+
+*Cons:*
+- *Each rule is more complex.* Even the "discrete" rule must accept all
+  five arguments (`self, A, phi, u, u0`) even though most are unused.
+  Verbose for simple cases.
+- *Requires `Partial`.* `comp` cannot be specified without `Partial`/`PartialP`.
+  Adding `Partial` is non-trivial (next subsection).
+- *Less intuitive for users.* Library authors writing per-type rules
+  must understand both the type-varying and side-varying axes
+  simultaneously; the separation in §5 lets each axis be reasoned about
+  independently.
+
+*Recommendation.* For Disp specifically: start with separate `transp_fn`
+and `hcomp_fn` (§5) as Stages 1–2; consider unifying to `comp_fn` at
+Stage 3 when `Partial` is built out anyway. The early stages benefit
+from per-axis clarity; once `Partial` is in play, unification pays off.
+
+== `Partial` — the cofibration machinery
+
+`Partial phi A` is "an `A`-value defined where `phi` holds." Conceptually:
+
+```
+Partial phi A := IsOne phi -> A
+```
+
+where `IsOne : I -> Type` is the proposition "this formula equals
+`I_one`." Operationally, a partial element is a function whose domain
+is restricted to proofs that `phi` is satisfied.
+
+=== `IsOne` as a library type
+
+```
+let isone_recognizer = \{phi, proof\} -> \{
+  // proof is a witness that phi evaluates to I_one
+  match (tree_eq phi I_one) \{
+    TT => tree_eq proof unit_witness   // canonical singleton
+    FF => FF                            // proof shouldn't exist
+  \}
+\}
+
+IsOne := \{phi\} -> guard (wait kernel_ref.predicate_frame
+  (pair isone_recognizer_sig (pair phi t)))
+
+one_is_one : IsOne I_one
+one_is_one := unit_witness
+```
+
+`IsOne I_one` has exactly one inhabitant (`unit_witness`); `IsOne I_zero`
+has no inhabitants; `IsOne i` for abstract `i` is propositionally
+undetermined.
+
+=== `Partial` and `PartialP`
+
+```
+Partial : I -> Type -> Type
+Partial := \{phi, A\} -> Pi (IsOne phi) (\{_\} -> A)
+
+PartialP : (phi : I) -> Partial phi Type -> Type
+PartialP := \{phi, A\} -> Pi (IsOne phi) A
+```
+
+A `Partial phi A` is a function from `IsOne phi`-proofs to `A`. When
+`phi = I_one`, there's exactly one such proof (`one_is_one`), so a
+`Partial I_one A` is essentially "an `A`-value." When `phi = I_zero`,
+no proofs exist, so the function is trivial.
+
+=== System notation
+
+The system notation `[i = I_zero ↦ a, i = I_one ↦ b]` desugars to a
+case-analysis function on `IsOne phi`-proofs:
+
+```
+system_2 : \{A : Type, a : A, b : A\} ->
+           Partial (I_or (i I_eq I_zero) (i I_eq I_one)) A
+system_2 := \{A, a, b\} -> \{proof_phi\} -> \{
+  // proof_phi witnesses (i = I_zero) ∨ (i = I_one)
+  // case-analysis on which disjunct holds yields a or b
+  ...
+\}
+```
+
+The case-analysis requires *inspecting* the proof. For walker-safety,
+this inspection happens inside the library function that *creates* the
+system, not by user code that *uses* it. Library smart constructors
+build systems by composing pre-existing partial elements via union and
+intersection.
+
+=== `glue` and `unglue` as proper constructors
+
+With `Partial`, `Glue` recovers its standard form:
+
+```
+Glue : (B : Type) -> (phi : I) ->
+       (T : Partial phi Type) ->
+       (e : PartialP phi (\{_\} -> T ~= B)) ->
+       Type
+
+glue   : (\{t : PartialP phi T\}) -> (b : B) -> Glue B phi T e
+         // t and b must agree along e on phi-faces
+unglue : Glue B phi T e -> B
+         // projects out the B-component
+```
+
+This is the full cubical `Glue`, including the mid-region case the
+`Glue2` of §5.6 left stuck. With it:
+
+```
+ua e := \{i\} ->
+  Glue B
+    (I_or (i I_eq I_zero) (i I_eq I_one))
+    (system_2 A B)
+    (system_2 e id_equiv)
+```
+
+The face system encodes both endpoints. `ua e`'s `comp_fn` (or
+`transp_fn` if not unified) handles the full case-analysis on which
+face is active at each endpoint.
+
+=== Costs of `Partial`
+
+Adding `Partial`/`PartialP`/`IsOne` is a substantial library extension:
+
+- *Three new library types* (`IsOne`, `Partial`, `PartialP`).
+- *Smart constructors* for systems with compatibility checks.
+- *Walker integration*: `IsOne phi` for abstract `phi` produces neutral
+  proofs that thread through; library code uses them only by case-split
+  *within the library*, not by user code under the walker.
+- *Hash-cons normalization* of `phi` formulas (mentioned in §7) so that
+  De-Morgan-equivalent cofibrations produce identical `IsOne` types.
+
+The cost is real but bounded — about three additional library files
+of comparable size to the existing type-former files (`pi.disp`,
+`bool.disp`, etc.). The kernel is unchanged.
+
+=== Recommendation
+
+Build `Partial` at Stage 3, alongside `Glue`. At Stage 3 you need
+`Glue`'s mid-region transport, which needs `Partial` either way.
+Doing `comp` unification at the same time (replacing separate
+`transp_fn`/`hcomp_fn` slots with a single `comp_fn` slot) costs one
+metadata-shape sweep but produces a cleaner final design. Stages 1–2
+can defer both — the separate-slot approach in §5 is sufficient for the
+practical wins those stages deliver.
+
+= Trade-offs summary
+
+#figure(
+  table(
+    columns: 4,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Stage*], [*Kernel additions*], [*Library additions*], [*Capability*],
+    [0], [None], [None], [Manual iso threading],
+    [1], [None],
+      [`transp_fn` slot in metadata; `transp` function; `Path`/`PathP`
+       as aliases over `Pi I`; per-former rules for Bool/Nat/Pi/Sigma/
+       Pair/List/Eq/Type; one-liner `refl`/`cong`/`sym`/`funext`.],
+      [Structural transport. Paths-as-functions. Definitional iso
+       roundtrip via stuck normalization.],
+    [2], [None],
+      [`I` library type with De Morgan ops + `I_normalize`;
+       `hcomp_fn` slot; `hcomp` function.],
+      [Path composition. Connections as data. Paths in `I`.],
+    [3], [None],
+      [`Glue` library type with non-trivial codomain_fn /
+       `transp_fn`; `ua` derivation.],
+      [Univalence as derivable theorem. Equivalence-as-equality
+       computationally for closed-endpoint paths.],
+    [4],
+      [`LateStuck` constructor + `fire_stuck` operation. Additive,
+       walker-unchanged.],
+      [Library `J` eliminator. HIT constructor laws. Equivalence-
+       fires-to-refl reduction.],
+      [Late-firing stucks (practical post-Stage-3 wins).],
+    [5],
+      [New reduction discipline for I-typed hypotheses (parametric
+       carrier + substitution-as-primitive).],
+      [None beyond Stage 4.],
+      [Full cubical with abstract-i triage. Synthetic homotopy.],
+  ),
+  caption: [Staged additions.],
 )
 
 == Disp-specific observations
 
-The unified design's commitment to "minimal kernel, library type-
-formers" is preserved through Stage 1. The metadata-driven dispatch
-pattern generalizes naturally; `path_apply` is structurally identical
-to `hyp_reduce`.
+The unified design's commitment to "minimal kernel, library
+type-formers" is *preserved through Stage 3* under this framing. The
+metadata-driven dispatch pattern generalizes naturally: `codomain_fn`
+for application of neutrals, `transp_fn` for structural transport,
+`hcomp_fn` for composition. All three are library hooks dispatched by
+library functions over closed metadata reads.
 
-Stages 2-4 introduce kernel primitives that are *not* extensions of the
-existing pattern. The interval requires substitution rules; Glue
-requires partial-element handling; `hcomp` requires composition.
-These are genuine architectural additions, not extensions of metadata-
-driven dispatch.
+Stage 4 (late-firing stucks) extends an existing kernel mechanism
+additively — `StuckElim` already exists; it just gains a deferred-rule
+variant. The reduction discipline is unchanged; the walker is
+unchanged. This is the natural successor to the metadata-driven
+pattern.
 
-For Disp's stated goals (neural-guided synthesis, self-improving
-optimizer), Stage 1 likely covers the practical wins. Stages 2-4 are
-research-grade features whose value depends on specific use cases
-(synthetic homotopy, formal category theory).
+Stage 5 is qualitatively different. Substitutable hypotheses are a
+sibling discipline to parametric ones, not an extension. If Disp ever
+needs full abstract-i cubical, that is the architectural decision;
+nothing in Stages 1-4 forecloses it, and nothing in Stages 1-4 demands
+it.
 
 = Summary
 
-Option B (`path_apply` parallel to `hyp_reduce`) is a clean,
-architecturally consistent extension of Disp's existing kernel pattern.
-It delivers cubical's structural transport without disrupting the
-unified design's existing primitives.
+The architectural insight: `transp`, `hcomp`, `Glue`, and `I` all fit
+the library-dispatch pattern Disp already uses. `StuckElim` is the
+kernel's existing notion of "value-by-evidence"; paths are just
+additional kinds of evidence; transport is just additional kinds of
+elimination. The kernel handlers were already shaped right; the
+library fills in the content.
 
-Full cubical requires two additional pieces beyond Option B:
+Three concrete additions deliver practical cubical:
 
-- *Interval primitive* (Stage 2) — for abstract paths and path induction.
-- *Glue + `hcomp`* (Stage 3, joint) — for univalence-as-computation;
-  higher paths emerge automatically as iteration of existing machinery
-  plus library extensions.
+- *Stage 1.* `transp_fn` metadata slot + library `transp` + `Path` type.
+  Structural transport along library-constructed paths. No kernel
+  change.
 
-Each is a genuine kernel addition rather than an extension of existing
-patterns. A staged implementation can ship after any stage with usable
-capabilities:
+- *Stage 2.* `I` as De Morgan algebra library type + `hcomp` library
+  function + connections. No kernel change.
 
-- Stage 1 (Option B): moderate work, big practical win. *Likely
-  sufficient for Disp's stated goals.*
-- Stage 2 (interval): substantial work, theoretical value, modest
-  practical value for most users.
-- Stage 3 (Glue + `hcomp`): substantial work, big theoretical value
-  (univalence + higher paths), modest direct practical value beyond
-  Stage 1.
+- *Stage 3.* `Glue` as a library type + `ua` derivation. Univalence
+  as a derivable theorem. No kernel change.
 
-The architectural shape Disp already has (metadata-driven dispatch via
-`hyp_reduce` + `codomain_fn`) makes Option B unusually clean. Adding it
-doesn't change the kernel's character. Beyond Option B, full cubical
-requires kernel growth that, while feasible, fundamentally extends the
-design.
+A fourth stage delivers the genuine cubical: abstract-i evaluation via
+a new `bind_interval` primitive and a second walker variant for
+substitutable hypotheses. This is the only stage that fundamentally
+extends the kernel's reduction discipline. It is open for future work
+and not required for Disp's stated goals.
 
-Whether to go past Stage 1 is a goals-driven question: does Disp need
-the additional cubical features, or do Stage 1's capabilities suffice
-for the synthesis/optimizer/self-hosting trajectory described in
-`GOALS.md`? The architecture supports either choice.
+The architectural shape Disp already has — metadata-driven dispatch
+via `hyp_reduce` + `codomain_fn`, `predicate_frame` + recognizer,
+`eliminator_frame` + dispatcher — makes Stages 1-3 fall out as new
+instances of an existing pattern. The kernel stays at seven
+primitives; cubical lives in the library.
