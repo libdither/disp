@@ -34,9 +34,9 @@ substrate and the library type files so most user code can write
 - Split `kernel/handlers.disp` further if the primitive handlers grow
   again. Today it is acceptable as the one file that assembles the
   recursive kernel record.
-- Add an explicit export-all or re-export syntax, then migrate
-  `kernel/prelude.disp` away from the legacy fieldless-file export
-  mode.
+- Add an explicit export-all or re-export syntax so
+  `kernel/prelude.disp` does not need to enumerate every re-exported
+  field by hand.
 - Consider carving tests into subdirectories by layer (`kernel`,
   `types`, `std`) if the suite grows much larger.
 - Continue moving standard-library additions under `lib/std/`.
