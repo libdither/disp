@@ -111,6 +111,7 @@ function cirToTree(e: Cir): Tree {
     case "I":   return I_TREE
     case "K":   return K_TREE
     case "S":   return S_TREE
+    case "lam": throw new Error(`cirToTree: unexpected lambda for ${e.x}`)
     case "app": {
       if (e.f.tag === "app" && e.f.f.tag === "S") return fork(stem(cirToTree(e.f.x)), cirToTree(e.x))
       // Full K application: K(x)(y) → x (drop second arg)

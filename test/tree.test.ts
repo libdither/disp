@@ -3,6 +3,7 @@ import {
   LEAF, stem, fork, isLeaf, isStem, isFork,
   treeEqual, treeApply, apply, applyTree, BudgetExhausted,
   K, I, prettyTree,
+  type Tree,
 } from "../src/tree.js"
 
 describe("Tree construction and equality", () => {

@@ -41,7 +41,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   const showStats = args.includes("--stats")
   const showStatsDetail = args.includes("--stats-detail")
   const showStatsAll = args.includes("--stats-all")
-  const file = args.find(arg => !arg.startsWith("--"))
+  const file = args.find((arg: string) => !arg.startsWith("--"))
   if (!file) { console.error("usage: tsx src/run.ts [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
   try {
     if (showStats) {

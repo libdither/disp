@@ -26,7 +26,7 @@ const binder = (params: { name: string | null; type: Expr | null }[], body: Expr
   ({ tag: "binder", params, body })
 const ann = (expr: Expr, type: Expr): Expr => ({ tag: "ann", expr, type })
 const proj = (target: Expr, field: string): Expr => ({ tag: "proj", target, field })
-const recType = (fields: { name: string; type: Expr }[]): Expr => ({ tag: "recType", fields })
+const recType = (fields: { name: string; type: Expr | null }[]): Expr => ({ tag: "recType", fields })
 const recValue = (fields: { name: string; type: Expr | null; value: Expr }[]): Expr =>
   ({ tag: "recValue", fields })
 const use = (path: string): Expr => ({ tag: "use", path })
@@ -477,6 +477,16 @@ describe("parse errors", () => {
     // { test t = t; t } is now a valid block expression (test is a side-effect statement)
     const result = parseExpr("{ test t = t; t }")
     expect(result).toEqual(leaf) // trailing expression is just `t`
+  })
+
+  it("rejects duplicate exported fields", () => {
+    expect(() => parseItems("x := t\nx := t t")).toThrow(/duplicate exported field 'x'/)
+    expect(() => parseExpr("{ x := t; x := t t }")).toThrow(/duplicate exported field 'x'/)
+  })
+
+  it("rejects duplicate record type fields", () => {
+    expect(() => parseExpr("{x : A, x : B}")).toThrow(/duplicate record field 'x'/)
+    expect(() => parseExpr("({x, x})")).toThrow(/duplicate record field 'x'/)
   })
 })
 

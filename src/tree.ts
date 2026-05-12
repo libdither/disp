@@ -359,6 +359,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     // Leaf/Stem: immediate result
     if (isLeaf(curF)) { traceApply("leaf", curF, curX, stackTop); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
     if (isStem(curF)) { traceApply("stem", curF, curX, stackTop); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
+    if (!isFork(curF)) throw new Error("apply: impossible non-fork function")
 
     // Memo check (inlined so we can capture the inner map for memoSet
     // reuse if this turns out to be a miss).
@@ -438,9 +439,11 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     }
 
     // Triage
+    if (!isFork(a)) throw new Error("apply: impossible non-fork branch")
     const tc = a.left, td = a.right
     if (isLeaf(curX)) { traceApply("T_leaf", curF, curX, stackTop); applyStats.triageLeafRules++; const r = deliver(tc); if (r !== null) return r; continue }
     if (isStem(curX)) { traceApply("T_stem", curF, curX, stackTop); applyStats.triageStemRules++; curF = td; curX = curX.child; continue }
+    if (!isFork(curX)) throw new Error("apply: impossible non-fork argument")
     traceApply("T_fork", curF, curX, stackTop)
     applyStats.triageForkRules++
     ensureStackSlot()
@@ -625,7 +628,9 @@ export function getTreeEqId(): number { return TREE_EQ_ID }
 // --- Pretty printer ---
 
 export function prettyTree(tree: Tree): string {
-  if (isLeaf(tree)) return "△"
-  if (isStem(tree)) return `(△ ${prettyTree(tree.child)})`
-  return `(△ ${prettyTree(tree.left)} ${prettyTree(tree.right)})`
+  switch (tree.tag) {
+    case "leaf": return "△"
+    case "stem": return `(△ ${prettyTree(tree.child)})`
+    case "fork": return `(△ ${prettyTree(tree.left)} ${prettyTree(tree.right)})`
+  }
 }
