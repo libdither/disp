@@ -36,7 +36,7 @@
   - The kernel has seven primitive handlers; everything else is library
     code.
   - Logical consistency at the public boundary follows from the
-    definition of `False` (the predicate `\{_\} -> FF`), not from
+    definition of `False` (the predicate `{_} -> FF`), not from
     universe stratification.
 
   bind_hyp's body may return values of any type; soundness is
@@ -62,11 +62,12 @@
   ranks; users opt in via the `Total T` library construction (§5)
   by supplying a measure and a decreasing-recursion witness.
 
-  The current implementation does NOT yet match this spec (it has
-  per-type kernel handlers per the previous data-as-eliminator
-  design). The migration plan is in §10. Where the implementation
-  and this document disagree, the document is authoritative and
-  the implementation is in transition.
+  The current implementation now follows this kernel shape for the
+  core library types: Pi, Bool, Nat, Eq, Ord, and Type are defined in
+  `lib/types/*.disp` using the generic primitives. Some sections below
+  still mark future work where the theory asks for stronger checks
+  than the implementation performs today, especially Type metadata
+  validation and categorical/lawful metadata functions.
 ]
 
 = Overview
@@ -74,7 +75,7 @@
 Disp is a dependently-typed language built on tree calculus. Types are
 predicates over trees. The kernel is a small set of primitive handlers
 that mediate parametric-mode evaluation, hypothesis minting, and the
-public boundary between trusted and untrusted code. All inductive
+public boundary between kernel-privileged and user code. All inductive
 types, quantifier types, and universe machinery live in the library.
 
 Five commitments govern the design:
@@ -101,7 +102,7 @@ Five commitments govern the design:
 + *Soundness via three runtime mechanisms, plus False's definition.*
   Public-boundary scan, stem-rule fork rejection, and walker triage
   rejection enforce that hypotheses don't escape into closed proofs.
-  False's predicate `\{_\} -> FF` ensures it has no closed inhabitants.
+  False's predicate `{_} -> FF` ensures it has no closed inhabitants.
   Together these give logical consistency at the public boundary.
 
 == Soundness, not completeness
@@ -131,7 +132,7 @@ The runtime's `apply` operates in one of two modes per application,
 selected by the dispatcher:
 
 - *Raw mode.* Standard tree-calculus reduction. Triage may match any
-  tree, including kernel-minted neutrals. Used for trusted code: kernel
+  tree, including kernel-minted neutrals. Used for kernel-privileged code: kernel
   handler bodies, internal metadata operations.
 
 - *Parametric mode* (the *walker*). Tree-calculus reduction with two
@@ -145,6 +146,15 @@ selected by the dispatcher:
 Parametric mode encodes operational parametricity: hypotheses are
 opaque tokens for universal quantification, and user code cannot
 inspect their structure or synthesize new hypotheses.
+
+#note[
+  *I_canonical carve-out.* The walker recognizes the canonical
+  polymorphic identity tree `I_canonical := {z} -> z` and returns
+  `Ok x` for `I_canonical x`, including when `x` is a hypothesis.
+  This is the only intentional walker carve-out: it preserves the
+  legitimate identity function without allowing user code to inspect
+  or rebuild hypothesis structure.
+]
 
 == The dispatcher
 
@@ -184,9 +194,8 @@ The kernel registry consists of seven handlers, fixed at boot time:
 )
 
 #note[
-  *Pi is library, not kernel.* The current implementation has a kernel
-  `q_pi_fn`. Under the unified design, `Pi A B` is a library wait-form
-  using `predicate_frame` + `bind_hyp`. The kernel is unaware of Pi
+  *Pi is library, not kernel.* `Pi A B` is a library wait-form using
+  `predicate_frame` + `bind_hyp`. The kernel is unaware of Pi
   specifically; it sees a generic predicate_frame application with
   a Pi-shaped recognizer in metadata.
 ]
@@ -259,11 +268,11 @@ The `codomain_fn` slot, when not the LEAF sentinel, is a function
 value:
 
 ```
-Extend := \{new_stored_type\} -> pair extend_tag new_stored_type
-Return := \{value\}            -> pair return_tag value
+Extend := {new_stored_type} -> pair extend_tag new_stored_type
+Return := {value}            -> pair return_tag value
 
-is_extend := \{action\} -> tree_eq (pair_fst action) extend_tag
-is_return := \{action\} -> tree_eq (pair_fst action) return_tag
+is_extend := {action} -> tree_eq (pair_fst action) extend_tag
+is_return := {action} -> tree_eq (pair_fst action) return_tag
 ```
 
 `extend_tag` and `return_tag` are distinct constant trees fixed at
@@ -280,7 +289,7 @@ types whose codomain_fn does the H-rule check inline.
 `hyp_reduce` (§4.1) dispatches on the Action tag.
 
 The four arguments:
-- `ks` — kernel-handler proxy (`\{q\} -> wait raw q`), the same
+- `ks` — kernel-handler proxy (`{q} -> wait raw q`), the same
   value `hyp_reduce` itself receives. Used for routing to other
   kernel handlers (e.g., `q_unguard_or_self ks ...`) and for
   reconstructing the codomain_fn's own type-form via H-rule.
@@ -298,11 +307,11 @@ The four arguments:
   which is itself a kernel handler running raw mode. So codomain_fn
   can use reflection (triage on neutrals, read stored types from
   hypothesis metadata) — operations the walker would reject in
-  user-untrusted contexts.
+  user contexts.
 
-  This is the privilege boundary: user-untrusted code (recognizers,
-  case dispatchers) runs under the walker; library-trusted code
-  (codomain_fns) runs raw via hyp_reduce. The trust is delegated
+  This is the privilege boundary: user code (recognizers,
+  case dispatchers) runs under the walker; library-privileged code
+  (codomain_fns) runs raw via hyp_reduce. The privilege is delegated
   through the metadata layout. Library authors choose what
   codomain_fn to put in their type's metadata; the kernel runs
   whatever they declare in raw mode.
@@ -330,7 +339,7 @@ Slots are described in §3.1. Used by `q_predicate_frame_fn` and
 per §3.2.
 
 *Neutral metadata (`neutral_meta`).* Carried by
-`wait kernel_ref.hyp_reduce neutral_meta`. Layout:
+`wait kernel.hyp_reduce neutral_meta`. Layout:
 
 ```
 neutral_meta := pair stored_type (pair id spine)
@@ -372,7 +381,7 @@ implementation:
 
 - `kernel` — the recq-fixed-point record. `kernel.X` is an *eager*
   projection that yields the handler closure directly.
-- `kernel_ref` — a lazy proxy defined as `\{q\} -> wait kernel q`.
+- `kernel_ref` — a lazy proxy defined as `{q} -> wait kernel q`.
   `kernel_ref.X` yields `wait kernel selector_X` — a wait-form
   delaying the projection.
 
@@ -410,30 +419,30 @@ extracts the codomain_fn (§3.4), and dispatches on the Action it
 returns:
 
 ```
-q_hyp_reduce_fn := \{ks, raw, query\} -> fix (\{self, meta, v\} -> \{
+q_hyp_reduce_fn := {ks, raw, query} -> fix ({self, meta, v} -> {
   let stored = q_unguard_or_self ks (neutral_meta_type meta)
   let cod_fn = pair_snd (pair_snd (type_meta stored))
-  match (tree_eq cod_fn t) \{
+  match (tree_eq cod_fn t) {
     TT =>
       // Sentinel: type is non-applicable. Extend with InvalidType.
       wait self (extend_neutral_meta meta InvalidType v)
-    FF => \{
+    FF => {
       let action = cod_fn ks raw meta v
-      match (is_extend action) \{
+      match (is_extend action) {
         TT =>
           let new_stored = pair_snd action
           wait self (extend_neutral_meta meta
                        (wait kernel_ref.guard new_stored) v)
-        FF => match (is_return action) \{
+        FF => match (is_return action) {
           TT => pair_snd action   // return value directly
           FF =>
             // Malformed action: defensive InvalidType.
             wait self (extend_neutral_meta meta InvalidType v)
-        \}
-      \}
-    \}
-  \}
-\})
+        }
+      }
+    }
+  }
+})
 ```
 
 The two Action cases serve different type-former classes:
@@ -454,11 +463,11 @@ Public-boundary entry scan plus predicate evaluation. Returns bare
 TT/FF.
 
 ```
-q_guard_fn := \{ks, raw, query\} -> \{core, v\} ->
-  match (q_scan_no_neutral raw v) \{
-    TT => match (tree_eq (core v) TT) \{ TT => TT; FF => FF \}
+q_guard_fn := {ks, raw, query} -> {core, v} ->
+  match (q_scan_no_neutral raw v) {
+    TT => match (tree_eq (core v) TT) { TT => TT; FF => FF }
     FF => FF
-  \}
+  }
 ```
 
 The scan rejects pre-existing neutrals; the inner check evaluates
@@ -470,17 +479,18 @@ Walker-safe peeling of the guard layer. Routed through the dispatcher
 so the body's triage on T runs in raw mode rather than under the
 walker (which would reject triage on a hypothesis-typed T).
 
-*Pass-through on non-guarded inputs.* If `v` is not a guard wait-form
-(e.g., `v` is a kernel-minted hypothesis, or any other tree shape),
+*Pass-through on hypotheses.* If `v` is a kernel-minted hypothesis,
 `unguard` returns `v` unchanged. This is what lets type-polymorphic
 Pi-checks (§5.1) write `unguard_checked (B hyp)` even when `B hyp`
 reduces to a hypothesis: `unguard_checked` peels nothing, returns
 the hypothesis directly, and subsequent application
 (`expected_core result`) routes through `hyp_reduce` as expected.
 
-The library wrapper convention is `q_unguard_or_self ks v` (§4.8) for
-explicit pass-through semantics; the bare kernel primitive `unguard`
-(via dispatcher) likewise behaves as identity on non-guarded `v`.
+For closed non-guarded, non-hypothesis inputs, the current
+implementation returns `InvalidType` (`FF`). Library code that wants
+ordinary identity-on-non-guards uses `q_unguard_or_self ks v` (§4.8)
+or the public `unguard_or_self` helper instead of the bare routed
+`unguard`.
 
 == `checked_apply`
 
@@ -492,8 +502,8 @@ parametric walker for unrecognized signatures.
 Wraps a user-supplied recognizer with H-rule for hypothesis inputs:
 
 ```
-q_predicate_frame_fn := \{ks, raw, query\} -> \{meta, v\} -> \{
-  match (q_is_neutral raw v) \{
+q_predicate_frame_fn := {ks, raw, query} -> {meta, v} -> {
+  match (q_is_neutral raw v) {
     TT =>
       // H-rule: reconstruct self-as-type, compare to v's stored type
       let self_type = wait (ks query) meta
@@ -504,9 +514,9 @@ q_predicate_frame_fn := \{ks, raw, query\} -> \{meta, v\} -> \{
       let recognizer = pair_fst meta
       let params = pair_fst (pair_snd meta)
       let result_r = ks.checked_apply (recognizer params) v
-      must_ok_or_ff result_r (\{result\} -> result)
-  \}
-\}
+      must_ok_or_ff result_r ({result} -> result)
+  }
+}
 ```
 
 The H-rule reconstruction relies on hash-cons stability of metadata
@@ -522,27 +532,27 @@ the hypothesis from escaping into a context where it could be
 exploited via predicate_frame's H-rule.
 
 ```
-q_bind_hyp_fn := \{ks, raw, query\} -> \{meta, x\} -> \{
+q_bind_hyp_fn := {ks, raw, query} -> {meta, x} -> {
   // Standard 2-ary arity-tracked accumulator: first arg is domain,
   // second arg is body. On second application, execute.
   let count = pair_fst meta
   let acc = pair_snd meta
-  let final_fn = ... -> \{
+  let final_fn = ... -> {
     let domain = pair_snd acc
     let body = x
     let hyp_id = t domain body
     let hyp = q_make_hyp raw domain hyp_id
     let result_r = ks.checked_apply body hyp
-    must_ok_or_ff result_r (\{result\} ->
-      match (q_contains_via_open_path raw result hyp) \{
+    must_ok_or_ff result_r ({result} ->
+      match (q_contains_via_open_path raw result hyp) {
         TT => Fail              // hyp escaped through a non-neutral path
         FF => result             // hyp didn't escape — return body's value
-      \})
-  \}
+      })
+  }
   let partial_fn = ... // accumulator for partial application
   select final_fn partial_fn (tree_eq count (t t t))
     raw query ks meta x count acc
-\}
+}
 ```
 
 The escape check `q_contains_via_open_path` walks the result tree and
@@ -550,21 +560,21 @@ returns TT if `hyp` is reachable at any position whose ancestors are
 *not* themselves kernel-minted neutrals. Concretely:
 
 ```
-q_contains_via_open_path := fix (\{self, raw, result, hyp\} ->
-  match (tree_eq result hyp) \{
+q_contains_via_open_path := fix ({self, raw, result, hyp} ->
+  match (tree_eq result hyp) {
     TT => TT                                      // direct match
-    FF => match (q_is_neutral raw result) \{
+    FF => match (q_is_neutral raw result) {
       TT => FF                                    // walled off inside a neutral
-      FF => match (is_fork result) \{
+      FF => match (is_fork result) {
         TT => or (self raw (pair_fst result) hyp)
                   (self raw (pair_snd result) hyp)
-        FF => match (is_stem result) \{
+        FF => match (is_stem result) {
           TT => self raw (stem_child result) hyp
           FF => FF                                 // leaf, no match
-        \}
-      \}
-    \}
-  \})
+        }
+      }
+    }
+  })
 ```
 
 The check stops at neutrals: if the result is a kernel-minted
@@ -602,7 +612,7 @@ because triage on neutrals is rejected by the walker.
 #note[
   *What this enables.* bind_hyp's body can return any value of any
   type, including `Bool`, `Ord`, `Nat`, etc. A library `Total` proof
-  for an inductive type T can use `bind_hyp T (\{h\} -> measure h)`
+  for an inductive type T can use `bind_hyp T ({h} -> measure h)`
   to express a measure of T's elements; the result is an Ord that
   may contain `h` inside a kernel-minted neutral (e.g., a stuck-Ord
   produced by ord_lt on hypothesis-typed Ord arguments), which the
@@ -636,28 +646,28 @@ Meta layout: `pair count (pair dispatcher acc)`:
 - `acc` — left-leaning pair tree of accumulated args; nil = `t`.
 
 ```
-q_eliminator_frame_fn := \{ks, raw, query\} -> \{meta, x\} -> \{
+q_eliminator_frame_fn := {ks, raw, query} -> {meta, x} -> {
   let count      = pair_fst meta
   let dispatcher = pair_fst (pair_snd meta)
   let acc        = pair_snd (pair_snd meta)
-  let final_fn = \{...\} -> \{
+  let final_fn = {...} -> {
     let motive = ... // extract from acc
     let cases  = ... // extract from acc
     let target = x
     select_lazy
-      (\{_\} -> q_make_hyp raw (motive target) target)
-      (\{_\} -> ks.checked_apply
+      ({_} -> q_make_hyp raw (motive target) target)
+      ({_} -> ks.checked_apply
                  (dispatcher motive cases) target)
       (q_is_neutral raw target)
-  \}
-  let partial_fn = \{...\} ->
+  }
+  let partial_fn = {...} ->
     wait (ks query)
       (pair (pred count) (pair dispatcher (pair acc x)))
   select final_fn partial_fn (tree_eq count (t t t))
     raw query ks meta x count dispatcher acc
-\}
+}
 
-init_meta_arity_N := \{dispatcher\} ->
+init_meta_arity_N := {dispatcher} ->
   pair (succ^N t) (pair dispatcher t)
 ```
 
@@ -706,17 +716,18 @@ runtime, mirroring an in-language reference body.
 *Signature recognition.*
 
 ```
-has_sig := \{sig, v\} ->
+has_sig := {sig, v} ->
   // tree_eq sig (extract head signature from v)
   // For a wait-form (wait f x), the head signature is f.
   // For other shapes, signature extraction yields t (no match).
   ...
 
-is_neutral := \{v\} -> has_sig kernel_ref.hyp_reduce v
-is_guard   := \{v\} -> has_sig kernel_ref.guard v
+is_neutral := {v} -> and (is_fork v) (has_sig kernel.hyp_reduce v)
+is_guard   := {v} -> has_sig kernel_ref.guard v
 
-q_is_neutral := \{raw, v\} -> is_neutral v
-  // raw arg threaded for kernel-handler call shape; unused.
+q_is_neutral := {raw, v} -> and (is_fork v) (has_sig raw.hyp_reduce v)
+  // Uses the raw kernel record because Hyp / q_make_hyp store the eager
+  // hyp_reduce handler signature, not the lazy kernel_ref proxy.
 ```
 
 *Tree-shape predicates.* These observe the outer constructor of `v`
@@ -725,16 +736,16 @@ without applying it. Under the parametric walker, all four return
 report the actual shape.
 
 ```
-is_leaf  := \{v\} -> tree_eq v t
-is_stem  := \{v\} -> "v has the form (t a)"
-is_fork  := \{v\} -> "v has the form (t a b)"
-stem_child := \{stem\} -> pair_snd stem   // for is_stem v = TT
+is_leaf  := {v} -> tree_eq v t
+is_stem  := {v} -> "v has the form (t a)"
+is_fork  := {v} -> "v has the form (t a b)"
+stem_child := {stem} -> pair_snd stem   // for is_stem v = TT
 ```
 
 *Metadata accessors.*
 
 ```
-type_meta := \{v\} ->
+type_meta := {v} ->
   // Peel guard + wait wrappers to recover the metadata payload.
   // For T = guard (wait pf T_meta):     returns T_meta.
   // For h = wait hyp_reduce nm:         returns nm.
@@ -743,10 +754,10 @@ type_meta := \{v\} ->
   ...
 
 neutral_meta_type := pair_fst                   // first slot of nm
-neutral_meta_id   := \{nm\} -> pair_fst (pair_snd nm)
-neutral_meta_spine := \{nm\} -> pair_snd (pair_snd nm)
+neutral_meta_id   := {nm} -> pair_fst (pair_snd nm)
+neutral_meta_spine := {nm} -> pair_snd (pair_snd nm)
 
-extend_neutral_meta := \{nm, new_stored, arg\} ->
+extend_neutral_meta := {nm, new_stored, arg} ->
   pair new_stored
        (pair (neutral_meta_id nm)
              (pair (neutral_meta_spine nm) arg))
@@ -755,18 +766,18 @@ extend_neutral_meta := \{nm, new_stored, arg\} ->
 *Hypothesis construction.*
 
 ```
-q_make_hyp := \{raw, stored_type, id\} ->
-  wait kernel_ref.hyp_reduce
+q_make_hyp := {raw, stored_type, id} ->
+  wait raw.hyp_reduce
     (pair stored_type (pair id t))   // empty spine
 
-q_unguard_or_self := \{ks, v\} ->
-  match (is_guard v) \{
+q_unguard_or_self := {ks, v} ->
+  match (is_guard v) {
     TT => unguard_checked v       // dispatcher route to kernel.unguard
     FF => v                        // pass-through (§4.3)
-  \}
+  }
 
-cert_make_stuck := \{stored_type, stuck_id\} ->
-  q_make_hyp t stored_type stuck_id
+cert_make_stuck := {stored_type, stuck_id} ->
+  wait kernel.hyp_reduce (pair stored_type (pair stuck_id t))
   // Mints a stuck-typed neutral. `stuck_id` should be a deterministic
   // function of the stuck origin (e.g., (neutral_meta, v)) so that
   // independent stucks hash-cons-distinguish.
@@ -776,37 +787,37 @@ cert_make_stuck := \{stored_type, stuck_id\} ->
 kernel-minted neutral is found; otherwise TT.
 
 ```
-q_scan_no_neutral := fix (\{self, raw, v\} ->
-  match (is_neutral v) \{
+q_scan_no_neutral := fix ({self, raw, v} ->
+  match (is_neutral v) {
     TT => FF
-    FF => match (is_fork v) \{
+    FF => match (is_fork v) {
       TT => and (self raw (pair_fst v)) (self raw (pair_snd v))
-      FF => match (is_stem v) \{
+      FF => match (is_stem v) {
         TT => self raw (stem_child v)
         FF => TT       // leaf
-      \}
-    \}
-  \})
+      }
+    }
+  })
 ```
 
 *Eq metadata helpers.*
 
 ```
-make_eq_meta := \{A, x, y\} -> pair A (pair x y)
+make_eq_meta := {A, x, y} -> pair A (pair x y)
 eq_meta_type := pair_fst
-eq_meta_lhs  := \{m\} -> pair_fst (pair_snd m)
-eq_meta_rhs  := \{m\} -> pair_snd (pair_snd m)
+eq_meta_lhs  := {m} -> pair_fst (pair_snd m)
+eq_meta_rhs  := {m} -> pair_snd (pair_snd m)
 ```
 
 *Result handling.* Walker invocations return `Ok value` or `Fail`;
 `must_ok_or_ff` folds Fail into FF for predicate composition.
 
 ```
-must_ok_or_ff := \{result, k\} ->
-  match (is_fail result) \{
+must_ok_or_ff := {result, k} ->
+  match (is_fail result) {
     TT => FF
     FF => k (ok_val result)
-  \}
+  }
 ```
 
 #note[
@@ -823,17 +834,17 @@ must_ok_or_ff := \{result, k\} ->
 == Pi
 
 ```
-let pi_recognizer = \{params, v\} -> \{
+let pi_recognizer = {params, v} -> {
   let A = pair_fst params
   let B = pair_snd params
-  bind_hyp A (\{hyp\} ->
+  bind_hyp A ({hyp} ->
     let result = v hyp
     let expected_core = unguard_checked (B hyp)
     expected_core result)   // returns Bool from expected's predicate
-\}
+}
 let pi_recognizer_sig = checker_sig pi_recognizer
 
-let pi_codomain_fn = \{ks, raw, neutral_meta, arg\} -> \{
+let pi_codomain_fn = {ks, raw, neutral_meta, arg} -> {
   // Recover T_meta from the hypothesis's neutral_meta:
   //   neutral_meta_type    : neutral_meta -> guarded T
   //   q_unguard_or_self ks : guarded T    -> wait pf T_meta (or self if not guarded)
@@ -843,9 +854,9 @@ let pi_codomain_fn = \{ks, raw, neutral_meta, arg\} -> \{
   let params = pair_fst (pair_snd T_meta)
   let B = pair_snd params
   Extend (B arg)
-\}
+}
 
-Pi := \{A, B\} -> guard (wait kernel_ref.predicate_frame
+Pi := {A, B} -> guard (wait kernel_ref.predicate_frame
   (pair pi_recognizer_sig
         (pair (pair A B) pi_codomain_fn)))
 ```
@@ -864,7 +875,7 @@ predicate routinely.
   `guard(...)`-wrapped per the public type API.
 
   Implementations that store a *pre-unguarded* B in the meta (e.g.,
-  `params := pair (unguard_checked A) (\{x\} -> unguard_checked (B
+  `params := pair (unguard_checked A) ({x} -> unguard_checked (B
   x))`) must *drop* the recognizer's outer `unguard_checked` to
   avoid double-unguarding (which `q_unguard_fn` rejects as
   `InvalidType`).
@@ -875,7 +886,7 @@ predicate routinely.
 ]
 
 For *type-polymorphic* Pi-checks (e.g.,
-`Pi Type (\{A\} -> Pi A (\{_\} -> A)) poly_id`):
+`Pi Type ({A} -> Pi A ({_} -> A)) poly_id`):
 
 + Outer pi_recognizer mints `A_hyp : Type`.
 + Inner pi_recognizer mints `x_hyp : A_hyp`.
@@ -894,9 +905,9 @@ extension.
 == Bool
 
 ```
-let bool_recognizer = \{_, v\} ->
+let bool_recognizer = {_, v} ->
   or (tree_eq v TT) (tree_eq v FF)
-let bool_dispatcher = \{motive, cases, target\} ->
+let bool_dispatcher = {motive, cases, target} ->
   let ct = pair_fst cases
   let cf = pair_snd cases
   select ct cf target
@@ -916,23 +927,23 @@ parametric-mode concerns inside the dispatcher.
 == Nat
 
 ```
-let nat_recognizer = fix (\{self, _, v\} ->
+let nat_recognizer = fix ({self, _, v} ->
   triage TT
-    (\{_\} -> FF)
-    (\{l, r\} -> and (is_leaf l) (Nat r))
+    ({_} -> FF)
+    ({l, r} -> and (is_leaf l) (Nat r))
     v)
 
-let nat_dispatcher = fix (\{self, motive, cases, target\} -> \{
+let nat_dispatcher = fix ({self, motive, cases, target} -> {
   let base = pair_fst cases
   let step = pair_snd cases
-  match (tree_eq target t) \{
+  match (tree_eq target t) {
     TT => base
     FF =>
       let k = pair_snd target
       let ih = self motive cases k
       step k ih   // user-supplied step body, runs under walker
-  \}
-\})
+  }
+})
 
 Nat := guard (wait kernel_ref.predicate_frame
   (pair nat_recognizer_sig (pair t t)))
@@ -948,45 +959,45 @@ predicates or function applications — not raw triage.
 == Eq
 
 ```
-let eq_recognizer = \{params, v\} -> \{
+let eq_recognizer = {params, v} -> {
   let A = eq_meta_type params
   let x = eq_meta_lhs params
   let y = eq_meta_rhs params
   and (tree_eq v refl) (tree_eq x y)
-\}
+}
 
-Eq := \{A, x, y\} -> guard (wait kernel_ref.predicate_frame
+Eq := {A, x, y} -> guard (wait kernel_ref.predicate_frame
   (pair eq_recognizer_sig
         (pair (make_eq_meta A x y) t)))
 ```
 
+The equality eliminator is an ordinary `eliminator_frame` wrapper, not
+a kernel primitive. The user-facing `eq_J A x motive base y proof`
+packages `motive` and `base` into the generic
+`motive -> cases -> target` shape: closed `refl` proofs dispatch to
+`base`, while neutral proofs mint a stuck neutral with stored type
+`motive y proof`.
+
 == Type
 
 ```
-let type_recognizer = \{_, v\} ->
+let type_recognizer = {_, v} ->
   // v is a "type" iff it's structurally a guarded predicate_frame wait-form
-  match (has_sig kernel_ref.guard v) \{
+  match (has_sig kernel_ref.guard v) {
     TT => has_sig kernel_ref.predicate_frame (type_meta v)
     FF => FF
-  \}
+  }
 
-let type_codomain_fn = \{ks, raw, neutral_meta, v\} -> \{
+let type_codomain_fn = {ks, raw, neutral_meta, v} -> {
   // Use `kernel.hyp_reduce` (eager) — matches Hyp / q_make_hyp's
   // construction. Using kernel_ref.hyp_reduce would produce a
   // different tree shape that fails to hash-cons-match the actual
   // hypothesis tree under tree_eq. See §3.5 "Kernel reference
   // convention".
   let self_as_hyp = wait kernel.hyp_reduce neutral_meta
-  match (q_is_neutral raw v) \{
-    TT =>
-      // H-rule: does v's stored type match this hypothesis?
-      Return (tree_eq (q_unguard_or_self ks (neutral_meta_type (type_meta v)))
-                       self_as_hyp)
-    FF =>
-      // Closed v: can't decide without the actual type.
-      Return (cert_make_stuck Bool (pair neutral_meta v))
-  \}
-\}
+  let stored_v = q_unguard_or_self ks (neutral_meta_type (type_meta v))
+  Return (tree_eq stored_v self_as_hyp)
+}
 
 Type := guard (wait kernel_ref.predicate_frame
   (pair type_recognizer_sig
@@ -1001,16 +1012,16 @@ For a hypothesis `Hyp Type id` (a "type variable"):
 - `predicate_frame`'s H-rule on its own treats this hyp as inhabiting
   `Type` (stored type matches T).
 - Applying the hypothesis to a value goes through hyp_reduce, which
-  invokes `type_codomain_fn`. For hypothesis arguments matching
-  this type-variable's identity, returns TT (H-rule); for non-matching
-  hypothesis arguments, FF; for closed arguments, stuck-Bool (the
-  actual type the hypothesis represents is unknown, so membership
-  can't be decided concretely).
+  invokes `type_codomain_fn`. For hypothesis arguments matching this
+  type-variable's identity, it returns TT (H-rule). For non-matching
+  hypotheses and for closed values, it returns FF in the current
+  implementation, because there is no stored-type evidence that the
+  value inhabits the unknown type.
 
 #note[
   *Type : Type.* Type is itself a guarded predicate_frame
   wait-form, so `Type Type = TT`. Russell-style paradoxes
-  (e.g., `R := \{T\} -> not (T T)`; `R R`) exist as well-formed
+  (e.g., `R := {T} -> not (T T)`; `R R`) exist as well-formed
   expressions but diverge when applied — the apply budget catches
   them as failure. Disp's "soundness via divergence-as-failure"
   stance applies: divergence is observably distinct from TT, so
@@ -1019,30 +1030,34 @@ For a hypothesis `Hyp Type id` (a "type variable"):
 ]
 
 #note[
-  *Closed-value case returns stuck-Bool.* When `apply A_hyp closed_v`
-  is evaluated and `closed_v` is not a hypothesis, Type's
-  codomain_fn can't decide membership without knowing what type
-  A_hyp actually represents (it's still hypothetical). It returns
-  stuck-Bool. This propagates upward; at the public boundary,
-  stuck-Bool fails the scan and the test reports FF.
+  *Closed-value case returns FF today.* Example: if `A_hyp = Hyp Type h0`,
+  then `A_hyp 5 = FF`. The closed value `5` has no neutral metadata
+  whose stored type can be compared to `A_hyp`, so Type's codomain_fn
+  cannot justify membership in the unknown type. This is conservative:
+  legitimate polymorphic functions are checked with hypotheses, and
+  concrete uses instantiate the type variable before checking closed
+  values.
+]
 
-  This is the right behavior for unsound constructions (functions
-  that don't preserve typing). For *legitimate* polymorphic functions
-  used at concrete instantiations, the user instantiates Type
-  with a specific type before testing — at that point Type isn't
-  a hypothesis, the recognizer runs concretely, and stuck-Bool
-  doesn't arise.
+#note[
+  *Future Type rigor.* `Type` currently recognizes guarded
+  predicate_frame values structurally. It does not yet validate that
+  a type's recognizer, params, and codomain_fn obey the intended laws
+  or that metadata functions correspond to lawful categorical
+  constructions. That stronger validation belongs in future tooling
+  and/or a richer `Type` checker; for now users are expected to use
+  types whose metadata they understand.
 ]
 
 == False
 
 ```
-let false_recognizer = \{_, _\} -> FF
+let false_recognizer = {_, _} -> FF
 
 False := guard (wait kernel_ref.predicate_frame
   (pair false_recognizer_sig (pair t t)))
 
-Not := \{P\} -> Pi P (\{_\} -> False)
+Not := {P} -> Pi P ({_} -> False)
 ```
 
 `False v = FF` for all closed `v`. For hypothesis `v` with stored type
@@ -1054,26 +1069,26 @@ synthesized.
 == Sigma, Refinement, Forall
 
 ```
-let sigma_recognizer = \{params, v\} -> \{
+let sigma_recognizer = {params, v} -> {
   let A = pair_fst params
   let B = pair_snd params
   let a = pair_fst v
   let b = pair_snd v
   and (A a) ((B a) b)
-\}
+}
 
-let refinement_recognizer = \{params, v\} -> \{
+let refinement_recognizer = {params, v} -> {
   let A = pair_fst params
   let P = pair_snd params
   and (A v) (P v)
-\}
+}
 
-let forall_recognizer = \{params, v\} -> \{
+let forall_recognizer = {params, v} -> {
   let A = pair_fst params
   let P = pair_snd params
-  bind_hyp A (\{hyp\} ->
+  bind_hyp A ({hyp} ->
     (P hyp) v)   // proposition P at hyp: does v inhabit?
-\}
+}
 ```
 
 Each gets the standard 3-tuple metadata wrapping with sentinel
@@ -1105,13 +1120,13 @@ strictly-smaller-measure inputs:
 // `body` takes `rec` and `v`; rec invocations on inputs whose
 // measure is not strictly less than measure(v) return Fail.
 
-wf_fix := \{measure, body\} ->
-  fix (\{self, v\} ->
-    let bounded_self = \{v_inner\} ->
-      match (lt_in_M (measure v_inner) (measure v)) \{
+wf_fix := {measure, body} ->
+  fix ({self, v} ->
+    let bounded_self = {v_inner} ->
+      match (lt_in_M (measure v_inner) (measure v)) {
         TT => self v_inner
         FF => Fail
-      \}
+      }
     body bounded_self v)
 ```
 
@@ -1128,7 +1143,7 @@ Two flavors of `Total` for asserting predicate totality:
 // Structural: Total T iff T's recognizer was built via wf_fix.
 // `wf_fix_sig` is the library-level signature of the wf_fix
 // combinator (a fixed hash-cons-stable tree, not a kernel ref).
-let total_recognizer = \{_, T\} ->
+let total_recognizer = {_, T} ->
   let inner = type_meta T
   let recognizer = pair_fst (type_meta inner)
   has_sig wf_fix_sig recognizer
@@ -1139,15 +1154,15 @@ Total := guard (wait kernel_ref.predicate_frame
 
 ```
 // Constructive: TotalWith T inhabited by (measure, decreasing_proof).
-TotalWith := \{T\} ->
-  Sigma (Tree -> Ord) (\{measure\} ->
-    Pi Tree (\{v\} ->
+TotalWith := {T} ->
+  Sigma (Tree -> Ord) ({measure} ->
+    Pi Tree ({v} ->
       // proof that recursive calls of T's body on input v
       // produce values v' with ord_lt (measure v') (measure v)
       ...))
 ```
 
-`Total` is the "trust the syntactic discipline" variant; `TotalWith`
+`Total` is the "accept the syntactic discipline" variant; `TotalWith`
 is "show me an explicit termination proof." Library authors pick
 based on need.
 
@@ -1201,7 +1216,7 @@ case dispatchers. All user code under `predicate_frame` or
 through the walker.
 
 Codomain_fns run in raw mode (invoked from inside hyp_reduce). They
-are library-trusted code, but their privilege is delegated through
+are library-privileged code, but their privilege is delegated through
 the metadata layout — library authors choose what to put in
 codomain_fn slots; the kernel runs whatever they declare in raw
 mode. Type's codomain_fn relies on this for its H-rule
@@ -1214,7 +1229,7 @@ boundary inhabits `False`.
 
 This follows from three facts:
 
-+ False's predicate is `\{_, _\} -> FF`. For any closed v, `False v = FF`.
++ False's predicate is `{_, _} -> FF`. For any closed v, `False v = FF`.
 + Hypothesis-tainted values cannot pass the public-boundary scan.
 + bind_hyp's escape check prevents user code from constructing
   type-system-accepted values that quietly carry hypotheses past
@@ -1225,7 +1240,7 @@ boundary.
 
 #note[
   *The escape check resolves the weirder attack.* Consider
-  `weirder := \{x\} -> bind_hyp False (\{h\} -> h)` —
+  `weirder := {x} -> bind_hyp False ({h} -> h)` —
   a function that ignores its argument and tries to return a fresh
   False hypothesis.
 
@@ -1236,20 +1251,20 @@ boundary.
   returns Fail.
 
   weirder thus evaluates to Fail at the body. Pi-check
-  `Pi Bool (\{_\} -> False) weirder`: the recognizer's
+  `Pi Bool ({_} -> False) weirder`: the recognizer's
   `expected_core (v hyp_b)` becomes `False Fail = FF`, so Pi-check
   rejects weirder. Soundness preserved.
 
   Without the escape check, weirder would be accepted at type-check
   via predicate_frame's H-rule firing on the escaped h_false. The
-  type-system would claim weirder inhabits Pi Bool (\{_\} -> False),
+  type-system would claim weirder inhabits `Pi Bool ({_} -> False)`,
   but the public-boundary scan on weirder(TT) would produce FF.
   That mismatch is what the escape check eliminates.
 ]
 
 == Russell-style paradoxes
 
-Russell-style self-referential predicates like `R := \{T\} -> not (T T)`
+Russell-style self-referential predicates like `R := {T} -> not (T T)`
 don't yield contradictions in Disp; they diverge.
 
 `R R` evaluates `not (R R)`, which evaluates `not (not (R R))`, which
@@ -1265,7 +1280,7 @@ TT and is treated as failure at the public boundary.
 
 = Type-polymorphic Pi via Type's codomain_fn
 
-The polymorphic identity check `Pi Type (\{A\} -> Pi A (\{_\} -> A))
+The polymorphic identity check `Pi Type ({A} -> Pi A ({_} -> A))
 poly_id` succeeds at the public boundary because Type's
 codomain_fn (§5) does H-rule directly via the `Return` Action,
 bypassing the spine-extension default that Pi-typed hypotheses use.
@@ -1285,32 +1300,26 @@ hyp_reduce by the Action protocol.
 The codomain_fn's reflective operations (`q_is_neutral`,
 `neutral_meta_type`) are safe because hyp_reduce runs in raw mode;
 they're privileged through the kernel's dispatch routing, not
-through any user-untrusted reflection.
+through any user reflection.
 
-= Migration plan (informational)
+= Implementation Status and Future Work
 
-The current implementation has per-type kernel handlers
-(`q_pi_fn`, `q_bool_fn`, `q_nat_fn`, `q_eq_fn`,
-`q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`) and corresponding
-recq fields, plus rank-graded universe machinery
-(`q_core_type_fn`, `q_guarded_type_fn`). Migrating to the unified
-design is a substantial refactor:
+The implementation has landed the central migration described by this
+document:
 
-+ Add `q_predicate_frame_fn`, `q_bind_hyp_fn`,
-  `q_eliminator_frame_fn` to the kernel record.
-+ Update `q_hyp_reduce_fn` to dispatch on Action tags (Extend /
-  Return) per §4.1.
-+ Drop the per-type handlers (`q_bool_fn`, `q_nat_fn`, `q_eq_fn`,
-  `q_bool_rec_fn`, `q_nat_rec_fn`, `q_eq_J_fn`, `q_pi_fn`).
-+ Drop the universe-rank machinery (`q_core_type_fn`,
-  `q_guarded_type_fn`) and the Ord-as-rank coupling.
-+ Reimplement Pi, Bool, Nat, Eq, Type, Ord as library types
-  using predicate_frame / eliminator_frame.
-+ Implement Action helpers (`Extend`, `Return`, `is_extend`,
-  `is_return`) and `q_contains_via_open_path` (for bind_hyp's
-  escape check).
-+ Implement `wf_fix` and `Total` library constructions.
-+ Update test sites (currently ~120 disp tests) where they assert
-  against specific representations.
++ The kernel record has the seven primitive handlers.
++ `hyp_reduce` dispatches on `Extend` / `Return` actions.
++ Pi, Bool, Nat, Eq, Type, and Ord are library types built from
+  `predicate_frame`, `bind_hyp`, and `eliminator_frame`.
++ Ranked universes have been replaced by canonical `Type`.
++ Eq no longer has a dedicated kernel handler.
 
-This document describes the target end-state.
+Known future work:
+
++ Make `Type` more rigorous about validating type metadata and the
+  laws expected of recognizers, codomain_fns, and eliminator
+  dispatchers.
++ Implement `wf_fix`, `Total`, and `TotalWith` library constructions.
++ Improve diagnostics for divergence and failed type validation.
++ Continue reducing host-only elaborator behavior as the
+  self-hosting story matures.

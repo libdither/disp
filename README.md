@@ -25,18 +25,14 @@ npm test
 
 ```
 src/tree.ts        -- Tree calculus runtime + native fast-paths (tree_eq, walker)
-src/parse.ts       -- Tokenizer / parser / bracket abstraction
-src/compile.ts     -- Elaborator and program driver
+src/parse.ts       -- Tokenizer / parser
+src/compile.ts     -- Bracket abstraction, elaborator, program driver
 src/run.ts         -- File runner
 
-lib/prelude.disp   -- Fundamental combinators (TT/FF, triage, select, pair, wait/fix/recq)
-lib/kernel.disp    -- Kernel record: type checkers, hyp_reduce, dispatcher, public types
-lib/dae.disp       -- Data-as-eliminator library types (Bool/Nat/Eq templates)
-lib/ord.disp       -- Ordinals up to ε₀
-lib/math.disp      -- add (via nat_rec, walker-safe)
-lib/nat.disp       -- pred, is_zero, equality proofs
-
-lib/list.disp, set.disp, fin.disp     -- Additional library types
-lib/*.test.disp                        -- Tests per module
-test/                                  -- Vitest harness + parser/runtime unit tests
+lib/prelude.disp          -- Fundamental combinators
+lib/kernel/*.disp         -- Seven primitive handlers, helpers, walker reference
+lib/types/*.disp          -- Library types: Pi, Type, Bool, Nat, Eq, Ord, conversion
+lib/std/**/*.disp         -- Standard library modules
+lib/tests/**/*.test.disp  -- Object-language test suite
+test/                     -- Vitest harness + parser/runtime unit tests
 ```
