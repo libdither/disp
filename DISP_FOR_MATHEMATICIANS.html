@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disp for Mathematicians — A First-Principles Walkthrough</title>
+<style>
+  :root {
+    --bg: #fbf9f4;
+    --bg-elev: #ffffff;
+    --bg-code: #f4efe4;
+    --bg-aside: #f6f1e3;
+    --bg-warn: #fff5dc;
+    --fg: #1c1a14;
+    --fg-muted: #5a554b;
+    --accent: #6a3a18;
+    --accent-soft: #b27a47;
+    --border: #d8cfb8;
+    --link: #8a3a18;
+    --pre-fg: #2a2722;
+    --hl-key: #8a3a18;
+    --hl-str: #2c5f3a;
+    --hl-com: #8d8470;
+    --hl-num: #6a3a18;
+    --hl-typ: #4c437a;
+  }
+  html[data-theme="dark"] {
+    --bg: #15130f;
+    --bg-elev: #1d1b16;
+    --bg-code: #221f18;
+    --bg-aside: #1e1c16;
+    --bg-warn: #2a2614;
+    --fg: #e8e2d2;
+    --fg-muted: #a39d8d;
+    --accent: #d6a878;
+    --accent-soft: #b27a47;
+    --border: #3a3528;
+    --link: #e5b07b;
+    --pre-fg: #e8e2d2;
+    --hl-key: #e5b07b;
+    --hl-str: #9ac28a;
+    --hl-com: #6f6857;
+    --hl-num: #d6a878;
+    --hl-typ: #b9a7d6;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Charter', 'Georgia', 'Times New Roman', serif;
+    font-size: 17px;
+    line-height: 1.6;
+  }
+  body {
+    display: flex;
+    min-height: 100vh;
+  }
+  /* Sidebar */
+  nav.toc {
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    width: 280px;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 1.5rem 1rem;
+    border-right: 1px solid var(--border);
+    background: var(--bg-elev);
+    font-size: 14px;
+    font-family: 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  }
+  nav.toc h1 {
+    font-size: 18px;
+    margin: 0 0 1rem 0;
+    color: var(--accent);
+    font-family: 'Charter', 'Georgia', serif;
+  }
+  nav.toc ol {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    counter-reset: section;
+  }
+  nav.toc > ol > li {
+    counter-increment: section;
+    margin: 0.4rem 0;
+  }
+  nav.toc > ol > li::before {
+    content: counter(section) ". ";
+    color: var(--fg-muted);
+  }
+  nav.toc ol ol {
+    padding-left: 1.2rem;
+    margin: 0.2rem 0;
+    counter-reset: subsection;
+  }
+  nav.toc ol ol li {
+    counter-increment: subsection;
+    margin: 0.15rem 0;
+    font-size: 13px;
+  }
+  nav.toc ol ol li::before {
+    content: counter(section) "." counter(subsection) "  ";
+    color: var(--fg-muted);
+  }
+  nav.toc a {
+    color: var(--fg);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc a.active { color: var(--accent); font-weight: 600; }
+  .theme-toggle {
+    margin-top: 1.5rem;
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    width: 100%;
+  }
+  .theme-toggle:hover { background: var(--bg-code); }
+  /* Main content */
+  main {
+    flex: 1;
+    max-width: 820px;
+    padding: 3rem 4rem 6rem;
+    margin: 0 auto;
+  }
+  h1, h2, h3, h4 {
+    font-family: 'Charter', 'Georgia', serif;
+    color: var(--accent);
+    line-height: 1.25;
+  }
+  h1.title {
+    font-size: 2.4rem;
+    margin: 0 0 0.5rem;
+    border: none;
+    color: var(--fg);
+  }
+  .subtitle {
+    color: var(--fg-muted);
+    font-style: italic;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.5rem;
+  }
+  h2 {
+    font-size: 1.7rem;
+    margin: 3rem 0 1rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 {
+    font-size: 1.3rem;
+    margin: 2rem 0 0.6rem;
+    color: var(--accent-soft);
+  }
+  h4 {
+    font-size: 1.05rem;
+    margin: 1.4rem 0 0.4rem;
+    color: var(--fg);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.9rem;
+  }
+  p { margin: 0.6em 0 0.9em; }
+  a { color: var(--link); text-decoration-style: dotted; }
+  a:hover { text-decoration-style: solid; }
+  /* Code */
+  code, pre, .mono {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+    font-size: 0.92em;
+  }
+  code {
+    background: var(--bg-code);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--bg-code);
+    padding: 1em 1.2em;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    overflow-x: auto;
+    line-height: 1.45;
+    color: var(--pre-fg);
+    margin: 1em 0;
+  }
+  pre code {
+    background: transparent;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+  }
+  pre .k { color: var(--hl-key); font-weight: 600; }
+  pre .s { color: var(--hl-str); }
+  pre .c { color: var(--hl-com); font-style: italic; }
+  pre .n { color: var(--hl-num); }
+  pre .t { color: var(--hl-typ); }
+  pre .punct { color: var(--fg-muted); }
+  /* Math */
+  .math {
+    font-family: 'STIX Two Math', 'Cambria Math', serif;
+    font-style: italic;
+  }
+  .math-block {
+    display: block;
+    text-align: center;
+    margin: 1em 0;
+    font-size: 1.1em;
+  }
+  .turnstile { font-style: normal; }
+  /* Asides */
+  aside.note, aside.warn, aside.deep {
+    margin: 1.4em 0;
+    padding: 0.9em 1.2em;
+    border-left: 4px solid var(--accent-soft);
+    background: var(--bg-aside);
+    border-radius: 0 5px 5px 0;
+    font-size: 0.96em;
+  }
+  aside.warn {
+    border-left-color: #c89535;
+    background: var(--bg-warn);
+  }
+  aside.deep summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 600;
+    font-family: 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    font-size: 0.92em;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    list-style: none;
+  }
+  aside.deep summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform 0.2s;
+  }
+  aside.deep[open] summary::before {
+    content: "▾ ";
+  }
+  aside.deep .body { margin-top: 0.8em; }
+  /* Definitions */
+  dfn {
+    font-style: italic;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: help;
+    border-bottom: 1px dotted var(--accent-soft);
+  }
+  /* Inline tree literal */
+  .tree-lit {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9em;
+    background: var(--bg-code);
+    padding: 0.05em 0.3em;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  /* Interactive widgets */
+  .widget {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.2em;
+    margin: 1.5em 0;
+    background: var(--bg-elev);
+  }
+  .widget h4.widget-title {
+    margin: 0 0 0.8em;
+    font-size: 0.85em;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .widget .row { display: flex; gap: 0.6em; align-items: center; flex-wrap: wrap; }
+  .widget button {
+    padding: 0.4em 0.9em;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'SF Pro Text', system-ui, sans-serif;
+    font-size: 0.88em;
+  }
+  .widget button:hover { background: var(--bg-code); border-color: var(--accent-soft); }
+  .widget button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .widget button.primary {
+    background: var(--accent);
+    color: var(--bg-elev);
+    border-color: var(--accent);
+  }
+  .widget button.primary:hover { background: var(--accent-soft); }
+  .widget input[type="text"] {
+    padding: 0.4em 0.7em;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9em;
+    flex: 1;
+    min-width: 250px;
+  }
+  .widget .display {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    padding: 0.8em;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9em;
+    margin: 0.6em 0;
+    min-height: 1.2em;
+    word-break: break-all;
+  }
+  .widget .label {
+    font-family: 'SF Pro Text', system-ui, sans-serif;
+    font-size: 0.8em;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .widget .step {
+    border-top: 1px solid var(--border);
+    padding-top: 0.6em;
+    margin-top: 0.6em;
+  }
+  .widget .step-num {
+    display: inline-block;
+    width: 1.8em;
+    height: 1.8em;
+    line-height: 1.8em;
+    text-align: center;
+    background: var(--accent);
+    color: var(--bg-elev);
+    border-radius: 50%;
+    font-size: 0.8em;
+    font-weight: 700;
+    margin-right: 0.5em;
+  }
+  /* SVG trees */
+  svg.tree-svg {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: block;
+    margin: 0.6em auto;
+  }
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.5em 0.8em;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--bg-aside);
+    font-family: 'SF Pro Text', system-ui, sans-serif;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+  }
+  td code { font-size: 0.88em; }
+  /* Footnotes / references */
+  .ref {
+    color: var(--fg-muted);
+    font-size: 0.85em;
+    font-style: italic;
+  }
+  /* Glossary tooltip */
+  .gloss { position: relative; }
+  .gloss .tip {
+    display: none;
+    position: absolute;
+    bottom: 1.5em;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--fg);
+    color: var(--bg-elev);
+    padding: 0.4em 0.7em;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-style: normal;
+    white-space: nowrap;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
+  .gloss:hover .tip { display: block; }
+  /* Quote */
+  blockquote {
+    margin: 1em 0;
+    padding: 0.4em 1.2em;
+    border-left: 3px solid var(--accent-soft);
+    color: var(--fg-muted);
+    font-style: italic;
+  }
+  blockquote cite {
+    display: block;
+    margin-top: 0.5em;
+    font-style: normal;
+    font-size: 0.85em;
+    color: var(--fg-muted);
+  }
+  .footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-size: 0.9em;
+  }
+  /* Reduction trace */
+  .trace { display: flex; flex-direction: column; gap: 0.4em; }
+  .trace .frame {
+    padding: 0.4em 0.6em;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88em;
+  }
+  .trace .frame.current { border-color: var(--accent); background: var(--bg-aside); }
+  .trace .rule {
+    font-size: 0.78em;
+    color: var(--fg-muted);
+    font-family: 'SF Pro Text', system-ui, sans-serif;
+    margin-top: 0.2em;
+  }
+  /* mobile */
+  @media (max-width: 900px) {
+    body { flex-direction: column; }
+    nav.toc {
+      position: relative;
+      width: 100%;
+      max-height: none;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    main { padding: 2rem 1.5rem 4rem; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <h1>Disp for Mathematicians</h1>
+  <ol>
+    <li><a href="#intro">Motivation</a>
+      <ol>
+        <li><a href="#whatis">What is Disp?</a></li>
+        <li><a href="#why">Why tree calculus?</a></li>
+      </ol>
+    </li>
+    <li><a href="#lambda">Lambda to Trees</a>
+      <ol>
+        <li><a href="#ski">SKI combinators</a></li>
+        <li><a href="#tree">Tree calculus</a></li>
+        <li><a href="#triage">Triage &amp; reduction</a></li>
+        <li><a href="#bracket">Bracket abstraction</a></li>
+        <li><a href="#hashcons">Hash-consing</a></li>
+      </ol>
+    </li>
+    <li><a href="#predicates">Types as Predicates</a>
+      <ol>
+        <li><a href="#prop">Propositions as predicates</a></li>
+        <li><a href="#scott">Scott encodings</a></li>
+        <li><a href="#tequalstt">T(v) = TT</a></li>
+      </ol>
+    </li>
+    <li><a href="#kernel">The Seven Kernel Primitives</a>
+      <ol>
+        <li><a href="#hypothesis">The hypothesis problem</a></li>
+        <li><a href="#walker">The parametric walker</a></li>
+        <li><a href="#seven">The seven primitives</a></li>
+        <li><a href="#action">Actions &amp; spines</a></li>
+        <li><a href="#soundness">Soundness</a></li>
+      </ol>
+    </li>
+    <li><a href="#library">Library Types</a>
+      <ol>
+        <li><a href="#bool">Bool, Nat</a></li>
+        <li><a href="#pi">Dependent functions</a></li>
+        <li><a href="#eq">Propositional equality</a></li>
+        <li><a href="#universe">The universe Type</a></li>
+      </ol>
+    </li>
+    <li><a href="#surface">Surface Syntax</a></li>
+    <li><a href="#future">Future Directions</a>
+      <ol>
+        <li><a href="#cat">Categorical structure</a></li>
+        <li><a href="#cubical">Cubical &amp; univalence</a></li>
+        <li><a href="#synthesis">Synthesis &amp; bootstrap</a></li>
+      </ol>
+    </li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+  <button class="theme-toggle" onclick="toggleTheme()">Toggle theme</button>
+</nav>
+
+<main>
+
+<h1 class="title">Disp</h1>
+<p class="subtitle">A first-principles walkthrough for mathematicians — from λ-calculus to a self-hosting dependent type system on tree calculus, with a glance at the categorical and cubical horizons.</p>
+
+<!-- ============================================================ -->
+<section id="intro">
+<h2>1.&nbsp; Motivation</h2>
+
+<h3 id="whatis">1.1&nbsp; What is Disp?</h3>
+
+<p><strong>Disp</strong> is a dependently typed programming language whose computational substrate is <em>tree calculus</em> rather than λ-calculus, and whose central design principle can be stated as a single equation:</p>
+
+<p class="math-block">
+<span class="math">T</span>&nbsp;<span class="math">(</span><span class="math">v</span><span class="math">)</span>&nbsp;<span class="turnstile">=</span>&nbsp;<span class="math">TT</span>&nbsp;&nbsp;&nbsp;⟺&nbsp;&nbsp;&nbsp;<span class="math">v&nbsp;:&nbsp;T</span>
+</p>
+
+<p>Read this aloud: <em>"the type</em>&nbsp;<span class="math">T</span>&nbsp;<em>applied to the value</em>&nbsp;<span class="math">v</span>&nbsp;<em>reduces to</em>&nbsp;<span class="math">TT</span>&nbsp;<em>if and only if</em>&nbsp;<span class="math">v</span>&nbsp;<em>inhabits</em>&nbsp;<span class="math">T</span><em>."</em></p>
+
+<p>In Disp, types <em>are not</em> a distinct stratum sitting above terms, related by a typing judgement <span class="math">Γ&nbsp;⊢&nbsp;v&nbsp;:&nbsp;T</span>. Types <em>are</em> tree-calculus programs &mdash; predicates that, when run against a tree, return Boolean <span class="math">TT</span> or <span class="math">FF</span>. <strong>Typing is literal program execution.</strong></p>
+
+<aside class="note">
+<strong>Quote (<code>README.md</code>:5)</strong> &mdash; <em>"Tree calculus is natively reflective &mdash; terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp's goal is a fully self-hosting dependent type system whose checker lives as an inhabitant of the object language, not just as a host-language function."</em>
+</aside>
+
+<h3 id="why">1.2&nbsp; Why does this design exist?</h3>
+
+<p>The long-term aspiration, stated in <code>GOALS.md</code>, is a <strong>self-improving optimizer</strong>: given a formal specification of "good program," synthesize the actual program. This requires every component &mdash; the specification, the type-checker, the scoring function, the candidate programs &mdash; to live inside a single, simple, fully-reflective computational universe. Lean, Coq, and Agda have not bootstrapped their checkers into themselves because their checkers depend on host-language features (mutable hash tables, exceptions, pattern-match compilation, tactic DSLs) that have no object-language counterpart. Disp's <strong>development philosophy</strong> &mdash; quoted from <code>DEVELOPMENT_PHILOSOPHY.md</code>:11&12 below &mdash; refuses this drift from day one.</p>
+
+<blockquote>
+"The object language is the specification. Host implementations are optimizations. Every component that participates in deciding well-typedness &mdash; the type checker, the elaborator's semantics, conversion, the data structures those components read &mdash; must have a declared encoding as a tree-calculus program. The TypeScript implementation exists to make iteration fast. It is never the ground truth."
+<cite>— <code>DEVELOPMENT_PHILOSOPHY.md</code>:11&ndash;13</cite>
+</blockquote>
+
+<p>The reward for the discipline is that <em>the type checker, eventually, can synthesize itself</em>. Disp is built backwards from this goal.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<section id="lambda">
+<h2>2.&nbsp; From λ-calculus to Trees</h2>
+
+<p>We begin where the working mathematician begins: untyped λ-calculus. The terms are</p>
+
+<p class="math-block"><span class="math">M, N&nbsp; ::=&nbsp; x &nbsp;|&nbsp; λx. M &nbsp;|&nbsp; M N</span></p>
+
+<p>and the single computation rule is β-reduction, <span class="math">(λx. M) N →<sub>β</sub> M[x ≔ N]</span>. The system is Turing complete and elegant, but it has a feature that pinches when you try to build a fully reflective language: <em>λ-terms cannot inspect their own structure</em>. Given a λ-term <span class="math">f</span>, there is no β-reducible context in which one can ask <em>"is</em>&nbsp;<span class="math">f</span>&nbsp;<em>a function or an atom?"</em> &mdash; everything is a function.</p>
+
+<h3 id="ski">2.1&nbsp; The SKI detour</h3>
+
+<p>Curry and Schönfinkel observed that one can dispense with bound variables entirely using three combinators:</p>
+
+<table>
+<tr><th>Combinator</th><th>Definition</th><th>Behaviour</th></tr>
+<tr><td><code>I</code></td><td><code>λx. x</code></td><td><span class="math">I x = x</span></td></tr>
+<tr><td><code>K</code></td><td><code>λx. λy. x</code></td><td><span class="math">K x y = x</span></td></tr>
+<tr><td><code>S</code></td><td><code>λx. λy. λz. (x z)(y z)</code></td><td><span class="math">S x y z = (x z)(y z)</span></td></tr>
+</table>
+
+<p>SKI is combinatorially complete: every λ-term has an equivalent SKI translation (the algorithm is called <em>bracket abstraction</em>). But SKI still has λ-calculus's opacity problem &mdash; you cannot ask <em>"is</em>&nbsp;<span class="math">f</span>&nbsp;<em>an</em>&nbsp;<span class="math">S</span>&nbsp;<em>or a</em>&nbsp;<span class="math">K</span><em>?"</em> as a reducible operation.</p>
+
+<h3 id="tree">2.2&nbsp; Tree calculus</h3>
+
+<p>Tree calculus, due to Barry Jay, is a small alternative inspired by SKI but with a crucial twist: <strong>every value is a tree built from three node shapes, and there is a primitive rule that pattern-matches on those shapes.</strong> The carrier is the free magma on a single nullary constructor &mdash; call it <span class="math">△</span> (a triangle, "leaf") &mdash; with binary operation written by juxtaposition. So every tree is one of:</p>
+
+<p class="math-block">
+<span class="math">△</span>&nbsp;&nbsp; &nbsp; &nbsp; <em>(leaf, arity 0)</em><br>
+<span class="math">△&nbsp;u</span>&nbsp; &nbsp; &nbsp; <em>(stem, arity 1, holds one child)</em><br>
+<span class="math">△&nbsp;u&nbsp;v</span> &nbsp; &nbsp; <em>(fork, arity 2, holds two children)</em>
+</p>
+
+<p>In Disp's implementation (<code>src/tree.ts</code>:4&ndash;16) this is the inductive type:</p>
+
+<pre><code><span class="k">type</span> <span class="t">Tree</span> <span class="punct">=</span>
+  | { tag: <span class="s">"leaf"</span>; id: <span class="t">number</span> }
+  | { tag: <span class="s">"stem"</span>; child: <span class="t">Tree</span>; id: <span class="t">number</span> }
+  | { tag: <span class="s">"fork"</span>; left: <span class="t">Tree</span>; right: <span class="t">Tree</span>; id: <span class="t">number</span> }</code></pre>
+
+<p>Application is <em>not</em> a syntactic constructor; it is an external operation <span class="math">apply&nbsp;:&nbsp;Tree&nbsp;×&nbsp;Tree&nbsp;→&nbsp;Tree</span>. Every tree is in normal form on its own &mdash; reduction only happens through <code>apply</code>.</p>
+
+<h3 id="triage">2.3&nbsp; The reduction rules</h3>
+
+<p>The five rules of <code>apply(f, x)</code> partition by the shape of <span class="math">f</span> (and, in the third case, by the shape of <span class="math">x</span>):</p>
+
+<table>
+<tr><th>Pattern of <span class="math">f</span></th><th>Result</th><th>Name / interpretation</th></tr>
+<tr><td><span class="math">△</span></td><td><span class="math">△&nbsp;x</span></td><td>build a stem</td></tr>
+<tr><td><span class="math">△&nbsp;u</span></td><td><span class="math">△&nbsp;u&nbsp;x</span></td><td>build a fork</td></tr>
+<tr><td><span class="math">△&nbsp;△&nbsp;b</span></td><td><span class="math">b</span></td><td>K rule (constant)</td></tr>
+<tr><td><span class="math">△&nbsp;(△&nbsp;c)&nbsp;b</span></td><td><span class="math">(c&nbsp;x)(b&nbsp;x)</span></td><td>S rule (composition)</td></tr>
+<tr><td><span class="math">△&nbsp;(△&nbsp;c&nbsp;d)&nbsp;b</span></td><td><em>triage on x</em>: leaf→<span class="math">c</span>, stem(<span class="math">u</span>)→<span class="math">d&nbsp;u</span>, fork(<span class="math">u,v</span>)→<span class="math">b&nbsp;u&nbsp;v</span></td><td>F rule (triage)</td></tr>
+</table>
+
+<p>Pause on the fifth rule. It is what distinguishes tree calculus from λ-calculus and from SKI. A program of shape <span class="math">△&nbsp;(△&nbsp;c&nbsp;d)&nbsp;b</span> is a <em>case analysis on the structure of its argument</em>. Triage is the primitive reflection: every tree can be decomposed into its constituent shapes, by reduction alone.</p>
+
+<aside class="note">
+<strong>Why this is a big deal.</strong> In λ-calculus, there is no β-reducible predicate "<em>x</em> is a variable" or "<em>x</em> is a λ-abstraction." In tree calculus, you can write <span class="math">is_leaf</span> as a closed tree program, and reduce it against any value to get <span class="math">TT</span> or <span class="math">FF</span>. This is what is meant by <strong>structural completeness</strong>: every program can decide the structure of every other program by reduction alone.
+</aside>
+
+<!-- INTERACTIVE WIDGET 1: tree reducer -->
+<div class="widget" id="reducer-widget">
+<h4 class="widget-title">Interactive: apply two trees</h4>
+<p style="font-size: 0.9em; margin-top:0;">Use <code>t</code> for the leaf and parentheses for stems and forks. Type <code>(t t (t t t))</code> for fork(△, fork(△,△)). Click <strong>Reduce</strong> to step.</p>
+<div class="row">
+  <span class="label">f:</span>
+  <input type="text" id="reducer-f" value="(t (t t) t)">
+  <span class="label">x:</span>
+  <input type="text" id="reducer-x" value="t">
+  <button class="primary" onclick="reducerStep()">Reduce step</button>
+  <button onclick="reducerReset()">Reset</button>
+</div>
+<div class="display" id="reducer-out">Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.</div>
+<div id="reducer-trace" class="trace"></div>
+</div>
+
+<h3 id="bracket">2.4&nbsp; Bracket abstraction: compiling λ to trees</h3>
+
+<p>Just as SKI admits bracket abstraction, so does tree calculus. The translation [<span class="math">x</span>].<span class="math">M</span> &mdash; remove the variable <span class="math">x</span> from <span class="math">M</span>, leaving a closed tree expression &mdash; is implemented in <code>src/compile.ts</code>:77&ndash;102:</p>
+
+<pre><code><span class="k">function</span> <span class="t">abstractName</span>(name, body) {
+  <span class="k">if</span> (!containsFree(body, name)) <span class="k">return</span> cap(K, body)         <span class="c">// [x].C  = K C</span>
+  <span class="k">switch</span> (body.tag) {
+    <span class="k">case</span> <span class="s">"var"</span>: <span class="k">return</span> I_CIR                                <span class="c">// [x].x  = I</span>
+    <span class="k">case</span> <span class="s">"app"</span>:
+      <span class="c">// η: [x].(f x) where x ∉ f   →   f</span>
+      <span class="k">if</span> (body.x.tag === <span class="s">"var"</span> && body.x.name === name && !containsFree(body.f, name))
+        <span class="k">return</span> body.f
+      <span class="k">const</span> af = abstractName(name, body.f), ax = abstractName(name, body.x)
+      <span class="c">// K-composition:  S (K p) (K q)   →   K (p q)</span>
+      <span class="k">if</span> (af.tag === <span class="s">"app"</span> && af.f.tag === <span class="s">"K"</span> && ax.tag === <span class="s">"app"</span> && ax.f.tag === <span class="s">"K"</span>)
+        <span class="k">return</span> cap(K, cap(af.x, ax.x))
+      <span class="k">return</span> cap(cap(S, af), ax)
+  }
+}</code></pre>
+
+<p>The three combinators <span class="math">I, K, S</span> are themselves specific trees:</p>
+
+<p class="math-block">
+<span class="math">I&nbsp; =&nbsp; △&nbsp;(△&nbsp;△)&nbsp;△</span>&nbsp;&nbsp; &nbsp; <span class="math">K&nbsp; =&nbsp; △&nbsp;△</span>&nbsp;&nbsp; &nbsp; <span class="math">S&nbsp; =&nbsp; △&nbsp;(△&nbsp;(△&nbsp;△))&nbsp;△</span>
+</p>
+
+<p>So every λ-term in the surface syntax of Disp becomes &mdash; via this bracket abstraction &mdash; a <em>closed</em> tree. There are no free variables in the runtime; binders are compiled away.</p>
+
+<h3 id="hashcons">2.5&nbsp; Hash-consing and O(1) equality</h3>
+
+<p>One implementation detail is load-bearing for the whole design. Disp's tree runtime stores every distinct tree exactly once: when <code>fork(l, r)</code> is invoked twice with the same children (identified by their integer <code>id</code>s), the second call returns the same node as the first (<code>src/tree.ts</code>:26&ndash;48). This is <dfn class="gloss">hash-consing<span class="tip">structural sharing: identical subtrees share one heap cell</span></dfn>. Consequence: <em>structural equality is identity</em>:</p>
+
+<pre><code><span class="k">export function</span> treeEqual(a, b) {
+  <span class="k">return</span> a.id === b.id   <span class="c">// O(1) — no traversal</span>
+}</code></pre>
+
+<p>Why is this load-bearing? Because <em>conversion checking in a dependent type system is structural equality of normal forms</em>. By making conversion O(1), the kernel keeps type-checking cheap. The whole "types are predicates that compare via reconstruction" trick &mdash; we will see this is the <strong>H-rule</strong> &mdash; only works because deterministic elaboration produces identical trees for identical types, and identical trees have identical ids.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<section id="predicates">
+<h2>3.&nbsp; Types as Predicates</h2>
+
+<h3 id="prop">3.1&nbsp; Propositions, predicates, and Curry&ndash;Howard</h3>
+
+<p>The mathematician already knows three closely related notions of "type":</p>
+
+<ol>
+<li><strong>Set</strong>: <span class="math">T</span> is a collection; <span class="math">v&nbsp;∈&nbsp;T</span> is membership.</li>
+<li><strong>Predicate</strong>: <span class="math">T</span> is a function from a universe <span class="math">U</span> to {true, false}; <span class="math">v&nbsp;∈&nbsp;T</span> when <span class="math">T(v) = \text{true}</span>.</li>
+<li><strong>Proposition (Curry&ndash;Howard)</strong>: <span class="math">T</span> is a proposition; <span class="math">v&nbsp;:&nbsp;T</span> is a proof.</li>
+</ol>
+
+<p>Standard Martin-Löf type theory chooses (3). Set theory chooses (1). Disp chooses (2), with <span class="math">U</span> the set of all trees and "true" the canonical tree <span class="math">TT</span>:</p>
+
+<p class="math-block"><span class="math">T&nbsp;:&nbsp;Tree&nbsp;→&nbsp;Bool</span>,&nbsp; &nbsp;<span class="math">v&nbsp;:&nbsp;T &nbsp;⟺ &nbsp;T(v)&nbsp;reduces&nbsp;to&nbsp;TT</span></p>
+
+<aside class="deep">
+<details>
+<summary>Aside: predicates vs. propositions, and why this is not just "set theory in disguise"</summary>
+<div class="body">
+<p>Choosing predicates over propositions looks, at first glance, like discarding proof-relevance. But Disp's predicates are run on tree-shaped values that include proof terms. The type <code>Eq A x y</code>, for instance, is a predicate <em>over candidate proofs</em>: it answers <span class="math">TT</span> precisely when the candidate has the shape of a reflexivity certificate and the two endpoints are structurally equal. So the proof-relevance survives &mdash; it's just relocated from the typing judgement into the predicate's body. The advantage: there is no separate object called "the typing judgement"; there is only function application.</p>
+</div>
+</details>
+</aside>
+
+<h3 id="scott">3.2&nbsp; Booleans as functions: the Scott encoding</h3>
+
+<p>To make <span class="math">T(v) = TT</span> a literal equation, Disp encodes Booleans not as opaque values but as <em>their own eliminators</em>. The encoding is Scott-style: a Boolean takes a motive and two branches, and dispatches to the appropriate branch (<code>lib/prelude.disp</code>:19&ndash;20):</p>
+
+<pre><code><span class="k">TT</span> := {m, ct, cf} -> ct
+<span class="k">FF</span> := {m, ct, cf} -> cf</code></pre>
+
+<p>After bracket abstraction these compile to specific trees: <span class="math">TT&nbsp;=&nbsp;K&nbsp;K&nbsp;=&nbsp;fork(△,&nbsp;stem(△))</span> and <span class="math">FF&nbsp;=&nbsp;K&nbsp;(K&nbsp;I)</span>. The combinator <code>select</code> is then trivial:</p>
+
+<pre><code><span class="c">// select then else cond  =  cond t then else</span>
+<span class="k">select</span> := {then_v, else_v, cond} -> cond t then_v else_v</code></pre>
+
+<p>If <code>cond</code> is <code>TT</code>, applying it discards the motive <code>t</code> and returns <code>then_v</code>. There is no <em>if</em>-keyword and no opcode; conditional dispatch is just Scott dispatch.</p>
+
+<h3 id="tequalstt">3.3&nbsp; The central equation, in code</h3>
+
+<p>Suppose <code>Nat</code> is some tree (a predicate on trees). Then to check that <code>0</code> has type <code>Nat</code>, we simply apply:</p>
+
+<pre><code>Nat 0   <span class="c">⇝   evaluates to TT or FF</span></code></pre>
+
+<p>There is nothing else &mdash; no typing context to maintain, no judgement to derive. The type checker is reduction. The library will define <code>Nat</code> shortly. First we need to confront the only real difficulty: what happens when <span class="math">v</span> is not a closed value but a <em>variable</em>?</p>
+
+</section>
+
+<!-- ============================================================ -->
+<section id="kernel">
+<h2>4.&nbsp; The Seven Kernel Primitives</h2>
+
+<h3 id="hypothesis">4.1&nbsp; The hypothesis problem</h3>
+
+<p>Consider <span class="math">f := \{x\} \to x</span>, the identity function, and ask: <em>does</em>&nbsp;<span class="math">f</span>&nbsp;<em>have type</em>&nbsp;<span class="math">Pi&nbsp;Nat&nbsp;(\{n\} \to Nat)</span>? Following our central equation, this becomes "evaluate <code>(Pi Nat ({n} -> Nat)) f</code> and check it returns <code>TT</code>." But to verify that <span class="math">f</span> produces a <code>Nat</code> for every input, we must &mdash; somehow &mdash; consider <em>all possible</em> inputs.</p>
+
+<p>The standard move in dependent type theory is to introduce a <strong>variable</strong> <span class="math">x : Nat</span> in the typing context and check <span class="math">f\;x : Nat</span> under that hypothesis. Disp does the same thing operationally: it <em>mints a fresh tree</em> that stands for "an unknown value of type Nat" and runs <code>f</code> on it. This minted tree is called a <strong>neutral</strong> or <strong>hypothesis</strong>, and it has a very specific shape:</p>
+
+<p class="math-block"><span class="tree-lit">Hyp Nat id&nbsp; =&nbsp; wait(kernel.hyp_reduce)(neutral_meta)</span></p>
+
+<p>where <code>neutral_meta</code> packages the stored type (here, <code>Nat</code>) with a unique identifier and a "spine" recording how the hypothesis has been applied so far. Crucially, the head signature <code>kernel.hyp_reduce</code> marks this tree as a kernel-minted neutral &mdash; not user code &mdash; and the kernel uses this signature to dispatch the type-checking machinery.</p>
+
+<aside class="warn">
+<strong>Soundness threat.</strong> If a user could fabricate their own tree masquerading as a neutral &mdash; or could decompose a real neutral with triage to inspect its stored type &mdash; type checking would be unsound. Imagine: "give me a hypothesis <span class="math">h</span> of type <span class="math">False</span>; now apply the predicate <span class="math">False</span> to <span class="math">h</span>; it reports <span class="math">TT</span> by H-rule, so I have proved <span class="math">False</span>." The kernel must prevent this.
+</aside>
+
+<h3 id="walker">4.2&nbsp; The parametric walker</h3>
+
+<p>The kernel solves the soundness threat by partitioning all <code>apply</code> calls into two modes:</p>
+
+<ul>
+<li><strong>Raw mode.</strong> The five reduction rules as written above. Used inside the kernel itself, where total visibility is required.</li>
+<li><strong>Parametric mode</strong>, also called <strong>the walker</strong>. The same five rules, but with two restrictions: <em>(i)</em> the F-rule (triage) on a hypothesis-rooted argument <span class="math">x</span> fails; <em>(ii)</em> the stem-rule cannot fork into a shape whose head signature matches a kernel-minted neutral.</li>
+</ul>
+
+<p>The walker is the discipline of <strong>operational parametricity</strong>: user code, running under the walker, cannot examine the structure of a hypothesis, and cannot forge new ones. From the user's perspective, a hypothesis behaves exactly like an opaque universally quantified value. The kernel's mode-switching is invisible to the user, but it is what makes <span class="math">f(h)</span> &mdash; for a freshly minted <span class="math">h</span> &mdash; <em>type-correct iff</em>&nbsp;<span class="math">f</span>&nbsp;<em>is correct on all inputs.</em></p>
+
+<aside class="note"><strong>Quote</strong> (<code>TYPE_THEORY.typ</code>:147&ndash;149) &mdash; <em>"Parametric mode encodes operational parametricity: hypotheses are opaque tokens for universal quantification, and user code cannot inspect their structure or synthesize new hypotheses."</em></aside>
+
+<h3 id="seven">4.3&nbsp; The seven primitives</h3>
+
+<p>Everything else about the type system is library code. The kernel exposes exactly seven primitive handlers, packaged as a fixed-point record (<code>lib/kernel/handlers.disp</code>:340&ndash;348):</p>
+
+<pre><code>kernel : {hyp_reduce, guard, unguard, checked_apply,
+          predicate_frame, eliminator_frame, bind_hyp} := recq {
+  hyp_reduce       := q_hyp_reduce_fn;
+  guard            := q_guard_fn;
+  unguard          := q_unguard_fn;
+  checked_apply    := q_checked_apply_fn;
+  predicate_frame  := q_predicate_frame_fn;
+  eliminator_frame := q_eliminator_frame_fn;
+  bind_hyp         := q_bind_hyp_fn
+}</code></pre>
+
+<p>Each handler does one thing.</p>
+
+<h4>① <code>checked_apply</code> &mdash; the dispatcher.</h4>
+<p>The gatekeeper of execution. Every application <code>apply(f, x)</code> in user code goes through <code>checked_apply</code>. It inspects the signature of <span class="math">f</span>'s head; if the signature matches one of the seven handlers, the handler runs in raw mode; otherwise the walker takes over. This is the privilege boundary: kernel handlers are raw-privileged, user code is parametric.</p>
+
+<h4>② <code>hyp_reduce</code> &mdash; what happens when you apply a hypothesis.</h4>
+<p>If <code>h</code> is a hypothesis of stored type <span class="math">T</span>, what does <code>h(arg)</code> mean? The kernel consults <span class="math">T</span>'s metadata for a <em>codomain function</em>, which returns an <strong>Action</strong>: either <code>Extend(B)</code> &mdash; "the result is a new hypothesis of type <span class="math">B</span>" &mdash; or <code>Return(v)</code> &mdash; "the result is the concrete value <span class="math">v</span>." The new hypothesis's spine records the application history. We discuss Actions below in §4.4.</p>
+
+<h4>③ <code>guard</code> &mdash; the public boundary.</h4>
+<p>Every published type-former wraps its predicate in <code>guard</code>. When the predicate is invoked at the boundary &mdash; that is, when a user writes <code>T v</code> at top level &mdash; <code>guard</code> first <em>scans</em> the candidate <span class="math">v</span> for any pre-existing kernel-minted neutrals (<code>handlers.disp</code>:100&ndash;108):</p>
+
+<pre><code><span class="k">let</span> q_guard_fn = {ks, raw, query} ->
+  {core, v} ->
+    <span class="k">match</span> (q_scan_no_neutral raw v) {
+      TT => <span class="k">match</span> (tree_eq (core v) TT) { TT => TT; FF => FF }
+      FF => FF
+    }</code></pre>
+
+<p>If <span class="math">v</span> contains a stray hypothesis, <code>guard</code> rejects with <code>FF</code> before evaluating the predicate. This closes the smuggling attack: hypotheses cannot leak across the public boundary into closed proofs.</p>
+
+<h4>④ <code>unguard</code> &mdash; the trusted peel.</h4>
+<p>Sometimes library code needs to <em>unwrap</em> a guarded type to access its inner predicate (e.g., to compose a new type former from existing ones). Doing this naively would re-trigger the walker, which forbids inspection. <code>unguard</code> is the handler that performs the peel in raw mode, recognized by signature and dispatched safely.</p>
+
+<h4>⑤ <code>predicate_frame</code> &mdash; the H-rule.</h4>
+<p>This is the engine of all type-checking. It wraps a user-supplied recognizer with a special case for hypothesis inputs: <em>if the candidate</em>&nbsp;<span class="math">v</span>&nbsp;<em>is a hypothesis, do not run the recognizer; instead, compare</em>&nbsp;<span class="math">v</span><em>'s stored type against the type reconstructed from this predicate's metadata.</em> This is the <strong>H-rule</strong> (hypothesis rule), and it is sound because hash-consing makes "reconstructed type" and "stored type" structurally compared via O(1) identity.</p>
+
+<pre><code><span class="k">let</span> q_predicate_frame_fn = {ks, raw, query} ->
+  fix ({self, meta, v} -> {
+    <span class="k">let</span> check_fn = {ks, raw, query, self, meta, v} -> {
+      <span class="k">let</span> recognizer = pair_fst meta
+      <span class="k">let</span> params     = pair_fst (pair_snd meta)
+      <span class="k">let</span> result_r   = ks.checked_apply (recognizer params) v
+      must_ok_or_ff result_r ({result} -> result)
+    }
+    select q_h_rule_fn check_fn (q_is_neutral raw v) ks raw query self meta v
+  })</code></pre>
+
+<h4>⑥ <code>eliminator_frame</code> &mdash; induction on hypotheses.</h4>
+<p>The dual of <code>predicate_frame</code>. Recognizers <em>check</em> membership; eliminators <em>destruct</em>. If the target of an eliminator is a hypothesis, we cannot pattern-match the case &mdash; we don't know which constructor it is. Instead, <code>eliminator_frame</code> mints a <strong>stuck neutral</strong> whose stored type is the motive applied to the target. Later, when the hypothesis is instantiated, the stuck neutral resumes reduction.</p>
+
+<h4>⑦ <code>bind_hyp</code> &mdash; binders that mint hypotheses.</h4>
+<p>The mechanism by which dependent types like <code>Pi A B</code> verify "for all <span class="math">x : A</span>, the body holds." <code>bind_hyp</code> mints a fresh hypothesis of domain type <span class="math">A</span>, runs the body with it, then performs an <strong>escape check</strong>: if the body's result contains the minted hypothesis via any non-neutral path, <code>bind_hyp</code> rejects (<code>handlers.disp</code>:188&ndash;214). The escape check is what prevents the bound variable from leaking into a closed proof.</p>
+
+<aside class="deep">
+<details>
+<summary>The escape check, explained</summary>
+<div class="body">
+<p>The danger: suppose <code>bind_hyp</code> mints <span class="math">h</span> with stored type <span class="math">False</span>, the body returns <span class="math">h</span> itself, and the caller now possesses <span class="math">h : False</span> &mdash; a proof of contradiction. The escape check walks the result and asks: <em>is the freshly minted </em><span class="math">h</span><em> reachable via a non-neutral path?</em> If so, the binder rejects. Hypotheses can occur inside other neutrals (that's how spines accumulate) but never as a directly extractable value.</p>
+</div>
+</details>
+</aside>
+
+<h3 id="action">4.4&nbsp; Actions and spines</h3>
+
+<p>The <strong>Action protocol</strong> (<code>lib/kernel/utils.disp</code>:78&ndash;93) lets a type's codomain function communicate the result type back to the kernel without the kernel knowing the type's internal structure:</p>
+
+<pre><code><span class="k">extend_tag</span> := t              <span class="c">// the leaf △</span>
+<span class="k">return_tag</span> := t t            <span class="c">// the stem △△</span>
+
+<span class="k">Extend</span> := {v} -> t extend_tag v
+<span class="k">Return</span> := {v} -> t return_tag v</code></pre>
+
+<p>For example, the codomain function inside Pi (<code>lib/types/pi.disp</code>:34&ndash;40) is:</p>
+
+<pre><code><span class="k">let</span> pi_pf_codomain_fn = {ks, raw, neutral_meta, arg} -> {
+  <span class="k">let</span> stored_type = q_unguard_or_self ks (neutral_meta_type neutral_meta)
+  <span class="k">let</span> T_meta      = type_meta stored_type
+  <span class="k">let</span> params      = pair_fst (pair_snd T_meta)
+  <span class="k">let</span> B           = pair_snd params
+  Extend (B arg)                          <span class="c">// codomain at this argument</span>
+}</code></pre>
+
+<p>When the kernel evaluates <code>h(arg)</code> for <span class="math">h : Pi\ Nat\ (\{n\}\to Nat)</span>, <code>hyp_reduce</code> calls Pi's <code>codomain_fn</code>, gets back <code>Extend(Nat)</code>, and constructs a new hypothesis with stored type <code>Nat</code> and spine extended by <code>arg</code>. This is how spines grow without the kernel hardcoding a notion of "function application."</p>
+
+<h3 id="soundness">4.5&nbsp; Three layers of soundness</h3>
+
+<p>The kernel's soundness theorem (informally stated): <em>if <span class="math">T(v) = TT</span> evaluates at the public boundary, then <span class="math">v</span> inhabits <span class="math">T</span> per <span class="math">T</span>'s predicate.</em> It rests on three runtime mechanisms:</p>
+
+<ol>
+<li><strong>Public-boundary scan.</strong> <code>guard</code> rejects candidates that contain pre-existing kernel-minted neutrals (the "smuggle a hypothesis past type checking" attack).</li>
+<li><strong>Walker triage rejection.</strong> User code cannot perform triage on a hypothesis. This prevents extracting the stored type and is what makes parametricity operational.</li>
+<li><strong>Stem-rule rejection.</strong> User code cannot fabricate a fork whose head looks like a kernel-minted hypothesis. This prevents forging neutrals.</li>
+</ol>
+
+<p>One soundness carve-out exists: the polymorphic identity <span class="math">I</span> reduces against any argument, including hypotheses. This is necessary because <span class="math">Pi\ Type\ (\{A\}\to Pi\ A\ (\{x\}\to A))</span> &mdash; the identity-function type &mdash; must be inhabited.</p>
+
+<p>What the kernel deliberately does <em>not</em> guarantee: termination of user predicates, semantic correctness of user-supplied recognizers, detection of paradoxical type definitions. These responsibilities sit with the library author. Russell-style paradoxes such as <code>R := {T} -> not (T T); R R</code> are well-formed in Disp's syntax but <em>diverge</em> under evaluation, and the apply budget catches divergence as failure rather than synthesizing a proof of False.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<section id="library">
+<h2>5.&nbsp; Library Types</h2>
+
+<p>Pi, Bool, Nat, Eq, Type, Ord, Sigma &mdash; none of these are kernel primitives. They are <em>library definitions</em> built from <code>predicate_frame</code> and <code>eliminator_frame</code> with type-specific recognizers and codomain functions. The kernel does not grow as new types are added.</p>
+
+<h3 id="bool">5.1&nbsp; Bool and Nat</h3>
+
+<p>From <code>lib/types/bool.disp</code>:</p>
+
+<pre><code><span class="k">let</span> bool_pf_recognizer = {_, v} -> or (tree_eq v TT) (tree_eq v FF)
+<span class="k">Bool</span> := guard (predicate_frame_form (t bool_pf_recognizer (t t t)))</code></pre>
+
+<p>That is the entire definition of <code>Bool</code>: "a tree is a Bool if it equals <code>TT</code> or <code>FF</code>." When applied to a hypothesis <span class="math">h</span>, the H-rule inside <code>predicate_frame</code> bypasses the recognizer and structurally compares stored type against reconstructed type. Bool is library code; the kernel has never heard of it.</p>
+
+<p>Natural numbers (<code>lib/types/nat.disp</code>:14&ndash;26) use a recursive predicate:</p>
+
+<pre><code><span class="k">let</span> nat_pf_recognizer = fix ({self_recog, params, v} -> {
+  <span class="k">let</span> nat_inner = predicate_frame_form (t self_recog (t t t))
+  <span class="k">match</span> (is_leaf v) {
+    TT => TT                                   <span class="c">// zero is △</span>
+    FF => <span class="k">match</span> (is_fork v) {
+      TT => and (is_leaf (pair_fst v))
+                (nat_inner (pair_snd v))      <span class="c">// succ n = fork(△, n)</span>
+      FF => FF
+    }
+  }
+})
+<span class="k">Nat</span> := guard (predicate_frame_form (t nat_pf_recognizer (t t t)))</code></pre>
+
+<p>A Nat is either a leaf (zero) or a fork whose left is a leaf and whose right is a Nat. The recursive call goes <em>through</em> <code>predicate_frame_form</code> so that when the recursion encounters a sub-hypothesis, the H-rule fires.</p>
+
+<h3 id="pi">5.2&nbsp; Dependent functions</h3>
+
+<p>The Pi type-former is library code that uses <code>bind_hyp</code> to mint a hypothesis and run the body:</p>
+
+<pre><code><span class="k">let</span> pi_pf_recognizer = {params, v} -> {
+  <span class="k">let</span> A = pair_fst params
+  <span class="k">let</span> B = pair_snd params
+  bind_hyp A ({hyp} -> {
+    <span class="k">let</span> result        = v hyp
+    <span class="k">let</span> expected_core = B hyp
+    expected_core result
+  })
+}
+
+<span class="k">Pi_pf</span> := {A, B} -> guard (predicate_frame_form
+  (t pi_pf_recognizer
+     (t (t (unguard_checked A) ({x} -> unguard_checked (B x)))
+        pi_pf_codomain_fn)))</code></pre>
+
+<p>Reading: "to check that <code>v : Pi A B</code>, mint a fresh hypothesis <code>hyp : A</code>, apply <code>v</code> to it, then check the result against the codomain <code>B(hyp)</code>." Cleanly stated, this is just the standard rule for dependent function types. But it is library code, not kernel code.</p>
+
+<h3 id="eq">5.3&nbsp; Propositional equality</h3>
+
+<pre><code><span class="k">refl</span> := t        <span class="c">// the leaf △ is the canonical proof of reflexivity</span>
+
+<span class="k">let</span> eq_pf_recognizer = {params, proof} ->
+  and (tree_eq proof refl)
+      (tree_eq (eq_meta_lhs params) (eq_meta_rhs params))
+
+<span class="k">Eq</span> := {A, x, y} ->
+  guard (predicate_frame_form
+    (t eq_pf_recognizer (t (make_eq_meta (unguard_checked A) x y) t)))</code></pre>
+
+<p>A proof of <code>Eq A x y</code> is the leaf, and only when <span class="math">x</span> and <span class="math">y</span> reduce to identical trees (O(1) comparison). The eliminator <code>eq_J</code> follows the standard Martin-Löf pattern, implemented via <code>eliminator_frame</code>.</p>
+
+<aside class="note">
+<strong>Mathematician's eye.</strong> Disp's propositional equality is, in the present design, definitional: <code>Eq A x y</code> is inhabited iff <span class="math">x</span> and <span class="math">y</span> are convertible (= identical after normalization, given hash-consing). Cubical extensions, sketched below in §7.2, replace this with a path-based equality where univalence becomes a theorem.
+</aside>
+
+<h3 id="universe">5.4&nbsp; The universe</h3>
+
+<p>There is a single universe <code>Type</code>; Disp does not stratify universes. A value inhabits <code>Type</code> iff it is structurally a published type-former &mdash; i.e., a <code>guard</code>-wrapped <code>predicate_frame</code> with well-formed metadata (<code>lib/types/type.disp</code>:71&ndash;96):</p>
+
+<pre><code><span class="k">let</span> type_pf_recognizer = {_, v} ->
+  <span class="k">match</span> (has_sig kernel_ref.guard v) {
+    TT => <span class="k">match</span> (has_sig kernel_ref.predicate_frame (type_meta v)) {
+      TT => type_pf_metadata_well_formed (type_meta (type_meta v))
+      FF => FF
+    }
+    FF => FF
+  }</code></pre>
+
+<p>Without stratification, paradoxical definitions exist as syntactic objects but <em>diverge</em>: <code>R := {T} -> not (T T); R R</code> loops, and the runtime's apply-budget catches the loop as failure. Soundness is achieved by divergence-as-failure rather than by Tarski-style hierarchy.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<section id="surface">
+<h2>6.&nbsp; What does Disp look like to write?</h2>
+
+<p>The surface syntax is small. Here is a tour, drawn from <code>SYNTAX.typ</code> and <code>lib/std/nat/arith.disp</code>:</p>
+
+<pre><code><span class="c">// Binders use braces; arrows are unicode-free</span>
+id : {A : Type} -> A -> A
+   := {A} -> {x} -> x
+
+<span class="c">// Pattern-matching on Bool</span>
+not := {b} -> match b {
+  TT => FF
+  FF => TT
+}
+
+<span class="c">// Addition by induction</span>
+add := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
+
+<span class="c">// Compile-time test (a proof obligation discharged by reduction)</span>
+test (Arrow Nat Nat) ({x} -> x) = TT
+test add (succ (succ t)) (succ t) = succ (succ (succ t))</code></pre>
+
+<p>The compiler (<code>src/compile.ts</code>) elaborates this through a small number of passes:</p>
+
+<ol>
+<li><strong>Parse.</strong> Tokenize and parse to an AST.</li>
+<li><strong>Elaborate.</strong> Resolve names, dispatch <code>{x} -&gt; e</code> by mode &mdash; in <em>term mode</em> it compiles to a λ-abstraction, in <em>type mode</em> it wraps in a Pi.</li>
+<li><strong>Bracket-abstract.</strong> Translate λs to combinator trees using the K-composition and η optimizations from §2.4.</li>
+<li><strong>Emit.</strong> Produce a closed tree.</li>
+</ol>
+
+<p>The elaborator never <em>checks</em> types; it produces tree programs, and the kernel checks by reduction. This is the metacircular discipline of <code>DEVELOPMENT_PHILOSOPHY.md</code> in action: elaboration is just translation, and type-checking is application.</p>
+
+<!-- INTERACTIVE WIDGET 2: type-checking trace -->
+<div class="widget">
+<h4 class="widget-title">Trace: checking the identity at <code>Pi Nat (λ_. Nat)</code></h4>
+<div class="trace">
+  <div class="frame"><strong>Goal.</strong>  evaluate <code>(Pi Nat ({_} -> Nat)) ({x} -> x)</code> and expect <code>TT</code>.</div>
+  <div class="frame"><strong>Step 1.</strong>  <code>Pi Nat (λ_.Nat)</code> reduces to <code>guard (predicate_frame_form …)</code>. The outer apply enters <code>guard</code>.</div>
+  <div class="frame"><strong>Step 2.</strong>  <code>guard</code> scans the candidate <code>{x} -&gt; x</code> for stray neutrals. None found. Passes through.</div>
+  <div class="frame"><strong>Step 3.</strong>  Core predicate is <code>predicate_frame</code> wrapped around <code>pi_pf_recognizer</code> with params <code>(Nat, λ_.Nat)</code>.</div>
+  <div class="frame"><strong>Step 4.</strong>  Candidate is not a hypothesis, so dispatch to the recognizer.</div>
+  <div class="frame"><strong>Step 5.</strong>  Recognizer calls <code>bind_hyp Nat (λhyp. body)</code>. Kernel mints fresh <code>h := Hyp Nat 0</code>.</div>
+  <div class="frame"><strong>Step 6.</strong>  Compute <code>({x} -&gt; x) h</code>. Walker reduces this under parametric mode. Result: <code>h</code>.</div>
+  <div class="frame"><strong>Step 7.</strong>  Compute expected: <code>(λ_.Nat) h = Nat</code>. Check <code>Nat h</code>.</div>
+  <div class="frame"><strong>Step 8.</strong>  <code>Nat</code> is <code>predicate_frame</code>-wrapped. Candidate <code>h</code> is a hypothesis. H-rule fires: compare reconstructed type (<code>Nat</code>) against stored type (<code>Nat</code>). Identical &mdash; <code>TT</code>.</div>
+  <div class="frame"><strong>Step 9.</strong>  Escape check: does the result <code>TT</code> contain <code>h</code>? No. <code>bind_hyp</code> returns <code>Ok(TT)</code>.</div>
+  <div class="frame current"><strong>Result.</strong>  <code>TT</code>. ∎</div>
+</div>
+</div>
+
+</section>
+
+<!-- ============================================================ -->
+<section id="future">
+<h2>7.&nbsp; Future Directions</h2>
+
+<h3 id="cat">7.1&nbsp; Categorical foundations</h3>
+
+<p><code>CATEGORY_THEORY_FOUNDATIONS_PROPOSAL.typ</code> argues that the existing seven-primitive design is already a faithful implementation of standard categorical machinery &mdash; the proposal is to make this explicit by typing the type-former metadata. A type's three metadata slots correspond to:</p>
+
+<ul>
+<li><strong>Recognizer</strong> &nbsp;⟷&nbsp; a <em>characteristic morphism</em> <span class="math">χ_T : Tree → Ω</span> into the subobject classifier (<span class="math">Ω = Bool</span>).</li>
+<li><strong>Codomain_fn</strong> &nbsp;⟷&nbsp; the evaluation morphism of a <em>locally cartesian closed category</em>, or the membership relation of a topos.</li>
+<li><strong>Comp_fn</strong> (proposed, cubical) &nbsp;⟷&nbsp; the morphism action of a <em>functor between ∞-groupoids</em>.</li>
+</ul>
+
+<p>The proposal refactors the opaque 3-tuple into a typed record <code>TypeFormer</code> with named fields, so that library authors must construct identity and composition laws as <em>propositional proofs</em> &mdash; functoriality is enforced by the kernel.</p>
+
+<blockquote>
+"The only genuinely Disp-specific decision in the entire categorical picture is <em>'everything is a tree'</em> &mdash; the commitment to Tree as the universal object. Everything else slots into well-established categorical frameworks (topos theory, LCCC, ∞-category theory)."
+<cite>— <code>CATEGORY_THEORY_FOUNDATIONS_PROPOSAL.typ</code>:285&ndash;294</cite>
+</blockquote>
+
+<p>Because Disp's walker enforces parametricity, the relevant categorical model is a <em>parametric topos</em> &mdash; a PER model or reflexive-graph model where parametricity refines which characteristic morphisms count as valid types. This places Disp on familiar mathematical ground: standard topos theory applies with this refinement.</p>
+
+<h3 id="cubical">7.2&nbsp; Cubical type theory and univalence</h3>
+
+<p>The two cubical proposals (<code>CUBICAL_PROPOSAL.typ</code> and the introductory <code>CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ</code>) argue that the move from MLTT-style propositional equality to <strong>path-based</strong> equality &mdash; the source of computational univalence &mdash; can be implemented as <em>library code</em> over the existing seven primitives. No new kernel work is required.</p>
+
+<h4>The interval and paths</h4>
+<p><code>I</code> is a library type whose values form the free De&nbsp;Morgan algebra on two constants <code>I_zero</code> and <code>I_one</code> with operations <code>I_and</code>, <code>I_or</code>, <code>I_inv</code>. It is <em>not</em> Boolean: in particular <code>i I_or (I_inv i) ≠ I_one</code> in general, preserving the continuous interpretation. Disp's walker already enforces the parametricity discipline that paths require &mdash; one cannot triage on an abstract <code>i : I</code>.</p>
+
+<p>Paths are then trivially <em>dependent functions from the interval:</em></p>
+
+<pre><code><span class="k">Path</span> A x y  :=  Pi I ({_} -> A)
+
+refl   := {A, x, i} -> x
+cong   := {A, B, f, p, i} -> f (p i)
+sym    := {A, p, i} -> p (I_inv i)
+funext := {A, B, h, i, a} -> h a i</code></pre>
+
+<p>Function extensionality &mdash; which requires an axiom in intensional MLTT &mdash; falls out as a one-line definition. The endpoints <span class="math">x, y</span> in <code>Path A x y</code> are documentation; they are recovered by applying the path to <code>I_zero</code> and <code>I_one</code>.</p>
+
+<h4>Transport, composition, and Glue</h4>
+<p>Transport, <span class="math">transp&nbsp;P&nbsp;x&nbsp;:&nbsp;P\,I_one</span> given <span class="math">x&nbsp;:&nbsp;P\,I_zero</span>, is implemented by dispatch: each type-former supplies a <code>transp_fn</code> slot. Discrete types (Bool, Nat) use identity; pairs recurse; Pis use the standard contravariant/covariant scheme. This is, in the proposal's words, "<em>the same shape Disp already uses for <code>predicate_frame</code> (recognizer dispatch with H-rule fallback) and <code>eliminator_frame</code> (case dispatcher with stuck-mint fallback). Cubical operations are not new in kind; they are new instances of an existing pattern.</em>" (<code>CUBICAL_PROPOSAL.typ</code>:168&ndash;173).</p>
+
+<p>The <strong>Glue</strong> type-former is the trick that makes univalence compute. <code>Glue B φ T e</code> is "<em>almost</em> <span class="math">B</span>, but with faces specified by <span class="math">φ</span> replaced by <span class="math">T</span> via the equivalence <span class="math">e</span>." Its <code>transp_fn</code> recognizes <span class="math">ua</span>-shaped paths and applies the stored equivalence directly:</p>
+
+<pre><code>ua : (A &asymp; B) -> Path Type A B
+ua := {A, B, e, i} -> Glue B (i I_or (I_inv i)) A e</code></pre>
+
+<p>So <code>transp (ua not_equiv) TT</code> evaluates to <code>not_equiv.forward TT = not TT = FF</code>. Univalence is a definable operation, not an axiom: equivalent types <em>compute</em> as equal.</p>
+
+<aside class="note"><strong>Quote</strong> (<code>CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ</code>:544&ndash;554) — <em>"In MLTT, there was no way to give it computational content... Cubical solves this by providing Glue as a type former whose values encode equivalences directly, and whose transport rule unpacks them."</em></aside>
+
+<h3 id="synthesis">7.3&nbsp; The long arc: synthesis and bootstrap</h3>
+
+<p>The final motivation, from <code>GOALS.md</code>:</p>
+
+<blockquote>
+"I want to synthesize the best possible programs given a specification... Turn type checker into a function that takes a program and returns 1 or 0, combine that with functions that measure performance or program size, and somehow turn all that into a function represented purely in some low-level deterministic turing-complete calculus."
+<cite>— <code>GOALS.md</code>:5&ndash;6</cite>
+</blockquote>
+
+<p>Once the kernel is small enough to live inside its own object language &mdash; and once enough mathematical structure (categorical, cubical) is library-defined within it &mdash; one has the prerequisites for <strong>neural-guided synthesis</strong>: an external optimizer can generate candidate trees, the type-checker (itself a tree) can score them, and the loop can refine itself. The path is:</p>
+
+<ol>
+<li>Tree calculus (<em>done</em>) gives a Turing-complete, reflective substrate.</li>
+<li>Seven-primitive kernel (<em>done</em>) gives dependent types as library code.</li>
+<li>Categorical typing (<em>proposed</em>) gives mathematical legibility of library structure.</li>
+<li>Cubical extensions (<em>proposed</em>) give univalence and HITs without axioms.</li>
+<li>Self-hosting checker (<em>in progress</em>) closes the metacircular loop.</li>
+<li>Optimizer-as-tree-program (<em>future</em>) enables self-improving synthesis.</li>
+</ol>
+
+<p>The thesis: a small, reflective, parametric core, with all mathematical content lifted into library code, is the practical path to a self-improving theorem-proving language. Whether the long-term vision is realized or not, the structural commitments — types are predicates, the kernel is minimal, the discipline is metacircular — make Disp a worthwhile object of mathematical study on its own.</p>
+
+</section>
+
+<!-- ============================================================ -->
+<section id="glossary">
+<h2>8.&nbsp; Glossary</h2>
+
+<dl>
+<dt><strong>Tree calculus.</strong></dt><dd>An abstract rewriting system on values built from one nullary constructor (the leaf △), with binary application. The reduction rules K, S, and triage make it Turing complete and structurally complete &mdash; every program can decide the shape of every value by reduction alone.</dd>
+
+<dt><strong>Triage.</strong></dt><dd>The third reduction rule of tree calculus: a function of shape <span class="math">△(△cd)b</span> dispatches on the shape of its argument (leaf, stem, or fork). Triage is the primitive reflection mechanism.</dd>
+
+<dt><strong>Hash-consing.</strong></dt><dd>The implementation technique of storing each distinct tree exactly once and identifying trees by integer ID. Makes structural equality an O(1) identity check.</dd>
+
+<dt><strong>Bracket abstraction.</strong></dt><dd>The algorithm <span class="math">[x].M</span> that removes a free variable from an expression, leaving a closed combinator expression in <span class="math">I, K, S</span> (plus partial applications). Bridges the surface λ-syntax to tree calculus.</dd>
+
+<dt><strong>Types-as-predicates.</strong></dt><dd>Disp's design principle: a type is a tree-program <span class="math">T : Tree → Bool</span>, and <span class="math">v : T</span> iff <span class="math">T(v) = TT</span>.</dd>
+
+<dt><strong>Scott encoding.</strong></dt><dd>Encoding a data type as its own eliminator: a Boolean is a 3-argument function that selects one of its branches. Removes the need for primitive case opcodes.</dd>
+
+<dt><strong>Neutral / hypothesis.</strong></dt><dd>A kernel-minted tree of shape <code>wait(kernel.hyp_reduce)(meta)</code> standing for "an unknown value of stored type <span class="math">T</span>." Used to type-check under binders.</dd>
+
+<dt><strong>Parametric walker.</strong></dt><dd>The user-mode reduction discipline. The five reduction rules with two restrictions: no triage on a hypothesis, and no stem-rule fabrication of a fork whose head matches a kernel-minted neutral signature.</dd>
+
+<dt><strong>Raw mode.</strong></dt><dd>The five reduction rules without restrictions. Privileged: kernel handlers run in raw mode.</dd>
+
+<dt><strong>Action protocol.</strong></dt><dd>Tagged return values <code>Extend(B)</code> / <code>Return(v)</code> from a type's codomain function. Let the kernel evaluate hypothesis applications without knowing the type's internal structure.</dd>
+
+<dt><strong>H-rule (hypothesis rule).</strong></dt><dd>The rule inside <code>predicate_frame</code>: if the candidate is a hypothesis, compare reconstructed type against stored type rather than running the recognizer. Sound because hash-consing makes reconstruction-equal-stored an O(1) identity check.</dd>
+
+<dt><strong>Stuck neutral.</strong></dt><dd>A neutral produced by <code>eliminator_frame</code> when an eliminator's target is a hypothesis. Stored type is the motive applied to the target; payload is the original target.</dd>
+
+<dt><strong>Escape check.</strong></dt><dd>The check performed by <code>bind_hyp</code> on its body's result: if the minted hypothesis is reachable via any non-neutral path, the binder rejects. Prevents hypothesis leakage from closed proofs.</dd>
+
+<dt><strong>Guard scan.</strong></dt><dd>The public-boundary check inside <code>guard</code>: rejects candidates containing pre-existing kernel-minted neutrals. Closes the "smuggle a hypothesis" soundness attack.</dd>
+
+<dt><strong>Path.</strong></dt><dd>(Cubical, proposed.) A dependent function <code>Pi I ({_} -> A)</code> from the interval into a type. Endpoints recovered by applying the path to <code>I_zero</code> and <code>I_one</code>.</dd>
+
+<dt><strong>Glue.</strong></dt><dd>(Cubical, proposed.) A type former whose values encode equivalences directly. Its transport rule applies the stored equivalence, giving univalence computational content.</dd>
+
+<dt><strong>Univalence.</strong></dt><dd>The principle that equivalent types are equal. In Disp's cubical extension this becomes a theorem, not an axiom, because the <code>ua</code> path is constructed using <code>Glue</code> with computational transport behavior.</dd>
+</dl>
+
+</section>
+
+<div class="footer">
+<p>Source repository at <a href="https://github.com/zyansheep/disp">github.com/zyansheep/disp</a>. Authoritative specifications: <code>TYPE_THEORY.typ</code> (kernel semantics), <code>SYNTAX.typ</code> (grammar), <code>COMPILATION.typ</code> (elaboration), <code>GOALS.md</code> (long-term vision), <code>DEVELOPMENT_PHILOSOPHY.md</code> (discipline). This writeup is pedagogical commentary; the cited <code>.typ</code> and <code>.disp</code> files are the ground truth.</p>
+</div>
+
+</main>
+
+<script>
+// =============================================================
+// Theme toggle
+// =============================================================
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  document.documentElement.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
+  try { localStorage.setItem('disp-theme', cur === 'light' ? 'dark' : 'light'); } catch (_) {}
+}
+(function () {
+  try {
+    const stored = localStorage.getItem('disp-theme');
+    if (stored) document.documentElement.setAttribute('data-theme', stored);
+  } catch (_) {}
+})();
+
+// =============================================================
+// TOC active-section highlighting
+// =============================================================
+(function () {
+  const links = document.querySelectorAll('nav.toc a');
+  const sections = Array.from(document.querySelectorAll('section[id], h2[id], h3[id]'));
+  function onScroll() {
+    const y = window.scrollY + 100;
+    let active = null;
+    for (const s of sections) {
+      if (s.offsetTop <= y) active = s;
+    }
+    if (!active) return;
+    links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + active.id));
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+})();
+
+// =============================================================
+// Tree calculus mini-reducer
+// =============================================================
+// Tree representation: { tag: "leaf" } | { tag: "stem", c } | { tag: "fork", l, r }
+function parseTree(input) {
+  // tokens: 't', '(', ')'
+  const tokens = [];
+  for (let i = 0; i < input.length; i++) {
+    const c = input[i];
+    if (c === ' ' || c === '\t' || c === '\n') continue;
+    if (c === '(' || c === ')') tokens.push(c);
+    else if (c === 't' || c === '△') tokens.push('t');
+    else throw new Error('bad char: ' + c);
+  }
+  let p = 0;
+  // grammar: expr = atom (atom)*  (left-assoc apply)
+  function atom() {
+    if (tokens[p] === 't') { p++; return { tag: 'leaf' }; }
+    if (tokens[p] === '(') {
+      p++;
+      const e = expr();
+      if (tokens[p] !== ')') throw new Error('expected )');
+      p++;
+      return e;
+    }
+    throw new Error('expected atom');
+  }
+  function expr() {
+    let e = atom();
+    while (p < tokens.length && tokens[p] !== ')') {
+      const a = atom();
+      e = apply(e, a);
+    }
+    return e;
+  }
+  const r = expr();
+  if (p !== tokens.length) throw new Error('extra tokens');
+  return r;
+}
+// "apply" here means "construct an apply node" — we do not reduce.
+// Build the syntactic shape according to the K/S/F rules of f.
+function apply(f, x) {
+  // We model apply as a *tree construction* operation that respects the rules.
+  // Rule 1: leaf ▷ x = stem(x)
+  if (f.tag === 'leaf') return { tag: 'stem', c: x };
+  // Rule 2: stem(u) ▷ x = fork(u, x)
+  if (f.tag === 'stem') return { tag: 'fork', l: f.c, r: x };
+  // Rule 3+: fork — defer (we'll reduce step by step in `step`)
+  return { tag: 'apply', f, x };
+}
+function freshFork(l, r) { return { tag: 'fork', l, r }; }
+
+function pretty(t) {
+  if (t.tag === 'leaf') return 't';
+  if (t.tag === 'stem') return '(t ' + pretty(t.c) + ')';
+  if (t.tag === 'fork') return '(t ' + pretty(t.l) + ' ' + pretty(t.r) + ')';
+  if (t.tag === 'apply') return '[' + pretty(t.f) + ' • ' + pretty(t.x) + ']';
+  return '?';
+}
+
+// One reduction step on apply(f, x) where f.tag === 'fork' (rules 3, 4, 5)
+function reduceStep(f, x) {
+  // f.tag must be 'fork'
+  if (f.tag !== 'fork') {
+    // For leaf/stem the construction rules apply directly
+    if (f.tag === 'leaf') return { result: { tag: 'stem', c: x }, rule: 'leaf rule:  △ ▷ x  =  △x' };
+    if (f.tag === 'stem') return { result: { tag: 'fork', l: f.c, r: x }, rule: 'stem rule:  △u ▷ x  =  △u x' };
+  }
+  const a = f.l, b = f.r;
+  if (a.tag === 'leaf') {
+    // △△b ▷ x  =  b   (K)
+    return { result: b, rule: 'K rule:  △△b ▷ x  =  b' };
+  }
+  if (a.tag === 'stem') {
+    // △(△c)b ▷ x  =  (c x)(b x)   (S)
+    const c = a.c;
+    return {
+      result: { tag: 'apply', f: { tag: 'apply', f: c, x }, x: { tag: 'apply', f: b, x } },
+      rule: 'S rule:  △(△c)b ▷ x  =  (c x)(b x)'
+    };
+  }
+  if (a.tag === 'fork') {
+    // △(△cd)b ▷ x  =  triage on x
+    const c = a.l, d = a.r;
+    if (x.tag === 'leaf') return { result: c, rule: 'F rule (x=leaf):  △(△cd)b ▷ △  =  c' };
+    if (x.tag === 'stem') return { result: { tag: 'apply', f: d, x: x.c }, rule: 'F rule (x=stem):  △(△cd)b ▷ △u  =  d u' };
+    if (x.tag === 'fork') return {
+      result: { tag: 'apply', f: { tag: 'apply', f: b, x: x.l }, x: x.r },
+      rule: 'F rule (x=fork):  △(△cd)b ▷ △uv  =  b u v'
+    };
+    return { result: { tag: 'apply', f, x }, rule: 'no reduction' };
+  }
+  return { result: { tag: 'apply', f, x }, rule: 'stuck' };
+}
+
+let reducerState = null;
+function reducerReset() {
+  reducerState = null;
+  document.getElementById('reducer-out').innerHTML = 'Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.';
+  document.getElementById('reducer-trace').innerHTML = '';
+}
+function reducerStep() {
+  try {
+    if (!reducerState) {
+      const fs = document.getElementById('reducer-f').value;
+      const xs = document.getElementById('reducer-x').value;
+      const f = parseTree(fs);
+      const x = parseTree(xs);
+      reducerState = { node: { tag: 'apply', f, x }, history: [] };
+    }
+    const node = reducerState.node;
+    let stepInfo = null;
+    function reduceFirstApply(n) {
+      if (n.tag !== 'apply') return null;
+      const f = n.f;
+      // Only reduce when f is a normal-form tree
+      if (f.tag === 'leaf' || f.tag === 'stem' || f.tag === 'fork') {
+        return reduceStep(f, n.x);
+      }
+      // Try left subtree
+      const left = reduceFirstApply(n.f);
+      if (left) {
+        return { result: { tag: 'apply', f: left.result, x: n.x }, rule: '(in left subterm) ' + left.rule };
+      }
+      const right = reduceFirstApply(n.x);
+      if (right) {
+        return { result: { tag: 'apply', f: n.f, x: right.result }, rule: '(in right subterm) ' + right.rule };
+      }
+      return null;
+    }
+    const step = reduceFirstApply(node);
+    if (!step) {
+      document.getElementById('reducer-out').innerHTML = '<strong>Normal form reached:</strong> <code>' + pretty(node) + '</code>';
+      return;
+    }
+    reducerState.history.push({ before: pretty(node), after: pretty(step.result), rule: step.rule });
+    reducerState.node = step.result;
+    document.getElementById('reducer-out').innerHTML = '<strong>Current term:</strong> <code>' + pretty(step.result) + '</code>';
+    // Render trace
+    const trace = document.getElementById('reducer-trace');
+    trace.innerHTML = reducerState.history.map((h, i) =>
+      '<div class="frame' + (i === reducerState.history.length - 1 ? ' current' : '') + '">' +
+        '<div><code>' + h.before + '</code></div>' +
+        '<div class="rule">→ ' + h.rule + '</div>' +
+        '<div><code>' + h.after + '</code></div>' +
+      '</div>'
+    ).join('');
+  } catch (e) {
+    document.getElementById('reducer-out').innerHTML = '<strong style="color:#c44">Error:</strong> ' + e.message;
+  }
+}
+</script>
+
+</body>
+</html>
