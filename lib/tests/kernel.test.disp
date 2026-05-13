@@ -273,7 +273,6 @@ test Type fakeEq = FF
 // Adversarial: trivially-accepting checker with Universe-like metadata
 // (LEAF for rank). Signature mismatch rejects it.
 let fakeUniverse = wait ({_meta, _x} -> TT) t
-test is_universe fakeUniverse = FF
 test Type fakeUniverse = FF
 
 // Adversarial: trivially-accepting checker with Pi-like metadata

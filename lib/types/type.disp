@@ -35,7 +35,3 @@ Type_pf := guard (predicate_frame_form
 // Universe stratification has been dropped. `Type` is the canonical
 // single universe value; the old `Type k` surface form has been removed.
 Type := Type_pf
-
-is_universe := {v} ->
-  tree_eq (pair_fst (type_meta (unguard_or_self v))) type_pf_recognizer
-universe_rank := {_v} -> t

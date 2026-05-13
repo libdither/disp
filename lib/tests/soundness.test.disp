@@ -93,7 +93,6 @@ let junk_guarded = guard junk_pred
 test hasguard junk_guarded = TT
 test (Type) junk_guarded = FF
 test is_pi junk_guarded = FF
-test is_universe junk_guarded = FF
 test is_eq junk_guarded = FF
 
 let fake_handler = {_meta, _x} -> TT
@@ -102,7 +101,6 @@ let fake_guarded = guard (wait fake_handler t)
 test hasguard fake_guarded = TT
 test (Type) fake_guarded = FF
 test is_pi fake_guarded = FF
-test is_universe fake_guarded = FF
 test is_eq fake_guarded = FF
 
 // Post-migration: Nat is now predicate-frame based; its unguarded
