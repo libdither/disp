@@ -35,9 +35,44 @@ neutral_app_payload := {old_meta, arg} -> t old_meta arg
 extend_neutral_meta := {old_meta, result_type, arg} ->
   make_neutral_meta result_type (neutral_app_payload old_meta arg)
 
-// Sentinel for invalid neutral application: applying a neutral whose current
-// type is not Pi produces a neutral with this stored type.
+// InvalidType — the "no-constraint" sentinel stored type.
+//
+// Convention (per TYPE_THEORY.typ §4.1, §4.2): when the kernel cannot
+// deduce or stabilise a stored type for a neutral (e.g., applying a
+// neutral whose current type's codomain_fn is the sentinel `t`, or
+// receiving a malformed Action from a user-supplied codomain_fn),
+// `hyp_reduce` extends the hypothesis spine with `InvalidType` as the
+// new stored type. The resulting neutral remains a well-formed kernel
+// hypothesis; subsequent checks against it reject.
+//
+// Concretely InvalidType is `FF`, the Scott-encoded false Boolean. The
+// kernel never *applies* InvalidType as a predicate to a value
+// directly; instead, InvalidType-stored hypotheses fail downstream
+// shape checks. In `q_hyp_reduce_fn`, the next application sees:
+//
+//   has_sig ks.predicate_frame (q_unguard_or_self ks InvalidType)
+//
+// which is FF (InvalidType is not a guarded predicate_frame wait-form),
+// so the spine extends with InvalidType again — the hypothesis is
+// inert and any check that consults its stored type fails (e.g.,
+// `q_guard_fn`'s `tree_eq (core v) TT` is FF when core = InvalidType).
+//
+// We use `FF` directly for two reasons:
+//   1. FF is the canonical hash-consed "no" answer in the codebase;
+//      reusing it keeps the convention transparent at the tree level
+//      and gives `is_invalid_type` an O(1) tree_eq fast-path against a
+//      boot-time constant.
+//   2. As a Scott-encoded value (`{m, ct, cf} -> cf`), FF is closed,
+//      not callable as a 1-argument predicate. This makes accidental
+//      "InvalidType v" reductions yield partially-applied trees rather
+//      than answers — exactly the right behaviour for a sentinel that
+//      should never be queried directly.
+//
+// `is_invalid_type` is the named accessor for testing the sentinel;
+// prefer it over open `tree_eq InvalidType ...` so the intent is
+// readable at the call site and the convention is greppable.
 InvalidType := FF
+is_invalid_type := {v} -> tree_eq InvalidType v
 
 // ================================================================
 // Action protocol (per TYPE_THEORY.typ §3.4)

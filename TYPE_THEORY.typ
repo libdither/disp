@@ -499,6 +499,35 @@ The two Action cases serve different type-former classes:
 The codomain_fn convention is part of the library type-former
 protocol (§3.1, §3.4).
 
+*InvalidType — the "no-constraint" sentinel.* `hyp_reduce` uses
+`InvalidType` to mark hypothesis spine extensions when the kernel
+cannot deduce a stored type — either because the stored type's
+codomain_fn is the sentinel `t` (the stored type is closed-dispatch,
+not function-like) or because the codomain_fn returned a malformed
+Action (neither `Extend _` nor `Return _`). Concretely:
+
+```
+InvalidType := FF
+is_invalid_type := {v} -> tree_eq InvalidType v
+```
+
+InvalidType is `FF`, the Scott-encoded false Boolean. The kernel
+never *applies* InvalidType as a predicate to a candidate value
+directly; instead, an InvalidType-stored hypothesis is inert because:
+- `q_unguard_or_self ks InvalidType = InvalidType` (no guard sig).
+- `has_sig ks.predicate_frame InvalidType = FF` (no predicate_frame
+  sig). So the next `hyp_reduce` step on that neutral falls straight
+  back to the InvalidType-extend branch.
+- `q_guard_fn`'s `tree_eq (InvalidType v) TT = FF` (a partially-
+  applied `FF` is never tree-equal to `TT`). So a guard whose core is
+  InvalidType rejects every candidate value.
+
+Implementations may keep `InvalidType := FF` (the current convention)
+or substitute a tagged distinguished tree for stronger debuggability;
+either way the kernel's only interactions with the sentinel are tree-
+equality tests and the "doesn't have any kernel signature" shape
+properties above.
+
 == `guard`
 
 Public-boundary entry scan plus predicate evaluation. Returns bare
@@ -1025,10 +1054,29 @@ packages `motive` and `base` into the generic
 == Type
 
 ```
+let type_metadata_well_formed = {raw_meta} -> {
+  // Structural laws on the inner 3-tuple meta = pair r (pair p cod):
+  //   (a) meta is a fork; pair_snd meta is a fork (canonical 3-tuple).
+  //   (c) recognizer slot is a fork (a compiled function tree).
+  //   (b) codomain_fn slot is either sentinel `t` (closed-dispatch
+  //       type) or a fork (function tree).
+  let recognizer = pair_fst raw_meta
+  let inner      = pair_snd raw_meta
+  let cod_fn     = pair_snd inner
+  and (is_fork raw_meta)
+    (and (is_fork inner)
+      (and (is_fork recognizer)
+        (or (tree_eq cod_fn t) (is_fork cod_fn))))
+}
+
 let type_recognizer = {_, v} ->
-  // v is a "type" iff it's structurally a guarded predicate_frame wait-form
+  // v is a "type" iff it is a guarded predicate_frame wait-form AND
+  // its raw 3-tuple metadata obeys the structural laws above.
   match (has_sig kernel_ref.guard v) {
-    TT => has_sig kernel_ref.predicate_frame (type_meta v)
+    TT => match (has_sig kernel_ref.predicate_frame (type_meta v)) {
+      TT => type_metadata_well_formed (type_meta (type_meta v))
+      FF => FF
+    }
     FF => FF
   }
 
@@ -1048,49 +1096,75 @@ Type := guard (wait kernel_ref.predicate_frame
         (pair t type_codomain_fn)))
 ```
 
-`Type v = TT` iff v is structurally a guarded predicate_frame
-wait-form. All library type-formers (Pi, Bool, Nat, Eq, False,
-Sigma, Type itself) qualify.
+`Type v = TT` iff v is a guarded predicate_frame wait-form whose
+raw metadata satisfies the type-former laws (a), (b), (c) above. All
+library type-formers (Pi, Bool, Nat, Eq, False, Sigma, Intersection,
+Type itself) construct metadata of this canonical shape and qualify.
 
 For a hypothesis `Hyp Type id` (a "type variable"):
 - `predicate_frame`'s H-rule on its own treats this hyp as inhabiting
   `Type` (stored type matches T).
-- Applying the hypothesis to a value goes through hyp_reduce, which
-  invokes `type_codomain_fn`. For hypothesis arguments matching this
-  type-variable's identity, it returns TT (H-rule). For non-matching
-  hypotheses and for closed values, it returns FF in the current
-  implementation, because there is no stored-type evidence that the
-  value inhabits the unknown type.
+- Applying the hypothesis to an argument goes through hyp_reduce,
+  which invokes `type_codomain_fn`. The codomain_fn computes
+  `tree_eq stored_v self_as_hyp` where `self_as_hyp` is the
+  reconstructed hypothesis tree and `stored_v` is the argument's
+  stored type (after `q_unguard_or_self`). The result is wrapped in
+  `Return`, so hyp_reduce yields the boolean directly with no spine
+  extension (§4.1).
+
+#note[
+  *Closed-value case returns FF.* If `A_hyp = Hyp Type h0` is a Type-
+  typed hypothesis and `v` is a closed (non-hypothesis) value, then
+  `A_hyp v = FF`. Reason: `type_codomain_fn` extracts
+  `stored_v = q_unguard_or_self ks (neutral_meta_type (type_meta v))`.
+  A closed value `v` has no neutral metadata; `type_meta v` projects
+  into v's substructure (yielding an arbitrary tree, typically not a
+  guarded wait-form), and `tree_eq stored_v self_as_hyp` is FF because
+  `self_as_hyp` is the hypothesis tree, which is a kernel-minted
+  wait-form built from `kernel.hyp_reduce` and the original neutral
+  metadata.
+
+  This is the spec'd behaviour, not an accident: Type's codomain_fn
+  is the H-rule itself, and the H-rule needs a hypothesis-shaped
+  argument to find evidence of membership. Legitimate polymorphic
+  functions are checked under bind_hyp (which mints a fresh
+  hypothesis, not a closed value), so this closed-value FF never
+  blocks well-typed code. Concrete consumers of polymorphic types
+  instantiate the type variable before checking closed values; once
+  `A` is replaced by, say, `Nat`, `Nat v` runs Nat's recognizer
+  directly and gives the right answer for any closed v.
+
+  Closed-value FF is the conservative result; a future Type may
+  attempt closed-value inhabitance via stored-type inference (e.g.,
+  if v is a known Nat literal and A's identity has accumulated
+  enough constraints to deduce A = Nat). The current spec opts not
+  to: closed values are out of scope for Type's H-rule check.
+]
 
 #note[
   *Type : Type.* Type is itself a guarded predicate_frame
-  wait-form, so `Type Type = TT`. Russell-style paradoxes
-  (e.g., `R := {T} -> not (T T)`; `R R`) exist as well-formed
-  expressions but diverge when applied — the apply budget catches
-  them as failure. Disp's "soundness via divergence-as-failure"
-  stance applies: divergence is observably distinct from TT, so
-  paradoxes don't synthesize proofs of False. Stratification is not
-  needed for soundness in Disp.
+  wait-form, and its metadata satisfies the structural laws, so
+  `Type Type = TT`. Russell-style paradoxes (e.g.,
+  `R := {T} -> not (T T)`; `R R`) exist as well-formed expressions
+  but diverge when applied — the apply budget catches them as
+  failure. Disp's "soundness via divergence-as-failure" stance
+  applies: divergence is observably distinct from TT, so paradoxes
+  don't synthesize proofs of False. Stratification is not needed for
+  soundness in Disp.
 ]
 
 #note[
-  *Closed-value case returns FF today.* Example: if `A_hyp = Hyp Type h0`,
-  then `A_hyp 5 = FF`. The closed value `5` has no neutral metadata
-  whose stored type can be compared to `A_hyp`, so Type's codomain_fn
-  cannot justify membership in the unknown type. This is conservative:
-  legitimate polymorphic functions are checked with hypotheses, and
-  concrete uses instantiate the type variable before checking closed
-  values.
-]
-
-#note[
-  *Future Type rigor.* `Type` currently recognizes guarded
-  predicate_frame values structurally. It does not yet validate that
-  a type's recognizer, params, and codomain_fn obey the intended laws
-  or that metadata functions correspond to lawful categorical
-  constructions. That stronger validation belongs in future tooling
-  and/or a richer `Type` checker; for now users are expected to use
-  types whose metadata they understand.
+  *Future Type rigor.* `Type` currently checks structural shape of
+  metadata: laws (a) (3-tuple form), (b) (codomain_fn is sentinel or
+  fork), (c) (recognizer is fork-shaped). Laws not yet checked
+  include: deep semantic well-formedness of the recognizer (it must
+  return TT/FF for every input — undecidable in general), hash-cons
+  stability of metadata (`§3.2`, by construction in current
+  libraries but not verifiable from the candidate tree alone), and
+  the precise 4-argument Action-returning shape of a non-sentinel
+  codomain_fn. The `lib/types/type.disp` source lists each unchecked
+  law inline with a `LAW NOT YET CHECKED` comment so the gap is
+  greppable.
 ]
 
 == False
