@@ -114,6 +114,14 @@ test (Eq Nat 0 0) (eq_sym Nat 0 0 refl) = TT
 test (Eq Nat 1 1) (eq_cong Nat Nat succ 0 0 refl) = TT
 test eq_subst Nat Nat 0 0 refl 5 = 5
 
+// Neutral-target behavior for the eq_J-derived helpers.
+test is_neutral (eq_sym Nat 0 0 (Hyp (Eq Nat 0 0) 0)) = TT
+test neutral_type (eq_sym Nat 0 0 (Hyp (Eq Nat 0 0) 0)) = Eq Nat 0 0
+test is_neutral (eq_cong Nat Nat succ 0 0 (Hyp (Eq Nat 0 0) 0)) = TT
+test neutral_type (eq_cong Nat Nat succ 0 0 (Hyp (Eq Nat 0 0) 0)) = Eq Nat 1 1
+test is_neutral (eq_subst Nat ({_} -> Nat) 0 0 (Hyp (Eq Nat 0 0) 0) 5) = TT
+test neutral_type (eq_subst Nat ({_} -> Nat) 0 0 (Hyp (Eq Nat 0 0) 0) 5) = Nat
+
 // ================================================================
 // Arithmetic: add
 // ================================================================

@@ -37,19 +37,10 @@ eq_J := {A, x, motive, base, y, proof} ->
   eq_J_inner ({p} -> motive y p) (t base y) proof
 
 eq_subst := {A, P, x, y, p, px} ->
-  select_lazy
-    ({_} -> StuckElim (P y) p)
-    ({_} -> px)
-    (is_neutral p)
+  eq_J A x ({y_, _p} -> P y_) px y p
 
 eq_sym := {A, x, y, p} ->
-  select_lazy
-    ({_} -> StuckElim (Eq A y x) p)
-    ({_} -> refl)
-    (is_neutral p)
+  eq_J A x ({y_, _p} -> Eq A y_ x) refl y p
 
 eq_cong := {A, B, f, x, y, p} ->
-  select_lazy
-    ({_} -> StuckElim (Eq B (f x) (f y)) p)
-    ({_} -> refl)
-    (is_neutral p)
+  eq_J A x ({y_, _p} -> Eq B (f x) (f y_)) refl y p
