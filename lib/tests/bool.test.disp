@@ -1,0 +1,132 @@
+// Tests for the Bool library type.
+//
+// Covers:
+//   1. Bool predicate recognises TT / FF only.
+//   2. bool_rec (eliminator_frame): closed case dispatch.
+//   3. bool_rec on a hypothesis: produces a stuck neutral.
+//   4. TT / FF discrimination via select.
+//   5. Double-negation reduction.
+//   6. Elimination via eliminator_frame directly.
+//   7. H-rule: Bool-typed hypothesis passes Type check.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ================================================================
+// 1. Bool predicate: closed value recognition
+// ================================================================
+
+test Bool TT = TT
+test Bool FF = TT
+
+// Non-Bool closed values rejected.
+test Bool t = FF
+test Bool (t t) = FF
+test Bool (t t t) = FF
+test Bool 0 = FF
+test Bool 1 = FF
+
+// Pre-existing neutral rejected by entry scan.
+let bool_h = Hyp Bool 0
+test Bool bool_h = FF
+
+// ================================================================
+// 2. bool_rec: closed case dispatch
+// ================================================================
+
+// motive ({_} -> Nat), ct = 1, cf = 0.
+test bool_rec ({_} -> Nat) 1 0 TT = 1
+test bool_rec ({_} -> Nat) 1 0 FF = 0
+
+// motive ({_} -> Bool), ct = FF, cf = TT — negation.
+test bool_rec ({_} -> Bool) FF TT TT = FF
+test bool_rec ({_} -> Bool) FF TT FF = TT
+
+// Motive that returns the target itself (identity case).
+test bool_rec ({_} -> Bool) TT FF TT = TT
+test bool_rec ({_} -> Bool) TT FF FF = FF
+
+// ================================================================
+// 3. bool_rec on a hypothesis: stuck neutral
+// ================================================================
+
+let bool_hyp = Hyp Bool 0
+let stuck_nat = bool_rec ({_} -> Nat) 1 0 bool_hyp
+test is_neutral stuck_nat = TT
+// Stored type is motive(hyp) = Nat.
+test neutral_type stuck_nat = Nat
+
+// Different motive → different stored type.
+let stuck_bool = bool_rec ({_} -> Bool) TT FF bool_hyp
+test is_neutral stuck_bool = TT
+test neutral_type stuck_bool = Bool
+
+// Distinct hypotheses produce distinct stucks.
+let bool_hyp_2 = Hyp Bool 1
+test tree_eq
+  (bool_rec ({_} -> Nat) 1 0 bool_hyp)
+  (bool_rec ({_} -> Nat) 1 0 bool_hyp_2) = FF
+
+// Same target + motive but different cases → same stuck (identity is
+// target-driven, not case-driven).
+test tree_eq
+  (bool_rec ({_} -> Nat) 1 0 bool_hyp)
+  (bool_rec ({_} -> Nat) 5 9 bool_hyp) = TT
+
+// ================================================================
+// 4. TT / FF discrimination via select
+// ================================================================
+
+// select then_v else_v cond: returns then_v if cond = TT, else_v if cond = FF.
+test select 1 0 TT = 1
+test select 1 0 FF = 0
+test select TT FF TT = TT
+test select TT FF FF = FF
+
+// ================================================================
+// 5. Double-negation reduces to identity on closed values
+// ================================================================
+
+let bool_not = {b} -> bool_rec ({_} -> Bool) FF TT b
+let bool_dbl_neg = {b} -> bool_not (bool_not b)
+
+test bool_not TT = FF
+test bool_not FF = TT
+test bool_dbl_neg TT = TT
+test bool_dbl_neg FF = FF
+
+// ================================================================
+// 6. bool_rec_ef_inner (eliminator_frame directly)
+// ================================================================
+
+// bool_rec_ef := {motive, ct, cf, target} -> bool_rec_ef_inner motive (pair ct cf) target
+// bool_rec_ef_inner has the eliminator_frame signature.
+test tree_eq (pair_fst bool_rec_ef_inner) kernel_eliminator_frame_sig = TT
+
+test bool_rec_ef ({_} -> Nat) 10 20 TT = 10
+test bool_rec_ef ({_} -> Nat) 10 20 FF = 20
+
+// ================================================================
+// 7. H-rule: Bool-typed hypothesis satisfies Type check
+// ================================================================
+
+// Type accepts Bool (the type-former itself).
+test Type Bool = TT
+
+// Bool has the predicate_frame signature.
+test hasguard Bool = TT
+test tree_eq (pair_fst (type_meta Bool)) kernel_predicate_frame_sig = TT
+
+// ================================================================
+// 8. Bool as Pi domain
+// ================================================================
+
+// Bool-typed functions can be typed against Pi Bool.
+let bool_to_nat = {b} -> bool_rec ({_} -> Nat) 1 0 b
+test (Pi Bool ({_} -> Nat)) bool_to_nat = TT
+
+// bool_rec eliminates correctly via Pi.
+test (Arrow Bool Nat) ({b} -> bool_rec ({_} -> Nat) 5 7 b) = TT
+
+// Wrong body type rejected.
+test (Arrow Bool Nat) ({b} -> bool_rec ({_} -> Bool) TT FF b) = FF
