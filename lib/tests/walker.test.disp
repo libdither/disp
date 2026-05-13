@@ -106,17 +106,17 @@ test scan_no_neutral h = FF
 test scan_no_neutral (t Nat (t h 0)) = FF
 
 // ================================================================
-// cert_make_neutral / cert_make_hyp / cert_make_stuck
+// adversarial_make_neutral / adversarial_make_hyp / adversarial_make_stuck
 // ================================================================
 // Kernel-internal helpers; minted via raw apply, produce real neutrals.
 
-test is_neutral (cert_make_neutral Nat 0) = TT
-test is_neutral (cert_make_hyp Nat 0) = TT
-test is_neutral (cert_make_stuck Bool h) = TT
+test is_neutral (adversarial_make_neutral Nat 0) = TT
+test is_neutral (adversarial_make_hyp Nat 0) = TT
+test is_neutral (adversarial_make_stuck Bool h) = TT
 
 // Stored type is recoverable
-test neutral_type (cert_make_neutral Nat 0) = Nat
-test neutral_type (cert_make_stuck Bool h) = Bool
+test neutral_type (adversarial_make_neutral Nat 0) = Nat
+test neutral_type (adversarial_make_stuck Bool h) = Bool
 
 // ================================================================
 // checked_h_rule

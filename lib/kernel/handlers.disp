@@ -11,7 +11,7 @@
 //   guard, hasguard, unguard_public, unguard_checked,
 //   predicate_frame_form, eliminator_frame_form,
 //   unguard_or_self, is_concrete_fork,
-//   I_canonical, cert_make_neutral, cert_make_hyp, cert_make_stuck,
+//   I_canonical, adversarial_make_neutral, adversarial_make_hyp, adversarial_make_stuck,
 //   fresh_id, checked_h_rule, checked_apply, checked_check.
 
 open use "../prelude.disp"
@@ -448,9 +448,9 @@ checked_check := {core, v} ->
 // ================================================================
 // Soundness-test adversarial-mint aliases
 // ================================================================
-cert_make_neutral := Hyp
-cert_make_hyp     := {domain, identity} -> Hyp domain identity
-cert_make_stuck   := StuckElim
+adversarial_make_neutral := Hyp
+adversarial_make_hyp     := {domain, identity} -> Hyp domain identity
+adversarial_make_stuck   := StuckElim
 
 fresh_id := {pi_type} -> type_meta pi_type
 
