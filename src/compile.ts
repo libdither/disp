@@ -20,6 +20,11 @@ import {
 
 // ──────────────────────── 5. Bracket abstraction ─────────────────────────
 
+// Step budget passed to applyTree from the compiler/elaborator. Large
+// enough that elaboration of any well-formed program terminates; small
+// enough that runaway evaluation aborts before exhausting host memory.
+const APPLY_BUDGET = 10_000_000
+
 // CIR: intermediate representation with explicit S/K/I sentinels.
 type Cir =
   | { tag: "lit"; t: Tree }
@@ -120,7 +125,7 @@ function cirToTree(e: Cir): Tree {
       if (e.f.tag === "I") return cirToTree(e.x)
       // Partial S application: S(x) → stem(stem(x)) so that S(x)(y) = fork(stem(x), y)
       if (e.f.tag === "S") return stem(stem(cirToTree(e.x)))
-      return applyTree(cirToTree(e.f), cirToTree(e.x), 10_000_000)
+      return applyTree(cirToTree(e.f), cirToTree(e.x), APPLY_BUDGET)
     }
   }
 }
@@ -167,7 +172,7 @@ function exprToCir(
       if (!zero || !succ) throw new Error(`numeric literal ${e.value}: zero and succ must be in scope`)
       let result = zero
       for (let i = 0; i < e.value; i++) {
-        result = applyTree(succ, result, 10_000_000)
+        result = applyTree(succ, result, APPLY_BUDGET)
       }
       return { tag: "lit", t: result }
     }
@@ -383,7 +388,7 @@ function typeMetaTree(t: Tree): Tree | null {
 // checker_sig(checker) = pair_fst(wait checker t) — signature of a type checker.
 // wait(checker)(t) reduces to a tree; pair_fst gives the constant signature.
 function checkerSig(checker: Tree): Tree {
-  const waitResult = applyTree(applyTree(checker, LEAF, 10_000_000), LEAF, 10_000_000)
+  const waitResult = applyTree(applyTree(checker, LEAF, APPLY_BUDGET), LEAF, APPLY_BUDGET)
   const sig = treePairFst(waitResult)
   if (!sig) throw new Error("checkerSig: expected fork from wait(checker)(t)")
   return sig
@@ -417,9 +422,9 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
   // Sample-and-peel: build a sample, peel guard if present, then take
   // pair_fst of the inner meta to get the recognizer identity.
   const I_FUNC = I_TREE
-  const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, 10_000_000), I_FUNC, 10_000_000) : null
+  const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, APPLY_BUDGET), I_FUNC, APPLY_BUDGET) : null
   const sampleType = Type ?? null
-  const sampleHyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, 10_000_000), LEAF, 10_000_000) : null
+  const sampleHyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, APPLY_BUDGET), LEAF, APPLY_BUDGET) : null
 
   const guardSig = samplePi ? treePairFst(samplePi) : (sampleType ? treePairFst(sampleType) : null)
   // For predicate-frame types, the *recognizer* (pair_fst of meta)
@@ -501,7 +506,7 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
     },
     makeHyp(type, id) {
       if (!make_hyp) throw new Error("makeHyp: make_hyp not in scope")
-      return applyTree(applyTree(make_hyp, type, 10_000_000), id, 10_000_000)
+      return applyTree(applyTree(make_hyp, type, APPLY_BUDGET), id, APPLY_BUDGET)
     },
   }
 }
@@ -592,7 +597,7 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
 
     const codFn = abstractTree(hyp, B_tree)
 
-    const piTree = applyTree(applyTree(Pi, A_tree, 10_000_000), codFn, 10_000_000)
+    const piTree = applyTree(applyTree(Pi, A_tree, APPLY_BUDGET), codFn, APPLY_BUDGET)
     // Universe stratification dropped — every Pi lives in the single
     // Type, not Type k. The sample-style call here is equivalent.
     const piUniv = Type
@@ -627,7 +632,7 @@ type ElabCtx = {
 // Gated behind debugTypeCheck — never on in production.
 function assertTypeCheck(tree: Tree, expected: Tree | null, ctx: ElabCtx): Tree {
   if (ctx.debugTypeCheck && expected !== null) {
-    const ok = applyTree(expected, tree, 10_000_000)
+    const ok = applyTree(expected, tree, APPLY_BUDGET)
     if (!treeEqual(ok, TT)) {
       throw new Error(
         `defense-in-depth: type check failed\n` +
@@ -648,7 +653,7 @@ function check(e: Expr, expected: Tree | null, ctx: ElabCtx): Tree {
   if (!k) {
     // No kernel helpers — fall through to untyped + predicate check
     const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-    const ok = applyTree(expected, tree, 10_000_000)
+    const ok = applyTree(expected, tree, APPLY_BUDGET)
     if (!treeEqual(ok, TT))
       throw new Error(`type check failed (no kernel helpers)`)
     return tree
@@ -708,7 +713,7 @@ function check(e: Expr, expected: Tree | null, ctx: ElabCtx): Tree {
         name === paramName ? hypEntry : prevLookup(name)
       const savedLookup = ctx.lookupEntry
       ctx.lookupEntry = checkLookup
-      const result_type = applyTree(codFn, hyp, 10_000_000)
+      const result_type = applyTree(codFn, hyp, APPLY_BUDGET)
 
       // Type-check the body (this validates types but we don't use the tree)
       // Only do this if there's meaningful type info to propagate
@@ -729,7 +734,7 @@ function check(e: Expr, expected: Tree | null, ctx: ElabCtx): Tree {
   const { tree, type } = infer(e, ctx)
   if (type !== null && treeEqual(type, expected)) return tree
   // Fall back to predicate check
-  const ok = applyTree(expected, tree, 10_000_000)
+  const ok = applyTree(expected, tree, APPLY_BUDGET)
   if (!treeEqual(ok, TT))
     throw new Error(`type check failed`)
   return tree
@@ -757,14 +762,14 @@ function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
         const D = k.piDomain(f_type)
         const codFn = k.piCodFn(f_type)
         const x_tree = check(e.x, D, ctx)
-        const result_tree = applyTree(f_tree, x_tree, 10_000_000)
-        const result_type = applyTree(codFn, x_tree, 10_000_000)
+        const result_tree = applyTree(f_tree, x_tree, APPLY_BUDGET)
+        const result_type = applyTree(codFn, x_tree, APPLY_BUDGET)
         return { tree: result_tree, type: result_type }
       }
 
       // Untyped fallback
       const x_tree = check(e.x, null, ctx)
-      const result_tree = applyTree(f_tree, x_tree, 10_000_000)
+      const result_tree = applyTree(f_tree, x_tree, APPLY_BUDGET)
       return { tree: result_tree, type: null }
     }
 
@@ -805,7 +810,7 @@ function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
 
           if (body_type !== null) {
             const codFn = abstractTree(hyp, body_type)
-            const pi = applyTree(applyTree(Pi, A_tree, 10_000_000), codFn, 10_000_000)
+            const pi = applyTree(applyTree(Pi, A_tree, APPLY_BUDGET), codFn, APPLY_BUDGET)
             return { tree: lam, type: pi }
           }
         }
@@ -1033,7 +1038,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse)
         const n = record.fields.length
         for (let i = 0; i < n; i++) {
-          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, selectorTree(n, i), 10_000_000)
+          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, selectorTree(n, i), APPLY_BUDGET)
           const name = record.fields[i]
           const existing = stack[stack.length - 1].get(name)
           if (existing) {
