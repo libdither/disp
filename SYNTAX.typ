@@ -198,7 +198,8 @@ simple    ::= \"(\" expr (\":\" expr)? \")\"
             | IDENT
             | \"_\"
 match     ::= \"match\" app \"{\" matchArm SEMI matchArm SEMI? \"}\"
-matchArm  ::= (\"TT\" | \"FF\") \"=>\" lineExpr
+matchArm  ::= (\"TT\" | \"FF\") \"=>\" matchExpr
+matchExpr ::= expr that spans newlines freely but stops before the next \"TT =>\" or \"FF =>\" pattern
 braced    ::= recValue | recType | block
 recValue  ::= \"{\" \"}\"
             | \"{\" recBody \"}\"
@@ -213,7 +214,7 @@ stmt       ::= let | test | \"open\" expr",
 { let a = t; f a }             // block (no fields, trailing expr)
 use \"../prelude.disp\"        // loads file, yields a recValue of its fields
 point.x.fst                    // chained projection",
-  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` is an expression that loads and elaborates the referenced file and yields a recValue whose exported fields become the record's fields. `match` currently has exactly two arms, one `TT` and one `FF`; each arm body is line-mode.],
+  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` is an expression that loads and elaborates the referenced file and yields a recValue whose exported fields become the record's fields. `match` currently has exactly two arms, one `TT` and one `FF`; each arm body is `matchExpr`, which can span multiple lines — it stops before the next `TT =>` or `FF =>` arm pattern.],
 )
 
 The `braced` alternatives are distinguished by member shape. A braced

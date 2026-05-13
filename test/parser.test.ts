@@ -9,7 +9,7 @@ import { join } from "node:path"
 
 import {
   tokenize, parseItems, parseExpr,
-  type Tok, type Expr, type Item,
+  type Tok, type Expr,
 } from "../src/parse.js"
 import { parseProgram } from "../src/compile.js"
 import {
@@ -649,6 +649,31 @@ describe("match expression", () => {
       match(v("c"),
         match(v("d"), v("a"), v("b")),
         v("e")))
+  })
+
+  it("multi-line arm body: triage applied across newlines", () => {
+    // Previously `FF => triage \n (arg1) \n (arg2)` only parsed the bare `triage`
+    // because the arm body was lineExpr. Now matchExpr spans newlines.
+    const src = `match c {
+      TT => a
+      FF => triage
+        (arg1)
+        (arg2)
+    }`
+    expect(parseExpr(src)).toEqual(
+      match(v("c"), v("a"), ap(ap(v("triage"), v("arg1")), v("arg2"))))
+  })
+
+  it("multi-line arm body: stops at the next arm pattern", () => {
+    // Each arm body must not consume the other arm's TT/FF pattern.
+    const src = `match c {
+      TT => f
+        x
+      FF => g
+        y
+    }`
+    expect(parseExpr(src)).toEqual(
+      match(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
   })
 
   it("rejects non-TT/FF arm patterns", () => {

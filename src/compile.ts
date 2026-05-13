@@ -15,7 +15,7 @@ import {
 } from "./tree.js"
 import {
   parseItems,
-  type Expr, type Param, type TypedField, type NamedField, type RecMember, type Item, type Tok,
+  type Expr, type Param, type TypedField, type NamedField, type RecMember, type Tok,
 } from "./parse.js"
 
 // ──────────────────────── 5. Bracket abstraction ─────────────────────────
@@ -157,6 +157,107 @@ interface ScopeEntry {
   fieldInnerTrees?: (Tree[] | undefined)[]
 }
 
+// Detect `{_} -> body` / `{x} -> body` thunks where the parameter is unused.
+// Returns the thunk body if `e` is a single-param binder whose param is not
+// referenced; null otherwise. Used by the select_lazy → match rewrite.
+function asUnusedParamThunk(e: Expr): Expr | null {
+  if (e.tag !== "binder" || e.params.length !== 1) return null
+  const p = e.params[0]
+  const name = p.name
+  // Anonymous binder (name=null, written as `{_}`) always qualifies.
+  if (name === null) return e.body
+  // Named binder qualifies if the body doesn't mention the name.
+  if (!exprMentions(e.body, name)) return e.body
+  return null
+}
+
+// Free-variable check on the Expr AST. Conservative: returns true if the
+// name could be referenced anywhere in `e` (modulo binder shadowing).
+function exprMentions(e: Expr, name: string): boolean {
+  switch (e.tag) {
+    case "leaf": case "num": case "hole": case "use": return false
+    case "var": return e.name === name
+    case "app": return exprMentions(e.f, name) || exprMentions(e.x, name)
+    case "ann": return exprMentions(e.expr, name) || exprMentions(e.type, name)
+    case "proj": return exprMentions(e.target, name)
+    case "binder": {
+      // Shadowed if any param has this name.
+      if (e.params.some(p => p.name === name)) {
+        return e.params.some(p => p.type && exprMentions(p.type, name))
+      }
+      return e.params.some(p => p.type && exprMentions(p.type, name)) || exprMentions(e.body, name)
+    }
+    case "recType":
+      return e.fields.some(f => f.type !== null && exprMentions(f.type, name))
+    case "recValue": {
+      if (e.fields.some(f => exprMentions(f.value, name) || (f.type && exprMentions(f.type, name))))
+        return true
+      if (e.members) {
+        for (const m of e.members) {
+          if (m.tag === "field") {
+            if (exprMentions(m.value, name)) return true
+            if (m.type && exprMentions(m.type, name)) return true
+          } else if (m.tag === "let") {
+            if (exprMentions(m.body, name)) return true
+            if (m.type && exprMentions(m.type, name)) return true
+            if (m.name === name) return false // subsequent members rebind
+          } else if (m.tag === "test") {
+            if (exprMentions(m.lhs, name) || exprMentions(m.rhs, name)) return true
+          } else if (m.tag === "open") {
+            if (exprMentions(m.expr, name)) return true
+          }
+        }
+      }
+      return false
+    }
+    case "match":
+      return exprMentions(e.cond, name) || exprMentions(e.thenBody, name) || exprMentions(e.elseBody, name)
+  }
+}
+
+// Peel a left-leaning app chain into head + args.
+function peelApp(e: Expr): { head: Expr; args: Expr[] } {
+  const args: Expr[] = []
+  let cur = e
+  while (cur.tag === "app") { args.unshift(cur.x); cur = cur.f }
+  return { head: cur, args }
+}
+
+// Rewrite `select_lazy ({_} -> A) ({_} -> B) cond` → `match cond { TT => A; FF => B }`
+// when both thunks have form `{_} -> body` (or `{x} -> body` with x unused).
+// This avoids the cirToTree eager-K-body evaluation that fires on self-
+// referential select_lazy uses (CLAUDE.md "Compiler workarounds"). The
+// match-style desugaring (see "match" case below) wraps each arm in a
+// closure over its free vars, side-stepping the K(body) construction whose
+// body would otherwise be reduced eagerly at compile time.
+//
+// Trailing args (beyond the third) are passed through: the prelude
+// select_lazy supports select-then-apply, and so does match's desugar.
+function tryRewriteSelectLazy(
+  e: Expr,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+): Expr | null {
+  if (e.tag !== "app") return null
+  const { head, args } = peelApp(e)
+  if (head.tag !== "var" || head.name !== "select_lazy") return null
+  if (args.length < 3) return null
+  // Require `select_lazy` to resolve to something in scope (sanity: don't
+  // rewrite if the name is unbound — let the normal path raise an error).
+  if (!lookupEntry("select_lazy")?.tree) return null
+  // `select` must also be in scope for the match desugaring.
+  if (!lookupEntry("select")?.tree) return null
+  const thenBody = asUnusedParamThunk(args[0])
+  const elseBody = asUnusedParamThunk(args[1])
+  if (thenBody === null || elseBody === null) return null
+  const cond = args[2]
+  let rewritten: Expr = { tag: "match", cond, thenBody, elseBody }
+  // Re-apply any trailing args (select-then-apply).
+  for (let i = 3; i < args.length; i++) {
+    rewritten = { tag: "app", f: rewritten, x: args[i] }
+  }
+  return rewritten
+}
+
 // Expr → Cir, with scope lookup and use-resolution.
 function exprToCir(
   e: Expr,
@@ -181,11 +282,18 @@ function exprToCir(
       return entry?.tree ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
     }
     case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
-    case "app":
+    case "app": {
+      // S2: rewrite `select_lazy (\_ -> A) (\_ -> B) cond [args...]` to
+      // `match cond { TT => A; FF => B } [args...]` so the recursive arm
+      // bodies don't hit cirToTree's eager K-body reduction. See
+      // tryRewriteSelectLazy for details.
+      const rewritten = tryRewriteSelectLazy(e, lookupEntry)
+      if (rewritten !== null) return exprToCir(rewritten, lookupEntry, resolveUse)
       return { tag: "app",
         f: exprToCir(e.f, lookupEntry, resolveUse),
         x: exprToCir(e.x, lookupEntry, resolveUse),
       }
+    }
     case "ann": return exprToCir(e.expr, lookupEntry, resolveUse) // erase type
     case "binder": {
       // Shadow binder params so they don't resolve to scope entries.
@@ -1000,7 +1108,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     return { tree, type: inferredType, fields, fieldTrees }
   }
 
-  function runItem(it: Item, target: Decl[], isExport: boolean): void {
+  function runItem(it: RecMember, target: Decl[], isExport: boolean): void {
     switch (it.tag) {
       case "field": {
         const result = compileBinding(it.name, it.type, it.value)
