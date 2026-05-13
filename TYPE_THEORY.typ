@@ -30,7 +30,7 @@
 
   - Inductive types are library-defined via a generic `predicate_frame`
     primitive that wraps user-supplied recognizers.
-  - Quantifier types (Pi, Forall, etc.) are library-defined using
+  - Quantifier types (Pi, Intersection, etc.) are library-defined using
     `bind_hyp` for fresh-hypothesis minting during type-checking.
   - Inductive eliminators are library-defined using `eliminator_frame`,
     which mints stuck-typed neutrals for hypothesis targets.
@@ -1110,7 +1110,7 @@ hypothesis assumption). At the public boundary, hypothesis-tainted
 values fail `scan_no_neutral`, so no closed proof of False can be
 synthesized.
 
-== Sigma, Refinement, Forall
+== Sigma, Refinement, Intersection
 
 ```
 let sigma_recognizer = {params, v} -> {
@@ -1127,7 +1127,7 @@ let refinement_recognizer = {params, v} -> {
   and (A v) (P v)
 }
 
-let forall_recognizer = {params, v} -> {
+let intersection_recognizer = {params, v} -> {
   let A = pair_fst params
   let P = pair_snd params
   bind_hyp A ({hyp} ->
@@ -1137,10 +1137,11 @@ let forall_recognizer = {params, v} -> {
 
 Each gets the standard 3-tuple metadata wrapping with sentinel
 codomain_fn. Sigma and Refinement don't need bind_hyp (closed
-dispatch). Forall does (it quantifies over A).
+dispatch). Intersection does (it quantifies over A).
 
-Forall's body returns `(P hyp) v` — a Bool resulting from applying
-P-at-hyp's predicate to v. The escape check examines this Bool:
+Intersection's body returns `(P hyp) v` — a Bool resulting from
+applying P-at-hyp's predicate to v. The escape check examines this
+Bool:
 - If concrete (TT or FF), no hyp present, accept.
 - If stuck-Bool (kernel-minted neutral whose metadata may reference
   hyp), the stuck wrapper walls off hyp, accept.
@@ -1148,8 +1149,20 @@ P-at-hyp's predicate to v. The escape check examines this Bool:
   position of the result, reject.
 
 In practice, `(P hyp) v` produces Bool values that don't expose hyp
-in user-extractable positions; legitimate Forall recognizers pass
-the escape check.
+in user-extractable positions; legitimate Intersection recognizers
+pass the escape check.
+
+`Intersection` is *not* the FOL ∀ quantifier of standard dependent
+type theory. In Coq/Lean/Agda, `forall x:A, B(x)` is a synonym for
+the Pi type — under Curry-Howard, Pi *is* FOL ∀, and its inhabitants
+are λ-abstractions. `Intersection A P` here is different: its
+inhabitants are plain values (not functions) that simultaneously
+inhabit `P a` for every `a : A` — a single tree-calculus value
+witnesses every instance. This is intersection typing / System-F-style
+impredicative quantification. Disp's naming convention diverges from
+standard DTT intentionally, because tree calculus supports this kind
+of intensional polymorphism directly and the role normally played by
+`forall` belongs to `Pi`.
 
 == `wf_fix` and `Total`
 

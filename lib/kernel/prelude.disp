@@ -31,6 +31,8 @@ open use "../types/eq.disp"
 open use "../types/ord.disp"
 open use "../types/conv.disp"
 open use "../types/false.disp"
+open use "../types/sigma.disp"
+open use "../types/intersection.disp"
 
 TT := TT
 FF := FF
@@ -169,3 +171,13 @@ ord_max := ord_max
 conv_structural := conv_structural
 False := False
 Not := Not
+Sigma_pf := Sigma_pf
+Sigma := Sigma
+is_sigma := is_sigma
+sigma_dom := sigma_dom
+sigma_cod_fn := sigma_cod_fn
+Intersection_pf := Intersection_pf
+Intersection := Intersection
+is_intersection := is_intersection
+intersection_dom := intersection_dom
+intersection_pred_fn := intersection_pred_fn

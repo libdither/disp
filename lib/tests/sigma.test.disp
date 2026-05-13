@@ -1,0 +1,73 @@
+// Sigma — dependent pair type. `Sigma A B` is inhabited by `pair a b`
+// where `a : A` and `b : B a`. The recognizer destructures the candidate
+// via pair_fst / pair_snd and checks each component. Sigma uses closed
+// dispatch (sentinel codomain_fn t); no bind_hyp.
+//
+// Per TYPE_THEORY.typ §5.8.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ================================================================
+// Identity sanity: Sigma is a public guarded predicate_frame type.
+// ================================================================
+test hasguard (Sigma Nat ({_} -> Nat)) = TT
+test tree_eq (pair_fst (type_meta (Sigma Nat ({_} -> Nat)))) kernel_predicate_frame_sig = TT
+test is_sigma (Sigma Nat ({_} -> Nat)) = TT
+test is_sigma Nat = FF
+
+// ================================================================
+// Reflection helpers
+// ================================================================
+test sigma_dom (Sigma Nat ({_} -> Bool)) = Nat
+test sigma_cod_fn (Sigma Nat ({_} -> Bool)) 0 = Bool
+
+// ================================================================
+// Closed pairs: non-dependent Sigma Nat Bool
+// ================================================================
+
+// `pair a b` = fork(a, b) = t a b. (pair 3 TT) : Sigma Nat ({_} -> Bool).
+test Sigma Nat ({_} -> Bool) (t 3 TT) = TT
+test Sigma Nat ({_} -> Bool) (t 0 FF) = TT
+test Sigma Nat ({_} -> Bool) (t 7 TT) = TT
+
+// Wrong first component: `TT` is not a Nat.
+test Sigma Nat ({_} -> Bool) (t TT TT) = FF
+
+// Wrong second component: a leaf `t` is not a Bool.
+test Sigma Nat ({_} -> Bool) (t 0 t) = FF
+test Sigma Nat ({_} -> Bool) (t 0 5) = FF
+
+// ================================================================
+// Dependent Sigma: second component's type depends on first
+// ================================================================
+// Sigma Bool ({b} -> select Nat Bool b): if b=TT pick Nat else Bool.
+
+let dep_B = {b} -> select Nat Bool b
+test Sigma Bool dep_B (t TT 5) = TT
+test Sigma Bool dep_B (t FF TT) = TT
+
+// Mismatched dependency: b=TT but second is a Bool.
+test Sigma Bool dep_B (t TT TT) = FF
+
+// Mismatched dependency: b=FF but second is a Nat.
+test Sigma Bool dep_B (t FF 3) = FF
+
+// ================================================================
+// Negative tests on malformed candidates
+// ================================================================
+
+// Stem (`t (t t)`) destructures to `pair_fst = t (t t)` (a stem, not a Nat).
+// Sigma Nat (\{_\} -> Bool): the first-component check fails on the stem.
+test Sigma Nat ({_} -> Bool) (t (t t)) = FF
+
+// Bare leaf `t` actually destructures to `pair t t` (`pair_fst t = t`,
+// `pair_snd t = t`), so for `Sigma Nat (\{_\} -> Bool)` this is rejected
+// because the second component `t` is not a Bool.
+test Sigma Nat ({_} -> Bool) t = FF
+
+// ================================================================
+// Public boundary rejects hypothesis input.
+// ================================================================
+let sigma_hyp = Hyp (Sigma Nat ({_} -> Bool)) 0
+test Sigma Nat ({_} -> Bool) sigma_hyp = FF
