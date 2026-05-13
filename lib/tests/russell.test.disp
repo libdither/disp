@@ -5,13 +5,6 @@
 // without rank stratification. This file pins that observation across the
 // core type-formers.
 //
-// Surface note: `Type` is currently `{_rank} -> Type_pf` (the rank arg is
-// vestigial since universe stratification was dropped). `Type_pf` is the
-// actual type-predicate value. We write the self-typing tests against
-// `Type_pf` directly so the "applied" tests don't accidentally test the
-// rank-shedding lambda — the LHS in `test Type Type = TT` would otherwise
-// be `Type_pf` (the lambda eats the second `Type`) rather than a check.
-//
 // ================================================================
 // Russell paradox itself — NOT TESTABLE in current framework
 // ================================================================
@@ -34,28 +27,32 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-let Type_v = Type 0  // apply rank to obtain the actual type predicate (= Type_pf)
-
 // ================================================================
 // H-rule self-typing — Type contains itself
 // ================================================================
-// Type_pf recognises any guarded predicate_frame wait-form. Type_pf
-// itself is built exactly that way, so `Type_pf Type_pf = TT`.
+// Type recognises any guarded predicate_frame wait-form. Type itself
+// is built exactly that way, so `Type Type = TT`.
 
-test Type_v Type_pf = TT
-test Type_pf Type_pf = TT
+test Type Type = TT
+test Type Type_pf = TT
+test Type_pf Type = TT
 
 // ================================================================
 // Core library type-formers qualify as Types
 // ================================================================
 
-test Type_v Bool = TT
-test Type_v Nat = TT
-test Type_v Ord = TT
-test Type_v (Pi Nat ({_} -> Nat)) = TT
-test Type_v (Pi Bool ({_} -> Nat)) = TT
-test Type_v (Pi Type_pf ({A} -> Arrow A A)) = TT
-test Type_v (Arrow Nat Bool) = TT
+test Type Bool = TT
+test Type Nat = TT
+test Type Ord = TT
+test Type (Pi Nat ({_} -> Nat)) = TT
+test Type (Pi Bool ({_} -> Nat)) = TT
+test Type (Pi Type ({A} -> Arrow A A)) = TT
+test Type (Arrow Nat Bool) = TT
+test Type False = TT
+
+// Eq is now predicate_frame (post-migration); qualifies as a Type.
+test Type (Eq Nat 0 0) = TT
+test Type (Eq Nat 0 1) = TT
 
 // ================================================================
 // Closed values are NOT types
@@ -63,30 +60,14 @@ test Type_v (Arrow Nat Bool) = TT
 // Concrete inhabitants (Nat literals, Bool literals, refl) lack the
 // guarded predicate_frame structure, so the recognizer says FF.
 
-test Type_v 5 = FF
-test Type_v 0 = FF
-test Type_v TT = FF
-test Type_v FF = FF
-test Type_v refl = FF
-test Type_v t = FF
-test Type_v (t t) = FF
-test Type_v (t t t) = FF
-
-// ================================================================
-// Eq — known-issue: not currently a Type
-// ================================================================
-// Eq is still on the legacy `q_eq_fn` handler path; its tree shape is
-// `guard (wait kernel_ref.eq ...)`, not `guard (wait kernel_ref.predicate_frame ...)`.
-// Type_pf's recognizer specifically checks for the predicate_frame
-// signature on the unguarded core, so Eq fails. This is consistent with
-// `kernel.test.disp` line ~257: `test Type0 (Eq Nat 0 0) = FF`.
-//
-// known-issue: once Eq migrates to predicate_frame (per CLAUDE.md
-// "Remaining Work"), the assertion below flips to TT and the prompt's
-// `Type (Eq Nat 0 0) = TT` is restored.
-
-test Type_v (Eq Nat 0 0) = FF
-test Type_v (Eq Nat 0 1) = FF
+test Type 5 = FF
+test Type 0 = FF
+test Type TT = FF
+test Type FF = FF
+test Type refl = FF
+test Type t = FF
+test Type (t t) = FF
+test Type (t t t) = FF
 
 // ================================================================
 // Public-boundary hypothesis rejection
@@ -96,5 +77,5 @@ test Type_v (Eq Nat 0 1) = FF
 // "of type Type". (H-rule fires only through the inner core, which
 // type_pf.test.disp already exercises.)
 
-let type_hyp = Hyp Type_pf 0
-test Type_v type_hyp = FF
+let type_hyp = Hyp Type 0
+test Type type_hyp = FF

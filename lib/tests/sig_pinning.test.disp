@@ -42,23 +42,17 @@ test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Pi Nat ({_} -> Nat
 test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Arrow Nat Bool))) = TT
 test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Pi Type_pf ({A} -> Arrow A A)))) = TT
 
-// Eq is still on the legacy `q_eq_fn` handler. Its core is
-// `wait kernel_ref.eq ...`, NOT `wait kernel_ref.predicate_frame ...`,
-// so Eq's pair_fst does NOT match kernel_predicate_frame_sig.
-//
-// known-issue: once Eq migrates to predicate_frame (CLAUDE.md
-// "Remaining Work"), the negation below flips and a positive assertion
-// like the Bool/Nat ones above takes its place.
-
-test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Eq Nat 0 0))) = FF
+// Eq has migrated to predicate_frame; its core matches the same sig.
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Eq Nat 0 0))) = TT
 
 // ================================================================
 // kernel_eliminator_frame_sig
 // ================================================================
 // `*_rec_ef_inner = eliminator_frame_form init_meta = wait kernel_ref.eliminator_frame init_meta`
 
+// Note: nat_rec_ef_inner is let-bound in nat.disp (not exported), so
+// only bool_rec_ef_inner and ord_rec_ef_inner can be probed externally.
 test tree_eq kernel_eliminator_frame_sig (pair_fst bool_rec_ef_inner) = TT
-test tree_eq kernel_eliminator_frame_sig (pair_fst nat_rec_ef_inner) = TT
 test tree_eq kernel_eliminator_frame_sig (pair_fst ord_rec_ef_inner) = TT
 
 // ================================================================
