@@ -354,7 +354,73 @@
     border-radius: 4px;
     display: block;
     margin: 0.6em auto;
+    max-width: 100%;
+    height: auto;
   }
+  svg.tree-svg .edge {
+    stroke: var(--fg-muted);
+    stroke-width: 1.5;
+    fill: none;
+    transition: stroke 0.3s;
+  }
+  svg.tree-svg .edge-apply {
+    stroke-dasharray: 4 3;
+    opacity: 0.7;
+  }
+  svg.tree-svg .edge.redex-edge {
+    stroke: #d97757;
+    stroke-width: 2.4;
+  }
+  svg.tree-svg .node {
+    transition: fill 0.35s ease, stroke 0.35s ease, r 0.35s ease;
+  }
+  svg.tree-svg .node-leaf  { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+  svg.tree-svg .node-stem  { fill: var(--accent);      stroke: var(--accent); stroke-width: 1.2; }
+  svg.tree-svg .node-fork  { fill: var(--accent);      stroke: var(--accent); stroke-width: 1.2; }
+  svg.tree-svg .node-apply {
+    fill: var(--bg-code);
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    stroke-dasharray: 3 2;
+  }
+  svg.tree-svg .node.redex-fn  { fill: #d97757; stroke: #b45a30; }
+  svg.tree-svg .node.redex-arg { fill: #5677d9; stroke: #3a55a8; }
+  svg.tree-svg .node.flash-new { animation: flashNew 0.9s ease-out; }
+  @keyframes flashNew {
+    0%   { fill: #6dba6d; stroke: #4a8a4a; r: 18; }
+    100% { /* settles to its class fill */ }
+  }
+  svg.tree-svg .lbl {
+    font-family: 'JetBrains Mono', 'Menlo', monospace;
+    font-size: 11px;
+    fill: var(--bg-elev);
+    pointer-events: none;
+    text-anchor: middle;
+    dominant-baseline: middle;
+  }
+  svg.tree-svg .lbl-apply {
+    font-size: 13px;
+    fill: var(--accent);
+    font-weight: 700;
+  }
+  .viz-caption {
+    text-align: center;
+    font-family: 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    font-size: 0.85em;
+    color: var(--fg-muted);
+    margin-top: -0.2em;
+    margin-bottom: 0.4em;
+  }
+  .viz-caption .pill {
+    display: inline-block;
+    padding: 0.05em 0.45em;
+    border-radius: 8px;
+    color: white;
+    font-weight: 600;
+    margin: 0 0.15em;
+  }
+  .viz-caption .pill-fn  { background: #d97757; }
+  .viz-caption .pill-arg { background: #5677d9; }
   /* Tables */
   table {
     width: 100%;
@@ -694,15 +760,17 @@
 <!-- INTERACTIVE WIDGET 1: tree reducer -->
 <div class="widget" id="reducer-widget">
 <h4 class="widget-title">Interactive: apply two trees</h4>
-<p style="font-size: 0.9em; margin-top:0;">Use <code>t</code> for the leaf and parentheses for stems and forks. Type <code>(t t (t t t))</code> for fork(△, fork(△,△)). Click <strong>Reduce</strong> to step.</p>
+<p style="font-size: 0.9em; margin-top:0;">Use <code>t</code> for the leaf and juxtaposition for application: <code>(t t t)</code> parses as <code>apply(apply(t,t),t)</code> = <code>fork(t, t)</code>. The default below is the S-rule pattern <code>△ (△ △) △</code> applied to a leaf. Try <code>(t t t)</code>, <code>t</code> for the K-rule. Click <strong>Reduce step</strong>; the redex highlights for a moment, then reduces.</p>
 <div class="row">
   <span class="label">f:</span>
-  <input type="text" id="reducer-f" value="(t (t t) t)">
+  <input type="text" id="reducer-f" value="(t (t t) t)" oninput="reducerReset()">
   <span class="label">x:</span>
-  <input type="text" id="reducer-x" value="t">
+  <input type="text" id="reducer-x" value="t" oninput="reducerReset()">
   <button class="primary" onclick="reducerStep()">Reduce step</button>
   <button onclick="reducerReset()">Reset</button>
 </div>
+<svg class="tree-svg" id="reducer-svg" width="600" height="120" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet"></svg>
+<div class="viz-caption" id="reducer-caption">leaf <span style="color:var(--accent-soft)">●</span> stem/fork <span style="color:var(--accent)">●</span> pending application <span style="color:var(--accent);font-family:monospace">@</span></div>
 <div class="display" id="reducer-out">Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.</div>
 <div id="reducer-trace" class="trace"></div>
 </div>
@@ -838,7 +906,7 @@ test ({x, y} -> x) t (t t) = t</code></pre>
 
 <h3 id="match">3.3&nbsp; Pattern matching</h3>
 
-<p>The <code>match</code> form dispatches on a Scott-encoded value:</p>
+<p>The <code>match</code> form dispatches on a Scott-encoded value (we will learn about Scott-encoding a.k.a. eliminator-encoding in a future section):</p>
 
 <pre><code>not := {b} -> match b {
   true  => false
@@ -1574,62 +1642,243 @@ function reduceStep(f, x) {
   return { result: { tag: 'apply', f, x }, rule: 'stuck' };
 }
 
-let reducerState = null;
-function reducerReset() {
-  reducerState = null;
-  document.getElementById('reducer-out').innerHTML = 'Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.';
-  document.getElementById('reducer-trace').innerHTML = '';
+// ---------- Tree visualization ----------
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const REDEX_HOLD_MS = 750;     // how long to show the redex before reducing
+const FLASH_MS = 900;          // how long the green "new" flash lasts
+
+function childrenOf(t) {
+  if (t.tag === 'leaf') return [];
+  if (t.tag === 'stem') return [t.c];
+  if (t.tag === 'fork') return [t.l, t.r];
+  if (t.tag === 'apply') return [t.f, t.x];
+  return [];
 }
-function reducerStep() {
-  try {
-    if (!reducerState) {
-      const fs = document.getElementById('reducer-f').value;
-      const xs = document.getElementById('reducer-x').value;
-      const f = parseTree(fs);
-      const x = parseTree(xs);
-      reducerState = { node: { tag: 'apply', f, x }, history: [] };
+
+// Tidy-tree layout. Returns { nodes: [{tree, x, depth}], rootX, width }.
+function layoutTidy(tree, depth) {
+  depth = depth || 0;
+  const children = childrenOf(tree);
+  if (children.length === 0) {
+    return { nodes: [{ tree, x: 0, depth }], rootX: 0, width: 1 };
+  }
+  let cumX = 0;
+  const all = [];
+  let firstRoot = null, lastRoot = null;
+  for (const c of children) {
+    const sub = layoutTidy(c, depth + 1);
+    for (const n of sub.nodes) all.push({ tree: n.tree, x: n.x + cumX, depth: n.depth });
+    const r = sub.rootX + cumX;
+    if (firstRoot === null) firstRoot = r;
+    lastRoot = r;
+    cumX += sub.width;
+  }
+  const myX = (firstRoot + lastRoot) / 2;
+  all.push({ tree, x: myX, depth });
+  return { nodes: all, rootX: myX, width: Math.max(cumX, 1) };
+}
+
+// Collect every subtree reference of `target` inside `root`, so we can highlight
+// every occurrence. (Reductions like S-rule duplicate the argument.)
+function collectRefs(root, target, out) {
+  out = out || [];
+  if (root === target) out.push(root);
+  for (const c of childrenOf(root)) collectRefs(c, target, out);
+  return out;
+}
+
+function renderTree(tree, opts) {
+  opts = opts || {};
+  const svg = document.getElementById('reducer-svg');
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (!tree) {
+    svg.setAttribute('viewBox', '0 0 600 120');
+    return;
+  }
+  const layout = layoutTidy(tree, 0);
+  const cellW = 42, cellH = 56, padX = 30, padY = 26;
+  const xs = layout.nodes.map(n => n.x);
+  const minX = Math.min.apply(null, xs);
+  const maxX = Math.max.apply(null, xs);
+  const maxD = Math.max.apply(null, layout.nodes.map(n => n.depth));
+  const w = Math.max((maxX - minX) * cellW + padX * 2, 200);
+  const h = Math.max(maxD * cellH + padY * 2, 110);
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+
+  // Map: tree reference → {x, y}
+  const pos = new Map();
+  for (const n of layout.nodes) {
+    pos.set(n.tree, { x: (n.x - minX) * cellW + padX, y: n.depth * cellH + padY });
+  }
+
+  // Build sets of highlighted refs.
+  const fnRefs  = opts.redex && opts.redex.f ? new Set(collectRefs(tree, opts.redex.f)) : new Set();
+  const argRefs = opts.redex && opts.redex.x ? new Set(collectRefs(tree, opts.redex.x)) : new Set();
+  const newRefs = opts.flashNew                ? new Set(collectRefs(tree, opts.flashNew)) : new Set();
+
+  // Edges first (under nodes)
+  for (const n of layout.nodes) {
+    const p = pos.get(n.tree);
+    for (const c of childrenOf(n.tree)) {
+      const q = pos.get(c);
+      const line = document.createElementNS(SVG_NS, 'line');
+      line.setAttribute('x1', p.x); line.setAttribute('y1', p.y);
+      line.setAttribute('x2', q.x); line.setAttribute('y2', q.y);
+      let cls = 'edge';
+      if (n.tree.tag === 'apply') cls += ' edge-apply';
+      if (fnRefs.has(n.tree) && fnRefs.has(c)) cls += ' redex-edge';
+      if (argRefs.has(n.tree) && argRefs.has(c)) cls += ' redex-edge';
+      line.setAttribute('class', cls);
+      svg.appendChild(line);
     }
-    const node = reducerState.node;
-    let stepInfo = null;
-    function reduceFirstApply(n) {
-      if (n.tag !== 'apply') return null;
-      const f = n.f;
-      // Only reduce when f is a normal-form tree
-      if (f.tag === 'leaf' || f.tag === 'stem' || f.tag === 'fork') {
-        return reduceStep(f, n.x);
-      }
-      // Try left subtree
-      const left = reduceFirstApply(n.f);
-      if (left) {
-        return { result: { tag: 'apply', f: left.result, x: n.x }, rule: '(in left subterm) ' + left.rule };
-      }
-      const right = reduceFirstApply(n.x);
-      if (right) {
-        return { result: { tag: 'apply', f: n.f, x: right.result }, rule: '(in right subterm) ' + right.rule };
-      }
-      return null;
+  }
+
+  // Nodes
+  for (const n of layout.nodes) {
+    const p = pos.get(n.tree);
+    const circle = document.createElementNS(SVG_NS, 'circle');
+    circle.setAttribute('cx', p.x);
+    circle.setAttribute('cy', p.y);
+    circle.setAttribute('r', n.tree.tag === 'leaf' ? 9 : 13);
+    let cls = 'node node-' + n.tree.tag;
+    if (fnRefs.has(n.tree))  cls += ' redex-fn';
+    if (argRefs.has(n.tree)) cls += ' redex-arg';
+    if (newRefs.has(n.tree)) cls += ' flash-new';
+    circle.setAttribute('class', cls);
+    svg.appendChild(circle);
+
+    if (n.tree.tag === 'leaf') {
+      const txt = document.createElementNS(SVG_NS, 'text');
+      txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
+      txt.setAttribute('class', 'lbl');
+      txt.textContent = '△';
+      svg.appendChild(txt);
+    } else if (n.tree.tag === 'apply') {
+      const txt = document.createElementNS(SVG_NS, 'text');
+      txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
+      txt.setAttribute('class', 'lbl lbl-apply');
+      txt.textContent = '@';
+      svg.appendChild(txt);
     }
-    const step = reduceFirstApply(node);
-    if (!step) {
-      document.getElementById('reducer-out').innerHTML = '<strong>Normal form reached:</strong> <code>' + pretty(node) + '</code>';
-      return;
-    }
-    reducerState.history.push({ before: pretty(node), after: pretty(step.result), rule: step.rule });
-    reducerState.node = step.result;
-    document.getElementById('reducer-out').innerHTML = '<strong>Current term:</strong> <code>' + pretty(step.result) + '</code>';
-    // Render trace
-    const trace = document.getElementById('reducer-trace');
-    trace.innerHTML = reducerState.history.map((h, i) =>
-      '<div class="frame' + (i === reducerState.history.length - 1 ? ' current' : '') + '">' +
-        '<div><code>' + h.before + '</code></div>' +
-        '<div class="rule">→ ' + h.rule + '</div>' +
-        '<div><code>' + h.after + '</code></div>' +
-      '</div>'
-    ).join('');
-  } catch (e) {
-    document.getElementById('reducer-out').innerHTML = '<strong style="color:#c44">Error:</strong> ' + e.message;
   }
 }
+
+// ---------- Reducer state machine ----------
+// reduceFirstApply returns { result, rule, redex: {f, x} } where {f, x} are the
+// specific subtree references in the *current* tree that participate in the
+// next reduction. We use these references to highlight occurrences visually.
+function reduceFirstApply(n) {
+  if (n.tag !== 'apply') return null;
+  const f = n.f;
+  if (f.tag === 'leaf' || f.tag === 'stem' || f.tag === 'fork') {
+    const r = reduceStep(f, n.x);
+    return { result: r.result, rule: r.rule, redex: { f, x: n.x } };
+  }
+  const left = reduceFirstApply(n.f);
+  if (left) {
+    return {
+      result: { tag: 'apply', f: left.result, x: n.x },
+      rule: '(in left subterm) ' + left.rule,
+      redex: left.redex
+    };
+  }
+  const right = reduceFirstApply(n.x);
+  if (right) {
+    return {
+      result: { tag: 'apply', f: n.f, x: right.result },
+      rule: '(in right subterm) ' + right.rule,
+      redex: right.redex
+    };
+  }
+  return null;
+}
+
+let reducerState = null;
+let reducerBusy = false;
+
+function reducerReset() {
+  reducerState = null;
+  reducerBusy = false;
+  document.getElementById('reducer-out').innerHTML = 'Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.';
+  document.getElementById('reducer-trace').innerHTML = '';
+  // Build the initial tree from inputs so the user can see it before the first step
+  try {
+    const f = parseTree(document.getElementById('reducer-f').value);
+    const x = parseTree(document.getElementById('reducer-x').value);
+    const initial = { tag: 'apply', f, x };
+    renderTree(initial);
+  } catch (_) {
+    renderTree(null);
+  }
+}
+
+function renderTrace() {
+  const trace = document.getElementById('reducer-trace');
+  trace.innerHTML = reducerState.history.map(function (h, i) {
+    return '<div class="frame' + (i === reducerState.history.length - 1 ? ' current' : '') + '">' +
+             '<div><code>' + h.before + '</code></div>' +
+             '<div class="rule">→ ' + h.rule + '</div>' +
+             '<div><code>' + h.after + '</code></div>' +
+           '</div>';
+  }).join('');
+}
+
+function reducerStep() {
+  if (reducerBusy) return;
+  try {
+    if (!reducerState) {
+      const f = parseTree(document.getElementById('reducer-f').value);
+      const x = parseTree(document.getElementById('reducer-x').value);
+      reducerState = { node: { tag: 'apply', f, x }, history: [] };
+    }
+    const step = reduceFirstApply(reducerState.node);
+    if (!step) {
+      document.getElementById('reducer-out').innerHTML =
+        '<strong>Normal form reached:</strong> <code>' + pretty(reducerState.node) + '</code>';
+      renderTree(reducerState.node);
+      return;
+    }
+    // Phase 1: highlight the redex
+    reducerBusy = true;
+    renderTree(reducerState.node, { redex: step.redex });
+    document.getElementById('reducer-out').innerHTML =
+      '<strong>Next:</strong> ' + step.rule +
+      '. <span style="color:var(--fg-muted)">(<span class="pill pill-fn" style="display:inline-block;padding:0.05em 0.45em;border-radius:8px;color:white;font-weight:600;background:#d97757">function</span> &middot; <span class="pill pill-arg" style="display:inline-block;padding:0.05em 0.45em;border-radius:8px;color:white;font-weight:600;background:#5677d9">argument</span>)</span>';
+
+    // Phase 2: perform the reduction after the highlight has been visible
+    setTimeout(function () {
+      reducerState.history.push({
+        before: pretty(reducerState.node),
+        after: pretty(step.result),
+        rule: step.rule
+      });
+      reducerState.node = step.result;
+      // Flash the new structure briefly green
+      renderTree(reducerState.node, { flashNew: step.result });
+      document.getElementById('reducer-out').innerHTML =
+        '<strong>Current term:</strong> <code>' + pretty(step.result) + '</code>';
+      renderTrace();
+      setTimeout(function () {
+        renderTree(reducerState.node);  // settle to normal colors
+        reducerBusy = false;
+      }, FLASH_MS);
+    }, REDEX_HOLD_MS);
+  } catch (e) {
+    document.getElementById('reducer-out').innerHTML =
+      '<strong style="color:#c44">Error:</strong> ' + e.message;
+    reducerBusy = false;
+  }
+}
+
+// Render the initial tree on page load so the widget isn't empty.
+(function initReducerViz() {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', reducerReset);
+  } else {
+    reducerReset();
+  }
+})();
 </script>
 
 </body>
