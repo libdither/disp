@@ -733,62 +733,233 @@ cases), this is automatic.
   that are themselves paths; absent the abstract-i machinery (§8),
   HITs are out of scope for this design.
 
-= Staged implementation plan
+= Single-pass implementation plan
 
-== Stage 0 — current Disp
+This proposal commits to *one full pass* — no intermediate phases, no
+transitional `transp_fn`/`hcomp_fn` slots — going directly to `comp` as
+the unified primitive with `Partial` machinery in place from the start.
+The motivation is design coherence: every transitional state is debt
+that has to be migrated later, and the unified `comp` approach is
+cleaner in the dependent cases (Sigma, Pi) where separate `transp`/`hcomp`
+would need hand-coordination.
 
-Isos are library records. Conversion is explicit. Iso roundtrip is
-propositional via weak Pi.
+The implementation has nine layers organized by dependency. Each layer
+is mechanically completable once the layers below it are in place.
 
-== Stage 1 — Library transport with metadata `transp_fn`
+== Layer 0 — Interval
 
-Extend metadata layout to include `transp_fn`. Implement `transp`
-library function. Add `transp_fn` to Bool, Nat, Pi, Sigma, Pair, List,
-Eq, Type. Define `Path`/`PathP` as aliases over `Pi I` (see §5.4 —
-no separate library type needed). Define `refl`, `cong`, `sym`,
-`funext` as one-liners over `Pi I`.
+```
+lib/cubical/interval.disp           // I type, I_zero, I_one, I_and, I_or, I_inv
+lib/cubical/interval_normalize.disp // I_normalize to canonical (DNF) form
+```
 
-*Capability:* structural transport via paths-as-functions.
-`refl`/`cong`/`sym`/`funext` fall out trivially. Definitional iso
-roundtrip via stuck-identity normalization (library-level rewrite).
+`I` is a `predicate_frame`-based library type with tagged operators.
+Smart constructors auto-normalize so that `tree_eq` captures De-Morgan
+equivalence. No upstream dependencies. ~150 lines.
 
-*Kernel work:* metadata layout convention update; the seven handlers
-are unchanged. Sweep test sites that assert specific metadata shapes.
+== Layer 1 — Cofibrations and partial elements
 
-== Stage 2 — `I` and `hcomp`
+```
+lib/cubical/isone.disp           // IsOne : I -> Type
+lib/cubical/partial.disp         // Partial, PartialP
+lib/cubical/systems.disp         // Smart constructors for face systems
+```
 
-Define `I` as a `predicate_frame`-based library type with De-Morgan
-operations and `I_normalize`. Add `hcomp_fn` slot (or fold into a
-single dispatch slot — see "Open questions"). Implement `hcomp` library
-function with per-type rules.
+`IsOne phi` is a unit-when-`phi=I_one`, empty-when-`phi=I_zero`,
+neutral-when-abstract proposition. `Partial phi A := IsOne phi -> A`.
+`PartialP phi A := Pi (IsOne phi) A`. See §11 for the deep dive on
+how `Partial` actually works and what it needs to handle.
 
-*Capability:* path composition via hcomp. Connections (`i ∧ j`, etc.)
-as data. Paths in I itself.
+Walker integration: `IsOne phi` for abstract `phi` produces neutral
+proofs that library smart constructors can case-analyze raw (privileged
+via kernel handlers), but user code cannot. ~100 lines.
 
-*Kernel work:* none. Metadata extension only.
+== Layer 2 — Metadata refactor
 
-== Stage 3 — `Glue` and univalence
+```
+lib/kernel/handlers.disp         // extend predicate_frame metadata to 4-tuple
+src/tree.ts                       // update host fast-path projections
+lib/types/*.disp                  // every type-former gets a comp_fn slot
+test/*.test.disp                  // sweep ~120 tests against new metadata shape
+```
 
-Define `Glue` as a `predicate_frame`-based library type. Implement
-`Glue.transp_fn` (uses `hcomp` internally). Define `ua : A ≃ B → Path
-Type A B`.
+Metadata layout changes once, irreversibly:
 
-*Capability:* univalence as a derivable theorem. Transport along
-`ua e` reduces via Glue's rule. Equivalence-as-equality
-computationally.
+```
+T_meta := pair recognizer_sig (pair params (pair codomain_fn comp_fn))
+```
 
-*Kernel work:* none. Library type addition.
+The biggest mechanical change — 30-50 file edits, but each is
+straightforward. ~50 new lines plus ~150 disrupted lines in existing
+type files. Test sweep is the largest single mechanical task.
 
-== Stage 4 — abstract-i evaluation
+== Layer 3 — `comp` dispatcher
 
-The genuinely new capability: type-family inspection at abstract `i`.
-See §8 for what this requires. Likely a sibling walker variant with
-relaxed parametricity for I-typed neutrals.
+```
+lib/cubical/comp.disp            // comp, transp, hcomp library functions
+lib/cubical/fill.disp            // comp_fill, hfill, transp_fill
+```
 
-*Capability:* full cubical computation including non-endpoint-decidable
-type families. Higher inductive types become tractable.
+```
+comp : (A : Pi I (\{_\} -> Type))
+       -> (phi : I)
+       -> (u : Pi I (\{i\} -> Partial phi (apply A i)))
+       -> (u0 : apply A I_zero)
+       -> apply A I_one
 
-*Kernel work:* substantial — a new reduction discipline.
+comp := fix (\{self, A, phi, u, u0\} -> \{
+  let T0 = apply A I_zero
+  let cfn = comp_fn_of T0
+  match (tree_eq cfn t) \{
+    TT => StuckElim (apply A I_one)
+                    (pair A (pair phi (pair u u0)))
+    FF => apply cfn
+                (pair self (pair A (pair phi (pair u u0))))
+  \}
+\})
+
+// transp and hcomp as one-line derivations
+transp := \{A, x\} -> comp A I_zero empty_partial_family x
+hcomp  := \{T, phi, u, u0\} -> comp (\{_\} -> T) phi u u0
+
+// fills (one-line via De Morgan connection)
+comp_fill := \{A, phi, u, u0, i\} ->
+  comp (\{j\} -> apply A (i I_and j))
+       (phi I_or (I_inv i))
+       (restrict u i)
+       u0
+```
+
+~100 lines.
+
+== Layer 4 — Per-type `comp_fn` rules
+
+```
+lib/types/bool.disp              // Bool.comp_fn  (discrete: u0)
+lib/types/nat.disp               // Nat.comp_fn
+lib/types/false.disp             // False.comp_fn
+lib/types/pair.disp              // Pair.comp_fn (component-wise)
+lib/types/sigma.disp             // Sigma.comp_fn (fill first, transport second)
+lib/types/pi.disp                // Pi.comp_fn (a-trajectory, dependent codomain)
+lib/types/eq.disp                // Eq.comp_fn
+lib/types/list.disp              // List.comp_fn (structural recursion)
+lib/types/type.disp              // Type.comp_fn (identity, Glue handles non-trivial)
+```
+
+Each rule receives the full 5-argument `comp` signature
+`(self, A, phi, u, u0)` and produces a value of `A I_one`. Discrete
+types return `u0`. Structural types recurse component-wise on both the
+type-path `A` and the side-system `u`. Dependent types thread an
+`a`-trajectory through the codomain.
+
+Total: ~400 lines across the type files.
+
+== Layer 5 — Path/PathP aliases and core operations
+
+```
+lib/cubical/path.disp            // Path, PathP aliases
+lib/cubical/path_ops.disp        // refl, cong, sym, funext, compose_path, inv_path, J
+```
+
+All one-liners over `comp`. ~50 lines total. See §5.4 for the alias
+design.
+
+== Layer 6 — Equivalences
+
+```
+lib/cubical/equiv.disp           // isContr, fiber, isEquiv, Equiv (~=)
+```
+
+`A ~= B := Sigma (f : A -> B) (\{_\} -> isEquiv f)`, with `isEquiv`
+defined via contractibility of fibers. All in terms of Sigma/Pi/Path.
+~80 lines.
+
+== Layer 7 — Glue and univalence
+
+```
+lib/cubical/glue.disp            // Glue, glue, unglue, Glue.comp_fn
+lib/cubical/ua.disp              // ua, ua_compute helper
+```
+
+`Glue` takes proper `Partial`-based face systems. `Glue.comp_fn` is the
+substantial implementation — the workhorse of computational univalence.
+See §12 for the deep dive on how it works.
+
+```
+ua := \{A, B, e, i\} ->
+  Glue B (i I_or (I_inv i))
+    (system_boundary A B)
+    (system_boundary e id_equiv)
+```
+
+~250 lines (Glue is dense).
+
+== Layer 8 — HIT eliminator machinery
+
+```
+lib/kernel/handlers.disp         // eliminator_frame extension for path constructors
+lib/cubical/hit_dispatcher.disp  // pattern library for tagged HIT dispatchers
+lib/types/circle.disp            // S^1 as worked example
+```
+
+Extend `eliminator_frame`'s dispatcher to recognize tagged
+constructor-application-to-interval patterns. Library-side dispatcher
+pattern for any HIT. Boundary-equality obligations on user-supplied
+path cases become propositional `Eq` proofs. ~200 lines kernel +
+per-HIT extras.
+
+== Layer 9 — Test sweep
+
+The largest single task. Update ~120 existing tests for the new
+4-tuple metadata layout. Add ~80-150 new tests for `comp`-derived
+operations, per-type rules, `ua e`-transport reduction, iso-roundtrip
+structural equality, and S^1 eliminator behavior.
+
+== Scope summary
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Layer*], [*New lines*], [*Disrupted lines*],
+    [0. Interval], [~150], [0],
+    [1. Cofibrations], [~100], [0],
+    [2. Metadata refactor], [~50], [~150 (existing types)],
+    [3. comp dispatcher], [~100], [0],
+    [4. Per-type rules], [~400], [~50 (existing type files)],
+    [5. Path/PathP, ops], [~50], [0],
+    [6. Equivalences], [~80], [0],
+    [7. Glue, ua], [~250], [0],
+    [8. HIT machinery], [~200], [~30 (eliminator_frame)],
+    [9. Test sweep], [~600], [~150 (existing tests)],
+    [*Total*], [*~2000*], [*~380*],
+  ),
+  caption: [Estimated implementation scope.],
+)
+
+Roughly 2400 lines of changes. With a focused 1-2 week effort and the
+two deep-dive sections below (§11 on `Partial`, §12 on `Glue.comp_fn`)
+as detailed references, the design is concrete enough to implement
+without further architectural decisions.
+
+== Risks specific to single-pass
+
++ *Partial's walker integration may need iteration.* The privilege
+  boundary (library can analyze `IsOne` proofs raw, user can't) is
+  subtle. Expect 1-2 rounds of refinement.
+
++ *Glue.comp_fn coherence is the hardest piece.* The mid-region
+  case-analysis involves multiple hcomps composed via boundary
+  cofibrations. Dedicate debugging time specifically here.
+
++ *Test sweep is mostly mechanical but tedious.* Most failures will be
+  metadata-shape assertions that need straightforward updates.
+
++ *Interval-formula normalization is optimization-sensitive.* DNF vs.
+  ANF choice affects `tree_eq` performance on real workloads. Benchmark
+  before committing.
 
 = Open questions
 
