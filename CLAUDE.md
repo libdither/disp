@@ -6,7 +6,7 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 
 - [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — **load-bearing**. The discipline governing what's allowed in the codebase.
 - [`GOALS.md`](GOALS.md) — the north star (neural-guided synthesis, self-improving optimizer).
-- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — **authoritative** type-theory spec. Unified design: 7 kernel primitives (`hyp_reduce`, `guard`, `unguard`, `checked_apply`, `predicate_frame`, `bind_hyp`, `eliminator_frame`); inductive types and quantifier types are library-defined. The current implementation does not yet match this spec; see "Implementation status" below.
+- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — **authoritative** type-theory spec. Unified design: 7 kernel primitives (`hyp_reduce`, `guard`, `unguard`, `checked_apply`, `predicate_frame`, `eliminator_frame`, `bind_hyp`); inductive types and quantifier types are library-defined. The current implementation does not yet match this spec; see "Implementation status" below.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape. Authoritative for the parser.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
 - [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms describing the **current** kernel: `hyp_reduce`, wait/fix/recq, deferred branching, bracket abstraction optimizations, performance notes. Reflects the codebase, not the spec target.

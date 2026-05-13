@@ -25,26 +25,29 @@ Reference implementation:
 The kernel is a recursive record:
 
 ```disp
-kernel : {hyp_reduce, guard, pi, nat, bool, eq,
-          core_type, guarded_type,
-          bool_rec, nat_rec, eq_J, unguard, checked_apply} := recq {
-  hyp_reduce    := q_hyp_reduce_fn;
-  guard         := q_guard_fn;
-  pi            := q_pi_fn;
-  nat           := q_nat_fn;
-  bool          := q_bool_fn;
-  eq            := q_eq_fn;
-  core_type     := q_core_type_fn;
-  guarded_type  := q_guarded_type_fn;
-  bool_rec      := q_bool_rec_fn;
-  nat_rec       := q_nat_rec_fn;
-  eq_J          := q_eq_J_fn;
-  unguard       := q_unguard_fn;
-  checked_apply := q_checked_apply_fn
+kernel : {hyp_reduce, guard, eq, eq_J, unguard, checked_apply,
+          predicate_frame, eliminator_frame, bind_hyp} := recq {
+  hyp_reduce       := q_hyp_reduce_fn;
+  guard            := q_guard_fn;
+  eq               := q_eq_fn;
+  eq_J             := q_eq_J_fn;
+  unguard          := q_unguard_fn;
+  checked_apply    := q_checked_apply_fn;
+  predicate_frame  := q_predicate_frame_fn;
+  eliminator_frame := q_eliminator_frame_fn;
+  bind_hyp         := q_bind_hyp_fn
 }
 
-let kernel_ref = {q} -> wait kernel q
+kernel_ref : {hyp_reduce, guard, eq, eq_J, unguard, checked_apply,
+              predicate_frame, eliminator_frame, bind_hyp} :=
+  {q} -> wait kernel q
 ```
+
+The `eq` and `eq_J` slots are legacy carry-overs from the pre-migration
+kernel; they remain in the record while the Eq library type still uses
+the older per-type handler path. The seven kernel primitives proper are
+`hyp_reduce`, `guard`, `unguard`, `checked_apply`, `predicate_frame`,
+`eliminator_frame`, `bind_hyp`.
 
 `kernel` is the actual recursive record. `kernel_ref` is its lazy proxy:
 projecting from `kernel_ref` returns delayed field selection, e.g.
