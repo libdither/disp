@@ -20,13 +20,18 @@ kernel : {hyp_reduce, guard, unguard, checked_apply,
   eliminator_frame := q_eliminator_frame_fn;
   bind_hyp         := q_bind_hyp_fn
 }
+
+kernel_ref : {hyp_reduce, guard, unguard, checked_apply,
+              predicate_frame, eliminator_frame, bind_hyp} :=
+  {q} -> wait kernel q
 ```
 
-`kernel` is the actual recursive record. `kernel_ref` is the lazy
-proxy `{q} -> wait kernel q`. Hypotheses use the eager
-`kernel.hyp_reduce` signature; public type constructors use lazy
-`kernel_ref.*` forms so their signatures match the exported native
-dispatcher anchors.
+`kernel` is the actual recursive record; `kernel_ref` is its lazy
+proxy. Projecting from `kernel_ref` returns delayed field selection,
+e.g. `kernel_ref.predicate_frame = wait kernel predicate_frame_selector`.
+Hypotheses use the eager `kernel.hyp_reduce` signature; public type
+constructors use lazy `kernel_ref.*` forms so their signatures match
+the exported native dispatcher anchors.
 
 ## Library Types
 

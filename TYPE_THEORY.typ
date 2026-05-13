@@ -163,7 +163,7 @@ checks the function's signature against a fixed set of registered
 handler signatures:
 
 ```
-hyp_reduce, guard, unguard, predicate_frame, bind_hyp, eliminator_frame
+hyp_reduce, guard, unguard, predicate_frame, eliminator_frame, bind_hyp
 ```
 
 If matched, the application is routed to the corresponding kernel
@@ -173,7 +173,9 @@ inherits parametric mode throughout its evaluation.
 
 == Trusted primitives
 
-The kernel registry consists of seven handlers, fixed at boot time:
+The kernel registry consists of seven handlers, fixed at boot time.
+The table below lists them in the same order they appear in the
+implementation's `recq` record (`lib/kernel/handlers.disp`):
 
 #figure(
   table(
@@ -182,15 +184,15 @@ The kernel registry consists of seven handlers, fixed at boot time:
     align: left,
     inset: 6pt,
     [*Primitive*], [*Role*], [*Mode*],
-    [`hyp_reduce`],     [`apply` on a kernel-minted neutral],            [raw],
-    [`guard`],          [public-boundary scan + predicate evaluation],   [raw],
-    [`unguard`],        [walker-safe peeling of guard layer],            [raw],
-    [`checked_apply`],  [dispatcher (signatures + walker default)],      [raw],
-    [`predicate_frame`],[wraps recognizer with H-rule for hypotheses],   [raw],
-    [`bind_hyp`],       [mints fresh hypothesis for predicate checking], [raw],
-    [`eliminator_frame`],[wraps case dispatcher with stuck-mint],        [raw],
+    [`hyp_reduce`],      [`apply` on a kernel-minted neutral],            [raw],
+    [`guard`],           [public-boundary scan + predicate evaluation],   [raw],
+    [`unguard`],         [walker-safe peeling of guard layer],            [raw],
+    [`checked_apply`],   [dispatcher (signatures + walker default)],      [raw],
+    [`predicate_frame`], [wraps recognizer with H-rule for hypotheses],   [raw],
+    [`eliminator_frame`],[wraps case dispatcher with stuck-mint],         [raw],
+    [`bind_hyp`],        [mints fresh hypothesis for predicate checking], [raw],
   ),
-  caption: [Kernel primitive handlers. The kernel does not grow with library type-formers; these seven mediate all type-system operations.],
+  caption: [Kernel primitive handlers. The kernel does not grow with library type-formers; these seven mediate all type-system operations. `checked_apply` is the dispatcher itself: it is included in the registry so that `ks.checked_apply` is available to handler bodies that route sub-checks through the perimeter.],
 )
 
 #note[
@@ -376,38 +378,68 @@ Reuses the neutral_meta layout above.
 
 == Kernel reference convention
 
-The kernel record itself has two reference forms in the
+*The two forms.* The kernel record has two reference forms in the
 implementation:
 
-- `kernel` — the recq-fixed-point record. `kernel.X` is an *eager*
-  projection that yields the handler closure directly.
-- `kernel_ref` — a lazy proxy defined as `{q} -> wait kernel q`.
-  `kernel_ref.X` yields `wait kernel selector_X` — a wait-form
-  delaying the projection.
+- `kernel` — the `recq` fixed-point record. `kernel.X` is an *eager*
+  projection that yields handler `X`'s closure directly.
+- `kernel_ref` — a lazy proxy, defined as `{q} -> wait kernel q`.
+  `kernel_ref.X` yields `wait kernel selector_X`, a wait-form that
+  delays the projection until forced.
 
-These produce *different* trees: `wait kernel.X meta` and
-`wait kernel_ref.X meta` are not hash-cons-identical.
+These forms produce *different* trees. In particular,
+`wait kernel.X meta` and `wait kernel_ref.X meta` are *not*
+hash-cons-identical: their outer shapes differ, so signature comparisons
+distinguish them.
 
-*Canonical form for hypothesis construction:* hypothesis trees must
-use `wait kernel.X meta` (the eager form), because that is the form
-`Hyp` / `q_make_hyp` produce. Any codomain_fn that reconstructs
-`self_as_hyp` for H-rule comparison must likewise use
-`wait kernel.hyp_reduce neutral_meta` — *not* `wait kernel_ref.hyp_reduce
-neutral_meta` — or the reconstruction will not hash-cons-match the
-actual hypothesis tree.
+The discipline below decides which to use in which context.
 
-*Canonical form for type construction:* library type-formers should
-use `wait kernel_ref.X meta` (the lazy proxy form) so that their
-recognizer signatures match the dispatcher's registered anchors,
-which are themselves built with `wait kernel_ref.X t` (see §4.8 /
-the implementation's `kernel_*_sig` exports).
+*Use eager `kernel.X` for:*
 
-Concretely: when `T = guard (wait kernel_ref.predicate_frame
-T_meta)`, the dispatcher's signature lookup matches because
-`pair_fst T = pair_fst (wait kernel_ref.predicate_frame t) =
-kernel_predicate_frame_sig`. Switching the type's construction to
-`wait kernel.predicate_frame T_meta` would yield a different
-signature shape and break the dispatcher.
+- *Hypothesis construction.* `Hyp` / `q_make_hyp` mint neutrals as
+  `wait kernel.hyp_reduce neutral_meta`. Anything that later needs to
+  hash-cons-match an existing hypothesis must use this same form.
+- *H-rule self-comparison from a codomain_fn.* A codomain_fn that
+  reconstructs the hypothesis tree (`self_as_hyp`) for H-rule
+  matching must rebuild it as `wait kernel.hyp_reduce neutral_meta`,
+  not via the lazy proxy.
+
+*Use lazy `kernel_ref.X` for:*
+
+- *Type-former metadata.* Library type-formers carry their `recq`
+  selector by constructing `wait kernel_ref.predicate_frame T_meta`
+  (and similar for other primitives). This is the form the elaborator
+  emits and that the dispatcher's registered signature anchors expect.
+- *Signature anchors.* The host's `kernel_*_sig` exports are computed
+  from `wait kernel_ref.X t`, so the dispatcher's `has_sig` check
+  matches only library-typed values that were constructed through the
+  lazy proxy.
+
+*Examples.*
+
+Eager — `type.disp`'s codomain_fn rebuilds the hypothesis for H-rule
+comparison:
+
+```
+self_as_hyp := wait kernel.hyp_reduce neutral_meta
+```
+
+This must use `kernel.hyp_reduce`, because the original hypothesis was
+minted via `q_make_hyp` (which goes through the eager form). Using
+`kernel_ref.hyp_reduce` would yield a structurally different tree and
+the hash-cons check would fail.
+
+Lazy — `pi.disp` builds the Pi type-former through the lazy proxy:
+
+```
+predicate_frame_form := wait kernel_ref.predicate_frame Pi_meta
+```
+
+`Pi_meta`'s recognizer signature must match what the dispatcher has
+registered, which is itself computed from `wait kernel_ref.predicate_frame
+t`. Switching to `kernel.predicate_frame` here would yield a different
+`pair_fst` and the dispatcher would fail to route to the
+`predicate_frame` handler.
 
 = Per-primitive specifications
 
