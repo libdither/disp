@@ -1,0 +1,65 @@
+// False / Not — the empty type and standard negation.
+//
+// The recognizer for False is `{_, _} -> FF`, so no closed value
+// passes. Combined with the entry scan in q_guard_fn (which rejects
+// pre-existing neutrals), no closed proof of False can exist at the
+// public boundary — this is the spec's logical-consistency anchor
+// (TYPE_THEORY.typ §5.6, §9.2).
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ================================================================
+// Closed values are rejected unconditionally.
+// ================================================================
+test False TT = FF
+test False FF = FF
+test False 0 = FF
+test False t = FF
+
+// ================================================================
+// Identity sanity: False is a public guarded predicate_frame type.
+// ================================================================
+test hasguard False = TT
+test tree_eq (pair_fst (type_meta False)) kernel_predicate_frame_sig = TT
+
+// ================================================================
+// Hypothesis-of-False: can be minted (the type-former is well-formed),
+// but at the public boundary the entry scan rejects neutrals.
+// ================================================================
+test is_neutral (Hyp False t) = TT
+test False (Hyp False t) = FF
+
+// Adversarial: a forged stuck neutral with stored type False does not
+// pass — the entry scan catches the neutral root.
+let fake_false = StuckElim False t
+test False fake_false = FF
+
+// Another closed-value rejection: a lambda body produces a value, the
+// recognizer still answers FF regardless of the body.
+test False ({_} -> 0) = FF
+
+// ================================================================
+// Not — standard negation.
+// ================================================================
+// Not P := Pi P ({_} -> False). Not should produce a Pi type.
+test is_pi (Not Bool) = TT
+
+// Not Bool of a closed Bool->X function:
+// Pi's recognizer mints a Bool hypothesis `b`, applies `({_} -> 0)` to
+// it (yielding the closed value `0`), then checks `False 0`. The False
+// recognizer returns FF unconditionally — so Not Bool rejects this
+// candidate. This is the expected behavior: there are no Not Bool
+// inhabitants (Bool is not empty, so its negation is uninhabited).
+test Not Bool ({_} -> 0) = FF
+
+// Same shape with a different closed body — still rejected.
+test Not Bool ({_} -> TT) = FF
+
+// Identity on Bool: Pi's recognizer applies `{x} -> x` to the Bool hyp,
+// yielding the hyp itself, then checks `False hyp`. Under the parametric
+// walker, False's recognizer (applied through ks.checked_apply) is
+// `{_, _} -> FF`, which discards its arguments and returns FF — the
+// recognizer never inspects the hyp reflectively, so this returns FF
+// cleanly (no walker Fail), and Not Bool rejects the identity.
+test Not Bool ({x} -> x) = FF

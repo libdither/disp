@@ -1,0 +1,30 @@
+// False — the empty type. Recognizer returns FF for every input, so no
+// closed value passes `False v`. This is the predicate that anchors the
+// spec's logical-consistency argument (TYPE_THEORY.typ §5.6, §9.2):
+// because the recognizer is unconditionally FF, no closed-term proof of
+// False can exist at the public boundary, and the entry scan in
+// q_guard_fn rejects any neutral-rooted forgery.
+//
+// Meta layout: pair recognizer (pair t t) — matches Bool's shape (no
+// params, sentinel codomain_fn `t`). The recognizer ignores both the
+// params slot and the candidate.
+//
+// Not P := Pi P ({_} -> False) — the standard negation. A closed value
+// of Not P would be a function that, on every closed P, returns a value
+// for which False holds — but no such value exists, so Not is the
+// canonical "no proof of P".
+//
+// Pi is imported so Not can be defined here; this file therefore
+// depends on lib/types/pi.disp in addition to the kernel substrate.
+
+open use "../prelude.disp"
+open use "../kernel/utils.disp"
+open use "../kernel/handlers.disp"
+open use "./pi.disp"
+
+let false_recognizer = {_, _} -> FF
+let false_recognizer_sig = checker_sig false_recognizer
+let false_pf_meta = t false_recognizer (t t t)
+False := guard (predicate_frame_form false_pf_meta)
+
+Not := {P} -> Pi P ({_} -> False)

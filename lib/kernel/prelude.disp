@@ -30,6 +30,7 @@ open use "../types/type.disp"
 open use "../types/eq.disp"
 open use "../types/ord.disp"
 open use "../types/conv.disp"
+open use "../types/false.disp"
 
 TT := TT
 FF := FF
@@ -168,3 +169,5 @@ ord_lt := ord_lt
 ord_le := ord_le
 ord_max := ord_max
 conv_structural := conv_structural
+False := False
+Not := Not
