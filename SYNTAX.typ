@@ -1,3 +1,4 @@
+// Reflects codebase as of fb5e4f056940 (2026-05-12)
 #set document(title: "Disp Surface Syntax")
 #set page(margin: 2cm, numbering: "1")
 #set text(font: "New Computer Modern", size: 10.5pt)
@@ -174,7 +175,7 @@ binderParam ::= (IDENT | \"_\") (\":\" expr)?",
 {x : Nat} -> x                 // annotated
 {A : Type, x : A} -> x         // multi-param sugar (right-assoc)
 {_ : Nat} -> t                 // anonymous (same as Nat -> t)",
-  note: [Lambda or Pi depending on expected type (`Type` ⇒ Pi, else lambda). A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn} -> body` desugars right-associatively to `{p1} -> ... -> {pn} -> body`.],
+  note: [Lambda or Pi depending on expected type (`Type` ⇒ Pi, else lambda). A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn} -> body` desugars right-associatively to `{p1} -> ... -> {pn} -> body`. Example: `{A : Type, x : A} -> x` means `{A : Type} -> ({x : A} -> x)`, not `({A : Type, x : A}) -> x` — each additional param wraps the remainder on the right.],
 )
 
 #rule(

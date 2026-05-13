@@ -1,3 +1,5 @@
+STATUS: Implemented (commits b68c6f7ba68a..5bd734cad975). Kept for historical context.
+
 # Reorganization Notes
 
 This file used to propose splitting the old monolithic `lib/kernel.disp`.

@@ -1,3 +1,5 @@
+> Reflects codebase as of 3f5e0f2b5464 (2026-04-12)
+
 # Development Philosophy
 
 How we're allowed to build this system.
