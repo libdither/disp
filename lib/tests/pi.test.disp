@@ -1,0 +1,159 @@
+// Tests for Pi / Arrow (dependent and non-dependent function types).
+//
+// Covers:
+//   1. Typing a λ against a Pi / Arrow type.
+//   2. Polymorphic Pi: Pi Type ({A} -> Arrow A A).
+//   3. Arity-mismatch functions rejected.
+//   4. pi_dom / pi_cod_fn reflection on constructed Pi.
+//   5. Dependent Pi: codomain varies with the argument.
+//   6. Arrow shorthand agrees with Pi with constant codomain.
+//   7. Hypothesis-typed Pi produces stuck neutrals via hyp_reduce.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+// ================================================================
+// 1. Typing a λ against Arrow / Pi
+// ================================================================
+
+// Identity at Nat → Nat.
+test (Arrow Nat Nat) ({x} -> x) = TT
+
+// Constant-zero function Nat → Nat.
+test (Arrow Nat Nat) ({_} -> 0) = TT
+
+// Identity at Bool → Bool.
+test (Arrow Bool Bool) ({x} -> x) = TT
+
+// succ is Nat → Nat.
+test (Arrow Nat Nat) succ = TT
+
+// Pi with explicit dependent binder syntax.
+test (Pi Nat ({_} -> Nat)) ({x} -> x) = TT
+
+// Constant function at Bool → Nat (always returns 0).
+test (Pi Bool ({_} -> Nat)) ({_} -> 0) = TT
+
+// Double arrow: Nat → Nat → Nat.
+test (Arrow Nat (Arrow Nat Nat)) add = TT
+test (Arrow Nat (Arrow Nat Nat)) ({x} -> {y} -> x) = TT
+
+// ================================================================
+// 2. Polymorphic Pi: Pi Type ({A} -> Arrow A A)
+// ================================================================
+
+let poly_id = {A, x} -> x
+test (Pi Type ({A} -> Arrow A A)) poly_id = TT
+
+// A function typed at Pi Type ({A} -> Pi A ({_} -> A)) — identity at each type.
+// (This is the same as poly_id, just written to stress the nested binder.)
+let poly_id2 = {_A, x} -> x
+test (Pi Type ({A} -> Pi A ({_} -> A))) poly_id2 = TT
+
+// Polymorphic composition rejected when return type is wrong.
+test (Pi Type ({A} -> Arrow A A)) ({_A} -> {_x} -> 0) = FF
+
+// ================================================================
+// 3. Arity mismatch / type mismatch
+// ================================================================
+
+// Returns FF (Bool) instead of Nat.
+test (Arrow Nat Nat) ({_} -> FF) = FF
+
+// Returns TT (Bool) instead of Nat.
+test (Arrow Nat Nat) ({_} -> TT) = FF
+
+// Identity at Bool → Nat rejected (Bool hyp is not Nat).
+test (Arrow Bool Nat) ({x} -> x) = FF
+
+// Zero-arity value: 0 is not Arrow Nat Nat.
+test (Arrow Nat Nat) 0 = FF
+
+// TT is not an Arrow.
+test (Arrow Nat Nat) TT = FF
+
+// ================================================================
+// 4. pi_dom / pi_cod_fn extraction
+// ================================================================
+
+let nn_pi = Pi Nat ({_} -> Nat)
+let bb_pi = Pi Bool ({_} -> Bool)
+let dep_pi = Pi Nat ({n} -> Eq Nat n n)
+
+// is_pi recognises Pi-shaped types.
+test is_pi nn_pi = TT
+test is_pi bb_pi = TT
+test is_pi dep_pi = TT
+test is_pi (Arrow Nat Bool) = TT
+
+// Non-Pi types are rejected.
+test is_pi Nat = FF
+test is_pi Bool = FF
+test is_pi t = FF
+test is_pi Type = FF
+
+// pi_dom extracts the domain.
+test pi_dom nn_pi = Nat
+test pi_dom bb_pi = Bool
+test pi_dom (Arrow Nat Bool) = Nat
+
+// pi_cod_fn extracts the codomain as a function of the argument.
+// For non-dependent Arrow, codomain is constant.
+test pi_cod_fn nn_pi 0 = Nat
+test pi_cod_fn nn_pi 5 = Nat
+test pi_cod_fn (Arrow Bool Nat) TT = Nat
+
+// For dependent Pi Nat ({n} -> Eq Nat n n): codomain depends on the arg.
+test (pi_cod_fn dep_pi 0) = Eq Nat 0 0
+test (pi_cod_fn dep_pi 1) = Eq Nat 1 1
+
+// ================================================================
+// 5. Arrow vs Pi consistency
+// ================================================================
+
+// Arrow Nat Nat and Pi Nat ({_} -> Nat) produce the same tree.
+test tree_eq (Arrow Nat Nat) (Pi Nat ({_} -> Nat)) = TT
+test tree_eq (Arrow Bool Nat) (Pi Bool ({_} -> Nat)) = TT
+
+// ================================================================
+// 6. Pi-typed hypothesis: hyp_reduce extends spine
+// ================================================================
+
+let pi_hyp = Hyp (Pi Nat ({_} -> Bool)) 0
+test is_neutral pi_hyp = TT
+
+// Applying pi_hyp to a Nat produces a neutral with stored type = codomain Bool.
+let app_result = pi_hyp 5
+test is_neutral app_result = TT
+test neutral_type app_result = Bool
+
+// Applying to another value extends further.
+let dep_hyp = Hyp (Pi Nat ({n} -> Eq Nat n n)) 0
+let app_dep = dep_hyp 2
+test is_neutral app_dep = TT
+// Codomain for argument 2 is Eq Nat 2 2.
+test neutral_type app_dep = Eq Nat 2 2
+
+// ================================================================
+// 7. Deeply nested polymorphic checking
+// ================================================================
+
+// (A : Type) -> (B : Type) -> A -> B -> A
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
+      Arrow A (Arrow B A))))
+  ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
+
+// Bad version: returns the B-typed value.
+test (Pi Type ({A} ->
+    Pi Type ({B} ->
+      Arrow A (Arrow B A))))
+  ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
+
+// (A : Type) -> (f : A -> A) -> A -> A
+let apply_self = {_A, f, x} -> f x
+test (Pi Type ({A} ->
+    Pi (Arrow A A) ({_f} ->
+      Arrow A A)))
+  apply_self = TT

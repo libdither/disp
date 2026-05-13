@@ -34,4 +34,24 @@ test list_tail_or nil xs = list_cons 2 (list_cons 3 nil)
 test list_tail_or nil nil = nil
 test list_foldl ({a, h} -> succ a) 0 xs = 3
 
+// list_foldr: fold from the right
+test list_foldr ({h, a} -> succ a) 0 nil = 0
+test list_foldr ({h, a} -> succ a) 0 xs = 3
+
+// list_append: further coverage
+test list_append nil nil = nil
+test list_append nil xs = xs
+test list_append xs nil = xs
+test list_length (list_append xs nil) = 3
+
+// FIXME: surfaces bug in list.disp — list_rec uses select_lazy with a self-referential
+// recursive branch in the cons case. Per CLAUDE.md, select_lazy + self-recursion blows
+// the compile-time budget (10M applyTree steps) because cirToTree eagerly evaluates
+// the K-body thunks at bracket-abstraction time. Calling list_rec with all 4 args at
+// test-site level triggers the same compile-time fix-unfolding. Workaround in list.disp
+// would be to replace select_lazy with match in list_rec_inner (same fix already applied
+// to list_map and list_foldl/foldr internals). Tests commented out pending that fix.
+// test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) nil = 0
+// test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) xs = 3
+
 

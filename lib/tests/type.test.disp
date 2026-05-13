@@ -1,0 +1,119 @@
+// Tests for the Type universe.
+//
+// Covers:
+//   1. Type recognises all library type-formers: Pi, Bool, Nat, Eq, Ord.
+//   2. Type rejects non-types: raw TT, zero, a stem, arbitrary forks.
+//   3. H-rule: a hypothesis whose stored type is Type passes Type check.
+//   4. Russell admissibility: Type : Type.
+//   5. Adversarial fake-type values rejected.
+//   6. Guard/signature structure of Type.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ================================================================
+// 1. Type recognises all library type-formers
+// ================================================================
+
+test Type Bool = TT
+test Type Nat = TT
+test Type (Arrow Nat Nat) = TT
+test Type (Pi Nat ({_} -> Nat)) = TT
+test Type (Pi Bool ({_} -> Nat)) = TT
+test Type (Eq Nat 0 0) = TT
+test Type (Eq Nat 1 1) = TT
+test Type (Eq Bool TT TT) = TT
+test Type Ord = TT
+test Type Type = TT
+
+// Polymorphic Pi is a type.
+test Type (Pi Type ({A} -> Arrow A A)) = TT
+
+// ================================================================
+// 2. Type rejects non-types
+// ================================================================
+
+// Raw closed values.
+test Type TT = FF
+test Type FF = FF
+test Type t = FF
+test Type (t t) = FF
+test Type 0 = FF
+test Type 1 = FF
+
+// Pre-existing neutral rejected by entry scan.
+let nat_h = Hyp Nat 0
+test Type nat_h = FF
+
+// A non-guarded wait-based value is not a type.
+let raw_wait = wait ({_meta, _x} -> TT) t
+test Type raw_wait = FF
+
+// ================================================================
+// 3. H-rule: hypothesis typed with Type passes Type check
+// ================================================================
+// The H-rule is reached through the inner core (bypassing the
+// public-boundary entry scan), exactly as Pi checking exercises it.
+
+let A_hyp = Hyp Type 0
+let B_hyp = Hyp Type 1
+
+// Direct application of a Type-hypothesis to another Type-hypothesis
+// routes via hyp_reduce → Type's codomain_fn (Return action / H-rule).
+// A_hyp x_of_A = TT when x_of_A's stored type is A_hyp.
+let x_of_A = Hyp A_hyp t
+test A_hyp x_of_A = TT
+
+// Different Type hypothesis: stored type of x_of_A is A_hyp, not B_hyp → FF.
+test B_hyp x_of_A = FF
+
+// ================================================================
+// 4. Russell admissibility: Type : Type
+// ================================================================
+
+test Type Type = TT
+
+// Type-in-Type smoke: polymorphic identity at Type level.
+test (Pi Type ({A} -> Arrow A A)) ({_A} -> {x} -> x) = TT
+
+// ================================================================
+// 5. Adversarial fake-type values rejected
+// ================================================================
+
+// Fake Nat: wait with a trivially-accepting checker but Nat-like metadata.
+let fakeNat = wait ({_meta, _x} -> TT) t
+test Type fakeNat = FF
+
+// Fake Bool: trivially-accepting checker with Bool-like metadata.
+let fakeBool = wait ({_meta, _x} -> TT) (t t)
+test Type fakeBool = FF
+
+// Fake Eq: trivially-accepting checker with Eq-like metadata fork.
+let fakeEq = wait ({_meta, _x} -> TT) (t Nat (t 0 0))
+test Type fakeEq = FF
+
+// Fake Pi: trivially-accepting checker with Pi-like metadata.
+let fakePi = wait ({_meta, _x} -> TT) (t Nat ({_x} -> Bool))
+test Type fakePi = FF
+
+// ================================================================
+// 6. Guard / signature structure of Type
+// ================================================================
+
+test hasguard Type = TT
+test tree_eq (pair_fst (type_meta Type)) kernel_predicate_frame_sig = TT
+
+// ================================================================
+// 7. Type is closed under common type-forming operations
+// ================================================================
+
+// Arrows built from recognised types are themselves types.
+test Type (Arrow Nat Bool) = TT
+test Type (Arrow Bool (Arrow Nat Nat)) = TT
+test Type (Arrow (Pi Nat ({_} -> Nat)) Bool) = TT
+
+// Eq over any type A and any closed values x, y is a type (structurally;
+// Type is purely structural after migration — no semantic check on
+// whether x/y actually have type A).
+test Type (Eq Nat 0 1) = TT
+test Type (Eq Bool TT FF) = TT
