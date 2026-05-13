@@ -258,11 +258,21 @@ function tryRewriteSelectLazy(
   return rewritten
 }
 
+// Optional callbacks threaded through Expr compilation. `recordTest` lets
+// inline `{ ... test lhs = rhs ... }` blocks emit Test decls into the
+// driver's `decls` array (Q2). `recordItem` mirrors parseProgram's
+// per-item stats reporting so inline-block items show up in --stats-detail.
+export interface CompileSinks {
+  recordTest?: (lhs: Tree, rhs: Tree) => void
+  recordOpen?: () => void
+}
+
 // Expr → Cir, with scope lookup and use-resolution.
 function exprToCir(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string) => ScopeEntry,
+  sinks?: CompileSinks,
 ): Cir {
   const lookup = (name: string) => lookupEntry(name)?.tree
   switch (e.tag) {
@@ -288,13 +298,13 @@ function exprToCir(
       // bodies don't hit cirToTree's eager K-body reduction. See
       // tryRewriteSelectLazy for details.
       const rewritten = tryRewriteSelectLazy(e, lookupEntry)
-      if (rewritten !== null) return exprToCir(rewritten, lookupEntry, resolveUse)
+      if (rewritten !== null) return exprToCir(rewritten, lookupEntry, resolveUse, sinks)
       return { tag: "app",
-        f: exprToCir(e.f, lookupEntry, resolveUse),
-        x: exprToCir(e.x, lookupEntry, resolveUse),
+        f: exprToCir(e.f, lookupEntry, resolveUse, sinks),
+        x: exprToCir(e.x, lookupEntry, resolveUse, sinks),
       }
     }
-    case "ann": return exprToCir(e.expr, lookupEntry, resolveUse) // erase type
+    case "ann": return exprToCir(e.expr, lookupEntry, resolveUse, sinks) // erase type
     case "binder": {
       // Shadow binder params so they don't resolve to scope entries.
       // If a param has a recType annotation, carry its field names as metadata
@@ -312,7 +322,7 @@ function exprToCir(
         return lookupEntry(name)
       }
 
-      let body = exprToCir(e.body, shadowedLookup, resolveUse)
+      let body = exprToCir(e.body, shadowedLookup, resolveUse, sinks)
       for (let i = e.params.length - 1; i >= 0; i--) {
         const name = e.params[i].name ?? `_anon${i}`
         body = { tag: "lam", x: name, body }
@@ -323,12 +333,20 @@ function exprToCir(
     case "recValue": {
       // If this recValue has members (let/test/open alongside fields),
       // process them to build a scoped lookup before compiling fields.
+      // test/open members are wired through `sinks`: tests forward
+      // (lhs, rhs) to the driver's decls collector; opens splice fields
+      // into the local lookup (and don't escape this scope).
       let fieldLookup = lookupEntry
       if (e.members && e.members.length > 0) {
         const localScope = new Map<string, ScopeEntry>()
+        const rebind = (name: string, entry: ScopeEntry) => {
+          localScope.set(name, entry)
+          const prevLookup = fieldLookup
+          fieldLookup = (n: string) => localScope.get(n) ?? prevLookup(n)
+        }
         for (const m of e.members) {
           if (m.tag === "let") {
-            const tree = compileExpr(m.body, fieldLookup, resolveUse)
+            const tree = compileExpr(m.body, fieldLookup, resolveUse, sinks)
             let fields: string[] | undefined, fieldTrees: Tree[] | undefined
             if (m.type?.tag === "recType") {
               fields = (m.type as any).fields.map((f: any) => f.name)
@@ -336,15 +354,53 @@ function exprToCir(
               const record = resolveExprRecord(m.body, fieldLookup, resolveUse)
               fields = record?.fields; fieldTrees = record?.fieldTrees
             }
-            localScope.set(m.name, { tree, fields, fieldTrees })
-            const prevLookup = fieldLookup
-            fieldLookup = (name: string) => localScope.get(name) ?? prevLookup(name)
+            rebind(m.name, { tree, fields, fieldTrees })
+          } else if (m.tag === "test") {
+            // Q2: inline-block tests now flow to the driver via sinks.recordTest.
+            // Without a sink we silently skip — same as the legacy behavior,
+            // but only when there is no enclosing collector (e.g., during
+            // inline elaboration of a typed binding, where tests would be
+            // re-evaluated on every typecheck).
+            if (sinks?.recordTest) {
+              const lhs = compileExpr(m.lhs, fieldLookup, resolveUse, sinks)
+              const rhs = compileExpr(m.rhs, fieldLookup, resolveUse, sinks)
+              sinks.recordTest(lhs, rhs)
+            }
+          } else if (m.tag === "open") {
+            // Inline `open expr`: resolve fields and splice them into the
+            // local lookup chain. Doesn't escape this recValue's scope.
+            const record = resolveExprRecord(m.expr, fieldLookup, resolveUse)
+            if (!record || record.fields.length === 0)
+              throw new Error("open (inline): expression has no known record fields")
+            const targetTree = record.fieldTrees
+              ? undefined
+              : compileExpr(m.expr, fieldLookup, resolveUse, sinks)
+            const n = record.fields.length
+            for (let i = 0; i < n; i++) {
+              const fieldTree = record.fieldTrees
+                ? record.fieldTrees[i]
+                : applyTree(targetTree!, selectorTree(n, i), APPLY_BUDGET)
+              const fieldType = record.fieldTypes?.[i] ?? null
+              const innerFields = (record as any).fieldInnerFields?.[i] as string[] | undefined
+              const innerTrees = (record as any).fieldInnerTrees?.[i] as Tree[] | undefined
+              rebind(record.fields[i], { tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })
+            }
+            sinks?.recordOpen?.()
           }
-          // test/open in inline recValues: skip for now (tests need driver context)
         }
       }
+      // If this recValue carries a `trailing` expression (block-with-
+      // trailing-expr that contained test/open members), evaluate the
+      // trailing body in the local scope and return its value instead
+      // of the Church-encoded record. fields[] is expected to be empty
+      // in this case (parser invariant).
+      if (e.trailing) {
+        if (e.fields.length !== 0)
+          throw new Error("recValue: 'trailing' is only valid when fields are empty")
+        return exprToCir(e.trailing, fieldLookup, resolveUse, sinks)
+      }
       // Church encoding: {x := a; y := b} → \sel. sel a b
-      const fieldCirs = e.fields.map(f => exprToCir(f.value, fieldLookup, resolveUse))
+      const fieldCirs = e.fields.map(f => exprToCir(f.value, fieldLookup, resolveUse, sinks))
       const selName = "__sel"
       let body: Cir = { tag: "var", name: selName }
       for (const fc of fieldCirs) body = cap(body, fc)
@@ -364,7 +420,7 @@ function exprToCir(
       if (idx < 0)
         throw new Error(`projection '.${e.field}': field not found (available: ${record.fields.join(", ")})`)
       if (record.fieldTrees) return { tag: "lit", t: record.fieldTrees[idx] }
-      const target = exprToCir(e.target, lookupEntry, resolveUse)
+      const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
       const sel = buildSelector(record.fields.length, idx)
       return cap(target, sel)
     }
@@ -378,9 +434,9 @@ function exprToCir(
       if (!selectEntry?.tree)
         throw new Error("match: 'select' must be in scope (import prelude)")
 
-      const condCir = exprToCir(e.cond, lookupEntry, resolveUse)
-      const thenCir = exprToCir(e.thenBody, lookupEntry, resolveUse)
-      const elseCir = exprToCir(e.elseBody, lookupEntry, resolveUse)
+      const condCir = exprToCir(e.cond, lookupEntry, resolveUse, sinks)
+      const thenCir = exprToCir(e.thenBody, lookupEntry, resolveUse, sinks)
+      const elseCir = exprToCir(e.elseBody, lookupEntry, resolveUse, sinks)
 
       const fvs: string[] = []
       const seen = new Set<string>()
@@ -423,9 +479,41 @@ function resolveExprRecord(
     return { fields: e.x.body.fields.map(f => f.name) }
   }
   if (e.tag === "recValue") {
+    // If this recValue has let/open members, they shadow scope for the
+    // field values. Process them to build the effective lookup before
+    // compiling fields. Tests are skipped here — resolveExprRecord
+    // shouldn't have side effects (it may be called speculatively).
+    let fieldLookup = lookupEntry
+    if (e.members && e.members.length > 0) {
+      const localScope = new Map<string, ScopeEntry>()
+      for (const m of e.members) {
+        if (m.tag === "let") {
+          const tree = compileExpr(m.body, fieldLookup, resolveUse)
+          const inner = resolveExprRecord(m.body, fieldLookup, resolveUse)
+          localScope.set(m.name, { tree, fields: inner?.fields, fieldTrees: inner?.fieldTrees })
+          const prevLookup = fieldLookup
+          fieldLookup = (name: string) => localScope.get(name) ?? prevLookup(name)
+        } else if (m.tag === "open") {
+          const rec = resolveExprRecord(m.expr, fieldLookup, resolveUse)
+          if (!rec) continue
+          const targetTree = rec.fieldTrees
+            ? undefined
+            : compileExpr(m.expr, fieldLookup, resolveUse)
+          const n = rec.fields.length
+          for (let i = 0; i < n; i++) {
+            const ft = rec.fieldTrees
+              ? rec.fieldTrees[i]
+              : applyTree(targetTree!, selectorTree(n, i), APPLY_BUDGET)
+            localScope.set(rec.fields[i], { tree: ft, type: rec.fieldTypes?.[i] ?? null })
+          }
+          const prevLookup = fieldLookup
+          fieldLookup = (name: string) => localScope.get(name) ?? prevLookup(name)
+        }
+      }
+    }
     return {
       fields: e.fields.map(f => f.name),
-      fieldTrees: e.fields.map(f => compileExpr(f.value, lookupEntry, resolveUse)),
+      fieldTrees: e.fields.map(f => compileExpr(f.value, fieldLookup, resolveUse)),
     }
   }
   if (e.tag === "proj") {
@@ -440,8 +528,9 @@ function compileExpr(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string) => ScopeEntry,
+  sinks?: CompileSinks,
 ): Tree {
-  return cirToTree(eliminateLams(exprToCir(e, lookupEntry, resolveUse)))
+  return cirToTree(eliminateLams(exprToCir(e, lookupEntry, resolveUse, sinks)))
 }
 
 // ──────────── 5b. Tree-level abstraction + kernel query helpers ─────────
@@ -1076,13 +1165,19 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     }
   }
 
-  function compileBinding(name: string, type: Expr | null | undefined, body: Expr): { tree: Tree; type?: Tree | null; fields?: string[]; fieldTrees?: Tree[] } {
+  function compileBinding(name: string, type: Expr | null | undefined, body: Expr, sinks?: CompileSinks): { tree: Tree; type?: Tree | null; fields?: string[]; fieldTrees?: Tree[] } {
     let tree: Tree, inferredType: Tree | null = null
     const ctx = getElabCtx()
 
     if (type != null && type.tag !== "recType" && ctx.kernel) {
       // Typed binding with kernel available: compile annotation as a type.
       // checkAsType handles binders (→ Pi construction) and infers universe levels.
+      // FIXME(Q2): inline tests inside typed binding bodies (e.g.
+      //   `let foo : T = { test ... ; body }`) are not yet wired — check/infer
+      //   don't thread the CompileSinks. Practical impact is small because
+      //   typed bindings rarely contain inline tests; lift them to the
+      //   enclosing untyped scope if you need them. To remove this caveat,
+      //   add `sinks?` to ElabCtx and propagate through check/infer.
       const { tree: type_tree, universe } = checkAsType(type, ctx)
       if (universe !== null && !ctx.kernel.isUniverse(universe))
         throw new Error(`annotation for '${name}' is not a type`)
@@ -1094,7 +1189,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
       inferredType = type_tree
     } else {
       // Untyped or no kernel — use existing compileExpr path
-      tree = compileExpr(body, lookupEntry, resolveUse)
+      tree = compileExpr(body, lookupEntry, resolveUse, sinks)
     }
 
     let fields: string[] | undefined, fieldTrees: Tree[] | undefined
@@ -1108,10 +1203,26 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     return { tree, type: inferredType, fields, fieldTrees }
   }
 
+  // Build a CompileSinks for the given target/decl array. Tests emitted by
+  // inline recValue blocks (`{ ... test x = y ... }`) flow through this
+  // sink — they're pushed into the same `target` array as top-level tests
+  // and reported via recordItem so --stats-detail sees them.
+  function makeSinks(target: Decl[]): CompileSinks {
+    return {
+      recordTest(lhs, rhs) {
+        compiledTestIndex++
+        target.push({ kind: "Test", lhs, rhs })
+        recordItem("test", undefined, compiledTestIndex)
+      },
+      recordOpen() { recordItem("open") },
+    }
+  }
+
   function runItem(it: RecMember, target: Decl[], isExport: boolean): void {
+    const sinks = makeSinks(target)
     switch (it.tag) {
       case "field": {
-        const result = compileBinding(it.name, it.type, it.value)
+        const result = compileBinding(it.name, it.type, it.value, sinks)
         target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
         // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
@@ -1120,7 +1231,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         return
       }
       case "let": {
-        const result = compileBinding(it.name, it.type, it.body)
+        const result = compileBinding(it.name, it.type, it.body, sinks)
         if (isExport) {
           // Legacy mode: top-level let exports (for files not yet migrated)
           target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
@@ -1133,8 +1244,8 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         compiledTestIndex++
         target.push({
           kind: "Test",
-          lhs: compileExpr(it.lhs, lookupEntry, resolveUse),
-          rhs: compileExpr(it.rhs, lookupEntry, resolveUse),
+          lhs: compileExpr(it.lhs, lookupEntry, resolveUse, sinks),
+          rhs: compileExpr(it.rhs, lookupEntry, resolveUse, sinks),
         })
         recordItem("test", undefined, compiledTestIndex)
         return
@@ -1143,7 +1254,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         const record = resolveExprRecord(it.expr, lookupEntry, resolveUse)
         if (!record || record.fields.length === 0)
           throw new Error("open: expression has no known record fields")
-        const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse)
+        const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse, sinks)
         const n = record.fields.length
         for (let i = 0; i < n; i++) {
           const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, selectorTree(n, i), APPLY_BUDGET)

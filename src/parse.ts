@@ -89,7 +89,7 @@ export type Expr =
   | { tag: "ann"; expr: Expr; type: Expr }
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
-  | { tag: "recValue"; fields: NamedField[]; members?: RecMember[] }
+  | { tag: "recValue"; fields: NamedField[]; members?: RecMember[]; trailing?: Expr }
   | { tag: "use"; path: string }
   | { tag: "match"; cond: Expr; thenBody: Expr; elseBody: Expr }
 
@@ -589,6 +589,19 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
     return err(`expected '}', got ${describe(ts[pos])}`, pos)
   pos++
+
+  // If the block contains test/open members, the simple App(Binder, val)
+  // desugaring would drop them — they have no Expr-level placeholder.
+  // Preserve them by emitting a recValue with a `trailing` body; compile.ts
+  // processes members (let/test/open) in order then evaluates `trailing`
+  // in the resulting scope, returning its value. This makes Q2 (inline
+  // tests in blocks) work without changing the desugaring for plain
+  // let-blocks (which still produce App(Binder, val) for back-compat).
+  const hasTestOrOpen = members.some(m => m.tag === "test" || m.tag === "open")
+  if (hasTestOrOpen) {
+    const rv: Expr = { tag: "recValue", fields: [], members, trailing: trailR.v }
+    return ok(rv, pos)
+  }
 
   // Desugar block: right-to-left wrap trailing expr in nested App(Binder, body)
   let result: Expr = trailR.v

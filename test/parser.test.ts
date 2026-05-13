@@ -474,9 +474,16 @@ describe("parse errors", () => {
   })
 
   it("test inside braced body parses as block with test", () => {
-    // { test t = t; t } is now a valid block expression (test is a side-effect statement)
+    // { test t = t; t } parses as a recValue carrying the test member
+    // alongside a `trailing` expression. compile.ts evaluates the trailing
+    // body after compiling each member (firing inline tests via sinks).
     const result = parseExpr("{ test t = t; t }")
-    expect(result).toEqual(leaf) // trailing expression is just `t`
+    expect(result).toEqual({
+      tag: "recValue",
+      fields: [],
+      members: [{ tag: "test", lhs: leaf, rhs: leaf }],
+      trailing: leaf,
+    })
   })
 
   it("rejects duplicate exported fields", () => {
