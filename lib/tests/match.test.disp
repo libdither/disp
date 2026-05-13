@@ -101,3 +101,36 @@ test succ_only TT ({y} -> y) 7 = 7
 // (This is just succ_only TT, exercising the same code path again
 //  with a richer continuation.)
 test succ_only TT ({y} -> succ y) 4 = 5
+
+// ================================================================
+// S2 regression: select_lazy + self-recursion compiles via auto-rewrite
+// ================================================================
+// Before the S2 fix, this pattern (`select_lazy` with a recursive call
+// in one of the thunks) blew the compile-time budget because cirToTree
+// eagerly reduced the resulting K(body) form. The elaborator now
+// rewrites `select_lazy ({_} -> A) ({_} -> B) cond` to
+// `match cond { TT => A; FF => B }`, side-stepping the eager reduction.
+
+let count_down = fix ({self, n} ->
+  select_lazy
+    ({_} -> 0)
+    ({_} -> succ (self (pair_snd n)))
+    (tree_eq n t))
+
+test count_down 0 = 0
+test count_down 3 = 3
+
+// Nested select_lazy with self-recursion under both arms.
+let count_down2 = fix ({self, n} ->
+  select_lazy
+    ({_} -> 0)
+    ({_} ->
+      select_lazy
+        ({_} -> 1)
+        ({_} -> succ (self (pair_snd n)))
+        (tree_eq (pair_snd n) t))
+    (tree_eq n t))
+
+test count_down2 0 = 0
+test count_down2 1 = 1
+test count_down2 3 = 3

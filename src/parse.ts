@@ -89,7 +89,7 @@ export type Expr =
   | { tag: "ann"; expr: Expr; type: Expr }
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
-  | { tag: "recValue"; fields: NamedField[]; members?: RecMember[] }
+  | { tag: "recValue"; fields: NamedField[]; members?: RecMember[]; trailing?: Expr }
   | { tag: "use"; path: string }
   | { tag: "match"; cond: Expr; thenBody: Expr; elseBody: Expr }
 
@@ -105,8 +105,7 @@ export type RecMember =
   | { tag: "test"; lhs: Expr; rhs: Expr }
   | { tag: "open"; expr: Expr }
 
-// Backward compat alias — parseItems still returns these for now.
-export type Item = RecMember
+// (Item alias removed; callers now use RecMember directly.)
 
 // ───────────────────────── 3. Parser combinators ─────────────────────────
 
@@ -320,6 +319,16 @@ function isFieldStart(ts: Tok[], i: number): boolean {
   return false
 }
 
+// Check if position starts a match arm pattern: (IDENT "=>") where IDENT is TT or FF.
+// Used to prevent match-arm body atoms from consuming the next arm after a newline.
+function isArmStart(ts: Tok[], i: number): boolean {
+  if (ts[i].t !== "id") return false
+  const name = (ts[i] as any).v as string
+  if (name !== "TT" && name !== "FF") return false
+  const next = ts[i + 1]
+  return next?.t === "punct" && (next as any).v === "=>"
+}
+
 // atom = simple ("." IDENT)*
 // Newlines before atoms are insignificant — expressions can span lines.
 // Item separation works because keywords (let, test, open) can't start an atom,
@@ -387,6 +396,24 @@ const makeExpr = (appP: P<Expr>): P<Expr> => {
 
 const lineExpr: P<Expr> = makeExpr(lineApp)
 
+// matchAtom: like atom but also stops before "TT =>" or "FF =>" after a newline.
+// Used in match arm bodies so multi-line arms don't consume the next arm's pattern.
+const matchAtom: P<Expr> = withProj((ts, i) => {
+  const hadNewline = ts[i].t === "nl"
+  while (ts[i].t === "nl") i++
+  if (hadNewline && (isFieldStart(ts, i) || isArmStart(ts, i)))
+    return err(`arm boundary, not an atom`, i)
+  return simple(ts, i)
+})
+
+// matchApp / matchExpr: full multi-line expression parser for match arm bodies.
+// Spans newlines freely but stops before the next arm pattern (TT/FF =>).
+const matchApp: P<Expr> = map(
+  seq(matchAtom, many(matchAtom)),
+  ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
+)
+const matchExpr: P<Expr> = makeExpr(matchApp)
+
 // binderParam = (IDENT | "_") (":" expr)?
 const binderParam: P<Param> = nl(map(
   seq(idP, optional(seq(nl(punctP(":")), skipNl, lazy(() => expr)))),
@@ -422,9 +449,10 @@ const recTypeInner: P<Expr> = (ts, i) => {
 }
 
 // match arm: IDENT "=>" expr (where IDENT is "TT" or "FF").
-// Body uses lineExpr so newlines/semicolons separate arms naturally.
+// Body uses matchExpr so it can span multiple lines; it stops before the next
+// "TT =>" or "FF =>" pattern (via matchAtom's isArmStart lookahead).
 const matchArmP: P<{ pat: "TT" | "FF"; body: Expr }> = nl((ts, i) => {
-  const r = seq(idP, nl(punctP("=>")), skipNl, lazy(() => lineExpr))(ts, i)
+  const r = seq(idP, nl(punctP("=>")), skipNl, lazy(() => matchExpr))(ts, i)
   if (!r.ok) return r
   const [pat, , , body] = r.v
   if (pat !== "TT" && pat !== "FF")
@@ -562,6 +590,19 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
     return err(`expected '}', got ${describe(ts[pos])}`, pos)
   pos++
 
+  // If the block contains test/open members, the simple App(Binder, val)
+  // desugaring would drop them — they have no Expr-level placeholder.
+  // Preserve them by emitting a recValue with a `trailing` body; compile.ts
+  // processes members (let/test/open) in order then evaluates `trailing`
+  // in the resulting scope, returning its value. This makes Q2 (inline
+  // tests in blocks) work without changing the desugaring for plain
+  // let-blocks (which still produce App(Binder, val) for back-compat).
+  const hasTestOrOpen = members.some(m => m.tag === "test" || m.tag === "open")
+  if (hasTestOrOpen) {
+    const rv: Expr = { tag: "recValue", fields: [], members, trailing: trailR.v }
+    return ok(rv, pos)
+  }
+
   // Desugar block: right-to-left wrap trailing expr in nested App(Binder, body)
   let result: Expr = trailR.v
   for (let i = bindings.length - 1; i >= 0; i--) {
@@ -671,7 +712,7 @@ const expr: P<Expr> = makeExpr(app)
 
 // --- Items ---
 
-const letItem: P<Item> = map(
+const letItem: P<RecMember> = map(
   seq(
     kwP("let"), idP,
     optional(seq(punctP(":"), skipNl, lazy(() => expr))),
@@ -685,22 +726,22 @@ const letItem: P<Item> = map(
   }),
 )
 
-const testItem: P<Item> = map(
+const testItem: P<RecMember> = map(
   seq(kwP("test"), lazy(() => expr), nl(punctP("=")), skipNl, lazy(() => expr)),
   ([, lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
 )
 
-const openItem: P<Item> = map(
+const openItem: P<RecMember> = map(
   seq(kwP("open"), lazy(() => expr)),
   ([, expr]) => ({ tag: "open" as const, expr }),
 )
 
-const itemP: P<Item> = nl(alt(openItem, letItem, testItem, topFieldP))
+const itemP: P<RecMember> = nl(alt(openItem, letItem, testItem, topFieldP))
 
 // Parse source into items.
-export function parseItems(src: string): Item[] {
+export function parseItems(src: string): RecMember[] {
   const toks = tokenize(src)
-  const items: Item[] = []
+  const items: RecMember[] = []
   const exportedNames = new Set<string>()
   let pos = 0
   while (toks[pos].t === "nl") pos++

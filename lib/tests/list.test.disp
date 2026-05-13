@@ -34,4 +34,21 @@ test list_tail_or nil xs = list_cons 2 (list_cons 3 nil)
 test list_tail_or nil nil = nil
 test list_foldl ({a, h} -> succ a) 0 xs = 3
 
+// list_foldr: fold from the right
+test list_foldr ({h, a} -> succ a) 0 nil = 0
+test list_foldr ({h, a} -> succ a) 0 xs = 3
+
+// list_append: further coverage
+test list_append nil nil = nil
+test list_append nil xs = xs
+test list_append xs nil = xs
+test list_length (list_append xs nil) = 3
+
+// list_rec: per-element eliminator. Previously hit the select_lazy +
+// self-recursion compile-time budget overrun (CLAUDE.md "Compiler
+// workarounds"); the elaborator now auto-rewrites those calls to match
+// form, so list_rec compiles without intervention.
+test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) nil = 0
+test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) xs = 3
+
 
