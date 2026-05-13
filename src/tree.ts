@@ -121,6 +121,9 @@ function memoSet(f: Tree, x: Tree, result: Tree): void {
   trimApplyMemo()
 }
 
+// Evict entries until under the limit. Eviction is FIFO in JavaScript
+// Map insertion order (`Map.keys().next()` always returns the oldest
+// key first), not LRU — there is no recency tracking on memoGet.
 function trimApplyMemo(): void {
   while (applyMemoEntries > applyMemoEntryLimit) {
     const firstOuter = applyMemo.keys().next()
