@@ -75,6 +75,7 @@ neutral_meta_payload := neutral_meta_payload
 neutral_app_payload := neutral_app_payload
 extend_neutral_meta := extend_neutral_meta
 InvalidType := InvalidType
+is_invalid_type := is_invalid_type
 extend_tag := extend_tag
 return_tag := return_tag
 Extend := Extend

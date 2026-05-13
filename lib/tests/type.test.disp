@@ -117,3 +117,107 @@ test Type (Arrow (Pi Nat ({_} -> Nat)) Bool) = TT
 // whether x/y actually have type A).
 test Type (Eq Nat 0 1) = TT
 test Type (Eq Bool TT FF) = TT
+
+// ================================================================
+// 8. Type-former metadata laws (D3)
+// ================================================================
+// Beyond "guarded predicate_frame wait-form", Type now also checks
+// structural laws on the raw metadata 3-tuple. Forged metadata that
+// passes the outer wait-form signature checks is rejected.
+
+// Helper: build a guarded predicate_frame wait-form with arbitrary meta.
+let forged = {meta} -> guard (predicate_frame_form meta)
+
+// Sanity: a well-formed forged meta with sentinel cod_fn is accepted.
+// We use an arbitrary fork-shaped value (a closure) as the recognizer
+// slot — Type's structural check only verifies fork-shape, not that
+// the recognizer actually returns a Bool.
+let dummy_recognizer = {_params, _v} -> FF
+let ok_forged_meta = t dummy_recognizer (t t t)
+test Type (forged ok_forged_meta) = TT
+
+// (a) Metadata is not a fork (leaf root) — rejected.
+let bad_meta_leaf = t
+test Type (forged bad_meta_leaf) = FF
+
+// (a) pair_snd meta is not a fork — rejected.
+// `(t r t)` parses as `t r` applied to `t` then-stem; pair_snd is t leaf.
+let bad_meta_inner_leaf = t dummy_recognizer t
+test Type (forged bad_meta_inner_leaf) = FF
+
+// (c) Recognizer slot is a leaf (not a function) — rejected.
+let bad_meta_leaf_recognizer = t t (t t t)
+test Type (forged bad_meta_leaf_recognizer) = FF
+
+// (b) codomain_fn slot is a stem (neither sentinel `t` nor a fork) —
+// rejected. `(t t)` is the stem of LEAF, which is neither a function
+// tree nor the canonical sentinel.
+let bad_meta_stem_cod = t dummy_recognizer (t t (t t))
+test Type (forged bad_meta_stem_cod) = FF
+
+// (b) Non-sentinel non-fork cod_fn: e.g., closed Bool value `TT`. TT
+// compiles to a tree but to a fork, so it actually passes the fork
+// check — that's the limit of (b)'s strictness. We use a stem-rooted
+// tree (`t t`) for the rejection test above. A fork cod_fn that
+// happens to be a closed Bool would pass — documented as "we don't
+// verify cod_fn is the correct 4-ary Action-returning shape".
+
+// All real library type-formers obey the laws and remain accepted.
+test Type Bool = TT
+test Type Nat = TT
+test Type Type = TT
+
+// ================================================================
+// 9. InvalidType sentinel (C1)
+// ================================================================
+// InvalidType is FF — the kernel's "no-constraint" stored type. It
+// never carries a value the kernel needs to apply as a predicate; the
+// kernel relies on InvalidType-stored hypotheses failing downstream
+// shape checks (no guard signature, no predicate_frame signature).
+// The `is_invalid_type` accessor names the sentinel for readability.
+
+test is_invalid_type InvalidType = TT
+test is_invalid_type FF = TT
+test is_invalid_type TT = FF
+test is_invalid_type Nat = FF
+
+// InvalidType-as-a-predicate rejection: in q_guard_fn's idiom,
+// `tree_eq (core v) TT` decides whether v is in the type. For
+// core = InvalidType, this is FF for every v (FF, partially applied,
+// is never structurally equal to TT).
+test tree_eq (InvalidType 0) TT = FF
+test tree_eq (InvalidType 1) TT = FF
+test tree_eq (InvalidType TT) TT = FF
+test tree_eq (InvalidType FF) TT = FF
+test tree_eq (InvalidType t) TT = FF
+test tree_eq (InvalidType Nat) TT = FF
+test tree_eq (InvalidType Bool) TT = FF
+
+// And the structural property the kernel relies on in q_hyp_reduce:
+// InvalidType is not a guarded predicate_frame wait-form, so the
+// stored-type shape check (`has_sig ks.predicate_frame stored_inner`)
+// returns FF, walling off any further codomain_fn dispatch.
+test has_sig kernel_ref.guard InvalidType = FF
+test has_sig kernel_ref.predicate_frame InvalidType = FF
+
+// ================================================================
+// 10. Type's closed-value case returns FF (C2)
+// ================================================================
+// A Type-typed hypothesis applied to a closed value (no hypothesis
+// metadata to compare against) returns FF: Type's codomain_fn does
+// the H-rule via `tree_eq stored_v self_as_hyp`, and a closed value
+// has no neutral metadata, so the stored-type projection yields a
+// tree that is not the hypothesis tree. See TYPE_THEORY.typ §5.5.
+
+let A_for_closed = Hyp Type 0
+
+// Closed Nat values: not inhabitants of an unknown type variable.
+test A_for_closed 0 = FF
+test A_for_closed 5 = FF
+
+// Closed Bool values: same.
+test A_for_closed TT = FF
+test A_for_closed FF = FF
+
+// Closed leaf t: same.
+test A_for_closed t = FF
