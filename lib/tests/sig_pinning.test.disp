@@ -1,0 +1,90 @@
+// Signature pinning — regression tests for the constants in
+// lib/kernel/handlers.disp that the native dispatcher fast-path uses
+// to recognise handler-routed wait-forms.
+//
+// Each kernel_*_sig constant is `pair_fst (wait <handler_ref> t)`. The
+// constructors below all wrap their metadata in a `wait <handler_ref> meta`,
+// and `pair_fst` on such a wait-form is constant regardless of meta
+// (the meta only ever lands in the second projection). So every
+// `pair_fst (constructor ...)` should be `tree_eq`-equal to the
+// corresponding kernel_*_sig.
+//
+// If any test below fails, the constant in handlers.disp has drifted
+// from its constructor's actual shape — do NOT update the constant
+// from here; the failure means a real bug in either the constant or
+// the constructor.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ================================================================
+// kernel_hyp_reduce_sig
+// ================================================================
+// `Hyp ty id` = `wait kernel.hyp_reduce (make_neutral_meta ty id)`. The
+// constant uses `kernel.hyp_reduce` (eager projection), matching what
+// the Hyp constructor produces (see TYPE_THEORY.typ §3.5).
+
+test tree_eq kernel_hyp_reduce_sig (pair_fst (Hyp t t)) = TT
+test tree_eq kernel_hyp_reduce_sig (pair_fst (Hyp Nat 0)) = TT
+test tree_eq kernel_hyp_reduce_sig (pair_fst (StuckElim Nat (Hyp Bool 0))) = TT
+
+// ================================================================
+// kernel_predicate_frame_sig
+// ================================================================
+// All current library types are `guard (wait kernel_ref.predicate_frame meta)`.
+// `type_meta T` peels the guard, yielding the inner wait-form.
+
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta Bool)) = TT
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta Nat)) = TT
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta Ord)) = TT
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta Type_pf)) = TT
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Pi Nat ({_} -> Nat)))) = TT
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Arrow Nat Bool))) = TT
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Pi Type_pf ({A} -> Arrow A A)))) = TT
+
+// Eq is still on the legacy `q_eq_fn` handler. Its core is
+// `wait kernel_ref.eq ...`, NOT `wait kernel_ref.predicate_frame ...`,
+// so Eq's pair_fst does NOT match kernel_predicate_frame_sig.
+//
+// known-issue: once Eq migrates to predicate_frame (CLAUDE.md
+// "Remaining Work"), the negation below flips and a positive assertion
+// like the Bool/Nat ones above takes its place.
+
+test tree_eq kernel_predicate_frame_sig (pair_fst (type_meta (Eq Nat 0 0))) = FF
+
+// ================================================================
+// kernel_eliminator_frame_sig
+// ================================================================
+// `*_rec_ef_inner = eliminator_frame_form init_meta = wait kernel_ref.eliminator_frame init_meta`
+
+test tree_eq kernel_eliminator_frame_sig (pair_fst bool_rec_ef_inner) = TT
+test tree_eq kernel_eliminator_frame_sig (pair_fst nat_rec_ef_inner) = TT
+test tree_eq kernel_eliminator_frame_sig (pair_fst ord_rec_ef_inner) = TT
+
+// ================================================================
+// kernel_bind_hyp_sig
+// ================================================================
+// `bind_hyp = wait kernel_ref.bind_hyp bind_hyp_init_meta`
+
+test tree_eq kernel_bind_hyp_sig (pair_fst bind_hyp) = TT
+
+// ================================================================
+// kernel_guard_sig
+// ================================================================
+// `Bool = guard (predicate_frame_form bool_pf_meta)`, and `guard core =
+// wait kernel_ref.guard core`. So `pair_fst Bool` should equal
+// kernel_guard_sig. Same for every other guarded library type.
+
+test tree_eq kernel_guard_sig (pair_fst Bool) = TT
+test tree_eq kernel_guard_sig (pair_fst Nat) = TT
+test tree_eq kernel_guard_sig (pair_fst Ord) = TT
+test tree_eq kernel_guard_sig (pair_fst Type_pf) = TT
+test tree_eq kernel_guard_sig (pair_fst (Pi Nat ({_} -> Nat))) = TT
+test tree_eq kernel_guard_sig (pair_fst (Eq Nat 0 0)) = TT  // Eq is still guarded externally
+
+// ================================================================
+// kernel_unguard_sig
+// ================================================================
+// `unguard_checked = wait kernel_ref.unguard t`
+
+test tree_eq kernel_unguard_sig (pair_fst unguard_checked) = TT

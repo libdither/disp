@@ -1,0 +1,111 @@
+// I-canonical carve-out tests.
+//
+// Per TYPE_THEORY.typ §6: the parametric walker rejects any reflective
+// operation on a hypothesis (triage, pair_fst, tree_eq, …), EXCEPT for
+// the polymorphic identity `{z} -> z`. Identity at a Pi domain is a
+// legitimate elaboration target (Pi-check on a hypothesis often comes
+// down to "does `id hyp` have type `hyp_type`?"), so the walker has a
+// literal carve-out for the canonical I tree.
+//
+// `I_canonical := {z} -> z` is the public reference value;
+// `kernel_I_canonical` is the constant the host fast-path uses. They
+// must be the same tree, and they must both round-trip a hypothesis
+// through `checked_apply_walker`.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+let h = Hyp Nat 0
+
+// ================================================================
+// Identity tree shape
+// ================================================================
+// I_canonical and `{z} -> z` are the same compiled tree (the canonical
+// polymorphic identity, fork(fork(LEAF, LEAF), LEAF)).
+
+test tree_eq I_canonical ({z} -> z) = TT
+test tree_eq I_canonical kernel_I_canonical = TT
+
+// ================================================================
+// Identity is accepted on a hypothesis
+// ================================================================
+
+test checked_apply_walker I_canonical h = Ok h
+test checked_apply_walker ({z} -> z) h = Ok h
+test checked_apply_walker kernel_I_canonical h = Ok h
+
+// Identity on a non-hyp value also works (it's still identity).
+test checked_apply_walker I_canonical 5 = Ok 5
+test checked_apply_walker I_canonical t = Ok t
+test checked_apply_walker I_canonical (t t t) = Ok (t t t)
+
+// ================================================================
+// Non-I lambdas on a hypothesis
+// ================================================================
+
+// `{x} -> t x` is constant-prepend: applying it to h produces stem `t h`.
+// The compiled tree is fork(K, t) = stem-like, NOT I, so the walker
+// descends. The application is `apply(stem(t), h)` which builds
+// `fork(t, h)` — a non-neutral fork (leaf t is not a neutral signature).
+// The stem rule's constructor check passes (neutral_root of the result
+// is FF), so the walker accepts it.
+test checked_apply_walker ({x} -> t x) h = Ok (t h)
+
+// known-issue: {x} -> Nat x η-reduces to Nat itself. Nat is a guarded
+// predicate_frame wait-form (a fork whose left child is itself a fork).
+// The walker's fork-rule triages the function's left child; on a
+// fork-headed `a`, it falls into the triage-x branch which then checks
+// `neutral_root x`. With x = h (a neutral), the rule Fails. So
+// `checked_apply_walker Nat h = Fail` (and likewise for any guarded
+// type). The Nat handler running raw via the kernel signature route is
+// the normal dispatch path; the standalone walker isn't expected to
+// see "real" application of a type-former to a hypothesis.
+test tree_eq (checked_apply_walker ({x} -> Nat x) h) Fail = TT
+
+// Triage on a hypothesis FAILS — this is the core walker soundness check
+// that the I-shortcut sits alongside. Triage's first move is to inspect
+// the discriminator's shape via pair_fst; on a neutral that's forbidden.
+test checked_apply_walker ({x} -> triage t ({_} -> t) ({_l, _r} -> t) x) h = Fail
+
+// More interesting triage branches read meta off the neutral. Same
+// rule fires at entry — Fail before any branch runs.
+test checked_apply_walker ({n} -> triage t ({c} -> c) ({l, r} -> l) n) h = Fail
+
+// is_neutral / is_fork / pair_fst on a hypothesis: walker Fails (these
+// reduce to triage-on-h, which trips the triage-on-neutral rule).
+test checked_apply_walker is_neutral h = Fail
+test checked_apply_walker is_fork h = Fail
+test checked_apply_walker pair_fst h = Fail
+
+// known-issue: `(tree_eq h) 0` does NOT Fail at the walker. The host's
+// native tree_eq fast-path represents the partial application `tree_eq h`
+// as `fork(TREE_EQ_PARTIAL_MARKER, h)` (see src/tree.ts ~L549). The
+// marker shape is a fork that does NOT match `kernel_hyp_reduce_sig`,
+// so neutral_root says FF on the whole partial. The walker's fork-rule
+// then dispatches as a normal triage-rule application; because x = 0
+// is a leaf (not a neutral), the triage-on-neutral check doesn't fire,
+// and the walker happily returns Ok(...).
+//
+// This is a known soundness observation, not a fix-it bug:
+//   - The walker rejects `is_neutral h` / `is_fork h` / `pair_fst h`
+//     because those eta-step into the body and triage on h directly.
+//   - But `tree_eq h 0` only ever hits the marker — h is never read
+//     reflectively along the walker's path on this partial form.
+// The full two-arg native fast-path bypasses the walker entirely in
+// practice; the in-language tree_eq reference would step further and
+// eventually triage on h, where it would Fail. Documented here so the
+// asymmetry is visible.
+test is_ok (checked_apply_walker (tree_eq h) 0) = TT
+
+// ================================================================
+// I-carve-out is tight: only the exact identity tree is exempt
+// ================================================================
+// Anything that triages on its argument is rejected even if it's
+// "morally" the identity on closed inputs.
+
+// `{x} -> triage x ({c} -> t c) ({l, r} -> t l r) x` is structurally
+// identity on every constructor shape, but it triages on x first. The
+// walker sees triage-on-hyp at the first step and Fails.
+test checked_apply_walker
+  ({x} -> triage x ({c} -> t c) ({l, r} -> t l r) x)
+  h = Fail
