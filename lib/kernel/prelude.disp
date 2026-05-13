@@ -31,6 +31,8 @@ open use "../types/eq.disp"
 open use "../types/ord.disp"
 open use "../types/conv.disp"
 open use "../types/false.disp"
+open use "../types/sigma.disp"
+open use "../types/forall.disp"
 
 TT := TT
 FF := FF
@@ -169,3 +171,13 @@ ord_max := ord_max
 conv_structural := conv_structural
 False := False
 Not := Not
+Sigma_pf := Sigma_pf
+Sigma := Sigma
+is_sigma := is_sigma
+sigma_dom := sigma_dom
+sigma_cod_fn := sigma_cod_fn
+Forall_pf := Forall_pf
+Forall := Forall
+is_forall := is_forall
+forall_dom := forall_dom
+forall_pred_fn := forall_pred_fn
