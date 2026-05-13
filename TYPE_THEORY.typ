@@ -1,3 +1,4 @@
+// Reflects codebase as of b2fd3285b18d (2026-05-12)
 #set document(title: "Disp Type Theory")
 #set page(margin: 2cm, numbering: "1")
 #set text(font: "New Computer Modern", size: 10.5pt)
@@ -344,16 +345,23 @@ per §3.2.
 `wait kernel.hyp_reduce neutral_meta`. Layout:
 
 ```
-neutral_meta := pair stored_type (pair id spine)
+neutral_meta := pair stored_type payload
 ```
 
-- `stored_type` — the hypothesis's stored type (a guarded
+Two slots:
+
+- `stored_type` — the hypothesis's current stored type (a guarded
   predicate_frame wait-form).
-- `id` — hypothesis identifier; for `bind_hyp`-minted hypotheses
-  this is `t domain body` (deterministic per call site, see §4.6).
-- `spine` — left-leaning record of arguments accumulated by past
-  `Extend` actions (§4.1). Initially `t` (empty); each function
-  application of the hypothesis appends one element.
+- `payload` — opaque accumulator that starts as the hypothesis
+  identifier and grows left-leaningly as the hypothesis is applied
+  to arguments. For a freshly minted `bind_hyp` hypothesis, the
+  initial payload is `t domain body` (deterministic per call site,
+  see §4.6). After each `Extend` action, the old metadata becomes
+  the new payload's left branch: `payload' = t old_meta arg`.
+
+There are no separate `id` or `spine` slots visible to the accessor
+API; the payload is opaque to library code. Only `hyp_reduce` and
+`extend_neutral_meta` inspect or build payload trees directly.
 
 *Eliminator-frame metadata.* Carried by
 `wait kernel_ref.eliminator_frame meta`. Layout:
@@ -373,8 +381,10 @@ On the first application, `acc` stores the domain; on the second,
 the body is invoked (§4.6).
 
 *Stuck-elim metadata.* Eliminator_frame mints a stuck-typed
-neutral whose `id` is the original target hypothesis (§4.7).
-Reuses the neutral_meta layout above.
+neutral using the same `neutral_meta` layout: `stored_type` is
+the motive applied to the target, and `payload` is the original
+target hypothesis (the initial identifier, with no spine yet,
+§4.7).
 
 == Kernel reference convention
 
@@ -785,14 +795,15 @@ type_meta := {v} ->
   // Otherwise:                          returns t.
   ...
 
-neutral_meta_type := pair_fst                   // first slot of nm
-neutral_meta_id   := {nm} -> pair_fst (pair_snd nm)
-neutral_meta_spine := {nm} -> pair_snd (pair_snd nm)
+neutral_meta_type    := pair_fst               // stored_type slot of nm
+neutral_meta_payload := {nm} -> pair_snd nm   // payload slot of nm
 
-extend_neutral_meta := {nm, new_stored, arg} ->
-  pair new_stored
-       (pair (neutral_meta_id nm)
-             (pair (neutral_meta_spine nm) arg))
+// neutral_app_payload: grow the payload by prepending the old metadata
+// as the left branch. Each application appends one more layer.
+neutral_app_payload := {old_meta, arg} -> t old_meta arg
+
+extend_neutral_meta := {old_meta, new_stored, arg} ->
+  pair new_stored (neutral_app_payload old_meta arg)
 ```
 
 *Hypothesis construction.*
@@ -800,7 +811,8 @@ extend_neutral_meta := {nm, new_stored, arg} ->
 ```
 q_make_hyp := {raw, stored_type, id} ->
   wait raw.hyp_reduce
-    (pair stored_type (pair id t))   // empty spine
+    (make_neutral_meta stored_type id)
+    // payload starts as `id` — no spine accumulated yet.
 
 q_unguard_or_self := {ks, v} ->
   match (is_guard v) {
@@ -809,7 +821,7 @@ q_unguard_or_self := {ks, v} ->
   }
 
 cert_make_stuck := {stored_type, stuck_id} ->
-  wait kernel.hyp_reduce (pair stored_type (pair stuck_id t))
+  wait kernel.hyp_reduce (make_neutral_meta stored_type stuck_id)
   // Mints a stuck-typed neutral. `stuck_id` should be a deterministic
   // function of the stuck origin (e.g., (neutral_meta, v)) so that
   // independent stucks hash-cons-distinguish.
