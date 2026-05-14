@@ -421,6 +421,28 @@
   svg.tree-svg .lbl-rule-dim {
     fill: var(--fg);
   }
+  /* The "next" marker: a soft pulsing ring + a small label above the apply
+     node that reduceFirstApply will fire on the next Step click. */
+  svg.tree-svg .next-halo {
+    fill: none;
+    stroke: #f0b429;
+    stroke-width: 2.5;
+    opacity: 0.85;
+    animation: nextPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes nextPulse {
+    0%, 100% { opacity: 0.45; }
+    50%      { opacity: 1; }
+  }
+  svg.tree-svg .next-arrow {
+    fill: #f0b429;
+    font-family: 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 10px;
+    text-anchor: middle;
+    letter-spacing: 0.04em;
+    pointer-events: none;
+  }
   svg.tree-svg .node.dimmed {
     opacity: 0.40;
     transition: opacity 0.35s;
@@ -859,6 +881,9 @@
   <span style="background:#b67318;color:#fff;padding:0 .3em;border-radius:3px;font-family:monospace">F</span>
   <span style="background:var(--bg-aside);color:var(--fg);padding:0 .3em;border-radius:3px;border:1px solid var(--border);font-family:monospace">L</span>
   <span style="background:var(--bg-aside);color:var(--fg);padding:0 .3em;border-radius:3px;border:1px solid var(--border);font-family:monospace">s</span>
+  &nbsp; &mdash; &nbsp;
+  <span style="border:2px solid #f0b429;border-radius:50%;padding:0 .35em;color:#f0b429;font-weight:700">next</span>
+  fires on the next Step
 </div>
 <div class="display" id="reducer-out">Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.</div>
 <div id="reducer-trace" class="trace"></div>
@@ -2012,6 +2037,33 @@ function applyRule(node) {
   return null;   // f is a pending apply
 }
 
+// Among all ready applies, which one will `reduceFirstApply` actually pick?
+// Mirrors that function's DFS order: descend into f first, then (for forks)
+// into f.l, then (for F-rule) into x, otherwise fire at the current node.
+// Returns the apply node that will fire next, or null at normal form.
+function nextApplyToFire(n) {
+  if (!n || n.tag !== 'apply') return null;
+  const f = n.f;
+  if (f.tag === 'apply') {
+    const inner = nextApplyToFire(f);
+    if (inner) return inner;
+  }
+  if (f.tag === 'leaf' || f.tag === 'stem') return n;
+  if (f.tag === 'fork') {
+    const a = f.l;
+    if (a.tag === 'apply') {
+      const inner = nextApplyToFire(a);
+      if (inner) return inner;
+    }
+    if (a.tag === 'fork' && n.x.tag === 'apply') {
+      const inner = nextApplyToFire(n.x);
+      if (inner) return inner;
+    }
+    return n;
+  }
+  return null;
+}
+
 function renderTree(tree, opts) {
   opts = opts || {};
   const svg = document.getElementById('reducer-svg');
@@ -2107,6 +2159,29 @@ function renderTree(tree, opts) {
     rect.setAttribute('class', 'name-region');
     target.appendChild(rect);
     reg._bbox = { minX: minX2, maxX: maxX2, minY: minY2, maxY: maxY2 };
+  }
+
+  // Halo around the apply node that the reducer will fire next (matches
+  // reduceFirstApply's DFS order). Multiple K/S/F-labeled nodes can be ready
+  // at once thanks to confluence; this marker calls out the *one* the
+  // implementation has chosen for the next Step.
+  const nextNode = nextApplyToFire(renderTreeRoot);
+  if (nextNode) {
+    const np = pos.get(nextNode);
+    if (np) {
+      const halo = document.createElementNS(SVG_NS, 'circle');
+      halo.setAttribute('cx', np.x);
+      halo.setAttribute('cy', np.y);
+      halo.setAttribute('r', 21);
+      halo.setAttribute('class', 'next-halo');
+      target.appendChild(halo);
+      const arrow = document.createElementNS(SVG_NS, 'text');
+      arrow.setAttribute('x', np.x);
+      arrow.setAttribute('y', np.y - 26);
+      arrow.setAttribute('class', 'next-arrow');
+      arrow.textContent = 'next ▼';
+      target.appendChild(arrow);
+    }
   }
 
   // Nodes
