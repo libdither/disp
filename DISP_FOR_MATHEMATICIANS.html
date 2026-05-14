@@ -405,22 +405,19 @@
     stroke-width: 1.5;
     stroke-dasharray: 3 2;
   }
-  /* Apply node colored by the rule that's currently ready to fire on it.
-     Confluence says these can be reduced in any order. */
-  svg.tree-svg .node-apply.rule-K { fill: #4a8a4a; stroke: #2e5a2e; stroke-dasharray: none; }
-  svg.tree-svg .node-apply.rule-S { fill: #6e54a8; stroke: #4a3878; stroke-dasharray: none; }
-  svg.tree-svg .node-apply.rule-F { fill: #b67318; stroke: #7e4e0a; stroke-dasharray: none; }
-  svg.tree-svg .node-apply.rule-L { fill: var(--bg-aside); stroke: var(--fg-muted); stroke-dasharray: none; }
-  svg.tree-svg .node-apply.rule-s { fill: var(--bg-aside); stroke: var(--fg-muted); stroke-dasharray: none; }
+  /* Apply nodes keep their dashed hollow styling regardless of whether a rule
+     is ready to fire. The rule color shows up in the INNER LETTER instead,
+     so it stays visually distinct from real tree nodes. */
   svg.tree-svg .lbl-rule {
-    fill: #fff;
     font-family: 'JetBrains Mono', 'Menlo', monospace;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
   }
-  svg.tree-svg .lbl-rule-dim {
-    fill: var(--fg);
-  }
+  svg.tree-svg .lbl-rule-K { fill: #4a8a4a; }
+  svg.tree-svg .lbl-rule-S { fill: #6e54a8; }
+  svg.tree-svg .lbl-rule-F { fill: #b67318; }
+  svg.tree-svg .lbl-rule-L { fill: var(--fg-muted); }
+  svg.tree-svg .lbl-rule-s { fill: var(--fg-muted); }
   /* The "next" marker: a soft pulsing ring + a small label above the apply
      node that reduceFirstApply will fire on the next Step click. */
   svg.tree-svg .next-halo {
@@ -850,7 +847,7 @@
 <!-- INTERACTIVE WIDGET 1: tree reducer -->
 <div class="widget" id="reducer-widget">
 <h4 class="widget-title">Interactive: apply two trees</h4>
-<p style="font-size: 0.9em; margin-top:0;">A general-purpose tree-calculus evaluator. Type any expression: <code>t</code> for the leaf, juxtaposition for application, parens for grouping. Named atoms: combinators <code>K</code>, <code>I</code>, <code>S</code>; Booleans <code>true</code>, <code>false</code>; Nat constructor <code>succ</code> (= <code>K</code> as a tree); operations <code>not</code>, <code>and</code>, <code>or</code>, <code>select</code>, <code>pair_fst</code>, <code>pair_snd</code>; and digit-runs <code>0</code>, <code>1</code>, &hellip; for Scott-encoded Nats. Try <code>not true</code>, <code>succ 0</code>, <code>succ (succ 0)</code>, <code>and (not false) true</code>.</p>
+<p style="font-size: 0.9em; margin-top:0;">A general-purpose tree-calculus evaluator. Type any expression: <code>t</code> for the leaf, juxtaposition for application, parens for grouping. Named atoms: combinators <code>K</code>, <code>I</code>, <code>S</code>; Booleans <code>true</code>, <code>false</code>; Nat constructor <code>succ</code> (= <code>K</code> as a tree); Boolean operations <code>not</code>, <code>and</code>, <code>or</code>, <code>select</code>; Nat addition <code>add</code>; and digit-runs <code>0</code>, <code>1</code>, &hellip; for Scott-encoded Nats. Try <code>not true</code>, <code>succ 0</code>, <code>add 2 3</code>, <code>and (not false) true</code>.</p>
 <div class="row">
   <span class="label">expr:</span>
   <input type="text" id="reducer-expr" value="not true" oninput="reducerReset()" style="flex:1; min-width:240px">
@@ -876,11 +873,12 @@
   leaf <span style="color:var(--accent-soft)">●</span> &nbsp;
   stem/fork <span style="color:var(--accent)">●</span> &nbsp;
   apply (waiting) <span style="color:var(--accent);font-family:monospace">@</span> &nbsp; &mdash; &nbsp;
-  ready: <span style="background:#4a8a4a;color:#fff;padding:0 .3em;border-radius:3px;font-family:monospace">K</span>
-  <span style="background:#6e54a8;color:#fff;padding:0 .3em;border-radius:3px;font-family:monospace">S</span>
-  <span style="background:#b67318;color:#fff;padding:0 .3em;border-radius:3px;font-family:monospace">F</span>
-  <span style="background:var(--bg-aside);color:var(--fg);padding:0 .3em;border-radius:3px;border:1px solid var(--border);font-family:monospace">L</span>
-  <span style="background:var(--bg-aside);color:var(--fg);padding:0 .3em;border-radius:3px;border:1px solid var(--border);font-family:monospace">s</span>
+  apply (ready):
+  <span style="color:#4a8a4a;font-family:monospace;font-weight:700">K</span>
+  <span style="color:#6e54a8;font-family:monospace;font-weight:700">S</span>
+  <span style="color:#b67318;font-family:monospace;font-weight:700">F</span>
+  <span style="color:var(--fg-muted);font-family:monospace;font-weight:700">L</span>
+  <span style="color:var(--fg-muted);font-family:monospace;font-weight:700">s</span>
   &nbsp; &mdash; &nbsp;
   <span style="border:2px solid #f0b429;border-radius:50%;padding:0 .35em;color:#f0b429;font-weight:700">next</span>
   fires on the next Step
@@ -1875,20 +1873,6 @@ const _OR  = _cirToTree(_cLam('a', _cLam('b',
 const _SELECT = _cirToTree(_cLam('then_v', _cLam('else_v', _cLam('cond',
   _cApp(_cApp(_cApp(_cVar('cond'), _LEAF_CIR), _cVar('then_v')), _cVar('else_v'))))));
 
-// pair_fst / pair_snd compile to simple tree literals via η:
-//   pair_fst p = triage t I K p   → fork(fork(t, I), K)   (η-reduced over p)
-//   pair_snd p = triage t I (K I) → fork(fork(t, I), apply(K, I))
-const _PAIR_FST = { tag: 'fork', l: { tag: 'fork', l: LEAF, r: cloneTree(_I) }, r: cloneTree(_K) };
-const _PAIR_SND = { tag: 'fork', l: { tag: 'fork', l: LEAF, r: cloneTree(_I) },
-                                  r: { tag: 'fork', l: LEAF, r: cloneTree(_I) } };
-
-// Register the operations as parser shortcuts.
-DEFS.not       = _NOT;
-DEFS.and       = _AND;
-DEFS.or        = _OR;
-DEFS.select    = _SELECT;
-DEFS.pair_fst  = _PAIR_FST;
-DEFS.pair_snd  = _PAIR_SND;
 // `succ` is operationally identical to K: succ n = fork(△, n) = apply(stem(△), n) = K n,
 // so [n](succ n) η-reduces to K. We accept `succ` as a surface name; the tree it
 // parses to is stem(△), and the visualizer labels that shape as K (the more
@@ -1896,15 +1880,56 @@ DEFS.pair_snd  = _PAIR_SND;
 DEFS.succ      = _K;
 DEFS.zero      = LEAF;
 
+// ---- Nat addition via fix ----
+// We can't avoid recursion here, so we have to build the disp prelude's
+//   wait, m, fix combinators first, then express add over Scott-encoded Nats
+//   (0 = △, succ n = fork(△, n)) by triaging on n.
+//
+// wait := λa b c. t (t a) (t t c) b
+//   so that `wait(a)(b)` does NOT fully evaluate (wait needs 3 args).
+const _WAIT = _cirToTree(_cLam('a', _cLam('b', _cLam('c',
+  _cApp(_cApp(_cApp(_LEAF_CIR, _cApp(_LEAF_CIR, _cVar('a'))),
+              _cApp(_cApp(_LEAF_CIR, _LEAF_CIR), _cVar('c'))),
+        _cVar('b'))))));
+// m := λx. x x
+const _MFIX = _cirToTree(_cLam('x', _cApp(_cVar('x'), _cVar('x'))));
+// fix := λf. wait m (λx. f (wait m x))
+const _FIX = _cirToTree(_cLam('f',
+  _cApp(_cApp(_cTree(_WAIT), _cTree(_MFIX)),
+        _cLam('x',
+          _cApp(_cVar('f'),
+                _cApp(_cApp(_cTree(_WAIT), _cTree(_MFIX)), _cVar('x')))))));
+// add := fix (λself n m. triage m (λ_.m) (λ_l pred. succ (self pred m)) n)
+//   Scott-Nat triage: t (t on_leaf on_stem) on_fork v
+//     n = △ (zero):  returns on_leaf = m
+//     n = △ △ pred (succ pred): returns on_fork △ pred = (λ_l pred. ...) △ pred
+const _ADD = _cirToTree(_cApp(_cTree(_FIX),
+  _cLam('self', _cLam('n', _cLam('m',
+    _cApp(
+      _cApp(
+        _cApp(_LEAF_CIR, _cApp(_cApp(_LEAF_CIR, _cVar('m')), _cLam('_', _cVar('m')))),
+        _cLam('_l', _cLam('pred',
+          _cApp(_cK, _cApp(_cApp(_cVar('self'), _cVar('pred')), _cVar('m')))))
+      ),
+      _cVar('n')
+    )
+  )))));
+
+// Register the operations as parser shortcuts.
+DEFS.not       = _NOT;
+DEFS.and       = _AND;
+DEFS.or        = _OR;
+DEFS.select    = _SELECT;
+DEFS.add       = _ADD;
+
 function recognize(t) {
   if (!t) return null;
   // Specific named operations first (they tend to be larger trees, more specific)
+  if (treeShapeEq(t, _ADD))      return 'add';
   if (treeShapeEq(t, _NOT))      return 'not';
   if (treeShapeEq(t, _AND))      return 'and';
   if (treeShapeEq(t, _OR))       return 'or';
   if (treeShapeEq(t, _SELECT))   return 'select';
-  if (treeShapeEq(t, _PAIR_FST)) return 'pair_fst';
-  if (treeShapeEq(t, _PAIR_SND)) return 'pair_snd';
   if (treeShapeEq(t, _I))        return 'I';
   if (treeShapeEq(t, _S))        return 'S';
   if (treeShapeEq(t, _TRUE))     return 'true';
@@ -2042,25 +2067,30 @@ function applyRule(node) {
 // into f.l, then (for F-rule) into x, otherwise fire at the current node.
 // Returns the apply node that will fire next, or null at normal form.
 function nextApplyToFire(n) {
-  if (!n || n.tag !== 'apply') return null;
-  const f = n.f;
-  if (f.tag === 'apply') {
-    const inner = nextApplyToFire(f);
-    if (inner) return inner;
-  }
-  if (f.tag === 'leaf' || f.tag === 'stem') return n;
-  if (f.tag === 'fork') {
-    const a = f.l;
-    if (a.tag === 'apply') {
-      const inner = nextApplyToFire(a);
+  if (!n) return null;
+  if (n.tag === 'apply') {
+    const f = n.f;
+    if (f.tag === 'apply') {
+      const inner = nextApplyToFire(f);
       if (inner) return inner;
     }
-    if (a.tag === 'fork' && n.x.tag === 'apply') {
-      const inner = nextApplyToFire(n.x);
-      if (inner) return inner;
+    if (f.tag === 'leaf' || f.tag === 'stem') return n;
+    if (f.tag === 'fork') {
+      const a = f.l;
+      if (a.tag === 'apply') {
+        const inner = nextApplyToFire(a);
+        if (inner) return inner;
+      }
+      if (a.tag === 'fork' && n.x.tag === 'apply') {
+        const inner = nextApplyToFire(n.x);
+        if (inner) return inner;
+      }
+      return n;
     }
-    return n;
+    return null;
   }
+  if (n.tag === 'fork') return nextApplyToFire(n.l) || nextApplyToFire(n.r);
+  if (n.tag === 'stem') return nextApplyToFire(n.c);
   return null;
 }
 
@@ -2192,9 +2222,8 @@ function renderTree(tree, opts) {
     const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('cx', p.x);
     circle.setAttribute('cy', p.y);
-    circle.setAttribute('r', n.tree.tag === 'leaf' ? 9 : (isApply && rule ? 14 : 13));
+    circle.setAttribute('r', n.tree.tag === 'leaf' ? 9 : 13);
     let cls = 'node node-' + n.tree.tag;
-    if (rule) cls += ' rule-' + rule;
     if (fnRefs.has(n.tree))  cls += ' redex-fn';
     if (argRefs.has(n.tree)) cls += ' redex-arg';
     if (newRefs.has(n.tree)) cls += ' flash-new';
@@ -2209,12 +2238,13 @@ function renderTree(tree, opts) {
       txt.textContent = '△';
       target.appendChild(txt);
     } else if (isApply) {
+      // Apply nodes keep their dashed hollow circle styling; the inner label
+      // shows the rule letter (K/S/F/L/s) when ready to fire, in the rule's
+      // signature color, or "@" when the apply is still waiting on a sub-apply.
       const txt = document.createElementNS(SVG_NS, 'text');
       txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
-      // When a rule is ready, the apply node's label is the rule letter
-      // (K/S/F/L/s); otherwise the dependent-marker @.
       if (rule) {
-        txt.setAttribute('class', (rule === 'L' || rule === 's') ? 'lbl lbl-rule lbl-rule-dim' : 'lbl lbl-rule');
+        txt.setAttribute('class', 'lbl lbl-rule lbl-rule-' + rule);
         txt.textContent = rule;
       } else {
         txt.setAttribute('class', 'lbl lbl-apply');
@@ -2335,53 +2365,62 @@ function reducerRerender() {
 // specific subtree references in the *current* tree that participate in the
 // next reduction. We use these references to highlight occurrences visually.
 function reduceFirstApply(n) {
-  if (n.tag !== 'apply') return null;
-  const f = n.f;
-  // Function not yet a normal-form tree — reduce it first
-  if (f.tag === 'apply') {
-    const left = reduceFirstApply(f);
-    if (left) {
-      return {
-        result: { tag: 'apply', f: left.result, x: n.x },
-        rule: '(in function) ' + left.rule,
-        redex: left.redex
-      };
-    }
-  }
-  // Leaf and stem rules: don't inspect x, so we can fire directly.
-  if (f.tag === 'leaf' || f.tag === 'stem') {
-    const r = reduceStep(f, n.x);
-    return { result: r.result, rule: r.rule, redex: { f, x: n.x } };
-  }
-  if (f.tag === 'fork') {
-    const a = f.l;
-    // K/S/F dispatch is on `a` (= f.l). If `a` is itself a pending apply (which
-    // can happen because the stem-rule wraps its child verbatim without
-    // reducing), we need to reduce `a` to normal form first.
-    if (a.tag === 'apply') {
-      const aRed = reduceFirstApply(a);
-      if (aRed) {
+  if (n.tag === 'apply') {
+    const f = n.f;
+    if (f.tag === 'apply') {
+      const left = reduceFirstApply(f);
+      if (left) {
         return {
-          result: { tag: 'apply', f: { tag: 'fork', l: aRed.result, r: f.r }, x: n.x },
-          rule: '(in fork-left) ' + aRed.rule,
-          redex: aRed.redex
+          result: { tag: 'apply', f: left.result, x: n.x },
+          rule: '(in function) ' + left.rule,
+          redex: left.redex
         };
       }
     }
-    // F-rule (triage) also needs x in normal form.
-    if (a.tag === 'fork' && n.x.tag === 'apply') {
-      const right = reduceFirstApply(n.x);
-      if (right) {
-        return {
-          result: { tag: 'apply', f, x: right.result },
-          rule: '(in argument) ' + right.rule,
-          redex: right.redex
-        };
-      }
+    if (f.tag === 'leaf' || f.tag === 'stem') {
+      const r = reduceStep(f, n.x);
+      return { result: r.result, rule: r.rule, redex: { f, x: n.x } };
     }
-    // K and S rules don't need x in normal form.
-    const r = reduceStep(f, n.x);
-    return { result: r.result, rule: r.rule, redex: { f, x: n.x } };
+    if (f.tag === 'fork') {
+      const a = f.l;
+      if (a.tag === 'apply') {
+        const aRed = reduceFirstApply(a);
+        if (aRed) {
+          return {
+            result: { tag: 'apply', f: { tag: 'fork', l: aRed.result, r: f.r }, x: n.x },
+            rule: '(in fork-left) ' + aRed.rule,
+            redex: aRed.redex
+          };
+        }
+      }
+      if (a.tag === 'fork' && n.x.tag === 'apply') {
+        const right = reduceFirstApply(n.x);
+        if (right) {
+          return {
+            result: { tag: 'apply', f, x: right.result },
+            rule: '(in argument) ' + right.rule,
+            redex: right.redex
+          };
+        }
+      }
+      const r = reduceStep(f, n.x);
+      return { result: r.result, rule: r.rule, redex: { f, x: n.x } };
+    }
+    return null;
+  }
+  // Strong normalization: also reduce inside data constructors. After K/S/F
+  // rules fire, results can wrap pending applies inside leaf/stem/fork shapes
+  // (e.g. succ(self pred m) → fork(t, apply(...))). Without this descent the
+  // recursion would stall at the first fork it produces.
+  if (n.tag === 'fork') {
+    const l = reduceFirstApply(n.l);
+    if (l) return { result: { tag: 'fork', l: l.result, r: n.r }, rule: '(in fork-left) ' + l.rule, redex: l.redex };
+    const r = reduceFirstApply(n.r);
+    if (r) return { result: { tag: 'fork', l: n.l, r: r.result }, rule: '(in fork-right) ' + r.rule, redex: r.redex };
+  }
+  if (n.tag === 'stem') {
+    const c = reduceFirstApply(n.c);
+    if (c) return { result: { tag: 'stem', c: c.result }, rule: '(in stem-body) ' + c.rule, redex: c.redex };
   }
   return null;
 }
