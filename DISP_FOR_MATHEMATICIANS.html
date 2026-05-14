@@ -383,6 +383,13 @@
     stroke-width: 1.5;
     stroke-dasharray: 3 2;
   }
+  svg.tree-svg .node.dimmed {
+    opacity: 0.40;
+    transition: opacity 0.35s;
+  }
+  svg.tree-svg .lbl.lbl-dim {
+    opacity: 0.55;
+  }
   svg.tree-svg .name-region {
     fill: var(--bg-aside);
     fill-opacity: 0.35;
@@ -786,10 +793,11 @@
 <p style="font-size: 0.9em; margin-top:0;">Use <code>t</code> for the leaf and juxtaposition for application: <code>(t t t)</code> parses as <code>apply(apply(t,t),t)</code>. The parser accepts <strong>named atoms</strong> &mdash; combinators <code>K</code>, <code>I</code>, <code>S</code>; Booleans <code>true</code>, <code>false</code>; operations <code>not</code>, <code>and</code>, <code>or</code>, <code>select</code>, <code>pair_fst</code>, <code>pair_snd</code>; and digit-runs <code>0</code>, <code>1</code>, &hellip; for Scott-encoded Nats. With <em>circle known shapes</em> on (default), recognized subtrees are circled and tagged. Try <code>(not true)</code>, <code>t</code> or <code>(and true)</code>, <code>false</code>.</p>
 <div class="row">
   <span class="label">f:</span>
-  <input type="text" id="reducer-f" value="(and true)" oninput="reducerReset()">
+  <input type="text" id="reducer-f" value="not" oninput="reducerReset()" style="min-width:120px">
   <span class="label">x:</span>
-  <input type="text" id="reducer-x" value="false" oninput="reducerReset()">
-  <button class="primary" onclick="reducerStep()">Reduce step</button>
+  <input type="text" id="reducer-x" value="true" oninput="reducerReset()" style="min-width:120px">
+  <button class="primary" onclick="reducerStep()">Step</button>
+  <button onclick="reducerRun()" id="reducer-run-btn">Run to normal form</button>
   <button onclick="reducerReset()">Reset</button>
   <label style="margin-left:0.6em; font-size:0.88em; cursor:pointer;">
     <input type="checkbox" id="reducer-labels" onchange="reducerRerender()" checked style="vertical-align:middle;">
@@ -1868,8 +1876,10 @@ function reduceStep(f, x) {
 
 // ---------- Tree visualization ----------
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const REDEX_HOLD_MS = 750;     // how long to show the redex before reducing
-const FLASH_MS = 900;          // how long the green "new" flash lasts
+const REDEX_HOLD_MS = 400;     // how long to show the redex before reducing
+const FLASH_MS = 450;          // how long the green "new" flash lasts
+const AUTO_STEP_MS = 250;      // delay between steps in auto mode (per-step total)
+const AUTO_STEP_LIMIT = 500;   // safety bound on auto reductions
 
 function childrenOf(t) {
   if (t.tag === 'leaf') return [];
@@ -1950,7 +1960,7 @@ function renderTree(tree, opts) {
   // Edges first (under nodes)
   for (const n of layout.nodes) {
     const p = pos.get(n.tree);
-    for (const c of effectiveChildren(n.tree)) {
+    for (const c of childrenOf(n.tree)) {
       const q = pos.get(c);
       const line = document.createElementNS(SVG_NS, 'line');
       line.setAttribute('x1', p.x); line.setAttribute('y1', p.y);
@@ -1964,7 +1974,54 @@ function renderTree(tree, opts) {
     }
   }
 
-  // Nodes (structure always rendered; recognized names are drawn as overlays below)
+  // Compute recognized regions first so we can dim nodes that live inside one.
+  // A node is "in a region" if any of its ancestors-or-self is a recognized
+  // subtree (other than itself). The recognized subtree's root is also dimmed
+  // a bit so the label is what reads — the inner structure is still visible
+  // but de-emphasized.
+  const regions = [];
+  const dimmed = new Set();
+  if (showLabels()) {
+    function walkRegions(t) {
+      const name = recognize(t);
+      if (name) {
+        const nodes = [];
+        (function collect(s) { nodes.push(s); for (const c of childrenOf(s)) collect(c); })(t);
+        regions.push({ name, nodes });
+        for (const s of nodes) dimmed.add(s);
+      }
+      for (const c of childrenOf(t)) walkRegions(c);
+    }
+    walkRegions(tree);
+    regions.sort(function (a, b) { return b.nodes.length - a.nodes.length; });
+  }
+
+  // Region rectangles first (painted BELOW edges and nodes so they read as background).
+  for (const reg of regions) {
+    const pts = reg.nodes.map(function (s) { return pos.get(s); }).filter(Boolean);
+    if (pts.length === 0) continue;
+    const pad = 11;
+    const xs = pts.map(function (p) { return p.x; });
+    const ys = pts.map(function (p) { return p.y; });
+    const minX = Math.min.apply(null, xs) - pad;
+    const maxX = Math.max.apply(null, xs) + pad;
+    const minY = Math.min.apply(null, ys) - pad;
+    const maxY = Math.max.apply(null, ys) + pad;
+    const rect = document.createElementNS(SVG_NS, 'rect');
+    rect.setAttribute('x', minX);
+    rect.setAttribute('y', minY);
+    rect.setAttribute('width',  maxX - minX);
+    rect.setAttribute('height', maxY - minY);
+    rect.setAttribute('rx', 10);
+    rect.setAttribute('class', 'name-region');
+    svg.appendChild(rect);
+    reg._bbox = { minX, maxX, minY, maxY };
+  }
+
+  // Re-draw edges (already done above) — they're already in the DOM behind the
+  // nodes. Move on to nodes.
+
+  // Nodes
   for (const n of layout.nodes) {
     const p = pos.get(n.tree);
     const circle = document.createElementNS(SVG_NS, 'circle');
@@ -1975,13 +2032,14 @@ function renderTree(tree, opts) {
     if (fnRefs.has(n.tree))  cls += ' redex-fn';
     if (argRefs.has(n.tree)) cls += ' redex-arg';
     if (newRefs.has(n.tree)) cls += ' flash-new';
+    if (dimmed.has(n.tree) && !fnRefs.has(n.tree) && !argRefs.has(n.tree)) cls += ' dimmed';
     circle.setAttribute('class', cls);
     svg.appendChild(circle);
 
     if (n.tree.tag === 'leaf') {
       const txt = document.createElementNS(SVG_NS, 'text');
       txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
-      txt.setAttribute('class', 'lbl');
+      txt.setAttribute('class', dimmed.has(n.tree) ? 'lbl lbl-dim' : 'lbl');
       txt.textContent = '△';
       svg.appendChild(txt);
     } else if (n.tree.tag === 'apply') {
@@ -1993,57 +2051,25 @@ function renderTree(tree, opts) {
     }
   }
 
-  // Name-region overlay: for each recognized subtree, draw a rounded box around
-  // every node in that subtree and tag it with a label. Nested recognitions get
-  // nested boxes — we draw the largest first so the smaller (more specific)
-  // boxes paint on top.
-  if (showLabels()) {
-    const regions = [];
-    function walk(t) {
-      const name = recognize(t);
-      if (name) {
-        const nodes = [];
-        (function collect(s) { nodes.push(s); for (const c of childrenOf(s)) collect(c); })(t);
-        regions.push({ name, nodes });
-      }
-      for (const c of childrenOf(t)) walk(c);
-    }
-    walk(tree);
-    regions.sort(function (a, b) { return b.nodes.length - a.nodes.length; });
-    for (const reg of regions) {
-      const pts = reg.nodes.map(function (s) { return pos.get(s); }).filter(Boolean);
-      if (pts.length === 0) continue;
-      const pad = 11;
-      const xs = pts.map(function (p) { return p.x; });
-      const ys = pts.map(function (p) { return p.y; });
-      const minX = Math.min.apply(null, xs) - pad;
-      const maxX = Math.max.apply(null, xs) + pad;
-      const minY = Math.min.apply(null, ys) - pad;
-      const maxY = Math.max.apply(null, ys) + pad;
-      const rect = document.createElementNS(SVG_NS, 'rect');
-      rect.setAttribute('x', minX);
-      rect.setAttribute('y', minY);
-      rect.setAttribute('width',  maxX - minX);
-      rect.setAttribute('height', maxY - minY);
-      rect.setAttribute('rx', 10);
-      rect.setAttribute('class', 'name-region');
-      svg.appendChild(rect);
-      const labelW = Math.max(20, reg.name.length * 7 + 8);
-      const tag = document.createElementNS(SVG_NS, 'rect');
-      tag.setAttribute('x', minX);
-      tag.setAttribute('y', minY - 14);
-      tag.setAttribute('width', labelW);
-      tag.setAttribute('height', 14);
-      tag.setAttribute('rx', 4);
-      tag.setAttribute('class', 'name-tag-bg');
-      svg.appendChild(tag);
-      const lbl = document.createElementNS(SVG_NS, 'text');
-      lbl.setAttribute('x', minX + labelW / 2);
-      lbl.setAttribute('y', minY - 7);
-      lbl.setAttribute('class', 'name-tag-label');
-      lbl.textContent = reg.name;
-      svg.appendChild(lbl);
-    }
+  // Region labels last, on top of everything (so they're never obscured).
+  for (const reg of regions) {
+    if (!reg._bbox) continue;
+    const { minX, minY } = reg._bbox;
+    const labelW = Math.max(20, reg.name.length * 7 + 8);
+    const tag = document.createElementNS(SVG_NS, 'rect');
+    tag.setAttribute('x', minX);
+    tag.setAttribute('y', minY - 14);
+    tag.setAttribute('width', labelW);
+    tag.setAttribute('height', 14);
+    tag.setAttribute('rx', 4);
+    tag.setAttribute('class', 'name-tag-bg');
+    svg.appendChild(tag);
+    const lbl = document.createElementNS(SVG_NS, 'text');
+    lbl.setAttribute('x', minX + labelW / 2);
+    lbl.setAttribute('y', minY - 7);
+    lbl.setAttribute('class', 'name-tag-label');
+    lbl.textContent = reg.name;
+    svg.appendChild(lbl);
   }
 }
 
@@ -2193,6 +2219,52 @@ function reducerStep() {
       '<strong style="color:#c44">Error:</strong> ' + e.message;
     reducerBusy = false;
   }
+}
+
+// Auto mode: step repeatedly until normal form, step limit, or user stops.
+let reducerAutoActive = false;
+function reducerRun() {
+  const btn = document.getElementById('reducer-run-btn');
+  if (reducerAutoActive) { reducerAutoActive = false; return; }  // toggle off
+  reducerAutoActive = true;
+  if (btn) btn.textContent = 'Stop';
+  let count = 0;
+  function tick() {
+    if (!reducerAutoActive || count++ > AUTO_STEP_LIMIT) {
+      reducerAutoActive = false;
+      if (btn) btn.textContent = 'Run to normal form';
+      return;
+    }
+    if (reducerBusy) { setTimeout(tick, 50); return; }
+    if (!reducerState) {
+      try {
+        const f = parseTree(document.getElementById('reducer-f').value);
+        const x = parseTree(document.getElementById('reducer-x').value);
+        reducerState = { node: { tag: 'apply', f, x }, history: [] };
+      } catch (e) {
+        reducerAutoActive = false;
+        if (btn) btn.textContent = 'Run to normal form';
+        return;
+      }
+    }
+    const step = reduceFirstApply(reducerState.node);
+    if (!step) {
+      reducerAutoActive = false;
+      if (btn) btn.textContent = 'Run to normal form';
+      renderTree(reducerState.node);
+      renderTrace();
+      const recName = recognize(reducerState.node);
+      document.getElementById('reducer-out').innerHTML =
+        '<strong>Normal form:</strong> <code>' + pretty(reducerState.node) + '</code>' +
+        (recName ? ' &mdash; <em>' + recName + '</em>' : '');
+      return;
+    }
+    reducerState.history.push({ before: pretty(reducerState.node), after: pretty(step.result), rule: step.rule });
+    reducerState.node = step.result;
+    renderTree(reducerState.node);
+    setTimeout(tick, AUTO_STEP_MS);
+  }
+  tick();
 }
 
 // Render the initial tree on page load so the widget isn't empty.
