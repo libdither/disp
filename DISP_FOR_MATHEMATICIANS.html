@@ -348,15 +348,37 @@
     margin-right: 0.5em;
   }
   /* SVG trees */
-  svg.tree-svg {
-    background: var(--bg-code);
+  .svg-pan-container {
+    position: relative;
+    height: 460px;
+    margin: 0.6em 0;
     border: 1px solid var(--border);
     border-radius: 4px;
-    display: block;
-    margin: 0.6em auto;
-    max-width: 100%;
-    height: auto;
+    background: var(--bg-code);
+    overflow: hidden;
   }
+  .svg-pan-container .svg-help {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    z-index: 2;
+    font-family: 'SF Pro Text', system-ui, sans-serif;
+    font-size: 11px;
+    color: var(--fg-muted);
+    background: var(--bg-code);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    pointer-events: none;
+  }
+  svg.tree-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    user-select: none;
+  }
+  svg.tree-svg.dragging { cursor: grabbing; }
   svg.tree-svg .edge {
     stroke: var(--fg-muted);
     stroke-width: 1.5;
@@ -382,6 +404,22 @@
     stroke: var(--accent);
     stroke-width: 1.5;
     stroke-dasharray: 3 2;
+  }
+  /* Apply node colored by the rule that's currently ready to fire on it.
+     Confluence says these can be reduced in any order. */
+  svg.tree-svg .node-apply.rule-K { fill: #4a8a4a; stroke: #2e5a2e; stroke-dasharray: none; }
+  svg.tree-svg .node-apply.rule-S { fill: #6e54a8; stroke: #4a3878; stroke-dasharray: none; }
+  svg.tree-svg .node-apply.rule-F { fill: #b67318; stroke: #7e4e0a; stroke-dasharray: none; }
+  svg.tree-svg .node-apply.rule-L { fill: var(--bg-aside); stroke: var(--fg-muted); stroke-dasharray: none; }
+  svg.tree-svg .node-apply.rule-s { fill: var(--bg-aside); stroke: var(--fg-muted); stroke-dasharray: none; }
+  svg.tree-svg .lbl-rule {
+    fill: #fff;
+    font-family: 'JetBrains Mono', 'Menlo', monospace;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  svg.tree-svg .lbl-rule-dim {
+    fill: var(--fg);
   }
   svg.tree-svg .node.dimmed {
     opacity: 0.40;
@@ -808,8 +846,20 @@
     tree view (unshare subtrees)
   </label>
 </div>
-<svg class="tree-svg" id="reducer-svg" width="600" height="120" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet"></svg>
-<div class="viz-caption" id="reducer-caption">leaf <span style="color:var(--accent-soft)">●</span> stem/fork <span style="color:var(--accent)">●</span> pending application <span style="color:var(--accent);font-family:monospace">@</span></div>
+<div class="svg-pan-container">
+  <svg class="tree-svg" id="reducer-svg" viewBox="0 0 600 460" preserveAspectRatio="xMidYMid meet"></svg>
+  <div class="svg-help">drag to pan &middot; wheel to zoom &middot; dbl-click to reset</div>
+</div>
+<div class="viz-caption" id="reducer-caption">
+  leaf <span style="color:var(--accent-soft)">●</span> &nbsp;
+  stem/fork <span style="color:var(--accent)">●</span> &nbsp;
+  apply (waiting) <span style="color:var(--accent);font-family:monospace">@</span> &nbsp; &mdash; &nbsp;
+  ready: <span style="background:#4a8a4a;color:#fff;padding:0 .3em;border-radius:3px;font-family:monospace">K</span>
+  <span style="background:#6e54a8;color:#fff;padding:0 .3em;border-radius:3px;font-family:monospace">S</span>
+  <span style="background:#b67318;color:#fff;padding:0 .3em;border-radius:3px;font-family:monospace">F</span>
+  <span style="background:var(--bg-aside);color:var(--fg);padding:0 .3em;border-radius:3px;border:1px solid var(--border);font-family:monospace">L</span>
+  <span style="background:var(--bg-aside);color:var(--fg);padding:0 .3em;border-radius:3px;border:1px solid var(--border);font-family:monospace">s</span>
+</div>
 <div class="display" id="reducer-out">Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.</div>
 <div id="reducer-trace" class="trace"></div>
 </div>
@@ -1939,13 +1989,36 @@ function collectRefs(root, target, out) {
   return out;
 }
 
+// For a given apply node, which reduction rule (if any) would fire RIGHT NOW
+// without needing other applies to resolve first? Because tree calculus is
+// confluent, every node that returns non-null here is an independent redex —
+// they can be reduced in any order with the same final outcome.
+function applyRule(node) {
+  if (node.tag !== 'apply') return null;
+  const f = node.f;
+  if (f.tag === 'leaf') return 'L';   // leaf-construction
+  if (f.tag === 'stem') return 's';   // stem-construction
+  if (f.tag === 'fork') {
+    const a = f.l;
+    if (a.tag === 'leaf') return 'K';
+    if (a.tag === 'stem') return 'S';
+    if (a.tag === 'fork') {
+      // F-rule (triage) — needs x in normal form too
+      if (node.x.tag === 'apply') return null;
+      return 'F';
+    }
+    return null; // f.l is itself a pending apply
+  }
+  return null;   // f is a pending apply
+}
+
 function renderTree(tree, opts) {
   opts = opts || {};
   const svg = document.getElementById('reducer-svg');
   if (!svg) return;
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   if (!tree) {
-    svg.setAttribute('viewBox', '0 0 600 120');
+    svg.setAttribute('viewBox', '0 0 600 460');
     return;
   }
   // In tree view, every occurrence of every subtree should appear as a
@@ -1954,23 +2027,27 @@ function renderTree(tree, opts) {
   // longer treats duplicates as the same node.
   const renderTreeRoot = treeView() ? cloneTree(tree) : tree;
   const layout = layoutTidy(renderTreeRoot, 0);
-  const cellW = 42, cellH = 56, padX = 30, padY = 26;
+  const cellW = 42, cellH = 60, padX = 32, padY = 32;
   const xs = layout.nodes.map(n => n.x);
   const minX = Math.min.apply(null, xs);
   const maxX = Math.max.apply(null, xs);
   const maxD = Math.max.apply(null, layout.nodes.map(n => n.depth));
   const w = Math.max((maxX - minX) * cellW + padX * 2, 200);
-  const h = Math.max(maxD * cellH + padY * 2, 110);
+  const h = Math.max(maxD * cellH + padY * 2, 120);
   svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
 
-  // Map: tree reference → {x, y}
+  // Viewport group: every rendered element goes inside this <g>; pan/zoom
+  // transforms it. The user's manual viewport state persists across renders.
+  const target = document.createElementNS(SVG_NS, 'g');
+  target.setAttribute('class', 'viewport');
+  svg.appendChild(target);
+  applyViewportTransform();
+
   const pos = new Map();
   for (const n of layout.nodes) {
     pos.set(n.tree, { x: (n.x - minX) * cellW + padX, y: n.depth * cellH + padY });
   }
 
-  // Build sets of highlighted refs. (Only valid in DAG view because the redex
-  // came from the original tree; in tree view we cloned, so these stay empty.)
   const fnRefs  = (!treeView() && opts.redex && opts.redex.f) ? new Set(collectRefs(renderTreeRoot, opts.redex.f)) : new Set();
   const argRefs = (!treeView() && opts.redex && opts.redex.x) ? new Set(collectRefs(renderTreeRoot, opts.redex.x)) : new Set();
   const newRefs = (!treeView() && opts.flashNew)                ? new Set(collectRefs(renderTreeRoot, opts.flashNew)) : new Set();
@@ -1988,15 +2065,11 @@ function renderTree(tree, opts) {
       if (fnRefs.has(n.tree) && fnRefs.has(c)) cls += ' redex-edge';
       if (argRefs.has(n.tree) && argRefs.has(c)) cls += ' redex-edge';
       line.setAttribute('class', cls);
-      svg.appendChild(line);
+      target.appendChild(line);
     }
   }
 
-  // Compute recognized regions first so we can dim nodes that live inside one.
-  // A node is "in a region" if any of its ancestors-or-self is a recognized
-  // subtree (other than itself). The recognized subtree's root is also dimmed
-  // a bit so the label is what reads — the inner structure is still visible
-  // but de-emphasized.
+  // Recognized regions for label overlays
   const regions = [];
   const dimmed = new Set();
   if (showLabels()) {
@@ -2014,82 +2087,164 @@ function renderTree(tree, opts) {
     regions.sort(function (a, b) { return b.nodes.length - a.nodes.length; });
   }
 
-  // Region rectangles first (painted BELOW edges and nodes so they read as background).
+  // Region rects underneath everything else
   for (const reg of regions) {
     const pts = reg.nodes.map(function (s) { return pos.get(s); }).filter(Boolean);
     if (pts.length === 0) continue;
     const pad = 11;
-    const xs = pts.map(function (p) { return p.x; });
-    const ys = pts.map(function (p) { return p.y; });
-    const minX = Math.min.apply(null, xs) - pad;
-    const maxX = Math.max.apply(null, xs) + pad;
-    const minY = Math.min.apply(null, ys) - pad;
-    const maxY = Math.max.apply(null, ys) + pad;
+    const rxs = pts.map(function (p) { return p.x; });
+    const rys = pts.map(function (p) { return p.y; });
+    const minX2 = Math.min.apply(null, rxs) - pad;
+    const maxX2 = Math.max.apply(null, rxs) + pad;
+    const minY2 = Math.min.apply(null, rys) - pad;
+    const maxY2 = Math.max.apply(null, rys) + pad;
     const rect = document.createElementNS(SVG_NS, 'rect');
-    rect.setAttribute('x', minX);
-    rect.setAttribute('y', minY);
-    rect.setAttribute('width',  maxX - minX);
-    rect.setAttribute('height', maxY - minY);
+    rect.setAttribute('x', minX2);
+    rect.setAttribute('y', minY2);
+    rect.setAttribute('width',  maxX2 - minX2);
+    rect.setAttribute('height', maxY2 - minY2);
     rect.setAttribute('rx', 10);
     rect.setAttribute('class', 'name-region');
-    svg.appendChild(rect);
-    reg._bbox = { minX, maxX, minY, maxY };
+    target.appendChild(rect);
+    reg._bbox = { minX: minX2, maxX: maxX2, minY: minY2, maxY: maxY2 };
   }
-
-  // Re-draw edges (already done above) — they're already in the DOM behind the
-  // nodes. Move on to nodes.
 
   // Nodes
   for (const n of layout.nodes) {
     const p = pos.get(n.tree);
+    const isApply = n.tree.tag === 'apply';
+    const rule = isApply ? applyRule(n.tree) : null;
     const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('cx', p.x);
     circle.setAttribute('cy', p.y);
-    circle.setAttribute('r', n.tree.tag === 'leaf' ? 9 : 13);
+    circle.setAttribute('r', n.tree.tag === 'leaf' ? 9 : (isApply && rule ? 14 : 13));
     let cls = 'node node-' + n.tree.tag;
+    if (rule) cls += ' rule-' + rule;
     if (fnRefs.has(n.tree))  cls += ' redex-fn';
     if (argRefs.has(n.tree)) cls += ' redex-arg';
     if (newRefs.has(n.tree)) cls += ' flash-new';
     if (dimmed.has(n.tree) && !fnRefs.has(n.tree) && !argRefs.has(n.tree)) cls += ' dimmed';
     circle.setAttribute('class', cls);
-    svg.appendChild(circle);
+    target.appendChild(circle);
 
     if (n.tree.tag === 'leaf') {
       const txt = document.createElementNS(SVG_NS, 'text');
       txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
       txt.setAttribute('class', dimmed.has(n.tree) ? 'lbl lbl-dim' : 'lbl');
       txt.textContent = '△';
-      svg.appendChild(txt);
-    } else if (n.tree.tag === 'apply') {
+      target.appendChild(txt);
+    } else if (isApply) {
       const txt = document.createElementNS(SVG_NS, 'text');
       txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
-      txt.setAttribute('class', 'lbl lbl-apply');
-      txt.textContent = '@';
-      svg.appendChild(txt);
+      // When a rule is ready, the apply node's label is the rule letter
+      // (K/S/F/L/s); otherwise the dependent-marker @.
+      if (rule) {
+        txt.setAttribute('class', (rule === 'L' || rule === 's') ? 'lbl lbl-rule lbl-rule-dim' : 'lbl lbl-rule');
+        txt.textContent = rule;
+      } else {
+        txt.setAttribute('class', 'lbl lbl-apply');
+        txt.textContent = '@';
+      }
+      target.appendChild(txt);
     }
   }
 
   // Region labels last, on top of everything (so they're never obscured).
   for (const reg of regions) {
     if (!reg._bbox) continue;
-    const { minX, minY } = reg._bbox;
+    const { minX: bMinX, minY: bMinY } = reg._bbox;
     const labelW = Math.max(20, reg.name.length * 7 + 8);
     const tag = document.createElementNS(SVG_NS, 'rect');
-    tag.setAttribute('x', minX);
-    tag.setAttribute('y', minY - 14);
+    tag.setAttribute('x', bMinX);
+    tag.setAttribute('y', bMinY - 14);
     tag.setAttribute('width', labelW);
     tag.setAttribute('height', 14);
     tag.setAttribute('rx', 4);
     tag.setAttribute('class', 'name-tag-bg');
-    svg.appendChild(tag);
+    target.appendChild(tag);
     const lbl = document.createElementNS(SVG_NS, 'text');
-    lbl.setAttribute('x', minX + labelW / 2);
-    lbl.setAttribute('y', minY - 7);
+    lbl.setAttribute('x', bMinX + labelW / 2);
+    lbl.setAttribute('y', bMinY - 7);
     lbl.setAttribute('class', 'name-tag-label');
     lbl.textContent = reg.name;
-    svg.appendChild(lbl);
+    target.appendChild(lbl);
   }
 }
+
+// ---- Pan / Zoom ----
+const reducerView = { scale: 1, tx: 0, ty: 0 };
+function applyViewportTransform() {
+  const v = document.querySelector('#reducer-svg .viewport');
+  if (!v) return;
+  v.setAttribute('transform',
+    'translate(' + reducerView.tx + ' ' + reducerView.ty + ') scale(' + reducerView.scale + ')');
+}
+function resetViewport() {
+  reducerView.scale = 1;
+  reducerView.tx = 0;
+  reducerView.ty = 0;
+  applyViewportTransform();
+}
+function svgClientToViewBox(svg, clientX, clientY) {
+  // Convert a screen-space point into the SVG's viewBox coordinate system,
+  // which is what the viewport <g>'s transform operates in.
+  const rect = svg.getBoundingClientRect();
+  const vb = (svg.getAttribute('viewBox') || '0 0 600 460').split(/\s+/).map(parseFloat);
+  const [vx, vy, vw, vh] = vb;
+  // preserveAspectRatio="xMidYMid meet": uniform scale, content centered.
+  const sx = rect.width / vw, sy = rect.height / vh;
+  const s = Math.min(sx, sy);
+  const ox = (rect.width  - vw * s) / 2;
+  const oy = (rect.height - vh * s) / 2;
+  return {
+    x: ((clientX - rect.left) - ox) / s + vx,
+    y: ((clientY - rect.top)  - oy) / s + vy
+  };
+}
+(function attachPanZoom() {
+  function setup() {
+    const svg = document.getElementById('reducer-svg');
+    if (!svg) return;
+    let dragging = false, lastX = 0, lastY = 0;
+    svg.addEventListener('mousedown', function (e) {
+      if (e.button !== 0) return;
+      dragging = true;
+      lastX = e.clientX; lastY = e.clientY;
+      svg.classList.add('dragging');
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!dragging) return;
+      // Translate in viewBox coordinates so panning feels at unit speed.
+      const rect = svg.getBoundingClientRect();
+      const vb = (svg.getAttribute('viewBox') || '0 0 600 460').split(/\s+/).map(parseFloat);
+      const s = Math.min(rect.width / vb[2], rect.height / vb[3]);
+      reducerView.tx += (e.clientX - lastX) / s;
+      reducerView.ty += (e.clientY - lastY) / s;
+      lastX = e.clientX; lastY = e.clientY;
+      applyViewportTransform();
+    });
+    window.addEventListener('mouseup', function () {
+      dragging = false; svg.classList.remove('dragging');
+    });
+    svg.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const pt = svgClientToViewBox(svg, e.clientX, e.clientY);
+      // Keep the point under the cursor fixed: the viewport's pre-image of
+      // `pt` is ((pt - tx) / scale); after rescaling we want the same
+      // pre-image to map back to `pt` under the new transform.
+      const ns = Math.max(0.1, Math.min(8, reducerView.scale * factor));
+      reducerView.tx = pt.x - (pt.x - reducerView.tx) * (ns / reducerView.scale);
+      reducerView.ty = pt.y - (pt.y - reducerView.ty) * (ns / reducerView.scale);
+      reducerView.scale = ns;
+      applyViewportTransform();
+    }, { passive: false });
+    svg.addEventListener('dblclick', function () { resetViewport(); });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
+  else setup();
+})();
 
 // Re-render current state when the user toggles a checkbox.
 function reducerRerender() {
@@ -2166,6 +2321,7 @@ function _parseExpr() {
 function reducerReset() {
   reducerState = null;
   reducerAutoActive = false;
+  resetViewport();
   document.getElementById('reducer-out').innerHTML = 'Type any tree-calculus expression and press <em>Step</em> or <em>Run</em>.';
   document.getElementById('reducer-trace').innerHTML = '';
   try {
