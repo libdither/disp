@@ -1876,10 +1876,8 @@ function reduceStep(f, x) {
 
 // ---------- Tree visualization ----------
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const REDEX_HOLD_MS = 400;     // how long to show the redex before reducing
-const FLASH_MS = 450;          // how long the green "new" flash lasts
-const AUTO_STEP_MS = 250;      // delay between steps in auto mode (per-step total)
-const AUTO_STEP_LIMIT = 500;   // safety bound on auto reductions
+const AUTO_STEP_MS = 80;       // delay between steps in auto-run mode
+const AUTO_STEP_LIMIT = 1000;  // safety bound on auto reductions
 
 function childrenOf(t) {
   if (t.tag === 'leaf') return [];
@@ -2145,12 +2143,11 @@ function reduceFirstApply(n) {
 }
 
 let reducerState = null;
-let reducerBusy = false;
 
 function reducerReset() {
   reducerState = null;
-  reducerBusy = false;
-  document.getElementById('reducer-out').innerHTML = 'Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.';
+  reducerAutoActive = false;
+  document.getElementById('reducer-out').innerHTML = 'Press <em>Step</em> or <em>Run to normal form</em> to evaluate <code>apply(f, x)</code>.';
   document.getElementById('reducer-trace').innerHTML = '';
   // Build the initial tree from inputs so the user can see it before the first step
   try {
@@ -2175,7 +2172,6 @@ function renderTrace() {
 }
 
 function reducerStep() {
-  if (reducerBusy) return;
   try {
     if (!reducerState) {
       const f = parseTree(document.getElementById('reducer-f').value);
@@ -2184,40 +2180,27 @@ function reducerStep() {
     }
     const step = reduceFirstApply(reducerState.node);
     if (!step) {
+      const recName = recognize(reducerState.node);
       document.getElementById('reducer-out').innerHTML =
-        '<strong>Normal form reached:</strong> <code>' + pretty(reducerState.node) + '</code>';
+        '<strong>Normal form:</strong> <code>' + pretty(reducerState.node) + '</code>' +
+        (recName ? ' &mdash; <em>' + recName + '</em>' : '');
       renderTree(reducerState.node);
       return;
     }
-    // Phase 1: highlight the redex
-    reducerBusy = true;
-    renderTree(reducerState.node, { redex: step.redex });
+    reducerState.history.push({
+      before: pretty(reducerState.node),
+      after: pretty(step.result),
+      rule: step.rule
+    });
+    reducerState.node = step.result;
     document.getElementById('reducer-out').innerHTML =
-      '<strong>Next:</strong> ' + step.rule +
-      '. <span style="color:var(--fg-muted)">(<span class="pill pill-fn" style="display:inline-block;padding:0.05em 0.45em;border-radius:8px;color:white;font-weight:600;background:#d97757">function</span> &middot; <span class="pill pill-arg" style="display:inline-block;padding:0.05em 0.45em;border-radius:8px;color:white;font-weight:600;background:#5677d9">argument</span>)</span>';
-
-    // Phase 2: perform the reduction after the highlight has been visible
-    setTimeout(function () {
-      reducerState.history.push({
-        before: pretty(reducerState.node),
-        after: pretty(step.result),
-        rule: step.rule
-      });
-      reducerState.node = step.result;
-      // Flash the new structure briefly green
-      renderTree(reducerState.node, { flashNew: step.result });
-      document.getElementById('reducer-out').innerHTML =
-        '<strong>Current term:</strong> <code>' + pretty(step.result) + '</code>';
-      renderTrace();
-      setTimeout(function () {
-        renderTree(reducerState.node);  // settle to normal colors
-        reducerBusy = false;
-      }, FLASH_MS);
-    }, REDEX_HOLD_MS);
+      '<strong>Applied:</strong> ' + step.rule +
+      '<br><strong>Current:</strong> <code>' + pretty(step.result) + '</code>';
+    renderTree(reducerState.node);
+    renderTrace();
   } catch (e) {
     document.getElementById('reducer-out').innerHTML =
       '<strong style="color:#c44">Error:</strong> ' + e.message;
-    reducerBusy = false;
   }
 }
 
@@ -2235,7 +2218,6 @@ function reducerRun() {
       if (btn) btn.textContent = 'Run to normal form';
       return;
     }
-    if (reducerBusy) { setTimeout(tick, 50); return; }
     if (!reducerState) {
       try {
         const f = parseTree(document.getElementById('reducer-f').value);
