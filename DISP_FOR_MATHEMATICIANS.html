@@ -383,6 +383,18 @@
     stroke-width: 1.5;
     stroke-dasharray: 3 2;
   }
+  svg.tree-svg .node-named {
+    fill: var(--bg-aside) !important;
+    stroke: var(--accent) !important;
+    stroke-width: 2 !important;
+    stroke-dasharray: none !important;
+  }
+  svg.tree-svg .lbl-named {
+    font-family: 'Charter', 'Georgia', serif;
+    font-size: 13px;
+    font-weight: 700;
+    fill: var(--accent);
+  }
   svg.tree-svg .node.redex-fn  { fill: #d97757; stroke: #b45a30; }
   svg.tree-svg .node.redex-arg { fill: #5677d9; stroke: #3a55a8; }
   svg.tree-svg .node.flash-new { animation: flashNew 0.9s ease-out; }
@@ -760,7 +772,7 @@
 <!-- INTERACTIVE WIDGET 1: tree reducer -->
 <div class="widget" id="reducer-widget">
 <h4 class="widget-title">Interactive: apply two trees</h4>
-<p style="font-size: 0.9em; margin-top:0;">Use <code>t</code> for the leaf and juxtaposition for application: <code>(t t t)</code> parses as <code>apply(apply(t,t),t)</code> = <code>fork(t, t)</code>. The default below is the S-rule pattern <code>△ (△ △) △</code> applied to a leaf. Try <code>(t t t)</code>, <code>t</code> for the K-rule. Click <strong>Reduce step</strong>; the redex highlights for a moment, then reduces.</p>
+<p style="font-size: 0.9em; margin-top:0;">Use <code>t</code> for the leaf and juxtaposition for application: <code>(t t t)</code> parses as <code>apply(apply(t,t),t)</code>. The parser also accepts <strong>named atoms</strong>: <code>K</code>, <code>I</code>, <code>S</code>, <code>true</code>, <code>false</code>, and digit-runs (<code>0</code>, <code>1</code>, <code>2</code>, &hellip;) for Scott-encoded Nats. Try <code>(K K)</code>, <code>t</code> &mdash; this is <code>K K</code>, which reduces to <code>true</code>. Click <strong>Reduce step</strong>; the redex highlights for a moment, then reduces.</p>
 <div class="row">
   <span class="label">f:</span>
   <input type="text" id="reducer-f" value="(t (t t) t)" oninput="reducerReset()">
@@ -768,6 +780,10 @@
   <input type="text" id="reducer-x" value="t" oninput="reducerReset()">
   <button class="primary" onclick="reducerStep()">Reduce step</button>
   <button onclick="reducerReset()">Reset</button>
+  <label style="margin-left:0.6em; font-size:0.88em; cursor:pointer;">
+    <input type="checkbox" id="reducer-labels" onchange="reducerRerender()" style="vertical-align:middle;">
+    show names
+  </label>
 </div>
 <svg class="tree-svg" id="reducer-svg" width="600" height="120" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet"></svg>
 <div class="viz-caption" id="reducer-caption">leaf <span style="color:var(--accent-soft)">●</span> stem/fork <span style="color:var(--accent)">●</span> pending application <span style="color:var(--accent);font-family:monospace">@</span></div>
@@ -815,7 +831,7 @@
 <p>The combinators <span class="math">I, K, S</span> are themselves particular trees:</p>
 
 <p class="math-block">
-<span class="math">I&nbsp; =&nbsp; △&nbsp;(△&nbsp;△)&nbsp;△</span>&nbsp;&nbsp; &nbsp; <span class="math">K&nbsp; =&nbsp; △&nbsp;△</span>&nbsp;&nbsp; &nbsp; <span class="math">S&nbsp; =&nbsp; △&nbsp;(△&nbsp;(△&nbsp;△))&nbsp;△</span>
+<span class="math">I&nbsp; =&nbsp; △&nbsp;(△&nbsp;△&nbsp;△)&nbsp;△</span>&nbsp;&nbsp; &nbsp; <span class="math">K&nbsp; =&nbsp; △&nbsp;△</span>&nbsp;&nbsp; &nbsp; <span class="math">S&nbsp; =&nbsp; △&nbsp;(△&nbsp;(△&nbsp;△&nbsp;△))&nbsp;△</span>
 </p>
 
 <p>You can check, from the reduction rules of §2.3, that these tree shapes do what the names say: <span class="math">I&nbsp;v</span> reduces to <span class="math">v</span> (because the leaf/stem rules construct a stem, and the fork shape of <span class="math">I</span> hits the F-rule whose leaf-branch is the identity), and similarly for <span class="math">K, S</span>.</p>
@@ -1557,22 +1573,52 @@ function parseTree(input) {
   for (let i = 0; i < input.length; i++) {
     const c = input[i];
     if (c === ' ' || c === '\t' || c === '\n') continue;
-    if (c === '(' || c === ')') tokens.push(c);
-    else if (c === 't' || c === '△') tokens.push('t');
-    else throw new Error('bad char: ' + c);
+    if (c === '(' || c === ')') { tokens.push(c); continue; }
+    if (c === '△') { tokens.push('t'); continue; }
+    // Multi-char names: alphabetic identifier or digit run
+    if (/[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < input.length && /[A-Za-z_]/.test(input[j])) j++;
+      tokens.push(input.slice(i, j));
+      i = j - 1;
+      continue;
+    }
+    if (/[0-9]/.test(c)) {
+      let j = i;
+      while (j < input.length && /[0-9]/.test(input[j])) j++;
+      tokens.push(input.slice(i, j));
+      i = j - 1;
+      continue;
+    }
+    throw new Error('unexpected char: ' + c);
   }
   let p = 0;
   // grammar: expr = atom (atom)*  (left-assoc apply)
   function atom() {
-    if (tokens[p] === 't') { p++; return { tag: 'leaf' }; }
-    if (tokens[p] === '(') {
+    const tok = tokens[p];
+    if (tok === '(') {
       p++;
       const e = expr();
       if (tokens[p] !== ')') throw new Error('expected )');
       p++;
       return e;
     }
-    throw new Error('expected atom');
+    if (tok === undefined || tok === ')') throw new Error('expected atom, got ' + (tok || 'end of input'));
+    if (tok === 't') { p++; return { tag: 'leaf' }; }
+    // Numbers: Nat literal
+    if (/^[0-9]+$/.test(tok)) {
+      p++;
+      const n = parseInt(tok, 10);
+      let cur = { tag: 'leaf' };
+      for (let k = 0; k < n; k++) cur = { tag: 'fork', l: { tag: 'leaf' }, r: cur };
+      return cur;
+    }
+    // Named definitions
+    if (Object.prototype.hasOwnProperty.call(DEFS, tok)) {
+      p++;
+      return cloneTree(DEFS[tok]);
+    }
+    throw new Error('unknown name: ' + tok);
   }
   function expr() {
     let e = atom();
@@ -1596,6 +1642,61 @@ function apply(f, x) {
   if (f.tag === 'stem') return { tag: 'fork', l: f.c, r: x };
   // Rule 3+: fork — defer (we'll reduce step by step in `step`)
   return { tag: 'apply', f, x };
+}
+
+// Named definitions: closed normal-form trees the parser will recognize.
+// (cloneTree gives each occurrence a fresh object so reference-equality identity
+// stays meaningful when we highlight redex subtrees.)
+const LEAF = { tag: 'leaf' };
+function cloneTree(t) {
+  if (t.tag === 'leaf') return { tag: 'leaf' };
+  if (t.tag === 'stem') return { tag: 'stem', c: cloneTree(t.c) };
+  if (t.tag === 'fork') return { tag: 'fork', l: cloneTree(t.l), r: cloneTree(t.r) };
+  if (t.tag === 'apply') return { tag: 'apply', f: cloneTree(t.f), x: cloneTree(t.x) };
+}
+// K = △△, I = △(△△△)△, S = △(△(△△△))△
+const _K = { tag: 'stem', c: LEAF };
+const _I = { tag: 'fork', l: { tag: 'fork', l: LEAF, r: LEAF }, r: LEAF };
+const _S = { tag: 'fork', l: { tag: 'stem', c: { tag: 'fork', l: LEAF, r: LEAF } }, r: LEAF };
+// Scott-encoded Booleans after bracket abstraction:
+//   true  = K K = apply(K, K) = fork(△, stem(△))
+//   false = K (K I) = fork(△, fork(△, I))
+const _TRUE  = { tag: 'fork', l: LEAF, r: { tag: 'stem', c: LEAF } };
+const _FALSE = { tag: 'fork', l: LEAF, r: { tag: 'fork', l: LEAF, r: { tag: 'fork', l: { tag: 'fork', l: LEAF, r: LEAF }, r: LEAF } } };
+const DEFS = {
+  // Combinators
+  'K': _K, 'I': _I, 'S': _S,
+  // Booleans
+  'true': _TRUE, 'false': _FALSE, 'TT': _TRUE, 'FF': _FALSE,
+};
+
+// ---- Recognizer: identify a subtree's canonical name, or null. ----
+// Specific shapes are tried before general patterns (Nats), and "1" is the
+// shortest interesting Nat — we deliberately do NOT label a bare leaf as "0"
+// because that overload is too misleading without context.
+function treeShapeEq(a, b) {
+  if (a.tag !== b.tag) return false;
+  if (a.tag === 'leaf') return true;
+  if (a.tag === 'stem') return treeShapeEq(a.c, b.c);
+  if (a.tag === 'fork') return treeShapeEq(a.l, b.l) && treeShapeEq(a.r, b.r);
+  if (a.tag === 'apply') return treeShapeEq(a.f, b.f) && treeShapeEq(a.x, b.x);
+  return false;
+}
+function natValue(t) {
+  let n = 0, cur = t;
+  while (cur.tag === 'fork' && cur.l.tag === 'leaf') { n++; cur = cur.r; }
+  return cur.tag === 'leaf' ? n : null;
+}
+function recognize(t) {
+  if (!t) return null;
+  if (treeShapeEq(t, _I))     return 'I';
+  if (treeShapeEq(t, _S))     return 'S';
+  if (treeShapeEq(t, _TRUE))  return 'true';
+  if (treeShapeEq(t, _FALSE)) return 'false';
+  if (treeShapeEq(t, _K))     return 'K';
+  const n = natValue(t);
+  if (n !== null && n >= 1 && n <= 9) return String(n);
+  return null;
 }
 function freshFork(l, r) { return { tag: 'fork', l, r }; }
 
@@ -1655,10 +1756,21 @@ function childrenOf(t) {
   return [];
 }
 
+// When "show names" is on, recognized subtrees are treated as atoms for layout
+// purposes (we don't descend into them).
+function showLabels() {
+  const cb = document.getElementById('reducer-labels');
+  return cb && cb.checked;
+}
+function effectiveChildren(t) {
+  if (showLabels() && recognize(t)) return [];
+  return childrenOf(t);
+}
+
 // Tidy-tree layout. Returns { nodes: [{tree, x, depth}], rootX, width }.
 function layoutTidy(tree, depth) {
   depth = depth || 0;
-  const children = childrenOf(tree);
+  const children = effectiveChildren(tree);
   if (children.length === 0) {
     return { nodes: [{ tree, x: 0, depth }], rootX: 0, width: 1 };
   }
@@ -1720,7 +1832,7 @@ function renderTree(tree, opts) {
   // Edges first (under nodes)
   for (const n of layout.nodes) {
     const p = pos.get(n.tree);
-    for (const c of childrenOf(n.tree)) {
+    for (const c of effectiveChildren(n.tree)) {
       const q = pos.get(c);
       const line = document.createElementNS(SVG_NS, 'line');
       line.setAttribute('x1', p.x); line.setAttribute('y1', p.y);
@@ -1737,29 +1849,53 @@ function renderTree(tree, opts) {
   // Nodes
   for (const n of layout.nodes) {
     const p = pos.get(n.tree);
+    const recognized = showLabels() ? recognize(n.tree) : null;
+    const isNamed = !!recognized;
     const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('cx', p.x);
     circle.setAttribute('cy', p.y);
-    circle.setAttribute('r', n.tree.tag === 'leaf' ? 9 : 13);
+    // Sized to fit longer names like "false"; tiny for bare leaves
+    const radius = isNamed ? Math.max(14, 5 + recognized.length * 4) : (n.tree.tag === 'leaf' ? 9 : 13);
+    circle.setAttribute('r', radius);
     let cls = 'node node-' + n.tree.tag;
+    if (isNamed) cls += ' node-named';
     if (fnRefs.has(n.tree))  cls += ' redex-fn';
     if (argRefs.has(n.tree)) cls += ' redex-arg';
     if (newRefs.has(n.tree)) cls += ' flash-new';
     circle.setAttribute('class', cls);
     svg.appendChild(circle);
 
-    if (n.tree.tag === 'leaf') {
-      const txt = document.createElementNS(SVG_NS, 'text');
-      txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
-      txt.setAttribute('class', 'lbl');
-      txt.textContent = '△';
-      svg.appendChild(txt);
+    let labelText = null, labelClass = 'lbl';
+    if (isNamed) {
+      labelText = recognized;
+      labelClass = 'lbl lbl-named';
+    } else if (n.tree.tag === 'leaf') {
+      labelText = '△';
     } else if (n.tree.tag === 'apply') {
+      labelText = '@';
+      labelClass = 'lbl lbl-apply';
+    }
+    if (labelText) {
       const txt = document.createElementNS(SVG_NS, 'text');
       txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
-      txt.setAttribute('class', 'lbl lbl-apply');
-      txt.textContent = '@';
+      txt.setAttribute('class', labelClass);
+      txt.textContent = labelText;
       svg.appendChild(txt);
+    }
+  }
+}
+
+// Re-render current state when the user toggles "show names" or changes inputs.
+function reducerRerender() {
+  if (reducerState && reducerState.node) {
+    renderTree(reducerState.node);
+  } else {
+    try {
+      const f = parseTree(document.getElementById('reducer-f').value);
+      const x = parseTree(document.getElementById('reducer-x').value);
+      renderTree({ tag: 'apply', f, x });
+    } catch (_) {
+      renderTree(null);
     }
   }
 }
