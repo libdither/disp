@@ -790,18 +790,22 @@
 <!-- INTERACTIVE WIDGET 1: tree reducer -->
 <div class="widget" id="reducer-widget">
 <h4 class="widget-title">Interactive: apply two trees</h4>
-<p style="font-size: 0.9em; margin-top:0;">Use <code>t</code> for the leaf and juxtaposition for application: <code>(t t t)</code> parses as <code>apply(apply(t,t),t)</code>. The parser accepts <strong>named atoms</strong> &mdash; combinators <code>K</code>, <code>I</code>, <code>S</code>; Booleans <code>true</code>, <code>false</code>; operations <code>not</code>, <code>and</code>, <code>or</code>, <code>select</code>, <code>pair_fst</code>, <code>pair_snd</code>; and digit-runs <code>0</code>, <code>1</code>, &hellip; for Scott-encoded Nats. With <em>circle known shapes</em> on (default), recognized subtrees are circled and tagged. Try <code>(not true)</code>, <code>t</code> or <code>(and true)</code>, <code>false</code>.</p>
+<p style="font-size: 0.9em; margin-top:0;">A general-purpose tree-calculus evaluator. Type any expression: <code>t</code> for the leaf, juxtaposition for application, parens for grouping. Named atoms: combinators <code>K</code>, <code>I</code>, <code>S</code>; Booleans <code>true</code>, <code>false</code>; Nat constructor <code>succ</code> (= <code>K</code> as a tree); operations <code>not</code>, <code>and</code>, <code>or</code>, <code>select</code>, <code>pair_fst</code>, <code>pair_snd</code>; and digit-runs <code>0</code>, <code>1</code>, &hellip; for Scott-encoded Nats. Try <code>not true</code>, <code>succ 0</code>, <code>succ (succ 0)</code>, <code>and (not false) true</code>.</p>
 <div class="row">
-  <span class="label">f:</span>
-  <input type="text" id="reducer-f" value="not" oninput="reducerReset()" style="min-width:120px">
-  <span class="label">x:</span>
-  <input type="text" id="reducer-x" value="true" oninput="reducerReset()" style="min-width:120px">
+  <span class="label">expr:</span>
+  <input type="text" id="reducer-expr" value="not true" oninput="reducerReset()" style="flex:1; min-width:240px">
   <button class="primary" onclick="reducerStep()">Step</button>
-  <button onclick="reducerRun()" id="reducer-run-btn">Run to normal form</button>
+  <button onclick="reducerRun()" id="reducer-run-btn">Run</button>
   <button onclick="reducerReset()">Reset</button>
-  <label style="margin-left:0.6em; font-size:0.88em; cursor:pointer;">
+</div>
+<div class="row" style="margin-top:0.4em; font-size:0.88em">
+  <label style="cursor:pointer;">
     <input type="checkbox" id="reducer-labels" onchange="reducerRerender()" checked style="vertical-align:middle;">
     circle known shapes
+  </label>
+  <label style="cursor:pointer; margin-left:1em;">
+    <input type="checkbox" id="reducer-treeview" onchange="reducerRerender()" checked style="vertical-align:middle;">
+    tree view (unshare subtrees)
   </label>
 </div>
 <svg class="tree-svg" id="reducer-svg" width="600" height="120" viewBox="0 0 600 120" preserveAspectRatio="xMidYMid meet"></svg>
@@ -1810,6 +1814,12 @@ DEFS.or        = _OR;
 DEFS.select    = _SELECT;
 DEFS.pair_fst  = _PAIR_FST;
 DEFS.pair_snd  = _PAIR_SND;
+// `succ` is operationally identical to K: succ n = fork(△, n) = apply(stem(△), n) = K n,
+// so [n](succ n) η-reduces to K. We accept `succ` as a surface name; the tree it
+// parses to is stem(△), and the visualizer labels that shape as K (the more
+// fundamental name) — a deliberate teaching moment about tree-calculus reflectivity.
+DEFS.succ      = _K;
+DEFS.zero      = LEAF;
 
 function recognize(t) {
   if (!t) return null;
@@ -1887,10 +1897,14 @@ function childrenOf(t) {
   return [];
 }
 
-// Whether to overlay name-circles around recognized subtrees.
+// UI option getters (default-ON for both)
 function showLabels() {
   const cb = document.getElementById('reducer-labels');
-  return !cb || cb.checked;  // default ON
+  return !cb || cb.checked;
+}
+function treeView() {
+  const cb = document.getElementById('reducer-treeview');
+  return !cb || cb.checked;
 }
 
 // Tidy-tree layout. Returns { nodes: [{tree, x, depth}], rootX, width }.
@@ -1934,7 +1948,12 @@ function renderTree(tree, opts) {
     svg.setAttribute('viewBox', '0 0 600 120');
     return;
   }
-  const layout = layoutTidy(tree, 0);
+  // In tree view, every occurrence of every subtree should appear as a
+  // separate visual node. Cloning the input deep-copies each subtree so JS
+  // reference equality (which the layout and rendering use as identity) no
+  // longer treats duplicates as the same node.
+  const renderTreeRoot = treeView() ? cloneTree(tree) : tree;
+  const layout = layoutTidy(renderTreeRoot, 0);
   const cellW = 42, cellH = 56, padX = 30, padY = 26;
   const xs = layout.nodes.map(n => n.x);
   const minX = Math.min.apply(null, xs);
@@ -1950,10 +1969,11 @@ function renderTree(tree, opts) {
     pos.set(n.tree, { x: (n.x - minX) * cellW + padX, y: n.depth * cellH + padY });
   }
 
-  // Build sets of highlighted refs.
-  const fnRefs  = opts.redex && opts.redex.f ? new Set(collectRefs(tree, opts.redex.f)) : new Set();
-  const argRefs = opts.redex && opts.redex.x ? new Set(collectRefs(tree, opts.redex.x)) : new Set();
-  const newRefs = opts.flashNew                ? new Set(collectRefs(tree, opts.flashNew)) : new Set();
+  // Build sets of highlighted refs. (Only valid in DAG view because the redex
+  // came from the original tree; in tree view we cloned, so these stay empty.)
+  const fnRefs  = (!treeView() && opts.redex && opts.redex.f) ? new Set(collectRefs(renderTreeRoot, opts.redex.f)) : new Set();
+  const argRefs = (!treeView() && opts.redex && opts.redex.x) ? new Set(collectRefs(renderTreeRoot, opts.redex.x)) : new Set();
+  const newRefs = (!treeView() && opts.flashNew)                ? new Set(collectRefs(renderTreeRoot, opts.flashNew)) : new Set();
 
   // Edges first (under nodes)
   for (const n of layout.nodes) {
@@ -1990,7 +2010,7 @@ function renderTree(tree, opts) {
       }
       for (const c of childrenOf(t)) walkRegions(c);
     }
-    walkRegions(tree);
+    walkRegions(renderTreeRoot);
     regions.sort(function (a, b) { return b.nodes.length - a.nodes.length; });
   }
 
@@ -2071,18 +2091,12 @@ function renderTree(tree, opts) {
   }
 }
 
-// Re-render current state when the user toggles "show names" or changes inputs.
+// Re-render current state when the user toggles a checkbox.
 function reducerRerender() {
   if (reducerState && reducerState.node) {
     renderTree(reducerState.node);
   } else {
-    try {
-      const f = parseTree(document.getElementById('reducer-f').value);
-      const x = parseTree(document.getElementById('reducer-x').value);
-      renderTree({ tag: 'apply', f, x });
-    } catch (_) {
-      renderTree(null);
-    }
+    try { renderTree(_parseExpr()); } catch (_) { renderTree(null); }
   }
 }
 
@@ -2144,18 +2158,28 @@ function reduceFirstApply(n) {
 
 let reducerState = null;
 
+function _parseExpr() {
+  const src = document.getElementById('reducer-expr').value;
+  return parseTree(src);
+}
+
 function reducerReset() {
   reducerState = null;
   reducerAutoActive = false;
-  document.getElementById('reducer-out').innerHTML = 'Press <em>Step</em> or <em>Run to normal form</em> to evaluate <code>apply(f, x)</code>.';
+  document.getElementById('reducer-out').innerHTML = 'Type any tree-calculus expression and press <em>Step</em> or <em>Run</em>.';
   document.getElementById('reducer-trace').innerHTML = '';
-  // Build the initial tree from inputs so the user can see it before the first step
   try {
-    const f = parseTree(document.getElementById('reducer-f').value);
-    const x = parseTree(document.getElementById('reducer-x').value);
-    const initial = { tag: 'apply', f, x };
-    renderTree(initial);
-  } catch (_) {
+    const expr = _parseExpr();
+    reducerState = { node: expr, history: [] };
+    renderTree(expr);
+    const rec = recognize(expr);
+    if (rec) {
+      document.getElementById('reducer-out').innerHTML =
+        '<strong>Initial term:</strong> <code>' + pretty(expr) + '</code> &mdash; <em>' + rec + '</em>';
+    }
+  } catch (e) {
+    document.getElementById('reducer-out').innerHTML =
+      '<strong style="color:#c44">Parse error:</strong> ' + e.message;
     renderTree(null);
   }
 }
@@ -2174,9 +2198,7 @@ function renderTrace() {
 function reducerStep() {
   try {
     if (!reducerState) {
-      const f = parseTree(document.getElementById('reducer-f').value);
-      const x = parseTree(document.getElementById('reducer-x').value);
-      reducerState = { node: { tag: 'apply', f, x }, history: [] };
+      reducerState = { node: _parseExpr(), history: [] };
     }
     const step = reduceFirstApply(reducerState.node);
     if (!step) {
@@ -2215,24 +2237,21 @@ function reducerRun() {
   function tick() {
     if (!reducerAutoActive || count++ > AUTO_STEP_LIMIT) {
       reducerAutoActive = false;
-      if (btn) btn.textContent = 'Run to normal form';
+      if (btn) btn.textContent = 'Run';
       return;
     }
     if (!reducerState) {
-      try {
-        const f = parseTree(document.getElementById('reducer-f').value);
-        const x = parseTree(document.getElementById('reducer-x').value);
-        reducerState = { node: { tag: 'apply', f, x }, history: [] };
-      } catch (e) {
+      try { reducerState = { node: _parseExpr(), history: [] }; }
+      catch (e) {
         reducerAutoActive = false;
-        if (btn) btn.textContent = 'Run to normal form';
+        if (btn) btn.textContent = 'Run';
         return;
       }
     }
     const step = reduceFirstApply(reducerState.node);
     if (!step) {
       reducerAutoActive = false;
-      if (btn) btn.textContent = 'Run to normal form';
+      if (btn) btn.textContent = 'Run';
       renderTree(reducerState.node);
       renderTrace();
       const recName = recognize(reducerState.node);
