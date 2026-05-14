@@ -661,6 +661,39 @@
     color: var(--fg-muted);
     font-size: 0.9em;
   }
+  /* Current-tree display (raw + named) under the reducer widget */
+  .forms-display {
+    margin-top: 0.6em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3em;
+  }
+  .form-row {
+    display: flex;
+    gap: 0.6em;
+    align-items: baseline;
+  }
+  .form-label {
+    font-family: 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    font-size: 0.75em;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    min-width: 3.5em;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .form-row code {
+    flex: 1;
+    word-break: break-all;
+    padding: 0.4em 0.6em;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.85em;
+    line-height: 1.45;
+    min-height: 1.6em;
+  }
   /* Reduction trace */
   .trace { display: flex; flex-direction: column; gap: 0.4em; }
   .trace .frame {
@@ -873,8 +906,8 @@
 
 <table>
 <tr><th>Pattern of <span class="math">f</span></th><th>Shape of <span class="math">x</span></th><th>Result</th><th>Name / interpretation</th></tr>
-<tr><td><span class="math">△</span></td><td><em>any</em></td><td><span class="math">△&nbsp;x</span></td><td>build a stem</td></tr>
-<tr><td><span class="math">△&nbsp;u</span></td><td><em>any</em></td><td><span class="math">△&nbsp;u&nbsp;x</span></td><td>build a fork</td></tr>
+<tr><td><span class="math">△</span></td><td><em>any</em></td><td><span class="math">△&nbsp;x</span></td><td>L rule (build a stem)</td></tr>
+<tr><td><span class="math">△&nbsp;u</span></td><td><em>any</em></td><td><span class="math">△&nbsp;u&nbsp;x</span></td><td>s rule (build a fork)</td></tr>
 <tr><td><span class="math">△&nbsp;△&nbsp;b</span></td><td><em>any</em></td><td><span class="math">b</span></td><td>K rule (constant)</td></tr>
 <tr><td><span class="math">△&nbsp;(△&nbsp;c)&nbsp;b</span></td><td><em>any</em></td><td><span class="math">(c&nbsp;x)(b&nbsp;x)</span></td><td>S rule (composition)</td></tr>
 <tr><td rowspan="3"><span class="math">△&nbsp;(△&nbsp;c&nbsp;d)&nbsp;b</span></td><td><span class="math">△</span> (leaf)</td><td><span class="math">c</span></td><td rowspan="3">F rule (triage on <span class="math">x</span>)</td></tr>
@@ -882,15 +915,17 @@
 <tr><td><span class="math">△&nbsp;u&nbsp;v</span> (fork)</td><td><span class="math">b&nbsp;u&nbsp;v</span></td></tr>
 </table>
 
-<p>The first two rules are passive: they just build larger trees when no reduction can fire. K and S match their SKI counterparts. The fifth rule &mdash; F &mdash; is the new ingredient: it's the only rule whose behavior depends on the shape of the <em>argument</em>. A program of shape <span class="math">△&nbsp;(△&nbsp;c&nbsp;d)&nbsp;b</span> is, operationally, a case analysis on the structure of its argument. Reduction itself can inspect tree shape.</p>
+<p>The first two rules (L and s) are passive: they just build larger trees when no reduction can fire. K and S match their SKI counterparts. The fifth rule &mdash; F &mdash; is the new ingredient: it's the only rule whose behavior depends on the shape of the <em>argument</em>. A program of shape <span class="math">△&nbsp;(△&nbsp;c&nbsp;d)&nbsp;b</span> is, operationally, a case analysis on the structure of its argument. Reduction itself can inspect tree shape. (The widget below labels each firing with its rule letter: K, S, F, L, or s.)</p>
 
 <aside class="note">
 <strong>Why this matters.</strong> In λ-calculus there is no β-reducible predicate "<em>x</em> is a variable" or "<em>x</em> is a λ-abstraction." In tree calculus we can write <span class="math">is_leaf</span> as a closed tree program and reduce it against any value to get <span class="math">true</span> or <span class="math">false</span>. This property is called <strong>structural completeness</strong>: every program can decide the structure of every other program by reduction alone. It's the property that makes a self-hosting type checker possible at all.
 </aside>
 
+<p>To get a better sense of the tree calculus in action, the widget below evaluates any expression you type &mdash; press <em>Step</em> to fire the next reduction, and watch the rule letter (K, S, F, L, or s) appear on each redex as it becomes ready.</p>
+
 <!-- INTERACTIVE WIDGET 1: tree reducer -->
 <div class="widget" id="reducer-widget">
-<h4 class="widget-title">Interactive Application: LORAX</h4>
+<h4 class="widget-title">LORAX: The Interactive Tree-Calculus Evaluator</h4>
 <em>It speaks for the trees.</em>
 <p style="font-size: 0.9em; margin-top:0;">A general-purpose tree-calculus evaluator. Type any expression: <code>t</code> for the leaf, juxtaposition for application, parens for grouping. Hover any name below (or any region label in the diagram) to see its tree-level definition.</p>
 <p style="font-size: 0.88em; margin-top:0.3em; color: var(--fg-muted);"><strong>Tree-style Booleans</strong> (the simplest encoding — the values <em>are</em> the smallest trees; operations triage via the F-rule):
@@ -960,8 +995,17 @@
   <span style="border:2px solid #f0b429;border-radius:50%;padding:0 .35em;color:#f0b429;font-weight:700">next</span>
   fires on the next Step
 </div>
-<div class="display" id="reducer-out">Press <em>Reduce step</em> to evaluate <code>apply(f, x)</code>.</div>
-<div id="reducer-trace" class="trace"></div>
+<div class="display" id="reducer-out">Type any tree-calculus expression and press <em>Step</em> or <em>Run</em>.</div>
+<div class="forms-display">
+  <div class="form-row">
+    <span class="form-label">raw</span>
+    <code id="reducer-form-raw"></code>
+  </div>
+  <div class="form-row">
+    <span class="form-label">named</span>
+    <code id="reducer-form-named"></code>
+  </div>
+</div>
 </div>
 
 <h3 id="bracket">2.4&nbsp; Bracket abstraction: compiling λ to trees</h3>
@@ -1024,7 +1068,7 @@
 <details>
 <summary>The recursive abstractor, in TypeScript</summary>
 <div class="body">
-<p>The two optimizations appear as small special cases inside the recursive abstractor:</p>
+<p>The two optimizations appear as small special cases inside the recursive abstractor. (<code>cap(f, x)</code> is just a one-line helper that constructs an IR application node <code>{ tag: "app", f, x }</code> &mdash; i.e., it represents the expression <code>f x</code> in the compiler intermediate representation, before bracket abstraction lowers the whole thing to trees.)</p>
 <pre><code><span class="k">function</span> <span class="t">abstractName</span>(name, body) {
   <span class="k">if</span> (!containsFree(body, name)) <span class="k">return</span> cap(K, body)         <span class="c">// [x].M = K M  (constant case)</span>
   <span class="k">switch</span> (body.tag) {
@@ -1084,9 +1128,12 @@
 I := {x} -> x
 K := {x, y} -> x
 
-<span class="c">// typed (the type is itself an expression — usually a Pi)</span>
+<span class="c">// typed (the type is itself an expression — typically a Pi, i.e. a</span>
+<span class="c">// dependent function type; introduced properly in §5.1)</span>
 id : {A : Type} -> A -> A
    := {A} -> {x} -> x</code></pre>
+
+<p>The <code>id</code> example reads: "for any type <code>A</code>, a function from <code>A</code> to <code>A</code>." The <code>{A : Type}</code> on the left of the <code>:=</code> is a type-level binder (Pi); the <code>{A}</code> on the right is the matching term-level binder. <code>Type</code>, the universe, is defined in §6.4.</p>
 
 <p>A <strong>test</strong> is a compile-time obligation: parse both sides, reduce, demand structural equality.</p>
 
@@ -1719,7 +1766,7 @@ Lecture Notes in Computer Science 78. Springer. The progenitor of the LCF tradit
 </section>
 
 <div class="footer">
-<p>Source repository at <a href="https://github.com/zyansheep/disp">github.com/zyansheep/disp</a>. Authoritative specifications: <code>TYPE_THEORY.typ</code> (kernel semantics), <code>SYNTAX.typ</code> (grammar), <code>COMPILATION.typ</code> (elaboration), <code>GOALS.md</code> (long-term vision), <code>DEVELOPMENT_PHILOSOPHY.md</code> (discipline). This writeup is pedagogical commentary; the cited <code>.typ</code> and <code>.disp</code> files are the ground truth.</p>
+<p>Source repository at <a href="https://github.com/libdither/disp">github.com/libdither/disp</a>. Authoritative specifications: <code>TYPE_THEORY.typ</code> (kernel semantics), <code>SYNTAX.typ</code> (grammar), <code>COMPILATION.typ</code> (elaboration), <code>GOALS.md</code> (long-term vision), <code>DEVELOPMENT_PHILOSOPHY.md</code> (discipline). This writeup is pedagogical commentary; the cited <code>.typ</code> and <code>.disp</code> files are the ground truth.</p>
 </div>
 
 </main>
@@ -2209,6 +2256,16 @@ function pretty(t) {
   if (t.tag === 'stem') return '(t ' + pretty(t.c) + ')';
   if (t.tag === 'fork') return '(t ' + pretty(t.l) + ' ' + pretty(t.r) + ')';
   if (t.tag === 'apply') return '[' + pretty(t.f) + ' • ' + pretty(t.x) + ']';
+  return '?';
+}
+// Raw form — no name substitution, just the tree as `t`, parens, and apply
+// brackets. Lets the user compare structure side-by-side with the named form.
+function prettyRaw(t) {
+  if (!t) return '?';
+  if (t.tag === 'leaf') return 't';
+  if (t.tag === 'stem') return '(t ' + prettyRaw(t.c) + ')';
+  if (t.tag === 'fork') return '(t ' + prettyRaw(t.l) + ' ' + prettyRaw(t.r) + ')';
+  if (t.tag === 'apply') return '[' + prettyRaw(t.f) + ' • ' + prettyRaw(t.x) + ']';
   return '?';
 }
 
@@ -2796,43 +2853,39 @@ function _parseExpr() {
   return parseTree(src);
 }
 
+function renderForms() {
+  const t = reducerState && reducerState.node;
+  document.getElementById('reducer-form-raw').textContent   = t ? prettyRaw(t) : '';
+  document.getElementById('reducer-form-named').textContent = t ? pretty(t)    : '';
+}
+
 function reducerReset() {
   reducerState = null;
   reducerAutoActive = false;
   resetViewport();
   document.getElementById('reducer-out').innerHTML = 'Type any tree-calculus expression and press <em>Step</em> or <em>Run</em>.';
-  document.getElementById('reducer-trace').innerHTML = '';
   try {
     const expr = _parseExpr();
-    reducerState = { node: expr, history: [] };
+    reducerState = { node: expr };
     renderTree(expr);
+    renderForms();
     const rec = recognize(expr);
     if (rec) {
       document.getElementById('reducer-out').innerHTML =
-        '<strong>Initial term:</strong> <code>' + pretty(expr) + '</code> &mdash; <em>' + rec + '</em>';
+        '<strong>Initial term:</strong> <em>' + rec + '</em>';
     }
   } catch (e) {
     document.getElementById('reducer-out').innerHTML =
       '<strong style="color:#c44">Parse error:</strong> ' + e.message;
     renderTree(null);
+    renderForms();
   }
-}
-
-function renderTrace() {
-  const trace = document.getElementById('reducer-trace');
-  trace.innerHTML = reducerState.history.map(function (h, i) {
-    return '<div class="frame' + (i === reducerState.history.length - 1 ? ' current' : '') + '">' +
-             '<div><code>' + h.before + '</code></div>' +
-             '<div class="rule">→ ' + h.rule + '</div>' +
-             '<div><code>' + h.after + '</code></div>' +
-           '</div>';
-  }).join('');
 }
 
 function reducerStep() {
   try {
     if (!reducerState) {
-      reducerState = { node: _parseExpr(), history: [] };
+      reducerState = { node: _parseExpr() };
     }
     const step = parallelMode()
       ? parallelReduceStep(reducerState.node)
@@ -2840,22 +2893,16 @@ function reducerStep() {
     if (!step) {
       const recName = recognize(reducerState.node);
       document.getElementById('reducer-out').innerHTML =
-        '<strong>Normal form:</strong> <code>' + pretty(reducerState.node) + '</code>' +
-        (recName ? ' &mdash; <em>' + recName + '</em>' : '');
+        '<strong>Normal form.</strong>' + (recName ? ' &mdash; <em>' + recName + '</em>' : '');
       renderTree(reducerState.node);
+      renderForms();
       return;
     }
-    reducerState.history.push({
-      before: pretty(reducerState.node),
-      after: pretty(step.result),
-      rule: step.rule
-    });
     reducerState.node = step.result;
     document.getElementById('reducer-out').innerHTML =
-      '<strong>Applied:</strong> ' + step.rule +
-      '<br><strong>Current:</strong> <code>' + pretty(step.result) + '</code>';
+      '<strong>Applied:</strong> ' + step.rule;
     renderTree(reducerState.node);
-    renderTrace();
+    renderForms();
   } catch (e) {
     document.getElementById('reducer-out').innerHTML =
       '<strong style="color:#c44">Error:</strong> ' + e.message;
@@ -2883,7 +2930,7 @@ function reducerRun() {
       return;
     }
     if (!reducerState) {
-      try { reducerState = { node: _parseExpr(), history: [] }; }
+      try { reducerState = { node: _parseExpr() }; }
       catch (e) {
         reducerAutoActive = false;
         if (btn) btn.textContent = 'Run';
@@ -2897,16 +2944,15 @@ function reducerRun() {
       reducerAutoActive = false;
       if (btn) btn.textContent = 'Run';
       renderTree(reducerState.node);
-      renderTrace();
+      renderForms();
       const recName = recognize(reducerState.node);
       document.getElementById('reducer-out').innerHTML =
-        '<strong>Normal form:</strong> <code>' + pretty(reducerState.node) + '</code>' +
-        (recName ? ' &mdash; <em>' + recName + '</em>' : '');
+        '<strong>Normal form.</strong>' + (recName ? ' &mdash; <em>' + recName + '</em>' : '');
       return;
     }
-    reducerState.history.push({ before: pretty(reducerState.node), after: pretty(step.result), rule: step.rule });
     reducerState.node = step.result;
     renderTree(reducerState.node);
+    renderForms();
     setTimeout(tick, AUTO_STEP_MS);
   }
   tick();
