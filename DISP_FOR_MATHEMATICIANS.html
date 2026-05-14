@@ -406,18 +406,16 @@
     stroke-dasharray: 3 2;
   }
   /* Apply nodes keep their dashed hollow styling regardless of whether a rule
-     is ready to fire. The rule color shows up in the INNER LETTER instead,
-     so it stays visually distinct from real tree nodes. */
+     is ready to fire. The inner label switches between "@" (waiting) and the
+     rule letter (K/S/F/L/s), but in the same accent color either way — so
+     apply nodes remain visually distinct from real tree nodes (leaf/stem/
+     fork) by shape, not by color. */
   svg.tree-svg .lbl-rule {
+    fill: var(--accent);
     font-family: 'JetBrains Mono', 'Menlo', monospace;
     font-size: 12px;
     font-weight: 700;
   }
-  svg.tree-svg .lbl-rule-K { fill: #4a8a4a; }
-  svg.tree-svg .lbl-rule-S { fill: #6e54a8; }
-  svg.tree-svg .lbl-rule-F { fill: #b67318; }
-  svg.tree-svg .lbl-rule-L { fill: var(--fg-muted); }
-  svg.tree-svg .lbl-rule-s { fill: var(--fg-muted); }
   /* The "next" marker: a soft pulsing ring + a small label above the apply
      node that reduceFirstApply will fire on the next Step click. */
   svg.tree-svg .next-halo {
@@ -864,6 +862,10 @@
     <input type="checkbox" id="reducer-treeview" onchange="reducerRerender()" checked style="vertical-align:middle;">
     tree view (unshare subtrees)
   </label>
+  <label style="cursor:pointer; margin-left:1em;" title="By confluence, all ready redexes can be reduced together. The next-marker is hidden in this mode since they all fire.">
+    <input type="checkbox" id="reducer-parallel" onchange="reducerRerender()" style="vertical-align:middle;">
+    fire all ready redexes per step
+  </label>
 </div>
 <div class="svg-pan-container">
   <svg class="tree-svg" id="reducer-svg" viewBox="0 0 600 460" preserveAspectRatio="xMidYMid meet"></svg>
@@ -872,13 +874,8 @@
 <div class="viz-caption" id="reducer-caption">
   leaf <span style="color:var(--accent-soft)">●</span> &nbsp;
   stem/fork <span style="color:var(--accent)">●</span> &nbsp;
-  apply (waiting) <span style="color:var(--accent);font-family:monospace">@</span> &nbsp; &mdash; &nbsp;
-  apply (ready):
-  <span style="color:#4a8a4a;font-family:monospace;font-weight:700">K</span>
-  <span style="color:#6e54a8;font-family:monospace;font-weight:700">S</span>
-  <span style="color:#b67318;font-family:monospace;font-weight:700">F</span>
-  <span style="color:var(--fg-muted);font-family:monospace;font-weight:700">L</span>
-  <span style="color:var(--fg-muted);font-family:monospace;font-weight:700">s</span>
+  apply: <span style="color:var(--accent);font-family:monospace">@</span> waiting,
+  <span style="color:var(--accent);font-family:monospace;font-weight:700">K&middot;S&middot;F&middot;L&middot;s</span> ready (rule letter shown)
   &nbsp; &mdash; &nbsp;
   <span style="border:2px solid #f0b429;border-radius:50%;padding:0 .35em;color:#f0b429;font-weight:700">next</span>
   fires on the next Step
@@ -2006,6 +2003,10 @@ function treeView() {
   const cb = document.getElementById('reducer-treeview');
   return !cb || cb.checked;
 }
+function parallelMode() {
+  const cb = document.getElementById('reducer-parallel');
+  return cb && cb.checked;
+}
 
 // Tidy-tree layout. Returns { nodes: [{tree, x, depth}], rootX, width }.
 function layoutTidy(tree, depth) {
@@ -2194,8 +2195,9 @@ function renderTree(tree, opts) {
   // Halo around the apply node that the reducer will fire next (matches
   // reduceFirstApply's DFS order). Multiple K/S/F-labeled nodes can be ready
   // at once thanks to confluence; this marker calls out the *one* the
-  // implementation has chosen for the next Step.
-  const nextNode = nextApplyToFire(renderTreeRoot);
+  // implementation has chosen for the next Step. Hidden in parallel mode
+  // since every ready apply will fire.
+  const nextNode = parallelMode() ? null : nextApplyToFire(renderTreeRoot);
   if (nextNode) {
     const np = pos.get(nextNode);
     if (np) {
@@ -2244,7 +2246,7 @@ function renderTree(tree, opts) {
       const txt = document.createElementNS(SVG_NS, 'text');
       txt.setAttribute('x', p.x); txt.setAttribute('y', p.y);
       if (rule) {
-        txt.setAttribute('class', 'lbl lbl-rule lbl-rule-' + rule);
+        txt.setAttribute('class', 'lbl lbl-rule');
         txt.textContent = rule;
       } else {
         txt.setAttribute('class', 'lbl lbl-apply');
@@ -2364,6 +2366,45 @@ function reducerRerender() {
 // reduceFirstApply returns { result, rule, redex: {f, x} } where {f, x} are the
 // specific subtree references in the *current* tree that participate in the
 // next reduction. We use these references to highlight occurrences visually.
+// Parallel reduction (Tait–Martin-Löf style complete development): reduce
+// children first, then fire this node if it's now ready. By confluence this
+// always agrees with sequential reduction on the final normal form. It can
+// fire many cascading redexes in one step — useful for expressions with
+// independent subterms.
+function parallelReduceStep(n) {
+  const fired = [];
+  function walk(t) {
+    if (t.tag === 'leaf') return t;
+    if (t.tag === 'stem') return { tag: 'stem', c: walk(t.c) };
+    if (t.tag === 'fork') return { tag: 'fork', l: walk(t.l), r: walk(t.r) };
+    if (t.tag === 'apply') {
+      // Reduce children first, then check if THIS application is ready in
+      // its new shape. This is what makes parallel reduction "cascading":
+      // a child reduction that turns f into a normal-form tree exposes the
+      // outer redex on the same pass.
+      const f2 = walk(t.f);
+      const x2 = walk(t.x);
+      const newApply = { tag: 'apply', f: f2, x: x2 };
+      const rule = applyRule(newApply);
+      if (rule) {
+        fired.push(rule);
+        const r = reduceStep(newApply.f, newApply.x);
+        return r.result;
+      }
+      return newApply;
+    }
+    return t;
+  }
+  const result = walk(n);
+  if (fired.length === 0) return null;
+  return {
+    result,
+    rule: 'parallel: ' + fired.length + ' redex' + (fired.length === 1 ? '' : 'es') +
+          ' fired (' + fired.join(', ') + ')',
+    count: fired.length
+  };
+}
+
 function reduceFirstApply(n) {
   if (n.tag === 'apply') {
     const f = n.f;
@@ -2470,7 +2511,9 @@ function reducerStep() {
     if (!reducerState) {
       reducerState = { node: _parseExpr(), history: [] };
     }
-    const step = reduceFirstApply(reducerState.node);
+    const step = parallelMode()
+      ? parallelReduceStep(reducerState.node)
+      : reduceFirstApply(reducerState.node);
     if (!step) {
       const recName = recognize(reducerState.node);
       document.getElementById('reducer-out').innerHTML =
@@ -2500,9 +2543,15 @@ function reducerStep() {
 let reducerAutoActive = false;
 function reducerRun() {
   const btn = document.getElementById('reducer-run-btn');
-  if (reducerAutoActive) { reducerAutoActive = false; return; }  // toggle off
+  if (reducerAutoActive) {
+    // toggle off — flip the label immediately so the user gets feedback
+    // without waiting for the pending tick to fire and notice the flag.
+    reducerAutoActive = false;
+    if (btn) btn.textContent = 'Run';
+    return;
+  }
   reducerAutoActive = true;
-  if (btn) btn.textContent = 'Stop';
+  if (btn) btn.textContent = 'Pause';
   let count = 0;
   function tick() {
     if (!reducerAutoActive || count++ > AUTO_STEP_LIMIT) {
@@ -2518,7 +2567,9 @@ function reducerRun() {
         return;
       }
     }
-    const step = reduceFirstApply(reducerState.node);
+    const step = parallelMode()
+      ? parallelReduceStep(reducerState.node)
+      : reduceFirstApply(reducerState.node);
     if (!step) {
       reducerAutoActive = false;
       if (btn) btn.textContent = 'Run';
