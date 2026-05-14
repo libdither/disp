@@ -2192,26 +2192,39 @@ function renderTree(tree, opts) {
     reg._bbox = { minX: minX2, maxX: maxX2, minY: minY2, maxY: maxY2 };
   }
 
-  // Halo around the apply node that the reducer will fire next (matches
-  // reduceFirstApply's DFS order). Multiple K/S/F-labeled nodes can be ready
-  // at once thanks to confluence; this marker calls out the *one* the
-  // implementation has chosen for the next Step. Hidden in parallel mode
-  // since every ready apply will fire.
-  const nextNode = parallelMode() ? null : nextApplyToFire(renderTreeRoot);
-  if (nextNode) {
-    const np = pos.get(nextNode);
-    if (np) {
-      const halo = document.createElementNS(SVG_NS, 'circle');
-      halo.setAttribute('cx', np.x);
-      halo.setAttribute('cy', np.y);
-      halo.setAttribute('r', 21);
-      halo.setAttribute('class', 'next-halo');
-      target.appendChild(halo);
+  // Halos around the apply node(s) that the reducer will fire next.
+  //   Sequential mode: a single halo, matching reduceFirstApply's DFS choice.
+  //   Parallel mode:   one halo per node that will fire on the next Step.
+  // Cascading parallel reduction can include nodes that aren't `applyRule`-
+  // ready in the current snapshot but become ready after their children
+  // reduce in the same pass.
+  let nextNodes;
+  if (parallelMode()) {
+    nextNodes = Array.from(nextParallelFirings(renderTreeRoot));
+  } else {
+    const sole = nextApplyToFire(renderTreeRoot);
+    nextNodes = sole ? [sole] : [];
+  }
+  for (let i = 0; i < nextNodes.length; i++) {
+    const np = pos.get(nextNodes[i]);
+    if (!np) continue;
+    const halo = document.createElementNS(SVG_NS, 'circle');
+    halo.setAttribute('cx', np.x);
+    halo.setAttribute('cy', np.y);
+    halo.setAttribute('r', 21);
+    halo.setAttribute('class', 'next-halo');
+    target.appendChild(halo);
+    // Only label one of them (the topmost / first found) to keep the SVG
+    // legible. In sequential mode that's the unique next; in parallel mode
+    // the others are obviously the same kind of marker.
+    if (i === 0) {
       const arrow = document.createElementNS(SVG_NS, 'text');
       arrow.setAttribute('x', np.x);
       arrow.setAttribute('y', np.y - 26);
       arrow.setAttribute('class', 'next-arrow');
-      arrow.textContent = 'next ▼';
+      arrow.textContent = parallelMode()
+        ? ('next ▼ (' + nextNodes.length + ')')
+        : 'next ▼';
       target.appendChild(arrow);
     }
   }
@@ -2371,23 +2384,26 @@ function reducerRerender() {
 // always agrees with sequential reduction on the final normal form. It can
 // fire many cascading redexes in one step — useful for expressions with
 // independent subterms.
-function parallelReduceStep(n) {
+//
+// `originalsFired`, when provided, is filled with the references to the
+// ORIGINAL apply nodes that fired — used by the renderer to draw a marker on
+// each one before the user clicks Step. (Cascading reductions fire nodes
+// that weren't `applyRule`-ready in the input tree but become ready after
+// their children reduce; this records them too.)
+function parallelReduceStep(n, originalsFired) {
   const fired = [];
   function walk(t) {
     if (t.tag === 'leaf') return t;
     if (t.tag === 'stem') return { tag: 'stem', c: walk(t.c) };
     if (t.tag === 'fork') return { tag: 'fork', l: walk(t.l), r: walk(t.r) };
     if (t.tag === 'apply') {
-      // Reduce children first, then check if THIS application is ready in
-      // its new shape. This is what makes parallel reduction "cascading":
-      // a child reduction that turns f into a normal-form tree exposes the
-      // outer redex on the same pass.
       const f2 = walk(t.f);
       const x2 = walk(t.x);
       const newApply = { tag: 'apply', f: f2, x: x2 };
       const rule = applyRule(newApply);
       if (rule) {
         fired.push(rule);
+        if (originalsFired) originalsFired.add(t);
         const r = reduceStep(newApply.f, newApply.x);
         return r.result;
       }
@@ -2403,6 +2419,14 @@ function parallelReduceStep(n) {
           ' fired (' + fired.join(', ') + ')',
     count: fired.length
   };
+}
+
+// Dry-run version: return the SET of apply-node references in `n` that would
+// fire if we ran parallelReduceStep on it, without actually mutating state.
+function nextParallelFirings(n) {
+  const out = new Set();
+  parallelReduceStep(n, out);
+  return out;
 }
 
 function reduceFirstApply(n) {
