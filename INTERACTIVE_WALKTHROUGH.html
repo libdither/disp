@@ -867,13 +867,12 @@
 <main>
 
 <h1 class="title">Disp</h1>
-<p class="subtitle">A first-principles walkthrough — from λ-calculus to a self-hosting dependent type system on tree calculus, with notes on planned categorical and cubical extensions.</p>
+<p class="subtitle">A walkthrough — covers the tree-calculus, self-hosted dependent types, and future directions for categorical foundations and cubical type theory</p>
 
 <aside class="note" id="how-to-read">
-<strong>How to read this.</strong> The walkthrough is written for two audiences at once.
+<strong>How to read this.</strong>
 <ul style="margin: 0.4em 0 0; padding-left: 1.4em;">
-  <li><strong>If you come from mathematics or logic</strong> — read straight through. The collapsed asides marked &ldquo;▸&rdquo; expand to categorical, cubical, and parametricity connections; pop them open when curious. Dotted-underline terms (e.g. <dfn class="gloss">hash-consing<span class="tip">structural sharing: identical subtrees share one heap cell</span></dfn>) carry hover-tooltips for jargon.</li>
-  <li><strong>If you come from programming and are new to type theory</strong> — read the body text and the plain notes; you can skip the collapsed &ldquo;▸&rdquo; asides on first pass (they go deeper than you need) and you can ignore the inline file references like <code>src/tree.ts</code>:4&ndash;16 unless you want to grep the codebase. The glossary in §9 is a safety net.</li>
+  <li><strong></strong>This doc was written for someone with a mathematics and light programming background</strong>. The collapsed asides marked &ldquo;▸&rdquo; mostly talk about implementation details; pop them open if you are curious about how a given idea is realized in code. Dotted-underline terms (e.g. <dfn class="gloss">hash-consing<span class="tip">structural sharing: identical subtrees share one heap cell</span></dfn>) carry hover-tooltips for jargon.</li>
 </ul>
 </aside>
 
@@ -883,7 +882,7 @@
 
 <h3 id="whatis">1.1&nbsp; What is Disp?</h3>
 
-<p><strong>Disp</strong> is a dependently typed programming language whose computation engine is the <em>tree calculus</em> rather than the λ-calculus, and whose central design principle can be stated as a single equation:</p>
+<p><strong>Disp</strong> is a dependently typed programming language based on the computational model of the <em>tree calculus</em>, rather than the λ-calculus, where the type system is a first-class object and can be stated as a single equation:</p>
 
 <p class="math-block">
 <span class="math">T</span>&nbsp;<span class="math">(</span><span class="math">v</span><span class="math">)</span>&nbsp;<span class="turnstile">=</span>&nbsp;<span class="math">true</span>&nbsp;&nbsp;&nbsp;⟺&nbsp;&nbsp;&nbsp;<span class="math">v&nbsp;:&nbsp;T</span>
@@ -894,22 +893,22 @@
 <p>In traditional type theory the relation "<span class="math">v</span> has type <span class="math">T</span>" is a separate kind of statement, written <span class="math">Γ&nbsp;⊢&nbsp;v&nbsp;:&nbsp;T</span> (read: "in context <span class="math">Γ</span>, the term <span class="math">v</span> has type <span class="math">T</span>") and derived by inference rules. Disp has no such separate machinery. Types are themselves tree-calculus programs: predicates that, run against a candidate tree, return a Boolean. Type-checking is, then, just function application on those predicates.</p>
 
 <aside class="note">
-<strong>From the project README:</strong> <em>"Tree calculus is natively reflective &mdash; terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp's goal is a fully self-hosting dependent type system whose checker lives as an inhabitant of the object language, not just as a host-language function."</em> (<code>README.md</code>:5)
+<strong>From the project README:</strong> <em>"Tree calculus is natively reflective &mdash; terms ARE data, so the type checker, the optimizer, and the programs it produces all inhabit the same universe. Disp's goal is a fully self-hosting dependent type system whose checker lives as an inhabitant of the object language, not just as a host-language function."</em> (<a href="https://github.com/libdither/disp/blob/main/README.md#L5" target="_blank" rel="noopener"><code>README.md</code>:5</a>)
 </aside>
 
 <aside class="note">
-<strong>Notation note.</strong> Throughout this document we write the Booleans as <code>true</code> and <code>false</code>, since they are values. The current codebase still spells them <code>TT</code> and <code>FF</code> (see <code>lib/prelude.disp</code>); the names are scheduled for change but the snippets here use the cleaner spelling.
+<strong>Notation note.</strong> Throughout this document we write the Booleans as <code>true</code> and <code>false</code>, since they are values. The current codebase still spells them <code>TT</code> and <code>FF</code> (see <a href="https://github.com/libdither/disp/blob/main/lib/prelude.disp#L19-L20" target="_blank" rel="noopener"><code>lib/prelude.disp</code>:19&ndash;20</a>); the names are scheduled for change but the snippets here use the cleaner spelling.
 </aside>
 
 <h3 id="why">1.2&nbsp; Why does this design exist?</h3>
 
-<p>The long-term aspiration, stated in <code>GOALS.md</code>, is a <em>self-improving optimizer</em> &mdash; a program that, given a specification of "good program" (encoded as a type, which is just a predicate), searches for programs satisfying it and improves the search itself over time. For that, every relevant component (the specification, the type-checker, the scoring function, the candidate programs) needs to live inside a single self-inspecting computational universe.</p>
+<p>The long-term aspiration, stated in <a href="https://github.com/libdither/disp/blob/main/GOALS.md" target="_blank" rel="noopener"><code>GOALS.md</code></a>, is a <em>self-improving optimizer</em> &mdash; a program that, given a specification of "good program" (encoded as a type, which is just a predicate), searches for programs satisfying it and improves the search itself over time. For that, every relevant component (the specification, the type-checker, the scoring function, the candidate programs) needs to live inside a single self-inspecting computational universe.</p>
 
 <p>The mainstream proof assistants Lean <a class="cite" id="cite-lean" href="#ref-lean">[Lean]</a>, Rocq/Coq <a class="cite" id="cite-rocq" href="#ref-rocq">[Rocq]</a>, and Agda <a class="cite" id="cite-agda" href="#ref-agda">[Agda]</a> have not bootstrapped their checkers into themselves, in part because those checkers accumulated dependencies on features of their implementation language (mutable hash tables, exceptions, pattern-match compilation, tactic DSLs) which have no counterpart in the language being implemented. Disp's development philosophy, in the spirit of the LCF tradition <a class="cite" id="cite-gordon" href="#ref-gordon">[Gordon, Milner &amp; Wadsworth 1979]</a> &mdash; a small, trusted kernel with everything else built on top in the language being implemented &mdash; aims to avoid that drift from the start.</p>
 
 <blockquote>
 "The object language is the specification. Host implementations are optimizations. Every component that participates in deciding well-typedness — the type checker, the elaborator's semantics, conversion, the data structures those components read — must have a declared encoding as a tree-calculus program. The TypeScript implementation exists to make iteration fast. It is never the ground truth."
-<cite>— <code>DEVELOPMENT_PHILOSOPHY.md</code>:11&ndash;13</cite>
+<cite>— <a href="https://github.com/libdither/disp/blob/main/DEVELOPMENT_PHILOSOPHY.md#L11-L13" target="_blank" rel="noopener"><code>DEVELOPMENT_PHILOSOPHY.md</code>:11&ndash;13</a></cite>
 </blockquote>
 
 <p>Reach that point and the type checker becomes synthesizable by the same machinery that uses it. The architectural commitments it forces &mdash; small kernel, predicates as types, metacircular checker &mdash; shape the rest of the document.</p>
@@ -965,7 +964,7 @@
 <details>
 <summary>The host-side <code>Tree</code> type</summary>
 <div class="body">
-<p>In Disp's TypeScript runtime (<code>src/tree.ts</code>:4&ndash;16) trees are a discriminated union — leaf, stem, or fork — with an integer <code>id</code> for hash-consing (§2.5):</p>
+<p>In Disp's TypeScript runtime (<a href="https://github.com/libdither/disp/blob/main/src/tree.ts#L4-L16" target="_blank" rel="noopener"><code>src/tree.ts</code>:4&ndash;16</a>) trees are a discriminated union — leaf, stem, or fork — with an integer <code>id</code> for hash-consing (§2.5):</p>
 <pre><code><span class="k">type</span> <span class="t">Tree</span> <span class="punct">=</span>
   | { tag: <span class="s">"leaf"</span>; id: <span class="t">number</span> }
   | { tag: <span class="s">"stem"</span>; child: <span class="t">Tree</span>; id: <span class="t">number</span> }
