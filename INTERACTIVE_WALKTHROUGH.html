@@ -687,6 +687,12 @@
     border-bottom-right-radius: 0;
     cursor: help;
   }
+  /* Plain-text dfn.gloss (no inner <code>): give it the same dotted-underline
+     affordance so prose terms are discoverable as hoverable. */
+  dfn.gloss:not(:has(code)) {
+    border-bottom: 1px dotted var(--accent);
+    cursor: help;
+  }
   .gloss { position: relative; }
   .gloss .tip {
     display: none;
@@ -902,9 +908,9 @@
 
 <h3 id="why">1.2&nbsp; Why does this design exist?</h3>
 
-<p>The long-term aspiration, stated in <a href="https://github.com/libdither/disp/blob/main/GOALS.md" target="_blank" rel="noopener"><code>GOALS.md</code></a>, is a <em>self-improving optimizer</em> &mdash; a program that, given a specification of "good program" (encoded as a type, which is just a predicate), searches for programs satisfying it and improves the search itself over time. For that, every relevant component (the specification, the type-checker, the scoring function, the candidate programs) needs to live inside a single self-inspecting computational universe.</p>
+<p>The long-term aspiration, stated in <a href="https://github.com/libdither/disp/blob/main/GOALS.md" target="_blank" rel="noopener"><code>GOALS.md</code></a>, is a <em>self-improving optimizer</em> &mdash; a program that, given a specification of "good program" (encoded as a type, which is just a predicate), searches for programs satisfying it and improves the search program itself over time. For that, every relevant component (the specification, the type-checker, the scoring function, the candidate programs) needs to live inside a single self-inspecting computational universe.</p>
 
-<p>The mainstream proof assistants Lean <a class="cite" id="cite-lean" href="#ref-lean">[Lean]</a>, Rocq/Coq <a class="cite" id="cite-rocq" href="#ref-rocq">[Rocq]</a>, and Agda <a class="cite" id="cite-agda" href="#ref-agda">[Agda]</a> have not bootstrapped their checkers into themselves, in part because those checkers accumulated dependencies on features of their implementation language (mutable hash tables, exceptions, pattern-match compilation, tactic DSLs) which have no counterpart in the language being implemented. Disp's development philosophy, in the spirit of the LCF tradition <a class="cite" id="cite-gordon" href="#ref-gordon">[Gordon, Milner &amp; Wadsworth 1979]</a> &mdash; a small, trusted kernel with everything else built on top in the language being implemented &mdash; aims to avoid that drift from the start.</p>
+<p>Proof assistants like Lean <a class="cite" id="cite-lean" href="#ref-lean">[Lean]</a>, Rocq/Coq <a class="cite" id="cite-rocq" href="#ref-rocq">[Rocq]</a>, and Agda <a class="cite" id="cite-agda" href="#ref-agda">[Agda]</a> have not bootstrapped their checkers into themselves, in part because those checkers accumulated dependencies on features of their implementation language (mutable hash tables, exceptions, pattern-match compilation, tactic <dfn class="gloss">DSLs<span class="tip">domain-specific languages: small embedded languages tailored to one purpose (here, writing proof tactics) rather than general-purpose programming.</span></dfn>) which have no counterpart in the language being implemented. Disp's development philosophy, in the spirit of the <dfn class="gloss">LCF tradition<span class="tip">Edinburgh LCF (Gordon, Milner &amp; Wadsworth, 1979) established the &ldquo;small trusted kernel + everything else as a library&rdquo; architecture: only the kernel can mint theorems, so soundness reduces to auditing it. HOL, Isabelle, Coq/Rocq, and Lean all inherit this design.</span></dfn> <a class="cite" id="cite-gordon" href="#ref-gordon">[Gordon, Milner &amp; Wadsworth 1979]</a> &mdash; a small, trusted kernel with everything else built on top in the language being implemented &mdash; aims to avoid that drift from the start.</p>
 
 <blockquote>
 "The object language is the specification. Host implementations are optimizations. Every component that participates in deciding well-typedness — the type checker, the elaborator's semantics, conversion, the data structures those components read — must have a declared encoding as a tree-calculus program. The TypeScript implementation exists to make iteration fast. It is never the ground truth."
