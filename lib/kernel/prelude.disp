@@ -35,6 +35,7 @@ open use "../types/sigma.disp"
 open use "../types/intersection.disp"
 open use "../types/refinement.disp"
 open use "../types/unit.disp"
+open use "../types/string.disp"
 
 TT := TT
 FF := FF
@@ -193,3 +194,8 @@ Unit := Unit
 Unit_pf := Unit_pf
 unit_witness := unit_witness
 is_unit_witness := is_unit_witness
+String := String
+String_pf := String_pf
+empty_string := empty_string
+string_cons := string_cons
+string_eq := string_eq

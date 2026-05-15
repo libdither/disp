@@ -108,3 +108,18 @@ list_foldl := {f, acc, xs} -> list_foldl_inner xs f acc
 let list_foldr_inner = fix ({self, xs, f, init} ->
   triage init ({_} -> init) ({head, tail} -> f head (self tail f init)) xs)
 list_foldr := {f, init, xs} -> list_foldr_inner xs f init
+
+// Partial accessors: caller must ensure xs is a non-nil list. On nil
+// (leaf) these return `t` / `t`; on a stem (malformed list) behavior is
+// unspecified. Use list_head_or / list_tail_or for total versions.
+list_is_nil := {xs} -> is_leaf xs
+list_head := {xs} -> pair_fst xs
+list_tail := {xs} -> pair_snd xs
+
+// First element satisfying `pred`, or `nil` if none. Caller-side checks
+// (e.g., via a Refinement) are responsible for non-empty guarantees.
+let list_find_inner = fix ({self, xs, pred} ->
+  triage nil ({_} -> nil)
+    ({head, tail} -> select head (self tail pred) (pred head))
+    xs)
+list_find := {pred, xs} -> list_find_inner xs pred

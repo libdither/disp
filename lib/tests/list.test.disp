@@ -51,4 +51,14 @@ test list_length (list_append xs nil) = 3
 test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) nil = 0
 test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) xs = 3
 
+// Partial accessors and list_find.
+test list_is_nil nil = TT
+test list_is_nil xs = FF
+test list_head xs = 1
+test list_tail xs = list_cons 2 (list_cons 3 nil)
+
+let is_two = {n} -> tree_eq n 2
+test list_find is_two xs = 2
+test list_find is_two (list_cons 5 (list_cons 6 nil)) = nil
+
 

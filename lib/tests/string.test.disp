@@ -1,0 +1,30 @@
+// String — permissive base type tests. The recognizer accepts any
+// tree; structural checks come from refinement layers built on top.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ================================================================
+// Identity sanity: String is a public guarded predicate_frame type.
+// ================================================================
+test hasguard String = TT
+test tree_eq (pair_fst (type_meta String)) kernel_predicate_frame_sig = TT
+
+// ================================================================
+// Permissive recognizer: every tree is accepted.
+// ================================================================
+test String t = TT
+test String TT = TT
+test String FF = TT
+test String zero = TT
+test String (succ zero) = TT
+test String empty_string = TT
+test String (string_cons zero empty_string) = TT
+
+// ================================================================
+// Scott-list constructors round-trip via string_eq (= tree_eq).
+// ================================================================
+test string_eq empty_string empty_string = TT
+test string_eq (string_cons zero empty_string) (string_cons zero empty_string) = TT
+test string_eq empty_string (string_cons zero empty_string) = FF
+test string_eq (string_cons zero empty_string) (string_cons (succ zero) empty_string) = FF

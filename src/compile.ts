@@ -591,6 +591,40 @@ function checkerSig(checker: Tree): Tree {
   return sig
 }
 
+// Identifier interning — canonical Scott byte-list trees for source
+// identifiers. Used by record-projection desugaring (r.x → proj r "x")
+// so the name "x" becomes a tree literal that can be compared via
+// tree_eq (= hash-cons identity) at compile time and runtime.
+//
+// Encoding: each codepoint is a succ-chain Nat; the list is built with
+// `string_cons` from right to left, terminated by `empty_string`. The
+// Map is a parse-time cache; hash-cons would dedupe anyway, but caching
+// avoids rebuilding succ-chains for repeated identifiers.
+const internedNames = new Map<string, Tree>()
+
+function internName(name: string, lookupEntry: (n: string) => ScopeEntry | undefined): Tree {
+  const cached = internedNames.get(name)
+  if (cached) return cached
+
+  const zeroTree = lookupEntry("zero")?.tree
+  const succTree = lookupEntry("succ")?.tree
+  const emptyStr = lookupEntry("empty_string")?.tree
+  const consStr  = lookupEntry("string_cons")?.tree
+  if (!zeroTree || !succTree || !emptyStr || !consStr)
+    throw new Error("internName: zero/succ/empty_string/string_cons must be in scope")
+
+  // Right-to-left fold: result = cons(byte_0, cons(byte_1, ... empty))
+  let result = emptyStr
+  for (let i = name.length - 1; i >= 0; i--) {
+    const code = name.codePointAt(i)!
+    let byteTree = zeroTree
+    for (let j = 0; j < code; j++) byteTree = applyTree(succTree, byteTree, APPLY_BUDGET)
+    result = applyTree(applyTree(consStr, byteTree, APPLY_BUDGET), result, APPLY_BUDGET)
+  }
+  internedNames.set(name, result)
+  return result
+}
+
 // Kernel query helpers. These are discovered from ordinary scope after
 // imports. A file that opens kernel/prelude.disp gets Pi, Type, Hyp, Nat,
 // etc. without a separate keyword-level trust channel.
