@@ -241,14 +241,48 @@
     list-style: none;
   }
   aside.deep summary::before {
-    content: "▸ ";
+    content: "▸";
     display: inline-block;
-    transition: transform 0.2s;
+    margin-right: 0.35em;
+    transition: transform 0.2s ease;
+    transform-origin: 50% 55%;
   }
-  aside.deep[open] summary::before {
-    content: "▾ ";
+  aside.deep details[open] summary::before {
+    transform: rotate(90deg);
   }
-  aside.deep .body { margin-top: 0.8em; }
+  /* Animate the open/close. `<details>` stays as a normal block container
+     (so wide content like <pre> wraps/scrolls as expected); a small JS handler
+     intercepts summary clicks and drives the height/opacity transitions on
+     .body. The ::after pseudo paints a bottom-fade gradient that's visible
+     while collapsed/animating and disappears once fully open — gives a "text
+     revealed from below" feel. */
+  aside.deep details > .body {
+    display: block !important;
+    position: relative;
+    overflow: hidden;
+    height: 0;
+    margin-top: 0;
+    opacity: 0;
+    transition: height 0.2s ease, margin-top 0.2s ease, opacity 0.18s ease;
+  }
+  aside.deep details > .body::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 2.5em;
+    background: linear-gradient(to bottom, transparent, var(--bg-aside));
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.18s ease;
+  }
+  aside.deep details[open] > .body {
+    margin-top: 0.8em;
+    opacity: 1;
+    /* height is set inline by JS so the transition is between pixel values */
+  }
+  aside.deep details[open] > .body::after {
+    opacity: 0;
+  }
   /* Definitions */
   dfn {
     font-style: italic;
@@ -310,6 +344,37 @@
     font-size: 0.9em;
     flex: 1;
     min-width: 250px;
+  }
+  .widget select {
+    padding: 0.35em 0.6em;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88em;
+    cursor: pointer;
+  }
+  .preset-info {
+    display: inline-block;
+    width: 1.25em;
+    height: 1.25em;
+    line-height: 1.25em;
+    text-align: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg-elev);
+    font-size: 0.75em;
+    font-weight: 700;
+    font-style: italic;
+    font-family: 'SF Pro Text', system-ui, sans-serif;
+    cursor: help;
+    vertical-align: middle;
+    border-bottom: none !important;
+  }
+  .preset-info .tip {
+    left: 0;
+    transform: none;
   }
   .widget .display {
     background: var(--bg-code);
@@ -960,22 +1025,30 @@
   <dfn class="gloss"><code>c20</code><span class="tip"><code>c20 := csucc c19</code><br>Church-K Nat 20; 125 nodes. (size grows as 5 + 6n.)</span></dfn>;
   <dfn class="gloss"><code>cadd</code><span class="tip"><code>cadd := λn m x. n (m x) = B</code><br>Church-K addition = function composition. <strong>12 nodes total, no fix needed</strong> (vs Scott's 156). Takes Church-K Nats and returns a function tree extensionally equal to <code>c_(n+m)</code>. <strong>For building chains of additions:</strong> nest <code>cadd</code> calls (intermediate results compose as functions) and apply <code>t</code> at the very end to collapse to a Scott-Nat digit, e.g. <code>cadd c4 (cadd c5 c3) t</code> → Scott-Nat-12.</span></dfn>.
 </p>
-<p style="font-size: 0.88em; margin-top:0.4em; color: var(--fg-muted);">Try <code>cadd c4 c5 t</code> (Scott-Nat-9), <code>cadd c4 (cadd c5 c3) t</code> (chained, Scott-Nat-12), <code>t_not t_true</code> (one F-rule step), <code>add 2 3</code> (same sum via Scott's heavier <code>add</code>).</p>
 <div class="row">
   <span class="label">expr:</span>
-  <input type="text" id="reducer-expr" value="t_not t_true" oninput="reducerReset()" style="flex:1; min-width:240px">
+  <input type="text" id="reducer-expr" value="t_not t_true" oninput="reducerOnExprInput()" style="flex:1; min-width:240px">
   <button class="primary" onclick="reducerStep()">Step</button>
   <button onclick="reducerRun()" id="reducer-run-btn">Run</button>
   <button onclick="reducerReset()">Reset</button>
+</div>
+<div class="row" style="margin-top:0.4em;">
+  <span class="label">preset:</span>
+  <dfn class="gloss preset-info" id="reducer-preset-info">i<span class="tip" id="reducer-preset-tip">Pick a preset expression to load into the expr field above. The tooltip on this icon updates to explain whichever preset is currently selected.</span></dfn>
+  <select id="reducer-preset" onchange="reducerLoadPreset()">
+    <option value="" disabled data-tip="A custom expression has been typed into the expr field above. Pick a preset to load one of the examples below.">(custom)</option>
+    <option value="t_not t_true" selected data-tip="Tree-style not applied to true. One F-rule firing: t_not is a triage tree whose leaf-branch is t_false, and t_true is the leaf, so reduction picks the leaf-branch and returns t_false (the stem △△).">t_not t_true</option>
+    <option value="t_and t_true t_false" data-tip="Tree-style and on two arguments. Two F-rule firings — first triages on t_true to expose the identity I, then I applied to t_false returns t_false.">t_and t_true t_false</option>
+    <option value="not true" data-tip="Scott-encoded not. Uses the Boolean as its own eliminator: not = {a} -> a t false true. So 'not true' applies true to the leaf motive and the two branches, picking the then-branch — which here is false.">not true</option>
+    <option value="add 2 3" data-tip="Scott Nat addition. The Scott-style add is heavy (~156 nodes, built from fix and the F-rule). Stepping through unfolds the fix-point one recursive call at a time; Run watches the full reduction.">add 2 3</option>
+    <option value="cadd c4 c5 t" data-tip="Church-K addition then collapse. cadd composes c4 and c5 as functions (just 12 nodes, no fix needed); applying the composed function to the leaf t collapses it down to the Scott-Nat encoding of 9.">cadd c4 c5 t</option>
+    <option value="cadd c4 (cadd c5 c3) t" data-tip="Chained Church-K additions. Nested cadd calls compose as functions (intermediate results stay as Church-K Nats); the final t collapses the whole chain to Scott-Nat 12.">cadd c4 (cadd c5 c3) t</option>
+  </select>
 </div>
 <div class="row" style="margin-top:0.4em; font-size:0.88em">
   <label style="cursor:pointer;">
     <input type="checkbox" id="reducer-labels" onchange="reducerRerender()" checked style="vertical-align:middle;">
     circle known shapes
-  </label>
-  <label style="cursor:pointer; margin-left:1em;">
-    <input type="checkbox" id="reducer-treeview" onchange="reducerRerender()" checked style="vertical-align:middle;">
-    tree view (unshare subtrees)
   </label>
   <label style="cursor:pointer; margin-left:1em;" title="By confluence, all ready redexes can be reduced together. The next-marker is hidden in this mode since they all fire.">
     <input type="checkbox" id="reducer-parallel" onchange="reducerRerender()" checked style="vertical-align:middle;">
@@ -2958,12 +3031,115 @@ function reducerRun() {
   tick();
 }
 
+function reducerSyncPresetTip() {
+  const sel = document.getElementById('reducer-preset');
+  const tipEl = document.getElementById('reducer-preset-tip');
+  if (!sel || !tipEl) return;
+  const opt = sel.options[sel.selectedIndex];
+  if (opt) tipEl.textContent = opt.getAttribute('data-tip') || '';
+}
+
+function reducerLoadPreset() {
+  const sel = document.getElementById('reducer-preset');
+  if (!sel) return;
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.value) {
+    document.getElementById('reducer-expr').value = opt.value;
+    reducerReset();
+  }
+  reducerSyncPresetTip();
+}
+
+function reducerOnExprInput() {
+  reducerReset();
+  const sel = document.getElementById('reducer-preset');
+  if (!sel) return;
+  const expr = document.getElementById('reducer-expr').value;
+  let match = -1;
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === expr) { match = i; break; }
+  }
+  sel.selectedIndex = match >= 0 ? match : 0;
+  reducerSyncPresetTip();
+}
+
 // Render the initial tree on page load so the widget isn't empty.
 (function initReducerViz() {
+  function init() { reducerReset(); reducerSyncPresetTip(); }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', reducerReset);
+    document.addEventListener('DOMContentLoaded', init);
   } else {
-    reducerReset();
+    init();
+  }
+})();
+
+// Animate the open/close of deep-aside <details> elements. We intercept the
+// summary click and drive height/opacity/margin transitions inline. Two
+// subtleties: (1) all four properties (height, opacity, margin, gradient)
+// are set inline so the close transition doesn't depend on the CSS [open]
+// rule disappearing at the right moment; (2) [open] is kept set throughout
+// the close animation so the UA stylesheet doesn't yank the body out of
+// layout — only removed when the animation finishes.
+(function setupDeepDetailsAnim() {
+  const DURATION = 220; // ms — matches the CSS transition durations
+  function setup() {
+    document.querySelectorAll('aside.deep details').forEach(d => {
+      const summary = d.querySelector('summary');
+      const body    = d.querySelector('.body');
+      if (!summary || !body) return;
+      // Sync inline styles with initial [open] state so transitions have a
+      // pixel-valued starting point in both directions.
+      if (d.open) {
+        body.style.height = 'auto';
+        body.style.opacity = '1';
+        body.style.marginTop = '0.8em';
+      }
+      summary.addEventListener('click', e => {
+        e.preventDefault();
+        if (body.dataset.animating) return;
+        body.dataset.animating = '1';
+        const opening = !d.open;
+        if (opening) {
+          d.setAttribute('open', '');
+          // Lock at start state (pixel values, not 'auto').
+          body.style.height = '0px';
+          body.style.opacity = '0';
+          body.style.marginTop = '0';
+          void body.offsetHeight; // force reflow so the next change transitions
+          // Animate to target state.
+          body.style.height = body.scrollHeight + 'px';
+          body.style.opacity = '1';
+          body.style.marginTop = '0.8em';
+          window.setTimeout(() => {
+            body.style.height = 'auto'; // allow content reflow afterward
+            delete body.dataset.animating;
+          }, DURATION);
+        } else {
+          // Closing — keep [open] set until the animation completes so the UA
+          // stylesheet's "hide non-summary children" rule doesn't kick in mid-
+          // animation. Resolve 'auto' to a pixel value first.
+          body.style.height = body.scrollHeight + 'px';
+          body.style.opacity = '1';
+          body.style.marginTop = '0.8em';
+          void body.offsetHeight; // force reflow
+          body.style.height = '0px';
+          body.style.opacity = '0';
+          body.style.marginTop = '0';
+          window.setTimeout(() => {
+            d.removeAttribute('open');
+            body.style.height = '';
+            body.style.opacity = '';
+            body.style.marginTop = '';
+            delete body.dataset.animating;
+          }, DURATION);
+        }
+      });
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setup);
+  } else {
+    setup();
   }
 })();
 </script>
