@@ -1,4 +1,3 @@
-// Reflects codebase as of fb5e4f056940 (2026-05-12)
 #set document(title: "Disp Surface Syntax")
 #set page(margin: 2cm, numbering: "1")
 #set text(font: "New Computer Modern", size: 10.5pt)

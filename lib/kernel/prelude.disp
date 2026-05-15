@@ -36,6 +36,7 @@ open use "../types/intersection.disp"
 open use "../types/refinement.disp"
 open use "../types/unit.disp"
 open use "../types/string.disp"
+open use "../types/record.disp"
 
 TT := TT
 FF := FF
@@ -199,3 +200,9 @@ String_pf := String_pf
 empty_string := empty_string
 string_cons := string_cons
 string_eq := string_eq
+Record := Record
+Record_pf := Record_pf
+sigma_chain := sigma_chain
+sigma_chain_top := sigma_chain_top
+is_record := is_record
+record_fields := record_fields

@@ -1,0 +1,66 @@
+// Record — iterated-Sigma encoding for record types. Field list lives
+// in `params`; value-shape is `t v1 (t v2 ... unit_witness)`.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// Build a one-field FieldList: [("x", {_} -> Nat)]
+//   field entry = pair name type_fn = (t "x_name" type_fn)
+//   list shape  = fork(entry, leaf)
+let name_x = t            // any tree works as a name placeholder for tests
+let name_y = t t          // distinct tree (a stem) — exercises name distinction
+let fields_x_nat = t (t name_x ({_} -> Nat)) t
+let fields_xy = t (t name_x ({_} -> Nat))
+                  (t (t name_y ({_} -> Bool)) t)
+let fields_empty = t
+
+// ================================================================
+// Identity sanity: Record is a public guarded predicate_frame type.
+// ================================================================
+test hasguard (Record fields_empty) = TT
+test tree_eq (pair_fst (type_meta (Record fields_x_nat))) kernel_predicate_frame_sig = TT
+test is_record (Record fields_empty) = TT
+test is_record (Record fields_x_nat) = TT
+test is_record Nat = FF
+
+// ================================================================
+// record_fields returns the FieldList from metadata.
+// ================================================================
+test record_fields (Record fields_empty) = fields_empty
+test record_fields (Record fields_x_nat) = fields_x_nat
+
+// ================================================================
+// Empty record: accepts only unit_witness.
+// ================================================================
+test Record fields_empty unit_witness = TT
+test Record fields_empty t = FF
+test Record fields_empty TT = FF
+test Record fields_empty (t zero unit_witness) = FF
+
+// ================================================================
+// One-field record: accepts `pair v unit_witness` iff v inhabits the
+// field's type. fields_x_nat = [("x", Nat)].
+// ================================================================
+test Record fields_x_nat (t zero unit_witness) = TT
+test Record fields_x_nat (t (succ zero) unit_witness) = TT
+test Record fields_x_nat (t TT unit_witness) = FF      // TT isn't Nat
+test Record fields_x_nat (t zero t) = FF               // tail isn't unit_witness
+test Record fields_x_nat unit_witness = FF             // missing field
+
+// ================================================================
+// Two-field record: accepts nested pairs ending in unit_witness.
+// fields_xy = [("x", Nat), ("y", Bool)].
+// ================================================================
+test Record fields_xy (t zero (t TT unit_witness)) = TT
+test Record fields_xy (t (succ zero) (t FF unit_witness)) = TT
+test Record fields_xy (t zero (t (succ zero) unit_witness)) = FF  // second slot not Bool
+test Record fields_xy (t TT (t TT unit_witness)) = FF             // first slot not Nat
+test Record fields_xy (t zero (t TT t)) = FF                       // missing terminator
+
+// ================================================================
+// Type identity tracks field names: distinct fields → distinct types
+// even when the underlying Sigma chain would coincide.
+// ================================================================
+let fields_a_nat = t (t name_y ({_} -> Nat)) t   // [("y", Nat)] vs [("x", Nat)]
+test tree_eq (Record fields_x_nat) (Record fields_a_nat) = FF
+test tree_eq (Record fields_x_nat) (Record fields_x_nat) = TT

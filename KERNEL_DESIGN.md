@@ -1,5 +1,3 @@
-> Reflects codebase as of b2fd3285b18d (2026-05-12)
-
 # Tree-Calculus Implementation Notes
 
 Practical notes for the current implementation. `TYPE_THEORY.typ`

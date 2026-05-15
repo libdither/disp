@@ -1,5 +1,3 @@
-> Reflects codebase as of ded506c30945 (2026-05-12)
-
 # Goals
 
 I want to be able to synthesize the best possible programs given a specification.
