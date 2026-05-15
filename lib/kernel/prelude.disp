@@ -33,6 +33,8 @@ open use "../types/conv.disp"
 open use "../types/false.disp"
 open use "../types/sigma.disp"
 open use "../types/intersection.disp"
+open use "../types/refinement.disp"
+open use "../types/unit.disp"
 
 TT := TT
 FF := FF
@@ -182,3 +184,12 @@ Intersection := Intersection
 is_intersection := is_intersection
 intersection_dom := intersection_dom
 intersection_pred_fn := intersection_pred_fn
+Refinement_pf := Refinement_pf
+Refinement := Refinement
+is_refinement := is_refinement
+refinement_base := refinement_base
+refinement_pred := refinement_pred
+Unit := Unit
+Unit_pf := Unit_pf
+unit_witness := unit_witness
+is_unit_witness := is_unit_witness

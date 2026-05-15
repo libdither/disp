@@ -1,0 +1,31 @@
+// Unit — the singleton type, ordinary library predicate_frame type.
+//
+// `Unit` is inhabited by exactly one value, `unit_witness = pair t t`
+// (the K combinator, which is also disp's "no-params" sentinel — see
+// lib/types/false.disp:30). The recognizer accepts only this canonical
+// tree.
+//
+// Unit terminates the Sigma chain used to encode records: an empty
+// record is `unit_witness`, a one-field record is `pair v unit_witness`,
+// and so on.
+//
+// Meta layout: pair recognizer (pair t t) — no params, sentinel
+// codomain_fn `t`. Closed dispatch (Unit is a value type, not a
+// function type).
+
+open use "../prelude.disp"
+open use "../kernel/utils.disp"
+open use "../kernel/handlers.disp"
+
+// pair a b = t a b (fork constructor). `pair` lives in lib/std/pair.disp
+// but the kernel substrate predates std/, so we use the bare `t a b`
+// form here. unit_witness is fork(t, t) = K combinator.
+unit_witness := t t t
+
+let unit_pf_recognizer = {_, v} -> tree_eq v unit_witness
+let unit_pf_recognizer_sig = checker_sig unit_pf_recognizer
+let unit_pf_meta = t unit_pf_recognizer (t t t)
+Unit := guard (predicate_frame_form unit_pf_meta)
+Unit_pf := Unit
+
+is_unit_witness := {v} -> tree_eq v unit_witness

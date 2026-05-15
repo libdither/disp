@@ -1,0 +1,51 @@
+// Refinement — refinement type recognizer tests. `Refinement A P`
+// accepts v iff (A v = TT) AND (P v = TT). A is a type, P is a Bool
+// predicate.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// Local predicate for tests (is_zero not yet in lib/std/nat/ops.disp).
+let is_zero = {n} -> tree_eq n zero
+
+// ================================================================
+// Identity sanity: Refinement is a public guarded predicate_frame type.
+// ================================================================
+test hasguard (Refinement Nat is_zero) = TT
+test tree_eq (pair_fst (type_meta (Refinement Nat is_zero))) kernel_predicate_frame_sig = TT
+test is_refinement (Refinement Nat is_zero) = TT
+test is_refinement Nat = FF
+
+// ================================================================
+// Reflection helpers.
+// ================================================================
+test refinement_base (Refinement Nat is_zero) = Nat
+test refinement_pred (Refinement Nat is_zero) = is_zero
+
+// ================================================================
+// Positive: Refinement Nat is_zero accepts 0, rejects succ 0.
+// ================================================================
+test Refinement Nat is_zero zero = TT
+test Refinement Nat is_zero (succ zero) = FF
+
+// ================================================================
+// Negative: malformed value (not a Nat at all) is rejected by base type.
+// Note: `t` IS zero in disp (zero := t), so it satisfies both Nat and
+// is_zero — used in the positive case above. Use TT/FF (Scott-encoded
+// Bools, fork-shaped) as non-Nat candidates here.
+// ================================================================
+test Refinement Nat is_zero TT = FF
+test Refinement Nat is_zero FF = FF
+
+// ================================================================
+// Trivial predicate ({_} -> TT) makes Refinement equivalent to the base.
+// ================================================================
+test Refinement Nat ({_} -> TT) zero = TT
+test Refinement Nat ({_} -> TT) (succ zero) = TT
+test Refinement Nat ({_} -> TT) TT = FF
+
+// ================================================================
+// Always-false predicate makes Refinement empty.
+// ================================================================
+test Refinement Nat ({_} -> FF) zero = FF
+test Refinement Nat ({_} -> FF) (succ zero) = FF

@@ -1,0 +1,42 @@
+// Refinement — refinement type, ordinary library predicate_frame type.
+//
+// `Refinement A P` is inhabited by values `v` such that `A v = TT` AND
+// `P v = TT`. `A` is a type (a guarded predicate), `P` is a Bool-valued
+// predicate. The recognizer evaluates both and conjoins the results.
+//
+// Meta layout: pair recognizer (pair (pair A P) t) — standard 3-tuple
+// metadata with sentinel codomain_fn `t` (closed dispatch — Refinement
+// is a value-shaped predicate, never function-applied).
+//
+// Unlike Sigma's second component, P is NOT a type-returning function:
+// it's a Bool predicate, so no unguard_checked wrapping. A is wrapped
+// in unguard_checked because the recognizer applies it as a raw
+// predicate to v.
+//
+// Per TYPE_THEORY.typ §5.8 (refinement sketch).
+
+open use "../prelude.disp"
+open use "../kernel/utils.disp"
+open use "../kernel/handlers.disp"
+
+let refinement_pf_recognizer = {params, v} -> {
+  let A = pair_fst params
+  let P = pair_snd params
+  and (A v) (P v)
+}
+let refinement_pf_recognizer_sig = checker_sig refinement_pf_recognizer
+
+Refinement_pf := {A, P} -> guard (predicate_frame_form
+  (t refinement_pf_recognizer
+     (t (t (unguard_checked A) P)
+        t)))
+
+Refinement := Refinement_pf
+
+// Reflection helpers. Meta layout: t recognizer (t (t A P) t).
+is_refinement := {v} ->
+  tree_eq (pair_fst (type_meta (unguard_or_self v))) refinement_pf_recognizer
+refinement_base := {v} ->
+  guard (pair_fst (pair_fst (pair_snd (type_meta (unguard_or_self v)))))
+refinement_pred := {v} ->
+  pair_snd (pair_fst (pair_snd (type_meta (unguard_or_self v))))
