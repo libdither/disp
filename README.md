@@ -11,7 +11,6 @@ Tree calculus is natively reflective — terms ARE data, so the type checker, th
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
 - [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms.
-- [`DEVELOPMENT_PHILOSOPHY.md`](DEVELOPMENT_PHILOSOPHY.md) — the discipline governing how features are added. Load-bearing — read before making design changes.
 - [`CLAUDE.md`](CLAUDE.md) — current implementation status, code layout, open work.
 
 ## Running tests
