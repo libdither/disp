@@ -1,6 +1,6 @@
 # Records and Refinement-Typed Projection — Proposal
 
-> STATUS: Proposed and design-frozen (not yet implemented). Drafted 2026-05-14. All eight design decisions are resolved (see §11). Implementation can begin with `Refinement` (step 1 of the §10.1 landing order). Audit (see §10.2) confirmed hard cutover is safe — zero current uses of `{}` in `.disp` source and zero non-`open use` value bindings.
+> **STATUS (2026-05-15):** Library-types phase complete (steps 1–6 from §11.1 landed; 148 tests passing). Encoding-migration phase paused after investigation revealed the original "hard cutover" plan was incompatible with `recq`'s Church-encoding dependency. **Sections 7–10 below describe the revised design (Option B: smart-wrapped chains + `rec {…}` recursive records) that supersedes the original `{x := e} → t e1 (t e2 unit_witness)` plan in the earlier draft of this document.** Pending: implementation of §8 encoding flip + §9 `rec` form + kernel rewrite per §10.
 
 ## 1. Motivation
 
@@ -14,551 +14,114 @@ This proposal reformulates records so that:
 
 - A record is an iterated `Sigma`, with names tracked in the type's metadata.
 - Projection is a tree-native function whose argument refinement type rejects invalid field names. **Compile-time errors for `r.bogus` come from kernel predicate evaluation**, identical to how `Bool TT = TT` is decided.
-- The current bespoke elaborator machinery is replaced by a thin syntactic desugaring layer (`r.x ⟶ proj r "x"`) plus an optional inlining pass that reduces literal-name projections to direct chains for speed.
+- Mutual recursion in records becomes a first-class user feature (`rec {…}`), with the kernel's handler-record as one instance of the general form.
 - Dependent records work automatically because iterated `Sigma` already handles dependence.
 
-The win is a smaller elaborator, a tree-calculus-native error model, and dependent records for free.
+The win is a smaller elaborator, a tree-calculus-native error model, dependent records for free, and a generalized recursion form that retires the kernel's bespoke `recq` combinator.
 
 ## 2. Design principles
 
 1. **Object language is the spec.** Records compile to existing kernel-validated structures (`Sigma`, `Refinement`). No new kernel primitives.
 2. **Errors are predicate evaluations.** Invalid projections fail because a Refinement type's predicate reduces to `FF`. Not because the host code raised.
 3. **Speed is optimization, not semantics.** A "slow path" using runtime name-walk is the reference; an elaborator inlining pass produces direct projection chains. The two are provably equal by reduction.
-4. **Names live in types, not values.** A `Record fields` value is a bare nested pair. The field names live in `fields`, which is the type's `params` metadata.
+4. **Names live in types, not values.** A `Record fields` value is a chain of field values. The field names live in `fields`, which is the type's `params` metadata.
 5. **Hash-cons does the heavy lifting.** Distinct field-name sets produce distinct types; identical schemas share trees. Memo makes repeated work free.
+6. **Unify, don't bifurcate.** Records and the kernel handler record must respond to the SAME projection desugaring rule. Two parallel mechanisms would split the elaborator and double the test surface.
 
-## 3. Prerequisites — library types to land first
+## 3. Library types — landed (steps 1–6)
 
-### 3.1 `Refinement`
+The library-types phase is **complete** and verified by 148 passing tests. These are real and usable today; the encoding migration in §§7–10 builds on top.
 
-Refinement is sketched in `TYPE_THEORY.typ` §5.8 but not yet implemented.
+### 3.1 `Refinement` — `lib/types/refinement.disp`
 
 ```disp
-// lib/types/refinement.disp
-//
-// Refinement A P : Type
-//   inhabited by v iff (A v = TT) AND (P v = TT)
-//
-// Standard predicate_frame wrapping; sentinel codomain_fn (closed dispatch —
-// Refinement is a value type, no function-application hypothesis behavior).
-
-open use "../kernel/utils.disp"
-open use "../kernel/handlers.disp"
-
-Refinement_pf := predicate_frame
-  ({params, v} ->
-    let A = pair_fst params
-    let P = pair_snd params
-    and (A v) (P v))
-  t
-
-Refinement := {A, P} -> wait Refinement_pf (pair A P)
-
-is_refinement := {v} -> has_sig Refinement_pf v
-refinement_base := {T} -> pair_fst (type_meta T)         // extracts A
-refinement_pred := {T} -> pair_snd (type_meta T)         // extracts P
+Refinement_pf := {A, P} -> guard (predicate_frame_form
+  (t refinement_pf_recognizer
+     (t (t (unguard_checked A) P) t)))
+Refinement := Refinement_pf
 ```
 
-**Tests** (`lib/tests/refinement.test.disp`):
+`Refinement A P` is inhabited by `v` iff `A v = TT` AND `P v = TT`. Predicate-frame wrapping; closed dispatch (no bind_hyp). Reflection: `is_refinement`, `refinement_base`, `refinement_pred`.
+
+### 3.2 `Unit` — `lib/types/unit.disp`
 
 ```disp
-// Define a local predicate for the test (is_zero is not currently in lib/std)
-let is_zero = {n} -> tree_eq n zero
-
-// positive: Nat ∧ is_zero accepts 0, rejects succ 0
-test (Refinement Nat is_zero) zero = TT
-test (Refinement Nat is_zero) (succ zero) = FF
-
-// negative: malformed value (not a Nat at all)
-test (Refinement Nat is_zero) TT = FF
-
-// is_refinement / accessors
-test is_refinement (Refinement Nat is_zero) = TT
-test refinement_base (Refinement Nat is_zero) = Nat
-test refinement_pred (Refinement Nat is_zero) = is_zero
+unit_witness := t t t   // = fork(LEAF, LEAF), the K combinator's tree
+Unit := guard (predicate_frame_form (t unit_pf_recognizer (t t t)))
 ```
 
-Note: `is_zero` should eventually move into `lib/std/nat/ops.disp` as part of standard predicate exports — currently only defined inline in `lib/tests/match.test.disp`.
+Singleton type. The recognizer accepts only `unit_witness`. Reflection: `is_unit_witness`.
 
-### 3.2 `Unit`
-
-The terminator for the Sigma chain encoding records.
+### 3.3 `String` — `lib/types/string.disp` (Option A: permissive)
 
 ```disp
-// lib/types/unit.disp
-//
-// Unit : Type
-//   inhabited by a single canonical witness `unit_witness`.
-
-open use "../kernel/utils.disp"
-open use "../kernel/handlers.disp"
-
-unit_witness := pair t t   // canonical leaf-pair; distinct from common compiled forms
-
-Unit_pf := predicate_frame
-  ({_params, v} -> tree_eq v unit_witness)
-  t
-
-Unit := wait Unit_pf t   // no parameters; closed singleton
-
-is_unit_witness := {v} -> tree_eq v unit_witness
+String_pf := predicate_frame ({_, _} -> TT) t   // accepts any tree
+empty_string := {n, _c} -> n
+string_cons  := {byte, rest} -> {_n, c} -> c byte rest
+string_eq    := tree_eq
 ```
 
-**Tests** (`lib/tests/unit.test.disp`):
+Identifiers compile to canonical Scott byte-list trees via the host-side atom table `internName` in `src/compile.ts`. Hash-consing makes equality O(1). Option B (a structural `is_scott_byte_list` recognizer) is reserved for if/when we need to reject non-string trees passed as names — currently the parser only emits canonical trees so the structural check is redundant.
+
+### 3.4 List helpers added to `lib/std/list.disp`
 
 ```disp
-test Unit unit_witness = TT
-test Unit t = FF                  // bare leaf isn't unit
-test Unit (pair t (pair t t)) = FF
+list_is_nil := {xs} -> is_leaf xs
+list_head   := {xs} -> pair_fst xs
+list_tail   := {xs} -> pair_snd xs
+list_find   := {pred, xs} -> ...   // first element where pred returns TT, else nil
 ```
 
-Note on the choice of `unit_witness`: `pair t t` is `K` (the constant combinator) in tree-calc. It is already established disp convention — `lib/types/false.disp:30` uses `pair t t` as the "no-params" sentinel in metadata layout. Bool's `TT` is `K K = pair (pair t t) (pair t t)`, not `K` itself, so there's no collision with Bool. Using `pair t t` as `unit_witness` is consistent with existing kernel patterns.
+`is_zero` / `pred` / `succ` were already in `lib/std/nat/ops.disp`.
 
-### 3.3 `String` (or just a permissive base type for v1)
-
-Identifiers from disp source are interned to canonical hash-consed trees at parse time. `tree_eq` decides equality in O(1).
-
-**For the records design to work, we don't strictly need a structural `String` recognizer** — we only need:
-1. A base type permissive enough to accept any name tree (so `Refinement` can layer constraints on top).
-2. The parser to intern identifiers deterministically.
-
-Two equivalent options:
-
-**Option A — permissive String (v1):**
-```disp
-// String accepts any tree. The Name s refinement is what enforces canonical-ness.
-String_pf := predicate_frame
-  ({_params, _v} -> TT)
-  t
-
-String := wait String_pf t
-```
-
-**Option B — proper Scott-byte-list String (future):**
-```disp
-// String accepts only well-formed Scott byte lists. Recursive predicate.
-// is_scott_byte_list is a prelude function defined alongside is_scott_nat.
-String_pf := predicate_frame
-  ({_params, v} -> is_scott_byte_list v)
-  t
-
-String := wait String_pf t
-```
-
-**Recommendation: Option A for v1.** The Refinement layer (`Name s`, `ValidField fields`) does the real type-level work — String only exists as a base type for refinement to refine over. The structural check in Option B becomes useful when we want to reject non-string trees passed as names, but for the records use case the parser only emits canonical trees so the structural check is redundant.
-
-**Parser convention** (independent of A or B): the parser maintains an atom table mapping source identifiers to their canonical Scott-byte-list trees. First reference to `"codomain_fn"` builds the Scott list; subsequent references reuse the same tree via hash-cons. Identifiers are interned deterministically (same source identifier → same tree, across sessions).
+### 3.5 `Record` — `lib/types/record.disp`
 
 ```disp
-// Helpers (parser-emitted; live in prelude):
-empty_string := {n, c} -> n
-string_cons  := {byte, rest} -> {n, c} -> c byte rest
-string_eq    := tree_eq    // hash-cons identity
-```
-
-## 4. The `Record` type
-
-### 4.1 Field lists
-
-A field list is a `List (Pair String Type_fn)` where `Type_fn` is either a constant type or a function from prior field values to a type (for dependent records).
-
-```disp
-// FieldList shape:
-//   nil   = empty record
-//   cons (name, type_fn) rest = head field + remaining fields
-//
-// For non-dependent records, type_fn ignores its argument:
-//   ("x", {_} -> Nat)
-//
-// For dependent records, type_fn binds the predecessor's value:
-//   ("x", {A} -> A)   // in a record where A : Type is a previous field
-```
-
-The parser canonicalizes field lists by sorting alphabetically on names. This makes `{x := 1, y := 2}` and `{y := 2, x := 1}` produce identical types and identical values.
-
-### 4.2 `Record` as a thin predicate_frame wrapper
-
-```disp
-// lib/types/record.disp
-
-open use "../kernel/utils.disp"
-open use "../kernel/handlers.disp"
-open use "./sigma.disp"
-open use "./unit.disp"
-open use "./refinement.disp"
-
-// Build the sigma chain corresponding to a field list. Each field's
-// type_fn takes the tuple of all preceding values, so dependent fields
-// can reference earlier values. For non-dependent fields, type_fn
-// simply ignores its argument.
-//
-//   [(n1, T1), (n2, T2)] with non-dependent T2:
-//     ⟶ Sigma (T1 ()) ({v1} -> Sigma (T2 (v1, ())) ({v2} -> Unit))
-//
-//   [(A, Type), (x, {prev} -> pair_fst prev)] — x depends on A:
-//     ⟶ Sigma Type ({A} -> Sigma A ({_} -> Unit))
-//
-// `sigma_chain` is a metadata-construction helper; the resulting tree
-// IS a Sigma chain, and the Record predicate_frame wraps it so the
-// type carries the field list as params.
-
-sigma_chain := fix({self, fields, prev_tuple} ->
-  match (list_is_nil fields) {
-    TT => (Unit)
-    FF => (let head = list_head fields
-           let rest = list_tail fields
-           let ty_fn = pair_snd head
-           Sigma (ty_fn prev_tuple)
-                 ({v} -> self rest (pair v prev_tuple)))
-  })
-
-// Top-level entry: starts with the empty predecessor tuple.
 sigma_chain_top := {fields} -> sigma_chain fields unit_witness
-
-// Record itself: predicate_frame wrapping the Sigma chain's recognizer,
-// with `fields` carried in params so accessors can read field names.
-
-Record_pf := predicate_frame
-  ({params, v} ->
-    let sigma_form = sigma_chain_top params
-    sigma_form v)
-  t   // closed dispatch — Records aren't applied like Pi
-
-Record := {fields} -> wait Record_pf fields
-
-is_record := {v} -> has_sig Record_pf v
-record_fields := {T} -> type_meta T   // the FieldList, with names
-
-// Field name list (just the names, no types):
-record_names := {T} -> list_map ({nt} -> pair_fst nt) (record_fields T)
-
-// Field type at a given name:
-record_type_at := {T, n} -> 
-  let fields = record_fields T
-  pair_snd (list_find ({nt} -> tree_eq (pair_fst nt) n) fields)
+Record_pf := {fields} -> guard (predicate_frame_form
+  (t record_pf_recognizer (t fields t)))
+Record := Record_pf
+record_fields := {T} -> pair_fst (pair_snd (type_meta (unguard_or_self T)))
 ```
 
-**Why a wrapper rather than just exposing iterated Sigma?**
+`Record fields` wraps an iterated `Sigma` chain in a predicate_frame whose params slot carries the FieldList. Value shape is `t v1 (t v2 ... unit_witness)` — the same nested-pair chain the §8 surface encoding will produce. Type identity tracks field names because they live in `params`.
 
-- **Type identity tracks field names.** `Record [("x", Nat)]` and `Record [("a", Nat)]` are different types because their `params` differ — even though their inhabitants are structurally identical (both are `pair v unit_witness`). Without the wrapper, both would be the same `Sigma Nat ({_} -> Unit)` type and `r.x` vs `r.a` would be indistinguishable to the type system.
-- **Validation hook.** The Record library type is where we'll attach record-specific laws (extensionality, projection laws) as the strictness work proceeds.
+Note: types/record.disp uses triage directly on the field-list constructor shape rather than calling std/list helpers, because std/ imports kernel/prelude.disp which re-exports this file (import cycle).
 
-### 4.3 Recognizer behavior
-
-`Record fields` accepts exactly the same value-shapes as the corresponding Sigma chain. Specifically:
-
-- `Record []` (empty record) accepts `unit_witness` and rejects everything else.
-- `Record [("x", Nat)]` accepts `pair v unit_witness` iff `Nat v = TT`.
-- `Record [("x", Nat), ("y", Bool)]` accepts `pair v1 (pair v2 unit_witness)` iff `Nat v1 = TT` and `Bool v2 = TT`.
-- Dependent: `Record [("A", Type), ("x", {A} -> A)]` accepts `pair Nat (pair 0 unit_witness)` (because `0 : Nat`).
-
-## 5. Projection
-
-### 5.1 `ValidField` refinement
-
-The key construct: a refinement type that accepts exactly the strings that name a field in some `fields` list.
+### 3.6 `ValidField` + `proj` — `lib/std/record.disp`
 
 ```disp
-// "Is name n in field list fields?"
-in_fields := fix({self, fields, n} ->
-  match (list_is_nil fields) {
-    TT => FF
-    FF => match (tree_eq (pair_fst (list_head fields)) n) {
+in_fields := fix ({self, fields, n} ->
+  triage FF (...) ({head, tail} ->
+    match (tree_eq (pair_fst head) n) {
       TT => TT
-      FF => self (list_tail fields) n
-    }
-  })
+      FF => self tail n
+    }) fields)
 
-// Refinement type: "n is a valid field name in fields"
 ValidField := {fields} -> Refinement String ({n} -> in_fields fields n)
+proj       := {fields, r, n} -> sigma_walk r (find_index fields n)
+
+record_names   := {T} -> list_map ({nt} -> pair_fst nt) (record_fields T)
+record_type_at := {T, n} -> pair_snd (list_find ({nt} -> tree_eq (pair_fst nt) n) (record_fields T))
 ```
 
-`ValidField [("x", Nat), ("y", Bool)]` is inhabited by exactly `"x"` and `"y"` (the canonical String trees for those identifiers) — and nothing else.
+`ValidField fields` is the refinement type that accepts exactly the names in `fields`. `proj` is the tree-native projector. Both work end-to-end against in-language constructed `Record` values.
 
-### 5.2 The projector
+## 4. The "compile-time error from kernel predicate" mechanism
 
-```disp
-// Walk the Sigma chain to a given index, returning the value at that position:
-sigma_walk := fix({self, r, i} ->
-  match (is_zero i) {
-    TT => pair_fst r
-    FF => self (pair_snd r) (pred i)
-  })
+This is the load-bearing claim — and the analysis below confirms it works as a clean rewrite of today's elaborator, not as a special case.
 
-// Find the index of a name in a field list (caller guarantees presence):
-find_index := fix({self, fields, n} ->
-  match (tree_eq (pair_fst (list_head fields)) n) {
-    TT => zero
-    FF => succ (self (list_tail fields) n)
-  })
+`src/compile.ts:846-938` already orchestrates type checking the same way the proposal needs: `check(e, expected, ctx)` compiles `e`, runs `applyTree(expected, tree, APPLY_BUDGET)`, and rejects if the result isn't `TT`. The host orchestrates; the kernel decides via reduction.
 
-// The tree-native projector:
-//   proj : {fields} -> Record fields -> (n : ValidField fields) -> field_type
-//
-// The Refinement on `n` is what enforces validity at typecheck time.
-proj := {fields, r, n} ->
-  sigma_walk r (find_index fields n)
-```
+Under the new encoding (§8), the parser desugars `r.x` to `proj r ("x" : ValidField (record_fields_of r))`. The annotation `: T` already routes through `check()` (compile.ts:973-988). The elaborator computes `ValidField (record_fields_of r)` from r's known type, the existing `check` path runs `applyTree`, and an `FF` result throws via the existing "type check failed" branch.
 
-### 5.3 Compile-time error mechanism
+**Net code change at projection sites:** the bespoke `record.fields`/`fieldTrees`/`fieldInnerFields` side-tables and `resolveExprRecord` walking go away. Replaced by `record_fields_of (type_of r)` — a kernel-evaluated query. Roughly the same line count, but the truth-condition is decided by kernel reduction rather than a TypeScript string-table lookup.
 
-When you call `proj r "bogus"` and `"bogus"` isn't in `r`'s fields, the kernel:
+The "available fields" error-message UX is preserved as a small special case in the elaborator for literal-name projections; otherwise users get the generic "Refinement returned FF" path.
 
-1. Checks the call's type. The argument's expected type is `ValidField fields`.
-2. `ValidField fields = Refinement String ({n} -> in_fields fields n)`.
-3. Refinement's recognizer evaluates `(String "bogus") ∧ (in_fields fields "bogus")`.
-4. `in_fields fields "bogus"` reduces by walking `fields` and comparing with `tree_eq`. None match. Result: `FF`.
-5. The conjunction returns `FF`. The Refinement's recognizer returns `FF`.
-6. The kernel concludes `"bogus"` is not of type `ValidField fields`. **Type-check fails.**
+## 5. Why the original "hard cutover" plan failed
 
-The error is structurally identical to what happens when you write `(succ zero) : Bool`: a predicate evaluates to `FF` and the kernel rejects. No bespoke error path; no elaborator special case.
-
-### 5.4 Speed: elaborator inlining
-
-The slow path `proj r n` walks the chain in O(k) reductions for the k-th field. Hash-cons memo makes repeated access O(1) after the first call, so closed records are effectively free.
-
-For *open* records (where `r` is a function parameter), reduction stalls on `r` and we'd pay O(k) per call site. Elaborator inlining recovers O(1):
-
-```
-proj r "x"
-  // Elaborator sees: literal name "x", knows r's type, so knows fields
-  // Computes: find_index fields "x" = 0  (at parse time)
-  // Rewrites to: sigma_walk r 0
-  // Further reduces: pair_fst r
-```
-
-The inlined form is provably equal to the slow path by reduction, so substituting is sound. The kernel typechecks the *original* `proj r "x"` form; the inlined form is the compiled result.
-
-If the name is dynamic (`proj r computed_name`), inlining can't fire; the slow path runs. Both produce identical results.
-
-This is the "speed and name-usability" payoff: kernel-validated correctness with no per-access cost in the common literal-name case.
-
-## 6. Surface syntax
-
-### 6.1 Construction
-
-```
-{ x := e1, y := e2 }
-```
-
-**Desugars to:** `pair (eval e1) (pair (eval e2) unit_witness)`, after the parser canonicalizes the field order alphabetically.
-
-If both `x` and `y` are explicitly typed via context (`let r : Record [("x", Nat), ("y", Bool)] = …`), the type's recognizer validates the value at typecheck time.
-
-If no type annotation is present, the type is inferred:
-- For each field, infer the value's type.
-- Build the FieldList from declared names + inferred types.
-- The result is `Record fields`.
-
-### 6.2 Type form
-
-```
-{ x : T1, y : T2 }
-```
-
-**Desugars to:** `Record [("x", T1), ("y", T2)]` after canonicalization. (For dependent records, the type expressions may reference earlier-named fields; see §7.)
-
-### 6.3 Projection
-
-```
-r.x
-```
-
-**Desugars to:** `proj r "x"`.
-
-The parser interns `"x"` as a canonical String tree (Scott byte list). The kernel typechecks the call, validating `"x" : ValidField (fields_of r)`. If the check passes, the elaborator inlining pass (§5.4) tries to reduce to a direct projection chain; otherwise the slow path runs at evaluation.
-
-### 6.4 Examples
-
-**Non-dependent record:**
-
-```disp
-let pt := { x := 1, y := 2 }
-// type: Record [("x", Nat), ("y", Nat)]
-// value: pair 1 (pair 2 unit_witness)
-
-test pt.x = 1
-test pt.y = 2
-// pt.z would fail typecheck — Refinement rejects "z"
-```
-
-**Dependent record:**
-
-```disp
-let pair_with_type := { T := Nat, val := 0 }
-// Source-level type: Record [("T", Type), ("val", T)]
-// Parser-emitted FieldList:
-//   [("T", {_prev} -> Type),
-//    ("val", {prev} -> pair_fst prev)]    -- T is at tuple position 0
-// Sigma-chain form:
-//   Sigma Type ({T_val} -> Sigma T_val ({_val_val} -> Unit))
-// Value: pair Nat (pair 0 unit_witness)
-// Typecheck:
-//   - first slot: Nat satisfies Type
-//   - second slot: 0 satisfies (the function applied to Nat = Nat)
-
-test pair_with_type.T = Nat
-test pair_with_type.val = 0
-```
-
-**Kernel metadata, rewritten:**
-
-```disp
-// Today (lib/types/pi.disp):
-//   Pi_pf := predicate_frame ({params, v} -> ...) ({ks, raw, meta, v} -> ...)
-//   metadata is bare pairs, accessed via pair_fst/pair_snd chains
-//
-// After Records land:
-let pi_meta := { recognizer := pi_recognizer, dom := A, cod_fn := B }
-// .recognizer, .dom, .cod_fn are typed projections, validated by ValidField.
-```
-
-## 7. Dependent records
-
-Dependence is automatic because `sigma_chain` builds an iterated `Sigma`, and `Sigma A ({a} -> B a)` is dependent by construction. Each entry in the FieldList has a `type_fn` that takes a tuple of all preceding values, so any field's type can reference any earlier field.
-
-**Encoding convention.** Each `type_fn` is a single-argument function whose argument is the tuple `(v_{i-1}, (v_{i-2}, (..., unit_witness)))` of all preceding field values (most recent first). The parser translates source-level identifier references into the corresponding tuple-accessor expressions:
-
-```
-Source:        { A : Type, x : A, y : List A }
-
-Parser emits FieldList:
-  [ ("A", {_prev} -> Type)
-  , ("x", {prev} -> pair_fst prev)                              // A is at position 0
-  , ("y", {prev} -> List (pair_fst (pair_snd prev)))            // A is at position 1
-  ]
-
-sigma_chain_top produces:
-  Sigma Type ({A_val} ->
-    Sigma A_val ({_x_val} ->
-      Sigma (List A_val) ({_y_val} ->
-        Unit)))
-```
-
-A value `pair Nat (pair 0 (pair nil unit_witness))` typechecks because:
-- First slot: `Nat` satisfies `Type`.
-- Second slot: applying `({A_val} -> Sigma A_val ...)` to `Nat` gives `Sigma Nat ...`, and `0` satisfies `Nat`.
-- Third slot: continues similarly.
-
-**Parser responsibility.** The parser must:
-1. Parse field-type expressions in a scope where preceding field names are bound.
-2. Translate each identifier reference (e.g., `A`) into the appropriate tuple-accessor (`pair_fst prev`, `pair_fst (pair_snd prev)`, …).
-3. Emit FieldList entries whose `type_fn` is the resulting closure.
-
-This is a mechanical desugaring — no inference required. Identifier-to-tuple-position is determined entirely by the position-from-end of the referenced field.
-
-**Non-dependent records** are the trivial case where every `type_fn` ignores `prev`: the parser emits `{_prev} -> SomeType` for each field. No source-level identifier references means no tuple-accessor translation.
-
-## 8. Coherence laws
-
-These should be provable in-language once Records land. Adding them to the test suite locks the semantics:
-
-```disp
-// (1) Projection of constructed record returns the right value
-test ({ x := 1, y := 2 }).x = 1
-test ({ x := 1, y := 2 }).y = 2
-
-// (2) Two records with the same fields in the same order are tree_eq
-test tree_eq { x := 1, y := 2 } { x := 1, y := 2 } = TT
-
-// (3) Field order is canonicalized — different source orders give same value
-test tree_eq { y := 2, x := 1 } { x := 1, y := 2 } = TT
-
-// (4) Different field names → different types (even with same value shape)
-test tree_eq (Record [("x", Nat)]) (Record [("a", Nat)]) = FF
-
-// (5) Extensionality: records with same projections at every field are equal
-//     (proven via the recognizer's structural recursion)
-```
-
-The extensionality property is what justifies the cubical-fast encoding optimization eventually: any program that observes only field projections is invariant under records that agree on every field.
-
-## 9. Enums (sketch)
-
-The dual construction. An enum is a tagged union, where the tag is a refinement-singleton name. The encoding mirrors records:
-
-```disp
-// VariantList = List (Pair String Type)
-//   [("Extend", Tree), ("Return", Tree)]
-
-// Either A B : Type — disjoint sum, needs to land alongside Refinement
-Either_pf := predicate_frame
-  ({params, v} ->
-    let A = pair_fst params
-    let B = pair_snd params
-    or (and (is_inl v) (A (un_inl v)))
-       (and (is_inr v) (B (un_inr v))))
-  t
-
-Either := {A, B} -> wait Either_pf (pair A B)
-
-// Enum encoding:
-//   data Action = Extend(Tree) | Return(Tree)
-//     ⟶  Either (Sigma (Name "Extend") ({_} -> Tree))
-//               (Sigma (Name "Return") ({_} -> Tree))
-//
-// where Name s := Refinement String ({x} -> tree_eq x s)
-//
-// Constructor:
-//   Extend(t) ⟶ inl ("Extend", t)
-//
-// Match:
-//   match a { Extend(x) => f x ; Return(y) => g y }
-//     ⟶  either ({et} -> let x = pair_snd et in f x)
-//                ({rt} -> let y = pair_snd rt in g y)
-//                a
-```
-
-For more than two variants, iterated `Either`. Parser canonicalizes variant order (alphabetical) for type stability.
-
-Exhaustiveness checking: the parser inspects the match arms against the enum's variant list (accessible via `params` on the Enum type), and emits a compile error if any variant is missing.
-
-This is a sketch; full enum design is a follow-up doc once records land.
-
-## 10. Migration plan
-
-### 10.1 Landing order
-
-1. **Refinement** (`lib/types/refinement.disp` + tests) — unblocking. ~50 lines including tests.
-2. **Unit** (`lib/types/unit.disp` + tests) — ~30 lines.
-3. **String** formalized as a library type if not already — clarify the existing convention, add a recognizer. ~50 lines.
-4. **Record** (`lib/types/record.disp` + tests) — depends on Sigma (already landed via W1), Refinement, Unit. ~80 lines.
-5. **ValidField + proj** (in `lib/types/record.disp` or `lib/std/record_ops.disp`) — ~40 lines.
-6. **Parser desugaring** updates to `src/parse.ts` and `src/compile.ts`:
-   - **Intern identifiers as canonical Scott byte lists.** New parser pass: each source identifier (in `r.x` projections, in `:=` field labels, in `:` field-type labels) gets a deterministic Scott-encoded byte-list tree via an atom table. Same identifier → same tree, across sessions. This is the load-bearing prerequisite for `Name s` refinements to work.
-   - `r.x` → `proj r "x"` (replaces current `proj` case in compile.ts:413).
-   - `{ x := e }` → nested pair (replaces Church encoding from compile.ts:402–407).
-   - `{ x : T }` → `Record [...]` (replaces current recType compile-time metadata).
-   - Canonicalize field order alphabetically at parse time.
-   - For dependent records: when parsing each field-type expression, track the predecessor field names in scope and translate identifier references to tuple-accessor functions (per §7).
-7. **Elaborator inlining pass** (optional, follows after correctness) — detects literal-name `proj` calls and rewrites to direct chains.
-8. **Spec updates to TYPE_THEORY.typ**:
-   - §5.X: Refinement (move from §5.8 sketch to its own section).
-   - §5.Y: Unit.
-   - §5.Z: Record (the predicate_frame wrapper + the projection refinement pattern).
-   - Update §"Compilation" to describe the new desugaring rules.
-9. **Migrate kernel metadata** to use Record syntax (`pi_meta.cod_fn` instead of `pair_snd (pair_snd ...)`), retiring hand-written `*_meta_*` accessors. Touches every `lib/types/*.disp` and `lib/kernel/handlers.disp`.
-10. **Migrate file bodies** (`use "..."` imports) to return Record values rather than Church-encoded records. Coordinate with all `use` consumers.
-
-Steps 1–6 are the core implementation. 7 is performance. 8–10 are downstream consolidation that can happen incrementally.
-
-### 10.2 Backward compatibility
-
-Steps 1–5 are purely additive (new library types, no kernel changes). Step 6 changes the underlying *tree encoding* of existing surface syntax — the syntax itself is unchanged.
-
-**What stays the same (syntax):**
-- `use "file.disp"` is still a valid expression. It still loads a file and yields a value of its exports.
-- `open use "file.disp"` is unchanged. Field names are still brought into scope.
-- `{x := e}` and `r.x` are still the construction / projection forms.
-
-**What changes (encoding):**
-- `use "file.disp"` previously evaluated to a Church-encoded record `λA. λk. k field1 field2 …`. After migration, it evaluates to a Record-typed value `pair field1 (pair field2 unit_witness)`.
-- `{x := e}` previously compiled to `λsel. sel e` (Church encoding). After migration, it compiles to `pair e unit_witness`.
-- `r.x` previously compiled to a Church-record selector application. After migration, it compiles to `proj r "x"` (or its inlined `pair_fst (pair_snd …)` form).
-
-**Why "hard cutover" is safe:**
-
-The encoding change is only observable to code that inspects the underlying tree shape directly. Audit for the two patterns that could break:
+The earlier draft of this document (audit in §10.2 of the original) claimed nested-pair encoding could replace Church-encoded records via a hard cutover. The audit greps came up clean:
 
 ```
 grep -rn "= use \""  lib/ src/        → 0 hits
@@ -566,58 +129,231 @@ grep -rn "let.*= use "  lib/ src/      → 0 hits
 grep -rn "{}"  in .disp source         → 0 hits
 ```
 
-Specifically:
-- **No code applies a `use` result as a Church record.** Hypothetical pattern: `(use "f.disp") SomeType (λa b → a + b)` — applying the result as a function. Not found anywhere.
-- **No code binds `use` to a name for later projection.** `let mod = use "x.disp"` — not found. (All uses are `open use`, which is encoding-invariant.)
-- **No `.disp` file uses `{}` in expression position.** The Church-unit identity encoding of the empty record is dead code.
+But the audit missed the load-bearing consumer of Church-encoded records: **`recq` itself**.
 
-So "hard cutover" means: change the desugaring once, delete the old code path, no compatibility shim. The alternative — side-by-side mode (e.g., `use!` for new, plain `use` for old) — would add complexity for no observable benefit since the audit showed nobody relies on the old encoding.
+```disp
+recq := {components} -> fix ({self, query} -> components query ({q} -> wait self q) self query)
+```
 
-**What changes in the codebase:**
-- `lib/tests/**/*.test.disp` and `lib/**/*.disp` using `{x := e}` or `r.x` get the new desugaring transparently. Surface syntax is identical, so source files don't need editing.
-- `src/compile.ts`'s `recValue` and `proj` cases are rewritten; the bespoke `resolveExprRecord` / `fieldInnerFields` infrastructure is deleted.
-- Add a few regression tests covering the new desugaring before deleting the old code path.
+This combinator (in `lib/prelude.disp:76`) and its consumer `kernel := recq {hyp_reduce := …, guard := …, …}` (in `lib/kernel/handlers.disp:340`) treat the record literal `{…}` as a function — `components query` is Church dispatch. Under a naive nested-pair encoding, `components query` becomes "fork applied to walker" which triages on the walker's tree and produces garbage.
 
-### 10.3 Spec updates
+Verified by attempting the hard cutover: 33/38 test files broke immediately because every kernel handler dispatch failed. Reverted.
 
-Each prerequisite type gets a §5.X entry in TYPE_THEORY.typ describing its recognizer (one-line code) and laws (a few sentences). Record gets a longer entry explaining the Sigma-chain desugaring rule and the ValidField refinement pattern. The "elaborator handles record shape tracking" note in COMPILATION.typ becomes "elaborator desugars syntax to library types," and the projection-mismatch error row in the error table moves from "elab" to "kernel: Refinement predicate FF on field name."
+## 6. The encoding question revisited
 
-## 11. Decisions (formerly open questions)
+After the failed hard cutover, the design question became: how do projection desugaring + recq dispatch + Record library type coexist?
 
-All design points have a resolution. Listed here for the implementation agent and for future readers who want the rationale.
+Two ways to think about it:
 
-1. **`unit_witness` tree: `pair t t`.** Matches the "no-params" sentinel already used in `lib/types/false.disp:30`. Does not collide with Bool (TT is `K K = pair (pair t t) (pair t t)`, not `K` alone). Established disp convention.
+**Option A — make recq dispatch via chain accessors.** Components becomes a chain; recq's `components query` flips to `walker components`. Internal handlers receive `(self, walker)` instead of `(ks, raw, query)`. But the recq output (`kernel`) is still a function. External call sites `kernel.field` need `target walker`; chain literals `{x := e1}.x` need `walker target`. **Two desugaring rules, distinguished by an elaborator `isChain` flag.**
 
-2. **String encoding: Scott byte list.** Stable, reflective, simple to spec. Performance is fine because hash-cons makes equality O(1) regardless of size. Alternatives (Church list, boot-set atoms, bit-pair tree) offered no compelling advantage for the cost of being non-standard.
+**Option B — make every record a function that hands its inner chain to whatever inspector you supply.** A `{x := e1, y := e2}` literal compiles to:
 
-3. **Atom-table interning: pure deterministic.** Every disp session produces the same canonical String tree for a given identifier. Cost is one Scott-list construction per unique identifier, paid once and cached. Stability across sessions enables hash-cons sharing in separate compilation and makes spec comparison reproducible.
+```disp
+λi. i (t e1 (t e2 unit_witness))
+```
 
-4. **Empty record `{}`: hard cutover.** Audit (`grep -rn '{}'` in `.disp` source) finds zero current uses of `{}`. The polymorphic-identity Church-unit encoding is dead code. After migration, `{}` desugars to `unit_witness`.
+The outer wrapper is a one-arg lambda; the chain sits inside. Apply the record to a walker and β-reduction produces `walker (the chain)`, which walks the chain. **One desugaring rule (`target walker`) works for kernel, chain literals, ks proxies, raw selves — all four shapes — because all four are functions that hand back chain content.**
 
-5. **`use "file.disp"` semantics: encoding changes, syntax doesn't.** `use` remains a valid expression that loads a file and yields its exports. The underlying tree changes from Church-encoded record to Record-typed value (nested Sigma). Audit finds zero current uses that depend on the underlying encoding (zero `= use "..."` bindings, zero `let foo = use "..."` patterns) — every existing `use` is `open use`, which is encoding-invariant. No compatibility shim needed.
+**Decision: Option B.** Unified desugaring, no elaborator complexity flag, recq stays structurally similar to today (`components walker self walker` — just rename `query` to `walker`). Cost is one extra β-reduction per access, fully memoized by hash-cons.
 
-6. **Inlining pass correctness: by reduction.** When the inlining pass rewrites `proj r "x"` to a direct projection chain, the result must be `tree_eq` to the original after kernel reduction. Add a regression test that compiles both forms and compares hash-cons identity. Not a design question — a test obligation.
+What Option B gives up: records are no longer pure data you can walk directly. To inspect a record's chain without using a known walker, apply to identity: `record (λx. x) = chain`. That's a tiny ceremony, and the chain you get back IS pure data that library code can introspect.
 
-7. **Dependent record scoping rule.** Field-type expressions are parsed in a scope where all preceding field names are bound. Mirrors `let`-binding shadowing. `{ A : Type, x : A }` parses with `A` in scope for `x`'s type expression. This is the only rule that makes sense for dependent records.
+For the `Record fields` library type's recognizer: extract chain via `v (λx. x)`, then check against the FieldList. One extra step beyond the pure-chain version implemented in §3.5; otherwise identical.
 
-8. **Enum design: deferred.** §9 sketches the construction. The full design (encoding choice, exhaustiveness implementation, multi-arity variants) lives in a separate `ENUMS_PROPOSAL.md` to be drafted once records land.
+## 7. Recursive records as a general feature
+
+Once Option B is in place, the kernel's `recq` pattern generalizes naturally. Every record that wants self-reference can opt in via `rec {…}`:
+
+```disp
+let counter = rec {
+  count := 0
+  inc   := {n} -> add count n        // bare `count` refers to self.count
+  reset := {} -> 0
+  next  := {} -> inc count           // bare `inc` and `count` refer to self.inc / self.count
+}
+```
+
+The parser detects that field bodies reference sibling names and rewrites those references to `self.<field>` projections. The compiler wraps the whole construction in `fix ({self} -> …)`, producing a wrapped chain whose fields can refer back to `self` via the standard projection mechanism.
+
+Compiled form (roughly):
+
+```disp
+fix ({self} -> wrap_chain (
+  t 0                                                                          // count
+    (t ({n} -> add (self walker_count) n)                                      // inc
+       (t ({} -> 0)                                                            // reset
+          (t ({} -> (self walker_inc) (self walker_count)) unit_witness)))))   // next
+```
+
+Mutual recursion is bounded by `wait` deferral, same mechanism the kernel uses today. The user typically doesn't write `wait` explicitly because call sites (`self.inc x`) supply all args; deferral only matters when constructing partial applications inside a method body — and there the user writes `wait self.field` explicitly. **Be liberal with `wait` for any cross-field call site that produces a value capturing self.**
+
+### 7.1 The kernel as a `rec {…}` instance
+
+Under §6 + §7, `recq` becomes redundant:
+
+```disp
+// lib/kernel/handlers.disp — after migration
+kernel = rec {
+  hyp_reduce       := {query, ...rest} -> ... (wait self.guard ...) ...
+  guard            := {query, ...rest} -> ... (wait self.predicate_frame ...) ...
+  unguard          := ...
+  checked_apply    := ...
+  predicate_frame  := ...
+  eliminator_frame := ...
+  bind_hyp         := ...
+}
+```
+
+The bespoke `recq` combinator in `lib/prelude.disp:76` retires. The `ks`/`raw`/`query` 3-arg dispatch contract collapses to plain `self.field` projections (lazy by default in cross-field call sites; the `wait` is implied by the partial-application context). External code (`Hyp := wait kernel.hyp_reduce …`) keeps the same syntactic shape.
+
+Importantly: **the kernel stops being a special case in the language**. It becomes one instance of the general `rec {…}` form available to any user.
+
+### 7.2 The two surface forms
+
+Form 1 (recommended for ergonomics) — the implicit-`self` shape shown above. The parser does letrec-style name resolution.
+
+Form 2 (falls out as a special case when there's no recursion) — non-recursive records use the plain `{…}` form. No `rec` keyword, no auto-`self`-passing, no fix-construction. Compatible with §3–§6 Record library type recognition.
+
+## 8. Projection desugaring under Option B
+
+Single rule: `r.field` desugars to `r W_field`, where `W_field` is the chain walker for field's position.
+
+The walker is a closed term built from prelude primitives:
+- `W_0 = pair_fst`
+- `W_1 = {r} -> pair_fst (pair_snd r)` → after bracket abstraction: `S (K pair_fst) pair_snd`
+- `W_i = pair_fst (pair_snd^i r)` → `S (K pair_fst) (S (K pair_snd) … pair_snd)` (i nested pair_snds)
+
+These are deterministic per index, hash-cons identical across call sites.
+
+Resolution flow at a `r.field` site:
+1. Elaborator queries r's type → finds Record-typed annotation or recType → extracts FieldList.
+2. Looks up `field` in FieldList → gets position `idx`.
+3. Builds (or memoizes) walker tree W_idx.
+4. Optionally: emits `check(internName(field), ValidField fieldList_tree, ctx)` for kernel-validated rejection of typos. The check runs `applyTree(ValidField_tree, name_tree, APPLY_BUDGET)`; on `FF`, throws with the available-fields list.
+5. Emits CIR: `cap(target_cir, { tag: "lit", t: W_idx })`.
+
+For a Record-typed (Option B wrapped) value at runtime:
+- `r W_idx = (λi. i chain) W_idx = W_idx chain = pair_fst (pair_snd^idx chain)` = the field value.
+
+For the kernel (recq output, which is itself a wrapped function via §7.1):
+- `kernel W_idx` fires the rec's fix, dispatches via `(W_idx components) self W_idx` = the handler partial-applied to (self, W_idx).
+
+For ks-style lazy proxies (if any survive after the kernel rewrite):
+- `ks W_idx = (λw. wait self w) W_idx = wait self W_idx`.
+
+**All four shapes resolve through the same desugaring.**
+
+## 9. H-rule identity check under Option B
+
+Today's H-rule sites compare `wait (ks query) meta` against reconstructed types. Hash-cons identity makes this O(1) because `self`, `query`, and `meta` are stable trees.
+
+Under Option B:
+- `ks query` (today) ↔ `wait self W_field` (tomorrow).
+- `wait (ks query) meta` (today) ↔ `wait (wait self W_field) meta` (tomorrow).
+- Both `self` and `W_field` and `meta` are stable trees (walker functions hash-cons via bracket-abstraction determinism).
+- Hash-cons identity preserved → H-rule O(1) preserved.
+
+**Verified by reasoning, not yet by code.** The first migration step (§10) is to confirm this empirically: build a test that compares wait-of-wait-of-self-of-walker against an independently-built reconstruction, expecting hash-cons match.
+
+## 10. Migration plan (revised)
+
+Each step is contained and reversible. Run tests after every step.
+
+### Step 1 — Smart-wrapper encoding for `{x := e}` literals
+Update `src/compile.ts:333` (`case "recValue"`) to emit `λi. i (t e1 (t e2 ... unit_witness))` instead of the current Church `λsel. sel e1 e2`.
+
+Update file-level export (`compile.ts:1169-1175`) similarly: file's exports become `λi. i (t v0 (t v1 ... unit_witness))`.
+
+Update projection (`compile.ts:413-426`): emit `cap(target_cir, walker_tree)` where walker_tree is built per-index from `pair_fst`/`pair_snd` primitives. The walker construction is the same per-position math used for the §6 sigma_walk; hoist that into a host helper.
+
+Update `open` extraction sites (`compile.ts:382, 506, 1294`): instead of `applyTree(target, selectorTree(n, i), APPLY_BUDGET)`, use `applyTree(target, walker_for_index(i), APPLY_BUDGET)`. Same arity, different walker.
+
+Test expectation: all 148 current tests pass unchanged. The Option B wrapper preserves Church-shaped projection semantics — `record selector` and `wrapped record walker` both produce the field value via β-reduction.
+
+### Step 2 — Empirical H-rule check
+Add a test in `lib/tests/walker.test.disp` (or new file) that constructs two independent `wait (wait self W_X) meta` forms and verifies `tree_eq` returns TT. If this fails, walkers aren't hash-cons-stable and the migration is blocked pending walker normalization.
+
+### Step 3 — Parser: `rec {…}` form
+Add `rec` keyword to the parser. Parsing produces a new AST node `recValueRec` with the same field list as `recValue`, plus a flag.
+
+In compile.ts, handle `recValueRec`:
+1. Compile the chain construction with each field body evaluated in a scope where sibling field names resolve to `self.<field>` projections.
+2. Wrap the result in `fix ({self} -> chain_construction)`.
+
+Implementation detail: the chain construction returns a wrapped record (§8 form). The fix produces a deferred form; applying it to an inspector fires the fix and returns `inspector chain`. For external `kernel.field` calls, this gives the right shape via §8 desugaring.
+
+### Step 4 — Kernel rewrite as `rec {…}`
+Rewrite `lib/kernel/handlers.disp:340` from `kernel := recq {…}` to `kernel = rec {…}`. Each handler body:
+- Old `{ks, raw, query} -> body` becomes `{query, …rest} -> body_with_self`.
+- Old `ks.field` becomes `wait self.field` (explicit defer at partial-app contexts).
+- Old `raw.field` becomes `self.field` (eager dispatch).
+
+Retire `recq` and the bespoke `ks` proxy in `lib/prelude.disp:76`. `rec` is the public combinator now (or rather, the keyword that desugars to fix+wrap).
+
+### Step 5 — kernel_ref consolidation
+`kernel_ref` (`handlers.disp:353`) exists today to provide a wait-form view of kernel for external type construction. Under §6 + §7, this is `{q} -> wait kernel q` — still expressible. Either keep it as a one-line definition, or inline its uses at the ~3 sites that need it. The latter is cleaner; do it during the kernel rewrite.
+
+### Step 6 — External `kernel.field` sites
+There's one external `kernel.field` use today: `lib/types/type.disp:86` (`wait kernel.hyp_reduce neutral_meta`). After §8 desugaring this becomes `wait (kernel walker_hyp_reduce) neutral_meta`. Should "just work" given §8 routing; verify in a regression test.
+
+### Step 7 — Test surface cleanup
+- `lib/tests/rec.test.disp` and `lib/tests/walker.test.disp` reference `rec`/`recq` directly. Rewrite to the new `rec {…}` form.
+- The `kernel.hyp_reduce` constant pinning test (`lib/tests/sig_pinning.test.disp`) verifies a known tree shape; update the expected tree if it changes under the new encoding (it shouldn't, by §8 unification, but verify).
+
+### Step 8 — Delete bespoke record machinery
+- `resolveExprRecord` (`compile.ts:462`): replace usages with `record_fields_of (type_of r)` queries. Delete once unused.
+- `ScopeEntry.fields`/`fieldTrees`/`fieldInnerFields`: delete side-tables.
+- `selectorTree`/`buildSelector` (`compile.ts:134, 143`): delete once walker-based emission is the only path.
+
+### Step 9 — Spec doc updates
+- `TYPE_THEORY.typ` §5.X: add Refinement (move from §5.8 sketch).
+- `TYPE_THEORY.typ` §5.Y: add Unit.
+- `TYPE_THEORY.typ` §5.Z: add Record (predicate_frame wrapper + ValidField refinement pattern).
+- `COMPILATION.typ` §"Record encoding": rewrite for Option B + `rec {…}`.
+- `SYNTAX.typ` §"Programs, record bodies, and items": add `rec` keyword.
+
+## 11. Decisions
+
+1. **`unit_witness` tree: `pair t t`** ✅ landed. Matches the "no-params" sentinel already used in `lib/types/false.disp:30`. Does not collide with Bool (TT is `K K = pair (pair t t) (pair t t)`, not `K` alone).
+
+2. **String encoding: Scott byte list (permissive Option A)** ✅ landed. Stable, reflective, simple to spec. Performance fine because hash-cons makes equality O(1). Option B (structural recognizer) reserved for future strictness work.
+
+3. **Atom-table interning: pure deterministic** ✅ landed in `src/compile.ts:internName`. Every disp session produces the same canonical String tree for a given identifier. Cost is one Scott-list construction per unique identifier, paid once and cached.
+
+4. **Encoding: Option B (smart-wrapped chains)** — NEW resolution superseding the original "nested-pair hard cutover." A `{x := e}` literal compiles to `λi. i (t e1 (t e2 unit_witness))`. All records are functions that hand back chain content. One desugaring rule for projection.
+
+5. **Recursive records: `rec {…}` keyword** — NEW. Generalizes the kernel's `recq` pattern as a first-class user feature. The kernel becomes a normal user record under this form.
+
+6. **`recq` and `ks`/`raw` distinction retired** — under §10.4, kernel handlers receive only `(query, …rest)` and reference siblings via `wait self.field` (lazy) or `self.field` (eager). The proxy mechanism dissolves into explicit per-call-site `wait`.
+
+7. **Empty record `{}`: hard cutover** ✅ Audit confirms zero current uses. Under Option B, `{}` compiles to `λi. i unit_witness`.
+
+8. **Field order canonicalization: alphabetical at parse time** ✅ Original decision stands. Makes `{x := 1, y := 2}` and `{y := 2, x := 1}` produce identical types and identical values.
+
+9. **Dependent record scoping rule** ✅ Original decision stands. Field-type expressions parse in a scope where preceding field names are bound. Mirrors `let`-binding shadowing.
+
+10. **H-rule O(1) identity check preservation** — to be verified empirically in §10.2 before committing to encoding flip. Reasoning suggests walker functions hash-cons stably; needs test.
 
 ## 12. What this proposal does NOT cover
 
-- **Record subtyping / row polymorphism.** Two records with overlapping fields are not interchangeable; subtyping coercions are not provided. Out of scope.
-- **Mutable records / update operators.** A `record { r | x := new_val }` update form would require additional library functions. Sketch only.
-- **Record types as kernel types.** Records are library types, not kernel primitives. No new kernel handler. The kernel's seven primitives don't grow.
+- **Record subtyping / row polymorphism.** Two records with overlapping fields are not interchangeable; subtyping coercions are not provided.
+- **Mutable records / update operators.** A `record { r | x := new_val }` update form would require additional library functions.
+- **Record types as kernel primitives.** Records are library types. The seven kernel primitives don't grow.
 - **First-class field names.** Names are tree values, but the parser still translates source identifiers; users can't write `"x"` directly in a projection (only via `r.x`). A separate `proj_dyn r expr` for computed names is a follow-up.
+- **Enum desugaring** (sketched in original §9). Moved to a separate `ENUMS_PROPOSAL.md` to be drafted once records land.
 
-## Summary
+## 13. Summary
 
-After this proposal lands, the entire record story in disp is:
+After §10 lands, the entire record story in disp is:
 
-- A record is a thin `Record fields` wrapper over an iterated `Sigma` chain.
-- Projection `r.x` desugars to `proj r "x"` where `proj`'s name parameter has a `ValidField fields` refinement type.
-- Compile-time errors for unknown fields come from the Refinement's predicate evaluating to `FF` — the kernel rejects, identical to any other type mismatch.
-- Speed is recovered by an elaborator inlining pass that reduces literal-name projections to direct chains.
-- Dependent records work for free because iterated Sigma handles dependence.
-- The current bespoke `resolveExprRecord` / `fieldInnerFields` machinery in `src/compile.ts` is replaced by a small desugaring layer.
+- A record is a function `λi. i chain` where `chain` is a nested-pair of field values terminating in `unit_witness`.
+- Projection `r.x` desugars to `r W_x` where `W_x` is the walker for x's position in the FieldList.
+- Compile-time errors for unknown fields come from `ValidField`'s predicate evaluating to `FF` — kernel reduction, no host check.
+- Speed is recovered by hash-cons memoization; the wrapper layer adds one β-reduction per access.
+- Dependent records work because the chain is recognized via iterated `Sigma`.
+- Mutual recursion is available via `rec {…}` — a general user feature that subsumes the kernel's `recq` combinator.
+- The kernel's handler record becomes one instance of `rec {…}`; the bespoke `ks`/`raw`/`query` 3-arg dispatch retires.
+- The `resolveExprRecord` machinery in `src/compile.ts` retires.
 
-Records become library code. The kernel stays the same. The elaborator shrinks. Errors come from tree calculus. That is the elegant landing zone we've been working toward.
+Records become library code with a single elaborator desugaring rule. The kernel stops being a special case in the language. Errors come from tree calculus. That is the landing zone.
