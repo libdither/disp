@@ -321,60 +321,117 @@ of §4 is itself an endo-Kleisli-arrow `Tree → CheckerResult(Tree)`;
 restricting objects to `Tree_p` (also §4) gives the subcategory on
 which composition stays in the same domain.
 
-== Bind variants
+== General `Result E` operations
 
-The kernel handlers use three named bind operations, all derivable
-from monadic `bind`:
+The standard `Result` API — these work for any error type `E` and
+know nothing about `CheckerError`. Five primitives cover the entire
+space of error-handling patterns:
 
 ```disp
-// Standard bind: threads payload to continuation on Ok; propagates
-// Err unchanged. This is just monadic `>>=`.
+// Monadic bind. Propagates Ok payload into continuation; passes Err
+// through unchanged. Equivalent to >>= / flatMap.
 bind := {r, k} ->
   match (is_ok r) {
     TT => k (ok_value r)
-    FF => r                       // Err propagates with its payload
-  }
-
-// Bind-requiring-TT: success case must be specifically Ok TT (the
-// predicate passed); Ok FF becomes Err PredicateFailed, Err
-// propagates. Used to chain predicate checks.
-require_tt := {type, value, r, k} ->
-  match (is_ok r) {
-    TT => match (tree_eq (ok_value r) TT) {
-      TT => k t
-      FF => Err (PredicateFailed { type, value, span = current_span })
-    }
     FF => r
   }
 
-// Recover-predicate-failed: fold Err PredicateFailed back into Ok FF
-// (the predicate said no, which IS the answer for a recognizer call).
-// Other Err variants — parametricity, escape, malformed — propagate
-// unchanged. This is what predicate_frame uses to convert recognizer
-// rejection into a Bool answer without laundering soundness bugs.
-recover_predicate_failed := {r} ->
+// Functor map. Transforms the Ok payload; leaves Err alone.
+map := {r, f} ->
+  match (is_ok r) {
+    TT => Ok (f (ok_value r))
+    FF => r
+  }
+
+// Error transform. Leaves Ok alone; transforms the Err payload.
+// Useful for re-tagging errors as they cross layer boundaries.
+map_err := {r, f} ->
   match (is_ok r) {
     TT => r
-    FF => match (error_tag (err_value r)) {
-      PredicateFailed => Ok FF
-      _               => r        // re-raise other errors
-    }
+    FF => Err (f (err_value r))
+  }
+
+// Error handler. Ok passes through; Err is handed to the handler,
+// which can itself produce Ok (recovery) or another Err (rethrow).
+// Equivalent to orElse / try-catch / Lean's Except.tryCatch.
+catch := {r, handler} ->
+  match (is_ok r) {
+    TT => r
+    FF => handler (err_value r)
+  }
+
+// Assertion sugar. Lifts a bool into Result Unit, supplying the
+// error for the false case. Useful for inline pre-conditions inside
+// a bind chain.
+guard := {cond, err} ->
+  match cond {
+    TT => Ok t                    // t = unit at this layer
+    FF => Err err
   }
 ```
 
-The third variant is the safety win: today's `must_ok_or_ff` blindly
-folds *any* `Fail` into `FF`, which would silently mask a
-parametricity violation inside a recognizer body as "this isn't an
-inhabitant." With tagged errors, `recover_predicate_failed` folds
-only the intended case and re-raises the rest.
+`map` and `map_err` together form the bifunctor structure; `catch`
+is monadic recovery on the error side; `guard` is the standard
+boolean-to-Result lift. These five are the entire vocabulary —
+every higher-level error-handling pattern is a composition.
+
+== `CheckerResult` helpers
+
+The kernel uses two named convenience patterns repeatedly. Each is
+a one-line specialization of the general operations above. They are
+named only because they appear at many call sites; semantically
+they are not primitive.
+
+```disp
+// require_tt: bind + assert extracted value is TT, else raise
+// PredicateFailed. Used in every typecheck-style chain to gate
+// progress on a recognizer's verdict.
+require_tt := {type, value, r, k} ->
+  bind r ({x} ->
+    bind (guard (tree_eq x TT)
+                (PredicateFailed { type, value, span = current_span }))
+         ({_} -> k t))
+
+// recover_predicate_failed: fold Err PredicateFailed back to Ok FF
+// (the predicate said no, which IS the answer for a recognizer
+// call). Other Err variants — Parametricity, Escape, Malformed —
+// propagate unchanged.
+recover_predicate_failed := {r} ->
+  catch r ({e} -> match (error_tag e) {
+    PredicateFailed => Ok FF
+    _               => Err e
+  })
+```
+
+The second helper is the soundness win versus the old
+undifferentiated `must_ok_or_ff`: that helper blindly folded *any*
+failure into `FF`, which would silently mask a parametricity
+violation inside a recognizer body as "this isn't an inhabitant."
+With tagged errors, `recover_predicate_failed` folds only the
+intended case and re-raises the rest. Every recognizer is now
+required to *be* a recognizer; bugs surface as themselves rather
+than as false negatives.
+
+#openq[
+  The eliminator handler currently uses an `Err`-fallback pattern
+  (`catch r (λ_. Ok wait_form)`) to stage partial application —
+  treating "not enough args yet" as an error to recover from. This
+  is misusing `Err` as control flow: partial application isn't a
+  failure, it's a different success state. Refactor candidate
+  (codebase work): redesign the eliminator's partial-app staging so
+  it returns `Ok (wait_for_more)` directly, with no `Err`
+  round-trip. See §6.3 and §15.
+]
 
 == Why a monad
 
 Failures propagate uniformly via `bind`. No manual short-circuiting
 in handler code; Kleisli composition does it automatically. Tagged
-errors mean each layer can decide what to recover from and what to
-re-raise, instead of pattern-matching on undifferentiated `Fail`
-trees.
+errors plus `catch` mean each layer decides what to recover from and
+what to re-raise, instead of pattern-matching on opaque `Fail`
+trees. The general/specialized split keeps the kernel's failure
+vocabulary self-documenting: `grep catch` finds every error
+suppression; `grep 'Err ('` finds every error raise.
 
 = The parametric walker and `Tree_p` <sec:tree-p>
 
