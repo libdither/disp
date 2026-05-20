@@ -1287,7 +1287,7 @@ test ({x, y} -> x) t (t t) = t</code></pre>
 <details>
 <summary>Aside: predicates vs. propositions, and why this isn't "set theory in disguise"</summary>
 <div class="body">
-<p>Choosing predicates over propositions can look like discarding proof-relevance. It isn't, because Disp's predicates are run on tree-shaped values that include proof terms. The type <code>Eq A x y</code>, for instance, is a predicate over candidate proofs: it answers <span class="math">true</span> when the candidate has the shape of a reflexivity certificate and the two endpoints are structurally equal. The proof-relevance survives; it has just been relocated from the typing judgement into the predicate's body. What we gain is that there is no separate object called "the typing judgement"; there is only function application.</p>
+<p>Choosing predicates over propositions can look like discarding <dfn class="gloss">proof-relevance<span class="tip">the property that different proofs of the same statement count as distinct, first-class objects you can inspect and compute with &mdash; rather than being collapsed to a single &ldquo;this is true&rdquo; token. The opposite is <em>proof-irrelevance</em>, where any two proofs of the same proposition are considered equal.</span></dfn>. It isn't, because Disp's predicates are run on tree-shaped values that include proof terms. The type <code>Eq A x y</code>, for instance, is a predicate over candidate proofs: it answers <span class="math">true</span> when the candidate has the shape of a reflexivity certificate and the two endpoints are structurally equal. The proof-relevance survives; it has just been relocated from the typing judgement into the predicate's body. What we gain is that there is no separate object called "the typing judgement"; there is only function application.</p>
 </div>
 </details>
 </aside>
@@ -3227,6 +3227,7 @@ function reducerOnExprInput() {
         body.style.height = 'auto';
         body.style.opacity = '1';
         body.style.marginTop = '0.8em';
+        body.style.overflow = 'visible';
       }
       summary.addEventListener('click', e => {
         e.preventDefault();
@@ -3246,12 +3247,14 @@ function reducerOnExprInput() {
           body.style.marginTop = '0.8em';
           window.setTimeout(() => {
             body.style.height = 'auto'; // allow content reflow afterward
+            body.style.overflow = 'visible'; // let tooltips escape once fully open
             delete body.dataset.animating;
           }, DURATION);
         } else {
           // Closing — keep [open] set until the animation completes so the UA
           // stylesheet's "hide non-summary children" rule doesn't kick in mid-
           // animation. Resolve 'auto' to a pixel value first.
+          body.style.overflow = ''; // restore CSS hidden for the close animation
           body.style.height = body.scrollHeight + 'px';
           body.style.opacity = '1';
           body.style.marginTop = '0.8em';
@@ -3264,6 +3267,7 @@ function reducerOnExprInput() {
             body.style.height = '';
             body.style.opacity = '';
             body.style.marginTop = '';
+            body.style.overflow = '';
             delete body.dataset.animating;
           }, DURATION);
         }
