@@ -95,8 +95,8 @@ and revisable:
     inset: 6pt,
     [*Section*], [*Covers*],
     [§2 Substrate], [Tree calculus, apply, hash-cons identity],
-    [§3 `Tree_p`], [Parametric subset, walker rules, soundness obligations],
-    [§4 The Result monad], [`CheckedResult`, Kleisli composition, bind variants],
+    [§3 The Result monad], [`CheckedResult`, Kleisli composition, bind variants],
+    [§4 The parametric walker and `Tree_p`], [Walker as Kleisli endoarrow, `Tree_p` as greatest fixed point, soundness discipline],
     [§5 The closed indexed effect], [Algebraic-effects framing for the kernel],
     [§6 The six primitives], [Operational semantics of each kernel handler],
     [§7 Boundary operations], [`param_lift`, `param_apply`, `typecheck`],
@@ -198,90 +198,6 @@ parametric walker) have native fast-paths that produce bit-identical
 results to the in-language reference implementations. The in-language
 reference is the spec; the host is the optimization.
 
-= The parametric subset `Tree_p` <sec:tree-p>
-
-== Motivating problem
-
-Disp's type system relies on *hypotheses* — fresh tree values minted by
-the kernel that represent "an unknown value of type `A`." Hypotheses
-have a pinned signature (`pair_fst h = kernel.hyp_reduce` for a kernel-
-minted neutral `h`). For the type system to be sound, user code must not
-be able to introspect hypotheses (otherwise it could behave differently
-on hypothesis inputs versus concrete inputs, breaking parametricity).
-
-The fix: restrict the reduction to *parametric* trees — trees that
-don't introspect kernel-minted neutrals. Operationally, this is enforced
-by a modified `apply` that rejects two patterns.
-
-== The parametric walker
-
-The parametric walker is `apply` with two added rejections:
-
-+ *Stem-rule rejection.* When applying a stem `stem(a)` to `x`, the
-  result is `fork(a, x)`. If this fork's `pair_fst` would be a pinned
-  kernel signature (specifically `hyp_reduce`'s signature), reject with
-  `Fail`. This prevents forgery of kernel-minted neutrals at user
-  level.
-
-+ *Triage-rule rejection.* When firing the triage rule on `x`, first
-  check whether `x` is a kernel-minted neutral
-  (`pair_fst(x) = kernel.hyp_reduce`). If so, reject with `Fail`. This
-  prevents reflection on hypotheses via triage.
-
-Plus one *carve-out*:
-
-- *I-shortcut.* `apply(I_canonical, x) = x` even when `x` is a
-  hypothesis. This is required so that the polymorphic identity
-  function passes Pi-checks against hypothesis-typed arguments. It is
-  the only soundness carve-out.
-
-== Definition of `Tree_p`
-
-A tree `t` is *parametric* iff, for every well-formed evaluation context
-that includes hypotheses, reducing `t` via the parametric walker never
-returns `Fail` due to one of the two parametric rejections.
-
-`Tree_p` is the set of parametric trees.
-
-#note[
-  This is a *semantic* property, not a syntactic one. You cannot tell
-  by inspection alone whether an arbitrary tree is parametric. The
-  walker enforces parametricity dynamically; following the rules in
-  §3.4 gives a static discipline that keeps user code in `Tree_p`.
-]
-
-== Soundness rules for users
-
-To stay in `Tree_p`, user code follows five rules:
-
-+ *Don't triage on hypothesis-typed values.* If `x` might be a
-  hypothesis (e.g., bound by `bind_hyp`), don't write
-  `triage l s f x`. Use kernel-mediated checks (`is_neutral`,
-  `tree_eq` against a known closed value, `has_sig` against a
-  registered signature) instead.
-
-+ *Don't construct forks with kernel signatures as `pair_fst`.* The
-  stem rule rejects this. Use kernel constructors (`Hyp`, `StuckElim`,
-  etc.) to mint neutrals.
-
-+ *Define new type-formers via kernel constructors.* Use
-  `predicate_frame_form` or `eliminator_frame_form`, not direct wait-
-  form construction.
-
-+ *Type-check at the boundary.* Use `typecheck T v`, not raw `T v`,
-  to verify membership. The boundary version sanitizes input and
-  routes through the dispatcher.
-
-+ *Kernel handler bodies have privileged access.* Code that runs
-  inside a kernel handler (recognizers, codomain functions) executes
-  "raw" — outside the walker. Library authors writing these are part
-  of the trusted base.
-
-Categorically, `Tree_p` is the *parametric subcategory* of `Tree`'s
-applicative structure. The walker is its composition operation. The
-two rejections are the structural constraints that define the
-subcategory.
-
 = The `CheckedResult` monad <sec:result-monad>
 
 == Definition
@@ -325,13 +241,15 @@ these definitions.
 
 == Kleisli composition
 
-The Kleisli category `Kl(CheckedResult)` has the same objects as
-`Tree_p`; morphisms `A → B` are functions `A → CheckedResult B` (in
-`Tree_p`). Composition is
+The Kleisli category `Kl(CheckedResult)` has trees as objects;
+morphisms `A → B` are functions `A → CheckedResult B`. Composition is
 
 $ g compose_K f = mu compose T(g) compose f $
 
-In disp source this is `{x} -> must_ok_any (f x) g`.
+In disp source this is `{x} -> must_ok_any (f x) g`. The parametric
+walker of §4 is itself an endo-Kleisli-arrow `Tree → CheckedResult(Tree)`;
+restricting its objects to `Tree_p` (also §4) gives the subcategory on
+which composition stays in the same domain.
 
 == Bind variants
 
@@ -378,6 +296,113 @@ in handler code; Kleisli composition does it automatically. The same
 machinery handles parametricity violations, type-recognition failures,
 and explicit `Fail` returns from primitives like `bind_hyp`.
 
+= The parametric walker and `Tree_p` <sec:tree-p>
+
+== Motivating problem
+
+Disp's type system relies on *hypotheses* — fresh tree values minted by
+the kernel that represent "an unknown value of type `A`." Hypotheses
+have a pinned signature (`pair_fst h = kernel.hyp_reduce` for a kernel-
+minted neutral `h`). For the type system to be sound, user code must not
+be able to introspect hypotheses (otherwise it could behave differently
+on hypothesis inputs versus concrete inputs, breaking parametricity).
+
+The fix: define a Kleisli endoarrow on trees — the *parametric walker*
+— that performs `apply` while rejecting two introspection patterns.
+`Tree_p` is then the largest subset of trees on which the walker never
+trips a rejection.
+
+== The walker as a Kleisli endoarrow
+
+The walker has type
+
+$ w : "Tree" -> "CheckedResult"("Tree") $
+
+— a Kleisli arrow in `Kl(CheckedResult)`. Its three clauses follow
+`apply`'s rules, with two added `Fail` cases and one carve-out:
+
++ *Stem-rule rejection.* When applying a stem `stem(a)` to `x`, the
+  result is `fork(a, x)`. If this fork's `pair_fst` would be a pinned
+  kernel signature (specifically `hyp_reduce`'s signature), return
+  `Fail`. This prevents forgery of kernel-minted neutrals at user
+  level.
+
++ *Triage-rule rejection.* When firing the triage rule on `x`, first
+  check whether `x` is a kernel-minted neutral
+  (`pair_fst(x) = kernel.hyp_reduce`). If so, return `Fail`. This
+  prevents reflection on hypotheses via triage.
+
++ *I-shortcut (carve-out).* `w(apply(I_canonical, x)) = Ok x`
+  unconditionally, even when `x` is a hypothesis. Required so the
+  polymorphic identity function passes Pi-checks against hypothesis-
+  typed arguments. It is the only soundness carve-out.
+
+All other reductions follow `apply` and return `Ok <result>`.
+
+== `Tree_p` as a greatest fixed point
+
+`Tree_p` is defined as the *largest* subset `S ⊆ Tree` such that the
+walker restricts to an endo-Kleisli-arrow on `S` without producing a
+parametric `Fail`:
+
+$ "Tree"_p = "greatest" S subset.eq "Tree" "such that" forall s in S, w(s) in {"Ok"(s') : s' in S} $
+
+(modulo divergence — non-terminating reductions don't violate
+membership). Since the walker is the only source of `Fail` in this
+design, this also coincides with the largest subset on which the
+walker is `Fail`-free.
+
+#note[
+  Tree_p is a property of the walker, not of `CheckedResult`. The
+  monad supplies the failure container; the *content* of "what counts
+  as parametric" lives in the walker's rejection clauses. The
+  definition is *semantic* and undecidable in general — you cannot
+  tell by inspection alone whether an arbitrary tree is in `Tree_p`.
+  §4.5 gives a syntactic discipline that approximates membership
+  conservatively.
+]
+
+== The walker restricted to `Tree_p`
+
+Once `Tree_p` is in hand, the walker restricts:
+
+$ w_p : "Tree"_p -> "CheckedResult"("Tree"_p) $
+
+That is the type the kernel actually relies on — every operation
+handler in §5 consumes and produces values in `Tree_p`.
+
+== Soundness rules for users
+
+To keep user-written trees in `Tree_p`, follow five rules. These form
+a *decidable static discipline* that conservatively approximates
+membership in the greatest fixed point above:
+
++ *Don't triage on hypothesis-typed values.* If `x` might be a
+  hypothesis (e.g., bound by `bind_hyp`), don't write
+  `triage l s f x`. Use kernel-mediated checks (`is_neutral`,
+  `tree_eq` against a known closed value, `has_sig` against a
+  registered signature) instead.
+
++ *Don't construct forks with kernel signatures as `pair_fst`.* The
+  stem rule rejects this. Use kernel constructors (`Hyp`, `StuckElim`,
+  etc.) to mint neutrals.
+
++ *Define new type-formers via kernel constructors.* Use
+  `predicate_frame_form` or `eliminator_frame_form`, not direct wait-
+  form construction.
+
++ *Type-check at the boundary.* Use `typecheck T v`, not raw `T v`,
+  to verify membership. The boundary version sanitizes input and
+  routes through the dispatcher.
+
++ *Kernel handler bodies have privileged access.* Code that runs
+  inside a kernel handler (recognizers, codomain functions) executes
+  "raw" — outside the walker. Library authors writing these are part
+  of the trusted base.
+
+`Tree_p`, with `w_p` as its Kleisli composition, is a coreflective
+subobject of `Tree` in `Kl(CheckedResult)`.
+
 = The closed indexed effect <sec:closed-effect>
 
 == Setup
@@ -395,28 +420,61 @@ Let Σ be the signature of operation symbols
       bind_hyp, param_apply, checked }
 ```
 
-Each has an arity expressed in `Tree_p × Tree_p → T(Tree_p)` form:
+Each operation is a *curried function* taking its structured meta
+record first, then an argument from `Tree_p`, and producing a result
+in the `CheckedResult` monad. The meta record is what gets baked
+into a wait-form (`wait kernel.op meta`, see §5.4); the second
+application supplies the argument and triggers dispatch.
 
 #figure(
   table(
-    columns: 3,
+    columns: 2,
     stroke: 0.4pt + gray,
     align: left,
     inset: 6pt,
-    [*Operation*], [*Input arity*], [*Output*],
-    [`hyp_reduce`], [`Meta × Tree`], [`T(Tree)` — new stuck value],
-    [`predicate_frame`], [`Meta × Tree`], [`T(Bool)` — TT/FF predicate result],
-    [`eliminator_frame`], [`Meta × Tree`], [`T(Tree)` — case result or stuck],
-    [`bind_hyp`], [`Meta × Tree`], [`T(Tree)` — body's result],
-    [`param_apply`], [`Tree × Tree`], [`T(Tree)` — the dispatcher itself],
-    [`checked`], [`Meta × Tree`], [`T(Tree)` — checked application],
+    [*Operation*], [*Type*],
+    [`hyp_reduce`],
+      [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckedResult(Tree_p)`],
+    [`predicate_frame`],
+      [`{recognizer : P -> A -> Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckedResult(Bool)`],
+    [`eliminator_frame`],
+      [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckedResult(Tree_p)`],
+    [`bind_hyp`],
+      [`{domain : Type, body : domain -> R} -> Tree_p -> CheckedResult(Tree_p)`],
+    [`param_apply`],
+      [`Tree_p -> Tree_p -> CheckedResult(Tree_p)` (no meta)],
+    [`checked`],
+      [`{T : Type, v : T} -> Tree_p -> CheckedResult(Tree_p)`],
   ),
-  caption: [Kernel operation signatures.],
+  caption: [Per-operation types. All but `param_apply` take a meta
+    record. Type variables: `A` = recognized/eliminated type, `P` =
+    closed params, `R` = result type, `Motive`/`Cases` =
+    dispatcher-specific. `CodFn = (P -> A -> Type) ∪ Sentinel` for
+    non-applicable types.],
 )
 
-`Meta` here is `Tree` — disp doesn't have a separate metadata type at
-the kernel level. Metadata is just a nested-pair tree (or, under
-categorical foundations §11, a `TypeFormer` record).
+#note[
+  *On the record types in the table.* The library types these records
+  reference — `Type`, `Bool`, `List`, `Pi` (as `->`) — are defined
+  later in the spec (`Type` in §11, `Bool`/`Nat`/`List` in §12). The
+  kernel itself is bootstrapped from tree-calculus primitives, so at
+  the bootstrap layer these records are physically encoded as nested
+  pairs of trees: e.g. `bind_hyp`'s meta is `pair domain body`,
+  `eliminator_frame`'s is `pair dispatcher (pair motive cases)`, etc.
+  Multi-arg operations like `bind_hyp` and `eliminator_frame` collect
+  their fields across multiple partial-app steps using an internal
+  arity counter in the wait-form payload; the user sees a uniform
+  one-arg-per-step dispatch shape while the handler assembles the
+  full record before firing. Early versions of the kernel cannot
+  reference the library record types because those types don't yet
+  exist.
+
+  Once §11's library types are in scope, the record forms above
+  become real ascriptions and the kernel handlers are *typeable by
+  the type checker they implement* — the closure of the metacircular
+  discipline. See §11 (typed surface) and §15 (self-checking
+  roadmap).
+]
 
 == Σ-algebras and the kernel
 
@@ -444,10 +502,11 @@ The kernel is the handler.
 
 == Operation invocation via wait-forms
 
-A wait-form `wait kernel.op meta` is a *delayed
-operation invocation*. When `param_apply` encounters such a wait-form
-applied to an argument, it routes via signature matching to the
-appropriate handler clause:
+A wait-form `wait kernel.op meta` is a *delayed operation invocation*
+— a tree whose `pair_fst` is the operation's signature (a constant
+tree per operation) and whose `pair_snd` is the structured meta. When
+`param_apply` encounters such a wait-form applied to an argument, it
+routes via signature matching to the appropriate handler clause:
 
 ```
 param_apply f x:
@@ -463,8 +522,39 @@ operation (if any) is being invoked and apply the corresponding
 Kleisli arrow.
 
 The default for non-operation invocations is the parametric walker
-(§3) — itself a Kleisli arrow that just applies tree-calculus rules
+(§4) — itself a Kleisli arrow that just applies tree-calculus rules
 with parametricity rejections.
+
+=== Why wait-forms, not plain partial application
+
+Semantically, meta is just an additional argument to the handler —
+`wait kernel.op meta arg` is `handler(meta, arg)` with extra
+ceremony. The wait-form encoding buys three things that direct
+partial application does not:
+
++ *O(1) signature dispatch.* `pair_fst(wait k m) = k` is a constant
+  tree per operation, so the dispatcher matches by hash-cons equality
+  on a single id. A directly partially-applied function would need
+  some other recognition mechanism (deeper structural inspection or
+  a tag argument) — both worse.
+
++ *Meta inspection without forcing the handler.* Library type-formers
+  need this: `Bool = wait q_predicate_frame_fn bool_meta` exposes
+  `bool_meta` (recognizer, classifier-into-Ω, codomain-fn) via
+  `pair_snd Bool` without ever applying `Bool` to anything.
+
++ *Stability under bracket abstraction.* A plain partial application
+  compiles, via bracket abstraction, into a tree where the S-combinator
+  distributes meta into the handler body wherever it's used —
+  scattering it past the dispatcher's reach. Wait-form keeps
+  `(signature, meta)` as a single top-level fork after compilation,
+  regardless of how the handler body uses meta internally.
+
+The wait-form is essentially a *reified curried-application stack*
+that the dispatcher pattern-matches on. The Lisp analogue is the
+difference between `(lambda (arg) (op meta arg))` (meta closed over,
+invisible) and `(quasiquote (op ,meta ,arg))` (meta in the spine,
+visible). Wait-forms are the second flavor, native to TC.
 
 == Derived terms
 
@@ -711,7 +801,7 @@ param_apply := fix ({self, f, x} -> {
 })
 ```
 
-See §3 for the stem and fork step helpers with the parametricity
+See §4 for the stem and fork step helpers with the parametricity
 rejections inlined.
 
 *Native fast-path.* The host runtime intercepts `apply(param_apply, ...)`
@@ -1730,7 +1820,7 @@ requires three properties:
 The bind_hyp body is verified under a fresh `A`-hypothesis. Since
 `bind_hyp` wraps applicable-typed hypotheses with `checked` (§6.4),
 applications of `hyp` inside `v`'s body go through `kernel.checked`
-input-checking. The walker's parametricity discipline (§3) prevents
+input-checking. The walker's parametricity discipline (§4) prevents
 introspection.
 
 By induction on `B`'s structure, the body check `B(hyp)(v hyp) = Ok TT`
