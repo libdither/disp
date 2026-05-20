@@ -44,7 +44,7 @@
   Major shifts from predecessors:
   - The kernel surface drops from 7 to 6 primitives (removed `guard`/`unguard`
     per Interp B; added `checked`).
-  - Type-checking is framed as manifest contracts over the `CheckedResult`
+  - Type-checking is framed as manifest contracts over the `CheckerResult`
     monad. The elaborator is purely a wrap-only pass; no bidirectional
     inference.
   - Library type-formers are explicit `TypeFormer` records with named fields,
@@ -69,7 +69,7 @@ predicate that values are checked against. The elaborator's only job is
 to *wrap function values with their declared types* — no bidirectional
 inference, no infer/check ping-pong. Type-checking happens at one
 top-level call per declaration; the reduction triggers all internal
-contract checks, and failures propagate uniformly via the `CheckedResult`
+contract checks, and failures propagate uniformly via the `CheckerResult`
 monad. After elaboration succeeds, a *strip pass* elides validated
 contracts to give a runtime tree with no per-call checking overhead.
 
@@ -95,7 +95,7 @@ and revisable:
     inset: 6pt,
     [*Section*], [*Covers*],
     [§2 Substrate], [Tree calculus, apply, hash-cons identity],
-    [§3 The Result monad], [`CheckedResult`, Kleisli composition, bind variants],
+    [§3 The Result monad], [`Result E A`, `CheckerError` variants, `CheckerResult`, Kleisli composition, bind variants],
     [§4 The parametric walker and `Tree_p`], [Walker as Kleisli endoarrow, `Tree_p` as greatest fixed point, soundness discipline],
     [§5 The closed indexed effect], [Algebraic-effects framing for the kernel],
     [§6 The six primitives], [Operational semantics of each kernel handler],
@@ -198,29 +198,83 @@ parametric walker) have native fast-paths that produce bit-identical
 results to the in-language reference implementations. The in-language
 reference is the spec; the host is the optimization.
 
-= The `CheckedResult` monad <sec:result-monad>
+= The `CheckerResult` monad <sec:result-monad>
 
-== Definition
+== The general `Result` shape
 
-`CheckedResult A = Ok A | Fail blame` where `blame` is an optional
-payload carrying source-span information for diagnostics. In disp
-source:
+`Result` is the standard error-or-value sum, parameterized over the
+error type:
 
-```disp
-Ok   := {v} -> t t v        // Ok v = fork(LEAF, v)
-Fail := t (t t)             // stem(stem(LEAF))
+```
+Result E A := Ok A | Err E
 ```
 
-The shape choice — `Ok v` is a fork with LEAF on the left — means
-`pair_fst (Ok v) = LEAF`, so `is_ok r = tree_eq (pair_fst r) LEAF`.
-Fast-path-friendly. `Fail` is a specific tree the kernel and library
-can pattern-match on.
+This is the same shape as Rust's `Result<T, E>`, OCaml's `('a, 'e) result`,
+Haskell's `Either E A`, and Lean's `Except E A`. For each fixed `E`,
+`Result E` is a monad: `η = Ok`, `μ` collapses nested `Ok (Ok x) → Ok x`
+and propagates `Err e` outward.
 
-== The monad structure
+== `CheckerError` — the kernel's failure vocabulary
 
-The unit `η : A → CheckedResult A` is `Ok`. The multiplication
-`μ : CheckedResult (CheckedResult A) → CheckedResult A` collapses
-nested wrappings:
+The kernel's failures are not undifferentiated — they carry distinct
+meanings that downstream code needs to react to differently. The
+failure type is a tagged enum:
+
+```disp
+// All errors carry a source span for diagnostics.
+CheckerError := tagged_enum {
+  Parametricity   : { kind : ParamKind, where : Tree_p, span : Span }
+  Escape          : { hyp : Tree_p, body_result : Tree_p, span : Span }
+  NotApplicable   : { type : Tree_p, span : Span }
+  PredicateFailed : { type : Tree_p, value : Tree_p, span : Span }
+  Malformed       : { handler : Symbol, meta : Tree_p, span : Span }
+}
+
+ParamKind := StemForge | TriageReflect
+```
+
+Each variant maps to a distinct kernel failure path:
+
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Variant*], [*Raised by*],
+    [`Parametricity StemForge`],
+      [walker, when applying a stem would produce a fork whose
+       `pair_fst` is a pinned kernel signature (would forge a neutral)],
+    [`Parametricity TriageReflect`],
+      [walker, when triage would split on a kernel-minted neutral
+       (would reflect on a hypothesis)],
+    [`Escape`],
+      [`bind_hyp`, when the body's result exposes the minted
+       hypothesis via a non-neutral path],
+    [`NotApplicable`],
+      [`checked`, when the stored type is not function-shaped;
+       `hyp_reduce`, when the stored type lacks `predicate_frame`
+       signature],
+    [`PredicateFailed`],
+      [boundary operations (`typecheck`, `validate`), when the
+       recognizer returned `FF`],
+    [`Malformed`],
+      [any handler, when its meta doesn't fit the expected shape
+       (currently silent — see §5 future-work)],
+  ),
+  caption: [`CheckerError` variants and their kernel-handler origins.],
+)
+
+== `CheckerResult` and the monad structure
+
+```
+CheckerResult A := Result CheckerError A
+```
+
+The unit `η : A → CheckerResult A` is `Ok`. The multiplication
+`μ : CheckerResult (CheckerResult A) → CheckerResult A` collapses
+nested wrappings (with the inner `Err` taking precedence over an
+outer `Ok` shell):
 
 #figure(
   table(
@@ -230,71 +284,97 @@ nested wrappings:
     inset: 6pt,
     [*Input*], [*Output*],
     [`Ok (Ok v)`], [`Ok v`],
-    [`Ok Fail`], [`Fail`],
-    [`Fail`], [`Fail`],
+    [`Ok (Err e)`], [`Err e`],
+    [`Err e`], [`Err e`],
   ),
-  caption: [Multiplication μ.],
+  caption: [Multiplication μ for `CheckerResult`.],
 )
 
-Monad laws (unit-left, unit-right, associativity) check trivially from
-these definitions.
+Monad laws (unit-left, unit-right, associativity) check trivially.
+
+== Tree encoding (bootstrap layer)
+
+At the bootstrap layer, `Ok` and `Err` are concrete tree shapes
+chosen for O(1) discrimination:
+
+```disp
+Ok  := {v} -> t t v            // Ok v  = fork(LEAF, v)
+Err := {e} -> t (t t) e         // Err e = fork(stem(LEAF), e)
+```
+
+Because `pair_fst (Ok v) = LEAF` and `pair_fst (Err e) = stem(LEAF)`,
+`is_ok r = tree_eq (pair_fst r) LEAF` remains a single hash-cons
+comparison. The error payload `e` is itself a tree encoding a
+`CheckerError` variant — at bootstrap this is hand-encoded (a tag
+tree plus payload subtrees); once §11's library types are in scope,
+the same encoding is type-ascribed to `CheckerError`.
 
 == Kleisli composition
 
-The Kleisli category `Kl(CheckedResult)` has trees as objects;
-morphisms `A → B` are functions `A → CheckedResult B`. Composition is
+The Kleisli category `Kl(CheckerResult)` has trees as objects;
+morphisms `A → B` are functions `A → CheckerResult B`. Composition is
 
 $ g compose_K f = mu compose T(g) compose f $
 
-In disp source this is `{x} -> must_ok_any (f x) g`. The parametric
-walker of §4 is itself an endo-Kleisli-arrow `Tree → CheckedResult(Tree)`;
-restricting its objects to `Tree_p` (also §4) gives the subcategory on
+In disp source this is `{x} -> bind (f x) g`. The parametric walker
+of §4 is itself an endo-Kleisli-arrow `Tree → CheckerResult(Tree)`;
+restricting objects to `Tree_p` (also §4) gives the subcategory on
 which composition stays in the same domain.
 
 == Bind variants
 
-Three commonly-used bind operations in the kernel handlers:
+The kernel handlers use three named bind operations, all derivable
+from monadic `bind`:
 
 ```disp
-// Standard monadic bind. Threads payload into continuation on success;
-// short-circuits to Fail otherwise.
-// (Disp's `match` is binary on TT/FF; we destructure via is_ok / ok_value.)
-must_ok_any := {r, k} ->
+// Standard bind: threads payload to continuation on Ok; propagates
+// Err unchanged. This is just monadic `>>=`.
+bind := {r, k} ->
   match (is_ok r) {
     TT => k (ok_value r)
-    FF => Fail
+    FF => r                       // Err propagates with its payload
   }
 
-// Bind-with-TT-requirement. Used when the success case must be
-// specifically Ok TT (the predicate passed); Ok FF or Fail short-
-// circuits to Fail.
-must_ok_tt := {r, k} ->
+// Bind-requiring-TT: success case must be specifically Ok TT (the
+// predicate passed); Ok FF becomes Err PredicateFailed, Err
+// propagates. Used to chain predicate checks.
+require_tt := {type, value, r, k} ->
   match (is_ok r) {
     TT => match (tree_eq (ok_value r) TT) {
       TT => k t
-      FF => Fail
+      FF => Err (PredicateFailed { type, value, span = current_span })
     }
-    FF => Fail
+    FF => r
   }
 
-// Bind-with-FF-fallback. Used by predicate_frame to convert Fail
-// (parametricity violation) into FF (predicate rejection).
-must_ok_or_ff := {r, k} ->
+// Recover-predicate-failed: fold Err PredicateFailed back into Ok FF
+// (the predicate said no, which IS the answer for a recognizer call).
+// Other Err variants — parametricity, escape, malformed — propagate
+// unchanged. This is what predicate_frame uses to convert recognizer
+// rejection into a Bool answer without laundering soundness bugs.
+recover_predicate_failed := {r} ->
   match (is_ok r) {
-    TT => k (ok_value r)
-    FF => FF
+    TT => r
+    FF => match (error_tag (err_value r)) {
+      PredicateFailed => Ok FF
+      _               => r        // re-raise other errors
+    }
   }
 ```
 
-These are all derivable from `must_ok_any` plus pattern matching, but
-they're given names because they appear repeatedly.
+The third variant is the safety win: today's `must_ok_or_ff` blindly
+folds *any* `Fail` into `FF`, which would silently mask a
+parametricity violation inside a recognizer body as "this isn't an
+inhabitant." With tagged errors, `recover_predicate_failed` folds
+only the intended case and re-raises the rest.
 
 == Why a monad
 
-Failure propagates uniformly via `bind`. No manual short-circuiting
-in handler code; Kleisli composition does it automatically. The same
-machinery handles parametricity violations, type-recognition failures,
-and explicit `Fail` returns from primitives like `bind_hyp`.
+Failures propagate uniformly via `bind`. No manual short-circuiting
+in handler code; Kleisli composition does it automatically. Tagged
+errors mean each layer can decide what to recover from and what to
+re-raise, instead of pattern-matching on undifferentiated `Fail`
+trees.
 
 = The parametric walker and `Tree_p` <sec:tree-p>
 
@@ -316,21 +396,22 @@ trips a rejection.
 
 The walker has type
 
-$ w : "Tree" -> "CheckedResult"("Tree") $
+$ w : "Tree" -> "CheckerResult"("Tree") $
 
-— a Kleisli arrow in `Kl(CheckedResult)`. Its three clauses follow
-`apply`'s rules, with two added `Fail` cases and one carve-out:
+— a Kleisli arrow in `Kl(CheckerResult)`. Its three clauses follow
+`apply`'s rules, with two `Err Parametricity` cases and one carve-out:
 
 + *Stem-rule rejection.* When applying a stem `stem(a)` to `x`, the
   result is `fork(a, x)`. If this fork's `pair_fst` would be a pinned
   kernel signature (specifically `hyp_reduce`'s signature), return
-  `Fail`. This prevents forgery of kernel-minted neutrals at user
-  level.
+  `Err (Parametricity { kind = StemForge, where = fork(a, x), span })`.
+  This prevents forgery of kernel-minted neutrals at user level.
 
 + *Triage-rule rejection.* When firing the triage rule on `x`, first
   check whether `x` is a kernel-minted neutral
-  (`pair_fst(x) = kernel.hyp_reduce`). If so, return `Fail`. This
-  prevents reflection on hypotheses via triage.
+  (`pair_fst(x) = kernel.hyp_reduce`). If so, return
+  `Err (Parametricity { kind = TriageReflect, where = x, span })`.
+  This prevents reflection on hypotheses via triage.
 
 + *I-shortcut (carve-out).* `w(apply(I_canonical, x)) = Ok x`
   unconditionally, even when `x` is a hypothesis. Required so the
@@ -342,18 +423,18 @@ All other reductions follow `apply` and return `Ok <result>`.
 == `Tree_p` as a greatest fixed point
 
 `Tree_p` is defined as the *largest* subset `S ⊆ Tree` such that the
-walker restricts to an endo-Kleisli-arrow on `S` without producing a
-parametric `Fail`:
+walker restricts to an endo-Kleisli-arrow on `S` without producing
+an `Err Parametricity`:
 
 $ "Tree"_p = "greatest" S subset.eq "Tree" "such that" forall s in S, w(s) in {"Ok"(s') : s' in S} $
 
 (modulo divergence — non-terminating reductions don't violate
-membership). Since the walker is the only source of `Fail` in this
-design, this also coincides with the largest subset on which the
-walker is `Fail`-free.
+membership). The walker is the only source of `Err Parametricity`,
+and parametricity is the only kind of error it produces; other
+`CheckerError` variants are raised by kernel handlers further out.
 
 #note[
-  Tree_p is a property of the walker, not of `CheckedResult`. The
+  Tree_p is a property of the walker, not of `CheckerResult`. The
   monad supplies the failure container; the *content* of "what counts
   as parametric" lives in the walker's rejection clauses. The
   definition is *semantic* and undecidable in general — you cannot
@@ -366,7 +447,7 @@ walker is `Fail`-free.
 
 Once `Tree_p` is in hand, the walker restricts:
 
-$ w_p : "Tree"_p -> "CheckedResult"("Tree"_p) $
+$ w_p : "Tree"_p -> "CheckerResult"("Tree"_p) $
 
 That is the type the kernel actually relies on — every operation
 handler in §5 consumes and produces values in `Tree_p`.
@@ -401,14 +482,14 @@ membership in the greatest fixed point above:
   of the trusted base.
 
 `Tree_p`, with `w_p` as its Kleisli composition, is a coreflective
-subobject of `Tree` in `Kl(CheckedResult)`.
+subobject of `Tree` in `Kl(CheckerResult)`.
 
 = The closed indexed effect <sec:closed-effect>
 
 == Setup
 
 Disp's kernel is best described as a *closed indexed algebraic effect*
-over the `CheckedResult` monad. This section makes the framing precise.
+over the `CheckerResult` monad. This section makes the framing precise.
 Readers preferring operational explanations can skip to §6.
 
 == The signature
@@ -422,7 +503,7 @@ Let Σ be the signature of operation symbols
 
 Each operation is a *curried function* taking its structured meta
 record first, then an argument from `Tree_p`, and producing a result
-in the `CheckedResult` monad. The meta record is what gets baked
+in the `CheckerResult` monad. The meta record is what gets baked
 into a wait-form (`wait kernel.op meta`, see §5.4); the second
 application supplies the argument and triggers dispatch.
 
@@ -434,17 +515,17 @@ application supplies the argument and triggers dispatch.
     inset: 6pt,
     [*Operation*], [*Type*],
     [`hyp_reduce`],
-      [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckedResult(Tree_p)`],
+      [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`],
     [`predicate_frame`],
-      [`{recognizer : P -> A -> Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckedResult(Bool)`],
+      [`{recognizer : P -> A -> Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`],
     [`eliminator_frame`],
-      [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckedResult(Tree_p)`],
+      [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`],
     [`bind_hyp`],
-      [`{domain : Type, body : domain -> R} -> Tree_p -> CheckedResult(Tree_p)`],
+      [`{domain : Type, body : domain -> R} -> Tree_p -> CheckerResult(Tree_p)`],
     [`param_apply`],
-      [`Tree_p -> Tree_p -> CheckedResult(Tree_p)` (no meta)],
+      [`Tree_p -> Tree_p -> CheckerResult(Tree_p)` (no meta)],
     [`checked`],
-      [`{T : Type, v : T} -> Tree_p -> CheckedResult(Tree_p)`],
+      [`{T : Type, v : T} -> Tree_p -> CheckerResult(Tree_p)`],
   ),
   caption: [Per-operation types. All but `param_apply` take a meta
     record. Type variables: `A` = recognized/eliminated type, `P` =
@@ -613,7 +694,7 @@ pseudocode), soundness obligation, and composition properties.
 
 == `hyp_reduce`
 
-*Signature.* `hyp_reduce : Meta × Tree → T(Tree)`.
+*Signature.* `hyp_reduce : {stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`.
 
 *Role.* When a hypothesis `h` is applied to an argument `v`, the
 dispatcher routes to `hyp_reduce`. The handler reads `h`'s stored type's
@@ -652,7 +733,7 @@ no triage on the input `v` unless `v` is known concrete.
 
 == `predicate_frame`
 
-*Signature.* `predicate_frame : Meta × Tree → T(Bool)`.
+*Signature.* `predicate_frame : {recognizer : P -> A -> Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`.
 
 *Role.* Recognizes whether a value inhabits a type. For hypothesis
 inputs, fires the H-rule (compare stored type to expected). For
@@ -668,7 +749,7 @@ let q_predicate_frame_fn = {ks, raw, query} ->
       let recognizer = pair_fst meta
       let params     = pair_fst (pair_snd meta)
       let result_r   = ks.param_apply (recognizer params) v
-      must_ok_or_ff result_r ({result} -> result)
+      recover_predicate_failed result_r
     }
     select q_h_rule_fn check_fn (q_is_neutral raw v)
       ks raw query self meta v
@@ -685,7 +766,7 @@ walker-safe predicates.
 
 == `eliminator_frame`
 
-*Signature.* `eliminator_frame : Meta × Tree → T(Tree)`.
+*Signature.* `eliminator_frame : {dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`.
 
 *Role.* Case dispatch on values of inductive types. Mints `StuckElim`
 on hypothesis targets so eliminations on unknown values stay opaque.
@@ -721,7 +802,7 @@ dispatch.
 
 == `bind_hyp`
 
-*Signature.* `bind_hyp : Meta × Tree → T(Tree)`.
+*Signature.* `bind_hyp : {domain : Type, body : domain -> R} -> Tree_p -> CheckerResult(Tree_p)`.
 
 *Role.* Introduces fresh hypotheses. Critically: when the domain type
 is *applicable* (a function type), the minted hypothesis is wrapped
@@ -750,11 +831,11 @@ let q_bind_hyp_fn = {ks, raw, query} ->
         TT => {
           let result = ok_value result_r
           match (q_contains_via_open_path raw result raw_hyp) {
-            TT => Fail
-            FF => result
+            TT => Err (Escape { hyp = raw_hyp, body_result = result, span })
+            FF => Ok result
           }
         }
-        FF => Fail
+        FF => result_r        // re-raise upstream error unchanged
       }
     }
     let partial_fn = {ks, raw, query, meta, x, count, acc} ->
@@ -770,13 +851,14 @@ The wrapping condition `is_applicable_type domain` is satisfied for
 non-applicable types like `Bool` or `Nat`, the hypothesis is bare.
 
 *Escape check.* If the minted hypothesis is reachable in the body's
-result via a non-neutral path, return `Fail`. This prevents the
+result via a non-neutral path, return
+`Err (Escape { hyp, body_result, span })`. This prevents the
 hypothesis from being smuggled into a context where it could be
 exploited via predicate_frame's H-rule.
 
 == `param_apply`
 
-*Signature.* `param_apply : Tree × Tree → T(Tree)`.
+*Signature.* `param_apply : Tree_p -> Tree_p -> CheckerResult(Tree_p)`.
 
 *Role.* The dispatcher itself. Given two trees `f` and `x`, decide
 whether `f` is an operation invocation (wait-form with a kernel
@@ -812,14 +894,15 @@ optimization.
 
 == `checked`
 
-*Signature.* `checked : Meta × Tree → T(Tree)`.
+*Signature.* `checked : {T : Type, v : T} -> Tree_p -> CheckerResult(Tree_p)`.
 
 *Role.* Input-checked function application AND certificate tagging
 (unified). The handler dispatches on whether the stored type is
 applicable (function-like) or not:
 
 - Applicable: check argument against domain, then apply.
-- Non-applicable: applying makes no sense; return `Fail`.
+- Non-applicable: applying makes no sense; return
+  `Err (NotApplicable { type = T, span })`.
 
 *Disp source:*
 
@@ -831,10 +914,10 @@ let q_checked_fn = {ks, raw, query} ->
     match (is_applicable_type T) {
       TT => {
         let A = pi_dom T
-        must_ok_tt (ks.param_apply A arg) ({_} ->
+        require_tt T arg (ks.param_apply A arg) ({_} ->
           ks.param_apply v arg)
       }
-      FF => Fail
+      FF => Err (NotApplicable { type = T, span })
     }
   })
 ```
@@ -851,7 +934,7 @@ typed_lambda := {A, B, f} -> checked (Pi A B) f
 
 // Typecheck-gated constructor producing a certificate:
 validate := {T, v} ->
-  must_ok_tt (typecheck T v) ({_} -> Ok (checked T v))
+  bind (typecheck T v) ({_} -> Ok (checked T v))
 ```
 
 *Soundness obligation.* `is_applicable_type` is a library predicate
@@ -876,7 +959,7 @@ neutrals and lifts into the Result monad on success.
 param_lift := {v} ->
   match (scan_no_neutral v) {
     TT => Ok v
-    FF => Fail
+    FF => Err (Malformed { handler = "param_lift", meta = v, span })
   }
 
 // scan_no_neutral: TT iff v contains no neutral-rooted subterm.
@@ -906,19 +989,22 @@ produce a fully validated result.
 
 ```disp
 typecheck := {T, v} ->
-  must_ok_any (param_lift v) ({sanitized_v} ->
-  must_ok_tt  (param_apply T sanitized_v) ({_} ->
+  bind       (param_lift v)            ({sanitized_v} ->
+  require_tt T sanitized_v (param_apply T sanitized_v) ({_} ->
   Ok sanitized_v))
 ```
 
-In Kleisli composition terms: `typecheck T = param_lift >>= param_apply T >>= (Ok ∘ pass-through)`.
+In Kleisli composition terms:
+`typecheck T = param_lift >>= param_apply T >>= (Ok ∘ pass-through)`,
+with `require_tt` raising `Err (PredicateFailed { type = T, value, span })`
+if the recognizer returns `Ok FF`.
 
 == Example traces
 
 *Trace 1: `typecheck Bool TT`.*
 + `param_lift TT` → `Ok TT` (TT contains no neutrals).
 + `param_apply Bool TT` → routes via predicate_frame signature → invokes Bool's recognizer → `TT` is a canonical Bool shape → returns `Ok TT`.
-+ `must_ok_tt (Ok TT) ...` → continues.
++ `require_tt Bool TT (Ok TT) ...` → continues.
 + Returns `Ok TT`.
 
 *Trace 2: `typecheck Bool (is_zero TT)`.*
@@ -928,25 +1014,17 @@ Here `is_zero` is a `checked (Pi Nat Bool) is_zero_raw` value.
 + Compile-time `applyTree (is_zero, TT)`:
   - Dispatcher routes `apply(checked-wait-form, TT)` to the `checked` handler.
   - Handler checks `param_apply Nat TT`. Nat's recognizer rejects TT structurally → `Ok FF`.
-  - `must_ok_tt (Ok FF) ...` → `Fail`.
-  - So `is_zero TT` reduces to `Fail`.
+  - `require_tt Nat TT (Ok FF) ...` → `Err (PredicateFailed { type = Nat, value = TT, span })`.
+  - So `is_zero TT` reduces to that `Err`.
 
-+ Now `typecheck Bool Fail`:
-  - `param_lift Fail` → `Ok Fail` (Fail contains no neutrals — it's a closed stem-of-stem).
-  - `param_apply Bool Fail` → Bool's recognizer triages on Fail, finds non-Bool shape, returns `Ok FF`.
-  - `must_ok_tt (Ok FF) ...` → `Fail`.
-  - Returns `Fail`.
++ Now `typecheck Bool (Err ...)`:
+  - `param_lift (Err ...)` → propagates the `Err` outward (it's already in the monad).
+  - Returns the original `Err PredicateFailed`, with `Nat`/`TT` in its payload pointing at the inner mismatch.
 
 The error originates inside the reduction (at the `checked` handler's
-domain check) and propagates outward. Blame info attached to the inner
-`Fail` survives to the outer `Fail`.
-
-#note[
-  The `Fail` propagation depends on how the blame payload composes. The
-  current sketch has `Fail` carrying optional blame; nested fails
-  preserve the innermost blame. This needs spec-level confirmation
-  during implementation.
-]
+domain check) and propagates outward unchanged. The user gets the
+inner failure's full payload — the failing type, value, and span —
+not an opaque outer "typecheck failed."
 
 = Checked values <sec:checked-values>
 
@@ -997,8 +1075,8 @@ Example trace: user writes `let bogus = checked Bool zero` (false claim).
   - `param_apply Bool bogus` — Bool's recognizer triages on `bogus`.
     The wait-form is a fork with `kernel.checked` as `pair_fst`, not
     a canonical Bool shape. Returns `Ok FF`.
-  - `must_ok_tt (Ok FF) ...` → `Fail`.
-- `typecheck` rejects.
+  - `require_tt Bool bogus (Ok FF) ...` → `Err (PredicateFailed { type = Bool, value = bogus, span })`.
+- `typecheck` rejects with a typed error pointing at the forgery.
 
 So forged certificates fail at first use. The structural recognizer
 check (each type knows its own canonical shapes) catches them.
@@ -1011,9 +1089,9 @@ Applying a `checked` value to an argument fires the handler:
 (checked (Pi A B) f) x
 → ks.param_apply (kernel.checked) (pair (Pi A B) f) x
 → handler runs
-→ must_ok_tt (param_apply A x) (λ_. param_apply f x)
-→ on success: Ok (f x)
-→ on domain mismatch: Fail
+→ require_tt A x (param_apply A x) (λ_. param_apply f x)
+→ on success:         Ok (f x)
+→ on domain mismatch: Err (PredicateFailed { type = A, value = x, span })
 ```
 
 Chained applications work the same way; each layer's handler fires
@@ -1103,8 +1181,8 @@ For `let foo : Pi Nat ({_} -> Bool) = {x} -> is_zero x`:
 
 The typecheck reduces `foo_tree` via `param_apply`, fires the outer
 `checked` handler against a Nat-hypothesis, runs the body, checks
-result against `Bool`. Success → `Ok foo_tree`. Failure → `Fail` with
-blame.
+result against `Bool`. Success → `Ok foo_tree`. Failure → an `Err`
+variant of `CheckerError` carrying the failing type, value, and span.
 
 = Strip and erasure <sec:strip>
 
@@ -1152,7 +1230,7 @@ The standard usage pattern: pair strip with `validate`.
 ```disp
 // Safe usage: validate first, strip the certified result.
 strip_validated := {T, v} ->
-  must_ok_any (validate T v) ({cert} ->
+  bind (validate T v) ({cert} ->
     Ok (strip (pair_snd (type_meta cert))))
 ```
 
@@ -1799,7 +1877,7 @@ treatment.]
   - If `T = Bool`/`Nat`/etc., then `v` is structurally an inhabitant
     of `T`'s canonical shapes.
   - Internal applications inside `v` either type-check correctly or
-    reduce to `Fail` during evaluation.
+    reduce to an `Err CheckerError` during evaluation.
 ]
 
 == Proof sketch
@@ -1862,14 +1940,14 @@ Speculative section on extending disp toward Koka-style effects.
 == The current state
 
 Disp has one effect: the type-checking effect, with monad
-`CheckedResult`. The kernel is the unique handler. Operations are
+`CheckerResult`. The kernel is the unique handler. Operations are
 dispatched by structural signature.
 
 == The forward direction
 
 Adding user-installable effects amounts to relaxing "closed" to "open"
 in §5.4. Each new effect is a monad (perhaps composed with
-`CheckedResult` via monad transformers); operations are dispatched by
+`CheckerResult` via monad transformers); operations are dispatched by
 context-aware signature matching; handlers are installable via a
 `with handler { ... }`-style construct.
 
