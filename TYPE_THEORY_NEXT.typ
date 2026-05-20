@@ -96,7 +96,7 @@ and revisable:
     [*Section*], [*Covers*],
     [§2 Substrate], [Tree calculus, apply, hash-cons identity],
     [§3 The Result monad], [`Result E A`, `CheckerError` variants, `CheckerResult`, Kleisli composition, bind variants],
-    [§4 The parametric walker and `Tree_p`], [Walker as Kleisli endoarrow, `Tree_p` as greatest fixed point, soundness discipline],
+    [§4 The parametric walker and `Tree_p`], [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
     [§5 The closed indexed effect], [Algebraic-effects framing for the kernel],
     [§6 The six primitives], [Operational semantics of each kernel handler],
     [§7 Boundary operations], [`param_lift`, `param_apply`, `typecheck`],
@@ -223,11 +223,11 @@ failure type is a tagged enum:
 ```disp
 // All errors carry a source span for diagnostics.
 CheckerError := tagged_enum {
-  Parametricity   : { kind : ParamKind, where : Tree_p, span : Span }
-  Escape          : { hyp : Tree_p, body_result : Tree_p, span : Span }
-  NotApplicable   : { type : Tree_p, span : Span }
-  PredicateFailed : { type : Tree_p, value : Tree_p, span : Span }
-  Malformed       : { handler : Symbol, meta : Tree_p, span : Span }
+  Parametricity : { kind : ParamKind, where : Tree_p, span : Span }
+  Escape        : { hyp : Tree_p, body_result : Tree_p, span : Span }
+  NotApplicable : { type : Tree_p, span : Span }
+  TypeMismatch  : { expected : Type, actual : Tree_p, span : Span }
+  Malformed     : { handler : Symbol, meta : Tree_p, span : Span }
 }
 
 ParamKind := StemForge | TriageReflect
@@ -255,15 +255,28 @@ Each variant maps to a distinct kernel failure path:
       [`checked`, when the stored type is not function-shaped;
        `hyp_reduce`, when the stored type lacks `predicate_frame`
        signature],
-    [`PredicateFailed`],
-      [boundary operations (`typecheck`, `validate`), when the
-       recognizer returned `FF`],
+    [`TypeMismatch`],
+      [contract boundaries (`checked` argument check, any typed-
+       function application), when a recognizer returns `Ok FF` on
+       a value where TT was contractually required],
     [`Malformed`],
       [any handler, when its meta doesn't fit the expected shape
        (currently silent — see §5 future-work)],
   ),
   caption: [`CheckerError` variants and their kernel-handler origins.],
 )
+
+#note[
+  *Verdict vs error.* A recognizer's `Ok FF` is *data*, not an
+  error — it means "this value is not an inhabitant of the queried
+  type," which is a legitimate answer to a query. Errors flow
+  through `Err` only when something is *broken*: parametricity
+  violated, hypothesis escaped, contract-mandated TT received FF,
+  meta malformed. Query-style callers (`typecheck`, `validate`) see
+  `Ok TT` / `Ok FF` and pattern-match. Contract-style callers
+  (`checked` application) raise `TypeMismatch` because their callers
+  promised the value would fit.
+]
 
 == `CheckerResult` and the monad structure
 
@@ -317,9 +330,11 @@ morphisms `A → B` are functions `A → CheckerResult B`. Composition is
 $ g compose_K f = mu compose T(g) compose f $
 
 In disp source this is `{x} -> bind (f x) g`. The parametric walker
-of §4 is itself an endo-Kleisli-arrow `Tree → CheckerResult(Tree)`;
-restricting objects to `Tree_p` (also §4) gives the subcategory on
-which composition stays in the same domain.
+of §4 is a Kleisli arrow `Tree × Tree → CheckerResult(Tree)` — the
+Kleisli lift of binary `apply`. Restricting it to `Tree_p × Tree_p
+→ CheckerResult(Tree_p)` (the subset of trees on which it never
+produces an `Err Parametricity`, defined in §4) gives the carrier
+on which the operation is closed under `Ok`.
 
 == General `Result E` operations
 
@@ -375,42 +390,49 @@ is monadic recovery on the error side; `guard` is the standard
 boolean-to-Result lift. These five are the entire vocabulary —
 every higher-level error-handling pattern is a composition.
 
-== `CheckerResult` helpers
+== Using `CheckerResult` in practice
 
-The kernel uses two named convenience patterns repeatedly. Each is
-a one-line specialization of the general operations above. They are
-named only because they appear at many call sites; semantically
-they are not primitive.
+There are no `CheckerResult`-specific helper combinators. The
+general `Result E` operations above are the entire vocabulary; the
+kernel just composes them with appropriate `CheckerError` variants.
+The two call-site patterns worth understanding:
+
+*Query patterns.* When the caller is asking the recognizer for a
+verdict — "is `v` an inhabitant of `T`?" — the answer is data, not
+an error. `Ok TT` and `Ok FF` are both successful runs; `Err _`
+signals something is broken (parametricity, escape, malformed
+input). Callers pattern-match on the verdict:
 
 ```disp
-// require_tt: bind + assert extracted value is TT, else raise
-// PredicateFailed. Used in every typecheck-style chain to gate
-// progress on a recognizer's verdict.
-require_tt := {type, value, r, k} ->
-  bind r ({x} ->
-    bind (guard (tree_eq x TT)
-                (PredicateFailed { type, value, span = current_span }))
-         ({_} -> k t))
-
-// recover_predicate_failed: fold Err PredicateFailed back to Ok FF
-// (the predicate said no, which IS the answer for a recognizer
-// call). Other Err variants — Parametricity, Escape, Malformed —
-// propagate unchanged.
-recover_predicate_failed := {r} ->
-  catch r ({e} -> match (error_tag e) {
-    PredicateFailed => Ok FF
-    _               => Err e
+bind (typecheck T v) ({verdict} ->
+  match verdict {
+    TT => /* it's an inhabitant; proceed */
+    FF => /* it's not; do whatever the query API demands */
   })
 ```
 
-The second helper is the soundness win versus the old
-undifferentiated `must_ok_or_ff`: that helper blindly folded *any*
-failure into `FF`, which would silently mask a parametricity
-violation inside a recognizer body as "this isn't an inhabitant."
-With tagged errors, `recover_predicate_failed` folds only the
-intended case and re-raises the rest. Every recognizer is now
-required to *be* a recognizer; bugs surface as themselves rather
-than as false negatives.
+*Contract patterns.* When the caller has a contractual guarantee
+that the value fits — applying a `f : Pi A B` to an arg, where the
+type system says the arg must be in `A` — receiving `Ok FF` from
+the recognizer means the program is broken, not that "we got a
+no." Here the receiving handler raises `TypeMismatch`:
+
+```disp
+bind (param_apply A arg) ({verdict} ->
+  match verdict {
+    TT => /* arg fits A; proceed */
+    FF => Err (TypeMismatch { expected = A, actual = arg, span })
+  })
+```
+
+This is the soundness win versus the old undifferentiated
+`must_ok_or_ff`: that helper blindly folded *any* failure into
+`FF`, which would silently mask a parametricity violation inside a
+recognizer body as "this isn't an inhabitant." In the new design,
+every recognizer is required to *be* a recognizer (returning a
+verdict, never absorbing soundness errors), and the lifting of
+`FF → Err` happens only where it is contractually justified
+(`checked` and similar typed boundaries).
 
 #openq[
   The eliminator handler currently uses an `Err`-fallback pattern
@@ -444,46 +466,51 @@ minted neutral `h`). For the type system to be sound, user code must not
 be able to introspect hypotheses (otherwise it could behave differently
 on hypothesis inputs versus concrete inputs, breaking parametricity).
 
-The fix: define a Kleisli endoarrow on trees — the *parametric walker*
-— that performs `apply` while rejecting two introspection patterns.
-`Tree_p` is then the largest subset of trees on which the walker never
-trips a rejection.
+The fix: define the *parametric walker* — a Kleisli-lifted version
+of `apply` that performs the same reduction but rejects two
+introspection patterns. `Tree_p` is then the largest subset of
+trees on which the walker, applied to pairs from `Tree_p × Tree_p`,
+never trips a rejection.
 
-== The walker as a Kleisli endoarrow
+== The walker as a Kleisli-lifted binary operation
 
-The walker has type
+The walker is the Kleisli lift of binary `apply`:
 
-$ w : "Tree" -> "CheckerResult"("Tree") $
+$ w : "Tree" times "Tree" -> "CheckerResult"("Tree") $
 
-— a Kleisli arrow in `Kl(CheckerResult)`. Its three clauses follow
-`apply`'s rules, with two `Err Parametricity` cases and one carve-out:
+— a Kleisli arrow in `Kl(CheckerResult)` with the same arity as
+the substrate operation it lifts. Its three clauses follow
+`apply`'s rules, with two `Err Parametricity` cases and one
+carve-out:
 
-+ *Stem-rule rejection.* When applying a stem `stem(a)` to `x`, the
-  result is `fork(a, x)`. If this fork's `pair_fst` would be a pinned
-  kernel signature (specifically `hyp_reduce`'s signature), return
++ *Stem-rule rejection.* When `w(stem(a), x)` would reduce to
+  `fork(a, x)`: if this fork's `pair_fst` would be a pinned kernel
+  signature (specifically `hyp_reduce`'s signature), return
   `Err (Parametricity { kind = StemForge, where = fork(a, x), span })`.
   This prevents forgery of kernel-minted neutrals at user level.
 
-+ *Triage-rule rejection.* When firing the triage rule on `x`, first
-  check whether `x` is a kernel-minted neutral
++ *Triage-rule rejection.* When `w(f, x)` would fire the triage
+  rule on `x` (because `f` is a fork-fork-fork shape), first check
+  whether `x` is a kernel-minted neutral
   (`pair_fst(x) = kernel.hyp_reduce`). If so, return
   `Err (Parametricity { kind = TriageReflect, where = x, span })`.
   This prevents reflection on hypotheses via triage.
 
-+ *I-shortcut (carve-out).* `w(apply(I_canonical, x)) = Ok x`
++ *I-shortcut (carve-out).* `w(I_canonical, x) = Ok x`
   unconditionally, even when `x` is a hypothesis. Required so the
   polymorphic identity function passes Pi-checks against hypothesis-
   typed arguments. It is the only soundness carve-out.
 
-All other reductions follow `apply` and return `Ok <result>`.
+All other applications follow `apply`'s rules and return `Ok <result>`.
 
 == `Tree_p` as a greatest fixed point
 
-`Tree_p` is defined as the *largest* subset `S ⊆ Tree` such that the
-walker restricts to an endo-Kleisli-arrow on `S` without producing
-an `Err Parametricity`:
+`Tree_p` is defined as the *largest* subset `S ⊆ Tree` such that
+the walker restricted to `S × S` is closed under `Ok` — i.e., the
+operation `S × S → CheckerResult(S)` never produces an
+`Err Parametricity`:
 
-$ "Tree"_p = "greatest" S subset.eq "Tree" "such that" forall s in S, w(s) in {"Ok"(s') : s' in S} $
+$ "Tree"_p = "greatest" S subset.eq "Tree" "such that" forall f\,x in S, w(f, x) in {"Ok"(r) : r in S} $
 
 (modulo divergence — non-terminating reductions don't violate
 membership). The walker is the only source of `Err Parametricity`,
@@ -502,9 +529,10 @@ and parametricity is the only kind of error it produces; other
 
 == The walker restricted to `Tree_p`
 
-Once `Tree_p` is in hand, the walker restricts:
+Once `Tree_p` is in hand, the walker restricts to a closed binary
+operation on it:
 
-$ w_p : "Tree"_p -> "CheckerResult"("Tree"_p) $
+$ w_p : "Tree"_p times "Tree"_p -> "CheckerResult"("Tree"_p) $
 
 That is the type the kernel actually relies on — every operation
 handler in §5 consumes and produces values in `Tree_p`.
@@ -538,8 +566,12 @@ membership in the greatest fixed point above:
   "raw" — outside the walker. Library authors writing these are part
   of the trusted base.
 
-`Tree_p`, with `w_p` as its Kleisli composition, is a coreflective
-subobject of `Tree` in `Kl(CheckerResult)`.
+`Tree_p` is the largest carrier in `Kl(CheckerResult)` on which the
+walker — the Kleisli lift of the substrate's apply operation —
+restricts to a closed binary operation. Composition in
+`Kl(CheckerResult)` is the standard `g ∘_K f = μ ∘ T(g) ∘ f` of
+§3.5; the walker is the operation those Kleisli arrows compose with
+when reducing `apply` chains.
 
 = The closed indexed effect <sec:closed-effect>
 
@@ -805,8 +837,11 @@ let q_predicate_frame_fn = {ks, raw, query} ->
     let check_fn = {ks, raw, query, self, meta, v} -> {
       let recognizer = pair_fst meta
       let params     = pair_fst (pair_snd meta)
-      let result_r   = ks.param_apply (recognizer params) v
-      recover_predicate_failed result_r
+      // Run the recognizer under the walker; its Ok TT/FF verdict
+      // passes through as data. Any Err — Parametricity, Escape, or
+      // Malformed — is a real soundness bug in the recognizer body
+      // and propagates unchanged for the caller to surface.
+      ks.param_apply (recognizer params) v
     }
     select q_h_rule_fn check_fn (q_is_neutral raw v)
       ks raw query self meta v
@@ -971,8 +1006,13 @@ let q_checked_fn = {ks, raw, query} ->
     match (is_applicable_type T) {
       TT => {
         let A = pi_dom T
-        require_tt T arg (ks.param_apply A arg) ({_} ->
-          ks.param_apply v arg)
+        // Contract boundary: arg MUST satisfy A. Verdict-as-data
+        // would be wrong here — the caller promised the type fits.
+        bind (ks.param_apply A arg) ({verdict} ->
+          match verdict {
+            TT => ks.param_apply v arg
+            FF => Err (TypeMismatch { expected = A, actual = arg, span })
+          })
       }
       FF => Err (NotApplicable { type = T, span })
     }
@@ -989,9 +1029,18 @@ checked := {T, v} -> wait kernel.checked (pair T v)
 // Ergonomic alias for function-typed checked values:
 typed_lambda := {A, B, f} -> checked (Pi A B) f
 
-// Typecheck-gated constructor producing a certificate:
+// Typecheck-gated constructor producing a certificate. Returns
+// `Ok None` when the verdict is FF (legitimate query answer:
+// no cert is issued). Returns `Ok (Some cert)` on TT. Soundness
+// errors propagate through `Err`.
+validate : Type -> Tree_p -> CheckerResult (Maybe Cert)
+
 validate := {T, v} ->
-  bind (typecheck T v) ({_} -> Ok (checked T v))
+  bind (typecheck T v) ({verdict} ->
+    match verdict {
+      TT => Ok (Some (checked T v))
+      FF => Ok None
+    })
 ```
 
 *Soundness obligation.* `is_applicable_type` is a library predicate
@@ -1041,28 +1090,28 @@ neutrals.
 
 == `typecheck`
 
-The user-facing entry. Composes `param_lift` with `param_apply` to
-produce a fully validated result.
+The user-facing query: "is `v` an inhabitant of `T`?" Composes
+`param_lift` with `param_apply` and returns the verdict as data.
 
 ```disp
+typecheck : Type -> Tree_p -> CheckerResult Bool
+
 typecheck := {T, v} ->
-  bind       (param_lift v)            ({sanitized_v} ->
-  require_tt T sanitized_v (param_apply T sanitized_v) ({_} ->
-  Ok sanitized_v))
+  bind (param_lift v) ({sanitized_v} ->
+    param_apply T sanitized_v)
 ```
 
-In Kleisli composition terms:
-`typecheck T = param_lift >>= param_apply T >>= (Ok ∘ pass-through)`,
-with `require_tt` raising `Err (PredicateFailed { type = T, value, span })`
-if the recognizer returns `Ok FF`.
+`Ok TT` means inhabitant, `Ok FF` means not, `Err _` means
+something soundness-level went wrong during the check (parametricity
+violation in the recognizer, malformed input, etc.). The verdict is
+data; the error channel carries only kernel-correctness failures.
 
 == Example traces
 
 *Trace 1: `typecheck Bool TT`.*
 + `param_lift TT` → `Ok TT` (TT contains no neutrals).
 + `param_apply Bool TT` → routes via predicate_frame signature → invokes Bool's recognizer → `TT` is a canonical Bool shape → returns `Ok TT`.
-+ `require_tt Bool TT (Ok TT) ...` → continues.
-+ Returns `Ok TT`.
++ `typecheck` returns `Ok TT` — the verdict.
 
 *Trace 2: `typecheck Bool (is_zero TT)`.*
 
@@ -1071,17 +1120,22 @@ Here `is_zero` is a `checked (Pi Nat Bool) is_zero_raw` value.
 + Compile-time `applyTree (is_zero, TT)`:
   - Dispatcher routes `apply(checked-wait-form, TT)` to the `checked` handler.
   - Handler checks `param_apply Nat TT`. Nat's recognizer rejects TT structurally → `Ok FF`.
-  - `require_tt Nat TT (Ok FF) ...` → `Err (PredicateFailed { type = Nat, value = TT, span })`.
+  - `checked` is a contract boundary: `Nat` was promised, `Ok FF` means broken promise → raises `Err (TypeMismatch { expected = Nat, actual = TT, span })`.
   - So `is_zero TT` reduces to that `Err`.
 
 + Now `typecheck Bool (Err ...)`:
-  - `param_lift (Err ...)` → propagates the `Err` outward (it's already in the monad).
-  - Returns the original `Err PredicateFailed`, with `Nat`/`TT` in its payload pointing at the inner mismatch.
+  - `param_lift` is called on an `Err` value. The wrapping monad propagates: `bind (Err e) k = Err e`.
+  - Returns the original `Err TypeMismatch`, payload pointing at the inner mismatch.
 
 The error originates inside the reduction (at the `checked` handler's
-domain check) and propagates outward unchanged. The user gets the
-inner failure's full payload — the failing type, value, and span —
-not an opaque outer "typecheck failed."
+domain check, a contract boundary) and propagates outward unchanged.
+The user gets the inner failure's full payload — the expected type,
+the actual value, and the span — not an opaque outer "typecheck
+failed."
+
+Contrast: a *query* like `typecheck Bool zero` returns `Ok FF`, not
+an error — `zero` simply isn't a Bool, which is a legitimate answer
+to a query. No `Err` is involved.
 
 = Checked values <sec:checked-values>
 
@@ -1109,7 +1163,7 @@ All three are library functions over the single kernel primitive
     [*Constructor*], [*Definition*], [*When used*],
     [`checked T v`], [`wait kernel.checked (pair T v)`], [Direct construction; no validation],
     [`typed_lambda A B f`], [`checked (Pi A B) f`], [Function values at construction time],
-    [`validate T v`], [`typecheck T v >>= Ok ∘ checked T`], [Producing a certificate post-validation],
+    [`validate T v`], [`typecheck T v >>= λverdict. Ok (if verdict then Some (checked T v) else None)`], [Querying whether a cert can be issued],
   ),
   caption: [Constructors for typed values.],
 )
@@ -1127,16 +1181,24 @@ when the value is used in a type-check.
 
 Example trace: user writes `let bogus = checked Bool zero` (false claim).
 - `bogus` evaluates to `wait kernel.checked (pair Bool zero)`.
-- Later, `typecheck Bool bogus`:
-  - `param_lift bogus` → `Ok bogus`.
-  - `param_apply Bool bogus` — Bool's recognizer triages on `bogus`.
-    The wait-form is a fork with `kernel.checked` as `pair_fst`, not
-    a canonical Bool shape. Returns `Ok FF`.
-  - `require_tt Bool bogus (Ok FF) ...` → `Err (PredicateFailed { type = Bool, value = bogus, span })`.
-- `typecheck` rejects with a typed error pointing at the forgery.
+- Later, the user calls `validate Bool bogus`:
+  - Internally `typecheck Bool bogus` runs:
+    - `param_lift bogus` → `Ok bogus`.
+    - `param_apply Bool bogus` — Bool's recognizer triages on `bogus`.
+      The wait-form is a fork with `kernel.checked` as `pair_fst`, not
+      a canonical Bool shape. Returns `Ok FF`.
+  - `validate` sees `Ok FF` from the verdict and returns `Ok None`
+    — no certificate issued.
 
-So forged certificates fail at first use. The structural recognizer
-check (each type knows its own canonical shapes) catches them.
+So forged certificates fail at first attempted validation: the user
+gets `Ok None` (verdict-as-data) telling them the claim was bogus,
+not a thrown error. Structural recognizer checks (each type knows
+its own canonical shapes) catch the lie.
+
+If `bogus` instead reaches a *contract boundary* — say, the user
+applies a `f : Pi Bool C` to `bogus` — the `checked` handler raises
+`Err (TypeMismatch { expected = Bool, actual = bogus, span })`,
+because at that boundary the type was promised.
 
 == Composition
 
@@ -1146,9 +1208,12 @@ Applying a `checked` value to an argument fires the handler:
 (checked (Pi A B) f) x
 → ks.param_apply (kernel.checked) (pair (Pi A B) f) x
 → handler runs
-→ require_tt A x (param_apply A x) (λ_. param_apply f x)
+→ bind (param_apply A x) ({verdict} -> match verdict {
+    TT => param_apply f x
+    FF => Err (TypeMismatch { expected = A, actual = x, span })
+  })
 → on success:         Ok (f x)
-→ on domain mismatch: Err (PredicateFailed { type = A, value = x, span })
+→ on domain mismatch: Err (TypeMismatch { expected = A, actual = x, span })
 ```
 
 Chained applications work the same way; each layer's handler fires
