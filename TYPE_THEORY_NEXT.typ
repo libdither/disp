@@ -606,7 +606,7 @@ application supplies the argument and triggers dispatch.
     [`hyp_reduce`],
       [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`],
     [`predicate_frame`],
-      [`{recognizer : P -> A -> CheckerResult Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`],
+      [`TypeFormer -> Tree_p -> CheckerResult(Bool)` (TypeFormer defined in §11.2)],
     [`eliminator_frame`],
       [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`],
     [`bind_hyp`],
@@ -619,8 +619,10 @@ application supplies the argument and triggers dispatch.
   caption: [Per-operation types. All but `param_apply` take a meta
     record. Type variables: `A` = recognized/eliminated type, `P` =
     closed params, `R` = result type, `Motive`/`Cases` =
-    dispatcher-specific. `CodFn = (P -> A -> Type) ∪ Sentinel` for
-    non-applicable types.],
+    dispatcher-specific. For `predicate_frame`, the meta is the
+    library-level `TypeFormer` record (§11.2); the handler projects
+    `meta.classifier.characteristic_morphism` for the recognizer and
+    `meta.classifier.params` for its params.],
 )
 
 #note[
@@ -822,7 +824,7 @@ no triage on the input `v` unless `v` is known concrete.
 
 == `predicate_frame`
 
-*Signature.* `predicate_frame : {recognizer : P -> A -> CheckerResult Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`.
+*Signature.* `predicate_frame : TypeFormer -> Tree_p -> CheckerResult(Bool)`. The handler reads its recognizer and params via record projection on the TypeFormer meta (defined in §11.2).
 
 *Role.* Recognizes whether a value inhabits a type. For hypothesis
 inputs, fires the H-rule (compare stored type to expected). For
@@ -835,8 +837,10 @@ runs under the walker.
 let q_predicate_frame_fn = {ks, raw, query} ->
   fix ({self, meta, v} -> {
     let check_fn = {ks, raw, query, self, meta, v} -> {
-      let recognizer = pair_fst meta
-      let params     = pair_fst (pair_snd meta)
+      // meta is a TypeFormer record (§11.2). Standard record
+      // projection extracts the recognizer and its closed params.
+      let recognizer = meta.classifier.characteristic_morphism
+      let params     = meta.classifier.params
       // The recognizer field is `P -> A -> CheckerResult Bool`. Running
       // it under the walker yields `CheckerResult (CheckerResult Bool)`:
       // the outer layer is from the walker (Err on parametricity trip),
@@ -1452,24 +1456,48 @@ Functor := {
 ```
 
 Every library type-former (`Bool`, `Nat`, `Pi`, `Sigma`, etc.) is
-constructed by filling these fields.
+constructed by filling these fields. No smart constructor is needed —
+a TypeFormer record literal IS the metadata that `predicate_frame_form`
+wraps. The handler in §6.2 projects fields via standard record
+projection (`meta.classifier.characteristic_morphism`, etc.).
 
-== The smart constructor
+== Record construction
 
-```disp
-make_type_former :
-  (params : Type) ->
-  (recognizer : params -> Tree -> CheckerResult Bool) ->
-  (applicable : Optional EvalSignature) ->
-  (functor_action : InfFunctorActionSignature) ->
-  (identity_law : ...) ->
-  (composition_law : ...) ->
-  Type
-```
+Records are not a kernel primitive — they are a library construction
+spec'd in detail in `RECORDS_PROPOSAL.md`. Three facts from that
+design are load-bearing for the rest of this section.
 
-Each argument is Pi-checked against its declared type. The smart
-constructor produces a `predicate_frame_form` wait-form whose
-metadata is a valid `TypeFormer` record.
+*Iterated `Sigma` chains with names in metadata.* A record type
+`{x : A, y : B, z : C}` compiles to an iterated `Sigma A (\x. Sigma B
+(\y. Sigma C (\z. Unit)))`. The field names (`x`, `y`, `z`) live in
+the record type's `params` metadata, not in values. Two record types
+with different field names are distinct types even when their value
+chains are structurally identical — type identity tracks names.
+
+*Smart-wrapper encoding: records are functions.* A record value
+`{x := e1, y := e2}` compiles to `{i} -> i (t e1 (t e2 unit_witness))`
+— a function whose argument is an "inspector" that gets handed the
+inner Sigma chain. Apply the record to a walker tree and β-reduction
+produces `walker chain`. This is what makes
+`kernel := rec { hyp_reduce := ..., ... }` work at the tree level: the
+kernel record IS a function, and each handler can self-reference
+siblings via `wait self.field` (lazy) or `self.field` (eager). The
+`rec` combinator at `lib/prelude.disp` ties the knot via `fix`.
+
+*Uniform projection desugaring.* `r.field` desugars to `r W_field`,
+where `W_field` is a position-walker tree built from `pair_fst` /
+`pair_snd` for the field's index in the record's field list (so
+`W_0 = pair_fst`, `W_1 = {r} -> pair_fst (pair_snd r)`, and so on).
+The same rule covers user records, kernel handler dispatch, library
+type metadata, and lazy proxies — one desugaring for all four,
+because all four are functions that hand back their chain.
+
+Consequence for type-formers: a `TypeFormer` literal `{classifier :=
+..., applicable := ..., functor := ...}` compiles to a function that
+returns the three-element Sigma chain. The kernel's predicate_frame
+handler projects fields out of this record exactly as user code
+would. There is no separate "build a type-former" entry point — the
+record literal is the metadata, full stop.
 
 == The bootstrap
 
@@ -1494,40 +1522,50 @@ etc.).
 
 === Step 2: the primordial `TypeFormer`
 
-The primordial is the first `TypeFormer` value, constructed by hand to
-satisfy its own contract:
+The primordial is the first `TypeFormer` value, written as a record
+literal that satisfies its own contract:
 
 ```disp
-let typeformer_recognizer = {params, v} ->
-  // Check v is a record matching the TypeFormer shape:
-  //   pair classifier (pair (Optional applicable) functor)
-  // where each field has the appropriate sub-shape. All sub-checks
-  // are pure structural predicates on the tree (no kernel-mediated
-  // calls), so the whole conjunction lifts to Ok in one step.
+// The recognizer that decides "is v a valid TypeFormer record?"
+// All sub-checks are pure structural predicates on the tree (no
+// kernel-mediated calls), so the whole conjunction lifts to Ok in
+// one step.
+let typeformer_recognizer = {_, v} ->
   Ok (and (is_fork v)
        (and (is_subobject_classifier (pair_fst v))
          (and (is_optional_applicable (pair_fst (pair_snd v)))
               (is_functor (pair_snd (pair_snd v))))))
 
-// The primordial TypeFormer record itself:
-let primordial_TypeFormer = pair
-  primordial_classifier_field
-  (pair primordial_applicable_field primordial_functor_field)
+// The primordial TypeFormer record — Type's own metadata. Written
+// as a record literal; under Option B it compiles to a function
+// that hands back the (classifier, applicable, functor) chain.
+let primordial_TypeFormer = {
+  classifier := {
+    params                  := Unit,
+    characteristic_morphism := typeformer_recognizer
+  },
+  applicable := none,
+  functor    := trivial_functor
+}
 
-// Type = predicate_frame_form wrapping the primordial:
-Type := predicate_frame_form (t typeformer_recognizer
-                                (t primordial_TypeFormer t))
+// Type wraps the primordial in a predicate_frame wait-form. The
+// dispatcher routes `Type x` calls to the predicate_frame handler,
+// which projects `meta.classifier.characteristic_morphism` =
+// typeformer_recognizer and runs it on x.
+Type := predicate_frame_form primordial_TypeFormer
 ```
 
-By construction, applying `Type` to `primordial_TypeFormer` reduces
+By construction, applying `Type` to `primordial_TypeFormer` routes
 through `typeformer_recognizer`, which verifies the structural shape
-and returns `TT`. Self-consistency by construction.
+and returns `Ok TT`. Self-consistency: `Type`'s metadata is its own
+first inhabitant.
 
-The verification that `primordial_TypeFormer` satisfies its own contract
-is a *manual proof obligation* — the implementer of this primordial
-tree value must verify by inspection that the contract holds. After
-that, all subsequent type-formers go through `make_type_former`, which
-mechanically enforces the contract.
+The verification that `primordial_TypeFormer` satisfies its own
+contract is a *manual proof obligation* — the implementer must verify
+by inspection that the record literal's structure matches each sub-
+check (`is_subobject_classifier`, `is_optional_applicable`,
+`is_functor`). After that, all subsequent type-formers are TypeFormer
+record literals validated against `Type` at construction.
 
 #note[
   *The trust seed.* The primordial `TypeFormer` is the load-bearing
@@ -1539,37 +1577,35 @@ mechanically enforces the contract.
 
 === Step 3: library types
 
-With the primordial in place, library types are constructed via
-`make_type_former`:
+With the primordial in place, library types are TypeFormer record
+literals wrapped by `predicate_frame_form`:
 
 ```disp
-Bool := make_type_former
-  Unit                  // no params
-  bool_recognizer
-  none                  // not applicable
-  trivial_functor       // discrete: refl-only morphism action
-  refl_identity_law
-  refl_composition_law
+Bool := predicate_frame_form {
+  classifier := { params := Unit, characteristic_morphism := bool_recognizer },
+  applicable := none,
+  functor    := trivial_functor       // discrete: refl-only morphism action
+}
 
-Nat := make_type_former
-  Unit
-  nat_recognizer
-  none
-  trivial_functor
-  refl_identity_law
-  refl_composition_law
+Nat := predicate_frame_form {
+  classifier := { params := Unit, characteristic_morphism := nat_recognizer },
+  applicable := none,
+  functor    := trivial_functor
+}
 
-Pi := make_type_former
-  (Sigma Type ({A} -> A -> Type))   // params = (A, B)
-  pi_recognizer
-  (some pi_eval_signature)
-  pi_functor_action                  // non-trivial; supports transp
-  pi_identity_law
-  pi_composition_law
+Pi := predicate_frame_form {
+  classifier := {
+    params                  := Sigma Type ({A} -> A -> Type),   // (A, B)
+    characteristic_morphism := pi_recognizer
+  },
+  applicable := some { eval_morphism := pi_eval_signature },
+  functor    := pi_functor               // non-trivial; supports transp
+}
 ```
 
-Each is validated against `Type` (which uses the primordial) at
-construction.
+Each is validated against `Type` (which uses the primordial) at the
+binding's outer `: Type` annotation — that single `typecheck` call
+fires `typeformer_recognizer` against the record's fields.
 
 === Step 4: Russell-paradox safety
 
@@ -1631,9 +1667,9 @@ separates capabilities.]
 = Library types under Design Y <sec:library-types>
 
 Each library type-former, recast under Design Y + categorical
-foundations. The pattern: declare the `TypeFormer` fields; wrap any
-function-typed metadata fields with `checked`; produce the type via
-`make_type_former`.
+foundations. The pattern: write a `TypeFormer` record literal; wrap
+any function-typed metadata fields with `checked`; wrap the record
+with `predicate_frame_form` to produce the type.
 
 == `Bool`
 
@@ -1641,18 +1677,16 @@ function-typed metadata fields with `checked`; produce the type via
 let bool_recognizer = {_, v} ->
   Ok (or (tree_eq v TT) (tree_eq v FF))
 
-Bool := make_type_former
-  Unit                     // no params
-  bool_recognizer
-  none                     // not applicable
-  trivial_functor          // discrete
-  refl_identity_law
-  refl_composition_law
+Bool := predicate_frame_form {
+  classifier := { params := Unit, characteristic_morphism := bool_recognizer },
+  applicable := none,
+  functor    := trivial_functor
+}
 ```
 
 Recognizer is a closed parametric function. The structural check is
 pure, so the body wraps in `Ok` directly. Discrete: transport is
-identity, both laws are `refl`.
+identity, both laws are `refl` (bundled in `trivial_functor`).
 
 == `Nat`
 
@@ -1667,13 +1701,11 @@ let nat_recognizer = {_, v} ->
             and (tree_eq l t) (self r))
           x) v)
 
-Nat := make_type_former
-  Unit
-  nat_recognizer
-  none
-  trivial_functor          // discrete: transport identity
-  refl_identity_law
-  refl_composition_law
+Nat := predicate_frame_form {
+  classifier := { params := Unit, characteristic_morphism := nat_recognizer },
+  applicable := none,
+  functor    := trivial_functor          // discrete: transport identity
+}
 ```
 
 == `Pi`
@@ -1708,15 +1740,16 @@ let pi_recognizer = {params, v} -> {
 }
 
 let pi_eval_signature = ...  // standard codomain_fn signature
-let pi_functor_action = ...  // non-trivial: supports transp via §13
+let pi_functor          = ...  // non-trivial: supports transp via §13
 
-Pi := make_type_former
-  (Sigma Type ({A} -> A -> Type))    // params = (A, B)
-  pi_recognizer
-  (some pi_eval_signature)
-  pi_functor_action
-  pi_identity_law
-  pi_composition_law
+Pi := predicate_frame_form {
+  classifier := {
+    params                  := Sigma Type ({A} -> A -> Type),   // (A, B)
+    characteristic_morphism := pi_recognizer
+  },
+  applicable := some { eval_morphism := pi_eval_signature },
+  functor    := pi_functor
+}
 ```
 
 The three-step check (signature, domain match, bind-hyp+body) is what
@@ -1725,10 +1758,10 @@ aren't `checked`-wrapped fail at step 1.
 
 == `Sigma`, `Eq`, `Ord`, `Refinement`, `Record`, `Unit`, `String`
 
-These follow the same pattern. Each defines a recognizer, builds a
-`TypeFormer` via `make_type_former`. The recognizers are the same as
-in the prior `lib/types/*.disp` files, but now wrapped with the
-categorical-foundations record structure.
+These follow the same pattern. Each defines a recognizer, then writes
+a `TypeFormer` record literal wrapped by `predicate_frame_form`. The
+recognizers are the same as in the prior `lib/types/*.disp` files,
+but now arranged under the categorical-foundations record structure.
 
 (Full definitions deferred to implementation; the framework is
 established.)
@@ -1739,9 +1772,11 @@ established.)
 bootstrap:
 
 ```disp
-Type := predicate_frame_form (t typeformer_recognizer
-                                (t primordial_TypeFormer t))
+Type := predicate_frame_form primordial_TypeFormer
 ```
+
+where `primordial_TypeFormer` is the TypeFormer record literal
+constructed in §11.4 Step 2.
 
 `typecheck Type Type = Ok TT` by the primordial's self-consistency.
 
@@ -1789,13 +1824,11 @@ let I_recognizer = {_, v} -> ...
   // of stored type I. Library smart constructors normalize formulas to
   // DNF so De-Morgan-equivalent formulas hash-cons to identical trees.
 
-I := make_type_former
-  Unit
-  I_recognizer
-  none
-  trivial_functor       // I doesn't transport
-  refl_identity_law
-  refl_composition_law
+I := predicate_frame_form {
+  classifier := { params := Unit, characteristic_morphism := I_recognizer },
+  applicable := none,
+  functor    := trivial_functor       // I doesn't transport
+}
 ```
 
 A library `I_normalize` reduces formulas to canonical (DNF) form;
@@ -1852,9 +1885,8 @@ transp := fix ({self, P, x} -> {
 ```
 
 Per-type rules are supplied as the `functor.morphism_action` field
-when each type-former is constructed via `make_type_former`. Sketches
-of the per-type clauses (each is the `morphism_action` argument when
-constructing the type):
+of each type-former's record literal. Sketches of the per-type clauses
+(each becomes the `morphism_action` inside the `functor` field):
 
 ```disp
 // Discrete types (Bool, Nat, False): transport is identity.
@@ -1874,8 +1906,8 @@ let pi_morphism_action    = {self, P, f} -> ...
 let eq_morphism_action    = {self, P, p} -> ...
 ```
 
-Each is passed to `make_type_former` when constructing the corresponding
-type. The pattern: recurse component-wise where possible; stuck-mint
+Each is dropped into the corresponding type's `functor.morphism_action`
+field. The pattern: recurse component-wise where possible; stuck-mint
 via `StuckElim` for non-structural cases. Full per-type rules carry
 over from the prior `CUBICAL_PROPOSAL.typ` §5.2.
 
@@ -1886,13 +1918,11 @@ phi A := IsOne phi -> A`. Walker-safe smart constructors for face
 systems.
 
 ```disp
-IsOne := make_type_former
-  I                       // params = i : I
-  isone_recognizer
-  none
-  trivial_functor
-  refl_identity_law
-  refl_composition_law
+IsOne := predicate_frame_form {
+  classifier := { params := I, characteristic_morphism := isone_recognizer },
+  applicable := none,
+  functor    := trivial_functor
+}
 
 Partial := {phi, A} -> Pi (IsOne phi) ({_} -> A)
 ```
@@ -1927,13 +1957,14 @@ with partial type information (T, e) at the face phi. Its non-trivial
 `Functor.morphism_action` implements equivalence-mediated transport.
 
 ```disp
-Glue := make_type_former
-  glue_params_shape       // (B, T, e) — base, partial type, equivalence
-  glue_recognizer
-  none
-  glue_functor_action     // applies the equivalence on transport
-  glue_identity_law
-  glue_composition_law
+Glue := predicate_frame_form {
+  classifier := {
+    params                  := glue_params_shape,   // (B, T, e)
+    characteristic_morphism := glue_recognizer
+  },
+  applicable := none,
+  functor    := glue_functor       // applies the equivalence on transport
+}
 
 // ua constructs a Path Type A B from an equivalence e : A ≃ B.
 // Notation `[(i = I_one) ↦ (A, e)]` is mathematical shorthand for the
