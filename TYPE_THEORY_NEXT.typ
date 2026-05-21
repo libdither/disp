@@ -190,6 +190,33 @@ exploits this.
   constructs its own functorial/morphism structure on its typed subset.
 ]
 
+== Pairs and projections
+
+`pair`, `pair_fst`, and `pair_snd` are library functions over the
+substrate, not kernel primitives. The spec uses them pervasively for
+extracting fields from records, wait-forms, and metadata trees.
+
+```disp
+// pair a b = fork(a, b). In disp source, `t` writes LEAF and tree
+// construction is left-associative application, so `t a b` is
+// fork(a, b).
+pair := {a, b} -> t a b
+
+// Projections via triage. The leaf and stem branches are degenerate
+// (pairs are forks); they exist only so the function is total.
+pair_fst := {p} -> triage t ({x} -> x) ({l, r} -> l) p
+pair_snd := {p} -> triage t ({x} -> x) ({l, r} -> r) p
+```
+
+On a regular pair `pair a b = fork(a, b)`, the projections behave as
+expected: `pair_fst (pair a b) = a` and `pair_snd (pair a b) = b`.
+
+These same projections are also applied to *wait-forms* — partial
+applications of the `wait` combinator — whose tree shape is *not* a
+plain `fork(a, b)`. The relationship between projection behavior on
+those trees and the kernel's signature-based dispatch is the subject
+of §5.4.
+
 == Native runtime
 
 The host runtime in `src/tree.ts` implements hash-consing and `apply`.
@@ -673,28 +700,56 @@ The kernel is the handler.
 
 == Operation invocation via wait-forms
 
-A wait-form `wait kernel.op meta` is a *delayed operation invocation*
-— a tree whose `pair_fst` is the operation's signature (a constant
-tree per operation) and whose `pair_snd` is the structured meta. When
-`param_apply` encounters such a wait-form applied to an argument, it
-routes via signature matching to the appropriate handler clause:
+`wait` is the library combinator (`lib/prelude.disp`):
+
+```disp
+wait := {a, b, c} -> t (t a) (t t c) b
+```
+
+so `wait a b c = a b c` but `wait a b` is a *stuck partial
+application* — bracket abstraction freezes it as a specific tree
+shape, not as `fork(a, b)`. A "wait-form" is `wait kernel.op meta`
+in this two-arg partial state: a delayed operation invocation.
+
+The wait-form's tree shape is not a plain pair, but it has two
+properties that the dispatcher and library code rely on:
+
+*Signature stability.* `pair_fst (wait k m)` is a derived constant
+that depends only on `k`, not on `m`. The library defines
+
+```disp
+checker_sig := {checker} -> pair_fst (wait checker t)
+has_sig    := {checker, v} -> tree_eq (pair_fst v) (checker_sig checker)
+```
+
+so `pair_fst (wait k m) = checker_sig(k)` for every `m`. Hash-cons
+identity (§2.2) makes the comparison O(1); the host runtime
+registers each kernel operation's `checker_sig` once at startup.
+(So the casual phrasing "pair_fst of a wait-form is the operation's
+signature" really means "the signature-constant derived from the
+operation via the wait-encoding," not the operation function
+itself.)
+
+*Meta accessibility.* `pair_snd (wait k m)` is a tree structurally
+containing `m`, recoverable by the handler. Library types use this
+to inspect metadata without firing the handler — e.g. extracting a
+`TypeFormer` record from a wait-form's payload before applying it
+to anything.
+
+With these two properties in place, the dispatcher's loop is:
 
 ```
 param_apply f x:
-  if pair_fst(f) matches kernel.hyp_reduce signature  → invoke hyp_reduce^A
-  if pair_fst(f) matches kernel.predicate_frame sig    → invoke predicate_frame^A
+  if pair_fst(f) matches kernel.hyp_reduce's checker_sig  → invoke hyp_reduce^A
+  if pair_fst(f) matches kernel.predicate_frame's sig     → invoke predicate_frame^A
   ...
-  else (no match)                                       → walker default
+  else (no match)                                         → walker default
 ```
 
-The dispatcher is the *interpretation function*: given a tree
-`f` representing a potential operation invocation, decide which
-operation (if any) is being invoked and apply the corresponding
-Kleisli arrow.
-
-The default for non-operation invocations is the parametric walker
-(§4) — itself a Kleisli arrow that just applies tree-calculus rules
-with parametricity rejections.
+Match by hash-cons equality on the signature constant. The default
+for non-operation invocations is the parametric walker (§4) — itself
+a Kleisli arrow that just applies tree-calculus rules with
+parametricity rejections.
 
 === Why wait-forms, not plain partial application
 
@@ -703,23 +758,26 @@ Semantically, meta is just an additional argument to the handler —
 ceremony. The wait-form encoding buys three things that direct
 partial application does not:
 
-+ *O(1) signature dispatch.* `pair_fst(wait k m) = k` is a constant
-  tree per operation, so the dispatcher matches by hash-cons equality
-  on a single id. A directly partially-applied function would need
-  some other recognition mechanism (deeper structural inspection or
-  a tag argument) — both worse.
++ *O(1) signature dispatch.* The signature constant
+  `checker_sig(k) = pair_fst(wait k t)` is hash-cons-stable: every
+  wait-form sharing the same operation produces the same pair_fst
+  regardless of metadata. The dispatcher matches via a single id
+  comparison. A directly partially-applied function would need
+  some other recognition mechanism (deeper structural inspection
+  or a tag argument) — both worse.
 
 + *Meta inspection without forcing the handler.* Library type-formers
   need this: `Bool = wait q_predicate_frame_fn bool_meta` exposes
-  `bool_meta` (recognizer, classifier-into-Ω, codomain-fn) via
-  `pair_snd Bool` without ever applying `Bool` to anything.
+  `bool_meta` (the TypeFormer record) via `pair_snd Bool` without
+  ever applying `Bool` to anything.
 
 + *Stability under bracket abstraction.* A plain partial application
   compiles, via bracket abstraction, into a tree where the S-combinator
   distributes meta into the handler body wherever it's used —
-  scattering it past the dispatcher's reach. Wait-form keeps
-  `(signature, meta)` as a single top-level fork after compilation,
-  regardless of how the handler body uses meta internally.
+  scattering it past the dispatcher's reach. The wait combinator's
+  specific shape (`t (t a) (t t c) b`) keeps the signature derivable
+  from pair_fst and the meta reachable from pair_snd, regardless of
+  how the handler body uses meta internally.
 
 The wait-form is essentially a *reified curried-application stack*
 that the dispatcher pattern-matches on. The Lisp analogue is the
