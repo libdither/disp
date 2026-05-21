@@ -736,20 +736,22 @@ to inspect metadata without firing the handler — e.g. extracting a
 `TypeFormer` record from a wait-form's payload before applying it
 to anything.
 
-With these two properties in place, the dispatcher's loop is:
+With these two properties in place, the dispatcher is a single
+privilege check:
 
 ```
 param_apply f x:
-  if pair_fst(f) matches kernel.hyp_reduce's checker_sig  → invoke hyp_reduce^A
-  if pair_fst(f) matches kernel.predicate_frame's sig     → invoke predicate_frame^A
-  ...
-  else (no match)                                         → walker default
+  if pair_fst(f) is in kernel_sigs  → run raw (just `f x`)
+  else                              → walker step (§4)
 ```
 
-Match by hash-cons equality on the signature constant. The default
-for non-operation invocations is the parametric walker (§4) — itself
-a Kleisli arrow that just applies tree-calculus rules with
-parametricity rejections.
+*The dispatcher does not route to handlers.* Once privilege is
+granted, the wait-form's bracket-abstracted reduction
+(`wait k m x` → `k m x`) invokes the embedded handler automatically
+— no mapping table required. The dispatcher's only choice is between
+two execution modes: raw apply for trusted reductions, walker apply
+for everything else. See §6.5 for the in-language reference and how
+`kernel_sigs` is derived from the kernel record itself.
 
 === Why wait-forms, not plain partial application
 
@@ -758,13 +760,15 @@ Semantically, meta is just an additional argument to the handler —
 ceremony. The wait-form encoding buys three things that direct
 partial application does not:
 
-+ *O(1) signature dispatch.* The signature constant
++ *O(1) privilege check.* The signature constant
   `checker_sig(k) = pair_fst(wait k t)` is hash-cons-stable: every
   wait-form sharing the same operation produces the same pair_fst
-  regardless of metadata. The dispatcher matches via a single id
-  comparison. A directly partially-applied function would need
-  some other recognition mechanism (deeper structural inspection
-  or a tag argument) — both worse.
+  regardless of metadata. The dispatcher decides "is this a trusted
+  kernel op?" via a single id-comparison membership check (§6.5).
+  Routing to the specific handler isn't needed — the wait-form
+  reduces directly to its embedded handler under raw apply.
+  A directly partially-applied function would lack a stable
+  signature to gate privilege on.
 
 + *Meta inspection without forcing the handler.* Library type-formers
   need this: `Bool = wait q_predicate_frame_fn bool_meta` exposes
@@ -1014,37 +1018,66 @@ exploited via predicate_frame's H-rule.
 
 *Signature.* `param_apply : Tree_p -> Tree_p -> CheckerResult(Tree_p)`.
 
-*Role.* The dispatcher itself. Given two trees `f` and `x`, decide
-whether `f` is an operation invocation (wait-form with a kernel
-signature) and route accordingly; otherwise apply via the parametric
-walker.
+*Role.* The dispatcher. One privilege check decides between trusted
+raw execution (for kernel-operation invocations) and unprivileged
+walker reduction (for everything else). The dispatcher does not route
+to specific handlers — wait-form reduction does that automatically
+(§5.4).
 
-*Disp source* (the in-language reference is `checked_apply_walker` in
-`lib/kernel/walker.disp`; the kernel handler `q_param_apply_fn` is a
-small stub that the host's native fast-path intercepts):
+*`kernel_sigs` is derived from the kernel record.* Adding a handler
+to `kernel` registers its signature automatically; there is no
+hardcoded list to keep in sync.
 
 ```disp
-// In-language reference (the spec):
-param_apply := fix ({self, f, x} -> {
-  match (tree_eq f I_canonical) {
-    TT => Ok x                            // I-shortcut
-    FF => triage
-      (Ok (t x))                          // leaf rule
-      ({a} -> stem_step a x)              // stem rule (with neutral-root check)
-      ({a, b} -> fork_step self a b x)    // fork rule (K/S/triage with restrictions)
-      f
-  }
-})
+// Extract a record's field chain via Option B's identity inspector.
+record_chain := {r} -> r ({x} -> x)
+
+// Walk a Sigma chain into a list.
+chain_to_list := fix ({self, c} ->
+  match (tree_eq c unit_witness) {
+    TT => nil
+    FF => cons (pair_fst c) (self (pair_snd c))
+  })
+
+kernel_sigs := list_map
+  ({h} -> checker_sig h)
+  (chain_to_list (record_chain kernel))
+
+is_kernel_sig := {sig} ->
+  list_any ({s} -> tree_eq s sig) kernel_sigs
 ```
 
-See §4 for the stem and fork step helpers with the parametricity
-rejections inlined.
+*The dispatcher.*
+
+```disp
+param_apply := fix ({self, f, x} ->
+  match (and (is_wait_form f) (is_kernel_sig (pair_fst f))) {
+    TT => f x                              // raw apply: handler embedded in f
+    FF => walker_step self f x             // walker (§4)
+  })
+```
+
+The two arms have different semantics:
+
+- *Raw arm.* `f x` is plain substrate apply (§2.1) — no walker
+  enforcement, no further dispatch at this level. The wait-form's
+  bracket-abstracted shape reduces `wait k m x` to `k m x`, invoking
+  the handler whose privilege we just granted. The handler's body,
+  running raw, can do operations the walker would reject — minting
+  neutrals (`bind_hyp`), extending spines (`hyp_reduce`), constructing
+  kernel-signature-rooted wait-forms for H-rule reconstruction.
+
+- *Walker arm.* `walker_step` is the parametricity-enforcing
+  reduction of §4. Its internal sub-applies re-enter
+  `self.param_apply` rather than calling substrate apply directly,
+  so dispatch happens at every layer of nested reduction. Any
+  sub-tree that happens to be a kernel wait-form gets routed back
+  to the raw arm.
 
 *Native fast-path.* The host runtime intercepts `apply(param_apply, ...)`
-based on the kernel handler's tree id, runs a TypeScript implementation
-of the same dispatch + walker discipline, and produces bit-identical
-results. The in-language reference is the spec; the host is the
-optimization.
+based on the compiled tree id and runs a TypeScript implementation of
+the same logic. The in-language version is the spec; the native is
+the optimization, producing bit-identical results.
 
 == `checked`
 
