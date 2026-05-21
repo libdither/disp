@@ -42,8 +42,8 @@
   into a single document.
 
   Major shifts from predecessors:
-  - The kernel surface drops from 7 to 6 primitives (removed `guard`/`unguard`
-    per Interp B; added `checked`).
+  - The kernel surface drops from 7 to 6 primitives (removed `guard`/`unguard`;
+    added `checked`).
   - Type-checking is framed as manifest contracts over the `CheckerResult`
     monad. The elaborator is purely a wrap-only pass; no bidirectional
     inference.
@@ -425,14 +425,13 @@ bind (param_apply A arg) ({verdict} ->
   })
 ```
 
-This is the soundness win versus the old undifferentiated
-`must_ok_or_ff`: that helper blindly folded *any* failure into
-`FF`, which would silently mask a parametricity violation inside a
-recognizer body as "this isn't an inhabitant." In the new design,
-every recognizer is required to *be* a recognizer (returning a
-verdict, never absorbing soundness errors), and the lifting of
-`FF → Err` happens only where it is contractually justified
-(`checked` and similar typed boundaries).
+This split is what keeps soundness errors visible. Folding any
+failure into `FF` — the obvious shortcut — would silently mask a
+parametricity violation inside a recognizer body as "this isn't an
+inhabitant." Here, every recognizer is required to *be* a recognizer
+(returning a verdict, never absorbing soundness errors), and the
+lifting of `FF → Err` happens only where it is contractually
+justified (`checked` and similar typed boundaries).
 
 #openq[
   The eliminator handler currently uses an `Err`-fallback pattern
@@ -1536,9 +1535,9 @@ let typeformer_recognizer = {_, v} ->
          (and (is_optional_applicable (pair_fst (pair_snd v)))
               (is_functor (pair_snd (pair_snd v))))))
 
-// The primordial TypeFormer record — Type's own metadata. Written
-// as a record literal; under Option B it compiles to a function
-// that hands back the (classifier, applicable, functor) chain.
+// The primordial TypeFormer record — Type's own metadata. The
+// record literal compiles (per §11.3) to a function that hands
+// back the (classifier, applicable, functor) chain.
 let primordial_TypeFormer = {
   classifier := {
     params                  := Unit,
@@ -1664,12 +1663,12 @@ error.
 operations require it? Adopting now adds verbosity but cleanly
 separates capabilities.]
 
-= Library types under Design Y <sec:library-types>
+= Library types <sec:library-types>
 
-Each library type-former, recast under Design Y + categorical
-foundations. The pattern: write a `TypeFormer` record literal; wrap
-any function-typed metadata fields with `checked`; wrap the record
-with `predicate_frame_form` to produce the type.
+Each library type-former, under the categorical foundations of §11.
+The pattern: write a `TypeFormer` record literal; wrap any function-
+typed metadata fields with `checked`; wrap the record with
+`predicate_frame_form` to produce the type.
 
 == `Bool`
 
@@ -1710,8 +1709,9 @@ Nat := predicate_frame_form {
 
 == `Pi`
 
-The pivotal one — under Design Y, Pi's recognizer must require its
-candidate be a `checked` wait-form.
+The pivotal one — Pi's recognizer requires its candidate be a
+`checked` wait-form. Raw function values do not inhabit Pi types;
+they must be wrapped first (via `typed_lambda` or `checked` directly).
 
 ```disp
 let pi_recognizer = {params, v} -> {
@@ -1753,15 +1753,17 @@ Pi := predicate_frame_form {
 ```
 
 The three-step check (signature, domain match, bind-hyp+body) is what
-makes Pi soundness-preserving under Design Y. Raw function values that
-aren't `checked`-wrapped fail at step 1.
+makes Pi soundness-preserving. Raw function values fail at step 1;
+domain-mismatched `checked` values fail at step 2; body-type mismatches
+fail at step 3 with a TypeMismatch or Escape error from the kernel
+operations the body invokes.
 
 == `Sigma`, `Eq`, `Ord`, `Refinement`, `Record`, `Unit`, `String`
 
 These follow the same pattern. Each defines a recognizer, then writes
 a `TypeFormer` record literal wrapped by `predicate_frame_form`. The
-recognizers are the same as in the prior `lib/types/*.disp` files,
-but now arranged under the categorical-foundations record structure.
+recognizer bodies are structural shape-checks on canonical inhabitants;
+specifics live alongside each type in `lib/types/`.
 
 (Full definitions deferred to implementation; the framework is
 established.)
@@ -1908,8 +1910,10 @@ let eq_morphism_action    = {self, P, p} -> ...
 
 Each is dropped into the corresponding type's `functor.morphism_action`
 field. The pattern: recurse component-wise where possible; stuck-mint
-via `StuckElim` for non-structural cases. Full per-type rules carry
-over from the prior `CUBICAL_PROPOSAL.typ` §5.2.
+via `StuckElim` for non-structural cases. The full per-type rules
+follow the standard CCHM treatment (Cohen-Coquand-Huber-Mörtberg
+2015); only the dispatch mechanism (signature on the TypeFormer's
+functor field) is disp-specific.
 
 == `Partial` and cofibrations
 
@@ -2075,13 +2079,18 @@ What is *not* in the trusted base:
 - Library type-former definitions (validated against `Type`'s recognizer).
 - User code (validated at every application via `checked`).
 
-== What this gives compared to the prior TYPE_THEORY.typ
+== TCB shape
 
-Today's disp has a similar soundness story but the TCB is larger: the
-elaborator's stepwise infer/check is implicitly trusted. Under Design Y,
-the elaborator just wraps; the kernel validates each binding via
-`typecheck`. The TCB shrinks to "the six kernel handlers + the walker +
-the primordial."
+The wrap-only elaboration discipline keeps the trusted computing base
+small. The elaborator emits wait-form trees but does not itself decide
+type-checking outcomes; the kernel re-validates each binding via
+`typecheck` as a one-shot reduction call. The TCB is therefore exactly
+"the six kernel handlers + the walker + the primordial `TypeFormer`."
+
+Designs with bidirectional infer/check elaboration must additionally
+trust the elaborator, since elaboration-time type decisions are not
+re-validated by the kernel. Disp's wrap-only design avoids that
+extension.
 
 #openq[The proof sketch is informal. A formal proof (Coq/Lean
 mechanization, or a careful pencil-and-paper version with PER-model
