@@ -606,7 +606,7 @@ application supplies the argument and triggers dispatch.
     [`hyp_reduce`],
       [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`],
     [`predicate_frame`],
-      [`{recognizer : P -> A -> Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`],
+      [`{recognizer : P -> A -> CheckerResult Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`],
     [`eliminator_frame`],
       [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`],
     [`bind_hyp`],
@@ -822,7 +822,7 @@ no triage on the input `v` unless `v` is known concrete.
 
 == `predicate_frame`
 
-*Signature.* `predicate_frame : {recognizer : P -> A -> Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`.
+*Signature.* `predicate_frame : {recognizer : P -> A -> CheckerResult Bool, params : P, codomain_fn : CodFn} -> Tree_p -> CheckerResult(Bool)`.
 
 *Role.* Recognizes whether a value inhabits a type. For hypothesis
 inputs, fires the H-rule (compare stored type to expected). For
@@ -837,11 +837,12 @@ let q_predicate_frame_fn = {ks, raw, query} ->
     let check_fn = {ks, raw, query, self, meta, v} -> {
       let recognizer = pair_fst meta
       let params     = pair_fst (pair_snd meta)
-      // Run the recognizer under the walker; its Ok TT/FF verdict
-      // passes through as data. Any Err — Parametricity, Escape, or
-      // Malformed — is a real soundness bug in the recognizer body
-      // and propagates unchanged for the caller to surface.
-      ks.param_apply (recognizer params) v
+      // The recognizer field is `P -> A -> CheckerResult Bool`. Running
+      // it under the walker yields `CheckerResult (CheckerResult Bool)`:
+      // the outer layer is from the walker (Err on parametricity trip),
+      // the inner layer is the recognizer's own verdict-or-error. We
+      // bind to flatten — any Err on either layer propagates uniformly.
+      bind (ks.param_apply (recognizer params) v) ({inner} -> inner)
     }
     select q_h_rule_fn check_fn (q_is_neutral raw v)
       ks raw query self meta v
@@ -1434,7 +1435,7 @@ TypeFormer := {
 
 SubobjectClassifier := {
   params                  : Type,
-  characteristic_morphism : params -> Tree -> Bool
+  characteristic_morphism : params -> Tree -> CheckerResult Bool
 }
 
 Applicable := {
@@ -1458,7 +1459,7 @@ constructed by filling these fields.
 ```disp
 make_type_former :
   (params : Type) ->
-  (recognizer : params -> Tree -> Bool) ->
+  (recognizer : params -> Tree -> CheckerResult Bool) ->
   (applicable : Optional EvalSignature) ->
   (functor_action : InfFunctorActionSignature) ->
   (identity_law : ...) ->
@@ -1497,15 +1498,16 @@ The primordial is the first `TypeFormer` value, constructed by hand to
 satisfy its own contract:
 
 ```disp
-let typeformer_recognizer = {params, v} -> {
+let typeformer_recognizer = {params, v} ->
   // Check v is a record matching the TypeFormer shape:
   //   pair classifier (pair (Optional applicable) functor)
-  // where each field has the appropriate sub-shape.
-  and (is_fork v)
-    (and (is_subobject_classifier (pair_fst v))
-      (and (is_optional_applicable (pair_fst (pair_snd v)))
-           (is_functor (pair_snd (pair_snd v)))))
-}
+  // where each field has the appropriate sub-shape. All sub-checks
+  // are pure structural predicates on the tree (no kernel-mediated
+  // calls), so the whole conjunction lifts to Ok in one step.
+  Ok (and (is_fork v)
+       (and (is_subobject_classifier (pair_fst v))
+         (and (is_optional_applicable (pair_fst (pair_snd v)))
+              (is_functor (pair_snd (pair_snd v))))))
 
 // The primordial TypeFormer record itself:
 let primordial_TypeFormer = pair
@@ -1592,7 +1594,7 @@ Five levels of validation, from cheap to expensive:
   `TypeFormer`-shaped tree. Cheap. Catches "this isn't a type-former at
   all."
 + *Component types.* Each field is Pi-checked against its declared type.
-  The recognizer must have shape `params → Tree → Bool`; the
+  The recognizer must have shape `params → Tree → CheckerResult Bool`; the
   `morphism_action` must have the right comp signature. Catches arity
   mismatches, return-type errors, missing fields.
 + *Behavioral testing.* For closed instances, run the operations on
@@ -1637,7 +1639,7 @@ function-typed metadata fields with `checked`; produce the type via
 
 ```disp
 let bool_recognizer = {_, v} ->
-  or (tree_eq v TT) (tree_eq v FF)
+  Ok (or (tree_eq v TT) (tree_eq v FF))
 
 Bool := make_type_former
   Unit                     // no params
@@ -1648,22 +1650,22 @@ Bool := make_type_former
   refl_composition_law
 ```
 
-Recognizer is a closed parametric function. Discrete: transport is
+Recognizer is a closed parametric function. The structural check is
+pure, so the body wraps in `Ok` directly. Discrete: transport is
 identity, both laws are `refl`.
 
 == `Nat`
 
 ```disp
-let nat_recognizer = {_, v} -> {
+let nat_recognizer = {_, v} ->
   // v is Nat iff v is zero (= LEAF) or v = fork(LEAF, n) where n is Nat.
-  // Implemented via triage:
-  fix ({self, x} ->
-    triage TT                              // leaf: zero
-      ({_} -> FF)                          // stem: not a Nat
-      ({l, r} ->                           // fork: zero-like (l=LEAF) + recurse on r
-        and (tree_eq l t) (self r))
-      x) v
-}
+  // Pure structural check on the tree; lifts to Ok in one step.
+  Ok (fix ({self, x} ->
+        triage TT                          // leaf: zero
+          ({_} -> FF)                      // stem: not a Nat
+          ({l, r} ->                       // fork: zero-like + recurse
+            and (tree_eq l t) (self r))
+          x) v)
 
 Nat := make_type_former
   Unit
@@ -1683,24 +1685,23 @@ candidate be a `checked` wait-form.
 let pi_recognizer = {params, v} -> {
   let A = pair_fst params
   let B = pair_snd params
-  // Step 1: v must be a `checked` wait-form.
+  // Step 1 (pure structural): v must be a `checked` wait-form.
   match (has_sig kernel.checked v) {
-    FF => FF
+    FF => Ok FF
     TT => {
-      // Step 2: v's stored domain matches A.
-      let v_meta = type_meta v
-      let v_A    = pair_fst v_meta
+      // Step 2 (pure structural): v's stored domain matches A.
+      let v_A = pair_fst (type_meta v)
       match (tree_eq v_A A) {
-        FF => FF
-        TT => {
-          // Step 3: bind hypothesis, check body. Lambda body needs {}
-          // because it's a multi-statement block.
-          bind_hyp A ({hyp} -> {
-            let result        = v hyp
-            let expected_core = B hyp
-            expected_core result
-          })
-        }
+        FF => Ok FF
+        TT =>
+          // Step 3 (kernel-mediated): bind a fresh A-hypothesis, apply
+          // v to it, then check the result against B hyp. Every step
+          // returns CheckerResult; `bind` propagates Err uniformly so
+          // parametricity / escape / malformed errors surface to the
+          // caller instead of being absorbed into a FF verdict.
+          bind_hyp A ({hyp} ->
+            bind (param_apply v hyp) ({result} ->
+              param_apply (B hyp) result))
       }
     }
   }
