@@ -1498,47 +1498,38 @@ handler projects fields out of this record exactly as user code
 would. There is no separate "build a type-former" entry point — the
 record literal is the metadata, full stop.
 
-== The bootstrap
+== Constructing `Type`
 
-The chicken-and-egg: `Type`'s recognizer is "the candidate's metadata
-is a valid `TypeFormer` record." `TypeFormer` is itself a `Type`. So
-checking `TypeFormer : Type` requires that `TypeFormer`'s metadata is
-a valid `TypeFormer` record. Circular.
+The construction is direct — no bootstrap mystique, no trust-seed
+ceremony. Three pieces:
 
-We break the circularity with a *primordial* `TypeFormer` instance
-hand-constructed in disp source.
-
-=== Step 1: kernel handlers exist
-
-The six kernel primitives (`hyp_reduce`, `predicate_frame`, ...) are
-defined in `lib/kernel/handlers.disp`. They use only tree-calculus
-primitives plus prelude combinators (TT/FF, triage, select, pair,
-wait/fix). No types involved yet — these are just trees.
-
-The kernel record `kernel := rec { ... }` assembles them. The host
-runtime registers their tree-id signatures (`kernel_hyp_reduce_sig`,
-etc.).
-
-=== Step 2: the primordial `TypeFormer`
-
-The primordial is the first `TypeFormer` value, written as a record
-literal that satisfies its own contract:
+*1. The TypeFormer-shape recognizer.* A closed tree-level function
+that pattern-matches on a candidate's tree shape:
 
 ```disp
-// The recognizer that decides "is v a valid TypeFormer record?"
-// All sub-checks are pure structural predicates on the tree (no
-// kernel-mediated calls), so the whole conjunction lifts to Ok in
-// one step.
 let typeformer_recognizer = {_, v} ->
-  Ok (and (is_fork v)
-       (and (is_subobject_classifier (pair_fst v))
-         (and (is_optional_applicable (pair_fst (pair_snd v)))
-              (is_functor (pair_snd (pair_snd v))))))
+  // v should be a predicate_frame wait-form whose meta is a
+  // TypeFormer-shaped record (3-field nested-pair chain).
+  Ok (and (has_sig kernel.predicate_frame v)
+       (let meta = type_meta v in
+        // The record literal compiles (§11.3) to a 3-element Sigma
+        // chain (classifier, applicable, functor). Structural check
+        // on that chain — no recursive type validation here; the
+        // fields' internal correctness is enforced separately (see
+        // §11.6 Validation layers).
+        and (is_chain_of_arity 3 meta)
+            (is_tf_classifier_shape (chain_at meta 0))))
+```
 
-// The primordial TypeFormer record — Type's own metadata. The
-// record literal compiles (per §11.3) to a function that hands
-// back the (classifier, applicable, functor) chain.
-let primordial_TypeFormer = {
+This is just structural pattern-matching on trees. It references no
+type and no kernel operation beyond `has_sig` (which is itself a
+pure tree-id comparison via §2.2 hash-consing). It can be defined
+before `Type` exists.
+
+*2. Type's metadata.* A TypeFormer record literal:
+
+```disp
+let type_metadata = {
   classifier := {
     params                  := Unit,
     characteristic_morphism := typeformer_recognizer
@@ -1546,38 +1537,41 @@ let primordial_TypeFormer = {
   applicable := none,
   functor    := trivial_functor
 }
-
-// Type wraps the primordial in a predicate_frame wait-form. The
-// dispatcher routes `Type x` calls to the predicate_frame handler,
-// which projects `meta.classifier.characteristic_morphism` =
-// typeformer_recognizer and runs it on x.
-Type := predicate_frame_form primordial_TypeFormer
 ```
 
-By construction, applying `Type` to `primordial_TypeFormer` routes
-through `typeformer_recognizer`, which verifies the structural shape
-and returns `Ok TT`. Self-consistency: `Type`'s metadata is its own
-first inhabitant.
+Just a tree. Doesn't need `Type` to be defined; record literals
+elaborate via §11.3's Option-B encoding without any type check.
 
-The verification that `primordial_TypeFormer` satisfies its own
-contract is a *manual proof obligation* — the implementer must verify
-by inspection that the record literal's structure matches each sub-
-check (`is_subobject_classifier`, `is_optional_applicable`,
-`is_functor`). After that, all subsequent type-formers are TypeFormer
-record literals validated against `Type` at construction.
+*3. Type itself.*
 
-#note[
-  *The trust seed.* The primordial `TypeFormer` is the load-bearing
-  hand-crafted piece. Once it's correct, everything else bootstraps
-  mechanically. This is metacircular in the same sense as Lisp's
-  `eval`: the first instance is hand-written; subsequent ones use the
-  established machinery.
-]
+```disp
+Type := predicate_frame_form type_metadata
+```
 
-=== Step 3: library types
+A wait-form. Comes into existence.
 
-With the primordial in place, library types are TypeFormer record
-literals wrapped by `predicate_frame_form`:
+After this binding, `typecheck Type Type` reduces as follows:
+the dispatcher sees `apply(Type, Type)`, routes to predicate_frame's
+handler, which projects `type_metadata.classifier.characteristic_morphism`
+= `typeformer_recognizer`, then runs `typeformer_recognizer Unit Type`.
+Type structurally IS a predicate_frame wait-form with a TypeFormer-
+shaped meta, so the recognizer returns `Ok TT`. Self-consistency.
+
+The recursion is benign — same flavor as Lisp's `eval` evaluating
+itself. The recognizer is a terminating structural check; applying
+it to a value containing itself terminates because the structural
+patterns are finite-depth and don't recurse into the candidate's
+own metadata.
+
+Type's metadata is no more privileged than Bool's or Pi's. The only
+thing distinguishing it is that the recognizer it carries happens to
+accept Type's own tree shape. Whether `Type : Type` is foundationally
+safe is a separate question, addressed in §11.5.
+
+== Library types
+
+With `Type` defined, library types are TypeFormer record literals
+wrapped by `predicate_frame_form`:
 
 ```disp
 Bool := predicate_frame_form {
@@ -1602,24 +1596,82 @@ Pi := predicate_frame_form {
 }
 ```
 
-Each is validated against `Type` (which uses the primordial) at the
-binding's outer `: Type` annotation — that single `typecheck` call
-fires `typeformer_recognizer` against the record's fields.
+Each is validated against `Type` at the binding's outer `: Type`
+annotation — that single `typecheck` call fires
+`typeformer_recognizer` against the record's tree shape.
 
-=== Step 4: Russell-paradox safety
+== `Type : Type`
 
-`Type : Type` holds in disp because `apply(Type, Type) = TT`. The
-recognizer applied to itself just checks structural shape and accepts.
+`typecheck Type Type = Ok TT` by the construction above. This is
+deliberate: `Type` is its own type. The standard concern is whether
+this admits Girard-style inconsistency (the "Hurkens paradox" for
+the type-in-type system λU, which encodes an inhabitant of every
+type via normalizing terms — not via non-termination).
 
-Russell-paradox attempts (encoding "the type of all types not containing
-themselves") *diverge* during reduction rather than producing a logical
-contradiction. The walker's parametricity discipline prevents the
-introspective construction needed to encode the paradox; attempts hit
-budget exhaustion before yielding a value.
+Disp's position is *conjectural consistency*: the walker's
+parametricity discipline plus the wrap-only contract regime
+together appear to block Hurkens-style encodings. The argument has
+three parts.
 
-This is "type-in-type via productivity": the universe is its own
-inhabitant, but the type system's reduction discipline rules out
-non-terminating witnesses to contradictions.
+*1. Polymorphic types like ⊥ := `Pi Type ({A} -> A)` have no
+inhabitants by direct case analysis.* To inhabit ⊥, one needs a
+`checked` wait-form whose body, given a fresh Type-hypothesis `A`,
+produces a value of type `A`. The Pi recognizer's body-check
+(§12.3) runs that body under `bind_hyp` with `A` as a kernel-minted
+neutral. The body's only inputs are `A` itself and closed
+combinators. To produce a value of type `A`, the body would have
+to either (a) introspect `A` to construct a value of the
+appropriate shape — rejected by the walker's TriageReflect rule
+(§4.2); (b) return some closed term — rejected by the recognizer
+of `A`, since closed terms are not inhabitants of an unknown type;
+or (c) return `A` itself via the I-shortcut — rejected because
+`A : Type` is not generally an inhabitant of `A`. No body
+satisfies the codomain check.
+
+*2. The same argument lifts to the Hurkens encoding.* Hurkens'
+construction (Hurkens 1995) of a normalizing inhabitant of ⊥ in
+λU depends on building specific polymorphic terms whose body
+introspects or generically constructs at type-quantified positions.
+Every such intermediate position has to satisfy disp's Pi recognizer
+body-check, which requires either parametric uniformity (walker-
+safe) or production of a typed value (which the recognizer of the
+ambient type re-validates). The parametricity carve-outs — the
+I-shortcut and concrete-fork operations — are restricted enough
+that the construction's typing obligations propagate down to a
+base case identical to the ⊥-inhabitation attempt in (1).
+
+*3. Self-application terminates.* `typeformer_recognizer Type` is
+a structural pattern-match on Type's tree shape, finite-depth, no
+recursion into the candidate's metadata content. So `typecheck Type
+Type` terminates with `Ok TT` rather than diverging — divergence is
+not the safety mechanism.
+
+#openq[
+  The argument above is informal and depends on properties not yet
+  proven for disp:
+
+  - *No formal parametricity theorem.* Reynolds-style parametricity
+    for disp's walker discipline hasn't been mechanized. The
+    case-analysis sketch is plausible but not a proof.
+  - *I-shortcut soundness.* The walker's I-shortcut (§4.2) is the
+    only documented carve-out. It enables polymorphic identity but
+    might enable more; the precise characterization of "what
+    I-compositions produce" is open.
+  - *No semantic model.* A logical-relations or PER model of disp
+    that interprets `Type` would settle the question. None exists.
+
+  Fallback if the conjecture fails: introduce ranked universes
+  (`Type 0 : Type 1 : Type 2 : ...`) with cumulative structure.
+  Standard predicative-universe arguments give soundness; cost is
+  some annotation overhead and loss of `Type : Type`. The kernel
+  primitives don't change — only the metadata of `Type` does (it
+  carries a level index).
+
+  Treating Type:Type as "informally sound until proven otherwise"
+  is fine for prototype work but should not be a long-term
+  position. Either mechanize the conjecture or commit to ranked
+  universes before the system claims foundational status.
+]
 
 == Validation layers
 
@@ -1770,17 +1822,17 @@ established.)
 
 == `Type` itself
 
-`Type` is built via the primordial bootstrap described in §11.4. After
-bootstrap:
+`Type` is the wait-form constructed in §11.4:
 
 ```disp
-Type := predicate_frame_form primordial_TypeFormer
+Type := predicate_frame_form type_metadata
 ```
 
-where `primordial_TypeFormer` is the TypeFormer record literal
-constructed in §11.4 Step 2.
-
-`typecheck Type Type = Ok TT` by the primordial's self-consistency.
+where `type_metadata` is the TypeFormer record literal whose
+`classifier.characteristic_morphism` is `typeformer_recognizer`.
+`typecheck Type Type = Ok TT` because Type's tree shape satisfies
+`typeformer_recognizer`'s structural pattern. The Type:Type concern
+and its (conjectural) resolution are discussed in §11.5.
 
 = Cubical extensions <sec:cubical>
 
@@ -2072,7 +2124,8 @@ each component; soundness follows by induction on components.
 - The six kernel handlers, implemented in disp source.
 - The host runtime's signature-pinning of the kernel operations.
 - The parametric walker (in-language reference + native fast-path).
-- The hand-crafted primordial `TypeFormer` (§11.4).
+- `Type`'s own metadata record (§11.4) — a concrete tree that must
+  satisfy `typeformer_recognizer`'s structural pattern.
 
 What is *not* in the trusted base:
 - The elaborator (it just emits wrapped trees; the kernel re-validates).
@@ -2085,7 +2138,7 @@ The wrap-only elaboration discipline keeps the trusted computing base
 small. The elaborator emits wait-form trees but does not itself decide
 type-checking outcomes; the kernel re-validates each binding via
 `typecheck` as a one-shot reduction call. The TCB is therefore exactly
-"the six kernel handlers + the walker + the primordial `TypeFormer`."
+"the six kernel handlers + the walker + Type's metadata record."
 
 Designs with bidirectional infer/check elaboration must additionally
 trust the elaborator, since elaboration-time type decisions are not
@@ -2197,9 +2250,10 @@ aliases over a single kernel operation.
 == Metacircular discipline
 
 The kernel is its own type-checker; the type system is defined in
-disp source; the host implements optimizations but not semantics. The
-primordial `TypeFormer` is the only hand-crafted seed; everything else
-bootstraps mechanically.
+disp source; the host implements optimizations but not semantics.
+`Type` is constructed directly from a TypeFormer record literal whose
+recognizer happens to accept Type's own tree shape — self-consistency
+by construction, not a special trust seed.
 
 Standard dependently-typed languages have substantial host-language
 infrastructure (Coq in OCaml + Coq itself; Lean in C++ + Lean itself).
