@@ -42,8 +42,10 @@
   into a single document.
 
   Major shifts from predecessors:
-  - The kernel surface drops from 7 to 6 primitives (removed `guard`/`unguard`;
-    added `checked`).
+  - The kernel surface drops from 7 to 5 primitives (removed `guard`,
+    `unguard`, `predicate_frame`; added `checked`; predicate_frame
+    relocated to library as `type_recognizer` since its handler body
+    is walker-safe).
   - Type-checking is framed as manifest contracts over the `CheckerResult`
     monad. The elaborator is purely a wrap-only pass; no bidirectional
     inference.
@@ -98,7 +100,7 @@ and revisable:
     [§3 The Result monad], [`Result E A`, `CheckerError` variants, `CheckerResult`, Kleisli composition, bind variants],
     [§4 The parametric walker and `Tree_p`], [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
     [§5 The closed indexed effect], [Algebraic-effects framing for the kernel],
-    [§6 The six primitives], [Operational semantics of each kernel handler],
+    [§6 The five primitives], [Operational semantics of each kernel handler],
     [§7 Boundary operations], [`param_lift`, `param_apply`, `typecheck`],
     [§8 Checked values], [`checked`, `typed_lambda`, `validate`],
     [§9 Wrap-only elaboration], [What the elaborator does (and doesn't)],
@@ -280,8 +282,8 @@ Each variant maps to a distinct kernel failure path:
        hypothesis via a non-neutral path],
     [`NotApplicable`],
       [`checked`, when the stored type is not function-shaped;
-       `hyp_reduce`, when the stored type lacks `predicate_frame`
-       signature],
+       `hyp_reduce`, when the stored type isn't a recognized
+       type wait-form],
     [`TypeMismatch`],
       [contract boundaries (`checked` argument check, any typed-
        function application), when a recognizer returns `Ok FF` on
@@ -579,9 +581,9 @@ membership in the greatest fixed point above:
   stem rule rejects this. Use kernel constructors (`Hyp`, `StuckElim`,
   etc.) to mint neutrals.
 
-+ *Define new type-formers via kernel constructors.* Use
-  `predicate_frame_form` or `eliminator_frame_form`, not direct wait-
-  form construction.
++ *Define new type-formers as wait-forms.* Use the substrate's `wait`
+  combinator with a library recognizer (§11). For inductive types
+  that need stuck-elimination on neutrals, use `eliminator_frame_form`.
 
 + *Type-check at the boundary.* Use `typecheck T v`, not raw `T v`,
   to verify membership. The boundary version sanitizes input and
@@ -612,8 +614,7 @@ Readers preferring operational explanations can skip to §6.
 Let Σ be the signature of operation symbols
 
 ```
-Σ = { hyp_reduce, predicate_frame, eliminator_frame,
-      bind_hyp, param_apply, checked }
+Σ = { hyp_reduce, eliminator_frame, bind_hyp, param_apply, checked }
 ```
 
 Each operation is a *curried function* taking its structured meta
@@ -631,8 +632,6 @@ application supplies the argument and triggers dispatch.
     [*Operation*], [*Type*],
     [`hyp_reduce`],
       [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`],
-    [`predicate_frame`],
-      [`TypeFormer -> Tree_p -> CheckerResult(Bool)` (TypeFormer defined in §11.2)],
     [`eliminator_frame`],
       [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`],
     [`bind_hyp`],
@@ -643,12 +642,8 @@ application supplies the argument and triggers dispatch.
       [`{T : Type, v : T} -> Tree_p -> CheckerResult(Tree_p)`],
   ),
   caption: [Per-operation types. All but `param_apply` take a meta
-    record. Type variables: `A` = recognized/eliminated type, `P` =
-    closed params, `R` = result type, `Motive`/`Cases` =
-    dispatcher-specific. For `predicate_frame`, the meta is the
-    library-level `TypeFormer` record (§11.2); the handler projects
-    `meta.classifier.characteristic_morphism` for the recognizer and
-    `meta.classifier.params` for its params.],
+    record. Type variables: `A` = type, `P` = closed params, `R` =
+    result type, `Motive`/`Cases` = dispatcher-specific.],
 )
 
 #note[
@@ -684,7 +679,6 @@ Disp ships exactly one Σ-algebra: the *kernel*.
 ```disp
 kernel := rec {
   hyp_reduce       := q_hyp_reduce_fn;
-  predicate_frame  := q_predicate_frame_fn;
   eliminator_frame := q_eliminator_frame_fn;
   bind_hyp         := q_bind_hyp_fn;
   param_apply      := q_param_apply_fn;
@@ -771,9 +765,9 @@ partial application does not:
   signature to gate privilege on.
 
 + *Meta inspection without forcing the handler.* Library type-formers
-  need this: `Bool = wait q_predicate_frame_fn bool_meta` exposes
-  `bool_meta` (the TypeFormer record) via `pair_snd Bool` without
-  ever applying `Bool` to anything.
+  need this: `Bool = wait bool_recognizer bool_meta` exposes `bool_meta`
+  (the type's metadata record) via `pair_snd Bool` without ever
+  applying `Bool` to anything.
 
 + *Stability under bracket abstraction.* A plain partial application
   compiles, via bracket abstraction, into a tree where the S-combinator
@@ -797,7 +791,7 @@ generators. Examples:
 - `typecheck` is the Kleisli composition of `param_lift` and `param_apply T` (precomposed with the user-supplied type).
 - `typed_lambda A B f` is a specific use of `checked` at function-type metadata.
 - `validate` composes `typecheck` with certificate construction.
-- Library types (`Pi`, `Sigma`, `Bool`, etc.) are derived terms built from `predicate_frame_form`, `eliminator_frame_form`, and `bind_hyp`.
+- Library types (`Pi`, `Sigma`, `Bool`, etc.) are derived terms — wait-forms over library recognizers. Inductive types use `eliminator_frame_form` for case dispatch.
 
 The library is "freely generated" from Σ in the algebraic-theory sense,
 modulo composition equations in `Kl(T)`.
@@ -838,11 +832,17 @@ exception monad*.
   "open" yields user-installable effects, the natural extension.
 ]
 
-= The six kernel primitives <sec:primitives>
+= The five kernel primitives <sec:primitives>
 
 This section gives operational semantics for each kernel primitive.
 Each subsection covers: signature, semantics in disp source (or
 pseudocode), soundness obligation, and composition properties.
+
+The kernel surface is deliberately small: only operations that
+require privileged construction (minting kernel-rooted forms the
+walker would otherwise reject) live here. Type recognition, typed
+function application, and most type-system machinery live in the
+library — see §11 for the framing.
 
 == `hyp_reduce`
 
@@ -869,7 +869,7 @@ let q_hyp_reduce_fn = {ks, raw, query} ->
           FF => invalid_result
         }
       }
-    match (has_sig ks.predicate_frame stored_inner) {
+    match (is_type stored_inner) {
       FF => invalid_result
       TT => match (tree_eq cod_fn t) {
         TT => invalid_result
@@ -881,46 +881,9 @@ let q_hyp_reduce_fn = {ks, raw, query} ->
 
 *Soundness obligation.* The codomain function `cod_fn` runs raw (outside
 the walker). Library authors writing `cod_fn`s must respect parametricity:
-no triage on the input `v` unless `v` is known concrete.
-
-== `predicate_frame`
-
-*Signature.* `predicate_frame : TypeFormer -> Tree_p -> CheckerResult(Bool)`. The handler reads its recognizer and params via record projection on the TypeFormer meta (defined in §11.2).
-
-*Role.* Recognizes whether a value inhabits a type. For hypothesis
-inputs, fires the H-rule (compare stored type to expected). For
-concrete inputs, runs the recognizer through `ks.param_apply` so it
-runs under the walker.
-
-*Disp source:*
-
-```disp
-let q_predicate_frame_fn = {ks, raw, query} ->
-  fix ({self, meta, v} -> {
-    let check_fn = {ks, raw, query, self, meta, v} -> {
-      // meta is a TypeFormer record (§11.2). Standard record
-      // projection extracts the recognizer and its closed params.
-      let recognizer = meta.classifier.characteristic_morphism
-      let params     = meta.classifier.params
-      // The recognizer field is `P -> A -> CheckerResult Bool`. Running
-      // it under the walker yields `CheckerResult (CheckerResult Bool)`:
-      // the outer layer is from the walker (Err on parametricity trip),
-      // the inner layer is the recognizer's own verdict-or-error. We
-      // bind to flatten — any Err on either layer propagates uniformly.
-      bind (ks.param_apply (recognizer params) v) ({inner} -> inner)
-    }
-    select q_h_rule_fn check_fn (q_is_neutral raw v)
-      ks raw query self meta v
-  })
-
-let q_h_rule_fn = {ks, raw, query, self, meta, v} ->
-  tree_eq (wait (ks query) meta) (neutral_meta_type (type_meta v))
-```
-
-*Soundness obligation.* The recognizer (in `pair_fst meta`) must be a
-parametric function. Library authors construct recognizers using
-`is_concrete_fork`, `tree_eq` against closed values, and similar
-walker-safe predicates.
+no triage on the input `v` unless `v` is known concrete. `is_type` is a
+library structural check (it tests whether `stored_inner` is a wait-form
+with the standard type-metadata layout — see §11).
 
 == `eliminator_frame`
 
@@ -2145,7 +2108,7 @@ treatment.]
 + *Univalence as a definable theorem* via `Glue` + `ua`.
 + *Representation independence in practice* — functions over one
   representation work on equivalent representations via transport.
-+ *No kernel growth.* The six primitives remain six.
++ *No kernel growth.* The five primitives remain five.
 
 == Limitations
 
