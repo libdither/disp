@@ -67,22 +67,23 @@
 Disp is a dependently-typed language whose type system is implemented as
 *manifest contracts* over a tree-calculus substrate. Every typed function
 value carries a runtime input-checker (a "contract"); every type is a
-predicate that values are checked against. The elaborator's only job is
-to *wrap function values with their declared types* — no bidirectional
-inference, no infer/check ping-pong. Type-checking happens at one
-top-level call per declaration; the reduction triggers all internal
-contract checks, and failures propagate uniformly via the `CheckerResult`
-monad. After elaboration succeeds, a *strip pass* elides validated
-contracts to give a runtime tree with no per-call checking overhead.
+*wait-form* whose recognizer judges inhabitants. The elaborator's only
+job is to transform syntax into trees and emit tests — no bidirectional
+inference, no judgments. Type validation is a `test` declaration that
+runs a library validator at elaboration time. Failures throw with the
+failing component identified. After elaboration succeeds, a *strip pass*
+elides validated contracts to give a runtime tree with no per-call
+checking overhead.
 
-The kernel implements a closed indexed algebraic effect with six
-operations. The dispatcher routes by structural signature on
-hash-consed trees, so dispatch is O(1) via tree-id comparison. Library
-types are expressed as `TypeFormer` records bundling the standard
-categorical structures (subobject classifier, eval morphism, ∞-functor
-action). Cubical operations sit naturally in the functor field. The
-metacircular discipline holds: the type system is defined in disp
-source; the host (TypeScript runtime in `src/tree.ts`) only optimizes.
+The kernel implements a closed indexed algebraic effect with five
+operations: `hyp_reduce`, `bind_hyp`, `eliminator_frame`, `param_apply`,
+`checked`. The dispatcher routes by structural signature on hash-consed
+trees, so dispatch is O(1) via tree-id comparison. Types, validators,
+recognizers, and the MetaShape convention all live in the library —
+not the kernel. Cubical operations sit naturally in each type's
+`functor` metadata field. The metacircular discipline holds: the type
+system is defined in disp source as library code; the host (TypeScript
+runtime in `src/tree.ts`) only optimizes.
 
 == Reading guide
 
@@ -103,12 +104,12 @@ and revisable:
     [§6 The five primitives], [Operational semantics of each kernel handler],
     [§7 Boundary operations], [`param_lift`, `param_apply`, `typecheck`],
     [§8 Checked values], [`checked`, `typed_lambda`, `validate`],
-    [§9 Wrap-only elaboration], [What the elaborator does (and doesn't)],
+    [§9 Elaboration and tests], [Syntactic transformation; tests as first-class; `: T` as test sugar],
     [§10 Strip and erasure], [`strip` as a tree function; PCC story],
-    [§11 TypeFormer records], [Categorical foundations; bootstrap],
+    [§11 Types and validators], [Types-as-wait-forms; validators-as-values],
     [§12 Library types], [Each library type under the framework],
     [§13 Cubical extensions], [`I`, `Path`, `comp`, `Glue`, `ua`],
-    [§14 Soundness theorem], [Formal statement and proof sketch],
+    [§14 Soundness via tests], [Three categories of runnable assertions; foundational conjecture stays open],
     [§15 Future effects], [Multi-effect disp via Koka-style rows],
     [§16 Disp-specific], [What disp contributes beyond standard machinery],
     [§17 Related work], [Literature context],
@@ -975,7 +976,7 @@ non-applicable types like `Bool` or `Nat`, the hypothesis is bare.
 result via a non-neutral path, return
 `Err (Escape { hyp, body_result, span })`. This prevents the
 hypothesis from being smuggled into a context where it could be
-exploited via predicate_frame's H-rule.
+exploited via `type_recognizer`'s H-rule.
 
 == `param_apply`
 
@@ -1102,15 +1103,19 @@ validate := {T, v} ->
 ```
 
 *Soundness obligation.* `is_applicable_type` is a library predicate
-that reads `T`'s metadata to decide. Under categorical foundations (§11),
-it checks `T`'s `TypeFormer` for the `Applicable` field.
+that reads `T`'s metadata to decide. Under the MetaShape convention
+(§11.2), it checks the `applicable` field:
 
-#openq[How best should `is_applicable_type` be defined? Options: (1)
-check `T`'s recognizer matches `pi_pf_recognizer`; (2) read a flag from
-`T`'s TypeFormer record; (3) check whether `T`'s cod_fn is non-sentinel.
-Option (2) is most general but requires the categorical-foundations
-TypeFormer to be in place. For now (1) suffices since only Pi is
-applicable.]
+```disp
+is_applicable_type := {T} ->
+  match (safe_is_fork T) {
+    FF => FF
+    TT => not (is_none (meta_get (safe_pair_snd T) "applicable"))
+  }
+```
+
+Walker-safe (uses `safe_*` helpers). Returns TT iff T's metadata has
+a non-`none` `applicable` field — i.e., T is function-shaped.
 
 = Boundary operations <sec:boundary>
 
@@ -1168,7 +1173,7 @@ data; the error channel carries only kernel-correctness failures.
 
 *Trace 1: `typecheck Bool TT`.*
 + `param_lift TT` → `Ok TT` (TT contains no neutrals).
-+ `param_apply Bool TT` → routes via predicate_frame signature → invokes Bool's recognizer → `TT` is a canonical Bool shape → returns `Ok TT`.
++ `param_apply Bool TT` reduces `wait bool_recognizer bool_meta TT` → `bool_recognizer bool_meta TT` → `TT` is a canonical Bool shape → returns `Ok TT`.
 + `typecheck` returns `Ok TT` — the verdict.
 
 *Trace 2: `typecheck Bool (is_zero TT)`.*
@@ -2177,7 +2182,7 @@ than a manually-discharged proof obligation.
 
 == The interval `I`
 
-`I` is a library predicate_frame type whose elements are formulas in
+`I` is a library type whose elements are formulas in
 the free De Morgan algebra:
 
 ```disp
@@ -2599,33 +2604,37 @@ type-level reasoning (e.g., relational interpretation of types). Disp
 gets the parametricity property from local pattern-matching on tree
 structure.
 
-== Wrap-only elaboration
+== Elaboration as pure syntax + tests
 
 Standard contract-compilation does syntactic inference of contract-
 eligible positions; disp's elaborator goes further by doing zero
-bottom-up type computation. Type info flows only top-down at binders.
-The elaborator is purely a wrapping pass.
+type-checking judgments. It transforms syntax and emits trees + tests
+(§9). The "type system" is a set of library validators exercised by
+those tests, not something the elaborator decides.
 
-This is more minimal than Lean/Coq elaboration (which does substantial
-inference) and even more than standard Findler-Felleisen contract
-compilation (which inserts contracts at typed-untyped boundaries).
-Disp's wrap-only design is novel in this combination.
+This is more minimal than Lean/Coq elaboration (substantial
+inference and type-checking) and more minimal than standard
+Findler-Felleisen contract compilation (inserts contracts at typed-
+untyped boundaries). The validator-as-value framing is novel.
 
-== Unified `checked` primitive
+== Unified `checked` for typed application
 
 Manifest-contract systems typically distinguish runtime checks from
-validation certificates. Disp unifies them via dispatch on the stored
-type's applicability. One primitive `checked` plays both roles. The
-unification is what allows `typed_lambda` and `validate` to be library
-aliases over a single kernel operation.
+validation certificates. Disp unifies them: `checked T v` is a
+wait-form that both certifies "v is claimed to inhabit T" and runs
+the input-check at every application. `typed_lambda` and `validate`
+are library aliases over `checked`. (`checked` is now a library
+function since its handler body is walker-safe — see §12.)
 
 == Metacircular discipline
 
-The kernel is its own type-checker; the type system is defined in
-disp source; the host implements optimizations but not semantics.
-`Type` is constructed directly from a TypeFormer record literal whose
+The kernel is a small set of privileged constructors and a dispatcher;
+the type system is defined entirely in disp source as library
+validators and tests; the host implements optimizations but not
+semantics. `Type` is constructed directly as a wait-form whose
 recognizer happens to accept Type's own tree shape — self-consistency
-by construction, not a special trust seed.
+by construction, validated by an explicit test rather than enforced
+by a special trust seed.
 
 Standard dependently-typed languages have substantial host-language
 infrastructure (Coq in OCaml + Coq itself; Lean in C++ + Lean itself).
@@ -2732,6 +2741,102 @@ Putting it together as it might appear in a paper:
   the CCHM framework. The categorical foundations are standard topos
   theory.
 ]
+
+= Appendix: standard test catalog <sec:test-catalog>
+
+The standard library ships with the tests below. Re-elaborating the
+library runs all of them. A failing test halts elaboration with the
+failing component identified.
+
+== Kernel behavioral tests
+
+Asserting the five kernel primitives behave per §6:
+
+```disp
+test bind_hyp_mints_neutral_with_correct_stored_type
+test hyp_reduce_extends_spine_on_application
+test hyp_reduce_returns_value_when_codomain_returns
+test eliminator_frame_mints_stuck_on_neutral_target
+test eliminator_frame_dispatches_on_concrete_target
+test param_apply_routes_kernel_sigs_to_raw
+test param_apply_walker_step_rejects_stem_forge
+test param_apply_walker_step_rejects_triage_on_neutral
+test checked_input_check_fires_at_application
+test checked_propagates_type_mismatch_as_err
+```
+
+== Type-system tests (lax validator)
+
+Each library type passes the structural `Type` validator:
+
+```disp
+test typecheck Type Bool
+test typecheck Type Nat
+test typecheck Type Unit
+test typecheck Type String
+test typecheck Type Pi
+test typecheck Type Sigma
+test typecheck Type Refinement
+test typecheck Type Record
+test typecheck Type Eq
+test typecheck Type Ord
+test typecheck Type MetaShape
+test typecheck Type RecognizerShape
+test typecheck Type Type           // Type:Type
+```
+
+== Type-system tests (strict validator)
+
+Each library type passes the `StrictType` validator, which deep-
+typechecks recognizer and metadata fields:
+
+```disp
+test typecheck StrictType Bool
+test typecheck StrictType Nat
+test typecheck StrictType Pi
+test typecheck StrictType Sigma
+test typecheck StrictType Refinement
+test typecheck StrictType Record
+test typecheck StrictType MetaShape
+test typecheck StrictType RecognizerShape
+test typecheck StrictType Type
+```
+
+== Behavioral spec tests (sample)
+
+Per-type Path-typed proofs of recognizer behavior:
+
+```disp
+test bool_recognizer unit_witness TT = Ok TT
+test bool_recognizer unit_witness FF = Ok TT
+test bool_recognizer unit_witness zero = Ok FF
+test nat_recognizer unit_witness zero = Ok TT
+test nat_recognizer unit_witness (succ zero) = Ok TT
+test nat_recognizer unit_witness TT = Ok FF
+test pi_recognizer (pi_meta_for Nat ({_} -> Bool)) is_zero = Ok TT
+test eq_recognizer (eq_meta_for Nat zero zero) refl = Ok TT
+```
+
+== Cubical tests
+
+Per §13, cubical operations have associated behavioral tests:
+
+```disp
+test typecheck Type I
+test typecheck Type IsOne
+test typecheck Type Glue
+test refl_at_endpoint I_zero (refl_for x) = x
+test refl_at_endpoint I_one (refl_for x) = x
+// transp at identity-paths returns unchanged values:
+test transp (const Bool) TT = TT
+test transp (const Nat) zero = zero
+```
+
+== Effect tests (future, §15)
+
+When user-installable effects land, each effect handler gets its own
+test category asserting handling behavior matches the effect's
+spec. Skipped here; will land alongside the effect system.
 
 = References <sec:references>
 
