@@ -1279,24 +1279,96 @@ independently. For curried functions returning functions, the result
 of one application may be another `checked` value, which is then
 applied normally.
 
-= Wrap-only elaboration <sec:elaboration>
+= Elaboration and tests <sec:elaboration>
+
+The elaborator is a *purely syntactic transformation*. It parses,
+resolves references, and emits trees and tests. It performs no
+type-checking judgments itself — those happen via library validators
+invoked through tests.
 
 == What the elaborator does
 
-The elaborator's algorithm is minimal:
+The elaboration steps:
 
 + Parse syntax to AST.
 + Resolve variable references against scope entries (which carry their
   declared types).
-+ At each lambda binder `{x : A} -> body`, wrap with
-  `checked (Pi A B)` where `B` comes from the expected type at this
-  position.
++ *Lambda wrapping.* At each lambda binder `{x : A} -> body` whose
+  surrounding type is known to be `Pi A B`, wrap the compiled body
+  with `checked (Pi A B)` (§8). This ensures typed function values
+  carry their declared types as runtime contracts.
 + Bracket-abstract the binder (standard combinator translation).
-+ At each let-binding `let name : T = body`, emit `name := body_tree`
-  and run `typecheck T body_tree` once.
++ *Test emission.* At each `let name : T = body`, emit two operations:
+
+```
+let name = body_tree
+test typecheck T name = TT
+```
+
+The first is the binding (no validation). The second is the test
+that the elaborator runs immediately.
 
 Type info flows *only top-down at binders*. There is no bottom-up type
 synthesis, no unification, no `infer`/`check` ping-pong.
+
+== The `test` keyword and `=`
+
+`=` is *infix `tree_eq`*. So `expr1 = expr2` is `tree_eq expr1 expr2`,
+returning a Bool tree (TT or FF). It is *not* assignment — disp has
+no mutable state.
+
+`test` is an elaborator keyword. `test expr` reduces `expr` (via the
+substrate's `apply` and the kernel dispatcher) and asserts the result
+equals `TT`. If `expr` reduces to anything else (FF, an Err value, a
+stuck form), the elaborator throws an error reporting the failing
+expression and its actual reduction.
+
+```disp
+test (add 2 3) = 5                // arithmetic check
+test typecheck Type Bool = TT      // type validity check
+test param_apply Bool TT = Ok TT   // recognition test
+```
+
+Common test idioms are sugar:
+
+- `test expr` (no `=`) defaults to `test expr = TT`. Useful when
+  `expr` already returns a Bool.
+- `test typecheck T v` is the standard "type-check test."
+
+The `: T` annotation is sugar for this last form. `let X : T = body`
+desugars to `let X = body; test typecheck T X`.
+
+== Tests run at elaboration time
+
+Disp currently has no notion of compiled output or runtime tests.
+Tests run during elaboration (the only time things "run" in the
+current spec). A failing test stops elaboration with an error.
+
+Once disp grows machine-code emission, a separate testing-effect
+framework can stage test-runs as runtime operations. For now, "test"
+is synonymous with "elaboration-time assertion."
+
+== Test catalog
+
+Tests defined alongside library types form the catalog of properties
+the standard library is expected to satisfy. The catalog is browsable
+in source and runnable as a whole by re-elaborating the library.
+
+```disp
+let Bool = wait bool_recognizer bool_meta
+test typecheck Type Bool             // Bool is a type
+test typecheck StrictType Bool       // Bool passes deep validation too
+test bool_recognizer unit TT = Ok TT // recognizer accepts TT
+test bool_recognizer unit FF = Ok TT // recognizer accepts FF
+test bool_recognizer unit zero = Ok FF  // recognizer rejects non-bool
+```
+
+The first two are "type validity" tests; the last three are "behavioral"
+tests. Both run identically (just elaboration-time `test` expressions);
+they differ only in what they assert about.
+
+See the appendix (§A.1) for the full catalog of tests the standard
+library ships with.
 
 == What the elaborator does NOT need
 
@@ -1308,32 +1380,35 @@ synthesis, no unification, no `infer`/`check` ping-pong.
     inset: 6pt,
     [*Not needed*], [*Why*],
     [`infer` function], [Type info is given by annotations, not synthesized],
-    [Bidirectional `check`/`infer` ping-pong], [One top-level `typecheck` call per binding suffices],
+    [Bidirectional `check`/`infer` ping-pong], [One `test typecheck T body` per annotated binding],
     [Unification], [No inference means no constraint solving],
     [Constraint generation/solving], [Same],
     [Coercion insertion], [Subtyping is not supported],
     [Higher-order pattern unification], [Same as above],
+    [A type-checker proper], [`typecheck` is a library validator; the elaborator just emits a test],
   ),
   caption: [Things a standard elaborator does that disp does not.],
 )
 
-This minimalism is the *wrap-only* property. It's strictly less than
-Lean/Coq elaboration (which does extensive type-class search, tactic
-execution, unification).
+The elaborator's output is *trees + tests*. The tests are run as
+part of elaboration; the trees are the artifact.
 
 == Restrictions on the source language
 
 The wrap-only design constrains what the source language can express:
 
-+ *Top-level `let`-bindings require `:` annotations.* `let foo = ...`
-  without an annotation is rejected — there's no place for the type
-  to come from.
-+ *Local lambdas in untyped contexts are rejected.* Every lambda's
-  domain must be inferrable from its enclosing context.
++ *Top-level `let`-bindings can omit `:` annotations.* Without `: T`,
+  no test is emitted; the user can write one explicitly if validation
+  is wanted.
++ *Local lambdas in untyped contexts are accepted but unwrapped.* They
+  compile to bare functions; no `checked` wrapping fires. No tests
+  validate them either; bugs manifest at use.
 + *No Hindley-Milner-style type variables.* Polymorphism is via
   explicit `Pi Type ({A} -> ...)` annotations.
 
 In exchange: the elaborator is small, simple, and trivially audited.
+The type system's rigor comes from library validators, not from
+elaborator complexity.
 
 == Compared to standard dependent-type elaboration
 
@@ -1342,11 +1417,15 @@ argument inference, unification, tactic execution. The de Bruijn
 criterion (de Moura et al. 2015) says the *kernel* (the type-checker
 proper) is the trusted base; elaboration is auxiliary.
 
-Disp pushes this minimalism further. Where Lean's elaborator does
-substantial work to fill in elided information, disp requires the user
-to provide it explicitly. The trade-off: more annotations in source,
-but a much smaller TCB and no possibility of elaborator bugs producing
-ill-typed kernel terms.
+Disp pushes this minimalism further. The elaborator does no type-
+checking judgments at all — it just transforms syntax and emits
+tests. The "type system" is the set of library validators and the
+tests that exercise them. The kernel only provides the dispatcher
+and a small set of privileged constructors.
+
+This is structurally analogous to property-based testing frameworks
+(QuickCheck, Hypothesis) lifted to the type-system level: the system
+is defined by what tests pass, not by what the elaborator decides.
 
 == Concrete sketch
 
@@ -1357,12 +1436,13 @@ For `let foo : Pi Nat ({_} -> Bool) = {x} -> is_zero x`:
 + Body `is_zero x` compiles to `apply(is_zero_compiled, x)`.
 + Wrap the binder: `checked (Pi Nat ({_} -> Bool)) ({x} -> apply(is_zero_compiled, x))`.
 + Bracket-abstract `{x}` over the body.
-+ At the let-binding: `typecheck (Pi Nat ({_} -> Bool)) foo_tree`.
++ Emit: `let foo = wrapped_tree` plus `test typecheck (Pi Nat ({_} -> Bool)) foo = TT`.
 
-The typecheck reduces `foo_tree` via `param_apply`, fires the outer
-`checked` handler against a Nat-hypothesis, runs the body, checks
-result against `Bool`. Success → `Ok foo_tree`. Failure → an `Err`
-variant of `CheckerError` carrying the failing type, value, and span.
+The test reduces `typecheck (Pi Nat ({_} -> Bool)) foo` via the
+kernel dispatcher. Pi's recognizer fires the outer `checked` handler
+against a Nat-hypothesis, runs the body, checks result against `Bool`.
+Result `Ok TT` → test passes. `Ok FF` or `Err _` → elaborator throws
+with the failure context.
 
 = Strip and erasure <sec:strip>
 
@@ -1440,15 +1520,16 @@ evaluation memo on `applyTree` provides the same O(1) speedup. No
 specialized "validated tree" cache is needed; the generic
 infrastructure suffices.
 
-= TypeFormer records <sec:typeformer>
+= Types and validators <sec:typeformer>
 
-This section formalizes how library type-formers are structured under
-the categorical-foundations reformulation. Replaces the prior
-`CATEGORY_THEORY_FOUNDATIONS_PROPOSAL.typ`.
+This section presents the type system as a library construction.
+Types are wait-forms; validators (including `Type` itself) are
+wait-forms whose recognizers judge whether other wait-forms count
+as types; validation is a `test` declaration (§9).
 
 == The categorical observation
 
-Every library type-former in disp plays three categorical roles:
+Every library type plays three categorical roles:
 
 #figure(
   table(
@@ -1474,252 +1555,218 @@ These are not invented categorical roles. They are the *standard*
 encoding of "membership," "application," and "functoriality" in topos
 theory and ∞-category theory.
 
-== The `TypeFormer` record
+== Types are wait-forms
 
-A type-former is a record with three fields, the categorical structures
-named explicitly:
+A type is a wait-form `wait recognizer meta`. Applying the type to a
+value reduces (via wait's bracket-abstracted shape) to
+`recognizer meta value`, which returns a `CheckerResult Bool`. That
+reduction IS the type's runtime behavior.
 
 ```disp
-// Record types in disp use `{field : Type, ...}`. Record values use
-// `{field := expr, ...}`. TypeFormer's three fields are the
-// categorical structures, named explicitly:
-
-TypeFormer := {
-  classifier : SubobjectClassifier,
-  applicable : Optional Applicable,
-  functor    : Functor
-}
-
-SubobjectClassifier := {
-  params                  : Type,
-  characteristic_morphism : params -> Tree -> CheckerResult Bool
-}
-
-Applicable := {
-  eval_morphism : EvalSignature
-  // EvalSignature is the Kleisli arrow shape for application;
-  // for Pi, it's the codomain_fn handler signature.
-}
-
-Functor := {
-  morphism_action : InfFunctorActionSignature,
-  identity_law    : Path morphism_action refl_action,
-  composition_law : Path (compose m_action m_action) (compose m_action compose)
-}
+Bool := wait bool_recognizer bool_meta
+Nat  := wait nat_recognizer nat_meta
+Pi   := {A, B} -> wait pi_recognizer (pi_meta_for A B)
+Type := wait type_recognizer type_self_meta
 ```
 
-Every library type-former (`Bool`, `Nat`, `Pi`, `Sigma`, etc.) is
-constructed by filling these fields. No smart constructor is needed —
-a TypeFormer record literal IS the metadata that `predicate_frame_form`
-wraps. The handler in §6.2 projects fields via standard record
-projection (`meta.classifier.characteristic_morphism`, etc.).
+The substrate's `wait` combinator (§5.4) is the universal type
+constructor. There is no specialized constructor (no
+`make_type_former`, no `predicate_frame_form` wrapper). Types are
+just wait-forms; different recognizers and metas give different
+types.
 
-== Record construction
+Different types have *different signatures* — `pair_fst Bool` and
+`pair_fst Nat` are different trees, because their recognizers are
+different. There is no uniform "type signature" recognized by the
+dispatcher; types are recognized BY `Type` (the structural
+validator), not by a kernel-side sig table.
 
-Records are not a kernel primitive — they are a library construction
-spec'd in detail in `RECORDS_PROPOSAL.md`. Three facts from that
-design are load-bearing for the rest of this section.
+== The metadata convention (MetaShape)
 
-*Iterated `Sigma` chains with names in metadata.* A record type
-`{x : A, y : B, z : C}` compiles to an iterated `Sigma A (\x. Sigma B
-(\y. Sigma C (\z. Unit)))`. The field names (`x`, `y`, `z`) live in
-the record type's `params` metadata, not in values. Two record types
-with different field names are distinct types even when their value
-chains are structurally identical — type identity tracks names.
+A type's metadata follows a conventional record layout that
+downstream library code projects from. The standard fields:
 
-*Smart-wrapper encoding: records are functions.* A record value
-`{x := e1, y := e2}` compiles to `{i} -> i (t e1 (t e2 unit_witness))`
-— a function whose argument is an "inspector" that gets handed the
-inner Sigma chain. Apply the record to a walker tree and β-reduction
-produces `walker chain`. This is what makes
-`kernel := rec { hyp_reduce := ..., ... }` work at the tree level: the
-kernel record IS a function, and each handler can self-reference
-siblings via `wait self.field` (lazy) or `self.field` (eager). The
-`rec` combinator at `lib/prelude.disp` ties the knot via `fix`.
+```disp
+MetaShape := Refinement Record [
+  ("recognizer_params", Tree),        // closed args to the recognizer
+  ("functor", Tree),                  // morphism action for transport (§13)
+  ("applicable", Optional Applicable), // optional codomain_fn for function-shaped types
+  ("behavioral_specs", Optional (List Path))  // optional Path-typed behavioral proofs
+]
+```
 
-*Uniform projection desugaring.* `r.field` desugars to `r W_field`,
-where `W_field` is a position-walker tree built from `pair_fst` /
-`pair_snd` for the field's index in the record's field list (so
-`W_0 = pair_fst`, `W_1 = {r} -> pair_fst (pair_snd r)`, and so on).
-The same rule covers user records, kernel handler dispatch, library
-type metadata, and lazy proxies — one desugaring for all four,
-because all four are functions that hand back their chain.
+`MetaShape` is the library refinement type capturing this convention.
+The structural shape (a Record with these fields) is enforced;
+deeper validation of each field's contents is the validator's
+responsibility.
 
-Consequence for type-formers: a `TypeFormer` literal `{classifier :=
-..., applicable := ..., functor := ...}` compiles to a function that
-returns the three-element Sigma chain. The kernel's predicate_frame
-handler projects fields out of this record exactly as user code
-would. There is no separate "build a type-former" entry point — the
-record literal is the metadata, full stop.
+The convention is *extensible*. Adding a new conventional field
+(e.g., for a new modality or effect system) extends MetaShape's
+expected layout. Existing types whose meta lacks the new field still
+pass structural checks; library code that needs the new field handles
+its absence explicitly.
+
+(Records, Refinement, and the projection mechanism are library
+constructions detailed in §12. Their behavior in turn relies on
+Sigma's projection codomain_fn, also §12. The dependency cycle
+between Type / MetaShape / Pi / Sigma is broken by deferring tests
+— see §11.4.)
+
+== Validators as library entities
+
+A *validator* is a type whose recognizer judges whether candidate
+trees are types-of-some-kind. The standard library ships three:
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Validator*], [*Rigor*], [*What it checks*],
+    [`Type`],
+      [Structural],
+      [`v` is a wait-form whose meta fits MetaShape's layout. H-rule on neutrals.],
+    [`StrictType`],
+      [Deep],
+      [Same as `Type`, plus typechecks the recognizer against `RecognizerShape` and the meta against `MetaShape` field-by-field.],
+    [`BehavioralType`],
+      [Behavioral],
+      [Same as `StrictType`, plus runs each Path-typed `behavioral_specs` entry.],
+  ),
+  caption: [Standard validators.],
+)
+
+Each validator is just a wait-form. Adding a new validator does not
+modify the kernel; it defines a new wait-form with a new recognizer.
+
+The relationship between a type and the validators it satisfies is
+expressed via tests:
+
+```disp
+test typecheck Type Bool             // Bool is structurally a type
+test typecheck StrictType Bool       // Bool also passes deep validation
+test typecheck BehavioralType Bool   // Bool's recognizer behaves per its specs
+```
+
+Users can define their own validators (e.g., a "linear types"
+validator that also checks the metadata carries usage annotations).
+Tests assert which validators accept which types. The "type system"
+is the union of all validators and tests; users compose them as
+needed.
 
 == Constructing `Type`
 
-The construction is direct — no bootstrap mystique, no trust-seed
-ceremony. Three pieces:
+Two pieces, both pure tree construction:
 
-*1. The TypeFormer-shape recognizer.* A closed tree-level function
-that pattern-matches on a candidate's tree shape:
+*1. The recognizer.* A library function performing the structural
+shape check:
 
 ```disp
-let typeformer_recognizer = {_, v} ->
-  // v should be a predicate_frame wait-form whose meta is a
-  // TypeFormer-shaped record (3-field nested-pair chain).
-  Ok (and (has_sig kernel.predicate_frame v)
-       (let meta = type_meta v in
-        // The record literal compiles (§11.3) to a 3-element Sigma
-        // chain (classifier, applicable, functor). Structural check
-        // on that chain — no recursive type validation here; the
-        // fields' internal correctness is enforced separately (see
-        // §11.6 Validation layers).
-        and (is_chain_of_arity 3 meta)
-            (is_tf_classifier_shape (chain_at meta 0))))
+let type_recognizer = {meta, v} ->
+  let self_type = wait type_recognizer meta in
+  match (safe_is_neutral v) {
+    TT => Ok (tree_eq self_type (neutral_stored_type v))  // H-rule
+    FF => bind (safe_is_fork v) ({is_pair} ->
+          match is_pair {
+            FF => Ok FF
+            TT => Ok (has_metashape_layout (safe_pair_snd v))
+          })
+  }
 ```
 
-This is just structural pattern-matching on trees. It references no
-type and no kernel operation beyond `has_sig` (which is itself a
-pure tree-id comparison via §2.2 hash-consing). It can be defined
-before `Type` exists.
+The `safe_*` helpers (defined in §12) route through `eliminator_frame`
+so the body works on hypothesis arguments as well as concrete values.
+`has_metashape_layout` is a structural check on the record's field
+presence.
 
-*2. Type's metadata.* A TypeFormer record literal:
+*2. Type's metadata.* A record literal following the MetaShape
+convention:
 
 ```disp
-let type_metadata = {
-  classifier := {
-    params                  := Unit,
-    characteristic_morphism := typeformer_recognizer
-  },
+let type_self_meta = {
+  recognizer_params := unit_witness,     // Type takes no params
+  functor := trivial_functor,
   applicable := none,
-  functor    := trivial_functor
+  behavioral_specs := none
 }
 ```
-
-Just a tree. Doesn't need `Type` to be defined; record literals
-elaborate via §11.3's Option-B encoding without any type check.
 
 *3. Type itself.*
 
 ```disp
-Type := predicate_frame_form type_metadata
+let Type = wait type_recognizer type_self_meta
 ```
 
-A wait-form. Comes into existence.
+Three definitions. No tests fired at construction; Type is just a
+value.
 
-After this binding, `typecheck Type Type` reduces as follows:
-the dispatcher sees `apply(Type, Type)`, routes to predicate_frame's
-handler, which projects `type_metadata.classifier.characteristic_morphism`
-= `typeformer_recognizer`, then runs `typeformer_recognizer Unit Type`.
-Type structurally IS a predicate_frame wait-form with a TypeFormer-
-shaped meta, so the recognizer returns `Ok TT`. Self-consistency.
-
-The recursion is benign — same flavor as Lisp's `eval` evaluating
-itself. The recognizer is a terminating structural check; applying
-it to a value containing itself terminates because the structural
-patterns are finite-depth and don't recurse into the candidate's
-own metadata.
-
-Type's metadata is no more privileged than Bool's or Pi's. The only
-thing distinguishing it is that the recognizer it carries happens to
-accept Type's own tree shape. Whether `Type : Type` is foundationally
-safe is a separate question, addressed in §11.5.
-
-== Library types
-
-With `Type` defined, library types are TypeFormer record literals
-wrapped by `predicate_frame_form`:
+Validation is a separate concern, expressed as tests:
 
 ```disp
-Bool := predicate_frame_form {
-  classifier := { params := Unit, characteristic_morphism := bool_recognizer },
-  applicable := none,
-  functor    := trivial_functor       // discrete: refl-only morphism action
-}
-
-Nat := predicate_frame_form {
-  classifier := { params := Unit, characteristic_morphism := nat_recognizer },
-  applicable := none,
-  functor    := trivial_functor
-}
-
-Pi := predicate_frame_form {
-  classifier := {
-    params                  := Sigma Type ({A} -> A -> Type),   // (A, B)
-    characteristic_morphism := pi_recognizer
-  },
-  applicable := some { eval_morphism := pi_eval_signature },
-  functor    := pi_functor               // non-trivial; supports transp
-}
+test typecheck Type Type         // Type is a type (lax)
+test typecheck StrictType Type   // Type also passes deep validation
 ```
 
-Each is validated against `Type` at the binding's outer `: Type`
-annotation — that single `typecheck` call fires
-`typeformer_recognizer` against the record's tree shape.
+The first runs `type_recognizer type_self_meta Type`. Type's structure
+(wait-form with MetaShape-conforming metadata) satisfies the
+structural check, returns `Ok TT`. The test passes by construction.
 
 == `Type : Type`
 
-`typecheck Type Type = Ok TT` by the construction above. This is
-deliberate: `Type` is its own type. The standard concern is whether
-this admits Girard-style inconsistency (the "Hurkens paradox" for
-the type-in-type system λU, which encodes an inhabitant of every
-type via normalizing terms — not via non-termination).
+The test `test typecheck Type Type` is expected to pass under all
+standard validators. Under `Type` (structural), it passes trivially
+by construction. Under `StrictType` (deep), it passes via recursive
+validation that bottoms out by hash-cons memoization. Under
+`BehavioralType`, it passes if Type's optional behavioral_specs (if
+any) typecheck.
 
-Disp's position is *conjectural consistency*: the walker's
-parametricity discipline plus the wrap-only contract regime
-together appear to block Hurkens-style encodings. The argument has
-three parts.
+These tests are *runnable mechanical assertions*. Their passing or
+failing is observable.
+
+The deeper question — does `typecheck Type Type = Ok TT` imply that
+disp's type system is foundationally consistent (no Girard / Hurkens
+encoding of inconsistency)? — remains open. Our conjecture is yes,
+on the strength of the walker's parametricity discipline.
+
+The argument (informal):
 
 *1. Polymorphic types like ⊥ := `Pi Type ({A} -> A)` have no
-inhabitants by direct case analysis.* To inhabit ⊥, one needs a
-`checked` wait-form whose body, given a fresh Type-hypothesis `A`,
-produces a value of type `A`. The Pi recognizer's body-check
-(§12.3) runs that body under `bind_hyp` with `A` as a kernel-minted
-neutral. The body's only inputs are `A` itself and closed
-combinators. To produce a value of type `A`, the body would have
-to either (a) introspect `A` to construct a value of the
-appropriate shape — rejected by the walker's TriageReflect rule
-(§4.2); (b) return some closed term — rejected by the recognizer
-of `A`, since closed terms are not inhabitants of an unknown type;
-or (c) return `A` itself via the I-shortcut — rejected because
-`A : Type` is not generally an inhabitant of `A`. No body
-satisfies the codomain check.
+inhabitants by case analysis.* To inhabit ⊥, one needs a `checked`
+wait-form whose body, given a fresh Type-hypothesis `A`, produces a
+value of type `A`. Pi's recognizer's body-check runs the body under
+`bind_hyp`. The body's options:
+  - introspect `A` to construct a value — rejected by walker
+    TriageReflect (§4.2);
+  - return some closed term — rejected by `A`'s recognizer (closed
+    terms aren't inhabitants of an unknown type);
+  - return `A` via I-shortcut — rejected because `A : Type` is not
+    generally in `A`.
+None satisfy the codomain check.
 
-*2. The same argument lifts to the Hurkens encoding.* Hurkens'
-construction (Hurkens 1995) of a normalizing inhabitant of ⊥ in
-λU depends on building specific polymorphic terms whose body
-introspects or generically constructs at type-quantified positions.
-Every such intermediate position has to satisfy disp's Pi recognizer
-body-check, which requires either parametric uniformity (walker-
-safe) or production of a typed value (which the recognizer of the
-ambient type re-validates). The parametricity carve-outs — the
-I-shortcut and concrete-fork operations — are restricted enough
-that the construction's typing obligations propagate down to a
-base case identical to the ⊥-inhabitation attempt in (1).
+*2. The argument lifts to Hurkens.* Hurkens-style normalizing
+constructions reduce to the ⊥-inhabitation problem at some
+intermediate position; (1) blocks it.
 
-*3. Self-application terminates.* `typeformer_recognizer Type` is
-a structural pattern-match on Type's tree shape, finite-depth, no
-recursion into the candidate's metadata content. So `typecheck Type
-Type` terminates with `Ok TT` rather than diverging — divergence is
-not the safety mechanism.
+*3. Self-application terminates.* The structural check is
+finite-depth.
 
 #openq[
-  The argument above is informal and depends on properties not yet
-  proven for disp:
+  The argument is informal and depends on three unproven
+  properties:
 
   - *No formal parametricity theorem.* Reynolds-style parametricity
-    for disp's walker discipline hasn't been mechanized. The
-    case-analysis sketch is plausible but not a proof.
-  - *I-shortcut soundness.* The walker's I-shortcut (§4.2) is the
-    only documented carve-out. It enables polymorphic identity but
-    might enable more; the precise characterization of "what
-    I-compositions produce" is open.
+    for disp's walker discipline hasn't been mechanized.
+  - *I-shortcut soundness.* The walker's I-shortcut (§4.2) might
+    enable more than polymorphic identity. Precise characterization
+    is open.
   - *No semantic model.* A logical-relations or PER model of disp
-    that interprets `Type` would settle the question. None exists.
+    that interprets `Type` would settle the question.
 
-  Fallback if the conjecture fails: introduce ranked universes
-  (`Type 0 : Type 1 : Type 2 : ...`) with cumulative structure.
-  Standard predicative-universe arguments give soundness; cost is
-  some annotation overhead and loss of `Type : Type`. The kernel
-  primitives don't change — only the metadata of `Type` does (it
-  carries a level index).
+  Fallback if the conjecture fails: ranked universes (`Type 0 :
+  Type 1 : Type 2 : ...`) with cumulative structure. Kernel
+  primitives don't change — only Type's metadata carries a level
+  index.
 
   Treating Type:Type as "informally sound until proven otherwise"
   is fine for prototype work but should not be a long-term
@@ -1727,47 +1774,36 @@ not the safety mechanism.
   universes before the system claims foundational status.
 ]
 
-== Validation layers
+== Validation levels via validators
 
-Five levels of validation, from cheap to expensive:
+Where the previous spec listed five fixed "validation layers," this
+spec exposes the spectrum as a *choice of validator*. Each validator
+provides a specific rigor level:
 
-+ *Structural validation.* `Type`'s recognizer checks the metadata is a
-  `TypeFormer`-shaped tree. Cheap. Catches "this isn't a type-former at
-  all."
-+ *Component types.* Each field is Pi-checked against its declared type.
-  The recognizer must have shape `params → Tree → CheckerResult Bool`; the
-  `morphism_action` must have the right comp signature. Catches arity
-  mismatches, return-type errors, missing fields.
-+ *Behavioral testing.* For closed instances, run the operations on
-  canonical inputs and check the categorical laws. Not part of `Type`'s
-  recognizer; runs at library test time. Catches semantic errors that
-  type-level validation misses.
-+ *Propositional law witnesses.* `Functor.identity_law` and
-  `composition_law` are `Path`-valued proofs. The kernel verifies the
-  proofs *typecheck*; doesn't verify semantic correctness (undecidable).
-+ *Full semantic verification.* Undecidable in general. Not pursued.
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Validator*], [*What it catches*],
+    [`Type`],
+      [Wrong wait-form shape, missing meta fields. Cheap.],
+    [`StrictType`],
+      [Above plus: recognizer not Pi-typed, meta fields wrong-typed.],
+    [`BehavioralType`],
+      [Above plus: documented Path-typed properties of the type's recognizer.],
+  ),
+  caption: [Validators and what they catch.],
+)
 
-== Categorical hierarchy via record extension
+Users opt into the rigor they want via the tests they write. Multiple
+validators can be applied to the same type; they're not mutually
+exclusive. A "fully validated" type passes tests against all three.
 
-Optional refinement (future direction): layer the records so operations
-demand the level of structure they need.
-
-```disp
-BareType         := { classifier : SubobjectClassifier }
-ApplicableType   := { base : BareType, applicable : Applicable }
-FunctorialType   := { base : BareType, functor : Functor }
-FullTypeFormer   := { base       : BareType,
-                      applicable : Optional Applicable,
-                      functor    : Functor }
-```
-
-`comp`/`transp` demand `FunctorialType`. Basic membership demands only
-`BareType`. Trying to `transp` along a `BareType` is a structural
-error.
-
-#openq[Should we adopt this layered hierarchy now or wait until
-operations require it? Adopting now adds verbosity but cleanly
-separates capabilities.]
+Test-based behavioral specs are the closest disp gets to *full semantic
+verification* (which remains undecidable in general). For specific
+finite properties, behavioral_specs Paths give mechanical proof.
 
 = Library types <sec:library-types>
 
