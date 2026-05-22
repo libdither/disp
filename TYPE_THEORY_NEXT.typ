@@ -42,10 +42,10 @@
   into a single document.
 
   Major shifts from predecessors:
-  - The kernel surface drops from 7 to 5 primitives (removed `guard`,
-    `unguard`, `predicate_frame`; added `checked`; predicate_frame
-    relocated to library as `type_recognizer` since its handler body
-    is walker-safe).
+  - The kernel surface drops from 7 to 4 primitives (removed `guard`,
+    `unguard`, `predicate_frame`, `checked`; the latter two relocated
+    to library as `type_recognizer` and `checked_apply` since their
+    handler bodies are walker-safe).
   - Type-checking is framed as manifest contracts over the `CheckerResult`
     monad. The elaborator is purely a wrap-only pass; no bidirectional
     inference.
@@ -101,8 +101,9 @@ and revisable:
     [§3 The Result monad], [`Result E A`, `CheckerError` variants, `CheckerResult`, Kleisli composition, bind variants],
     [§4 The parametric walker and `Tree_p`], [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
     [§5 The closed indexed effect], [Algebraic-effects framing for the kernel],
-    [§6 The five primitives], [Operational semantics of each kernel handler],
-    [§7 Boundary operations], [`param_lift`, `param_apply`, `typecheck`],
+    [§6 The four primitives], [Operational semantics of each kernel handler],
+    [§7 Stuck forms and neutrals], [How hypotheses propagate; H-rule's role; why it matters],
+    [§8 Boundary operations], [`param_lift`, `param_apply`, `typecheck`],
     [§8 Checked values], [`checked`, `typed_lambda`, `validate`],
     [§9 Elaboration and tests], [Syntactic transformation; tests as first-class; `: T` as test sugar],
     [§10 Strip and erasure], [`strip` as a tree function; PCC story],
@@ -615,7 +616,7 @@ Readers preferring operational explanations can skip to §6.
 Let Σ be the signature of operation symbols
 
 ```
-Σ = { hyp_reduce, eliminator_frame, bind_hyp, param_apply, checked }
+Σ = { hyp_reduce, eliminator_frame, bind_hyp, param_apply }
 ```
 
 Each operation is a *curried function* taking its structured meta
@@ -639,8 +640,6 @@ application supplies the argument and triggers dispatch.
       [`{domain : Type, body : domain -> R} -> Tree_p -> CheckerResult(Tree_p)`],
     [`param_apply`],
       [`Tree_p -> Tree_p -> CheckerResult(Tree_p)` (no meta)],
-    [`checked`],
-      [`{T : Type, v : T} -> Tree_p -> CheckerResult(Tree_p)`],
   ),
   caption: [Per-operation types. All but `param_apply` take a meta
     record. Type variables: `A` = type, `P` = closed params, `R` =
@@ -682,8 +681,7 @@ kernel := rec {
   hyp_reduce       := q_hyp_reduce_fn;
   eliminator_frame := q_eliminator_frame_fn;
   bind_hyp         := q_bind_hyp_fn;
-  param_apply      := q_param_apply_fn;
-  checked          := q_checked_fn
+  param_apply      := q_param_apply_fn
 }
 ```
 
@@ -833,7 +831,7 @@ exception monad*.
   "open" yields user-installable effects, the natural extension.
 ]
 
-= The five kernel primitives <sec:primitives>
+= The four kernel primitives <sec:primitives>
 
 This section gives operational semantics for each kernel primitive.
 Each subsection covers: signature, semantics in disp source (or
@@ -844,6 +842,11 @@ require privileged construction (minting kernel-rooted forms the
 walker would otherwise reject) live here. Type recognition, typed
 function application, and most type-system machinery live in the
 library — see §11 for the framing.
+
+The four primitives are: `hyp_reduce`, `bind_hyp`, `eliminator_frame`,
+`param_apply`. (`checked` was previously kernel-resident; its handler
+body is walker-safe, so it has been relocated to the library — see
+§12 for the library `checked_apply`.)
 
 == `hyp_reduce`
 
@@ -945,7 +948,7 @@ let q_bind_hyp_fn = {ks, raw, query} ->
       let raw_hyp = q_make_hyp raw domain hyp_id
       // Wrap applicable-typed hypotheses with `checked`:
       let final_hyp = match (is_applicable_type domain) {
-        TT => wait kernel.checked (pair (pi_dom domain) raw_hyp)
+        TT => wait checked_apply (pair (pi_dom domain) raw_hyp)
         FF => raw_hyp
       }
       let result_r = ks.param_apply body final_hyp
@@ -1043,79 +1046,156 @@ based on the compiled tree id and runs a TypeScript implementation of
 the same logic. The in-language version is the spec; the native is
 the optimization, producing bit-identical results.
 
-== `checked`
+= Stuck forms and neutrals <sec:stuck-forms>
 
-*Signature.* `checked : {T : Type, v : T} -> Tree_p -> CheckerResult(Tree_p)`.
+A common thread runs through the four kernel primitives:
+each constructs, extends, or eliminates *stuck forms* — kernel-rooted
+trees representing computations that can't proceed because some
+value is unknown. This section makes the stuck-form story explicit.
 
-*Role.* Input-checked function application AND certificate tagging
-(unified). The handler dispatches on whether the stored type is
-applicable (function-like) or not:
+== What are stuck forms?
 
-- Applicable: check argument against domain, then apply.
-- Non-applicable: applying makes no sense; return
-  `Err (NotApplicable { type = T, span })`.
+A *stuck form* is a tree of a specific kernel-pinned shape
+representing "a computation whose value is unknown until later." Disp
+has three kinds, each from a different kernel primitive:
 
-*Disp source:*
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Kind*], [*Constructor*], [*Represents*],
+    [Hypothesis],
+      [`bind_hyp` (mints fresh)],
+      ["An unknown value of type T."],
+    [Spine-extended neutral],
+      [`hyp_reduce` (extends on application)],
+      ["An unknown value, after being applied to known args."],
+    [Stuck elimination],
+      [`eliminator_frame` (mints on neutral target)],
+      ["Eliminating an unknown value with known cases."],
+  ),
+  caption: [The three kinds of stuck forms.],
+)
 
-```disp
-let q_checked_fn = {ks, raw, query} ->
-  fix ({self, meta, arg} -> {
-    let T = pair_fst meta
-    let v = pair_snd meta
-    match (is_applicable_type T) {
-      TT => {
-        let A = pi_dom T
-        // Contract boundary: arg MUST satisfy A. Verdict-as-data
-        // would be wrong here — the caller promised the type fits.
-        bind (ks.param_apply A arg) ({verdict} ->
-          match verdict {
-            TT => ks.param_apply v arg
-            FF => Err (TypeMismatch { expected = A, actual = arg, span })
-          })
-      }
-      FF => Err (NotApplicable { type = T, span })
-    }
-  })
+All three are *kernel-rooted*: their `pair_fst` is a pinned kernel
+signature (`hyp_reduce`'s for hypotheses and spine extensions;
+`eliminator_frame`'s for stuck eliminations). The walker (§4)
+rejects user-side construction of such trees via its stem-forge
+rule. Only the kernel can mint them, via the four privileged
+operations.
+
+== How stuck forms propagate
+
+Stuck forms thread through computation; subsequent operations on
+them extend the stuck-ness rather than reducing to concrete values.
+
+*Application to a stuck form*: `apply(hyp_X, v)` routes through
+`hyp_reduce`. The handler consults `X`'s stored type's `codomain_fn`
+to decide what type the result should have, then extends the spine
+with the new argument. The result is a *bigger* stuck form
+representing "hyp_X applied to v."
+
+For Pi-typed hyp, codomain_fn returns `Extend B(v)`: result is a
+neutral of type B(v). For Type-typed hyp, codomain_fn returns
+`Extend CheckerResultBool`: result is a stuck CheckerResult. For
+non-applicable types (Bool, Nat), codomain_fn returns `Invalid` and
+hyp_reduce produces an `invalid_result` form.
+
+*Elimination of a stuck form*: `eliminator_frame_form { dispatcher,
+motive, cases } target` checks if `target` is a neutral. If yes,
+mints a `StuckElim` form representing "the dispatch that would have
+happened if target were concrete." If no, runs the dispatcher
+normally.
+
+*Triage on a stuck form*: walker-rejected (TriageReflect, §4.2).
+User code that tries to inspect a stuck form's structure via raw
+triage will be caught by the walker. Library helpers (`safe_*`)
+that route through `eliminator_frame` give well-defined
+"stuck Bool" / "stuck Tree" / etc. results instead.
+
+*Hash-cons equality with stuck forms*: works (`tree_eq` is just
+pointer comparison). Two stuck forms constructed via the same
+operation with the same metadata hash-cons to the same tree id, so
+`tree_eq` returns TT for them. Different operations or different
+metadata → different tree ids → FF.
+
+== The H-rule and stuck forms
+
+When a type-recognizer is applied to a hypothesis, naive recognition
+fails: the hypothesis isn't structurally a canonical inhabitant of
+the type. Without intervention, recognizers reject their own
+hypothesis values, and Pi-checks of polymorphic functions cascade-fail.
+
+The *H-rule* solves this. When applying `T v` and `v` is a kernel-
+minted neutral whose stored type equals `T`, return `Ok TT` directly
+(without running T's structural check). This recognizes hypotheses as
+inhabitants of their own declared types.
+
+Per §12 `make_recognizer`, the H-rule is provided uniformly by a
+library wrapper that every type's recognizer should be built through.
+Per-type recognizer bodies see only concrete `v` values; the wrapper
+intercepts hypothesis cases.
+
+Without `make_recognizer`'s H-rule, polymorphism breaks. With it,
+polymorphic Pi-types work: `Pi Type ({A} -> Pi A ({_} -> A))` (the
+polymorphic identity) inhabits successfully because A-hypotheses
+applied to it produce A-hypotheses, which the codomain's recognizer
+accepts via H-rule.
+
+== When stuck forms cause cascading failure
+
+A recognizer body that doesn't short-circuit on hypothesis arguments
+(via H-rule) propagates stuck-ness through its operations:
+
+```
+match (safe_is_fork hyp) { TT => ...; FF => ... }
+  -- safe_is_fork hyp → StuckElim form (stuck Bool)
+  -- match on stuck Bool → stuck application
+  -- subsequent operations → bigger stuck term
+  -- recognizer's overall result → Ok stuck_term (not Ok TT)
 ```
 
-*Library constructors over `checked`:*
+The test framework asserts `Ok TT`. A stuck CheckerResult doesn't
+equal `Ok TT`. The test fails.
 
-```disp
-// Direct constructor — anyone can build a checked value.
-// No typecheck performed; validation happens at outer let-binding.
-checked := {T, v} -> wait kernel.checked (pair T v)
+This is why `make_recognizer`'s H-rule is mandatory for any
+recognizer that might be applied to a hypothesis — which is
+*every* recognizer in practice, since `bind_hyp` can create
+hypotheses of any type.
 
-// Ergonomic alias for function-typed checked values:
-typed_lambda := {A, B, f} -> checked (Pi A B) f
+== Stuck forms in tests
 
-// Typecheck-gated constructor producing a certificate. Returns
-// `Ok None` when the verdict is FF (legitimate query answer:
-// no cert is issued). Returns `Ok (Some cert)` on TT. Soundness
-// errors propagate through `Err`.
-validate : Type -> Tree_p -> CheckerResult (Maybe Cert)
+A test `test typecheck T v = TT` requires the computation to reduce
+to literal `TT`. Stuck forms (which represent unresolved computation)
+don't reduce to TT — they're not TT, they're symbolic terms
+representing "what TT would be once we know the unknowns."
 
-validate := {T, v} ->
-  bind (typecheck T v) ({verdict} ->
-    match verdict {
-      TT => Ok (Some (checked T v))
-      FF => Ok None
-    })
-```
+For tests over hypothesis-laden computations (like strict validation
+of Pi-typed recognizers via Pi's body-check), the *H-rule short-
+circuits* before stuck forms can propagate. With H-rule, the body
+returns a concrete `Ok TT` or `Ok FF` via the tree_eq check. Without
+it, the body returns stuck and the test fails.
 
-*Soundness obligation.* `is_applicable_type` is a library predicate
-that reads `T`'s metadata to decide. Under the MetaShape convention
-(§11.2), it checks the `applicable` field:
+The `make_recognizer` discipline is therefore load-bearing for
+strict validation: without it, no recognizer passes its strict
+validation tests, because the body-check propagates stuck forms.
 
-```disp
-is_applicable_type := {T} ->
-  match (safe_is_fork T) {
-    FF => FF
-    TT => not (is_none (meta_get (safe_pair_snd T) "applicable"))
-  }
-```
+== Stuck forms after strip
 
-Walker-safe (uses `safe_*` helpers). Returns TT iff T's metadata has
-a non-`none` `applicable` field — i.e., T is function-shaped.
+The `strip` pass (§10) removes `checked` wait-forms from a validated
+tree. It does NOT remove kernel-rooted stuck forms — those represent
+genuine unknown values, not type-checking artifacts. After strip,
+validated programs that compute over hypothesis-typed values (e.g.,
+polymorphic library functions instantiated lazily) still contain
+stuck forms in their reduction paths until the actual values are
+supplied at runtime.
+
+This is the proof-carrying-code pattern (§17 Necula 1997) for
+disp's setting: certificates assert "the stuck-form propagation is
+sound by construction"; strip elides the certificate but leaves the
+stuck-form machinery intact.
 
 = Boundary operations <sec:boundary>
 
@@ -1224,7 +1304,7 @@ All three are library functions over the single kernel primitive
     align: left,
     inset: 6pt,
     [*Constructor*], [*Definition*], [*When used*],
-    [`checked T v`], [`wait kernel.checked (pair T v)`], [Direct construction; no validation],
+    [`checked T v`], [`wait checked_apply (pair T v)`], [Direct construction; no validation],
     [`typed_lambda A B f`], [`checked (Pi A B) f`], [Function values at construction time],
     [`validate T v`], [`typecheck T v >>= λverdict. Ok (if verdict then Some (checked T v) else None)`], [Querying whether a cert can be issued],
   ),
@@ -1243,12 +1323,12 @@ construction — the constructor doesn't validate. But the lie is caught
 when the value is used in a type-check.
 
 Example trace: user writes `let bogus = checked Bool zero` (false claim).
-- `bogus` evaluates to `wait kernel.checked (pair Bool zero)`.
+- `bogus` evaluates to `wait checked_apply (pair Bool zero)`.
 - Later, the user calls `validate Bool bogus`:
   - Internally `typecheck Bool bogus` runs:
     - `param_lift bogus` → `Ok bogus`.
     - `param_apply Bool bogus` — Bool's recognizer triages on `bogus`.
-      The wait-form is a fork with `kernel.checked` as `pair_fst`, not
+      The wait-form is a fork with `checked_apply` as `pair_fst`, not
       a canonical Bool shape. Returns `Ok FF`.
   - `validate` sees `Ok FF` from the verdict and returns `Ok None`
     — no certificate issued.
@@ -1269,7 +1349,7 @@ Applying a `checked` value to an argument fires the handler:
 
 ```
 (checked (Pi A B) f) x
-→ ks.param_apply (kernel.checked) (pair (Pi A B) f) x
+→ ks.param_apply (checked_apply) (pair (Pi A B) f) x
 → handler runs
 → bind (param_apply A x) ({verdict} -> match verdict {
     TT => param_apply f x
@@ -1468,7 +1548,7 @@ type-checking overhead.
 
 ```disp
 strip := fix ({self, t} ->
-  match (has_sig kernel.checked t) {
+  match (has_sig checked_apply t) {
     TT => self (pair_snd (type_meta t))   // unwrap, recurse into inner
     FF => triage
       t                                   // leaf: unchanged
@@ -1479,7 +1559,7 @@ strip := fix ({self, t} ->
 ```
 
 Strip is a tree-level function. It walks the entire tree, identifies
-`kernel.checked` wait-forms by signature, and replaces each with its
+`checked_apply` wait-forms by signature, and replaces each with its
 underlying value (then recursively strips inside).
 
 == Soundness
@@ -1664,26 +1744,32 @@ needed.
 
 Two pieces, both pure tree construction:
 
-*1. The recognizer.* A library function performing the structural
-shape check:
+*1. The recognizer.* A library function built via the standard
+`make_recognizer` wrapper (§12.X) so H-rule logic is uniform:
 
 ```disp
-let type_recognizer = {meta, v} ->
-  let self_type = wait type_recognizer meta in
-  match (safe_is_neutral v) {
-    TT => Ok (tree_eq self_type (neutral_stored_type v))  // H-rule
-    FF => bind (safe_is_fork v) ({is_pair} ->
-          match is_pair {
-            FF => Ok FF
-            TT => Ok (has_metashape_layout (safe_pair_snd v))
-          })
-  }
+let type_recognizer = make_recognizer ({meta, v} ->
+  // Concrete body — make_recognizer's wrapper has already handled
+  // the hypothesis case via the H-rule, so v is concrete here.
+  bind (safe_is_fork v) ({is_pair} ->
+    match is_pair {
+      FF => Ok FF
+      TT => bind (safe_pair_fst v) ({rec_field} ->
+            // Verify the recognizer field was built via make_recognizer
+            // (catches missing H-rule discipline at type-construction).
+            bind (safe_has_sig recognizer_wrap_fn rec_field) ({is_wrapped} ->
+            match is_wrapped {
+              FF => Ok FF
+              TT => bind (safe_pair_snd v) ({meta_field} ->
+                    Ok (has_metashape_layout meta_field))
+            }))
+    }))
 ```
 
-The `safe_*` helpers (defined in §12) route through `eliminator_frame`
-so the body works on hypothesis arguments as well as concrete values.
 `has_metashape_layout` is a structural check on the record's field
-presence.
+presence. The `has_sig recognizer_wrap_fn` check enforces the
+`make_recognizer` discipline: types whose recognizers bypass
+`make_recognizer` are rejected.
 
 *2. Type's metadata.* A record literal following the MetaShape
 convention:
@@ -1737,21 +1823,41 @@ on the strength of the walker's parametricity discipline.
 The argument (informal):
 
 *1. Polymorphic types like ⊥ := `Pi Type ({A} -> A)` have no
-inhabitants by case analysis.* To inhabit ⊥, one needs a `checked`
-wait-form whose body, given a fresh Type-hypothesis `A`, produces a
-value of type `A`. Pi's recognizer's body-check runs the body under
-`bind_hyp`. The body's options:
-  - introspect `A` to construct a value — rejected by walker
-    TriageReflect (§4.2);
-  - return some closed term — rejected by `A`'s recognizer (closed
-    terms aren't inhabitants of an unknown type);
-  - return `A` via I-shortcut — rejected because `A : Type` is not
-    generally in `A`.
-None satisfy the codomain check.
+inhabitants.* The core property: Pi's body check requires the
+body's result, applied to the codomain recognizer, to reduce to a
+*concrete `Ok TT`*. Any "stuck symbolic" result — a tree representing
+an unresolved computation, produced by `hyp_reduce`, `eliminator_frame`,
+or composition through them — fails this requirement because it isn't
+literally the tree `Ok TT`.
+
+To inhabit ⊥, the body (under a fresh Type-hypothesis `hyp_A`) must
+produce a value whose check against `hyp_A` reduces to `Ok TT`.
+But `hyp_A` is a kernel-minted neutral with stored type Type, and
+applying `hyp_A` to anything routes through `hyp_reduce`. Type's
+codomain_fn (§11.X) produces a *stuck* CheckerResult — not `Ok TT`,
+not even a Bool value. The body-check fails regardless of what the
+body returns.
+
+The three classic candidate bodies all fail this way:
+  - *Introspect A*: rejected directly by walker TriageReflect (§4.2)
+    before reduction proceeds.
+  - *Return a closed term*: when checked against `hyp_A`, the
+    check routes through `hyp_reduce`, produces a stuck symbolic
+    CheckerResult, fails the literal `Ok TT` requirement.
+  - *Return `hyp_A` itself via I-shortcut*: `hyp_A : Type`, and
+    `param_apply hyp_A hyp_A` routes through hyp_reduce + Type's
+    codomain_fn, again producing stuck symbolic CheckerResult.
+
+This "stuck results fail the body check" framing is more precise
+than "A isn't in A" — it handles the Type:Type edge case (where
+A=Type is in Type) by noting that even then, hyp_reduce on a
+Type-hypothesis produces stuck values.
 
 *2. The argument lifts to Hurkens.* Hurkens-style normalizing
 constructions reduce to the ⊥-inhabitation problem at some
-intermediate position; (1) blocks it.
+intermediate position; (1) blocks it. Specifically, every
+intermediate Pi-typed sub-expression in Hurkens' encoding has a
+body-check that propagates stuck-result-failure inward.
 
 *3. Self-application terminates.* The structural check is
 finite-depth.
@@ -1957,12 +2063,71 @@ test typecheck StrictType MetaShape
 test typecheck StrictType RecognizerShape
 ```
 
+== Typed application: `checked` and `checked_apply`
+
+`checked` is the library construction for typed function values — a
+manifest contract pairing a function with its declared type. When
+applied to an argument, the wait-form's reduction fires
+`checked_apply`, which checks the argument against the type's domain
+before invoking the function:
+
+```disp
+let checked_apply = {meta, arg} ->
+  let T = pair_fst meta
+  let v = pair_snd meta
+  match (is_applicable_type T) {
+    TT => bind (param_apply (pi_dom T) arg) ({verdict} ->
+          match verdict {
+            TT => param_apply v arg
+            FF => Err (TypeMismatch { expected = pi_dom T, actual = arg })
+          })
+    FF => Err (NotApplicable { type = T })
+  }
+
+let checked = {T, v} -> wait checked_apply (pair T v)
+
+// Ergonomic alias for function-typed values:
+let typed_lambda = {A, B, f} -> checked (Pi A B) f
+
+// Typecheck-gated constructor (returns a certificate or None).
+let validate = {T, v} ->
+  bind (typecheck T v) ({verdict} ->
+    match verdict {
+      TT => Ok (Some (checked T v))
+      FF => Ok None
+    })
+```
+
+*Walker-safe body.* `checked_apply`'s operations — pair projections,
+`is_applicable_type`, `param_apply` — are all walker-safe (no
+stem-forge of pinned sigs, no triage on neutrals). The function lives
+in the library; no kernel privilege required.
+
+*Dispatcher behavior.* The wait-form `wait checked_apply (pair T v)`
+has the sig `checker_sig checked_apply` — a library sig, not in
+`kernel_sigs`. So the dispatcher does not route it specially;
+walker reduction handles `(checked T v) arg` by reducing via wait's
+bracket-abstracted shape to `checked_apply (pair T v) arg`. Internal
+`param_apply` calls then route through the dispatcher normally.
+
+*`is_applicable_type`*:
+
+```disp
+is_applicable_type := {T} ->
+  match (safe_is_fork T) {
+    FF => FF
+    TT => not (is_none (meta_get (safe_pair_snd T) "applicable"))
+  }
+```
+
+Returns TT iff T's metadata has a non-`none` `applicable` field —
+i.e., T is function-shaped.
+
 == `safe_*` helpers (hypothesis-safe structural inspection)
 
-Recognizer bodies sometimes need to inspect their value argument
-structurally (`is_fork`, `pair_fst`, `has_sig`). Raw triage-based
-implementations of these are walker-unsafe — triage on a kernel-minted
-neutral is rejected (§4.2). Library helpers route through
+Inspection of a value's tree shape (`is_fork`, `pair_fst`, `has_sig`)
+via raw triage is walker-unsafe — triage on a kernel-minted neutral
+is rejected (§4.2). The `safe_*` helpers route through
 `eliminator_frame_form`, which kernel-mints `StuckElim` for neutrals:
 
 ```disp
@@ -1984,11 +2149,69 @@ safe_has_sig := {checker, v} ->
 safe_is_neutral := {v} -> safe_has_sig kernel.hyp_reduce v
 ```
 
-Recognizers use these helpers whenever they need to introspect their
-value argument. For concrete values, the helpers reduce to the raw
-operation's result; for hypotheses, they reduce to a `StuckElim` form
-representing "this structural property of an unknown value." Validation
-walks through these reductions cleanly.
+For concrete values, these reduce to the raw operation's result; for
+hypotheses, they reduce to a `StuckElim` form representing "this
+structural property of an unknown value."
+
+*Where they're used*: primarily *inside* `make_recognizer`'s
+wrapper. The H-rule check `safe_is_neutral v` runs on the recognizer's
+v argument before delegating; for hypothesis v, this returns Ok TT and
+the H-rule branch fires (short-circuits with a concrete result).
+
+*Where they're NOT typically used*: per-type recognizer bodies. Those
+bodies run only on concrete v values (the H-rule has already
+short-circuited the hypothesis case), so they can use raw operations
+freely. This is the architectural benefit of `make_recognizer`: it
+isolates the hypothesis-handling discipline to one library function,
+keeping per-type recognizer bodies clean.
+
+The `safe_*` helpers are also used by library functions that
+genuinely need to inspect tree structure on potentially-hypothesis
+arguments — for example, `is_applicable_type` (§6.6) and
+`is_neutral`. These are kernel-mediated checks that work uniformly.
+
+== `make_recognizer`: the universal H-rule wrapper
+
+Every type's recognizer needs the *H-rule*: when applied to a
+hypothesis whose stored type equals the type being checked, return
+`Ok TT` directly. Without this, recognizers reject their own
+hypothesis values, and Pi-checks of polymorphic functions cascade-fail
+(see §6.X "Stuck forms and neutrals" for the full story).
+
+The H-rule is universal — every recognizer needs the same wrapping
+logic. The library provides `make_recognizer` so per-type authors
+write only the concrete-case body:
+
+```disp
+let recognizer_wrap_fn = fix ({wrap, body, meta, v} ->
+  let self_type = wait (wait recognizer_wrap_fn body) meta in
+  match (safe_is_neutral v) {
+    TT => Ok (tree_eq self_type (neutral_stored_type v))  // H-rule
+    FF => body meta v                                     // concrete dispatch
+  })
+
+let make_recognizer = {body} -> wait recognizer_wrap_fn body
+```
+
+The wrapped recognizer is a wait-form `wait recognizer_wrap_fn body`.
+Its sig is `checker_sig recognizer_wrap_fn` — a fixed library
+signature shared by all `make_recognizer`-built recognizers.
+
+`Type`'s recognizer can structurally verify that a candidate
+recognizer was built via `make_recognizer` by checking
+`has_sig recognizer_wrap_fn`. This makes the H-rule discipline
+*enforceable*: a recognizer that bypasses `make_recognizer` is
+structurally distinguishable and is rejected by `Type`.
+
+Library convention: every type-former author writes:
+
+```disp
+let my_recognizer = make_recognizer ({meta, v} -> /* concrete-only body */)
+```
+
+The body sees only concrete v values; the wrapper handles hypothesis
+cases. Bodies can use raw `triage`, `pair_fst`, etc. — they don't
+need `safe_*` helpers, because they never run with hypothesis args.
 
 == Library function `type_recognizer`
 
@@ -1996,28 +2219,41 @@ walks through these reductions cleanly.
 relocated to library):
 
 ```disp
-let type_recognizer = {meta, v} ->
-  let self_type = wait type_recognizer meta in
-  match (safe_is_neutral v) {
-    TT => Ok (tree_eq self_type (neutral_stored_type v))  // H-rule
-    FF => bind (safe_is_fork v) ({is_pair} ->
-          match is_pair {
-            FF => Ok FF
-            TT => Ok (has_metashape_layout (safe_pair_snd v))
-          })
-  }
+let type_recognizer = make_recognizer ({meta, v} ->
+  bind (safe_is_fork v) ({is_pair} ->
+    match is_pair {
+      FF => Ok FF
+      TT => bind (safe_pair_fst v) ({rec_field} ->
+            // Structural check 1: recognizer field is make_recognizer-formed.
+            // Catches recognizers that bypassed make_recognizer; they'd be
+            // missing H-rule and would silently misbehave on hypothesis args.
+            bind (safe_has_sig recognizer_wrap_fn rec_field) ({is_wrapped} ->
+            match is_wrapped {
+              FF => Ok FF
+              TT => bind (safe_pair_snd v) ({meta_field} ->
+                    // Structural check 2: meta has MetaShape layout.
+                    Ok (has_metashape_layout meta_field))
+            }))
+    }))
 ```
 
-Walker-safe (uses `safe_*` helpers). H-rule fires on neutrals
-(returns Ok TT when stored type equals the type being checked).
-Structural validation on concrete values (`has_metashape_layout`
-checks the meta has the required fields).
+`type_recognizer` itself is a `make_recognizer`-built recognizer, so
+H-rule fires on hypothesis arguments uniformly. The body's structural
+checks run only on concrete v values (using raw `safe_*` for the
+top-level fork shape, since this section needs them anyway for the
+recognizer's own H-rule infrastructure).
+
+Note: the recognizer-field structural check (`has_sig
+recognizer_wrap_fn`) is what enforces the make_recognizer discipline.
+Without this check, recognizers built without H-rule would pass
+`Type` but break at first hypothesis-argument use. With it, the
+failure surfaces at type-construction time.
 
 == `Bool`
 
 ```disp
-let bool_recognizer = {_, v} ->
-  Ok (or (tree_eq v TT) (tree_eq v FF))
+let bool_recognizer = make_recognizer ({_, v} ->
+  Ok (or (tree_eq v TT) (tree_eq v FF)))
 
 let bool_meta = {
   recognizer_params := unit_witness,
@@ -2030,26 +2266,29 @@ let Bool = wait bool_recognizer bool_meta
 
 test typecheck Type Bool
 test typecheck StrictType Bool
-test bool_recognizer unit_witness TT = Ok TT
-test bool_recognizer unit_witness FF = Ok TT
-test bool_recognizer unit_witness zero = Ok FF
+test bool_recognizer bool_meta TT = Ok TT
+test bool_recognizer bool_meta FF = Ok TT
+test bool_recognizer bool_meta zero = Ok FF
+// H-rule test: hypothesis of Bool is recognized as Bool inhabitant.
+test bool_recognizer bool_meta (mint_hyp_form Bool) = Ok TT
 ```
 
-Recognizer is a closed parametric function. Discrete: transport is
-identity. The behavioral tests assert the recognizer accepts canonical
-booleans and rejects non-booleans.
+Body is concrete-only (no H-rule logic — `make_recognizer` provides
+it). Discrete: transport is identity. The behavioral tests assert
+the recognizer accepts canonical booleans, rejects non-booleans,
+and (via H-rule) accepts hypothesis arguments.
 
 == `Nat`
 
 ```disp
-let nat_recognizer = {_, v} ->
+let nat_recognizer = make_recognizer ({_, v} ->
   // v is Nat iff v is zero (= LEAF) or v = fork(LEAF, n) where n is Nat.
   Ok (fix ({self, x} ->
         triage TT                          // leaf: zero
           ({_} -> FF)                      // stem: not a Nat
           ({l, r} ->                       // fork: zero-like + recurse
             and (tree_eq l t) (self r))
-          x) v)
+          x) v))
 
 let nat_meta = {
   recognizer_params := unit_witness,
@@ -2062,9 +2301,10 @@ let Nat = wait nat_recognizer nat_meta
 
 test typecheck Type Nat
 test typecheck StrictType Nat
-test nat_recognizer unit_witness zero = Ok TT
-test nat_recognizer unit_witness (succ zero) = Ok TT
-test nat_recognizer unit_witness TT = Ok FF
+test nat_recognizer nat_meta zero = Ok TT
+test nat_recognizer nat_meta (succ zero) = Ok TT
+test nat_recognizer nat_meta TT = Ok FF
+test nat_recognizer nat_meta (mint_hyp_form Nat) = Ok TT   // H-rule
 ```
 
 == `Pi`
@@ -2074,27 +2314,27 @@ The pivotal one — Pi's recognizer requires its candidate to be a
 they must be wrapped first (via `typed_lambda` or `checked` directly).
 
 ```disp
-let pi_recognizer = {meta, v} ->
+let pi_recognizer = make_recognizer ({meta, v} ->
   let A = meta.recognizer_params.first
   let B = meta.recognizer_params.second
   // Step 1 (pure structural): v must be a `checked` wait-form.
-  bind (safe_has_sig checked_apply v) ({is_chkd} ->
-    match is_chkd {
-      FF => Ok FF
-      TT =>
-        // Step 2 (pure structural): v's stored domain matches A.
-        bind (safe_pair_snd v) ({v_meta} ->
-        bind (safe_pair_fst v_meta) ({v_A} ->
-        match (tree_eq v_A A) {
-          FF => Ok FF
-          TT =>
-            // Step 3 (kernel-mediated): bind a fresh A-hypothesis, apply
-            // v to it, then check the result against B hyp.
-            bind_hyp A ({hyp} ->
-              bind (param_apply v hyp) ({result} ->
-                param_apply (B hyp) result))
-        }))
-    })
+  // Raw has_sig is fine — v is concrete here (make_recognizer's
+  // H-rule already handled the hypothesis case).
+  match (has_sig checked_apply v) {
+    FF => Ok FF
+    TT =>
+      // Step 2 (pure structural): v's stored domain matches A.
+      let v_A = pair_fst (pair_snd v) in
+      match (tree_eq v_A A) {
+        FF => Ok FF
+        TT =>
+          // Step 3 (kernel-mediated): bind a fresh A-hypothesis, apply
+          // v to it, then check the result against B hyp.
+          bind_hyp A ({hyp} ->
+            bind (param_apply v hyp) ({result} ->
+              param_apply (B hyp) result))
+      }
+  })
 
 let pi_meta_for = {A, B} -> {
   recognizer_params := pair A B,
@@ -2422,7 +2662,7 @@ operational story.
     inset: 6pt,
     [*Category*], [*What it asserts*],
     [Kernel tests],
-      [The five kernel handlers behave per their specs (§6).
+      [The four kernel handlers behave per their specs (§6).
        Test that `bind_hyp` mints a neutral, `hyp_reduce` extends
        spines, `eliminator_frame` mints StuckElim on neutrals, etc.],
     [Type-system tests],
@@ -2477,8 +2717,8 @@ a whole by re-elaborating the library.
 
 What's in the trusted base:
 
-- The five kernel handlers (`param_apply`, `bind_hyp`, `hyp_reduce`,
-  `eliminator_frame`, `checked`) implemented in disp source.
+- The four kernel handlers (`param_apply`, `bind_hyp`, `hyp_reduce`,
+  `eliminator_frame`) implemented in disp source.
 - The host runtime's signature-pinning of those handlers.
 - The parametric walker (in-language reference + native fast-path).
 - Library validators (`Type`, `StrictType`, `BehavioralType`) and
@@ -2525,6 +2765,63 @@ The test suite addresses (1); (2) is open work flagged in §11.5.
 model, or careful pencil-and-paper PER-model argument — would
 solidify the foundational story. Until then, the system is
 "empirically sound" with a documented conjecture about consistency.]
+
+== Memo policy requirement
+
+Strict validation of self-referential types (`Type`, `RecognizerShape`,
+`MetaShape`, `Pi`, `Sigma` — each of which references the others
+through their recognizers and metas) requires memoization that
+handles *in-progress* recursive queries. Without this, validation
+loops.
+
+A concrete example: `test typecheck StrictType Type` triggers
+recursive validation through `RecognizerShape` (= `Pi MetaShape (Pi
+Tree CheckerResultBool)`). The Pi-body-check for `type_recognizer`
+fires `bind_hyp MetaShape`, then applies the body to a fresh
+metashape-hypothesis. Inside, body operations may recursively call
+`typecheck RecognizerShape type_recognizer` again — the *same*
+validation that's currently in progress.
+
+The kernel's memoization table must record entries as "in progress"
+when validation starts, return the optimistic answer (`Ok TT`) for
+recursive queries during the in-progress window, and finalize when
+the outer validation completes:
+
+```
+typecheck T v:
+  case memo[T, v] of
+    Some (InProgress) => Ok TT       // optimistic; outer validation
+                                     // will catch real failures
+    Some (Final r)    => r           // memoized result
+    None              =>
+      memo[T, v] := InProgress
+      let r = ... actual validation ...
+      memo[T, v] := Final r
+      r
+```
+
+This is a *fixed-point computation*: the recursive structure asserts
+"if my sub-references are well-typed, I'm well-typed." The in-
+progress optimistic answer + final verification together implement
+the fixed point.
+
+*This policy is load-bearing for strict validation to terminate on
+self-referential types.* Without it, `test typecheck StrictType Type`
+loops. The spec mandates this memo discipline; implementations must
+provide it for strict validators to work.
+
+The lax `Type` validator doesn't need fixed-point memoization (its
+structural check doesn't recurse into the candidate's components),
+so `test typecheck Type Type` works under any memo policy. The
+fixed-point requirement is specifically for the deep validators.
+
+#openq[Empirical verification of fix-based self-reference hash-cons
+stability (RECORDS_PROPOSAL.md §9 step 2) is also load-bearing for
+H-rule reconstruction. If `wait self.handler meta` (constructed
+inside a handler body) doesn't hash-cons-equal `wait kernel.handler
+meta` (constructed externally), tree_eq comparisons in the H-rule
+fail and validation behaves unpredictably. This needs an explicit
+test in the implementation.]
 
 = Future: user-installable effects <sec:future>
 
@@ -2750,7 +3047,7 @@ failing component identified.
 
 == Kernel behavioral tests
 
-Asserting the five kernel primitives behave per §6:
+Asserting the four kernel primitives behave per §6:
 
 ```disp
 test bind_hyp_mints_neutral_with_correct_stored_type
