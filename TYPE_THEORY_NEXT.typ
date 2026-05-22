@@ -1807,10 +1807,206 @@ finite properties, behavioral_specs Paths give mechanical proof.
 
 = Library types <sec:library-types>
 
-Each library type-former, under the categorical foundations of §11.
-The pattern: write a `TypeFormer` record literal; wrap any function-
-typed metadata fields with `checked`; wrap the record with
-`predicate_frame_form` to produce the type.
+Each library type, under the framing of §11. The pattern: define a
+recognizer (a closed function `meta -> v -> CheckerResult Bool`),
+define a meta record following the MetaShape convention (§11.2),
+construct the type as `wait recognizer meta`, and assert validity
+via tests.
+
+This section opens with the library infrastructure that supports
+strict / behavioral validation (Sigma's projection codomain_fn,
+Record, Refinement, MetaShape, RecognizerShape, the `safe_*` helpers),
+then walks the individual type-formers (Bool, Nat, Pi, …).
+
+== `Sigma` and projection-as-application
+
+`Sigma A B` is the dependent product. Its values are pairs `pair a b`
+where `a : A` and `b : B(a)`. Inspection is via `pair_fst` / `pair_snd`.
+
+For *hypothesis* values of Sigma type, projection works through a
+codomain_fn that treats projection as application. Applying a Sigma
+hypothesis to a position walker triggers `hyp_reduce`, which dispatches
+via `sigma_cod_fn`:
+
+```disp
+sigma_cod_fn := {meta, walker_arg} ->
+  let A = meta.recognizer_params.first in
+  let B = meta.recognizer_params.second in
+  match (tree_eq walker_arg walker_pair_fst) {
+    TT => Extend A
+    FF => match (tree_eq walker_arg walker_pair_snd) {
+      TT => Extend (B (apply self_hyp walker_pair_fst))
+      FF => Invalid
+    }
+  }
+```
+
+Applying `hyp_AB : Sigma A B` to `walker_pair_fst` extends the spine
+with a fresh A-typed projection (representing "the first component
+of this hypothesis"). Applying to `walker_pair_snd` extends with B
+instantiated at that prior projection — the dependency is preserved.
+
+Sigma's meta:
+
+```disp
+sigma_meta_for := {A, B} -> {
+  recognizer_params := pair A B,
+  functor := sigma_functor,
+  applicable := some sigma_cod_fn,
+  behavioral_specs := none
+}
+
+Sigma := {A, B} -> wait sigma_recognizer (sigma_meta_for A B)
+
+test typecheck Type Sigma            // Sigma is structurally a type
+test typecheck StrictType Sigma      // Sigma passes deep validation
+```
+
+Records, Refinement-of-Record, and any type built on Sigma chains
+inherit projection support through this mechanism.
+
+== `Record`
+
+Records are iterated Sigma chains with named fields. `{x : A, y : B}`
+compiles to `Sigma A (\x. Sigma B (\y. Unit))`. The `Record`
+type-former takes a field list and produces the appropriate
+wait-form:
+
+```disp
+Record := {fields} -> wait record_recognizer (record_meta_for fields)
+```
+
+Codomain_fn delegates directly to the underlying Sigma chain (option
+(a) from the design notes): field-name verification is *parse-time*
+only (`r.x` desugars to `r W_x` at elaboration), so codomain_fn just
+needs to handle position walkers. Sigma's codomain_fn does this.
+
+Tests:
+
+```disp
+test typecheck Type Record
+test typecheck StrictType Record
+```
+
+== `Refinement` (passthrough codomain_fn)
+
+`Refinement A P` values are inspected as values of A with an attached
+P-proof. For hypothesis projection, Refinement defers to A's
+codomain_fn:
+
+```disp
+refinement_cod_fn := {meta, walker_arg} ->
+  let A = meta.recognizer_params.base in
+  let A_cod_fn = applicable_eval_of A in
+  match (is_some A_cod_fn) {
+    TT => apply A_cod_fn (A, walker_arg)
+    FF => Invalid
+  }
+```
+
+A `Refinement Record [...]` hypothesis projects through this delegation
+to Sigma's codomain_fn — supporting the same projections as the
+underlying Record. This is what lets `MetaShape` (a Refinement of
+Record) be used as a Pi domain whose body projects fields.
+
+== `MetaShape` and `RecognizerShape`
+
+The standard metadata layout (§11.2), as a Refinement of Record:
+
+```disp
+let MetaShape = Refinement
+  (Record [
+    ("recognizer_params", Tree),
+    ("functor", Tree),
+    ("applicable", Tree),
+    ("behavioral_specs", Tree)
+  ])
+  ({_} -> Ok TT)
+```
+
+The Refinement's predicate is trivial — the Record-membership check
+already enforces field presence. Field-value types are loosely `Tree`
+(rather than specifically typed): MetaShape's structural check doesn't
+deeply validate each field. The deeper validation (e.g., the
+`recognizer` field is a Pi-typed function) is performed by validators
+like `StrictType`.
+
+The shape every type-former's recognizer must inhabit:
+
+```disp
+let RecognizerShape = Pi MetaShape ({_} ->
+                       Pi Tree ({_} -> CheckerResultBool))
+```
+
+A function from MetaShape to Tree to CheckerResultBool. `StrictType`'s
+validator typechecks each type's recognizer against this shape, which
+requires the recognizer to be a `checked`-wrapped function (per Pi's
+recognition rules, §12.X for Pi).
+
+Tests:
+
+```disp
+test typecheck Type MetaShape
+test typecheck Type RecognizerShape
+test typecheck StrictType MetaShape
+test typecheck StrictType RecognizerShape
+```
+
+== `safe_*` helpers (hypothesis-safe structural inspection)
+
+Recognizer bodies sometimes need to inspect their value argument
+structurally (`is_fork`, `pair_fst`, `has_sig`). Raw triage-based
+implementations of these are walker-unsafe — triage on a kernel-minted
+neutral is rejected (§4.2). Library helpers route through
+`eliminator_frame_form`, which kernel-mints `StuckElim` for neutrals:
+
+```disp
+safe_is_fork := {v} -> eliminator_frame_form {
+  dispatcher := tree_shape_dispatcher,
+  motive := const Bool,
+  cases := {leaf := FF, stem := {_} -> FF, fork := {_, _} -> TT}
+} v
+
+safe_pair_fst := {v} -> eliminator_frame_form {
+  dispatcher := tree_shape_dispatcher,
+  motive := const Tree,
+  cases := {leaf := error_form, stem := {c} -> c, fork := {l, _} -> l}
+} v
+
+safe_has_sig := {checker, v} ->
+  bind (safe_pair_fst v) ({sig} -> Ok (tree_eq sig (checker_sig checker)))
+
+safe_is_neutral := {v} -> safe_has_sig kernel.hyp_reduce v
+```
+
+Recognizers use these helpers whenever they need to introspect their
+value argument. For concrete values, the helpers reduce to the raw
+operation's result; for hypotheses, they reduce to a `StuckElim` form
+representing "this structural property of an unknown value." Validation
+walks through these reductions cleanly.
+
+== Library function `type_recognizer`
+
+`Type`'s recognizer (formerly the kernel's `predicate_frame` handler,
+relocated to library):
+
+```disp
+let type_recognizer = {meta, v} ->
+  let self_type = wait type_recognizer meta in
+  match (safe_is_neutral v) {
+    TT => Ok (tree_eq self_type (neutral_stored_type v))  // H-rule
+    FF => bind (safe_is_fork v) ({is_pair} ->
+          match is_pair {
+            FF => Ok FF
+            TT => Ok (has_metashape_layout (safe_pair_snd v))
+          })
+  }
+```
+
+Walker-safe (uses `safe_*` helpers). H-rule fires on neutrals
+(returns Ok TT when stored type equals the type being checked).
+Structural validation on concrete values (`has_metashape_layout`
+checks the meta has the required fields).
 
 == `Bool`
 
@@ -1818,23 +2014,31 @@ typed metadata fields with `checked`; wrap the record with
 let bool_recognizer = {_, v} ->
   Ok (or (tree_eq v TT) (tree_eq v FF))
 
-Bool := predicate_frame_form {
-  classifier := { params := Unit, characteristic_morphism := bool_recognizer },
+let bool_meta = {
+  recognizer_params := unit_witness,
+  functor := trivial_functor,        // discrete: identity transport
   applicable := none,
-  functor    := trivial_functor
+  behavioral_specs := none
 }
+
+let Bool = wait bool_recognizer bool_meta
+
+test typecheck Type Bool
+test typecheck StrictType Bool
+test bool_recognizer unit_witness TT = Ok TT
+test bool_recognizer unit_witness FF = Ok TT
+test bool_recognizer unit_witness zero = Ok FF
 ```
 
-Recognizer is a closed parametric function. The structural check is
-pure, so the body wraps in `Ok` directly. Discrete: transport is
-identity, both laws are `refl` (bundled in `trivial_functor`).
+Recognizer is a closed parametric function. Discrete: transport is
+identity. The behavioral tests assert the recognizer accepts canonical
+booleans and rejects non-booleans.
 
 == `Nat`
 
 ```disp
 let nat_recognizer = {_, v} ->
   // v is Nat iff v is zero (= LEAF) or v = fork(LEAF, n) where n is Nat.
-  // Pure structural check on the tree; lifts to Ok in one step.
   Ok (fix ({self, x} ->
         triage TT                          // leaf: zero
           ({_} -> FF)                      // stem: not a Nat
@@ -1842,87 +2046,115 @@ let nat_recognizer = {_, v} ->
             and (tree_eq l t) (self r))
           x) v)
 
-Nat := predicate_frame_form {
-  classifier := { params := Unit, characteristic_morphism := nat_recognizer },
+let nat_meta = {
+  recognizer_params := unit_witness,
+  functor := trivial_functor,
   applicable := none,
-  functor    := trivial_functor          // discrete: transport identity
+  behavioral_specs := none
 }
+
+let Nat = wait nat_recognizer nat_meta
+
+test typecheck Type Nat
+test typecheck StrictType Nat
+test nat_recognizer unit_witness zero = Ok TT
+test nat_recognizer unit_witness (succ zero) = Ok TT
+test nat_recognizer unit_witness TT = Ok FF
 ```
 
 == `Pi`
 
-The pivotal one — Pi's recognizer requires its candidate be a
+The pivotal one — Pi's recognizer requires its candidate to be a
 `checked` wait-form. Raw function values do not inhabit Pi types;
 they must be wrapped first (via `typed_lambda` or `checked` directly).
 
 ```disp
-let pi_recognizer = {params, v} -> {
-  let A = pair_fst params
-  let B = pair_snd params
+let pi_recognizer = {meta, v} ->
+  let A = meta.recognizer_params.first
+  let B = meta.recognizer_params.second
   // Step 1 (pure structural): v must be a `checked` wait-form.
-  match (has_sig kernel.checked v) {
-    FF => Ok FF
-    TT => {
-      // Step 2 (pure structural): v's stored domain matches A.
-      let v_A = pair_fst (type_meta v)
-      match (tree_eq v_A A) {
-        FF => Ok FF
-        TT =>
-          // Step 3 (kernel-mediated): bind a fresh A-hypothesis, apply
-          // v to it, then check the result against B hyp. Every step
-          // returns CheckerResult; `bind` propagates Err uniformly so
-          // parametricity / escape / malformed errors surface to the
-          // caller instead of being absorbed into a FF verdict.
-          bind_hyp A ({hyp} ->
-            bind (param_apply v hyp) ({result} ->
-              param_apply (B hyp) result))
-      }
-    }
-  }
+  bind (safe_has_sig checked_apply v) ({is_chkd} ->
+    match is_chkd {
+      FF => Ok FF
+      TT =>
+        // Step 2 (pure structural): v's stored domain matches A.
+        bind (safe_pair_snd v) ({v_meta} ->
+        bind (safe_pair_fst v_meta) ({v_A} ->
+        match (tree_eq v_A A) {
+          FF => Ok FF
+          TT =>
+            // Step 3 (kernel-mediated): bind a fresh A-hypothesis, apply
+            // v to it, then check the result against B hyp.
+            bind_hyp A ({hyp} ->
+              bind (param_apply v hyp) ({result} ->
+                param_apply (B hyp) result))
+        }))
+    })
+
+let pi_meta_for = {A, B} -> {
+  recognizer_params := pair A B,
+  functor := pi_functor,                          // non-trivial; supports transp (§13)
+  applicable := some pi_eval_signature,
+  behavioral_specs := none
 }
 
-let pi_eval_signature = ...  // standard codomain_fn signature
-let pi_functor          = ...  // non-trivial: supports transp via §13
+let Pi = {A, B} -> wait pi_recognizer (pi_meta_for A B)
 
-Pi := predicate_frame_form {
-  classifier := {
-    params                  := Sigma Type ({A} -> A -> Type),   // (A, B)
-    characteristic_morphism := pi_recognizer
-  },
-  applicable := some { eval_morphism := pi_eval_signature },
-  functor    := pi_functor
-}
+test typecheck Type Pi
+test typecheck StrictType Pi
+test typecheck (Pi Nat ({_} -> Bool)) is_zero    // is_zero has this Pi type
 ```
 
-The three-step check (signature, domain match, bind-hyp+body) is what
-makes Pi soundness-preserving. Raw function values fail at step 1;
+The three-step check (signature, domain match, bind-hyp+body) makes
+Pi soundness-preserving. Raw function values fail at step 1;
 domain-mismatched `checked` values fail at step 2; body-type mismatches
 fail at step 3 with a TypeMismatch or Escape error from the kernel
 operations the body invokes.
 
-== `Sigma`, `Eq`, `Ord`, `Refinement`, `Record`, `Unit`, `String`
+The recognizer uses `safe_*` helpers (§12.6) for structural inspection,
+so it works on hypothesis arguments during strict validation of types
+that quantify over functions.
 
-These follow the same pattern. Each defines a recognizer, then writes
-a `TypeFormer` record literal wrapped by `predicate_frame_form`. The
-recognizer bodies are structural shape-checks on canonical inhabitants;
-specifics live alongside each type in `lib/types/`.
+== `Eq`, `Ord`, `Unit`, `String`
 
-(Full definitions deferred to implementation; the framework is
-established.)
+Each defines a recognizer following the same pattern: closed
+structural check on canonical inhabitants, plus an H-rule via
+`safe_is_neutral`. Their metas follow the MetaShape convention.
+Tests assert validity and basic behavioral properties.
+
+```disp
+let Unit = wait unit_recognizer unit_meta
+test typecheck Type Unit
+test unit_recognizer unit_witness unit_witness = Ok TT
+
+let String = wait string_recognizer string_meta
+test typecheck Type String
+
+let Eq = {A, x, y} -> wait eq_recognizer (eq_meta_for A x y)
+test typecheck Type Eq
+test typecheck (Eq Nat zero zero) refl
+
+// Ord follows the same pattern.
+```
+
+(Full definitions live in `lib/types/`; the framework here is what
+the spec mandates.)
 
 == `Type` itself
 
 `Type` is the wait-form constructed in §11.4:
 
 ```disp
-Type := predicate_frame_form type_metadata
+Type := wait type_recognizer type_self_meta
+
+test typecheck Type Type        // Type is a type (lax)
+test typecheck StrictType Type  // Type passes deep validation
 ```
 
-where `type_metadata` is the TypeFormer record literal whose
-`classifier.characteristic_morphism` is `typeformer_recognizer`.
-`typecheck Type Type = Ok TT` because Type's tree shape satisfies
-`typeformer_recognizer`'s structural pattern. The Type:Type concern
-and its (conjectural) resolution are discussed in §11.5.
+The Type:Type concern and its (conjectural) resolution are discussed
+in §11.5. The tests themselves run mechanically; their passing is an
+empirical observation, while their implications for foundational
+consistency remain open.
 
 = Cubical extensions <sec:cubical>
 
@@ -1968,11 +2200,16 @@ let I_recognizer = {_, v} -> ...
   // of stored type I. Library smart constructors normalize formulas to
   // DNF so De-Morgan-equivalent formulas hash-cons to identical trees.
 
-I := predicate_frame_form {
-  classifier := { params := Unit, characteristic_morphism := I_recognizer },
+let I_meta = {
+  recognizer_params := unit_witness,
+  functor := trivial_functor,         // I doesn't transport
   applicable := none,
-  functor    := trivial_functor       // I doesn't transport
+  behavioral_specs := none
 }
+
+let I = wait I_recognizer I_meta
+
+test typecheck Type I
 ```
 
 A library `I_normalize` reduces formulas to canonical (DNF) form;
@@ -2064,11 +2301,14 @@ phi A := IsOne phi -> A`. Walker-safe smart constructors for face
 systems.
 
 ```disp
-IsOne := predicate_frame_form {
-  classifier := { params := I, characteristic_morphism := isone_recognizer },
+let IsOne = {i} -> wait isone_recognizer {
+  recognizer_params := i,
+  functor := trivial_functor,
   applicable := none,
-  functor    := trivial_functor
+  behavioral_specs := none
 }
+
+test typecheck Type IsOne
 
 Partial := {phi, A} -> Pi (IsOne phi) ({_} -> A)
 ```
@@ -2103,14 +2343,14 @@ with partial type information (T, e) at the face phi. Its non-trivial
 `Functor.morphism_action` implements equivalence-mediated transport.
 
 ```disp
-Glue := predicate_frame_form {
-  classifier := {
-    params                  := glue_params_shape,   // (B, T, e)
-    characteristic_morphism := glue_recognizer
-  },
+let Glue = {B, T, e} -> wait glue_recognizer {
+  recognizer_params := glue_params_for B T e,
+  functor := glue_functor,             // applies the equivalence on transport
   applicable := none,
-  functor    := glue_functor       // applies the equivalence on transport
+  behavioral_specs := none
 }
+
+test typecheck Type Glue
 
 // ua constructs a Path Type A B from an equivalence e : A ≃ B.
 // Notation `[(i = I_one) ↦ (A, e)]` is mathematical shorthand for the
@@ -2158,86 +2398,128 @@ treatment.]
   library smart constructors normalize I-arguments so hash-cons
   captures De-Morgan equivalence.
 
-= Soundness theorem <sec:soundness>
+= Soundness via tests <sec:soundness>
 
-== Statement
+Disp's soundness is asserted as a *test suite* that the standard
+library is expected to pass. There is no "soundness theorem" in the
+traditional sense — soundness is a runnable assertion, not a
+metatheoretic proof. The conjectural-consistency story (§11.5)
+underwrites the foundational interpretation; the tests verify the
+operational story.
 
-#note[
-  *Theorem (Soundness).* Let `T` be a tree such that
-  `param_apply Type T = Ok TT` (T is a valid type). Let `v` be a tree
-  such that `typecheck T v = Ok v`. Then for any context in which `v`
-  is used — including reductions under hypotheses of arbitrary types —
-  no application within `v` produces a value whose type contradicts the
-  type structure established by `T`.
+== Three categories of tests
 
-  In particular:
-  - If `T = Pi A B`, then `v` is a `checked` wait-form whose stored
-    domain matches `A`, and `v` applied to any value of type `A`
-    produces a value of type `B(arg)`.
-  - If `T = Bool`/`Nat`/etc., then `v` is structurally an inhabitant
-    of `T`'s canonical shapes.
-  - Internal applications inside `v` either type-check correctly or
-    reduce to an `Err CheckerError` during evaluation.
-]
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Category*], [*What it asserts*],
+    [Kernel tests],
+      [The five kernel handlers behave per their specs (§6).
+       Test that `bind_hyp` mints a neutral, `hyp_reduce` extends
+       spines, `eliminator_frame` mints StuckElim on neutrals, etc.],
+    [Type-system tests],
+      [Each library type passes the expected validators. Test that
+       `Type Bool`, `StrictType Bool`, `Type Pi`, etc. all reduce
+       to `Ok TT`.],
+    [Behavioral tests],
+      [Optional Path-typed proofs in `behavioral_specs`. Test that
+       each type's recognizer behaves as documented on canonical
+       inhabitants and counter-examples.],
+  ),
+  caption: [Test categories asserting soundness.],
+)
 
-== Proof sketch
+All three are runnable. The first two are mandatory for any release;
+the third is opt-in per type-former.
 
-By induction on the structure of `T`.
+== Sample tests
 
-*Base cases* (Bool, Nat, Unit, etc., discrete types). `T`'s
-recognizer is a closed parametric function that checks `v`'s structural
-shape. If `typecheck T v = Ok v`, then `v` has the right shape. No
-applications are involved; soundness is immediate.
+```disp
+// Kernel tests
+test bind_hyp_mints_kernel_signature_neutral
+test hyp_reduce_extends_spine_correctly
+test eliminator_frame_mints_stuck_on_neutral
+test param_apply_routes_kernel_sigs_raw
 
-*Inductive case: Pi types.* For `T = Pi A B`, the recognizer (§12.3)
-requires three properties:
-+ `v` is a `kernel.checked` wait-form.
-+ `v`'s stored domain matches `A` exactly (hash-cons identity).
-+ `bind_hyp A (\hyp -> (B hyp) (v hyp))` returns TT.
+// Type-system tests (lax)
+test typecheck Type Bool = TT
+test typecheck Type Nat = TT
+test typecheck Type Pi = TT
+test typecheck Type Sigma = TT
+test typecheck Type Eq = TT
+test typecheck Type Type = TT
 
-The bind_hyp body is verified under a fresh `A`-hypothesis. Since
-`bind_hyp` wraps applicable-typed hypotheses with `checked` (§6.4),
-applications of `hyp` inside `v`'s body go through `kernel.checked`
-input-checking. The walker's parametricity discipline (§4) prevents
-introspection.
+// Type-system tests (strict)
+test typecheck StrictType Bool = TT
+test typecheck StrictType Pi = TT
+test typecheck StrictType Type = TT
 
-By induction on `B`'s structure, the body check `B(hyp)(v hyp) = Ok TT`
-holds for the specific hyp. By parametricity (the walker rejects
-hypothesis introspection), the property generalizes to all values of
-type `A`: applying `v` to any A-value yields a B-value.
+// Behavioral tests (sample)
+test bool_recognizer unit_witness TT = Ok TT
+test bool_recognizer unit_witness FF = Ok TT
+test nat_recognizer unit_witness zero = Ok TT
+test pi_recognizer (pi_meta_for Nat ({_} -> Bool)) is_zero = Ok TT
+```
 
-*Inductive case: Sigma, Refinement, Eq, etc.* Similar structural
-recursion using each type-former's recognizer. The recognizer checks
-each component; soundness follows by induction on components.
+The standard library ships these tests inline with the relevant
+definitions. The full catalog is browsable as source and runnable as
+a whole by re-elaborating the library.
 
-*The trust boundary* is precisely:
-- The six kernel handlers, implemented in disp source.
-- The host runtime's signature-pinning of the kernel operations.
+== The trust boundary
+
+What's in the trusted base:
+
+- The five kernel handlers (`param_apply`, `bind_hyp`, `hyp_reduce`,
+  `eliminator_frame`, `checked`) implemented in disp source.
+- The host runtime's signature-pinning of those handlers.
 - The parametric walker (in-language reference + native fast-path).
-- `Type`'s own metadata record (§11.4) — a concrete tree that must
-  satisfy `typeformer_recognizer`'s structural pattern.
+- Library validators (`Type`, `StrictType`, `BehavioralType`) and
+  their recognizer functions.
+- Library `safe_*` helpers (hypothesis-safe structural inspection).
+- The `MetaShape` convention.
 
-What is *not* in the trusted base:
-- The elaborator (it just emits wrapped trees; the kernel re-validates).
-- Library type-former definitions (validated against `Type`'s recognizer).
-- User code (validated at every application via `checked`).
+What's *not* in the trusted base:
 
-== TCB shape
+- The elaborator (purely syntactic; emits trees and tests).
+- Type-former definitions (validated by the standard validators
+  through tests).
+- User code (validated at every typed function application via
+  `checked`).
 
-The wrap-only elaboration discipline keeps the trusted computing base
-small. The elaborator emits wait-form trees but does not itself decide
-type-checking outcomes; the kernel re-validates each binding via
-`typecheck` as a one-shot reduction call. The TCB is therefore exactly
-"the six kernel handlers + the walker + Type's metadata record."
+Compared to the previous spec's trust boundary: the library validators
+and `safe_*` helpers move into the TCB (they were implicit in the
+kernel's `predicate_frame` handler). The kernel surface shrinks
+correspondingly. The net trust footprint is roughly the same; the
+distribution shifts toward library code that's auditable in `.disp`
+source.
 
-Designs with bidirectional infer/check elaboration must additionally
-trust the elaborator, since elaboration-time type decisions are not
-re-validated by the kernel. Disp's wrap-only design avoids that
-extension.
+== Foundational status
 
-#openq[The proof sketch is informal. A formal proof (Coq/Lean
-mechanization, or a careful pencil-and-paper version with PER-model
-semantics) would solidify it. Deferred.]
+Test-based soundness is *operational*: the tests pass on concrete
+inputs. This is necessary but not sufficient for foundational
+consistency (Type:Type, etc.) — see §11.5 for the open conjecture.
+
+Two distinct claims to keep separate:
+
++ *The standard library passes its standard tests.* Operational;
+  empirically verified at every elaboration. Failure indicates an
+  implementation bug or definitional inconsistency.
+
++ *The disp type system is foundationally consistent (no inhabitant
+  of ⊥).* Theoretical; relies on the walker's parametricity
+  discipline being strong enough to block Hurkens-style encodings.
+  Currently a conjecture; resolution requires either a formal
+  parametricity theorem or commitment to ranked universes.
+
+The test suite addresses (1); (2) is open work flagged in §11.5.
+
+#openq[A formal proof of (2) — Coq/Lean mechanization, semantic
+model, or careful pencil-and-paper PER-model argument — would
+solidify the foundational story. Until then, the system is
+"empirically sound" with a documented conjecture about consistency.]
 
 = Future: user-installable effects <sec:future>
 
