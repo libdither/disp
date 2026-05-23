@@ -42,17 +42,18 @@
   into a single document.
 
   Major shifts from predecessors:
-  - The kernel surface drops from 7 to 4 primitives (removed `guard`,
-    `unguard`, `predicate_frame`, `checked`; the latter two relocated
-    to library as `type_recognizer` and `checked_apply` since their
-    handler bodies are walker-safe).
+  - The kernel surface drops from 7 to 3 operations + 1 dispatcher
+    (removed `guard`, `unguard`, `predicate_frame`, `checked`; the
+    latter two relocated to library as `type_recognizer` and
+    `checked_apply` since their handler bodies are walker-safe).
   - Type-checking is framed as manifest contracts over the `CheckerResult`
     monad. The elaborator is purely a wrap-only pass; no bidirectional
     inference.
-  - Library type-formers are explicit `TypeFormer` records with named fields,
-    not positional metadata tuples.
+  - Library types carry MetaShape-conforming meta records with named
+    fields (`recognizer_params`, `functor`, `applicable`,
+    `behavioral_specs`), not positional metadata tuples.
   - Cubical operations (`transp`, `hcomp`, `comp`, `Glue`) live in the
-    `Functor` field of each type-former's `TypeFormer` record.
+    `functor` meta-field of each library type.
   - `strip` is a tree-level function gated by `validate`'s certificate
     for proof-carrying-code-style erasure.
 
@@ -75,12 +76,12 @@ failing component identified. After elaboration succeeds, a *strip pass*
 elides validated contracts to give a runtime tree with no per-call
 checking overhead.
 
-The kernel implements a closed indexed algebraic effect with five
-operations: `hyp_reduce`, `bind_hyp`, `eliminator_frame`, `param_apply`,
-`checked`. The dispatcher routes by structural signature on hash-consed
-trees, so dispatch is O(1) via tree-id comparison. Types, validators,
-recognizers, and the MetaShape convention all live in the library —
-not the kernel. Cubical operations sit naturally in each type's
+The kernel implements a closed indexed algebraic effect with three
+operations — `hyp_reduce`, `bind_hyp`, `eliminator_frame` — invoked
+through a single dispatcher, `param_apply`. The dispatcher routes by
+structural signature on hash-consed trees, so dispatch is O(1) via
+tree-id comparison. Types, validators, recognizers, and the MetaShape
+convention all live in the library — not the kernel. Cubical operations sit naturally in each type's
 `functor` metadata field. The metacircular discipline holds: the type
 system is defined in disp source as library code; the host (TypeScript
 runtime in `src/tree.ts`) only optimizes.
@@ -97,38 +98,39 @@ and revisable:
     align: left,
     inset: 6pt,
     [*Section*], [*Covers*],
-    [§2 Substrate], [Tree calculus, apply, hash-cons identity],
-    [§3 The Result monad], [`Result E A`, `CheckerError` variants, `CheckerResult`, Kleisli composition, bind variants],
+    [§2 Substrate], [Tree calculus, apply, hash-cons identity, glossary of ambient types],
+    [§3 The `CheckerResult` monad], [`Result E A`, `CheckerError` variants, Kleisli composition, the *verdict-vs-error principle*],
     [§4 The parametric walker and `Tree_p`], [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
-    [§5 The closed indexed effect], [Algebraic-effects framing for the kernel],
-    [§6 The four primitives], [Operational semantics of each kernel handler],
-    [§7 Stuck forms and neutrals], [How hypotheses propagate; H-rule's role; why it matters],
-    [§8 Boundary operations], [`param_lift`, `param_apply`, `typecheck`],
-    [§8 Checked values], [`checked`, `typed_lambda`, `validate`],
+    [§5 The closed indexed effect], [Algebraic-effects framing: Σ of three operations + one dispatcher],
+    [§6 Stuck forms and neutrals], [The three kinds of stuck forms, the H-rule, cascading-failure story],
+    [§7 The kernel primitives], [Operational semantics of `hyp_reduce`, `bind_hyp`, `eliminator_frame`, `param_apply`],
+    [§8 Boundary operations and checked values], [`param_lift`, `typecheck`, `checked`, `typed_lambda`, `validate`],
     [§9 Elaboration and tests], [Syntactic transformation; tests as first-class; `: T` as test sugar],
     [§10 Strip and erasure], [`strip` as a tree function; PCC story],
-    [§11 Types and validators], [Types-as-wait-forms; validators-as-values],
-    [§12 Library types], [Each library type under the framework],
+    [§11 Types and validators], [Types-as-wait-forms; MetaShape; validators-as-values],
+    [§12 Library types], [Each library type under the framework, including `Type` itself],
     [§13 Cubical extensions], [`I`, `Path`, `comp`, `Glue`, `ua`],
     [§14 Soundness via tests], [Three categories of runnable assertions; foundational conjecture stays open],
     [§15 Future effects], [Multi-effect disp via Koka-style rows],
     [§16 Disp-specific], [What disp contributes beyond standard machinery],
     [§17 Related work], [Literature context],
-    [§18 References], [Citations],
+    [Appendix A], [Open questions and conjectures],
+    [Appendix B], [Standard test catalog],
+    [References], [Citations],
   ),
   caption: [Section map.],
 )
 
 Read §1–§7 in order for the framework. §8–§12 build the type system on
-top. §13 covers cubical. §14 is the formal payoff. §15–§17 are
-forward-looking and contextual.
+top. §13 covers cubical. §14 is the formal payoff. §15–§16 are
+forward-looking; §17 places the design in the literature.
 
 == Prerequisites
 
 Familiarity with dependent type theory and basic category theory helps
 but is not required. The algebraic-effects framing in §5 is the most
 mathematically dense; readers can skim it and rely on the operational
-semantics in §6 if preferred.
+semantics in §7 if preferred.
 
 = Substrate: tree calculus <sec:substrate>
 
@@ -190,8 +192,9 @@ exploits this.
 
   `apply` is evaluation, not arrow composition, so the substrate carries
   no inherited categorical structure (no canonical identity-with-respect-to-
-  composition, no associative ∘). Each `TypeFormer` (§sec:typeformer)
-  constructs its own functorial/morphism structure on its typed subset.
+  composition, no associative ∘). Each library type (§11) constructs its
+  own functorial/morphism structure on its typed subset via its
+  metadata's `functor` field.
 ]
 
 == Pairs and projections
@@ -228,6 +231,34 @@ Performance-critical operations (`tree_eq`, the dispatcher, the
 parametric walker) have native fast-paths that produce bit-identical
 results to the in-language reference implementations. The in-language
 reference is the spec; the host is the optimization.
+
+== Ambient types and notation <sec:glossary>
+
+The spec uses several ambient names that are conventional library
+constructions over the substrate, not new primitives. Listed here once
+to avoid re-introducing them inline:
+
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Name*], [*Meaning*],
+    [`Tree`],         [Any tree in the substrate (§2.1).],
+    [`Tree_p`],       [Trees on which the parametric walker is closed under `Ok` (§4).],
+    [`Bool`],         [`TT` / `FF` Scott encoding (`lib/prelude.disp`); see §12.],
+    [`List X`],       [Standard cons/nil list of `X`-trees; iterated `pair`s.],
+    [`Optional X`],   [`Some x` / `None`; sentinel-tagged.],
+    [`Span`],         [Source-span record (file, start, end) attached to error variants for diagnostics; opaque tree at the substrate level.],
+    [`Symbol`],       [A fixed tree value identifying a handler / constant — distinct from any user-constructed tree.],
+    [`Functor`],      [Synonym for `Tree_p`; conventionally a morphism-action function consumed by `transp` (§13). Sentinel `trivial_functor` = "identity / no transport rule."],
+    [`Applicable`],   [`Type -> Tree_p -> Action`. The codomain_fn role: given a stored type and an applied argument, decide what `hyp_reduce` does next.],
+    [`Action`],       [`Extend Type | Return Tree_p | Invalid`. The protocol `hyp_reduce` consumes from a type's codomain_fn (§7).],
+    [`Path`],         [`Pi I` alias from §13; appears in `behavioral_specs`.],
+  ),
+  caption: [Glossary of ambient names used in signatures.],
+)
 
 = The `CheckerResult` monad <sec:result-monad>
 
@@ -292,7 +323,8 @@ Each variant maps to a distinct kernel failure path:
        a value where TT was contractually required],
     [`Malformed`],
       [any handler, when its meta doesn't fit the expected shape
-       (currently silent — see §5 future-work)],
+       (currently silent in some paths — see §15 for the planned
+       diagnostic story)],
   ),
   caption: [`CheckerError` variants and their kernel-handler origins.],
 )
@@ -464,15 +496,18 @@ inhabitant." Here, every recognizer is required to *be* a recognizer
 lifting of `FF → Err` happens only where it is contractually
 justified (`checked` and similar typed boundaries).
 
-#openq[
-  The eliminator handler currently uses an `Err`-fallback pattern
-  (`catch r (λ_. Ok wait_form)`) to stage partial application —
-  treating "not enough args yet" as an error to recover from. This
-  is misusing `Err` as control flow: partial application isn't a
-  failure, it's a different success state. Refactor candidate
-  (codebase work): redesign the eliminator's partial-app staging so
-  it returns `Ok (wait_for_more)` directly, with no `Err`
-  round-trip. See §6.3 and §15.
+We elevate this split to a *named design principle*, referenced
+elsewhere in the spec:
+
+#note[
+  *The verdict-vs-error principle.* `Ok TT` / `Ok FF` are *verdicts*
+  — legitimate data answers to "is `v` an inhabitant of `T`?". `Err _`
+  is reserved for *soundness-level breakage* — parametricity violation,
+  escape, malformed meta, broken-contract `TypeMismatch`. Recognizer
+  bodies must never fold the latter into the former. Contract
+  boundaries (and only contract boundaries) lift verdict-`FF` into
+  `Err TypeMismatch` because at those sites the call was promised
+  to fit.
 ]
 
 == Why a monad
@@ -609,21 +644,25 @@ when reducing `apply` chains.
 
 Disp's kernel is best described as a *closed indexed algebraic effect*
 over the `CheckerResult` monad. This section makes the framing precise.
-Readers preferring operational explanations can skip to §6.
+Readers preferring operational explanations can skip to §7.
 
-== The signature
+== The signature and the dispatcher
 
-Let Σ be the signature of operation symbols
+The kernel surface has two distinct roles. The *signature* Σ lists
+the operation symbols a Σ-algebra interprets; the *dispatcher*
+`param_apply` is the algebra interpreter — it routes incoming
+applications to either a privileged handler or the parametric walker.
 
 ```
-Σ = { hyp_reduce, eliminator_frame, bind_hyp, param_apply }
+Σ = { hyp_reduce, bind_hyp, eliminator_frame }
+dispatcher = param_apply
 ```
 
-Each operation is a *curried function* taking its structured meta
+Each operation in Σ is a *curried function* taking its structured meta
 record first, then an argument from `Tree_p`, and producing a result
-in the `CheckerResult` monad. The meta record is what gets baked
-into a wait-form (`wait kernel.op meta`, see §5.4); the second
-application supplies the argument and triggers dispatch.
+in the `CheckerResult` monad. The meta record is what gets baked into
+a wait-form (`wait kernel.op meta`, see §5.4); the second application
+supplies the argument and triggers dispatch via `param_apply`.
 
 #figure(
   table(
@@ -631,19 +670,19 @@ application supplies the argument and triggers dispatch.
     stroke: 0.4pt + gray,
     align: left,
     inset: 6pt,
-    [*Operation*], [*Type*],
-    [`hyp_reduce`],
+    [*Symbol*], [*Type*],
+    [`hyp_reduce` (Σ-op)],
       [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`],
-    [`eliminator_frame`],
-      [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`],
-    [`bind_hyp`],
+    [`bind_hyp` (Σ-op)],
       [`{domain : Type, body : domain -> R} -> Tree_p -> CheckerResult(Tree_p)`],
-    [`param_apply`],
-      [`Tree_p -> Tree_p -> CheckerResult(Tree_p)` (no meta)],
+    [`eliminator_frame` (Σ-op)],
+      [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`],
+    [`param_apply` (dispatcher)],
+      [`Tree_p -> Tree_p -> CheckerResult(Tree_p)` (no meta — substrate-apply with a privilege check)],
   ),
-  caption: [Per-operation types. All but `param_apply` take a meta
-    record. Type variables: `A` = type, `P` = closed params, `R` =
-    result type, `Motive`/`Cases` = dispatcher-specific.],
+  caption: [The kernel surface: three operations plus the dispatcher.
+    Type variables: `A` = type, `R` = result type, `Motive` / `Cases`
+    = dispatcher-specific.],
 )
 
 #note[
@@ -674,14 +713,18 @@ application supplies the argument and triggers dispatch.
 A *Σ-algebra* A over `T` assigns to each operation symbol `op ∈ Σ` a Kleisli
 arrow `⟦op⟧^A` of the appropriate arity.
 
-Disp ships exactly one Σ-algebra: the *kernel*.
+Disp ships exactly one Σ-algebra: the *kernel*. The record below
+groups the three Σ-operation handlers and the dispatcher under one
+name — the dispatcher's signature is also registered in `kernel_sigs`
+(see §7's `param_apply` entry for the derivation) so it can recognize
+its own re-entries.
 
 ```disp
 kernel := rec {
   hyp_reduce       := q_hyp_reduce_fn;
-  eliminator_frame := q_eliminator_frame_fn;
   bind_hyp         := q_bind_hyp_fn;
-  param_apply      := q_param_apply_fn
+  eliminator_frame := q_eliminator_frame_fn;
+  param_apply      := q_param_apply_fn       // dispatcher, not Σ-op
 }
 ```
 
@@ -726,8 +769,8 @@ itself.)
 *Meta accessibility.* `pair_snd (wait k m)` is a tree structurally
 containing `m`, recoverable by the handler. Library types use this
 to inspect metadata without firing the handler — e.g. extracting a
-`TypeFormer` record from a wait-form's payload before applying it
-to anything.
+type's MetaShape-conforming meta record from a wait-form's payload
+before applying it to anything.
 
 With these two properties in place, the dispatcher is a single
 privilege check:
@@ -743,8 +786,9 @@ granted, the wait-form's bracket-abstracted reduction
 (`wait k m x` → `k m x`) invokes the embedded handler automatically
 — no mapping table required. The dispatcher's only choice is between
 two execution modes: raw apply for trusted reductions, walker apply
-for everything else. See §6.5 for the in-language reference and how
-`kernel_sigs` is derived from the kernel record itself.
+for everything else. See §7's `param_apply` entry for the in-language
+reference and how `kernel_sigs` is derived from the kernel record
+itself.
 
 === Why wait-forms, not plain partial application
 
@@ -757,7 +801,8 @@ partial application does not:
   `checker_sig(k) = pair_fst(wait k t)` is hash-cons-stable: every
   wait-form sharing the same operation produces the same pair_fst
   regardless of metadata. The dispatcher decides "is this a trusted
-  kernel op?" via a single id-comparison membership check (§6.5).
+  kernel op?" via a single id-comparison membership check (§7,
+  `param_apply`).
   Routing to the specific handler isn't needed — the wait-form
   reduces directly to its embedded handler under raw apply.
   A directly partially-applied function would lack a stable
@@ -831,22 +876,173 @@ exception monad*.
   "open" yields user-installable effects, the natural extension.
 ]
 
-= The four kernel primitives <sec:primitives>
+= Stuck forms and neutrals <sec:stuck-forms>
 
-This section gives operational semantics for each kernel primitive.
-Each subsection covers: signature, semantics in disp source (or
-pseudocode), soundness obligation, and composition properties.
+Before defining each kernel primitive's operational semantics, we
+introduce the *stuck forms* the kernel exists to construct and
+manipulate. The Σ-operations of §5 each play one role in this story —
+they're the only constructors of stuck forms, the only consumers of
+them, and the only sources of the H-rule short-circuit they need to
+travel safely through library code.
+
+== What are stuck forms?
+
+A *stuck form* is a tree of a specific kernel-pinned shape
+representing "a computation whose value is unknown until later." Disp
+has three kinds, each from a different Σ-operation:
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Kind*], [*Constructor*], [*Represents*],
+    [Hypothesis],
+      [`bind_hyp` (mints fresh)],
+      ["An unknown value of type T."],
+    [Spine-extended neutral],
+      [`hyp_reduce` (extends on application)],
+      ["An unknown value, after being applied to known args."],
+    [Stuck elimination],
+      [`eliminator_frame` (mints on neutral target)],
+      ["Eliminating an unknown value with known cases."],
+  ),
+  caption: [The three kinds of stuck forms.],
+)
+
+All three are *kernel-rooted*: their `pair_fst` is a pinned kernel
+signature (`hyp_reduce`'s for hypotheses and spine extensions;
+`eliminator_frame`'s for stuck eliminations). The walker (§4)
+rejects user-side construction of such trees via its stem-forge
+rule. Only the kernel can mint them, via the three privileged
+Σ-operations.
+
+== How stuck forms propagate
+
+Stuck forms thread through computation; subsequent operations on
+them extend the stuck-ness rather than reducing to concrete values.
+
+*Application to a stuck form*: `apply(hyp_X, v)` routes through
+`hyp_reduce`. The handler consults `X`'s stored type's `codomain_fn`
+to decide what type the result should have, then extends the spine
+with the new argument. The result is a *bigger* stuck form
+representing "hyp_X applied to v."
+
+For Pi-typed hyp, codomain_fn returns `Extend B(v)`: result is a
+neutral of type B(v). For Type-typed hyp, codomain_fn returns
+`Extend CheckerResultBool`: result is a stuck CheckerResult. For
+non-applicable types (Bool, Nat), codomain_fn returns `Invalid` and
+hyp_reduce produces an `invalid_result` form.
+
+*Elimination of a stuck form*: `eliminator_frame_form { dispatcher,
+motive, cases } target` checks if `target` is a neutral. If yes,
+mints a `StuckElim` form representing "the dispatch that would have
+happened if target were concrete." If no, runs the dispatcher
+normally.
+
+*Triage on a stuck form*: walker-rejected (TriageReflect, §4.2).
+User code that tries to inspect a stuck form's structure via raw
+triage will be caught by the walker. Library helpers (`safe_*`)
+that route through `eliminator_frame` give well-defined
+"stuck Bool" / "stuck Tree" / etc. results instead.
+
+*Hash-cons equality with stuck forms*: works (`tree_eq` is just
+pointer comparison). Two stuck forms constructed via the same
+operation with the same metadata hash-cons to the same tree id, so
+`tree_eq` returns TT for them. Different operations or different
+metadata → different tree ids → FF.
+
+== The H-rule and stuck forms
+
+When a type-recognizer is applied to a hypothesis, naive recognition
+fails: the hypothesis isn't structurally a canonical inhabitant of
+the type. Without intervention, recognizers reject their own
+hypothesis values, and Pi-checks of polymorphic functions cascade-fail.
+
+The *H-rule* solves this. When applying `T v` and `v` is a kernel-
+minted neutral whose stored type equals `T`, return `Ok TT` directly
+(without running T's structural check). This recognizes hypotheses as
+inhabitants of their own declared types.
+
+Per §12 `make_recognizer`, the H-rule is provided uniformly by a
+library wrapper that every type's recognizer should be built through.
+Per-type recognizer bodies see only concrete `v` values; the wrapper
+intercepts hypothesis cases.
+
+Without `make_recognizer`'s H-rule, polymorphism breaks. With it,
+polymorphic Pi-types work: `Pi Type ({A} -> Pi A ({_} -> A))` (the
+polymorphic identity) inhabits successfully because A-hypotheses
+applied to it produce A-hypotheses, which the codomain's recognizer
+accepts via H-rule.
+
+== When stuck forms cause cascading failure
+
+A recognizer body that doesn't short-circuit on hypothesis arguments
+(via H-rule) propagates stuck-ness through its operations:
+
+```
+match (safe_is_fork hyp) { TT => ...; FF => ... }
+  -- safe_is_fork hyp → StuckElim form (stuck Bool)
+  -- match on stuck Bool → stuck application
+  -- subsequent operations → bigger stuck term
+  -- recognizer's overall result → Ok stuck_term (not Ok TT)
+```
+
+The test framework asserts `Ok TT`. A stuck CheckerResult doesn't
+equal `Ok TT`. The test fails.
+
+This is why `make_recognizer`'s H-rule is mandatory for any
+recognizer that might be applied to a hypothesis — which is
+*every* recognizer in practice, since `bind_hyp` can create
+hypotheses of any type.
+
+== Stuck forms in tests
+
+A test `test typecheck T v = TT` requires the computation to reduce
+to literal `TT`. Stuck forms (which represent unresolved computation)
+don't reduce to TT — they're not TT, they're symbolic terms
+representing "what TT would be once we know the unknowns."
+
+For tests over hypothesis-laden computations (like strict validation
+of Pi-typed recognizers via Pi's body-check), the *H-rule short-
+circuits* before stuck forms can propagate. With H-rule, the body
+returns a concrete `Ok TT` or `Ok FF` via the tree_eq check. Without
+it, the body returns stuck and the test fails.
+
+The `make_recognizer` discipline is therefore load-bearing for
+strict validation: without it, no recognizer passes its strict
+validation tests, because the body-check propagates stuck forms.
+
+== Stuck forms after strip
+
+The `strip` pass (§10) removes `checked` wait-forms from a validated
+tree. It does NOT remove kernel-rooted stuck forms — those represent
+genuine unknown values, not type-checking artifacts. After strip,
+validated programs that compute over hypothesis-typed values (e.g.,
+polymorphic library functions instantiated lazily) still contain
+stuck forms in their reduction paths until the actual values are
+supplied at runtime.
+
+This is the proof-carrying-code pattern (§17 Necula 1997) for
+disp's setting: certificates assert "the stuck-form propagation is
+sound by construction"; strip elides the certificate but leaves the
+stuck-form machinery intact.
+
+= The kernel primitives <sec:primitives>
+
+This section gives operational semantics for the three Σ-operations
+of §5 plus the dispatcher `param_apply`. Each subsection covers:
+signature, role (which stuck form it constructs or extends, per §6),
+disp source, and soundness obligations.
 
 The kernel surface is deliberately small: only operations that
-require privileged construction (minting kernel-rooted forms the
-walker would otherwise reject) live here. Type recognition, typed
+require privileged construction — minting kernel-rooted stuck forms
+the walker would otherwise reject — live here. Type recognition, typed
 function application, and most type-system machinery live in the
-library — see §11 for the framing.
-
-The four primitives are: `hyp_reduce`, `bind_hyp`, `eliminator_frame`,
-`param_apply`. (`checked` was previously kernel-resident; its handler
-body is walker-safe, so it has been relocated to the library — see
-§12 for the library `checked_apply`.)
+library (see §11). (`checked` was previously kernel-resident; its
+handler body is walker-safe, so it has been relocated to the library —
+see §12 for the library `checked_apply`.)
 
 == `hyp_reduce`
 
@@ -1046,158 +1242,14 @@ based on the compiled tree id and runs a TypeScript implementation of
 the same logic. The in-language version is the spec; the native is
 the optimization, producing bit-identical results.
 
-= Stuck forms and neutrals <sec:stuck-forms>
+= Boundary operations and checked values <sec:boundary>
 
-A common thread runs through the four kernel primitives:
-each constructs, extends, or eliminates *stuck forms* — kernel-rooted
-trees representing computations that can't proceed because some
-value is unknown. This section makes the stuck-form story explicit.
-
-== What are stuck forms?
-
-A *stuck form* is a tree of a specific kernel-pinned shape
-representing "a computation whose value is unknown until later." Disp
-has three kinds, each from a different kernel primitive:
-
-#figure(
-  table(
-    columns: 3,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*Kind*], [*Constructor*], [*Represents*],
-    [Hypothesis],
-      [`bind_hyp` (mints fresh)],
-      ["An unknown value of type T."],
-    [Spine-extended neutral],
-      [`hyp_reduce` (extends on application)],
-      ["An unknown value, after being applied to known args."],
-    [Stuck elimination],
-      [`eliminator_frame` (mints on neutral target)],
-      ["Eliminating an unknown value with known cases."],
-  ),
-  caption: [The three kinds of stuck forms.],
-)
-
-All three are *kernel-rooted*: their `pair_fst` is a pinned kernel
-signature (`hyp_reduce`'s for hypotheses and spine extensions;
-`eliminator_frame`'s for stuck eliminations). The walker (§4)
-rejects user-side construction of such trees via its stem-forge
-rule. Only the kernel can mint them, via the four privileged
-operations.
-
-== How stuck forms propagate
-
-Stuck forms thread through computation; subsequent operations on
-them extend the stuck-ness rather than reducing to concrete values.
-
-*Application to a stuck form*: `apply(hyp_X, v)` routes through
-`hyp_reduce`. The handler consults `X`'s stored type's `codomain_fn`
-to decide what type the result should have, then extends the spine
-with the new argument. The result is a *bigger* stuck form
-representing "hyp_X applied to v."
-
-For Pi-typed hyp, codomain_fn returns `Extend B(v)`: result is a
-neutral of type B(v). For Type-typed hyp, codomain_fn returns
-`Extend CheckerResultBool`: result is a stuck CheckerResult. For
-non-applicable types (Bool, Nat), codomain_fn returns `Invalid` and
-hyp_reduce produces an `invalid_result` form.
-
-*Elimination of a stuck form*: `eliminator_frame_form { dispatcher,
-motive, cases } target` checks if `target` is a neutral. If yes,
-mints a `StuckElim` form representing "the dispatch that would have
-happened if target were concrete." If no, runs the dispatcher
-normally.
-
-*Triage on a stuck form*: walker-rejected (TriageReflect, §4.2).
-User code that tries to inspect a stuck form's structure via raw
-triage will be caught by the walker. Library helpers (`safe_*`)
-that route through `eliminator_frame` give well-defined
-"stuck Bool" / "stuck Tree" / etc. results instead.
-
-*Hash-cons equality with stuck forms*: works (`tree_eq` is just
-pointer comparison). Two stuck forms constructed via the same
-operation with the same metadata hash-cons to the same tree id, so
-`tree_eq` returns TT for them. Different operations or different
-metadata → different tree ids → FF.
-
-== The H-rule and stuck forms
-
-When a type-recognizer is applied to a hypothesis, naive recognition
-fails: the hypothesis isn't structurally a canonical inhabitant of
-the type. Without intervention, recognizers reject their own
-hypothesis values, and Pi-checks of polymorphic functions cascade-fail.
-
-The *H-rule* solves this. When applying `T v` and `v` is a kernel-
-minted neutral whose stored type equals `T`, return `Ok TT` directly
-(without running T's structural check). This recognizes hypotheses as
-inhabitants of their own declared types.
-
-Per §12 `make_recognizer`, the H-rule is provided uniformly by a
-library wrapper that every type's recognizer should be built through.
-Per-type recognizer bodies see only concrete `v` values; the wrapper
-intercepts hypothesis cases.
-
-Without `make_recognizer`'s H-rule, polymorphism breaks. With it,
-polymorphic Pi-types work: `Pi Type ({A} -> Pi A ({_} -> A))` (the
-polymorphic identity) inhabits successfully because A-hypotheses
-applied to it produce A-hypotheses, which the codomain's recognizer
-accepts via H-rule.
-
-== When stuck forms cause cascading failure
-
-A recognizer body that doesn't short-circuit on hypothesis arguments
-(via H-rule) propagates stuck-ness through its operations:
-
-```
-match (safe_is_fork hyp) { TT => ...; FF => ... }
-  -- safe_is_fork hyp → StuckElim form (stuck Bool)
-  -- match on stuck Bool → stuck application
-  -- subsequent operations → bigger stuck term
-  -- recognizer's overall result → Ok stuck_term (not Ok TT)
-```
-
-The test framework asserts `Ok TT`. A stuck CheckerResult doesn't
-equal `Ok TT`. The test fails.
-
-This is why `make_recognizer`'s H-rule is mandatory for any
-recognizer that might be applied to a hypothesis — which is
-*every* recognizer in practice, since `bind_hyp` can create
-hypotheses of any type.
-
-== Stuck forms in tests
-
-A test `test typecheck T v = TT` requires the computation to reduce
-to literal `TT`. Stuck forms (which represent unresolved computation)
-don't reduce to TT — they're not TT, they're symbolic terms
-representing "what TT would be once we know the unknowns."
-
-For tests over hypothesis-laden computations (like strict validation
-of Pi-typed recognizers via Pi's body-check), the *H-rule short-
-circuits* before stuck forms can propagate. With H-rule, the body
-returns a concrete `Ok TT` or `Ok FF` via the tree_eq check. Without
-it, the body returns stuck and the test fails.
-
-The `make_recognizer` discipline is therefore load-bearing for
-strict validation: without it, no recognizer passes its strict
-validation tests, because the body-check propagates stuck forms.
-
-== Stuck forms after strip
-
-The `strip` pass (§10) removes `checked` wait-forms from a validated
-tree. It does NOT remove kernel-rooted stuck forms — those represent
-genuine unknown values, not type-checking artifacts. After strip,
-validated programs that compute over hypothesis-typed values (e.g.,
-polymorphic library functions instantiated lazily) still contain
-stuck forms in their reduction paths until the actual values are
-supplied at runtime.
-
-This is the proof-carrying-code pattern (§17 Necula 1997) for
-disp's setting: certificates assert "the stuck-form propagation is
-sound by construction"; strip elides the certificate but leaves the
-stuck-form machinery intact.
-
-= Boundary operations <sec:boundary>
+The boundary between untrusted user trees and the Kleisli world of
+`CheckerResult` is two operations wide: `param_lift` sanitizes
+incoming values, and `checked` wraps function values so applications
+go through input-checking. `typecheck` and `validate` build on these
+to turn the boundary into the user-facing query and certificate-
+issuance APIs respectively. This section covers all four.
 
 == `param_lift`
 
@@ -1280,13 +1332,13 @@ Contrast: a *query* like `typecheck Bool zero` returns `Ok FF`, not
 an error — `zero` simply isn't a Bool, which is a legitimate answer
 to a query. No `Err` is involved.
 
-= Checked values <sec:checked-values>
-
-== Manifest contracts
+== Checked values: manifest contracts <sec:checked-values>
 
 Every typed function value in disp is *contract-wrapped*: it carries
 its declared domain type, and applying it triggers a runtime input-
-check. The wrapping is via the `checked` primitive (§6.6).
+check. The wrapping is via the library `checked` construction, whose
+full definition lives in §12; this subsection covers how checked
+values participate in the boundary.
 
 This is the manifest contracts discipline from the Findler-Felleisen
 contract semantics, refined by Greenberg-Pierce-Weirich to identify
@@ -1294,8 +1346,8 @@ contracts with refinement types. See §17 for full citations.
 
 == The three library constructors
 
-All three are library functions over the single kernel primitive
-`checked`:
+`checked`, `typed_lambda`, and `validate` are library functions
+built on the wait-form encoding of §5.4:
 
 #figure(
   table(
@@ -1672,18 +1724,32 @@ A type's metadata follows a conventional record layout that
 downstream library code projects from. The standard fields:
 
 ```disp
+// Helper synonyms used in MetaShape:
+//
+//   Functor    := Tree_p                 // a morphism-action function;
+//                                        //   sentinel `trivial_functor` means
+//                                        //   "identity / no transport rule"
+//   Applicable := Type -> Tree_p -> Action
+//                                        // codomain_fn for function-shaped
+//                                        //   types; sentinel `none` means
+//                                        //   non-applicable
+//   Action     := Extend Type | Return Tree_p | Invalid
+//                                        // the protocol consumed by hyp_reduce
+
 MetaShape := Refinement Record [
-  ("recognizer_params", Tree),        // closed args to the recognizer
-  ("functor", Tree),                  // morphism action for transport (§13)
-  ("applicable", Optional Applicable), // optional codomain_fn for function-shaped types
-  ("behavioral_specs", Optional (List Path))  // optional Path-typed behavioral proofs
+  ("recognizer_params", Tree),                  // closed args to the recognizer
+  ("functor", Functor),                         // morphism action for transport (§13)
+  ("applicable", Optional Applicable),          // codomain_fn for function-shaped types
+  ("behavioral_specs", Optional (List Path))    // optional Path-typed proofs
 ]
 ```
 
 `MetaShape` is the library refinement type capturing this convention.
-The structural shape (a Record with these fields) is enforced;
-deeper validation of each field's contents is the validator's
-responsibility.
+The structural shape (a Record with these fields) is enforced; deeper
+validation of each field's contents is the validator's responsibility.
+At the bootstrap layer, where library record types don't yet exist,
+each field is just a tree subterm of the meta payload — the synonyms
+above name conventions, not enforced contracts.
 
 The convention is *extensible*. Adding a new conventional field
 (e.g., for a new modality or effect system) extends MetaShape's
@@ -1695,7 +1761,7 @@ its absence explicitly.
 constructions detailed in §12. Their behavior in turn relies on
 Sigma's projection codomain_fn, also §12. The dependency cycle
 between Type / MetaShape / Pi / Sigma is broken by deferring tests
-— see §11.4.)
+— see §11, validators-as-library-entities.)
 
 == Validators as library entities
 
@@ -1740,69 +1806,6 @@ Tests assert which validators accept which types. The "type system"
 is the union of all validators and tests; users compose them as
 needed.
 
-== Constructing `Type`
-
-Two pieces, both pure tree construction:
-
-*1. The recognizer.* A library function built via the standard
-`make_recognizer` wrapper (§12.X) so H-rule logic is uniform:
-
-```disp
-let type_recognizer = make_recognizer ({meta, v} ->
-  // Concrete body — make_recognizer's wrapper has already handled
-  // the hypothesis case via the H-rule, so v is concrete here.
-  bind (safe_is_fork v) ({is_pair} ->
-    match is_pair {
-      FF => Ok FF
-      TT => bind (safe_pair_fst v) ({rec_field} ->
-            // Verify the recognizer field was built via make_recognizer
-            // (catches missing H-rule discipline at type-construction).
-            bind (safe_has_sig recognizer_wrap_fn rec_field) ({is_wrapped} ->
-            match is_wrapped {
-              FF => Ok FF
-              TT => bind (safe_pair_snd v) ({meta_field} ->
-                    Ok (has_metashape_layout meta_field))
-            }))
-    }))
-```
-
-`has_metashape_layout` is a structural check on the record's field
-presence. The `has_sig recognizer_wrap_fn` check enforces the
-`make_recognizer` discipline: types whose recognizers bypass
-`make_recognizer` are rejected.
-
-*2. Type's metadata.* A record literal following the MetaShape
-convention:
-
-```disp
-let type_self_meta = {
-  recognizer_params := unit_witness,     // Type takes no params
-  functor := trivial_functor,
-  applicable := none,
-  behavioral_specs := none
-}
-```
-
-*3. Type itself.*
-
-```disp
-let Type = wait type_recognizer type_self_meta
-```
-
-Three definitions. No tests fired at construction; Type is just a
-value.
-
-Validation is a separate concern, expressed as tests:
-
-```disp
-test typecheck Type Type         // Type is a type (lax)
-test typecheck StrictType Type   // Type also passes deep validation
-```
-
-The first runs `type_recognizer type_self_meta Type`. Type's structure
-(wait-form with MetaShape-conforming metadata) satisfies the
-structural check, returns `Ok TT`. The test passes by construction.
-
 == `Type : Type`
 
 The test `test typecheck Type Type` is expected to pass under all
@@ -1834,9 +1837,9 @@ To inhabit ⊥, the body (under a fresh Type-hypothesis `hyp_A`) must
 produce a value whose check against `hyp_A` reduces to `Ok TT`.
 But `hyp_A` is a kernel-minted neutral with stored type Type, and
 applying `hyp_A` to anything routes through `hyp_reduce`. Type's
-codomain_fn (§11.X) produces a *stuck* CheckerResult — not `Ok TT`,
-not even a Bool value. The body-check fails regardless of what the
-body returns.
+codomain_fn (§12, Type entry) produces a *stuck* CheckerResult —
+not `Ok TT`, not even a Bool value. The body-check fails regardless
+of what the body returns.
 
 The three classic candidate bodies all fail this way:
   - *Introspect A*: rejected directly by walker TriageReflect (§4.2)
@@ -2052,7 +2055,7 @@ let RecognizerShape = Pi MetaShape ({_} ->
 A function from MetaShape to Tree to CheckerResultBool. `StrictType`'s
 validator typechecks each type's recognizer against this shape, which
 requires the recognizer to be a `checked`-wrapped function (per Pi's
-recognition rules, §12.X for Pi).
+recognition rules — see the Pi entry later in §12).
 
 Tests:
 
@@ -2167,8 +2170,8 @@ keeping per-type recognizer bodies clean.
 
 The `safe_*` helpers are also used by library functions that
 genuinely need to inspect tree structure on potentially-hypothesis
-arguments — for example, `is_applicable_type` (§6.6) and
-`is_neutral`. These are kernel-mediated checks that work uniformly.
+arguments — for example, `is_applicable_type` (defined later in §12)
+and `is_neutral`. These are kernel-mediated checks that work uniformly.
 
 == `make_recognizer`: the universal H-rule wrapper
 
@@ -2176,7 +2179,7 @@ Every type's recognizer needs the *H-rule*: when applied to a
 hypothesis whose stored type equals the type being checked, return
 `Ok TT` directly. Without this, recognizers reject their own
 hypothesis values, and Pi-checks of polymorphic functions cascade-fail
-(see §6.X "Stuck forms and neutrals" for the full story).
+(see §6 "Stuck forms and neutrals" for the full story).
 
 The H-rule is universal — every recognizer needs the same wrapping
 logic. The library provides `make_recognizer` so per-type authors
@@ -2360,52 +2363,159 @@ The recognizer uses `safe_*` helpers (§12.6) for structural inspection,
 so it works on hypothesis arguments during strict validation of types
 that quantify over functions.
 
-== `Eq`, `Ord`, `Unit`, `String`
+== `Unit`
 
-Each defines a recognizer following the same pattern: closed
-structural check on canonical inhabitants, plus an H-rule via
-`safe_is_neutral`. Their metas follow the MetaShape convention.
-Tests assert validity and basic behavioral properties.
+Single-inhabitant type. The recognizer accepts exactly `unit_witness`
+(which is the substrate `LEAF`, i.e. `t`).
 
 ```disp
+let unit_recognizer = make_recognizer ({_, v} ->
+  Ok (tree_eq v unit_witness))
+
+let unit_meta = {
+  recognizer_params := unit_witness,
+  functor           := trivial_functor,
+  applicable        := none,
+  behavioral_specs  := none
+}
+
 let Unit = wait unit_recognizer unit_meta
+
 test typecheck Type Unit
-test unit_recognizer unit_witness unit_witness = Ok TT
-
-let String = wait string_recognizer string_meta
-test typecheck Type String
-
-let Eq = {A, x, y} -> wait eq_recognizer (eq_meta_for A x y)
-test typecheck Type Eq
-test typecheck (Eq Nat zero zero) refl
-
-// Ord follows the same pattern.
+test unit_recognizer unit_meta unit_witness = Ok TT
+test unit_recognizer unit_meta TT            = Ok FF
 ```
 
-(Full definitions live in `lib/types/`; the framework here is what
-the spec mandates.)
+== `Eq`
+
+Propositional equality. `Eq A x y` is inhabited by `refl` exactly when
+`tree_eq x y = TT`. Cubical `Path` (§13) is the computational
+counterpart; `Eq` is the discrete one.
+
+```disp
+let eq_recognizer = make_recognizer ({meta, v} ->
+  let x = pair_fst (pair_snd meta)
+  let y = pair_snd (pair_snd meta)
+  // v is a refl iff v = refl AND x and y are hash-cons-equal
+  Ok (and (tree_eq v refl_canonical) (tree_eq x y)))
+
+let eq_meta_for = {A, x, y} -> {
+  recognizer_params := pair A (pair x y),
+  functor           := eq_functor,         // refl at the new endpoints (§13)
+  applicable        := none,
+  behavioral_specs  := none
+}
+
+let Eq = {A, x, y} -> wait eq_recognizer (eq_meta_for A x y)
+
+test typecheck Type Eq
+test typecheck (Eq Nat zero zero) refl
+test eq_recognizer (eq_meta_for Nat zero zero) refl = Ok TT
+test eq_recognizer (eq_meta_for Nat zero (succ zero)) refl = Ok FF
+```
+
+The cross-type-parameter check (`tree_eq x y`) is the load-bearing
+piece: refl inhabits `Eq A x x` for any `A` and any `x`, but never
+`Eq A x y` when `x ≠ y` (in hash-cons identity).
+
+== `Ord`
+
+Countable ordinals: `zero_ord`, `succ_ord o`, `omega_plus o`. Used as
+a recursion measure in proofs and well-founded induction.
+
+```disp
+let ord_recognizer = make_recognizer ({_, v} ->
+  // v is in Ord iff v is zero_ord, succ_ord o' for o' in Ord, or
+  // omega_plus o' for o' in Ord. Structural recursion bottoms out.
+  Ok (fix ({self, x} -> /* tagged-shape recursion */) v))
+
+let ord_meta = {
+  recognizer_params := unit_witness,
+  functor           := trivial_functor,    // discrete
+  applicable        := none,
+  behavioral_specs  := none
+}
+
+let Ord = wait ord_recognizer ord_meta
+
+test typecheck Type Ord
+test typecheck StrictType Ord
+test ord_recognizer ord_meta zero_ord                       = Ok TT
+test ord_recognizer ord_meta (succ_ord zero_ord)            = Ok TT
+test ord_recognizer ord_meta (omega_plus zero_ord)          = Ok TT
+test ord_recognizer ord_meta TT                              = Ok FF
+```
+
+== `String`
+
+Sequences of characters. `String` is library-defined (a list of
+character-tagged trees); shown here for completeness.
+
+```disp
+let string_recognizer = make_recognizer ({_, v} ->
+  // v is a String iff v is a list whose elements are valid char tags
+  Ok (and (is_list v) (list_all is_char_tag v)))
+
+let string_meta = {
+  recognizer_params := unit_witness,
+  functor           := trivial_functor,
+  applicable        := none,
+  behavioral_specs  := none
+}
+
+let String = wait string_recognizer string_meta
+
+test typecheck Type String
+test string_recognizer string_meta empty_string            = Ok TT
+test string_recognizer string_meta (cons (char "a") empty_string) = Ok TT
+```
+
+(Full definitions live in `lib/types/`; the spec mandates the
+recognizer / meta shape above and the tests below.)
 
 == `Type` itself
 
-`Type` is the wait-form constructed in §11.4:
+`Type` is constructed identically to every other library type — a
+wait-form pairing a recognizer with a MetaShape-conforming meta
+record. The recognizer (§12, library function `type_recognizer`)
+checks that a candidate value is a wait-form whose recognizer was
+built via `make_recognizer` and whose meta has the MetaShape layout.
+The meta carries no parameters (Type takes none), a trivial functor,
+and no applicable / behavioral_specs fields.
 
 ```disp
-Type := wait type_recognizer type_self_meta
+let type_self_meta = {
+  recognizer_params := unit_witness,     // Type takes no params
+  functor           := trivial_functor,
+  applicable        := none,
+  behavioral_specs  := none
+}
 
-test typecheck Type Type        // Type is a type (lax)
-test typecheck StrictType Type  // Type passes deep validation
+let Type = wait type_recognizer type_self_meta
+
+test typecheck Type Type         // Type is a type (lax)
+test typecheck StrictType Type   // Type also passes deep validation
 ```
 
+Three definitions. No tests fired at construction; `Type` is just a
+value. The first test runs `type_recognizer type_self_meta Type`;
+Type's structure (wait-form with MetaShape-conforming metadata)
+satisfies the structural check, returns `Ok TT`, and the test passes
+by construction.
+
 The Type:Type concern and its (conjectural) resolution are discussed
-in §11.5. The tests themselves run mechanically; their passing is an
+in §11. The tests themselves run mechanically; their passing is an
 empirical observation, while their implications for foundational
 consistency remain open.
 
 = Cubical extensions <sec:cubical>
 
-This section folds in the cubical proposal. Cubical operations live in
-the `Functor.morphism_action` field of each `TypeFormer`. No new kernel
-primitives.
+This section folds in the cubical proposal. Cubical operations live
+in each library type's `meta.functor` field (the *morphism-action*
+function, per MetaShape's §11 convention) — no new kernel primitives,
+no new type-former framework. Throughout this section, "type's functor"
+is shorthand for the `functor` field of that type's metadata record;
+"per-type morphism action" is the function stored there.
 
 == Motivation
 
@@ -2484,14 +2594,12 @@ sym    := {A, p, i} -> p (I_inv i)
 funext := {A, B, h, i, a} -> h a i
 ```
 
-== `transp` and per-type `morphism_action`
+== `transp` and per-type functor actions
 
-The `Functor.morphism_action` field of each `TypeFormer` is the
-*comp_fn* — the function that computes transport along a type-path
-for values of this type-former.
-
-`transp` is a library function that dispatches on the target type's
-`Functor.morphism_action`:
+Each library type's `meta.functor` stores the *morphism-action* — the
+function that computes transport along a type-path for values of that
+type. `transp` is a library function that retrieves and applies this
+field:
 
 ```disp
 transp := fix ({self, P, x} -> {
@@ -2500,9 +2608,9 @@ transp := fix ({self, P, x} -> {
   match (tree_eq T0 T1) {
     TT => x                                    // fast path: constant family
     FF => {
-      let action = functor_morphism_action_of T0
-      match (tree_eq action t) {
-        TT => StuckElim T1 (pair P x)          // sentinel: no transport rule
+      let action = meta_get (type_meta T0) "functor"
+      match (tree_eq action trivial_functor) {
+        TT => StuckElim T1 (pair P x)          // no non-trivial transport rule
         FF => apply action (pair self (pair P x))
       }
     }
@@ -2510,34 +2618,33 @@ transp := fix ({self, P, x} -> {
 })
 ```
 
-Per-type rules are supplied as the `functor.morphism_action` field
-of each type-former's record literal. Sketches of the per-type clauses
-(each becomes the `morphism_action` inside the `functor` field):
+Per-type morphism actions are supplied as the `functor` field of each
+type's meta record. Sketches:
 
 ```disp
 // Discrete types (Bool, Nat, False): transport is identity.
-let bool_morphism_action  = {self, P, x} -> x
-let nat_morphism_action   = {self, P, x} -> x
+let bool_functor  = {self, P, x} -> x
+let nat_functor   = {self, P, x} -> x
 
 // Pair: component-wise recursion.
-let pair_morphism_action  = {self, P, x} -> ...
+let pair_functor  = {self, P, x} -> ...
 
 // Sigma: dependent second component via a-trajectory.
-let sigma_morphism_action = {self, P, x} -> ...
+let sigma_functor = {self, P, x} -> ...
 
 // Pi: contravariant in A, covariant in B; threads a-trajectory through B.
-let pi_morphism_action    = {self, P, f} -> ...
+let pi_functor    = {self, P, f} -> ...
 
 // Eq: refl at the new endpoints.
-let eq_morphism_action    = {self, P, p} -> ...
+let eq_functor    = {self, P, p} -> ...
 ```
 
-Each is dropped into the corresponding type's `functor.morphism_action`
-field. The pattern: recurse component-wise where possible; stuck-mint
-via `StuckElim` for non-structural cases. The full per-type rules
-follow the standard CCHM treatment (Cohen-Coquand-Huber-Mörtberg
-2015); only the dispatch mechanism (signature on the TypeFormer's
-functor field) is disp-specific.
+Each value above is dropped directly into the corresponding type's
+`functor` meta field. The pattern: recurse component-wise where
+possible; stuck-mint via `StuckElim` for non-structural cases. The full
+per-type rules follow the standard CCHM treatment (Cohen-Coquand-Huber-
+Mörtberg 2015); only the dispatch mechanism (lookup on `meta.functor`
+of a hash-consed type) is disp-specific.
 
 == `Partial` and cofibrations
 
@@ -2570,22 +2677,22 @@ transport along a type-path) unify into `comp`:
 ```disp
 comp := fix ({self, P, phi, u, u0} -> {
   let T = apply P I_zero
-  let cfn = functor_morphism_action_of T
-  match (tree_eq cfn t) {
+  let action = meta_get (type_meta T) "functor"
+  match (tree_eq action trivial_functor) {
     TT => StuckElim (apply P I_one) ...      // stuck
-    FF => apply cfn ...
+    FF => apply action ...
   }
 })
 ```
 
-Each `Functor.morphism_action` for a type-former handles both the
-homogeneous and heterogeneous cases via its argument structure.
+Each per-type functor handles both the homogeneous and heterogeneous
+cases via its argument structure.
 
 == `Glue` and univalence
 
 `Glue B [phi ↦ (T, e)]` is a library type that "glues" a base type B
 with partial type information (T, e) at the face phi. Its non-trivial
-`Functor.morphism_action` implements equivalence-mediated transport.
+`functor` field implements equivalence-mediated transport.
 
 ```disp
 let Glue = {B, T, e} -> wait glue_recognizer {
@@ -2605,9 +2712,9 @@ ua := {A, B, e} -> {i} ->
   Glue B (make_face_system i I_one A e)
 ```
 
-Transport along `ua e` reduces via `Glue.functor.morphism_action`,
-which applies the equivalence `e`. This makes univalence a definable
-library theorem (not an axiom).
+Transport along `ua e` reduces via `Glue`'s `meta.functor`, which
+applies the equivalence `e`. This makes univalence a definable library
+theorem (not an axiom).
 
 == HIT eliminator machinery
 
@@ -2624,12 +2731,12 @@ treatment.]
 == What this delivers
 
 + *Definitional iso-roundtrip* for ua-mediated equivalences.
-+ *Structural transport on type-formers* via the per-type-former rule
-  in `Functor.morphism_action`.
++ *Structural transport on type-formers* via each type's
+  `meta.functor` field.
 + *Univalence as a definable theorem* via `Glue` + `ua`.
 + *Representation independence in practice* — functions over one
   representation work on equivalent representations via transport.
-+ *No kernel growth.* The five primitives remain five.
++ *No kernel growth.* The three operations plus the dispatcher remain four total.
 
 == Limitations
 
@@ -2662,7 +2769,7 @@ operational story.
     inset: 6pt,
     [*Category*], [*What it asserts*],
     [Kernel tests],
-      [The four kernel handlers behave per their specs (§6).
+      [The four kernel handlers behave per their specs (§7).
        Test that `bind_hyp` mints a neutral, `hyp_reduce` extends
        spines, `eliminator_frame` mints StuckElim on neutrals, etc.],
     [Type-system tests],
@@ -3039,7 +3146,47 @@ Putting it together as it might appear in a paper:
   theory.
 ]
 
-= Appendix: standard test catalog <sec:test-catalog>
+= Appendix A: open questions and conjectures <sec:open-questions>
+
+Inline `Open question:` blocks throughout the spec, collected here
+for at-a-glance review. Each entry links back to where the question
+is raised in detail.
+
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Where*], [*Question*],
+    [§11 (Type:Type)],
+      [Is `typecheck Type Type = Ok TT` enough to imply foundational
+       consistency, or is a Hurkens-style encoding lurking? Argument
+       is informal; needs a parametricity theorem, an I-shortcut
+       characterization, or a semantic model. Fallback: ranked
+       universes.],
+    [§13 (HITs)],
+      [Higher inductive types are sketched; constructor-path
+       eliminators need their own follow-up document.],
+    [§14 (formal soundness)],
+      [No mechanized soundness proof exists; "empirically sound + a
+       documented conjecture about consistency" is the current
+       position.],
+    [§14 (memo-stability test)],
+      [Empirical verification needed that `wait self.handler meta`
+       inside a handler body hash-cons-equals
+       `wait kernel.handler meta` constructed externally. If they
+       don't, H-rule tree_eq comparisons misbehave.],
+  ),
+  caption: [Open questions inventory.],
+)
+
+The spec is *not* blocked on any of these — the system is operational
+without them — but each represents an honest gap worth tracking. The
+foundational ones (Type:Type, formal soundness) are the load-bearing
+items; the others are scoped.
+
+= Appendix B: standard test catalog <sec:test-catalog>
 
 The standard library ships with the tests below. Re-elaborating the
 library runs all of them. A failing test halts elaboration with the
@@ -3047,7 +3194,7 @@ failing component identified.
 
 == Kernel behavioral tests
 
-Asserting the four kernel primitives behave per §6:
+Asserting the kernel primitives behave per §7:
 
 ```disp
 test bind_hyp_mints_neutral_with_correct_stored_type
