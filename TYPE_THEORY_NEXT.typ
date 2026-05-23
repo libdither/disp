@@ -115,7 +115,7 @@ and revisable:
     [§16 Disp-specific], [What disp contributes beyond standard machinery],
     [§17 Related work], [Literature context],
     [Appendix A], [Open questions and conjectures],
-    [Appendix B], [Standard test catalog],
+    [Appendix B], [Where the tests live (pointer to inline tests)],
     [References], [Citations],
   ),
   caption: [Section map.],
@@ -259,6 +259,20 @@ to avoid re-introducing them inline:
   ),
   caption: [Glossary of ambient names used in signatures.],
 )
+
+#note[
+  *Layering convention.* Wherever a signature in this spec uses a
+  field-typed record (e.g.
+  `{stored_type : Type, spine : List Tree_p}`), the typed names refer
+  to *post-§11 ascriptions* — what the library type checker assigns
+  to the field once the relevant types are in scope. The same field
+  at the *bootstrap layer* is a tree subterm in conventional pair-
+  encoded position: `pair stored_type (pair spine ...)`. Records are
+  read positionally before library types exist and ascribed by name
+  once they do. We use the typed presentation throughout for
+  readability; the implementation walks the pair structure either
+  way.
+]
 
 = The `CheckerResult` monad <sec:result-monad>
 
@@ -453,6 +467,16 @@ is monadic recovery on the error side; `guard` is the standard
 boolean-to-Result lift. These five are the entire vocabulary —
 every higher-level error-handling pattern is a composition.
 
+== Why a monad
+
+Failures propagate uniformly via `bind`. No manual short-circuiting
+in handler code; Kleisli composition does it automatically. Tagged
+errors plus `catch` mean each layer decides what to recover from and
+what to re-raise, instead of pattern-matching on opaque `Fail`
+trees. The general/specialized split keeps the kernel's failure
+vocabulary self-documenting: `grep catch` finds every error
+suppression; `grep 'Err ('` finds every error raise.
+
 == Using `CheckerResult` in practice
 
 There are no `CheckerResult`-specific helper combinators. The
@@ -509,16 +533,6 @@ elsewhere in the spec:
   `Err TypeMismatch` because at those sites the call was promised
   to fit.
 ]
-
-== Why a monad
-
-Failures propagate uniformly via `bind`. No manual short-circuiting
-in handler code; Kleisli composition does it automatically. Tagged
-errors plus `catch` mean each layer decides what to recover from and
-what to re-raise, instead of pattern-matching on opaque `Fail`
-trees. The general/specialized split keeps the kernel's failure
-vocabulary self-documenting: `grep catch` finds every error
-suppression; `grep 'Err ('` finds every error raise.
 
 = The parametric walker and `Tree_p` <sec:tree-p>
 
@@ -1806,6 +1820,33 @@ Tests assert which validators accept which types. The "type system"
 is the union of all validators and tests; users compose them as
 needed.
 
+== `Type`, previewed
+
+The next subsection discusses `Type`'s self-consistency, but `Type`'s
+concrete construction lives in §12 alongside Bool/Nat/Pi/etc. For the
+§11.6 discussion, take `Type` as the wait-form
+
+```disp
+Type := wait type_recognizer type_self_meta
+```
+
+where `type_recognizer` is a `make_recognizer`-wrapped function (§12,
+`make_recognizer`) that accepts a candidate `v` iff:
+
++ `v` is a wait-form (`safe_is_fork v`),
++ `v`'s `pair_fst` was itself produced via `make_recognizer` (i.e.
+  carries `checker_sig recognizer_wrap_fn`), and
++ `v`'s `pair_snd` conforms to the MetaShape layout from §11.3.
+
+And `type_self_meta` is a MetaShape-conforming record with
+`recognizer_params := unit_witness`, `functor := trivial_functor`,
+`applicable := none`, `behavioral_specs := none`.
+
+The §11.6 argument depends only on this contract — that `Type` is a
+wait-form with a structural recognizer and a MetaShape-conforming
+meta. The actual recognizer body is §12's responsibility; readers
+can verify it satisfies this contract there.
+
 == `Type : Type`
 
 The test `test typecheck Type Type` is expected to pass under all
@@ -2594,59 +2635,10 @@ sym    := {A, p, i} -> p (I_inv i)
 funext := {A, B, h, i, a} -> h a i
 ```
 
-== `transp` and per-type functor actions
-
-Each library type's `meta.functor` stores the *morphism-action* — the
-function that computes transport along a type-path for values of that
-type. `transp` is a library function that retrieves and applies this
-field:
-
-```disp
-transp := fix ({self, P, x} -> {
-  let T0 = apply P I_zero
-  let T1 = apply P I_one
-  match (tree_eq T0 T1) {
-    TT => x                                    // fast path: constant family
-    FF => {
-      let action = meta_get (type_meta T0) "functor"
-      match (tree_eq action trivial_functor) {
-        TT => StuckElim T1 (pair P x)          // no non-trivial transport rule
-        FF => apply action (pair self (pair P x))
-      }
-    }
-  }
-})
-```
-
-Per-type morphism actions are supplied as the `functor` field of each
-type's meta record. Sketches:
-
-```disp
-// Discrete types (Bool, Nat, False): transport is identity.
-let bool_functor  = {self, P, x} -> x
-let nat_functor   = {self, P, x} -> x
-
-// Pair: component-wise recursion.
-let pair_functor  = {self, P, x} -> ...
-
-// Sigma: dependent second component via a-trajectory.
-let sigma_functor = {self, P, x} -> ...
-
-// Pi: contravariant in A, covariant in B; threads a-trajectory through B.
-let pi_functor    = {self, P, f} -> ...
-
-// Eq: refl at the new endpoints.
-let eq_functor    = {self, P, p} -> ...
-```
-
-Each value above is dropped directly into the corresponding type's
-`functor` meta field. The pattern: recurse component-wise where
-possible; stuck-mint via `StuckElim` for non-structural cases. The full
-per-type rules follow the standard CCHM treatment (Cohen-Coquand-Huber-
-Mörtberg 2015); only the dispatch mechanism (lookup on `meta.functor`
-of a hash-consed type) is disp-specific.
-
 == `Partial` and cofibrations
+
+We need `Partial` before introducing `comp` because `comp`'s third
+argument is a `Partial`-valued partial element.
 
 `IsOne phi : Type` is the proposition "phi reduces to I_one." `Partial
 phi A := IsOne phi -> A`. Walker-safe smart constructors for face
@@ -2663,30 +2655,98 @@ let IsOne = {i} -> wait isone_recognizer {
 test typecheck Type IsOne
 
 Partial := {phi, A} -> Pi (IsOne phi) ({_} -> A)
+
+// The empty partial element (used when phi = I_zero):
+let empty_partial = {A} -> {_proof_false} -> /* unreachable */
 ```
 
 (Full design from `CUBICAL_PROPOSAL.typ` §11 carries over; the
 recognizer enforces "phi = I_one or phi has the canonical disjunction
 shape.")
 
-== `hcomp` and the unified `comp`
+== Unified `comp`, with `transp` as sugar
 
-`hcomp` (homogeneous composition) and `transp` (heterogeneous
-transport along a type-path) unify into `comp`:
+The cubical composition operator `comp` and the special case `transp`
+share a single calling convention. Every library type's `meta.functor`
+field is a *morphism-action* function of the form:
 
-```disp
-comp := fix ({self, P, phi, u, u0} -> {
-  let T = apply P I_zero
-  let action = meta_get (type_meta T) "functor"
-  match (tree_eq action trivial_functor) {
-    TT => StuckElim (apply P I_one) ...      // stuck
-    FF => apply action ...
-  }
-})
+```
+functor : Tree_p
+//   (self  : the self-reference for fixed-point recursion)
+//   (P     : I -> Type, the type-path)
+//   (phi   : I, the cofibration)
+//   (u     : Partial phi (Pi I ({i} -> P i)))
+//   (u0    : P I_zero)
+//   -> P I_one
 ```
 
-Each per-type functor handles both the homogeneous and heterogeneous
-cases via its argument structure.
+Every per-type sketch in this section uses *exactly* this 5-tuple. Per-
+type functors that ignore the cofibration / partial-element side (the
+"pure transp" case: discrete types, etc.) drop them with `_`.
+
+```disp
+// The unified composition operator. Looks up the type's functor and
+// hands it the full 5-tuple.
+comp := fix ({self, P, phi, u, u0} -> {
+  let T0 = apply P I_zero
+  let action = meta_get (type_meta T0) "functor"
+  match (tree_eq action trivial_functor) {
+    TT => StuckElim (apply P I_one) (pair P (pair phi (pair u u0)))
+    FF => apply action self P phi u u0
+  }
+})
+
+// `transp P x` is `comp P I_zero (empty_partial T_path) x` — the
+// degenerate case with no cofibration.
+transp := {P, x} -> comp P I_zero (empty_partial (apply P I_zero)) x
+
+// `hcomp` is `comp` at a constant family. The first arg is just a
+// type rather than a type-path.
+hcomp := {A, phi, u, u0} -> comp ({_} -> A) phi u u0
+```
+
+The fast path for constant families (when `apply P I_zero` and
+`apply P I_one` hash-cons-equal) lives inside each per-type functor —
+the functor is free to short-circuit with `u0` when the source and
+target types match and `phi = I_zero`.
+
+Per-type morphism actions (always 5-arg, conforming to the calling
+convention above):
+
+```disp
+// Discrete types (Bool, Nat, False): transport is identity, partial
+// elements have no semantic content because there's no path-structure.
+let bool_functor  = {_, _, _, _, x} -> x
+let nat_functor   = {_, _, _, _, x} -> x
+
+// Pair: component-wise recursion. Splits u/u0 into component
+// partials/endpoints and recurses on each side.
+let pair_functor  = {self, P, phi, u, u0} ->
+  pair (self (P_fst P) phi (u_fst u) (pair_fst u0))
+       (self (P_snd P) phi (u_snd u) (pair_snd u0))
+
+// Sigma: dependent second component via the first component's
+// trajectory. The B(a) family is reconstructed at each interval point
+// by transporting a along P_fst.
+let sigma_functor = {self, P, phi, u, u0} -> /* CCHM Sigma rule */ ...
+
+// Pi: contravariant in A, covariant in B; threads the a-trajectory
+// through B's family. Body application happens at the source endpoint;
+// result is transported forward.
+let pi_functor    = {self, P, phi, u, u0} -> /* CCHM Pi rule */ ...
+
+// Eq: refl at the new endpoints. The path-of-refls case is structural.
+let eq_functor    = {self, P, phi, u, u0} -> /* CCHM Eq rule */ ...
+```
+
+Each value above is dropped directly into the corresponding type's
+`functor` meta field. The full per-type rules follow the standard
+CCHM treatment (Cohen-Coquand-Huber-Mörtberg 2015); only the dispatch
+mechanism (lookup on `meta.functor` of a hash-consed type) is
+disp-specific. Crucially, the 5-tuple shape is the *contract every
+library type-former must honor* to participate in cubical
+machinery — types whose functors take fewer arguments are
+non-conforming and will type-error when wired into `comp`.
 
 == `Glue` and univalence
 
@@ -3186,101 +3246,24 @@ without them — but each represents an honest gap worth tracking. The
 foundational ones (Type:Type, formal soundness) are the load-bearing
 items; the others are scoped.
 
-= Appendix B: standard test catalog <sec:test-catalog>
+= Appendix B: where the tests live <sec:test-catalog>
 
-The standard library ships with the tests below. Re-elaborating the
-library runs all of them. A failing test halts elaboration with the
-failing component identified.
+The standard library's tests are defined *inline* with the entities
+they exercise: kernel-primitive behavioral tests next to each
+primitive's spec (§7), type-system tests next to each library type
+(§12), cubical tests next to the cubical operations (§13). The
+combined set is the spec's test suite; re-elaborating `lib/` runs all
+of them, and a failing test halts elaboration at the failing
+component.
 
-== Kernel behavioral tests
+The on-disk source of truth is the recursive set
+`lib/tests/**/*.test.disp`, runnable as a whole via `npm test` (see
+`test/disp.test.ts`). Effect-handler tests will land alongside the
+effect system itself if §15's roadmap is pursued.
 
-Asserting the kernel primitives behave per §7:
-
-```disp
-test bind_hyp_mints_neutral_with_correct_stored_type
-test hyp_reduce_extends_spine_on_application
-test hyp_reduce_returns_value_when_codomain_returns
-test eliminator_frame_mints_stuck_on_neutral_target
-test eliminator_frame_dispatches_on_concrete_target
-test param_apply_routes_kernel_sigs_to_raw
-test param_apply_walker_step_rejects_stem_forge
-test param_apply_walker_step_rejects_triage_on_neutral
-test checked_input_check_fires_at_application
-test checked_propagates_type_mismatch_as_err
-```
-
-== Type-system tests (lax validator)
-
-Each library type passes the structural `Type` validator:
-
-```disp
-test typecheck Type Bool
-test typecheck Type Nat
-test typecheck Type Unit
-test typecheck Type String
-test typecheck Type Pi
-test typecheck Type Sigma
-test typecheck Type Refinement
-test typecheck Type Record
-test typecheck Type Eq
-test typecheck Type Ord
-test typecheck Type MetaShape
-test typecheck Type RecognizerShape
-test typecheck Type Type           // Type:Type
-```
-
-== Type-system tests (strict validator)
-
-Each library type passes the `StrictType` validator, which deep-
-typechecks recognizer and metadata fields:
-
-```disp
-test typecheck StrictType Bool
-test typecheck StrictType Nat
-test typecheck StrictType Pi
-test typecheck StrictType Sigma
-test typecheck StrictType Refinement
-test typecheck StrictType Record
-test typecheck StrictType MetaShape
-test typecheck StrictType RecognizerShape
-test typecheck StrictType Type
-```
-
-== Behavioral spec tests (sample)
-
-Per-type Path-typed proofs of recognizer behavior:
-
-```disp
-test bool_recognizer unit_witness TT = Ok TT
-test bool_recognizer unit_witness FF = Ok TT
-test bool_recognizer unit_witness zero = Ok FF
-test nat_recognizer unit_witness zero = Ok TT
-test nat_recognizer unit_witness (succ zero) = Ok TT
-test nat_recognizer unit_witness TT = Ok FF
-test pi_recognizer (pi_meta_for Nat ({_} -> Bool)) is_zero = Ok TT
-test eq_recognizer (eq_meta_for Nat zero zero) refl = Ok TT
-```
-
-== Cubical tests
-
-Per §13, cubical operations have associated behavioral tests:
-
-```disp
-test typecheck Type I
-test typecheck Type IsOne
-test typecheck Type Glue
-test refl_at_endpoint I_zero (refl_for x) = x
-test refl_at_endpoint I_one (refl_for x) = x
-// transp at identity-paths returns unchanged values:
-test transp (const Bool) TT = TT
-test transp (const Nat) zero = zero
-```
-
-== Effect tests (future, §15)
-
-When user-installable effects land, each effect handler gets its own
-test category asserting handling behavior matches the effect's
-spec. Skipped here; will land alongside the effect system.
+This appendix exists to point at that organization; it does not
+maintain a parallel test catalog. Any duplication would rot — the
+inline tests are canonical.
 
 = References <sec:references>
 
