@@ -582,6 +582,34 @@ carve-out:
 
 All other applications follow `apply`'s rules and return `Ok <result>`.
 
+== Why only `I` needs a carve-out
+
+Every substrate reduction rule either inspects its argument
+(triage — rejected when the argument is a hypothesis), wraps it
+(leaf/stem — risks forging a kernel sig at the resulting fork's
+`pair_fst`), or discards it (the K rule). None of these returns the
+argument unchanged. Yet the polymorphic identity `{x} -> x` must exist
+as a typeable closed term — it's what makes
+`Pi Type ({A} -> Pi A ({_} -> A))` inhabitable. The elaborator
+compiles `{x} -> x` to a canonical tree `I` (typically `S K K` after
+bracket abstraction); without intervention, `apply(I, hyp)` would
+route through stem/S/K rules, hit the stem-forge rejection on an
+intermediate fork, and reject the application. The I-shortcut
+intercepts: `w(I, x) = Ok x` directly, by *hash-cons-identity check*
+on `I`. It activates *only* for that canonical tree — η-equivalent
+identities (e.g., `triage t t t` applied to canonical inputs)
+don't trigger it and don't pass hypotheses through. The carve-out
+is structural ("this exact tree, by pointer-identity") rather than
+behavioral ("any function that happens to be the identity"), so the
+soundness obligation reduces to: the elaborator must produce
+canonical `I` for `{x} -> x` and only for that. The literature
+framing — `I` as the identity element of the application monoid, or
+equivalently the trivial polymorphic transformation — places this in
+standard Yoneda/Church territory; we don't lean on that framing
+operationally, but it explains why no other carve-out is needed: no
+other tree represents a parametric operation that introspects
+nothing.
+
 == `Tree_p` as a greatest fixed point
 
 `Tree_p` is defined as the *largest* subset `S ⊆ Tree` such that
@@ -727,23 +755,30 @@ supplies the argument and triggers dispatch via `param_apply`.
 A *Σ-algebra* A over `T` assigns to each operation symbol `op ∈ Σ` a Kleisli
 arrow `⟦op⟧^A` of the appropriate arity.
 
-Disp ships exactly one Σ-algebra: the *kernel*. The record below
-groups the three Σ-operation handlers and the dispatcher under one
-name — the dispatcher's signature is also registered in `kernel_sigs`
-(see §7's `param_apply` entry for the derivation) so it can recognize
-its own re-entries.
+Disp ships exactly one Σ-algebra: the *kernel*. We split it cleanly
+into two records — the Σ-operation handlers (whose signatures
+the dispatcher routes to) and the dispatcher itself (which is *not*
+a Σ-op and never gets invoked via a wait-form):
 
 ```disp
-kernel := rec {
+// The three Σ-operation handlers. Their signatures populate
+// kernel_sigs and are matched by the dispatcher's privilege check.
+sigma_ops := rec {
   hyp_reduce       := q_hyp_reduce_fn;
   bind_hyp         := q_bind_hyp_fn;
-  eliminator_frame := q_eliminator_frame_fn;
-  param_apply      := q_param_apply_fn       // dispatcher, not Σ-op
+  eliminator_frame := q_eliminator_frame_fn
 }
+
+// The dispatcher. Called by name (not via a wait-form), so its
+// signature does NOT need to appear in kernel_sigs.
+param_apply := q_param_apply_fn
+
+// Umbrella for ergonomic ks.X access inside handler bodies:
+kernel := rec { sigma_ops, param_apply }
 ```
 
 Each `q_*_fn` is a Kleisli arrow implementing its operation's semantics
-(full definitions in §6).
+(full definitions in §7).
 
 This is *closed*: there is no user-installable alternative Σ-algebra.
 The kernel is the handler.
@@ -801,8 +836,7 @@ granted, the wait-form's bracket-abstracted reduction
 — no mapping table required. The dispatcher's only choice is between
 two execution modes: raw apply for trusted reductions, walker apply
 for everything else. See §7's `param_apply` entry for the in-language
-reference and how `kernel_sigs` is derived from the kernel record
-itself.
+reference and how `kernel_sigs` is derived from `sigma_ops`.
 
 === Why wait-forms, not plain partial application
 
@@ -1201,9 +1235,12 @@ walker reduction (for everything else). The dispatcher does not route
 to specific handlers — wait-form reduction does that automatically
 (§5.4).
 
-*`kernel_sigs` is derived from the kernel record.* Adding a handler
-to `kernel` registers its signature automatically; there is no
-hardcoded list to keep in sync.
+*`kernel_sigs` is derived from `sigma_ops` only.* Adding a Σ-operation
+handler to `sigma_ops` registers its signature automatically; there is
+no hardcoded list to keep in sync. `param_apply` itself is *not* in
+`kernel_sigs` because no wait-form is ever rooted at `param_apply`'s
+signature — the dispatcher is called by name, not via the wait-form
+encoding.
 
 ```disp
 // Extract a record's field chain via Option B's identity inspector.
@@ -1216,9 +1253,10 @@ chain_to_list := fix ({self, c} ->
     FF => cons (pair_fst c) (self (pair_snd c))
   })
 
+// Σ-op handlers' signatures — the only sigs the dispatcher recognizes.
 kernel_sigs := list_map
   ({h} -> checker_sig h)
-  (chain_to_list (record_chain kernel))
+  (chain_to_list (record_chain sigma_ops))
 
 is_kernel_sig := {sig} ->
   list_any ({s} -> tree_eq s sig) kernel_sigs
@@ -2992,58 +3030,163 @@ test in the implementation.]
 
 = Future: user-installable effects <sec:future>
 
-Speculative section on extending disp toward Koka-style effects.
+This section sketches a concrete path to user-installable effects in
+disp. The *operational* part — declaring effect ops, writing handlers,
+running effectful programs — needs no kernel changes; it's purely
+library + host-registry work, demonstrated below with a worked
+`console` example. The *static* part — tracking effect rows on
+function types so the elaborator can statically reject unhandled
+effects — is sketched briefly at the end and deferred to a follow-up
+document.
 
 == The current state
 
 Disp has one effect: the type-checking effect, with monad
-`CheckerResult`. The kernel is the unique handler. Operations are
-dispatched by structural signature.
+`CheckerResult`. The kernel is the unique handler. Σ-operations are
+dispatched by structural signature on hash-consed wait-forms (§5).
 
-== The forward direction
+== Operational extension: host-registered effect handlers
 
-Adding user-installable effects amounts to relaxing "closed" to "open"
-in §5.4. Each new effect is a monad (perhaps composed with
-`CheckerResult` via monad transformers); operations are dispatched by
-context-aware signature matching; handlers are installable via a
-`with handler { ... }`-style construct.
-
-Concretely, primitive trees with pinned signatures become host-
-intercepted effect operations. `param_apply` gains an effect-context
-parameter; operations dispatch based on what handlers are installed in
-the current context.
-
-== Three-stage migration
-
-+ *Stage 1* (this document): document and use the algebraic-effects
-  framing. Internal vocabulary aligned.
-+ *Stage 2*: factor the kernel handler into smaller reusable Kleisli
-  arrows. Identify which operations are "kernel-essential" vs
-  "extensible."
-+ *Stage 3*: add user-installable handlers and effect-row tracking
-  (Koka-style). Type system extends to track effect rows.
-
-The mechanism for dispatch (signature matching) is already in place
-from Stage 0; only the "open" extension requires new infrastructure.
-
-== Effect rows in disp
-
-A future disp type might look like:
+The dispatcher's privilege-check (§5.4, §7's `param_apply` entry)
+asks: "is `pair_fst(f)` in `kernel_sigs`?". To support user-installable
+effects, we extend this to a second registry the host maintains:
 
 ```
-print : String → <console> ()
-random : Nat → <random> Nat
+param_apply f x:
+  if pair_fst(f) is in kernel_sigs   → run raw (kernel handler)
+  if pair_fst(f) is in effect_sigs   → invoke host effect handler
+  else                                → walker step (§4)
 ```
 
-The `<...>` row specifies which effects can be invoked. Pure code has
-empty row. Handler installation transforms rows (discharging the
-handled effect).
+`effect_sigs` is a runtime registry populated by host calls at startup
+(or by handler-installation calls during evaluation). Each entry maps
+a signature constant to a host-side procedure that knows how to
+perform the effect.
 
-Type-checking enforces the row: invoking a primitive whose signature
-isn't in the active row is a type error.
+=== Worked example: a `console` effect
 
-This is speculative; not committed to. The framing supports it; the
-implementation work is its own project.
+Step 1 — declare the operation's signature. A signature is just a
+unique tree constant, chosen so its `tree_eq` against unrelated trees
+returns `FF`:
+
+```disp
+// In lib/effects/console.disp:
+let console_print_sig = checker_sig console_print_op
+let console_print_op  = {payload, k} -> /* never reached: host intercepts */
+```
+
+Step 2 — define the operation as a wait-form factory. `print msg k`
+constructs `wait console_print_op (pair msg k)`. The host registry
+intercepts the resulting wait-form at apply time:
+
+```disp
+let print = {msg, k} -> wait console_print_op (pair msg k)
+```
+
+Step 3 — register the host handler. In `src/effects/console.ts`:
+
+```typescript
+import { registerEffectHandler, treeToString, applyTree } from "../tree";
+import { CONSOLE_PRINT_SIG } from "../lib-anchors";
+
+registerEffectHandler(CONSOLE_PRINT_SIG, (payload) => {
+  const msg = treeToString(pair_fst(payload));
+  const k   = pair_snd(payload);
+  process.stdout.write(msg);
+  return applyTree(k, UNIT_LEAF);   // continue with unit
+});
+```
+
+Step 4 — use the effect in disp source:
+
+```disp
+// CPS-style; the program threads its handler-environment via k.
+let greet = {name, k} ->
+  print "hello, "       ({_} ->
+  print name            ({_} ->
+  print "\n"            ({_} ->
+  k unit_witness)))
+
+test (greet "world" ({_} -> done_marker)) = done_marker
+// During the test, stdout actually receives "hello, world\n".
+```
+
+The disp-level program has no idea what `print` does — it just
+constructs wait-forms. The dispatcher's effect-registry arm routes
+each `print`-wait-form to the host handler, which performs the OS
+side-effect and resumes the continuation.
+
+=== What this gives you
+
++ *No kernel changes.* `kernel_sigs` and `sigma_ops` are untouched.
+  The dispatcher gains one branch (the `effect_sigs` lookup), which is
+  trivially backwards-compatible: an empty `effect_sigs` makes it a
+  no-op.
+
++ *Multi-shot continuations free.* `k` is a tree value; the host
+  handler can call it zero, one, or many times. Generators, backtracking,
+  and probabilistic effects fit naturally.
+
++ *Effects are first-class trees.* Hash-cons identity gives O(1)
+  dispatch. Handler installation is registry insertion, also O(1).
+
++ *Strip-safe.* The strip pass (§10) doesn't touch effect wait-forms
+  — they're not `checked_apply` rooted. After strip, effectful code
+  still routes through the registry.
+
+=== Scoped handler installation (sketch)
+
+The example above uses a *global* registry — handlers registered at
+startup persist. For *scoped* handlers (Koka's `with handler { ... }`),
+the registry becomes a stack and the disp source gains a
+`with_handler` primitive:
+
+```disp
+// Push a handler onto the active stack, run body, pop on exit.
+let with_handler = {sig, handler, body, k} ->
+  wait install_handler_op (pair sig (pair handler (pair body k)))
+```
+
+The host's `install_handler_op` intercept pushes `handler` onto a
+sig-keyed stack, evaluates `body`, pops, and passes the result to `k`.
+Within `body`, the dispatcher consults the top-of-stack handler for
+`sig`. This adds dynamic-scope semantics without changing the kernel.
+
+== Static row checking: deferred
+
+The above is purely operational — at no point does the type system
+statically check that a function declared `pure` doesn't call
+`print`. Adding that check requires:
+
++ A type-former `Effectful row A B` (a wait-form like `Pi`) whose
+  recognizer scans the function body for effect signatures not in
+  `row`. The recognizer can reuse the body-scanning machinery from
+  the parametric walker.
+
++ A row representation. *Effect rows are sets of signatures, and sets
+  in disp are records with normalized field order.* The record code
+  from §12.2 carries over directly: a row of `{console, random}` is
+  the Record `[ ("console_sig", Unit), ("random_sig", Unit) ]` with
+  fields hash-cons-id-sorted. Subset = field-projection check; union
+  = record merge; intersection = filter. The set operations are
+  almost free from the record infrastructure already in the library.
+
++ Row polymorphism — an `Effectful R A B` whose `R` is Pi-bound,
+  letting functions like `map` propagate the caller's row through.
+
++ Elaborator sugar for the `<row>` syntax in source.
+
+Total estimated work: ~350-400 lines of library code + ~150 lines of
+elaborator support. Doable as a follow-up; not required for the
+operational story above to work.
+
+#openq[
+  The exact algebraic-effect design disp commits to (free-monad
+  encoding vs. CPS-with-evidence-passing vs. delimited
+  continuations) is open. Each has trade-offs in static checkability,
+  efficiency, and integration with the existing wait-form dispatch.
+  A follow-up document should compare candidates and pick.
+]
 
 = What's genuinely disp-specific <sec:disp-specific>
 
