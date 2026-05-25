@@ -755,10 +755,17 @@ when reducing `apply` chains.
 
 == Setup
 
-Disp's kernel is best described as a *tree-calculus interpreter
-parameterized over a dispatch environment* Σ — a list value mapping
-handler signatures to handler trees. This section makes the framing
-precise. Readers preferring operational explanations can skip to §7.
+In operational terms: the kernel takes a list of *handler trees*
+(call it Σ), takes two trees (`f` and `x`), and reduces `f x`. If
+`pair_fst f` matches the sig of some handler in Σ, the handler runs;
+otherwise the substrate's `apply` rules fire, subject to the
+parametricity walker. That's it.
+
+The §5 material below makes this precise in algebraic-effects
+vocabulary (Σ as a signature, handlers as a Σ-algebra, the dispatcher
+as the algebra interpreter). The framing is useful for connecting to
+the PL literature but is not needed to use the system. Readers
+preferring operational explanations can skip to §7.
 
 == The signature and the dispatcher
 
@@ -1037,6 +1044,50 @@ framing is illuminating.
   environment substitution.
 ]
 
+== What "effect" means here
+
+A *handler* in Σ is anything the dispatcher routes to: a tree whose
+`apply` semantics carry observable consequences. The kernel-shipped
+handlers in `kernel_handlers` provide *type-system effects*:
+
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Handler*], [*Effect on the type-checking environment*],
+    [`bind_hyp`], [Mint a fresh symbol for an unknown of given type.],
+    [`hyp_reduce`], [Apply a symbol to an argument; extend its observed spine.],
+    [`eliminator_frame`], [Case-dispatch a value; if symbolic, defer.],
+    [`postulate`], [Bridge from user code to a non-self-dispatching handler.],
+  ),
+  caption: [Kernel handlers as type-system effects.],
+)
+
+The host-provided handlers in `host_provided` provide *real-world
+effects* — IO, syscalls, time-of-day, anything the host TS layer
+implements. Both categories populate the *same* Σ; both go through the
+*same* `safe_apply` dispatcher; both are subject to the *same* walker
+discipline (no forging, no triage on resulting stuck forms). The
+kernel/host distinction is an implementation detail, not a semantic
+boundary.
+
+Operationally, the most consequential difference between the two is
+*which slot of the wait-form holds what*. For kernel Σ-ops the
+handler logic is bracket-abstracted into the wait-form's body and runs
+via substrate reduction. For host primitives the handler is a TS
+function in the native fast-path table, and the wait-form's body is
+inert (waiting to be intercepted). To a disp-source reader these look
+identical: both are wait-forms in Σ whose application has a defined
+semantics.
+
+This unification — *"effects" mean "Σ entries"* — is what lets the
+parametricity story scale uniformly: any pinned sig is unforgeable by
+the walker, regardless of whether its handler manipulates type-system
+state or filesystem state. The §4 stem-forge rule and the §6 H-rule
+both consult Σ; both apply equally to neutrals and to IO calls.
+
 = Stuck forms and neutrals <sec:stuck-forms>
 
 Before defining each kernel primitive's operational semantics, we
@@ -1140,50 +1191,73 @@ effect-using functions with intermediate stuck values fail too.
 
 The *H-rule* solves this. When applying `T v` and `v` is a handler-
 minted stuck form whose stored type equals `T`, return `Ok TT`
-directly (without running T's structural check). This recognizes
-both raw hypotheses (`bind_hyp`-minted, stored type = explicit
-domain) and stuck eliminations (`eliminator_frame`-minted, stored
-type = motive at the target) as inhabitants of their respective
-declared types. The §12 `make_recognizer` wrapper consults
-`safe_is_stuck` rather than the original (narrower) `safe_is_neutral`
-so that the rule fires uniformly for all handler-rooted stuck forms
-in the current Σ.
+directly (without running T's structural check).
 
 The H-rule has *two operational sides* corresponding to two distinct
-application paths through `param_apply`:
+application paths through `param_apply`. They sound similar but route
+through entirely different machinery.
 
-+ *Recognizer-side*. `param_apply T v` where `T` is a library
-  recognizer (a `make_recognizer`-wrapped wait-form) and `v` is a
-  hypothesis with stored type `T`. Routes through `param_apply`'s
-  walker arm, reduces via wait-form to `recognizer_wrap_fn body meta v`,
-  and the wrapper's `safe_is_neutral v` check short-circuits to
-  `tree_eq self_type (neutral_stored_type v) = TT`.
+=== Recognizer-side H-rule
 
-+ *Predicate-side*. `param_apply hyp_T v` where `hyp_T` is itself a
-  Type-typed hypothesis (not a library recognizer) being applied as a
-  predicate. `hyp_T`'s sig is `kernel.hyp_reduce`, so the call routes
-  through `param_apply`'s *raw arm* and never reaches
-  `recognizer_wrap_fn`. The H-rule here must live in `Type`'s
-  codomain_fn, which `hyp_reduce` consults via `Type`'s metadata.
+*Scenario.* `param_apply T v` where `T` is a *library recognizer* —
+a `make_recognizer`-wrapped wait-form, e.g. `Bool`, `Nat`, `Pi A B`.
 
-The recognizer-side is uniform — every `make_recognizer`-wrapped
-recognizer gets it. The predicate-side is *type-specific* and only
-matters for `Type`, because `Type` is the only library type whose
-hypotheses are themselves operationally predicates (Pi-hyps extend
-spines, Sigma-hyps project, non-applicable hyps don't apply at all).
-See §12.10 `type_predicate_h_rule` for the predicate-side
-implementation.
+*Path.* The call routes through `param_apply`'s walker arm; the
+wait-form reduces to `recognizer_wrap_fn body meta v`.
 
-Per §12 `make_recognizer`, the recognizer-side H-rule is provided
-uniformly by a library wrapper that every type's recognizer should
-be built through. Per-type recognizer bodies see only concrete `v`
-values; the wrapper intercepts hypothesis cases.
+*Mechanism.* The wrapper checks `safe_is_stuck v`. If true, it
+short-circuits to `Ok (tree_eq self_type (stuck_stored_type v))` —
+a concrete `Ok TT` or `Ok FF`, computed by hash-cons identity. If
+false, the per-type recognizer body runs on the concrete `v`.
 
-Without `make_recognizer`'s H-rule, polymorphism breaks. With it,
-polymorphic Pi-types work: `Pi Type ({A} -> Pi A ({_} -> A))` (the
-polymorphic identity) inhabits successfully because A-hypotheses
-applied to it produce A-hypotheses, which the codomain's recognizer
-accepts via H-rule.
+*Scope.* Uniform — every `make_recognizer`-wrapped recognizer gets
+this for free. Per-type bodies see only concrete `v` values; the
+wrapper handles all stuck cases.
+
+*Source.* §12, `make_recognizer`.
+
+=== Predicate-side H-rule
+
+*Scenario.* `param_apply hyp_T v` where `hyp_T` is itself a
+*Type-typed hypothesis* being applied as a predicate — not a library
+recognizer.
+
+*Path.* `pair_fst hyp_T = checker_sig hyp_reduce`, so the call
+routes through `param_apply`'s *raw arm* (privileged dispatch).
+`recognizer_wrap_fn` is never reached.
+
+*Mechanism.* `hyp_reduce`'s handler consults the stored type's
+codomain function. For `hyp_T : Type` specifically, `Type`'s
+codomain function is `type_predicate_h_rule`: it returns
+`Return (tree_eq (stuck_stored_type v) hyp_T)` iff `v` is a
+kernel-minted stuck form, else `Return FF`. Again a concrete Bool
+verdict.
+
+*Scope.* `Type`-specific. Only `Type`-typed hypotheses are
+operationally predicates — Pi-hyps extend spines via `hyp_reduce`'s
+default behavior, Sigma-hyps project, non-applicable hyps don't
+apply at all. So only `Type` needs a predicate-side codomain function
+implementing the H-rule.
+
+*Source.* §12.10, `type_predicate_h_rule`.
+
+=== Why both sides exist
+
+The recognizer-side handles the common case: any library type
+recognizer can short-circuit on its own hypotheses uniformly. The
+predicate-side handles the polymorphic-quantification case: when a
+function is polymorphic over `Type`, Pi-recognition mints a
+`Type`-hyp and applies the body to it; the body's `A`-typed values
+must be recognized as inhabitants of that same hyp. Without the
+predicate-side H-rule, polymorphic `Pi Type ({A} -> Pi A ({_} -> A))`
+fails because applying `hyp_A` to candidate values produces non-`Ok
+TT` results.
+
+Without either side, polymorphism breaks. With both, polymorphic
+Pi-types work: `Pi Type ({A} -> Pi A ({_} -> A))` (the polymorphic
+identity) inhabits successfully because A-hypotheses applied to it
+produce A-hypotheses, which the codomain's recognizer accepts via
+H-rule.
 
 == When stuck forms cause cascading failure
 
@@ -1256,14 +1330,20 @@ see §12 for the library `checked_apply`.)
 #note[
   *Handler bodies and the current dispatch environment.* Each
   Σ-operation handler is invoked from inside some `safe_apply Σ`
-  call; sub-evaluations the handler performs should use that same
-  Σ. The internal kernel record `ks` (the `{ks, raw, query}` lambda
-  in each handler body) threads Σ through implicitly — `ks.dispatch`
-  evaluates against the same environment as the outer call. The
-  per-handler source code below uses `ks.param_apply` as the
-  default-instance name; under a non-default Σ, the same code path
-  uses `ks.dispatch` with that Σ. This is an implementation detail;
-  semantically, "handler sub-evaluations use the current Σ".
+  call. The dispatcher constructs the internal kernel record `ks`
+  per-invocation with `ks.param_apply` bound to `safe_apply Σ` — the
+  *current* environment, not the default. So the per-handler source
+  code below using `ks.param_apply (...)` always means "dispatch the
+  sub-call against the same Σ I was invoked under." Under `test_pure`,
+  handlers' sub-calls run under `kernel_handlers`; under
+  `default_dispatch`, they run under the full environment. The
+  threading is automatic; handler-body authors don't write Σ
+  explicitly.
+
+  This means handlers compose: `bind_hyp`'s body-application uses
+  whatever Σ the outer call provided. A `test_pure` test traversing
+  a `bind_hyp` will see all body reductions also run under
+  `kernel_handlers`.
 ]
 
 == `hyp_reduce`
@@ -1274,6 +1354,11 @@ see §12 for the library `checked_apply`.)
 dispatcher routes to `hyp_reduce`. The handler reads `h`'s stored type's
 codomain function and uses the `Action` protocol (`Extend new_type | Return value`)
 to decide whether to extend the spine or return a value.
+
+*Gloss.* "Apply a neutral to an argument. Look up what the stored
+type says should happen — extend the spine with the new arg (and a
+new stored type), or short-circuit with a concrete return value, or
+mark the call invalid. The codomain function is the per-type policy."
 
 *Disp source:*
 
@@ -1314,6 +1399,13 @@ with the standard type-metadata layout — see §11).
 *Role.* Case dispatch on values of inductive types. Mints `StuckElim`
 on hypothesis targets so eliminations on unknown values stay opaque.
 
+*Gloss.* "Dispatch on a target. If the target is concrete (an
+ordinary constructor of the inductive type), run the cases-dispatcher
+to pick the right branch. If the target is neutral (a hypothesis or
+another stuck form), mint a fresh `StuckElim` form that records
+'this dispatch would have happened, but the target is symbolic.'
+The stored type of the `StuckElim` is `motive(target)`."
+
 *Disp source:*
 
 ```disp
@@ -1351,6 +1443,13 @@ dispatch.
 is *applicable* (a function type), the minted hypothesis is wrapped
 with `checked` so applications of function-typed hypotheses go through
 input-checking.
+
+*Gloss.* "Mint a fresh kernel-pinned neutral tagged with `domain` as
+its stored type, then evaluate `body` on it. If `domain` is a function
+type, wrap the neutral with `checked` so applications respect the
+domain contract. After the body returns, run the escape check (see
+'Open vs closed paths' below) — if the hyp leaked via an open path,
+raise `Err Escape`; otherwise return the body's result."
 
 *Disp source:*
 
@@ -1394,10 +1493,76 @@ The wrapping condition `is_applicable_type domain` is satisfied for
 non-applicable types like `Bool` or `Nat`, the hypothesis is bare.
 
 *Escape check.* If the minted hypothesis is reachable in the body's
-result via a non-neutral path, return
+result via an *open path*, return
 `Err (Escape { hyp, body_result, span })`. This prevents the
 hypothesis from being smuggled into a context where it could be
 exploited via `type_recognizer`'s H-rule.
+
+*Open vs closed paths — precise definition.* A path from `result` to
+`raw_hyp` is *closed* iff every step in the path traverses a
+distinguished "opaque slot" of a wait-form rooted at a *stuck-form-
+producing kernel Σ-op*. The opaque slots are:
+
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Kernel Σ-op*], [*Opaque slot(s)*],
+    [`hyp_reduce`], [the `spine` field of pair_snd — applied arguments are inside],
+    [`eliminator_frame`], [the `target` field of pair_snd — the value being eliminated],
+  ),
+  caption: [Opaque slots that constitute closed paths.],
+)
+
+Other slots of these same wait-forms (motive, cases, stored_type) and
+*all* slots of any other wait-form (postulate-built host-effect
+wait-forms, `checked_apply` wait-forms, library type wait-forms) are
+*open*. Any path passing through an open slot is an open path; the
+hyp escapes.
+
+The rationale: the walker treats the opaque slots above as "values
+the kernel knows are stuck symbolic data" — triage on them is
+rejected, structural reflection on them is rejected. A hyp inside an
+opaque slot stays inside the parametricity bubble. Any other slot is
+either user-constructed (open by definition) or accessible to user
+code via raw inspection (open in effect).
+
+Worked examples:
+
+```disp
+// Closed — passes escape check, returns stuck Nat at top level.
+bind_hyp Nat ({x} -> Ok (nat_rec ({_} -> Bool) cases x))
+//                       ↑ target slot of eliminator_frame: opaque
+
+// Closed — spine extension.
+bind_hyp Nat ({x} -> Ok (apply x 0))
+//                       ↑ spine slot of hyp_reduce: opaque
+
+// Open — direct return.
+bind_hyp Nat ({x} -> Ok x)                              // ✗ Err Escape
+
+// Open — wrapped in user-constructed pair.
+bind_hyp Nat ({x} -> Ok (pair x 0))                     // ✗ Err Escape
+
+// Open — wrapped in a checked contract.
+bind_hyp Nat ({x} -> Ok (checked Nat x))                // ✗ Err Escape
+
+// Open — passed into a host-effect payload.
+bind_hyp Nat ({x} -> Ok (host_write_stdout (nat_to_string x)))
+//                                          ↑ open path through WRITE_STDOUT_SIG
+//                                            wait-form's pair_snd  ✗ Err Escape
+```
+
+*Soundness story.* The escape check blocks direct hyp leakage. The
+*closed-path* leak case is real — user code can return a stuck form
+whose `stored_type` is whatever the user chose for the motive. The
+resulting top-level value passes `typecheck T = Ok TT` for that T
+(via H-rule). Soundness depends on the property that stuck forms
+*never reduce to concrete values* of their declared type — the same
+property underwriting the Type:Type conjecture (§11.6). See §14.5
+for the soundness argument.
 
 == `postulate`
 
@@ -1412,6 +1577,12 @@ Each library postulate `host_op : T := postulate sig` produces a
 `checked T (call_via_postulate sig)` value; the `checked` wrap (§8,
 §12) enforces input validation, and `postulate`'s handler validates
 that the payload contains no neutrals before constructing.
+
+*Gloss.* "Build a wait-form rooted at `sig`, paired with the given
+payload, on behalf of user code. Refuse if the payload contains
+neutrals (would smuggle a hyp to a host handler). This is the only
+path by which user code produces a pinned-sig fork shape, because
+the walker rejects all other paths."
 
 The disp library is responsible for the *type ascription* T. The host
 provides only the handler tree (the entry in `host_provided : Σ`);
@@ -1452,6 +1623,12 @@ host handler through the postulate route.
 *Role.* The parameterized dispatcher. Takes a dispatch environment Σ
 as its first argument. Each call decides between trusted raw execution
 (for handler invocations whose sig is in Σ) and unprivileged walker
+
+*Gloss.* "Look at `f x`. If `f`'s sig is in Σ, run the handler raw
+(it's privileged). Otherwise, run the walker — apply substrate
+reduction rules, but reject any rule that would forge a pinned sig
+or triage on a neutral. Either way, sub-evaluations recurse with the
+same Σ."
 reduction (for everything else). The dispatcher does not route to
 specific handlers — wait-form reduction does that automatically
 (§5.4).
@@ -2551,21 +2728,34 @@ safe_has_sig := {checker, v} ->
 
 safe_is_neutral := {v} -> safe_has_sig kernel.hyp_reduce v
 
-// Generalized stuck-form check: any wait-form rooted at a handler sig
-// in the current dispatch environment Σ. Used by `make_recognizer`'s
-// H-rule below so that StuckElim forms (eliminator_frame-rooted) and
-// any future custom-handler stuck forms are recognized uniformly.
-safe_is_stuck := {Σ, v} ->
-  bind (safe_pair_fst v) ({sig} -> Ok (is_pinned_sig Σ sig))
+// The kernel-controlled list of stuck-form-producing Σ-ops. This is a
+// fixed property of the kernel, not a per-call parameter — the set of
+// "things that can produce stuck symbolic values" is what the kernel
+// ships, independent of any dispatch environment Σ. Currently two
+// entries; an async-pending Σ-op would add a third (see §15 open
+// questions on async).
+stuck_form_producers := [hyp_reduce ; eliminator_frame]
 
-// Stored-type extraction. Returns the type associated with a stuck v:
-//   - bind_hyp / hyp_reduce-rooted: the explicit domain.
-//   - eliminator_frame-rooted (StuckElim): the motive applied to the target.
-//   - other custom-handler stuck forms: per-handler convention; the
-//     handler may expose a stored type via a specific pair_snd subterm.
-// Library-defined; for the default dispatch environment, dispatches on
-// pair_fst v among the three kernel-shipped cases.
-stuck_stored_type := {v} -> /* dispatch by pair_fst, see §11.5.1 */
+// Generalized stuck-form check: v is a wait-form rooted at one of the
+// stuck-form-producing kernel Σ-ops. Σ-independent.
+safe_is_stuck := {v} ->
+  bind (safe_pair_fst v) ({sig} ->
+    Ok (list_any ({h} -> tree_eq sig (checker_sig h)) stuck_form_producers))
+
+// Stored-type extraction. Returns the type associated with a stuck v.
+// Dispatches by pair_fst on the kernel-controlled producers above.
+stuck_stored_type := {v} ->
+  let sig = pair_fst v in
+  let payload = pair_snd v in
+  match (tree_eq sig (checker_sig hyp_reduce)) {
+    TT => neutral_meta_type payload      // explicit domain in meta
+    FF => match (tree_eq sig (checker_sig eliminator_frame)) {
+      TT => apply (stuck_elim_motive payload) (stuck_elim_target payload)
+                                          // motive applied to target
+      FF => /* unreachable if safe_is_stuck v = TT */
+            error "stuck_stored_type on non-stuck input"
+    }
+  }
 ```
 
 For concrete values, these reduce to the raw operation's result; for
@@ -2606,21 +2796,22 @@ write only the concrete-case body:
 ```disp
 let recognizer_wrap_fn = fix ({wrap, body, meta, v} ->
   let self_type = wait (wait recognizer_wrap_fn body) meta in
-  match (safe_is_stuck default_dispatch v) {
-    TT => Ok (tree_eq self_type (stuck_stored_type v))    // H-rule
-    FF => body meta v                                     // concrete dispatch
+  match (safe_is_stuck v) {                              // Σ-independent
+    TT => Ok (tree_eq self_type (stuck_stored_type v))   // H-rule
+    FF => body meta v                                    // concrete dispatch
   })
 
 let make_recognizer = {body} -> wait recognizer_wrap_fn body
 ```
 
-The generalized check `safe_is_stuck` (§12.6) accepts *any* handler-
-rooted stuck form whose `pair_fst` is in the current Σ — both raw
-hypotheses (`hyp_reduce`-rooted) and stuck eliminations
-(`eliminator_frame`-rooted). This closes a soundness gap that
-matters for effect-using polymorphic functions: a Pi-body containing
-`eliminator_frame`-built intermediate values (e.g. `nat_rec`)
-otherwise produces stuck-typed intermediates that the older
+The generalized check `safe_is_stuck` (§12.6) accepts any wait-form
+rooted at a kernel-shipped stuck-form-producer — currently `hyp_reduce`
+(raw hypotheses and spine extensions) and `eliminator_frame` (stuck
+eliminations). The set is kernel-controlled, not user-extensible, and
+independent of the surrounding dispatch environment Σ. This closes a
+soundness gap that matters for effect-using polymorphic functions: a
+Pi-body containing `eliminator_frame`-built intermediate values (e.g.
+`nat_rec`) otherwise produces stuck-typed intermediates that the older
 `safe_is_neutral` check missed, cascading into spurious body-check
 failures.
 
@@ -3452,6 +3643,29 @@ Two distinct claims to keep separate:
 
 The test suite addresses (1); (2) is open work flagged in §11.5.
 
+*`bind_hyp` shares (2)'s soundness obligation.* The escape check
+(§7.3) blocks *direct* hyp leakage via open paths, but stuck forms
+produced inside `bind_hyp`'s body — whose target/spine slots
+contain `raw_hyp` — pass the escape check and reach the top level.
+Such stuck forms have user-chosen stored types and trigger the
+H-rule, so they typecheck as inhabitants of those types. The system
+remains sound only because:
+
++ Stuck forms never reduce to concrete values of their declared
+  type — they propagate as stuck forms through any further
+  computation.
++ Tests demand concrete reductions; a stuck-form reaching a test
+  comparison fails the test (stuck ≠ literal expected value).
++ The H-rule produces concrete *verdicts* (`Ok TT`/`Ok FF`) about
+  stuck-form inhabitation, but never concrete *inhabitants* of
+  uninhabited types.
+
+This is the same property the Type:Type conjecture (§11.6) relies on.
+`bind_hyp`'s safety and Type:Type's consistency stand or fall
+together. A formal parametricity theorem for the walker's
+discipline would settle both; until then both are "empirically
+sound with a documented conjecture."
+
 #openq[A formal proof of (2) — Coq/Lean mechanization, semantic
 model, or careful pencil-and-paper PER-model argument — would
 solidify the foundational story. Until then, the system is
@@ -3608,6 +3822,24 @@ Both postulates coexist. Call sites pick the one matching their
 proof obligations. Older code using the looser ascription continues
 to work.
 
+*Postulate migration discipline.* When a stricter postulate
+supersedes a looser one targeting the same sig:
+
++ Keep both bindings in the library (e.g. `host_write_stdout` and
+  `host_write_stdout_strict`).
++ Provide a `Refinement`-to-base coercion if the stricter type is a
+  refinement of the looser one — call sites that lift to the strict
+  version supply the necessary proof at the call site.
++ Lint: a future `--check-postulate-currency` flag flags use of the
+  loose binding when a strict one targeting the same sig is in
+  scope. Currently advisory.
++ Eventually the loose binding can be removed once all call sites
+  have migrated; the host's underlying handler is unchanged.
+
+This is the same pattern as Lean 4's `Decidable` migration story or
+Coq's typeclass refinement: weaker ascriptions remain available for
+legacy code; stricter ones land alongside; deprecation is gradual.
+
 #note[
   *Trusted base.* Each postulate is a *trust claim*: "the handler
   registered for `WRITE_STDOUT_SIG` behaves consistently with this
@@ -3709,6 +3941,7 @@ What it doesn't:
 
 - *Transparent multi-shot continuations* (Koka-style). The substrate
   is pure; reified continuations are explicit in the effect interface.
+  See the explicit CPS example below.
 - *Stateful handlers without explicit state-threading.* No mutable
   cells in disp; stateful effects need either a State capability
   backed by a host primitive or pure state-threading. Best practice
@@ -3716,6 +3949,72 @@ What it doesn't:
 - *Effect rows in Koka's sense.* Capability passing gives row
   polymorphism at the type level (via record extension) but doesn't
   yet provide elaborator inference of effect rows. Future work.
+
+== Explicit CPS in interfaces
+
+When an effect needs control over its continuation — nondeterminism,
+backtracking, async, generators — the continuation appears as an
+explicit argument to the operation:
+
+```disp
+let Nondet : Type := record {
+  // For any element type A and result type B, choose takes a list of
+  // candidates and a continuation `k : A -> B`. The handler decides
+  // how many candidates to try and how to combine the per-call
+  // results.
+  choose : Pi (A : Type) ({_} ->
+           Pi (B : Type) ({_} ->
+           Pi (List A) ({_} ->
+           Pi (Pi A ({_} -> B)) ({_} ->
+           List B))))
+}
+
+// Try-all handler: invoke k on every candidate, collect results.
+let try_all : Nondet := {
+  choose := {A, B, candidates, k} -> list_map k candidates
+}
+
+// First-success handler: invoke k on the first candidate, return its
+// result (a single B, not a List B — this handler has a different
+// interface, but the same operation shape).
+```
+
+The continuation `k` is a tree value. The handler can:
+- Call `k` once → linear evaluation.
+- Call `k` zero times → exit early (effect-style throw).
+- Call `k` many times → multi-shot, generators, nondet.
+
+Disp's substrate is pure, so multi-shot is free (continuations don't
+hold mutable state; calling them repeatedly with different arguments
+just performs more computation). The cost vs Koka: the user writes
+`k` explicitly in the interface and at every operation call.
+
+== Async via stuck forms (sketch)
+
+Async I/O is where stuck forms (§6) become operationally interesting.
+A host primitive like:
+
+```disp
+let host_read_async : Pi Fd ({_} -> Promise Bytes) := postulate READ_ASYNC_SIG
+```
+
+isn't synchronous — the host handler can't block to produce the
+result. Instead, it returns a *fresh stuck form* representing "the
+result, when it arrives." A future kernel Σ-op `async_pending` (not
+yet specified) would mint these stuck forms; the host's event loop
+substitutes concrete bytes when epoll signals completion.
+
+This requires `safe_is_stuck` to recognize a third stuck-form
+producer; the `stuck_form_producers` list (§12.6) would grow from
+`[hyp_reduce, eliminator_frame]` to `[hyp_reduce, eliminator_frame,
+async_pending]`. The H-rule then fires for `Promise X`-typed stuck
+forms uniformly; polymorphic code over promises works the same way
+as polymorphic code over neutrals.
+
+Disp doesn't ship async yet. The point: stuck forms are a general
+mechanism for "values whose concrete identity isn't yet known," not
+just for type-checking hypotheses. Async slots in by adding one
+producer to the kernel list — same machinery, new motivation.
 
 #openq[
   *Higher-order effects (Wu–Schrijvers–Hinze 2014).* Effects whose
