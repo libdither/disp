@@ -7,10 +7,11 @@ Tree calculus is natively reflective — terms ARE data, so the type checker, th
 ## Documentation
 
 - [`GOALS.md`](GOALS.md) — the long-term vision (neural-guided synthesis, self-improving optimizer).
-- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — authoritative type-theory spec. Unified design: small kernel of seven primitives; inductive types and quantifier types are library-defined.
+- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — authoritative type-theory spec. Kernel of four Σ-operations (`hyp_reduce`, `bind_hyp`, `eliminator_frame`, `postulate`) plus a Σ-parameterized dispatcher (`safe_apply`); manifest contracts over the tree-calculus substrate; library types, validators, and cubical extensions on top.
+- [`TYPE_THEORY_LEGACY.typ`](TYPE_THEORY_LEGACY.typ) — previous spec (seven kernel primitives). The current codebase still tracks this shape; kept for reference until the migration lands.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
-- [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms.
+- [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms (current codebase).
 - [`CLAUDE.md`](CLAUDE.md) — current implementation status, code layout, open work.
 
 ## Running tests
@@ -29,7 +30,7 @@ src/compile.ts     -- Bracket abstraction, elaborator, program driver
 src/run.ts         -- File runner
 
 lib/prelude.disp          -- Fundamental combinators
-lib/kernel/*.disp         -- Seven primitive handlers, helpers, walker reference
+lib/kernel/*.disp         -- Kernel handlers (currently seven; spec target is four), helpers, walker reference
 lib/types/*.disp          -- Library types: Pi, Type, Bool, Nat, Eq, Ord, conversion
 lib/std/**/*.disp         -- Standard library modules
 lib/tests/**/*.test.disp  -- Object-language test suite

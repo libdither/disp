@@ -5,7 +5,8 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 ## Read before making design changes
 
 - [`GOALS.md`](GOALS.md) — the north star (neural-guided synthesis, self-improving optimizer) and the metacircular discipline used to get there.
-- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — **authoritative** type-theory spec. Seven kernel primitives (`hyp_reduce`, `guard`, `unguard`, `checked_apply`, `predicate_frame`, `eliminator_frame`, `bind_hyp`); inductive types and quantifier types are library-defined.
+- [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — **authoritative** type-theory spec (target). Four Σ-operations (`hyp_reduce`, `bind_hyp`, `eliminator_frame`, `postulate`) plus a Σ-parameterized dispatcher (`safe_apply`); manifest contracts over the tree-calculus substrate; `CheckerResult` monad with named-variant errors; library types carry MetaShape-conforming meta records (`recognizer_params`, `functor`, `applicable`, `behavioral_specs`); cubical operations live in each type's `functor` meta-field; validators (`Type` / `StrictType` / `BehavioralType`) are ordinary library wait-forms.
+- [`TYPE_THEORY_LEGACY.typ`](TYPE_THEORY_LEGACY.typ) — previous spec. Seven kernel primitives (`hyp_reduce`, `guard`, `unguard`, `checked_apply`, `predicate_frame`, `eliminator_frame`, `bind_hyp`). The current `src/` + `lib/kernel/` implementation tracks this shape, not the new spec — see "Implementation status" below.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape. Authoritative for the parser.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
 - [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms describing the **current** kernel: `hyp_reduce`, wait/fix/recq, deferred branching, bracket abstraction optimizations, performance notes. Reflects the codebase, not the spec target.
@@ -52,7 +53,7 @@ Every component participating in checking, elaboration, or conversion must have 
 
 ## Implementation status
 
-**The codebase now implements the unified seven-primitive kernel shape for the core library types.** Pi, Bool, Nat, Eq, Type, and Ord are ordinary library types under `lib/types/`; the kernel no longer has per-type handlers for them.
+**The codebase implements the seven-primitive kernel shape from `TYPE_THEORY_LEGACY.typ`.** Pi, Bool, Nat, Eq, Type, and Ord are ordinary library types under `lib/types/`; the kernel no longer has per-type handlers for them. The new `TYPE_THEORY.typ` retargets to a four-Σ-operation kernel (`hyp_reduce`, `bind_hyp`, `eliminator_frame`, `postulate`) plus a Σ-parameterized dispatcher (`safe_apply`); migration is open work and no `lib/kernel/` files have moved to the new shape yet.
 
 ### Landed
 - ✅ **Native parametric walker** active. Reflective predicates on hypotheses (`is_neutral`, `is_fork`, `pair_fst`, `tree_eq`, `has_sig` against a hypothesis) return `Fail` under `checked_apply`. Forgery of neutral-rooted forks via user code is rejected (stem-rule constructor check). I-shortcut is the only soundness carve-out. Verified by `lib/walker.test.disp` and `lib/soundness.test.disp`.
