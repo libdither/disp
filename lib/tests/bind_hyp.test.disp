@@ -25,6 +25,16 @@ test tree_eq (bind_hyp Nat ({h} -> t t h)) Fail = TT
 // Body that returns a stem containing the hypothesis: escape detected.
 test tree_eq (bind_hyp Nat ({h} -> t h)) Fail = TT
 
+// Derived-neutral escape (the case the old opaque scan missed): applying a
+// function-typed hypothesis yields a stuck neutral that hides the hypothesis
+// inside its own spine metadata; returning it must still be rejected.
+test tree_eq (bind_hyp (Pi Nat ({_} -> Bool)) ({h} -> h 0)) Fail = TT
+
+// Non-over-rejection: nested bind_hyp whose inner body doesn't leak either
+// hypothesis passes (the support scan looks for one specific hypothesis, so
+// descending through seals never flags an unrelated in-scope one).
+test bind_hyp Nat ({x} -> bind_hyp Nat ({y} -> TT)) = TT
+
 // Identity sanity: bind_hyp has the bind_hyp signature.
 test tree_eq (pair_fst bind_hyp) kernel_bind_hyp_sig = TT
 

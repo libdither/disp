@@ -122,14 +122,20 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,unguard,checked_apply,predicate_fr
   fix ({self, meta, v} -> {
     let stored_inner = q_unguard_or_self ks (neutral_meta_type meta)
     let cod_fn = pair_snd (pair_snd (type_meta stored_inner))
-    let invalid_result = wait self (extend_neutral_meta meta InvalidType v)
+    // Spine extensions embed the PREDECESSOR NEUTRAL (wait self meta), not its
+    // bare metadata, so every hypothesis a derived neutral depends on appears
+    // as a recognizable seal-root subterm (uniform with eliminator stuck-mints,
+    // which already embed their target neutral). This lets `support` collect
+    // hypotheses by recognizing neutrals; the escape scan still finds a
+    // hypothesis's metadata inside the embedded predecessor.
+    let invalid_result = wait self (extend_neutral_meta (wait self meta) InvalidType v)
     // Action dispatcher: cod_fn ks raw meta v returns an Action
     // (Extend new_stored | Return value). Extend re-guards and
     // appends to the hypothesis spine; Return yields the value
     // directly; malformed Actions fall back to InvalidType.
     let dispatch_action = {action} ->
       match (is_extend action) {
-        TT => wait self (extend_neutral_meta meta (wait ks.guard (pair_snd action)) v)
+        TT => wait self (extend_neutral_meta (wait self meta) (wait ks.guard (pair_snd action)) v)
         FF => match (is_return action) {
           TT => pair_snd action
           FF => invalid_result
@@ -150,25 +156,52 @@ let q_hyp_reduce_fn = {ks : {hyp_reduce,guard,unguard,checked_apply,predicate_fr
 // ================================================================
 // Escape check for bind_hyp (per spec §4.6)
 // ================================================================
-// q_contains_via_open_path walks `result` looking for `hyp`. Returns TT
-// if hyp is reachable via a non-neutral path (fork/stem decomposition
-// through non-neutral roots). Returns FF if hyp is walled off inside
-// a kernel-minted neutral (e.g., a stuck-Bool whose metadata contains
-// hyp — user code under the walker can't extract through that).
-let q_contains_via_open_path = fix ({self, raw, result, hyp} ->
-  match (tree_eq result hyp) {
-    TT => TT
-    FF => match (q_is_neutral raw result) {
-      TT => FF
-      FF => match (is_fork result) {
-        TT => (or (self raw (pair_fst result) hyp) (self raw (pair_snd result) hyp))
-        FF => match (is_stem result) {
-          TT => self raw (stem_child result) hyp
-          FF => FF
-        }
+// A value's `support` is the set of hypotheses it depends on. It is found
+// by walking the value and collecting, at every neutral, that neutral's
+// metadata (type_meta) — then descending *into* that metadata. Because a
+// derived neutral's spine embeds the predecessor neutral it was built from
+// (see hyp_reduce above), the descent reaches every hypothesis in the
+// dependency chain, including ones nested inside other neutrals.
+//
+// Membership compares metadata (type_meta), which is recovered identically
+// however a neutral was reconstructed, so the check does not depend on
+// handler-tree identity. `support` is a pure function of the value, so the
+// runtime memoizes it per tree id; the escape check reads the cached set.
+//
+// The support set is a kernel-internal cons-list keyed by tree_eq (LEAF =
+// empty; duplicates are harmless for membership). It is intentionally
+// private: the library's general-purpose set is the predicate-set in
+// std/set.disp, which depends on the kernel and so cannot be used here. The
+// `q_set_*` names keep it distinct from that set (different representation
+// and argument order).
+let q_set_empty = t
+let q_set_insert = {x, s} -> t x s
+let q_set_member = fix ({self, x, s} ->
+  match (is_fork s) {
+    TT => match (tree_eq (pair_fst s) x) { TT => TT; FF => self x (pair_snd s) }
+    FF => FF
+  })
+let q_set_union = fix ({self, a, b} ->
+  match (is_fork a) {
+    TT => t (pair_fst a) (self (pair_snd a) b)
+    FF => b
+  })
+
+let q_support = fix ({self, raw, v} ->
+  match (q_is_neutral raw v) {
+    TT => q_set_insert (type_meta v) (self raw (type_meta v))
+    FF => match (is_fork v) {
+      TT => q_set_union (self raw (pair_fst v)) (self raw (pair_snd v))
+      FF => match (is_stem v) {
+        TT => self raw (stem_child v)
+        FF => q_set_empty
       }
     }
   })
+
+// occurs raw target v — does a hypothesis whose metadata is `target`
+// (= type_meta of the hypothesis) appear anywhere in `v`?
+let q_occurs = {raw, target, v} -> q_set_member target (q_support raw v)
 
 // ================================================================
 // Generic bind_hyp (per spec §4.6)
@@ -198,7 +231,7 @@ let q_bind_hyp_fn = {ks : {hyp_reduce,guard,unguard,checked_apply,predicate_fram
       match (is_ok result_r) {
         TT => {
           let result = ok_value result_r
-          match (q_contains_via_open_path raw result hyp) {
+          match (q_occurs raw (t domain hyp_id) result) {
             TT => Fail
             FF => result
           }
