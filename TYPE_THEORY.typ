@@ -42,31 +42,45 @@
   into a single document.
 
   Major shifts from predecessors:
-  - The kernel ships *4 Σ-operations + 1 parameterized dispatcher*.
-    Σ-ops: `hyp_reduce`, `bind_hyp`, `eliminator_frame`, `postulate`.
-    Dispatcher: `safe_apply Σ` — parameterized over a *dispatch
-    environment* Σ (a list of handler trees). `param_apply := safe_apply
-    default_dispatch`.
+  - The kernel ships *3 Σ-operations + 1 parameterized dispatcher*.
+    Σ-ops: `hyp_reduce`, `bind_hyp`, `postulate`. Dispatcher:
+    `safe_apply Σ` — parameterized over a dispatch environment Σ.
+    `param_apply := safe_apply default_dispatch`. `eliminator_frame`,
+    in earlier drafts a fourth Σ-op, folds into `hyp_reduce` + a
+    library `elim` (§12).
+  - The walker consults pinned-sig sets derived from Σ: `seal(Σ)`
+    (trusted-token producers — unforgeable *and* uninspectable) and
+    `funnel(Σ)` (host sigs forced through `postulate`'s sanitizer —
+    unforgeable only), with `forge(Σ) = seal(Σ) ∪ funnel(Σ)`. The
+    pure kernel operations `bind_hyp` / `postulate` are in neither:
+    the dispatcher routes pinned sigs to the *registered* handler
+    (not a wait-form's embedded one), so forging their invocation is
+    harmless and library recognizers may build those invocations
+    under the walker.
   - Kernel and host primitives are *values, not registrations*.
-    `default_dispatch = kernel_handlers ++ host_provided`; both are
-    ordinary top-level bindings. The host exposes `host_provided : Σ`
-    as a value at module-load time; the disp side concatenates
-    explicitly. No mutable global registry anywhere in the disp
-    semantics.
+    `default_dispatch = kernel_handlers ++ host_provided`. No mutable
+    global registry.
   - Effects are unified with type-system primitives. Neutrals, stuck
     eliminations, and host IO are all dispatched through the same
-    `safe_apply Σ` mechanism — they differ only in which handler is
-    looked up.
-  - Type-checking is framed as manifest contracts over the `CheckerResult`
-    monad. The elaborator is purely a wrap-only pass; no bidirectional
-    inference.
+    `safe_apply Σ` mechanism.
+  - Type-checking is framed as manifest contracts over the
+    `CheckerResult` monad. The elaborator is purely a wrap-only pass.
   - Library types carry MetaShape-conforming meta records with named
-    fields (`recognizer_params`, `functor`, `applicable`,
-    `behavioral_specs`), not positional metadata tuples.
+    fields (`recognizer_params`, `functor`, `respond`,
+    `behavioral_specs`). `respond` is the universal "respond to an
+    elimination frame" function, generalizing the earlier `applicable`.
   - Cubical operations (`transp`, `hcomp`, `comp`, `Glue`) live in the
-    `functor` meta-field of each library type.
-  - `strip` is a tree-level function gated by `validate`'s certificate
-    for proof-carrying-code-style erasure.
+    `functor` meta-field of each library type. Stuck `comp` reuses
+    the one `hyp_reduce`-rooted neutral constructor.
+  - The `bind_hyp` escape check is a single dependency scan `occurs`
+    (§8.1) that descends *through* seals to find a hypothesis hidden in
+    a derived neutral's spine; `fresh_for` and `is_closed` are its two
+    policy uses (`bind_hyp` escape; `param_lift` / `postulate`
+    closedness). Searching for one specific hypothesis distinguishes a
+    legal in-scope reference from an extruded one, so the scan need not
+    treat seals as opaque — the prior opaque scan let derived neutrals
+    carry a hypothesis out of scope.
+  - `strip` is a tree-level function gated by `validate`'s certificate.
 
   Open items are flagged inline as `Open question:` notes. The spec is
   designed to be iterated on section by section.
@@ -89,19 +103,19 @@ checking overhead.
 
 The kernel is a *tree-calculus interpreter parameterized over a dispatch
 environment* Σ — a list value mapping handler signatures to handler
-trees. Four kernel Σ-operations ship in `kernel_handlers`: `hyp_reduce`,
-`bind_hyp`, `eliminator_frame`, and `postulate`. The host exposes any
+trees. Three kernel Σ-operations ship in `kernel_handlers`:
+`hyp_reduce`, `bind_hyp`, and `postulate`. The host exposes any
 real-world primitives (IO, syscalls) as `host_provided : Σ`. The
 default environment `default_dispatch := kernel_handlers ++
 host_provided` is what `param_apply` evaluates against; stricter callers
 (foundational tests, sandboxes) construct narrower environments. The
 dispatcher routes by structural signature on hash-consed trees, so
 dispatch is O(1) via tree-id comparison. Types, validators, recognizers,
-and the MetaShape convention all live in the library — not the kernel.
-Cubical operations sit naturally in each type's `functor` metadata
-field. The metacircular discipline holds: the type system is defined in
-disp source as library code; the host (TypeScript runtime in
-`src/tree.ts`) only optimizes.
+case eliminators, and the MetaShape convention all live in the
+library. Cubical operations sit in each type's `functor` metadata field
+and reuse the kernel's one stuck-form constructor for their stuck
+cases. The metacircular discipline holds: the type system is defined
+in disp source as library code; the host only optimizes.
 
 == Reading guide
 
@@ -120,7 +134,7 @@ and revisable:
     [§4 The parametric walker and `Tree_p`], [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
     [§5 The dispatcher and dispatch environments], [Σ-algebra framing: handlers as values, environments as list-passing, openness via concatenation],
     [§6 Stuck forms and neutrals], [Stuck forms from any pinned handler, the generalized H-rule, cascading-failure story],
-    [§7 The kernel primitives], [Operational semantics of `hyp_reduce`, `bind_hyp`, `eliminator_frame`, `postulate`, `safe_apply`],
+    [§7 The kernel primitives], [Operational semantics of `hyp_reduce`, `bind_hyp`, `postulate`, `safe_apply`],
     [§8 Boundary operations and checked values], [`param_lift`, `typecheck`, `checked`, `typed_lambda`, `validate`],
     [§9 Elaboration and tests], [Syntactic transformation; tests as first-class; `: T` as test sugar],
     [§10 Strip and erasure], [`strip` as a tree function; PCC story],
@@ -270,9 +284,10 @@ to avoid re-introducing them inline:
     [`Optional X`],   [`Some x` / `None`; sentinel-tagged.],
     [`Span`],         [Source-span record (file, start, end) attached to error variants for diagnostics; opaque tree at the substrate level.],
     [`Symbol`],       [A fixed tree value identifying a handler / constant — distinct from any user-constructed tree.],
-    [`Functor`],      [Synonym for `Tree_p`; conventionally a morphism-action function consumed by `transp` (§13). Sentinel `trivial_functor` = "identity / no transport rule."],
-    [`Applicable`],   [`Type -> Tree_p -> Action`. The codomain_fn role: given a stored type and an applied argument, decide what `hyp_reduce` does next.],
-    [`Action`],       [`Extend Type | Return Tree_p | Invalid`. The protocol `hyp_reduce` consumes from a type's codomain_fn (§7).],
+    [`Functor`],      [Synonym for `Tree_p`; conventionally a morphism-action function consumed by `transp` (§13). Sentinel `trivial_functor` = "trivial Kan structure": `comp` returns `u0` for it (identity transport; discrete `hcomp` is the cap). Non-discrete types carry a real morphism action.],
+    [`Respond`],      [`NeutralMeta -> Frame -> Action`. The universal "respond to an elimination frame" function carried by each type's meta. Generalizes the earlier `Applicable`.],
+    [`Frame`],        [`Tree_p`. The thing applied to a neutral — an argument (Π), a projection selector (Σ), a case-pair (inductive), a dimension (Path), a candidate value (Type). Untagged; the stored type interprets it.],
+    [`Action`],       [`Extend Type | Return Tree_p | Invalid`. The protocol `hyp_reduce` consumes from a type's `respond` (§7).],
     [`Path`],         [`Pi I` alias from §13; appears in `behavioral_specs`.],
   ),
   caption: [Glossary of ambient names used in signatures.],
@@ -587,50 +602,77 @@ The walker, the dispatcher, and the stem-forge check all consult the
 
 == The walker as a Kleisli-lifted binary operation
 
-The walker is the Kleisli lift of binary `apply`, *parameterized over Σ*:
+The walker `w_Σ : Tree × Tree → CheckerResult(Tree)` is the Kleisli
+lift of binary `apply`, parameterized over *two pinned-sig sets*
+derived from Σ:
 
-$ w_Sigma : "Tree" times "Tree" -> "CheckerResult"("Tree") $
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Set*], [*Meaning*],
+    [`seal(Σ)`],
+      [Sigs whose handlers mint *trusted tokens* — values whose
+       provenance other code believes (the H-rule, `is_neutral`, the
+       escape scan). `hyp_reduce` in the default environment;
+       extensible to any future stuck-form producer (e.g.
+       `async_pending`, §15). These need *both* protections:
+       unforgeable as values (construction) and opaque to inspection
+       (triage).],
+    [`funnel(Σ)`],
+      [Host / effect sigs whose invocation must be routed through
+       `postulate`'s sanitizer. These need *construction* protection
+       only — so user code can't fabricate a host call that bypasses
+       the no-neutral scan — but not inspection protection.],
+    [`forge(Σ) := seal(Σ) ∪ funnel(Σ)`],
+      [The construction-protected set the stem-forge clause consults.
+       *Excludes* the pure kernel operations `bind_hyp` and
+       `postulate` (see note): library code legitimately constructs
+       their invocation wait-forms under the walker.],
+  ),
+  caption: [The pinned-sig sets the walker consults.],
+)
 
-— a Kleisli arrow in `Kl(CheckerResult)` with the same arity as the
-substrate operation it lifts, indexed by the dispatch environment in
-effect. Its three clauses follow `apply`'s rules, with two
-`Err Parametricity` cases and one carve-out:
+Three clauses, following `apply`'s rules:
 
-+ *Stem-rule rejection (parameterized).* When `w_Σ(stem(a), x)` would
-  reduce to `fork(a, x)`: if there exists a handler `h ∈ Σ` such that
-  `tree_eq (checker_sig h) a`, return
-  `Err (Parametricity { kind = StemForge, where = fork(a, x), span })`.
-  This prevents forgery of any privileged tree shape — kernel-minted
-  neutrals, stuck eliminations, host-effect wait-forms, or anything
-  else the current Σ pins.
++ *Stem-forge.* `w_Σ(stem(a), x)` would reduce to `fork(a, x)`; if
+  `tree_eq a (checker_sig h)` for some `h ∈ forge(Σ)`, return `Err
+  (Parametricity { kind = StemForge, where = fork(a, x), span })`.
+  Members of `forge(Σ)` can't be fabricated.
 
-+ *Triage-rule rejection.* When `w_Σ(f, x)` would fire the triage
-  rule on `x` (because `f` is a fork-fork-fork shape), first check
-  whether `x` is a kernel-minted neutral
-  (`pair_fst(x) = checker_sig hyp_reduce`). If so, return
-  `Err (Parametricity { kind = TriageReflect, where = x, span })`.
-  This prevents reflection on hypotheses via triage. The check uses
-  the kernel-internal `hyp_reduce` sig directly because only
-  `hyp_reduce`-rooted trees are introspection targets (other pinned
-  sigs name handlers, not introspectable values).
++ *Triage-on-seal.* `w_Σ(f, x)` would fire the triage rule on `x`; if
+  `pair_fst(x) = checker_sig h` for some `h ∈ seal(Σ)`, return `Err
+  (Parametricity { kind = TriageReflect, where = x, span })`. Seals
+  can't be opened.
 
-+ *I-shortcut (carve-out).* `w_Σ(I_canonical, x) = Ok x`
-  unconditionally, even when `x` is a hypothesis. Required so the
-  polymorphic identity function passes Pi-checks against hypothesis-
-  typed arguments. It is the only soundness carve-out. Σ-independent.
++ *I-shortcut.* `w_Σ(I_canonical, x) = Ok x` unconditionally, even
+  when `x` is a hypothesis. Required so polymorphic identity passes
+  Pi-checks against hypothesis-typed arguments. The sole soundness
+  carve-out, Σ-independent.
 
 All other applications follow `apply`'s rules and return `Ok <result>`.
 
 #note[
-  *Why parameterize over Σ?* Different callers want different trust
-  boundaries. The default environment pins kernel handlers plus host
-  primitives, forbidding their forgery. A foundational test running
-  under `kernel_handlers` alone permits constructing tree shapes that
-  the host would otherwise pin (because the host's primitives aren't
-  in scope). A sandboxed elaborator running untrusted code might use
-  a *larger* Σ that pins user-supplied mock handlers as well. The
-  walker's behavior tracks the environment in which evaluation
-  happens.
+  *Tokens vs. operations.* An earlier framing protected *every*
+  handler sig against construction, justified as "forging a wait-form
+  invokes privileged code with chosen inputs." That rationale
+  presupposes the dispatcher trusting a wait-form's *embedded*
+  handler; once the dispatcher routes pinned sigs to the *registered*
+  handler instead (§5.4, §7.4), forging a wait-form can only
+  re-invoke the genuine handler — which is built to accept arbitrary
+  inputs (`bind_hyp` escape-checks, `postulate` no-neutral-scans). So
+  construction protection is *not* needed for the kernel operations
+  `bind_hyp` / `postulate`, and is in fact *harmful* there: library
+  recognizers run under the walker (§6.3.1) and must construct
+  `wait kernel.bind_hyp …` invocations to mint their hypotheses (Pi's
+  body check, §12). What genuinely needs unforgeability is the *value*
+  a stuck-form producer mints (a neutral is a token the H-rule
+  trusts) and the *funnel* into a sanitizer (host calls). Hence
+  `forge(Σ) = seal(Σ) ∪ funnel(Σ)`, excluding the operations.
+  Inspection protection is narrower still: only `seal(Σ)`, whose
+  minted tokens are introspection targets.
 ]
 
 == Why only `I` needs a carve-out
@@ -718,14 +760,19 @@ membership in the greatest fixed point above:
   `tree_eq` against a known closed value, `has_sig` against a
   registered signature) instead.
 
-+ *Don't construct forks rooted at any handler sig in the current Σ.*
-  The stem rule rejects this. Use kernel constructors (`bind_hyp`,
-  `eliminator_frame`, `postulate`) for the privileged tree shapes that
-  Σ pins.
++ *Don't construct forks rooted at a `forge(Σ)` sig.* The stem rule
+  rejects this — you can't fabricate a trusted token (`seal(Σ)`) or a
+  host call (`funnel(Σ)`). Mint tokens via `bind_hyp` / `hyp_reduce`
+  and build host calls via `postulate`. (Invocations of `bind_hyp` /
+  `postulate` themselves are *not* forge-protected and may be
+  constructed directly — the dispatcher routes them to the registered
+  handler regardless, §5.4.)
 
 + *Define new type-formers as wait-forms.* Use the substrate's `wait`
   combinator with a library recognizer (§11). For inductive types
-  that need stuck-elimination on neutrals, use `eliminator_frame_form`.
+  that need stuck-elimination on neutrals, supply a `respond` field
+  whose case-frame action returns `Extend (motive (reconstruct_self
+  meta))`, then expose case dispatch via the library `elim` (§12).
 
 + *Type-check at the boundary.* Use `typecheck T v`, not raw `T v`,
   to verify membership. The boundary version sanitizes input and
@@ -788,7 +835,7 @@ baked into a wait-form (`wait handler meta`, see §5.4); the second
 application supplies the argument and triggers dispatch via
 `safe_apply`.
 
-The four kernel-shipped Σ-operations are:
+The three kernel-shipped Σ-operations are:
 
 #figure(
   table(
@@ -798,42 +845,31 @@ The four kernel-shipped Σ-operations are:
     inset: 6pt,
     [*Symbol*], [*Type*],
     [`hyp_reduce` (Σ-op)],
-      [`{stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`],
+      [`NeutralMeta → Frame → CheckerResult(Tree_p)` — the universal
+       "push a frame onto a neutral" engine; consults the stored
+       type's `respond` field],
     [`bind_hyp` (Σ-op)],
-      [`{domain : Type, body : domain -> R} -> Tree_p -> CheckerResult(Tree_p)`],
-    [`eliminator_frame` (Σ-op)],
-      [`{dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`],
+      [`(T : Type) → ((h : T) → Pub h R) → CheckerResult R` — mints a
+       fresh seal and checks the body's public projection is fresh for
+       it (§7.2)],
     [`postulate` (Σ-op)],
-      [`{sig : Tree} -> Tree_p -> CheckerResult(Tree_p)` (mints a wait-form rooted at any handler sig in the current Σ; the bridge from user code to non-self-dispatching handlers)],
+      [`{sig : Tree} → Tree_p → CheckerResult(Tree_p)` — mints a
+       wait-form rooted at a handler sig in the current Σ; the bridge
+       from user code to non-self-dispatching handlers],
     [`safe_apply` (dispatcher)],
-      [`List Tree -> Tree_p -> Tree_p -> CheckerResult(Tree_p)` (Σ-parameterized substrate-apply with a privilege check)],
+      [`List Tree → Tree_p → Tree_p → CheckerResult(Tree_p)` —
+       Σ-parameterized substrate-apply with a privilege check],
   ),
-  caption: [The kernel surface: four Σ-operations plus the
-    parameterized dispatcher. Type variables: `A` = type, `R` =
-    result type, `Motive` / `Cases` = dispatcher-specific.],
+  caption: [The kernel surface: three Σ-operations plus the
+    parameterized dispatcher.],
 )
 
 #note[
-  *On the record types in the table.* The library types these records
-  reference — `Type`, `Bool`, `List`, `Pi` (as `->`) — are defined
-  later in the spec (`Type` in §11, `Bool`/`Nat`/`List` in §12). The
-  kernel itself is bootstrapped from tree-calculus primitives, so at
-  the bootstrap layer these records are physically encoded as nested
-  pairs of trees: e.g. `bind_hyp`'s meta is `pair domain body`,
-  `eliminator_frame`'s is `pair dispatcher (pair motive cases)`, etc.
-  Multi-arg operations like `bind_hyp` and `eliminator_frame` collect
-  their fields across multiple partial-app steps using an internal
-  arity counter in the wait-form payload; the user sees a uniform
-  one-arg-per-step dispatch shape while the handler assembles the
-  full record before firing. Early versions of the kernel cannot
-  reference the library record types because those types don't yet
-  exist.
-
-  Once §11's library types are in scope, the record forms above
-  become real ascriptions and the kernel handlers are *typeable by
-  the type checker they implement* — the closure of the metacircular
-  discipline. See §11 (typed surface) and §15 (self-checking
-  roadmap).
+  *Bootstrap.* The records above are typed once §11's library types
+  are in scope. At the bootstrap layer they are physically nested
+  pairs: `bind_hyp`'s meta is `pair domain body`, etc. Multi-arg
+  operations collect their fields across partial-app steps using an
+  internal arity counter in the wait-form payload.
 ]
 
 == Dispatch environments
@@ -848,13 +884,12 @@ to scanning Σ with O(1) per-element comparisons (hash-cons identity,
 §2.2). For typical Σ-sizes (≤ 30) the linear scan is fine; the host
 fast-path may use a hash table indexed by sig.
 
-The kernel ships its four Σ-operation handlers as a top-level binding:
+The kernel ships its three Σ-operation handlers as a top-level binding:
 
 ```disp
 let kernel_handlers : List Tree := [
   q_hyp_reduce_fn ;
   q_bind_hyp_fn ;
-  q_eliminator_frame_fn ;
   q_postulate_fn
 ]
 ```
@@ -938,20 +973,29 @@ privilege check parameterized by Σ:
 
 ```
 safe_apply Σ f x:
-  if ∃ h ∈ Σ. tree_eq (pair_fst f) (checker_sig h)  → run raw (just `f x`)
-  else                                               → walker step (§4)
+  if ∃! h ∈ Σ. tree_eq (pair_fst f) (checker_sig h)  → Ok ((h ⟨wait_meta f⟩) x)
+                                                          // registered handler, not f's embedded one
+  else                                                 → walker step (§4)
 ```
 
-*The dispatcher does not route to handlers via a separate table.* Once
-privilege is granted, the wait-form's bracket-abstracted reduction
-(`wait k m x` → `k m x`) invokes the embedded handler automatically
-— no mapping required. The dispatcher's only choice is between two
-execution modes: raw apply for trusted reductions, walker apply for
-everything else. The Σ argument carries the *trust set* (which sigs
-are privileged); the wait-form encoding carries *which specific
-handler each privileged sig dispatches to* (because the handler is
-the `k` inside `wait k m`). See §7's `safe_apply` entry for the
-in-language reference.
+*The dispatcher routes to the registered handler.* When `pair_fst f`
+matches the sig of the (unique) member `h ∈ Σ`, the dispatcher
+recovers the wait-form's meta `m = wait_meta f` (the *meta
+accessibility* property below) and evaluates `h m x` for *that
+registered handler* — it does *not* trust the handler `f` happens to
+embed. For a genuine wait-form `f = wait h m` this is exactly `f x`
+(`wait h m x → h m x`); for a forgery carrying the right sig but a
+different embedded handler, the registered `h` runs anyway, so a
+forged routing cannot execute attacker-chosen code. This closes the
+trust-set-vs-routing-table gap (see `SCOPE_VERIFICATION_INVESTIGATION.md`):
+privilege is granted to a *sig*, and the sig names a *registered
+handler*, not whatever tree presents that sig.
+
+So Σ is a genuine routing table, not merely a trust set. Soundness
+needs only that *registered* handlers have distinct sigs (`checker_sig`
+injective on Σ — a finite, checkable property asserted when Σ is
+built), not the far stronger "no user-reachable tree shares a trusted
+sig." See §7's `safe_apply` entry for the in-language reference.
 
 === Why wait-forms, not plain partial application
 
@@ -966,10 +1010,11 @@ partial application does not:
   regardless of metadata. The dispatcher decides "is this a trusted
   kernel op?" via a single id-comparison membership check (§7,
   `param_apply`).
-  Routing to the specific handler isn't needed — the wait-form
-  reduces directly to its embedded handler under raw apply.
-  A directly partially-applied function would lack a stable
-  signature to gate privilege on.
+  The sig also *keys the routing table*: the dispatcher looks it up in
+  Σ and runs that registered handler on the wait-form's recovered meta
+  (§5.4, §7.4), rather than trusting the handler `f` embeds. A directly
+  partially-applied function would lack a stable signature to gate
+  privilege on or to key the table by.
 
 + *Meta inspection without forcing the handler.* Library type-formers
   need this: `Bool = wait bool_recognizer bool_meta` exposes `bool_meta`
@@ -998,7 +1043,7 @@ generators. Examples:
 - `typecheck` is the Kleisli composition of `param_lift` and `param_apply T` (precomposed with the user-supplied type).
 - `typed_lambda A B f` is a specific use of `checked` at function-type metadata.
 - `validate` composes `typecheck` with certificate construction.
-- Library types (`Pi`, `Sigma`, `Bool`, etc.) are derived terms — wait-forms over library recognizers. Inductive types use `eliminator_frame_form` for case dispatch.
+- Library types (`Pi`, `Sigma`, `Bool`, etc.) are derived terms — wait-forms over library recognizers. Inductive types supply a `respond` field whose case-frame action mints stuck eliminations through `hyp_reduce`; the library `elim` (§12) handles the concrete/neutral gate.
 
 The library is "freely generated" from Σ in the algebraic-theory sense,
 modulo composition equations in `Kl(T)`.
@@ -1057,9 +1102,8 @@ handlers in `kernel_handlers` provide *type-system effects*:
     align: left,
     inset: 6pt,
     [*Handler*], [*Effect on the type-checking environment*],
-    [`bind_hyp`], [Mint a fresh symbol for an unknown of given type.],
-    [`hyp_reduce`], [Apply a symbol to an argument; extend its observed spine.],
-    [`eliminator_frame`], [Case-dispatch a value; if symbolic, defer.],
+    [`bind_hyp`], [Mint a fresh seal for an unknown of given type.],
+    [`hyp_reduce`], [Push a frame onto a neutral; consult the stored type's `respond`.],
     [`postulate`], [Bridge from user code to a non-self-dispatching handler.],
   ),
   caption: [Kernel handlers as type-system effects.],
@@ -1099,45 +1143,38 @@ travel safely through library code.
 
 == What are stuck forms?
 
-A *stuck form* is a tree of a specific kernel-pinned shape
-representing "a computation whose value is unknown until later." Disp
-has three kinds, each from a different Σ-operation:
+A *stuck form* is a `hyp_reduce`-rooted tree of shape
+`wait kernel.hyp_reduce (make_neutral_meta T payload)` representing
+"a computation whose value is unknown until later." Two operational
+roles use the same constructor:
 
 #figure(
   table(
-    columns: 3,
+    columns: 2,
     stroke: 0.4pt + gray,
     align: left,
     inset: 6pt,
-    [*Kind*], [*Constructor*], [*Represents*],
-    [Hypothesis],
-      [`bind_hyp` (mints fresh)],
-      ["An unknown value of type T."],
-    [Spine-extended neutral],
-      [`hyp_reduce` (extends on application)],
-      ["An unknown value, after being applied to known args."],
-    [Stuck elimination],
-      [`eliminator_frame` (mints on neutral target)],
-      ["Eliminating an unknown value with known cases."],
+    [*Role*], [*Origin*],
+    [Hypothesis], [`bind_hyp` (mints fresh; payload = fresh id)],
+    [Spine-extended neutral / stuck elimination],
+      [`hyp_reduce` (extends an existing neutral with a frame;
+       payload = `(old_meta, frame)` where the frame may be an
+       applied arg, a projection selector, or a case-frame
+       `(motive, cases)`)],
   ),
-  caption: [The three kinds of stuck forms.],
+  caption: [Origins of stuck forms — one constructor.],
 )
 
-All three are *handler-rooted*: their `pair_fst` is the sig of some
-handler in Σ (`hyp_reduce`'s for hypotheses and spine extensions;
-`eliminator_frame`'s for stuck eliminations). The walker (§4) rejects
-user-side construction of such trees via its stem-forge rule. Only
-the kernel can mint them, via the three privileged Σ-operations.
+All stuck forms are *handler-rooted*: `pair_fst = checker_sig
+hyp_reduce`. The walker rejects user-side construction via its
+stem-forge rule; only the kernel mints them. `StuckElim` and `Hyp`
+are aliases at the tree level.
 
 #note[
-  *Stuck forms generalize to any handler.* Today only the three
-  kernel Σ-ops listed above produce stuck forms — host primitives
-  in the default environment either reduce on concrete input or fail
-  on neutral input. In principle a custom handler can symbolic-defer
-  on neutral input and contribute a fourth stuck-form kind; the H-rule
-  generalization in §11 handles such forms uniformly via the
-  `safe_is_stuck` helper. The three-kind taxonomy above is descriptive
-  of the default environment, not exhaustive of what Σ can contain.
+  *Generalization.* In principle a custom handler can symbolic-defer
+  on neutral input and contribute another stuck-form kind; the H-rule
+  generalization in §11 handles such forms uniformly. The single-
+  constructor view above is descriptive of the default environment.
 ]
 
 == How stuck forms propagate
@@ -1145,34 +1182,31 @@ the kernel can mint them, via the three privileged Σ-operations.
 Stuck forms thread through computation; subsequent operations on
 them extend the stuck-ness rather than reducing to concrete values.
 
-*Application to a stuck form*: `apply(hyp_X, v)` routes through
-`hyp_reduce`. The handler consults `X`'s stored type's `codomain_fn`
-to decide what type the result should have, then extends the spine
-with the new argument. The result is a *bigger* stuck form
-representing "hyp_X applied to v."
+*Pushing a frame*: `apply(neutral, frame)` routes through
+`hyp_reduce`. The handler consults the stored type's `respond` field
+and either extends the spine (`Extend T'` — new stored type `T'`,
+frame appended) or yields a value (`Return v` — short-circuit).
+Per-type behavior:
 
-For Pi-typed hyp, codomain_fn returns `Extend B(v)`: result is a
-neutral of type B(v). For Type-typed hyp, codomain_fn fires the
-*predicate-side H-rule*: it returns `Return TT` iff `v` is itself a
-kernel-minted neutral whose stored type hash-cons-equals the
-applied hypothesis, and `Return FF` otherwise — a concrete Bool
-verdict, decided structurally by `tree_eq` (see §12.10 for the
-`type_predicate_h_rule` definition; the rationale for this being
-predicate-side rather than `Extend`-based is in §6.4). For
-non-applicable types (Bool, Nat), codomain_fn returns `Invalid` and
-hyp_reduce produces an `invalid_result` form.
+- *Π-typed neutral, frame = argument*: `Extend (B frame)`.
+- *Σ-typed neutral, frame = projection selector*: `Extend A` or
+  `Extend (B (apply self walker_pair_fst))`.
+- *Inductive (Bool/Nat/…) neutral, frame = `(pair motive cases)`*:
+  `Extend (motive (reconstruct_self meta))` — this is what earlier
+  drafts factored out as `eliminator_frame`.
+- *Type-typed neutral, frame = candidate value*: `Return (and
+  (is_neutral frame) (tree_eq (neutral_type frame)
+  (reconstruct_self meta)))` — the predicate-side H-rule (§12.10).
+- *Non-applicable type (e.g. raw `I`)*: `respond = none`; the
+  neutral is inert and `hyp_reduce` records `InvalidType`.
 
-*Elimination of a stuck form*: `eliminator_frame_form { dispatcher,
-motive, cases } target` checks if `target` is a neutral. If yes,
-mints a `StuckElim` form representing "the dispatch that would have
-happened if target were concrete." If no, runs the dispatcher
-normally.
+*Library elimination* (`elim`, §12) gates on `is_neutral target`:
+the concrete branch runs the dispatcher; the neutral branch routes
+the case-frame through `hyp_reduce` as above.
 
-*Triage on a stuck form*: walker-rejected (TriageReflect, §4.2).
-User code that tries to inspect a stuck form's structure via raw
-triage will be caught by the walker. Library helpers (`safe_*`)
-that route through `eliminator_frame` give well-defined
-"stuck Bool" / "stuck Tree" / etc. results instead.
+*Triage on a stuck form*: walker-rejected (`TriageReflect`, §4.2).
+Library `safe_*` helpers go through `elim` to give well-defined
+stuck-Bool / stuck-Tree results.
 
 *Hash-cons equality with stuck forms*: works (`tree_eq` is just
 pointer comparison). Two stuck forms constructed via the same
@@ -1314,275 +1348,155 @@ stuck-form machinery intact.
 
 = The kernel primitives <sec:primitives>
 
-This section gives operational semantics for the four Σ-operations
-of §5 plus the parameterized dispatcher `safe_apply`. Each subsection
-covers: signature, role (which stuck form it constructs, extends, or
-mediates, per §6), disp source, and soundness obligations.
-
-The kernel surface is deliberately small: only operations that
-require privileged construction — minting handler-rooted stuck forms
-the walker would otherwise reject — live here. Type recognition, typed
-function application, and most type-system machinery live in the
-library (see §11). (`checked` was previously kernel-resident; its
-handler body is walker-safe, so it has been relocated to the library —
-see §12 for the library `checked_apply`.)
+Operational semantics for the three Σ-operations of §5 plus the
+parameterized dispatcher `safe_apply`. The kernel surface is small by
+design: only operations requiring privileged construction live here.
+Type recognition, case eliminators, typed function application, and
+most type-system machinery live in the library (§12).
 
 #note[
-  *Handler bodies and the current dispatch environment.* Each
-  Σ-operation handler is invoked from inside some `safe_apply Σ`
-  call. The dispatcher constructs the internal kernel record `ks`
-  per-invocation with `ks.param_apply` bound to `safe_apply Σ` — the
-  *current* environment, not the default. So the per-handler source
-  code below using `ks.param_apply (...)` always means "dispatch the
-  sub-call against the same Σ I was invoked under." Under `test_pure`,
-  handlers' sub-calls run under `kernel_handlers`; under
-  `default_dispatch`, they run under the full environment. The
-  threading is automatic; handler-body authors don't write Σ
-  explicitly.
-
-  This means handlers compose: `bind_hyp`'s body-application uses
-  whatever Σ the outer call provided. A `test_pure` test traversing
-  a `bind_hyp` will see all body reductions also run under
-  `kernel_handlers`.
+  Each handler is invoked from inside some `safe_apply Σ` call. The
+  dispatcher binds `ks.param_apply := safe_apply Σ` per-invocation, so
+  handler sub-calls inherit Σ automatically. Under `test_pure` the
+  inherited Σ is `kernel_handlers`; under `default_dispatch` it's the
+  full environment.
 ]
 
 == `hyp_reduce`
 
-*Signature.* `hyp_reduce : {stored_type : Type, spine : List Tree_p} -> Tree_p -> CheckerResult(Tree_p)`.
+*Signature.* `hyp_reduce : NeutralMeta → Frame → CheckerResult(Tree_p)`.
 
-*Role.* When a hypothesis `h` is applied to an argument `v`, the
-dispatcher routes to `hyp_reduce`. The handler reads `h`'s stored type's
-codomain function and uses the `Action` protocol (`Extend new_type | Return value`)
-to decide whether to extend the spine or return a value.
-
-*Gloss.* "Apply a neutral to an argument. Look up what the stored
-type says should happen — extend the spine with the new arg (and a
-new stored type), or short-circuit with a concrete return value, or
-mark the call invalid. The codomain function is the per-type policy."
+*Role.* The universal "push a frame onto a neutral" engine. When a
+neutral is applied to a frame, the dispatcher routes here; the handler
+consults the stored type's `respond` field (§11.2) and either extends
+the spine (`Extend`) or yields a value (`Return`).
 
 *Disp source:*
 
 ```disp
 let q_hyp_reduce_fn = {ks, raw, query} ->
-  fix ({self, meta, v} -> {
-    let stored_inner = neutral_meta_type meta
-    let cod_fn       = pair_snd (pair_snd (type_meta stored_inner))
-    let invalid_result = wait self (extend_neutral_meta meta InvalidType v)
-    let dispatch_action = {action} ->
-      match (is_extend action) {
-        TT => wait self (extend_neutral_meta meta (pair_snd action) v)
-        FF => match (is_return action) {
-          TT => pair_snd action
-          FF => invalid_result
+  fix ({self, meta, frame} -> {
+    let stored  = neutral_meta_type meta
+    let respond = meta_get (type_meta stored) "respond"
+    let invalid = wait self (extend_neutral_meta meta InvalidType frame)
+    match (is_some respond) {
+      FF => invalid
+      TT => (
+        let action = (unwrap respond) meta frame
+        match (is_extend action) {
+          TT => wait self (extend_neutral_meta meta (pair_snd action) frame)
+          FF => match (is_return action) {
+            TT => pair_snd action
+            FF => invalid
+          }
         }
-      }
-    match (is_type stored_inner) {
-      FF => invalid_result
-      TT => match (tree_eq cod_fn t) {
-        TT => invalid_result
-        FF => dispatch_action (cod_fn ks raw meta v)
-      }
+      )
     }
   })
 ```
 
-*Soundness obligation.* The codomain function `cod_fn` runs raw (outside
-the walker). Library authors writing `cod_fn`s must respect parametricity:
-no triage on the input `v` unless `v` is known concrete. `is_type` is a
-library structural check (it tests whether `stored_inner` is a wait-form
-with the standard type-metadata layout — see §11).
-
-== `eliminator_frame`
-
-*Signature.* `eliminator_frame : {dispatcher : Motive -> Cases -> A -> R, motive : Motive, cases : Cases} -> Tree_p -> CheckerResult(Tree_p)`.
-
-*Role.* Case dispatch on values of inductive types. Mints `StuckElim`
-on hypothesis targets so eliminations on unknown values stay opaque.
-
-*Gloss.* "Dispatch on a target. If the target is concrete (an
-ordinary constructor of the inductive type), run the cases-dispatcher
-to pick the right branch. If the target is neutral (a hypothesis or
-another stuck form), mint a fresh `StuckElim` form that records
-'this dispatch would have happened, but the target is symbolic.'
-The stored type of the `StuckElim` is `motive(target)`."
-
-*Disp source:*
-
-```disp
-let q_eliminator_frame_fn = {ks, raw, query} ->
-  {meta, x} -> {
-    let count      = pair_fst meta
-    let dispatcher = pair_fst (pair_snd meta)
-    let acc        = pair_snd (pair_snd meta)
-    let final_fn = {ks, raw, query, meta, x, count, dispatcher, acc} -> {
-      let cases  = pair_snd acc
-      let motive = pair_snd (pair_fst acc)
-      let target = x
-      select_lazy
-        ({_} -> q_make_hyp raw (motive target) target)
-        ({_} -> must_ok_or_self (ks.param_apply (dispatcher motive cases) target))
-        (q_is_neutral raw target)
-    }
-    let partial_fn = {ks, raw, query, meta, x, count, dispatcher, acc} ->
-      wait (ks query) (t (pair_snd count) (t dispatcher (t acc x)))
-    select final_fn partial_fn
-      (tree_eq count (t t t))
-      ks raw query meta x count dispatcher acc
-  }
-```
-
-The arity-tracking via `count` allows partial applications to remain
-in wait-form, accumulating arguments until the final one fires the
-dispatch.
+*Soundness obligation.* `respond` runs raw (outside the walker). Each
+type former's `Return v` channel must be fed only by public-derived
+data — the local DCC `[BindM]` discipline. `Extend` and `Invalid` are
+unconditionally safe.
 
 == `bind_hyp`
 
-*Signature.* `bind_hyp : {domain : Type, body : domain -> R} -> Tree_p -> CheckerResult(Tree_p)`.
+*Signature.* `bind_hyp : (T : Type) → ((h : T) → Pub h R) → CheckerResult R`.
 
-*Role.* Introduces fresh hypotheses. Critically: when the domain type
-is *applicable* (a function type), the minted hypothesis is wrapped
-with `checked` so applications of function-typed hypotheses go through
-input-checking.
-
-*Gloss.* "Mint a fresh kernel-pinned neutral tagged with `domain` as
-its stored type, then evaluate `body` on it. If `domain` is a function
-type, wrap the neutral with `checked` so applications respect the
-domain contract. After the body returns, run the escape check (see
-'Open vs closed paths' below) — if the hyp leaked via an open path,
-raise `Err Escape`; otherwise return the body's result."
+*Role.* Mint a fresh hypothesis of type `T`, run the body, and ensure
+the result does not depend on the hypothesis — so it cannot leak out of
+the body, where it would have no binder.
 
 *Disp source:*
 
 ```disp
-let q_bind_hyp_fn = {ks, raw, query} ->
-  {meta, x} -> {
-    let count = pair_fst meta
-    let acc   = pair_snd meta
-    let final_fn = {ks, raw, query, meta, x, count, acc} -> {
-      let domain = pair_snd acc
-      let body   = x
-      let hyp_id = t domain body
-      let raw_hyp = q_make_hyp raw domain hyp_id
-      // Wrap applicable-typed hypotheses with `checked`:
-      let final_hyp = match (is_applicable_type domain) {
-        TT => wait checked_apply (pair (pi_dom domain) raw_hyp)
-        FF => raw_hyp
-      }
-      let result_r = ks.param_apply body final_hyp
-      match (is_ok result_r) {
-        TT => {
-          let result = ok_value result_r
-          match (q_contains_via_open_path raw result raw_hyp) {
-            TT => Err (Escape { hyp = raw_hyp, body_result = result, span })
-            FF => Ok result
-          }
-        }
-        FF => result_r        // re-raise upstream error unchanged
-      }
-    }
-    let partial_fn = {ks, raw, query, meta, x, count, acc} ->
-      wait (ks query) (t (pair_snd count) (t acc x))
-    select final_fn partial_fn
-      (tree_eq count (t t t))
-      ks raw query meta x count acc
+let q_bind_hyp_fn = {ks, raw, query} -> {domain, body} -> {
+  let h = wait raw.hyp_reduce (make_neutral_meta domain (t domain body))
+  let h_use = match (is_pi domain) {
+    TT => checked (pi_dom domain) h
+    FF => h
   }
+  bind (ks.param_apply body h_use) ({result} -> (
+    match (occurs h result) {
+      TT => Err (Escape { hyp = h, body_result = result, span })
+      FF => Ok result
+    }
+  ))
+}
 ```
 
-The wrapping condition `is_applicable_type domain` is satisfied for
-`Pi`-shaped types (and any future applicable type-former). For
-non-applicable types like `Bool` or `Nat`, the hypothesis is bare.
-
-*Escape check.* If the minted hypothesis is reachable in the body's
-result via an *open path*, return
-`Err (Escape { hyp, body_result, span })`. This prevents the
-hypothesis from being smuggled into a context where it could be
-exploited via `type_recognizer`'s H-rule.
-
-*Open vs closed paths — precise definition.* A path from `result` to
-`raw_hyp` is *closed* iff every step in the path traverses a
-distinguished "opaque slot" of a wait-form rooted at a *stuck-form-
-producing kernel Σ-op*. The opaque slots are:
-
-#figure(
-  table(
-    columns: 2,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*Kernel Σ-op*], [*Opaque slot(s)*],
-    [`hyp_reduce`], [the `spine` field of pair_snd — applied arguments are inside],
-    [`eliminator_frame`], [the `target` field of pair_snd — the value being eliminated],
-  ),
-  caption: [Opaque slots that constitute closed paths.],
-)
-
-Other slots of these same wait-forms (motive, cases, stored_type) and
-*all* slots of any other wait-form (postulate-built host-effect
-wait-forms, `checked_apply` wait-forms, library type wait-forms) are
-*open*. Any path passing through an open slot is an open path; the
-hyp escapes.
-
-The rationale: the walker treats the opaque slots above as "values
-the kernel knows are stuck symbolic data" — triage on them is
-rejected, structural reflection on them is rejected. A hyp inside an
-opaque slot stays inside the parametricity bubble. Any other slot is
-either user-constructed (open by definition) or accessible to user
-code via raw inspection (open in effect).
-
-Worked examples:
+*Escape rule.* The result must not depend on `h`. `occurs` (§8.1)
+searches the whole result — descending *through* neutrals — for `h`'s
+metadata, which is what every value derived from `h` carries in its
+spine. A hypothesis hidden inside a stuck elimination is found and
+rejected, not waved through:
 
 ```disp
-// Closed — passes escape check, returns stuck Nat at top level.
-bind_hyp Nat ({x} -> Ok (nat_rec ({_} -> Bool) cases x))
-//                       ↑ target slot of eliminator_frame: opaque
-
-// Closed — spine extension.
-bind_hyp Nat ({x} -> Ok (apply x 0))
-//                       ↑ spine slot of hyp_reduce: opaque
-
-// Open — direct return.
-bind_hyp Nat ({x} -> Ok x)                              // ✗ Err Escape
-
-// Open — wrapped in user-constructed pair.
-bind_hyp Nat ({x} -> Ok (pair x 0))                     // ✗ Err Escape
-
-// Open — wrapped in a checked contract.
-bind_hyp Nat ({x} -> Ok (checked Nat x))                // ✗ Err Escape
-
-// Open — passed into a host-effect payload.
-bind_hyp Nat ({x} -> Ok (host_write_stdout (nat_to_string x)))
-//                                          ↑ open path through WRITE_STDOUT_SIG
-//                                            wait-form's pair_snd  ✗ Err Escape
+bind_hyp Nat ({x} -> Ok 0)                       // ✓ result doesn't depend on x
+bind_hyp Nat ({x} -> Ok (apply x 0))             // ✗ apply x 0 is a stuck elim carrying x
+bind_hyp Nat ({x} -> Ok x)                       // ✗ x at public position
+bind_hyp Nat ({x} -> Ok (pair x 0))              // ✗ x in user-constructed pair
+bind_hyp Nat ({x} -> Ok (checked Nat x))         // ✗ x in checked wrapper
+bind_hyp Nat ({x} -> Ok (host_write_stdout (to_string x)))   // ✗ x in host payload
 ```
 
-*Soundness story.* The escape check blocks direct hyp leakage. The
-*closed-path* leak case is real — user code can return a stuck form
-whose `stored_type` is whatever the user chose for the motive. The
-resulting top-level value passes `typecheck T = Ok TT` for that T
-(via H-rule). Soundness depends on the property that stuck forms
-*never reduce to concrete values* of their declared type — the same
-property underwriting the Type:Type conjecture (§11.6). See §14.5
-for the soundness argument.
+*The `Pub` modality.* `Pub h R := Refinement R ({v} -> fresh_for h v)`
+— the sealing modality as an ordinary library refinement (§12). The
+runtime scan is the certificate for the typed claim; under the
+per-type-former `respond` discipline (§11.2) it is sound by
+construction and erasable at strip time.
+
+#note[
+  *Dependent hypotheses scan correctly.* When one hypothesis's type is
+  another — `bind_hyp Type ({A} -> bind_hyp A ({x} -> …))` — `x`'s
+  metadata contains `A`, so `x` depends on both. Releasing `x` (inner)
+  searches for `x`: a result that mentions `A` but not `x` passes,
+  since `A` is still in scope. Releasing `A` (outer) searches for `A`:
+  any value of type `A` that tried to escape carries `A` in its
+  metadata and is caught. Searching for one specific hypothesis, while
+  descending through all structure, is what distinguishes a reference
+  to a hypothesis still in scope from one being smuggled out — so the
+  scan can go through seals without ever flagging a legal in-scope
+  reference.
+]
+
+== `eliminator_frame` is no longer a Σ-op
+
+Case dispatch is library code (§12, `elim`). Stuck eliminations on
+neutral targets are produced by `hyp_reduce` when the inductive type's
+`respond` returns `Extend (motive (reconstruct_self meta))` for a
+case-frame `(pair motive cases)`. `StuckElim` and `Hyp` are aliases at
+the tree level — both are `wait kernel.hyp_reduce (make_neutral_meta T
+payload)`.
 
 == `postulate`
 
 *Signature.* `postulate : {sig : Tree} -> Tree_p -> CheckerResult(Tree_p)`.
 
-*Role.* The kernel-mediated constructor for wait-forms rooted at any
-handler in the current Σ. User code can't directly construct such
-trees — the walker rejects forgery for any sig pinned by Σ (§4). The
-`postulate` handler runs in the privileged arm; it is exempt from
-walker enforcement and can mint the otherwise-forbidden fork shape.
+*Role.* The kernel-mediated constructor for wait-forms rooted at a
+*funnel sig* — a host / effect handler in `funnel(Σ)` (§4.2). User
+code can't construct such trees directly: the walker's stem-forge
+clause rejects fabricating a `forge(Σ)` root, so every host call is
+forced through this one sanitizing route. `postulate` runs in the
+privileged arm and may mint the otherwise-forbidden fork shape — but
+*only for `funnel(Σ)` targets*. Targeting a `seal(Σ)` sig (which would
+forge a trusted token, e.g. a neutral) is refused: `postulate` is a
+bridge to effects, never a back door to the seal set.
 Each library postulate `host_op : T := postulate sig` produces a
 `checked T (call_via_postulate sig)` value; the `checked` wrap (§8,
 §12) enforces input validation, and `postulate`'s handler validates
 that the payload contains no neutrals before constructing.
 
 *Gloss.* "Build a wait-form rooted at `sig`, paired with the given
-payload, on behalf of user code. Refuse if the payload contains
-neutrals (would smuggle a hyp to a host handler). This is the only
-path by which user code produces a pinned-sig fork shape, because
-the walker rejects all other paths."
+payload, on behalf of user code. Refuse if `sig` is a seal sig (no
+forging tokens) or if the payload contains neutrals (would smuggle a
+hyp to a host handler). This is the only path by which user code
+produces a `funnel(Σ)`-rooted fork shape, because the walker rejects
+all other paths to it. (The kernel operations `bind_hyp` / `postulate`
+themselves are *not* construction-protected — their invocation
+wait-forms are built by ordinary library code under the walker and
+routed to the registered handler, §5.4.)"
 
 The disp library is responsible for the *type ascription* T. The host
 provides only the handler tree (the entry in `host_provided : Σ`);
@@ -1597,11 +1511,17 @@ their proof obligations at the call site.
 let q_postulate_fn = {ks, raw, query} ->
   {meta, payload} -> {
     let sig = pair_snd meta             // the target handler sig
-    // Sanitize: payload must not contain forged neutrals or
-    // hypothesis leakage. The host primitive must not see them.
-    match (scan_no_neutral payload) {
-      FF => Err (Malformed { handler = "postulate", meta = payload, span })
-      TT => Ok (wait_with_sig sig payload)
+    // Reject seal-sig targets: postulate bridges to effects, never
+    // forges a trusted token (e.g. a hyp_reduce-rooted neutral).
+    match (is_seal_sig sig) {
+      TT => Err (Malformed { handler = "postulate", meta = sig, span })
+      FF =>
+        // Sanitize: payload must not contain forged neutrals or
+        // hypothesis leakage. The host primitive must not see them.
+        match (scan_no_neutral payload) {
+          FF => Err (Malformed { handler = "postulate", meta = payload, span })
+          TT => Ok (wait_with_sig sig payload)
+        }
     }
   }
 
@@ -1641,31 +1561,40 @@ reduction in this spec. Stricter callers (foundational tests,
 sandboxes) use `safe_apply Σ_strict` with a narrower Σ.
 
 ```disp
-// Membership check on Σ. Linear scan; each comparison is O(1) hash-cons id.
-is_pinned_sig := {Σ, sig} ->
-  list_any ({h} -> tree_eq sig (checker_sig h)) Σ
+// Routing lookup on Σ. Linear scan; each comparison is O(1) hash-cons
+// id. Returns the registered handler for `sig`, or None if unpinned.
+// `wait_meta` is the meta-recovery of §5.4 (the "meta accessibility"
+// property): for a genuine `wait k m` it returns `m`.
+lookup_handler := {Σ, sig} ->
+  list_find ({h} -> tree_eq sig (checker_sig h)) Σ
 ```
 
 *The dispatcher.*
 
 ```disp
 safe_apply := fix ({self, Σ, f, x} ->
-  match (and (is_wait_form f) (is_pinned_sig Σ (pair_fst f))) {
-    TT => f x                                // raw apply: handler embedded in f
+  match (and (is_wait_form f) (is_some (lookup_handler Σ (pair_fst f)))) {
+    TT => Ok (apply (apply (unwrap (lookup_handler Σ (pair_fst f)))
+                           (wait_meta f))
+                    x)                       // registered handler on recovered meta
     FF => walker_step Σ (self Σ) f x         // walker (§4), parameterized by Σ
   })
 ```
 
 The two arms have different semantics:
 
-- *Raw arm.* `f x` is plain substrate apply (§2.1) — no walker
-  enforcement, no further dispatch at this level. The wait-form's
-  bracket-abstracted shape reduces `wait k m x` to `k m x`, invoking
-  the handler whose privilege we just granted. The handler's body,
-  running raw, can do operations the walker would reject — minting
-  neutrals (`bind_hyp`), extending spines (`hyp_reduce`), constructing
-  handler-sig-rooted wait-forms for H-rule reconstruction or via
-  `postulate`.
+- *Routed arm.* The dispatcher runs the *registered* handler `h ∈ Σ`
+  on the wait-form's recovered meta and the argument: `h (wait_meta f)
+  x`, in raw (non-walker) reduction. For a genuine `f = wait h m` this
+  equals `f x` (`wait h m x → h m x`); for a forgery presenting the
+  sig with a different embedded handler, `h` still runs (§5.4). The
+  handler's body, running raw, can do operations the walker would
+  reject — minting neutrals (`bind_hyp`), extending spines
+  (`hyp_reduce`), constructing funnel-sig-rooted wait-forms via
+  `postulate`. Because the routed handler is the *registered* one,
+  forging the *invocation* of a non-token operation (`bind_hyp`,
+  `postulate`) is harmless: it can only re-enter the genuine,
+  self-defending handler.
 
 - *Walker arm.* `walker_step` is the parametricity-enforcing
   reduction of §4, also parameterized by Σ. Its internal sub-applies
@@ -1681,7 +1610,6 @@ bindings:
 let kernel_handlers : List Tree := [
   q_hyp_reduce_fn ;
   q_bind_hyp_fn ;
-  q_eliminator_frame_fn ;
   q_postulate_fn
 ]
 
@@ -1710,43 +1638,106 @@ corresponding TS function (a second fast-path tier).
 = Boundary operations and checked values <sec:boundary>
 
 The boundary between untrusted user trees and the Kleisli world of
-`CheckerResult` is two operations wide: `param_lift` sanitizes
-incoming values, and `checked` wraps function values so applications
-go through input-checking. `typecheck` and `validate` build on these
+`CheckerResult` rests on one scan (`occurs`) and one wrap
+(`checked`). `param_lift`, `typecheck`, and `validate` build on these
 to turn the boundary into the user-facing query and certificate-
-issuance APIs respectively. This section covers all four.
+issuance APIs.
+
+== `support`, `occurs`, and `fresh_for` — the dependency set
+
+A `bind_hyp` body must not let its hypothesis leak out. The check is a
+single question: does the result *depend on* the hypothesis? A value
+depends on a hypothesis when the hypothesis appears anywhere in its
+tree — and that includes inside the metadata of *other* neutrals. When
+a hypothesis is eliminated (a function-hypothesis applied, a pair-
+hypothesis projected), `hyp_reduce` builds a stuck elimination whose
+spine embeds the *predecessor neutral* it came from (the same way an
+eliminator stuck-form embeds its target). So a value can carry a
+hypothesis without *being* it — the hypothesis sits inside a derived
+neutral — but every hypothesis it depends on is still reachable as a
+neutral somewhere in its tree.
+
+The *support* of a value is the set of those hypotheses, collected by
+walking the value, recognizing each neutral by its root signature, and
+descending through its metadata:
+
+```disp
+// support v — the hypotheses v depends on, as their metadata. At each
+// neutral, collect its metadata (type_meta) and descend into it; because
+// a stuck elimination embeds the predecessor neutral it was built from
+// (see hyp_reduce), the descent reaches the whole dependency chain,
+// including hypotheses nested inside other neutrals' spines.
+support := fix ({self, v} ->
+  match (is_neutral v) {
+    TT => set_insert (type_meta v) (self (type_meta v))
+    FF => triage set_empty ({c} -> self c)
+                 ({l, r} -> set_union (self l) (self r)) v
+  })
+
+// Membership compares metadata (type_meta), which is recovered identically
+// however a neutral was reconstructed — so the check never depends on
+// handler-tree identity, only on the metadata threaded verbatim.
+occurs    := {h, v} -> set_member (type_meta h) (support v)
+fresh_for := {h, v} -> not (occurs h v)
+is_closed := {v}    -> set_is_empty (support v)
+```
+
+Two policies, one set:
+
+#figure(
+  table(
+    columns: 2,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*Call site*], [*Policy*],
+    [`bind_hyp` escape],
+      [`fresh_for h result` — this hypothesis can't cross the
+       kernel→user return],
+    [`param_lift` / `postulate`],
+      [`is_closed v` — no hypothesis crosses to the user or the host],
+  ),
+  caption: [Two boundary checks, one set.],
+)
+
+The walk does *not* stop at neutrals. That is the whole correction: a
+stuck elimination is itself a neutral, so a scan that halted at neutral
+roots would stop *before* reaching the hypothesis embedded in its
+spine — precisely the values that carry a hypothesis out of scope. This
+is verified in the implementation: `bind_hyp (Pi Nat ({_} -> Bool))
+({h} -> h 0)` returns `Fail`, because `h 0` is a stuck elimination
+whose spine holds `h` (`lib/tests/bind_hyp.test.disp`); the prior
+seal-stopping scan returned the leaked neutral instead.
+
+`support v` is a pure function of `v`'s structure, so the runtime
+memoizes it per tree id (the same hash-cons-keyed `apply` memo that
+makes `tree_eq` O(1)); equal subtrees share their support and the
+boundary checks read the cache rather than re-walking. Membership on
+metadata — not on the neutral itself — is what lets the embedded
+predecessor (`wait self meta`, built inside the handler) match the
+hypothesis it stands for (`wait raw.hyp_reduce meta`, minted by
+`bind_hyp`) without depending on those two wait-forms being identical.
+Because the set is keyed on what a value *depends on* rather than on a
+binder stack, it also survives stuck-form producers whose lifetimes are
+not stack-disciplined — async results, multi-shot continuations — which
+a de Bruijn level counter would not.
 
 == `param_lift`
 
-The boundary sanitizer. Scans a value for embedded kernel-minted
-neutrals and lifts into the Result monad on success.
+The boundary sanitizer, in terms of `is_closed`:
 
 ```disp
 param_lift := {v} ->
-  match (scan_no_neutral v) {
+  match (is_closed v) {
     TT => Ok v
     FF => Err (Malformed { handler = "param_lift", meta = v, span })
   }
-
-// scan_no_neutral: TT iff v contains no neutral-rooted subterm.
-scan_no_neutral := {v} -> not (contains_neutral v)
-contains_neutral := fix ({self, x} ->
-  match (neutral_root x) {
-    TT => TT
-    FF => match (is_fork x) {
-      TT => or (self (pair_fst x)) (self (pair_snd x))
-      FF => match (is_stem x) {
-        TT => self (stem_child x)
-        FF => FF
-      }
-    }
-  })
 ```
 
-`param_lift` is the *boundary lift* — the gate where untrusted user
-values enter the Kleisli world. Inside `param_lift`'s output, you have
-sanitary trees; outside, you have raw trees that might harbor forged
-neutrals.
+Inside `param_lift`'s output, you have sanitary trees; outside, you
+have raw trees that might carry a neutral at a public position —
+whether a stray kernel-minted token or (in a misconfigured Σ) a
+forged one. Either is rejected at this boundary.
 
 == `typecheck`
 
@@ -1765,6 +1756,27 @@ typecheck := {T, v} ->
 something soundness-level went wrong during the check (parametricity
 violation in the recognizer, malformed input, etc.). The verdict is
 data; the error channel carries only kernel-correctness failures.
+
+#note[
+  *`typecheck` sanitizes; `param_apply` recognizes.* `param_lift`'s
+  scan errors on *any* neutral in `v`'s public skeleton, so the
+  recognizer-side H-rule (§6.3.1, §12 `make_recognizer`) — which fires
+  precisely when a recognizer is applied to a neutral — is *never
+  reached through `typecheck`*. That is intentional, not a dead path:
+  `typecheck` is the sanitizing entry for *closed* user queries, where
+  a public neutral can only be adversarial or confused. The H-rule is
+  reached through `param_apply` (the internal recognition primitive),
+  which the Pi/Sigma body-checks invoke *without* the sanitizing scan:
+  e.g. Pi's `param_apply (B hyp) result` (§12) hands the recognizer a
+  result that legitimately contains the freshly-minted `hyp`. The
+  recognizer's H-rule fires there. Tests that exercise the H-rule
+  directly (`bool_recognizer bool_meta (mint_hyp_form Bool) = Ok TT`,
+  §12) likewise call the recognizer through `param_apply`, not
+  `typecheck`. A caller that genuinely needs to ask "does this
+  neutral-bearing `v` inhabit `T`?" uses `param_apply T v` directly,
+  accepting that it has stepped inside the trusted recognition layer
+  rather than the sanitizing boundary.
+]
 
 *Pure variant.* For foundational tests, untrusted-code elaboration, and
 any context where host primitives must not influence the verdict, use
@@ -2253,48 +2265,51 @@ validator), not by a kernel-side sig table.
 
 == The metadata convention (MetaShape)
 
-A type's metadata follows a conventional record layout that
-downstream library code projects from. The standard fields:
-
 ```disp
-// Helper synonyms used in MetaShape:
+// Helper synonyms:
 //
-//   Functor    := Tree_p                 // a morphism-action function;
-//                                        //   sentinel `trivial_functor` means
-//                                        //   "identity / no transport rule"
-//   Applicable := Type -> Tree_p -> Action
-//                                        // codomain_fn for function-shaped
-//                                        //   types; sentinel `none` means
-//                                        //   non-applicable
-//   Action     := Extend Type | Return Tree_p | Invalid
-//                                        // the protocol consumed by hyp_reduce
+//   Functor := Tree_p                  // Kan-method for transport (§13)
+//   Respond := NeutralMeta -> Frame -> Action
+//                                       // response to an elimination
+//                                       //   frame applied to a neutral
+//                                       //   of this type
+//   Action  := Extend Type | Return Tree_p | Invalid
+//   Frame   := Tree_p                   // untagged; the stored type
+//                                       //   interprets it
 
 MetaShape := Refinement Record [
-  ("recognizer_params", Tree),                  // closed args to the recognizer
-  ("functor", Functor),                         // morphism action for transport (§13)
-  ("applicable", Optional Applicable),          // codomain_fn for function-shaped types
-  ("behavioral_specs", Optional (List Path))    // optional Path-typed proofs
+  ("recognizer_params", Tree),
+  ("functor",  Functor),
+  ("respond",  Optional Respond),
+  ("behavioral_specs", Optional (List Path))
 ]
 ```
 
-`MetaShape` is the library refinement type capturing this convention.
-The structural shape (a Record with these fields) is enforced; deeper
-validation of each field's contents is the validator's responsibility.
-At the bootstrap layer, where library record types don't yet exist,
-each field is just a tree subterm of the meta payload — the synonyms
-above name conventions, not enforced contracts.
+`respond` is the universal "respond to an elimination frame" function.
+The stored type determines how the frame is interpreted; frames are
+untagged because one type accepts one frame kind:
 
-The convention is *extensible*. Adding a new conventional field
-(e.g., for a new modality or effect system) extends MetaShape's
-expected layout. Existing types whose meta lacks the new field still
-pass structural checks; library code that needs the new field handles
-its absence explicitly.
+- *Π*: frame is an argument `a`; `Extend (B a)`.
+- *Σ*: frame is a projection selector (`walker_pair_fst` /
+  `walker_pair_snd`); `Extend A` or `Extend (B (apply self
+  walker_pair_fst))`.
+- *Inductive*: frame is `(pair motive cases)`; `Extend (motive
+  (reconstruct_self meta))`.
+- *Path*: frame is a dimension `i`; `Extend (P i)`.
+- *Type*: frame is a candidate value `v`; `Return (and (is_neutral v)
+  (tree_eq (neutral_type v) (reconstruct_self meta)))` — the
+  predicate-side H-rule.
 
-(Records, Refinement, and the projection mechanism are library
-constructions detailed in §12. Their behavior in turn relies on
-Sigma's projection codomain_fn, also §12. The dependency cycle
-between Type / MetaShape / Pi / Sigma is broken by deferring tests
-— see §11, validators-as-library-entities.)
+A type with `respond = none` is inert under elimination (e.g., `I`,
+`IsOne`). The convention is extensible: existing types whose meta
+lacks a new field still pass structural checks.
+
+#note[
+  *Naming.* The earlier `applicable` field is renamed `respond` to
+  reflect that it handles every elimination form, not only function
+  application. The narrower `is_pi` / `pi_dom` (used for `checked`
+  wrapping) is a separate convention.
+]
 
 == Validators as library entities
 
@@ -2359,12 +2374,12 @@ where `type_recognizer` is a `make_recognizer`-wrapped function (§12,
 
 And `type_self_meta` is a MetaShape-conforming record with
 `recognizer_params := unit_witness`, `functor := trivial_functor`,
-`applicable := some type_predicate_h_rule` (the predicate-side
-H-rule, §6.4 and §12.10), `behavioral_specs := none`.
+`respond := some type_predicate_h_rule` (the predicate-side
+H-rule, §6.3 and §12.10), `behavioral_specs := none`.
 
 The §11.6 argument depends on this contract *plus* the predicate-side
 H-rule: `Type` is a wait-form with a structural recognizer, a
-MetaShape-conforming meta, and a codomain_fn that returns
+MetaShape-conforming meta, and a respond that returns
 `Return (tree_eq (neutral_stored_type v) self_as_hyp)` for neutral
 `v` and `Return FF` otherwise. The actual recognizer body and
 H-rule are §12.10's responsibility; readers can verify they satisfy
@@ -2394,18 +2409,17 @@ inhabitants.* The core property: Pi's body check requires the
 body's result, applied to the codomain recognizer, to reduce to
 *literal `Ok TT`*. Two failure modes block ⊥-inhabitation:
 
-  + Stuck symbolic results — trees produced by `hyp_reduce`,
-    `eliminator_frame`, or composition through them — are not the
-    tree `Ok TT`.
-  + Concrete `Ok FF` from a decidable codomain_fn (notably `Type`'s
+  + Stuck symbolic results — trees produced by `hyp_reduce` (or
+    composition through it) — are not the tree `Ok TT`.
+  + Concrete `Ok FF` from a decidable respond (notably `Type`'s
     predicate-side H-rule) is also not `Ok TT`.
 
 To inhabit ⊥, the body (under a fresh Type-hypothesis `hyp_A`) must
 produce a value `v` whose check against `hyp_A` reduces to `Ok TT`.
 `hyp_A` is a kernel-minted neutral with stored type `Type`, so
 applying `hyp_A` to `v` routes through `hyp_reduce`, which consults
-`Type`'s codomain_fn (`type_predicate_h_rule`, §12.10). That
-codomain_fn returns `Return (tree_eq (neutral_stored_type v) self_as_hyp)`
+`Type`'s respond (`type_predicate_h_rule`, §12.10). That
+respond returns `Return (tree_eq (neutral_stored_type v) self_as_hyp)`
 — a concrete Bool. The verdict is `TT` iff `v` is itself a
 kernel-minted neutral whose stored type hash-cons-equals `hyp_A`.
 
@@ -2505,7 +2519,7 @@ construct the type as `wait recognizer meta`, and assert validity
 via tests.
 
 This section opens with the library infrastructure that supports
-strict / behavioral validation (Sigma's projection codomain_fn,
+strict / behavioral validation (Sigma's projection respond,
 Record, Refinement, MetaShape, RecognizerShape, the `safe_*` helpers),
 then walks the individual type-formers (Bool, Nat, Pi, …).
 
@@ -2515,12 +2529,12 @@ then walks the individual type-formers (Bool, Nat, Pi, …).
 where `a : A` and `b : B(a)`. Inspection is via `pair_fst` / `pair_snd`.
 
 For *hypothesis* values of Sigma type, projection works through a
-codomain_fn that treats projection as application. Applying a Sigma
+respond that treats projection as application. Applying a Sigma
 hypothesis to a position walker triggers `hyp_reduce`, which dispatches
-via `sigma_cod_fn`:
+via `sigma_respond`:
 
 ```disp
-sigma_cod_fn := {meta, walker_arg} ->
+sigma_respond := {meta, walker_arg} ->
   let A = meta.recognizer_params.first in
   let B = meta.recognizer_params.second in
   match (tree_eq walker_arg walker_pair_fst) {
@@ -2543,7 +2557,7 @@ Sigma's meta:
 sigma_meta_for := {A, B} -> {
   recognizer_params := pair A B,
   functor := sigma_functor,
-  applicable := some sigma_cod_fn,
+  respond := some sigma_respond,
   behavioral_specs := none
 }
 
@@ -2555,6 +2569,44 @@ test typecheck StrictType Sigma      // Sigma passes deep validation
 
 Records, Refinement-of-Record, and any type built on Sigma chains
 inherit projection support through this mechanism.
+
+== The library eliminator
+
+Case dispatch on inductive values is library code, not a kernel
+primitive. The two cases are gated by `is_neutral`:
+
+```disp
+elim := {dispatcher, motive, cases, target} ->
+  select_lazy
+    ({_} -> param_apply target (pair motive cases))  // neutral
+    ({_} -> dispatcher motive cases target)           // concrete
+    (is_neutral target)
+
+reconstruct_self := {meta} -> wait kernel.hyp_reduce meta
+```
+
+The neutral branch routes the case-frame `(pair motive cases)` through
+`hyp_reduce`; the inductive type's `respond` extends the spine with
+stored type `motive target`:
+
+```disp
+bool_respond := {meta, frame} ->
+  Extend ((pair_fst frame) (reconstruct_self meta))
+
+nat_respond := {meta, frame} ->
+  Extend ((pair_fst frame) (reconstruct_self meta))
+```
+
+The concrete branch's `dispatcher` is walker-safe: for Scott-encoded
+types it's plain application (no triage); for tagged-sum types it
+triages on `target`, which the gate guarantees is concrete (triage on
+concrete values is walker-safe).
+
+`StuckElim` and `Hyp` are aliases at the tree level — both are
+`wait kernel.hyp_reduce (make_neutral_meta T payload)`. The
+distinction is purely about how the payload was constructed:
+`bind_hyp` for hypotheses, `hyp_reduce` for spine-extended forms
+(including stuck eliminations).
 
 == `Record`
 
@@ -2569,8 +2621,8 @@ Record := {fields} -> wait record_recognizer (record_meta_for fields)
 
 Codomain_fn delegates directly to the underlying Sigma chain (option
 (a) from the design notes): field-name verification is *parse-time*
-only (`r.x` desugars to `r W_x` at elaboration), so codomain_fn just
-needs to handle position walkers. Sigma's codomain_fn does this.
+only (`r.x` desugars to `r W_x` at elaboration), so respond just
+needs to handle position walkers. Sigma's respond does this.
 
 Tests:
 
@@ -2579,25 +2631,24 @@ test typecheck Type Record
 test typecheck StrictType Record
 ```
 
-== `Refinement` (passthrough codomain_fn)
+== `Refinement` (passthrough `respond`)
 
 `Refinement A P` values are inspected as values of A with an attached
-P-proof. For hypothesis projection, Refinement defers to A's
-codomain_fn:
+P-proof. For hypothesis frames, Refinement defers to A's `respond`:
 
 ```disp
-refinement_cod_fn := {meta, walker_arg} ->
+refinement_respond := {meta, frame} ->
   let A = meta.recognizer_params.base in
-  let A_cod_fn = applicable_eval_of A in
-  match (is_some A_cod_fn) {
-    TT => apply A_cod_fn (A, walker_arg)
+  let A_respond = respond_of A in
+  match (is_some A_respond) {
+    TT => apply A_respond (A, frame)
     FF => Invalid
   }
 ```
 
-A `Refinement Record [...]` hypothesis projects through this delegation
-to Sigma's codomain_fn — supporting the same projections as the
-underlying Record. This is what lets `MetaShape` (a Refinement of
+A `Refinement Record [...]` hypothesis projects through this
+delegation to Sigma's `respond` — supporting the same projections as
+the underlying Record. This is what lets `MetaShape` (a Refinement of
 Record) be used as a Pi domain whose body projects fields.
 
 == `MetaShape` and `RecognizerShape`
@@ -2609,7 +2660,7 @@ let MetaShape = Refinement
   (Record [
     ("recognizer_params", Tree),
     ("functor", Tree),
-    ("applicable", Tree),
+    ("respond", Tree),
     ("behavioral_specs", Tree)
   ])
   ({_} -> Ok TT)
@@ -2655,7 +2706,7 @@ before invoking the function:
 let checked_apply = {meta, arg} ->
   let T = pair_fst meta
   let v = pair_snd meta
-  match (is_applicable_type T) {
+  match (is_pi T) {
     TT => bind (param_apply (pi_dom T) arg) ({verdict} ->
           match verdict {
             TT => param_apply v arg
@@ -2678,8 +2729,25 @@ let validate = {T, v} ->
     })
 ```
 
+*Why `is_pi`, not `is_applicable_type`.* `checked_apply` implements
+exactly one elimination frame — *function application* — and then
+calls the Π-specific `pi_dom`. It must therefore gate on `is_pi`, not
+on the broad `is_applicable_type` (= "responds to *some* frame"),
+which is also true of Σ (projection), inductives (case-frame), `Path`
+(dimension) and `Type` (candidate). Gating on `is_applicable_type`
+would let `checked (Sigma A B) f` past the guard and then misapply
+`pi_dom` to a non-Π type. The division of labor is clean: *concrete
+typed function values* are applied through `checked_apply` (Π frame
+only); *all other elimination frames on neutrals* are handled by
+`hyp_reduce` + the stored type's `respond` (§7.1, §11.2). A concrete
+Σ value is projected with `pair_fst`/`pair_snd` directly and never
+reaches `checked_apply`; `Path = Pi I` is a Π alias, so `is_pi`
+accepts it. Applying a non-Π checked value (`checked Nat x`, §7.2)
+still yields `Err NotApplicable`, exactly as before — only the
+applicable-but-not-Π bug changes.
+
 *Walker-safe body.* `checked_apply`'s operations — pair projections,
-`is_applicable_type`, `param_apply` — are all walker-safe (no
+`is_pi`, `pi_dom`, `param_apply` — are all walker-safe (no
 stem-forge of pinned sigs, no triage on neutrals). The function lives
 in the library; no kernel privilege required.
 
@@ -2696,72 +2764,56 @@ bracket-abstracted shape to `checked_apply (pair T v) arg`. Internal
 is_applicable_type := {T} ->
   match (safe_is_fork T) {
     FF => FF
-    TT => not (is_none (meta_get (safe_pair_snd T) "applicable"))
+    TT => not (is_none (meta_get (safe_pair_snd T) "respond"))
   }
 ```
 
-Returns TT iff T's metadata has a non-`none` `applicable` field —
-i.e., T is function-shaped.
+Returns TT iff T's metadata has a non-`none` `respond` field —
+i.e., T accepts an elimination frame. (Sharper Π-specific checks
+use `is_pi` / `pi_dom`.)
 
 == `safe_*` helpers (hypothesis-safe structural inspection)
 
 Inspection of a value's tree shape (`is_fork`, `pair_fst`, `has_sig`)
 via raw triage is walker-unsafe — triage on a kernel-minted neutral
-is rejected (§4.2). The `safe_*` helpers route through
-`eliminator_frame_form`, which kernel-mints `StuckElim` for neutrals:
+is rejected (§4.2). The `safe_*` helpers route through the library
+`elim` (§12), which gates on `is_neutral` and pushes a case-frame
+into `hyp_reduce` for stuck targets:
 
 ```disp
-safe_is_fork := {v} -> eliminator_frame_form {
-  dispatcher := tree_shape_dispatcher,
-  motive := const Bool,
-  cases := {leaf := FF, stem := {_} -> FF, fork := {_, _} -> TT}
-} v
+safe_is_fork := {v} -> elim
+  tree_shape_dispatcher
+  (const Bool)
+  {leaf := FF, stem := {_} -> FF, fork := {_, _} -> TT}
+  v
 
-safe_pair_fst := {v} -> eliminator_frame_form {
-  dispatcher := tree_shape_dispatcher,
-  motive := const Tree,
-  cases := {leaf := error_form, stem := {c} -> c, fork := {l, _} -> l}
-} v
+safe_pair_fst := {v} -> elim
+  tree_shape_dispatcher
+  (const Tree)
+  {leaf := error_form, stem := {c} -> c, fork := {l, _} -> l}
+  v
 
 safe_has_sig := {checker, v} ->
   bind (safe_pair_fst v) ({sig} -> Ok (tree_eq sig (checker_sig checker)))
 
 safe_is_neutral := {v} -> safe_has_sig kernel.hyp_reduce v
 
-// The kernel-controlled list of stuck-form-producing Σ-ops. This is a
-// fixed property of the kernel, not a per-call parameter — the set of
-// "things that can produce stuck symbolic values" is what the kernel
-// ships, independent of any dispatch environment Σ. Currently two
-// entries; an async-pending Σ-op would add a third (see §15 open
-// questions on async).
-stuck_form_producers := [hyp_reduce ; eliminator_frame]
-
-// Generalized stuck-form check: v is a wait-form rooted at one of the
-// stuck-form-producing kernel Σ-ops. Σ-independent.
+// All stuck forms are hyp_reduce-rooted (§6.1), so the generalized
+// stuck-form check is a single sig comparison.
 safe_is_stuck := {v} ->
   bind (safe_pair_fst v) ({sig} ->
-    Ok (list_any ({h} -> tree_eq sig (checker_sig h)) stuck_form_producers))
+    Ok (tree_eq sig (checker_sig kernel.hyp_reduce)))
 
-// Stored-type extraction. Returns the type associated with a stuck v.
-// Dispatches by pair_fst on the kernel-controlled producers above.
-stuck_stored_type := {v} ->
-  let sig = pair_fst v in
-  let payload = pair_snd v in
-  match (tree_eq sig (checker_sig hyp_reduce)) {
-    TT => neutral_meta_type payload      // explicit domain in meta
-    FF => match (tree_eq sig (checker_sig eliminator_frame)) {
-      TT => apply (stuck_elim_motive payload) (stuck_elim_target payload)
-                                          // motive applied to target
-      FF => /* unreachable if safe_is_stuck v = TT */
-            error "stuck_stored_type on non-stuck input"
-    }
-  }
+// Stored-type extraction. All stuck forms carry the stored type in
+// the first slot of their payload, regardless of whether the payload
+// describes a hypothesis or a spine-extended elimination.
+stuck_stored_type := {v} -> neutral_meta_type (pair_snd v)
 ```
 
 For concrete values, these reduce to the raw operation's result; for
-hypotheses or other handler-rooted stuck forms, they reduce to a
-`StuckElim` form representing "this structural property of an unknown
-value."
+hypotheses or other stuck forms, they reduce to a `StuckElim`
+(produced by `hyp_reduce` + the inductive type's `respond`)
+representing "this structural property of an unknown value."
 
 *Where they're used*: primarily *inside* `make_recognizer`'s wrapper.
 The H-rule check `safe_is_stuck v` runs on the recognizer's v argument
@@ -2805,12 +2857,11 @@ let make_recognizer = {body} -> wait recognizer_wrap_fn body
 ```
 
 The generalized check `safe_is_stuck` (§12.6) accepts any wait-form
-rooted at a kernel-shipped stuck-form-producer — currently `hyp_reduce`
-(raw hypotheses and spine extensions) and `eliminator_frame` (stuck
-eliminations). The set is kernel-controlled, not user-extensible, and
-independent of the surrounding dispatch environment Σ. This closes a
-soundness gap that matters for effect-using polymorphic functions: a
-Pi-body containing `eliminator_frame`-built intermediate values (e.g.
+rooted at `hyp_reduce` — all stuck forms (raw hypotheses, spine
+extensions, stuck eliminations) share this one constructor. The
+check is Σ-independent. This closes a soundness gap that matters for
+effect-using polymorphic functions: a Pi-body containing stuck-
+elimination intermediate values (e.g.
 `nat_rec`) otherwise produces stuck-typed intermediates that the older
 `safe_is_neutral` check missed, cascading into spurious body-check
 failures.
@@ -2880,7 +2931,7 @@ let bool_recognizer = make_recognizer ({_, v} ->
 let bool_meta = {
   recognizer_params := unit_witness,
   functor := trivial_functor,        // discrete: identity transport
-  applicable := none,
+  respond := none,
   behavioral_specs := none
 }
 
@@ -2915,7 +2966,7 @@ let nat_recognizer = make_recognizer ({_, v} ->
 let nat_meta = {
   recognizer_params := unit_witness,
   functor := trivial_functor,
-  applicable := none,
+  respond := none,
   behavioral_specs := none
 }
 
@@ -2961,7 +3012,7 @@ let pi_recognizer = make_recognizer ({meta, v} ->
 let pi_meta_for = {A, B} -> {
   recognizer_params := pair A B,
   functor := pi_functor,                          // non-trivial; supports transp (§13)
-  applicable := some pi_eval_signature,
+  respond := some pi_eval_signature,
   behavioral_specs := none
 }
 
@@ -2994,7 +3045,7 @@ let unit_recognizer = make_recognizer ({_, v} ->
 let unit_meta = {
   recognizer_params := unit_witness,
   functor           := trivial_functor,
-  applicable        := none,
+  respond           := none,
   behavioral_specs  := none
 }
 
@@ -3021,7 +3072,7 @@ let eq_recognizer = make_recognizer ({meta, v} ->
 let eq_meta_for = {A, x, y} -> {
   recognizer_params := pair A (pair x y),
   functor           := eq_functor,         // refl at the new endpoints (§13)
-  applicable        := none,
+  respond           := none,
   behavioral_specs  := none
 }
 
@@ -3051,7 +3102,7 @@ let ord_recognizer = make_recognizer ({_, v} ->
 let ord_meta = {
   recognizer_params := unit_witness,
   functor           := trivial_functor,    // discrete
-  applicable        := none,
+  respond           := none,
   behavioral_specs  := none
 }
 
@@ -3078,7 +3129,7 @@ let string_recognizer = make_recognizer ({_, v} ->
 let string_meta = {
   recognizer_params := unit_witness,
   functor           := trivial_functor,
-  applicable        := none,
+  respond           := none,
   behavioral_specs  := none
 }
 
@@ -3100,19 +3151,19 @@ record. The recognizer (§12, library function `type_recognizer`)
 checks that a candidate value is a wait-form whose recognizer was
 built via `make_recognizer` and whose meta has the MetaShape layout.
 The meta carries no parameters (Type takes none), a trivial functor,
-and the *predicate-side H-rule* in its `applicable` slot.
+and the *predicate-side H-rule* in its `respond` slot.
 
 ```disp
-// Predicate-side H-rule (see §6.4). Fires when a Type-typed
+// Predicate-side H-rule (see §6.3). Fires when a Type-typed
 // hypothesis is applied as a predicate to a candidate value `v`:
 // returns Ok TT iff v is itself a kernel-minted neutral whose
 // stored type hash-cons-equals the applied hypothesis. This is the
 // dual of `make_recognizer`'s recognizer-side H-rule — needed
 // because Type-hypotheses, when applied, route through
 // `hyp_reduce`'s raw arm and never reach the `make_recognizer`
-// wrapper. Body runs raw per §7.1's codomain_fn discipline; raw
+// wrapper. Body runs raw per §7.1's respond discipline; raw
 // `is_neutral` / `neutral_stored_type` are walker-safe because the
-// codomain_fn is invoked from inside `hyp_reduce`'s privileged
+// respond is invoked from inside `hyp_reduce`'s privileged
 // handler.
 let type_predicate_h_rule = {ks, raw, neutral_meta, v} -> {
   let self_as_hyp = wait kernel.hyp_reduce neutral_meta in
@@ -3125,7 +3176,7 @@ let type_predicate_h_rule = {ks, raw, neutral_meta, v} -> {
 let type_self_meta = {
   recognizer_params := unit_witness,           // Type takes no params
   functor           := trivial_functor,
-  applicable        := some type_predicate_h_rule,
+  respond           := some type_predicate_h_rule,
   behavioral_specs  := none
 }
 
@@ -3148,10 +3199,10 @@ test A_hyp A_hyp  = FF     // I-shortcut: stored_type=Type ≠ A_hyp
 Four definitions. No tests fired at construction; `Type` is just a
 value. The structural tests run `type_recognizer type_self_meta Type`;
 Type's structure (wait-form with MetaShape-conforming metadata,
-applicable populated) satisfies the structural check, returns
+`respond` populated) satisfies the structural check, returns
 `Ok TT`, and the tests pass by construction. The H-rule tests
 exercise the predicate-side path: applying a Type-hypothesis
-through `hyp_reduce` and observing the codomain_fn's verdict.
+through `hyp_reduce` and observing the respond's verdict.
 
 The Type:Type concern and its (conjectural) resolution are discussed
 in §11. The tests themselves run mechanically; their passing is an
@@ -3286,7 +3337,7 @@ let I_recognizer = {_, v} -> ...
 let I_meta = {
   recognizer_params := unit_witness,
   functor := trivial_functor,         // I doesn't transport
-  applicable := none,
+  respond := none,
   behavioral_specs := none
 }
 
@@ -3335,7 +3386,7 @@ systems.
 let IsOne = {i} -> wait isone_recognizer {
   recognizer_params := i,
   functor := trivial_functor,
-  applicable := none,
+  respond := none,
   behavioral_specs := none
 }
 
@@ -3372,14 +3423,15 @@ type functors that ignore the cofibration / partial-element side (the
 "pure transp" case: discrete types, etc.) drop them with `_`.
 
 ```disp
-// The unified composition operator. Looks up the type's functor and
-// hands it the full 5-tuple.
+// The unified composition operator. Look up the source type's functor
+// and hand it the full 5-tuple. A `trivial_functor` (the discrete
+// marker) means *trivial Kan structure*: comp returns u0 directly.
 comp := fix ({self, P, phi, u, u0} -> {
   let T0 = apply P I_zero
   let action = meta_get (type_meta T0) "functor"
   match (tree_eq action trivial_functor) {
-    TT => StuckElim (apply P I_one) (pair P (pair phi (pair u u0)))
-    FF => apply action self P phi u u0
+    TT => u0                              // discrete: trivial Kan structure
+    FF => apply action self P phi u u0    // real functor handles family + cofibration
   }
 })
 
@@ -3392,19 +3444,42 @@ transp := {P, x} -> comp P I_zero (empty_partial (apply P I_zero)) x
 hcomp := {A, phi, u, u0} -> comp ({_} -> A) phi u u0
 ```
 
-The fast path for constant families (when `apply P I_zero` and
-`apply P I_one` hash-cons-equal) lives inside each per-type functor —
-the functor is free to short-circuit with `u0` when the source and
-target types match and `phi = I_zero`.
+`trivial_functor` now means *trivial Kan structure*, and `comp`
+returns `u0` for it directly — correct for *both* `transp` (identity
+transport) and `hcomp` (a discrete type composes to its cap `u0`,
+since its only paths are reflexivity). So `Bool`, `Nat`, etc. keep
+`functor := trivial_functor` and need no transport rule of their own.
+(This replaces the earlier `trivial_functor → StuckElim`, which wrongly
+made `transp Bool x` stuck instead of `x`.) A genuine per-type functor
+is consulted for every non-discrete type — including `hcomp` over
+higher types, whose homogeneous composite is *not* `u0` — and is free
+to short-circuit with `u0` itself when its own source and target
+hash-cons-equal.
+
+#openq[
+  *Non-discrete dispatch is endpoint-bound (the `ua`/`Glue` gap).*
+  For a non-discrete type `comp` dispatches on the functor of the
+  *source endpoint* `T0 = P I_zero`. That is correct for families
+  built from a single covariant former, but it cannot deliver
+  univalence transport: for `transp (ua A B e) x` the equivalence `e`
+  lives in the `Glue` at the `i = I_one` face, which `T0`'s functor
+  never sees. Fixing this needs `comp` to dispatch on the head former
+  of the *family under a fresh interval hypothesis*
+  (`bind_hyp I ({i} -> head_former_of (P i))`) rather than on an
+  endpoint — the standard "recurse on the type family" principle,
+  recast into disp's neutral machinery. Deferred to a dedicated
+  cubical pass; until then, `ua`-mediated transport is not
+  operational and the §13.10 "univalence as a definable theorem"
+  claim is aspirational.
+]
 
 Per-type morphism actions (always 5-arg, conforming to the calling
 convention above):
 
 ```disp
-// Discrete types (Bool, Nat, False): transport is identity, partial
-// elements have no semantic content because there's no path-structure.
-let bool_functor  = {_, _, _, _, x} -> x
-let nat_functor   = {_, _, _, _, x} -> x
+// Discrete types (Bool, Nat, False) need no functor: their
+// `functor := trivial_functor` makes `comp` return `u0` directly
+// (trivial Kan structure — identity transport, and hcomp = cap).
 
 // Pair: component-wise recursion. Splits u/u0 into component
 // partials/endpoints and recurses on each side.
@@ -3445,7 +3520,7 @@ with partial type information (T, e) at the face phi. Its non-trivial
 let Glue = {B, T, e} -> wait glue_recognizer {
   recognizer_params := glue_params_for B T e,
   functor := glue_functor,             // applies the equivalence on transport
-  applicable := none,
+  respond := none,
   behavioral_specs := none
 }
 
@@ -3477,20 +3552,30 @@ treatment.]
 
 == What this delivers
 
-+ *Definitional iso-roundtrip* for ua-mediated equivalences.
 + *Structural transport on type-formers* via each type's
-  `meta.functor` field.
-+ *Univalence as a definable theorem* via `Glue` + `ua`.
+  `meta.functor` field — for discrete types and single-former
+  covariant families. (Identity transport / cap-composition on
+  discrete types is delivered by `comp`'s `trivial_functor` branch.)
++ *Univalence as a definable theorem* via `Glue` + `ua` — *once the
+  non-constant dispatch is fixed* (the endpoint-bound dispatch openq
+  in §13.6). The framework supports it; the current `comp` does not
+  yet route `ua`-paths to `glue_functor`.
++ *Definitional iso-roundtrip* for ua-mediated equivalences —
+  contingent on the same fix.
 + *Representation independence in practice* — functions over one
   representation work on equivalent representations via transport.
-+ *No kernel growth.* The four Σ-operations plus the dispatcher are
++ *No kernel growth.* The three Σ-operations plus the dispatcher are
   the total kernel surface; cubical adds none.
 
 == Limitations
 
-+ *Endpoint-only path evaluation.* `transp` evaluates `P` at `I_zero`
-  and `I_one`, then dispatches on the shared head former. Path bodies
-  whose intermediate behavior matters are not captured.
++ *Endpoint-only path evaluation.* `comp` dispatches on the functor of
+  the source type `T0 = P I_zero` (discrete `trivial_functor` types
+  return `u0` directly). Families whose transport rule lives at the
+  *other* endpoint — notably `ua`/`Glue`, whose equivalence sits at
+  the `i = I_one` face — are not yet handled (the §13.6 openq). Path
+  bodies whose intermediate behavior matters are likewise not
+  captured.
 + *Walker constraints on path bodies.* Path bodies cannot triage on
   their `i`-argument. Bodies must use `i` only through I-operations
   or by passing it to I-consuming type formers.
@@ -3517,11 +3602,11 @@ operational story.
     inset: 6pt,
     [*Category*], [*What it asserts*],
     [Kernel tests],
-      [The four kernel handlers behave per their specs (§7).
+      [The three kernel handlers behave per their specs (§7).
        Test that `bind_hyp` mints a neutral, `hyp_reduce` extends
-       spines, `eliminator_frame` mints StuckElim on neutrals, etc.
-       Run under `test_pure` — the foundational layer must not
-       depend on host primitives.],
+       spines and mints StuckElim via inductive types' `respond`,
+       `postulate` builds pinned wait-forms. Run under `test_pure` —
+       the foundational layer must not depend on host primitives.],
     [Type-system tests],
       [Each library type passes the expected validators. Test that
        `Type Bool`, `StrictType Bool`, `Type Pi`, etc. all reduce
@@ -3555,7 +3640,7 @@ and reports failures distinctly from foundational failures).
 // Kernel tests
 test bind_hyp_mints_kernel_signature_neutral
 test hyp_reduce_extends_spine_correctly
-test eliminator_frame_mints_stuck_on_neutral
+test hyp_reduce_mints_stuck_elim_via_nat_respond
 test postulate_constructs_pinned_wait_form
 test safe_apply_routes_default_dispatch_handlers_raw
 
@@ -3587,8 +3672,8 @@ a whole by re-elaborating the library.
 
 What's in the trusted base:
 
-- The four kernel Σ-operations (`hyp_reduce`, `bind_hyp`,
-  `eliminator_frame`, `postulate`) implemented in disp source.
+- The three kernel Σ-operations (`hyp_reduce`, `bind_hyp`,
+  `postulate`) implemented in disp source.
 - The dispatcher `safe_apply` (in-language reference + native fast-path).
 - The host runtime's signature-pinning and native fast-paths for the
   above plus any host-provided handlers in `host_provided`.
@@ -3643,33 +3728,32 @@ Two distinct claims to keep separate:
 
 The test suite addresses (1); (2) is open work flagged in §11.5.
 
-*`bind_hyp` shares (2)'s soundness obligation.* The escape check
-(§7.3) blocks *direct* hyp leakage via open paths, but stuck forms
-produced inside `bind_hyp`'s body — whose target/spine slots
-contain `raw_hyp` — pass the escape check and reach the top level.
-Such stuck forms have user-chosen stored types and trigger the
-H-rule, so they typecheck as inhabitants of those types. The system
-remains sound only because:
+*`bind_hyp` and Type:Type share a proof recipe.* The escape check
+(§7.2) blocks hypothesis leakage *structurally*: `occurs` descends
+through seals, so a stuck elimination whose spine carries `h` does not
+pass — it is exactly the value the scan is built to catch (§8.1). What
+the scan cannot see is a *laundered* leak: a handler's `respond` that
+reads a neutral's metadata and `Return`s a fresh value rebuilt from it,
+carrying no neutral. That path is constrained separately, by the
+`respond` discipline (§7.1: a `Return v` must be built only from public
+inputs). The two together — structural scan plus `Return` discipline —
+keep a hypothesis-typed neutral from being extruded and then accepted
+by the H-rule as an inhabitant of its stored type.
 
-+ Stuck forms never reduce to concrete values of their declared
-  type — they propagate as stuck forms through any further
-  computation.
-+ Tests demand concrete reductions; a stuck-form reaching a test
-  comparison fails the test (stuck ≠ literal expected value).
-+ The H-rule produces concrete *verdicts* (`Ok TT`/`Ok FF`) about
-  stuck-form inhabitation, but never concrete *inhabitants* of
-  uninhabited types.
+This is the dynamic-sealing parametricity preservation theorem of
+Matthews & Ahmed (*Theorems for Low, Low Prices!*, ESOP 2008),
+proved by step-indexed logical relations. The disp setting is a
+strict simplification: the kernel is the *sole* keyholder (user code
+has no `unseal`), so the relational interpretation is single-party.
 
-This is the same property the Type:Type conjecture (§11.6) relies on.
-`bind_hyp`'s safety and Type:Type's consistency stand or fall
-together. A formal parametricity theorem for the walker's
-discipline would settle both; until then both are "empirically
-sound with a documented conjecture."
-
-#openq[A formal proof of (2) — Coq/Lean mechanization, semantic
-model, or careful pencil-and-paper PER-model argument — would
-solidify the foundational story. Until then, the system is
-"empirically sound" with a documented conjecture about consistency.]
+#openq[
+  A step-indexed Kripke logical relation indexed by the world of
+  allocated seals (the live `Tree_p(Σ)` neutrals) is the indicated
+  technique; Ahmed–Dreyer–Rossberg's *State-Dependent Representation
+  Independence* supplies the closest off-the-shelf machinery.
+  Mechanizing this would settle both `bind_hyp`'s soundness obligation
+  and the Type:Type conjecture (§11.6).
+]
 
 == Memo policy requirement
 
@@ -4004,12 +4088,11 @@ result, when it arrives." A future kernel Σ-op `async_pending` (not
 yet specified) would mint these stuck forms; the host's event loop
 substitutes concrete bytes when epoll signals completion.
 
-This requires `safe_is_stuck` to recognize a third stuck-form
-producer; the `stuck_form_producers` list (§12.6) would grow from
-`[hyp_reduce, eliminator_frame]` to `[hyp_reduce, eliminator_frame,
-async_pending]`. The H-rule then fires for `Promise X`-typed stuck
-forms uniformly; polymorphic code over promises works the same way
-as polymorphic code over neutrals.
+This would extend the seal set (§4.2) with `async_pending`'s sig —
+`safe_is_stuck` becomes `pair_fst v ∈ {hyp_reduce, async_pending}`.
+The H-rule then fires for `Promise X`-typed stuck forms uniformly;
+polymorphic code over promises works the same way as polymorphic
+code over neutrals.
 
 Disp doesn't ship async yet. The point: stuck forms are a general
 mechanism for "values whose concrete identity isn't yet known," not
@@ -4019,9 +4102,9 @@ producer to the kernel list — same machinery, new motivation.
 #openq[
   *Higher-order effects (Wu–Schrijvers–Hinze 2014).* Effects whose
   operations take computation arguments (e.g. `catch handler body`)
-  need more machinery than capability passing. The `handle`-via-
-  `eliminator_frame` reduction (§6) covers algebraic operations
-  cleanly; higher-order operations are a future addition.
+  need more machinery than capability passing. The library `elim`
+  (§12) + `hyp_reduce` mechanism covers algebraic operations cleanly;
+  higher-order operations are a future addition.
 ]
 
 #openq[
