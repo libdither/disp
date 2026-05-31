@@ -300,11 +300,12 @@ to avoid re-introducing them inline:
   to *post-§11 ascriptions* — what the library type checker assigns
   to the field once the relevant types are in scope. The same field
   at the *bootstrap layer* is a tree subterm in conventional pair-
-  encoded position: `pair stored_type (pair spine ...)`. Records are
-  read positionally before library types exist and ascribed by name
-  once they do. We use the typed presentation throughout for
-  readability; the implementation walks the pair structure either
-  way.
+  encoded position: `pair stored_type (pair spine ...)`. This *scaffolding*
+  (the wait-form shape, neutral spines) is read positionally and ascribed
+  by name once the relevant types exist; genuine `{…}` records instead
+  carry their field names in a header (§2.6) and are read by name directly.
+  We use the typed presentation throughout for readability; the
+  implementation walks the structure either way.
 ]
 
 == Records, arrays, and coproducts <sec:sugar>
@@ -340,8 +341,9 @@ A record value carries its ordered field-name list in a header node
 (`pair_snd`). The header is one hash-consed node: records with the same
 names in the same order share it, and `tree_eq` on two headers is O(1)
 (§2.2). Names live in the *value*, not only in the type — so a recognizer
-can decide field membership from the value alone, and projection needs no
-type information (see below).
+can decide field membership from the value alone, and a concrete record's
+projection resolves against its own header at runtime (the type still
+governs the *result type*; see §12).
 
 This is the product dual of the coproduct encoding (`pair tag payload`,
 below): a coproduct value tags *which one* it is; a record value names
@@ -360,18 +362,24 @@ by kernel reduction, so a bad name fails as `Ok FF`, never a host error),
 and returns the value at that field's position in the payload. For a
 *literal* name the call `proj r "a"` is a subterm closed in `r`, so it
 β-reduces — by ordinary `apply`, with no certificate — to the direct path
-`pair_fst (pair_snd (pair_snd r))`; hash-cons shares that normal form
+`pair_fst (pair_snd r)`; hash-cons shares that normal form
 across every projection of the same field. §12 gives the dependent type of
 `proj`, the neutral case, and how `strip` relates to it.
 
 #note[
-  *The header is for surface `{…}` records only.* The kernel's own
-  bootstrap structures — wait-form metadata, neutral metadata — predate
-  the library `Record` type and stay bare positional pairs, read by
-  position (the layering note, §2). This is the same split as coproducts:
-  the interpreter's own enums hand-build minimal tags, while library and
-  user coproducts tag by name. The kernel pays no header cost; only
-  user-facing records do.
+  *One record discipline, metadata included.* Every `{…}` record carries a
+  header — metadata records too. A type's MetaShape meta
+  (`{recognizer_params, functor, respond, …}`, §11.2) is a headered record,
+  which is exactly why the kernel reads it by name: `meta_get m "respond"`
+  *is* the projection `m.respond`, resolving the name against the value's
+  own header with no field list threaded in. What stays positional is not
+  metadata but the substrate *scaffolding* that is not a record at all — the
+  `wait`-form tree shape and a neutral's spine, reached by fixed projections
+  (`type_meta`, `neutral_meta_type`; the iterated-pair layout of §2's
+  layering note). The header sits *inside* that scaffolding, on the meta
+  record it carries. Coproducts split the same way: the interpreter's own
+  enums hand-build minimal tags, while library and user coproducts tag by
+  name.
 ]
 
 === Record types
@@ -2436,6 +2444,10 @@ MetaShape := Refinement Record [
 ]
 ```
 
+A MetaShape value is an ordinary headered record (§2.6), so `meta_get m
+"respond"` is the projection `m.respond` — the name resolves against the
+value's own header, no field list needed.
+
 `respond` is the universal "respond to an elimination frame" function.
 The stored type determines how the frame is interpreted; frames are
 untagged because one type accepts one frame kind:
@@ -2802,6 +2814,16 @@ types but different names (`{a:Nat,b:Nat}` vs `{p:Nat,q:Nat}`) have
 distinct headers and are told apart at the value boundary, not merely as
 distinct types.
 
+*Exact match vs. row subtyping.* `record_recognizer`'s `tree_eq` on the
+header is an *exact* O(1) match: `Record F` recognizes only records whose
+names are exactly `F`, in order. Width subtyping — accepting "any record
+that has at least these fields," the basis of the row-polymorphism story
+(§15, `extends R Console`) — is a *different* recognizer: a `Refinement`
+whose predicate checks the value's header is a *superset* of the required
+names (O(n) in the required count, not a single `tree_eq`). Closed records
+keep the O(1) exact check; open/extensible records opt into the subset
+check. They are distinct types, not one recognizer serving both.
+
 === Projection is a `checked` dependent application
 
 `r.x` is not a positional shortcut the elaborator computes; it is the
@@ -2809,18 +2831,22 @@ application of a dependent function whose refined domain validates the
 field name and whose codomain depends on it:
 
 ```disp
-proj : Pi Record_r ({r} ->
-       Pi (ValidField (names_of r)) ({n} ->     // n must be a present field
-          field_type (names_of r) n))            // result type depends on n
+proj : Pi (Record F) ({r} ->
+       Pi (ValidField F) ({n} ->     // F = r's type's field list, from the binder
+          field_type F n))            // result type depends on the validated n
 
 proj     := {r, n} -> path_at (index_of (names_of r) n) (pair_snd r)
-names_of := {r} -> pair_fst r                    // value-local; no type needed
+names_of := {r} -> pair_fst r        // runtime read of the value header (concrete r)
 ```
 
 `r.x` desugars to `proj r "x"`. This *is* the `checked` pattern (§8):
 the validated input is the name `n` (`ValidField` is a Refinement decided
 by kernel reduction, so `r.bogus` fails as a verdict `Ok FF`, never a host
-throw); the trusted output type is `field_type (names_of r) n`. Projection
+throw); the trusted output type is `field_type F n`. The type depends on
+`F` — the field list carried by `r`'s *type* `Record F`, from the binder —
+not on `pair_fst r`; reading the value header is a runtime step (below),
+never a type-level dependency on a hypothesis, and the recognizer
+guarantees `pair_fst r = names_of_fields F`, so the two agree. Projection
 reuses the kernel's Pi/`checked` machinery instead of re-implementing a
 resolution pass.
 
@@ -2830,10 +2856,9 @@ resolution pass.
 direct path `pair_fst (pair_snd^idx (pair_snd r))`. This is unconditional
 reduction — sound on all inputs, no certificate — and hash-cons shares the
 normal form across every projection of that field. The elaborator decides
-*nothing*: it emits `proj r "x"` and the kernel reduces. This is the
-*elaboration-as-quotation* discipline: the elaborator may quote a
-kernel-validated artifact into the program, but anything it would compute
-from a type is written as a closed term and left to reduction (§9).
+*nothing*: it emits `proj r "x"` and the kernel reduces — anything that
+would otherwise be computed from the type is written as a closed term and
+left to reduction.
 
 *Neutral records resolve through `respond`.* When `r` is a hypothesis,
 `names_of r = pair_fst r` would triage on a neutral, which the walker
