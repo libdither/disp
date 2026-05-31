@@ -129,7 +129,7 @@ and revisable:
     align: left,
     inset: 6pt,
     [*Section*], [*Covers*],
-    [§2 Substrate], [Tree calculus, apply, hash-cons identity, glossary of ambient types],
+    [§2 Substrate], [Tree calculus, apply, hash-cons identity, glossary; record/array/coproduct sugar (§2)],
     [§3 The `CheckerResult` monad], [`Result E A`, `CheckerError` variants, Kleisli composition, the *verdict-vs-error principle*],
     [§4 The parametric walker and `Tree_p`], [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
     [§5 The dispatcher and dispatch environments], [Σ-algebra framing: handlers as values, environments as list-passing, openness via concatenation],
@@ -307,6 +307,128 @@ to avoid re-introducing them inline:
   way.
 ]
 
+== Records, arrays, and coproducts <sec:sugar>
+
+Three notations recur throughout this document — record values and types in
+braces, array literals in brackets, coproduct (variant) types with bars. All
+three are surface sugar over the pairs of §2; their desugaring is fixed
+here once so later sections use them without restating the encoding. (`≡`
+below reads "desugars to.")
+
+=== Arrays
+
+```disp
+[]              ≡  nil
+[a, b, c]       ≡  cons a (cons b (cons c nil))
+```
+
+An array literal is a `List` (§2 glossary): `nil` is empty, `cons h t` prepends. At
+the substrate these are the iterated-pair encoding (`nil = LEAF`,
+`cons = pair`), so a list is a right-nested fork chain ending in `LEAF`.
+Lists carry no names; position is the only index.
+
+=== Record values
+
+```disp
+{ a := x, b := y, c := z }   ≡  pair [a, b, c] (pair x (pair y z))
+                                       ^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+                                       names hdr   payload (a Σ-chain)
+```
+
+A record value carries its ordered field-name list in a header node
+(`pair_fst`), with the field values as a right-nested payload tuple
+(`pair_snd`). The header is one hash-consed node: records with the same
+names in the same order share it, and `tree_eq` on two headers is O(1)
+(§2.2). Names live in the *value*, not only in the type — so a recognizer
+can decide field membership from the value alone, and projection needs no
+type information (see below).
+
+This is the product dual of the coproduct encoding (`pair tag payload`,
+below): a coproduct value tags *which one* it is; a record value names
+*all the fields* it has. Both put a discriminating descriptor in
+`pair_fst` and the data in `pair_snd`.
+
+Projection is a `checked` dependent application, not a positional shortcut:
+
+```disp
+r.a   ≡   proj r "a"
+```
+
+`proj` reads the header (`names_of r = pair_fst r`), validates that `"a"`
+is a present field (`ValidField (names_of r) "a"` — a Refinement decided
+by kernel reduction, so a bad name fails as `Ok FF`, never a host error),
+and returns the value at that field's position in the payload. For a
+*literal* name the call `proj r "a"` is a subterm closed in `r`, so it
+β-reduces — by ordinary `apply`, with no certificate — to the direct path
+`pair_fst (pair_snd (pair_snd r))`; hash-cons shares that normal form
+across every projection of the same field. §12 gives the dependent type of
+`proj`, the neutral case, and how `strip` relates to it.
+
+#note[
+  *The header is for surface `{…}` records only.* The kernel's own
+  bootstrap structures — wait-form metadata, neutral metadata — predate
+  the library `Record` type and stay bare positional pairs, read by
+  position (the layering note, §2). This is the same split as coproducts:
+  the interpreter's own enums hand-build minimal tags, while library and
+  user coproducts tag by name. The kernel pays no header cost; only
+  user-facing records do.
+]
+
+=== Record types
+
+```disp
+{ a : A, b : B, c : C }   ≡  Record [(a, A), (b, B), (c, C)]
+```
+
+A record type is the `Record` former (§12) over the array of name/type
+entries. `Record` recognizes a value by checking its name header against
+the declared names (O(1)) and its payload against the underlying `Sigma`
+chain — so a later field's type may depend on earlier fields
+(`{ n : Nat, v : Vec n }`), and a value whose header names don't match is
+rejected, distinguishing `{a:Nat,b:Nat}` from `{p:Nat,q:Nat}` at the value
+level. Before §11 a record-type annotation is read positionally and
+validated only once `Record` exists.
+
+=== Coproducts
+
+```disp
+C := V1 T1 | V2 T2 | ... | Vn Tn
+  ≡  C := Coproduct [(V1, T1), ..., (Vn, Tn)]
+```
+
+A coproduct is the `Coproduct` former (§12) over its constructors. A
+constructor application `Vi e` builds `pair tag_i e` — a distinct tag tree in
+`pair_fst`, the payload in `pair_snd` (a nullary constructor carries the unit
+payload). Elimination dispatches on the tag:
+
+```disp
+match v {
+  V1 x => b1
+  ...
+  Vn x => bn
+}
+```
+
+compares `pair_fst v` against each `tag_i` and runs the matching branch on
+`pair_snd v`. This one rule subsumes `select` (the two-constructor Bool
+case), the per-type recursors of §12, and raw `triage` decomposition.
+
+#note[
+  *Tags and O(1) discrimination.* A coproduct's tag sits in `pair_fst`, so
+  `match` discriminates by one `tree_eq` (O(1), §2.2). Library and user
+  coproducts tag by interned constructor name. The kernel enums the
+  interpreter itself returns — `Result` (`Ok` / `Err`, §3.4) and `Action`
+  (`Extend` / `Return` / `Invalid`, §7) — pick *minimal* tag trees (`LEAF`,
+  `stem LEAF`, …) so the comparison is against a boot-time constant; that is
+  the only reason their trees are written by hand instead of produced by
+  `Coproduct`. Same desugaring, different tag policy.
+
+  `Bool` is the coproduct `True Unit | False Unit`; it keeps its Scott
+  encoding (§12) because it is the substrate's branching primitive and must
+  apply directly as `select`. That encoding optimizes the general
+  eliminator — it is not a separate mechanism.
+]
+
 = The `CheckerResult` monad <sec:result-monad>
 
 == The general `Result` shape
@@ -331,13 +453,13 @@ failure type is a tagged enum:
 
 ```disp
 // All errors carry a source span for diagnostics.
-CheckerError := tagged_enum {
-  Parametricity : { kind : ParamKind, where : Tree_p, span : Span }
-  Escape        : { hyp : Tree_p, body_result : Tree_p, span : Span }
-  NotApplicable : { type : Tree_p, span : Span }
-  TypeMismatch  : { expected : Type, actual : Tree_p, span : Span }
-  Malformed     : { handler : Symbol, meta : Tree_p, span : Span }
-}
+// A coproduct (§2): each variant is a constructor carrying a record payload.
+CheckerError :=
+    Parametricity { kind : ParamKind, where : Tree_p, span : Span }
+  | Escape        { hyp : Tree_p, body_result : Tree_p, span : Span }
+  | NotApplicable { type : Tree_p, span : Span }
+  | TypeMismatch  { expected : Type, actual : Tree_p, span : Span }
+  | Malformed     { handler : Symbol, meta : Tree_p, span : Span }
 
 ParamKind := StemForge | TriageReflect
 ```
@@ -386,6 +508,32 @@ Each variant maps to a distinct kernel failure path:
   `Ok TT` / `Ok FF` and pattern-match. Contract-style callers
   (`checked` application) raise `TypeMismatch` because their callers
   promised the value would fit.
+]
+
+#note[
+  *Most of this vocabulary is meant to disappear.* Of the five variants, only
+  `Parametricity` and `Escape` report a genuine soundness event — user code
+  tried to forge or reflect on a hypothesis, or let one escape its scope. The
+  other three describe a type that was *built* wrong, not a value that fails
+  to inhabit it: `Malformed` (meta off-shape), `NotApplicable` (stored type
+  not a function / not a type), and `TypeMismatch` (a contract promised `TT`
+  and got `FF`). Those are discharged earlier — by validating every type
+  annotation against `Type` at elaboration, and by the validate-then-strip
+  discipline (§10) under which a checked contract can only fire on the
+  un-validated path. On well-formed, validated input the checker never raises
+  them, so the steady-state recognizer is effectively `Tree -> Tree -> Bool`:
+  a verdict, with `Parametricity` / `Escape` the only residual error channel.
+
+  *Folding `Err` to `FF` is conservative only for monotone recognizers.* When
+  a recognizer runs a sub-check under the walker and folds its `Parametricity`
+  failure to `Ok FF` (the kernel does this — §6), it *rejects* the value,
+  which is sound. This stays sound exactly while recognizers are *monotone* in
+  their sub-verdicts: a sub-check turning `FF` may only weaken the answer,
+  never strengthen it. A recognizer that negated a sub-verdict
+  (`{v} -> not (sub v)`) would turn a forgery's `FF` into `TT` and accept it.
+  The library recognizers do not negate (Pi, Sigma, Refinement are
+  conjunctive; `Not` is the type `Arrow A False`, not a verdict negation), so
+  the fold is sound today; a recognizer-monotonicity check belongs in §14.
 ]
 
 == `CheckerResult` and the monad structure
@@ -1192,8 +1340,8 @@ Per-type behavior:
 - *Σ-typed neutral, frame = projection selector*: `Extend A` or
   `Extend (B (apply self walker_pair_fst))`.
 - *Inductive (Bool/Nat/…) neutral, frame = `(pair motive cases)`*:
-  `Extend (motive (reconstruct_self meta))` — this is what earlier
-  drafts factored out as `eliminator_frame`.
+  `Extend (motive (reconstruct_self meta))`; the library `elim` (§12)
+  drives the concrete-case side.
 - *Type-typed neutral, frame = candidate value*: `Return (and
   (is_neutral frame) (tree_eq (neutral_type frame)
   (reconstruct_self meta)))` — the predicate-side H-rule (§12.10).
@@ -1461,14 +1609,17 @@ construction and erasable at strip time.
   reference.
 ]
 
-== `eliminator_frame` is no longer a Σ-op
+== Eliminators are library code, not a primitive
 
-Case dispatch is library code (§12, `elim`). Stuck eliminations on
-neutral targets are produced by `hyp_reduce` when the inductive type's
-`respond` returns `Extend (motive (reconstruct_self meta))` for a
-case-frame `(pair motive cases)`. `StuckElim` and `Hyp` are aliases at
-the tree level — both are `wait kernel.hyp_reduce (make_neutral_meta T
-payload)`.
+Case dispatch lives in the library — the generic `elim` of §12. `elim`
+gates on its target: a concrete value runs the cases directly; a neutral
+target is handed to `hyp_reduce`, which consults the inductive type's
+`respond`. For a case-frame `(pair motive cases)` that `respond` returns
+`Extend (motive (reconstruct_self meta))`, minting the stuck elimination.
+So the neutral path reuses the single `hyp_reduce` primitive and the
+concrete path is ordinary library code — no dedicated eliminator primitive
+is needed. `StuckElim` and `Hyp` are tree-level aliases: both are
+`wait kernel.hyp_reduce (make_neutral_meta T payload)`.
 
 == `postulate`
 
@@ -2311,6 +2462,23 @@ lacks a new field still pass structural checks.
   wrapping) is a separate convention.
 ]
 
+#note[
+  *Two ways to read `respond`.* Operationally it is the per-type *handler
+  clause* for one operation, "eliminate": a neutral is a stuck operation, its
+  spine is the captured continuation, and `respond` says how that operation
+  reacts to a frame — stay stuck at a new type (`Extend`), resolve to a value
+  (`Return`), or reject (`Invalid`). This is the same shape as a `postulate`
+  handler interpreting a host effect (§7, §15), which is why neutrals, stuck
+  eliminations, and IO share one dispatcher. Formally it is the structure map
+  of a coalgebra on `Tree_p` (itself a greatest fixed point, §4): a typed
+  transition system whose states are neutrals carrying their stored type,
+  whose labels are frames, and whose steps are `Extend` (advance to a new
+  typed state), `Return` (halt with a value), and `Invalid` (dead state). The
+  §8.1 escape scan is reachability in that system. Both readings agree; the
+  handler reading keeps `respond` beside the effect story, the coalgebra
+  reading pins down what "responds to every elimination form" means.
+]
+
 == Validators as library entities
 
 A *validator* is a type whose recognizer judges whether candidate
@@ -2567,8 +2735,9 @@ test typecheck Type Sigma            // Sigma is structurally a type
 test typecheck StrictType Sigma      // Sigma passes deep validation
 ```
 
-Records, Refinement-of-Record, and any type built on Sigma chains
-inherit projection support through this mechanism.
+Records (whose payload is a Sigma chain), Refinement-of-Record, and any
+type built on Sigma chains inherit neutral-projection support through
+this mechanism.
 
 == The library eliminator
 
@@ -2610,19 +2779,87 @@ distinction is purely about how the payload was constructed:
 
 == `Record`
 
-Records are iterated Sigma chains with named fields. `{x : A, y : B}`
-compiles to `Sigma A (\x. Sigma B (\y. Unit))`. The `Record`
-type-former takes a field list and produces the appropriate
-wait-form:
+A record is a *name-header over a Sigma chain* (§2). The value is
+`pair names payload`: `names` is the ordered field-name list in one
+hash-consed header node, `payload` is the dependent Sigma chain holding
+the field values. `{x : A, y : B}`'s payload type is
+`Sigma A ({x} -> Sigma B ({y} -> Unit))`, so field dependencies
+(`{n : Nat, v : Vec n}`) fall out of the chain.
 
 ```disp
 Record := {fields} -> wait record_recognizer (record_meta_for fields)
+
+// Recognize: the value's header must match the declared names (O(1)
+// tree_eq on the hash-consed header), then the payload must inhabit
+// the underlying Sigma chain.
+record_recognizer := {fields, v} ->
+  and (tree_eq (pair_fst v) (names_of_fields fields))
+      (sigma_chain_recognizer (chain_for fields) (pair_snd v))
 ```
 
-Codomain_fn delegates directly to the underlying Sigma chain (option
-(a) from the design notes): field-name verification is *parse-time*
-only (`r.x` desugars to `r W_x` at elaboration), so respond just
-needs to handle position walkers. Sigma's respond does this.
+Because the names are in the *value*, two records with identical field
+types but different names (`{a:Nat,b:Nat}` vs `{p:Nat,q:Nat}`) have
+distinct headers and are told apart at the value boundary, not merely as
+distinct types.
+
+=== Projection is a `checked` dependent application
+
+`r.x` is not a positional shortcut the elaborator computes; it is the
+application of a dependent function whose refined domain validates the
+field name and whose codomain depends on it:
+
+```disp
+proj : Pi Record_r ({r} ->
+       Pi (ValidField (names_of r)) ({n} ->     // n must be a present field
+          field_type (names_of r) n))            // result type depends on n
+
+proj     := {r, n} -> path_at (index_of (names_of r) n) (pair_snd r)
+names_of := {r} -> pair_fst r                    // value-local; no type needed
+```
+
+`r.x` desugars to `proj r "x"`. This *is* the `checked` pattern (§8):
+the validated input is the name `n` (`ValidField` is a Refinement decided
+by kernel reduction, so `r.bogus` fails as a verdict `Ok FF`, never a host
+throw); the trusted output type is `field_type (names_of r) n`. Projection
+reuses the kernel's Pi/`checked` machinery instead of re-implementing a
+resolution pass.
+
+*Concrete records resolve by reduction, trust-free.* For a literal name,
+`proj r "x"` is a subterm closed in `r`: `names_of r`, `index_of`, and
+`path_at` all reduce by ordinary `apply`, so the call β-reduces to the
+direct path `pair_fst (pair_snd^idx (pair_snd r))`. This is unconditional
+reduction — sound on all inputs, no certificate — and hash-cons shares the
+normal form across every projection of that field. The elaborator decides
+*nothing*: it emits `proj r "x"` and the kernel reduces. This is the
+*elaboration-as-quotation* discipline: the elaborator may quote a
+kernel-validated artifact into the program, but anything it would compute
+from a type is written as a closed term and left to reduction (§9).
+
+*Neutral records resolve through `respond`.* When `r` is a hypothesis,
+`names_of r = pair_fst r` would triage on a neutral, which the walker
+forbids. There projection is an elimination, routed through the record
+type's `respond` — which delegates to `sigma_respond` (§12.3), reading the
+field list from the hypothesis's *stored type* (supplied by the binder,
+not inferred). So names are read from the value header on concrete records
+and from the type on neutral ones; neither path trusts an elaborator
+computation.
+
+=== Strip and the fast path
+
+The reduction above needs no `strip` — it is plain β. `strip` (§10,
+certificate-gated) enters only where a check is genuinely elided:
+
+- *Dynamic names.* `proj_dyn r nameExpr` with a non-literal name keeps
+  `ValidField` as a real runtime contract; `strip` removes it given a
+  validation certificate — the literal `checked` story.
+- *Header drop (optional).* A record proven to have no surviving dynamic
+  or reflective projection may have its header elided (reclaiming the one
+  node), shifting payload offsets by one. This is a representation
+  lowering, not β, so it is certificate-gated and opt-in.
+
+Reduction stays the unconditional optimizer (collapsing literal projection
+to a direct path); `strip` stays the certified eliminator (removing checks,
+and the optional header, whose redundancy a certificate vouches for).
 
 Tests:
 
