@@ -288,7 +288,10 @@ to avoid re-introducing them inline:
     [`Respond`],      [`NeutralMeta -> Frame -> Action`. The universal "respond to an elimination frame" function carried by each type's meta. Generalizes the earlier `Applicable`.],
     [`Frame`],        [`Tree_p`. The thing applied to a neutral — an argument (Π), a projection selector (Σ), a case-pair (inductive), a dimension (Path), a candidate value (Type). Untagged; the stored type interprets it.],
     [`Action`],       [`Extend Type | Return Tree_p | Invalid`. The protocol `hyp_reduce` consumes from a type's `respond` (§7).],
-    [`Path`],         [`Pi I` alias from §13; appears in `behavioral_specs`.],
+    [`Spec`],         [A runnable behavioral property attached to a type's meta (the `behavioral_specs` field, §11.2). Layer-neutral name so the core metadata convention does not depend on the cubical extension; realized concretely as `Path` once §13 is in scope.],
+    [`Path`],         [`Pi I` alias from §13; the concrete realization of `Spec` used in `behavioral_specs`.],
+    [`ROOT_SIG`],     [Canonical reader tree (= the blessed `pair_fst`): `ROOT_SIG x` is the handler signature rooting `x`. Walker-resolved on seals (§4.2); a fixed projection onto the public descriptor.],
+    [`STORED_TYPE`],  [Canonical reader tree: `STORED_TYPE x` is the stored-type slot of a neutral's meta (`neutral_meta_type (pair_snd x)`), projected atomically so the meta's payload is never surfaced. Walker-resolved on seals (§4.2).],
   ),
   caption: [Glossary of ambient names used in signatures.],
 )
@@ -372,13 +375,24 @@ The two faces of the cut differ only in what the fields do with the payload: a
 use it. Both are eliminated by the identical call.
 
 #note[
-  *The `fork(LEAF, _)` shape is shared.* A `const`-wrapped record field
-  (`const x = fork(LEAF, x)`) has the same shape as `Ok x` (§3.4) and `succ x`
-  (§12) — the substrate's `fork(LEAF, _)` node is reused across all three. A
-  field thunk is therefore told apart from those by *context* (its position in a
-  product's table), not by its root. Where canonical fields must be
-  self-describing, a dedicated tag distinguishes them; the cut itself never
-  needs to, since it reaches fields by name through `proj`.
+  *The `fork(LEAF, _)` shape is shared — by design.* A `const`-wrapped record
+  field (`const x = fork(LEAF, x)`) has the same shape as `Ok x` (§3.4) and
+  `succ x` (§12) — the substrate's `fork(LEAF, _)` node is reused across all
+  three, *intentionally*: reusing one minimal node keeps hash-cons sharing
+  maximal and the eliminators uniform. A field thunk is therefore told apart from
+  those by *context* (its position in a product's table), not by its root. Where
+  canonical fields must be self-describing, a dedicated tag distinguishes them;
+  the cut itself never needs to, since it reaches fields by name through `proj`.
+
+  *Consequence: recognizers are sound only on type-respecting inputs.* Because
+  the shapes collide, a recognizer is not injective on *arbitrary* trees:
+  `nat_recognizer` accepts `Ok zero` (it *is* `succ zero` structurally), and
+  `is_ok (succ n) = TT`. This is harmless because the type discipline never feeds
+  a `Result` where a `Nat` is expected — every value reaches a recognizer through
+  a typed position. The structural-recognition soundness claim (§8.7, §14) is
+  therefore scoped to inputs that already respect the ambient typing, not to all
+  trees; a recognizer is a decision procedure for its type *among well-typed
+  candidates*, not a universal tree classifier.
 ]
 
 === Record values
@@ -838,8 +852,10 @@ derived from Σ:
        escape scan). `hyp_reduce` in the default environment;
        extensible to any future stuck-form producer (e.g.
        `async_pending`, §15). These need *both* protections:
-       unforgeable as values (construction) and opaque to inspection
-       (triage).],
+       unforgeable as values (construction) and opaque to *general*
+       inspection (triage) — only the §4.2 canonical readers may expose
+       a seal's public descriptor (its root sig and stored type), never
+       its payload.],
     [`funnel(Σ)`],
       [Host / effect sigs whose invocation must be routed through
        `postulate`'s sanitizer. These need *construction* protection
@@ -854,22 +870,52 @@ derived from Σ:
   caption: [The pinned-sig sets the walker consults.],
 )
 
-Three clauses, following `apply`'s rules:
+The walker reduces `apply(f, x)` by the *same move* the §5 dispatcher uses:
+*match the operator `f`, short-circuit to a fixed behavior when it matches a
+known pattern, else fall through to substrate reduction.* The two differ only in
+*what part of `f` is matched* and *what the matched behavior may do* — the
+unified picture is §4.3. The walker's own layer matches the *whole* `f` by
+hash-cons identity against a small fixed set of *canonical reader trees*, each
+resolving to a fixed result (its body is never run):
+
++ *I-shortcut.* `w_Σ(I, x) = Ok x`. Polymorphic identity — returns its argument,
+  constructs nothing. (Running `I`'s body `S K K x` would create intermediate
+  forks that trip Stem-forge below; resolving to `x` directly sidesteps that.)
+
++ *Root-sig read.* `w_Σ(ROOT_SIG, x) = Ok (pair_fst x)` — the signature rooting
+  `x` (`ROOT_SIG` *is* the canonical `pair_fst` tree). On a seal this returns the
+  *public* sig, identical for every same-typed seal; a fixed projection.
+
++ *Stored-type read.* `w_Σ(STORED_TYPE, x) = Ok (neutral_meta_type (pair_snd x))`
+  — the stored-type slot of `x`'s meta. *Atomic*: it must project straight to the
+  type without ever surfacing the intermediate meta, whose payload is the
+  protected content (§4.3); `pair_snd` itself is therefore *not* a reader.
+  Uniform across same-typed seals.
+
+These three are *observe-only* — each is a total function of `x`'s public
+descriptor (root sig, stored type), so it returns identical results on any two
+seals of the same type and leaks nothing seal-distinguishing (the litmus test,
+§4.3). They short-circuit *before* the guard clauses below, so they never trip
+them — exactly as `I` always has. `is_neutral`, `has_sig`, `safe_is_stuck`, and
+`stuck_stored_type` (§12.8) are ordinary library code over these readers plus the
+O(1) `tree_eq`; *value*-decomposition of a neutral (e.g. "is the unknown Nat a
+fork?") is a different operation — it *applies* the neutral, routing to
+`hyp_reduce` and staying symbolic (§6, §12.3) — and is not a reader.
+
+When `f` is not a canonical reader, the walker follows `apply`'s rules, rejecting
+two introspection patterns:
 
 + *Stem-forge.* `w_Σ(stem(a), x)` would reduce to `fork(a, x)`; if
   `tree_eq a (checker_sig h)` for some `h ∈ forge(Σ)`, return `Err
-  (Parametricity { kind = StemForge, where = fork(a, x), span })`.
-  Members of `forge(Σ)` can't be fabricated.
+  (Parametricity { kind = StemForge, where = fork(a, x), span })`. Members of
+  `forge(Σ)` can't be fabricated — only the raw construct-layer (handlers, §5)
+  may build them.
 
 + *Triage-on-seal.* `w_Σ(f, x)` would fire the triage rule on `x`; if
   `pair_fst(x) = checker_sig h` for some `h ∈ seal(Σ)`, return `Err
-  (Parametricity { kind = TriageReflect, where = x, span })`. Seals
-  can't be opened.
-
-+ *I-shortcut.* `w_Σ(I_canonical, x) = Ok x` unconditionally, even
-  when `x` is a hypothesis. Required so polymorphic identity passes
-  Pi-checks against hypothesis-typed arguments. The sole soundness
-  carve-out, Σ-independent.
+  (Parametricity { kind = TriageReflect, where = x, span })`. A seal can't be
+  opened by *general* triage; the only sanctioned reads are the canonical readers
+  above, which expose only the public descriptor.
 
 All other applications follow `apply`'s rules and return `Ok <result>`.
 
@@ -894,7 +940,71 @@ All other applications follow `apply`'s rules and return `Ok <result>`.
   minted tokens are introspection targets.
 ]
 
-== Why only `I` needs a carve-out
+== One LHS-dispatch, two layers <sec:two-layer>
+
+The walker's reader layer (§4.2) and the §5 dispatcher's handler layer are the
+*same mechanism* at two match granularities. Both reduce `apply(f, x)` by
+pattern-matching the operator `f` and short-circuiting to a registered behavior
+when it matches; on no match, ordinary substrate reduction proceeds. They differ
+on exactly two correlated points:
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray, align: left, inset: 6pt,
+    [], [*Handler layer (§5)*], [*Reader layer (§4.2)*],
+    [*Matches*],
+      [a *subterm* of `f` — its signature `pair_fst f` — against Σ's pinned sigs],
+      [the *whole* `f`, by hash-cons identity, against the canonical reader trees],
+    [*Behavior may*],
+      [*construct* seal-rooted trees, branch, recurse, do IO — so it runs _raw_ (body executes outside the guards)],
+      [only *observe* (a fixed projection) — so it resolves to a _denotation_ (body never runs)],
+    [*Membership*],
+      [environment-relative: Σ is a value, varied per call],
+      [substrate-fixed: always present, part of the reduction contract],
+    [*Soundness*],
+      [trusted *by audit* (TCB; §14)],
+      [safe *by construction* (the litmus test below)],
+  ),
+  caption: [Two layers of one LHS-dispatch.],
+)
+
+Both are implemented the identical way — *pattern-match the LHS to short-circuit
+`apply(lhs, rhs)`*; the lone essential difference is that the handler layer
+matches a *subterm* of `f` (its sig) while the reader layer matches the *whole
+term* `f`. Everything else in the table follows from one root question: *does
+the matched behavior construct seal-rooted trees, or only observe them?* A
+constructor must run raw (it would otherwise trip Stem-forge) and is an arbitrary
+program (so it cannot be a denotation), and arbitrary programs arrive as wait-form
+*families* sharing one sig (so they are keyed by that sig and need the
+route-to-registered discipline of §5.4). An observer is a fixed projection (so it
+resolves to a denotation, needs no raw region, and is one *canonical* tree, keyed
+by identity, self-routing). Subterm-match-and-run-raw vs
+whole-term-match-and-substitute: that is the whole of it. `I` is the degenerate
+observer — it observes *nothing* and returns its argument; `ROOT_SIG` /
+`STORED_TYPE` observe the public descriptor.
+
+#note[
+  *The litmus test for the reader layer.* A canonical reader is sound iff it is a
+  *total function of the seal's public descriptor* — its root signature and its
+  stored type — and therefore returns *identical results on any two seals sharing
+  that descriptor*. `I` (returns its argument), `ROOT_SIG` (returns the public
+  sig), and `STORED_TYPE` (returns the guarded type) all pass: none can
+  distinguish two same-typed hypotheses. A would-be reader exposing a seal's
+  *payload* (its identity or bound body) would fail — two same-typed hypotheses
+  differ there, so `pair_snd` is excluded and `STORED_TYPE` must be atomic. This
+  is strictly *more conservative* than a carve-out the system already grants:
+  `tree_eq` on neutrals (used by the H-rule and the escape scan, §6, §8.1) can
+  already tell two same-typed seals apart, which the descriptor reads cannot — so
+  the reader layer widens no attack surface beyond `tree_eq`'s.
+]
+
+== Why `I` is the only *passthrough* carve-out
+
+(`I` is the only carve-out that *passes an argument through* a reduction; the
+other two reader-layer trees, `ROOT_SIG` / `STORED_TYPE`, are *observations* — a
+distinct kind, covered in §4.2–§4.3. This section is about why no reduction rule
+beyond `I` needs the passthrough treatment.)
 
 Every substrate reduction rule either inspects its argument
 (triage — rejected when the argument is a hypothesis), wraps it
@@ -918,9 +1028,12 @@ canonical `I` for `{x} -> x` and only for that. The literature
 framing — `I` as the identity element of the application monoid, or
 equivalently the trivial polymorphic transformation — places this in
 standard Yoneda/Church territory; we don't lean on that framing
-operationally, but it explains why no other carve-out is needed: no
-other tree represents a parametric operation that introspects
-nothing.
+operationally, but it explains why no other *passthrough* carve-out is
+needed: no other tree represents a parametric operation that introspects
+nothing. (The reader layer adds two *observation* carve-outs alongside
+`I` — `ROOT_SIG` / `STORED_TYPE`, §4.2 — but those return public
+descriptor facts rather than passing the argument through, and are
+justified by the §4.3 litmus test, not by this passthrough argument.)
 
 == `Tree_p(Σ)` as a greatest fixed point
 
@@ -997,10 +1110,21 @@ membership in the greatest fixed point above:
   to verify membership. The boundary version sanitizes input and
   routes through the dispatcher.
 
-+ *Kernel handler bodies have privileged access.* Code that runs
-  inside a kernel handler (recognizers, codomain functions) executes
-  "raw" — outside the walker. Library authors writing these are part
-  of the trusted base.
++ *Handler bodies run raw; recognizer bodies run under the walker with
+  reader access.* Two different privilege levels, easy to conflate.
+  *Handler* bodies (`respond` functions and codomain functions invoked
+  *inside* `hyp_reduce`, and the Σ-op handlers themselves) execute "raw"
+  — outside the walker — so they may construct seal-rooted trees and use
+  raw projection; their authors are part of the trusted base.
+  *Recognizer* bodies, by contrast, run *under the walker* (their sig is
+  not in Σ, so `param_apply` reaches them through the walker arm, §6.3.1)
+  — they do *not* get a raw region. What lets them inspect a
+  hypothesis argument is the §4.2 *reader layer*: `ROOT_SIG` /
+  `STORED_TYPE` (and the `make_recognizer` H-rule built on them) give the
+  public descriptor concretely, while any *other* reflective move (raw
+  `pair_snd`, `triage` on the neutral) is still rejected. So a buggy
+  recognizer cannot leak by accident — the walker stays live around it;
+  only the blessed reads pass.
 
 + *Stricter contexts use smaller Σ.* Programs that want to operate
   outside the host's effect surface should run under `safe_apply
@@ -1484,12 +1608,19 @@ through entirely different machinery.
 a `make_recognizer`-wrapped wait-form, e.g. `Bool`, `Nat`, `Pi A B`.
 
 *Path.* The call routes through `param_apply`'s walker arm; the
-wait-form reduces to `recognizer_wrap_fn body meta v`.
+wait-form reduces to `recognizer_wrap_fn body meta v`. The wrapper runs
+*under the walker* — it gets no raw region — so its inspection of `v`
+goes through the §4.2 reader layer, not raw triage.
 
-*Mechanism.* The wrapper checks `safe_is_stuck v`. If true, it
-short-circuits to `Ok (tree_eq self_type (stuck_stored_type v))` —
-a concrete `Ok TT` or `Ok FF`, computed by hash-cons identity. If
-false, the per-type recognizer body runs on the concrete `v`.
+*Mechanism.* The wrapper checks `safe_is_stuck v` and reads
+`stuck_stored_type v` — both reader-based (`ROOT_SIG` / `STORED_TYPE`,
+§4.2/§12.8), so they return a *concrete* descriptor even when `v` is a
+seal. If `v` is stuck it short-circuits to
+`Ok (tree_eq self_type (stuck_stored_type v))` — a concrete `Ok TT` or
+`Ok FF`, by hash-cons identity. If false, the per-type recognizer body
+runs on the concrete `v`. (This is the resolution of finding A: the
+reads are concrete here, where the old `elim`-routed `safe_*` would have
+returned a symbolic `StuckElim`.)
 
 *Scope.* Uniform — every `make_recognizer`-wrapped recognizer gets
 this for free. Per-type bodies see only concrete `v` values; the
@@ -1508,8 +1639,8 @@ routes through `param_apply`'s *raw arm* (privileged dispatch).
 `recognizer_wrap_fn` is never reached.
 
 *Mechanism.* `hyp_reduce`'s handler consults the stored type's
-codomain function. For `hyp_T : Type` specifically, `Type`'s
-codomain function is `type_predicate_h_rule`: it returns
+`respond` field. For `hyp_T : Type` specifically, `Type`'s
+`respond` is `type_predicate_h_rule`: it returns
 `Return (tree_eq (stuck_stored_type v) hyp_T)` iff `v` is a
 kernel-minted stuck form, else `Return FF`. Again a concrete Bool
 verdict.
@@ -1517,7 +1648,7 @@ verdict.
 *Scope.* `Type`-specific. Only `Type`-typed hypotheses are
 operationally predicates — Pi-hyps extend spines via `hyp_reduce`'s
 default behavior, Sigma-hyps project, non-applicable hyps don't
-apply at all. So only `Type` needs a predicate-side codomain function
+apply at all. So only `Type` needs a predicate-side `respond`
 implementing the H-rule.
 
 *Source.* §12.18, `type_predicate_h_rule`.
@@ -2242,6 +2373,22 @@ The elaboration steps:
   surrounding type is known to be `Pi A B`, wrap the compiled body
   with `checked (Pi A B)` (§8). This ensures typed function values
   carry their declared types as runtime contracts.
+
+  *Record-field lambdas wrap the same way.* The surrounding type that
+  fixes a binder's `Pi` need not come from an outer `Pi` annotation — it
+  can come from a *record field's* declared type. When a record literal
+  `{ f := e, … }` is elaborated against a known record type
+  `Record [(f, Tf), …]` (e.g. an effect-handler value at its interface
+  type, §12/§15), each field's expected type `Tf` flows down to its
+  initializer: if `Tf` is a `Pi` and `e` is a lambda, `e` is wrapped as
+  `checked Tf e`, exactly as a top-level `Pi`-typed binder would be.
+  This is *required*, not cosmetic — `Pi`'s recognizer (§12) accepts only
+  `checked` wait-forms, so without the wrap a bare field lambda like
+  `mockConsole.print := {_} -> unit_witness` would fail
+  `typecheck Console mockConsole`. The rule recurses through nested
+  records, so a field that is itself a record propagates field types one
+  level further. (A field whose initializer is already a `checked` value
+  — e.g. `print := host_write_stdout`, a postulate — needs no wrap.)
 + Bracket-abstract the binder (standard combinator translation).
 + *Test emission.* At each `let name : T = body`, emit two operations:
 
@@ -2493,7 +2640,7 @@ replace each with its `value`, recurse:
 ```disp
 strip_checked := fix ({self, t} ->
   match (has_sig checked_apply t) {
-    TT => self ((type_meta t).value)      // unwrap (read the `value` field), recurse into inner
+    TT => self ((wait_meta t).value)      // unwrap (read the `value` field), recurse into inner
     FF => triage
       t                                   // leaf: unchanged
       ({c} -> t (self c))                 // stem: recurse
@@ -2502,13 +2649,60 @@ strip_checked := fix ({self, t} ->
   })
 ```
 
-The record and coproduct rows lower the `prod`/`const`/`inj` scaffolding of §2.6:
-a literal projection `r.a` β-collapses and its `const` wrap folds away to the
-positional path; a `match` lowers to "index the positional branch tuple by the
-value's positional index." Resolving names → positions needs the binder types,
-so the full pass — `strip`, used in the rest of this section — is
-*type-directed* (§17), of which the structural `strip_checked` above is the
-no-rewrite corner.
+The full pass `strip` extends that corner with the record and coproduct rows.
+Disp has no typing derivation (elaboration is wrap-only, §9), so `strip` is a
+tree-to-tree function that reads each value's schema from the value *itself* — a
+record's name header, a coproduct's tag — together with the type ascriptions
+embedded in the `checked` wait-forms it walks through. It drops every
+type-determined descriptor, lowers each eliminator, and leaves handler-rooted
+wait-forms (seals, host effects) untouched:
+
+```disp
+strip := fix ({self, t} ->
+  match (is_handler_rooted t) {            // seal- or funnel-rooted: a genuine
+    TT => t                                //   unknown / effect — never a contract
+    FF => match (has_sig checked_apply t) {
+      TT => self ((wait_meta t).value)     // checked: drop ascription, recurse into value
+      FF => match (is_record_product t) {  // record VALUE (const-field product, §2.6)
+        TT => strip_record self (wait_meta t)
+        FF => triage                       // concrete data / code: structural recurse
+          t
+          ({c}    -> t (self c))
+          ({l, r} -> t (self l) (self r))
+          t
+      }}})
+
+// A record's field table is `pair names payload`, where `payload` is a Σ-chain
+// of `const`-wrapped thunks (§2.6). Drop the name header, unwrap each `const`
+// (its inner is `pair_snd`), strip it, and re-emit the bare positional Σ-tuple —
+// position is now the only index, so a literal `r.a` (already β-lowered to
+// `pair_fst (pair_snd^idx payload)`, §12.4) indexes straight into it.
+strip_record := {self, F} ->
+  map_chain ({field} -> self (pair_snd field)) (pair_snd F)
+```
+
+The `is_record_product` guard separates a record *value* (whose fields are
+`const`-wrapped, ignoring the payload, §2.6) from a `match`/`cases` *product*
+(whose fields are real handlers): only the former lowers to a positional tuple
+here. The latter is the one genuinely *type-directed* step, and the only place
+`strip` must consult a type rather than the value:
+
+#note[
+  *Coproduct lowering needs the variant order — the residual type-directed step.*
+  A coproduct value `inj Vi pay` carries its own tag `Vi` but not the *order* of
+  the full variant set, and a `match` requires the value and the branch table to
+  agree on an index. That order is fixed by the coproduct's *type*. So at a
+  `match` site, `strip` reads the variant list from the scrutinee's ascribed
+  `Coproduct [(Vi, Si)]`, rewrites each value's tag `Vi` to
+  `index_of [V1..Vn] Vi`, and lowers the `cases` product to a positional branch
+  tuple keyed by that same index — consistent because both sides use the one
+  variant order. A single-variant sum needs no index (one branch); the Scott
+  encoding (`Bool`) carries its selector in the value and needs no table at all
+  (§2.6). Everywhere else — `checked`, record — the value is self-describing and
+  `strip` needs no type. This is the no-typing-derivation analogue of
+  type-directed erasure (§17): the schema is threaded from the enclosing `checked`
+  ascription and the value's own headers, not from a typing tree.
+]
 
 *Strip leaves handler-rooted wait-forms intact.* Kernel-rooted stuck forms
 (hypotheses, stuck eliminations) and host-effect wait-forms survive strip — only
@@ -2653,15 +2847,18 @@ validator), not by a kernel-side sig table.
 
 MetaShape := Refinement
   (Record [
-    ("recognizer_params", Tree),
-    ("functor",  Functor),
-    ("respond",  Optional Respond),
-    ("behavioral_specs", Optional (List Path))
+    ("recognizer_params", Tree),   // intended: type-former parameters (per type)
+    ("functor",           Tree),   // intended: Functor (Kan transport, §13)
+    ("respond",           Tree),   // intended: Optional Respond (elimination handler)
+    ("behavioral_specs",  Tree)    // intended: Optional (List Spec) (runnable specs;
+                                   //           Spec is realized as Path, §13)
   ])
-  ({_} -> Ok TT)   // structural membership suffices; the per-field types
-                   //   shown are the *intended* ascriptions. §12.6 realizes
-                   //   MetaShape with these fields loosened to `Tree`, with
-                   //   deep field-typing deferred to `StrictType`.
+  ({_} -> Ok TT)   // This is *the* definition — there is no second one. Field
+                   //   types are loosened to `Tree` so structural membership
+                   //   (fields present, in order) suffices; the *intended*
+                   //   ascriptions in the comments are enforced deeply by
+                   //   `StrictType`, not by `MetaShape` itself. §12.6 references
+                   //   this definition rather than restating it.
 ```
 
 A MetaShape value is an ordinary headered record (§2.6), so `meta_get m
@@ -2862,9 +3059,13 @@ finite-depth.
 
   - *No formal parametricity theorem.* Reynolds-style parametricity
     for disp's walker discipline hasn't been mechanized.
-  - *I-shortcut soundness.* The walker's I-shortcut (§4.2) might
-    enable more than polymorphic identity. Precise characterization
-    is open.
+  - *Reader-layer soundness.* The walker's identity-keyed reader layer
+    (§4.2–§4.3) — `I`, plus the descriptor reads `ROOT_SIG` /
+    `STORED_TYPE` — might enable more than intended. The litmus test
+    (§4.3) argues each reader is a total function of the public
+    descriptor, and that the descriptor reads are dominated by the
+    already-granted `tree_eq`-on-neutrals carve-out; but a precise
+    characterization (and `tree_eq`-on-neutrals itself) is open.
   - *No semantic model.* A logical-relations or PER model of disp
     that interprets `Type` would settle the question.
 
@@ -3238,18 +3439,10 @@ whose body projects fields.
 
 == `MetaShape` and `RecognizerShape`
 
-The standard metadata layout (§11.2), as a Refinement of Record:
-
-```disp
-let MetaShape = Refinement
-  (Record [
-    ("recognizer_params", Tree),
-    ("functor", Tree),
-    ("respond", Tree),
-    ("behavioral_specs", Tree)
-  ])
-  ({_} -> Ok TT)
-```
+`MetaShape` is the metadata layout defined once in §11.3 — a `Refinement` of the
+four-field `Record` whose field types are loosened to `Tree`. It is *not*
+redefined here; this section uses that single definition and adds the companion
+`RecognizerShape`.
 
 The Refinement's predicate is trivial — the Record-membership check
 already enforces field presence. Field-value types are loosely `Tree`
@@ -3373,13 +3566,37 @@ Returns TT iff T's metadata has a non-`none` `respond` field —
 i.e., T accepts an elimination frame. (Sharper Π-specific checks
 use `is_pi` / `pi_dom`.)
 
-== `safe_*` helpers (hypothesis-safe structural inspection)
+== `safe_*` helpers: wrapper reads vs value decomposition
 
-Inspection of a value's tree shape (`is_fork`, `pair_fst`, `has_sig`)
-via raw triage is walker-unsafe — triage on a kernel-minted neutral
-is rejected (§4.2). The `safe_*` helpers route through the library
-`elim` (§12), which gates on `is_neutral` and pushes a case-frame
-into `hyp_reduce` for stuck targets:
+Two needs are easy to conflate here, and §4.2's reader layer is exactly what
+keeps them apart. Raw `triage` / `pair_snd` on a seal is walker-rejected
+(TriageReflect, §4.2) for *both*, so neither can use raw projection — but they
+diverge on what a *correct* answer is:
+
+*Wrapper reads* — "what roots this value, and what type does it store?" — have a
+concrete answer even on a seal (the public descriptor), so they go through the
+canonical readers `ROOT_SIG` (= the blessed `pair_fst` tree) and `STORED_TYPE`
+(§4.2), which short-circuit before the guard and return that descriptor:
+
+```disp
+// Wrapper reads (concrete on seals; built on the §4.2 readers + O(1) tree_eq).
+safe_has_sig := {checker, v} -> Ok (tree_eq (ROOT_SIG v) (checker_sig checker))
+safe_is_neutral := {v} -> safe_has_sig kernel.hyp_reduce v
+// All stuck forms are hyp_reduce-rooted (§6.1), so the stuck check is the same
+// single sig comparison; it is Σ-independent.
+safe_is_stuck := {v} -> tree_eq (ROOT_SIG v) (checker_sig kernel.hyp_reduce)
+// Stored type of any stuck form. Uses STORED_TYPE — *not* raw
+// `neutral_meta_type (pair_snd v)` — because `pair_snd` is not a reader (it
+// would surface the meta's protected payload, §4.2/§4.3); STORED_TYPE projects
+// straight to the type slot.
+stuck_stored_type := {v} -> STORED_TYPE v
+```
+
+*Value decomposition* — "is the value this seal *represents* a leaf / stem /
+fork?" — has no concrete answer for an unknown, so it must stay *symbolic*. These
+route through the library `elim` (§12.3), which gates on `is_neutral` and, for a
+stuck target, pushes a case-frame into `hyp_reduce`, yielding a `StuckElim`
+("this structural property of an unknown value"). They are *not* readers:
 
 ```disp
 safe_is_fork := {v} -> elim
@@ -3388,33 +3605,19 @@ safe_is_fork := {v} -> elim
   {leaf := FF, stem := {_} -> FF, fork := {_, _} -> TT}
   v
 
-safe_pair_fst := {v} -> elim
+safe_pair_fst := {v} -> elim                       // decompose the *represented value*
   tree_shape_dispatcher
   (const Tree)
   {leaf := error_form, stem := {c} -> c, fork := {l, _} -> l}
   v
-
-safe_has_sig := {checker, v} ->
-  bind (safe_pair_fst v) ({sig} -> Ok (tree_eq sig (checker_sig checker)))
-
-safe_is_neutral := {v} -> safe_has_sig kernel.hyp_reduce v
-
-// All stuck forms are hyp_reduce-rooted (§6.1), so the generalized
-// stuck-form check is a single sig comparison.
-safe_is_stuck := {v} ->
-  bind (safe_pair_fst v) ({sig} ->
-    Ok (tree_eq sig (checker_sig kernel.hyp_reduce)))
-
-// Stored-type extraction. All stuck forms carry the stored type in
-// the first slot of their payload, regardless of whether the payload
-// describes a hypothesis or a spine-extended elimination.
-stuck_stored_type := {v} -> neutral_meta_type (pair_snd v)
 ```
 
-For concrete values, these reduce to the raw operation's result; for
-hypotheses or other stuck forms, they reduce to a `StuckElim`
-(produced by `hyp_reduce` + the inductive type's `respond`)
-representing "this structural property of an unknown value."
+The distinction is the resolution of finding A: a recognizer running under the
+walker needs *wrapper* facts (its argument's root sig and stored type), which the
+old `elim`-routed `safe_*` returned as a `StuckElim` — symbolic where the H-rule
+needs a concrete `tree_eq`. The readers fix that: wrapper reads are concrete on
+seals; only genuine value-decomposition stays symbolic. For concrete values both
+columns reduce to the raw operation's result; the difference shows only on seals.
 
 *Where they're used*: primarily *inside* `make_recognizer`'s wrapper.
 The H-rule check `safe_is_stuck v` runs on the recognizer's v argument
@@ -3448,7 +3651,11 @@ write only the concrete-case body:
 
 ```disp
 let recognizer_wrap_fn = fix ({wrap, body, meta, v} ->
-  let self_type = wait (wait recognizer_wrap_fn body) meta in
+  // Reconstruct this type via the `fix` self-param `wrap` (= recognizer_wrap_fn),
+  // not the external let-name: `wrap` is in scope here without a forward
+  // reference, and the two are the same tree, so `self_type` hash-cons-equals
+  // any externally-built `wait (make_recognizer body) meta` (cf. §14 openq).
+  let self_type = wait (wait wrap body) meta in
   match (safe_is_stuck v) {                              // Σ-independent
     TT => Ok (tree_eq self_type (stuck_stored_type v))   // H-rule
     FF => body meta v                                    // concrete dispatch
@@ -3685,7 +3892,9 @@ let eq_recognizer = make_recognizer ({meta, v} ->
 let eq_meta_for = {A, x, y} -> {
   recognizer_params := pair A (pair x y),
   functor           := eq_functor,         // refl at the new endpoints (§13)
-  respond           := none,
+  respond           := some inductive_respond,  // J on a neutral equality (§12.3):
+                                                //   eliminating a stuck `p : Eq A x y`
+                                                //   yields `motive self` (stuck subst/transp)
   behavioral_specs  := none
 }
 
@@ -3803,10 +4012,14 @@ let A_hyp  = Hyp Type 0
 let B_hyp  = Hyp Type 1
 let x_of_A = Hyp A_hyp t
 
-test A_hyp x_of_A = TT     // matching-identity hypothesis: H-rule fires
-test B_hyp x_of_A = FF     // distinct Type-hyp: tree_eq FF
-test A_hyp 0      = FF     // closed value: is_neutral FF, then Return FF
-test A_hyp A_hyp  = FF     // I-shortcut: stored_type=Type ≠ A_hyp
+// Applying a Type-hyp routes through hyp_reduce's Return channel, which is
+// Ok-wrapped (§7.1, §7.5 wrapping invariant) — so these reduce to Ok TT / Ok FF,
+// not bare TT / FF.
+test A_hyp x_of_A = Ok TT     // matching-identity hypothesis: H-rule fires
+test B_hyp x_of_A = Ok FF     // distinct Type-hyp: tree_eq FF
+test A_hyp 0      = Ok FF     // closed value: is_neutral FF, then Return FF
+test A_hyp A_hyp  = Ok FF     // routes through hyp_reduce (A_hyp is the head, not I):
+                              //   is_neutral A_hyp = TT, but stored_type = Type ≠ A_hyp
 ```
 
 Four definitions. No tests fired at construction; `Type` is just a
@@ -4479,6 +4692,28 @@ structural check doesn't recurse into the candidate's components),
 so `test typecheck Type Type` works under any memo policy. The
 fixed-point requirement is specifically for the deep validators.
 
+#openq[
+  *Is the optimistic in-progress answer sound, not just terminating?*
+  The memo returns `Ok TT` for a recursive query that is still
+  in-progress, justified as "the outer validation will catch real
+  failures." That guarantees *termination*, but its *soundness*
+  rests on an unstated assumption: that the recursion is *productive*
+  — every cycle must pass through enough non-recursive structural
+  obligation (is it a wait-form? does the meta carry the required
+  fields?) that no ill-formed self-referential type can validate
+  *only* on the strength of the optimistic answer it hands itself.
+  If a type passed its structural checks but its deep field-types
+  were wrong in a way observable *only* through the recursive query,
+  the optimism could accept it (the coinductive "guarded vs. unsound
+  circular reasoning" hazard). The §11/§12 self-referential types
+  (`Type`, `Pi`, `Sigma`, `MetaShape`, `RecognizerShape`) appear
+  productive — their structural layer is checked eagerly and only the
+  field-by-field deep typing recurses — but this has not been proven.
+  A guardedness/productivity criterion on `StrictType`'s recursive
+  structure would settle it; until then the optimism is a
+  *conjectured-sound* termination device, not a proven-sound one.
+]
+
 #openq[Empirical verification of fix-based self-reference hash-cons
 stability (RECORDS_PROPOSAL.md §9 step 2) is also load-bearing for
 H-rule reconstruction. If `wait self.handler meta` (constructed
@@ -4567,7 +4802,31 @@ let host_read_stdin : Pi Unit ({_} -> String) :=
 ```
 
 The host doesn't know about `Pi String _`; the disp library asserts
-this is the right type. As library matures and refinement proofs
+this is the right type.
+
+#openq[
+  *The postulate value shape and the host-side meta layout are
+  underspecified, and the two examples disagree.* §7.5 says a library
+  postulate `host_op : T := postulate sig` "produces a `checked T
+  (call_via_postulate sig)` value," but `call_via_postulate` is never
+  defined, and the relationship between (a) the partially-applied
+  Σ-operation `postulate sig` (a `wait kernel.postulate {sig}` form
+  awaiting its payload), (b) the `checked T (...)` wrapper, and (c) the
+  host-rooted wait-form `wait_with_sig sig payload` that the handler
+  finally mints is left implicit. Worse, the host handler in §15 reads
+  its meta as `pair(msg, cont)` — a CPS pair carrying a continuation —
+  yet the disp-level ascription `Pi String ({_} -> Unit)` describes a
+  single string argument returning `Unit`, with no continuation in
+  sight. Either the host meta layout or the ascribed arity is wrong as
+  written. Pinning this down needs: a concrete definition of how a
+  postulate accumulates its argument(s) into the payload the host sees,
+  and a single convention for whether host primitives are direct
+  (`arg → result`) or CPS (`arg → (result → k) → …`). Until then the
+  `checked T (call_via_postulate sig)` line and the §15 `pair(msg,
+  cont)` handler should be read as illustrative, not normative.
+]
+
+As library matures and refinement proofs
 accumulate, stricter ascriptions can be written without changing the
 host:
 
@@ -5049,6 +5308,18 @@ is raised in detail.
        inside a handler body hash-cons-equals
        `wait kernel.handler meta` constructed externally. If they
        don't, H-rule tree_eq comparisons misbehave.],
+    [§14 (memo optimism soundness)],
+      [The in-progress memo returns optimistic `Ok TT`, which
+       guarantees termination but not soundness. Needs a
+       guardedness/productivity criterion on `StrictType`'s recursion
+       to rule out an ill-formed self-referential type validating
+       only on the strength of its own optimistic answer.],
+    [§15 (postulate value shape)],
+      [`call_via_postulate` is undefined and the postulate→`checked`→
+       host-rooted-wait-form chain is implicit; the §15 host handler's
+       `pair(msg, cont)` CPS meta layout contradicts the single-arg
+       `Pi String ({_} -> Unit)` ascription. Needs one convention for
+       postulate argument accumulation and direct-vs-CPS host calls.],
     [§15 (higher-order effects)],
       [Effects with operations that take computation arguments
        (e.g. `catch handler body`) require Wu-Schrijvers-Hinze
