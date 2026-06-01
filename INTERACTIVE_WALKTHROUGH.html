@@ -1712,7 +1712,7 @@ Sections 7.1&ndash;7.2 reach into category theory and homotopy type theory. The 
 
 <h3 id="cubical">7.2&nbsp; Cubical type theory and univalence</h3>
 
-<p>The two cubical proposals (<a href="https://github.com/libdither/disp/blob/main/CUBICAL_PROPOSAL.typ" target="_blank" rel="noopener"><code>CUBICAL_PROPOSAL.typ</code></a> and the introductory <a href="https://github.com/libdither/disp/blob/main/CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ" target="_blank" rel="noopener"><code>CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ</code></a>) argue that the move from MLTT-style propositional equality to path-based equality <a class="cite" id="cite-cubical" href="#ref-cubical">[Cohen et al. 2018]</a> (the source of computational univalence <a class="cite" id="cite-hott" href="#ref-hott">[Univalent Foundations Program 2013]</a>) can be implemented as library code over the existing seven primitives. No new kernel work appears to be required.</p>
+<p>The two cubical proposals (<a href="https://github.com/libdither/disp/blob/main/CUBICAL_PROPOSAL.typ" target="_blank" rel="noopener"><code>CUBICAL_PROPOSAL.typ</code></a> and the introductory <a href="https://github.com/libdither/disp/blob/main/research/CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ" target="_blank" rel="noopener"><code>CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ</code></a>) argue that the move from MLTT-style propositional equality to path-based equality <a class="cite" id="cite-cubical" href="#ref-cubical">[Cohen et al. 2018]</a> (the source of computational univalence <a class="cite" id="cite-hott" href="#ref-hott">[Univalent Foundations Program 2013]</a>) can be implemented as library code over the existing seven primitives. No new kernel work appears to be required.</p>
 
 <h4>The interval and paths</h4>
 <p><code>I</code> is a library type whose values form the free De&nbsp;Morgan algebra on two constants <code>I_zero</code> and <code>I_one</code> with operations <code>I_and</code>, <code>I_or</code>, <code>I_inv</code>. It is not Boolean: <code>i I_or (I_inv i) ≠ I_one</code> in general, which preserves the continuous interpretation. Disp's walker already enforces the parametricity discipline that paths require: one cannot triage on an abstract <code>i : I</code>.</p>
@@ -1747,7 +1747,7 @@ ua := {A, B, e, i} -> Glue B (i I_or (I_inv i)) A e</code></pre>
 
 <p>So <code>transp (ua not_equiv) true</code> evaluates to <code>not_equiv.forward true = not true = false</code>. Univalence is a definable operation in this design, not an axiom: equivalent types compute as equal.</p>
 
-<aside class="note"><strong>Quote</strong> (<a href="https://github.com/libdither/disp/blob/main/CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ#L544-L554" target="_blank" rel="noopener"><code>CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ</code>:544&ndash;554</a>) — <em>"In MLTT, there was no way to give it computational content... Cubical solves this by providing Glue as a type former whose values encode equivalences directly, and whose transport rule unpacks them."</em></aside>
+<aside class="note"><strong>Quote</strong> (<a href="https://github.com/libdither/disp/blob/main/research/CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ#L544-L554" target="_blank" rel="noopener"><code>CUBICAL_TYPE_THEORY_FOR_DUMMIES.typ</code>:544&ndash;554</a>) — <em>"In MLTT, there was no way to give it computational content... Cubical solves this by providing Glue as a type former whose values encode equivalences directly, and whose transport rule unpacks them."</em></aside>
 
 <h3 id="synthesis">7.3&nbsp; The long arc: synthesis and bootstrap</h3>
 

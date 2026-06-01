@@ -92,8 +92,7 @@
 
 Disp is a dependently-typed language whose type system is implemented as
 *manifest contracts* over a tree-calculus substrate. Every typed function
-value carries a runtime input-checker (a "contract"); every type is a
-*wait-form* whose recognizer judges inhabitants. The elaborator's only
+value carries a runtime input-checker (a "contract"); every type is a predicate on programs implemented as a *wait-form* whose recognizer field judges inhabitants. The elaborator's only
 job is to transform syntax into trees and emit tests — no bidirectional
 inference, no judgments. Type validation is a `test` declaration that
 runs a library validator at elaboration time. Failures throw with the
@@ -130,10 +129,18 @@ and revisable:
     inset: 6pt,
     [*Section*], [*Covers*],
     [§2 Substrate], [Tree calculus, apply, hash-cons identity, glossary; record/array/coproduct sugar (§2)],
-    [§3 The `CheckerResult` monad], [`Result E A`, `CheckerError` variants, Kleisli composition, the *verdict-vs-error principle*],
-    [§4 The parametric walker and `Tree_p`], [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
-    [§5 The dispatcher and dispatch environments], [Σ-algebra framing: handlers as values, environments as list-passing, openness via concatenation],
-    [§6 Stuck forms and neutrals], [Stuck forms from any pinned handler, the generalized H-rule, cascading-failure story],
+    [§3 The `CheckerResult` monad],
+    [`Result E A`, `CheckerError` variants, Kleisli composition, the *verdict-vs-error principle*],
+
+    [§4 The parametric walker and `Tree_p`],
+    [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
+
+    [§5 The dispatcher and dispatch environments],
+    [Σ-algebra framing: handlers as values, environments as list-passing, openness via concatenation],
+
+    [§6 Stuck forms and neutrals],
+    [Stuck forms from any pinned handler, the generalized H-rule, cascading-failure story],
+
     [§7 The kernel primitives], [Operational semantics of `hyp_reduce`, `bind_hyp`, `postulate`, `safe_apply`],
     [§8 Boundary operations and checked values], [`param_lift`, `typecheck`, `checked`, `typed_lambda`, `validate`],
     [§9 Elaboration and tests], [Syntactic transformation; tests as first-class; `: T` as test sugar],
@@ -141,7 +148,9 @@ and revisable:
     [§11 Types and validators], [Types-as-wait-forms; MetaShape; validators-as-values],
     [§12 Library types], [Each library type under the framework, including `Type` itself],
     [§13 Cubical extensions], [`I`, `Path`, `comp`, `Glue`, `ua`],
-    [§14 Soundness via tests], [Four categories of runnable assertions; foundational conjecture stays open; environment probes via effectful tests],
+    [§14 Soundness via tests],
+    [Four categories of runnable assertions; foundational conjecture stays open; environment probes via effectful tests],
+
     [§15 Effects], [Effects as dispatch-environment entries; effect interfaces as typed records; capability passing],
     [§16 Disp-specific], [What disp contributes beyond standard machinery],
     [§17 Related work], [Literature context],
@@ -277,21 +286,36 @@ to avoid re-introducing them inline:
     align: left,
     inset: 6pt,
     [*Name*], [*Meaning*],
-    [`Tree`],         [Any tree in the substrate (§2.1).],
-    [`Tree_p`],       [Trees on which the parametric walker is closed under `Ok` (§4).],
-    [`Bool`],         [`TT` / `FF` Scott encoding (`lib/prelude.disp`); see §12.],
-    [`List X`],       [Standard cons/nil list of `X`-trees; iterated `pair`s.],
-    [`Optional X`],   [`Some x` / `None`; sentinel-tagged.],
-    [`Span`],         [Source-span record (file, start, end) attached to error variants for diagnostics; opaque tree at the substrate level.],
-    [`Symbol`],       [A fixed tree value identifying a handler / constant — distinct from any user-constructed tree.],
-    [`Functor`],      [Synonym for `Tree_p`; conventionally a morphism-action function consumed by `transp` (§13). Sentinel `trivial_functor` = "trivial Kan structure": `comp` returns `u0` for it (identity transport; discrete `hcomp` is the cap). Non-discrete types carry a real morphism action.],
-    [`Respond`],      [`NeutralMeta -> Frame -> Action`. The universal "respond to an elimination frame" function carried by each type's meta. Generalizes the earlier `Applicable`.],
-    [`Frame`],        [`Tree_p`. The thing applied to a neutral — an argument (Π), a projection selector (Σ), a case-pair (inductive), a dimension (Path), a candidate value (Type). Untagged; the stored type interprets it.],
-    [`Action`],       [`Extend Type | Return Tree_p | Invalid`. The protocol `hyp_reduce` consumes from a type's `respond` (§7).],
-    [`Spec`],         [A runnable behavioral property attached to a type's meta (the `behavioral_specs` field, §11.2). Layer-neutral name so the core metadata convention does not depend on the cubical extension; realized concretely as `Path` once §13 is in scope.],
-    [`Path`],         [`Pi I` alias from §13; the concrete realization of `Spec` used in `behavioral_specs`.],
-    [`ROOT_SIG`],     [Canonical reader tree (= the blessed `pair_fst`): `ROOT_SIG x` is the handler signature rooting `x`. Walker-resolved on seals (§4.2); a fixed projection onto the public descriptor.],
-    [`STORED_TYPE`],  [Canonical reader tree: `STORED_TYPE x` is the stored-type slot of a neutral's meta (`neutral_meta_type (pair_snd x)`), projected atomically so the meta's payload is never surfaced. Walker-resolved on seals (§4.2).],
+    [`Tree`], [Any tree in the substrate (§2.1).],
+    [`Tree_p`], [Trees on which the parametric walker is closed under `Ok` (§4).],
+    [`Bool`], [`TT` / `FF` Scott encoding (`lib/prelude.disp`); see §12.],
+    [`List X`], [Standard cons/nil list of `X`-trees; iterated `pair`s.],
+    [`Optional X`], [`Some x` / `None`; sentinel-tagged.],
+    [`Span`],
+    [Source-span record (file, start, end) attached to error variants for diagnostics; opaque tree at the substrate level.],
+
+    [`Symbol`], [A fixed tree value identifying a handler / constant — distinct from any user-constructed tree.],
+    [`Functor`],
+    [Synonym for `Tree_p`; conventionally a morphism-action function consumed by `transp` (§13). Sentinel `trivial_functor` = "trivial Kan structure": `comp` returns `u0` for it (identity transport; discrete `hcomp` is the cap). Non-discrete types carry a real morphism action.],
+
+    [`Respond`],
+    [`NeutralMeta -> Frame -> Action`. The universal "respond to an elimination frame" function carried by each type's meta. Generalizes the earlier `Applicable`.],
+
+    [`Frame`],
+    [`Tree_p`. The thing applied to a neutral — an argument (Π), a projection selector (Σ), a case-pair (inductive), a dimension (Path), a candidate value (Type). Untagged; the stored type interprets it.],
+
+    [`Action`],
+    [`Extend Type | Return Tree_p | Invalid`. The protocol `hyp_reduce` consumes from a type's `respond` (§7).],
+
+    [`Spec`],
+    [A runnable behavioral property attached to a type's meta (the `behavioral_specs` field, §11.2). Layer-neutral name so the core metadata convention does not depend on the cubical extension; realized concretely as `Path` once §13 is in scope.],
+
+    [`Path`], [`Pi I` alias from §13; the concrete realization of `Spec` used in `behavioral_specs`.],
+    [`ROOT_SIG`],
+    [Canonical reader tree (= the blessed `pair_fst`): `ROOT_SIG x` is the handler signature rooting `x`. Walker-resolved on seals (§4.2); a fixed projection onto the public descriptor.],
+
+    [`STORED_TYPE`],
+    [Canonical reader tree: `STORED_TYPE x` is the stored-type slot of a neutral's meta (`neutral_meta_type (pair_snd x)`), projected atomically so the meta's payload is never surfaced. Walker-resolved on seals (§4.2).],
   ),
   caption: [Glossary of ambient names used in signatures.],
 )
@@ -559,26 +583,31 @@ Each variant maps to a distinct kernel failure path:
     inset: 6pt,
     [*Variant*], [*Raised by*],
     [`Parametricity StemForge`],
-      [walker, when applying a stem would produce a fork whose
-       `pair_fst` is a pinned kernel signature (would forge a neutral)],
+    [walker, when applying a stem would produce a fork whose
+      `pair_fst` is a pinned kernel signature (would forge a neutral)],
+
     [`Parametricity TriageReflect`],
-      [walker, when triage would split on a kernel-minted neutral
-       (would reflect on a hypothesis)],
+    [walker, when triage would split on a kernel-minted neutral
+      (would reflect on a hypothesis)],
+
     [`Escape`],
-      [`bind_hyp`, when the body's result exposes the minted
-       hypothesis via a non-neutral path],
+    [`bind_hyp`, when the body's result exposes the minted
+      hypothesis via a non-neutral path],
+
     [`NotApplicable`],
-      [`checked`, when the stored type is not function-shaped;
-       `hyp_reduce`, when the stored type isn't a recognized
-       type wait-form],
+    [`checked`, when the stored type is not function-shaped;
+      `hyp_reduce`, when the stored type isn't a recognized
+      type wait-form],
+
     [`TypeMismatch`],
-      [contract boundaries (`checked` argument check, any typed-
-       function application), when a recognizer returns `Ok FF` on
-       a value where TT was contractually required],
+    [contract boundaries (`checked` argument check, any typed-
+      function application), when a recognizer returns `Ok FF` on
+      a value where TT was contractually required],
+
     [`Malformed`],
-      [any handler, when its meta doesn't fit the expected shape
-       (currently silent in some paths — see §15 for the planned
-       diagnostic story)],
+    [any handler, when its meta doesn't fit the expected shape
+      (currently silent in some paths — see §15 for the planned
+      diagnostic story)],
   ),
   caption: [`CheckerError` variants and their kernel-handler origins.],
 )
@@ -847,25 +876,27 @@ derived from Σ:
     inset: 6pt,
     [*Set*], [*Meaning*],
     [`seal(Σ)`],
-      [Sigs whose handlers mint *trusted tokens* — values whose
-       provenance other code believes (the H-rule, `is_neutral`, the
-       escape scan). `hyp_reduce` in the default environment;
-       extensible to any future stuck-form producer (e.g.
-       `async_pending`, §15). These need *both* protections:
-       unforgeable as values (construction) and opaque to *general*
-       inspection (triage) — only the §4.2 canonical readers may expose
-       a seal's public descriptor (its root sig and stored type), never
-       its payload.],
+    [Sigs whose handlers mint *trusted tokens* — values whose
+      provenance other code believes (the H-rule, `is_neutral`, the
+      escape scan). `hyp_reduce` in the default environment;
+      extensible to any future stuck-form producer (e.g.
+      `async_pending`, §15). These need *both* protections:
+      unforgeable as values (construction) and opaque to *general*
+      inspection (triage) — only the §4.2 canonical readers may expose
+      a seal's public descriptor (its root sig and stored type), never
+      its payload.],
+
     [`funnel(Σ)`],
-      [Host / effect sigs whose invocation must be routed through
-       `postulate`'s sanitizer. These need *construction* protection
-       only — so user code can't fabricate a host call that bypasses
-       the no-neutral scan — but not inspection protection.],
+    [Host / effect sigs whose invocation must be routed through
+      `postulate`'s sanitizer. These need *construction* protection
+      only — so user code can't fabricate a host call that bypasses
+      the no-neutral scan — but not inspection protection.],
+
     [`forge(Σ) := seal(Σ) ∪ funnel(Σ)`],
-      [The construction-protected set the stem-forge clause consults.
-       *Excludes* the pure kernel operations `bind_hyp` and
-       `postulate` (see note): library code legitimately constructs
-       their invocation wait-forms under the walker.],
+    [The construction-protected set the stem-forge clause consults.
+      *Excludes* the pure kernel operations `bind_hyp` and
+      `postulate` (see note): library code legitimately constructs
+      their invocation wait-forms under the walker.],
   ),
   caption: [The pinned-sig sets the walker consults.],
 )
@@ -951,20 +982,23 @@ on exactly two correlated points:
 #figure(
   table(
     columns: 3,
-    stroke: 0.4pt + gray, align: left, inset: 6pt,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
     [], [*Handler layer (§5)*], [*Reader layer (§4.2)*],
     [*Matches*],
-      [a *subterm* of `f` — its signature `pair_fst f` — against Σ's pinned sigs],
-      [the *whole* `f`, by hash-cons identity, against the canonical reader trees],
+    [a *subterm* of `f` — its signature `pair_fst f` — against Σ's pinned sigs],
+    [the *whole* `f`, by hash-cons identity, against the canonical reader trees],
+
     [*Behavior may*],
-      [*construct* seal-rooted trees, branch, recurse, do IO — so it runs _raw_ (body executes outside the guards)],
-      [only *observe* (a fixed projection) — so it resolves to a _denotation_ (body never runs)],
+    [*construct* seal-rooted trees, branch, recurse, do IO — so it runs _raw_ (body executes outside the guards)],
+    [only *observe* (a fixed projection) — so it resolves to a _denotation_ (body never runs)],
+
     [*Membership*],
-      [environment-relative: Σ is a value, varied per call],
-      [substrate-fixed: always present, part of the reduction contract],
-    [*Soundness*],
-      [trusted *by audit* (TCB; §14)],
-      [safe *by construction* (the litmus test below)],
+    [environment-relative: Σ is a value, varied per call],
+    [substrate-fixed: always present, part of the reduction contract],
+
+    [*Soundness*], [trusted *by audit* (TCB; §14)], [safe *by construction* (the litmus test below)],
   ),
   caption: [Two layers of one LHS-dispatch.],
 )
@@ -1192,21 +1226,24 @@ The three kernel-shipped Σ-operations are:
     inset: 6pt,
     [*Symbol*], [*Type*],
     [`hyp_reduce` (Σ-op)],
-      [`NeutralMeta → Frame → CheckerResult(Tree_p)` — the universal
-       "push a frame onto a neutral" engine; consults the stored
-       type's `respond` field],
+    [`NeutralMeta → Frame → CheckerResult(Tree_p)` — the universal
+      "push a frame onto a neutral" engine; consults the stored
+      type's `respond` field],
+
     [`bind_hyp` (Σ-op)],
-      [`(T : Type) → ((h : T) → CheckerResult (Pub h R)) → CheckerResult R`
-       — mints a fresh seal, runs the body, and propagates its
-       `CheckerResult` after checking the result is fresh for the seal
-       (§7.2)],
+    [`(T : Type) → ((h : T) → CheckerResult (Pub h R)) → CheckerResult R`
+      — mints a fresh seal, runs the body, and propagates its
+      `CheckerResult` after checking the result is fresh for the seal
+      (§7.2)],
+
     [`postulate` (Σ-op)],
-      [`{sig : Tree} → Tree_p → CheckerResult(Tree_p)` — mints a
-       wait-form rooted at a handler sig in the current Σ; the bridge
-       from user code to non-self-dispatching handlers],
+    [`{sig : Tree} → Tree_p → CheckerResult(Tree_p)` — mints a
+      wait-form rooted at a handler sig in the current Σ; the bridge
+      from user code to non-self-dispatching handlers],
+
     [`safe_apply` (dispatcher)],
-      [`List Tree → Tree_p → Tree_p → CheckerResult(Tree_p)` —
-       Σ-parameterized substrate-apply with a privilege check],
+    [`List Tree → Tree_p → Tree_p → CheckerResult(Tree_p)` —
+      Σ-parameterized substrate-apply with a privilege check],
   ),
   caption: [The kernel surface: three Σ-operations plus the
     parameterized dispatcher.],
@@ -1349,7 +1386,7 @@ genuine wait-form `f = wait h m` the registered handler is the embedded
 one, so the call is the intended `h Σ m x`; for a forgery carrying the
 right sig but a different embedded handler, the registered `h` runs
 anyway, so a forged routing cannot execute attacker-chosen code. This closes the
-trust-set-vs-routing-table gap (see `SCOPE_VERIFICATION_INVESTIGATION.md`):
+trust-set-vs-routing-table gap (see `archive/SCOPE_VERIFICATION_INVESTIGATION.md`):
 privilege is granted to a *sig*, and the sig names a *registered
 handler*, not whatever tree presents that sig.
 
@@ -1517,14 +1554,16 @@ roles use the same constructor:
     align: left,
     inset: 6pt,
     [*Role*], [*Origin*],
-    [Hypothesis], [`bind_hyp` (payload = `(domain, body)`, so a
-       hypothesis is determined by its type and the body it is bound
-       in — fresh per distinct binder, deterministic under hash-cons)],
+    [Hypothesis],
+    [`bind_hyp` (payload = `(domain, body)`, so a
+      hypothesis is determined by its type and the body it is bound
+      in — fresh per distinct binder, deterministic under hash-cons)],
+
     [Spine-extended neutral / stuck elimination],
-      [`hyp_reduce` (extends an existing neutral with a frame;
-       payload = `(old_meta, frame)` where the frame may be an
-       applied arg, a projection selector, or a case-frame
-       `(motive, cases)`)],
+    [`hyp_reduce` (extends an existing neutral with a frame;
+      payload = `(old_meta, frame)` where the frame may be an
+      applied arg, a projection selector, or a case-frame
+      `(motive, cases)`)],
   ),
   caption: [Origins of stuck forms — one constructor.],
 )
@@ -2131,10 +2170,10 @@ Two policies, one set:
     inset: 6pt,
     [*Call site*], [*Policy*],
     [`bind_hyp` escape],
-      [`fresh_for h result` — this hypothesis can't cross the
-       kernel→user return],
-    [`param_lift` / `postulate`],
-      [`is_closed v` — no hypothesis crosses to the user or the host],
+    [`fresh_for h result` — this hypothesis can't cross the
+      kernel→user return],
+
+    [`param_lift` / `postulate`], [`is_closed v` — no hypothesis crosses to the user or the host],
   ),
   caption: [Two boundary checks, one set.],
 )
@@ -2295,7 +2334,9 @@ built on the wait-form encoding of §5.4:
     [*Constructor*], [*Definition*], [*When used*],
     [`checked T v`], [`wait checked_apply {ascribed_type:=T, value:=v}`], [Direct construction; no validation],
     [`typed_lambda A B f`], [`checked (Pi A B) f`], [Function values at construction time],
-    [`validate T v`], [`typecheck T v >>= λverdict. Ok (if verdict then Some (checked T v) else None)`], [Querying whether a cert can be issued],
+    [`validate T v`],
+    [`typecheck T v >>= λverdict. Ok (if verdict then Some (checked T v) else None)`],
+    [Querying whether a cert can be issued],
   ),
   caption: [Constructors for typed values.],
 )
@@ -2621,12 +2662,9 @@ Strip drops the first and lowers the eliminator accordingly:
     align: left,
     inset: 6pt,
     [*kind*], [*type-determined → stripped*], [*value-determined → kept*], [*eliminator: before → after*],
-    [`checked`], [the ascription `T`], [inner value `f`],
-      [`cv x` → raw `f x` (no rewrite)],
-    [record], [field names → positions], [field tuple],
-      [`r.a` → `pair_fst (pair_snd^idx payload)`],
-    [coproduct], [variant names → positions], [variant *index* + payload],
-      [`match`-by-name → dispatch-by-index],
+    [`checked`], [the ascription `T`], [inner value `f`], [`cv x` → raw `f x` (no rewrite)],
+    [record], [field names → positions], [field tuple], [`r.a` → `pair_fst (pair_snd^idx payload)`],
+    [coproduct], [variant names → positions], [variant *index* + payload], [`match`-by-name → dispatch-by-index],
   ),
   caption: [Strip = drop the type-determined descriptor, lower the eliminator.],
 )
@@ -2789,14 +2827,13 @@ Every library type plays three categorical roles:
     inset: 6pt,
     [*Role*], [*What it does*], [*Categorical structure*],
     [Recognizer],
-      [Decides "is this tree an inhabitant?"],
-      [Characteristic morphism `Tree → Ω` into subobject classifier (`Ω = Bool`)],
-    [Eval / `∈`],
-      [Behavior under application],
-      [Eval morphism of an LCCC (for Pi-like) or `∈` (for predicate-like)],
+    [Decides "is this tree an inhabitant?"],
+    [Characteristic morphism `Tree → Ω` into subobject classifier (`Ω = Bool`)],
+
+    [Eval / `∈`], [Behavior under application], [Eval morphism of an LCCC (for Pi-like) or `∈` (for predicate-like)],
     [Functor],
-      [Transports values along type-paths; fills cubes],
-      [Functor's morphism action between ∞-groupoids of types],
+    [Transports values along type-paths; fills cubes],
+    [Functor's morphism action between ∞-groupoids of types],
   ),
   caption: [Disp slots → standard categorical structures.],
 )
@@ -2920,15 +2957,12 @@ trees are types-of-some-kind. The standard library ships three:
     align: left,
     inset: 6pt,
     [*Validator*], [*Rigor*], [*What it checks*],
-    [`Type`],
-      [Structural],
-      [`v` is a wait-form whose meta fits MetaShape's layout. H-rule on neutrals.],
+    [`Type`], [Structural], [`v` is a wait-form whose meta fits MetaShape's layout. H-rule on neutrals.],
     [`StrictType`],
-      [Deep],
-      [Same as `Type`, plus typechecks the recognizer against `RecognizerShape` and the meta against `MetaShape` field-by-field.],
-    [`BehavioralType`],
-      [Behavioral],
-      [Same as `StrictType`, plus runs each Path-typed `behavioral_specs` entry.],
+    [Deep],
+    [Same as `Type`, plus typechecks the recognizer against `RecognizerShape` and the meta against `MetaShape` field-by-field.],
+
+    [`BehavioralType`], [Behavioral], [Same as `StrictType`, plus runs each Path-typed `behavioral_specs` entry.],
   ),
   caption: [Standard validators.],
 )
@@ -3006,10 +3040,10 @@ inhabitants.* The core property: Pi's body check requires the
 body's result, applied to the codomain recognizer, to reduce to
 *literal `Ok TT`*. Two failure modes block ⊥-inhabitation:
 
-  + Stuck symbolic results — trees produced by `hyp_reduce` (or
-    composition through it) — are not the tree `Ok TT`.
-  + Concrete `Ok FF` from a decidable respond (notably `Type`'s
-    predicate-side H-rule) is also not `Ok TT`.
++ Stuck symbolic results — trees produced by `hyp_reduce` (or
+  composition through it) — are not the tree `Ok TT`.
++ Concrete `Ok FF` from a decidable respond (notably `Type`'s
+  predicate-side H-rule) is also not `Ok TT`.
 
 To inhabit ⊥, the body (under a fresh Type-hypothesis `hyp_A`) must
 produce a value `v` whose check against `hyp_A` reduces to `Ok TT`.
@@ -3021,13 +3055,13 @@ respond returns `Return (tree_eq (stuck_stored_type v) self_as_hyp)`
 kernel-minted neutral whose stored type hash-cons-equals `hyp_A`.
 
 The three classic candidate bodies all fail this way:
-  - *Introspect A*: rejected directly by walker TriageReflect (§4.2)
-    before reduction proceeds.
-  - *Return a closed term*: closed values fail `is_neutral`, so
-    `type_predicate_h_rule` returns `Ok FF`.
-  - *Return `hyp_A` itself via I-shortcut*: `hyp_A` is a neutral, but
-    its stored type is `Type`, not `hyp_A`. `tree_eq Type hyp_A = FF`
-    (distinct hash-cons identities), so `Ok FF`.
+- *Introspect A*: rejected directly by walker TriageReflect (§4.2)
+  before reduction proceeds.
+- *Return a closed term*: closed values fail `is_neutral`, so
+  `type_predicate_h_rule` returns `Ok FF`.
+- *Return `hyp_A` itself via I-shortcut*: `hyp_A` is a neutral, but
+  its stored type is `Type`, not `hyp_A`. `tree_eq Type hyp_A = FF`
+  (distinct hash-cons identities), so `Ok FF`.
 
 The deeper invariant: the only way to obtain a `v` with
 `stuck_stored_type v = hyp_A` is to receive one via `bind_hyp` at
@@ -3093,12 +3127,9 @@ provides a specific rigor level:
     align: left,
     inset: 6pt,
     [*Validator*], [*What it catches*],
-    [`Type`],
-      [Wrong wait-form shape, missing meta fields. Cheap.],
-    [`StrictType`],
-      [Above plus: recognizer not Pi-typed, meta fields wrong-typed.],
-    [`BehavioralType`],
-      [Above plus: documented Path-typed properties of the type's recognizer.],
+    [`Type`], [Wrong wait-form shape, missing meta fields. Cheap.],
+    [`StrictType`], [Above plus: recognizer not Pi-typed, meta fields wrong-typed.],
+    [`BehavioralType`], [Above plus: documented Path-typed properties of the type's recognizer.],
   ),
   caption: [Validators and what they catch.],
 )
@@ -3331,7 +3362,10 @@ handler-record the coproduct `C` demands.
 
 #figure(
   table(
-    columns: 1, stroke: none, inset: 5pt, align: center,
+    columns: 1,
+    stroke: none,
+    inset: 5pt,
+    align: center,
     [`C : Coproduct [(Vi, Si)]     P : Record [(Vi, Si -> R)]`],
     [#line(length: 70%, stroke: 0.5pt)],
     [`P C : R`           #h(2em) (the cut = `Σ`-elimination)],
@@ -4044,9 +4078,14 @@ or *arbitrary* (intensional, code) domain:
 #figure(
   table(
     columns: 3,
-    stroke: 0.4pt + gray, align: left, inset: 6pt,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
     [], [*finite domain — extensional (data, stored)*], [*arbitrary domain — intensional (code, computed)*],
-    [*`Π` (product)*], [`Record` — graph stored as a `Σ`-tuple, accessed by lookup], [`Pi` — graph computed; `f x` = `checked_apply`],
+    [*`Π` (product)*],
+    [`Record` — graph stored as a `Σ`-tuple, accessed by lookup],
+    [`Pi` — graph computed; `f x` = `checked_apply`],
+
     [*`Σ` (sum)*], [`Coproduct` — finite tag + payload], [`Sigma` — arbitrary tag + dependent payload],
   ),
   caption: [Every former is `Σ` or `Π`; the remaining axis is extensional vs intensional.],
@@ -4286,9 +4325,9 @@ Partial := {phi, A} -> Pi (IsOne phi) ({_} -> A)
 let empty_partial = {A} -> {_proof_false} -> /* unreachable */
 ```
 
-(Full design from `CUBICAL_PROPOSAL.typ` §11 carries over; the
-recognizer enforces "phi = I_one or phi has the canonical disjunction
-shape.")
+(The full `Partial` / face-system design is the standard CCHM one
+(§13.5; CCHM, §17); the recognizer enforces "phi = I_one or phi has the
+canonical disjunction shape.")
 
 == Unified `comp`, with `transp` as sugar
 
@@ -4433,10 +4472,10 @@ Their eliminators must respect those equalities. Full HIT support
 requires additional library scaffolding beyond what's in this section.
 
 #openq[HITs are sketched briefly here for completeness; full
-implementation is deferred to a follow-up document on HIT mechanisms.
-The framework handles HITs in principle (constructor paths live in the
-eliminator's metadata), but the operational details need their own
-treatment.]
+  implementation is deferred to a follow-up document on HIT mechanisms.
+  The framework handles HITs in principle (constructor paths live in the
+  eliminator's metadata), but the operational details need their own
+  treatment.]
 
 == What this delivers
 
@@ -4490,27 +4529,30 @@ operational story.
     inset: 6pt,
     [*Category*], [*What it asserts*],
     [Kernel tests],
-      [The three kernel handlers behave per their specs (§7).
-       Test that `bind_hyp` mints a neutral, `hyp_reduce` extends
-       spines and mints StuckElim via inductive types' `respond`,
-       `postulate` builds pinned wait-forms. Run under `test_pure` —
-       the foundational layer must not depend on host primitives.],
+    [The three kernel handlers behave per their specs (§7).
+      Test that `bind_hyp` mints a neutral, `hyp_reduce` extends
+      spines and mints StuckElim via inductive types' `respond`,
+      `postulate` builds pinned wait-forms. Run under `test_pure` —
+      the foundational layer must not depend on host primitives.],
+
     [Type-system tests],
-      [Each library type passes the expected validators. Test that
-       `Type Bool`, `StrictType Bool`, `Type Pi`, etc. all reduce
-       to `Ok TT`. Run under `test_pure`.],
+    [Each library type passes the expected validators. Test that
+      `Type Bool`, `StrictType Bool`, `Type Pi`, etc. all reduce
+      to `Ok TT`. Run under `test_pure`.],
+
     [Behavioral tests],
-      [Optional Path-typed proofs in `behavioral_specs`. Test that
-       each type's recognizer behaves as documented on canonical
-       inhabitants and counter-examples. Run under `test_pure`
-       unless the spec genuinely depends on a host primitive.],
+    [Optional Path-typed proofs in `behavioral_specs`. Test that
+      each type's recognizer behaves as documented on canonical
+      inhabitants and counter-examples. Run under `test_pure`
+      unless the spec genuinely depends on a host primitive.],
+
     [Environment probes],
-      [*Empirical* observations about the surrounding host
-       environment — file existence, env vars, time-of-day,
-       network reachability. Run under the default dispatch
-       environment (host primitives active). Useful for integration
-       checks; *not foundational*. May produce different results
-       in different environments.],
+    [*Empirical* observations about the surrounding host
+      environment — file existence, env vars, time-of-day,
+      network reachability. Run under the default dispatch
+      environment (host primitives active). Useful for integration
+      checks; *not foundational*. May produce different results
+      in different environments.],
   ),
   caption: [Test categories asserting soundness.],
 )
@@ -4715,12 +4757,12 @@ fixed-point requirement is specifically for the deep validators.
 ]
 
 #openq[Empirical verification of fix-based self-reference hash-cons
-stability (RECORDS_PROPOSAL.md §9 step 2) is also load-bearing for
-H-rule reconstruction. If `wait self.handler meta` (constructed
-inside a handler body) doesn't hash-cons-equal `wait kernel.handler
+  stability (`archive/RECORDS_PROPOSAL.md` §9 step 2) is also load-bearing for
+  H-rule reconstruction. If `wait self.handler meta` (constructed
+  inside a handler body) doesn't hash-cons-equal `wait kernel.handler
 meta` (constructed externally), tree_eq comparisons in the H-rule
-fail and validation behaves unpredictably. This needs an explicit
-test in the implementation.]
+  fail and validation behaves unpredictably. This needs an explicit
+  test in the implementation.]
 
 = Effects <sec:effects>
 
@@ -5291,50 +5333,58 @@ is raised in detail.
     inset: 6pt,
     [*Where*], [*Question*],
     [§11 (Type:Type)],
-      [Is `typecheck Type Type = Ok TT` enough to imply foundational
-       consistency, or is a Hurkens-style encoding lurking? Argument
-       is informal; needs a parametricity theorem, an I-shortcut
-       characterization, or a semantic model. Fallback: ranked
-       universes.],
+    [Is `typecheck Type Type = Ok TT` enough to imply foundational
+      consistency, or is a Hurkens-style encoding lurking? Argument
+      is informal; needs a parametricity theorem, an I-shortcut
+      characterization, or a semantic model. Fallback: ranked
+      universes.],
+
     [§13 (HITs)],
-      [Higher inductive types are sketched; constructor-path
-       eliminators need their own follow-up document.],
+    [Higher inductive types are sketched; constructor-path
+      eliminators need their own follow-up document.],
+
     [§14 (formal soundness)],
-      [No mechanized soundness proof exists; "empirically sound + a
-       documented conjecture about consistency" is the current
-       position.],
+    [No mechanized soundness proof exists; "empirically sound + a
+      documented conjecture about consistency" is the current
+      position.],
+
     [§14 (memo-stability test)],
-      [Empirical verification needed that `wait self.handler meta`
-       inside a handler body hash-cons-equals
-       `wait kernel.handler meta` constructed externally. If they
-       don't, H-rule tree_eq comparisons misbehave.],
+    [Empirical verification needed that `wait self.handler meta`
+      inside a handler body hash-cons-equals
+      `wait kernel.handler meta` constructed externally. If they
+      don't, H-rule tree_eq comparisons misbehave.],
+
     [§14 (memo optimism soundness)],
-      [The in-progress memo returns optimistic `Ok TT`, which
-       guarantees termination but not soundness. Needs a
-       guardedness/productivity criterion on `StrictType`'s recursion
-       to rule out an ill-formed self-referential type validating
-       only on the strength of its own optimistic answer.],
+    [The in-progress memo returns optimistic `Ok TT`, which
+      guarantees termination but not soundness. Needs a
+      guardedness/productivity criterion on `StrictType`'s recursion
+      to rule out an ill-formed self-referential type validating
+      only on the strength of its own optimistic answer.],
+
     [§15 (postulate value shape)],
-      [`call_via_postulate` is undefined and the postulate→`checked`→
-       host-rooted-wait-form chain is implicit; the §15 host handler's
-       `pair(msg, cont)` CPS meta layout contradicts the single-arg
-       `Pi String ({_} -> Unit)` ascription. Needs one convention for
-       postulate argument accumulation and direct-vs-CPS host calls.],
+    [`call_via_postulate` is undefined and the postulate→`checked`→
+      host-rooted-wait-form chain is implicit; the §15 host handler's
+      `pair(msg, cont)` CPS meta layout contradicts the single-arg
+      `Pi String ({_} -> Unit)` ascription. Needs one convention for
+      postulate argument accumulation and direct-vs-CPS host calls.],
+
     [§15 (higher-order effects)],
-      [Effects with operations that take computation arguments
-       (e.g. `catch handler body`) require Wu-Schrijvers-Hinze
-       treatment beyond what capability passing covers.
-       Operationally workable via tag-based encoding; static
-       checking is open.],
+    [Effects with operations that take computation arguments
+      (e.g. `catch handler body`) require Wu-Schrijvers-Hinze
+      treatment beyond what capability passing covers.
+      Operationally workable via tag-based encoding; static
+      checking is open.],
+
     [§15 (stateful effects without refs)],
-      [Buffered loggers, accumulators, and similar stateful
-       handlers need explicit state-threading or a host `alloc_ref`
-       primitive. Best practice undetermined.],
+    [Buffered loggers, accumulators, and similar stateful
+      handlers need explicit state-threading or a host `alloc_ref`
+      primitive. Best practice undetermined.],
+
     [§15 (postulate migration)],
-      [When a stricter postulate supersedes a looser one, library
-       call sites need refactoring. A
-       `--check-postulate-currency` lint that flags use of
-       loose-when-strict-exists would help. Not yet implemented.],
+    [When a stricter postulate supersedes a looser one, library
+      call sites need refactoring. A
+      `--check-postulate-currency` lint that flags use of
+      loose-when-strict-exists would help. Not yet implemented.],
   ),
   caption: [Open questions inventory.],
 )
@@ -5417,7 +5467,9 @@ inline tests are canonical.
 - `KERNEL_DESIGN.md` — host-side implementation idioms.
 - `SYNTAX.typ` — surface grammar.
 - `COMPILATION.typ` — parse / elaborate / emit pipeline.
-- `RECORDS_PROPOSAL.md` — records and projection (uses this framework).
+- `archive/RECORDS_PROPOSAL.md` — records and projection (archived; record
+  *theory* now in §2.6/§12, the file retains the forward-looking design for
+  recursive records and the encoding migration).
 - `INTERACTIVE_WALKTHROUGH.html` — pedagogical introduction.
 
 #v(2em)
