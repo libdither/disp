@@ -4886,7 +4886,7 @@ view through `respond` (§12) never arises.
 
 *Part 2 — one type-directed pass.* The data-view "header drop" and the `checked`
 unwrap are two cases of a single erasure: *drop the part of each descriptor the
-**type** already fixes, keep the part only the **value** knows, and lower every
+*type* already fixes, keep the part only the *value* knows, and lower every
 eliminator to positional / raw form.* A wait-wrapped value `wait k payload`
 splits its descriptor this way:
 
@@ -5010,6 +5010,142 @@ dispatchable records, eliminated by dispatch-on-header then field reads."
   constructible, lies caught at use (§8.7). Adoption should be a deliberate pass
   that resolves these together, not a piecemeal edit.
 ]
+
+== The cut: products and coproducts annihilate
+
+The previous subsections present records, coproducts, and functions as one
+shape. This one collapses their *elimination* to a single operation — the
+*cut* — by making the product the callable side and the coproduct the data
+side. Four definitions:
+
+```disp
+annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)  // project P by c's tag, feed c's payload
+prod := {P}        -> wait annihilate P     // a product: a CALLABLE wrapper; field-data stays in wait_meta
+inj  := {tag, pay} -> pair tag pay          // a coproduct value: tag + payload (plain inspectable data)
+acc  := {name}     -> inj name unit         // an accessor: a nullary coproduct (unit payload)
+```
+
+`prod` makes a record a `wait`-form, so applying it to a coproduct is *raw
+substrate application* — no surface `pair_fst`/`pair_snd`. The load-bearing
+insight (§13's `Bool`, the curry iso) is that *a record is a product whose
+fields ignore the payload* (`const`), while a `match` is a product whose fields
+*use* it:
+
+```disp
+// RECORD = product of `const` fields (ignore the accessor's unit payload)
+r := prod { x := const 5, y := const 7 }
+r (acc 'x)  ⇝  annihilate {x:=const 5,…} (inj 'x unit)
+            ⇝  (proj {x:=const 5,…} 'x) unit  ⇝  (const 5) unit  ⇝  5      // r.x  ≡  r (acc 'x)
+
+// MATCH = product of real handlers (use the scrutinee's payload)
+cases := prod { None := const 0, Some := {k} -> add k 1 }
+cases (inj 'Some 5)  ⇝  (proj {…} 'Some) 5  ⇝  ({k} -> add k 1) 5  ⇝  6   // match v {…}  ≡  cases v
+```
+
+`r (acc 'x)` and `cases v` are the *identical* call — `prod`-thing applied to
+`inj`-thing. The only differences are `const` vs real handlers, and a `unit` vs
+a data payload. So a record and a `match` are one construct, dialed between
+"ignore the payload" and "use it."
+
+This is the polarized / CBPV / sequent picture exactly: *coproducts are
+positive values, products are negative consumers (continuations that say what to
+do per tag), and `P C` is the cut.* `match`, `.`, and `checked_apply` are all
+this one operation; `checked_apply` is its *intensional* case (the function is a
+product over an arbitrary domain, so the component is computed, not stored —
+§C below).
+
+#note[
+  *Cost ledger.* (1) Records gain a `wait` wrapper and fields a `const` wrap —
+  pre-strip overhead that *strip* removes: a literal accessor `r.x` resolves to a
+  static position and `annihilate`/`prod`/`const`/`proj` β-collapse to the direct
+  path `pair_fst (pair_snd^idx …)`. So the cut is the *semantic* model; strip
+  lowers it to the positional data form. (2) Inspectability is preserved — the
+  field-data is the product's `wait_meta`; the coproduct is plain data. (3)
+  Neutral `c` routes through `respond` (a stuck cut), as records/coproducts
+  already do. (4) Hygiene wart: `const x = fork(LEAF, x)` collides with `Ok x` and
+  `succ x` (§3.4) — the `fork(LEAF,_)` shape is already overloaded; making it
+  canonical for fields wants a dedicated tag.
+]
+
+== Σ and Π: coproduct types, record types, and where Pi lands
+
+The cut forces the type story to close up, and it closes cleanly: every former
+here is `Σ` or `Π`, at a *finite* (extensional, data) or *arbitrary*
+(intensional, code) domain.
+
+*Coproduct types are finite-tag `Sigma`.* A coproduct value `pair tag payload`
+inhabits `Coproduct [(V1,S1), …, (Vn,Sn)]` iff its tag is one of the `Vi` and
+its payload inhabits the matching `Si` — i.e. it is the `Sigma` (§12.1) whose
+first component ranges over the closed tag set:
+
+```disp
+let coproduct_recognizer = make_recognizer ({meta, v} ->
+  let variants = meta.recognizer_params.variants        // [(V1,S1), …]
+  bind (lookup_arm variants (pair_fst v)) ({arm} ->      // arm whose tag = v's tag
+    match (is_some arm) {
+      TT => param_apply (unwrap arm) (pair_snd v)         // payload must inhabit S_tag
+      FF => Ok FF                                         // unknown tag → not an inhabitant
+    }))
+
+let Coproduct = {variants} -> wait coproduct_recognizer (coproduct_meta_for variants)
+//   Coproduct [(Vi, Si)]  ≅  Sigma (Tags [V1..Vn]) ({t} -> arm_type variants t)
+```
+
+*Record types are finite-index `Pi`.* `Record [(Vi, Ti)] ≅ Π (i : Tags). T_i` —
+a dependent function from the index to the field type. So field access is just
+`Pi`-application: `r (acc a) = r a` selects the `a`-th component.
+
+*Typing the cut — the two sides are curry-duals over the shared index.* `P C`
+typechecks exactly when the product `P` inhabits the handler-record derived from
+the coproduct `C`:
+
+#figure(
+  table(
+    columns: 1, stroke: none, inset: 5pt, align: center,
+    [`C : Coproduct [(Vi, Si)]     P : Record [(Vi, Si -> R)]`],
+    [#line(length: 70%, stroke: 0.5pt)],
+    [`P C : R`           #h(2em) (cut = `Σ`-elimination)],
+  ),
+  caption: [The product and coproduct must be `Π`/`Σ` duals over the same index.],
+)
+
+The handler-record `Record [(Vi, Si -> R)]` *is* `Handlers (Coproduct [(Vi,Si)])
+R` — the curry iso `(⊕ Si) → R ≅ ∏ (Si → R)`. Compatibility is therefore an
+ordinary `Record` recognition: `P` must have exactly the fields `{Vi}` (exact
+header ⇒ *exhaustiveness*), each typed `Si -> R`. The dependent form `P :
+Record [(Vi, Si -> R_i)]` gives `P C : R_(tag C)`; *field access is this with
+`Si = Unit`, `R_i = T_i`*, so `r (acc a) : T_a` — and since the accessor `a` is
+a literal, `T_a` is static.
+
+*So does `Pi` merge? Conceptually yes; operationally it is the intensional
+fragment.* Laying the four formers on the `Σ`/`Π` × finite/arbitrary grid:
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray, align: left, inset: 6pt,
+    [], [*finite domain — extensional (data, stored)*], [*arbitrary domain — intensional (code, computed)*],
+    [*`Π` (product)*], [`Record` — graph stored as a `Σ`-tuple, accessed by lookup], [`Pi` — graph computed; `f x` = `checked_apply`],
+    [*`Σ` (sum)*], [`Coproduct` — finite tag + payload], [`Sigma` — arbitrary tag + dependent payload],
+  ),
+  caption: [Every former is `Σ` or `Π`; the only axis left is extensional vs intensional.],
+)
+
+A record *is* a finite `Pi`; a coproduct *is* a finite `Sigma`. The cut couples a
+`Σ`-value (coproduct) with a `Π`-consumer (record/cases) over a shared index, and
+it is exactly `Σ`-elimination; `Pi`-application (field access, function call) is
+`Π`-elimination. The one thing that does *not* collapse is the *finite ↔
+arbitrary / extensional ↔ intensional* axis: a finite product's graph can be
+stored as a `Σ`-tuple and looked up (hash-cons-comparable); an arbitrary `Pi`'s
+graph must be computed and is not a finite datum. That is the data/codata
+(positive/negative) boundary — the same residue every layer of this appendix
+bottoms out at, and the reason `Pi` shares records' *shape* and *type-former*
+(`Π`) without being swallowed by the finite-cut machinery.
+
+The picture, whole: *`Σ` and `Π`, finite or arbitrary; one introduction per
+polarity (inject / tabulate) and one elimination — the cut, `Σ`-value against
+`Π`-consumer — with `match`, `.`, and function application its finite-extensional,
+finite-extensional, and arbitrary-intensional instances.*
 
 = References <sec:references>
 
