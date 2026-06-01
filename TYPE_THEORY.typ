@@ -303,7 +303,8 @@ to avoid re-introducing them inline:
   encoded position: `pair stored_type (pair spine ...)`. This *scaffolding*
   (the wait-form shape, neutral spines) is read positionally and ascribed
   by name once the relevant types exist; genuine `{…}` records instead
-  carry their field names in a header (§2.6) and are read by name directly.
+  carry their field names in their field table's header (§2.6) and are
+  read by name through the cut.
   We use the typed presentation throughout for readability; the
   implementation walks the structure either way.
 ]
@@ -315,6 +316,14 @@ braces, array literals in brackets, coproduct (variant) types with bars. All
 three are surface sugar over the pairs of §2; their desugaring is fixed
 here once so later sections use them without restating the encoding. (`≡`
 below reads "desugars to.")
+
+Records, coproducts, and functions are not three encodings but three uses of
+*one shape*. Every value is `fork(descriptor, payload)`: the descriptor
+(`pair_fst`) decides which capabilities the value has, and a single elimination
+— the *cut* — drives them all. Projection, `match`, and function application
+are that one operation at different arities. This subsection fixes the shared
+shape and its eliminator; §12 gives the types (`Record`, `Coproduct`, `Sigma`,
+`Pi`) and §10 the erasure that lowers the shape back to positional data.
 
 === Arrays
 
@@ -328,58 +337,99 @@ the substrate these are the iterated-pair encoding (`nil = LEAF`,
 `cons = pair`), so a list is a right-nested fork chain ending in `LEAF`.
 Lists carry no names; position is the only index.
 
-=== Record values
+=== The one shape and the cut
+
+A *coproduct value* is a tag paired with a payload; a *product* is a callable
+table of fields. Four combinators relate them:
 
 ```disp
-{ a := x, b := y, c := z }   ≡  pair [a, b, c] (pair x (pair y z))
-                                       ^^^^^^^^^  ^^^^^^^^^^^^^^^^^
-                                       names hdr   payload (a Σ-chain)
+annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)  // select P's field named by c's tag, feed c's payload
+prod := {P}        -> wait annihilate P     // a product: a callable wrapper; its field table is the wait_meta
+inj  := {tag, pay} -> pair tag pay          // a coproduct value: tag + payload (plain inspectable data)
+acc  := {name}     -> inj name unit         // an accessor: a nullary coproduct (unit payload)
+
+// proj reads the table's name header for the position, then indexes the payload:
+proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
 ```
 
-A record value carries its ordered field-name list in a header node
-(`pair_fst`), with the field values as a right-nested payload tuple
-(`pair_snd`). The header is one hash-consed node: records with the same
-names in the same order share it, and `tree_eq` on two headers is O(1)
-(§2.2). Names live in the *value*, not only in the type — so a recognizer
-can decide field membership from the value alone, and a concrete record's
-projection resolves against its own header at runtime (the type still
-governs the *result type*; see §12).
-
-This is the product dual of the coproduct encoding (`pair tag payload`,
-below): a coproduct value tags *which one* it is; a record value names
-*all the fields* it has. Both put a discriminating descriptor in
-`pair_fst` and the data in `pair_snd`.
-
-Projection is a `checked` dependent application, not a positional shortcut:
+`prod P` is a wait-form (§5.4), so applying it is raw substrate reduction — no
+`pair_fst`/`pair_snd` triage on the argument. Applying a product to a coproduct
+value is the *cut*:
 
 ```disp
-r.a   ≡   proj r "a"
+(prod P) c   →   annihilate P c   →   (proj P (pair_fst c)) (pair_snd c)
 ```
 
-`proj` reads the header (`names_of r = pair_fst r`), validates that `"a"`
-is a present field (`ValidField (names_of r) "a"` — a Refinement decided
-by kernel reduction, so a bad name fails as `Ok FF`, never a host error),
-and returns the value at that field's position in the payload. For a
-*literal* name the call `proj r "a"` is a subterm closed in `r`, so it
-β-reduces — by ordinary `apply`, with no certificate — to the direct path
-`pair_fst (pair_snd r)`; hash-cons shares that normal form
-across every projection of the same field. §12 gives the dependent type of
-`proj`, the neutral case, and how `strip` relates to it.
+— "select the field named by `c`'s tag, then feed that field `c`'s payload." The
+field table `P` is the name-headed Σ-tuple of §2's pairs (`pair [names]
+payload`), recoverable as `wait_meta (prod P)`, so a product stays fully
+inspectable while being callable. A coproduct value `inj tag pay` is plain data:
+its tag sits in `pair_fst`, its payload in `pair_snd`, discriminated by one O(1)
+`tree_eq` (§2.2).
+
+The two faces of the cut differ only in what the fields do with the payload: a
+*record* is a product whose fields ignore it, a *match* a product whose fields
+use it. Both are eliminated by the identical call.
 
 #note[
-  *One record discipline, metadata included.* Every `{…}` record carries a
-  header — metadata records too. A type's MetaShape meta
-  (`{recognizer_params, functor, respond, …}`, §11.2) is a headered record,
-  which is exactly why the kernel reads it by name: `meta_get m "respond"`
-  *is* the projection `m.respond`, resolving the name against the value's
-  own header with no field list threaded in. What stays positional is not
-  metadata but the substrate *scaffolding* that is not a record at all — the
-  `wait`-form tree shape and a neutral's spine, reached by fixed projections
-  (`type_meta`, `neutral_meta_type`; the iterated-pair layout of §2's
-  layering note). The header sits *inside* that scaffolding, on the meta
-  record it carries. Coproducts split the same way: the interpreter's own
-  enums hand-build minimal tags, while library and user coproducts tag by
-  name.
+  *The `fork(LEAF, _)` shape is shared.* A `const`-wrapped record field
+  (`const x = fork(LEAF, x)`) has the same shape as `Ok x` (§3.4) and `succ x`
+  (§12) — the substrate's `fork(LEAF, _)` node is reused across all three. A
+  field thunk is therefore told apart from those by *context* (its position in a
+  product's table), not by its root. Where canonical fields must be
+  self-describing, a dedicated tag distinguishes them; the cut itself never
+  needs to, since it reaches fields by name through `proj`.
+]
+
+=== Record values
+
+A record is a product whose fields *ignore* the payload they are fed — each
+field is wrapped in `const` (`const x = fork(LEAF, x)`, so `const x y = x`):
+
+```disp
+{ a := x, b := y, c := z }   ≡  prod (pair [a, b, c] (pair (const x) (pair (const y) (const z))))
+                                            ^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                            names hdr   const-wrapped field thunks (a Σ-chain)
+```
+
+The field table — the name header plus the field thunks — is the product's
+`wait_meta`. The header is one hash-consed node: records with the same names in
+the same order share it, and `tree_eq` on two headers is O(1) (§2.2). Names live
+in the *value* (inside its field table), not only in the type, so a recognizer
+can decide field membership from the value alone (§12). A coproduct value tags
+*which one* it is in `pair_fst`; a record's field table names *all the fields* in
+its header; the `prod` wrapper makes that table callable so the cut drives both.
+
+Projection is the cut against a nullary accessor — not a positional shortcut:
+
+```disp
+r.a   ≡   r (acc a)   →   annihilate F (inj a unit)
+                       →   (proj F a) unit   →   (const x) unit   →   x
+```
+
+where `F` is `r`'s field table. The field name is validated by the cut's type
+(§12): an out-of-range name has no field, so the elimination has no inhabitant
+and fails as a verdict, never a host error. For a *literal* name the whole chain
+is a subterm closed in `r`, so it β-reduces — by ordinary `apply`, with no
+certificate — and `const x` constant-folds to `x`; hash-cons shares that normal
+form across every projection of the same field. `strip` (§10) removes the
+`prod`/`const` scaffolding on a validated program, leaving the bare positional
+path `pair_fst (pair_snd^idx payload)`. §12 gives the dependent type of
+projection and the neutral case.
+
+#note[
+  *One record discipline, metadata included.* Every `{…}` record is a product —
+  metadata records too. A type's MetaShape meta
+  (`{recognizer_params, functor, respond, …}`, §11.2) is such a record, which is
+  exactly why the kernel reads it by name: `meta_get m "respond"` *is* the
+  projection `m.respond`, i.e. the cut `m (acc respond)` against `m`'s own field
+  table, with no field list threaded in. What stays positional is not metadata
+  but the substrate *scaffolding* that is not a record at all — the `wait`-form
+  tree shape and a neutral's spine, reached by fixed projections (`type_meta`,
+  `neutral_meta_type`; the iterated-pair layout of §2's layering note). The
+  field table sits *inside* that scaffolding, as the meta product's `wait_meta`.
+  Coproducts split the same way: the interpreter's own enums hand-build minimal
+  tags, while library and user coproducts tag by name.
 ]
 
 === Record types
@@ -389,13 +439,14 @@ across every projection of the same field. §12 gives the dependent type of
 ```
 
 A record type is the `Record` former (§12) over the array of name/type
-entries. `Record` recognizes a value by checking its name header against
-the declared names (O(1)) and its payload against the underlying `Sigma`
-chain — so a later field's type may depend on earlier fields
-(`{ n : Nat, v : Vec n }`), and a value whose header names don't match is
-rejected, distinguishing `{a:Nat,b:Nat}` from `{p:Nat,q:Nat}` at the value
-level. Before §11 a record-type annotation is read positionally and
-validated only once `Record` exists.
+entries — a finite-index `Pi` (a dependent function from field name to field
+type). `Record` recognizes a value by checking the name header of its field
+table against the declared names (O(1)) and the table's payload against the
+underlying `Sigma` chain — so a later field's type may depend on earlier fields
+(`{ n : Nat, v : Vec n }`), and a value whose names don't match is rejected,
+distinguishing `{a:Nat,b:Nat}` from `{p:Nat,q:Nat}` at the value level. Before
+§11 a record-type annotation is read positionally and validated only once
+`Record` exists.
 
 === Coproducts
 
@@ -404,10 +455,12 @@ C := V1 T1 | V2 T2 | ... | Vn Tn
   ≡  C := Coproduct [(V1, T1), ..., (Vn, Tn)]
 ```
 
-A coproduct is the `Coproduct` former (§12) over its constructors. A
-constructor application `Vi e` builds `pair tag_i e` — a distinct tag tree in
-`pair_fst`, the payload in `pair_snd` (a nullary constructor carries the unit
-payload). Elimination dispatches on the tag:
+A coproduct is the `Coproduct` former (§12) over its constructors — a
+finite-tag `Sigma`. A constructor application `Vi e` is the injection
+`inj Vi e = pair Vi e`: a distinct tag tree in `pair_fst`, the payload in
+`pair_snd` (a nullary constructor carries the unit payload). Elimination is the
+cut against a product of handlers — a *match* is a product whose fields *use*
+the payload:
 
 ```disp
 match v {
@@ -415,26 +468,33 @@ match v {
   ...
   Vn x => bn
 }
+  ≡  cases v        // cases = prod (pair [V1, ..., Vn] (pair ({x} -> b1) ... ({x} -> bn)))
 ```
 
-compares `pair_fst v` against each `tag_i` and runs the matching branch on
-`pair_snd v`. This one rule subsumes `select` (the two-constructor Bool
-case), the per-type recursors of §12, and raw `triage` decomposition.
+The case product `cases` is built like a record, but its fields are *raw
+handlers* (not `const`-wrapped), so the cut `cases v → (proj cases (pair_fst v))
+(pair_snd v)` selects the handler named by `v`'s tag and *feeds it* `v`'s payload
+— one `tree_eq` to discriminate (§2.2), then a branch jump. This one rule
+subsumes `select` (the two-constructor Bool case), the per-type recursors of
+§12, and raw `triage` decomposition. A record's field access `r (acc a)` is the
+*same* call with `const` fields and a `unit` payload — the only difference is the
+`const`, i.e. whether the field reads the payload.
 
 #note[
-  *Tags and O(1) discrimination.* A coproduct's tag sits in `pair_fst`, so
-  `match` discriminates by one `tree_eq` (O(1), §2.2). Library and user
-  coproducts tag by interned constructor name. The kernel enums the
-  interpreter itself returns — `Result` (`Ok` / `Err`, §3.4) and `Action`
-  (`Extend` / `Return` / `Invalid`, §7) — pick *minimal* tag trees (`LEAF`,
-  `stem LEAF`, …) so the comparison is against a boot-time constant; that is
-  the only reason their trees are written by hand instead of produced by
-  `Coproduct`. Same desugaring, different tag policy.
+  *Tags and O(1) discrimination.* A coproduct's tag sits in `pair_fst`, so the
+  cut discriminates by one `tree_eq` (O(1), §2.2). Library and user coproducts
+  tag by interned constructor name. The kernel enums the interpreter itself
+  returns — `Result` (`Ok` / `Err`, §3.4) and `Action` (`Extend` / `Return` /
+  `Invalid`, §7) — pick *minimal* tag trees (`LEAF`, `stem LEAF`, …) so the
+  comparison is against a boot-time constant; that is the only reason their
+  trees are written by hand instead of produced by `Coproduct`. Same cut,
+  different tag policy.
 
-  `Bool` is the coproduct `True Unit | False Unit`; it keeps its Scott
-  encoding (§12) because it is the substrate's branching primitive and must
-  apply directly as `select`. That encoding optimizes the general
-  eliminator — it is not a separate mechanism.
+  `Bool` is the coproduct `True Unit | False Unit`; it keeps its Scott encoding
+  (§12) because it is the substrate's branching primitive and must apply
+  directly as `select`. The Scott encoding *is* the cut internalized — the value
+  carries its own handler-selection instead of waiting for a product — so it
+  optimizes the general eliminator rather than being a separate mechanism.
 ]
 
 = The `CheckerResult` monad <sec:result-monad>
@@ -1383,7 +1443,7 @@ Per-type behavior:
   drives the concrete-case side.
 - *Type-typed neutral, frame = candidate value*: `Return (and
   (is_neutral frame) (tree_eq (stuck_stored_type frame)
-  (reconstruct_self meta)))` — the predicate-side H-rule (§12.17).
+  (reconstruct_self meta)))` — the predicate-side H-rule (§12.18).
 - *Non-applicable type (e.g. raw `I`)*: `respond = none`; the
   neutral is inert and `hyp_reduce` records `InvalidType`.
 
@@ -1460,7 +1520,7 @@ default behavior, Sigma-hyps project, non-applicable hyps don't
 apply at all. So only `Type` needs a predicate-side codomain function
 implementing the H-rule.
 
-*Source.* §12.17, `type_predicate_h_rule`.
+*Source.* §12.18, `type_predicate_h_rule`.
 
 === Why both sides exist
 
@@ -1573,7 +1633,7 @@ let q_hyp_reduce_fn = {Σ, meta, frame} -> {     // Σ unused: hyp_reduce sub-ev
   // A spine extension roots at the *registered* handler `kernel.hyp_reduce`
   // — the very tree held in Σ, so the result both routes (dispatch) and
   // answers `is_neutral` — and embeds the PREDECESSOR NEUTRAL
-  // `reconstruct_self meta` (= `wait kernel.hyp_reduce meta`, §12.2), NOT its
+  // `reconstruct_self meta` (= `wait kernel.hyp_reduce meta`, §12.3), NOT its
   // bare metadata. The embedding is load-bearing for the escape scan: §8.1's
   // `support` inserts metadata only at neutral roots, so a hypothesis hidden
   // in a spine is reached only if the predecessor it sits under is itself a
@@ -2382,21 +2442,56 @@ with the failure context.
 
 == Motivation
 
-Per-call `checked` handler invocations are not free: each application
-of a typed function pays the cost of running the input-check (one
-`param_apply` of the domain against the argument). For hot paths and
-release builds, we want to elide these checks once the program has
-been validated.
+Carrying type information at runtime is not free. A `checked` function pays an
+input-check on every application (one `param_apply` of the domain against the
+argument); a record carries a name header it resolves against; a coproduct
+carries named tags. For hot paths and release builds we want to drop everything
+the *type* already fixes, once the program has been validated.
 
-This is the *strip* pass: walk the validated tree and replace each
-`checked` wait-form with its inner raw function. Result: a tree
-equivalent to what raw tree-calculus apply would compute, without
-type-checking overhead.
+This is the *strip* pass — one type-directed erasure with a single rule: *drop
+the part of each value's descriptor the type already determines, keep the part
+only the value knows, and lower every eliminator to its positional form.* The
+result is a tree equivalent to what raw tree-calculus apply would compute,
+without type-checking or name-resolution overhead.
 
 == Definition
 
+A wait-wrapped value `wait k payload` splits its descriptor in two:
+
+- *type-determined* — a validated contract (`checked`'s `ascribed_type`) or a
+  name schema (record field names, coproduct variant names). The type fixes it,
+  so it is redundant at runtime: names resolve to positions, a validated
+  contract drops.
+- *value-determined* — the payload, plus *which variant* a sum carries. Only the
+  value knows it, so it is retained.
+
+Strip drops the first and lowers the eliminator accordingly:
+
+#figure(
+  table(
+    columns: 4,
+    stroke: 0.4pt + gray,
+    align: left,
+    inset: 6pt,
+    [*kind*], [*type-determined → stripped*], [*value-determined → kept*], [*eliminator: before → after*],
+    [`checked`], [the ascription `T`], [inner value `f`],
+      [`cv x` → raw `f x` (no rewrite)],
+    [record], [field names → positions], [field tuple],
+      [`r.a` → `pair_fst (pair_snd^idx payload)`],
+    [coproduct], [variant names → positions], [variant *index* + payload],
+      [`match`-by-name → dispatch-by-index],
+  ),
+  caption: [Strip = drop the type-determined descriptor, lower the eliminator.],
+)
+
+The `checked` row is the *degenerate, no-rewrite corner*: its descriptor is
+entirely type-determined (a pure contract), so it strips completely and apply of
+the inner value is already correct. That corner needs no binder types, so it is
+a plain structural walk — recognize `checked_apply` wait-forms by signature,
+replace each with its `value`, recurse:
+
 ```disp
-strip := fix ({self, t} ->
+strip_checked := fix ({self, t} ->
   match (has_sig checked_apply t) {
     TT => self ((type_meta t).value)      // unwrap (read the `value` field), recurse into inner
     FF => triage
@@ -2407,17 +2502,29 @@ strip := fix ({self, t} ->
   })
 ```
 
-Strip is a tree-level function. It walks the entire tree, identifies
-`checked_apply` wait-forms by signature, and replaces each with its
-underlying value (then recursively strips inside).
+The record and coproduct rows lower the `prod`/`const`/`inj` scaffolding of §2.6:
+a literal projection `r.a` β-collapses and its `const` wrap folds away to the
+positional path; a `match` lowers to "index the positional branch tuple by the
+value's positional index." Resolving names → positions needs the binder types,
+so the full pass — `strip`, used in the rest of this section — is
+*type-directed* (§17), of which the structural `strip_checked` above is the
+no-rewrite corner.
 
-*Strip leaves handler-rooted wait-forms intact.* Kernel-rooted stuck
-forms (hypotheses, stuck eliminations) and host-effect wait-forms
-both survive strip — only `checked_apply` wait-forms are unwrapped.
-Strip's role is to elide validated contracts, not to remove effects.
-A stripped program retains all of its effect machinery and executes
-identically under `safe_apply default_dispatch`, modulo the per-call
-contract overhead.
+*Strip leaves handler-rooted wait-forms intact.* Kernel-rooted stuck forms
+(hypotheses, stuck eliminations) and host-effect wait-forms survive strip — only
+type-determined descriptors are erased. Strip's role is to elide what the type
+fixes, not to remove effects. A stripped program retains all of its effect
+machinery and executes identically under `safe_apply default_dispatch`, modulo
+the elided contract and name-resolution overhead.
+
+*What survives.* For a product, nothing — its content is fixed by its type
+(every field present, in order), so it lowers to a bare positional tuple. For a
+sum, one residue: the variant *index*, the genuinely dynamic "which one." It is
+no longer a name but a minimal positional tag (≈ `log₂` variants of structure;
+in the Scott encoding not even a data field, just which branch the value picks;
+a single-variant sum strips even that). That residue is the operational content
+of *polarity* (§17): a product is negative and fully static, a sum positive with
+one dynamic index.
 
 == Soundness
 
@@ -2552,7 +2659,7 @@ MetaShape := Refinement
     ("behavioral_specs", Optional (List Path))
   ])
   ({_} -> Ok TT)   // structural membership suffices; the per-field types
-                   //   shown are the *intended* ascriptions. §12.5 realizes
+                   //   shown are the *intended* ascriptions. §12.6 realizes
                    //   MetaShape with these fields loosened to `Tree`, with
                    //   deep field-typing deferred to `StrictType`.
 ```
@@ -2668,14 +2775,14 @@ where `type_recognizer` is a `make_recognizer`-wrapped function (§12,
 And `type_self_meta` is a MetaShape-conforming record with
 `recognizer_params := unit_witness`, `functor := trivial_functor`,
 `respond := some type_predicate_h_rule` (the predicate-side
-H-rule, §6.3 and §12.17), `behavioral_specs := none`.
+H-rule, §6.3 and §12.18), `behavioral_specs := none`.
 
 The §11.6 argument depends on this contract *plus* the predicate-side
 H-rule: `Type` is a wait-form with a structural recognizer, a
 MetaShape-conforming meta, and a respond that returns
 `Return (tree_eq (stuck_stored_type v) self_as_hyp)` for neutral
 `v` and `Return FF` otherwise. The actual recognizer body and
-H-rule are §12.17's responsibility; readers can verify they satisfy
+H-rule are §12.18's responsibility; readers can verify they satisfy
 this contract there.
 
 == `Type : Type`
@@ -2711,7 +2818,7 @@ To inhabit ⊥, the body (under a fresh Type-hypothesis `hyp_A`) must
 produce a value `v` whose check against `hyp_A` reduces to `Ok TT`.
 `hyp_A` is a kernel-minted neutral with stored type `Type`, so
 applying `hyp_A` to `v` routes through `hyp_reduce`, which consults
-`Type`'s respond (`type_predicate_h_rule`, §12.17). That
+`Type`'s respond (`type_predicate_h_rule`, §12.18). That
 respond returns `Return (tree_eq (stuck_stored_type v) self_as_hyp)`
 — a concrete Bool. The verdict is `TT` iff `v` is itself a
 kernel-minted neutral whose stored type hash-cons-equals `hyp_A`.
@@ -2827,13 +2934,18 @@ hypothesis to a position walker triggers `hyp_reduce`, which dispatches
 via `sigma_respond`:
 
 ```disp
-sigma_respond := {meta, walker_arg} ->
-  let A = meta.recognizer_params.dom in
-  let B = meta.recognizer_params.fam in
+// `hyp_reduce` (§7.1) hands a respond the *neutral* meta `pair(stored_type,
+// payload)`, which has no `recognizer_params`. The type's params live on the
+// stored type's MetaShape meta, recovered via `type_meta (neutral_meta_type ·)`;
+// `reconstruct_self` keeps the neutral meta, since it rebuilds the hypothesis.
+sigma_respond := {neutral_meta, walker_arg} ->
+  let params = (type_meta (neutral_meta_type neutral_meta)).recognizer_params in
+  let A = params.dom in
+  let B = params.fam in
   match (tree_eq walker_arg walker_pair_fst) {
     TT => Extend A
     FF => match (tree_eq walker_arg walker_pair_snd) {
-      TT => Extend (B (apply (reconstruct_self meta) walker_pair_fst))
+      TT => Extend (B (apply (reconstruct_self neutral_meta) walker_pair_fst))
       FF => Invalid
     }
   }
@@ -2864,10 +2976,67 @@ Records (whose payload is a Sigma chain), Refinement-of-Record, and any
 type built on Sigma chains inherit neutral-projection support through
 this mechanism.
 
+`Sigma` is the `Σ` corner at an *arbitrary* tag domain: a value `pair a b`
+injects an arbitrary first component `a` together with a dependent payload
+`b : B a`. Restricting the tag to a finite closed set gives `Coproduct` (below);
+the two share the injection `pair tag payload` and differ only in whether the
+tag ranges over a type or a fixed name list.
+
+== `Coproduct` and `Tags`
+
+A coproduct value `pair tag payload` (§2.6) inhabits `Coproduct [(V1,S1), …,
+(Vn,Sn)]` iff its tag is one of the `Vi` and its payload inhabits the matching
+`Si`. It is therefore the finite-tag `Sigma`: the `Σ` whose first component
+ranges over the closed tag set `Tags [V1..Vn]`.
+
+```disp
+// Tags [V1..Vn]: the finite type of the declared constructor tags (discrete).
+let tags_recognizer = make_recognizer ({meta, v} ->
+  Ok (list_mem v meta.recognizer_params.names))   // v is one of the declared tags
+
+let tags_meta_for = {names} -> {
+  recognizer_params := { names := names },
+  functor := trivial_functor, respond := none, behavioral_specs := none
+}
+let Tags = {names} -> wait tags_recognizer (tags_meta_for names)
+
+// Coproduct [(Vi,Si)]: tag ∈ {Vi}, payload inhabits S_tag.
+let coproduct_recognizer = make_recognizer ({meta, v} ->
+  let variants = meta.recognizer_params.variants         // [(V1,S1), …]
+  bind (lookup_arm variants (pair_fst v)) ({arm} ->       // arm whose tag = v's tag
+    match (is_some arm) {
+      TT => param_apply (unwrap arm) (pair_snd v)          // payload must inhabit S_tag
+      FF => Ok FF                                          // unknown tag → not an inhabitant
+    }))
+
+// Elimination is the cut: a neutral coproduct routes a case-product frame
+// through `hyp_reduce`, exactly like a (non-recursive) inductive type — so it
+// carries the shared `inductive_respond` (§12.3).
+let coproduct_meta_for = {variants} -> {
+  recognizer_params := { variants := variants },
+  functor := coproduct_functor,
+  respond := some inductive_respond,
+  behavioral_specs := none
+}
+let Coproduct = {variants} -> wait coproduct_recognizer (coproduct_meta_for variants)
+//   Coproduct [(Vi, Si)]  ≅  Sigma (Tags [V1..Vn]) ({t} -> arm_type variants t)
+
+test typecheck Type Coproduct
+test typecheck StrictType Coproduct
+test coproduct_recognizer (coproduct_meta_for [(V1, Unit)]) (inj V1 unit) = Ok TT
+```
+
+A concrete coproduct is eliminated by the cut against a product of handlers
+(`match v {…}`, §2.6); a neutral one routes that case-product through `respond`,
+the same path the inductive eliminator below uses. This is the definition §2.6's
+coproduct sugar refers to.
+
 == The library eliminator
 
-Case dispatch on inductive values is library code, not a kernel
-primitive. The two cases are gated by `is_neutral`:
+Case dispatch on inductive values is library code, not a kernel primitive. It is
+the cut (§2.6) made neutral-aware: on a concrete target it runs the cut against
+the case-product directly; on a neutral target it routes the case-frame through
+`hyp_reduce`. The two cases are gated by `is_neutral`:
 
 ```disp
 elim := {dispatcher, motive, cases, target} ->
@@ -2880,16 +3049,24 @@ reconstruct_self := {meta} -> wait kernel.hyp_reduce meta
 ```
 
 The neutral branch routes the case-frame `(pair motive cases)` through
-`hyp_reduce`; the inductive type's `respond` extends the spine with
-stored type `motive target`:
+`hyp_reduce`; the inductive type's `respond` extends the spine with stored type
+`motive target`. The action is the same for every (recursive or non-recursive)
+inductive — `Bool`, `Nat`, `Unit`, `Ord`, and every `Coproduct` — because a
+neutral target cannot be unfolded; the response only records that eliminating it
+yields `motive self`. So they share one respond:
 
 ```disp
-bool_respond := {meta, frame} ->
-  Extend ((pair_fst frame) (reconstruct_self meta))
-
-nat_respond := {meta, frame} ->
-  Extend ((pair_fst frame) (reconstruct_self meta))
+inductive_respond := {neutral_meta, frame} ->            // frame = (pair motive cases)
+  Extend ((pair_fst frame) (reconstruct_self neutral_meta))
 ```
+
+Each inductive type's meta therefore carries `respond := some inductive_respond`
+(installed in the `Bool`, `Nat`, `Unit`, and `Ord` metas below, and in
+`Coproduct`, §12.2); a type whose meta leaves `respond := none` (e.g. `I`,
+`IsOne`) is inert under case-elimination, and routing a frame to it yields
+`InvalidType`.
+`respond` is independent of `functor`: a *discrete* type (trivial transport,
+§13) still responds to case-elimination.
 
 The concrete branch's `dispatcher` is walker-safe: for Scott-encoded
 types it's plain application (no triage); for tagged-sum types it
@@ -2904,100 +3081,126 @@ distinction is purely about how the payload was constructed:
 
 == `Record`
 
-A record is a *name-header over a Sigma chain* (§2). The value is
-`pair names payload`: `names` is the ordered field-name list in one
-hash-consed header node, `payload` is the dependent Sigma chain holding
-the field values. `{x : A, y : B}`'s payload type is
-`Sigma A ({x} -> Sigma B ({y} -> Unit))`, so field dependencies
-(`{n : Nat, v : Vec n}`) fall out of the chain.
+A record is a *product over a name-headed Sigma chain* (§2.6). The value is
+`prod F`, where the field table `F = pair names payload`: `names` is the ordered
+field-name list in one hash-consed header node, `payload` is the dependent Sigma
+chain of `const`-wrapped field thunks. `{x : A, y : B}`'s payload type is
+`Sigma A ({x} -> Sigma B ({y} -> Unit))` — describing the *projected* field
+values — so field dependencies (`{n : Nat, v : Vec n}`) fall out of the chain.
 
 ```disp
 Record := {fields} -> wait record_recognizer (record_meta_for fields)
 
-// Recognize: the value's header must match the declared names (O(1)
-// tree_eq on the hash-consed header), then the payload must inhabit
-// the underlying Sigma chain.
+// Recognize: v is a product (the cut wrapper) whose field-table header matches
+// the declared names (O(1) tree_eq on the hash-consed header), then the
+// projected fields (recovered by the cut, §2.6) inhabit the underlying Sigma chain.
 record_recognizer := {fields, v} ->
-  and (tree_eq (pair_fst v) (names_of_fields fields))
-      (sigma_chain_recognizer (chain_for fields) (pair_snd v))
+  bind (safe_has_sig annihilate v) ({is_prod} ->
+    match is_prod {
+      FF => Ok FF
+      TT => let F = wait_meta v in                            // the field table
+            and (tree_eq (pair_fst F) (names_of_fields fields))
+                (sigma_chain_recognizer (chain_for fields)
+                                        (cut_fields v fields)) // each field via `v (acc name_i)`
+    })
 ```
 
-Because the names are in the *value*, two records with identical field
-types but different names (`{a:Nat,b:Nat}` vs `{p:Nat,q:Nat}`) have
-distinct headers and are told apart at the value boundary, not merely as
+Because the names are in the *value* (its field table), two records with
+identical field types but different names (`{a:Nat,b:Nat}` vs `{p:Nat,q:Nat}`)
+have distinct headers and are told apart at the value boundary, not merely as
 distinct types.
 
-*Exact match vs. row subtyping.* `record_recognizer`'s `tree_eq` on the
-header is an *exact* O(1) match: `Record F` recognizes only records whose
-names are exactly `F`, in order. Width subtyping — accepting "any record
-that has at least these fields," the basis of the row-polymorphism story
-(§15, `extends R Console`) — is a *different* recognizer: a `Refinement`
-whose predicate checks the value's header is a *superset* of the required
-names (O(n) in the required count, not a single `tree_eq`). Closed records
-keep the O(1) exact check; open/extensible records opt into the subset
-check. They are distinct types, not one recognizer serving both.
+*Exact match vs. row subtyping.* `record_recognizer`'s `tree_eq` on the field
+table's header is an *exact* O(1) match: `Record F` recognizes only records whose
+names are exactly `F`, in order. Width subtyping — accepting "any record that has
+at least these fields," the basis of the row-polymorphism story (§15, `extends R
+Console`) — is a *different* recognizer: a `Refinement` whose predicate checks the
+header is a *superset* of the required names (O(n) in the required count, not a
+single `tree_eq`). Closed records keep the O(1) exact check; open/extensible
+records opt into the subset check. They are distinct types, not one recognizer
+serving both.
 
-=== Projection is a `checked` dependent application
+=== Record as finite `Pi`; typing the cut
 
-`r.x` is not a positional shortcut the elaborator computes; it is the
-application of a dependent function whose refined domain validates the
-field name and whose codomain depends on it:
+`Record [(Vi, Ti)] ≅ Π (i : Tags). T_i` — a dependent function from the field
+index to the field type. Field access is `Π`-application: `r (acc a)` selects the
+`a`-th component. Dually, `Coproduct [(Vi, Si)]` (§12.2) is the finite-tag `Σ`.
+The cut couples them: `P C` typechecks exactly when the product `P` inhabits the
+handler-record the coproduct `C` demands.
+
+#figure(
+  table(
+    columns: 1, stroke: none, inset: 5pt, align: center,
+    [`C : Coproduct [(Vi, Si)]     P : Record [(Vi, Si -> R)]`],
+    [#line(length: 70%, stroke: 0.5pt)],
+    [`P C : R`           #h(2em) (the cut = `Σ`-elimination)],
+  ),
+  caption: [Product and coproduct must be `Π`/`Σ` duals over the same index.],
+)
+
+The handler-record `Record [(Vi, Si -> R)]` *is* `Handlers (Coproduct [(Vi,Si)])
+R` — the curry iso `(⊕ Si) → R ≅ ∏ (Si → R)`. Compatibility is therefore an
+ordinary `Record` recognition: `P` must have exactly the fields `{Vi}` (the exact
+header match above ⇒ *exhaustiveness*), each typed `Si -> R`. The dependent form
+`P : Record [(Vi, Si -> R_i)]` gives `P C : R_(tag C)`. *Field access is this with
+`Si = Unit` and `R_i = T_i`*: `r (acc a) : T_a`, and since the accessor `a` is a
+literal, `T_a` is static. `match`, projection, and function application are thus
+one typed operation.
+
+=== Projection is the cut
+
+`r.x` is not a positional shortcut the elaborator computes; it is the cut of the
+record against the literal accessor `acc x` — `Π`-application at one index, whose
+codomain depends on the name:
 
 ```disp
-proj : Pi (Record F) ({r} ->
-       Pi (ValidField F) ({n} ->     // F = r's type's field list, from the binder
-          field_type F n))            // result type depends on the validated n
-
-proj     := {r, n} -> path_at (index_of (names_of r) n) (pair_snd r)
-names_of := {r} -> pair_fst r        // runtime read of the value header (concrete r)
+r.x   ≡   r (acc x)               // r (acc x) : field_type F x
+//   F = r's type's field list, from the binder; field_type F x is the type at name x
 ```
 
-`r.x` desugars to `proj r "x"`. This *is* the `checked` pattern (§8):
-the validated input is the name `n` (`ValidField` is a Refinement decided
-by kernel reduction, so `r.bogus` fails as a verdict `Ok FF`, never a host
-throw); the trusted output type is `field_type F n`. The type depends on
-`F` — the field list carried by `r`'s *type* `Record F`, from the binder —
-not on `pair_fst r`; reading the value header is a runtime step (below),
-never a type-level dependency on a hypothesis, and the recognizer
-guarantees `pair_fst r = names_of_fields F`, so the two agree. Projection
-reuses the kernel's Pi/`checked` machinery instead of re-implementing a
-resolution pass.
+The result type `field_type F x` depends on `F` — the field list carried by `r`'s
+*type* `Record F`, from the binder — not on the value's header; the recognizer
+guarantees `r`'s field-table header equals `names_of_fields F`, so the two agree.
+An out-of-range name has no field in `F`, so the cut has no inhabitant and fails
+as a verdict `Ok FF`, never a host throw. Projection reuses the cut's `Π`/`Σ`
+machinery instead of a bespoke resolution pass.
 
-*Concrete records resolve by reduction, trust-free.* For a literal name,
-`proj r "x"` is a subterm closed in `r`: `names_of r`, `index_of`, and
-`path_at` all reduce by ordinary `apply`, so the call β-reduces to the
-direct path `pair_fst (pair_snd^idx (pair_snd r))`. This is unconditional
-reduction — sound on all inputs, no certificate — and hash-cons shares the
-normal form across every projection of that field. The elaborator decides
-*nothing*: it emits `proj r "x"` and the kernel reduces — anything that
-would otherwise be computed from the type is written as a closed term and
-left to reduction.
+*Concrete records resolve by reduction, trust-free.* For a literal name, `r (acc
+x)` is a subterm closed in `r`: the cut, `proj`, and the `const` wrap all reduce
+by ordinary `apply`, so the call β-reduces to the direct path
+`pair_fst (pair_snd^idx payload)`. This is unconditional reduction — sound on all
+inputs, no certificate — and hash-cons shares the normal form across every
+projection of that field. The elaborator decides *nothing*: it emits `r (acc x)`
+and the kernel reduces — anything that would otherwise be computed from the type
+is written as a closed term and left to reduction.
 
-*Neutral records resolve through `respond`.* When `r` is a hypothesis,
-`names_of r = pair_fst r` would triage on a neutral, which the walker
-forbids. There projection is an elimination, routed through the record
-type's `respond` — which delegates to `sigma_respond` (§12.1), reading the
-field list from the hypothesis's *stored type* (supplied by the binder,
-not inferred). So names are read from the value header on concrete records
-and from the type on neutral ones; neither path trusts an elaborator
-computation.
+*Neutral records resolve through `respond`.* When `r` is a hypothesis, reading
+its field table would triage on a neutral, which the walker forbids. There
+projection is an elimination, routed through the record type's `respond` — which
+delegates to `sigma_respond` (§12.1), reading the field list from the
+hypothesis's *stored type* (supplied by the binder, not inferred). So names are
+read from the value's field table on concrete records and from the type on
+neutral ones; neither path trusts an elaborator computation.
 
 === Strip and the fast path
 
 The reduction above needs no `strip` — it is plain β. `strip` (§10,
-certificate-gated) enters only where a check is genuinely elided:
+type-directed and certificate-gated) enters only where a check or scaffolding is
+genuinely elided:
 
-- *Dynamic names.* `proj_dyn r nameExpr` with a non-literal name keeps
-  `ValidField` as a real runtime contract; `strip` removes it given a
-  validation certificate — the literal `checked` story.
-- *Header drop (optional).* A record proven to have no surviving dynamic
-  or reflective projection may have its header elided (reclaiming the one
-  node), shifting payload offsets by one. This is a representation
-  lowering, not β, so it is certificate-gated and opt-in.
+- *Dynamic names.* `r (acc nameExpr)` with a non-literal name cannot β-collapse;
+  the cut keeps a runtime field lookup, and the name's validity is a real
+  contract. `strip` removes it given a validation certificate — the literal
+  `checked` story (§10).
+- *Scaffolding drop.* On a validated record with no surviving dynamic or
+  reflective projection, `strip` removes the `prod`/`const` wrappers and the name
+  header, lowering the value to a bare positional tuple and every literal
+  projection to `pair_fst (pair_snd^idx payload)`. This is the record row of the
+  §10 erasure table — a representation lowering, certificate-gated and opt-in.
 
-Reduction stays the unconditional optimizer (collapsing literal projection
-to a direct path); `strip` stays the certified eliminator (removing checks,
-and the optional header, whose redundancy a certificate vouches for).
+Reduction stays the unconditional optimizer (collapsing literal projection to a
+direct path); `strip` stays the certified eliminator (removing checks and the
+`prod`/`const`/header scaffolding, whose redundancy a certificate vouches for).
 
 Tests:
 
@@ -3012,19 +3215,26 @@ test typecheck StrictType Record
 P-proof. For hypothesis frames, Refinement defers to A's `respond`:
 
 ```disp
-refinement_respond := {meta, frame} ->
-  let A = meta.recognizer_params.base in
-  let A_respond = respond_of A in
+refinement_respond := {neutral_meta, frame} ->
+  let A = (type_meta (neutral_meta_type neutral_meta)).recognizer_params.base in
+  let A_respond = respond_of A in                       // = meta_get (type_meta A) "respond"
   match (is_some A_respond) {
-    TT => apply A_respond (A, frame)
+    // Delegate to A's respond, but retarget the neutral meta to A so A's respond
+    // reads *its own* recognizer_params (not the Refinement's) and reconstructs an
+    // A-typed self. Same payload, so the hypothesis identity is preserved.
+    TT => (unwrap A_respond)
+            (make_neutral_meta A (neutral_meta_payload neutral_meta)) frame
     FF => Invalid
   }
 ```
 
-A `Refinement Record [...]` hypothesis projects through this
-delegation to Sigma's `respond` — supporting the same projections as
-the underlying Record. This is what lets `MetaShape` (a Refinement of
-Record) be used as a Pi domain whose body projects fields.
+The base type `A` is read off the *stored type's* meta (the neutral meta is just
+`pair(stored_type, payload)`, §7.1), and the delegated call passes a neutral meta
+*retargeted to `A`* — not `A` itself — so `A`'s respond sees a well-formed
+neutral. A `Refinement Record [...]` hypothesis projects through this delegation
+to Sigma's `respond` — supporting the same projections as the underlying Record.
+This is what lets `MetaShape` (a Refinement of Record) be used as a Pi domain
+whose body projects fields.
 
 == `MetaShape` and `RecognizerShape`
 
@@ -3075,7 +3285,16 @@ test typecheck StrictType RecognizerShape
 manifest contract pairing a function with its declared type. When
 applied to an argument, the wait-form's reduction fires
 `checked_apply`, which checks the argument against the type's domain
-before invoking the function:
+before invoking the function.
+
+Function application is the *intensional* cut (§2.6). A function is a `Π`-product
+over an *arbitrary* domain, so its graph is not a finite stored table: the
+component for an argument is *computed*, not selected by name. `checked_apply` is
+that computed cut — the same `Σ`-value-against-`Π`-consumer elimination as
+`match` and projection, specialized to a domain too large to tabulate. The
+contract check is the price of the arbitrary domain: there is no finite tag set
+to guarantee a hit, so the argument is validated against `pi_dom T` before the
+function runs.
 
 ```disp
 // `meta` is the headered record `{ ascribed_type, value }` carried in the
@@ -3238,7 +3457,7 @@ let recognizer_wrap_fn = fix ({wrap, body, meta, v} ->
 let make_recognizer = {body} -> wait recognizer_wrap_fn body
 ```
 
-The generalized check `safe_is_stuck` (§12.7) accepts any wait-form
+The generalized check `safe_is_stuck` (§12.8) accepts any wait-form
 rooted at `hyp_reduce` — all stuck forms (raw hypotheses, spine
 extensions, stuck eliminations) share this one constructor. The
 check is Σ-independent. This closes a soundness gap that matters for
@@ -3312,8 +3531,8 @@ let bool_recognizer = make_recognizer ({_, v} ->
 
 let bool_meta = {
   recognizer_params := unit_witness,
-  functor := trivial_functor,        // discrete: identity transport
-  respond := none,
+  functor := trivial_functor,            // discrete: identity transport
+  respond := some inductive_respond,     // case-elimination on a neutral Bool (§12.3)
   behavioral_specs := none
 }
 
@@ -3348,7 +3567,7 @@ let nat_recognizer = make_recognizer ({_, v} ->
 let nat_meta = {
   recognizer_params := unit_witness,
   functor := trivial_functor,
-  respond := none,
+  respond := some inductive_respond,     // case-elimination on a neutral Nat (§12.3)
   behavioral_specs := none
 }
 
@@ -3393,10 +3612,14 @@ let pi_recognizer = make_recognizer ({meta, v} ->
       }
   })
 
-// Respond for a Π-typed neutral: the frame is an argument `a`, and the
-// spine extends at the codomain instantiated there (§6.2, §11.2). Mirrors
-// `sigma_respond`'s meta convention (`meta.recognizer_params.*`).
-pi_respond := {meta, frame} -> Extend ((meta.recognizer_params.cod) frame)
+// Respond for a Π-typed neutral: the frame is an argument `a`, and the spine
+// extends at the codomain instantiated there (§6.2, §11.2). The codomain lives
+// on the *stored type's* meta — the neutral meta `hyp_reduce` passes (§7.1) is
+// `pair(stored_type, payload)` and has no `recognizer_params` — so it is read
+// via `type_meta (neutral_meta_type ·)`, the same extraction `sigma_respond` uses.
+pi_respond := {neutral_meta, frame} ->
+  let cod = (type_meta (neutral_meta_type neutral_meta)).recognizer_params.cod in
+  Extend (cod frame)
 
 let pi_meta_for = {A, B} -> {
   recognizer_params := { dom := A, cod := B },
@@ -3418,7 +3641,7 @@ domain-mismatched `checked` values fail at step 2; body-type mismatches
 fail at step 3 with a TypeMismatch or Escape error from the kernel
 operations the body invokes.
 
-The recognizer uses `safe_*` helpers (§12.7) for structural inspection,
+The recognizer uses `safe_*` helpers (§12.8) for structural inspection,
 so it works on hypothesis arguments during strict validation of types
 that quantify over functions.
 
@@ -3434,7 +3657,7 @@ let unit_recognizer = make_recognizer ({_, v} ->
 let unit_meta = {
   recognizer_params := unit_witness,
   functor           := trivial_functor,
-  respond           := none,
+  respond           := some inductive_respond,   // case-elimination on a neutral Unit (§12.3)
   behavioral_specs  := none
 }
 
@@ -3491,8 +3714,8 @@ let ord_recognizer = make_recognizer ({_, v} ->
 
 let ord_meta = {
   recognizer_params := unit_witness,
-  functor           := trivial_functor,    // discrete
-  respond           := none,
+  functor           := trivial_functor,        // discrete transport
+  respond           := some inductive_respond,  // ord_rec on a neutral Ord (§12.3)
   behavioral_specs  := none
 }
 
@@ -3555,7 +3778,7 @@ and the *predicate-side H-rule* in its `respond` slot.
 // `is_neutral` / `stuck_stored_type` are walker-safe because the
 // respond is invoked from inside `hyp_reduce`'s privileged
 // handler.
-let type_predicate_h_rule = {neutral_meta, v} -> {     // a 2-arg `respond`, like bool_respond
+let type_predicate_h_rule = {neutral_meta, v} -> {     // a 2-arg `respond`, like inductive_respond
   let self_as_hyp = wait kernel.hyp_reduce neutral_meta in
   match (is_neutral v) {
     TT => Return (tree_eq (stuck_stored_type v) self_as_hyp)
@@ -3598,6 +3821,68 @@ The Type:Type concern and its (conjectural) resolution are discussed
 in §11. The tests themselves run mechanically; their passing is an
 empirical observation, while their implications for foundational
 consistency remain open.
+
+== `Σ` and `Π`: the four formers, one cut
+
+Records, coproducts, functions, and dependent pairs are not four mechanisms but
+the four cells of a single grid — `Σ` or `Π`, at a *finite* (extensional, data)
+or *arbitrary* (intensional, code) domain:
+
+#figure(
+  table(
+    columns: 3,
+    stroke: 0.4pt + gray, align: left, inset: 6pt,
+    [], [*finite domain — extensional (data, stored)*], [*arbitrary domain — intensional (code, computed)*],
+    [*`Π` (product)*], [`Record` — graph stored as a `Σ`-tuple, accessed by lookup], [`Pi` — graph computed; `f x` = `checked_apply`],
+    [*`Σ` (sum)*], [`Coproduct` — finite tag + payload], [`Sigma` — arbitrary tag + dependent payload],
+  ),
+  caption: [Every former is `Σ` or `Π`; the remaining axis is extensional vs intensional.],
+)
+
+A record *is* a finite `Pi`; a coproduct *is* a finite `Sigma`. There is one
+introduction per polarity — inject a `Σ`-value (`inj`) or tabulate a `Π`-graph
+(`prod`) — and one elimination, the *cut*: a `Σ`-value applied against a
+`Π`-consumer over a shared index. `match` and projection (`.`) are its
+finite-extensional instances, function application its arbitrary-intensional one;
+the neutral-aware `elim` (§12.3) is the cut lifted over hypotheses.
+
+The one axis that does *not* collapse is finite ↔ arbitrary. A finite product's
+graph is a `Σ`-tuple that can be stored and hash-cons-compared; an arbitrary
+`Pi`'s graph must be computed and is not a finite datum. That is the data/codata
+(positive/negative) boundary — the same residue `strip` (§10) bottoms out at, and
+the reason `Pi` shares records' shape and type-former (`Π`) without being a
+finite table. `Σ` and `Π`, finite or arbitrary, eliminated by the cut: that is
+the whole of the value layer.
+
+== The primitive floor
+
+The grid above places every value former on the `Σ`/`Π` axes, but two of its
+corners are also where the grid *bottoms out*. `Bool`, `Nat`, and `Unit` — with
+the interpreter's own `Result` (§3.4) and `Action` (§7) — are conceptually `Σ`/`Π`
+(`Bool` is `True | False`, `Nat` is `Zero | Succ`, `Unit` is the empty record),
+but they are *not* `Coproduct`/`Record` instances. They are the bootstrap floor
+the formers are built on, and the dependency runs one way only:
+
+- `coproduct_recognizer` (§12.2) branches with `match` / `is_some` / `Ok FF` —
+  that is `Bool`.
+- the cut's accessor `acc name = inj name unit` (§2.6) needs the `Unit` value.
+- `proj`'s `index_of` / `path_at` count positions — that is `Nat`.
+
+Defining the primitives *through* the formers would therefore be circular. `Bool`
+is the sharpest case: it must keep its Scott encoding because it *is* the
+substrate's branch (`select` / `triage`), and a
+`Coproduct [(True, Unit), (False, Unit)]` recognizer would reject the actual `TT`
+— a Scott value carries no tag in `pair_fst` to match against. The hand-built
+minimal-tag enums `Result` and `Action` are primitive for the same reason (§2.6).
+
+What the floor *shares* with the derived formers is the elimination, not the
+encoding. A neutral `Bool` and a neutral `Coproduct [(True, Unit), (False, Unit)]`
+both respond through `inductive_respond` (§12.3), and the concrete branch of
+`elim` abstracts the encoding gap — plain application for Scott types, a triage
+for tagged sums. So the unification is real but lives at the level of *the cut's
+semantics and the `Σ`/`Π` grid*, not at the level of definitions: minimizing
+primitives (the metacircular goal) leaves an irreducible floor — the tree-calculus
+substrate plus this handful of encodings — rather than eliminating it.
 
 == Effect interfaces and handlers
 
@@ -3667,7 +3952,7 @@ let with_console : Pi (R : Type) ({_} ->
   Pi (extends R Console) ({caps} -> Unit)) := ...
 ```
 
-`extends R Console` is a `Refinement Record [..]` (§12.4) requiring
+`extends R Console` is a `Refinement Record [..]` (§12.5) requiring
 `R` to contain at least Console's fields. Row union is record
 concatenation; row subset is field-projection. All of this falls out
 of the record/refinement machinery already in §12 — no effect-row-
@@ -4030,7 +4315,7 @@ and reports failures distinctly from foundational failures).
 // Kernel tests
 test bind_hyp_mints_kernel_signature_neutral
 test hyp_reduce_extends_spine_correctly
-test hyp_reduce_mints_stuck_elim_via_nat_respond
+test hyp_reduce_mints_stuck_elim_via_inductive_respond
 test postulate_constructs_pinned_wait_form
 test safe_apply_routes_default_dispatch_handlers_raw
 
@@ -4571,6 +4856,21 @@ the input-check at every application. `typed_lambda` and `validate`
 are library aliases over `checked`. (`checked` is now a library
 function since its handler body is walker-safe — see §12.)
 
+== One cut for projection, match, and application
+
+Most languages give records, sums, and functions three distinct eliminators
+(field access, `case`, application). Disp has one. Every value is
+`fork(descriptor, payload)`; products and coproducts share the `prod`/`inj`
+encoding of §2.6, and a single operation — the *cut*, a `Σ`-value applied against
+a `Π`-consumer over a shared index — drives all three eliminations. Field access,
+`match`, and function application differ only along the finite↔arbitrary and
+const-field↔real-handler axes (§12). This collapses the value layer to two
+introductions (inject, tabulate) and one elimination, and it makes a value freely
+presentable as data to inspect or as code to run — the property a metacircular,
+self-optimizing language most needs. The polarized reading (products negative,
+coproducts positive, the cut their interaction) is standard; carrying it all the
+way down to one substrate combinator is disp's.
+
 == Metacircular discipline
 
 The kernel is a small set of privileged constructors and a dispatcher;
@@ -4681,6 +4981,21 @@ Working Mathematician" (1998); Awodey, "Category Theory" (2010);
 Borceux, "Handbook of Categorical Algebra." Topos theory: Mac Lane &
 Moerdijk, "Sheaves in Geometry and Logic" (1992).
 
+== Polarity, focusing, and data abstraction
+
+The one-cut picture (§2.6, §12) is the polarized / call-by-push-value reading of
+data. Coproducts are positive (value-determined, one dynamic index survives
+erasure), products negative (type-determined, fully static), and the cut is the
+sequent-calculus cut — `Σ`-value against `Π`-consumer. This is Levy's
+call-by-push-value (2001) and the focusing tradition of Andreoli (1992),
+Zeilberger (2008), and Munch-Maccagnoni (2013); disp's `strip` residue (§10) is
+the operational content of that polarity. The two faces of a record — readable
+data and callable behavior — are Cook's ADT-vs-object duality (Cook 2009),
+itself a sharpening of Reynolds's "user-defined types and procedural data
+structures" (1975). Disp's contribution is to realize both faces in *one*
+substrate value (the `prod`/`inj` shape), sliding between them by which
+capability the descriptor grants.
+
 == The disp-specific paragraph
 
 Putting it together as it might appear in a paper:
@@ -4786,367 +5101,6 @@ This appendix exists to point at that organization; it does not
 maintain a parallel test catalog. Any duplication would rot — the
 inline tests are canonical.
 
-= Appendix C: design direction — descriptor-tagged values <sec:descriptor-values>
-
-#note[
-  *Status.* Design direction, *not* adopted in the spec body. This appendix
-  maps a unification the current encodings already gesture at — records,
-  coproducts, and functions as one primitive — so a future pass can adopt it
-  deliberately rather than rediscover it. Nothing in §1–§16 depends on it.
-]
-
-== The shape every value already shares
-
-Every value in the substrate is `fork(descriptor, payload)`. The three
-surface encodings differ *only* in what sits in the descriptor slot
-(`pair_fst`):
-
-#figure(
-  table(
-    columns: 3,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*Encoding*], [*descriptor (`pair_fst`)*], [*how it activates*],
-    [wait-form], [a sig `checker_sig k` (fingerprint of `k`)],
-      [reduction: `wait k m x → k m x`],
-    [record], [a field-name header `[a, b, …]`], [projection (read header → index)],
-    [coproduct], [a constructor tag], [`match` (compare tag)],
-    [neutral], [the `hyp_reduce` sig], [routing: dispatcher → `hyp_reduce`],
-  ),
-  caption: [One shape; the descriptor decides the capability.],
-)
-
-The generalization: *`pair_fst` is a descriptor, and which operations a value
-supports is decided by which tables its descriptor appears in* — registered in
-Σ ⇒ applicable; a name-list ⇒ projectable; a constructor tag ⇒ matchable. A
-single value may be several at once. Record / wait-form / coproduct stop being
-three encodings and become three *capabilities* a descriptor may grant.
-
-Note a wait-form's `k` is *any* tree: the dispatch sig is an emergent O(1)
-fingerprint of `k`, not a prerequisite. Most wait-forms (types, `checked`) are
-*not* in Σ and activate purely by reduction; Σ-membership is the extra layer
-the privileged few (`hyp_reduce`, host primitives) opt into. The wait
-combinator's real contribution is *inspectability* — a stable fingerprint in
-`pair_fst` plus a meta recoverable from `pair_snd` — i.e. an *inspectable
-closure*.
-
-== Records and coproducts as nested wait-forms
-
-A record must bind `(proj, schema, payload)` and then wait for a `name`; a
-coproduct must bind `(sel, tag, payload)` and then wait for the `cases`.
-Freezing two-of-three is two nested wait-forms:
-
-```disp
-{a:=x, b:=y}  ≡  wait (wait proj [a,b]) (pair x y)     // apply to a NAME
-Vi e          ≡  wait (wait sel  "Vi" ) e              // apply to a CASE-RECORD
-
-// reductions:
-{a:=x,b:=y} n  →  proj [a,b] (pair x y) n   →  the value at field n
-(Vi e) cases   →  sel "Vi" e cases          →  cases "Vi" e   →  hi e
-```
-
-*The inner wait-form collapses.* A wait wrapper earns its keep only when its
-frozen arg must be *recovered* — but the inner schema/tag is unreachable
-through the outer wait anyway (the outer exposes only the *fingerprint* of its
-`k`, never `k`). The inner layer's remaining jobs — *work*, and give the outer
-record a *per-schema fingerprint* in `pair_fst` (`checker_sig` of the inner,
-which bakes in the schema) — are both met by a bare bracket-abstracted
-combinator. So collapse the inner wait into a specialized *selector-reception
-function*:
-
-```disp
-{a:=x, b:=y}  ≡  wait proj_ab payload      // proj_ab : payload → name  → value
-Vi e          ≡  wait sel_Vi  payload      // sel_Vi  : payload → cases → result
-```
-
-The slot logic that forces this: data to be *recovered* (payload) goes in the
-outer meta; a descriptor to be *fingerprinted* (schema / tag) fuses into `k`;
-behavior (`proj` / `sel`) fuses into `k`. Field/variant *enumeration* — names
-as readable data, not just a capability — costs one extra stash of the schema
-in the outer meta (`wait proj_ab (pair [a,b] payload)`); that is the only knob.
-
-Literal projection still constant-folds (`proj_ab payload "a"` β-reduces to the
-value), and same-schema descriptors stay hash-cons-shared, so the §2.6 name
-optimizations survive; what changes is only whether names are *enumerable data*
-or an *encapsulated capability*.
-
-== Strip in this design
-
-The §2.6 / §10 projection optimization has two parts, and both carry over.
-
-*Part 1 — literal projection β-reduces with no runtime name lookup.* `r.a ≡ r
-"a"` on a concrete `wait proj_ab payload` reduces by plain `apply`:
-`r "a" → proj_ab payload "a" → pair_fst payload` — the wait resumes, then
-`proj_ab` constant-folds the literal name against its *baked-in* schema. No
-certificate, no runtime compare. This is in fact *cleaner* than the data view:
-the schema lives in the always-concrete `proj_ab`, never in the value header, so
-the "`pair_fst r` would triage on a neutral header" case that sends the data
-view through `respond` (§12) never arises.
-
-*Part 2 — one type-directed pass.* The data-view "header drop" and the `checked`
-unwrap are two cases of a single erasure: *drop the part of each descriptor the
-*type* already fixes, keep the part only the *value* knows, and lower every
-eliminator to positional / raw form.* A wait-wrapped value `wait k payload`
-splits its descriptor this way:
-
-- *type-determined* — a contract (`checked`'s `ascribed_type`) or a name-schema
-  (record fields, coproduct variants). The type fixes it, so it is redundant at
-  runtime: names resolve to positions, a validated contract drops.
-- *value-determined* — the payload, plus *which variant* for a sum. Only the
-  value knows it, so it is retained.
-
-#figure(
-  table(
-    columns: 4,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*kind*], [*type-determined → stripped*], [*value-determined → kept*], [*eliminator: before → after*],
-    [`checked`], [the ascription `T`], [inner value `f`],
-      [`cv x` → raw `f x` (no rewrite)],
-    [record], [field names → positions], [field tuple],
-      [`r."a"` → `pair_fst (pair_snd^idx payload)`],
-    [coproduct], [variant names → positions], [variant *index* + payload],
-      [`match`-by-name → dispatch-by-index],
-  ),
-  caption: [Strip = drop the type-determined descriptor, lower the eliminator.],
-)
-
-In the coproduct row the variant *names* strip to positions — *both* the value's
-tag (name → positional index) and the cases-record (a product, so its header
-strips like any record → a positional branch tuple) — so `match v cases` lowers
-to "index the positional branches by the value's positional index." Names thus
-disappear for products *and* sums alike.
-
-`checked` is the *degenerate* case: its descriptor is entirely type-determined (a
-pure contract), so it strips completely and its eliminator (apply) needs no
-rewrite — raw application of the inner value is already correct. That is exactly
-what §10 does today: recognize `checked` wait-forms by sig, replace with
-`.value`. The general pass keeps that move and adds two strippable wrapper kinds:
-recognize a record-projector or coproduct-selector sig, replace with the
-value-determined core, and resolve the type-determined names → positions at the
-eliminator sites. Resolving names → positions needs the binder types, so the pass
-is *type-directed* — the standard erasure framing (§17), of which today's purely
-structural `checked`-strip is the no-rewrite corner.
-
-*What survives.* The only residue anywhere is a sum's variant *index* — the
-genuinely dynamic "which one." It is no longer a name but a minimal positional
-tag (≈ `log₂` variants of structure; in the Scott encoding not even a data field,
-just which branch the value picks; a single-variant sum strips even that). So the
-product/sum difference at strip time is *not* "whether the descriptor strips" — it
-always does — but only the *residue*: a product leaves nothing, a sum leaves one
-minimal dynamic index. That residue is the operational content of polarity (CBPV
-/ focusing, §17): a product's content is fixed by its type (negative, fully
-static), a sum's is chosen by its value (positive, one dynamic index survives).
-
-== The ADT / object duality
-
-The two presentations are the two faces of Cook's ADT-vs-object duality
-(Reynolds 1975; Cook 2009):
-
-#figure(
-  table(
-    columns: 3,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [], [*data view* (ADT) — eliminate by *reading*], [*behavior view* (object) — eliminate by *applying*],
-    [*product*], [`pair names payload`; project via header], [`wait proj_ab payload`; apply to a name],
-    [*coproduct*], [`pair tag payload`; `match` on tag], [`wait sel_Vi payload` (Scott); apply to cases],
-  ),
-  caption: [Same value, two faces; the wait-form holds both.],
-)
-
-The selecting name comes from *outside* for a product (the consumer chooses a
-component) and from the *value's own baked-in tag* for a coproduct (the value
-chooses a handler) — the essence of ⊓ vs ⊔. Coproduct elimination bottoms out
-in record projection (`cases "Vi"`), and the data view additionally gives
-enumeration while the behavior view additionally gives a direct branch-jump (no
-tag scan) — which is exactly why §2.6 notes the Scott encoding "optimizes the
-general eliminator," with `Bool`'s `{m,ct,cf}->ct` / `{m,ct,cf}->cf` the
-hand-tuned curried special case.
-
-Two threads meet here from opposite directions: pushing *functions* toward the
-data view gives "a function is an inspectable `{ascribed_type, value}` record"
-(the Design A meta is already this); pushing *records* toward the behavior view
-gives "a record is a function from name to value." The wait-form — an
-inspectable closure with a data side (recoverable meta + fingerprint) and a
-behavior side (resume on apply) — is the hinge that makes a value presentable in
-either view, or both. For a metacircular, self-optimizing language this is the
-point: slide freely between *code I run* and *structure I inspect and rewrite*.
-
-== Design B: dispatchable records (functions-are-records)
-
-A value can be *both* projectable-by-name and applicable iff its descriptor is
-both a field-name header and a Σ-registered key. The hard constraint:
-applying a plain record `fork([names], payload)` fires *triage* on the argument
-(its `pair_fst` is itself a fork), so *records cannot be made callable by
-reduction* — callability must go through the dispatcher (Route 2). Register the
-header `[ascribed_type, value]` → `checked_apply`, and `checked T f` *is* the
-record `{ascribed_type := T, value := f}`: `.ascribed_type` projects, `v x`
-dispatches. Then `pi_dom T` collapses to a literal `T.recognizer_params.dom`
-field chain with no recovery hop.
-
-When behavior is *fixed* the header alone selects the handler (`checked` →
-`checked_apply`). When it is *per-instance* — each type needs its own recognizer
-— the behavior moves to a *field* read by a *generic* handler (header →
-`run_recognizer`, which runs `self.recognizer`): the vtable / typeclass-
-dictionary pattern. The end state is "functions, types, and neutrals are all
-dispatchable records, eliminated by dispatch-on-header then field reads."
-
-#openq[
-  *What adopting Design B would cost.* (1) Callable ⇒ Route 2: `checked` (and,
-  fully, types) move from walker-reduction into the dispatcher's registered
-  table, so `checked_apply` joins the trusted-routed set and more applications
-  are routed. (2) Lose §5.3's "sig derivable from handler" — header keys are not
-  computed from the handler, so Σ entries become explicit `(key, handler)`
-  pairs. (3) Lose §11.4's "different types have different `pair_fst`" — types
-  share the MetaShape header and differ only in field contents (`tree_eq` still
-  separates them by fields). (4) Forgery is *already* handled: the walker's
-  stem-forge rule guards `pair_fst` construction against `forge(Σ)` regardless
-  of whether the forbidden tag is a wait-sig or a header, so seals stay
-  unforgeable and `checked_apply` (not in `forge(Σ)`) stays freely
-  constructible, lies caught at use (§8.7). Adoption should be a deliberate pass
-  that resolves these together, not a piecemeal edit.
-]
-
-== The cut: products and coproducts annihilate
-
-The previous subsections present records, coproducts, and functions as one
-shape. This one collapses their *elimination* to a single operation — the
-*cut* — by making the product the callable side and the coproduct the data
-side. Four definitions:
-
-```disp
-annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)  // project P by c's tag, feed c's payload
-prod := {P}        -> wait annihilate P     // a product: a CALLABLE wrapper; field-data stays in wait_meta
-inj  := {tag, pay} -> pair tag pay          // a coproduct value: tag + payload (plain inspectable data)
-acc  := {name}     -> inj name unit         // an accessor: a nullary coproduct (unit payload)
-```
-
-`prod` makes a record a `wait`-form, so applying it to a coproduct is *raw
-substrate application* — no surface `pair_fst`/`pair_snd`. The load-bearing
-insight (§13's `Bool`, the curry iso) is that *a record is a product whose
-fields ignore the payload* (`const`), while a `match` is a product whose fields
-*use* it:
-
-```disp
-// RECORD = product of `const` fields (ignore the accessor's unit payload)
-r := prod { x := const 5, y := const 7 }
-r (acc 'x)  ⇝  annihilate {x:=const 5,…} (inj 'x unit)
-            ⇝  (proj {x:=const 5,…} 'x) unit  ⇝  (const 5) unit  ⇝  5      // r.x  ≡  r (acc 'x)
-
-// MATCH = product of real handlers (use the scrutinee's payload)
-cases := prod { None := const 0, Some := {k} -> add k 1 }
-cases (inj 'Some 5)  ⇝  (proj {…} 'Some) 5  ⇝  ({k} -> add k 1) 5  ⇝  6   // match v {…}  ≡  cases v
-```
-
-`r (acc 'x)` and `cases v` are the *identical* call — `prod`-thing applied to
-`inj`-thing. The only differences are `const` vs real handlers, and a `unit` vs
-a data payload. So a record and a `match` are one construct, dialed between
-"ignore the payload" and "use it."
-
-This is the polarized / CBPV / sequent picture exactly: *coproducts are
-positive values, products are negative consumers (continuations that say what to
-do per tag), and `P C` is the cut.* `match`, `.`, and `checked_apply` are all
-this one operation; `checked_apply` is its *intensional* case (the function is a
-product over an arbitrary domain, so the component is computed, not stored —
-§C below).
-
-#note[
-  *Cost ledger.* (1) Records gain a `wait` wrapper and fields a `const` wrap —
-  pre-strip overhead that *strip* removes: a literal accessor `r.x` resolves to a
-  static position and `annihilate`/`prod`/`const`/`proj` β-collapse to the direct
-  path `pair_fst (pair_snd^idx …)`. So the cut is the *semantic* model; strip
-  lowers it to the positional data form. (2) Inspectability is preserved — the
-  field-data is the product's `wait_meta`; the coproduct is plain data. (3)
-  Neutral `c` routes through `respond` (a stuck cut), as records/coproducts
-  already do. (4) Hygiene wart: `const x = fork(LEAF, x)` collides with `Ok x` and
-  `succ x` (§3.4) — the `fork(LEAF,_)` shape is already overloaded; making it
-  canonical for fields wants a dedicated tag.
-]
-
-== Σ and Π: coproduct types, record types, and where Pi lands
-
-The cut forces the type story to close up, and it closes cleanly: every former
-here is `Σ` or `Π`, at a *finite* (extensional, data) or *arbitrary*
-(intensional, code) domain.
-
-*Coproduct types are finite-tag `Sigma`.* A coproduct value `pair tag payload`
-inhabits `Coproduct [(V1,S1), …, (Vn,Sn)]` iff its tag is one of the `Vi` and
-its payload inhabits the matching `Si` — i.e. it is the `Sigma` (§12.1) whose
-first component ranges over the closed tag set:
-
-```disp
-let coproduct_recognizer = make_recognizer ({meta, v} ->
-  let variants = meta.recognizer_params.variants        // [(V1,S1), …]
-  bind (lookup_arm variants (pair_fst v)) ({arm} ->      // arm whose tag = v's tag
-    match (is_some arm) {
-      TT => param_apply (unwrap arm) (pair_snd v)         // payload must inhabit S_tag
-      FF => Ok FF                                         // unknown tag → not an inhabitant
-    }))
-
-let Coproduct = {variants} -> wait coproduct_recognizer (coproduct_meta_for variants)
-//   Coproduct [(Vi, Si)]  ≅  Sigma (Tags [V1..Vn]) ({t} -> arm_type variants t)
-```
-
-*Record types are finite-index `Pi`.* `Record [(Vi, Ti)] ≅ Π (i : Tags). T_i` —
-a dependent function from the index to the field type. So field access is just
-`Pi`-application: `r (acc a) = r a` selects the `a`-th component.
-
-*Typing the cut — the two sides are curry-duals over the shared index.* `P C`
-typechecks exactly when the product `P` inhabits the handler-record derived from
-the coproduct `C`:
-
-#figure(
-  table(
-    columns: 1, stroke: none, inset: 5pt, align: center,
-    [`C : Coproduct [(Vi, Si)]     P : Record [(Vi, Si -> R)]`],
-    [#line(length: 70%, stroke: 0.5pt)],
-    [`P C : R`           #h(2em) (cut = `Σ`-elimination)],
-  ),
-  caption: [The product and coproduct must be `Π`/`Σ` duals over the same index.],
-)
-
-The handler-record `Record [(Vi, Si -> R)]` *is* `Handlers (Coproduct [(Vi,Si)])
-R` — the curry iso `(⊕ Si) → R ≅ ∏ (Si → R)`. Compatibility is therefore an
-ordinary `Record` recognition: `P` must have exactly the fields `{Vi}` (exact
-header ⇒ *exhaustiveness*), each typed `Si -> R`. The dependent form `P :
-Record [(Vi, Si -> R_i)]` gives `P C : R_(tag C)`; *field access is this with
-`Si = Unit`, `R_i = T_i`*, so `r (acc a) : T_a` — and since the accessor `a` is
-a literal, `T_a` is static.
-
-*So does `Pi` merge? Conceptually yes; operationally it is the intensional
-fragment.* Laying the four formers on the `Σ`/`Π` × finite/arbitrary grid:
-
-#figure(
-  table(
-    columns: 3,
-    stroke: 0.4pt + gray, align: left, inset: 6pt,
-    [], [*finite domain — extensional (data, stored)*], [*arbitrary domain — intensional (code, computed)*],
-    [*`Π` (product)*], [`Record` — graph stored as a `Σ`-tuple, accessed by lookup], [`Pi` — graph computed; `f x` = `checked_apply`],
-    [*`Σ` (sum)*], [`Coproduct` — finite tag + payload], [`Sigma` — arbitrary tag + dependent payload],
-  ),
-  caption: [Every former is `Σ` or `Π`; the only axis left is extensional vs intensional.],
-)
-
-A record *is* a finite `Pi`; a coproduct *is* a finite `Sigma`. The cut couples a
-`Σ`-value (coproduct) with a `Π`-consumer (record/cases) over a shared index, and
-it is exactly `Σ`-elimination; `Pi`-application (field access, function call) is
-`Π`-elimination. The one thing that does *not* collapse is the *finite ↔
-arbitrary / extensional ↔ intensional* axis: a finite product's graph can be
-stored as a `Σ`-tuple and looked up (hash-cons-comparable); an arbitrary `Pi`'s
-graph must be computed and is not a finite datum. That is the data/codata
-(positive/negative) boundary — the same residue every layer of this appendix
-bottoms out at, and the reason `Pi` shares records' *shape* and *type-former*
-(`Π`) without being swallowed by the finite-cut machinery.
-
-The picture, whole: *`Σ` and `Π`, finite or arbitrary; one introduction per
-polarity (inject / tabulate) and one elimination — the cut, `Σ`-value against
-`Π`-consumer — with `match`, `.`, and function application its finite-extensional,
-finite-extensional, and arbitrary-intensional instances.*
-
 = References <sec:references>
 
 == Papers
@@ -5171,6 +5125,12 @@ finite-extensional, and arbitrary-intensional instances.*
 - Tejiščák (2020). "A Dependently Typed Calculus with Pattern Matching and Erasure Inference." ICFP. DOI 10.1145/3408973.
 - Xie, Brachthäuser, Hillerström, Schuster & Leijen (2020). "Effect Handlers, Evidently." ICFP.
 - Sozeau et al. (2020). "Coq Coq Correct! Verification of Type Checking and Erasure for Coq, in Coq." POPL.
+- Reynolds (1975). "User-Defined Types and Procedural Data Structures as Complementary Approaches to Data Abstraction." In _New Directions in Algorithmic Languages_.
+- Cook (2009). "On Understanding Data Abstraction, Revisited." OOPSLA. DOI 10.1145/1640089.1640133.
+- Andreoli (1992). "Logic Programming with Focusing Proofs in Linear Logic." Journal of Logic and Computation 2(3).
+- Levy (2001). "Call-by-Push-Value: A Functional/Imperative Synthesis." PhD thesis; Springer monograph (2004).
+- Zeilberger (2008). "On the Unity of Duality." Annals of Pure and Applied Logic 153(1).
+- Munch-Maccagnoni (2013). "Syntax and Models of a Non-Associative Composition of Programs and Proofs." PhD thesis, Université Paris Diderot.
 - Univalent Foundations Program (2013). "Homotopy Type Theory: Univalent Foundations of Mathematics." HoTT book.
 
 == Books
