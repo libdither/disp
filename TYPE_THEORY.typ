@@ -352,19 +352,22 @@ three are surface sugar over the pairs of §2; their desugaring is fixed
 here once so later sections use them without restating the encoding. (`≡`
 below reads "desugars to.")
 
-Records, coproducts, and functions are not three encodings but three uses of
-*one shape*. Every value is `fork(descriptor, payload)`: the descriptor
-(`pair_fst`) decides which capabilities the value has, and a single elimination
-— the *cut* — drives them all. Projection, `match`, and function application
-are that one operation at different arities. This subsection fixes the shared
-shape and its eliminator; §12 gives the types (`Record`, `Coproduct`, `Sigma`,
-`Pi`) and §10 the erasure that lowers the shape back to positional data.
+The one idea to carry out: records, coproducts, and functions are not three
+encodings but three uses of *one shape*, driven by *one* eliminator. Every value
+is `fork(descriptor, payload)` — the descriptor (`pair_fst`) fixes which
+capabilities the value has — and a single operation, the *cut*, eliminates them
+all; projection, `match`, and function application are that one operation at
+different arities. We build to it in order: arrays first (the trivial case, no
+cut), then the shared shape and its two halves, the cut that joins them, the one
+knob that splits records from matches, the cut's type, and finally each construct
+as an instance. §12 gives the types (`Record`, `Coproduct`, `Sigma`, `Pi`); §10
+the erasure that lowers the shape back to positional data.
 
 === Arrays
 
 ```disp
-[]              ≡  nil
-[a, b, c]       ≡  cons a (cons b (cons c nil))
+[]              ≡  nil                            // nil  : List X
+[a, b, c]       ≡  cons a (cons b (cons c nil))   // cons : X -> List X -> List X
 ```
 
 An array literal is a `List` (§2 glossary): `nil` is empty, `cons h t` prepends. At
@@ -374,37 +377,75 @@ Lists carry no names; position is the only index.
 
 === The one shape and the cut
 
-A *coproduct value* is a tag paired with a payload; a *product* is a callable
-table of fields. Four combinators relate them:
+The shape has two halves. A *variant* (a coproduct value) is the data half — a
+tag paired with a payload, built by `inj`. A *product* is the consumer half — a
+callable table of fields, built by `prod`. Read the combinators below bottom-up
+— each is a definition, its type, and the surface syntax it powers:
 
-```disp
-annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)  // select P's field named by c's tag, feed c's payload
-prod := {P}        -> wait annihilate P     // a product: a callable wrapper; its field table is the wait_meta
-inj  := {tag, pay} -> pair tag pay          // a coproduct value: tag + payload (plain inspectable data)
-acc  := {name}     -> inj name unit         // an accessor: a nullary coproduct (unit payload)
+- `inj tag pay = pair tag pay` builds a *variant* (a coproduct value) —
+  `inj : (tag : Name) -> A tag -> Variant`. Plain, inspectable data: the tag in
+  `pair_fst`, the payload in `pair_snd`, discriminated by one O(1) `tree_eq`
+  (§2.2). A constructor application *is* this injection: `V e ≡ inj V e`.
+- `acc name = inj name unit` is the nullary variant, payload `unit` —
+  `acc : (n : Name) -> Variant`. It is the accessor a projection cuts against:
+  `r.a ≡ r (acc a)`.
+- `proj P name = path_at (index_of (pair_fst P) name) (pair_snd P)` selects a
+  field by name — `proj : (P : FieldTable) -> (n : Name) -> Field n`: read the
+  table's name header for the field's position, then index the payload. Internal
+  to the cut; it has no surface syntax of its own.
+- `annihilate P c = (proj P (pair_fst c)) (pair_snd c)` is the *cut body* —
+  `annihilate : FieldTable -> (c : Variant) -> B (tag c)`: select `P`'s field
+  named by `c`'s tag, then feed that field `c`'s payload.
+- `prod P = wait annihilate P` makes a field table *callable* —
+  `prod : FieldTable -> Product`. It is what `{ a := x }` and `match` both
+  desugar to. Because `prod P` is a wait-form (§5.4), applying it is raw
+  substrate reduction — no `pair_fst`/`pair_snd` triage on the argument — and the
+  table stays recoverable as `wait_meta (prod P)`, so a product is callable yet
+  fully inspectable.
 
-// proj reads the table's name header for the position, then indexes the payload:
-proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
-```
-
-`prod P` is a wait-form (§5.4), so applying it is raw substrate reduction — no
-`pair_fst`/`pair_snd` triage on the argument. Applying a product to a coproduct
-value is the *cut*:
+The signatures index a finite name set by two per-name families: `A : Name → Type`
+(each field's payload domain) and `B : Name → Type` (each field's result). A
+`Field n` is `A n -> B n`; a `FieldTable` is `Σ (ns : List Name). Π (n : ns). Field n`
+(a name header plus one field per name); a `Variant` is `Σ (tag : Name). A tag`.
+`inj` and `prod` are the two *introductions*; the cut is the one *elimination* — a
+product applied to a variant:
 
 ```disp
 (prod P) c   →   annihilate P c   →   (proj P (pair_fst c)) (pair_snd c)
 ```
 
-— "select the field named by `c`'s tag, then feed that field `c`'s payload." The
-field table `P` is the name-headed Σ-tuple of §2's pairs (`pair [names]
-payload`), recoverable as `wait_meta (prod P)`, so a product stays fully
-inspectable while being callable. A coproduct value `inj tag pay` is plain data:
-its tag sits in `pair_fst`, its payload in `pair_snd`, discriminated by one O(1)
-`tree_eq` (§2.2).
+— "select the field named by `c`'s tag, then feed it `c`'s payload." The cut is
+well-typed exactly when the variant and the product agree on the two things a tag
+carries:
 
-The two faces of the cut differ only in what the fields do with the payload: a
-*record* is a product whose fields ignore it, a *match* a product whose fields
-use it. Both are eliminated by the identical call.
+#figure(
+  table(
+    columns: 1,
+    stroke: none,
+    inset: 5pt,
+    align: center,
+    [`tag c ∈ names P` #h(2em) `pay c : A (tag c)`],
+    [#line(length: 60%, stroke: 0.5pt)],
+    [`(prod P) c   →   (proj P (tag c)) (pay c)   :   B (tag c)`],
+  ),
+  caption: [The cut is well-typed iff the variant's tag names a field of the
+    product and its payload inhabits that field's domain. The result type
+    `B (tag c)` depends on the tag — the cut is a `Σ`-elimination.],
+)
+
+If the tag *names no field* the elimination has no inhabitant and fails as a
+verdict (`Ok FF`, never a host crash); otherwise the payload must inhabit the
+selected field's domain `A (tag c)`. The two faces of the cut then turn on a
+single knob — *do the fields read the payload?* A *record*'s fields ignore it:
+each is `const`-wrapped (`const x = fork(LEAF, x)`), so `A n = Unit`, `acc n`
+feeds `unit`, and the cut returns the stored value (`r.n : B n`). A *match*'s
+fields use it: they are raw handlers with `A n` = constructor `n`'s argument type
+and a uniform result `B n = R`, so the cut feeds a real payload to the selected
+handler (`match v : R`). Records and matches are the *identical call* — only the
+`const` differs. These signatures are structural, over the substrate; §12.4
+restates the rule under the `Record`/`Coproduct` types (where exact name-header
+matching forces exhaustiveness), and the `Σ`/`Π` grid later in §12 ("the four
+formers, one cut") places both polarities on one axis.
 
 #note[
   *The `fork(LEAF, _)` shape is shared — by design.* A `const`-wrapped record

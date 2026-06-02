@@ -150,6 +150,12 @@ describe("parse: expressions", () => {
     expect(parseExpr('"respond"')).toEqual({ tag: "str", value: "respond" })
   })
 
+  it("coproduct match (string tags, multi-binder, wildcard) parses to the cut", () => {
+    // desugars to `(prod (pair names handlers)) cond` — an application
+    const e = parseExpr("match c { A x => x; B a b c => a; _ => c }")
+    expect(e.tag).toBe("app")
+  })
+
   it("use STRING still wins over a bare string literal", () => {
     expect(parseExpr('use "lib/foo.disp"')).toEqual(use("lib/foo.disp"))
   })

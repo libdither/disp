@@ -197,9 +197,9 @@ simple    ::= \"(\" expr (\":\" expr)? \")\"
             | NUM
             | IDENT
             | \"_\"
-match     ::= \"match\" app \"{\" matchArm SEMI matchArm SEMI? \"}\"
-matchArm  ::= (\"TT\" | \"FF\") \"=>\" matchExpr
-matchExpr ::= expr that spans newlines freely but stops before the next \"TT =>\" or \"FF =>\" pattern
+match     ::= \"match\" app \"{\" matchArm (SEMI matchArm)* SEMI? \"}\"
+matchArm  ::= IDENT IDENT* \"=>\" matchExpr   // Ctor + zero or more binders (\"_\" discards)
+matchExpr ::= expr that spans newlines freely but stops before the next arm (\"Ctor binder* =>\")
 braced    ::= recValue | recType | block
 recValue  ::= \"{\" \"}\"
             | \"{\" recBody \"}\"
@@ -214,7 +214,7 @@ stmt       ::= let | test | \"open\" expr",
 { let a = t; f a }             // block (no fields, trailing expr)
 use \"../prelude.disp\"        // loads file, yields a recValue of its fields
 point.x.fst                    // chained projection",
-  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` is an expression that loads and elaborates the referenced file and yields a recValue whose exported fields become the record's fields. `match` currently has exactly two arms, one `TT` and one `FF`; each arm body is `matchExpr`, which can span multiple lines — it stops before the next `TT =>` or `FF =>` arm pattern.],
+  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` is an expression that loads and elaborates the referenced file and yields a recValue whose exported fields become the record's fields. `match` has two forms. *Bool*: exactly two binderless arms `TT`/`FF` → `select`. *Coproduct*: arms `Ctor binder* => body` where the constructor name is the tag *by spelling* (a string), desugaring to the §2.6 cut `(prod (pair [\"Ctor\"…] [handlers…])) c` (needs `prod` in scope). A `_` constructor is the wildcard/default arm (its handler is appended past the names, so an unmatched tag falls to it). Multiple binders destructure a right-nested-pair payload (`Ctor a b c` ⇔ `inj \"Ctor\" (pair a (pair b c))`). Each arm body is `matchExpr`, which can span multiple lines — it stops before the next arm pattern.],
 )
 
 The `braced` alternatives are distinguished by member shape. A braced
