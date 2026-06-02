@@ -2,8 +2,7 @@
 // and the first-order library types — all on the new two-Σ-op core.
 
 open use "../prelude.disp"
-open use "../kernel/utils.disp"
-open use "../next/core.disp"
+open use "../kernel/prelude.disp"
 
 // ---- Type universe: which things are types ----
 test typecheck Type Bool = Ok TT
@@ -42,7 +41,7 @@ test neg FF = TT
 
 // recursor on a neutral target -> stuck elimination stored at motive(self)
 let hN = mint_hyp Nat 0
-test is_neutral (ok_value (nat_rec ({_} -> Bool) TT ({n, rec} -> FF) hN)) = TT
+test is_neutral (nat_rec ({_} -> Bool) TT ({n, rec} -> FF) hN) = TT
 
 // ---- first-order types ----
 test typecheck Unit unit_val = Ok TT

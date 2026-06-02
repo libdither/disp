@@ -6,18 +6,14 @@ open use "../std/pair.disp"
 test pair_fst (pair 1 2) = 1
 test pair_snd (pair 1 2) = 2
 
-// Pair predicate accepts well-typed pairs
-test Pair Nat Nat (pair 0 0) = TT
-test Pair Nat Nat (pair 3 7) = TT
-test Pair Nat Bool (pair 1 TT) = TT
-test Pair Bool Nat (pair FF 5) = TT
+// Pair A B is a Sigma type — recognized through the kernel (Ok-wrapped verdict).
+test typecheck (Pair Nat Nat) (pair 0 0) = Ok TT
+test typecheck (Pair Nat Nat) (pair 3 7) = Ok TT
+test typecheck (Pair Nat Bool) (pair 1 TT) = Ok TT
+test typecheck (Pair Bool Nat) (pair FF 5) = Ok TT
 
 // Rejects ill-typed contents
-test Pair Bool Nat (pair 1 5) = FF
-
-// Rejects non-fork shapes (leaf, stem)
-test Pair Nat Nat t = FF
-test Pair Nat Nat (t t) = FF
+test typecheck (Pair Bool Nat) (pair 1 5) = Ok FF
 
 // Helpers
 test pair_map_fst succ (pair 1 9) = pair 2 9

@@ -5,7 +5,7 @@
 // legacy 7-primitive kernel.
 
 open use "../prelude.disp"
-open use "../kernel/utils.disp"
+open use "utils.disp"
 
 pair := {a, b} -> t a b
 
@@ -40,9 +40,14 @@ hyp_reduce := fix ({self, meta, frame} -> {
 
 reconstruct_self := {meta} -> wait hyp_reduce meta
 mint_hyp := {ty, id} -> wait hyp_reduce (make_neutral_meta ty id)
+// Hyp / StuckElim are tree-level aliases for mint_hyp (a hypothesis vs a
+// spine-extended/stuck form — same constructor, §6.1).
+Hyp := mint_hyp
+StuckElim := mint_hyp
 
 hyp_sig := checker_sig hyp_reduce
 is_neutral := {v} -> tree_eq (pair_fst v) hyp_sig         // root-sig read (bare pair_fst)
+is_concrete_fork := {v} -> select FF (is_fork v) (is_neutral v)   // a fork that isn't a neutral
 neutral_type := {v} -> neutral_meta_type (type_meta v)    // stored type of a seal
 wait_meta := {f} -> type_meta f                           // recover a wait-form's meta
 
@@ -183,9 +188,13 @@ typecheck := {T, v} -> must_ok_any (param_lift v) ({sv} -> param_apply T sv)
 // ================================================================
 // Library eliminator: concrete -> dispatcher, neutral -> hyp_reduce via respond
 // ================================================================
+// Neutral branch uses juxtaposition `target frame` (not flat param_apply): when
+// elim runs UNDER walk (e.g. a recursor applied to a hyp during Pi-checking) the
+// enclosing walk routes it raw, avoiding a double-walk of the mint. must_ok_or_self
+// unwraps hyp_reduce's Ok to a bare stuck neutral so a recursor composes as a value.
 elim := {dispatcher, motive, cases, target} ->
   select_lazy
-    ({_} -> param_apply target (pair motive cases))
+    ({_} -> must_ok_or_self (target (pair motive cases)))
     ({_} -> dispatcher motive cases target)
     (is_neutral target)
 
@@ -280,6 +289,23 @@ nat_rec := {motive, base, step, target} -> elim nat_dispatcher motive (pair base
 let bool_dispatcher = {motive, cases, target} -> select (pair_fst cases) (pair_snd cases) target
 bool_rec := {motive, ct, cf, target} -> elim bool_dispatcher motive (pair ct cf) target
 
+// ord_rec: zero_ord -> case_z; omega_plus a b -> case_op a b (rec a) (rec b).
+let ord_dispatcher = fix ({self, motive, cases, target} ->
+  match (is_leaf target) {
+    TT => pair_fst cases
+    FF => {
+      let a = stem_child (pair_fst target)
+      let b = pair_snd target
+      (pair_snd cases) a b (self motive cases a) (self motive cases b)
+    }
+  })
+ord_rec := {motive, case_z, case_op, target} -> elim ord_dispatcher motive (pair case_z case_op) target
+
+// eq_J: the only concrete proof is refl, so the dispatcher returns the base;
+// a neutral proof routes to a stuck elimination via elim.
+let eq_J_dispatcher = {motive, cases, target} -> pair_fst cases
+eq_J := {motive, base, proof} -> elim eq_J_dispatcher motive (pair base t) proof
+
 // ================================================================
 // First-order library types: Unit, False, String, Eq, Sigma, Refinement, Ord
 // ================================================================
@@ -302,6 +328,12 @@ eq_body := {meta, v} -> {
   Ok (and (tree_eq v refl) (tree_eq x y))
 }
 Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta (pair A (pair x y)) trivial_functor inert_respond none)
+
+// Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
+// refl and stays stuck on a neutral proof).
+eq_subst := {motive, p, base} -> eq_J motive base p
+eq_sym := {A, x, y, p} -> eq_J ({y_} -> Eq A y_ x) refl p
+eq_cong := {A, B, f, x, y, p} -> eq_J ({y_} -> Eq B (f x) (f y_)) refl p
 
 sigma_body := {meta, v} -> {
   let A = pair_fst (meta_params meta)
@@ -334,6 +366,15 @@ refinement_body := {meta, v} -> {
   must_ok_any (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) })   // P is a bare-Bool predicate
 }
 Refinement := {A, P} -> wait (make_recognizer refinement_body) (make_meta (pair A P) trivial_functor inert_respond none)
+
+// Intersection A P: v inhabits iff (P hyp) v holds for a fresh A-hyp — like Pi
+// but P is applied to the hypothesis and checked against the SAME v.
+intersection_body := {meta, v} -> {
+  let A = pair_fst (meta_params meta)
+  let P = pair_snd (meta_params meta)
+  bind_hyp A ({hyp} -> (P hyp) v)
+}
+Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta (pair A P) trivial_functor inert_respond none)
 
 zero_ord := t
 omega_plus := {a, b} -> t (t a) b                          // fork(stem a, b)

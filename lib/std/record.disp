@@ -18,6 +18,9 @@ open use "list.disp"
 // Reflection on a Record type
 // ================================================================
 
+// A Record type's field list lives in its meta's recognizer_params (new core).
+record_fields := {T} -> meta_params (type_meta T)
+
 record_names := {T} ->
   list_map ({nt} -> pair_fst nt) (record_fields T)
 
@@ -84,4 +87,4 @@ ValidField := {fields} -> Refinement String ({n} -> in_fields fields n)
 //   proj : {fields} -> Record fields -> (n : ValidField fields) -> record_type_at T n
 // The parser desugaring (task #7) supplies all three; user-facing
 // syntax is just `r.x`.
-proj := {fields, r, n} -> sigma_walk r (find_index fields n)
+record_proj := {fields, r, n} -> sigma_walk r (find_index fields n)

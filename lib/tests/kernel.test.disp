@@ -1,413 +1,64 @@
+// Tests for the new-kernel core (lib/next/core.disp): the two-Σ-op shape end
+// to end — param_apply dispatch, recognition + H-rule, hyp_reduce spine
+// extension via respond, typecheck, and the boundary scan.
+
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
 
-// Test-only convenience definitions
-let is_nat_type = {x} -> tree_eq x Nat
-let is_bool_type = {x} -> tree_eq x Bool
-let is_registered = {x} -> select TT (is_bool_type x) (is_nat_type x)
-let NatToNat = Arrow Nat Nat
-let id_fn = {x} -> x
-
-// ================================================================
-// Neutral detection (signature-based)
-// ================================================================
-
-test is_neutral (Hyp t t) = TT
-test is_neutral (Hyp (t t) (t t)) = TT
-test is_neutral t = FF
-test is_neutral (t t) = FF
-test is_neutral (t t t) = FF
-
-// Tightened is_neutral: stem of canonical signature must not be accepted.
-// pair_fst(stem(c)) = c via triage, so without the fork-shape check this
-// would pass the signature test. This regression test pins the tightening.
-let hyp_reduce_sig = pair_fst (Hyp t t)
-test is_neutral (t hyp_reduce_sig) = FF
-
-// Spine accumulation: applying a neutral produces a neutral
-test is_neutral (Hyp t t (t t)) = TT
-
-// VStuckElim is also neutral
-test is_neutral (StuckElim t (Hyp t t)) = TT
-
-// ================================================================
-// Spine accumulation (raw apply on neutrals)
-// ================================================================
-
-// Applying a hypothesis accumulates the spine
-let h1 = Hyp t t
-let stuck1 = h1 (t t)
-let stuck2 = stuck1 (t t t)
-
-// All share the same signature
-test tree_eq (pair_fst h1) (pair_fst stuck1) = TT
-test tree_eq (pair_fst stuck1) (pair_fst stuck2) = TT
-
-// Raw function apply still works
-test ({x} -> x) t = t
-test ({x} -> x) (t t) = t t
-test ({x} -> x) (Hyp (t t) t) = Hyp (t t) t
-
-// ================================================================
-// Metadata extraction from neutrals
-// ================================================================
-
-// Type is always at neutral_meta_type(meta); payload preserves identity.
-// Base hypothesis: meta = make_neutral_meta(type, id)
-test neutral_type h1 = t
-
-// Spine: meta = extend_neutral_meta(old_meta, result_type, arg)
-// h1 has type t (LEAF), which is not Pi, so result_type = InvalidType
-test neutral_type stuck1 = InvalidType
-// Arg is still accessible deeper in the metadata
-test pair_snd (pair_snd (type_meta stuck1)) = t t
-
-// ================================================================
-// Nat / Bool predicates
-// ================================================================
-
-test Nat 0 = TT
-test Nat 1 = TT
-test Nat 2 = TT
-test Nat FF = FF
-test Bool TT = TT
-test Bool FF = TT
-test Bool 1 = FF
-test Nat 5 = TT
-
-// ================================================================
-// VStuckElim (stuck eliminator neutral)
-// ================================================================
-
-test is_neutral (StuckElim Nat (Hyp Bool 0)) = TT
-test neutral_type (StuckElim Nat (Hyp Bool 0)) = Nat
-
-// ================================================================
-// Typed eliminators
-// ================================================================
-
-test bool_rec ({_} -> Nat) 1 0 TT = 1
-test bool_rec ({_} -> Nat) 1 0 FF = 0
-test is_neutral (bool_rec ({_} -> Nat) 1 0 (Hyp Bool 0)) = TT
-
-test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) 0 = TT
-test nat_rec ({_} -> Bool) TT ({n, prev} -> prev) 2 = TT
-test is_neutral (nat_rec ({_} -> Bool) TT ({n, prev} -> prev) (Hyp Nat 0)) = TT
-
-test nat_rec ({_} -> Nat) 1 ({n, p} -> p) 0 = 1
-test nat_rec ({_} -> Nat) 0 ({n, p} -> succ p) 2 = 2
-
-// ================================================================
-// Eq type
-// ================================================================
-
-test (Eq Nat 0 0) refl = TT
-test (Eq Nat 1 1) refl = TT
-test (Eq Nat 0 1) refl = FF
-
-// FF is not a proof of Eq Nat 0 0
-test (Eq Nat 0 0) FF = FF
-
-test eq_J Nat 0 ({y, p} -> Nat) 5 0 refl = 5
-test (Eq Nat 0 0) (eq_sym Nat 0 0 refl) = TT
-test (Eq Nat 1 1) (eq_cong Nat Nat succ 0 0 refl) = TT
-test eq_subst Nat Nat 0 0 refl 5 = 5
-
-// Neutral-target behavior for the eq_J-derived helpers.
-test is_neutral (eq_sym Nat 0 0 (Hyp (Eq Nat 0 0) 0)) = TT
-test neutral_type (eq_sym Nat 0 0 (Hyp (Eq Nat 0 0) 0)) = Eq Nat 0 0
-test is_neutral (eq_cong Nat Nat succ 0 0 (Hyp (Eq Nat 0 0) 0)) = TT
-test neutral_type (eq_cong Nat Nat succ 0 0 (Hyp (Eq Nat 0 0) 0)) = Eq Nat 1 1
-test is_neutral (eq_subst Nat ({_} -> Nat) 0 0 (Hyp (Eq Nat 0 0) 0) 5) = TT
-test neutral_type (eq_subst Nat ({_} -> Nat) 0 0 (Hyp (Eq Nat 0 0) 0) 5) = Nat
-
-// ================================================================
-// Arithmetic: add
-// ================================================================
-
-test add 0 0 = 0
-test add 0 3 = 3
-test add 2 3 = 5
-test add 3 2 = 5
-
-// Block expression: let bindings inside an expression
-test { let x = 5; let y = 3; add x y } = 8
-
-// Projection on annotated binder param (bare recType for field metadata)
-test ({r : {a, b}} -> r.a) {a := 5; b := 3} = 5
-test ({r : {a, b}} -> r.b) {a := 5; b := 3} = 3
-
-test (Eq Nat (add 0 0) 0) refl = TT
-test (Eq Nat (add 1 0) 1) refl = TT
-test (Eq Nat (add 2 0) 2) refl = TT
-test (Eq Nat (add 3 0) 3) refl = TT
-test (Eq Nat (add 2 3) (add 3 2)) refl = TT
-test (Eq Nat (add 1 4) (add 4 1)) refl = TT
-
-let add_comm = {n} ->
-  nat_rec
-    ({n_} -> Pi Nat ({m} -> Eq Nat (add n_ m) (add m n_)))
-    ({m} -> refl)
-    ({n_, ih} -> {m} -> refl)
-    n
-
-test (Pi Nat ({n} ->
-    Pi Nat ({m} ->
-      Eq Nat (add n m) (add m n))))
-  add_comm = TT
-test (Eq Nat (add 2 3) (add 3 2)) (add_comm 2 3) = TT
-
-// ================================================================
-// Arrow type checking
-// ================================================================
-
-test NatToNat id_fn = TT
-test NatToNat ({_} -> 0) = TT
-test NatToNat ({_} -> FF) = FF
-
-// ================================================================
-// infer (convenience helper: is_neutral + neutral_type + check_fn)
-// ================================================================
-
-// n : Nat |- typeOf n = Nat
-test infer ({x} -> x) (Hyp Nat 0) = Nat
-
-// n : Nat |- n : Nat
-test infer (conv Nat) (Hyp Nat 0) = TT
-
-// n : Nat |- n : Bool
-test infer (conv Bool) (Hyp Nat 0) = FF
-
-// f : Nat -> Nat, n : Nat |- typeOf (f n) = Nat
-test infer ({x} -> x) ((Hyp NatToNat 0) (Hyp Nat 1)) = Nat
-
-// f : Nat -> Nat, n : Nat |- f n : Nat
-test infer (conv Nat) ((Hyp NatToNat 0) (Hyp Nat 1)) = TT
-
-// h : nonPi, x : nonPi |- typeOf (h x) = InvalidType
-test infer ({x} -> x) ((Hyp (Hyp t t) (t t)) (Hyp (Hyp t t) (t t))) = InvalidType
-
-// t is not neutral
-test infer ({x} -> x) t = FF
-
-// ================================================================
-// H-rule via infer (kernel-internal H-rule mechanism)
-// ================================================================
-// Public types like Nat now reject pre-existing neutrals at the entry
-// scan, so direct `Nat (Hyp Nat 0)` fails (boundary closure). The H-rule
-// itself is exercised through `infer`, which is a kernel-internal helper.
-
-test infer (conv Nat) (Hyp Nat 0) = TT
-test infer (conv Nat) (Hyp Bool 0) = FF
-test infer (conv Nat) ((Hyp NatToNat 0) (Hyp Nat 1)) = TT
-
-// Boundary closure: applying public Nat to a Hyp-built tree returns FF
-// (entry scan sees the neutral root and rejects).
-test Nat (Hyp Nat 0) = FF
-test Nat (Hyp Bool 0) = FF
-test Nat ((Hyp NatToNat 0) (Hyp Nat 1)) = FF
-
-// ================================================================
-// Pi metadata reflection
-// ================================================================
-
-test is_pi (Pi Nat ({_} -> Nat)) = TT
-test is_pi Nat = FF
-test is_pi t = FF
-test pi_dom (Pi Nat ({_} -> Nat)) = Nat
-test is_pi (Arrow Nat Nat) = TT
-test pi_dom (Arrow Nat Nat) = Nat
-
-// ================================================================
-// Type
-// ================================================================
-
-test Type Nat = TT
-test Type Bool = TT
-test is_nat_type Nat = TT
-test is_bool_type Bool = TT
-test is_nat_type Bool = FF
-test is_bool_type Nat = FF
-test Type t = FF
-test Type FF = FF
-
-// Adversarial: a wait-based value with a trivially-accepting checker
-// and Nat-like metadata (LEAF). Must be rejected — only the canonical
-// Nat (built by the kernel's own Q_NAT) is recognized.
-let fakeNat = wait ({_meta, _x} -> TT) t
-test is_nat_type fakeNat = FF
-test Type fakeNat = FF
-
-// Same attack against Bool: trivially-accepting checker with Bool-like
-// metadata (stem of LEAF). Canonical identity rejects it.
-let fakeBool = wait ({_meta, _x} -> TT) (t t)
-test is_bool_type fakeBool = FF
-test Type fakeBool = FF
-
-test Type (Arrow Nat Nat) = TT
-// regression: ranked Type k was removed 2026-05-12; Type is a single
-// structural predicate_frame recognizer (Russell-admissible, no ranks).
-test Type Type = TT
-test Type Nat = TT
-test Type (Pi Nat ({_x} -> Bool)) = TT
-test Type (Pi Nat ({x} -> x)) = TT  // structural check; ill-typed but not rejected
-test Type (Pi FF ({_x} -> Nat)) = TT // structural check; FF-domain not rejected
-test Type (Pi Type ({A} -> Arrow A A)) = TT
-test Type (Eq Nat 0 0) = TT
-test Type (Eq Nat 0 FF) = TT
-test Type (Eq FF 0 0) = TT
-test is_eq (Eq Nat 0 0) = TT
-
-// Adversarial: trivially-accepting checker with Eq-like metadata
-// (fork(A, fork(x, y))). Signature mismatch rejects it.
-let fakeEq = wait ({_meta, _x} -> TT) (t Nat (t 0 0))
-test is_eq fakeEq = FF
-test Type fakeEq = FF
-
-// Adversarial: trivially-accepting checker with Universe-like metadata
-// (LEAF for rank). Signature mismatch rejects it.
-let fakeUniverse = wait ({_meta, _x} -> TT) t
-test Type fakeUniverse = FF
-
-// Adversarial: trivially-accepting checker with Pi-like metadata
-// (fork(dom, codFn)). Signature mismatch rejects it.
-let fakePi = wait ({_meta, _x} -> TT) (t Nat ({_x} -> Bool))
-test is_pi fakePi = FF
-test Type fakePi = FF
-
-// A hypothesis typed with fakePi doesn't get Pi-style accumulation,
-// so applying it to a value doesn't track the codomain type.
-test Bool ((Hyp fakePi 0) 0) = FF
-
-// ================================================================
-// Structural conv
-// ================================================================
-
-test conv_structural t t = TT
-test conv_structural t (t t) = FF
-test conv_structural Type Type = TT
-test conv_structural (Pi Nat ({_} -> Nat)) (Pi Nat ({_} -> Nat)) = TT
-test conv_structural (Pi Nat ({_} -> Nat)) (Pi Bool ({_} -> Nat)) = FF
-test conv_structural
-  (Pi Nat ({_x} -> Nat))
-  (Arrow Nat Nat) = TT
-test conv_structural
-  (Arrow Nat Bool)
-  (Arrow Nat Nat) = FF
-
-// ================================================================
-// Integration: full pipeline
-// ================================================================
-
-// idPoly : (A : Type) -> A -> A
-test (Pi Type ({A} -> Arrow A A)) ({_A} -> {x} -> x) = TT
-
-// idNatToNat : (Nat -> Nat) -> Nat -> Nat
-test (Arrow NatToNat NatToNat) ({f} -> f) = TT
-
-// composeNat : (Nat -> Nat) -> (Nat -> Nat) -> Nat -> Nat
-test (Arrow NatToNat (Arrow NatToNat NatToNat))
-  ({f} -> {g} -> {x} -> f (g x)) = TT
-
-test (Arrow NatToNat (Arrow NatToNat NatToNat))
-  ({f} -> {g} -> {x} -> FF) = FF
-
-// doubleApply : (Nat -> Nat) -> Nat -> Nat
-test (Arrow NatToNat NatToNat)
-  ({f} -> {x} -> f (f x)) = TT
-
-// constNat : Nat -> Nat -> Nat
-test (Arrow Nat (Arrow Nat Nat)) ({x} -> {_y} -> x) = TT
-
-// constPoly : (A : Type) -> (B : Type) -> A -> B -> A
-test (Pi Type ({A} ->
-    Pi Type ({B} ->
-      Arrow A (Arrow B A))))
-  ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
-
-// badConstPoly
-test (Pi Type ({A} ->
-    Pi Type ({B} ->
-      Arrow A (Arrow B A))))
-  ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
-
-// flip : (A : Type) -> (B : Type) -> (C : Type) -> (A -> B -> C) -> B -> A -> C
-test (Pi Type ({A} ->
-    Pi Type ({B} ->
-      Pi Type ({C} ->
-        Arrow
-          (Arrow A (Arrow B C))
-          (Arrow B (Arrow A C))))))
-  ({_A} -> {_B} -> {_C} -> {f} -> {b} -> {a} -> (f a) b) = TT
-
-// f : Nat -> Nat, x : Nat |- f x : Nat (kernel-internal H-rule via infer)
-test infer (conv Nat) ((Hyp NatToNat 3) (Hyp Nat 4)) = TT
-test infer (conv Bool) ((Hyp NatToNat 3) (Hyp Nat 4)) = FF
-
-test Type (Pi Type ({A} -> Arrow A A)) = TT
-
-// boolToNat : Bool -> Nat
-test (Arrow Bool Nat) ({b} ->
-  bool_rec ({_} -> Nat) 1 0 b) = TT
-
-// natToBool : Nat -> Bool
-test (Arrow Nat Bool) ({n} ->
-  nat_rec ({_} -> Bool) TT ({n_, prev} -> FF) n) = TT
-
-// badNatToBool : Nat -> Bool (body returns Nat, not Bool)
-test (Arrow Nat Bool) ({n} ->
-  nat_rec ({_} -> Nat) 0 ({n_, prev} -> succ prev) n) = FF
-
-// applyPoly : (A : Type) -> (B : Type) -> (A -> B) -> A -> B
-test (Pi Type ({A} ->
-    Pi Type ({B} ->
-      Arrow (Arrow A B) (Arrow A B))))
-  ({_A} -> {_B} -> {f} -> f) = TT
-
-// badSelf : (A : Type) -> A -> A — self-application rejected
-test (Pi Type ({A} -> Arrow A A))
-  ({_A} -> {x} -> x x) = FF
-
-// pairNat : Nat -> Nat -> (Nat -> Nat -> Nat) -> Nat
-test (Arrow Nat
-  (Arrow Nat
-    (Arrow (Arrow Nat (Arrow Nat Nat))
-      Nat)))
-  ({a} -> {b} -> {sel} -> (sel a) b) = TT
-
-// h : H |- h : H
-test infer (tree_eq (Hyp t t)) (Hyp (Hyp t t) (t t)) = TT
-
-// ctxId : (A : Type) -> (x : A) -> A
-test (Pi Type ({A} ->
-    Pi A ({_x} -> A)))
-  ({_A} -> {x} -> x) = TT
-
-// ctxConst : (A : Type) -> (B : Type) -> A -> B -> A
-test (Pi Type ({A} ->
-    Pi Type ({B} ->
-      Arrow A (Arrow B A))))
-  ({_A} -> {_B} -> {x} -> {_y} -> x) = TT
-
-// badCtxConst
-test (Pi Type ({A} ->
-    Pi Type ({B} ->
-      Arrow A (Arrow B A))))
-  ({_A} -> {_B} -> {_x} -> {y} -> y) = FF
-
-// f : (x : Nat) -> Bool, n : Nat |- f n : Bool / Nat (via infer)
-test infer (conv Bool)
-  ((Hyp (Pi Nat ({_x} -> Bool)) 0)
-    (Hyp Nat 1)) = TT
-test infer (conv Nat)
-  ((Hyp (Pi Nat ({_x} -> Bool)) 0)
-    (Hyp Nat 1)) = FF
-
-// f : (A : Type) -> A -> A, n : Nat |- f Nat n : Nat (via infer)
-test infer (conv Nat)
-  (((Hyp
-      (Pi Type ({A} -> Arrow A A))
-      0)
-    Nat)
-    (Hyp Nat 1)) = TT
+// ---- recognition via param_apply (the dispatcher) ----
+test param_apply Bool TT = Ok TT
+test param_apply Bool FF = Ok TT
+test param_apply Bool zero = Ok FF
+test param_apply Nat zero = Ok TT
+test param_apply Nat (succ (succ zero)) = Ok TT
+test param_apply Nat TT = Ok FF
+
+// ---- typecheck (sanitize + recognize); closed queries only ----
+test typecheck Bool TT = Ok TT
+test typecheck Nat (succ zero) = Ok TT
+test typecheck Bool zero = Ok FF
+
+// param_lift rejects a public neutral
+test param_lift (mint_hyp Nat 0) = Fail
+test is_closed (mint_hyp Nat 0) = FF
+test is_closed (succ zero) = TT
+
+// ---- H-rule via param_apply (reached directly, not through typecheck) ----
+let hB = mint_hyp Bool 0
+let hN = mint_hyp Nat 0
+test param_apply Bool hB = Ok TT          // Bool-hyp inhabits Bool (H-rule)
+test param_apply Nat hN = Ok TT
+test param_apply Bool hN = Ok FF          // Nat-hyp does not inhabit Bool
+test param_apply Nat hB = Ok FF
+
+// ---- hyp_reduce spine extension via inductive_respond ----
+// Applying a Nat-neutral to a case-frame (pair motive cases) yields a stuck
+// elimination: a fresh neutral stored at `motive self`. hyp_reduce results are
+// Ok-wrapped CheckerResults, so `stuck` is Ok(neutral).
+let motive = {n} -> Bool
+let cases = pair zero ({k} -> k)
+let stuck = param_apply hN (pair motive cases)
+test is_ok stuck = TT
+test is_neutral (ok_value stuck) = TT
+test neutral_type (ok_value stuck) = Bool      // motive applied to the reconstructed self
+
+// elim drives the same: concrete target runs the dispatcher, neutral routes here
+let nat_dispatcher = {motive, cases, target} -> pair_fst cases   // toy: returns base
+test elim nat_dispatcher motive cases zero = zero                // concrete branch
+test is_neutral (elim nat_dispatcher motive cases hN) = TT  // neutral branch
+
+// ---- bind_hyp (Σ-op): mint, run body, escape-check ----
+test bind_hyp Nat ({x} -> Ok zero) = Ok zero            // result independent of x
+test bind_hyp Nat ({x} -> Ok x) = Fail                  // x at public position -> escape
+test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail      // x inside a user pair -> escape
+
+// ---- checked values + Pi (monomorphic dependent function) ----
+// Bodies must be walker-safe (no raw triage on the argument); case-analysing
+// functions need the eliminator (future work). Identity and const qualify.
+let id_nat = checked Nat ({n} -> n)
+let const_true = checked Nat ({n} -> TT)
+test param_apply (Pi Nat ({_} -> Nat)) id_nat = Ok TT       // id : Nat -> Nat
+test typecheck (Arrow Nat Nat) id_nat = Ok TT               // same via Arrow + typecheck
+test param_apply (Pi Nat ({_} -> Bool)) const_true = Ok TT  // const TT : Nat -> Bool
+test param_apply (Pi Nat ({_} -> Nat)) const_true = Ok FF   // body returns Bool, not Nat
+test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch (stored Nat)

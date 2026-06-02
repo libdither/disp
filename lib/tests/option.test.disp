@@ -10,18 +10,18 @@ test is_some (some 7) = TT
 test is_none (some 7) = FF
 
 // Option Nat accepts/rejects
-test Option Nat none = TT
-test Option Nat (some 0) = TT
-test Option Nat (some 42) = TT
-test Option Nat (some TT) = FF
+test Option Nat none = Ok TT
+test Option Nat (some 0) = Ok TT
+test Option Nat (some 42) = Ok TT
+test Option Nat (some TT) = Ok FF
 // A bare fork that isn't `some _` (no `t t` tag) is rejected
-test Option Nat (t t 5) = FF
+test Option Nat (t t 5) = Ok FF
 
 // Option Bool
-test Option Bool (some TT) = TT
-test Option Bool (some FF) = TT
-test Option Bool none = TT
-test Option Bool (some 3) = FF
+test Option Bool (some TT) = Ok TT
+test Option Bool (some FF) = Ok TT
+test Option Bool none = Ok TT
+test Option Bool (some 3) = Ok FF
 
 // option_rec dispatches the right branch
 test option_rec ({_} -> Nat) 0 ({v} -> succ v) none = 0

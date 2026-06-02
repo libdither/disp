@@ -40,12 +40,8 @@ add_succ_r : {n : Nat} -> Eq Nat (add n 1) (succ n) :=
       ({k, _ih} -> refl)
       n
 
-// Explicit Pi form keeps this proof on the kernel-accepted path while the
-// elaborator's nested dependent-sugar body checking is still being tightened.
-add_comm : Pi Nat ({n} -> Pi Nat ({m} -> Eq Nat (add n m) (add m n))) :=
-  {n} ->
-    nat_rec
-      ({n_} -> Pi Nat ({m} -> Eq Nat (add n_ m) (add m n_)))
-      ({m} -> refl)
-      ({n_, _ih} -> {m} -> refl)
-      n
+// (add_comm removed in the NEXT cutover: its base `{m} -> refl` claimed
+//  Eq Nat (add 0 m) (add m 0), but `add m 0` does not reduce to `m` for a
+//  symbolic `m`, so it is not refl-provable. The legacy kernel accepted it
+//  loosely; the stricter new kernel correctly rejects it. A real commutativity
+//  proof needs induction with eq_cong/eq_subst, deferred.)

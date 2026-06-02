@@ -114,14 +114,14 @@ test wrap ({x} -> add x 1) 0 = 1
 // Arithmetic with type annotations
 // ================================================================
 
-let typed_add : Nat -> Nat -> Nat = add
+let typed_add : Nat -> Nat -> Nat = {n} -> {m} -> add n m
 test typed_add 2 3 = 5
 
-let typed_succ : Nat -> Nat = succ
+let typed_succ : Nat -> Nat = {n} -> succ n
 test typed_succ 0 = 1
 
 // Partially applied arithmetic
-let add3 : Nat -> Nat = add 3
+let add3 : Nat -> Nat = {n} -> add 3 n
 test add3 0 = 3
 test add3 4 = 7
 

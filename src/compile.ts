@@ -639,99 +639,48 @@ interface KernelHelpers {
 }
 
 function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined): KernelHelpers | null {
-  // Post-migration: public Pi/Bool/Nat/Type are all predicate_frame
-  // wait-forms. Their outer signature (after unguarding) is the SAME
-  // predicate_frame signature; what distinguishes them is the
-  // *recognizer* stored in `pair_fst meta`. We derive the recognizer
-  // identifier for Pi and Type by sampling and inspecting metadata.
+  // New two-Σ-op kernel: a type is `wait (make_recognizer body) meta`. Type-
+  // formers are told apart by their recognizer SIGNATURE (`pair_fst T`, which is
+  // constant per former, independent of the type's parameters). A Pi's meta is
+  // the positional MetaShape `pair (pair A B) rest`, so its params live at
+  // `pair_fst (type_meta T)`.
   const Pi = lookupEntry("Pi")?.tree
   const Type = lookupEntry("Type")?.tree
   const make_hyp = lookupEntry("Hyp")?.tree ?? lookupEntry("make_hyp")?.tree
 
   if (!Pi && !Type && !make_hyp) return null
 
-  // Sample-and-peel: build a sample, peel guard if present, then take
-  // pair_fst of the inner meta to get the recognizer identity.
-  const I_FUNC = I_TREE
-  const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, APPLY_BUDGET), I_FUNC, APPLY_BUDGET) : null
-  const sampleType = Type ?? null
+  const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, APPLY_BUDGET), I_TREE, APPLY_BUDGET) : null
+  const piSig = samplePi ? treePairFst(samplePi) : null
+  const typeSig = Type ? treePairFst(Type) : null
   const sampleHyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, APPLY_BUDGET), LEAF, APPLY_BUDGET) : null
-
-  const guardSig = samplePi ? treePairFst(samplePi) : (sampleType ? treePairFst(sampleType) : null)
-  // For predicate-frame types, the *recognizer* (pair_fst of meta)
-  // identifies the type-former. We peel two wait layers:
-  //   1. typeMetaTree(sample) — peels guard → wait pred_frame meta.
-  //   2. typeMetaTree(...) again — peels pred_frame → meta.
-  // pair_fst of meta = the recognizer (pi_pf_recognizer /
-  // type_pf_recognizer) which discriminates between Pi/Type/Bool/Nat
-  // type-formers (all of which share the predicate_frame outer sig).
-  function recognizerOf(sample: Tree | null): Tree | null {
-    if (!sample) return null
-    const outer = typeMetaTree(sample)
-    if (!outer) return null
-    const inner = typeMetaTree(outer)
-    return inner ? treePairFst(inner) : null
-  }
-  const piRecognizer = recognizerOf(samplePi)
-  const typeRecognizer = recognizerOf(sampleType)
   const hypSig = sampleHyp ? treePairFst(sampleHyp) : null
 
-  function hasSig(sig: Tree | null, t: Tree): boolean {
+  function sigMatches(sig: Tree | null, t: Tree): boolean {
     if (!sig) return false
-    const tSig = treePairFst(t)
-    return tSig !== null && treeEqual(tSig, sig)
+    const ts = treePairFst(t)
+    return ts !== null && treeEqual(ts, sig)
   }
-  // Look through guard: if t is guarded, peel; otherwise return t.
-  function unguardOrSelf(t: Tree): Tree {
-    if (guardSig && hasSig(guardSig, t)) {
-      const inner = typeMetaTree(t)
-      return inner ?? t
-    }
-    return t
-  }
-  // Discriminate a predicate-frame type by its recognizer identity.
-  // For t = guard (wait pred_frame meta):
-  //   unguardOrSelf t → wait pred_frame meta
-  //   typeMetaTree(...) → meta
-  //   pair_fst meta → recognizer
-  function recognizerMatches(recognizer: Tree | null, t: Tree): boolean {
-    if (!recognizer) return false
-    const meta = typeMetaTree(unguardOrSelf(t))
-    if (!meta) return false
-    const r = treePairFst(meta)
-    return r !== null && treeEqual(r, recognizer)
+  // Pi meta = pair (pair A B) rest; params = pair_fst (type_meta T).
+  function piParams(t: Tree): Tree {
+    const meta = typeMetaTree(t)
+    if (!meta) throw new Error("piParams: not a valid type tree")
+    const params = treePairFst(meta)
+    if (!params) throw new Error("piParams: params slot missing")
+    return params
   }
 
   return {
-    isUniverse(t) { return recognizerMatches(typeRecognizer, t) },
-    isPi(t) { return recognizerMatches(piRecognizer, t) },
-    isNeutral(t) { return hasSig(hypSig, t) },
-    // Pi's predicate-frame layout: guard (wait pred_frame meta) where
-    //   meta = t recognizer (t (t A B) cod_fn).
-    //   piDomain : pair_fst (pair_fst (pair_snd meta)) = A (unguarded).
-    //   piCodFn  : pair_snd (pair_fst (pair_snd meta)) = B (unguard-wrapping).
-    // Peel: t → unguardOrSelf → typeMetaTree → meta.
+    isUniverse(t) { return sigMatches(typeSig, t) },
+    isPi(t) { return sigMatches(piSig, t) },
+    isNeutral(t) { return sigMatches(hypSig, t) },
     piDomain(t) {
-      const inner = unguardOrSelf(t)
-      const meta = typeMetaTree(inner)
-      if (!meta) throw new Error("piDomain: not a valid type tree")
-      const metaSnd = treePairSnd(meta)
-      if (!metaSnd) throw new Error("piDomain: metadata not a pair")
-      const params = treePairFst(metaSnd)
-      if (!params) throw new Error("piDomain: params slot missing")
-      const d = treePairFst(params)
+      const d = treePairFst(piParams(t))
       if (!d) throw new Error("piDomain: A slot missing")
       return d
     },
     piCodFn(t) {
-      const inner = unguardOrSelf(t)
-      const meta = typeMetaTree(inner)
-      if (!meta) throw new Error("piCodFn: not a valid type tree")
-      const metaSnd = treePairSnd(meta)
-      if (!metaSnd) throw new Error("piCodFn: metadata not a pair")
-      const params = treePairFst(metaSnd)
-      if (!params) throw new Error("piCodFn: params slot missing")
-      const c = treePairSnd(params)
+      const c = treePairSnd(piParams(t))
       if (!c) throw new Error("piCodFn: B slot missing")
       return c
     },
@@ -850,6 +799,11 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
 // Imported from tree.ts so the host's tree_eq fast-path and the elaborator's
 // predicate validation agree on the canonical shapes.
 const TT = SCOTT_TT
+// New-core recognizers return an Ok-wrapped verdict (`Ok TT` = fork(LEAF, TT));
+// a bare TT also counts (e.g. Scott-Bool predicates). The elaborator's
+// type-check accepts either.
+const OK_TT = fork(LEAF, TT)
+function verdictOk(ok: Tree): boolean { return treeEqual(ok, TT) || treeEqual(ok, OK_TT) }
 
 type ElabCtx = {
   lookupEntry: (name: string) => ScopeEntry | undefined
@@ -864,7 +818,7 @@ type ElabCtx = {
 function assertTypeCheck(tree: Tree, expected: Tree | null, ctx: ElabCtx): Tree {
   if (ctx.debugTypeCheck && expected !== null) {
     const ok = applyTree(expected, tree, APPLY_BUDGET)
-    if (!treeEqual(ok, TT)) {
+    if (!verdictOk(ok)) {
       throw new Error(
         `defense-in-depth: type check failed\n` +
         `  tree:     ${prettyTree(tree)}\n` +
@@ -885,7 +839,7 @@ function check(e: Expr, expected: Tree | null, ctx: ElabCtx): Tree {
     // No kernel helpers — fall through to untyped + predicate check
     const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
     const ok = applyTree(expected, tree, APPLY_BUDGET)
-    if (!treeEqual(ok, TT))
+    if (!verdictOk(ok))
       throw new Error(`type check failed (no kernel helpers)`)
     return tree
   }
@@ -966,7 +920,7 @@ function check(e: Expr, expected: Tree | null, ctx: ElabCtx): Tree {
   if (type !== null && treeEqual(type, expected)) return tree
   // Fall back to predicate check
   const ok = applyTree(expected, tree, APPLY_BUDGET)
-  if (!treeEqual(ok, TT))
+  if (!verdictOk(ok))
     throw new Error(`type check failed`)
   return tree
 }
