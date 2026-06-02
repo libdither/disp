@@ -1,0 +1,66 @@
+// Walker / kernel soundness — the parametricity guarantees of TYPE_THEORY §4–§7,
+// plus characterization tests that PIN the two flagged soundness deferrals so the
+// gaps are visible and any future fix forces these assertions to be updated.
+//
+// (Restores coverage lost when walker.test.disp / soundness.test.disp were
+// deleted in the two-Σ-op cutover.)
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+let hN = mint_hyp Nat 0
+
+// ================================================================
+// PRESENT protections (permanent — these must always hold)
+// ================================================================
+
+// Stem-forge rejection (§4.2): user code cannot construct a neutral-rooted fork.
+// `forge` tries to build fork(hyp_sig, x) = a fake hypothesis; the walker's
+// stem rule rejects it, so dispatching the application fails.
+let forge = {x} -> t hyp_sig x
+test param_apply forge zero = Fail
+test param_apply forge (succ zero) = Fail
+
+// Triage-on-neutral rejection (§4.2/§4.3): reflecting on a hypothesis's shape
+// under the walker fails. is_fork/is_leaf/is_stem all triage on their argument.
+test param_apply ({x} -> is_fork x) hN = Fail
+test param_apply ({x} -> is_leaf x) hN = Fail
+test param_apply ({x} -> is_stem x) hN = Fail
+
+// bind_hyp escape check (§7.2/§8.1): a result that exposes the hypothesis via a
+// non-neutral path is rejected; a result independent of it passes.
+test bind_hyp Nat ({x} -> Ok zero) = Ok zero
+test bind_hyp Nat ({x} -> Ok x) = Fail
+test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail
+
+// ================================================================
+// DEFERRED GAP 1 — bind_hyp runs the body RAW (TYPE_THEORY §7.2)
+// ================================================================
+// The body is invoked raw (`body h`), so reflection on the hypothesis INSIDE
+// the body is NOT walker-caught — only the final `occurs` escape scan guards.
+// A body that triages on the hypothesis therefore leaks a structural verdict
+// that the spec says should be rejected: the SAME predicates fail outright when
+// run under the walker (the param_apply tests above are `Fail`), but inside a
+// bind_hyp body they slip through with a concrete answer. These assertions pin
+// the CURRENT (leaky) behavior; when body-walking lands, flip each RHS to `Fail`.
+test bind_hyp Nat ({x} -> Ok (is_fork x)) = Ok TT       // sound: Fail (triage on hyp)
+test bind_hyp Nat ({x} -> Ok (is_leaf x)) = Ok FF       // sound: Fail (triage on hyp)
+test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF       // sound: Fail (triage on hyp)
+
+// ================================================================
+// DEFERRED GAP 2 — param_apply routes to the embedded handler (TYPE_THEORY §5.4)
+// ================================================================
+// The dispatcher's routed arm runs `f x` (the wait-form's embedded handler),
+// not `h (wait_meta f) x` for the registered `h`. This is defense-in-depth that
+// is currently MOOT: a forged kernel-op would need a wait-form presenting a
+// kernel sig with a *different* embedded handler, but `checker_sig` derives the
+// signature FROM the handler tree, so a wait-form's sig and handler are coupled;
+// the only other way to present `hyp_sig` — a hand-built fork(hyp_sig, …) — is
+// blocked by the stem-forge rejection tested above. So the operative guard is
+// forge rejection; route-to-registered hardening is tracked but has no
+// constructible in-language counterexample today. The genuine routing IS
+// exercised end-to-end — a Nat-neutral eliminated by a case frame runs the
+// registered hyp_reduce and extends the spine:
+let stuck = param_apply hN (pair ({_} -> Bool) (pair zero ({k} -> k)))
+test is_neutral (ok_value stuck) = TT
+test neutral_type (ok_value stuck) = Bool
