@@ -1961,10 +1961,14 @@ The two arms have different semantics:
   rather than relying on a second `Ok` from the dispatcher.
 ]
 
-*Native fast-path.* The host runtime intercepts `apply(param_apply, …)`
-based on the compiled tree id and runs a TypeScript implementation of the
-same logic. The in-language version is the spec; the native is the
-optimization, producing bit-identical results.
+*Native fast-path (optional, currently off).* `param_apply` runs
+*in-language* — the dispatcher of this section is what executes. A host
+fast-path that intercepts `apply(param_apply, …)` by compiled tree id and
+runs a TypeScript reimplementation is *permitted* as an optimization, but
+is not wired in the current runtime (the only live native fast-path is
+`tree_eq`, §2.2). Re-enabling a native dispatcher requires a restored
+bit-identical equivalence test against this in-language reference, which
+remains the spec.
 
 = Boundary operations and checked values <sec:boundary>
 

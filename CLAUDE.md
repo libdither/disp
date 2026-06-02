@@ -15,15 +15,15 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 
 **The object language is the specification. Host implementations are optimizations.**
 
-Every component participating in checking, elaboration, or conversion must have a declared tree-calculus encoding. The TypeScript runtime (`src/tree.ts`) is the only host code; everything else — type predicates, the parametric walker, the elaborator — are tree programs. Native fast-paths in `src/tree.ts` mirror in-language code semantically (bit-identical results) and are validated against the in-language reference.
+Every component participating in checking, elaboration, or conversion must have a declared tree-calculus encoding. The TypeScript runtime (`src/tree.ts`) is the only host code; everything else — type predicates, the parametric walker, the elaborator — are tree programs. A native fast-path in `src/tree.ts` must mirror in-language code semantically (bit-identical results) and be validated against the in-language reference. Currently the only live native fast-path is `tree_eq`; the dispatcher (`param_apply`) runs in-language. (A native dispatcher fast-path existed for the legacy kernel but was orphaned and removed in the cutover; re-introducing one requires restoring an equivalence test.)
 
 ## Code layout
 
 ### Source
-- `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, `tree_eq` fast-path, **native parametric-walker / dispatcher** fast-path (intercepts `apply(checked_apply, …)` to run dispatch + walker in TS rather than executing the in-language fix-form chain).
+- `src/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, `tree_eq` native fast-path. (The dispatcher/parametric-walker runs in-language via `param_apply` in `lib/kernel/core.disp`; there is no native dispatcher fast-path.)
 - `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar. Bracket abstraction with η-reduction + K-composition optimizations.
 - `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests.
-- `src/compile.ts` — elaborator: typed bindings, kernel-helpers, native dispatcher / signature anchor registration.
+- `src/compile.ts` — elaborator: typed bindings, kernel-helpers, `tree_eq` native-fast-path tree-id registration.
 
 ### Library layout (`.disp` files in `lib/`)
 - `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix/recq, tree_eq, nat_le).
@@ -83,7 +83,7 @@ Two issues affect kernel-level code involving recursion or multi-line conditiona
 - **Wait-based types.** `wait(checker)(metadata)`. Signature = `pair_fst(T)` (constant per checker). Metadata = `pair_snd(pair_snd(T))`. Type-former recognition is via signature comparison.
 - **H-rule inlined.** Each checker reconstructs its own type via `wait (ks query) meta` for H-rule self-comparison.
 - **Hash-consing is load-bearing.** `conv = fast_eq` is O(1). Deterministic elaboration ensures same type → same tree.
-- **Native fast-paths.** `tree_eq` and `checked_apply` (the dispatcher + walker) are native fast-paths in `src/tree.ts`. They produce bit-identical results to the in-language reference; the in-language code is the spec.
+- **Native fast-paths.** `tree_eq` is a native fast-path in `src/tree.ts`, producing bit-identical results to the in-language reference; the in-language code is the spec. The dispatcher (`param_apply`) runs in-language — no native fast-path (the legacy native dispatcher was removed in the cutover).
 
 ## Testing
 

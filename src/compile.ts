@@ -10,7 +10,6 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
   Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
-  setNativeDispatcherTreeId, getNativeDispatcherTreeId, setNativeKernelSig, setNativeICanonicalId,
   SCOTT_TT,
 } from "./tree.js"
 import {
@@ -691,41 +690,6 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
   }
 }
 
-// Native dispatcher / kernel-signature registration anchors.
-// kernel.disp exports a small block of `:=` constants whose values are
-// the canonical signatures the host needs to recognise. When we see one
-// of those names being defined, we forward the resulting tree id to
-// tree.ts. Once the dispatcher tree id and at least the hyp_reduce
-// signature are registered, the native fast-path activates; until then
-// it is dormant and apply runs the in-language stub.
-// Dispatcher list (per spec §6.1): only kernel primitives route raw.
-// Bool/Nat/Eq predicates are ordinary predicate_frame types and their
-// applications fall through to the walker unless they hit the generic
-// predicate_frame signature.
-const NATIVE_SIG_NAMES = new Set([
-  "kernel_hyp_reduce_sig",
-  "kernel_guard_sig",
-  "kernel_unguard_sig",
-  "kernel_predicate_frame_sig",
-  "kernel_eliminator_frame_sig",
-  "kernel_bind_hyp_sig",
-])
-function registerNativeDispatcherAnchor(name: string, tree: Tree): void {
-  if (name === "checked_apply" && getNativeDispatcherTreeId() === -1) {
-    setNativeDispatcherTreeId(tree.id)
-    return
-  }
-  if (name === "kernel_I_canonical") {
-    setNativeICanonicalId(tree.id)
-    return
-  }
-  if (NATIVE_SIG_NAMES.has(name)) {
-    // Strip "kernel_" prefix and trailing "_sig" to get the handler key.
-    const key = name.slice("kernel_".length, name.length - "_sig".length)
-    setNativeKernelSig(key, tree.id)
-  }
-}
-
 // checkAsType(e, ctx): compile an expression as a type, returning both
 // the compiled tree and the universe it lives in. For binders, this
 // triggers Pi construction. For other expressions, it infers and verifies.
@@ -1214,7 +1178,6 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
         // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
-        registerNativeDispatcherAnchor(it.name, result.tree)
         recordItem("field", it.name)
         return
       }
