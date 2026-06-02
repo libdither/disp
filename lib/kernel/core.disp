@@ -10,13 +10,58 @@ open use "utils.disp"
 pair := {a, b} -> t a b
 
 // ================================================================
-// MetaShape (positional): { recognizer_params, functor, respond, specs }
+// Value-level cut primitives (§2.6) — defined early so MetaShape metadata
+// is an ordinary §2.6 headered record, read by name through the cut. The
+// Coproduct / Record *type-formers* (which need the type system) stay below.
 // ================================================================
-make_meta := {params, functor, respond, specs} -> pair params (pair functor (pair respond specs))
-meta_params  := {m} -> pair_fst m
-meta_functor := {m} -> pair_fst (pair_snd m)
-meta_respond := {m} -> pair_fst (pair_snd (pair_snd m))
-meta_specs   := {m} -> pair_snd (pair_snd (pair_snd m))
+// A value is fork(descriptor, payload); a single elimination (the cut) drives
+// projection, match, and application. Lists are iterated pairs (nil = leaf).
+nat_pred := {n} -> pair_snd n               // succ n = t t n
+nil := t
+cons := {h, tl} -> t h tl
+list_const := {x} -> t t x                  // const x y = x (K); ignores the cut payload
+inj := {tag, pay} -> t tag pay              // a coproduct value: tag + payload
+acc := {name} -> inj name t                 // accessor: nullary coproduct (unit payload)
+
+let index_of = fix ({self, l, name} ->
+  match (is_fork l) {
+    TT => match (tree_eq (pair_fst l) name) { TT => zero; FF => succ (self (pair_snd l) name) }
+    FF => zero
+  })
+let path_at = fix ({self, i, payload} ->
+  match (tree_eq i zero) { TT => pair_fst payload; FF => self (nat_pred i) (pair_snd payload) })
+// proj reads the table's name header for the position, then indexes the payload.
+proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
+// the cut: select the field named by c's tag, then feed it c's payload.
+annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
+prod := {P} -> wait annihilate P            // a product: callable; field table is its wait_meta
+annihilate_sig := checker_sig annihilate
+// A record value: fields are const-wrapped (ignore the payload). Projection is
+// the cut against a nullary accessor. A match is a product of raw handlers.
+record_val := {names, payload} -> prod (pair names payload)
+field := {r, name} -> r (acc name)                              // r.name
+match_co := {names, handlers, c} -> (prod (pair names handlers)) c
+
+// ================================================================
+// MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
+// behavioral_specs }, built and read BY NAME through the cut — the one-record
+// discipline of TYPE_THEORY §2.6 / §11.2 ("metadata included"). Field-name
+// tags are distinct closed trees fixed at boot; the canonical header is one
+// hash-consed node, so MetaShape conformance is an O(1) tree_eq on it.
+// ================================================================
+meta_k_params  := t t                        // "recognizer_params"
+meta_k_functor := t (t t)                    // "functor"
+meta_k_respond := t (t (t t))                // "respond"
+meta_k_specs   := t (t (t (t t)))            // "behavioral_specs"
+metashape_header := cons meta_k_params (cons meta_k_functor (cons meta_k_respond (cons meta_k_specs nil)))
+
+make_meta := {params, functor, respond, specs} ->
+  record_val metashape_header
+    (cons (list_const params) (cons (list_const functor) (cons (list_const respond) (cons (list_const specs) nil))))
+meta_params  := {m} -> field m meta_k_params
+meta_functor := {m} -> field m meta_k_functor
+meta_respond := {m} -> field m meta_k_respond
+meta_specs   := {m} -> field m meta_k_specs
 
 trivial_functor := t
 none := t
@@ -250,9 +295,10 @@ Arrow := {A, B} -> Pi A ({_} -> B)
 // ================================================================
 // Type universe + the predicate-side H-rule (unlocks polymorphic Pi)
 // ================================================================
-// A MetaShape meta is a 4-field positional record => 3 nested forks.
+// A MetaShape meta is a §2.6 record (a `prod`, so annihilate-rooted) whose
+// name header is exactly the canonical MetaShape header — both O(1) tree_eq.
 has_metashape_layout := {m} ->
-  and (is_fork m) (and (is_fork (pair_snd m)) (is_fork (pair_snd (pair_snd m))))
+  and (tree_eq (pair_fst m) annihilate_sig) (tree_eq (pair_fst (type_meta m)) metashape_header)
 
 // respond for a Type-typed neutral applied as a predicate to a candidate v:
 // Ok TT iff v is a neutral whose stored type IS this hypothesis (§6.3, §12.18).
@@ -278,7 +324,7 @@ Type := wait (make_recognizer type_body) type_self_meta
 // ================================================================
 // Inductive recursors (concrete dispatcher + library elim)
 // ================================================================
-nat_pred := {n} -> pair_snd n                              // succ n = t t n
+// (nat_pred and the value-level cut primitives are defined near the top.)
 let nat_dispatcher = fix ({self, motive, cases, target} ->
   match (tree_eq target zero) {
     TT => pair_fst cases                                   // base
@@ -385,38 +431,10 @@ ord_body := {m, v} -> Ok (fix ({self, x} ->
 Ord := wait (make_recognizer ord_body) (make_meta unit_witness trivial_functor inductive_respond none)
 
 // ================================================================
-// The cut: products / coproducts / records (§2.6) — one shape, one eliminator
-// ================================================================
-// A value is fork(descriptor, payload); a single elimination (the cut) drives
-// projection, match, and application. Lists are iterated pairs (nil = leaf).
-nil := t
-cons := {h, tl} -> t h tl
-list_const := {x} -> t t x                  // const x y = x (K); ignores the cut payload
-inj := {tag, pay} -> t tag pay              // a coproduct value: tag + payload
-acc := {name} -> inj name t                 // accessor: nullary coproduct (unit payload)
-
-let index_of = fix ({self, l, name} ->
-  match (is_fork l) {
-    TT => match (tree_eq (pair_fst l) name) { TT => zero; FF => succ (self (pair_snd l) name) }
-    FF => zero
-  })
-let path_at = fix ({self, i, payload} ->
-  match (tree_eq i zero) { TT => pair_fst payload; FF => self (nat_pred i) (pair_snd payload) })
-// proj reads the table's name header for the position, then indexes the payload.
-proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
-// the cut: select the field named by c's tag, then feed it c's payload.
-annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
-prod := {P} -> wait annihilate P            // a product: callable; field table is its wait_meta
-annihilate_sig := checker_sig annihilate
-
-// A record value: fields are const-wrapped (ignore the payload). Projection is
-// the cut against a nullary accessor. A match is a product of raw handlers.
-record_val := {names, payload} -> prod (pair names payload)
-field := {r, name} -> r (acc name)                              // r.name
-match_co := {names, handlers, c} -> (prod (pair names handlers)) c
-
-// ================================================================
 // Coproduct and Record types
+// (The value-level cut primitives — nil/cons/inj/acc/proj/annihilate/prod/
+//  record_val/field/match_co — are defined near the top of this file, since
+//  MetaShape metadata is itself a §2.6 record built with them.)
 // ================================================================
 let lookup_arm = fix ({self, variants, tag} ->
   match (is_fork variants) {

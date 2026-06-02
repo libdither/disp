@@ -640,12 +640,14 @@ interface KernelHelpers {
 function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined): KernelHelpers | null {
   // New two-Σ-op kernel: a type is `wait (make_recognizer body) meta`. Type-
   // formers are told apart by their recognizer SIGNATURE (`pair_fst T`, which is
-  // constant per former, independent of the type's parameters). A Pi's meta is
-  // the positional MetaShape `pair (pair A B) rest`, so its params live at
-  // `pair_fst (type_meta T)`.
+  // constant per former, independent of the type's parameters). The MetaShape
+  // meta is a §2.6 headered record (read by name through the cut), so the host
+  // recovers a type's `recognizer_params` by delegating to the in-language
+  // `meta_params` accessor rather than reading a fixed positional slot.
   const Pi = lookupEntry("Pi")?.tree
   const Type = lookupEntry("Type")?.tree
   const make_hyp = lookupEntry("Hyp")?.tree ?? lookupEntry("make_hyp")?.tree
+  const meta_params = lookupEntry("meta_params")?.tree
 
   if (!Pi && !Type && !make_hyp) return null
 
@@ -660,11 +662,13 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
     const ts = treePairFst(t)
     return ts !== null && treeEqual(ts, sig)
   }
-  // Pi meta = pair (pair A B) rest; params = pair_fst (type_meta T).
+  // recognizer_params = meta_params (type_meta T), via the in-language accessor
+  // (the meta is a §2.6 record read by name). For Pi, params is still `pair A B`.
   function piParams(t: Tree): Tree {
     const meta = typeMetaTree(t)
     if (!meta) throw new Error("piParams: not a valid type tree")
-    const params = treePairFst(meta)
+    if (!meta_params) throw new Error("piParams: meta_params not in scope")
+    const params = applyTree(meta_params, meta, APPLY_BUDGET)
     if (!params) throw new Error("piParams: params slot missing")
     return params
   }
