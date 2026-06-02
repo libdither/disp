@@ -143,8 +143,8 @@ and revisable:
     [§4 The parametric walker and `Tree_p`],
     [Walker as Kleisli-lifted binary apply, `Tree_p` as greatest fixed point, soundness discipline],
 
-    [§5 The dispatcher and dispatch environments],
-    [Σ-algebra framing: handlers as values, environments as list-passing, openness via concatenation],
+    [§5 The dispatcher],
+    [`param_apply` over the fixed two-op Σ; routing to the registered handler; wait-forms; why the dispatcher is *not* the effect system],
 
     [§6 Stuck forms and neutrals],
     [Stuck forms from any pinned handler, the generalized H-rule, cascading-failure story],
@@ -837,14 +837,17 @@ elsewhere in the spec:
 ]
 
 #note[
-  *Same monad for effectful computations.* `CheckerResult` is also the
-  return type of every handler in a dispatch environment (§5, §7),
-  including host primitives. There is no separate `IO` monad at the
-  kernel level — effectful computations and type-checking computations
-  share the same failure vocabulary, and `bind` / `catch` work the
-  same way for both. Library types like `IO X` are constructed atop
-  this (or independently of it) as MetaShape-conforming wait-forms;
-  they don't change the kernel's monad.
+  *`CheckerResult` is the kernel's monad; `Eff` is a separate library
+  monad.* `CheckerResult` is the return type of the two kernel handlers
+  (§5, §7) and of every recognizer — the *checking* monad. Effects are a
+  distinct library monad, the free monad `Eff R X` (§15), whose `bind`
+  sequences effect *values*; it does not flow through the kernel and is
+  not `CheckerResult`. The two only meet at the boundary: the effect
+  *driver* (§15.6) and the `is_closed` sanitizer it runs are the points
+  where a checked tree crosses into effect execution. So there is no
+  unified "one monad for everything" — checking and effecting are
+  deliberately separate, which is what keeps the substrate (and hence
+  the checker) pure.
 ]
 
 = The parametric walker and `Tree_p` <sec:tree-p>
@@ -854,17 +857,19 @@ elsewhere in the spec:
 Disp's type system relies on *hypotheses* — fresh tree values minted by
 the kernel that represent "an unknown value of type `A`." Hypotheses
 have a pinned signature (`pair_fst h = checker_sig hyp_reduce` for a
-kernel-minted neutral `h`). More generally, every handler in the
-dispatch environment Σ (§5, §7) has a sig that user code must not be
-able to forge — forging would let user-side trees masquerade as
-privileged operations (kernel-minted neutrals, host IO calls, etc.),
-breaking the soundness of dispatch.
+kernel-minted neutral `h`). The seal-producing kernel operation
+(`hyp_reduce`, §5, §7) has a sig that user code must not be able to
+forge — forging would let user-side trees masquerade as kernel-minted
+neutrals (a token the H-rule trusts), breaking the soundness of
+dispatch.
 
 The fix: define the *parametric walker* — a Kleisli-lifted version
-of `apply`, parameterized over Σ, that performs the same reduction
-but rejects two introspection patterns. `Tree_p(Σ)` is then the
+of `apply`, over the fixed Σ, that performs the same reduction
+but rejects two introspection patterns. `Tree_p` is then the
 largest subset of trees on which the walker, applied to pairs from
-`Tree_p(Σ) × Tree_p(Σ)`, never trips a rejection.
+`Tree_p × Tree_p`, never trips a rejection. (We keep the notation
+`w_Σ` / `Tree_p(Σ)` below to name the dependence on Σ; since Σ is a
+fixed constant (§5), they denote one walker and one set.)
 
 The walker, the dispatcher, and the stem-forge check all consult the
 *same* Σ — they are aspects of one mechanism, not independent layers.
@@ -1089,11 +1094,14 @@ membership). The walker is the only source of `Err Parametricity`,
 and parametricity is the only kind of error it produces; other
 `CheckerError` variants are raised by handlers further out.
 
-*Monotonicity in Σ.* If `Σ ⊆ Σ'`, then `Tree_p(Σ') ⊆ Tree_p(Σ)`: a
-larger environment is *more* restrictive (more sigs to forbid forging),
-so fewer trees survive. Programs walker-safe under a larger Σ are
-walker-safe under any smaller Σ, but not conversely. This is the
-soundness story for environment substitution.
+*Σ is fixed, so `Tree_p` is a single set.* Earlier drafts varied Σ per
+caller and noted a monotonicity law (`Σ ⊆ Σ'` ⇒ `Tree_p(Σ') ⊆ Tree_p(Σ)`)
+to justify environment substitution. With Σ now the fixed two-op kernel
+constant (§5) there is nothing to range over: one Σ, one `Tree_p`. (Should
+a future seal-producer be added — e.g. `async_pending`, §15 — it would
+enlarge the protected set and shrink `Tree_p` accordingly; that is the only
+residue of the old monotonicity story, and it is a kernel-design change,
+not a per-call parameter.)
 
 #note[
   Tree_p(Σ) is a property of the walker, not of `CheckerResult`. The
@@ -4818,39 +4826,104 @@ state_hdlr  := { covers := is_State,                     // parameter-passing: c
 == The effect row and effect-safety
 
 The row `R` in `Eff R X` is a *set of effect labels* carried in the type's
-`recognizer_params`, and effect-safety is ordinary recognizer + `Pi`
-checking — no new machinery. This is the research literature's *graded
-monad* `T_e` with `e` ranging over the idempotent powerset-of-labels
-monoid (union, ∅): Koka-style row effects, realized as a parameterized
-library inductive plus dependent `Pi`-types.
+`recognizer_params`. Effect-safety is ordinary recognizer + `Pi` checking
+— no new machinery. This is the research literature's *graded monad* `T_e`
+with `e` ranging over the idempotent powerset-of-labels monoid (union, ∅):
+Koka-style row effects, realized as a parameterized library inductive plus
+dependent `Pi`-types.
+
+=== Representation
+
+An *effect label* is an interned effect name — a deterministic tree per
+name (so `effect_label "State"` is always the same tree), totally ordered
+by `label_compare` = the name order (a *structural*, hence
+run-deterministic, comparison; *not* hash-cons id, which is not stable
+across runs). A *row* value is then:
+
+- a *name-sorted, duplicate-free list* of effect labels (closed row), or
+- that list improper-tailed by a single *row variable* — a `Row`-typed
+  hypothesis (`bind_hyp Row`) — standing for "the rest of the effects"
+  (open row, for polymorphism).
+
+`Row : Type` recognizes exactly these. Canonicity (sorted + deduped) makes
+two closed rows the *same tree* iff they are the same set, so type
+conversion `Eff R X ≡ Eff R' X` is the kernel's O(1) `tree_eq` — `{A,B}`
+and `{B,A}` are one tree. The row operations are library functions that
+*reduce to canonical form on concrete inputs* and *stay stuck*
+(hash-cons-consistently) on a neutral tail:
 
 ```disp
-// The Eff recognizer structurally verifies every Op uses a label in R.
+row_nil    := nil                                   // {} — the empty row
+row_singleton := {E}    -> [E]
+row_cons   := {E, R}    -> sorted_insert_dedup E R  // canonical on concrete R; stuck if R is a row-var
+row_union  := {R, S}    -> sorted_merge_dedup R S   // ditto
+row_remove := {E, R}    -> filter ({l} -> not (label_eq l E)) R
+label_in_row := {e, R}  -> list_mem e R             // (over the concrete prefix; see below)
+```
+
+=== Weakening is free — there is no subtyping judgment
+
+The `Eff` recognizer checks one thing: every `Op`'s effect-label lies in
+`R` (`Pure` is unconstrained). In other words, it decides `support(v) ⊆ R`
+— the set of effects `v` may perform is *contained in* the permitted row:
+
+```disp
 eff_recognizer := make_recognizer ({meta, v} ->
   let R = meta.recognizer_params.row in
   let X = meta.recognizer_params.result in
-  match v {                                   // (concrete v; H-rule handled by make_recognizer)
-    Pure x => param_apply X x                              // payload inhabits X
-    Op p   => and (label_in_row (effect_of p.op) R)        // op's effect ∈ R
+  match v {                                   // (concrete v; H-rule handles neutral v)
+    Pure x => param_apply X x                              // payload inhabits X; no row constraint
+    Op p   => and (label_in_row (effect_of p.op) R)        // this op's effect ∈ R
                   (param_apply (Pi (p.op.result) ({_} -> Eff R X)) (p.k))  // k continues in Eff R X
   })
 ```
 
-The row arithmetic lives in the `Pi`-types of the combinators — `∪` to
-sequence, `−` to discharge:
+Because membership is a *containment* check, *effect weakening falls out
+definitionally* — no subtyping rule, no coercion. `m : Eff S X` inhabits
+`Eff R X` for every `R ⊇ S` (its ops are still all in `R`), and `pure : Eff
+{} X` inhabits *every* row. Where Koka needs row subsumption/unification,
+disp gets it because *a type is a predicate that checks `⊆`, not an index
+that must match `=`*. (Handling an effect a computation never uses is the
+same fact: `m : Eff ρ X` inhabits `Eff (row_cons E ρ) X`.)
+
+=== Polymorphism is `Pi Row`; the row arithmetic rides the combinator types
+
+A row-polymorphic combinator quantifies over a row with an ordinary
+`Pi Row`, and the bound `ρ` is a `Row`-hypothesis like any other:
 
 ```
-op_E    : …             -> Eff {E} _                       // singleton row
-bind    : Eff R A -> (A -> Eff S B) -> Eff (R ∪ S) B        // union (the graded μ)
-handle_E: Eff (R ∪ {E}) X -> Handler E -> Eff R Y           // discharge: remove E
+op_E    : …                                              -> Eff (row_singleton E) _
+bind    : Pi Row ρ. Pi Row σ. Eff ρ A -> (A -> Eff σ B)  -> Eff (row_union ρ σ) B
+handle_E: Pi Row ρ.            Eff (row_cons E ρ) X -> Handler E -> Eff ρ Y
+main    :                                                   Eff (row_singleton IO) Unit
 ```
 
-`row_union` / `row_remove` are set operations on the label list (`Tags`,
-§12.2). A computation reaching `main` must have row `⊆ {IO}` — only the
-driver-handled effect may remain — or it is a type error (a missing
-handler). Effect-safety is thus checked by the `Eff` recognizer plus `Pi`
-recognition; custom user effects are first-class because `effect` is sugar
-and the row is data.
+`bind` joins rows (`∪`, the graded μ); `handle_E` discharges `E` (removes
+it). These typecheck *generically* with no new mechanism: checking such a
+type applies the combinator to a *neutral* `Eff`-value, and `bind`/`handle`
+are `elim`-gated (§12.3) — on a concrete target they run the fold, on a
+neutral target they produce a respond-mediated stuck value whose stored
+type is the codomain row (`Eff (row_union ρ σ) B`, `Eff ρ Y`), which the
+recognizer accepts by the H-rule (O(1) `tree_eq` against that stored type).
+A row variable only ever appears as the tail of a stuck `row_*` expression
+during such a body-check; on a concrete instantiation (`ρ := {IO}`) the row
+op reduces to a canonical closed row. A computation reaching `main` must
+have row `⊆ {IO}` — only the driver-handled effect may remain — or it is a
+type error (a missing handler).
+
+#note[
+  *Limitation: open-row equality is syntactic.* `tree_eq` compares a stuck
+  `row_union ρ S` by its tree, not semantically up-to-reordering, so the
+  convergent case is a *single* trailing row variable with concrete labels
+  added in canonical order — which covers every standard handler /
+  row-polymorphism pattern. Unioning two *distinct* row variables yields a
+  stuck `row_union ρ σ` that will not match a reassociated `row_union σ ρ`;
+  and full *inference* of rows (rather than ascription) stays open
+  (Appendix A). This is the deliberate cost of "conversion is `tree_eq`"
+  instead of a row-unification engine — and the right trade for disp:
+  closed rows stay O(1), and the one-variable case (the common one) is
+  exact.
+]
 
 == The driver: the one impure handler
 
