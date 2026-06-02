@@ -1,0 +1,11 @@
+// Fixture module for module.test.disp. Exports a few `: Type`-annotated fields
+// plus one unannotated field. `use` resolves this to a tuple { record, typ }:
+//   record = { foo := Bool, bar := Nat, baz := …, helper := … }
+//   typ    = Record [(foo, Type), (bar, Type), (baz, Type)]   (annotated only)
+
+open use "../kernel/prelude.disp"
+
+foo : Type := Bool
+bar : Type := Nat
+baz : Type := Pi Nat ({_} -> Bool)
+helper := {x} -> x                      // unannotated → absent from `typ` (gradual)

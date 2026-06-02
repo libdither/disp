@@ -422,20 +422,46 @@ function exprToCir(
       return cap(cap(recordVal, { tag: "lit", t: namesTree }), payloadCir)
     }
     case "use": {
+      // A file resolves to a module tuple { record, typ } (§2.6 records):
+      //   record = a product of the file's exported values, keyed by name;
+      //   typ    = `Record [(name, declaredType)…]` over the *annotated* exports.
+      // Verification is then ordinary: `(use "f").typ (use "f").record` applies
+      // the Record type to the value record (gradual: unannotated exports are
+      // absent from `typ`, so skipped). Falls back to the bare value record when
+      // the cut/Record formers aren't in scope (e.g. files that don't open the
+      // kernel — they carry no checkable annotations anyway). `open use` is
+      // unaffected: it splices the export metadata, not this value.
       const entry = resolveUse(e.path)
-      return { tag: "lit", t: entry.tree! }
+      const record_val = lookupEntry("record_val")?.tree
+      const list_const = lookupEntry("list_const")?.tree
+      const Record = lookupEntry("Record")?.tree
+      if (!record_val || !list_const || !Record || !entry.fields || !entry.fieldTrees)
+        return { tag: "lit", t: entry.tree! }
+      const B = APPLY_BUDGET
+      const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => fork(h, acc), LEAF)
+      const constWrap = (v: Tree): Tree => applyTree(list_const, v, B)
+      const mkRecord = (names: string[], vals: Tree[]): Tree =>
+        applyTree(applyTree(record_val, consList(names.map(stringToTree)), B), consList(vals.map(constWrap)), B)
+      const names = entry.fields, vals = entry.fieldTrees, types = entry.fieldTypes ?? []
+      const valuesRecord = mkRecord(names, vals)
+      // typ = Record [ pair name type ]  over annotated exports (pair = fork(name,type))
+      const typEntries: Tree[] = []
+      for (let i = 0; i < names.length; i++)
+        if (types[i]) typEntries.push(fork(stringToTree(names[i]), types[i]!))
+      const typ = applyTree(Record, consList(typEntries), B)
+      return { tag: "lit", t: mkRecord(["record", "typ"], [valuesRecord, typ]) }
     }
     case "proj": {
       // r.x is the §2.6 cut `r (acc x)`. When the target is a statically-known
-      // record we keep the compile-time collapse (return the field's tree, or
-      // validate the name); otherwise we emit the runtime cut so projection
-      // works on any product value (e.g. a metadata record passed at runtime).
+      // record with the field, keep the compile-time collapse (return the field
+      // tree); otherwise emit the runtime cut, so projection works on any product
+      // value — a runtime metadata record, or a module tuple whose value carries
+      // fields not in the binding's compile-time field list (e.g. `(use f).typ`,
+      // where the let's known fields are the file's exports, not record/typ).
       const record = resolveExprRecord(e.target, lookupEntry, resolveUse)
-      if (record) {
+      if (record && record.fieldTrees) {
         const idx = record.fields.indexOf(e.field)
-        if (idx < 0)
-          throw new Error(`projection '.${e.field}': field not found (available: ${record.fields.join(", ")})`)
-        if (record.fieldTrees) return { tag: "lit", t: record.fieldTrees[idx] }
+        if (idx >= 0) return { tag: "lit", t: record.fieldTrees[idx] }
       }
       const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
       return cap(target, { tag: "lit", t: accTree(e.field) })

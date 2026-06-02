@@ -1,0 +1,31 @@
+// Module system: a file resolves to a tuple { record, typ } (§2.6 records).
+//   record = the file's exported values, keyed by name
+//   typ    = `Record [(name, declaredType)…]` over the annotated exports
+// Verification is direct application of the type record to the value record —
+// no bespoke checker: the Record recognizer checks every named field's type.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+let m = use "typed_mod.disp"
+
+// The whole module verifies in one application: (typ) (record) = Ok TT.
+// This checks foo:Type, bar:Type, baz:Type — names and types — at once.
+test m.typ m.record = Ok TT
+
+// Non-vacuous: applying the SAME typ to a record whose `foo` isn't a type fails.
+test m.typ (record_val ["foo", "bar", "baz"] [list_const zero, list_const Nat, list_const Bool]) = Ok FF
+
+// The value record projects by name through the cut.
+test m.record.foo = Bool
+test m.record.bar = Nat
+
+// Gradual: the unannotated `helper` isn't in `typ`, so it's simply skipped —
+// verification still succeeds, and the value is still present in `record`.
+test m.record.helper zero = zero
+
+// `open use` is unaffected — it splices the values (not the tuple) into scope.
+open use "typed_mod.disp"
+test foo = Bool
+test bar = Nat
+test helper (succ zero) = succ zero
