@@ -1,0 +1,65 @@
+// Tests for the new-kernel core (lib/next/core.disp): the two-Σ-op shape end
+// to end — param_apply dispatch, recognition + H-rule, hyp_reduce spine
+// extension via respond, typecheck, and the boundary scan.
+
+open use "../prelude.disp"
+open use "../kernel/utils.disp"
+open use "../next/core.disp"
+
+// ---- recognition via param_apply (the dispatcher) ----
+test param_apply Bool TT = Ok TT
+test param_apply Bool FF = Ok TT
+test param_apply Bool zero = Ok FF
+test param_apply Nat zero = Ok TT
+test param_apply Nat (succ (succ zero)) = Ok TT
+test param_apply Nat TT = Ok FF
+
+// ---- typecheck (sanitize + recognize); closed queries only ----
+test typecheck Bool TT = Ok TT
+test typecheck Nat (succ zero) = Ok TT
+test typecheck Bool zero = Ok FF
+
+// param_lift rejects a public neutral
+test param_lift (mint_hyp Nat 0) = Fail
+test is_closed (mint_hyp Nat 0) = FF
+test is_closed (succ zero) = TT
+
+// ---- H-rule via param_apply (reached directly, not through typecheck) ----
+let hB = mint_hyp Bool 0
+let hN = mint_hyp Nat 0
+test param_apply Bool hB = Ok TT          // Bool-hyp inhabits Bool (H-rule)
+test param_apply Nat hN = Ok TT
+test param_apply Bool hN = Ok FF          // Nat-hyp does not inhabit Bool
+test param_apply Nat hB = Ok FF
+
+// ---- hyp_reduce spine extension via inductive_respond ----
+// Applying a Nat-neutral to a case-frame (pair motive cases) yields a stuck
+// elimination: a fresh neutral stored at `motive self`. hyp_reduce results are
+// Ok-wrapped CheckerResults, so `stuck` is Ok(neutral).
+let motive = {n} -> Bool
+let cases = pair zero ({k} -> k)
+let stuck = param_apply hN (pair motive cases)
+test is_ok stuck = TT
+test is_neutral (ok_value stuck) = TT
+test neutral_type (ok_value stuck) = Bool      // motive applied to the reconstructed self
+
+// elim drives the same: concrete target runs the dispatcher, neutral routes here
+let nat_dispatcher = {motive, cases, target} -> pair_fst cases   // toy: returns base
+test elim nat_dispatcher motive cases zero = zero                // concrete branch
+test is_neutral (ok_value (elim nat_dispatcher motive cases hN)) = TT  // neutral branch
+
+// ---- bind_hyp (Σ-op): mint, run body, escape-check ----
+test bind_hyp Nat ({x} -> Ok zero) = Ok zero            // result independent of x
+test bind_hyp Nat ({x} -> Ok x) = Fail                  // x at public position -> escape
+test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail      // x inside a user pair -> escape
+
+// ---- checked values + Pi (monomorphic dependent function) ----
+// Bodies must be walker-safe (no raw triage on the argument); case-analysing
+// functions need the eliminator (future work). Identity and const qualify.
+let id_nat = checked Nat ({n} -> n)
+let const_true = checked Nat ({n} -> TT)
+test param_apply (Pi Nat ({_} -> Nat)) id_nat = Ok TT       // id : Nat -> Nat
+test typecheck (Arrow Nat Nat) id_nat = Ok TT               // same via Arrow + typecheck
+test param_apply (Pi Nat ({_} -> Bool)) const_true = Ok TT  // const TT : Nat -> Bool
+test param_apply (Pi Nat ({_} -> Nat)) const_true = Ok FF   // body returns Bool, not Nat
+test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch (stored Nat)

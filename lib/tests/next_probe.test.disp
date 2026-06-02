@@ -1,0 +1,111 @@
+// GO/NO-GO PROBE for the TYPE_THEORY.typ (NEXT) migration.
+//
+// Tests the two linchpin risks together, in isolation, reusing the proven
+// neutral-minting infra (Hyp / kernel sig) so nothing else can confound it:
+//
+//   #1 walker reader layer — the ROOT_SIG / STORED_TYPE carve-outs let a
+//      recognizer running UNDER the walker read a seal's root-sig and
+//      stored-type *concretely*. Today the walker rejects both (see the
+//      `checked_apply_walker pair_fst h = Fail` control below).
+//   #4 fix-self hash-cons stability — make_recognizer reconstructs its own
+//      type via the fix self-param; the H-rule tree_eq fires only if that
+//      reconstruction hash-cons-equals the externally-built type.
+//
+// The `*** H-RULE ***` test is the real go/no-go for the whole design.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ---- reader-layer canonical trees (matched by hash-cons identity) ----
+let ROOT_SIG = pair_fst            // w(ROOT_SIG, x)    = Ok (pair_fst x)   — root signature
+let STORED_TYPE = neutral_type     // w(STORED_TYPE, x) = Ok (stored type)  — seal's typed slot
+let hyp_sig = kernel_hyp_reduce_sig
+
+// neut_root: raw neutral check, used by the walker's own (raw) guard code.
+let neut_root = {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+
+// ---- walker = checked_apply_walker + two observe-only reader carve-outs ----
+let w_stem = {a, x} -> {
+  let r = t a x
+  match (neut_root r) { TT => Fail; FF => Ok r }
+}
+let w_s = {self, c, b, x} -> {
+  let cx = self c x
+  match (is_ok cx) {
+    TT => {
+      let bx = self b x
+      match (is_ok bx) { TT => self (ok_value cx) (ok_value bx); FF => Fail }
+    }
+    FF => Fail
+  }
+}
+let w_tfk = {self, b, l, r} -> {
+  let bl = self b l
+  match (is_ok bl) { TT => self (ok_value bl) r; FF => Fail }
+}
+let w_fork = {self, a, b, x} ->
+  triage
+    (Ok b)
+    ({c} -> w_s self c b x)
+    ({tc, td} ->
+      match (neut_root x) {
+        TT => Fail
+        FF => (triage (Ok tc) ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x)
+      })
+    a
+
+let w = fix ({self, f, x} ->
+  match (tree_eq f ROOT_SIG) {                              // reader: root sig (concrete on seals)
+    TT => Ok (pair_fst x)
+    FF => (match (tree_eq f STORED_TYPE) {                  // reader: stored type (concrete on seals)
+      TT => Ok (neutral_type x)
+      FF => (match (tree_eq f I_canonical) {                // I-shortcut (the prior sole carve-out)
+        TT => Ok x
+        FF => (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f)
+      })
+    })
+  })
+
+// ---- make_recognizer: the universal H-rule wrapper, run UNDER the walker ----
+let is_neutral_r = {v} -> tree_eq (pair_fst v) hyp_sig      // bare pair_fst -> ROOT_SIG carve-out
+let recognizer_wrap = fix ({wrap, body, meta, v} ->
+  match (is_neutral_r v) {
+    TT => Ok (tree_eq (wait (wait wrap body) meta) (neutral_type v))   // H-rule (needs both readers + #4)
+    FF => body meta v                                                   // concrete-only body
+  })
+let make_recognizer = {body} -> wait recognizer_wrap body
+
+// Apply a recognizer to (meta, v) under the walker, unwrapping the walker's
+// outer "reduction succeeded" Ok to expose the recognizer's own verdict.
+let recog2 = {rec, meta, v} -> must_ok_any (w rec meta) ({rm} -> must_ok_or_self (w rm v))
+
+// ================================================================
+// Reader layer: the new walker permits what the old one rejects
+// ================================================================
+let hN = Hyp Nat 0
+
+test tree_eq (checked_apply_walker pair_fst hN) Fail = TT   // OLD walker: root-sig read rejected
+test w pair_fst hN = Ok (pair_fst hN)                       // NEW: ROOT_SIG reader -> concrete
+test w STORED_TYPE hN = Ok Nat                              // NEW: STORED_TYPE reader -> concrete
+test w I_canonical hN = Ok hN                               // I-shortcut intact
+
+// Reader layer does NOT loosen the genuine rejections:
+test tree_eq (w is_fork hN) Fail = TT                       // triage-on-neutral still rejected
+test w ({x} -> succ x) 5 = Ok 6                             // ordinary reduction intact
+test w ({x} -> x) 5 = Ok 5
+
+// ================================================================
+// make_recognizer + H-rule under the new walker
+// ================================================================
+let bool_body = {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
+let bool_recognizer = make_recognizer bool_body
+let bool_meta = t
+let Bool2 = wait bool_recognizer bool_meta
+let hB = Hyp Bool2 (t t t)
+let hN2 = Hyp Nat (t t t)
+
+test recog2 bool_recognizer bool_meta TT = Ok TT           // concrete inhabitant
+test recog2 bool_recognizer bool_meta FF = Ok TT
+test recog2 bool_recognizer bool_meta zero = Ok FF         // concrete non-inhabitant
+test recog2 bool_recognizer bool_meta hB = Ok TT           // *** H-RULE — THE GO/NO-GO ***
+test recog2 bool_recognizer bool_meta hN2 = Ok FF          // H-rule discriminates by stored type
