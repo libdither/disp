@@ -9,7 +9,7 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 - [`TYPE_THEORY_LEGACY.typ`](TYPE_THEORY_LEGACY.typ) — previous spec, retained for history. Seven kernel primitives (`hyp_reduce`, `guard`, `unguard`, `checked_apply`, `predicate_frame`, `eliminator_frame`, `bind_hyp`). The codebase has **migrated off** this shape to `TYPE_THEORY.typ`'s two-Σ-op kernel — see "Implementation status" below.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape. Authoritative for the parser.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
-- [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms: `hyp_reduce`, wait/fix/recq, deferred branching, bracket abstraction optimizations, performance notes. Predates the two-Σ-op cutover, so some idioms (the `(ks,raw,query)` handler protocol, the native dispatcher fast-path) describe retired machinery; the wait/fix/bracket-abstraction notes still hold.
+- [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms: `hyp_reduce`, wait/fix, deferred branching, bracket abstraction optimizations, performance notes. Predates the two-Σ-op cutover, so some idioms (the `(ks,raw,query)`/`recq` handler protocol, the native dispatcher fast-path) describe retired machinery; the wait/fix/bracket-abstraction notes still hold.
 
 ## Core discipline
 
@@ -26,7 +26,7 @@ Every component participating in checking, elaboration, or conversion must have 
 - `src/compile.ts` — elaborator: typed bindings, kernel-helpers, `tree_eq` native-fast-path tree-id registration.
 
 ### Library layout (`.disp` files in `lib/`)
-- `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix/recq, tree_eq, nat_le, zero/succ).
+- `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix, tree_eq, nat_le, zero/succ).
 - `kernel/` — the two-Σ-op kernel center:
   - `prelude.disp` — canonical entry point: `open`s `../prelude.disp` + `utils.disp` + `core.disp`. Files that build on the type system do `open use "../kernel/prelude.disp"`.
   - `utils.disp` — metadata accessors (`type_meta`, neutral-meta layout), signatures (`checker_sig`/`has_sig`), Action protocol (`Extend`/`Return`/`is_extend`), CheckerResult (`Ok`/`Fail`, `must_ok_any`/`must_ok_or_self`), `InvalidType`.
@@ -72,7 +72,7 @@ Two issues affect kernel-level code involving recursion or multi-line conditiona
 ## Key tree-calculus idioms
 
 - **`wait` for deferred application.** `wait a b c = a(b)(c)` but `wait(a)(b)` doesn't evaluate `a(b)`. Essential for `fix` and partial application.
-- **`recq` lazy self-proxy.** A prelude combinator for self-referential records. The new kernel's Σ-ops (`hyp_reduce`/`bind_hyp`) are plain `fix`-forms, not `recq` handler records — the old `(ks, raw, query)` handler protocol was retired with the 7-primitive kernel.
+- **Plain `fix` handlers.** The kernel's Σ-ops (`hyp_reduce`/`bind_hyp`) are plain `fix`-forms. The old `(ks, raw, query)` self-proxy handler protocol and the `rec`/`recq` self-referential-record combinators were retired with the 7-primitive kernel (nothing in the new kernel used them).
 - **Wait-based types.** `wait(checker)(metadata)`. Signature = `pair_fst(T)` (constant per checker). Metadata = `type_meta(T) = pair_snd(pair_snd(T))`, a §2.6 record whose fields (`respond`, `recognizer_params`, …) are read **by name** via the cut (`meta_respond`/`meta_params`). Type-former recognition is via signature comparison.
 - **H-rule via `make_recognizer`.** The universal recognizer-side H-rule lives in `make_recognizer`, which reconstructs the type via `wait (wait wrap body) meta` and short-circuits `Ok TT` when the candidate is a neutral of that stored type. `type_predicate_h_rule` is the predicate-side dual.
 - **Hash-consing is load-bearing.** `conv = fast_eq` is O(1). Deterministic elaboration ensures same type → same tree.

@@ -58,23 +58,6 @@ wait := {a, b, c} -> t (t a) (t t c) b
 m := {x} -> x x
 fix := {f} -> wait m ({x} -> f (wait m x))
 
-// rec: self-referential record combinator.
-// Wraps a Church-encoded record of component functions into a fixpoint
-// using the select-then-apply-self pattern (each component receives `self`
-// as first argument when selected).
-// Usage: let k : {a, b} = rec {a := {ks, x} -> x; b := {ks, x} -> ks.a x}
-rec := {components} -> fix ({self, sel} -> components sel self)
-
-// recq: query/self-proxy recursive record combinator.
-// Each selected component receives:
-//   ks    = lazy self proxy, where ks q = wait self q
-//   raw   = the actual recursive record, for places that need handler identity
-//   query = the selector used for this component
-// This lets component bodies write ordinary record projections like ks.pi;
-// the projection is strict, but it targets the cheap proxy and produces a
-// delayed self-field reference.
-recq := {components} -> fix ({self, query} -> components query ({q} -> wait self q) self query)
-
 // ================================================================
 // select_chain: flat conditional dispatch
 // ================================================================
