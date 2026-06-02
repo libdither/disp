@@ -62,3 +62,10 @@ test typecheck (Arrow Nat Nat) id_nat = Ok TT               // same via Arrow + 
 test param_apply (Pi Nat ({_} -> Bool)) const_true = Ok TT  // const TT : Nat -> Bool
 test param_apply (Pi Nat ({_} -> Nat)) const_true = Ok FF   // body returns Bool, not Nat
 test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch (stored Nat)
+
+// ---- cut_apply: the contract boundary on direct application ----
+// Applying a `checked` value runs cut_apply: the arg is checked against the
+// stored domain before the function fires. Domain holds -> Ok (fn arg);
+// domain fails -> Fail (the TypeMismatch boundary, §3 verdict-vs-error).
+test (checked Nat ({n} -> n)) (succ zero) = Ok (succ zero)  // domain holds
+test (checked Nat ({n} -> n)) TT = Fail                     // TT is not a Nat -> contract breakage
