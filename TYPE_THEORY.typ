@@ -36,33 +36,42 @@
 #v(1em)
 
 #note[
-  *Status (2026-05-25).* Active spec. Replaces the prior `TYPE_THEORY.typ`
+  *Status (2026-06-01).* Active spec. Replaces the prior `TYPE_THEORY.typ`
   (seven-primitive kernel design) and consolidates
   `CATEGORY_THEORY_FOUNDATIONS_PROPOSAL.typ` and `CUBICAL_PROPOSAL.typ`
-  into a single document.
+  into a single document. *2026-06-01 revision:* the kernel drops to *two*
+  Σ-operations — `postulate` is removed and effects are re-cast as a pure
+  library construction (`Eff R X` free monad + handlers + an outermost
+  driver, §15); the dispatcher reverts to the two-argument `param_apply`
+  over a *fixed* Σ; the `funnel` sig-set dissolves (`forge = seal`); and
+  `respond` becomes a constitutive (non-optional) field with the
+  two-tag `Action` (`Invalid` = `Extend InvalidType`).
 
   Major shifts from predecessors:
-  - The kernel ships *3 Σ-operations + 1 parameterized dispatcher*.
-    Σ-ops: `hyp_reduce`, `bind_hyp`, `postulate`. Dispatcher:
-    `safe_apply Σ` — parameterized over a dispatch environment Σ.
-    `param_apply := safe_apply default_dispatch`. `eliminator_frame`,
-    in earlier drafts a fourth Σ-op, folds into `hyp_reduce` + a
-    library `elim` (§12).
-  - The walker consults pinned-sig sets derived from Σ: `seal(Σ)`
-    (trusted-token producers — unforgeable *and* uninspectable) and
-    `funnel(Σ)` (host sigs forced through `postulate`'s sanitizer —
-    unforgeable only), with `forge(Σ) = seal(Σ) ∪ funnel(Σ)`. The
-    pure kernel operations `bind_hyp` / `postulate` are in neither:
-    the dispatcher routes pinned sigs to the *registered* handler
-    (not a wait-form's embedded one), so forging their invocation is
-    harmless and library recognizers may build those invocations
-    under the walker.
-  - Kernel and host primitives are *values, not registrations*.
-    `default_dispatch = kernel_handlers ++ host_provided`. No mutable
-    global registry.
-  - Effects are unified with type-system primitives. Neutrals, stuck
-    eliminations, and host IO are all dispatched through the same
-    `safe_apply Σ` mechanism.
+  - The kernel ships *2 Σ-operations + 1 dispatcher*.
+    Σ-ops: `hyp_reduce`, `bind_hyp` — both privileged because both mint
+    a seal-rooted tree the walker forbids library code from building.
+    Dispatcher: `param_apply` (two arguments; the dispatch set Σ is the
+    *fixed* two-op kernel constant, no longer a caller-varied
+    environment). `eliminator_frame` (an earlier Σ-op) folds into
+    `hyp_reduce` + a library `elim` (§12); `postulate` (another) is
+    *removed* — effects are now a library construction (below).
+  - The walker consults one pinned-sig set derived from Σ: `seal(Σ)`
+    (trusted-token producers — unforgeable *and* uninspectable), with
+    `forge(Σ) = seal(Σ)`. The other kernel operation `bind_hyp` is not
+    in it: the dispatcher routes pinned sigs to the *registered* handler
+    (not a wait-form's embedded one), so forging `bind_hyp`'s invocation
+    is harmless and library recognizers may build those invocations
+    under the walker. (The earlier `funnel(Σ)` set, for host-effect
+    sigs, is gone — there are no host sigs in Σ.)
+  - Effects are an *entirely library* construction (§15): a free monad
+    `Eff R X` over an operation signature, interpreted by handlers, with
+    one impure *driver* at the program boundary. The kernel is not
+    involved — no effect Σ-entry, no `postulate`, no host-rooted
+    wait-form. Effect rows ride in `recognizer_params` and are checked
+    by the ordinary `Eff` recognizer + `Pi` types. The substrate's
+    purity (which hash-consing requires) *forces* effects to be values
+    performed only at the boundary.
   - Type-checking is framed as manifest contracts over the
     `CheckerResult` monad. The elaborator is purely a wrap-only pass.
   - Library types carry MetaShape-conforming meta records with named
@@ -75,12 +84,12 @@
   - The `bind_hyp` escape check is a single dependency scan `occurs`
     (§8.1) that descends *through* seals to find a hypothesis hidden in
     a derived neutral's spine; `fresh_for` and `is_closed` are its two
-    policy uses (`bind_hyp` escape; `param_lift` / `postulate`
-    closedness). Searching for one specific hypothesis distinguishes a
+    policy uses (`bind_hyp` escape; `param_lift` closedness, and the
+    driver's pre-host `is_closed` check, §15.6). Searching for one specific hypothesis distinguishes a
     legal in-scope reference from an extruded one, so the scan need not
     treat seals as opaque — the prior opaque scan let derived neutrals
     carry a hypothesis out of scope.
-  - `strip` is a tree-level function gated by `validate`'s certificate.
+  - `strip` is a tree-level function gated by a `typecheck` verdict.
 
   Open items are flagged inline as `Open question:` notes. The spec is
   designed to be iterated on section by section.
@@ -100,17 +109,16 @@ failing component identified. After elaboration succeeds, a *strip pass*
 elides validated contracts to give a runtime tree with no per-call
 checking overhead.
 
-The kernel is a *tree-calculus interpreter parameterized over a dispatch
-environment* Σ — a list value mapping handler signatures to handler
-trees. Three kernel Σ-operations ship in `kernel_handlers`:
-`hyp_reduce`, `bind_hyp`, and `postulate`. The host exposes any
-real-world primitives (IO, syscalls) as `host_provided : Σ`. The
-default environment `default_dispatch := concat kernel_handlers
-host_provided` is what `param_apply` evaluates against; stricter callers
-(foundational tests, sandboxes) construct narrower environments. The
-dispatcher routes by structural signature on hash-consed trees, so
-dispatch is O(1) via tree-id comparison. Types, validators, recognizers,
-case eliminators, and the MetaShape convention all live in the
+The kernel is a *tree-calculus interpreter over a fixed dispatch set* Σ
+— the two Σ-operations `hyp_reduce` and `bind_hyp`, the only operations
+needing privileged construction. `param_apply f x` routes by structural
+signature on hash-consed trees (O(1) tree-id comparison): if `f`'s sig is
+a kernel-op sig the handler runs raw, otherwise the parametric walker (§4)
+reduces it. Real-world effects (IO, syscalls) are *not* kernel operations
+and not entries in Σ — they are library values in the `Eff` free monad
+(§15), performed by an outermost driver at the program boundary; the
+substrate stays pure (which hash-consing requires). Types, validators,
+recognizers, case eliminators, and the MetaShape convention all live in the
 library. Cubical operations sit in each type's `functor` metadata field
 and reuse the kernel's one stuck-form constructor for their stuck
 cases. The metacircular discipline holds: the type system is defined
@@ -141,8 +149,8 @@ and revisable:
     [§6 Stuck forms and neutrals],
     [Stuck forms from any pinned handler, the generalized H-rule, cascading-failure story],
 
-    [§7 The kernel primitives], [Operational semantics of `hyp_reduce`, `bind_hyp`, `postulate`, `safe_apply`],
-    [§8 Boundary operations and checked values], [`param_lift`, `typecheck`, `checked`, `typed_lambda`, `validate`],
+    [§7 The kernel primitives], [Operational semantics of `hyp_reduce`, `bind_hyp`, `param_apply`],
+    [§8 Boundary operations and checked values], [`param_lift`, `typecheck`, `checked`, `strip_validated`],
     [§9 Elaboration and tests], [Syntactic transformation; tests as first-class; `: T` as test sugar],
     [§10 Strip and erasure], [`strip` as a tree function; PCC story],
     [§11 Types and validators], [Types-as-wait-forms; MetaShape; validators-as-values],
@@ -151,7 +159,7 @@ and revisable:
     [§14 Soundness via tests],
     [Four categories of runnable assertions; foundational conjecture stays open; environment probes via effectful tests],
 
-    [§15 Effects], [Effects as dispatch-environment entries; effect interfaces as typed records; capability passing],
+    [§15 Effects], [Effects as a library free monad `Eff R X`; operations, handlers, effect rows; the outermost driver],
     [§16 Disp-specific], [What disp contributes beyond standard machinery],
     [§17 Related work], [Literature context],
     [Appendix A], [Open questions and conjectures],
@@ -163,7 +171,7 @@ and revisable:
 
 Read §1–§7 in order for the framework. §8–§12 build the type system on
 top. §13 covers cubical. §14 is the formal payoff. §15 covers effects
-(host primitives, postulates, capability passing). §16 highlights
+(the `Eff` free monad, handlers, effect rows, the driver). §16 highlights
 what's genuinely novel; §17 places the design in the literature.
 
 == Prerequisites
@@ -305,7 +313,7 @@ to avoid re-introducing them inline:
     [`Tree_p`. The thing applied to a neutral — an argument (Π), a projection selector (Σ), a case-pair (inductive), a dimension (Path), a candidate value (Type). Untagged; the stored type interprets it.],
 
     [`Action`],
-    [`Extend Type | Return Tree_p | Invalid`. The protocol `hyp_reduce` consumes from a type's `respond` (§7).],
+    [`Extend Type | Return Tree_p`. The protocol `hyp_reduce` consumes from a type's `respond` (§7). A frame a type does not accept is rejected as `Extend InvalidType` (§12.3) — the dead-state type — so there is no third "reject" tag.],
 
     [`Spec`],
     [A runnable behavioral property attached to a type's meta (the `behavioral_specs` field, §11.2). Layer-neutral name so the core metadata convention does not depend on the cubical extension; realized concretely as `Path` once §13 is in scope.],
@@ -522,8 +530,8 @@ subsumes `select` (the two-constructor Bool case), the per-type recursors of
   *Tags and O(1) discrimination.* A coproduct's tag sits in `pair_fst`, so the
   cut discriminates by one `tree_eq` (O(1), §2.2). Library and user coproducts
   tag by interned constructor name. The kernel enums the interpreter itself
-  returns — `Result` (`Ok` / `Err`, §3.4) and `Action` (`Extend` / `Return` /
-  `Invalid`, §7) — pick *minimal* tag trees (`LEAF`, `stem LEAF`, …) so the
+  returns — `Result` (`Ok` / `Err`, §3.4) and `Action` (`Extend` / `Return`,
+  §7) — pick *minimal* tag trees (`LEAF`, `stem LEAF`, …) so the
   comparison is against a boot-time constant; that is the only reason their
   trees are written by hand instead of produced by `Coproduct`. Same cut,
   different tag policy.
@@ -595,8 +603,7 @@ Each variant maps to a distinct kernel failure path:
       hypothesis via a non-neutral path],
 
     [`NotApplicable`],
-    [`checked`, when the stored type is not function-shaped;
-      `hyp_reduce`, when the stored type isn't a recognized
+    [`hyp_reduce`, when the stored type isn't a recognized
       type wait-form],
 
     [`TypeMismatch`],
@@ -618,8 +625,8 @@ Each variant maps to a distinct kernel failure path:
   type," which is a legitimate answer to a query. Errors flow
   through `Err` only when something is *broken*: parametricity
   violated, hypothesis escaped, contract-mandated TT received FF,
-  meta malformed. Query-style callers (`typecheck`, `validate`) see
-  `Ok TT` / `Ok FF` and pattern-match. Contract-style callers
+  meta malformed. Query-style callers (`typecheck`, `strip_validated`)
+  see `Ok TT` / `Ok FF` and pattern-match. Contract-style callers
   (`checked` application) raise `TypeMismatch` because their callers
   promised the value would fit.
 ]
@@ -865,8 +872,11 @@ The walker, the dispatcher, and the stem-forge check all consult the
 == The walker as a Kleisli-lifted binary operation
 
 The walker `w_Σ : Tree × Tree → CheckerResult(Tree)` is the Kleisli
-lift of binary `apply`, parameterized over *two pinned-sig sets*
-derived from Σ:
+lift of binary `apply`, consulting *one* pinned-sig set derived from Σ —
+`seal(Σ)`, the trusted-token producers. (Earlier drafts carried a second
+set `funnel(Σ)` for host-effect sigs forced through `postulate`'s
+sanitizer; with effects now a pure library construction (§15) there are no
+host sigs to protect, so `funnel(Σ) = ∅` and `forge(Σ) = seal(Σ)`.)
 
 #figure(
   table(
@@ -878,27 +888,22 @@ derived from Σ:
     [`seal(Σ)`],
     [Sigs whose handlers mint *trusted tokens* — values whose
       provenance other code believes (the H-rule, `is_neutral`, the
-      escape scan). `hyp_reduce` in the default environment;
-      extensible to any future stuck-form producer (e.g.
-      `async_pending`, §15). These need *both* protections:
-      unforgeable as values (construction) and opaque to *general*
-      inspection (triage) — only the §4.2 canonical readers may expose
-      a seal's public descriptor (its root sig and stored type), never
-      its payload.],
+      escape scan). Just `hyp_reduce` today; extensible to any future
+      stuck-form producer (e.g. `async_pending`, §15). A seal needs
+      *both* protections: unforgeable as a value (construction) and
+      opaque to *general* inspection (triage) — only the §4.2 canonical
+      readers may expose its public descriptor (root sig, stored type),
+      never its payload.],
 
-    [`funnel(Σ)`],
-    [Host / effect sigs whose invocation must be routed through
-      `postulate`'s sanitizer. These need *construction* protection
-      only — so user code can't fabricate a host call that bypasses
-      the no-neutral scan — but not inspection protection.],
-
-    [`forge(Σ) := seal(Σ) ∪ funnel(Σ)`],
-    [The construction-protected set the stem-forge clause consults.
-      *Excludes* the pure kernel operations `bind_hyp` and
-      `postulate` (see note): library code legitimately constructs
-      their invocation wait-forms under the walker.],
+    [`forge(Σ) := seal(Σ)`],
+    [The construction-protected set the stem-forge clause consults. With
+      `funnel(Σ) = ∅` (effects are library, §15) it *coincides with*
+      `seal(Σ)`. It *excludes* the other kernel operation `bind_hyp`
+      (see note): library code legitimately constructs `bind_hyp`
+      invocation wait-forms under the walker, since the dispatcher routes
+      them to the registered handler regardless (§5.4).],
   ),
-  caption: [The pinned-sig sets the walker consults.],
+  caption: [The pinned-sig set the walker consults.],
 )
 
 The walker reduces `apply(f, x)` by the *same move* the §5 dispatcher uses:
@@ -927,7 +932,7 @@ These three are *observe-only* — each is a total function of `x`'s public
 descriptor (root sig, stored type), so it returns identical results on any two
 seals of the same type and leaks nothing seal-distinguishing (the litmus test,
 §4.3). They short-circuit *before* the guard clauses below, so they never trip
-them — exactly as `I` always has. `is_neutral`, `has_sig`, `safe_is_stuck`, and
+them — exactly as `I` always has. `is_neutral`, `has_sig`, and
 `stuck_stored_type` (§12.8) are ordinary library code over these readers plus the
 O(1) `tree_eq`; *value*-decomposition of a neutral (e.g. "is the unknown Nat a
 fork?") is a different operation — it *applies* the neutral, routing to
@@ -956,19 +961,20 @@ All other applications follow `apply`'s rules and return `Ok <result>`.
   invokes privileged code with chosen inputs." That rationale
   presupposes the dispatcher trusting a wait-form's *embedded*
   handler; once the dispatcher routes pinned sigs to the *registered*
-  handler instead (§5.4, §7.4), forging a wait-form can only
+  handler instead (§5.4, §7.5), forging a wait-form can only
   re-invoke the genuine handler — which is built to accept arbitrary
-  inputs (`bind_hyp` escape-checks, `postulate` no-neutral-scans). So
-  construction protection is *not* needed for the kernel operations
-  `bind_hyp` / `postulate`, and is in fact *harmful* there: library
-  recognizers run under the walker (§6.3.1) and must construct
-  `wait kernel.bind_hyp …` invocations to mint their hypotheses (Pi's
-  body check, §12). What genuinely needs unforgeability is the *value*
-  a stuck-form producer mints (a neutral is a token the H-rule
-  trusts) and the *funnel* into a sanitizer (host calls). Hence
-  `forge(Σ) = seal(Σ) ∪ funnel(Σ)`, excluding the operations.
-  Inspection protection is narrower still: only `seal(Σ)`, whose
-  minted tokens are introspection targets.
+  inputs (`bind_hyp` escape-checks). So construction protection is
+  *not* needed for the kernel operation `bind_hyp`, and is in fact
+  *harmful* there: library recognizers run under the walker (§6.3.1)
+  and must construct `wait kernel.bind_hyp …` invocations to mint their
+  hypotheses (Pi's body check, §12). What genuinely needs
+  unforgeability is the *value* a stuck-form producer mints (a neutral
+  is a token the H-rule trusts). Hence `forge(Σ) = seal(Σ)`, excluding
+  `bind_hyp`. Inspection protection is the same set: only `seal(Σ)`,
+  whose minted tokens are introspection targets. (The earlier `funnel`
+  set — host-effect sigs forced through `postulate` — is gone: effects
+  are a library free monad now (§15), so there are no host sigs in Σ to
+  protect.)
 ]
 
 == One LHS-dispatch, two layers <sec:two-layer>
@@ -1098,10 +1104,10 @@ soundness story for environment substitution.
   §4.5 gives a syntactic discipline that approximates membership
   conservatively.
 
-  Throughout the rest of this spec we write `Tree_p` to mean
-  `Tree_p(default_dispatch)` unless an alternative environment is
-  specified. The §11 type system, in particular, is defined relative
-  to the default environment.
+  Σ is now a fixed constant (the two kernel ops, §5), so there is a
+  single `Tree_p` — we write `Tree_p` for `Tree_p(Σ)` throughout, with
+  no alternative environment to range over. The §11 type system is
+  defined relative to it.
 ]
 
 == The walker restricted to `Tree_p(Σ)`
@@ -1116,7 +1122,7 @@ in environment Σ, consumes and produces values in `Tree_p(Σ)`.
 
 == Soundness rules for users
 
-To keep user-written trees in `Tree_p(Σ)`, follow six rules. These
+To keep user-written trees in `Tree_p(Σ)`, follow five rules. These
 form a *decidable static discipline* that conservatively approximates
 membership in the greatest fixed point above:
 
@@ -1127,10 +1133,9 @@ membership in the greatest fixed point above:
   registered signature) instead.
 
 + *Don't construct forks rooted at a `forge(Σ)` sig.* The stem rule
-  rejects this — you can't fabricate a trusted token (`seal(Σ)`) or a
-  host call (`funnel(Σ)`). Mint tokens via `bind_hyp` / `hyp_reduce`
-  and build host calls via `postulate`. (Invocations of `bind_hyp` /
-  `postulate` themselves are *not* forge-protected and may be
+  rejects this — you can't fabricate a trusted token (`seal(Σ)` =
+  `hyp_reduce`). Mint tokens via `bind_hyp` / `hyp_reduce`.
+  (Invocations of `bind_hyp` itself are *not* forge-protected and may be
   constructed directly — the dispatcher routes them to the registered
   handler regardless, §5.4.)
 
@@ -1160,13 +1165,12 @@ membership in the greatest fixed point above:
   recognizer cannot leak by accident — the walker stays live around it;
   only the blessed reads pass.
 
-+ *Stricter contexts use smaller Σ.* Programs that want to operate
-  outside the host's effect surface should run under `safe_apply
-  kernel_handlers`. The walker becomes more permissive (fewer
-  pinned sigs to forbid), but dispatch covers only the kernel
-  handlers — host primitives that would have been intercepted are
-  now reduced as ordinary trees and will fail when their handler is
-  absent.
+(The prior spec had a sixth rule, "stricter contexts use smaller Σ,"
+for running outside the host's effect surface. It is gone: Σ is fixed
+and host effects are no longer dispatcher entries (§15), so there is no
+narrower environment to drop into — effectful code is simply
+interpreted by a different *handler*, in-language, with no change to Σ
+or the walker.)
 
 `Tree_p(Σ)` is the largest carrier in `Kl(CheckerResult)` on which the
 walker — the Kleisli lift of the substrate's apply operation —
@@ -1175,7 +1179,7 @@ restricts to a closed binary operation. Composition in
 §3.5; the walker is the operation those Kleisli arrows compose with
 when reducing `apply` chains.
 
-= The dispatcher and dispatch environments <sec:dispatcher>
+= The dispatcher <sec:dispatcher>
 
 == Setup
 
@@ -1193,30 +1197,28 @@ preferring operational explanations can skip to §7.
 
 == The signature and the dispatcher
 
-The kernel surface has two distinct roles. The *dispatch environment*
-Σ is a list of handler trees whose signatures the dispatcher is
-trusted to invoke; the *dispatcher* `safe_apply Σ` is the interpreter —
-it routes incoming applications either to a handler in Σ or to the
-parametric walker.
+The kernel surface has two distinct roles. The *dispatch set* Σ is the
+fixed list of the two kernel-operation handler trees whose signatures the
+dispatcher is trusted to invoke; the *dispatcher* `param_apply` is the
+interpreter — it routes an incoming application either to the matching
+kernel handler in Σ or to the parametric walker.
 
 ```
-Σ : List Tree   -- the dispatch environment
-dispatcher = safe_apply : List Tree → Tree → Tree → CheckerResult Tree
-param_apply := safe_apply default_dispatch    -- the default-instance name
+Σ : List Tree   -- the fixed dispatch set: [hyp_reduce, bind_hyp]
+param_apply : Tree → Tree → CheckerResult Tree    -- the dispatcher
 ```
 
-Each handler in Σ is a *curried function* the dispatcher invokes as
-`handler Σ meta arg`: the current dispatch environment Σ first (threaded
-so the handler's own sub-evaluation stays in this environment), then its
-structured meta record, then an argument from `Tree_p(Σ)`, producing a
-result in the `CheckerResult` monad. The per-operation signatures in the
-table below elide the leading Σ; handlers that sub-evaluate nothing
-(`hyp_reduce`, `postulate`) ignore it. The meta record is what gets
-baked into a wait-form (`wait handler meta`, see §5.4); applying the
-wait-form to an argument triggers dispatch via `safe_apply`, which
-supplies Σ.
+Each handler is a *curried function* the dispatcher invokes as
+`handler meta arg`: its structured meta record, then an argument from
+`Tree_p`, producing a result in the `CheckerResult` monad. (Earlier
+drafts threaded the dispatch environment Σ as a leading argument so a
+handler's sub-evaluation stayed in a chosen environment; with Σ fixed to
+the two kernel ops, there is nothing to vary and nothing to thread.) The
+meta record is what gets baked into a wait-form (`wait handler meta`, see
+§5.4); applying the wait-form to an argument triggers dispatch via
+`param_apply`.
 
-The three kernel-shipped Σ-operations are:
+The two kernel-shipped Σ-operations are:
 
 #figure(
   table(
@@ -1236,17 +1238,11 @@ The three kernel-shipped Σ-operations are:
       `CheckerResult` after checking the result is fresh for the seal
       (§7.2)],
 
-    [`postulate` (Σ-op)],
-    [`{sig : Tree} → Tree_p → CheckerResult(Tree_p)` — mints a
-      wait-form rooted at a handler sig in the current Σ; the bridge
-      from user code to non-self-dispatching handlers],
-
-    [`safe_apply` (dispatcher)],
-    [`List Tree → Tree_p → Tree_p → CheckerResult(Tree_p)` —
-      Σ-parameterized substrate-apply with a privilege check],
+    [`param_apply` (dispatcher)],
+    [`Tree_p → Tree_p → CheckerResult(Tree_p)` — substrate-apply over
+      the fixed kernel Σ, with a privilege check],
   ),
-  caption: [The kernel surface: three Σ-operations plus the
-    parameterized dispatcher.],
+  caption: [The kernel surface: two Σ-operations plus the dispatcher.],
 )
 
 #note[
@@ -1257,64 +1253,39 @@ The three kernel-shipped Σ-operations are:
   internal arity counter in the wait-form payload.
 ]
 
-== Dispatch environments
+== The fixed dispatch set
 
-A *dispatch environment* Σ is a list of handler trees. Each handler is
-a closed disp tree implementing a Kleisli arrow of the appropriate
-arity; its signature is derived from the wait-encoding as
-`checker_sig h := pair_fst (wait h t)` (the same library helper used
-throughout §5.4 and §12). The dispatcher's privilege check asks "is
-`pair_fst f` equal to `checker_sig h` for some `h ∈ Σ`?", which reduces
-to scanning Σ with O(1) per-element comparisons (hash-cons identity,
-§2.2). For typical Σ-sizes (≤ 30) the linear scan is fine; the host
-fast-path may use a hash table indexed by sig.
+The dispatch set Σ is a *fixed* list of the two kernel-operation
+handler trees. Each handler is a closed disp tree implementing a Kleisli
+arrow of the appropriate arity; its signature is derived from the
+wait-encoding as `checker_sig h := pair_fst (wait h t)` (the same library
+helper used throughout §5.4 and §12). The dispatcher's privilege check
+asks "is `pair_fst f` equal to `checker_sig h` for some `h ∈ Σ`?", which
+reduces to at most two O(1) comparisons (hash-cons identity, §2.2).
 
-The kernel ships its three Σ-operation handlers as a top-level binding.
-The named-record view `kernel` and the list `kernel_handlers` hold the
-*same* handler trees — so a `kernel.hyp_reduce`-rooted neutral routes to,
-and is recognized against, exactly the `q_hyp_reduce_fn` entry in Σ
-(handlers reference one another through `kernel.…`, tied as a mutually
-recursive record):
+The named-record view `kernel` and the list `Σ` hold the *same* handler
+trees — so a `kernel.hyp_reduce`-rooted neutral routes to, and is
+recognized against, exactly the `q_hyp_reduce_fn` entry (handlers
+reference one another through `kernel.…`, tied as a mutually recursive
+record):
 
 ```disp
-let kernel : { hyp_reduce, bind_hyp, postulate } := {
+let kernel : { hyp_reduce, bind_hyp } := {
   hyp_reduce := q_hyp_reduce_fn,
-  bind_hyp   := q_bind_hyp_fn,
-  postulate  := q_postulate_fn
+  bind_hyp   := q_bind_hyp_fn
 }
-let kernel_handlers : List Tree := [
-  kernel.hyp_reduce,           // = q_hyp_reduce_fn
-  kernel.bind_hyp,
-  kernel.postulate
-]
+let Σ : List Tree := [ kernel.hyp_reduce, kernel.bind_hyp ]   // the whole dispatch set
+let param_apply := /* the §7.5 fix-form over Σ */
 ```
 
-The host exposes its primitives (IO, syscalls, …) as a value at
-module-load time:
-
-```disp
-let host_provided : List Tree := /* exposed by the host runtime */
-```
-
-The default dispatch environment used by `param_apply`, by every test
-declaration, and by `typecheck` is their concatenation:
-
-```disp
-let default_dispatch : List Tree := concat kernel_handlers host_provided
-let param_apply := safe_apply default_dispatch
-```
-
-There is no mutable registry. Every (P, H) — every dispatch environment —
-is an explicit value. Stricter callers construct alternative
-environments by restricting or extending this list:
-
-```disp
-let test_env : List Tree := concat kernel_handlers [my_mock_console]
-let test_apply := safe_apply test_env
-```
-
-Each `q_*_fn` is a Kleisli arrow implementing its operation's semantics
-(full definitions in §7).
+There is no host environment and no mutable registry. Real-world effects
+are *not* in Σ — they are library `Eff` values performed by the driver
+(§15), so Σ never grows beyond the two kernel ops. (Earlier drafts
+concatenated a caller-varied `host_provided` into a `default_dispatch`
+and let callers substitute narrower environments; that openness existed
+only to vary host availability, which is now a driver concern, so Σ is a
+single fixed constant.) Each `q_*_fn` is a Kleisli arrow implementing its
+operation's semantics (full definitions in §7).
 
 #note[
   *Sigs are derivable from handlers.* A handler is a tree; its sig is
@@ -1364,13 +1335,13 @@ type's MetaShape-conforming meta record from a wait-form's payload
 before applying it to anything.
 
 With these two properties in place, the dispatcher is a single
-privilege check parameterized by Σ:
+privilege check against the fixed Σ:
 
 ```
-safe_apply Σ f x:
-  if ∃! h ∈ Σ. tree_eq (pair_fst f) (checker_sig h)  → h Σ ⟨wait_meta f⟩ x
+param_apply f x:
+  if ∃! h ∈ Σ. tree_eq (pair_fst f) (checker_sig h)  → h ⟨wait_meta f⟩ x
                                                           // registered handler (not f's embedded one),
-                                                          // given Σ + recovered meta + arg; its
+                                                          // given recovered meta + arg; its
                                                           // CheckerResult is the result (no extra Ok)
   else                                                 → walker step (§4)
 ```
@@ -1378,23 +1349,22 @@ safe_apply Σ f x:
 *The dispatcher routes to the registered handler.* When `pair_fst f`
 matches the sig of the (unique) member `h ∈ Σ`, the dispatcher
 recovers the wait-form's meta `m = wait_meta f` (the *meta
-accessibility* property below) and evaluates `h Σ m x` for *that
+accessibility* property below) and evaluates `h m x` for *that
 registered handler* — it does *not* trust the handler `f` happens to
-embed, and it never raw-reduces `f` itself. Σ is threaded so the
-handler's own sub-evaluation stays in the current environment. For a
-genuine wait-form `f = wait h m` the registered handler is the embedded
-one, so the call is the intended `h Σ m x`; for a forgery carrying the
-right sig but a different embedded handler, the registered `h` runs
-anyway, so a forged routing cannot execute attacker-chosen code. This closes the
+embed, and it never raw-reduces `f` itself. For a genuine wait-form
+`f = wait h m` the registered handler is the embedded one, so the call is
+the intended `h m x`; for a forgery carrying the right sig but a different
+embedded handler, the registered `h` runs anyway, so a forged routing
+cannot execute attacker-chosen code. This closes the
 trust-set-vs-routing-table gap (see `archive/SCOPE_VERIFICATION_INVESTIGATION.md`):
 privilege is granted to a *sig*, and the sig names a *registered
 handler*, not whatever tree presents that sig.
 
 So Σ is a genuine routing table, not merely a trust set. Soundness
-needs only that *registered* handlers have distinct sigs (`checker_sig`
-injective on Σ — a finite, checkable property asserted when Σ is
-built), not the far stronger "no user-reachable tree shares a trusted
-sig." See §7's `safe_apply` entry for the in-language reference.
+needs only that the two *registered* handlers have distinct sigs
+(`checker_sig` injective on Σ — trivially true for the fixed pair), not
+the far stronger "no user-reachable tree shares a trusted sig." See §7's
+`param_apply` entry for the in-language reference.
 
 === Why wait-forms, not plain partial application
 
@@ -1411,7 +1381,7 @@ partial application does not:
   `param_apply`).
   The sig also *keys the routing table*: the dispatcher looks it up in
   Σ and runs that registered handler on the wait-form's recovered meta
-  (§5.4, §7.4), rather than trusting the handler `f` embeds. A directly
+  (§5.4, §7.5), rather than trusting the handler `f` embeds. A directly
   partially-applied function would lack a stable signature to gate
   privilege on or to key the table by.
 
@@ -1440,59 +1410,17 @@ Library operations are *derived terms* built by composition of Σ
 generators. Examples:
 
 - `typecheck` is the Kleisli composition of `param_lift` and `param_apply T` (precomposed with the user-supplied type).
-- `typed_lambda A B f` is a specific use of `checked` at function-type metadata.
-- `validate` composes `typecheck` with certificate construction.
+- `checked A f` wraps a function with its input (domain) type `A`, contract-checking each argument against `A` before applying `f` (§8, §12.16).
 - Library types (`Pi`, `Sigma`, `Bool`, etc.) are derived terms — wait-forms over library recognizers. Inductive types supply a `respond` field whose case-frame action mints stuck eliminations through `hyp_reduce`; the library `elim` (§12) handles the concrete/neutral gate.
 
 The library is "freely generated" from Σ in the algebraic-theory sense,
 modulo composition equations in `Kl(T)`.
 
-== Caveats vs Plotkin-Pretnar algebraic effects
+== What the dispatcher is — and what it is *not*
 
-Disp's system is structurally similar to but technically narrower than
-Plotkin-Pretnar algebraic effects:
-
-#figure(
-  table(
-    columns: 3,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*Property*], [*Disp*], [*Plotkin-Pretnar*],
-    [Handler set], [Σ-parameterized; default carries kernel + host], [Open (user-defined)],
-    [Dispatch], [Structural signature on wait-forms], [Lexical handler scope],
-    [Algebraicity], [Operations not algebraic in general], [Operations algebraic (`bind (op c_i) k = op (bind c_i k)`)],
-    [Multi-shot continuations], [No (tree calculus is pure); explicit CPS in interface for nondet/backtracking], [Yes],
-    [Effect rows], [Capability passing via dependent records (§15)], [Explicit row polymorphism],
-  ),
-  caption: [Disp vs Plotkin-Pretnar.],
-)
-
-Disp inherits the *vocabulary* (monad, Kleisli, operations, handlers)
-and now also part of the *power* (handler-set extension via
-Σ-parameterization). It still differs from Plotkin-Pretnar in two ways:
-(a) the substrate is pure, so multi-shot continuations require explicit
-CPS in the effect interface rather than implicit capture; (b) effect
-typing is capability passing (Effekt-style, §15), not row polymorphism
-(Koka-style). We use "algebraic effect" as informal shorthand because
-the structural similarities to Koka, Effekt, and Eff are real and the
-framing is illuminating.
-
-#note[
-  *Position vs. predecessors.* Disp's original framing called the
-  Σ-algebra "closed" (one fixed kernel handler). This spec opens it
-  along the Σ-parameter axis: the kernel still ships a default
-  Σ-algebra, but every caller can substitute its own. This is a
-  cleaner factoring than Koka/Eff's *scoped handler installation*:
-  there is no implicit dynamic handler stack, only explicit
-  environment substitution.
-]
-
-== What "effect" means here
-
-A *handler* in Σ is anything the dispatcher routes to: a tree whose
-`apply` semantics carry observable consequences. The kernel-shipped
-handlers in `kernel_handlers` provide *type-system effects*:
+The dispatcher routes exactly two operations — the kernel's
+*type-system* operations, which change the checking state rather than
+the world:
 
 #figure(
   table(
@@ -1500,36 +1428,29 @@ handlers in `kernel_handlers` provide *type-system effects*:
     stroke: 0.4pt + gray,
     align: left,
     inset: 6pt,
-    [*Handler*], [*Effect on the type-checking environment*],
+    [*Handler*], [*Effect on the type-checking state*],
     [`bind_hyp`], [Mint a fresh seal for an unknown of given type.],
     [`hyp_reduce`], [Push a frame onto a neutral; consult the stored type's `respond`.],
-    [`postulate`], [Bridge from user code to a non-self-dispatching handler.],
   ),
-  caption: [Kernel handlers as type-system effects.],
+  caption: [The two kernel handlers as type-system operations.],
 )
 
-The host-provided handlers in `host_provided` provide *real-world
-effects* — IO, syscalls, time-of-day, anything the host TS layer
-implements. Both categories populate the *same* Σ; both go through the
-*same* `safe_apply` dispatcher; both are subject to the *same* walker
-discipline (no forging, no triage on resulting stuck forms). The
-kernel/host distinction is an implementation detail, not a semantic
-boundary.
+*The dispatcher is not the effect system.* Real-world effects — IO,
+syscalls, time-of-day — are *not* dispatcher entries and are *not* in Σ.
+They are values in the library free monad `Eff R X` (§15), interpreted by
+library handlers, and performed only by an outermost *driver* at the
+program boundary. This is a deliberate change from the prior spec, which
+unified "effects" with "Σ entries" and routed host IO through the same
+dispatcher; the substrate's purity (which hash-consing requires) forces
+effects to be values, so they cannot be side-effecting dispatch targets.
 
-Operationally, the most consequential difference between the two is
-*which slot of the wait-form holds what*. For kernel Σ-ops the
-handler logic is bracket-abstracted into the wait-form's body and runs
-via substrate reduction. For host primitives the handler is a TS
-function in the native fast-path table, and the wait-form's body is
-inert (waiting to be intercepted). To a disp-source reader these look
-identical: both are wait-forms in Σ whose application has a defined
-semantics.
-
-This unification — *"effects" mean "Σ entries"* — is what lets the
-parametricity story scale uniformly: any pinned sig is unforgeable by
-the walker, regardless of whether its handler manipulates type-system
-state or filesystem state. The §4 stem-forge rule and the §6 H-rule
-both consult Σ; both apply equally to neutrals and to IO calls.
+The genuine algebraic-effects story — operations, handlers, multi-shot
+continuations, effect rows, and the comparison to Plotkin-Pretnar /
+Koka / Eff — therefore lives in §15, at the *library* layer, not here. The
+kernel dispatcher is just the privilege gate that lets `hyp_reduce` and
+`bind_hyp` mint seal-rooted trees the walker would otherwise forbid; it
+inherits the algebraic-effects *vocabulary* (monad, Kleisli) but its only
+"effects" are the two type-system operations above.
 
 = Stuck forms and neutrals <sec:stuck-forms>
 
@@ -1607,8 +1528,9 @@ Per-type behavior:
 - *Type-typed neutral, frame = candidate value*: `Return (and
   (is_neutral frame) (tree_eq (stuck_stored_type frame)
   (reconstruct_self meta)))` — the predicate-side H-rule (§12.18).
-- *Non-applicable type (e.g. raw `I`)*: `respond = none`; the
-  neutral is inert and `hyp_reduce` records `InvalidType`.
+- *Non-applicable type (e.g. raw `I`)*: `respond = inert_respond`
+  (§12.3), which returns `Extend InvalidType` for every frame; the
+  neutral becomes an `InvalidType`-typed dead-state stuck form.
 
 *Library elimination* (`elim`, §12) gates on `is_neutral target`:
 the concrete branch runs the dispatcher; the neutral branch routes
@@ -1651,7 +1573,7 @@ wait-form reduces to `recognizer_wrap_fn body meta v`. The wrapper runs
 *under the walker* — it gets no raw region — so its inspection of `v`
 goes through the §4.2 reader layer, not raw triage.
 
-*Mechanism.* The wrapper checks `safe_is_stuck v` and reads
+*Mechanism.* The wrapper checks `is_neutral v` and reads
 `stuck_stored_type v` — both reader-based (`ROOT_SIG` / `STORED_TYPE`,
 §4.2/§12.8), so they return a *concrete* descriptor even when `v` is a
 seal. If `v` is stuck it short-circuits to
@@ -1765,24 +1687,24 @@ stuck-form machinery intact.
 
 = The kernel primitives <sec:primitives>
 
-Operational semantics for the three Σ-operations of §5 plus the
-parameterized dispatcher `safe_apply`. The kernel surface is small by
+Operational semantics for the two Σ-operations of §5 plus the
+dispatcher `param_apply`. The kernel surface is small by
 design: only operations requiring privileged construction live here.
-Type recognition, case eliminators, typed function application, and
-most type-system machinery live in the library (§12).
+Type recognition, case eliminators, typed function application,
+effects (§15), and most type-system machinery live in the library (§12).
 
 #note[
-  Each handler is invoked from inside some `safe_apply Σ` call as
-  `handler Σ meta arg` (§5.4). The dispatcher passes the current Σ
-  explicitly, so a handler's own sub-evaluation (`safe_apply Σ …`)
-  stays in the same environment. Under `test_pure` that Σ is
-  `kernel_handlers`; under `default_dispatch` it's the full
-  environment. Sibling Σ-ops are referenced by their canonical
-  `kernel.…` names (the mutually recursive `kernel` record, §5.3), so
-  every `kernel.hyp_reduce`-rooted neutral is the one canonical tree. The
-  earlier `(ks, raw, query)` self-proxy is gone: explicit Σ-passing
-  supplies what `ks.param_apply` did, and the `kernel.…` names supply
-  what `raw.field` did.
+  Each handler is invoked from inside a `param_apply` call as
+  `handler meta arg` (§5.4). With Σ fixed (the two kernel ops), a
+  handler's own sub-evaluation just calls `param_apply` again — there is
+  no environment to thread, and type-checking is host-independent
+  regardless, since effects are inert library values (§15). Sibling
+  Σ-ops are referenced by their canonical `kernel.…` names (the mutually
+  recursive `kernel` record, §5.3), so every `kernel.hyp_reduce`-rooted
+  neutral is the one canonical tree. The earlier `(ks, raw, query)`
+  self-proxy is gone: direct `param_apply` calls supply what
+  `ks.param_apply` did, and the `kernel.…` names supply what `raw.field`
+  did.
 ]
 
 == `hyp_reduce`
@@ -1797,9 +1719,15 @@ the spine (`Extend`) or yields a value (`Return`).
 *Disp source:*
 
 ```disp
-let q_hyp_reduce_fn = {Σ, meta, frame} -> {     // Σ unused: hyp_reduce sub-evaluates nothing
+let q_hyp_reduce_fn = {meta, frame} -> {        // hyp_reduce sub-evaluates nothing
   let stored  = neutral_meta_type meta
+  // `respond` is a *constitutive* field — every type has one (§11.2); inert
+  // types carry `inert_respond` (§12.3), so there is no `none` case to test.
   let respond = meta_get (type_meta stored) "respond"
+  // The two-tag `Action`: `Extend T'` extends the spine at a new stored type,
+  // `Return v` short-circuits to a value. A frame the type rejects is returned
+  // as `Extend InvalidType` (§12.3) — handled here by the ordinary `Extend`
+  // branch, so `hyp_reduce` needs no third case and no hardcoded `invalid`.
   // A spine extension roots at the *registered* handler `kernel.hyp_reduce`
   // — the very tree held in Σ, so the result both routes (dispatch) and
   // answers `is_neutral` — and embeds the PREDECESSOR NEUTRAL
@@ -1813,27 +1741,19 @@ let q_hyp_reduce_fn = {Σ, meta, frame} -> {     // Σ unused: hyp_reduce sub-ev
   // Returns are `Ok`-wrapped: like every dispatch target, `hyp_reduce`
   // hands back a `CheckerResult` (§7.5 wrapping invariant), so the
   // dispatcher passes it through un-nested rather than re-wrapping.
-  let invalid = Ok (wait kernel.hyp_reduce (extend_neutral_meta (reconstruct_self meta) InvalidType frame))
-  match (is_some respond) {
-    FF => invalid
-    TT => (
-      let action = (unwrap respond) meta frame
-      match (is_extend action) {
-        TT => Ok (wait kernel.hyp_reduce (extend_neutral_meta (reconstruct_self meta) (pair_snd action) frame))
-        FF => match (is_return action) {
-          TT => Ok (pair_snd action)
-          FF => invalid
-        }
-      }
-    )
+  let action = respond meta frame
+  match (is_extend action) {
+    TT => Ok (wait kernel.hyp_reduce (extend_neutral_meta (reconstruct_self meta) (pair_snd action) frame))
+    FF => Ok (pair_snd action)            // Return v
   }
 }
 ```
 
 *Soundness obligation.* `respond` runs raw (outside the walker). Each
 type former's `Return v` channel must be fed only by public-derived
-data — the local DCC `[BindM]` discipline. `Extend` and `Invalid` are
-unconditionally safe.
+data — the local DCC `[BindM]` discipline. `Extend` (including the
+rejection case `Extend InvalidType`) is unconditionally safe: it only
+ever names a type, never surfaces payload.
 
 == `bind_hyp`
 
@@ -1850,19 +1770,19 @@ the body, where it would have no binder.
 *Disp source:*
 
 ```disp
-let q_bind_hyp_fn = {Σ, domain, body} -> {
+let q_bind_hyp_fn = {domain, body} -> {
   let h = wait kernel.hyp_reduce (make_neutral_meta domain (t domain body))
   let h_use = match (is_pi domain) {
-    TT => checked domain h        // wrap with the *full* function type, so applying
-    FF => h                       // h_use checks its arg against `pi_dom domain` (§8, §12)
+    TT => checked (pi_dom domain) h   // wrap with the domain's *input* type, so applying
+    FF => h                           // h_use checks its arg against `pi_dom domain` (§8, §12)
   }
-  // safe_apply Σ runs the body under the *current* environment, so a
-  // body-check fired under test_pure (Σ = kernel_handlers) stays
-  // host-independent (§14). Per the §7.5 wrapping invariant, safe_apply
-  // returns the body's CheckerResult un-nested, so `bind` exposes the
-  // body's own payload (a `Pub h R` value); we escape-check it and
-  // re-wrap with `Ok` to hand back a `CheckerResult R`.
-  bind (safe_apply Σ body h_use) ({result} -> (
+  // `param_apply` runs the body. Type-checking never performs an effect
+  // (effects are inert library values, §15), so a body-check is inherently
+  // host-independent — there is no environment to thread. Per the §7.5
+  // wrapping invariant, param_apply returns the body's CheckerResult
+  // un-nested, so `bind` exposes the body's own payload (a `Pub h R` value);
+  // we escape-check it and re-wrap with `Ok` to hand back a `CheckerResult R`.
+  bind (param_apply body h_use) ({result} -> (
     match (occurs h result) {
       TT => Err (Escape { hyp = h, body_result = result, span })
       FF => Ok result
@@ -1918,208 +1838,133 @@ concrete path is ordinary library code — no dedicated eliminator primitive
 is needed. `StuckElim` and `Hyp` are tree-level aliases: both are
 `wait kernel.hyp_reduce (make_neutral_meta T payload)`.
 
-== `postulate`
+== `postulate` is gone — effects are a library construction
 
-*Signature.* `postulate : {sig : Tree} -> Tree_p -> CheckerResult(Tree_p)`.
+Earlier drafts shipped a third Σ-operation, `postulate`, as the
+kernel-mediated constructor for host-rooted wait-forms — the bridge by
+which user code reached a host effect handler, sanitizing the payload
+(no neutrals) on the way. That entire mechanism is *removed*. Effects are
+now a pure library free monad interpreted by an outermost driver (§15):
 
-*Role.* The kernel-mediated constructor for wait-forms rooted at a
-*funnel sig* — a host / effect handler in `funnel(Σ)` (§4.2). User
-code can't construct such trees directly: the walker's stem-forge
-clause rejects fabricating a `forge(Σ)` root, so every host call is
-forced through this one sanitizing route. `postulate` runs in the
-privileged arm and may mint the otherwise-forbidden fork shape — but
-*only for `funnel(Σ)` targets*. Targeting a `seal(Σ)` sig (which would
-forge a trusted token, e.g. a neutral) is refused: `postulate` is a
-bridge to effects, never a back door to the seal set.
-Each library postulate `host_op : T := postulate sig` produces a
-`checked T (call_via_postulate sig)` value; the `checked` wrap (§8,
-§12) enforces input validation, and `postulate`'s handler validates
-that the payload contains no neutrals before constructing.
+- An effect operation is an ordinary `Eff R X` *value* (a free-monad `Op`
+  node, §15.2), built by library `declare_op` — not a privileged
+  construction, so no kernel primitive mints it.
+- The host never appears in the dispatch environment Σ. There is no
+  `host_provided`, no funnel sig (§4.2), no host-rooted wait-form.
+- The no-neutral sanitizer that `postulate` performed relocates to the
+  *driver*, as the `is_closed` check before each host call (§15.6) —
+  the only sound place for it, since op arguments are legitimately
+  symbolic during type-checking.
 
-*Gloss.* "Build a wait-form rooted at `sig`, paired with the given
-payload, on behalf of user code. Refuse if `sig` is a seal sig (no
-forging tokens) or if the payload contains neutrals (would smuggle a
-hyp to a host handler). This is the only path by which user code
-produces a `funnel(Σ)`-rooted fork shape, because the walker rejects
-all other paths to it. (The kernel operations `bind_hyp` / `postulate`
-themselves are *not* construction-protected — their invocation
-wait-forms are built by ordinary library code under the walker and
-routed to the registered handler, §5.4.)"
+So the kernel ships exactly *two* Σ-operations, `hyp_reduce` and
+`bind_hyp`, both privileged because both *mint a seal-rooted tree*
+(§4.2) that the walker forbids library code from constructing. Nothing
+else needs privileged construction.
 
-The disp library is responsible for the *type ascription* T. The host
-provides only the handler tree (the entry in `host_provided : Σ`);
-disp source code asserts what type that handler implements. Multiple
-postulates can target the same sig with different (typically
-incrementally stricter) type ascriptions; users pick the one matching
-their proof obligations at the call site.
+== `param_apply`
 
-*Disp source (sketch):*
+*Signature.* `param_apply : Tree_p -> Tree_p -> CheckerResult(Tree_p)`.
 
-```disp
-let q_postulate_fn = {Σ, meta, payload} -> {    // Σ unused
-    let sig = pair_snd meta             // the target handler sig
-    // Reject seal-sig targets: postulate bridges to effects, never
-    // forges a trusted token (e.g. a hyp_reduce-rooted neutral).
-    match (is_seal_sig sig) {
-      TT => Err (Malformed { handler = "postulate", meta = sig, span })
-      FF =>
-        // Sanitize: payload must not contain forged neutrals or
-        // hypothesis leakage. The host primitive must not see them.
-        match (scan_no_neutral payload) {
-          FF => Err (Malformed { handler = "postulate", meta = payload, span })
-          TT => Ok (wait_with_sig sig payload)
-        }
-    }
-  }
+*Role.* The dispatcher. Each call decides between trusted raw execution
+(for an invocation of a kernel Σ-operation) and unprivileged walker
+reduction (everything else). On the raw arm it *routes to the registered
+handler* for the matched sig — the kernel handler the sig names, not the
+handler the wait-form happens to embed (§5.4) — so privilege is granted to
+a sig and the sig names a fixed kernel handler.
 
-// wait_with_sig is host-mediated: it constructs the fork shape
-// `pair_fst = sig, pair_snd = payload` using the same encoding the
-// wait-form uses, bypassing the walker (we're in the privileged arm).
-```
+*Σ is now a fixed kernel constant.* With effects moved to the library
+(§15), nothing host-specific populates the dispatch set, so the earlier
+`safe_apply Σ` parameterization collapses back to the plain two-argument
+`param_apply`. The dispatch set Σ is the *fixed* list of the two
+Σ-operations; there is no `host_provided`, no `default_dispatch`, no
+caller-varied environment. (`Σ` remains the name of this set throughout —
+the walker's `seal(Σ)` / `forge(Σ)` / `Tree_p(Σ)` of §4 are now just
+`seal`, `forge`, `Tree_p` over this one fixed Σ.)
 
-*Soundness obligation.* The host's handler for `sig`, when invoked,
-behaves consistently with whatever type ascription the disp library
-assigned to it. Type-ascription correctness is a *library-level*
-soundness concern; the kernel only ensures that user code reaches the
-host handler through the postulate route.
-
-== `safe_apply`
-
-*Signature.* `safe_apply : List Tree -> Tree_p -> Tree_p -> CheckerResult(Tree_p)`.
-
-*Role.* The parameterized dispatcher. Takes a dispatch environment Σ
-as its first argument. Each call decides between trusted raw execution
-(for handler invocations whose sig is in Σ) and unprivileged walker
-reduction (for everything else). On the raw arm it *routes to the
-registered handler* for the matched sig — the member of Σ, not the
-handler the wait-form happens to embed (§5.4) — so privilege is granted
-to a sig and the sig names a registered handler.
-
-*Gloss.* "Look at `f x`. If `f`'s sig is in Σ, run the registered
-handler raw (it's privileged). Otherwise, run the walker — apply
-substrate reduction rules, but reject any rule that would forge a
-pinned sig or triage on a neutral. Either way, sub-evaluations recurse
-with the same Σ."
-
-*`param_apply` is the default-instance name.* The kernel ships
-`default_dispatch : List Tree` (the concatenation of `kernel_handlers`
-and `host_provided`); `param_apply := safe_apply default_dispatch` is
-the version used by `typecheck`, by tests, and by every implicit
-reduction in this spec. Stricter callers (foundational tests,
-sandboxes) use `safe_apply Σ_strict` with a narrower Σ.
+*Gloss.* "Look at `f x`. If `f`'s sig is a kernel-op sig, run that kernel
+handler raw (it's privileged). Otherwise, run the walker — apply substrate
+reduction rules, but reject any rule that would forge a pinned sig or
+triage on a neutral."
 
 ```disp
-// Routing lookup on Σ. Linear scan; each comparison is O(1) hash-cons
-// id. Returns the registered handler for `sig`, or None if unpinned.
-// `wait_meta` is the meta-recovery of §5.4 (the "meta accessibility"
-// property): for a genuine `wait k m` it returns `m`.
-lookup_handler := {Σ, sig} ->
-  list_find ({h} -> tree_eq sig (checker_sig h)) Σ
+// The fixed kernel dispatch set: the two Σ-operations. No host entries.
+let Σ : List Tree := [ q_hyp_reduce_fn, q_bind_hyp_fn ]
+
+// Routing lookup. At most two O(1) hash-cons comparisons. Returns the
+// kernel handler for `sig`, or None if `sig` is not a kernel-op sig.
+// `wait_meta` is the meta-recovery of §5.4: for a genuine `wait k m` → `m`.
+lookup_handler := {sig} -> list_find ({h} -> tree_eq sig (checker_sig h)) Σ
 ```
 
 *The dispatcher.*
 
 ```disp
-safe_apply := fix ({self, Σ, f, x} ->
-  match (and (is_wait_form f) (is_some (lookup_handler Σ (pair_fst f)))) {
+param_apply := fix ({self, f, x} ->
+  match (and (is_wait_form f) (is_some (lookup_handler (pair_fst f)))) {
     TT => (
-      let h = unwrap (lookup_handler Σ (pair_fst f))
-      h Σ (wait_meta f) x)                     // registered handler: Σ, recovered meta, arg —
+      let h = unwrap (lookup_handler (pair_fst f))
+      h (wait_meta f) x)                       // registered kernel handler: recovered meta, arg —
                                                // already returns a CheckerResult, passed through un-nested (§7.5)
-    FF => walker_step Σ (self Σ) f x          // walker (§4), parameterized by Σ
+    FF => walker_step self f x                 // walker (§4)
   })
 ```
 
 The two arms have different semantics:
 
-- *Routed arm.* The dispatcher runs the *registered* handler `h ∈ Σ`,
-  supplying the current environment Σ, the wait-form's recovered meta,
-  and the argument: `h Σ (wait_meta f) x`, in raw (non-walker)
-  reduction. Threading Σ keeps the handler's sub-evaluation in the
-  *same* environment (so a body-check under `test_pure` stays
-  host-independent, §14). The dispatcher never raw-reduces `f` itself:
-  for a genuine `f = wait h m` the registered handler equals the
-  embedded one, and for a forgery presenting the sig with a different
-  embedded handler the *registered* `h` runs regardless (§5.4). The
-  handler's body, running raw, can do operations the walker would
-  reject — minting neutrals (`bind_hyp`), extending spines
-  (`hyp_reduce`), constructing funnel-sig-rooted wait-forms via
-  `postulate`. Because the routed handler is the *registered* one,
-  forging the *invocation* of a non-token operation (`bind_hyp`,
-  `postulate`) is harmless: it can only re-enter the genuine,
-  self-defending handler.
+- *Routed arm.* The dispatcher runs the *registered* kernel handler `h`
+  (its sig is one of the two in Σ), supplying the wait-form's recovered
+  meta and the argument: `h (wait_meta f) x`, in raw (non-walker)
+  reduction. The dispatcher never raw-reduces `f` itself: for a genuine
+  `f = wait h m` the registered handler equals the embedded one, and for a
+  forgery presenting the sig with a different embedded handler the
+  *registered* `h` runs regardless (§5.4). The handler's body, running
+  raw, can do operations the walker would reject — minting neutrals
+  (`bind_hyp`), extending spines (`hyp_reduce`). Because the routed handler
+  is the *registered* one, forging the *invocation* of `bind_hyp` is
+  harmless: it can only re-enter the genuine, self-defending handler.
 
-- *Walker arm.* `walker_step` is the parametricity-enforcing
-  reduction of §4, also parameterized by Σ. Its internal sub-applies
-  re-enter `self Σ` (the same `safe_apply` with the same environment)
-  rather than calling substrate apply directly, so dispatch happens
-  at every layer of nested reduction. Any sub-tree that happens to be
-  a Σ-pinned wait-form gets routed back to the raw arm.
+- *Walker arm.* `walker_step` is the parametricity-enforcing reduction of
+  §4. Its internal sub-applies re-enter `self` (the same `param_apply`)
+  rather than calling substrate apply directly, so dispatch happens at
+  every layer of nested reduction. Any sub-tree that is a kernel-op
+  wait-form gets routed back to the raw arm.
 
 #note[
-  *The wrapping invariant.* `safe_apply Σ f x` evaluates the application
+  *The wrapping invariant.* `param_apply f x` evaluates the application
   `f x` to normal form and returns that normal form *directly*; the only
   `CheckerError` it introduces itself is `Err Parametricity`, when a
   reduction step trips a walker rejection. It never adds an `Ok` of its
   own. Two consequences:
   - A *pure* reduction returns its bare result tree —
-    `safe_apply … (add 2 3) → 5`, not `Ok 5` (so arithmetic tests like
+    `param_apply (add 2 3) → 5`, not `Ok 5` (so arithmetic tests like
     `test (add 2 3) = 5` hold).
   - A reduction whose head is a `CheckerResult`-producer — a library
-    recognizer, a Σ-handler, or `checked_apply` — returns that producer's
-    `CheckerResult` as the normal form: `param_apply Bool TT → Ok TT`,
-    *not* `Ok (Ok TT)`.
+    recognizer, a kernel handler, or `checked_apply` — returns that
+    producer's `CheckerResult` as the normal form: `param_apply Bool TT →
+    Ok TT`, *not* `Ok (Ok TT)`.
 
-  So `safe_apply` results are *never* nested (`Ok (Ok _)` / `Ok (Err _)`
+  So `param_apply` results are *never* nested (`Ok (Ok _)` / `Ok (Err _)`
   do not arise): every dispatch target already returns a `CheckerResult`,
-  and the dispatcher returns it verbatim (the routed arm is `h Σ
-  (wait_meta f) x`, with no wrapping `Ok`). This is why the three
-  handlers share one return convention — `hyp_reduce`'s spine extensions
-  are `Ok`-wrapped (§7.1) just as `bind_hyp` / `postulate` already wrap
-  their verdicts and errors — and why `bind_hyp` re-wraps its
-  escape-checked result as `Ok result` (§7.2) rather than relying on a
-  second `Ok` from the dispatcher.
+  and the dispatcher returns it verbatim (the routed arm is `h (wait_meta
+  f) x`, with no wrapping `Ok`). This is why the two handlers share one
+  return convention — `hyp_reduce`'s spine extensions are `Ok`-wrapped
+  (§7.1) just as `bind_hyp` wraps its verdicts and errors — and why
+  `bind_hyp` re-wraps its escape-checked result as `Ok result` (§7.2)
+  rather than relying on a second `Ok` from the dispatcher.
 ]
 
-*Default dispatch environment.* The kernel's standard top-level
-bindings:
-
-```disp
-let kernel_handlers : List Tree := [
-  q_hyp_reduce_fn,
-  q_bind_hyp_fn,
-  q_postulate_fn
-]
-
-let host_provided : List Tree := /* exposed by the host runtime */
-
-let default_dispatch : List Tree := concat kernel_handlers host_provided
-
-let param_apply := safe_apply default_dispatch
-```
-
-The host's contribution `host_provided` is a *value*, not a
-registration: at startup the host constructs a tree-encoded list of
-handler trees (each one with a native fast-path interceptor) and
-binds it to `host_provided` in the disp top-level scope. The disp
-side concatenates explicitly. No mutable state, no scope-tracking
-primitives — just list values passed to `safe_apply`.
-
-*Native fast-path.* The host runtime intercepts `apply(safe_apply, …)`
-(or its specialization `apply(param_apply, …)`) based on the compiled
-tree id and runs a TypeScript implementation of the same logic. The
-in-language version is the spec; the native is the optimization,
-producing bit-identical results. For host-provided handler trees, the
-fast-path resolves the handler invocation directly to the
-corresponding TS function (a second fast-path tier).
+*Native fast-path.* The host runtime intercepts `apply(param_apply, …)`
+based on the compiled tree id and runs a TypeScript implementation of the
+same logic. The in-language version is the spec; the native is the
+optimization, producing bit-identical results.
 
 = Boundary operations and checked values <sec:boundary>
 
 The boundary between untrusted user trees and the Kleisli world of
 `CheckerResult` rests on one scan (`occurs`) and one wrap
-(`checked`). `param_lift`, `typecheck`, and `validate` build on these
-to turn the boundary into the user-facing query and certificate-
-issuance APIs.
+(`checked`). `param_lift` and `typecheck` build on these to turn the
+boundary into the user-facing query API; `strip_validated` (§10) pairs
+the verdict with erasure.
 
 == `support`, `occurs`, and `fresh_for` — the dependency set
 
@@ -2173,7 +2018,7 @@ Two policies, one set:
     [`fresh_for h result` — this hypothesis can't cross the
       kernel→user return],
 
-    [`param_lift` / `postulate`], [`is_closed v` — no hypothesis crosses to the user or the host],
+    [`param_lift` / the effect driver (§15.6)], [`is_closed v` — no hypothesis crosses to the user (`typecheck`) or to a host call (the driver, before `perform_host`)],
   ),
   caption: [Two boundary checks, one set.],
 )
@@ -2258,24 +2103,13 @@ data; the error channel carries only kernel-correctness failures.
   rather than the sanitizing boundary.
 ]
 
-*Pure variant.* For foundational tests, untrusted-code elaboration, and
-any context where host primitives must not influence the verdict, use
-`typecheck_pure`:
-
-```disp
-typecheck_pure : Type -> Tree_p -> CheckerResult Bool
-
-typecheck_pure := {T, v} ->
-  bind (param_lift v) ({sanitized_v} ->
-    safe_apply kernel_handlers T sanitized_v)
-```
-
-Identical behavior except: any wait-form rooted at a host primitive
-inside `T` or `v` will be walker-rejected (the host's sigs aren't in
-`kernel_handlers`, so the walker now considers them unpinned and may
-attempt to reduce them, exposing whatever the host stubbed in their
-place). Use `typecheck_pure` when the answer must be independent of
-the host environment.
+*No "pure variant" is needed.* Earlier drafts shipped a `typecheck_pure`
+that ran under `safe_apply kernel_handlers` so host primitives could not
+influence the verdict. With effects moved to the library (§15), host
+primitives are inert `Eff` values that are never *performed* during
+checking — `param_apply` carries no host environment and `typecheck` is
+*inherently* host-independent. The foundational tests that used
+`typecheck_pure` now just use `typecheck`; there is one checking mode.
 
 == Example traces
 
@@ -2286,7 +2120,7 @@ the host environment.
 
 *Trace 2: `typecheck Bool (is_zero TT)`.*
 
-Here `is_zero` is a `checked (Pi Nat Bool) is_zero_raw` value.
+Here `is_zero` is a `checked Nat is_zero_raw` value (domain `Nat`).
 
 + Compile-time `applyTree (is_zero, TT)`:
   - Dispatcher routes `apply(checked-wait-form, TT)` to the `checked` handler.
@@ -2320,80 +2154,75 @@ This is the manifest contracts discipline from the Findler-Felleisen
 contract semantics, refined by Greenberg-Pierce-Weirich to identify
 contracts with refinement types. See §17 for full citations.
 
-== The three library constructors
+== The library constructor
 
-`checked`, `typed_lambda`, and `validate` are library functions
-built on the wait-form encoding of §5.4:
+There is one constructor. `checked` pairs a function with its declared
+*input* (domain) type, building the wait-form of §5.4. Its full
+definition is in §12.16.
 
-#figure(
-  table(
-    columns: 3,
-    stroke: 0.4pt + gray,
-    align: left,
-    inset: 6pt,
-    [*Constructor*], [*Definition*], [*When used*],
-    [`checked T v`], [`wait checked_apply {ascribed_type:=T, value:=v}`], [Direct construction; no validation],
-    [`typed_lambda A B f`], [`checked (Pi A B) f`], [Function values at construction time],
-    [`validate T v`],
-    [`typecheck T v >>= λverdict. Ok (if verdict then Some (checked T v) else None)`],
-    [Querying whether a cert can be issued],
-  ),
-  caption: [Constructors for typed values.],
-)
+```disp
+checked A f  ≡  wait checked_apply { dom := A, fn := f }
+```
 
-`typed_lambda` is purely ergonomic. `validate` is the proof-carrying
-form — it doesn't just wrap, it ensures the wrap is sound by running
-`typecheck` first.
+Applying it checks the argument against `A`, then runs `f` (§8.10).
+There is no separate `typed_lambda` — a lambda is wrapped directly with
+its domain — and no certificate wrapper. Whether `f` actually maps `A`
+into a particular codomain is *not* asserted at construction; that is
+decided when the value is recognized against a `Pi A B` (§12.9).
+Validation is therefore a *verdict*, not a wrapped certificate:
+`strip_validated` (§10) runs `typecheck` and, on `Ok TT`, erases the
+now-redundant `checked` input-guards.
 
-== Soundness via structural recognizer checks
+== Soundness: forged function contracts are caught by recognition
 
-Forging a `checked` value (constructing `checked Bool zero` without
-having actually validated zero against Bool) is *possible* at
-construction — the constructor doesn't validate. But the lie is caught
-when the value is used in a type-check.
+`checked A f` does not assert at construction that `f` maps `A` into
+any particular codomain — the constructor only records the domain and
+defers the rest. A *false* contract — an `f` whose body does not land
+in the claimed codomain — is caught the moment the value is recognized
+against a `Pi A B`.
 
-Example trace: user writes `let bogus = checked Bool zero` (false claim).
-- `bogus` evaluates to `wait checked_apply {ascribed_type:=Bool, value:=zero}`.
-- Later, the user calls `validate Bool bogus`:
-  - Internally `typecheck Bool bogus` runs:
-    - `param_lift bogus` → `Ok bogus`.
-    - `param_apply Bool bogus` — Bool's recognizer triages on `bogus`.
-      The wait-form is a fork with `checked_apply` as `pair_fst`, not
-      a canonical Bool shape. Returns `Ok FF`.
-  - `validate` sees `Ok FF` from the verdict and returns `Ok None`
-    — no certificate issued.
+Example: user writes `let bogus = checked Nat ({n} -> TT)` and asserts
+`bogus : Pi Nat ({_} -> Nat)` (a lie — the body returns a `Bool`).
+- `typecheck (Pi Nat ({_} -> Nat)) bogus` runs Pi's recognizer (§12.9):
+  - `bogus` is a `checked` wait-form whose stored domain is `Nat` —
+    the structural checks pass.
+  - The body-check binds a fresh `Nat`-hypothesis, applies `bogus` to
+    it (yielding `TT`), and checks `TT` against the codomain `Nat`.
+    `Nat`'s recognizer rejects `TT` → `Ok FF`.
+- So the verdict is `Ok FF`: the false contract is not an inhabitant.
 
-So forged certificates fail at first attempted validation: the user
-gets `Ok None` (verdict-as-data) telling them the claim was bogus,
-not a thrown error. Structural recognizer checks (each type knows
-its own canonical shapes) catch the lie.
+The user gets `Ok FF` (verdict-as-data), not a thrown error — the body
+simply does not satisfy the codomain.
 
-If `bogus` instead reaches a *contract boundary* — say, the user
-applies a `f : Pi Bool C` to `bogus` — the `checked` handler raises
-`Err (TypeMismatch { expected = Bool, actual = bogus, span })`,
-because at that boundary the type was promised.
+If `bogus` instead reaches a *contract boundary* — a `checked`-wrapped
+function applied to it where its domain was promised — that function's
+input-check raises `Err (TypeMismatch { … })`, because at that boundary
+the type was promised rather than queried (§3, verdict-vs-error).
 
 == Composition
 
-Applying a `checked` value to an argument fires the handler:
+Applying a `checked` value to an argument fires `checked_apply`:
 
 ```
-(checked (Pi A B) f) x
-→ checked_apply {ascribed_type:=Pi A B, value:=f} x   // wait-form reduction: checked_apply's
-                                           // sig is a library sig, not in Σ, so no
-                                           // special routing — wait reduces directly
-→ handler runs
+(checked A f) x
+→ checked_apply { dom := A, fn := f } x   // wait-form reduction: checked_apply's
+                                          // sig is a library sig, not in Σ, so no
+                                          // special routing — wait reduces directly
 → bind (param_apply A x) ({verdict} -> match verdict {
-    TT => Ok (param_apply f x)   // checked_apply wraps; `param_apply f x` is bare (§7.5)
+    TT => match (is_neutral f) {
+            TT => param_apply f x        // f is a bind_hyp-wrapped neutral: its
+                                         //   application is already a CheckerResult
+                                         //   (§7.5) — pass through, do not re-wrap
+            FF => Ok (param_apply f x)   // f is a raw function: its application is a
+          }                              //   bare reduct, so wrap with Ok
     FF => Err (TypeMismatch { expected = A, actual = x, span })
   })
 → on success:         Ok (f x)
 → on domain mismatch: Err (TypeMismatch { expected = A, actual = x, span })
 ```
 
-Chained applications work the same way; each layer's handler fires
-independently. For curried functions returning functions, the result
-of one application may be another `checked` value, which is then
+Chained applications work the same way. For curried functions returning
+functions, the result of one application may be another `checked` value,
 applied normally.
 
 = Elaboration and tests <sec:elaboration>
@@ -2412,8 +2241,8 @@ The elaboration steps:
   declared types).
 + *Lambda wrapping.* At each lambda binder `{x : A} -> body` whose
   surrounding type is known to be `Pi A B`, wrap the compiled body
-  with `checked (Pi A B)` (§8). This ensures typed function values
-  carry their declared types as runtime contracts.
+  with `checked A` (§8) — the function carries its *domain* as a
+  runtime input-contract.
 
   *Record-field lambdas wrap the same way.* The surrounding type that
   fixes a binder's `Pi` need not come from an outer `Pi` annotation — it
@@ -2422,14 +2251,15 @@ The elaboration steps:
   `Record [(f, Tf), …]` (e.g. an effect-handler value at its interface
   type, §12/§15), each field's expected type `Tf` flows down to its
   initializer: if `Tf` is a `Pi` and `e` is a lambda, `e` is wrapped as
-  `checked Tf e`, exactly as a top-level `Pi`-typed binder would be.
+  `checked A e` (with `A` = `Tf`'s domain), exactly as a top-level
+  `Pi`-typed binder would be.
   This is *required*, not cosmetic — `Pi`'s recognizer (§12) accepts only
   `checked` wait-forms, so without the wrap a bare field lambda like
-  `mockConsole.print := {_} -> unit_witness` would fail
+  `mockConsole.print := {_} -> io_pure unit` would fail
   `typecheck Console mockConsole`. The rule recurses through nested
   records, so a field that is itself a record propagates field types one
   level further. (A field whose initializer is already a `checked` value
-  — e.g. `print := host_write_stdout`, a postulate — needs no wrap.)
+  needs no wrap.)
 + Bracket-abstract the binder (standard combinator translation).
 + *Test emission.* At each `let name : T = body`, emit two operations:
 
@@ -2452,7 +2282,7 @@ no mutable state.
 
 `test` is an elaborator keyword, not a function. `test expr`
 *evaluates* `expr` — the substrate's `apply` reduction, with the
-dispatcher `safe_apply default_dispatch` standing in for `apply` at
+dispatcher `param_apply` standing in for `apply` at
 every application step — and asserts the normal form equals `TT`.
 Evaluation just *is* reduction: there is no separate "un-reduced
 expression" object, so `test` takes an expression to reduce, not a
@@ -2477,38 +2307,26 @@ Common test idioms are sugar:
 The `: T` annotation is sugar for this last form. `let X : T = body`
 desugars to `let X = body; test typecheck T X`.
 
-== Tests are evaluated under the default dispatch environment
+== Tests reduce under `param_apply`; effects need a handler
 
-Because `test expr` reduces `expr` under `param_apply`, tests *may
-fire host primitives* — IO operations, syscalls, time-of-day reads,
-anything `host_provided` exposes. This is by design: tests are a
-useful place to make empirical observations about the surrounding
-environment.
-
-```disp
-test (file_exists "lib/prelude.disp") = TT
-test (length (read_env_var "PATH")) > 0
-```
-
-Pure-test discipline is opt-in via `test_pure`, a sibling elaborator
-directive that evaluates its expression with `safe_apply
-kernel_handlers` (rather than `default_dispatch`) standing in for
-`apply` — the same reduction, under a stricter environment. Like
-`test`, it is a directive that takes an expression to reduce, *not* a
-function applied to a tree:
+`test expr` reduces `expr` under `param_apply` (the fixed-Σ dispatcher,
+§7.5). Because effects are inert library values (§15), a test does *not*
+fire host primitives by merely mentioning one: `read_env_var "PATH"` is
+an `Eff String` *value*, not a performed read. To observe effectful
+behavior in a test, interpret it with a handler — typically a mock — and
+assert on the pure result:
 
 ```disp
-// The elaborator switches the reduction environment for the body:
-test_pure (add 2 3) = 5
-test_pure (typecheck Type Bool) = Ok TT
+test (handle mock_fs  (file_exists "lib/prelude.disp")) = TT
+test (length (handle mock_env (read_env_var "PATH")))   > 0
 ```
 
-Foundational and conversion tests (anything underwriting the type
-system's soundness story) should use `test_pure`. Behavioral
-tests of effectful library code use the default `test`. Users elaborating
-untrusted code through `disp` should run elaboration under
-`safe_apply kernel_handlers` (the CLI's `--pure-elaboration` flag
-substitutes this).
+Because checking and reduction never perform an effect, there is *no*
+separate "pure test" mode: the prior spec's `test_pure` (which ran under
+`safe_apply kernel_handlers` to exclude host influence) collapses into
+plain `test`. Foundational, conversion, and behavioral tests all use the
+one `test` directive; effectful tests differ only in supplying a handler
+rather than the real driver.
 
 #note[
   *Two failure modes for a `test` declaration.* Under the default
@@ -2616,7 +2434,7 @@ For `let foo : Pi Nat ({_} -> Bool) = {x} -> is_zero x`:
 + Outer expected type: `Pi Nat ({_} -> Bool)`.
 + Extract domain `Nat` for the binder `{x}`.
 + Body `is_zero x` compiles to `apply(is_zero_compiled, x)`.
-+ Wrap the binder: `checked (Pi Nat ({_} -> Bool)) ({x} -> apply(is_zero_compiled, x))`.
++ Wrap the binder: `checked Nat ({x} -> apply(is_zero_compiled, x))`.
 + Bracket-abstract `{x}` over the body.
 + Emit: `let foo = wrapped_tree` plus `test typecheck (Pi Nat ({_} -> Bool)) foo = TT`.
 
@@ -2646,7 +2464,7 @@ without type-checking or name-resolution overhead.
 
 A wait-wrapped value `wait k payload` splits its descriptor in two:
 
-- *type-determined* — a validated contract (`checked`'s `ascribed_type`) or a
+- *type-determined* — a validated contract (`checked`'s domain `A`) or a
   name schema (record field names, coproduct variant names). The type fixes it,
   so it is redundant at runtime: names resolve to positions, a validated
   contract drops.
@@ -2662,7 +2480,7 @@ Strip drops the first and lowers the eliminator accordingly:
     align: left,
     inset: 6pt,
     [*kind*], [*type-determined → stripped*], [*value-determined → kept*], [*eliminator: before → after*],
-    [`checked`], [the ascription `T`], [inner value `f`], [`cv x` → raw `f x` (no rewrite)],
+    [`checked`], [the domain `A`], [the function `fn`], [`cv x` → raw `fn x` (no rewrite)],
     [record], [field names → positions], [field tuple], [`r.a` → `pair_fst (pair_snd^idx payload)`],
     [coproduct], [variant names → positions], [variant *index* + payload], [`match`-by-name → dispatch-by-index],
   ),
@@ -2678,7 +2496,7 @@ replace each with its `value`, recurse:
 ```disp
 strip_checked := fix ({self, t} ->
   match (has_sig checked_apply t) {
-    TT => self ((wait_meta t).value)      // unwrap (read the `value` field), recurse into inner
+    TT => self ((wait_meta t).fn)         // unwrap (read the `fn` field), recurse into inner
     FF => triage
       t                                   // leaf: unchanged
       ({c} -> t (self c))                 // stem: recurse
@@ -2692,15 +2510,16 @@ Disp has no typing derivation (elaboration is wrap-only, §9), so `strip` is a
 tree-to-tree function that reads each value's schema from the value *itself* — a
 record's name header, a coproduct's tag — together with the type ascriptions
 embedded in the `checked` wait-forms it walks through. It drops every
-type-determined descriptor, lowers each eliminator, and leaves handler-rooted
-wait-forms (seals, host effects) untouched:
+type-determined descriptor, lowers each eliminator, and leaves seal-rooted
+wait-forms (neutrals) untouched — effect values are ordinary `Eff`
+coproduct data (§15) and are simply recursed through:
 
 ```disp
 strip := fix ({self, t} ->
-  match (is_handler_rooted t) {            // seal- or funnel-rooted: a genuine
-    TT => t                                //   unknown / effect — never a contract
+  match (is_neutral t) {                   // seal-rooted (a neutral): a genuine
+    TT => t                                //   unknown — never a contract
     FF => match (has_sig checked_apply t) {
-      TT => self ((wait_meta t).value)     // checked: drop ascription, recurse into value
+      TT => self ((wait_meta t).fn)        // checked: drop domain guard, recurse into fn
       FF => match (is_record_product t) {  // record VALUE (const-field product, §2.6)
         TT => strip_record self (wait_meta t)
         FF => triage                       // concrete data / code: structural recurse
@@ -2746,7 +2565,7 @@ here. The latter is the one genuinely *type-directed* step, and the only place
 (hypotheses, stuck eliminations) and host-effect wait-forms survive strip — only
 type-determined descriptors are erased. Strip's role is to elide what the type
 fixes, not to remove effects. A stripped program retains all of its effect
-machinery and executes identically under `safe_apply default_dispatch`, modulo
+machinery and executes identically under `param_apply`, modulo
 the elided contract and name-resolution overhead.
 
 *What survives.* For a product, nothing — its content is fixed by its type
@@ -2762,38 +2581,38 @@ one dynamic index.
 
 Strip is *not* unconditionally sound. Applying strip to an arbitrary
 tree may remove checks that were necessary for soundness — e.g., if a
-`checked Bool zero` value was waiting to be caught by an outer
-`typecheck Bool`, stripping it would expose the lie.
+`checked A f` whose body lies about its codomain was waiting to be
+caught by an outer `typecheck (Pi A B)`, stripping its input-guards
+would erase the only thing that would have flagged the lie at runtime.
 
 Strip is sound *exactly when* applied to a tree that has been validated.
-The standard usage pattern: pair strip with `validate`.
+The standard usage pattern: pair strip with `typecheck`.
 
 ```disp
-// Safe usage: validate first, strip the certified result. `validate`
-// yields `Ok (Some cert)` / `Ok None`, so match the Optional and strip
-// the `checked` wait-form `cert` it carries.
+// Safe usage: validate first (typecheck = Ok TT), then strip. There is
+// no certificate wrapper — the verdict *is* the certificate, so on
+// success we strip `v` directly.
 strip_validated := {T, v} ->
-  bind (validate T v) ({opt} ->
-    match opt {
-      Some cert => Ok (strip ((type_meta cert).value))
-      None      => Err (TypeMismatch { expected = T, actual = v, span })
+  bind (typecheck T v) ({verdict} ->
+    match verdict {
+      TT => Ok (strip v)
+      FF => Err (TypeMismatch { expected = T, actual = v, span })
     })
 ```
 
-The certificate `cert = checked T v` (carried by `validate`'s `Some`)
-attests that `typecheck T v = Ok TT` was true at construction time.
-Strip on the inner `v` of a certificate is sound: every internal
-`checked` wait-form's check has already been validated at
-certificate-construction time.
+`typecheck T v = Ok TT` is itself the certificate: it attests that every
+`checked` input-guard inside `v` was exercised against a fresh
+hypothesis and held. Stripping those guards from `v` is therefore sound
+— the contract they enforce has already been discharged.
 
 == Connection to proof-carrying code
 
 This is Necula's proof-carrying code pattern (Necula 1997). The
 elaborator/host plays the *certifier* role: it validates the program
-once by running `typecheck`. The certificate (the `checked T v`
-wait-form returned in `validate`'s `Some`) attests that validation
-happened. The strip pass plays the
-*compiler optimization* role: once validated, runtime needn't re-check.
+once by running `typecheck`. The certificate is the *verdict*
+`typecheck T v = Ok TT` — the fact that validation succeeded, not a
+wrapper around `v`. The strip pass plays the *compiler optimization*
+role: once validated, runtime needn't re-check.
 
 See §17 for the literature.
 
@@ -2878,7 +2697,7 @@ validator), not by a kernel-side sig table.
 //                                       // response to an elimination
 //                                       //   frame applied to a neutral
 //                                       //   of this type
-//   Action  := Extend Type | Return Tree_p | Invalid
+//   Action  := Extend Type | Return Tree_p   // reject = Extend InvalidType (§12.3)
 //   Frame   := Tree_p                   // untagged; the stored type
 //                                       //   interprets it
 
@@ -2886,7 +2705,7 @@ MetaShape := Refinement
   (Record [
     ("recognizer_params", Tree),   // intended: type-former parameters (per type)
     ("functor",           Tree),   // intended: Functor (Kan transport, §13)
-    ("respond",           Tree),   // intended: Optional Respond (elimination handler)
+    ("respond",           Tree),   // intended: Respond (elimination handler; constitutive, never none)
     ("behavioral_specs",  Tree)    // intended: Optional (List Spec) (runnable specs;
                                    //           Spec is realized as Path, §13)
   ])
@@ -2917,15 +2736,45 @@ untagged because one type accepts one frame kind:
   (tree_eq (stuck_stored_type v) (reconstruct_self meta)))` — the
   predicate-side H-rule.
 
-A type with `respond = none` is inert under elimination (e.g., `I`,
-`IsOne`). The convention is extensible: existing types whose meta
-lacks a new field still pass structural checks.
+An *inert* type carries `respond = inert_respond` (§12.3), which returns
+`Extend InvalidType` for every frame (e.g., `I`, `IsOne`, `String`,
+`Glue`). `respond` is never `none`: it is a *constitutive half* of a
+type, not optional metadata — see the note below. The convention is
+extensible in the other fields: existing types whose meta lacks a
+*new* field still pass structural checks.
+
+#note[
+  *A type is intro + elim + computation.* A type's recognizer says what
+  *inhabits* it (its introduction side); its `respond` says how a *neutral*
+  of the type *eliminates* (its elimination side). A type missing `respond`
+  is only half-defined — you could ask "is `x` a `T`?" but not "what happens
+  when a `T` is used." Dependent type theory needs both, so `respond` is
+  mandatory, and the three validators (§11.4) are exactly three tiers of "how
+  much of intro + elim + computation is present and checked":
+  - `Type` (structural): both halves *present and shaped* — recognizer is
+    `make_recognizer`-formed, meta fits MetaShape (`respond` included).
+  - `StrictType` (deep): both halves *well-typed* — recognizer inhabits
+    `RecognizerShape`, `respond` inhabits `RespondShape` (§12.6).
+  - `BehavioralType` (behavioral): both halves *coherent* — the type's
+    `behavioral_specs` Paths, which encode the per-former computation rules
+    (the bullets above, e.g. Π's `stuck_stored_type (n a) ≡ B a`), all run to
+    `Ok TT` (§11.4, §12.3).
+
+  *Derived, not hand-written.* A user does not author a `respond`: each type
+  *former* (Π/Σ/Coproduct/Record/Refinement/inductive) ships one
+  library-certified `respond` plus its coherence Paths, proven once; a type
+  built from a former *inherits* it (this is why every inductive shares
+  `inductive_respond`, §12.3). So a user type structurally cannot carry a
+  *wrong* `respond` — it never wrote one. A genuinely *new* former is the only
+  site a fresh `respond` appears, and `BehavioralType` gates it.
+]
 
 #note[
   *Naming.* The earlier `applicable` field is renamed `respond` to
   reflect that it handles every elimination form, not only function
-  application. The narrower `is_pi` / `pi_dom` (used for `checked`
-  wrapping) is a separate convention.
+  application. The narrower `is_pi` / `pi_dom` (used by `bind_hyp` to
+  wrap a Pi-typed hypothesis with its domain, §7.2) is a separate
+  convention.
 ]
 
 #note[
@@ -2933,13 +2782,16 @@ lacks a new field still pass structural checks.
   clause* for one operation, "eliminate": a neutral is a stuck operation, its
   spine is the captured continuation, and `respond` says how that operation
   reacts to a frame — stay stuck at a new type (`Extend`), resolve to a value
-  (`Return`), or reject (`Invalid`). This is the same shape as a `postulate`
-  handler interpreting a host effect (§7, §15), which is why neutrals, stuck
-  eliminations, and IO share one dispatcher. Formally it is the structure map
+  (`Return`), or reject by advancing to the dead state (`Extend InvalidType`).
+  This is the same shape as an `Eff` handler's per-operation clause
+  interpreting an effect (§15) — "react to a frame" and "interpret an
+  operation" are one move, which is why the eliminator and the effect handler
+  are the same fold. Formally it is the structure map
   of a coalgebra on `Tree_p` (itself a greatest fixed point, §4): a typed
   transition system whose states are neutrals carrying their stored type,
   whose labels are frames, and whose steps are `Extend` (advance to a new
-  typed state), `Return` (halt with a value), and `Invalid` (dead state). The
+  typed state) and `Return` (halt with a value); `Extend InvalidType` is the
+  absorbing dead state (`InvalidType` itself responds `Extend InvalidType`). The
   §8.1 escape scan is reachability in that system. Both readings agree; the
   handler reading keeps `respond` beside the effect story, the coalgebra
   reading pins down what "responds to every elimination form" means.
@@ -2960,9 +2812,9 @@ trees are types-of-some-kind. The standard library ships three:
     [`Type`], [Structural], [`v` is a wait-form whose meta fits MetaShape's layout. H-rule on neutrals.],
     [`StrictType`],
     [Deep],
-    [Same as `Type`, plus typechecks the recognizer against `RecognizerShape` and the meta against `MetaShape` field-by-field.],
+    [Same as `Type`, plus typechecks the recognizer against `RecognizerShape`, the `respond` against `RespondShape` (§12.6), and the meta against `MetaShape` field-by-field.],
 
-    [`BehavioralType`], [Behavioral], [Same as `StrictType`, plus runs each Path-typed `behavioral_specs` entry.],
+    [`BehavioralType`], [Behavioral], [Same as `StrictType`, plus runs each Path-typed `behavioral_specs` entry — including the *respond-coherence* Paths (the per-former computation rules, §12.3): a type whose `respond` returns the wrong eliminated type fails here.],
   ),
   caption: [Standard validators.],
 )
@@ -3005,7 +2857,7 @@ where `type_recognizer` is a `make_recognizer`-wrapped function (§12,
 
 And `type_self_meta` is a MetaShape-conforming record with
 `recognizer_params := unit_witness`, `functor := trivial_functor`,
-`respond := some type_predicate_h_rule` (the predicate-side
+`respond := type_predicate_h_rule` (the predicate-side
 H-rule, §6.3 and §12.18), `behavioral_specs := none`.
 
 The §11.6 argument depends on this contract *plus* the predicate-side
@@ -3127,9 +2979,9 @@ provides a specific rigor level:
     align: left,
     inset: 6pt,
     [*Validator*], [*What it catches*],
-    [`Type`], [Wrong wait-form shape, missing meta fields. Cheap.],
-    [`StrictType`], [Above plus: recognizer not Pi-typed, meta fields wrong-typed.],
-    [`BehavioralType`], [Above plus: documented Path-typed properties of the type's recognizer.],
+    [`Type`], [Wrong wait-form shape, missing meta fields (`respond` included). Cheap.],
+    [`StrictType`], [Above plus: recognizer not Pi-typed, `respond` not `RespondShape`-typed, meta fields wrong-typed.],
+    [`BehavioralType`], [Above plus: documented Path-typed properties of the recognizer *and* the respond-coherence laws (right eliminated type per frame).],
   ),
   caption: [Validators and what they catch.],
 )
@@ -3178,7 +3030,7 @@ sigma_respond := {neutral_meta, walker_arg} ->
     TT => Extend A
     FF => match (tree_eq walker_arg walker_pair_snd) {
       TT => Extend (B (apply (reconstruct_self neutral_meta) walker_pair_fst))
-      FF => Invalid
+      FF => Extend InvalidType            // not a projection selector: reject to the dead state
     }
   }
 ```
@@ -3194,7 +3046,7 @@ Sigma's meta:
 sigma_meta_for := {A, B} -> {
   recognizer_params := { dom := A, fam := B },
   functor := sigma_functor,
-  respond := some sigma_respond,
+  respond := sigma_respond,
   behavioral_specs := none
 }
 
@@ -3228,7 +3080,7 @@ let tags_recognizer = make_recognizer ({meta, v} ->
 
 let tags_meta_for = {names} -> {
   recognizer_params := { names := names },
-  functor := trivial_functor, respond := none, behavioral_specs := none
+  functor := trivial_functor, respond := inert_respond, behavioral_specs := none
 }
 let Tags = {names} -> wait tags_recognizer (tags_meta_for names)
 
@@ -3247,7 +3099,7 @@ let coproduct_recognizer = make_recognizer ({meta, v} ->
 let coproduct_meta_for = {variants} -> {
   recognizer_params := { variants := variants },
   functor := coproduct_functor,
-  respond := some inductive_respond,
+  respond := inductive_respond,
   behavioral_specs := none
 }
 let Coproduct = {variants} -> wait coproduct_recognizer (coproduct_meta_for variants)
@@ -3292,13 +3144,100 @@ inductive_respond := {neutral_meta, frame} ->            // frame = (pair motive
   Extend ((pair_fst frame) (reconstruct_self neutral_meta))
 ```
 
-Each inductive type's meta therefore carries `respond := some inductive_respond`
+Each inductive type's meta therefore carries `respond := inductive_respond`
 (installed in the `Bool`, `Nat`, `Unit`, and `Ord` metas below, and in
-`Coproduct`, §12.2); a type whose meta leaves `respond := none` (e.g. `I`,
-`IsOne`) is inert under case-elimination, and routing a frame to it yields
-`InvalidType`.
-`respond` is independent of `functor`: a *discrete* type (trivial transport,
-§13) still responds to case-elimination.
+`Coproduct`, §12.2). `respond` is independent of `functor`: a *discrete* type
+(trivial transport, §13) still responds to case-elimination.
+
+=== Inert types, `InvalidType`, and the dead state
+
+`respond` is constitutive (§11.2): every type has one, so there is no `none`
+case. A type that *responds to no frame* — `I`, `IsOne`, `String`, `Glue`,
+`Tags` — carries the canonical `inert_respond`, which rejects every frame to
+the dead state. Rejection is not a separate `Action` tag; it is `Extend` at the
+distinguished type `InvalidType`, which is itself inert, so the dead state is
+*absorbing* (any further frame stays at `InvalidType`):
+
+```disp
+// The dead-state type: uninhabited, and inert under elimination. A neutral
+// stored at InvalidType is "an elimination that did not apply." (Future: its
+// recognizer_params can carry the offending frame / a reason, for diagnostics.)
+let invalidtype_recognizer = make_recognizer ({_, _} -> Ok FF)   // nothing inhabits it
+let inert_respond = {_, _} -> Extend InvalidType                  // reject every frame
+let invalidtype_meta = {
+  recognizer_params := unit_witness,
+  functor := trivial_functor,
+  respond := inert_respond,     // absorbing: eliminating an InvalidType-neutral re-yields InvalidType
+  behavioral_specs := none
+}
+let InvalidType = wait invalidtype_recognizer invalidtype_meta
+
+test typecheck Type InvalidType
+test invalidtype_recognizer invalidtype_meta zero = Ok FF       // genuinely empty
+```
+
+This is what folds the former three-tag `Action` (`Extend | Return | Invalid`)
+into two tags: `Invalid` was definitionally `Extend InvalidType` (the `hyp_reduce`
+rejection branch built exactly that tree, §7.1), so naming it as a third case
+bought nothing. A `respond` rejects by returning `Extend InvalidType`; the
+ordinary `Extend` branch of `hyp_reduce` handles it.
+
+=== Respond-coherence as runnable Paths
+
+A type former's `respond` is *certified*, not trusted on sight. Each former
+ships, in its `behavioral_specs` (§11.2), the *coherence law* relating `respond`
+to the type's intended elimination — the per-former bullets of §11.2 turned into
+runnable `Path`s, which `BehavioralType` (§11.4) runs:
+
+```disp
+// A coherence law is a Path (§13) populating the former's behavioral_specs list.
+// Π-coherence: applying a Π-typed neutral to an argument lands at the codomain
+// instantiated there. (The H-rule concretizes the hypothesis applications, so
+// this reduces to a tree_eq and the Path is genuinely runnable.)
+pi_respond_coherence := {A, B} ->
+  bind_hyp (Pi A B) ({n} -> bind_hyp A ({a} ->
+    Path Type (stuck_stored_type (n a)) (B a)))
+
+// Inductive-coherence: eliminating a neutral lands at `motive self`.
+// `elim_for T` is the type's own case dispatcher (§12.3).
+inductive_respond_coherence := {T, motive, cases} ->
+  bind_hyp T ({n} ->
+    Path Type (stuck_stored_type (elim (elim_for T) motive cases n)) (motive n))
+```
+
+Two enforcement gates, with different strengths:
+
+- *`StrictType` is the unconditional gate.* It checks `respond : RespondShape`
+  (§12.6) for *every* type, with no escape hatch. So a "valid (strict) type
+  without a well-typed `respond`" is *impossible* — a missing or ill-typed
+  `respond` fails `StrictType` outright. This already secures the goal
+  "not a type unless it has a well-typed `respond`."
+- *`BehavioralType` adds coherence.* It looks the type's former up in the
+  former→coherence-law association (each former registers its law, as
+  `pi_respond_coherence` / `inductive_respond_coherence` above) and *runs* that
+  law. A former with no registered law cannot be behaviorally certified — its
+  types pass `BehavioralType` only *vacuously*, which a reviewer reads as
+  "coherence unproven," not "coherence holds." A registered-but-false law fails
+  outright. So `BehavioralType` is exactly as strong as the laws formers declare.
+
+Because formers are certified once and user types *inherit* a former's `respond`
+(and its law), a user type cannot carry a wrong `respond`; only a *new* former
+introduces a fresh `respond`, and it is the new former's obligation to register
+a coherence law that `BehavioralType` can run.
+
+#note[
+  *What "proven respond" does and does not cover.* The coherence Paths above
+  prove `respond` returns the *right eliminated type* per frame — a finite,
+  decidable property, fully runnable. They do *not* discharge the §7.1
+  soundness obligation that `respond`'s `Return v` channel only ever surfaces
+  *public-derived* data (the DCC `[BindM]` non-interference discipline): that is
+  a parametricity property, not a finite equation, so it cannot be a runnable
+  `Path` and remains in the trusted base — the same open frontier as the
+  Type:Type conjecture (§11.6, Appendix A). `Extend`-only responds (every
+  former except `Type`'s predicate-side H-rule) trivially satisfy the obligation
+  — `Extend` names a type and surfaces no payload — so the residue is confined
+  to the handful of `Return`-using responds.
+]
 
 The concrete branch's `dispatcher` is walker-safe: for Scott-encoded
 types it's plain application (no triage); for tagged-sum types it
@@ -3453,14 +3392,12 @@ P-proof. For hypothesis frames, Refinement defers to A's `respond`:
 refinement_respond := {neutral_meta, frame} ->
   let A = (type_meta (neutral_meta_type neutral_meta)).recognizer_params.base in
   let A_respond = respond_of A in                       // = meta_get (type_meta A) "respond"
-  match (is_some A_respond) {
-    // Delegate to A's respond, but retarget the neutral meta to A so A's respond
-    // reads *its own* recognizer_params (not the Refinement's) and reconstructs an
-    // A-typed self. Same payload, so the hypothesis identity is preserved.
-    TT => (unwrap A_respond)
-            (make_neutral_meta A (neutral_meta_payload neutral_meta)) frame
-    FF => Invalid
-  }
+  // Delegate to A's respond (always present — respond is constitutive, §11.2),
+  // retargeting the neutral meta to A so A's respond reads *its own*
+  // recognizer_params (not the Refinement's) and reconstructs an A-typed self.
+  // Same payload, so the hypothesis identity is preserved. If A is inert, its
+  // `inert_respond` yields `Extend InvalidType` — the old reject case, for free.
+  A_respond (make_neutral_meta A (neutral_meta_payload neutral_meta)) frame
 ```
 
 The base type `A` is read off the *stored type's* meta (the neutral meta is just
@@ -3490,12 +3427,21 @@ The shape every type-former's recognizer must inhabit:
 ```disp
 let RecognizerShape = Pi MetaShape ({_} ->
                        Pi Tree ({_} -> CheckerResultBool))
+
+// The two-tag elimination protocol (§7, §12.3) as a library coproduct, and the
+// shape every type-former's `respond` must inhabit.
+let Action       = Coproduct [(Extend, Type), (Return, Tree)]
+let RespondShape = Pi NeutralMeta ({_} -> Pi Frame ({_} -> Action))
 ```
 
-A function from MetaShape to Tree to CheckerResultBool. `StrictType`'s
-validator typechecks each type's recognizer against this shape, which
-requires the recognizer to be a `checked`-wrapped function (per Pi's
-recognition rules — see the Pi entry later in §12).
+`RecognizerShape` is a function from MetaShape to Tree to CheckerResultBool;
+`RespondShape` is a function from a neutral's meta and a frame to an `Action`.
+`StrictType`'s validator typechecks each type's recognizer against
+`RecognizerShape` *and* its `respond` against `RespondShape` — both of which
+require a `checked`-wrapped function (per Pi's recognition rules — see the Pi
+entry later in §12). Because `respond` is constitutive (§11.2), the
+`RespondShape` check is not conditional: a type whose meta carries an
+ill-typed (or absent) `respond` fails `StrictType`.
 
 Tests:
 
@@ -3509,10 +3455,10 @@ test typecheck StrictType RecognizerShape
 == Typed application: `checked` and `checked_apply`
 
 `checked` is the library construction for typed function values — a
-manifest contract pairing a function with its declared type. When
-applied to an argument, the wait-form's reduction fires
-`checked_apply`, which checks the argument against the type's domain
-before invoking the function.
+manifest contract pairing a function with its declared *input* (domain)
+type. When applied to an argument, the wait-form's reduction fires
+`checked_apply`, which checks the argument against that domain before
+invoking the function.
 
 Function application is the *intensional* cut (§2.6). A function is a `Π`-product
 over an *arbitrary* domain, so its graph is not a finite stored table: the
@@ -3520,85 +3466,76 @@ component for an argument is *computed*, not selected by name. `checked_apply` i
 that computed cut — the same `Σ`-value-against-`Π`-consumer elimination as
 `match` and projection, specialized to a domain too large to tabulate. The
 contract check is the price of the arbitrary domain: there is no finite tag set
-to guarantee a hit, so the argument is validated against `pi_dom T` before the
-function runs.
+to guarantee a hit, so the argument is validated against the stored domain `A`
+before the function runs.
 
 ```disp
-// `meta` is the headered record `{ ascribed_type, value }` carried in the
-// wait-form's payload (recovered by the wait reduction), read by name — the
-// same one-record discipline type metas follow (§2.6, §11.2).
+// `meta` is the headered record `{ dom, fn }` carried in the wait-form's
+// payload (recovered by the wait reduction), read by name — the same
+// one-record discipline type metas follow (§2.6, §11.2). `dom` is the
+// function's input (domain) type; `fn` is the underlying function.
 let checked_apply = {meta, arg} ->
-  let T = meta.ascribed_type
-  let v = meta.value
-  match (is_pi T) {
-    TT => bind (param_apply (pi_dom T) arg) ({verdict} ->
-          match verdict {
-            TT => Ok (param_apply v arg)   // `v` is the raw wrapped fn, so
-                                           // `param_apply v arg` is a bare reduct;
-                                           // checked_apply is the CheckerResult-
-                                           // producer here, so it wraps (§7.5, §8.9)
-            FF => Err (TypeMismatch { expected = pi_dom T, actual = arg, span })
-          })
-    FF => Err (NotApplicable { type = T, span })
-  }
-
-let checked = {T, v} -> wait checked_apply { ascribed_type := T, value := v }
-
-// Ergonomic alias for function-typed values:
-let typed_lambda = {A, B, f} -> checked (Pi A B) f
-
-// Typecheck-gated constructor (returns a certificate or None).
-let validate = {T, v} ->
-  bind (typecheck T v) ({verdict} ->
+  let A  = meta.dom
+  let fn = meta.fn
+  bind (param_apply A arg) ({verdict} ->
     match verdict {
-      TT => Ok (Some (checked T v))
-      FF => Ok None
+      // Domain holds. Apply `fn`, which is *always* one of two things:
+      // a raw function (its application is a bare reduct, so wrap with
+      // Ok) or a `bind_hyp`-wrapped neutral hypothesis (its application
+      // routes through `hyp_reduce` and is *already* a CheckerResult, so
+      // pass it through un-nested). The `is_neutral fn` split is what
+      // keeps the result from double-wrapping into `Ok (Ok …)` (§7.5).
+      TT => match (is_neutral fn) {
+              TT => param_apply fn arg
+              FF => Ok (param_apply fn arg)
+            }
+      // Domain fails. A contract boundary promised the arg would fit, so
+      // this is breakage, not a verdict (§3, verdict-vs-error).
+      FF => Err (TypeMismatch { expected = A, actual = arg, span })
     })
+
+let checked = {A, f} -> wait checked_apply { dom := A, fn := f }
 ```
 
-*Why `is_pi`, not `is_applicable_type`.* `checked_apply` implements
-exactly one elimination frame — *function application* — and then
-calls the Π-specific `pi_dom`. It must therefore gate on `is_pi`, not
-on the broad `is_applicable_type` (= "responds to *some* frame"),
-which is also true of Σ (projection), inductives (case-frame), `Path`
-(dimension) and `Type` (candidate). Gating on `is_applicable_type`
-would let `checked (Sigma A B) f` past the guard and then misapply
-`pi_dom` to a non-Π type. The division of labor is clean: *concrete
-typed function values* are applied through `checked_apply` (Π frame
-only); *all other elimination frames on neutrals* are handled by
-`hyp_reduce` + the stored type's `respond` (§7.1, §11.2). A concrete
-Σ value is projected with `pair_fst`/`pair_snd` directly and never
-reaches `checked_apply`; `Path = Pi I` is a Π alias, so `is_pi`
-accepts it. Applying a non-Π checked value (`checked Nat x`, §7.2)
-still yields `Err NotApplicable`, exactly as before — only the
-applicable-but-not-Π bug changes.
+`checked` stores only the *domain*: that is all the input-check needs,
+and it is what `Pi`'s recognizer reads to confirm a candidate's input
+type (§12.9). The codomain is the recognizer's own (the expected `B`),
+re-checked against the body and never read off the value, so a `checked`
+value carries no codomain. There is no `is_pi` / `NotApplicable` gate:
+`checked` only ever wraps a function, so the stored `dom` is the
+operative type and the question "is the ascription a Π?" does not arise.
+(`typed_lambda` and a certificate-issuing `validate` are gone — §8: a
+lambda is wrapped directly with its domain, and validation is a verdict,
+not a wrapper.)
 
 *Walker-safe body.* `checked_apply`'s operations — pair projections,
-`is_pi`, `pi_dom`, `param_apply` — are all walker-safe (no
-stem-forge of pinned sigs, no triage on neutrals). The function lives
-in the library; no kernel privilege required.
+`is_neutral`, `param_apply` — are all walker-safe (no stem-forge of
+pinned sigs, no triage on neutrals). The function lives in the library;
+no kernel privilege required.
 
 *Dispatcher behavior.* The wait-form
-`wait checked_apply { ascribed_type := T, value := v }` has the sig
-`checker_sig checked_apply` — a library sig, not in `default_dispatch`.
+`wait checked_apply { dom := A, fn := f }` has the sig
+`checker_sig checked_apply` — a library sig, not in `Σ`.
 So the dispatcher does not route it specially; walker reduction handles
-`(checked T v) arg` by reducing via wait's bracket-abstracted shape to
-`checked_apply { ascribed_type := T, value := v } arg`. Internal
+`(checked A f) arg` by reducing via wait's bracket-abstracted shape to
+`checked_apply { dom := A, fn := f } arg`. Internal
 `param_apply` calls then route through the dispatcher normally.
 
-*`is_applicable_type`*:
+*`is_applicable_type`* (a general reflection helper, no longer consulted
+by `checked_apply`):
 
 ```disp
 is_applicable_type := {T} ->
   match (safe_is_fork T) {
     FF => FF
-    TT => not (is_none (meta_get (safe_pair_snd T) "respond"))
+    TT => not (tree_eq (meta_get (safe_pair_snd T) "respond") inert_respond)
   }
 ```
 
-Returns TT iff T's metadata has a non-`none` `respond` field —
-i.e., T accepts an elimination frame. (Sharper Π-specific checks
-use `is_pi` / `pi_dom`.)
+Returns TT iff T's `respond` is not `inert_respond` (§12.3) — i.e., T
+accepts at least one elimination frame. (Every type now *has* a respond,
+so the test is "non-inert," not "present"; sharper Π-specific checks use
+`is_pi` / `pi_dom`.)
 
 == `safe_*` helpers: wrapper reads vs value decomposition
 
@@ -3614,12 +3551,23 @@ canonical readers `ROOT_SIG` (= the blessed `pair_fst` tree) and `STORED_TYPE`
 
 ```disp
 // Wrapper reads (concrete on seals; built on the §4.2 readers + O(1) tree_eq).
+//
+// A root-sig read is *always* walker-safe — ROOT_SIG (§4.2) short-circuits
+// before the guards — so "what roots this value?" needs no `safe_`-prefixed
+// variant. "Neutral" and "stuck form" are the *same* predicate: all stuck forms
+// are hyp_reduce-rooted (§6.1), one O(1) tree_eq, Σ-independent. It is total and
+// infallible, so it returns a bare Bool (no CheckerResult wrapping):
+is_neutral := {v} -> tree_eq (ROOT_SIG v) (checker_sig kernel.hyp_reduce)
+//
+// (The former `safe_is_neutral` / `safe_is_stuck` are gone — they were this same
+//  comparison with inconsistent wrapping, `Ok Bool` vs bare `Bool`. The `safe_`
+//  prefix is now reserved for *value-decomposition that must stay symbolic on a
+//  neutral* — `safe_is_fork` / `safe_pair_fst` below — never for a root read.)
+
+// The Ok-wrapped root-sig read, for recognizer bodies that thread CheckerResult.
 safe_has_sig := {checker, v} -> Ok (tree_eq (ROOT_SIG v) (checker_sig checker))
-safe_is_neutral := {v} -> safe_has_sig kernel.hyp_reduce v
-// All stuck forms are hyp_reduce-rooted (§6.1), so the stuck check is the same
-// single sig comparison; it is Σ-independent.
-safe_is_stuck := {v} -> tree_eq (ROOT_SIG v) (checker_sig kernel.hyp_reduce)
-// Stored type of any stuck form. Uses STORED_TYPE — *not* raw
+
+// Stored type of any neutral. Uses STORED_TYPE — *not* raw
 // `neutral_meta_type (pair_snd v)` — because `pair_snd` is not a reader (it
 // would surface the meta's protected payload, §4.2/§4.3); STORED_TYPE projects
 // straight to the type slot.
@@ -3654,7 +3602,7 @@ seals; only genuine value-decomposition stays symbolic. For concrete values both
 columns reduce to the raw operation's result; the difference shows only on seals.
 
 *Where they're used*: primarily *inside* `make_recognizer`'s wrapper.
-The H-rule check `safe_is_stuck v` runs on the recognizer's v argument
+The H-rule check `is_neutral v` runs on the recognizer's v argument
 before delegating; for any handler-rooted stuck v whose stored type
 matches the recognizer's self-type, the H-rule branch fires and the
 recognizer short-circuits with a concrete `Ok TT`.
@@ -3690,7 +3638,7 @@ let recognizer_wrap_fn = fix ({wrap, body, meta, v} ->
   // reference, and the two are the same tree, so `self_type` hash-cons-equals
   // any externally-built `wait (make_recognizer body) meta` (cf. §14 openq).
   let self_type = wait (wait wrap body) meta in
-  match (safe_is_stuck v) {                              // Σ-independent
+  match (is_neutral v) {                                 // Σ-independent
     TT => Ok (tree_eq self_type (stuck_stored_type v))   // H-rule
     FF => body meta v                                    // concrete dispatch
   })
@@ -3698,15 +3646,14 @@ let recognizer_wrap_fn = fix ({wrap, body, meta, v} ->
 let make_recognizer = {body} -> wait recognizer_wrap_fn body
 ```
 
-The generalized check `safe_is_stuck` (§12.8) accepts any wait-form
-rooted at `hyp_reduce` — all stuck forms (raw hypotheses, spine
-extensions, stuck eliminations) share this one constructor. The
-check is Σ-independent. This closes a soundness gap that matters for
-effect-using polymorphic functions: a Pi-body containing stuck-
-elimination intermediate values (e.g.
-`nat_rec`) otherwise produces stuck-typed intermediates that the older
-`safe_is_neutral` check missed, cascading into spurious body-check
-failures.
+The check `is_neutral` (§12.8) accepts any wait-form rooted at
+`hyp_reduce` — all stuck forms (raw hypotheses, spine extensions, stuck
+eliminations) share this one constructor (§6.1), so the single root
+comparison covers them all. The check is Σ-independent. This is what
+lets effect-using polymorphic functions check: a Pi-body containing
+stuck-elimination intermediate values (e.g. `nat_rec`) is recognized as
+a neutral and short-circuited via the H-rule, rather than propagating
+stuck-typed intermediates into spurious body-check failures.
 
 The wrapped recognizer is a wait-form `wait recognizer_wrap_fn body`.
 Its sig is `checker_sig recognizer_wrap_fn` — a fixed library
@@ -3773,7 +3720,7 @@ let bool_recognizer = make_recognizer ({_, v} ->
 let bool_meta = {
   recognizer_params := unit_witness,
   functor := trivial_functor,            // discrete: identity transport
-  respond := some inductive_respond,     // case-elimination on a neutral Bool (§12.3)
+  respond := inductive_respond,          // case-elimination on a neutral Bool (§12.3)
   behavioral_specs := none
 }
 
@@ -3808,7 +3755,7 @@ let nat_recognizer = make_recognizer ({_, v} ->
 let nat_meta = {
   recognizer_params := unit_witness,
   functor := trivial_functor,
-  respond := some inductive_respond,     // case-elimination on a neutral Nat (§12.3)
+  respond := inductive_respond,          // case-elimination on a neutral Nat (§12.3)
   behavioral_specs := none
 }
 
@@ -3826,32 +3773,40 @@ test nat_recognizer nat_meta (mint_hyp_form Nat) = Ok TT   // H-rule
 
 The pivotal one — Pi's recognizer requires its candidate to be a
 `checked` wait-form. Raw function values do not inhabit Pi types;
-they must be wrapped first (via `typed_lambda` or `checked` directly).
+they must be wrapped first (via `checked`).
 
 ```disp
 let pi_recognizer = make_recognizer ({meta, v} ->
   let A = meta.recognizer_params.dom
   let B = meta.recognizer_params.cod
-  // Step 1 (pure structural): v must be a `checked` wait-form.
+  // Step 1 (pure structural): v must be a `checked` function.
   // Raw has_sig is fine — v is concrete here (make_recognizer's
   // H-rule already handled the hypothesis case).
   match (has_sig checked_apply v) {
     FF => Ok FF
     TT =>
-      // Step 2 (pure structural): v's stored domain matches A. Recover v's
-      // meta record via wait_meta (§5.4); its `ascribed_type` field is the
-      // full stored type `Pi A' B'` — then compare its *domain* to A.
-      let v_dom = pi_dom (wait_meta v).ascribed_type in
-      match (tree_eq v_dom A) {
+      // Step 2 (pure structural): v's stored input type matches A.
+      // `checked` stores its domain directly (§12.16), so this is a
+      // direct field read — no `pi_dom` extraction. We keep this
+      // structural match (rather than relying *solely* on `checked`'s
+      // own input-check in step 3) so a domain mismatch is a clean
+      // verdict `Ok FF`, not the `Err TypeMismatch` that `checked`'s
+      // contract boundary would raise on a non-matching arg (§3,
+      // verdict-vs-error).
+      match (tree_eq (wait_meta v).dom A) {
         FF => Ok FF
         TT =>
-          // Step 3 (kernel-mediated): bind a fresh A-hypothesis, apply
-          // v to it, then check the result against B hyp.
+          // Step 3: bind a fresh A-hypothesis and apply the *wrapped* v,
+          // so `checked`'s own input-check is the operative domain check
+          // on `hyp` (here a no-op, since step 2 already matched the
+          // domain — defense in depth). Then check the body's result
+          // against `B hyp`.
           bind_hyp A ({hyp} ->
             bind (param_apply v hyp) ({result} ->
               param_apply (B hyp) result))
       }
-  })
+  }
+)
 
 // Respond for a Π-typed neutral: the frame is an argument `a`, and the spine
 // extends at the codomain instantiated there (§6.2, §11.2). The codomain lives
@@ -3865,8 +3820,8 @@ pi_respond := {neutral_meta, frame} ->
 let pi_meta_for = {A, B} -> {
   recognizer_params := { dom := A, cod := B },
   functor := pi_functor,                          // non-trivial; supports transp (§13)
-  respond := some pi_respond,
-  behavioral_specs := none
+  respond := pi_respond,
+  behavioral_specs := some [pi_respond_coherence A B]   // respond-coherence Path (§12.3)
 }
 
 let Pi = {A, B} -> wait pi_recognizer (pi_meta_for A B)
@@ -3985,7 +3940,7 @@ let string_recognizer = make_recognizer ({_, v} ->
 let string_meta = {
   recognizer_params := unit_witness,
   functor           := trivial_functor,
-  respond           := none,
+  respond           := inert_respond,    // String is inert under elimination (§12.3)
   behavioral_specs  := none
 }
 
@@ -4136,83 +4091,44 @@ semantics and the `Σ`/`Π` grid*, not at the level of definitions: minimizing
 primitives (the metacircular goal) leaves an irreducible floor — the tree-calculus
 substrate plus this handful of encodings — rather than eliminating it.
 
-== Effect interfaces and handlers
+== Capability records (a dependency-injection pattern over `Eff`)
 
-An *effect interface* is a typed record of operation signatures. An
-*effect handler* is a value of an interface type. Both are ordinary
-library constructions — no kernel changes, no extensions to the
-dispatch environment, no new validators.
+The canonical effect system is the `Eff R X` free monad of §15. *In
+addition*, a function may bundle a set of operations into a record passed
+as an explicit argument — a *capability*, in the Effekt style — which is
+ordinary `Record`/`Pi`/`Refinement` machinery (§12.1–§12.5), no effect-
+specific types. This is dependency injection, not a second effect system:
+a capability's operation fields *return `Eff` values* (they describe
+effects), and the result is still run by a handler / the driver (§15).
 
 ```disp
-// Interface: just a record type.
+// A capability is just a record type; its fields produce Eff values.
 let Console : Type := record {
-  print    : Pi String ({_} -> Unit),
-  readline : Pi Unit   ({_} -> String)
+  print    : Pi String ({_} -> Eff {IO} Unit),
+  readline : Pi Unit   ({_} -> Eff {IO} String)
 }
 
-// Native handler: bottoms out at host postulates (§7.5, §15).
-let stdoutConsole : Console := {
-  print    := host_write_stdout,
-  readline := host_read_stdin
-}
+// A "handler" here is a record value supplying those operations. A mock
+// supplies pure Eff values, so test code needs no driver at all.
+let realConsole : Console := { print := write stdout, readline := {_} -> read stdin }
+let mockConsole : Console := { print := {_} -> io_pure unit, readline := {_} -> io_pure "stub" }
 
-// Constructed handler: built on top of another.
-let prefixedConsole : Console := {
-  print    := {msg} -> stdoutConsole.print (concat "[log] " msg),
-  readline := stdoutConsole.readline
-}
-
-// Mock handler for testing: no IO.
-let mockConsole : Console := {
-  print    := {_} -> unit_witness,
-  readline := {_} -> "stub input"
-}
+// A function using the capability takes it as a Pi-bound argument:
+let greet : Pi Console ({_} -> Pi String ({_} -> Eff {IO} Unit)) :=
+  checked Console ({c, name} -> c.print (concat "hello, " name))
 
 test typecheck Type Console
-test typecheck Console stdoutConsole
-test typecheck Console prefixedConsole
 test typecheck Console mockConsole
 ```
 
-Functions that use an effect accept a handler value as a Pi-bound
-*capability* argument:
-
-```disp
-let greet : Pi Console ({_} -> Pi String ({_} -> Unit)) :=
-  typed_lambda Console ({_} -> Pi String ({_} -> Unit)) ({c, name} ->
-    c.print (concat "hello, " name))
-
-// Usage:
-//   greet stdoutConsole  "world"   -- real IO
-//   greet prefixedConsole "world"  -- logged IO
-//   greet mockConsole     "world"  -- no IO; for tests
-```
-
-*Row polymorphism via dependent records.* A function using two
-effects accepts a product:
-
-```disp
-let backup : Pi (record { c : Console, f : FileIO }) ({_} -> Unit) :=
-  typed_lambda _ ({_} -> Unit) ({caps} -> ...)
-```
-
-A row-polymorphic function uses Pi over a refinement that requires
-specific capabilities:
-
-```disp
-let with_console : Pi (R : Type) ({_} ->
-  Pi (extends R Console) ({caps} -> Unit)) := ...
-```
-
-`extends R Console` is a `Refinement Record [..]` (§12.5) requiring
-`R` to contain at least Console's fields. Row union is record
-concatenation; row subset is field-projection. All of this falls out
-of the record/refinement machinery already in §12 — no effect-row-
-specific type machinery needed.
-
-See §15 for the broader effects story: host primitives, postulates,
-construction patterns, and the relationship between interfaces and
-the dispatch environment.
+Bundling several capabilities is a product (`record { c : Console, f :
+FileIO }`); "row-polymorphic over capabilities" is `Pi` over an
+`extends R Console` refinement (§12.5) — all from the record/refinement
+machinery, distinct from the §15 *effect row* `R`, which tracks the
+operations an `Eff` value may perform. Capability-passing answers "where
+do the operations come from"; the effect row answers "which effects may
+fire" — they compose, and neither requires kernel support. See §15 for
+the effect system proper.
 
 = Cubical extensions <sec:cubical>
 
@@ -4264,7 +4180,7 @@ let I_recognizer = {_, v} -> ...
 let I_meta = {
   recognizer_params := unit_witness,
   functor := trivial_functor,         // I doesn't transport
-  respond := none,
+  respond := inert_respond,           // the interval is inert under elimination (§12.3)
   behavioral_specs := none
 }
 
@@ -4313,7 +4229,7 @@ systems.
 let IsOne = {i} -> wait isone_recognizer {
   recognizer_params := i,
   functor := trivial_functor,
-  respond := none,
+  respond := inert_respond,
   behavioral_specs := none
 }
 
@@ -4447,7 +4363,7 @@ with partial type information (T, e) at the face phi. Its non-trivial
 let Glue = {B, T, e} -> wait glue_recognizer {
   recognizer_params := glue_params_for B T e,
   functor := glue_functor,             // applies the equivalence on transport
-  respond := none,
+  respond := inert_respond,            // Glue is eliminated via unglue, not a respond frame
   behavioral_specs := none
 }
 
@@ -4491,7 +4407,7 @@ requires additional library scaffolding beyond what's in this section.
   contingent on the same fix.
 + *Representation independence in practice* — functions over one
   representation work on equivalent representations via transport.
-+ *No kernel growth.* The three Σ-operations plus the dispatcher are
++ *No kernel growth.* The two Σ-operations plus the dispatcher are
   the total kernel surface; cubical adds none.
 
 == Limitations
@@ -4529,40 +4445,41 @@ operational story.
     inset: 6pt,
     [*Category*], [*What it asserts*],
     [Kernel tests],
-    [The three kernel handlers behave per their specs (§7).
-      Test that `bind_hyp` mints a neutral, `hyp_reduce` extends
-      spines and mints StuckElim via inductive types' `respond`,
-      `postulate` builds pinned wait-forms. Run under `test_pure` —
-      the foundational layer must not depend on host primitives.],
+    [The two kernel handlers behave per their specs (§7).
+      Test that `bind_hyp` mints a neutral and `hyp_reduce` extends
+      spines / mints StuckElim via inductive types' `respond`. There is
+      no host dependence to exclude — checking never performs an effect
+      (§15), so these are ordinary `test`s.],
 
     [Type-system tests],
     [Each library type passes the expected validators. Test that
       `Type Bool`, `StrictType Bool`, `Type Pi`, etc. all reduce
-      to `Ok TT`. Run under `test_pure`.],
+      to `Ok TT`.],
 
     [Behavioral tests],
-    [Optional Path-typed proofs in `behavioral_specs`. Test that
-      each type's recognizer behaves as documented on canonical
-      inhabitants and counter-examples. Run under `test_pure`
-      unless the spec genuinely depends on a host primitive.],
+    [Optional Path-typed proofs in `behavioral_specs` (including the
+      respond-coherence laws, §12.3). Test that each type's recognizer
+      and `respond` behave as documented on canonical inhabitants and
+      counter-examples.],
 
     [Environment probes],
     [*Empirical* observations about the surrounding host
       environment — file existence, env vars, time-of-day,
-      network reachability. Run under the default dispatch
-      environment (host primitives active). Useful for integration
-      checks; *not foundational*. May produce different results
-      in different environments.],
+      network reachability. These run the relevant `Eff` value through
+      the *real driver* (§15), so they are meaningful only at the
+      CLI/integration layer, *not* in unit tests; *not foundational*;
+      may produce different results in different environments.],
   ),
   caption: [Test categories asserting soundness.],
 )
 
-The first three are runnable as pure tests and underwrite the
-foundational story. Environment probes are an *operational* category —
-they fail when the host environment doesn't match expectations, not
-when the type system is unsound. Mark them with `test_observe` for
-clarity (a sugar that runs under the default dispatch environment
-and reports failures distinctly from foundational failures).
+The first three never perform an effect and underwrite the foundational
+story directly. Environment probes are an *operational* category — they
+fail when the host environment doesn't match expectations, not when the
+type system is unsound — and are the only category that engages the real
+driver; mark them with `test_observe` for clarity (a sugar that runs the
+`Eff` value through the driver and reports failures distinctly from
+foundational failures).
 
 == Sample tests
 
@@ -4571,8 +4488,7 @@ and reports failures distinctly from foundational failures).
 test bind_hyp_mints_kernel_signature_neutral
 test hyp_reduce_extends_spine_correctly
 test hyp_reduce_mints_stuck_elim_via_inductive_respond
-test postulate_constructs_pinned_wait_form
-test safe_apply_routes_default_dispatch_handlers_raw
+test param_apply_routes_kernel_handlers_raw
 
 // Type-system tests (lax)
 test typecheck Type Bool = TT
@@ -4602,19 +4518,19 @@ a whole by re-elaborating the library.
 
 What's in the trusted base:
 
-- The three kernel Σ-operations (`hyp_reduce`, `bind_hyp`,
-  `postulate`) implemented in disp source.
-- The dispatcher `safe_apply` (in-language reference + native fast-path).
+- The two kernel Σ-operations (`hyp_reduce`, `bind_hyp`) implemented in
+  disp source.
+- The dispatcher `param_apply` (in-language reference + native fast-path).
 - The host runtime's signature-pinning and native fast-paths for the
-  above plus any host-provided handlers in `host_provided`.
+  above.
 - The parametric walker (in-language reference + native fast-path).
 - Library validators (`Type`, `StrictType`, `BehavioralType`) and
   their recognizer functions.
 - Library `safe_*` helpers (hypothesis-safe structural inspection).
 - The `MetaShape` convention.
-- Each host primitive's *type ascription* — its `postulate` claim about
-  what the underlying host handler implements (library-level trust;
-  see §15).
+- The *effect driver* (§15) and each host operation's *type ascription*
+  in the host-op map — the library claim about what the underlying host
+  function implements (library-level trust; see §15).
 
 What's *not* in the trusted base:
 
@@ -4637,12 +4553,13 @@ Test-based soundness is *operational*: the tests pass on concrete
 inputs. This is necessary but not sufficient for foundational
 consistency (Type:Type, etc.) — see §11.6 for the open conjecture.
 
-*Foundational tests must run under `test_pure`.* The conjectural-
-consistency argument depends on Σ being `kernel_handlers` only; if
-host primitives are in scope during the test, their stubbed return
-values can mask soundness issues. The standard library marks every
-foundational test (kernel-handler behavior, Type:Type, conversion
-properties) with `test_pure`; CI verifies this discipline.
+*Foundational tests are automatically host-independent.* The
+conjectural-consistency argument needs Σ to be the kernel ops only — and
+that now holds *by construction*: Σ is the fixed two-op constant, host
+primitives are inert `Eff` values never performed during checking (§15),
+and `param_apply` carries no host environment. The earlier requirement
+to mark foundational tests `test_pure` is obsolete; every `test` already
+runs in the one host-independent mode.
 
 Two distinct claims to keep separate:
 
@@ -4766,218 +4683,291 @@ meta` (constructed externally), tree_eq comparisons in the H-rule
 
 = Effects <sec:effects>
 
-Disp's effect story rests on three observations:
+Disp's effect system is *entirely a library construction* — a free monad
+over a signature of operations, interpreted by handlers, with one impure
+*driver* at the program boundary. The kernel is not involved: there is no
+effect Σ-entry, no `postulate`, no host-rooted wait-form. This section
+specifies it.
 
-+ *Effects are dispatch-environment entries.* The kernel ships
-  handlers for its type-system effects (neutral minting, spine
-  extension, case dispatch, postulate construction). The host exposes
-  additional handlers for IO primitives. Both populate the same Σ
-  list-value. `safe_apply Σ` evaluates trees against any chosen
-  environment.
+== Why effects are values
 
-+ *Effect interfaces are typed records; handlers are values.* No
-  special syntax, no scoped runtime registry, no row-type system.
-  An interface is a record type; a handler is a record value; calling
-  effects is record projection plus apply. Capability passing
-  (Effekt-style) is how functions declare effect requirements.
+The substrate must be pure: hash-consing shares structurally-equal trees,
+and the `apply`-memo that makes `tree_eq` O(1) (§2.2) is only sound if
+reduction has no side effects. A side-effecting `apply` would make two
+equal subtrees — one node — perform their effect a number of times that
+depends on sharing, which is incoherent. So an effect *cannot happen
+during reduction*. It follows that an effect operation must be a *value*
+— a description — and real IO happens only at the impure boundary, when
+the outermost *driver* walks that value. This is forced, not chosen, and
+it is why the design is a free monad plus a driver rather than a
+dispatch-environment of side-effecting handlers (the framing of the prior
+spec).
 
-+ *Strengthening proceeds via library postulates.* The host registers
-  raw handlers (sig + TS body, no types). The disp library ascribes
-  types via `postulate`. As library matures, stricter postulates
-  supersede looser ones; the host is unaffected. Trusted-base
-  discipline is library-level, not kernel-level.
+== `Eff R X`: the free monad
 
-== Host primitives
-
-The host exposes a small fixed set of low-level operations as a
-*value* — `host_provided : List Tree` — bound at module-load time.
-Each entry is a handler tree whose `apply` semantics are intercepted
-by the native fast-path and routed to the corresponding TypeScript
-function.
-
-```typescript
-// src/host_primitives.ts (host setup, not a registration call from disp)
-
-// Each host primitive is a TS function; the host builds anchor trees
-// for each and wires them into the native fast-path table.
-const handlers = {
-  WRITE_STDOUT_SIG: (meta, finalArg) => {
-    const msg = treeToString(pair_fst(meta));
-    const cont = pair_snd(meta);
-    process.stdout.write(msg);
-    return applyTree(cont, UNIT);
-  },
-  READ_STDIN_SIG:  (meta, finalArg) => readLineSync(),
-  GET_TIME_SIG:    (meta, finalArg) => Date.now(),
-  // ... ~10-30 total. Frozen at startup.
-};
-
-// The host then constructs `host_provided` as a disp tree value:
-//   host_provided := [write_stdout_anchor, read_stdin_anchor, ...]
-// and exposes it in the disp top-level scope.
-```
-
-There is no `register_effect_handler` *call* exposed to disp source.
-The host's contribution is a single value, concatenated into
-`default_dispatch` explicitly by `lib/prelude.disp`:
+An effectful computation is a value of `Eff R X` — "a computation that may
+perform the effects in row `R`, ultimately yielding an `X`." It is an
+ordinary library `Coproduct` (§12.2), hence recursive like `List`, and it
+inherits `inductive_respond` (§12.3) so an `Eff`-typed *hypothesis* is
+handled by the kernel's neutral machinery automatically — the only point
+at which effects touch the kernel at all.
 
 ```disp
-let default_dispatch : List Tree := concat kernel_handlers host_provided
-```
+// A self-describing operation occurrence: its label and its dependent
+// param / result types, carried inline (so `op.result` is a projection,
+// not a global-table lookup — §15.3).
+OpOcc := { label : OpLabel, param : Type, result : Type }
 
-Different builds (production, test, minimal sandbox) can expose
-different `host_provided` lists — the disp library sees only the
-value.
-
-== Postulates: typed ascriptions for host primitives
-
-The host hands disp raw handler trees. The disp library separately
-ascribes types using `postulate` (§7.5):
-
-```disp
-// In lib/host/console.disp:
-let host_write_stdout : Pi String ({_} -> Unit) :=
-  postulate WRITE_STDOUT_SIG
-
-let host_read_stdin : Pi Unit ({_} -> String) :=
-  postulate READ_STDIN_SIG
-```
-
-The host doesn't know about `Pi String _`; the disp library asserts
-this is the right type.
-
-#openq[
-  *The postulate value shape and the host-side meta layout are
-  underspecified, and the two examples disagree.* §7.5 says a library
-  postulate `host_op : T := postulate sig` "produces a `checked T
-  (call_via_postulate sig)` value," but `call_via_postulate` is never
-  defined, and the relationship between (a) the partially-applied
-  Σ-operation `postulate sig` (a `wait kernel.postulate {sig}` form
-  awaiting its payload), (b) the `checked T (...)` wrapper, and (c) the
-  host-rooted wait-form `wait_with_sig sig payload` that the handler
-  finally mints is left implicit. Worse, the host handler in §15 reads
-  its meta as `pair(msg, cont)` — a CPS pair carrying a continuation —
-  yet the disp-level ascription `Pi String ({_} -> Unit)` describes a
-  single string argument returning `Unit`, with no continuation in
-  sight. Either the host meta layout or the ascribed arity is wrong as
-  written. Pinning this down needs: a concrete definition of how a
-  postulate accumulates its argument(s) into the payload the host sees,
-  and a single convention for whether host primitives are direct
-  (`arg → result`) or CPS (`arg → (result → k) → …`). Until then the
-  `checked T (call_via_postulate sig)` line and the §15 `pair(msg,
-  cont)` handler should be read as illustrative, not normative.
+// The free monad. R (the effect row, §15.5) is a type-level parameter;
+// the value shape is just Pure | Op.
+Eff := {R, X} -> Coproduct [
+  (Pure, X),                                          // done — payload is the result
+  (Op,   Sigma OpOcc ({op} ->                         // perform op `op` …
+           Sigma (op.param) ({arg} ->                 //   on `arg : op.param` …
+             Pi (op.result) ({_} -> Eff R X))))       //   then continue: k : op.result -> Eff R X
 ]
 
-As library matures and refinement proofs
-accumulate, stricter ascriptions can be written without changing the
-host:
-
-```disp
-// lib/host/console_v2.disp — stricter type, same underlying sig.
-let host_write_stdout_strict : Pi (Refinement String is_valid_utf8) ({_} -> Unit) :=
-  postulate WRITE_STDOUT_SIG
+io_pure := {x}           -> inj Pure x                          // = pair Pure x   (§2.6)
+io_op   := {op, arg, k}  -> inj Op (pair op (pair arg k))       // = pair Op (op,arg,k)
 ```
 
-Both postulates coexist. Call sites pick the one matching their
-proof obligations. Older code using the looser ascription continues
-to work.
+The continuation `k` is an ordinary function-tree awaiting the op's result
+(§15.3 makes the result type dependent: `op.result`). `bind` is the
+standard free-monad graft — walk to the `Pure` leaf, attach `f`:
 
-*Postulate migration discipline.* When a stricter postulate
-supersedes a looser one targeting the same sig:
+```disp
+bind := fix ({self, m, f} ->
+  match m {                                       // the cut on m's tag (§2.6)
+    Pure x => f x
+    Op p   => io_op (p.op) (p.arg) ({r} -> self (p.k r) f)
+  })
+```
 
-+ Keep both bindings in the library (e.g. `host_write_stdout` and
-  `host_write_stdout_strict`).
-+ Provide a `Refinement`-to-base coercion if the stricter type is a
-  refinement of the looser one — call sites that lift to the strict
-  version supply the necessary proof at the call site.
-+ Lint: a future `--check-postulate-currency` flag flags use of the
-  loose binding when a strict one targeting the same sig is in
-  scope. Currently advisory.
-+ Eventually the loose binding can be removed once all call sites
-  have migrated; the host's underlying handler is unchanged.
+== Operations and user-definable effects
 
-This is the same pattern as Lean 4's `Decidable` migration story or
-Coq's typeclass refinement: weaker ascriptions remain available for
-legacy code; stricter ones land alongside; deprecation is gradual.
+Every operation — host or user — is built by one generator that makes it
+self-describing (this is the dependent-result resolution: `op.result` is
+read off the occurrence, no global `OpResult` table):
+
+```disp
+// `declare_op` is what an `effect` declaration expands to, per operation.
+declare_op := {label, ParamTy, ResultTy} ->
+  {arg} -> io_op { label := label, param := ParamTy, result := ResultTy }
+                 arg
+                 ({r} -> io_pure r)        // trivial "return the result" continuation
+```
+
+The built-in `IO` effect's operations are nothing special — just the
+operations of one effect whose handler happens to be the driver:
+
+```disp
+read  := declare_op IO.read  Fd                 String     // read  : Fd -> Eff {IO} String
+write := {fd, s} ->
+  (declare_op IO.write (pair Fd String) Unit) (pair fd s)  // write : … -> Eff {IO} Unit
+```
+
+A *user effect declaration* desugars to a label, a `declare_op` per
+operation, and a row entry — all library sugar, no privilege:
+
+```disp
+// surface:                          elaborates to:
+effect State S {                     State    := effect_label "State"
+  get : Unit -> S                    get      := declare_op (op State "get") Unit S
+  put : S    -> Unit                 put := {s} -> (declare_op (op State "put") S Unit) s
+}
+```
+
+== Handlers
+
+A handler interprets a free-monad value as a *deep fold*, with the
+continuation reified as `resume`. On an operation it covers, it runs the
+clause; on one it does not, it *forwards* the op and stays installed on
+the tail:
+
+```disp
+handle := {h} -> fix ({self, m} ->
+  match m {
+    Pure x => h.return x
+    Op p   => match (h.covers (p.op)) {
+      TT => (h.on (p.op)) (p.arg) ({r} -> self (p.k r))   // interpret; resume = run the tail under h
+      FF => io_op (p.op) (p.arg) ({r} -> self (p.k r))    // forward; keep h installed on the tail
+    }
+  })
+```
+
+`resume = {r} -> self (p.k r)` *is* the continuation. The clause decides
+how often to call it; because the substrate is pure (§15.1), calling it
+0/1/many times is free:
+
+```disp
+exn_handler := { covers := is_Exn,                       // throw aborts: resume unused
+                 return := {x} -> Ok x,
+                 on := {_op} -> {e, resume} -> Err e }
+
+nondet_hdlr := { covers := is_Nondet,                    // choose: resume per candidate (multi-shot)
+                 return := {x} -> [x],
+                 on := {_op} -> {cands, resume} -> concat_map resume cands }
+
+state_hdlr  := { covers := is_State,                     // parameter-passing: clauses return S -> …
+                 return := {x} -> {s} -> io_pure (pair x s),
+                 on := {op} -> select_op op {
+                   get := {_, resume} -> {s} -> (resume s)    s,
+                   put := {_, resume} -> {s'} -> (resume unit) s' } }
+```
+
+== The effect row and effect-safety
+
+The row `R` in `Eff R X` is a *set of effect labels* carried in the type's
+`recognizer_params`, and effect-safety is ordinary recognizer + `Pi`
+checking — no new machinery. This is the research literature's *graded
+monad* `T_e` with `e` ranging over the idempotent powerset-of-labels
+monoid (union, ∅): Koka-style row effects, realized as a parameterized
+library inductive plus dependent `Pi`-types.
+
+```disp
+// The Eff recognizer structurally verifies every Op uses a label in R.
+eff_recognizer := make_recognizer ({meta, v} ->
+  let R = meta.recognizer_params.row in
+  let X = meta.recognizer_params.result in
+  match v {                                   // (concrete v; H-rule handled by make_recognizer)
+    Pure x => param_apply X x                              // payload inhabits X
+    Op p   => and (label_in_row (effect_of p.op) R)        // op's effect ∈ R
+                  (param_apply (Pi (p.op.result) ({_} -> Eff R X)) (p.k))  // k continues in Eff R X
+  })
+```
+
+The row arithmetic lives in the `Pi`-types of the combinators — `∪` to
+sequence, `−` to discharge:
+
+```
+op_E    : …             -> Eff {E} _                       // singleton row
+bind    : Eff R A -> (A -> Eff S B) -> Eff (R ∪ S) B        // union (the graded μ)
+handle_E: Eff (R ∪ {E}) X -> Handler E -> Eff R Y           // discharge: remove E
+```
+
+`row_union` / `row_remove` are set operations on the label list (`Tags`,
+§12.2). A computation reaching `main` must have row `⊆ {IO}` — only the
+driver-handled effect may remain — or it is a type error (a missing
+handler). Effect-safety is thus checked by the `Eff` recognizer plus `Pi`
+recognition; custom user effects are first-class because `effect` is sugar
+and the row is data.
+
+== The driver: the one impure handler
+
+The built-in `IO` effect is discharged by the *driver* — the outermost
+handler, and the only impure code in the system, run at `main`:
+
+```
+run(m):                                   // run : Eff {IO} X -> X, native, at the boundary
+  while tag(m) == Op && is_IO(m.op):
+    arg = m.arg
+    require (is_closed arg)               // §8.1 sanitizer — see below
+    result = perform_host(m.op, arg)      // the syscall; the host-op map
+    m = apply(m.k, result)                // resume the continuation with the concrete result
+  return payload(m)                       // Pure x → x  (all IO discharged)
+```
+
+`perform_host` is the host-op map (`OpLabel → TS function`) — an
+*interpretation* table consulted only here, never a protection registry,
+never seen by the walker. An unknown label is an error (no handler).
+*Async* needs no new mechanism: the driver simply *defers* `apply(m.k,
+result)` until the bytes arrive — `m.k` is the suspended continuation —
+so an event-loop driver schedules resumptions without any kernel `Promise`
+primitive.
 
 #note[
-  *Trusted base.* Each postulate is a *trust claim*: "the handler
-  registered for `WRITE_STDOUT_SIG` behaves consistently with this
-  declared type." A wrong ascription is a soundness bug, but it's
-  library-level — fixable without touching the kernel or the host.
-  The kernel ensures user code can only invoke host handlers via the
-  postulate route; it cannot ensure the postulate's type matches the
-  handler's behavior. Discipline: only the standard library's
-  postulates are "blessed"; user code adding its own postulates is
-  use-at-your-own-risk.
+  *The sanitizer, and where `postulate`'s scan went.* The `is_closed`
+  check (§8.1) is the residue of the prior spec's `postulate`
+  no-neutral scan. It belongs *here*, at the driver, not at the
+  smart constructors or in a type: during type-checking an op's `arg`
+  is legitimately symbolic (checking `{s : String} -> write fd s`
+  builds `write fd s` with `s` a hypothesis), and the `String`
+  recognizer *accepts* a `String`-typed neutral via the H-rule — so
+  neither construction nor the type can forbid a neutral arg. Only at
+  run time is the program closed (`main` has no free hypotheses), so
+  the driver is the unique sound place to require that the host never
+  receives a symbolic tree. On a validated closed program it never
+  fires; it is a cheap (memoized) defensive backstop.
 ]
 
-== Effect interfaces and handlers
-
-§12 (Effect interfaces and handlers) covers the typed-records side.
-Briefly:
-
-- An *interface* is a record type, e.g. `Console := record { print : ..., readline : ... }`.
-- A *handler* is a value of an interface type. Native handlers are
-  built from postulates; constructed handlers are built from other
-  handlers; mock handlers stub everything.
-- A function that uses an effect *accepts a handler as a Pi-bound
-  argument* (capability-passing à la Effekt). Row polymorphism is
-  product types of interfaces (§12).
+== Worked example: a user effect over IO
 
 ```disp
-let greet : Pi Console ({_} -> Pi String ({_} -> Unit)) :=
-  typed_lambda Console _ ({c, name} ->
-    c.print (concat "hello, " name))
+prog : Eff {State Nat, IO} Unit
+prog := bind get               ({n} ->
+        bind (write stdout n)  ({_} ->
+        put (succ n)))
+// value: Op get () (\n -> Op write (stdout,n) (\_ -> Op put (n+1) (\_ -> Pure ())))
 
-// Usage: greet stdoutConsole "world"  (real IO)
-//        greet mockConsole "world"     (no IO; for tests)
+main : Eff {IO} Unit
+main := map ({_} -> unit) (handle state_hdlr prog 0)
+// handle state_hdlr interprets get/put (threading state), FORWARDS write;
+// residual row {State Nat, IO} − {State Nat} = {IO}; the driver then runs write.
 ```
 
-== Test handlers and mock environments
+`handle state_hdlr` folds `prog`: `get`/`put` are interpreted (state
+threaded as a parameter), `write` is forwarded unchanged into the residual
+`Eff {IO}` value, which the driver performs. Multi-shot, abort, and state
+all come from the *same* fold; the only difference is how each clause uses
+`resume`.
 
-Tests can install mock handlers in two ways:
+== `catch` is a handler, not an operation
 
-*(a) Pass a mock interface value.* Simplest. Works for any effect
-expressed as a typed interface:
+Scoped operations whose semantics are fixed at the use site — `catch`,
+`local` (Reader), `once`, `bracket` — are *handlers*, not higher-order
+operations. `catch` is a locally-installed `Exn` handler whose recovery
+clause drops the continuation:
 
 ```disp
-test (greet mockConsole "world") = unit_witness
+// catch : Eff (R ∪ {Exn E}) A -> (E -> Eff R A) -> Eff R A
+catch := {body, recover} -> handle {
+  covers := is_Exn,
+  return := {x} -> io_pure x,                 // body finished normally: keep its value
+  on     := {_op} -> {e, resume} -> recover e // a throw inside body: run recover, DROP resume
+} body
 ```
 
-*(b) Substitute a stricter dispatch environment.* Useful when the
-test code under examination calls host primitives directly (e.g.,
-the postulate values themselves). Build a custom Σ with overrides:
+The scoping is correct because `handle h body` folds *only* `body` — the
+delimited region — while throws *after* `catch` live in the outer
+continuation `handle` never touches. It composes with other effects: in
+`catch (do { put 2; throw e; put 3 }) (\_ -> get)`, the local `Exn`
+handler *forwards* `put 2` (so the outer `State` handler sees it), the
+`throw` triggers recovery (dropping `put 3`), and `State` threads straight
+through the catch boundary. This is the standard algebraic-effects
+treatment, and disp gets delimited control for free: `handle` is `reset`,
+`resume` is the captured delimited continuation, so no `shift`/`reset`
+primitive is needed.
 
-```disp
-let mock_env : List Tree := concat kernel_handlers [my_mock_print_handler]
-let test_apply := safe_apply mock_env
+#openq[
+  *Higher-order operations that must be reinterpreted by outer handlers*
+  (the Wu–Schrijvers–Hinze 2014 "effect handlers in scope" problem) are
+  the residue the handler-encoding does *not* cover: a scoped operation
+  whose meaning is determined by an *outer* handler it is forwarded
+  through (a transactional or logging handler that must observe the
+  scope). The flat free monad fails here because a handler's fold walks
+  the `k`-spine but never recurses into a computation sitting in argument
+  position. The minimal fix is a second constructor
+  `Scoped { op, body : Eff R B, k }` whose sub-computations the fold
+  enters on forward (`body := self body`), plus a `weave`/`thread`
+  function on handlers to push handler *state* through a forwarded
+  sub-computation. This is additive (one inductive arm, one fold case),
+  reuses `inductive_respond`, and leaves the driver untouched (IO
+  operations are all algebraic). It is deferred as a v2 extension; the
+  clean modern treatment is Bach Poulsen & van der Rest, *Hefty
+  Algebras* (POPL 2023), which elaborates higher-order syntax into
+  algebraic operations before handling.
+]
 
-test (test_apply (greet stdoutConsole "world")) = unit_witness
-```
+== Pure regions and testing
 
-Both compose. Most tests use (a) for clarity; (b) is the escape
-hatch for testing primitive postulates.
-
-== Pure regions
-
-For foundational reasoning, sandboxed elaboration of untrusted code,
-or any context where host primitives must not influence behavior,
-evaluate with `safe_apply kernel_handlers` in place of `param_apply` —
-exactly what the `test_pure` directive (§9) does:
-
-```disp
-// `test_pure expr` reduces `expr` under `safe_apply kernel_handlers`
-// rather than the default environment.
-test_pure (typecheck Type Bool) = Ok TT
-```
-
-Under `safe_apply kernel_handlers`, host sigs are *not* pinned, so the walker
-considers their wait-forms as ordinary trees and attempts to reduce
-them. Since host handlers don't reduce as ordinary trees (their
-implementation is the host's TS function, accessible only when the
-sig is pinned), the reduction stalls or fails. This is the desired
-behavior: pure regions can't accidentally fire host effects.
+Because effects are *values* and the type checker never performs them, all
+type-checking is inherently host-independent — there is no `test_pure`
+versus default distinction to maintain (the prior spec's `safe_apply
+kernel_handlers` "pure region" is now the *only* mode, since `param_apply`
+no longer carries a host environment). To run effectful code without real
+IO, supply a *test handler* instead of the driver: `handle mock_console
+prog` interprets `IO` operations in-language and returns a pure value, so
+`test (handle mock_console prog) = …` needs no host at all.
 
 == What this gives, what it gives up
 
@@ -4988,112 +4978,28 @@ behavior: pure regions can't accidentally fire host effects.
     align: left,
     inset: 6pt,
     [*Capability*], [*Mechanism*],
-    [O(1) effect dispatch], [Hash-cons sig comparison],
-    [Multi-shot continuations], [Explicit CPS in interface for nondet/backtracking],
-    [Effect typing], [Capability passing through typed-record arguments],
-    [Row polymorphism], [Pi over `extends R Console` Refinement-of-Record],
-    [Test mocking], [Pass a different handler value or substitute Σ],
-    [Pure regions], [`safe_apply kernel_handlers`],
-    [Native fast-path], [Host fast-path per sig; transparent to disp source],
-    [Foundational soundness], [Postulate type-ascriptions are library trust claims; kernel discipline unchanged],
+    [Custom user-definable effects], [`effect` sugar → `declare_op`; a label + a row entry],
+    [Effect typing / safety], [The row `R` in `recognizer_params`, checked by the `Eff` recognizer + `Pi` types],
+    [Row composition], [`bind` unions rows (`∪`); `handle_E` discharges (`−`)],
+    [Multi-shot continuations], [`resume` is a pure tree — call 0/1/many times],
+    [`catch` / `local` / scoped recovery], [Locally-installed handlers (`handle` = `reset`)],
+    [Test mocking], [Supply a test handler in place of the driver],
+    [Async], [Driver defers `apply k`; no kernel primitive],
+    [No kernel surface], [`Eff` is a library `Coproduct`; only the driver is impure],
   ),
   caption: [What disp's effects machinery delivers.],
 )
 
-What it doesn't:
+What it gives up / leaves open:
 
-- *Transparent multi-shot continuations* (Koka-style). The substrate
-  is pure; reified continuations are explicit in the effect interface.
-  See the explicit CPS example below.
-- *Stateful handlers without explicit state-threading.* No mutable
-  cells in disp; stateful effects need either a State capability
-  backed by a host primitive or pure state-threading. Best practice
-  to be determined.
-- *Effect rows in Koka's sense.* Capability passing gives row
-  polymorphism at the type level (via record extension) but doesn't
-  yet provide elaborator inference of effect rows. Future work.
-
-== Explicit CPS in interfaces
-
-When an effect needs control over its continuation — nondeterminism,
-backtracking, async, generators — the continuation appears as an
-explicit argument to the operation:
-
-```disp
-let Nondet : Type := record {
-  // For any element type A and result type B, choose takes a list of
-  // candidates and a continuation `k : A -> B`. The handler decides
-  // how many candidates to try and how to combine the per-call
-  // results.
-  choose : Pi (A : Type) ({_} ->
-           Pi (B : Type) ({_} ->
-           Pi (List A) ({_} ->
-           Pi (Pi A ({_} -> B)) ({_} ->
-           List B))))
-}
-
-// Try-all handler: invoke k on every candidate, collect results.
-let try_all : Nondet := {
-  choose := {A, B, candidates, k} -> list_map k candidates
-}
-
-// First-success handler: invoke k on the first candidate, return its
-// result (a single B, not a List B — this handler has a different
-// interface, but the same operation shape).
-```
-
-The continuation `k` is a tree value. The handler can:
-- Call `k` once → linear evaluation.
-- Call `k` zero times → exit early (effect-style throw).
-- Call `k` many times → multi-shot, generators, nondet.
-
-Disp's substrate is pure, so multi-shot is free (continuations don't
-hold mutable state; calling them repeatedly with different arguments
-just performs more computation). The cost vs Koka: the user writes
-`k` explicitly in the interface and at every operation call.
-
-== Async via stuck forms (sketch)
-
-Async I/O is where stuck forms (§6) become operationally interesting.
-A host primitive like:
-
-```disp
-let host_read_async : Pi Fd ({_} -> Promise Bytes) := postulate READ_ASYNC_SIG
-```
-
-isn't synchronous — the host handler can't block to produce the
-result. Instead, it returns a *fresh stuck form* representing "the
-result, when it arrives." A future kernel Σ-op `async_pending` (not
-yet specified) would mint these stuck forms; the host's event loop
-substitutes concrete bytes when epoll signals completion.
-
-This would extend the seal set (§4.2) with `async_pending`'s sig —
-`safe_is_stuck` becomes `pair_fst v ∈ {hyp_reduce, async_pending}`.
-The H-rule then fires for `Promise X`-typed stuck forms uniformly;
-polymorphic code over promises works the same way as polymorphic
-code over neutrals.
-
-Disp doesn't ship async yet. The point: stuck forms are a general
-mechanism for "values whose concrete identity isn't yet known," not
-just for type-checking hypotheses. Async slots in by adding one
-producer to the kernel list — same machinery, new motivation.
-
-#openq[
-  *Higher-order effects (Wu–Schrijvers–Hinze 2014).* Effects whose
-  operations take computation arguments (e.g. `catch handler body`)
-  need more machinery than capability passing. The library `elim`
-  (§12) + `hyp_reduce` mechanism covers algebraic operations cleanly;
-  higher-order operations are a future addition.
-]
-
-#openq[
-  *Stateful effects without host refs.* Disp has no mutable cells.
-  Buffered loggers, accumulators, and similar stateful handlers
-  currently require explicit state-threading. Either accept the
-  verbosity, add a host primitive `host_alloc_ref`, or reify
-  continuations and use them to thread state. The trade-offs need a
-  design document.
-]
+- *Higher-order operations reinterpretable by outer handlers* — the
+  `Scoped` + weave extension above (deferred).
+- *Tail-resumption efficiency.* A handler that calls `resume` once in
+  tail position naively rebuilds the continuation each step (O(n²) over
+  n operations); production systems special-case tail-resumptive
+  handlers. The free-monad encoding has this cost and the known fix.
+- *Elaborator inference of rows.* Rows are tracked and checked, but
+  inferring them (rather than ascribing) is future work.
 
 = What's genuinely disp-specific <sec:disp-specific>
 
@@ -5118,22 +5024,22 @@ type-level reasoning (e.g., relational interpretation of types). Disp
 gets the parametricity property from local pattern-matching on tree
 structure.
 
-== Dispatch-environment parameterization
+== Effects as library values, forced by the substrate
 
-No other dependently-typed language treats the privileged-handler set
-as a first-class runtime parameter of the reducer. In Koka and Eff,
-handler scope is built into the language's evaluation semantics. In
-OCaml 5, the effect set is fixed at compile time. In Lean 4, IO
-primitives are baked into the metatheory.
-
-Disp passes Σ as a value to `safe_apply`, so strict callers
-(foundational tests, untrusted-code sandboxes, verified-extraction
-targets) can construct stricter dispatch environments without
-changing the kernel or recompiling the language. The same mechanism
-that pins neutrals against forgery also pins host primitives against
-forgery; one parameter, one rule, one walker discipline. This
-unification of "type-system effects" and "real-world effects" under
-a common Σ-parameterization is, to our knowledge, novel.
+In Koka and Eff, handlers are built into the evaluation semantics; in
+OCaml 5 effects are an unchecked runtime primitive; in Lean 4 IO is
+baked into the metatheory. Disp's effect system (§15) is *entirely
+library code* — a free monad `Eff R X`, deep handlers, and row tracking
+via ordinary recognizers and `Pi`-types — with the kernel doing nothing
+effect-specific. What forces this factoring is the substrate itself:
+hash-consing requires `apply` to be pure (a side-effecting `apply` would
+break `tree_eq`-is-O(1)), so an effect *cannot* be a reduction step and
+*must* be a value performed at the boundary by an outermost driver. The
+kernel stays a pure type-checker; the only privileged constructs are the
+two type-system operations that mint neutrals. That a dependently-typed
+language can host a full row-typed algebraic-effect system with *zero*
+effect surface in its kernel — because purity leaves no other option — is,
+to our knowledge, novel.
 
 == Elaboration as pure syntax + tests
 
@@ -5148,14 +5054,17 @@ inference and type-checking) and more minimal than standard
 Findler-Felleisen contract compilation (inserts contracts at typed-
 untyped boundaries). The validator-as-value framing is novel.
 
-== Unified `checked` for typed application
+== Input-checked functions
 
-Manifest-contract systems typically distinguish runtime checks from
-validation certificates. Disp unifies them: `checked T v` is a
-wait-form that both certifies "v is claimed to inhabit T" and runs
-the input-check at every application. `typed_lambda` and `validate`
-are library aliases over `checked`. (`checked` is now a library
-function since its handler body is walker-safe — see §12.)
+`checked A f` is a function paired with its declared *input* (domain)
+type: applying it checks the argument against `A` before running `f`.
+This is the Findler-Felleisen higher-order contract, and it is the only
+typed-value wrapper disp needs — there is no separate certificate
+construct. "This value was validated against `T`" is recorded as the
+*verdict* `typecheck T v = Ok TT`, not as a wrapper around `v`; `strip`
+(§10) then erases the `checked` input-guards a validated program no
+longer needs. (`checked` is a library function — its body is walker-safe,
+see §12.16.)
 
 == One cut for projection, match, and application
 
@@ -5249,20 +5158,20 @@ The Σ-algebra framing in §5 follows Plotkin & Power (2002),
 implementations: Bauer & Pretnar (Eff), Leijen (Koka), Brachthäuser
 et al. (Effekt).
 
-*Disp's capability-passing model* is Effekt's: Brachthäuser, Schuster,
-Ostermann (2020), "Effects as Capabilities: Effect Handlers and
-Lightweight Effect Polymorphism" (OOPSLA, DOI 10.1145/3428194), with
-the earlier "Effekt: Capability-Passing Style for Type- and
-Effect-Safe, Extensible Effect Handlers in Scala" (JFP 2020). The key
-move — handlers as second-class values whose lexical scope is the
-handler scope — fits disp's no-implicit-state aesthetic better than
-Koka's dynamic handler stack. Disp differs from Effekt in two ways:
-(a) handlers are first-class values (records), so capabilities can
-escape lexical scope and be stored in data structures (the
-soundness consequence is that effects must be invoked via a
-capability in scope, not implicitly); (b) the dispatch environment Σ
-is itself a value passed to `safe_apply`, giving an additional layer
-of control not present in Effekt.
+*Disp's effect system* (§15) is a *free monad over an operation
+signature, interpreted by deep handlers* — the Plotkin-Pretnar / Eff /
+Koka lineage — realized entirely in the library, with the substrate's
+purity forcing effects to be values performed by an outermost driver.
+Row-typed effect tracking follows Koka (Leijen); the deep-handler fold
+follows Eff / Frank. The *capability-passing* layer (§12.7) — bundling
+operations into a record passed as an argument — is Effekt's:
+Brachthäuser, Schuster, Ostermann (2020), "Effects as Capabilities"
+(OOPSLA, DOI 10.1145/3428194); but in disp it is an optional
+dependency-injection pattern over the free monad (a capability's fields
+*return* `Eff` values), not the effect system itself. Disp differs from
+all of these in not threading effects through the kernel at all: the
+dispatcher routes only the two type-system operations, and effects never
+appear in the dispatch set Σ.
 
 Compilation: Leijen (2017), "Type Directed Compilation of Row-Typed
 Algebraic Effects" (POPL); Xie, Brachthäuser, Hillerström, Schuster,
@@ -5312,9 +5221,10 @@ Putting it together as it might appear in a paper:
   as articulated by de Moura et al. (2015). The strip pass is
   type-theoretic erasure (Mishra-Linger & Sheard 2008; Tejiščák 2020);
   its soundness is the proof-carrying-code pattern (Necula 1997).
-  The kernel handler architecture is a Σ-parameterized Plotkin-Pretnar
-  algebraic effect system; capability-passing for typed effects is
-  Effekt's (Brachthäuser et al. 2020). Cubical operations follow the
+  Effects are a library free monad with deep handlers in the
+  Plotkin-Pretnar / Eff / Koka lineage (the kernel is not involved),
+  with capability records (Effekt, Brachthäuser et al. 2020) as an
+  optional dependency-injection layer. Cubical operations follow the
   CCHM framework. The categorical foundations are standard topos
   theory.
 ]
@@ -5361,30 +5271,23 @@ is raised in detail.
       to rule out an ill-formed self-referential type validating
       only on the strength of its own optimistic answer.],
 
-    [§15 (postulate value shape)],
-    [`call_via_postulate` is undefined and the postulate→`checked`→
-      host-rooted-wait-form chain is implicit; the §15 host handler's
-      `pair(msg, cont)` CPS meta layout contradicts the single-arg
-      `Pi String ({_} -> Unit)` ascription. Needs one convention for
-      postulate argument accumulation and direct-vs-CPS host calls.],
+    [§15 (higher-order operations)],
+    [Operations taking *computation* arguments that must be reinterpreted
+      by an outer handler (`catch` as a forwardable op, `fork`) need the
+      `Scoped` constructor + handler weaving (Wu-Schrijvers-Hinze; the
+      hefty-algebra treatment). The flat free monad handles algebraic ops
+      and use-site-scoped `catch`-as-handler; the rest is the deferred v2
+      extension noted in §15.],
 
-    [§15 (higher-order effects)],
-    [Effects with operations that take computation arguments
-      (e.g. `catch handler body`) require Wu-Schrijvers-Hinze
-      treatment beyond what capability passing covers.
-      Operationally workable via tag-based encoding; static
-      checking is open.],
+    [§15 (tail-resumption efficiency)],
+    [A handler calling `resume` once in tail position naively rebuilds the
+      continuation each step (O(n²)); production systems special-case
+      tail-resumptive handlers. The free-monad encoding has this cost and
+      the known fix; not yet specified.],
 
-    [§15 (stateful effects without refs)],
-    [Buffered loggers, accumulators, and similar stateful
-      handlers need explicit state-threading or a host `alloc_ref`
-      primitive. Best practice undetermined.],
-
-    [§15 (postulate migration)],
-    [When a stricter postulate supersedes a looser one, library
-      call sites need refactoring. A
-      `--check-postulate-currency` lint that flags use of
-      loose-when-strict-exists would help. Not yet implemented.],
+    [§15 (effect-row inference)],
+    [Effect rows are tracked and *checked* (the `Eff` recognizer + `Pi`
+      types) but must be *ascribed*; inferring them is future work.],
   ),
   caption: [Open questions inventory.],
 )
@@ -5395,12 +5298,15 @@ foundational ones (Type:Type, formal soundness) are the load-bearing
 items; the others are scoped.
 
 *Resolved since previous iteration:*
-- User-installable effects: §15 specifies the design (dispatch-
-  environment entries; capability passing; postulates).
-- Scoped vs. algebraic effects: lexical scope of capabilities is
-  handler scope; no implicit dynamic stack needed.
-- Closed vs. open Σ-algebra: Σ is a value passed to `safe_apply`,
-  not a fixed compile-time set.
+- User-installable effects: §15 specifies the design — a library free
+  monad `Eff R X`, user `effect` declarations desugaring to `declare_op`,
+  deep handlers, and an outermost driver. No kernel surface.
+- Effects vs. the kernel: effects left the dispatch set entirely. Σ is
+  the *fixed* two-op kernel constant (`postulate` and `host_provided` are
+  gone); the substrate's purity forces effects to be values, not dispatch
+  targets.
+- Scoped recovery (`catch`, `local`): a locally-installed handler
+  (`handle` = `reset`), not a primitive; composes with other effects.
 
 = Appendix B: where the tests live <sec:test-catalog>
 
@@ -5414,8 +5320,8 @@ component.
 
 The on-disk source of truth is the recursive set
 `lib/tests/**/*.test.disp`, runnable as a whole via `npm test` (see
-`test/disp.test.ts`). Effect-handler tests (postulate type-checks,
-capability-passing application tests, mock-environment tests) land in
+`test/disp.test.ts`). Effect tests (`Eff` recognizer + row checks,
+handler folds, `catch`-as-handler scoping, mock-handler runs) land in
 `lib/tests/effects/`.
 
 This appendix exists to point at that organization; it does not
