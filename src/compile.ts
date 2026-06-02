@@ -379,7 +379,7 @@ function exprToCir(
             for (let i = 0; i < n; i++) {
               const fieldTree = record.fieldTrees
                 ? record.fieldTrees[i]
-                : applyTree(targetTree!, selectorTree(n, i), APPLY_BUDGET)
+                : applyTree(targetTree!, accTree(record.fields[i]), APPLY_BUDGET)
               const fieldType = record.fieldTypes?.[i] ?? null
               const innerFields = (record as any).fieldInnerFields?.[i] as string[] | undefined
               const innerTrees = (record as any).fieldInnerTrees?.[i] as Tree[] | undefined
@@ -399,30 +399,46 @@ function exprToCir(
           throw new Error("recValue: 'trailing' is only valid when fields are empty")
         return exprToCir(e.trailing, fieldLookup, resolveUse, sinks)
       }
-      // Church encoding: {x := a; y := b} → \sel. sel a b
-      const fieldCirs = e.fields.map(f => exprToCir(f.value, fieldLookup, resolveUse, sinks))
-      const selName = "__sel"
-      let body: Cir = { tag: "var", name: selName }
-      for (const fc of fieldCirs) body = cap(body, fc)
-      return { tag: "lam", x: selName, body }
+      // §2.6 record: {x := a; y := b} → record_val ["x","y"] [list_const a, list_const b]
+      // — a `prod` over a string-interned name header, read by name through the
+      // cut. (record_val/list_const must be in scope, like `match` needs `prod`.)
+      const recordValEntry = lookupEntry("record_val")
+      const listConstEntry = lookupEntry("list_const")
+      if (!recordValEntry?.tree || !listConstEntry?.tree)
+        throw new Error("record literal '{ := }': 'record_val' and 'list_const' must be in scope (open the kernel prelude)")
+      const recordVal: Cir = { tag: "lit", t: recordValEntry.tree }
+      const listConst: Cir = { tag: "lit", t: listConstEntry.tree }
+      // names header: a closed cons-chain of string tags.
+      let namesTree: Tree = LEAF
+      for (let i = e.fields.length - 1; i >= 0; i--)
+        namesTree = fork(stringToTree(e.fields[i].name), namesTree)
+      // payload: a cons-chain of const-wrapped field values (cons = `t h tl`).
+      const consCir = (h: Cir, tl: Cir): Cir => cap(cap({ tag: "lit", t: LEAF }, h), tl)
+      let payloadCir: Cir = { tag: "lit", t: LEAF }
+      for (let i = e.fields.length - 1; i >= 0; i--) {
+        const fc = exprToCir(e.fields[i].value, fieldLookup, resolveUse, sinks)
+        payloadCir = consCir(cap(listConst, fc), payloadCir)
+      }
+      return cap(cap(recordVal, { tag: "lit", t: namesTree }), payloadCir)
     }
     case "use": {
       const entry = resolveUse(e.path)
       return { tag: "lit", t: entry.tree! }
     }
     case "proj": {
-      // Compile target, then look up field index from target's field metadata.
-      // Target must be a known record (var with fields, or use expression).
+      // r.x is the §2.6 cut `r (acc x)`. When the target is a statically-known
+      // record we keep the compile-time collapse (return the field's tree, or
+      // validate the name); otherwise we emit the runtime cut so projection
+      // works on any product value (e.g. a metadata record passed at runtime).
       const record = resolveExprRecord(e.target, lookupEntry, resolveUse)
-      if (!record)
-        throw new Error(`projection '.${e.field}': target has no known record fields`)
-      const idx = record.fields.indexOf(e.field)
-      if (idx < 0)
-        throw new Error(`projection '.${e.field}': field not found (available: ${record.fields.join(", ")})`)
-      if (record.fieldTrees) return { tag: "lit", t: record.fieldTrees[idx] }
+      if (record) {
+        const idx = record.fields.indexOf(e.field)
+        if (idx < 0)
+          throw new Error(`projection '.${e.field}': field not found (available: ${record.fields.join(", ")})`)
+        if (record.fieldTrees) return { tag: "lit", t: record.fieldTrees[idx] }
+      }
       const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
-      const sel = buildSelector(record.fields.length, idx)
-      return cap(target, sel)
+      return cap(target, { tag: "lit", t: accTree(e.field) })
     }
     case "match": {
       // Desugar to closed-branch select-then-apply.
@@ -503,7 +519,7 @@ function resolveExprRecord(
           for (let i = 0; i < n; i++) {
             const ft = rec.fieldTrees
               ? rec.fieldTrees[i]
-              : applyTree(targetTree!, selectorTree(n, i), APPLY_BUDGET)
+              : applyTree(targetTree!, accTree(rec.fields[i]), APPLY_BUDGET)
             localScope.set(rec.fields[i], { tree: ft, type: rec.fieldTypes?.[i] ?? null })
           }
           const prevLookup = fieldLookup
@@ -1034,6 +1050,13 @@ export function stringToTree(s: string): Tree {
   return result
 }
 
+// accTree(name): the §2.6 accessor for a field name — `acc name = inj name unit
+// = fork(name, LEAF)`, with the name interned as a string tag. Applying a
+// product (record) to it performs the cut and yields the named field.
+function accTree(name: string): Tree {
+  return fork(stringToTree(name), LEAF)
+}
+
 // ──────────────────────────── 6. Driver ─────────────────────────────────
 
 export type Decl =
@@ -1238,7 +1261,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse, sinks)
         const n = record.fields.length
         for (let i = 0; i < n; i++) {
-          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, selectorTree(n, i), APPLY_BUDGET)
+          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, accTree(record.fields[i]), APPLY_BUDGET)
           const name = record.fields[i]
           const existing = stack[stack.length - 1].get(name)
           if (existing) {
