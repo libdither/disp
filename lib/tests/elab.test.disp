@@ -44,6 +44,11 @@ test nat_to_bool_to_nat 5 TT = 5
 let pi_id : Pi Nat ({_} -> Nat) = {x} -> x
 test pi_id 0 = 0
 
+// annotated lambda domain must match the expected Pi domain — exercises the
+// host's piDomain (reads the {dom,cod} params record by name, not positionally)
+let annotated_dom : Nat -> Nat = {x : Nat} -> x
+test annotated_dom 4 = 4
+
 // Arrow and explicit Pi produce identical types
 let arrow_nn : Nat -> Nat = {x} -> x
 let pi_nn : Pi Nat ({_} -> Nat) = {x} -> x

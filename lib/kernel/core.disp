@@ -63,6 +63,23 @@ meta_functor := {m} -> field m meta_k_functor
 meta_respond := {m} -> field m meta_k_respond
 meta_specs   := {m} -> field m meta_k_specs
 
+// recognizer_params field-name tags (§12). A former's multi-field params is a
+// §2.6 record read by name through the cut; rp2/rp3 build the 2-/3-field ones.
+// A single-payload params (Coproduct variants, Record fields) stays the bare
+// value — a one-element record would add a cut layer with nothing to name.
+rp_dom  := t t                               // Pi / Sigma domain
+rp_cod  := t (t t)                           // Pi codomain family
+rp_fam  := t (t (t t))                       // Sigma fibre family
+rp_base := t (t (t (t t)))                   // Refinement / Intersection base type
+rp_pred := t (t (t (t (t t))))               // Refinement / Intersection predicate
+rp_type := t (t (t (t (t (t t)))))           // Eq carrier
+rp_lhs  := t (t (t (t (t (t (t t))))))       // Eq left endpoint
+rp_rhs  := t (t (t (t (t (t (t (t t)))))))   // Eq right endpoint
+rp2 := {k0, v0, k1, v1} ->
+  record_val (cons k0 (cons k1 nil)) (cons (list_const v0) (cons (list_const v1) nil))
+rp3 := {k0, v0, k1, v1, k2, v2} ->
+  record_val (cons k0 (cons k1 (cons k2 nil))) (cons (list_const v0) (cons (list_const v1) (cons (list_const v2) nil)))
+
 trivial_functor := t
 none := t
 unit_witness := t
@@ -283,8 +300,9 @@ Nat := wait (make_recognizer nat_body) nat_meta
 // Pi: candidate must be a `checked` value whose stored domain matches A; then
 // bind a fresh A-hyp, apply the candidate, and check the result against `B hyp`.
 pi_body := {meta, v} -> {
-  let A = pair_fst (meta_params meta)
-  let B = pair_snd (meta_params meta)
+  let params = meta_params meta
+  let A = field params rp_dom
+  let B = field params rp_cod
   match (tree_eq (pair_fst v) checked_sig) {
     FF => Ok FF
     TT => (match (tree_eq (checked_dom v) A) {
@@ -293,8 +311,8 @@ pi_body := {meta, v} -> {
     })
   }
 }
-pi_respond := {nmeta, frame} -> Extend ((pair_snd (meta_params (type_meta (neutral_meta_type nmeta)))) frame)
-pi_meta_for := {A, B} -> make_meta (pair A B) trivial_functor pi_respond none
+pi_respond := {nmeta, frame} -> Extend ((field (meta_params (type_meta (neutral_meta_type nmeta))) rp_cod) frame)
+pi_meta_for := {A, B} -> make_meta (rp2 rp_dom A rp_cod B) trivial_functor pi_respond none
 Pi := {A, B} -> wait (make_recognizer pi_body) (pi_meta_for A B)
 Arrow := {A, B} -> Pi A ({_} -> B)
 
@@ -374,12 +392,12 @@ String := wait (make_recognizer string_body) (make_meta unit_witness trivial_fun
 
 refl := t
 eq_body := {meta, v} -> {
-  let p = meta_params meta                                 // pair A (pair x y)
-  let x = pair_fst (pair_snd p)
-  let y = pair_snd (pair_snd p)
+  let p = meta_params meta                                 // { type, lhs, rhs }
+  let x = field p rp_lhs
+  let y = field p rp_rhs
   Ok (and (tree_eq v refl) (tree_eq x y))
 }
-Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta (pair A (pair x y)) trivial_functor inert_respond none)
+Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta (rp3 rp_type A rp_lhs x rp_rhs y) trivial_functor inert_respond none)
 
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
 // refl and stays stuck on a neutral proof).
@@ -388,8 +406,9 @@ eq_sym := {A, x, y, p} -> eq_J ({y_} -> Eq A y_ x) refl p
 eq_cong := {A, B, f, x, y, p} -> eq_J ({y_} -> Eq B (f x) (f y_)) refl p
 
 sigma_body := {meta, v} -> {
-  let A = pair_fst (meta_params meta)
-  let B = pair_snd (meta_params meta)
+  let params = meta_params meta
+  let A = field params rp_dom
+  let B = field params rp_fam
   must_ok_any (A (pair_fst v)) ({va} ->
     match va { FF => Ok FF; TT => (B (pair_fst v)) (pair_snd v) })   // b inhabits (B a)
 }
@@ -400,8 +419,8 @@ walker_pair_fst := t (t t) t
 walker_pair_snd := t (t t) (t t)
 sigma_respond := {nmeta, frame} -> {
   let params = meta_params (type_meta (neutral_meta_type nmeta))
-  let A = pair_fst params
-  let B = pair_snd params
+  let A = field params rp_dom
+  let B = field params rp_fam
   match (tree_eq frame walker_pair_fst) {
     TT => Extend A
     FF => (match (tree_eq frame walker_pair_snd) {
@@ -410,23 +429,25 @@ sigma_respond := {nmeta, frame} -> {
     })
   }
 }
-Sigma := {A, B} -> wait (make_recognizer sigma_body) (make_meta (pair A B) trivial_functor sigma_respond none)
+Sigma := {A, B} -> wait (make_recognizer sigma_body) (make_meta (rp2 rp_dom A rp_fam B) trivial_functor sigma_respond none)
 
 refinement_body := {meta, v} -> {
-  let A = pair_fst (meta_params meta)
-  let P = pair_snd (meta_params meta)
+  let params = meta_params meta
+  let A = field params rp_base
+  let P = field params rp_pred
   must_ok_any (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) })   // P is a bare-Bool predicate
 }
-Refinement := {A, P} -> wait (make_recognizer refinement_body) (make_meta (pair A P) trivial_functor inert_respond none)
+Refinement := {A, P} -> wait (make_recognizer refinement_body) (make_meta (rp2 rp_base A rp_pred P) trivial_functor inert_respond none)
 
 // Intersection A P: v inhabits iff (P hyp) v holds for a fresh A-hyp — like Pi
 // but P is applied to the hypothesis and checked against the SAME v.
 intersection_body := {meta, v} -> {
-  let A = pair_fst (meta_params meta)
-  let P = pair_snd (meta_params meta)
+  let params = meta_params meta
+  let A = field params rp_base
+  let P = field params rp_pred
   bind_hyp A ({hyp} -> (P hyp) v)
 }
-Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta (pair A P) trivial_functor inert_respond none)
+Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta (rp2 rp_base A rp_pred P) trivial_functor inert_respond none)
 
 zero_ord := t
 omega_plus := {a, b} -> t (t a) b                          // fork(stem a, b)
