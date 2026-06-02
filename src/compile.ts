@@ -659,17 +659,12 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
   // formers are told apart by their recognizer SIGNATURE (`pair_fst T`, which is
   // constant per former, independent of the type's parameters). The MetaShape
   // meta is a §2.6 headered record (read by name through the cut), so the host
-  // recovers a type's `recognizer_params` by delegating to the in-language
-  // `meta_params` accessor rather than reading a fixed positional slot.
+  // recovers a type's `recognizer_params` and Pi's { dom, cod } fields by name,
+  // through the §2.6 cut (accTree) — the same string-interned record discipline
+  // the in-language metadata uses.
   const Pi = lookupEntry("Pi")?.tree
   const Type = lookupEntry("Type")?.tree
   const make_hyp = lookupEntry("Hyp")?.tree ?? lookupEntry("make_hyp")?.tree
-  const meta_params = lookupEntry("meta_params")?.tree
-  // Pi's recognizer_params is the §2.6 record { dom, cod } (§12); the host reads
-  // its fields by name through the in-language `field` cut and the rp_* tags.
-  const field_fn = lookupEntry("field")?.tree
-  const rp_dom = lookupEntry("rp_dom")?.tree
-  const rp_cod = lookupEntry("rp_cod")?.tree
 
   if (!Pi && !Type && !make_hyp) return null
 
@@ -684,31 +679,20 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
     const ts = treePairFst(t)
     return ts !== null && treeEqual(ts, sig)
   }
-  // recognizer_params = meta_params (type_meta T), via the in-language accessor
-  // (the meta is a §2.6 record read by name). For Pi, params is the record
-  // { dom, cod }, whose fields are read by name (not positionally).
+  // recognizer_params = (type_meta T).recognizer_params, via the §2.6 cut. For
+  // Pi, params is the record { dom, cod }, whose fields are read by name.
   function piParams(t: Tree): Tree {
     const meta = typeMetaTree(t)
     if (!meta) throw new Error("piParams: not a valid type tree")
-    if (!meta_params) throw new Error("piParams: meta_params not in scope")
-    const params = applyTree(meta_params, meta, APPLY_BUDGET)
-    if (!params) throw new Error("piParams: params slot missing")
-    return params
-  }
-  // Read a named field of Pi's params record via the in-language `field` cut.
-  function piField(t: Tree, key: Tree | undefined, slot: string): Tree {
-    if (!field_fn || !key) throw new Error(`piField: field/${slot} tag not in scope`)
-    const r = applyTree(applyTree(field_fn, piParams(t), APPLY_BUDGET), key, APPLY_BUDGET)
-    if (!r) throw new Error(`piField: ${slot} slot missing`)
-    return r
+    return applyTree(meta, accTree("recognizer_params"), APPLY_BUDGET)
   }
 
   return {
     isUniverse(t) { return sigMatches(typeSig, t) },
     isPi(t) { return sigMatches(piSig, t) },
     isNeutral(t) { return sigMatches(hypSig, t) },
-    piDomain(t) { return piField(t, rp_dom, "dom") },
-    piCodFn(t) { return piField(t, rp_cod, "cod") },
+    piDomain(t) { return applyTree(piParams(t), accTree("dom"), APPLY_BUDGET) },
+    piCodFn(t) { return applyTree(piParams(t), accTree("cod"), APPLY_BUDGET) },
     makeHyp(type, id) {
       if (!make_hyp) throw new Error("makeHyp: make_hyp not in scope")
       return applyTree(applyTree(make_hyp, type, APPLY_BUDGET), id, APPLY_BUDGET)

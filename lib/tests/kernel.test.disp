@@ -87,3 +87,8 @@ test meta_respond m = FF
 test meta_specs m = unit_val
 test has_metashape_layout m = TT
 test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF  // old positional shape is no longer a meta
+// recognizer_params is itself an inline record read by name (Pi's { dom, cod })
+test (meta_params (type_meta (Pi Nat ({_} -> Bool)))).dom = Nat
+test (meta_params (type_meta (Sigma Nat ({_} -> Bool)))).dom = Nat
+// and a kernel meta projects respond directly via .field
+test (type_meta Bool).respond = inductive_respond
