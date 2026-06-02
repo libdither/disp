@@ -221,6 +221,23 @@ let recognizer_wrap = fix ({wrap, body, meta, v} ->
   })
 make_recognizer := {body} -> wait recognizer_wrap body
 
+// Recursive recognizers (Nat, Ord) must re-apply the H-rule at EVERY structural
+// level, not just the top. A constructor over a neutral child — e.g. `succ hyp` =
+// fork(leaf, hyp) — has a *concrete* root but a *neutral* predecessor; a raw
+// recursion would triage that neutral (walker-rejected, §A). `make_rec_recognizer`
+// threads the full recognizer `self` into the body, so the body's recursion
+// re-enters the H-rule on a neutral child (recognised by stored type) and recurses
+// structurally on a concrete one. `self` is the same reconstruction the top-level
+// H-rule already uses, so no new memo-stability obligation (§14).
+let recursive_recognizer_wrap = fix ({wrap, body, meta, v} -> {
+  let self = wait (wait wrap body) meta
+  match (is_neutral v) {
+    TT => Ok (tree_eq self (neutral_type v))     // H-rule (identical to recognizer_wrap)
+    FF => body self meta v                        // pass `self`: body recurses via the H-rule
+  }
+})
+make_rec_recognizer := {body} -> wait recursive_recognizer_wrap body
+
 // ================================================================
 // Boundary: param_lift / typecheck
 // ================================================================
@@ -271,11 +288,16 @@ bool_body := {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
 bool_meta := make_meta unit_witness trivial_functor inductive_respond none
 Bool := wait (make_recognizer bool_body) bool_meta
 
-let nat_body_rec = fix ({self, x} ->
-  triage TT ({_} -> FF) ({l, r} -> and (tree_eq l t) (self r)) x)
-nat_body := {m, v} -> Ok (nat_body_rec v)
+// nat_body recurses via the threaded `self` (the full Nat recognizer), so a
+// neutral predecessor in `succ hyp` is recognised by the H-rule, not triaged (§A).
+nat_body := {self, m, v} ->
+  triage
+    (Ok TT)                                                       // zero
+    ({_} -> Ok FF)                                                // stem -> not a Nat
+    ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) // succ r -> recurse via self
+    v
 nat_meta := make_meta unit_witness trivial_functor inductive_respond none
-Nat := wait (make_recognizer nat_body) nat_meta
+Nat := wait (make_rec_recognizer nat_body) nat_meta
 
 // Pi: candidate must be a `checked` value whose stored domain matches A; then
 // bind a fresh A-hyp, apply the candidate, and check the result against `B hyp`.
@@ -431,11 +453,17 @@ Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta { 
 
 zero_ord := t
 omega_plus := {a, b} -> t (t a) b                          // fork(stem a, b)
-ord_body := {m, v} -> Ok (fix ({self, x} ->
-  triage TT ({_} -> FF)
-    ({l, r} -> match (is_stem l) { TT => and (self (stem_child l)) (self r); FF => FF })
-    x) v)
-Ord := wait (make_recognizer ord_body) (make_meta unit_witness trivial_functor inductive_respond none)
+// ord_body recurses via the threaded `self` into both child ordinals, so neutral
+// children are recognised by the H-rule rather than triaged (§A).
+ord_body := {self, m, v} ->
+  triage
+    (Ok TT)                                                       // zero_ord
+    ({_} -> Ok FF)                                                // stem -> not an ord
+    ({l, r} -> match (is_stem l) {                                // omega_plus a b = fork(stem a, b)
+       FF => Ok FF
+       TT => must_ok_any (self (stem_child l)) ({oka} -> match oka { FF => Ok FF; TT => self r }) })
+    v
+Ord := wait (make_rec_recognizer ord_body) (make_meta unit_witness trivial_functor inductive_respond none)
 
 // ================================================================
 // Coproduct and Record types

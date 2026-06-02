@@ -53,8 +53,10 @@ test bind_hyp Nat ({x} -> Ok x) = Fail                  // x at public position 
 test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail      // x inside a user pair -> escape
 
 // ---- checked values + Pi (monomorphic dependent function) ----
-// Bodies must be walker-safe (no raw triage on the argument); case-analysing
-// functions need the eliminator (future work). Identity and const qualify.
+// Bodies must be walker-safe (no raw triage on the argument). Identity, const,
+// and constructor-building bodies (e.g. `succ y`) qualify — the recogniser is
+// H-rule-aware at every level (§A). Genuinely case-analysing bodies still route
+// through the eliminator, which gates its cases against the motive (§B).
 let id_nat = checked Nat ({n} -> n)
 let const_true = checked Nat ({n} -> TT)
 test param_apply (Pi Nat ({_} -> Nat)) id_nat = Ok TT       // id : Nat -> Nat
@@ -62,6 +64,10 @@ test typecheck (Arrow Nat Nat) id_nat = Ok TT               // same via Arrow + 
 test param_apply (Pi Nat ({_} -> Bool)) const_true = Ok TT  // const TT : Nat -> Bool
 test param_apply (Pi Nat ({_} -> Nat)) const_true = Ok FF   // body returns Bool, not Nat
 test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch (stored Nat)
+
+// (§A) constructor-over-the-argument now checks: the recogniser re-applies the
+// H-rule on the neutral predecessor in `succ hyp` instead of triaging it.
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> succ y)) = Ok TT
 
 // ---- cut_apply: the contract boundary on direct application ----
 // Applying a `checked` value runs cut_apply: the arg is checked against the
