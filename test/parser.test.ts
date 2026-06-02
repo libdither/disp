@@ -683,15 +683,24 @@ describe("match expression", () => {
       match(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
   })
 
-  it("rejects non-TT/FF arm patterns", () => {
-    expect(() => parseExpr(`match c { foo => a; FF => b }`)).toThrow(/TT.*FF/)
+  // Non-Bool arms desugar to the §2.6 cut: `(prod (pair [V..] [h..])) cond`.
+  // We check the top-level shape: an application of `prod ...` to the scrutinee.
+  const isCutOf = (e: Expr, cond: Expr) => {
+    expect(e.tag).toBe("app")
+    expect((e as any).x).toEqual(cond)            // applied to the scrutinee
+    expect((e as any).f.tag).toBe("app")
+    expect((e as any).f.f).toEqual(v("prod"))     // head is `prod`
+  }
+
+  it("desugars a non-TT/FF match to the cut", () => {
+    isCutOf(parseExpr(`match c { foo x => a; bar y => b }`), v("c"))
   })
 
-  it("rejects single arm", () => {
-    expect(() => parseExpr(`match c { TT => a }`)).toThrow(/exactly 2 arms|both TT and FF/)
+  it("accepts a single-arm match (one-constructor cut)", () => {
+    isCutOf(parseExpr(`match c { A x => b }`), v("c"))
   })
 
-  it("rejects duplicate TT arm", () => {
-    expect(() => parseExpr(`match c { TT => a; TT => b }`)).toThrow(/both TT and FF/)
+  it("a two-arm match with binders is the cut, not Bool", () => {
+    isCutOf(parseExpr(`match c { Ok x => a; Err y => b }`), v("c"))
   })
 })

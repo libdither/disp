@@ -325,3 +325,72 @@ ord_body := {m, v} -> Ok (fix ({self, x} ->
     ({l, r} -> match (is_stem l) { TT => and (self (stem_child l)) (self r); FF => FF })
     x) v)
 Ord := wait (make_recognizer ord_body) (make_meta unit_witness trivial_functor inductive_respond none)
+
+// ================================================================
+// The cut: products / coproducts / records (§2.6) — one shape, one eliminator
+// ================================================================
+// A value is fork(descriptor, payload); a single elimination (the cut) drives
+// projection, match, and application. Lists are iterated pairs (nil = leaf).
+nil := t
+cons := {h, tl} -> t h tl
+list_const := {x} -> t t x                  // const x y = x (K); ignores the cut payload
+inj := {tag, pay} -> t tag pay              // a coproduct value: tag + payload
+acc := {name} -> inj name t                 // accessor: nullary coproduct (unit payload)
+
+let index_of = fix ({self, l, name} ->
+  match (is_fork l) {
+    TT => match (tree_eq (pair_fst l) name) { TT => zero; FF => succ (self (pair_snd l) name) }
+    FF => zero
+  })
+let path_at = fix ({self, i, payload} ->
+  match (tree_eq i zero) { TT => pair_fst payload; FF => self (nat_pred i) (pair_snd payload) })
+// proj reads the table's name header for the position, then indexes the payload.
+proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
+// the cut: select the field named by c's tag, then feed it c's payload.
+annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
+prod := {P} -> wait annihilate P            // a product: callable; field table is its wait_meta
+annihilate_sig := checker_sig annihilate
+
+// A record value: fields are const-wrapped (ignore the payload). Projection is
+// the cut against a nullary accessor. A match is a product of raw handlers.
+record_val := {names, payload} -> prod (pair names payload)
+field := {r, name} -> r (acc name)                              // r.name
+match_co := {names, handlers, c} -> (prod (pair names handlers)) c
+
+// ================================================================
+// Coproduct and Record types
+// ================================================================
+let lookup_arm = fix ({self, variants, tag} ->
+  match (is_fork variants) {
+    TT => {
+      let arm = pair_fst variants
+      match (tree_eq (pair_fst arm) tag) { TT => Ok (pair_snd arm); FF => self (pair_snd variants) tag }
+    }
+    FF => Fail
+  })
+// Coproduct [(Vi, Si)]: v = inj tag pay inhabits iff tag is some Vi and pay : S_tag.
+coproduct_body := {meta, v} -> {
+  let arm_r = lookup_arm (meta_params meta) (pair_fst v)
+  match (is_ok arm_r) {
+    TT => (ok_value arm_r) (pair_snd v)                         // payload inhabits S_tag
+    FF => Ok FF                                                  // unknown tag
+  }
+}
+Coproduct := {variants} -> wait (make_recognizer coproduct_body) (make_meta variants trivial_functor inductive_respond none)
+
+// Record [(Vi, Ti)]: v is a product whose every named field inhabits its type.
+let record_check = fix ({self, fields, v} ->
+  match (is_fork fields) {
+    TT => {
+      let arm = pair_fst fields
+      must_ok_any ((pair_snd arm) (v (acc (pair_fst arm)))) ({ok} ->
+        match ok { FF => Ok FF; TT => self (pair_snd fields) v })
+    }
+    FF => Ok TT
+  })
+record_body := {meta, v} ->
+  match (tree_eq (pair_fst v) annihilate_sig) {
+    FF => Ok FF
+    TT => record_check (meta_params meta) v
+  }
+Record := {fields} -> wait (make_recognizer record_body) (make_meta fields trivial_functor inert_respond none)

@@ -58,3 +58,34 @@ test param_apply (Refinement Nat ({n} -> tree_eq n zero)) (succ zero) = Ok FF
 test typecheck Ord zero_ord = Ok TT
 test typecheck Ord (omega_plus zero_ord zero_ord) = Ok TT
 test param_apply Ord TT = Ok FF
+
+// ---- Coproduct / Record / the cut (§2.6), using [..] array-literal sugar ----
+let tag_a = t t
+let tag_b = t (t t)
+
+// array literal desugars to the cons-chain (cons = `t a b`, nil = leaf)
+test [zero, succ zero] = cons zero (cons (succ zero) nil)
+test [] = nil
+
+// Coproduct [(a, Nat), (b, Bool)]
+let MySum = Coproduct [pair tag_a Nat, pair tag_b Bool]
+test param_apply MySum (inj tag_a zero) = Ok TT
+test param_apply MySum (inj tag_b TT) = Ok TT
+test param_apply MySum (inj tag_a TT) = Ok FF            // a expects Nat, got Bool
+test param_apply MySum (inj (t t t) zero) = Ok FF        // unknown tag
+
+// n-ary `match` desugars to the cut: dispatch on the tag, feed the payload to
+// the matching handler (constructor patterns resolve to the tag values).
+let handle = {c} -> match c { tag_a n => succ n; tag_b x => x }
+test handle (inj tag_a zero) = succ zero                 // a-handler runs on zero
+test handle (inj tag_b TT) = TT                          // b-handler runs on TT
+// the underlying library cut (what `match` expands to):
+test match_co [tag_a, tag_b] [{n} -> succ n, {x} -> x] (inj tag_a zero) = succ zero
+
+// Record [(a, Nat), (b, Bool)] and projection via the cut
+let MyRec = Record [pair tag_a Nat, pair tag_b Bool]
+let r = record_val [tag_a, tag_b] [list_const zero, list_const TT]
+test typecheck MyRec r = Ok TT
+test param_apply MyRec (record_val [tag_a, tag_b] [list_const TT, list_const TT]) = Ok FF
+test field r tag_a = zero                                // r.a
+test field r tag_b = TT                                  // r.b

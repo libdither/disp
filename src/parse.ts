@@ -21,7 +21,7 @@ export type Tok =
 
 const KEYWORDS = new Set(["let", "test", "use", "open", "match"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
-const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
+const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -288,6 +288,7 @@ const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
     ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
   ),
   lazy(() => matchP),
+  lazy(() => arrayP),
   lazy(bracedP),
   map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
   map(leafP, (): Expr => ({ tag: "leaf" })),
@@ -319,14 +320,18 @@ function isFieldStart(ts: Tok[], i: number): boolean {
   return false
 }
 
-// Check if position starts a match arm pattern: (IDENT "=>") where IDENT is TT or FF.
-// Used to prevent match-arm body atoms from consuming the next arm after a newline.
+// Check if position starts a match arm pattern: a constructor `IDENT "=>"` or
+// `IDENT binder "=>"`. Used to stop multi-line arm bodies before the next arm.
+// `=>` is match-only, so this only ever fires inside a match.
 function isArmStart(ts: Tok[], i: number): boolean {
   if (ts[i].t !== "id") return false
-  const name = (ts[i] as any).v as string
-  if (name !== "TT" && name !== "FF") return false
-  const next = ts[i + 1]
-  return next?.t === "punct" && (next as any).v === "=>"
+  const n1 = ts[i + 1]
+  if (n1?.t === "punct" && (n1 as any).v === "=>") return true   // nullary / TT / FF
+  if (n1?.t === "id") {                                           // constructor + binder
+    const n2 = ts[i + 2]
+    return n2?.t === "punct" && (n2 as any).v === "=>"
+  }
+  return false
 }
 
 // atom = simple ("." IDENT)*
@@ -451,20 +456,25 @@ const recTypeInner: P<Expr> = (ts, i) => {
 // match arm: IDENT "=>" expr (where IDENT is "TT" or "FF").
 // Body uses matchExpr so it can span multiple lines; it stops before the next
 // "TT =>" or "FF =>" pattern (via matchAtom's isArmStart lookahead).
-const matchArmP: P<{ pat: "TT" | "FF"; body: Expr }> = nl((ts, i) => {
-  const r = seq(idP, nl(punctP("=>")), skipNl, lazy(() => matchExpr))(ts, i)
+// match arm: `Ctor => body` or `Ctor binder => body` (binder may be `_`).
+type Arm = { pat: string; binder: string | null; hasBinder: boolean; body: Expr }
+const matchArmP: P<Arm> = nl((ts, i) => {
+  const ctor = idP(ts, i)
+  if (!ctor.ok) return ctor
+  let pos = ctor.pos, binder: string | null = null, hasBinder = false
+  if (ts[pos].t === "id") {
+    const v = (ts[pos] as any).v as string
+    hasBinder = true; binder = v === "_" ? null : v; pos++
+  }
+  const r = seq(nl(punctP("=>")), skipNl, lazy(() => matchExpr))(ts, pos)
   if (!r.ok) return r
-  const [pat, , , body] = r.v
-  if (pat !== "TT" && pat !== "FF")
-    return err(`match arm pattern must be 'TT' or 'FF', got '${pat}'`, i)
-  return ok({ pat: pat as "TT" | "FF", body }, r.pos)
+  return ok({ pat: ctor.v, binder, hasBinder, body: r.v[2] }, r.pos)
 })
 
-// match cond { TT => e1 ; FF => e2 }
-// Desugared in compile.ts to closed-branch select-then-apply.
-// Validation errors use r.pos (the deepest matched position) so `alt`'s
-// deepest-wins logic surfaces them instead of falling through to other
-// alternatives.
+// Two flavours, discriminated by the arms:
+//   Bool:      `match c { TT => a; FF => b }`        → select desugar (compile.ts)
+//   Coproduct: `match c { V1 x => b1; V2 y => b2 }`  → the cut (§2.6):
+//              `(prod (pair [V1,V2] [{x}->b1, {y}->b2])) c`   (needs `prod` in scope)
 const matchP: P<Expr> = (ts, i) => {
   const r = seq(
     kwP("match"), skipNl, lazy(() => app),
@@ -474,13 +484,44 @@ const matchP: P<Expr> = (ts, i) => {
   )(ts, i)
   if (!r.ok) return r
   const [, , cond, , arms] = r.v
-  if (arms.length !== 2)
-    return err(`match: expected exactly 2 arms (TT and FF), got ${arms.length}`, r.pos)
-  const tt = arms.find(a => a.pat === "TT")
-  const ff = arms.find(a => a.pat === "FF")
-  if (!tt || !ff)
-    return err(`match: must have both TT and FF arms`, r.pos)
-  return ok({ tag: "match" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
+  const isBool = arms.length === 2 && !arms.some(a => a.hasBinder)
+    && arms.some(a => a.pat === "TT") && arms.some(a => a.pat === "FF")
+  if (isBool) {
+    const tt = arms.find(a => a.pat === "TT")!, ff = arms.find(a => a.pat === "FF")!
+    return ok({ tag: "match" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
+  }
+  const names = mkConsChain(arms.map(a => ({ tag: "var", name: a.pat } as Expr)))
+  const handlers = mkConsChain(arms.map(a =>
+    ({ tag: "binder", params: [{ name: a.binder, type: null }], body: a.body } as Expr)))
+  const table: Expr = { tag: "app", f: { tag: "app", f: { tag: "leaf" }, x: names }, x: handlers }
+  const prodTable: Expr = { tag: "app", f: { tag: "var", name: "prod" }, x: table }
+  return ok({ tag: "app", f: prodTable, x: cond }, r.pos)
+}
+
+// Build the leaf-based cons-chain `t e1 (t e2 (... t))` — cons = `t a b` (fork),
+// nil = leaf — matching the library's cons/nil (§2.6 arrays).
+function mkConsChain(elems: Expr[]): Expr {
+  let acc: Expr = { tag: "leaf" }
+  for (let k = elems.length - 1; k >= 0; k--)
+    acc = { tag: "app", f: { tag: "app", f: { tag: "leaf" }, x: elems[k] }, x: acc }
+  return acc
+}
+
+// Array literal: [ e1, e2, ... ] (comma- or newline-separated). Empty `[]` is nil.
+const arrayP: P<Expr> = (ts, i) => {
+  const open = punctP("[")(ts, i)
+  if (!open.ok) return open
+  let pos = open.pos
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === "]")
+    return ok({ tag: "leaf" }, pos + 1)
+  const elemsR = sepBy1(nl(lazy(() => expr)), commaP)(ts, pos)
+  if (!elemsR.ok) return elemsR
+  pos = elemsR.pos
+  while (ts[pos].t === "nl") pos++
+  const close = punctP("]")(ts, pos)
+  if (!close.ok) return close
+  return ok(mkConsChain(elemsR.v), close.pos)
 }
 
 // field = IDENT (":" expr)? ":=" valParser
