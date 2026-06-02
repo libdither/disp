@@ -249,17 +249,23 @@ elim := {dispatcher, motive, cases, target} ->
 // cut_apply runs UNDER walk, so it recognizes/applies by juxtaposition
 // (`A arg`, `fn arg`) — the enclosing walk routes each sub-application. Calling
 // the flat param_apply here would nest a fresh walk and get double-walked.
+// The checked payload is a §2.6 record { dom, fn }, read by name through the
+// cut (§12.10) — the same one-record discipline the type metas follow.
+chk_k_dom := t t                            // "dom"
+chk_k_fn  := t (t t)                        // "fn"
+chk_header := cons chk_k_dom (cons chk_k_fn nil)
 cut_apply := {meta, arg} -> {
-  let A = pair_fst meta
-  let fn = pair_snd meta
+  let A = field meta chk_k_dom
+  let fn = field meta chk_k_fn
   must_ok_any (A arg) ({verdict} ->
     match verdict {
       TT => match (is_neutral fn) { TT => fn arg; FF => Ok (fn arg) }
       FF => Fail                       // TypeMismatch (simplified)
     })
 }
-checked := {A, f} -> wait cut_apply (pair A f)
+checked := {A, f} -> wait cut_apply (record_val chk_header (cons (list_const A) (cons (list_const f) nil)))
 checked_sig := checker_sig cut_apply
+checked_dom := {v} -> field (type_meta v) chk_k_dom   // a checked value's stored domain
 
 // ================================================================
 // Bool / Nat / Pi
@@ -281,7 +287,7 @@ pi_body := {meta, v} -> {
   let B = pair_snd (meta_params meta)
   match (tree_eq (pair_fst v) checked_sig) {
     FF => Ok FF
-    TT => (match (tree_eq (pair_fst (type_meta v)) A) {
+    TT => (match (tree_eq (checked_dom v) A) {
       FF => Ok FF
       TT => bind_hyp A ({hyp} -> must_ok_any (param_apply v hyp) ({result} -> param_apply (B hyp) result))
     })

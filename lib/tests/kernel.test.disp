@@ -69,6 +69,8 @@ test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch (
 // domain fails -> Fail (the TypeMismatch boundary, §3 verdict-vs-error).
 test (checked Nat ({n} -> n)) (succ zero) = Ok (succ zero)  // domain holds
 test (checked Nat ({n} -> n)) TT = Fail                     // TT is not a Nat -> contract breakage
+// the checked payload is a {dom, fn} record; the domain is read back by name
+test checked_dom (checked Nat ({n} -> n)) = Nat
 
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----
 // make_meta builds a `prod`; the meta_* accessors are the cut against the
