@@ -21,12 +21,6 @@ conv := {a, b} -> tree_eq a b
 checker_sig := {checker} -> pair_fst (wait checker t)
 has_sig := {checker, v} -> tree_eq (pair_fst v) (checker_sig checker)
 
-// Eq metadata helpers.
-make_eq_meta := {A, x, y} -> t A (t x y)
-eq_meta_type := {meta} -> pair_fst meta
-eq_meta_lhs := {meta} -> pair_fst (pair_snd meta)
-eq_meta_rhs := {meta} -> pair_snd (pair_snd meta)
-
 // Neutral (hypothesis) metadata layout.
 make_neutral_meta := {current_type, payload} -> t current_type payload
 neutral_meta_type := {meta} -> pair_fst meta
@@ -35,50 +29,27 @@ neutral_app_payload := {old_meta, arg} -> t old_meta arg
 extend_neutral_meta := {old_meta, result_type, arg} ->
   make_neutral_meta result_type (neutral_app_payload old_meta arg)
 
-// InvalidType — the "no-constraint" sentinel stored type.
+// InvalidType — the absorbing "dead state" stored type (TYPE_THEORY §12.3).
 //
-// Convention (per TYPE_THEORY.typ §4.1, §4.2): when the kernel cannot
-// deduce or stabilise a stored type for a neutral (e.g., applying a
-// neutral whose current type's codomain_fn is the sentinel `t`, or
-// receiving a malformed Action from a user-supplied codomain_fn),
-// `hyp_reduce` extends the hypothesis spine with `InvalidType` as the
-// new stored type. The resulting neutral remains a well-formed kernel
-// hypothesis; subsequent checks against it reject.
+// A type's `respond` rejects a frame by returning `Extend InvalidType`; the
+// `inert_respond` of inert types (False, String, Refinement, …) does this for
+// every frame. `hyp_reduce`'s ordinary Extend branch then stores the neutral at
+// InvalidType, and InvalidType is itself inert, so the state is absorbing — any
+// further frame stays at InvalidType. Nothing inhabits it, so any check that
+// consults a neutral's stored type rejects.
 //
-// Concretely InvalidType is `FF`, the Scott-encoded false Boolean. The
-// kernel never *applies* InvalidType as a predicate to a value
-// directly; instead, InvalidType-stored hypotheses fail downstream
-// shape checks. In `q_hyp_reduce_fn`, the next application sees:
-//
-//   has_sig ks.predicate_frame (q_unguard_or_self ks InvalidType)
-//
-// which is FF (InvalidType is not a guarded predicate_frame wait-form),
-// so the spine extends with InvalidType again — the hypothesis is
-// inert and any check that consults its stored type fails (e.g.,
-// `q_guard_fn`'s `tree_eq (core v) TT` is FF when core = InvalidType).
-//
-// We use `FF` directly for two reasons:
-//   1. FF is the canonical hash-consed "no" answer in the codebase;
-//      reusing it keeps the convention transparent at the tree level
-//      and gives `is_invalid_type` an O(1) tree_eq fast-path against a
-//      boot-time constant.
-//   2. As a Scott-encoded value (`{m, ct, cf} -> cf`), FF is closed,
-//      not callable as a 1-argument predicate. This makes accidental
-//      "InvalidType v" reductions yield partially-applied trees rather
-//      than answers — exactly the right behaviour for a sentinel that
-//      should never be queried directly.
-//
-// `is_invalid_type` is the named accessor for testing the sentinel;
-// prefer it over open `tree_eq InvalidType ...` so the intent is
-// readable at the call site and the convention is greppable.
+// Concretely InvalidType is `FF`: the canonical hash-consed "no" answer (O(1)
+// tree_eq against a boot-time constant), and as a Scott value (`{m,ct,cf}->cf`)
+// it is closed — an accidental `InvalidType v` yields a partial tree, never a
+// spurious verdict, which is correct for a sentinel that is never queried.
 InvalidType := FF
-is_invalid_type := {v} -> tree_eq InvalidType v
 
 // ================================================================
-// Action protocol (per TYPE_THEORY.typ §3.4)
+// Action protocol (per TYPE_THEORY.typ §11.2)
 // ================================================================
-// codomain_fn returns a tagged Action: Extend new_stored_type or
-// Return value. hyp_reduce dispatches on the tag.
+// A type's `respond` returns a tagged Action: `Extend new_stored_type` or
+// `Return value` (rejection = `Extend InvalidType`). hyp_reduce dispatches on
+// the tag.
 //
 // extend_tag = t (LEAF). return_tag = t t (stem). These are distinct
 // closed trees fixed at boot; their hash-cons ids drive is_extend /
@@ -93,13 +64,12 @@ is_extend := {action} -> tree_eq (pair_fst action) extend_tag
 is_return := {action} -> tree_eq (pair_fst action) return_tag
 
 // ================================================================
-// CheckedResult encoding
+// CheckerResult encoding (Result, folded to Ok | Fail)
 // ================================================================
-// Used by ks.checked_apply (dispatcher wraps every routed result in Ok)
-// and by handlers' sub-evaluation paths. Public type checkers themselves
-// return BARE TT/FF — the dispatcher wraps when routing through
-// ks.checked_apply, and handlers fold Fail and Ok FF back to bare FF
-// using must_ok_or_ff for their ks.checked_apply consumers.
+// TYPE_THEORY §3's CheckerResult is `Result CheckerError A`; this kernel folds
+// the error vocabulary to a single info-free `Fail` (the verdict channel keeps
+// Ok TT / Ok FF). `param_apply`'s routed/recognizer targets return a
+// CheckerResult; the walker arm Ok-wraps a pure reduct (§7.5).
 
 Ok := {v} -> t t v
 Fail := t (t t)
@@ -107,38 +77,18 @@ Fail := t (t t)
 is_ok := {r} -> tree_eq (pair_fst r) t
 ok_value := {r} -> pair_snd r
 
-// must_ok_or_ff: r must be Ok _; thread the payload into k. If r is Fail,
-// fold to bare FF (the handler's "no" answer). Used at boundaries where
-// the handler returns bare TT/FF but sub-evaluations return CheckedResult.
-must_ok_or_ff := {r, k} ->
-  match (is_ok r) {
-    TT => k (ok_value r)
-    FF => FF
-  }
-
 // must_ok_any: r must be Ok _; thread the payload into k. If r is Fail,
-// propagate as Fail. Used inside CheckedResult-producing chains.
+// propagate as Fail. Used inside CheckerResult-producing chains.
 must_ok_any := {r, k} ->
   match (is_ok r) {
     TT => k (ok_value r)
     FF => Fail
   }
 
-// must_ok_tt: r must be Ok TT specifically. Used for predicate validation
-// where Ok FF is a "no" answer that should propagate as Fail.
-must_ok_tt := {r, k} ->
-  match (is_ok r) {
-    TT => match (tree_eq (ok_value r) TT) {
-      TT => k t
-      FF => Fail
-    }
-    FF => Fail
-  }
-
 // must_ok_or_self: r is Ok v → return v as-is; Fail → return Fail tree.
-// Used by eliminator_frame's non-hypothesis branch where the result of
-// the dispatcher's body is any value (not necessarily a Bool), so we
-// can't fold to FF — we propagate the raw value or the raw Fail tree.
+// Used where the Ok payload is any value (not necessarily a Bool) — e.g.
+// param_apply unwrapping the walker's success-Ok, and elim's neutral branch
+// unwrapping a stuck reduct — so we can't fold to FF.
 must_ok_or_self := {r} ->
   match (is_ok r) {
     TT => ok_value r
