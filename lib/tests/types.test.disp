@@ -118,9 +118,12 @@ test eq_sym Nat zero zero refl = refl
 test param_apply (Eq Nat zero zero) (eq_sym Nat zero zero refl) = Ok TT
 test eq_cong Nat Nat ({n} -> n) zero zero refl = refl
 test param_apply (Eq Nat (succ zero) (succ zero)) (eq_cong Nat Nat ({n} -> succ n) zero zero refl) = Ok TT
-// A neutral (hypothesis) proof routes eq_J to a stuck elimination.
+// A neutral (hypothesis) proof routes eq_J to a stuck elimination stored at
+// `motive self` (Eq's respond is inductive_respond, §12 — not the dead state).
 let hEq = mint_hyp (Eq Nat zero (succ zero)) 0
-test is_neutral (eq_J ({_} -> Bool) zero hEq) = TT
+let stuck_eqJ = eq_J ({_} -> Bool) zero hEq
+test is_neutral stuck_eqJ = TT
+test neutral_type stuck_eqJ = Bool
 
 // ---- ord_rec (ordinal recursor via elim) ----
 // depth along the right child of omega_plus.

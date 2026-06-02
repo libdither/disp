@@ -397,7 +397,9 @@ eq_body := {meta, v} -> {
   let y = field p rp_rhs
   Ok (and (tree_eq v refl) (tree_eq x y))
 }
-Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta (rp3 rp_type A rp_lhs x rp_rhs y) trivial_functor inert_respond none)
+// respond = inductive_respond (§12): eliminating a stuck `p : Eq A x y` via eq_J
+// yields `motive self` (a stuck subst/transp), not the dead state.
+Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta (rp3 rp_type A rp_lhs x rp_rhs y) trivial_functor inductive_respond none)
 
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
 // refl and stays stuck on a neutral proof).
