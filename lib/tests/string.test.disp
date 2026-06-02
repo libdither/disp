@@ -1,0 +1,27 @@
+// String literals (SYNTAX.typ): a string is the List of its codepoint Nats
+// (cons = `t a b`, nil = leaf) — bit-identical to the array of its codepoints,
+// giving a deterministic, distinct tree per spelling. Used as field-name tags.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// A string is the array of its codepoints.
+test "A" = [65]
+test "ab" = [97, 98]
+test "" = nil
+
+// Deterministic + distinct: equal spellings hash-cons equal, distinct differ.
+test tree_eq "respond" "respond" = TT
+test tree_eq "respond" "functor" = FF
+test tree_eq "ab" "ba" = FF
+
+// Usable as a record field-name tag through the cut.
+let r = record_val ["x", "y"] [list_const zero, list_const TT]
+test field r "x" = zero
+test field r "y" = TT
+
+// And as coproduct tags through the cut (match_co takes the names as a list of
+// string terms; match-arm *patterns* are still identifiers, a separate feature).
+let handle = match_co ["inc", "id"] [{n} -> succ n, {x} -> x]
+test handle (inj "inc" zero) = succ zero
+test handle (inj "id" TT) = TT

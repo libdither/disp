@@ -146,6 +146,14 @@ describe("parse: expressions", () => {
     expect(parseExpr("_")).toEqual(hole)
   })
 
+  it("string literal is a term", () => {
+    expect(parseExpr('"respond"')).toEqual({ tag: "str", value: "respond" })
+  })
+
+  it("use STRING still wins over a bare string literal", () => {
+    expect(parseExpr('use "lib/foo.disp"')).toEqual(use("lib/foo.disp"))
+  })
+
   it("_foo is an identifier, not a hole", () => {
     expect(parseExpr("_foo")).toEqual(v("_foo"))
   })

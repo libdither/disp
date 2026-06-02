@@ -174,7 +174,7 @@ function asUnusedParamThunk(e: Expr): Expr | null {
 // name could be referenced anywhere in `e` (modulo binder shadowing).
 function exprMentions(e: Expr, name: string): boolean {
   switch (e.tag) {
-    case "leaf": case "num": case "hole": case "use": return false
+    case "leaf": case "num": case "str": case "hole": case "use": return false
     case "var": return e.name === name
     case "app": return exprMentions(e.f, name) || exprMentions(e.x, name)
     case "ann": return exprMentions(e.expr, name) || exprMentions(e.type, name)
@@ -286,6 +286,7 @@ function exprToCir(
       }
       return { tag: "lit", t: result }
     }
+    case "str": return { tag: "lit", t: stringToTree(e.value) }
     case "var": {
       const entry = lookupEntry(e.name)
       return entry?.tree ? { tag: "lit", t: entry.tree } : { tag: "var", name: e.name }
@@ -1010,6 +1011,26 @@ function buildNat(n: number): Tree {
   for (let i = 0; i < n; i++) {
     result = fork(fork(LEAF, LEAF), result)
   }
+  return result
+}
+
+// natLitTree(n): the lib's canonical Nat for `n` — zero = LEAF, succ(m) =
+// `t t m` = fork(LEAF, m). Matches `succ`/`zero` applied in scope (unlike
+// buildNat, which is only an opaque hypothesis-id encoding).
+function natLitTree(n: number): Tree {
+  let result: Tree = LEAF
+  for (let i = 0; i < n; i++) result = fork(LEAF, result)
+  return result
+}
+
+// stringToTree(s): a string literal as a List of codepoint Nats (cons = fork,
+// nil = LEAF) — bit-identical to the array literal `[c0, c1, …]` of its
+// codepoints, so a string is a genuine String value and a deterministic,
+// distinct tag per spelling. Reused to intern record field-name identifiers.
+export function stringToTree(s: string): Tree {
+  const codes = [...s].map(c => c.codePointAt(0)!)
+  let result: Tree = LEAF
+  for (let i = codes.length - 1; i >= 0; i--) result = fork(natLitTree(codes[i]), result)
   return result
 }
 

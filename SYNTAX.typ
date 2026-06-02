@@ -66,7 +66,7 @@ let x = t   // trailing comments work too
   [Keyword],     [`let`, `test`, `use`, `open`, `match`],     [`let`],
   [Identifier],  [`[A-Za-z_][A-Za-z0-9_']*`, excluding keywords and the bare leaf `t`], [`foo_bar`, `x'`, `_priv`],
   [Leaf],        [`t` (not followed by an identifier char) or `△`],       [`t`, `△`],
-  [String],      [`"..."` (no escape sequences; only appears as `use` argument)], [`"lib/foo.disp"`],
+  [String],      [`"..."` (no escape sequences). A `use` argument, or a term: a string literal is the `List` of its codepoint `Nat`s (so `"A"` ≡ `[65]`), giving a deterministic, distinct tree per spelling — used as record/coproduct field-name tags.], [`"lib/foo.disp"`, `"respond"`],
   [Punctuation], [`(`  `)`  `{`  `}`  `,`  `.`  `=`  `:`  `:=`  `;`  `->`  `→`], [`{x : A} -> x`],
 )
 
@@ -192,6 +192,7 @@ simple    ::= \"(\" expr (\":\" expr)? \")\"
             | match
             | braced
             | \"use\" STRING
+            | STRING
             | LEAF
             | NUM
             | IDENT

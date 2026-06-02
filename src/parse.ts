@@ -82,6 +82,7 @@ export function tokenize(src: string): Tok[] {
 export type Expr =
   | { tag: "leaf" }
   | { tag: "num"; value: number }
+  | { tag: "str"; value: string }
   | { tag: "var"; name: string }
   | { tag: "hole" }
   | { tag: "app"; f: Expr; x: Expr }
@@ -291,6 +292,7 @@ const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
   lazy(() => arrayP),
   lazy(bracedP),
   map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
+  map(strP, (value): Expr => ({ tag: "str", value })),
   map(leafP, (): Expr => ({ tag: "leaf" })),
   map(numP, (value): Expr => ({ tag: "num", value })),
   holeP,
