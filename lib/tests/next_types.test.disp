@@ -89,3 +89,18 @@ test typecheck MyRec r = Ok TT
 test param_apply MyRec (record_val [tag_a, tag_b] [list_const TT, list_const TT]) = Ok FF
 test field r tag_a = zero                                // r.a
 test field r tag_b = TT                                  // r.b
+
+// ---- neutral projection through respond (§12.1) ----
+// A Sigma-hyp applied to a projection selector yields a stuck component.
+let hAB = mint_hyp (Sigma Nat ({_} -> Bool)) 0
+test neutral_type (ok_value (param_apply hAB walker_pair_fst)) = Nat     // fst : A = Nat
+test neutral_type (ok_value (param_apply hAB walker_pair_snd)) = Bool    // snd : B fst = Bool
+// dependency is preserved: snd of (n : Nat, _ : Eq Nat n n) lands at Eq Nat fst fst
+let hDep = mint_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
+let fstp = ok_value (param_apply hDep walker_pair_fst)
+test neutral_type (ok_value (param_apply hDep walker_pair_snd)) = Eq Nat fstp fstp
+
+// A Record-hyp projects each field at its declared type, read by name.
+let hR = mint_hyp MyRec 0
+test neutral_type (ok_value (param_apply hR (acc tag_a))) = Nat          // r.a : Nat
+test neutral_type (ok_value (param_apply hR (acc tag_b))) = Bool         // r.b : Bool

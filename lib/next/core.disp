@@ -309,7 +309,24 @@ sigma_body := {meta, v} -> {
   must_ok_any (A (pair_fst v)) ({va} ->
     match va { FF => Ok FF; TT => (B (pair_fst v)) (pair_snd v) })   // b inhabits (B a)
 }
-Sigma := {A, B} -> wait (make_recognizer sigma_body) (make_meta (pair A B) trivial_functor inert_respond none)
+// Projection-as-application for Sigma neutrals (§12.1): a Sigma-hyp applied to a
+// projection selector extends the spine with the component's type. fst -> A;
+// snd -> B at the fst-projection (dependency preserved). Runs raw in hyp_reduce.
+walker_pair_fst := t (t t) t
+walker_pair_snd := t (t t) (t t)
+sigma_respond := {nmeta, frame} -> {
+  let params = meta_params (type_meta (neutral_meta_type nmeta))
+  let A = pair_fst params
+  let B = pair_snd params
+  match (tree_eq frame walker_pair_fst) {
+    TT => Extend A
+    FF => (match (tree_eq frame walker_pair_snd) {
+      TT => Extend (B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst)))
+      FF => Extend InvalidType
+    })
+  }
+}
+Sigma := {A, B} -> wait (make_recognizer sigma_body) (make_meta (pair A B) trivial_functor sigma_respond none)
 
 refinement_body := {meta, v} -> {
   let A = pair_fst (meta_params meta)
@@ -393,4 +410,13 @@ record_body := {meta, v} ->
     FF => Ok FF
     TT => record_check (meta_params meta) v
   }
-Record := {fields} -> wait (make_recognizer record_body) (make_meta fields trivial_functor inert_respond none)
+// Projection for Record neutrals: a record-hyp applied to `acc name` extends the
+// spine with that field's declared type, read by name from the stored type.
+record_respond := {nmeta, frame} -> {
+  let arm_r = lookup_arm (meta_params (type_meta (neutral_meta_type nmeta))) (pair_fst frame)
+  match (is_ok arm_r) {
+    TT => Extend (ok_value arm_r)
+    FF => Extend InvalidType
+  }
+}
+Record := {fields} -> wait (make_recognizer record_body) (make_meta fields trivial_functor record_respond none)
