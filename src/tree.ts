@@ -382,9 +382,15 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
     if (stackTop > applyStats.maxStack) applyStats.maxStack = stackTop
 
-    // Suspended application as the operator: (f a) applied to curX.
-    // tree_eq stage 2: a `tree_eq a` partial meeting its second operand is the
-    // O(1) hash-cons equality. Any other suspension is materialized, then applied.
+    // Leaf/Stem: immediate result
+    if (isLeaf(curF)) { traceApply("leaf", curF, curX, stackTop); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
+    if (isStem(curF)) { traceApply("stem", curF, curX, stackTop); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
+
+    // Suspended application as the operator — the only non-fork tag left, so it is
+    // checked HERE (after leaf/stem, which therefore skip it) and stands in for the
+    // old non-fork guard, leaving the fork path's check count unchanged. (f a)
+    // applied to curX; tree_eq stage 2: a `tree_eq a` partial meeting its second
+    // operand is the O(1) hash-cons equality. Other suspensions: force, then apply.
     if (curF.tag === "susp") {
       if (TREE_EQ_ID !== -1 && curF.f.id === TREE_EQ_ID) {
         traceApply("tree_eq", curF, curX, stackTop)
@@ -394,10 +400,6 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
       }
       curF = force(curF); continue
     }
-
-    // Leaf/Stem: immediate result
-    if (isLeaf(curF)) { traceApply("leaf", curF, curX, stackTop); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
-    if (isStem(curF)) { traceApply("stem", curF, curX, stackTop); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
     if (!isFork(curF)) throw new Error("apply: impossible non-fork function")
 
     // tree_eq host fast path (stage 1): apply(tree_eq, a) suspends as the honest
