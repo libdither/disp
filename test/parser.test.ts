@@ -146,6 +146,20 @@ describe("parse: expressions", () => {
     expect(parseExpr("_")).toEqual(hole)
   })
 
+  it("string literal is a term", () => {
+    expect(parseExpr('"respond"')).toEqual({ tag: "str", value: "respond" })
+  })
+
+  it("coproduct match (string tags, multi-binder, wildcard) parses to the cut", () => {
+    // desugars to `(prod (pair names handlers)) cond` — an application
+    const e = parseExpr("match c { A x => x; B a b c => a; _ => c }")
+    expect(e.tag).toBe("app")
+  })
+
+  it("use STRING still wins over a bare string literal", () => {
+    expect(parseExpr('use "lib/foo.disp"')).toEqual(use("lib/foo.disp"))
+  })
+
   it("_foo is an identifier, not a hole", () => {
     expect(parseExpr("_foo")).toEqual(v("_foo"))
   })
@@ -426,19 +440,17 @@ describe("parseProgram (compile + driver)", () => {
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
   })
 
-  it("recValue Church encoding: field access works", () => {
-    // { x := t; y := t t }.x should equal t
-    const decls = parseProgram("let r = { x := t; y := t t }\ntest r.x = t")
-    const test = decls.find(d => d.kind === "Test")
-    if (!test || test.kind !== "Test") throw new Error("test")
-    expect(treeEqual(test.lhs, test.rhs)).toBe(true)
+  // Record VALUES now compile to the §2.6 cut (`prod`, needs the kernel in
+  // scope), so end-to-end field access is covered in the lib suite
+  // (lib/tests/record.test.disp). Here we assert the parse/AST shape.
+  it("record value { := } parses to a recValue", () => {
+    expect(parseExpr("{ x := t; y := t t }")).toEqual(
+      recValue([{ name: "x", type: null, value: leaf }, { name: "y", type: null, value: ap(leaf, leaf) }]),
+    )
   })
 
-  it("recValue Church encoding: second field", () => {
-    const decls = parseProgram("let r = { x := t; y := t t }\ntest r.y = t t")
-    const test = decls.find(d => d.kind === "Test")
-    if (!test || test.kind !== "Test") throw new Error("test")
-    expect(treeEqual(test.lhs, test.rhs)).toBe(true)
+  it("projection r.x parses to a proj node", () => {
+    expect(parseExpr("r.x")).toEqual(proj(v("r"), "x"))
   })
 })
 
@@ -683,15 +695,24 @@ describe("match expression", () => {
       match(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
   })
 
-  it("rejects non-TT/FF arm patterns", () => {
-    expect(() => parseExpr(`match c { foo => a; FF => b }`)).toThrow(/TT.*FF/)
+  // Non-Bool arms desugar to the §2.6 cut: `(prod (pair [V..] [h..])) cond`.
+  // We check the top-level shape: an application of `prod ...` to the scrutinee.
+  const isCutOf = (e: Expr, cond: Expr) => {
+    expect(e.tag).toBe("app")
+    expect((e as any).x).toEqual(cond)            // applied to the scrutinee
+    expect((e as any).f.tag).toBe("app")
+    expect((e as any).f.f).toEqual(v("prod"))     // head is `prod`
+  }
+
+  it("desugars a non-TT/FF match to the cut", () => {
+    isCutOf(parseExpr(`match c { foo x => a; bar y => b }`), v("c"))
   })
 
-  it("rejects single arm", () => {
-    expect(() => parseExpr(`match c { TT => a }`)).toThrow(/exactly 2 arms|both TT and FF/)
+  it("accepts a single-arm match (one-constructor cut)", () => {
+    isCutOf(parseExpr(`match c { A x => b }`), v("c"))
   })
 
-  it("rejects duplicate TT arm", () => {
-    expect(() => parseExpr(`match c { TT => a; TT => b }`)).toThrow(/both TT and FF/)
+  it("a two-arm match with binders is the cut, not Bool", () => {
+    isCutOf(parseExpr(`match c { Ok x => a; Err y => b }`), v("c"))
   })
 })

@@ -7,8 +7,8 @@ open use "list.disp"
 
 Fin := {limit, value} ->
   select_lazy
-    ({_} -> TT)
-    ({_} -> and (Nat value) (nat_lt value limit))
+    ({_} -> Ok TT)
+    ({_} -> must_ok_any (Nat value) ({b} -> match b { FF => Ok FF; TT => Ok (nat_lt value limit) }))
     (is_neutral value)
 
 fin0 : {n : Nat} -> Fin (succ n) :=
@@ -19,8 +19,8 @@ fin_two_of_three : Fin 3 := 2
 
 VecNat := {length, xs} ->
   select_lazy
-    ({_} -> TT)
-    ({_} -> and (NatList xs) (tree_eq (list_length xs) length))
+    ({_} -> Ok TT)
+    ({_} -> must_ok_any (NatList xs) ({b} -> match b { FF => Ok FF; TT => Ok (tree_eq (list_length xs) length) }))
     (is_neutral xs)
 
 vnil : VecNat 0 := nil

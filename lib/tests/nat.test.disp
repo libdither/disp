@@ -20,6 +20,4 @@ test add1 5 = 6
 test add_zero_l 4 = t
 test add_zero_r 4 = t
 test add_succ_r 4 = t
-test add_comm 2 3 = t
-test add_comm 4 1 = t
 

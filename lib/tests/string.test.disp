@@ -1,30 +1,27 @@
-// String — permissive base type tests. The recognizer accepts any
-// tree; structural checks come from refinement layers built on top.
+// String literals (SYNTAX.typ): a string is the List of its codepoint Nats
+// (cons = `t a b`, nil = leaf) — bit-identical to the array of its codepoints,
+// giving a deterministic, distinct tree per spelling. Used as field-name tags.
 
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-// ================================================================
-// Identity sanity: String is a public guarded predicate_frame type.
-// ================================================================
-test hasguard String = TT
-test tree_eq (pair_fst (type_meta String)) kernel_predicate_frame_sig = TT
+// A string is the array of its codepoints.
+test "A" = [65]
+test "ab" = [97, 98]
+test "" = nil
 
-// ================================================================
-// Permissive recognizer: every tree is accepted.
-// ================================================================
-test String t = TT
-test String TT = TT
-test String FF = TT
-test String zero = TT
-test String (succ zero) = TT
-test String empty_string = TT
-test String (string_cons zero empty_string) = TT
+// Deterministic + distinct: equal spellings hash-cons equal, distinct differ.
+test tree_eq "respond" "respond" = TT
+test tree_eq "respond" "functor" = FF
+test tree_eq "ab" "ba" = FF
 
-// ================================================================
-// Scott-list constructors round-trip via string_eq (= tree_eq).
-// ================================================================
-test string_eq empty_string empty_string = TT
-test string_eq (string_cons zero empty_string) (string_cons zero empty_string) = TT
-test string_eq empty_string (string_cons zero empty_string) = FF
-test string_eq (string_cons zero empty_string) (string_cons (succ zero) empty_string) = FF
+// Usable as a record field-name tag through the cut.
+let r = record_val ["x", "y"] [list_const zero, list_const TT]
+test field r "x" = zero
+test field r "y" = TT
+
+// And as coproduct tags through the cut (match_co takes the names as a list of
+// string terms; match-arm *patterns* are still identifiers, a separate feature).
+let handle = match_co ["inc", "id"] [{n} -> succ n, {x} -> x]
+test handle (inj "inc" zero) = succ zero
+test handle (inj "id" TT) = TT

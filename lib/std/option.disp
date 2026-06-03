@@ -16,19 +16,17 @@ some := {v} -> t (t t) v
 
 let some_tag = t t
 
+// Returns a CheckerResult: `A (pair_snd opt)` is itself the Ok-wrapped
+// recognizer verdict for the some-payload.
 Option := {A, opt} ->
   select_lazy
-    ({_} -> TT)
-    ({_} ->
-      select_lazy
-        ({_} -> TT)
-        ({_} ->
-          select_lazy
-            ({_} ->
-              and (tree_eq (pair_fst opt) some_tag) (A (pair_snd opt)))
-            ({_} -> FF)
-            (is_concrete_fork opt))
-        (tree_eq opt none))
+    ({_} -> Ok TT)                                  // neutral: permissive
+    ({_} -> match (tree_eq opt none) {
+       TT => Ok TT
+       FF => match (and (is_fork opt) (tree_eq (pair_fst opt) some_tag)) {
+         TT => A (pair_snd opt)
+         FF => Ok FF
+       }})
     (is_neutral opt)
 
 is_none := {opt} -> tree_eq opt none

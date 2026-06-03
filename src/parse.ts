@@ -21,7 +21,7 @@ export type Tok =
 
 const KEYWORDS = new Set(["let", "test", "use", "open", "match"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
-const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}"] as const
+const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -82,6 +82,7 @@ export function tokenize(src: string): Tok[] {
 export type Expr =
   | { tag: "leaf" }
   | { tag: "num"; value: number }
+  | { tag: "str"; value: string }
   | { tag: "var"; name: string }
   | { tag: "hole" }
   | { tag: "app"; f: Expr; x: Expr }
@@ -288,8 +289,10 @@ const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
     ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
   ),
   lazy(() => matchP),
+  lazy(() => arrayP),
   lazy(bracedP),
   map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
+  map(strP, (value): Expr => ({ tag: "str", value })),
   map(leafP, (): Expr => ({ tag: "leaf" })),
   map(numP, (value): Expr => ({ tag: "num", value })),
   holeP,
@@ -319,14 +322,15 @@ function isFieldStart(ts: Tok[], i: number): boolean {
   return false
 }
 
-// Check if position starts a match arm pattern: (IDENT "=>") where IDENT is TT or FF.
-// Used to prevent match-arm body atoms from consuming the next arm after a newline.
+// Check if position starts a match arm pattern: a constructor followed by zero
+// or more binder idents and then `=>` (e.g. `Ctor =>`, `Ctor x =>`,
+// `Ctor a b c =>`). Used to stop multi-line arm bodies before the next arm.
+// `=>` is match-only, so this only ever fires inside a match.
 function isArmStart(ts: Tok[], i: number): boolean {
   if (ts[i].t !== "id") return false
-  const name = (ts[i] as any).v as string
-  if (name !== "TT" && name !== "FF") return false
-  const next = ts[i + 1]
-  return next?.t === "punct" && (next as any).v === "=>"
+  let j = i + 1
+  while (ts[j]?.t === "id") j++           // skip binder idents
+  return ts[j]?.t === "punct" && (ts[j] as any).v === "=>"
 }
 
 // atom = simple ("." IDENT)*
@@ -451,20 +455,50 @@ const recTypeInner: P<Expr> = (ts, i) => {
 // match arm: IDENT "=>" expr (where IDENT is "TT" or "FF").
 // Body uses matchExpr so it can span multiple lines; it stops before the next
 // "TT =>" or "FF =>" pattern (via matchAtom's isArmStart lookahead).
-const matchArmP: P<{ pat: "TT" | "FF"; body: Expr }> = nl((ts, i) => {
-  const r = seq(idP, nl(punctP("=>")), skipNl, lazy(() => matchExpr))(ts, i)
+// match arm: `Ctor b0 b1 ... => body` — a constructor and zero or more binders
+// (each may be `_`). `Ctor` is the tag (a string, by spelling); `_` as the
+// constructor is the wildcard/default arm.
+type Arm = { pat: string; binders: string[]; body: Expr }
+const matchArmP: P<Arm> = nl((ts, i) => {
+  const ctor = idP(ts, i)
+  if (!ctor.ok) return ctor
+  let pos = ctor.pos
+  const binders: string[] = []
+  while (ts[pos].t === "id") { binders.push((ts[pos] as any).v as string); pos++ }
+  const r = seq(nl(punctP("=>")), skipNl, lazy(() => matchExpr))(ts, pos)
   if (!r.ok) return r
-  const [pat, , , body] = r.v
-  if (pat !== "TT" && pat !== "FF")
-    return err(`match arm pattern must be 'TT' or 'FF', got '${pat}'`, i)
-  return ok({ pat: pat as "TT" | "FF", body }, r.pos)
+  return ok({ pat: ctor.v, binders, body: r.v[2] }, r.pos)
 })
 
-// match cond { TT => e1 ; FF => e2 }
-// Desugared in compile.ts to closed-branch select-then-apply.
-// Validation errors use r.pos (the deepest matched position) so `alt`'s
-// deepest-wins logic surfaces them instead of falling through to other
-// alternatives.
+const binderName = (b: string): string | null => (b === "_" ? null : b)
+const apE = (f: Expr, x: Expr): Expr => ({ tag: "app", f, x })
+const varE = (name: string): Expr => ({ tag: "var", name })
+
+// The handler an arm contributes to the cut's case-product. The cut feeds it
+// the scrutinee's payload `pair_snd c`; binders destructure it:
+//   0 binders → ignore the payload;  1 → the payload IS the binder;
+//   n≥2 → the payload is a right-nested pair (pair b0 (pair b1 …)), projected.
+function armHandler(a: Arm): Expr {
+  const n = a.binders.length
+  if (n <= 1)
+    return { tag: "binder", params: [{ name: n === 0 ? null : binderName(a.binders[0]), type: null }], body: a.body }
+  const inner: Expr = { tag: "binder", params: a.binders.map(b => ({ name: binderName(b), type: null })), body: a.body }
+  let appd: Expr = inner
+  for (let k = 0; k < n; k++) {
+    let acc: Expr = varE("__p")
+    for (let s = 0; s < k; s++) acc = apE(varE("pair_snd"), acc)   // pair_snd^k __p
+    appd = apE(appd, k < n - 1 ? apE(varE("pair_fst"), acc) : acc) // last field is the bare snd-chain
+  }
+  return { tag: "binder", params: [{ name: "__p", type: null }], body: appd }
+}
+
+// Two flavours, discriminated by the arms:
+//   Bool:      `match c { TT => a; FF => b }`        → select desugar (compile.ts)
+//   Coproduct: `match c { V1 x => b1; V2 y => b2 }`  → the cut (§2.6):
+//              `(prod (pair ["V1","V2"] [{x}->b1, {y}->b2])) c`   (needs `prod` in scope)
+// Tags are the constructor *names as strings*; `_` is the wildcard arm, whose
+// handler is appended past the names so an unmatched tag's `index_of` (= the
+// name count) lands on it.
 const matchP: P<Expr> = (ts, i) => {
   const r = seq(
     kwP("match"), skipNl, lazy(() => app),
@@ -474,13 +508,47 @@ const matchP: P<Expr> = (ts, i) => {
   )(ts, i)
   if (!r.ok) return r
   const [, , cond, , arms] = r.v
-  if (arms.length !== 2)
-    return err(`match: expected exactly 2 arms (TT and FF), got ${arms.length}`, r.pos)
-  const tt = arms.find(a => a.pat === "TT")
-  const ff = arms.find(a => a.pat === "FF")
-  if (!tt || !ff)
-    return err(`match: must have both TT and FF arms`, r.pos)
-  return ok({ tag: "match" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
+  const isBool = arms.length === 2 && !arms.some(a => a.binders.length > 0)
+    && arms.some(a => a.pat === "TT") && arms.some(a => a.pat === "FF")
+  if (isBool) {
+    const tt = arms.find(a => a.pat === "TT")!, ff = arms.find(a => a.pat === "FF")!
+    return ok({ tag: "match" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
+  }
+  const named = arms.filter(a => a.pat !== "_")
+  const wildcard = arms.find(a => a.pat === "_")
+  const names = mkConsChain(named.map(a => ({ tag: "str", value: a.pat } as Expr)))
+  const handlerExprs = named.map(armHandler)
+  if (wildcard) handlerExprs.push(armHandler(wildcard))   // default: past the names
+  const handlers = mkConsChain(handlerExprs)
+  const table: Expr = { tag: "app", f: { tag: "app", f: { tag: "leaf" }, x: names }, x: handlers }
+  const prodTable: Expr = { tag: "app", f: { tag: "var", name: "prod" }, x: table }
+  return ok({ tag: "app", f: prodTable, x: cond }, r.pos)
+}
+
+// Build the leaf-based cons-chain `t e1 (t e2 (... t))` — cons = `t a b` (fork),
+// nil = leaf — matching the library's cons/nil (§2.6 arrays).
+function mkConsChain(elems: Expr[]): Expr {
+  let acc: Expr = { tag: "leaf" }
+  for (let k = elems.length - 1; k >= 0; k--)
+    acc = { tag: "app", f: { tag: "app", f: { tag: "leaf" }, x: elems[k] }, x: acc }
+  return acc
+}
+
+// Array literal: [ e1, e2, ... ] (comma- or newline-separated). Empty `[]` is nil.
+const arrayP: P<Expr> = (ts, i) => {
+  const open = punctP("[")(ts, i)
+  if (!open.ok) return open
+  let pos = open.pos
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === "]")
+    return ok({ tag: "leaf" }, pos + 1)
+  const elemsR = sepBy1(nl(lazy(() => expr)), commaP)(ts, pos)
+  if (!elemsR.ok) return elemsR
+  pos = elemsR.pos
+  while (ts[pos].t === "nl") pos++
+  const close = punctP("]")(ts, pos)
+  if (!close.ok) return close
+  return ok(mkConsChain(elemsR.v), close.pos)
 }
 
 // field = IDENT (":" expr)? ":=" valParser

@@ -1,0 +1,35 @@
+// Micro-benchmark: per-operation cost of the current tagged-union encoding
+// vs the §2.6 coproduct (inj / match_co) for CheckerResult and Action.
+//
+// Each driver folds an elimination over 100 DISTINCT Nats (k = 0..99) so the
+// apply-memo never fires — every iteration is a fresh reduction. The nat_rec /
+// add scaffolding is identical across the cur/cop pair, so the step DELTA
+// between the two `let`s isolates the encoding's per-op cost x100.
+//
+// Measure with:  npx tsx src/run.ts --stats-detail --stats-all bench/micro_coproduct.disp
+
+open use "../lib/prelude.disp"
+open use "../lib/kernel/prelude.disp"
+open use "../lib/std/nat/arith.disp"
+
+let N = 100
+
+// ---- CheckerResult: construct Ok k, then eliminate back to k ----
+let cur_cr = {k} -> match (is_ok (Ok k)) { TT => ok_value (Ok k); FF => zero }
+let cop_cr = {k} -> match_co ["ok", "fail"] [{v} -> v, {_} -> zero] (inj "ok" k)
+
+// ---- Action: construct Extend k, dispatch, extract payload ----
+let cur_act = {k} -> match (is_extend (Extend k)) { TT => pair_snd (Extend k); FF => pair_snd (Extend k) }
+let cop_act = {k} -> match_co ["Extend", "Return"] [{v} -> v, {v} -> v] (inj "Extend" k)
+
+// drivers: sum elim(k) over k = 0..N-1 (distinct inputs, no memo reuse)
+let drive = {f, n} -> nat_rec ({_} -> Nat) zero ({k, acc} -> add (f k) acc) n
+
+// identical scaffolding baseline (elim is identity) to subtract nat_rec/add cost
+let drive_id = {k} -> k
+
+bench_scaffold := drive drive_id N
+bench_cur_cr   := drive cur_cr N
+bench_cop_cr   := drive cop_cr N
+bench_cur_act  := drive cur_act N
+bench_cop_act  := drive cop_act N

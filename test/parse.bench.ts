@@ -9,14 +9,12 @@ import { parseProgram } from "../src/compile.js"
 
 const FILES = [
   "lib/prelude.disp",
-  "lib/kernel/handlers.disp",
   "lib/kernel/utils.disp",
-  "lib/kernel/walker.disp",
-  "lib/types/ord.disp",
+  "lib/kernel/core.disp",
   "lib/std/list.disp",
   "lib/tests/prelude.test.disp",
   "lib/tests/kernel.test.disp",
-  "lib/tests/rec.test.disp",
+  "lib/tests/types.test.disp",
 ]
 
 const sources = FILES.map(f => ({

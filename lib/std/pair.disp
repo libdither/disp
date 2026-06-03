@@ -11,15 +11,9 @@ open use "../kernel/prelude.disp"
 
 pair := {a, b} -> t a b
 
-Pair := {A, B, p} ->
-  select_lazy
-    ({_} -> TT)
-    ({_} ->
-      select_lazy
-        ({_} -> and (A (pair_fst p)) (B (pair_snd p)))
-        ({_} -> FF)
-        (is_concrete_fork p))
-    (is_neutral p)
+// Pair A B is the non-dependent Sigma (a proper core type: recognized via the
+// kernel, neutral-projecting through sigma_respond).
+Pair := {A, B} -> Sigma A ({_} -> B)
 
 pair_map_fst := {f, p} -> pair (f (pair_fst p)) (pair_snd p)
 pair_map_snd := {g, p} -> pair (pair_fst p) (g (pair_snd p))

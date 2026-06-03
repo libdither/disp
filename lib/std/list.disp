@@ -20,17 +20,19 @@ open use "nat/ops.disp"
 // Recursive structural check. The `fix` is placed *inside* the outer
 // binder over (A, xs) so partial application `List A` doesn't trigger
 // fix-unfolding at compile time. `match` (not `select_lazy`) wraps the
-// recursive branch per CLAUDE.md's self-recursion workaround.
+// recursive branch per CLAUDE.md's self-recursion workaround. Returns a
+// CheckerResult: check the head via A's recognizer, then recurse on the tail.
 List := {A, xs} ->
   fix ({self, ys} ->
     select_lazy
-      ({_} -> TT)
+      ({_} -> Ok TT)
       ({_} ->
         match (tree_eq ys t) {
-          TT => TT
+          TT => Ok TT
           FF => match (is_concrete_fork ys) {
-            TT => and (A (pair_fst ys)) (self (pair_snd ys))
-            FF => FF
+            TT => must_ok_any (A (pair_fst ys)) ({hd} ->
+                    match hd { FF => Ok FF; TT => self (pair_snd ys) })
+            FF => Ok FF
           }
         })
       (is_neutral ys))

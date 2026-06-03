@@ -352,19 +352,22 @@ three are surface sugar over the pairs of §2; their desugaring is fixed
 here once so later sections use them without restating the encoding. (`≡`
 below reads "desugars to.")
 
-Records, coproducts, and functions are not three encodings but three uses of
-*one shape*. Every value is `fork(descriptor, payload)`: the descriptor
-(`pair_fst`) decides which capabilities the value has, and a single elimination
-— the *cut* — drives them all. Projection, `match`, and function application
-are that one operation at different arities. This subsection fixes the shared
-shape and its eliminator; §12 gives the types (`Record`, `Coproduct`, `Sigma`,
-`Pi`) and §10 the erasure that lowers the shape back to positional data.
+The one idea to carry out: records, coproducts, and functions are not three
+encodings but three uses of *one shape*, driven by *one* eliminator. Every value
+is `fork(descriptor, payload)` — the descriptor (`pair_fst`) fixes which
+capabilities the value has — and a single operation, the *cut*, eliminates them
+all; projection, `match`, and function application are that one operation at
+different arities. We build to it in order: arrays first (the trivial case, no
+cut), then the shared shape and its two halves, the cut that joins them, the one
+knob that splits records from matches, the cut's type, and finally each construct
+as an instance. §12 gives the types (`Record`, `Coproduct`, `Sigma`, `Pi`); §10
+the erasure that lowers the shape back to positional data.
 
 === Arrays
 
 ```disp
-[]              ≡  nil
-[a, b, c]       ≡  cons a (cons b (cons c nil))
+[]              ≡  nil                            // nil  : List X
+[a, b, c]       ≡  cons a (cons b (cons c nil))   // cons : X -> List X -> List X
 ```
 
 An array literal is a `List` (§2 glossary): `nil` is empty, `cons h t` prepends. At
@@ -374,37 +377,66 @@ Lists carry no names; position is the only index.
 
 === The one shape and the cut
 
-A *coproduct value* is a tag paired with a payload; a *product* is a callable
-table of fields. Four combinators relate them:
+Every value is `fork(descriptor, payload)`, used two ways: a *variant* is the
+data half (a tag plus a payload — a coproduct value), a *product* the consumer
+half (a callable table of fields). Their types index a finite name set by two
+per-field families — `A n` and `B n`, each field's payload domain and result —
+from which `Field n = A n -> B n`, a `FieldTable` is a name header plus one field
+per name, a `Variant` is `(tag : Name, pay : A tag)`, and a `Product` is
+`(c : Variant) -> B (tag c)`. (Precise dependent forms in §12.4.) Five combinators
+build and join the halves:
 
 ```disp
-annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)  // select P's field named by c's tag, feed c's payload
-prod := {P}        -> wait annihilate P     // a product: a callable wrapper; its field table is the wait_meta
-inj  := {tag, pay} -> pair tag pay          // a coproduct value: tag + payload (plain inspectable data)
-acc  := {name}     -> inj name unit         // an accessor: a nullary coproduct (unit payload)
-
-// proj reads the table's name header for the position, then indexes the payload:
-proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
+inj : (tag : Name) -> A tag -> Variant :=
+  {tag, pay} -> pair tag pay
 ```
-
-`prod P` is a wait-form (§5.4), so applying it is raw substrate reduction — no
-`pair_fst`/`pair_snd` triage on the argument. Applying a product to a coproduct
-value is the *cut*:
+Builds a *variant* — the tag in `pair_fst`, the payload in `pair_snd`, told apart
+by one O(1) `tree_eq` (§2.2). A constructor application is exactly this injection:
+`V e ≡ inj V e`.
 
 ```disp
-(prod P) c   →   annihilate P c   →   (proj P (pair_fst c)) (pair_snd c)
+acc : (n : Name) -> Variant :=
+  {n} -> inj n unit
+```
+The nullary variant (payload `unit`); the accessor a projection cuts against:
+`r.a ≡ r (acc a)`.
+
+```disp
+proj : (P : FieldTable) -> (n : Name) -> Field n :=
+  {P, n} -> path_at (index_of (pair_fst P) n) (pair_snd P)
+```
+Selects a field by name: reads the table's name header for the field's position,
+then indexes the payload. Internal to the cut — no surface syntax of its own.
+
+```disp
+annihilate : FieldTable -> (c : Variant) -> B (tag c) :=
+  {P, c} -> (proj P (pair_fst c)) (pair_snd c)
+```
+The *cut body*: select `P`'s field named by `c`'s tag, then feed that field `c`'s
+payload.
+
+```disp
+prod : FieldTable -> Product :=
+  {P} -> wait annihilate P
+```
+Makes a field table *callable* — the product behind both `{ a := x }` and
+`match`. `prod P` is a wait-form (§5.4), so applying it is raw substrate
+reduction, with no triage on the argument.
+
+The *cut* applies a product to a variant:
+
+```disp
+(prod P) c   →   (proj P (pair_fst c)) (pair_snd c)   :   B (tag c)
 ```
 
-— "select the field named by `c`'s tag, then feed that field `c`'s payload." The
-field table `P` is the name-headed Σ-tuple of §2's pairs (`pair [names]
-payload`), recoverable as `wait_meta (prod P)`, so a product stays fully
-inspectable while being callable. A coproduct value `inj tag pay` is plain data:
-its tag sits in `pair_fst`, its payload in `pair_snd`, discriminated by one O(1)
-`tree_eq` (§2.2).
-
-The two faces of the cut differ only in what the fields do with the payload: a
-*record* is a product whose fields ignore it, a *match* a product whose fields
-use it. Both are eliminated by the identical call.
+It typechecks exactly when `tag c ∈ names P` and `pay c : A (tag c)` — if the tag
+names no field the elimination has no inhabitant and fails as a verdict
+(`Ok FF`), never a host crash — and its result type `B (tag c)` depends on the
+tag (a `Σ`-elimination). The two faces differ by one knob, *do the fields read
+the payload?*: a *record*'s fields are `const`-wrapped and ignore it
+(`A n = Unit`), so `r.a → x`; a *match*'s are raw handlers that use it
+(`B n = R`), so `match v → handler pay`. §12.4 gives the dependent rule under
+`Record`/`Coproduct`; the `Σ`/`Π` grid later in §12 unifies both polarities.
 
 #note[
   *The `fork(LEAF, _)` shape is shared — by design.* A `const`-wrapped record
@@ -1961,10 +1993,14 @@ The two arms have different semantics:
   rather than relying on a second `Ok` from the dispatcher.
 ]
 
-*Native fast-path.* The host runtime intercepts `apply(param_apply, …)`
-based on the compiled tree id and runs a TypeScript implementation of the
-same logic. The in-language version is the spec; the native is the
-optimization, producing bit-identical results.
+*Native fast-path (optional, currently off).* `param_apply` runs
+*in-language* — the dispatcher of this section is what executes. A host
+fast-path that intercepts `apply(param_apply, …)` by compiled tree id and
+runs a TypeScript reimplementation is *permitted* as an optimization, but
+is not wired in the current runtime (the only live native fast-path is
+`tree_eq`, §2.2). Re-enabling a native dispatcher requires a restored
+bit-identical equivalence test against this in-language reference, which
+remains the spec.
 
 = Boundary operations and checked values <sec:boundary>
 
@@ -3157,6 +3193,65 @@ Each inductive type's meta therefore carries `respond := inductive_respond`
 `Coproduct`, §12.2). `respond` is independent of `functor`: a *discrete* type
 (trivial transport, §13) still responds to case-elimination.
 
+#note[
+  *The case-coherence gate (the motive must not lie).* `inductive_respond` reads
+  the result type from `pair_fst frame` — the *motive* — and _ignores the cases_
+  (`pair_snd frame`). On its own that is unsound: nothing forces the cases to
+  *inhabit* the motive, so a recursor with a deliberately-wrong motive types as
+  anything. Concretely, with motive `{_} -> Nat` but `Bool`-producing cases,
+  `nat_rec ({_}->Nat) TT ({p,ih}->TT)` elaborates to a stuck neutral *typed* `Nat`,
+  so `{y} -> nat_rec ({_}->Nat) TT ({p,ih}->TT) y` is accepted at `Nat -> Nat` even
+  though it returns `TT ∉ Nat` on every input (witnessed in
+  `lib/tests/kernel.test.disp`).
+
+  The dependent eliminator typing rule closes it: at a *use*, the cases must
+  inhabit the motive — `base : motive zero`, `step : Π n. motive n -> motive (succ
+  n)`. Crucially the gate lives _in the type's `respond`, not in `nat_rec`_ — so
+  it is *unbypassable*. Every elimination of a `Nat`-neutral applies the neutral to
+  the case-frame (`target (pair motive cases)`), which routes through `hyp_reduce →
+  Nat`'s respond; a hand-rolled recursor, or a raw `n frame`, hits the same gate.
+  And a recursor cannot avoid that route: the *only other* way to act on a neutral
+  is to `triage` it, which the walker rejects (§4) — so the respond is the sole
+  chokepoint. The respond reads its own type `T` off the neutral and runs a per-type
+  `coherence` checker; failure routes to the dead state `InvalidType` (§12.3), so
+  the eliminated neutral is typed `InvalidType` and rejected downstream:
+
+  ```disp
+  gated_inductive_respond := {coh, nmeta, frame} -> {
+    let T = neutral_meta_type nmeta                              // the type, read off the neutral
+    let motive = pair_fst frame ; let cases = pair_snd frame
+    let r = coh T motive cases
+    match (is_ok r) {
+      FF => Extend InvalidType                                   // a case triaged a hyp, etc.
+      TT => match (ok_value r) { FF => Extend InvalidType        // cases do not inhabit the motive
+                               ; TT => Extend (motive (reconstruct_self nmeta)) } } }   // coherent
+
+  nat_coherence := {T, motive, cases} -> {                       // base : motive zero ;
+    let base = pair_fst cases ; let step = pair_snd cases        // step : Π n. motive n -> motive (succ n)
+    must_ok_any ((motive zero) base) ({okb} -> match okb {
+      FF => Ok FF
+      TT => bind_hyp T ({n} -> bind_hyp (motive n) ({ih} -> (motive (succ n)) (step n ih))) }) }
+
+  nat_respond := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
+  // Nat's meta carries `respond := nat_respond`; Bool's a two-line `bool_coherence`.
+  ```
+
+  Concrete targets never reach the respond (`elim` runs the dispatcher on them), so
+  ordinary computation is value-transparent — the gate fires only on the neutral
+  targets that *checking* produces. Two further notes. First, this is _distinct from
+  the respond-coherence Paths of §12.3_: those certify a *former's* respond returns
+  the right *type per frame* (per-former, trivially true here); the gate certifies,
+  *per use*, that the supplied cases inhabit the supplied motive. Both are needed.
+  Second, enforcement is _Pi-free_: the step gate *mint-applies* `step` against the
+  motive via `bind_hyp` + recogniser application, and reads `T` off the neutral, so
+  it names neither `Π` nor its own type. So a type *former* (`Nat`, `Bool`, …)
+  depends only on `Type` (for an optional `Type (motive n)` motive-check), with no
+  self-reference and no `Π` — the eliminator's *nominal* `Π`-type is an ascription,
+  not load-bearing for checking. (`Π` and `Type` need no such gate: `Π`'s
+  eliminator is application, whose coherence is `pi_body`'s body-check, and `Type`
+  has no inductive eliminator. So they are the foundation the data types layer on.)
+]
+
 === Inert types, `InvalidType`, and the dead state
 
 `respond` is constitutive (§11.2): every type has one, so there is no `none`
@@ -3682,6 +3777,50 @@ let my_recognizer = make_recognizer ({meta, v} -> /* concrete-only body */)
 The body sees only concrete v values; the wrapper handles hypothesis
 cases. Bodies can use raw `triage`, `pair_fst`, etc. — they don't
 need `safe_*` helpers, because they never run with hypothesis args.
+
+#note[
+  *Recursive recognizers must re-apply the H-rule at every level.* The wrapper
+  above runs the H-rule only at the *top*. That is enough for a non-recursive
+  body, but a *recursive* body that descends into the value's children hits a
+  subtlety: a constructor over a neutral — `succ hyp = fork(leaf, hyp)` — has a
+  *concrete* root (so the top-level H-rule does not fire) but a *neutral child*.
+  A body that recurses into that child with raw `triage` triages a neutral, which
+  the walker rejects (`Parametricity`), so `succ hyp` fails to recognise as a
+  `Nat` and `succ y : Nat -> Nat` is spuriously rejected.
+
+  The fix is *open recursion*: `make_rec_recognizer` threads the reconstructed
+  recogniser `self` (the same `wait (wait wrap body) meta` the H-rule already
+  builds) into the body, and the body recurses through `self` rather than a
+  private raw predicate. A neutral child then re-enters the H-rule (recognised by
+  stored type); a concrete child recurses structurally. No new memo-stability
+  obligation arises — `self` is the reconstruction the top-level H-rule already
+  depends on (§14).
+
+  ```disp
+  let recursive_recognizer_wrap = fix ({wrap, body, meta, v} ->
+    let self = wait (wait wrap body) meta in
+    match (is_neutral v) {
+      TT => Ok (tree_eq self (stuck_stored_type v))   // H-rule, unchanged
+      FF => body self meta v                          // pass `self`: recurse via the H-rule
+    })
+  let make_rec_recognizer = {body} -> wait recursive_recognizer_wrap body
+
+  // Nat's body recurses through `self`, so `succ hyp` is a Nat (the neutral
+  // predecessor is recognised by the H-rule, not triaged):
+  let nat_body = {self, m, v} ->
+    triage (Ok TT) ({_} -> Ok FF)
+      ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) v
+  let Nat = wait (make_rec_recognizer nat_body) nat_meta
+  ```
+
+  `Nat` and `Ord` (the recognisers with structural recursion into children) use
+  `make_rec_recognizer`; the rest stay on `make_recognizer`. Recognisers that
+  recurse by delegating child-checks to *field/component types* (`Record`,
+  `Sigma`, `Coproduct`) are already H-rule-aware via that delegation and need no
+  change. *The principled end-state* is to generate recognisers from inductive
+  *declarations*, wiring each recursive occurrence through the full recogniser by
+  construction; `make_rec_recognizer` is the runtime residue of exactly that knot.
+]
 
 == Library function `type_recognizer`
 

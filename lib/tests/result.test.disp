@@ -10,18 +10,18 @@ test is_ok_result (err 9) = FF
 test is_err_result (err 9) = TT
 
 // Result Bool Nat: error is Bool, success is Nat
-test Result Bool Nat (ok 0) = TT
-test Result Bool Nat (ok 5) = TT
-test Result Bool Nat (err TT) = TT
-test Result Bool Nat (err FF) = TT
+test Result Bool Nat (ok 0) = Ok TT
+test Result Bool Nat (ok 5) = Ok TT
+test Result Bool Nat (err TT) = Ok TT
+test Result Bool Nat (err FF) = Ok TT
 
 // Type mismatches
-test Result Bool Nat (ok TT) = FF
-test Result Bool Nat (err 3) = FF
+test Result Bool Nat (ok TT) = Ok FF
+test Result Bool Nat (err 3) = Ok FF
 
 // Bad shapes
-test Result Nat Nat t = FF
-test Result Nat Nat (t t) = FF
+test Result Nat Nat t = Ok FF
+test Result Nat Nat (t t) = Ok FF
 
 // result_rec dispatches by branch
 test result_rec ({_} -> Nat) ({v} -> succ v) ({e} -> 0) (ok 4) = 5

@@ -20,21 +20,17 @@ let err_tag = t t t
 ok  := {v} -> t ok_tag v
 err := {e} -> t err_tag e
 
+// Returns a CheckerResult: A/E applied to the payload are themselves
+// Ok-wrapped recognizer verdicts.
 Result := {E, A, r} ->
   select_lazy
-    ({_} -> TT)
-    ({_} ->
-      select_lazy
-        ({_} ->
-          match (tree_eq (pair_fst r) ok_tag) {
-            TT => A (pair_snd r)
-            FF => match (tree_eq (pair_fst r) err_tag) {
-              TT => E (pair_snd r)
-              FF => FF
-            }
-          })
-        ({_} -> FF)
-        (is_concrete_fork r))
+    ({_} -> Ok TT)                                  // neutral: permissive
+    ({_} -> match (and (is_fork r) (tree_eq (pair_fst r) ok_tag)) {
+       TT => A (pair_snd r)
+       FF => match (and (is_fork r) (tree_eq (pair_fst r) err_tag)) {
+         TT => E (pair_snd r)
+         FF => Ok FF
+       }})
     (is_neutral r)
 
 is_ok_result  := {r} -> and (is_fork r) (tree_eq (pair_fst r) ok_tag)
