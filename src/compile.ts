@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
-  Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
+  Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, force, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
   SCOTT_TT, SCOTT_FF,
 } from "./tree.js"
 import {
@@ -583,14 +583,16 @@ function compileExpr(
 
 function containsTree(h: Tree, t: Tree): boolean {
   if (treeEqual(h, t)) return true
-  if (t.tag === "leaf") return false
+  t = force(t)   // a suspended application is its genuine reduct
   if (t.tag === "stem") return containsTree(h, t.child)
-  return containsTree(h, t.left) || containsTree(h, t.right)
+  if (t.tag === "fork") return containsTree(h, t.left) || containsTree(h, t.right)
+  return false   // leaf (or — impossible post-force — susp)
 }
 
 function abstractTree(h: Tree, body: Tree): Tree {
   if (treeEqual(body, h)) return I_TREE
   if (!containsTree(h, body)) return fork(LEAF, body) // K body
+  body = force(body)   // a suspended application is its genuine reduct
   if (body.tag === "fork") {
     const l = abstractTree(h, body.left)
     const r = abstractTree(h, body.right)
@@ -612,9 +614,11 @@ function abstractTree(h: Tree, body: Tree): Tree {
 // These mirror the Disp prelude's pair_fst/pair_snd but operate on Tree directly.
 
 function treePairFst(p: Tree): Tree | null {
+  p = force(p)
   return p.tag === "fork" ? p.left : null
 }
 function treePairSnd(p: Tree): Tree | null {
+  p = force(p)
   return p.tag === "fork" ? p.right : null
 }
 

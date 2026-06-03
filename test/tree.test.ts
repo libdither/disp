@@ -2,9 +2,13 @@ import { describe, it, expect } from "vitest"
 import {
   LEAF, stem, fork, isLeaf, isStem, isFork,
   treeEqual, treeApply, apply, applyTree, BudgetExhausted,
-  K, I, prettyTree,
+  K, I, prettyTree, force,
+  SCOTT_TT, SCOTT_FF, setTreeEqId, getTreeEqId, clearApplyCache, resetApplyStats, getApplyStats,
   type Tree,
 } from "../src/tree.js"
+import { parseProgram } from "../src/compile.js"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 
 describe("Tree construction and equality", () => {
   it("creates leaf, stem, fork", () => {
@@ -167,5 +171,57 @@ describe("constants", () => {
 
   it("I = fork(fork(LEAF, LEAF), LEAF)", () => {
     expect(isFork(I)).toBe(true)
+  })
+})
+
+// The tree_eq fast-path represents `tree_eq a` as the honest suspended-application
+// P(tree_eq, a) instead of a synthetic marker. These tests pin the two properties
+// that justify it: (1) correctness — full application yields the right Scott bool;
+// (2) TRANSPARENCY — the partial is observationally identical to the genuine
+// recursive-triage reduct the spec would produce, which the old marker was not.
+describe("tree_eq suspension (P node)", () => {
+  const teq = (() => {
+    const src = readFileSync(resolve("lib/prelude.disp"), "utf-8")
+    const decls = parseProgram(src, resolve("lib/prelude.disp"))
+    return (decls.find((d: any) => d.kind === "Def" && d.name === "tree_eq") as any).tree as Tree
+  })()
+  const a1 = fork(stem(LEAF), LEAF)          // a distinctive 4-node operand
+  const a2 = stem(stem(LEAF))
+
+  // The genuine reduct of `tree_eq a`, computed with the fast-path disabled.
+  function natural(a: Tree): Tree {
+    const saved = getTreeEqId()
+    setTreeEqId(-1)
+    try { return applyTree(teq, a, 5_000_000) } finally { setTreeEqId(saved) }
+  }
+
+  it("apply(tree_eq, a) is a P node holding a, built in 0 steps", () => {
+    clearApplyCache(); resetApplyStats()
+    const p = apply(teq, a1) as any
+    expect(p.tag).toBe("susp")
+    expect(p.f).toBe(teq)
+    expect(treeEqual(p.a, a1)).toBe(true)            // operand held raw, O(1) extractable
+    expect(getApplyStats().steps).toBe(0)            // interception, no reduction
+  })
+
+  it("two-step application gives the right Scott bool", () => {
+    expect(treeEqual(apply(apply(teq, a1), a1), SCOTT_TT)).toBe(true)
+    expect(treeEqual(apply(apply(teq, a1), a2), SCOTT_FF)).toBe(true)
+    expect(treeEqual(apply(apply(teq, LEAF), LEAF), SCOTT_TT)).toBe(true)
+  })
+
+  it("the partial is TRANSPARENT: indistinguishable from the genuine reduct", () => {
+    const p = apply(teq, a1)
+    // treeEqual sees through the suspension to its real reduct...
+    expect(treeEqual(p, natural(a1))).toBe(true)
+    // ...so forcing yields exactly the spec's natural reduct (same hash-cons node)...
+    expect(force(p).id).toBe(natural(a1).id)
+    // ...and structural inspection (triage → here, isFork/prettyTree) agrees with it.
+    expect(prettyTree(p)).toBe(prettyTree(natural(a1)))
+  })
+
+  it("identical partials share one node; distinct operands do not", () => {
+    expect(apply(teq, a1)).toBe(apply(teq, a1))      // hash-consed susp
+    expect(treeEqual(apply(teq, a1), apply(teq, a2))).toBe(false)
   })
 })

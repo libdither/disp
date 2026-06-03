@@ -13,6 +13,19 @@ export type Tree = {
   readonly left: Tree
   readonly right: Tree
   readonly id: number
+} | {
+  // P(f, a): a suspended application `f a` (TC-Net's P node). It is the honest,
+  // first-class representation of a partially-applied native primitive — today
+  // only `tree_eq a`, awaiting its second operand — with NO synthetic marker.
+  // It behaves exactly like the genuine reduct of `f a` under every observation:
+  // applied to one more argument it takes the native fast-path; inspected
+  // structurally (triaged, compared, printed) it is `force`d to its real reduct.
+  // `forced` memoizes that reduct the first time it is demanded.
+  readonly tag: "susp"
+  readonly f: Tree
+  readonly a: Tree
+  forced: Tree | null
+  readonly id: number
 }
 
 // --- Hash-consing ---
@@ -47,6 +60,25 @@ export function fork(left: Tree, right: Tree): Tree {
   return node
 }
 
+// susp(f, a) = the suspended application `f a` (P node). Hash-consed like the
+// constructors, so two identical partials share one node (O(1) treeEqual) and a
+// forced value memoized on it is seen by every reference.
+const suspCache = new Map<number, Map<number, Tree>>()
+export function susp(f: Tree, a: Tree): Tree {
+  let inner = suspCache.get(f.id)
+  if (inner) {
+    const cached = inner.get(a.id)
+    if (cached) return cached
+  } else {
+    inner = new Map()
+    suspCache.set(f.id, inner)
+  }
+  const node: Tree = { tag: "susp", f, a, forced: null, id: nextId++ }
+  inner.set(a.id, node)
+  cacheStats.uniqueNodes++
+  return node
+}
+
 // --- Predicates ---
 
 export function isLeaf(t: Tree): t is Tree & { tag: "leaf" } {
@@ -62,7 +94,10 @@ export function isFork(t: Tree): t is Tree & { tag: "fork" } {
 // --- Tree equality (O(1) via hash-consing) ---
 
 export function treeEqual(a: Tree, b: Tree): boolean {
-  return a.id === b.id
+  if (a.id === b.id) return true                       // identical (incl. shared susps)
+  if (a.tag !== "susp" && b.tag !== "susp") return false
+  // A suspended application is observationally its genuine reduct: force, compare.
+  return force(a).id === force(b).id
 }
 
 // --- treeApply: constructive application for the compiler ---
@@ -347,10 +382,38 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
     if (stackTop > applyStats.maxStack) applyStats.maxStack = stackTop
 
+    // Suspended application as the operator: (f a) applied to curX.
+    // tree_eq stage 2: a `tree_eq a` partial meeting its second operand is the
+    // O(1) hash-cons equality. Any other suspension is materialized, then applied.
+    if (curF.tag === "susp") {
+      if (TREE_EQ_ID !== -1 && curF.f.id === TREE_EQ_ID) {
+        traceApply("tree_eq", curF, curX, stackTop)
+        applyStats.treeEqRules++
+        const r = deliver(treeEqual(curF.a, curX) ? SCOTT_TT : SCOTT_FF)
+        if (r !== null) return r; continue
+      }
+      curF = force(curF); continue
+    }
+
     // Leaf/Stem: immediate result
     if (isLeaf(curF)) { traceApply("leaf", curF, curX, stackTop); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
     if (isStem(curF)) { traceApply("stem", curF, curX, stackTop); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
     if (!isFork(curF)) throw new Error("apply: impossible non-fork function")
+
+    // tree_eq host fast path (stage 1): apply(tree_eq, a) suspends as the honest
+    // P(tree_eq, a) — a first-class value, no synthetic marker. Canonical
+    // definition lives in lib/prelude.disp as a recursive triage form; the host
+    // captures its compiled tree id at boot (via setTreeEqId). Checked BEFORE the
+    // memo so a natural reduct cached under (tree_eq, a) during `force` can never
+    // shadow it. Stage 2 (the partial meeting its second operand → O(1) compare)
+    // is the `curF.tag === "susp"` branch above. `suspEnabled` is cleared only
+    // while `force` materializes the genuine reduct, so forcing is non-recursive.
+    if (suspEnabled && TREE_EQ_ID !== -1 && curF.id === TREE_EQ_ID) {
+      traceApply("tree_eq", curF, curX, stackTop)
+      applyStats.treeEqRules++
+      const r = deliver(susp(curF, curX))
+      if (r !== null) return r; continue
+    }
 
     // Memo check (inlined so we can capture the inner map for memoSet
     // reuse if this turns out to be a miss).
@@ -359,35 +422,16 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue }
     cacheStats.misses++
 
-    // tree_eq host fast path: O(1) hash-cons identity check.
-    // Canonical definition lives in lib/prelude.disp as a recursive triage
-    // form. The host captures its compiled tree id at boot (via
-    // `setTreeEqId`); the fast-path fires whenever an apply step is about
-    // to reduce `apply(tree_eq, a)` (recognized by `curF.id === TREE_EQ_ID`)
-    // — it synthesizes `fork(TREE_EQ_PARTIAL_MARKER, a)` so the next apply
-    // can do an O(1) compare via the partial-marker branch below.
-    // The fast-path is an optimization; removing it yields identical
-    // answers from the recursive spec.
-    if (TREE_EQ_ID !== -1 && curF.id === TREE_EQ_ID) {
-      traceApply("tree_eq", curF, curX, stackTop)
-      applyStats.treeEqRules++
-      const r = fork(TREE_EQ_PARTIAL_MARKER, curX)
-      memoSet(curF, curX, r)
-      const d = deliver(r); if (d !== null) return d; continue
-    }
-    if (curF.left.id === TREE_EQ_PARTIAL_MARKER.id) {
-      traceApply("tree_eq", curF, curX, stackTop)
-      applyStats.treeEqRules++
-      const v = treeEqual(curF.right, curX) ? SCOTT_TT : SCOTT_FF
-      memoSet(curF, curX, v)
-      const r = deliver(v); if (r !== null) return r; continue
-    }
-
     budget.remaining--
     applyStats.steps++
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
 
     const a = curF.left, b = curF.right
+
+    // A suspension in operator position (fork(susp, b) applied) needs its real
+    // shape to pick the K/S/triage rule. Rare (tree_eq partials are saturated),
+    // but forced here for totality. Re-dispatch on the materialized operator.
+    if (a.tag === "susp") { curF = fork(force(a), b); continue }
 
     // K rule is O(1) and produces a value constant in curX (just b).
     // Caching (curF, curX) -> b would mostly pollute the cache with
@@ -424,9 +468,12 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
       curF = c; continue  // curX unchanged
     }
 
-    // Triage
+    // Triage. The scrutinee's structure is observed here — so a suspended
+    // application is forced to its genuine reduct first (this is the transparency
+    // point: "if it is ever triaged on, do the real computation").
     if (!isFork(a)) throw new Error("apply: impossible non-fork branch")
     const tc = a.left, td = a.right
+    if (curX.tag === "susp") curX = force(curX)
     if (isLeaf(curX)) { traceApply("T_leaf", curF, curX, stackTop); applyStats.triageLeafRules++; const r = deliver(tc); if (r !== null) return r; continue }
     if (isStem(curX)) { traceApply("T_stem", curF, curX, stackTop); applyStats.triageStemRules++; curF = td; curX = curX.child; continue }
     if (!isFork(curX)) throw new Error("apply: impossible non-fork argument")
@@ -467,20 +514,40 @@ export const SCOTT_TT = fork(LEAF, K)               // K K
 export const SCOTT_FF = fork(LEAF, fork(LEAF, I))   // K (K I)
 
 // --- tree_eq host fast path ---
-// `tree_eq` is defined as a recursive tree program in lib/prelude.disp.
-// The host captures the id of its compiled tree at boot (via setTreeEqId)
-// and short-circuits two-arg applications to an O(1) hash-cons identity
-// check. This optimization must produce answers identical to the spec.
-//
-// TREE_EQ_PARTIAL_MARKER is a synthetic, host-internal tree shape used
-// only as the left child of the partial-application intermediate. It does
-// not collide with any canonical kernel checker signature, so user code
-// inspecting the partial form via pair_fst will see the marker (an
-// observable but harmless artifact of the optimization).
-const TREE_EQ_PARTIAL_MARKER = fork(fork(stem(stem(LEAF)), LEAF), stem(stem(LEAF)))
+// `tree_eq` is defined as a recursive tree program in lib/prelude.disp. The host
+// captures its compiled tree id at boot (via setTreeEqId) and short-circuits
+// two-arg applications to an O(1) hash-cons identity check, in two stages:
+//   apply(tree_eq, a)         → susp(tree_eq, a)            (P node, stage 1)
+//   apply(susp(tree_eq, a), b) → treeEqual(a, b) ? TT : FF  (stage 2)
+// The intermediate is the honest suspended application P(tree_eq, a): no synthetic
+// marker, and fully transparent — `force` materializes the genuine recursive-triage
+// reduct the moment the partial is inspected structurally instead of applied. The
+// optimization yields answers identical to the spec.
 let TREE_EQ_ID: number = -1
 export function setTreeEqId(id: number): void { TREE_EQ_ID = id }
 export function getTreeEqId(): number { return TREE_EQ_ID }
+
+// While `force` runs, stage-1 suspension is disabled so the partial reduces to its
+// genuine combinator reduct instead of re-suspending. tree_eq's partial never
+// re-applies tree_eq to a single argument, so this does not nest; saved/restored
+// regardless for robustness.
+let suspEnabled = true
+const FORCE_BUDGET = 10_000_000
+
+// Materialize a suspended application to its genuine reduct, memoized on the node.
+// Non-susp inputs pass through, so `force` doubles as a transparent deref.
+export function force(t: Tree): Tree {
+  if (t.tag !== "susp") return t
+  if (t.forced !== null) return t.forced
+  const prev = suspEnabled
+  suspEnabled = false
+  try {
+    t.forced = apply(t.f, t.a, { remaining: FORCE_BUDGET })
+  } finally {
+    suspEnabled = prev
+  }
+  return t.forced
+}
 
 // --- Pretty printer ---
 
@@ -489,5 +556,6 @@ export function prettyTree(tree: Tree): string {
     case "leaf": return "△"
     case "stem": return `(△ ${prettyTree(tree.child)})`
     case "fork": return `(△ ${prettyTree(tree.left)} ${prettyTree(tree.right)})`
+    case "susp": return prettyTree(force(tree))   // print the genuine reduct (transparent)
   }
 }
