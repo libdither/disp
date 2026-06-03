@@ -179,15 +179,17 @@ let is_kernel_op = {f} ->
 // (§4.3): walk runs it raw instead of reducing its triage body, which keeps
 // `tree_eq` safe on neutral operands (needed to compare neutral domains/types).
 // Two-stage, like the host fast-path: stage 1 holds the first operand as the
-// honest `fork(tree_eq, a)` — keyed on the REAL tree_eq combinator, no dummy
-// token — and stage 2 (is_teq_partial) recognizes it by `pair_fst == tree_eq`,
-// then completes via the host fast-path. The walker needs its OWN fork-shaped
-// partial rather than the host's transparent `susp(tree_eq, a)`: recognizing a
-// susp in-language would `force` it — materializing the slow reduct and
-// re-triggering the very neutral-triage this carve-out exists to avoid — and a
-// host `is_susp` would be host code with no in-language spec.
+// deferred application `wait tree_eq a`, and stage 2 (is_teq_partial) recognizes
+// it by its signature and completes it. The carried partial is a proper wait-form
+// — not a bare `fork(tree_eq, a)` — so it is correct even if it ever escapes the
+// walker: `(wait tree_eq a) b` reduces to `tree_eq a b` via the host fast-path,
+// not garbage, and is recognized by `pair_fst == checker_sig tree_eq` exactly like
+// a kernel op (no forcing, vs the host's transparent `susp(tree_eq, a)` which any
+// in-language inspection would force — materializing the slow reduct and
+// re-triggering the very neutral-triage this carve-out exists to avoid).
 TEQ := tree_eq
-let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ)
+TEQ_WAIT_SIG := checker_sig tree_eq
+let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 
 let w_stem = {a, x} -> {
   let r = t a x
@@ -228,9 +230,9 @@ let w_fork = {self, a, b, x} ->
 // kernel-op sub-trees route at every layer.
 let walk = fix ({self, f, x} ->
   match (tree_eq f TEQ) {
-    TT => Ok (t TEQ x)                                 // stage 1: honest fork(tree_eq, a) partial
+    TT => Ok (wait tree_eq x)                          // stage 1: deferred application `wait tree_eq a`
     FF => (match (is_teq_partial f) {
-      TT => Ok (tree_eq (pair_snd f) x)                // tree_eq stage 2: raw O(1), neutral-safe
+      TT => Ok (f x)                                   // stage 2: complete it — (wait tree_eq a) x = tree_eq a x (host, O(1), neutral-safe)
       FF => (match (is_kernel_op f) {
         TT => Ok (f x)                                 // routed: f x is the handler's CheckerResult
         FF => (match (tree_eq f ROOT_SIG) {
