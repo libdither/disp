@@ -107,8 +107,8 @@ hyp_reduce := fix ({self, meta, frame} -> {
   let stored = neutral_meta_type meta
   let respond = (type_meta stored).respond
   match (respond meta frame) {
-    Extend new_type => Ok (wait self (extend_neutral_meta (wait self meta) new_type frame))
-    Return v => Ok v
+    Extend new_type => wait self (extend_neutral_meta (wait self meta) new_type frame)  // bare stuck (Option A, §7.5/§9)
+    Return v => Ok v                                                                     // verdict stays Ok (data)
   }
 })
 
@@ -187,14 +187,10 @@ let w_stem = {a, x} -> {
   let r = t a x
   match (is_hyp_fork r) { TT => Fail; FF => Ok r }          // stem-forge rejection
 }
-// A routed kernel-op application comes back DOUBLE-Ok-wrapped (`Ok (f x)` with
-// `f x` itself an `Ok stuck`), so `param_apply` of a neutral-headed body leaves a
-// residual `Ok` around the stuck reduct. `unwrap_routed` strips it — but ONLY when
-// the payload is a NEUTRAL (a routed kernel-op result). An `Ok verdict` from a
-// recogniser/recursor carries Bool data, not a neutral, and must stay wrapped. A
-// bare reduct never roots at `Ok`, so it is left untouched. (Used by `pi_body`.)
-let unwrap_routed = {y} ->
-  match (and (is_ok y) (is_neutral (ok_value y))) { TT => ok_value y; FF => y }
+// Under Option A (§7.5) hyp_reduce's Extend channel is BARE, so a routed
+// kernel-op application `Ok (f x)` is single-wrapped (`Ok bare-stuck`) and
+// `param_apply` of a neutral-headed body returns the bare stuck reduct directly —
+// no residual `Ok` to strip. (The old `unwrap_routed` helper is therefore gone.)
 let w_s = {self, c, b, x} -> {
   let cx = self c x
   match (is_ok cx) {
@@ -287,11 +283,12 @@ typecheck := {T, v} -> must_ok_any (param_lift v) ({sv} -> param_apply T sv)
 // ================================================================
 // Neutral branch uses juxtaposition `target frame` (not flat param_apply): when
 // elim runs UNDER walk (e.g. a recursor applied to a hyp during Pi-checking) the
-// enclosing walk routes it raw, avoiding a double-walk of the mint. must_ok_or_self
-// unwraps hyp_reduce's Ok to a bare stuck neutral so a recursor composes as a value.
+// enclosing walk routes it raw, avoiding a double-walk of the mint. Under Option A
+// (§7.5) hyp_reduce's Extend is already BARE, so the stuck elimination composes as
+// a plain value with no Ok to unwrap.
 elim := {dispatcher, motive, cases, target} ->
   select_lazy
-    ({_} -> must_ok_or_self (target { motive := motive; cases := cases }))
+    ({_} -> target { motive := motive; cases := cases })   // bare stuck (Option A): hyp_reduce's Extend is already bare
     ({_} -> dispatcher motive cases target)
     (is_neutral target)
 
@@ -359,10 +356,9 @@ Nat := wait (make_rec_recognizer nat_body) nat_meta
 // makes `param_apply v hyp` return `Fail`; that rejection is PROPAGATED, not fed
 // to the codomain check — otherwise a permissive codomain (e.g. String) would
 // accept a malformed function.
-// When the body HEAD-reduces to a neutral application (`f (g x)`), the top-level
-// routed arm hands back `Ok stuck` rather than the bare `stuck` (the intermediate
-// `w_s` deref only normalises sub-applications). Strip that one residual `Ok`
-// before the codomain check; a bare reduct never roots at the `Ok` tag.
+// Under Option A (§7.5) a body that head-reduces to a neutral application
+// (`f (g x)`, or operator-position nesting like flip's `(f y) x`) yields a BARE
+// stuck reduct, so it feeds the codomain check directly — no residual `Ok`.
 pi_body := {meta, v} -> {
   let params = meta.recognizer_params
   let A = params.dom
@@ -371,7 +367,7 @@ pi_body := {meta, v} -> {
     let r = param_apply v hyp
     match (tree_eq r Fail) {
       TT => Fail
-      FF => param_apply (B hyp) (unwrap_routed r)
+      FF => param_apply (B hyp) r                           // Option A: r is already bare (no residual Ok to strip)
     }
   })
 }

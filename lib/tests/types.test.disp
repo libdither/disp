@@ -94,22 +94,23 @@ test field r tag_b = TT                                  // r.b
 // ---- neutral projection through respond (§12.1) ----
 // A Sigma-hyp applied to a projection selector yields a stuck component.
 let hAB = mint_hyp (Sigma Nat ({_} -> Bool)) 0
-test neutral_type (ok_value (param_apply hAB walker_pair_fst)) = Nat     // fst : A = Nat
-test neutral_type (ok_value (param_apply hAB walker_pair_snd)) = Bool    // snd : B fst = Bool
+// Option A (§7.5): param_apply of a neutral is the BARE stuck component, not Ok(stuck).
+test neutral_type (param_apply hAB walker_pair_fst) = Nat     // fst : A = Nat
+test neutral_type (param_apply hAB walker_pair_snd) = Bool    // snd : B fst = Bool
 // dependency is preserved: snd of (n : Nat, _ : Eq Nat n n) lands at Eq Nat fst fst
 let hDep = mint_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
-let fstp = ok_value (param_apply hDep walker_pair_fst)
-test neutral_type (ok_value (param_apply hDep walker_pair_snd)) = Eq Nat fstp fstp
+let fstp = param_apply hDep walker_pair_fst
+test neutral_type (param_apply hDep walker_pair_snd) = Eq Nat fstp fstp
 
 // A Pi-hyp applied to an argument lands at the codomain (pi_respond reads
 // the cod field of the recognizer_params record by name).
 let hPi = mint_hyp (Pi Nat ({_} -> Bool)) 0
-test neutral_type (ok_value (param_apply hPi zero)) = Bool
+test neutral_type (param_apply hPi zero) = Bool
 
 // A Record-hyp projects each field at its declared type, read by name.
 let hR = mint_hyp MyRec 0
-test neutral_type (ok_value (param_apply hR (acc tag_a))) = Nat          // r.a : Nat
-test neutral_type (ok_value (param_apply hR (acc tag_b))) = Bool         // r.b : Bool
+test neutral_type (param_apply hR (acc tag_a)) = Nat          // r.a : Nat
+test neutral_type (param_apply hR (acc tag_b)) = Bool         // r.b : Bool
 
 // ---- equality eliminator eq_J + lemmas (refl is the only concrete proof) ----
 // On a concrete refl proof, eq_J computes the base; the motive is irrelevant.
@@ -149,6 +150,6 @@ test param_apply (Intersection Nat ({_} -> Nat)) TT = Ok FF
 // ---- inert respond: eliminating a neutral of an inert type -> dead state ----
 let hF = mint_hyp False 0
 let stuckF = param_apply hF zero            // inert_respond ignores the frame
-test is_ok stuckF = TT
-test is_neutral (ok_value stuckF) = TT
-test neutral_type (ok_value stuckF) = InvalidType    // absorbing dead state
+test is_neutral stuckF = TT                  // bare stuck neutral (Option A §7.5)
+test is_ok stuckF = FF                       // ...NOT Ok-wrapped
+test neutral_type stuckF = InvalidType       // absorbing dead state

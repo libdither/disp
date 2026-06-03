@@ -1,0 +1,87 @@
+// Regression suite for the §7.5 WRAPPING INVARIANT fix (Option A): hyp_reduce's
+// Extend channel returns a BARE stuck neutral, so `Ok <neutral>` never arises and
+// the CheckerResult monad is unambiguous. Locks in the operator-position
+// false-negatives this fix removes (flip et al.), reliable Ok FF vs Fail verdicts,
+// the §5 uniformity trap (Eq proofs), and the bare-stuck invariant across multi-
+// step spine extension. See WRAPPING_INVARIANT.md.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+// ================================================================
+// A. OPERATOR-POSITION NESTING AT DEPTH (the fix's core) — all Ok TT
+// ================================================================
+let appT  = Arrow (Arrow Nat Nat) (Arrow Nat Nat)
+test param_apply appT ({f} -> {x} -> f x)             = Ok TT
+test param_apply appT ({f} -> {x} -> f (f x))         = Ok TT          // double
+test param_apply appT ({f} -> {x} -> f (f (f x)))     = Ok TT          // triple
+
+// flip / reverse-args (stuck neutral in operator position)
+let flip2T = Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat (Arrow Nat Nat))
+test param_apply flip2T ({f} -> {x} -> {y} -> f y x)  = Ok TT
+let flip3T = Arrow (Arrow Nat (Arrow Nat (Arrow Nat Nat))) (Arrow Nat (Arrow Nat (Arrow Nat Nat)))
+test param_apply flip3T ({f} -> {a} -> {b} -> {c} -> f c b a) = Ok TT  // reverse 3 args
+
+// stuck-applied-to-itself: (f x) x  — operator-position stuck re-applied
+let selfappT = Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat)
+test param_apply selfappT ({f} -> {x} -> f x x)       = Ok TT
+
+// f x used in BOTH argument slots of a binary g (nesting in arg AND operator chains)
+let g2T = Arrow (Arrow Nat Nat) (Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat))
+test param_apply g2T ({f} -> {g} -> {x} -> g (f x) (f x)) = Ok TT
+
+// deep compose: f (g (h x))
+let compose3T = Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow Nat Nat)))
+test param_apply compose3T ({f} -> {g} -> {h} -> {x} -> f (g (h x))) = Ok TT
+
+// ================================================================
+// B. ILL-TYPED — must be a CLEAN Ok FF (genuine type mismatch), reliably
+// ================================================================
+test param_apply (Arrow Nat Bool) ({n} -> n)          = Ok FF          // Nat body for Bool codomain
+test param_apply (Arrow Nat Nat) ({n} -> TT)          = Ok FF          // Bool body for Nat codomain
+test param_apply appT ({f} -> {x} -> f x x)           = Ok FF          // f:Nat->Nat applied to 2 args
+test param_apply flip2T ({f} -> {x} -> {y} -> f x y)  = Ok TT          // η: {x}{y}->f x y = f, inhabits
+test param_apply (Arrow Nat Nat) ({f} -> {x} -> f x)  = Ok TT          // η: {f}{x}->f x = identity
+test param_apply (Arrow Nat Nat) ({f} -> {x} -> x)    = Ok FF          // {f}->I : returns a function, not Nat
+
+// ================================================================
+// C. PARAMETRICITY VIOLATIONS — must be a CLEAN Fail, reliably
+// ================================================================
+let hN = mint_hyp Nat 0
+test param_apply ({x} -> is_fork x) hN                = Fail           // triage on hyp
+test param_apply (Arrow Nat Nat) ({n} -> is_fork n)   = Fail           // body triages its hyp
+let forge = {x} -> t hyp_sig x
+test param_apply forge zero                           = Fail           // stem-forge
+
+// ================================================================
+// D. EQ-TYPE UNIFORMITY (the §5 uniformity trap canary)
+// ================================================================
+// refl inhabits Eq Nat n n with n a stuck hyp — both sides bare-uniform, so tree_eq matches
+test param_apply (Pi Nat ({n} -> Eq Nat n n)) ({n} -> refl)            = Ok TT
+// n vs succ n: distinct, must reject
+test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl)     = Ok FF
+// add zero n = n by computation (zero is concrete) -> refl proves it
+test param_apply (Pi Nat ({n} -> Eq Nat (add zero n) n)) ({n} -> refl) = Ok TT
+// add n zero needs INDUCTION (n stuck): naive refl must be REJECTED
+test param_apply (Pi Nat ({n} -> Eq Nat (add n zero) n)) ({n} -> refl) = Ok FF
+
+// ================================================================
+// E. BARE-STUCK INVARIANT under multi-step spine extension
+// ================================================================
+let hF2 = mint_hyp (Arrow Nat (Arrow Nat Nat)) 0
+let s1 = param_apply hF2 zero                  // stuck : Arrow Nat Nat
+let s2 = param_apply s1 zero                   // stuck : Nat  (second spine extension)
+test is_ok s1 = FF                             // bare (Option A)
+test is_neutral s1 = TT
+test neutral_type s1 = Arrow Nat Nat
+test is_ok s2 = FF                             // STILL bare after a 2nd extension (no Ok accumulation)
+test is_neutral s2 = TT
+test neutral_type s2 = Nat
+
+// ================================================================
+// F. POLYMORPHIC / higher-rank (predicate H-rule path) — Ok TT/FF
+// ================================================================
+test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) ({A} -> {x} -> x)    = Ok TT  // poly id
+test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) ({A} -> {x} -> zero) = Ok FF  // can't make A from nothing
+test param_apply (Pi Type ({A} -> Pi A ({_} -> Pi A ({_} -> A)))) ({A} -> {x} -> {y} -> x) = Ok TT  // K
+test param_apply (Pi Type ({A} -> Pi A ({_} -> Pi A ({_} -> A)))) ({A} -> {x} -> {y} -> y) = Ok TT  // K*
