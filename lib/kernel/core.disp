@@ -176,12 +176,18 @@ let is_kernel_op = {f} ->
   and (is_fork f) (or (tree_eq (pair_fst f) hyp_sig) (tree_eq (pair_fst f) bind_hyp_sig))
 
 // tree_eq is O(1) hash-cons and never reflects, so it is a granted carve-out
-// (§4.3): walk runs it raw (native fast-path) instead of reducing its triage
-// body, which keeps `tree_eq` safe on neutral operands (needed to compare
-// neutral domains/types). Two-stage, like the native partial.
+// (§4.3): walk runs it raw instead of reducing its triage body, which keeps
+// `tree_eq` safe on neutral operands (needed to compare neutral domains/types).
+// Two-stage, like the host fast-path: stage 1 holds the first operand as the
+// honest `fork(tree_eq, a)` — keyed on the REAL tree_eq combinator, no dummy
+// token — and stage 2 (is_teq_partial) recognizes it by `pair_fst == tree_eq`,
+// then completes via the host fast-path. The walker needs its OWN fork-shaped
+// partial rather than the host's transparent `susp(tree_eq, a)`: recognizing a
+// susp in-language would `force` it — materializing the slow reduct and
+// re-triggering the very neutral-triage this carve-out exists to avoid — and a
+// host `is_susp` would be host code with no in-language spec.
 TEQ := tree_eq
-TEQ_MARK := t (t (t (t (t t)))) (t (t (t (t t))))
-let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_MARK)
+let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ)
 
 let w_stem = {a, x} -> {
   let r = t a x
@@ -222,7 +228,7 @@ let w_fork = {self, a, b, x} ->
 // kernel-op sub-trees route at every layer.
 let walk = fix ({self, f, x} ->
   match (tree_eq f TEQ) {
-    TT => Ok (t TEQ_MARK x)                            // tree_eq stage 1: hold first operand
+    TT => Ok (t TEQ x)                                 // stage 1: honest fork(tree_eq, a) partial
     FF => (match (is_teq_partial f) {
       TT => Ok (tree_eq (pair_snd f) x)                // tree_eq stage 2: raw O(1), neutral-safe
       FF => (match (is_kernel_op f) {
