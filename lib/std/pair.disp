@@ -18,3 +18,13 @@ Pair := {A, B} -> Sigma A ({_} -> B)
 pair_map_fst := {f, p} -> pair (f (pair_fst p)) (pair_snd p)
 pair_map_snd := {g, p} -> pair (pair_fst p) (g (pair_snd p))
 pair_swap := {p} -> pair (pair_snd p) (pair_fst p)
+
+// PARAMETRIC projections. Prelude's `pair_fst`/`pair_snd` raw-`triage` their
+// argument, which the walker forbids on a hypothesis — so a typed projection like
+// `{p : Pair A B} -> pair_snd p` fails to verify (a parametricity rejection, not a
+// real type error). These dispatch on `is_neutral`: a concrete pair takes the raw
+// fast path; an abstract Pair-hypothesis routes through `sigma_respond` (the
+// `walker_pair_fst`/`walker_pair_snd` selectors), the one walker-legal way to
+// eliminate a neutral. Use these whenever a projection must work parametrically.
+proj_fst := {p} -> select_lazy ({_} -> p walker_pair_fst) ({_} -> pair_fst p) (is_neutral p)
+proj_snd := {p} -> select_lazy ({_} -> p walker_pair_snd) ({_} -> pair_snd p) (is_neutral p)

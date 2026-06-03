@@ -20,6 +20,11 @@ test pair_map_fst succ (pair 1 9) = pair 2 9
 test pair_map_snd succ (pair 1 9) = pair 1 10
 test pair_swap (pair 1 9) = pair 9 1
 
-// Pair under a Pi binder — exercises is_neutral permissiveness.
-let snd_of_nats : Pair Nat Nat -> Nat = {p} -> pair_snd p
+// Pair under a Pi binder — the parametric projection `proj_snd` routes a
+// Pair-hypothesis through sigma_respond, so this typed binding VERIFIES
+// (raw `pair_snd` would raw-triage the hyp → parametricity rejection).
+let snd_of_nats : Pair Nat Nat -> Nat = {p} -> proj_snd p
 test snd_of_nats (pair 4 7) = 7
+let fst_of_nats : Pair Nat Nat -> Nat = {p} -> proj_fst p
+test fst_of_nats (pair 4 7) = 4
+test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> proj_snd p) = Ok TT   // verifies (was Fail with raw pair_snd)

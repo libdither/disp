@@ -19,9 +19,9 @@ test Result Bool Nat (err FF) = Ok TT
 test Result Bool Nat (ok TT) = Ok FF
 test Result Bool Nat (err 3) = Ok FF
 
-// Bad shapes
+// Bad shapes / unknown tags
 test Result Nat Nat t = Ok FF
-test Result Nat Nat (t t) = Ok FF
+test Result Nat Nat (inj "huh" 5) = Ok FF
 
 // result_rec dispatches by branch
 test result_rec ({_} -> Nat) ({v} -> succ v) ({e} -> 0) (ok 4) = 5
@@ -42,7 +42,9 @@ test result_and_then (err FF) succ_ok = err FF
 test result_unwrap_or 99 (ok 5) = 5
 test result_unwrap_or 99 (err TT) = 99
 
-// Under a Pi binder
-let or_zero : Result Bool Nat -> Nat = {r} -> result_unwrap_or 0 r
+// Under a Pi binder — the PARAMETRIC eliminator result_rec routes a neutral
+// Result through the coproduct respond, so this typed binding VERIFIES.
+let or_zero : Result Bool Nat -> Nat = {r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r
+test param_apply (Arrow (Result Bool Nat) Nat) ({r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r) = Ok TT
 test or_zero (ok 8) = 8
 test or_zero (err TT) = 0

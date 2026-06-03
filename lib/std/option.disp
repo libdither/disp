@@ -1,75 +1,50 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-// Option A — optional value.
+// Option A — optional value, as a proper §2.6 Coproduct.
 //
-// Tree representation:
-//   none    = t                          (LEAF)
-//   some v  = t (t t) v                  (fork(stem(LEAF), v))
-//
-// The tag `t t` (= stem(LEAF)) is chosen so the some-shape doesn't
-// collide with `succ n = t t n = fork(LEAF, n)` (Nat) — handy when
-// debugging `Option Nat` values.
+// Option is `Coproduct [(some, A), (none, Unit)]`: a value is `inj tag payload`
+// (a tag tree in pair_fst, the payload in pair_snd). Being a real coproduct type
+// — a wait-form carrying `inductive_respond` — is what makes a *neutral* Option
+// eliminable: `option_rec`'s neutral branch applies the hypothesis to a
+// `{motive; cases}` frame, which routes through the respond (the one walker-legal
+// way to eliminate a hypothesis). The earlier ad-hoc encoding (none=LEAF,
+// some=fork) was a raw function with no respond, so a Pi-typed eliminator over it
+// could not verify.
 
-none := t
-some := {v} -> t (t t) v
+none_tag := "none"
+some_tag := "some"
 
-let some_tag = t t
+Option := {A} -> Coproduct [pair some_tag A, pair none_tag Unit]
 
-// Returns a CheckerResult: `A (pair_snd opt)` is itself the Ok-wrapped
-// recognizer verdict for the some-payload.
-Option := {A, opt} ->
-  select_lazy
-    ({_} -> Ok TT)                                  // neutral: permissive
-    ({_} -> match (tree_eq opt none) {
-       TT => Ok TT
-       FF => match (and (is_fork opt) (tree_eq (pair_fst opt) some_tag)) {
-         TT => A (pair_snd opt)
-         FF => Ok FF
-       }})
-    (is_neutral opt)
+none := inj none_tag unit_val
+some := {v} -> inj some_tag v
 
-is_none := {opt} -> tree_eq opt none
-is_some := {opt} -> not (is_none opt)
+is_none := {opt} -> tree_eq (pair_fst opt) none_tag
+is_some := {opt} -> tree_eq (pair_fst opt) some_tag
 
-// option_rec motive on_none on_some opt
-// On a closed value, dispatches; on a neutral, returns StuckElim.
+// option_rec — the PARAMETRIC dependent eliminator. Dispatches on is_neutral:
+// a concrete value runs the matching handler via the §2.6 cut (match_co); a
+// neutral hypothesis is applied to a `{motive; cases}` frame, routing through the
+// coproduct's `inductive_respond` to a stuck elimination stored at `motive opt`.
+// So `{o : Option A} -> option_rec M n s o` type-checks (the neutral branch is a
+// well-typed stuck form), unlike a raw `triage`/`StuckElim` which the walker bars.
 option_rec := {motive, on_none, on_some, opt} ->
   select_lazy
-    ({_} -> StuckElim (motive opt) opt)
-    ({_} ->
-      triage
-        on_none
-        ({_} -> on_none)
-        ({_tag, v} -> on_some v)
-        opt)
+    ({_} -> opt { motive := motive; cases := pair on_none on_some })
+    ({_} -> match_co [some_tag, none_tag] [on_some, {_} -> on_none] opt)
     (is_neutral opt)
 
+// Concrete-only conveniences (built on the cut; they carry no motive, so they do
+// not lift to a hypothesis — use option_rec with an explicit motive for that).
 option_map := {f, opt} ->
-  triage
-    none
-    ({_} -> none)
-    ({_tag, v} -> some (f v))
-    opt
+  match_co [some_tag, none_tag] [{v} -> some (f v), {_} -> none] opt
 
-// Monadic bind: chain a function returning Option.
 option_and_then := {opt, k} ->
-  triage
-    none
-    ({_} -> none)
-    ({_tag, v} -> k v)
-    opt
+  match_co [some_tag, none_tag] [{v} -> k v, {_} -> none] opt
 
 option_unwrap_or := {default, opt} ->
-  triage
-    default
-    ({_} -> default)
-    ({_tag, v} -> v)
-    opt
+  match_co [some_tag, none_tag] [{v} -> v, {_} -> default] opt
 
 option_or := {opt_a, opt_b} ->
-  triage
-    opt_b
-    ({_} -> opt_b)
-    ({_tag, _v} -> opt_a)
-    opt_a
+  match_co [some_tag, none_tag] [{_} -> opt_a, {_} -> opt_b] opt_a

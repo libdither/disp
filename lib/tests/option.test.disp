@@ -14,8 +14,8 @@ test Option Nat none = Ok TT
 test Option Nat (some 0) = Ok TT
 test Option Nat (some 42) = Ok TT
 test Option Nat (some TT) = Ok FF
-// A bare fork that isn't `some _` (no `t t` tag) is rejected
-test Option Nat (t t 5) = Ok FF
+// A value with an unknown tag (not some/none) is rejected
+test Option Nat (inj "huh" 5) = Ok FF
 
 // Option Bool
 test Option Bool (some TT) = Ok TT
@@ -48,7 +48,9 @@ test option_or (some 1) (some 2) = some 1
 test option_or none (some 2) = some 2
 test option_or none none = none
 
-// Under a Pi binder — exercises is_neutral permissiveness.
-let first_or_zero : Option Nat -> Nat = {o} -> option_unwrap_or 0 o
+// Under a Pi binder — the PARAMETRIC eliminator option_rec routes a neutral
+// Option through the coproduct respond, so this typed binding VERIFIES.
+let first_or_zero : Option Nat -> Nat = {o} -> option_rec ({_} -> Nat) 0 ({v} -> v) o
+test param_apply (Arrow (Option Nat) Nat) ({o} -> option_rec ({_} -> Nat) 0 ({v} -> v) o) = Ok TT
 test first_or_zero (some 8) = 8
 test first_or_zero none = 0

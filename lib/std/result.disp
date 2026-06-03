@@ -1,101 +1,43 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-// Result E A — success-or-error value.
+// Result E A — success-or-error value, as a proper §2.6 Coproduct.
 //
-// Tree representation:
-//   ok v   = t (t (t t)) v        (fork(stem(stem(LEAF)), v))
-//   err e  = t (t t t) e          (fork(fork(LEAF, LEAF), e))
-//
-// Both constructors are 1-ary forks. Tags `t (t t)` and `t t t` are
-// chosen to be distinct from existing library constructor shapes
-// (Nat succ uses tag LEAF; Option some uses tag stem(LEAF)).
-//
-// Neutral-permissive: the predicate returns TT on hypotheses so
-// Result E A may appear in Pi-typed signatures.
+// Result is `Coproduct [(ok, A), (err, E)]`: a value is `inj tag payload`. Being
+// a real coproduct type (a wait-form carrying `inductive_respond`) is what makes a
+// *neutral* Result eliminable — `result_rec`'s neutral branch applies the
+// hypothesis to a `{motive; cases}` frame that routes through the respond, the one
+// walker-legal way to eliminate a hypothesis. The earlier ad-hoc fork encoding was
+// a raw function with no respond, so a Pi-typed eliminator over it could not verify.
 
-let ok_tag  = t (t t)
-let err_tag = t t t
+ok_tag  := "ok"
+err_tag := "err"
 
-ok  := {v} -> t ok_tag v
-err := {e} -> t err_tag e
+Result := {E, A} -> Coproduct [pair ok_tag A, pair err_tag E]
 
-// Returns a CheckerResult: A/E applied to the payload are themselves
-// Ok-wrapped recognizer verdicts.
-Result := {E, A, r} ->
-  select_lazy
-    ({_} -> Ok TT)                                  // neutral: permissive
-    ({_} -> match (and (is_fork r) (tree_eq (pair_fst r) ok_tag)) {
-       TT => A (pair_snd r)
-       FF => match (and (is_fork r) (tree_eq (pair_fst r) err_tag)) {
-         TT => E (pair_snd r)
-         FF => Ok FF
-       }})
-    (is_neutral r)
+ok  := {v} -> inj ok_tag v
+err := {e} -> inj err_tag e
 
-is_ok_result  := {r} -> and (is_fork r) (tree_eq (pair_fst r) ok_tag)
-is_err_result := {r} -> and (is_fork r) (tree_eq (pair_fst r) err_tag)
+is_ok_result  := {r} -> tree_eq (pair_fst r) ok_tag
+is_err_result := {r} -> tree_eq (pair_fst r) err_tag
 
-// result_rec motive on_ok on_err r
+// result_rec — the PARAMETRIC dependent eliminator (see option_rec for the why):
+// concrete -> the §2.6 cut; neutral hypothesis -> frame route through the respond.
 result_rec := {motive, on_ok, on_err, r} ->
   select_lazy
-    ({_} -> StuckElim (motive r) r)
-    ({_} ->
-      triage
-        on_ok
-        ({_} -> on_ok)
-        ({tag, payload} ->
-          match (tree_eq tag ok_tag) {
-            TT => on_ok payload
-            FF => on_err payload
-          })
-        r)
+    ({_} -> r { motive := motive; cases := pair on_ok on_err })
+    ({_} -> match_co [ok_tag, err_tag] [on_ok, on_err] r)
     (is_neutral r)
 
-// Map over the success branch.
+// Concrete-only conveniences (no motive, so they do not lift to a hypothesis).
 result_map := {f, r} ->
-  triage
-    r
-    ({_} -> r)
-    ({tag, payload} ->
-      match (tree_eq tag ok_tag) {
-        TT => ok (f payload)
-        FF => r
-      })
-    r
+  match_co [ok_tag, err_tag] [{v} -> ok (f v), {e} -> err e] r
 
-// Map over the error branch.
 result_map_err := {g, r} ->
-  triage
-    r
-    ({_} -> r)
-    ({tag, payload} ->
-      match (tree_eq tag err_tag) {
-        TT => err (g payload)
-        FF => r
-      })
-    r
+  match_co [ok_tag, err_tag] [{v} -> ok v, {e} -> err (g e)] r
 
-// Monadic bind on the success branch.
 result_and_then := {r, k} ->
-  triage
-    r
-    ({_} -> r)
-    ({tag, payload} ->
-      match (tree_eq tag ok_tag) {
-        TT => k payload
-        FF => r
-      })
-    r
+  match_co [ok_tag, err_tag] [{v} -> k v, {e} -> err e] r
 
-// Unwrap with default — collapses err to default.
 result_unwrap_or := {default, r} ->
-  triage
-    default
-    ({_} -> default)
-    ({tag, payload} ->
-      match (tree_eq tag ok_tag) {
-        TT => payload
-        FF => default
-      })
-    r
+  match_co [ok_tag, err_tag] [{v} -> v, {_} -> default] r
