@@ -3193,6 +3193,65 @@ Each inductive type's meta therefore carries `respond := inductive_respond`
 `Coproduct`, §12.2). `respond` is independent of `functor`: a *discrete* type
 (trivial transport, §13) still responds to case-elimination.
 
+#note[
+  *The case-coherence gate (the motive must not lie).* `inductive_respond` reads
+  the result type from `pair_fst frame` — the *motive* — and _ignores the cases_
+  (`pair_snd frame`). On its own that is unsound: nothing forces the cases to
+  *inhabit* the motive, so a recursor with a deliberately-wrong motive types as
+  anything. Concretely, with motive `{_} -> Nat` but `Bool`-producing cases,
+  `nat_rec ({_}->Nat) TT ({p,ih}->TT)` elaborates to a stuck neutral *typed* `Nat`,
+  so `{y} -> nat_rec ({_}->Nat) TT ({p,ih}->TT) y` is accepted at `Nat -> Nat` even
+  though it returns `TT ∉ Nat` on every input (witnessed in
+  `lib/tests/kernel.test.disp`).
+
+  The dependent eliminator typing rule closes it: at a *use*, the cases must
+  inhabit the motive — `base : motive zero`, `step : Π n. motive n -> motive (succ
+  n)`. Crucially the gate lives _in the type's `respond`, not in `nat_rec`_ — so
+  it is *unbypassable*. Every elimination of a `Nat`-neutral applies the neutral to
+  the case-frame (`target (pair motive cases)`), which routes through `hyp_reduce →
+  Nat`'s respond; a hand-rolled recursor, or a raw `n frame`, hits the same gate.
+  And a recursor cannot avoid that route: the *only other* way to act on a neutral
+  is to `triage` it, which the walker rejects (§4) — so the respond is the sole
+  chokepoint. The respond reads its own type `T` off the neutral and runs a per-type
+  `coherence` checker; failure routes to the dead state `InvalidType` (§12.3), so
+  the eliminated neutral is typed `InvalidType` and rejected downstream:
+
+  ```disp
+  gated_inductive_respond := {coh, nmeta, frame} -> {
+    let T = neutral_meta_type nmeta                              // the type, read off the neutral
+    let motive = pair_fst frame ; let cases = pair_snd frame
+    let r = coh T motive cases
+    match (is_ok r) {
+      FF => Extend InvalidType                                   // a case triaged a hyp, etc.
+      TT => match (ok_value r) { FF => Extend InvalidType        // cases do not inhabit the motive
+                               ; TT => Extend (motive (reconstruct_self nmeta)) } } }   // coherent
+
+  nat_coherence := {T, motive, cases} -> {                       // base : motive zero ;
+    let base = pair_fst cases ; let step = pair_snd cases        // step : Π n. motive n -> motive (succ n)
+    must_ok_any ((motive zero) base) ({okb} -> match okb {
+      FF => Ok FF
+      TT => bind_hyp T ({n} -> bind_hyp (motive n) ({ih} -> (motive (succ n)) (step n ih))) }) }
+
+  nat_respond := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
+  // Nat's meta carries `respond := nat_respond`; Bool's a two-line `bool_coherence`.
+  ```
+
+  Concrete targets never reach the respond (`elim` runs the dispatcher on them), so
+  ordinary computation is value-transparent — the gate fires only on the neutral
+  targets that *checking* produces. Two further notes. First, this is _distinct from
+  the respond-coherence Paths of §12.3_: those certify a *former's* respond returns
+  the right *type per frame* (per-former, trivially true here); the gate certifies,
+  *per use*, that the supplied cases inhabit the supplied motive. Both are needed.
+  Second, enforcement is _Pi-free_: the step gate *mint-applies* `step` against the
+  motive via `bind_hyp` + recogniser application, and reads `T` off the neutral, so
+  it names neither `Π` nor its own type. So a type *former* (`Nat`, `Bool`, …)
+  depends only on `Type` (for an optional `Type (motive n)` motive-check), with no
+  self-reference and no `Π` — the eliminator's *nominal* `Π`-type is an ascription,
+  not load-bearing for checking. (`Π` and `Type` need no such gate: `Π`'s
+  eliminator is application, whose coherence is `pi_body`'s body-check, and `Type`
+  has no inductive eliminator. So they are the foundation the data types layer on.)
+]
+
 === Inert types, `InvalidType`, and the dead state
 
 `respond` is constitutive (§11.2): every type has one, so there is no `none`
@@ -3718,6 +3777,50 @@ let my_recognizer = make_recognizer ({meta, v} -> /* concrete-only body */)
 The body sees only concrete v values; the wrapper handles hypothesis
 cases. Bodies can use raw `triage`, `pair_fst`, etc. — they don't
 need `safe_*` helpers, because they never run with hypothesis args.
+
+#note[
+  *Recursive recognizers must re-apply the H-rule at every level.* The wrapper
+  above runs the H-rule only at the *top*. That is enough for a non-recursive
+  body, but a *recursive* body that descends into the value's children hits a
+  subtlety: a constructor over a neutral — `succ hyp = fork(leaf, hyp)` — has a
+  *concrete* root (so the top-level H-rule does not fire) but a *neutral child*.
+  A body that recurses into that child with raw `triage` triages a neutral, which
+  the walker rejects (`Parametricity`), so `succ hyp` fails to recognise as a
+  `Nat` and `succ y : Nat -> Nat` is spuriously rejected.
+
+  The fix is *open recursion*: `make_rec_recognizer` threads the reconstructed
+  recogniser `self` (the same `wait (wait wrap body) meta` the H-rule already
+  builds) into the body, and the body recurses through `self` rather than a
+  private raw predicate. A neutral child then re-enters the H-rule (recognised by
+  stored type); a concrete child recurses structurally. No new memo-stability
+  obligation arises — `self` is the reconstruction the top-level H-rule already
+  depends on (§14).
+
+  ```disp
+  let recursive_recognizer_wrap = fix ({wrap, body, meta, v} ->
+    let self = wait (wait wrap body) meta in
+    match (is_neutral v) {
+      TT => Ok (tree_eq self (stuck_stored_type v))   // H-rule, unchanged
+      FF => body self meta v                          // pass `self`: recurse via the H-rule
+    })
+  let make_rec_recognizer = {body} -> wait recursive_recognizer_wrap body
+
+  // Nat's body recurses through `self`, so `succ hyp` is a Nat (the neutral
+  // predecessor is recognised by the H-rule, not triaged):
+  let nat_body = {self, m, v} ->
+    triage (Ok TT) ({_} -> Ok FF)
+      ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) v
+  let Nat = wait (make_rec_recognizer nat_body) nat_meta
+  ```
+
+  `Nat` and `Ord` (the recognisers with structural recursion into children) use
+  `make_rec_recognizer`; the rest stay on `make_recognizer`. Recognisers that
+  recurse by delegating child-checks to *field/component types* (`Record`,
+  `Sigma`, `Coproduct`) are already H-rule-aware via that delegation and need no
+  change. *The principled end-state* is to generate recognisers from inductive
+  *declarations*, wiring each recursive occurrence through the full recogniser by
+  construction; `make_rec_recognizer` is the runtime residue of exactly that knot.
+]
 
 == Library function `type_recognizer`
 
