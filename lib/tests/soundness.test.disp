@@ -63,6 +63,6 @@ test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF       // sound: Fail (triage o
 // registered hyp_reduce and extends the spine:
 // the respond gates the cases against the motive (§B), so they must be coherent:
 // with motive Bool, base : Bool and step returns its ih : Bool.
-let stuck = param_apply hN (pair ({_} -> Bool) (pair TT ({pred, ih} -> ih)))
+let stuck = param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({pred, ih} -> ih) } }
 test is_neutral (ok_value stuck) = TT
 test neutral_type (ok_value stuck) = Bool

@@ -32,20 +32,20 @@ test param_apply Bool hN = Ok FF          // Nat-hyp does not inhabit Bool
 test param_apply Nat hB = Ok FF
 
 // ---- hyp_reduce spine extension via the (gated) inductive respond ----
-// Applying a Nat-neutral to a case-frame (pair motive cases) yields a stuck
+// Applying a Nat-neutral to a case-frame { motive; cases } yields a stuck
 // elimination: a fresh neutral stored at `motive self`. hyp_reduce results are
 // Ok-wrapped CheckerResults, so `stuck` is Ok(neutral). The respond now gates the
 // cases against the motive (§B), so the cases must be COHERENT: with motive Bool,
 // base : Bool and step : Π n. Bool -> Bool.
 let motive = {n} -> Bool
-let cases = pair TT ({pred, ih} -> ih)         // base TT : Bool ; step returns ih : Bool
-let stuck = param_apply hN (pair motive cases)
+let cases = { base := TT; step := ({pred, ih} -> ih) }    // base TT : Bool ; step returns ih : Bool
+let stuck = param_apply hN { motive := motive; cases := cases }
 test is_ok stuck = TT
 test is_neutral (ok_value stuck) = TT
 test neutral_type (ok_value stuck) = Bool      // motive applied to the reconstructed self
 
 // elim drives the same: concrete target runs the dispatcher, neutral routes here
-let nat_dispatcher = {motive, cases, target} -> pair_fst cases   // toy: returns base
+let nat_dispatcher = {motive, cases, target} -> cases.base   // toy: returns base
 test elim nat_dispatcher motive cases zero = TT                  // concrete branch -> base (TT)
 test is_neutral (elim nat_dispatcher motive cases hN) = TT  // neutral branch
 
@@ -85,12 +85,12 @@ test honest (succ (succ zero)) = succ (succ zero)                    // value-tr
 // adversarial: a USER's OWN recursor (own dispatcher, via elim) is gated identically,
 // because on a neutral target elim applies the neutral -> the type's respond -> gate.
 let my_dispatcher = fix ({self, motive, cases, target} ->
-  match (tree_eq target zero) { TT => pair_fst cases; FF => (pair_snd cases) (pair_snd target) (self motive cases (pair_snd target)) })
-let my_rec = {motive, base, step, target} -> elim my_dispatcher motive (pair base step) target
+  match (tree_eq target zero) { TT => cases.base; FF => cases.step (pair_snd target) (self motive cases (pair_snd target)) })
+let my_rec = {motive, base, step, target} -> elim my_dispatcher motive { base := base; step := step } target
 test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> my_rec ({_} -> Nat) TT ({p, ih} -> TT) y))        = Ok FF
 test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y)) = Ok TT
 // applying the neutral to a hand-built frame directly is also gated:
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> must_ok_or_self (y (pair ({_} -> Nat) (pair TT ({p, ih} -> TT)))))) = Ok FF
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> must_ok_or_self (y { motive := ({_} -> Nat); cases := { base := TT; step := ({p, ih} -> TT) } }))) = Ok FF
 // and you cannot bypass by DESTRUCTURING the neutral -- triage on a hyp is rejected:
 test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> pair_snd y)) = Fail
 // the gate is general: Bool's recursor is gated the same way (no recursive args).

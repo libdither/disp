@@ -42,6 +42,42 @@ field := {r, name} -> r (acc name)                              // r.name
 match_co := {names, handlers, c} -> (prod (pair names handlers)) c
 
 // ================================================================
+// Action + CheckerResult: the kernel's two control coproducts, built with the
+// §2.6 cut above — `inj` constructors, `match` elimination — so they are the
+// SAME coproduct construct every library type uses, not bespoke tag dispatch.
+// ================================================================
+// Action (§11.2): a type's `respond` returns `Extend new_stored_type | Return
+// value`; rejection is `Extend InvalidType`. hyp_reduce eliminates by `match`.
+Extend := {v} -> inj "Extend" v
+Return := {v} -> inj "Return" v
+is_extend := {a} -> tree_eq (pair_fst a) "Extend"
+is_return := {a} -> tree_eq (pair_fst a) "Return"
+
+// CheckerResult (§3): `Ok value | Fail`, the error vocabulary folded to one
+// info-free Fail (the verdict channel carries Ok TT / Ok FF).
+Ok := {v} -> inj "Ok" v
+Fail := inj "Fail" t
+is_ok := {r} -> tree_eq (pair_fst r) "Ok"
+ok_value := {r} -> pair_snd r
+
+// must_ok_any: `Ok v` → thread v into k; `Fail` → propagate. must_ok_or_self:
+// like it, but returns the payload as-is (param_apply unwrapping a success-Ok,
+// elim a stuck reduct) so the payload need not be a Bool.
+must_ok_any := {r, k} -> match r { Ok v => k v; Fail _ => Fail }
+must_ok_or_self := {r} -> match r { Ok v => v; Fail _ => Fail }
+
+// ================================================================
+// Neutral (hypothesis) metadata — a { stored_type; payload } record (the §2.6
+// cut), read by name. The payload is the spine: a fresh hyp's id, or an applied
+// neutral's (old_meta, arg) extension. Only stored_type is read by name; the
+// payload exists so the §8.1 support scan can descend it for occurs-checking.
+make_neutral_meta := {stored_type, payload} -> { stored_type := stored_type; payload := payload }
+neutral_meta_type := {meta} -> meta.stored_type
+neutral_app_payload := {old_meta, arg} -> t old_meta arg
+extend_neutral_meta := {old_meta, result_type, arg} ->
+  make_neutral_meta result_type (neutral_app_payload old_meta arg)
+
+// ================================================================
 // MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
 // behavioral_specs }, written as a record literal and read BY NAME — the
 // one-record discipline of TYPE_THEORY §2.6 / §11.2 ("metadata included").
@@ -64,16 +100,15 @@ unit_witness := t
 // ================================================================
 // hyp_reduce (Σ-op): push a frame onto a neutral, via the stored type's respond
 // ================================================================
-// `meta` is the neutral meta `pair(stored_type, payload)`. self == the top-level
+// `meta` is the neutral meta record `{ stored_type; payload }`. self == the top-level
 // hyp_reduce (hash-cons stable), so every `wait self _` shares one canonical
 // root = the is_neutral signature.
 hyp_reduce := fix ({self, meta, frame} -> {
   let stored = neutral_meta_type meta
   let respond = (type_meta stored).respond
-  let action = respond meta frame
-  match (is_extend action) {
-    TT => Ok (wait self (extend_neutral_meta (wait self meta) (pair_snd action) frame))
-    FF => Ok (pair_snd action)        // Return v
+  match (respond meta frame) {
+    Extend new_type => Ok (wait self (extend_neutral_meta (wait self meta) new_type frame))
+    Return v => Ok v
   }
 })
 
@@ -90,7 +125,7 @@ is_concrete_fork := {v} -> select FF (is_fork v) (is_neutral v)   // a fork that
 neutral_type := {v} -> neutral_meta_type (type_meta v)    // stored type of a seal
 
 inert_respond := {nmeta, frame} -> Extend InvalidType
-inductive_respond := {nmeta, frame} -> Extend ((pair_fst frame) (reconstruct_self nmeta))
+inductive_respond := {nmeta, frame} -> Extend (frame.motive (reconstruct_self nmeta))
 
 // ================================================================
 // support / occurs / is_closed (the §8.1 dependency scan)
@@ -248,7 +283,7 @@ typecheck := {T, v} -> must_ok_any (param_lift v) ({sv} -> param_apply T sv)
 // unwraps hyp_reduce's Ok to a bare stuck neutral so a recursor composes as a value.
 elim := {dispatcher, motive, cases, target} ->
   select_lazy
-    ({_} -> must_ok_or_self (target (pair motive cases)))
+    ({_} -> must_ok_or_self (target { motive := motive; cases := cases }))
     ({_} -> dispatcher motive cases target)
     (is_neutral target)
 
@@ -285,8 +320,8 @@ checked_dom := {v} -> (type_meta v).dom   // a checked value's stored domain
 // neutral is typed `InvalidType` and rejected downstream.
 gated_inductive_respond := {coh, nmeta, frame} -> {
   let T = neutral_meta_type nmeta
-  let motive = pair_fst frame
-  let cases = pair_snd frame
+  let motive = frame.motive
+  let cases = frame.cases
   let r = coh T motive cases
   match (is_ok r) {
     FF => Extend InvalidType                                      // gate errored (e.g. a case triaged a hyp)
@@ -297,16 +332,16 @@ gated_inductive_respond := {coh, nmeta, frame} -> {
 }
 // Nat: base : motive zero ; step : Π n. motive n -> motive (succ n)
 nat_coherence := {T, motive, cases} -> {
-  let base = pair_fst cases
-  let step = pair_snd cases
+  let base = cases.base
+  let step = cases.step
   must_ok_any ((motive zero) base) ({okb} -> match okb {
     FF => Ok FF
     TT => bind_hyp T ({n} -> bind_hyp (motive n) ({ih} -> (motive (succ n)) (step n ih))) })
 }
 // Bool: ct : motive TT ; cf : motive FF  (no recursive arguments, so no bind_hyp)
 bool_coherence := {T, motive, cases} -> {
-  let ct = pair_fst cases
-  let cf = pair_snd cases
+  let ct = cases.ct
+  let cf = cases.cf
   must_ok_any ((motive TT) ct) ({okt} -> match okt { FF => Ok FF; TT => (motive FF) cf })
 }
 nat_respond  := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
@@ -384,30 +419,30 @@ Type := wait (make_recognizer type_body) type_self_meta
 // (nat_pred and the value-level cut primitives are defined near the top.)
 let nat_dispatcher = fix ({self, motive, cases, target} ->
   match (tree_eq target zero) {
-    TT => pair_fst cases                                   // base
-    FF => (pair_snd cases) (nat_pred target) (self motive cases (nat_pred target))  // step n rec
+    TT => cases.base                                       // base
+    FF => cases.step (nat_pred target) (self motive cases (nat_pred target))  // step n rec
   })
-nat_rec := {motive, base, step, target} -> elim nat_dispatcher motive (pair base step) target
+nat_rec := {motive, base, step, target} -> elim nat_dispatcher motive { base := base; step := step } target
 
-let bool_dispatcher = {motive, cases, target} -> select (pair_fst cases) (pair_snd cases) target
-bool_rec := {motive, ct, cf, target} -> elim bool_dispatcher motive (pair ct cf) target
+let bool_dispatcher = {motive, cases, target} -> select cases.ct cases.cf target
+bool_rec := {motive, ct, cf, target} -> elim bool_dispatcher motive { ct := ct; cf := cf } target
 
 // ord_rec: zero_ord -> case_z; omega_plus a b -> case_op a b (rec a) (rec b).
 let ord_dispatcher = fix ({self, motive, cases, target} ->
   match (is_leaf target) {
-    TT => pair_fst cases
+    TT => cases.case_z
     FF => {
-      let a = stem_child (pair_fst target)
-      let b = pair_snd target
-      (pair_snd cases) a b (self motive cases a) (self motive cases b)
+      let a = stem_child (pair_fst target)                 // pair_fst/snd here destructure
+      let b = pair_snd target                              // the ord value omega_plus a b
+      cases.case_op a b (self motive cases a) (self motive cases b)
     }
   })
-ord_rec := {motive, case_z, case_op, target} -> elim ord_dispatcher motive (pair case_z case_op) target
+ord_rec := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { case_z := case_z; case_op := case_op } target
 
 // eq_J: the only concrete proof is refl, so the dispatcher returns the base;
 // a neutral proof routes to a stuck elimination via elim.
-let eq_J_dispatcher = {motive, cases, target} -> pair_fst cases
-eq_J := {motive, base, proof} -> elim eq_J_dispatcher motive (pair base t) proof
+let eq_J_dispatcher = {motive, cases, target} -> cases.base
+eq_J := {motive, base, proof} -> elim eq_J_dispatcher motive { base := base } proof
 
 // ================================================================
 // First-order library types: Unit, False, String, Eq, Sigma, Refinement, Ord

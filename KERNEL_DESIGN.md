@@ -69,18 +69,20 @@ scan and the walker.
 
 `mint_hyp ty id = wait hyp_reduce (make_neutral_meta ty id)`; `Hyp` and
 `StuckElim` are aliases (a hypothesis vs. a spine-extended/stuck form —
-same constructor). Neutral metadata is `pair(stored_type, payload)`:
+same constructor). Neutral metadata is a `{ stored_type; payload }`
+record (the §2.6 cut), read by name:
 
 ```disp
-make_neutral_meta := {current_type, payload} -> t current_type payload
-neutral_meta_type := {meta} -> pair_fst meta
+make_neutral_meta := {stored_type, payload} -> { stored_type := stored_type; payload := payload }
+neutral_meta_type := {meta} -> meta.stored_type
 ```
 
 Applying a neutral routes to `hyp_reduce`, which consults the stored
-type's `respond`. `Extend` appends to the spine with a new stored type;
-`Return` yields a value directly. Rejection extends with `InvalidType`,
-which is itself inert — an absorbing dead state, so any later check on
-the stored type fails deterministically.
+type's `respond`. The `respond` returns an `Action` (itself a §2.6
+coproduct): `Extend new_type` appends to the spine with a new stored
+type, `Return v` yields a value directly. Rejection extends with
+`InvalidType`, which is itself inert — an absorbing dead state, so any
+later check on the stored type fails deterministically.
 
 ## Walker and Native Fast Paths
 

@@ -29,11 +29,12 @@ Every component participating in checking, elaboration, or conversion must have 
 - `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix, tree_eq, nat_le, zero/succ).
 - `kernel/` — the two-Σ-op kernel center:
   - `prelude.disp` — canonical entry point: `open`s `../prelude.disp` + `utils.disp` + `core.disp`. Files that build on the type system do `open use "../kernel/prelude.disp"`.
-  - `utils.disp` — metadata accessors (`type_meta`, neutral-meta layout), the `checker_sig` signature, Action protocol (`Extend`/`Return`/`is_extend`), CheckerResult (`Ok`/`Fail`, `must_ok_any`/`must_ok_or_self`), `InvalidType`.
+  - `utils.disp` — the `type_meta` accessor, the `checker_sig` signature, `InvalidType`. (Action / CheckerResult and the neutral-meta record moved to `core.disp`, since they are built from the §2.6 cut.)
   - `core.disp` — the entire kernel + library type system, built bottom-up on the substrate only:
     - **Σ-ops:** `hyp_reduce` (push a frame onto a neutral via the stored type's `respond`) and `bind_hyp` (mint a fresh hyp, run the body, `occurs` escape-check).
     - **Dispatcher:** `param_apply` = the in-language parametric walker (`walk`) with reader carve-outs (`ROOT_SIG`/`STORED_TYPE`/`I`/`tree_eq`) + Σ routing on `hyp_sig`/`bind_hyp_sig`.
     - **The cut (§2.6):** value-level `prod`/`annihilate`/`proj`/`inj`/`acc`/`record_val`/`field`/`match_co`. MetaShape metadata (built by `make_meta`), each former's `recognizer_params` (inline `{ }` literals, e.g. Pi's `{ dom; cod }`), and `checked`'s `{ dom, fn }` are §2.6 records read **by name** through the cut (`.field`) — no accessor wrappers.
+    - **Control coproducts:** `Action` (`Extend | Return`) and `CheckerResult` (`Ok | Fail`) are §2.6 coproducts — `inj` constructors, `match` elimination — the same construct library types use, not bespoke tag dispatch. The neutral-meta `{ stored_type; payload }` and the eliminator frame `{ motive; cases }` are likewise records read by name.
     - **H-rule:** `make_recognizer` (recognizer side) + `type_predicate_h_rule` (predicate side).
     - **Library types:** Bool, Nat, Pi/Arrow, Type, Unit, False/Not, String, Eq (+ `eq_J`/`eq_subst`/`eq_sym`/`eq_cong`), Ord, Sigma, Refinement, Intersection, Coproduct, Record — each `wait (make_recognizer body) meta`. Recursors `nat_rec`/`bool_rec`/`ord_rec` via the library `elim`.
 - `std/` — standard library on top of the kernel (`open use "../kernel/prelude.disp"`): `nat/arith.disp` (`add`), `nat/ops.disp` (`pred`, `is_zero`, `double`), `list.disp`, `set.disp`, `fin.disp`, `option.disp`, `result.disp`, `pair.disp`. (Records live in the kernel: the §2.6 cut — `record_val`/`field`/`Record`.)

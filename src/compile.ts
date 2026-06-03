@@ -799,11 +799,13 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
 // Imported from tree.ts so the host's tree_eq fast-path and the elaborator's
 // predicate validation agree on the canonical shapes.
 const TT = SCOTT_TT
-// New-core recognizers return an Ok-wrapped verdict (`Ok TT` = fork(LEAF, TT));
-// a bare TT also counts (e.g. Scott-Bool predicates). The elaborator's
-// type-check accepts either.
-const OK_TT = fork(LEAF, TT)
-function verdictOk(ok: Tree): boolean { return treeEqual(ok, TT) || treeEqual(ok, OK_TT) }
+// Recognizers return an Ok-wrapped verdict — `Ok TT` is the §2.6 coproduct
+// `inj "Ok" TT` = fork(tag, TT), so success is "a fork whose payload is TT",
+// independent of the Ok tag's tree shape. A bare TT also counts (Scott-Bool
+// predicates). The elaborator's type-check accepts either.
+function verdictOk(ok: Tree): boolean {
+  return treeEqual(ok, TT) || (ok.tag === "fork" && treeEqual(ok.right, TT))
+}
 
 type ElabCtx = {
   lookupEntry: (name: string) => ScopeEntry | undefined
