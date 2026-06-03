@@ -23,10 +23,10 @@ test param_apply B_hyp x_of_A = Ok FF            // distinct Type-hyp
 test param_apply A_hyp zero = Ok FF              // closed value: not a neutral
 
 // ---- polymorphic Pi: the polymorphic identity inhabits Pi Type (A -> A -> A) ----
-let polyid = checked Type ({A} -> checked A ({x} -> x))
+let polyid = {A} -> {x} -> x
 test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) polyid = Ok TT
 // a non-identity polymorphic body does NOT inhabit it (can't produce an A from nothing):
-let polywrong = checked Type ({A} -> checked A ({x} -> zero))
+let polywrong = {A} -> {x} -> zero
 test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) polywrong = Ok FF
 
 // ---- inductive recursors via elim ----
@@ -138,8 +138,8 @@ test is_neutral (ord_depth (mint_hyp Ord 0)) = TT
 
 // ---- Not (negation = Pi P (_ -> False)) ----
 test typecheck Type (Not Bool) = Ok TT                        // Not Bool is a (Pi) type
-test param_apply (Not False) (checked False ({x} -> x)) = Ok TT     // id : False -> False inhabits Not False
-test param_apply (Not Unit) (checked Unit ({_} -> unit_val)) = Ok FF  // can't produce False from Unit
+test param_apply (Not False) ({x} -> x) = Ok TT              // id : False -> False inhabits Not False
+test param_apply (Not Unit) ({_} -> unit_val) = Ok FF        // can't produce False from Unit
 
 // ---- Intersection A P: v inhabits iff (P hyp) v for a fresh A-hyp ----
 test typecheck Type (Intersection Nat ({_} -> Nat)) = Ok TT

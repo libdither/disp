@@ -37,7 +37,7 @@ add_succ_r : {n : Nat} -> Eq Nat (add n 1) (succ n) :=
     nat_rec
       ({k} -> Eq Nat (add k 1) (succ k))
       refl
-      ({k, _ih} -> refl)
+      ({k, ih} -> eq_cong Nat Nat succ (add k 1) (succ k) ih)   // succ both sides of ih
       n
 
 // add_comm is intentionally omitted: a `{m} -> refl` base would claim

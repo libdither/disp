@@ -54,22 +54,24 @@ test bind_hyp Nat ({x} -> Ok zero) = Ok zero            // result independent of
 test bind_hyp Nat ({x} -> Ok x) = Fail                  // x at public position -> escape
 test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail      // x inside a user pair -> escape
 
-// ---- checked values + Pi (monomorphic dependent function) ----
-// Bodies must be walker-safe (no raw triage on the argument). Identity, const,
-// and constructor-building bodies (e.g. `succ y`) qualify — the recogniser is
-// H-rule-aware at every level (§A). Genuinely case-analysing bodies still route
+// ---- raw functions + Pi (monomorphic dependent function) ----
+// Functions are raw bracket-abstracted lambdas — no `checked` wrapper. Pi binds
+// a fresh A-hyp, applies the candidate, and checks the reduced spine against the
+// codomain. Bodies must be walker-safe (no raw triage on the argument). Identity,
+// const, and constructor-building bodies (e.g. `succ y`) qualify — the recogniser
+// is H-rule-aware at every level (§A). Genuinely case-analysing bodies still route
 // through the eliminator, which gates its cases against the motive (§B).
-let id_nat = checked Nat ({n} -> n)
-let const_true = checked Nat ({n} -> TT)
+let id_nat = {n} -> n
+let const_true = {n} -> TT
 test param_apply (Pi Nat ({_} -> Nat)) id_nat = Ok TT       // id : Nat -> Nat
 test typecheck (Arrow Nat Nat) id_nat = Ok TT               // same via Arrow + typecheck
 test param_apply (Pi Nat ({_} -> Bool)) const_true = Ok TT  // const TT : Nat -> Bool
 test param_apply (Pi Nat ({_} -> Nat)) const_true = Ok FF   // body returns Bool, not Nat
-test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch (stored Nat)
+test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch -> clean verdict
 
 // (§A) constructor-over-the-argument now checks: the recogniser re-applies the
 // H-rule on the neutral predecessor in `succ hyp` instead of triaging it.
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> succ y)) = Ok TT
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> succ y) = Ok TT
 
 // (§B) the eliminator's cases must inhabit the motive. Enforced in the TYPE's
 // respond (keyed off the neutral's stored type), so it is UNBYPASSABLE: the kernel
@@ -77,9 +79,9 @@ test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> succ y)) = Ok TT
 let lying  = {y} -> nat_rec ({_} -> Nat) TT ({p, ih} -> TT) y        // base/step Bool, motive says Nat
 let lying2 = {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> TT) y      // correct base, lying step
 let honest = {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat lying)  = Ok FF  // incoherent cases -> rejected
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat lying2) = Ok FF  // step lie also caught
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat honest) = Ok TT  // coherent -> accepted
+test param_apply (Pi Nat ({_} -> Nat)) lying  = Ok FF  // incoherent cases -> rejected
+test param_apply (Pi Nat ({_} -> Nat)) lying2 = Ok FF  // step lie also caught
+test param_apply (Pi Nat ({_} -> Nat)) honest = Ok TT  // coherent -> accepted
 test honest (succ (succ zero)) = succ (succ zero)                    // value-transparent on concrete targets
 
 // adversarial: a USER's OWN recursor (own dispatcher, via elim) is gated identically,
@@ -87,24 +89,15 @@ test honest (succ (succ zero)) = succ (succ zero)                    // value-tr
 let my_dispatcher = fix ({self, motive, cases, target} ->
   match (tree_eq target zero) { TT => cases.base; FF => cases.step (pair_snd target) (self motive cases (pair_snd target)) })
 let my_rec = {motive, base, step, target} -> elim my_dispatcher motive { base := base; step := step } target
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> my_rec ({_} -> Nat) TT ({p, ih} -> TT) y))        = Ok FF
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y)) = Ok TT
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) TT ({p, ih} -> TT) y)        = Ok FF
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok TT
 // applying the neutral to a hand-built frame directly is also gated:
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> must_ok_or_self (y { motive := ({_} -> Nat); cases := { base := TT; step := ({p, ih} -> TT) } }))) = Ok FF
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> must_ok_or_self (y { motive := ({_} -> Nat); cases := { base := TT; step := ({p, ih} -> TT) } })) = Ok FF
 // and you cannot bypass by DESTRUCTURING the neutral -- triage on a hyp is rejected:
-test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> pair_snd y)) = Fail
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> pair_snd y) = Fail
 // the gate is general: Bool's recursor is gated the same way (no recursive args).
-test param_apply (Pi Bool ({_} -> Nat)) (checked Bool ({b} -> bool_rec ({_} -> Nat) TT TT b))            = Ok FF
-test param_apply (Pi Bool ({_} -> Nat)) (checked Bool ({b} -> bool_rec ({_} -> Nat) zero (succ zero) b))  = Ok TT
-
-// ---- cut_apply: the contract boundary on direct application ----
-// Applying a `checked` value runs cut_apply: the arg is checked against the
-// stored domain before the function fires. Domain holds -> Ok (fn arg);
-// domain fails -> Fail (the TypeMismatch boundary, §3 verdict-vs-error).
-test (checked Nat ({n} -> n)) (succ zero) = Ok (succ zero)  // domain holds
-test (checked Nat ({n} -> n)) TT = Fail                     // TT is not a Nat -> contract breakage
-// the checked payload is a {dom, fn} record; the domain is read back by name
-test checked_dom (checked Nat ({n} -> n)) = Nat
+test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) TT TT b)            = Ok FF
+test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) zero (succ zero) b)  = Ok TT
 
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----
 // make_meta builds a `prod`; fields are read by name with the §2.6 cut (.field),

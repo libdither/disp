@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
   Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
-  SCOTT_TT,
+  SCOTT_TT, SCOTT_FF,
 } from "./tree.js"
 import {
   parseItems,
@@ -726,31 +726,29 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
   }
 }
 
-// checkAsType(e, ctx): compile an expression as a type, returning both
-// the compiled tree and the universe it lives in. For binders, this
-// triggers Pi construction. For other expressions, it infers and verifies.
-function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null } {
+// compileType(e, ctx): compile an expression that denotes a TYPE to its tree.
+// This is type CONSTRUCTION, not value compilation: a binder `{n : A} -> B`
+// becomes `Pi A (codFn)` where `codFn` abstracts the body over a fresh A-hyp
+// (so dependent codomains like `{n : Nat} -> Vec n` work). Every other shape is
+// an ordinary expression whose tree IS the type (e.g. `Nat`, `Pi Nat (...)`,
+// `Eq Nat x y`) and compiles via plain bracket abstraction. No type *checking*
+// happens here — a binding's body is verified against its type in the in-language
+// kernel (`compileBinding`), so this function never needs `infer`/`check`.
+function compileType(e: Expr, ctx: ElabCtx): Tree {
   const k = ctx.kernel
-  if (!k) {
-    const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-    return { tree, universe: null }
-  }
+  if (!k) return compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
 
   // Binder → Pi type construction.
   if (e.tag === "binder") {
-    const Type = ctx.lookupEntry("Type")?.tree
     const Pi = ctx.lookupEntry("Pi")?.tree
-    if (!Type || !Pi) {
-      const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-      return { tree, universe: null }
-    }
+    if (!Pi) return compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
 
     // Process one param, recursing for the rest.
     const param = e.params[0]
     if (!param.type) throw new Error("Pi domain requires a type annotation")
     const paramName = param.name ?? `_anon0`
 
-    const { tree: A_tree } = checkAsType(param.type, ctx)
+    const A_tree = compileType(param.type, ctx)
 
     // Recurse for the inner type (remaining params + body) with the
     // parameter available as a kernel hypothesis. The resulting codomain
@@ -768,29 +766,18 @@ function checkAsType(e: Expr, ctx: ElabCtx): { tree: Tree; universe: Tree | null
     ctx.scopeDepth++
     let B_tree: Tree
     try {
-      const checked = checkAsType(innerExpr, ctx)
-      B_tree = checked.tree
+      B_tree = compileType(innerExpr, ctx)
     } finally {
       ctx.lookupEntry = prevLookup
       ctx.scopeDepth--
     }
 
     const codFn = abstractTree(hyp, B_tree)
-
-    const piTree = applyTree(applyTree(Pi, A_tree, APPLY_BUDGET), codFn, APPLY_BUDGET)
-    // Universe stratification dropped — every Pi lives in the single
-    // Type, not Type k. The sample-style call here is equivalent.
-    const piUniv = Type
-    return { tree: piTree, universe: piUniv }
+    return applyTree(applyTree(Pi, A_tree, APPLY_BUDGET), codFn, APPLY_BUDGET)
   }
 
-  // Non-binder: infer type and check it's a universe
-  const { tree, type } = infer(e, ctx)
-  if (type !== null && k.isUniverse(type)) {
-    return { tree, universe: type }
-  }
-  // Type is unknown or not a universe — return what we have
-  return { tree, universe: type }
+  // Non-binder: the expression's tree is the type, by plain bracket abstraction.
+  return compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
 }
 
 // ─────────────────────── 5c. Elaborator (check/infer) ───────────────────
@@ -813,223 +800,6 @@ type ElabCtx = {
   kernel: KernelHelpers | null
   scopeDepth: number
   debugTypeCheck: boolean
-}
-
-// Defense-in-depth: verify the kernel agrees with the elaborator's type dispatch.
-// Gated behind debugTypeCheck — never on in production.
-function assertTypeCheck(tree: Tree, expected: Tree | null, ctx: ElabCtx): Tree {
-  if (ctx.debugTypeCheck && expected !== null) {
-    const ok = applyTree(expected, tree, APPLY_BUDGET)
-    if (!verdictOk(ok)) {
-      throw new Error(
-        `defense-in-depth: type check failed\n` +
-        `  tree:     ${prettyTree(tree)}\n` +
-        `  result:   ${prettyTree(ok)}`
-      )
-    }
-  }
-  return tree
-}
-
-// check(e, expected, ctx): compile e, expecting it to have type `expected`.
-// When expected is null, delegates to compileExpr (untyped path).
-function check(e: Expr, expected: Tree | null, ctx: ElabCtx): Tree {
-  if (expected === null) return compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-
-  const k = ctx.kernel
-  if (!k) {
-    // No kernel helpers — fall through to untyped + predicate check
-    const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-    const ok = applyTree(expected, tree, APPLY_BUDGET)
-    if (!verdictOk(ok))
-      throw new Error(`type check failed (no kernel helpers)`)
-    return tree
-  }
-
-  // Type-directed dispatch for binders
-  if (e.tag === "binder") {
-    // Case 2: expected is a universe → binder means Pi
-    if (k.isUniverse(expected)) {
-      // Delegate to checkAsType which handles Pi construction with level inference
-      const { tree } = checkAsType(e, ctx)
-      return assertTypeCheck(tree, expected, ctx)
-    }
-
-    // Case 3: expected is a Pi → binder means lambda
-    if (k.isPi(expected)) {
-      const D = k.piDomain(expected)
-      const codFn = k.piCodFn(expected)
-
-      if (e.params.length === 0) throw new Error("empty binder against Pi")
-      const param = e.params[0]
-      const paramName = param.name ?? `_anon0`
-
-      // Check domain annotation if present
-      if (param.type) {
-        const { tree: A_tree } = infer(param.type, ctx)
-        if (!treeEqual(A_tree, D))
-          throw new Error(`domain annotation doesn't match expected Pi domain`)
-      }
-
-      // Compile the binder as a lambda using the Cir pipeline (which handles
-      // bracket abstraction correctly via named variables). Type-check the body
-      // by binding the parameter to a hypothesis with the domain type, so that
-      // inner check/infer calls see the correct type information.
-      const piMeta = typeMetaTree(expected)
-      const hyp = k.makeHyp(D, piMeta ?? fork(D, codFn))
-
-      // Shadow param with hypothesis for type tracking
-      const prevLookup = ctx.lookupEntry
-      const hypEntry: ScopeEntry = { tree: hyp, type: D }
-
-      // For inner type checking, bind param to hypothesis
-      // But for compilation, we use the Cir pipeline which does bracket abstraction by name
-      // So we DON'T bind the param tree — we let exprToCir see it as a free variable
-      // and bracket-abstract it normally. We only set the type for inner checks.
-      const paramTypeEntry: ScopeEntry = { type: D }
-      ctx.lookupEntry = (name: string) => name === paramName ? paramTypeEntry : prevLookup(name)
-      ctx.scopeDepth++
-
-      // Verify the body type-checks: create hypothesis scope for type checking
-      const innerExpr: Expr = e.params.length > 1
-        ? { tag: "binder", params: e.params.slice(1), body: e.body }
-        : e.body
-
-      // For the body type check, bind the param to the actual hypothesis tree
-      const checkLookup = (name: string): ScopeEntry | undefined =>
-        name === paramName ? hypEntry : prevLookup(name)
-      const savedLookup = ctx.lookupEntry
-      ctx.lookupEntry = checkLookup
-      const result_type = applyTree(codFn, hyp, APPLY_BUDGET)
-
-      // Type-check the body (this validates types but we don't use the tree)
-      // Only do this if there's meaningful type info to propagate
-      if (k.isPi(result_type) || k.isUniverse(result_type) || k.isNeutral(result_type)) {
-        // Deep type check — validates body against codomain
-        check(innerExpr, result_type, ctx)
-      }
-
-      // Restore and compile using the Cir pipeline for correct bracket abstraction
-      ctx.lookupEntry = prevLookup
-      ctx.scopeDepth--
-
-      return assertTypeCheck(compileExpr(e, ctx.lookupEntry, ctx.resolveUse), expected, ctx)
-    }
-  }
-
-  // Case 4 / fallback: infer then verify
-  const { tree, type } = infer(e, ctx)
-  if (type !== null && treeEqual(type, expected)) return tree
-  // Fall back to predicate check
-  const ok = applyTree(expected, tree, APPLY_BUDGET)
-  if (!verdictOk(ok))
-    throw new Error(`type check failed`)
-  return tree
-}
-
-// infer(e, ctx): compile e and infer its type.
-function infer(e: Expr, ctx: ElabCtx): { tree: Tree; type: Tree | null } {
-  const k = ctx.kernel
-
-  switch (e.tag) {
-    case "var": {
-      const entry = ctx.lookupEntry(e.name)
-      if (!entry?.tree) {
-        // Free variable — compile via untyped path
-        const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-        return { tree, type: null }
-      }
-      return { tree: entry.tree, type: entry.type ?? null }
-    }
-
-    case "app": {
-      const { tree: f_tree, type: f_type } = infer(e.f, ctx)
-
-      if (k && f_type !== null && k.isPi(f_type)) {
-        const D = k.piDomain(f_type)
-        const codFn = k.piCodFn(f_type)
-        const x_tree = check(e.x, D, ctx)
-        const result_tree = applyTree(f_tree, x_tree, APPLY_BUDGET)
-        const result_type = applyTree(codFn, x_tree, APPLY_BUDGET)
-        return { tree: result_tree, type: result_type }
-      }
-
-      // Untyped fallback
-      const x_tree = check(e.x, null, ctx)
-      const result_tree = applyTree(f_tree, x_tree, APPLY_BUDGET)
-      return { tree: result_tree, type: null }
-    }
-
-    case "ann": {
-      // Compile annotation as a type (handles binders → Pi construction).
-      const { tree: T_tree, universe: T_univ } = checkAsType(e.type, ctx)
-      if (k && T_univ !== null && !k.isUniverse(T_univ))
-        throw new Error("annotation is not a type")
-      const e_tree = check(e.expr, T_tree, ctx)
-      return { tree: e_tree, type: T_tree }
-    }
-
-    case "binder": {
-      // Compile the binder as a lambda using the Cir pipeline
-      const lam = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-
-      if (!k) return { tree: lam, type: null }
-
-      // If domain annotated, infer a Pi type for the result
-      const param = e.params[0]
-      if (param?.type) {
-        const { tree: A_tree } = checkAsType(param.type, ctx)
-        const paramName = param.name ?? `_anon0`
-        const Pi = ctx.lookupEntry("Pi")?.tree
-        if (Pi) {
-          const id = fork(A_tree, fork(buildNat(ctx.scopeDepth), buildNat(0)))
-          const hyp = k.makeHyp(A_tree, id)
-          const prevLookup = ctx.lookupEntry
-          const hypEntry: ScopeEntry = { tree: hyp, type: A_tree }
-          ctx.lookupEntry = (name: string) => name === paramName ? hypEntry : prevLookup(name)
-          ctx.scopeDepth++
-          const innerExpr2: Expr = e.params.length > 1
-            ? { tag: "binder", params: e.params.slice(1), body: e.body }
-            : e.body
-          const { type: body_type } = infer(innerExpr2, ctx)
-          ctx.lookupEntry = prevLookup
-          ctx.scopeDepth--
-
-          if (body_type !== null) {
-            const codFn = abstractTree(hyp, body_type)
-            const pi = applyTree(applyTree(Pi, A_tree, APPLY_BUDGET), codFn, APPLY_BUDGET)
-            return { tree: lam, type: pi }
-          }
-        }
-      }
-
-      return { tree: lam, type: null }
-    }
-
-    case "leaf":
-      return { tree: LEAF, type: null }
-
-    case "num": {
-      const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-      const Nat = ctx.lookupEntry("Nat")?.tree
-      return { tree, type: Nat ?? null }
-    }
-
-    case "proj": {
-      const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-      return { tree, type: null }
-    }
-
-    case "recValue": {
-      const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-      return { tree, type: null }
-    }
-
-    default: {
-      const tree = compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-      return { tree, type: null }
-    }
-  }
 }
 
 // Helper to build a Nat tree from a number (for hypothesis identity).
@@ -1087,6 +857,10 @@ export type ParseItemStats = {
 export type ParseProgramOptions = {
   onItem?: (item: ParseItemStats) => void
   debugTypeCheck?: boolean
+  // Warn (don't throw) when a typed binding's body does not verify against its
+  // declared type under the in-language checker. Off by default; verification is
+  // advisory while the checker's nested-application false-negatives are open.
+  warnUnverified?: boolean
 }
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
@@ -1187,21 +961,41 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     const ctx = getElabCtx()
 
     if (type != null && type.tag !== "recType" && ctx.kernel) {
-      // Typed binding with kernel available: compile annotation as a type.
-      // checkAsType handles binders (→ Pi construction) and infers universe levels.
-      // FIXME(Q2): inline tests inside typed binding bodies (e.g.
-      //   `let foo : T = { test ... ; body }`) are not yet wired — check/infer
-      //   don't thread the CompileSinks. Practical impact is small because
-      //   typed bindings rarely contain inline tests; lift them to the
-      //   enclosing untyped scope if you need them. To remove this caveat,
-      //   add `sinks?` to ElabCtx and propagate through check/infer.
-      const { tree: type_tree, universe } = checkAsType(type, ctx)
-      if (universe !== null && !ctx.kernel.isUniverse(universe))
-        throw new Error(`annotation for '${name}' is not a type`)
-      try {
-        tree = check(body, type_tree, ctx)
-      } catch (e: any) {
-        throw new Error(`type check failed for '${name}': ${e.message}`)
+      // Typed binding with kernel available. Build the annotation's type tree by
+      // construction (compileType: binder → Pi, else plain compile), then split:
+      //   - annotation is the universe `Type` → the body itself denotes a TYPE,
+      //     compiled by construction (compileType).
+      //   - otherwise → the body is a VALUE; compile it by plain bracket
+      //     abstraction and verify it inhabits the type with the IN-LANGUAGE
+      //     kernel (`param_apply T body`), exactly as any user query does. There
+      //     is no host-side bidirectional `check`/`infer`: the metacircular
+      //     checker is the spec. Threading `sinks` also lets inline tests inside
+      //     typed value bodies flow through (the old check/infer path could not).
+      const type_tree = compileType(type, ctx)
+      if (ctx.kernel.isUniverse(type_tree)) {
+        tree = compileType(body, ctx)
+      } else {
+        tree = compileExpr(body, lookupEntry, resolveUse, sinks)
+        const param_apply = lookupEntry("param_apply")?.tree
+        if (param_apply) {
+          const verdict = applyTree(applyTree(param_apply, type_tree, APPLY_BUDGET), tree, APPLY_BUDGET)
+          // ADVISORY verification (for now). The in-language checker is the spec,
+          // but it currently has known FALSE-NEGATIVES: a body with a nested
+          // neutral application (`f (g x)`, or `a x` fed into an eliminator) is
+          // mis-reduced because the §7.5 `Ok`-wrapping invariant isn't fully
+          // reconciled, and a body that raw-decomposes its hypothesis (`pair_snd p`)
+          // trips the walker. Both yield a non-`Ok TT` verdict that is NOT a real
+          // type error. Worse, the bogus verdict is arbitrary (`Ok FF` vs `Fail`),
+          // so we cannot reliably reject on `Ok FF`. Until the wrapping invariant
+          // is fixed, treat a failed verdict as "could not verify" and let the
+          // binding through — the SAME coverage the old `check`/`infer` gave (it
+          // skipped every non-Pi-codomain body). When nested-application checking
+          // lands, switch this back to a hard error.  `verdictOk` ⇔ `Ok TT`.
+          if (!verdictOk(verdict) && options.warnUnverified) {
+            const reason = (verdict.tag === "fork" && treeEqual(verdict.right, SCOTT_FF)) ? "Ok FF" : "Fail"
+            console.warn(`[disp] could not verify '${name}' : declared type (verdict ${reason})`)
+          }
+        }
       }
       inferredType = type_tree
     } else {

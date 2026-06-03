@@ -187,6 +187,14 @@ let w_stem = {a, x} -> {
   let r = t a x
   match (is_hyp_fork r) { TT => Fail; FF => Ok r }          // stem-forge rejection
 }
+// A routed kernel-op application comes back DOUBLE-Ok-wrapped (`Ok (f x)` with
+// `f x` itself an `Ok stuck`), so `param_apply` of a neutral-headed body leaves a
+// residual `Ok` around the stuck reduct. `unwrap_routed` strips it — but ONLY when
+// the payload is a NEUTRAL (a routed kernel-op result). An `Ok verdict` from a
+// recogniser/recursor carries Bool data, not a neutral, and must stay wrapped. A
+// bare reduct never roots at `Ok`, so it is left untouched. (Used by `pi_body`.)
+let unwrap_routed = {y} ->
+  match (and (is_ok y) (is_neutral (ok_value y))) { TT => ok_value y; FF => y }
 let w_s = {self, c, b, x} -> {
   let cx = self c x
   match (is_ok cx) {
@@ -288,27 +296,6 @@ elim := {dispatcher, motive, cases, target} ->
     (is_neutral target)
 
 // ================================================================
-// checked / cut_apply: typed function values (the intensional cut)
-// ================================================================
-// cut_apply runs UNDER walk, so it recognizes/applies by juxtaposition
-// (`A arg`, `fn arg`) — the enclosing walk routes each sub-application. Calling
-// the flat param_apply here would nest a fresh walk and get double-walked.
-// The checked payload is a §2.6 record { dom, fn }, read by name through the
-// cut (§12.10) — the same one-record discipline the type metas follow.
-cut_apply := {meta, arg} -> {
-  let A = meta.dom
-  let fn = meta.fn
-  must_ok_any (A arg) ({verdict} ->
-    match verdict {
-      TT => match (is_neutral fn) { TT => fn arg; FF => Ok (fn arg) }
-      FF => Fail                       // TypeMismatch (simplified)
-    })
-}
-checked := {A, f} -> wait cut_apply { dom := A; fn := f }
-checked_sig := checker_sig cut_apply
-checked_dom := {v} -> (type_meta v).dom   // a checked value's stored domain
-
-// ================================================================
 // Inductive case-coherence (§B): the cases must inhabit the motive.
 // ================================================================
 // The gate lives in the *respond* (keyed off the neutral's stored type T), so EVERY
@@ -365,19 +352,28 @@ nat_body := {self, m, v} ->
 nat_meta := make_meta unit_witness trivial_functor nat_respond none
 Nat := wait (make_rec_recognizer nat_body) nat_meta
 
-// Pi: candidate must be a `checked` value whose stored domain matches A; then
-// bind a fresh A-hyp, apply the candidate, and check the result against `B hyp`.
+// Pi: bind a fresh A-hyp, apply the candidate by regular hypothesis application,
+// and check the reduced spine against `B hyp`. No `checked` wrapper — raw
+// functions are first-class inhabitants; eliminators route neutral sub-terms
+// through `respond`. A body that trips the walker (e.g. triages the hypothesis)
+// makes `param_apply v hyp` return `Fail`; that rejection is PROPAGATED, not fed
+// to the codomain check — otherwise a permissive codomain (e.g. String) would
+// accept a malformed function.
+// When the body HEAD-reduces to a neutral application (`f (g x)`), the top-level
+// routed arm hands back `Ok stuck` rather than the bare `stuck` (the intermediate
+// `w_s` deref only normalises sub-applications). Strip that one residual `Ok`
+// before the codomain check; a bare reduct never roots at the `Ok` tag.
 pi_body := {meta, v} -> {
   let params = meta.recognizer_params
   let A = params.dom
   let B = params.cod
-  match (tree_eq (pair_fst v) checked_sig) {
-    FF => Ok FF
-    TT => (match (tree_eq (checked_dom v) A) {
-      FF => Ok FF
-      TT => bind_hyp A ({hyp} -> must_ok_any (param_apply v hyp) ({result} -> param_apply (B hyp) result))
-    })
-  }
+  bind_hyp A ({hyp} -> {
+    let r = param_apply v hyp
+    match (tree_eq r Fail) {
+      TT => Fail
+      FF => param_apply (B hyp) (unwrap_routed r)
+    }
+  })
 }
 pi_respond := {nmeta, frame} -> Extend ((type_meta (neutral_meta_type nmeta)).recognizer_params.cod frame)
 pi_meta_for := {A, B} -> make_meta { dom := A; cod := B } trivial_functor pi_respond none
@@ -417,10 +413,16 @@ Type := wait (make_recognizer type_body) type_self_meta
 // Inductive recursors (concrete dispatcher + library elim)
 // ================================================================
 // (nat_pred and the value-level cut primitives are defined near the top.)
+// The recursive call routes back through `elim` (not raw `self`), so a NEUTRAL
+// predecessor — e.g. `nat_pred (succ hyp) = hyp` when recursing into `succ hyp` —
+// re-hits `elim`'s `is_neutral` gate and yields a clean stuck elimination instead
+// of being decomposed by `nat_pred`. This is what makes `add (succ hyp) m` reduce
+// to `succ (add hyp m)` symbolically (needed to type inductive proofs like
+// `add_zero_r`), mirroring the recogniser-side open recursion (§A).
 let nat_dispatcher = fix ({self, motive, cases, target} ->
   match (tree_eq target zero) {
     TT => cases.base                                       // base
-    FF => cases.step (nat_pred target) (self motive cases (nat_pred target))  // step n rec
+    FF => cases.step (nat_pred target) (elim self motive cases (nat_pred target))  // step n rec
   })
 nat_rec := {motive, base, step, target} -> elim nat_dispatcher motive { base := base; step := step } target
 
@@ -434,7 +436,7 @@ let ord_dispatcher = fix ({self, motive, cases, target} ->
     FF => {
       let a = stem_child (pair_fst target)                 // pair_fst/snd here destructure
       let b = pair_snd target                              // the ord value omega_plus a b
-      cases.case_op a b (self motive cases a) (self motive cases b)
+      cases.case_op a b (elim self motive cases a) (elim self motive cases b)   // recurse via elim (gate neutrals)
     }
   })
 ord_rec := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { case_z := case_z; case_op := case_op } target
@@ -463,9 +465,13 @@ eq_body := {meta, v} -> {
   let p = meta.recognizer_params                                 // { type, lhs, rhs }
   Ok (and (tree_eq v refl) (tree_eq p.lhs p.rhs))
 }
-// respond = inductive_respond (§12): eliminating a stuck `p : Eq A x y` via eq_J
-// yields `motive self` (a stuck subst/transp), not the dead state.
-Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } trivial_functor inductive_respond none)
+// respond for J: eliminating a stuck `p : Eq A x y` lands the motive at the RHS
+// ENDPOINT `y` (read off the stored Eq type), giving `motive y` — the J rule
+// `C : (y:A) -> Type ⊢ C y`. The generic `inductive_respond` would give the wrong
+// `motive self` (motive at the proof, not the endpoint), so `eq_cong`/`eq_subst`
+// on a neutral proof would land at the wrong equality and fail the §B gate.
+eq_respond := {nmeta, frame} -> Extend (frame.motive (type_meta (neutral_meta_type nmeta)).recognizer_params.rhs)
+Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } trivial_functor eq_respond none)
 
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
 // refl and stays stuck on a neutral proof).
