@@ -1,4 +1,4 @@
-// Tests for the new-kernel core (lib/next/core.disp): the two-Σ-op shape end
+// Tests for the kernel core (lib/kernel/core.disp): the two-Σ-op shape end
 // to end — param_apply dispatch, recognition + H-rule, hyp_reduce spine
 // extension via respond, typecheck, and the boundary scan.
 
@@ -107,23 +107,21 @@ test (checked Nat ({n} -> n)) TT = Fail                     // TT is not a Nat -
 test checked_dom (checked Nat ({n} -> n)) = Nat
 
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----
-// make_meta builds a `prod`; the meta_* accessors are the cut against the
-// canonical field-name tags, not positional pair projections.
-test meta_respond (type_meta Bool) = bool_respond          // Bool now carries the gated respond (§B)
-test meta_respond (type_meta Unit) = inductive_respond     // an ungated inductive type
-test meta_respond (type_meta False) = inert_respond
-test meta_functor (type_meta Nat) = trivial_functor
-test meta_respond (type_meta Type) = type_predicate_h_rule
+// make_meta builds a `prod`; fields are read by name with the §2.6 cut (.field),
+// not positional pair projections.
+test (type_meta Bool).respond = bool_respond           // Bool carries the gated respond (§B)
+test (type_meta Unit).respond = inductive_respond      // an ungated inductive type
+test (type_meta False).respond = inert_respond
+test (type_meta Nat).functor = trivial_functor
+test (type_meta Type).respond = type_predicate_h_rule
 // a hand-built meta round-trips field-by-field
 let m = make_meta zero TT FF unit_val
-test meta_params m = zero
-test meta_functor m = TT
-test meta_respond m = FF
-test meta_specs m = unit_val
+test m.recognizer_params = zero
+test m.functor = TT
+test m.respond = FF
+test m.behavioral_specs = unit_val
 test has_metashape_layout m = TT
 test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF  // old positional shape is no longer a meta
 // recognizer_params is itself an inline record read by name (Pi's { dom, cod })
-test (meta_params (type_meta (Pi Nat ({_} -> Bool)))).dom = Nat
-test (meta_params (type_meta (Sigma Nat ({_} -> Bool)))).dom = Nat
-// and a kernel meta projects respond directly via .field
-test (type_meta Bool).respond = bool_respond
+test (type_meta (Pi Nat ({_} -> Bool))).recognizer_params.dom = Nat
+test (type_meta (Sigma Nat ({_} -> Bool))).recognizer_params.dom = Nat

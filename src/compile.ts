@@ -1279,10 +1279,9 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
           const fieldType = record.fieldTypes?.[i] ?? null
-          // Propagate inner-field metadata if this field is itself
-          // a record-typed binding (e.g., the kernel recq record).
-          // Without this, `kernel.hyp_reduce` projection wouldn't work
-          // across `open use` boundaries.
+          // Propagate inner-field metadata if this field is itself a
+          // record-typed binding, so projecting its sub-fields still
+          // works across `open use` boundaries.
           const innerFields = (record as any).fieldInnerFields?.[i] as string[] | undefined
           const innerTrees = (record as any).fieldInnerTrees?.[i] as Tree[] | undefined
           define(name, { tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })

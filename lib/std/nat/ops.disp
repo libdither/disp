@@ -40,8 +40,7 @@ add_succ_r : {n : Nat} -> Eq Nat (add n 1) (succ n) :=
       ({k, _ih} -> refl)
       n
 
-// (add_comm removed in the NEXT cutover: its base `{m} -> refl` claimed
-//  Eq Nat (add 0 m) (add m 0), but `add m 0` does not reduce to `m` for a
-//  symbolic `m`, so it is not refl-provable. The legacy kernel accepted it
-//  loosely; the stricter new kernel correctly rejects it. A real commutativity
-//  proof needs induction with eq_cong/eq_subst, deferred.)
+// add_comm is intentionally omitted: a `{m} -> refl` base would claim
+// Eq Nat (add 0 m) (add m 0), but `add m 0` does not reduce to `m` for a
+// symbolic `m`, so it is not refl-provable. A real commutativity proof needs
+// induction with eq_cong/eq_subst.

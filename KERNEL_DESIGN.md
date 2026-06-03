@@ -6,47 +6,49 @@ that are easy to forget when editing the kernel, parser, or runtime.
 
 ## Kernel Shape
 
-The kernel record lives in `lib/kernel/handlers.disp` and has seven
-primitive handlers:
+The kernel surface is two Σ-ops plus a dispatcher, all in
+`lib/kernel/core.disp`:
 
-```disp
-kernel : {hyp_reduce, guard, unguard, checked_apply,
-          predicate_frame, eliminator_frame, bind_hyp} := recq {
-  hyp_reduce       := q_hyp_reduce_fn;
-  guard            := q_guard_fn;
-  unguard          := q_unguard_fn;
-  checked_apply    := q_checked_apply_fn;
-  predicate_frame  := q_predicate_frame_fn;
-  eliminator_frame := q_eliminator_frame_fn;
-  bind_hyp         := q_bind_hyp_fn
-}
+- `hyp_reduce` — push a frame onto a neutral. It reads the stored
+  type's `respond` meta-field, which returns an `Action`: `Extend
+  new_stored_type` (grow the spine) or `Return value`.
+- `bind_hyp` — mint a fresh hypothesis, run a body over it, then
+  `occurs`-scan the result so the hypothesis cannot escape.
+- `param_apply` — the dispatcher: the in-language parametric walker
+  (`walk`) with reader carve-outs plus Σ routing on the two op
+  signatures.
 
-kernel_ref : {hyp_reduce, guard, unguard, checked_apply,
-              predicate_frame, eliminator_frame, bind_hyp} :=
-  {q} -> wait kernel q
-```
+Both Σ-ops are plain `fix`-forms. There is no kernel record and no
+self-proxy handler protocol — the legacy seven-primitive `recq`
+kernel was retired in the two-Σ-op cutover.
 
-`kernel` is the actual recursive record; `kernel_ref` is its lazy
-proxy. Projecting from `kernel_ref` returns delayed field selection,
-e.g. `kernel_ref.predicate_frame = wait kernel predicate_frame_selector`.
-Hypotheses use the eager `kernel.hyp_reduce` signature; public type
-constructors use lazy `kernel_ref.*` forms so their signatures match
-the exported native dispatcher anchors.
+`eliminator_frame` is no longer primitive: it is the library `elim`
+over `hyp_reduce` + a type's `respond`. Pi, Type, Bool, Nat, Eq, Ord,
+Sigma, Refinement, Intersection, Coproduct, and Record are ordinary
+library wait-forms in `core.disp`.
 
 ## Library Types
 
-Pi, Type, Bool, Nat, Eq, and Ord are ordinary library definitions in
-`lib/types/`.
+A type is `wait (make_recognizer body) meta`:
 
-- Predicate types use `guard (predicate_frame_form meta)`.
-- Eliminators use `eliminator_frame_form init_meta`.
-- Function-typed hypotheses extend through `Extend`.
-- Type-like predicate hypotheses can return values directly through
-  `Return`.
+- `pair_fst T` is the recognizer **signature** (constant per
+  recognizer body); type-former recognition is signature comparison.
+- `type_meta T = pair_snd (pair_snd T)` is a MetaShape record — a §2.6
+  headered record `{ recognizer_params, functor, respond,
+  behavioral_specs }` read **by name** through the cut, not by
+  position.
 
-Eq is no longer a dedicated kernel handler. It is a predicate_frame
-type whose recognizer accepts `refl` exactly when the two endpoints
-are structurally equal; `eq_J` is an eliminator_frame wrapper.
+`make_recognizer` wraps the predicate body in the universal
+recognizer-side H-rule (a neutral of the stored type is accepted in
+O(1)). `make_rec_recognizer` threads the full recognizer back into the
+body so recursive recognizers (Nat, Ord) re-apply the H-rule at every
+structural level — a neutral child of a concrete constructor (e.g.
+`succ hyp`) is recognised, not triaged.
+
+`respond` is constitutive. Inert types use `inert_respond` (every
+frame → `Extend InvalidType`); inductive types use `inductive_respond`
+or a gated coherence respond (`nat_respond` / `bool_respond`) that
+checks the eliminator's cases inhabit the motive.
 
 ## Signatures
 
@@ -54,62 +56,71 @@ Wait-based values have a stable head signature:
 
 ```disp
 checker_sig := {checker} -> pair_fst (wait checker t)
-has_sig := {checker, v} -> tree_eq (pair_fst v) (checker_sig checker)
 ```
 
-Neutral recognition is deliberately stricter than `has_sig`: it also
-requires fork shape. Without that guard, a stem containing the
-hypothesis signature would be misclassified because `pair_fst` on a
-stem returns its child.
+Neutral recognition reads that signature, but is deliberately fork-
+guarded where it must not misfire: a partial `wait hyp_reduce …`
+recipe sitting inside type metadata is a *stem* that shares the bare
+signature (`pair_fst` on a stem returns its child). `is_neutral` is the
+bare check; `is_hyp_fork` is the fork-guarded check used by the support
+scan and the walker.
 
 ## Neutrals
 
-`Hyp ty id` and `StuckElim result_type target` are wait-encoded
-values routed through `kernel.hyp_reduce`. Neutral metadata stores the
-current type and payload:
+`mint_hyp ty id = wait hyp_reduce (make_neutral_meta ty id)`; `Hyp` and
+`StuckElim` are aliases (a hypothesis vs. a spine-extended/stuck form —
+same constructor). Neutral metadata is `pair(stored_type, payload)`:
 
 ```disp
 make_neutral_meta := {current_type, payload} -> t current_type payload
 neutral_meta_type := {meta} -> pair_fst meta
 ```
 
-Applying a neutral reads the stored type's `codomain_fn`. `Extend`
-appends to the neutral spine with a new stored type; `Return` yields a
-value directly. Invalid or non-applicable cases extend with
-`InvalidType` so later checks fail deterministically.
+Applying a neutral routes to `hyp_reduce`, which consults the stored
+type's `respond`. `Extend` appends to the spine with a new stored type;
+`Return` yields a value directly. Rejection extends with `InvalidType`,
+which is itself inert — an absorbing dead state, so any later check on
+the stored type fails deterministically.
 
 ## Walker and Native Fast Paths
 
-`checked_apply` is the security perimeter. The in-language definition
-has a stable unique shape, and `src/tree.ts` intercepts it to run a
-native implementation of the same dispatcher/walker discipline.
+`param_apply` runs the walker **in-language**; there is no native
+dispatcher fast-path (the legacy native walker was removed in the
+cutover, and re-introducing one would require restoring an equivalence
+test). The only live native fast-path is `tree_eq`, which short-
+circuits to a hash-cons identity check and returns the exact Scott
+`TT`/`FF` trees — bit-identical to the in-language reference, which is
+the spec.
 
-Native fast paths must be bit-identical to the object-language
-semantics:
-
-- `tree_eq` short-circuits to hash-cons identity and returns the exact
-  Scott `TT`/`FF` trees.
-- `checked_apply` routes registered kernel signatures in raw mode and
-  otherwise runs the parametric walker.
-- `I_canonical` is the only walker carve-out; `I x` is accepted even
-  when `x` is a hypothesis.
+The walker's reader carve-outs (run raw instead of being reduced) are
+`ROOT_SIG` (`pair_fst`), `STORED_TYPE` (`neutral_type`), `I_canonical`
+(identity), and `tree_eq` (a two-stage partial, neutral-safe). Σ routing
+runs a registered kernel-op's wait-form raw. Everything else is reduced
+structurally, and the two parametricity guards fire there: forging a
+neutral-rooted fork (stem-forge) and triaging on a neutral both return
+`Fail`. These are pinned by `lib/tests/soundness.test.disp`.
 
 ## Strictness Pitfalls
 
 Tree calculus is strict. Use `wait` when a partial application should
-remain inert, especially around recursive records and fixed points.
+remain inert, especially around fixed points.
 
-`select_lazy` can still interact badly with bracket abstraction when a
-branch closes over recursive self references. For recursive branch
-bodies, prefer `match`; the compiler wraps each arm over its free
-variables and avoids eager K-body evaluation during `cirToTree`.
+`select_lazy` interacts badly with bracket abstraction when a branch
+closes over a recursive self-reference: the closed combinator's
+compile-time reduction can fire the recursion. For recursive branch
+bodies, prefer `match` — the compiler wraps each arm over its free
+variables, side-stepping the eager K-body evaluation. (See CLAUDE.md's
+"Compiler workarounds" for the multi-line-arm and self-recursion
+caveats.)
 
 ## Records and Exports
 
-Runtime records are Church-encoded values. Field names and field trees
-are compile-time metadata used for projection and `open`.
+Field names and field trees are compile-time metadata used for
+projection and `open`. The value-level §2.6 records the kernel uses for
+metadata are `prod`/`annihilate` forms read by name through the cut
+(`field` / `proj`).
 
-Files with any `name := expr` fields export only those fields. A
-legacy fieldless-file mode still re-exports top-level lets and opened
-names for compatibility shims such as `lib/kernel/prelude.disp`.
-Duplicate exported fields are rejected by the parser.
+Files with any `name := expr` field export only those fields. A legacy
+fieldless-file mode still re-exports top-level `let`s and opened names,
+used by shims such as `lib/kernel/prelude.disp`. Duplicate exported
+fields are rejected by the parser.

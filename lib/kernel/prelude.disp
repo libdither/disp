@@ -1,7 +1,6 @@
 // Kernel entry point. `open use "../kernel/prelude.disp"` brings the full
-// surface: substrate combinators, substrate utils, and the new two-Σ-op
-// kernel + library types (lib/kernel/core.disp). The legacy 7-primitive
-// kernel (handlers/walker) and lib/types/ were retired in the NEXT cutover.
+// surface: substrate combinators (../prelude.disp), kernel utils (utils.disp),
+// and the two-Σ-op kernel + library types (core.disp).
 
 open use "../prelude.disp"
 open use "utils.disp"

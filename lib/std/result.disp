@@ -20,8 +20,8 @@ let err_tag = t t t
 ok  := {v} -> t ok_tag v
 err := {e} -> t err_tag e
 
-// Ok-wrapped verdict (new-core convention): A/E applied to the payload are
-// themselves Ok-wrapped recognizer results.
+// Returns a CheckerResult: A/E applied to the payload are themselves
+// Ok-wrapped recognizer verdicts.
 Result := {E, A, r} ->
   select_lazy
     ({_} -> Ok TT)                                  // neutral: permissive

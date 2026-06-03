@@ -6,7 +6,7 @@ I want to be able to synthesize the best possible programs given a specification
 To do this we basically need a universal self-improving optimizer, but to bootstrap this we first need:
  - A simple calculus with:
    - Programs are data (to enable defining type checkers in the language itself)
-   - Must have a primitive that enables outsourcing execution to an external faster language, using an encoding of that language in the base calculus, where it takes as input calculus-encoded data and outputs calculus-encoded data. The results of primitive language execution (including time spent, memory usage, etc.) should be returned along with the host-calculus encoded outputs. *(Long-term vision. The current kernel has no such primitive; the seven kernel handlers in `TYPE_THEORY.typ` §3.3 are the present registry.)*
+   - Must have a primitive that enables outsourcing execution to an external faster language, using an encoding of that language in the base calculus, where it takes as input calculus-encoded data and outputs calculus-encoded data. The results of primitive language execution (including time spent, memory usage, etc.) should be returned along with the host-calculus encoded outputs. *(Long-term vision. The current kernel has no such primitive; its surface is the two Σ-ops (`hyp_reduce`, `bind_hyp`) plus the `param_apply` dispatcher.)*
  - A type system written in the host calculus that:
    - Is a dependently typed system or strictly more powerful (i.e. HoTT).
    - Provides either basic axiomatic assertions of equivalence between a sufficient family of structures in the external language and the host calculus, or an deterministic model of the external language in the host calculus that can be fully reasoned about.

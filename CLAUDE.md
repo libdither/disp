@@ -9,7 +9,7 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 - [`TYPE_THEORY_LEGACY.typ`](TYPE_THEORY_LEGACY.typ) — previous spec, retained for history. Seven kernel primitives (`hyp_reduce`, `guard`, `unguard`, `checked_apply`, `predicate_frame`, `eliminator_frame`, `bind_hyp`). The codebase has **migrated off** this shape to `TYPE_THEORY.typ`'s two-Σ-op kernel — see "Implementation status" below.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape. Authoritative for the parser.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
-- [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms: `hyp_reduce`, wait/fix, deferred branching, bracket abstraction optimizations, performance notes. Predates the two-Σ-op cutover, so some idioms (the `(ks,raw,query)`/`recq` handler protocol, the native dispatcher fast-path) describe retired machinery; the wait/fix/bracket-abstraction notes still hold.
+- [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms for the current two-Σ-op kernel: `hyp_reduce`/`bind_hyp`/`param_apply`, wait/fix, signatures, neutrals, the `tree_eq` native fast-path, bracket-abstraction caveats.
 
 ## Core discipline
 
@@ -29,14 +29,14 @@ Every component participating in checking, elaboration, or conversion must have 
 - `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix, tree_eq, nat_le, zero/succ).
 - `kernel/` — the two-Σ-op kernel center:
   - `prelude.disp` — canonical entry point: `open`s `../prelude.disp` + `utils.disp` + `core.disp`. Files that build on the type system do `open use "../kernel/prelude.disp"`.
-  - `utils.disp` — metadata accessors (`type_meta`, neutral-meta layout), signatures (`checker_sig`/`has_sig`), Action protocol (`Extend`/`Return`/`is_extend`), CheckerResult (`Ok`/`Fail`, `must_ok_any`/`must_ok_or_self`), `InvalidType`.
+  - `utils.disp` — metadata accessors (`type_meta`, neutral-meta layout), the `checker_sig` signature, Action protocol (`Extend`/`Return`/`is_extend`), CheckerResult (`Ok`/`Fail`, `must_ok_any`/`must_ok_or_self`), `InvalidType`.
   - `core.disp` — the entire kernel + library type system, built bottom-up on the substrate only:
     - **Σ-ops:** `hyp_reduce` (push a frame onto a neutral via the stored type's `respond`) and `bind_hyp` (mint a fresh hyp, run the body, `occurs` escape-check).
     - **Dispatcher:** `param_apply` = the in-language parametric walker (`walk`) with reader carve-outs (`ROOT_SIG`/`STORED_TYPE`/`I`/`tree_eq`) + Σ routing on `hyp_sig`/`bind_hyp_sig`.
-    - **The cut (§2.6):** value-level `prod`/`annihilate`/`proj`/`inj`/`acc`/`record_val`/`field`/`match_co`. MetaShape metadata (`make_meta`/`meta_*`), recognizer_params (`rp2`/`rp3`), and `checked`'s `{dom,fn}` are §2.6 records read **by name** through the cut.
+    - **The cut (§2.6):** value-level `prod`/`annihilate`/`proj`/`inj`/`acc`/`record_val`/`field`/`match_co`. MetaShape metadata (built by `make_meta`), each former's `recognizer_params` (inline `{ }` literals, e.g. Pi's `{ dom; cod }`), and `checked`'s `{ dom, fn }` are §2.6 records read **by name** through the cut (`.field`) — no accessor wrappers.
     - **H-rule:** `make_recognizer` (recognizer side) + `type_predicate_h_rule` (predicate side).
     - **Library types:** Bool, Nat, Pi/Arrow, Type, Unit, False/Not, String, Eq (+ `eq_J`/`eq_subst`/`eq_sym`/`eq_cong`), Ord, Sigma, Refinement, Intersection, Coproduct, Record — each `wait (make_recognizer body) meta`. Recursors `nat_rec`/`bool_rec`/`ord_rec` via the library `elim`.
-- `std/` — standard library on top of the kernel (`open use "../kernel/prelude.disp"`): `nat/arith.disp` (`add`), `nat/ops.disp` (`pred`, `is_zero`, `double`), `list.disp`, `set.disp`, `fin.disp`, `option.disp`, `result.disp`, `pair.disp`, `record.disp`.
+- `std/` — standard library on top of the kernel (`open use "../kernel/prelude.disp"`): `nat/arith.disp` (`add`), `nat/ops.disp` (`pred`, `is_zero`, `double`), `list.disp`, `set.disp`, `fin.disp`, `option.disp`, `result.disp`, `pair.disp`. (Records live in the kernel: the §2.6 cut — `record_val`/`field`/`Record`.)
 - `tests/` — all `*.test.disp` files. Test runner globs recursively under `tests/`.
 
 ### Host tests
@@ -73,9 +73,9 @@ Two issues affect kernel-level code involving recursion or multi-line conditiona
 
 - **`wait` for deferred application.** `wait a b c = a(b)(c)` but `wait(a)(b)` doesn't evaluate `a(b)`. Essential for `fix` and partial application.
 - **Plain `fix` handlers.** The kernel's Σ-ops (`hyp_reduce`/`bind_hyp`) are plain `fix`-forms. The old `(ks, raw, query)` self-proxy handler protocol and the `rec`/`recq` self-referential-record combinators were retired with the 7-primitive kernel (nothing in the new kernel used them).
-- **Wait-based types.** `wait(checker)(metadata)`. Signature = `pair_fst(T)` (constant per checker). Metadata = `type_meta(T) = pair_snd(pair_snd(T))`, a §2.6 record whose fields (`respond`, `recognizer_params`, …) are read **by name** via the cut (`meta_respond`/`meta_params`). Type-former recognition is via signature comparison.
+- **Wait-based types.** `wait(checker)(metadata)`. Signature = `pair_fst(T)` (constant per checker). Metadata = `type_meta(T) = pair_snd(pair_snd(T))`, a §2.6 record whose fields (`respond`, `recognizer_params`, …) are read **by name** via the cut (`m.respond`, `m.recognizer_params`). Type-former recognition is via signature comparison.
 - **H-rule via `make_recognizer`.** The universal recognizer-side H-rule lives in `make_recognizer`, which reconstructs the type via `wait (wait wrap body) meta` and short-circuits `Ok TT` when the candidate is a neutral of that stored type. `type_predicate_h_rule` is the predicate-side dual.
-- **Hash-consing is load-bearing.** `conv = fast_eq` is O(1). Deterministic elaboration ensures same type → same tree.
+- **Hash-consing is load-bearing.** Conversion is `tree_eq`, an O(1) hash-cons identity check. Deterministic elaboration ensures same type → same tree.
 - **Native fast-paths.** `tree_eq` is a native fast-path in `src/tree.ts`, producing bit-identical results to the in-language reference; the in-language code is the spec. The dispatcher (`param_apply`) runs in-language — no native fast-path (the legacy native dispatcher was removed in the cutover).
 
 ## Testing
@@ -85,7 +85,7 @@ Two issues affect kernel-level code involving recursion or multi-line conditiona
 ## Operating notes
 
 - Type checking is raw `apply(T, v) = TT`. Types are wait-based raw functions.
-- `is_neutral` is a fork-shape check plus an O(1) signature check against `kernel.hyp_reduce`.
+- `is_neutral` is an O(1) signature check (`pair_fst v` against `hyp_sig`); `is_hyp_fork` adds the fork-shape guard where partial wait-forms could share the bare signature.
 - Prefer editing existing files over creating new ones.
 - Binder parameter names shadow scope variables during compilation. Name collisions are safe but should be avoided for clarity.
 - Files with any `name := expr` field use the export model where only `:=` fields export. Files with only `let`/`test`/`open` use legacy mode where all `let` bindings export. Prefer `name := expr` for new code.

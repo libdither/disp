@@ -20,9 +20,8 @@ open use "nat/ops.disp"
 // Recursive structural check. The `fix` is placed *inside* the outer
 // binder over (A, xs) so partial application `List A` doesn't trigger
 // fix-unfolding at compile time. `match` (not `select_lazy`) wraps the
-// recursive branch per CLAUDE.md's self-recursion workaround.
-// Ok-wrapped verdict (new-core convention): check the head via A's recognizer,
-// then recurse on the tail.
+// recursive branch per CLAUDE.md's self-recursion workaround. Returns a
+// CheckerResult: check the head via A's recognizer, then recurse on the tail.
 List := {A, xs} ->
   fix ({self, ys} ->
     select_lazy

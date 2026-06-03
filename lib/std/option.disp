@@ -16,8 +16,8 @@ some := {v} -> t (t t) v
 
 let some_tag = t t
 
-// Returns an Ok-wrapped verdict (new-core convention): `A (pair_snd opt)` is
-// itself the Ok-wrapped recognizer result for the some-payload.
+// Returns a CheckerResult: `A (pair_snd opt)` is itself the Ok-wrapped
+// recognizer verdict for the some-payload.
 Option := {A, opt} ->
   select_lazy
     ({_} -> Ok TT)                                  // neutral: permissive
