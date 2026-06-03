@@ -31,12 +31,14 @@ test param_apply Nat hN = Ok TT
 test param_apply Bool hN = Ok FF          // Nat-hyp does not inhabit Bool
 test param_apply Nat hB = Ok FF
 
-// ---- hyp_reduce spine extension via inductive_respond ----
+// ---- hyp_reduce spine extension via the (gated) inductive respond ----
 // Applying a Nat-neutral to a case-frame (pair motive cases) yields a stuck
 // elimination: a fresh neutral stored at `motive self`. hyp_reduce results are
-// Ok-wrapped CheckerResults, so `stuck` is Ok(neutral).
+// Ok-wrapped CheckerResults, so `stuck` is Ok(neutral). The respond now gates the
+// cases against the motive (§B), so the cases must be COHERENT: with motive Bool,
+// base : Bool and step : Π n. Bool -> Bool.
 let motive = {n} -> Bool
-let cases = pair zero ({k} -> k)
+let cases = pair TT ({pred, ih} -> ih)         // base TT : Bool ; step returns ih : Bool
 let stuck = param_apply hN (pair motive cases)
 test is_ok stuck = TT
 test is_neutral (ok_value stuck) = TT
@@ -44,7 +46,7 @@ test neutral_type (ok_value stuck) = Bool      // motive applied to the reconstr
 
 // elim drives the same: concrete target runs the dispatcher, neutral routes here
 let nat_dispatcher = {motive, cases, target} -> pair_fst cases   // toy: returns base
-test elim nat_dispatcher motive cases zero = zero                // concrete branch
+test elim nat_dispatcher motive cases zero = TT                  // concrete branch -> base (TT)
 test is_neutral (elim nat_dispatcher motive cases hN) = TT  // neutral branch
 
 // ---- bind_hyp (Σ-op): mint, run body, escape-check ----
@@ -69,6 +71,32 @@ test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok FF      // domain mismatch (
 // H-rule on the neutral predecessor in `succ hyp` instead of triaging it.
 test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> succ y)) = Ok TT
 
+// (§B) the eliminator's cases must inhabit the motive. Enforced in the TYPE's
+// respond (keyed off the neutral's stored type), so it is UNBYPASSABLE: the kernel
+// recursor, a hand-rolled recursor, and raw neutral application are all gated.
+let lying  = {y} -> nat_rec ({_} -> Nat) TT ({p, ih} -> TT) y        // base/step Bool, motive says Nat
+let lying2 = {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> TT) y      // correct base, lying step
+let honest = {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat lying)  = Ok FF  // incoherent cases -> rejected
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat lying2) = Ok FF  // step lie also caught
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat honest) = Ok TT  // coherent -> accepted
+test honest (succ (succ zero)) = succ (succ zero)                    // value-transparent on concrete targets
+
+// adversarial: a USER's OWN recursor (own dispatcher, via elim) is gated identically,
+// because on a neutral target elim applies the neutral -> the type's respond -> gate.
+let my_dispatcher = fix ({self, motive, cases, target} ->
+  match (tree_eq target zero) { TT => pair_fst cases; FF => (pair_snd cases) (pair_snd target) (self motive cases (pair_snd target)) })
+let my_rec = {motive, base, step, target} -> elim my_dispatcher motive (pair base step) target
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> my_rec ({_} -> Nat) TT ({p, ih} -> TT) y))        = Ok FF
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y)) = Ok TT
+// applying the neutral to a hand-built frame directly is also gated:
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> must_ok_or_self (y (pair ({_} -> Nat) (pair TT ({p, ih} -> TT)))))) = Ok FF
+// and you cannot bypass by DESTRUCTURING the neutral -- triage on a hyp is rejected:
+test param_apply (Pi Nat ({_} -> Nat)) (checked Nat ({y} -> pair_snd y)) = Fail
+// the gate is general: Bool's recursor is gated the same way (no recursive args).
+test param_apply (Pi Bool ({_} -> Nat)) (checked Bool ({b} -> bool_rec ({_} -> Nat) TT TT b))            = Ok FF
+test param_apply (Pi Bool ({_} -> Nat)) (checked Bool ({b} -> bool_rec ({_} -> Nat) zero (succ zero) b))  = Ok TT
+
 // ---- cut_apply: the contract boundary on direct application ----
 // Applying a `checked` value runs cut_apply: the arg is checked against the
 // stored domain before the function fires. Domain holds -> Ok (fn arg);
@@ -81,7 +109,8 @@ test checked_dom (checked Nat ({n} -> n)) = Nat
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----
 // make_meta builds a `prod`; the meta_* accessors are the cut against the
 // canonical field-name tags, not positional pair projections.
-test meta_respond (type_meta Bool) = inductive_respond
+test meta_respond (type_meta Bool) = bool_respond          // Bool now carries the gated respond (§B)
+test meta_respond (type_meta Unit) = inductive_respond     // an ungated inductive type
 test meta_respond (type_meta False) = inert_respond
 test meta_functor (type_meta Nat) = trivial_functor
 test meta_respond (type_meta Type) = type_predicate_h_rule
@@ -97,4 +126,4 @@ test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF  // old 
 test (meta_params (type_meta (Pi Nat ({_} -> Bool)))).dom = Nat
 test (meta_params (type_meta (Sigma Nat ({_} -> Bool)))).dom = Nat
 // and a kernel meta projects respond directly via .field
-test (type_meta Bool).respond = inductive_respond
+test (type_meta Bool).respond = bool_respond

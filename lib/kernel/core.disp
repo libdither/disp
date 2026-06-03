@@ -282,10 +282,50 @@ checked_sig := checker_sig cut_apply
 checked_dom := {v} -> field (type_meta v) chk_k_dom   // a checked value's stored domain
 
 // ================================================================
+// Inductive case-coherence (§B): the cases must inhabit the motive.
+// ================================================================
+// The gate lives in the *respond* (keyed off the neutral's stored type T), so EVERY
+// elimination of a T-neutral — nat_rec, a hand-rolled recursor, or a raw `n frame` —
+// is gated; there is no eliminator to leave unprotected. Pi-free: each per-type
+// `*_coherence` mint-applies the cases against the motive via bind_hyp + recogniser
+// application (T flows in from the neutral; the checker never names its own type).
+// Incoherent cases route to the dead state `InvalidType` (§12.3), so the eliminated
+// neutral is typed `InvalidType` and rejected downstream.
+gated_inductive_respond := {coh, nmeta, frame} -> {
+  let T = neutral_meta_type nmeta
+  let motive = pair_fst frame
+  let cases = pair_snd frame
+  let r = coh T motive cases
+  match (is_ok r) {
+    FF => Extend InvalidType                                      // gate errored (e.g. a case triaged a hyp)
+    TT => match (ok_value r) {
+            FF => Extend InvalidType                              // cases do not inhabit the motive
+            TT => Extend (motive (reconstruct_self nmeta)) }      // coherent: same as the ungated respond
+  }
+}
+trivial_coherence := {T, motive, cases} -> Ok TT                  // for types whose checker is not yet written
+// Nat: base : motive zero ; step : Π n. motive n -> motive (succ n)
+nat_coherence := {T, motive, cases} -> {
+  let base = pair_fst cases
+  let step = pair_snd cases
+  must_ok_any ((motive zero) base) ({okb} -> match okb {
+    FF => Ok FF
+    TT => bind_hyp T ({n} -> bind_hyp (motive n) ({ih} -> (motive (succ n)) (step n ih))) })
+}
+// Bool: ct : motive TT ; cf : motive FF  (no recursive arguments, so no bind_hyp)
+bool_coherence := {T, motive, cases} -> {
+  let ct = pair_fst cases
+  let cf = pair_snd cases
+  must_ok_any ((motive TT) ct) ({okt} -> match okt { FF => Ok FF; TT => (motive FF) cf })
+}
+nat_respond  := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
+bool_respond := {nmeta, frame} -> gated_inductive_respond bool_coherence nmeta frame
+
+// ================================================================
 // Bool / Nat / Pi
 // ================================================================
 bool_body := {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
-bool_meta := make_meta unit_witness trivial_functor inductive_respond none
+bool_meta := make_meta unit_witness trivial_functor bool_respond none
 Bool := wait (make_recognizer bool_body) bool_meta
 
 // nat_body recurses via the threaded `self` (the full Nat recognizer), so a
@@ -296,7 +336,7 @@ nat_body := {self, m, v} ->
     ({_} -> Ok FF)                                                // stem -> not a Nat
     ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) // succ r -> recurse via self
     v
-nat_meta := make_meta unit_witness trivial_functor inductive_respond none
+nat_meta := make_meta unit_witness trivial_functor nat_respond none
 Nat := wait (make_rec_recognizer nat_body) nat_meta
 
 // Pi: candidate must be a `checked` value whose stored domain matches A; then
