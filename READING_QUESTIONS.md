@@ -1,5 +1,9 @@
+Questions on things that might be interesting to do:
+ - How feasible would it be to unify functions with multiple inputs with records and allow both of them to have fields that are inferred from other fields?
+ - I'm thinking about the `arg.func` syntax and how intuitively it just means "call this `func` function on this argument `arg`" where in typical languages its the first argument or some kind of special argument (i.e. `impl`) in rust. But I'm wondering if this can just be turned into a general "inverse apply", that drops out `coproduct.product` as well. I imagine here then coproducts would have to be the things that hold the selector algorithm, not the product. Does this work? And if so, is it a more general solution? Does it meld nicely with inference as well? (i.e. I'm imagining doing name-resolution as a kind of inference perhaps?)
+ - Can wait-forms be represented as just plain sets (or perhaps we need a generalization of set that enables arbitrary waiting?), resulting in unification between neutrals and a lot of other things? Would walker then just be like "certain fields in this particular set are private and can't be accessed?". Thoughts on this?
+ - Reading through core.disp, I notice a lot of like re-creation of wait wrappers (i.e. checker_sig?), and requirements to like store sig in a separate term, which confuses me because shouldn't the term itself double as the signature? (Is there a reason it is this way? If not, could it be streamlined / made more elegant) 
+
 Smaller writing/naming questions:
- - There is a general AI-writing smell. I need to make a list of these.
- - "Kleisli-lifted" and mention of "Kleisli" everywhere is kinda obscure terminology. Maybe "monadic"? There's gotta be a more intuitive way to do this.
- - Ambient types and notation, some of these assume a lot of knowledge. Is this fine? (Is there a point to bringing them up early if they'll be defined more rigorously later and we can just say "these will be defined later, here's the rough intuition when they are initially introduced?)
- - "sig" is kinda bad shorthand, maybe just "tree" or "specific tree" or "form"?
+ - How much "AI smell" is there in the various documents and comments? How tedious/fluffed is it to read? Could we make a list?
+ - Can we investigate TODOs in the code and see what the resolution might be?
