@@ -64,9 +64,6 @@ is_return := {a} -> tree_eq (pair_fst a) "Return"
 // info-free Err (the verdict channel carries Ok TT / Ok FF).
 Ok := {v} -> inj "Ok" v
 Err := inj "Err" t
-// TODO: shift all uses of these over to non-boolean matches
-is_ok := {r} -> tree_eq (pair_fst r) "Ok"
-ok_value := {r} -> pair_snd r
 
 // this is CheckerResult-specific monadic bind, eventually this will be a generalized monadic bind where monad impl of CheckerResult is inferred automatically.
 bind := {r, k} -> match r { Ok v => k v; Err _ => r }
@@ -293,9 +290,9 @@ elim := {dispatcher, motive, cases, target} ->
 // neutral is typed `InvalidType` and rejected downstream.
 gated_inductive_respond := {coh, nmeta, frame} -> {
   let r = coh nmeta.stored_type frame.motive frame.cases
-  match (is_ok r) {
-    FF => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
-    TT => match (ok_value r) {
+  match r {
+    Err _ => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
+    Ok v => match v {
             FF => Extend InvalidType // cases do not inhabit the motive
             TT => match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType } } // coherent; police the motive
   }
@@ -544,9 +541,9 @@ let lookup_arm = fix ({self, variants, tag} ->
 Coproduct := {variants} -> wait (make_recognizer
   {meta, v} -> {
   let arm_r = lookup_arm meta.recognizer_params (pair_fst v)
-  match (is_ok arm_r) {
-    TT => (ok_value arm_r) (pair_snd v) // payload inhabits S_tag
-    FF => Ok FF // unknown tag
+  match arm_r {
+    Ok handler => handler (pair_snd v) // payload inhabits S_tag
+    Err _ => Ok FF // unknown tag
   }
 }
 ) (make_meta variants inductive_respond)
@@ -570,9 +567,9 @@ record_body := {meta, v} ->
 // spine with that field's declared type, read by name from the stored type.
 record_respond := {nmeta, frame} -> {
   let arm_r = lookup_arm (type_meta nmeta.stored_type).recognizer_params (pair_fst frame)
-  match (is_ok arm_r) {
-    TT => Extend (ok_value arm_r)
-    FF => Extend InvalidType
+  match arm_r {
+    Ok ty => Extend ty
+    Err _ => Extend InvalidType
   }
 }
 Record := {fields} -> wait (make_recognizer record_body) (make_meta fields record_respond)

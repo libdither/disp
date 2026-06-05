@@ -151,5 +151,5 @@ test param_apply (Intersection Nat ({_} -> Nat)) TT = Ok FF
 let hF = make_hyp False 0
 let stuckF = param_apply hF zero // inert_respond ignores the frame
 test is_neutral stuckF = TT // bare stuck neutral (Option A §7.5)
-test is_ok stuckF = FF // ...NOT Ok-wrapped
+test (tree_eq (pair_fst stuckF) "Ok") = FF // ...NOT Ok-wrapped
 test neutral_type stuckF = InvalidType // absorbing dead state

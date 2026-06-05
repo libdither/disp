@@ -41,7 +41,7 @@ let motive = {n} -> Bool
 let cases = { base := TT; step := ({pred, ih} -> ih) } // base TT : Bool ; step returns ih : Bool
 let stuck = param_apply hN { motive := motive; cases := cases }
 test is_neutral stuck = TT // bare stuck neutral (Option A)
-test is_ok stuck = FF // ...NOT Ok-wrapped
+test (tree_eq (pair_fst stuck) "Ok") = FF // ...NOT Ok-wrapped
 test neutral_type stuck = Bool // motive applied to the reconstructed self
 
 // elim drives the same: concrete target runs the dispatcher, neutral routes here

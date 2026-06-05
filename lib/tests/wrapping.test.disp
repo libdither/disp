@@ -71,10 +71,10 @@ test param_apply (Pi Nat ({n} -> Eq Nat (add n zero) n)) ({n} -> refl) = Ok FF
 let hF2 = make_hyp (Arrow Nat (Arrow Nat Nat)) 0
 let s1 = param_apply hF2 zero // stuck : Arrow Nat Nat
 let s2 = param_apply s1 zero // stuck : Nat  (second spine extension)
-test is_ok s1 = FF // bare (Option A)
+test (tree_eq (pair_fst s1) "Ok") = FF // bare (Option A)
 test is_neutral s1 = TT
 test neutral_type s1 = Arrow Nat Nat
-test is_ok s2 = FF // STILL bare after a 2nd extension (no Ok accumulation)
+test (tree_eq (pair_fst s2) "Ok") = FF // STILL bare after a 2nd extension (no Ok accumulation)
 test is_neutral s2 = TT
 test neutral_type s2 = Nat
 
