@@ -9,7 +9,6 @@ import { parseProgram } from "../src/compile.js"
 
 const FILES = [
   "lib/prelude.disp",
-  "lib/kernel/utils.disp",
   "lib/kernel/core.disp",
   "lib/std/list.disp",
   "lib/tests/prelude.test.disp",

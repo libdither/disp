@@ -28,8 +28,7 @@ Every component participating in checking, elaboration, or conversion must have 
 ### Library layout (`.disp` files in `lib/`)
 - `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix, tree_eq, nat_le, zero/succ).
 - `kernel/` — the two-Σ-op kernel center:
-  - `prelude.disp` — canonical entry point: `open`s `../prelude.disp` + `utils.disp` + `core.disp`. Files that build on the type system do `open use "../kernel/prelude.disp"`.
-  - `utils.disp` — the `type_meta` accessor, the `checker_sig` signature, `InvalidType`. (Action / CheckerResult and the neutral-meta record moved to `core.disp`, since they are built from the §2.6 cut.)
+  - `prelude.disp` — canonical entry point: `open`s `../prelude.disp` + `core.disp`. Files that build on the type system do `open use "../kernel/prelude.disp"`
   - `core.disp` — the entire kernel + library type system, built bottom-up on the substrate only:
     - **Σ-ops:** `hyp_reduce` (push a frame onto a neutral via the stored type's `respond`) and `bind_hyp` (mint a fresh hyp, run the body, `occurs` escape-check).
     - **Dispatcher:** `param_apply` = the in-language parametric walker (`walk`) with reader carve-outs (`ROOT_SIG`/`STORED_TYPE`/`I`/`tree_eq`) + Σ routing on `hyp_sig`/`bind_hyp_sig`.

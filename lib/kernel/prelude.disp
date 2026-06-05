@@ -1,7 +1,6 @@
 // Kernel entry point. `open use "../kernel/prelude.disp"` brings the full
-// surface: substrate combinators (../prelude.disp), kernel utils (utils.disp),
+// surface: substrate combinators (../prelude.disp).
 // and the two-Σ-op kernel + library types (core.disp).
 
 open use "../prelude.disp"
-open use "utils.disp"
 open use "core.disp"

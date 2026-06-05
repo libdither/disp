@@ -30,7 +30,7 @@ src/compile.ts     -- Bracket abstraction, elaborator, program driver
 src/run.ts         -- File runner
 
 lib/prelude.disp          -- Fundamental combinators
-lib/kernel/*.disp         -- Two-Σ-op kernel + library types (core.disp, utils.disp, prelude.disp)
+lib/kernel/*.disp         -- Two-Σ-op kernel + library types (core.disp, prelude.disp)
 lib/std/**/*.disp         -- Standard library modules
 lib/tests/**/*.test.disp  -- Object-language test suite
 test/                     -- Vitest harness + parser/runtime unit tests
