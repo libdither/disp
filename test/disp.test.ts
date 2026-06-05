@@ -39,7 +39,7 @@ describe("disp", () => {
       // trees may contain certified-neutral hypotheses that the scan
       // rejects. Re-enable once session 5 routes the elaborator through
       // kernel-internal checking that bypasses the public boundary.
-      const r = runFile(join(testsDir, file), { debugTypeCheck: false })
+      const r = runFile(join(testsDir, file))
       if (r.failed.length > 0) {
         // TODO: figure out how to return specific line in test file that failed (e.g. via spans)
         const msgs = r.failed.map(f => `[test ${f.i}] ${f.msg}`).join("\n")

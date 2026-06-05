@@ -10,12 +10,12 @@ import {
 } from "./tree.js"
 
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string }[] }
-interface RunOptions { onParseItem?: (item: ParseItemStats) => void; debugTypeCheck?: boolean }
+interface RunOptions { onParseItem?: (item: ParseItemStats) => void }
 
 export function runFile(path: string, options: RunOptions = {}): RunResult {
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
-  const decls = parseProgram(src, abs, { onItem: options.onParseItem, debugTypeCheck: options.debugTypeCheck })
+  const decls = parseProgram(src, abs, { onItem: options.onParseItem })
   const result: RunResult = { defs: 0, tests: 0, passed: 0, failed: [] }
   let testIdx = 0
   for (const d of decls) {

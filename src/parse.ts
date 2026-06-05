@@ -91,7 +91,7 @@ export type Expr =
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
   | { tag: "recValue"; fields: NamedField[]; members?: RecMember[]; trailing?: Expr }
-  | { tag: "use"; path: string }
+  | { tag: "use"; path: string; raw?: boolean }
   | { tag: "match"; cond: Expr; thenBody: Expr; elseBody: Expr }
 
 export type Param = { name: string | null; type: Expr | null }
@@ -192,6 +192,8 @@ const numP:    P<number>  = map(tokP(t => t.t === "num", "number"), t => (t as T
 const leafP:   P<Tok>     = tokP(t => t.t === "leaf", "leaf")
 const strP:    P<string>  = map(tokP(t => t.t === "str", "string literal"), t => (t as Tok & {v: string}).v)
 const arrowP:  P<Tok>     = alt(punctP("->"), punctP("→"))
+// `raw` modifier on `use` — not a reserved keyword, so it tokenizes as an id.
+const rawKwP:  P<Tok>     = tokP(t => t.t === "id" && t.v === "raw", "'raw'")
 
 function duplicateName(fields: { name: string }[]): string | null {
   const seen = new Set<string>()
@@ -291,7 +293,7 @@ const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
   lazy(() => matchP),
   lazy(() => arrayP),
   lazy(bracedP),
-  map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
+  map(seq(kwP("use"), optional(rawKwP), strP), ([, raw, path]): Expr => raw !== null ? { tag: "use", path, raw: true } : { tag: "use", path }),
   map(strP, (value): Expr => ({ tag: "str", value })),
   map(leafP, (): Expr => ({ tag: "leaf" })),
   map(numP, (value): Expr => ({ tag: "num", value })),

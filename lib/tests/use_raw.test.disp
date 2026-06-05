@@ -1,0 +1,11 @@
+// Smoke test: raw import of the kernel, then a normal re-import in that context.
+// Proves `use raw` loads values without annotation processing, and that the
+// checked re-import produces value-identical trees (the second `open` is a
+// no-op iff every name matches the raw one — the open conflict check enforces it).
+open use "../prelude.disp"
+open use raw "../kernel/core.disp"
+open use "../kernel/core.disp"
+
+// kernel names are in scope and usable
+test param_apply Type Nat = Ok TT
+test typecheck Type (Pi Nat ({_} -> Bool)) = Ok TT

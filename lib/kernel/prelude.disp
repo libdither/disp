@@ -3,4 +3,14 @@
 // and the two-Σ-op kernel + library types (core.disp).
 
 open use "../prelude.disp"
+
+// Bootstrap by deferred typechecking. `use raw` loads core's values WITHOUT
+// processing its annotations — a complete, unchecked snapshot of every kernel
+// name. The checked re-import then elaborates each binding's annotations in that
+// context, so once core carries its own kernel types, forward/mutual references
+// resolve against the raw layer (a file can't type-check against names it is
+// still defining otherwise). For today's unannotated core the two passes are
+// value-identical, and the `open` conflict-check enforces that consistency: the
+// second open is a no-op iff every checked value matches its raw counterpart.
+open use raw "core.disp"
 open use "core.disp"

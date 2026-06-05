@@ -9,12 +9,11 @@
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
-  Tree, LEAF, stem, fork, applyTree, treeEqual, prettyTree, force, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
-  SCOTT_TT, SCOTT_FF,
+  Tree, LEAF, stem, fork, applyTree, treeEqual, force, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
 } from "./tree.js"
 import {
   parseItems,
-  type Expr, type Param, type TypedField, type NamedField, type RecMember, type Tok,
+  type Expr, type RecMember,
 } from "./parse.js"
 
 // ──────────────────────── 5. Bracket abstraction ─────────────────────────
@@ -127,20 +126,6 @@ function cirToTree(e: Cir): Tree {
       return applyTree(cirToTree(e.f), cirToTree(e.x), APPLY_BUDGET)
     }
   }
-}
-
-// Build selector: \x0 x1 ... xn-1. xi (picks the i-th of n arguments)
-function buildSelector(n: number, i: number): Cir {
-  const names = Array.from({ length: n }, (_, j) => `__sel${j}`)
-  let body: Cir = { tag: "var", name: names[i] }
-  for (let j = n - 1; j >= 0; j--) {
-    body = { tag: "lam", x: names[j], body }
-  }
-  return body
-}
-
-function selectorTree(n: number, i: number): Tree {
-  return cirToTree(eliminateLams(buildSelector(n, i)))
 }
 
 // Scope entry: a compiled tree plus optional compile-time record metadata.
@@ -270,7 +255,7 @@ export interface CompileSinks {
 function exprToCir(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string) => ScopeEntry,
+  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
   sinks?: CompileSinks,
 ): Cir {
   const lookup = (name: string) => lookupEntry(name)?.tree
@@ -431,7 +416,9 @@ function exprToCir(
       // the cut/Record formers aren't in scope (e.g. files that don't open the
       // kernel — they carry no checkable annotations anyway). `open use` is
       // unaffected: it splices the export metadata, not this value.
-      const entry = resolveUse(e.path)
+      // `use raw "f"` skips the file's annotations (no `typ`); it falls through to
+      // the bare value record below since `entry.fieldTypes` are all null.
+      const entry = resolveUse(e.path, e.raw)
       const mk_record = lookupEntry("mk_record")?.tree
       const list_const = lookupEntry("list_const")?.tree
       const Record = lookupEntry("Record")?.tree
@@ -504,14 +491,14 @@ function exprToCir(
 function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string) => ScopeEntry,
+  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
 ): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldInnerFields?: (string[] | undefined)[]; fieldInnerTrees?: (Tree[] | undefined)[] } | undefined {
   if (e.tag === "var") {
     const entry = lookupEntry(e.name)
     return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes } : undefined
   }
   if (e.tag === "use") {
-    const entry = resolveUse(e.path) as any
+    const entry = resolveUse(e.path, e.raw) as any
     return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldInnerFields: entry.fieldInnerFields, fieldInnerTrees: entry.fieldInnerTrees } : undefined
   }
   // Application where the argument is a binder returning a recValue:
@@ -569,256 +556,72 @@ function resolveExprRecord(
 function compileExpr(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string) => ScopeEntry,
+  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
   sinks?: CompileSinks,
 ): Tree {
   return cirToTree(eliminateLams(exprToCir(e, lookupEntry, resolveUse, sinks)))
 }
 
-// ──────────── 5b. Tree-level abstraction + kernel query helpers ─────────
+// ──────────────────── 5b. Type construction ─────────────────────────────
 
-// abstractTree(h, body): given a tree `body` containing subtree `h`,
-// produce a tree F such that apply(F, v) = body[h := v].
-// Same algorithm as eliminateLams but on Tree with hash-cons identity for variable check.
-
-function containsTree(h: Tree, t: Tree): boolean {
-  if (treeEqual(h, t)) return true
-  t = force(t)   // a suspended application is its genuine reduct
-  if (t.tag === "stem") return containsTree(h, t.child)
-  if (t.tag === "fork") return containsTree(h, t.left) || containsTree(h, t.right)
-  return false   // leaf (or — impossible post-force — susp)
-}
-
-function abstractTree(h: Tree, body: Tree): Tree {
-  if (treeEqual(body, h)) return I_TREE
-  if (!containsTree(h, body)) return fork(LEAF, body) // K body
-  body = force(body)   // a suspended application is its genuine reduct
-  if (body.tag === "fork") {
-    const l = abstractTree(h, body.left)
-    const r = abstractTree(h, body.right)
-    // A normal-form fork is data, not necessarily an application that should
-    // reduce as left(right). Rebuild fork(l, r) as (leaf l) r.
-    const stemLeft = fork(stem(fork(LEAF, LEAF)), l) // S (K LEAF) l
-    return fork(stem(stemLeft), r) // S stemLeft r
-  }
-  if (body.tag === "stem") {
-    // Rebuild stem(x) as leaf x.
-    const inner = abstractTree(h, body.child)
-    return fork(stem(fork(LEAF, LEAF)), inner) // S (K LEAF) inner
-  }
-  return fork(LEAF, body) // K body (leaf case, h not present)
-}
-
-// Kernel tree helpers — tree-level pair operations.
-// pair = fork(l, r). pair_fst extracts left, pair_snd extracts right.
-// These mirror the Disp prelude's pair_fst/pair_snd but operate on Tree directly.
-
+// treePairFst(p): the left projection of a wait-form fork. A type is a
+// wait-form; its left projection is the constant former-signature. Used only to
+// recognise whether a binding's annotation IS the universe `Type`.
 function treePairFst(p: Tree): Tree | null {
   p = force(p)
   return p.tag === "fork" ? p.left : null
 }
-function treePairSnd(p: Tree): Tree | null {
-  p = force(p)
-  return p.tag === "fork" ? p.right : null
+
+// isUniverseTree(t, Type): does `t` carry the same former-signature as `Type`?
+// (signature = pair_fst, constant per former, independent of its parameters).
+function isUniverseTree(t: Tree, Type: Tree): boolean {
+  const ts = treePairFst(t), us = treePairFst(Type)
+  return ts !== null && us !== null && treeEqual(ts, us)
 }
 
-// type_meta(T) = pair_snd(pair_snd(T)) — extracts metadata from a wait-based type.
-function typeMetaTree(t: Tree): Tree | null {
-  const inner = treePairSnd(t)
-  return inner ? treePairSnd(inner) : null
+// binderToPi(e): desugar a type-position binder into explicit `Pi` applications.
+//   {n : A} -> B          ⟶  Pi A ({n} -> B)
+//   {a : A, b : B} -> C   ⟶  Pi A ({a} -> Pi B ({b} -> C))
+//   A -> B  (anonymous)   ⟶  Pi A ({_} -> B)
+// The codomain is an *untyped* binder ({n} -> …), so it compiles by ordinary
+// bracket abstraction — the dependent codomain `{n} -> Vec n` substitutes the
+// argument for `n`. Domains and codomains are recursively desugared. Non-binders
+// (Nat, `Eq Nat x y`, an explicit `Pi …` application) are returned unchanged:
+// their tree already IS the type. This is the whole of "type construction" — no
+// kernel hypotheses, no host-side check/infer. The desugar is annotation-free
+// and produces trees bit-identical to the explicit `Pi` form (the sugar and
+// `Pi A ({n} -> B)` are the same type); a binding's body is verified against its
+// type by the in-language kernel, never here.
+function binderToPi(e: Expr): Expr {
+  if (e.tag !== "binder") return e
+  const p = e.params[0]
+  if (!p.type) throw new Error("Pi domain requires a type annotation")
+  const dom = binderToPi(p.type)
+  const rest: Expr = e.params.length > 1
+    ? { tag: "binder", params: e.params.slice(1), body: e.body }
+    : e.body
+  const cod: Expr = { tag: "binder", params: [{ name: p.name, type: null }], body: binderToPi(rest) }
+  return { tag: "app", f: { tag: "app", f: { tag: "var", name: "Pi" }, x: dom }, x: cod }
 }
 
-// checker_sig(checker) = pair_fst(wait checker t) — signature of a type checker.
-// wait(checker)(t) reduces to a tree; pair_fst gives the constant signature.
-function checkerSig(checker: Tree): Tree {
-  const waitResult = applyTree(applyTree(checker, LEAF, APPLY_BUDGET), LEAF, APPLY_BUDGET)
-  const sig = treePairFst(waitResult)
-  if (!sig) throw new Error("checkerSig: expected fork from wait(checker)(t)")
-  return sig
+// compileType(e): compile an expression that denotes a TYPE to its tree. A
+// type-position binder becomes a `Pi` (via binderToPi); every other shape is an
+// ordinary expression whose tree IS the type. Falls back to plain compilation
+// when `Pi` isn't in scope (non-kernel files carry no checkable types — a binder
+// there is an ordinary value lambda).
+function compileType(
+  e: Expr,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
+): Tree {
+  const desugared = lookupEntry("Pi")?.tree ? binderToPi(e) : e
+  return compileExpr(desugared, lookupEntry, resolveUse)
 }
 
-// Identifier interning — canonical Scott byte-list trees for source
-// identifiers. Used by record-projection desugaring (r.x → proj r "x")
-// so the name "x" becomes a tree literal that can be compared via
-// tree_eq (= hash-cons identity) at compile time and runtime.
-//
-// Encoding: each codepoint is a succ-chain Nat; the list is built with
-// `string_cons` from right to left, terminated by `empty_string`. The
-// Map is a parse-time cache; hash-cons would dedupe anyway, but caching
-// avoids rebuilding succ-chains for repeated identifiers.
-const internedNames = new Map<string, Tree>()
-
-function internName(name: string, lookupEntry: (n: string) => ScopeEntry | undefined): Tree {
-  const cached = internedNames.get(name)
-  if (cached) return cached
-
-  const zeroTree = lookupEntry("zero")?.tree
-  const succTree = lookupEntry("succ")?.tree
-  const emptyStr = lookupEntry("empty_string")?.tree
-  const consStr  = lookupEntry("string_cons")?.tree
-  if (!zeroTree || !succTree || !emptyStr || !consStr)
-    throw new Error("internName: zero/succ/empty_string/string_cons must be in scope")
-
-  // Right-to-left fold: result = cons(byte_0, cons(byte_1, ... empty))
-  let result = emptyStr
-  for (let i = name.length - 1; i >= 0; i--) {
-    const code = name.codePointAt(i)!
-    let byteTree = zeroTree
-    for (let j = 0; j < code; j++) byteTree = applyTree(succTree, byteTree, APPLY_BUDGET)
-    result = applyTree(applyTree(consStr, byteTree, APPLY_BUDGET), result, APPLY_BUDGET)
-  }
-  internedNames.set(name, result)
-  return result
-}
-
-// Kernel query helpers. These are discovered from ordinary scope after
-// imports. A file that opens kernel/prelude.disp gets Pi, Type, make_hyp, Nat,
-// etc. without a separate keyword-level trust channel.
-
-interface KernelHelpers {
-  isUniverse(t: Tree): boolean
-  isPi(t: Tree): boolean
-  isNeutral(t: Tree): boolean
-  piDomain(t: Tree): Tree
-  piCodFn(t: Tree): Tree
-  makemake_hyp(type: Tree, id: Tree): Tree
-}
-
-function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined): KernelHelpers | null {
-  // New two-Σ-op kernel: a type is `wait (make_recognizer body) meta`. Type-
-  // formers are told apart by their recognizer SIGNATURE (`pair_fst T`, which is
-  // constant per former, independent of the type's parameters). The MetaShape
-  // meta is a §2.6 headered record (read by name through the cut), so the host
-  // recovers a type's `recognizer_params` and Pi's { dom, cod } fields by name,
-  // through the §2.6 cut (accTree) — the same string-interned record discipline
-  // the in-language metadata uses.
-  const Pi = lookupEntry("Pi")?.tree
-  const Type = lookupEntry("Type")?.tree
-  const make_hyp = lookupEntry("make_hyp")?.tree ?? lookupEntry("make_hyp")?.tree
-
-  if (!Pi && !Type && !make_hyp) return null
-
-  const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, APPLY_BUDGET), I_TREE, APPLY_BUDGET) : null
-  const piSig = samplePi ? treePairFst(samplePi) : null
-  const typeSig = Type ? treePairFst(Type) : null
-  const samplemake_hyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, APPLY_BUDGET), LEAF, APPLY_BUDGET) : null
-  const hypSig = samplemake_hyp ? treePairFst(samplemake_hyp) : null
-
-  function sigMatches(sig: Tree | null, t: Tree): boolean {
-    if (!sig) return false
-    const ts = treePairFst(t)
-    return ts !== null && treeEqual(ts, sig)
-  }
-  // recognizer_params = (type_meta T).recognizer_params, via the §2.6 cut. For
-  // Pi, params is the record { dom, cod }, whose fields are read by name.
-  function piParams(t: Tree): Tree {
-    const meta = typeMetaTree(t)
-    if (!meta) throw new Error("piParams: not a valid type tree")
-    return applyTree(meta, accTree("recognizer_params"), APPLY_BUDGET)
-  }
-
-  return {
-    isUniverse(t) { return sigMatches(typeSig, t) },
-    isPi(t) { return sigMatches(piSig, t) },
-    isNeutral(t) { return sigMatches(hypSig, t) },
-    piDomain(t) { return applyTree(piParams(t), accTree("dom"), APPLY_BUDGET) },
-    piCodFn(t) { return applyTree(piParams(t), accTree("cod"), APPLY_BUDGET) },
-    makemake_hyp(type, id) {
-      if (!make_hyp) throw new Error("makemake_hyp: make_hyp not in scope")
-      return applyTree(applyTree(make_hyp, type, APPLY_BUDGET), id, APPLY_BUDGET)
-    },
-  }
-}
-
-// compileType(e, ctx): compile an expression that denotes a TYPE to its tree.
-// This is type CONSTRUCTION, not value compilation: a binder `{n : A} -> B`
-// becomes `Pi A (codFn)` where `codFn` abstracts the body over a fresh A-hyp
-// (so dependent codomains like `{n : Nat} -> Vec n` work). Every other shape is
-// an ordinary expression whose tree IS the type (e.g. `Nat`, `Pi Nat (...)`,
-// `Eq Nat x y`) and compiles via plain bracket abstraction. No type *checking*
-// happens here — a binding's body is verified against its type in the in-language
-// kernel (`compileBinding`), so this function never needs `infer`/`check`.
-function compileType(e: Expr, ctx: ElabCtx): Tree {
-  const k = ctx.kernel
-  if (!k) return compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-
-  // Binder → Pi type construction.
-  if (e.tag === "binder") {
-    const Pi = ctx.lookupEntry("Pi")?.tree
-    if (!Pi) return compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-
-    // Process one param, recursing for the rest.
-    const param = e.params[0]
-    if (!param.type) throw new Error("Pi domain requires a type annotation")
-    const paramName = param.name ?? `_anon0`
-
-    const A_tree = compileType(param.type, ctx)
-
-    // Recurse for the inner type (remaining params + body) with the
-    // parameter available as a kernel hypothesis. The resulting codomain
-    // tree may mention that hypothesis; abstractTree turns it into the
-    // Pi codomain function.
-    const innerExpr: Expr = e.params.length > 1
-      ? { tag: "binder", params: e.params.slice(1), body: e.body }
-      : e.body
-
-    const id = fork(A_tree, fork(buildNat(ctx.scopeDepth), buildNat(0)))
-    const hyp = k.makemake_hyp(A_tree, id)
-    const prevLookup = ctx.lookupEntry
-    const hypEntry: ScopeEntry = { tree: hyp, type: A_tree }
-    ctx.lookupEntry = (name: string) => name === paramName ? hypEntry : prevLookup(name)
-    ctx.scopeDepth++
-    let B_tree: Tree
-    try {
-      B_tree = compileType(innerExpr, ctx)
-    } finally {
-      ctx.lookupEntry = prevLookup
-      ctx.scopeDepth--
-    }
-
-    const codFn = abstractTree(hyp, B_tree)
-    return applyTree(applyTree(Pi, A_tree, APPLY_BUDGET), codFn, APPLY_BUDGET)
-  }
-
-  // Non-binder: the expression's tree is the type, by plain bracket abstraction.
-  return compileExpr(e, ctx.lookupEntry, ctx.resolveUse)
-}
-
-// ─────────────────────── 5c. Elaborator (check/infer) ───────────────────
-
-// Scott-encoded Bool: TT = K K = fork(LEAF, K), FF = K (K I) per spec §4.5.
-// Imported from tree.ts so the host's tree_eq fast-path and the elaborator's
-// predicate validation agree on the canonical shapes.
-const TT = SCOTT_TT
-// Recognizers return an Ok-wrapped verdict — `Ok TT` is the §2.6 coproduct
-// `inj "Ok" TT` = fork(tag, TT), so success is "a fork whose payload is TT",
-// independent of the Ok tag's tree shape. A bare TT also counts (Scott-Bool
-// predicates). The elaborator's type-check accepts either.
-function verdictOk(ok: Tree): boolean {
-  return treeEqual(ok, TT) || (ok.tag === "fork" && treeEqual(ok.right, TT))
-}
-
-type ElabCtx = {
-  lookupEntry: (name: string) => ScopeEntry | undefined
-  resolveUse: (path: string) => ScopeEntry
-  kernel: KernelHelpers | null
-  scopeDepth: number
-  debugTypeCheck: boolean
-}
-
-// Helper to build a Nat tree from a number (for hypothesis identity).
-function buildNat(n: number): Tree {
-  // zero = LEAF, succ(n) = fork(fork(LEAF, LEAF), n) = stem(LEAF) applied to n
-  let result: Tree = LEAF
-  for (let i = 0; i < n; i++) {
-    result = fork(fork(LEAF, LEAF), result)
-  }
-  return result
-}
+// ─────────────────────── 5c. Value/identifier encoding ───────────────────
 
 // natLitTree(n): the lib's canonical Nat for `n` — zero = LEAF, succ(m) =
-// `t t m` = fork(LEAF, m). Matches `succ`/`zero` applied in scope (unlike
-// buildNat, which is only an opaque hypothesis-id encoding).
+// `t t m` = fork(LEAF, m). Matches `succ`/`zero` applied in scope.
 function natLitTree(n: number): Tree {
   let result: Tree = LEAF
   for (let i = 0; i < n; i++) result = fork(LEAF, result)
@@ -860,11 +663,6 @@ export type ParseItemStats = {
 
 export type ParseProgramOptions = {
   onItem?: (item: ParseItemStats) => void
-  debugTypeCheck?: boolean
-  // Warn (don't throw) when a typed binding's body does not verify against its
-  // declared type under the in-language checker. Off by default; verification is
-  // advisory while the checker's nested-application false-negatives are open.
-  warnUnverified?: boolean
 }
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
@@ -884,7 +682,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
   }
   const define = (name: string, entry: ScopeEntry) => stack[stack.length - 1].set(name, entry)
 
-  function resolveUse(path: string): ScopeEntry {
+  function resolveUse(path: string, raw = false): ScopeEntry {
     const abs = pathResolve(dirStack[dirStack.length - 1], path)
     if (loadedFiles.has(abs)) throw new Error(`use: circular dependency on ${abs}`)
     loadedFiles.add(abs)
@@ -901,7 +699,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     const hasFields = items.some(it => it.tag === "field")
     try {
       for (const it of items) {
-        runItem(it, fileDecls, !hasFields)
+        runItem(it, fileDecls, !hasFields, raw)
       }
     } finally {
       const fileScope = stack.pop()!
@@ -950,60 +748,38 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     })
   }
 
-  function getElabCtx(): ElabCtx {
-    return {
-      lookupEntry,
-      resolveUse,
-      kernel: makeKernelHelpers(lookupEntry),
-      scopeDepth: stack.length,
-      debugTypeCheck: options.debugTypeCheck ?? false,
-    }
-  }
-
-  function compileBinding(name: string, type: Expr | null | undefined, body: Expr, sinks?: CompileSinks): { tree: Tree; type?: Tree | null; fields?: string[]; fieldTrees?: Tree[] } {
+  function compileBinding(
+    name: string,
+    type: Expr | null | undefined,
+    body: Expr,
+    sinks?: CompileSinks,
+    raw = false,
+  ): { tree: Tree; type?: Tree | null; fields?: string[]; fieldTrees?: Tree[] } {
     let tree: Tree, inferredType: Tree | null = null
-    const ctx = getElabCtx()
+    const Type = lookupEntry("Type")?.tree
 
-    if (type != null && type.tag !== "recType" && ctx.kernel) {
-      // Typed binding with kernel available. Build the annotation's type tree by
-      // construction (compileType: binder → Pi, else plain compile), then split:
-      //   - annotation is the universe `Type` → the body itself denotes a TYPE,
-      //     compiled by construction (compileType).
-      //   - otherwise → the body is a VALUE; compile it by plain bracket
-      //     abstraction and verify it inhabits the type with the IN-LANGUAGE
-      //     kernel (`param_apply T body`), exactly as any user query does. There
-      //     is no host-side bidirectional `check`/`infer`: the metacircular
-      //     checker is the spec. Threading `sinks` also lets inline tests inside
-      //     typed value bodies flow through (the old check/infer path could not).
-      const type_tree = compileType(type, ctx)
-      if (ctx.kernel.isUniverse(type_tree)) {
-        tree = compileType(body, ctx)
-      } else {
-        tree = compileExpr(body, lookupEntry, resolveUse, sinks)
-        const param_apply = lookupEntry("param_apply")?.tree
-        if (param_apply) {
-          const verdict = applyTree(applyTree(param_apply, type_tree, APPLY_BUDGET), tree, APPLY_BUDGET)
-          // ADVISORY verification (for now). The in-language checker is the spec,
-          // but it currently has known FALSE-NEGATIVES: a body with a nested
-          // neutral application (`f (g x)`, or `a x` fed into an eliminator) is
-          // mis-reduced because the §7.5 `Ok`-wrapping invariant isn't fully
-          // reconciled, and a body that raw-decomposes its hypothesis (`pair_snd p`)
-          // trips the walker. Both yield a non-`Ok TT` verdict that is NOT a real
-          // type error. Worse, the bogus verdict is arbitrary (`Ok FF` vs `Err`),
-          // so we cannot reliably reject on `Ok FF`. Until the wrapping invariant
-          // is fixed, treat a failed verdict as "could not verify" and let the
-          // binding through — the SAME coverage the old `check`/`infer` gave (it
-          // skipped every non-Pi-codomain body). When nested-application checking
-          // lands, switch this back to a hard error.  `verdictOk` ⇔ `Ok TT`.
-          if (!verdictOk(verdict) && options.warnUnverified) {
-            const reason = (verdict.tag === "fork" && treeEqual(verdict.right, SCOTT_FF)) ? "Ok FF" : "Err"
-            console.warn(`[disp] could not verify '${name}' : declared type (verdict ${reason})`)
-          }
-        }
-      }
+    // `raw` (a `use raw "…"` import) drops annotation processing: the body is
+    // compiled as a value and the declared type is discarded. This breaks the
+    // bootstrap cycle — a file's own annotations can reference names the file is
+    // still defining — at the cost of the module's `typ`. A body compiles the
+    // SAME with or without its annotation, EXCEPT a `: Type := <arrow>` type-alias
+    // (e.g. `NatSet : Type := Nat -> Bool`), which a raw import yields as the
+    // unevaluated lambda rather than the `Pi`. The kernel has no such alias, so a
+    // raw kernel import matches a checked one value-for-value.
+    if (!raw && type != null && type.tag !== "recType" && (Type || lookupEntry("Pi")?.tree)) {
+      // Build the annotation's type tree (binder → Pi, else plain compile). If the
+      // annotation is the universe `Type`, the BODY itself denotes a type, so
+      // compile it the same way; otherwise the body is a value (plain bracket
+      // abstraction). Verifying the value inhabits the type is the in-language
+      // kernel's job (`param_apply T body`, via the module tuple at the use site),
+      // never the host's — there is no check/infer here.
+      const type_tree = compileType(type, lookupEntry, resolveUse)
+      tree = (Type && isUniverseTree(type_tree, Type))
+        ? compileType(body, lookupEntry, resolveUse)
+        : compileExpr(body, lookupEntry, resolveUse, sinks)
       inferredType = type_tree
     } else {
-      // Untyped or no kernel — use existing compileExpr path
+      // Untyped, raw, or no kernel — plain value compilation.
       tree = compileExpr(body, lookupEntry, resolveUse, sinks)
     }
 
@@ -1033,11 +809,11 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     }
   }
 
-  function runItem(it: RecMember, target: Decl[], isExport: boolean): void {
+  function runItem(it: RecMember, target: Decl[], isExport: boolean, raw = false): void {
     const sinks = makeSinks(target)
     switch (it.tag) {
       case "field": {
-        const result = compileBinding(it.name, it.type, it.value, sinks)
+        const result = compileBinding(it.name, it.type, it.value, sinks, raw)
         target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
         // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
@@ -1045,7 +821,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         return
       }
       case "let": {
-        const result = compileBinding(it.name, it.type, it.body, sinks)
+        const result = compileBinding(it.name, it.type, it.body, sinks, raw)
         if (isExport) {
           // Legacy mode: top-level let exports (for files not yet migrated)
           target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
