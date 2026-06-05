@@ -399,13 +399,13 @@ function exprToCir(
           throw new Error("recValue: 'trailing' is only valid when fields are empty")
         return exprToCir(e.trailing, fieldLookup, resolveUse, sinks)
       }
-      // §2.6 record: {x := a; y := b} → record_val ["x","y"] [list_const a, list_const b]
+      // §2.6 record: {x := a; y := b} → mk_record ["x","y"] [list_const a, list_const b]
       // — a `prod` over a string-interned name header, read by name through the
-      // cut. (record_val/list_const must be in scope, like `match` needs `prod`.)
-      const recordValEntry = lookupEntry("record_val")
+      // cut. (mk_record/list_const must be in scope, like `match` needs `prod`.)
+      const recordValEntry = lookupEntry("mk_record")
       const listConstEntry = lookupEntry("list_const")
       if (!recordValEntry?.tree || !listConstEntry?.tree)
-        throw new Error("record literal '{ := }': 'record_val' and 'list_const' must be in scope (open the kernel prelude)")
+        throw new Error("record literal '{ := }': 'mk_record' and 'list_const' must be in scope (open the kernel prelude)")
       const recordVal: Cir = { tag: "lit", t: recordValEntry.tree }
       const listConst: Cir = { tag: "lit", t: listConstEntry.tree }
       // names header: a closed cons-chain of string tags.
@@ -432,16 +432,16 @@ function exprToCir(
       // kernel — they carry no checkable annotations anyway). `open use` is
       // unaffected: it splices the export metadata, not this value.
       const entry = resolveUse(e.path)
-      const record_val = lookupEntry("record_val")?.tree
+      const mk_record = lookupEntry("mk_record")?.tree
       const list_const = lookupEntry("list_const")?.tree
       const Record = lookupEntry("Record")?.tree
-      if (!record_val || !list_const || !Record || !entry.fields || !entry.fieldTrees)
+      if (!mk_record || !list_const || !Record || !entry.fields || !entry.fieldTrees)
         return { tag: "lit", t: entry.tree! }
       const B = APPLY_BUDGET
       const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => fork(h, acc), LEAF)
       const constWrap = (v: Tree): Tree => applyTree(list_const, v, B)
       const mkRecord = (names: string[], vals: Tree[]): Tree =>
-        applyTree(applyTree(record_val, consList(names.map(stringToTree)), B), consList(vals.map(constWrap)), B)
+        applyTree(applyTree(mk_record, consList(names.map(stringToTree)), B), consList(vals.map(constWrap)), B)
       const names = entry.fields, vals = entry.fieldTrees, types = entry.fieldTypes ?? []
       const valuesRecord = mkRecord(names, vals)
       // typ = Record [ pair name type ]  over annotated exports (pair = fork(name,type))

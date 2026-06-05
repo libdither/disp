@@ -35,17 +35,16 @@ let index_of = fix ({self, l, name} ->
   })
 let path_at = fix ({self, i, payload} ->
   match (tree_eq i zero) { TT => pair_fst payload; FF => self (nat_pred i) (pair_snd payload) })
-// proj reads the table's name header for the position, then indexes the payload.
+// take a record and a string name, then resolve the path into the pair data and return item 
 proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
-// the cut: select the field named by c's tag, then feed it c's payload.
+// cut rule: runs when applying a product (record) to coproduct (enum), indexes product by name of codproduct, and runs the product field (which must be a function) with coproduct associated data. 
 annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
 prod := {P} -> wait annihilate P // a product: callable; field table is its meta
 annihilate_sig := checker_sig annihilate
 // A record value: fields are const-wrapped (ignore the payload). Projection is
-// the cut against a nullary accessor. A match is a product of raw handlers.
-record_val := {names, payload} -> prod (pair names payload)
-field := {r, name} -> r (acc name) // r.name
-match_co := {names, handlers, c} -> (prod (pair names handlers)) c
+mk_record := {names, payload} -> prod (pair names payload)
+field := {r, name} -> r (acc name) // r.name resolves to this
+// construct a product of handlers to construct a match statement
 
 // ================================================================
 // Action + CheckerResult: the kernel's two control coproducts, built with the
@@ -557,7 +556,7 @@ Ord := wait (make_rec_recognizer ord_body) (make_meta unit_witness inductive_res
 // ================================================================
 // Coproduct and Record types
 // (The value-level cut primitives — nil/cons/inj/acc/proj/annihilate/prod/
-//  record_val/field/match_co — are defined near the top of this file, since
+//  mk_record/field/mk_record — are defined near the top of this file, since
 //  MetaShape metadata is itself a §2.6 record built with them.)
 // ================================================================
 let lookup_arm = fix ({self, variants, tag} ->

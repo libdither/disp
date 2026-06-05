@@ -26,18 +26,18 @@ is_err_result := {r} -> tree_eq (pair_fst r) err_tag
 result_rec := {motive, on_ok, on_err, r} ->
   select_lazy
     ({_} -> r { motive := motive; cases := pair on_ok on_err })
-    ({_} -> match_co [ok_tag, err_tag] [on_ok, on_err] r)
+    ({_} -> mk_record [ok_tag, err_tag] [on_ok, on_err] r)
     (is_neutral r)
 
 // Concrete-only conveniences (no motive, so they do not lift to a hypothesis).
 result_map := {f, r} ->
-  match_co [ok_tag, err_tag] [{v} -> ok (f v), {e} -> err e] r
+  mk_record [ok_tag, err_tag] [{v} -> ok (f v), {e} -> err e] r
 
 result_map_err := {g, r} ->
-  match_co [ok_tag, err_tag] [{v} -> ok v, {e} -> err (g e)] r
+  mk_record [ok_tag, err_tag] [{v} -> ok v, {e} -> err (g e)] r
 
 result_and_then := {r, k} ->
-  match_co [ok_tag, err_tag] [{v} -> k v, {e} -> err e] r
+  mk_record [ok_tag, err_tag] [{v} -> k v, {e} -> err e] r
 
 result_unwrap_or := {default, r} ->
-  match_co [ok_tag, err_tag] [{v} -> v, {_} -> default] r
+  mk_record [ok_tag, err_tag] [{v} -> v, {_} -> default] r
