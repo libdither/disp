@@ -62,6 +62,7 @@ is_return := {a} -> tree_eq (pair_fst a) "Return"
 // info-free Err (the verdict channel carries Ok TT / Ok FF).
 Ok := {v} -> inj "Ok" v
 Err := inj "Err" t
+// TODO: shift all uses of these over to non-boolean matches
 is_ok := {r} -> tree_eq (pair_fst r) "Ok"
 ok_value := {r} -> pair_snd r
 
@@ -175,20 +176,13 @@ let w_stem = {a, x} -> {
 // kernel-op application `Ok (f x)` is single-wrapped (`Ok bare-stuck`) and
 // `param_apply` of a neutral-headed body returns the bare stuck reduct directly —
 // no residual `Ok` to strip. (The old `unwrap_routed` helper is therefore gone.)
-let w_s = {self, c, b, x} -> {
-  let cx = self c x
-  match (is_ok cx) {
-    TT => {
-      let bx = self b x
-      match (is_ok bx) { TT => self (ok_value cx) (ok_value bx); FF => Err }
-    }
-    FF => Err
-  }
-}
-let w_tfk = {self, b, l, r} -> {
-  let bl = self b l
-  match (is_ok bl) { TT => self (ok_value bl) r; FF => Err }
-}
+// TODO: investigate why when inlining this function directly into w_fork it causs OOM.
+let w_s = {self, c, b, x} ->
+  bind (self c x) ({cx} -> bind (self b x) ({bx} -> self cx bx))
+
+let w_tfk = {self, b, l, r} -> 
+  bind (self b l) ({bl} -> self bl r)
+
 let w_fork = {self, a, b, x} ->
   triage
     (Ok b)
@@ -295,6 +289,20 @@ gated_inductive_respond := {coh, nmeta, frame} -> {
             TT => Extend (frame.motive (reconstruct_self nmeta)) } // coherent: same as the ungated respond
   }
 }
+
+// TODO: Investigate whether Bool/Nat/Ord can be defined in terms of coproduct.
+Bool := wait (make_recognizer
+  {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
+) (make_meta unit_witness (
+  {nmeta, frame} -> gated_inductive_respond (
+    {T, motive, cases} -> {
+      let ct = cases.ct
+      let cf = cases.cf
+      bind ((motive TT) ct) ({okt} -> match okt { FF => Ok FF; TT => (motive FF) cf })
+    }
+  ) nmeta frame
+))
+
 // Nat: base : motive zero ; step : Π n. motive n -> motive (succ n)
 nat_coherence := {T, motive, cases} -> {
   let base = cases.base
@@ -303,32 +311,19 @@ nat_coherence := {T, motive, cases} -> {
     FF => Ok FF
     TT => bind_hyp T ({n} -> bind_hyp (motive n) ({ih} -> (motive (succ n)) (step n ih))) })
 }
-// Bool: ct : motive TT ; cf : motive FF  (no recursive arguments, so no bind_hyp)
-bool_coherence := {T, motive, cases} -> {
-  let ct = cases.ct
-  let cf = cases.cf
-  bind ((motive TT) ct) ({okt} -> match okt { FF => Ok FF; TT => (motive FF) cf })
-}
 nat_respond  := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
-bool_respond := {nmeta, frame} -> gated_inductive_respond bool_coherence nmeta frame
 
-// ================================================================
-// Bool / Nat / Pi
-// ================================================================
-bool_body := {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
-bool_meta := make_meta unit_witness bool_respond
-Bool := wait (make_recognizer bool_body) bool_meta
 
 // nat_body recurses via the threaded `self` (the full Nat recognizer), so a
 // neutral predecessor in `succ hyp` is recognised by the H-rule, not triaged (§A).
-nat_body := {self, m, v} ->
+Nat := wait (make_rec_recognizer
+  {self, m, v} ->
   triage
     (Ok TT) // zero
     ({_} -> Ok FF) // stem -> not a Nat
     ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) // succ r -> recurse via self
     v
-nat_meta := make_meta unit_witness nat_respond
-Nat := wait (make_rec_recognizer nat_body) nat_meta
+) (make_meta unit_witness nat_respond)
 
 // runs pi-type check for a given pi type on given function-value v
 pi_body := {meta, v} -> {
@@ -454,63 +449,68 @@ eq_subst := {motive, p, base} -> eq_J motive base p
 eq_sym := {A, x, y, p} -> eq_J ({y_} -> Eq A y_ x) refl p
 eq_cong := {A, B, f, x, y, p} -> eq_J ({y_} -> Eq B (f x) (f y_)) refl p
 
-sigma_body := {meta, v} -> {
-  let params = meta.recognizer_params
-  let A = params.dom
-  let B = params.fam
-  bind (A (pair_fst v)) ({va} ->
-    match va { FF => Ok FF; TT => (B (pair_fst v)) (pair_snd v) }) // b inhabits (B a)
-}
 // Projection-as-application for Sigma neutrals (§12.1): a Sigma-hyp applied to a
 // projection selector extends the spine with the component's type. fst -> A;
 // snd -> B at the fst-projection (dependency preserved). Runs raw in hyp_reduce.
 walker_pair_fst := t (t t) t
 walker_pair_snd := t (t t) (t t)
-sigma_respond := {nmeta, frame} -> {
-  let params = (type_meta nmeta.stored_type).recognizer_params
-  let A = params.dom
-  let B = params.fam
-  match (tree_eq frame walker_pair_fst) {
-    TT => Extend A
-    FF => (match (tree_eq frame walker_pair_snd) {
-      TT => Extend (B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst)))
-      FF => Extend InvalidType
-    })
+Sigma := {A, B} -> wait (make_recognizer
+  {meta, v} -> {
+    let params = meta.recognizer_params
+    let A = params.dom
+    let B = params.fam
+    bind (A (pair_fst v)) ({va} ->
+      match va { FF => Ok FF; TT => (B (pair_fst v)) (pair_snd v) }) // b inhabits (B a)
   }
-}
-Sigma := {A, B} -> wait (make_recognizer sigma_body) (make_meta { dom := A; fam := B } sigma_respond)
+) (make_meta { dom := A; fam := B }
+  {nmeta, frame} -> {
+    let params = (type_meta nmeta.stored_type).recognizer_params
+    let A = params.dom
+    let B = params.fam
+    match (tree_eq frame walker_pair_fst) {
+      TT => Extend A
+      FF => (match (tree_eq frame walker_pair_snd) {
+        TT => Extend (B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst)))
+        FF => Extend InvalidType
+      })
+    }
+  }
+)
 
-refinement_body := {meta, v} -> {
-  let params = meta.recognizer_params
-  let A = params.base
-  let P = params.pred
-  bind (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) }) // P is a bare-Bool predicate
-}
-Refinement := {A, P} -> wait (make_recognizer refinement_body) (make_meta { base := A; pred := P } inert_respond)
+Refinement := {A, P} -> wait (make_recognizer 
+  {meta, v} -> {
+    let params = meta.recognizer_params
+    let A = params.base
+    let P = params.pred
+    bind (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) }) // P is a bare-Bool predicate
+  }
+) (make_meta { base := A; pred := P } inert_respond)
 
 // Intersection A P: v inhabits iff (P hyp) v holds for a fresh A-hyp — like Pi
 // but P is applied to the hypothesis and checked against the SAME v.
-intersection_body := {meta, v} -> {
-  let params = meta.recognizer_params
-  let A = params.base
-  let P = params.pred
-  bind_hyp A ({hyp} -> (P hyp) v)
-}
-Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta { base := A; pred := P } inert_respond)
+Intersection := {A, P} -> wait (make_recognizer
+  {meta, v} -> {
+    let params = meta.recognizer_params
+    let A = params.base
+    let P = params.pred
+    bind_hyp A ({hyp} -> (P hyp) v)
+  }
+) (make_meta { base := A; pred := P } inert_respond)
 
 zero_ord := t
 omega_plus := {a, b} -> t (t a) b // fork(stem a, b)
 // ord_body recurses via the threaded `self` into both child ordinals, so neutral
 // children are recognised by the H-rule rather than triaged (§A).
-ord_body := {self, m, v} ->
-  triage
-    (Ok TT) // zero_ord
-    ({_} -> Ok FF) // stem -> not an ord
-    ({l, r} -> match (is_stem l) { // omega_plus a b = fork(stem a, b)
-       FF => Ok FF
-       TT => bind (self (stem_child l)) ({oka} -> match oka { FF => Ok FF; TT => self r }) })
-    v
-Ord := wait (make_rec_recognizer ord_body) (make_meta unit_witness inductive_respond)
+Ord := wait (make_rec_recognizer
+  {self, m, v} ->
+    triage
+      (Ok TT) // zero_ord
+      ({_} -> Ok FF) // stem -> not an ord
+      ({l, r} -> match (is_stem l) { // omega_plus a b = fork(stem a, b)
+        FF => Ok FF
+        TT => bind (self (stem_child l)) ({oka} -> match oka { FF => Ok FF; TT => self r }) })
+      v
+) (make_meta unit_witness inductive_respond)
 
 // ================================================================
 // Coproduct and Record types
@@ -527,14 +527,15 @@ let lookup_arm = fix ({self, variants, tag} ->
     FF => Err
   })
 // Coproduct [(Vi, Si)]: v = inj tag pay inhabits iff tag is some Vi and pay : S_tag.
-coproduct_body := {meta, v} -> {
+Coproduct := {variants} -> wait (make_recognizer
+  {meta, v} -> {
   let arm_r = lookup_arm meta.recognizer_params (pair_fst v)
   match (is_ok arm_r) {
     TT => (ok_value arm_r) (pair_snd v) // payload inhabits S_tag
     FF => Ok FF // unknown tag
   }
 }
-Coproduct := {variants} -> wait (make_recognizer coproduct_body) (make_meta variants inductive_respond)
+) (make_meta variants inductive_respond)
 
 // Record [(Vi, Ti)]: v is a product whose every named field inhabits its type.
 let record_check = fix ({self, fields, v} ->

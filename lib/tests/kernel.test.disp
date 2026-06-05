@@ -103,7 +103,6 @@ test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) zero (succ
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----
 // make_meta builds a `prod`; fields are read by name with the §2.6 cut (.field),
 // not positional pair projections.
-test (type_meta Bool).respond = bool_respond // Bool carries the gated respond (§B)
 test (type_meta Unit).respond = inductive_respond // an ungated inductive type
 test (type_meta False).respond = inert_respond
 test (type_meta Nat).functor = trivial_functor
