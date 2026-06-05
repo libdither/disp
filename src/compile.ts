@@ -209,7 +209,7 @@ function exprMentions(e: Expr, name: string): boolean {
       }
       return false
     }
-    case "match":
+    case "if":
       return exprMentions(e.cond, name) || exprMentions(e.thenBody, name) || exprMentions(e.elseBody, name)
   }
 }
@@ -222,13 +222,13 @@ function peelApp(e: Expr): { head: Expr; args: Expr[] } {
   return { head: cur, args }
 }
 
-// Rewrite `select_lazy ({_} -> A) ({_} -> B) cond` → `match cond { TT => A; FF => B }`
+// Rewrite `select_lazy ({_} -> A) ({_} -> B) cond` → `if cond then A else B`
 // when both thunks have form `{_} -> body` (or `{x} -> body` with x unused).
 // This avoids the cirToTree eager-K-body evaluation that fires on self-
-// referential select_lazy uses (CLAUDE.md "Compiler workarounds"). The
-// match-style desugaring (see "match" case below) wraps each arm in a
-// closure over its free vars, side-stepping the K(body) construction whose
-// body would otherwise be reduced eagerly at compile time.
+// referential select_lazy uses (CLAUDE.md "Compiler workarounds"). The `if`
+// desugaring (see "if" case below) wraps each branch in a closure over its
+// free vars, side-stepping the K(body) construction whose body would
+// otherwise be reduced eagerly at compile time.
 //
 // Trailing args (beyond the third) are passed through: the prelude
 // select_lazy supports select-then-apply, and so does match's desugar.
@@ -249,7 +249,7 @@ function tryRewriteSelectLazy(
   const elseBody = asUnusedParamThunk(args[1])
   if (thenBody === null || elseBody === null) return null
   const cond = args[2]
-  let rewritten: Expr = { tag: "match", cond, thenBody, elseBody }
+  let rewritten: Expr = { tag: "if", cond, thenBody, elseBody }
   // Re-apply any trailing args (select-then-apply).
   for (let i = 3; i < args.length; i++) {
     rewritten = { tag: "app", f: rewritten, x: args[i] }
@@ -294,7 +294,7 @@ function exprToCir(
     case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
     case "app": {
       // S2: rewrite `select_lazy (\_ -> A) (\_ -> B) cond [args...]` to
-      // `match cond { TT => A; FF => B } [args...]` so the recursive arm
+      // `if cond then A else B [args...]` so the recursive branch
       // bodies don't hit cirToTree's eager K-body reduction. See
       // tryRewriteSelectLazy for details.
       const rewritten = tryRewriteSelectLazy(e, lookupEntry)
@@ -466,15 +466,18 @@ function exprToCir(
       const target = exprToCir(e.target, lookupEntry, resolveUse, sinks)
       return cap(target, { tag: "lit", t: accTree(e.field) })
     }
-    case "match": {
-      // Desugar to closed-branch select-then-apply.
-      // `match cond { TT => e1; FF => e2 }` becomes
-      // `select ({fvs...} -> e1) ({fvs...} -> e2) cond fv1 fv2 ... fvn`
-      // where fvs is the union of free vars across both arms (only names
-      // that aren't already closed top-level lits).
-      const selectEntry = lookupEntry("select")
-      if (!selectEntry?.tree)
-        throw new Error("match: 'select' must be in scope (import prelude)")
+    case "if": {
+      // Desugar to closed-branch select-then-apply over `cond` (prelude):
+      // `if c then e1 else e2` becomes
+      // `cond c ({fvs...} -> e1) ({fvs...} -> e2) fv1 fv2 ... fvn`
+      // where fvs is the union of free vars across both branches (only names
+      // that aren't already closed top-level lits). Wrapping each branch in a
+      // closure over its free vars defers evaluation (only the taken branch is
+      // forced) AND keeps recursive bodies out of cirToTree's eager K-body
+      // reduction (see tryRewriteSelectLazy / CLAUDE.md compiler workarounds).
+      const condEntry = lookupEntry("cond")
+      if (!condEntry?.tree)
+        throw new Error("if: 'cond' must be in scope (import prelude)")
 
       const condCir = exprToCir(e.cond, lookupEntry, resolveUse, sinks)
       const thenCir = exprToCir(e.thenBody, lookupEntry, resolveUse, sinks)
@@ -490,10 +493,12 @@ function exprToCir(
         for (let i = fvs.length - 1; i >= 0; i--) b = { tag: "lam", x: fvs[i], body: b }
         return b
       }
-      const branchTT = wrap(thenCir)
-      const branchFF = wrap(elseCir)
+      const branchThen = wrap(thenCir)
+      const branchElse = wrap(elseCir)
 
-      let out: Cir = cap(cap(cap({ tag: "lit", t: selectEntry.tree }, branchTT), branchFF), condCir)
+      // cond c branchThen branchElse fv1 ... fvn — the Scott Bool picks a branch
+      // closure, the trailing fvs re-supply the free vars it abstracted over.
+      let out: Cir = cap(cap(cap({ tag: "lit", t: condEntry.tree }, condCir), branchThen), branchElse)
       for (const v of fvs) out = cap(out, { tag: "var", name: v })
       return out
     }

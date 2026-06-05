@@ -623,7 +623,7 @@ describe("block expressions", () => {
 // ─────────────────────────── match ──────────────────────────────────────
 
 const match = (cond: Expr, thenBody: Expr, elseBody: Expr): Expr =>
-  ({ tag: "match", cond, thenBody, elseBody })
+  ({ tag: "if", cond, thenBody, elseBody })
 
 describe("match expression", () => {
   it("parses basic match with TT and FF arms", () => {

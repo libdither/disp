@@ -19,7 +19,7 @@ export type Tok =
   | { t: "nl" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["let", "test", "use", "open", "match"])
+const KEYWORDS = new Set(["let", "test", "use", "open", "match", "if", "then", "else"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
 const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]"] as const
 const IDENT_HEAD = /[A-Za-z_]/
@@ -92,7 +92,11 @@ export type Expr =
   | { tag: "recType"; fields: TypedField[] }
   | { tag: "recValue"; fields: NamedField[]; members?: RecMember[]; trailing?: Expr }
   | { tag: "use"; path: string }
-  | { tag: "match"; cond: Expr; thenBody: Expr; elseBody: Expr }
+  // `if c then a else b` — the boolean conditional. Desugars to `cond` (a
+  // select-then-apply over the Scott Bool, closure-wrapped per arm). The old
+  // `match c { TT => a; FF => b }` boolean-match surface was removed in favour
+  // of this; coproduct `match` (the §2.6 cut) is a separate, parser-level desugar.
+  | { tag: "if"; cond: Expr; thenBody: Expr; elseBody: Expr }
 
 export type Param = { name: string | null; type: Expr | null }
 export type TypedField = { name: string; type: Expr | null }
@@ -281,14 +285,16 @@ const withProj = (base: P<Expr>): P<Expr> => (ts, i) => {
   return ok(result, pos)
 }
 
-// simple/lineSimple differ only in which braced parser they use.
-const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
+// simple/lineSimple differ only in which braced parser and which `if` atom
+// they use (multi-line vs newline-terminated bodies — see ifP / lineIfP).
+const makeSimple = (bracedP: () => P<Expr>, ifAtom: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
   // Parenthesized: ( expr ) or ( expr : expr )
   map(
     seq(punctP("("), skipNl, lazy(() => expr), nl(optional(seq(punctP(":"), skipNl, lazy(() => expr)))), nl(punctP(")"))),
     ([, , e, ann]) => ann ? { tag: "ann", expr: e, type: ann[2] } : e,
   ),
   lazy(() => matchP),
+  lazy(ifAtom),
   lazy(() => arrayP),
   lazy(bracedP),
   map(seq(kwP("use"), strP), ([, path]): Expr => ({ tag: "use", path })),
@@ -298,7 +304,7 @@ const makeSimple = (bracedP: () => P<Expr>): P<Expr> => lazy(() => alt<Expr>(
   holeP,
   map(idP, (name): Expr => ({ tag: "var", name })),
 ))
-const simple: P<Expr> = makeSimple(() => braced)
+const simple: P<Expr> = makeSimple(() => braced, () => ifP)
 
 // Check if position starts a field definition (IDENT ":=" or IDENT ":" ... ":=").
 // Used to prevent atoms from consuming field starts after a newline.
@@ -356,7 +362,7 @@ const app: P<Expr> = map(
 // In line mode, newlines terminate expressions. Braces still group freely.
 // This prevents `let x = a\nb` from parsing `a b` as one expression.
 
-const lineSimple: P<Expr> = makeSimple(() => lineBraced)
+const lineSimple: P<Expr> = makeSimple(() => lineBraced, () => lineIfP)
 
 const lineAtom: P<Expr> = withProj((ts, i) => {
   if (ts[i].t === "nl") return err(`unexpected newline`, i)
@@ -511,8 +517,11 @@ const matchP: P<Expr> = (ts, i) => {
   const isBool = arms.length === 2 && !arms.some(a => a.binders.length > 0)
     && arms.some(a => a.pat === "TT") && arms.some(a => a.pat === "FF")
   if (isBool) {
+    // BRIDGE (transitional): the boolean-match surface is being retired in favour
+    // of `if c then a else b`; it still parses to the same `if` node during the
+    // migration. Removed (errors) once all call sites are converted.
     const tt = arms.find(a => a.pat === "TT")!, ff = arms.find(a => a.pat === "FF")!
-    return ok({ tag: "match" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
+    return ok({ tag: "if" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
   }
   const named = arms.filter(a => a.pat !== "_")
   const wildcard = arms.find(a => a.pat === "_")
@@ -524,6 +533,32 @@ const matchP: P<Expr> = (ts, i) => {
   const prodTable: Expr = { tag: "app", f: { tag: "var", name: "prod" }, x: table }
   return ok({ tag: "app", f: prodTable, x: cond }, r.pos)
 }
+
+// `if c then a else b` — the boolean conditional (desugars to `cond` in
+// compile.ts). The cond is an app chain bounded by the `then` keyword; `then`
+// and `else` (keywords, never atoms) bound the first two parts. The else body's
+// trailing boundary is mode-sensitive, so `if` comes in two flavours like
+// simple/lineSimple:
+//   ifP     (multi-line): bodies use matchExpr — span newlines but stop at the
+//           enclosing boundary (closing punct, next field, or next match arm).
+//           Reached via `simple`, including inside match arms, so a nested
+//           `Ok v => if … else …` stops at the next arm. `else if` chains and
+//           nested `if`s fall out for free (the else body re-enters ifP).
+//   lineIfP (line mode): bodies use lineApp/lineExpr — newline-terminated, so
+//           `let r = if x then a else b` ends at the line, leaving the block's
+//           trailing expression untouched. Reached via `lineSimple`.
+const makeIf = (condP: () => P<Expr>, bodyP: () => P<Expr>): P<Expr> => (ts, i) => {
+  const r = seq(
+    kwP("if"), skipNl, lazy(condP),
+    nl(kwP("then")), skipNl, lazy(bodyP),
+    nl(kwP("else")), skipNl, lazy(bodyP),
+  )(ts, i)
+  if (!r.ok) return r
+  const [, , cond, , , thenBody, , , elseBody] = r.v
+  return ok({ tag: "if" as const, cond, thenBody, elseBody }, r.pos)
+}
+const ifP: P<Expr> = makeIf(() => app, () => matchExpr)
+const lineIfP: P<Expr> = makeIf(() => lineApp, () => lineExpr)
 
 // Build the leaf-based cons-chain `t e1 (t e2 (... t))` — cons = `t a b` (fork),
 // nil = leaf — matching the library's cons/nil (§2.6 arrays).
