@@ -302,7 +302,9 @@ gated_inductive_respond := {coh, nmeta, frame} -> {
 }
 
 // TODO: Investigate whether Bool/Nat/Ord can be defined in terms of coproduct.
-Bool := wait (make_recognizer
+// Annotated `: Type` — `Type` is defined ~90 lines below, so this is a FORWARD
+// reference resolved against the `use raw` layer (the deferred-typecheck bootstrap).
+Bool : Type := wait (make_recognizer
   {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
 ) (make_meta unit_witness (
   {nmeta, frame} -> gated_inductive_respond (
@@ -330,7 +332,7 @@ nat_respond  := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta fr
 
 // nat_body recurses via the threaded `self` (the full Nat recognizer), so a
 // neutral predecessor in `succ hyp` is recognised by the H-rule, not triaged (§A).
-Nat := wait (make_rec_recognizer
+Nat : Type := wait (make_rec_recognizer
   {self, m, v} ->
   triage
     (Ok TT) // zero
@@ -360,8 +362,12 @@ pi_body := {meta, v} -> {
 }
 pi_respond := {nmeta, frame} -> Extend ((type_meta (nmeta.stored_type)).recognizer_params.cod frame)
 pi_meta_for := {A, B} -> make_meta { dom := A; cod := B } pi_respond
-Pi := {A, B} -> wait (make_recognizer pi_body) (pi_meta_for A B)
-Arrow := {A, B} -> Pi A ({_} -> B)
+// `Pi : (A : Type) -> (A -> Type) -> Type` — the dependent, SELF-referential type
+// of the Pi former (its annotation mentions Pi, via the `->` sugar and the raw
+// layer). The hardest stress on the deferred-typecheck path.
+Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer pi_body) (pi_meta_for A B)
+// `Arrow : Type -> Type -> Type` — forward ref to `Type` via the `use raw` layer.
+Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 
 // ================================================================
 // Type universe + the predicate-side H-rule (unlocks polymorphic Pi)
@@ -390,7 +396,9 @@ type_body := {m, v} ->
     TT => Ok (has_metashape_layout (type_meta v))
   }
 type_self_meta := make_meta unit_witness type_predicate_h_rule
-Type := wait (make_recognizer type_body) type_self_meta
+// `Type : Type` — the universe is its own type (§ Type:Type). Self-reference on
+// the same binding: the annotation resolves to the `use raw` Type (value-identical).
+Type : Type := wait (make_recognizer type_body) type_self_meta
 
 // ================================================================
 // Inductive recursors (concrete dispatcher + library elim)
@@ -435,14 +443,14 @@ eq_J := {motive, base, proof} -> elim
 // First-order library types: Unit, False, String, Eq, Sigma, Refinement, Ord
 // ================================================================
 unit_val := t t t
-Unit := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
+Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
 false_body := {m, v} -> Ok FF
-False := wait (make_recognizer false_body) (make_meta unit_witness inert_respond)
-Not := {P} -> Pi P ({_} -> False)
+False : Type := wait (make_recognizer false_body) (make_meta unit_witness inert_respond)
+Not : Type -> Type := {P} -> Pi P ({_} -> False)
 
 string_body := {m, v} -> Ok TT
-String := wait (make_recognizer string_body) (make_meta unit_witness inert_respond)
+String : Type := wait (make_recognizer string_body) (make_meta unit_witness inert_respond)
 
 refl := t
 eq_body := {meta, v} -> {
