@@ -4,7 +4,7 @@
 // skipped; now it's compiled and registered as a real Test decl.
 
 open use "../prelude.disp"
-open use "../kernel/prelude.disp"   // record values { := } compile to the §2.6 cut (record_val)
+open use "../kernel/prelude.disp" // record values { := } compile to the §2.6 cut (record_val)
 
 // ================================================================
 // Inline tests in a block-with-trailing-expression

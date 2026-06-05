@@ -38,7 +38,7 @@ test param_apply Nat hB = Ok FF
 // The respond now gates the cases against the motive (§B), so the cases must be
 // COHERENT: with motive Bool, base : Bool and step : Π n. Bool -> Bool.
 let motive = {n} -> Bool
-let cases = { base := TT; step := ({pred, ih} -> ih) }    // base TT : Bool ; step returns ih : Bool
+let cases = { base := TT; step := ({pred, ih} -> ih) } // base TT : Bool ; step returns ih : Bool
 let stuck = param_apply hN { motive := motive; cases := cases }
 test is_neutral stuck = TT // bare stuck neutral (Option A)
 test is_ok stuck = FF // ...NOT Ok-wrapped
@@ -82,7 +82,7 @@ let honest = {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y
 test param_apply (Pi Nat ({_} -> Nat)) lying  = Ok FF // incoherent cases -> rejected
 test param_apply (Pi Nat ({_} -> Nat)) lying2 = Ok FF // step lie also caught
 test param_apply (Pi Nat ({_} -> Nat)) honest = Ok TT // coherent -> accepted
-test honest (succ (succ zero)) = succ (succ zero)                    // value-transparent on concrete targets
+test honest (succ (succ zero)) = succ (succ zero) // value-transparent on concrete targets
 
 // adversarial: a USER's OWN recursor (own dispatcher, via elim) is gated identically,
 // because on a neutral target elim applies the neutral -> the type's respond -> gate.
