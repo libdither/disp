@@ -517,11 +517,10 @@ const matchP: P<Expr> = (ts, i) => {
   const isBool = arms.length === 2 && !arms.some(a => a.binders.length > 0)
     && arms.some(a => a.pat === "TT") && arms.some(a => a.pat === "FF")
   if (isBool) {
-    // BRIDGE (transitional): the boolean-match surface is being retired in favour
-    // of `if c then a else b`; it still parses to the same `if` node during the
-    // migration. Removed (errors) once all call sites are converted.
-    const tt = arms.find(a => a.pat === "TT")!, ff = arms.find(a => a.pat === "FF")!
-    return ok({ tag: "if" as const, cond, thenBody: tt.body, elseBody: ff.body }, r.pos)
+    // Boolean match was removed in favour of `if c then a else b` (which desugars
+    // to the prelude `cond`). `match` is now exclusively the §2.6 coproduct cut.
+    // Report at r.pos (past the arms) so this beats the generic idP error in `alt`.
+    return err(`boolean 'match c { TT => …; FF => … }' was removed — use 'if c then … else …'`, r.pos)
   }
   const named = arms.filter(a => a.pat !== "_")
   const wildcard = arms.find(a => a.pat === "_")

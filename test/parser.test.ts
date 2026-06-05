@@ -620,81 +620,67 @@ describe("block expressions", () => {
   })
 })
 
-// ─────────────────────────── match ──────────────────────────────────────
+// ─────────────────────────── if / then / else ────────────────────────────
 
-const match = (cond: Expr, thenBody: Expr, elseBody: Expr): Expr =>
+const mkIf = (cond: Expr, thenBody: Expr, elseBody: Expr): Expr =>
   ({ tag: "if", cond, thenBody, elseBody })
 
-describe("match expression", () => {
-  it("parses basic match with TT and FF arms", () => {
-    const src = `match c { TT => a; FF => b }`
-    expect(parseExpr(src)).toEqual(match(v("c"), v("a"), v("b")))
+describe("if expression", () => {
+  it("parses a basic if/then/else", () => {
+    expect(parseExpr(`if c then a else b`)).toEqual(mkIf(v("c"), v("a"), v("b")))
   })
 
-  it("accepts FF arm before TT arm", () => {
-    const src = `match c { FF => b; TT => a }`
-    // arms reordered into canonical (cond, then=TT, else=FF) form
-    expect(parseExpr(src)).toEqual(match(v("c"), v("a"), v("b")))
+  it("spans newlines between cond / then / else", () => {
+    const src = `if c
+      then a
+      else b`
+    expect(parseExpr(src)).toEqual(mkIf(v("c"), v("a"), v("b")))
   })
 
-  it("uses newlines as arm separators", () => {
-    const src = `match c {
-      TT => a
-      FF => b
-    }`
-    expect(parseExpr(src)).toEqual(match(v("c"), v("a"), v("b")))
+  it("cond can be an application", () => {
+    expect(parseExpr(`if (f x) then a else b`)).toEqual(mkIf(ap(v("f"), v("x")), v("a"), v("b")))
   })
 
-  it("scrutinee can be an application", () => {
-    const src = `match (f x) { TT => a; FF => b }`
-    expect(parseExpr(src)).toEqual(match(ap(v("f"), v("x")), v("a"), v("b")))
-  })
-
-  it("arm bodies can be applications", () => {
-    const src = `match c { TT => f x; FF => g y }`
-    expect(parseExpr(src)).toEqual(match(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
+  it("branch bodies can be applications", () => {
+    expect(parseExpr(`if c then f x else g y`))
+      .toEqual(mkIf(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
   })
 
   it("nests inside binders", () => {
-    const src = `{x} -> match x { TT => a; FF => b }`
-    expect(parseExpr(src)).toEqual(
-      binder([{ name: "x", type: null }],
-        match(v("x"), v("a"), v("b"))))
+    expect(parseExpr(`{x} -> if x then a else b`)).toEqual(
+      binder([{ name: "x", type: null }], mkIf(v("x"), v("a"), v("b"))))
   })
 
-  it("nests recursively in arms", () => {
-    const src = `match c { TT => match d { TT => a; FF => b }; FF => e }`
-    expect(parseExpr(src)).toEqual(
-      match(v("c"),
-        match(v("d"), v("a"), v("b")),
-        v("e")))
+  it("nests in the then branch (parenthesised)", () => {
+    expect(parseExpr(`if c then (if d then a else b) else e`)).toEqual(
+      mkIf(v("c"), mkIf(v("d"), v("a"), v("b")), v("e")))
   })
 
-  it("multi-line arm body: triage applied across newlines", () => {
-    // Previously `FF => triage \n (arg1) \n (arg2)` only parsed the bare `triage`
-    // because the arm body was lineExpr. Now matchExpr spans newlines.
-    const src = `match c {
-      TT => a
-      FF => triage
+  it("else-if chains right-associatively without parens", () => {
+    expect(parseExpr(`if c then a else if d then b else e`)).toEqual(
+      mkIf(v("c"), v("a"), mkIf(v("d"), v("b"), v("e"))))
+  })
+
+  it("multi-line branch body: application across newlines", () => {
+    // The else body uses matchExpr, so it spans newlines but stops at the
+    // enclosing boundary (here, EOF).
+    const src = `if c
+      then a
+      else triage
         (arg1)
-        (arg2)
-    }`
+        (arg2)`
     expect(parseExpr(src)).toEqual(
-      match(v("c"), v("a"), ap(ap(v("triage"), v("arg1")), v("arg2"))))
+      mkIf(v("c"), v("a"), ap(ap(v("triage"), v("arg1")), v("arg2"))))
   })
 
-  it("multi-line arm body: stops at the next arm pattern", () => {
-    // Each arm body must not consume the other arm's TT/FF pattern.
-    const src = `match c {
-      TT => f
-        x
-      FF => g
-        y
-    }`
-    expect(parseExpr(src)).toEqual(
-      match(v("c"), ap(v("f"), v("x")), ap(v("g"), v("y"))))
+  it("rejects the removed boolean 'match { TT/FF }' surface", () => {
+    expect(() => parseExpr(`match c { TT => a; FF => b }`)).toThrow(/boolean/)
   })
+})
 
+// ─────────────────────────── coproduct match (the §2.6 cut) ───────────────
+
+describe("coproduct match", () => {
   // Non-Bool arms desugar to the §2.6 cut: `(prod (pair [V..] [h..])) cond`.
   // We check the top-level shape: an application of `prod ...` to the scrutinee.
   const isCutOf = (e: Expr, cond: Expr) => {
@@ -704,7 +690,7 @@ describe("match expression", () => {
     expect((e as any).f.f).toEqual(v("prod"))     // head is `prod`
   }
 
-  it("desugars a non-TT/FF match to the cut", () => {
+  it("desugars a multi-constructor match to the cut", () => {
     isCutOf(parseExpr(`match c { foo x => a; bar y => b }`), v("c"))
   })
 
