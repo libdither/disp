@@ -63,7 +63,7 @@ let x = t   // trailing comments work too
   align: (left, left, left),
   stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
   table.header[*Category*][*Pattern / members*][*Example*],
-  [Keyword],     [`let`, `test`, `use`, `open`, `match`],     [`let`],
+  [Keyword],     [`let`, `test`, `use`, `open`, `match`, `if`, `then`, `else`],     [`let`],
   [Identifier],  [`[A-Za-z_][A-Za-z0-9_']*`, excluding keywords and the bare leaf `t`], [`foo_bar`, `x'`, `_priv`],
   [Leaf],        [`t` (not followed by an identifier char) or `△`],       [`t`, `△`],
   [String],      [`"..."` (no escape sequences). A `use` argument, or a term: a string literal is the `List` of its codepoint `Nat`s (so `"A"` ≡ `[65]`), giving a deterministic, distinct tree per spelling — used as record/coproduct field-name tags.], [`"lib/foo.disp"`, `"respond"`],
@@ -190,6 +190,7 @@ F A B",
   "atom      ::= simple (\".\" IDENT)*
 simple    ::= \"(\" expr (\":\" expr)? \")\"
             | match
+            | if
             | braced
             | \"use\" STRING
             | STRING
@@ -200,6 +201,8 @@ simple    ::= \"(\" expr (\":\" expr)? \")\"
 match     ::= \"match\" app \"{\" matchArm (SEMI matchArm)* SEMI? \"}\"
 matchArm  ::= IDENT IDENT* \"=>\" matchExpr   // Ctor + zero or more binders (\"_\" discards)
 matchExpr ::= expr that spans newlines freely but stops before the next arm (\"Ctor binder* =>\")
+if        ::= \"if\" app \"then\" ifBody \"else\" ifBody   // boolean conditional -> `cond`
+ifBody    ::= matchExpr (multi-line) | newline-terminated expr (line mode)
 braced    ::= recValue | recType | block
 recValue  ::= \"{\" \"}\"
             | \"{\" recBody \"}\"
@@ -214,7 +217,7 @@ stmt       ::= let | test | \"open\" expr",
 { let a = t; f a }             // block (no fields, trailing expr)
 use \"../prelude.disp\"        // loads file, yields the module tuple { record, typ }
 point.x.fst                    // chained projection",
-  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` loads and elaborates the referenced file and yields a *module tuple* `{ record, typ }`: `record` is the §2.6 product of the file's exported values (keyed by name), and `typ` is `Record [(name, declaredType)…]` over the *annotated* exports — so a file is verified by ordinary application, `(use f).typ (use f).record = Ok TT` (gradual: unannotated exports are absent from `typ`). `open use f` splices the *values* into scope (the export metadata), independent of this value. (When the cut/`Record` formers aren't in scope, `use` falls back to the bare value record.) `match` has two forms. *Bool*: exactly two binderless arms `TT`/`FF` → `select`. *Coproduct*: arms `Ctor binder* => body` where the constructor name is the tag *by spelling* (a string), desugaring to the §2.6 cut `(prod (pair [\"Ctor\"…] [handlers…])) c` (needs `prod` in scope). A `_` constructor is the wildcard/default arm (its handler is appended past the names, so an unmatched tag falls to it). Multiple binders destructure a right-nested-pair payload (`Ctor a b c` ⇔ `inj \"Ctor\" (pair a (pair b c))`). Each arm body is `matchExpr`, which can span multiple lines — it stops before the next arm pattern.],
+  note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` loads and elaborates the referenced file and yields a *module tuple* `{ record, typ }`: `record` is the §2.6 product of the file's exported values (keyed by name), and `typ` is `Record [(name, declaredType)…]` over the *annotated* exports — so a file is verified by ordinary application, `(use f).typ (use f).record = Ok TT` (gradual: unannotated exports are absent from `typ`). `open use f` splices the *values* into scope (the export metadata), independent of this value. (When the cut/`Record` formers aren't in scope, `use` falls back to the bare value record.) `if c then a else b` is the boolean conditional: it desugars to the prelude `cond` (`cond c a b`, a select-then-apply over the Scott Bool, motive `t`), with each branch closed over the free vars the two share so only the taken branch is forced (and recursive bodies dodge the eager compile-time K-reduction). `then`/`else` (keywords) bound the first two parts; the else body's tail is mode-sensitive (multi-line `matchExpr` vs newline-terminated). `else if …` chains right-associatively. `match` is now exclusively the *coproduct* cut: arms `Ctor binder* => body` where the constructor name is the tag *by spelling* (a string), desugaring to the §2.6 cut `(prod (pair [\"Ctor\"…] [handlers…])) c` (needs `prod` in scope). (The old boolean `match { TT/FF }` surface was removed.) A `_` constructor is the wildcard/default arm (its handler is appended past the names, so an unmatched tag falls to it). Multiple binders destructure a right-nested-pair payload (`Ctor a b c` ⇔ `inj \"Ctor\" (pair a (pair b c))`). Each arm body is `matchExpr`, which can span multiple lines — it stops before the next arm pattern.],
 )
 
 The `braced` alternatives are distinguished by member shape. A braced

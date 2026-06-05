@@ -27,14 +27,11 @@ List := {A, xs} ->
     select_lazy
       ({_} -> Ok TT)
       ({_} ->
-        match (tree_eq ys t) {
-          TT => Ok TT
-          FF => match (is_concrete_fork ys) {
-            TT => bind (A (pair_fst ys)) ({hd} ->
-                    match hd { FF => Ok FF; TT => self (pair_snd ys) })
-            FF => Ok FF
-          }
-        })
+        if (tree_eq ys t) then (Ok TT)
+        else (if (is_concrete_fork ys)
+          then (bind (A (pair_fst ys)) ({hd} ->
+                  if hd then (self (pair_snd ys)) else (Ok FF)))
+          else (Ok FF)))
       (is_neutral ys))
     xs
 

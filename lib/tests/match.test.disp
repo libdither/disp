@@ -1,5 +1,6 @@
-// Tests for the `match` keyword: select-then-apply desugaring
-// with closed-branch free-variable capture.
+// Tests for `if c then a else b` (the boolean conditional → `cond` desugar,
+// with closed-branch free-variable capture) and the coproduct `match` keyword
+// (the §2.6 cut — string-tag arms, wildcard, multi-binder destructuring).
 
 open use "../prelude.disp"
 open use "../kernel/prelude.disp" // coproduct match uses the cut (prod/inj)
@@ -8,77 +9,84 @@ open use "../kernel/prelude.disp" // coproduct match uses the cut (prod/inj)
 // Basic correctness — closed scrutinees
 // ================================================================
 
-test (match TT { TT => 1; FF => 0 }) = 1
-test (match FF { TT => 1; FF => 0 }) = 0
+test (if TT then 1 else 0) = 1
+test (if FF then 1 else 0) = 0
 
 // ================================================================
-// Free-var capture: arms reference outer binders
+// Free-var capture: branches reference outer binders
 // ================================================================
 
 // Single free var
-test ({x} -> match x { TT => 1; FF => 0 }) TT = 1
-test ({x} -> match x { TT => 1; FF => 0 }) FF = 0
+test ({x} -> if x then 1 else 0) TT = 1
+test ({x} -> if x then 1 else 0) FF = 0
 
-// Multiple free vars; both arms use them
-test ({x, a, b} -> match x { TT => a; FF => b }) TT 5 7 = 5
-test ({x, a, b} -> match x { TT => a; FF => b }) FF 5 7 = 7
+// Multiple free vars; both branches use them
+test ({x, a, b} -> if x then a else b) TT 5 7 = 5
+test ({x, a, b} -> if x then a else b) FF 5 7 = 7
 
-// Asymmetric: only one arm uses the free var
-test ({x, a} -> match x { TT => a; FF => 0 }) TT 9 = 9
-test ({x, a} -> match x { TT => a; FF => 0 }) FF 9 = 0
-
-// ================================================================
-// Nested match
-// ================================================================
-
-test (match TT { TT => match FF { TT => 1; FF => 2 }; FF => 3 }) = 2
-test (match FF { TT => 1; FF => match TT { TT => 4; FF => 5 } }) = 4
-
-// Nested with shared free vars across both levels
-test ({x, y} -> match x {
-  TT => match y { TT => 1; FF => 2 }
-  FF => match y { TT => 3; FF => 4 }
-}) TT FF = 2
-
-test ({x, y} -> match x {
-  TT => match y { TT => 1; FF => 2 }
-  FF => match y { TT => 3; FF => 4 }
-}) FF TT = 3
+// Asymmetric: only one branch uses the free var
+test ({x, a} -> if x then a else 0) TT 9 = 9
+test ({x, a} -> if x then a else 0) FF 9 = 0
 
 // ================================================================
-// Short-circuit: unselected arm never runs
+// Nested if
+// ================================================================
+
+test (if TT then (if FF then 1 else 2) else 3) = 2
+test (if FF then 1 else (if TT then 4 else 5)) = 4
+
+// Nested with shared free vars across both levels (multi-line bodies)
+test ({x, y} -> if x
+  then (if y then 1 else 2)
+  else (if y then 3 else 4)) TT FF = 2
+
+test ({x, y} -> if x
+  then (if y then 1 else 2)
+  else (if y then 3 else 4)) FF TT = 3
+
+// else-if chain (right-associative; the trailing else needs no parens)
+let bucket = {n} ->
+  if (tree_eq n 0) then 100
+  else if (tree_eq n 1) then 200
+  else 300
+test bucket 0 = 100
+test bucket 1 = 200
+test bucket 2 = 300
+
+// ================================================================
+// Short-circuit: unselected branch never runs
 // ================================================================
 // `loops y` diverges when applied (infinite recursion via fix).
-// If desugaring is correct (select-then-apply with closed branches),
-// the FF arm's body never fires when x = TT, so the test terminates
-// and returns y. If the desugaring were broken (eager thunks,
-// select_lazy with K-wrap), bracket abstraction over `y` would
+// If the desugar is correct (select-then-apply with closed branches),
+// the else branch's body never fires when x = TT, so the test terminates.
+// If it were broken (eager thunks), bracket abstraction over `y` would
 // eagerly evaluate `loops y` and the test would hit budget.
 
 let loops = fix ({self, x} -> self x)
 
-test ({x, y} -> match x { TT => y; FF => loops y }) TT 5 = 5
+test ({x, y} -> if x then y else loops y) TT 5 = 5
 
-// Symmetric case: FF selected, TT arm has the divergent body
-test ({x, y} -> match x { TT => loops y; FF => y }) FF 5 = 5
+// Symmetric case: FF selected, the then-branch has the divergent body
+test ({x, y} -> if x then loops y else y) FF 5 = 5
 
 // ================================================================
-// Match composes with other constructs
+// `if` composes with other constructs
 // ================================================================
 
-// Inside a let
+// As a block-let member body (line mode: the else body ends at the newline,
+// so the block's trailing `r` is left untouched)
 test ({x} -> {
-  let r = match x { TT => 10; FF => 20 }
+  let r = if x then 10 else 20
   r
 }) TT = 10
 
 // As the body of a binder
-test (({x} -> match x { TT => 1; FF => 0 }) TT) = 1
+test (({x} -> if x then 1 else 0) TT) = 1
 
 // Scrutinee is an application
 let is_zero = {n} -> tree_eq n 0
-test (match (is_zero 0) { TT => 1; FF => 0 }) = 1
-test (match (is_zero 1) { TT => 1; FF => 0 }) = 0
+test (if (is_zero 0) then 1 else 0) = 1
+test (if (is_zero 1) then 1 else 0) = 0
 
 // ================================================================
 // CPS-style chain (mirrors soundness plan's must_ok_* pattern)
@@ -88,19 +96,14 @@ test (match (is_zero 1) { TT => 1; FF => 0 }) = 0
 // invoked only when the success branch is selected — otherwise the
 // "Err short-circuit" property is broken.
 
-let succ_only = {cond, k, x} ->
-  match cond {
-    TT => k x
-    FF => loops x
-  }
+let succ_only = {c, k, x} ->
+  if c then k x else loops x
 
-// When cond=TT, k is invoked with x.
+// When c=TT, k is invoked with x.
 test succ_only TT ({y} -> y) 7 = 7
 
-// When cond=FF, the FF arm runs `loops x` which diverges. So the test
-// budget would blow up if we ever reached the FF arm via cond=TT.
-// (This is just succ_only TT, exercising the same code path again
-//  with a richer continuation.)
+// When c=FF, the else branch runs `loops x` which diverges. So the test
+// budget would blow up if we ever reached the else branch via c=TT.
 test succ_only TT ({y} -> succ y) 4 = 5
 
 // ================================================================
@@ -110,7 +113,7 @@ test succ_only TT ({y} -> succ y) 4 = 5
 // in one of the thunks) blew the compile-time budget because cirToTree
 // eagerly reduced the resulting K(body) form. The elaborator now
 // rewrites `select_lazy ({_} -> A) ({_} -> B) cond` to
-// `match cond { TT => A; FF => B }`, side-stepping the eager reduction.
+// `if cond then A else B`, side-stepping the eager reduction.
 
 let count_down = fix ({self, n} ->
   select_lazy

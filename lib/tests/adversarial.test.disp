@@ -47,8 +47,8 @@ test bind_hyp Nat ({x} -> Ok (pair x zero)) = Err
 // param_lift block it from every closed proof (the BACKSTOP below). When
 // body-walking or a sealed-hyp representation lands, the LEAK line flips to Err.
 // ================================================================
-let stolen = ok_value (bind_hyp Nat ({x} -> Ok (type_meta x)))
-test is_ok (bind_hyp Nat ({x} -> Ok (type_meta x))) = TT    // LEAK (sound: Err)
+let stolen = pair_snd (bind_hyp Nat ({x} -> Ok (type_meta x)))
+test (tree_eq (pair_fst (bind_hyp Nat ({x} -> Ok (type_meta x)))) "Ok") = TT    // LEAK (sound: Err)
 let revived = wait hyp_reduce stolen                        // reconstructed hyp, escaped its scope
 test is_neutral revived = TT
 // BACKSTOP — the escaped (open) hyp cannot enter any closed proof:
@@ -63,4 +63,4 @@ test typecheck False revived = Err
 // ================================================================
 test param_apply False zero   = Ok FF
 test param_apply False stolen = Ok FF
-test typecheck False (ok_value (bind_hyp False ({x} -> Ok (make_hyp False 0)))) = Err
+test typecheck False (pair_snd (bind_hyp False ({x} -> Ok (make_hyp False 0)))) = Err

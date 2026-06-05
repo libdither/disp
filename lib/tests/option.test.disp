@@ -33,10 +33,7 @@ test option_map succ (some 4) = some 5
 
 // option_and_then
 let some_pred = {n} ->
-  match (is_zero n) {
-    TT => none
-    FF => some (pred n)
-  }
+  if (is_zero n) then none else (some (pred n))
 test option_and_then (some 5) some_pred = some 4
 test option_and_then (some 0) some_pred = none
 test option_and_then none some_pred = none
