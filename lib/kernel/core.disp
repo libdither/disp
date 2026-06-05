@@ -129,7 +129,8 @@ neutral_type := {v} -> (type_meta v).stored_type
 InvalidType := FF
 
 inert_respond := {nmeta, frame} -> Extend InvalidType
-inductive_respond := {nmeta, frame} -> Extend (frame.motive (reconstruct_self nmeta))
+// inductive_respond is defined just after param_walker (it routes the motive
+// through it), since the walker is defined below.
 
 // ================================================================
 // support / occurs / is_closed (the §8.1 dependency scan)
@@ -227,6 +228,14 @@ let param_walker = fix ({self, f, x} ->
 // success-Ok; a routed/recognizer CheckerResult passes through.
 param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 
+// A respond extends a neutral's spine at a type the USER motive produces from the
+// neutral. Run that through param_walker so a motive that raw-reflects on the
+// neutral is caught: Ok ty -> extend at ty; Err -> route to the inert dead state.
+// (param_walker, not param_apply: it already exposes the Ok/Err we need, so we
+// match it directly instead of unwrapping then re-checking for Err.)
+inductive_respond := {nmeta, frame} ->
+  match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType }
+
 // shim for all type recognizers that automatically executes the H-rule, i.e. checks if we are passed a neutral with matching type and if so, automatically return true.
 let recognizer_wrap = fix ({wrap, body, meta, v} ->
   match (is_neutral v) {
@@ -288,7 +297,7 @@ gated_inductive_respond := {coh, nmeta, frame} -> {
     FF => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
     TT => match (ok_value r) {
             FF => Extend InvalidType // cases do not inhabit the motive
-            TT => Extend (frame.motive (reconstruct_self nmeta)) } // coherent: same as the ungated respond
+            TT => match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType } } // coherent; police the motive
   }
 }
 
@@ -442,7 +451,7 @@ eq_body := {meta, v} -> {
 // `C : (y:A) -> Type ⊢ C y`. The generic `inductive_respond` would give the wrong
 // `motive self` (motive at the proof, not the endpoint), so `eq_cong`/`eq_subst`
 // on a neutral proof would land at the wrong equality and fail the §B gate.
-eq_respond := {nmeta, frame} -> Extend (frame.motive (type_meta (nmeta.stored_type)).recognizer_params.rhs)
+eq_respond := {nmeta, frame} -> match (param_walker frame.motive (type_meta (nmeta.stored_type)).recognizer_params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }
 Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } eq_respond)
 
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
@@ -472,7 +481,7 @@ Sigma := {A, B} -> wait (make_recognizer
     match (tree_eq frame walker_pair_fst) {
       TT => Extend A
       FF => (match (tree_eq frame walker_pair_snd) {
-        TT => Extend (B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst)))
+        TT => match (param_walker B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst))) { Ok ty => Extend ty; Err _ => Extend InvalidType }  // police the family on the fst-projection
         FF => Extend InvalidType
       })
     }
@@ -495,7 +504,7 @@ Intersection := {A, P} -> wait (make_recognizer
     let params = meta.recognizer_params
     let A = params.base
     let P = params.pred
-    bind_hyp A ({hyp} -> (P hyp) v)
+    bind_hyp A ({hyp} -> match (param_walker P hyp) { Ok pred_ty => param_apply pred_ty v; Err _ => Err })  // police the predicate's use of hyp
   }
 ) (make_meta { base := A; pred := P } inert_respond)
 
