@@ -41,6 +41,7 @@ describe("disp", () => {
       // kernel-internal checking that bypasses the public boundary.
       const r = runFile(join(testsDir, file), { debugTypeCheck: false })
       if (r.failed.length > 0) {
+        // TODO: figure out how to return specific line in test file that failed (e.g. via spans)
         const msgs = r.failed.map(f => `[test ${f.i}] ${f.msg}`).join("\n")
         throw new Error(`${file}:\n${msgs}`)
       }

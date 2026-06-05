@@ -3,6 +3,8 @@
 // wait-forms; the H-rule lives in the library make_recognizer. Self-contained:
 // depends only on prelude + utils.
 
+// TODO: start working on actually giving types to things in this file, may need more thought on exactly how deferred testing works.
+
 open use "../prelude.disp"
 
 pair := {a, b} -> t a b

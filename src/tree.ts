@@ -553,6 +553,7 @@ export function force(t: Tree): Tree {
 
 // --- Pretty printer ---
 
+// TODO: Make this function actually try to lookup names of things given context so we don't get tree spam when running tests.
 export function prettyTree(tree: Tree): string {
   switch (tree.tag) {
     case "leaf": return "△"
