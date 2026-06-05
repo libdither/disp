@@ -30,7 +30,7 @@ List := {A, xs} ->
         match (tree_eq ys t) {
           TT => Ok TT
           FF => match (is_concrete_fork ys) {
-            TT => must_ok_any (A (pair_fst ys)) ({hd} ->
+            TT => bind (A (pair_fst ys)) ({hd} ->
                     match hd { FF => Ok FF; TT => self (pair_snd ys) })
             FF => Ok FF
           }

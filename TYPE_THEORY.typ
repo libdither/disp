@@ -3232,7 +3232,7 @@ Each inductive type's meta therefore carries `respond := inductive_respond`
 
   nat_coherence := {T, motive, cases} -> {                       // base : motive zero ;
     let base = pair_fst cases ; let step = pair_snd cases        // step : Π n. motive n -> motive (succ n)
-    must_ok_any ((motive zero) base) ({okb} -> match okb {
+    bind ((motive zero) base) ({okb} -> match okb {
       FF => Ok FF
       TT => bind_hyp T ({n} -> bind_hyp (motive n) ({ih} -> (motive (succ n)) (step n ih))) }) }
 

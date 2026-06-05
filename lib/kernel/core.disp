@@ -65,10 +65,8 @@ Err := inj "Err" t
 is_ok := {r} -> tree_eq (pair_fst r) "Ok"
 ok_value := {r} -> pair_snd r
 
-// must_ok_any: `Ok v` → thread v into k; `Err` → propagate.:
-// like it, but returns the payload as-is (param_apply unwrapping a success-Ok,
-// elim a stuck reduct) so the payload need not be a Bool.
-must_ok_any := {r, k} -> match r { Ok v => k v; Err _ => Err }
+// this is CheckerResult-specific monadic bind, eventually this will be a generalized monadic bind where monad impl of CheckerResult is inferred automatically.
+bind := {r, k} -> match r { Ok v => k v; Err _ => r }
 
 // ================================================================
 // Neutral (hypothesis) metadata — a { stored_type; payload } record (the §2.6
@@ -176,7 +174,7 @@ is_closed := {v} -> is_leaf (support_set v)
 // soundness hardening deferred; the `occurs` escape check is in place.)
 bind_hyp_handler := {domain, body} -> {
   let h = mint_hyp domain (pair domain body)
-  must_ok_any (body h) ({result} ->
+  bind (body h) ({result} ->
     match (occurs h result) { TT => Err; FF => Ok result })
 }
 bind_hyp := {A} -> wait bind_hyp_handler A
@@ -282,7 +280,7 @@ make_rec_recognizer := {body} -> wait recursive_recognizer_wrap body
 // Boundary: param_lift / typecheck
 // ================================================================
 param_lift := {v} -> match (is_closed v) { TT => Ok v; FF => Err }
-typecheck := {T, v} -> must_ok_any (param_lift v) ({sv} -> param_apply T sv)
+typecheck := {T, v} -> bind (param_lift v) ({sv} -> param_apply T sv)
 
 // ================================================================
 // Library eliminator: concrete -> dispatcher, neutral -> hyp_reduce via respond
@@ -321,7 +319,7 @@ gated_inductive_respond := {coh, nmeta, frame} -> {
 nat_coherence := {T, motive, cases} -> {
   let base = cases.base
   let step = cases.step
-  must_ok_any ((motive zero) base) ({okb} -> match okb {
+  bind ((motive zero) base) ({okb} -> match okb {
     FF => Ok FF
     TT => bind_hyp T ({n} -> bind_hyp (motive n) ({ih} -> (motive (succ n)) (step n ih))) })
 }
@@ -329,7 +327,7 @@ nat_coherence := {T, motive, cases} -> {
 bool_coherence := {T, motive, cases} -> {
   let ct = cases.ct
   let cf = cases.cf
-  must_ok_any ((motive TT) ct) ({okt} -> match okt { FF => Ok FF; TT => (motive FF) cf })
+  bind ((motive TT) ct) ({okt} -> match okt { FF => Ok FF; TT => (motive FF) cf })
 }
 nat_respond  := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
 bool_respond := {nmeta, frame} -> gated_inductive_respond bool_coherence nmeta frame
@@ -480,7 +478,7 @@ sigma_body := {meta, v} -> {
   let params = meta.recognizer_params
   let A = params.dom
   let B = params.fam
-  must_ok_any (A (pair_fst v)) ({va} ->
+  bind (A (pair_fst v)) ({va} ->
     match va { FF => Ok FF; TT => (B (pair_fst v)) (pair_snd v) }) // b inhabits (B a)
 }
 // Projection-as-application for Sigma neutrals (§12.1): a Sigma-hyp applied to a
@@ -506,7 +504,7 @@ refinement_body := {meta, v} -> {
   let params = meta.recognizer_params
   let A = params.base
   let P = params.pred
-  must_ok_any (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) }) // P is a bare-Bool predicate
+  bind (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) }) // P is a bare-Bool predicate
 }
 Refinement := {A, P} -> wait (make_recognizer refinement_body) (make_meta { base := A; pred := P } inert_respond)
 
@@ -530,7 +528,7 @@ ord_body := {self, m, v} ->
     ({_} -> Ok FF) // stem -> not an ord
     ({l, r} -> match (is_stem l) { // omega_plus a b = fork(stem a, b)
        FF => Ok FF
-       TT => must_ok_any (self (stem_child l)) ({oka} -> match oka { FF => Ok FF; TT => self r }) })
+       TT => bind (self (stem_child l)) ({oka} -> match oka { FF => Ok FF; TT => self r }) })
     v
 Ord := wait (make_rec_recognizer ord_body) (make_meta unit_witness inductive_respond)
 
@@ -563,7 +561,7 @@ let record_check = fix ({self, fields, v} ->
   match (is_fork fields) {
     TT => {
       let arm = pair_fst fields
-      must_ok_any ((pair_snd arm) (v (acc (pair_fst arm)))) ({ok} ->
+      bind ((pair_snd arm) (v (acc (pair_fst arm)))) ({ok} ->
         match ok { FF => Ok FF; TT => self (pair_snd fields) v })
     }
     FF => Ok TT
