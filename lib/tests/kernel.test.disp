@@ -109,11 +109,9 @@ test (type_meta False).respond = inert_respond
 test (type_meta Nat).functor = trivial_functor
 test (type_meta Type).respond = type_predicate_h_rule
 // a hand-built meta round-trips field-by-field
-let m = make_meta zero TT FF unit_val
+let m = make_meta zero FF
 test m.recognizer_params = zero
-test m.functor = TT
 test m.respond = FF
-test m.behavioral_specs = unit_val
 test has_metashape_layout m = TT
 test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF  // old positional shape is no longer a meta
 // recognizer_params is itself an inline record read by name (Pi's { dom, cod })

@@ -72,7 +72,6 @@ must_ok_or_self := {r} -> match r { Ok v => v; Fail _ => Fail }
 // neutral's (old_meta, arg) extension. Only stored_type is read by name; the
 // payload exists so the §8.1 support scan can descend it for occurs-checking.
 make_neutral_meta := {stored_type, payload} -> { stored_type := stored_type; payload := payload }
-neutral_meta_type := {meta} -> meta.stored_type
 neutral_app_payload := {old_meta, arg} -> t old_meta arg
 extend_neutral_meta := {old_meta, result_type, arg} ->
   make_neutral_meta result_type (neutral_app_payload old_meta arg)
@@ -87,15 +86,15 @@ extend_neutral_meta := {old_meta, result_type, arg} ->
 // (Pi {dom,cod}, Sigma {dom,fam}, Eq {type,lhs,rhs}, …); single-payload
 // params (Coproduct variants, Record fields) stay the bare value.
 // ================================================================
-make_meta := {params, functor, respond, specs} ->
-  { recognizer_params := params; functor := functor; respond := respond; behavioral_specs := specs }
+
+unit_witness := t
+trivial_functor := t
+make_meta := {params, respond} ->
+  { recognizer_params := params; functor := trivial_functor; respond := respond; behavioral_specs := t }
 // Fields are read by name via the §2.6 cut — `meta.recognizer_params`,
 // `meta.respond`, etc. — not through accessor wrappers.
 metashape_header := ["recognizer_params", "functor", "respond", "behavioral_specs"]
 
-trivial_functor := t
-no_specs := t
-unit_witness := t
 
 // ================================================================
 // hyp_reduce (Σ-op): push a frame onto a neutral, via the stored type's respond
@@ -104,8 +103,7 @@ unit_witness := t
 // hyp_reduce (hash-cons stable), so every `wait self _` shares one canonical
 // root = the is_neutral signature.
 hyp_reduce := fix ({self, meta, frame} -> {
-  let stored = neutral_meta_type meta
-  let respond = (type_meta stored).respond
+  let respond = (type_meta meta.stored_type).respond
   match (respond meta frame) {
     Extend new_type => wait self (extend_neutral_meta (wait self meta) new_type frame)  // bare stuck (Option A, §7.5/§9)
     Return v => Ok v                                                                     // verdict stays Ok (data)
@@ -122,7 +120,8 @@ StuckElim := mint_hyp
 hyp_sig := checker_sig hyp_reduce
 is_neutral := {v} -> tree_eq (pair_fst v) hyp_sig         // root-sig read (bare pair_fst)
 is_concrete_fork := {v} -> select FF (is_fork v) (is_neutral v)   // a fork that isn't a neutral
-neutral_type := {v} -> neutral_meta_type (type_meta v)    // stored type of a seal
+// fetch stored type of neutral
+neutral_type := {v} -> (type_meta v).stored_type
 
 inert_respond := {nmeta, frame} -> Extend InvalidType
 inductive_respond := {nmeta, frame} -> Extend (frame.motive (reconstruct_self nmeta))
@@ -311,15 +310,12 @@ elim := {dispatcher, motive, cases, target} ->
 // Incoherent cases route to the dead state `InvalidType` (§12.3), so the eliminated
 // neutral is typed `InvalidType` and rejected downstream.
 gated_inductive_respond := {coh, nmeta, frame} -> {
-  let T = neutral_meta_type nmeta
-  let motive = frame.motive
-  let cases = frame.cases
-  let r = coh T motive cases
+  let r = coh nmeta.stored_type frame.motive frame.cases
   match (is_ok r) {
     FF => Extend InvalidType                                      // gate errored (e.g. a case triaged a hyp)
     TT => match (ok_value r) {
             FF => Extend InvalidType                              // cases do not inhabit the motive
-            TT => Extend (motive (reconstruct_self nmeta)) }      // coherent: same as the ungated respond
+            TT => Extend (frame.motive (reconstruct_self nmeta)) }      // coherent: same as the ungated respond
   }
 }
 // Nat: base : motive zero ; step : Π n. motive n -> motive (succ n)
@@ -343,7 +339,7 @@ bool_respond := {nmeta, frame} -> gated_inductive_respond bool_coherence nmeta f
 // Bool / Nat / Pi
 // ================================================================
 bool_body := {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
-bool_meta := make_meta unit_witness trivial_functor bool_respond no_specs
+bool_meta := make_meta unit_witness bool_respond
 Bool := wait (make_recognizer bool_body) bool_meta
 
 // nat_body recurses via the threaded `self` (the full Nat recognizer), so a
@@ -354,33 +350,30 @@ nat_body := {self, m, v} ->
     ({_} -> Ok FF)                                                // stem -> not a Nat
     ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) // succ r -> recurse via self
     v
-nat_meta := make_meta unit_witness trivial_functor nat_respond no_specs
+nat_meta := make_meta unit_witness nat_respond
 Nat := wait (make_rec_recognizer nat_body) nat_meta
 
-// Pi: bind a fresh A-hyp, apply the candidate by regular hypothesis application,
-// and check the reduced spine against `B hyp`. No `checked` wrapper — raw
-// functions are first-class inhabitants; eliminators route neutral sub-terms
-// through `respond`. A body that trips the walker (e.g. triages the hypothesis)
-// makes `param_apply v hyp` return `Fail`; that rejection is PROPAGATED, not fed
-// to the codomain check — otherwise a permissive codomain (e.g. String) would
-// accept a malformed function.
-// Under Option A (§7.5) a body that head-reduces to a neutral application
-// (`f (g x)`, or operator-position nesting like flip's `(f y) x`) yields a BARE
-// stuck reduct, so it feeds the codomain check directly — no residual `Ok`.
+// runs pi-type check for a given pi type on given function-value v
 pi_body := {meta, v} -> {
   let params = meta.recognizer_params
   let A = params.dom
   let B = params.cod
   bind_hyp A ({hyp} -> {
-    let r = param_apply v hyp
-    match (tree_eq r Fail) {
+    // resolve type family using param_apply to prevent family from raw-inspecting hyp metadata
+    let codomain = param_apply B hyp
+    // do the same for main function
+    let ret = param_apply v hyp
+    match (tree_eq ret Fail) { // check that neither returns invalid type
       TT => Fail
-      FF => param_apply (B hyp) r                           // Option A: r is already bare (no residual Ok to strip)
+      FF => match (tree_eq codomain Fail) {
+        TT => Fail;
+        FF => param_apply codomain ret // typecheck result, run resolved type on resolved function body
+      }
     }
   })
 }
-pi_respond := {nmeta, frame} -> Extend ((type_meta (neutral_meta_type nmeta)).recognizer_params.cod frame)
-pi_meta_for := {A, B} -> make_meta { dom := A; cod := B } trivial_functor pi_respond no_specs
+pi_respond := {nmeta, frame} -> Extend ((type_meta (nmeta.stored_type)).recognizer_params.cod frame)
+pi_meta_for := {A, B} -> make_meta { dom := A; cod := B } pi_respond
 Pi := {A, B} -> wait (make_recognizer pi_body) (pi_meta_for A B)
 Arrow := {A, B} -> Pi A ({_} -> B)
 
@@ -410,7 +403,7 @@ type_body := {m, v} ->
     FF => Ok FF
     TT => Ok (has_metashape_layout (type_meta v))
   }
-type_self_meta := make_meta unit_witness trivial_functor type_predicate_h_rule no_specs
+type_self_meta := make_meta unit_witness type_predicate_h_rule
 Type := wait (make_recognizer type_body) type_self_meta
 
 // ================================================================
@@ -455,14 +448,14 @@ eq_J := {motive, base, proof} -> elim eq_J_dispatcher motive { base := base } pr
 // ================================================================
 unit_val := t t t
 unit_body := {m, v} -> Ok (tree_eq v unit_val)
-Unit := wait (make_recognizer unit_body) (make_meta unit_witness trivial_functor inductive_respond no_specs)
+Unit := wait (make_recognizer unit_body) (make_meta unit_witness inductive_respond)
 
 false_body := {m, v} -> Ok FF
-False := wait (make_recognizer false_body) (make_meta unit_witness trivial_functor inert_respond no_specs)
+False := wait (make_recognizer false_body) (make_meta unit_witness inert_respond)
 Not := {P} -> Pi P ({_} -> False)
 
 string_body := {m, v} -> Ok TT
-String := wait (make_recognizer string_body) (make_meta unit_witness trivial_functor inert_respond no_specs)
+String := wait (make_recognizer string_body) (make_meta unit_witness inert_respond)
 
 refl := t
 eq_body := {meta, v} -> {
@@ -474,8 +467,8 @@ eq_body := {meta, v} -> {
 // `C : (y:A) -> Type ⊢ C y`. The generic `inductive_respond` would give the wrong
 // `motive self` (motive at the proof, not the endpoint), so `eq_cong`/`eq_subst`
 // on a neutral proof would land at the wrong equality and fail the §B gate.
-eq_respond := {nmeta, frame} -> Extend (frame.motive (type_meta (neutral_meta_type nmeta)).recognizer_params.rhs)
-Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } trivial_functor eq_respond no_specs)
+eq_respond := {nmeta, frame} -> Extend (frame.motive (type_meta (nmeta.stored_type)).recognizer_params.rhs)
+Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } eq_respond)
 
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
 // refl and stays stuck on a neutral proof).
@@ -496,7 +489,7 @@ sigma_body := {meta, v} -> {
 walker_pair_fst := t (t t) t
 walker_pair_snd := t (t t) (t t)
 sigma_respond := {nmeta, frame} -> {
-  let params = (type_meta (neutral_meta_type nmeta)).recognizer_params
+  let params = (type_meta nmeta.stored_type).recognizer_params
   let A = params.dom
   let B = params.fam
   match (tree_eq frame walker_pair_fst) {
@@ -507,7 +500,7 @@ sigma_respond := {nmeta, frame} -> {
     })
   }
 }
-Sigma := {A, B} -> wait (make_recognizer sigma_body) (make_meta { dom := A; fam := B } trivial_functor sigma_respond no_specs)
+Sigma := {A, B} -> wait (make_recognizer sigma_body) (make_meta { dom := A; fam := B } sigma_respond)
 
 refinement_body := {meta, v} -> {
   let params = meta.recognizer_params
@@ -515,7 +508,7 @@ refinement_body := {meta, v} -> {
   let P = params.pred
   must_ok_any (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) })   // P is a bare-Bool predicate
 }
-Refinement := {A, P} -> wait (make_recognizer refinement_body) (make_meta { base := A; pred := P } trivial_functor inert_respond no_specs)
+Refinement := {A, P} -> wait (make_recognizer refinement_body) (make_meta { base := A; pred := P } inert_respond)
 
 // Intersection A P: v inhabits iff (P hyp) v holds for a fresh A-hyp — like Pi
 // but P is applied to the hypothesis and checked against the SAME v.
@@ -525,7 +518,7 @@ intersection_body := {meta, v} -> {
   let P = params.pred
   bind_hyp A ({hyp} -> (P hyp) v)
 }
-Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta { base := A; pred := P } trivial_functor inert_respond no_specs)
+Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta { base := A; pred := P } inert_respond)
 
 zero_ord := t
 omega_plus := {a, b} -> t (t a) b                          // fork(stem a, b)
@@ -539,7 +532,7 @@ ord_body := {self, m, v} ->
        FF => Ok FF
        TT => must_ok_any (self (stem_child l)) ({oka} -> match oka { FF => Ok FF; TT => self r }) })
     v
-Ord := wait (make_rec_recognizer ord_body) (make_meta unit_witness trivial_functor inductive_respond no_specs)
+Ord := wait (make_rec_recognizer ord_body) (make_meta unit_witness inductive_respond)
 
 // ================================================================
 // Coproduct and Record types
@@ -563,7 +556,7 @@ coproduct_body := {meta, v} -> {
     FF => Ok FF                                                  // unknown tag
   }
 }
-Coproduct := {variants} -> wait (make_recognizer coproduct_body) (make_meta variants trivial_functor inductive_respond no_specs)
+Coproduct := {variants} -> wait (make_recognizer coproduct_body) (make_meta variants inductive_respond)
 
 // Record [(Vi, Ti)]: v is a product whose every named field inhabits its type.
 let record_check = fix ({self, fields, v} ->
@@ -583,10 +576,10 @@ record_body := {meta, v} ->
 // Projection for Record neutrals: a record-hyp applied to `acc name` extends the
 // spine with that field's declared type, read by name from the stored type.
 record_respond := {nmeta, frame} -> {
-  let arm_r = lookup_arm (type_meta (neutral_meta_type nmeta)).recognizer_params (pair_fst frame)
+  let arm_r = lookup_arm (type_meta nmeta.stored_type).recognizer_params (pair_fst frame)
   match (is_ok arm_r) {
     TT => Extend (ok_value arm_r)
     FF => Extend InvalidType
   }
 }
-Record := {fields} -> wait (make_recognizer record_body) (make_meta fields trivial_functor record_respond no_specs)
+Record := {fields} -> wait (make_recognizer record_body) (make_meta fields record_respond)
