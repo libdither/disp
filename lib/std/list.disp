@@ -50,12 +50,12 @@ list_cons : Nat -> NatList -> NatList :=
 singleton := {x} -> cons x nil
 
 // list_rec motive nil_case cons_case xs
-// Neutral targets produce StuckElim (motive xs).
+// Neutral targets produce make_hyp (motive xs).
 // Internal `xs`-first binder order avoids the bracket-abstraction
 // η-on-innermost-binder edge case (see list_map note).
 let list_rec_inner = fix ({self, xs, motive, nil_case, cons_case} ->
   select_lazy
-    ({_} -> StuckElim (motive xs) xs)
+    ({_} -> make_hyp (motive xs) xs)
     ({_} ->
       select_lazy
         ({_} -> nil_case)

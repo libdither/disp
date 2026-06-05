@@ -672,7 +672,7 @@ function internName(name: string, lookupEntry: (n: string) => ScopeEntry | undef
 }
 
 // Kernel query helpers. These are discovered from ordinary scope after
-// imports. A file that opens kernel/prelude.disp gets Pi, Type, Hyp, Nat,
+// imports. A file that opens kernel/prelude.disp gets Pi, Type, make_hyp, Nat,
 // etc. without a separate keyword-level trust channel.
 
 interface KernelHelpers {
@@ -681,7 +681,7 @@ interface KernelHelpers {
   isNeutral(t: Tree): boolean
   piDomain(t: Tree): Tree
   piCodFn(t: Tree): Tree
-  makeHyp(type: Tree, id: Tree): Tree
+  makemake_hyp(type: Tree, id: Tree): Tree
 }
 
 function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined): KernelHelpers | null {
@@ -694,15 +694,15 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
   // the in-language metadata uses.
   const Pi = lookupEntry("Pi")?.tree
   const Type = lookupEntry("Type")?.tree
-  const make_hyp = lookupEntry("Hyp")?.tree ?? lookupEntry("make_hyp")?.tree
+  const make_hyp = lookupEntry("make_hyp")?.tree ?? lookupEntry("make_hyp")?.tree
 
   if (!Pi && !Type && !make_hyp) return null
 
   const samplePi = Pi ? applyTree(applyTree(Pi, LEAF, APPLY_BUDGET), I_TREE, APPLY_BUDGET) : null
   const piSig = samplePi ? treePairFst(samplePi) : null
   const typeSig = Type ? treePairFst(Type) : null
-  const sampleHyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, APPLY_BUDGET), LEAF, APPLY_BUDGET) : null
-  const hypSig = sampleHyp ? treePairFst(sampleHyp) : null
+  const samplemake_hyp = make_hyp ? applyTree(applyTree(make_hyp, LEAF, APPLY_BUDGET), LEAF, APPLY_BUDGET) : null
+  const hypSig = samplemake_hyp ? treePairFst(samplemake_hyp) : null
 
   function sigMatches(sig: Tree | null, t: Tree): boolean {
     if (!sig) return false
@@ -723,8 +723,8 @@ function makeKernelHelpers(lookupEntry: (name: string) => ScopeEntry | undefined
     isNeutral(t) { return sigMatches(hypSig, t) },
     piDomain(t) { return applyTree(piParams(t), accTree("dom"), APPLY_BUDGET) },
     piCodFn(t) { return applyTree(piParams(t), accTree("cod"), APPLY_BUDGET) },
-    makeHyp(type, id) {
-      if (!make_hyp) throw new Error("makeHyp: make_hyp not in scope")
+    makemake_hyp(type, id) {
+      if (!make_hyp) throw new Error("makemake_hyp: make_hyp not in scope")
       return applyTree(applyTree(make_hyp, type, APPLY_BUDGET), id, APPLY_BUDGET)
     },
   }
@@ -763,7 +763,7 @@ function compileType(e: Expr, ctx: ElabCtx): Tree {
       : e.body
 
     const id = fork(A_tree, fork(buildNat(ctx.scopeDepth), buildNat(0)))
-    const hyp = k.makeHyp(A_tree, id)
+    const hyp = k.makemake_hyp(A_tree, id)
     const prevLookup = ctx.lookupEntry
     const hypEntry: ScopeEntry = { tree: hyp, type: A_tree }
     ctx.lookupEntry = (name: string) => name === paramName ? hypEntry : prevLookup(name)

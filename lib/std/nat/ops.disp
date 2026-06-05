@@ -3,7 +3,7 @@ open use "../../kernel/prelude.disp"
 open use "arith.disp"
 
 // Standard Nat helpers and proof terms. Functions that branch on a Nat use
-// nat_rec so Pi checking sees StuckElim instead of raw triage on hypotheses.
+// nat_rec so Pi checking sees make_hyp instead of raw triage on hypotheses.
 
 one : Nat := 1
 two : Nat := 2

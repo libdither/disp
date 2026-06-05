@@ -1515,7 +1515,7 @@ roles use the same constructor:
     align: left,
     inset: 6pt,
     [*Role*], [*Origin*],
-    [Hypothesis],
+    [make_hypothesis],
     [`bind_hyp` (payload = `(domain, body)`, so a
       hypothesis is determined by its type and the body it is bound
       in — fresh per distinct binder, deterministic under hash-cons)],
@@ -1531,15 +1531,14 @@ roles use the same constructor:
 
 All stuck forms are *handler-rooted*: `pair_fst = checker_sig
 hyp_reduce`. The walker rejects user-side construction via its
-stem-forge rule; only the kernel mints them. `StuckElim` and `Hyp`
-are aliases at the tree level — and, like `bind_hyp`, they are
+stem-forge rule; only the kernel mints them via `bind_hyp`. They are
 *kernel-privileged* constructors (trusted base), not walker-buildable
 user code. Tests that need a bare hypothesis to probe a recognizer or
-`respond` (e.g. `bool_recognizer bool_meta (mint_hyp_form Bool)`, §12)
+`respond` (e.g. `bool_recognizer bool_meta (make_hyp_form Bool)`, §12)
 use these privileged minters and call the recognizer *directly* — they
 do not go through `typecheck`, whose `param_lift` would reject any
-public neutral (§8.3). `mint_hyp_form` is the test-only spelling of
-`Hyp`.
+public neutral (§8.3). `make_hyp_form` is the test-only spelling of
+`make_hyp`.
 
 #note[
   *Generalization.* In principle a custom handler can symbolic-defer
@@ -1621,7 +1620,7 @@ seal. If `v` is stuck it short-circuits to
 `Ok FF`, by hash-cons identity. If false, the per-type recognizer body
 runs on the concrete `v`. (This is the resolution of finding A: the
 reads are concrete here, where the old `elim`-routed `safe_*` would have
-returned a symbolic `StuckElim`.)
+returned a symbolic `make_hyp`.)
 
 *Scope.* Uniform — every `make_recognizer`-wrapped recognizer gets
 this for free. Per-type bodies see only concrete `v` values; the
@@ -1679,7 +1678,7 @@ A recognizer body that doesn't short-circuit on hypothesis arguments
 
 ```
 match (safe_is_fork hyp) { TT => ...; FF => ... }
-  -- safe_is_fork hyp → StuckElim form (stuck Bool)
+  -- safe_is_fork hyp → make_hyp form (stuck Bool)
   -- match on stuck Bool → stuck application
   -- subsequent operations → bigger stuck term
   -- recognizer's overall result → Ok stuck_term (not Ok TT)
@@ -1875,8 +1874,7 @@ target is handed to `hyp_reduce`, which consults the inductive type's
 `Extend (motive (reconstruct_self meta))`, minting the stuck elimination.
 So the neutral path reuses the single `hyp_reduce` primitive and the
 concrete path is ordinary library code — no dedicated eliminator primitive
-is needed. `StuckElim` and `Hyp` are tree-level aliases: both are
-`wait kernel.hyp_reduce (make_neutral_meta T payload)`.
+is needed.
 
 == `postulate` is gone — effects are a library construction
 
@@ -2140,7 +2138,7 @@ data; the error channel carries only kernel-correctness failures.
   e.g. Pi's `param_apply (B hyp) result` (§12) hands the recognizer a
   result that legitimately contains the freshly-minted `hyp`. The
   recognizer's H-rule fires there. Tests that exercise the H-rule
-  directly (`bool_recognizer bool_meta (mint_hyp_form Bool) = Ok TT`,
+  directly (`bool_recognizer bool_meta (make_hyp_form Bool) = Ok TT`,
   §12) likewise call the recognizer through `param_apply`, not
   `typecheck`. A caller that genuinely needs to ask "does this
   neutral-bearing `v` inhabit `T`?" uses `param_apply T v` directly,
@@ -3351,8 +3349,7 @@ types it's plain application (no triage); for tagged-sum types it
 triages on `target`, which the gate guarantees is concrete (triage on
 concrete values is walker-safe).
 
-`StuckElim` and `Hyp` are aliases at the tree level — both are
-`wait kernel.hyp_reduce (make_neutral_meta T payload)`. The
+The
 distinction is purely about how the payload was constructed:
 `bind_hyp` for hypotheses, `hyp_reduce` for spine-extended forms
 (including stuck eliminations).
@@ -3684,7 +3681,7 @@ stuck_stored_type := {v} -> STORED_TYPE v
 *Value decomposition* — "is the value this seal *represents* a leaf / stem /
 fork?" — has no concrete answer for an unknown, so it must stay *symbolic*. These
 route through the library `elim` (§12.3), which gates on `is_neutral` and, for a
-stuck target, pushes a case-frame into `hyp_reduce`, yielding a `StuckElim`
+stuck target, pushes a case-frame into `hyp_reduce`, yielding a `make_hyp`
 ("this structural property of an unknown value"). They are *not* readers:
 
 ```disp
@@ -3703,7 +3700,7 @@ safe_pair_fst := {v} -> elim                       // decompose the *represented
 
 The distinction is the resolution of finding A: a recognizer running under the
 walker needs *wrapper* facts (its argument's root sig and stored type), which the
-old `elim`-routed `safe_*` returned as a `StuckElim` — symbolic where the H-rule
+old `elim`-routed `safe_*` returned as a `make_hyp` — symbolic where the H-rule
 needs a concrete `tree_eq`. The readers fix that: wrapper reads are concrete on
 seals; only genuine value-decomposition stays symbolic. For concrete values both
 columns reduce to the raw operation's result; the difference shows only on seals.
@@ -3883,7 +3880,7 @@ test bool_recognizer bool_meta TT = Ok TT
 test bool_recognizer bool_meta FF = Ok TT
 test bool_recognizer bool_meta zero = Ok FF
 // H-rule test: hypothesis of Bool is recognized as Bool inhabitant.
-test bool_recognizer bool_meta (mint_hyp_form Bool) = Ok TT
+test bool_recognizer bool_meta (make_hyp_form Bool) = Ok TT
 ```
 
 Body is concrete-only (no H-rule logic — `make_recognizer` provides
@@ -3917,7 +3914,7 @@ test typecheck StrictType Nat
 test nat_recognizer nat_meta zero = Ok TT
 test nat_recognizer nat_meta (succ zero) = Ok TT
 test nat_recognizer nat_meta TT = Ok FF
-test nat_recognizer nat_meta (mint_hyp_form Nat) = Ok TT   // H-rule
+test nat_recognizer nat_meta (make_hyp_form Nat) = Ok TT   // H-rule
 ```
 
 == `Pi`
@@ -4148,9 +4145,9 @@ test typecheck Type Type         // Type is a type (lax)
 test typecheck StrictType Type   // Type also passes deep validation
 
 // Predicate-side H-rule tests (the load-bearing case for polymorphism).
-let A_hyp  = Hyp Type 0
-let B_hyp  = Hyp Type 1
-let x_of_A = Hyp A_hyp t
+let A_hyp  = make_hyp Type 0
+let B_hyp  = make_hyp Type 1
+let x_of_A = make_hyp A_hyp t
 
 // Applying a Type-hyp routes through hyp_reduce's Return channel, which is
 // Ok-wrapped (§7.1, §7.5 wrapping invariant) — so these reduce to Ok TT / Ok FF,
@@ -4443,7 +4440,7 @@ returns `u0` for it directly — correct for *both* `transp` (identity
 transport) and `hcomp` (a discrete type composes to its cap `u0`,
 since its only paths are reflexivity). So `Bool`, `Nat`, etc. keep
 `functor := trivial_functor` and need no transport rule of their own.
-(This replaces the earlier `trivial_functor → StuckElim`, which wrongly
+(This replaces the earlier `trivial_functor → make_hyp`, which wrongly
 made `transp Bool x` stuck instead of `x`.) A genuine per-type functor
 is consulted for every non-discrete type — including `hcomp` over
 higher types, whose homogeneous composite is *not* `u0` — and is free
@@ -4598,7 +4595,7 @@ operational story.
     [Kernel tests],
     [The two kernel handlers behave per their specs (§7).
       Test that `bind_hyp` mints a neutral and `hyp_reduce` extends
-      spines / mints StuckElim via inductive types' `respond`. There is
+      spines / mints make_hyp via inductive types' `respond`. There is
       no host dependence to exclude — checking never performs an effect
       (§15), so these are ordinary `test`s.],
 

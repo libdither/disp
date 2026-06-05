@@ -69,16 +69,6 @@ ok_value := {r} -> pair_snd r
 bind := {r, k} -> match r { Ok v => k v; Err _ => r }
 
 // ================================================================
-// Neutral (hypothesis) metadata — a { stored_type; payload } record (the §2.6
-// cut), read by name. The payload is the spine: a fresh hyp's id, or an applied
-// neutral's (old_meta, arg) extension. Only stored_type is read by name; the
-// payload exists so the §8.1 support scan can descend it for occurs-checking.
-make_neutral_meta := {stored_type, payload} -> { stored_type := stored_type; payload := payload }
-neutral_app_payload := {old_meta, arg} -> t old_meta arg
-extend_neutral_meta := {old_meta, result_type, arg} ->
-  make_neutral_meta result_type (neutral_app_payload old_meta arg)
-
-// ================================================================
 // MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
 // behavioral_specs }, written as a record literal and read BY NAME — the
 // one-record discipline of TYPE_THEORY §2.6 / §11.2 ("metadata included").
@@ -93,8 +83,6 @@ unit_witness := t
 trivial_functor := t
 make_meta := {params, respond} ->
   { recognizer_params := params; functor := trivial_functor; respond := respond; behavioral_specs := t }
-// Fields are read by name via the §2.6 cut — `meta.recognizer_params`,
-// `meta.respond`, etc. — not through accessor wrappers.
 metashape_header := ["recognizer_params", "functor", "respond", "behavioral_specs"]
 
 // ================================================================
@@ -103,6 +91,8 @@ metashape_header := ["recognizer_params", "functor", "respond", "behavioral_spec
 // `meta` is the neutral meta record `{ stored_type; payload }`. self == the top-level
 // hyp_reduce (hash-cons stable), so every `wait self _` shares one canonical
 // root = the is_neutral signature.
+extend_neutral_meta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
+
 hyp_reduce := fix ({self, meta, frame} -> {
   let respond = (type_meta meta.stored_type).respond
   match (respond meta frame) {
@@ -112,11 +102,7 @@ hyp_reduce := fix ({self, meta, frame} -> {
 })
 
 reconstruct_self := {meta} -> wait hyp_reduce meta
-mint_hyp := {ty, id} -> wait hyp_reduce (make_neutral_meta ty id)
-// Hyp / StuckElim are tree-level aliases for mint_hyp (a hypothesis vs a
-// spine-extended/stuck form — same constructor, §6.1).
-Hyp := mint_hyp
-StuckElim := mint_hyp
+make_hyp := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := id }
 
 hyp_sig := checker_sig hyp_reduce
 is_neutral := {v} -> tree_eq (pair_fst v) hyp_sig // root-sig read (bare pair_fst)
@@ -165,15 +151,9 @@ let support_set = fix ({self, v} ->
 occurs := {h, v} -> set_member (type_meta h) (support_set v)
 is_closed := {v} -> is_leaf (support_set v)
 
-// ================================================================
-// bind_hyp (Σ-op): mint a fresh hyp, run the body, escape-check the result
-// ================================================================
-// The body runs RAW (`body h`): bind_hyp is always reached via routing, so its
-// nested param_apply calls run raw too — no walking of mints, breaking the
-// param_apply<->bind_hyp cycle. (Walker reflection-protection of the body is a
-// soundness hardening deferred; the `occurs` escape check is in place.)
+// The bind_hyp kernel operation is called raw from param_apply. It mints a neutral, runs a passed function on that neutral (`body`), and verifies that the neutral doesn't escape the context via `occurs`
 bind_hyp_handler := {domain, body} -> {
-  let h = mint_hyp domain (pair domain body)
+  let h = make_hyp domain (pair domain body)
   bind (body h) ({result} ->
     match (occurs h result) { TT => Err; FF => Ok result })
 }
@@ -183,7 +163,7 @@ bind_hyp_sig := checker_sig bind_hyp_handler
 let is_kernel_op = {f} ->
   and (is_fork f) (or (tree_eq (pair_fst f) hyp_sig) (tree_eq (pair_fst f) bind_hyp_sig))
 
-// for param_apply to take advantage or tree_eq's host O(1) optimization, we need to re-create the lazy evaluation of tree_eq via special signature shenanigans, ideally this would be transparent to the walker, but to do that we would need a canonical function that detects partially evaluated tree_eq that is also lazy-optimized. Since we haven't done that yet, we just have a special partial eval signature constructed using wait-forms.
+// For param_apply to take advantage or tree_eq's host O(1) optimization, we need to re-create the lazy evaluation of tree_eq via special signature shenanigans, ideally this would be transparent to the walker, but to do that we would need a canonical function that detects partially evaluated tree_eq that is also lazy-optimized. Since we haven't done that yet, we just have a special partial eval signature constructed using wait-forms.
 TEQ_WAIT_SIG := checker_sig tree_eq
 let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 

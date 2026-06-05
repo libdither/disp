@@ -15,9 +15,9 @@ test typecheck Type zero = Ok FF // not a type
 test typecheck Type TT = Ok FF
 
 // ---- predicate-side H-rule (a Type-hyp used as a predicate) ----
-let A_hyp = mint_hyp Type 0
-let B_hyp = mint_hyp Type 1
-let x_of_A = mint_hyp A_hyp t
+let A_hyp = make_hyp Type 0
+let B_hyp = make_hyp Type 1
+let x_of_A = make_hyp A_hyp t
 test param_apply A_hyp x_of_A = Ok TT // x:A_hyp inhabits the predicate A_hyp
 test param_apply B_hyp x_of_A = Ok FF // distinct Type-hyp
 test param_apply A_hyp zero = Ok FF // closed value: not a neutral
@@ -40,7 +40,7 @@ test neg TT = FF
 test neg FF = TT
 
 // recursor on a neutral target -> stuck elimination stored at motive(self)
-let hN = mint_hyp Nat 0
+let hN = make_hyp Nat 0
 test is_neutral (nat_rec ({_} -> Bool) TT ({n, rec} -> FF) hN) = TT
 
 // ---- first-order types ----
@@ -93,22 +93,22 @@ test field r tag_b = TT // r.b
 
 // ---- neutral projection through respond (§12.1) ----
 // A Sigma-hyp applied to a projection selector yields a stuck component.
-let hAB = mint_hyp (Sigma Nat ({_} -> Bool)) 0
+let hAB = make_hyp (Sigma Nat ({_} -> Bool)) 0
 // Option A (§7.5): param_apply of a neutral is the BARE stuck component, not Ok(stuck).
 test neutral_type (param_apply hAB walker_pair_fst) = Nat // fst : A = Nat
 test neutral_type (param_apply hAB walker_pair_snd) = Bool // snd : B fst = Bool
 // dependency is preserved: snd of (n : Nat, _ : Eq Nat n n) lands at Eq Nat fst fst
-let hDep = mint_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
+let hDep = make_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
 let fstp = param_apply hDep walker_pair_fst
 test neutral_type (param_apply hDep walker_pair_snd) = Eq Nat fstp fstp
 
 // A Pi-hyp applied to an argument lands at the codomain (pi_respond reads
 // the cod field of the recognizer_params record by name).
-let hPi = mint_hyp (Pi Nat ({_} -> Bool)) 0
+let hPi = make_hyp (Pi Nat ({_} -> Bool)) 0
 test neutral_type (param_apply hPi zero) = Bool
 
 // A Record-hyp projects each field at its declared type, read by name.
-let hR = mint_hyp MyRec 0
+let hR = make_hyp MyRec 0
 test neutral_type (param_apply hR (acc tag_a)) = Nat // r.a : Nat
 test neutral_type (param_apply hR (acc tag_b)) = Bool // r.b : Bool
 
@@ -123,7 +123,7 @@ test eq_cong Nat Nat ({n} -> n) zero zero refl = refl
 test param_apply (Eq Nat (succ zero) (succ zero)) (eq_cong Nat Nat ({n} -> succ n) zero zero refl) = Ok TT
 // A neutral (hypothesis) proof routes eq_J to a stuck elimination stored at
 // `motive self` (Eq's respond is inductive_respond, §12 — not the dead state).
-let hEq = mint_hyp (Eq Nat zero (succ zero)) 0
+let hEq = make_hyp (Eq Nat zero (succ zero)) 0
 let stuck_eqJ = eq_J ({_} -> Bool) zero hEq
 test is_neutral stuck_eqJ = TT
 test neutral_type stuck_eqJ = Bool
@@ -135,7 +135,7 @@ test ord_depth zero_ord = zero
 test ord_depth (omega_plus zero_ord zero_ord) = succ zero
 test ord_depth (omega_plus zero_ord (omega_plus zero_ord zero_ord)) = succ (succ zero)
 // recursor on a neutral Ord -> stuck elimination
-test is_neutral (ord_depth (mint_hyp Ord 0)) = TT
+test is_neutral (ord_depth (make_hyp Ord 0)) = TT
 
 // ---- Not (negation = Pi P (_ -> False)) ----
 test typecheck Type (Not Bool) = Ok TT // Not Bool is a (Pi) type
@@ -148,7 +148,7 @@ test param_apply (Intersection Nat ({_} -> Nat)) (succ zero) = Ok TT
 test param_apply (Intersection Nat ({_} -> Nat)) TT = Ok FF
 
 // ---- inert respond: eliminating a neutral of an inert type -> dead state ----
-let hF = mint_hyp False 0
+let hF = make_hyp False 0
 let stuckF = param_apply hF zero // inert_respond ignores the frame
 test is_neutral stuckF = TT // bare stuck neutral (Option A §7.5)
 test is_ok stuckF = FF // ...NOT Ok-wrapped

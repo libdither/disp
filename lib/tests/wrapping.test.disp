@@ -47,7 +47,7 @@ test param_apply (Arrow Nat Nat) ({f} -> {x} -> x)    = Ok FF // {f}->I : return
 // ================================================================
 // C. PARAMETRICITY VIOLATIONS — must be a CLEAN Err, reliably
 // ================================================================
-let hN = mint_hyp Nat 0
+let hN = make_hyp Nat 0
 test param_apply ({x} -> is_fork x) hN                = Err // triage on hyp
 test param_apply (Arrow Nat Nat) ({n} -> is_fork n)   = Err // body triages its hyp
 let forge = {x} -> t hyp_sig x
@@ -68,7 +68,7 @@ test param_apply (Pi Nat ({n} -> Eq Nat (add n zero) n)) ({n} -> refl) = Ok FF
 // ================================================================
 // E. BARE-STUCK INVARIANT under multi-step spine extension
 // ================================================================
-let hF2 = mint_hyp (Arrow Nat (Arrow Nat Nat)) 0
+let hF2 = make_hyp (Arrow Nat (Arrow Nat Nat)) 0
 let s1 = param_apply hF2 zero // stuck : Arrow Nat Nat
 let s2 = param_apply s1 zero // stuck : Nat  (second spine extension)
 test is_ok s1 = FF // bare (Option A)

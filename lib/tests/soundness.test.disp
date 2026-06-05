@@ -8,7 +8,7 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-let hN = mint_hyp Nat 0
+let hN = make_hyp Nat 0
 
 // ================================================================
 // PRESENT protections (permanent — these must always hold)

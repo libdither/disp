@@ -28,7 +28,7 @@ is_some := {opt} -> tree_eq (pair_fst opt) some_tag
 // neutral hypothesis is applied to a `{motive; cases}` frame, routing through the
 // coproduct's `inductive_respond` to a stuck elimination stored at `motive opt`.
 // So `{o : Option A} -> option_rec M n s o` type-checks (the neutral branch is a
-// well-typed stuck form), unlike a raw `triage`/`StuckElim` which the walker bars.
+// well-typed stuck form), unlike a raw `triage`/`make_hyp` which the walker bars.
 option_rec := {motive, on_none, on_some, opt} ->
   select_lazy
     ({_} -> opt { motive := motive; cases := pair on_none on_some })
