@@ -87,7 +87,7 @@ test honest (succ (succ zero)) = succ (succ zero) // value-transparent on concre
 // adversarial: a USER's OWN recursor (own dispatcher, via elim) is gated identically,
 // because on a neutral target elim applies the neutral -> the type's respond -> gate.
 let my_dispatcher = fix ({self, motive, cases, target} ->
-  match (tree_eq target zero) { TT => cases.base; FF => cases.step (pair_snd target) (self motive cases (pair_snd target)) })
+  if (tree_eq target zero) then cases.base else (cases.step (pair_snd target) (self motive cases (pair_snd target))))
 let my_rec = {motive, base, step, target} -> elim my_dispatcher motive { base := base; step := step } target
 test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) TT ({p, ih} -> TT) y)        = Ok FF
 test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok TT

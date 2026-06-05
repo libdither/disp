@@ -31,12 +31,11 @@ type_meta := {T} -> pair_snd (pair_snd T)
 checker_sig := {checker} -> pair_fst (wait checker t)
 
 let index_of = fix ({self, l, name} ->
-  match (is_fork l) {
-    TT => match (tree_eq (pair_fst l) name) { TT => zero; FF => succ (self (pair_snd l) name) }
-    FF => zero
-  })
+  if (is_fork l)
+    then (if (tree_eq (pair_fst l) name) then zero else (succ (self (pair_snd l) name)))
+    else zero)
 let path_at = fix ({self, i, payload} ->
-  match (tree_eq i zero) { TT => pair_fst payload; FF => self (nat_pred i) (pair_snd payload) })
+  if (tree_eq i zero) then (pair_fst payload) else (self (nat_pred i) (pair_snd payload)))
 // take a record and a string name, then resolve the path into the pair data and return item 
 proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
 // cut rule: runs when applying a product (record) to coproduct (enum), indexes product by name of codproduct, and runs the product field (which must be a function) with coproduct associated data. 
@@ -133,22 +132,20 @@ inert_respond := {nmeta, frame} -> Extend InvalidType
 // support / occurs / is_closed (the §8.1 dependency scan)
 // ================================================================
 let t_union = fix ({self, a, b} ->
-  match (is_fork a) { TT => t (pair_fst a) (self (pair_snd a) b); FF => b })
+  if (is_fork a) then (t (pair_fst a) (self (pair_snd a) b)) else b)
 let set_member = fix ({self, x, s} ->
-  match (is_fork s) {
-    TT => match (tree_eq (pair_fst s) x) { TT => TT; FF => self x (pair_snd s) }
-    FF => FF
-  })
+  if (is_fork s)
+    then (if (tree_eq (pair_fst s) x) then TT else (self x (pair_snd s)))
+    else FF)
 // support descends THROUGH neutrals: a hyp hidden in a derived neutral's spine
 // is still found. The scan uses the *fork-guarded* neutral check: a genuine
 // neutral is a fork, whereas partial `wait hyp_reduce` recipes inside type
 // metadata are stems that share the bare sig (the §2.6 shape collision).
 let is_hyp_fork = {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
 let support_set = fix ({self, v} ->
-  match (is_hyp_fork v) {
-    TT => t (type_meta v) (self (type_meta v))
-    FF => (triage t ({c} -> self c) ({l, r} -> t_union (self l) (self r)) v)
-  })
+  if (is_hyp_fork v)
+    then (t (type_meta v) (self (type_meta v)))
+    else (triage t ({c} -> self c) ({l, r} -> t_union (self l) (self r)) v))
 occurs := {h, v} -> set_member (type_meta h) (support_set v)
 is_closed := {v} -> is_leaf (support_set v)
 
@@ -156,7 +153,7 @@ is_closed := {v} -> is_leaf (support_set v)
 bind_hyp_handler := {domain, body} -> {
   let h = make_hyp domain (pair domain body)
   bind (body h) ({result} ->
-    match (occurs h result) { TT => Err; FF => Ok result })
+    if (occurs h result) then Err else (Ok result))
 }
 bind_hyp := {A} -> wait bind_hyp_handler A
 bind_hyp_sig := checker_sig bind_hyp_handler
@@ -170,7 +167,7 @@ let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 
 let w_stem = {a, x} -> {
   let r = t a x
-  match (is_hyp_fork r) { TT => Err; FF => Ok r } // stem-forge rejection
+  if (is_hyp_fork r) then Err else (Ok r) // stem-forge rejection
 }
 // Under Option A (§7.5) hyp_reduce's Extend channel is BARE, so a routed
 // kernel-op application `Ok (f x)` is single-wrapped (`Ok bare-stuck`) and
@@ -188,10 +185,9 @@ let w_fork = {self, a, b, x} ->
     (Ok b)
     ({c} -> w_s self c b x)
     ({tc, td} ->
-      match (is_hyp_fork x) {
-        TT => Err // triage-on-neutral rejection
-        FF => (triage (Ok tc) ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x)
-      })
+      if (is_hyp_fork x)
+        then Err // triage-on-neutral rejection
+        else (triage (Ok tc) ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x))
     a
 
 // param_walker: Ok-wrapped reducer. Routed arm runs the kernel-op wait-form raw (`f x`);
@@ -200,26 +196,14 @@ let w_fork = {self, a, b, x} ->
 // kernel-op sub-trees route at every layer.
 let param_walker = fix ({self, f, x} ->
   // TODO: turn this into something more elegant, maybe direct match destructing on tree or conversion of tree into coproduct, anything to make this easier to read and not using boolean matches
-  match (tree_eq f tree_eq) {
-    TT => Ok (wait tree_eq x) // stage 1: deferred application `wait tree_eq a`
-    FF => (match (is_teq_partial f) {
-      TT => Ok (f x) // stage 2: complete it — (wait tree_eq a) x = tree_eq a x (host, O(1), neutral-safe)
-      FF => (match (is_kernel_op f) { // if kernel op, run it in raw mode
-        TT => Ok (f x)
-        FF => (match (tree_eq f pair_fst) { // accessing the left branch / "root signature" of anything (including neutrals) is fine
-          TT => Ok (pair_fst x)
-          FF => (match (tree_eq f neutral_type) { // trying to fetch type of neutral is fine
-            TT => Ok (neutral_type x)
-            FF => (match (tree_eq f {x} -> x) { // identity is allowed
-              TT => Ok x
-              // run neutral-respecting triage (I wonder if this could be combined with the triage-bypassings above?)
-              FF => (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f)
-            })
-          })
-        })
-      })
-    })
-  })
+  if (tree_eq f tree_eq) then (Ok (wait tree_eq x)) // stage 1: deferred application `wait tree_eq a`
+  else if (is_teq_partial f) then (Ok (f x)) // stage 2: complete it — (wait tree_eq a) x = tree_eq a x (host, O(1), neutral-safe)
+  else if (is_kernel_op f) then (Ok (f x)) // if kernel op, run it in raw mode
+  else if (tree_eq f pair_fst) then (Ok (pair_fst x)) // accessing the left branch / "root signature" of anything (including neutrals) is fine
+  else if (tree_eq f neutral_type) then (Ok (neutral_type x)) // trying to fetch type of neutral is fine
+  else if (tree_eq f ({x} -> x)) then (Ok x) // identity is allowed
+  // run neutral-respecting triage (I wonder if this could be combined with the triage-bypassings above?)
+  else (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f))
 
 // param_apply returns the bare reduct (wrapping invariant §7.5): unwrap param_walker's
 // success-Ok; a routed/recognizer CheckerResult passes through.
@@ -235,10 +219,9 @@ inductive_respond := {nmeta, frame} ->
 
 // shim for all type recognizers that automatically executes the H-rule, i.e. checks if we are passed a neutral with matching type and if so, automatically return true.
 let recognizer_wrap = fix ({wrap, body, meta, v} ->
-  match (is_neutral v) {
-    TT => Ok (tree_eq (wait (wait wrap body) meta) (neutral_type v)) // H-rule
-    FF => body meta v // concrete-only body
-  })
+  if (is_neutral v)
+    then (Ok (tree_eq (wait (wait wrap body) meta) (neutral_type v))) // H-rule
+    else (body meta v)) // concrete-only body
 make_recognizer := {body} -> wait recognizer_wrap body
 
 // Recursive recognizers (Nat, Ord) must re-apply the H-rule at EVERY structural
@@ -251,17 +234,16 @@ make_recognizer := {body} -> wait recognizer_wrap body
 // H-rule already uses, so no new memo-stability obligation (§14).
 let recursive_recognizer_wrap = fix ({wrap, body, meta, v} -> {
   let self = wait (wait wrap body) meta
-  match (is_neutral v) {
-    TT => Ok (tree_eq self (neutral_type v)) // H-rule (identical to recognizer_wrap)
-    FF => body self meta v // pass `self`: body recurses via the H-rule
-  }
+  if (is_neutral v)
+    then (Ok (tree_eq self (neutral_type v))) // H-rule (identical to recognizer_wrap)
+    else (body self meta v) // pass `self`: body recurses via the H-rule
 })
 make_rec_recognizer := {body} -> wait recursive_recognizer_wrap body
 
 // ================================================================
 // Boundary: param_lift / typecheck
 // ================================================================
-param_lift := {v} -> match (is_closed v) { TT => Ok v; FF => Err }
+param_lift := {v} -> if (is_closed v) then (Ok v) else Err
 typecheck := {T, v} -> bind (param_lift v) ({sv} -> param_apply T sv)
 
 // ================================================================
@@ -292,9 +274,9 @@ gated_inductive_respond := {coh, nmeta, frame} -> {
   let r = coh nmeta.stored_type frame.motive frame.cases
   match r {
     Err _ => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
-    Ok v => match v {
-            FF => Extend InvalidType // cases do not inhabit the motive
-            TT => match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType } } // coherent; police the motive
+    Ok v => if v
+            then (match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // coherent; police the motive
+            else (Extend InvalidType) // cases do not inhabit the motive
   }
 }
 
@@ -306,7 +288,7 @@ Bool := wait (make_recognizer
     {T, motive, cases} -> {
       let ct = cases.ct
       let cf = cases.cf
-      bind ((motive TT) ct) ({okt} -> match okt { FF => Ok FF; TT => (motive FF) cf })
+      bind ((motive TT) ct) ({okt} -> if okt then ((motive FF) cf) else (Ok FF))
     }
   ) nmeta frame
 ))
@@ -320,7 +302,7 @@ nat_coherence := {T, motive, cases} -> {
   let step_coherent = (bind_hyp T ({n} -> bind_hyp (motive n) ({ih} ->
     bind (param_walker cases.step n) ({sn} ->
       bind (param_walker sn ih) ({val} -> (motive (succ n)) val)))))
-  bind ((motive zero) cases.base) ({okb} -> match okb { FF => Ok FF; TT => step_coherent })
+  bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
 }
 nat_respond  := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
 
@@ -332,7 +314,7 @@ Nat := wait (make_rec_recognizer
   triage
     (Ok TT) // zero
     ({_} -> Ok FF) // stem -> not a Nat
-    ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) // succ r -> recurse via self
+    ({l, r} -> if (tree_eq l t) then (self r) else (Ok FF)) // succ r -> recurse via self
     v
 ) (make_meta unit_witness nat_respond)
 
@@ -346,13 +328,11 @@ pi_body := {meta, v} -> {
     let codomain = param_apply B hyp
   // do the same for main function
     let ret = param_apply v hyp
-    match (tree_eq ret Err) { // check that neither returns invalid type
-      TT => Err
-      FF => match (tree_eq codomain Err) {
-        TT => Err;
-        FF => param_apply codomain ret // typecheck result, run resolved type on resolved function body
-      }
-    }
+    if (tree_eq ret Err) // check that neither returns invalid type
+      then Err
+      else (if (tree_eq codomain Err)
+        then Err
+        else (param_apply codomain ret)) // typecheck result, run resolved type on resolved function body
   })
 }
 pi_respond := {nmeta, frame} -> Extend ((type_meta (nmeta.stored_type)).recognizer_params.cod frame)
@@ -373,19 +353,17 @@ has_metashape_layout := {m} ->
 // Runs raw inside hyp_reduce, so raw is_neutral/neutral_type are walker-safe.
 type_predicate_h_rule := {nmeta, v} -> {
   let self_as_hyp = wait hyp_reduce nmeta
-  match (is_neutral v) {
-    TT => Return (tree_eq (neutral_type v) self_as_hyp)
-    FF => Return FF
-  }
+  if (is_neutral v)
+    then (Return (tree_eq (neutral_type v) self_as_hyp))
+    else (Return FF)
 }
 
 // Type recognizes a wait-form with a MetaShape-conforming meta. (A stricter
 // check that the recognizer was make_recognizer-built is deferred.)
 type_body := {m, v} ->
-  match (is_fork v) {
-    FF => Ok FF
-    TT => Ok (has_metashape_layout (type_meta v))
-  }
+  if (is_fork v)
+    then (Ok (has_metashape_layout (type_meta v)))
+    else (Ok FF)
 type_self_meta := make_meta unit_witness type_predicate_h_rule
 Type := wait (make_recognizer type_body) type_self_meta
 
@@ -400,10 +378,9 @@ Type := wait (make_recognizer type_body) type_self_meta
 // to `succ (add hyp m)` symbolically (needed to type inductive proofs like
 // `add_zero_r`), mirroring the recogniser-side open recursion (§A).
 let nat_dispatcher = fix ({self, motive, cases, target} ->
-  match (tree_eq target zero) {
-    TT => cases.base // base
-    FF => cases.step (nat_pred target) (elim self motive cases (nat_pred target)) // step n rec
-  })
+  if (tree_eq target zero)
+    then cases.base // base
+    else (cases.step (nat_pred target) (elim self motive cases (nat_pred target)))) // step n rec
 nat_rec := {motive, base, step, target} -> elim nat_dispatcher motive { base := base; step := step } target
 
 let bool_dispatcher = {motive, cases, target} -> select cases.ct cases.cf target
@@ -411,13 +388,11 @@ bool_rec := {motive, ct, cf, target} -> elim bool_dispatcher motive { ct := ct; 
 
 // ord_rec: zero_ord -> case_z; omega_plus a b -> case_op a b (rec a) (rec b).
 let ord_dispatcher = fix ({self, motive, cases, target} ->
-  match (is_leaf target) {
-    TT => cases.case_z
-    FF => {
-      let a = stem_child (pair_fst target) // pair_fst/snd here destructure
-      let b = pair_snd target // the ord value omega_plus a b
-      cases.case_op a b (elim self motive cases a) (elim self motive cases b) // recurse via elim (gate neutrals)
-    }
+  if (is_leaf target) then cases.case_z
+  else {
+    let a = stem_child (pair_fst target) // pair_fst/snd here destructure
+    let b = pair_snd target // the ord value omega_plus a b
+    cases.case_op a b (elim self motive cases a) (elim self motive cases b) // recurse via elim (gate neutrals)
   })
 ord_rec := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { case_z := case_z; case_op := case_op } target
 
@@ -471,20 +446,17 @@ Sigma := {A, B} -> wait (make_recognizer
     let A = params.dom
     let B = params.fam
     bind (A (pair_fst v)) ({va} ->
-      match va { FF => Ok FF; TT => (B (pair_fst v)) (pair_snd v) }) // b inhabits (B a)
+      if va then ((B (pair_fst v)) (pair_snd v)) else (Ok FF)) // b inhabits (B a)
   }
 ) (make_meta { dom := A; fam := B }
   {nmeta, frame} -> {
     let params = (type_meta nmeta.stored_type).recognizer_params
     let A = params.dom
     let B = params.fam
-    match (tree_eq frame walker_pair_fst) {
-      TT => Extend A
-      FF => (match (tree_eq frame walker_pair_snd) {
-        TT => match (param_walker B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst))) { Ok ty => Extend ty; Err _ => Extend InvalidType }  // police the family on the fst-projection
-        FF => Extend InvalidType
-      })
-    }
+    if (tree_eq frame walker_pair_fst) then (Extend A)
+    else if (tree_eq frame walker_pair_snd)
+      then (match (param_walker B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst))) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // police the family on the fst-projection
+      else (Extend InvalidType)
   }
 )
 
@@ -493,7 +465,7 @@ Refinement := {A, P} -> wait (make_recognizer
     let params = meta.recognizer_params
     let A = params.base
     let P = params.pred
-    bind (A v) ({va} -> match va { FF => Ok FF; TT => Ok (P v) }) // P is a bare-Bool predicate
+    bind (A v) ({va} -> if va then (Ok (P v)) else (Ok FF)) // P is a bare-Bool predicate
   }
 ) (make_meta { base := A; pred := P } inert_respond)
 
@@ -517,9 +489,9 @@ Ord := wait (make_rec_recognizer
     triage
       (Ok TT) // zero_ord
       ({_} -> Ok FF) // stem -> not an ord
-      ({l, r} -> match (is_stem l) { // omega_plus a b = fork(stem a, b)
-        FF => Ok FF
-        TT => bind (self (stem_child l)) ({oka} -> match oka { FF => Ok FF; TT => self r }) })
+      ({l, r} -> if (is_stem l) // omega_plus a b = fork(stem a, b)
+        then (bind (self (stem_child l)) ({oka} -> if oka then (self r) else (Ok FF)))
+        else (Ok FF))
       v
 ) (make_meta unit_witness inductive_respond)
 
@@ -530,13 +502,10 @@ Ord := wait (make_rec_recognizer
 //  MetaShape metadata is itself a §2.6 record built with them.)
 // ================================================================
 let lookup_arm = fix ({self, variants, tag} ->
-  match (is_fork variants) {
-    TT => {
-      let arm = pair_fst variants
-      match (tree_eq (pair_fst arm) tag) { TT => Ok (pair_snd arm); FF => self (pair_snd variants) tag }
-    }
-    FF => Err
-  })
+  if (is_fork variants) then {
+    let arm = pair_fst variants
+    if (tree_eq (pair_fst arm) tag) then (Ok (pair_snd arm)) else (self (pair_snd variants) tag)
+  } else Err)
 // Coproduct [(Vi, Si)]: v = inj tag pay inhabits iff tag is some Vi and pay : S_tag.
 Coproduct := {variants} -> wait (make_recognizer
   {meta, v} -> {
@@ -550,19 +519,15 @@ Coproduct := {variants} -> wait (make_recognizer
 
 // Record [(Vi, Ti)]: v is a product whose every named field inhabits its type.
 let record_check = fix ({self, fields, v} ->
-  match (is_fork fields) {
-    TT => {
-      let arm = pair_fst fields
-      bind ((pair_snd arm) (v (acc (pair_fst arm)))) ({ok} ->
-        match ok { FF => Ok FF; TT => self (pair_snd fields) v })
-    }
-    FF => Ok TT
-  })
+  if (is_fork fields) then {
+    let arm = pair_fst fields
+    bind ((pair_snd arm) (v (acc (pair_fst arm)))) ({ok} ->
+      if ok then (self (pair_snd fields) v) else (Ok FF))
+  } else (Ok TT))
 record_body := {meta, v} ->
-  match (tree_eq (pair_fst v) annihilate_sig) {
-    FF => Ok FF
-    TT => record_check meta.recognizer_params v
-  }
+  if (tree_eq (pair_fst v) annihilate_sig)
+    then (record_check meta.recognizer_params v)
+    else (Ok FF)
 // Projection for Record neutrals: a record-hyp applied to `acc name` extends the
 // spine with that field's declared type, read by name from the stored type.
 record_respond := {nmeta, frame} -> {
