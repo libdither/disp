@@ -58,18 +58,17 @@ Return := {v} -> inj "Return" v
 is_extend := {a} -> tree_eq (pair_fst a) "Extend"
 is_return := {a} -> tree_eq (pair_fst a) "Return"
 
-// CheckerResult (§3): `Ok value | Fail`, the error vocabulary folded to one
-// info-free Fail (the verdict channel carries Ok TT / Ok FF).
+// CheckerResult (§3): `Ok value | Err`, the error vocabulary folded to one
+// info-free Err (the verdict channel carries Ok TT / Ok FF).
 Ok := {v} -> inj "Ok" v
-Fail := inj "Fail" t
+Err := inj "Err" t
 is_ok := {r} -> tree_eq (pair_fst r) "Ok"
 ok_value := {r} -> pair_snd r
 
-// must_ok_any: `Ok v` → thread v into k; `Fail` → propagate. must_ok_or_self:
+// must_ok_any: `Ok v` → thread v into k; `Err` → propagate.:
 // like it, but returns the payload as-is (param_apply unwrapping a success-Ok,
 // elim a stuck reduct) so the payload need not be a Bool.
-must_ok_any := {r, k} -> match r { Ok v => k v; Fail _ => Fail }
-must_ok_or_self := {r} -> match r { Ok v => v; Fail _ => Fail }
+must_ok_any := {r, k} -> match r { Ok v => k v; Err _ => Err }
 
 // ================================================================
 // Neutral (hypothesis) metadata — a { stored_type; payload } record (the §2.6
@@ -178,40 +177,21 @@ is_closed := {v} -> is_leaf (support_set v)
 bind_hyp_handler := {domain, body} -> {
   let h = mint_hyp domain (pair domain body)
   must_ok_any (body h) ({result} ->
-    match (occurs h result) { TT => Fail; FF => Ok result })
+    match (occurs h result) { TT => Err; FF => Ok result })
 }
 bind_hyp := {A} -> wait bind_hyp_handler A
 bind_hyp_sig := checker_sig bind_hyp_handler
 
-// ================================================================
-// param_apply (dispatcher) = walk with reader carve-outs + Σ routing
-// ================================================================
-ROOT_SIG := pair_fst
-STORED_TYPE := neutral_type
-I_canonical := {x} -> x
-
 let is_kernel_op = {f} ->
   and (is_fork f) (or (tree_eq (pair_fst f) hyp_sig) (tree_eq (pair_fst f) bind_hyp_sig))
 
-// tree_eq is O(1) hash-cons and never reflects, so it is a granted carve-out
-// (§4.3): walk runs it raw instead of reducing its triage body, which keeps
-// `tree_eq` safe on neutral operands (needed to compare neutral domains/types).
-// Two-stage, like the host fast-path: stage 1 holds the first operand as the
-// deferred application `wait tree_eq a`, and stage 2 (is_teq_partial) recognizes
-// it by its signature and completes it. The carried partial is a proper wait-form
-// — not a bare `fork(tree_eq, a)` — so it is correct even if it ever escapes the
-// walker: `(wait tree_eq a) b` reduces to `tree_eq a b` via the host fast-path,
-// not garbage, and is recognized by `pair_fst == checker_sig tree_eq` exactly like
-// a kernel op (no forcing, vs the host's transparent `susp(tree_eq, a)` which any
-// in-language inspection would force — materializing the slow reduct and
-// re-triggering the very neutral-triage this carve-out exists to avoid).
-TEQ := tree_eq
+// for param_apply to take advantage or tree_eq's host O(1) optimization, we need to re-create the lazy evaluation of tree_eq via special signature shenanigans, ideally this would be transparent to the walker, but to do that we would need a canonical function that detects partially evaluated tree_eq that is also lazy-optimized. Since we haven't done that yet, we just have a special partial eval signature constructed using wait-forms.
 TEQ_WAIT_SIG := checker_sig tree_eq
 let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 
 let w_stem = {a, x} -> {
   let r = t a x
-  match (is_hyp_fork r) { TT => Fail; FF => Ok r } // stem-forge rejection
+  match (is_hyp_fork r) { TT => Err; FF => Ok r } // stem-forge rejection
 }
 // Under Option A (§7.5) hyp_reduce's Extend channel is BARE, so a routed
 // kernel-op application `Ok (f x)` is single-wrapped (`Ok bare-stuck`) and
@@ -222,14 +202,14 @@ let w_s = {self, c, b, x} -> {
   match (is_ok cx) {
     TT => {
       let bx = self b x
-      match (is_ok bx) { TT => self (ok_value cx) (ok_value bx); FF => Fail }
+      match (is_ok bx) { TT => self (ok_value cx) (ok_value bx); FF => Err }
     }
-    FF => Fail
+    FF => Err
   }
 }
 let w_tfk = {self, b, l, r} -> {
   let bl = self b l
-  match (is_ok bl) { TT => self (ok_value bl) r; FF => Fail }
+  match (is_ok bl) { TT => self (ok_value bl) r; FF => Err }
 }
 let w_fork = {self, a, b, x} ->
   triage
@@ -237,28 +217,30 @@ let w_fork = {self, a, b, x} ->
     ({c} -> w_s self c b x)
     ({tc, td} ->
       match (is_hyp_fork x) {
-        TT => Fail // triage-on-neutral rejection
+        TT => Err // triage-on-neutral rejection
         FF => (triage (Ok tc) ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x)
       })
     a
 
-// walk: Ok-wrapped reducer. Routed arm runs the kernel-op wait-form raw (`f x`);
+// param_walker: Ok-wrapped reducer. Routed arm runs the kernel-op wait-form raw (`f x`);
 // the embedded handler equals the registered one for genuine wait-forms
 // (route-to-registered hardening: TODO). Sub-applies re-enter self so nested
 // kernel-op sub-trees route at every layer.
-let walk = fix ({self, f, x} ->
-  match (tree_eq f TEQ) {
+let param_walker = fix ({self, f, x} ->
+  // TODO: turn this into something more elegant, maybe direct match destructing on tree or conversion of tree into coproduct, anything to make this easier to read and not using boolean matches
+  match (tree_eq f tree_eq) {
     TT => Ok (wait tree_eq x) // stage 1: deferred application `wait tree_eq a`
     FF => (match (is_teq_partial f) {
       TT => Ok (f x) // stage 2: complete it — (wait tree_eq a) x = tree_eq a x (host, O(1), neutral-safe)
-      FF => (match (is_kernel_op f) {
-        TT => Ok (f x) // routed: f x is the handler's CheckerResult
-        FF => (match (tree_eq f ROOT_SIG) {
+      FF => (match (is_kernel_op f) { // if kernel op, run it in raw mode
+        TT => Ok (f x)
+        FF => (match (tree_eq f pair_fst) { // accessing the left branch / "root signature" of anything (including neutrals) is fine
           TT => Ok (pair_fst x)
-          FF => (match (tree_eq f STORED_TYPE) {
+          FF => (match (tree_eq f neutral_type) { // trying to fetch type of neutral is fine
             TT => Ok (neutral_type x)
-            FF => (match (tree_eq f I_canonical) {
+            FF => (match (tree_eq f {x} -> x) { // identity is allowed
               TT => Ok x
+              // run neutral-respecting triage (I wonder if this could be combined with the triage-bypassings above?)
               FF => (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f)
             })
           })
@@ -267,13 +249,11 @@ let walk = fix ({self, f, x} ->
     })
   })
 
-// param_apply returns the bare reduct (wrapping invariant §7.5): unwrap walk's
+// param_apply returns the bare reduct (wrapping invariant §7.5): unwrap param_walker's
 // success-Ok; a routed/recognizer CheckerResult passes through.
-param_apply := {f, x} -> must_ok_or_self (walk f x)
+param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 
-// ================================================================
-// make_recognizer: the universal H-rule wrapper (runs UNDER the walker)
-// ================================================================
+// shim for all type recognizers that automatically executes the H-rule, i.e. checks if we are passed a neutral with matching type and if so, automatically return true.
 let recognizer_wrap = fix ({wrap, body, meta, v} ->
   match (is_neutral v) {
     TT => Ok (tree_eq (wait (wait wrap body) meta) (neutral_type v)) // H-rule
@@ -301,15 +281,15 @@ make_rec_recognizer := {body} -> wait recursive_recognizer_wrap body
 // ================================================================
 // Boundary: param_lift / typecheck
 // ================================================================
-param_lift := {v} -> match (is_closed v) { TT => Ok v; FF => Fail }
+param_lift := {v} -> match (is_closed v) { TT => Ok v; FF => Err }
 typecheck := {T, v} -> must_ok_any (param_lift v) ({sv} -> param_apply T sv)
 
 // ================================================================
 // Library eliminator: concrete -> dispatcher, neutral -> hyp_reduce via respond
 // ================================================================
 // Neutral branch uses juxtaposition `target frame` (not flat param_apply): when
-// elim runs UNDER walk (e.g. a recursor applied to a hyp during Pi-checking) the
-// enclosing walk routes it raw, avoiding a double-walk of the mint. Under Option A
+// elim runs UNDER param_walker (e.g. a recursor applied to a hyp during Pi-checking) the
+// enclosing param_walker routes it raw, avoiding a double-walk of the mint. Under Option A
 // (§7.5) hyp_reduce's Extend is already BARE, so the stuck elimination composes as
 // a plain value with no Ok to unwrap.
 elim := {dispatcher, motive, cases, target} ->
@@ -382,10 +362,10 @@ pi_body := {meta, v} -> {
     let codomain = param_apply B hyp
   // do the same for main function
     let ret = param_apply v hyp
-    match (tree_eq ret Fail) { // check that neither returns invalid type
-      TT => Fail
-      FF => match (tree_eq codomain Fail) {
-        TT => Fail;
+    match (tree_eq ret Err) { // check that neither returns invalid type
+      TT => Err
+      FF => match (tree_eq codomain Err) {
+        TT => Err;
         FF => param_apply codomain ret // typecheck result, run resolved type on resolved function body
       }
     }
@@ -459,15 +439,16 @@ ord_rec := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { cas
 
 // eq_J: the only concrete proof is refl, so the dispatcher returns the base;
 // a neutral proof routes to a stuck elimination via elim.
-let eq_J_dispatcher = {motive, cases, target} -> cases.base
-eq_J := {motive, base, proof} -> elim eq_J_dispatcher motive { base := base } proof
+eq_J := {motive, base, proof} -> elim
+  ({motive, cases, target} -> cases.base)
+  motive { base := base }
+  proof
 
 // ================================================================
 // First-order library types: Unit, False, String, Eq, Sigma, Refinement, Ord
 // ================================================================
 unit_val := t t t
-unit_body := {m, v} -> Ok (tree_eq v unit_val)
-Unit := wait (make_recognizer unit_body) (make_meta unit_witness inductive_respond)
+Unit := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
 false_body := {m, v} -> Ok FF
 False := wait (make_recognizer false_body) (make_meta unit_witness inert_respond)
@@ -565,7 +546,7 @@ let lookup_arm = fix ({self, variants, tag} ->
       let arm = pair_fst variants
       match (tree_eq (pair_fst arm) tag) { TT => Ok (pair_snd arm); FF => self (pair_snd variants) tag }
     }
-    FF => Fail
+    FF => Err
   })
 // Coproduct [(Vi, Si)]: v = inj tag pay inhabits iff tag is some Vi and pay : S_tag.
 coproduct_body := {meta, v} -> {

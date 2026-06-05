@@ -1,7 +1,7 @@
 // Regression suite for the §7.5 WRAPPING INVARIANT fix (Option A): hyp_reduce's
 // Extend channel returns a BARE stuck neutral, so `Ok <neutral>` never arises and
 // the CheckerResult monad is unambiguous. Locks in the operator-position
-// false-negatives this fix removes (flip et al.), reliable Ok FF vs Fail verdicts,
+// false-negatives this fix removes (flip et al.), reliable Ok FF vs Err verdicts,
 // the §5 uniformity trap (Eq proofs), and the bare-stuck invariant across multi-
 // step spine extension. See WRAPPING_INVARIANT.md.
 open use "../prelude.disp"
@@ -45,13 +45,13 @@ test param_apply (Arrow Nat Nat) ({f} -> {x} -> f x)  = Ok TT // η: {f}{x}->f x
 test param_apply (Arrow Nat Nat) ({f} -> {x} -> x)    = Ok FF // {f}->I : returns a function, not Nat
 
 // ================================================================
-// C. PARAMETRICITY VIOLATIONS — must be a CLEAN Fail, reliably
+// C. PARAMETRICITY VIOLATIONS — must be a CLEAN Err, reliably
 // ================================================================
 let hN = mint_hyp Nat 0
-test param_apply ({x} -> is_fork x) hN                = Fail // triage on hyp
-test param_apply (Arrow Nat Nat) ({n} -> is_fork n)   = Fail // body triages its hyp
+test param_apply ({x} -> is_fork x) hN                = Err // triage on hyp
+test param_apply (Arrow Nat Nat) ({n} -> is_fork n)   = Err // body triages its hyp
 let forge = {x} -> t hyp_sig x
-test param_apply forge zero                           = Fail // stem-forge
+test param_apply forge zero                           = Err // stem-forge
 
 // ================================================================
 // D. EQ-TYPE UNIFORMITY (the §5 uniformity trap canary)

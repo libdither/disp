@@ -806,7 +806,7 @@ every higher-level error-handling pattern is a composition.
 Failures propagate uniformly via `bind`. No manual short-circuiting
 in handler code; Kleisli composition does it automatically. Tagged
 errors plus `catch` mean each layer decides what to recover from and
-what to re-raise, instead of pattern-matching on opaque `Fail`
+what to re-raise, instead of pattern-matching on opaque `Err`
 trees. The general/specialized split keeps the kernel's failure
 vocabulary self-documenting: `grep catch` finds every error
 suppression; `grep 'Err ('` finds every error raise.
@@ -2062,7 +2062,8 @@ Two policies, one set:
     [`fresh_for h result` — this hypothesis can't cross the
       kernel→user return],
 
-    [`param_lift` / the effect driver (§15.6)], [`is_closed v` — no hypothesis crosses to the user (`typecheck`) or to a host call (the driver, before `perform_host`)],
+    [`param_lift` / the effect driver (§15.6)],
+    [`is_closed v` — no hypothesis crosses to the user (`typecheck`) or to a host call (the driver, before `perform_host`)],
   ),
   caption: [Two boundary checks, one set.],
 )
@@ -2072,7 +2073,7 @@ stuck elimination is itself a neutral, so a scan that halted at neutral
 roots would stop *before* reaching the hypothesis embedded in its
 spine — precisely the values that carry a hypothesis out of scope. This
 is verified in the implementation: `bind_hyp (Pi Nat ({_} -> Bool))
-({h} -> h 0)` returns `Fail`, because `h 0` is a stuck elimination
+({h} -> h 0)` returns `Err`, because `h 0` is a stuck elimination
 whose spine holds `h` (`lib/tests/bind_hyp.test.disp`); the prior
 seal-stopping scan returned the leaked neutral instead.
 
@@ -2858,7 +2859,9 @@ trees are types-of-some-kind. The standard library ships three:
     [Deep],
     [Same as `Type`, plus typechecks the recognizer against `RecognizerShape`, the `respond` against `RespondShape` (§12.6), and the meta against `MetaShape` field-by-field.],
 
-    [`BehavioralType`], [Behavioral], [Same as `StrictType`, plus runs each Path-typed `behavioral_specs` entry — including the *respond-coherence* Paths (the per-former computation rules, §12.3): a type whose `respond` returns the wrong eliminated type fails here.],
+    [`BehavioralType`],
+    [Behavioral],
+    [Same as `StrictType`, plus runs each Path-typed `behavioral_specs` entry — including the *respond-coherence* Paths (the per-former computation rules, §12.3): a type whose `respond` returns the wrong eliminated type fails here.],
   ),
   caption: [Standard validators.],
 )
@@ -3025,7 +3028,8 @@ provides a specific rigor level:
     [*Validator*], [*What it catches*],
     [`Type`], [Wrong wait-form shape, missing meta fields (`respond` included). Cheap.],
     [`StrictType`], [Above plus: recognizer not Pi-typed, `respond` not `RespondShape`-typed, meta fields wrong-typed.],
-    [`BehavioralType`], [Above plus: documented Path-typed properties of the recognizer *and* the respond-coherence laws (right eliminated type per frame).],
+    [`BehavioralType`],
+    [Above plus: documented Path-typed properties of the recognizer *and* the respond-coherence laws (right eliminated type per frame).],
   ),
   caption: [Validators and what they catch.],
 )
@@ -4711,7 +4715,7 @@ runs in the one host-independent mode.
 Two distinct claims to keep separate:
 
 + *The standard library passes its standard tests.* Operational;
-  empirically verified at every elaboration. Failure indicates an
+  empirically verified at every elaboration. Errure indicates an
   implementation bug or definitional inconsistency.
 
 + *The disp type system is foundationally consistent (no inhabitant

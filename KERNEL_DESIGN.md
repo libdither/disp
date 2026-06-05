@@ -100,7 +100,7 @@ The walker's reader carve-outs (run raw instead of being reduced) are
 runs a registered kernel-op's wait-form raw. Everything else is reduced
 structurally, and the two parametricity guards fire there: forging a
 neutral-rooted fork (stem-forge) and triaging on a neutral both return
-`Fail`. These are pinned by `lib/tests/soundness.test.disp`.
+`Err`. These are pinned by `lib/tests/soundness.test.disp`.
 
 ## Strictness Pitfalls
 

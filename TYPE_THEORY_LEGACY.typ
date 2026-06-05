@@ -138,10 +138,10 @@ selected by the dispatcher:
 - *Parametric mode* (the *walker*). Tree-calculus reduction with two
   restrictions:
   + *Triage on a neutral fails.* If the value being triaged is a
-    kernel-minted hypothesis, the application returns `Fail`.
+    kernel-minted hypothesis, the application returns `Err`.
   + *Fork-formation rejecting neutral roots.* If the stem rule would
     produce a fork whose left component matches the canonical
-    hypothesis-handler signature, the application returns `Fail`.
+    hypothesis-handler signature, the application returns `Err`.
 
 Parametric mode encodes operational parametricity: hypotheses are
 opaque tokens for universal quantification, and user code cannot
@@ -184,13 +184,13 @@ implementation's `recq` record (`lib/kernel/handlers.disp`):
     align: left,
     inset: 6pt,
     [*Primitive*], [*Role*], [*Mode*],
-    [`hyp_reduce`],      [`apply` on a kernel-minted neutral],            [raw],
-    [`guard`],           [public-boundary scan + predicate evaluation],   [raw],
-    [`unguard`],         [walker-safe peeling of guard layer],            [raw],
-    [`checked_apply`],   [dispatcher (signatures + walker default)],      [raw],
-    [`predicate_frame`], [wraps recognizer with H-rule for hypotheses],   [raw],
-    [`eliminator_frame`],[wraps case dispatcher with stuck-mint],         [raw],
-    [`bind_hyp`],        [mints fresh hypothesis for predicate checking], [raw],
+    [`hyp_reduce`], [`apply` on a kernel-minted neutral], [raw],
+    [`guard`], [public-boundary scan + predicate evaluation], [raw],
+    [`unguard`], [walker-safe peeling of guard layer], [raw],
+    [`checked_apply`], [dispatcher (signatures + walker default)], [raw],
+    [`predicate_frame`], [wraps recognizer with H-rule for hypotheses], [raw],
+    [`eliminator_frame`], [wraps case dispatcher with stuck-mint], [raw],
+    [`bind_hyp`], [mints fresh hypothesis for predicate checking], [raw],
   ),
   caption: [Kernel primitive handlers. The kernel does not grow with library type-formers; these seven mediate all type-system operations. `checked_apply` is the dispatcher itself: it is included in the registry so that `ks.checked_apply` is available to handler bodies that route sub-checks through the perimeter.],
 )
@@ -597,7 +597,7 @@ The H-rule reconstruction relies on hash-cons stability of metadata
 Mints a fresh kernel-minted neutral for type-checking. The body may
 return any value; the kernel performs an *escape check* on the
 result: if the minted hypothesis is reachable in the result via a
-non-neutral path, the bind_hyp call returns `Fail`. This prevents
+non-neutral path, the bind_hyp call returns `Err`. This prevents
 the hypothesis from escaping into a context where it could be
 exploited via predicate_frame's H-rule.
 
@@ -615,7 +615,7 @@ q_bind_hyp_fn := {ks, raw, query} -> {meta, x} -> {
     let result_r = ks.checked_apply body hyp
     must_ok_or_ff result_r ({result} ->
       match (q_contains_via_open_path raw result hyp) {
-        TT => Fail              // hyp escaped through a non-neutral path
+        TT => Err              // hyp escaped through a non-neutral path
         FF => result             // hyp didn't escape — return body's value
       })
   }
@@ -664,7 +664,7 @@ because triage on neutrals is rejected by the walker.
   to *extract* `h` from bind_hyp's return value and apply `T` to
   it. The escape check forbids exactly this: if `h` is reachable
   in the return tree via paths that user code (under parametric
-  mode) can traverse, bind_hyp returns Fail instead.
+  mode) can traverse, bind_hyp returns Err instead.
 
   Paths user code can traverse: `pair_fst`, `pair_snd`, `triage`'s
   on_fork branch — all on non-neutral fork-shaped values. Walker
@@ -802,7 +802,7 @@ q_is_neutral := {raw, v} -> and (is_fork v) (has_sig raw.hyp_reduce v)
 
 *Tree-shape predicates.* These observe the outer constructor of `v`
 without applying it. Under the parametric walker, all four return
-`Fail` when applied to a kernel-minted neutral; under raw mode they
+`Err` when applied to a kernel-minted neutral; under raw mode they
 report the actual shape.
 
 ```
@@ -881,8 +881,8 @@ eq_meta_lhs  := {m} -> pair_fst (pair_snd m)
 eq_meta_rhs  := {m} -> pair_snd (pair_snd m)
 ```
 
-*Result handling.* Walker invocations return `Ok value` or `Fail`;
-`must_ok_or_ff` folds Fail into FF for predicate composition.
+*Result handling.* Walker invocations return `Ok value` or `Err`;
+`must_ok_or_ff` folds Err into FF for predicate composition.
 
 ```
 must_ok_or_ff := {result, k} ->
@@ -1248,14 +1248,14 @@ strictly-smaller-measure inputs:
 //
 // `measure` maps inputs to a well-founded type M (Nat, Ord, ...).
 // `body` takes `rec` and `v`; rec invocations on inputs whose
-// measure is not strictly less than measure(v) return Fail.
+// measure is not strictly less than measure(v) return Err.
 
 wf_fix := {measure, body} ->
   fix ({self, v} ->
     let bounded_self = {v_inner} ->
       match (lt_in_M (measure v_inner) (measure v)) {
         TT => self v_inner
-        FF => Fail
+        FF => Err
       }
     body bounded_self v)
 ```
@@ -1378,11 +1378,11 @@ boundary.
   bind_hyp's result detects that the minted hyp `h` is reachable
   via a non-neutral path (in fact, `h` IS the result, modulo
   identity). The check returns TT (h escapes), so bind_hyp
-  returns Fail.
+  returns Err.
 
-  weirder thus evaluates to Fail at the body. Pi-check
+  weirder thus evaluates to Err at the body. Pi-check
   `Pi Bool ({_} -> False) weirder`: the recognizer's
-  `expected_core (v hyp_b)` becomes `False Fail = FF`, so Pi-check
+  `expected_core (v hyp_b)` becomes `False Err = FF`, so Pi-check
   rejects weirder. Soundness preserved.
 
   Without the escape check, weirder would be accepted at type-check

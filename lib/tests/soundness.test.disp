@@ -18,20 +18,20 @@ let hN = mint_hyp Nat 0
 // `forge` tries to build fork(hyp_sig, x) = a fake hypothesis; the walker's
 // stem rule rejects it, so dispatching the application fails.
 let forge = {x} -> t hyp_sig x
-test param_apply forge zero = Fail
-test param_apply forge (succ zero) = Fail
+test param_apply forge zero = Err
+test param_apply forge (succ zero) = Err
 
 // Triage-on-neutral rejection (§4.2/§4.3): reflecting on a hypothesis's shape
 // under the walker fails. is_fork/is_leaf/is_stem all triage on their argument.
-test param_apply ({x} -> is_fork x) hN = Fail
-test param_apply ({x} -> is_leaf x) hN = Fail
-test param_apply ({x} -> is_stem x) hN = Fail
+test param_apply ({x} -> is_fork x) hN = Err
+test param_apply ({x} -> is_leaf x) hN = Err
+test param_apply ({x} -> is_stem x) hN = Err
 
 // bind_hyp escape check (§7.2/§8.1): a result that exposes the hypothesis via a
 // non-neutral path is rejected; a result independent of it passes.
 test bind_hyp Nat ({x} -> Ok zero) = Ok zero
-test bind_hyp Nat ({x} -> Ok x) = Fail
-test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail
+test bind_hyp Nat ({x} -> Ok x) = Err
+test bind_hyp Nat ({x} -> Ok (pair x zero)) = Err
 
 // ================================================================
 // DEFERRED GAP 1 — bind_hyp runs the body RAW (TYPE_THEORY §7.2)
@@ -40,12 +40,12 @@ test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail
 // the body is NOT walker-caught — only the final `occurs` escape scan guards.
 // A body that triages on the hypothesis therefore leaks a structural verdict
 // that the spec says should be rejected: the SAME predicates fail outright when
-// run under the walker (the param_apply tests above are `Fail`), but inside a
+// run under the walker (the param_apply tests above are `Err`), but inside a
 // bind_hyp body they slip through with a concrete answer. These assertions pin
-// the CURRENT (leaky) behavior; when body-walking lands, flip each RHS to `Fail`.
-test bind_hyp Nat ({x} -> Ok (is_fork x)) = Ok TT // sound: Fail (triage on hyp)
-test bind_hyp Nat ({x} -> Ok (is_leaf x)) = Ok FF // sound: Fail (triage on hyp)
-test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF // sound: Fail (triage on hyp)
+// the CURRENT (leaky) behavior; when body-walking lands, flip each RHS to `Err`.
+test bind_hyp Nat ({x} -> Ok (is_fork x)) = Ok TT // sound: Err (triage on hyp)
+test bind_hyp Nat ({x} -> Ok (is_leaf x)) = Ok FF // sound: Err (triage on hyp)
+test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF // sound: Err (triage on hyp)
 
 // ================================================================
 // DEFERRED GAP 2 — param_apply routes to the embedded handler (TYPE_THEORY §5.4)

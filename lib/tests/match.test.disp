@@ -86,7 +86,7 @@ test (match (is_zero 1) { TT => 1; FF => 0 }) = 0
 // A continuation `{r} -> body` whose body has outer free vars is the
 // pattern the soundness plan relies on. The continuation must be
 // invoked only when the success branch is selected — otherwise the
-// "Fail short-circuit" property is broken.
+// "Err short-circuit" property is broken.
 
 let succ_only = {cond, k, x} ->
   match cond {

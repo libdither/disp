@@ -22,10 +22,10 @@ object values:
 
 ```disp
 Ok   := {v} -> inj "Ok" v          // = fork("Ok",  v)
-Fail := inj "Fail" t               // = fork("Fail", t)
+Err := inj "Err" t               // = fork("Err", t)
 is_ok    := {r} -> tree_eq (pair_fst r) "Ok"
 ok_value := {r} -> pair_snd r
-must_ok_or_self := {r} -> match r { Ok v => v ; Fail _ => Fail }   // peels ONE Ok
+must_ok_or_self := {r} -> match r { Ok v => v ; Err _ => Err }   // peels ONE Ok
 ```
 
 The dispatcher is `param_apply f x = must_ok_or_self (walk f x)`. `walk` is an
@@ -135,7 +135,7 @@ than it fixes — every attempt below hit exactly this.
 
 ## 6. Root cause: the monad and object values share one tree space
 
-The deepest framing: `Ok`/`Fail` are *monad wrappers*, but they are encoded as
+The deepest framing: `Ok`/`Err` are *monad wrappers*, but they are encoded as
 trees (`fork("Ok", v)`) in the **same space** as object values, and the walker
 reduces by tree rewriting. So two distinct things become indistinguishable:
 
@@ -164,7 +164,7 @@ Concretely this means:
 - A genuinely ill-typed value binding (`foo : Nat -> Bool := {n} -> n`) is **not
   caught** — it produces `Ok FF`, same channel as a wrapping false-negative.
 - Hard-rejecting on `Ok FF` is *untenable*: the bogus verdict is **arbitrary**
-  (`Ok FF` vs `Fail`, reduction-order dependent). Dropping `set_union`'s
+  (`Ok FF` vs `Err`, reduction-order dependent). Dropping `set_union`'s
   annotation just moved the failure to `set_inter` — same body shape, different
   garbage verdict.
 
@@ -190,7 +190,7 @@ All four were validated against the full suite; none converged.
    both are `Ok <neutral>`. → `pred`, `typed_add` fail.
 
 3. **Routed `f x` + reify the recogniser body**
-   (`FF => match (body meta v) { Ok r => Ok r ; Fail _ => Fail }`, forcing a
+   (`FF => match (body meta v) { Ok r => Ok r ; Err _ => Err }`, forcing a
    *constructed* `Ok` rather than a routed tail). Hand-analysis says this restores
    the Pi contract; **empirically it did not** — `param_apply (Pi Nat Nat) ({n}->n)`
    still wasn't `Ok TT`. The reduction-order emergence (§6) defeats the local fix.
@@ -301,7 +301,7 @@ elaborator
                                              enforcer — one trusted oracle
 ```
 
-- `compileBinding`'s verification becomes a **hard error** on `Ok FF`/`Fail`. The
+- `compileBinding`'s verification becomes a **hard error** on `Ok FF`/`Err`. The
   host carries *zero* type-checking logic — it compiles to trees and calls one
   in-language `typecheck`. (`check`/`infer` are already gone; this removes the
   last reason they might come back.)
@@ -341,7 +341,7 @@ the entire premise of the project.
 ```
 # the canonical false-negatives (operator-position nesting; raw decomposition)
 param_apply (Pi …) ({f}{x}{y} -> f y x)        # flip — garbage from Ok-tag-as-fn
-param_apply (Pi …) ({p} -> pair_snd p)         # raw triage on a Σ-hyp → Fail
+param_apply (Pi …) ({p} -> pair_snd p)         # raw triage on a Σ-hyp → Err
 
 # the contract that must stay true through any fix
 param_apply Bool TT                 = Ok TT     # recogniser verdict is data

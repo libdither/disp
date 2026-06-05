@@ -989,14 +989,14 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
           // mis-reduced because the §7.5 `Ok`-wrapping invariant isn't fully
           // reconciled, and a body that raw-decomposes its hypothesis (`pair_snd p`)
           // trips the walker. Both yield a non-`Ok TT` verdict that is NOT a real
-          // type error. Worse, the bogus verdict is arbitrary (`Ok FF` vs `Fail`),
+          // type error. Worse, the bogus verdict is arbitrary (`Ok FF` vs `Err`),
           // so we cannot reliably reject on `Ok FF`. Until the wrapping invariant
           // is fixed, treat a failed verdict as "could not verify" and let the
           // binding through — the SAME coverage the old `check`/`infer` gave (it
           // skipped every non-Pi-codomain body). When nested-application checking
           // lands, switch this back to a hard error.  `verdictOk` ⇔ `Ok TT`.
           if (!verdictOk(verdict) && options.warnUnverified) {
-            const reason = (verdict.tag === "fork" && treeEqual(verdict.right, SCOTT_FF)) ? "Ok FF" : "Fail"
+            const reason = (verdict.tag === "fork" && treeEqual(verdict.right, SCOTT_FF)) ? "Ok FF" : "Err"
             console.warn(`[disp] could not verify '${name}' : declared type (verdict ${reason})`)
           }
         }

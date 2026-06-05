@@ -33,7 +33,7 @@ Every component participating in checking, elaboration, or conversion must have 
     - **Σ-ops:** `hyp_reduce` (push a frame onto a neutral via the stored type's `respond`) and `bind_hyp` (mint a fresh hyp, run the body, `occurs` escape-check).
     - **Dispatcher:** `param_apply` = the in-language parametric walker (`walk`) with reader carve-outs (`ROOT_SIG`/`STORED_TYPE`/`I`/`tree_eq`) + Σ routing on `hyp_sig`/`bind_hyp_sig`.
     - **The cut (§2.6):** value-level `prod`/`annihilate`/`proj`/`inj`/`acc`/`mk_record`/`field`/`match_co`. MetaShape metadata (built by `make_meta`), each former's `recognizer_params` (inline `{ }` literals, e.g. Pi's `{ dom; cod }`), and `checked`'s `{ dom, fn }` are §2.6 records read **by name** through the cut (`.field`) — no accessor wrappers.
-    - **Control coproducts:** `Action` (`Extend | Return`) and `CheckerResult` (`Ok | Fail`) are §2.6 coproducts — `inj` constructors, `match` elimination — the same construct library types use, not bespoke tag dispatch. The neutral-meta `{ stored_type; payload }` and the eliminator frame `{ motive; cases }` are likewise records read by name.
+    - **Control coproducts:** `Action` (`Extend | Return`) and `CheckerResult` (`Ok | Err`) are §2.6 coproducts — `inj` constructors, `match` elimination — the same construct library types use, not bespoke tag dispatch. The neutral-meta `{ stored_type; payload }` and the eliminator frame `{ motive; cases }` are likewise records read by name.
     - **H-rule:** `make_recognizer` (recognizer side) + `type_predicate_h_rule` (predicate side).
     - **Library types:** Bool, Nat, Pi/Arrow, Type, Unit, False/Not, String, Eq (+ `eq_J`/`eq_subst`/`eq_sym`/`eq_cong`), Ord, Sigma, Refinement, Intersection, Coproduct, Record — each `wait (make_recognizer body) meta`. Recursors `nat_rec`/`bool_rec`/`ord_rec` via the library `elim`.
 - `std/` — standard library on top of the kernel (`open use "../kernel/prelude.disp"`): `nat/arith.disp` (`add`), `nat/ops.disp` (`pred`, `is_zero`, `double`), `list.disp`, `set.disp`, `fin.disp`, `option.disp`, `result.disp`, `pair.disp`. (Records live in the kernel: the §2.6 cut — `mk_record`/`field`/`Record`.)
@@ -49,7 +49,7 @@ Every component participating in checking, elaboration, or conversion must have 
 **The codebase implements the two-Σ-op kernel of `TYPE_THEORY.typ`** — the cutover from the legacy 7-primitive shape has landed (`lib/types/` and `lib/kernel/{handlers,walker}.disp` were retired). The kernel surface is `hyp_reduce` + `bind_hyp` + the dispatcher `param_apply` over a fixed Σ; `eliminator_frame` is now the library `elim`; Pi/Bool/Nat/Eq/Type/Ord/Sigma/Refinement/Intersection/Coproduct/Record are ordinary library types in `lib/kernel/core.disp`.
 
 ### Landed
-- ✅ **In-language parametric walker.** `param_apply` runs the walker + Σ routing in-language (no native dispatcher fast-path). Forging a neutral-rooted fork (stem-forge) and triaging on a neutral are rejected (`Fail`); root-sig reads and `tree_eq` are the carve-outs. Verified by `lib/tests/soundness.test.disp`.
+- ✅ **In-language parametric walker.** `param_apply` runs the walker + Σ routing in-language (no native dispatcher fast-path). Forging a neutral-rooted fork (stem-forge) and triaging on a neutral are rejected (`Err`); root-sig reads and `tree_eq` are the carve-outs. Verified by `lib/tests/soundness.test.disp`.
 - ✅ **Recognizer + predicate H-rule.** `make_recognizer` handles the recognizer-side H-rule; `type_predicate_h_rule` the predicate side. Polymorphic Pi (`Pi Type ({A} -> Pi A ({_} -> A))`) type-checks.
 - ✅ **The cut (§2.6).** Coproduct / Record / match / projection over one `prod`/`annihilate` shape. MetaShape metadata, multi-field recognizer_params, and `checked`'s `{dom,fn}` are §2.6 records read by name.
 - ✅ **Recursors.** `nat_rec` / `bool_rec` / `ord_rec` and `eq_J` (+ Eq lemmas) via the library `elim`.
@@ -60,7 +60,7 @@ Every component participating in checking, elaboration, or conversion must have 
 - Route-to-registered handler in `param_apply` (§5.4) and body-walking in `bind_hyp` (§7.2) — both pinned by characterization tests in `lib/tests/soundness.test.disp`.
 - `StrictType` / `BehavioralType` validators, `RespondShape` / `RecognizerShape`, and behavioral_specs coherence Paths (§11–§12); make `Type` stricter (check the recognizer is `make_recognizer`-built).
 - Effects: the `Eff R X` free monad + driver (§15). Cubical: `Path` / `Partial` / `comp` / `transp` / `Glue` (§13). `strip` / erasure (§10). `wf_fix` / `Total` / `TotalWith`.
-- Richer `CheckerError` vocabulary (currently folded to a single `Fail`); source-span diagnostics and multi-error reporting.
+- Richer `CheckerError` vocabulary (currently folded to a single `Err`); source-span diagnostics and multi-error reporting.
 
 ## Compiler workarounds
 
