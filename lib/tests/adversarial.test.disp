@@ -1,0 +1,66 @@
+// Adversarial soundness suite — the hardest attacks I could construct on the
+// kernel's parametricity / sealing discipline. Each asserts the attack is BLOCKED.
+// Added alongside the GAP-2 sub-term policing (codomain/predicate/family/step) and
+// a hard-break pass on GAP-1 (the raw bind_hyp body). See
+// project_targeted_fix_policing_user_subterms in memory.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+let hN = make_hyp Nat 0
+let reflects = {n} -> select_lazy ({_} -> Nat) ({_} -> Bool) (is_fork n)   // non-parametric: branches on n's shape
+
+// ================================================================
+// GAP-2 regression: a USER sub-term that reflects on a hyp/neutral is caught
+// (codomain B, Intersection predicate P, Sigma family, recursor step)
+// ================================================================
+test param_apply (Pi Nat reflects) ({n} -> n)        = Err                 // codomain family reflects
+test param_apply (Intersection Nat reflects) zero    = Err                 // predicate reflects
+test neutral_type (param_apply (make_hyp (Sigma Nat reflects) 0) walker_pair_snd) = InvalidType   // Sigma family reflects
+test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({p, ih} -> is_fork p) } }) = InvalidType  // step reflects
+// valid analogues still pass (the policing only rejects reflection)
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n)            = Ok TT
+test param_apply (Pi Nat ({n} -> Eq Nat n n)) ({n} -> refl)  = Ok TT
+test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({p, ih} -> ih) } }) = Bool
+
+// ================================================================
+// A typed function cannot reflect on / extract from its argument (the walker
+// rejects triage-on-neutral and raw decomposition)
+// ================================================================
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x)   = Err
+test param_apply (Pi Nat ({_} -> Nat))  ({x} -> pair_snd x)  = Err
+test param_apply (Pi Nat ({_} -> Nat))  ({x} -> type_meta x) = Err
+test param_apply (Pi Nat ({_} -> Pi Nat ({_} -> Bool))) ({x} -> {y} -> is_fork x) = Err
+
+// ================================================================
+// bind_hyp escape check catches the hyp when it appears as a NEUTRAL
+// ================================================================
+test bind_hyp Nat ({x} -> Ok x)             = Err
+test bind_hyp Nat ({x} -> Ok (pair x zero)) = Err
+
+// ================================================================
+// KNOWN SEALING GAP (pinned): `occurs` does NOT catch bare metadata extraction.
+// A raw bind_hyp body can `type_meta x` and return the meta — the meta is a plain
+// record, not a hyp-fork, so the escape scan misses it — and the hyp can be
+// reconstructed outside its scope. This is the sharp edge of GAP-1 (raw body).
+// It is NOT a soundness hole today: the revived hyp is OPEN, so is_closed /
+// param_lift block it from every closed proof (the BACKSTOP below). When
+// body-walking or a sealed-hyp representation lands, the LEAK line flips to Err.
+// ================================================================
+let stolen = ok_value (bind_hyp Nat ({x} -> Ok (type_meta x)))
+test is_ok (bind_hyp Nat ({x} -> Ok (type_meta x))) = TT    // LEAK (sound: Err)
+let revived = wait hyp_reduce stolen                        // reconstructed hyp, escaped its scope
+test is_neutral revived = TT
+// BACKSTOP — the escaped (open) hyp cannot enter any closed proof:
+test is_closed revived       = FF
+test param_lift revived      = Err
+test typecheck Nat revived   = Err
+test typecheck False revived = Err
+
+// ================================================================
+// No CLOSED inhabitant of False (the empty type), by forging or otherwise.
+// False accepts only False-neutrals (via the H-rule), and every neutral is open.
+// ================================================================
+test param_apply False zero   = Ok FF
+test param_apply False stolen = Ok FF
+test typecheck False (ok_value (bind_hyp False ({x} -> Ok (make_hyp False 0)))) = Err
