@@ -144,7 +144,7 @@ test count_down2 3 = 3
 let classify = {c} -> match c { inc n => succ n; id x => x; _ => zero }
 test classify (inj "inc" zero) = succ zero
 test classify (inj "id" (succ zero)) = succ zero
-test classify (inj "other" TT) = zero          // wildcard: unmatched tag -> default
+test classify (inj "other" TT) = zero // wildcard: unmatched tag -> default
 
 // Nullary arm ignores the (unit) payload.
 let opt = {c} -> match c { none => zero; some x => x }
@@ -154,8 +154,8 @@ test opt (inj "some" (succ zero)) = succ zero
 // Multi-binder arm destructures a right-nested-pair payload (Σ-chain layout):
 //   pt a b c   ≡   inj "pt" (pair a (pair b c))
 let p3 = inj "pt" (pair zero (pair (succ zero) (succ (succ zero))))
-test (match p3 { pt x y z => x }) = zero               // x = fst
-test (match p3 { pt x y z => y }) = succ zero          // y = fst snd
+test (match p3 { pt x y z => x }) = zero // x = fst
+test (match p3 { pt x y z => y }) = succ zero // y = fst snd
 test (match p3 { pt x y z => z }) = succ (succ zero)   // z = snd snd
 test (match p3 { pt x y z => t x (t y z) }) = t zero (t (succ zero) (succ (succ zero)))
 

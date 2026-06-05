@@ -7,7 +7,7 @@ open use "../kernel/prelude.disp"
 
 // ---- a record value is a product, read by name ----
 let r = { a := zero; b := TT }
-test r.a = zero                       // statically-known record: compile-time collapse
+test r.a = zero // statically-known record: compile-time collapse
 test r.b = TT
 
 // it IS a §2.6 product (annihilate-rooted), so the cut combinators work on it
@@ -24,7 +24,7 @@ test get_b { a := zero; b := TT } = TT
 // ---- surface records interoperate with the Record TYPE via string names ----
 let MyRec = Record [pair "a" Nat, pair "b" Bool]
 test typecheck MyRec { a := zero; b := TT } = Ok TT
-test param_apply MyRec { a := TT; b := TT } = Ok FF      // a should be a Nat
+test param_apply MyRec { a := TT; b := TT } = Ok FF // a should be a Nat
 
 // ---- a record literal as kernel metadata: read a field by name at runtime ----
 // (the shape step 3 relies on: a 4-field record projected by an accessor fn)

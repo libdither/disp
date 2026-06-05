@@ -15,12 +15,12 @@ pair := {a, b} -> t a b
 // ================================================================
 // A value is fork(descriptor, payload); a single elimination (the cut) drives
 // projection, match, and application. Lists are iterated pairs (nil = leaf).
-nat_pred := {n} -> pair_snd n               // succ n = t t n
+nat_pred := {n} -> pair_snd n // succ n = t t n
 nil := t
 cons := {h, tl} -> t h tl
-list_const := {x} -> t t x                  // const x y = x (K); ignores the cut payload
-inj := {tag, pay} -> t tag pay              // a coproduct value: tag + payload
-acc := {name} -> inj name t                 // accessor: nullary coproduct (unit payload)
+list_const := {x} -> t t x // const x y = x (K); ignores the cut payload
+inj := {tag, pay} -> t tag pay // a coproduct value: tag + payload
+acc := {name} -> inj name t // accessor: nullary coproduct (unit payload)
 
 let index_of = fix ({self, l, name} ->
   match (is_fork l) {
@@ -33,7 +33,7 @@ let path_at = fix ({self, i, payload} ->
 proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
 // the cut: select the field named by c's tag, then feed it c's payload.
 annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
-prod := {P} -> wait annihilate P            // a product: callable; field table is its meta
+prod := {P} -> wait annihilate P // a product: callable; field table is its meta
 annihilate_sig := checker_sig annihilate
 // A record value: fields are const-wrapped (ignore the payload). Projection is
 // the cut against a nullary accessor. A match is a product of raw handlers.
@@ -106,7 +106,7 @@ hyp_reduce := fix ({self, meta, frame} -> {
   let respond = (type_meta meta.stored_type).respond
   match (respond meta frame) {
     Extend new_type => wait self (extend_neutral_meta (wait self meta) new_type frame)  // bare stuck (Option A, §7.5/§9)
-    Return v => Ok v                                                                     // verdict stays Ok (data)
+    Return v => Ok v // verdict stays Ok (data)
   }
 })
 
@@ -118,7 +118,7 @@ Hyp := mint_hyp
 StuckElim := mint_hyp
 
 hyp_sig := checker_sig hyp_reduce
-is_neutral := {v} -> tree_eq (pair_fst v) hyp_sig         // root-sig read (bare pair_fst)
+is_neutral := {v} -> tree_eq (pair_fst v) hyp_sig // root-sig read (bare pair_fst)
 is_concrete_fork := {v} -> select FF (is_fork v) (is_neutral v)   // a fork that isn't a neutral
 // fetch stored type of neutral
 neutral_type := {v} -> (type_meta v).stored_type
@@ -218,7 +218,7 @@ let w_fork = {self, a, b, x} ->
     ({c} -> w_s self c b x)
     ({tc, td} ->
       match (is_hyp_fork x) {
-        TT => Fail                                           // triage-on-neutral rejection
+        TT => Fail // triage-on-neutral rejection
         FF => (triage (Ok tc) ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x)
       })
     a
@@ -258,7 +258,7 @@ param_apply := {f, x} -> must_ok_or_self (walk f x)
 let recognizer_wrap = fix ({wrap, body, meta, v} ->
   match (is_neutral v) {
     TT => Ok (tree_eq (wait (wait wrap body) meta) (neutral_type v))   // H-rule
-    FF => body meta v                                                  // concrete-only body
+    FF => body meta v // concrete-only body
   })
 make_recognizer := {body} -> wait recognizer_wrap body
 
@@ -274,7 +274,7 @@ let recursive_recognizer_wrap = fix ({wrap, body, meta, v} -> {
   let self = wait (wait wrap body) meta
   match (is_neutral v) {
     TT => Ok (tree_eq self (neutral_type v))     // H-rule (identical to recognizer_wrap)
-    FF => body self meta v                        // pass `self`: body recurses via the H-rule
+    FF => body self meta v // pass `self`: body recurses via the H-rule
   }
 })
 make_rec_recognizer := {body} -> wait recursive_recognizer_wrap body
@@ -312,9 +312,9 @@ elim := {dispatcher, motive, cases, target} ->
 gated_inductive_respond := {coh, nmeta, frame} -> {
   let r = coh nmeta.stored_type frame.motive frame.cases
   match (is_ok r) {
-    FF => Extend InvalidType                                      // gate errored (e.g. a case triaged a hyp)
+    FF => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
     TT => match (ok_value r) {
-            FF => Extend InvalidType                              // cases do not inhabit the motive
+            FF => Extend InvalidType // cases do not inhabit the motive
             TT => Extend (frame.motive (reconstruct_self nmeta)) }      // coherent: same as the ungated respond
   }
 }
@@ -418,7 +418,7 @@ Type := wait (make_recognizer type_body) type_self_meta
 // `add_zero_r`), mirroring the recogniser-side open recursion (§A).
 let nat_dispatcher = fix ({self, motive, cases, target} ->
   match (tree_eq target zero) {
-    TT => cases.base                                       // base
+    TT => cases.base // base
     FF => cases.step (nat_pred target) (elim self motive cases (nat_pred target))  // step n rec
   })
 nat_rec := {motive, base, step, target} -> elim nat_dispatcher motive { base := base; step := step } target
@@ -432,7 +432,7 @@ let ord_dispatcher = fix ({self, motive, cases, target} ->
     TT => cases.case_z
     FF => {
       let a = stem_child (pair_fst target)                 // pair_fst/snd here destructure
-      let b = pair_snd target                              // the ord value omega_plus a b
+      let b = pair_snd target // the ord value omega_plus a b
       cases.case_op a b (elim self motive cases a) (elim self motive cases b)   // recurse via elim (gate neutrals)
     }
   })
@@ -459,7 +459,7 @@ String := wait (make_recognizer string_body) (make_meta unit_witness inert_respo
 
 refl := t
 eq_body := {meta, v} -> {
-  let p = meta.recognizer_params                                 // { type, lhs, rhs }
+  let p = meta.recognizer_params // { type, lhs, rhs }
   Ok (and (tree_eq v refl) (tree_eq p.lhs p.rhs))
 }
 // respond for J: eliminating a stuck `p : Eq A x y` lands the motive at the RHS
@@ -521,7 +521,7 @@ intersection_body := {meta, v} -> {
 Intersection := {A, P} -> wait (make_recognizer intersection_body) (make_meta { base := A; pred := P } inert_respond)
 
 zero_ord := t
-omega_plus := {a, b} -> t (t a) b                          // fork(stem a, b)
+omega_plus := {a, b} -> t (t a) b // fork(stem a, b)
 // ord_body recurses via the threaded `self` into both child ordinals, so neutral
 // children are recognised by the H-rule rather than triaged (§A).
 ord_body := {self, m, v} ->
@@ -553,7 +553,7 @@ coproduct_body := {meta, v} -> {
   let arm_r = lookup_arm meta.recognizer_params (pair_fst v)
   match (is_ok arm_r) {
     TT => (ok_value arm_r) (pair_snd v)                         // payload inhabits S_tag
-    FF => Ok FF                                                  // unknown tag
+    FF => Ok FF // unknown tag
   }
 }
 Coproduct := {variants} -> wait (make_recognizer coproduct_body) (make_meta variants inductive_respond)

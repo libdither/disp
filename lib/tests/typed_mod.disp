@@ -8,4 +8,4 @@ open use "../kernel/prelude.disp"
 foo : Type := Bool
 bar : Type := Nat
 baz : Type := Pi Nat ({_} -> Bool)
-helper := {x} -> x                      // unannotated → absent from `typ` (gradual)
+helper := {x} -> x // unannotated → absent from `typ` (gradual)

@@ -43,9 +43,9 @@ test bind_hyp Nat ({x} -> Ok (pair x zero)) = Fail
 // run under the walker (the param_apply tests above are `Fail`), but inside a
 // bind_hyp body they slip through with a concrete answer. These assertions pin
 // the CURRENT (leaky) behavior; when body-walking lands, flip each RHS to `Fail`.
-test bind_hyp Nat ({x} -> Ok (is_fork x)) = Ok TT       // sound: Fail (triage on hyp)
-test bind_hyp Nat ({x} -> Ok (is_leaf x)) = Ok FF       // sound: Fail (triage on hyp)
-test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF       // sound: Fail (triage on hyp)
+test bind_hyp Nat ({x} -> Ok (is_fork x)) = Ok TT // sound: Fail (triage on hyp)
+test bind_hyp Nat ({x} -> Ok (is_leaf x)) = Ok FF // sound: Fail (triage on hyp)
+test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF // sound: Fail (triage on hyp)
 
 // ================================================================
 // DEFERRED GAP 2 — param_apply routes to the embedded handler (TYPE_THEORY §5.4)
@@ -64,5 +64,5 @@ test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF       // sound: Fail (triage o
 // the respond gates the cases against the motive (§B), so they must be coherent:
 // with motive Bool, base : Bool and step returns its ih : Bool.
 let stuck = param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({pred, ih} -> ih) } }
-test is_neutral stuck = TT                  // bare stuck neutral (Option A §7.5)
+test is_neutral stuck = TT // bare stuck neutral (Option A §7.5)
 test neutral_type stuck = Bool

@@ -27,4 +27,4 @@ let snd_of_nats : Pair Nat Nat -> Nat = {p} -> proj_snd p
 test snd_of_nats (pair 4 7) = 7
 let fst_of_nats : Pair Nat Nat -> Nat = {p} -> proj_fst p
 test fst_of_nats (pair 4 7) = 4
-test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> proj_snd p) = Ok TT   // verifies (was Fail with raw pair_snd)
+test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> proj_snd p) = Ok TT // verifies (was Fail with raw pair_snd)
