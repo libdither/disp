@@ -173,7 +173,15 @@ let w_stem = {a, x} -> {
 // kernel-op application `Ok (f x)` is single-wrapped (`Ok bare-stuck`) and
 // `param_apply` of a neutral-headed body returns the bare stuck reduct directly —
 // no residual `Ok` to strip. (The old `unwrap_routed` helper is therefore gone.)
-// TODO: investigate why when inlining this function directly into w_fork it causs OOM.
+// w_s/w_tfk are factored into named `let`s — NOT inlined into w_fork's branches —
+// on purpose: inlining blows the compile-time eval budget (APPLY_BUDGET). w_s
+// references self/x/b multiple times across nested lambdas; inlined under w_fork's
+// binders, bracket abstraction (compile.ts `abstractName`, the S-combinator case)
+// duplicates those occurrences down both branches at every binder, and `cirToTree`
+// then eagerly normalizes the blown-up combinator — exhausting the budget (the OOM).
+// As a named `let`, each is abstracted and reduced ONCE into a single hash-consed
+// tree that w_fork just references (linear, no re-reduction). This is manual CSE;
+// see ABSTRACTION_SHARING.md for the compiler-level fix that removes the need.
 let w_s = {self, c, b, x} ->
   bind (self c x) ({cx} -> bind (self b x) ({bx} -> self cx bx))
 
