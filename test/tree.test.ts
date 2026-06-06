@@ -162,6 +162,21 @@ describe("prettyTree", () => {
     expect(prettyTree(fork(LEAF, LEAF))).toBe("(△ △ △)")
     expect(prettyTree(fork(stem(LEAF), fork(LEAF, LEAF)))).toBe("(△ (△ △) (△ △ △))")
   })
+
+  it("greedily substitutes names top-down, descending only unnamed structure", () => {
+    const zero = LEAF
+    const two = fork(LEAF, fork(LEAF, LEAF)) // succ (succ zero) shape
+    const names = new Map<number, string>([
+      [zero.id, "zero"],
+      [two.id, "two"],
+    ])
+    // largest match wins: the whole tree is named, no descent
+    expect(prettyTree(two, names)).toBe("two")
+    // unnamed parent descends; named children (the leaves) substitute
+    expect(prettyTree(stem(zero), names)).toBe("(△ zero)")
+    // no map → raw representation (back-compat)
+    expect(prettyTree(two)).toBe("(△ △ (△ △ △))")
+  })
 })
 
 describe("constants", () => {

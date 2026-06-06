@@ -553,12 +553,21 @@ export function force(t: Tree): Tree {
 
 // --- Pretty printer ---
 
-// TODO: Make this function actually try to lookup names of things given context so we don't get tree spam when running tests.
-export function prettyTree(tree: Tree): string {
+// Greedy top-down naming: `names` maps a hash-consed tree id to a source-level
+// name (built by the driver from the program's definitions). At each node we try
+// the lookup FIRST — so the largest named subtree wins — and only descend into
+// children that aren't themselves named, bottoming out at △. A node that *is* a
+// named definition (a type like `Nat`, a value like `Err`/`TT`) prints as that
+// name instead of △-spam. The lookup runs before `force` so a named wait-form
+// (e.g. `Nat`, a stuck susp) matches as-is rather than being expanded. With no
+// `names` map this degrades to the raw △ representation (back-compat).
+export function prettyTree(tree: Tree, names?: Map<number, string>): string {
+  const named = names?.get(tree.id)
+  if (named !== undefined) return named
   switch (tree.tag) {
     case "leaf": return "△"
-    case "stem": return `(△ ${prettyTree(tree.child)})`
-    case "fork": return `(△ ${prettyTree(tree.left)} ${prettyTree(tree.right)})`
-    case "susp": return prettyTree(force(tree))   // print the genuine reduct (transparent)
+    case "stem": return `(△ ${prettyTree(tree.child, names)})`
+    case "fork": return `(△ ${prettyTree(tree.left, names)} ${prettyTree(tree.right, names)})`
+    case "susp": return prettyTree(force(tree), names)   // unnamed: print the genuine reduct (transparent)
   }
 }

@@ -16,6 +16,13 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
   const decls = parseProgram(src, abs, { onItem: options.onParseItem })
+  // Name registry for prettyTree: map each definition's hash-consed tree id to its
+  // name (first definition wins on id collisions — many atoms share one leaf id).
+  // Includes opened/imported names, which land in `decls` as Defs in legacy mode.
+  const names = new Map<number, string>()
+  for (const d of decls) {
+    if (d.kind === "Def" && !names.has(d.tree.id)) names.set(d.tree.id, d.name)
+  }
   const result: RunResult = { defs: 0, tests: 0, passed: 0, failed: [] }
   let testIdx = 0
   for (const d of decls) {
@@ -28,7 +35,7 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
       } else {
         result.failed.push({
           i: testIdx,
-          msg: `mismatch:\n    lhs = ${prettyTree(d.lhs)}\n    rhs = ${prettyTree(d.rhs)}`,
+          msg: `mismatch:\n    lhs = ${prettyTree(d.lhs, names)}\n    rhs = ${prettyTree(d.rhs, names)}`,
         })
       }
     }
