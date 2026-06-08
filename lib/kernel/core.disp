@@ -254,28 +254,25 @@ param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 inductive_respond := {nmeta, frame} ->
   match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType }
 
-// shim for all type recognizers that automatically executes the H-rule, i.e. checks if we are passed a neutral with matching type and if so, automatically return true.
-let recognizer_wrap = fix ({wrap, body, meta, v} ->
-  if (is_neutral v)
-    then (Ok (tree_eq (wait (wait wrap body) meta) (neutral_type v))) // H-rule
-    else (body meta v)) // concrete-only body
-make_recognizer := {body} -> wait recognizer_wrap body
-
-// Recursive recognizers (Nat, Ord) must re-apply the H-rule at EVERY structural
-// level, not just the top. A constructor over a neutral child — e.g. `succ hyp` =
-// fork(leaf, hyp) — has a *concrete* root but a *neutral* predecessor; a raw
-// recursion would triage that neutral (walker-rejected, §A). `make_rec_recognizer`
-// threads the full recognizer `self` into the body, so the body's recursion
-// re-enters the H-rule on a neutral child (recognised by stored type) and recurses
-// structurally on a concrete one. `self` is the same reconstruction the top-level
-// H-rule already uses, so no new memo-stability obligation (§14).
-let recursive_recognizer_wrap = fix ({wrap, body, meta, v} -> {
+// The single recognizer shim. It runs the H-rule automatically — a neutral inhabits
+// a type iff its stored type IS that type — and on a concrete value threads the full
+// recognizer `self` into the body. `self` lets a RECURSIVE recognizer (Nat, Ord)
+// re-apply the H-rule at every structural level: a constructor over a neutral child
+// — e.g. `succ hyp` = fork(leaf, hyp) — has a concrete root but a neutral
+// predecessor, and a raw recursion would triage that neutral (walker-rejected, §A);
+// recursing via `self` instead re-enters the H-rule on the child (recognised by its
+// stored type). `self` is the same reconstruction the top-level H-rule uses, so no
+// new memo-stability obligation (§14).
+let recognizer_wrap = fix ({wrap, body, meta, v} -> {
   let self = wait (wait wrap body) meta
   if (is_neutral v)
-    then (Ok (tree_eq self (neutral_type v))) // H-rule (identical to recognizer_wrap)
-    else (body self meta v) // pass `self`: body recurses via the H-rule
+    then (Ok (tree_eq self (neutral_type v))) // H-rule
+    else (body self meta v) // concrete: body may recurse via `self`
 })
-make_rec_recognizer := {body} -> wait recursive_recognizer_wrap body
+make_rec_recognizer := {body} -> wait recognizer_wrap body
+// A non-recursive recognizer simply ignores `self` (its concrete check doesn't
+// recurse into sub-values) — most types: Bool, Type, Pi, Unit, False, Eq, … .
+make_recognizer := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
 
 // ================================================================
 // Boundary: param_lift / typecheck
