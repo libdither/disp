@@ -78,7 +78,13 @@ bind := {r, k} -> match r { Ok v => k v; Err _ => r }
 
 unit_witness := t
 trivial_functor := t
-make_meta := {params, respond} ->
+// Annotated `: Tree -> Tree -> MetaShape` — a forward reference to the structural
+// types defined at the end of the file, resolved against the `use raw` layer (the
+// deferred-typecheck bootstrap, as for Pi). This is the kernel typechecking its own
+// metadata constructor: given any params and any respond, it builds a MetaShape.
+// (`respond` is `Tree`, not `RespondShape`: most kernel responds raw-inspect their
+// meta and so do not inhabit `RespondShape` — the open §12.6 / StrictType problem.)
+make_meta : Tree -> Tree -> MetaShape := {params, respond} ->
   { recognizer_params := params; functor := trivial_functor; respond := respond; behavioral_specs := t }
 metashape_header := ["recognizer_params", "functor", "respond", "behavioral_specs"]
 
@@ -122,7 +128,12 @@ neutral_type := {v} -> (type_meta v).stored_type
 // spurious verdict, which is correct for a sentinel that is never queried.
 InvalidType := FF
 
-inert_respond := {nmeta, frame} -> Extend InvalidType
+// Annotated `: RespondShape` (forward ref via the raw layer): inert_respond is
+// PARAMETRIC — it ignores its meta and frame — so it genuinely inhabits the respond
+// type. (The inductive/Pi/Sigma/Eq responds raw-inspect their meta and do NOT; see
+// RespondShape at the end of the file.) This is the kernel self-typing the one
+// respond that the parametric walker can check.
+inert_respond : RespondShape := {nmeta, frame} -> Extend InvalidType
 // inductive_respond is defined just after param_walker (it routes the motive
 // through it), since the walker is defined below.
 
@@ -586,3 +597,38 @@ record_respond := {nmeta, frame} -> {
   }
 }
 Record := {fields} -> wait (make_recognizer record_body) (make_meta fields record_respond)
+
+// ================================================================
+// The kernel's own structural types, made first-class (§11.2 / §12.6).
+// These reflect the metadata convention the kernel runs on into the type system
+// itself, so it can typecheck its own internals (see make_meta below). They use the
+// library formers defined above, so they live here at the end. `Type`/`Coproduct`/
+// `Record`/`Pi` are forward-referenced in their `: Type` annotations via the `use
+// raw` layer (same deferred-typecheck path as Pi's self-reference).
+// ================================================================
+// Tree — the permissive "any tree" type (recognizer = Ok TT). Stands for the spec's
+// `Tree_p`; the de-facto top type. (`String` is the same shape; a stricter `String`
+// as `Refinement Tree is_string` is future work.)
+Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
+// Frame — an elimination frame; untagged, the stored type interprets it (§7.1).
+Frame : Type := Tree
+// NeutralMeta — a neutral's metadata record `{ stored_type; payload }` (§6.1).
+NeutralMeta : Type := Record [pair "stored_type" Type, pair "payload" Tree]
+// Action — a respond's result: `Extend new_type | Return value`; reject = Extend
+// InvalidType (§12.3). Extend's payload is `Tree`, not `Type`, because InvalidType
+// (= FF) is a non-Type sentinel that Extend legitimately carries — tightening it to
+// `Type` needs InvalidType promoted to a real (empty) type. (deferred)
+Action : Type := Coproduct [pair "Extend" Tree, pair "Return" Tree]
+// RespondShape — the INTENDED type of a `respond` (§11.2 / §12.6): given a neutral's
+// meta and an elimination frame, produce an Action. This is the deep shape a future
+// `StrictType` checks the respond against. NOTE: only PARAMETRIC responds (the inert
+// ones) inhabit it; a respond that raw-inspects its meta (Nat/Bool/Pi/Sigma/Eq/…)
+// does NOT — it trips the walker's triage-on-neutral rejection. Closing that is the
+// open §12.6 problem (responds are privileged meta-readers, not parametric fns).
+RespondShape : Type := Pi NeutralMeta ({_} -> Pi Frame ({_} -> Action))
+// MetaShape — the metadata record every library type carries (§11.2). Field types
+// are loosened to `Tree` (so structural membership suffices — every kernel meta
+// inhabits it); the intended deep ascriptions (`respond : RespondShape`, …) are the
+// job of `StrictType` (§12.6), not `MetaShape`. This is the type the structural
+// `Type` validator approximates today via `has_metashape_layout`.
+MetaShape : Type := Record [pair "recognizer_params" Tree, pair "functor" Tree, pair "respond" Tree, pair "behavioral_specs" Tree]

@@ -1,0 +1,39 @@
+// The kernel's own structural types (§11.2 / §12.6), made first-class: Tree, Frame,
+// NeutralMeta, Action, RespondShape, MetaShape. Pins (a) that they are types and
+// real kernel values inhabit them, (b) the kernel self-typing its metadata via
+// auto-verify (make_meta : Tree -> Tree -> MetaShape ; inert_respond : RespondShape),
+// and (c) the Rung-3 wall: an INSPECTING respond does not inhabit RespondShape.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ---- the structural types are types ----
+test typecheck Type Tree        = Ok TT
+test typecheck Type Frame       = Ok TT
+test typecheck Type NeutralMeta = Ok TT
+test typecheck Type Action      = Ok TT
+test typecheck Type RespondShape = Ok TT
+test typecheck Type MetaShape   = Ok TT
+
+// ---- real kernel values inhabit them ----
+test param_apply Tree zero                                       = Ok TT // Tree is permissive (any tree)
+test param_apply NeutralMeta { stored_type := Nat; payload := zero } = Ok TT
+test param_apply Action (Extend Nat)                             = Ok TT
+test param_apply Action (Return zero)                            = Ok TT
+// a real neutral's meta is a NeutralMeta
+test typecheck NeutralMeta (type_meta (make_hyp Nat 0))          = Ok TT
+
+// ---- the kernel's metadata records inhabit MetaShape ----
+test typecheck MetaShape (make_meta unit_witness inert_respond)  = Ok TT
+test typecheck MetaShape (type_meta Bool)                        = Ok TT // a live type's actual metadata
+test typecheck MetaShape (type_meta (Pi Nat ({_} -> Bool)))      = Ok TT
+test param_apply MetaShape zero                                  = Ok FF // a non-record is not a MetaShape
+
+// ---- RespondShape: parametric responds inhabit it; inspecting ones do NOT ----
+// inert_respond ignores its meta+frame -> parametric -> inhabits RespondShape.
+test param_apply RespondShape inert_respond = Ok TT
+// nat_respond / pi_respond raw-inspect their meta (read .stored_type, type_meta, …),
+// which trips the walker's triage-on-neutral rejection -> Err. This is the open
+// §12.6 / StrictType obstacle (responds are privileged meta-readers, not parametric
+// functions). When that's resolved, these flip to Ok TT.
+test param_apply RespondShape nat_respond = Err
+test param_apply RespondShape pi_respond  = Err
