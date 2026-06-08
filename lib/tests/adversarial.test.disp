@@ -33,34 +33,33 @@ test param_apply (Pi Nat ({_} -> Nat))  ({x} -> type_meta x) = Err
 test param_apply (Pi Nat ({_} -> Pi Nat ({_} -> Bool))) ({x} -> {y} -> is_fork x) = Err
 
 // ================================================================
-// bind_hyp escape check catches the hyp when it appears as a NEUTRAL
+// bind_hyp escape check catches the hyp when it appears as a NEUTRAL.
+// (bind_hyp is the bare op-tag; routed into the walker from this raw test context
+//  via `param_apply (bind_hyp A) body`.)
 // ================================================================
-test bind_hyp Nat ({x} -> Ok x)             = Err
-test bind_hyp Nat ({x} -> Ok (pair x zero)) = Err
+test param_apply (bind_hyp Nat) ({x} -> Ok x)             = Err
+test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err
 
 // ================================================================
-// KNOWN SEALING GAP (pinned): `occurs` does NOT catch bare metadata extraction.
-// A raw bind_hyp body can `type_meta x` and return the meta — the meta is a plain
-// record, not a hyp-fork, so the escape scan misses it — and the hyp can be
-// reconstructed outside its scope. This is the sharp edge of GAP-1 (raw body).
-// It is NOT a soundness hole today: the revived hyp is OPEN, so is_closed /
-// param_lift block it from every closed proof (the BACKSTOP below). When
-// body-walking or a sealed-hyp representation lands, the LEAK line flips to Err.
-// ================================================================
-let stolen = pair_snd (bind_hyp Nat ({x} -> Ok (type_meta x)))
-test (tree_eq (pair_fst (bind_hyp Nat ({x} -> Ok (type_meta x)))) "Ok") = TT    // LEAK (sound: Err)
-let revived = wait hyp_reduce stolen                        // reconstructed hyp, escaped its scope
-test is_neutral revived = TT
-// BACKSTOP — the escaped (open) hyp cannot enter any closed proof:
-test is_closed revived       = FF
-test param_lift revived      = Err
-test typecheck Nat revived   = Err
-test typecheck False revived = Err
+// SEALING GAP CLOSED (was pinned): bind_hyp now runs its body UNDER the walker
+// (merged as `w_bind_hyp` in core.disp), so the metadata-extraction launder is
+// caught at the source. A body that does `type_meta x` / `pair_snd x` raw-triages
+// the neutral, which the walker rejects — so no bare meta escapes and there is
+// nothing to reconstruct a hypothesis from. (These were the LEAK lines; they now
+// assert the sound `Err`.)
+test param_apply (bind_hyp Nat) ({x} -> Ok (type_meta x)) = Err   // launder closed (was the leak)
+test param_apply (bind_hyp Nat) ({x} -> Ok (pair_snd x))  = Err   // raw decomposition closed
+test param_apply (bind_hyp Nat) ({x} -> Ok (is_fork x))   = Err   // raw reflection closed
+// Returning an INDEPENDENT value/neutral (not the bound hyp) is still allowed —
+// the escape check rejects only the hypothesis itself, not unrelated data:
+test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero
 
 // ================================================================
-// No CLOSED inhabitant of False (the empty type), by forging or otherwise.
-// False accepts only False-neutrals (via the H-rule), and every neutral is open.
+// No CLOSED inhabitant of False (the empty type). False accepts only
+// False-neutrals (via the H-rule), and every neutral is OPEN, so even a hypothesis
+// minted inside a bind_hyp body (an independent open neutral) is rejected at the
+// closed-world boundary (is_closed / param_lift). This is the standing backstop.
 // ================================================================
-test param_apply False zero   = Ok FF
-test param_apply False stolen = Ok FF
-test typecheck False (pair_snd (bind_hyp False ({x} -> Ok (make_hyp False 0)))) = Err
+test param_apply False zero  = Ok FF
+test typecheck False (make_hyp False 0) = Err   // a False-neutral is open -> not closed
+test typecheck False (pair_snd (param_apply (bind_hyp False) ({x} -> Ok (make_hyp False 0)))) = Err

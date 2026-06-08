@@ -13,7 +13,9 @@ test typecheck Type (Pi Nat ({_} -> Bool)) = Ok TT
 // Deferred self-check: with the raw layer in scope, the CHECKED module tuple
 // { record, typ } carries core's annotated exports (Bool/Nat/Type/Unit/False/
 // String/Not/Arrow/Pi : their declared types) — forward/self references resolved
-// against the raw layer. Applying `typ` to `record` runs the in-language kernel
-// over its own exports: the kernel typechecking the kernel.
+// against the raw layer. `verify` routes through `param_apply` (the checker entry
+// point) — NOT raw `typ record` juxtaposition, which would bypass the walker's
+// parametricity guards (a non-parametric export would slip through). This is the
+// kernel typechecking the kernel, under the walker.
 let core_mod = use "../kernel/core.disp"
-test core_mod.typ core_mod.record = Ok TT
+test verify core_mod = Ok TT

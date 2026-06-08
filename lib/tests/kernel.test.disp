@@ -50,9 +50,11 @@ test elim nat_dispatcher motive cases zero = TT // concrete branch -> base (TT)
 test is_neutral (elim nat_dispatcher motive cases hN) = TT // neutral branch
 
 // ---- bind_hyp (Σ-op): mint, run body, escape-check ----
-test bind_hyp Nat ({x} -> Ok zero) = Ok zero // result independent of x
-test bind_hyp Nat ({x} -> Ok x) = Err // x at public position -> escape
-test bind_hyp Nat ({x} -> Ok (pair x zero)) = Err // x inside a user pair -> escape
+// bind_hyp is the bare op-tag; from a raw context (a test) route it into the walker
+// with `param_apply (bind_hyp A) body` so the interception (w_bind_hyp) fires.
+test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero // result independent of x
+test param_apply (bind_hyp Nat) ({x} -> Ok x) = Err // x at public position -> escape
+test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err // x inside a user pair -> escape
 
 // ---- raw functions + Pi (monomorphic dependent function) ----
 // Functions are raw bracket-abstracted lambdas — no `checked` wrapper. Pi binds

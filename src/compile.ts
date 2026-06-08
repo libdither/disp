@@ -410,9 +410,12 @@ function exprToCir(
       // A file resolves to a module tuple { record, typ } (§2.6 records):
       //   record = a product of the file's exported values, keyed by name;
       //   typ    = `Record [(name, declaredType)…]` over the *annotated* exports.
-      // Verification is then ordinary: `(use "f").typ (use "f").record` applies
-      // the Record type to the value record (gradual: unannotated exports are
-      // absent from `typ`, so skipped). Falls back to the bare value record when
+      // Verification goes through the kernel's `verify` helper —
+      // `verify (use "f")` = `param_apply (use "f").typ (use "f").record` — so it
+      // runs UNDER the walker (parametricity guards apply to every export). It must
+      // NOT be the raw juxtaposition `(use "f").typ (use "f").record`, which bypasses
+      // the walker and would let a non-parametric export slip through. (Gradual:
+      // unannotated exports are absent from `typ`, so skipped.) Falls back to the bare value record when
       // the cut/Record formers aren't in scope (e.g. files that don't open the
       // kernel — they carry no checkable annotations anyway). `open use` is
       // unaffected: it splices the export metadata, not this value.

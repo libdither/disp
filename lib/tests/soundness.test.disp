@@ -28,24 +28,23 @@ test param_apply ({x} -> is_leaf x) hN = Err
 test param_apply ({x} -> is_stem x) hN = Err
 
 // bind_hyp escape check (§7.2/§8.1): a result that exposes the hypothesis via a
-// non-neutral path is rejected; a result independent of it passes.
-test bind_hyp Nat ({x} -> Ok zero) = Ok zero
-test bind_hyp Nat ({x} -> Ok x) = Err
-test bind_hyp Nat ({x} -> Ok (pair x zero)) = Err
+// non-neutral path is rejected; a result independent of it passes. bind_hyp is the
+// bare op-tag, routed into the walker from this raw context via `param_apply`.
+test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero
+test param_apply (bind_hyp Nat) ({x} -> Ok x) = Err
+test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err
 
 // ================================================================
-// DEFERRED GAP 1 — bind_hyp runs the body RAW (TYPE_THEORY §7.2)
+// GAP 1 CLOSED — bind_hyp runs the body UNDER the walker (TYPE_THEORY §7.2)
 // ================================================================
-// The body is invoked raw (`body h`), so reflection on the hypothesis INSIDE
-// the body is NOT walker-caught — only the final `occurs` escape scan guards.
-// A body that triages on the hypothesis therefore leaks a structural verdict
-// that the spec says should be rejected: the SAME predicates fail outright when
-// run under the walker (the param_apply tests above are `Err`), but inside a
-// bind_hyp body they slip through with a concrete answer. These assertions pin
-// the CURRENT (leaky) behavior; when body-walking lands, flip each RHS to `Err`.
-test bind_hyp Nat ({x} -> Ok (is_fork x)) = Ok TT // sound: Err (triage on hyp)
-test bind_hyp Nat ({x} -> Ok (is_leaf x)) = Ok FF // sound: Err (triage on hyp)
-test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF // sound: Err (triage on hyp)
+// bind_hyp is merged into the walker (`w_bind_hyp`): the body runs via the
+// walker's own `self`, so reflection on the hypothesis INSIDE the body is now
+// caught exactly as at the top level (the param_apply tests above). A body that
+// triages on the hypothesis is rejected with `Err` — no structural verdict leaks.
+// (These RHSs were the pinned leaky `Ok TT`/`Ok FF` before the fix landed.)
+test param_apply (bind_hyp Nat) ({x} -> Ok (is_fork x)) = Err // triage on hyp -> rejected
+test param_apply (bind_hyp Nat) ({x} -> Ok (is_leaf x)) = Err // triage on hyp -> rejected
+test param_apply (bind_hyp Nat) ({x} -> Ok (is_stem x)) = Err // triage on hyp -> rejected
 
 // ================================================================
 // DEFERRED GAP 2 — param_apply routes to the embedded handler (TYPE_THEORY §5.4)
@@ -66,3 +65,19 @@ test bind_hyp Nat ({x} -> Ok (is_stem x)) = Ok FF // sound: Err (triage on hyp)
 let stuck = param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({pred, ih} -> ih) } }
 test is_neutral stuck = TT // bare stuck neutral (Option A §7.5)
 test neutral_type stuck = Bool
+
+// ================================================================
+// RAW application of a BINDER type FAILS FAST (the "don't bypass the checker" guard)
+// ================================================================
+// Types that mint a hypothesis (Pi / Intersection / Sigma — those taking a USER
+// type-function) embed a bind_hyp, whose handler fails closed outside the walker.
+// So a raw juxtaposition `T v` (bypassing param_apply) returns Err instead of a
+// silent, unsound verdict — i.e. applying a binder type raw is an early failure,
+// and the only sound way to check is `param_apply T v` / `typecheck` / `verify`.
+test (Pi Nat ({_} -> Nat)) ({n} -> n)         = Err     // raw binder-application -> fail fast
+test (Intersection Nat ({_} -> Nat)) zero     = Err     // raw binder-application -> fail fast
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n) = Ok TT   // the sound path still works
+// Non-binder types have no parametricity surface (no user type-function, no hyp),
+// so raw application stays valid — recognizers compose that way internally.
+test Nat (succ zero)       = Ok TT
+test (Eq Nat zero zero) refl = Ok TT
