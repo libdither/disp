@@ -1830,6 +1830,36 @@ let q_bind_hyp_fn = {domain, body} -> {
 }
 ```
 
+#note[
+  *Implementation (landed): `bind_hyp` is merged into the walker.* This source
+  runs the body via `param_apply` — i.e. UNDER the walker. The kernel realizes
+  that by making `bind_hyp` a bare op-tag (`wait bind_hyp_handler A`) that
+  `param_walker` intercepts (`is_bind_hyp`, alongside the `hyp_reduce` routing);
+  the interception (`w_bind_hyp`) mints the hyp, walks `body h` via the walker's
+  own `self`, and escape-checks. Running the body through `self` keeps
+  `bind_hyp`/`param_apply` mutually recursive without a forward-reference cycle and
+  is *re-entrant*: the walker's sanctioned reads of a neutral (`is_neutral`,
+  `neutral_type` — H-rule) pass, while raw reflection in the body
+  (`triage`/`pair_snd`/`type_meta` on the hyp) is rejected exactly as at top level.
+  This closes the metadata-extraction leak — `occurs` is no longer the sole guard
+  inside a raw body (there is no raw body). Recognizer bodies are written with
+  *raw applications* (`(B hyp) (v hyp)` in Pi, `(P hyp) v` in Intersection); the
+  enclosing walk polices each user sub-term, so the explicit per-sub-term
+  `param_apply` calls are unnecessary. An under-walker site applies the tag
+  directly; a RAW context (a `respond`, a test) routes it in with
+  `param_apply (bind_hyp A) body`. `bind_hyp_handler` fails closed (`Err`): a tag
+  reduced outside the walker is a bug, so a *binder type* (Pi/Intersection/Sigma —
+  those minting a hyp) applied RAW (`T v`, bypassing `param_apply`) fails fast
+  rather than silently checking with the guards off.
+
+  *Verification goes through the walker.* A module's typed exports are checked by
+  `verify mod := param_apply mod.typ mod.record` — NOT raw `mod.typ mod.record`
+  juxtaposition, which bypasses the walker entirely (a non-parametric export would
+  slip through). The elaborator auto-runs `verify` on each loaded module's typed
+  exports at elaboration time, so a value that does not inhabit its declared type
+  is a compile error.
+]
+
 *Escape rule.* The result must not depend on `h`. `occurs` (§8.1)
 searches the whole result — descending *through* neutrals — for `h`'s
 metadata, which is what every value derived from `h` carries in its
