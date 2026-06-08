@@ -23,6 +23,13 @@ import {
 // enough that runaway evaluation aborts before exhausting host memory.
 const APPLY_BUDGET = 10_000_000
 
+// Auto-verification cache (§ module checking): each module's typed exports are
+// checked through the kernel once per process (file content is immutable, and a
+// module's verdict is a pure function of its content + the fixed kernel). Keyed by
+// absolute path. Without this, every file that opens the kernel would re-run the
+// whole kernel self-check at compile time.
+const verifiedModules = new Set<string>()
+
 // CIR: intermediate representation with explicit S/K/I sentinels.
 type Cir =
   | { tag: "lit"; t: Tree }
@@ -705,10 +712,18 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     // If any field members exist, only fields export. Otherwise fall back
     // to legacy mode where all lets export (for backward compat during migration).
     const hasFields = items.some(it => it.tag === "field")
+    // Kernel formers needed to auto-verify this module, captured while its own scope
+    // is still on the stack (popped in `finally`). Null if the kernel isn't in scope
+    // (a file with no checkable annotations) — verification is then skipped.
+    let vFormers: { paramApply: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; ok: Tree; tt: Tree } | null = null
     try {
       for (const it of items) {
         runItem(it, fileDecls, !hasFields, raw)
       }
+      const pa = lookupEntry("param_apply")?.tree, rec = lookupEntry("Record")?.tree
+      const mkr = lookupEntry("mk_record")?.tree, lc = lookupEntry("list_const")?.tree
+      const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("TT")?.tree
+      if (pa && rec && mkr && lc && ok && tt) vFormers = { paramApply: pa, Record: rec, mkRecord: mkr, listConst: lc, ok, tt }
     } finally {
       const fileScope = stack.pop()!
       dirStack.pop()
@@ -731,6 +746,29 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         fieldTypes.push(d.type ?? null)
         fieldInnerFields.push(d.fields)
         fieldInnerTrees.push(d.fieldTrees)
+      }
+    }
+    // Auto-verification: check the module's typed exports through the kernel
+    // (`verify mod` = `param_apply typ record`), so an export that doesn't inhabit
+    // its declared type is a COMPILE error rather than a silent advisory. Runs under
+    // the walker (param_apply), so the parametricity guards apply. Skipped for raw
+    // imports (annotations dropped) and for files without the kernel in scope (no
+    // checkable annotations). The scope is already popped, so a throw here is clean.
+    if (!raw && vFormers && !verifiedModules.has(abs)) {
+      const typEntries: Tree[] = []
+      for (let i = 0; i < fieldNames.length; i++)
+        if (fieldTypes[i]) typEntries.push(fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
+      if (typEntries.length > 0) {
+        const B = APPLY_BUDGET
+        const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => fork(h, acc), LEAF)
+        const recordVal = applyTree(applyTree(vFormers.mkRecord, consList(fieldNames.map(stringToTree)), B),
+                                    consList(fieldTrees.map(v => applyTree(vFormers!.listConst, v, B))), B)
+        const typVal = applyTree(vFormers.Record, consList(typEntries), B)
+        const verdict = applyTree(applyTree(vFormers.paramApply, typVal, B), recordVal, B)
+        const okTT = applyTree(vFormers.ok, vFormers.tt, B)
+        if (!treeEqual(verdict, okTT))
+          throw new Error(`type check failed for module ${abs}: an export does not inhabit its declared type (verify returned non-(Ok TT))`)
+        verifiedModules.add(abs)
       }
     }
     // Church-encode: \sel. sel v1 v2 ... vn
