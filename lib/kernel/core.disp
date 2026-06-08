@@ -96,10 +96,18 @@ metashape_header := ["recognizer_params", "functor", "respond", "behavioral_spec
 // root = the is_neutral signature.
 extend_neutral_meta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
 
+// hyp_reduce extracts the stored type's metadata ONCE (a raw read, but hyp_reduce
+// is the privileged Σ-op that runs raw) and passes the pieces a respond needs —
+// `recognizer_params` and the reconstructed self-neutral `me` — as arguments. So a
+// respond is `{params, self, frame} -> Action` and does NOT re-extract metadata from
+// its (possibly abstract) stored type: it reads `params` directly and gets the
+// stored type itself walker-safely via `neutral_type self`. (This is the §12.6
+// re-contract: the one raw metadata read lives in the one raw operation.)
 hyp_reduce := fix ({self, meta, frame} -> {
-  let respond = (type_meta meta.stored_type).respond
-  match (respond meta frame) {
-    Extend new_type => wait self (extend_neutral_meta (wait self meta) new_type frame) // bare stuck (Option A, §7.5/§9)
+  let tmeta = type_meta meta.stored_type
+  let me = wait self meta // the reconstructed self-neutral (= reconstruct_self meta)
+  match (tmeta.respond tmeta.recognizer_params me frame) {
+    Extend new_type => wait self (extend_neutral_meta me new_type frame) // bare stuck (Option A, §7.5/§9)
     Return v => Ok v // verdict stays Ok (data)
   }
 })
@@ -128,12 +136,11 @@ neutral_type := {v} -> (type_meta v).stored_type
 // spurious verdict, which is correct for a sentinel that is never queried.
 InvalidType := FF
 
-// Annotated `: RespondShape` (forward ref via the raw layer): inert_respond is
-// PARAMETRIC — it ignores its meta and frame — so it genuinely inhabits the respond
-// type. (The inductive/Pi/Sigma/Eq responds raw-inspect their meta and do NOT; see
-// RespondShape at the end of the file.) This is the kernel self-typing the one
-// respond that the parametric walker can check.
-inert_respond : RespondShape := {nmeta, frame} -> Extend InvalidType
+// Every respond is `{params, self, frame} -> Action` (§12.6 contract; hyp_reduce
+// supplies params + the reconstructed self). Annotated `: RespondShape` (forward ref
+// via the raw layer): inert_respond is PARAMETRIC — it ignores all three — so it
+// genuinely inhabits the respond type.
+inert_respond : RespondShape := {params, self, frame} -> Extend InvalidType
 // inductive_respond is defined just after param_walker (it routes the motive
 // through it), since the walker is defined below.
 
@@ -262,8 +269,8 @@ param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 // neutral is caught: Ok ty -> extend at ty; Err -> route to the inert dead state.
 // (param_walker, not param_apply: it already exposes the Ok/Err we need, so we
 // match it directly instead of unwrapping then re-checking for Err.)
-inductive_respond := {nmeta, frame} ->
-  match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType }
+inductive_respond := {params, self, frame} ->
+  match (param_walker frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }
 
 // The single recognizer shim. It runs the H-rule automatically — a neutral inhabits
 // a type iff its stored type IS that type — and on a concrete value threads the full
@@ -323,12 +330,12 @@ elim := {dispatcher, motive, cases, target} ->
 // application (T flows in from the neutral; the checker never names its own type).
 // Incoherent cases route to the dead state `InvalidType` (§12.3), so the eliminated
 // neutral is typed `InvalidType` and rejected downstream.
-gated_inductive_respond := {coh, nmeta, frame} -> {
-  let r = coh nmeta.stored_type frame.motive frame.cases
+gated_inductive_respond := {coh, params, self, frame} -> {
+  let r = coh (neutral_type self) frame.motive frame.cases
   match r {
     Err _ => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
     Ok v => if v
-            then (match (param_walker frame.motive (reconstruct_self nmeta)) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // coherent; police the motive
+            then (match (param_walker frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // coherent; police the motive
             else (Extend InvalidType) // cases do not inhabit the motive
   }
 }
@@ -339,13 +346,13 @@ gated_inductive_respond := {coh, nmeta, frame} -> {
 Bool : Type := wait (make_recognizer
   {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
 ) (make_meta unit_witness (
-  {nmeta, frame} -> gated_inductive_respond (
+  {params, self, frame} -> gated_inductive_respond (
     {T, motive, cases} -> {
       let ct = cases.ct
       let cf = cases.cf
       bind ((motive TT) ct) ({okt} -> if okt then ((motive FF) cf) else (Ok FF))
     }
-  ) nmeta frame
+  ) params self frame
 ))
 
 // Nat: base : motive zero ; step : Π n. motive n -> motive (succ n)
@@ -361,7 +368,7 @@ nat_coherence := {T, motive, cases} -> {
     (motive (succ n)) ((cases.step n) ih))))
   bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
 }
-nat_respond  := {nmeta, frame} -> gated_inductive_respond nat_coherence nmeta frame
+nat_respond  := {params, self, frame} -> gated_inductive_respond nat_coherence params self frame
 
 
 // nat_body recurses via the threaded `self` (the full Nat recognizer), so a
@@ -388,7 +395,7 @@ pi_body := {meta, v} -> {
   // the enclosing walk on the neutral); Err short-circuits through the walk.
   bind_hyp A ({hyp} -> (B hyp) (v hyp))
 }
-pi_respond := {nmeta, frame} -> Extend ((type_meta (nmeta.stored_type)).recognizer_params.cod frame)
+pi_respond := {params, self, frame} -> Extend (params.cod frame)
 pi_meta_for := {A, B} -> make_meta { dom := A; cod := B } pi_respond
 // `Pi : (A : Type) -> (A -> Type) -> Type` — the dependent, SELF-referential type
 // of the Pi former (its annotation mentions Pi, via the `->` sugar and the raw
@@ -405,15 +412,14 @@ Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 has_metashape_layout := {m} ->
   and (tree_eq (pair_fst m) annihilate_sig) (tree_eq (pair_fst (type_meta m)) metashape_header)
 
-// respond for a Type-typed neutral applied as a predicate to a candidate v:
-// Ok TT iff v is a neutral whose stored type IS this hypothesis (§6.3, §12.18).
-// Runs raw inside hyp_reduce, so raw is_neutral/neutral_type are walker-safe.
-type_predicate_h_rule := {nmeta, v} -> {
-  let self_as_hyp = wait hyp_reduce nmeta
-  if (is_neutral v)
-    then (Return (tree_eq (neutral_type v) self_as_hyp))
+// respond for a Type-typed neutral applied as a predicate to a candidate (the
+// `frame` here is the candidate value). Ok TT iff the candidate is a neutral whose
+// stored type IS this hypothesis `self` (§6.3, §12.18). is_neutral/neutral_type are
+// walker-safe readers.
+type_predicate_h_rule := {params, self, frame} ->
+  if (is_neutral frame)
+    then (Return (tree_eq (neutral_type frame) self))
     else (Return FF)
-}
 
 // Type recognizes a wait-form with a MetaShape-conforming meta. (A stricter
 // check that the recognizer was make_recognizer-built is deferred.)
@@ -485,7 +491,7 @@ eq_body := {meta, v} -> {
 // `C : (y:A) -> Type ⊢ C y`. The generic `inductive_respond` would give the wrong
 // `motive self` (motive at the proof, not the endpoint), so `eq_cong`/`eq_subst`
 // on a neutral proof would land at the wrong equality and fail the §B gate.
-eq_respond := {nmeta, frame} -> match (param_walker frame.motive (type_meta (nmeta.stored_type)).recognizer_params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }
+eq_respond := {params, self, frame} -> match (param_walker frame.motive params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }
 Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } eq_respond)
 
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
@@ -508,13 +514,12 @@ Sigma := {A, B} -> wait (make_recognizer
       if va then ((B (pair_fst v)) (pair_snd v)) else (Ok FF)) // b inhabits (B a)
   }
 ) (make_meta { dom := A; fam := B }
-  {nmeta, frame} -> {
-    let params = (type_meta nmeta.stored_type).recognizer_params
+  {params, self, frame} -> {
     let A = params.dom
     let B = params.fam
     if (tree_eq frame walker_pair_fst) then (Extend A)
     else if (tree_eq frame walker_pair_snd)
-      then (match (param_walker B (wait hyp_reduce (extend_neutral_meta (reconstruct_self nmeta) A walker_pair_fst))) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // police the family on the fst-projection
+      then (match (param_walker B (wait hyp_reduce (extend_neutral_meta self A walker_pair_fst))) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // police the family on the fst-projection
       else (Extend InvalidType)
   }
 )
@@ -589,8 +594,8 @@ record_body := {meta, v} ->
     else (Ok FF)
 // Projection for Record neutrals: a record-hyp applied to `acc name` extends the
 // spine with that field's declared type, read by name from the stored type.
-record_respond := {nmeta, frame} -> {
-  let arm_r = lookup_arm (type_meta nmeta.stored_type).recognizer_params (pair_fst frame)
+record_respond := {params, self, frame} -> {
+  let arm_r = lookup_arm params (pair_fst frame)
   match arm_r {
     Ok ty => Extend ty
     Err _ => Extend InvalidType
@@ -619,13 +624,15 @@ NeutralMeta : Type := Record [pair "stored_type" Type, pair "payload" Tree]
 // (= FF) is a non-Type sentinel that Extend legitimately carries — tightening it to
 // `Type` needs InvalidType promoted to a real (empty) type. (deferred)
 Action : Type := Coproduct [pair "Extend" Tree, pair "Return" Tree]
-// RespondShape — the INTENDED type of a `respond` (§11.2 / §12.6): given a neutral's
-// meta and an elimination frame, produce an Action. This is the deep shape a future
-// `StrictType` checks the respond against. NOTE: only PARAMETRIC responds (the inert
-// ones) inhabit it; a respond that raw-inspects its meta (Nat/Bool/Pi/Sigma/Eq/…)
-// does NOT — it trips the walker's triage-on-neutral rejection. Closing that is the
-// open §12.6 problem (responds are privileged meta-readers, not parametric fns).
-RespondShape : Type := Pi NeutralMeta ({_} -> Pi Frame ({_} -> Action))
+// RespondShape — the type of a `respond` under the §12.6 contract (hyp_reduce now
+// supplies the pieces): given the stored type's `recognizer_params`, the reconstructed
+// self-neutral, and an elimination frame, produce an Action. Params/Self are loosened
+// to `Tree` (heterogeneous per former); the meaningful guarantee is "total function
+// into Action". A respond inhabits this iff it does not raw-triage these arguments —
+// since metadata extraction now lives in hyp_reduce (not the respond), the responds
+// that only PROJECT/route their inputs qualify; one that iterates abstract params
+// (record_respond's lookup) still does not. (Pinned in metashape.test.disp.)
+RespondShape : Type := Arrow Tree (Arrow Tree (Arrow Frame Action))
 // MetaShape — the metadata record every library type carries (§11.2). Field types
 // are loosened to `Tree` (so structural membership suffices — every kernel meta
 // inhabits it); the intended deep ascriptions (`respond : RespondShape`, …) are the
