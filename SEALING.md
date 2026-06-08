@@ -243,9 +243,10 @@ let the single enclosing walk police every user sub-term. Because the walker is
 evaluator's own neutral reads (H-rule via `is_neutral`/`neutral_type`) pass; a
 `triage`/`pair_snd` *node in the body* is rejected.
 
-Consequence (a clean side effect): a *binder* type (Pi/Intersection/Sigma — those
-minting a hyp) applied RAW (`T v`, bypassing `param_apply`) now fails fast, because
-its `bind_hyp_handler` fails closed outside the walker. So bypassing the checker is
+Consequence (a clean side effect): a type whose *recognizer* mints a hyp (Pi,
+Intersection) applied RAW (`T v`, bypassing `param_apply`) now fails fast, because
+its `bind_hyp_marker` fails closed outside the walker. (Sigma's recognizer checks a
+concrete pair — no hyp — so it does not fail fast raw.) So bypassing the checker is
 either safe (non-binder types — no parametricity surface) or an early `Err`, never
 a silent unsound accept. Verification therefore goes through `param_apply`
 (`verify mod = param_apply mod.typ mod.record`), never raw `typ record`
@@ -262,7 +263,7 @@ genuine dynamic abstraction barrier (no representation-extraction channel throug
 
 - Code: `lib/kernel/core.disp` — `make_hyp`, `hyp_sig`, `type_meta`, `neutral_type`,
   `support_set` / `occurs` / `is_closed`; the fix: `bind_hyp` (op-tag) + `is_bind_hyp`
-  + `w_bind_hyp` (the merged walker branch), `bind_hyp_handler` (fail-closed),
+  + `w_bind_hyp` (the merged walker branch), `bind_hyp_marker` (fail-closed),
   `verify`; the walker carve-outs and rejections (stem-forge, triage-on-neutral).
 - Tests: `lib/tests/adversarial.test.disp` + `soundness.test.disp` — now pin the
   CLOSED behavior: `param_apply (bind_hyp Nat) ({x} -> Ok (type_meta x)) = Err`

@@ -1,9 +1,7 @@
 // Walker / kernel soundness — the parametricity guarantees of TYPE_THEORY §4–§7,
-// plus characterization tests that PIN the two flagged soundness deferrals so the
-// gaps are visible and any future fix forces these assertions to be updated.
-//
-// (Restores coverage lost when walker.test.disp / soundness.test.disp were
-// deleted in the two-Σ-op cutover.)
+// plus characterization tests that PIN the flagged soundness deferral (GAP 2,
+// route-to-registered §5.4) so it stays visible. GAP 1 (raw bind_hyp body) is now
+// CLOSED — the body runs under the walker — and its tests assert the sound behavior.
 
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
@@ -67,17 +65,20 @@ test is_neutral stuck = TT // bare stuck neutral (Option A §7.5)
 test neutral_type stuck = Bool
 
 // ================================================================
-// RAW application of a BINDER type FAILS FAST (the "don't bypass the checker" guard)
+// RAW application: a type whose RECOGNIZER mints a hypothesis fails fast
 // ================================================================
-// Types that mint a hypothesis (Pi / Intersection / Sigma — those taking a USER
-// type-function) embed a bind_hyp, whose handler fails closed outside the walker.
-// So a raw juxtaposition `T v` (bypassing param_apply) returns Err instead of a
-// silent, unsound verdict — i.e. applying a binder type raw is an early failure,
-// and the only sound way to check is `param_apply T v` / `typecheck` / `verify`.
-test (Pi Nat ({_} -> Nat)) ({n} -> n)         = Err     // raw binder-application -> fail fast
-test (Intersection Nat ({_} -> Nat)) zero     = Err     // raw binder-application -> fail fast
+// Pi and Intersection check their user type-function against a fresh hypothesis, so
+// their recognizer embeds a bind_hyp whose marker fails closed outside the walker. A
+// raw juxtaposition `T v` (bypassing param_apply) therefore returns Err instead of a
+// silent, unsound verdict — the only sound check is `param_apply` / `typecheck` /
+// `verify`.
+test (Pi Nat ({_} -> Nat)) ({n} -> n)         = Err     // raw -> fail fast (recognizer mints a hyp)
+test (Intersection Nat ({_} -> Nat)) zero     = Err     // raw -> fail fast (recognizer mints a hyp)
 test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n) = Ok TT   // the sound path still works
-// Non-binder types have no parametricity surface (no user type-function, no hyp),
-// so raw application stays valid — recognizers compose that way internally.
+// A type whose recognizer does NOT mint a hyp applies raw to a CONCRETE value safely
+// — no parametricity surface. Sigma's recognizer checks a concrete pair (its family
+// is only abstracted in its respond), so raw Sigma yields a verdict, NOT fail-fast;
+// recognizers rely on this raw composition internally.
+test (Sigma Nat ({_} -> Bool)) (pair zero TT) = Ok TT   // raw Sigma: a verdict, not fail-fast
 test Nat (succ zero)       = Ok TT
 test (Eq Nat zero zero) refl = Ok TT

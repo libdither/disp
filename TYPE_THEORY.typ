@@ -1833,7 +1833,7 @@ let q_bind_hyp_fn = {domain, body} -> {
 #note[
   *Implementation (landed): `bind_hyp` is merged into the walker.* This source
   runs the body via `param_apply` — i.e. UNDER the walker. The kernel realizes
-  that by making `bind_hyp` a bare op-tag (`wait bind_hyp_handler A`) that
+  that by making `bind_hyp` a bare op-tag (`wait bind_hyp_marker A`) that
   `param_walker` intercepts (`is_bind_hyp`, alongside the `hyp_reduce` routing);
   the interception (`w_bind_hyp`) mints the hyp, walks `body h` via the walker's
   own `self`, and escape-checks. Running the body through `self` keeps
@@ -1847,10 +1847,11 @@ let q_bind_hyp_fn = {domain, body} -> {
   enclosing walk polices each user sub-term, so the explicit per-sub-term
   `param_apply` calls are unnecessary. An under-walker site applies the tag
   directly; a RAW context (a `respond`, a test) routes it in with
-  `param_apply (bind_hyp A) body`. `bind_hyp_handler` fails closed (`Err`): a tag
-  reduced outside the walker is a bug, so a *binder type* (Pi/Intersection/Sigma —
-  those minting a hyp) applied RAW (`T v`, bypassing `param_apply`) fails fast
-  rather than silently checking with the guards off.
+  `param_apply (bind_hyp A) body`. `bind_hyp_marker` fails closed (`Err`): a tag
+  reduced outside the walker is a bug, so a type whose *recognizer* mints a hyp
+  (Pi, Intersection) applied RAW (`T v`, bypassing `param_apply`) fails fast rather
+  than silently checking with the guards off. (Sigma's recognizer checks a concrete
+  pair — no hyp — so it does not fail fast raw; its family is policed in its respond.)
 
   *Verification goes through the walker.* A module's typed exports are checked by
   `verify mod := param_apply mod.typ mod.record` — NOT raw `mod.typ mod.record`

@@ -56,8 +56,6 @@ field := {r, name} -> r (acc name) // r.name resolves to this
 // value`; rejection is `Extend InvalidType`. hyp_reduce eliminates by `match`.
 Extend := {v} -> inj "Extend" v
 Return := {v} -> inj "Return" v
-is_extend := {a} -> tree_eq (pair_fst a) "Extend"
-is_return := {a} -> tree_eq (pair_fst a) "Return"
 
 // CheckerResult (§3): `Ok value | Err`, the error vocabulary folded to one
 // info-free Err (the verdict channel carries Ok TT / Ok FF).
@@ -149,33 +147,27 @@ let support_set = fix ({self, v} ->
 occurs := {h, v} -> set_member (type_meta h) (support_set v)
 is_closed := {v} -> is_leaf (support_set v)
 
-// bind_hyp is a Σ-op MERGED into the walker (see `w_bind_hyp` / param_walker
-// below): minting + body-walk + escape-check all run inside param_walker via its
-// own `self`, so the body executes UNDER the walker rather than raw. `bind_hyp_tag`
-// is the recognized wait-form the walker intercepts (`is_bind_hyp`); its domain is
-// read off as `type_meta`. `bind_hyp_handler` exists only to fix the signature: the
-// walker intercepts the tag before reducing it, and every entry into checking goes
-// through `param_apply` (verification is `param_apply typ record`, never raw
-// `typ record`), so a tag is never reduced raw. It therefore FAILS CLOSED (`Err`) —
-// a tag that somehow reaches raw reduction is a bug, not a silent escape-only check.
-bind_hyp_handler := {domain, body} -> Err
-// `bind_hyp A` is the bare op-tag — ONE name, ONE meaning: it is only ever
-// meaningful UNDER the walker, which intercepts it (`is_bind_hyp`) and runs the
-// mint + body-walk + escape-check in `w_bind_hyp`. Under-walker sites apply it
-// directly (`bind_hyp A body`); a RAW context (a respond, a test) must route it in
-// explicitly via `param_apply (bind_hyp A) body` so the interception fires. (There
-// is deliberately NO auto-routing wrapper: the param_apply boundary is the visible
-// "entering the checker" marker, and a tag reduced raw fails closed — see handler.)
-bind_hyp := {A} -> wait bind_hyp_handler A
-bind_hyp_sig := checker_sig bind_hyp_handler
-
-let is_kernel_op = {f} ->
-  and (is_fork f) (or (tree_eq (pair_fst f) hyp_sig) (tree_eq (pair_fst f) bind_hyp_sig))
-// A bind_hyp invocation (`bind_hyp A` = wait bind_hyp_handler A), recognized by its
-// root signature so the walker can intercept it before reduction.
+// bind_hyp is a Σ-op MERGED into the walker: `param_walker` intercepts the op-tag
+// (`is_bind_hyp`) and runs mint + body-walk (via its own `self`) + escape-check in
+// `w_bind_hyp`, so the body executes UNDER the walker, not raw. `bind_hyp A` is the
+// bare op-tag — ONE name, ONE meaning, only meaningful under the walker: under-walker
+// sites apply it directly (`bind_hyp A body`); a RAW context (a respond, a test) must
+// route it in via `param_apply (bind_hyp A) body`. There is deliberately NO
+// auto-routing wrapper — the `param_apply` boundary is the visible "entering the
+// checker" marker. `bind_hyp_marker` exists only to fix the signature (the tag is
+// `wait bind_hyp_marker A`, domain readable as `type_meta`); the walker intercepts the
+// tag before reducing it and every checking entry goes through `param_apply`, so a tag
+// is never reduced raw — `bind_hyp_marker` therefore FAILS CLOSED (`Err`): a tag that
+// reaches raw reduction is a bug, not a silent escape-only check.
+bind_hyp_marker := {domain, body} -> Err
+bind_hyp := {A} -> wait bind_hyp_marker A
+bind_hyp_sig := checker_sig bind_hyp_marker
+// A bind_hyp invocation, recognized by its root signature so the walker intercepts
+// it before reduction. (hyp_reduce neutrals are recognized by `is_hyp_fork`, defined
+// above; the two together are the kernel-op routing in `param_walker`.)
 let is_bind_hyp = {f} -> and (is_fork f) (tree_eq (pair_fst f) bind_hyp_sig)
 
-// For param_apply to take advantage or tree_eq's host O(1) optimization, we need to re-create the lazy evaluation of tree_eq via special signature shenanigans, ideally this would be transparent to the walker, but to do that we would need a canonical function that detects partially evaluated tree_eq that is also lazy-optimized. Since we haven't done that yet, we just have a special partial eval signature constructed using wait-forms.
+// For param_apply to take advantage of tree_eq's host O(1) optimization, we need to re-create the lazy evaluation of tree_eq via special signature shenanigans, ideally this would be transparent to the walker, but to do that we would need a canonical function that detects partially evaluated tree_eq that is also lazy-optimized. Since we haven't done that yet, we just have a special partial eval signature constructed using wait-forms.
 TEQ_WAIT_SIG := checker_sig tree_eq
 let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 
@@ -212,7 +204,7 @@ let w_fork = {self, a, b, x} ->
         else (triage (Ok tc) ({ci} -> self td ci) ({l, r} -> w_tfk self b l r) x))
     a
 
-// w_bind_hyp: the bind_hyp Σ-op, MERGED into the walker. `f` is the bind_hyp_tag
+// w_bind_hyp: the bind_hyp Σ-op, MERGED into the walker. `f` is the bind_hyp op-tag
 // (domain = type_meta f), `x` is the body. Mint a fresh hyp of the domain, then walk
 // `body hyp` via `self` (the SAME walker) — so the body runs UNDER the walker and any
 // raw reflection on the hyp (triage / pair_snd / type_meta) is rejected, closing the
@@ -229,20 +221,25 @@ let w_bind_hyp = {self, f, x} -> {
   })
 }
 
-// param_walker: Ok-wrapped reducer. Routed arm runs the kernel-op wait-form raw (`f x`);
-// the embedded handler equals the registered one for genuine wait-forms
-// (route-to-registered hardening: TODO). Sub-applies re-enter self so nested
-// kernel-op sub-trees route at every layer.
+// param_walker: the dispatcher. An Ok-wrapped reducer that decides how to compute
+// `f x` by a short-circuiting head check, falling through to a neutral-respecting
+// structural triage. Three kinds of head are handled specially, then the triage:
+//   (1) tree_eq — the host O(1) fast-path, in two stages via a wait-form sig;
+//   (2) the Σ-ops — bind_hyp (mint+walk body via self) and a hyp_reduce neutral
+//       (is_hyp_fork; routed raw to extend its spine — the embedded handler equals
+//       the registered one for genuine wait-forms, route-to-registered: TODO §5.4);
+//   (3) the sanctioned readers — pair_fst (root sig), neutral_type, identity.
+// The fallthrough triage rejects any raw triage of a neutral argument (w_fork).
+// (A coproduct-match rewrite would read better but loses short-circuiting on this
+// hot path — deferred.)
 let param_walker = fix ({self, f, x} ->
-  // TODO: turn this into something more elegant, maybe direct match destructing on tree or conversion of tree into coproduct, anything to make this easier to read and not using boolean matches
-  if (tree_eq f tree_eq) then (Ok (wait tree_eq x)) // stage 1: deferred application `wait tree_eq a`
-  else if (is_teq_partial f) then (Ok (f x)) // stage 2: complete it — (wait tree_eq a) x = tree_eq a x (host, O(1), neutral-safe)
-  else if (is_bind_hyp f) then (w_bind_hyp self f x) // bind_hyp Σ-op: mint + walk body via self + escape-check
-  else if (is_kernel_op f) then (Ok (f x)) // if kernel op (hyp_reduce), run it in raw mode
-  else if (tree_eq f pair_fst) then (Ok (pair_fst x)) // accessing the left branch / "root signature" of anything (including neutrals) is fine
-  else if (tree_eq f neutral_type) then (Ok (neutral_type x)) // trying to fetch type of neutral is fine
-  else if (tree_eq f ({x} -> x)) then (Ok x) // identity is allowed
-  // run neutral-respecting triage (I wonder if this could be combined with the triage-bypassings above?)
+  if (tree_eq f tree_eq) then (Ok (wait tree_eq x)) // tree_eq stage 1: defer to `wait tree_eq a`
+  else if (is_teq_partial f) then (Ok (f x)) // tree_eq stage 2: complete it — `(wait tree_eq a) x` (host O(1), neutral-safe)
+  else if (is_bind_hyp f) then (w_bind_hyp self f x) // Σ-op: mint + walk body via self + escape-check
+  else if (is_hyp_fork f) then (Ok (f x)) // Σ-op: a hyp_reduce neutral — route raw to extend its spine
+  else if (tree_eq f pair_fst) then (Ok (pair_fst x)) // reader: any value's root signature (incl. neutrals)
+  else if (tree_eq f neutral_type) then (Ok (neutral_type x)) // reader: a neutral's stored type
+  else if (tree_eq f ({x} -> x)) then (Ok x) // identity
   else (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f))
 
 // param_apply returns the bare reduct (wrapping invariant §7.5): unwrap param_walker's
@@ -375,7 +372,7 @@ pi_body := {meta, v} -> {
   let params = meta.recognizer_params
   let A = params.dom
   let B = params.cod
-  // The whole body runs UNDER the walker (bind_hyp_tag is intercepted), so raw
+  // The whole body runs UNDER the walker (the bind_hyp tag is intercepted), so raw
   // applications suffice: the walk reduces `B hyp` (codomain) and `v hyp` (the
   // function-body value) while policing any raw reflection on `hyp` in B or v, and
   // `(B hyp) (v hyp)` = applying the resolved codomain predicate to the resolved
