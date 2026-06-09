@@ -449,24 +449,20 @@ Type : Type := wait (make_recognizer type_body) type_self_meta
 // of being decomposed by `nat_pred`. This is what makes `add (succ hyp) m` reduce
 // to `succ (add hyp m)` symbolically (needed to type inductive proofs like
 // `add_zero_r`), mirroring the recogniser-side open recursion (§A).
-// NOTE: nat_rec/bool_rec/ord_rec DO inhabit their full dependent recursor types
-// (e.g. nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) ->
-// {n : Nat} -> P n) — verified via param_apply. The annotations are left off only
-// because VERIFYING them is expensive: param_apply runs the recursor against minted
-// P/base/step/target hyps, which drives the inductive case-coherence machinery
-// (nat_coherence + the walker) to ~6M apply steps for ONE recursor (~27s; it also
-// overflows the apply cache). Compiling the type-tree is cheap — the cost is the
-// use-site verify, amortized once per process via verifiedModules but still a real
-// import-time hit. eq_sym/eq_cong are similar. (eq_subst/eq_J/refl can't be typed at
-// all as written: their type args aren't lambda binders.)
+// nat_rec/bool_rec/ord_rec carry their full dependent recursor types, verified via
+// param_apply at the use site. (Their verify adds only ~215K apply steps each, once
+// per process via verifiedModules; the earlier ~27s import was a since-fixed apply-
+// cache eviction cliff, not these.) eq_subst/eq_J/refl stay bare — they can't be
+// typed as written: their type args aren't lambda binders (and refl is the bare
+// constant `t`, not a function).
 let nat_dispatcher = fix ({self, motive, cases, target} ->
   if (tree_eq target zero)
     then cases.base // base
     else (cases.step (nat_pred target) (elim self motive cases (nat_pred target)))) // step n rec
-nat_rec := {motive, base, step, target} -> elim nat_dispatcher motive { base := base; step := step } target
+nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n := {motive, base, step, target} -> elim nat_dispatcher motive { base := base; step := step } target
 
 let bool_dispatcher = {motive, cases, target} -> select cases.ct cases.cf target
-bool_rec := {motive, ct, cf, target} -> elim bool_dispatcher motive { ct := ct; cf := cf } target
+bool_rec : {P : Bool -> Type} -> P TT -> P FF -> {b : Bool} -> P b := {motive, ct, cf, target} -> elim bool_dispatcher motive { ct := ct; cf := cf } target
 
 // ord_rec: zero_ord -> case_z; omega_plus a b -> case_op a b (rec a) (rec b).
 let ord_dispatcher = fix ({self, motive, cases, target} ->
@@ -476,7 +472,7 @@ let ord_dispatcher = fix ({self, motive, cases, target} ->
     let b = pair_snd target // the ord value omega_plus a b
     cases.case_op a b (elim self motive cases a) (elim self motive cases b) // recurse via elim (gate neutrals)
   })
-ord_rec := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { case_z := case_z; case_op := case_op } target
+ord_rec : {P : Ord -> Type} -> P zero_ord -> ({a : Ord} -> {b : Ord} -> P a -> P b -> P (omega_plus a b)) -> {o : Ord} -> P o := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { case_z := case_z; case_op := case_op } target
 
 // eq_J: the only concrete proof is refl, so the dispatcher returns the base;
 // a neutral proof routes to a stuck elimination via elim.
@@ -514,8 +510,8 @@ Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer eq_body)
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
 // refl and stays stuck on a neutral proof).
 eq_subst := {motive, p, base} -> eq_J motive base p
-eq_sym := {A, x, y, p} -> eq_J ({y_} -> Eq A y_ x) refl p
-eq_cong := {A, B, f, x, y, p} -> eq_J ({y_} -> Eq B (f x) (f y_)) refl p
+eq_sym : {A : Type} -> {x : A} -> {y : A} -> Eq A x y -> Eq A y x := {A, x, y, p} -> eq_J ({y_} -> Eq A y_ x) refl p
+eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A x y -> Eq B (f x) (f y) := {A, B, f, x, y, p} -> eq_J ({y_} -> Eq B (f x) (f y_)) refl p
 
 // Projection-as-application for Sigma neutrals (§12.1): a Sigma-hyp applied to a
 // projection selector extends the spine with the component's type. fst -> A;
