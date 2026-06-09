@@ -9,11 +9,11 @@ open use "../kernel/prelude.disp"
 // Neutral-permissive (NatList-style): a hypothesis-typed value passes
 // the predicate, so `Pair A B` is safe to use inside type-mode binders.
 
-pair := {a, b} -> t a b
+pair : Tree -> Tree -> Tree := {a, b} -> t a b
 
 // Pair A B is the non-dependent Sigma (a proper core type: recognized via the
 // kernel, neutral-projecting through sigma_respond).
-Pair := {A, B} -> Sigma A ({_} -> B)
+Pair : Type -> Type -> Type := {A, B} -> Sigma A ({_} -> B)
 
 pair_map_fst := {f, p} -> pair (f (pair_fst p)) (pair_snd p)
 pair_map_snd := {g, p} -> pair (pair_fst p) (g (pair_snd p))

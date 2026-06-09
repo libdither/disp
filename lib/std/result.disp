@@ -10,16 +10,18 @@ open use "../kernel/prelude.disp"
 // walker-legal way to eliminate a hypothesis. The earlier ad-hoc fork encoding was
 // a raw function with no respond, so a Pi-typed eliminator over it could not verify.
 
-ok_tag  := "ok"
-err_tag := "err"
+ok_tag  : String := "ok"
+err_tag : String := "err"
 
-Result := {E, A} -> Coproduct [pair ok_tag A, pair err_tag E]
+Result : Type -> Type -> Type := {E, A} -> Coproduct [pair ok_tag A, pair err_tag E]
 
-ok  := {v} -> inj ok_tag v
-err := {e} -> inj err_tag e
+// payload-only constructors -> loose Tree type (see option.disp none/some).
+ok  : Tree -> Tree := {v} -> inj ok_tag v
+err : Tree -> Tree := {e} -> inj err_tag e
 
-is_ok_result  := {r} -> tree_eq (pair_fst r) ok_tag
-is_err_result := {r} -> tree_eq (pair_fst r) err_tag
+// tag-only reads via the sanctioned pair_fst reader -> type on abstract Results too.
+is_ok_result  : Tree -> Bool := {r} -> tree_eq (pair_fst r) ok_tag
+is_err_result : Tree -> Bool := {r} -> tree_eq (pair_fst r) err_tag
 
 // result_rec — the PARAMETRIC dependent eliminator (see option_rec for the why):
 // concrete -> the §2.6 cut; neutral hypothesis -> frame route through the respond.

@@ -12,16 +12,20 @@ open use "../kernel/prelude.disp"
 // some=fork) was a raw function with no respond, so a Pi-typed eliminator over it
 // could not verify.
 
-none_tag := "none"
-some_tag := "some"
+none_tag : String := "none"
+some_tag : String := "some"
 
-Option := {A} -> Coproduct [pair some_tag A, pair none_tag Unit]
+Option : Type -> Type := {A} -> Coproduct [pair some_tag A, pair none_tag Unit]
 
-none := inj none_tag unit_val
-some := {v} -> inj some_tag v
+// none/some are payload-only constructors, so they carry the loose Tree type rather
+// than the dependent `{A} -> A -> Option A` (which would need an extra A binder).
+none : Tree := inj none_tag unit_val
+some : Tree -> Tree := {v} -> inj some_tag v
 
-is_none := {opt} -> tree_eq (pair_fst opt) none_tag
-is_some := {opt} -> tree_eq (pair_fst opt) some_tag
+// is_none/is_some read only the tag via the sanctioned `pair_fst` reader, so they
+// type even on an abstract Option hypothesis.
+is_none : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) none_tag
+is_some : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) some_tag
 
 // option_rec — the PARAMETRIC dependent eliminator. Dispatches on is_neutral:
 // a concrete value runs the matching handler via the §2.6 cut (mk_record); a

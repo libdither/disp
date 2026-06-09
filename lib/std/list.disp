@@ -22,7 +22,9 @@ open use "nat/ops.disp"
 // fix-unfolding at compile time. `match` (not `select_lazy`) wraps the
 // recursive branch per CLAUDE.md's self-recursion workaround. Returns a
 // CheckerResult: check the head via A's recognizer, then recurse on the tail.
-List := {A, xs} ->
+// List is a raw type-predicate (not a wait-form former), so its type is `Type -> Tree
+// -> Tree`: given the element type and a candidate tree, return a CheckerResult.
+List : Type -> Tree -> Tree := {A, xs} ->
   fix ({self, ys} ->
     select_lazy
       ({_} -> Ok TT)
@@ -35,16 +37,16 @@ List := {A, xs} ->
       (is_neutral ys))
     xs
 
-NatList := List Nat
+NatList : Tree -> Tree := List Nat
 
 nil : NatList := t
 
-cons := {head, tail} -> t head tail
+cons : Tree -> Tree -> Tree := {head, tail} -> t head tail
 
 list_cons : Nat -> NatList -> NatList :=
   {head} -> {tail} -> cons head tail
 
-singleton := {x} -> cons x nil
+singleton : Tree -> Tree := {x} -> cons x nil
 
 // list_rec motive nil_case cons_case xs
 // Neutral targets produce make_hyp (motive xs).
