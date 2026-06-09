@@ -452,10 +452,13 @@ Type : Type := wait (make_recognizer type_body) type_self_meta
 // NOTE: nat_rec/bool_rec/ord_rec DO inhabit their full dependent recursor types
 // (e.g. nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) ->
 // {n : Nat} -> P n) — verified via param_apply. The annotations are left off only
-// because compiling those type-trees (cirToTree eagerly reduces the nested dependent
-// Pis) is paid on every kernel import and ~4x's the test suite; the eq lemmas eq_sym/
-// eq_cong are the same. Restore once module-compilation is cached. (eq_subst/eq_J/refl
-// can't be typed at all as written: their type args aren't lambda binders.)
+// because VERIFYING them is expensive: param_apply runs the recursor against minted
+// P/base/step/target hyps, which drives the inductive case-coherence machinery
+// (nat_coherence + the walker) to ~6M apply steps for ONE recursor (~27s; it also
+// overflows the apply cache). Compiling the type-tree is cheap — the cost is the
+// use-site verify, amortized once per process via verifiedModules but still a real
+// import-time hit. eq_sym/eq_cong are similar. (eq_subst/eq_J/refl can't be typed at
+// all as written: their type args aren't lambda binders.)
 let nat_dispatcher = fix ({self, motive, cases, target} ->
   if (tree_eq target zero)
     then cases.base // base
