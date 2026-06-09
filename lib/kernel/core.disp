@@ -7,8 +7,6 @@
 
 open use "../prelude.disp"
 
-pair := {a, b} -> t a b
-
 // ================================================================
 // Value-level cut primitives (§2.6) — defined early so MetaShape metadata
 // is an ordinary §2.6 headered record, read by name through the cut. The
@@ -54,8 +52,8 @@ field := {r, name} -> r (acc name) // r.name resolves to this
 // ================================================================
 // Action (§11.2): a type's `respond` returns `Extend new_stored_type | Return
 // value`; rejection is `Extend InvalidType`. hyp_reduce eliminates by `match`.
-Extend := {v} -> inj "Extend" v
-Return := {v} -> inj "Return" v
+Extend : Type -> Action := {v} -> inj "Extend" v
+Return : Tree -> Action := {v} -> inj "Return" v
 
 // CheckerResult (§3): `Ok value | Err`, the error vocabulary folded to one
 // info-free Err (the verdict channel carries Ok TT / Ok FF).
@@ -405,7 +403,7 @@ pi_body := {meta, v} -> {
   bind_hyp A ({hyp} -> (B hyp) (v hyp))
 }
 pi_respond := {params, self, frame} -> Extend (params.cod frame)
-pi_meta_for := {A, B} -> make_meta { dom := A; cod := B } pi_respond
+pi_meta_for : Tree -> Tree -> MetaShape := {A, B} -> make_meta { dom := A; cod := B } pi_respond
 // `Pi : (A : Type) -> (A -> Type) -> Type` — the dependent, SELF-referential type
 // of the Pi former (its annotation mentions Pi, via the `->` sugar and the raw
 // layer). The hardest stress on the deferred-typecheck path.
@@ -436,7 +434,7 @@ type_body := {m, v} ->
   if (is_fork v)
     then (Ok (has_metashape_layout (type_meta v)))
     else (Ok FF)
-type_self_meta := make_meta unit_witness type_predicate_h_rule
+type_self_meta : MetaShape := make_meta unit_witness type_predicate_h_rule
 // `Type : Type` — the universe is its own type (§ Type:Type). Self-reference on
 // the same binding: the annotation resolves to the `use raw` Type (value-identical).
 Type : Type := wait (make_recognizer type_body) type_self_meta
@@ -451,6 +449,13 @@ Type : Type := wait (make_recognizer type_body) type_self_meta
 // of being decomposed by `nat_pred`. This is what makes `add (succ hyp) m` reduce
 // to `succ (add hyp m)` symbolically (needed to type inductive proofs like
 // `add_zero_r`), mirroring the recogniser-side open recursion (§A).
+// NOTE: nat_rec/bool_rec/ord_rec DO inhabit their full dependent recursor types
+// (e.g. nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) ->
+// {n : Nat} -> P n) — verified via param_apply. The annotations are left off only
+// because compiling those type-trees (cirToTree eagerly reduces the nested dependent
+// Pis) is paid on every kernel import and ~4x's the test suite; the eq lemmas eq_sym/
+// eq_cong are the same. Restore once module-compilation is cached. (eq_subst/eq_J/refl
+// can't be typed at all as written: their type args aren't lambda binders.)
 let nat_dispatcher = fix ({self, motive, cases, target} ->
   if (tree_eq target zero)
     then cases.base // base
@@ -480,7 +485,7 @@ eq_J := {motive, base, proof} -> elim
 // ================================================================
 // First-order library types: Unit, False, String, Eq, Sigma, Refinement, Ord
 // ================================================================
-unit_val := t t t
+unit_val : Unit := t t t
 Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
 false_body := {m, v} -> Ok FF
@@ -501,7 +506,7 @@ eq_body := {meta, v} -> {
 // `motive self` (motive at the proof, not the endpoint), so `eq_cong`/`eq_subst`
 // on a neutral proof would land at the wrong equality and fail the §B gate.
 eq_respond := {params, self, frame} -> match (param_walker frame.motive params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }
-Eq := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } eq_respond)
+Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } eq_respond)
 
 // Equality lemmas via eq_J (refl is the only concrete proof, so each computes on
 // refl and stays stuck on a neutral proof).
@@ -514,7 +519,7 @@ eq_cong := {A, B, f, x, y, p} -> eq_J ({y_} -> Eq B (f x) (f y_)) refl p
 // snd -> B at the fst-projection (dependency preserved). Runs raw in hyp_reduce.
 walker_pair_fst := t (t t) t
 walker_pair_snd := t (t t) (t t)
-Sigma := {A, B} -> wait (make_recognizer
+Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer
   {meta, v} -> {
     let params = meta.recognizer_params
     let A = params.dom
@@ -533,7 +538,7 @@ Sigma := {A, B} -> wait (make_recognizer
   }
 )
 
-Refinement := {A, P} -> wait (make_recognizer 
+Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> wait (make_recognizer
   {meta, v} -> {
     let params = meta.recognizer_params
     let A = params.base
@@ -544,7 +549,7 @@ Refinement := {A, P} -> wait (make_recognizer
 
 // Intersection A P: v inhabits iff (P hyp) v holds for a fresh A-hyp — like Pi
 // but P is applied to the hypothesis and checked against the SAME v.
-Intersection := {A, P} -> wait (make_recognizer
+Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> wait (make_recognizer
   {meta, v} -> {
     let params = meta.recognizer_params
     let A = params.base
@@ -553,11 +558,11 @@ Intersection := {A, P} -> wait (make_recognizer
   }
 ) (make_meta { base := A; pred := P } inert_respond)
 
-zero_ord := t
-omega_plus := {a, b} -> t (t a) b // fork(stem a, b)
+zero_ord : Ord := t
+omega_plus : Ord -> Ord -> Ord := {a, b} -> t (t a) b // fork(stem a, b)
 // ord_body recurses via the threaded `self` into both child ordinals, so neutral
 // children are recognised by the H-rule rather than triaged (§A).
-Ord := wait (make_rec_recognizer
+Ord : Type := wait (make_rec_recognizer
   {self, m, v} ->
     triage
       (Ok TT) // zero_ord
@@ -580,7 +585,7 @@ let lookup_arm = fix ({self, variants, tag} ->
     if (tree_eq (pair_fst arm) tag) then (Ok (pair_snd arm)) else (self (pair_snd variants) tag)
   } else Err)
 // Coproduct [(Vi, Si)]: v = inj tag pay inhabits iff tag is some Vi and pay : S_tag.
-Coproduct := {variants} -> wait (make_recognizer
+Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
   {meta, v} -> {
   let arm_r = lookup_arm meta.recognizer_params (pair_fst v)
   match arm_r {
@@ -610,7 +615,7 @@ record_respond := {params, self, frame} -> {
     Err _ => Extend InvalidType
   }
 }
-Record := {fields} -> wait (make_recognizer record_body) (make_meta fields record_respond)
+Record : Tree -> Type := {fields} -> wait (make_recognizer record_body) (make_meta fields record_respond)
 
 // ================================================================
 // The kernel's own structural types, made first-class (§11.2 / §12.6).

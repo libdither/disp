@@ -1,5 +1,11 @@
 // Prelude: fundamental combinators, wait/fix.
-// No dependencies.
+// No RUNTIME dependencies — every value here is pure substrate and compiles
+// without the type system. A few VALUE CONSTRUCTORS carry type annotations that
+// forward-reference kernel types (TT/FF : Bool, zero/succ : Nat, tree_eq : Tree
+// -> Tree -> Bool); these resolve via the use-raw layer and are checked only when
+// the kernel is in scope. The raw inspectors/eliminators (pair_fst, triage, is_fork,
+// and/or/not, …) are deliberately UNtyped: they raw-triage or Scott-eliminate their
+// argument, which the parametric walker rejects on an abstract hypothesis.
 
 // ================================================================
 // Fundamental combinators
@@ -16,8 +22,8 @@
 // The host's tree_eq fast-path (src/tree.ts) returns these exact shapes
 // so a tree-level identity test still matches predicate semantics.
 
-TT := {m, ct, cf} -> ct
-FF := {m, ct, cf} -> cf
+TT : Bool := {m, ct, cf} -> ct
+FF : Bool := {m, ct, cf} -> cf
 
 // triage(on_leaf, on_stem, on_fork) x:
 //   x=leaf -> on_leaf, x=stem(u) -> on_stem u, x=fork(u,v) -> on_fork u v
@@ -46,8 +52,11 @@ select_lazy := {then_thunk, else_thunk, cond} -> cond t then_thunk else_thunk t
 // free vars it abstracted over each arm (compile.ts).
 cond := {c, then_v, else_v} -> c t then_v else_v
 
-// pair = fork(l, r). pair_fst/pair_snd extract via triage's fork branch.
-// The leaf and stem branches are dead code (pairs are always forks).
+// pair = fork(l, r). The constructor is typed (it just builds a fork); pair_fst/
+// pair_snd extract via triage's fork branch and stay UNtyped (they raw-triage their
+// argument, which the walker rejects on an abstract hypothesis). The leaf and stem
+// branches of the projections are dead code (pairs are always forks).
+pair : Tree -> Tree -> Tree := {a, b} -> t a b
 pair_fst := {p} -> triage t ({x} -> x) ({l, r} -> l) p
 pair_snd := {p} -> triage t ({x} -> x) ({l, r} -> r) p
 
@@ -101,7 +110,7 @@ stem_child := {v} -> triage t ({c} -> c) ({l, r} -> l) v
 // iff ax=bx and ay=by; otherwise FF.
 //
 // the following tree_eq implementation is valid in tree calculus but in the host language it can be implemented in O(1) just via hash-cons comparison, so there is an optimization carve-out in the host language for this exact definition that lazy-evals any `(tree a)` branch and waits for either a triage or another applied parameter to reduce to true or false.
-tree_eq := fix ({self, a, b} ->
+tree_eq : Tree -> Tree -> Bool := fix ({self, a, b} ->
   triage
     (triage TT ({_} -> FF) ({_l, _r} -> FF) b)
     ({ax} -> triage FF (self ax) ({_l, _r} -> FF) b)
@@ -127,5 +136,5 @@ nat_le := fix ({self, a, b} ->
 nat_lt := {a, b} -> nat_le (t t a) b
 
 // Nat data constructors (also used by parser for numeric literals)
-zero := t
-succ := {n} -> t t n
+zero : Nat := t
+succ : Nat -> Nat := {n} -> t t n
