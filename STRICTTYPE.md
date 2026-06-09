@@ -5,6 +5,14 @@
 `StrictType` (TYPE_THEORY §11.4 / §12.6) can check them — and the two concrete
 problems Part A surfaced, with solution sketches.
 
+> **Update (2026-06-08): Step 1 (Problem 2) is LANDED.** `InvalidType` is now a real
+> empty type (`make_recognizer` wait-form, MetaShape meta, respond `Extend (neutral_type
+> self)`), distinct from `False`, and `Action`'s `Extend` payload is tightened `Tree →
+> `Type`. The dead-state explosion is gone: under abstract `RespondShape` checking,
+> `nat_respond` now returns a clean `Err` and `pi_respond` terminates (both previously
+> exhausted the eval budget). Pinned in `metashape.test.disp`. Steps 2–4 (the per-former
+> Frame buildout) remain deferred per §6.
+
 Audience: anyone continuing the kernel-self-typing thread (Rung 1+2 landed; see
 `lib/kernel/core.disp` end-of-file types, `metashape.test.disp`, and the memory note
 `project_kernel_self_typing_metashape`).
@@ -190,9 +198,12 @@ outcome). Not yet investigated.
 
 ## 5. Suggested staging
 
-1. **Real `InvalidType`** (Problem 2). Smallest, unblocks `pi`/`nat` from exploding
-   under abstract checking, and tightens `Action`'s `Extend` to `Type`. Mechanical
-   audit + a bootstrap-cycle fix. Do this first — it's useful independent of Part C.
+1. **Real `InvalidType`** (Problem 2). ✅ **LANDED (2026-06-08).** The bootstrap cycle
+   was sidestepped without a `fix`: `make_recognizer` moved up before `InvalidType`, and
+   InvalidType's respond returns `Extend (neutral_type self)` (recovers InvalidType from
+   the neutral via the sanctioned reader) instead of the literal `InvalidType` binding —
+   so it never references its own meta's respond. Kept distinct from `False` via the
+   differing respond. `Action`'s `Extend` tightened `Tree → Type`. 140/140 green.
 2. **Inductive Frame type** (the biggest former group: Unit/Nat/Bool/Ord/Coproduct/Eq).
    Define `IndFrame`/`CaseShape`, make `inductive`/`gated`/`eq` responds typeable
    against per-former `RespondShape_T`. This is where the `cases`-inhabit-the-motive

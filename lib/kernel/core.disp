@@ -121,20 +121,49 @@ is_concrete_fork := {v} -> select FF (is_fork v) (is_neutral v) // a fork that i
 // fetch stored type of neutral
 neutral_type := {v} -> (type_meta v).stored_type
 
-// InvalidType — the absorbing "dead state" stored type (TYPE_THEORY §12.3).
+// The single recognizer shim. It runs the H-rule automatically — a neutral inhabits
+// a type iff its stored type IS that type — and on a concrete value threads the full
+// recognizer `self` into the body. `self` lets a RECURSIVE recognizer (Nat, Ord)
+// re-apply the H-rule at every structural level: a constructor over a neutral child
+// — e.g. `succ hyp` = fork(leaf, hyp) — has a concrete root but a neutral
+// predecessor, and a raw recursion would triage that neutral (walker-rejected, §A);
+// recursing via `self` instead re-enters the H-rule on the child (recognised by its
+// stored type). `self` is the same reconstruction the top-level H-rule uses, so no
+// new memo-stability obligation (§14). (Defined here, before InvalidType, because the
+// real InvalidType is itself a make_recognizer wait-form.)
+let recognizer_wrap = fix ({wrap, body, meta, v} -> {
+  let self = wait (wait wrap body) meta
+  if (is_neutral v)
+    then (Ok (tree_eq self (neutral_type v))) // H-rule
+    else (body self meta v) // concrete: body may recurse via `self`
+})
+make_rec_recognizer := {body} -> wait recognizer_wrap body
+// A non-recursive recognizer simply ignores `self` (its concrete check doesn't
+// recurse into sub-values) — most types: Bool, Type, Pi, Unit, False, Eq, … .
+make_recognizer := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
+
+// InvalidType — the absorbing "dead state" stored type (TYPE_THEORY §12.3 / §12.6).
 //
 // A type's `respond` rejects a frame by returning `Extend InvalidType`; the
 // `inert_respond` of inert types (False, String, Refinement, …) does this for
 // every frame. `hyp_reduce`'s ordinary Extend branch then stores the neutral at
-// InvalidType, and InvalidType is itself inert, so the state is absorbing — any
-// further frame stays at InvalidType. Nothing inhabits it, so any check that
-// consults a neutral's stored type rejects.
+// InvalidType, and InvalidType's own respond is inert, so the state is absorbing —
+// any further frame stays at InvalidType. Nothing inhabits it (recognizer always
+// `Ok FF`), so any check that consults a neutral's stored type rejects.
 //
-// Concretely InvalidType is `FF`: the canonical hash-consed "no" answer (O(1)
-// tree_eq against a boot-time constant), and as a Scott value (`{m,ct,cf}->cf`)
-// it is closed — an accidental `InvalidType v` yields a partial tree, never a
-// spurious verdict, which is correct for a sentinel that is never queried.
-InvalidType := FF
+// InvalidType is a REAL empty type (§12.6 / STRICTTYPE.md step 1), not the old `FF`
+// sentinel: a make_recognizer wait-form with a MetaShape meta, so `type_meta
+// InvalidType` is a real record and eliminating an InvalidType-neutral runs a
+// well-defined respond instead of projecting `.respond` out of `FF` and looping (the
+// old dead-state explosion that made pi/nat responds exhaust the eval budget under
+// abstract checking). Its respond returns `Extend (neutral_type self)`: for an
+// InvalidType-neutral that IS `Extend InvalidType` (absorbing), and it names only the
+// sanctioned `neutral_type` reader — never the `InvalidType` binding — so there is no
+// definitional cycle with `inert_respond` (which returns the literal `InvalidType`).
+// Kept DISTINCT from `False` (the logical empty proposition, defined below): same
+// empty/inert shape but a different respond in the meta, so the trees differ — an
+// "ill-formed elimination" stays separable from "the empty proposition".
+InvalidType := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness ({params, self, frame} -> Extend (neutral_type self)))
 
 // Every respond is `{params, self, frame} -> Action` (§12.6 contract; hyp_reduce
 // supplies params + the reconstructed self). Annotated `: RespondShape` (forward ref
@@ -271,26 +300,6 @@ param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 // match it directly instead of unwrapping then re-checking for Err.)
 inductive_respond := {params, self, frame} ->
   match (param_walker frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }
-
-// The single recognizer shim. It runs the H-rule automatically — a neutral inhabits
-// a type iff its stored type IS that type — and on a concrete value threads the full
-// recognizer `self` into the body. `self` lets a RECURSIVE recognizer (Nat, Ord)
-// re-apply the H-rule at every structural level: a constructor over a neutral child
-// — e.g. `succ hyp` = fork(leaf, hyp) — has a concrete root but a neutral
-// predecessor, and a raw recursion would triage that neutral (walker-rejected, §A);
-// recursing via `self` instead re-enters the H-rule on the child (recognised by its
-// stored type). `self` is the same reconstruction the top-level H-rule uses, so no
-// new memo-stability obligation (§14).
-let recognizer_wrap = fix ({wrap, body, meta, v} -> {
-  let self = wait (wait wrap body) meta
-  if (is_neutral v)
-    then (Ok (tree_eq self (neutral_type v))) // H-rule
-    else (body self meta v) // concrete: body may recurse via `self`
-})
-make_rec_recognizer := {body} -> wait recognizer_wrap body
-// A non-recursive recognizer simply ignores `self` (its concrete check doesn't
-// recurse into sub-values) — most types: Bool, Type, Pi, Unit, False, Eq, … .
-make_recognizer := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
 
 // ================================================================
 // Boundary: param_lift / typecheck
@@ -620,10 +629,11 @@ Frame : Type := Tree
 // NeutralMeta — a neutral's metadata record `{ stored_type; payload }` (§6.1).
 NeutralMeta : Type := Record [pair "stored_type" Type, pair "payload" Tree]
 // Action — a respond's result: `Extend new_type | Return value`; reject = Extend
-// InvalidType (§12.3). Extend's payload is `Tree`, not `Type`, because InvalidType
-// (= FF) is a non-Type sentinel that Extend legitimately carries — tightening it to
-// `Type` needs InvalidType promoted to a real (empty) type. (deferred)
-Action : Type := Coproduct [pair "Extend" Tree, pair "Return" Tree]
+// InvalidType (§12.3). Extend's payload is now `Type` (tightened in STRICTTYPE.md
+// step 1): every Extend carries a stored type, and the rejection sentinel InvalidType
+// is itself a real (empty) Type, so there is no non-Type payload to accommodate.
+// Return's payload stays `Tree` (it carries a value, not a type).
+Action : Type := Coproduct [pair "Extend" Type, pair "Return" Tree]
 // RespondShape — the type of a `respond` under the §12.6 contract (hyp_reduce now
 // supplies the pieces): given the stored type's `recognizer_params`, the reconstructed
 // self-neutral, and an elimination frame, produce an Action. Params/Self are loosened
