@@ -156,21 +156,30 @@ function memoSet(f: Tree, x: Tree, result: Tree): void {
   trimApplyMemo()
 }
 
-// Evict entries until under the limit. Eviction is FIFO in JavaScript
-// Map insertion order (`Map.keys().next()` always returns the oldest
-// key first), not LRU — there is no recency tracking on memoGet.
+// Evict entries until under the limit. Eviction is FIFO in JavaScript Map
+// insertion order (iteration always yields oldest-inserted first), not LRU —
+// there is no recency tracking on memoGet.
+//
+// Batch eviction: drop to a low-water mark (87.5% of the limit) in ONE pass over
+// the live Map iterators, rather than one entry per call. The old one-at-a-time
+// form allocated TWO iterators (`applyMemo.keys().next()`, `inner.keys().next()`)
+// PER eviction; at the cap that fired on every memoSet, so a verify whose working
+// set just exceeds the limit paid ~5x in iterator-alloc + GC churn for ZERO extra
+// reduction steps (a hard performance cliff at the cap). Evicting a batch under one
+// pair of iterators, then sitting idle until the next 12.5% refills, removes it.
 function trimApplyMemo(): void {
-  while (applyMemoEntries > applyMemoEntryLimit) {
-    const firstOuter = applyMemo.keys().next()
-    if (firstOuter.done) { applyMemoEntries = 0; return }
-    const outerKey = firstOuter.value
-    const inner = applyMemo.get(outerKey)
-    if (!inner) { applyMemo.delete(outerKey); continue }
-    const firstInner = inner.keys().next()
-    if (firstInner.done) { applyMemo.delete(outerKey); continue }
-    inner.delete(firstInner.value)
-    applyMemoEntries--
-    if (inner.size === 0) applyMemo.delete(outerKey)
+  if (applyMemoEntries <= applyMemoEntryLimit) return
+  const target = applyMemoEntryLimit - (applyMemoEntryLimit >> 3) // 87.5%
+  for (const [outerKey, inner] of applyMemo) {
+    for (const innerKey of inner.keys()) {
+      inner.delete(innerKey)
+      applyMemoEntries--
+      if (applyMemoEntries <= target) {
+        if (inner.size === 0) applyMemo.delete(outerKey)
+        return
+      }
+    }
+    applyMemo.delete(outerKey) // inner fully drained; remove the empty outer bucket
   }
 }
 
