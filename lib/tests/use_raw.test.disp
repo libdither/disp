@@ -1,21 +1,27 @@
-// Smoke test: raw import of the kernel, then a normal re-import in that context.
-// Proves `use raw` loads values without annotation processing, and that the
-// checked re-import produces value-identical trees (the second `open` is a
-// no-op iff every name matches the raw one — the open conflict check enforces it).
+// Smoke test: raw import of the kernel fragments, then a normal re-import in that
+// context. Proves `use raw` loads values without annotation processing, and the checked
+// re-import produces value-identical trees (the second `open` is a no-op iff every name
+// matches the raw one — the open conflict check enforces it).
 open use "../prelude.disp"
-open use raw "../kernel/core.disp"
-open use "../kernel/core.disp"
+open use raw "../kernel/cut.disp"
+open use raw "../kernel/engine.disp"
+open use raw "../kernel/types.disp"
+open use "../kernel/cut.disp"
+open use "../kernel/engine.disp"
+open use "../kernel/types.disp"
 
 // kernel names are in scope and usable
 test param_apply Type Nat = Ok TT
 test typecheck Type (Pi Nat ({_} -> Bool)) = Ok TT
 
-// Deferred self-check: with the raw layer in scope, the CHECKED module tuple
-// { record, typ } carries core's annotated exports (Bool/Nat/Type/Unit/False/
-// String/Not/Arrow/Pi : their declared types) — forward/self references resolved
-// against the raw layer. `verify` routes through `param_apply` (the checker entry
-// point) — NOT raw `typ record` juxtaposition, which would bypass the walker's
-// parametricity guards (a non-parametric export would slip through). This is the
-// kernel typechecking the kernel, under the walker.
-let core_mod = use "../kernel/core.disp"
-test verify core_mod = Ok TT
+// Deferred self-check: with the raw layer in scope, each fragment's CHECKED module tuple
+// { record, typ } carries its annotated exports, resolved against the raw snapshot.
+// `verify` routes through `param_apply` (the checker entry) — NOT raw `typ record`
+// juxtaposition, which would bypass the walker's parametricity guards. This is the kernel
+// typechecking the kernel, under the walker.
+let cut_mod = use "../kernel/cut.disp"
+let engine_mod = use "../kernel/engine.disp"
+let types_mod = use "../kernel/types.disp"
+test verify cut_mod = Ok TT
+test verify engine_mod = Ok TT
+test verify types_mod = Ok TT

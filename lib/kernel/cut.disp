@@ -1,0 +1,50 @@
+// Kernel fragment: the §2.6 value-level cut + control coproducts + MetaShape builder.
+// Assembled by kernel/prelude.disp's raw-then-checked barrel; not a standalone module
+// (annotations forward-ref types in types.disp, resolved against the raw layer).
+
+// Value-level cut primitives (§2.6): a value is fork(descriptor, payload); one
+// elimination (the cut) drives projection, match, and application.
+nat_pred := {n} -> pair_snd n // succ n = t t n
+nil : Tree := t
+cons : Tree -> Tree -> Tree := {h, tl} -> t h tl
+list_const : Tree -> Tree := {x} -> t t x // const x y = x (K); ignores the cut payload
+inj : Tree -> Tree -> Tree := {tag, pay} -> t tag pay // a coproduct value: tag + payload
+acc : Tree -> Tree := {name} -> inj name t // accessor: nullary coproduct (unit payload)
+
+// Type & spine metadata of a wait-form type wait(checker)(meta).
+type_meta := {T} -> pair_snd (pair_snd T)
+
+// Signature of a wait-form checker: constant across all metadata for that checker.
+checker_sig := {checker} -> pair_fst (wait checker t)
+
+let index_of = fix ({self, l, name} ->
+  if (is_fork l)
+    then (if (tree_eq (pair_fst l) name) then zero else (succ (self (pair_snd l) name)))
+    else zero)
+let path_at = fix ({self, i, payload} ->
+  if (tree_eq i zero) then (pair_fst payload) else (self (nat_pred i) (pair_snd payload)))
+// proj resolves a record by field name; annihilate is the cut: apply a record to an
+// enum value -> index the record by the enum's tag, run that field on the payload.
+proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
+annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
+prod : Tree -> Tree := {P} -> wait annihilate P // a callable product; field table is its meta
+annihilate_sig := checker_sig annihilate
+mk_record : Tree -> Tree -> Tree := {names, payload} -> prod (pair names payload)
+field := {r, name} -> r (acc name) // r.name resolves to this
+
+// Action + CheckerResult: control coproducts via the §2.6 cut. A respond returns
+// `Extend new_type | Return value` (reject = Extend InvalidType); a checker `Ok v | Err`.
+Extend : Type -> Action := {v} -> inj "Extend" v
+Return : Tree -> Action := {v} -> inj "Return" v
+Ok : Tree -> Tree := {v} -> inj "Ok" v
+Err : Tree := inj "Err" t
+
+bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind
+
+// MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
+// behavioral_specs }, read by name; conformance is an O(1) tree_eq on the header.
+unit_witness := t
+trivial_functor := t
+make_meta : Tree -> Tree -> MetaShape := {params, respond} ->
+  { recognizer_params := params; functor := trivial_functor; respond := respond; behavioral_specs := t }
+metashape_header := ["recognizer_params", "functor", "respond", "behavioral_specs"]
