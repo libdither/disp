@@ -14,14 +14,15 @@ Bool : Type := wait (make_recognizer
   ) params self frame
 ))
 
-// nat_coherence: base : motive zero, step : Π n. motive n -> motive (succ n). Runs raw in a
-// respond, so the outer binder routes into the walker via `param_apply (bind_hyp T)`.
-nat_coherence := {T, motive, cases} -> {
-  let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
-    (motive (succ n)) ((cases.step n) ih))))
-  bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
-}
-nat_respond  := {params, self, frame} -> gated_inductive_respond nat_coherence params self frame
+// nat_respond's coherence: base : motive zero, step : Π n. motive n -> motive (succ n).
+// Runs raw in a respond, so the outer binder routes into the walker via `param_apply (bind_hyp T)`.
+nat_respond := {params, self, frame} -> gated_inductive_respond (
+  {T, motive, cases} -> {
+    let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
+      (motive (succ n)) ((cases.step n) ih))))
+    bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
+  }
+) params self frame
 
 
 // Nat recurses via the threaded `self`, so a neutral predecessor in `succ hyp` is
@@ -35,19 +36,19 @@ Nat : Type := wait (make_rec_recognizer
     v
 ) (make_meta unit_witness nat_respond)
 
-// pi_body: check a function v against Pi A B. Under the walker, `(B hyp) (v hyp)` checks
-// the result against the codomain while policing raw reflection on hyp in B or v.
-pi_body := {meta, v} -> {
-  let params = meta.recognizer_params
-  let A = params.dom
-  let B = params.cod
-  bind_hyp A ({hyp} -> (B hyp) (v hyp))
-}
 pi_respond := {params, self, frame} -> Extend (params.cod frame)
 pi_meta_for : Tree -> Tree -> MetaShape := {A, B} -> make_meta { dom := A; cod := B } pi_respond
-// Pi : {A : Type} -> (A -> Type) -> Type — self-referential (its annotation mentions
-// Pi via `->`); the hardest stress on the deferred-typecheck path.
-Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer pi_body) (pi_meta_for A B)
+// Pi : {A : Type} -> (A -> Type) -> Type — self-referential (its annotation mentions Pi
+// via `->`). Recognizer: under the walker, `(B hyp) (v hyp)` checks the result against the
+// codomain while policing raw reflection on hyp in B or v.
+Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer
+  {meta, v} -> {
+    let params = meta.recognizer_params
+    let A = params.dom
+    let B = params.cod
+    bind_hyp A ({hyp} -> (B hyp) (v hyp))
+  }
+) (pi_meta_for A B)
 Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 
 // Type universe + the predicate-side H-rule (unlocks polymorphic Pi).
@@ -65,12 +66,10 @@ type_predicate_h_rule := {params, self, frame} ->
 
 // Type recognizes a wait-form with a MetaShape-conforming meta (a make_recognizer-built
 // check is deferred). Type : Type — the universe is its own type (§ Type:Type).
-type_body := {m, v} ->
-  if (is_fork v)
-    then (Ok (has_metashape_layout (type_meta v)))
-    else (Ok FF)
 type_self_meta : MetaShape := make_meta unit_witness type_predicate_h_rule
-Type : Type := wait (make_recognizer type_body) type_self_meta
+Type : Type := wait (make_recognizer
+  {m, v} -> if (is_fork v) then (Ok (has_metashape_layout (type_meta v))) else (Ok FF)
+) type_self_meta
 
 // Inductive recursors. Recursive calls route through `elim` (not raw `self`), so a neutral
 // predecessor yields a clean stuck elimination (§A). nat_rec/bool_rec/ord_rec are dependently typed.
@@ -104,24 +103,24 @@ eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> E
 unit_val : Unit := t t t
 Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
-false_body := {m, v} -> Ok FF
-False : Type := wait (make_recognizer false_body) (make_meta unit_witness inert_respond)
+False : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness inert_respond)
 Not : Type -> Type := {P} -> Pi P ({_} -> False)
 
-string_body := {m, v} -> Ok TT
-String : Type := wait (make_recognizer string_body) (make_meta unit_witness inert_respond)
+String : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
 
 // refl: the canonical proof VALUE `t` (proofs erase to one value; eq_body checks a candidate
 // IS it). Bare — typing it `{A}->{x:A}->Eq A x x` forces a function vs. this value idiom.
 refl := t
-eq_body := {meta, v} -> {
-  let p = meta.recognizer_params // { type, lhs, rhs }
-  Ok (and (tree_eq v refl) (tree_eq p.lhs p.rhs))
-}
 // eq_respond (J): eliminating a stuck `p : Eq A x y` lands the motive at the RHS
 // endpoint `y` (not the proof), giving `motive y` — the J rule `C : (y:A) ⊢ C y`.
 eq_respond := {params, self, frame} -> match (param_walker frame.motive params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }
-Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer eq_body) (make_meta { type := A; lhs := x; rhs := y } eq_respond)
+// Eq recognizer: a candidate inhabits Eq A x y iff it IS refl and the endpoints x,y match.
+Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer
+  {meta, v} -> {
+    let p = meta.recognizer_params // { type, lhs, rhs }
+    Ok (and (tree_eq v refl) (tree_eq p.lhs p.rhs))
+  }
+) (make_meta { type := A; lhs := x; rhs := y } eq_respond)
 
 // Equality lemmas via eq_J (compute on refl, stay stuck on a neutral proof).
 eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} -> eq_J A x y motive base p
@@ -210,10 +209,6 @@ let record_check = fix ({self, fields, v} ->
     bind ((pair_snd arm) (v (acc (pair_fst arm)))) ({ok} ->
       if ok then (self (pair_snd fields) v) else (Ok FF))
   } else (Ok TT))
-record_body := {meta, v} ->
-  if (tree_eq (pair_fst v) annihilate_sig)
-    then (record_check meta.recognizer_params v)
-    else (Ok FF)
 // Projection for Record neutrals: a record-hyp applied to `acc name` extends the
 // spine with that field's declared type, read by name from the stored type.
 record_respond := {params, self, frame} -> {
@@ -223,7 +218,10 @@ record_respond := {params, self, frame} -> {
     Err _ => Extend InvalidType
   }
 }
-Record : Tree -> Type := {fields} -> wait (make_recognizer record_body) (make_meta fields record_respond)
+// Record recognizer: v is annihilate-rooted (a product) and every field inhabits its type.
+Record : Tree -> Type := {fields} -> wait (make_recognizer
+  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (record_check meta.recognizer_params v) else (Ok FF)
+) (make_meta fields record_respond)
 
 // The kernel's own structural types (§11.2 / §12.6), built from the library formers above
 // so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
