@@ -1,0 +1,116 @@
+// In-language bracket abstraction — the self-hosted spec of the host
+// elaborator's Cir → Tree stage (src/compile.ts abstractName/eliminateLams/
+// cirToTree). Bracket abstraction DEFINES which tree a binder becomes, and
+// conversion is tree_eq on trees, so this algorithm is part of definitional
+// equality: the host is the fast path, THIS is the specification. Validated
+// bit-identical by lib/tests/bracket.test.disp (in-language vs host-compiled
+// surface lambdas) and test/bracket.test.ts (randomized host-vs-in-language).
+//
+// Cir is a §2.6 coproduct: Lit tree | Var name | App (f, x) | Lam (name, body)
+// plus the combinator sentinels S | K | I (nullary tags).
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+cir_lit : Tree -> Tree := {v} -> inj "Lit" v
+cir_var : Tree -> Tree := {n} -> inj "Var" n
+cir_app : Tree -> Tree -> Tree := {f, x} -> inj "App" (pair f x)
+cir_lam : Tree -> Tree -> Tree := {n, b} -> inj "Lam" (pair n b)
+cir_S : Tree := inj "S" t
+cir_K : Tree := inj "K" t
+cir_I : Tree := inj "I" t
+
+// The combinator trees (host I_TREE/K_TREE/S_TREE, src/compile.ts):
+// I = fork(fork(t,t),t); K = stem t; S = fork(stem(fork(t,t)), t).
+let I_tree = t (t t t) t
+let K_tree = t t
+let S_tree = t (t (t t t)) t
+
+// contains_free name e: does the free variable `name` occur in e?
+// Lam shadows; Lit/S/K/I are closed.
+// NOTE the `wait self name …` shape: in a multi-param fix, a match-arm call
+// `self name x` contains the sub-application `self name`, which is a CLOSED
+// redex once `name` is known — cirToTree's eager compile-time evaluation
+// unfolds the fix forever (the select_lazy hazard's match-arm cousin). `wait`
+// defers until the structural argument arrives.
+contains_free := fix ({self, name, e} ->
+  match e {
+    Var n => tree_eq n name
+    App f x => or (wait self name f) (wait self name x)
+    Lam n b => if (tree_eq n name) then FF else (wait self name b)
+    _ => FF
+  })
+
+// Cir-shape helpers for the optimization patterns. k_payload: `App K p`
+// destructures to the stem-option `t p` (else `t`).
+let is_var_named = {e, name} -> match e { Var n => tree_eq n name; _ => FF }
+let k_payload = {e} -> match e { App f x => (if (tree_eq f cir_K) then (t x) else t); _ => t }
+let app_head_is = {e, h} -> match e { App f x => tree_eq f h; _ => FF }
+let app_arg = {e} -> match e { App f x => x; _ => t }
+
+// abstract_name name body = [name]body, mirroring the host abstractName rule
+// for rule (INCLUDING evaluation order of the optimizations):
+//   name ∉ FV(body)                  -> K body
+//   [x]x                             -> I
+//   [x](f x), x ∉ FV(f)              -> f                 (η)
+//   [x](f a) with af=[x]f, ax=[x]a:
+//     af = K p, ax = I               -> p                 (S(Kp)I → p)
+//     af = K p, ax = K q             -> K (p q)           (K-composition)
+//     else                           -> S af ax
+//   [x](λy. b)                       -> [x]([y]b)
+abstract_name := fix ({self, name, body} ->
+  if (not (contains_free name body)) then (cir_app cir_K body)
+  else match body {
+    Var _ => cir_I
+    App f x => (
+      if (and (is_var_named x name) (not (contains_free name f))) then f
+      else {
+        let af = wait self name f // wait: see contains_free (closed-prefix redex)
+        let ax = wait self name x
+        let kf = k_payload af
+        if (and (is_stem kf) (tree_eq ax cir_I)) then (stem_child kf)
+        else {
+          let kx = k_payload ax
+          if (and (is_stem kf) (is_stem kx))
+            then (cir_app cir_K (cir_app (stem_child kf) (stem_child kx)))
+            else (cir_app (cir_app cir_S af) ax)
+        }
+      })
+    Lam n b => wait self name (wait self n b)
+    _ => t // unreachable: contains_free is FF for Lit/S/K/I (the K-rule fires first)
+  })
+
+// eliminate_lams: bottom-up λ-elimination (host eliminateLams).
+eliminate_lams := fix ({self, e} ->
+  match e {
+    App f x => cir_app (self f) (self x)
+    Lam n b => abstract_name n (self b)
+    _ => e
+  })
+
+// cir_to_tree: a LAM-FREE, CLOSED Cir to its tree, mirroring the host
+// cirToTree case for case — the partial-application normal forms are
+// constructions, the general application is the substrate itself (the host's
+// applyTree call IS tree-calculus application, which juxtaposition gives us
+// for free). Var/Lam are host THROWS; here they fall to the leaf.
+cir_to_tree := fix ({self, e} ->
+  match e {
+    Lit v => v
+    S _ => S_tree
+    K _ => K_tree
+    I _ => I_tree
+    App f x => (
+      if (app_head_is f cir_S) then (t (t (self (app_arg f))) (self x)) // S a b = fork(stem a', b')
+      else if (app_head_is f cir_K) then (self (app_arg f)) // K a b = a' (b dropped UNevaluated)
+      else if (tree_eq f cir_K) then (t t (self x)) // K a = fork(t, a')
+      else if (tree_eq f cir_I) then (self x) // I a = a'
+      else if (tree_eq f cir_S) then (t (t (self x))) // S a = stem(stem a')
+      else ((self f) (self x)) // general: tree-calculus application
+    )
+    _ => t // Var/Lam: invalid input (host throws); closed inputs never reach this
+  })
+
+// The composed stage: Cir in, tree out — `compileExpr`'s back half.
+// (Unannotated, like `mk`: the folds match on their argument, so a `Tree -> …`
+// typing would mint a hyp they inspect.)
+bracket_compile := {e} -> cir_to_tree (eliminate_lams e)
