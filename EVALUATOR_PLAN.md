@@ -1,10 +1,13 @@
 # Evaluator Backends Plan
 
-Re-organize the repo so disp programs can be run by **arbitrary evaluators** — the
-current eager hash-consed host evaluator, a future parallel TC-Net runtime, and
-out-of-process evaluators speaking the lambada-llc ternary ABI (their ASM/C++/etc.
-implementations, spikeyarmaku's interaction-net evaluator) — selectable at the CLI,
-with a benchmark harness that compares them on identical workloads.
+Make the evaluator a **fully portable dependency of the elaborator**: the
+TypeScript elaboration pipeline (itself slated to move to native disp
+eventually) consumes an evaluator through a small session ABI — a state object
+the engine passes around, `apply`, term construction/inspection, and budgets —
+so that *the entire pipeline* (elaboration, verification, tests) runs on any
+backend: the current eager TS evaluator, a Rust/WASM TC-Net runtime, or
+anything else implementing the ABI. Out-of-process evaluators speaking the
+lambada ternary ABI remain supported as a batch tier for benchmarking.
 
 Status: PLAN — for review. Nothing here is implemented.
 
@@ -12,279 +15,437 @@ Status: PLAN — for review. Nothing here is implemented.
 
 ## 1. Current state (audit)
 
-Facts that constrain the design, verified against the code 2026-06-11:
+Verified against the code 2026-06-11:
 
-- **`src/tree.ts` (582 lines) has two roles fused**: the term substrate
-  (hash-consed `Tree`, `stem`/`fork`, `susp`/`force`, `treeEqual`, `prettyTree`)
-  and the evaluator (`apply` with memo + budget + stats, `applyTree`, the
-  `tree_eq` native fast-path registry `setTreeEqId`).
-- **Evaluation happens during elaboration, not after it.** `src/compile.ts`
-  calls `applyTree` at ~12 sites (e.g. CIR reduction at `compile.ts:133`, nat
-  literals at `:277`, record building at `:742`, and typed-binding verification
-  `param_apply typ record` at `:745`). By the time `run.ts` sees a test, both
-  sides are already normalized; `runFile` only compares hash-cons ids
-  (`run.ts:33`). There is **no separate runtime phase today**.
-- **Hash-consing is load-bearing** (CLAUDE.md): conversion is O(1) id equality;
-  deterministic elaboration means same type → same tree. Any design must keep
-  this for the kernel's `tree_eq`.
-- **`susp`/`force` already exist** (`tree.ts:67`, `:550`) — deferred-application
-  infrastructure is partially built.
-- **Rule-set compatibility is confirmed**: disp implements the same 5-rule
-  "triage calculus" the lambada repo standardizes on (K, S, triage-leaf/stem/fork
-  — see their `reduction-rules/README.md`), so cross-evaluator comparison is
-  semantically sound.
-- **The lambada ABI** (their `benchmark/run-one.sh`): an evaluator is a CLI that
-  reads newline-separated ternary terms (`0`=leaf, `1`=stem+child,
-  `2`=fork+left+right, prefix notation) on stdin, left-fold-applies them,
-  prints the ternary normal form. Output is asserted against an expected string.
-- **`bench/` already exists** (`eval-steps.ts`: step-count corpus benchmark;
-  `micro_coproduct.disp`). It is host-evaluator-only and will be absorbed.
-- **One native fast-path is live**: `tree_eq`, registered by tree-id from
-  `compile.ts`. Exported programs must substitute the in-language `tree_eq`
-  definition (which exists by the metacircular discipline) or they are not
-  portable.
+- **The elaborator's entire evaluator coupling is one import list.**
+  `compile.ts` imports `{ Tree, LEAF, stem, fork, applyTree, treeEqual, force,
+  getApplyStats, setTreeEqId, getTreeEqId }` from `tree.js`; `run.ts` adds
+  `prettyTree` and the cache/stats reset functions; tests add the same resets.
+  Nothing else inspects trees. This *is* the ABI surface, discovered rather
+  than designed.
+- **Evaluation happens during elaboration** (~12 `applyTree` sites in
+  `compile.ts`, including typed-binding verification `param_apply typ record`
+  at `compile.ts:745`). There is no separate runtime phase; `run.ts` compares
+  already-normalized test sides.
+- **Evaluator state is module-global** (`applyMemo`, `applyStats`,
+  `cacheStats`, the trace buffer, `TREE_EQ_ID`), which is why consumers must
+  call `clearApplyCache()`/`resetApplyStats()` defensively — the
+  non-transparency this plan eliminates by making state a session object.
+- **`tree_eq`'s O(1)-ness is an implementation property, not a contract.**
+  The kernel's conversion checking needs *decidable structural equality of
+  normal forms* — which tree calculus provides natively via the in-language
+  `tree_eq` program. Hash-consing + the native fast-path make it O(1) in the
+  reference backend; a backend without them runs the in-language `tree_eq` at
+  O(min size) or implements `equal` however it likes. Correctness is
+  unaffected; only constants change.
+- **Rule-set compatibility with the lambada ecosystem is confirmed** (same
+  5-rule triage calculus), and their CLI contract (stdin ternary terms,
+  left-fold apply, print ternary NF) is the de-facto batch interchange format.
+- `susp`/`force` exist in `tree.ts` — the reference backend is already
+  internally lazy-capable; under the ABI, suspension becomes a backend-internal
+  concern.
 
 ## 2. Goals and non-goals
 
 **Goals**
-1. `npm run disp -- --evaluator=<name> file.disp` runs a file's tests under any
-   registered evaluator.
-2. Two evaluator tiers with one registry:
-   - **in-process** (TypeScript, implements the full `Evaluator` interface),
-   - **external** (subprocess speaking the ternary ABI; coarse-grained).
-3. A `disp emit` path that serializes any compiled binding to a portable ternary
-   artifact (native fast-paths substituted with in-language definitions).
-4. A benchmark harness in `bench/` that runs {disp-eager, external repos, future
-   TC-Net} × {lambada's 5 benchmarks, disp-authored benchmarks} and reports
-   wall-clock, rule/interaction counts, and PASS/FAIL assertions.
-5. A conformance suite: every evaluator must agree with the reference on a
-   corpus (lib tests + randomized terms), in the spirit of the existing
-   `test/bracket.test.ts` differential discipline.
+1. A `Session` ABI (§3) such that `parseProgram`/`runFile` take a session and
+   never touch a concrete tree representation. Selecting
+   `--evaluator=<backend>` runs **elaboration + verification + tests** on that
+   backend.
+2. Backend-owned state: sessions encapsulate memo tables, arenas, stats,
+   native-recognition tables. No module-global evaluator state anywhere.
+3. An FFI story (§4) for in-process native backends (WASM first, N-API if
+   needed) with bulk operations so boundary chattiness doesn't dominate.
+4. Ternary serialization + `emit` CLI for interchange with the batch tier and
+   the benchmark harness.
+5. A conformance suite that runs the full `lib/tests` corpus on every session
+   backend, plus randomized differential terms across batch evaluators.
+6. `bench/` harness comparing all backends and external repos on shared
+   workloads (lambada's five + disp-authored sharing/laziness/kernel-checker
+   benchmarks).
 
-**Non-goals (this plan)**
-- Swapping the **elaboration-time** evaluator. Compile-time reduction and
-  typed-binding verification stay pinned to the host eager evaluator: it is
-  part of definitional equality (deterministic tree ids) and runs mid-compile
-  at per-`apply` granularity, which external evaluators cannot serve. The
-  interface seam is built (§4 phase 2) so this can change later behind a
-  bit-identical conformance gate.
-- Building the TC-Net Rust evaluator itself (separate effort; this plan gives
-  it a socket to plug into).
-- Changing surface syntax, the kernel, or any `.disp` semantics.
+**Non-goals**
+- Building the TC-Net evaluator itself (this plan defines its socket).
+- Subprocess backends serving *elaboration* (latency-prohibitive; see §4.4 —
+  they remain batch-tier).
+- Self-hosting the elaborator (but the ABI is chosen to survive it: once the
+  elaborator is a disp program, it runs *on* the backend and the host shrinks
+  to backend + driver, per GOALS.md).
 
-## 3. Target architecture
+## 3. The Session ABI
+
+```ts
+// A backend is a factory; a session owns all evaluator state.
+interface EvalBackend {
+  readonly name: string
+  createSession(opts?: SessionOpts): Session
+}
+
+type H = unknown   // opaque handle, owned by its session
+
+interface Session {
+  // ── term algebra ──
+  leaf(): H
+  stem(child: H): H
+  fork(left: H, right: H): H
+
+  // ── computation ──
+  // May return a suspended handle under lazy backends; dump/equality force.
+  apply(f: H, x: H, budget?: Budget): H
+
+  // ── bulk ops (required; the anti-chattiness path and the interchange path) ──
+  loadTernary(s: string): H
+  dumpTernary(h: H): string          // forces full normal form
+
+  // ── standard natives (recognition — see §3.1) ──
+  // Backends ship knowing the standard-natives registry (name -> canonical
+  // tree, pinned by content hash; today only "tree_eq") and MUST intercept
+  // saturated applications of any recognized tree with a native
+  // implementation bit-identical to running the definition; the in-language
+  // tree remains the spec. Equality semantics: structural equality of normal
+  // forms in the backend's own representation (id check, recursive walk,
+  // normalize-and-compare — backend's choice). Recognition is free under
+  // hash-consing (canonicalization makes the prelude-compiled def
+  // pointer-equal to the baked-in tree); one bottom-up hash at construction
+  // otherwise. Interception hooks APPLICATION ONLY, at saturation: a
+  // recognized definition examined as data (triaged over by reflective code)
+  // presents its real structure — intensionality is never bypassed.
+
+  // Static build-time report: native name -> content hashes (of the
+  // canonical ternary encoding) this backend recognizes. Input to the
+  // engine-side compatibility assertion (§3.1); never consulted during
+  // reduction, and independent of anything the elaborator compiles.
+  natives(): ReadonlyMap<string, readonly string[]>
+
+  // ── capabilities (optional) ──
+  // Native equality shortcut. DERIVABLE: the engine applies the standard
+  // tree_eq definition — recognized and intercepted natively by obligation,
+  // so even the derived path runs native equality — and dumps the tiny
+  // constant TT/FF result: equal(a,b) ≡ dump(apply(apply(treeEqDef,a),b))
+  // === dump(TT). 3 boundary crossings + two partial-application nodes vs 1.
+  equal?(a: H, b: H, budget?: Budget): boolean
+  // Native weak-head inspection. DERIVABLE in-language: classify is one
+  // triage step — tag = apply(△(△ tagL (K tagS)) (K(K tagF)), h), the tiny
+  // constant tag tree read back via dump (or derived equal); children
+  // projected by triage{_,I,_} / triage{_,_,K} / triage{_,_,K∘I}. The engine
+  // ships that derivation as a session-generic helper (~3-5 boundary calls +
+  // garbage terms per node); backends override natively for performance.
+  // Same spec/optimization split as tree_eq: the derivation is the spec,
+  // conformance checks native-vs-derived agreement. Forces WHNF under lazy
+  // backends either way (applying triage IS the demand).
+  classify?(h: H): { tag: "leaf" } | { tag: "stem", child: H }
+                | { tag: "fork", left: H, right: H }
+  stats?(): EvalStats                // rule/interaction counts, steps, peaks
+  // True iff handles are canonical (a === b implies equal(a,b)); engines may
+  // use this only as an optimization gate (e.g. run.ts name registry).
+  readonly canonicalHandles: boolean
+
+  // End-of-life: free everything the session owns (WASM instance / native
+  // arena / threads). Near no-op on the TS reference backend (GC suffices);
+  // load-bearing for native backends, whose arena memory the JS GC cannot
+  // see. Implement [Symbol.dispose] so call sites can `using session = ...`.
+  dispose(): void
+}
+
+interface Budget { remaining: number }   // steps (sequential) or interactions
+                                         // (nets); BudgetExhausted on zero
+```
+
+Notes, mapped to the audit:
+
+- `leaf/stem/fork` replace `LEAF/stem/fork`; `classify` (derived or native)
+  replaces `isLeaf/isStem/isFork` + child access and subsumes `force`; `apply`
+  replaces `applyTree` (budget now explicit); `equal` replaces `treeEqual`;
+  standard-natives recognition (§3.1) replaces `setTreeEqId/getTreeEqId`; `stats` replaces
+  `getApplyStats`; session creation/disposal replaces the
+  `clearApplyCache/resetApplyStats/resetCacheStats` sprinkles; `equal`
+  (derived or native) replaces `treeEqual`. `prettyTree` becomes an
+  engine-side helper over `classify`.
+- **`dumpTernary` is the sole irreducible observation primitive.** Handles
+  are opaque, so at least one operation must bridge handle-space to
+  JS-value-space for the engine to branch on results; that bridge is dump's
+  string. Everything else is derivable from
+  `{leaf, stem, fork, apply, dump}`: engine-side equality
+  routes through the standard `tree_eq` tree — recognized and intercepted
+  natively by obligation, so even the derived path runs native equality,
+  paying only boundary overhead — with the tiny TT/FF result dumped and compared
+  host-side; `classify` via a triage step whose constant tag trees are
+  likewise dumped. The required core is therefore exactly: build trees,
+  apply trees, serialize trees, register natives. Everything observational
+  beyond dump (`equal`, `classify`, `stats`) is an optional native override
+  of an engine-side derivation, conformance-checked against it.
+- **Budgets are per-call with a shared mutable budget object** (current
+  `apply` already does exactly this); the unit is backend-declared
+  (steps vs interactions) and reported in stats, never compared across
+  backends.
+- **Laziness is admitted by contract**: `apply` may be O(1) and suspended
+  (TC-Net builds a `P` node); `classify`/`dumpTernary`/`equal` force. The
+  eager reference backend simply always returns WHNF+ trees. Divergence
+  differences between eager and lazy backends surface as budget/timeout
+  differences on non-total terms — the conformance corpus is total.
+- **Handle identity is not semantics.** Only `canonicalHandles` backends
+  permit `===` shortcuts; the engine treats it as an optimization gate
+  (today's only use: the `run.ts` tree-id → name registry for pretty errors,
+  which degrades to numbered placeholders on non-canonical backends).
+- **Determinism**: results are deterministic on all backends (confluence;
+  strong confluence for nets). Stats and scheduling need not be (parallel
+  backends), except interaction *counts*, which strong confluence fixes.
+- **The session is the unit of memory reclamation — there is deliberately no
+  per-handle `free()`.** The engine never tracks liveness of intermediate
+  trees; backends arena-allocate and `dispose()` drops everything wholesale.
+  Cost: a session's high-water mark is its total allocation — acceptable for
+  per-file elaboration sessions, and exactly how the current evaluator
+  behaves anyway (the module-global memo grows until `clearApplyCache()`;
+  dispose is that, made explicit and scoped). Keeps refcounting out of the
+  FFI entirely.
+
+### 3.1 Standard natives: recognition
+
+Backends know the standard native definitions statically, rather than being
+told per session. (The alternative — a runtime call where the engine hands
+each session its compiled `tree_eq` handle — is worse on every axis that
+matters here: it adds a per-session protocol step for information that is
+static, it excludes evaluators the engine never gets to call — the batch
+tier — which would force an export-substitution step and fork the blob
+format, and it ties interception to a handshake instead of to the committed
+convention that already pins these trees.)
+
+The convention:
+
+- A committed registry (e.g. `conventions/natives.json`): native name →
+  canonical ternary encoding(s) + content hash(es) + pointer to the
+  in-language spec (`prelude.disp`'s `tree_eq`). The canonical tree is a
+  compilation artifact, but the repo already treats bracket abstraction as
+  part of definitional equality (`lib/elab/bracket.disp` is the spec,
+  bit-identically validated) — pinning the tree makes existing policy
+  explicit. The registry may carry multiple canonical encodings per native
+  during encoding transitions.
+- Backends bake the registry in at build time and intercept recognized trees
+  at saturated application (recognition cost: zero under hash-consing, one
+  bottom-up hash at node construction otherwise).
+
+**How the compatibility assertion works** (who provides what): matching is by
+content hash of the canonical ternary encoding — representation-independent,
+so no handles ever cross the boundary for this.
+
+1. The *registry* pins, per native name, the blessed hashes.
+2. The *backend* reports via `natives()` which registry hashes it was built
+   recognizing. This is a static fact about the backend binary; it does not
+   consult the elaborator and cannot be wrong about itself.
+3. The *engine*, after compiling the prelude, dumps its own compiled
+   `tree_eq` (a small tree) and hashes the ternary string — this is "what has
+   been set as tree_eq" in the current build. It then asserts:
+   (a) the hash is in the registry — guards against prelude or
+   bracket-abstraction drift relative to the convention;
+   (b) the hash is in `session.natives().get("tree_eq")` — guards against a
+   stale or mismatched backend.
+   Either failure is a loud configuration error before any reduction runs —
+   never a silent performance cliff.
+
+The handshake is deliberately indirect: engine and backend each conform to
+the committed registry independently, and the engine verifies both
+conformances by hash. Nothing about "which tree is tree_eq" flows between
+them at runtime.
+
+What recognition buys beyond a smaller ABI: **exported blobs are
+self-contained and fast-pathable everywhere.** The definition is inline (it
+always was the spec), and any evaluator that recognizes it intercepts —
+including batch-tier CLIs. The native-substitution machinery that
+`format/export.ts` would have needed is deleted; there is no difference
+between a blob for a session backend and a blob for the batch tier.
+
+Is anything else registration-shaped needed? `tree_eq` is the only live
+native. Plausible future natives — nat arithmetic on the binary encoding, a
+revived native `param_apply` dispatcher (the legacy kernel had one; per
+CLAUDE.md it returns only with an equivalence test) — fit the same convention
+once their definitions stabilize. A fast-churning definition would suffer
+registry churn, which is an argument for stabilizing it before pinning, not
+for dynamic registration.
+
+## 4. FFI per backend class
+
+The crucial sizing fact: the ABI boundary is **per term-operation, not
+per reduction step**. One `apply` call may run millions of internal rule
+firings; FFI overhead amortizes over them. The chatty direction is term
+*construction* (one `mk` per node), which `loadTernary` batches.
+
+### 4.1 TypeScript in-process (reference: `eval/eager.ts`)
+Handle = `Tree` object pointer. Zero-cost calls. Work: move module-global
+memo/stats/trace/`TREE_EQ_ID` into an `EagerSession` instance (pure hygiene,
+fixes the transparency mess regardless of the rest of this plan).
+`canonicalHandles: true` (hash-consing retained as this backend's internal
+optimization — exactly the demotion requested).
+
+### 4.2 WASM (Rust/C compiled; the intended TC-Net path)
+- Handle = `u32` index into instance-owned arena; session = WASM instance +
+  handle table; `dispose()` drops the instance.
+- Calls are synchronous, ~10–50 ns overhead each — negligible against `apply`
+  payloads; `loadTernary`/`dumpTernary` cross the boundary once per term as
+  UTF-8 in linear memory.
+- Same artifact runs in node and browser; no platform build matrix; sandboxed
+  memory makes arena bugs non-fatal to the host.
+- Threads: WASM threads + SharedArrayBuffer exist but are operationally
+  painful; a parallel TC-Net backend may prefer §4.3. A *sequential* TC-Net
+  WASM backend is still a perfectly good first conformance target.
+
+### 4.3 N-API native addon (escape hatch for parallel)
+Same handle scheme over `napi-rs`; calls ~100 ns; full OS threads inside the
+addon (rayon work-stealing reducer runs freely; `apply`/`equal` block the JS
+thread or expose async variants — engine is synchronous today, so blocking is
+acceptable). Cost: per-platform builds. Choose only if/when the parallel
+TC-Net backend exists and WASM threading proves inadequate.
+
+### 4.4 Subprocess session (rejected for elaboration)
+A line protocol (`MK`/`APPLY`/`EQ`/`CLASSIFY` with integer handles over stdio)
+can implement the ABI, but elaboration performs ~10⁴–10⁶ boundary calls per
+file at ~µs–ms per round trip — orders of magnitude over budget. Kept out of
+scope; revisit only as a debugging curiosity.
+
+### 4.5 Batch tier (lambada ABI peers)
+External CLIs (`lambada-tc` implementations, `tc-evaluator`, any future
+standalone) are `BatchRunner`s: one-shot stdin ternary terms → left-fold →
+ternary NF, declared in `bench/evaluators.json`. They serve **benchmarks and
+differential conformance only**, never elaboration. `bench/adapters/disp-eager.ts`
+(~40 lines over the reference session: `loadTernary` each line, fold `apply`,
+`dumpTernary`) makes disp a contestant in *their* harness too.
+
+## 5. Repo re-org
 
 ```
 src/
-  core/
-    tree.ts        # term substrate ONLY: Tree, hash-consing, stem/fork/susp,
-                   # treeEqual (id check + force), prettyTree, K/I/SCOTT_* consts
-  eval/
-    types.ts       # Evaluator interface + EvalStats + capability flags
-    eager.ts       # current apply/applyTree/memo/budget/stats, unchanged behavior
-                   # (the REFERENCE evaluator; default everywhere)
-    external.ts    # subprocess adapter: ternary ABI, batch normalize() only
-    registry.ts    # name -> evaluator factory; reads evaluators.json
-  format/
-    ternary.ts     # encode/decode Tree <-> ternary string; minbin optional later
-    export.ts      # export mode: native-fast-path substitution (tree_eq id ->
-                   # in-language tree), closure of a binding into one blob
-  parse.ts         # unchanged
-  compile.ts       # imports eval/eager directly (pinned, documented); gains
-                   # "defer" compilation of test/expression spines (susp nodes)
-  run.ts           # gains --evaluator; routes test execution through registry
+  core/cir.ts        # (if split from parse) bracket abstraction IR — no tree dep
+  eval/types.ts      # EvalBackend / Session / Budget / EvalStats / errors
+  eval/eager.ts      # the reference backend (current tree.ts evaluator, state-ized)
+  eval/registry.ts   # name -> EvalBackend; --evaluator resolution
+  format/ternary.ts  # engine-side encode/decode helpers (over classify/mk)
+  format/export.ts   # closure of a binding into one self-contained blob
+                     # (defs inline by construction; no substitution — §3.1)
+  parse.ts           # unchanged
+  compile.ts         # takes a Session; all tree ops via ABI
+  run.ts             # takes/creates a Session; --evaluator flag
 bench/
-  evaluators.json  # registered external evaluators: name, cmd, cwd, encoding
-  programs/        # benchmarks AUTHORED IN DISP (*.disp) + frozen lambada blobs
-  artifacts/       # generated .ternary + expected outputs (gitignored, rebuilt)
-  harness.ts       # runner: evaluators x benchmarks, wall + counts + assert,
-                   # thread sweep for parallel evaluators; absorbs eval-steps.ts
-  adapters/
-    disp-eager.ts  # ~40-line CLI giving the host evaluator the lambada ABI
+  evaluators.json    # batch-tier peers (external repos, by path)
+  programs/          # disp-authored benchmarks + frozen lambada blobs + expected
+  artifacts/         # generated ternary (gitignored)
+  harness.ts         # sessions + batch runners x benchmarks; wall, counts,
+                     # PASS/FAIL, thread sweep; absorbs bench/eval-steps.ts
+  adapters/disp-eager.ts
 test/
-  eval-conformance.test.ts  # every evaluator vs reference: lib corpus + random terms
+  eval-conformance.test.ts
 ```
 
-### 3.1 The `Evaluator` interface (in-process tier)
+`src/core/tree.ts` (hash-consed `Tree`, `susp`/`force`) survives as the
+**private internals of `eval/eager.ts`** — no longer exported to the engine.
+That is the concrete meaning of "tree_eq O(1) is just this backend's
+optimization."
 
-```ts
-interface Evaluator {
-  readonly name: string
-  // Core: both must return hash-consed trees (re-intern at the boundary if the
-  // evaluator uses its own representation internally).
-  apply(f: Tree, x: Tree, budget?: Budget): Tree
-  normalize(t: Tree, budget?: Budget): Tree     // full NF (forces susp spines)
-  // Instrumentation (the currency of the bench harness):
-  stats(): EvalStats                            // rule counts, steps, memo, peak
-  reset(): void
-  // Capabilities:
-  readonly natives: ReadonlySet<string>         // e.g. {"tree_eq"} — must mirror
-                                                // in-language defs bit-identically
-  readonly deterministic: boolean               // parallel evaluators: result yes,
-                                                // stats no
-}
-```
+## 6. Phases
 
-Decisions embedded here, for review:
-- **Hash-consing stays the shared term substrate.** In-process evaluators
-  receive and return interned `Tree`s so `treeEqual` stays O(1) and the kernel's
-  conversion checking is untouched. An evaluator with its own representation
-  (e.g. a future in-process TC-Net via N-API) pays an intern/extract cost at
-  the call boundary. External evaluators avoid this entirely: they round-trip
-  through ternary text and results are re-interned on parse.
-- **`BudgetExhausted` is part of the contract** (the compiler's 10M-step budget
-  and `run` budgets must behave identically under any in-process evaluator).
-- **Stats are best-effort for parallel evaluators** (interaction counts are
-  deterministic under strong confluence; wall-clock and scheduling are not).
+**Phase 0 — pin behavior (½ day).** Golden snapshot of outputs + `applyStats`
+for the eval-steps corpus. Grep audit of remaining tree-shape couplings in
+`compile.ts` (per the elaborator-consumes-names memory) so `equal`-based
+replacements are enumerated up front.
 
-### 3.2 The external tier
+**Phase 1 — state-ize the evaluator (1 day).** Module globals →
+`EagerSession`; `clearApplyCache`/reset sprinkles deleted; consumers create
+sessions. Behavior byte-identical against phase 0. (Standalone value even if
+the plan stops here.)
 
-An external evaluator is *not* an `Evaluator` — it is a `BatchRunner`:
+**Phase 2 — ABI extraction (2–3 days).** `eval/types.ts`; `compile.ts` and
+`run.ts` rewritten against `Session` (mechanical: the import list in §1 maps
+1:1); `setTreeEqId` → `registerNative("tree_eq", def)`; `core/tree.ts`
+de-exported from the engine. Tests green via the reference backend.
 
-```ts
-interface BatchRunner {
-  readonly name: string
-  // One shot: terms are ternary strings; returns the ternary normal form.
-  run(terms: string[], opts: { timeoutMs: number, threads?: number }): Promise<string>
-}
-```
+**Phase 3 — honesty backend + conformance (1–2 days).** A deliberately naive
+second TS backend (`eval/naive.ts`: no hash-consing, no memo, structural
+`equal`, `canonicalHandles: false`). Its native `equal` (per decision 2)
+is a plain recursive walk. Run the full `lib/tests` suite on it. This is the
+cheap proof that the ABI is real, that nothing secretly depends on canonical
+handles or O(1) equality, and it prices hash-consing directly (the existing
+`treeEqRules` counter gives the equality-call volume the O(n) walk must
+absorb). Becomes the permanent conformance fixture.
 
-Registered declaratively in `bench/evaluators.json`:
+**Phase 4 — ternary + export + batch tier (1–2 days).** `format/`,
+`emit` CLI, binding-closure export, `conventions/natives.json` registry + the
+engine-side hash assertion (§3.1). Export-conformance tests: exported blob
+normalized by the reference backend equals the in-repo result, and a
+recognizing backend intercepts `tree_eq` inside the blob. `BatchRunner` +
+`evaluators.json` + disp-eager adapter; randomized differential test across
+batch peers.
 
-```json
-{ "name": "lambada-asm-x64",
-  "cmd": ["/path/to/lambada-tc/implementation/asm/bin/x64"],
-  "stdin": "ternary-lines", "encoding": "ternary" }
-```
+**Phase 5 — bench harness (2–3 days).** Matrix runner, per-benchmark
+timeouts, median+min wall, counts column (per-backend units, labeled), thread
+sweep, dated logs; programs = five frozen lambada blobs + disp-authored ports
++ sharing/laziness benchmarks (the δⁿ experiments from
+`research/interaction-combinator/tc-net.typ`) + the kernel-checker flagship
+(`verify` of a real module via `emit`). Delete `bench/eval-steps.ts` after
+absorption.
 
-External evaluators can run **test executions and benchmarks** (closed-term
-normalization), never elaboration. A persistent server protocol (one process,
-term-per-line REPL) is a future extension noted in §6 — not in scope.
+**Phase 6 — first native backend (separate effort).** Sequential TC-Net in
+Rust→WASM implementing `Session` (§4.2); parallel version later via WASM
+threads or N-API (§4.3). The conformance suite from phase 3 is its
+acceptance gate: full `lib/tests` green ⇒ disp elaborates on an interaction-net
+substrate.
 
-### 3.3 Execution-model change: deferred test spines
+Total for phases 0–5: ~1.5–2 weeks. Each phase lands green and is
+independently revertable.
 
-Today a test's `lhs`/`rhs` are normalized during compilation, so there is no
-work left for a selected evaluator. Fix: compile test (and top-level
-expression) bodies in **defer mode** — build the application spine with `susp`
-nodes instead of calling `applyTree`. Then:
+## 7. Decisions requiring sign-off
 
-- default path (`--evaluator=eager`): `runFile` normalizes via the reference
-  evaluator — *behaviorally identical to today* (eager evaluation of the same
-  spine, same budget), only the evaluation site moves from compile-time to
-  run-time for test bodies;
-- external path: the susp spine is exported via `format/export.ts` (function
-  position and argument as separate ternary terms — exactly the lambada
-  left-fold convention) and shipped to the `BatchRunner`; the returned ternary
-  NF is re-interned and compared with `treeEqual` against the (host-normalized)
-  `rhs`.
+1. **Handles are opaque; hash-consing is demoted** to a private optimization of
+   the reference backend; the `tree_eq` interception is the equality contract
+   (decidable structural equality of NFs), `canonicalHandles` the optimization
+   gate.
+2. **`tree_eq` interception is a backend obligation via recognition, not
+   registration (§3.1).** Every session bakes in the standard-natives registry
+   and intercepts recognized trees at saturated application; the engine
+   asserts registry agreement at prelude-compile time (loud error, never a
+   silent perf cliff). The in-language `tree_eq` stays the spec: conformance
+   validates each backend's native against the reference backend with
+   recognition disabled (`SessionOpts.noNativeIntercept` exists for exactly
+   this). Note for lazy/parallel backends: native equality is a strictness
+   point and a parallelism barrier (both sides forced to full NF) —
+   semantically identical to the in-language program, but it will show in
+   profiles. Export substitution is deleted: blobs carry definitions inline
+   and any recognizing evaluator (batch tier included) fast-paths them.
+3. **The whole pipeline runs on the selected backend** — including
+   typed-binding verification. There is no longer a privileged
+   elaboration evaluator. (The alternative — pinning elaboration to the host
+   evaluator and making only test execution pluggable — would need a special
+   deferred-compilation seam for test spines and would leave verification
+   untestable on other backends; running everything on the session avoids
+   both, with the conformance suite carrying the correctness burden.)
+4. **`loadTernary`/`dumpTernary` are required, not optional** — they are both
+   the FFI anti-chattiness path and the interchange format; making them
+   optional would fork the engine into two code paths.
+5. **WASM before N-API** for native backends.
+6. **Batch tier stays one-shot** (no subprocess session protocol).
 
-Scope guard: defer mode applies **only to test/expression items**. `let`
-bindings, annotations, and verification still elaborate eagerly (they feed
-subsequent scope and must produce deterministic ids). This is the minimal seam
-that makes "running disp" pluggable without touching definitional equality.
+## 8. Risks
 
-Audit task before implementing (phase 0): confirm no `lib/tests` test depends
-on evaluation order or budget effects in a way that distinguishes
-compile-time from run-time normalization (expected: none — same evaluator,
-same spine).
-
-### 3.4 Export mode and native substitution
-
-`format/export.ts` produces a self-contained blob for a binding:
-1. compile normally;
-2. replace any subtree whose id is a registered native fast-path id
-   (today: `tree_eq`) with its **in-language definition's tree** (compiled with
-   registration disabled);
-3. serialize to ternary.
-
-CLI: `npm run disp -- emit --ternary <file.disp> <binding>` and
-`emit --test <n>` (emits `{ lhs-spine terms..., expected }` for harness use).
-Conformance: an exported blob normalized by the reference evaluator must equal
-the in-repo result (this pins substitution correctness, and is a test).
-
-## 4. Phases
-
-Each phase lands green (`npm test`) and is independently revertable.
-
-**Phase 0 — pin behavior (½ day).**
-Snapshot current `applyStats` + outputs for the `bench/eval-steps.ts` corpus
-into a committed golden file. Audit defer-mode safety (§3.3). Grep `src/` for
-kernel-name/tree-shape couplings before any move (per
-`reference_elaborator_consumes_disp_names` memory).
-
-**Phase 1 — mechanical split (1 day).**
-`src/tree.ts` → `src/core/tree.ts` (substrate) + `src/eval/eager.ts`
-(evaluator). Pure code motion: no signature or behavior changes; update
-imports (`compile.ts`, `run.ts`, `bench/eval-steps.ts`, `test/*`). Update
-CLAUDE.md "Code layout". Golden file from phase 0 must be byte-identical.
-
-**Phase 2 — interface + registry (1–2 days).**
-Add `eval/types.ts`, wrap `eager.ts` as the reference `Evaluator`, add
-`eval/registry.ts`, thread `--evaluator` through `run.ts`. `compile.ts` keeps a
-direct import of the eager evaluator with a comment documenting *why* it is
-pinned (definitional equality). Default behavior unchanged.
-
-**Phase 3 — ternary format + export (1–2 days).**
-`format/ternary.ts` (encode/decode + property test: roundtrip identity on
-random trees), `format/export.ts` (native substitution), `emit` CLI. Add the
-export-conformance test (§3.4).
-
-**Phase 4 — deferred test spines + external tier (2–3 days).**
-Defer-mode compilation for test items; `eval/external.ts` `BatchRunner`;
-`bench/evaluators.json`; `bench/adapters/disp-eager.ts` (lambada-ABI CLI around
-the reference evaluator — this also makes disp a contestant in *their*
-harness). Conformance test grows: run a subset of `lib/tests` through the
-external path against the disp-eager adapter (round-trip sanity), and random
-closed terms through every registered external evaluator.
-
-**Phase 5 — bench harness (2–3 days).**
-`bench/harness.ts`: benchmarks × evaluators matrix; per-benchmark timeout;
-median + min wall-clock; steps/interactions column (from `EvalStats` for
-in-process, from evaluator-reported counters for external ones that provide
-them); thread sweep (`threads: 1/2/4/8`) for parallel evaluators; PASS/FAIL
-assertion à la lambada; dated logs. Seed `bench/programs/` with: the five
-frozen lambada blobs (verbatim), disp-authored ports of fib/sort
-(cross-validation), one sharing benchmark and one laziness benchmark (the δⁿ
-experiments from `research/interaction-combinator/tc-net.typ`), and the
-flagship **kernel-checker workload** (`verify` of a real module, exported via
-`emit`). Absorb and delete `bench/eval-steps.ts` (its corpus becomes harness
-entries; its step-count reporting becomes the steps column).
-
-**Phase 6 — futures (out of scope, sockets ready).**
-Persistent server protocol for external evaluators; in-process TC-Net via
-N-API (implements `Evaluator`, pays intern boundary); swapping the elaboration
-evaluator behind a bit-identical conformance gate; minbin encoding.
-
-Total: ~1.5–2 weeks. Phases 1–3 are low-risk and individually useful; phase 4
-is the only one touching compile semantics (behind the defer-mode scope guard).
-
-## 5. Decisions requiring sign-off
-
-1. **Hash-consed `Tree` remains the universal in-process term type** (§3.1).
-   Alternative rejected: abstract term handles per evaluator — would force the
-   kernel's O(1) `tree_eq` through an indirection and contaminate `compile.ts`.
-2. **Elaboration stays pinned to the eager reference evaluator** (§2 non-goals).
-3. **Test semantics under external evaluators** = normalize exported spine,
-   re-intern, `treeEqual` against host-normalized `rhs`. (Implication: the host
-   still elaborates and normalizes `rhs`; external evaluators are checked
-   against the host, not trusted independently.)
-4. **`bench/artifacts/` is generated and gitignored**; `bench/programs/` (disp
-   sources + frozen lambada blobs + expected outputs) is committed.
-5. **External repos are referenced by path in `evaluators.json`**, not vendored
-   or submoduled (they are benchmarking peers, not dependencies).
-
-## 6. Risks
-
-- **Defer mode changes *where* evaluation happens for tests.** Mitigated by
-  phase 0 audit + golden snapshots; same evaluator, same spine, same budget.
-- **Kernel-export blob size** (whole kernel closure in one ternary string,
-  plausibly MBs). The lambada "parsing is negligible" assumption must be
-  re-verified at that scale before the flagship benchmark is trusted.
-- **Eager/lazy semantic divergence**: a lazy external evaluator can normalize
-  terms the eager reference cannot (and vice versa for budget exhaustion).
-  Harness reports these as explicit `DIVERGES`/`TIMEOUT` rows, never silent
-  failures; conformance tests use total terms only.
-- **Stats comparability**: disp rule-counts and interaction-net interaction
-  counts are different currencies. Report both, label clearly, never sum.
-- **CLAUDE.md drift**: phases 1, 4, 5 each end with a CLAUDE.md layout update
-  (it documents `src/tree.ts` prominently today).
+- **FFI chattiness in construction-heavy elaboration** (one boundary call per
+  AST node before reduction starts). Mitigated by `loadTernary` bulk paths and
+  by measuring phase-3 call counts before building any native backend; if
+  construction dominates, add a bulk `loadExprBatch`.
+- **Budget-unit drift**: 10M compile steps was tuned for the eager backend
+  with native tree_eq; other backends need per-backend budget configuration,
+  not a shared constant (put it in `SessionOpts`).
+- **Hidden canonical-handle assumptions** beyond the known `run.ts` name
+  registry — exactly what phase 3's naive backend exists to flush out.
+- **Lazy-backend forcing discipline**: `classify` in a loop can accidentally
+  deep-force; engine helpers (`prettyTree`, ternary encode) must be written
+  once, carefully, in `format/`.
+- **Performance regression of the demotion itself**: none expected for the
+  default path — the reference backend keeps hash-consing internally; only the
+  engine's *access* to it changes.
+- **Standard-native drift**: the canonical `tree_eq` tree is a compilation
+  artifact — evolving bracket abstraction or the prelude changes it, and a
+  stale backend stops recognizing. Correctness is unaffected (the in-language
+  definition runs), but conversion checking falls off a performance cliff.
+  Mitigated by the engine-side hash assertion + `natives()` report (loud
+  mismatch, never silent) and by multi-version registry entries during
+  transitions.
+- **CLAUDE.md drift**: phases 1, 2, 5 each end with a layout/discipline
+  update (`src/tree.ts` is documented prominently today; the "native
+  fast-path" discipline section gains the standard-natives recognition
+  framing).
