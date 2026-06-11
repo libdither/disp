@@ -50,8 +50,8 @@ test param_apply False zero = Ok FF // False is empty
 test typecheck String unit_val = Ok TT // String is permissive
 test typecheck (Eq Nat zero zero) refl = Ok TT
 test param_apply (Eq Nat zero (succ zero)) refl = Ok FF
-test typecheck (Sigma Nat ({_} -> Bool)) (pair zero TT) = Ok TT
-test param_apply (Sigma Nat ({_} -> Bool)) (pair zero zero) = Ok FF
+test typecheck (Sigma Nat ({_} -> Bool)) { fst := zero; snd := TT } = Ok TT
+test param_apply (Sigma Nat ({_} -> Bool)) { fst := zero; snd := zero } = Ok FF
 test typecheck (Refinement Nat ({n} -> tree_eq n zero)) zero = Ok TT
 test param_apply (Refinement Nat ({n} -> tree_eq n zero)) (succ zero) = Ok FF
 test typecheck Ord zero_ord = Ok TT
@@ -92,15 +92,15 @@ test field r tag_a = zero // r.a
 test field r tag_b = TT // r.b
 
 // ---- neutral projection through respond (§12.1) ----
-// A Sigma-hyp applied to a projection selector yields a stuck component.
+// A Sigma-hyp projected by field name (`acc`) yields a stuck component.
 let hAB = make_hyp (Sigma Nat ({_} -> Bool)) 0
 // Option A (§7.5): param_apply of a neutral is the BARE stuck component, not Ok(stuck).
-test neutral_type (param_apply hAB walker_pair_fst) = Nat // fst : A = Nat
-test neutral_type (param_apply hAB walker_pair_snd) = Bool // snd : B fst = Bool
+test neutral_type (param_apply hAB (acc "fst")) = Nat // fst : A = Nat
+test neutral_type (param_apply hAB (acc "snd")) = Bool // snd : B fst = Bool
 // dependency is preserved: snd of (n : Nat, _ : Eq Nat n n) lands at Eq Nat fst fst
 let hDep = make_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
-let fstp = param_apply hDep walker_pair_fst
-test neutral_type (param_apply hDep walker_pair_snd) = Eq Nat fstp fstp
+let fstp = param_apply hDep (acc "fst")
+test neutral_type (param_apply hDep (acc "snd")) = Eq Nat fstp fstp
 
 // A Pi-hyp applied to an argument lands at the codomain (pi_respond reads
 // the cod field of the recognizer_params record by name).

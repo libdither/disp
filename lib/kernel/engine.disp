@@ -9,8 +9,8 @@ hyp_reduce := fix ({self, meta, frame} -> {
   let tmeta = type_meta meta.stored_type
   let me = wait self meta // the reconstructed self-neutral (= reconstruct_self meta)
   match (tmeta.respond tmeta.recognizer_params me frame) {
-    Extend new_type => wait self (extend_neutral_meta me new_type frame) // bare stuck (Option A, §7.5/§9)
-    Return v => Ok v // verdict stays Ok (data)
+    Extend new_type => wait self (extend_neutral_meta me new_type frame) // stuck: bare neutral (Option A, §7.5/§9)
+    Reduce v => v // computes: bare value (verdicts arrive as Reduce (Ok v) via the Return alias)
   }
 })
 

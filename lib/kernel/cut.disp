@@ -32,12 +32,18 @@ annihilate_sig := checker_sig annihilate
 mk_record : Tree -> Tree -> Tree := {names, payload} -> prod (pair names payload)
 field := {r, name} -> r (acc name) // r.name resolves to this
 
-// Action + CheckerResult: control coproducts via the §2.6 cut. A respond returns
-// `Extend new_type | Return value` (reject = Extend InvalidType); a checker `Ok v | Err`.
+// Action + CheckerResult: control coproducts via the §2.6 cut. Eliminating a
+// neutral has exactly TWO outcomes: it stays stuck (`Extend new_type` — the
+// spine grows; reject = Extend InvalidType) or it computes (`Reduce value` —
+// bare, mirroring Extend's bare stuck; §7.5 Option A). A checker returns
+// `Ok v | Err`. `Return v = Reduce (Ok v)` is a library ALIAS for the verdict
+// case (the H-rule predicate): a verdict is just a value that happens to be a
+// CheckerResult — not a third arm.
 Extend : Type -> Action := {v} -> inj "Extend" v
-Return : Tree -> Action := {v} -> inj "Return" v
+Reduce : Tree -> Action := {v} -> inj "Reduce" v
 Ok : Tree -> Tree := {v} -> inj "Ok" v
 Err : Tree := inj "Err" t
+Return : Tree -> Action := {v} -> Reduce (Ok v)
 
 bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind
 
@@ -46,5 +52,5 @@ bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic b
 unit_witness := t
 trivial_functor := t
 make_meta : Tree -> Tree -> MetaShape := {params, respond} ->
-  { recognizer_params := params; functor := trivial_functor; respond := respond; behavioral_specs := t }
+  { recognizer_params := params; functor := trivial_functor; respond; behavioral_specs := t }
 metashape_header := ["recognizer_params", "functor", "respond", "behavioral_specs"]

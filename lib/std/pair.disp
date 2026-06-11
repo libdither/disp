@@ -1,30 +1,20 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-// Typed pair predicate over the existing fork-as-pair representation
-// (`t a b = fork(a, b)`). Prelude's `pair_fst` / `pair_snd` extractors
-// are the canonical accessors; `Pair A B` adds a type predicate so
-// pairs can appear in Pi-typed signatures.
-//
-// Neutral-permissive (NatList-style): a hypothesis-typed value passes
-// the predicate, so `Pair A B` is safe to use inside type-mode binders.
+// Typed pairs are 2-field records ({ fst := a; snd := b }): Pair A B is the
+// non-dependent Sigma, itself a 2-entry telescope. Projection is UNIFORM —
+// `p.fst` is the §2.6 cut on a concrete record and routes through tele_respond
+// on a Pair-hypothesis — so the old is_neutral dispatch (proj_fst/proj_snd over
+// walker_pair_* selectors) is gone. Prelude's fork-pairs (`pair`, `pair_fst`,
+// `pair_snd`) remain the RAW substrate idiom for kernel-internal trees.
 
-pair : Tree -> Tree -> Tree := {a, b} -> t a b
+mk_pair : Tree -> Tree -> Tree := {a, b} -> { fst := a; snd := b }
 
-// Pair A B is the non-dependent Sigma (a proper core type: recognized via the
-// kernel, neutral-projecting through sigma_respond).
 Pair : Type -> Type -> Type := {A, B} -> Sigma A ({_} -> B)
 
-pair_map_fst := {f, p} -> pair (f (pair_fst p)) (pair_snd p)
-pair_map_snd := {g, p} -> pair (pair_fst p) (g (pair_snd p))
-pair_swap := {p} -> pair (pair_snd p) (pair_fst p)
+proj_fst := {p} -> p.fst
+proj_snd := {p} -> p.snd
 
-// PARAMETRIC projections. Prelude's `pair_fst`/`pair_snd` raw-`triage` their
-// argument, which the walker forbids on a hypothesis — so a typed projection like
-// `{p : Pair A B} -> pair_snd p` fails to verify (a parametricity rejection, not a
-// real type error). These dispatch on `is_neutral`: a concrete pair takes the raw
-// fast path; an abstract Pair-hypothesis routes through `sigma_respond` (the
-// `walker_pair_fst`/`walker_pair_snd` selectors), the one walker-legal way to
-// eliminate a neutral. Use these whenever a projection must work parametrically.
-proj_fst := {p} -> select_lazy ({_} -> p walker_pair_fst) ({_} -> pair_fst p) (is_neutral p)
-proj_snd := {p} -> select_lazy ({_} -> p walker_pair_snd) ({_} -> pair_snd p) (is_neutral p)
+pair_map_fst := {f, p} -> mk_pair (f p.fst) p.snd
+pair_map_snd := {g, p} -> mk_pair p.fst (g p.snd)
+pair_swap := {p} -> mk_pair p.snd p.fst

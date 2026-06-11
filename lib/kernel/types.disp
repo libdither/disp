@@ -127,29 +127,6 @@ eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y 
 eq_sym : {A : Type} -> {x : A} -> {y : A} -> Eq A x y -> Eq A y x := {A, x, y, p} -> eq_J A x y ({y_} -> Eq A y_ x) refl p
 eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A x y -> Eq B (f x) (f y) := {A, B, f, x, y, p} -> eq_J A x y ({y_} -> Eq B (f x) (f y_)) refl p
 
-// Sigma projection selectors (§12.1): a Sigma-hyp applied to one extends the spine with
-// that component's type — fst -> A; snd -> B at the fst-projection (dependency preserved).
-walker_pair_fst := t (t t) t
-walker_pair_snd := t (t t) (t t)
-Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer
-  {meta, v} -> {
-    let params = meta.recognizer_params
-    let A = params.dom
-    let B = params.fam
-    bind (A (pair_fst v)) ({va} ->
-      if va then ((B (pair_fst v)) (pair_snd v)) else (Ok FF)) // b inhabits (B a)
-  }
-) (make_meta { dom := A; fam := B }
-  {params, self, frame} -> {
-    let A = params.dom
-    let B = params.fam
-    if (tree_eq frame walker_pair_fst) then (Extend A)
-    else if (tree_eq frame walker_pair_snd)
-      then (match (param_walker B (wait hyp_reduce (extend_neutral_meta self A walker_pair_fst))) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // police the family on the fst-projection
-      else (Extend InvalidType)
-  }
-)
-
 Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> wait (make_recognizer
   {meta, v} -> {
     let params = meta.recognizer_params
@@ -185,6 +162,71 @@ Ord : Type := wait (make_rec_recognizer
       v
 ) (make_meta unit_witness inductive_respond)
 
+// Telescope: the dependent n-ary record former. An entry is the record
+// { name; ty; def } with def a stem-option (t = opaque, t e = derived: the
+// field is PINNED to recipe e over the priors). A telescope is `t entry
+// (λx. rest)` — the tail binds this entry's value (a constant tail is the
+// K-stem `t t rest`), so well-foundedness is structural: tails see only priors.
+let tele_check = fix ({self, tele, v} ->
+  if (is_fork tele) then {
+    let entry = pair_fst tele
+    let x = field v (entry.name)
+    let rest = (pair_snd tele) x
+    if (is_leaf entry.def)
+      then (bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF)))
+      else (if (tree_eq x (stem_child entry.def)) then (self rest v) else (Ok FF))
+  } else (Ok TT))
+// tele_field_at: projection typing on a telescope-hyp. Walk to the requested
+// field feeding each prior either its projection-neutral (opaque) or its
+// recipe value (derived — δ in the feed); tails instantiate UNDER the walker
+// (a tail that raw-triages a neutral prior routes to the dead state). At the
+// field: opaque -> Extend its type; derived -> Return its value (transparency
+// is the Return arm of Action).
+let tele_field_at = fix ({self, tele, slf, name} ->
+  if (is_fork tele) then {
+    let entry = pair_fst tele
+    if (tree_eq (entry.name) name)
+      then (if (is_leaf entry.def) then (Extend entry.ty) else (Reduce (stem_child entry.def)))
+      else {
+        let x = if (is_leaf entry.def)
+          then (wait hyp_reduce (extend_neutral_meta slf (entry.ty) (acc entry.name)))
+          else (stem_child entry.def)
+        match (param_walker (pair_snd tele) x) {
+          Ok rest => self rest slf name
+          Err _ => Extend InvalidType
+        }
+      }
+  } else (Extend InvalidType))
+tele_respond := {params, self, frame} -> tele_field_at params self (pair_fst frame)
+Telescope : Tree -> Type := {tele} -> wait (make_recognizer
+  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (tele_check meta.recognizer_params v) else (Ok FF)
+) (make_meta tele tele_respond)
+
+// mk: the builder — fill derived fields from their recipes, take opaque ones
+// from `given`, emit the full §2.6 record (which the recognizer then re-pins).
+let mk_fold = fix ({self, tele, given} ->
+  if (is_fork tele) then {
+    let entry = pair_fst tele
+    let x = if (is_leaf entry.def) then (field given (entry.name)) else (stem_child entry.def)
+    let rest = self ((pair_snd tele) x) given
+    pair (cons (entry.name) (pair_fst rest)) (cons (list_const x) (pair_snd rest))
+  } else (pair nil nil))
+// mk takes the Telescope TYPE (reads the telescope off its meta), so call
+// sites write `mk T { … }`. (Unannotated: the fold triages its argument, so a
+// `Tree -> …` typing would mint hyps it inspects.)
+mk := {T, given} -> {
+  let nv = mk_fold ((type_meta T).recognizer_params) given
+  mk_record (pair_fst nv) (pair_snd nv)
+}
+
+// Sigma A B: the dependent pair as a 2-entry telescope { fst : A, snd : B fst }.
+// Values are §2.6 records ({ fst := a; snd := b }); a Sigma-hyp projects via
+// `acc "fst"` / `acc "snd"` through tele_respond (dependency preserved; the old
+// walker_pair_* selectors and bespoke sigma respond are gone).
+Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
+  t { name := "fst"; ty := A; def := t } ({a} ->
+  t { name := "snd"; ty := B a; def := t } (t t t)))
+
 // Coproduct and Record types (the value-level cut primitives they reflect are at the top).
 let lookup_arm = fix ({self, variants, tag} ->
   if (is_fork variants) then {
@@ -202,26 +244,20 @@ Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
 }
 ) (make_meta variants inductive_respond)
 
-// Record [(Vi, Ti)]: v is a product whose every named field inhabits its type.
-let record_check = fix ({self, fields, v} ->
+// Record [(Vi, Ti)]: the NON-DEPENDENT record — a constant-tail (K-stem)
+// telescope, sharing Telescope's folds. The flat field list lifts LAZILY (at
+// recognition/projection, not formation), keeping Record parametric in its
+// params so `Record : Tree -> Type` self-verifies. (The old record_check/
+// record_respond were the degenerate case and are gone.)
+let fields_to_tele = fix ({self, fields} ->
   if (is_fork fields) then {
     let arm = pair_fst fields
-    bind ((pair_snd arm) (v (acc (pair_fst arm)))) ({ok} ->
-      if ok then (self (pair_snd fields) v) else (Ok FF))
-  } else (Ok TT))
-// Projection for Record neutrals: a record-hyp applied to `acc name` extends the
-// spine with that field's declared type, read by name from the stored type.
-record_respond := {params, self, frame} -> {
-  let arm_r = lookup_arm params (pair_fst frame)
-  match arm_r {
-    Ok ty => Extend ty
-    Err _ => Extend InvalidType
-  }
-}
-// Record recognizer: v is annihilate-rooted (a product) and every field inhabits its type.
+    t { name := pair_fst arm; ty := pair_snd arm; def := t } (t t (self (pair_snd fields)))
+  } else t)
+record_tele_respond := {params, self, frame} -> tele_field_at (fields_to_tele params) self (pair_fst frame)
 Record : Tree -> Type := {fields} -> wait (make_recognizer
-  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (record_check meta.recognizer_params v) else (Ok FF)
-) (make_meta fields record_respond)
+  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (tele_check (fields_to_tele meta.recognizer_params) v) else (Ok FF)
+) (make_meta fields record_tele_respond)
 
 // The kernel's own structural types (§11.2 / §12.6), built from the library formers above
 // so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
@@ -231,9 +267,11 @@ Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness 
 Frame : Type := Tree
 // NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).
 NeutralMeta : Type := Record [pair "stored_type" Type, pair "payload" Tree]
-// Action: a respond's result `Extend new_type | Return value`. Extend's payload is Type
-// (InvalidType is itself a real empty Type); Return's stays Tree (a value, not a type).
-Action : Type := Coproduct [pair "Extend" Type, pair "Return" Tree]
+// Action: a respond's result — a neutral elimination either stays stuck
+// (`Extend new_type`, payload Type; InvalidType is itself a real empty Type) or
+// computes (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the
+// verdict ALIAS, not an arm.
+Action : Type := Coproduct [pair "Extend" Type, pair "Reduce" Tree]
 // RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
 // A respond inhabits it iff it doesn't raw-triage its args. (Pinned in metashape.test.disp.)
 RespondShape : Type := Arrow Tree (Arrow Tree (Arrow Frame Action))

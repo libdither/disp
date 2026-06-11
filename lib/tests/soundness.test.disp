@@ -76,9 +76,9 @@ test (Pi Nat ({_} -> Nat)) ({n} -> n)         = Err     // raw -> fail fast (rec
 test (Intersection Nat ({_} -> Nat)) zero     = Err     // raw -> fail fast (recognizer mints a hyp)
 test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n) = Ok TT   // the sound path still works
 // A type whose recognizer does NOT mint a hyp applies raw to a CONCRETE value safely
-// — no parametricity surface. Sigma's recognizer checks a concrete pair (its family
-// is only abstracted in its respond), so raw Sigma yields a verdict, NOT fail-fast;
-// recognizers rely on this raw composition internally.
-test (Sigma Nat ({_} -> Bool)) (pair zero TT) = Ok TT   // raw Sigma: a verdict, not fail-fast
+// — no parametricity surface. Sigma's recognizer (the telescope fold) checks a
+// concrete record (its family is only abstracted in its respond), so raw Sigma
+// yields a verdict, NOT fail-fast; recognizers rely on this raw composition internally.
+test (Sigma Nat ({_} -> Bool)) { fst := zero; snd := TT } = Ok TT   // raw Sigma: a verdict, not fail-fast
 test Nat (succ zero)       = Ok TT
 test (Eq Nat zero zero) refl = Ok TT

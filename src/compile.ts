@@ -179,7 +179,8 @@ function exprMentions(e: Expr, name: string): boolean {
       return e.params.some(p => p.type && exprMentions(p.type, name)) || exprMentions(e.body, name)
     }
     case "recType":
-      return e.fields.some(f => f.type !== null && exprMentions(f.type, name))
+      return e.fields.some(f => (f.type !== null && exprMentions(f.type, name)) ||
+        ((f as any).value != null && exprMentions((f as any).value, name)))
     case "recValue": {
       if (e.fields.some(f => exprMentions(f.value, name) || (f.type && exprMentions(f.type, name))))
         return true
@@ -321,7 +322,40 @@ function exprToCir(
       }
       return body
     }
-    case "recType": throw new Error("recType cannot appear in untyped compilation")
+    case "recType": {
+      // A record-type literal IS a telescope type: fold the fields into
+      // `t entry (λname. rest)` (entry = { name; ty; def }, def the stem-option
+      // — `t recipe` for a derived `name := e` member) and wrap in `Telescope`.
+      // Later fields' types and derived recipes compile under lams binding the
+      // PRIOR field names, so `{ a : Nat, b := double a }` scopes naturally.
+      const TelescopeEntry = lookupEntry("Telescope")
+      const mkRecordEntry = lookupEntry("mk_record")
+      const listConstEntry2 = lookupEntry("list_const")
+      if (!TelescopeEntry?.tree || !mkRecordEntry?.tree || !listConstEntry2?.tree)
+        throw new Error("record type literal '{ name : T }': 'Telescope', 'mk_record', and 'list_const' must be in scope (open the kernel prelude)")
+      const lc: Cir = { tag: "lit", t: listConstEntry2.tree }
+      const leafCir: Cir = { tag: "lit", t: LEAF }
+      const entryNames = fork(stringToTree("name"), fork(stringToTree("ty"), fork(stringToTree("def"), LEAF)))
+      const consC = (h: Cir, tl: Cir): Cir => cap(cap(leafCir, h), tl)
+      let teleCir: Cir = leafCir
+      for (let i = e.fields.length - 1; i >= 0; i--) {
+        const f = e.fields[i]
+        const priorNames = new Set(e.fields.slice(0, i).map(p => p.name))
+        const shadowed = (n: string): ScopeEntry | undefined =>
+          priorNames.has(n) ? {} : lookupEntry(n)
+        const tyCir: Cir = f.type
+          ? exprToCir(f.type, shadowed, resolveUse, sinks)
+          : exprToCir({ tag: "var", name: "Tree" }, shadowed, resolveUse, sinks)
+        const defCir: Cir = f.value != null
+          ? cap(leafCir, exprToCir(f.value, shadowed, resolveUse, sinks)) // t recipe (derived)
+          : leafCir // t (opaque)
+        const payload = consC(cap(lc, { tag: "lit", t: stringToTree(f.name) }),
+          consC(cap(lc, tyCir), consC(cap(lc, defCir), leafCir)))
+        const entryCir = cap(cap({ tag: "lit", t: mkRecordEntry.tree }, { tag: "lit", t: entryNames }), payload)
+        teleCir = cap(cap(leafCir, entryCir), { tag: "lam", x: f.name, body: teleCir })
+      }
+      return cap({ tag: "lit", t: TelescopeEntry.tree }, teleCir)
+    }
     case "recValue": {
       // If this recValue has members (let/test/open alongside fields),
       // process them to build a scoped lookup before compiling fields.
@@ -404,14 +438,25 @@ function exprToCir(
       let namesTree: Tree = LEAF
       for (let i = e.fields.length - 1; i >= 0; i--)
         namesTree = fork(stringToTree(e.fields[i].name), namesTree)
-      // payload: a cons-chain of const-wrapped field values (cons = `t h tl`).
+      // Sequential field scope (telescope discipline): later fields see earlier
+      // ones by name ({ a := 2; b := double a }). The record core references
+      // each field as a var; each field wraps the rest as ((λname. rest) value),
+      // with PRIOR names shadowed while compiling `value` — so a field's value
+      // compiles before its own name binds (`respond := respond` resolves
+      // outward, field puns included).
       const consCir = (h: Cir, tl: Cir): Cir => cap(cap({ tag: "lit", t: LEAF }, h), tl)
       let payloadCir: Cir = { tag: "lit", t: LEAF }
+      for (let i = e.fields.length - 1; i >= 0; i--)
+        payloadCir = consCir(cap(listConst, { tag: "var", name: e.fields[i].name }), payloadCir)
+      let result: Cir = cap(cap(recordVal, { tag: "lit", t: namesTree }), payloadCir)
       for (let i = e.fields.length - 1; i >= 0; i--) {
-        const fc = exprToCir(e.fields[i].value, fieldLookup, resolveUse, sinks)
-        payloadCir = consCir(cap(listConst, fc), payloadCir)
+        const priorNames = new Set(e.fields.slice(0, i).map(f => f.name))
+        const shadowedLookup = (n: string): ScopeEntry | undefined =>
+          priorNames.has(n) ? {} : fieldLookup(n)
+        const vc = exprToCir(e.fields[i].value, shadowedLookup, resolveUse, sinks)
+        result = cap({ tag: "lam", x: e.fields[i].name, body: result }, vc)
       }
-      return cap(cap(recordVal, { tag: "lit", t: namesTree }), payloadCir)
+      return result
     }
     case "use": {
       // A file resolves to a module tuple { record, typ } (§2.6 records):
@@ -555,10 +600,19 @@ function resolveExprRecord(
         }
       }
     }
-    return {
-      fields: e.fields.map(f => f.name),
-      fieldTrees: e.fields.map(f => compileExpr(f.value, fieldLookup, resolveUse)),
+    // Sequential field scope, mirroring exprToCir's recValue case: each
+    // compiled field rebinds its name for LATER fields (after its own value
+    // compiles, so a self-named field still resolves outward).
+    const fieldNames: string[] = []
+    const fieldTrees: Tree[] = []
+    for (const f of e.fields) {
+      const tree = compileExpr(f.value, fieldLookup, resolveUse)
+      fieldNames.push(f.name)
+      fieldTrees.push(tree)
+      const prevLookup = fieldLookup
+      fieldLookup = (n: string) => n === f.name ? { tree } : prevLookup(n)
     }
+    return { fields: fieldNames, fieldTrees }
   }
   if (e.tag === "proj") {
     // Nested projection: target.field — would need the inner record's field type
@@ -812,7 +866,9 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     // (e.g. `NatSet : Type := Nat -> Bool`), which a raw import yields as the
     // unevaluated lambda rather than the `Pi`. The kernel has no such alias, so a
     // raw kernel import matches a checked one value-for-value.
-    if (!raw && type != null && type.tag !== "recType" && (Type || lookupEntry("Pi")?.tree)) {
+    // recType annotations participate once `Telescope` exists (they compile to
+    // telescope types); without it they keep the legacy fields-metadata-only role.
+    if (!raw && type != null && (type.tag !== "recType" || lookupEntry("Telescope")?.tree) && (Type || lookupEntry("Pi")?.tree)) {
       // Build the annotation's type tree (binder → Pi, else plain compile). If the
       // annotation is the universe `Type`, the BODY itself denotes a type, so
       // compile it the same way; otherwise the body is a value (plain bracket

@@ -99,13 +99,13 @@ export type Expr =
   | { tag: "if"; cond: Expr; thenBody: Expr; elseBody: Expr }
 
 export type Param = { name: string | null; type: Expr | null }
-export type TypedField = { name: string; type: Expr | null }
+export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
 export type NamedField = { name: string; type: Expr | null; value: Expr }
 
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
 export type RecMember =
-  | { tag: "field"; name: string; type: Expr | null; value: Expr }
+  | { tag: "field"; name: string; type: Expr | null; value: Expr; pun?: boolean }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr }
   | { tag: "open"; expr: Expr }
@@ -440,14 +440,25 @@ const makeBinderInner = (bodyParser: P<Expr>): P<Expr> => map(
 const binderInner: P<Expr> = makeBinderInner(lazy(() => expr))
 const lineBinderInner: P<Expr> = makeBinderInner(lazy(() => lineExpr))
 
-// typedField = IDENT ":" expr
+// typedField = IDENT (":" expr)? (":=" expr)? — at least one part present.
+// `name : T` is an opaque telescope entry; `name := e` / `name : T := e` is a
+// DERIVED entry (the field is pinned to recipe e over the prior fields).
 const typedFieldP: P<TypedField> = nl((ts, i) => {
   // Reject "_" as a recType field name
   if (ts[i].t === "id" && (ts[i] as any).v === "_") return err(`recType field cannot be '_'`, i)
-  const r = seq(idP, nl(punctP(":")), skipNl, lazy(() => expr))(ts, i)
+  const r = idP(ts, i)
   if (!r.ok) return r
-  const [name, , , type] = r.v
-  return ok({ name, type }, r.pos)
+  const name = r.v
+  let pos = r.pos
+  let type: Expr | null = null
+  let value: Expr | null = null
+  const withType = seq(nl(punctP(":")), skipNl, lazy(() => expr))(ts, pos)
+  if (withType.ok) { type = withType.v[2] as Expr; pos = withType.pos }
+  const withVal = seq(nl(punctP(":=")), skipNl, lazy(() => expr))(ts, pos)
+  if (withVal.ok) { value = withVal.v[2] as Expr; pos = withVal.pos }
+  if (type === null && value === null) return err(`expected ':' or ':=' after field name '${name}'`, pos)
+  // Omit `value` for plain fields so the AST shape is unchanged for them.
+  return ok(value === null ? { name, type } : { name, type, value }, pos)
 })
 
 // Parse recType contents after "{". Expects typed fields, "}".
@@ -633,7 +644,24 @@ const bracedFieldMemberP: P<RecMember> = (ts, i) => {
   return ok(r.v as RecMember, pos)
 }
 
-const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedOpenP, bracedFieldMemberP))
+// Field pun (Rust-style shorthand): a bare IDENT member is `name := name`,
+// the name resolving in the OUTER scope (a field's value compiles before its
+// name binds). Only meaningful alongside at least one real `:=` field —
+// unifiedBracedInner reinterprets or rejects puns in field-less bodies.
+const bracedPunP: P<RecMember> = (ts, i) => {
+  const r = idP(ts, i)
+  if (!r.ok) return r
+  const name = r.v
+  if (name === "_") return err("'_' cannot be a field pun", i)
+  const punMember = { tag: "field" as const, name, type: null, value: { tag: "var" as const, name }, pun: true }
+  const s = semiP(ts, r.pos)
+  if (s.ok) return ok(punMember as RecMember, s.pos)
+  if (ts[r.pos].t === "punct" && (ts[r.pos] as any).v === "}")
+    return ok(punMember as RecMember, r.pos)
+  return err("bare identifier is not a member (pun needs ';', newline, or '}')", i)
+}
+
+const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedOpenP, bracedFieldMemberP, bracedPunP))
 
 // Unified braced body parser: handles blocks, recValues, and mixed members.
 // Parses members (let/test/open/field). Then:
@@ -643,8 +671,25 @@ const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, b
 const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   const membersR = many(bracedMemberP)(ts, startPos)
   if (!membersR.ok) return membersR
-  const members = membersR.v
+  const members = membersR.v.slice()
   let pos = membersR.pos
+
+  // Field puns only make sense alongside a real `:=` field. In a field-less
+  // body, a single FINAL pun is really the block's trailing expression
+  // (e.g. `{ let a = t; a }`); anything else is an error.
+  let preTrailing: Expr | null = null
+  const isPun = (m: RecMember) => m.tag === "field" && (m as any).pun === true
+  const realFieldCount = members.filter(m => m.tag === "field" && !isPun(m)).length
+  const punCount = members.filter(isPun).length
+  if (realFieldCount === 0 && punCount > 0) {
+    const last = members[members.length - 1]
+    if (punCount === 1 && isPun(last)) {
+      members.pop()
+      preTrailing = { tag: "var", name: (last as any).name }
+    } else {
+      return err("bare identifier member (field pun) needs a sibling ':=' field", startPos)
+    }
+  }
 
   const exportedFields: NamedField[] = []
   const bindings: { name: string; type: Expr | null; body: Expr }[] = []
@@ -673,22 +718,28 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   }
 
   // No exported fields: "}" → empty recValue, or trailing expr → block
-  if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
+  if (preTrailing === null && ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
     pos++
     const rv: Expr = { tag: "recValue", fields: [] }
     if (membersOrUndef) (rv as any).members = membersOrUndef
     return ok(rv, pos)
   }
 
-  if (bindings.length === 0 && members.length === 0)
+  if (preTrailing === null && bindings.length === 0 && members.length === 0)
     return err(`expected '}' or expression, got ${describe(ts[pos])}`, pos)
 
-  // Block with trailing expression
-  const trailR = expr(ts, pos)
-  if (!trailR.ok) return trailR
-  pos = trailR.pos
-  const s = semiP(ts, pos)
-  if (s.ok) pos = s.pos
+  // Block with trailing expression (a converted final pun arrives pre-parsed).
+  let trailing: Expr
+  if (preTrailing !== null) {
+    trailing = preTrailing
+  } else {
+    const trailR = expr(ts, pos)
+    if (!trailR.ok) return trailR
+    trailing = trailR.v
+    pos = trailR.pos
+    const s = semiP(ts, pos)
+    if (s.ok) pos = s.pos
+  }
   while (ts[pos].t === "nl") pos++
   if (!(ts[pos].t === "punct" && (ts[pos] as any).v === "}"))
     return err(`expected '}', got ${describe(ts[pos])}`, pos)
@@ -703,12 +754,12 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   // let-blocks (which still produce App(Binder, val) for back-compat).
   const hasTestOrOpen = members.some(m => m.tag === "test" || m.tag === "open")
   if (hasTestOrOpen) {
-    const rv: Expr = { tag: "recValue", fields: [], members, trailing: trailR.v }
+    const rv: Expr = { tag: "recValue", fields: [], members, trailing }
     return ok(rv, pos)
   }
 
   // Desugar block: right-to-left wrap trailing expr in nested App(Binder, body)
-  let result: Expr = trailR.v
+  let result: Expr = trailing
   for (let i = bindings.length - 1; i >= 0; i--) {
     const b = bindings[i]
     const val: Expr = b.type
@@ -775,6 +826,24 @@ function parseBraced(binderParser: P<Expr>): P<Expr> {
 const braced: P<Expr> = parseBraced(binderInner)
 const lineBraced: P<Expr> = parseBraced(lineBinderInner)
 
+// Scan forward for a ":=" at depth 0, stopping at the enclosing "}" — used to
+// spot a recValue whose first member doesn't show one directly (a typed field
+// `a : T := e`, or a field pun `respond; a := 1`).
+function scanForFieldAssign(ts: Tok[], q: number, stopAtCommaSemi: boolean): boolean {
+  let depth = 0
+  while (q < ts.length && ts[q].t !== "eof") {
+    if (ts[q].t === "punct") {
+      const v = (ts[q] as any).v
+      if (v === "(" || v === "{") depth++
+      else if (v === ")" || v === "}") { if (depth === 0) return false; depth-- }
+      else if (depth === 0 && v === ":=") return true
+      else if (depth === 0 && stopAtCommaSemi && (v === "," || v === ";")) return false
+    }
+    q++
+  }
+  return false
+}
+
 // Peek at tokens after "{" to classify the braced content.
 function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | "recTypeOrBinder" {
   let p = pos
@@ -782,7 +851,8 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
   if (ts[p].t === "id") {
     const name = (ts[p] as any).v as string
     p++
-    while (ts[p].t === "nl") p++
+    let crossedNl = false
+    while (ts[p].t === "nl") { crossedNl = true; p++ }
     if (name === "_") {
       if (ts[p].t === "punct" && (ts[p] as any).v === ":") return "recTypeOrBinder"
       return "binder"
@@ -790,20 +860,13 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
     if (ts[p].t === "punct" && ((ts[p] as any).v === "}" || (ts[p] as any).v === ",")) return "binder"
     if (ts[p].t === "punct" && (ts[p] as any).v === ":=") return "recValue"
     if (ts[p].t === "punct" && (ts[p] as any).v === ":") {
-      // Scan for ":=" at this nesting depth (before "}", ",", ";")
-      let depth = 0
-      let q = p + 1
-      while (q < ts.length && ts[q].t !== "eof") {
-        if (ts[q].t === "punct") {
-          const v = (ts[q] as any).v
-          if (v === "(" || v === "{") depth++
-          else if (v === ")" || v === "}") { if (depth === 0) break; depth-- }
-          else if (depth === 0 && v === ":=") return "recValue"
-          else if (depth === 0 && (v === "," || v === ";")) break
-        }
-        q++
-      }
-      return "recTypeOrBinder"
+      // `name : T …` — a later ":=" in this member means a typed field.
+      return scanForFieldAssign(ts, p + 1, true) ? "recValue" : "recTypeOrBinder"
+    }
+    // `name ;` or `name NEWLINE id …` — possibly a field pun leading a
+    // recValue; a ":=" anywhere before the closing "}" decides it.
+    if ((ts[p].t === "punct" && (ts[p] as any).v === ";") || (crossedNl && ts[p].t === "id")) {
+      if (scanForFieldAssign(ts, p, false)) return "recValue"
     }
   }
   return "binder"

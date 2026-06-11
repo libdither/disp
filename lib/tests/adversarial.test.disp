@@ -16,7 +16,7 @@ let reflects = {n} -> select_lazy ({_} -> Nat) ({_} -> Bool) (is_fork n)   // no
 // ================================================================
 test param_apply (Pi Nat reflects) ({n} -> n)        = Err                 // codomain family reflects
 test param_apply (Intersection Nat reflects) zero    = Err                 // predicate reflects
-test neutral_type (param_apply (make_hyp (Sigma Nat reflects) 0) walker_pair_snd) = InvalidType   // Sigma family reflects
+test neutral_type (param_apply (make_hyp (Sigma Nat reflects) 0) (acc "snd")) = InvalidType   // Sigma family reflects
 test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({p, ih} -> is_fork p) } }) = InvalidType  // step reflects
 // valid analogues still pass (the policing only rejects reflection)
 test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n)            = Ok TT

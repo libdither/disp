@@ -2,29 +2,30 @@ open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/pair.disp"
 
-// Constructors and accessors
+// Raw fork-pairs (prelude substrate idiom) still work
 test pair_fst (pair 1 2) = 1
 test pair_snd (pair 1 2) = 2
 
-// Pair A B is a Sigma type — recognized through the kernel (Ok-wrapped verdict).
-test typecheck (Pair Nat Nat) (pair 0 0) = Ok TT
-test typecheck (Pair Nat Nat) (pair 3 7) = Ok TT
-test typecheck (Pair Nat Bool) (pair 1 TT) = Ok TT
-test typecheck (Pair Bool Nat) (pair FF 5) = Ok TT
+// Pair A B is a Sigma (2-entry telescope); values are records
+test typecheck (Pair Nat Nat) (mk_pair 0 0) = Ok TT
+test typecheck (Pair Nat Nat) (mk_pair 3 7) = Ok TT
+test typecheck (Pair Nat Bool) (mk_pair 1 TT) = Ok TT
+test typecheck (Pair Bool Nat) (mk_pair FF 5) = Ok TT
+test mk_pair 4 7 = { fst := 4; snd := 7 }
 
 // Rejects ill-typed contents
-test typecheck (Pair Bool Nat) (pair 1 5) = Ok FF
+test typecheck (Pair Bool Nat) (mk_pair 1 5) = Ok FF
 
 // Helpers
-test pair_map_fst succ (pair 1 9) = pair 2 9
-test pair_map_snd succ (pair 1 9) = pair 1 10
-test pair_swap (pair 1 9) = pair 9 1
+test pair_map_fst succ (mk_pair 1 9) = mk_pair 2 9
+test pair_map_snd succ (mk_pair 1 9) = mk_pair 1 10
+test pair_swap (mk_pair 1 9) = mk_pair 9 1
 
-// Pair under a Pi binder — the parametric projection `proj_snd` routes a
-// Pair-hypothesis through sigma_respond, so this typed binding VERIFIES
-// (raw `pair_snd` would raw-triage the hyp → parametricity rejection).
-let snd_of_nats : Pair Nat Nat -> Nat = {p} -> proj_snd p
-test snd_of_nats (pair 4 7) = 7
-let fst_of_nats : Pair Nat Nat -> Nat = {p} -> proj_fst p
-test fst_of_nats (pair 4 7) = 4
-test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> proj_snd p) = Ok TT // verifies (was Err with raw pair_snd)
+// Pair under a Pi binder — `.fst`/`.snd` projection is uniform: the §2.6 cut
+// on a concrete record, tele_respond on a Pair-hypothesis. No is_neutral
+// dispatch needed (the old proj_fst/proj_snd select_lazy hack is gone).
+let snd_of_nats : Pair Nat Nat -> Nat = {p} -> p.snd
+test snd_of_nats (mk_pair 4 7) = 7
+let fst_of_nats : Pair Nat Nat -> Nat = {p} -> p.fst
+test fst_of_nats (mk_pair 4 7) = 4
+test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> p.snd) = Ok TT // verifies through the walker

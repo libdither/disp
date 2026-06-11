@@ -117,4 +117,6 @@ test has_metashape_layout m = TT
 test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF // old positional shape is no longer a meta
 // recognizer_params is itself an inline record read by name (Pi's { dom, cod })
 test (type_meta (Pi Nat ({_} -> Bool))).recognizer_params.dom = Nat
-test (type_meta (Sigma Nat ({_} -> Bool))).recognizer_params.dom = Nat
+// Sigma's params are its telescope: first entry is the named fst component
+test (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params)).name = "fst"
+test (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params)).ty = Nat
