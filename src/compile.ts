@@ -135,17 +135,16 @@ function cirToTree(e: Cir): Tree {
   }
 }
 
-// Scope entry: a compiled tree plus optional compile-time record metadata.
-// Field names/trees are parser metadata only; runtime records remain ordinary
-// Church-encoded values.
+// Scope entry: a compiled tree plus optional MODULE export metadata (set by
+// resolveUse, propagated through `let m = use "f"`). Needed because a module's
+// fallback value is a Church-encoded record the runtime cut can't read; for
+// everything else, projection is the §2.6 cut and needs no metadata.
 interface ScopeEntry {
   tree?: Tree
   type?: Tree | null    // null = untyped, undefined = not yet set
   fields?: string[]
   fieldTrees?: Tree[]
   fieldTypes?: (Tree | null)[]  // per-field types for open
-  fieldInnerFields?: (string[] | undefined)[]
-  fieldInnerTrees?: (Tree[] | undefined)[]
 }
 
 // Detect `{_} -> body` / `{x} -> body` thunks where the parameter is unused.
@@ -300,18 +299,11 @@ function exprToCir(
     case "ann": return exprToCir(e.expr, lookupEntry, resolveUse, sinks) // erase type
     case "binder": {
       // Shadow binder params so they don't resolve to scope entries.
-      // If a param has a recType annotation, carry its field names as metadata
-      // so that projections (e.g. ks.field) work on bound variables.
+      // (Projection on a bound variable is the runtime §2.6 cut — no
+      // compile-time field metadata is needed.)
       const paramNames = new Set(e.params.map((p, i) => p.name ?? `_anon${i}`))
-      const paramEntries = new Map<string, ScopeEntry>()
-      for (let i = 0; i < e.params.length; i++) {
-        const name = e.params[i].name ?? `_anon${i}`
-        if (e.params[i].type?.tag === "recType") {
-          paramEntries.set(name, { fields: (e.params[i].type as any).fields.map((f: any) => f.name) })
-        }
-      }
       const shadowedLookup = (name: string): ScopeEntry | undefined => {
-        if (paramNames.has(name)) return paramEntries.get(name)
+        if (paramNames.has(name)) return undefined
         return lookupEntry(name)
       }
 
@@ -373,14 +365,10 @@ function exprToCir(
         for (const m of e.members) {
           if (m.tag === "let") {
             const tree = compileExpr(m.body, fieldLookup, resolveUse, sinks)
-            let fields: string[] | undefined, fieldTrees: Tree[] | undefined
-            if (m.type?.tag === "recType") {
-              fields = (m.type as any).fields.map((f: any) => f.name)
-            } else {
-              const record = resolveExprRecord(m.body, fieldLookup, resolveUse)
-              fields = record?.fields; fieldTrees = record?.fieldTrees
-            }
-            rebind(m.name, { tree, fields, fieldTrees })
+            // Module metadata propagation (`let m = use "f"`) so an inline
+            // `open m` still sees the export list.
+            const record = resolveExprRecord(m.body, fieldLookup, resolveUse)
+            rebind(m.name, { tree, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes })
           } else if (m.tag === "test") {
             // Q2: inline-block tests now flow to the driver via sinks.recordTest.
             // Without a sink we silently skip — same as the legacy behavior,
@@ -407,9 +395,7 @@ function exprToCir(
                 ? record.fieldTrees[i]
                 : applyTree(targetTree!, accTree(record.fields[i]), APPLY_BUDGET)
               const fieldType = record.fieldTypes?.[i] ?? null
-              const innerFields = (record as any).fieldInnerFields?.[i] as string[] | undefined
-              const innerTrees = (record as any).fieldInnerTrees?.[i] as Tree[] | undefined
-              rebind(record.fields[i], { tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })
+              rebind(record.fields[i], { tree: fieldTree, type: fieldType })
             }
             sinks?.recordOpen?.()
           }
@@ -547,77 +533,22 @@ function exprToCir(
   }
 }
 
-// Resolve record metadata known at compile time (for projection/open).
+// Resolve MODULE export metadata known at compile time (for `open` splicing
+// and projection on module values, whose fallback representation is a Church
+// record the runtime cut can't read). Ordinary record values need none of
+// this — projection on them is the §2.6 cut.
 function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string, raw?: boolean) => ScopeEntry,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldInnerFields?: (string[] | undefined)[]; fieldInnerTrees?: (Tree[] | undefined)[] } | undefined {
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[] } | undefined {
   if (e.tag === "var") {
     const entry = lookupEntry(e.name)
     return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes } : undefined
   }
   if (e.tag === "use") {
-    const entry = resolveUse(e.path, e.raw) as any
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldInnerFields: entry.fieldInnerFields, fieldInnerTrees: entry.fieldInnerTrees } : undefined
-  }
-  // Application where the argument is a binder returning a recValue:
-  // e.g. fix({ks : {...}} -> { f1 := ...; f2 := ... }) → fields from the recValue.
-  // This propagates field metadata through higher-order patterns like fix.
-  if (e.tag === "app" && e.x.tag === "binder" && e.x.body.tag === "recValue") {
-    return { fields: e.x.body.fields.map(f => f.name) }
-  }
-  if (e.tag === "recValue") {
-    // If this recValue has let/open members, they shadow scope for the
-    // field values. Process them to build the effective lookup before
-    // compiling fields. Tests are skipped here — resolveExprRecord
-    // shouldn't have side effects (it may be called speculatively).
-    let fieldLookup = lookupEntry
-    if (e.members && e.members.length > 0) {
-      const localScope = new Map<string, ScopeEntry>()
-      for (const m of e.members) {
-        if (m.tag === "let") {
-          const tree = compileExpr(m.body, fieldLookup, resolveUse)
-          const inner = resolveExprRecord(m.body, fieldLookup, resolveUse)
-          localScope.set(m.name, { tree, fields: inner?.fields, fieldTrees: inner?.fieldTrees })
-          const prevLookup = fieldLookup
-          fieldLookup = (name: string) => localScope.get(name) ?? prevLookup(name)
-        } else if (m.tag === "open") {
-          const rec = resolveExprRecord(m.expr, fieldLookup, resolveUse)
-          if (!rec) continue
-          const targetTree = rec.fieldTrees
-            ? undefined
-            : compileExpr(m.expr, fieldLookup, resolveUse)
-          const n = rec.fields.length
-          for (let i = 0; i < n; i++) {
-            const ft = rec.fieldTrees
-              ? rec.fieldTrees[i]
-              : applyTree(targetTree!, accTree(rec.fields[i]), APPLY_BUDGET)
-            localScope.set(rec.fields[i], { tree: ft, type: rec.fieldTypes?.[i] ?? null })
-          }
-          const prevLookup = fieldLookup
-          fieldLookup = (name: string) => localScope.get(name) ?? prevLookup(name)
-        }
-      }
-    }
-    // Sequential field scope, mirroring exprToCir's recValue case: each
-    // compiled field rebinds its name for LATER fields (after its own value
-    // compiles, so a self-named field still resolves outward).
-    const fieldNames: string[] = []
-    const fieldTrees: Tree[] = []
-    for (const f of e.fields) {
-      const tree = compileExpr(f.value, fieldLookup, resolveUse)
-      fieldNames.push(f.name)
-      fieldTrees.push(tree)
-      const prevLookup = fieldLookup
-      fieldLookup = (n: string) => n === f.name ? { tree } : prevLookup(n)
-    }
-    return { fields: fieldNames, fieldTrees }
-  }
-  if (e.tag === "proj") {
-    // Nested projection: target.field — would need the inner record's field type
-    // which itself is a record. Not supported yet.
-    return undefined
+    const entry = resolveUse(e.path, e.raw)
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes } : undefined
   }
   return undefined
 }
@@ -718,7 +649,7 @@ function accTree(name: string): Tree {
 // ──────────────────────────── 6. Driver ─────────────────────────────────
 
 export type Decl =
-  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; fields?: string[]; fieldTrees?: Tree[] }
+  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null }
   | { kind: "Test"; lhs: Tree; rhs: Tree }
 
 export type ParseItemStats = {
@@ -784,22 +715,15 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
       sourceStack.pop()
       loadedFiles.delete(abs)
     }
-    // Collect the file's top-level defs as a record. Each field can
-    // itself be a record (carrying nested fields metadata) — those
-    // propagate so that downstream `kernel.hyp_reduce`-style projections
-    // work across `open use` boundaries.
+    // Collect the file's top-level defs as a record.
     const fieldNames: string[] = []
     const fieldTrees: Tree[] = []
     const fieldTypes: (Tree | null)[] = []
-    const fieldInnerFields: (string[] | undefined)[] = []
-    const fieldInnerTrees: (Tree[] | undefined)[] = []
     for (const d of fileDecls) {
       if (d.kind === "Def") {
         fieldNames.push(d.name)
         fieldTrees.push(d.tree)
         fieldTypes.push(d.type ?? null)
-        fieldInnerFields.push(d.fields)
-        fieldInnerTrees.push(d.fieldTrees)
       }
     }
     // Auto-verification: check the module's typed exports through the kernel
@@ -834,7 +758,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    return { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldInnerFields, fieldInnerTrees }
+    return { tree, fields: fieldNames, fieldTrees, fieldTypes }
   }
 
   function recordItem(kind: "let" | "test" | "open" | "field", name?: string, testIndex?: number): void {
@@ -885,15 +809,11 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
       tree = compileExpr(body, lookupEntry, resolveUse, sinks)
     }
 
-    let fields: string[] | undefined, fieldTrees: Tree[] | undefined
-    if (type?.tag === "recType") {
-      fields = (type as any).fields.map((f: any) => f.name)
-    } else {
-      const record = resolveExprRecord(body, lookupEntry, resolveUse)
-      fields = record?.fields; fieldTrees = record?.fieldTrees
-    }
-    define(name, { tree, type: inferredType, fields, fieldTrees })
-    return { tree, type: inferredType, fields, fieldTrees }
+    // Module metadata propagation (`let m = use "f"`): `open m` and projection
+    // on the module's Church-record fallback need the export list.
+    const record = resolveExprRecord(body, lookupEntry, resolveUse)
+    define(name, { tree, type: inferredType, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes })
+    return { tree, type: inferredType }
   }
 
   // Build a CompileSinks for the given target/decl array. Tests emitted by
@@ -916,7 +836,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     switch (it.tag) {
       case "field": {
         const result = compileBinding(it.name, it.type, it.value, sinks, raw)
-        target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
+        target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
         // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
         recordItem("field", it.name)
@@ -926,7 +846,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         const result = compileBinding(it.name, it.type, it.body, sinks, raw)
         if (isExport) {
           // Legacy mode: top-level let exports (for files not yet migrated)
-          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type, fields: result.fields, fieldTrees: result.fieldTrees })
+          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
         }
         if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
         recordItem("let", it.name)
@@ -957,15 +877,10 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
           const fieldType = record.fieldTypes?.[i] ?? null
-          // Propagate inner-field metadata if this field is itself a
-          // record-typed binding, so projecting its sub-fields still
-          // works across `open use` boundaries.
-          const innerFields = (record as any).fieldInnerFields?.[i] as string[] | undefined
-          const innerTrees = (record as any).fieldInnerTrees?.[i] as Tree[] | undefined
-          define(name, { tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })
+          define(name, { tree: fieldTree, type: fieldType })
           if (isExport) {
-            // Legacy mode: open re-exports opened names (with inner-field metadata).
-            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, fields: innerFields, fieldTrees: innerTrees })
+            // Legacy mode: open re-exports opened names.
+            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType })
           }
         }
         recordItem("open")
