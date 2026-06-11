@@ -1,16 +1,19 @@
 # The Wrapping Invariant — problem, fix, and the road to metacircular checking
 
-**Status:** open problem. The in-language checker is sound where it terminates
-cleanly, but has **false-negatives on nested neutral application**. Because of
-that, elaborator verification is currently **advisory** (`src/compile.ts`
-`compileBinding`: a non-`Ok TT` verdict is *not* a hard error). This document
-explains the bug precisely, catalogs the fixes tried (and why each is subtle),
-proposes the real fix, and describes what a clean checker unlocks.
+**Status: RESOLVED (Option A landed).** `hyp_reduce`'s Extend channel returns a
+BARE stuck neutral, so `Ok <neutral>` never arises and verdicts are unambiguous;
+module verification is a **hard compile error** (`src/compile.ts` `resolveUse`).
+Pinned by `lib/tests/wrapping.test.disp` (operator-position nesting, flip,
+uniformity). The same dichotomy was later completed on the value side: `Action`
+is now `Extend type | Reduce value` (both bare), with `Return v = Reduce (Ok v)`
+a verdict alias — see `KERNEL_DESIGN.md` § Telescopes. Retained for the problem
+analysis and the catalog of failed fixes (§4), which explain WHY bare-by-default
+is the only stable point. File references predate the `core.disp` →
+`cut/engine/types.disp` split.
 
-Audience: anyone touching `lib/kernel/core.disp`'s walker, recognisers, `elim`,
-or the elaborator's verification path. Read `TYPE_THEORY.typ` §3 (CheckerResult)
-and §7.5 (the wrapping invariant) first; this file is the implementation reality
-that diverges from that spec.
+Audience: anyone touching the walker, recognisers, `elim`, or the elaborator's
+verification path. Read `TYPE_THEORY.typ` §3 (CheckerResult) and §7.5 (the
+wrapping invariant) first.
 
 ---
 

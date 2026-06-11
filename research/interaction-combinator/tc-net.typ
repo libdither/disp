@@ -55,7 +55,7 @@
   stroke: 0.5pt + luma(120),
   radius: 4pt,
 )[
-  *Abstract.* We construct TC-Net, an interaction net system for evaluating Barry Jay's tree calculus inside Yves Lafont's interaction net framework. The revised construction treats every tree-calculus expression as a principal-rooted term and treats evaluation, application, triage, duplication, and erasure as consumers of that root. This removes the earlier orientation problem where application results were exposed only through auxiliary ports. The key insight remains that tree calculus's triage operation is case analysis on a fixed three-way recursive type, while sharing is structural copy/delete for that same first-order term algebra. The system therefore avoids Lamping-style binding-scope bookkeeping, not because duplication is free, but because there are no binders whose scope identities must be tracked.
+  *Abstract.* We construct TC-Net, an interaction net system for evaluating Barry Jay's tree calculus inside Yves Lafont's interaction net framework. The revised construction treats every tree-calculus expression as a principal-rooted term and treats evaluation, application, triage, duplication, and erasure as consumers of that root. This removes the earlier orientation problem where application results were exposed only through auxiliary ports. The key insight remains that tree calculus's triage operation is case analysis on a fixed three-way recursive type, while sharing is structural copy/delete for that same first-order term algebra. The system therefore avoids Lamping-style binding-scope bookkeeping, not because duplication is free, but because there are no binders whose scope identities must be tracked. A second duplicator species --- demand-before-copy --- upgrades structural copying to call-by-need; because there are no binders, this alone yields at-most-once reduction of every application, the tree-calculus analog of optimal sharing, again with no oracle.
 ]
 
 // ═══════════════════════════════════════════════════════════════
@@ -318,6 +318,34 @@ Hash-consing also gives a clean story for structural comparison:
 
 This optimization should not be confused with observational equality of programs. Hash-consing makes equality of already-materialized tree structure cheap; it does not decide whether two different programs compute the same behavior.
 
+== Variant: Demand-Before-Copy Duplication <demand-before-copy>
+
+The structural rule $delta times.o P$ copies a _suspended computation_ as syntax. If a shared subterm is duplicated before it has been evaluated, each copy is subsequently demanded on its own, and the same dispatch interactions are re-performed once per copy. Structural $delta$ shares _structure_, never _work_ (@work-sharing makes this precise).
+
+There is a one-rule repair. Write $delta^n$ ("need") for a second duplicator species and $delta^s$ ("structural") for the original. Instead of copying a suspended application, $delta^n$ _demands_ it and parks itself on the result wire:
+
+$
+  delta^n (l, r) times.o P(f, a) : quad A["arg" := a, "res" := t].p -> f, quad delta^n [l := l, r := r].p -> t
+$
+
+Port accounting: the four external wires ($"delta.l"$, $"delta.r"$, $P.f$, $P.a$) are each used exactly once, and the single internal wire $t$ connects $A."res"$ (an auxiliary port) to the parked duplicator's principal port. The net is well-formed and the rule table remains functional (one rule per unordered agent pair), so the strong confluence argument (Theorem 2) is untouched.
+
+Because the parked $delta^n$ faces an _auxiliary_ port, no active pair exists yet: it waits. Every dispatch chain terminates by wiring a producer's principal root to its result wire, so eventually:
+
+- a constructor $L$, $S$, or $F$ arrives: the structural copy rule fires, copying _one_ weak-head constructor (the children duplicators spawned by that rule are again $delta^n$ --- the species propagates through the copy wave);
+- another suspended $P$ arrives (possible: e.g. the K rule returns its $b$ branch unevaluated): $delta^n times.o P$ fires again and the demand continues.
+
+The shared computation is therefore performed _once_; only weak-head constructors are ever copied; and suspended children of the result remain shared behind further parked duplicators. This is call-by-need rendered as an interaction net, in the style of Sinot's token-passing nets: the demand chain is the evaluation token, and parking a consumer on an auxiliary result wire is the only way an interaction net can express "wait until this value exists."
+
+=== The Two Species Coexist Without an Oracle
+
+Duplicators only ever face term producers (or parked result wires) at their principal ports, so $delta^s$ and $delta^n$ can never meet principal-to-principal, and no coherence rule between the species is required. Contrast optimal $lambda$-reducers, where distinguishing duplicator species is precisely where index labels and the oracle enter. A compiler may choose per duplication site:
+
+- $delta^n$ for _computational_ sharing --- in particular, the S-rule ($T_1 times.o S$) should spawn $delta^n$;
+- $delta^s$ where copying syntax is the intent --- e.g. a reflective program materializing a structural copy of an unevaluated program as data.
+
+Erasure is unchanged: $epsilon times.o P$ still deletes a suspended application without evaluating it. Laziness of _discard_ is single-consumer and independent of sharing of _demand_.
+
 == Reduction Diagrams
 
 The following Fletcher diagrams form an atlas of the active-pair reductions. The symbol $times.o$ marks the principal-principal connection. The right-hand side is a wiring sketch, not a sequential program: every newly exposed active pair may reduce in parallel with the others.
@@ -542,6 +570,46 @@ All triage rules ($T_2 times.o L\/S\/F$) produce only $A$'s and $epsilon$'s --- 
 
 *Consequence:* Self-reflection (triage) introduces no new duplication rule. The duplication cost is proportional to S-combinator usage and structural sharing policy. Programs that heavily use triage but avoid the S-combinator incur no computational $delta$ cost from triage itself.
 
+== Work Sharing and First-Order Optimality <work-sharing>
+
+The two duplicator species of @demand-before-copy differ in what they share.
+
+#block(inset: (left: 1em))[
+*Proposition 5 (Structural duplication is not work-sharing).* With $delta^s times.o P$ as the only duplication rule for suspended applications, there are nets in which residuals of a single source redex are reduced twice.
+]
+
+_Proof._ Let $c$ be the suspended application `not true` (six interactions to weak-head form; see the worked example below) and encode $tri (tri x) y space c$ where $x$ and $y$ are both strict in their argument. The S-rule fires $delta^s times.o P(N, S(L))$, copying the suspended application as syntax. Each copy is then demanded independently and the dispatch interactions of `not true` are performed twice. The two copies are residuals of one source application, so the same work is done once per residual.
+
+#block(inset: (left: 1em))[
+*Theorem 6 (At-most-once reduction).* In a TC-Net in which every duplicator that can reach a suspended application is $delta^n$, every $P$ agent is dispatched at most once. Equivalently: no dispatch interaction is ever performed on two residuals of the same application.
+]
+
+_Proof sketch._ Residuals are created only by duplication. The $delta^n$ copy rules apply only to constructor agents ($L$, $S$, $F$); a $P$ agent is never copied --- when $delta^n$ meets $P$, the pair is consumed and replaced by a single demand chain plus a parked duplicator, and the species propagates through copy waves, so no $delta^s$ is ever introduced above a $P$. Each $P$ has exactly one principal wire, hence exactly one consumer, hence participates in exactly one dispatch. New $P$ agents arising during reduction are distinct individuals with their own single consumers. By induction over the reduction, no application agent ever acquires two residuals, so none is dispatched twice.
+
+#block(inset: (left: 1em))[
+*Corollary (Binderlessness collapses optimal sharing to need-sharing).* The tree-calculus analog of Lévy optimality --- no redex family contracted more than once --- is achieved by plain call-by-need duplication, with no labels, no brackets or croissants, and no oracle.
+]
+
+Why this is cheap here and expensive for $lambda$-calculus: $beta$-reduction substitutes _into_ binder bodies, so copying a $lambda$-value copies the redexes inside it, splitting their families --- keeping those families shared is exactly what Lamping's machinery exists for. Tree calculus never substitutes into anything: the S-rule builds new applications _around_ shared subtrees, and triage reads constructors without instantiating them. There are no redexes hiding under binders because there are no binders. First-order graph reduction with need-sharing is therefore already family-optimal.
+
+Weak-head simulation (Theorem 1) is preserved under demand-driven scheduling: call-by-need and call-by-name coincide observationally in orthogonal rewrite systems; only the cost model changes.
+
+=== What Is Still Not Shared
+
+Theorem 6 is per-net sharing of _residuals_, not semantic memoization:
+
+- Applying the same function tree to two _different_ arguments re-runs the dispatch spine once per application. (Lévy-optimal $lambda$-reducers do not share across distinct families either.)
+- Two syntactically identical but _distinct_ subnets are never identified; that is the complementary mechanism of hash-consing (the implementation note above).
+- When a binder language is compiled to tree calculus by bracket abstraction, each source-level $beta$ still expands to $Theta(|"body"|)$ dispatch interactions that thread the argument to its use sites. $delta^n$ guarantees the argument's _own_ work happens at most once, but the per-application distribution overhead remains. The asymptotic gap between TC-Net and optimal $lambda$-reducers on binder-heavy workloads is exactly this distribution cost --- never re-reduction.
+
+=== Costs of $delta^n$
+
+The need species trades away two properties of the purely structural system:
+
++ *Eager-safety.* In the original system every active pair is either demanded work or a terminating copy/delete wave; suspended $P$ agents are inert, so a fire-everything scheduler (HVM2-style) performs no speculative computation. $delta^n$ spawns _live_ demand chains: under fire-everything scheduling, shared arguments are evaluated speculatively --- still at most once, but possibly unneeded, and a divergent-but-discardable shared argument now diverges. This is the same semantics shift as strict-mode HVM2. The completeness direction of Theorem 1 therefore requires a demand-driven scheduler once $delta^n$ is in play; the choice of scheduler now affects the work profile, where previously it affected only copy-wave timing.
++ *Erasure completeness.* If both copies of a shared suspended term are discarded, the parked $delta^n$ and its unfired demand chain are garbage that $epsilon$ cannot reach ($epsilon$ interacts at principal ports; the parked duplicator is reachable only through auxiliary wires). A lazy implementation needs reachability-based garbage collection --- the known cost of lazy interaction-net evaluators. Under fire-everything scheduling there is no leak (the chain runs and $epsilon$ meets its result), at the price of the speculation above.
++ *Need-strictness.* Once _either_ copy is demanded, the shared work is performed, even if the sibling copy is later erased. This is ordinary call-by-need behavior.
+
 // ═══════════════════════════════════════════════════════════════
 = Worked Example: Boolean Negation
 // ═══════════════════════════════════════════════════════════════
@@ -650,7 +718,7 @@ Categorically, TC-Net implements an interaction net system for the fragment of M
     [Bookkeeping], [Binding-scope bookkeeping in optimal lambda reduction], [*No binding-scope labels*],
     [Self-reflection], [Requires external encoding], [*Native*],
     [Parallelism], [$checkmark$ (strong confluence)], [$checkmark$ (strong confluence)],
-    [Sharing], [Engineered graph sharing], [Structural copy/delete on tree terms],
+    [Sharing], [Engineered graph sharing], [Structural ($delta^s$) or call-by-need ($delta^n$, at-most-once)],
     [Constructor dispatch], [Scott/NumScott encoding], [*Direct interaction rules*],
     [GPU-amenable], [$checkmark$ (proven by HVM2)], [Plausible, unbenchmarked],
     [Self-application], [$lambda x. x x$ via encoding], [Via S-combinator],
@@ -715,7 +783,7 @@ Self-reflection is precisely the _composition_ of these two levels: making compu
 = Open Questions
 // ═══════════════════════════════════════════════════════════════
 
-+ *Lévy-Optimality for Tree Calculus.* Lévy's notion of optimal reduction is defined for $lambda$-calculus. An analogous notion for tree calculus --- "no redundant triage steps across shared computations" --- needs to be formalized. TC-Net appears to satisfy it (triage on a shared value is dispatched independently for each consumer, each producing the correct result), but a formal proof requires defining the equivalence classes of "triage families" analogous to Lévy's "redex families."
++ *Lévy-Optimality for Tree Calculus.* Largely resolved in @work-sharing: structural $delta^s$ duplication is _not_ work-sharing (Proposition 5 --- the earlier intuition that TC-Net "appears to satisfy" optimality was wrong for suspended applications), while the demand-before-copy species $delta^n$ ensures every application is dispatched at most once (Theorem 6), with no oracle, because binderlessness means no redex ever acquires two residuals. What remains open is the formalization: define redex families for tree calculus via labelled reduction à la Lévy, prove the at-most-once property coincides with family-optimality, and extend the statement from weak-head to full normalization (see the next item).
 
 + *Full Normalization.* The core system is weak-head and demand-driven. A full normalizer should be added as a recursive consumer that demands constructor children when full normal forms are required.
 
@@ -738,6 +806,8 @@ Self-reflection is precisely the _composition_ of these two levels: making compu
 TC-Net demonstrates that self-reflection and explicit parallel sharing are not in tension. The key insight is deceptively simple: tree calculus programs are trees, interaction nets can duplicate trees while preserving their constructor identity, and triage dispatches on constructor identity. Therefore triage (self-reflection) composes naturally with structural sharing.
 
 The rooted construction sharpens the original idea. Suspended applications are principal-rooted term producers, while evaluation, application, dispatch, duplication, and erasure are consumers. This fixes erasure and duplication of arbitrary unevaluated arguments without losing the compact dispatch structure.
+
+The demand-before-copy variant sharpens it once more: a single replacement rule turns structural sharing into call-by-need, and binderlessness turns call-by-need into at-most-once reduction of every application --- the sharing for which $lambda$-calculus needs the full optimal-reduction apparatus. The costs are a scheduler obligation (demand-driven firing for laziness) and reachability garbage collection, not labels or an oracle.
 
 Whether this theoretical elegance translates to practical performance remains to be demonstrated, but the structural advantages --- no binding oracle, native reflection, and direct constructor dispatch --- suggest that TC-Net may offer a clean foundation for parallel self-reflecting computation.
 
@@ -769,5 +839,7 @@ Victor Taelin. Interaction Calculus. https://github.com/VictorTaelin/Interaction
 Andrea Asperti and Stefano Guerrini. _The Optimal Implementation of Functional Programming Languages._ Cambridge University Press, 1999.
 
 Damiano Mazza. "A Denotational Semantics for the Symmetric Interaction Combinators." _Mathematical Structures in Computer Science_, 2007.
+
+François-Régis Sinot. "Call-by-Name and Call-by-Value as Token-Passing Interaction Nets." _Proceedings of TLCA_, 2005. (Call-by-need extension: "Token-Passing Nets: Call-by-Need for Free," _ENTCS_, 2006.)
 
 Matt Brown and Jens Palsberg. "Breaking Through the Normalization Barrier: A Self-Interpreter for F-omega." _Proceedings of POPL_, 2016.

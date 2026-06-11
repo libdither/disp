@@ -5,6 +5,15 @@
 `StrictType` (TYPE_THEORY §11.4 / §12.6) can check them — and the two concrete
 problems Part A surfaced, with solution sketches.
 
+> **Update (2026-06-11): the Part-C machinery now exists.** Telescopes landed
+> (`Telescope` former; `KERNEL_DESIGN.md` § Telescopes): a structured per-former
+> `Frame` type is now expressible as a `Telescope` (e.g. `{ motive : …, cases :
+> … }`), and a frame-HYP's `frame.motive` projects through `tele_respond` with a
+> real type instead of routing to Tree's inert respond. The `params` side still
+> needs a per-former `Telescope`-params classifier (tele_respond itself triages
+> its telescope, so it doesn't inhabit RespondShape under abstract params —
+> pinned in `metashape.test.disp`). Steps 2–4 are now incremental, not blocked.
+
 > **Update (2026-06-08): Step 1 (Problem 2) is LANDED.** `InvalidType` is now a real
 > empty type (`make_recognizer` wait-form, MetaShape meta, respond `Extend (neutral_type
 > self)`), distinct from `False`, and `Action`'s `Extend` payload is tightened `Tree →

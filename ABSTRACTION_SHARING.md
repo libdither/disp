@@ -10,6 +10,14 @@ Audience: anyone touching `src/compile.ts` bracket abstraction (`abstractName`,
 `eliminateLams`, `cirToTree`), or hitting "Evaluation budget exhausted" while
 compiling `.disp` code.
 
+> **Constraint added 2026-06-11:** bracket abstraction now has an in-language
+> specification (`lib/elab/bracket.disp`, validated bit-identically by
+> `lib/tests/bracket.test.disp` + `test/bracket.test.ts`). Abstraction defines
+> which tree a binder becomes — i.e. definitional equality — so option (b), or
+> ANY change to `abstractName`/`eliminateLams`/`cirToTree`, must land in
+> LOCKSTEP with the in-language spec and its equivalence tests, and it changes
+> every compiled tree (a conversion-identity migration, not a pure optimization).
+
 ---
 
 ## 1. Symptom
