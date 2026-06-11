@@ -208,7 +208,7 @@ recValue  ::= \"{\" \"}\"
             | \"{\" recBody \"}\"
 recType   ::= \"{\" typedField (COMMA typedField)* COMMA? \"}\"
 block     ::= \"{\" (stmt SEMI)* expr SEMI? \"}\"
-typedField ::= IDENT \":\" expr
+typedField ::= IDENT (\":\" expr)? (\":=\" expr)?
 stmt       ::= let | test | \"open\" expr",
   "(f x : Nat)                    // parenthesized ascription
 { x := t; y := t t }           // recValue (2 exported fields)
@@ -229,6 +229,24 @@ reparsed as a `binder`: `{x : A}` alone is a recType;
 `{x : A} -> e` is a binder. The empty `{}` is a 0-field recValue
 (Church unit; see `COMPILATION.typ` § Record encoding). Duplicate
 field names in recValues and recTypes are rejected.
+
+Three telescope-era refinements. (1) *Field puns*: inside a recValue, a
+bare `IDENT` member is shorthand for `name := name`, the value resolving
+in the *outer* scope (a field's value always compiles before its own
+name binds). A pun needs at least one sibling `:=` field — a field-less
+`{ x }` stays a bare recType / block trailing expression. (2) *Sequential
+field scope*: later recValue fields see earlier ones by name
+(`{ a := 2; b := double a }`), with the telescope discipline — a field's
+own RHS resolves outward, so `respond := respond` refers to the enclosing
+binding. (3) *recType = telescope type*: a recType in expression position
+compiles to `Telescope ⟦entries⟧` (the dependent n-ary record former);
+later field types may reference earlier field *names*
+(`{ T : Type, x : T }`), and a `name := e` / `name : T := e` member is a
+*derived* entry — the field is definitionally pinned to recipe `e` over
+the prior fields (checked by `tree_eq`, filled by `mk`). A braced body
+parseable as a multi-param `binder` (all members `name : T`, followed by
+`ARROW`) still reparses as the *curried* binder; record-domain functions
+are written `Arrow { a : Nat, b : Nat } R`.
 
 == Associativity and precedence
 
@@ -260,7 +278,7 @@ Use      { path: string }
 Match    { cond: Expr, thenBody: Expr, elseBody: Expr }
 
 Param      { name: string | null, type: Expr | null }
-TypedField { name: string, type: Expr | null }
+TypedField { name: string, type: Expr | null, value?: Expr | null }  -- value ⇒ derived entry
 NamedField { name: string, type: Expr | null, value: Expr }
 
 RecMember ::= Field | Let | Test | Open
