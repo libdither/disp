@@ -51,12 +51,12 @@ Every component participating in checking, elaboration, or conversion must have 
 
 ## Compiler workarounds
 
-Three issues affect kernel-level code involving recursion or multi-line conditional dispatch:
-
-- **Closed-prefix `self` applications in match arms blow the compile-time budget.** In a multi-param fix, a match-arm recursive call `self name x` contains the sub-application `self name`; once `name` is a closed value, `app(self, name)` is a closed redex and `cirToTree`'s eager evaluation unfolds the fix forever (the select_lazy hazard's match-arm cousin — `if`-branches are immune because their desugar closes branches over free vars, and `self x`-style calls are immune because the arm binder keeps the application open). **Workaround**: `wait self name x` (defer until the structural argument arrives), or order the fix's params so the recursive call's FIRST argument is arm-derived. See `lib/elab/bracket.disp` for the wait-wrapped pattern.
+Two issues affect kernel-level code involving recursion or multi-line conditional dispatch:
 
 - **Match arm bodies are single-line.** A multi-line match arm body like `FF => triage \n (arg1) \n (arg2)` parses only the bare `triage` because the arm body uses `lineExpr`. Wrap multi-line content in parens to make it one atom: `FF => (triage \n (arg1) \n (arg2))`. Same workaround for multi-line `let` bodies.
-- **`select_lazy` + self-recursion blows the compile-time budget.** A thunk `{_} -> self meta (pair_snd x)` compiles to `K body`. After outer bracket abstraction, `cirToTree`'s reduction of the closed combinator eagerly evaluates internal apps via `applyTree` (10M-step budget). For self-referential expressions, this fires fix-unfolding at compile time even though runtime semantics would short-circuit via `select_lazy`'s lazy thunk dispatch. **Workaround**: use `match` instead of `select_lazy` for bodies containing recursive calls. `match` desugars to `select branchTT branchFF cond fvs...` where each branch is wrapped in a closure over its free vars, side-stepping the eager K-body evaluation.
+- **`select_lazy` + self-recursion blows the compile-time budget.** A thunk `{_} -> self meta (pair_snd x)` compiles to `K body`. After outer bracket abstraction, `cirToTree`'s reduction of the closed combinator eagerly evaluates internal apps via `applyTree` (10M-step budget). For self-referential expressions, this fires fix-unfolding at compile time even though runtime semantics would short-circuit via `select_lazy`'s lazy thunk dispatch. **Workaround**: use `if`/`match` instead of `select_lazy` for bodies containing recursive calls — both close their branches/arms over the free-var union (`if`: `cond c ({fvs}->e1) ({fvs}->e2) fvs…`; `match`: `(λfvs. prod table c) fvs…`), side-stepping the eager K-body evaluation.
+
+(Retired 2026-06-12: the **closed-prefix-redex hazard** — a match-arm recursive call `self name x` whose prefix `app(self, name)` became a closed redex that `cirToTree` unfolded forever, requiring `wait self name x`. The match desugar now closes the whole cut over the arms' free vars, so arm-body recursion stays open under bracket abstraction; the `wait` workaround is no longer needed in match arms.)
 
 ## Key tree-calculus idioms
 

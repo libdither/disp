@@ -203,6 +203,9 @@ function exprMentions(e: Expr, name: string): boolean {
     }
     case "if":
       return exprMentions(e.cond, name) || exprMentions(e.thenBody, name) || exprMentions(e.elseBody, name)
+    case "match":
+      return exprMentions(e.cond, name) ||
+        e.arms.some(a => !a.binders.includes(name) && exprMentions(a.body, name))
   }
 }
 
@@ -527,6 +530,94 @@ function exprToCir(
       // cond c branchThen branchElse fv1 ... fvn — the Scott Bool picks a branch
       // closure, the trailing fvs re-supply the free vars it abstracted over.
       let out: Cir = cap(cap(cap({ tag: "lit", t: condEntry.tree }, condCir), branchThen), branchElse)
+      for (const v of fvs) out = cap(out, { tag: "var", name: v })
+      return out
+    }
+    case "match": {
+      // The §2.6 cut, with the WHOLE cut closed over the arms' free vars
+      // (mirroring `if`'s branch closures):
+      //   match c { A x => b1; … }
+      //     ⟶  (λfv1…fvn. prod (pair ["A",…] [{x} -> b1, …]) c) fv1 … fvn
+      // Closing keeps recursive calls in arm bodies open under bracket
+      // abstraction — `self name x` in an arm is no longer a closed redex for
+      // cirToTree's eager evaluation to unfold (the closed-prefix hazard;
+      // CLAUDE.md § Compiler workarounds). The fvs close around the cut, NOT
+      // as a row appended to the selected handler's result: kernel idioms rely
+      // on a mis-tagged cut (e.g. a respond returning Err into hyp_reduce's
+      // Extend/Reduce match) staying INERT — extra args applied to that junk
+      // can re-enter recursion. Arm binders shadow the wrapper lams naturally.
+      // With no free vars this is the plain cut, unchanged.
+      if (!lookupEntry("prod")?.tree)
+        throw new Error("match: 'prod' must be in scope (open the kernel prelude)")
+      const condCir = exprToCir(e.cond, lookupEntry, resolveUse, sinks)
+      const leafCir: Cir = { tag: "lit", t: LEAF }
+
+      // Compile each arm body with its binders shadowed.
+      const arms = e.arms.map(a => {
+        const bound = new Set(a.binders.filter(b => b !== "_"))
+        const look = (n: string) => bound.has(n) ? undefined : lookupEntry(n)
+        return { pat: a.pat, binders: a.binders, bound, bodyCir: exprToCir(a.body, look, resolveUse, sinks) }
+      })
+
+      // fv union over arms, each minus its own binders (arm order, then
+      // discovery order — deterministic elaboration is load-bearing).
+      const fvs: string[] = []
+      const seen = new Set<string>()
+      for (const a of arms) collectFreeVars(a.bodyCir, a.bound, fvs, seen)
+
+      // A lam param that must bind nothing: deterministic fresh name.
+      const freshFor = (base: string, body: Cir): string => {
+        let n = base
+        while (containsFree(body, n)) n += "_"
+        return n
+      }
+
+      // The handler an arm contributes: the cut applies it to the payload
+      // (annihilate: `(proj P tag) (pair_snd c)`); binders destructure it.
+      //   0 binders → ignore the payload;  1 → the payload IS the binder;
+      //   n≥2 → a right-nested pair (pair b0 (pair b1 …)), projected.
+      const handlerCir = (a: typeof arms[number]): Cir => {
+        const n = a.binders.length
+        if (n <= 1) {
+          const p = n === 1 && a.binders[0] !== "_"
+            ? a.binders[0]
+            : freshFor("__m", a.bodyCir)
+          return { tag: "lam", x: p, body: a.bodyCir }
+        }
+        let inner: Cir = a.bodyCir
+        for (let k = n - 1; k >= 0; k--) {
+          const b = a.binders[k]
+          inner = { tag: "lam", x: b === "_" ? freshFor(`__m${k}`, a.bodyCir) : b, body: inner }
+        }
+        const pairFst = exprToCir({ tag: "var", name: "pair_fst" }, lookupEntry, resolveUse, sinks)
+        const pairSnd = exprToCir({ tag: "var", name: "pair_snd" }, lookupEntry, resolveUse, sinks)
+        const pn = freshFor("__p", inner)
+        let appd: Cir = inner
+        for (let k = 0; k < n; k++) {
+          let acc: Cir = { tag: "var", name: pn }
+          for (let s = 0; s < k; s++) acc = cap(pairSnd, acc)   // pair_snd^k __p
+          appd = cap(appd, k < n - 1 ? cap(pairFst, acc) : acc) // last binder takes the bare snd-chain
+        }
+        return { tag: "lam", x: pn, body: appd }
+      }
+
+      // Wildcard handler is appended PAST the names so an unmatched tag's
+      // index_of (= the name count) lands on it.
+      const named = arms.filter(a => a.pat !== "_")
+      const wildcard = arms.find(a => a.pat === "_")
+      let namesTree: Tree = LEAF
+      for (let i = named.length - 1; i >= 0; i--)
+        namesTree = fork(stringToTree(named[i].pat), namesTree)
+      const handlerList = named.map(handlerCir)
+      if (wildcard) handlerList.push(handlerCir(wildcard))
+      let handlersCir: Cir = leafCir
+      for (let i = handlerList.length - 1; i >= 0; i--)
+        handlersCir = cap(cap(leafCir, handlerList[i]), handlersCir)
+
+      const table = cap(cap(leafCir, { tag: "lit", t: namesTree }), handlersCir)
+      const prodCir = exprToCir({ tag: "var", name: "prod" }, lookupEntry, resolveUse, sinks)
+      let out: Cir = cap(cap(prodCir, table), condCir)
+      for (let i = fvs.length - 1; i >= 0; i--) out = { tag: "lam", x: fvs[i], body: out }
       for (const v of fvs) out = cap(out, { tag: "var", name: v })
       return out
     }

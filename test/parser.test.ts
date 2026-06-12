@@ -150,10 +150,10 @@ describe("parse: expressions", () => {
     expect(parseExpr('"respond"')).toEqual({ tag: "str", value: "respond" })
   })
 
-  it("coproduct match (string tags, multi-binder, wildcard) parses to the cut", () => {
-    // desugars to `(prod (pair names handlers)) cond` — an application
+  it("coproduct match (string tags, multi-binder, wildcard) parses to a match node", () => {
+    // The cut desugar lives in compile.ts; the parser yields the arms verbatim.
     const e = parseExpr("match c { A x => x; B a b c => a; _ => c }")
-    expect(e.tag).toBe("app")
+    expect(e.tag).toBe("match")
   })
 
   it("use STRING still wins over a bare string literal", () => {
@@ -681,24 +681,25 @@ describe("if expression", () => {
 // ─────────────────────────── coproduct match (the §2.6 cut) ───────────────
 
 describe("coproduct match", () => {
-  // Non-Bool arms desugar to the §2.6 cut: `(prod (pair [V..] [h..])) cond`.
-  // We check the top-level shape: an application of `prod ...` to the scrutinee.
-  const isCutOf = (e: Expr, cond: Expr) => {
-    expect(e.tag).toBe("app")
-    expect((e as any).x).toEqual(cond)            // applied to the scrutinee
-    expect((e as any).f.tag).toBe("app")
-    expect((e as any).f.f).toEqual(v("prod"))     // head is `prod`
+  // Non-Bool arms parse to a `match` node (the cut desugar is compile.ts's);
+  // check the scrutinee and the arms' tags/binders survive verbatim.
+  const isMatchOf = (e: Expr, cond: Expr, arms: { pat: string; binders: string[] }[]) => {
+    expect(e.tag).toBe("match")
+    expect((e as any).cond).toEqual(cond)
+    expect((e as any).arms.map((a: any) => ({ pat: a.pat, binders: a.binders }))).toEqual(arms)
   }
 
-  it("desugars a multi-constructor match to the cut", () => {
-    isCutOf(parseExpr(`match c { foo x => a; bar y => b }`), v("c"))
+  it("parses a multi-constructor match", () => {
+    isMatchOf(parseExpr(`match c { foo x => a; bar y => b }`), v("c"),
+      [{ pat: "foo", binders: ["x"] }, { pat: "bar", binders: ["y"] }])
   })
 
   it("accepts a single-arm match (one-constructor cut)", () => {
-    isCutOf(parseExpr(`match c { A x => b }`), v("c"))
+    isMatchOf(parseExpr(`match c { A x => b }`), v("c"), [{ pat: "A", binders: ["x"] }])
   })
 
   it("a two-arm match with binders is the cut, not Bool", () => {
-    isCutOf(parseExpr(`match c { Ok x => a; Err y => b }`), v("c"))
+    isMatchOf(parseExpr(`match c { Ok x => a; Err y => b }`), v("c"),
+      [{ pat: "Ok", binders: ["x"] }, { pat: "Err", binders: ["y"] }])
   })
 })

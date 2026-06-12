@@ -1,10 +1,13 @@
 # Elaborator-in-disp: the self-hosting plan
 
-**Status: ACTIVE — Stage 0 landed (2026-06-11, commit 4ae9e9f5); Stages 1–5
-open.** Companion: `EVALUATOR_PLAN.md` (evaluator backends; touches the same
-`src/` layering — see §7). Read `CLAUDE.md` § Compiler workarounds before
-writing any multi-param fix in elab code (the closed-prefix-redex hazard was
-discovered doing Stage 0).
+**Status: ACTIVE — Stage 0 landed (2026-06-11, commit 4ae9e9f5); the §4
+match-desugar fix landed 2026-06-12 (the closed-prefix-redex hazard is
+retired); Stages 1–5 open.** Companion: `EVALUATOR_PLAN.md` (evaluator
+backends; touches the same `src/` layering — see §7). Related:
+`ABSTRACTION_SHARING.md` — the S-duplication blow-up is the remaining member
+of the compile-time blow-up family; its option (b) is a conversion-identity
+migration whose cost grows with every stage landed here (hand-factoring is
+the accepted idiom meanwhile).
 
 ## 1. Principle
 
@@ -87,12 +90,16 @@ literals → codepoint lists, array literals → cons chains, recValue →
 `mk_record` with sequential field scope + puns (mirror `compile.ts` recValue
 case: core-with-vars, `(λname. rest) value` wrapping, prior-name shadowing).
 
-**Recommended first move (host-side, small):** make the host match-desugar
-close arms over their free vars the way `if` already does, THEN mirror it.
-This retires the closed-prefix-redex workaround class entirely (arm bodies
-would no longer embed `self name` as a closed subterm) and simplifies both
-sides. It changes compiled trees → conversion-identity migration: do it as
-its own commit with the full suite green.
+**Recommended first move (host-side, small): DONE 2026-06-12.** The parser
+now emits a `match` Expr node; the desugar lives in compile.ts and closes the
+WHOLE cut over the arms' free-var union: `(λfvs… . prod (pair names handlers)
+c) fvs…`. The fvs close *around* the cut rather than being appended to the
+selected handler's result — kernel idioms rely on a mis-tagged cut (a respond
+returning `Err` into `hyp_reduce`'s `Extend|Reduce` match) staying INERT, and
+extra args applied to that junk re-enter recursion (found the hard way:
+`wrapping.test.disp` diverged under the appended-row variant). With no free
+vars the output is bit-identical to the old desugar, so only matches under
+binders migrated. Stage 2's in-language `match` desugar mirrors this shape.
 
 ## 5. Stage 3 — scope resolution (Expr → Cir)
 
@@ -132,9 +139,12 @@ means for out-of-process backends.
 
 ## 8. Hazards & conventions (learned in Stage 0)
 
-- **Closed-prefix redexes** in multi-param fixes (CLAUDE.md § Compiler
-  workarounds): `wait self name x` or arm-derived-arg-first. Bites EVERY
-  AST fold in this plan until the §4 match-desugar fix lands.
+- **Closed-prefix redexes: RETIRED** (the §4 match-desugar fix landed
+  2026-06-12) — match arms close over their free vars, so `self name x` in an
+  arm stays open under bracket abstraction; no `wait` needed. The remaining
+  blow-up-family member is the S-duplication size blow-up
+  (`ABSTRACTION_SHARING.md`): multi-occurrence helpers under nested binders
+  still need hand-factoring (option a) — expect it in the bigger AST folds.
 - **Don't annotate inspecting functions** with `Tree -> …`: verification
   mints hyps the folds triage (`mk`, `bracket_compile` precedent) — leave
   unannotated until StrictType-era classifier types exist.

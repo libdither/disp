@@ -95,8 +95,10 @@ export type Expr =
   // `if c then a else b` — the boolean conditional. Desugars to `cond` (a
   // select-then-apply over the Scott Bool, closure-wrapped per arm). The old
   // `match c { TT => a; FF => b }` boolean-match surface was removed in favour
-  // of this; coproduct `match` (the §2.6 cut) is a separate, parser-level desugar.
+  // of this; coproduct `match` (the §2.6 cut) desugars in compile.ts, where
+  // arm bodies are closed over their free vars the way `if` branches are.
   | { tag: "if"; cond: Expr; thenBody: Expr; elseBody: Expr }
+  | { tag: "match"; cond: Expr; arms: Arm[] }
 
 export type Param = { name: string | null; type: Expr | null }
 export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
@@ -477,7 +479,7 @@ const recTypeInner: P<Expr> = (ts, i) => {
 // match arm: `Ctor b0 b1 ... => body` — a constructor and zero or more binders
 // (each may be `_`). `Ctor` is the tag (a string, by spelling); `_` as the
 // constructor is the wildcard/default arm.
-type Arm = { pat: string; binders: string[]; body: Expr }
+export type Arm = { pat: string; binders: string[]; body: Expr }
 const matchArmP: P<Arm> = nl((ts, i) => {
   const ctor = idP(ts, i)
   if (!ctor.ok) return ctor
@@ -489,35 +491,10 @@ const matchArmP: P<Arm> = nl((ts, i) => {
   return ok({ pat: ctor.v, binders, body: r.v[2] }, r.pos)
 })
 
-const binderName = (b: string): string | null => (b === "_" ? null : b)
-const apE = (f: Expr, x: Expr): Expr => ({ tag: "app", f, x })
-const varE = (name: string): Expr => ({ tag: "var", name })
-
-// The handler an arm contributes to the cut's case-product. The cut feeds it
-// the scrutinee's payload `pair_snd c`; binders destructure it:
-//   0 binders → ignore the payload;  1 → the payload IS the binder;
-//   n≥2 → the payload is a right-nested pair (pair b0 (pair b1 …)), projected.
-function armHandler(a: Arm): Expr {
-  const n = a.binders.length
-  if (n <= 1)
-    return { tag: "binder", params: [{ name: n === 0 ? null : binderName(a.binders[0]), type: null }], body: a.body }
-  const inner: Expr = { tag: "binder", params: a.binders.map(b => ({ name: binderName(b), type: null })), body: a.body }
-  let appd: Expr = inner
-  for (let k = 0; k < n; k++) {
-    let acc: Expr = varE("__p")
-    for (let s = 0; s < k; s++) acc = apE(varE("pair_snd"), acc)   // pair_snd^k __p
-    appd = apE(appd, k < n - 1 ? apE(varE("pair_fst"), acc) : acc) // last field is the bare snd-chain
-  }
-  return { tag: "binder", params: [{ name: "__p", type: null }], body: appd }
-}
-
-// Two flavours, discriminated by the arms:
-//   Bool:      `match c { TT => a; FF => b }`        → select desugar (compile.ts)
-//   Coproduct: `match c { V1 x => b1; V2 y => b2 }`  → the cut (§2.6):
-//              `(prod (pair ["V1","V2"] [{x}->b1, {y}->b2])) c`   (needs `prod` in scope)
-// Tags are the constructor *names as strings*; `_` is the wildcard arm, whose
-// handler is appended past the names so an unmatched tag's `index_of` (= the
-// name count) lands on it.
+// Coproduct match: `match c { V1 x => b1; V2 y => b2 }` parses to a `match`
+// node; the desugar to the §2.6 cut lives in compile.ts, where arm bodies are
+// closed over their free vars (so it can consult the compiled bodies). Tags are
+// the constructor *names as strings*; `_` is the wildcard/default arm.
 const matchP: P<Expr> = (ts, i) => {
   const r = seq(
     kwP("match"), skipNl, lazy(() => app),
@@ -535,15 +512,7 @@ const matchP: P<Expr> = (ts, i) => {
     // Report at r.pos (past the arms) so this beats the generic idP error in `alt`.
     return err(`boolean 'match c { TT => …; FF => … }' was removed — use 'if c then … else …'`, r.pos)
   }
-  const named = arms.filter(a => a.pat !== "_")
-  const wildcard = arms.find(a => a.pat === "_")
-  const names = mkConsChain(named.map(a => ({ tag: "str", value: a.pat } as Expr)))
-  const handlerExprs = named.map(armHandler)
-  if (wildcard) handlerExprs.push(armHandler(wildcard))   // default: past the names
-  const handlers = mkConsChain(handlerExprs)
-  const table: Expr = { tag: "app", f: { tag: "app", f: { tag: "leaf" }, x: names }, x: handlers }
-  const prodTable: Expr = { tag: "app", f: { tag: "var", name: "prod" }, x: table }
-  return ok({ tag: "app", f: prodTable, x: cond }, r.pos)
+  return ok({ tag: "match", cond, arms }, r.pos)
 }
 
 // `if c then a else b` — the boolean conditional (desugars to `cond` in
