@@ -1,10 +1,12 @@
 # Elaborator-in-disp: the self-hosting plan
 
-**Status: ACTIVE — Stage 0 landed (2026-06-11, commit 4ae9e9f5); the §4
-match-desugar fix landed 2026-06-12 (the closed-prefix-redex hazard is
-retired); Stages 1–5 open.** Companion: `EVALUATOR_PLAN.md` (evaluator
-backends; touches the same `src/` layering — see §7). Related: Appendix A
-(sharing-aware bracket abstraction, formerly `ABSTRACTION_SHARING.md`) — the
+**Status: ACTIVE — Stages 0–3 landed (Stage 0: 2026-06-11, commit 4ae9e9f5;
+the match-desugar fix + Stages 1–3: 2026-06-12). The full AST→tree pipeline
+(`compile_expr`/`compile_type` in `lib/elab/compile.disp`) is in-language;
+the host `compileExpr` is now a validated fast path. Stages 4 (parser) and 5
+(driver boundary) open.** Companion: `EVALUATOR_PLAN.md` (evaluator backends;
+touches the same `src/` layering — see §7). Related: Appendix A (sharing-
+aware bracket abstraction, formerly `ABSTRACTION_SHARING.md`) — the
 S-duplication blow-up is the remaining member of the compile-time blow-up
 family; its option (b) is a conversion-identity migration whose cost grows
 with every stage landed here (hand-factoring is the accepted idiom
@@ -38,9 +40,8 @@ the bit-identity check), plus a randomized host-vs-spec vitest.
 | `src/tree.ts` substrate + evaluator | 582 | sanctioned host (see EVALUATOR_PLAN) | — |
 | driver (`run.ts` + use-resolution/cache/IO in `compile.ts`) | ~300 | impure driver | stays host |
 | **bracket abstraction** (`abstractName`/`eliminateLams`/`cirToTree`) | ~90 | semantic weight #1 | **DONE: `lib/elab/bracket.disp`**, validated by `lib/tests/bracket.test.disp` (16 golden) + `test/bracket.test.ts` (300 randomized) |
-| type-position desugars (`binderToPi` ~`compile.ts:664`; recType→Telescope fold ~`compile.ts:317`) | ~50 | semantic weight #2 | Stage 1 |
-| value desugars (match→cut, if→cond, literals, recValue sequential scope, puns) | ~250 | syntax maps | Stage 2 |
-| scope resolution / Expr→Cir (`exprToCir`) | ~150 | syntax maps | Stage 3 |
+| type-position desugars (`binderToPi` `compile.ts:595`; recType→Telescope fold `compile.ts:317`) | ~50 | semantic weight #2 | **DONE: `lib/elab/ast.disp`**, validated by `lib/tests/ast.test.disp` (12 golden) + `test/desugar.test.ts` (130 randomized) |
+| value desugars + scope resolution (match→cut, if→cond, literals, recValue sequential scope; `exprToCir`) | ~400 | syntax maps | **DONE: `lib/elab/compile.disp`** (one fold — the closures depend on resolution), validated by `lib/tests/compile.test.disp` (27 golden) + `test/compile.test.ts` (180 randomized end-to-end) |
 | parser (`parse.ts`) | 942 | syntax maps (pure) | Stage 4 |
 | `use`/verify orchestration (`resolveUse`) | ~80 | the ONE host-trusted soundness decision | Stage 5 |
 
@@ -75,39 +76,52 @@ Implementation decisions (where the plan said "decide at implementation"):
 - Surface caveat the randomizer honours: a recType's FIRST field must be
   `name : T` — a leading `:=` classifies the braces as a record VALUE.
 
-## 4. Stage 2 — value desugars
+## 4. Stages 2+3 — value desugars + scope resolution (DONE 2026-06-12)
 
-In-language versions of: `match` → §2.6 cut (`prod (pair tags handlers)`,
-wildcard appended, multi-binder pair destructuring), `if` → `cond` with
-branch closures over free vars (needs in-language free-var collection — reuse
-`contains_free` generalized to Expr), numeric literals → zero/succ, string
-literals → codepoint lists, array literals → cons chains, recValue →
-`mk_record` with sequential field scope + puns (mirror `compile.ts` recValue
-case: core-with-vars, `(λname. rest) value` wrapping, prior-name shadowing).
+Landed TOGETHER as `lib/elab/compile.disp`, because they don't factor: the
+match/if/recValue closures depend on what resolves (free vars are collected
+on the COMPILED Cir — a name that resolved to a lit isn't free), so the
+Stage-2 desugars are arms of the Stage-3 scope fold, exactly like the host's
+single `exprToCir`. Validated by `lib/tests/compile.test.disp` (27 goldens)
++ `test/compile.test.ts` (180 randomized value/type ASTs, end-to-end tree
+equivalence — no decode step; the spec emits final trees).
 
-**Recommended first move (host-side, small): DONE 2026-06-12.** The parser
-now emits a `match` Expr node; the desugar lives in compile.ts and closes the
-WHOLE cut over the arms' free-var union: `(λfvs… . prod (pair names handlers)
-c) fvs…`. The fvs close *around* the cut rather than being appended to the
-selected handler's result — kernel idioms rely on a mis-tagged cut (a respond
+What's in it: `env_bind`/`env_shadow`/`env_lookup` (assoc list, `t v` bound /
+`t` shadowed-or-unbound = the host's undefined), `cir_fvs` (ordered free-var
+collection), `expr_mentions` (the host's conservative AST check),
+`try_select_lazy` (the select_lazy → if rewrite — part of definitional
+equality, so mirrored), per-tag desugars `w_num`/`w_binder`/`w_if`/`w_match`/
+`w_recvalue` (hand-factored per Appendix A option a), and the fold
+`expr_to_cir` (keyword tags `if`/`match` can't be surface match patterns, so
+dispatch is a tree_eq chain; encoding tags stay host-spelled). Composition:
+`compile_expr := bracket_compile ∘ expr_to_cir env`, and the positional mode
+bit is the entry point: `compile_type env e = compile_expr env (binder_to_pi
+e)` with the host's Pi-in-scope fallback.
+
+**Prerequisite host-side match fix: DONE 2026-06-12.** The parser now emits a
+`match` Expr node; the desugar lives in compile.ts and closes the WHOLE cut
+over the arms' free-var union: `(λfvs… . prod (pair names handlers) c) fvs…`.
+The fvs close *around* the cut rather than being appended to the selected
+handler's result — kernel idioms rely on a mis-tagged cut (a respond
 returning `Err` into `hyp_reduce`'s `Extend|Reduce` match) staying INERT, and
 extra args applied to that junk re-enter recursion (found the hard way:
 `wrapping.test.disp` diverged under the appended-row variant). With no free
 vars the output is bit-identical to the old desugar, so only matches under
-binders migrated. Stage 2's in-language `match` desugar mirrors this shape.
+binders migrated.
 
-## 5. Stage 3 — scope resolution (Expr → Cir)
-
-`exprToCir`'s remaining job once desugars are in-language: name → lit/var
-resolution against an environment, binder shadowing, lam introduction. The
-environment is a §2.6 record (name → tree). The irreducibly POSITIONAL
-type/value mode decision (annotation = universe `Type` ⇒ body compiles in
-type mode; see memory `project_elaborator_simplification`) lives here — it is
-a *mode bit threaded by the caller*, not inference.
-
-After Stage 3, `compile_expr := cir_to_tree ∘ eliminate_lams ∘ expr_to_cir`
-is the full in-language pipeline from AST to tree; the host `compileExpr`
-becomes a pure fast path, validated end-to-end (random ASTs, both pipelines).
+Deliberately out of the in-language spec (deferred with rationale):
+- `use` + module records/metadata + the projection collapse — Stage 5's
+  driver boundary (the collapse is metadata-only: for plain records both
+  sides emit the runtime cut, and eager closed-redex evaluation converges).
+- recValue MEMBERS (`let`/`test`/`open` inside braces) and `trailing` —
+  driver territory (sinks, open-splicing).
+- Array literals and field puns — parser-level desugars (no Expr node
+  survives to compile), so they're Stage 4.
+- The host's `_anon${i}`/`__m${k}`/`__p` fresh-name SPELLINGS — binder names
+  erase under bracket abstraction, so only binding structure + fresh_for
+  capture-safety must match (anon params bind the leaf as their name).
+- Host THROW paths (missing kernel formers, holes, unbound vars at
+  cirToTree) fall to the leaf, as in bracket.disp.
 
 ## 6. Stage 4 — parser
 

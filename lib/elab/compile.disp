@@ -1,0 +1,353 @@
+// In-language Expr → Cir → tree — Stages 2+3 of the self-hosted elaborator
+// (ELABORATOR_PLAN.md §4–§5): scope resolution + the value desugars, as ONE
+// fold mirroring the host's exprToCir case for case (the match/if/recValue
+// closures depend on what resolves, so the desugars are arms of the scope
+// fold, not a separate pass). This is the SPEC; src/compile.ts is the fast
+// path, validated by lib/tests/compile.test.disp (goldens) and
+// test/compile.test.ts (randomized end-to-end tree equivalence).
+//
+// The environment is an assoc list `pair name opt` (opt: `t v` bound to a
+// tree / `t` shadowed-or-unbound — the host's lookup-returns-undefined).
+// Host THROW paths (missing kernel formers, holes) fall to the leaf, like
+// bracket.disp. Out of scope here (driver territory, Stage 5): `use`,
+// recValue members/trailing, module-metadata projection collapse — and the
+// host's `_anon${i}`/`__m${k}` fresh-name spellings are not reproduced
+// (binder names erase under bracket abstraction; only the binding STRUCTURE
+// must match, with capture-safety via fresh_for).
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "bracket.disp"
+open use "ast.disp"
+
+// ── environment ───────────────────────────────────────────────────────────
+env_bind : Tree -> Tree -> Tree -> Tree := {env, name, v} -> cons (pair name (t v)) env
+env_shadow : Tree -> Tree -> Tree := {env, name} -> cons (pair name t) env
+env_lookup := fix ({self, env, name} ->
+  if (is_fork env)
+    then (if (tree_eq (pair_fst (pair_fst env)) name)
+      then (pair_snd (pair_fst env))
+      else (self (pair_snd env) name))
+    else t)
+
+// ── small list/string helpers ─────────────────────────────────────────────
+let append = fix ({self, xs, ys} ->
+  if (is_fork xs) then (cons (pair_fst xs) (self (pair_snd xs) ys)) else ys)
+let member_str = fix ({self, n, xs} ->
+  if (is_fork xs)
+    then (if (tree_eq (pair_fst xs) n) then TT else (self n (pair_snd xs)))
+    else FF)
+
+// fresh_for body base: a lam param that must bind nothing in `body` —
+// append "_" until it is not free (host freshFor).
+let fresh_for = fix ({self, body, n} ->
+  if (contains_free n body) then (self body (append n "_")) else n)
+
+// cir_fvs: free vars of a Cir term, insertion order, shadow-aware (host
+// collectFreeVars — f before x, names deduped via acc membership).
+let cir_fvs = fix ({self, bound, acc, e} ->
+  match e {
+    Var n => (if (or (member_str n bound) (member_str n acc)) then acc else (append acc (cons n nil)))
+    App f x => (self bound (self bound acc f) x)
+    Lam n b => (self (cons n bound) acc b)
+    _ => acc
+  })
+
+// ── expr_mentions: the host's conservative AST free-name check ───────────
+let param_has_name = fix ({self, params, name} ->
+  if (is_fork params)
+    then {
+      let n_opt = pair_fst (pair_fst params)
+      if (and (is_stem n_opt) (tree_eq (stem_child n_opt) name)) then TT else (self (pair_snd params) name)
+    }
+    else FF)
+let params_types_mention = fix ({self, m, name, params} ->
+  if (is_fork params)
+    then {
+      let ty_opt = pair_snd (pair_fst params)
+      if (and (is_stem ty_opt) (m name (stem_child ty_opt))) then TT else (self m name (pair_snd params))
+    }
+    else FF)
+let tfields_mention = fix ({self, m, name, fields} ->
+  if (is_fork fields)
+    then {
+      let opts = pair_snd (pair_fst fields)
+      if (and (is_stem (pair_fst opts)) (m name (stem_child (pair_fst opts)))) then TT
+      else if (and (is_stem (pair_snd opts)) (m name (stem_child (pair_snd opts)))) then TT
+      else (self m name (pair_snd fields))
+    }
+    else FF)
+let vfields_mention = fix ({self, m, name, fields} ->
+  if (is_fork fields)
+    then (if (m name (pair_snd (pair_fst fields))) then TT else (self m name (pair_snd fields)))
+    else FF)
+let arms_mention = fix ({self, m, name, arms} ->
+  if (is_fork arms)
+    then {
+      let a = pair_fst arms
+      if (and (not (member_str name (pair_fst (pair_snd a)))) (m name (pair_snd (pair_snd a)))) then TT
+      else (self m name (pair_snd arms))
+    }
+    else FF)
+
+expr_mentions := fix ({self, name, e} -> {
+  let tag = pair_fst e
+  let pay = pair_snd e
+  if (tree_eq tag "var") then (tree_eq pay name)
+  else if (tree_eq tag "app") then (or (self name (pair_fst pay)) (self name (pair_snd pay)))
+  else if (tree_eq tag "ann") then (or (self name (pair_fst pay)) (self name (pair_snd pay)))
+  else if (tree_eq tag "proj") then (self name (pair_fst pay))
+  else if (tree_eq tag "binder") then {
+    let params = pair_fst pay
+    let tym = params_types_mention self name params
+    if (param_has_name params name) then tym else (or tym (self name (pair_snd pay)))
+  }
+  else if (tree_eq tag "recType") then (tfields_mention self name pay)
+  else if (tree_eq tag "recValue") then (vfields_mention self name pay)
+  else if (tree_eq tag "if") then (or (self name (pair_fst pay)) (or (self name (pair_fst (pair_snd pay))) (self name (pair_snd (pair_snd pay)))))
+  else if (tree_eq tag "match") then (or (self name (pair_fst pay)) (arms_mention self name (pair_snd pay)))
+  else FF
+})
+
+// ── the select_lazy → if rewrite (host tryRewriteSelectLazy) ─────────────
+// peel_app: left app spine → pair head (args in order).
+let peel_app = fix ({self, e, acc} ->
+  if (tree_eq (pair_fst e) "app")
+    then (self (pair_fst (pair_snd e)) (cons (pair_snd (pair_snd e)) acc))
+    else (pair e acc))
+// unused_thunk: stem-option of the body when e = `{_} -> b` / `{x} -> b`, x unused.
+let unused_thunk = {e} ->
+  if (tree_eq (pair_fst e) "binder")
+    then {
+      let params = pair_fst (pair_snd e)
+      let body = pair_snd (pair_snd e)
+      if (and (is_fork params) (not (is_fork (pair_snd params))))
+        then {
+          let n_opt = pair_fst (pair_fst params)
+          if (is_stem n_opt)
+            then (if (expr_mentions (stem_child n_opt) body) then t else (t body))
+            else (t body)
+        }
+        else t
+    }
+    else t
+let re_apply = fix ({self, f, args} ->
+  if (is_fork args) then (self (e_app f (pair_fst args)) (pair_snd args)) else f)
+// try_select_lazy env e: stem-option of the rewritten `if` (with trailing
+// args re-applied) when e = `select_lazy thunk thunk cond args…`.
+let try_select_lazy = {env, e} -> {
+  let hp = peel_app e nil
+  let head = pair_fst hp
+  let args = pair_snd hp
+  if (not (tree_eq (pair_fst head) "var")) then t
+  else if (not (tree_eq (pair_snd head) "select_lazy")) then t
+  else if (not (and (is_fork args) (and (is_fork (pair_snd args)) (is_fork (pair_snd (pair_snd args)))))) then t
+  else if (not (is_stem (env_lookup env "select_lazy"))) then t
+  else if (not (is_stem (env_lookup env "select"))) then t
+  else {
+    let th = unused_thunk (pair_fst args)
+    let el = unused_thunk (pair_fst (pair_snd args))
+    if (and (is_stem th) (is_stem el))
+      then (t (re_apply (e_if (pair_fst (pair_snd (pair_snd args))) (stem_child th) (stem_child el)) (pair_snd (pair_snd (pair_snd args)))))
+      else t
+  }
+}
+
+// ── shared Cir builders ───────────────────────────────────────────────────
+let lookup_cir = {env, n} -> {
+  let r = env_lookup env n
+  if (is_stem r) then (cir_lit (stem_child r)) else (cir_var n)
+}
+let cir_cons = {h, tl} -> cir_app (cir_app (cir_lit t) h) tl
+let wrap_lams = fix ({self, fvs, b} ->
+  if (is_fork fvs) then (cir_lam (pair_fst fvs) (self (pair_snd fvs) b)) else b)
+let apply_fvs = fix ({self, c, fvs} ->
+  if (is_fork fvs) then (self (cir_app c (cir_var (pair_fst fvs))) (pair_snd fvs)) else c)
+
+// ── per-tag desugars (hand-factored: ELABORATOR_PLAN Appendix A option a) ──
+// num → the scope's zero/succ applied (host natLitTree via applyTree).
+let w_num = fix ({self, env, n} ->
+  if (is_fork n)
+    then {
+      let s = env_lookup env "succ"
+      if (is_stem s) then ((stem_child s) (self env (pair_snd n))) else t
+    }
+    else {
+      let z = env_lookup env "zero"
+      if (is_stem z) then (stem_child z) else t
+    })
+
+// binder → params shadow the env; lams innermost-last (anon param = leaf
+// name: nothing can reference it, the K-rule fires regardless of spelling).
+let shadow_params = fix ({self, env, params} ->
+  if (is_fork params)
+    then {
+      let n_opt = pair_fst (pair_fst params)
+      self (if (is_stem n_opt) then (env_shadow env (stem_child n_opt)) else env) (pair_snd params)
+    }
+    else env)
+let lam_params = fix ({self, params, bodyc} ->
+  if (is_fork params)
+    then {
+      let n_opt = pair_fst (pair_fst params)
+      cir_lam (if (is_stem n_opt) then (stem_child n_opt) else t) (self (pair_snd params) bodyc)
+    }
+    else bodyc)
+let w_binder = {self, env, pay} ->
+  lam_params (pair_fst pay) (self (shadow_params env (pair_fst pay)) (pair_snd pay))
+
+// if → `cond c ({fvs}->then) ({fvs}->else) fvs…` (host `if` case).
+let w_if = {self, env, pay} -> {
+  let cnd = env_lookup env "cond"
+  if (is_stem cnd)
+    then {
+      let c = self env (pair_fst pay)
+      let th = self env (pair_fst (pair_snd pay))
+      let el = self env (pair_snd (pair_snd pay))
+      let fvs = cir_fvs nil (cir_fvs nil nil th) el
+      apply_fvs (cir_app (cir_app (cir_app (cir_lit (stem_child cnd)) c) (wrap_lams fvs th)) (wrap_lams fvs el)) fvs
+    }
+    else t
+}
+
+// match → `(λfvs…. prod (pair names handlers) c) fvs…` (host `match` case).
+let arm_bound = fix ({self, binders} ->
+  if (is_fork binders)
+    then {
+      let b = pair_fst binders
+      if (tree_eq b "_") then (self (pair_snd binders)) else (cons b (self (pair_snd binders)))
+    }
+    else nil)
+let shadow_names = fix ({self, env, names} ->
+  if (is_fork names) then (self (env_shadow env (pair_fst names)) (pair_snd names)) else env)
+// armC = pair pat (pair binders bodyCir), body compiled under the binders.
+let compile_arms = fix ({selfA, sc, env, arms} ->
+  if (is_fork arms)
+    then {
+      let a = pair_fst arms
+      let binders = pair_fst (pair_snd a)
+      let bodyc = sc (shadow_names env (arm_bound binders)) (pair_snd (pair_snd a))
+      cons (pair (pair_fst a) (pair binders bodyc)) (selfA sc env (pair_snd arms))
+    }
+    else nil)
+let arms_fvs = fix ({self, acc, armcs} ->
+  if (is_fork armcs)
+    then {
+      let a = pair_fst armcs
+      self (cir_fvs (arm_bound (pair_fst (pair_snd a))) acc (pair_snd (pair_snd a))) (pair_snd armcs)
+    }
+    else acc)
+let lam_binders = fix ({self, binders, bodyc} ->
+  if (is_fork binders)
+    then {
+      let b = pair_fst binders
+      cir_lam (if (tree_eq b "_") then (fresh_for bodyc "__m") else b) (self (pair_snd binders) bodyc)
+    }
+    else bodyc)
+let apply_projs = fix ({self, appd, pf, ps, acc_cir, binders} ->
+  if (is_fork (pair_snd binders))
+    then (self (cir_app appd (cir_app pf acc_cir)) pf ps (cir_app ps acc_cir) (pair_snd binders))
+    else (cir_app appd acc_cir))
+// The handler an arm contributes: payload-destructuring lams over the body.
+let handler_cir = {env, a} -> {
+  let binders = pair_fst (pair_snd a)
+  let bodyc = pair_snd (pair_snd a)
+  if (not (is_fork binders)) then (cir_lam (fresh_for bodyc "__m") bodyc)
+  else if (not (is_fork (pair_snd binders))) then (
+    if (tree_eq (pair_fst binders) "_")
+      then (cir_lam (fresh_for bodyc "__m") bodyc)
+      else (cir_lam (pair_fst binders) bodyc))
+  else {
+    let inner = lam_binders binders bodyc
+    let pn = fresh_for inner "__p"
+    cir_lam pn (apply_projs inner (lookup_cir env "pair_fst") (lookup_cir env "pair_snd") (cir_var pn) binders)
+  }
+}
+let arm_names_tree = fix ({self, armcs} ->
+  if (is_fork armcs)
+    then {
+      let pat = pair_fst (pair_fst armcs)
+      if (tree_eq pat "_") then (self (pair_snd armcs)) else (t pat (self (pair_snd armcs)))
+    }
+    else t)
+let find_wildcard = fix ({self, armcs} ->
+  if (is_fork armcs)
+    then (if (tree_eq (pair_fst (pair_fst armcs)) "_") then (t (pair_fst armcs)) else (self (pair_snd armcs)))
+    else t)
+let handlers_chain = fix ({self, env, armcs, tailc} ->
+  if (is_fork armcs)
+    then {
+      let a = pair_fst armcs
+      if (tree_eq (pair_fst a) "_") then (self env (pair_snd armcs) tailc)
+        else (cir_cons (handler_cir env a) (self env (pair_snd armcs) tailc))
+    }
+    else tailc)
+let w_match = {self, env, pay} -> {
+  let pr = env_lookup env "prod"
+  if (is_stem pr)
+    then {
+      let condc = self env (pair_fst pay)
+      let armcs = compile_arms self env (pair_snd pay)
+      let fvs = arms_fvs nil armcs
+      let wc = find_wildcard armcs
+      let tailc = if (is_stem wc) then (cir_cons (handler_cir env (stem_child wc)) (cir_lit t)) else (cir_lit t)
+      let handlers = handlers_chain env armcs tailc
+      let table = cir_app (cir_app (cir_lit t) (cir_lit (arm_names_tree armcs))) handlers
+      apply_fvs (wrap_lams fvs (cir_app (cir_app (cir_lit (stem_child pr)) table) condc)) fvs
+    }
+    else t
+}
+
+// recValue → mk_record names [list_const <var>…], each field wrapped
+// `(λname. rest) value` with PRIOR names shadowed while compiling value.
+let rv_names_tree = fix ({self, fields} ->
+  if (is_fork fields) then (t (pair_fst (pair_fst fields)) (self (pair_snd fields))) else t)
+let rv_payload = fix ({self, lc, fields} ->
+  if (is_fork fields)
+    then (cir_cons (cir_app lc (cir_var (pair_fst (pair_fst fields)))) (self lc (pair_snd fields)))
+    else (cir_lit t))
+let rv_wrap = fix ({self, sc, env, fields, core} ->
+  if (is_fork fields)
+    then {
+      let fname = pair_fst (pair_fst fields)
+      let vc = sc env (pair_snd (pair_fst fields))
+      cir_app (cir_lam fname (self sc (env_shadow env fname) (pair_snd fields) core)) vc
+    }
+    else core)
+let w_recvalue = {self, env, fields} -> {
+  let mr = env_lookup env "mk_record"
+  let lc = env_lookup env "list_const"
+  if (and (is_stem mr) (is_stem lc))
+    then (rv_wrap self env fields
+      (cir_app (cir_app (cir_lit (stem_child mr)) (cir_lit (rv_names_tree fields))) (rv_payload (cir_lit (stem_child lc)) fields)))
+    else t
+}
+
+// ── the fold (host exprToCir, case for case; keyword tags via tree_eq) ────
+expr_to_cir := fix ({self, env, e} -> {
+  let tag = pair_fst e
+  let pay = pair_snd e
+  if (tree_eq tag "leaf") then (cir_lit t)
+  else if (tree_eq tag "num") then (cir_lit (w_num env pay))
+  else if (tree_eq tag "str") then (cir_lit pay)
+  else if (tree_eq tag "var") then (lookup_cir env pay)
+  else if (tree_eq tag "app") then {
+    let rw = try_select_lazy env e
+    if (is_stem rw)
+      then (self env (stem_child rw))
+      else (cir_app (self env (pair_fst pay)) (self env (pair_snd pay)))
+  }
+  else if (tree_eq tag "ann") then (self env (pair_fst pay))
+  else if (tree_eq tag "binder") then (w_binder self env pay)
+  else if (tree_eq tag "recType") then (self env (rectype_to_telescope e))
+  else if (tree_eq tag "recValue") then (w_recvalue self env pay)
+  else if (tree_eq tag "proj") then (cir_app (self env (pair_fst pay)) (cir_lit (acc (pair_snd pay))))
+  else if (tree_eq tag "if") then (w_if self env pay)
+  else if (tree_eq tag "match") then (w_match self env pay)
+  else t // hole/use/unknown: host throws / driver territory
+})
+
+// ── the composed pipeline (ELABORATOR_PLAN §5) ────────────────────────────
+compile_expr := {env, e} -> bracket_compile (expr_to_cir env e)
+compile_type := {env, e} ->
+  compile_expr env (if (is_stem (env_lookup env "Pi")) then (binder_to_pi e) else e)

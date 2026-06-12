@@ -24,6 +24,21 @@ e_rectype : Tree -> Tree := {fields} -> inj "recType" fields
 mk_param : Tree -> Tree -> Tree := {name_opt, ty_opt} -> pair name_opt ty_opt
 mk_tfield : Tree -> Tree -> Tree -> Tree := {name, ty_opt, val_opt} -> pair name (pair ty_opt val_opt)
 
+// Stage-2 value nodes (ELABORATOR_PLAN §4): num payload is the lib-canonical
+// Nat; recValue fields are `pair name value` (the host ignores recValue field
+// TYPES when compiling, and members/trailing are driver territory — out of
+// the encoding); match arm = pair pat (pair binders body), binders a list of
+// name strings with "_" verbatim; if payload = pair cond (pair then else).
+e_num : Tree -> Tree := {n} -> inj "num" n
+e_hole : Tree := inj "hole" t
+e_ann : Tree -> Tree -> Tree := {x, ty} -> inj "ann" (pair x ty)
+e_proj : Tree -> Tree -> Tree := {target, f} -> inj "proj" (pair target f)
+e_recvalue : Tree -> Tree := {fields} -> inj "recValue" fields
+e_if : Tree -> Tree -> Tree -> Tree := {c, th, el} -> inj "if" (pair c (pair th el))
+e_match : Tree -> Tree -> Tree := {c, arms} -> inj "match" (pair c arms)
+mk_vfield : Tree -> Tree -> Tree := {name, value} -> pair name value
+mk_arm : Tree -> Tree -> Tree -> Tree := {pat, binders, body} -> pair pat (pair binders body)
+
 // AST-level cons cell: `t h tl` spelled as applications (host consC).
 e_cons : Tree -> Tree -> Tree := {h, tl} -> e_app (e_app e_leaf h) tl
 

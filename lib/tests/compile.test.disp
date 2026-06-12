@@ -1,0 +1,83 @@
+// Stages 2+3: the in-language expr_to_cir / compile_expr / compile_type
+// (lib/elab/compile.disp) vs the HOST elaborator, bit for bit. Each test's
+// LHS runs the in-language pipeline on an encoded AST over an explicit env;
+// the RHS is the host compiling the SAME surface term (the test harness's
+// hash-cons comparison IS the bit-identity check).
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../elab/ast.disp"
+open use "../elab/compile.disp"
+
+let env0 = env_bind (env_bind (env_bind (env_bind (env_bind (env_bind (env_bind (env_bind nil
+  "zero" zero) "succ" succ) "cond" cond) "prod" prod) "pair_fst" pair_fst) "pair_snd" pair_snd) "mk_record" mk_record) "list_const" list_const
+let env1 = env_bind (env_bind (env_bind (env_bind (env_bind (env_bind env0
+  "Pi" Pi) "Nat" Nat) "Tree" Tree) "Telescope" Telescope) "select" select) "select_lazy" select_lazy
+
+// ── scope resolution + binders ────────────────────────────────────────────
+test compile_expr env0 (e_var "zero") = zero
+test compile_expr env0 (e_var "unbound_name") = t // host throws at cirToTree; spec Var → leaf
+test compile_expr env0 (e_binder [mk_param (t "x") t] (e_var "x")) = ({x} -> x)
+test compile_expr env0 (e_binder [mk_param (t "x") t, mk_param (t "y") t] (e_var "x")) = ({x, y} -> x)
+test compile_expr env0 (e_binder [mk_param (t "x") t] (e_binder [mk_param (t "x") t] (e_var "x"))) = ({x} -> {x} -> x) // shadowing
+test compile_expr env0 (e_binder [mk_param (t "x") t] (e_var "zero")) = ({x} -> zero) // binder doesn't shadow distinct names
+test compile_expr env0 (e_binder [mk_param t t] (e_var "zero")) = ({_} -> zero) // anonymous param
+
+// ── literals / ann / proj ─────────────────────────────────────────────────
+test compile_expr env0 (e_num 0) = 0
+test compile_expr env0 (e_num 3) = 3
+test compile_expr env0 e_leaf = t
+test compile_expr env0 (e_str "respond") = "respond"
+test compile_expr env0 (e_ann (e_num 1) (e_var "Nat")) = (1 : Nat) // annotation erases
+test compile_expr env0 (e_proj (e_recvalue [mk_vfield "a" (e_num 1)]) "a") = ({ a := 1 }).a
+
+// ── if (branch closures over the free-var union) ──────────────────────────
+test compile_expr env0 (e_binder [mk_param (t "b") t] (e_if (e_var "b") (e_var "zero") (e_num 1)))
+  = ({b} -> if b then zero else 1)
+test compile_expr env0 (e_binder [mk_param (t "b") t, mk_param (t "x") t]
+    (e_if (e_var "b") (e_app (e_var "succ") (e_var "x")) (e_var "x")))
+  = ({b, x} -> if b then (succ x) else x)
+
+// ── match (the cut, closed over arm free vars) ────────────────────────────
+test compile_expr env0 (e_binder [mk_param (t "r") t] (e_match (e_var "r") [
+    mk_arm "Ok" ["v"] (e_var "v"),
+    mk_arm "Err" ["_"] (e_var "zero")]))
+  = ({r} -> match r { Ok v => v; Err _ => zero })
+test compile_expr env0 (e_binder [mk_param (t "r") t, mk_param (t "d") t] (e_match (e_var "r") [
+    mk_arm "Some" ["v"] (e_app (e_var "succ") (e_var "v")),
+    mk_arm "_" [] (e_var "d")]))
+  = ({r, d} -> match r { Some v => succ v; _ => d }) // wildcard + arm fv
+test compile_expr env0 (e_binder [mk_param (t "p") t] (e_match (e_var "p") [
+    mk_arm "Mk" ["x", "y", "z"] (e_app (e_app (e_var "x") (e_var "z")) (e_var "y"))]))
+  = ({p} -> match p { Mk x y z => x z y }) // n≥3 pair destructuring
+test compile_expr env0 (e_match (e_app (e_app (e_var "inj") (e_str "Ok")) (e_var "zero")) [
+    mk_arm "Ok" ["v"] (e_app (e_var "succ") (e_var "v")),
+    mk_arm "Err" [] (e_var "zero")])
+  = (match (inj "Ok" zero) { Ok v => succ v; Err => zero }) // closed cut evaluates
+
+// ── recValue (sequential field scope) ─────────────────────────────────────
+test compile_expr env0 (e_recvalue [mk_vfield "a" (e_num 1), mk_vfield "b" (e_app (e_var "succ") (e_var "a"))])
+  = { a := 1; b := succ a }
+test compile_expr env0 (e_binder [mk_param (t "a") t]
+    (e_recvalue [mk_vfield "a" (e_app (e_var "succ") (e_var "a")), mk_vfield "b" (e_var "a")]))
+  = ({a} -> { a := succ a; b := a }) // field value sees OUTER a; b sees field a
+
+// ── the select_lazy → if rewrite (host tryRewriteSelectLazy) ──────────────
+test compile_expr env1 (e_binder [mk_param (t "c") t]
+    (e_app (e_app (e_app (e_var "select_lazy")
+      (e_binder [mk_param t t] (e_var "zero")))
+      (e_binder [mk_param (t "u") t] (e_num 1)))
+      (e_var "c")))
+  = ({c} -> select_lazy ({_} -> zero) ({u} -> 1) c)
+
+// ── recType through the value fold + compile_type ─────────────────────────
+test compile_expr env1 (e_rectype [mk_tfield "a" (t (e_var "Nat")) t]) = { a : Nat }
+test compile_expr env1 (e_rectype [
+    mk_tfield "a" (t (e_var "Nat")) t,
+    mk_tfield "b" t (t (e_app (e_var "succ") (e_var "a")))])
+  = { a : Nat, b := succ a }
+test compile_type env1 (e_binder [mk_param (t "n") (t (e_var "Nat"))] (e_var "Nat"))
+  = (Pi Nat ({n} -> Nat))
+test compile_type env1 (e_binder [mk_param t (t (e_var "Nat"))] (e_binder [mk_param t (t (e_var "Nat"))] (e_var "Nat")))
+  = (Pi Nat ({_} -> Pi Nat ({_} -> Nat)))
+test compile_type env1 (e_var "Nat") = Nat // non-binder: the tree IS the type
