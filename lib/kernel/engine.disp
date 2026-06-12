@@ -76,7 +76,7 @@ let w_stem = {a, x} -> {
   if (is_hyp_fork r) then Err else (Ok r) // stem-forge rejection
 }
 // w_s/w_tfk are named `let`s, not inlined into w_fork: inlining over-expands under bracket
-// abstraction + cirToTree past the compile budget. (Manual CSE; see ABSTRACTION_SHARING.md.)
+// abstraction + cirToTree past the compile budget. (Manual CSE; see ELABORATOR_PLAN.md Appendix A.)
 let w_s = {self, c, b, x} ->
   bind (self c x) ({cx} -> bind (self b x) ({bx} -> self cx bx))
 

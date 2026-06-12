@@ -201,21 +201,21 @@ const natT = (n: number): Tree => { let r: Tree = LEAF; for (let i = 0; i < n; i
 
 function enc(e: Expr): Tree {
   switch (e.tag) {
-    case "leaf": return inj("leaf", LEAF)
-    case "num": return inj("num", natT(e.value))
-    case "str": return inj("str", str(e.value))
-    case "var": return inj("var", str(e.name))
-    case "app": return inj("app", fork(enc(e.f), enc(e.x)))
-    case "ann": return inj("ann", fork(enc(e.expr), enc(e.type)))
-    case "binder": return inj("binder", fork(
+    case "leaf": return inj("Leaf", LEAF)
+    case "num": return inj("Num", natT(e.value))
+    case "str": return inj("Str", str(e.value))
+    case "var": return inj("Var", str(e.name))
+    case "app": return inj("App", fork(enc(e.f), enc(e.x)))
+    case "ann": return inj("Ann", fork(enc(e.expr), enc(e.type)))
+    case "binder": return inj("Binder", fork(
       consList(e.params.map(p => fork(opt(p.name === null ? null : str(p.name)), opt(p.type === null ? null : enc(p.type))))),
       enc(e.body)))
-    case "recType": return inj("recType", consList(e.fields.map(f =>
+    case "recType": return inj("RecType", consList(e.fields.map(f =>
       fork(str(f.name), fork(opt(f.type === null ? null : enc(f.type)), opt(f.value === null ? null : enc(f.value)))))))
-    case "recValue": return inj("recValue", consList(e.fields.map(f => fork(str(f.name), enc(f.value)))))
-    case "proj": return inj("proj", fork(enc(e.target), str(e.field)))
-    case "if": return inj("if", fork(enc(e.cond), fork(enc(e.thenBody), enc(e.elseBody))))
-    case "match": return inj("match", fork(enc(e.cond), consList(e.arms.map(a =>
+    case "recValue": return inj("RecValue", consList(e.fields.map(f => fork(str(f.name), enc(f.value)))))
+    case "proj": return inj("Proj", fork(enc(e.target), str(e.field)))
+    case "if": return inj("If", fork(enc(e.cond), fork(enc(e.thenBody), enc(e.elseBody))))
+    case "match": return inj("Match", fork(enc(e.cond), consList(e.arms.map(a =>
       fork(str(a.pat), fork(consList(a.binders.map(str)), enc(a.body)))))))
   }
 }

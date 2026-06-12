@@ -121,14 +121,14 @@ const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => fork(h, 
 
 function enc(e: Expr): Tree {
   switch (e.tag) {
-    case "leaf": return inj("leaf", LEAF)
-    case "str": return inj("str", str(e.value))
-    case "var": return inj("var", str(e.name))
-    case "app": return inj("app", fork(enc(e.f), enc(e.x)))
-    case "binder": return inj("binder", fork(
+    case "leaf": return inj("Leaf", LEAF)
+    case "str": return inj("Str", str(e.value))
+    case "var": return inj("Var", str(e.name))
+    case "app": return inj("App", fork(enc(e.f), enc(e.x)))
+    case "binder": return inj("Binder", fork(
       consList(e.params.map(p => fork(opt(p.name === null ? null : str(p.name)), opt(p.type === null ? null : enc(p.type))))),
       enc(e.body)))
-    case "recType": return inj("recType", consList(e.fields.map(f =>
+    case "recType": return inj("RecType", consList(e.fields.map(f =>
       fork(str(f.name), fork(opt(f.type === null ? null : enc(f.type)), opt(f.value === null ? null : enc(f.value)))))))
   }
 }
@@ -141,7 +141,7 @@ const NAME_POOL = [
 const nameById = new Map<number, string>()
 for (const n of NAME_POOL) nameById.set(str(n).id, n)
 const tagById = new Map<number, string>()
-for (const n of ["leaf", "str", "var", "app", "binder", "recType"]) tagById.set(str(n).id, n)
+for (const n of ["Leaf", "Str", "Var", "App", "Binder", "RecType"]) tagById.set(str(n).id, n)
 
 const asFork = (t: Tree): Tree & { tag: "fork" } => {
   const f = force(t)
@@ -159,14 +159,14 @@ function dec(tr: Tree): Expr {
   const tag = tagById.get(force(node.left).id)
   const pay = force(node.right)
   switch (tag) {
-    case "leaf": return { tag: "leaf" }
-    case "str": return { tag: "str", value: lookupName(pay) }
-    case "var": return { tag: "var", name: lookupName(pay) }
-    case "app": {
+    case "Leaf": return { tag: "leaf" }
+    case "Str": return { tag: "str", value: lookupName(pay) }
+    case "Var": return { tag: "var", name: lookupName(pay) }
+    case "App": {
       const p = asFork(pay)
       return { tag: "app", f: dec(p.left), x: dec(p.right) }
     }
-    case "binder": {
+    case "Binder": {
       const p = asFork(pay)
       const params: Param[] = []
       let cur = force(p.left)
@@ -181,7 +181,7 @@ function dec(tr: Tree): Expr {
       }
       return { tag: "binder", params, body: dec(p.right) }
     }
-    case "recType": {
+    case "RecType": {
       const fields: TField[] = []
       let cur = pay
       while (cur.tag === "fork") {

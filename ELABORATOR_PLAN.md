@@ -90,13 +90,27 @@ What's in it: `env_bind`/`env_shadow`/`env_lookup` (assoc list, `t v` bound /
 `t` shadowed-or-unbound = the host's undefined), `cir_fvs` (ordered free-var
 collection), `expr_mentions` (the host's conservative AST check),
 `try_select_lazy` (the select_lazy → if rewrite — part of definitional
-equality, so mirrored), per-tag desugars `w_num`/`w_binder`/`w_if`/`w_match`/
+equality, so mirrored), per-tag desugars `w_num`/`w_if`/`w_match`/
 `w_recvalue` (hand-factored per Appendix A option a), and the fold
-`expr_to_cir` (keyword tags `if`/`match` can't be surface match patterns, so
-dispatch is a tree_eq chain; encoding tags stay host-spelled). Composition:
+`expr_to_cir`, a match over the AST coproduct mirroring the host switch.
+Encoding tags are CAPITALIZED constructor-style (`Var`/`App`/`If`/`Match`…,
+the bracket.disp Cir precedent) — the host's lowercase `if`/`match` are
+keywords and can't be surface match patterns. Constructors are declared via
+the cut's `inj0`–`inj3` declarators (`e_app := inj2 "App"`). Composition:
 `compile_expr := bracket_compile ∘ expr_to_cir env`, and the positional mode
 bit is the entry point: `compile_type env e = compile_expr env (binder_to_pi
 e)` with the host's Pi-in-scope fallback.
+
+Hazard found writing the fold (now CLAUDE.md § Compiler workarounds, the
+**η/saturation rule**): a match-arm call saturated by fv-row vars alone
+(`self env e`) η-exposes under bracket abstraction and the cut's fv
+distribution evaluates it eagerly for every arm — selected or not — so a
+recursive one regresses forever. Arms must thread an arm-bound var in every
+call spine; when the scrutinee itself is needed, rebuild it from the binders
+(`e_rectype fields` is hash-cons-identical to `e`). This predates the new
+desugar (the old shape distributed at the enclosing-binder level with the
+same η-exposure); it simply had no in-language match code dense enough to
+trip it before.
 
 **Prerequisite host-side match fix: DONE 2026-06-12.** The parser now emits a
 `match` Expr node; the desugar lives in compile.ts and closes the WHOLE cut

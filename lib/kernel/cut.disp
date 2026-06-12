@@ -11,6 +11,14 @@ list_const : Tree -> Tree := {x} -> t t x // const x y = x (K); ignores the cut 
 inj : Tree -> Tree -> Tree := {tag, pay} -> t tag pay // a coproduct value: tag + payload
 acc : Tree -> Tree := {name} -> inj name t // accessor: nullary coproduct (unit payload)
 
+// Constructor declarators: `C := injN "C"` declares an N-field coproduct
+// constructor (payload = right-nested pairs, the shape match-arm binders
+// destructure). The §2.6 cut's "data declaration" until surface syntax grows one.
+inj0 : Tree -> Tree := {tag} -> inj tag t
+inj1 : Tree -> Tree -> Tree := {tag, a} -> inj tag a
+inj2 : Tree -> Tree -> Tree -> Tree := {tag, a, b} -> inj tag (pair a b)
+inj3 : Tree -> Tree -> Tree -> Tree -> Tree := {tag, a, b, c} -> inj tag (pair a (pair b c))
+
 // Type & spine metadata of a wait-form type wait(checker)(meta).
 type_meta := {T} -> pair_snd (pair_snd T)
 
@@ -39,10 +47,10 @@ field := {r, name} -> r (acc name) // r.name resolves to this
 // `Ok v | Err`. `Return v = Reduce (Ok v)` is a library ALIAS for the verdict
 // case (the H-rule predicate): a verdict is just a value that happens to be a
 // CheckerResult — not a third arm.
-Extend : Type -> Action := {v} -> inj "Extend" v
-Reduce : Tree -> Action := {v} -> inj "Reduce" v
-Ok : Tree -> Tree := {v} -> inj "Ok" v
-Err : Tree := inj "Err" t
+Extend : Type -> Action := inj1 "Extend"
+Reduce : Tree -> Action := inj1 "Reduce"
+Ok : Tree -> Tree := inj1 "Ok"
+Err : Tree := inj0 "Err"
 Return : Tree -> Action := {v} -> Reduce (Ok v)
 
 bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind

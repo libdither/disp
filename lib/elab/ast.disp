@@ -1,42 +1,42 @@
 // In-language surface AST + the type-position desugars — Stage 1 of the
 // self-hosted elaborator (ELABORATOR_PLAN.md §3). The AST is a §2.6 coproduct
-// mirroring src/parse.ts Expr, tags spelled as the host tag names; this file
-// is the SPEC and the host (compile.ts binderToPi / the recType→Telescope
-// fold) is the fast path, validated by lib/tests/ast.test.disp (golden ASTs)
-// and test/desugar.test.ts (randomized host-vs-spec tree equivalence).
+// mirroring src/parse.ts Expr; this file is the SPEC and the host
+// (compile.ts binderToPi / the recType→Telescope fold) is the fast path,
+// validated by lib/tests/ast.test.disp (golden ASTs) and test/desugar.test.ts
+// (randomized host-vs-spec tree equivalence).
 //
-// Encoding (Stage 1 subset; nodes are added per stage):
-//   leaf | str s | var name | app (pair f x) | binder (pair params body)
-//   | recType fields
-// Param        = pair name_opt ty_opt          (stem-option: `t x` / `t`)
+// Tags are capitalized constructor-style (the bracket.disp Cir precedent —
+// host tags `if`/`match` are KEYWORDS and can't be surface match patterns):
+//   Leaf | Num n | Str s | Var name | Hole | App f x | Ann e ty
+//   | Binder params body | RecType fields | RecValue fields
+//   | Proj target field | If c then else | Match c arms
+// Param         = pair name_opt ty_opt         (stem-option: `t x` / `t`)
 // recType field = pair name (pair ty_opt val_opt)
+// recValue field = pair name value (host recValue field TYPES are unused by
+//   the compile; members/trailing are driver territory — out of the encoding)
+// match arm     = pair pat (pair binders body), binders name strings, "_" verbatim
+// num payload   = the lib-canonical Nat
 // Lists are cons-chains (cons = t h tl, nil = t); strings are already trees.
 
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-e_leaf : Tree := inj "leaf" t
-e_str : Tree -> Tree := {s} -> inj "str" s
-e_var : Tree -> Tree := {n} -> inj "var" n
-e_app : Tree -> Tree -> Tree := {f, x} -> inj "app" (pair f x)
-e_binder : Tree -> Tree -> Tree := {params, body} -> inj "binder" (pair params body)
-e_rectype : Tree -> Tree := {fields} -> inj "recType" fields
-mk_param : Tree -> Tree -> Tree := {name_opt, ty_opt} -> pair name_opt ty_opt
+e_leaf : Tree := inj0 "Leaf"
+e_num : Tree -> Tree := inj1 "Num"
+e_str : Tree -> Tree := inj1 "Str"
+e_var : Tree -> Tree := inj1 "Var"
+e_hole : Tree := inj0 "Hole"
+e_app : Tree -> Tree -> Tree := inj2 "App"
+e_ann : Tree -> Tree -> Tree := inj2 "Ann"
+e_binder : Tree -> Tree -> Tree := inj2 "Binder"
+e_rectype : Tree -> Tree := inj1 "RecType"
+e_recvalue : Tree -> Tree := inj1 "RecValue"
+e_proj : Tree -> Tree -> Tree := inj2 "Proj"
+e_if : Tree -> Tree -> Tree -> Tree := inj3 "If"
+e_match : Tree -> Tree -> Tree := inj2 "Match"
+mk_param : Tree -> Tree -> Tree := pair
+mk_vfield : Tree -> Tree -> Tree := pair
 mk_tfield : Tree -> Tree -> Tree -> Tree := {name, ty_opt, val_opt} -> pair name (pair ty_opt val_opt)
-
-// Stage-2 value nodes (ELABORATOR_PLAN §4): num payload is the lib-canonical
-// Nat; recValue fields are `pair name value` (the host ignores recValue field
-// TYPES when compiling, and members/trailing are driver territory — out of
-// the encoding); match arm = pair pat (pair binders body), binders a list of
-// name strings with "_" verbatim; if payload = pair cond (pair then else).
-e_num : Tree -> Tree := {n} -> inj "num" n
-e_hole : Tree := inj "hole" t
-e_ann : Tree -> Tree -> Tree := {x, ty} -> inj "ann" (pair x ty)
-e_proj : Tree -> Tree -> Tree := {target, f} -> inj "proj" (pair target f)
-e_recvalue : Tree -> Tree := {fields} -> inj "recValue" fields
-e_if : Tree -> Tree -> Tree -> Tree := {c, th, el} -> inj "if" (pair c (pair th el))
-e_match : Tree -> Tree -> Tree := {c, arms} -> inj "match" (pair c arms)
-mk_vfield : Tree -> Tree -> Tree := {name, value} -> pair name value
 mk_arm : Tree -> Tree -> Tree -> Tree := {pat, binders, body} -> pair pat (pair binders body)
 
 // AST-level cons cell: `t h tl` spelled as applications (host consC).
@@ -51,18 +51,15 @@ e_cons : Tree -> Tree -> Tree := {h, tl} -> e_app (e_app e_leaf h) tl
 //   falls to the leaf (host: throws "Pi domain requires a type annotation").
 binder_to_pi := fix ({self, e} ->
   match e {
-    binder pay => {
-      let params = pair_fst pay
-      let body = pair_snd pay
+    Binder params body => {
       let p = pair_fst params
       let rest_params = pair_snd params
-      let p_name = pair_fst p
       let p_ty = pair_snd p
       if (is_stem p_ty)
         then {
           let dom = self (stem_child p_ty)
           let rest = if (is_fork rest_params) then (e_binder rest_params body) else body
-          let cod = e_binder (cons (mk_param p_name t) nil) (self rest)
+          let cod = e_binder (cons (mk_param (pair_fst p) t) nil) (self rest)
           e_app (e_app (e_var "Pi") dom) cod
         }
         else t
@@ -107,6 +104,6 @@ let tele_entries = fix ({self, fields} ->
 // visit.
 rectype_to_telescope := {e} ->
   match e {
-    recType fields => e_app (e_var "Telescope") (tele_entries fields)
+    RecType fields => e_app (e_var "Telescope") (tele_entries fields)
     _ => e
   }

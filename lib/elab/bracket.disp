@@ -12,13 +12,13 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-cir_lit : Tree -> Tree := {v} -> inj "Lit" v
-cir_var : Tree -> Tree := {n} -> inj "Var" n
-cir_app : Tree -> Tree -> Tree := {f, x} -> inj "App" (pair f x)
-cir_lam : Tree -> Tree -> Tree := {n, b} -> inj "Lam" (pair n b)
-cir_S : Tree := inj "S" t
-cir_K : Tree := inj "K" t
-cir_I : Tree := inj "I" t
+cir_lit : Tree -> Tree := inj1 "Lit"
+cir_var : Tree -> Tree := inj1 "Var"
+cir_app : Tree -> Tree -> Tree := inj2 "App"
+cir_lam : Tree -> Tree -> Tree := inj2 "Lam"
+cir_S : Tree := inj0 "S"
+cir_K : Tree := inj0 "K"
+cir_I : Tree := inj0 "I"
 
 // The combinator trees (host I_TREE/K_TREE/S_TREE, src/compile.ts):
 // I = fork(fork(t,t),t); K = stem t; S = fork(stem(fork(t,t)), t).
