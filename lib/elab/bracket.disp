@@ -27,17 +27,15 @@ let K_tree = t t
 let S_tree = t (t (t t t)) t
 
 // contains_free name e: does the free variable `name` occur in e?
-// Lam shadows; Lit/S/K/I are closed.
-// NOTE the `wait self name …` shape: in a multi-param fix, a match-arm call
-// `self name x` contains the sub-application `self name`, which is a CLOSED
-// redex once `name` is known — cirToTree's eager compile-time evaluation
-// unfolds the fix forever (the select_lazy hazard's match-arm cousin). `wait`
-// defers until the structural argument arrives.
+// Lam shadows; Lit/S/K/I are closed. (Bare `self name f` calls in match arms
+// are fine: the match desugar closes arms over their free vars, so the
+// recursive call stays open under bracket abstraction — this file is the
+// living regression for the retired closed-prefix-redex hazard.)
 contains_free := fix ({self, name, e} ->
   match e {
     Var n => tree_eq n name
-    App f x => or (wait self name f) (wait self name x)
-    Lam n b => if (tree_eq n name) then FF else (wait self name b)
+    App f x => or (self name f) (self name x)
+    Lam n b => if (tree_eq n name) then FF else (self name b)
     _ => FF
   })
 
@@ -65,8 +63,8 @@ abstract_name := fix ({self, name, body} ->
     App f x => (
       if (and (is_var_named x name) (not (contains_free name f))) then f
       else {
-        let af = wait self name f // wait: see contains_free (closed-prefix redex)
-        let ax = wait self name x
+        let af = self name f
+        let ax = self name x
         let kf = k_payload af
         if (and (is_stem kf) (tree_eq ax cir_I)) then (stem_child kf)
         else {
@@ -76,7 +74,7 @@ abstract_name := fix ({self, name, body} ->
             else (cir_app (cir_app cir_S af) ax)
         }
       })
-    Lam n b => wait self name (wait self n b)
+    Lam n b => self name (self n b)
     _ => t // unreachable: contains_free is FF for Lit/S/K/I (the K-rule fires first)
   })
 
