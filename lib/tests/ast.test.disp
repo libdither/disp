@@ -1,0 +1,75 @@
+// Stage-1 type-position desugars: in-language binder_to_pi /
+// rectype_to_telescope vs hand-built expected ASTs (the host-shape pins;
+// test/desugar.test.ts closes the host-vs-spec loop on real trees).
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../elab/ast.disp"
+
+// ── binder_to_pi ──────────────────────────────────────────────────────────
+
+// non-binder nodes pass through unchanged
+test binder_to_pi (e_var "Nat") = (e_var "Nat")
+test binder_to_pi e_leaf = e_leaf
+
+// anonymous arrow: A -> B  ⟶  Pi A ({_} -> B)
+test binder_to_pi (e_binder [mk_param t (t (e_var "A"))] (e_var "B"))
+  = (e_app (e_app (e_var "Pi") (e_var "A")) (e_binder [mk_param t t] (e_var "B")))
+
+// named, dependent: {n : A} -> n  ⟶  Pi A ({n} -> n)
+test binder_to_pi (e_binder [mk_param (t "n") (t (e_var "A"))] (e_var "n"))
+  = (e_app (e_app (e_var "Pi") (e_var "A")) (e_binder [mk_param (t "n") t] (e_var "n")))
+
+// multi-param right-association: {a : A, b : B} -> C  ⟶  Pi A ({a} -> Pi B ({b} -> C))
+test binder_to_pi (e_binder [mk_param (t "a") (t (e_var "A")), mk_param (t "b") (t (e_var "B"))] (e_var "C"))
+  = (e_app (e_app (e_var "Pi") (e_var "A"))
+      (e_binder [mk_param (t "a") t]
+        (e_app (e_app (e_var "Pi") (e_var "B"))
+          (e_binder [mk_param (t "b") t] (e_var "C")))))
+
+// recursive domain desugar: {f : A -> B} -> C  ⟶  Pi (Pi A ({_} -> B)) ({f} -> C)
+test binder_to_pi (e_binder [mk_param (t "f") (t (e_binder [mk_param t (t (e_var "A"))] (e_var "B")))] (e_var "C"))
+  = (e_app (e_app (e_var "Pi") (e_app (e_app (e_var "Pi") (e_var "A")) (e_binder [mk_param t t] (e_var "B"))))
+      (e_binder [mk_param (t "f") t] (e_var "C")))
+
+// recursive codomain desugar: {n : A} -> (B -> C)
+test binder_to_pi (e_binder [mk_param (t "n") (t (e_var "A"))] (e_binder [mk_param t (t (e_var "B"))] (e_var "C")))
+  = (e_app (e_app (e_var "Pi") (e_var "A"))
+      (e_binder [mk_param (t "n") t]
+        (e_app (e_app (e_var "Pi") (e_var "B")) (e_binder [mk_param t t] (e_var "C")))))
+
+// missing domain annotation: the host throws; the spec falls to the leaf
+test binder_to_pi (e_binder [mk_param (t "n") t] (e_var "n")) = t
+
+// ── rectype_to_telescope ──────────────────────────────────────────────────
+
+// non-recType nodes pass through unchanged
+test rectype_to_telescope (e_var "Nat") = (e_var "Nat")
+
+let lc_ast = {x} -> e_app (e_var "list_const") x
+let entry_ast = {name, ty_ast, def_ast} ->
+  (e_app (e_app (e_var "mk_record") entry_names_ast)
+    (e_cons (lc_ast (e_str name)) (e_cons (lc_ast ty_ast) (e_cons (lc_ast def_ast) e_leaf))))
+
+// single opaque field: { a : A }  ⟶  Telescope (t entry_a ({a} -> t))
+test rectype_to_telescope (e_rectype [mk_tfield "a" (t (e_var "A")) t])
+  = (e_app (e_var "Telescope")
+      (e_cons (entry_ast "a" (e_var "A") e_leaf)
+        (e_binder [mk_param (t "a") t] e_leaf)))
+
+// opaque + derived (untyped): { a : A, b := succ a } — b's ty defaults to
+// Tree, its def is the stem-option `t (succ a)`, scoped under {a}.
+test rectype_to_telescope (e_rectype [
+    mk_tfield "a" (t (e_var "A")) t,
+    mk_tfield "b" t (t (e_app (e_var "succ") (e_var "a")))])
+  = (e_app (e_var "Telescope")
+      (e_cons (entry_ast "a" (e_var "A") e_leaf)
+        (e_binder [mk_param (t "a") t]
+          (e_cons (entry_ast "b" (e_var "Tree") (e_app e_leaf (e_app (e_var "succ") (e_var "a"))))
+            (e_binder [mk_param (t "b") t] e_leaf)))))
+
+// typed derived field: { a : A := x } carries BOTH the annotation and the recipe
+test rectype_to_telescope (e_rectype [mk_tfield "a" (t (e_var "A")) (t (e_var "x"))])
+  = (e_app (e_var "Telescope")
+      (e_cons (entry_ast "a" (e_var "A") (e_app e_leaf (e_var "x")))
+        (e_binder [mk_param (t "a") t] e_leaf)))

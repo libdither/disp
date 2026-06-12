@@ -1,0 +1,97 @@
+// In-language surface AST + the type-position desugars — Stage 1 of the
+// self-hosted elaborator (ELABORATOR_PLAN.md §3). The AST is a §2.6 coproduct
+// mirroring src/parse.ts Expr, tags spelled as the host tag names; this file
+// is the SPEC and the host (compile.ts binderToPi / the recType→Telescope
+// fold) is the fast path, validated by lib/tests/ast.test.disp (golden ASTs)
+// and test/desugar.test.ts (randomized host-vs-spec tree equivalence).
+//
+// Encoding (Stage 1 subset; nodes are added per stage):
+//   leaf | str s | var name | app (pair f x) | binder (pair params body)
+//   | recType fields
+// Param        = pair name_opt ty_opt          (stem-option: `t x` / `t`)
+// recType field = pair name (pair ty_opt val_opt)
+// Lists are cons-chains (cons = t h tl, nil = t); strings are already trees.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+e_leaf : Tree := inj "leaf" t
+e_str : Tree -> Tree := {s} -> inj "str" s
+e_var : Tree -> Tree := {n} -> inj "var" n
+e_app : Tree -> Tree -> Tree := {f, x} -> inj "app" (pair f x)
+e_binder : Tree -> Tree -> Tree := {params, body} -> inj "binder" (pair params body)
+e_rectype : Tree -> Tree := {fields} -> inj "recType" fields
+mk_param : Tree -> Tree -> Tree := {name_opt, ty_opt} -> pair name_opt ty_opt
+mk_tfield : Tree -> Tree -> Tree -> Tree := {name, ty_opt, val_opt} -> pair name (pair ty_opt val_opt)
+
+// AST-level cons cell: `t h tl` spelled as applications (host consC).
+e_cons : Tree -> Tree -> Tree := {h, tl} -> e_app (e_app e_leaf h) tl
+
+// binder_to_pi: mirror of compile.ts binderToPi — a type-position binder
+// becomes explicit `Pi` applications; every other node is returned unchanged
+// (its tree already IS the type).
+//   {n : A} -> B          ⟶  app (app (var "Pi") A') (binder [{n}] B')
+//   {a : A, b : B} -> C   ⟶  right-association via the singleton-param peel
+//   domain/codomain are recursively desugared; a missing domain annotation
+//   falls to the leaf (host: throws "Pi domain requires a type annotation").
+binder_to_pi := fix ({self, e} ->
+  match e {
+    binder pay => {
+      let params = pair_fst pay
+      let body = pair_snd pay
+      let p = pair_fst params
+      let rest_params = pair_snd params
+      let p_name = pair_fst p
+      let p_ty = pair_snd p
+      if (is_stem p_ty)
+        then {
+          let dom = self (stem_child p_ty)
+          let rest = if (is_fork rest_params) then (e_binder rest_params body) else body
+          let cod = e_binder (cons (mk_param p_name t) nil) (self rest)
+          e_app (e_app (e_var "Pi") dom) cod
+        }
+        else t
+    }
+    _ => e
+  })
+
+// The telescope entry header { name; ty; def }, spelled as applications
+// (the host interns it as a literal fork chain; both lower to the same tree).
+entry_names_ast : Tree :=
+  (e_cons (e_str "name") (e_cons (e_str "ty") (e_cons (e_str "def") e_leaf)))
+
+// The right fold over recType fields (host compile.ts recType case): each
+// field becomes the entry record `mk_record ["name","ty","def"] [name, ty,
+// def]` consed onto a binder over the REST — later fields' types and derived
+// recipes sit under lams binding the prior field names, so `{ a : Nat,
+// b := double a }` scopes naturally once compiled. An untyped field's ty is
+// `var "Tree"`; a derived member's def is the stem-option `t recipe`.
+let tele_entries = fix ({self, fields} ->
+  if (is_fork fields)
+    then {
+      let f = pair_fst fields
+      let rest = self (pair_snd fields)
+      let fname = pair_fst f
+      let opts = pair_snd f
+      let ty_opt = pair_fst opts
+      let val_opt = pair_snd opts
+      let ty_ast = if (is_stem ty_opt) then (stem_child ty_opt) else (e_var "Tree")
+      let def_ast = if (is_stem val_opt) then (e_app e_leaf (stem_child val_opt)) else e_leaf
+      let payload = (e_cons (e_app (e_var "list_const") (e_str fname))
+        (e_cons (e_app (e_var "list_const") ty_ast)
+          (e_cons (e_app (e_var "list_const") def_ast) e_leaf)))
+      let entry = e_app (e_app (e_var "mk_record") entry_names_ast) payload
+      e_cons entry (e_binder (cons (mk_param (t fname) t) nil) rest)
+    }
+    else e_leaf)
+
+// rectype_to_telescope: mirror of the compile.ts recType case — a record-type
+// literal IS a telescope type. Non-recType nodes are returned unchanged;
+// nested recTypes (e.g. in a field's type) are the recursive elaboration's
+// job (Stage 3), exactly as the host desugars them at their own exprToCir
+// visit.
+rectype_to_telescope := {e} ->
+  match e {
+    recType fields => e_app (e_var "Telescope") (tele_entries fields)
+    _ => e
+  }
