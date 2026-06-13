@@ -187,14 +187,20 @@ HBin : Type := wait (make_rec_recognizer
 // field is PINNED to recipe e over the priors). A telescope is `t entry
 // (λx. rest)` — the tail binds this entry's value (a constant tail is the
 // K-stem `t t rest`), so well-foundedness is structural: tails see only priors.
+// opt_elim: eliminate an entry's stem-option `def` (t = opaque / none, t e =
+// derived / some e). The none case is a thunk so a derived field never runs the
+// opaque path; `if`-based (not select_lazy) to stay recursion-safe in the folds.
+let opt_elim = {opt, on_none, on_some} ->
+  if (is_leaf opt) then (on_none t) else (on_some (stem_child opt))
+
 let tele_check = fix ({self, tele, v} ->
   if (is_fork tele) then {
     let entry = pair_fst tele
     let x = field v (entry.name)
     let rest = (pair_snd tele) x
-    if (is_leaf entry.def)
-      then (bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF)))
-      else (if (tree_eq x (stem_child entry.def)) then (self rest v) else (Ok FF))
+    opt_elim entry.def
+      ({_} -> bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF))) // opaque: x : ty
+      ({recipe} -> if (tree_eq x recipe) then (self rest v) else (Ok FF))           // derived: x ≡ recipe
   } else (Ok TT))
 // tele_field_at: projection typing on a telescope-hyp. Walk to the requested
 // field feeding each prior either its projection-neutral (opaque) or its
@@ -206,11 +212,12 @@ let tele_field_at = fix ({self, tele, slf, name} ->
   if (is_fork tele) then {
     let entry = pair_fst tele
     if (tree_eq (entry.name) name)
-      then (if (is_leaf entry.def) then (Extend entry.ty) else (Reduce (stem_child entry.def)))
+      then (opt_elim entry.def ({_} -> Extend entry.ty) ({recipe} -> Reduce recipe))  // opaque -> type; derived -> value
       else {
-        let x = if (is_leaf entry.def)
-          then (wait hyp_reduce (extend_neutral_meta slf (entry.ty) (acc entry.name)))
-          else (stem_child entry.def)
+        // feed the tail this prior's projection-neutral (opaque) or recipe (derived)
+        let x = (opt_elim entry.def
+          ({_} -> wait hyp_reduce (extend_neutral_meta slf (entry.ty) (acc entry.name)))
+          ({recipe} -> recipe))
         match (param_walker (pair_snd tele) x) {
           Ok rest => self rest slf name
           Err _ => Extend InvalidType
@@ -226,7 +233,7 @@ Telescope : Tree -> Type := {tele} -> wait (make_recognizer
 let mk_fold = fix ({self, tele, given} ->
   if (is_fork tele) then {
     let entry = pair_fst tele
-    let x = if (is_leaf entry.def) then (field given (entry.name)) else (stem_child entry.def)
+    let x = opt_elim entry.def ({_} -> field given (entry.name)) ({recipe} -> recipe)
     let rest = self ((pair_snd tele) x) given
     pair (cons (entry.name) (pair_fst rest)) (cons (list_const x) (pair_snd rest))
   } else (pair nil nil))
