@@ -22,7 +22,7 @@ test pair_map_snd succ (mk_pair 1 9) = mk_pair 1 10
 test pair_swap (mk_pair 1 9) = mk_pair 9 1
 
 // Pair under a Pi binder — `.fst`/`.snd` projection is uniform: the §2.6 cut
-// on a concrete record, tele_respond on a Pair-hypothesis. No is_neutral
+// on a concrete record, Telescope's respond on a Pair-hypothesis. No is_neutral
 // dispatch needed (the old proj_fst/proj_snd select_lazy hack is gone).
 let snd_of_nats : Pair Nat Nat -> Nat = {p} -> p.snd
 test snd_of_nats (mk_pair 4 7) = 7

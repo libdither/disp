@@ -43,19 +43,20 @@ test param_apply MetaShape zero                                  = Ok FF // a no
 // does NOT make the inspecting responds typeable:
 // - inert_respond ignores all three args -> parametric -> inhabits RespondShape.
 test param_apply RespondShape inert_respond = Ok TT
-// - inductive/eq/record PROJECT off `frame` (`frame.motive`, `pair_fst frame`). Under
+// - inductive/eq/telescope PROJECT off `frame` (`frame.motive`, `pair_fst frame`). Under
 //   RespondShape, `frame : Tree` is abstract, so `frame.motive` routes to Tree's inert
 //   respond -> InvalidType, and applying that to the self-neutral trips the walker -> Err.
 //   Fixing this needs a per-former STRUCTURED Frame type (Part C), so `frame.motive` is a
-//   real motive. (When that lands, these flip to Ok TT.)
+//   real motive. (When that lands, these flip to Ok TT.) The single-use responds are
+//   inlined into their formers now, so read them off the live metas.
 test param_apply RespondShape inductive_respond = Err
-test param_apply RespondShape eq_respond        = Err
-test param_apply RespondShape tele_respond      = Err
-// - pi_respond / nat_respond now TERMINATE (STRICTTYPE.md step 1): with InvalidType a
+test param_apply RespondShape ((type_meta (Eq Nat zero zero)).respond) = Err
+test param_apply RespondShape ((type_meta (Telescope t)).respond)      = Err
+// - Pi's / Nat's responds now TERMINATE (STRICTTYPE.md step 1): with InvalidType a
 //   real empty type, eliminating an InvalidType-neutral runs a well-defined inert
 //   respond instead of projecting `.respond` out of `FF` and looping. They still do
 //   NOT inhabit RespondShape (the Part-C reason: `params`/`frame` are unstructured
-//   Tree, so projecting off them under abstract inputs is ill-formed). nat surfaces
-//   that cleanly as Err; pi terminates with a stuck non-verdict (≠ TT).
-test param_apply RespondShape nat_respond            = Err
-test tree_eq (param_apply RespondShape pi_respond) TT = FF
+//   Tree, so projecting off them under abstract inputs is ill-formed). Nat surfaces
+//   that cleanly as Err; Pi terminates with a stuck non-verdict (≠ TT).
+test param_apply RespondShape ((type_meta Nat).respond)                          = Err
+test tree_eq (param_apply RespondShape ((type_meta (Pi Nat ({_} -> Bool))).respond)) TT = FF

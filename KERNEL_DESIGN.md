@@ -47,7 +47,7 @@ structural level — a neutral child of a concrete constructor (e.g.
 
 `respond` is constitutive. Inert types use `inert_respond` (every
 frame → `Extend InvalidType`); inductive types use `inductive_respond`
-or a gated coherence respond (`nat_respond` / `bool_respond`) that
+or a gated coherence respond (Nat's / Bool's, inlined in their metas) that
 checks the eliminator's cases inhabit the motive.
 
 ## Telescopes

@@ -102,7 +102,7 @@ let hDep = make_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
 let fstp = param_apply hDep (acc "fst")
 test neutral_type (param_apply hDep (acc "snd")) = Eq Nat fstp fstp
 
-// A Pi-hyp applied to an argument lands at the codomain (pi_respond reads
+// A Pi-hyp applied to an argument lands at the codomain (Pi's respond reads
 // the cod field of the recognizer_params record by name).
 let hPi = make_hyp (Pi Nat ({_} -> Bool)) 0
 test neutral_type (param_apply hPi zero) = Bool

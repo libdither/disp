@@ -3,8 +3,8 @@ open use "../kernel/prelude.disp"
 
 // Typed pairs are 2-field records ({ fst := a; snd := b }): Pair A B is the
 // non-dependent Sigma, itself a 2-entry telescope. Projection is UNIFORM —
-// `p.fst` is the §2.6 cut on a concrete record and routes through tele_respond
-// on a Pair-hypothesis — so the old is_neutral dispatch (proj_fst/proj_snd over
+// `p.fst` is the §2.6 cut on a concrete record and routes through Telescope's
+// respond (tele_field_at) on a Pair-hypothesis — so the old is_neutral dispatch (proj_fst/proj_snd over
 // walker_pair_* selectors) is gone. Prelude's fork-pairs (`pair`, `pair_fst`,
 // `pair_snd`) remain the RAW substrate idiom for kernel-internal trees.
 

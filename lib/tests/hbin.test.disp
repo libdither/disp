@@ -1,0 +1,59 @@
+// HBin — hereditarily binary naturals (Tarau, arXiv:1306.1128). Pins
+// (a) recognition of the paper's §3.2 examples + rejection of non-terms,
+// (b) the H-rule on HBin hypotheses, and (c) the denotation n : T -> Nat
+// (eq. 19), including the Mersenne shape: a chain of k hb_v's stays a
+// k-node tree while the number towers (0, 1, 3, 15, …).
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+test typecheck Type HBin = Ok TT
+
+// the paper's first naturals (§3.2):
+// 0 = E   1 = V E []   2 = W E []   3 = V (V E []) []   4 = W E [E]   5 = V E [E]
+test param_apply HBin hb_e = Ok TT
+test param_apply HBin (hb_v hb_e t) = Ok TT
+test param_apply HBin (hb_w hb_e t) = Ok TT
+test param_apply HBin (hb_v (hb_v hb_e t) t) = Ok TT
+test param_apply HBin (hb_w hb_e (pair hb_e t)) = Ok TT
+test param_apply HBin (hb_v hb_e (pair hb_e t)) = Ok TT
+
+// rejections: a bare stem, a fork without the stem head, a stem block list,
+// and a non-HBin count (counts must be HBins, hereditarily). NB a STEM count
+// is not rejectable garbage: hb_v (t t) xs IS hb_w hb_e xs — the W tag is
+// exactly a stem on the count, and HBin values are never stems.
+test param_apply HBin (t t) = Ok FF
+test param_apply HBin (t t t) = Ok FF
+test param_apply HBin (hb_v hb_e (t t)) = Ok FF
+test param_apply HBin (hb_v (t t t) t) = Ok FF
+test tree_eq (hb_v (t t) t) (hb_w hb_e t) = TT // the stem-count pun, pinned
+
+// H-rule: an HBin hypothesis inhabits HBin (reached via param_apply, §6.3)
+test param_apply HBin (make_hyp HBin 0) = Ok TT
+
+// ---- denotation: eq. 19 read through the o/i digit ops ----
+// n(V x xs) = o^(n(x)+1) (n(W y ys))  for xs = (y:ys), o^(n(x)+1) (0) for [];
+// dually for W with i. The head block is applied OUTERMOST; the tag
+// alternates down the list.
+let dbl = fix ({self, n} -> if (tree_eq n zero) then zero else (succ (succ (self (nat_pred n)))))
+let o_op = {n} -> succ (dbl n) // o(x) = 2x+1
+let i_op = {n} -> succ (succ (dbl n)) // i(x) = 2x+2
+let iter_op = fix ({self, f, k, acc} -> if (tree_eq k zero) then acc else (self f (nat_pred k) (f acc)))
+let hb_nat = fix ({self, hb} ->
+  if (is_leaf hb) then zero
+  else {
+    let lx = stem_child (pair_fst hb) // hb_v: the count; hb_w: stem(count)
+    let xs = pair_snd hb
+    let vtag = not (is_stem lx)
+    let k = succ (self (if (is_stem lx) then (stem_child lx) else lx)) // block length n(x)+1
+    let rest = if (is_leaf xs) then zero else (self ((select hb_w hb_v vtag) (pair_fst xs) (pair_snd xs)))
+    iter_op (select o_op i_op vtag) k rest
+  })
+
+test hb_nat hb_e = 0
+test hb_nat (hb_v hb_e t) = 1
+test hb_nat (hb_w hb_e t) = 2
+test hb_nat (hb_v (hb_v hb_e t) t) = 3
+test hb_nat (hb_w hb_e (pair hb_e t)) = 4
+test hb_nat (hb_v hb_e (pair hb_e t)) = 5
+// the Mersenne tower: one more hb_v jumps 3 -> 15 (= 2^(3+1) − 1)
+test hb_nat (hb_v (hb_v (hb_v hb_e t) t) t) = 15
