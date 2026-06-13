@@ -7,19 +7,18 @@
 extend_neutral_meta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
 hyp_reduce := fix ({self, meta, frame} -> {
   let tmeta = type_meta meta.stored_type
-  let me = wait self meta // the reconstructed self-neutral (= reconstruct_self meta)
+  let me = wait self meta // the reconstructed self-neutral
   match (tmeta.respond tmeta.recognizer_params me frame) {
     Extend new_type => wait self (extend_neutral_meta me new_type frame) // stuck: bare neutral (Option A, §7.5/§9)
     Reduce v => v // computes: bare value (verdicts arrive as Reduce (Ok v) via the Return alias)
   }
 })
 
-reconstruct_self := {meta} -> wait hyp_reduce meta
 make_hyp := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := id }
 
 hyp_sig := checker_sig hyp_reduce
 is_neutral := {v} -> tree_eq (pair_fst v) hyp_sig // root-sig read (bare pair_fst)
-is_concrete_fork := {v} -> select FF (is_fork v) (is_neutral v) // a fork that isn't a neutral
+is_concrete_fork := {v} -> and (is_fork v) (not (is_neutral v)) // a fork that isn't a neutral
 // fetch stored type of neutral
 neutral_type := {v} -> (type_meta v).stored_type
 

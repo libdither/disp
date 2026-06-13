@@ -4,15 +4,10 @@
 // TODO: investigate whether Bool/Nat/Ord can be defined as Coproducts.
 Bool : Type := wait (make_recognizer
   {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
-) (make_meta unit_witness (
-  {params, self, frame} -> gated_inductive_respond (
-    {T, motive, cases} -> {
-      let ct = cases.ct
-      let cf = cases.cf
-      bind ((motive TT) ct) ({okt} -> if okt then ((motive FF) cf) else (Ok FF))
-    }
-  ) params self frame
-))
+) (make_meta unit_witness (gated_inductive_respond (
+  {T, motive, cases} ->
+    bind ((motive TT) cases.ct) ({okt} -> if okt then ((motive FF) cases.cf) else (Ok FF))
+)))
 
 // Nat recurses via the threaded `self`, so a neutral predecessor in `succ hyp` is
 // recognised by the H-rule, not triaged (§A). The respond's coherence: base : motive
@@ -25,15 +20,13 @@ Nat : Type := wait (make_rec_recognizer
     ({_} -> Ok FF) // stem -> not a Nat
     ({l, r} -> if (tree_eq l t) then (self r) else (Ok FF)) // succ r -> recurse via self
     v
-) (make_meta unit_witness (
-  {params, self, frame} -> gated_inductive_respond (
-    {T, motive, cases} -> {
-      let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
-        (motive (succ n)) ((cases.step n) ih))))
-      bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
-    }
-  ) params self frame
-))
+) (make_meta unit_witness (gated_inductive_respond (
+  {T, motive, cases} -> {
+    let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
+      (motive (succ n)) ((cases.step n) ih))))
+    bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
+  }
+)))
 
 // Pi : {A : Type} -> (A -> Type) -> Type — self-referential (its annotation mentions Pi
 // via `->`). Recognizer: under the walker, `(B hyp) (v hyp)` checks the result against the
@@ -42,9 +35,7 @@ Nat : Type := wait (make_rec_recognizer
 Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer
   {meta, v} -> {
     let params = meta.recognizer_params
-    let A = params.dom
-    let B = params.cod
-    bind_hyp A ({hyp} -> (B hyp) (v hyp))
+    bind_hyp params.dom ({hyp} -> (params.cod hyp) (v hyp))
   }
 ) (make_meta { dom := A; cod := B } ({params, self, frame} -> Extend (params.cod frame)))
 
@@ -128,9 +119,7 @@ eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A
 Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> wait (make_recognizer
   {meta, v} -> {
     let params = meta.recognizer_params
-    let A = params.base
-    let P = params.pred
-    bind (A v) ({va} -> if va then (Ok (P v)) else (Ok FF)) // P is a bare-Bool predicate
+    bind (params.base v) ({va} -> if va then (Ok (params.pred v)) else (Ok FF)) // pred is a bare-Bool predicate
   }
 ) (make_meta { base := A; pred := P } inert_respond)
 
@@ -139,9 +128,7 @@ Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> wait (make_recognize
 Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> wait (make_recognizer
   {meta, v} -> {
     let params = meta.recognizer_params
-    let A = params.base
-    let P = params.pred
-    bind_hyp A ({hyp} -> (P hyp) v)  // under the walker: walk polices P's use of hyp, then typecheck v against (P hyp)
+    bind_hyp params.base ({hyp} -> (params.pred hyp) v)  // under the walker: walk polices pred's use of hyp, then typecheck v against (pred hyp)
   }
 ) (make_meta { base := A; pred := P } inert_respond)
 
