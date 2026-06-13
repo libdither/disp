@@ -921,16 +921,13 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     let tree: Tree, inferredType: Tree | null = null
     const Type = lookupEntry("Type")?.tree
 
-    // `raw` (a `use raw "…"` import) drops annotation processing: the body is
-    // compiled as a value and the declared type is discarded. This breaks the
-    // bootstrap cycle — a file's own annotations can reference names the file is
-    // still defining — at the cost of the module's `typ`. A body compiles the
-    // SAME with or without its annotation, EXCEPT a `: Type := <arrow>` type-alias
-    // (e.g. `NatSet : Type := Nat -> Bool`), which a raw import yields as the
-    // unevaluated lambda rather than the `Pi`. The kernel has no such alias, so a
-    // raw kernel import matches a checked one value-for-value.
+    // `raw` (a `use raw "…"` import) drops annotation *verification*: the
+    // declared type is discarded and the body compiled directly. This breaks
+    // the bootstrap cycle — a file's own annotations can reference names the
+    // file is still defining — at the cost of the module's `typ`.
     // recType annotations participate once `Telescope` exists (they compile to
     // telescope types); without it they keep the legacy fields-metadata-only role.
+    const isTypeAlias = type?.tag === "var" && type.name === "Type" && !!lookupEntry("Pi")?.tree
     if (!raw && type != null && (type.tag !== "recType" || lookupEntry("Telescope")?.tree) && (Type || lookupEntry("Pi")?.tree)) {
       // Build the annotation's type tree (binder → Pi, else plain compile). If the
       // annotation is the universe `Type`, the BODY itself denotes a type, so
@@ -943,8 +940,16 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
         ? compileType(body, lookupEntry, resolveUse)
         : compileExpr(body, lookupEntry, resolveUse, sinks)
       inferredType = type_tree
+    } else if (raw && isTypeAlias) {
+      // Raw load of a `: Type := …` alias: still run the type-mode desugar
+      // (binderToPi) on the body, so a `: Type := <arrow>` alias compiles to the
+      // same `Pi` tree raw OR checked (mode-independent). This is the SYNTACTIC
+      // `Type`-position decision only — pure desugar, no verification — so it
+      // does NOT reopen the bootstrap cycle, yet lets raw-loaded kernel files use
+      // `A -> B` for type aliases instead of the function-application `Arrow`.
+      tree = compileType(body, lookupEntry, resolveUse)
     } else {
-      // Untyped, raw, or no kernel — plain value compilation.
+      // Untyped, raw value, or no kernel — plain value compilation.
       tree = compileExpr(body, lookupEntry, resolveUse, sinks)
     }
 

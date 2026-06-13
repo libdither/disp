@@ -333,7 +333,7 @@ NeutralMeta : Type := { stored_type : Type, payload : Tree }
 Action : Type := Coproduct_of { Extend := Type; Reduce := Tree }
 // RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
 // A respond inhabits it iff it doesn't raw-triage its args. (Pinned in metashape.test.disp.)
-RespondShape : Type := Arrow Tree (Arrow Tree (Arrow Frame Action))
+RespondShape : Type := Tree -> Tree -> Frame -> Action
 // MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
 MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }

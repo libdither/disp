@@ -37,6 +37,12 @@ test typecheck MetaShape (type_meta Bool)                        = Ok TT // a li
 test typecheck MetaShape (type_meta (Pi Nat ({_} -> Bool)))      = Ok TT
 test param_apply MetaShape zero                                  = Ok FF // a non-record is not a MetaShape
 
+// RespondShape is defined `Tree -> Tree -> Frame -> Action` (the `->` sugar), in a
+// raw-loaded kernel fragment. This pins that a `: Type := <arrow>` alias compiles to
+// the SAME Pi tree as the function-application `Arrow` form (the raw-load type-mode
+// fix) — i.e. `->` is mode-independent for type aliases.
+test tree_eq RespondShape (Arrow Tree (Arrow Tree (Arrow Frame Action))) = TT
+
 // ---- RespondShape (post §12.6 Part-A re-contract): respond = {params, self, frame} -> Action ----
 // hyp_reduce now extracts the metadata once and passes params + reconstructed self, so
 // responds no longer raw-read `type_meta` of an abstract stored type. But that alone
