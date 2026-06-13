@@ -55,6 +55,20 @@ Return : Tree -> Action := {v} -> Reduce (Ok v)
 
 bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind
 
+// lookup_field: the CHECKING-layer sibling of `field`. `field`/`proj`/`annihilate`
+// are TOTAL — they trust that a projected name is present (well-typed records always
+// are), which is what keeps the runtime cut a plain application. A recognizer is what
+// ESTABLISHES that invariant, so it looks up HONESTLY: `Ok value` if `name` is a
+// field of record `r`, else `Err`. (Without this a record MISSING `name` projects to
+// junk `t t`, which a permissive field type — Tree, String — would silently accept.)
+let lookup_field_at = fix ({self, names, payload, name} ->
+  if (is_fork names)
+    then (if (tree_eq (pair_fst names) name)
+            then (Ok ((pair_fst payload) t)) // unwrap the list_const-wrapped value
+            else (self (pair_snd names) (pair_snd payload) name))
+    else Err)
+lookup_field := {r, name} -> lookup_field_at (pair_fst (type_meta r)) (pair_snd (type_meta r)) name
+
 // MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
 // behavioral_specs }, read by name; conformance is an O(1) tree_eq on the header.
 unit_witness := t

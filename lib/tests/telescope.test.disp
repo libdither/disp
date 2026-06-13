@@ -25,6 +25,19 @@ test param_apply T2 { b := TT } = Ok FF // missing field
 test param_apply T2 zero = Ok FF
 test typecheck T2 { a := 2; b := TT; c := 9 } = Ok TT // width subtyping: extra fields ignored
 
+// ---- presence is required, even for PERMISSIVE field types. A missing field
+// used to be coerced to junk `t t`, which a top-like type (Tree/String) accepts;
+// tele_check now uses the honest `lookup_field` (Ok value | Err) instead of the
+// total `field`, so absent fields are rejected regardless of the field's type. ----
+let TTop = Telescope (t (ent "a" Tree) ({_a} -> t (ent "b" Bool) ({_b} -> t)))
+test param_apply TTop { b := TT } = Ok FF          // missing a:Tree -> rejected (was Ok TT)
+test typecheck TTop { a := zero; b := TT } = Ok TT // present -> accepted
+test lookup_field { a := zero; b := TT } "a" = Ok zero
+test lookup_field { a := zero; b := TT } "zzz" = Err // absent name -> Err
+// the kernel's own structural records require all their fields too:
+test param_apply NeutralMeta { stored_type := Nat } = Ok FF // missing payload:Tree
+test param_apply NeutralMeta { stored_type := Nat; payload := zero } = Ok TT
+
 // ---- the H-rule: a Telescope-typed neutral inhabits its own type ----
 test param_apply T2 (make_hyp T2 0) = Ok TT
 

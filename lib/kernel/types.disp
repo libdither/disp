@@ -196,11 +196,15 @@ let opt_elim = {opt, on_none, on_some} ->
 let tele_check = fix ({self, tele, v} ->
   if (is_fork tele) then {
     let entry = pair_fst tele
-    let x = field v (entry.name)
-    let rest = (pair_snd tele) x
-    opt_elim entry.def
-      ({_} -> bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF))) // opaque: x : ty
-      ({recipe} -> if (tree_eq x recipe) then (self rest v) else (Ok FF))           // derived: x ≡ recipe
+    match (lookup_field v (entry.name)) {
+      Err _ => Ok FF // declared field absent — presence is part of membership
+      Ok x => {
+        let rest = (pair_snd tele) x
+        opt_elim entry.def
+          ({_} -> bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF))) // opaque: x : ty
+          ({recipe} -> if (tree_eq x recipe) then (self rest v) else (Ok FF))           // derived: x ≡ recipe
+      }
+    }
   } else (Ok TT))
 // tele_field_at: projection typing on a telescope-hyp. Walk to the requested
 // field feeding each prior either its projection-neutral (opaque) or its
