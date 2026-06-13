@@ -387,6 +387,7 @@ function exprToCir(
             // Inline `open expr`: resolve fields and splice them into the
             // local lookup chain. Doesn't escape this recValue's scope.
             const record = resolveExprRecord(m.expr, fieldLookup, resolveUse)
+              ?? recordFieldsFromTree(compileExpr(m.expr, fieldLookup, resolveUse, sinks), fieldLookup)
             if (!record || record.fields.length === 0)
               throw new Error("open (inline): expression has no known record fields")
             const targetTree = record.fieldTrees
@@ -737,6 +738,53 @@ function accTree(name: string): Tree {
   return fork(stringToTree(name), LEAF)
 }
 
+// treeToNat / treeToString: decode the lib encodings (Nat = nested fork(LEAF,·),
+// String = a cons-chain of codepoint Nats) back to host values — the inverse of
+// natLitTree / stringToTree. Used to read a record's field-name header.
+function treeToNat(t: Tree): number {
+  let n = 0, cur = force(t)
+  while (cur.tag === "fork") { n++; cur = force(cur.right) }
+  return n
+}
+function treeToString(t: Tree): string {
+  const codes: number[] = []
+  let cur = force(t)
+  while (cur.tag === "fork") { codes.push(treeToNat(cur.left)); cur = force(cur.right) }
+  return codes.length ? String.fromCodePoint(...codes) : ""
+}
+
+// recordFieldsFromTree(tree): if `tree` is a §2.6 record VALUE (an annihilate-
+// rooted product — e.g. the output of `mk_record` / `Enum`), read its field-name
+// header and extract each field via the cut, so `open` works on a *computed*
+// record, not only on statically-known `use` modules. Returns undefined for
+// anything that isn't such a record — in particular library TYPES are
+// recognizer-rooted (not annihilate-rooted), so they are correctly excluded.
+// Needs the kernel in scope (`annihilate_sig`/`type_meta`/`pair_fst`); without
+// it, returns undefined.
+function recordFieldsFromTree(
+  tree: Tree,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[] } | undefined {
+  const annihilateSig = lookupEntry("annihilate_sig")?.tree
+  const typeMeta = lookupEntry("type_meta")?.tree
+  const pairFst = lookupEntry("pair_fst")?.tree
+  if (!annihilateSig || !typeMeta || !pairFst) return undefined
+  const sig = treePairFst(tree)
+  if (!sig || !treeEqual(sig, annihilateSig)) return undefined
+  // names = pair_fst (type_meta tree): a cons-chain of interned string tags.
+  const namesTree = applyTree(pairFst, applyTree(typeMeta, tree, APPLY_BUDGET), APPLY_BUDGET)
+  const fields: string[] = []
+  const fieldTrees: Tree[] = []
+  let cur = force(namesTree)
+  while (cur.tag === "fork") {
+    const name = treeToString(cur.left)
+    fields.push(name)
+    fieldTrees.push(applyTree(tree, accTree(name), APPLY_BUDGET))
+    cur = force(cur.right)
+  }
+  return fields.length > 0 ? { fields, fieldTrees } : undefined
+}
+
 // ──────────────────────────── 6. Driver ─────────────────────────────────
 
 export type Decl =
@@ -901,8 +949,11 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
     }
 
     // Module metadata propagation (`let m = use "f"`): `open m` and projection
-    // on the module's Church-record fallback need the export list.
-    const record = resolveExprRecord(body, lookupEntry, resolveUse)
+    // on the module's Church-record fallback need the export list. Falls back to
+    // reading the field header off the compiled tree, so a binding whose value is
+    // a §2.6 record (`E := Enum {…}`, any `mk_record` result) is `open`-able and
+    // projects at compile time.
+    const record = resolveExprRecord(body, lookupEntry, resolveUse) ?? recordFieldsFromTree(tree, lookupEntry)
     define(name, { tree, type: inferredType, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes })
     return { tree, type: inferredType }
   }
@@ -955,6 +1006,7 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
       }
       case "open": {
         const record = resolveExprRecord(it.expr, lookupEntry, resolveUse)
+          ?? recordFieldsFromTree(compileExpr(it.expr, lookupEntry, resolveUse, sinks), lookupEntry)
         if (!record || record.fields.length === 0)
           throw new Error("open: expression has no known record fields")
         const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse, sinks)

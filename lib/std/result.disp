@@ -3,7 +3,7 @@ open use "../kernel/prelude.disp"
 
 // Result E A — success-or-error value, as a proper §2.6 Coproduct.
 //
-// Result is `Coproduct [(ok, A), (err, E)]`: a value is `inj tag payload`. Being
+// Result is `Coproduct_of { ok := A; err := E }`: a value is `inj tag payload`. Being
 // a real coproduct type (a wait-form carrying `inductive_respond`) is what makes a
 // *neutral* Result eliminable — `result_rec`'s neutral branch applies the
 // hypothesis to a `{motive; cases}` frame that routes through the respond, the one
@@ -13,7 +13,7 @@ open use "../kernel/prelude.disp"
 ok_tag  : String := "ok"
 err_tag : String := "err"
 
-Result : Type -> Type -> Type := {E, A} -> Coproduct [pair ok_tag A, pair err_tag E]
+Result : Type -> Type -> Type := {E, A} -> Coproduct_of { ok := A; err := E }
 
 // payload-only constructors -> loose Tree type (see option.disp none/some).
 ok  : Tree -> Tree := {v} -> inj ok_tag v

@@ -288,6 +288,36 @@ Record : Tree -> Type := {fields} -> wait (make_recognizer
   {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (tele_check (fields_to_tele meta.recognizer_params) v) else (Ok FF)
 ) (make_meta fields ({params, self, frame} -> tele_field_at (fields_to_tele params) self (pair_fst frame)))
 
+// Coproduct_of / ctors: build a coproduct from a variant RECORD
+// `{ Tag := payloadType, … }` instead of the positional `Coproduct [pair "Tag"
+// T, …]`. `Coproduct_of` is the TYPE; `ctors` derives that type's constructor
+// record `{ Tag := inj1 Tag, … }` (inj0 for a Unit payload) FROM the type, so the
+// type keeps your binding's name and the constructors come for free:
+//   Action := Coproduct_of { Extend := Type; Reduce := Tree }
+//   open ctors Action      // Extend, Reduce in scope (or by dot: (ctors Action).Extend)
+// `open` reads the record header off the compiled tree (src/compile.ts
+// recordFieldsFromTree). Unannotated (like `mk`): the folds read a record
+// header, so a `Tree -> …` typing would mint a hyp they inspect.
+let variants_of = fix ({self, decl, names} ->
+  if (is_fork names)
+    then (cons (pair (pair_fst names) (field decl (pair_fst names))) (self decl (pair_snd names)))
+    else nil)
+Coproduct_of := {decl} -> Coproduct (variants_of decl (pair_fst (type_meta decl)))
+
+let ctors_fold = fix ({self, variants} ->
+  if (is_fork variants) then {
+    let nm = pair_fst (pair_fst variants)
+    // Unit payload -> the nullary value `inj nm unit_val` (Unit recognizes only
+    // unit_val, NOT the bare `t` of inj0); else the payload-taking `inj1 nm`.
+    let ctor = if (tree_eq (pair_snd (pair_fst variants)) Unit) then (inj nm unit_val) else (inj1 nm)
+    let rest = self (pair_snd variants)
+    pair (cons nm (pair_fst rest)) (cons (list_const ctor) (pair_snd rest))
+  } else (pair nil nil))
+ctors := {T} -> {
+  let cs = ctors_fold ((type_meta T).recognizer_params)
+  mk_record (pair_fst cs) (pair_snd cs)
+}
+
 // The kernel's own structural types (§11.2 / §12.6), built from the library formers above
 // so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
 // Tree: the permissive "any tree" type (recognizer = Ok TT), the de-facto top type.
@@ -295,15 +325,15 @@ Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness 
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
 Frame : Type := Tree
 // NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).
-NeutralMeta : Type := Record [pair "stored_type" Type, pair "payload" Tree]
+NeutralMeta : Type := { stored_type : Type, payload : Tree }
 // Action: a respond's result — a neutral elimination either stays stuck
 // (`Extend new_type`, payload Type; InvalidType is itself a real empty Type) or
 // computes (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the
 // verdict ALIAS, not an arm.
-Action : Type := Coproduct [pair "Extend" Type, pair "Reduce" Tree]
+Action : Type := Coproduct_of { Extend := Type; Reduce := Tree }
 // RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
 // A respond inhabits it iff it doesn't raw-triage its args. (Pinned in metashape.test.disp.)
 RespondShape : Type := Arrow Tree (Arrow Tree (Arrow Frame Action))
 // MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
-MetaShape : Type := Record [pair "recognizer_params" Tree, pair "functor" Tree, pair "respond" Tree, pair "behavioral_specs" Tree]
+MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }

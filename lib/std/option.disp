@@ -3,7 +3,7 @@ open use "../kernel/prelude.disp"
 
 // Option A — optional value, as a proper §2.6 Coproduct.
 //
-// Option is `Coproduct [(some, A), (none, Unit)]`: a value is `inj tag payload`
+// Option is `Coproduct_of { some := A; none := Unit }`: a value is `inj tag payload`
 // (a tag tree in pair_fst, the payload in pair_snd). Being a real coproduct type
 // — a wait-form carrying `inductive_respond` — is what makes a *neutral* Option
 // eliminable: `option_rec`'s neutral branch applies the hypothesis to a
@@ -15,7 +15,7 @@ open use "../kernel/prelude.disp"
 none_tag : String := "none"
 some_tag : String := "some"
 
-Option : Type -> Type := {A} -> Coproduct [pair some_tag A, pair none_tag Unit]
+Option : Type -> Type := {A} -> Coproduct_of { some := A; none := Unit }
 
 // none/some are payload-only constructors, so they carry the loose Tree type rather
 // than the dependent `{A} -> A -> Option A` (which would need an extra A binder).
