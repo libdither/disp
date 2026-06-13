@@ -249,6 +249,40 @@ mk := {T, given} -> {
   mk_record (pair_fst nv) (pair_snd nv)
 }
 
+// mk_curried T: the CURRIED constructor — like `mk` but takes the opaque fields
+// one at a time (a lambda per opaque field), computing each derived field from
+// the priors and instantiating the tail at every value. Fully applied it yields
+// the SAME record as `mk T { … }`; a partial application is a record-under-
+// construction whose type is the residual (see `constructor_type`). This is the
+// Π/Σ bridge: `mk_curried T : Π Δ_opaque. T` builds the Σ-record that Δ describes.
+let list_rev = fix ({self, xs, acc} -> if (is_fork xs) then (self (pair_snd xs) (cons (pair_fst xs) acc)) else acc)
+let mkc_go = fix ({self, tele, names, vals} ->
+  if (is_fork tele) then {
+    let entry = pair_fst tele
+    if (is_leaf entry.def)
+      then ({x} -> self ((pair_snd tele) x) (cons (entry.name) names) (cons (list_const x) vals)) // opaque: await x
+      else {
+        let x = stem_child entry.def                                                              // derived: compute now
+        self ((pair_snd tele) x) (cons (entry.name) names) (cons (list_const x) vals)
+      }
+  } else (mk_record (list_rev names nil) (list_rev vals nil)))
+mk_curried := {T} -> mkc_go ((type_meta T).recognizer_params) nil nil
+
+// constructor_type T: the type of `mk_curried T` — a Π-chain over the OPAQUE
+// fields, ending in T (derived fields skipped, computed). Each opaque field is a
+// Pi whose codomain is the residual constructor type, so a partial application
+// has the shrunk residual type (a typestate). For a *dependent* field the
+// codomain genuinely depends on the bound value, so the residual is an unreduced
+// family — recognizer-correct and deterministic, but intensional under tree_eq.
+let ctype_go = fix ({self, tele, T} ->
+  if (is_fork tele) then {
+    let entry = pair_fst tele
+    if (is_leaf entry.def)
+      then (Pi (entry.ty) ({x} -> self ((pair_snd tele) x) T))      // opaque -> a Pi
+      else (self ((pair_snd tele) (stem_child entry.def)) T)        // derived -> skip (computed)
+  } else T)
+constructor_type := {T} -> ctype_go ((type_meta T).recognizer_params) T
+
 // Sigma A B: the dependent pair as a 2-entry telescope { fst : A, snd : B fst }.
 // Values are §2.6 records ({ fst := a; snd := b }); a Sigma-hyp projects via
 // `acc "fst"` / `acc "snd"` through tele_respond (dependency preserved; the old

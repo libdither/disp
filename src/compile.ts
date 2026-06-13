@@ -338,9 +338,14 @@ function exprToCir(
         const priorNames = new Set(e.fields.slice(0, i).map(p => p.name))
         const shadowed = (n: string): ScopeEntry | undefined =>
           priorNames.has(n) ? {} : lookupEntry(n)
-        const tyCir: Cir = f.type
-          ? exprToCir(f.type, shadowed, resolveUse, sinks)
-          : exprToCir({ tag: "var", name: "Tree" }, shadowed, resolveUse, sinks)
+        // A field's type is a TYPE position: desugar binders to `Pi` (so a
+        // function-typed field `s : T -> T` is a `Pi`, not a value-lambda),
+        // exactly as a binding annotation does. Non-binder types (`Nat`, `B fst`)
+        // pass through unchanged.
+        const tyExpr: Expr = f.type ?? { tag: "var", name: "Tree" }
+        const tyCir: Cir = exprToCir(
+          lookupEntry("Pi")?.tree ? binderToPi(tyExpr) : tyExpr,
+          shadowed, resolveUse, sinks)
         const defCir: Cir = f.value != null
           ? cap(leafCir, exprToCir(f.value, shadowed, resolveUse, sinks)) // t recipe (derived)
           : leafCir // t (opaque)

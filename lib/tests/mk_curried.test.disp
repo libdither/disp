@@ -1,0 +1,31 @@
+// Curried telescope constructors: `mk_curried T` builds a record by taking its
+// opaque fields one at a time (computing derived fields between), and
+// `constructor_type T` is its type — a Π-chain over the opaque fields ending in
+// T. Together they realize the Π/Σ-over-a-telescope bridge: the constructor is a
+// function (Π) that builds a record (Σ); partial application has the residual
+// (shrinking) type. This is the substrate for modules / type-classes.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// ── derived-field record { a : Nat; b := succ a } ────────────────────────────
+Td := { a : Nat, b := succ a }
+test tree_eq (mk_curried Td 3) (mk Td { a := 3 })           = TT  // curried == all-at-once
+test param_apply Td (mk_curried Td 3)                       = Ok TT  // full app inhabits Td (b computed)
+test (mk_curried Td 3).b                                    = (succ 3)  // derived field computed at apply
+test param_apply (constructor_type Td) (mk_curried Td)      = Ok TT  // mk_curried Td : Nat -> Td
+
+// ── dependent pair Sigma Nat (_ -> Bool) ──────────────────────────────────────
+SP := Sigma Nat ({_} -> Bool)
+test param_apply SP (mk_curried SP 2 TT)                    = Ok TT  // (x:Nat)(y:Bool) curried, full
+test param_apply (constructor_type SP) (mk_curried SP)      = Ok TT  // mk_curried SP : Nat -> Bool -> SP
+test param_apply (Pi Bool ({_} -> SP)) (mk_curried SP 2)    = Ok TT  // PARTIAL: residual (shrunk) type Bool -> SP
+
+// ── a type-class / module signature, as a telescope ───────────────────────────
+// `{ T : Type; z : T; s : T -> T }` — a pointed type with an endo. The field
+// types DEPEND on the carrier `T`. Its constructor is the (polymorphic) instance
+// builder; an instance is `mk_curried PointedEndo <carrier> <z> <s>`.
+PointedEndo := { T : Type, z : T, s : T -> T }
+test param_apply PointedEndo (mk_curried PointedEndo Nat zero succ) = Ok TT  // the Nat/zero/succ instance
+test (mk_curried PointedEndo Nat zero succ).s                       = succ   // project a method
+// the instance constructor is polymorphic over the carrier: (T:Type)(z:T)(s:T->T) -> PointedEndo
+test param_apply (constructor_type PointedEndo) (mk_curried PointedEndo) = Ok TT
