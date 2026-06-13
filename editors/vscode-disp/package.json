@@ -1,0 +1,26 @@
+{
+  "name": "disp-lang",
+  "displayName": "Disp",
+  "description": "Syntax highlighting for the Disp language (.disp)",
+  "version": "0.1.0",
+  "publisher": "zyansheep",
+  "engines": { "vscode": "^1.70.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "disp",
+        "aliases": ["Disp", "disp"],
+        "extensions": [".disp"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "disp",
+        "scopeName": "source.disp",
+        "path": "./syntaxes/disp.tmLanguage.json"
+      }
+    ]
+  }
+}

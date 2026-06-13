@@ -1,0 +1,103 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Disp",
+  "scopeName": "source.disp",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#keywords" },
+    { "include": "#leaf" },
+    { "include": "#hole" },
+    { "include": "#numbers" },
+    { "include": "#definition" },
+    { "include": "#projection" },
+    { "include": "#operators" },
+    { "include": "#types" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.disp",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.disp",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.disp",
+      "begin": "\"",
+      "end": "\""
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.disp",
+          "match": "(?<![A-Za-z0-9_'])(match|if|then|else)(?![A-Za-z0-9_'])"
+        },
+        {
+          "name": "keyword.other.disp",
+          "match": "(?<![A-Za-z0-9_'])(let|test|use|open|raw)(?![A-Za-z0-9_'])"
+        }
+      ]
+    },
+    "leaf": {
+      "name": "constant.language.leaf.disp",
+      "match": "(?<![A-Za-z0-9_'])t(?![A-Za-z0-9_'])|△"
+    },
+    "hole": {
+      "name": "constant.language.hole.disp",
+      "match": "(?<![A-Za-z0-9_'])_(?![A-Za-z0-9_'])"
+    },
+    "numbers": {
+      "name": "constant.numeric.disp",
+      "match": "(?<![A-Za-z0-9_'])[0-9]+(?![A-Za-z0-9_'])"
+    },
+    "definition": {
+      "comment": "Exported field `name := e` / `name : T := e` or `let name = e` — highlight the bound name",
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_'])(let)\\s+([A-Za-z_][A-Za-z0-9_']*)",
+          "captures": {
+            "1": { "name": "keyword.other.disp" },
+            "2": { "name": "entity.name.function.disp" }
+          }
+        },
+        {
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
+          "captures": {
+            "1": { "name": "entity.name.function.disp" }
+          }
+        }
+      ]
+    },
+    "projection": {
+      "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_']*)",
+      "captures": {
+        "1": { "name": "punctuation.accessor.disp" },
+        "2": { "name": "variable.other.member.disp" }
+      }
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.define.disp", "match": ":=" },
+        { "name": "keyword.operator.arrow.disp", "match": "->|→|=>" },
+        { "name": "keyword.operator.disp", "match": ":|=" }
+      ]
+    },
+    "types": {
+      "comment": "Capitalized identifiers: type formers and coproduct constructors",
+      "name": "entity.name.type.disp",
+      "match": "(?<![A-Za-z0-9_'])[A-Z][A-Za-z0-9_']*(?![A-Za-z0-9_'])"
+    },
+    "identifiers": {
+      "name": "variable.other.disp",
+      "match": "(?<![A-Za-z0-9_'])[a-z_][A-Za-z0-9_']*(?![A-Za-z0-9_'])"
+    }
+  }
+}
