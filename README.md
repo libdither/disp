@@ -8,7 +8,7 @@ Tree calculus is natively reflective — terms ARE data, so the type checker, th
 
 - [`GOALS.md`](GOALS.md) — the long-term vision (neural-guided synthesis, self-improving optimizer).
 - [`TYPE_THEORY.typ`](TYPE_THEORY.typ) — authoritative type-theory spec. Kernel of two Σ-operations (`hyp_reduce`, `bind_hyp`) plus the dispatcher `param_apply` over a fixed Σ; manifest contracts over the tree-calculus substrate; library types (Pi, Bool, Nat, Eq, …), validators, and cubical extensions on top.
-- [`TYPE_THEORY_LEGACY.typ`](TYPE_THEORY_LEGACY.typ) — previous spec (seven kernel primitives), kept for history. The codebase has migrated off it to the two-Σ-op shape.
+- [`archive/TYPE_THEORY_LEGACY.typ`](archive/TYPE_THEORY_LEGACY.typ) — previous spec (seven kernel primitives), kept for history. The codebase has migrated off it to the two-Σ-op shape.
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
 - [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms (current codebase).
