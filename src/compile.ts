@@ -21,7 +21,12 @@ import {
 // Step budget passed to applyTree from the compiler/elaborator. Large
 // enough that elaboration of any well-formed program terminates; small
 // enough that runaway evaluation aborts before exhausting host memory.
-const APPLY_BUDGET = 10_000_000
+// (Raised 10M -> 40M when Pi/Record/Sigma unified onto the generic negative-
+// telescope recognizer `neg_check`: the kernel self-check at load now costs
+// ~16M steps vs ~8M for the old specialized recognizers — a more general
+// recognizer, ~2x heavier per Pi-check; a validated lean fast path could
+// reclaim it later, cf. the tree_eq native-fast-path discipline.)
+const APPLY_BUDGET = 40_000_000
 
 // Auto-verification cache (§ module checking): each module's typed exports are
 // checked through the kernel once per process (file content is immutable, and a

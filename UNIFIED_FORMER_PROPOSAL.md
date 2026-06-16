@@ -1,7 +1,18 @@
 # Unified Dependent Former (Negative Telescopes) — Proposal
 
-**Status: PROPOSAL (2026-06-14). Recognizer validated in scratch; respond
-unvalidated; no migration started.** Companion reading: `TYPE_THEORY.typ`
+**Status: LANDED on main 2026-06-15 (option (b), with the partial-cut fix; 149/149
+green).** `Pi`/`Record`/`Sigma`/`Telescope` now share one recognizer `neg_check`
+and one respond `neg_respond` (`lib/kernel/types.disp`); the cut grew `entry_src` +
+`observe` (`lib/kernel/cut.disp`). **The §4/§5 `v (acc name)` raw cut was NOT used**
+— `neg_check`'s `qacc` cells observe via the honest `lookup_field` (the PARTIAL cut),
+which is what keeps the pinned missing-field rejection (the soundness hole this doc
+missed; see the session that landed it). Cost: the generic recognizer is ~2× the old
+specialized ones (kernel self-check ~8M→16M steps), so `APPLY_BUDGET` was raised
+10M→40M. The §6 respond for *pure* formers is a router (mint-lead Pi vs `tele_field_at`
+projection); the genuinely-unified single-walk respond for *mixed/callable* records
+(§10.1, `Neg` over a sum index) remains future work. Original proposal below.
+
+Companion reading: `TYPE_THEORY.typ`
 (§2.6 "one cut for projection, match, and application"; §12 Telescope/Pi/Record/
 Sigma), `KERNEL_DESIGN.md` (§ Telescopes), and the `mk_curried`/`constructor_type`
 work (commit `7e1a11eb`).

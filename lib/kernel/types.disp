@@ -28,16 +28,77 @@ Nat : Type := wait (make_rec_recognizer
   }
 )))
 
-// Pi : {A : Type} -> (A -> Type) -> Type — self-referential (its annotation mentions Pi
-// via `->`). Recognizer: under the walker, `(B hyp) (v hyp)` checks the result against the
-// codomain while policing raw reflection on hyp in B or v. The respond lands a Pi-hyp
-// applied to an argument at the codomain.
+// ── Negative telescopes: ONE recognizer (neg_check) + ONE respond (neg_respond),
+// shared by Pi / Record / Sigma / Telescope. A telescope is `t entry (λx. rest)`;
+// an entry is the §2.6 record { name; ty; def } optionally carrying a coverage tag
+// `src` (entry_src defaults absent -> "qacc"). Each cell is either MINTED
+// (src=mint — a fresh hyp; ∀ over an opaque/infinite domain, the function-argument
+// case) or OBSERVED via the PARTIAL cut `observe` (qacc: lookup_field a record
+// field; qapp: apply a function output), threading the observed value as `prior`
+// to later cells. `def` is the orthogonal transparency axis (opaque / `t recipe` =
+// derived/δ). The project-vs-apply split is just which arm of `observe` runs; the
+// only irreducible axis is coverage (mint vs observe). opt_elim eliminates `def`
+// (t = opaque/none, t e = derived/some e); `if`-based to stay recursion-safe.
+let opt_elim = {opt, on_none, on_some} ->
+  if (is_leaf opt) then (on_none t) else (on_some (stem_child opt))
+
+let neg_check = fix ({self, tele, v, prior} ->
+  if (is_fork tele) then {
+    let e = pair_fst tele
+    if (tree_eq (entry_src e) "mint")
+      then (bind_hyp (e.ty) ({h} -> self ((pair_snd tele) h) v h)) // ∀ by minting (parametric coverage)
+      else (opt_elim e.def
+        ({_} -> match (observe e v prior) { // the PARTIAL cut: qapp apply | qacc lookup
+                  Err _ => Ok FF // undefined here -> not a member
+                  Ok x => (bind ((e.ty) x) ({ok} -> if ok then (self ((pair_snd tele) x) v x) else (Ok FF)))
+                })
+        ({recipe} -> match (lookup_field v (e.name)) { // derived (δ): present AND pinned to recipe
+                  Err _ => Ok FF
+                  Ok x => (if (tree_eq x recipe) then (self ((pair_snd tele) recipe) v recipe) else (Ok FF))
+                }))
+  } else (Ok TT))
+
+// tele_field_at: projection typing on a telescope-hyp. Walk to the requested field
+// feeding each prior its projection-neutral (opaque) or recipe (derived — δ in the
+// feed); tails instantiate UNDER the walker. At the field: opaque -> Extend its
+// type; derived -> Reduce its value (transparency is the Reduce arm of Action).
+let tele_field_at = fix ({self, tele, slf, name} ->
+  if (is_fork tele) then {
+    let entry = pair_fst tele
+    if (tree_eq (entry.name) name)
+      then (opt_elim entry.def ({_} -> Extend entry.ty) ({recipe} -> Reduce recipe))  // opaque -> type; derived -> value
+      else {
+        // feed the tail this prior's projection-neutral (opaque) or recipe (derived)
+        let x = (opt_elim entry.def
+          ({_} -> wait hyp_reduce (extend_neutral_meta slf (entry.ty) (acc entry.name)))
+          ({recipe} -> recipe))
+        match (param_walker (pair_snd tele) x) {
+          Ok rest => self rest slf name
+          Err _ => Extend InvalidType
+        }
+      }
+  } else (Extend InvalidType))
+
+// neg_respond: route a neutral elimination. A mint-lead telescope (a Pi) is being
+// APPLIED — the frame is the argument; instantiate the binder under the walker and
+// land at the codomain cell's type (≡ the old Pi `Extend (cod frame)`). Otherwise
+// it is a record/Sigma being PROJECTED — delegate to tele_field_at on the accessor.
+let neg_respond = {params, self, frame} ->
+  if (tree_eq (entry_src (pair_fst params)) "mint")
+    then (match (param_walker (pair_snd params) frame) { // Pi-application: instantiate the binder (policing a triaging codomain)
+            Ok rest => Extend ((pair_fst rest).ty)        // land at the codomain cell's type (≡ old Pi Extend (cod frame))
+            Err _ => Extend InvalidType
+          })
+    else (tele_field_at params self (pair_fst frame))
+
+// Pi A B = the 2-cell telescope [ mint x:A ; qapp out:(B x) ] — mint the argument,
+// observe v at it. Self-referential (its annotation mentions Pi via `->`); no record
+// guard (its inhabitants are functions, not records). The respond is neg_respond's
+// mint-lead arm. (Was a bespoke recognizer over a { dom; cod } meta.)
 Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer
-  {meta, v} -> {
-    let params = meta.recognizer_params
-    bind_hyp params.dom ({hyp} -> (params.cod hyp) (v hyp))
-  }
-) (make_meta { dom := A; cod := B } ({params, self, frame} -> Extend (params.cod frame)))
+  {meta, v} -> neg_check (meta.recognizer_params) v t
+) (make_meta (t { src := "mint"; ty := A; def := t } ({h} ->
+              t { src := "qapp"; ty := B h; def := t } ({_} -> t))) neg_respond)
 
 Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 
@@ -182,55 +243,13 @@ HBin : Type := wait (make_rec_recognizer
     v
 ) (make_meta unit_witness inductive_respond)
 
-// Telescope: the dependent n-ary record former. An entry is the record
-// { name; ty; def } with def a stem-option (t = opaque, t e = derived: the
-// field is PINNED to recipe e over the priors). A telescope is `t entry
-// (λx. rest)` — the tail binds this entry's value (a constant tail is the
-// K-stem `t t rest`), so well-foundedness is structural: tails see only priors.
-// opt_elim: eliminate an entry's stem-option `def` (t = opaque / none, t e =
-// derived / some e). The none case is a thunk so a derived field never runs the
-// opaque path; `if`-based (not select_lazy) to stay recursion-safe in the folds.
-let opt_elim = {opt, on_none, on_some} ->
-  if (is_leaf opt) then (on_none t) else (on_some (stem_child opt))
-
-let tele_check = fix ({self, tele, v} ->
-  if (is_fork tele) then {
-    let entry = pair_fst tele
-    match (lookup_field v (entry.name)) {
-      Err _ => Ok FF // declared field absent — presence is part of membership
-      Ok x => {
-        let rest = (pair_snd tele) x
-        opt_elim entry.def
-          ({_} -> bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF))) // opaque: x : ty
-          ({recipe} -> if (tree_eq x recipe) then (self rest v) else (Ok FF))           // derived: x ≡ recipe
-      }
-    }
-  } else (Ok TT))
-// tele_field_at: projection typing on a telescope-hyp. Walk to the requested
-// field feeding each prior either its projection-neutral (opaque) or its
-// recipe value (derived — δ in the feed); tails instantiate UNDER the walker
-// (a tail that raw-triages a neutral prior routes to the dead state). At the
-// field: opaque -> Extend its type; derived -> Return its value (transparency
-// is the Return arm of Action).
-let tele_field_at = fix ({self, tele, slf, name} ->
-  if (is_fork tele) then {
-    let entry = pair_fst tele
-    if (tree_eq (entry.name) name)
-      then (opt_elim entry.def ({_} -> Extend entry.ty) ({recipe} -> Reduce recipe))  // opaque -> type; derived -> value
-      else {
-        // feed the tail this prior's projection-neutral (opaque) or recipe (derived)
-        let x = (opt_elim entry.def
-          ({_} -> wait hyp_reduce (extend_neutral_meta slf (entry.ty) (acc entry.name)))
-          ({recipe} -> recipe))
-        match (param_walker (pair_snd tele) x) {
-          Ok rest => self rest slf name
-          Err _ => Extend InvalidType
-        }
-      }
-  } else (Extend InvalidType))
+// Telescope: the dependent n-ary record former (an all-qacc telescope; entry =
+// { name; ty; def }, def a stem-option — t = opaque, t e = derived/pinned). Shares
+// neg_check/neg_respond (defined with Pi above). The record-guard keeps a non-record
+// candidate out before neg_check's per-cell lookup_field would reject it anyway.
 Telescope : Tree -> Type := {tele} -> wait (make_recognizer
-  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (tele_check meta.recognizer_params v) else (Ok FF)
-) (make_meta tele ({params, self, frame} -> tele_field_at params self (pair_fst frame)))
+  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (neg_check meta.recognizer_params v t) else (Ok FF)
+) (make_meta tele neg_respond)
 
 // mk: the builder — fill derived fields from their recipes, take opaque ones
 // from `given`, emit the full §2.6 record (which the recognizer then re-pins).
@@ -319,8 +338,8 @@ let fields_to_tele = fix ({self, fields} ->
     t { name := pair_fst arm; ty := pair_snd arm; def := t } (t t (self (pair_snd fields)))
   } else t)
 Record : Tree -> Type := {fields} -> wait (make_recognizer
-  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (tele_check (fields_to_tele meta.recognizer_params) v) else (Ok FF)
-) (make_meta fields ({params, self, frame} -> tele_field_at (fields_to_tele params) self (pair_fst frame)))
+  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (neg_check (fields_to_tele meta.recognizer_params) v t) else (Ok FF)
+) (make_meta fields ({params, self, frame} -> neg_respond (fields_to_tele params) self frame))
 
 // Coproduct_of / ctors: build a coproduct from a variant RECORD
 // `{ Tag := payloadType, … }` instead of the positional `Coproduct [pair "Tag"

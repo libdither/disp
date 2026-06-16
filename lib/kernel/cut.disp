@@ -69,6 +69,18 @@ let lookup_field_at = fix ({self, names, payload, name} ->
     else Err)
 lookup_field := {r, name} -> lookup_field_at (pair_fst (type_meta r)) (pair_snd (type_meta r)) name
 
+// entry_src / observe: the negative-telescope coverage tag + the PARTIAL cut.
+// entry_src reads a cell's coverage class, DEFAULTING absent -> "qacc" (a legacy
+// { name; ty; def } record-field entry has no `src`, so reads as qacc; only
+// Pi-side cells carry an explicit src). `observe` is the recognizer-layer partial
+// cut: project-or-apply with a definedness check — a function cell (qapp) is total
+// so it observes by APPLICATION (always defined); a record cell (qacc) observes by
+// `lookup_field` (a finite domain, where presence is a real check). This is the one
+// operation project and apply genuinely share (cf. the total `field`).
+entry_src := {e} -> match (lookup_field e "src") { Ok s => s; Err _ => "qacc" }
+observe := {e, v, prior} ->
+  if (tree_eq (entry_src e) "qapp") then (Ok (v prior)) else (lookup_field v (e.name))
+
 // MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
 // behavioral_specs }, read by name; conformance is an O(1) tree_eq on the header.
 unit_witness := t
