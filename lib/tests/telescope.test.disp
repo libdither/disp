@@ -13,9 +13,13 @@ open use "../std/nat/ops.disp"
 let ent = {name, ty} -> { name := name; ty := ty; def := t }
 let dent = {name, e} -> { name := name; ty := Tree; def := t e }
 
-// ---- empty telescope: every product inhabits ----
-test typecheck (Telescope t) {} = Ok TT
-test param_apply (Telescope t) zero = Ok FF // not a product
+// ---- empty telescope = ⊤ (the empty meet of obligations = Top, = Tree). Guard-free:
+// a non-empty record telescope still rejects non-records via neg_check's lookup_field,
+// but the EMPTY telescope imposes no obligations, so everything inhabits it. ----
+test typecheck (Telescope t) {} = Ok TT             // a record inhabits {}
+test param_apply (Telescope t) zero = Ok TT         // ...and so does a non-record (⊤, not "any record")
+test param_apply (Telescope t) ({x} -> x) = Ok TT   // ...and a function
+test tree_eq (param_apply (Telescope t) zero) (param_apply Tree zero) = TT  // {} agrees with Tree
 
 // ---- non-dependent 2-entry telescope ----
 let T2 = Telescope (t (ent "a" Nat) ({_a} -> t (ent "b" Bool) ({_b} -> t)))

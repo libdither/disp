@@ -3109,11 +3109,15 @@ projection and checks it, pinning derived fields by `tree_eq`:
 tele_check := fix ({self, tele, v} ->
   if (is_fork tele) then {
     let entry = pair_fst tele
-    let x     = field v (entry.name)            // v.<name> — the §2.6 cut
-    let rest  = (pair_snd tele) x               // instantiate the tail at this field
-    if (is_leaf entry.def)
-      then (bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF)))   // opaque: x : ty
-      else (if (tree_eq x (stem_child entry.def)) then (self rest v) else (Ok FF))  // derived: x ≡ recipe
+    match (lookup_field v (entry.name)) {       // HONEST cut: Ok value | Err (absent ⇒ reject —
+      Err _ => Ok FF                            //   load-bearing now the guard is gone: a missing
+      Ok x  => {                                //   field must reject even when its type accepts junk)
+        let rest = (pair_snd tele) x            // instantiate the tail at this field
+        if (is_leaf entry.def)
+          then (bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF)))   // opaque: x : ty
+          else (if (tree_eq x (stem_child entry.def)) then (self rest v) else (Ok FF))  // derived: x ≡ recipe
+      }
+    }
   } else (Ok TT))
 ```
 
@@ -3139,10 +3143,30 @@ tele_field_at := fix ({self, tele, slf, name} ->
   } else (Extend InvalidType))
 
 Telescope : Tree -> Type := {tele} -> wait (make_recognizer
-  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig)
-               then (tele_check meta.recognizer_params v) else (Ok FF)
+  {meta, v} -> tele_check meta.recognizer_params v        // guard-free (see below)
 ) (make_meta tele ({params, self, frame} -> tele_field_at params self (pair_fst frame)))
 ```
+
+*No record guard; the empty telescope is `⊤`.* A type is a predicate over `Tree`,
+and a telescope type is the *meet* of its cells' obligation-predicates (each cell
+carves out the values passing that observation). A non-empty record telescope
+rejects a non-record on its own — `tele_check`'s first `lookup_field` returns
+`Err`. So the old `is_record_product v` guard was redundant *except* at the empty
+telescope, where it conflated `Telescope t` with "the type of all records." Without
+it, `Telescope t` is the empty meet `⋂∅ = ⊤` — the all-trees predicate, definitionally
+`Tree` (§"Inert types"). `{}` is thus the *terminal* negative type / nullary product,
+distinct from `Unit` (one inhabitant) and `False` (none); "the type of all records"
+is a separate predicate (`is_record_product`) if wanted.
+
+*One negative-product former.* `Pi`, `Record`, and `Sigma` are instances of this
+single `Telescope` — the kernel shares one recognizer and one `respond`. A cell's
+*source* is `mint` (a fresh ∀-bound hyp — a function argument), `qacc name` (observe
+a record field by honest `lookup_field`), `qapp` (observe `v` applied to the prior —
+a function codomain), or `compute` (a derived/δ field). Then `Pi A B = Telescope
+[mint x:A ; qapp out:(B x)]`; `Record`/`Sigma` are `qacc` chains. So `Π`, `Σ`,
+records, and `⊤` are one *negative* former (a finite dependent limit), differing only
+in cell source — the dual of the *positive* `Coproduct` (a sum / colimit), which is
+therefore **not** a telescope (§12.2).
 
 The builder `mk T given` reads the telescope off the *type* `T`'s meta, fills
 derived fields from their recipes and opaque ones from `given`, and emits the
@@ -4280,7 +4304,9 @@ the whole of the value layer.
 The grid above places every value former on the `Σ`/`Π` axes, but two of its
 corners are also where the grid *bottoms out*. `Bool`, `Nat`, and `Unit` — with
 the interpreter's own `Result` (§3.4) and `Action` (§7) — are conceptually `Σ`/`Π`
-(`Bool` is `True | False`, `Nat` is `Zero | Succ`, `Unit` is the empty record),
+(`Bool` is `True | False`, `Nat` is `Zero | Succ`, `Unit` is a single-inhabitant
+type — the canonical empty *tuple* value `t t t`, *not* the empty record *type*
+`{}`, which is `⊤` = `Tree`, §12.7),
 but they are *not* `Coproduct`/`Record` instances. They are the bootstrap floor
 the formers are built on, and the dependency runs one way only:
 

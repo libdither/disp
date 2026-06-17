@@ -91,14 +91,24 @@ let neg_respond = {params, self, frame} ->
           })
     else (tele_field_at params self (pair_fst frame))
 
-// Pi A B = the 2-cell telescope [ mint x:A ; qapp out:(B x) ] — mint the argument,
-// observe v at it. Self-referential (its annotation mentions Pi via `->`); no record
-// guard (its inhabitants are functions, not records). The respond is neg_respond's
-// mint-lead arm. (Was a bespoke recognizer over a { dom; cod } meta.)
-Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer
+// Telescope: THE negative n-ary former — the dependent product over a chain of cells.
+// `wait (make_recognizer neg_check) (make_meta tele neg_respond)`, with NO guard: a
+// type is a predicate over Tree and a telescope is the MEET of its cells' obligations,
+// so the EMPTY telescope is the empty meet = ⊤ = the all-trees predicate (= Tree).
+// neg_check's per-cell lookup_field already rejects non-records for any NON-empty
+// record telescope; Pi (mint-lead) accepts functions; so the old record-guard was an
+// artifact (it conflated `{}` with "the type of all records") and is gone. Pi/Sigma are
+// thin instances below; Record lifts its flat field list lazily (for self-verification).
+Telescope : Tree -> Type := {tele} -> wait (make_recognizer
   {meta, v} -> neg_check (meta.recognizer_params) v t
-) (make_meta (t { src := "mint"; ty := A; def := t } ({h} ->
-              t { src := "qapp"; ty := B h; def := t } ({_} -> t))) neg_respond)
+) (make_meta tele neg_respond)
+
+// Pi A B = the 2-cell telescope [ mint x:A ; qapp out:(B x) ] — a thin Telescope
+// instance. Self-referential (its annotation mentions Pi via `->`). The mint cell is
+// the ∀-intro (binds the argument); the qapp cell observes v applied to it (codomain).
+Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
+  t { src := "mint"; ty := A;   def := t } ({h} ->
+  t { src := "qapp"; ty := B h; def := t } ({_} -> t)))
 
 Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 
@@ -243,13 +253,6 @@ HBin : Type := wait (make_rec_recognizer
     v
 ) (make_meta unit_witness inductive_respond)
 
-// Telescope: the dependent n-ary record former (an all-qacc telescope; entry =
-// { name; ty; def }, def a stem-option — t = opaque, t e = derived/pinned). Shares
-// neg_check/neg_respond (defined with Pi above). The record-guard keeps a non-record
-// candidate out before neg_check's per-cell lookup_field would reject it anyway.
-Telescope : Tree -> Type := {tele} -> wait (make_recognizer
-  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (neg_check meta.recognizer_params v t) else (Ok FF)
-) (make_meta tele neg_respond)
 
 // mk: the builder — fill derived fields from their recipes, take opaque ones
 // from `given`, emit the full §2.6 record (which the recognizer then re-pins).
@@ -337,8 +340,14 @@ let fields_to_tele = fix ({self, fields} ->
     let arm = pair_fst fields
     t { name := pair_fst arm; ty := pair_snd arm; def := t } (t t (self (pair_snd fields)))
   } else t)
+// Record: the non-dependent flat-field former. NOT a literal `Telescope (fields_to_tele
+// fields)` wrapper — `fields_to_tele` triages its list argument, so an eager lift would
+// trip the walker when `Record` is self-verified against `Tree -> Type` (its param is a
+// neutral there). So it keeps its own wait-form and lifts LAZILY inside the recognizer
+// (where the params are concrete), sharing neg_check/neg_respond. Guard-free like
+// Telescope: a non-record is rejected by neg_check's lookup_field; `Record []` = ⊤.
 Record : Tree -> Type := {fields} -> wait (make_recognizer
-  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig) then (neg_check (fields_to_tele meta.recognizer_params) v t) else (Ok FF)
+  {meta, v} -> neg_check (fields_to_tele meta.recognizer_params) v t
 ) (make_meta fields ({params, self, frame} -> neg_respond (fields_to_tele params) self frame))
 
 // Coproduct_of / ctors: build a coproduct from a variant RECORD

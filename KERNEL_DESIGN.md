@@ -52,23 +52,41 @@ checks the eliminator's cases inhabit the motive.
 
 ## Telescopes
 
-`Telescope` is the dependent n-ary record former; `Record` (constant
-K-stem tails, lazily lifted from its flat field list so formation stays
-parametric) and `Sigma` (the 2-entry `{ fst : A, snd : B fst }`) are
-instances of it. A telescope is `t entry (λx. rest)` — the tail binds
-the entry's value, so well-foundedness is structural (tails see only
-priors). An entry is `{ name; ty; def }` with `def` a stem-option:
-`t` = opaque field, `t e` = **derived** — the field is definitionally
-pinned to recipe `e` over the prior fields.
+`Telescope` is THE negative n-ary former; `Pi`, `Record`, and `Sigma`
+are instances. `Pi A B = Telescope [mint x:A ; qapp out:(B x)]` and
+`Sigma` (the 2-entry `{ fst : A, snd : B fst }`) are literal
+`Telescope (cells)`; `Record` shares the engine but keeps its own
+wait-form, lazily lifting its flat field list via `fields_to_tele` (an
+eager lift would trip the walker when `Record : Tree -> Type` is
+self-verified, since `fields_to_tele` triages its param). A telescope is
+`t entry (λx. rest)` — the tail binds the entry's value, so
+well-foundedness is structural (tails see only priors). An entry is
+`{ name; ty; def }` optionally carrying a coverage tag `src`
+(`entry_src` defaults absent → `"qacc"`); `def` is a stem-option:
+`t` = opaque, `t e` = **derived** (definitionally pinned to recipe `e`).
 
-One fold, two feeds. The recognizer (`tele_check`) feeds each tail the
-*stored projection* (concrete feed): opaque entries type-check, derived
-entries pin by `tree_eq` (conversion, no `Eq` proofs). The respond
-(`tele_field_at`) feeds *projection-neutrals* for opaque priors and
-recipe values for derived priors, instantiating each tail UNDER
-`param_walker` (a tail that raw-triages a neutral prior routes to
-`InvalidType` — the GAP-2 regime). At the requested field the answer is
-the `Action` arm matching its transparency:
+Each cell has a **source**: `mint` (a fresh ∀-bound hyp via `bind_hyp` —
+a function argument), `qacc name` (observe a record field by HONEST
+`lookup_field` — the *partial cut* `observe`), `qapp` (observe `v`
+applied to the prior — a function codomain), or `compute` (a derived/δ
+field). One recognizer `neg_check` walks them; project-vs-apply is just
+which arm of `observe` runs, and the only irreducible axis is coverage
+(mint vs observe). The recognizer is **guard-free**: a non-record is
+rejected by `qacc`'s `lookup_field` (`Err`), so the empty telescope
+`Telescope t` is the empty meet of obligations = `⊤` = `Tree` (the
+nullary negative product / terminal). `Coproduct` (a sum / positive
+type) is the dual and is NOT a telescope.
+
+One fold, two feeds. `neg_check` feeds each tail the *observed value*
+(concrete feed): `qacc`/`qapp` cells type-check, derived cells pin by
+`tree_eq` (conversion, no `Eq` proofs). The respond (`neg_respond`) is a
+router: a mint-lead telescope (a Pi) instantiates the binder at the
+frame and `Extend`s the codomain cell's type; otherwise `tele_field_at`
+feeds *projection-neutrals* for opaque priors and recipe values for
+derived priors, instantiating each tail UNDER `param_walker` (a tail
+that raw-triages a neutral prior routes to `InvalidType` — the GAP-2
+regime). At the requested field the answer is the `Action` arm matching
+its transparency:
 
 - opaque → `Extend ty` (the spine grows at the field's type);
 - derived → `Reduce e` (δ-transparency: `hyp_reduce` hands back the
