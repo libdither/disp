@@ -108,6 +108,11 @@ meta). Dependent-tail trees are canonical per *spelling* (deterministic
 elaboration), not across different constructions — the same conversion
 discipline as Pi codomains.
 
+For *why* the telescope is shaped this way (the forced-choice chain), the ideal it
+approximates (observation interfaces / NbE), and the remaining improvements from
+local to global — including the one architectural move (unifying recognition and
+respond into a single mode-polymorphic walk) — see [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md).
+
 ## Signatures
 
 Wait-based values have a stable head signature:

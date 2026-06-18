@@ -10,6 +10,7 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 - [`SYNTAX.typ`](SYNTAX.typ) — surface grammar and AST shape. Authoritative for the parser.
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
 - [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms for the current two-Σ-op kernel: `hyp_reduce`/`bind_hyp`/`param_apply`, wait/fix, signatures, neutrals, the `tree_eq` native fast-path, bracket-abstraction caveats.
+- [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) — design rationale for the telescope (the one negative former for `Pi`/`Sigma`/`Record`/`⊤`): the forced-choice chain that nearly determines it, the observation-interface/NbE ideal it approximates, and the frontier of remaining improvements (cosmetic cell encoding; completeness via `qid`→Intersection / positional / callable-record respond / metacircular self-typing; the one architectural move — unifying recognition+respond into a single mode-polymorphic walk). Read before reworking telescopes/`neg_check`/`neg_respond`.
 
 ## Core discipline
 
