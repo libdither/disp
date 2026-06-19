@@ -396,3 +396,30 @@ RespondShape : Type := Tree -> Tree -> Frame -> Action
 // MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
 MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }
+
+// ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
+// A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the
+// recognizer → a CheckerResult) and PROJECTED (`type_meta T` → its MetaShape). So `T : Type`
+// iff BOTH faces hold. Two new observation ops express the faces (the wait-form openness —
+// no `at` edit): `qid` observes `v` itself (Intersection/Refinement), `qid_meta` observes
+// `type_meta v`. `StrictType` is then a plain `Telescope` of two qid cells, walked by the
+// same `at` as everything else — and it inhabits ITSELF (`StrictType : StrictType`), the
+// metacircular fixed point. (Its `respond` is subsumption — Extend the qid type — a §4b
+// placeholder; the recognize face is the point.)
+CheckerResult : Type := Coproduct_of { Ok := Tree; Err := Unit }
+
+let qid_op = {meta, mode, source, prior, frame} -> // observe v itself, check v : meta.ty
+  if mode
+    then (match ((meta.ty) source) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
+    else (SDone (Extend (meta.ty)))
+let qid_meta_op = {meta, mode, source, prior, frame} -> // observe type_meta v, check it : meta.ty
+  if mode
+    then (match ((meta.ty) (type_meta source)) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
+    else (SDone (Extend (meta.ty)))
+qid_cell := {ty} -> wait qid_op { ty := ty }
+qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
+
+// StrictType: v is a type iff v is a recognizer (Tree -> CheckerResult) AND type_meta v : MetaShape.
+StrictType : Type := Telescope (
+  t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
+  t (qid_meta_cell MetaShape) ({_} -> t)))
