@@ -35,7 +35,7 @@ Three validators are intended (§11.4):
 | Validator | Checks |
 |---|---|
 | `Type` (structural) | recognizer is `make_recognizer`-formed; meta fits `MetaShape`'s *layout*. H-rule on neutrals. **This is what the kernel ships today** (via `has_metashape_layout`). |
-| `StrictType` (deep) | the above, **plus** recognizer inhabits `RecognizerShape`, `respond` inhabits `RespondShape`, meta typed field-by-field. **Not built.** |
+| `StrictType` (deep) | the above, **plus** recognizer inhabits `RecognizerShape`, `respond` inhabits `RespondShape`, meta typed field-by-field. **Recognize-side LANDED** (2026-06, as a self-hosting telescope — see §7); the deep `respond : RespondShape` half is open (§7A/§7B). |
 | `BehavioralType` (coherence) | the above, **plus** the per-former computation laws (Π's `B a`, Σ's projection dependency, …) hold — encoded as `Path`s, run to `Ok TT`. **Needs cubical §13.** |
 
 Rung 1 (landed) defined the vocabulary as first-class types: `Tree`, `Frame`,
@@ -243,13 +243,126 @@ per-former Frame buildout (steps 2–3) until §13 makes the full `BehavioralTyp
 reachable, so the Frame types are designed once against the stronger target rather than
 twice.
 
+## 7. Next steps (2026-06) — the recognize side landed; the respond side is two research problems
+
+**What changed since §0–§6.** Two developments reshape this doc. (a) The kernel migrated
+to **one walker `at` over wait-form cells** (`lib/kernel/{cut,engine,types}.disp` — `core.disp`
+was split): a telescope cell is a wait-form `wait op meta` returning a `Step`, the negative
+formers' respond is now `at FF` (not the per-former `pi_respond`/`record_respond` the §0 table
+names), and projections inside responds route through `param_walker` for GAP-2 policing. (b)
+**The recognize-side metacircle LANDED as `StrictType`** (commit `466b76a`): instead of
+`has_metashape_layout` (a structural header `tree_eq`), `StrictType` checks the *semantic* type
+interface as a plain `Telescope` of two `qid` cells — recognize-face `v : Arrow Tree
+CheckerResult` and meta-face `type_meta v : MetaShape` — walked by the same `at`. It recognizes
+every kernel type, tells a type from a type *constructor*, and **`StrictType : StrictType`** —
+the fixed point closes with no privileged kinding rule (`lib/tests/strict_type.test.disp`,
+150/150, additive; legacy `Type` untouched).
+
+So §0's "StrictType: not built" is now half-built: the `param_apply MetaShape (type_meta v)`
+half (Problem-1's "wire StrictType", §5 step 4) is **done and self-hosting**. What remains is
+the deep `respond : RespondShape` check, and Phase-B probing (2026-06) located it *below*
+Problem 1 in two specific, independent walls.
+
+**Problem 1 (structured frames) is VALIDATED — it is not the wall.** A structured frame type
+*does* make a *projecting* respond checkable: against `params -> Self -> { motive : Tree ->
+Type, cases } -> Action`, the hand-inlined `{p,s,f} -> Extend (f.motive s)` checks `Ok TT`,
+where the flat `RespondShape` (frame : Tree) rejects it. So "Part C" works for the
+data-projection half. The wall is one layer deeper, in *how the responds use that frame*.
+
+### 7A. Typing privileged walker-policing
+
+**The problem, precisely.** The real responds don't write `Extend (f.motive s)` — they write
+```disp
+match (param_walker frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }
+```
+The `param_walker` is **load-bearing soundness**: it polices the motive so a motive that
+raw-triages the self-neutral routes to `InvalidType` (the GAP-2 discipline — a respond must not
+let a sub-term inspect a hyp). With a structured frame the *inlined* form (no `param_walker`)
+type-checks; the *policed* form does not, though both compute the same value. (Validated 2026-06:
+standalone, the `param_walker`/`match` pieces all check — scrutinee is `Ok (…)`, result is
+`Extend (…)`, it inhabits `Action`; but under the Pi-chain recognition — nested `bind_hyp`,
+ambient walker — the policed respond fails where the inlined one passes.)
+
+**Why it's hard.** `param_walker` invoked *inside a respond that is itself being type-checked by
+`param_walker`* is a **privileged operation typing against itself** — the same self-reference
+that blocks typing `bind_hyp` and the raw meta-readers (the recurring privileged-vs-parametric
+wall). You cannot give `param_walker` a parametric `(A -> B) -> A -> CheckerResult` type and have
+the respond inherit it, because `param_walker`'s job is precisely to *break* parametricity safely
+(it is the walker — the thing that *decides* soundness). Typing it strictly is circular.
+
+**Attack vectors:**
+- **Sealing / trusted-token (most promising).** `bind_hyp` is already a privileged op the kernel
+  *trusts* (the `seal(Σ)` set; `bind_hyp_marker` fails closed). Ask whether `param_walker` — or
+  one factored-out `apply_policed` combinator — can be admitted as a **sealed token with a
+  *declared* (not *checked*) type** for the purpose of respond-checking, so a respond that calls
+  it inherits a clean type without the walker re-deriving the walker. This is the same resolution
+  that landed `bind_hyp` body-walking (the sealing-framework note): a privileged op gets a
+  declared, trusted type. Open question: does declaring `param_walker`'s type preserve soundness
+  (the step-indexed-LR "sealing preserves parametricity" conjecture), and do the projecting
+  responds (`inductive`/`eq`) then inhabit `RespondShape`?
+- **Factor policing into one typed helper.** If every `param_walker` use in responds is
+  concentrated into a single sealed `apply_policed : (Self -> Type) -> Self -> Action`-shaped
+  combinator, each respond body becomes *parametric modulo one trusted call*, and the trusted
+  call carries the type. (Same shape as the sealing route, framed as a refactor.)
+- **Honest fallback.** Keep `respond` at `MetaShape`'s loose `Tree` and have `StrictType` check
+  only `recognizer : RecognizerShape` + `type_meta : MetaShape` strictly — which is what ships.
+  Per §3/§6, respond *correctness* needs `BehavioralType`/§13 anyway, so a strict-but-shallow
+  respond *shape* type buys little; this may be the right precision ceiling.
+
+### 7B. Self-typing the spine
+
+**The problem, precisely.** The negative-former respond is `at FF params self frame t`, and
+`at FF` walks the cell telescope `params` with **raw structural ops** — `is_fork params`,
+`pair_fst params`, `(pair_snd params) x`. Under `RespondShape`-checking `params` is an abstract
+hyp, so `is_fork params` triages it → the walker rejects. So the *negative-former* respond cannot
+inhabit any `RespondShape` while it raw-walks the spine — **independent of frame structure (7A)**,
+because the **spine itself is untyped**.
+
+**Why it's hard.** The spine `t cell (λx. rest)` is a *dependent* structure: each tail is a real
+λ binding the prior cell's value, so it is not a `List Cell` but a Σ-chain `Cell × (cellvalue ->
+(Cell × …))`. Walking it safely (routing a neutral spine through a recursor instead of raw
+`is_fork`) needs both an **`Entry`/`Cell` type** and a **`Telescope`-shape recursor** that routes
+a neutral spine through `respond` — and that recursor is *higher-order* (the λ-tails range over
+cell values, themselves typed).
+
+**Attack vectors:**
+- **`Cell` as a coproduct of op-signatures (the easy half).** The op set is closed-ish
+  (`mint`/`proj`/`apply`/`deriv`/`qid`/`qid_meta`), so `Cell := Coproduct [(mint_sig, Type),
+  (proj_sig, {name;ty}), …]` is expressible, and `is_derive`-style signature reads are
+  *sanctioned* (they use `pair_fst`, a walker carve-out). This types the cell.
+- **The spine recursor (the hard half).** A `tele_rec` that, given a neutral spine, routes
+  through a *spine respond* rather than `is_fork` — i.e. make `at FF` itself **elim-routed over a
+  typed spine, exactly as `nat_rec` is elim-routed over `Nat`**. Whether the dependent λ-tails can
+  be typed without full first-class dependent-spine machinery is the open question (NEGATIVE_TYPES
+  §4b's "self-description needs higher-order machinery").
+- **Independence from 7A.** A fully self-typed spine still leaves the *projecting* responds on 7A
+  (they `param_walker` the motive); a fully solved 7A still leaves the *negative-former* respond
+  on 7B (it raw-walks the spine). **Both** are required for a fully strict `respond` across all
+  formers; they are independent walls.
+
+### Recommended next move
+
+The cheap, high-leverage experiment is **7A via sealing**: declare `param_walker` (or one
+`apply_policed` helper) a trusted, typed token, then check whether the projecting responds inhabit
+`RespondShape` and whether the soundness story (sealing preserves parametricity) holds. It is the
+smallest step that could move the deep-respond check and it reuses the `bind_hyp` sealing
+precedent. **7B** is the larger, genuinely higher-order project; per §6, consider deferring it
+until §13/`BehavioralType`, so the spine type is designed once against the stronger target. Either
+way: the recognize-side metacircle is done, and the two remaining walls are now *located*.
+
+---
+
 ## References
 
-- Code: `lib/kernel/core.disp` — `hyp_reduce` (the §12.6 Part-A contract), the responds
-  (`inert_`/`inductive_`/`gated_inductive_`/`nat_`/`pi_`/`eq_`/`sigma`/`record_respond`,
-  `type_predicate_h_rule`), `InvalidType`, and the end-of-file structural types
-  (`Tree`/`Frame`/`NeutralMeta`/`Action`/`RespondShape`/`MetaShape`).
-- Tests: `lib/tests/metashape.test.disp` — pins the inhabitation results and the wall.
+- Code (NB: `core.disp` was SPLIT into `cut`/`engine`/`types`): `lib/kernel/engine.disp`
+  — `hyp_reduce` (the §12.6 Part-A contract), `param_walker` (the policing op of §7A),
+  `inert_`/`inductive_`/`gated_inductive_respond`, `make_recognizer`, `InvalidType`;
+  `lib/kernel/types.disp` — the `at` walker + wait-form cell ops (the spine of §7B), the
+  structural types (`Tree`/`Frame`/`NeutralMeta`/`Action`/`RespondShape`/`MetaShape`), and
+  the landed `qid`/`qid_meta` ops + `StrictType`/`CheckerResult`.
+- Tests: `lib/tests/metashape.test.disp` (the respond-inhabitation wall) and
+  `lib/tests/strict_type.test.disp` (the landed recognize-side metacircle, `StrictType :
+  StrictType`).
 - Spec: `TYPE_THEORY.typ` §11.2 (MetaShape convention), §11.4 (the three validators),
   §12.3 (InvalidType / the dead state), §12.6 (RespondShape / RecognizerShape).
 - Memory: `project_kernel_self_typing_metashape`.
