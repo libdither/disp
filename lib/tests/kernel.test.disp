@@ -115,10 +115,12 @@ test m.recognizer_params = zero
 test m.respond = FF
 test has_metashape_layout m = TT
 test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF // old positional shape is no longer a meta
-// recognizer_params is now Pi's [ mint x:A ; qapp out:(B x) ] telescope; the lead
-// cell is the minted domain (coverage tag "mint", ty A).
-test (entry_src (pair_fst ((type_meta (Pi Nat ({_} -> Bool))).recognizer_params))) = "mint"
-test (pair_fst ((type_meta (Pi Nat ({_} -> Bool))).recognizer_params)).ty = Nat
-// Sigma's params are its telescope: first entry is the named fst component
-test (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params)).name = "fst"
-test (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params)).ty = Nat
+// recognizer_params is now Pi's [ mint x:A ; qapp out:(B x) ] telescope; each cell is
+// a WAIT-FORM `wait op meta`. The lead cell is the minted domain (a mint_cell, ty A),
+// read by signature (the cell IS a mint_cell) and meta (its ty).
+test tree_eq (pair_fst (pair_fst ((type_meta (Pi Nat ({_} -> Bool))).recognizer_params))) (pair_fst (mint_cell zero)) = TT
+test (type_meta (pair_fst ((type_meta (Pi Nat ({_} -> Bool))).recognizer_params))).ty = Nat
+// Sigma's params are its telescope: first cell is the named "fst" proj_cell
+test tree_eq (pair_fst (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params))) (pair_fst (proj_cell t t)) = TT
+test (type_meta (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params))).name = "fst"
+test (type_meta (pair_fst ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params))).ty = Nat

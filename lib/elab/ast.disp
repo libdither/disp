@@ -67,10 +67,6 @@ binder_to_pi := fix ({self, e} ->
     _ => e
   })
 
-// The telescope entry header { name; ty; def }, spelled as applications
-// (the host interns it as a literal fork chain; both lower to the same tree).
-entry_names_ast : Tree :=
-  (e_cons (e_str "name") (e_cons (e_str "ty") (e_cons (e_str "def") e_leaf)))
 
 // The right fold over recType fields (host compile.ts recType case): each
 // field becomes the entry record `mk_record ["name","ty","def"] [name, ty,
@@ -87,14 +83,13 @@ let tele_entries = fix ({self, fields} ->
       let opts = pair_snd f
       let ty_opt = pair_fst opts
       let val_opt = pair_snd opts
-      // a field's type is a TYPE position: desugar binders to Pi (so `s : T -> T`
-      // is a Pi, not a value-lambda), mirroring host compile.ts's recType case.
-      let ty_ast = if (is_stem ty_opt) then (binder_to_pi (stem_child ty_opt)) else (e_var "Tree")
-      let def_ast = if (is_stem val_opt) then (e_app e_leaf (stem_child val_opt)) else e_leaf
-      let payload = (e_cons (e_app (e_var "list_const") (e_str fname))
-        (e_cons (e_app (e_var "list_const") ty_ast)
-          (e_cons (e_app (e_var "list_const") def_ast) e_leaf)))
-      let entry = e_app (e_app (e_var "mk_record") entry_names_ast) payload
+      // each field becomes a WAIT-FORM cell: a derived `name := e` member ->
+      // `deriv_cell name recipe`; else `proj_cell name ty` (the type is a TYPE
+      // position: desugar binders to Pi). Mirrors host compile.ts's recType case.
+      let entry = if (is_stem val_opt)
+        then (e_app (e_app (e_var "deriv_cell") (e_str fname)) (stem_child val_opt))
+        else (e_app (e_app (e_var "proj_cell") (e_str fname))
+                (if (is_stem ty_opt) then (binder_to_pi (stem_child ty_opt)) else (e_var "Tree")))
       e_cons entry (e_binder (cons (mk_param (t fname) t) nil) rest)
     }
     else e_leaf)

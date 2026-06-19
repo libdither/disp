@@ -323,40 +323,35 @@ function exprToCir(
       return body
     }
     case "recType": {
-      // A record-type literal IS a telescope type: fold the fields into
-      // `t entry (λname. rest)` (entry = { name; ty; def }, def the stem-option
-      // — `t recipe` for a derived `name := e` member) and wrap in `Telescope`.
-      // Later fields' types and derived recipes compile under lams binding the
-      // PRIOR field names, so `{ a : Nat, b := double a }` scopes naturally.
+      // A record-type literal IS a telescope type: each field becomes a WAIT-FORM
+      // cell — `proj_cell name ty`, or `deriv_cell name recipe` for a derived
+      // `name := e` member — consed into `t cell (λname. rest)` and wrapped in
+      // `Telescope`. Later fields' types and derived recipes compile under lams
+      // binding the PRIOR field names, so `{ a : Nat, b := double a }` scopes
+      // naturally. (Pi/Sigma emit the same cells, so surface and manual agree.)
       const TelescopeEntry = lookupEntry("Telescope")
-      const mkRecordEntry = lookupEntry("mk_record")
-      const listConstEntry2 = lookupEntry("list_const")
-      if (!TelescopeEntry?.tree || !mkRecordEntry?.tree || !listConstEntry2?.tree)
-        throw new Error("record type literal '{ name : T }': 'Telescope', 'mk_record', and 'list_const' must be in scope (open the kernel prelude)")
-      const lc: Cir = { tag: "lit", t: listConstEntry2.tree }
+      const projCellEntry = lookupEntry("proj_cell")
+      const derivCellEntry = lookupEntry("deriv_cell")
+      if (!TelescopeEntry?.tree || !projCellEntry?.tree || !derivCellEntry?.tree)
+        throw new Error("record type literal '{ name : T }': 'Telescope', 'proj_cell', and 'deriv_cell' must be in scope (open the kernel prelude)")
       const leafCir: Cir = { tag: "lit", t: LEAF }
-      const entryNames = fork(stringToTree("name"), fork(stringToTree("ty"), fork(stringToTree("def"), LEAF)))
-      const consC = (h: Cir, tl: Cir): Cir => cap(cap(leafCir, h), tl)
       let teleCir: Cir = leafCir
       for (let i = e.fields.length - 1; i >= 0; i--) {
         const f = e.fields[i]
         const priorNames = new Set(e.fields.slice(0, i).map(p => p.name))
         const shadowed = (n: string): ScopeEntry | undefined =>
           priorNames.has(n) ? {} : lookupEntry(n)
-        // A field's type is a TYPE position: desugar binders to `Pi` (so a
-        // function-typed field `s : T -> T` is a `Pi`, not a value-lambda),
-        // exactly as a binding annotation does. Non-binder types (`Nat`, `B fst`)
-        // pass through unchanged.
-        const tyExpr: Expr = f.type ?? { tag: "var", name: "Tree" }
-        const tyCir: Cir = exprToCir(
-          lookupEntry("Pi")?.tree ? binderToPi(tyExpr) : tyExpr,
-          shadowed, resolveUse, sinks)
-        const defCir: Cir = f.value != null
-          ? cap(leafCir, exprToCir(f.value, shadowed, resolveUse, sinks)) // t recipe (derived)
-          : leafCir // t (opaque)
-        const payload = consC(cap(lc, { tag: "lit", t: stringToTree(f.name) }),
-          consC(cap(lc, tyCir), consC(cap(lc, defCir), leafCir)))
-        const entryCir = cap(cap({ tag: "lit", t: mkRecordEntry.tree }, { tag: "lit", t: entryNames }), payload)
+        const nameCir: Cir = { tag: "lit", t: stringToTree(f.name) }
+        // derived field `name := e` -> deriv_cell name recipe; else proj_cell name ty.
+        // A field's type is a TYPE position: desugar binders to `Pi` (so `s : T -> T`
+        // is a `Pi`, not a value-lambda), exactly as a binding annotation does.
+        const entryCir: Cir = f.value != null
+          ? cap(cap({ tag: "lit", t: derivCellEntry.tree }, nameCir),
+                exprToCir(f.value, shadowed, resolveUse, sinks))
+          : cap(cap({ tag: "lit", t: projCellEntry.tree }, nameCir),
+                exprToCir(
+                  lookupEntry("Pi")?.tree ? binderToPi(f.type ?? { tag: "var", name: "Tree" }) : (f.type ?? { tag: "var", name: "Tree" }),
+                  shadowed, resolveUse, sinks))
         teleCir = cap(cap(leafCir, entryCir), { tag: "lam", x: f.name, body: teleCir })
       }
       return cap({ tag: "lit", t: TelescopeEntry.tree }, teleCir)

@@ -11,8 +11,8 @@ open use "../elab/compile.disp"
 
 let env0 = env_bind (env_bind (env_bind (env_bind (env_bind (env_bind (env_bind (env_bind nil
   "zero" zero) "succ" succ) "cond" cond) "prod" prod) "pair_fst" pair_fst) "pair_snd" pair_snd) "mk_record" mk_record) "list_const" list_const
-let env1 = env_bind (env_bind (env_bind (env_bind (env_bind (env_bind env0
-  "Pi" Pi) "Nat" Nat) "Tree" Tree) "Telescope" Telescope) "select" select) "select_lazy" select_lazy
+let env1 = env_bind (env_bind (env_bind (env_bind (env_bind (env_bind (env_bind (env_bind env0
+  "Pi" Pi) "Nat" Nat) "Tree" Tree) "Telescope" Telescope) "select" select) "select_lazy" select_lazy) "proj_cell" proj_cell) "deriv_cell" deriv_cell
 
 // ── scope resolution + binders ────────────────────────────────────────────
 test compile_expr env0 (e_var "zero") = zero

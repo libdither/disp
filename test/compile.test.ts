@@ -223,7 +223,7 @@ function enc(e: Expr): Tree {
 const ENV_NAMES = [
   "zero", "succ", "cond", "prod", "pair_fst", "pair_snd", "mk_record",
   "list_const", "select", "select_lazy", "inj", "TT", "FF",
-  "Pi", "Telescope", "Tree", "Nat", "Bool", "Eq",
+  "Pi", "Telescope", "Tree", "Nat", "Bool", "Eq", "proj_cell", "deriv_cell",
 ]
 
 const BUDGET = 100_000_000

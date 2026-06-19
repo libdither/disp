@@ -135,7 +135,7 @@ function enc(e: Expr): Tree {
 
 const NAME_POOL = [
   ...TYPE_ATOMS, ...BINDER_NAMES, ...FIELD_NAMES,
-  "zero", "succ", "Eq", "Pi", "Tree", "Telescope", "mk_record", "list_const",
+  "zero", "succ", "Eq", "Pi", "Tree", "Telescope", "proj_cell", "deriv_cell",
   "name", "ty", "def",
 ]
 const nameById = new Map<number, string>()

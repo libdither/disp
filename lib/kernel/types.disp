@@ -28,87 +28,87 @@ Nat : Type := wait (make_rec_recognizer
   }
 )))
 
-// ── Negative telescopes: ONE recognizer (neg_check) + ONE respond (neg_respond),
-// shared by Pi / Record / Sigma / Telescope. A telescope is `t entry (λx. rest)`;
-// an entry is the §2.6 record { name; ty; def } optionally carrying a coverage tag
-// `src` (entry_src defaults absent -> "qacc"). Each cell is either MINTED
-// (src=mint — a fresh hyp; ∀ over an opaque/infinite domain, the function-argument
-// case) or OBSERVED via the PARTIAL cut `observe` (qacc: lookup_field a record
-// field; qapp: apply a function output), threading the observed value as `prior`
-// to later cells. `def` is the orthogonal transparency axis (opaque / `t recipe` =
-// derived/δ). The project-vs-apply split is just which arm of `observe` runs; the
-// only irreducible axis is coverage (mint vs observe). opt_elim eliminates `def`
-// (t = opaque/none, t e = derived/some e); `if`-based to stay recursion-safe.
-let opt_elim = {opt, on_none, on_some} ->
-  if (is_leaf opt) then (on_none t) else (on_some (stem_child opt))
+// ── Negative telescopes (the §4c single-walk, WAIT-FORM cells). ONE walker `at` for
+// BOTH recognition (`at TT`) and projection-response (`at FF`). A telescope is
+// `t cell (λx. rest)`; each CELL is a wait-form `wait op meta` — INSPECTABLE (signature
+// = which observation, meta = its data, read by mk/constructor_type) AND RUNNABLE (the
+// op observes). An op is mode-polymorphic and returns a STEP (pure data); `at` interprets
+// the step with the recursion and `bind_hyp` INLINE. (A continuation passed THROUGH a
+// function to `bind_hyp` miscompiles under nested binders — the hyp leaks into the result
+// and trips its occurs-check — so the recursion must live in `at`, not the op.) This is
+// the recursion-schemes split: the op is the per-cell ALGEBRA, `at` the fixed harness.
+// New observation modes (qid → Intersection, positional → tuples, callable records) plug
+// in as new ops with no `at` edit — the kernel's "types are open wait-forms" discipline,
+// applied to cells. CHECK runs under the ambient walker (so the mint `bind_hyp` and the
+// `source prior` application are policed); STUCK instantiates each tail EXPLICITLY under
+// `param_walker` (respond runs off-walker, driven by hyp_reduce).
+//
+// Steps: SMint ty (mint a ∀-hyp), SThread x (observed value x — thread + continue),
+// SReject (not a member — CHECK), SDone action (STUCK: emit this Action).
+let SMint   = inj1 "SMint"
+let SThread = inj1 "SThread"
+let SReject = inj0 "SReject"
+let SDone   = inj1 "SDone"
+let op_sig = {op} -> pair_fst (wait op t) // a cell's kind = its op's signature (like is_neutral)
 
-let neg_check = fix ({self, tele, v, prior} ->
+// The observation ops: op meta mode source prior frame -> Step. `source` is the candidate
+// (CHECK) or the self-neutral (STUCK); `prior` the previous cell's observed value.
+let mint_op = {meta, mode, source, prior, frame} -> SMint (meta.ty) // ∀-intro: `at` mints (CHECK) / lands the codomain (STUCK)
+let apply_op = {meta, mode, source, prior, frame} -> // a function codomain: observe `source prior`
+  if mode
+    then (match ((meta.ty) (source prior)) { Ok b => (if b then (SThread (source prior)) else SReject); Err _ => SReject })
+    else (SDone (Extend (meta.ty)))
+let proj_op = {meta, mode, source, prior, frame} -> // a record field: observe by honest lookup
+  if mode
+    then (match (lookup_field source (meta.name)) { Err _ => SReject; Ok x => (match ((meta.ty) x) { Ok b => (if b then (SThread x) else SReject); Err _ => SReject }) })
+    else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Extend (meta.ty))) else (SThread (wait hyp_reduce (extend_neutral_meta source (meta.ty) (acc (meta.name))))))
+let deriv_op = {meta, mode, source, prior, frame} -> // a δ field: present AND pinned to recipe
+  if mode
+    then (match (lookup_field source (meta.name)) { Err _ => SReject; Ok x => (if (tree_eq x (meta.recipe)) then (SThread (meta.recipe)) else SReject) })
+    else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Reduce (meta.recipe))) else (SThread (meta.recipe)))
+
+// Cell constructors — the Pi/Sigma/Record wrappers AND the elaborator (recType desugar)
+// emit these. is_derive inspects a cell by op-signature (used by mk / constructor_type).
+mint_cell : Tree -> Tree := {ty} -> wait mint_op { ty := ty }
+apply_cell : Tree -> Tree := {ty} -> wait apply_op { ty := ty }
+proj_cell : Tree -> Tree -> Tree := {name, ty} -> wait proj_op { name := name; ty := ty }
+deriv_cell : Tree -> Tree -> Tree := {name, recipe} -> wait deriv_op { name := name; recipe := recipe }
+is_derive := {cell} -> tree_eq (pair_fst cell) (op_sig deriv_op)
+
+// at: the spine walker. Apply the cell op (-> a Step), interpret with the recursion and
+// bind_hyp INLINE. SMint: CHECK mints a hyp; STUCK (Pi application) routes the tail at the
+// argument and lands the codomain. SThread: CHECK recurses directly; STUCK routes the tail
+// under param_walker. SReject: not a member. SDone: emit the Action.
+let at = fix ({self, mode, tele, source, frame, prior} ->
   if (is_fork tele) then {
-    let e = pair_fst tele
-    if (tree_eq (entry_src e) "mint")
-      then (bind_hyp (e.ty) ({h} -> self ((pair_snd tele) h) v h)) // ∀ by minting (parametric coverage)
-      else (opt_elim e.def
-        ({_} -> match (observe e v prior) { // the PARTIAL cut: qapp apply | qacc lookup
-                  Err _ => Ok FF // undefined here -> not a member
-                  Ok x => (bind ((e.ty) x) ({ok} -> if ok then (self ((pair_snd tele) x) v x) else (Ok FF)))
-                })
-        ({recipe} -> match (lookup_field v (e.name)) { // derived (δ): present AND pinned to recipe
-                  Err _ => Ok FF
-                  Ok x => (if (tree_eq x recipe) then (self ((pair_snd tele) recipe) v recipe) else (Ok FF))
-                }))
-  } else (Ok TT))
-
-// tele_field_at: projection typing on a telescope-hyp. Walk to the requested field
-// feeding each prior its projection-neutral (opaque) or recipe (derived — δ in the
-// feed); tails instantiate UNDER the walker. At the field: opaque -> Extend its
-// type; derived -> Reduce its value (transparency is the Reduce arm of Action).
-let tele_field_at = fix ({self, tele, slf, name} ->
-  if (is_fork tele) then {
-    let entry = pair_fst tele
-    if (tree_eq (entry.name) name)
-      then (opt_elim entry.def ({_} -> Extend entry.ty) ({recipe} -> Reduce recipe))  // opaque -> type; derived -> value
-      else {
-        // feed the tail this prior's projection-neutral (opaque) or recipe (derived)
-        let x = (opt_elim entry.def
-          ({_} -> wait hyp_reduce (extend_neutral_meta slf (entry.ty) (acc entry.name)))
-          ({recipe} -> recipe))
-        match (param_walker (pair_snd tele) x) {
-          Ok rest => self rest slf name
-          Err _ => Extend InvalidType
-        }
-      }
-  } else (Extend InvalidType))
-
-// neg_respond: route a neutral elimination. A mint-lead telescope (a Pi) is being
-// APPLIED — the frame is the argument; instantiate the binder under the walker and
-// land at the codomain cell's type (≡ the old Pi `Extend (cod frame)`). Otherwise
-// it is a record/Sigma being PROJECTED — delegate to tele_field_at on the accessor.
-let neg_respond = {params, self, frame} ->
-  if (tree_eq (entry_src (pair_fst params)) "mint")
-    then (match (param_walker (pair_snd params) frame) { // Pi-application: instantiate the binder (policing a triaging codomain)
-            Ok rest => Extend ((pair_fst rest).ty)        // land at the codomain cell's type (≡ old Pi Extend (cod frame))
-            Err _ => Extend InvalidType
-          })
-    else (tele_field_at params self (pair_fst frame))
+    let cell = pair_fst tele
+    match (cell mode source prior frame) {
+      SMint ty => (if mode
+                    then (bind_hyp ty ({h} -> self TT ((pair_snd tele) h) source frame h))
+                    else (match (param_walker (pair_snd tele) frame) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
+      SThread x => (if mode
+                    then (self TT ((pair_snd tele) x) source frame x)
+                    else (match (param_walker (pair_snd tele) x) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
+      SReject _ => Ok FF
+      SDone a => a
+    }
+  } else (if mode then (Ok TT) else (Extend InvalidType)))
 
 // Telescope: THE negative n-ary former — the dependent product over a chain of cells.
-// `wait (make_recognizer neg_check) (make_meta tele neg_respond)`, with NO guard: a
-// type is a predicate over Tree and a telescope is the MEET of its cells' obligations,
-// so the EMPTY telescope is the empty meet = ⊤ = the all-trees predicate (= Tree).
-// neg_check's per-cell lookup_field already rejects non-records for any NON-empty
-// record telescope; Pi (mint-lead) accepts functions; so the old record-guard was an
-// artifact (it conflated `{}` with "the type of all records") and is gone. Pi/Sigma are
-// thin instances below; Record lifts its flat field list lazily (for self-verification).
+// `wait (make_recognizer (at TT)) (make_meta tele (at FF))`, NO guard: a telescope is
+// the MEET of its cells' obligations, so the EMPTY telescope is the empty meet = ⊤ =
+// the all-trees predicate (= Tree). Pi/Sigma are thin instances below; Record lifts
+// its flat field list lazily (for self-verification).
 Telescope : Tree -> Type := {tele} -> wait (make_recognizer
-  {meta, v} -> neg_check (meta.recognizer_params) v t
-) (make_meta tele neg_respond)
+  {meta, v} -> at TT (meta.recognizer_params) v t t
+) (make_meta tele ({params, self, frame} -> at FF params self frame t))
 
 // Pi A B = the 2-cell telescope [ mint x:A ; qapp out:(B x) ] — a thin Telescope
 // instance. Self-referential (its annotation mentions Pi via `->`). The mint cell is
 // the ∀-intro (binds the argument); the qapp cell observes v applied to it (codomain).
 Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
-  t { src := "mint"; ty := A;   def := t } ({h} ->
-  t { src := "qapp"; ty := B h; def := t } ({_} -> t)))
+  t (mint_cell A) ({h} ->
+  t (apply_cell (B h)) ({_} -> t)))
 
 Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 
@@ -258,10 +258,10 @@ HBin : Type := wait (make_rec_recognizer
 // from `given`, emit the full §2.6 record (which the recognizer then re-pins).
 let mk_fold = fix ({self, tele, given} ->
   if (is_fork tele) then {
-    let entry = pair_fst tele
-    let x = opt_elim entry.def ({_} -> field given (entry.name)) ({recipe} -> recipe)
+    let m = type_meta (pair_fst tele) // inspect the wait-form cell's meta
+    let x = if (is_derive (pair_fst tele)) then (m.recipe) else (field given (m.name))
     let rest = self ((pair_snd tele) x) given
-    pair (cons (entry.name) (pair_fst rest)) (cons (list_const x) (pair_snd rest))
+    pair (cons (m.name) (pair_fst rest)) (cons (list_const x) (pair_snd rest))
   } else (pair nil nil))
 // mk takes the Telescope TYPE (reads the telescope off its meta), so call
 // sites write `mk T { … }`. (Unannotated: the fold triages its argument, so a
@@ -280,13 +280,10 @@ mk := {T, given} -> {
 let list_rev = fix ({self, xs, acc} -> if (is_fork xs) then (self (pair_snd xs) (cons (pair_fst xs) acc)) else acc)
 let mkc_go = fix ({self, tele, names, vals} ->
   if (is_fork tele) then {
-    let entry = pair_fst tele
-    if (is_leaf entry.def)
-      then ({x} -> self ((pair_snd tele) x) (cons (entry.name) names) (cons (list_const x) vals)) // opaque: await x
-      else {
-        let x = stem_child entry.def                                                              // derived: compute now
-        self ((pair_snd tele) x) (cons (entry.name) names) (cons (list_const x) vals)
-      }
+    let m = type_meta (pair_fst tele)
+    if (is_derive (pair_fst tele))
+      then (self ((pair_snd tele) (m.recipe)) (cons (m.name) names) (cons (list_const (m.recipe)) vals)) // derived: compute now
+      else ({x} -> self ((pair_snd tele) x) (cons (m.name) names) (cons (list_const x) vals)) // opaque: await x
   } else (mk_record (list_rev names nil) (list_rev vals nil)))
 mk_curried := {T} -> mkc_go ((type_meta T).recognizer_params) nil nil
 
@@ -298,10 +295,10 @@ mk_curried := {T} -> mkc_go ((type_meta T).recognizer_params) nil nil
 // family — recognizer-correct and deterministic, but intensional under tree_eq.
 let ctype_go = fix ({self, tele, T} ->
   if (is_fork tele) then {
-    let entry = pair_fst tele
-    if (is_leaf entry.def)
-      then (Pi (entry.ty) ({x} -> self ((pair_snd tele) x) T))      // opaque -> a Pi
-      else (self ((pair_snd tele) (stem_child entry.def)) T)        // derived -> skip (computed)
+    let m = type_meta (pair_fst tele)
+    if (is_derive (pair_fst tele))
+      then (self ((pair_snd tele) (m.recipe)) T)               // derived -> skip (computed)
+      else (Pi (m.ty) ({x} -> self ((pair_snd tele) x) T))     // opaque -> a Pi
   } else T)
 constructor_type := {T} -> ctype_go ((type_meta T).recognizer_params) T
 
@@ -310,8 +307,8 @@ constructor_type := {T} -> ctype_go ((type_meta T).recognizer_params) T
 // `acc "fst"` / `acc "snd"` through tele_respond (dependency preserved; the old
 // walker_pair_* selectors and bespoke sigma respond are gone).
 Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
-  t { name := "fst"; ty := A; def := t } ({a} ->
-  t { name := "snd"; ty := B a; def := t } (t t t)))
+  t (proj_cell "fst" A) ({a} ->
+  t (proj_cell "snd" (B a)) ({_} -> t)))
 
 // Coproduct and Record types (the value-level cut primitives they reflect are at the top).
 let lookup_arm = fix ({self, variants, tag} ->
@@ -338,17 +335,17 @@ Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
 let fields_to_tele = fix ({self, fields} ->
   if (is_fork fields) then {
     let arm = pair_fst fields
-    t { name := pair_fst arm; ty := pair_snd arm; def := t } (t t (self (pair_snd fields)))
+    t (proj_cell (pair_fst arm) (pair_snd arm)) (t t (self (pair_snd fields)))
   } else t)
 // Record: the non-dependent flat-field former. NOT a literal `Telescope (fields_to_tele
 // fields)` wrapper — `fields_to_tele` triages its list argument, so an eager lift would
 // trip the walker when `Record` is self-verified against `Tree -> Type` (its param is a
 // neutral there). So it keeps its own wait-form and lifts LAZILY inside the recognizer
-// (where the params are concrete), sharing neg_check/neg_respond. Guard-free like
-// Telescope: a non-record is rejected by neg_check's lookup_field; `Record []` = ⊤.
+// (where the params are concrete), sharing the `at` walk. Guard-free like Telescope:
+// a non-record is rejected by `at`'s per-cell lookup_field; `Record []` = ⊤.
 Record : Tree -> Type := {fields} -> wait (make_recognizer
-  {meta, v} -> neg_check (fields_to_tele meta.recognizer_params) v t
-) (make_meta fields ({params, self, frame} -> neg_respond (fields_to_tele params) self frame))
+  {meta, v} -> at TT (fields_to_tele meta.recognizer_params) v t t
+) (make_meta fields ({params, self, frame} -> at FF (fields_to_tele params) self frame t))
 
 // Coproduct_of / ctors: build a coproduct from a variant RECORD
 // `{ Tag := payloadType, … }` instead of the positional `Coproduct [pair "Tag"

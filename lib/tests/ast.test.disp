@@ -46,30 +46,31 @@ test binder_to_pi (e_binder [mk_param (t "n") t] (e_var "n")) = t
 // non-recType nodes pass through unchanged
 test rectype_to_telescope (e_var "Nat") = (e_var "Nat")
 
-let lc_ast = {x} -> e_app (e_var "list_const") x
-let entry_ast = {name, ty_ast, def_ast} ->
-  (e_app (e_app (e_var "mk_record") entry_names_ast)
-    (e_cons (lc_ast (e_str name)) (e_cons (lc_ast ty_ast) (e_cons (lc_ast def_ast) e_leaf))))
+// each field is now a wait-form cell: proj_cell name ty (opaque) or
+// deriv_cell name recipe (derived — the annotation is dropped, the recipe pins it).
+let proj_entry = {name, ty_ast} -> e_app (e_app (e_var "proj_cell") (e_str name)) ty_ast
+let deriv_entry = {name, recipe} -> e_app (e_app (e_var "deriv_cell") (e_str name)) recipe
 
-// single opaque field: { a : A }  ⟶  Telescope (t entry_a ({a} -> t))
+// single opaque field: { a : A }  ⟶  Telescope (t (proj_cell "a" A) ({a} -> t))
 test rectype_to_telescope (e_rectype [mk_tfield "a" (t (e_var "A")) t])
   = (e_app (e_var "Telescope")
-      (e_cons (entry_ast "a" (e_var "A") e_leaf)
+      (e_cons (proj_entry "a" (e_var "A"))
         (e_binder [mk_param (t "a") t] e_leaf)))
 
-// opaque + derived (untyped): { a : A, b := succ a } — b's ty defaults to
-// Tree, its def is the stem-option `t (succ a)`, scoped under {a}.
+// opaque + derived (untyped): { a : A, b := succ a } — b is a deriv_cell pinned
+// to the recipe `succ a`, scoped under {a}.
 test rectype_to_telescope (e_rectype [
     mk_tfield "a" (t (e_var "A")) t,
     mk_tfield "b" t (t (e_app (e_var "succ") (e_var "a")))])
   = (e_app (e_var "Telescope")
-      (e_cons (entry_ast "a" (e_var "A") e_leaf)
+      (e_cons (proj_entry "a" (e_var "A"))
         (e_binder [mk_param (t "a") t]
-          (e_cons (entry_ast "b" (e_var "Tree") (e_app e_leaf (e_app (e_var "succ") (e_var "a"))))
+          (e_cons (deriv_entry "b" (e_app (e_var "succ") (e_var "a")))
             (e_binder [mk_param (t "b") t] e_leaf)))))
 
-// typed derived field: { a : A := x } carries BOTH the annotation and the recipe
+// typed derived field: { a : A := x } — a value member is a deriv_cell on the
+// recipe `x`; the annotation `A` is dropped (the recognizer pins, doesn't check it).
 test rectype_to_telescope (e_rectype [mk_tfield "a" (t (e_var "A")) (t (e_var "x"))])
   = (e_app (e_var "Telescope")
-      (e_cons (entry_ast "a" (e_var "A") (e_app e_leaf (e_var "x")))
+      (e_cons (deriv_entry "a" (e_var "x"))
         (e_binder [mk_param (t "a") t] e_leaf)))

@@ -8,10 +8,10 @@ open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
 
-// entry builders (note `name := name` resolves to the BINDER param — the
-// sequential-field-scope ordering rule)
-let ent = {name, ty} -> { name := name; ty := ty; def := t }
-let dent = {name, e} -> { name := name; ty := Tree; def := t e }
+// entry builders: a telescope cell is now a wait-form (`proj_cell name ty` /
+// `deriv_cell name recipe`) — the same trees the surface recType desugar emits.
+let ent = {name, ty} -> proj_cell name ty
+let dent = {name, e} -> deriv_cell name e
 
 // ---- empty telescope = ⊤ (the empty meet of obligations = Top, = Tree). Guard-free:
 // a non-empty record telescope still rejects non-records via neg_check's lookup_field,
