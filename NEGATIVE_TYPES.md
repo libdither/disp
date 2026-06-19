@@ -115,10 +115,20 @@ The telescope currently covers `⊤`/`Π`/`Σ`/records. The rest of the *negativ
 - **Metacircular self-typing of the telescope machinery.** Cells are now wait-forms
   `wait op meta` whose op signatures already make them partly self-describing; a
   telescope-*type* can recognize them, and the kernel already self-types
-  `MetaShape`/`NeutralMeta`. Closing the loop — an `Entry` type for cells, a
-  shape-type for the spine — completes self-hosting. Non-trivial: the spine is
-  *dependent* (the λ-tails), so fully typing it needs dependent/higher-order
-  machinery. Self-*description*, not simplification.
+  `MetaShape`/`NeutralMeta`. **The recognize-side metacircle LANDED (2026-06):**
+  a type is a wait-form observed two ways — applied (`T v` → `CheckerResult`) and
+  projected (`type_meta T` → `MetaShape`) — so `StrictType` is a plain `Telescope`
+  of two `qid` cells (the recognize-face `Tree -> CheckerResult` and the meta-face
+  `MetaShape`), walked by the same `at`, and it **inhabits itself**
+  (`StrictType : StrictType`) with no privileged kinding rule
+  (`lib/tests/strict_type.test.disp`). What remains is the *respond* side: a strict
+  `respond : RespondShape` needs a **dependent `MetaShape`** (respond typed
+  `params_ty -> Self -> frame_ty -> Action` against the former's structured frame).
+  That makes *projecting* responds (inductive/eq) checkable, but the negative-former
+  respond (`at FF`, which raw-walks the cell spine) needs an `Entry` type for cells
+  + a shape-type for the spine — fully typing it needs dependent/higher-order
+  machinery, since the spine is *dependent* (the λ-tails). Self-*description*, not
+  simplification.
 
 ### 4c. The architectural move — unify recognition and respond (one walk) — **LANDED (2026-06)**
 
