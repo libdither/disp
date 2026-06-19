@@ -70,6 +70,16 @@ let is_bind_hyp = {f} -> and (is_fork f) (tree_eq (pair_fst f) bind_hyp_sig)
 TEQ_WAIT_SIG := checker_sig tree_eq
 let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 
+// apply_policed (§7A): the trusted policing token. `apply_policed M s` IS `param_walker M s` (real
+// policing both when run raw — at runtime hyp_reduce invokes responds directly — AND when a respond
+// is being type-checked). It is `wait param_walker M` so (i) raw, `(wait param_walker M) s` reduces
+// to `param_walker M s`; (ii) its root sig is `checker_sig param_walker` (independent of the deferred
+// M), which the walker's carve-out below spots via `checker_sig self` and SHORT-CIRCUITS — returning
+// `Ok (self M s)` instead of re-emulating the inner walker's (sanctioned) neutral-inspecting
+// application and wrongly rejecting it. Keying on `checker_sig self` (self = the fix var, not the
+// global `param_walker`) keeps param_walker's tree FINITE — the definition cycle that a fail-closed
+// marker would need to dodge is dissolved. (Defined just after param_walker.)
+
 let w_stem = {a, x} -> {
   let r = t a x
   if (is_hyp_fork r) then Err else (Ok r) // stem-forge rejection
@@ -113,8 +123,13 @@ param_walker := fix ({self, f, x} ->
   else if (is_hyp_fork f) then (Ok (f x)) // Σ-op: a hyp_reduce neutral — route raw to extend its spine
   else if (tree_eq f pair_fst) then (Ok (pair_fst x)) // reader: any value's root signature (incl. neutrals)
   else if (tree_eq f neutral_type) then (Ok (neutral_type x)) // reader: a neutral's stored type
+  else if (and (is_fork f) (tree_eq (pair_fst f) (checker_sig self))) then (Ok (self (type_meta f) x)) // §7A: trusted policer — complete `apply_policed M · s` = self M s = param_walker M s
   else if (tree_eq f ({x} -> x)) then (Ok x) // identity
   else (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f))
+
+// apply_policed: the trusted policing token responds use to walk a user sub-term (motive,
+// codomain, predicate) applied to the self-neutral. See the note above param_walker.
+apply_policed := {M} -> wait param_walker M
 
 // param_apply returns the bare reduct (wrapping invariant §7.5): unwrap param_walker's
 // success-Ok; a routed/recognizer CheckerResult passes through.
@@ -123,7 +138,7 @@ param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 // inductive_respond: extend the neutral's spine at `motive self`, routed through the
 // walker so a motive that raw-reflects on the neutral is rejected (-> dead state).
 inductive_respond := {params, self, frame} ->
-  match (param_walker frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }
+  match (apply_policed frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }
 
 // Boundary: param_lift gates on closedness; typecheck = lift then check.
 param_lift := {v} -> if (is_closed v) then (Ok v) else Err
@@ -148,7 +163,7 @@ gated_inductive_respond := {coh, params, self, frame} -> {
   match r {
     Err _ => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
     Ok v => if v
-            then (match (param_walker frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // coherent; police the motive
+            then (match (apply_policed frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // coherent; police the motive
             else (Extend InvalidType) // cases do not inhabit the motive
   }
 }

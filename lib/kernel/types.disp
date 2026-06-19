@@ -61,7 +61,7 @@ let apply_op = {meta, mode, source, prior, frame} -> // a function codomain: obs
 let proj_op = {meta, mode, source, prior, frame} -> // a record field: observe by honest lookup
   if mode
     then (match (lookup_field source (meta.name)) { Err _ => SReject; Ok x => (match ((meta.ty) x) { Ok b => (if b then (SThread x) else SReject); Err _ => SReject }) })
-    else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Extend (meta.ty))) else (SThread (wait hyp_reduce (extend_neutral_meta source (meta.ty) (acc (meta.name))))))
+    else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Extend (meta.ty))) else (SThread (source (acc (meta.name))))) // §7B: thread field-value via the SANCTIONED elimination (source.name), not a forged hyp_reduce neutral (which the stem-forge guard rejects under emulation)
 let deriv_op = {meta, mode, source, prior, frame} -> // a δ field: present AND pinned to recipe
   if mode
     then (match (lookup_field source (meta.name)) { Err _ => SReject; Ok x => (if (tree_eq x (meta.recipe)) then (SThread (meta.recipe)) else SReject) })
@@ -85,10 +85,10 @@ let at = fix ({self, mode, tele, source, frame, prior} ->
     match (cell mode source prior frame) {
       SMint ty => (if mode
                     then (bind_hyp ty ({h} -> self TT ((pair_snd tele) h) source frame h))
-                    else (match (param_walker (pair_snd tele) frame) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
+                    else (match (apply_policed (pair_snd tele) frame) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
       SThread x => (if mode
                     then (self TT ((pair_snd tele) x) source frame x)
-                    else (match (param_walker (pair_snd tele) x) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
+                    else (match (apply_policed (pair_snd tele) x) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
       SReject _ => Ok FF
       SDone a => a
     }
@@ -180,7 +180,7 @@ Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer
     Ok (and (tree_eq v refl) (tree_eq p.lhs p.rhs))
   }
 ) (make_meta { type := A; lhs := x; rhs := y } ({params, self, frame} ->
-  match (param_walker frame.motive params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }))
+  match (apply_policed frame.motive params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }))
 
 // Equality lemmas via eq_J (compute on refl, stay stuck on a neutral proof).
 eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} -> eq_J A x y motive base p
