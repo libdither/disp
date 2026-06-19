@@ -103,9 +103,9 @@ Telescope : Tree -> Type := {tele} -> wait (make_recognizer
   {meta, v} -> at TT (meta.recognizer_params) v t t
 ) (make_meta tele ({params, self, frame} -> at FF params self frame t))
 
-// Pi A B = the 2-cell telescope [ mint x:A ; qapp out:(B x) ] — a thin Telescope
-// instance. Self-referential (its annotation mentions Pi via `->`). The mint cell is
-// the ∀-intro (binds the argument); the qapp cell observes v applied to it (codomain).
+// Pi A B = the 2-cell telescope [ mint x:A ; apply out:(B x) ] — a thin Telescope
+// instance. Self-referential (its annotation mentions Pi via `->`). The mint_cell is
+// the ∀-intro (binds the argument); the apply_cell observes v applied to it (codomain).
 Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
   t (mint_cell A) ({h} ->
   t (apply_cell (B h)) ({_} -> t)))

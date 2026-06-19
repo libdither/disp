@@ -3085,72 +3085,68 @@ individual type-formers (`Bool`, `Nat`, `Pi`, …).
 == `Telescope`, `Sigma`, and projection-by-name
 
 The dependent n-ary record former subsumes `Sigma` and `Record` (§12.4) as
-instances. A *telescope* is a chain of entries, each the §2.6 record
-`{ name; ty; def }`, threaded so later entries' types see the earlier fields'
-values:
+instances. A *telescope* is a chain of *cells*, threaded so later cells' types
+see the earlier fields' values:
 
 ```disp
-t entry0 (λx0. t entry1 (λx1. … t entryN (λxN. t)))   // tail = t (nil)
+t cell0 (λx0. t cell1 (λx1. … t cellN (λxN. t)))   // tail = t (nil)
 ```
 
-`entry.ty` is the field's declared type (a function of the priors, fed in by
-each tail's λ); `entry.def` is a *stem-option*: `t` for an *opaque* field (its
-value is supplied) or `t recipe` for a *derived* field *pinned* to `recipe`
-over the priors. A tail `λx. rest` that ignores `x` (written `t t rest`) makes
-the entry non-dependent — that degenerate case is `Record`. Well-foundedness is
-structural: a tail sees only priors.
+Each **cell is a wait-form** `wait op meta` — inspectable (`pair_fst` = the op's
+signature, `type_meta` = its data) AND runnable (applying it runs the op). The op
+is the cell's *observation*, and `meta` carries its `name`/`ty`/`recipe`. The four
+ops: `mint` (a fresh ∀-bound hyp — a function argument), `proj name` (observe a
+record field by honest `lookup_field`), `apply` (observe `v` applied to the prior —
+a function codomain), `deriv name recipe` (a *derived* field pinned to `recipe`).
+A tail `λx. rest` that ignores `x` makes the cell non-dependent — that degenerate
+case is `Record`. Well-foundedness is structural: a tail sees only priors. New
+observation modes are new ops, no walker edit (the kernel's "types are open
+wait-forms" discipline, at the cell level).
 
 Values of a telescope type are §2.6 *records* (`{ fst := a; snd := b }`),
 recognized and projected *by name* through the cut — there are no positional
-`pair_fst`/`pair_snd` projection selectors. Recognition feeds each field its
-projection and checks it, pinning derived fields by `tree_eq`:
+`pair_fst`/`pair_snd` projection selectors. ONE walker `at` serves both faces:
+recognition (`at TT`, concrete `v`) and projection-response (`at FF`, a neutral).
+`at` applies each cell op, which returns a **Step** — pure data — and interprets
+it with the recursion and `bind_hyp` *inline*:
 
 ```disp
-tele_check := fix ({self, tele, v} ->
-  if (is_fork tele) then {
-    let entry = pair_fst tele
-    match (lookup_field v (entry.name)) {       // HONEST cut: Ok value | Err (absent ⇒ reject —
-      Err _ => Ok FF                            //   load-bearing now the guard is gone: a missing
-      Ok x  => {                                //   field must reject even when its type accepts junk)
-        let rest = (pair_snd tele) x            // instantiate the tail at this field
-        if (is_leaf entry.def)
-          then (bind ((entry.ty) x) ({ok} -> if ok then (self rest v) else (Ok FF)))   // opaque: x : ty
-          else (if (tree_eq x (stem_child entry.def)) then (self rest v) else (Ok FF))  // derived: x ≡ recipe
-      }
-    }
-  } else (Ok TT))
-```
-
-Projection on a *neutral* walks to the requested field, feeding each prior
-either its projection-neutral (opaque) or its recipe (derived — a δ-step in the
-feed), instantiating tails UNDER the walker (a tail that raw-triages a neutral
-prior routes to the dead state). At the field: opaque ↦ `Extend ty`, derived ↦
-`Reduce recipe` — transparency is the `Reduce` arm of `Action`:
-
-```disp
-tele_field_at := fix ({self, tele, slf, name} ->
-  if (is_fork tele) then {
-    let entry = pair_fst tele
-    if (tree_eq (entry.name) name)
-      then (if (is_leaf entry.def) then (Extend entry.ty) else (Reduce (stem_child entry.def)))
-      else {
-        let x = if (is_leaf entry.def)
-          then (wait hyp_reduce (extend_neutral_meta slf (entry.ty) (acc entry.name))) // opaque prior: its proj-neutral
-          else (stem_child entry.def)                                                  // derived prior: its recipe
-        match (param_walker (pair_snd tele) x) { Ok rest => self rest slf name
-                                                ; Err _   => Extend InvalidType }
-      }
-  } else (Extend InvalidType))
+// Step: SMint ty | SThread x | SReject | SDone action
+// an op:  op meta mode source prior frame -> Step
+//   proj  CHECK:  lookup_field, check ty -> SThread x | SReject ;  STUCK: name-match -> SDone (Extend ty) | reflect -> SThread
+//   apply CHECK:  check ty (source prior) -> SThread (source prior) | SReject ;  STUCK: SDone (Extend ty)
+//   mint:  SMint ty                       (at mints (CHECK) or lands the codomain (STUCK))
+//   deriv CHECK:  lookup_field, pin tree_eq -> SThread recipe | SReject ;  STUCK: name-match -> SDone (Reduce recipe) | SThread recipe
+at := fix ({self, mode, tele, source, frame, prior} ->
+  if (is_fork tele) then (match ((pair_fst tele) mode source prior frame) {
+    SMint ty  => (if mode then (bind_hyp ty ({h} -> self TT ((pair_snd tele) h) source frame h))
+                          else (match (param_walker (pair_snd tele) frame) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
+    SThread x => (if mode then (self TT ((pair_snd tele) x) source frame x)
+                          else (match (param_walker (pair_snd tele) x) { Ok rest => self FF rest source frame frame; Err _ => Extend InvalidType }))
+    SReject _ => Ok FF
+    SDone a   => a
+  }) else (if mode then (Ok TT) else (Extend InvalidType)))
 
 Telescope : Tree -> Type := {tele} -> wait (make_recognizer
-  {meta, v} -> tele_check meta.recognizer_params v        // guard-free (see below)
-) (make_meta tele ({params, self, frame} -> tele_field_at params self (pair_fst frame)))
+  {meta, v} -> at TT (meta.recognizer_params) v t t       // guard-free (see below)
+) (make_meta tele ({params, self, frame} -> at FF params self frame t))
 ```
+
+This is the recursion-schemes split: the op is the per-cell *algebra* (and, being a
+wait-form, the open extension point); `at` is the fixed recursion harness. `bind_hyp`
+lives in `at`, not the op, *by necessity* — a continuation passed *through* a function
+to `bind_hyp` miscompiles under nested binders (the hyp leaks and trips its
+occurs-check), so the op returns a `Step` for `at` to interpret. `at TT` runs under
+the ambient walker (the mint `bind_hyp` and `source prior` are policed); `at FF` runs
+off-walker (driven by `hyp_reduce`), so it instantiates each tail explicitly under
+`param_walker` (a tail that raw-triages a neutral prior routes to the dead state). At
+a field: opaque ↦ `Extend ty`, derived ↦ `Reduce recipe` — transparency is the
+`Reduce` arm of `Action`.
 
 *No record guard; the empty telescope is `⊤`.* A type is a predicate over `Tree`,
 and a telescope type is the *meet* of its cells' obligation-predicates (each cell
 carves out the values passing that observation). A non-empty record telescope
-rejects a non-record on its own — `tele_check`'s first `lookup_field` returns
+rejects a non-record on its own — the `at TT` walk's first `proj` `lookup_field` returns
 `Err`. So the old `is_record_product v` guard was redundant *except* at the empty
 telescope, where it conflated `Telescope t` with "the type of all records." Without
 it, `Telescope t` is the empty meet `⋂∅ = ⊤` — the all-trees predicate, definitionally
@@ -3159,13 +3155,13 @@ distinct from `Unit` (one inhabitant) and `False` (none); "the type of all recor
 is a separate predicate (`is_record_product`) if wanted.
 
 *One negative-product former.* `Pi`, `Record`, and `Sigma` are instances of this
-single `Telescope` — the kernel shares one recognizer and one `respond`. A cell's
-*source* is `mint` (a fresh ∀-bound hyp — a function argument), `qacc name` (observe
-a record field by honest `lookup_field`), `qapp` (observe `v` applied to the prior —
-a function codomain), or `compute` (a derived/δ field). Then `Pi A B = Telescope
-[mint x:A ; qapp out:(B x)]`; `Record`/`Sigma` are `qacc` chains. So `Π`, `Σ`,
-records, and `⊤` are one *negative* former (a finite dependent limit), differing only
-in cell source — the dual of the *positive* `Coproduct` (a sum / colimit), which is
+single `Telescope` — the kernel shares one walker `at` (both faces). A cell's *op*
+is `mint` (a fresh ∀-bound hyp — a function argument), `proj name` (observe a record
+field by honest `lookup_field`), `apply` (observe `v` applied to the prior — a
+function codomain), or `deriv name recipe` (a derived/δ field). Then `Pi A B =
+Telescope [mint x:A ; apply out:(B x)]`; `Record`/`Sigma` are `proj` chains. So `Π`,
+`Σ`, records, and `⊤` are one *negative* former (a finite dependent limit), differing
+only in cell op — the dual of the *positive* `Coproduct` (a sum / colimit), which is
 therefore **not** a telescope (§12.2).
 
 The builder `mk T given` reads the telescope off the *type* `T`'s meta, fills
@@ -3178,17 +3174,17 @@ opaque, the second's type depending on the first:
 
 ```disp
 Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
-  t { name := "fst"; ty := A;   def := t } ({a} ->
-  t { name := "snd"; ty := B a; def := t } (t t t)))
+  t (proj_cell "fst" A) ({a} ->
+  t (proj_cell "snd" (B a)) ({_} -> t)))
 
 test typecheck Type Sigma            // Sigma is structurally a type
 ```
 
 A Sigma value is the record `{ fst := a; snd := b }`; a Sigma-*hypothesis*
-projects via `acc "fst"` / `acc "snd"` through `tele_field_at`, so reading
-`hyp_AB.snd` lands `Extend (B hyp_AB.fst)` — the dependency preserved by the
-first field's projection-neutral being fed into the tail. The old bespoke
-`sigma_respond` and the `walker_pair_fst/snd` selectors are gone.
+projects via `acc "fst"` / `acc "snd"` through `at FF`, so reading `hyp_AB.snd`
+lands `Extend (B hyp_AB.fst)` — the dependency preserved by the first field's
+projection-neutral being fed into the tail. The old bespoke `sigma_respond` and
+the `walker_pair_fst/snd` selectors are gone.
 
 `Sigma` is the `Σ` corner at an *arbitrary* first-component domain. Restricting
 a finite *tag* domain instead gives `Coproduct` (below); the two share the
@@ -3458,31 +3454,29 @@ distinction is purely about how the payload was constructed:
 
 A record is the *non-dependent* telescope (§12.1): a constant-tail (K-stem)
 telescope where every tail ignores its bound field, so later entries' types do
-*not* depend on earlier values. It shares Telescope's `tele_check` /
-`tele_field_at` folds. The flat field list `[(Vi, Ti)]` lifts to the telescope
-*lazily* — at recognition/projection, via `fields_to_tele`, not at formation —
-so `Record` stays parametric in its field-list params and `Record : Tree ->
-Type` self-verifies:
+*not* depend on earlier values. It shares Telescope's single `at` walk (both
+faces). The flat field list `[(Vi, Ti)]` lifts to the telescope *lazily* — at
+recognition/projection, via `fields_to_tele`, not at formation — so `Record`
+stays parametric in its field-list params and `Record : Tree -> Type`
+self-verifies:
 
 ```disp
-// Lift a flat (name, type) list to a constant-tail telescope: each tail is
-// `t t (rest)` (the K-stem — ignores the bound field), every def opaque.
+// Lift a flat (name, type) list to a constant-tail telescope of proj_cells: each
+// tail is `t t (rest)` (the K-stem — ignores the bound field).
 fields_to_tele := fix ({self, fields} ->
   if (is_fork fields) then {
     let arm = pair_fst fields
-    t { name := pair_fst arm; ty := pair_snd arm; def := t } (t t (self (pair_snd fields)))
+    t (proj_cell (pair_fst arm) (pair_snd arm)) (t t (self (pair_snd fields)))
   } else t)
 
-Record : Tree -> Type := {fields} -> wait (make_recognizer
-  {meta, v} -> if (tree_eq (pair_fst v) annihilate_sig)
-               then (tele_check (fields_to_tele meta.recognizer_params) v) else (Ok FF)
-) (make_meta fields ({params, self, frame} -> tele_field_at (fields_to_tele params) self (pair_fst frame)))
+Record : Tree -> Type := {fields} -> wait (make_recognizer    // guard-free, like Telescope
+  {meta, v} -> at TT (fields_to_tele meta.recognizer_params) v t t
+) (make_meta fields ({params, self, frame} -> at FF (fields_to_tele params) self frame t))
 ```
 
 The value is `prod F`, where the field table `F = pair names payload`: `names`
 is the ordered field-name list in one hash-consed header node, `payload` the
-`const`-wrapped field values. The recognizer checks `v` is a product (O(1)
-`tree_eq` on the `annihilate` sig) and runs `tele_check` over the lifted
+`const`-wrapped field values. The recognizer runs `at TT` over the lifted
 telescope, which projects and checks each field by name. (The old
 `record_recognizer` / `sigma_chain_recognizer` were the degenerate Sigma-chain
 case and are gone.)
@@ -3492,7 +3486,7 @@ identical field types but different names (`{a:Nat,b:Nat}` vs `{p:Nat,q:Nat}`)
 have distinct headers and are told apart at the value boundary, not merely as
 distinct types.
 
-*Structural check and row subtyping.* `tele_check` walks the declared fields,
+*Structural check and row subtyping.* the `at TT` walk traverses the declared fields,
 projecting each by name (`field v name`, the §2.6 cut, O(1) per field) and
 checking it — a *structural* "`v` has these fields, well-typed" check, the
 natural basis of the row-polymorphism story (§15, `extends R Console`): it does
@@ -3546,7 +3540,7 @@ r.x   ≡   r (acc x)               // r (acc x) : field_type F x
 
 The result type `field_type F x` depends on `F` — the field list carried by `r`'s
 *type* `Record F`, from the binder — not on the value's header; the recognizer's
-`tele_check` projects `r`'s fields by the names in `F`, so the two agree. An
+the `at TT` walk projects `r`'s fields by the names in `F`, so the two agree. An
 out-of-range name has no field in `F`, so the cut has no inhabitant and fails
 as a verdict `Ok FF`, never a host throw. Projection reuses the cut's `Π`/`Σ`
 machinery instead of a bespoke resolution pass.
@@ -3563,7 +3557,7 @@ is written as a closed term and left to reduction.
 *Neutral records resolve through `respond`.* When `r` is a hypothesis, reading
 its field table would triage on a neutral, which the walker forbids. There
 projection is an elimination, routed through the record type's `respond` — which
-delegates to `tele_field_at` (§12.1) over the lifted telescope `fields_to_tele
+delegates to the `at FF` walk (§12.1) over the lifted telescope `fields_to_tele
 F`, reading the field list from the hypothesis's *stored type* (supplied by the
 binder, not inferred). So names are read from the value's field table on
 concrete records and from the type on neutral ones; neither path trusts an

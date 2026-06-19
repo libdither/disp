@@ -53,40 +53,61 @@ checks the eliminator's cases inhabit the motive.
 ## Telescopes
 
 `Telescope` is THE negative n-ary former; `Pi`, `Record`, and `Sigma`
-are instances. `Pi A B = Telescope [mint x:A ; qapp out:(B x)]` and
+are instances. `Pi A B = Telescope [mint x:A ; apply out:(B x)]` and
 `Sigma` (the 2-entry `{ fst : A, snd : B fst }`) are literal
 `Telescope (cells)`; `Record` shares the engine but keeps its own
 wait-form, lazily lifting its flat field list via `fields_to_tele` (an
 eager lift would trip the walker when `Record : Tree -> Type` is
 self-verified, since `fields_to_tele` triages its param). A telescope is
-`t entry (λx. rest)` — the tail binds the entry's value, so
-well-foundedness is structural (tails see only priors). An entry is
-`{ name; ty; def }` optionally carrying a coverage tag `src`
-(`entry_src` defaults absent → `"qacc"`); `def` is a stem-option:
-`t` = opaque, `t e` = **derived** (definitionally pinned to recipe `e`).
+`t cell (λx. rest)` — the tail binds the cell's value, so
+well-foundedness is structural (tails see only priors).
 
-Each cell has a **source**: `mint` (a fresh ∀-bound hyp via `bind_hyp` —
-a function argument), `qacc name` (observe a record field by HONEST
-`lookup_field` — the *partial cut* `observe`), `qapp` (observe `v`
-applied to the prior — a function codomain), or `compute` (a derived/δ
-field). One recognizer `neg_check` walks them; project-vs-apply is just
-which arm of `observe` runs, and the only irreducible axis is coverage
-(mint vs observe). The recognizer is **guard-free**: a non-record is
-rejected by `qacc`'s `lookup_field` (`Err`), so the empty telescope
-`Telescope t` is the empty meet of obligations = `⊤` = `Tree` (the
-nullary negative product / terminal). `Coproduct` (a sum / positive
-type) is the dual and is NOT a telescope.
+**Cells are WAIT-FORMS.** A cell is `wait op meta` — inspectable
+(`pair_fst` = the op's signature, `type_meta` = its data) AND runnable
+(applying it runs the op). The op is the cell's **observation**: `mint`
+(a fresh ∀-bound hyp via `bind_hyp` — a function argument), `proj name`
+(observe a record field by HONEST `lookup_field`), `apply` (observe `v`
+applied to the prior — a function codomain), or `deriv name recipe` (a
+derived/δ field pinned by `tree_eq`). The constructors `mint_cell` /
+`apply_cell` / `proj_cell` / `deriv_cell` are exported, and the
+elaborator emits the same ones, so surface `{a:Nat}`, manual
+`Telescope (proj_cell "a" Nat)`, and `Pi`/`Sigma` all build identical
+trees. New observation modes plug in as new ops — no walker edit (the
+kernel's "types are open wait-forms" discipline, at the cell level).
 
-One fold, two feeds. `neg_check` feeds each tail the *observed value*
-(concrete feed): `qacc`/`qapp` cells type-check, derived cells pin by
-`tree_eq` (conversion, no `Eq` proofs). The respond (`neg_respond`) is a
-router: a mint-lead telescope (a Pi) instantiates the binder at the
-frame and `Extend`s the codomain cell's type; otherwise `tele_field_at`
-feeds *projection-neutrals* for opaque priors and recipe values for
-derived priors, instantiating each tail UNDER `param_walker` (a tail
-that raw-triages a neutral prior routes to `InvalidType` — the GAP-2
-regime). At the requested field the answer is the `Action` arm matching
-its transparency:
+**One walker, two modes.** A single `at mode tele source frame prior`
+serves BOTH recognition (`at TT`) and projection-response (`at FF`).
+`at` applies each cell op, which returns a **Step** — pure data:
+`SMint ty` (mint a ∀-hyp), `SThread x` (observed value `x`: thread +
+continue), `SReject` (not a member), or `SDone action` (stuck: emit this
+`Action`). `at` interprets the Step with the recursion and `bind_hyp`
+INLINE — the op is the per-cell *algebra*, `at` the fixed recursion
+harness (recursion-schemes split). Because the per-cell logic for both
+faces lives in one op, the recognizer and respond cannot disagree about a
+cell. The walker is **guard-free**: a non-record is rejected by `proj`'s
+`lookup_field` (`SReject`), so the empty telescope `Telescope t` is the
+empty meet of obligations = `⊤` = `Tree` (the nullary negative product /
+terminal). `Coproduct` (a sum / positive type) is the dual and is NOT a
+telescope.
+
+`bind_hyp` lives in `at`, not the op, by necessity: a continuation passed
+*through* a function to `bind_hyp` miscompiles under nested binders (the
+hyp leaks and trips the occurs-check — see CLAUDE.md § Compiler
+workarounds), which is exactly why the op returns a `Step` for `at` to
+interpret rather than calling `bind_hyp` with a passed `kont`.
+
+`at TT` (recognition) runs under the ambient walker, so the mint
+`bind_hyp` and the `source prior` application are policed automatically;
+each cell type-checks the observed value (`SThread x`), with derived
+cells pinning by `tree_eq` (conversion, no `Eq` proofs). `at FF`
+(response) runs off-walker (driven by `hyp_reduce`), so it instantiates
+each tail EXPLICITLY under `param_walker` (a tail that raw-triages a
+neutral prior routes to `InvalidType` — the GAP-2 regime): a mint-lead
+telescope (a Pi) instantiates the binder at the frame and lands the
+codomain cell's type; a proj-lead telescope feeds *projection-neutrals*
+for opaque priors and recipe values for derived priors, walking to the
+named field. At the requested field the answer is the `Action` arm
+matching its transparency:
 
 - opaque → `Extend ty` (the spine grows at the field's type);
 - derived → `Reduce e` (δ-transparency: `hyp_reduce` hands back the
@@ -110,8 +131,9 @@ discipline as Pi codomains.
 
 For *why* the telescope is shaped this way (the forced-choice chain), the ideal it
 approximates (observation interfaces / NbE), and the remaining improvements from
-local to global — including the one architectural move (unifying recognition and
-respond into a single mode-polymorphic walk) — see [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md).
+local to global — the recognition/respond unification into one mode-polymorphic walk
+*landed* (it is the `at`/Step machinery above); the open frontier is now frame-tagging
+for *mixed/callable* records — see [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md).
 
 ## Signatures
 

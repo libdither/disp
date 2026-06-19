@@ -11,12 +11,13 @@ the concrete improvements that remain. Companion to `KERNEL_DESIGN.md` § Telesc
 The telescope is close to a *global* optimum, not merely a local one — because
 disp's substrate and foundations nearly **determine** it via a chain of forced
 choices (§1). The current design is a faithful realization of the ideal in §2. The
-remaining distance is three kinds of gap (§4): **(a) cosmetic** encoding, **(b)
-completeness** (folding the rest of the negative lattice in), and **(c) one genuine
-architectural frontier** — collapsing recognition and respond into a single
-mode-polymorphic walk (the NbE move), whose payoff is *unvalidated*. A *genuinely
-different* optimum requires breaking the chain — intrinsic typing — which means a
-different substrate, i.e. a different project (§6).
+**(c) architectural move** — collapsing recognition and respond into a single
+mode-polymorphic walk (the NbE move) — has now **landed** (one walker `at`, wait-form
+cells; §4c), so the remaining distance is just **(a) cosmetic** encoding and **(b)
+completeness** (folding the rest of the negative lattice in — `qid`/Intersection,
+and frame-tagging for mixed/callable records, now pluggable as new wait-form ops). A
+*genuinely different* optimum requires breaking the chain — intrinsic typing — which
+means a different substrate, i.e. a different project (§6).
 
 ## 1. Why the design is nearly determined (the forced-choice chain)
 
@@ -65,27 +66,30 @@ completeness.
 ## 3. What's landed (the current realization)
 
 `Telescope` is THE negative n-ary former, **guard-free**; `Pi A B = Telescope [mint
-x:A ; qapp out:(B x)]` and `Sigma` are thin instances; `Record` shares
-`neg_check`/`neg_respond` but keeps its own wait-form (lazy `fields_to_tele` lift,
-for self-verification). A cell is a §2.6 record `{ name; ty; def; [src] }`; coverage
-is the `src` tag (`mint`/`qacc`/`qapp`, default `qacc`), transparency is `def`
-(opaque / `t recipe`). `{} = Telescope t = ⊤ = Tree`. See `KERNEL_DESIGN.md` §
-Telescopes and `TYPE_THEORY.typ` §12.7.
+x:A ; apply out:(B x)]` and `Sigma` are thin instances; `Record` shares the engine
+but keeps its own wait-form (lazy `fields_to_tele` lift, for self-verification). The
+recognition/respond split collapsed into ONE walker `at` (the §4c move, landed), and
+a cell is now a **wait-form** `wait op meta` — inspectable (signature = which
+observation, meta = its data) AND runnable. The op is the observation
+(`mint`/`proj name`/`apply`/`deriv name recipe`) and returns a *Step* (`SMint`,
+`SThread`, `SReject`, `SDone`) that `at` interprets, recursion + `bind_hyp` inline.
+New observation modes plug in as new ops with no walker edit. `{} = Telescope t = ⊤ =
+Tree`. See `KERNEL_DESIGN.md` § Telescopes and `TYPE_THEORY.typ` §12.7.
 
 ## 4. The distance from local to global
 
-### 4a. Cosmetic — the cell encoding (marginal)
+### 4a. Cosmetic — the cell encoding (mostly settled by §4c)
 
-Tags vs a stored *query value* vs a coproduct of cell-kinds vs stored closures. All
-behavior-identical; measured ~5% recognition cost difference; the **tag is the
-correct *defunctionalized* form** for disp's situation (few cell kinds, many
-operations over cells — recognize/respond/`mk`/`constructor_type`/future `strip`).
-Storing the operation (tagless-final) is open-to-new-kinds but closed-to-new-ops,
-the wrong dual here; it also fattens cell literals and forces a behavior+data hybrid
-(`mk` needs `name`/`def` as data). The one genuine tightening: **query-collapse** —
-fold `src`+`name` into a single `query` (qacc's query = `acc name`, a real cut-value)
-so `observe = honest-cut v query` mirrors the value-level cut. Real but cosmetic;
-worth doing only if the cell encoding is being touched anyway.
+The §4c landing chose **wait-form cells** `wait op meta`: the op *is* the
+defunctionalized observation (signature = kind, meta = data), so the old `src`/`def`
+axes collapsed into the op identity, and `mk`/`constructor_type` inspect cells by
+op-signature (`is_derive`) + `type_meta`. This is the inspectable-AND-runnable point
+the encoding debate (tag vs stored-query vs coproduct-of-kinds vs closures) converged
+on — a closure would be a black box to `mk`/`constructor_type`, but a wait-form is
+not. The op carries the genuine duality (intro `mint` vs the observations
+`proj`/`apply`/`deriv`); openness (new observation = new op) is what §4b builds on.
+Residual tightening (a query value folding `proj`'s name into a single cut-value) is
+marginal and behavior-identical.
 
 ### 4b. Completeness — fold the rest of the negative lattice in
 
@@ -99,45 +103,55 @@ The telescope currently covers `⊤`/`Π`/`Σ`/records. The rest of the *negativ
   frame-routing as callable records below.
 - **positional / `Fin` observations → tuples** (the prelude fork-pair idiom as a
   telescope instance, distinct from named §2.6 records).
-- **The unified single-frame respond for *mixed*/callable interfaces.** Today
-  `neg_respond` is a *router* (mint-lead ⟹ Pi-application; else ⟹ `tele_field_at`
+- **The unified single-frame respond for *mixed*/callable interfaces.** `at FF`
+  routes a neutral elimination by the lead cell (mint-lead ⟹ Pi-application; else ⟹
   projection) — sound for *pure* formers. A value that is both projected *and*
-  applied (a callable record = `Neg` over a sum index `Q = Tags ⊕ A`) needs a single
-  walk that dispatches a frame by tag. Validated in scratch with **tagged queries**
-  (`inj "apply" arg`); blocked on pure bare-application being unsound to unwrap (a
-  function argument can itself be `inj "apply" x`). Defer until a consumer
-  (dataflow/objects, `GOALS.md`) exists.
-- **Metacircular self-typing of the telescope machinery.** Cells are §2.6 record
-  *values*; a telescope-*type* can recognize them (validated), and the kernel already
-  self-types `MetaShape`/`NeutralMeta`. Closing the loop — an `Entry` type for cells,
-  a shape-type for the spine — completes self-hosting. Non-trivial: the spine is
+  applied (a callable record = `Neg` over a sum index `Q = Tags ⊕ A`) needs the
+  elimination *frame* to carry an accessor-vs-argument tag so one walk dispatches it.
+  Validated in scratch with **tagged queries** (`inj "apply" arg`); blocked on `acc`
+  being load-bearing for the §2.6 value cut (`annihilate` indexes records by the
+  accessor's tag), so it cannot be naively retagged. This is now the live frontier
+  (§7).
+- **Metacircular self-typing of the telescope machinery.** Cells are now wait-forms
+  `wait op meta` whose op signatures already make them partly self-describing; a
+  telescope-*type* can recognize them, and the kernel already self-types
+  `MetaShape`/`NeutralMeta`. Closing the loop — an `Entry` type for cells, a
+  shape-type for the spine — completes self-hosting. Non-trivial: the spine is
   *dependent* (the λ-tails), so fully typing it needs dependent/higher-order
   machinery. Self-*description*, not simplification.
 
-### 4c. The architectural frontier — unify recognition and respond (one walk)
+### 4c. The architectural move — unify recognition and respond (one walk) — **LANDED (2026-06)**
 
-The only non-cosmetic, non-completeness move. Today `neg_check` (concrete,
-fold-all-observations) and `neg_respond`/`tele_field_at` (neutral, one-observation)
-are **two walks that share** the spine-walk, the dependency-threading, and the
-observe-dispatch, differing only at the **leaf** (check-and-continue vs extend-stuck)
-and the **prior-feed** (concrete value vs projection-neutral). The ideal writes one
-per-frame kernel and derives both:
+This is the one move that actually shifted the design, and it is done. Formerly
+`neg_check` (concrete, fold-all-observations) and `neg_respond`/`tele_field_at`
+(neutral, one-observation) were **two walks that shared** the spine-walk, the
+dependency-threading, and the observe-dispatch, differing only at the **leaf**
+(check-and-continue vs extend-stuck) and the **prior-feed** (concrete value vs
+projection-neutral). They are now one walker:
 
 ```
-at(tele, v, frame, mode)        // observe v at frame; mode = check (concrete) | stuck (neutral)
-recognize v = ∀ frame. at(tele, v, frame, check)   // mint (infinite Q) or enumerate (finite Q)
-respond   v frame = at(tele, v, frame, stuck)       // single application
+at(mode, tele, source, frame, prior)               // mode = TT (check / concrete) | FF (stuck / neutral)
+recognize v       = at(TT, tele, v, t, t)          // ∀ frame, folding; mint a hyp at mint cells
+respond   v frame = at(FF, tele, v, frame, t)       // answer one frame
 ```
 
-This is NbE's "single evaluator, reflect/reify as modes," one level down. It would
-deduplicate the two ~15-line walks into one. **But the payoff is unvalidated:** the
-split it merges is partly forced — concrete vs neutral (reify/reflect), fold-all vs
-answer-one, and mint vs enumerate vs given-frame (coverage). The unified `at` must
-branch on all three, so the merge may *relocate* the duality into a mode parameter
-rather than eliminate it. **The experiment:** build `at`, define
-`neg_check`/`neg_respond` as its two specializations, and measure whether one walk is
-genuinely simpler than the two it replaces (and survives the dependent-threading and
-coverage cases). This is the one move that could actually shift the design.
+How the prediction played out (it was right): the merge **relocated** the duality
+into the `mode`, it did not eliminate it — the leaf (fold-all vs answer-one) and the
+prior-feed (observe vs reflect) genuinely differ by mode, as forced. But two real
+wins landed anyway: (1) the spine traversal, dependency threading, and observe-
+dispatch are written ONCE; (2) because each cell's check-and-stuck behavior is
+co-located in one op, the recognizer and respond **cannot disagree** about a cell.
+
+The realization went *further* than the §4c sketch by also taking the wait-form-cell
+encoding (§4b's "cells carry their semantics"): the per-cell logic moved OUT of the
+walker into a wait-form **op** that returns a `Step` (`SMint | SThread | SReject |
+SDone`), and `at` is the interpreter. This is the recursion-schemes split (op =
+algebra, `at` = harness), and it is what makes new observation modes (§4b) pluggable
+without a walker edit. One non-obvious constraint forced this shape rather than the
+naive "op calls `bind_hyp kont`": a `bind_hyp` continuation passed *through* a
+function miscompiles under nested binders (the hyp leaks, trips the occurs-check), so
+the recursion/`bind_hyp` had to stay inline in `at` and the op had to return data
+(see CLAUDE.md § Compiler workarounds). See `KERNEL_DESIGN.md` § Telescopes.
 
 ## 5. The boundary that is *not* a gap (the positive dual)
 
@@ -161,11 +175,18 @@ improvement to this one. Given erased trees, everything from §1.2 onward follow
 
 ## 7. Recommended order (if pursued)
 
-1. **§4c** — prototype the NbE recognition/respond unification and *measure*. The
-   only architectural move; do it first because a positive result reshapes everything
-   below it.
-2. **§4b `qid`** — Intersection/Refinement (recognition is validated; design the
-   subsumption respond, shared with the callable-record frame-router).
-3. **§4b metacircular self-typing** — the self-hosting `GOALS.md` win.
-4. **§4a query-collapse** — only when the cell encoding is already being touched.
-5. **Defer** callable/mixed respond until a dataflow/objects consumer exists.
+0. **§4c — DONE.** The recognition/respond unification + wait-form-cell encoding
+   landed (one walker `at`, ops returning `Step`s). This reshaped everything below: a
+   new observation mode is now a new wait-form op, no walker edit.
+1. **§4b `qid`** — Intersection/Refinement as a `qid_cell` op (observe `v` itself).
+   Recognition is validated; design the subsumption respond, shared with the
+   callable-record frame-router.
+2. **frame-tagging / mixed-callable** — the live frontier (§4b): a value both
+   projected *and* applied needs the elimination frame to carry an accessor-vs-
+   argument tag. Blocked on `acc` being load-bearing for the §2.6 value cut, so it
+   can't be naively retagged; needs its own design.
+3. **§4b metacircular self-typing** — the self-hosting `GOALS.md` win (an `Entry`
+   type for cells; the wait-form op signatures make cells partly self-describing
+   already).
+4. **§4a encoding tightening** — only when the cell encoding is already being touched
+   (the wait-form op already absorbs the old `src`/`def` axes into the op identity).

@@ -115,7 +115,7 @@ test m.recognizer_params = zero
 test m.respond = FF
 test has_metashape_layout m = TT
 test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF // old positional shape is no longer a meta
-// recognizer_params is now Pi's [ mint x:A ; qapp out:(B x) ] telescope; each cell is
+// recognizer_params is now Pi's [ mint x:A ; apply out:(B x) ] telescope; each cell is
 // a WAIT-FORM `wait op meta`. The lead cell is the minted domain (a mint_cell, ty A),
 // read by signature (the cell IS a mint_cell) and meta (its ty).
 test tree_eq (pair_fst (pair_fst ((type_meta (Pi Nat ({_} -> Bool))).recognizer_params))) (pair_fst (mint_cell zero)) = TT

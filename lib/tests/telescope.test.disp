@@ -14,7 +14,7 @@ let ent = {name, ty} -> proj_cell name ty
 let dent = {name, e} -> deriv_cell name e
 
 // ---- empty telescope = ⊤ (the empty meet of obligations = Top, = Tree). Guard-free:
-// a non-empty record telescope still rejects non-records via neg_check's lookup_field,
+// a non-empty record telescope still rejects non-records via the proj cell's lookup_field,
 // but the EMPTY telescope imposes no obligations, so everything inhabits it. ----
 test typecheck (Telescope t) {} = Ok TT             // a record inhabits {}
 test param_apply (Telescope t) zero = Ok TT         // ...and so does a non-record (⊤, not "any record")
@@ -31,9 +31,9 @@ test typecheck T2 { a := 2; b := TT; c := 9 } = Ok TT // width subtyping: extra 
 
 // ---- presence is required, even for PERMISSIVE field types. A missing field
 // used to be coerced to junk `t t`, which a top-like type (Tree/String) accepts;
-// neg_check observes a qacc cell with the honest `lookup_field` (Ok value | Err) —
-// the PARTIAL cut — not the total `field`, so absent fields are rejected regardless
-// of the field's type (the soundness fix the partial-cut unification preserves). ----
+// the `at` walk observes a proj cell with the honest `lookup_field` (Ok value | Err),
+// not the total `field`, so absent fields are rejected regardless of the field's type
+// (the soundness fix the wait-form unification preserves). ----
 let TTop = Telescope (t (ent "a" Tree) ({_a} -> t (ent "b" Bool) ({_b} -> t)))
 test param_apply TTop { b := TT } = Ok FF          // missing a:Tree -> rejected (was Ok TT)
 test typecheck TTop { a := zero; b := TT } = Ok TT // present -> accepted
