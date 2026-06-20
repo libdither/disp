@@ -468,3 +468,12 @@ InductiveRespondShape : Type := Tree -> Tree -> InductiveFrame -> Action
 // ProjectingRespondShape: the params-PINNED form — apply the respond to the type's OWN
 // recognizer_params, then check the residual `self -> frame -> Action`.
 ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
+
+// RESIDUAL — recursive gated formers (Nat). Its coherence gate reads `cases.base : motive zero`
+// and `cases.step : Π n. motive n -> motive (succ n)`, so the frame `cases` is a DEPENDENT record
+// on the `motive` field. A structured `NatFrame := { motive ; cases : { base : motive zero ; step …}}`
+// IS a valid type, but Nat's respond still does not inhabit `Tree -> NatFrame -> Action`: projecting
+// `frame.cases.base` is a DEPENDENT projection off a neutral record (its type mentions another field,
+// `motive`), which is a separate frontier (dependent-record projection) the negative former / `at`
+// don't yet self-type — distinct from the projecting/Pi/Sigma/Record cases above, which structuring
+// alone closed. Left as the one open respond residual (the recursive-gated branching case).

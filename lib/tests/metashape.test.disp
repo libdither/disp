@@ -70,11 +70,11 @@ test param_apply InductiveRespondShape inductive_respond = Ok TT
 test param_apply ProjectingRespondShape ((type_meta Unit).respond (type_meta Unit).recognizer_params) = Ok TT
 test param_apply ProjectingRespondShape ((type_meta Ord).respond (type_meta Ord).recognizer_params)   = Ok TT
 test param_apply ProjectingRespondShape ((type_meta (Eq Nat zero zero)).respond (type_meta (Eq Nat zero zero)).recognizer_params) = Ok TT
-// RECURSIVE GATED formers are the residual: Nat's coherence gate inspects the neutral/cases
-// (Nat = zero | succ Nat), and InductiveFrame still loosens `cases` to Tree, so the gate
-// triages an abstract hyp -> Nat does not yet inhabit. Pinning the per-constructor `cases`
-// structure is the next step (the branching residual). (Non-recursive Bool happens to pass,
-// but that's an artifact of its trivial gate, not a general gated-former result.)
+// RESIDUAL — recursive gated Nat: its coherence gate reads cases.base/cases.step, so it can't
+// inhabit ProjectingRespondShape (cases : Tree -> the gate triages an abstract hyp). A DEPENDENT
+// NatFrame (cases structured on motive) doesn't close it either: projecting `frame.cases.base`
+// is a dependent projection off a neutral record (type depends on the `motive` field), a separate
+// frontier. So Nat stays the one open respond residual (the recursive-gated branching case).
 test tree_eq (param_apply ProjectingRespondShape ((type_meta Nat).respond (type_meta Nat).recognizer_params)) (Ok TT) = FF
 
 // NEGATIVE former (Pi): its `at FF` respond, params PINNED to the spine `[mint A ; apply (B h)]`,
@@ -82,6 +82,12 @@ test tree_eq (param_apply ProjectingRespondShape ((type_meta Nat).respond (type_
 // walk lands `Extend (B arg)`. So for `Pi Nat ({_} -> Bool)` the per-former shape is
 // `Tree -> Nat -> Action`. This is §7B self-typing the spine, validated in-tree for the Pi face.
 test param_apply (Arrow Tree (Arrow Nat Action)) ((type_meta (Pi Nat ({_} -> Bool))).respond (type_meta (Pi Nat ({_} -> Bool))).recognizer_params) = Ok TT
+// NEGATIVE formers Sigma/Record (PROJECTION-lead): params PINNED, frame : Frame (Tree). Unlike Pi
+// (which APPLIES its codomain to the frame, so frame : A), a projection respond only READS
+// `pair_fst frame` and threads `source (acc name)` — no application — so the frame stays abstract
+// Tree and the field-name branch doesn't block. Shape `Self -> Frame -> Action`.
+test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Sigma Nat ({_} -> Bool))).respond (type_meta (Sigma Nat ({_} -> Bool))).recognizer_params) = Ok TT
+test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Record (cons (pair "a" Nat) t))).respond (type_meta (Record (cons (pair "a" Nat) t))).recognizer_params) = Ok TT
 // - Pi's / Nat's responds now TERMINATE (STRICTTYPE.md step 1): with InvalidType a
 //   real empty type, eliminating an InvalidType-neutral runs a well-defined inert
 //   respond instead of projecting `.respond` out of `FF` and looping. They still do
