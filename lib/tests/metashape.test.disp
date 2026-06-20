@@ -76,6 +76,12 @@ test param_apply ProjectingRespondShape ((type_meta (Eq Nat zero zero)).respond 
 // structure is the next step (the branching residual). (Non-recursive Bool happens to pass,
 // but that's an artifact of its trivial gate, not a general gated-former result.)
 test tree_eq (param_apply ProjectingRespondShape ((type_meta Nat).respond (type_meta Nat).recognizer_params)) (Ok TT) = FF
+
+// NEGATIVE former (Pi): its `at FF` respond, params PINNED to the spine `[mint A ; apply (B h)]`,
+// inhabits `Self -> A -> Action` — the elimination frame IS the argument (: the domain A), and the
+// walk lands `Extend (B arg)`. So for `Pi Nat ({_} -> Bool)` the per-former shape is
+// `Tree -> Nat -> Action`. This is §7B self-typing the spine, validated in-tree for the Pi face.
+test param_apply (Arrow Tree (Arrow Nat Action)) ((type_meta (Pi Nat ({_} -> Bool))).respond (type_meta (Pi Nat ({_} -> Bool))).recognizer_params) = Ok TT
 // - Pi's / Nat's responds now TERMINATE (STRICTTYPE.md step 1): with InvalidType a
 //   real empty type, eliminating an InvalidType-neutral runs a well-defined inert
 //   respond instead of projecting `.respond` out of `FF` and looping. They still do
