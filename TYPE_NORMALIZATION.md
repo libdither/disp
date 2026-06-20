@@ -293,21 +293,31 @@ Tier-A normalization are only 10a + 10b — both done.
   primitive (`reify_hyp`, expressible over `prelude` + `tree_eq`), not a relocation. The reflect half exists
   (`bind_hyp` mint, `types.disp:87`). Since it gates only the (not-yet-built) Tier B and has no consumer to
   validate end-to-end, **build it with Tier B**, not now. (Tier A needs none of it.)
-- **10e. `StrictType` → `Type` — NOT blocked (both §7A and §7B resolved); it's wiring + one narrow
-  residual.** Correction (the merged `4d5f7bf` does more than I first credited): §7A (`apply_policed`) AND
-  §7B (spine self-typing — sanctioned `source (acc name)` threading + `at FF` via `apply_policed`, "the
-  feared higher-order spine recursor is not needed") are **both live on main**. The PoC validated that
-  Pi/Record/Sigma/dependent-Sigma + the projecting (inductive/eq/gated) responds inhabit their per-former
-  RespondShapes. So the remaining work for full migration is **not a wall**: (i) **wiring** — build the
-  per-former `RespondShape_T` and make `StrictType` actually *check* `respond` against it (the PoC proves it
-  works; just not hooked up); (ii) a **narrow residual** — codomains that *branch* on the bound value
-  (`λa. if … then T1 else T2`), a pre-existing neutral-branching limit the current uniform kernel formers
-  don't hit. The one genuine *migration* risk is separate from the respond walls: `Type := StrictType`
-  "tells a type from a type *constructor*", so some `: Type` annotations in codomain position may need
-  attention — worth an experiment, not a blocker. **Safe sub-step taken this pass:** updated `STRICTTYPE.md`
-  (its §7B section + "recommended next move" presented 7B as open and were stale). This is now arguably the
-  *most* tractable of 10c–10e, and it makes the universe itself a telescope so normalization applies to
-  `Type`/`&`-of-types uniformly (6d).
+- **10e. `StrictType` → `Type` — substantive part LANDED; literal name-collapse BLOCKED at the host
+  level.** Worked this pass (2026-06-19). Outcome in two parts:
+  - **LANDED (committed):** *(a)* the per-former **structured RespondShapes** are now defined and
+    validated **in-tree** (not just PoC scratch): `InductiveFrame`, `InductiveRespondShape`, and the
+    params-pinned `ProjectingRespondShape` — the projecting family (Unit/Ord, Eq's J-rule) and the Pi
+    negative former all inhabit their shapes (`metashape.test.disp`). Residual pinned: recursive *gated*
+    formers (Nat) need per-constructor `cases` structure (the branching residual); Record/Sigma
+    projection-frame shapes not yet built. *(b)* **StrictType is now a real UNIVERSE, not just a
+    recognizer** — its respond was a §4b *placeholder* (telescope `at FF` subsumption); swapped for
+    `type_predicate_h_rule`, so a StrictType-hyp works as a polymorphic Pi domain (`∀(A:StrictType). A→A`
+    recognizes the polymorphic identity — empirically confirmed: it *failed* before, passes now). This is
+    the substantive content of "make the universe strict": StrictType can now actually serve as `Type`.
+  - **BLOCKED — the literal `Type := StrictType` name-collapse:** an **irreducible host-level bootstrap
+    cycle** (confirmed empirically, two distinct failures). *(1)* In-language: `Type` is used in VALUE
+    position early (`Action`'s `Extend := Type`, `InductiveFrame`'s motive, `NeutralMeta`) before the
+    strict machinery (MetaShape/qid/CheckerResult) exists, and within-file value refs are sequential —
+    fixable by reordering those defs after a late `Type := StrictType`. *(2)* But then the **host
+    elaborator** breaks: `compile.ts`'s `isUniverseTree(type_tree, Type)` (the positional type/value
+    desugar) needs `Type` **in scope when compiling every `: Type` binding**; a late `Type` is invisible
+    to the early ones, corrupting the type/value decision (`binderToPi` then fails on a value lambda).
+    Breaking this needs a **host change** — forward-declaring `Type`'s tree before compiling the kernel,
+    or a two-pass top-level compile — not just a `.disp` reshuffle. Reverted the collapse experiment; the
+    universe stays two names (`Type` lean-early for bootstrap, `StrictType` the strict universe) until the
+    host forward-declaration lands. So "universe is a telescope" (for 6d normalization) holds *via
+    StrictType*, just not yet under the name `Type`.
 
 **Test impact (no pre-cleanup needed, but update on landing).** The suite is not redundant; the pins to
 revisit *when normalization lands* are: `telescope.test.disp:134,144` (surface `{a:Nat,b:Bool}` ==
