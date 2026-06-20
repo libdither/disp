@@ -407,6 +407,25 @@ RespondShape : Type := Tree -> Tree -> Frame -> Action
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
 MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }
 
+// ── Per-former STRUCTURED RespondShapes (§7A/§7B → StrictType wiring). The flat
+// RespondShape above loosens `frame` to Tree, so a PROJECTING respond (`frame.motive`)
+// cannot inhabit it — `frame.motive` off an abstract Tree is ill-formed. Giving the frame
+// STRUCTURE per former makes the projection well-formed, and the responds then inhabit
+// these shapes (the merged §7A `apply_policed` carve-out is what lets the policed body
+// type-check). This is the vocabulary StrictType checks each former's respond against.
+//
+// Inductive (Nat/Bool/Ord/Coproduct): the elimination frame is `{ motive ; cases }` and the
+// respond answers `Extend (motive self)`. `motive` maps the eliminated target to its type.
+InductiveFrame : Type := { motive : Tree -> Type, cases : Tree }
+InductiveRespondShape : Type := Tree -> Tree -> InductiveFrame -> Action
+// ProjectingRespondShape: the params-PINNED form StrictType actually checks against. It
+// applies a respond to the type's OWN recognizer_params (a constant — the "PIN params"
+// move) and checks the residual `self -> frame -> Action`. After pinning, the entire
+// projecting family — plain inductive, gated (Bool/Nat case-coherence), and Eq's J-rule
+// (which reads `params.rhs`) — collapses to this one shape: all answer `Extend (motive
+// <target>)` over an InductiveFrame.
+ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
+
 // ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
 // A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the
 // recognizer → a CheckerResult) and PROJECTED (`type_meta T` → its MetaShape). So `T : Type`
