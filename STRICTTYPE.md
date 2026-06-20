@@ -342,13 +342,28 @@ cell values, themselves typed).
 
 ### Recommended next move
 
-The cheap, high-leverage experiment is **7A via sealing**: declare `param_walker` (or one
-`apply_policed` helper) a trusted, typed token, then check whether the projecting responds inhabit
-`RespondShape` and whether the soundness story (sealing preserves parametricity) holds. It is the
-smallest step that could move the deep-respond check and it reuses the `bind_hyp` sealing
-precedent. **7B** is the larger, genuinely higher-order project; per §6, consider deferring it
-until §13/`BehavioralType`, so the spine type is designed once against the stronger target. Either
-way: the recognize-side metacircle is done, and the two remaining walls are now *located*.
+**Update (2026-06-19): 7A via `apply_policed` has LANDED as a validated PoC** (commit `4d5f7bf`,
+merged to `main`). `apply_policed := wait param_walker M` is admitted as a trusted walker carve-out
+keyed on `checker_sig self` (finite tree → no definition cycle; works raw at runtime *and* under
+check-time emulation). The `inductive`/`gated`/`eq` responds were switched from raw `param_walker
+frame.motive self` to `apply_policed`; with params **PINNED** per former (the universal quant was
+over-general and also sidestepped the PiParams dependent-record residual), the projecting AND
+negative-former responds (Pi/Record/Sigma/dependent-Sigma) now inhabit per-former RespondShapes —
+the feared higher-order spine recursor of 7B was **not** needed for these. `at FF` spine tails also
+route through `apply_policed`, and `proj_op` threads the no-match field value via the sanctioned
+`source (acc name)` elimination (not a forged `wait hyp_reduce …` neutral, which the stem-forge guard
+rejects under emulation). Full suite 150/150, soundness 19/19, metashape pins intact. **Residual:**
+dependent codomains that *branch* on the bound value (the pre-existing neutral-branching limit), and
+the StrictType *wiring* itself — building per-former `RespondShape_T` and checking `respond` against it
+— is not yet done (the PoC is not wired into `StrictType`).
+
+The original framing, for history: the cheap, high-leverage experiment was **7A via sealing** — declare
+`param_walker` (or one `apply_policed` helper) a trusted, typed token, then check whether the projecting
+responds inhabit `RespondShape` and whether the soundness story (sealing preserves parametricity) holds.
+That is what landed. **7B** (a fully self-typed spine for the general branching case) remains the larger,
+genuinely higher-order project; per §6, consider deferring it until §13/`BehavioralType`, so the spine
+type is designed once against the stronger target. Either way: the recognize-side metacircle is done, 7A
+is validated, and the remaining wall (general 7B branching) is *located*.
 
 ---
 
