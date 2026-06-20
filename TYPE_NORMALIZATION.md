@@ -293,31 +293,34 @@ Tier-A normalization are only 10a + 10b — both done.
   primitive (`reify_hyp`, expressible over `prelude` + `tree_eq`), not a relocation. The reflect half exists
   (`bind_hyp` mint, `types.disp:87`). Since it gates only the (not-yet-built) Tier B and has no consumer to
   validate end-to-end, **build it with Tier B**, not now. (Tier A needs none of it.)
-- **10e. `StrictType` → `Type` — substantive part LANDED; literal name-collapse BLOCKED at the host
-  level.** Worked this pass (2026-06-19). Outcome in two parts:
-  - **LANDED (committed):** *(a)* the per-former **structured RespondShapes** are now defined and
-    validated **in-tree** (not just PoC scratch): `InductiveFrame`, `InductiveRespondShape`, and the
-    params-pinned `ProjectingRespondShape` — the projecting family (Unit/Ord, Eq's J-rule) and the Pi
-    negative former all inhabit their shapes (`metashape.test.disp`). Residual pinned: recursive *gated*
-    formers (Nat) need per-constructor `cases` structure (the branching residual); Record/Sigma
-    projection-frame shapes not yet built. *(b)* **StrictType is now a real UNIVERSE, not just a
-    recognizer** — its respond was a §4b *placeholder* (telescope `at FF` subsumption); swapped for
-    `type_predicate_h_rule`, so a StrictType-hyp works as a polymorphic Pi domain (`∀(A:StrictType). A→A`
-    recognizes the polymorphic identity — empirically confirmed: it *failed* before, passes now). This is
-    the substantive content of "make the universe strict": StrictType can now actually serve as `Type`.
-  - **BLOCKED — the literal `Type := StrictType` name-collapse:** an **irreducible host-level bootstrap
-    cycle** (confirmed empirically, two distinct failures). *(1)* In-language: `Type` is used in VALUE
-    position early (`Action`'s `Extend := Type`, `InductiveFrame`'s motive, `NeutralMeta`) before the
-    strict machinery (MetaShape/qid/CheckerResult) exists, and within-file value refs are sequential —
-    fixable by reordering those defs after a late `Type := StrictType`. *(2)* But then the **host
-    elaborator** breaks: `compile.ts`'s `isUniverseTree(type_tree, Type)` (the positional type/value
-    desugar) needs `Type` **in scope when compiling every `: Type` binding**; a late `Type` is invisible
-    to the early ones, corrupting the type/value decision (`binderToPi` then fails on a value lambda).
-    Breaking this needs a **host change** — forward-declaring `Type`'s tree before compiling the kernel,
-    or a two-pass top-level compile — not just a `.disp` reshuffle. Reverted the collapse experiment; the
-    universe stays two names (`Type` lean-early for bootstrap, `StrictType` the strict universe) until the
-    host forward-declaration lands. So "universe is a telescope" (for 6d normalization) holds *via
-    StrictType*, just not yet under the name `Type`.
+- **10e. `StrictType` → `Type` — LANDED in full (universe collapsed).** Worked 2026-06-19/20. Three parts:
+  - *(a)* The per-former **structured RespondShapes** are defined and validated **in-tree** (not just PoC
+    scratch): `InductiveFrame`, `InductiveRespondShape`, the params-pinned `ProjectingRespondShape` — the
+    projecting family (Unit/Ord, Eq's J-rule) and the Pi negative former inhabit their shapes
+    (`metashape.test.disp`). Residual pinned: recursive *gated* formers (Nat) need per-constructor `cases`
+    structure (the branching residual); Record/Sigma projection-frame shapes not yet built.
+  - *(b)* **StrictType is a real UNIVERSE, not just a recognizer** — its respond was a §4b *placeholder*
+    (telescope `at FF` subsumption); swapped for `type_predicate_h_rule`, so a StrictType-hyp works as a
+    polymorphic Pi domain (`∀(A:StrictType). A→A` — empirically failed before, passes now). Made StrictType
+    a HYBRID wait-form (telescope recognizer + H-rule respond).
+  - *(c)* **`Type := StrictType` — the universe is now one strict name.** My first attempt mis-diagnosed
+    this as a host-level wall; it is **not**. The real blocker was `compile.ts`'s `isUniverseTree`, which
+    matched the universe by **root signature** — and the hybrid StrictType *shares Pi/Telescope's
+    signature*, so every `: <Pi-type>` binding was mis-read as universe-typed (`binderToPi` then choked on
+    `Pi`'s `{A,B} -> …` value). Fix: `isUniverseTree` now uses **exact tree identity** (1-line host
+    change). With that + the in-language reshuffle (the structural types whose *values* mention `Type` —
+    `Action`/`NeutralMeta`/`InductiveFrame`/the RespondShapes — moved after the late `Type := StrictType`;
+    within-file value refs are sequential, but the two-pass raw-then-checked import resolves the rest),
+    the kernel loads and **151/151 passes**. So "universe is a telescope" (for 6d) now holds under the
+    name `Type`.
+  - **Costs (accepted):** the strict telescope check is the universe's hot path now — ~25% slower kernel
+    checking, and the test suite needs an 8GB heap (4GB OOMs; `vitest.config.ts` bumps it) because
+    `disp.test.ts` loads the kernel ~29× per worker and the strict check retains ~3-4× more per load (real
+    programs load once — a test-harness artifact). Semantic change: the universe now **mints** (its
+    recognize-face `v : Arrow Tree CheckerResult` is a Pi), so raw `Type x` fails fast — verification must
+    go through `param_apply`/`verify` (which it already did; only `module.test.disp`'s raw shortcut needed
+    updating). A future optimization (cheap structural recognize-face + semantic MetaShape meta-face) could
+    cut the cost.
 
 **Test impact (no pre-cleanup needed, but update on landing).** The suite is not redundant; the pins to
 revisit *when normalization lands* are: `telescope.test.disp:134,144` (surface `{a:Nat,b:Bool}` ==

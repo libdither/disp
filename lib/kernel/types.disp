@@ -135,11 +135,12 @@ type_predicate_h_rule := {params, self, frame} ->
     then (Return (tree_eq (neutral_type frame) self))
     else (Return FF)
 
-// Type recognizes a wait-form with a MetaShape-conforming meta (a make_recognizer-built
-// check is deferred). Type : Type — the universe is its own type (§ Type:Type).
-Type : Type := wait (make_recognizer
-  {m, v} -> if (is_fork v) then (Ok (has_metashape_layout (type_meta v))) else (Ok FF)
-) (make_meta unit_witness type_predicate_h_rule)
+// Type IS the universe StrictType (migration): `Type := StrictType` is defined LATE (after
+// StrictType + its strict machinery). The early `: Type` ANNOTATIONS resolve via the raw-load
+// snapshot; the structural types whose VALUES mention `Type` (Action `Extend := Type`,
+// InductiveFrame motive, NeutralMeta) are moved to AFTER that definition (within-file value
+// refs are sequential). The host `isUniverseTree` uses exact tree identity, so a `: Type`
+// binding is still detected as universe-typed even though StrictType shares Telescope's sig.
 
 // Inductive recursors. Recursive calls route through `elim` (not raw `self`), so a neutral
 // predecessor yields a clean stuck elimination (§A). nat_rec/bool_rec/ord_rec are dependently typed.
@@ -393,38 +394,17 @@ ctors := {T} -> {
 Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
 Frame : Type := Tree
-// NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).
-NeutralMeta : Type := { stored_type : Type, payload : Tree }
-// Action: a respond's result — a neutral elimination either stays stuck
-// (`Extend new_type`, payload Type; InvalidType is itself a real empty Type) or
-// computes (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the
-// verdict ALIAS, not an arm.
-Action : Type := Coproduct_of { Extend := Type; Reduce := Tree }
-// RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
-// A respond inhabits it iff it doesn't raw-triage its args. (Pinned in metashape.test.disp.)
-RespondShape : Type := Tree -> Tree -> Frame -> Action
+// NeutralMeta / Action / RespondShape / the per-former RespondShapes use `Type` in VALUE
+// position (Action's `Extend := Type`, etc.), so they are defined AFTER `Type := StrictType`
+// below (within-file value refs are sequential — they can't forward-ref the late universe).
+// MetaShape uses only Tree, so it stays here (StrictType's qid_meta_cell needs it).
 // MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
 MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }
 
-// ── Per-former STRUCTURED RespondShapes (§7A/§7B → StrictType wiring). The flat
-// RespondShape above loosens `frame` to Tree, so a PROJECTING respond (`frame.motive`)
-// cannot inhabit it — `frame.motive` off an abstract Tree is ill-formed. Giving the frame
-// STRUCTURE per former makes the projection well-formed, and the responds then inhabit
-// these shapes (the merged §7A `apply_policed` carve-out is what lets the policed body
-// type-check). This is the vocabulary StrictType checks each former's respond against.
-//
-// Inductive (Nat/Bool/Ord/Coproduct): the elimination frame is `{ motive ; cases }` and the
-// respond answers `Extend (motive self)`. `motive` maps the eliminated target to its type.
-InductiveFrame : Type := { motive : Tree -> Type, cases : Tree }
-InductiveRespondShape : Type := Tree -> Tree -> InductiveFrame -> Action
-// ProjectingRespondShape: the params-PINNED form StrictType actually checks against. It
-// applies a respond to the type's OWN recognizer_params (a constant — the "PIN params"
-// move) and checks the residual `self -> frame -> Action`. After pinning, the entire
-// projecting family — plain inductive, gated (Bool/Nat case-coherence), and Eq's J-rule
-// (which reads `params.rhs`) — collapses to this one shape: all answer `Extend (motive
-// <target>)` over an InductiveFrame.
-ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
+// (The per-former STRUCTURED RespondShapes — InductiveFrame / InductiveRespondShape /
+// ProjectingRespondShape — also use `Type`/`Action` in value position, so they too are
+// defined after `Type := StrictType` below.)
 
 // ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
 // A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the
@@ -463,3 +443,28 @@ StrictType : Type := wait (make_recognizer
   (t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
    t (qid_meta_cell MetaShape) ({_} -> t)))
   type_predicate_h_rule)
+
+// The migration: the universe `Type` IS `StrictType`. One strict universe (semantic
+// recognize-face + MetaShape meta-face + the H-rule respond). The structural types whose
+// VALUES mention `Type`/`Action` follow here — they can't precede this line (within-file
+// value refs are sequential).
+Type := StrictType
+
+// NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).
+NeutralMeta : Type := { stored_type : Type, payload : Tree }
+// Action: a respond's result — stuck (`Extend new_type`, payload Type) or computes
+// (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the verdict ALIAS.
+Action : Type := Coproduct_of { Extend := Type; Reduce := Tree }
+// RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
+RespondShape : Type := Tree -> Tree -> Frame -> Action
+
+// ── Per-former STRUCTURED RespondShapes (§7A/§7B → StrictType wiring). The flat RespondShape
+// loosens `frame` to Tree, so a PROJECTING respond (`frame.motive`) can't inhabit it; giving
+// the frame STRUCTURE per former makes the projection well-formed (the merged §7A apply_policed
+// carve-out type-checks the policed body). Inductive: frame `{ motive ; cases }`, respond
+// answers `Extend (motive self)`.
+InductiveFrame : Type := { motive : Tree -> Type, cases : Tree }
+InductiveRespondShape : Type := Tree -> Tree -> InductiveFrame -> Action
+// ProjectingRespondShape: the params-PINNED form — apply the respond to the type's OWN
+// recognizer_params, then check the residual `self -> frame -> Action`.
+ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action

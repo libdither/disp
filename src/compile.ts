@@ -669,11 +669,14 @@ function treePairFst(p: Tree): Tree | null {
   return p.tag === "fork" ? p.left : null
 }
 
-// isUniverseTree(t, Type): does `t` carry the same former-signature as `Type`?
-// (signature = pair_fst, constant per former, independent of its parameters).
+// isUniverseTree(t, Type): is the annotation `t` EXACTLY the universe `Type`?
+// Uses full tree identity, not the root signature: when `Type` is the strict universe
+// (a Telescope-shaped wait-form), its signature is SHARED by every Pi/Telescope type, so
+// a root-sig match would wrongly treat any `: <Pi-type>` binding as universe-typed and
+// compile its value (e.g. Pi's `{A,B} -> …`) as a type. Exact identity matches only the
+// universe itself. (Hash-consing makes this O(1); revisit if universe levels `Type i` land.)
 function isUniverseTree(t: Tree, Type: Tree): boolean {
-  const ts = treePairFst(t), us = treePairFst(Type)
-  return ts !== null && us !== null && treeEqual(ts, us)
+  return treeEqual(t, Type)
 }
 
 // binderToPi(e): desugar a type-position binder into explicit `Pi` applications.
