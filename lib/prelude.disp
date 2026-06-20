@@ -117,6 +117,23 @@ tree_eq : Tree -> Tree -> Bool := fix ({self, a, b} ->
     ({ax, ay} -> triage FF ({_} -> FF) ({bx, by} -> and (self ax bx) (self ay by)) b)
     a)
 
+// tree_lt: a STRICT structural total order on trees — leaf < stem < fork, then
+// lexicographic on children. The canonical sort key for telescope-cell ordering
+// (TYPE_NORMALIZATION §3/§10b): a DETERMINISTIC, structure-derived order, NOT the
+// hash-cons id (ids are allocation-counter values, so id-order would make a normal
+// form depend on elaboration order). Mirrors tree_eq's recursion; total + irreflexive,
+// and exactly one of `tree_lt a b` / `tree_eq a b` / `tree_lt b a` holds.
+// (Unannotated like `nat_le`/`tree_eq`'s siblings: it triages its arg, and a Pi
+// annotation would mint a neutral and trip the walker's triage-on-neutral guard —
+// only `tree_eq` is a sanctioned carve-out for that pattern.)
+tree_lt := fix ({self, a, b} ->
+  triage
+    (triage FF ({_} -> TT) ({_l, _r} -> TT) b)                  // a leaf: < stem, < fork
+    ({ax} -> triage FF ({bx} -> self ax bx) ({_l, _r} -> TT) b) // a stem: child cmp; < fork
+    ({ax, ay} -> triage FF ({_} -> FF)                          // a fork: not < leaf/stem
+        ({bx, by} -> or (self ax bx) (and (tree_eq ax bx) (self ay by))) b)
+    a)
+
 // nat_le(a, b): true if natural number a <= b
 // Uses select-then-apply with fix for recursive comparison.
 let nat_le_zero_fn = {self, a, b} -> TT

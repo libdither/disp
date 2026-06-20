@@ -75,6 +75,16 @@ proj_cell : Tree -> Tree -> Tree := {name, ty} -> wait proj_op { name := name; t
 deriv_cell : Tree -> Tree -> Tree := {name, recipe} -> wait deriv_op { name := name; recipe := recipe }
 is_derive := {cell} -> tree_eq (pair_fst cell) (op_sig deriv_op)
 
+// const_tail / is_const_tail: the NON-DEPENDENT spine tail. A telescope node is
+// `t cell tail`; an INDEPENDENT cell's tail ignores the prior cell's value — the
+// `K rest` shape `t t rest` (exactly what a closed `{_} -> rest` compiles to). This
+// is the named vocabulary for the §4/§10 dependency split (TYPE_NORMALIZATION):
+// `is_const_tail` decides "this cell is independent of its prior" STRUCTURALLY, the
+// cheap proxy the canonical sort keys on (exact, non-adjacent analysis uses the
+// engine's `occurs`/`support_set`). `const_tail` is the matching constructor.
+const_tail := {rest} -> t t rest
+is_const_tail := {tail} -> and (is_fork tail) (is_leaf (pair_fst tail))
+
 // at: the spine walker. Apply the cell op (-> a Step), interpret with the recursion and
 // bind_hyp INLINE. SMint: CHECK mints a hyp; STUCK (Pi application) routes the tail at the
 // argument and lands the codomain. SThread: CHECK recurses directly; STUCK routes the tail
@@ -335,7 +345,7 @@ Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
 let fields_to_tele = fix ({self, fields} ->
   if (is_fork fields) then {
     let arm = pair_fst fields
-    t (proj_cell (pair_fst arm) (pair_snd arm)) (t t (self (pair_snd fields)))
+    t (proj_cell (pair_fst arm) (pair_snd arm)) (const_tail (self (pair_snd fields)))
   } else t)
 // Record: the non-dependent flat-field former. NOT a literal `Telescope (fields_to_tele
 // fields)` wrapper — `fields_to_tele` triages its list argument, so an eager lift would
