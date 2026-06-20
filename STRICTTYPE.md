@@ -311,6 +311,12 @@ the respond inherit it, because `param_walker`'s job is precisely to *break* par
 
 ### 7B. Self-typing the spine
 
+> **RESOLVED for the uniform formers (2026-06-19, commit `4d5f7bf`).** The wall described below was
+> dissolved without the feared higher-order recursor: `at FF` tails route through `apply_policed` and
+> `proj_op` threads via the sanctioned `source (acc name)` elimination, so Pi/Record/Sigma/dependent-Sigma
+> responds inhabit per-former RespondShapes. The analysis below is retained as history; the only surviving
+> open case is **branching dependent codomains** (see "Recommended next move").
+
 **The problem, precisely.** The negative-former respond is `at FF params self frame t`, and
 `at FF` walks the cell telescope `params` with **raw structural ops** — `is_fork params`,
 `pair_fst params`, `(pair_snd params) x`. Under `RespondShape`-checking `params` is an abstract
@@ -359,11 +365,18 @@ the StrictType *wiring* itself — building per-former `RespondShape_T` and chec
 
 The original framing, for history: the cheap, high-leverage experiment was **7A via sealing** — declare
 `param_walker` (or one `apply_policed` helper) a trusted, typed token, then check whether the projecting
-responds inhabit `RespondShape` and whether the soundness story (sealing preserves parametricity) holds.
-That is what landed. **7B** (a fully self-typed spine for the general branching case) remains the larger,
-genuinely higher-order project; per §6, consider deferring it until §13/`BehavioralType`, so the spine
-type is designed once against the stronger target. Either way: the recognize-side metacircle is done, 7A
-is validated, and the remaining wall (general 7B branching) is *located*.
+responds inhabit `RespondShape`. That landed — **and so did 7B**: the spine self-types without the feared
+higher-order recursor, via `apply_policed` on the `at FF` tails plus `proj_op` threading the no-match field
+through the sanctioned `source (acc name)` elimination (not a forged neutral). So §7B as written below
+(an open "self-typing the spine" problem) is **superseded** — it is solved for the uniform formers.
+
+What actually remains is therefore **not a wall**: (a) the **StrictType wiring** — build per-former
+`RespondShape_T` and make `StrictType` *check* `respond` against it (validated by the PoC, just not hooked
+up); and (b) one **narrow residual** — codomains that *branch* on the bound value (`λa. if … then T1 else
+T2`), a pre-existing neutral-branching limit the current uniform kernel formers don't trigger. Both are
+engineering / a contained extension, not the higher-order spine recursor §7B feared. The recognize-side
+metacircle is done, 7A+7B are validated, and the only open frontier is the branching-codomain case (defer
+to §13/`BehavioralType` if you want the spine type designed once against the stronger target).
 
 ---
 

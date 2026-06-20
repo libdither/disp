@@ -293,15 +293,21 @@ Tier-A normalization are only 10a + 10b — both done.
   primitive (`reify_hyp`, expressible over `prelude` + `tree_eq`), not a relocation. The reflect half exists
   (`bind_hyp` mint, `types.disp:87`). Since it gates only the (not-yet-built) Tier B and has no consumer to
   validate end-to-end, **build it with Tier B**, not now. (Tier A needs none of it.)
-- **10e. `StrictType` → `Type` — full migration BLOCKED; safe sub-step done.** Full migration (make
-  canonical `Type` reject non-strict types) is **blocked by the §7B spine-typing wall + branching dependent
-  codomains** (`STRICTTYPE.md` §7B; the merged `apply_policed` PoC advances 7A but is "not yet wired into
-  StrictType"). A blind `Type := StrictType` alias is high-risk (StrictType "tells a type from a type
-  *constructor*", so it would reject many `: Type` annotations in codomain position) and needs its own
-  experiment. **Safe sub-step taken this pass:** updated `STRICTTYPE.md` to record that its "recommended next
-  move" (7A via sealing/`apply_policed`) has *landed* as a validated PoC (it was stale). The universe-as-
-  telescope unification (so normalization applies to `Type`/`&`-of-types) waits on the StrictType wiring,
-  which is its own project.
+- **10e. `StrictType` → `Type` — NOT blocked (both §7A and §7B resolved); it's wiring + one narrow
+  residual.** Correction (the merged `4d5f7bf` does more than I first credited): §7A (`apply_policed`) AND
+  §7B (spine self-typing — sanctioned `source (acc name)` threading + `at FF` via `apply_policed`, "the
+  feared higher-order spine recursor is not needed") are **both live on main**. The PoC validated that
+  Pi/Record/Sigma/dependent-Sigma + the projecting (inductive/eq/gated) responds inhabit their per-former
+  RespondShapes. So the remaining work for full migration is **not a wall**: (i) **wiring** — build the
+  per-former `RespondShape_T` and make `StrictType` actually *check* `respond` against it (the PoC proves it
+  works; just not hooked up); (ii) a **narrow residual** — codomains that *branch* on the bound value
+  (`λa. if … then T1 else T2`), a pre-existing neutral-branching limit the current uniform kernel formers
+  don't hit. The one genuine *migration* risk is separate from the respond walls: `Type := StrictType`
+  "tells a type from a type *constructor*", so some `: Type` annotations in codomain position may need
+  attention — worth an experiment, not a blocker. **Safe sub-step taken this pass:** updated `STRICTTYPE.md`
+  (its §7B section + "recommended next move" presented 7B as open and were stale). This is now arguably the
+  *most* tractable of 10c–10e, and it makes the universe itself a telescope so normalization applies to
+  `Type`/`&`-of-types uniformly (6d).
 
 **Test impact (no pre-cleanup needed, but update on landing).** The suite is not redundant; the pins to
 revisit *when normalization lands* are: `telescope.test.disp:134,144` (surface `{a:Nat,b:Bool}` ==
