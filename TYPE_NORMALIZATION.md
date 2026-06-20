@@ -296,9 +296,15 @@ Tier-A normalization are only 10a + 10b — both done.
 - **10e. `StrictType` → `Type` — LANDED in full (universe collapsed).** Worked 2026-06-19/20. Three parts:
   - *(a)* The per-former **structured RespondShapes** are defined and validated **in-tree** (not just PoC
     scratch): `InductiveFrame`, `InductiveRespondShape`, the params-pinned `ProjectingRespondShape` — the
-    projecting family (Unit/Ord, Eq's J-rule) and the Pi negative former inhabit their shapes
-    (`metashape.test.disp`). Residual pinned: recursive *gated* formers (Nat) need per-constructor `cases`
-    structure (the branching residual); Record/Sigma projection-frame shapes not yet built.
+    projecting family (Unit/Ord, Eq's J-rule), the Pi negative former (frame : domain A), **and the
+    projection-lead negative formers Sigma/Record** (params pinned, frame : Frame — they only *read*
+    `pair_fst frame` and thread `source (acc name)`, no application, so the field-name branch doesn't
+    block) all inhabit their per-former shapes (`metashape.test.disp`). **One residual remains: recursive
+    *gated* Nat.** Its coherence gate reads `cases.base : motive zero` / `cases.step : Π n. motive n ->
+    motive (succ n)`, so the frame's `cases` is a *dependent* record on the `motive` field; even a valid
+    structured `NatFrame` doesn't let Nat's respond inhabit, because projecting `frame.cases.base` is a
+    **dependent projection off a neutral record** (its type mentions another field) — a separate frontier
+    the `at`/negative former doesn't self-type yet, distinct from the cases structuring alone closed.
   - *(b)* **StrictType is a real UNIVERSE, not just a recognizer** — its respond was a §4b *placeholder*
     (telescope `at FF` subsumption); swapped for `type_predicate_h_rule`, so a StrictType-hyp works as a
     polymorphic Pi domain (`∀(A:StrictType). A→A` — empirically failed before, passes now). Made StrictType
