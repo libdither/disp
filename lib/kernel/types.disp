@@ -449,6 +449,17 @@ qid_cell := {ty} -> wait qid_op { ty := ty }
 qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
 
 // StrictType: v is a type iff v is a recognizer (Tree -> CheckerResult) AND type_meta v : MetaShape.
-StrictType : Type := Telescope (
-  t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
-  t (qid_meta_cell MetaShape) ({_} -> t)))
+// A HYBRID wait-form, not a plain `Telescope` instance: it keeps the telescope RECOGNIZER (`at TT`
+// over the two qid cells — the strict semantic check) but swaps the telescope's `at FF` respond
+// (which was a §4b subsumption PLACEHOLDER) for the real universe respond `type_predicate_h_rule`.
+// That respond is what makes a StrictType-HYP usable as the domain of a polymorphic Pi: a type-hyp
+// `A`, applied as a predicate, accepts neutrals of stored type A (the predicate-side H-rule). With
+// the placeholder respond a `Pi StrictType (λA. … A …)` could not recognize its own neutrals; with
+// this one it can — StrictType becomes a real universe (not just a recognizer), so it can replace
+// the legacy `Type` (the recognizer is identical to Telescope's; only the respond differs).
+StrictType : Type := wait (make_recognizer
+  {meta, v} -> at TT (meta.recognizer_params) v t t
+) (make_meta
+  (t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
+   t (qid_meta_cell MetaShape) ({_} -> t)))
+  type_predicate_h_rule)
