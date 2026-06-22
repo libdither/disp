@@ -4,16 +4,18 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseProgram, type ParseItemStats } from "./compile.js"
-import { EagerSession, prettyTree } from "./tree.js"
-import type { EvalStats } from "./eval/types.js"
+import { EagerSession, prettyTree, type Tree } from "./tree.js"
+import type { Session, EvalStats } from "./eval/types.js"
+import { getBackend, defaultBackendName } from "./eval/registry.js"
+import { emitBlob } from "./format/export.js"
 
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string }[] }
-interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: EagerSession }
+interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: Session<Tree> }
 
 export function runFile(path: string, options: RunOptions = {}): RunResult {
   // One fresh session per file: isolates the apply memo / stats (replacing the
-  // old clearApplyCache/reset sprinkles). Callers may pass their own to read its
-  // stats afterward (the --stats CLI path below).
+  // old clearApplyCache/reset sprinkles). Callers may pass their own (any backend,
+  // e.g. --evaluator) to read its stats afterward.
   const session = options.session ?? new EagerSession()
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
@@ -32,7 +34,7 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
       result.defs++
     } else {
       result.tests++; testIdx++
-      if (session.treeEqual(d.lhs, d.rhs)) {
+      if (session.equal!(d.lhs, d.rhs)) {
         result.passed++
       } else {
         result.failed.push({
@@ -50,17 +52,31 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   const showStats = args.includes("--stats")
   const showStatsDetail = args.includes("--stats-detail")
   const showStatsAll = args.includes("--stats-all")
+  const valOf = (name: string): string | undefined => {
+    const f = args.find(a => a === `--${name}` || a.startsWith(`--${name}=`))
+    return f && f.includes("=") ? f.split("=")[1] : undefined
+  }
+  const backendName = valOf("evaluator") ?? defaultBackendName
+  const emitName = valOf("emit")
   const file = args.find((arg: string) => !arg.startsWith("--"))
-  if (!file) { console.error("usage: tsx src/run.ts [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
+  if (!file) { console.error("usage: tsx src/run.ts [--evaluator=<name>] [--emit=<binding>] [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
   try {
-    // Fresh session for this run; its stats are read directly below (no global
-    // reset needed — a new session starts clean).
-    const session = new EagerSession()
+    const session = getBackend(backendName).createSession() as unknown as Session<Tree>
+    // --emit=<binding>: compile the file and print the binding's self-contained
+    // ternary blob (defs inline by construction — EVALUATOR_PLAN §3.1/§4), then exit.
+    if (emitName) {
+      const abs = resolve(file)
+      const decls = parseProgram(readFileSync(abs, "utf-8"), abs, { session })
+      const def = decls.find(d => d.kind === "Def" && d.name === emitName)
+      if (!def || def.kind !== "Def") { console.error(`emit: binding '${emitName}' not found in ${file}`); process.exit(1) }
+      console.log(emitBlob(session, def.tree))
+      process.exit(0)
+    }
     const itemStats: ParseItemStats[] = []
     const r = runFile(file, { session, onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
-    console.log(`defs: ${r.defs}, tests: ${r.tests}, passed: ${r.passed}, failed: ${r.failed.length}`)
+    console.log(`defs: ${r.defs}, tests: ${r.tests}, passed: ${r.passed}, failed: ${r.failed.length} [${backendName}]`)
     if (showStats) {
-      const s = session.getApplyStats()
+      const s = (session.stats?.() ?? { steps: 0 }) as EvalStats
       console.log(
         `stats: steps=${s.steps}, calls=${s.calls}, maxStack=${s.maxStack}, ` +
         `uniqueNodes=${s.uniqueNodes}, memoEntries=${s.cacheEntries}`,
