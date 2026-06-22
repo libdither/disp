@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
-import { type Tree, EagerSession, defaultSession } from "./tree.js"
+import { type Tree, EagerSession, defaultSession } from "./eval/eager.js"
 import type { Session, EvalStats, Budget } from "./eval/types.js"
 import {
   parseItems,

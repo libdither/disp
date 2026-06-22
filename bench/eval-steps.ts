@@ -10,7 +10,7 @@
 // the full from-scratch reduction cost.
 
 import { runFile } from "../src/run.js"
-import { clearApplyCache, getApplyStats, resetApplyStats, resetCacheStats } from "../src/tree.js"
+import { clearApplyCache, getApplyStats, resetApplyStats, resetCacheStats } from "../src/core/tree.js"
 
 const CORPUS = [
   "lib/tests/types.test.disp",   // every type former, polymorphic Pi, neutrals

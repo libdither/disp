@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseProgram, type ParseItemStats } from "./compile.js"
-import { EagerSession, prettyTree, type Tree } from "./tree.js"
+import { EagerSession, prettyTree, type Tree } from "./eval/eager.js"
 import type { Session, EvalStats } from "./eval/types.js"
 import { getBackend, defaultBackendName } from "./eval/registry.js"
 import { emitBlob } from "./format/export.js"

@@ -10,8 +10,10 @@
 // cross-session/cross-file invariants (verifiedModules, the run.ts name
 // registry) keep working. This is the Phase-1 "state-ize the evaluator" step of
 // EVALUATOR_PLAN.md: no module-global *evaluator state*, only a global arena.
-
-import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classification } from "./eval/types.js"
+//
+// This is core/tree.ts: the PRIVATE internals of the eager backend. The engine
+// (compile.ts/run.ts) never imports it — it goes through the Session ABI; only
+// eval/eager.ts (the backend) consumes these internals (EVALUATOR_PLAN §5).
 
 export type Tree = {
   readonly tag: "leaf"
@@ -49,7 +51,7 @@ const forkCache = new Map<number, Map<number, Tree>>()
 // Global node-creation counter. Unique nodes are a property of the shared arena,
 // not of any one session, so this stays module-global (incremented by the
 // constructors below, read back through getApplyStats).
-const nodeStats = { uniqueNodes: 0 }
+export const nodeStats = { uniqueNodes: 0 }
 
 export const LEAF: Tree = { tag: "leaf", id: nextId++ }
 
@@ -148,7 +150,7 @@ interface RuleCounters {
   maxStack: number
 }
 
-interface EagerState {
+export interface EagerState {
   applyMemo: Map<number, Map<number, Tree>>
   applyMemoEntries: number
   applyMemoEntryLimit: number
@@ -163,14 +165,14 @@ interface EagerState {
   suspEnabled: boolean
 }
 
-function freshCounters(): RuleCounters {
+export function freshCounters(): RuleCounters {
   return {
     calls: 0, steps: 0, leafRules: 0, stemRules: 0, kRules: 0, sRules: 0,
     triageLeafRules: 0, triageStemRules: 0, triageForkRules: 0, treeEqRules: 0, maxStack: 0,
   }
 }
 
-function freshState(): EagerState {
+export function freshState(): EagerState {
   return {
     applyMemo: new Map(),
     applyMemoEntries: 0,
@@ -184,9 +186,13 @@ function freshState(): EagerState {
   }
 }
 
-// The currently-active evaluator state. Repointed at the default session's
-// state at module end; this initial bag is just to satisfy definite assignment.
+// The currently-active evaluator state. Defaults to a throwaway bag; the eager
+// backend (eval/eager.ts) swaps in a session's state via setActive for the
+// duration of a call. These accessors exist because an imported `let` binding is
+// read-only across modules, so eager.ts cannot reassign `active` directly.
 let active: EagerState = freshState()
+export function getActive(): EagerState { return active }
+export function setActive(st: EagerState): void { active = st }
 
 // --- Tree equality (O(1) via hash-consing) ---
 // Reads `active` only via force() (suspEnabled); the comparison itself is
@@ -272,7 +278,7 @@ function memoSet(f: Tree, x: Tree, result: Tree): void {
 // set just exceeds the limit paid ~5x in iterator-alloc + GC churn for ZERO extra
 // reduction steps (a hard performance cliff at the cap). Evicting a batch under one
 // pair of iterators, then sitting idle until the next 12.5% refills, removes it.
-function trimApplyMemo(): void {
+export function trimApplyMemo(): void {
   if (active.applyMemoEntries <= active.applyMemoEntryLimit) return
   const applyMemo = active.applyMemo
   const target = active.applyMemoEntryLimit - (active.applyMemoEntryLimit >> 3) // 87.5%
@@ -317,7 +323,7 @@ export function resetApplyStats(): void {
   active.memoWrites = 0
 }
 
-function statsOf(st: EagerState): ApplyStats {
+export function statsOf(st: EagerState): ApplyStats {
   return {
     ...st.counters,
     memoHits: st.hits,
@@ -679,128 +685,4 @@ export function decodeTernary(s: string): Tree {
   const t = go()
   if (i !== s.length) throw new Error("loadTernary: trailing input after one term")
   return t
-}
-
-// ──────────────────────────── Eager session ──────────────────────────────
-// The reference evaluator backend, state-ized. An EagerSession owns one
-// EagerState bag; its methods swap that bag in as `active` for the duration of
-// the call, so the free functions above (and the apply loop) operate on it. The
-// hash-cons arena stays global, so handles are canonical across sessions.
-// (Phase 1 of EVALUATOR_PLAN.md. The opaque-handle `Session` ABI interface and
-// the file split to eval/eager.ts land in Phase 2.)
-
-export class EagerSession implements Session<Tree> {
-  // Not marked #private: same-module helpers (withActiveSession) read it.
-  readonly st: EagerState = freshState()
-
-  // Handles are hash-consed Tree pointers, so identity coincides with equality.
-  // The engine may use this only as an optimization gate (run.ts name registry).
-  readonly canonicalHandles = true
-
-  // ── term algebra (hash-consing is global; these just expose the arena) ──
-  leaf(): Tree { return LEAF }
-  stem(child: Tree): Tree { return stem(child) }
-  fork(left: Tree, right: Tree): Tree { return fork(left, right) }
-
-  // ── bulk ops / interchange ──
-  loadTernary(s: string): Tree { return decodeTernary(s) }
-  dumpTernary(h: Tree, _budget?: Budget): string {
-    // Forces to NF; the eager backend is already strict, so _budget is unused
-    // here (force uses its own large internal budget). Lazy backends would honor
-    // it. Swap active so any forcing runs on this session's state.
-    const prev = active; active = this.st
-    try { return encodeTernary(h) } finally { active = prev }
-  }
-
-  // ── observations (native overrides of the engine-side derivations) ──
-  equal(a: Tree, b: Tree, _budget?: Budget): boolean { return this.treeEqual(a, b) }
-  classify(h: Tree, _budget?: Budget): Classification<Tree> {
-    const prev = active; active = this.st
-    try {
-      let n = force(h)
-      while (n.tag === "susp") n = force(n)   // force returns the NF; loop is defensive + narrows
-      if (n.tag === "leaf") return { tag: "leaf" }
-      if (n.tag === "stem") return { tag: "stem", child: n.child }
-      return { tag: "fork", left: n.left, right: n.right }
-    } finally { active = prev }
-  }
-  stats(): EvalStats { return statsOf(this.st) }
-
-  // ── computation ──
-  apply(f: Tree, x: Tree, budget = { remaining: 10000 }): Tree {
-    const prev = active; active = this.st
-    try { return apply(f, x, budget) } finally { active = prev }
-  }
-  applyTree(f: Tree, x: Tree, maxSteps = 10000): Tree {
-    const prev = active; active = this.st
-    try { return applyTree(f, x, maxSteps) } finally { active = prev }
-  }
-  force(t: Tree): Tree {
-    const prev = active; active = this.st
-    try { return force(t) } finally { active = prev }
-  }
-  treeEqual(a: Tree, b: Tree): boolean {
-    const prev = active; active = this.st
-    try { return treeEqual(a, b) } finally { active = prev }
-  }
-
-  // ── tree_eq native fast-path registration ──
-  setTreeEqId(id: number): void { this.st.treeEqId = id }
-  getTreeEqId(): number { return this.st.treeEqId }
-  // ABI hook: idempotently register the tree_eq handle for the fast path.
-  recognizeNative(name: string, handle: Tree): void {
-    if (name === "tree_eq" && this.st.treeEqId === -1) this.st.treeEqId = handle.id
-  }
-
-  // ── stats / cache (read this session's own state; no swap needed) ──
-  getApplyStats(): ApplyStats { return statsOf(this.st) }
-  resetApplyStats(): void {
-    this.st.counters = freshCounters()
-    this.st.hits = 0; this.st.misses = 0; this.st.memoWrites = 0
-  }
-  resetCacheStats(): void {
-    this.st.hits = 0; this.st.misses = 0; this.st.memoWrites = 0
-    nodeStats.uniqueNodes = 0
-  }
-  clear(): void { this.st.applyMemo.clear(); this.st.applyMemoEntries = 0 }
-  setApplyCacheLimit(entries: number): void {
-    if (!Number.isFinite(entries) || entries < 0) throw new Error("apply cache limit must be a non-negative finite number")
-    this.st.applyMemoEntryLimit = entries
-    const prev = active; active = this.st
-    try { trimApplyMemo() } finally { active = prev }
-  }
-  applyCacheSize(): number { return this.st.applyMemoEntries }
-
-  // ── lifecycle ──
-  // On the TS backend, GC reclaims everything once the session is unreachable;
-  // dispose just drops the memo so a long-held reference doesn't pin it.
-  dispose(): void { this.clear() }
-}
-
-// Run `fn` with `session` active, restoring the previous active state after.
-// The driver (parseProgram) wraps a whole compilation in this so the free
-// functions called by the elaborator's helpers operate on the chosen session,
-// without threading it through every call site (that is Phase 2's rewrite).
-export function withActiveSession<T>(session: EagerSession, fn: () => T): T {
-  const prev = active
-  active = session.st
-  try { return fn() } finally { active = prev }
-}
-
-// The default session backs the free functions when no session is activated
-// (standalone callers, the elaborator-validation tests that call applyTree
-// directly). It is created last so `active` is non-null for the whole module.
-export const defaultSession = new EagerSession()
-active = defaultSession.st
-
-// The eager reference backend: a factory over EagerSession. (Stays in tree.ts
-// for now; the file split to eval/eager.ts + the de-export of the Tree internals
-// is the later reorg step of EVALUATOR_PLAN §5.)
-export const eagerBackend: EvalBackend<Tree> = {
-  name: "eager",
-  // Recognition-by-hash (the natives() report + the engine-side hash assertion,
-  // EVALUATOR_PLAN §3.1) is a later sub-step; today the eager session recognizes
-  // tree_eq via setTreeEqId at kernel-load time, so it reports none here yet.
-  natives(): ReadonlyMap<string, readonly string[]> { return new Map() },
-  createSession(_opts?: SessionOpts): EagerSession { return new EagerSession() },
 }

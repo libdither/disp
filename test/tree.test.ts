@@ -5,7 +5,7 @@ import {
   K, I, prettyTree, force,
   SCOTT_TT, SCOTT_FF, setTreeEqId, getTreeEqId, clearApplyCache, resetApplyStats, getApplyStats,
   type Tree,
-} from "../src/tree.js"
+} from "../src/core/tree.js"
 import { parseProgram } from "../src/compile.js"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"

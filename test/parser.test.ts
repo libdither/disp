@@ -14,7 +14,7 @@ import {
 import { parseProgram } from "../src/compile.js"
 import {
   LEAF, stem, fork, treeEqual, applyTree,
-} from "../src/tree.js"
+} from "../src/core/tree.js"
 
 // ─────────────────────────── helpers ────────────────────────────────────
 

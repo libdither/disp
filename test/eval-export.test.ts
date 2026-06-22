@@ -6,7 +6,7 @@
 //     NF, and the eager and naive runners agree.
 
 import { describe, it, expect } from "vitest"
-import { eagerBackend, type Tree } from "../src/tree.js"
+import { eagerBackend, type Tree } from "../src/eval/eager.js"
 import { naiveBackend } from "../src/eval/naive.js"
 import { emitBlob } from "../src/format/export.js"
 import { sessionBatchRunner } from "../src/eval/batch.js"

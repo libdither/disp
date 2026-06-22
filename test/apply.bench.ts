@@ -15,7 +15,7 @@ import { parseProgram } from "../src/compile.js"
 import {
   type Tree, LEAF, I, applyTree,
   clearApplyCache, resetApplyStats, resetCacheStats,
-} from "../src/tree.js"
+} from "../src/core/tree.js"
 
 // Synthetic source: opens kernel/prelude + std/nat/arith so we have
 // tree_eq, nat_rec, add, succ in scope; binds them to bench_* names so

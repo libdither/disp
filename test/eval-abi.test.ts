@@ -4,7 +4,7 @@
 // backend lands, the same checks run against it (differential conformance).
 
 import { describe, it, expect } from "vitest"
-import { eagerBackend, type Tree } from "../src/tree.js"
+import { eagerBackend, type Tree } from "../src/eval/eager.js"
 import type { Session } from "../src/eval/types.js"
 
 let seed = 0x1234567

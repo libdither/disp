@@ -4,7 +4,7 @@
 // runtime) register themselves here.
 
 import type { EvalBackend } from "./types.js"
-import { eagerBackend } from "../tree.js"
+import { eagerBackend } from "./eager.js"
 import { naiveBackend } from "./naive.js"
 
 // Handles are opaque to the engine, so backends are stored at `unknown` handle

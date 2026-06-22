@@ -19,7 +19,7 @@
 // fresh here, never through the global hash-cons constructors.
 
 import type { Session, EvalBackend, SessionOpts, Budget, Classification, EvalStats } from "./types.js"
-import type { Tree } from "../tree.js"
+import type { Tree } from "../core/tree.js"
 
 // Fresh, non-deduplicated constructors. The id is a throwaway uniqueness stamp,
 // NOT a canonical structural identity — `equal` ignores it and walks structure.
