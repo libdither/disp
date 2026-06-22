@@ -301,10 +301,11 @@ Tier-A normalization are only 10a + 10b — both done.
     `pair_fst frame` and thread `source (acc name)`, no application, so the field-name branch doesn't
     block) all inhabit their per-former shapes (`metashape.test.disp`). **One residual remains: recursive
     *gated* Nat.** Its coherence gate reads `cases.base : motive zero` / `cases.step : Π n. motive n ->
-    motive (succ n)`, so the frame's `cases` is a *dependent* record on the `motive` field; even a valid
-    structured `NatFrame` doesn't let Nat's respond inhabit, because projecting `frame.cases.base` is a
-    **dependent projection off a neutral record** (its type mentions another field) — a separate frontier
-    the `at`/negative former doesn't self-type yet, distinct from the cases structuring alone closed.
+    motive (succ n)`. The blocker (diagnosed by feeding the gate neutral fields built *directly*, no frame
+    projection — it still fails) is the **recursive coherence gate itself**: verifying `step : Π n. motive
+    n -> motive (succ n)` (mint n + ih, check the dependent application under nested `bind_hyp`) doesn't
+    self-type under abstract cases. Non-recursive gated (Bool) inhabits; so the open frontier is precisely
+    the **recursive inductive eliminator** (the IH-bearing case), not projection or frame structure.
   - *(b)* **StrictType is a real UNIVERSE, not just a recognizer** — its respond was a §4b *placeholder*
     (telescope `at FF` subsumption); swapped for `type_predicate_h_rule`, so a StrictType-hyp works as a
     polymorphic Pi domain (`∀(A:StrictType). A→A` — empirically failed before, passes now). Made StrictType
