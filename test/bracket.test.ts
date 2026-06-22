@@ -9,7 +9,14 @@
 import { describe, it, expect } from "vitest"
 import { resolve } from "node:path"
 import { parseProgram, stringToTree } from "../src/compile.js"
-import { fork, LEAF, applyTree, type Tree } from "../src/tree.js"
+import { eagerBackend } from "../src/eval/eager.js"
+import type { Tree } from "../src/eval/eager.js"
+
+// Ported to the Session ABI (EVALUATOR_PLAN decision 8): build/apply/compare go
+// through a Session, not the raw core/tree runtime, and equivalence is equal()
+// rather than `.id ===`. Runs on the eager backend; the in-language elaborator is
+// thereby exercised through the same surface a non-eager backend would use.
+const session = eagerBackend.createSession()
 
 type Term =
   | { k: "var"; n: string }
@@ -53,13 +60,13 @@ function render(t: Term): string {
 
 // Encode a Term as the Cir coproduct value lib/elab/bracket.disp consumes:
 // inj tag pay = fork(stringToTree(tag), pay); pair = fork.
-const inj = (tag: string, pay: Tree): Tree => fork(stringToTree(tag), pay)
+const inj = (tag: string, pay: Tree): Tree => session.fork(stringToTree(tag), pay)
 function enc(t: Term): Tree {
   switch (t.k) {
     case "var": return inj("Var", stringToTree(t.n))
-    case "leaf": return inj("Lit", LEAF)
-    case "app": return inj("App", fork(enc(t.f), enc(t.x)))
-    case "lam": return inj("Lam", fork(stringToTree(t.n), enc(t.b)))
+    case "leaf": return inj("Lit", session.leaf())
+    case "app": return inj("App", session.fork(enc(t.f), enc(t.x)))
+    case "lam": return inj("Lam", session.fork(stringToTree(t.n), enc(t.b)))
   }
 }
 
@@ -69,7 +76,7 @@ describe("in-language bracket abstraction", () => {
   it("compiles random closed lambda terms bit-identically to the host", () => {
     // Load the in-language compiler once (pulls in prelude + kernel).
     const driverPath = resolve("lib/tests/__bracket_driver.disp")
-    const decls = parseProgram('open use "../elab/bracket.disp"', driverPath)
+    const decls = parseProgram('open use "../elab/bracket.disp"', driverPath, { session })
     const bc = decls.find(d => d.kind === "Def" && d.name === "bracket_compile")
     expect(bc, "bracket_compile export").toBeDefined()
     const bcTree = (bc as { tree: Tree }).tree
@@ -82,14 +89,14 @@ describe("in-language bracket abstraction", () => {
       terms.push({ k: "lam", n, b: gen(4, [n]) })
     }
     const src = terms.map((t, i) => `let q${i} = ${render(t)}`).join("\n")
-    const hostDecls = parseProgram(src, resolve("lib/tests/__rand.disp"))
+    const hostDecls = parseProgram(src, resolve("lib/tests/__rand.disp"), { session })
     const hostTrees = new Map<string, Tree>()
     for (const d of hostDecls) if (d.kind === "Def") hostTrees.set(d.name, d.tree)
 
     for (let i = 0; i < terms.length; i++) {
       const host = hostTrees.get(`q${i}`)!
-      const inLang = applyTree(bcTree, enc(terms[i]), BUDGET)
-      expect(inLang.id, `term ${i}: ${render(terms[i])}`).toBe(host.id)
+      const inLang = session.apply(bcTree, enc(terms[i]), { remaining: BUDGET })
+      expect(session.equal!(inLang, host), `term ${i}: ${render(terms[i])}`).toBe(true)
     }
   })
 })

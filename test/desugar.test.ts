@@ -12,7 +12,18 @@
 import { describe, it, expect } from "vitest"
 import { resolve } from "node:path"
 import { parseProgram, stringToTree } from "../src/compile.js"
-import { fork, stem, LEAF, applyTree, force, type Tree } from "../src/tree.js"
+import { eagerBackend } from "../src/eval/eager.js"
+import type { Tree } from "../src/eval/eager.js"
+
+// Ported to the Session ABI (EVALUATOR_PLAN decision 8): build/apply via a
+// Session, the id-keyed decode maps become dumpTernary-string-keyed, the decode
+// walk goes through classify (not raw `force`+field access), and equivalence is
+// equal(). Local fork/stem/LEAF/applyTree aliases keep the encoders unchanged.
+const session = eagerBackend.createSession()
+const fork = (l: Tree, r: Tree): Tree => session.fork(l, r)
+const stem = (c: Tree): Tree => session.stem(c)
+const LEAF: Tree = session.leaf()
+const applyTree = (f: Tree, x: Tree, budget: number): Tree => session.apply(f, x, { remaining: budget })
 
 type Param = { name: string | null; type: Expr | null }
 type TField = { name: string; type: Expr | null; value: Expr | null }
@@ -138,26 +149,29 @@ const NAME_POOL = [
   "zero", "succ", "Eq", "Pi", "Tree", "Telescope", "proj_cell", "deriv_cell",
   "name", "ty", "def",
 ]
-const nameById = new Map<number, string>()
-for (const n of NAME_POOL) nameById.set(str(n).id, n)
-const tagById = new Map<number, string>()
-for (const n of ["Leaf", "Str", "Var", "App", "Binder", "RecType"]) tagById.set(str(n).id, n)
+const nameByDump = new Map<string, string>()
+for (const n of NAME_POOL) nameByDump.set(session.dumpTernary(str(n)), n)
+const tagByDump = new Map<string, string>()
+for (const n of ["Leaf", "Str", "Var", "App", "Binder", "RecType"]) tagByDump.set(session.dumpTernary(str(n)), n)
 
-const asFork = (t: Tree): Tree & { tag: "fork" } => {
-  const f = force(t)
-  if (f.tag !== "fork") throw new Error(`dec: expected fork, got ${f.tag}`)
-  return f
+// classify-based decode: each node is inspected through the ABI's classify
+// (weak-head tag + children), and interned names/tags are matched by their
+// canonical ternary dump rather than a hash-cons id.
+const asFork = (t: Tree): { left: Tree; right: Tree } => {
+  const c = session.classify!(t)
+  if (c.tag !== "fork") throw new Error(`dec: expected fork, got ${c.tag}`)
+  return c
 }
 const lookupName = (t: Tree): string => {
-  const n = nameById.get(force(t).id)
+  const n = nameByDump.get(session.dumpTernary(t))
   if (n === undefined) throw new Error("dec: unknown interned name")
   return n
 }
 
 function dec(tr: Tree): Expr {
   const node = asFork(tr)
-  const tag = tagById.get(force(node.left).id)
-  const pay = force(node.right)
+  const tag = tagByDump.get(session.dumpTernary(node.left))
+  const pay = node.right
   switch (tag) {
     case "Leaf": return { tag: "leaf" }
     case "Str": return { tag: "str", value: lookupName(pay) }
@@ -169,31 +183,31 @@ function dec(tr: Tree): Expr {
     case "Binder": {
       const p = asFork(pay)
       const params: Param[] = []
-      let cur = force(p.left)
+      let cur = session.classify!(p.left)
       while (cur.tag === "fork") {
         const pr = asFork(cur.left)
-        const nOpt = force(pr.left), tOpt = force(pr.right)
+        const nOpt = session.classify!(pr.left), tOpt = session.classify!(pr.right)
         params.push({
           name: nOpt.tag === "stem" ? lookupName(nOpt.child) : null,
           type: tOpt.tag === "stem" ? dec(tOpt.child) : null,
         })
-        cur = force(cur.right)
+        cur = session.classify!(cur.right)
       }
       return { tag: "binder", params, body: dec(p.right) }
     }
     case "RecType": {
       const fields: TField[] = []
-      let cur = pay
+      let cur = session.classify!(pay)
       while (cur.tag === "fork") {
         const f = asFork(cur.left)
         const opts = asFork(f.right)
-        const tOpt = force(opts.left), vOpt = force(opts.right)
+        const tOpt = session.classify!(opts.left), vOpt = session.classify!(opts.right)
         fields.push({
           name: lookupName(f.left),
           type: tOpt.tag === "stem" ? dec(tOpt.child) : null,
           value: vOpt.tag === "stem" ? dec(vOpt.child) : null,
         })
-        cur = force(asFork(cur).right)
+        cur = session.classify!(cur.right)
       }
       return { tag: "recType", fields }
     }
@@ -207,7 +221,7 @@ describe("Stage-1 type-position desugars (in-language vs host)", () => {
   it("desugars random binder/recType ASTs bit-identically to the host", () => {
     // Load the in-language desugars once (pulls in prelude + kernel).
     const driverPath = resolve("lib/tests/__desugar_driver.disp")
-    const decls = parseProgram('open use "../elab/ast.disp"', driverPath)
+    const decls = parseProgram('open use "../elab/ast.disp"', driverPath, { session })
     const get = (n: string): Tree => {
       const d = decls.find(d => d.kind === "Def" && d.name === n)
       expect(d, `${n} export`).toBeDefined()
@@ -224,7 +238,7 @@ describe("Stage-1 type-position desugars (in-language vs host)", () => {
     // compileType → binderToPi; recTypes desugar inside exprToCir).
     const srcHost = ['open use "../kernel/prelude.disp"',
       ...terms.map((t, i) => `T${i} : Type := ${render(t.e)}`)].join("\n")
-    const hostDecls = parseProgram(srcHost, resolve("lib/tests/__desugar_host.disp"))
+    const hostDecls = parseProgram(srcHost, resolve("lib/tests/__desugar_host.disp"), { session })
     const hostTrees = new Map<string, Tree>()
     for (const d of hostDecls) if (d.kind === "Def") hostTrees.set(d.name, d.tree)
 
@@ -235,14 +249,14 @@ describe("Stage-1 type-position desugars (in-language vs host)", () => {
     const rendered = terms.map(t => render(dec(applyTree(t.spec, enc(t.e), BUDGET))))
     const srcSpec = ['open use "../kernel/prelude.disp"',
       ...rendered.map((r, i) => `S${i} := ${r}`)].join("\n")
-    const specDecls = parseProgram(srcSpec, resolve("lib/tests/__desugar_spec.disp"))
+    const specDecls = parseProgram(srcSpec, resolve("lib/tests/__desugar_spec.disp"), { session })
     const specTrees = new Map<string, Tree>()
     for (const d of specDecls) if (d.kind === "Def") specTrees.set(d.name, d.tree)
 
     for (let i = 0; i < terms.length; i++) {
       const host = hostTrees.get(`T${i}`)!
       const spec = specTrees.get(`S${i}`)!
-      expect(spec.id, `term ${i}: ${render(terms[i].e)}\n  desugared: ${rendered[i]}`).toBe(host.id)
+      expect(session.equal!(spec, host), `term ${i}: ${render(terms[i].e)}\n  desugared: ${rendered[i]}`).toBe(true)
     }
   })
 })

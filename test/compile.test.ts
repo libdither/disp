@@ -10,7 +10,18 @@
 import { describe, it, expect } from "vitest"
 import { resolve } from "node:path"
 import { parseProgram, stringToTree } from "../src/compile.js"
-import { fork, stem, LEAF, applyTree, force, type Tree } from "../src/tree.js"
+import { eagerBackend } from "../src/eval/eager.js"
+import type { Tree } from "../src/eval/eager.js"
+
+// Ported to the Session ABI (EVALUATOR_PLAN decision 8): build/apply/compare go
+// through a Session rather than the raw core/tree runtime. Local aliases keep the
+// encoders below unchanged (they resolve to the eager backend's arena, the same
+// trees), and equivalence is equal(), not `.id ===`.
+const session = eagerBackend.createSession()
+const fork = (l: Tree, r: Tree): Tree => session.fork(l, r)
+const stem = (c: Tree): Tree => session.stem(c)
+const LEAF: Tree = session.leaf()
+const applyTree = (f: Tree, x: Tree, budget: number): Tree => session.apply(f, x, { remaining: budget })
 
 type Param = { name: string | null; type: Expr | null }
 type Expr =
@@ -234,7 +245,7 @@ describe("Stages 2+3: in-language compile_expr/compile_type vs host", () => {
     const driverPath = resolve("lib/tests/__compile_driver.disp")
     const decls = parseProgram(
       ['open use "../kernel/prelude.disp"', 'open use "../elab/compile.disp"'].join("\n"),
-      driverPath)
+      driverPath, { session })
     const byName = new Map<string, Tree>()
     for (const d of decls) if (d.kind === "Def" && !byName.has(d.name)) byName.set(d.name, d.tree)
     const compileExprT = byName.get("compile_expr")!
@@ -261,17 +272,17 @@ describe("Stages 2+3: in-language compile_expr/compile_type vs host", () => {
     const src = ['open use "../kernel/prelude.disp"',
       ...vals.map((e, i) => `q${i} := ${render(e)}`),
       ...typs.map((e, i) => `T${i} : Type := ${render(e)}`)].join("\n")
-    const hostDecls = parseProgram(src, resolve("lib/tests/__compile_host.disp"))
+    const hostDecls = parseProgram(src, resolve("lib/tests/__compile_host.disp"), { session })
     const host = new Map<string, Tree>()
     for (const d of hostDecls) if (d.kind === "Def") host.set(d.name, d.tree)
 
     for (let i = 0; i < vals.length; i++) {
       const spec = applyTree(applyTree(compileExprT, envTree, BUDGET), enc(vals[i]), BUDGET)
-      expect(force(spec).id, `value ${i}: ${render(vals[i])}`).toBe(force(host.get(`q${i}`)!).id)
+      expect(session.equal!(spec, host.get(`q${i}`)!), `value ${i}: ${render(vals[i])}`).toBe(true)
     }
     for (let i = 0; i < typs.length; i++) {
       const spec = applyTree(applyTree(compileTypeT, envTree, BUDGET), enc(typs[i]), BUDGET)
-      expect(force(spec).id, `type ${i}: ${render(typs[i])}`).toBe(force(host.get(`T${i}`)!).id)
+      expect(session.equal!(spec, host.get(`T${i}`)!), `type ${i}: ${render(typs[i])}`).toBe(true)
     }
   })
 })
