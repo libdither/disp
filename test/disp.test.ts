@@ -1,10 +1,9 @@
 // Disp language tests: runs all *.test.disp files through the parser/driver.
 
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect } from "vitest"
 import { readdirSync } from "node:fs"
 import { join } from "node:path"
 import { runFile } from "../src/run.js"
-import { clearApplyCache, resetApplyStats, resetCacheStats } from "../src/tree.js"
 
 const testsDir = join(import.meta.dirname, "..", "lib", "tests")
 
@@ -22,15 +21,9 @@ function findTestFiles(dir: string, rel = ""): string[] {
 const testFiles = findTestFiles(testsDir).sort()
 
 describe("disp", () => {
-  // Isolate each .test.disp file: clear the apply memoization cache and
-  // reset apply/cache statistics so cross-file state doesn't bleed
-  // through (cache pressure, stale stats, etc.).
-  beforeEach(() => {
-    clearApplyCache()
-    resetApplyStats()
-    resetCacheStats()
-  })
-
+  // Each .test.disp file is isolated by construction: runFile creates a fresh
+  // EagerSession per call, so its apply memo / stats start clean — no
+  // cross-file bleed-through, no manual reset needed (Phase 1, EVALUATOR_PLAN).
   for (const file of testFiles) {
     it(file, () => {
       // Session 3: defense-in-depth temporarily disabled — the elaborator's

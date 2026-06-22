@@ -1,5 +1,15 @@
 // Tree Calculus: Leaf | Stem(child) | Fork(left, right)
 // Trees are always in normal form. Application is an operation.
+//
+// Evaluator state (apply memo, stats, the tree_eq id, the suspension toggle)
+// lives in an `EagerState` bag reached through the module-level `active`
+// pointer; an `EagerSession` owns one bag and swaps it in for the duration of
+// its calls (see the EvalBackend section at the bottom). Node identity
+// (hash-consing) and the unique-node counter stay GLOBAL — trees built under
+// any session share one identity space, which is what lets the elaborator's
+// cross-session/cross-file invariants (verifiedModules, the run.ts name
+// registry) keep working. This is the Phase-1 "state-ize the evaluator" step of
+// EVALUATOR_PLAN.md: no module-global *evaluator state*, only a global arena.
 
 export type Tree = {
   readonly tag: "leaf"
@@ -28,11 +38,16 @@ export type Tree = {
   readonly id: number
 }
 
-// --- Hash-consing ---
+// --- Hash-consing (global arena: node identity is process-wide) ---
 
 let nextId = 0
 const stemCache = new Map<number, Tree>()
 const forkCache = new Map<number, Map<number, Tree>>()
+
+// Global node-creation counter. Unique nodes are a property of the shared arena,
+// not of any one session, so this stays module-global (incremented by the
+// constructors below, read back through getApplyStats).
+const nodeStats = { uniqueNodes: 0 }
 
 export const LEAF: Tree = { tag: "leaf", id: nextId++ }
 
@@ -41,7 +56,7 @@ export function stem(child: Tree): Tree {
   if (cached) return cached
   const node: Tree = { tag: "stem", child, id: nextId++ }
   stemCache.set(child.id, node)
-  cacheStats.uniqueNodes++
+  nodeStats.uniqueNodes++
   return node
 }
 
@@ -56,7 +71,7 @@ export function fork(left: Tree, right: Tree): Tree {
   }
   const node: Tree = { tag: "fork", left, right, id: nextId++ }
   inner.set(right.id, node)
-  cacheStats.uniqueNodes++
+  nodeStats.uniqueNodes++
   return node
 }
 
@@ -75,7 +90,7 @@ export function susp(f: Tree, a: Tree): Tree {
   }
   const node: Tree = { tag: "susp", f, a, forced: null, id: nextId++ }
   inner.set(a.id, node)
-  cacheStats.uniqueNodes++
+  nodeStats.uniqueNodes++
   return node
 }
 
@@ -91,7 +106,89 @@ export function isFork(t: Tree): t is Tree & { tag: "fork" } {
   return t.tag === "fork"
 }
 
+// --- Per-session evaluator state ---
+// Everything that a `clearApplyCache()` / `resetApplyStats()` used to touch lives
+// here. The module-level `active` pointer names the state the free functions
+// (apply/force/treeEqual/…) and the apply loop read; an EagerSession swaps it in.
+
+export type ApplyStats = {
+  calls: number
+  steps: number
+  leafRules: number
+  stemRules: number
+  kRules: number
+  sRules: number
+  triageLeafRules: number
+  triageStemRules: number
+  triageForkRules: number
+  treeEqRules: number
+  memoHits: number
+  memoMisses: number
+  memoWrites: number
+  maxStack: number
+  cacheEntries: number
+  uniqueNodes: number
+}
+
+// The mutable counters carried per session (the ApplyStats fields that are
+// genuinely accumulated during reduction; the rest are derived in statsOf).
+interface RuleCounters {
+  calls: number
+  steps: number
+  leafRules: number
+  stemRules: number
+  kRules: number
+  sRules: number
+  triageLeafRules: number
+  triageStemRules: number
+  triageForkRules: number
+  treeEqRules: number
+  maxStack: number
+}
+
+interface EagerState {
+  applyMemo: Map<number, Map<number, Tree>>
+  applyMemoEntries: number
+  applyMemoEntryLimit: number
+  hits: number
+  misses: number
+  memoWrites: number
+  counters: RuleCounters
+  // `tree_eq`'s compiled tree id for this session's native fast-path (-1 = unset).
+  treeEqId: number
+  // While `force` runs, stage-1 suspension is disabled so the partial reduces to
+  // its genuine combinator reduct instead of re-suspending.
+  suspEnabled: boolean
+}
+
+function freshCounters(): RuleCounters {
+  return {
+    calls: 0, steps: 0, leafRules: 0, stemRules: 0, kRules: 0, sRules: 0,
+    triageLeafRules: 0, triageStemRules: 0, triageForkRules: 0, treeEqRules: 0, maxStack: 0,
+  }
+}
+
+function freshState(): EagerState {
+  return {
+    applyMemo: new Map(),
+    applyMemoEntries: 0,
+    applyMemoEntryLimit: 5_000_000,
+    hits: 0,
+    misses: 0,
+    memoWrites: 0,
+    counters: freshCounters(),
+    treeEqId: -1,
+    suspEnabled: true,
+  }
+}
+
+// The currently-active evaluator state. Repointed at the default session's
+// state at module end; this initial bag is just to satisfy definite assignment.
+let active: EagerState = freshState()
+
 // --- Tree equality (O(1) via hash-consing) ---
+// Reads `active` only via force() (suspEnabled); the comparison itself is
+// identity + top-level susp forcing, both session-independent in result.
 
 export function treeEqual(a: Tree, b: Tree): boolean {
   if (a.id === b.id) return true                       // identical (incl. shared susps)
@@ -116,43 +213,49 @@ export function treeApply(f: Tree, g: Tree): Tree {
 // apply(f, x) is a pure function: same (f, x) always produces the same result.
 // Hash-consing guarantees tree identity, so (f.id, x.id) is a complete key.
 // Only fork-case results are cached (leaf→stem and stem→fork are O(1)).
-
-const applyMemo = new Map<number, Map<number, Tree>>()
-let applyMemoEntries = 0
-let applyMemoEntryLimit = 5_000_000
-
-// --- Cache instrumentation ---
-export const cacheStats = { hits: 0, misses: 0, memoWrites: 0, uniqueNodes: 0 }
-export function resetCacheStats(): void {
-  cacheStats.hits = 0; cacheStats.misses = 0; cacheStats.memoWrites = 0; cacheStats.uniqueNodes = 0
-}
+// The memo is per-session: it lives on `active`.
 
 export function clearApplyCache(): void {
-  applyMemo.clear()
-  applyMemoEntries = 0
+  active.applyMemo.clear()
+  active.applyMemoEntries = 0
 }
 
 export function setApplyCacheLimit(entries: number): void {
   if (!Number.isFinite(entries) || entries < 0) throw new Error("apply cache limit must be a non-negative finite number")
-  applyMemoEntryLimit = entries
+  active.applyMemoEntryLimit = entries
   trimApplyMemo()
 }
 
 export function applyCacheSize(): number {
-  return applyMemoEntries
+  return active.applyMemoEntries
+}
+
+// --- Cache instrumentation ---
+// `cacheStats` exposes the GLOBAL unique-node count (arena-wide). The hit/miss/
+// write counters are per-session and read through getApplyStats; this object is
+// kept (uniqueNodes only) for back-compat with callers that read it directly.
+export const cacheStats = {
+  get hits() { return active.hits },
+  get misses() { return active.misses },
+  get memoWrites() { return active.memoWrites },
+  get uniqueNodes() { return nodeStats.uniqueNodes },
+}
+export function resetCacheStats(): void {
+  active.hits = 0; active.misses = 0; active.memoWrites = 0
+  nodeStats.uniqueNodes = 0
 }
 
 function memoGet(f: Tree, x: Tree): Tree | undefined {
-  return applyMemo.get(f.id)?.get(x.id)
+  return active.applyMemo.get(f.id)?.get(x.id)
 }
 
 function memoSet(f: Tree, x: Tree, result: Tree): void {
-  if (applyMemoEntryLimit === 0) return
-  let m = applyMemo.get(f.id)
-  if (!m) { m = new Map(); applyMemo.set(f.id, m) }
-  if (!m.has(x.id)) applyMemoEntries++
+  if (active.applyMemoEntryLimit === 0) return
+  let m = active.applyMemo.get(f.id)
+  if (!m) { m = new Map(); active.applyMemo.set(f.id, m) }
+  if (!m.has(x.id)) active.applyMemoEntries++
   m.set(x.id, result)
-  cacheStats.memoWrites++
+  active.memoWrites++
   trimApplyMemo()
 }
 
@@ -168,13 +271,14 @@ function memoSet(f: Tree, x: Tree, result: Tree): void {
 // reduction steps (a hard performance cliff at the cap). Evicting a batch under one
 // pair of iterators, then sitting idle until the next 12.5% refills, removes it.
 function trimApplyMemo(): void {
-  if (applyMemoEntries <= applyMemoEntryLimit) return
-  const target = applyMemoEntryLimit - (applyMemoEntryLimit >> 3) // 87.5%
+  if (active.applyMemoEntries <= active.applyMemoEntryLimit) return
+  const applyMemo = active.applyMemo
+  const target = active.applyMemoEntryLimit - (active.applyMemoEntryLimit >> 3) // 87.5%
   for (const [outerKey, inner] of applyMemo) {
     for (const innerKey of inner.keys()) {
       inner.delete(innerKey)
-      applyMemoEntries--
-      if (applyMemoEntries <= target) {
+      active.applyMemoEntries--
+      if (active.applyMemoEntries <= target) {
         if (inner.size === 0) applyMemo.delete(outerKey)
         return
       }
@@ -183,43 +287,6 @@ function trimApplyMemo(): void {
   }
 }
 
-export type ApplyStats = {
-  calls: number
-  steps: number
-  leafRules: number
-  stemRules: number
-  kRules: number
-  sRules: number
-  triageLeafRules: number
-  triageStemRules: number
-  triageForkRules: number
-  treeEqRules: number
-  memoHits: number
-  memoMisses: number
-  memoWrites: number
-  maxStack: number
-  cacheEntries: number
-  uniqueNodes: number
-}
-
-const applyStats: ApplyStats = {
-  calls: 0,
-  steps: 0,
-  leafRules: 0,
-  stemRules: 0,
-  kRules: 0,
-  sRules: 0,
-  triageLeafRules: 0,
-  triageStemRules: 0,
-  triageForkRules: 0,
-  treeEqRules: 0,
-  memoHits: 0,
-  memoMisses: 0,
-  memoWrites: 0,
-  maxStack: 0,
-  cacheEntries: 0,
-  uniqueNodes: 0,
-}
 let applyTraceLimit = 0
 const applyTrace: string[] = []
 
@@ -242,33 +309,25 @@ function traceApply(event: string, f: Tree, x: Tree, stackDepth: number): void {
 }
 
 export function resetApplyStats(): void {
-  applyStats.calls = 0
-  applyStats.steps = 0
-  applyStats.leafRules = 0
-  applyStats.stemRules = 0
-  applyStats.kRules = 0
-  applyStats.sRules = 0
-  applyStats.triageLeafRules = 0
-  applyStats.triageStemRules = 0
-  applyStats.triageForkRules = 0
-  applyStats.treeEqRules = 0
-  applyStats.memoHits = 0
-  applyStats.memoMisses = 0
-  applyStats.memoWrites = 0
-  applyStats.maxStack = 0
-  applyStats.cacheEntries = 0
-  applyStats.uniqueNodes = 0
+  active.counters = freshCounters()
+  active.hits = 0
+  active.misses = 0
+  active.memoWrites = 0
+}
+
+function statsOf(st: EagerState): ApplyStats {
+  return {
+    ...st.counters,
+    memoHits: st.hits,
+    memoMisses: st.misses,
+    memoWrites: st.memoWrites,
+    cacheEntries: st.applyMemoEntries,
+    uniqueNodes: nodeStats.uniqueNodes,
+  }
 }
 
 export function getApplyStats(): ApplyStats {
-  return {
-    ...applyStats,
-    memoHits: cacheStats.hits,
-    memoMisses: cacheStats.misses,
-    memoWrites: cacheStats.memoWrites,
-    cacheEntries: applyMemoEntries,
-    uniqueNodes: cacheStats.uniqueNodes,
-  }
+  return statsOf(active)
 }
 
 // --- apply: tree calculus application (execution) ---
@@ -312,10 +371,12 @@ interface ContSlot {
 }
 
 // Module-level continuation stack — preallocated slots, reused across all
-// apply() calls (including recursive ones). Each
-// apply() captures stackTop at entry and only pops down to that
-// `baseTop`, so nested calls don't interfere. No per-push allocation:
-// pushes overwrite slot fields in place.
+// apply() calls (including recursive ones). It is transient scratch (empty
+// between top-level calls, baseTop-isolated within them), NOT session state, so
+// it stays global: JS is single-threaded and a session's apply runs to
+// completion before another's starts. Each apply() captures stackTop at entry
+// and only pops down to that `baseTop`, so nested calls don't interfere. No
+// per-push allocation: pushes overwrite slot fields in place.
 const STACK_INITIAL_CAP = 4096
 const stack: ContSlot[] = []
 let stackTop = 0
@@ -333,7 +394,9 @@ function ensureStackSlot(): void {
 }
 
 export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): Tree {
-  applyStats.calls++
+  const st = active
+  const counters = st.counters
+  counters.calls++
   let curF = fInit, curX = xInit
   const baseTop = stackTop  // isolation: only pop frames pushed by THIS call
 
@@ -359,12 +422,12 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
         stackTop = i
         // Inline memoSet, using the innerMap captured at memoGet time
         // to skip a redundant applyMemo.get(sf.id) lookup.
-        if (applyMemoEntryLimit !== 0) {
-          if (!m) { m = new Map(); applyMemo.set(sf.id, m) }
-          if (!m.has(sx.id)) applyMemoEntries++
+        if (st.applyMemoEntryLimit !== 0) {
+          if (!m) { m = new Map(); st.applyMemo.set(sf.id, m) }
+          if (!m.has(sx.id)) st.applyMemoEntries++
           m.set(sx.id, result)
-          cacheStats.memoWrites++
-          if (applyMemoEntries > applyMemoEntryLimit) trimApplyMemo()
+          st.memoWrites++
+          if (st.applyMemoEntries > st.applyMemoEntryLimit) trimApplyMemo()
         }
         continue  // keep popping
       }
@@ -389,11 +452,11 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
 
   while (true) {
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
-    if (stackTop > applyStats.maxStack) applyStats.maxStack = stackTop
+    if (stackTop > counters.maxStack) counters.maxStack = stackTop
 
     // Leaf/Stem: immediate result
-    if (isLeaf(curF)) { traceApply("leaf", curF, curX, stackTop); applyStats.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
-    if (isStem(curF)) { traceApply("stem", curF, curX, stackTop); applyStats.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
+    if (isLeaf(curF)) { traceApply("leaf", curF, curX, stackTop); counters.leafRules++; const r = deliver(stem(curX)); if (r !== null) return r; continue }
+    if (isStem(curF)) { traceApply("stem", curF, curX, stackTop); counters.stemRules++; const r = deliver(fork(curF.child, curX)); if (r !== null) return r; continue }
 
     // Suspended application as the operator — the only non-fork tag left, so it is
     // checked HERE (after leaf/stem, which therefore skip it) and stands in for the
@@ -401,9 +464,9 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     // applied to curX; tree_eq stage 2: a `tree_eq a` partial meeting its second
     // operand is the O(1) hash-cons equality. Other suspensions: force, then apply.
     if (curF.tag === "susp") {
-      if (TREE_EQ_ID !== -1 && curF.f.id === TREE_EQ_ID) {
+      if (st.treeEqId !== -1 && curF.f.id === st.treeEqId) {
         traceApply("tree_eq", curF, curX, stackTop)
-        applyStats.treeEqRules++
+        counters.treeEqRules++
         const r = deliver(treeEqual(curF.a, curX) ? SCOTT_TT : SCOTT_FF)
         if (r !== null) return r; continue
       }
@@ -419,22 +482,22 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     // shadow it. Stage 2 (the partial meeting its second operand → O(1) compare)
     // is the `curF.tag === "susp"` branch above. `suspEnabled` is cleared only
     // while `force` materializes the genuine reduct, so forcing is non-recursive.
-    if (suspEnabled && TREE_EQ_ID !== -1 && curF.id === TREE_EQ_ID) {
+    if (st.suspEnabled && st.treeEqId !== -1 && curF.id === st.treeEqId) {
       traceApply("tree_eq", curF, curX, stackTop)
-      applyStats.treeEqRules++
+      counters.treeEqRules++
       const r = deliver(susp(curF, curX))
       if (r !== null) return r; continue
     }
 
     // Memo check (inlined so we can capture the inner map for memoSet
     // reuse if this turns out to be a miss).
-    const innerMap = applyMemo.get(curF.id)
+    const innerMap = st.applyMemo.get(curF.id)
     const c = innerMap?.get(curX.id)
-    if (c !== undefined) { cacheStats.hits++; const r = deliver(c); if (r !== null) return r; continue }
-    cacheStats.misses++
+    if (c !== undefined) { st.hits++; const r = deliver(c); if (r !== null) return r; continue }
+    st.misses++
 
     budget.remaining--
-    applyStats.steps++
+    counters.steps++
     if (budget.remaining <= 0) throw new BudgetExhausted(0)
 
     const a = curF.left, b = curF.right
@@ -449,7 +512,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     // entries that won't repeat. Skip the Memo frame entirely.
     if (isLeaf(a)) {
       traceApply("K", curF, curX, stackTop)
-      applyStats.kRules++
+      counters.kRules++
       const r = deliver(b); if (r !== null) return r; continue
     }
 
@@ -463,7 +526,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
 
     if (isStem(a)) {
       traceApply("S", curF, curX, stackTop)
-      applyStats.sRules++
+      counters.sRules++
       const c = a.child
       if (isFork(c) && isLeaf(c.left)) {
         if (isFork(b) && isLeaf(b.left)) { curF = c.right; curX = b.right; continue }
@@ -485,11 +548,11 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
     if (!isFork(a)) throw new Error("apply: impossible non-fork branch")
     const tc = a.left, td = a.right
     if (curX.tag === "susp") curX = force(curX)
-    if (isLeaf(curX)) { traceApply("T_leaf", curF, curX, stackTop); applyStats.triageLeafRules++; const r = deliver(tc); if (r !== null) return r; continue }
-    if (isStem(curX)) { traceApply("T_stem", curF, curX, stackTop); applyStats.triageStemRules++; curF = td; curX = curX.child; continue }
+    if (isLeaf(curX)) { traceApply("T_leaf", curF, curX, stackTop); counters.triageLeafRules++; const r = deliver(tc); if (r !== null) return r; continue }
+    if (isStem(curX)) { traceApply("T_stem", curF, curX, stackTop); counters.triageStemRules++; curF = td; curX = curX.child; continue }
     if (!isFork(curX)) throw new Error("apply: impossible non-fork argument")
     traceApply("T_fork", curF, curX, stackTop)
-    applyStats.triageForkRules++
+    counters.triageForkRules++
     ensureStackSlot()
     {
       const s = stack[stackTop++]
@@ -533,29 +596,26 @@ export const SCOTT_FF = fork(LEAF, fork(LEAF, I))   // K (K I)
 // The intermediate is the honest suspended application P(tree_eq, a): no synthetic
 // marker, and fully transparent — `force` materializes the genuine recursive-triage
 // reduct the moment the partial is inspected structurally instead of applied. The
-// optimization yields answers identical to the spec.
-let TREE_EQ_ID: number = -1
-export function setTreeEqId(id: number): void { TREE_EQ_ID = id }
-export function getTreeEqId(): number { return TREE_EQ_ID }
+// optimization yields answers identical to the spec. The id is per-session (the
+// registry handle in Phase-2 terms), read from `active`.
+export function setTreeEqId(id: number): void { active.treeEqId = id }
+export function getTreeEqId(): number { return active.treeEqId }
 
-// While `force` runs, stage-1 suspension is disabled so the partial reduces to its
-// genuine combinator reduct instead of re-suspending. tree_eq's partial never
-// re-applies tree_eq to a single argument, so this does not nest; saved/restored
-// regardless for robustness.
-let suspEnabled = true
 const FORCE_BUDGET = 10_000_000
 
 // Materialize a suspended application to its genuine reduct, memoized on the node.
-// Non-susp inputs pass through, so `force` doubles as a transparent deref.
+// Non-susp inputs pass through, so `force` doubles as a transparent deref. The
+// suspEnabled toggle lives on `active`; tree_eq's partial never re-applies tree_eq
+// to a single argument, so this does not nest; saved/restored for robustness.
 export function force(t: Tree): Tree {
   if (t.tag !== "susp") return t
   if (t.forced !== null) return t.forced
-  const prev = suspEnabled
-  suspEnabled = false
+  const prev = active.suspEnabled
+  active.suspEnabled = false
   try {
     t.forced = apply(t.f, t.a, { remaining: FORCE_BUDGET })
   } finally {
-    suspEnabled = prev
+    active.suspEnabled = prev
   }
   return t.forced
 }
@@ -580,3 +640,83 @@ export function prettyTree(tree: Tree, names?: Map<number, string>): string {
     case "susp": return prettyTree(force(tree), names)   // unnamed: print the genuine reduct (transparent)
   }
 }
+
+// ──────────────────────────── Eager session ──────────────────────────────
+// The reference evaluator backend, state-ized. An EagerSession owns one
+// EagerState bag; its methods swap that bag in as `active` for the duration of
+// the call, so the free functions above (and the apply loop) operate on it. The
+// hash-cons arena stays global, so handles are canonical across sessions.
+// (Phase 1 of EVALUATOR_PLAN.md. The opaque-handle `Session` ABI interface and
+// the file split to eval/eager.ts land in Phase 2.)
+
+export class EagerSession {
+  // Not marked #private: same-module helpers (withActiveSession) read it.
+  readonly st: EagerState = freshState()
+
+  // ── term algebra (hash-consing is global; these just expose the arena) ──
+  leaf(): Tree { return LEAF }
+  stem(child: Tree): Tree { return stem(child) }
+  fork(left: Tree, right: Tree): Tree { return fork(left, right) }
+
+  // ── computation ──
+  apply(f: Tree, x: Tree, budget = { remaining: 10000 }): Tree {
+    const prev = active; active = this.st
+    try { return apply(f, x, budget) } finally { active = prev }
+  }
+  applyTree(f: Tree, x: Tree, maxSteps = 10000): Tree {
+    const prev = active; active = this.st
+    try { return applyTree(f, x, maxSteps) } finally { active = prev }
+  }
+  force(t: Tree): Tree {
+    const prev = active; active = this.st
+    try { return force(t) } finally { active = prev }
+  }
+  treeEqual(a: Tree, b: Tree): boolean {
+    const prev = active; active = this.st
+    try { return treeEqual(a, b) } finally { active = prev }
+  }
+
+  // ── tree_eq native fast-path registration ──
+  setTreeEqId(id: number): void { this.st.treeEqId = id }
+  getTreeEqId(): number { return this.st.treeEqId }
+
+  // ── stats / cache (read this session's own state; no swap needed) ──
+  getApplyStats(): ApplyStats { return statsOf(this.st) }
+  resetApplyStats(): void {
+    this.st.counters = freshCounters()
+    this.st.hits = 0; this.st.misses = 0; this.st.memoWrites = 0
+  }
+  resetCacheStats(): void {
+    this.st.hits = 0; this.st.misses = 0; this.st.memoWrites = 0
+    nodeStats.uniqueNodes = 0
+  }
+  clear(): void { this.st.applyMemo.clear(); this.st.applyMemoEntries = 0 }
+  setApplyCacheLimit(entries: number): void {
+    if (!Number.isFinite(entries) || entries < 0) throw new Error("apply cache limit must be a non-negative finite number")
+    this.st.applyMemoEntryLimit = entries
+    const prev = active; active = this.st
+    try { trimApplyMemo() } finally { active = prev }
+  }
+  applyCacheSize(): number { return this.st.applyMemoEntries }
+
+  // ── lifecycle ──
+  // On the TS backend, GC reclaims everything once the session is unreachable;
+  // dispose just drops the memo so a long-held reference doesn't pin it.
+  dispose(): void { this.clear() }
+}
+
+// Run `fn` with `session` active, restoring the previous active state after.
+// The driver (parseProgram) wraps a whole compilation in this so the free
+// functions called by the elaborator's helpers operate on the chosen session,
+// without threading it through every call site (that is Phase 2's rewrite).
+export function withActiveSession<T>(session: EagerSession, fn: () => T): T {
+  const prev = active
+  active = session.st
+  try { return fn() } finally { active = prev }
+}
+
+// The default session backs the free functions when no session is activated
+// (standalone callers, the elaborator-validation tests that call applyTree
+// directly). It is created last so `active` is non-null for the whole module.
+export const defaultSession = new EagerSession()
+active = defaultSession.st

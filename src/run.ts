@@ -4,18 +4,19 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseProgram, type ParseItemStats } from "./compile.js"
-import {
-  treeEqual, prettyTree,
-  clearApplyCache, getApplyStats, resetApplyStats, resetCacheStats,
-} from "./tree.js"
+import { EagerSession, prettyTree } from "./tree.js"
 
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string }[] }
-interface RunOptions { onParseItem?: (item: ParseItemStats) => void }
+interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: EagerSession }
 
 export function runFile(path: string, options: RunOptions = {}): RunResult {
+  // One fresh session per file: isolates the apply memo / stats (replacing the
+  // old clearApplyCache/reset sprinkles). Callers may pass their own to read its
+  // stats afterward (the --stats CLI path below).
+  const session = options.session ?? new EagerSession()
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
-  const decls = parseProgram(src, abs, { onItem: options.onParseItem })
+  const decls = parseProgram(src, abs, { onItem: options.onParseItem, session })
   // Name registry for prettyTree: map each definition's hash-consed tree id to its
   // name (first definition wins on id collisions — many atoms share one leaf id).
   // Includes opened/imported names, which land in `decls` as Defs in legacy mode.
@@ -30,7 +31,7 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
       result.defs++
     } else {
       result.tests++; testIdx++
-      if (treeEqual(d.lhs, d.rhs)) {
+      if (session.treeEqual(d.lhs, d.rhs)) {
         result.passed++
       } else {
         result.failed.push({
@@ -51,16 +52,14 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
   const file = args.find((arg: string) => !arg.startsWith("--"))
   if (!file) { console.error("usage: tsx src/run.ts [--stats] [--stats-detail] [--stats-all] <file.disp>"); process.exit(1) }
   try {
-    if (showStats) {
-      clearApplyCache()
-      resetApplyStats()
-      resetCacheStats()
-    }
+    // Fresh session for this run; its stats are read directly below (no global
+    // reset needed — a new session starts clean).
+    const session = new EagerSession()
     const itemStats: ParseItemStats[] = []
-    const r = runFile(file, { onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
+    const r = runFile(file, { session, onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
     console.log(`defs: ${r.defs}, tests: ${r.tests}, passed: ${r.passed}, failed: ${r.failed.length}`)
     if (showStats) {
-      const s = getApplyStats()
+      const s = session.getApplyStats()
       console.log(
         `stats: steps=${s.steps}, calls=${s.calls}, maxStack=${s.maxStack}, ` +
         `uniqueNodes=${s.uniqueNodes}, memoEntries=${s.cacheEntries}`,

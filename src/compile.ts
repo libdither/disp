@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import {
   Tree, LEAF, stem, fork, applyTree, treeEqual, force, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
+  EagerSession, withActiveSession, defaultSession,
 } from "./tree.js"
 import {
   parseItems,
@@ -810,9 +811,24 @@ export type ParseItemStats = {
 
 export type ParseProgramOptions = {
   onItem?: (item: ParseItemStats) => void
+  // The evaluator session to run elaboration + verification on. A fresh
+  // EagerSession is created if none is supplied. Activated for the whole body
+  // (withActiveSession) so the free tree-ops the helpers call route to it —
+  // Phase 2 replaces those free calls with explicit `session.*` (EVALUATOR_PLAN).
+  session?: EagerSession
 }
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
+  // Default to the shared defaultSession (not a fresh one) so callers that don't
+  // manage sessions keep the single-global-session behavior — in particular the
+  // elaborator-validation tests, which load the kernel here (setting tree_eq's
+  // id) and then build trees with the free tree-ops on that same session. An
+  // explicit session (run.ts, one per file) opts into isolation.
+  const session = options.session ?? defaultSession
+  return withActiveSession(session, () => parseProgramBody(src, sourcePath, options))
+}
+
+function parseProgramBody(src: string, sourcePath: string | undefined, options: ParseProgramOptions): Decl[] {
   const stack: Map<string, ScopeEntry>[] = [new Map()]
   const decls: Decl[] = []
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
