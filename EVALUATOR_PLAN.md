@@ -564,6 +564,11 @@ Cross-cutting calls:
 
 ## 5. Repo re-org
 
+> The **on-disk layout** (project-per-folder isolation, `src/eval/impl/`,
+> foreign builds under `evaluators/`) is now detailed in
+> [`EVALUATOR_LAYOUT.md`](EVALUATOR_LAYOUT.md). The tree below is the original
+> flat sketch, superseded by that doc.
+
 ```
 src/
   core/cir.ts        # (if split from parse) bracket abstraction IR — no tree dep
