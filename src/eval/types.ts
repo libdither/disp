@@ -77,6 +77,14 @@ export interface Session<H = unknown> {
   classify?(h: H, budget?: Budget): Classification<H>
   stats?(): EvalStats
 
+  // Tell the backend that `handle` is the standard native `name` (today only
+  // "tree_eq"), so it may intercept saturated applications with its native
+  // fast-path. Idempotent; a no-op on backends without a fast path (they run the
+  // in-language definition). This is the pragmatic registration hook; sourcing
+  // the identity from a committed hash registry instead (EVALUATOR_PLAN §3.1,
+  // recognition-not-registration) is the planned refinement.
+  recognizeNative?(name: string, handle: H): void
+
   // True iff handles are canonical (a === b implies equal(a,b)). The engine may
   // use this ONLY as an optimization gate (e.g. the run.ts name registry).
   readonly canonicalHandles: boolean

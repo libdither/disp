@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseProgram, type ParseItemStats } from "./compile.js"
 import { EagerSession, prettyTree } from "./tree.js"
+import type { EvalStats } from "./eval/types.js"
 
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string }[] }
 interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: EagerSession }
@@ -71,7 +72,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       console.log(`memo: hits=${s.memoHits}, misses=${s.memoMisses}, writes=${s.memoWrites}`)
     }
     if (showStatsDetail) {
-      let prev = {
+      let prev: EvalStats = {
         steps: 0, calls: 0, uniqueNodes: 0, memoWrites: 0,
         kRules: 0, sRules: 0, triageLeafRules: 0, triageStemRules: 0, triageForkRules: 0, treeEqRules: 0,
       }

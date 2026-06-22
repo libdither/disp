@@ -747,6 +747,10 @@ export class EagerSession implements Session<Tree> {
   // ── tree_eq native fast-path registration ──
   setTreeEqId(id: number): void { this.st.treeEqId = id }
   getTreeEqId(): number { return this.st.treeEqId }
+  // ABI hook: idempotently register the tree_eq handle for the fast path.
+  recognizeNative(name: string, handle: Tree): void {
+    if (name === "tree_eq" && this.st.treeEqId === -1) this.st.treeEqId = handle.id
+  }
 
   // ── stats / cache (read this session's own state; no swap needed) ──
   getApplyStats(): ApplyStats { return statsOf(this.st) }

@@ -8,14 +8,22 @@
 
 import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
-import {
-  Tree, LEAF, stem, fork, applyTree, treeEqual, force, getApplyStats, setTreeEqId, getTreeEqId, type ApplyStats,
-  EagerSession, withActiveSession, defaultSession,
-} from "./tree.js"
+import { type Tree, EagerSession, defaultSession } from "./tree.js"
+import type { Session, EvalStats, Budget } from "./eval/types.js"
 import {
   parseItems,
   type Expr, type RecMember,
 } from "./parse.js"
+
+// The evaluator session the elaborator runs on. Set per-call by parseProgram
+// (defaults to the eager defaultSession so helpers called outside a parse — e.g.
+// stringToTree from tests — still work). Every tree operation goes through this,
+// so an alternate backend (the Phase-3 naive backend, a WASM runtime) can drive
+// elaboration. Handles stay typed `Tree` for now but are treated opaquely: built
+// via cs.leaf/stem/fork, reduced via cs.apply, compared via cs.equal, inspected
+// via cs.classify — never by direct field/.id access.
+let cs: Session<Tree> = defaultSession
+const B = (): Budget => ({ remaining: APPLY_BUDGET })
 
 // ──────────────────────── 5. Bracket abstraction ─────────────────────────
 
@@ -48,10 +56,6 @@ const S: Cir = { tag: "S" }
 const K: Cir = { tag: "K" }
 const I_CIR: Cir = { tag: "I" }
 const cap = (f: Cir, x: Cir): Cir => ({ tag: "app", f, x })
-
-const I_TREE = fork(fork(LEAF, LEAF), LEAF)
-const K_TREE = stem(LEAF)
-const S_TREE = fork(stem(fork(LEAF, LEAF)), LEAF)
 
 function containsFree(e: Cir, name: string): boolean {
   switch (e.tag) {
@@ -124,19 +128,19 @@ function cirToTree(e: Cir): Tree {
   switch (e.tag) {
     case "lit": return e.t
     case "var": throw new Error(`cirToTree: unresolved free variable ${e.name}`)
-    case "I":   return I_TREE
-    case "K":   return K_TREE
-    case "S":   return S_TREE
+    case "I":   return cs.fork(cs.fork(cs.leaf(), cs.leaf()), cs.leaf())
+    case "K":   return cs.stem(cs.leaf())
+    case "S":   return cs.fork(cs.stem(cs.fork(cs.leaf(), cs.leaf())), cs.leaf())
     case "lam": throw new Error(`cirToTree: unexpected lambda for ${e.x}`)
     case "app": {
-      if (e.f.tag === "app" && e.f.f.tag === "S") return fork(stem(cirToTree(e.f.x)), cirToTree(e.x))
+      if (e.f.tag === "app" && e.f.f.tag === "S") return cs.fork(cs.stem(cirToTree(e.f.x)), cirToTree(e.x))
       // Full K application: K(x)(y) → x (drop second arg)
       if (e.f.tag === "app" && e.f.f.tag === "K") return cirToTree(e.f.x)
-      if (e.f.tag === "K") return fork(LEAF, cirToTree(e.x))
+      if (e.f.tag === "K") return cs.fork(cs.leaf(), cirToTree(e.x))
       if (e.f.tag === "I") return cirToTree(e.x)
       // Partial S application: S(x) → stem(stem(x)) so that S(x)(y) = fork(stem(x), y)
-      if (e.f.tag === "S") return stem(stem(cirToTree(e.x)))
-      return applyTree(cirToTree(e.f), cirToTree(e.x), APPLY_BUDGET)
+      if (e.f.tag === "S") return cs.stem(cs.stem(cirToTree(e.x)))
+      return cs.apply(cirToTree(e.f), cirToTree(e.x), B())
     }
   }
 }
@@ -276,14 +280,14 @@ function exprToCir(
 ): Cir {
   const lookup = (name: string) => lookupEntry(name)?.tree
   switch (e.tag) {
-    case "leaf": return { tag: "lit", t: LEAF }
+    case "leaf": return { tag: "lit", t: cs.leaf() }
     case "num": {
       const zero = lookup("zero")
       const succ = lookup("succ")
       if (!zero || !succ) throw new Error(`numeric literal ${e.value}: zero and succ must be in scope`)
       let result = zero
       for (let i = 0; i < e.value; i++) {
-        result = applyTree(succ, result, APPLY_BUDGET)
+        result = cs.apply(succ, result, B())
       }
       return { tag: "lit", t: result }
     }
@@ -335,7 +339,7 @@ function exprToCir(
       const derivCellEntry = lookupEntry("deriv_cell")
       if (!TelescopeEntry?.tree || !projCellEntry?.tree || !derivCellEntry?.tree)
         throw new Error("record type literal '{ name : T }': 'Telescope', 'proj_cell', and 'deriv_cell' must be in scope (open the kernel prelude)")
-      const leafCir: Cir = { tag: "lit", t: LEAF }
+      const leafCir: Cir = { tag: "lit", t: cs.leaf() }
       let teleCir: Cir = leafCir
       for (let i = e.fields.length - 1; i >= 0; i--) {
         const f = e.fields[i]
@@ -403,7 +407,7 @@ function exprToCir(
             for (let i = 0; i < n; i++) {
               const fieldTree = record.fieldTrees
                 ? record.fieldTrees[i]
-                : applyTree(targetTree!, accTree(record.fields[i]), APPLY_BUDGET)
+                : cs.apply(targetTree!, accTree(record.fields[i]), B())
               const fieldType = record.fieldTypes?.[i] ?? null
               rebind(record.fields[i], { tree: fieldTree, type: fieldType })
             }
@@ -431,17 +435,17 @@ function exprToCir(
       const recordVal: Cir = { tag: "lit", t: recordValEntry.tree }
       const listConst: Cir = { tag: "lit", t: listConstEntry.tree }
       // names header: a closed cons-chain of string tags.
-      let namesTree: Tree = LEAF
+      let namesTree: Tree = cs.leaf()
       for (let i = e.fields.length - 1; i >= 0; i--)
-        namesTree = fork(stringToTree(e.fields[i].name), namesTree)
+        namesTree = cs.fork(stringToTree(e.fields[i].name), namesTree)
       // Sequential field scope (telescope discipline): later fields see earlier
       // ones by name ({ a := 2; b := double a }). The record core references
       // each field as a var; each field wraps the rest as ((λname. rest) value),
       // with PRIOR names shadowed while compiling `value` — so a field's value
       // compiles before its own name binds (`respond := respond` resolves
       // outward, field puns included).
-      const consCir = (h: Cir, tl: Cir): Cir => cap(cap({ tag: "lit", t: LEAF }, h), tl)
-      let payloadCir: Cir = { tag: "lit", t: LEAF }
+      const consCir = (h: Cir, tl: Cir): Cir => cap(cap({ tag: "lit", t: cs.leaf() }, h), tl)
+      let payloadCir: Cir = { tag: "lit", t: cs.leaf() }
       for (let i = e.fields.length - 1; i >= 0; i--)
         payloadCir = consCir(cap(listConst, { tag: "var", name: e.fields[i].name }), payloadCir)
       let result: Cir = cap(cap(recordVal, { tag: "lit", t: namesTree }), payloadCir)
@@ -475,18 +479,17 @@ function exprToCir(
       const Record = lookupEntry("Record")?.tree
       if (!mk_record || !list_const || !Record || !entry.fields || !entry.fieldTrees)
         return { tag: "lit", t: entry.tree! }
-      const B = APPLY_BUDGET
-      const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => fork(h, acc), LEAF)
-      const constWrap = (v: Tree): Tree => applyTree(list_const, v, B)
+      const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => cs.fork(h, acc), cs.leaf())
+      const constWrap = (v: Tree): Tree => cs.apply(list_const, v, B())
       const mkRecord = (names: string[], vals: Tree[]): Tree =>
-        applyTree(applyTree(mk_record, consList(names.map(stringToTree)), B), consList(vals.map(constWrap)), B)
+        cs.apply(cs.apply(mk_record, consList(names.map(stringToTree)), B()), consList(vals.map(constWrap)), B())
       const names = entry.fields, vals = entry.fieldTrees, types = entry.fieldTypes ?? []
       const valuesRecord = mkRecord(names, vals)
       // typ = Record [ pair name type ]  over annotated exports (pair = fork(name,type))
       const typEntries: Tree[] = []
       for (let i = 0; i < names.length; i++)
-        if (types[i]) typEntries.push(fork(stringToTree(names[i]), types[i]!))
-      const typ = applyTree(Record, consList(typEntries), B)
+        if (types[i]) typEntries.push(cs.fork(stringToTree(names[i]), types[i]!))
+      const typ = cs.apply(Record, consList(typEntries), B())
       return { tag: "lit", t: mkRecord(["record", "typ"], [valuesRecord, typ]) }
     }
     case "proj": {
@@ -557,7 +560,7 @@ function exprToCir(
       if (!lookupEntry("prod")?.tree)
         throw new Error("match: 'prod' must be in scope (open the kernel prelude)")
       const condCir = exprToCir(e.cond, lookupEntry, resolveUse, sinks)
-      const leafCir: Cir = { tag: "lit", t: LEAF }
+      const leafCir: Cir = { tag: "lit", t: cs.leaf() }
 
       // Compile each arm body with its binders shadowed.
       const arms = e.arms.map(a => {
@@ -612,9 +615,9 @@ function exprToCir(
       // index_of (= the name count) lands on it.
       const named = arms.filter(a => a.pat !== "_")
       const wildcard = arms.find(a => a.pat === "_")
-      let namesTree: Tree = LEAF
+      let namesTree: Tree = cs.leaf()
       for (let i = named.length - 1; i >= 0; i--)
-        namesTree = fork(stringToTree(named[i].pat), namesTree)
+        namesTree = cs.fork(stringToTree(named[i].pat), namesTree)
       const handlerList = named.map(handlerCir)
       if (wildcard) handlerList.push(handlerCir(wildcard))
       let handlersCir: Cir = leafCir
@@ -666,8 +669,8 @@ function compileExpr(
 // wait-form; its left projection is the constant former-signature. Used only to
 // recognise whether a binding's annotation IS the universe `Type`.
 function treePairFst(p: Tree): Tree | null {
-  p = force(p)
-  return p.tag === "fork" ? p.left : null
+  const c = cs.classify!(p)
+  return c.tag === "fork" ? c.left : null
 }
 
 // isUniverseTree(t, Type): is the annotation `t` EXACTLY the universe `Type`?
@@ -677,7 +680,7 @@ function treePairFst(p: Tree): Tree | null {
 // compile its value (e.g. Pi's `{A,B} -> …`) as a type. Exact identity matches only the
 // universe itself. (Hash-consing makes this O(1); revisit if universe levels `Type i` land.)
 function isUniverseTree(t: Tree, Type: Tree): boolean {
-  return treeEqual(t, Type)
+  return cs.equal!(t, Type)
 }
 
 // binderToPi(e): desugar a type-position binder into explicit `Pi` applications.
@@ -724,8 +727,8 @@ function compileType(
 // natLitTree(n): the lib's canonical Nat for `n` — zero = LEAF, succ(m) =
 // `t t m` = fork(LEAF, m). Matches `succ`/`zero` applied in scope.
 function natLitTree(n: number): Tree {
-  let result: Tree = LEAF
-  for (let i = 0; i < n; i++) result = fork(LEAF, result)
+  let result: Tree = cs.leaf()
+  for (let i = 0; i < n; i++) result = cs.fork(cs.leaf(), result)
   return result
 }
 
@@ -735,8 +738,8 @@ function natLitTree(n: number): Tree {
 // distinct tag per spelling. Reused to intern record field-name identifiers.
 export function stringToTree(s: string): Tree {
   const codes = [...s].map(c => c.codePointAt(0)!)
-  let result: Tree = LEAF
-  for (let i = codes.length - 1; i >= 0; i--) result = fork(natLitTree(codes[i]), result)
+  let result: Tree = cs.leaf()
+  for (let i = codes.length - 1; i >= 0; i--) result = cs.fork(natLitTree(codes[i]), result)
   return result
 }
 
@@ -744,21 +747,21 @@ export function stringToTree(s: string): Tree {
 // = fork(name, LEAF)`, with the name interned as a string tag. Applying a
 // product (record) to it performs the cut and yields the named field.
 function accTree(name: string): Tree {
-  return fork(stringToTree(name), LEAF)
+  return cs.fork(stringToTree(name), cs.leaf())
 }
 
 // treeToNat / treeToString: decode the lib encodings (Nat = nested fork(LEAF,·),
 // String = a cons-chain of codepoint Nats) back to host values — the inverse of
 // natLitTree / stringToTree. Used to read a record's field-name header.
 function treeToNat(t: Tree): number {
-  let n = 0, cur = force(t)
-  while (cur.tag === "fork") { n++; cur = force(cur.right) }
+  let n = 0, cur = cs.classify!(t)
+  while (cur.tag === "fork") { n++; cur = cs.classify!(cur.right) }
   return n
 }
 function treeToString(t: Tree): string {
   const codes: number[] = []
-  let cur = force(t)
-  while (cur.tag === "fork") { codes.push(treeToNat(cur.left)); cur = force(cur.right) }
+  let cur = cs.classify!(t)
+  while (cur.tag === "fork") { codes.push(treeToNat(cur.left)); cur = cs.classify!(cur.right) }
   return codes.length ? String.fromCodePoint(...codes) : ""
 }
 
@@ -779,17 +782,17 @@ function recordFieldsFromTree(
   const pairFst = lookupEntry("pair_fst")?.tree
   if (!annihilateSig || !typeMeta || !pairFst) return undefined
   const sig = treePairFst(tree)
-  if (!sig || !treeEqual(sig, annihilateSig)) return undefined
+  if (!sig || !cs.equal!(sig, annihilateSig)) return undefined
   // names = pair_fst (type_meta tree): a cons-chain of interned string tags.
-  const namesTree = applyTree(pairFst, applyTree(typeMeta, tree, APPLY_BUDGET), APPLY_BUDGET)
+  const namesTree = cs.apply(pairFst, cs.apply(typeMeta, tree, B()), B())
   const fields: string[] = []
   const fieldTrees: Tree[] = []
-  let cur = force(namesTree)
+  let cur = cs.classify!(namesTree)
   while (cur.tag === "fork") {
     const name = treeToString(cur.left)
     fields.push(name)
-    fieldTrees.push(applyTree(tree, accTree(name), APPLY_BUDGET))
-    cur = force(cur.right)
+    fieldTrees.push(cs.apply(tree, accTree(name), B()))
+    cur = cs.classify!(cur.right)
   }
   return fields.length > 0 ? { fields, fieldTrees } : undefined
 }
@@ -806,26 +809,26 @@ export type ParseItemStats = {
   testIndex?: number
   sourcePath?: string
   depth: number
-  stats: ApplyStats
+  stats: EvalStats
 }
 
 export type ParseProgramOptions = {
   onItem?: (item: ParseItemStats) => void
-  // The evaluator session to run elaboration + verification on. A fresh
-  // EagerSession is created if none is supplied. Activated for the whole body
-  // (withActiveSession) so the free tree-ops the helpers call route to it —
-  // Phase 2 replaces those free calls with explicit `session.*` (EVALUATOR_PLAN).
-  session?: EagerSession
+  // The evaluator session to run elaboration + verification on (any backend).
+  // Defaults to the eager defaultSession.
+  session?: Session<Tree>
 }
 
 export function parseProgram(src: string, sourcePath?: string, options: ParseProgramOptions = {}): Decl[] {
-  // Default to the shared defaultSession (not a fresh one) so callers that don't
-  // manage sessions keep the single-global-session behavior — in particular the
-  // elaborator-validation tests, which load the kernel here (setting tree_eq's
-  // id) and then build trees with the free tree-ops on that same session. An
-  // explicit session (run.ts, one per file) opts into isolation.
+  // Default to the shared eager defaultSession so callers that don't manage
+  // sessions keep the single-global-session behavior — in particular the
+  // elaborator-validation tests, which load the kernel here (recognizing
+  // tree_eq) and then build trees on that same session. An explicit session
+  // (run.ts, one per file; a non-eager backend) opts into its own state.
   const session = options.session ?? defaultSession
-  return withActiveSession(session, () => parseProgramBody(src, sourcePath, options))
+  const prev = cs
+  cs = session
+  try { return parseProgramBody(src, sourcePath, options) } finally { cs = prev }
 }
 
 function parseProgramBody(src: string, sourcePath: string | undefined, options: ParseProgramOptions): Decl[] {
@@ -898,23 +901,22 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     if (!raw && vFormers && !verifiedModules.has(abs)) {
       const typEntries: Tree[] = []
       for (let i = 0; i < fieldNames.length; i++)
-        if (fieldTypes[i]) typEntries.push(fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
+        if (fieldTypes[i]) typEntries.push(cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
       if (typEntries.length > 0) {
-        const B = APPLY_BUDGET
-        const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => fork(h, acc), LEAF)
-        const recordVal = applyTree(applyTree(vFormers.mkRecord, consList(fieldNames.map(stringToTree)), B),
-                                    consList(fieldTrees.map(v => applyTree(vFormers!.listConst, v, B))), B)
-        const typVal = applyTree(vFormers.Record, consList(typEntries), B)
-        const verdict = applyTree(applyTree(vFormers.paramApply, typVal, B), recordVal, B)
-        const okTT = applyTree(vFormers.ok, vFormers.tt, B)
-        if (!treeEqual(verdict, okTT))
+        const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => cs.fork(h, acc), cs.leaf())
+        const recordVal = cs.apply(cs.apply(vFormers.mkRecord, consList(fieldNames.map(stringToTree)), B()),
+                                   consList(fieldTrees.map(v => cs.apply(vFormers!.listConst, v, B()))), B())
+        const typVal = cs.apply(vFormers.Record, consList(typEntries), B())
+        const verdict = cs.apply(cs.apply(vFormers.paramApply, typVal, B()), recordVal, B())
+        const okTT = cs.apply(vFormers.ok, vFormers.tt, B())
+        if (!cs.equal!(verdict, okTT))
           throw new Error(`type check failed for module ${abs}: an export does not inhabit its declared type (verify returned non-(Ok TT))`)
         verifiedModules.add(abs)
       }
     }
     // Church-encode: \sel. sel v1 v2 ... vn
     const n = fieldTrees.length
-    if (n === 0) return { tree: LEAF, fields: [] }
+    if (n === 0) return { tree: cs.leaf(), fields: [] }
     // Build as Cir, then compile
     const selName = "__use_sel"
     let body: Cir = { tag: "var", name: selName }
@@ -931,7 +933,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       testIndex,
       sourcePath: sourceStack[sourceStack.length - 1],
       depth: sourceStack.length - 1,
-      stats: getApplyStats(),
+      stats: cs.stats!(),
     })
   }
 
@@ -1009,7 +1011,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         const result = compileBinding(it.name, it.type, it.value, sinks, raw)
         target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
         // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
-        if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
+        if (it.name === "tree_eq") cs.recognizeNative?.("tree_eq", result.tree)
         recordItem("field", it.name)
         return
       }
@@ -1019,7 +1021,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           // Legacy mode: top-level let exports (for files not yet migrated)
           target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
         }
-        if (it.name === "tree_eq" && getTreeEqId() === -1) setTreeEqId(result.tree.id)
+        if (it.name === "tree_eq") cs.recognizeNative?.("tree_eq", result.tree)
         recordItem("let", it.name)
         return
       }
@@ -1041,11 +1043,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         const tree = record.fieldTrees ? undefined : compileExpr(it.expr, lookupEntry, resolveUse, sinks)
         const n = record.fields.length
         for (let i = 0; i < n; i++) {
-          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : applyTree(tree!, accTree(record.fields[i]), APPLY_BUDGET)
+          const fieldTree = record.fieldTrees ? record.fieldTrees[i] : cs.apply(tree!, accTree(record.fields[i]), B())
           const name = record.fields[i]
           const existing = stack[stack.length - 1].get(name)
           if (existing) {
-            if (existing.tree?.id === fieldTree.id) continue
+            if (existing.tree && cs.equal!(existing.tree, fieldTree)) continue
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
           const fieldType = record.fieldTypes?.[i] ?? null
