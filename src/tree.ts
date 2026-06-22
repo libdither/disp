@@ -11,6 +11,8 @@
 // registry) keep working. This is the Phase-1 "state-ize the evaluator" step of
 // EVALUATOR_PLAN.md: no module-global *evaluator state*, only a global arena.
 
+import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classification } from "./eval/types.js"
+
 export type Tree = {
   readonly tag: "leaf"
   readonly id: number
@@ -641,6 +643,44 @@ export function prettyTree(tree: Tree, names?: Map<number, string>): string {
   }
 }
 
+// --- Ternary serialization (preorder arity encoding) ---
+// Each node is its arity digit in preorder: leaf "0", stem "1"+child, fork
+// "2"+left+right. Canonical (one string per tree) — the recognition hash and the
+// dump-comparison observation bridge both rely on that. dumpTernary forces
+// suspensions (it is a forcing op). NOTE: this is *a* preorder arity encoding;
+// reconciling its exact bytes with the lambada batch-tier convention is Phase 4
+// (EVALUATOR_PLAN §4.5), and a deep-tree iterative encoder is the §8 blowup hedge
+// — the recursive form here is fine for the small terms dump is used on so far.
+export function encodeTernary(t: Tree): string {
+  const parts: string[] = []
+  const go = (n: Tree): void => {
+    n = force(n)
+    switch (n.tag) {
+      case "leaf": parts.push("0"); return
+      case "stem": parts.push("1"); go(n.child); return
+      case "fork": parts.push("2"); go(n.left); go(n.right); return
+      case "susp": go(force(n)); return  // unreachable after force; exhaustiveness
+    }
+  }
+  go(t)
+  return parts.join("")
+}
+
+export function decodeTernary(s: string): Tree {
+  let i = 0
+  const go = (): Tree => {
+    if (i >= s.length) throw new Error("loadTernary: unexpected end of input")
+    const c = s[i++]
+    if (c === "0") return LEAF
+    if (c === "1") return stem(go())
+    if (c === "2") { const l = go(); const r = go(); return fork(l, r) }
+    throw new Error(`loadTernary: bad character '${c}' at ${i - 1}`)
+  }
+  const t = go()
+  if (i !== s.length) throw new Error("loadTernary: trailing input after one term")
+  return t
+}
+
 // ──────────────────────────── Eager session ──────────────────────────────
 // The reference evaluator backend, state-ized. An EagerSession owns one
 // EagerState bag; its methods swap that bag in as `active` for the duration of
@@ -649,14 +689,42 @@ export function prettyTree(tree: Tree, names?: Map<number, string>): string {
 // (Phase 1 of EVALUATOR_PLAN.md. The opaque-handle `Session` ABI interface and
 // the file split to eval/eager.ts land in Phase 2.)
 
-export class EagerSession {
+export class EagerSession implements Session<Tree> {
   // Not marked #private: same-module helpers (withActiveSession) read it.
   readonly st: EagerState = freshState()
+
+  // Handles are hash-consed Tree pointers, so identity coincides with equality.
+  // The engine may use this only as an optimization gate (run.ts name registry).
+  readonly canonicalHandles = true
 
   // ── term algebra (hash-consing is global; these just expose the arena) ──
   leaf(): Tree { return LEAF }
   stem(child: Tree): Tree { return stem(child) }
   fork(left: Tree, right: Tree): Tree { return fork(left, right) }
+
+  // ── bulk ops / interchange ──
+  loadTernary(s: string): Tree { return decodeTernary(s) }
+  dumpTernary(h: Tree, _budget?: Budget): string {
+    // Forces to NF; the eager backend is already strict, so _budget is unused
+    // here (force uses its own large internal budget). Lazy backends would honor
+    // it. Swap active so any forcing runs on this session's state.
+    const prev = active; active = this.st
+    try { return encodeTernary(h) } finally { active = prev }
+  }
+
+  // ── observations (native overrides of the engine-side derivations) ──
+  equal(a: Tree, b: Tree, _budget?: Budget): boolean { return this.treeEqual(a, b) }
+  classify(h: Tree, _budget?: Budget): Classification<Tree> {
+    const prev = active; active = this.st
+    try {
+      let n = force(h)
+      while (n.tag === "susp") n = force(n)   // force returns the NF; loop is defensive + narrows
+      if (n.tag === "leaf") return { tag: "leaf" }
+      if (n.tag === "stem") return { tag: "stem", child: n.child }
+      return { tag: "fork", left: n.left, right: n.right }
+    } finally { active = prev }
+  }
+  stats(): EvalStats { return statsOf(this.st) }
 
   // ── computation ──
   apply(f: Tree, x: Tree, budget = { remaining: 10000 }): Tree {
@@ -720,3 +788,15 @@ export function withActiveSession<T>(session: EagerSession, fn: () => T): T {
 // directly). It is created last so `active` is non-null for the whole module.
 export const defaultSession = new EagerSession()
 active = defaultSession.st
+
+// The eager reference backend: a factory over EagerSession. (Stays in tree.ts
+// for now; the file split to eval/eager.ts + the de-export of the Tree internals
+// is the later reorg step of EVALUATOR_PLAN §5.)
+export const eagerBackend: EvalBackend<Tree> = {
+  name: "eager",
+  // Recognition-by-hash (the natives() report + the engine-side hash assertion,
+  // EVALUATOR_PLAN §3.1) is a later sub-step; today the eager session recognizes
+  // tree_eq via setTreeEqId at kernel-load time, so it reports none here yet.
+  natives(): ReadonlyMap<string, readonly string[]> { return new Map() },
+  createSession(_opts?: SessionOpts): EagerSession { return new EagerSession() },
+}
