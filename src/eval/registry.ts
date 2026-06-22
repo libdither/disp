@@ -5,11 +5,13 @@
 
 import type { EvalBackend } from "./types.js"
 import { eagerBackend } from "../tree.js"
+import { naiveBackend } from "./naive.js"
 
 // Handles are opaque to the engine, so backends are stored at `unknown` handle
-// type; each backend casts internally (the eager backend's H = Tree).
+// type; each backend casts internally (the eager/naive backends' H = Tree).
 const backends = new Map<string, EvalBackend>([
   [eagerBackend.name, eagerBackend as unknown as EvalBackend],
+  [naiveBackend.name, naiveBackend as unknown as EvalBackend],
 ])
 
 export const defaultBackendName = "eager"
