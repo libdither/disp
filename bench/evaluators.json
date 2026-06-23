@@ -1,4 +1,15 @@
 {
-  "_doc": "Batch-tier peers (EVALUATOR_PLAN.md §4.5): external one-shot ternary evaluators, for benchmarks + differential conformance only (never elaboration). Each peer entry is { name, cmd, args } where the binary reads ternary terms on stdin (one per line), left-folds application, and prints the ternary normal form (the lambada run-one.sh contract). In-process disp backends (eager, naive) are BatchRunners via src/eval/batch.ts#sessionBatchRunner and are NOT declared here. No external peers are wired yet — populate this when lambada-tc / tc-evaluator binaries are available locally, and reconcile the 0/1/2 preorder-arity ternary bytes with their conventions/ first.",
+  "_doc": "Batch-tier peers (EVALUATOR_PLAN.md §4.5): external one-shot ternary evaluators, for benchmarks + differential conformance only (never elaboration). In-process disp backends (eager, naive) are BatchRunners via src/eval/batch.ts#sessionBatchRunner and are NOT declared here. The lambada peers are all wired in code via src/eval/lambada.ts#lambadaRunner(name); this file documents the contract. Ternary 0/1/2 preorder-arity is byte-identical to disp's (CONFIRMED — see EVALUATOR_LAMBADA_PLAN.md §2). The disp benchmark (bench/bench-evaluators.ts) drives these.",
+  "lambada": {
+    "_doc": "All 11 lambada-llc/tree-calculus evaluators, exposed by one bundled CLI (evaluators/lambada/build.sh ⇒ artifacts/cli.cjs). Invoke a given evaluator argv-style: `node <cli> -e <evaluator> -ternary <term> <term> ...` — folds from identity, prints ternary NF on stdout and startup-free `reduce_ms=<n>` on stderr.",
+    "cli": "evaluators/lambada/artifacts/cli.cjs",
+    "mode": "argv",
+    "invoke": ["node", "<cli>", "-e", "<evaluator>", "-ternary", "<terms...>"],
+    "evaluators": [
+      "eager-func", "eager-node-app", "eager-stacks", "eager-value-adt",
+      "eager-value-memory", "eager-value-memoizing", "eager-value-memoizing-alt",
+      "lazy-func", "lazy-stacks", "lazy-value-adt", "lazy-value-memory"
+    ]
+  },
   "peers": []
 }
