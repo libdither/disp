@@ -9,7 +9,19 @@ backend: the current eager TS evaluator, a Rust/WASM TC-Net runtime, or
 anything else implementing the ABI. Out-of-process evaluators speaking the
 lambada ternary ABI remain supported as a batch tier for benchmarking.
 
-Status: PLAN — for review. Nothing here is implemented.
+Status: Phases 1–4 LANDED and merged to main (2026-06-22) — the `Session` ABI
+(`src/eval/types.ts`), the state-ized eager backend, the naive honesty backend +
+conformance (real elaboration on non-canonical handles), ternary export + batch
+tier + `--evaluator`/`--emit` CLI, the `core/tree.ts`↔`eval/eager.ts` split, and
+the ported elaborator-validation tests (decision 8). **One deliberate divergence
+from this doc:** §3.1 recognition-by-hash was *not* built; the landed ABI uses a
+pragmatic `recognizeNative(name, handle)` registration hook (the engine pushes
+the compiled `tree_eq` handle to the session once, after the prelude compiles —
+`compile.ts:1014`). The suite is green without the hash-registry machinery, which
+re-grades recognition from "load-bearing, phase 2" to a foreign/batch-tier
+*optimization* (see the §3.1 re-grade). Remaining: the on-disk layout migration
+([`EVALUATOR_LAYOUT.md`](EVALUATOR_LAYOUT.md)), §3.1 recognition itself, phase 5
+bench, phase 6 TC-Net.
 
 ---
 
@@ -145,7 +157,9 @@ interface EvalBackend {
   // Static build-time report: native name -> content hashes (sha-256 over the
   // UTF-8 canonical ternary string) this backend recognizes. A fact about the
   // backend binary — hence here, not on Session. Input to the engine-side
-  // compatibility assertion (§3.1); never consulted during reduction.
+  // compatibility assertion (§3.1). DEFERRED/re-graded: today both backends
+  // return an empty map and nothing consults it; the landed recognition path is
+  // Session.recognizeNative (below). Never consulted during reduction.
   natives(): ReadonlyMap<string, readonly string[]>
   createSession(opts?: SessionOpts): Session
 }
@@ -177,20 +191,21 @@ interface Session {
   // diverge inside a call that is O(size) on the eager one.
   dumpTernary(h: H, budget?: Budget): string
 
-  // ── standard natives (recognition — see §3.1) ──
-  // Backends ship knowing the standard-natives registry (name -> canonical
-  // tree, pinned by content hash; today only "tree_eq") and MUST intercept
-  // saturated applications of any recognized tree with a native
-  // implementation bit-identical to running the definition; the in-language
-  // tree remains the spec. Equality semantics: structural equality of normal
-  // forms in the backend's own representation (id check, recursive walk,
-  // normalize-and-compare — backend's choice). Recognition is free under
-  // hash-consing (canonicalization makes the prelude-compiled def
-  // pointer-equal to the baked-in tree); one bottom-up hash at construction
-  // otherwise. Interception hooks APPLICATION ONLY, at saturation: a
-  // recognized definition examined as data (triaged over by reflective code)
-  // presents its real structure — intensionality is never bypassed.
-  // (The build-time natives() report lives on EvalBackend.)
+  // ── standard natives (recognition) ──
+  // LANDED mechanism — a registration hook (NOT the §3.1 hash registry, which is
+  // re-graded to deferred). After the prelude compiles, the engine pushes the
+  // session its compiled tree_eq handle; the session may then intercept
+  // saturated applications with a native fast-path (eager: O(1) hash-cons id;
+  // naive: no-op → runs the in-language def). The in-language tree_eq stays the
+  // spec; interception is bit-identical and hooks APPLICATION ONLY at saturation,
+  // so a definition examined as data presents its real structure (intensionality
+  // preserved).
+  recognizeNative?(name: string, handle: H): void
+  // DEFERRED (§3.1, re-graded): swap this push-the-handle hook for static
+  // recognition-by-hash (committed registry + EvalBackend.natives() + an
+  // engine-side hash assertion), so batch-tier CLIs and exported blobs fast-path
+  // tree_eq with no per-session handshake. A foreign/batch-tier optimization, not
+  // an elaboration prerequisite — phases 1–4 are green on the hook alone.
 
   // ── capabilities (optional) ──
   // Native equality shortcut. DERIVABLE: the engine applies the standard
@@ -234,7 +249,7 @@ Notes, mapped to the audit:
 - `leaf/stem/fork` replace `LEAF/stem/fork`; `classify` (derived or native)
   replaces `isLeaf/isStem/isFork` + child access and subsumes `force`; `apply`
   replaces `applyTree` (budget now explicit); `equal` replaces `treeEqual`;
-  standard-natives recognition (§3.1) replaces `setTreeEqId/getTreeEqId`; `stats` replaces
+  the `recognizeNative` hook (§3; the §3.1 hash registry deferred) replaces `setTreeEqId/getTreeEqId`; `stats` replaces
   `getApplyStats`; session creation/disposal replaces the
   `clearApplyCache/resetApplyStats/resetCacheStats` sprinkles. `prettyTree`
   becomes an engine-side helper over `classify`.
@@ -315,14 +330,30 @@ Notes, mapped to the audit:
 
 ### 3.1 Standard natives: recognition
 
-Backends know the standard native definitions statically, rather than being
-told per session. (The alternative — a runtime call where the engine hands
-each session its compiled `tree_eq` handle — is worse on every axis that
-matters here: it adds a per-session protocol step for information that is
-static, it excludes evaluators the engine never gets to call — the batch
-tier — which would force an export-substitution step and fork the blob
-format, and it ties interception to a handshake instead of to the committed
-convention that already pins these trees.)
+> **Re-grade (2026-06-22): DEFERRED; not on the elaboration critical path.**
+> This section designs *recognition-by-hash* (static registry + `natives()` +
+> engine-side hash assertion + binding substitution). Phases 1–4 shipped without
+> any of it, using the `recognizeNative` registration hook in §3 instead —
+> exactly the "runtime call where the engine hands each session its compiled
+> `tree_eq` handle" that the paragraph below calls "worse on every axis."
+> Implementation falsified that ranking *for the elaboration tier*: pushing one
+> handle once at kernel-load (`compile.ts:1014`) is trivial and the whole suite
+> is green on it. Recognition-by-hash earns its keep only for the tiers the
+> engine never calls — **exported blobs and batch-tier CLIs** — where there is no
+> session to hand a handle to, so a content-hash convention is the only way they
+> can fast-path `tree_eq`. Read the rest of this section as the design for *that*
+> (a foreign/batch-tier optimization), de-scoped out of phase 2 and **decoupled
+> from phase 6** (TC-Net needs the ABI, not the registry). The "worse on every
+> axis" claim holds only in the no-engine-handshake setting, not for the
+> in-process elaboration tier the hook already serves.
+
+Backends would know the standard native definitions statically, rather than
+being told per session. (The push-the-handle alternative that *did* ship is
+cheap and correct for in-process sessions; the argument here applies to the
+batch/blob tiers, where there is no per-session call to piggyback on: a runtime
+handshake there would exclude evaluators the engine never gets to call — forcing
+an export-substitution step and forking the blob format — and tie interception
+to a handshake instead of to the committed convention that pins these trees.)
 
 The convention:
 
@@ -483,7 +514,9 @@ optimization — exactly the demotion requested).
   arguments), reachability GC for parked δⁿ duplicators (the erasure leak;
   the ABI's session-arena + `dispose()` model absorbs it — garbage
   accumulates per session and is reclaimed wholesale), and arena layout.
-  The §3.1 recognition story transfers *unchanged*, because the reference
+  The §3.1 recognition story (deferred — see the re-grade; TC-Net's correctness
+  rides on the `recognizeNative` hook like every other backend, recognition is a
+  later speed knob) transfers *unchanged* when it does land, because the reference
   backend's two-stage susp scheme was modeled on TC-Net's `P` node in the
   first place: stage 1 leaves the inert hash-consed partial `P(tree_eq, a)`
   exactly as `susp` does, and both stages are O(1) canonical-id checks
@@ -627,11 +660,14 @@ here.)
 
 **Phase 2 — ABI extraction (2–3 days).** `eval/types.ts`; `compile.ts` and
 `run.ts` rewritten against `Session` (mechanical: the import list in §1 maps
-1:1); `setTreeEqId` → recognition per §3.1 — `conventions/natives.json`, the
-engine-side hash assertion, and binding substitution land **here**, not in
-phase 4 (recognition is load-bearing for elaboration and the registry file
-is small; phase 4 keeps only the export/batch tooling); `core/tree.ts`
-de-exported from the engine. `verifiedModules` re-keyed to `(backend.name,
+1:1); `setTreeEqId` → the `recognizeNative(name, handle)` hook on `Session` (§3)
+— the engine pushes the compiled `tree_eq` handle at kernel-load time
+(`compile.ts:1014`). **What actually landed here vs. the original plan:** the
+§3.1 hash registry / `conventions/natives.json` / hash assertion / binding
+substitution did **not** land — they are re-graded to a deferred foreign/batch
+step; the push-the-handle hook is sufficient for elaboration (and proves
+recognition-by-hash was never load-bearing for it). `core/tree.ts` de-exported
+from the engine. `verifiedModules` re-keyed to `(backend.name,
 path)` (§1, decision 9). The elaborator-validation tests port to the ABI
 (decision 8): `.id ===` → `equal()`, id-keyed decode maps →
 `dumpTernary`-string-keyed. Tests green via the reference backend.
@@ -654,10 +690,12 @@ no *required* ABI path forces unbounded growth on a backend that cannot help
 it. Becomes the permanent conformance fixture.
 
 **Phase 4 — ternary + export + batch tier (1–2 days).** `format/`,
-`emit` CLI, binding-closure export (the registry + hash assertion landed in
-phase 2). Export-conformance tests: exported blob
-normalized by the reference backend equals the in-repo result, and a
-recognizing backend intercepts `tree_eq` inside the blob. `BatchRunner` +
+`emit` CLI, binding-closure export (a thin canonical dump — defs inline by
+construction, no substitution; the §3.1 registry + hash assertion are deferred,
+so there is no recognition step here). Export-conformance tests: an exported blob
+normalized by the reference backend equals the in-repo result, and reloading it
+on the naive backend agrees (it runs the inline `tree_eq`; once a recognizing
+backend exists it fast-paths the same blob). `BatchRunner` +
 `evaluators.json` + disp-eager adapter; randomized differential test across
 batch peers.
 
@@ -691,18 +729,22 @@ independently revertable.
    O(1) id check. The reference backend keeps the O(1) path by staying eager.
    The ABI is exactly what lets eager-fast-conversion and demand-driven
    work-sharing coexist without forking the language.
-2. **`tree_eq` interception is a backend obligation via recognition, not
-   registration (§3.1).** Every session bakes in the standard-natives registry
-   and intercepts recognized trees at saturated application; the engine
-   asserts registry agreement at prelude-compile time (loud error, never a
-   silent perf cliff). The in-language `tree_eq` stays the spec: conformance
-   validates each backend's native against the reference backend with
-   recognition disabled (`SessionOpts.noNativeIntercept` exists for exactly
-   this). Note for lazy/parallel backends: native equality is a strictness
-   point and a parallelism barrier (both sides forced to full NF) —
-   semantically identical to the in-language program, but it will show in
-   profiles. Export substitution is deleted: blobs carry definitions inline
-   and any recognizing evaluator (batch tier included) fast-paths them.
+2. **`tree_eq` interception is a backend obligation; the LANDED trigger is
+   registration, not recognition (§3.1 re-graded).** The shipped mechanism is the
+   `recognizeNative(name, handle)` hook: the engine pushes the compiled `tree_eq`
+   handle to the session at kernel-load, and the session intercepts saturated
+   applications (eager: O(1) hash-cons id; naive: no-op). The recognition-by-hash
+   registry + engine-side hash assertion are deferred to the foreign/batch tier.
+   The in-language `tree_eq` stays the spec: conformance is currently carried by
+   the naive backend, whose no-op `recognizeNative` means it always runs the real
+   in-language definition, so eager-vs-naive differential tests already exercise
+   native-vs-spec agreement (the `noNativeIntercept` flag is declared in
+   `SessionOpts` but not yet wired — the naive backend makes it redundant for
+   now). Note for lazy/parallel backends: native equality is a strictness point
+   and a parallelism barrier (both sides forced to full NF) — semantically
+   identical to the in-language program, but it will show in profiles. Export
+   substitution is deleted: blobs carry definitions inline and any recognizing
+   evaluator (batch tier included) will fast-path them once recognition lands.
 3. **The whole pipeline runs on the selected backend** — including
    typed-binding verification. There is no longer a privileged
    elaboration evaluator. (The alternative — pinning elaboration to the host
