@@ -1,0 +1,15 @@
+[package]
+name = "tc-net"
+version = "0.0.0"
+edition = "2021"
+description = "Rooted TC-Net: a sequential interaction-net evaluator for disp tree calculus (M0 scaffold)"
+license = "MIT"
+
+[lib]
+# cdylib ⇒ a freestanding .wasm with C ABI exports the disp Session wrapper calls.
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"     # no unwinding across the wasm boundary; budget exhaustion is a sentinel return, not a panic

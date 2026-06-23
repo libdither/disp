@@ -6,6 +6,7 @@
 import type { EvalBackend } from "./types.js"
 import { eagerBackend } from "./eager.js"
 import { naiveBackend } from "./naive.js"
+import { tcnetBackend, tcnetAvailable } from "./tcnet.js"
 
 // Handles are opaque to the engine, so backends are stored at `unknown` handle
 // type; each backend casts internally (the eager/naive backends' H = Tree).
@@ -13,6 +14,11 @@ const backends = new Map<string, EvalBackend>([
   [eagerBackend.name, eagerBackend as unknown as EvalBackend],
   [naiveBackend.name, naiveBackend as unknown as EvalBackend],
 ])
+
+// Foreign in-process backends register only if their build artifact exists, so
+// the everyday loop needs no foreign toolchain (EVALUATOR_LAYOUT.md). tc-net is
+// a Rust→WASM Session backend; absent until evaluators/tc-net/build.sh runs.
+if (tcnetAvailable()) backends.set(tcnetBackend.name, tcnetBackend as unknown as EvalBackend)
 
 export const defaultBackendName = "eager"
 
