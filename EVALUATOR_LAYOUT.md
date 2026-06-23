@@ -123,5 +123,9 @@ Small — most files only move, no behavior change, suite stays green:
 3. Then lambada: `evaluators/lambada/build.sh` (pinned fetch of `main.js`) +
    `src/eval/impl/lambada.ts` (~40-line subprocess BatchRunner registering
    `lambada-lazy` etc.; the ternary format already matches disp's) + a
-   differential conformance test.
+   differential conformance test. **Detailed in
+   [`EVALUATOR_LAMBADA_PLAN.md`](EVALUATOR_LAMBADA_PLAN.md)** (reconciliation
+   confirmed against the lambada repo; can land *before* steps 1–2, since a batch
+   peer only adds `evaluators/lambada/` + a flat `src/eval/lambada.ts`, no
+   reshuffle).
 4. tc-net later slots into the identical shape.
