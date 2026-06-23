@@ -8,6 +8,7 @@
     "test:watch": "NODE_OPTIONS=--max-old-space-size=8192 vitest",
     "bench": "vitest bench",
     "bench:eval": "tsx bench/eval-steps.ts",
+    "bench:evaluators": "tsx bench/bench-evaluators.ts",
     "disp": "tsx src/run.ts"
   },
   "devDependencies": {
