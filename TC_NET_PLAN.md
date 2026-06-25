@@ -7,10 +7,13 @@ substrate. This is `EVALUATOR_PLAN.md` Phase 6, made concrete.
 
 Status: **M0 LANDED — FULL `lib/tests` elaboration GREEN on the interaction-net
 backend, and ~2× FASTER than the eager V8 backend.** Running the whole corpus
-through `--evaluator=tcnet`: **39 files / 816 tests, all pass, in 85.2 s vs eager's
-176.2 s** (same machine, same run). disp's elaborator + verifier + tests run on a
-Rust→WASM interaction-net substrate, and the Rust-vs-V8 constant factor beats eager
-outright — sequential, no parallelism. `tc_apply` ships **eager** (the
+through `--evaluator=tcnet`: **all 816 tests pass, in ~58 s vs eager's ~176 s**
+(~3× — initially 85 s, brought to 58 s by a perf pass: an inline FxHash-style
+hasher on the intern/memo tables + a sparse `forced` map). disp's elaborator +
+verifier + tests run on a Rust→WASM interaction-net substrate, and the Rust-vs-V8
+constant factor beats eager outright — sequential, no parallelism. (Exact ratios
+drift with the live std/kernel edit churn; eager and tcnet agree on identical
+source.) `tc_apply` ships **eager** (the
 elaboration-conformance mode — EVALUATOR_PLAN decision 7: the elaborator is
 eager-normative); the iterative explicit-stack reducer + the `tree_eq` two-stage
 fast-path (`recognizeNative`) make it competitive. The **M1 lazy** core
