@@ -3,4 +3,4 @@
 # checker, recursive benchmarks). 64 MiB is generous headroom; an explicit-stack
 # machine (no native recursion) is the later robustness upgrade if this is hit.
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "link-arg=-zstack-size=67108864"]
+rustflags = ["-C", "link-arg=-zstack-size=268435456"]

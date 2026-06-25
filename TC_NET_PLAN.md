@@ -5,27 +5,45 @@ interaction-net runtime in Rust→WASM, implementing the `Session` ABI so the wh
 pipeline (elaboration + verification + tests) can run on an interaction-net
 substrate. This is `EVALUATOR_PLAN.md` Phase 6, made concrete.
 
-Status: **M0 + M1 LANDED (sequential, hash-consed reducer strategy).**
-`evaluators/tc-net/crate/src/lib.rs` implements the arena + hash-consing, the
-eager **M0** reducer (`reduce`/`dispatch_eager`, cargo-tested on the worked
-examples), and the live **lazy M1** core (`tc_apply` = `Susp`; `force`/`nf` drive
-call-by-need with the `forced` memo cell = `δⁿ` at-most-once). `tc_dump_ternary`/
-`tc_classify`/`tc_equal` force on demand; the ternary codec is byte-identical to
-disp's. **Conformance GREEN:** `test/eval-tcnet.test.ts` cross-checks TC-Net
-against disp-eager on the five lambada benchmark programs + 50 randomized terms
-(the M0 gate, one direction). **Laziness verified directly:** a discarded argument
-is never reduced — `K a (silly-exp 6)` resolves in 2 interactions vs 13 304 to
-force that argument. The hash-cons forced-memo makes fib/exp/merge-sort tractable
-(no materialized `δⁿ` agents, scheduler, or reachability GC — those are M2; see
-§Implementation strategy). The backend registers only once `build.sh` produces
-the (gitignored) artifact, so the default loop needs no Rust toolchain.
-**Remaining: M2** (parallelism + materialized agents + the modal-typed scheduler).
+Status: **M0 LANDED — FULL `lib/tests` elaboration GREEN on the interaction-net
+backend, and ~2× FASTER than the eager V8 backend.** Running the whole corpus
+through `--evaluator=tcnet`: **39 files / 816 tests, all pass, in 85.2 s vs eager's
+176.2 s** (same machine, same run). disp's elaborator + verifier + tests run on a
+Rust→WASM interaction-net substrate, and the Rust-vs-V8 constant factor beats eager
+outright — sequential, no parallelism. `tc_apply` ships **eager** (the
+elaboration-conformance mode — EVALUATOR_PLAN decision 7: the elaborator is
+eager-normative); the iterative explicit-stack reducer + the `tree_eq` two-stage
+fast-path (`recognizeNative`) make it competitive. The **M1 lazy** core
+(`tc_apply_lazy` = `Susp`; `force`/`nf` = `δⁿ` at-most-once via the `forced` memo)
+is kept and validated by the reduction differential (`test/eval-tcnet.test.ts`: 5
+lambada programs + 50 random terms) + the direct laziness check (`K a (silly-exp
+6)` = 2 interactions vs 13 304 to force the discarded arg).
+
+**Five backend-compat fixes were needed for full elaboration** — none a reduction
+bug (the engine matches eager on 4000-term differentials); all from tcnet being the
+first **number-handle + deep-reduction** Session backend (the naive backend uses
+Tree *objects*, so it never flushed these):
+1. **Falsy handle** — compile.ts tests handles with `entry?.tree ?` (truthiness);
+   a `0` LEAF handle reads as "absent" → spurious "unresolved free variable". Fix:
+   reserve handle 0 as null, `LEAF = 1` (no valid handle is JS-falsy).
+2. **Stack overflow** — native recursion dies on the kernel's deep reduction spines.
+   Fix: ported `src/core/tree.ts`'s **iterative explicit-stack** `apply` machine.
+3. **No `tree_eq` fast-path** — in-language `tree_eq` (O(size)) made kernel verify
+   heavy. Fix: `recognizeNative` + the two-stage susp interception (O(1) compare).
+4. **Budget over-charge** — tcnet charged budget for leaf/stem; eager charges only
+   fork-dispatches. Fix: aligned.
+5. **Per-call budget** — even aligned, a kernel verification call exceeds eager's
+   40 M (`APPLY_BUDGET`, eager-tuned); budget is a non-portable per-backend bound
+   (decision 9 / §8). Fix: tcnet floors its per-call budget at 4 G interactions.
+
+The backend registers only once `build.sh` produces the (gitignored) artifact, so
+the default loop needs no Rust toolchain. **Remaining: M2** (parallelism +
+materialized agents + the modal-typed scheduler).
 
 Toolchain note: `build.sh` works with rustup *or* a standalone/Nix toolchain that
 ships the `wasm32-unknown-unknown` std (it discovers a `wasm-ld` when `rust-lld`
-is absent). `.cargo/config.toml` sets a 64 MiB wasm stack (the reducers recurse
-along the spine; an explicit-stack machine is the later robustness upgrade if a
-deep reduction overflows it).
+is absent). `.cargo/config.toml` sets a 256 MiB wasm stack (the iterative reducer
+no longer recurses along the spine; only `nf`/`equal` recurse, on tree depth).
 
 ## Source docs (authoritative, read first)
 

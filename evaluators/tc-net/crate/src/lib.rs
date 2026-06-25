@@ -46,7 +46,13 @@ enum Node {
     Susp(u32, u32),
 }
 
-const LEAF_ID: u32 = 0;
+/// LEAF is handle 1, not 0: handle 0 is a reserved null sentinel so that NO valid
+/// handle is JS-falsy. The host elaborator (`src/compile.ts`) was written against
+/// object handles (always truthy) and tests them with `entry?.tree ? …` /
+/// truthiness; a `0` LEAF handle would be misread as "absent" → spurious
+/// "unresolved free variable". Reserving 0 makes every real handle ≥ 1 (truthy),
+/// fixing all such checks at once without touching the shared host.
+const LEAF_ID: u32 = 1;
 /// `forced[id]` sentinel: this `Susp` has not been forced yet.
 const NOT_FORCED: u32 = u32::MAX;
 
@@ -54,6 +60,20 @@ const NOT_FORCED: u32 = u32::MAX;
 /// boundary can return the `u32::MAX` sentinel instead of trapping.
 struct Exhausted;
 type R = Result<u32, Exhausted>;
+
+/// Continuation frame for the iterative eager reducer (a port of `src/core/tree.ts`
+/// `apply`). Native recursion would overflow on the kernel's deep reduction spines
+/// (tens of millions deep), so the spine lives on an explicit `Vec`.
+enum Cont {
+    /// result → `apply(result, arg)`
+    ApplyTo(u32),
+    /// result → `apply(func, result)`
+    ApplyResultTo(u32),
+    /// memoize `apply(f, x) = result`
+    Memo(u32, u32),
+    /// S-rule tail: `result` is `c x`; carry `(b, orig_x)` to finish `(c x)(b x)`
+    SAfterCx(u32, u32),
+}
 
 /// One session's arena (a WASM instance owns exactly one). Handles are indices
 /// into `nodes`. `intern` is the hash-cons table (structural node → id), so `δˢ`
@@ -69,6 +89,15 @@ struct Arena {
     memo: Map<(u32, u32), u32>,
     /// Interaction counter (the backend-declared budget unit; reported via stats).
     interactions: u64,
+    /// The `tree_eq` definition's handle, registered via `recognizeNative` (0 =
+    /// unset). When set, `apply(tree_eq, a) b` is intercepted as the O(1)
+    /// hash-cons structural compare (the two-stage susp scheme of the eager
+    /// backend), so conversion checking is cheap — without it, in-language
+    /// `tree_eq` makes kernel verification blow the host's apply budget.
+    tree_eq_id: u32,
+    /// Scott `TT`/`FF` (the fast-path results), built once at session init.
+    tt: u32,
+    ff: u32,
 }
 
 impl Arena {
@@ -79,9 +108,25 @@ impl Arena {
             forced: Vec::with_capacity(1 << 16),
             memo: Map::default(),
             interactions: 0,
+            tree_eq_id: 0,
+            tt: 0,
+            ff: 0,
         };
-        let id = a.mk(Node::Leaf);
+        // index 0: reserved null sentinel (never interned, never returned) so no
+        // valid handle is JS-falsy — see LEAF_ID.
+        a.nodes.push(Node::Leaf);
+        a.forced.push(NOT_FORCED);
+        let id = a.mk(Node::Leaf); // real LEAF interned at index 1
         debug_assert_eq!(id, LEAF_ID);
+        // Scott TT/FF — the exact trees the prelude's TT/FF compile to (matching
+        // src/core/tree.ts SCOTT_TT/FF): TT = △(△△), FF = △(△(△(△△)△)).
+        let l = LEAF_ID;
+        let k = a.stem(l); // K = △△
+        a.tt = a.fork(l, k); // TT = fork(L, K)
+        let ll = a.fork(l, l);
+        let i = a.fork(ll, l); // I = fork(fork(L,L), L)
+        let ki = a.fork(l, i);
+        a.ff = a.fork(l, ki); // FF = fork(L, fork(L, I))
         a
     }
 
@@ -121,64 +166,137 @@ impl Arena {
     // (NF, NF) → NF. (Used by the cargo tests; tc_apply ships the lazy core.)
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn reduce(&mut self, f: u32, x: u32, budget: &mut i64) -> R {
-        if let Some(&r) = self.memo.get(&(f, x)) {
-            return Ok(r);
-        }
-        if *budget <= 0 {
-            return Err(Exhausted);
-        }
-        *budget -= 1;
-        self.interactions += 1;
-        let r = match self.node(f) {
-            Node::Leaf => self.stem(x),       // A ⊗ L: △ x
-            Node::Stem(a) => self.fork(a, x), // A ⊗ S: △ a x
-            Node::Fork(a, b) => self.dispatch_eager(a, b, x, budget)?, // A ⊗ F: T₁
-            Node::Susp(f2, a2) => {
-                // M0 never builds Susp, but stay total: force then re-apply.
-                let fv = self.force(f2, a2, f, budget)?;
-                return self.reduce(fv, x, budget);
+    fn reduce(&mut self, f0: u32, x0: u32, budget: &mut i64) -> R {
+        let mut stack: Vec<Cont> = Vec::new();
+        let mut cur_f = f0;
+        let mut cur_x = x0;
+        'outer: loop {
+            if *budget <= 0 {
+                return Err(Exhausted);
             }
-        };
-        self.memo.insert((f, x), r);
-        Ok(r)
-    }
-
-    /// T₁/T₂ dispatch on `△ a b x` (eager). `a` is the operator, `b` the second
-    /// argument, `x` the third (the one that triggered reduction).
-    fn dispatch_eager(&mut self, a: u32, b: u32, x: u32, budget: &mut i64) -> R {
-        match self.node(a) {
-            // K: △ △ b x → b  (x discarded, never reduced)
-            Node::Leaf => Ok(b),
-            // S: △ (△ c) b x → (c x)(b x)
-            Node::Stem(c) => {
-                let cx = self.reduce(c, x, budget)?;
-                // lazy discard: if cx = K(v) = △ △ v, then (cx)(bx) = v without bx.
-                if let Node::Fork(cl, cr) = self.node(cx) {
-                    if matches!(self.node(cl), Node::Leaf) {
-                        return Ok(cr);
+            // Produce a `result` value, or `continue 'outer` after re-aiming cur_f/cur_x.
+            let result: u32;
+            if self.tree_eq_id != 0 && cur_f == self.tree_eq_id {
+                // tree_eq fast-path stage 1: apply(tree_eq, x) ⇒ susp(tree_eq, x).
+                // O(1); not budget-charged (matches the eager backend's fast-path).
+                self.interactions += 1;
+                result = self.susp(cur_f, cur_x);
+            } else {
+                result = match self.node(cur_f) {
+                // Leaf/Stem are O(1) constructor builds — NOT budget-charged,
+                // matching src/core/tree.ts (budget decrements only on fork
+                // dispatch). Charging them burns the host's per-call budget ~3×
+                // faster and spuriously exhausts kernel verification.
+                Node::Leaf => {
+                    self.interactions += 1;
+                    self.stem(cur_x) // A ⊗ L: △ x
+                }
+                Node::Stem(a) => {
+                    self.interactions += 1;
+                    self.fork(a, cur_x) // A ⊗ S: △ a x
+                }
+                Node::Susp(sf, sa) => {
+                    if self.tree_eq_id != 0 && sf == self.tree_eq_id {
+                        // tree_eq fast-path stage 2: apply(susp(tree_eq, a), x) ⇒
+                        // a == x ? TT : FF (O(1) hash-cons structural compare).
+                        self.interactions += 1;
+                        if self.equal(sa, cur_x, budget)? {
+                            self.tt
+                        } else {
+                            self.ff
+                        }
+                    } else {
+                        // Operator suspension: force then re-dispatch (eager never
+                        // builds these, but lazy-path nodes may flow in; stay total).
+                        cur_f = self.force(sf, sa, cur_f, budget)?;
+                        continue 'outer;
                     }
                 }
-                let bx = self.reduce(b, x, budget)?;
-                self.reduce(cx, bx, budget)
+                Node::Fork(a, b) => {
+                    if let Some(&r) = self.memo.get(&(cur_f, cur_x)) {
+                        r
+                    } else if let Node::Susp(sf, sa) = self.node(a) {
+                        let av = self.force(sf, sa, a, budget)?;
+                        cur_f = self.fork(av, b);
+                        continue 'outer;
+                    } else {
+                        *budget -= 1;
+                        self.interactions += 1;
+                        match self.node(a) {
+                            // K: △ △ b x → b  (x discarded, never reduced). No memo
+                            // frame — the result is constant in x, caching pollutes.
+                            Node::Leaf => b,
+                            // S: △ (△ c) b x → (c x)(b x). Compute c x first.
+                            Node::Stem(c) => {
+                                stack.push(Cont::Memo(cur_f, cur_x));
+                                stack.push(Cont::SAfterCx(b, cur_x));
+                                cur_f = c; // cur_x unchanged
+                                continue 'outer;
+                            }
+                            // triage: △ (△ w u) b x → dispatch on x (w=a.left, u=a.right)
+                            Node::Fork(w, u) => {
+                                stack.push(Cont::Memo(cur_f, cur_x));
+                                if let Node::Susp(sf, sa) = self.node(cur_x) {
+                                    cur_x = self.force(sf, sa, cur_x, budget)?;
+                                }
+                                match self.node(cur_x) {
+                                    Node::Leaf => w, // T₂ ⊗ L → w
+                                    Node::Stem(v) => {
+                                        cur_f = u; // T₂ ⊗ S → u v
+                                        cur_x = v;
+                                        continue 'outer;
+                                    }
+                                    Node::Fork(s, t) => {
+                                        // T₂ ⊗ F → (b s) t
+                                        stack.push(Cont::ApplyTo(t));
+                                        cur_f = b;
+                                        cur_x = s;
+                                        continue 'outer;
+                                    }
+                                    Node::Susp(..) => unreachable!("forced above"),
+                                }
+                            }
+                            Node::Susp(..) => unreachable!("handled above"),
+                        }
+                    }
+                }
+                };
             }
-            // triage: △ (△ w u) b x → dispatch on x  (w = a.left, u = a.right)
-            Node::Fork(w, u) => match self.node(x) {
-                Node::Leaf => Ok(w),                       // T₂ ⊗ L → w
-                Node::Stem(v) => self.reduce(u, v, budget), // T₂ ⊗ S → u v
-                Node::Fork(s, t) => {
-                    // T₂ ⊗ F → (b s) t
-                    let bs = self.reduce(b, s, budget)?;
-                    self.reduce(bs, t, budget)
+            // deliver(result): pop continuations until one re-aims the reducer.
+            let mut res = result;
+            loop {
+                match stack.pop() {
+                    None => return Ok(res),
+                    Some(Cont::ApplyTo(arg)) => {
+                        cur_f = res;
+                        cur_x = arg;
+                        continue 'outer;
+                    }
+                    Some(Cont::ApplyResultTo(func)) => {
+                        cur_f = func;
+                        cur_x = res;
+                        continue 'outer;
+                    }
+                    Some(Cont::Memo(sf, sx)) => {
+                        self.memo.insert((sf, sx), res);
+                        // keep popping
+                    }
+                    Some(Cont::SAfterCx(sb, sox)) => {
+                        // res = c x. apply(res, b x): if res = K(cr) = △ △ cr, the
+                        // result is cr without computing b x (lazy discard).
+                        if let Node::Fork(cl, cr) = self.node(res) {
+                            if matches!(self.node(cl), Node::Leaf) {
+                                res = cr;
+                                continue;
+                            }
+                        }
+                        // general: compute b x, then apply res to it.
+                        stack.push(Cont::ApplyResultTo(res));
+                        cur_f = sb;
+                        cur_x = sox;
+                        continue 'outer;
+                    }
                 }
-                Node::Susp(f2, a2) => {
-                    let xv = self.force(f2, a2, x, budget)?;
-                    self.dispatch_eager(a, b, xv, budget)
-                }
-            },
-            Node::Susp(f2, a2) => {
-                let av = self.force(f2, a2, a, budget)?;
-                self.dispatch_eager(av, b, x, budget)
             }
         }
     }
@@ -388,13 +506,42 @@ pub extern "C" fn tc_fork(left: u32, right: u32) -> u32 {
     with(|a| a.fork(left, right))
 }
 
-// ── computation (Session.apply) — LAZY: build the suspended application ───────
-/// `apply f x = Susp(f, x)`, reduced on demand by the forcing observations.
-/// O(1); `budget` is unused here (forcing is where reduction — and exhaustion —
-/// happens). Returns `u32::MAX` only on overflow, which cannot occur for a build.
+// ── computation (Session.apply) ─────────────────────────────────────────────
+/// **EAGER (M0)** — fully normalize `apply(f, x)`. This is the elaboration
+/// conformance mode: disp's elaborator is eager-normative (EVALUATOR_PLAN
+/// decision 7), so the full-`lib/tests` gate needs eager reduction (a lazy
+/// `tc_apply` defers redexes the elaborator's host-side observations assume are
+/// already reduced). Returns `u32::MAX` on budget exhaustion.
+///
+/// The **M1 lazy** core (`tc_apply_lazy` → `Susp`, forced by the observations) is
+/// the work-sharing path, validated separately by the reduction differential; it
+/// is NOT the Session `apply`, because the elaborator can't consume a lazy one yet
+/// (the decision-7 crux — retiring it needs demand-driven compile-time
+/// normalization, out of scope here).
 #[no_mangle]
-pub extern "C" fn tc_apply(f: u32, x: u32, _budget: u32) -> u32 {
+pub extern "C" fn tc_apply(f: u32, x: u32, budget: u32) -> u32 {
+    with(|a| {
+        let mut b = budget as i64;
+        match a.reduce(f, x, &mut b) {
+            Ok(r) => r,
+            Err(_) => u32::MAX,
+        }
+    })
+}
+
+/// M1 lazy apply: `apply f x = Susp(f, x)`, reduced on demand by the forcing
+/// observations (`dump`/`classify`/`equal`). The work-sharing path (δⁿ
+/// at-most-once); exposed for the reduction differential + laziness benchmark.
+#[no_mangle]
+pub extern "C" fn tc_apply_lazy(f: u32, x: u32, _budget: u32) -> u32 {
     with(|a| a.susp(f, x))
+}
+
+/// Register the `tree_eq` definition's handle (Session.recognizeNative) so
+/// `apply(tree_eq, a) b` fast-paths to the O(1) hash-cons compare. Idempotent.
+#[no_mangle]
+pub extern "C" fn tc_recognize_tree_eq(handle: u32) {
+    with(|a| a.tree_eq_id = handle);
 }
 
 // ── bulk / interchange (Session.loadTernary / dumpTernary) ──────────────────

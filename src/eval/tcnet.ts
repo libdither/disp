@@ -38,6 +38,7 @@ interface TcNetExports {
   tc_child1(h: number): number
   tc_equal(a: number, b: number, budget: number): number      // 0=false 1=true 2=exhausted
   tc_interactions(): bigint                                    // total interactions this session
+  tc_recognize_tree_eq(handle: number): void                  // register tree_eq fast-path
 }
 
 const DEFAULT_BUDGET = 5_000_000_000
@@ -46,6 +47,8 @@ const EXHAUSTED = -1 // tc_* return u32::MAX on budget exhaustion; WASM i32→JS
 // passes as the full u32::MAX rather than silently truncating mod 2³².
 const U32_MAX = 0xffff_ffff
 const clampBudget = (n: number): number => (n > U32_MAX ? U32_MAX : n)
+// Floor for the per-call interaction budget (see #bud); ~u32 ceiling.
+const TCNET_MIN_BUDGET = 4_000_000_000
 
 class TcNetSession implements Session<number> {
   readonly canonicalHandles = false
@@ -64,7 +67,14 @@ class TcNetSession implements Session<number> {
   stem(child: number): number { return this.#x.tc_stem(child) }
   fork(left: number, right: number): number { return this.#x.tc_fork(left, right) }
 
-  #bud(budget?: Budget): number { return clampBudget(budget?.remaining ?? this.#budget) }
+  // The host passes an eager-tuned per-call budget (compile.ts APPLY_BUDGET=40M
+  // steps); budget is a non-portable per-backend divergence bound (decision 9 /
+  // EVALUATOR_PLAN §8), and tcnet's interaction unit differs, so we floor it at a
+  // generous interaction budget. The total conformance corpus terminates well
+  // under this, so it never becomes a tight accept/reject boundary.
+  #bud(budget?: Budget): number {
+    return clampBudget(Math.max(budget?.remaining ?? this.#budget, TCNET_MIN_BUDGET))
+  }
 
   // apply is LAZY: it builds the suspended application P(f,x) in O(1) and never
   // reduces, so it cannot exhaust (the EXHAUSTED check stays as a defensive guard
@@ -114,6 +124,14 @@ class TcNetSession implements Session<number> {
   // Interaction count is the backend-declared unit (never compared to eager's
   // steps — decision 9). Reported under the standard `steps` key.
   stats(): EvalStats { return { steps: Number(this.#x.tc_interactions()) } }
+
+  // The engine pushes the compiled tree_eq handle at kernel-load; registering it
+  // lets reduce intercept saturated tree_eq applications with the O(1) hash-cons
+  // compare (the two-stage susp scheme), so conversion checking is cheap — without
+  // it, in-language tree_eq blows the host's per-call apply budget on kernel verify.
+  recognizeNative(name: string, handle: number): void {
+    if (name === "tree_eq") this.#x.tc_recognize_tree_eq(handle)
+  }
 
   // dispose drops the only references to the WASM instance/exports; the JS GC
   // then reclaims the instance and its linear-memory ArrayBuffer wholesale.
