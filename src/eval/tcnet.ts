@@ -36,11 +36,16 @@ interface TcNetExports {
   tc_classify(h: number, budget: number): number              // 0=leaf 1=stem 2=fork, -1 exhausted
   tc_child0(h: number): number
   tc_child1(h: number): number
-  tc_equal(a: number, b: number, budget: number): number      // 0/1
+  tc_equal(a: number, b: number, budget: number): number      // 0=false 1=true 2=exhausted
+  tc_interactions(): bigint                                    // total interactions this session
 }
 
 const DEFAULT_BUDGET = 5_000_000_000
 const EXHAUSTED = -1 // tc_* return u32::MAX on budget exhaustion; WASM i32→JS Number is signed ⇒ -1
+// The FFI budget is a single u32 (interactions). Clamp so a >u32 default (5e9)
+// passes as the full u32::MAX rather than silently truncating mod 2³².
+const U32_MAX = 0xffff_ffff
+const clampBudget = (n: number): number => (n > U32_MAX ? U32_MAX : n)
 
 class TcNetSession implements Session<number> {
   readonly canonicalHandles = false
@@ -59,8 +64,14 @@ class TcNetSession implements Session<number> {
   stem(child: number): number { return this.#x.tc_stem(child) }
   fork(left: number, right: number): number { return this.#x.tc_fork(left, right) }
 
+  #bud(budget?: Budget): number { return clampBudget(budget?.remaining ?? this.#budget) }
+
+  // apply is LAZY: it builds the suspended application P(f,x) in O(1) and never
+  // reduces, so it cannot exhaust (the EXHAUSTED check stays as a defensive guard
+  // against a future eager-mode export). Forcing — and exhaustion — happens in
+  // dumpTernary / classify / equal.
   apply(f: number, x: number, budget?: Budget): number {
-    const h = this.#x.tc_apply(f, x, budget?.remaining ?? this.#budget)
+    const h = this.#x.tc_apply(f, x, this.#bud(budget))
     if (h === EXHAUSTED) throw new Error("TC-Net: evaluation budget exhausted")
     return h
   }
@@ -74,9 +85,12 @@ class TcNetSession implements Session<number> {
     return h
   }
 
+  // Forces full NF (this is where deferred reduction runs). On budget exhaustion
+  // the engine returns ptr = u32::MAX (len 0); detect it before reading memory.
   dumpTernary(h: number, budget?: Budget): string {
-    const packed = this.#x.tc_dump_ternary(h, budget?.remaining ?? this.#budget)
+    const packed = this.#x.tc_dump_ternary(h, this.#bud(budget))
     const ptr = Number(packed >> 32n)
+    if (ptr === U32_MAX) throw new Error("TC-Net: evaluation budget exhausted (dump)")
     const len = Number(packed & 0xffffffffn)
     const out = new TextDecoder().decode(new Uint8Array(this.#x.memory.buffer, ptr, len).slice())
     this.#x.tc_free(ptr, len)
@@ -84,18 +98,22 @@ class TcNetSession implements Session<number> {
   }
 
   equal(a: number, b: number, budget?: Budget): boolean {
-    return this.#x.tc_equal(a, b, budget?.remaining ?? this.#budget) !== 0
+    const r = this.#x.tc_equal(a, b, this.#bud(budget))
+    if (r > 1) throw new Error("TC-Net: evaluation budget exhausted (equal)")
+    return r === 1
   }
 
   classify(h: number, budget?: Budget): Classification<number> {
-    const tag = this.#x.tc_classify(h, budget?.remaining ?? this.#budget)
+    const tag = this.#x.tc_classify(h, this.#bud(budget))
     if (tag === 0) return { tag: "leaf" }
     if (tag === 1) return { tag: "stem", child: this.#x.tc_child0(h) }
     if (tag === 2) return { tag: "fork", left: this.#x.tc_child0(h), right: this.#x.tc_child1(h) }
     throw new Error("TC-Net: classify failed (budget exhausted?)")
   }
 
-  stats(): EvalStats { return { steps: 0 } }   // M1: report interaction counts
+  // Interaction count is the backend-declared unit (never compared to eager's
+  // steps — decision 9). Reported under the standard `steps` key.
+  stats(): EvalStats { return { steps: Number(this.#x.tc_interactions()) } }
 
   // dispose drops the only references to the WASM instance/exports; the JS GC
   // then reclaims the instance and its linear-memory ArrayBuffer wholesale.

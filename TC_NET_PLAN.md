@@ -5,11 +5,27 @@ interaction-net runtime in Rust→WASM, implementing the `Session` ABI so the wh
 pipeline (elaboration + verification + tests) can run on an interaction-net
 substrate. This is `EVALUATOR_PLAN.md` Phase 6, made concrete.
 
-Status: **PLAN + M0 SCAFFOLD landed.** The crate skeleton
-(`evaluators/tc-net/crate/`), `build.sh`, and the Session wrapper
-(`src/eval/tcnet.ts`) exist with the full FFI surface pinned and every engine
-body `todo!()`. The backend registers only once `build.sh` produces the artifact,
-so the default loop needs no Rust toolchain. Milestones below fill it in.
+Status: **M0 + M1 LANDED (sequential, hash-consed reducer strategy).**
+`evaluators/tc-net/crate/src/lib.rs` implements the arena + hash-consing, the
+eager **M0** reducer (`reduce`/`dispatch_eager`, cargo-tested on the worked
+examples), and the live **lazy M1** core (`tc_apply` = `Susp`; `force`/`nf` drive
+call-by-need with the `forced` memo cell = `δⁿ` at-most-once). `tc_dump_ternary`/
+`tc_classify`/`tc_equal` force on demand; the ternary codec is byte-identical to
+disp's. **Conformance GREEN:** `test/eval-tcnet.test.ts` cross-checks TC-Net
+against disp-eager on the five lambada benchmark programs + 50 randomized terms
+(the M0 gate, one direction). **Laziness verified directly:** a discarded argument
+is never reduced — `K a (silly-exp 6)` resolves in 2 interactions vs 13 304 to
+force that argument. The hash-cons forced-memo makes fib/exp/merge-sort tractable
+(no materialized `δⁿ` agents, scheduler, or reachability GC — those are M2; see
+§Implementation strategy). The backend registers only once `build.sh` produces
+the (gitignored) artifact, so the default loop needs no Rust toolchain.
+**Remaining: M2** (parallelism + materialized agents + the modal-typed scheduler).
+
+Toolchain note: `build.sh` works with rustup *or* a standalone/Nix toolchain that
+ships the `wasm32-unknown-unknown` std (it discovers a `wasm-ld` when `rust-lld`
+is absent). `.cargo/config.toml` sets a 64 MiB wasm stack (the reducers recurse
+along the spine; an explicit-stack machine is the later robustness upgrade if a
+deep reduction overflows it).
 
 ## Source docs (authoritative, read first)
 
@@ -111,6 +127,40 @@ principal, so **no coherence oracle**. Costs `δⁿ` imposes (the M1 obligations
 - **Full normalizer** — the core is weak-head; `dumpTernary`/`equal` need full NF,
   so add a recursive consumer that demands constructor children (§Open Q #2).
 
+### Implementation strategy: hash-consed reducer (M0/M1) vs materialized graph (M2)
+
+tc-net.typ specifies the *semantics* (agents, ports, active pairs) — it does not
+mandate the data structures. Two strategies realize it, and the choice decides
+which of the §Costs-of-`δⁿ` obligations are even incurred:
+
+1. **Hash-consed tree reducer** — the eager backend's lineage (`src/core/tree.ts`).
+   Producers are hash-consed nodes (`L`/`S`/`F`/`P`=`susp`); the consumers
+   (`A`/`T₁`/`T₂`/`δ`/`ε`) are the *control flow* of a reduction function, not
+   stored agents. Then `δˢ` = returning a shared reference = **free** (it *is*
+   hash-consing), and `δⁿ` at-most-once = a `forced` memo cell on the shared `P`
+   node (force once, memoize, every reference reads it). Sequentially this yields
+   the full work-sharing of `δⁿ` with **no materialized duplicators, no parked-
+   agent reachability-GC, and no active-pair queue** — they collapse into
+   hash-consing + memoized forcing + ordinary heap reachability. This is precisely
+   what the eager backend already is (`susp` *is* `P`; the apply loop *is* the
+   `A`/`T₁`/`T₂` dispatch; `tree.ts:30`).
+2. **Materialized graph machine** — HVM-style. Agents and ports are real arena
+   nodes; active pairs sit in a work queue; `δⁿ` is a genuine parked agent on an
+   auxiliary wire. This is what M2 (parallel) **requires** — reduction can't be
+   distributed across threads without explicit, schedulable active pairs — and it
+   is what *creates* the reachability-GC and scheduler obligations the plan lists.
+
+**Decision: M0 and M1 take strategy (1); M2 switches to (2).** Consequence: the
+demand-driven scheduler and reachability GC that §Costs-of-`δⁿ` attaches to "M1"
+are *strategy-(2)* costs. Under strategy (1), M0 is a faithful **port** of
+`src/core/tree.ts` (apply/force/treeEqual/encode/decode) + arena + budget + the
+FFI seam (already pinned in `tcnet.ts`/`lib.rs`), and M1 is a **bounded** change —
+make `apply` lazy (WHNF, standard call-by-need forcing) + add the recursive
+normalizer — with GC deferred to grow-until-`dispose()` (sound for per-file
+sessions). The materialized machine and its open *parallel* scheduler are
+correctly deferred to M2, where parallelism forces them and the modal-type lever
+(M2 note) makes the scheduling optimal rather than heuristic.
+
 ## ABI mapping (Session method → WASM export)
 
 The FFI is **numbers-only except one string copy per term** (EVALUATOR_PLAN §4.2).
@@ -154,7 +204,7 @@ exhibit work-sharing wins, not binder-heavy workloads.
 
 ## Milestones
 
-### M0 — sequential, `δˢ`-only, get to conformance parity
+### M0 — sequential, `δˢ`-only, get to conformance parity  ✅ LANDED
 
 Implement the arena + hash-consing + the 5-rule two-level dispatch + structural
 `δˢ`/`ε` + the full normalizer for `dumpTernary` + ternary parse/serialize +
@@ -168,15 +218,21 @@ parity so it joins the benchmark + a subprocess differential.
 - **Outcome:** disp elaborates on an interaction-net substrate. Correct, not yet
   work-sharing.
 
-### M1 — `δⁿ` call-by-need + demand-driven scheduler + reachability GC
+### M1 — `δⁿ` call-by-need  ✅ LANDED (hash-cons forced-memo, not materialized agents)
 
-Add the second duplicator species (S-rule spawns `δⁿ`), the demand-driven
-scheduler completeness requires, and reachability GC for parked duplicators.
-- **Gate:** conformance still green; the sharing benchmarks (the `δⁿ` experiments
-  — encode a shared suspended computation duplicated into two strict positions,
-  per Prop 5) show `δⁿ` performing the shared work **once** vs `δˢ` twice, and
-  TC-Net beating disp-eager on sharing-heavy inputs. Report interaction counts in
-  `stats()`.
+**As built:** under the hash-consed reducer strategy (§Implementation strategy),
+`δⁿ` call-by-need is realized *without* the materialized parked-duplicator,
+demand-driven *parallel* scheduler, or reachability GC the formal net would need —
+those are M2 costs. `tc_apply` returns `Susp(f,x)` (O(1)); `force` drives WHNF on
+demand and memoizes every visited `Susp` in its `forced` cell (`δⁿ` at-most-once,
+Theorem 6); hash-consing makes structurally-identical `Susp`s share one cell
+(cross-occurrence global memoization, the eager backend's `applyMemo` equivalent).
+Sequential lazy forcing is the "scheduler"; grow-until-`dispose()` is the GC.
+- **Gate:** ✅ conformance green (`test/eval-tcnet.test.ts`); laziness verified —
+  a discarded suspended computation is never forced (`K a (silly-exp 6)` = 2
+  interactions vs 13 304); `stats()` reports interaction counts via
+  `tc_interactions`. Deferred: the Prop-5 dual-strict-position sharing benchmark +
+  a bench contestant (`disp-cli` wrapper) — measurement, not capability.
 
 ### M2 — parallel
 
@@ -188,6 +244,61 @@ builds, node-only). Choose WASM-threads first; N-API only if threading proves
 inadequate.
 - **Gate:** conformance green under the parallel scheduler; a thread-sweep column
   in the benchmark shows speedup on parallelizable workloads.
+
+#### The work/span trade-off — why *optimal* M2 scheduling depends on modal types
+
+The M2 scheduler must resolve a real tension, not a tuning knob. Call-by-need
+(`δⁿ`) is **work-optimal** (every application dispatched at most once, Theorem 6)
+but its demand chain *serializes* — it throttles available parallelism (high
+span). Fire-everything (`δˢ`, HVM2-style) is **low-span** but *wastes work*:
+it speculatively reduces discarded subterms and diverges on
+discardable-but-divergent ones (§Costs of `δⁿ`, eager-safety). This is the
+classic **work-vs-span (work-depth) trade-off** of parallel evaluation.
+
+It has a *principled* resolution, not a heuristic one: speculate (fire eagerly /
+in parallel) **exactly on subterms that are definitely demanded**. A strict
+position wastes zero work when forced early — it would be forced anyway — so it
+is free to parallelize (work-efficient in Brent's sense); a non-strict position
+stays call-by-need. The two enabling analyses are sound, not guesses:
+
+- *strictness / demand analysis* → **where** eager/parallel firing is
+  semantically safe (a sound static analysis; GHC ships it in production);
+- *cardinality / usage analysis* → the **sharing policy** per duplication site:
+  `no-δ` for linear / used-once values (the §Open "Typed TC-Net" point), `δⁿ`
+  for used-many, `δˢ` only where copying *syntax* is the intent.
+
+The only genuinely heuristic residue is **granularity** (is a task big enough to
+amortize the spark?) — and even that has an adaptive answer (below).
+
+**Why disp can do this better than HVM, and where the information lives.** disp is
+*typed*, so strictness and usage are **type-level facts** — M2 can do
+*type-directed scheduling* instead of HVM's untyped fire-everything-and-hope. The
+formal home for "how a value is used" is **coeffects / graded modal types /
+quantitative type theory**, which disp already has research on
+(`research/effects-and-coeffects.typ`, `research/MODAL_TYPES_INVESTIGATION.md`);
+the natural carrier is a **graded `Pi`** — usage/occurrence info belongs on the
+function type, not the term (the bindtree-is-a-`Pi`-property insight). So the
+principled lever for optimal M2 scheduling is *already inside disp's research
+program*: it is the bridge that lets "valid disp" carry its own parallelization
+policy. The self-improving cost model (`ApplyStats`-style interaction counts,
+`research/VERIFIED_OPTIMIZER_IMPLEMENTATION.md`) is the substrate for the adaptive
+granularity policy (Optimistic-Evaluation-style: speculate, measure, back off),
+which fits the GOALS.md self-optimizing north star.
+
+**Architectural consequence for M1.** The trade-off is *purely an M2 concern* —
+M0's `δˢ` fire-everything is speculation-safe (`P` is inert), and M1's `δⁿ`
+demand-driven is sequential and work-optimal. So build M1's reducer with a
+**pluggable demand policy**: M2 then starts at the sound floor (speculate only on
+type-certified strict positions → zero wasted work) and grows toward
+graded-type-directed and adaptive scheduling, without reworking M1.
+
+*Literature before designing the M2 scheduler:* GHC cardinality/demand analysis
+(Sergey–Vytiniotis–Peyton Jones, POPL 2014); quantitative/graded types (Atkey
+QTT; McBride "I Got Plenty o' Nuttin'"; Petricek–Orchard–Mycroft coeffects); the
+parallel optimal-reduction implementations that hit this wall directly (Asperti
+**BOHM**, Pedicini–Quaglia **PELCR**, **Lambdascope**); lenient/dataflow
+(Arvind–Nikhil Id/pH); adaptive speculation (Ennals–Peyton Jones, *Optimistic
+Evaluation*, ICFP 2003); work-span cost semantics (Blelloch–Greiner).
 
 ### (M3 — GPU, deferred)
 
@@ -223,9 +334,19 @@ convenient, not as part of this work.)
 
 ## Open questions (from tc-net.typ §Open Questions, scoped to this effort)
 
-- **Scheduler design** — the central M1 runtime decision (demand-driven firing).
-- **Reachability-GC strategy** — the known cost of lazy interaction-net evaluators.
+- **Scheduler design** — sequential demand-driven firing (M1) is *standard lazy
+  evaluation* (STG/Sinot), not research; the **parallel** scheduler (M2) is the
+  open problem — the work/span trade-off resolved by type-directed speculation
+  (see the M2 modal-types note). Don't conflate the two.
+- **Reachability-GC strategy** — the known cost of lazy interaction-net evaluators
+  *under the materialized-agent strategy*. A hash-consed reducer (the M0/M1
+  route — see §Architecture / Implementation strategy) replaces parked-duplicator
+  reachability with ordinary heap reachability + grow-until-`dispose()`, deferring
+  this past the M1 gate; it returns only if/when M2 materializes active pairs.
 - **Lévy-optimality formalization** — theory only; not on the impl path.
-- **Typed/linear TC-Net** — linear values need no `δ`; a later optimization.
+- **Typed/linear TC-Net** — NOT merely a later optimization: graded/usage types
+  are the *principled lever* for optimal M2 scheduling (strict ⇒ safe to fire
+  early/parallel; linear ⇒ no `δ`). See the M2 note; the formal home is disp's
+  coeffect/modal-type research.
 - **HVM2 extension vs from-scratch** — we chose from-scratch sequential Rust→WASM;
   HVM2-extension stays the GPU-parallel (M3) option.

@@ -5,19 +5,41 @@
 #   Output: evaluators/tc-net/artifacts/tcnet.wasm   (gitignored; this produces it)
 #
 # The everyday loop never runs this: src/eval/tcnet.ts skips the backend if the
-# artifact is absent, so `npm test` stays green with no Rust toolchain. Run this
-# once TC-Net is implemented (M0) to enable it as an --evaluator backend.
+# artifact is absent, so `npm test` stays green with no Rust toolchain.
 #
-# Requires: rustup + a Rust toolchain. The wasm32 target is added on demand.
+# Requires: cargo + the wasm32 std + an LLD linker. Works with a rustup toolchain
+# (adds the target + ships rust-lld) OR a standalone/Nix toolchain that already
+# bundles the wasm32 std (then we discover a wasm-ld, since rust-lld may be absent).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TARGET=wasm32-unknown-unknown
 
 command -v cargo >/dev/null || { echo "cargo not found — install Rust (https://rustup.rs)" >&2; exit 1; }
-if ! rustup target list --installed 2>/dev/null | grep -q "$TARGET"; then
-  echo "tc-net: adding rust target $TARGET"
-  rustup target add "$TARGET"
+
+# Ensure the wasm32 std is present. Prefer rustup; tolerate a toolchain that
+# already ships the target (rustup absent — e.g. Nix).
+SYSROOT="$(rustc --print sysroot)"
+if [ ! -d "$SYSROOT/lib/rustlib/$TARGET" ]; then
+  if command -v rustup >/dev/null; then
+    echo "tc-net: adding rust target $TARGET"
+    rustup target add "$TARGET"
+  else
+    echo "tc-net: $TARGET std not installed and rustup absent — add the wasm32 std to your toolchain" >&2
+    exit 1
+  fi
+fi
+
+# The wasm link step needs an LLD-based linker. rustup ships rust-lld; a Nix
+# rustc may not, so discover a wasm-ld and point cargo at it.
+if ! command -v rust-lld >/dev/null 2>&1 && ! command -v wasm-ld >/dev/null 2>&1; then
+  if [ -d /nix/store ]; then
+    WASMLD="$(find /nix/store -maxdepth 3 -name 'wasm-ld' -type f 2>/dev/null | head -1 || true)"
+    if [ -n "${WASMLD:-}" ]; then
+      echo "tc-net: using discovered wasm-ld: $WASMLD"
+      export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_LINKER="$WASMLD"
+    fi
+  fi
 fi
 
 ( cd "$HERE/crate" && cargo build --release --target "$TARGET" )
