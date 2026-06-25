@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { parseProgram, type ParseItemStats } from "./compile.js"
-import { EagerSession, prettyTree, type Tree } from "./eval/eager.js"
+import { prettyTree, type Tree } from "./eval/eager.js"
 import type { Session, EvalStats } from "./eval/types.js"
 import { getBackend, defaultBackendName } from "./eval/registry.js"
 import { emitBlob } from "./format/export.js"
@@ -15,8 +15,9 @@ interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: S
 export function runFile(path: string, options: RunOptions = {}): RunResult {
   // One fresh session per file: isolates the apply memo / stats (replacing the
   // old clearApplyCache/reset sprinkles). Callers may pass their own (any backend,
-  // e.g. --evaluator) to read its stats afterward.
-  const session = options.session ?? new EagerSession()
+  // e.g. --evaluator) to read its stats afterward. The default tracks the registry
+  // (tc-net when built, else eager) so the test harness gets tc-net's OOM headroom.
+  const session = options.session ?? (getBackend(defaultBackendName).createSession() as unknown as Session<Tree>)
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
   const decls = parseProgram(src, abs, { onItem: options.onParseItem, session })

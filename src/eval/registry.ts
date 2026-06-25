@@ -20,7 +20,11 @@ const backends = new Map<string, EvalBackend>([
 // a Rust→WASM Session backend; absent until evaluators/tc-net/build.sh runs.
 if (tcnetAvailable()) backends.set(tcnetBackend.name, tcnetBackend as unknown as EvalBackend)
 
-export const defaultBackendName = "eager"
+// Default to tc-net when its WASM artifact is built: the Rust reducer uses linear
+// memory (not the V8 heap), so the full .disp suite runs without the multi-GB heap
+// the eager backend needs (and ~2× faster). Falls back to eager when tc-net is
+// absent, so a fresh checkout with no Rust toolchain still works.
+export const defaultBackendName = tcnetAvailable() ? "tcnet" : "eager"
 
 export function registerBackend(b: EvalBackend): void {
   backends.set(b.name, b)
