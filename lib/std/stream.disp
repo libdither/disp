@@ -55,3 +55,10 @@ stream_take := fix ({self, n, s} ->
 
 // stream_map f s : a new Stream whose heads are f-mapped (the ν functorial action on `head`).
 stream_map := {f, s} -> unfold ({s2} -> { head := (f (field (out s2) "head")); tail := (field (out s2) "tail") }) s
+
+// stream_unfold: the typed CORECURSOR (anamorphism) — the ν dual of `rec_value`. A coalgebra
+// `step : S -> { head : A ; tail : S }` plus a seed produces a `Stream A`; `unfold` is the raw builder.
+// Productivity is correct-by-construction: a Stream-recognized value can only be built from a typed
+// coalgebra (the type IS the soundness — you cannot write a non-productive stream).
+stream_unfold : {A : Type} -> {S : Type} -> (S -> { head : A, tail : S }) -> S -> Stream A :=
+  {A, S, step, seed} -> unfold step seed

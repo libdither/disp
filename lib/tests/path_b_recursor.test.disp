@@ -1,0 +1,41 @@
+// B1: the dependent RECURSOR `rec_value`, derived from the cells — generalizes nat_rec/ord_rec to ANY
+// inductive. Each case gets the RAW args AND the IH per recursive position; neutrals route through
+// `elim` to a stuck elimination at `motive self` (a real dependent eliminator, usable under a binder).
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/list.disp"
+
+// ── inj-tagged Peano nat ──
+let PN = Coproduct [pair "zero" [], pair "succ" [Rec]]
+let pz = inj "zero" t
+let ps = {n} -> inj "succ" n
+// convert PN -> kernel Nat via the recursor (succ case uses the IH; the raw predecessor is also passed)
+let pn_to_nat = rec_value PN ({_} -> Nat) { zero := zero; succ := ({pred, ih} -> succ ih) }
+test pn_to_nat pz              = 0
+test pn_to_nat (ps (ps pz))   = 2
+
+// ── a binary tree: the case gets raw children AND their recursive results ──
+let BT = Coproduct [pair "leaf" [Nat], pair "node" [Rec, Rec]]
+let lf = {n}    -> inj "leaf" n
+let nd = {l, r} -> inj "node" (pair l r)
+let bt = nd (lf 1) (nd (lf 2) (lf 3))
+// node case `{l, r, ihl, ihr}` receives both the raw subtrees AND their folded sums (the recursor
+// interface — fold_value would give only ihl/ihr). Here we use the IHs.
+let bt_sum = rec_value BT ({_} -> Nat) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> add ihl ihr) }
+test bt_sum bt                = 6
+
+// ── the dependent-eliminator payoff: a NEUTRAL target -> stuck elimination at motive(self) ──
+// (exactly nat_rec's behaviour — so rec_value works under a Pi binder, in proofs).
+test tree_eq (neutral_type (rec_value PN ({_} -> Bool) { zero := TT; succ := ({pred, ih} -> ih) } (make_hyp PN 0))) Bool = TT
+test tree_eq (neutral_type (rec_value BT ({_} -> Nat) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> add ihl ihr) } (make_hyp BT 0))) Nat = TT
+
+// ── generic TRAVERSAL: `children T v` = the recursive sub-values, read off the cells. size/depth then
+//    derive with NO per-constructor code — one definition works for EVERY inductive. ──
+test children BT (lf 9)            = nil           // a leaf has no recursive children
+test list_length (children BT bt) = 2             // a node has two
+test list_length (children PN (ps (ps pz))) = 1   // succ has one
+// node-count = 1 + sum of children's counts. Generic: never names a constructor.
+let bt_size = fix ({self, v} -> succ (list_foldl add zero (list_map self (children BT v))))
+test bt_size (lf 5)               = 1
+test bt_size bt                   = 5             // 3 leaves + 2 internal nodes

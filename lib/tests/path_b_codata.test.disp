@@ -30,3 +30,10 @@ test typecheck (Stream Nat) (stream_map succ nats)             = Ok TT
 // ── codata ELIMINATION: a Stream-neutral PROJECTS — head : Nat, tail : Stream Nat (delegating respond) ──
 test tree_eq (neutral_type ((make_hyp (Stream Nat) 0) (acc "head"))) Nat          = TT
 test tree_eq (neutral_type ((make_hyp (Stream Nat) 0) (acc "tail"))) (Stream Nat) = TT
+
+// ── B2: the TYPED corecursor `stream_unfold : {A}{S} -> (S -> {head:A;tail:S}) -> S -> Stream A`.
+// (stream.disp loading with this annotation IS the verify; here we use it to build a stream.) ──
+let nats2 = stream_unfold Nat Nat ({n} -> { head := n; tail := succ n }) zero
+test (field (out nats2) "head")    = zero
+test (field (out (field (out nats2) "tail")) "head") = succ zero
+test typecheck (Stream Nat) nats2  = Ok TT

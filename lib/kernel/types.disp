@@ -452,6 +452,38 @@ fold_value_via := {view} -> fix ({fold, T, alg, v} -> {
 })
 fold_value := fold_value_via ({v} -> Ok v)
 
+// rec_value (the dependent RECURSOR, derived from cells — generalizes nat_rec/ord_rec to ANY inductive).
+// Unlike fold_value (each case gets only the FOLDED args), a recursor case gets the RAW args AND the IH
+// per recursive position (`succ := λpred ih. …`, `node := λl r ihl ihr. …`) — the §4 case-type
+// `Π args. (IH per rec) → P (c args)`. Routes through `elim`, so a NEUTRAL target becomes a stuck
+// elimination at `motive self` (usable under a Pi binder, exactly like nat_rec). all_args = every raw
+// arg; ih_args = the elim-recursion at each rec cell; the case is applied to (raw args ++ IHs).
+let all_args = fix ({self, cells, payload} ->
+  if (is_fork cells) then (cons (((type_meta (pair_fst cells)).acc) payload) (self ((pair_snd cells) t) payload)) else nil)
+let ih_args = fix ({self, cells, payload, rec} ->
+  if (is_fork cells) then {
+    let cell = pair_fst cells
+    let rest = self ((pair_snd cells) t) payload rec
+    if (is_rec_cell cell) then (cons (rec (((type_meta cell).acc) payload)) rest) else rest
+  } else nil)
+let cat = fix ({self, xs, ys} -> if (is_fork xs) then (cons (pair_fst xs) (self (pair_snd xs) ys)) else ys)
+let rec_dispatcher = {T} -> fix ({self, motive, cases, v} -> {
+  let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t })
+  apply_all (field cases (pair_fst v)) (cat (all_args cells (pair_snd v)) (ih_args cells (pair_snd v) (elim self motive cases)))
+})
+rec_value := {T, motive, cases, target} -> elim (rec_dispatcher T) motive cases target
+
+// children (generic TRAVERSAL): the immediate recursive sub-values of `v`, read off the cells — the raw
+// material for size/depth/any structural traversal over ANY inductive with NO per-type code. (Just the
+// `is_rec_cell` positions extracted, not folded.) `size v = 1 + sum (map size (children v))`, etc.
+let rec_children = fix ({self, cells, payload} ->
+  if (is_fork cells) then {
+    let cell = pair_fst cells
+    let rest = self ((pair_snd cells) t) payload
+    if (is_rec_cell cell) then (cons (((type_meta cell).acc) payload) rest) else rest
+  } else nil)
+children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t }) (pair_snd v)
+
 // Ord (migrated, Path B): the shape-encoded recursive ordinal sum — zero_ord = leaf, omega_plus a b
 // = fork(stem a, b). `view_ord` decodes the shape to inj-tagged form; the recursive `omega_plus`
 // carries two `Rec` children, so the self-aware Coproduct_viewed ties its own knot — NO `Mu` wrapper.
