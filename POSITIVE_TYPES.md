@@ -12,16 +12,26 @@ StrictType/`Type` migration and the respond-shape residuals) and [`STRICTTYPE.md
 
 > **What landed (Track A — the recognizer/eliminator merge).** `pos_cell` is in the kernel
 > (`types.disp`, a positional `at` op, §5a), and `Coproduct` is now THE generic positive former:
-> `Coproduct [(tag, [arg-types])]` — **multi-arg and recursive** (an arg list may contain `REC`),
-> recognized by `at` over each variant's positional telescope (no hand-written recognizer). A whole
-> recursive datatype is a one-line spec, e.g. `NatList = Coproduct [pair "nil" [], pair "cons" [Nat, REC]]`
-> (see `lib/tests/positive_proto.test.disp`). The eliminator is the surface `match`/§2.6 cut. The
-> existing single-arg sums (`Action`, `CheckerResult`, `Option`, `Result`) are the degenerate `[T]`
-> case — unchanged, no regression. **What's NOT done (deferred):** §5b **views** (so shape-encoded
-> types `Nat`/`Bool`/`Ord`/`List` — whose tags live in the tree shape, not an `inj` tag — can move
-> onto specs), and §8 the **coherence-gate self-typing** = Track B (the sealing program; see
-> [`KERNEL_SELF_TYPING.md`](KERNEL_SELF_TYPING.md)). Bool/Nat/Ord keep their existing recognizers +
-> responds for now.
+> `Coproduct [(tag, [arg-types])]` — a **plain n-ary sum** recognized by `at` over each variant's
+> positional telescope (no hand-written recognizer). **Recursion is `Mu`**, a fixpoint binder
+> (NOT a `REC` sentinel — see the §-note below): a recursive datatype is `Mu (λself. Coproduct
+> […self…])`, so the recursive position is an ordinary cell whose type is `self`. The eliminator is
+> the surface `match`/§2.6 cut. Single-arg sums (`Action`/`CheckerResult`/`Option`/`Result`) are the
+> degenerate `[T]` case — unchanged, no regression. **§5b views landed too** (`Coproduct_viewed
+> view variants`, where `view` maps a shape-encoded tree to inj-tagged form): **`Ord`** (kernel) and
+> **`List`** (std, was a raw predicate → now a real wait-form `Type -> Type`) are migrated onto
+> specs. See `lib/tests/positive_proto.test.disp`. **Deferred:** `Nat`/`Bool` — defined *before* the
+> Coproduct machinery and used as values throughout `types.disp`, so in-place migration is blocked by
+> forward-ref ordering; and their *gated* responds (`coh_nat`/`coh_bool`) are the §8 coherence-gate
+> self-typing = **Track B** (the sealing program; see [`KERNEL_SELF_TYPING.md`](KERNEL_SELF_TYPING.md)).
+>
+> **On recursion (§-note answering "is `REC` the best way?").** No — recursion is now `Mu`, the least
+> fixpoint, *not* a magic marker + substitution pass. `Coproduct` is a plain sum (no `self`-threading,
+> no `fill_rec`); `Mu F` recognizes `v` by unfolding one level (`(F self) v`, `self = Mu F`, knot
+> tied by `make_rec_recognizer`, neutrals via the H-rule). This is the μ-types / initial-algebra
+> presentation: recursion is orthogonal to summing, `self` is a real λ-binder, and it composes
+> (nested/mutual recursion, codata). So "rec on the telescope" is *not* a special cell op — the
+> recursive cell is an ordinary one whose type happens to be the `Mu`-bound `self`.
 
 ## TL;DR
 
