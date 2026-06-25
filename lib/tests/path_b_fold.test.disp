@@ -1,0 +1,46 @@
+// A1: the cell-derived catamorphism `fold_value` — ONE generic fold for every inductive, reading the
+// recursive positions straight off the cells (the dormant `functor` field made concrete). No per-type
+// recursor: `fold_value T { c := case }` recurses at `Rec`/`RecUnder` cells and applies the case.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+let one = succ zero
+
+// ── BTree of Nats (inj-tagged): leaf Nat | node BTree BTree ──
+let BTree = Coproduct [pair "leaf" [Nat], pair "node" [Rec, Rec]]
+let bleaf = {n} -> inj "leaf" n
+let bnode = {l, r} -> inj "node" (pair l r)
+let t1 = bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3))
+
+// sum the leaves (case `leaf` gets the raw Nat; case `node` gets the two FOLDED subtrees)
+let tree_sum = fold_value BTree { leaf := ({n} -> n); node := add }
+test tree_sum (bleaf 5) = 5
+test tree_sum t1        = 6                       // 1 + (2 + 3)
+
+// count the leaves (same structure, different algebra)
+let tree_leaves = fold_value BTree { leaf := ({_} -> one); node := add }
+test tree_leaves t1     = 3
+
+// ── a tiny expression language exercising nullary-data / 1-rec / 2-rec constructors ──
+//   Expr = Lit Nat | Add Expr Expr | Dbl Expr ;  eval = the fold
+let Expr = Coproduct [pair "lit" [Nat], pair "add" [Rec, Rec], pair "dbl" [Rec]]
+let lit  = {n}    -> inj "lit" n
+let eadd = {a, b} -> inj "add" (pair a b)
+let edbl = {a}    -> inj "dbl" a
+let eval = fold_value Expr { lit := ({n} -> n); add := add; dbl := ({x} -> add x x) }
+test eval (lit 7)                          = 7
+test eval (eadd (lit 2) (edbl (lit 3)))    = 8    // 2 + (3+3)
+test eval (edbl (eadd (lit 1) (lit 4)))    = 10   // 2*(1+4)
+
+// ── A0: SHAPE-encoded fold via an explicit view. A unary nat (z = leaf, s n = fork(t,n)) whose tag
+//    lives in the tree shape; `view_un` decodes raw -> inj-tagged; `fold_value_via` folds it. ──
+let view_un = {v} -> triage (Ok (inj "z" t)) ({_} -> Err) ({l, r} -> if (tree_eq l t) then (Ok (inj "s" r)) else Err) v
+let UN = Coproduct_viewed view_un [pair "z" [], pair "s" [Rec]]
+let z = t
+let s = {n} -> t t n
+test typecheck UN (s (s z))                                = Ok TT       // recognized (via the view)
+let un_to_nat = fold_value_via view_un UN { z := zero; s := ({r} -> succ r) }
+test un_to_nat (s (s z))                                   = 2           // raw unary -> Nat (recursive decode)
+let un_depth = fold_value_via view_un UN { z := zero; s := ({r} -> succ r) }
+test un_depth (s (s (s z)))                                = 3

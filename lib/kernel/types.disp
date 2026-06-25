@@ -88,6 +88,10 @@ let rec_at_op = {meta, mode, source, prior, frame, rs} ->     // mutual: recurse
 rec_cell : Tree -> Tree -> Tree := {F, acc} -> wait rec_op { F := F; acc := acc }
 gen_cell : Tree -> Tree := {acc} -> wait gen_op { acc := acc }
 rec_at_cell : Tree -> Tree -> Tree := {idx, acc} -> wait rec_at_op { idx := idx; acc := acc }
+// Inspect a cell by op-signature (like is_derive). is_rec_cell marks the functor's RECURSIVE
+// positions — the data a generic fold/map (the cell-derived functor) reads to know where to recurse.
+is_pos_cell := {cell} -> tree_eq (pair_fst cell) (op_sig pos_op)
+is_rec_cell := {cell} -> tree_eq (pair_fst cell) (op_sig rec_op)
 
 // RecUnder F / Rec / RecAt i: markers in a positive variant's arg-list, lifted by `pos_tele` to the
 // recursive cells. `RecUnder F` -> recurse UNDER functor F (`acc source : F self`); `Rec` is the
@@ -414,6 +418,39 @@ Coproduct_viewed := {view, variants} -> Coproduct_viewed_resp inductive_respond 
 Coproduct_ctx := {ctx, variants} -> wait (make_recognizer
   {meta, v} -> (coproduct_at ctx meta.recognizer_params v)
 ) (make_meta variants inductive_respond)
+
+// fold_value (the cell-derived catamorphism — the SHAPE FUNCTOR read straight off the cells, the
+// dormant `functor` field made concrete). For an inj-tagged recursive Coproduct value `v = inj tag
+// (a0,a1,…)`: look up the variant's cell telescope, extract each arg by its stored accessor, RECURSE
+// the fold at `rec` cells (the functor's recursive positions), and apply the algebra's case `alg.tag`
+// to the folded args. ONE generic fold for every inductive — `fold_value T { c1 := …; c2 := … }`. The
+// dependent recursor, fmap, and (once §13 lands) cubical transport are this fold with other algebras.
+// apply_all: saturate a curried case with the positional (folded) args.
+let apply_all = fix ({self, fn, args} -> if (is_fork args) then (self (fn (pair_fst args)) (pair_snd args)) else fn)
+// collect_args: walk the variant's cell telescope, extracting each arg (`acc payload`) and folding it
+// at rec cells via `fold alg raw`. The positional tail is `{_} -> rest`, so `(pair_snd cells) t` is the
+// rest telescope. `fold`/`alg` are threaded SEPARATELY (never pre-formed as `fold alg` — that closed
+// redex unfolds forever at compile time; `fold alg raw` forms only at the runtime rec site).
+let collect_args = fix ({self, cells, payload, fold, alg} ->
+  if (is_fork cells) then {
+    let cell = pair_fst cells
+    let raw = ((type_meta cell).acc) payload
+    let x = if (is_rec_cell cell) then (fold alg raw) else raw
+    cons x (self ((pair_snd cells) t) payload fold alg)
+  } else nil)
+// fold_value_via view: first DECODE v via `view` (the from-iso for SHAPE-encoded types — Nat/List/Ord,
+// whose constructor tag lives in the tree shape, not an `inj` tag), then fold the decoded inj-tagged
+// form. `fold_value` is the inj-tagged case (identity view). So ONE fold covers inj-tagged AND
+// shape-encoded inductives. (Auto-reading the view from a type's meta — so `fold_value` alone decodes
+// kernel Nat/List/Ord — is deferred: the view can't live in `functor` (reserved for the cubical Kan
+// action, kernel.test pins Nat's = trivial_functor); it would go in `recognizer_params`, a localized
+// refactor. Until then, shape-encoded folds pass their view explicitly.)
+fold_value_via := {view} -> fix ({fold, T, alg, v} -> {
+  let dec = (match (view v) { Ok tg => tg; Err _ => v })
+  let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
+  apply_all (field alg (pair_fst dec)) (collect_args cells (pair_snd dec) (wait fold T) alg)
+})
+fold_value := fold_value_via ({v} -> Ok v)
 
 // Ord (migrated, Path B): the shape-encoded recursive ordinal sum — zero_ord = leaf, omega_plus a b
 // = fork(stem a, b). `view_ord` decodes the shape to inj-tagged form; the recursive `omega_plus`
