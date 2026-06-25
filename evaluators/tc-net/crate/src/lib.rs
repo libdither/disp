@@ -21,19 +21,57 @@
 //! wholesale (grow-until-dispose absorbs the per-session laziness leak —
 //! tc-net.typ §Costs of δⁿ). Budget exhaustion returns `u32::MAX`, never a trap
 //! (`panic = "abort"`).
-// `reduce`/`dispatch_eager`/`memo` are the M0 eager reference, exercised by the
-// cargo tests but not by the lazy `tc_apply` the wasm build ships — hence dead in
-// release.
+// The M1 lazy reducer (`tc_apply_lazy` / `force` / `step_lazy` / `dispatch_lazy`)
+// is the work-sharing path — reachable from the forcing observations but not the
+// eager `tc_apply` Session path, so parts read as dead in a pure-eager release.
 #![allow(clippy::missing_safety_doc, dead_code)]
 
 use std::cell::RefCell;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
+use std::hash::{BuildHasherDefault, Hasher};
 
-// Deterministic hasher (fixed keys, no entropy) — wasm32-unknown-unknown has no
-// randomness source, so the std `RandomState` default would not link cleanly.
-type Map<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
+// A fast, deterministic, dependency-free hasher (FxHash-style: rotate-xor-multiply
+// per word). Two reasons over std's default: wasm32-unknown-unknown has no entropy
+// for SipHash's `RandomState`, and SipHash is ~3-5× slower than this on the small
+// (u32 / `Node`) keys the `intern` + `memo` tables hash on *every* reduction — the
+// hottest structures in the evaluator.
+#[derive(Default)]
+struct FxHasher(u64);
+const FX_K: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+impl FxHasher {
+    #[inline]
+    fn add(&mut self, i: u64) {
+        self.0 = (self.0.rotate_left(5) ^ i).wrapping_mul(FX_K);
+    }
+}
+impl Hasher for FxHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    // Fallback (e.g. the enum discriminant); the typed paths below cover the keys.
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut b = [0u8; 8];
+            b[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(b));
+        }
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.add(i as u64)
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.add(i)
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64)
+    }
+}
+type Map<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 /// A producer node (tc-net.typ §Agents). `Leaf`/`Stem`/`Fork` are constructors;
 /// `Susp(f,a)` is the suspended application `P(f,a)` — the call-by-need parking
@@ -53,8 +91,6 @@ enum Node {
 /// "unresolved free variable". Reserving 0 makes every real handle ≥ 1 (truthy),
 /// fixing all such checks at once without touching the shared host.
 const LEAF_ID: u32 = 1;
-/// `forced[id]` sentinel: this `Susp` has not been forced yet.
-const NOT_FORCED: u32 = u32::MAX;
 
 /// Budget exhaustion, threaded as `Err` through the recursive reducers so the
 /// boundary can return the `u32::MAX` sentinel instead of trapping.
@@ -81,13 +117,16 @@ enum Cont {
 struct Arena {
     nodes: Vec<Node>,
     intern: Map<Node, u32>,
-    /// Per-node `Susp` WHNF memo (`δⁿ` at-most-once); `NOT_FORCED` until forced.
-    /// Parallel to `nodes`; unused for constructor nodes.
-    forced: Vec<u32>,
+    /// `Susp` WHNF memo (`δⁿ` at-most-once): susp id → its forced WHNF. SPARSE —
+    /// only forced susps appear (absent = not yet forced), so eager mode (which
+    /// never forces) keeps it empty and `mk` does zero per-node bookkeeping.
+    forced: Map<u32, u32>,
     /// Eager apply memo (M0): `apply(f,a)` is a pure function of `(f,a)`, and
     /// hash-consing makes `(f,a)` a complete key (the eager backend's `applyMemo`).
     memo: Map<(u32, u32), u32>,
-    /// Interaction counter (the backend-declared budget unit; reported via stats).
+    /// Reduction counter = fork-dispatches (the budget unit; eager-`steps`-
+    /// equivalent; reported via stats). Leaf/stem builds and the tree_eq fast-path
+    /// are O(1) and uncounted, matching src/core/tree.ts.
     interactions: u64,
     /// The `tree_eq` definition's handle, registered via `recognizeNative` (0 =
     /// unset). When set, `apply(tree_eq, a) b` is intercepted as the O(1)
@@ -105,7 +144,7 @@ impl Arena {
         let mut a = Arena {
             nodes: Vec::with_capacity(1 << 16),
             intern: Map::default(),
-            forced: Vec::with_capacity(1 << 16),
+            forced: Map::default(),
             memo: Map::default(),
             interactions: 0,
             tree_eq_id: 0,
@@ -115,7 +154,6 @@ impl Arena {
         // index 0: reserved null sentinel (never interned, never returned) so no
         // valid handle is JS-falsy — see LEAF_ID.
         a.nodes.push(Node::Leaf);
-        a.forced.push(NOT_FORCED);
         let id = a.mk(Node::Leaf); // real LEAF interned at index 1
         debug_assert_eq!(id, LEAF_ID);
         // Scott TT/FF — the exact trees the prelude's TT/FF compile to (matching
@@ -138,7 +176,6 @@ impl Arena {
         }
         let id = self.nodes.len() as u32;
         self.nodes.push(n);
-        self.forced.push(NOT_FORCED);
         self.intern.insert(n, id);
         id
     }
@@ -178,28 +215,20 @@ impl Arena {
             let result: u32;
             if self.tree_eq_id != 0 && cur_f == self.tree_eq_id {
                 // tree_eq fast-path stage 1: apply(tree_eq, x) ⇒ susp(tree_eq, x).
-                // O(1); not budget-charged (matches the eager backend's fast-path).
-                self.interactions += 1;
+                // O(1); not budget- or interaction-charged (matches eager's fast-path).
                 result = self.susp(cur_f, cur_x);
             } else {
                 result = match self.node(cur_f) {
-                // Leaf/Stem are O(1) constructor builds — NOT budget-charged,
-                // matching src/core/tree.ts (budget decrements only on fork
-                // dispatch). Charging them burns the host's per-call budget ~3×
-                // faster and spuriously exhausts kernel verification.
-                Node::Leaf => {
-                    self.interactions += 1;
-                    self.stem(cur_x) // A ⊗ L: △ x
-                }
-                Node::Stem(a) => {
-                    self.interactions += 1;
-                    self.fork(a, cur_x) // A ⊗ S: △ a x
-                }
+                // Leaf/Stem are O(1) constructor builds (argument accumulation, NOT
+                // reductions) — neither budget- nor interaction-charged, matching
+                // src/core/tree.ts (only fork dispatch counts). Charging them burns
+                // the host's per-call budget ~3× faster → spurious verify exhaustion.
+                Node::Leaf => self.stem(cur_x), // A ⊗ L: △ x
+                Node::Stem(a) => self.fork(a, cur_x), // A ⊗ S: △ a x
                 Node::Susp(sf, sa) => {
                     if self.tree_eq_id != 0 && sf == self.tree_eq_id {
                         // tree_eq fast-path stage 2: apply(susp(tree_eq, a), x) ⇒
                         // a == x ? TT : FF (O(1) hash-cons structural compare).
-                        self.interactions += 1;
                         if self.equal(sa, cur_x, budget)? {
                             self.tt
                         } else {
@@ -310,8 +339,7 @@ impl Arena {
     /// whose children may still be suspended. Memoizes the whole demand chain.
     fn force(&mut self, f0: u32, a0: u32, self_id: u32, budget: &mut i64) -> R {
         // Already forced?
-        let fc = self.forced[self_id as usize];
-        if fc != NOT_FORCED {
+        if let Some(&fc) = self.forced.get(&self_id) {
             return Ok(fc);
         }
         let mut chain: Vec<u32> = Vec::new();
@@ -329,8 +357,7 @@ impl Arena {
             let next = self.step_lazy(f, a, budget)?;
             match self.node(next) {
                 Node::Susp(nf, na) => {
-                    let nfc = self.forced[next as usize];
-                    if nfc != NOT_FORCED {
+                    if let Some(&nfc) = self.forced.get(&next) {
                         break nfc; // already-forced Susp: its WHNF ends the chain
                     }
                     h = next;
@@ -341,7 +368,7 @@ impl Arena {
             }
         };
         for &s in &chain {
-            self.forced[s as usize] = result;
+            self.forced.insert(s, result);
         }
         Ok(result)
     }
