@@ -21,9 +21,11 @@
 //! wholesale (grow-until-dispose absorbs the per-session laziness leak —
 //! tc-net.typ §Costs of δⁿ). Budget exhaustion returns `u32::MAX`, never a trap
 //! (`panic = "abort"`).
-// The M1 lazy reducer (`tc_apply_lazy` / `force` / `step_lazy` / `dispatch_lazy`)
-// is the work-sharing path — reachable from the forcing observations but not the
-// eager `tc_apply` Session path, so parts read as dead in a pure-eager release.
+// The Session wrapper (`src/eval/tcnet.ts`) wires ONLY `tc_apply` (eager), so the
+// M1 lazy reducer (`tc_apply_lazy` / `force` / `step_lazy` / `dispatch_lazy` / `nf`)
+// is off the production path — reachable from the forcing observations and the
+// reduction differential (`tc_apply_lazy`), but not eager `tc_apply`, so parts read
+// as dead in a pure-eager release. Kept and validated so M2 inherits a live M1 core.
 #![allow(clippy::missing_safety_doc, dead_code)]
 
 use std::cell::RefCell;
@@ -156,7 +158,9 @@ struct Arena {
     intern_count: usize,
     /// `Susp` WHNF memo (`δⁿ` at-most-once): susp id → its forced WHNF. SPARSE —
     /// only forced susps appear (absent = not yet forced), so eager mode (which
-    /// never forces) keeps it empty and `mk` does zero per-node bookkeeping.
+    /// never forces) keeps it empty and `mk` does zero per-node bookkeeping. No
+    /// size cap (unlike `memo`) — the production Session path is eager so it stays
+    /// empty; a long-lived *lazy* session bounds it via `tc_clear_caches`/`dispose`.
     forced: Map<u32, u32>,
     /// Eager apply memo (M0): `apply(f,a)` is a pure function of `(f,a)`, and
     /// hash-consing makes `(f,a)` a complete key (the eager backend's `applyMemo`).
@@ -201,37 +205,39 @@ impl Arena {
         a.nodes.push(Node::Leaf);
         let id = a.mk(Node::Leaf); // real LEAF interned at index 1
         debug_assert_eq!(id, LEAF_ID);
-        // Scott TT/FF — the exact trees the prelude's TT/FF compile to (matching
-        // src/core/tree.ts SCOTT_TT/FF): TT = △(△△), FF = △(△(△(△△)△)).
+        // Scott TT/FF — the exact trees the prelude's TT/FF compile to. Mirror
+        // src/core/tree.ts:595-596: TT = K K = fork(L, K); FF = K (K I) = fork(L, K I).
         let l = LEAF_ID;
         let k = a.stem(l); // K = △△
-        a.tt = a.fork(l, k); // TT = fork(L, K)
+        a.tt = a.fork(l, k); // TT = fork(L, K) = K K
         let ll = a.fork(l, l);
         let i = a.fork(ll, l); // I = fork(fork(L,L), L)
-        let ki = a.fork(l, i);
-        a.ff = a.fork(l, ki); // FF = fork(L, fork(L, I))
+        let ki = a.fork(l, i); // K I = fork(L, I)
+        a.ff = a.fork(l, ki); // FF = fork(L, K I) = K (K I)
         a
     }
 
-    /// Intern a node (hash-cons): structurally-identical nodes share one id.
+    /// Intern a node (hash-cons): structurally-identical nodes share one id. The
+    /// node's hash is computed ONCE here and threaded into find + insert, so a new
+    /// node hashes once, not twice (the hottest path in the evaluator).
     #[inline]
     fn mk(&mut self, n: Node) -> u32 {
-        if let Some(id) = self.intern_find(n) {
+        let h = node_hash(n);
+        if let Some(id) = self.intern_find(n, h) {
             return id;
         }
         let id = self.nodes.len() as u32;
         self.nodes.push(n);
-        self.intern_insert(id);
+        self.intern_insert(id, h);
         id
     }
 
-    /// Find `n`'s id in the hash-cons table, or `None`. Linear-probe from `n`'s
-    /// hash; the tag check skips the `nodes[id]` compare on mismatch (exact compare
-    /// on tag match — no false dedup).
+    /// Find `n`'s id in the hash-cons table, or `None`, given its precomputed hash
+    /// `h`. Linear-probe from `h`; the tag check skips the `nodes[id]` compare on
+    /// mismatch (exact compare on tag match — no false dedup).
     #[inline]
-    fn intern_find(&self, n: Node) -> Option<u32> {
+    fn intern_find(&self, n: Node, h: u64) -> Option<u32> {
         let mask = self.intern_table.len() - 1;
-        let h = node_hash(n);
         let tag = node_tag(h);
         let mut i = (h as usize) & mask;
         loop {
@@ -249,28 +255,31 @@ impl Arena {
         }
     }
 
-    /// Insert an id (its `nodes[id]` not yet in the table), growing at 7/8 load.
+    /// Insert an id (its `nodes[id]` not yet in the table) with precomputed hash
+    /// `h`, growing at 7/8 load. The rehash recomputes hashes (it's amortized rare);
+    /// the common path reuses `h` from `mk`.
     #[inline]
-    fn intern_insert(&mut self, id: u32) {
+    fn intern_insert(&mut self, id: u32, h: u64) {
         if (self.intern_count + 1) * 8 >= self.intern_table.len() * 7 {
             let new_size = self.intern_table.len() * 2;
             let old = std::mem::replace(&mut self.intern_table, vec![0u32; new_size]);
             self.intern_tags = vec![0u8; new_size];
             for old_id in old {
                 if old_id != 0 {
-                    self.intern_put(old_id);
+                    let oh = node_hash(self.nodes[old_id as usize]);
+                    self.intern_put(old_id, oh);
                 }
             }
         }
-        self.intern_put(id);
+        self.intern_put(id, h);
         self.intern_count += 1;
     }
 
-    /// Place an id at its probe slot (assumes spare capacity), setting its tag.
+    /// Place an id at its probe slot (assumes spare capacity) given its hash `h`,
+    /// setting its tag.
     #[inline]
-    fn intern_put(&mut self, id: u32) {
+    fn intern_put(&mut self, id: u32, h: u64) {
         let mask = self.intern_table.len() - 1;
-        let h = node_hash(self.nodes[id as usize]);
         let mut i = (h as usize) & mask;
         while self.intern_tags[i] != 0 {
             i = (i + 1) & mask;
@@ -479,6 +488,19 @@ impl Arena {
     /// One head-reduction step of `apply(f, a)` in the lazy world: force the
     /// operator to WHNF, then build the result with suspended (lazy) children.
     fn step_lazy(&mut self, f: u32, a: u32, budget: &mut i64) -> R {
+        // tree_eq fast-path (mirror the eager `reduce` stage 2): when the operator
+        // is the partial application `susp(tree_eq, sa)`, the saturated call
+        // `tree_eq sa a` is the O(1) hash-cons structural compare — WITHOUT this the
+        // lazy path forces the in-language tree_eq (O(size)) and blows kernel-verify
+        // budget. (Stage 1, `apply(tree_eq, x) = susp(tree_eq, x)`, is what lazy
+        // apply already builds, so only stage 2 needs intercepting here.)
+        if self.tree_eq_id != 0 {
+            if let Node::Susp(sf, sa) = self.node(f) {
+                if sf == self.tree_eq_id {
+                    return Ok(if self.equal(sa, a, budget)? { self.tt } else { self.ff });
+                }
+            }
+        }
         let wf = self.whnf(f, budget)?;
         match self.node(wf) {
             Node::Leaf => Ok(self.stem(a)),    // A ⊗ L: △ a  (a stays lazy)
@@ -575,24 +597,42 @@ impl Arena {
     }
 
     // ── ternary codec (preorder arity: leaf "0", stem "1"+child, fork "2"+l+r) ──
+    /// Parse one preorder ternary term. Iterative (explicit frame stack) so a deep
+    /// input can't overflow the wasm shadow stack on this FFI-reachable path — see
+    /// .cargo/config.toml. Frames record what each pending parent still needs.
     fn parse(&mut self, s: &[u8], i: &mut usize) -> u32 {
-        if *i >= s.len() {
-            return LEAF_ID;
+        enum Frame {
+            Stem,       // a stem awaiting its child
+            ForkL,      // a fork awaiting its left child
+            ForkR(u32), // a fork whose left child (carried) is built; awaiting the right
         }
-        let c = s[*i];
-        *i += 1;
-        match c {
-            b'0' => LEAF_ID,
-            b'1' => {
-                let c0 = self.parse(s, i);
-                self.stem(c0)
+        let mut stack: Vec<Frame> = Vec::new();
+        loop {
+            // Descend: read tokens, pushing frames, until a token completes a value.
+            let mut value = loop {
+                if *i >= s.len() {
+                    break LEAF_ID; // truncated input ⇒ leaf (matches the old base case)
+                }
+                let c = s[*i];
+                *i += 1;
+                match c {
+                    b'1' => stack.push(Frame::Stem),
+                    b'2' => stack.push(Frame::ForkL),
+                    _ => break LEAF_ID, // b'0' or unknown ⇒ a leaf value
+                }
+            };
+            // Ascend: attach `value` to parent frames, completing stems and full forks.
+            loop {
+                match stack.pop() {
+                    None => return value, // the whole term is built
+                    Some(Frame::Stem) => value = self.stem(value),
+                    Some(Frame::ForkL) => {
+                        stack.push(Frame::ForkR(value)); // left done; go build the right
+                        break;
+                    }
+                    Some(Frame::ForkR(left)) => value = self.fork(left, value),
+                }
             }
-            b'2' => {
-                let l = self.parse(s, i);
-                let r = self.parse(s, i);
-                self.fork(l, r)
-            }
-            _ => LEAF_ID,
         }
     }
 

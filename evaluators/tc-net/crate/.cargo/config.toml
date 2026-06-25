@@ -1,8 +1,8 @@
 # The wasm shadow stack is COMMITTED up front (it's the [0, __heap_base) region of
-# linear memory), so its size is the session's RSS floor. The hot paths — reduce,
-# equal, dump_emit — are now iterative (explicit work-stacks on the heap), so the
-# only native recursion left is shallow (parse on bounded input; test-only nf), and
-# 16 MiB is ample headroom. Overflow, if ever hit, is a CATCHABLE wasm trap (the
-# host recovers), not corruption. (Was 256 MiB back when `reduce` was recursive.)
+# linear memory), so its size is the session's RSS floor. Every FFI-reachable path —
+# reduce, equal, dump_emit, parse — is now iterative (explicit work-stacks on the
+# heap), so the only native recursion left is test-only (`nf`/`encode`, on tree
+# depth), and 16 MiB is ample headroom. Overflow, if ever hit, is a CATCHABLE wasm
+# trap (the host recovers), not corruption. (Was 256 MiB back when `reduce` recursed.)
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "link-arg=-zstack-size=16777216"]
