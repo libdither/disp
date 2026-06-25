@@ -84,6 +84,32 @@ enum Node {
     Susp(u32, u32),
 }
 
+/// Hash a node directly (for the id-only hash-cons table). `tag + 1` so Leaf isn't 0.
+#[inline]
+fn node_hash(n: Node) -> u64 {
+    let (tag, a, b) = match n {
+        Node::Leaf => (0u64, 0u64, 0u64),
+        Node::Stem(c) => (1, c as u64, 0),
+        Node::Fork(l, r) => (2, l as u64, r as u64),
+        Node::Susp(f, x) => (3, f as u64, x as u64),
+    };
+    let mut h = (tag + 1).wrapping_mul(FX_K);
+    h = (h.rotate_left(5) ^ a).wrapping_mul(FX_K);
+    h = (h.rotate_left(5) ^ b).wrapping_mul(FX_K);
+    h
+}
+
+/// 1-byte hash tag for a slot, never 0 (0 is reserved for "empty slot").
+#[inline]
+fn node_tag(h: u64) -> u8 {
+    let t = (h >> 56) as u8;
+    if t == 0 {
+        1
+    } else {
+        t
+    }
+}
+
 /// LEAF is handle 1, not 0: handle 0 is a reserved null sentinel so that NO valid
 /// handle is JS-falsy. The host elaborator (`src/compile.ts`) was written against
 /// object handles (always truthy) and tests them with `entry?.tree ? …` /
@@ -116,7 +142,18 @@ enum Cont {
 /// copy is reference sharing and identical `Susp`s share one `forced` memo cell.
 struct Arena {
     nodes: Vec<Node>,
-    intern: Map<Node, u32>,
+    /// Hash-cons table: an open-addressing set of node IDS (not Nodes), hashed and
+    /// compared THROUGH `nodes`. So each interned node is stored once (in `nodes`),
+    /// not twice — a `Map<Node,u32>` duplicated every Node as its key, ~half the
+    /// arena's overhead on a heavy file. Power-of-two size; stored value 0 = empty
+    /// slot (id 0 is the reserved null, so never a real entry); grow at 7/8 load.
+    intern_table: Vec<u32>,
+    /// Parallel 1-byte hash tags (0 = empty slot, else the node's hash tag). A
+    /// probe checks this contiguous array first and only chases `nodes[id]` on a
+    /// tag match (~1/256 false positives), so most probes never touch the node
+    /// arena — recovers the speed an id-only table lost to that indirection.
+    intern_tags: Vec<u8>,
+    intern_count: usize,
     /// `Susp` WHNF memo (`δⁿ` at-most-once): susp id → its forced WHNF. SPARSE —
     /// only forced susps appear (absent = not yet forced), so eager mode (which
     /// never forces) keeps it empty and `mk` does zero per-node bookkeeping.
@@ -148,7 +185,9 @@ impl Arena {
     fn new() -> Self {
         let mut a = Arena {
             nodes: Vec::with_capacity(1 << 16),
-            intern: Map::default(),
+            intern_table: vec![0u32; 1 << 16],
+            intern_tags: vec![0u8; 1 << 16],
+            intern_count: 0,
             forced: Map::default(),
             memo: Map::default(),
             interactions: 0,
@@ -177,13 +216,67 @@ impl Arena {
     /// Intern a node (hash-cons): structurally-identical nodes share one id.
     #[inline]
     fn mk(&mut self, n: Node) -> u32 {
-        if let Some(&id) = self.intern.get(&n) {
+        if let Some(id) = self.intern_find(n) {
             return id;
         }
         let id = self.nodes.len() as u32;
         self.nodes.push(n);
-        self.intern.insert(n, id);
+        self.intern_insert(id);
         id
+    }
+
+    /// Find `n`'s id in the hash-cons table, or `None`. Linear-probe from `n`'s
+    /// hash; the tag check skips the `nodes[id]` compare on mismatch (exact compare
+    /// on tag match — no false dedup).
+    #[inline]
+    fn intern_find(&self, n: Node) -> Option<u32> {
+        let mask = self.intern_table.len() - 1;
+        let h = node_hash(n);
+        let tag = node_tag(h);
+        let mut i = (h as usize) & mask;
+        loop {
+            let t = self.intern_tags[i];
+            if t == 0 {
+                return None; // empty slot ⇒ not present
+            }
+            if t == tag {
+                let id = self.intern_table[i];
+                if self.nodes[id as usize] == n {
+                    return Some(id);
+                }
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    /// Insert an id (its `nodes[id]` not yet in the table), growing at 7/8 load.
+    #[inline]
+    fn intern_insert(&mut self, id: u32) {
+        if (self.intern_count + 1) * 8 >= self.intern_table.len() * 7 {
+            let new_size = self.intern_table.len() * 2;
+            let old = std::mem::replace(&mut self.intern_table, vec![0u32; new_size]);
+            self.intern_tags = vec![0u8; new_size];
+            for old_id in old {
+                if old_id != 0 {
+                    self.intern_put(old_id);
+                }
+            }
+        }
+        self.intern_put(id);
+        self.intern_count += 1;
+    }
+
+    /// Place an id at its probe slot (assumes spare capacity), setting its tag.
+    #[inline]
+    fn intern_put(&mut self, id: u32) {
+        let mask = self.intern_table.len() - 1;
+        let h = node_hash(self.nodes[id as usize]);
+        let mut i = (h as usize) & mask;
+        while self.intern_tags[i] != 0 {
+            i = (i + 1) & mask;
+        }
+        self.intern_tags[i] = node_tag(h);
+        self.intern_table[i] = id;
     }
 
     #[inline]
