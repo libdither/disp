@@ -67,8 +67,8 @@ let tag_b = "tag_b"
 test [zero, succ zero] = cons zero (cons (succ zero) nil)
 test [] = nil
 
-// Coproduct [(a, Nat), (b, Bool)]
-let MySum = Coproduct [pair tag_a Nat, pair tag_b Bool]
+// Coproduct [(a, [Nat]), (b, [Bool])] — each variant carries its arg list (here single-arg).
+let MySum = Coproduct [pair tag_a [Nat], pair tag_b [Bool]]
 test param_apply MySum (inj tag_a zero) = Ok TT
 test param_apply MySum (inj tag_b TT) = Ok TT
 test param_apply MySum (inj tag_a TT) = Ok FF // a expects Nat, got Bool

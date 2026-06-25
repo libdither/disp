@@ -75,6 +75,17 @@ proj_cell : Tree -> Tree -> Tree := {name, ty} -> wait proj_op { name := name; t
 deriv_cell : Tree -> Tree -> Tree := {name, recipe} -> wait deriv_op { name := name; recipe := recipe }
 is_derive := {cell} -> tree_eq (pair_fst cell) (op_sig deriv_op)
 
+// pos_cell (POSITIVE_TYPES §5a): a POSITIONAL cell — observe a component of a RAW payload (a
+// bare `inj` tuple, not a named §2.6 record) via a stored accessor, then check it : ty. The one
+// new observation op the positive merge needs: it lets `at` walk a constructor's argument tuple
+// with ZERO boxing, so a positive type's per-constructor arg list is just another telescope.
+// Pluggable like the rest (returns a Step; no `at` edit).
+let pos_op = {meta, mode, source, prior, frame} ->
+  if mode
+    then (match ((meta.ty) (meta.acc source)) { Ok b => (if b then (SThread (meta.acc source)) else SReject); Err _ => SReject })
+    else (SDone (Extend (meta.ty)))
+pos_cell : Tree -> Tree -> Tree := {acc, ty} -> wait pos_op { acc := acc; ty := ty }
+
 // const_tail / is_const_tail: the NON-DEPENDENT spine tail. A telescope node is
 // `t cell tail`; an INDEPENDENT cell's tail ignores the prior cell's value — the
 // `K rest` shape `t t rest` (exactly what a closed `{_} -> rest` compiles to). This
@@ -327,15 +338,39 @@ let lookup_arm = fix ({self, variants, tag} ->
     let arm = pair_fst variants
     if (tree_eq (pair_fst arm) tag) then (Ok (pair_snd arm)) else (self (pair_snd variants) tag)
   } else Err)
-// Coproduct [(Vi, Si)]: v = inj tag pay inhabits iff tag is some Vi and pay : S_tag.
-Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
-  {meta, v} -> {
-  let arm_r = lookup_arm meta.recognizer_params (pair_fst v)
-  match arm_r {
-    Ok handler => handler (pair_snd v) // payload inhabits S_tag
-    Err _ => Ok FF // unknown tag
-  }
-}
+
+// A positive constructor's arguments form a POSITIONAL telescope over its raw payload
+// (POSITIVE_TYPES §2): the k-ary payload `inj tag (a0,(a1,…))` is the `inj1`/`inj2`/`inj3`
+// right-nested pair, so arg j is read by `pair_fst (pair_snd^j)` (or `pair_snd^j` for the last,
+// which for a single arg is the identity). `pos_tele` turns a list of arg types into that
+// telescope; the EMPTY list -> the empty telescope (= ⊤, a nullary constructor's `t` payload).
+let snd_n = fix ({self, n, x} -> if (tree_eq n zero) then x else (self (nat_pred n) (pair_snd x)))
+let pos_tele_go = fix ({self, types, depth} ->
+  if (is_fork types) then {
+    let acc = if (is_fork (pair_snd types))            // not the last arg
+                then ({x} -> pair_fst (snd_n depth x))
+                else ({x} -> snd_n depth x)            // last arg (single-arg -> identity)
+    t (pos_cell acc (pair_fst types)) ({_} -> self (pair_snd types) (succ depth))
+  } else t)
+pos_tele := {types} -> pos_tele_go types zero
+// REC marks "the type being defined" in a constructor's arg list. The recognizer threads `self`
+// (make_rec_recognizer) and fill_rec substitutes it before the walk, so a constructor may recurse.
+REC := "@REC"
+let fill_rec = fix ({self, sf, types} ->
+  if (is_fork types)
+    then (cons (if (tree_eq (pair_fst types) REC) then sf else (pair_fst types)) (self sf (pair_snd types)))
+    else nil)
+
+// Coproduct [(tag, [arg-types])]: v = inj tag (a0,a1,…) inhabits iff tag is a variant and its
+// args inhabit that variant's arg telescope. THE positive former — multi-arg AND recursive (an
+// arg list may contain REC). Recognition is `at` over the per-variant positional telescope: the
+// SAME walker as Pi/Sigma/Record (POSITIVE_TYPES §1–§3). The respond stays `inductive_respond`
+// (a coproduct is a hybrid — telescope recognize-face, positive case-analysis elim).
+Coproduct : Tree -> Type := {variants} -> wait (make_rec_recognizer
+  {self, meta, v} -> (match (lookup_arm meta.recognizer_params (pair_fst v)) {
+    Ok argspec => (at TT (pos_tele (fill_rec self argspec)) (pair_snd v) t t) // args inhabit the arg telescope
+    Err _ => (Ok FF) // unknown tag
+  })
 ) (make_meta variants inductive_respond)
 
 // Record [(Vi, Ti)]: the NON-DEPENDENT record — a constant-tail (K-stem)
@@ -368,18 +403,23 @@ Record : Tree -> Type := {fields} -> wait (make_recognizer
 // `open` reads the record header off the compiled tree (src/compile.ts
 // recordFieldsFromTree). Unannotated (like `mk`): the folds read a record
 // header, so a `Tree -> …` typing would mint a hyp they inspect.
+// Each declared field `Tag := T` is a SINGLE-arg constructor, so its arg list is the singleton
+// `[T]` (the generic former's per-variant spec). Multi-arg/recursive variants are written with
+// the positional `Coproduct [pair tag [A, REC, …]]` form directly.
 let variants_of = fix ({self, decl, names} ->
   if (is_fork names)
-    then (cons (pair (pair_fst names) (field decl (pair_fst names))) (self decl (pair_snd names)))
+    then (cons (pair (pair_fst names) (cons (field decl (pair_fst names)) nil)) (self decl (pair_snd names)))
     else nil)
 Coproduct_of := {decl} -> Coproduct (variants_of decl (pair_fst (type_meta decl)))
 
 let ctors_fold = fix ({self, variants} ->
   if (is_fork variants) then {
     let nm = pair_fst (pair_fst variants)
-    // Unit payload -> the nullary value `inj nm unit_val` (Unit recognizes only
-    // unit_val, NOT the bare `t` of inj0); else the payload-taking `inj1 nm`.
-    let ctor = if (tree_eq (pair_snd (pair_fst variants)) Unit) then (inj nm unit_val) else (inj1 nm)
+    let argspec = pair_snd (pair_fst variants) // the arg list [T] (or [T0,T1,…])
+    // Single Unit arg -> the nullary value `inj nm unit_val` (Unit recognizes only unit_val,
+    // NOT the bare `t` of inj0); else the payload-taking `inj1 nm`. (Multi-arg ctors: build by hand.)
+    let is_unit1 = and (is_fork argspec) (and (is_leaf (pair_snd argspec)) (tree_eq (pair_fst argspec) Unit))
+    let ctor = if is_unit1 then (inj nm unit_val) else (inj1 nm)
     let rest = self (pair_snd variants)
     pair (cons nm (pair_fst rest)) (cons (list_const ctor) (pair_snd rest))
   } else (pair nil nil))

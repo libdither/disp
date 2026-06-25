@@ -1,13 +1,27 @@
 # Positive types as a coproduct of telescopes — the inductive-former merge
 
-**Status: design proposal (2026-06).** How to present inductive types (Bool, Nat, Ord, List, …)
-generically as a **constructor spec** — a coproduct of argument-telescopes — so the recognizer,
-the case-eliminator, and the coherence gate are all *derived* from one spec by reusing machinery
-that already exists (the telescope walker `at`, the §2.6 cut `annihilate`), instead of being
-hand-written per type. The dual of [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) (the telescope = the one
-*negative* n-ary former); this note is the *positive* side. Companion to
-[`TYPE_NORMALIZATION.md`](TYPE_NORMALIZATION.md) §10e (the StrictType/`Type` migration and the
-respond-shape residuals) and [`STRICTTYPE.md`](STRICTTYPE.md) (per-former respond typing).
+**Status: Track A LANDED (2026-06-24); Track B research-open.** How to present inductive types
+(Bool, Nat, Ord, List, …) generically as a **constructor spec** — a coproduct of
+argument-telescopes — so the recognizer, the case-eliminator, and the coherence gate are all
+*derived* from one spec by reusing machinery that already exists (the telescope walker `at`, the
+§2.6 cut `annihilate`), instead of being hand-written per type. The dual of
+[`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) (the telescope = the one *negative* n-ary former); this
+note is the *positive* side. Companion to [`TYPE_NORMALIZATION.md`](TYPE_NORMALIZATION.md) §10e (the
+StrictType/`Type` migration and the respond-shape residuals) and [`STRICTTYPE.md`](STRICTTYPE.md)
+(per-former respond typing).
+
+> **What landed (Track A — the recognizer/eliminator merge).** `pos_cell` is in the kernel
+> (`types.disp`, a positional `at` op, §5a), and `Coproduct` is now THE generic positive former:
+> `Coproduct [(tag, [arg-types])]` — **multi-arg and recursive** (an arg list may contain `REC`),
+> recognized by `at` over each variant's positional telescope (no hand-written recognizer). A whole
+> recursive datatype is a one-line spec, e.g. `NatList = Coproduct [pair "nil" [], pair "cons" [Nat, REC]]`
+> (see `lib/tests/positive_proto.test.disp`). The eliminator is the surface `match`/§2.6 cut. The
+> existing single-arg sums (`Action`, `CheckerResult`, `Option`, `Result`) are the degenerate `[T]`
+> case — unchanged, no regression. **What's NOT done (deferred):** §5b **views** (so shape-encoded
+> types `Nat`/`Bool`/`Ord`/`List` — whose tags live in the tree shape, not an `inj` tag — can move
+> onto specs), and §8 the **coherence-gate self-typing** = Track B (the sealing program; see
+> [`KERNEL_SELF_TYPING.md`](KERNEL_SELF_TYPING.md)). Bool/Nat/Ord keep their existing recognizers +
+> responds for now.
 
 ## TL;DR
 
