@@ -39,6 +39,8 @@ interface TcNetExports {
   tc_equal(a: number, b: number, budget: number): number      // 0=false 1=true 2=exhausted
   tc_interactions(): bigint                                    // total interactions this session
   tc_recognize_tree_eq(handle: number): void                  // register tree_eq fast-path
+  tc_set_memo_limit(n: number): void                          // cap apply memo (0 = unbounded)
+  tc_clear_caches(): void                                      // drop caches to relieve pressure
 }
 
 const DEFAULT_BUDGET = 5_000_000_000
@@ -61,7 +63,16 @@ class TcNetSession implements Session<number> {
     const inst = new WebAssembly.Instance(mod, {})
     this.#x = inst.exports as unknown as TcNetExports
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
+    // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
+    // (TCNET_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
+    // by dispose() anyway; this is for constrained or long-running deployments.
+    const lim = Number(process.env.TCNET_MEMO_LIMIT ?? 0)
+    if (Number.isFinite(lim) && lim > 0) this.#x.tc_set_memo_limit(lim >>> 0)
   }
+
+  // Not part of the Session ABI: drop re-derivable caches (apply memo + susp WHNF
+  // memo) to relieve memory pressure mid-session; live trees are untouched.
+  clearCaches(): void { this.#x.tc_clear_caches() }
 
   leaf(): number { return this.#x.tc_leaf() }
   stem(child: number): number { return this.#x.tc_stem(child) }

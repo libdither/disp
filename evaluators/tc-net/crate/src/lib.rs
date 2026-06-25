@@ -137,6 +137,11 @@ struct Arena {
     /// Scott `TT`/`FF` (the fast-path results), built once at session init.
     tt: u32,
     ff: u32,
+    /// Cap on `memo` entries; over it the eager apply memo is cleared (pure cache —
+    /// correctness-preserving, just re-reduces). Default unbounded (`usize::MAX`);
+    /// lower via `tc_set_memo_limit` to trade speed for a smaller footprint on
+    /// long-lived sessions. Per-file sessions are bounded by `dispose()` regardless.
+    memo_limit: usize,
 }
 
 impl Arena {
@@ -150,6 +155,7 @@ impl Arena {
             tree_eq_id: 0,
             tt: 0,
             ff: 0,
+            memo_limit: usize::MAX,
         };
         // index 0: reserved null sentinel (never interned, never returned) so no
         // valid handle is JS-falsy — see LEAF_ID.
@@ -308,6 +314,10 @@ impl Arena {
                     }
                     Some(Cont::Memo(sf, sx)) => {
                         self.memo.insert((sf, sx), res);
+                        // Cap the pure-cache memo (correctness-preserving — re-reduces).
+                        if self.memo.len() > self.memo_limit {
+                            self.memo.clear();
+                        }
                         // keep popping
                     }
                     Some(Cont::SAfterCx(sb, sox)) => {
@@ -445,23 +455,30 @@ impl Arena {
 
     /// Decidable structural equality of normal forms — demand-then-compare, with
     /// the hash-cons id shortcut and short-circuit on first difference (decision 1).
-    fn equal(&mut self, a: u32, b: u32, budget: &mut i64) -> Result<bool, Exhausted> {
-        if a == b {
-            return Ok(true); // hash-cons identity (incl. shared susps)
-        }
-        let wa = self.whnf(a, budget)?;
-        let wb = self.whnf(b, budget)?;
-        if wa == wb {
-            return Ok(true);
-        }
-        match (self.node(wa), self.node(wb)) {
-            (Node::Leaf, Node::Leaf) => Ok(true),
-            (Node::Stem(x), Node::Stem(y)) => self.equal(x, y, budget),
-            (Node::Fork(x1, x2), Node::Fork(y1, y2)) => {
-                Ok(self.equal(x1, y1, budget)? && self.equal(x2, y2, budget)?)
+    /// Iterative (work-stack of pairs) so it costs O(1) native stack regardless of
+    /// tree depth — lets the wasm shadow stack stay small (see .cargo/config.toml).
+    fn equal(&mut self, a0: u32, b0: u32, budget: &mut i64) -> Result<bool, Exhausted> {
+        let mut stack: Vec<(u32, u32)> = vec![(a0, b0)];
+        while let Some((a, b)) = stack.pop() {
+            if a == b {
+                continue; // hash-cons identity (incl. shared susps)
             }
-            _ => Ok(false),
+            let wa = self.whnf(a, budget)?;
+            let wb = self.whnf(b, budget)?;
+            if wa == wb {
+                continue;
+            }
+            match (self.node(wa), self.node(wb)) {
+                (Node::Leaf, Node::Leaf) => {}
+                (Node::Stem(x), Node::Stem(y)) => stack.push((x, y)),
+                (Node::Fork(x1, x2), Node::Fork(y1, y2)) => {
+                    stack.push((x1, y1));
+                    stack.push((x2, y2));
+                }
+                _ => return Ok(false), // short-circuit on first difference
+            }
         }
+        Ok(true)
     }
 
     // ── ternary codec (preorder arity: leaf "0", stem "1"+child, fork "2"+l+r) ──
@@ -502,6 +519,31 @@ impl Arena {
             }
             Node::Susp(..) => out.push(b'0'), // unreachable after nf; defensive
         }
+    }
+
+    /// Force `h` to full NF and emit ternary directly — WITHOUT materializing the
+    /// NF tree (a big result streams to `out` instead of being built as nodes;
+    /// iterative, so deep results don't recurse). For eager handles `whnf` is the
+    /// identity, so this is an iterative encode; lazy handles force as they descend.
+    fn dump_emit(&mut self, h: u32, out: &mut Vec<u8>, budget: &mut i64) -> Result<(), Exhausted> {
+        let mut stack: Vec<u32> = vec![h];
+        while let Some(n) = stack.pop() {
+            let w = self.whnf(n, budget)?;
+            match self.node(w) {
+                Node::Leaf => out.push(b'0'),
+                Node::Stem(c) => {
+                    out.push(b'1');
+                    stack.push(c);
+                }
+                Node::Fork(l, r) => {
+                    out.push(b'2');
+                    stack.push(r); // pushed first ⇒ popped after the left child
+                    stack.push(l);
+                }
+                Node::Susp(..) => unreachable!("whnf returns a constructor"),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -571,6 +613,27 @@ pub extern "C" fn tc_recognize_tree_eq(handle: u32) {
     with(|a| a.tree_eq_id = handle);
 }
 
+// ── memory knobs (run at smaller footprints) ────────────────────────────────
+/// Cap the eager apply memo at `n` entries (0 = unbounded); over the cap the memo
+/// is cleared. Pure cache → correctness-preserving (just re-reduces). Trades speed
+/// for a smaller footprint on long-lived sessions.
+#[no_mangle]
+pub extern "C" fn tc_set_memo_limit(n: u32) {
+    with(|a| a.memo_limit = if n == 0 { usize::MAX } else { n as usize });
+}
+/// Drop all caches (apply memo + susp WHNF memo) and release their backing memory
+/// to relieve pressure. Correctness-preserving; the node arena (live trees stay
+/// reachable via handles) is untouched — only re-derivable cache is freed.
+#[no_mangle]
+pub extern "C" fn tc_clear_caches() {
+    with(|a| {
+        a.memo.clear();
+        a.memo.shrink_to_fit();
+        a.forced.clear();
+        a.forced.shrink_to_fit();
+    });
+}
+
 // ── bulk / interchange (Session.loadTernary / dumpTernary) ──────────────────
 #[no_mangle]
 pub extern "C" fn tc_alloc(len: u32) -> u32 {
@@ -600,12 +663,10 @@ pub unsafe extern "C" fn tc_load_ternary(ptr: u32, len: u32) -> u32 {
 pub extern "C" fn tc_dump_ternary(h: u32, budget: u32) -> u64 {
     with(|a| {
         let mut b = budget as i64;
-        let nf = match a.nf(h, &mut b) {
-            Ok(n) => n,
-            Err(_) => return pack(u32::MAX, 0),
-        };
         let mut out: Vec<u8> = Vec::new();
-        a.encode(nf, &mut out);
+        if a.dump_emit(h, &mut out, &mut b).is_err() {
+            return pack(u32::MAX, 0);
+        }
         let len = out.len() as u32;
         let ptr = out.as_ptr() as u32;
         std::mem::forget(out);

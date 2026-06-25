@@ -1,6 +1,8 @@
-# The reducers (reduce/force/nf) recurse along the reduction spine; the default
-# 1 MiB wasm shadow stack overflows on deep tree-calculus reductions (the kernel
-# checker, recursive benchmarks). 64 MiB is generous headroom; an explicit-stack
-# machine (no native recursion) is the later robustness upgrade if this is hit.
+# The wasm shadow stack is COMMITTED up front (it's the [0, __heap_base) region of
+# linear memory), so its size is the session's RSS floor. The hot paths — reduce,
+# equal, dump_emit — are now iterative (explicit work-stacks on the heap), so the
+# only native recursion left is shallow (parse on bounded input; test-only nf), and
+# 16 MiB is ample headroom. Overflow, if ever hit, is a CATCHABLE wasm trap (the
+# host recovers), not corruption. (Was 256 MiB back when `reduce` was recursive.)
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "link-arg=-zstack-size=268435456"]
+rustflags = ["-C", "link-arg=-zstack-size=16777216"]
