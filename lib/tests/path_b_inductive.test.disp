@@ -1,0 +1,33 @@
+// Real-world INDUCTIVE types via Path B: one self-aware `at`, recursion = a RecUnder F cell, NO Mu.
+//   Rec            = RecUnder Id    — direct recursion (acc source : self)
+//   RecUnder List  — NESTED recursion: a constructor carrying a List of sub-terms (AST arg lists).
+// This is the make-or-break case for parsers/PLs: a call node carries `List Expr`.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/list.disp"
+
+// ── direct recursion: a binary tree of Nats (Rec = RecUnder Id) ──
+let BTree = Coproduct [pair "leaf" [Nat], pair "node" [Rec, Rec]]
+let bleaf = {n} -> inj "leaf" n
+let bnode = {l, r} -> inj "node" (pair l r)
+test typecheck BTree (bleaf 7)                                    = Ok TT
+test typecheck BTree (bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3)))= Ok TT
+test typecheck BTree (bnode (bleaf 1) (bleaf TT))                 = Ok FF   // non-Nat leaf rejected
+test typecheck Type BTree                                        = Ok TT   // a real Type
+
+// ── NESTED recursion: Expr = Lit Nat | Call Expr (List Expr) ──
+let Expr = Coproduct [pair "lit" [Nat], pair "call" [Rec, RecUnder List]]
+let lit  = {n} -> inj "lit" n
+let call = {f, args} -> inj "call" (pair f args)
+let e1 = call (lit 0) (cons (lit 1) (cons (lit 2) nil))
+test typecheck Expr (lit 9)                          = Ok TT
+test typecheck Expr e1                               = Ok TT   // nested: a List of Exprs as args
+test typecheck Expr (call (lit 0) (cons TT nil))     = Ok FF   // a non-Expr IN the arg list
+test typecheck Expr (call TT nil)                    = Ok FF   // a non-Expr callee
+test typecheck Type Expr                             = Ok TT
+
+// ── kernel recursive types (Ord/List) recognize as before, now via Rec = RecUnder Id ──
+test typecheck Ord (omega_plus (omega_plus zero_ord zero_ord) zero_ord) = Ok TT
+test typecheck (List Nat) (cons 1 (cons 2 nil))                         = Ok TT
+test typecheck (List Nat) (cons 1 (cons TT nil))                        = Ok FF

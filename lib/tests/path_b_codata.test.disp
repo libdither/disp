@@ -1,0 +1,32 @@
+// Real-world CODATA via Path B: Stream A as a coalgebra (gen cell), the ν dual of List. Recognition
+// GUARDS the generator (never descends), so it terminates on infinite data; elimination PROJECTS.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/stream.disp"
+
+// ── the infinite "count up from 0" stream — observe a few steps; it never loops ──
+let nats = unfold ({n} -> { head := n; tail := succ n }) zero
+test (field (out nats) "head")                                  = zero
+test (field (out (field (out nats) "tail")) "head")             = succ zero
+test (field (out (field (out (field (out nats) "tail")) "tail")) "head") = succ (succ zero)
+test stream_take (succ (succ (succ zero))) nats = cons zero (cons (succ zero) (cons (succ (succ zero)) nil))  // take 3
+
+// ── recognition TERMINATES on the infinite stream (checks the generator, not the stream) ──
+test typecheck (Stream Nat) nats   = Ok TT
+test typecheck Type (Stream Nat)   = Ok TT                       // Stream A is a real Type
+test param_apply (Stream Nat) (unfold ({n} -> { head := TT; tail := n }) zero) = Ok FF  // bad head
+test param_apply (Stream Nat) zero = Ok FF                       // not a generator at all
+
+// ── Fibonacci stream (seed = (a,b); head = a; tail = (b, a+b)) ──
+let fib = unfold ({s} -> { head := (pair_fst s); tail := (pair (pair_snd s) (add (pair_fst s) (pair_snd s))) }) (pair zero (succ zero))
+test stream_take (succ (succ (succ (succ (succ zero))))) fib
+  = cons zero (cons (succ zero) (cons (succ zero) (cons (succ (succ zero)) (cons (succ (succ (succ zero))) nil))))  // 0,1,1,2,3
+
+// ── stream_map (the ν functorial action on head): increment every element ──
+test (field (out (stream_map succ nats)) "head")               = succ zero      // map succ: first head 0 -> 1
+test typecheck (Stream Nat) (stream_map succ nats)             = Ok TT
+
+// ── codata ELIMINATION: a Stream-neutral PROJECTS — head : Nat, tail : Stream Nat (delegating respond) ──
+test tree_eq (neutral_type ((make_hyp (Stream Nat) 0) (acc "head"))) Nat          = TT
+test tree_eq (neutral_type ((make_hyp (Stream Nat) 0) (acc "tail"))) (Stream Nat) = TT

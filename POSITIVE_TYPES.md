@@ -27,6 +27,12 @@ StrictType/`Type` migration and the respond-shape residuals) and [`STRICTTYPE.md
 > `at` walker. See `lib/tests/positive_proto.test.disp`. The only positive-side work left is **Track B**
 > (the coherence-gate self-typing / sealing; see [`KERNEL_SELF_TYPING.md`](KERNEL_SELF_TYPING.md)).
 >
+> **[SUPERSEDED 2026-06-25 by TELESCOPE_FIXPOINT.md / Path B.]** `Mu` was later RETIRED: recursion is now
+> a `RecUnder F` cell (`Rec := RecUnder Id` for direct, `RecUnder List` for nested), `at` is self-aware
+> (threads `rs`), and mutual recursion is `Coproduct_ctx` + `RecAt i`. `RecUnder F` *is* a cell, yet it
+> also covers the nested recursion this note credits to `Mu`'s self-as-value binder — so the "binder vs
+> cell" dichotomy below dissolved. The §-note is kept as the historical reasoning that motivated the binder.
+>
 > **On recursion (§-note answering "is `REC` the best way?").** No — recursion is now `Mu`, the least
 > fixpoint, *not* a magic marker + substitution pass. `Coproduct` is a plain sum (no `self`-threading,
 > no `fill_rec`); `Mu F` recognizes `v` by unfolding one level (`(F self) v`, `self = Mu F`, knot

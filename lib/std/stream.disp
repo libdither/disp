@@ -1,0 +1,57 @@
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// Stream A — codata, the ν (greatest-fixpoint) dual of List, via Path B's `gen` cell. A Stream VALUE
+// is a finite COALGEBRA (a generator): `unfold step seed` packs a step function and a seed under the
+// kernel "gen" tag. You never materialise the infinite sequence; you OBSERVE one step at a time with
+// `out`. Recognition GUARDS (the `gen_cell`): it checks the generator and exactly ONE observation —
+// head : A, and that the tail is again a generator — so it TERMINATES on infinite data (it never
+// descends). The respond DELEGATES to the observation Record [head:A; tail:self], so eliminating a
+// Stream-neutral PROJECTS (head : A, tail : Stream A) — the codata elimination.
+//
+//   unfold : (S -> { head : A ; tail : S }) -> S -> Stream A      -- introduce (a coalgebra)
+//   out    : Stream A -> { head : A ; tail : Stream A }           -- observe one step
+//
+// This is the dual of `List`: List is recognized by DESCENDING a finite value (`Rec` cell recurses);
+// Stream is recognized by GUARDING a finite generator (`gen` cell stops). Same self-aware `at`.
+
+stream_head := {r} -> field r "head"
+stream_tail := {r} -> field r "tail"
+
+// unfold: the coalgebra constructor. out: run one step (step seed : { head ; tail }) and RE-SUSPEND
+// the tail as the next generator — so observing never forces more than one level.
+unfold := {step, seed} -> inj gen_tag (pair step seed)
+out := {v} -> {
+  let sp = pair_snd v
+  let step = pair_fst sp
+  let one = step (pair_snd sp)
+  { head := (field one "head"); tail := (unfold step (field one "tail")) }
+}
+
+// stream_respond: eliminating a Stream-neutral observes ONE level — delegate to the observation
+// Record [head:A; tail:Stream A]'s projection respond (self = the neutral, so tail lands Stream A).
+// `params.elem` is the element type A (see the recognizer_params wrapping below).
+let stream_respond = {params, self, frame} -> {
+  let obs = Record [pair "head" (params.elem), pair "tail" (neutral_type self)]
+  ((type_meta obs).respond (type_meta obs).recognizer_params self frame)
+}
+
+// Stream A: GUARD `is_gen v`, then walk the one-step observation telescope [ head : A ; gen tail ]
+// over `out v` via the self-aware `at` (rs is unused here — gen guards by is_gen, pos checks A).
+// The element type A is stored WRAPPED in a record `{ elem := A }` as recognizer_params — NOT bare:
+// `recognizer_params : Tree` is checked at load (the `Type -> Type` self-verify), and Tree's H-rule
+// rejects a BARE abstract type (a Type-typed neutral's stored type is Type, not Tree -> Ok FF). A
+// concrete record wrapper is a fine Tree regardless of A, so `Stream : Type -> Type` verifies. (This
+// is why every parameterized former — Eq's `{type,lhs,rhs}`, List's variants list — wraps its params.)
+Stream : Type -> Type := {A} -> wait (make_recognizer
+  {meta, v} -> (if (is_gen v)
+    then (at t TT (t (pos_cell stream_head ((meta.recognizer_params).elem)) ({_} -> t (gen_cell stream_tail) ({_} -> t))) (out v) t t)
+    else (Ok FF))
+) (make_meta { elem := A } stream_respond)
+
+// stream_take n s : a List of the first n observed heads. The finite eliminator for an infinite value.
+stream_take := fix ({self, n, s} ->
+  if (tree_eq n zero) then nil else (cons (field (out s) "head") (self (nat_pred n) (field (out s) "tail"))))
+
+// stream_map f s : a new Stream whose heads are f-mapped (the ν functorial action on `head`).
+stream_map := {f, s} -> unfold ({s2} -> { head := (f (field (out s2) "head")); tail := (field (out s2) "tail") }) s

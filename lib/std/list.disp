@@ -7,18 +7,19 @@ open use "nat/ops.disp"
 //   nil           = t                     (LEAF)
 //   cons head xs  = t head xs             (fork(head, xs))
 //
-// `List` is now a PROPER wait-form former (POSITIVE_TYPES §5b), not a hand-written raw
-// predicate: a `view` maps the shape encoding to inj-tagged form, the generic `Coproduct_viewed`
-// dispatches, and `Mu` ties the recursive knot. So `List A : Type` is recognized by the same `at`
-// as every other type — head : A then tail : List A — with neutrals handled by the H-rule (so
-// `List A` still appears under Pi binders). The hand-rolled fix + bracket-abstraction caveats are gone.
+// `List` is a PROPER wait-form former (POSITIVE_TYPES §5b / TELESCOPE_FIXPOINT Path B), not a
+// hand-written raw predicate: a `view` maps the shape encoding to inj-tagged form, the generic
+// self-aware `Coproduct_viewed` dispatches, and the recursive `cons` tail is a `Rec` cell — so the
+// former ties its OWN knot (no `Mu` wrapper). `List A : Type` is recognized by the same `at` as every
+// other type — head : A then tail : List A — with neutrals handled by the H-rule (so `List A` still
+// appears under Pi binders). The hand-rolled fix + bracket-abstraction caveats are gone.
 let view_list = {v} -> triage
   (Ok (inj "nil" t))                         // leaf            -> nil
   ({_} -> Err)                               // bare stem       -> not a list
   ({h, tl} -> Ok (inj "cons" (pair h tl)))   // fork(head,tail) -> cons
   v
 List : Type -> Type := {A} ->
-  Mu ({self} -> Coproduct_viewed view_list [pair "nil" [], pair "cons" [A, self]])
+  Coproduct_viewed view_list [pair "nil" [], pair "cons" [A, Rec]]
 
 NatList : Type := List Nat
 
