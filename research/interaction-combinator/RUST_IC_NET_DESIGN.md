@@ -284,10 +284,18 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
   `canonicalHandles===false`; **`stats` shows `agents_allocated>0 ∧ interactions>0`** (proves
   it's a real materialized net, not a recompiled `rust-eager`). *Isolates the rules +
   scheduler with zero concurrency risk — the foundation M2 stands on.*
-- **M1 — `δⁿ` need-sharing** (still sequential): two duplicator species + demand-driven
-  scheduling + wire-RC for parked `δⁿ`. **Gate:** M0 differential stays green + the
-  Prop-5/Theorem-6 micro-benchmark (`not true` under strict binders: `δⁿ` dispatches the
-  shared `P` once, `δˢ` twice).
+- **M1 — `δⁿ` need-sharing** (still sequential) — *the δⁿ mechanism LANDED; wire-RC is
+  the remaining piece.* The S-rule spawns `δⁿ`; δˢ/δⁿ share the constructor copy rules,
+  differing only on `P` (δⁿ forces once + parks). **Gate met:** M0 differential green +
+  the Prop-5/Theorem-6 micro-benchmark — a shared 12-deep suspension chain costs **δⁿ=111
+  vs δˢ=327 interactions (~2.95×)**. **Key finding (refines this milestone):** δⁿ shares
+  re-*reduction*, NOT *structure* — on the lambda benchmarks `δⁿ⊗P` fires **zero** times
+  (`dnp=0`) because they duplicate values already reduced to *constructors* at the S-rule,
+  which is a *hash-consing* matter (tc-net.typ "What Is Still Not Shared"), not δⁿ's. So
+  δⁿ is a no-op there (identical counts to δˢ); its win is specifically on
+  suspension-duplication. **Still TODO:** wire-RC (so δⁿ-parked leaks are reclaimed — the
+  "usable" half of finding 12.2), and the lazy/demand schedule that would make δⁿ pay on
+  more programs (M2's eager-safe bit).
 - **M2 — parallelize: native + napi-rs + rayon.** Redex queue → concurrent work bag; slots
   → atomic; the exchange linker; crossbeam-epoch reclamation. **Gate:** same differential
   green on the N-API Session (now a race detector) + a `bench/` thread-sweep showing
