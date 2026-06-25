@@ -293,9 +293,20 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
   (`dnp=0`) because they duplicate values already reduced to *constructors* at the S-rule,
   which is a *hash-consing* matter (tc-net.typ "What Is Still Not Shared"), not δⁿ's. So
   δⁿ is a no-op there (identical counts to δˢ); its win is specifically on
-  suspension-duplication. **Still TODO:** wire-RC (so δⁿ-parked leaks are reclaimed — the
-  "usable" half of finding 12.2), and the lazy/demand schedule that would make δⁿ pay on
-  more programs (M2's eager-safe bit).
+  suspension-duplication.
+  **M1b GC — LANDED, but it's *free-on-consume*, not refcounting.** An interaction net is
+  LINEAR (each agent consumed exactly once), so the complete reclamation for the eager net
+  is to free both agents of every active pair (+ resolved wire cells) to per-arity free
+  lists; the demand/park rules reuse the consumer (freed later when it fires). Peak
+  `nodes.len()` then tracks the LIVE working set: **silly-exp(4) 2.2M→55K, fib(8) 7.6M→64K
+  (~119×), merge-sort 17.5M→38K (~460×)** — the actual usability fix. Refcounting (§5/§6)
+  is *unnecessary* in eager M1: the parked-δⁿ leak it targets needs the *lazy* schedule (a
+  δⁿ whose value is never demanded), but eager's forcing `A` always fires, so there is no
+  unreachable garbage. **New requirement surfaced:** terms must be LINEAR — a node
+  referenced twice is an ill-formed net; *sharing goes through δ, not host handle reuse*.
+  `loadTernary` + the fold provide this; the optimizer must insert δ to share. **Still
+  TODO (M2):** refcounting for the lazy leak + the demand schedule that makes δⁿ pay on
+  more programs (the eager-safe bit).
 - **M2 — parallelize: native + napi-rs + rayon.** Redex queue → concurrent work bag; slots
   → atomic; the exchange linker; crossbeam-epoch reclamation. **Gate:** same differential
   green on the N-API Session (now a race detector) + a `bench/` thread-sweep showing
