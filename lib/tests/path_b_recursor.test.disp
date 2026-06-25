@@ -39,3 +39,29 @@ test list_length (children PN (ps (ps pz))) = 1   // succ has one
 let bt_size = fix ({self, v} -> succ (list_foldl add zero (list_map self (children BT v))))
 test bt_size (lf 5)               = 1
 test bt_size bt                   = 5             // 3 leaves + 2 internal nodes
+
+// ── rec_value is TYPED: it INHABITS the standard dependent-recursor type. Here PN's recursor with the
+//    hand-written Nat-style type; the annotated `:=` is VERIFIED at load (= the proof rec_value is
+//    type-correct: on a neutral x it lands `P x` via elim). `derive_case_telescope` builds this type
+//    FROM the cells (next). ──
+PN_rec : {P : PN -> Type} -> P pz -> ({n : PN} -> P n -> P (ps n)) -> {x : PN} -> P x :=
+  {P, base, step, x} -> rec_value PN P { zero := base; succ := ({pred, ih} -> step pred ih) } x
+test PN_rec ({_} -> Nat) zero ({n, ih} -> succ ih) (ps (ps pz)) = 2
+
+// ── and the TYPE itself is DERIVED from the cells by `derive_case_telescope`. For PN with motive
+//    (_->Nat) it computes Record [(zero, Nat), (succ, PN -> Nat -> Nat)] — args Π-bound, IH per rec
+//    position, conclusion at the reconstructed constructor. ──
+test typecheck (derive_case_telescope PN ({_} -> Nat)) { zero := zero; succ := ({n, ih} -> succ ih) } = Ok TT
+test param_apply (derive_case_telescope PN ({_} -> Nat)) { zero := TT; succ := ({n, ih} -> succ ih) }   = Ok FF  // zero must be a Nat
+test param_apply (derive_case_telescope PN ({_} -> Nat)) { zero := zero; succ := ({n, ih} -> TT) }       = Ok FF  // succ must return a Nat
+// rec_value PN is now FULLY typed with the GENERATED cases telescope — no hand-written recursor type:
+PN_rec2 : {P : PN -> Type} -> derive_case_telescope PN P -> {x : PN} -> P x := rec_value PN
+test PN_rec2 ({_} -> Nat) { zero := zero; succ := ({n, ih} -> succ ih) } (ps (ps pz)) = 2
+
+// multi-rec-arg + a data arg: BT's node case-type is `Π l:BT. Π r:BT. P l -> P r -> P (node l r)`
+// (two IHs), leaf's is `Π n:Nat. P (leaf n)`. So for motive (_->Nat) the derived telescope is
+// Record [(leaf, Nat -> Nat), (node, BT -> BT -> Nat -> Nat -> Nat)].
+test typecheck (derive_case_telescope BT ({_} -> Nat)) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> add ihl ihr) } = Ok TT
+test param_apply (derive_case_telescope BT ({_} -> Nat)) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> TT) }       = Ok FF
+BT_rec : {P : BT -> Type} -> derive_case_telescope BT P -> {x : BT} -> P x := rec_value BT
+test BT_rec ({_} -> Nat) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> add ihl ihr) } bt = 6

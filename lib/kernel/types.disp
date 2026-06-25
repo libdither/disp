@@ -541,6 +541,32 @@ Record : Tree -> Type := {fields} -> wait (make_recognizer
   {meta, v} -> at t TT (fields_to_tele meta.recognizer_params) v t t
 ) (make_meta fields ({params, self, frame} -> at t FF (fields_to_tele params) self frame t))
 
+// derive_case_telescope T P: the RECURSOR'S case-types, DERIVED from the cells (POSITIVE §4) — so
+// `rec_value`'s type is `{P} -> derive_case_telescope T P -> {x:T} -> P x`, GENERATED not hand-written.
+// For each constructor `c` it builds `Π args. (P aⱼ →)* P (c args)` — Π-bind each arg (a rec arg has
+// type T), insert one IH premise `P aⱼ` per recursive position, and conclude the motive at the
+// RECONSTRUCTED constructor value `c args = inj tag (build_payload args)`. (Nested `RecUnder F` args
+// would need the F-lifted IH `All P` — deferred with fmap; Rec/Id covered.)
+let build_payload = fix ({self, args} ->                          // [a1..ak] -> the right-nested payload
+  if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
+let cell_argty = {cell, T} -> if (is_rec_cell cell) then T else ((type_meta cell).ty)  // a rec arg has type T
+let wrap_ihs = fix ({self, cells, args, P, concl} ->             // one `P aⱼ →` per rec cell, around concl
+  if (is_fork cells) then {
+    let rest = self ((pair_snd cells) t) (pair_snd args) P concl
+    if (is_rec_cell (pair_fst cells)) then (Arrow (P (pair_fst args)) rest) else rest
+  } else concl)
+let case_type_go = fix ({self, cells, orig, tag, T, P, args} -> // Π over args (collecting), then IHs, then P(c args)
+  if (is_fork cells)
+    then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (cat args (cons a nil))))
+    else (wrap_ihs orig args P (P (inj tag (build_payload args)))))
+let dct_go = fix ({self, variants, T, P} ->
+  if (is_fork variants) then {
+    let var = pair_fst variants
+    let cells = pos_tele (pair_snd var)
+    cons (pair (pair_fst var) (case_type_go cells cells (pair_fst var) T P nil)) (self (pair_snd variants) T P)
+  } else nil)
+derive_case_telescope := {T, P} -> Record (dct_go (type_meta T).recognizer_params T P)
+
 // Coproduct_of / ctors: build a coproduct from a variant RECORD
 // `{ Tag := payloadType, … }` instead of the positional `Coproduct [pair "Tag"
 // T, …]`. `Coproduct_of` is the TYPE; `ctors` derives that type's constructor
