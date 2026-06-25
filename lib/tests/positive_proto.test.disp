@@ -17,9 +17,9 @@ test typecheck ByPos (pair TT TT) = Ok FF                            // fst not 
 
 // ── a recursive, multi-arg datatype as a ONE-LINE spec — NO recognizer body:
 //      NatList = nil | cons (head : Nat) (tail : NatList)
-// REC marks the recursive position; the generic Coproduct threads `self` and walks each
-// constructor's arg telescope. Raw compact values (inj-tagged), zero boxing.
-let NatList = Coproduct [pair "nil" [], pair "cons" [Nat, REC]]
+// `Coproduct` is a PLAIN sum; recursion is tied by `Mu` (the fixpoint binder), so the recursive
+// position is just the ordinary cell type `self` — no marker, no substitution. Raw inj values.
+let NatList = Mu ({self} -> Coproduct [pair "nil" [], pair "cons" [Nat, self]])
 let nl_nil = inj "nil" t
 let nl_cons = {h, tl} -> inj "cons" (pair h tl)
 
@@ -31,10 +31,12 @@ test typecheck NatList (nl_cons TT nl_nil)                 = Ok FF   // head not
 test typecheck NatList (nl_cons 2 (nl_cons TT nl_nil))     = Ok FF   // nested head not a Nat
 test typecheck NatList (nl_cons 2 TT)                      = Ok FF   // tail not a NatList
 test typecheck NatList (inj "bogus" t)                     = Ok FF   // unknown tag
+test typecheck Type NatList                               = Ok TT   // Mu self-verifies as a real Type
 
-// ── a 3-ARG recursive constructor exercises pos_tele's right-nested accessor decode (inj3):
+// ── a 3-ARG recursive constructor exercises pos_tele's right-nested accessor decode (inj3),
+//    with TWO recursive positions (self both sides):
 //      BinTree = leaf | node (left : BinTree) (val : Nat) (right : BinTree)
-let BinTree = Coproduct [pair "leaf" [], pair "node" [REC, Nat, REC]]
+let BinTree = Mu ({self} -> Coproduct [pair "leaf" [], pair "node" [self, Nat, self]])
 let bt_leaf = inj "leaf" t
 let bt_node = {l, x, r} -> inj "node" (pair l (pair x r))            // inj3 layout
 test typecheck BinTree bt_leaf                                              = Ok TT

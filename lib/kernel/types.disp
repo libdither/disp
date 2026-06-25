@@ -353,25 +353,31 @@ let pos_tele_go = fix ({self, types, depth} ->
     t (pos_cell acc (pair_fst types)) ({_} -> self (pair_snd types) (succ depth))
   } else t)
 pos_tele := {types} -> pos_tele_go types zero
-// REC marks "the type being defined" in a constructor's arg list. The recognizer threads `self`
-// (make_rec_recognizer) and fill_rec substitutes it before the walk, so a constructor may recurse.
-REC := "@REC"
-let fill_rec = fix ({self, sf, types} ->
-  if (is_fork types)
-    then (cons (if (tree_eq (pair_fst types) REC) then sf else (pair_fst types)) (self sf (pair_snd types)))
-    else nil)
 
 // Coproduct [(tag, [arg-types])]: v = inj tag (a0,a1,…) inhabits iff tag is a variant and its
-// args inhabit that variant's arg telescope. THE positive former — multi-arg AND recursive (an
-// arg list may contain REC). Recognition is `at` over the per-variant positional telescope: the
-// SAME walker as Pi/Sigma/Record (POSITIVE_TYPES §1–§3). The respond stays `inductive_respond`
-// (a coproduct is a hybrid — telescope recognize-face, positive case-analysis elim).
-Coproduct : Tree -> Type := {variants} -> wait (make_rec_recognizer
-  {self, meta, v} -> (match (lookup_arm meta.recognizer_params (pair_fst v)) {
-    Ok argspec => (at TT (pos_tele (fill_rec self argspec)) (pair_snd v) t t) // args inhabit the arg telescope
+// args inhabit that variant's arg telescope. THE positive former — a PLAIN n-ary sum, recognized
+// by `at` over the per-variant positional telescope: the SAME walker as Pi/Sigma/Record
+// (POSITIVE_TYPES §1–§3). Recursion is NOT a Coproduct concern — it is tied OUTSIDE, by `Mu`
+// (below), so a recursive arg type is just `self`, an ordinary cell type. The respond stays
+// `inductive_respond` (a coproduct is a hybrid — telescope recognize-face, positive elim).
+Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
+  {meta, v} -> (match (lookup_arm meta.recognizer_params (pair_fst v)) {
+    Ok argspec => (at TT (pos_tele argspec) (pair_snd v) t t) // args inhabit the arg telescope
     Err _ => (Ok FF) // unknown tag
   })
 ) (make_meta variants inductive_respond)
+
+// Mu F: the least fixpoint — recursion as a binder, not a magic marker. `Mu F` recognizes v by
+// UNFOLDING one level: `(F self) v` with self = Mu F (make_rec_recognizer ties the knot; a neutral
+// v short-circuits via the H-rule). So a recursive datatype is `Mu (λself. Coproduct […self…])` and
+// the recursive position is an ORDINARY cell whose type is `self` — no REC sentinel, no fill_rec
+// substitution, and `self` is a real λ-binder (composes: nested/mutual recursion, codata, …).
+//   NatList A = Mu (λself. Coproduct [pair "nil" [], pair "cons" [A, self]])
+// Unannotated (like `mk`): its recognizer APPLIES the param `F`, so a `(Type->Type)->Type` typing
+// mints an F-hyp the construction would inspect. The recognize/meta faces still self-check via `at`.
+Mu := {F} -> wait (make_rec_recognizer
+  {self, meta, v} -> ((F self) v)
+) (make_meta F inductive_respond)
 
 // Record [(Vi, Ti)]: the NON-DEPENDENT record — a constant-tail (K-stem)
 // telescope, sharing Telescope's folds. The flat field list lifts LAZILY (at
