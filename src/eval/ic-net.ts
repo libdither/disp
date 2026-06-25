@@ -31,6 +31,7 @@ interface IcNetExports {
   tc_equal(a: number, b: number, budget: number): number      // 0=false 1=true 2=exhausted
   tc_interactions(): bigint
   tc_nodes(): bigint                                          // live node-cell count
+  tc_dnp(): bigint                                            // δⁿ⊗P firings (shared suspensions)
 }
 
 const DEFAULT_BUDGET = 5_000_000_000
@@ -98,7 +99,7 @@ class IcNetSession implements Session<number> {
   // `nodes` is reported too — a materialized net allocates agents, proving it is not a
   // recompiled tree reducer (an M0-gate signal; see the design doc).
   stats(): EvalStats {
-    return { steps: Number(this.#x.tc_interactions()), nodes: Number(this.#x.tc_nodes()) }
+    return { steps: Number(this.#x.tc_interactions()), nodes: Number(this.#x.tc_nodes()), dnp: Number(this.#x.tc_dnp()) }
   }
 
   dispose(): void { this.#x = undefined as unknown as IcNetExports }

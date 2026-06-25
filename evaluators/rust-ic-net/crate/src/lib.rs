@@ -1,11 +1,18 @@
 //! rust-ic-net — a MATERIALIZED interaction-net evaluator for disp tree calculus.
 //!
-//! **M0 (sequential).** Unlike `rust-eager` (where the net collapses to a hash-consed
+//! **M0 + M1 (sequential).** Unlike `rust-eager` (where the net collapses to a hash-consed
 //! tree reducer — consumers are control flow, δˢ is interning), here the agents and
 //! ports are REAL arena nodes and active pairs sit in a schedulable redex bag. This is
-//! the substrate M2 parallelizes; M0 validates the rules + scheduler single-threaded,
+//! the substrate M2 parallelizes; M0/M1 validate the rules + scheduler single-threaded,
 //! gated differentially against `rust-eager` (strong confluence ⇒ identical NFs).
 //! Design: research/interaction-combinator/RUST_IC_NET_DESIGN.md; calculus: tc-net.typ.
+//! - **M0:** the full rule kernel with δˢ (structural copy). Correct, but re-reduces
+//!   shared subterms (Prop 5), so sharing-heavy programs allocate exponentially.
+//! - **M1:** the S-rule spawns δⁿ (demand-before-copy) — a duplicated SUSPENSION's work
+//!   runs at most once (Theorem 6; validated by `dn_shares_what_ds_redoes`). δⁿ shares
+//!   re-*reduction*, NOT structure (identical constructors are a hash-consing matter, not
+//!   δⁿ's — so it's a no-op where the duplicated value is already a constructor). Wire-RC
+//!   + atomics stay M2; M1 still grows-until-dispose, so it cuts *work*, not peak arena.
 //!
 //! Representation (option (d), IVM/Vine-style, 32-bit ports for M0 so a handle = a port):
 //! - A `Port` is a `u32`: low 4 bits tag, high 28 bits value (node base index, or var
@@ -33,10 +40,11 @@ const P: u32 = 4; // suspended application (2 aux: f, a)
 const A: u32 = 5; // apply (2 aux: arg, res)
 const T1: u32 = 6; // first-level dispatch (3 aux: b, c, res)
 const T2: u32 = 7; // second-level dispatch (4 aux: w, x, b, res)
-const DS: u32 = 8; // structural duplicator δˢ (2 aux: l, r)
+const DS: u32 = 8; // structural duplicator δˢ (2 aux: l, r) — copies syntax (Prop 5)
 const EPS: u32 = 9; // eraser ε (nullary consumer)
 const N: u32 = 10; // recursive normalizer (1 aux: res)
 const VAR: u32 = 11; // a substitution-cell wire end (value = vars index)
+const DN: u32 = 12; // need duplicator δⁿ (2 aux: l, r) — demand-before-copy (Thm 6)
 
 #[inline]
 fn pack(tag: u32, val: u32) -> u32 {
@@ -72,6 +80,10 @@ struct Net {
     redexes: Vec<(u32, u32)>,
     /// Reduction counter = interactions fired (the budget unit; reported via stats).
     interactions: u64,
+    /// δⁿ ⊗ P firings — how often a duplicated SUSPENSION was shared (vs reduced-then-copied).
+    /// Zero means the eval order reduced every duplicated value before the S-rule saw it,
+    /// so δⁿ degenerates to δˢ (the win needs demand-driven scheduling — see the M1 note).
+    dnp: u64,
 }
 
 impl Net {
@@ -81,6 +93,7 @@ impl Net {
             vars: Vec::with_capacity(1 << 16),
             redexes: Vec::new(),
             interactions: 0,
+            dnp: 0,
         }
     }
 
@@ -235,14 +248,17 @@ impl Net {
                         self.link(pack(EPS, 0), carg);
                     }
                     S => {
-                        // S rule: △(△x) b c → (x c)(b c) ; the sole δ
+                        // S rule: △(△x) b c → (x c)(b c). The SOLE δ site — it spawns δⁿ
+                        // (need-sharing) so the duplicated argument `c` is reduced at most
+                        // once across both uses (Theorem 6). δˢ is reserved for an explicit
+                        // reflective syntax-copy (no such site yet).
                         let x = self.nodes[pb as usize];
                         let c1 = self.new_var();
                         let c2 = self.new_var();
                         let u = self.new_var();
                         let w = self.new_var();
                         let d = self.alloc(&[pack(VAR, c1), pack(VAR, c2)]);
-                        self.link(pack(DS, d), carg);
+                        self.link(pack(DN, d), carg);
                         let a1 = self.alloc(&[pack(VAR, c1), pack(VAR, u)]);
                         self.link(pack(A, a1), x);
                         let a2 = self.alloc(&[pack(VAR, c2), pack(VAR, w)]);
@@ -304,10 +320,16 @@ impl Net {
                     _ => {}
                 }
             }
-            // ── δˢ (structural copy; constructor identity preserved) ───────────
-            DS => {
+            // ── δ (duplicate). δˢ and δⁿ share the constructor rules — copy one
+            //    WHNF constructor, children inherit the SPECIES (`sp`), so the copy
+            //    wave propagates. They differ ONLY on `P`: δˢ copies the suspension as
+            //    syntax (redoes its work per copy, tc-net.typ Prop 5); δⁿ DEMANDS it
+            //    (an `A` forces `f a` once) and PARKS itself on the result wire, so the
+            //    shared computation runs at most once (Theorem 6, demand-before-copy).
+            DS | DN => {
                 let dl = self.nodes[cb as usize];
                 let dr = self.nodes[cb as usize + 1];
+                let sp = ct; // children inherit this duplicator's species
                 match pt {
                     L => {
                         self.link(dl, pack(L, 0));
@@ -318,7 +340,7 @@ impl Net {
                         let a = self.new_var();
                         let b = self.new_var();
                         let d = self.alloc(&[pack(VAR, a), pack(VAR, b)]);
-                        self.link(pack(DS, d), x);
+                        self.link(pack(sp, d), x);
                         let s1 = self.alloc(&[pack(VAR, a)]);
                         let s2 = self.alloc(&[pack(VAR, b)]);
                         self.link(dl, pack(S, s1));
@@ -330,9 +352,9 @@ impl Net {
                         let (ll, lr, rl, rr) =
                             (self.new_var(), self.new_var(), self.new_var(), self.new_var());
                         let da = self.alloc(&[pack(VAR, ll), pack(VAR, lr)]);
-                        self.link(pack(DS, da), l);
+                        self.link(pack(sp, da), l);
                         let db = self.alloc(&[pack(VAR, rl), pack(VAR, rr)]);
-                        self.link(pack(DS, db), r);
+                        self.link(pack(sp, db), r);
                         let f1 = self.alloc(&[pack(VAR, ll), pack(VAR, rl)]);
                         let f2 = self.alloc(&[pack(VAR, lr), pack(VAR, rr)]);
                         self.link(dl, pack(F, f1));
@@ -341,16 +363,29 @@ impl Net {
                     P => {
                         let pf = self.nodes[pb as usize];
                         let pa = self.nodes[pb as usize + 1];
-                        let (fl, fr, al, ar) =
-                            (self.new_var(), self.new_var(), self.new_var(), self.new_var());
-                        let df = self.alloc(&[pack(VAR, fl), pack(VAR, fr)]);
-                        self.link(pack(DS, df), pf);
-                        let da = self.alloc(&[pack(VAR, al), pack(VAR, ar)]);
-                        self.link(pack(DS, da), pa);
-                        let p1 = self.alloc(&[pack(VAR, fl), pack(VAR, al)]);
-                        let p2 = self.alloc(&[pack(VAR, fr), pack(VAR, ar)]);
-                        self.link(dl, pack(P, p1));
-                        self.link(dr, pack(P, p2));
+                        if sp == DN {
+                            // δⁿ: demand-before-copy — force `f a` once (via an A), then
+                            // park this δⁿ on the result wire (its l/r preserved). When a
+                            // constructor arrives the δⁿ ⊗ ctor rule copies ONE level,
+                            // children re-parked behind fresh δⁿ. Shared work runs once.
+                            self.dnp += 1;
+                            let t = self.new_var();
+                            let a1 = self.alloc(&[pa, pack(VAR, t)]);
+                            self.link(pack(A, a1), pf);
+                            self.link(pack(VAR, t), c);
+                        } else {
+                            // δˢ: structural copy of the unevaluated suspension
+                            let (fl, fr, al, ar) =
+                                (self.new_var(), self.new_var(), self.new_var(), self.new_var());
+                            let df = self.alloc(&[pack(VAR, fl), pack(VAR, fr)]);
+                            self.link(pack(sp, df), pf);
+                            let da = self.alloc(&[pack(VAR, al), pack(VAR, ar)]);
+                            self.link(pack(sp, da), pa);
+                            let p1 = self.alloc(&[pack(VAR, fl), pack(VAR, al)]);
+                            let p2 = self.alloc(&[pack(VAR, fr), pack(VAR, ar)]);
+                            self.link(dl, pack(P, p1));
+                            self.link(dr, pack(P, p2));
+                        }
                     }
                     _ => {}
                 }
@@ -614,6 +649,11 @@ pub extern "C" fn tc_interactions() -> u64 {
 pub extern "C" fn tc_nodes() -> u64 {
     with(|n| n.nodes.len() as u64)
 }
+/// δⁿ ⊗ P firings = how many duplicated suspensions were shared (vs reduced-then-copied).
+#[no_mangle]
+pub extern "C" fn tc_dnp() -> u64 {
+    with(|n| n.dnp)
+}
 
 #[cfg(test)]
 mod tests {
@@ -680,6 +720,72 @@ mod tests {
         let mut out = Vec::new();
         n.emit(nf, &mut out);
         assert_eq!(&out, s);
+    }
+
+    // Exercises the S-rule (T1 ⊗ S → δⁿ): △(△a) b c → (a c)(b c).
+    //   operator = Fork(Stem(L), L) = △(△△)△ ; arg c = Stem(L) = △△
+    //   → (L·c)(L·c) = Stem(Stem(L)) applied to itself = Fork(Stem(L), Stem(Stem(L)))
+    //   ternary "2" + "10" + "110" = "210110".
+    #[test]
+    fn s_rule_dup() {
+        let mut n = Net::new();
+        let op = {
+            let sl = n.stem(pack(L, 0));
+            n.fork(sl, pack(L, 0))
+        };
+        let c = n.stem(pack(L, 0));
+        let app = n.susp(op, c);
+        assert_eq!(nf_string(&mut n, app), "210110");
+    }
+
+    // δⁿ ⊗ P (parking): duplicate a SUSPENSION. △(△L) L (not false) → (L c)(L c) where
+    // c = `not false` is an unreduced P. δⁿ must force c ONCE (dnp ≥ 1) and share it;
+    // c → true = S(L), so (L·true)(L·true) = Fork(S(L), S(S(L))) = "210110".
+    #[test]
+    fn dn_parks_on_suspension() {
+        let mut n = Net::new();
+        let not = build_not(&mut n);
+        let c = n.susp(not, pack(L, 0)); // (not false) — a suspension reducing to true
+        let op = {
+            let sl = n.stem(pack(L, 0));
+            n.fork(sl, pack(L, 0))
+        }; // Fork(Stem(L), L) = △(△L)·
+        let app = n.susp(op, c);
+        assert_eq!(nf_string(&mut n, app), "210110");
+        assert!(n.dnp >= 1, "δⁿ⊗P should fire when a suspension is duplicated");
+    }
+
+    // The Theorem-6 work-sharing win, directly: duplicate one EXPENSIVE suspension and
+    // normalize both copies. δⁿ forces the shared chain once; δˢ copies it as syntax and
+    // forces both copies, doing ~2× the reduction. (This is the win the lambda benchmarks
+    // don't show — they duplicate already-reduced constructors, a hash-consing matter.)
+    fn dup_cost(species: u32, k: usize) -> u64 {
+        let mut n = Net::new();
+        let not = build_not(&mut n);
+        let mut e = pack(L, 0); // false
+        for _ in 0..k {
+            e = n.susp(not, e); // not^k false — a chain of suspensions (k reductions to NF)
+        }
+        let (lv, rv) = (n.new_var(), n.new_var());
+        let d = n.alloc(&[pack(VAR, lv), pack(VAR, rv)]);
+        n.link(pack(species, d), e); // δ duplicates the suspension
+        for v in [lv, rv] {
+            let res = n.new_var();
+            let nn = n.alloc(&[pack(VAR, res)]);
+            n.link(pack(N, nn), pack(VAR, v)); // normalize each copy to full NF
+        }
+        let mut b = 1_000_000_000i64;
+        n.drain(&mut b);
+        n.interactions
+    }
+
+    #[test]
+    fn dn_shares_what_ds_redoes() {
+        let dn = dup_cost(DN, 12);
+        let ds = dup_cost(DS, 12);
+        // δⁿ shares the shared chain's reduction; δˢ re-reduces it per copy (Prop 5).
+        // (Measured k=12: δⁿ=111 vs δˢ=327 interactions, ~2.95×.)
+        assert!(dn < ds, "δⁿ ({dn}) should do strictly less work than δˢ ({ds})");
     }
 
     #[test]
