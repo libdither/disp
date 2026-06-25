@@ -1,8 +1,8 @@
 [package]
-name = "tc-net"
+name = "rust-eager"
 version = "0.0.0"
 edition = "2021"
-description = "Rooted TC-Net: a sequential interaction-net evaluator for disp tree calculus (M0 scaffold)"
+description = "rust-eager: a sequential hash-consed eager tree-calculus reducer for disp (Rust→WASM Session backend)"
 license = "MIT"
 
 [lib]

@@ -21,7 +21,7 @@
 //! wholesale (grow-until-dispose absorbs the per-session laziness leak —
 //! tc-net.typ §Costs of δⁿ). Budget exhaustion returns `u32::MAX`, never a trap
 //! (`panic = "abort"`).
-// The Session wrapper (`src/eval/tcnet.ts`) wires ONLY `tc_apply` (eager), so the
+// The Session wrapper (`src/eval/rust-eager.ts`) wires ONLY `tc_apply` (eager), so the
 // M1 lazy reducer (`tc_apply_lazy` / `force` / `step_lazy` / `dispatch_lazy` / `nf`)
 // is off the production path — reachable from the forcing observations and the
 // reduction differential (`tc_apply_lazy`), but not eager `tc_apply`, so parts read

@@ -16,7 +16,7 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
   // One fresh session per file: isolates the apply memo / stats (replacing the
   // old clearApplyCache/reset sprinkles). Callers may pass their own (any backend,
   // e.g. --evaluator) to read its stats afterward. The default tracks the registry
-  // (tc-net when built, else eager) so the test harness gets tc-net's OOM headroom.
+  // (rust-eager when built, else eager) so the test harness gets rust-eager's OOM headroom.
   const session = options.session ?? (getBackend(defaultBackendName).createSession() as unknown as Session<Tree>)
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")

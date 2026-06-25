@@ -1,12 +1,12 @@
 // Backend registry: name -> EvalBackend, for `--evaluator=<name>` resolution
 // (EVALUATOR_PLAN §5). The eager reference backend is always registered; other
-// backends (the Phase-3 naive conformance backend, a future Rust/WASM TC-Net
+// backends (the Phase-3 naive conformance backend, a future Rust/WASM net
 // runtime) register themselves here.
 
 import type { EvalBackend } from "./types.js"
 import { eagerBackend } from "./eager.js"
 import { naiveBackend } from "./naive.js"
-import { tcnetBackend, tcnetAvailable } from "./tcnet.js"
+import { rustEagerBackend, rustEagerAvailable } from "./rust-eager.js"
 
 // Handles are opaque to the engine, so backends are stored at `unknown` handle
 // type; each backend casts internally (the eager/naive backends' H = Tree).
@@ -16,15 +16,15 @@ const backends = new Map<string, EvalBackend>([
 ])
 
 // Foreign in-process backends register only if their build artifact exists, so
-// the everyday loop needs no foreign toolchain (EVALUATOR_LAYOUT.md). tc-net is
-// a Rust→WASM Session backend; absent until evaluators/tc-net/build.sh runs.
-if (tcnetAvailable()) backends.set(tcnetBackend.name, tcnetBackend as unknown as EvalBackend)
+// the everyday loop needs no foreign toolchain (EVALUATOR_LAYOUT.md). rust-eager is
+// a Rust→WASM Session backend; absent until evaluators/rust-eager/build.sh runs.
+if (rustEagerAvailable()) backends.set(rustEagerBackend.name, rustEagerBackend as unknown as EvalBackend)
 
-// Default to tc-net when its WASM artifact is built: the Rust reducer uses linear
+// Default to rust-eager when its WASM artifact is built: the Rust reducer uses linear
 // memory (not the V8 heap), so the full .disp suite runs without the multi-GB heap
-// the eager backend needs (and ~2× faster). Falls back to eager when tc-net is
+// the eager backend needs (and ~2× faster). Falls back to eager when rust-eager is
 // absent, so a fresh checkout with no Rust toolchain still works.
-export const defaultBackendName = tcnetAvailable() ? "tcnet" : "eager"
+export const defaultBackendName = rustEagerAvailable() ? "rust-eager" : "eager"
 
 export function registerBackend(b: EvalBackend): void {
   backends.set(b.name, b)

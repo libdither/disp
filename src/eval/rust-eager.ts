@@ -1,9 +1,9 @@
-// Rooted TC-Net Session backend (EVALUATOR_PLAN.md §4.2, Phase 6 / TC_NET_PLAN.md).
+// rust-eager Session backend — the Rust hash-consed eager tree-calculus reducer (EVALUATOR_PLAN.md §4.2, Phase 6 / TC_NET_PLAN.md).
 //
 // **M0 SCAFFOLD.** The seam is complete — WASM instantiation, the u32-arena handle
 // scheme, and every Session method mapped to its C-ABI export — but the engine
 // behind those exports is `todo!()` until TC_NET_PLAN milestones land. The backend
-// registers ONLY when evaluators/tc-net/build.sh has produced the artifact (like
+// registers ONLY when evaluators/rust-eager/build.sh has produced the artifact (like
 // the lambada peer), so `npm test` and the default loop never need a Rust toolchain.
 //
 // Handle = u32 index into the WASM instance's arena (opaque to the engine).
@@ -17,13 +17,13 @@ import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classification } from "./types.js"
 
-const ARTIFACT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluators", "tc-net", "artifacts", "tcnet.wasm")
+const ARTIFACT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "evaluators", "rust-eager", "artifacts", "rust_eager.wasm")
 
-export function tcnetArtifactPath(): string { return ARTIFACT }
-export function tcnetAvailable(): boolean { return existsSync(ARTIFACT) }
+export function rustEagerArtifactPath(): string { return ARTIFACT }
+export function rustEagerAvailable(): boolean { return existsSync(ARTIFACT) }
 
-// The C-ABI exports tc_net.wasm provides (see evaluators/tc-net/crate/src/lib.rs).
-interface TcNetExports {
+// The C-ABI exports rust_eager.wasm provides (see evaluators/rust-eager/crate/src/lib.rs).
+interface RustEagerExports {
   memory: WebAssembly.Memory
   tc_leaf(): number
   tc_stem(child: number): number
@@ -51,23 +51,23 @@ const EXHAUSTED = -1 // tc_* return u32::MAX on budget exhaustion; WASM i32→JS
 const U32_MAX = 0xffff_ffff
 const clampBudget = (n: number): number => (n > U32_MAX ? U32_MAX : n)
 // Floor for the per-call interaction budget (see #bud); ~u32 ceiling.
-const TCNET_MIN_BUDGET = 4_000_000_000
+const RUST_EAGER_MIN_BUDGET = 4_000_000_000
 
-class TcNetSession implements Session<number> {
+class RustEagerSession implements Session<number> {
   readonly canonicalHandles = false
-  #x: TcNetExports
+  #x: RustEagerExports
   #budget: number
 
   constructor(opts?: SessionOpts) {
     const bytes = readFileSync(ARTIFACT)
     const mod = new WebAssembly.Module(bytes)
     const inst = new WebAssembly.Instance(mod, {})
-    this.#x = inst.exports as unknown as TcNetExports
+    this.#x = inst.exports as unknown as RustEagerExports
     this.#budget = opts?.defaultBudget ?? DEFAULT_BUDGET
     // Memory knob: cap the apply memo for smaller-footprint / long-lived sessions
-    // (TCNET_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
+    // (RUST_EAGER_MEMO_LIMIT=<entries>). Off by default — per-file sessions are bounded
     // by dispose() anyway; this is for constrained or long-running deployments.
-    const lim = Number(process.env.TCNET_MEMO_LIMIT ?? 0)
+    const lim = Number(process.env.RUST_EAGER_MEMO_LIMIT ?? 0)
     if (Number.isFinite(lim) && lim > 0) this.#x.tc_set_memo_limit(lim >>> 0)
   }
 
@@ -81,11 +81,11 @@ class TcNetSession implements Session<number> {
 
   // The host passes an eager-tuned per-call budget (compile.ts APPLY_BUDGET=40M
   // steps); budget is a non-portable per-backend divergence bound (decision 9 /
-  // EVALUATOR_PLAN §8), and tcnet's interaction unit differs, so we floor it at a
+  // EVALUATOR_PLAN §8), and rust-eager's interaction unit differs, so we floor it at a
   // generous interaction budget. The total conformance corpus terminates well
   // under this, so it never becomes a tight accept/reject boundary.
   #bud(budget?: Budget): number {
-    return clampBudget(Math.max(budget?.remaining ?? this.#budget, TCNET_MIN_BUDGET))
+    return clampBudget(Math.max(budget?.remaining ?? this.#budget, RUST_EAGER_MIN_BUDGET))
   }
 
   // apply is EAGER: tc_apply fully normalizes apply(f,x) (the elaboration-
@@ -94,7 +94,7 @@ class TcNetSession implements Session<number> {
   // exhaust — the EXHAUSTED check is load-bearing, returning u32::MAX (−1 in JS).
   apply(f: number, x: number, budget?: Budget): number {
     const h = this.#x.tc_apply(f, x, this.#bud(budget))
-    if (h === EXHAUSTED) throw new Error("TC-Net: evaluation budget exhausted")
+    if (h === EXHAUSTED) throw new Error("rust-eager: evaluation budget exhausted")
     return h
   }
 
@@ -120,7 +120,7 @@ class TcNetSession implements Session<number> {
   dumpTernary(h: number, budget?: Budget): string {
     const packed = this.#x.tc_dump_ternary(h, this.#bud(budget))
     const ptr = Number(packed >> 32n)
-    if (ptr === U32_MAX) throw new Error("TC-Net: evaluation budget exhausted (dump)")
+    if (ptr === U32_MAX) throw new Error("rust-eager: evaluation budget exhausted (dump)")
     const len = Number(packed & 0xffffffffn)
     const out = new TextDecoder().decode(new Uint8Array(this.#x.memory.buffer, ptr, len).slice())
     this.#x.tc_free(ptr, len)
@@ -129,7 +129,7 @@ class TcNetSession implements Session<number> {
 
   equal(a: number, b: number, budget?: Budget): boolean {
     const r = this.#x.tc_equal(a, b, this.#bud(budget))
-    if (r > 1) throw new Error("TC-Net: evaluation budget exhausted (equal)")
+    if (r > 1) throw new Error("rust-eager: evaluation budget exhausted (equal)")
     return r === 1
   }
 
@@ -138,7 +138,7 @@ class TcNetSession implements Session<number> {
     if (tag === 0) return { tag: "leaf" }
     if (tag === 1) return { tag: "stem", child: this.#x.tc_child0(h) }
     if (tag === 2) return { tag: "fork", left: this.#x.tc_child0(h), right: this.#x.tc_child1(h) }
-    throw new Error("TC-Net: classify failed (budget exhausted?)")
+    throw new Error("rust-eager: classify failed (budget exhausted?)")
   }
 
   // Interaction count is the backend-declared unit (never compared to eager's
@@ -155,15 +155,15 @@ class TcNetSession implements Session<number> {
 
   // dispose drops the only references to the WASM instance/exports; the JS GC
   // then reclaims the instance and its linear-memory ArrayBuffer wholesale.
-  dispose(): void { this.#x = undefined as unknown as TcNetExports }
+  dispose(): void { this.#x = undefined as unknown as RustEagerExports }
 }
 
-export const tcnetBackend: EvalBackend<number> = {
-  name: "tcnet",
+export const rustEagerBackend: EvalBackend<number> = {
+  name: "rust-eager",
   natives(): ReadonlyMap<string, readonly string[]> { return new Map() },
-  createSession(opts?: SessionOpts): TcNetSession {
-    if (!tcnetAvailable())
-      throw new Error(`tc-net artifact missing: ${ARTIFACT} (run evaluators/tc-net/build.sh)`)
-    return new TcNetSession(opts)
+  createSession(opts?: SessionOpts): RustEagerSession {
+    if (!rustEagerAvailable())
+      throw new Error(`rust-eager artifact missing: ${ARTIFACT} (run evaluators/rust-eager/build.sh)`)
+    return new RustEagerSession(opts)
   },
 }

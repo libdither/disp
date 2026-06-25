@@ -1,12 +1,12 @@
 // Differential conformance: disp's eager reducer (the oracle) vs the Rooted
-// TC-Net Rust→WASM backend (TC_NET_PLAN.md M0/M1) over the shared ternary
-// interchange. TC-Net is an INDEPENDENT implementation of the same 5-rule
+// rust-eager Rust→WASM backend (TC_NET_PLAN.md M0/M1) over the shared ternary
+// interchange. rust-eager is an INDEPENDENT implementation of the same 5-rule
 // calculus on a different substrate (hash-consed lazy interaction-net reducer),
 // so agreement on the real benchmark programs + randomized total terms is the M0
-// conformance gate: "everything eager accepts, TC-Net accepts" (decision 7, one
+// conformance gate: "everything eager accepts, rust-eager accepts" (decision 7, one
 // direction). Mirrors test/eval-lambada.test.ts.
 //
-// Gated on the built artifact (evaluators/tc-net/build.sh); skipped otherwise, so
+// Gated on the built artifact (evaluators/rust-eager/build.sh); skipped otherwise, so
 // the default `npm test` needs no Rust toolchain.
 
 import { describe, it, expect } from "vitest"
@@ -15,17 +15,17 @@ import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { eagerBackend } from "../src/eval/eager.js"
 import { sessionBatchRunner } from "../src/eval/batch.js"
-import { tcnetBackend, tcnetAvailable } from "../src/eval/tcnet.js"
+import { rustEagerBackend, rustEagerAvailable } from "../src/eval/rust-eager.js"
 
 // Eager's default budget is only 10k steps; the benchmark programs need more.
 const dispFold = (terms: string[], steps = 500_000_000): string =>
   sessionBatchRunner("eager", eagerBackend.createSession()).fold(terms, { remaining: steps })
 
-// Fresh TC-Net session per fold; dispose drops the WASM instance + its arena.
-const tcnetFold = (terms: string[], budget = 4_000_000_000): string => {
-  const s = tcnetBackend.createSession()
+// Fresh rust-eager session per fold; dispose drops the WASM instance + its arena.
+const rustEagerFold = (terms: string[], budget = 4_000_000_000): string => {
+  const s = rustEagerBackend.createSession()
   try {
-    return sessionBatchRunner("tcnet", s).fold(terms, { remaining: budget })
+    return sessionBatchRunner("rust-eager", s).fold(terms, { remaining: budget })
   } finally {
     s.dispose()
   }
@@ -59,21 +59,21 @@ const cases: Array<{ name: string; terms: string[]; expected?: string }> = [
   { name: "merge-sort([6..1]) = [1..6]", terms: [programs["merge-sort"], makeNatList(6, 1, -1)], expected: makeNatList(1, 6, 1) },
 ]
 
-describe.skipIf(!tcnetAvailable())("disp-eager ↔ tcnet differential conformance", () => {
-  // The named benchmark programs are total — TC-Net MUST produce the answer (no
+describe.skipIf(!rustEagerAvailable())("disp-eager ↔ rust-eager differential conformance", () => {
+  // The named benchmark programs are total — rust-eager MUST produce the answer (no
   // skip), and it must equal eager's NF (and the independently-derived value).
   for (const c of cases) {
     it(c.name, () => {
       const oracle = dispFold(c.terms)
-      expect(tcnetFold(c.terms), `tcnet disagrees with eager on ${c.name}`).toBe(oracle)
+      expect(rustEagerFold(c.terms), `rust-eager disagrees with eager on ${c.name}`).toBe(oracle)
       if (c.expected !== undefined) expect(oracle).toBe(c.expected)
     })
   }
 
   // Randomized small total terms. A term that diverges/blows up on EITHER backend
-  // (eager budget, tcnet budget) is out of the total-corpus contract and skipped —
+  // (eager budget, rust-eager budget) is out of the total-corpus contract and skipped —
   // only terms total on both are compared (same shape as the lambada differential).
-  it("randomized small folds agree: eager ↔ tcnet", () => {
+  it("randomized small folds agree: eager ↔ rust-eager", () => {
     let seed = 0xC0FFEE
     const rnd = () => {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff
@@ -91,7 +91,7 @@ describe.skipIf(!tcnetAvailable())("disp-eager ↔ tcnet differential conformanc
         continue
       }
       try {
-        t = tcnetFold(terms, 20_000_000)
+        t = rustEagerFold(terms, 20_000_000)
       } catch {
         continue
       }
@@ -103,7 +103,7 @@ describe.skipIf(!tcnetAvailable())("disp-eager ↔ tcnet differential conformanc
 
   // canonicalHandles is false (live suspensions ⇒ id≠id no longer implies ≠).
   it("reports non-canonical handles", () => {
-    const s = tcnetBackend.createSession()
+    const s = rustEagerBackend.createSession()
     try {
       expect(s.canonicalHandles).toBe(false)
     } finally {
