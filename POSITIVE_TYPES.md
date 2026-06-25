@@ -18,12 +18,14 @@ StrictType/`Type` migration and the respond-shape residuals) and [`STRICTTYPE.md
 > […self…])`, so the recursive position is an ordinary cell whose type is `self`. The eliminator is
 > the surface `match`/§2.6 cut. Single-arg sums (`Action`/`CheckerResult`/`Option`/`Result`) are the
 > degenerate `[T]` case — unchanged, no regression. **§5b views landed too** (`Coproduct_viewed
-> view variants`, where `view` maps a shape-encoded tree to inj-tagged form): **`Ord`** (kernel) and
-> **`List`** (std, was a raw predicate → now a real wait-form `Type -> Type`) are migrated onto
-> specs. See `lib/tests/positive_proto.test.disp`. **Deferred:** `Nat`/`Bool` — defined *before* the
-> Coproduct machinery and used as values throughout `types.disp`, so in-place migration is blocked by
-> forward-ref ordering; and their *gated* responds (`coh_nat`/`coh_bool`) are the §8 coherence-gate
-> self-typing = **Track B** (the sealing program; see [`KERNEL_SELF_TYPING.md`](KERNEL_SELF_TYPING.md)).
+> view variants`, where `view` maps a shape-encoded tree to inj-tagged form): **ALL FOUR** shape-encoded
+> inductives — **`Bool`, `Nat`, `Ord`** (kernel) and **`List`** (std, was a raw predicate → now a real
+> wait-form `Type -> Type`) — are migrated onto specs. `Nat`/`Bool` keep their **gated** coherence
+> responds via `Mu_resp` (a fixpoint carrying a custom respond): the gate is in the *respond*,
+> orthogonal to the recognizer, so the §8/Track B residual (Nat's respond not self-typing) is preserved
+> exactly. **No hand-written recognizer bodies remain** — every inductive recognizes through the one
+> `at` walker. See `lib/tests/positive_proto.test.disp`. The only positive-side work left is **Track B**
+> (the coherence-gate self-typing / sealing; see [`KERNEL_SELF_TYPING.md`](KERNEL_SELF_TYPING.md)).
 >
 > **On recursion (§-note answering "is `REC` the best way?").** No — recursion is now `Mu`, the least
 > fixpoint, *not* a magic marker + substitution pass. `Coproduct` is a plain sum (no `self`-threading,
