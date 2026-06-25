@@ -13,17 +13,16 @@
 //!   memoizing each visited `Susp` (`δⁿ` at-most-once). Off the production path; kept
 //!   and validated so M2 inherits a live M1 core.
 //!
-//! Module map: [`hash`] (the FxHash primitive) · [`arena`] (Node + hash-cons + term
-//! algebra) · [`reduce`] (the eager + lazy reducers + `equal`) · [`codec`] (ternary) ·
-//! [`ffi`] (the `tc_*` Session C-ABI). A WASM instance owns exactly one [`arena::Arena`];
-//! `dispose()` drops it wholesale (grow-until-dispose absorbs the per-session laziness
-//! leak — tc-net.typ §Costs of δⁿ).
+//! Module map: [`arena`] (Node + hash-cons table + term algebra) · [`reduce`] (the
+//! eager + lazy reducers + `equal`) · [`codec`] (ternary) · [`ffi`] (the `tc_*` Session
+//! C-ABI). Hashing/maps are `hashbrown` + `rustc-hash`. A WASM instance owns exactly one
+//! [`arena::Arena`]; `dispose()` drops it wholesale (grow-until-dispose absorbs the
+//! per-session laziness leak — tc-net.typ §Costs of δⁿ).
 #![allow(clippy::missing_safety_doc, dead_code)]
 
 mod arena;
 mod codec;
 mod ffi;
-mod hash;
 mod reduce;
 #[cfg(test)]
 mod tests;

@@ -9,6 +9,15 @@ license = "MIT"
 # cdylib ⇒ a freestanding .wasm with C ABI exports the disp Session wrapper calls.
 crate-type = ["cdylib"]
 
+[dependencies]
+# SwissTable, for the hash-cons intern table (HashTable<u32> = id-only storage,
+# compare-through-`nodes`, keeping the half-arena memory win). default-features = false
+# drops ahash (needs runtime entropy wasm32-unknown-unknown lacks).
+hashbrown = { version = "0.15", default-features = false }
+# FxHash: the deterministic, dependency-light hasher for the forced/memo maps + the
+# intern table's node hashing (replaces the hand-rolled FxHasher; same algorithm family).
+rustc-hash = "2"
+
 [profile.release]
 opt-level = 3
 lto = true
