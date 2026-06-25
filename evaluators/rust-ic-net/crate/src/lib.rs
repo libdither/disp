@@ -11,8 +11,15 @@
 //! - **M1:** the S-rule spawns δⁿ (demand-before-copy) — a duplicated SUSPENSION's work
 //!   runs at most once (Theorem 6; validated by `dn_shares_what_ds_redoes`). δⁿ shares
 //!   re-*reduction*, NOT structure (identical constructors are a hash-consing matter, not
-//!   δⁿ's — so it's a no-op where the duplicated value is already a constructor). Wire-RC
-//!   + atomics stay M2; M1 still grows-until-dispose, so it cuts *work*, not peak arena.
+//!   δⁿ's — so it's a no-op where the duplicated value is already a constructor).
+//! - **M1b (GC):** free-on-consume — an interaction consumes its two agents, so their
+//!   cells return to per-arity free lists for reuse (and resolved wire cells too). Peak
+//!   `nodes.len()` then tracks the LIVE working set, not cumulative allocs (measured:
+//!   fib(8) 7.6M→64K nodes, ~119×). This is COMPLETE for the eager net because it is
+//!   LINEAR — every agent is consumed exactly once. **Requirement:** terms must be linear
+//!   (each node referenced once); sharing in a net goes through δ, NOT host handle reuse —
+//!   `loadTernary`/the fold provide this. Refcounting for the lazy parked-δⁿ leak (which
+//!   eager M1 doesn't have — the forcing `A` always fires) + atomics stay M2.
 //!
 //! Representation (option (d), IVM/Vine-style, 32-bit ports for M0 so a handle = a port):
 //! - A `Port` is a `u32`: low 4 bits tag, high 28 bits value (node base index, or var
@@ -66,6 +73,17 @@ fn is_var(p: u32) -> bool {
 fn is_producer(t: u32) -> bool {
     (L..=P).contains(&t)
 }
+/// Number of auxiliary cells an agent of this kind occupies (0 = nullary / no node).
+#[inline]
+fn arity(t: u32) -> usize {
+    match t {
+        S | N => 1,
+        F | P | A | DS | DN => 2,
+        T1 => 3,
+        T2 => 4,
+        _ => 0, // L, EPS, VAR, NUL — nullary, no allocated node
+    }
+}
 
 /// Budget exhaustion sentinel, threaded as a bool out of `drain`.
 struct Net {
@@ -84,6 +102,12 @@ struct Net {
     /// Zero means the eval order reduced every duplicated value before the S-rule saw it,
     /// so δⁿ degenerates to δˢ (the win needs demand-driven scheduling — see the M1 note).
     dnp: u64,
+    /// Free lists of reusable node bases, indexed by arity (1..=4; 0 unused). Linear
+    /// reclamation: an interaction consumes its two agents, so their cells return here for
+    /// reuse — peak `nodes.len()` then tracks the LIVE working set, not cumulative allocs.
+    free: [Vec<u32>; 5],
+    /// Free list of reusable substitution cells (a wire freed when both ends resolve).
+    free_vars: Vec<u32>,
 }
 
 impl Net {
@@ -94,19 +118,38 @@ impl Net {
             redexes: Vec::new(),
             interactions: 0,
             dnp: 0,
+            free: Default::default(),
+            free_vars: Vec::new(),
         }
     }
 
     /// Allocate a node with the given auxiliary ports; returns its base cell index.
+    /// Reuses a freed same-arity node when available (free-on-consume), else bumps.
     #[inline]
     fn alloc(&mut self, aux: &[u32]) -> u32 {
+        let size = aux.len();
+        if let Some(base) = self.free[size].pop() {
+            self.nodes[base as usize..base as usize + size].copy_from_slice(aux);
+            return base;
+        }
         let base = self.nodes.len() as u32;
         self.nodes.extend_from_slice(aux);
         base
     }
-    /// A fresh substitution cell (wire); returns its index.
+    /// Return a consumed node's cells to the free list for reuse (`ar` = its arity).
+    #[inline]
+    fn free_node(&mut self, base: u32, ar: usize) {
+        if ar > 0 {
+            self.free[ar].push(base);
+        }
+    }
+    /// A fresh substitution cell (wire); reuses a freed cell when available.
     #[inline]
     fn new_var(&mut self) -> u32 {
+        if let Some(v) = self.free_vars.pop() {
+            self.vars[v as usize] = NUL;
+            return v;
+        }
         let v = self.vars.len() as u32;
         self.vars.push(NUL);
         v
@@ -154,8 +197,9 @@ impl Net {
                 self.vars[v] = b; // park: b waits for the far end
                 return;
             }
-            // far end already arrived: consume the cell and link the two partners.
+            // far end already arrived: consume the cell (free it) and link the partners.
             self.vars[v] = NUL;
+            self.free_vars.push(v as u32);
             a = prev;
             // loop with (prev, b)
         }
@@ -443,6 +487,15 @@ impl Net {
                 }
             }
             _ => {}
+        }
+        // Linear reclamation (free-on-consume): both agents of the active pair are spent,
+        // so return their cells to the free list for reuse — EXCEPT the demand/park rules
+        // (T1/T2/N/δⁿ ⊗ P) REUSE the consumer (it re-aimed at the result wire), so it must
+        // stay live (it is freed later, when it fires against the forced constructor).
+        let reuse_c = pt == P && (ct == T1 || ct == T2 || ct == N || ct == DN);
+        self.free_node(pb, arity(pt));
+        if !reuse_c {
+            self.free_node(cb, arity(ct));
         }
     }
 
@@ -761,10 +814,10 @@ mod tests {
     // don't show — they duplicate already-reduced constructors, a hash-consing matter.)
     fn dup_cost(species: u32, k: usize) -> u64 {
         let mut n = Net::new();
-        let not = build_not(&mut n);
         let mut e = pack(L, 0); // false
         for _ in 0..k {
-            e = n.susp(not, e); // not^k false — a chain of suspensions (k reductions to NF)
+            let not = build_not(&mut n); // FRESH not per level — a linear chain (a node
+            e = n.susp(not, e); // is consumed once; sharing in a net goes through δ, not reuse)
         }
         let (lv, rv) = (n.new_var(), n.new_var());
         let d = n.alloc(&[pack(VAR, lv), pack(VAR, rv)]);
