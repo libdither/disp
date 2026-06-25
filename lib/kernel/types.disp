@@ -1,32 +1,11 @@
 // Kernel fragment: the library type formers + recursors + the kernel's own structural
 // typedefs. Assembled by kernel/prelude.disp's barrel (sees cut + engine via that scope).
 
-// TODO: investigate whether Bool/Nat/Ord can be defined as Coproducts.
-Bool : Type := wait (make_recognizer
-  {m, v} -> Ok (or (tree_eq v TT) (tree_eq v FF))
-) (make_meta unit_witness (gated_inductive_respond (
-  {T, motive, cases} ->
-    bind ((motive TT) cases.ct) ({okt} -> if okt then ((motive FF) cases.cf) else (Ok FF))
-)))
-
-// Nat recurses via the threaded `self`, so a neutral predecessor in `succ hyp` is
-// recognised by the H-rule, not triaged (§A). The respond's coherence: base : motive
-// zero, step : Π n. motive n -> motive (succ n). Runs raw in a respond, so the outer
-// binder routes into the walker via `param_apply (bind_hyp T)`.
-Nat : Type := wait (make_rec_recognizer
-  {self, m, v} ->
-  triage
-    (Ok TT) // zero
-    ({_} -> Ok FF) // stem -> not a Nat
-    ({l, r} -> if (tree_eq l t) then (self r) else (Ok FF)) // succ r -> recurse via self
-    v
-) (make_meta unit_witness (gated_inductive_respond (
-  {T, motive, cases} -> {
-    let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
-      (motive (succ n)) ((cases.step n) ih))))
-    bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
-  }
-)))
+// RESOLVED (the old TODO "can Bool/Nat/Ord be Coproducts?"): YES. `Bool`, `Nat` (and `Ord`) are
+// shape-encoded inductives, so they are now `Coproduct_viewed` instances, defined LATER (after the
+// machinery they reuse). They keep their GATED responds (the coherence gate is in the RESPOND,
+// orthogonal to the recognizer) via `Mu_resp`. The `: Bool`/`: Nat` annotations throughout
+// forward-reference them via the raw-load layer.
 
 // ── Negative telescopes (the §4c single-walk, WAIT-FORM cells). ONE walker `at` for
 // BOTH recognition (`at TT`) and projection-response (`at FF`). A telescope is
@@ -369,9 +348,12 @@ Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
 //   NatList A = Mu (λself. Coproduct [pair "nil" [], pair "cons" [A, self]])
 // Unannotated (like `mk`): its recognizer APPLIES the param `F`, so a `(Type->Type)->Type` typing
 // mints an F-hyp the construction would inspect. The recognize/meta faces still self-check via `at`.
-Mu := {F} -> wait (make_rec_recognizer
+// Mu_resp lets a fixpoint carry a CUSTOM respond (Nat/Bool keep their gated coherence respond — the
+// gate is in the respond, orthogonal to the recognizer); `Mu` is the inductive_respond default.
+Mu_resp := {respond, F} -> wait (make_rec_recognizer
   {self, meta, v} -> ((F self) v)
-) (make_meta F inductive_respond)
+) (make_meta F respond)
+Mu := Mu_resp inductive_respond
 
 // Coproduct_viewed view variants: a coproduct over a SHAPE-encoded value (POSITIVE_TYPES §5b).
 // `view` maps the raw tree to an inj-tagged form — `Ok (inj tag payload)` if some constructor's
@@ -392,6 +374,33 @@ let view_ord = {v} -> triage
   ({l, r} -> if (is_stem l) then (Ok (inj "omega_plus" (pair (stem_child l) r))) else Err) // fork(stem a, b)
   v
 Ord : Type := Mu ({self} -> Coproduct_viewed view_ord [pair "zero_ord" [], pair "omega_plus" [self, self]])
+
+// Bool (migrated, §5b): TT/FF are shape combinators, so view_bool decodes by identity. Non-recursive
+// (self unused). KEEPS its gated coherence respond (cases.ct : motive TT, cases.cf : motive FF) via
+// Mu_resp — recognizer migrates, respond unchanged.
+let coh_bool = {T, motive, cases} ->
+  bind ((motive TT) cases.ct) ({okt} -> if okt then ((motive FF) cases.cf) else (Ok FF))
+let view_bool = {v} ->
+  if (tree_eq v TT) then (Ok (inj "true" t)) else (if (tree_eq v FF) then (Ok (inj "false" t)) else Err)
+Bool : Type := Mu_resp (gated_inductive_respond coh_bool)
+  ({self} -> Coproduct_viewed view_bool [pair "true" [], pair "false" []])
+
+// Nat (migrated, §5b): zero = leaf, succ r = fork(t, r). view_nat decodes the shape; `succ` carries
+// one `self` (the predecessor); `Mu_resp` ties the knot AND keeps the gated coherence respond
+// (base : motive zero, step : Π n. motive n -> motive (succ n)) — the §8/Track B residual respond,
+// preserved exactly. Recognizes identically to the old triage recognizer.
+let coh_nat = {T, motive, cases} -> {
+  let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
+    (motive (succ n)) ((cases.step n) ih))))
+  bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
+}
+let view_nat = {v} -> triage
+  (Ok (inj "zero" t))                                              // leaf -> zero
+  ({_} -> Err)                                                     // bare stem -> not a Nat
+  ({l, r} -> if (tree_eq l t) then (Ok (inj "succ" r)) else Err)   // fork(t, r) -> succ r
+  v
+Nat : Type := Mu_resp (gated_inductive_respond coh_nat)
+  ({self} -> Coproduct_viewed view_nat [pair "zero" [], pair "succ" [self]])
 
 // Record [(Vi, Ti)]: the NON-DEPENDENT record — a constant-tail (K-stem)
 // telescope, sharing Telescope's folds. The flat field list lifts LAZILY (at
