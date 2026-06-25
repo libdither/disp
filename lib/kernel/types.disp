@@ -227,18 +227,9 @@ Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> wait (make_recogni
 
 zero_ord : Ord := t
 omega_plus : Ord -> Ord -> Ord := {a, b} -> t (t a) b // fork(stem a, b)
-// Ord recurses via `self` into both child ordinals, so neutral children are recognised
-// by the H-rule, not triaged (§A).
-Ord : Type := wait (make_rec_recognizer
-  {self, m, v} ->
-    triage
-      (Ok TT) // zero_ord
-      ({_} -> Ok FF) // stem -> not an ord
-      ({l, r} -> if (is_stem l) // omega_plus a b = fork(stem a, b)
-        then (bind (self (stem_child l)) ({oka} -> if oka then (self r) else (Ok FF)))
-        else (Ok FF))
-      v
-) (make_meta unit_witness inductive_respond)
+// `Ord` (the TYPE) is defined LATER, after the Coproduct machinery it now reuses (POSITIVE_TYPES
+// §5b): it is a shape-encoded recursive sum, so it is `Mu (Coproduct_viewed view_ord …)`. The
+// `: Ord` annotations above forward-reference it via the raw-load layer.
 
 // HBin: hereditarily binary naturals (Tarau, arXiv:1306.1128) — recursively
 // run-length compressed bijective base-2. hb_e = 0; hb_v x xs / hb_w x xs open
@@ -360,11 +351,14 @@ pos_tele := {types} -> pos_tele_go types zero
 // (POSITIVE_TYPES §1–§3). Recursion is NOT a Coproduct concern — it is tied OUTSIDE, by `Mu`
 // (below), so a recursive arg type is just `self`, an ordinary cell type. The respond stays
 // `inductive_respond` (a coproduct is a hybrid — telescope recognize-face, positive elim).
-Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
-  {meta, v} -> (match (lookup_arm meta.recognizer_params (pair_fst v)) {
+// coproduct_at: the shared dispatch — look up the inj-tag's arg list, walk the args by `at`.
+let coproduct_at = {variants, v} ->
+  match (lookup_arm variants (pair_fst v)) {
     Ok argspec => (at TT (pos_tele argspec) (pair_snd v) t t) // args inhabit the arg telescope
     Err _ => (Ok FF) // unknown tag
-  })
+  }
+Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
+  {meta, v} -> (coproduct_at meta.recognizer_params v)
 ) (make_meta variants inductive_respond)
 
 // Mu F: the least fixpoint — recursion as a binder, not a magic marker. `Mu F` recognizes v by
@@ -378,6 +372,26 @@ Coproduct : Tree -> Type := {variants} -> wait (make_recognizer
 Mu := {F} -> wait (make_rec_recognizer
   {self, meta, v} -> ((F self) v)
 ) (make_meta F inductive_respond)
+
+// Coproduct_viewed view variants: a coproduct over a SHAPE-encoded value (POSITIVE_TYPES §5b).
+// `view` maps the raw tree to an inj-tagged form — `Ok (inj tag payload)` if some constructor's
+// shape matches, else `Err` (-> not a member). So types whose tag lives in the TREE SHAPE rather
+// than an `inj` tag (Ord, List, …) reuse the SAME `at` dispatch. Wrap in `Mu` to recurse.
+Coproduct_viewed := {view, variants} -> wait (make_recognizer
+  {meta, v} -> (match (view v) { Ok tg => (coproduct_at meta.recognizer_params tg); Err _ => (Ok FF) })
+) (make_meta variants inductive_respond)
+
+// Ord (migrated, POSITIVE_TYPES §5b): the shape-encoded recursive ordinal sum — zero_ord = leaf,
+// omega_plus a b = fork(stem a, b). `view_ord` decodes the shape to inj-tagged form; the recursive
+// `omega_plus` carries two `self` children; `Mu` ties the knot. Recognizes exactly the same values
+// as the old hand-written triage recognizer, now via the SAME `at` dispatch as everything else.
+// (zero_ord/omega_plus are declared earlier; the type lands here, after the machinery it reuses.)
+let view_ord = {v} -> triage
+  (Ok (inj "zero_ord" t))                                                 // leaf -> zero_ord
+  ({_} -> Err)                                                            // bare stem -> not an ord
+  ({l, r} -> if (is_stem l) then (Ok (inj "omega_plus" (pair (stem_child l) r))) else Err) // fork(stem a, b)
+  v
+Ord : Type := Mu ({self} -> Coproduct_viewed view_ord [pair "zero_ord" [], pair "omega_plus" [self, self]])
 
 // Record [(Vi, Ti)]: the NON-DEPENDENT record — a constant-tail (K-stem)
 // telescope, sharing Telescope's folds. The flat field list lifts LAZILY (at

@@ -3,41 +3,24 @@ open use "../kernel/prelude.disp"
 open use "nat/arith.disp"
 open use "nat/ops.disp"
 
-// Lists parameterised by element type `A`. Tree shape:
+// Lists parameterised by element type `A`. Tree shape (shape-encoded, NOT inj-tagged):
 //   nil           = t                     (LEAF)
 //   cons head xs  = t head xs             (fork(head, xs))
 //
-// The predicate is neutral-permissive (NatList-style) so `List A` can
-// appear under Pi binders. The recursion uses `fix` so the predicate
-// fully checks every element, not just the head.
-//
-// Bracket-abstraction caveat: top-level `name := fix(...)` is safe, but
-// `name := fix(...) arg` or `name := list_map succ` pre-applies the
-// fix-form at compile time and trips cirToTree's eager reduction
-// (CLAUDE.md self-recursion workaround). Partial-applied fix-bindings
-// belong at call sites, not as top-level definitions.
+// `List` is now a PROPER wait-form former (POSITIVE_TYPES §5b), not a hand-written raw
+// predicate: a `view` maps the shape encoding to inj-tagged form, the generic `Coproduct_viewed`
+// dispatches, and `Mu` ties the recursive knot. So `List A : Type` is recognized by the same `at`
+// as every other type — head : A then tail : List A — with neutrals handled by the H-rule (so
+// `List A` still appears under Pi binders). The hand-rolled fix + bracket-abstraction caveats are gone.
+let view_list = {v} -> triage
+  (Ok (inj "nil" t))                         // leaf            -> nil
+  ({_} -> Err)                               // bare stem       -> not a list
+  ({h, tl} -> Ok (inj "cons" (pair h tl)))   // fork(head,tail) -> cons
+  v
+List : Type -> Type := {A} ->
+  Mu ({self} -> Coproduct_viewed view_list [pair "nil" [], pair "cons" [A, self]])
 
-// Recursive structural check. The `fix` is placed *inside* the outer
-// binder over (A, xs) so partial application `List A` doesn't trigger
-// fix-unfolding at compile time. `match` (not `select_lazy`) wraps the
-// recursive branch per CLAUDE.md's self-recursion workaround. Returns a
-// CheckerResult: check the head via A's recognizer, then recurse on the tail.
-// List is a raw type-predicate (not a wait-form former), so its type is `Type -> Tree
-// -> Tree`: given the element type and a candidate tree, return a CheckerResult.
-List : Type -> Tree -> Tree := {A, xs} ->
-  fix ({self, ys} ->
-    select_lazy
-      ({_} -> Ok TT)
-      ({_} ->
-        if (tree_eq ys t) then (Ok TT)
-        else (if (is_concrete_fork ys)
-          then (bind (A (pair_fst ys)) ({hd} ->
-                  if hd then (self (pair_snd ys)) else (Ok FF)))
-          else (Ok FF)))
-      (is_neutral ys))
-    xs
-
-NatList : Tree -> Tree := List Nat
+NatList : Type := List Nat
 
 nil : NatList := t
 
