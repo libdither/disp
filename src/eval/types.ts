@@ -62,6 +62,13 @@ export interface Session<H = unknown> {
   // May return a suspended handle under lazy backends; dump/equal/classify force.
   apply(f: H, x: H, budget?: Budget): H
 
+  // OPTIONAL lazy apply: build the suspended application `P(f,x)` in O(1) WITHOUT
+  // reducing, deferring the work to the next forcing observation (dump/equal/
+  // classify). Lets a caller build up a large computation and force it all at once
+  // at the end — where work-sharing (and, later, parallel reduction) applies. Absent
+  // on eager backends (no suspension); callers fall back to eager `apply`.
+  applyLazy?(f: H, x: H): H
+
   // ── bulk ops (the anti-FFI-chattiness path and the interchange format) ──
   loadTernary(s: string): H
   // Forces full normal form, so it is boundable: under a lazy backend THIS is

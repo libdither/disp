@@ -29,6 +29,7 @@ interface TcNetExports {
   tc_stem(child: number): number
   tc_fork(left: number, right: number): number
   tc_apply(f: number, x: number, budget: number): number      // u32::MAX (-1) ⇒ budget exhausted
+  tc_apply_lazy(f: number, x: number, budget: number): number // lazy: build Susp(f,x), force later
   tc_alloc(len: number): number
   tc_free(ptr: number, len: number): void
   tc_load_ternary(ptr: number, len: number): number
@@ -87,14 +88,22 @@ class TcNetSession implements Session<number> {
     return clampBudget(Math.max(budget?.remaining ?? this.#budget, TCNET_MIN_BUDGET))
   }
 
-  // apply is LAZY: it builds the suspended application P(f,x) in O(1) and never
-  // reduces, so it cannot exhaust (the EXHAUSTED check stays as a defensive guard
-  // against a future eager-mode export). Forcing — and exhaustion — happens in
-  // dumpTernary / classify / equal.
+  // apply is EAGER: tc_apply fully normalizes apply(f,x) (the elaboration-
+  // conformance mode — EVALUATOR_PLAN decision 7; the elaborator is eager-normative,
+  // and the M1 lazy core `tc_apply_lazy` is NOT wired here). So it reduces and CAN
+  // exhaust — the EXHAUSTED check is load-bearing, returning u32::MAX (−1 in JS).
   apply(f: number, x: number, budget?: Budget): number {
     const h = this.#x.tc_apply(f, x, this.#bud(budget))
     if (h === EXHAUSTED) throw new Error("TC-Net: evaluation budget exhausted")
     return h
+  }
+
+  // Lazy apply (M1): build P(f,x) = Susp(f,x) in O(1), reduced on demand by the
+  // next forcing observation (dumpTernary/equal/classify). The work-sharing path —
+  // identical Susps share one forced-WHNF memo cell (δⁿ at-most-once). Used to
+  // defer a big computation (e.g. module verification) to one end-of-run force.
+  applyLazy(f: number, x: number): number {
+    return this.#x.tc_apply_lazy(f, x, 0)
   }
 
   loadTernary(s: string): number {

@@ -44,6 +44,16 @@ const APPLY_BUDGET = 40_000_000
 // whole kernel self-check at compile time.
 const verifiedModules = new Set<string>()
 
+// Per-session module-record cache: memoize resolveUse(abs, raw) → its export record,
+// so a module `use`d by many files (above all the kernel) is elaborated ONCE per
+// session instead of re-traversed each time. Keyed by SESSION because the record
+// holds Tree handles (arena indices) valid only within one session — a WeakMap so an
+// independent per-file session's cache is GC'd with it, while a shared session
+// accumulates the whole suite's modules (bounded, a few dozen). Within a session it
+// is keyed by abs path (raw imports get a distinct key — `use raw` drops annotations
+// and can yield a different tree than `use`).
+const moduleCacheBySession = new WeakMap<Session<Tree>, Map<string, ScopeEntry>>()
+
 // CIR: intermediate representation with explicit S/K/I sentinels.
 type Cir =
   | { tag: "lit"; t: Tree }
@@ -838,6 +848,30 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   const sourceStack = [sourcePath ? pathResolve(sourcePath) : undefined]
   const loadedFiles = new Set<string>() // cycle detection
   let compiledTestIndex = 0
+  // Deferred module verification: instead of forcing each module's `param_apply
+  // typ record` verdict at its `use` site, build it LAZILY (a suspended computation,
+  // via the backend's applyLazy) and force them ALL at once at the end of the parse.
+  // Lazy is acceptance-equivalent here (the verdict is fully forced against `Ok TT`,
+  // so confluence gives the same NF as eager), and the single end-of-parse force is
+  // where work-sharing — and, later, parallel reduction — applies. `scheduled` dedups
+  // a module across its many `use` sites; the global `verifiedModules` dedups across
+  // files. DISP_EAGER_VERIFY=1 forces eager build (an A/B + debug escape hatch).
+  const pendingVerifications: { abs: string; verdict: Tree; okTT: Tree }[] = []
+  const scheduledForVerification = new Set<string>()
+  // Lazy verification is OPT-IN (DISP_LAZY_VERIFY=1), eager by default. It is
+  // acceptance-equivalent (the verdict is fully forced against `Ok TT`, so confluence
+  // gives eager's NF — see project_eager_normative_is_scaffolding), but EMPIRICALLY
+  // the M1 lazy reducer OOMs on kernel verification: it materializes every suspended
+  // sub-application as a node and has no reachability GC, so the fully-demanded walk
+  // allocates far more than eager's in-place reduction + apply-memo. Lazy verification
+  // becomes viable once the lazy path gains GC (the deferred §Costs-of-δⁿ cost) or an
+  // NF-level memo; until then eager is the measured winner. The deferred-batch below
+  // is backend-agnostic and is the seam where a future parallel backend fans out.
+  const lazyVerify = process.env.DISP_LAZY_VERIFY === "1"
+  const vApply = (f: Tree, x: Tree): Tree => {
+    const al = cs.applyLazy
+    return lazyVerify && al ? al.call(cs, f, x) : cs.apply(f, x, B())
+  }
 
   const lookupEntry = (name: string): ScopeEntry | undefined => {
     for (let i = stack.length - 1; i >= 0; i--) {
@@ -850,6 +884,15 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
 
   function resolveUse(path: string, raw = false): ScopeEntry {
     const abs = pathResolve(dirStack[dirStack.length - 1], path)
+    // Module cache (per session): return the already-elaborated record if present.
+    // Checked BEFORE cycle detection on purpose — a cached module is fully loaded, so
+    // returning it can't mask a real cycle (a module still mid-load is not yet cached,
+    // so it still trips the loadedFiles guard below).
+    let modCache = moduleCacheBySession.get(cs)
+    if (!modCache) { modCache = new Map(); moduleCacheBySession.set(cs, modCache) }
+    const cacheKey = raw ? `${abs}\0raw` : abs
+    const hit = modCache.get(cacheKey)
+    if (hit) return hit
     if (loadedFiles.has(abs)) throw new Error(`use: circular dependency on ${abs}`)
     loadedFiles.add(abs)
     const fileSrc = readFileSync(abs, "utf-8")
@@ -898,7 +941,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // the walker (param_apply), so the parametricity guards apply. Skipped for raw
     // imports (annotations dropped) and for files without the kernel in scope (no
     // checkable annotations). The scope is already popped, so a throw here is clean.
-    if (!raw && vFormers && !verifiedModules.has(abs)) {
+    if (!raw && vFormers && !verifiedModules.has(abs) && !scheduledForVerification.has(abs)) {
       const typEntries: Tree[] = []
       for (let i = 0; i < fieldNames.length; i++)
         if (fieldTypes[i]) typEntries.push(cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
@@ -907,23 +950,31 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         const recordVal = cs.apply(cs.apply(vFormers.mkRecord, consList(fieldNames.map(stringToTree)), B()),
                                    consList(fieldTrees.map(v => cs.apply(vFormers!.listConst, v, B()))), B())
         const typVal = cs.apply(vFormers.Record, consList(typEntries), B())
-        const verdict = cs.apply(cs.apply(vFormers.paramApply, typVal, B()), recordVal, B())
+        // Build the verdict (lazily by default — vApply); defer the force to the
+        // single end-of-parse batch (see pendingVerifications). Keeps the elegant
+        // whole-record form; the parallelism/laziness transfers to the final force.
+        const verdict = vApply(vApply(vFormers.paramApply, typVal), recordVal)
         const okTT = cs.apply(vFormers.ok, vFormers.tt, B())
-        if (!cs.equal!(verdict, okTT))
-          throw new Error(`type check failed for module ${abs}: an export does not inhabit its declared type (verify returned non-(Ok TT))`)
-        verifiedModules.add(abs)
+        pendingVerifications.push({ abs, verdict, okTT })
+        scheduledForVerification.add(abs)
       }
     }
     // Church-encode: \sel. sel v1 v2 ... vn
     const n = fieldTrees.length
-    if (n === 0) return { tree: cs.leaf(), fields: [] }
+    if (n === 0) {
+      const empty: ScopeEntry = { tree: cs.leaf(), fields: [] }
+      modCache.set(cacheKey, empty)
+      return empty
+    }
     // Build as Cir, then compile
     const selName = "__use_sel"
     let body: Cir = { tag: "var", name: selName }
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    return { tree, fields: fieldNames, fieldTrees, fieldTypes }
+    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes }
+    modCache.set(cacheKey, record)
+    return record
   }
 
   function recordItem(kind: "let" | "test" | "open" | "field", name?: string, testIndex?: number): void {
@@ -1066,5 +1117,15 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   const items = parseItems(src)
   const hasFields = items.some(it => it.tag === "field")
   for (const it of items) runItem(it, decls, !hasFields)
+  // Force ALL deferred module verifications at once. On a lazy backend this is where
+  // the kernel verification walks actually run — one end-of-parse batch over a shared
+  // hash-consed arena, so identical sub-checks across modules share work (and a future
+  // parallel backend can fan the independent verdicts out). `equal` forces each verdict
+  // to NF and compares to `Ok TT` — a closed force, so the result equals eager's.
+  for (const { abs, verdict, okTT } of pendingVerifications) {
+    if (!cs.equal!(verdict, okTT))
+      throw new Error(`type check failed for module ${abs}: an export does not inhabit its declared type (verify returned non-(Ok TT))`)
+    verifiedModules.add(abs)
+  }
   return decls
 }
