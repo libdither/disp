@@ -313,6 +313,70 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
 4. **Threading order: settled** — wasm-sequential first (oracle), N-API/rayon at M2 (the dual
    build resolves the "wasm-first vs N-API-first" tension).
 
+## 12. Foreseeable risks & coherency notes (post-M0 review)
+
+Grounded in the M0 build (`evaluators/rust-ic-net/`, the differential green on the full
+named lambada gate). Ordered by how much they shape the path.
+
+1. **Observation protocol — a lazy materialized net cannot support the host's per-node
+   `classify`.** This is deeper than "no hash-consing." In the net, a child's principal
+   is *consumed by its parent's aux port*; to WHNF a child you must **detach** it from the
+   parent, but the host's `classify(h) → {tag, child0, child1}` then `classify(child0)`
+   protocol assumes `h` and its children stay independently inspectable. They don't —
+   adding a second demand to a child's principal is a port conflict. M0 resolves it by
+   reading back via **full-NF + structural walk** (the `N` normalizer consumes parents as
+   it descends). *Consequences:* (a) the "not a checker backend" decision is forced by the
+   *observation model*, not just conversion cost — the elaborator's `classify` literally
+   cannot run on this substrate (confirmed: `cs.classify is not a function`); (b) the
+   **optimizer must read results via `dumpTernary`/`collapse` (full readback), never lazy
+   `classify`** — fold this into the tier-1–3 interface (§9).
+
+2. **M0 is a *correctness* milestone only — δˢ + grow-until-dispose blows up.** Measured:
+   `recursive-fib(8)` = 3.8M interactions / **7.6M nodes** (~30 MB); `silly-exp` is
+   exponential in `n` without sharing. So **M1 (δⁿ + wire-RC) is REQUIRED for usability,
+   not an optimization** — without it ic-net OOMs on any real workload (the same shape as
+   the rust-eager lazy-verify OOM). It also bounds M0's **differential coverage**: rust-eager
+   validates ic-net only where *both* terminate, and δˢ exhausts on heavy sharing — so full
+   oracle coverage also needs δⁿ. Reframe M0's gate as "the rules + scheduler + linker are
+   correct," and treat M1 as the first *usable* milestone.
+
+3. **The atomic linker is the M2 risk — but M0 shows the port is tractable.** The exchange
+   linker is only *reasoned* correct for our rule set (HVM/IVM use it, but with different
+   rules). The good news from M0: **every rule already satisfies the "owned-only"
+   invariant** — each `interact` touches exactly its two redex agents + freshly-allocated
+   nodes + far var-cells, never a third-party node. That's precisely the property the
+   lock-free argument needs, so M0's rules port to atomics structurally. Gate: the
+   differential-as-race-detector under a thread sweep, plus a per-rule audit that the
+   owned-only invariant holds (it does in M0 — keep it as rules are added).
+
+4. **Wire-RC completeness rests on net acyclicity — validate, don't assume.** RC is
+   complete *only* if the net is a DAG (the design's "recursion = tree-unfold, not a graph
+   cycle"). This held trivially in M0 (δˢ only builds trees), but δⁿ-parking + `fix`-heavy
+   programs must be checked: ship the **tracing backstop as a test-time assertion ("frees
+   ∅") from M1**, and if it ever frees something, RC is leaking and tracing must become
+   primary, not validator.
+
+5. **The "sound floor extracts real parallelism" claim is workload-dependent.** A sequential
+   demand spine (operator chain, bracket-abstracted binder distribution) keeps the redex
+   bag at ~1 ready redex → little parallelism. The floor pays off on **independent-data**
+   workloads (the optimizer's search, wide records) — which is exactly ic-net's consumer,
+   so the claim is *true for the target* but should not be read as generic speedup (it
+   matches the existing "distribution cost is never shared" caveat).
+
+6. **`sup_λ` (optimizer tier 2) is the research-risky frontier.** It requires triage to
+   *distribute over superposition* (a `sup_λ(a,b)` meeting a `T₁`/`T₂` must split), which
+   is unproven (DISP_BACKPROP Conjectures 1/2) and is exactly where HVM's own superposition
+   carries soundness caveats. Tier 1 (`foldMany`, pure tree calculus) is safe and
+   validatable vs rust-eager *now*; gate tiers 2–3 behind that conjecture.
+
+7. **Minor coherency cleanups.** `E` (WHNF demand) is redundant with `N` for full-NF readback
+   (M0 needs no `E`; demand is driven by the `A` agents that `N`/`T₁`/`T₂` spawn on `P`) —
+   `E` is only for a lazy `classify`, which §risk-1 shows the net can't offer anyway, so
+   drop `E` unless a WHNF-only observation appears. Conversely `N` is **essential**, not an
+   "extension" (§4) — it's the readback mechanism. And M0's `equal` fully normalizes both
+   sides before comparing; an interleaved WHNF-compare would short-circuit earlier (an M2
+   refinement, not a correctness issue).
+
 ## Sources
 HVM2 `github.com/HigherOrderCO/HVM` (Apache-2.0) + paper `paper/HVM2` (memory layout,
 exchange linker, redex bags, per-thread bump alloc, linearity-not-GC, eager-only +
