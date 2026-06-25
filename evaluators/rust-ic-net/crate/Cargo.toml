@@ -1,0 +1,15 @@
+[package]
+name = "rust-ic-net"
+version = "0.0.0"
+edition = "2021"
+description = "rust-ic-net: a materialized interaction-net evaluator for disp tree calculus (M0: sequential)"
+license = "MIT"
+
+[lib]
+# cdylib ⇒ a freestanding .wasm with C ABI exports the disp Session wrapper calls.
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"     # budget exhaustion is a sentinel return, not a panic

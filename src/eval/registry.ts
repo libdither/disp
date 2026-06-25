@@ -7,6 +7,7 @@ import type { EvalBackend } from "./types.js"
 import { eagerBackend } from "./eager.js"
 import { naiveBackend } from "./naive.js"
 import { rustEagerBackend, rustEagerAvailable } from "./rust-eager.js"
+import { icNetBackend, icNetAvailable } from "./ic-net.js"
 
 // Handles are opaque to the engine, so backends are stored at `unknown` handle
 // type; each backend casts internally (the eager/naive backends' H = Tree).
@@ -19,6 +20,11 @@ const backends = new Map<string, EvalBackend>([
 // the everyday loop needs no foreign toolchain (EVALUATOR_LAYOUT.md). rust-eager is
 // a Rust→WASM Session backend; absent until evaluators/rust-eager/build.sh runs.
 if (rustEagerAvailable()) backends.set(rustEagerBackend.name, rustEagerBackend as unknown as EvalBackend)
+
+// rust-ic-net: the materialized interaction-net backend (M0). Registers when built,
+// but is NEVER the default — it's a batch/differential + optimizer substrate, not the
+// checker (no hash-consing ⇒ no O(1) conversion). See RUST_IC_NET_DESIGN.md.
+if (icNetAvailable()) backends.set(icNetBackend.name, icNetBackend as unknown as EvalBackend)
 
 // Default to rust-eager when its WASM artifact is built: the Rust reducer uses linear
 // memory (not the V8 heap), so the full .disp suite runs without the multi-GB heap

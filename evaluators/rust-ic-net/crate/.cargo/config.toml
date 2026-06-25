@@ -1,0 +1,6 @@
+# M0 is sequential: reduction is an iterative redex-bag drain (no native recursion on
+# the reduction spine). Only the ternary emit/equal structural walks recurse on tree
+# depth — kept iterative where it matters. 16 MiB shadow stack is ample; overflow is a
+# catchable wasm trap (the host recovers), not corruption. (M2 parallel will revisit.)
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=16777216"]
