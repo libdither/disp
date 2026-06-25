@@ -1,0 +1,43 @@
+// PROTOTYPE: POSITIVE_TYPES.md §8 — the coherence gate as a TELESCOPE walk.
+// FINDINGS (all asserted true == green):
+//  (A) RUNTIME: the gate-as-telescope WORKS, incl. a DEPENDENT motive. The conceptual
+//      unification is real — coherence = typecheck `cases` against a derived case-telescope,
+//      same `at`; the IH premise is a Pi cell, minted by the Pi recognizer.
+//  (B) SELF-TYPING (the bet): FAILS — the telescope-gated respond does NOT inhabit
+//      ProjectingRespondShape, same as hand-rolled coh_nat.
+//  (WHY): the wall is `param_apply (Telescope ..) cases` — applying a CONCRETE recognizer to
+//      the abstract cases-hyp. Even an EMPTY-telescope gate fails. Bool self-types because it
+//      applies the NEUTRAL motive-predicate to cases-fields (spine extension, walker-clean),
+//      never a concrete recognizer. So the residual is concrete-recognizer-on-hyp, NOT the IH.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+let case_tele = {mv} ->
+  t (proj_cell "base" (mv zero)) ({_} ->
+  t (proj_cell "step" (Pi Nat ({n} -> Arrow (mv n) (mv (succ n))))) ({_} -> t))
+let coh_tele  = {T, motive, cases} -> param_apply (Telescope (case_tele motive)) cases
+let resp_tele = gated_inductive_respond coh_tele
+
+// ════════ (A) RUNTIME CORRECTNESS — the unification, validated ════════
+let cmotive = {_} -> Nat                          // constant motive P n = Nat
+test coh_tele Nat cmotive { base := zero; step := {n} -> {ih} -> succ ih } = Ok TT  // coherent
+test coh_tele Nat cmotive { base := TT;   step := {n} -> {ih} -> succ ih } = Ok FF  // base : not Nat
+test coh_tele Nat cmotive { base := zero; step := {n} -> {ih} -> TT }      = Ok FF  // step : not Nat
+let dmotive = {n} -> Eq Nat n n                   // DEPENDENT motive P n = (n = n)
+test coh_tele Nat dmotive { base := refl; step := {n} -> {ih} -> refl } = Ok TT     // dependent, coherent
+test coh_tele Nat dmotive { base := TT;   step := {n} -> {ih} -> refl } = Ok FF     // base : not a proof
+
+// ════════ (B) THE BET — self-typing — FAILS ════════
+// baseline: hand-rolled coh_nat does NOT inhabit ProjectingRespondShape (the residual):
+test tree_eq (param_apply ProjectingRespondShape ((type_meta Nat).respond (type_meta Nat).recognizer_params)) (Ok TT) = FF
+// the bet: the telescope-gated respond ALSO does NOT (Ok FF, not Ok TT) — bet lost:
+test tree_eq (param_apply ProjectingRespondShape (resp_tele unit_witness)) (Ok TT) = FF
+
+// ════════ (WHY) the wall is "concrete recognizer applied to the cases-hyp" ════════
+// Bool's REAL respond DOES self-type (harness sanity + the contrast): it applies the NEUTRAL
+// motive-predicate to cases-fields, never a concrete recognizer.
+test param_apply ProjectingRespondShape ((type_meta Bool).respond (type_meta Bool).recognizer_params) = Ok TT
+// but even an EMPTY-telescope gate (⊤, no cells, no IH) fails to self-type — so it is the
+// `param_apply (Telescope ..) cases` pattern itself, not the cells or the IH:
+let empty_gate = {T, m, c} -> param_apply (Telescope t) c
+test tree_eq (param_apply ProjectingRespondShape ((gated_inductive_respond empty_gate) unit_witness)) (Ok TT) = FF
