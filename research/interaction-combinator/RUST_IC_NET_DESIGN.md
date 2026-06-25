@@ -65,17 +65,40 @@ delimiters, affine-var bookkeeping) — all binder bookkeeping we don't have.
   `δ` wave. Dropping the intern table is also the single biggest *parallel-allocation* win
   (`alloc` no longer consults global shared state).
 
-### ⚠ Open decision #1 — node width / how T₁(3 aux) and T₂(4 aux) are encoded
-The single-64-bit-binary-node assumption gates HVM2's whole substrate (one atomic per node,
-the GPU path needs it — no 128-bit GPU atomics). Producers/most consumers are ≤2 aux, but
-**T₁ has 3 and T₂ has 4**. Two options, decide before writing code:
-- **(a) Keep agents binary** — encode T₁/T₂ as *chained binary nodes* (HVM encodes all
-  n-ary this way). Preserves single-word atomics + GPU-readiness.
-- **(b) Wider transient nodes** for T₁/T₂. The *slot-level* exchange linker (§3) works on
-  individual `Var` slots, so node width does **not** break linking on CPU; but it forfeits
-  the whole-node atomic + GPU. Acceptable if GPU stays out of scope.
-Recommendation: **(a)** if GPU is ever wanted; **(b)** is the faster path to a CPU prototype.
-Lock this first — it ripples through everything.
+### Node width / T₁(3 aux) & T₂(4 aux) — RESOLVED: uniform atomic cells, T₁/T₂ as blocks
+The deep-dive flagged this as gated by "binary nodes ⇒ GPU; T₁/T₂ are wider." A focused
+verification (HVM2 + IVM/Vine + inpla source, CUDA atomics) **overturned that framing:**
+- The 128-bit-atomic limit only bites a *whole-node* atomic on a >64-bit node. **No such
+  op is needed.** HVM2's whole-node `node_take` is a **`relaxed` load-and-clear, not
+  synchronization** — correctness rests on *ownership*, not atomicity ("the thread holding
+  a redex implicitly owns both trees it contains"). The *only* cross-thread sync is a
+  per-variable ≤64-bit `exchange` on a **separate** var/wire cell — which never touches the
+  consumer node at all.
+- So a **wide consumer (T₁/T₂) is owned-when-fired** (single-principal-port invariant ⇒
+  claiming the redex claims both whole agents) and is read/cleared **per-slot**. It never
+  needs a >64-bit atomic. Tree calculus does **not** hit the wall — its producers are all
+  binary, and its only wide agents are owned consumers. (And on Hopper/Blackwell CC 9.x the
+  128-bit wall is gone anyway; it persists only ≤ Ada / RTX 4090.)
+- **The one invariant to hold: every agent has exactly ONE principal port.** Multiport
+  agents would break the ownership argument — never introduce one.
+
+**Decision — option (d): IVM/Vine-style.** Uniform **atomic cells** (one `AtomicU64` slot,
+`Relaxed`; `swap` for the linker, `compare_exchange` only for the freelist head). Producers
+(`L`/`S`/`F`/`P`, ≤2 aux) = **one 2-slot node** (the dense common case = the M2 bandwidth
+win). Consumers **T₁/T₂ = a contiguous multi-slot block**, principal implicit, accessed
+per-slot. Allocator = per-worker bump + freelist with **two size classes** (2-slot "node",
+4-slot "wide"; T₁ rounds up with one spare, T₂ fits) — keeps the bump path, no inpla-style
+uniform-wide waste. Per-slot ≤64-bit atomics throughout ⇒ **GPU-portable on any generation.**
+
+This is **exactly what IVM/Vine (`VineLang/vine`, the closest existing Rust CPU-parallel IC
+runtime) already does** — uniform 16-byte 2-slot atomic cells, per-slot 64-bit `Relaxed`,
+bump+freelist — so option (d) is validated by a working system, not just reasoned. Rejected:
+**(a) binary-chained** = HVM2's λ-encoding, which its own paper flags as a regretted *2–5×
+memory overhead*, and it taxes the hottest path (dispatch); **(b) non-uniform** loses the
+bump allocator + worst for coalescing; **(c) uniform-wide** (inpla) wastes 2× on the
+ubiquitous binary producers and correlates with the lock-based (non-scalable) pole.
+*(32-bit ports à la HVM2 — denser, 536M-node ceiling, GPU-prep — stay a later densification
+of (d); start at IVM's 64-bit word for full address space + simplicity.)*
 
 ## 3. The atomic linker — exchange-based, **no CAS** (the crown jewel)
 
@@ -276,8 +299,11 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
 
 ## 11. Open decisions (decide before / early in M0)
 
-1. **Node width / T₁-T₂ encoding** (§2) — binary-chained (GPU-ready) vs wider transient.
-   *The #1 thing to lock; it ripples through layout, linker, GPU.*
+1. **Node width / T₁-T₂ encoding** (§2) — **RESOLVED: option (d)**, IVM/Vine-style uniform
+   atomic cells with T₁/T₂ as contiguous 2-slot-class blocks, per-slot ≤64-bit atomics. The
+   "binary ⇒ GPU" constraint was softer than framed: owned-when-fired consumers never need a
+   whole-node atomic, so tree calculus dodges the 128-bit wall. Validated by IVM doing exactly
+   this. Invariant to hold: every agent has exactly one principal port.
 2. **Eager vs lazy default** — HVM2 gives eager free, lazy not at all (it punted the
    uplink scheduler). Our sound floor (§7) is structural-strict + lazy-elsewhere = M1's
    policy; confirm that's the M0/M1 target and the lazy machinery (parked `δⁿ` + RC) lands
