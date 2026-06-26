@@ -45,6 +45,15 @@ const DN: u32 = 12; // need duplicator δⁿ (2 aux: l, r) — demand-before-cop
 const NODE_CAP: usize = 1 << 21; // 2M cells (8 MiB)
 const VAR_CAP: usize = 1 << 21;
 
+/// Stage 3: per-worker bump REGION size (cells). A worker leases a contiguous region from
+/// the shared cursor with ONE atomic, then bumps locally — turning the per-alloc
+/// `node_top`/`var_top.fetch_add` into one per ~1024 allocs AND giving each worker its own
+/// cache lines (different workers no longer interleave cells on a shared line). A region's
+/// unused tail (< a few cells at a forced re-lease, or a low-traffic worker's whole region)
+/// is abandoned, so `node_top` now reports cells *leased*, slightly above cells *used*.
+const NODE_REGION: u32 = 1 << 10;
+const VAR_REGION: u32 = 1 << 10;
+
 #[inline]
 fn pack(tag: u32, val: u32) -> u32 {
     (val << TAG_BITS) | tag
@@ -130,10 +139,18 @@ struct Worker {
     bag: Vec<(u32, u32)>, // local active-pair stack (M2c: crossbeam work-stealing deque)
     free: [Vec<u32>; 5],  // reusable node bases by arity (free-on-consume)
     free_vars: Vec<u32>,  // reusable wire cells
+    node_rgn: (u32, u32), // (next, end) of this worker's leased node region (Stage 3)
+    var_rgn: (u32, u32),  // (next, end) of this worker's leased var region
 }
 impl Worker {
     fn new() -> Self {
-        Worker { bag: Vec::new(), free: Default::default(), free_vars: Vec::new() }
+        Worker {
+            bag: Vec::new(),
+            free: Default::default(),
+            free_vars: Vec::new(),
+            node_rgn: (0, 0),
+            var_rgn: (0, 0),
+        }
     }
 }
 
@@ -162,8 +179,17 @@ impl<'a> Ctx<'a> {
         let base = if let Some(b) = self.w.free[size].pop() {
             b
         } else {
-            let b = self.net.node_top.fetch_add(size as u32, Ordering::Relaxed);
-            assert!((b as usize) + size <= self.net.nodes.len(), "ic-net: node arena overflow");
+            // bump within the local region; lease a fresh region when `size` won't fit.
+            if self.w.node_rgn.0 + size as u32 > self.w.node_rgn.1 {
+                let start = self.net.node_top.fetch_add(NODE_REGION, Ordering::Relaxed);
+                assert!(
+                    (start as usize) + NODE_REGION as usize <= self.net.nodes.len(),
+                    "ic-net: node arena overflow"
+                );
+                self.w.node_rgn = (start, start + NODE_REGION);
+            }
+            let b = self.w.node_rgn.0;
+            self.w.node_rgn.0 += size as u32;
             b
         };
         for (i, &v) in aux.iter().enumerate() {
@@ -185,8 +211,16 @@ impl<'a> Ctx<'a> {
             self.net.vars[v as usize].store(NUL, Ordering::Relaxed);
             return v;
         }
-        let v = self.net.var_top.fetch_add(1, Ordering::Relaxed);
-        assert!((v as usize) < self.net.vars.len(), "ic-net: var arena overflow");
+        if self.w.var_rgn.0 >= self.w.var_rgn.1 {
+            let start = self.net.var_top.fetch_add(VAR_REGION, Ordering::Relaxed);
+            assert!(
+                (start as usize) + VAR_REGION as usize <= self.net.vars.len(),
+                "ic-net: var arena overflow"
+            );
+            self.w.var_rgn = (start, start + VAR_REGION);
+        }
+        let v = self.w.var_rgn.0;
+        self.w.var_rgn.0 += 1;
         v
     }
 
@@ -601,17 +635,19 @@ impl<'a> Ctx<'a> {
     }
 }
 
-// ── M2c: native parallel drain ──────────────────────────────────────────────
-// A simple lock-free scheduler: every redex goes to a shared crossbeam `Injector`; N
-// worker threads steal, interact, and flush their output back. Termination via an
-// `in_flight` counter (incremented BEFORE a producer's redexes are pushed, decremented
-// AFTER each is processed) — 0 means done. Not work-stealing-optimal (all contention on
-// the injector; per-worker deques are a later perf knob), but CORRECT and genuinely
-// parallel. Strong confluence (Theorem 2) means the NF AND the interaction COUNT are
-// identical to sequential regardless of thread count — exactly the race-detector gate.
-// Cross-thread publishing: a stealing worker sees the producer's node-cell writes via the
-// injector push/steal (release/acquire) + the `vars` AcqRel; owned-only (the atomic
-// `node_top` bump hands each worker a disjoint region) means no two workers race a cell.
+// ── M2c: native parallel drain (Stage 2 — per-worker work-stealing deques) ───
+// Each worker owns a crossbeam `Worker` deque (LIFO ⇒ depth-first, hot local working set);
+// a rule's products go to the OWNER's deque with NO atomic (the common case). The shared
+// `Injector` only seeds + absorbs nothing else; an idle worker steals a BATCH from the
+// injector or a victim. The per-interaction `in_flight` counter is GONE — termination is an
+// `active` (non-idle) worker count: a worker decrements when its deque empties AND every
+// steal source is empty, re-increments when it finds work; `active == 0` ⇒ quiescent ⇒ done.
+// Coordination is now O(steal events), not O(interactions). Correctness rests on: (a) only a
+// deque's OWNER pushes to it (stealers only remove), so once a worker idles its deque stays
+// empty; (b) a producing worker is never idle (it drains its deque before trying to steal),
+// so `active` can't reach 0 while any redex exists; (c) AcqRel on `active` + the var AcqRel
+// publish the producer's owned-cell writes to the thief. Strong confluence (Theorem 2) ⇒ NF
+// AND interaction count are thread-count-invariant — the race-detector gate is unchanged.
 #[cfg(not(target_arch = "wasm32"))]
 impl Net {
     /// Reduce `h` to full NF with `threads` workers sharing this net. NF root, or None on
@@ -619,8 +655,37 @@ impl Net {
     /// binding (M2d); the plain sequential lib build has no caller, hence the scoped allow.
     #[allow(dead_code)]
     fn full_nf_parallel(&self, h: u32, threads: usize, budget: i64) -> Option<u32> {
-        use crossbeam_deque::{Injector, Steal};
+        use crossbeam_deque::{Injector, Steal, Stealer, Worker as Deque};
+        use crossbeam_utils::CachePadded;
         use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize};
+
+        // Steal one task from the injector, else a batch-and-pop from any victim. Returns a
+        // task (with any batch already moved into `local`), or None when ALL sources are
+        // empty (Retry is looped through, never reported as empty ⇒ live work is never missed).
+        fn find_task(
+            injector: &Injector<(u32, u32)>,
+            stealers: &[Stealer<(u32, u32)>],
+            local: &Deque<(u32, u32)>,
+        ) -> Option<(u32, u32)> {
+            loop {
+                match injector.steal_batch_and_pop(local) {
+                    Steal::Success(r) => return Some(r),
+                    Steal::Empty => break,
+                    Steal::Retry => {}
+                }
+            }
+            for st in stealers {
+                loop {
+                    match st.steal_batch_and_pop(local) {
+                        Steal::Success(r) => return Some(r),
+                        Steal::Empty => break,
+                        Steal::Retry => {}
+                    }
+                }
+            }
+            None
+        }
+
         let mut setup = Worker::new();
         let v = {
             let mut c = self.ctx(&mut setup);
@@ -629,63 +694,82 @@ impl Net {
             c.link(pack(N, n), h);
             v
         };
-        let injector = Injector::new();
-        let mut seeded = 0usize;
-        for r in setup.bag.drain(..) {
-            injector.push(r);
-            seeded += 1;
-        }
-        if seeded == 0 {
+        if setup.bag.is_empty() {
             return Some(self.resolve(pack(VAR, v)));
         }
-        let in_flight = AtomicUsize::new(seeded);
-        let budget = AtomicI64::new(budget);
-        let exhausted = AtomicBool::new(false);
+        let injector = Injector::new();
+        for r in setup.bag.drain(..) {
+            injector.push(r);
+        }
+
+        const BUDGET_LEASE: i64 = 1 << 16;
+        let deques: Vec<Deque<(u32, u32)>> = (0..threads).map(|_| Deque::new_lifo()).collect();
+        let stealers: Vec<Stealer<(u32, u32)>> = deques.iter().map(|d| d.stealer()).collect();
+        let active = CachePadded::new(AtomicUsize::new(threads));
+        let pool = CachePadded::new(AtomicI64::new(budget));
+        let exhausted = CachePadded::new(AtomicBool::new(false));
         let injector = &injector;
-        let in_flight = &in_flight;
-        let budget = &budget;
+        let stealers = &stealers;
+        let active = &active;
+        let pool = &pool;
         let exhausted = &exhausted;
+
         std::thread::scope(|s| {
-            for _ in 0..threads {
+            for deque in deques {
                 s.spawn(move || {
                     let mut w = Worker::new();
                     let backoff = crossbeam_utils::Backoff::new();
+                    let mut local_budget: i64 = 0;
+                    let mut local_int: u64 = 0;
+                    let mut idle = false;
                     loop {
-                        let stolen = loop {
-                            match injector.steal() {
-                                Steal::Success(r) => break Some(r),
-                                Steal::Empty => break None,
-                                Steal::Retry => {}
-                            }
-                        };
-                        match stolen {
-                            Some((x, y)) => {
-                                backoff.reset();
-                                if budget.fetch_sub(1, Ordering::Relaxed) <= 0 {
+                        // 1. drain the local deque (no shared-state traffic on this path).
+                        while let Some((x, y)) = deque.pop() {
+                            if local_budget <= 0 {
+                                let got = pool.fetch_sub(BUDGET_LEASE, Ordering::Relaxed);
+                                if got <= 0 {
                                     exhausted.store(true, Ordering::Relaxed);
-                                    in_flight.fetch_sub(1, Ordering::AcqRel);
-                                    continue;
-                                }
-                                self.interactions.fetch_add(1, Ordering::Relaxed);
-                                {
-                                    let mut c = self.ctx(&mut w);
-                                    c.interact(x, y);
-                                }
-                                let produced: Vec<(u32, u32)> = w.bag.drain(..).collect();
-                                in_flight.fetch_add(produced.len(), Ordering::AcqRel);
-                                for nr in produced {
-                                    injector.push(nr);
-                                }
-                                in_flight.fetch_sub(1, Ordering::AcqRel);
-                            }
-                            None => {
-                                if in_flight.load(Ordering::Acquire) == 0 {
                                     break;
                                 }
-                                backoff.snooze();
+                                local_budget = got.min(BUDGET_LEASE);
+                            }
+                            local_budget -= 1;
+                            local_int += 1;
+                            {
+                                let mut c = self.ctx(&mut w);
+                                c.interact(x, y);
+                            }
+                            for nr in w.bag.drain(..) {
+                                deque.push(nr);
                             }
                         }
+                        if exhausted.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        // 2. local empty — look for external work.
+                        if let Some(r) = find_task(injector, stealers, &deque) {
+                            if idle {
+                                active.fetch_add(1, Ordering::AcqRel);
+                                idle = false;
+                            }
+                            backoff.reset();
+                            deque.push(r);
+                            continue;
+                        }
+                        // 3. nothing anywhere — announce idle; quiesce when all are idle.
+                        if !idle {
+                            active.fetch_sub(1, Ordering::AcqRel);
+                            idle = true;
+                        }
+                        if active.load(Ordering::Acquire) == 0 {
+                            break;
+                        }
+                        backoff.snooze();
                     }
+                    if !idle {
+                        active.fetch_sub(1, Ordering::AcqRel); // leave decremented (exhausted path)
+                    }
+                    self.interactions.fetch_add(local_int, Ordering::Relaxed);
                 });
             }
         });
