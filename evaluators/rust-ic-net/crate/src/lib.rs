@@ -591,6 +591,109 @@ impl<'a> Ctx<'a> {
     }
 }
 
+// ── M2c: native parallel drain ──────────────────────────────────────────────
+// A simple lock-free scheduler: every redex goes to a shared crossbeam `Injector`; N
+// worker threads steal, interact, and flush their output back. Termination via an
+// `in_flight` counter (incremented BEFORE a producer's redexes are pushed, decremented
+// AFTER each is processed) — 0 means done. Not work-stealing-optimal (all contention on
+// the injector; per-worker deques are a later perf knob), but CORRECT and genuinely
+// parallel. Strong confluence (Theorem 2) means the NF AND the interaction COUNT are
+// identical to sequential regardless of thread count — exactly the race-detector gate.
+// Cross-thread publishing: a stealing worker sees the producer's node-cell writes via the
+// injector push/steal (release/acquire) + the `vars` AcqRel; owned-only (the atomic
+// `node_top` bump hands each worker a disjoint region) means no two workers race a cell.
+#[cfg(not(target_arch = "wasm32"))]
+impl Net {
+    fn resolve_ro(&self, mut p: u32) -> u32 {
+        while is_var(p) {
+            let nx = self.vars[val(p)].load(Ordering::Acquire);
+            if nx == NUL {
+                return p;
+            }
+            p = nx;
+        }
+        p
+    }
+    /// Reduce `h` to full NF with `threads` workers sharing this net. NF root, or None on
+    /// budget exhaustion.
+    fn full_nf_parallel(&self, h: u32, threads: usize, budget: i64) -> Option<u32> {
+        use crossbeam_deque::{Injector, Steal};
+        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize};
+        let mut setup = Worker::new();
+        let v = {
+            let mut c = self.ctx(&mut setup);
+            let v = c.new_var();
+            let n = c.alloc(&[pack(VAR, v)]);
+            c.link(pack(N, n), h);
+            v
+        };
+        let injector = Injector::new();
+        let mut seeded = 0usize;
+        for r in setup.bag.drain(..) {
+            injector.push(r);
+            seeded += 1;
+        }
+        if seeded == 0 {
+            return Some(self.resolve_ro(pack(VAR, v)));
+        }
+        let in_flight = AtomicUsize::new(seeded);
+        let budget = AtomicI64::new(budget);
+        let exhausted = AtomicBool::new(false);
+        let injector = &injector;
+        let in_flight = &in_flight;
+        let budget = &budget;
+        let exhausted = &exhausted;
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(move || {
+                    let mut w = Worker::new();
+                    let backoff = crossbeam_utils::Backoff::new();
+                    loop {
+                        let stolen = loop {
+                            match injector.steal() {
+                                Steal::Success(r) => break Some(r),
+                                Steal::Empty => break None,
+                                Steal::Retry => {}
+                            }
+                        };
+                        match stolen {
+                            Some((x, y)) => {
+                                backoff.reset();
+                                if budget.fetch_sub(1, Ordering::Relaxed) <= 0 {
+                                    exhausted.store(true, Ordering::Relaxed);
+                                    in_flight.fetch_sub(1, Ordering::AcqRel);
+                                    continue;
+                                }
+                                self.interactions.fetch_add(1, Ordering::Relaxed);
+                                {
+                                    let mut c = self.ctx(&mut w);
+                                    c.interact(x, y);
+                                }
+                                let produced: Vec<(u32, u32)> = w.bag.drain(..).collect();
+                                in_flight.fetch_add(produced.len(), Ordering::AcqRel);
+                                for nr in produced {
+                                    injector.push(nr);
+                                }
+                                in_flight.fetch_sub(1, Ordering::AcqRel);
+                            }
+                            None => {
+                                if in_flight.load(Ordering::Acquire) == 0 {
+                                    break;
+                                }
+                                backoff.snooze();
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        if exhausted.load(Ordering::Relaxed) {
+            return None;
+        }
+        Some(self.resolve_ro(pack(VAR, v)))
+    }
+}
+
 // One Net + one Worker per WASM instance (the host calls on a single thread). The Net is
 // interior-mutable (atomics), so a plain `&` suffices; the Worker is RefCell (briefly
 // borrowed per op — never nested, so no double-borrow).
@@ -850,4 +953,57 @@ mod tests {
         let mut b2 = 1_000_000i64;
         assert_eq!(c.equal(nf_app, pack(L, 0), &mut b2), Some(false));
     }
+
+    // M2c race detector: a balanced fork tree of independent not^4-chains has many
+    // independent N redexes; reducing with 1 vs 4 threads must give the SAME NF and the
+    // SAME interaction count (strong confluence). Run many times — concurrency bugs flake.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parallel_matches_sequential() {
+        fn build(c: &mut Ctx, depth: usize) -> u32 {
+            if depth == 0 {
+                let mut e = pack(L, 0); // false
+                for _ in 0..4 {
+                    let not = build_not(c);
+                    e = c.susp(not, e); // not^4 false
+                }
+                e
+            } else {
+                let l = build(c, depth - 1);
+                let r = build(c, depth - 1);
+                c.fork(l, r)
+            }
+        }
+        for _ in 0..20 {
+            let nseq = Net::new(1 << 20, 1 << 20);
+            let (seq_nf, seq_int) = {
+                let mut w = Worker::new();
+                let mut c = nseq.ctx(&mut w);
+                let h = build(&mut c, 6);
+                let mut b = 1_000_000_000i64;
+                let nf = c.full_nf(h, &mut b).expect("seq nf");
+                let mut o = Vec::new();
+                c.emit(nf, &mut o);
+                (o, nseq.interactions.load(Ordering::Relaxed))
+            };
+            let npar = Net::new(1 << 20, 1 << 20);
+            let h = {
+                let mut w = Worker::new();
+                let mut c = npar.ctx(&mut w);
+                build(&mut c, 6)
+            };
+            let nf = npar.full_nf_parallel(h, 4, 1_000_000_000).expect("par nf");
+            let par_nf = {
+                let mut w = Worker::new();
+                let c = npar.ctx(&mut w);
+                let mut o = Vec::new();
+                c.emit(nf, &mut o);
+                o
+            };
+            let par_int = npar.interactions.load(Ordering::Relaxed);
+            assert_eq!(seq_nf, par_nf, "parallel NF must equal sequential");
+            assert_eq!(seq_int, par_int, "interaction count deterministic across threads");
+        }
+    }
+
 }
