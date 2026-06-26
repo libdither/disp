@@ -107,7 +107,11 @@ test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) zero (succ
 // not positional pair projections.
 test (type_meta Unit).respond = inductive_respond // an ungated inductive type
 test (type_meta False).respond = inert_respond
-test (type_meta Nat).functor = trivial_functor
+// Nat now carries its shape↔inj ISO in `functor` (CELL_OPTICS — what generic fmap/fold_value read).
+test tree_eq (type_meta Nat).functor trivial_functor = FF                     // no longer trivial
+test ((pair_fst (type_meta Nat).functor) (succ zero)) = Ok (inj "succ" zero)  // view decodes the shape
+test ((pair_snd (type_meta Nat).functor) (inj "succ" zero)) = succ zero       // encode re-encodes
+test (type_meta Type).functor = trivial_functor                              // non-coproducts keep trivial
 test (type_meta Type).respond = type_predicate_h_rule
 // a hand-built meta round-trips field-by-field
 let m = make_meta zero FF

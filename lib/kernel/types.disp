@@ -1,11 +1,9 @@
 // Kernel fragment: the library type formers + recursors + the kernel's own structural
 // typedefs. Assembled by kernel/prelude.disp's barrel (sees cut + engine via that scope).
 
-// RESOLVED (the old TODO "can Bool/Nat/Ord be Coproducts?"): YES. `Bool`, `Nat` (and `Ord`) are
-// shape-encoded inductives, so they are now `Coproduct_viewed` instances, defined LATER (after the
-// machinery they reuse). They keep their GATED responds (the coherence gate is in the RESPOND,
-// orthogonal to the recognizer) via `Mu_resp`. The `: Bool`/`: Nat` annotations throughout
-// forward-reference them via the raw-load layer.
+// Bool/Nat/Ord are shape-encoded inductives — `Coproduct_viewed` instances, defined LATER (after the
+// machinery they reuse). Bool/Nat keep a gated coherence respond (the gate is in the RESPOND, orthogonal
+// to the recognizer); Ord is non-gated. `: Bool`/`: Nat` annotations forward-reference via the raw-load layer.
 
 // ── Negative telescopes (the §4c single-walk, WAIT-FORM cells). ONE walker `at` for
 // BOTH recognition (`at TT`) and projection-response (`at FF`). A telescope is
@@ -30,18 +28,21 @@ let SReject = inj0 "SReject"
 let SDone   = inj1 "SDone"
 let op_sig = {op} -> pair_fst (wait op t) // a cell's kind = its op's signature (like is_neutral)
 
-// The observation ops: op meta mode source prior frame -> Step. `source` is the candidate
-// (CHECK) or the self-neutral (STUCK); `prior` the previous cell's observed value.
+// The observation ops: op meta mode source prior frame rs -> Step. `source` is the candidate (CHECK)
+// or the self-neutral (STUCK); `prior` the previous cell's observed value. Most ops are the `check ty`
+// obligation (CELL_OPTICS role): they share `do_check`, differing ONLY in the optic's get (`getr`,
+// DEFERRED so the STUCK path never forces it) and the type `ty` (literal / `F self` / `ctx i`).
+let do_check = {mode, getr, ty} ->
+  if mode
+    then (match (getr t) { Ok part => (match (ty part) { Ok b => (if b then (SThread part) else SReject); Err _ => SReject }); Err _ => SReject })
+    else (SDone (Extend ty))
 let mint_op = {meta, mode, source, prior, frame, rs} -> SMint (meta.ty) // ∀-intro: `at` mints (CHECK) / lands the codomain (STUCK)
-let apply_op = {meta, mode, source, prior, frame, rs} -> // a function codomain: observe `source prior`
+let apply_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (source prior)) (meta.ty) // Pi codomain: observe `source prior`
+let proj_op = {meta, mode, source, prior, frame, rs} -> // a record field: honest lookup (key optic); STUCK frame-routes (§7B)
   if mode
-    then (match ((meta.ty) (source prior)) { Ok b => (if b then (SThread (source prior)) else SReject); Err _ => SReject })
-    else (SDone (Extend (meta.ty)))
-let proj_op = {meta, mode, source, prior, frame, rs} -> // a record field: observe by honest lookup
-  if mode
-    then (match (lookup_field source (meta.name)) { Err _ => SReject; Ok x => (match ((meta.ty) x) { Ok b => (if b then (SThread x) else SReject); Err _ => SReject }) })
-    else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Extend (meta.ty))) else (SThread (source (acc (meta.name))))) // §7B: thread field-value via the SANCTIONED elimination (source.name), not a forged hyp_reduce neutral (which the stem-forge guard rejects under emulation)
-let deriv_op = {meta, mode, source, prior, frame, rs} -> // a δ field: present AND pinned to recipe
+    then (do_check TT ({_} -> lookup_field source (meta.name)) (meta.ty))
+    else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Extend (meta.ty))) else (SThread (source (acc (meta.name))))) // §7B: thread field-value via the SANCTIONED elimination source.name
+let deriv_op = {meta, mode, source, prior, frame, rs} -> // a δ field: present AND pinned to recipe (Pin role)
   if mode
     then (match (lookup_field source (meta.name)) { Err _ => SReject; Ok x => (if (tree_eq x (meta.recipe)) then (SThread (meta.recipe)) else SReject) })
     else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Reduce (meta.recipe))) else (SThread (meta.recipe)))
@@ -59,10 +60,7 @@ is_derive := {cell} -> tree_eq (pair_fst cell) (op_sig deriv_op)
 // new observation op the positive merge needs: it lets `at` walk a constructor's argument tuple
 // with ZERO boxing, so a positive type's per-constructor arg list is just another telescope.
 // Pluggable like the rest (returns a Step; no `at` edit).
-let pos_op = {meta, mode, source, prior, frame, rs} ->
-  if mode
-    then (match ((meta.ty) (meta.acc source)) { Ok b => (if b then (SThread (meta.acc source)) else SReject); Err _ => SReject })
-    else (SDone (Extend (meta.ty)))
+let pos_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.ty) // positional slot
 pos_cell : Tree -> Tree -> Tree := {acc, ty} -> wait pos_op { acc := acc; ty := ty }
 
 // ── Path B: recursion + corecursion as CELLS over the self-aware `at`. `rec`/`rec_at` RECURSE via
@@ -79,18 +77,15 @@ is_gen := {v} -> tree_eq (pair_fst v) gen_tag
 // `acc source : (F self)`. Direct recursion is `F = Id` (the identity functor: `Id self = self`),
 // NESTED recursion is `F = List` etc. (`acc source : List self`). So ONE recursive cell op covers
 // both — `rec` is just `rec_under Id` (the user's unification: rec defined via rec_under).
-let rec_op = {meta, mode, source, prior, frame, rs} ->        // μ: check `acc source : (F self)`
-  if mode then (match ((meta.F rs) (meta.acc source)) { Ok b => (if b then (SThread (meta.acc source)) else SReject); Err _ => SReject }) else (SDone (Extend (meta.F rs)))
-let gen_op = {meta, mode, source, prior, frame, rs} ->        // ν: GUARD `is_gen (acc source)`, no descent
+let rec_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.F rs)        // μ: acc source : F self
+let gen_op = {meta, mode, source, prior, frame, rs} ->        // ν: GUARD `is_gen (acc source)`, no descent (Guard role)
   if mode then (if (is_gen (meta.acc source)) then (SThread (meta.acc source)) else SReject) else (SDone (Extend rs))
-let rec_at_op = {meta, mode, source, prior, frame, rs} ->     // mutual: recurse into context entry `rs idx`
-  if mode then (match ((rs (meta.idx)) (meta.acc source)) { Ok b => (if b then (SThread (meta.acc source)) else SReject); Err _ => SReject }) else (SDone (Extend (rs (meta.idx))))
+let rec_at_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (rs (meta.idx)) // mutual: acc source : ctx idx
 rec_cell : Tree -> Tree -> Tree := {F, acc} -> wait rec_op { F := F; acc := acc }
 gen_cell : Tree -> Tree := {acc} -> wait gen_op { acc := acc }
 rec_at_cell : Tree -> Tree -> Tree := {idx, acc} -> wait rec_at_op { idx := idx; acc := acc }
-// Inspect a cell by op-signature (like is_derive). is_rec_cell marks the functor's RECURSIVE
-// positions — the data a generic fold/map (the cell-derived functor) reads to know where to recurse.
-is_pos_cell := {cell} -> tree_eq (pair_fst cell) (op_sig pos_op)
+// is_rec_cell: marks the functor's RECURSIVE positions (by op-signature, like is_derive) — the data a
+// generic fold/map reads to know where to recurse.
 is_rec_cell := {cell} -> tree_eq (pair_fst cell) (op_sig rec_op)
 
 // RecUnder F / Rec / RecAt i: markers in a positive variant's arg-list, lifted by `pos_tele` to the
@@ -102,8 +97,15 @@ Id := {x} -> x                                  // the identity functor: Id self
 RecUnder := {F} -> inj "@RecUnder" F
 Rec := RecUnder Id
 RecAt := {i} -> inj "@RecAt" i
+// Param i (CELL_OPTICS): a constructor-arg marker for TYPE PARAMETER #i — the one new addressing the
+// functorial map (`fmap`/`nmap`) needs. Resolved at BUILD time by `pos_tele_p` (→ a `pos_cell` checking
+// `params i`), so recognition is unchanged; `at_map` reads the marker straight from the argspec to know
+// which positions to map. So `List A = Coproduct_p [A] [nil:[]; cons:[Param 0, Rec]]` — `Param 0` IS `A`
+// for recognition, AND tells fmap "map this slot."
+Param := {i} -> inj "@Param" i
 let is_recunder_marker = {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@RecUnder")
 let is_recat_marker = {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@RecAt")
+let is_param_marker = {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@Param")
 
 // const_tail / is_const_tail: the NON-DEPENDENT spine tail. A telescope node is
 // `t cell tail`; an INDEPENDENT cell's tail ignores the prior cell's value — the
@@ -169,12 +171,10 @@ type_predicate_h_rule := {params, self, frame} ->
     then (Return (tree_eq (neutral_type frame) self))
     else (Return FF)
 
-// Type IS the universe StrictType (migration): `Type := StrictType` is defined LATE (after
-// StrictType + its strict machinery). The early `: Type` ANNOTATIONS resolve via the raw-load
-// snapshot; the structural types whose VALUES mention `Type` (Action `Extend := Type`,
-// InductiveFrame motive, NeutralMeta) are moved to AFTER that definition (within-file value
-// refs are sequential). The host `isUniverseTree` uses exact tree identity, so a `: Type`
-// binding is still detected as universe-typed even though StrictType shares Telescope's sig.
+// `Type := StrictType` is defined LATE (after StrictType's machinery, ~line 684). Early `: Type`
+// annotations resolve via the raw-load snapshot; structural types whose VALUES mention `Type` follow
+// that def (sequential value refs). Host `isUniverseTree` uses exact tree identity, so a `: Type`
+// binding is detected as universe-typed even though StrictType shares Telescope's sig.
 
 // Inductive recursors. Recursive calls route through `elim` (not raw `self`), so a neutral
 // predecessor yields a clean stuck elimination (§A). nat_rec/bool_rec/ord_rec are dependently typed.
@@ -359,18 +359,22 @@ let lookup_arm = fix ({self, variants, tag} ->
 // which for a single arg is the identity). `pos_tele` turns a list of arg types into that
 // telescope; the EMPTY list -> the empty telescope (= ⊤, a nullary constructor's `t` payload).
 let snd_n = fix ({self, n, x} -> if (tree_eq n zero) then x else (self (nat_pred n) (pair_snd x)))
-let pos_tele_go = fix ({self, types, depth} ->
+let param_nth = fix ({self, l, i} -> if (tree_eq i zero) then (pair_fst l) else (self (pair_snd l) (nat_pred i)))
+// pos_tele_go: one impl for both the plain and parameterized arg-list lift. A `Param i` arg is
+// RESOLVED here to `pos_cell acc (params i)` — so recognition is byte-identical to the un-parameterized
+// form, no `rs` threading needed (params baked in). The marker stays in the argspec for `fmap` to read.
+let pos_tele_go = fix ({self, params, types, depth} ->
   if (is_fork types) then {
-    let acc = if (is_fork (pair_snd types))            // not the last arg
-                then ({x} -> pair_fst (snd_n depth x))
-                else ({x} -> snd_n depth x)            // last arg (single-arg -> identity)
+    let acc = if (is_fork (pair_snd types)) then ({x} -> pair_fst (snd_n depth x)) else ({x} -> snd_n depth x) // last arg -> identity
     let ty = pair_fst types
-    let cell = (if (is_recunder_marker ty) then (rec_cell (pair_snd ty) acc)        // RecUnder F / Rec -> μ cell under F
-                else (if (is_recat_marker ty) then (rec_at_cell (pair_snd ty) acc)  // RecAt i -> mutual cell
-                else (pos_cell acc ty)))                                            // a type -> a data cell
-    t cell ({_} -> self (pair_snd types) (succ depth))
+    let cell = (if (is_param_marker ty) then (pos_cell acc (param_nth params (pair_snd ty)))   // Param i -> check params i
+                else (if (is_recunder_marker ty) then (rec_cell (pair_snd ty) acc)             // RecUnder F / Rec -> μ cell
+                else (if (is_recat_marker ty) then (rec_at_cell (pair_snd ty) acc)             // RecAt i -> mutual cell
+                else (pos_cell acc ty))))                                                      // a type -> a data cell
+    t cell ({_} -> self params (pair_snd types) (succ depth))
   } else t)
-pos_tele := {types} -> pos_tele_go types zero
+pos_tele   := {types}         -> pos_tele_go t types zero        // plain (no Param markers)
+pos_tele_p := {params, types} -> pos_tele_go params types zero   // CELL_OPTICS: Param i resolved against params
 
 // Coproduct [(tag, [arg-types])]: v = inj tag (a0,a1,…) inhabits iff tag is a variant and its
 // args inhabit that variant's arg telescope. THE positive former — a PLAIN n-ary sum, recognized
@@ -380,34 +384,40 @@ pos_tele := {types} -> pos_tele_go types zero
 // recurses via the threaded rs = self. The former ties its OWN knot (make_rec_recognizer), so there
 // is no `Mu` wrapper. The respond is supplied — inductive_respond (a plain sum: telescope
 // recognize-face, positive case elim) or a gated coherence respond (Nat/Bool).
-// coproduct_at: the shared dispatch — look up the inj-tag's arg list, walk the args by `at` (rs=self).
-let coproduct_at = {rs, variants, v} ->
+// coproduct_at: the shared dispatch — look up the inj-tag's arg list, walk the args by `at`.
+// `params` resolves `Param i` arg markers (CELL_OPTICS); pass `t` for non-parameterized sums.
+let coproduct_at = {params, rs, variants, v} ->
   match (lookup_arm variants (pair_fst v)) {
-    Ok argspec => (at rs TT (pos_tele argspec) (pair_snd v) t t) // args inhabit the arg telescope
+    Ok argspec => (at rs TT (pos_tele_p params argspec) (pair_snd v) t t)
     Err _ => (Ok FF) // unknown tag
   }
-// Coproduct_resp: the positive former, self-aware (rs=self lets `Rec` cells recurse) + respond-
-// parametric (so Nat/Bool can supply a gated respond — replacing `Mu_resp`'s role for sums).
-Coproduct_resp := {respond, variants} -> wait (make_rec_recognizer
-  {self, meta, v} -> (coproduct_at self meta.recognizer_params v)
-) (make_meta variants respond)
-Coproduct : Tree -> Type := {variants} -> Coproduct_resp inductive_respond variants
+// Coproduct_resp_p: THE positive former — self-aware (rs=self lets `Rec` cells recurse), respond-
+// parametric (Nat/Bool supply a gated coherence respond), and Param-aware (CELL_OPTICS: variants may
+// carry `Param i`, resolved against `params`; the marker survives in recognizer_params for `fmap`).
+// The other Coproduct formers are thin instances. `Coproduct_p t vs` == `Coproduct vs`.
+// `functor` carries the type's shape↔inj ISO (decode `view` + `encode`), which generic `fmap`/
+// `fold_value` read. Inj-tagged types use the IDENTITY iso (a value IS its own canonical form).
+iso_id := pair ({v} -> Ok v) ({x} -> x)   // decode = Ok, encode = id
+Coproduct_resp_p := {params, respond, variants} -> wait (make_rec_recognizer
+  {self, meta, v} -> (coproduct_at params self meta.recognizer_params v)
+) (make_meta_f variants iso_id respond)
+Coproduct_resp := {respond, variants}  -> Coproduct_resp_p t respond variants
+Coproduct : Tree -> Type := {variants}  -> Coproduct_resp inductive_respond variants
+Coproduct_p := {params, variants}       -> Coproduct_resp_p params inductive_respond variants
 
-// (`Mu`/`Mu_resp` — the least-fixpoint BINDER — are RETIRED. Recursion is now a `RecUnder F` cell
-// (TELESCOPE_FIXPOINT Path B): the self-aware sum ties its OWN knot via make_rec_recognizer threading
-// rs = self, so `Rec` (= RecUnder Id) and `RecUnder List` (nested) replace `Mu (λself. …)`, and a
-// CUSTOM/gated respond is supplied to `Coproduct[_viewed]_resp` directly. Mutual recursion is
-// `Coproduct_ctx` + `RecAt i`. The four corners {Σ,Π}×{μ,ν} are all cells on one walker — no wrappers.)
+// (`Mu`/`Mu_resp` RETIRED (Path B): recursion is a `RecUnder F` cell, the self-aware sum ties its own
+// knot via make_rec_recognizer (rs=self); mutual recursion is `Coproduct_ctx` + `RecAt i`.)
 
-// Coproduct_viewed view variants: a coproduct over a SHAPE-encoded value (POSITIVE_TYPES §5b).
-// `view` maps the raw tree to an inj-tagged form — `Ok (inj tag payload)` if some constructor's
-// shape matches, else `Err` (-> not a member). So types whose tag lives in the TREE SHAPE rather
-// than an `inj` tag (Ord, List, …) reuse the SAME `at` dispatch. Self-aware: a `Rec` arg recurses
-// into the type itself, so a recursive shape-encoded type needs no `Mu` wrapper.
-Coproduct_viewed_resp := {respond, view, variants} -> wait (make_rec_recognizer
-  {self, meta, v} -> (match (view v) { Ok tg => (coproduct_at self meta.recognizer_params tg); Err _ => (Ok FF) })
-) (make_meta variants respond)
-Coproduct_viewed := {view, variants} -> Coproduct_viewed_resp inductive_respond view variants
+// Coproduct_viewed params iso variants: a coproduct over a SHAPE-encoded value (POSITIVE_TYPES §5b),
+// param-aware (like Coproduct_resp_p — `Param i` markers resolved against `params`; pass `t` if none).
+// `iso` = `pair view encode`: `view` maps the raw tree to inj-tagged form (`Ok (inj tag payload)` if a
+// constructor's shape matches, else `Err`); `encode` rebuilds the shape from the inj form. Stored in
+// `functor`, so generic `fmap` (decode→map→encode) and `fold_value` (decode) work on shape-encoded
+// types via the SAME `at` dispatch — types whose tag lives in the TREE SHAPE (Nat/List/Ord) need no Mu.
+Coproduct_viewed_resp := {params, respond, iso, variants} -> wait (make_rec_recognizer
+  {self, meta, v} -> (match ((pair_fst iso) v) { Ok tg => (coproduct_at params self meta.recognizer_params tg); Err _ => (Ok FF) })
+) (make_meta_f variants iso respond)
+Coproduct_viewed := {params, iso, variants} -> Coproduct_viewed_resp params inductive_respond iso variants
 
 // Coproduct_ctx ctx variants: a sum for MUTUAL recursion (TELESCOPE_FIXPOINT Path B). Instead of
 // threading rs = self, it threads rs = `ctx`, a CONTEXT FUNCTION (i -> recognizer) over the mutual
@@ -416,8 +426,8 @@ Coproduct_viewed := {view, variants} -> Coproduct_viewed_resp inductive_respond 
 // so e.g. `Tree A = (mkctx A) 0`, `Forest A = (mkctx A) 1` build with no Tree↔Forest loop. Elimination
 // of a ctx-sum neutral is ordinary `inductive_respond` (the context is a recognize-face concern).
 Coproduct_ctx := {ctx, variants} -> wait (make_recognizer
-  {meta, v} -> (coproduct_at ctx meta.recognizer_params v)
-) (make_meta variants inductive_respond)
+  {meta, v} -> (coproduct_at t ctx meta.recognizer_params v)
+) (make_meta_f variants iso_id inductive_respond)
 
 // fold_value (the cell-derived catamorphism — the SHAPE FUNCTOR read straight off the cells, the
 // dormant `functor` field made concrete). For an inj-tagged recursive Coproduct value `v = inj tag
@@ -450,7 +460,9 @@ fold_value_via := {view} -> fix ({fold, T, alg, v} -> {
   let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
   apply_all (field alg (pair_fst dec)) (collect_args cells (pair_snd dec) (wait fold T) alg)
 })
-fold_value := fold_value_via ({v} -> Ok v)
+// fold_value: like fold_value_via but AUTO-READS the decode `view` from the type's iso (functor),
+// so `fold_value T` works on shape-encoded (Nat/List/Ord) AND inj-tagged (iso_id view = Ok) alike.
+fold_value := {T} -> fold_value_via (pair_fst (type_meta T).functor) T
 
 // rec_value (the dependent RECURSOR, derived from cells — generalizes nat_rec/ord_rec to ANY inductive).
 // Unlike fold_value (each case gets only the FOLDED args), a recursor case gets the RAW args AND the IH
@@ -484,31 +496,66 @@ let rec_children = fix ({self, cells, payload} ->
   } else nil)
 children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t }) (pair_snd v)
 
-// Ord (migrated, Path B): the shape-encoded recursive ordinal sum — zero_ord = leaf, omega_plus a b
-// = fork(stem a, b). `view_ord` decodes the shape to inj-tagged form; the recursive `omega_plus`
-// carries two `Rec` children, so the self-aware Coproduct_viewed ties its own knot — NO `Mu` wrapper.
-// Recognizes exactly the same values as before, via the SAME `at` dispatch as everything else.
-// (zero_ord/omega_plus are declared earlier; the type lands here, after the machinery it reuses.)
+// ── fmap / nmap — the cell-derived functorial map (CELL_OPTICS §3). `at_map` is the sibling of `at`
+// that walks an inj-tagged value's argspec and REBUILDS via the optic's `over` (here `slot_over`, the
+// positional `over` for the right-nested payload) — so reconstruction is composed position-wise `over`s,
+// NOT a hand-rolled `build_payload`. At a `Param i` arg it maps with `fns i`; at a direct-recursive
+// `Rec` (= RecUnder Id) arg it recurses; everything else is left. `fmap`/`bimap` are the 1-/2-parameter
+// specializations. (Shape-encoded `Coproduct_viewed` types need a view-decode first — deferred; nested
+// `RecUnder F`, F≠Id, needs F's map — deferred, as in the prototype.)
+let slot_over = fix ({self, depth, is_last, f, p} ->
+  if (tree_eq depth zero)
+    then (if is_last then (f p) else (pair (f (pair_fst p)) (pair_snd p)))
+    else (pair (pair_fst p) (self (nat_pred depth) is_last f (pair_snd p))))
+let at_map_args = fix ({self, nm, fns, argspec, payload, depth} ->
+  if (is_fork argspec) then {
+    let marker = pair_fst argspec
+    let is_last = is_leaf (pair_snd argspec)
+    let trans = (if (is_param_marker marker) then (fns (pair_snd marker)) else (if (and (is_recunder_marker marker) (tree_eq (pair_snd marker) Id)) then (nm fns) else Id))
+    self nm fns (pair_snd argspec) (slot_over depth is_last trans payload) (succ depth)
+  } else payload)
+// fmap_n: map over a value via the type's iso (functor) — decode (view) -> map the inj form (slot_over,
+// recursing at Rec cells) -> re-encode. Identity iso (inj-tagged) makes this the plain inj map; a real
+// iso (shape-encoded Nat/List/Ord) makes the SAME `fmap` work on shape values. `fmap_step` does the
+// decoded-form map+encode (split out so the match arm ends in the arm-bound `tg`).
+let fmap_step = {self, T, fns, encode, tg} ->
+  encode (inj (pair_fst tg) (at_map_args (wait self T) fns (match (lookup_arm (type_meta T).recognizer_params (pair_fst tg)) { Ok a => a; Err _ => t }) (pair_snd tg) zero))
+fmap_n := fix ({self, T, fns, v} -> {
+  let iso = (type_meta T).functor
+  match ((pair_fst iso) v) {
+    Ok tg => (fmap_step self T fns (pair_snd iso) tg)
+    Err _ => v
+  }
+})
+fmap  := {T, f, v}    -> fmap_n T ({i} -> f) v
+bimap := {T, f, g, v} -> fmap_n T ({i} -> if (tree_eq i zero) then f else g) v
+nmap  := fmap_n
+
+// Ord: shape-encoded recursive ordinal sum — zero_ord = leaf, omega_plus a b = fork(stem a, b).
+// `view_ord` decodes to inj-tagged form; omega_plus's two `Rec` children tie the knot via the self-aware
+// Coproduct_viewed. (zero_ord/omega_plus declared earlier; the type lands here, after its machinery.)
 let view_ord = {v} -> triage
   (Ok (inj "zero_ord" t))                                                 // leaf -> zero_ord
   ({_} -> Err)                                                            // bare stem -> not an ord
   ({l, r} -> if (is_stem l) then (Ok (inj "omega_plus" (pair (stem_child l) r))) else Err) // fork(stem a, b)
   v
-Ord : Type := Coproduct_viewed view_ord [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
+// encode_ord: inj-form -> shape (the inverse of view_ord). zero_ord -> leaf; omega_plus (a,b) -> fork(stem a, b).
+let encode_ord = {x} -> if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair_fst (pair_snd x))) (pair_snd (pair_snd x))) else t
+Ord : Type := Coproduct_viewed t (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
 
-// Bool (migrated, §5b): TT/FF are shape combinators, so view_bool decodes by identity. Non-recursive
-// (self unused). KEEPS its gated coherence respond (cases.ct : motive TT, cases.cf : motive FF) via
-// Mu_resp — recognizer migrates, respond unchanged.
+// Bool: TT/FF are shape combinators, so view_bool decodes by identity. Non-recursive (self unused).
+// Gated coherence respond (cases.ct : motive TT, cases.cf : motive FF) via gated_inductive_respond.
 let coh_bool = {T, motive, cases} ->
   bind ((motive TT) cases.ct) ({okt} -> if okt then ((motive FF) cases.cf) else (Ok FF))
 let view_bool = {v} ->
   if (tree_eq v TT) then (Ok (inj "true" t)) else (if (tree_eq v FF) then (Ok (inj "false" t)) else Err)
-Bool : Type := Coproduct_viewed_resp (gated_inductive_respond coh_bool) view_bool [pair "true" [], pair "false" []]
+// encode_bool: inj-form -> shape combinator. true -> TT; false -> FF. (Bool has no param: fmap = id.)
+let encode_bool = {x} -> if (tree_eq (pair_fst x) "true") then TT else FF
+Bool : Type := Coproduct_viewed_resp t (gated_inductive_respond coh_bool) (pair view_bool encode_bool) [pair "true" [], pair "false" []]
 
-// Nat (migrated, §5b): zero = leaf, succ r = fork(t, r). view_nat decodes the shape; `succ` carries
-// one `self` (the predecessor); `Mu_resp` ties the knot AND keeps the gated coherence respond
-// (base : motive zero, step : Π n. motive n -> motive (succ n)) — the §8/Track B residual respond,
-// preserved exactly. Recognizes identically to the old triage recognizer.
+// Nat: zero = leaf, succ r = fork(t, r). view_nat decodes the shape; `succ` carries one `self` (the
+// predecessor); Coproduct_viewed_resp ties the knot. Gated coherence respond (base : motive zero,
+// step : Π n. motive n -> motive (succ n)) — the §8/Track B residual.
 let coh_nat = {T, motive, cases} -> {
   let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
     (motive (succ n)) ((cases.step n) ih))))
@@ -519,27 +566,45 @@ let view_nat = {v} -> triage
   ({_} -> Err)                                                     // bare stem -> not a Nat
   ({l, r} -> if (tree_eq l t) then (Ok (inj "succ" r)) else Err)   // fork(t, r) -> succ r
   v
-Nat : Type := Coproduct_viewed_resp (gated_inductive_respond coh_nat) view_nat [pair "zero" [], pair "succ" [Rec]]
+// encode_nat: inj-form -> shape. zero -> leaf; succ r -> fork(t, r). (Nat has no param: fmap = id.)
+let encode_nat = {x} -> if (tree_eq (pair_fst x) "succ") then (t t (pair_snd x)) else t
+Nat : Type := Coproduct_viewed_resp t (gated_inductive_respond coh_nat) (pair view_nat encode_nat) [pair "zero" [], pair "succ" [Rec]]
 
-// Record [(Vi, Ti)]: the NON-DEPENDENT record — a constant-tail (K-stem)
-// telescope, sharing Telescope's folds. The flat field list lifts LAZILY (at
-// recognition/projection, not formation), keeping Record parametric in its
-// params so `Record : Tree -> Type` self-verifies. (The old record_check/
-// record_respond were the degenerate case and are gone.)
-let fields_to_tele = fix ({self, fields} ->
+// fields_to_tele_go: lift a flat field list to a const-tail (K-stem) proj-cell telescope, sharing
+// Telescope's folds. `Param i` fields (CELL_OPTICS) resolve to `proj_cell name (params i)`; pass `t`
+// for plain records. Lifted LAZILY inside the recognizer (not at formation) so `Record : Tree -> Type`
+// self-verifies — its param is a neutral there, and an eager triage would trip the walker. Guard-free
+// like Telescope: a non-record is rejected by `at`'s per-cell lookup_field; `Record []` = ⊤.
+let fields_to_tele_go = fix ({self, params, fields} ->
   if (is_fork fields) then {
     let arm = pair_fst fields
-    t (proj_cell (pair_fst arm) (pair_snd arm)) (const_tail (self (pair_snd fields)))
+    let ty = if (is_param_marker (pair_snd arm)) then (param_nth params (pair_snd (pair_snd arm))) else (pair_snd arm)
+    t (proj_cell (pair_fst arm) ty) (const_tail (self params (pair_snd fields)))
   } else t)
-// Record: the non-dependent flat-field former. NOT a literal `Telescope (fields_to_tele
-// fields)` wrapper — `fields_to_tele` triages its list argument, so an eager lift would
-// trip the walker when `Record` is self-verified against `Tree -> Type` (its param is a
-// neutral there). So it keeps its own wait-form and lifts LAZILY inside the recognizer
-// (where the params are concrete), sharing the `at` walk. Guard-free like Telescope:
-// a non-record is rejected by `at`'s per-cell lookup_field; `Record []` = ⊤.
-Record : Tree -> Type := {fields} -> wait (make_recognizer
-  {meta, v} -> at t TT (fields_to_tele meta.recognizer_params) v t t
-) (make_meta fields ({params, self, frame} -> at t FF (fields_to_tele params) self frame t))
+Record_p := {params, fields} -> wait (make_recognizer
+  {meta, v} -> at t TT (fields_to_tele_go params meta.recognizer_params) v t t
+) (make_meta fields ({flds, self, frame} -> at t FF (fields_to_tele_go params flds) self frame t))
+Record : Tree -> Type := {fields} -> Record_p t fields
+
+// key.over (CELL_OPTICS, the NAMED side of the optic): `key name = slot (index_of names name)` re-
+// attaching names — the §2.6 cut (`proj P n = path_at (index_of …) …`) run BACKWARD. So `fmap`/`bimap`
+// work over records (compose key.overs, no hand mk_record) by the same engine as positional slot.over.
+let name_index = fix ({self, names, name} -> if (is_fork names) then (if (tree_eq (pair_fst names) name) then zero else (succ (self (pair_snd names) name))) else zero)
+let list_set = fix ({self, idx, v, l} -> if (tree_eq idx zero) then (cons v (pair_snd l)) else (cons (pair_fst l) (self (nat_pred idx) v (pair_snd l))))
+key_over := {name, f, record} -> { // rebuild the §2.6 record with field `name` mapped (payload = list_const-wrapped)
+  let np = type_meta record
+  let idx = name_index (pair_fst np) name
+  mk_record (pair_fst np) (list_set idx (list_const (f ((param_nth (pair_snd np) idx) t))) (pair_snd np))
+}
+// at_map over a record: map each `Param i` field via key.over (compose). fmap_rec/bimap_rec derive.
+let at_map_fields = fix ({self, fns, fields, record} ->
+  if (is_fork fields) then {
+    let arm = pair_fst fields
+    let record2 = if (is_param_marker (pair_snd arm)) then (key_over (pair_fst arm) (fns (pair_snd (pair_snd arm))) record) else record
+    self fns (pair_snd fields) record2
+  } else record)
+fmap_rec  := {T, fns, r}    -> at_map_fields fns (type_meta T).recognizer_params r
+bimap_rec := {T, f, g, r}   -> fmap_rec T ({i} -> if (tree_eq i zero) then f else g) r
 
 // derive_case_telescope T P: the RECURSOR'S case-types, DERIVED from the cells (POSITIVE §4) — so
 // `rec_value`'s type is `{P} -> derive_case_telescope T P -> {x:T} -> P x`, GENERATED not hand-written.
@@ -567,40 +632,15 @@ let dct_go = fix ({self, variants, T, P} ->
   } else nil)
 derive_case_telescope := {T, P} -> Record (dct_go (type_meta T).recognizer_params T P)
 
-// Coproduct_of / ctors: build a coproduct from a variant RECORD
-// `{ Tag := payloadType, … }` instead of the positional `Coproduct [pair "Tag"
-// T, …]`. `Coproduct_of` is the TYPE; `ctors` derives that type's constructor
-// record `{ Tag := inj1 Tag, … }` (inj0 for a Unit payload) FROM the type, so the
-// type keeps your binding's name and the constructors come for free:
+// Coproduct_of: build a coproduct from a variant RECORD `{ Tag := payloadType, … }` instead of the
+// positional `Coproduct [pair "Tag" T, …]` — each field `Tag := T` is a SINGLE-arg variant `[T]`:
 //   Action := Coproduct_of { Extend := Type; Reduce := Tree }
-//   open ctors Action      // Extend, Reduce in scope (or by dot: (ctors Action).Extend)
-// `open` reads the record header off the compiled tree (src/compile.ts
-// recordFieldsFromTree). Unannotated (like `mk`): the folds read a record
-// header, so a `Tree -> …` typing would mint a hyp they inspect.
-// Each declared field `Tag := T` is a SINGLE-arg constructor, so its arg list is the singleton
-// `[T]` (the generic former's per-variant spec). Multi-arg/recursive variants are written with
-// the positional `Coproduct [pair tag [A, REC, …]]` form directly.
+// Multi-arg/recursive variants use the positional `Coproduct [pair tag [A, Rec, …]]` form directly.
 let variants_of = fix ({self, decl, names} ->
   if (is_fork names)
     then (cons (pair (pair_fst names) (cons (field decl (pair_fst names)) nil)) (self decl (pair_snd names)))
     else nil)
 Coproduct_of := {decl} -> Coproduct (variants_of decl (pair_fst (type_meta decl)))
-
-let ctors_fold = fix ({self, variants} ->
-  if (is_fork variants) then {
-    let nm = pair_fst (pair_fst variants)
-    let argspec = pair_snd (pair_fst variants) // the arg list [T] (or [T0,T1,…])
-    // Single Unit arg -> the nullary value `inj nm unit_val` (Unit recognizes only unit_val,
-    // NOT the bare `t` of inj0); else the payload-taking `inj1 nm`. (Multi-arg ctors: build by hand.)
-    let is_unit1 = and (is_fork argspec) (and (is_leaf (pair_snd argspec)) (tree_eq (pair_fst argspec) Unit))
-    let ctor = if is_unit1 then (inj nm unit_val) else (inj1 nm)
-    let rest = self (pair_snd variants)
-    pair (cons nm (pair_fst rest)) (cons (list_const ctor) (pair_snd rest))
-  } else (pair nil nil))
-ctors := {T} -> {
-  let cs = ctors_fold ((type_meta T).recognizer_params)
-  mk_record (pair_fst cs) (pair_snd cs)
-}
 
 // The kernel's own structural types (§11.2 / §12.6), built from the library formers above
 // so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
@@ -608,17 +648,13 @@ ctors := {T} -> {
 Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
 Frame : Type := Tree
-// NeutralMeta / Action / RespondShape / the per-former RespondShapes use `Type` in VALUE
-// position (Action's `Extend := Type`, etc.), so they are defined AFTER `Type := StrictType`
-// below (within-file value refs are sequential — they can't forward-ref the late universe).
+// NeutralMeta / Action / RespondShape and the per-former RespondShapes (InductiveFrame /
+// InductiveRespondShape / ProjectingRespondShape) use `Type`/`Action` in VALUE position, so they are
+// defined AFTER `Type := StrictType` below (within-file value refs are sequential — no forward-ref).
 // MetaShape uses only Tree, so it stays here (StrictType's qid_meta_cell needs it).
 // MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
 MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }
-
-// (The per-former STRUCTURED RespondShapes — InductiveFrame / InductiveRespondShape /
-// ProjectingRespondShape — also use `Type`/`Action` in value position, so they too are
-// defined after `Type := StrictType` below.)
 
 // ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
 // A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the
@@ -631,10 +667,8 @@ MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, 
 // placeholder; the recognize face is the point.)
 CheckerResult : Type := Coproduct_of { Ok := Tree; Err := Unit }
 
-let qid_op = {meta, mode, source, prior, frame, rs} -> // observe v itself, check v : meta.ty
-  if mode
-    then (match ((meta.ty) source) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
-    else (SDone (Extend (meta.ty)))
+let qid_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.ty) // observe v itself (self optic)
+// qid_meta: observe type_meta v, check it : meta.ty — but THREAD v (not the meta), so it stays separate.
 let qid_meta_op = {meta, mode, source, prior, frame, rs} -> // observe type_meta v, check it : meta.ty
   if mode
     then (match ((meta.ty) (type_meta source)) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
@@ -658,10 +692,8 @@ StrictType : Type := wait (make_recognizer
    t (qid_meta_cell MetaShape) ({_} -> t)))
   type_predicate_h_rule)
 
-// The migration: the universe `Type` IS `StrictType`. One strict universe (semantic
-// recognize-face + MetaShape meta-face + the H-rule respond). The structural types whose
-// VALUES mention `Type`/`Action` follow here — they can't precede this line (within-file
-// value refs are sequential).
+// Type := StrictType: the universe IS the strict type (recognize-face + MetaShape meta-face + H-rule
+// respond). Structural types whose values mention Type/Action follow here (sequential value refs).
 Type := StrictType
 
 // NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).

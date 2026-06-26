@@ -18,8 +18,11 @@ let view_list = {v} -> triage
   ({_} -> Err)                               // bare stem       -> not a list
   ({h, tl} -> Ok (inj "cons" (pair h tl)))   // fork(head,tail) -> cons
   v
+// encode_list: inj-form -> shape (inverse of view_list). nil -> leaf; cons (h,tl) -> fork(h,tl).
+let encode_list = {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
+// cons's head is `Param 0` (the element A) — so the generic `fmap (List A) f` maps it; params = [A].
 List : Type -> Type := {A} ->
-  Coproduct_viewed view_list [pair "nil" [], pair "cons" [A, Rec]]
+  Coproduct_viewed (cons A nil) (pair view_list encode_list) [pair "nil" [], pair "cons" [Param zero, Rec]]
 
 NatList : Type := List Nat
 

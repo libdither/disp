@@ -2,12 +2,19 @@
 name = "rust-ic-net"
 version = "0.0.0"
 edition = "2021"
-description = "rust-ic-net: a materialized interaction-net evaluator for disp tree calculus (M0: sequential)"
+description = "rust-ic-net: a materialized interaction-net evaluator for disp tree calculus"
 license = "MIT"
 
 [lib]
 # cdylib ⇒ a freestanding .wasm with C ABI exports the disp Session wrapper calls.
-crate-type = ["cdylib"]
+# rlib ⇒ also testable natively (the M2c parallel cargo tests).
+crate-type = ["cdylib", "rlib"]
+
+# M2c — native parallel drain. crossbeam does NOT build on wasm32, so it is cfg-gated to
+# non-wasm targets; the wasm build (the sequential oracle) excludes it.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+crossbeam-deque = "0.8"
+crossbeam-utils = "0.8"
 
 [profile.release]
 opt-level = 3

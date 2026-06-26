@@ -74,6 +74,9 @@ lookup_field := {r, name} -> lookup_field_at (pair_fst (type_meta r)) (pair_snd 
 // behavioral_specs }, read by name; conformance is an O(1) tree_eq on the header.
 unit_witness := t
 trivial_functor := t
-make_meta : Tree -> Tree -> MetaShape := {params, respond} ->
-  { recognizer_params := params; functor := trivial_functor; respond; behavioral_specs := t }
+// make_meta_f sets the `functor` field explicitly; coproducts store their shape↔inj ISO there
+// (CELL_OPTICS — what generic `fmap`/`fold_value` read). make_meta keeps the trivial default.
+make_meta_f : Tree -> Tree -> Tree -> MetaShape := {params, functor, respond} ->
+  { recognizer_params := params; functor; respond; behavioral_specs := t }
+make_meta : Tree -> Tree -> MetaShape := {params, respond} -> make_meta_f params trivial_functor respond
 metashape_header := ["recognizer_params", "functor", "respond", "behavioral_specs"]

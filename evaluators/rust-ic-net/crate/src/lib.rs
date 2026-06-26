@@ -706,6 +706,7 @@ pub extern "C" fn tc_dnp() -> u64 {
 mod tests {
     use super::*;
 
+    // A net + worker for a test, small fixed arena.
     fn net() -> Net {
         Net::new(1 << 16, 1 << 16)
     }

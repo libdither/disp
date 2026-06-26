@@ -36,7 +36,8 @@ test eval (edbl (eadd (lit 1) (lit 4)))    = 10   // 2*(1+4)
 // ── A0: SHAPE-encoded fold via an explicit view. A unary nat (z = leaf, s n = fork(t,n)) whose tag
 //    lives in the tree shape; `view_un` decodes raw -> inj-tagged; `fold_value_via` folds it. ──
 let view_un = {v} -> triage (Ok (inj "z" t)) ({_} -> Err) ({l, r} -> if (tree_eq l t) then (Ok (inj "s" r)) else Err) v
-let UN = Coproduct_viewed view_un [pair "z" [], pair "s" [Rec]]
+let encode_un = {x} -> if (tree_eq (pair_fst x) "s") then (t t (pair_snd x)) else t
+let UN = Coproduct_viewed t (pair view_un encode_un) [pair "z" [], pair "s" [Rec]]
 let z = t
 let s = {n} -> t t n
 test typecheck UN (s (s z))                                = Ok TT       // recognized (via the view)

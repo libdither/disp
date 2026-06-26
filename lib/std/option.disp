@@ -3,19 +3,17 @@ open use "../kernel/prelude.disp"
 
 // Option A — optional value, as a proper §2.6 Coproduct.
 //
-// Option is `Coproduct_of { some := A; none := Unit }`: a value is `inj tag payload`
-// (a tag tree in pair_fst, the payload in pair_snd). Being a real coproduct type
-// — a wait-form carrying `inductive_respond` — is what makes a *neutral* Option
-// eliminable: `option_rec`'s neutral branch applies the hypothesis to a
-// `{motive; cases}` frame, which routes through the respond (the one walker-legal
-// way to eliminate a hypothesis). The earlier ad-hoc encoding (none=LEAF,
-// some=fork) was a raw function with no respond, so a Pi-typed eliminator over it
-// could not verify.
+// Option is a `Coproduct_p` (CELL_OPTICS): `some` carries `Param 0` (the type parameter A), `none`
+// carries Unit. A value is `inj tag payload`. The `Param 0` marker is what makes Option a FUNCTOR —
+// `fmap (Option A) f` maps the `some` payload and leaves `none` (generic, from the kernel). Being a
+// real coproduct (a wait-form carrying `inductive_respond`) is also what makes a *neutral* Option
+// eliminable: `option_rec`'s neutral branch applies the hypothesis to a `{motive; cases}` frame, which
+// routes through the respond (the one walker-legal way to eliminate a hypothesis).
 
 none_tag : String := "none"
 some_tag : String := "some"
 
-Option : Type -> Type := {A} -> Coproduct_of { some := A; none := Unit }
+Option : Type -> Type := {A} -> Coproduct_p (cons A nil) [pair some_tag [Param zero], pair none_tag [Unit]]
 
 // none/some are payload-only constructors, so they carry the loose Tree type rather
 // than the dependent `{A} -> A -> Option A` (which would need an extra A binder).

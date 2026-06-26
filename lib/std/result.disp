@@ -3,17 +3,16 @@ open use "../kernel/prelude.disp"
 
 // Result E A — success-or-error value, as a proper §2.6 Coproduct.
 //
-// Result is `Coproduct_of { ok := A; err := E }`: a value is `inj tag payload`. Being
-// a real coproduct type (a wait-form carrying `inductive_respond`) is what makes a
-// *neutral* Result eliminable — `result_rec`'s neutral branch applies the
-// hypothesis to a `{motive; cases}` frame that routes through the respond, the one
-// walker-legal way to eliminate a hypothesis. The earlier ad-hoc fork encoding was
-// a raw function with no respond, so a Pi-typed eliminator over it could not verify.
+// Result is a `Coproduct_p` (CELL_OPTICS) over params [E, A]: `ok` carries `Param 1` (= A), `err`
+// carries `Param 0` (= E). A value is `inj tag payload`. The markers make Result a BIFUNCTOR —
+// `bimap (Result E A) g f` maps `err` with g and `ok` with f (generic, from the kernel). Being a real
+// coproduct (a wait-form carrying `inductive_respond`) is what makes a *neutral* Result eliminable:
+// `result_rec`'s neutral branch routes through the respond (the one walker-legal hyp elimination).
 
 ok_tag  : String := "ok"
 err_tag : String := "err"
 
-Result : Type -> Type -> Type := {E, A} -> Coproduct_of { ok := A; err := E }
+Result : Type -> Type -> Type := {E, A} -> Coproduct_p (cons E (cons A nil)) [pair ok_tag [Param (succ zero)], pair err_tag [Param zero]]
 
 // payload-only constructors -> loose Tree type (see option.disp none/some).
 ok  : Tree -> Tree := {v} -> inj ok_tag v

@@ -70,15 +70,10 @@ let is_bind_hyp = {f} -> and (is_fork f) (tree_eq (pair_fst f) bind_hyp_sig)
 TEQ_WAIT_SIG := checker_sig tree_eq
 let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 
-// apply_policed (§7A): the trusted policing token. `apply_policed M s` IS `param_walker M s` (real
-// policing both when run raw — at runtime hyp_reduce invokes responds directly — AND when a respond
-// is being type-checked). It is `wait param_walker M` so (i) raw, `(wait param_walker M) s` reduces
-// to `param_walker M s`; (ii) its root sig is `checker_sig param_walker` (independent of the deferred
-// M), which the walker's carve-out below spots via `checker_sig self` and SHORT-CIRCUITS — returning
-// `Ok (self M s)` instead of re-emulating the inner walker's (sanctioned) neutral-inspecting
-// application and wrongly rejecting it. Keying on `checker_sig self` (self = the fix var, not the
-// global `param_walker`) keeps param_walker's tree FINITE — the definition cycle that a fail-closed
-// marker would need to dodge is dissolved. (Defined just after param_walker.)
+// apply_policed (§7A): the trusted policing token = `wait param_walker M`, so `apply_policed M s`
+// reduces to `param_walker M s` (real policing). Its root sig is `checker_sig param_walker` (independent
+// of M), which the walker's line-126 carve-out spots via `checker_sig self` and short-circuits to
+// `Ok (self M s)` — keying on the fix var `self` (not the global) keeps param_walker's tree finite.
 
 let w_stem = {a, x} -> {
   let r = t a x
@@ -127,8 +122,7 @@ param_walker := fix ({self, f, x} ->
   else if (tree_eq f ({x} -> x)) then (Ok x) // identity
   else (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f))
 
-// apply_policed: the trusted policing token responds use to walk a user sub-term (motive,
-// codomain, predicate) applied to the self-neutral. See the note above param_walker.
+// responds use apply_policed to walk a user sub-term (motive/codomain/predicate) against the neutral.
 apply_policed := {M} -> wait param_walker M
 
 // param_apply returns the bare reduct (wrapping invariant §7.5): unwrap param_walker's
@@ -163,7 +157,7 @@ gated_inductive_respond := {coh, params, self, frame} -> {
   match r {
     Err _ => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
     Ok v => if v
-            then (match (apply_policed frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }) // coherent; police the motive
+            then (inductive_respond params self frame) // coherent; police the motive (same as the plain respond)
             else (Extend InvalidType) // cases do not inhabit the motive
   }
 }
