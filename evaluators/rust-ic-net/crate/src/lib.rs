@@ -33,6 +33,7 @@
 #![allow(clippy::missing_safety_doc, dead_code)]
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // ── port encoding ────────────────────────────────────────────────────────────
 // tag in the low 4 bits; value (node base index / var index) in the high 28 bits.
@@ -90,9 +91,11 @@ struct Net {
     /// Flat cell store: a node at base `b` of arity `k` owns `nodes[b .. b+k]` (its
     /// auxiliary ports). Append-only in M0 (grow-until-dispose).
     nodes: Vec<u32>,
-    /// Substitution cells (the exchange linker's rendezvous): `vars[v]` = a parked Port
-    /// or `NUL` (empty). A wire end is `pack(VAR, v)`.
-    vars: Vec<u32>,
+    /// Substitution cells — the exchange linker's rendezvous and the SOLE cross-thread
+    /// shared state (node cells are owned by the firing worker). `vars[v]` = a parked Port
+    /// or `NUL`; a wire end is `pack(VAR, v)`. Atomic (`swap`, AcqRel) so the linker is
+    /// lock-free under M2 parallelism; single-threaded (M2a) the ops degrade to plain.
+    vars: Vec<AtomicU32>,
     /// Active pairs (principal ⊗ principal), the schedulable work bag (a LIFO stack for
     /// M0; M2 makes it a per-worker work-stealing deque).
     redexes: Vec<(u32, u32)>,
@@ -147,11 +150,11 @@ impl Net {
     #[inline]
     fn new_var(&mut self) -> u32 {
         if let Some(v) = self.free_vars.pop() {
-            self.vars[v as usize] = NUL;
+            self.vars[v as usize].store(NUL, Ordering::Relaxed);
             return v;
         }
         let v = self.vars.len() as u32;
-        self.vars.push(NUL);
+        self.vars.push(AtomicU32::new(NUL));
         v
     }
 
@@ -190,15 +193,16 @@ impl Net {
             if !is_var(a) {
                 std::mem::swap(&mut a, &mut b);
             }
-            // a is a Var: rendezvous in its cell.
+            // a is a Var: the lock-free rendezvous. Atomically deposit our partner `b` and
+            // read what was there. NUL ⇒ we parked b (the far end will find it on its own
+            // swap). Otherwise the far end already deposited `prev`; we won, the var is now
+            // spent (freed; AcqRel publishes our subgraph / acquires theirs), and we link
+            // the two partners — chaining if `prev` is itself a var.
             let v = val(a);
-            let prev = self.vars[v];
+            let prev = self.vars[v].swap(b, Ordering::AcqRel);
             if prev == NUL {
-                self.vars[v] = b; // park: b waits for the far end
                 return;
             }
-            // far end already arrived: consume the cell (free it) and link the partners.
-            self.vars[v] = NUL;
             self.free_vars.push(v as u32);
             a = prev;
             // loop with (prev, b)
@@ -503,7 +507,7 @@ impl Net {
     #[inline]
     fn resolve(&self, mut p: u32) -> u32 {
         while is_var(p) {
-            let nx = self.vars[val(p)];
+            let nx = self.vars[val(p)].load(Ordering::Acquire);
             if nx == NUL {
                 return p;
             }
