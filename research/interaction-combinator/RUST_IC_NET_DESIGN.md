@@ -307,7 +307,12 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
   `loadTernary` + the fold provide this; the optimizer must insert δ to share. **Still
   TODO (M2):** refcounting for the lazy leak + the demand schedule that makes δⁿ pay on
   more programs (the eager-safe bit).
-- **M2 — parallelize.** *Build architecture (settled):* ONE reducer, atomics in the shared
+- **M2 — parallelize. M2a/b/c LANDED + validated (commits cc4562c, 2af0d1e, 26e8e0e).**
+- M2a: atomic exchange linker (vars AtomicU32, swap/AcqRel, no CAS).
+- M2b: shared `Net` (atomic FIXED arena + bump cursors + atomic counters) / per-thread `Worker`, split by `Ctx{net,w}`; node cells OWNED (Relaxed), only vars cross-thread (AcqRel).
+- M2c: native parallel drain — a lock-free shared crossbeam `Injector`; N workers steal/interact/flush; `in_flight`-counter termination. cfg-gated to non-wasm (crossbeam); the wasm build stays the sequential oracle. **Race-detector `parallel_matches_sequential` (1 vs 4 threads, 20×) GREEN: identical NF AND identical interaction count.** Measured (wide fork tree, depth 8): 1t=15.4ms, 2t=6.5ms, 4t=4.9ms (~3.1×), 8t=10ms (shared-injector contends — per-worker deques are the next perf knob). Remaining: **M2d** napi-rs Session binding (host access to the parallel reducer; the cargo tests validate the reducer without it). Original sub-step text follows.
+
+**M2 — parallelize (original plan).** *Build architecture (settled):* ONE reducer, atomics in the shared
   cells; the **wasm32 build runs it single-threaded = the oracle** (AtomicU32 compiles on
   wasm32 — confirmed; degrades to plain ops, no `+atomics` needed), the **native build runs
   it parallel** (crossbeam work-stealing + threads; napi-rs Session binding). crossbeam
