@@ -4,7 +4,7 @@
 
 // hyp_reduce (Σ-op): push a frame onto a neutral via its stored type's respond. Makes the
 // one raw metadata read and hands the respond `{recognizer_params, self, frame}` (§12.6).
-extend_neutral_meta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
+extend_neutral_meta : NeutralMeta -> Type -> Frame -> NeutralMeta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
 hyp_reduce := fix ({self, meta, frame} -> {
   let tmeta = type_meta meta.stored_type
   let me = wait self meta // the reconstructed self-neutral
@@ -17,7 +17,7 @@ hyp_reduce := fix ({self, meta, frame} -> {
 make_hyp := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := id }
 
 hyp_sig := checker_sig hyp_reduce
-is_neutral := {v} -> tree_eq (pair_fst v) hyp_sig // root-sig read (bare pair_fst)
+is_neutral : Tree -> Bool := {v} -> tree_eq (pair_fst v) hyp_sig // root-sig read (bare pair_fst); verifies via the pair_fst/tree_eq carve-outs
 is_concrete_fork := {v} -> and (is_fork v) (not (is_neutral v)) // a fork that isn't a neutral
 // fetch stored type of neutral
 neutral_type := {v} -> (type_meta v).stored_type
@@ -31,12 +31,13 @@ let recognizer_wrap = fix ({wrap, body, meta, v} -> {
     else (body self meta v) // concrete: body may recurse via `self`
 })
 make_rec_recognizer := {body} -> wait recognizer_wrap body
-// A non-recursive recognizer ignores `self` (most types: Bool, Type, Pi, Unit, …).
+// A non-recursive recognizer ignores `self` (most types: Type, Pi, Unit, String, …;
+// Bool/Nat/Ord are now Coproduct types built via make_rec_recognizer, see types.disp).
 make_recognizer := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
 
 // InvalidType: the absorbing dead-state type (§12.3) — a real empty type (recognizer always
 // Ok FF) whose inert respond returns `Extend (neutral_type self)`. Distinct from False.
-InvalidType := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness ({params, self, frame} -> Extend (neutral_type self)))
+InvalidType : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness ({params, self, frame} -> Extend (neutral_type self)))
 
 // inert_respond: ignores all three args, returns the dead state. Parametric, so it
 // inhabits RespondShape. (inductive_respond is defined after param_walker, which it uses.)
@@ -72,7 +73,7 @@ let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
 
 // apply_policed (§7A): the trusted policing token = `wait param_walker M`, so `apply_policed M s`
 // reduces to `param_walker M s` (real policing). Its root sig is `checker_sig param_walker` (independent
-// of M), which the walker's line-126 carve-out spots via `checker_sig self` and short-circuits to
+// of M), which the walker's §7A carve-out (the `checker_sig self` branch below) spots and short-circuits to
 // `Ok (self M s)` — keying on the fix var `self` (not the global) keeps param_walker's tree finite.
 
 let w_stem = {a, x} -> {
@@ -131,7 +132,7 @@ param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 
 // inductive_respond: extend the neutral's spine at `motive self`, routed through the
 // walker so a motive that raw-reflects on the neutral is rejected (-> dead state).
-inductive_respond := {params, self, frame} ->
+inductive_respond : InductiveRespondShape := {params, self, frame} ->
   match (apply_policed frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }
 
 // Boundary: param_lift gates on closedness; typecheck = lift then check.

@@ -120,8 +120,9 @@ is_const_tail := {tail} -> and (is_fork tail) (is_leaf (pair_fst tail))
 // at: the spine walker, now SELF-AWARE (Path B). `rs` = the recursion environment threaded to
 // every cell op: the recursive type itself (for `rec` cells / μ), or a context function i->recognizer
 // (for `rec_at` / mutual recursion). The NEGATIVE + positional ops (mint/apply/proj/deriv/pos/qid)
-// IGNORE rs — Pi/Sigma/Record/non-recursive sums pass a dummy `t`; only recursive/codata formers
-// thread a real self. Apply the cell op (-> a Step), interpret with the recursion and bind_hyp
+// IGNORE rs — negative formers (Pi/Sigma/Record/Telescope/StrictType) pass a literal dummy `t`; sums
+// thread `self` (mutual block: `ctx`) but IGNORE it unless a rec/rec_at/gen cell consumes it. Apply
+// the cell op (-> a Step), interpret with the recursion and bind_hyp
 // INLINE. SMint: CHECK mints a hyp; STUCK (Pi application) routes the tail at the argument and lands
 // the codomain. SThread: CHECK recurses directly; STUCK routes the tail under param_walker. SReject:
 // not a member. SDone: emit the Action.
@@ -166,12 +167,12 @@ has_metashape_layout := {m} ->
 
 // type_predicate_h_rule: a Type-typed neutral, applied as a predicate to a candidate
 // `frame`, holds iff frame is a neutral whose stored type IS this hypothesis (§6.3).
-type_predicate_h_rule := {params, self, frame} ->
+type_predicate_h_rule : RespondShape := {params, self, frame} ->
   if (is_neutral frame)
     then (Return (tree_eq (neutral_type frame) self))
     else (Return FF)
 
-// `Type := StrictType` is defined LATE (after StrictType's machinery, ~line 684). Early `: Type`
+// `Type := StrictType` is defined LATE (after StrictType's machinery, below). Early `: Type`
 // annotations resolve via the raw-load snapshot; structural types whose VALUES mention `Type` follow
 // that def (sequential value refs). Host `isUniverseTree` uses exact tree identity, so a `: Type`
 // binding is detected as universe-typed even though StrictType shares Telescope's sig.
@@ -204,7 +205,8 @@ eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> E
   motive { base := base }
   proof
 
-// First-order library types: Unit, False, String, Eq, Sigma, Refinement, Ord.
+// First-order library types: Unit, False, Not, String, Eq, Refinement, Intersection, HBin (+ Ord's
+// constructors zero_ord/omega_plus; Sigma and the Ord type land later with the telescope/Coproduct machinery).
 unit_val : Unit := t t t
 Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
@@ -340,7 +342,7 @@ constructor_type := {T} -> ctype_go ((type_meta T).recognizer_params) T
 
 // Sigma A B: the dependent pair as a 2-entry telescope { fst : A, snd : B fst }.
 // Values are §2.6 records ({ fst := a; snd := b }); a Sigma-hyp projects via
-// `acc "fst"` / `acc "snd"` through tele_respond (dependency preserved; the old
+// `acc "fst"` / `acc "snd"` through the telescope respond (`at FF` over the proj cells; dependency preserved; the old
 // walker_pair_* selectors and bespoke sigma respond are gone).
 Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
   t (proj_cell "fst" A) ({a} ->
@@ -450,11 +452,10 @@ let collect_args = fix ({self, cells, payload, fold, alg} ->
   } else nil)
 // fold_value_via view: first DECODE v via `view` (the from-iso for SHAPE-encoded types — Nat/List/Ord,
 // whose constructor tag lives in the tree shape, not an `inj` tag), then fold the decoded inj-tagged
-// form. `fold_value` is the inj-tagged case (identity view). So ONE fold covers inj-tagged AND
-// shape-encoded inductives. (Auto-reading the view from a type's meta — so `fold_value` alone decodes
-// kernel Nat/List/Ord — is deferred: the view can't live in `functor` (reserved for the cubical Kan
-// action, kernel.test pins Nat's = trivial_functor); it would go in `recognizer_params`, a localized
-// refactor. Until then, shape-encoded folds pass their view explicitly.)
+// form. So ONE fold covers inj-tagged AND shape-encoded inductives. `fold_value_via` takes the view
+// explicitly; `fold_value` (below) AUTO-READS it from the type's `functor` iso, so `fold_value T` alone
+// decodes kernel Nat/List/Ord. (The view now lives in `functor`: `make_meta_f` stores the iso there and
+// kernel.test pins Nat's functor as non-trivial; iso_id's view = `Ok`, so inj-tagged types pass through.)
 fold_value_via := {view} -> fix ({fold, T, alg, v} -> {
   let dec = (match (view v) { Ok tg => tg; Err _ => v })
   let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
@@ -501,8 +502,8 @@ children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_p
 // positional `over` for the right-nested payload) — so reconstruction is composed position-wise `over`s,
 // NOT a hand-rolled `build_payload`. At a `Param i` arg it maps with `fns i`; at a direct-recursive
 // `Rec` (= RecUnder Id) arg it recurses; everything else is left. `fmap`/`bimap` are the 1-/2-parameter
-// specializations. (Shape-encoded `Coproduct_viewed` types need a view-decode first — deferred; nested
-// `RecUnder F`, F≠Id, needs F's map — deferred, as in the prototype.)
+// specializations. (`fmap_n` view-decodes shape-encoded `Coproduct_viewed` types via the `functor` iso,
+// maps, then re-encodes — so List/Nat/Ord work too. Still deferred: nested `RecUnder F`, F≠Id, needs F's map.)
 let slot_over = fix ({self, depth, is_last, f, p} ->
   if (tree_eq depth zero)
     then (if is_last then (f p) else (pair (f (pair_fst p)) (pair_snd p)))
@@ -543,7 +544,7 @@ let view_ord = {v} -> triage
 let encode_ord = {x} -> if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair_fst (pair_snd x))) (pair_snd (pair_snd x))) else t
 Ord : Type := Coproduct_viewed t (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
 
-// Bool: TT/FF are shape combinators, so view_bool decodes by identity. Non-recursive (self unused).
+// Bool: TT/FF are opaque combinators, so view_bool decodes by tree_eq COMPARISON (a real view, not iso_id). Non-recursive (self unused).
 // Gated coherence respond (cases.ct : motive TT, cases.cf : motive FF) via gated_inductive_respond.
 let coh_bool = {T, motive, cases} ->
   bind ((motive TT) cases.ct) ({okt} -> if okt then ((motive FF) cases.cf) else (Ok FF))
@@ -661,10 +662,10 @@ MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, 
 // recognizer → a CheckerResult) and PROJECTED (`type_meta T` → its MetaShape). So `T : Type`
 // iff BOTH faces hold. Two new observation ops express the faces (the wait-form openness —
 // no `at` edit): `qid` observes `v` itself (Intersection/Refinement), `qid_meta` observes
-// `type_meta v`. `StrictType` is then a plain `Telescope` of two qid cells, walked by the
-// same `at` as everything else — and it inhabits ITSELF (`StrictType : StrictType`), the
-// metacircular fixed point. (Its `respond` is subsumption — Extend the qid type — a §4b
-// placeholder; the recognize face is the point.)
+// `type_meta v`. `StrictType` then RECOGNIZES via a two-qid-cell telescope walked by the same
+// `at` as everything else — and it inhabits ITSELF (`StrictType : StrictType`), the metacircular
+// fixed point. (It is a HYBRID wait-form, NOT a plain `Telescope` instance: its respond is the real
+// universe H-rule `type_predicate_h_rule`, not a placeholder — see the StrictType definition below.)
 CheckerResult : Type := Coproduct_of { Ok := Tree; Err := Unit }
 
 let qid_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.ty) // observe v itself (self optic)

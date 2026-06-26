@@ -1,8 +1,8 @@
 // Prelude: fundamental combinators, wait/fix.
 // No RUNTIME dependencies — every value here is pure substrate and compiles
 // without the type system. A few VALUE CONSTRUCTORS carry type annotations that
-// forward-reference kernel types (TT/FF : Bool, zero/succ : Nat, tree_eq : Tree
-// -> Tree -> Bool); these resolve via the use-raw layer and are checked only when
+// forward-reference kernel types (TT/FF : Bool, zero/succ : Nat, pair/tree_eq :
+// Tree -> …); these resolve via the use-raw layer and are checked only when
 // the kernel is in scope. The raw inspectors/eliminators (pair_fst, triage, is_fork,
 // and/or/not, …) are deliberately UNtyped: they raw-triage or Scott-eliminate their
 // argument, which the parametric walker rejects on an abstract hypothesis.
@@ -19,7 +19,7 @@
 //   TT = K K       = fork(LEAF, stem(LEAF))
 //   FF = K (K I)   = fork(LEAF, fork(LEAF, fork(fork(LEAF, LEAF), LEAF)))
 //
-// The host's tree_eq fast-path (src/tree.ts) returns these exact shapes
+// The host's tree_eq fast-path (src/core/tree.ts) returns these exact shapes
 // so a tree-level identity test still matches predicate semantics.
 
 TT : Bool := {m, ct, cf} -> ct
@@ -76,24 +76,6 @@ m := {x} -> x x
 fix := {f} -> wait m ({x} -> f (wait m x))
 
 // ================================================================
-// select_chain: flat conditional dispatch
-// ================================================================
-
-// case(cond, handler, rest): build a list of condition->handler pairs.
-// cond = TT/FF, handler = function for select-then-apply, rest = more cases or t (nil).
-case := {cond, handler, rest} -> t (t cond handler) rest
-
-// select_chain(cases, default): walk cases, return first handler whose condition is TT.
-// Falls back to default if no condition matches. All conditions are evaluated eagerly.
-// Compatible with select-then-apply: select_chain cases default shared_args...
-select_chain := fix ({self, cases, default} ->
-  triage
-    default
-    ({_} -> default)
-    ({head, tail} -> select (pair_snd head) (self tail default) (pair_fst head))
-    cases)
-
-// ================================================================
 // Tree / Nat helpers
 // ================================================================
 
@@ -109,7 +91,7 @@ stem_child := {v} -> triage t ({c} -> c) ({l, r} -> l) v
 // Recursion: leaf=leaf, stem(ax)=stem(bx) iff ax=bx, fork(ax,ay)=fork(bx,by)
 // iff ax=bx and ay=by; otherwise FF.
 //
-// the following tree_eq implementation is valid in tree calculus but in the host language it can be implemented in O(1) just via hash-cons comparison, so there is an optimization carve-out in the host language for this exact definition that lazy-evals any `(tree a)` branch and waits for either a triage or another applied parameter to reduce to true or false.
+// the following tree_eq implementation is valid in tree calculus but in the host language it can be implemented in O(1) just via hash-cons comparison, so there is an optimization carve-out in the host language for this exact definition that suspends the partial application `(tree_eq a)` and waits for either a triage (forcing the real computation) or a second operand (an O(1) hash-cons compare) to reduce to true or false.
 tree_eq : Tree -> Tree -> Bool := fix ({self, a, b} ->
   triage
     (triage TT ({_} -> FF) ({_l, _r} -> FF) b)

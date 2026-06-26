@@ -6,16 +6,17 @@ that are easy to forget when editing the kernel, parser, or runtime.
 
 ## Kernel Shape
 
-The kernel surface is two Σ-ops plus a dispatcher, all in
-`lib/kernel/core.disp`:
+The kernel surface is two Σ-ops plus a dispatcher, split across
+`lib/kernel/{cut,engine,types}.disp` (assembled by `lib/kernel/prelude.disp`):
 
 - `hyp_reduce` — push a frame onto a neutral. It reads the stored
   type's `respond` meta-field, which returns an `Action`: `Extend
-  new_stored_type` (grow the spine) or `Return value`.
+  new_stored_type` (grow the spine) or `Reduce value` (compute; the
+  verdict `Return v = Reduce (Ok v)` is an alias).
 - `bind_hyp` — mint a fresh hypothesis, run a body over it, then
   `occurs`-scan the result so the hypothesis cannot escape.
 - `param_apply` — the dispatcher: the in-language parametric walker
-  (`walk`) with reader carve-outs plus Σ routing on the two op
+  (`param_walker`) with reader carve-outs plus Σ routing on the two op
   signatures.
 
 Both Σ-ops are plain `fix`-forms. There is no kernel record and no
@@ -25,7 +26,7 @@ kernel was retired in the two-Σ-op cutover.
 `eliminator_frame` is no longer primitive: it is the library `elim`
 over `hyp_reduce` + a type's `respond`. Pi, Type, Bool, Nat, Eq, Ord,
 Sigma, Refinement, Intersection, Coproduct, and Record are ordinary
-library wait-forms in `core.disp`.
+library wait-forms in `lib/kernel/types.disp`.
 
 ## Library Types
 
@@ -152,14 +153,15 @@ scan and the walker.
 
 ## Neutrals
 
-`mint_hyp ty id = wait hyp_reduce (make_neutral_meta ty id)`; `Hyp` and
-`StuckElim` are aliases (a hypothesis vs. a spine-extended/stuck form —
-same constructor). Neutral metadata is a `{ stored_type; payload }`
+`make_hyp ty id = wait hyp_reduce { stored_type := ty; payload := id }`
+mints a neutral (a hypothesis; a spine-extended/stuck form shares the
+same constructor — `hyp_reduce` grows the payload via
+`extend_neutral_meta`). Neutral metadata is a `{ stored_type; payload }`
 record (the §2.6 cut), read by name:
 
 ```disp
-make_neutral_meta := {stored_type, payload} -> { stored_type := stored_type; payload := payload }
-neutral_meta_type := {meta} -> meta.stored_type
+make_hyp     := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := id }   // engine.disp
+neutral_type := {v}      -> (type_meta v).stored_type
 ```
 
 Applying a neutral routes to `hyp_reduce`, which consults the stored
