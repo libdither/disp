@@ -307,14 +307,40 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
   `loadTernary` + the fold provide this; the optimizer must insert δ to share. **Still
   TODO (M2):** refcounting for the lazy leak + the demand schedule that makes δⁿ pay on
   more programs (the eager-safe bit).
-- **M2 — parallelize: native + napi-rs + rayon.** Redex queue → concurrent work bag; slots
-  → atomic; the exchange linker; crossbeam-epoch reclamation. **Gate:** same differential
-  green on the N-API Session (now a race detector) + a `bench/` thread-sweep showing
-  wall-clock scaling on a wide workload.
+- **M2 — parallelize.** *Build architecture (settled):* ONE reducer, atomics in the shared
+  cells; the **wasm32 build runs it single-threaded = the oracle** (AtomicU32 compiles on
+  wasm32 — confirmed; degrades to plain ops, no `+atomics` needed), the **native build runs
+  it parallel** (crossbeam work-stealing + threads; napi-rs Session binding). crossbeam
+  doesn't build on wasm32, so the *scheduler* is `#[cfg]`-split (wasm: sequential `Vec`
+  drain; native: work-stealing) while the *rule kernel + atomic cells + linker* are shared.
+  *Concurrency model:* the **node cells are owned** by the firing worker (single-principal
+  invariant — no contention); the **`vars` substitution cells are the sole cross-thread
+  rendezvous**, so only they need the atomic exchange (`swap`, AcqRel) — node cells publish
+  via the var's release/acquire (must still be `AtomicU32`+Relaxed for Rust-soundness, but
+  uncontended). *Sub-steps:* **M2a** atomic exchange linker (`vars` atomic) ← *landing now,
+  single-threaded-validated* · **M2b** node cells atomic + `&self` ownership (interior
+  mutability) · **M2c** native crossbeam work-stealing + N threads, validated by a cargo
+  race-detector test (Theorem 2 ⇒ any NF disagreement across thread counts IS a race) ·
+  **M2d** napi-rs Session binding + `bench/` thread-sweep. **Gate:** differential green on
+  the parallel native Session + wall-clock scaling on a wide (independent-reduction) workload.
 - **M3 — optimizer tiers** 1→3 on M2 (foldMany → sup/collapse → reduceWithWitness).
 - **(deferred) GPU** — only after the CPU engine is proven *and* open-decision #1 resolves
   to binary nodes; tree-calc reduction is irregular pointer-chasing → warp divergence is a
   real risk (HVM2's own irregular workloads needed annotation to not crater).
+
+## Deferred idea — NF merkle-hashing for cheap equality (NOT hash-consing)
+
+For when conversion-on-ic-net matters (e.g. an optimizer that type-checks): a node that
+has reached normal form is *immutable*, so cache a bottom-up structural (merkle) hash on
+each NF node. Equality becomes a hash compare (~O(1) + collision check) with **no global
+intern table** — contention-free, parallel-friendly (the "recognition-by-hash" knob). This
+is the principled way to recover rust-eager's O(1) `tree_eq` without reintroducing
+hash-consing. Cheaper stop-gap: a `recognizeNative("tree_eq")` intercept → ic-net's native
+structural `equal` (O(min size)), avoiding the catastrophic "reduce in-language tree_eq
+through the net." **Crucially neither recovers the apply-memo / cross-occurrence reduction
+sharing — that IS hash-consing, which ic-net drops on purpose (it both contends under
+parallelism AND destroys the per-candidate provenance the reverse-mode optimizer needs).**
+So merkle-hash buys fast *equality*, never the sequential reduction speed (that's rust-eager).
 
 ## 11. Open decisions (decide before / early in M0)
 
