@@ -16,7 +16,7 @@
 //!   is the cross-thread rendezvous (AcqRel). This is the substrate M2c parallelizes:
 //!   N workers share one `&Net`, each with its own `Worker`. The arena is fixed (no
 //!   realloc under `&self`); overflow traps (catchable, `panic=abort`).
-#![allow(clippy::missing_safety_doc, dead_code)]
+#![allow(clippy::missing_safety_doc)]
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -107,6 +107,19 @@ impl Net {
     #[inline]
     fn ctx<'a>(&'a self, w: &'a mut Worker) -> Ctx<'a> {
         Ctx { net: self, w }
+    }
+    /// Follow a wire through resolved substitution cells to a non-var port. The one
+    /// canonical wire-walk — `Ctx::resolve` and the parallel readback both delegate here.
+    #[inline]
+    fn resolve(&self, mut p: u32) -> u32 {
+        while is_var(p) {
+            let nx = self.vars[val(p)].load(Ordering::Acquire);
+            if nx == NUL {
+                return p;
+            }
+            p = nx;
+        }
+        p
     }
 }
 
@@ -240,7 +253,11 @@ impl<'a> Ctx<'a> {
         let ct = tag(c);
         let pt = tag(p);
         if !is_producer(pt) {
-            return; // consumer ⊗ consumer — degenerate; ignore (Eps⊗Eps vanishes)
+            // consumer ⊗ consumer cannot arise in a well-formed net: every consumer's lone
+            // principal faces a producer. Assert it in debug/test builds (a violation means
+            // a malformed net, not a no-op to swallow); drop the redex in release.
+            debug_assert!(false, "ic-net: unexpected consumer⊗consumer redex (tags {ct}/{pt})");
+            return;
         }
         let cb = val(c) as u32;
         let pb = val(p) as u32;
@@ -489,17 +506,10 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// Follow a wire through resolved substitution cells to a non-var port.
+    /// Follow a wire to a non-var port (delegates to the canonical `Net::resolve`).
     #[inline]
-    fn resolve(&self, mut p: u32) -> u32 {
-        while is_var(p) {
-            let nx = self.net.vars[val(p)].load(Ordering::Acquire);
-            if nx == NUL {
-                return p;
-            }
-            p = nx;
-        }
-        p
+    fn resolve(&self, p: u32) -> u32 {
+        self.net.resolve(p)
     }
 
     /// Reduce `h` to full normal form by connecting an `N` normalizer and draining.
@@ -604,18 +614,10 @@ impl<'a> Ctx<'a> {
 // `node_top` bump hands each worker a disjoint region) means no two workers race a cell.
 #[cfg(not(target_arch = "wasm32"))]
 impl Net {
-    fn resolve_ro(&self, mut p: u32) -> u32 {
-        while is_var(p) {
-            let nx = self.vars[val(p)].load(Ordering::Acquire);
-            if nx == NUL {
-                return p;
-            }
-            p = nx;
-        }
-        p
-    }
     /// Reduce `h` to full NF with `threads` workers sharing this net. NF root, or None on
-    /// budget exhaustion.
+    /// budget exhaustion. Exercised by the cargo race-detector test and the native parallel
+    /// binding (M2d); the plain sequential lib build has no caller, hence the scoped allow.
+    #[allow(dead_code)]
     fn full_nf_parallel(&self, h: u32, threads: usize, budget: i64) -> Option<u32> {
         use crossbeam_deque::{Injector, Steal};
         use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize};
@@ -634,7 +636,7 @@ impl Net {
             seeded += 1;
         }
         if seeded == 0 {
-            return Some(self.resolve_ro(pack(VAR, v)));
+            return Some(self.resolve(pack(VAR, v)));
         }
         let in_flight = AtomicUsize::new(seeded);
         let budget = AtomicI64::new(budget);
@@ -690,7 +692,7 @@ impl Net {
         if exhausted.load(Ordering::Relaxed) {
             return None;
         }
-        Some(self.resolve_ro(pack(VAR, v)))
+        Some(self.resolve(pack(VAR, v)))
     }
 }
 
