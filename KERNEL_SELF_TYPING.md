@@ -120,6 +120,53 @@ construction/encoding.** This lens re-reads §1:
 - **Map the seal-set** empirically by attempting each kernel op and recording where reflection
   is forced.
 
+## 6. The road to FULL kernel self-verification (2026-06-26)
+
+Self-verification today is **partial and opt-in**: a binding `name : T := v` auto-verifies at load
+(`verify mod = param_apply mod.typ mod.record`); a bare `name := v` does not. Coverage now:
+
+| fragment | typed (verified) | untyped |
+|---|---|---|
+| `cut.disp`    | 14 | 12 |
+| `engine.disp` |  1 | 25 |
+| `types.disp`  | 46 | 47 |
+
+The untyped bindings are the **meta-level machinery**: a naive `: T` annotation mints a hyp for the
+argument and runs the body, which the walker rejects the instant the body triages/reflects on that hyp.
+They form a difficulty ladder; "full self-verification" = climbing it until the only untyped bindings
+left are the irreducible seals (the §2 criterion):
+
+1. **Pure data helpers** — constructors, the list/§2.6-cut accessors, the new `encode_*` / `iso_id` /
+   iso plumbing. They don't inspect their argument as a hyp, so they have honest types and just need
+   annotating. A mechanical sweep that shrinks the gap to the genuinely-reflective ops. **Do this first.**
+2. **Inductive eliminators** — `fmap` / `fold_value` / `mk` / the cell ops / the walker `at`. They
+   case/triage a value, so over an inductive argument they reflect on a hyp. The TYPED recursors
+   (`nat_rec` / `ord_rec` / `rec_value`) already show the path: route through `elim`, so a neutral
+   target goes via `hyp_reduce` + the coherence gate. Re-expressing `fmap`/`fold_value` over that typed
+   path — and giving the kernel its first honest **functor types** (`F : Type -> Type` with an `fmap`) —
+   is this rung; it depends on rung 3.
+3. **The responds + the coherence gate.** §7A/§7B (PoC'd — branch `investigate/stricttype-7a-7b`,
+   150/150, NOT merged): projecting + negative-former responds inhabit per-former `RespondShape`s via
+   `apply_policed` + PIN params. Merging it types most of the respond surface. The residual is the GATED
+   respond (Nat/Bool) — the §1 "concrete-recognizer-on-hyp" wall — addressed by the `recognize_policed`
+   probe (§5).
+4. **The Σ-ops** (`hyp_reduce` / `bind_hyp` / `param_walker`) — the GENUINE seals. `hyp_reduce_open` (§5)
+   isolates the one reflective read → the first typed kernel primitive; beyond it, the sealing modality
+   (§4, research).
+
+So the order is: **(1) annotate the data helpers [mechanical, now] → (2) type the eliminators via `elim`
+[+ honest functor types] → (3) merge §7A/§7B + the gate probe [engineering + small research] →
+(4) `hyp_reduce_open` + sealing [research].** Each rung shrinks the untyped count and sharpens what the
+irreducible trusted seal-set actually is.
+
+**Where the CELL_OPTICS optic/fmap landing fits.** It added rung-1/2 surface — the shape↔inj iso in the
+`functor` field, `fmap`/`fold_value` (now generic over inj-tagged AND shape-encoded), and `do_check`,
+all currently untyped. Typing `fmap`/`fold_value` (rung 2) is the natural occasion to give the kernel
+honest functor types, connecting self-verification to the container / polynomial-functor account that
+[`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) and [`CELL_OPTICS.md`](CELL_OPTICS.md) gesture at. (Caveat from
+that landing: the richer kernel terms diverge under the *weak* non-canonical naive reducer — see the
+skipped `eval-naive-elaborate` test — a reproducibility limit of that reducer, orthogonal to typing.)
+
 ## Provenance / Tracks
 
 - **Track A (engineering) — LANDED 2026-06-24.** The recognizer + eliminator merge from

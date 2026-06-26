@@ -1,0 +1,163 @@
+// CELL_OPTICS.md step 0 — `Param i` + `fmap`/`nmap` on the EXISTING slot accessors.
+//
+// The cheap prototype that justifies the optic migration (CELL_OPTICS §6 "Where to start"):
+// prove that a generic functorial map (`fmap`/`bimap`/`nmap`) DERIVES from the cells, with NO
+// optic interface, NO cell refactor, and NO metacircle risk — reusing `build_payload` for the
+// rebuild. If `fmap` here re-derives `build_payload` by hand, that is the signal that lifting the
+// bare getters to a real `optic` (get + over) earns its keep (the stage-1–5 refactor).
+//
+// Two new things vs. the landed Path B cells:
+//   1. `Param i` — a marker (the `RecAt i` analogue) for a constructor arg that holds TYPE
+//      PARAMETER #i. Lifted by a param-aware `pos_tele` to a `param_cell`, which (a) checks
+//      `arg : (params i)` during recognition, and (b) tells `nmap` which mapping function to apply.
+//   2. `nmap` — a CELL-WALK that, per variant, applies `fns i` at `param` cells, recurses at `rec`
+//      cells, leaves fixed cells, and rebuilds the payload with `build_payload`. `fmap`/`bimap` are
+//      the 1-/2-parameter specializations.
+//
+// The parameter context is threaded EXACTLY like Path B's `rs` (the recursion self): we bundle
+// `rs = pair self params`, so `rec` cells read `pair_fst rs` (= self) and `param` cells read
+// `pair_snd rs` (= params). The kernel walker `at` threads `rs` opaquely, so recognition reuses the
+// REAL `at` unchanged — the new ops just plug in (the "new observation = new op, no walker edit"
+// discipline). Promotion (§5: a second context param on the real `at`, or `Param` in `Coproduct`)
+// is deliberately NOT done here — this is the semantics proof, not the integration.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/nat/ops.disp"
+
+// ── small local helpers (the kernel's are `let`-private; reimplemented bit-identically) ──
+// Steps MUST be tree-identical to the kernel's so the real `at` can `match` them; `inj1`/`inj0`
+// are deterministic, so these reconstruct the same trees (hash-consing makes them one).
+let SThread = inj1 "SThread"
+let SReject = inj0 "SReject"
+let SDone   = inj1 "SDone"
+let op_sig = {op} -> pair_fst (wait op t)                              // a cell's kind = its op signature
+
+let nth = fix ({self, l, i} -> if (tree_eq i zero) then (pair_fst l) else (self (pair_snd l) (nat_pred i)))
+let snd_n = fix ({self, n, x} -> if (tree_eq n zero) then x else (self (nat_pred n) (pair_snd x)))
+// build_payload: [a0..ak] -> the right-nested payload `inj`N expects (single arg -> identity).
+let build_payload = fix ({self, args} ->
+  if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
+
+// ── the `Param i` marker + its recognizer cell op ──
+// Param i marks a constructor arg as type-parameter #i (like `Rec`/`RecAt i`, but for a parameter).
+Param := {i} -> inj "@Param" i
+let is_param_marker   = {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@Param")
+let is_recunder_marker = {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@RecUnder")  // Rec = RecUnder Id
+
+// param_op: observe the positional slot `acc source`, check it against `params i` (= `pair_snd rs` i).
+// Identical SHAPE to the kernel's pos_op/rec_op — the only difference is WHERE the type comes from
+// (the threaded parameter context). FF branch present for totality (responds don't run `at FF` on sums).
+let param_op = {meta, mode, source, prior, frame, rs} ->
+  if mode
+    then (match ((nth (pair_snd rs) (meta.idx)) (meta.acc source)) { Ok b => (if b then (SThread (meta.acc source)) else SReject); Err _ => SReject })
+    else (SDone (Extend (nth (pair_snd rs) (meta.idx))))
+// rec_op (prototype): direct/nested recursion via the threaded self (= `pair_fst rs`). A copy of the
+// kernel rec_op that reads `pair_fst rs` instead of `rs`, because here rs = (self, params).
+let rec_op_p = {meta, mode, source, prior, frame, rs} ->
+  if mode
+    then (match ((meta.F (pair_fst rs)) (meta.acc source)) { Ok b => (if b then (SThread (meta.acc source)) else SReject); Err _ => SReject })
+    else (SDone (Extend (meta.F (pair_fst rs))))
+
+let param_cell  = {idx, acc} -> wait param_op { idx := idx; acc := acc }
+let rec_cell_p  = {F, acc}   -> wait rec_op_p { F := F; acc := acc }
+let is_param_cell = {cell} -> tree_eq (pair_fst cell) (op_sig param_op)
+let is_rec_cell_p = {cell} -> tree_eq (pair_fst cell) (op_sig rec_op_p)
+
+// pos_tele_p: the kernel pos_tele, extended with the `Param i` marker case. Lifts an arg list (with
+// markers) into a positional cell telescope: `Param i` -> param_cell, `RecUnder F`/`Rec` -> rec_cell_p,
+// a plain type -> kernel pos_cell. The positional accessor (snd_n offset; last arg = identity) is the
+// same logic the kernel uses — the part the real `optic` would factor into `slot acc`.
+let pos_tele_p_go = fix ({self, types, depth} ->
+  if (is_fork types) then {
+    let acc = if (is_fork (pair_snd types)) then ({x} -> pair_fst (snd_n depth x)) else ({x} -> snd_n depth x)
+    let ty = pair_fst types
+    let cell = (if (is_param_marker ty) then (param_cell (pair_snd ty) acc) else (if (is_recunder_marker ty) then (rec_cell_p (pair_snd ty) acc) else (pos_cell acc ty)))
+    t cell ({_} -> self (pair_snd types) (succ depth))
+  } else t)
+let pos_tele_p = {types} -> pos_tele_p_go types zero
+
+// ── recognition: a Coproduct that threads (self, params), reusing the REAL kernel `at` ──
+let lookup_arm_p = fix ({self, variants, tag} ->
+  if (is_fork variants) then {
+    let arm = pair_fst variants
+    if (tree_eq (pair_fst arm) tag) then (Ok (pair_snd arm)) else (self (pair_snd variants) tag)
+  } else Err)
+let coproduct_at_p = {rs, variants, v} ->
+  match (lookup_arm_p variants (pair_fst v)) {
+    Ok argspec => (at rs TT (pos_tele_p argspec) (pair_snd v) t t)
+    Err _ => (Ok FF)
+  }
+// Coproduct_p params variants: a parameterized inductive. params = the type-arg list (indexed by
+// `Param i`); variants keep the markers (so nmap can read them via `recognizer_params`). rs = (self,
+// params) ties the recursive knot AND supplies the parameters. Mirrors the kernel `Coproduct_resp`.
+let Coproduct_p = {params, variants} -> wait (make_rec_recognizer
+  {self, meta, v} -> (coproduct_at_p (pair self params) meta.recognizer_params v)
+) (make_meta variants inductive_respond)
+
+// ── nmap: the cell-derived functorial map (the headline of step 0) ──
+// nmap T fns v: read T's variant shape (with markers), look up v's variant, walk its cells —
+//   param cell i -> apply `fns i`;  rec cell -> recurse nmap;  fixed cell -> leave;
+// then REBUILD with `build_payload`. The recursion is threaded as `wait self T` (the kernel's
+// proven-safe `wait fold T` idiom — keeps `self T fns` from forming a closed redex that the
+// compiler would unfold forever). This is exactly the place CELL_OPTICS says re-derives
+// `build_payload` by hand → the consumer that justifies the optic's `over`.
+let nmap_args = fix ({self, nm, fns, cells, payload} ->
+  if (is_fork cells) then {
+    let cell = pair_fst cells
+    let raw = ((type_meta cell).acc) payload
+    let mapped = (if (is_param_cell cell) then (fns ((type_meta cell).idx) raw) else (if (is_rec_cell_p cell) then (nm fns raw) else raw))
+    cons mapped (self nm fns ((pair_snd cells) t) payload)
+  } else nil)
+let nmap = fix ({self, T, fns, v} -> {
+  let variants = (type_meta T).recognizer_params
+  let cells = (match (lookup_arm_p variants (pair_fst v)) { Ok a => (pos_tele_p a); Err _ => t })
+  inj (pair_fst v) (build_payload (nmap_args (wait self T) fns cells (pair_snd v)))
+})
+let fmap  = {T, f, v}    -> nmap T ({i} -> f) v                                          // 1 parameter
+let bimap = {T, f, g, v} -> nmap T ({i} -> if (tree_eq i zero) then f else g) v          // 2 parameters
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// The functor trio: List (recursive, 1 param), Either (sum, 2 params), BTree (recursive, 1 param,
+// 2 rec positions). (Map-as-association-list = a NESTED functor `RecUnder Pair`, deferred with
+// nested fmap per CELL_OPTICS / TELESCOPE_FIXPOINT §8 — Rec/Id is what step 0 covers.)
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+let List = {A} -> Coproduct_p (cons A nil) [pair "nil" [], pair "cons" [Param zero, Rec]]
+let lnil  = inj "nil" t
+let lcons = {h, tl} -> inj "cons" (pair h tl)
+
+let Either = {A, B} -> Coproduct_p (cons A (cons B nil)) [pair "left" [Param zero], pair "right" [Param (succ zero)]]
+let eleft  = {a} -> inj "left" a
+let eright = {b} -> inj "right" b
+
+let BTree = {A} -> Coproduct_p (cons A nil) [pair "leaf" [Param zero], pair "node" [Rec, Rec]]
+let bleaf = {a} -> inj "leaf" a
+let bnode = {l, r} -> inj "node" (pair l r)
+
+// ── recognition (Param is a real recognizer cell, threaded through the real `at`) ──
+test typecheck (List Nat) lnil                              = Ok TT     // []
+test typecheck (List Nat) (lcons 1 (lcons 2 (lcons 3 lnil))) = Ok TT   // [1,2,3] : List Nat
+test typecheck (List Bool) (lcons TT (lcons FF lnil))      = Ok TT     // [TT,FF] : List Bool
+test typecheck (List Nat) (eleft 3)                        = Ok FF     // wrong tag -> rejected
+test typecheck (List Bool) (lcons 1 lnil)                  = Ok FF     // param check: 1 is not a Bool
+test typecheck (Either Nat Bool) (eleft 5)                 = Ok TT     // 5 : Nat (param 0)
+test typecheck (Either Nat Bool) (eright TT)               = Ok TT     // TT : Bool (param 1)
+test typecheck (Either Nat Bool) (eright 9)                = Ok FF     // param 1: 9 is not a Bool
+
+// ── fmap over List (recursion into `rec` cells + map at `param` cells) ──
+test fmap (List Nat) succ lnil                                       = lnil
+test fmap (List Nat) succ (lcons 1 (lcons 2 (lcons 3 lnil)))        = lcons 2 (lcons 3 (lcons 4 lnil))
+test fmap (List Nat) double (lcons 2 (lcons 5 lnil))               = lcons 4 (lcons 10 lnil)
+// fmap preserves recognition (List Nat -> List Nat)
+test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok TT
+
+// ── bimap over Either (distinct functions at param 0 vs param 1) ──
+test bimap (Either Nat Nat) succ double (eleft 5)  = eleft 6         // succ at param 0
+test bimap (Either Nat Nat) succ double (eright 5) = eright 10       // double at param 1
+
+// ── fmap over a binary tree (two `rec` positions per node + a `param` leaf) ──
+let bt = bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3))
+test fmap (BTree Nat) succ (bleaf 7) = bleaf 8
+test fmap (BTree Nat) succ bt        = bnode (bleaf 2) (bnode (bleaf 3) (bleaf 4))

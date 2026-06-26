@@ -1,0 +1,50 @@
+// Kernel integration of CELL_OPTICS (stage 1): `Param` + the optic's `over` (`slot_over`) + `fmap`/
+// `bimap`/`nmap` now live in the KERNEL (lib/kernel/types.disp), exported. This test uses the REAL
+// kernel formers — `Coproduct_p` (parameterized inj-tagged sum) + `fmap`/`bimap` — with NO local
+// machinery, proving the integration: a param-marked type recognizes (params resolved at build time)
+// AND fmaps (rebuilt via the optic's `over`, no hand `build_payload`). Additive: the rest of the suite
+// is untouched (no `rs` change, existing ops/fold/recursor unchanged).
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/nat/ops.disp"
+
+// inj-tagged, param-marked types via the kernel `Coproduct_p` (Param 0/1 = type params; Rec = direct μ).
+let List   = {A}    -> Coproduct_p (cons A nil) [pair "nil" [], pair "cons" [Param zero, Rec]]
+let lnil   = inj1 "nil" t
+let lcons  = {h, tl} -> inj2 "cons" h tl
+let Either = {A, B} -> Coproduct_p (cons A (cons B nil)) [pair "left" [Param zero], pair "right" [Param (succ zero)]]
+let eleft  = {a} -> inj1 "left" a
+let eright = {b} -> inj1 "right" b
+let BTree  = {A}    -> Coproduct_p (cons A nil) [pair "leaf" [Param zero], pair "node" [Rec, Rec]]
+let bleaf  = {a} -> inj1 "leaf" a
+let bnode  = {l, r} -> inj2 "node" l r
+
+// ── recognition: Param resolved at build time → byte-identical to the un-parameterized check ──
+test typecheck (List Nat) lnil                              = Ok TT
+test typecheck (List Nat) (lcons 1 (lcons 2 (lcons 3 lnil))) = Ok TT
+test typecheck (List Bool) (lcons TT (lcons FF lnil))      = Ok TT
+test typecheck (List Nat) (eleft 3)                        = Ok FF       // wrong tag
+test typecheck (List Bool) (lcons 1 lnil)                  = Ok FF       // param check: 1 is not Bool
+test typecheck (Either Nat Bool) (eleft 5)                 = Ok TT
+test typecheck (Either Nat Bool) (eright TT)               = Ok TT
+test typecheck (Either Nat Bool) (eright 9)                = Ok FF       // param 1: 9 is not Bool
+
+// ── fmap / bimap via the kernel's optic `over` (slot_over) — no hand build_payload ──
+test fmap (List Nat) succ lnil                                       = lnil
+test fmap (List Nat) succ (lcons 1 (lcons 2 (lcons 3 lnil)))        = lcons 2 (lcons 3 (lcons 4 lnil))
+test bimap (Either Nat Nat) succ double (eleft 5)                   = eleft 6     // succ at param 0
+test bimap (Either Nat Nat) succ double (eright 5)                  = eright 10   // double at param 1
+test fmap (BTree Nat) succ (bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3))) = bnode (bleaf 2) (bnode (bleaf 3) (bleaf 4))
+// fmap preserves recognition (List Nat -> List Nat)
+test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok TT
+
+// ── NAMED side: the optic `over` generalizes to records (key.over), same engine ──
+let Pair    = {A, B} -> Record_p (cons A (cons B nil)) [pair "fst" (Param zero), pair "snd" (Param (succ zero))]
+let mk_pair = {a, b} -> mk_record ["fst", "snd"] (cons (list_const a) (cons (list_const b) nil))
+test typecheck (Pair Nat Nat) (mk_pair 3 5)              = Ok TT       // Record_p recognizes (Param resolved)
+test typecheck (Pair Nat Bool) (mk_pair 3 9)             = Ok FF       // param 1: 9 is not Bool
+test bimap_rec (Pair Nat Nat) succ double (mk_pair 3 5)  = mk_pair 4 10 // key.over rebuilds the record
+test fmap_rec (Pair Nat Nat) ({i} -> succ) (mk_pair 3 5) = mk_pair 4 6  // uniform map over both fields
+test typecheck (Pair Nat Nat) (bimap_rec (Pair Nat Nat) succ double (mk_pair 3 5)) = Ok TT
