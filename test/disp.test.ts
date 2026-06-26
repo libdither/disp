@@ -50,6 +50,14 @@ describe("disp", () => {
       // rejects. Re-enable once session 5 routes the elaborator through
       // kernel-internal checking that bypasses the public boundary.
       const r = runFile(join(testsDir, file), sharedSession ? { session: sharedSession } : {})
+      // Bound cumulative memory in shared-session mode: the shared rust-eager arena
+      // interns nodes AND memoizes every apply across all files; the apply memo is an
+      // unbounded pure cache (`memo_limit` defaults to usize::MAX), so auto-verify-heavy
+      // kernels (each typed export runs the 40M-budget walker) grow it until the WASM
+      // arena OOMs. The memo is re-derivable, so drop it at each file boundary — this
+      // keeps the within-file memo + the shared interned kernel (the real speedup) while
+      // bounding peak to ~one file's worth. Live trees/handles are untouched.
+      ;(sharedSession as unknown as { clearCaches?: () => void } | undefined)?.clearCaches?.()
       if (r.failed.length > 0) {
         // TODO: figure out how to return specific line in test file that failed (e.g. via spans)
         const msgs = r.failed.map(f => `[test ${f.i}] ${f.msg}`).join("\n")
