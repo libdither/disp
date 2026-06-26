@@ -27,7 +27,7 @@ mod reduce;
 #[cfg(test)]
 mod tests;
 
-use arena::Arena;
+use arena::{Arena, LEAF_ID};
 use std::cell::RefCell;
 
 thread_local! {
@@ -40,4 +40,68 @@ thread_local! {
 #[inline]
 pub(crate) fn with<T>(f: impl FnOnce(&mut Arena) -> T) -> T {
     ARENA.with(|a| f(&mut a.borrow_mut()))
+}
+
+/// Native CLI entry (`src/bin/eager-cli.rs`) — the fair native-subprocess baseline for the
+/// rust-ic-net benchmark (M2d). Mirrors src/eval/batch.ts#fold: left-fold eager-apply over
+/// the ternary `terms`, serialize the NF. Returns `(nf, reduce_ms, interactions)`; the timer
+/// excludes arena allocation (matching disp-cli's "session created before t0"). None on
+/// budget exhaustion.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn reduce_fold_timed(terms: &[Vec<u8>], budget: i64) -> Option<(String, f64, u64)> {
+    let mut a = Arena::new();
+    let t0 = std::time::Instant::now();
+    let mut b = budget;
+    let mut acc: Option<u32> = None;
+    for t in terms {
+        let mut i = 0usize;
+        let term = a.parse(t, &mut i);
+        acc = Some(match acc {
+            None => term,
+            Some(f) => a.reduce(f, term, &mut b).ok()?,
+        });
+    }
+    let h = acc?;
+    let mut out = Vec::new();
+    a.dump_emit(h, &mut out, &mut b).ok()?;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    Some((String::from_utf8(out).ok()?, ms, a.interactions))
+}
+
+// The same wide independent-chain workload rust-ic-net's CLI builds (2^depth chains of
+// not^chain false) — the sequential baseline against ic-net's parallel sweep.
+#[cfg(not(target_arch = "wasm32"))]
+fn build_not_eager(a: &mut Arena) -> u32 {
+    let sl = a.stem(LEAF_ID);
+    let fll = a.fork(LEAF_ID, LEAF_ID);
+    let inner = a.fork(sl, fll);
+    a.fork(inner, LEAF_ID)
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn build_wide_eager(a: &mut Arena, d: usize, chain: usize) -> u32 {
+    if d == 0 {
+        let mut e = LEAF_ID;
+        for _ in 0..chain {
+            let not = build_not_eager(a);
+            e = a.susp(not, e);
+        }
+        e
+    } else {
+        let l = build_wide_eager(a, d - 1, chain);
+        let r = build_wide_eager(a, d - 1, chain);
+        a.fork(l, r)
+    }
+}
+/// Build + sequentially reduce the wide workload (the rust-eager baseline for ic-net's
+/// parallel sweep). Returns `(nf, reduce_ms, interactions)`; None on exhaustion.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn reduce_wide_timed(depth: usize, chain: usize, budget: i64) -> Option<(String, f64, u64)> {
+    let mut a = Arena::new();
+    let t0 = std::time::Instant::now();
+    let h = build_wide_eager(&mut a, depth, chain);
+    let mut b = budget;
+    let mut out = Vec::new();
+    a.dump_emit(h, &mut out, &mut b).ok()?;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    Some((String::from_utf8(out).ok()?, ms, a.interactions))
 }

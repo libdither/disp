@@ -37,7 +37,9 @@ if ! command -v rust-lld >/dev/null 2>&1 && ! command -v wasm-ld >/dev/null 2>&1
   fi
 fi
 
-( cd "$HERE/crate" && cargo build --release --target "$TARGET" )
+# --lib only: the native CLI bin (src/bin/ic-net-cli.rs) uses threads/crossbeam, which
+# don't build on wasm32 — the wasm artifact is the sequential oracle (the lib's cdylib).
+( cd "$HERE/crate" && cargo build --release --target "$TARGET" --lib )
 
 mkdir -p "$HERE/artifacts"
 cp "$HERE/crate/target/$TARGET/release/rust_ic_net.wasm" "$HERE/artifacts/rust_ic_net.wasm"

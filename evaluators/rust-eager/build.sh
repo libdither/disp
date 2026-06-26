@@ -42,7 +42,9 @@ if ! command -v rust-lld >/dev/null 2>&1 && ! command -v wasm-ld >/dev/null 2>&1
   fi
 fi
 
-( cd "$HERE/crate" && cargo build --release --target "$TARGET" )
+# --lib only: the native CLI bin (src/bin/eager-cli.rs) is a host-side benchmark tool, not
+# part of the wasm Session artifact (and it links the rlib, which wasm32 needn't build).
+( cd "$HERE/crate" && cargo build --release --target "$TARGET" --lib )
 
 mkdir -p "$HERE/artifacts"
 cp "$HERE/crate/target/$TARGET/release/rust_eager.wasm" "$HERE/artifacts/rust_eager.wasm"

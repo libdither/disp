@@ -7,7 +7,9 @@ license = "MIT"
 
 [lib]
 # cdylib ⇒ a freestanding .wasm with C ABI exports the disp Session wrapper calls.
-crate-type = ["cdylib"]
+# rlib ⇒ the native CLI bin (src/bin/eager-cli.rs) can link the lib — the fair
+# native-subprocess baseline for the rust-ic-net benchmark (M2d).
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # SwissTable, for the hash-cons intern table (HashTable<u32> = id-only storage,

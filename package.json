@@ -9,6 +9,7 @@
     "bench": "vitest bench",
     "bench:eval": "tsx bench/eval-steps.ts",
     "bench:evaluators": "tsx bench/bench-evaluators.ts",
+    "bench:ic-net": "tsx bench/ic-net-bench.ts",
     "disp": "tsx src/run.ts"
   },
   "devDependencies": {
