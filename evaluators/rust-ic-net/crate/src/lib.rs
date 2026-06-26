@@ -1,39 +1,25 @@
 //! rust-ic-net — a MATERIALIZED interaction-net evaluator for disp tree calculus.
 //!
-//! **M0 + M1 (sequential).** Unlike `rust-eager` (where the net collapses to a hash-consed
-//! tree reducer — consumers are control flow, δˢ is interning), here the agents and
-//! ports are REAL arena nodes and active pairs sit in a schedulable redex bag. This is
-//! the substrate M2 parallelizes; M0/M1 validate the rules + scheduler single-threaded,
-//! gated differentially against `rust-eager` (strong confluence ⇒ identical NFs).
-//! Design: research/interaction-combinator/RUST_IC_NET_DESIGN.md; calculus: tc-net.typ.
-//! - **M0:** the full rule kernel with δˢ (structural copy). Correct, but re-reduces
-//!   shared subterms (Prop 5), so sharing-heavy programs allocate exponentially.
+//! **M0 + M1 + M2a/b (sequential, parallel-ready).** Agents and ports are REAL arena
+//! nodes; active pairs sit in a schedulable redex bag. Differentially gated against
+//! `rust-eager` (strong confluence ⇒ identical NFs). Design:
+//! research/interaction-combinator/RUST_IC_NET_DESIGN.md; calculus: tc-net.typ.
+//! - **M0:** the full rule kernel with δˢ (structural copy).
 //! - **M1:** the S-rule spawns δⁿ (demand-before-copy) — a duplicated SUSPENSION's work
-//!   runs at most once (Theorem 6; validated by `dn_shares_what_ds_redoes`). δⁿ shares
-//!   re-*reduction*, NOT structure (identical constructors are a hash-consing matter, not
-//!   δⁿ's — so it's a no-op where the duplicated value is already a constructor).
-//! - **M1b (GC):** free-on-consume — an interaction consumes its two agents, so their
-//!   cells return to per-arity free lists for reuse (and resolved wire cells too). Peak
-//!   `nodes.len()` then tracks the LIVE working set, not cumulative allocs (measured:
-//!   fib(8) 7.6M→64K nodes, ~119×). This is COMPLETE for the eager net because it is
-//!   LINEAR — every agent is consumed exactly once. **Requirement:** terms must be linear
-//!   (each node referenced once); sharing in a net goes through δ, NOT host handle reuse —
-//!   `loadTernary`/the fold provide this. Refcounting for the lazy parked-δⁿ leak (which
-//!   eager M1 doesn't have — the forcing `A` always fires) + atomics stay M2.
-//!
-//! Representation (option (d), IVM/Vine-style, 32-bit ports for M0 so a handle = a port):
-//! - A `Port` is a `u32`: low 4 bits tag, high 28 bits value (node base index, or var
-//!   index). The PRINCIPAL port is implicit (it's whoever references the node), so a
-//!   node stores only its auxiliary ports — kind lives in the referencing port's tag.
-//! - Producers `L S F P` (≤2 aux); consumers `A T1 T2 Ds Eps N`. Nullary `L`/`Eps` need
-//!   no allocation (`pack(L,0)`/`pack(EPS,0)`). δⁿ + reachability GC + atomics are M1/M2.
-//! - The linker is exchange-based on a separate `vars` substitution buffer (no CAS).
-//! - M0 GC = grow-until-dispose: `alloc` only bumps, nothing is freed (the per-call
-//!   Session arena is dropped wholesale). δⁿ/free-lists/atomics arrive at M1/M2.
+//!   runs at most once (Theorem 6). **M1b:** free-on-consume GC (linear net ⇒ each agent
+//!   consumed once; peak arena tracks the live working set).
+//! - **M2a:** atomic exchange linker (`vars` = `AtomicU32`, `swap`/AcqRel, no CAS).
+//! - **M2b:** split into a SHARED `Net` (atomic FIXED arena — `nodes`/`vars` `AtomicU32`,
+//!   atomic bump cursors, atomic counters) and a per-thread `Worker` (local redex bag +
+//!   free lists), carried together by a `Ctx{net, w}`. The node cells are OWNED by the
+//!   firing worker (single-principal invariant ⇒ no contention, Relaxed); only `vars`
+//!   is the cross-thread rendezvous (AcqRel). This is the substrate M2c parallelizes:
+//!   N workers share one `&Net`, each with its own `Worker`. The arena is fixed (no
+//!   realloc under `&self`); overflow traps (catchable, `panic=abort`).
 #![allow(clippy::missing_safety_doc, dead_code)]
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // ── port encoding ────────────────────────────────────────────────────────────
 // tag in the low 4 bits; value (node base index / var index) in the high 28 bits.
@@ -53,6 +39,11 @@ const EPS: u32 = 9; // eraser ε (nullary consumer)
 const N: u32 = 10; // recursive normalizer (1 aux: res)
 const VAR: u32 = 11; // a substitution-cell wire end (value = vars index)
 const DN: u32 = 12; // need duplicator δⁿ (2 aux: l, r) — demand-before-copy (Thm 6)
+
+/// Default fixed-arena sizes (cells). The bump allocator + free-on-consume keep the live
+/// set tiny (benchmarks peak ~64K cells), so this is generous headroom; overflow traps.
+const NODE_CAP: usize = 1 << 21; // 2M cells (8 MiB)
+const VAR_CAP: usize = 1 << 21;
 
 #[inline]
 fn pack(tag: u32, val: u32) -> u32 {
@@ -86,79 +77,106 @@ fn arity(t: u32) -> usize {
     }
 }
 
-/// Budget exhaustion sentinel, threaded as a bool out of `drain`.
+/// The SHARED net state — one per session, borrowed `&self` by all workers. Fixed atomic
+/// arena (no realloc under sharing) + atomic bump cursors + atomic counters.
 struct Net {
-    /// Flat cell store: a node at base `b` of arity `k` owns `nodes[b .. b+k]` (its
-    /// auxiliary ports). Append-only in M0 (grow-until-dispose).
-    nodes: Vec<u32>,
+    /// Node cells: a node at base `b`, arity `k`, owns `nodes[b..b+k]`. OWNED by the
+    /// firing worker (single-principal invariant) ⇒ accessed Relaxed; the `vars` AcqRel
+    /// rendezvous provides cross-thread ordering. `AtomicU32` for Rust-soundness only.
+    nodes: Box<[AtomicU32]>,
     /// Substitution cells — the exchange linker's rendezvous and the SOLE cross-thread
-    /// shared state (node cells are owned by the firing worker). `vars[v]` = a parked Port
-    /// or `NUL`; a wire end is `pack(VAR, v)`. Atomic (`swap`, AcqRel) so the linker is
-    /// lock-free under M2 parallelism; single-threaded (M2a) the ops degrade to plain.
-    vars: Vec<AtomicU32>,
-    /// Active pairs (principal ⊗ principal), the schedulable work bag (a LIFO stack for
-    /// M0; M2 makes it a per-worker work-stealing deque).
-    redexes: Vec<(u32, u32)>,
-    /// Reduction counter = interactions fired (the budget unit; reported via stats).
-    interactions: u64,
-    /// δⁿ ⊗ P firings — how often a duplicated SUSPENSION was shared (vs reduced-then-copied).
-    /// Zero means the eval order reduced every duplicated value before the S-rule saw it,
-    /// so δⁿ degenerates to δˢ (the win needs demand-driven scheduling — see the M1 note).
-    dnp: u64,
-    /// Free lists of reusable node bases, indexed by arity (1..=4; 0 unused). Linear
-    /// reclamation: an interaction consumes its two agents, so their cells return here for
-    /// reuse — peak `nodes.len()` then tracks the LIVE working set, not cumulative allocs.
-    free: [Vec<u32>; 5],
-    /// Free list of reusable substitution cells (a wire freed when both ends resolve).
-    free_vars: Vec<u32>,
+    /// shared mutable state. `swap`/AcqRel (no CAS). `vars[v]` = a parked Port or NUL.
+    vars: Box<[AtomicU32]>,
+    node_top: AtomicU32, // bump cursor into `nodes` (high-water = peak live cells)
+    var_top: AtomicU32,  // bump cursor into `vars`
+    interactions: AtomicU64, // reduction counter (budget unit)
+    dnp: AtomicU64,          // δⁿ ⊗ P firings (shared suspensions)
 }
 
 impl Net {
-    fn new() -> Self {
+    fn new(node_cap: usize, var_cap: usize) -> Self {
         Net {
-            nodes: Vec::with_capacity(1 << 16),
-            vars: Vec::with_capacity(1 << 16),
-            redexes: Vec::new(),
-            interactions: 0,
-            dnp: 0,
-            free: Default::default(),
-            free_vars: Vec::new(),
+            nodes: (0..node_cap).map(|_| AtomicU32::new(NUL)).collect(),
+            vars: (0..var_cap).map(|_| AtomicU32::new(NUL)).collect(),
+            node_top: AtomicU32::new(0),
+            var_top: AtomicU32::new(0),
+            interactions: AtomicU64::new(0),
+            dnp: AtomicU64::new(0),
         }
     }
+    #[inline]
+    fn ctx<'a>(&'a self, w: &'a mut Worker) -> Ctx<'a> {
+        Ctx { net: self, w }
+    }
+}
 
-    /// Allocate a node with the given auxiliary ports; returns its base cell index.
-    /// Reuses a freed same-arity node when available (free-on-consume), else bumps.
+/// Per-thread reduction context: a local redex bag + free lists. One per worker thread;
+/// its free-list bases index into a SPECIFIC `Net`'s arena, so it is paired with a `Net`
+/// via `Ctx` (never shared across nets).
+struct Worker {
+    bag: Vec<(u32, u32)>, // local active-pair stack (M2c: crossbeam work-stealing deque)
+    free: [Vec<u32>; 5],  // reusable node bases by arity (free-on-consume)
+    free_vars: Vec<u32>,  // reusable wire cells
+}
+impl Worker {
+    fn new() -> Self {
+        Worker { bag: Vec::new(), free: Default::default(), free_vars: Vec::new() }
+    }
+}
+
+/// A worker operating on a shared net — the rule kernel lives here so call sites need no
+/// extra threading: `self.net` is the shared arena, `self.w` the local bag/free-lists.
+struct Ctx<'a> {
+    net: &'a Net,
+    w: &'a mut Worker,
+}
+
+impl<'a> Ctx<'a> {
+    // ── cell access (owned nodes: Relaxed) ──
+    #[inline]
+    fn nd(&self, i: u32) -> u32 {
+        self.net.nodes[i as usize].load(Ordering::Relaxed)
+    }
+    #[inline]
+    fn set_nd(&self, i: u32, v: u32) {
+        self.net.nodes[i as usize].store(v, Ordering::Relaxed);
+    }
+
+    /// Allocate a node with the given aux ports; reuses a freed same-arity node else bumps.
     #[inline]
     fn alloc(&mut self, aux: &[u32]) -> u32 {
         let size = aux.len();
-        if let Some(base) = self.free[size].pop() {
-            self.nodes[base as usize..base as usize + size].copy_from_slice(aux);
-            return base;
+        let base = if let Some(b) = self.w.free[size].pop() {
+            b
+        } else {
+            let b = self.net.node_top.fetch_add(size as u32, Ordering::Relaxed);
+            assert!((b as usize) + size <= self.net.nodes.len(), "ic-net: node arena overflow");
+            b
+        };
+        for (i, &v) in aux.iter().enumerate() {
+            self.set_nd(base + i as u32, v);
         }
-        let base = self.nodes.len() as u32;
-        self.nodes.extend_from_slice(aux);
         base
     }
     /// Return a consumed node's cells to the free list for reuse (`ar` = its arity).
     #[inline]
     fn free_node(&mut self, base: u32, ar: usize) {
         if ar > 0 {
-            self.free[ar].push(base);
+            self.w.free[ar].push(base);
         }
     }
     /// A fresh substitution cell (wire); reuses a freed cell when available.
     #[inline]
     fn new_var(&mut self) -> u32 {
-        if let Some(v) = self.free_vars.pop() {
-            self.vars[v as usize].store(NUL, Ordering::Relaxed);
+        if let Some(v) = self.w.free_vars.pop() {
+            self.net.vars[v as usize].store(NUL, Ordering::Relaxed);
             return v;
         }
-        let v = self.vars.len() as u32;
-        self.vars.push(AtomicU32::new(NUL));
+        let v = self.net.var_top.fetch_add(1, Ordering::Relaxed);
+        assert!((v as usize) < self.net.vars.len(), "ic-net: var arena overflow");
         v
     }
 
-    // term builders (Session.leaf/stem/fork + parse) — produce a producer Port.
     #[inline]
     fn leaf(&self) -> u32 {
         pack(L, 0)
@@ -179,93 +197,77 @@ impl Net {
         pack(P, b)
     }
 
-    /// The universal connect. Exchange-based: when an end is a `Var`, swap our partner
-    /// into its cell; if the far end already deposited a partner, the second arrival
-    /// "wins" and we link the two partners (chaining through resolved vars). When both
-    /// ends are principals, they form an active pair → the redex bag. Iterative (the
-    /// chain resolves without native recursion).
+    /// The universal connect. Exchange-based (M2a): when an end is a `Var`, atomically
+    /// `swap` our partner into its cell; if the far end already deposited a partner the
+    /// second arrival wins, frees the spent cell, and links the two (chaining onward).
+    /// Two principals form an active pair → the local bag.
     fn link(&mut self, mut a: u32, mut b: u32) {
         loop {
             if !is_var(a) && !is_var(b) {
-                self.redexes.push((a, b));
+                self.w.bag.push((a, b));
                 return;
             }
             if !is_var(a) {
                 std::mem::swap(&mut a, &mut b);
             }
-            // a is a Var: the lock-free rendezvous. Atomically deposit our partner `b` and
-            // read what was there. NUL ⇒ we parked b (the far end will find it on its own
-            // swap). Otherwise the far end already deposited `prev`; we won, the var is now
-            // spent (freed; AcqRel publishes our subgraph / acquires theirs), and we link
-            // the two partners — chaining if `prev` is itself a var.
             let v = val(a);
-            let prev = self.vars[v].swap(b, Ordering::AcqRel);
+            let prev = self.net.vars[v].swap(b, Ordering::AcqRel);
             if prev == NUL {
-                return;
+                return; // parked b; the far end will find it
             }
-            self.free_vars.push(v as u32);
+            self.w.free_vars.push(v as u32);
             a = prev;
             // loop with (prev, b)
         }
     }
 
-    /// Drive the redex bag to quiescence (full reduction of all demanded work) or until
-    /// the budget is exhausted. Returns false on exhaustion.
+    /// Drive the local bag to quiescence or until the budget runs out (returns false).
     fn drain(&mut self, budget: &mut i64) -> bool {
-        while let Some((x, y)) = self.redexes.pop() {
+        while let Some((x, y)) = self.w.bag.pop() {
             if *budget <= 0 {
                 return false;
             }
             *budget -= 1;
-            self.interactions += 1;
+            self.net.interactions.fetch_add(1, Ordering::Relaxed);
             self.interact(x, y);
         }
         true
     }
 
-    /// One interaction. Every well-formed active pair is consumer ⊗ producer; we orient
-    /// to `(c = consumer, p = producer)` and apply the rule (tc-net.typ §Demand/Dispatch/
-    /// Sharing). The S-rule (`T1 ⊗ S`) is the sole δ-spawner.
+    /// One interaction (consumer ⊗ producer). tc-net.typ §Demand/Dispatch/Sharing.
     fn interact(&mut self, x: u32, y: u32) {
-        // Orient: producer in `p`, the other in `c`.
         let (c, p) = if is_producer(tag(x)) { (y, x) } else { (x, y) };
         let ct = tag(c);
         let pt = tag(p);
         if !is_producer(pt) {
-            // consumer ⊗ consumer — shouldn't arise in well-formed tree-calc reduction
-            // (every value/wire has one producer end). Eps ⊗ Eps vanishes; else ignore.
-            return;
+            return; // consumer ⊗ consumer — degenerate; ignore (Eps⊗Eps vanishes)
         }
         let cb = val(c) as u32;
         let pb = val(p) as u32;
         match ct {
-            // ── A (apply) ──────────────────────────────────────────────────────
+            // ── A (apply) ──
             A => {
-                let arg = self.nodes[cb as usize];
-                let res = self.nodes[cb as usize + 1];
+                let arg = self.nd(cb);
+                let res = self.nd(cb + 1);
                 match pt {
                     L => {
-                        // A ⊗ L: build stem △arg
                         let s = self.stem(arg);
                         self.link(res, s);
                     }
                     S => {
-                        // A ⊗ S(x): build fork △x arg
-                        let x = self.nodes[pb as usize];
+                        let x = self.nd(pb);
                         let f = self.fork(x, arg);
                         self.link(res, f);
                     }
                     F => {
-                        // A ⊗ F(l,r): enter first-level dispatch, T1(b=r,c=arg,res) faces l
-                        let l = self.nodes[pb as usize];
-                        let r = self.nodes[pb as usize + 1];
+                        let l = self.nd(pb);
+                        let r = self.nd(pb + 1);
                         let t = self.alloc(&[r, arg, res]);
                         self.link(pack(T1, t), l);
                     }
                     P => {
-                        // A ⊗ P(f,a): associate — demand (f a) first, then apply arg
-                        let pf = self.nodes[pb as usize];
-                        let pa = self.nodes[pb as usize + 1];
+                        let pf = self.nd(pb);
+                        let pa = self.nd(pb + 1);
                         let t = self.new_var();
                         let a1 = self.alloc(&[pa, pack(VAR, t)]);
                         let a2 = self.alloc(&[arg, res]);
@@ -275,16 +277,15 @@ impl Net {
                     _ => {}
                 }
             }
-            // ── T1 (first-level dispatch on a of △ a b c) ──────────────────────
+            // ── T1 (first-level dispatch on a of △ a b c) ──
             T1 => {
-                let b = self.nodes[cb as usize];
-                let carg = self.nodes[cb as usize + 1];
-                let res = self.nodes[cb as usize + 2];
+                let b = self.nd(cb);
+                let carg = self.nd(cb + 1);
+                let res = self.nd(cb + 2);
                 match pt {
                     P => {
-                        // demand the discriminator; T1 re-aims at the result wire
-                        let pf = self.nodes[pb as usize];
-                        let pa = self.nodes[pb as usize + 1];
+                        let pf = self.nd(pb);
+                        let pa = self.nd(pb + 1);
                         let t = self.new_var();
                         let a1 = self.alloc(&[pa, pack(VAR, t)]);
                         self.link(pack(A, a1), pf);
@@ -296,11 +297,8 @@ impl Net {
                         self.link(pack(EPS, 0), carg);
                     }
                     S => {
-                        // S rule: △(△x) b c → (x c)(b c). The SOLE δ site — it spawns δⁿ
-                        // (need-sharing) so the duplicated argument `c` is reduced at most
-                        // once across both uses (Theorem 6). δˢ is reserved for an explicit
-                        // reflective syntax-copy (no such site yet).
-                        let x = self.nodes[pb as usize];
+                        // S rule: △(△x) b c → (x c)(b c). Sole δ site — spawns δⁿ.
+                        let x = self.nd(pb);
                         let c1 = self.new_var();
                         let c2 = self.new_var();
                         let u = self.new_var();
@@ -316,47 +314,44 @@ impl Net {
                     }
                     F => {
                         // triage: △(△w x) b c → T2(w,x,b,res) faces c
-                        let w = self.nodes[pb as usize];
-                        let x = self.nodes[pb as usize + 1];
+                        let w = self.nd(pb);
+                        let x = self.nd(pb + 1);
                         let t = self.alloc(&[w, x, b, res]);
                         self.link(pack(T2, t), carg);
                     }
                     _ => {}
                 }
             }
-            // ── T2 (second-level dispatch on z of △(△w x) y z) ─────────────────
+            // ── T2 (second-level dispatch on z of △(△w x) y z) ──
             T2 => {
-                let w = self.nodes[cb as usize];
-                let x = self.nodes[cb as usize + 1];
-                let b = self.nodes[cb as usize + 2];
-                let res = self.nodes[cb as usize + 3];
+                let w = self.nd(cb);
+                let x = self.nd(cb + 1);
+                let b = self.nd(cb + 2);
+                let res = self.nd(cb + 3);
                 match pt {
                     P => {
-                        let pf = self.nodes[pb as usize];
-                        let pa = self.nodes[pb as usize + 1];
+                        let pf = self.nd(pb);
+                        let pa = self.nd(pb + 1);
                         let t = self.new_var();
                         let a1 = self.alloc(&[pa, pack(VAR, t)]);
                         self.link(pack(A, a1), pf);
                         self.link(pack(VAR, t), c);
                     }
                     L => {
-                        // triage leaf → w ; erase x, b
                         self.link(res, w);
                         self.link(pack(EPS, 0), x);
                         self.link(pack(EPS, 0), b);
                     }
                     S => {
-                        // triage stem → x u ; erase w, b
-                        let u = self.nodes[pb as usize];
+                        let u = self.nd(pb);
                         let a1 = self.alloc(&[u, res]);
                         self.link(pack(A, a1), x);
                         self.link(pack(EPS, 0), w);
                         self.link(pack(EPS, 0), b);
                     }
                     F => {
-                        // triage fork → (b u) v ; erase w, x
-                        let u = self.nodes[pb as usize];
-                        let v = self.nodes[pb as usize + 1];
+                        let u = self.nd(pb);
+                        let v = self.nd(pb + 1);
                         let t = self.new_var();
                         let a1 = self.alloc(&[u, pack(VAR, t)]);
                         self.link(pack(A, a1), b);
@@ -368,23 +363,20 @@ impl Net {
                     _ => {}
                 }
             }
-            // ── δ (duplicate). δˢ and δⁿ share the constructor rules — copy one
-            //    WHNF constructor, children inherit the SPECIES (`sp`), so the copy
-            //    wave propagates. They differ ONLY on `P`: δˢ copies the suspension as
-            //    syntax (redoes its work per copy, tc-net.typ Prop 5); δⁿ DEMANDS it
-            //    (an `A` forces `f a` once) and PARKS itself on the result wire, so the
-            //    shared computation runs at most once (Theorem 6, demand-before-copy).
+            // ── δ (duplicate): δˢ/δⁿ share constructor rules (children inherit `sp`);
+            //    differ only on P — δˢ copies the suspension as syntax, δⁿ forces it once
+            //    (via an A) and parks on the result wire (Theorem 6). ──
             DS | DN => {
-                let dl = self.nodes[cb as usize];
-                let dr = self.nodes[cb as usize + 1];
-                let sp = ct; // children inherit this duplicator's species
+                let dl = self.nd(cb);
+                let dr = self.nd(cb + 1);
+                let sp = ct;
                 match pt {
                     L => {
                         self.link(dl, pack(L, 0));
                         self.link(dr, pack(L, 0));
                     }
                     S => {
-                        let x = self.nodes[pb as usize];
+                        let x = self.nd(pb);
                         let a = self.new_var();
                         let b = self.new_var();
                         let d = self.alloc(&[pack(VAR, a), pack(VAR, b)]);
@@ -395,8 +387,8 @@ impl Net {
                         self.link(dr, pack(S, s2));
                     }
                     F => {
-                        let l = self.nodes[pb as usize];
-                        let r = self.nodes[pb as usize + 1];
+                        let l = self.nd(pb);
+                        let r = self.nd(pb + 1);
                         let (ll, lr, rl, rr) =
                             (self.new_var(), self.new_var(), self.new_var(), self.new_var());
                         let da = self.alloc(&[pack(VAR, ll), pack(VAR, lr)]);
@@ -409,20 +401,17 @@ impl Net {
                         self.link(dr, pack(F, f2));
                     }
                     P => {
-                        let pf = self.nodes[pb as usize];
-                        let pa = self.nodes[pb as usize + 1];
+                        let pf = self.nd(pb);
+                        let pa = self.nd(pb + 1);
                         if sp == DN {
-                            // δⁿ: demand-before-copy — force `f a` once (via an A), then
-                            // park this δⁿ on the result wire (its l/r preserved). When a
-                            // constructor arrives the δⁿ ⊗ ctor rule copies ONE level,
-                            // children re-parked behind fresh δⁿ. Shared work runs once.
-                            self.dnp += 1;
+                            // δⁿ: demand-before-copy — force `f a` once, park on the wire.
+                            self.net.dnp.fetch_add(1, Ordering::Relaxed);
                             let t = self.new_var();
                             let a1 = self.alloc(&[pa, pack(VAR, t)]);
                             self.link(pack(A, a1), pf);
                             self.link(pack(VAR, t), c);
                         } else {
-                            // δˢ: structural copy of the unevaluated suspension
+                            // δˢ: structural copy of the unevaluated suspension.
                             let (fl, fr, al, ar) =
                                 (self.new_var(), self.new_var(), self.new_var(), self.new_var());
                             let df = self.alloc(&[pack(VAR, fl), pack(VAR, fr)]);
@@ -438,28 +427,28 @@ impl Net {
                     _ => {}
                 }
             }
-            // ── ε (erase; recurse into children, P erased unevaluated) ─────────
+            // ── ε (erase; recurse into children, P erased unevaluated) ──
             EPS => match pt {
                 L => {}
                 S => {
-                    let x = self.nodes[pb as usize];
+                    let x = self.nd(pb);
                     self.link(pack(EPS, 0), x);
                 }
                 F | P => {
-                    let a = self.nodes[pb as usize];
-                    let b = self.nodes[pb as usize + 1];
+                    let a = self.nd(pb);
+                    let b = self.nd(pb + 1);
                     self.link(pack(EPS, 0), a);
                     self.link(pack(EPS, 0), b);
                 }
                 _ => {}
             },
-            // ── N (recursive normalizer → full NF; tc-net.typ §Full Normalization) ──
+            // ── N (recursive normalizer → full NF) ──
             N => {
-                let res = self.nodes[cb as usize];
+                let res = self.nd(cb);
                 match pt {
                     L => self.link(res, pack(L, 0)),
                     S => {
-                        let x = self.nodes[pb as usize];
+                        let x = self.nd(pb);
                         let vx = self.new_var();
                         let nx = self.alloc(&[pack(VAR, vx)]);
                         self.link(pack(N, nx), x);
@@ -467,8 +456,8 @@ impl Net {
                         self.link(res, pack(S, s2));
                     }
                     F => {
-                        let l = self.nodes[pb as usize];
-                        let r = self.nodes[pb as usize + 1];
+                        let l = self.nd(pb);
+                        let r = self.nd(pb + 1);
                         let vl = self.new_var();
                         let vr = self.new_var();
                         let nl = self.alloc(&[pack(VAR, vl)]);
@@ -479,9 +468,8 @@ impl Net {
                         self.link(res, pack(F, f2));
                     }
                     P => {
-                        // demand (f a), then keep normalizing the result
-                        let pf = self.nodes[pb as usize];
-                        let pa = self.nodes[pb as usize + 1];
+                        let pf = self.nd(pb);
+                        let pa = self.nd(pb + 1);
                         let t = self.new_var();
                         let a1 = self.alloc(&[pa, pack(VAR, t)]);
                         self.link(pack(A, a1), pf);
@@ -492,10 +480,8 @@ impl Net {
             }
             _ => {}
         }
-        // Linear reclamation (free-on-consume): both agents of the active pair are spent,
-        // so return their cells to the free list for reuse — EXCEPT the demand/park rules
-        // (T1/T2/N/δⁿ ⊗ P) REUSE the consumer (it re-aimed at the result wire), so it must
-        // stay live (it is freed later, when it fires against the forced constructor).
+        // Free-on-consume: both agents are spent — reclaim their cells, EXCEPT the
+        // demand/park rules (T1/T2/N/δⁿ ⊗ P) reuse the consumer (it re-aimed at the wire).
         let reuse_c = pt == P && (ct == T1 || ct == T2 || ct == N || ct == DN);
         self.free_node(pb, arity(pt));
         if !reuse_c {
@@ -507,7 +493,7 @@ impl Net {
     #[inline]
     fn resolve(&self, mut p: u32) -> u32 {
         while is_var(p) {
-            let nx = self.vars[val(p)].load(Ordering::Acquire);
+            let nx = self.net.vars[val(p)].load(Ordering::Acquire);
             if nx == NUL {
                 return p;
             }
@@ -516,8 +502,7 @@ impl Net {
         p
     }
 
-    /// Reduce `h` to full normal form (a Susp-free producer tree) by connecting an `N`
-    /// normalizer and draining. Returns the NF root Port, or `None` on budget exhaustion.
+    /// Reduce `h` to full normal form by connecting an `N` normalizer and draining.
     fn full_nf(&mut self, h: u32, budget: &mut i64) -> Option<u32> {
         let v = self.new_var();
         let n = self.alloc(&[pack(VAR, v)]);
@@ -528,8 +513,7 @@ impl Net {
         Some(self.resolve(pack(VAR, v)))
     }
 
-    /// Encode an already-normalized producer tree to ternary (iterative; deep results
-    /// don't recurse). `root` must be Susp-free (call `full_nf` first).
+    /// Encode an already-normalized producer tree to ternary (iterative).
     fn emit(&self, root: u32, out: &mut Vec<u8>) {
         let mut stack = vec![root];
         while let Some(p) = stack.pop() {
@@ -538,19 +522,19 @@ impl Net {
                 L => out.push(b'0'),
                 S => {
                     out.push(b'1');
-                    stack.push(self.nodes[val(p)]);
+                    stack.push(self.nd(val(p) as u32));
                 }
                 F => {
                     out.push(b'2');
-                    stack.push(self.nodes[val(p) + 1]); // right popped after left
-                    stack.push(self.nodes[val(p)]);
+                    stack.push(self.nd(val(p) as u32 + 1)); // right popped after left
+                    stack.push(self.nd(val(p) as u32));
                 }
                 _ => out.push(b'0'), // unreachable after full_nf; defensive
             }
         }
     }
 
-    /// Structural NF equality (no hash-cons ⇒ demand-then-compare). Iterative.
+    /// Structural NF equality (no hash-cons ⇒ demand-then-compare).
     fn equal(&mut self, a: u32, b: u32, budget: &mut i64) -> Option<bool> {
         let na = self.full_nf(a, budget)?;
         let nb = self.full_nf(b, budget)?;
@@ -560,10 +544,10 @@ impl Net {
             let y = self.resolve(y);
             match (tag(x), tag(y)) {
                 (L, L) => {}
-                (S, S) => stack.push((self.nodes[val(x)], self.nodes[val(y)])),
+                (S, S) => stack.push((self.nd(val(x) as u32), self.nd(val(y) as u32))),
                 (F, F) => {
-                    stack.push((self.nodes[val(x)], self.nodes[val(y)]));
-                    stack.push((self.nodes[val(x) + 1], self.nodes[val(y) + 1]));
+                    stack.push((self.nd(val(x) as u32), self.nd(val(y) as u32)));
+                    stack.push((self.nd(val(x) as u32 + 1), self.nd(val(y) as u32 + 1)));
                 }
                 _ => return Some(false),
             }
@@ -573,7 +557,6 @@ impl Net {
 
     // ── ternary codec (preorder: leaf "0", stem "1"+child, fork "2"+l+r) ──
     fn parse(&mut self, s: &[u8], i: &mut usize) -> u32 {
-        // iterative preorder build (no native recursion on input depth)
         enum Frame {
             Stem,
             ForkL,
@@ -608,12 +591,22 @@ impl Net {
     }
 }
 
+// One Net + one Worker per WASM instance (the host calls on a single thread). The Net is
+// interior-mutable (atomics), so a plain `&` suffices; the Worker is RefCell (briefly
+// borrowed per op — never nested, so no double-borrow).
 thread_local! {
-    static NET: RefCell<Net> = RefCell::new(Net::new());
+    static NET: Net = Net::new(NODE_CAP, VAR_CAP);
+    static WK: RefCell<Worker> = RefCell::new(Worker::new());
 }
 #[inline]
-fn with<T>(f: impl FnOnce(&mut Net) -> T) -> T {
-    NET.with(|n| f(&mut n.borrow_mut()))
+fn with<T>(f: impl FnOnce(&mut Ctx) -> T) -> T {
+    NET.with(|net| {
+        WK.with(|wk| {
+            let mut w = wk.borrow_mut();
+            let mut ctx = net.ctx(&mut w);
+            f(&mut ctx)
+        })
+    })
 }
 #[inline]
 fn pack_ptr(ptr: u32, len: u32) -> u64 {
@@ -627,18 +620,16 @@ pub extern "C" fn tc_leaf() -> u32 {
 }
 #[no_mangle]
 pub extern "C" fn tc_stem(child: u32) -> u32 {
-    with(|n| n.stem(child))
+    with(|c| c.stem(child))
 }
 #[no_mangle]
 pub extern "C" fn tc_fork(left: u32, right: u32) -> u32 {
-    with(|n| n.fork(left, right))
+    with(|c| c.fork(left, right))
 }
-
-/// **LAZY** apply: build the suspended application `P(f,x)` in O(1); reduction is
-/// deferred to the forcing observations (`dumpTernary`/`equal`). Budget unused.
+/// **LAZY** apply: build `P(f,x)` in O(1); reduction is deferred to dump/equal.
 #[no_mangle]
 pub extern "C" fn tc_apply(f: u32, x: u32, _budget: u32) -> u32 {
-    with(|n| n.susp(f, x))
+    with(|c| c.susp(f, x))
 }
 
 // ── bulk / interchange (Session.loadTernary / dumpTernary) ──────────────────
@@ -658,22 +649,21 @@ pub unsafe extern "C" fn tc_free(ptr: u32, len: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn tc_load_ternary(ptr: u32, len: u32) -> u32 {
     let bytes = std::slice::from_raw_parts(ptr as *const u8, len as usize);
-    with(|n| {
+    with(|c| {
         let mut i = 0usize;
-        n.parse(bytes, &mut i)
+        c.parse(bytes, &mut i)
     })
 }
-/// Force full NF, serialize to ternary, return `(ptr<<32)|len`. On exhaustion returns
-/// `(u32::MAX<<32)` (the host checks the ptr sentinel).
+/// Force full NF, serialize to ternary, return `(ptr<<32)|len`; `(u32::MAX<<32)` on exhaust.
 #[no_mangle]
 pub extern "C" fn tc_dump_ternary(h: u32, budget: u32) -> u64 {
-    with(|n| {
+    with(|c| {
         let mut b = budget as i64;
-        match n.full_nf(h, &mut b) {
+        match c.full_nf(h, &mut b) {
             None => pack_ptr(u32::MAX, 0),
             Some(nf) => {
                 let mut out: Vec<u8> = Vec::new();
-                n.emit(nf, &mut out);
+                c.emit(nf, &mut out);
                 let len = out.len() as u32;
                 let ptr = out.as_ptr() as u32;
                 std::mem::forget(out);
@@ -684,177 +674,179 @@ pub extern "C" fn tc_dump_ternary(h: u32, budget: u32) -> u64 {
 }
 
 // ── observations ────────────────────────────────────────────────────────────
-/// NF equality: `0`=false `1`=true `2`=budget exhausted (host checks `> 1`).
+/// NF equality: `0`=false `1`=true `2`=budget exhausted.
 #[no_mangle]
 pub extern "C" fn tc_equal(a: u32, b: u32, budget: u32) -> u32 {
-    with(|n| {
+    with(|c| {
         let mut bud = budget as i64;
-        match n.equal(a, b, &mut bud) {
+        match c.equal(a, b, &mut bud) {
             Some(true) => 1,
             Some(false) => 0,
             None => 2,
         }
     })
 }
-/// Total interactions consumed this session (the backend-declared budget unit).
+/// Total interactions consumed this session.
 #[no_mangle]
 pub extern "C" fn tc_interactions() -> u64 {
-    with(|n| n.interactions)
+    NET.with(|n| n.interactions.load(Ordering::Relaxed))
 }
-/// Live node-cell count (proof the net is materialized, not a recompiled tree reducer).
+/// Peak node cells used (the bump high-water — materialized-net proof + footprint).
 #[no_mangle]
 pub extern "C" fn tc_nodes() -> u64 {
-    with(|n| n.nodes.len() as u64)
+    NET.with(|n| n.node_top.load(Ordering::Relaxed) as u64)
 }
-/// δⁿ ⊗ P firings = how many duplicated suspensions were shared (vs reduced-then-copied).
+/// δⁿ ⊗ P firings = how many duplicated suspensions were shared.
 #[no_mangle]
 pub extern "C" fn tc_dnp() -> u64 {
-    with(|n| n.dnp)
+    NET.with(|n| n.dnp.load(Ordering::Relaxed))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // tc-net.typ §Worked Example: false = △ = L; true = △△ = S(L);
-    //   not = △ (△ (△△) (△△△)) △ = F(F(S(L), F(L,L)), L)
-    fn build_not(n: &mut Net) -> u32 {
-        let sl = n.stem(pack(L, 0)); // S(L) = true
-        let fll = n.fork(pack(L, 0), pack(L, 0)); // F(L,L)
-        let inner = n.fork(sl, fll); // F(S(L), F(L,L))
-        n.fork(inner, pack(L, 0)) // F(.., L) = not
+    fn net() -> Net {
+        Net::new(1 << 16, 1 << 16)
     }
-
-    fn nf_string(n: &mut Net, h: u32) -> String {
+    fn build_not(c: &mut Ctx) -> u32 {
+        let sl = c.stem(pack(L, 0)); // S(L) = true
+        let fll = c.fork(pack(L, 0), pack(L, 0)); // F(L,L)
+        let inner = c.fork(sl, fll); // F(S(L), F(L,L))
+        c.fork(inner, pack(L, 0)) // F(.., L) = not
+    }
+    fn nf_string(c: &mut Ctx, h: u32) -> String {
         let mut b = 100_000_000i64;
-        let nf = n.full_nf(h, &mut b).expect("nf");
+        let nf = c.full_nf(h, &mut b).expect("nf");
         let mut out = Vec::new();
-        n.emit(nf, &mut out);
+        c.emit(nf, &mut out);
         String::from_utf8(out).unwrap()
     }
 
     #[test]
     fn not_false_is_true() {
-        let mut n = Net::new();
-        let not = build_not(&mut n);
-        let app = n.susp(not, pack(L, 0)); // not false
-        assert_eq!(nf_string(&mut n, app), "10"); // S(L) = true
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let not = build_not(&mut c);
+        let app = c.susp(not, pack(L, 0));
+        assert_eq!(nf_string(&mut c, app), "10"); // S(L) = true
     }
 
     #[test]
     fn not_true_is_false() {
-        let mut n = Net::new();
-        let not = build_not(&mut n);
-        let t = n.stem(pack(L, 0));
-        let app = n.susp(not, t); // not true
-        assert_eq!(nf_string(&mut n, app), "0"); // L = false
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let not = build_not(&mut c);
+        let t = c.stem(pack(L, 0));
+        let app = c.susp(not, t);
+        assert_eq!(nf_string(&mut c, app), "0"); // L = false
     }
 
-    // K x y = x ;  K = △△ = S(L)
     #[test]
     fn k_discards_second() {
-        let mut n = Net::new();
-        let k = n.stem(pack(L, 0)); // K
-        let x = n.fork(pack(L, 0), pack(L, 0)); // some value F(L,L)
-        let y = n.stem(pack(L, 0));
-        let kx = n.susp(k, x);
-        let kxy = n.susp(kx, y); // (K x) y → x
-        assert_eq!(nf_string(&mut n, kxy), "200"); // F(L,L)
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let k = c.stem(pack(L, 0));
+        let x = c.fork(pack(L, 0), pack(L, 0));
+        let y = c.stem(pack(L, 0));
+        let kx = c.susp(k, x);
+        let kxy = c.susp(kx, y);
+        assert_eq!(nf_string(&mut c, kxy), "200"); // F(L,L)
     }
 
-    // S K K x = x  (identity);  S = △(△(△△△))... build via combinators is verbose,
-    // so test the dispatch directly: △(△△) drops to the S-rule.
     #[test]
     fn ternary_roundtrip_via_parse() {
-        let mut n = Net::new();
-        let s = b"210200"; // F(S(L), F(L,L))
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let s = b"210200";
         let mut i = 0usize;
-        let h = n.parse(s, &mut i);
+        let h = c.parse(s, &mut i);
         assert_eq!(i, s.len());
-        // already NF (no P); dump must round-trip
         let mut b = 1_000_000i64;
-        let nf = n.full_nf(h, &mut b).unwrap();
+        let nf = c.full_nf(h, &mut b).unwrap();
         let mut out = Vec::new();
-        n.emit(nf, &mut out);
+        c.emit(nf, &mut out);
         assert_eq!(&out, s);
     }
 
-    // Exercises the S-rule (T1 ⊗ S → δⁿ): △(△a) b c → (a c)(b c).
-    //   operator = Fork(Stem(L), L) = △(△△)△ ; arg c = Stem(L) = △△
-    //   → (L·c)(L·c) = Stem(Stem(L)) applied to itself = Fork(Stem(L), Stem(Stem(L)))
-    //   ternary "2" + "10" + "110" = "210110".
+    // S-rule (T1 ⊗ S → δⁿ): △(△L) L (Stem(L)) → "210110".
     #[test]
     fn s_rule_dup() {
-        let mut n = Net::new();
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
         let op = {
-            let sl = n.stem(pack(L, 0));
-            n.fork(sl, pack(L, 0))
+            let sl = c.stem(pack(L, 0));
+            c.fork(sl, pack(L, 0))
         };
-        let c = n.stem(pack(L, 0));
-        let app = n.susp(op, c);
-        assert_eq!(nf_string(&mut n, app), "210110");
+        let arg = c.stem(pack(L, 0));
+        let app = c.susp(op, arg);
+        assert_eq!(nf_string(&mut c, app), "210110");
     }
 
-    // δⁿ ⊗ P (parking): duplicate a SUSPENSION. △(△L) L (not false) → (L c)(L c) where
-    // c = `not false` is an unreduced P. δⁿ must force c ONCE (dnp ≥ 1) and share it;
-    // c → true = S(L), so (L·true)(L·true) = Fork(S(L), S(S(L))) = "210110".
+    // δⁿ ⊗ P (parking): duplicate a SUSPENSION (not false); δⁿ⊗P must fire (dnp ≥ 1).
     #[test]
     fn dn_parks_on_suspension() {
-        let mut n = Net::new();
-        let not = build_not(&mut n);
-        let c = n.susp(not, pack(L, 0)); // (not false) — a suspension reducing to true
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let not = build_not(&mut c);
+        let susp = c.susp(not, pack(L, 0)); // (not false) reduces to true
         let op = {
-            let sl = n.stem(pack(L, 0));
-            n.fork(sl, pack(L, 0))
-        }; // Fork(Stem(L), L) = △(△L)·
-        let app = n.susp(op, c);
-        assert_eq!(nf_string(&mut n, app), "210110");
-        assert!(n.dnp >= 1, "δⁿ⊗P should fire when a suspension is duplicated");
+            let sl = c.stem(pack(L, 0));
+            c.fork(sl, pack(L, 0))
+        };
+        let app = c.susp(op, susp);
+        assert_eq!(nf_string(&mut c, app), "210110");
+        assert!(n.dnp.load(Ordering::Relaxed) >= 1, "δⁿ⊗P should fire");
     }
 
-    // The Theorem-6 work-sharing win, directly: duplicate one EXPENSIVE suspension and
-    // normalize both copies. δⁿ forces the shared chain once; δˢ copies it as syntax and
-    // forces both copies, doing ~2× the reduction. (This is the win the lambda benchmarks
-    // don't show — they duplicate already-reduced constructors, a hash-consing matter.)
+    // Theorem-6 work-sharing: duplicate one expensive suspension; δⁿ < δˢ interactions.
     fn dup_cost(species: u32, k: usize) -> u64 {
-        let mut n = Net::new();
-        let mut e = pack(L, 0); // false
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let mut e = pack(L, 0);
         for _ in 0..k {
-            let not = build_not(&mut n); // FRESH not per level — a linear chain (a node
-            e = n.susp(not, e); // is consumed once; sharing in a net goes through δ, not reuse)
+            let not = build_not(&mut c); // FRESH not per level — a linear chain
+            e = c.susp(not, e);
         }
-        let (lv, rv) = (n.new_var(), n.new_var());
-        let d = n.alloc(&[pack(VAR, lv), pack(VAR, rv)]);
-        n.link(pack(species, d), e); // δ duplicates the suspension
+        let (lv, rv) = (c.new_var(), c.new_var());
+        let d = c.alloc(&[pack(VAR, lv), pack(VAR, rv)]);
+        c.link(pack(species, d), e);
         for v in [lv, rv] {
-            let res = n.new_var();
-            let nn = n.alloc(&[pack(VAR, res)]);
-            n.link(pack(N, nn), pack(VAR, v)); // normalize each copy to full NF
+            let res = c.new_var();
+            let nn = c.alloc(&[pack(VAR, res)]);
+            c.link(pack(N, nn), pack(VAR, v));
         }
         let mut b = 1_000_000_000i64;
-        n.drain(&mut b);
-        n.interactions
+        c.drain(&mut b);
+        n.interactions.load(Ordering::Relaxed)
     }
 
     #[test]
     fn dn_shares_what_ds_redoes() {
         let dn = dup_cost(DN, 12);
         let ds = dup_cost(DS, 12);
-        // δⁿ shares the shared chain's reduction; δˢ re-reduces it per copy (Prop 5).
-        // (Measured k=12: δⁿ=111 vs δˢ=327 interactions, ~2.95×.)
+        // (Measured k=12: δⁿ≈111 vs δˢ≈327 interactions, ~2.95×.)
         assert!(dn < ds, "δⁿ ({dn}) should do strictly less work than δˢ ({ds})");
     }
 
     #[test]
     fn equal_nf() {
-        let mut n = Net::new();
-        let not = build_not(&mut n);
-        let nf_app = n.susp(not, pack(L, 0)); // not false → true
-        let tru = n.stem(pack(L, 0)); // true
+        let n = net();
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let not = build_not(&mut c);
+        let nf_app = c.susp(not, pack(L, 0)); // → true
+        let tru = c.stem(pack(L, 0));
         let mut b = 1_000_000i64;
-        assert_eq!(n.equal(nf_app, tru, &mut b), Some(true));
-        let fls = pack(L, 0);
+        assert_eq!(c.equal(nf_app, tru, &mut b), Some(true));
         let mut b2 = 1_000_000i64;
-        assert_eq!(n.equal(nf_app, fls, &mut b2), Some(false));
+        assert_eq!(c.equal(nf_app, pack(L, 0), &mut b2), Some(false));
     }
 }
