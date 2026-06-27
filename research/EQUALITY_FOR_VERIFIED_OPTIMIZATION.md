@@ -1,5 +1,7 @@
 # Equality for Verified Optimization
 
+> *Part of disp's verified-optimizer stack — [`OPTIMIZER.md`](OPTIMIZER.md) is the reading map (this is layer 1, "what equality").*
+
 Research notes on which equality / type theory best serves disp's north-star goal
 (`GOALS.md`): a self-improving optimizer that **replaces a program with a
 provably-equal cheaper one**. The investigation covers observational type theory

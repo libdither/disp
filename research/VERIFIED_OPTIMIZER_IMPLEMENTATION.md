@@ -1,5 +1,7 @@
 # Implementing the Verified Optimizer in Practice
 
+> *Part of disp's verified-optimizer stack — [`OPTIMIZER.md`](OPTIMIZER.md) is the reading map (this is layer 3, "how to build it").*
+
 How to actually build the operational-equivalence-licensing optimizer stack on
 disp's *current* codebase. Companion to the theory in
 [`OPERATIONAL_EQUIVALENCE_LICENSING.md`](OPERATIONAL_EQUIVALENCE_LICENSING.md)

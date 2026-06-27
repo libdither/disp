@@ -1,5 +1,7 @@
 # Operational-Equivalence Licensing for Disp's Optimizer
 
+> *Part of disp's verified-optimizer stack — [`OPTIMIZER.md`](OPTIMIZER.md) is the reading map (this is layer 2, the soundness deep-dive on EQUALITY's §7).*
+
 A deep dive into §7 of [`EQUALITY_FOR_VERIFIED_OPTIMIZATION.md`](EQUALITY_FOR_VERIFIED_OPTIMIZATION.md)
 — "license rewrites by operational equivalence, in a total fragment." The
 question: **is this the ideal soundness foundation for disp's verified
