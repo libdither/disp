@@ -19,6 +19,17 @@ hashbrown = { version = "0.15", default-features = false }
 # FxHash: the deterministic, dependency-light hasher for the forced/memo maps + the
 # intern table's node hashing (replaces the hand-rolled FxHasher; same algorithm family).
 rustc-hash = "2"
+# Optional memo backend (cargo feature `memo-quickcache`): quick_cache::unsync, an S3-FIFO
+# scan-resistant cache. default-features = false drops ahash (would pull getrandom, which
+# wasm32-unknown-unknown lacks); we supply FxHash explicitly. The `memo-clock` backend (a
+# hand-rolled CLOCK) needs no dependency. See src/memo.rs.
+quick_cache = { version = "0.6", default-features = false, optional = true }
+
+[features]
+default = []
+memo-watermark = []                      # FxHashMap; clear() keeps kernel-keyed (low-id) entries
+memo-quickcache = ["dep:quick_cache"]    # quick_cache::unsync (S3-FIFO)
+memo-clock = []                          # hand-rolled CLOCK / second-chance (no deps)
 
 [profile.release]
 opt-level = 3

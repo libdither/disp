@@ -9,6 +9,7 @@
 
 use hashbrown::HashTable;
 use rustc_hash::{FxHashMap, FxHasher};
+use crate::memo::Memo;
 use std::hash::{Hash, Hasher};
 
 /// A producer node (tc-net.typ §Agents). `Leaf`/`Stem`/`Fork` are constructors;
@@ -57,8 +58,9 @@ pub(crate) struct Arena {
     /// via `tc_clear_caches`/`dispose`.
     pub(crate) forced: FxHashMap<u32, u32>,
     /// Eager apply memo (M0): `apply(f,a)` is a pure function of `(f,a)`, and
-    /// hash-consing makes `(f,a)` a complete key (the eager backend's `applyMemo`).
-    pub(crate) memo: FxHashMap<(u32, u32), u32>,
+    /// hash-consing makes `(f,a)` a complete key. Backend-abstracted (see `memo.rs`):
+    /// default FxHashMap+clear, or `memo-quickcache`/`memo-clock` bounded self-evicting.
+    pub(crate) memo: Memo,
     /// Reduction counter = fork-dispatches (the budget unit; eager-`steps`-equivalent,
     /// reported via stats). Leaf/stem builds and the tree_eq fast-path are O(1) and
     /// uncounted, matching src/core/tree.ts.
@@ -71,10 +73,6 @@ pub(crate) struct Arena {
     /// Scott `TT`/`FF` (the tree_eq fast-path results), built once at session init.
     pub(crate) tt: u32,
     pub(crate) ff: u32,
-    /// Cap on `memo` entries; over it the eager apply memo is cleared (pure cache —
-    /// correctness-preserving, just re-reduces). Default unbounded; lower via
-    /// `tc_set_memo_limit` to trade speed for a smaller footprint on long sessions.
-    pub(crate) memo_limit: usize,
 }
 
 impl Arena {
@@ -83,12 +81,11 @@ impl Arena {
             nodes: Vec::with_capacity(1 << 16),
             intern: HashTable::with_capacity(1 << 16),
             forced: FxHashMap::default(),
-            memo: FxHashMap::default(),
+            memo: Memo::new(),
             interactions: 0,
             tree_eq_id: 0,
             tt: 0,
             ff: 0,
-            memo_limit: usize::MAX,
         };
         // index 0: reserved null sentinel (never interned, never returned) so no valid
         // handle is JS-falsy — see LEAF_ID.
@@ -129,6 +126,11 @@ impl Arena {
     #[inline]
     pub(crate) fn node(&self, id: u32) -> Node {
         self.nodes[id as usize]
+    }
+    /// Current node high-water (interned count) — the watermark backend's baseline source.
+    #[inline]
+    pub(crate) fn node_count(&self) -> u32 {
+        self.nodes.len() as u32
     }
     #[inline]
     pub(crate) fn stem(&mut self, c: u32) -> u32 {

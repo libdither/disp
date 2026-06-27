@@ -73,15 +73,15 @@ pub extern "C" fn tc_recognize_tree_eq(handle: u32) {
 /// cleared. Pure cache → correctness-preserving (just re-reduces).
 #[no_mangle]
 pub extern "C" fn tc_set_memo_limit(n: u32) {
-    with(|a| a.memo_limit = if n == 0 { usize::MAX } else { n as usize });
+    with(|a| a.memo.set_limit(n as usize));
 }
 /// Drop all caches (apply memo + susp WHNF memo) and release their backing memory. The
 /// node arena (live trees reachable via handles) is untouched — only re-derivable cache.
 #[no_mangle]
 pub extern "C" fn tc_clear_caches() {
     with(|a| {
-        a.memo.clear();
-        a.memo.shrink_to_fit();
+        let node_hw = a.node_count(); // for the watermark backend's baseline; others ignore it
+        a.memo.clear(node_hw);
         a.forced.clear();
         a.forced.shrink_to_fit();
     });

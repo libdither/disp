@@ -23,6 +23,7 @@
 mod arena;
 mod codec;
 mod ffi;
+mod memo;
 mod reduce;
 #[cfg(test)]
 mod tests;

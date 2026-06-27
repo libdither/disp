@@ -65,7 +65,7 @@ impl Arena {
                     }
                 }
                 Node::Fork(a, b) => {
-                    if let Some(&r) = self.memo.get(&(cur_f, cur_x)) {
+                    if let Some(r) = self.memo.get(cur_f, cur_x) {
                         r
                     } else if let Node::Susp(sf, sa) = self.node(a) {
                         let av = self.force(sf, sa, a, budget)?;
@@ -130,11 +130,7 @@ impl Arena {
                         continue 'outer;
                     }
                     Some(Cont::Memo(sf, sx)) => {
-                        self.memo.insert((sf, sx), res);
-                        // Cap the pure-cache memo (correctness-preserving — re-reduces).
-                        if self.memo.len() > self.memo_limit {
-                            self.memo.clear();
-                        }
+                        self.memo.insert(sf, sx, res); // capacity/eviction handled by the backend (memo.rs)
                         // keep popping
                     }
                     Some(Cont::SAfterCx(sb, sox)) => {

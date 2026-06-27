@@ -44,7 +44,7 @@ fi
 
 # --lib only: the native CLI bin (src/bin/eager-cli.rs) is a host-side benchmark tool, not
 # part of the wasm Session artifact (and it links the rlib, which wasm32 needn't build).
-( cd "$HERE/crate" && cargo build --release --target "$TARGET" --lib )
+( cd "$HERE/crate" && cargo build --release --target "$TARGET" --lib ${CARGO_FEATURES:+--features "$CARGO_FEATURES"} )
 
 mkdir -p "$HERE/artifacts"
 cp "$HERE/crate/target/$TARGET/release/rust_eager.wasm" "$HERE/artifacts/rust_eager.wasm"
