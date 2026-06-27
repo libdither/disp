@@ -23,6 +23,13 @@ re-grades recognition from "load-bearing, phase 2" to a foreign/batch-tier
 ([`EVALUATOR_LAYOUT.md`](EVALUATOR_LAYOUT.md)), §3.1 recognition itself, phase 5
 bench, phase 6 TC-Net.
 
+> **TC-Net update (post-2026-06-22).** The single "Rust/WASM TC-Net runtime" above has since
+> split into two sibling crates: `evaluators/rust-eager/` (the hash-consed reducer — the fast
+> checker backend, M0+M1 landed) and `evaluators/rust-ic-net/` (the materialized parallel net
+> — the optimizer substrate, M0–M2d landed). Phase 6 has thus largely landed; the
+> `TC_NET_PLAN.md` that used to concretize it was folded into
+> [`research/interaction-combinator/RUST_IC_NET_DESIGN.md`](research/interaction-combinator/RUST_IC_NET_DESIGN.md).
+
 ---
 
 ## 1. Current state (audit)
