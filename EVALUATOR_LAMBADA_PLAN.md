@@ -1,5 +1,7 @@
 # Lambada batch peer + ternary reconciliation
 
+> *Part of the evaluator subsystem — [`EVALUATOR.md`](EVALUATOR.md) is the overview + backend map; this is the batch-tier detail.*
+
 The concrete next step after the Session ABI (phases 1–4). Wires the first
 **external** evaluator — a lambada (`lambada-llc/tree-calculus`) reducer — as a
 batch-tier peer, and proves disp's ternary interchange against it by differential

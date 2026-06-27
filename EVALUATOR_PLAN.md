@@ -1,5 +1,9 @@
 # Evaluator Backends Plan
 
+> **Start at [`EVALUATOR.md`](EVALUATOR.md)** for the architecture overview + backend map.
+> This doc is the detailed design + decision record behind it — the `Session` ABI (§3), the
+> FFI backend classes (§4), the phase history (§6), and the sign-off decisions (§7).
+
 Make the evaluator a **fully portable dependency of the elaborator**: the
 TypeScript elaboration pipeline (itself slated to move to native disp
 eventually) consumes an evaluator through a small session ABI — a state object

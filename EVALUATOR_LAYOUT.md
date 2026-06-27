@@ -1,5 +1,7 @@
 # Evaluator subsystem layout
 
+> *Part of the evaluator subsystem — [`EVALUATOR.md`](EVALUATOR.md) is the overview + backend map.*
+
 How the evaluator backends are organized on disk, so that multi-language,
 externally-vendored evaluators stay conceptually isolated and the engine never
 has to care about anyone's build system. This refines `EVALUATOR_PLAN.md` §5
