@@ -1,5 +1,5 @@
 // Differential conformance: disp's eager reducer (the oracle) vs the Rooted
-// rust-eager Rust→WASM backend (TC_NET_PLAN.md M0/M1) over the shared ternary
+// rust-eager Rust→WASM backend (EVALUATOR_PLAN.md Phase 6) over the shared ternary
 // interchange. rust-eager is an INDEPENDENT implementation of the same 5-rule
 // calculus on a different substrate (hash-consed lazy interaction-net reducer),
 // so agreement on the real benchmark programs + randomized total terms is the M0

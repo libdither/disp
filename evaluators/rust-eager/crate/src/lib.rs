@@ -1,7 +1,7 @@
 //! rust-eager — a sequential, hash-consed reducer for disp tree calculus.
 //!
-//! **M0 + M1 (the hash-consed reducer strategy — TC_NET_PLAN.md §Implementation
-//! strategy).** With hash-consing the formal interaction net collapses to a tree
+//! **M0 + M1 (the hash-consed reducer strategy — RUST_IC_NET_DESIGN.md §0, strategy
+//! (1) vs (2)).** With hash-consing the formal interaction net collapses to a tree
 //! reducer; the genuinely-materialized parallel net is the sibling `rust-ic-net` crate.
 //! Materialized agents + parked duplicators + reachability GC are deferred to that M2
 //! substrate, where they are actually required.

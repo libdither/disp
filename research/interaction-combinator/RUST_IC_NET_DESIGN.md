@@ -1,8 +1,8 @@
 # rust-ic-net — design
 
 The **materialized, parallel** interaction-net evaluator for disp tree calculus — the
-"strategy (2)" machine that `TC_NET_PLAN.md` defers to M2, now a sibling crate of the
-renamed `rust-eager` (the strategy-(1) hash-consed reducer). Agents and ports are
+materialized **"strategy (2)"** machine (§0), a sibling crate of the renamed `rust-eager`
+(the **"strategy (1)"** hash-consed reducer). Agents and ports are
 **real mutable arena nodes**, active pairs sit in a **schedulable work bag**, and `δⁿ`
 is a genuine **parked agent** — the structure required to distribute reduction across
 threads, which the hash-consed collapse structurally cannot give.
@@ -10,7 +10,8 @@ threads, which the hash-consed collapse structurally cannot give.
 > Calculus spec: [`tc-net.typ`](tc-net.typ) (authoritative for agents + rules).
 > Consumer: [`DISP_BACKPROP.typ`](DISP_BACKPROP.typ) (the optimizer this exists for).
 > This doc synthesizes a 5-track deep-dive (HVM2, materialization, scheduler/GC,
-> prior art, host integration); it is the input to the build, not yet built.
+> prior art, host integration). The CPU engine has since been **built through M2d**
+> (see §10 for the landed milestones); read this doc for rationale, the crate for truth.
 
 ## 0. Scope & non-goals
 
@@ -22,6 +23,29 @@ threads, which the hash-consed collapse structurally cannot give.
   destroys per-candidate blame attribution (DISP_BACKPROP Open-Q 7).
 - It owes only the **batch-fold differential** vs `rust-eager` + the optimizer surface —
   not full `lib/tests` elaboration conformance (that's `rust-eager`'s gate, decision 7).
+
+### Strategy (1) vs (2) — why this is a *separate machine*, not a flag
+
+`tc-net.typ` fixes the *semantics* (agents, ports, active pairs); it does not mandate the
+data structures. Two strategies realize it, and the choice decides which §Costs-of-`δⁿ`
+obligations are even incurred:
+
+1. **Hash-consed tree reducer — what `rust-eager` *is*.** Producers are interned nodes
+   (`L`/`S`/`F`/`P`); the consumers (`A`/`T₁`/`T₂`/`δ`/`ε`) are the *control flow* of a
+   reduction function, not stored agents. Then `δˢ` = returning a shared reference (it *is*
+   hash-consing — free), and `δⁿ` at-most-once = a `forced` memo cell on the shared `P`.
+   Sequentially this delivers `δⁿ`'s full work-sharing with **no materialized duplicators,
+   no parked-agent reachability-GC, and no active-pair queue** — they collapse into
+   hash-consing + memoized forcing + heap reachability, and it wins sequential reduction
+   outright (§10-M2d).
+2. **Materialized graph machine — what rust-ic-net *is*.** Agents and ports are real arena
+   nodes; active pairs sit in a schedulable bag; `δⁿ` is a genuine parked agent on an aux
+   wire. This is what **parallelism requires** (reduction can't be distributed without
+   explicit, schedulable active pairs) *and* what **provenance requires** (distinct-but-equal
+   subnets must stay distinct) — and it is exactly what *creates* the reachability-GC + the
+   scheduler obligations (§5, §6). So this machine is justified by precisely the two things
+   hash-consing structurally cannot do (§0); on raw sequential reduction it loses to
+   `rust-eager`, by design.
 
 ## 1. The verdict: from-scratch Rust, reuse HVM2's *design*
 
@@ -341,17 +365,18 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
 
 ## Deferred idea — NF merkle-hashing for cheap equality (NOT hash-consing)
 
-For when conversion-on-ic-net matters (e.g. an optimizer that type-checks): a node that
-has reached normal form is *immutable*, so cache a bottom-up structural (merkle) hash on
-each NF node. Equality becomes a hash compare (~O(1) + collision check) with **no global
-intern table** — contention-free, parallel-friendly (the "recognition-by-hash" knob). This
-is the principled way to recover rust-eager's O(1) `tree_eq` without reintroducing
-hash-consing. Cheaper stop-gap: a `recognizeNative("tree_eq")` intercept → ic-net's native
-structural `equal` (O(min size)), avoiding the catastrophic "reduce in-language tree_eq
-through the net." **Crucially neither recovers the apply-memo / cross-occurrence reduction
-sharing — that IS hash-consing, which ic-net drops on purpose (it both contends under
-parallelism AND destroys the per-candidate provenance the reverse-mode optimizer needs).**
-So merkle-hash buys fast *equality*, never the sequential reduction speed (that's rust-eager).
+> **Superseded by [`IC_NET_FINGERPRINTS.md`](IC_NET_FINGERPRINTS.md).** That doc reframes
+> the merkle hash from a *verdict* ("hashes equal ⇒ declare equal," which forces a 128-bit
+> hash + a dense arena-sized array) to a *filter* ("mismatch ⇒ sound not-equal; match ⇒
+> exact check"), sound at any hash width with nothing stored per arena node. It also covers
+> the `recognizeNative("tree_eq")` intercept (the one *required* piece) and the bloom-gated
+> memo. Read it instead of this stub.
+
+The enduring point: neither fingerprints nor merkle recover the apply-memo /
+cross-occurrence reduction sharing — that IS hash-consing, which ic-net drops on purpose
+(it both contends under parallelism AND destroys the per-candidate provenance the
+reverse-mode optimizer needs). So this buys fast *equality*, never the sequential reduction
+speed (that's rust-eager's).
 
 ## 11. Open decisions (decide before / early in M0)
 
@@ -442,6 +467,10 @@ minimal agent/equation representation, in-place rewriting, parallel-scaling base
 crossbeam-{deque,utils,epoch,queue}; rayon; memmap2; napi-rs. Fernández–Mackie *Weak
 Reduction and GC in Interaction Nets*; *Parallel needed reduction* (arXiv:1702.06092);
 Ennals–Peyton Jones *Optimistic Evaluation* (ICFP 2003); Sergey–Vytiniotis–Peyton Jones
-*Cardinality Analysis* (POPL 2014). Internal: `tc-net.typ`, `TC_NET_PLAN.md` (M2 work/span
-note), `DISP_BACKPROP.typ`, `research/effects-and-coeffects.typ`,
+*Cardinality Analysis* (POPL 2014). M2 type-directed scheduling (the graded-Pi lever, §7):
+Atkey *QTT* + McBride *I Got Plenty o' Nuttin'* (quantitative types), Petricek–Orchard–Mycroft
+*coeffects*; the parallel optimal-reduction systems that hit the work/span wall — Asperti
+**BOHM**, Pedicini–Quaglia **PELCR**, **Lambdascope**; Arvind–Nikhil *Id/pH* (lenient
+dataflow); Blelloch–Greiner (work-span cost semantics). Internal: `tc-net.typ`,
+`DISP_BACKPROP.typ`, `research/effects-and-coeffects.typ`,
 `research/MODAL_TYPES_INVESTIGATION.md`, `src/eval/types.ts`, the `rust-eager` crate + seam.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the rust-eager evaluator (crate/) to a single wasm32 artifact for
-# disp's Session backend. See TC_NET_PLAN.md.
+# disp's Session backend. See EVALUATOR_PLAN.md (Phase 6).
 #
 #   Output: evaluators/rust-eager/artifacts/rust_eager.wasm   (gitignored; this produces it)
 #

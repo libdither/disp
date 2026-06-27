@@ -1,10 +1,10 @@
-// rust-eager Session backend — the Rust hash-consed eager tree-calculus reducer (EVALUATOR_PLAN.md §4.2, Phase 6 / TC_NET_PLAN.md).
+// rust-eager Session backend — the Rust hash-consed eager tree-calculus reducer (EVALUATOR_PLAN.md §4.2, Phase 6).
 //
-// **M0 SCAFFOLD.** The seam is complete — WASM instantiation, the u32-arena handle
-// scheme, and every Session method mapped to its C-ABI export — but the engine
-// behind those exports is `todo!()` until TC_NET_PLAN milestones land. The backend
-// registers ONLY when evaluators/rust-eager/build.sh has produced the artifact (like
-// the lambada peer), so `npm test` and the default loop never need a Rust toolchain.
+// **M0 + M1 landed** — a real hash-consed eager reducer (the fast Rust checker backend when
+// built). The seam — WASM instantiation, the u32-arena handle scheme, every Session method
+// mapped to its C-ABI export — wraps that engine (the crate's lib.rs has the strategy notes).
+// The backend registers ONLY when evaluators/rust-eager/build.sh has produced the artifact
+// (like the lambada peer), so `npm test` and the default loop never need a Rust toolchain.
 //
 // Handle = u32 index into the WASM instance's arena (opaque to the engine).
 // `dispose()` drops the instance ⇒ the arena's backing ArrayBuffer is GC'd
