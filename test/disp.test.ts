@@ -51,12 +51,12 @@ describe("disp", () => {
       // kernel-internal checking that bypasses the public boundary.
       const r = runFile(join(testsDir, file), sharedSession ? { session: sharedSession } : {})
       // Bound cumulative memory in shared-session mode: the shared rust-eager arena
-      // interns nodes AND memoizes every apply across all files; the apply memo is an
-      // unbounded pure cache (`memo_limit` defaults to usize::MAX), so auto-verify-heavy
-      // kernels (each typed export runs the 40M-budget walker) grow it until the WASM
-      // arena OOMs. The memo is re-derivable, so drop it at each file boundary — this
-      // keeps the within-file memo + the shared interned kernel (the real speedup) while
-      // bounding peak to ~one file's worth. Live trees/handles are untouched.
+      // memoizes every apply across all files, and auto-verify-heavy kernels (each typed
+      // export runs the 40M-budget walker) would grow that unbounded until the WASM arena
+      // OOMs. Shed the memo at each file boundary — the rust-eager backend's generational
+      // clear RETAINS the kernel-keyed (low-id) reductions and drops only file-local ones,
+      // so the shared interned kernel AND its (expensive) reductions stay cached across
+      // files while peak stays small. Pure cache → live trees/handles untouched.
       ;(sharedSession as unknown as { clearCaches?: () => void } | undefined)?.clearCaches?.()
       if (r.failed.length > 0) {
         // TODO: figure out how to return specific line in test file that failed (e.g. via spans)
