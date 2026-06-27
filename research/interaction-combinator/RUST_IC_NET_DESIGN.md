@@ -363,20 +363,66 @@ throughput/leaks, *never* a verdict — so build bottom-up, validate at each ste
   to binary nodes; tree-calc reduction is irregular pointer-chasing → warp divergence is a
   real risk (HVM2's own irregular workloads needed annotation to not crater).
 
-## Deferred idea — NF merkle-hashing for cheap equality (NOT hash-consing)
+## Fast-paths for conversion & memo (proposed): fingerprints, not merkle
 
-> **Superseded by [`IC_NET_FINGERPRINTS.md`](IC_NET_FINGERPRINTS.md).** That doc reframes
-> the merkle hash from a *verdict* ("hashes equal ⇒ declare equal," which forces a 128-bit
-> hash + a dense arena-sized array) to a *filter* ("mismatch ⇒ sound not-equal; match ⇒
-> exact check"), sound at any hash width with nothing stored per arena node. It also covers
-> the `recognizeNative("tree_eq")` intercept (the one *required* piece) and the bloom-gated
-> memo. Read it instead of this stub.
+*Not built — nothing in the crate references this yet; it is the plan for when ic-net needs
+the two things it dropped with hash-consing:* **O(1) conversion** (`tree_eq`) and
+**cross-occurrence memoization**. Recover both *approximately, with an exact fallback*, so
+correctness is by construction and the approximation is a pure performance knob. (This
+supersedes an earlier "NF merkle-hashing" sketch that made the hash a *verdict* — "hashes
+equal ⇒ declare equal", which forces a 128-bit hash + a dense arena-sized array; the reframe
+below makes it a *filter*.)
 
-The enduring point: neither fingerprints nor merkle recover the apply-memo /
-cross-occurrence reduction sharing — that IS hash-consing, which ic-net drops on purpose
-(it both contends under parallelism AND destroys the per-candidate provenance the
-reverse-mode optimizer needs). So this buys fast *equality*, never the sequential reduction
-speed (that's rust-eager's).
+- **The principle — filter, not verdict.** A fingerprint is a function of content, so equal
+  trees always produce equal fingerprints. Hence a **mismatch** is a *sound* "not equal" (no
+  false negatives) and a **match** defers to an **exact** check; a collision costs one wasted
+  exact check, **never a wrong answer**. Bits buy collision rate (speed), not correctness —
+  32-bit, or even a node count, is sound. Same discipline as the live `tree_eq` native
+  fast-path: a lossy accelerator with an exact backstop.
+- **`tree_eq`, single-shot — the walk is already optimal.** `Ctx::equal` full-NFs both sides
+  then walks lockstep with early-exit on the first mismatched tag (`O(min size)`, O(1) at the
+  root) — it *is* a root-first cascade. A precomputed tier (size, fingerprint) must itself be
+  *computed by a walk*, so it can't beat the early-exit walk one-shot; serialize-and-compare
+  (`emit`→`memcmp`) is strictly *worse* (no early exit, two buffers). Leave `equal` alone
+  unless profiling shows repeat conversion; the only single-shot win is interleaved WHNF
+  (§12 risk-7).
+- **Repeat-heavy conversion** (the checker re-comparing the same types) is the one place
+  caching pays, and the cached form must be **small** and **per compared handle, never per
+  arena node**: a per-handle fingerprint (O(1) reject; the exact walk still confirms a match)
+  + a scoped NF intern (O(1) repeat-equal, dropped per phase). Cost scales with the type
+  vocabulary compared, not arena capacity.
+- **In-reduction `tree_eq` — the only *required* piece.** The kernel's conversion *is*
+  in-language `tree_eq`; reducing it through the net is catastrophic (`O(size)` + budget
+  blow). ic-net has no registered id, so it recognizes the operator **by content**: a
+  **root-shape pre-filter** rejects ~all non-`tree_eq` operators in O(1) (the load-bearing
+  step), survivors fingerprint-compare to the registered `tree_eq`, a match runs native
+  `equal` and links the Scott boolean. (§8 omits `recognizeNative` for the *differential*;
+  this is for when the optimizer type-checks on ic-net.)
+- **memo — a bloom recurrence-gate, off by default.** Content-memo needs content-identity,
+  which ic-net lacks (that *was* hash-consing) — so the key is a fingerprint of the operands,
+  an intrinsic per-redex cost a bloom does *not* remove. What the bloom buys is a small,
+  cache-hot memo: insert a key only on its **second** sighting, so singletons never bloat it;
+  **per-worker** ⇒ parallel-healthy. **Provenance gate (non-negotiable):** memoization merges
+  equal-by-evaluation terms — the blame attribution the reverse-mode optimizer needs — so it
+  is **off by default**, on only for pure-reduction runs (conversion, benchmarks), validated
+  by a `memo_on == memo_off` NF differential. Honest verdict: it pays a real per-redex cost
+  for cross-occurrence sharing rust-eager already delivers better; its only justification is
+  ic-net **self-containment**, so it ranks below `tree_eq`.
+- **Storage & soundness.** **Nothing is per-arena-node** — single-shot `equal` keeps the walk
+  and adds zero; the per-handle fingerprint, scoped NF intern, and per-worker bloom+memo all
+  scale with *work actually compared/memoized*, so the merkle proposal's 32 MB dense array is
+  avoided entirely. Every verdict still comes from pointer-eq, `memcmp`, or the structural
+  walk; fingerprints only accelerate *rejection*, so no false verdict is possible at any hash
+  width. Note too that neither path recovers the apply-memo / cross-occurrence *reduction*
+  sharing — that **is** hash-consing, dropped on purpose (it contends under parallelism AND
+  destroys provenance); this buys fast *equality*, never sequential reduction speed (rust-eager's).
+- **Libraries & build order.** `rustc-hash` (FxHash — deterministic, wasm-clean, already a
+  rust-eager dep) for the mixing; a hand-rolled `Vec<u64>` bloom (~30 lines, no
+  `rand`/`getrandom`); the memo reuses `rust-eager/src/memo.rs`'s swap-in pattern per `Worker`.
+  Order: **(1)** the `recognizeNative` root-shape pre-filter (the only *required* piece —
+  unblocks kernel conversion on ic-net) → **(2)** optional interleaved-WHNF `equal` → **(3)**
+  per-handle fingerprint + scoped NF intern *only if* profiled repeat-heavy → **(4)** the
+  bloom-gated memo, off by default.
 
 ## 11. Open decisions (decide before / early in M0)
 
