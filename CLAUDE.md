@@ -11,6 +11,8 @@ Dependently-typed language built on tree calculus. Types are predicates; the typ
 - [`COMPILATION.typ`](COMPILATION.typ) — parse/elaborate/emit pipeline.
 - [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) — tree-calculus implementation idioms for the current two-Σ-op kernel: `hyp_reduce`/`bind_hyp`/`param_apply`, wait/fix, signatures, neutrals, the `tree_eq` native fast-path, bracket-abstraction caveats.
 - [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) — design rationale for the telescope (the one negative former for `Pi`/`Sigma`/`Record`/`⊤`): the forced-choice chain that nearly determines it, the observation-interface/NbE ideal it approximates, and the frontier of remaining improvements. The one architectural move — unifying recognition+respond into a single mode-polymorphic walk (`at`) over **wait-form cells** — **landed (2026-06)**; the live frontier is now frame-tagging for mixed/callable records and `qid`→Intersection (both pluggable as new wait-form ops). Read before reworking the telescope `at` walker / its cell ops.
+- [`EVALUATOR.md`](EVALUATOR.md) — the reduction-backend subsystem map: the `Session` ABI, the five backends (disp-eager / naive / rust-eager / rust-ic-net / lambada peers) and how they relate (strategy 1 vs 2, checker-vs-optimizer-vs-bench, the differential-oracle discipline). Read before touching `src/eval/` or a backend crate; detail in `EVALUATOR_PLAN.md`, calculus in `research/interaction-combinator/tc-net.typ`.
+- [`research/OPTIMIZER.md`](research/OPTIMIZER.md) — reading-map for the verified self-improving optimizer (the `GOALS.md` endgame): the 4-doc stack (what-equality → soundness → how-to-build → search-strategy) and its `rust-ic-net` substrate. Not yet built; substrate mostly exists.
 
 ## Core discipline
 
