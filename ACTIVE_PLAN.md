@@ -194,13 +194,21 @@ instead of five traversals. Deferrable; its uncertainty is engineering, not rese
 
 ## 5. Track 3 — Full verified kernel (the umbrella)
 
-- **K0 — declare + pin the substrate floor** as trusted axioms, pinned to `soundness.test`. 🟢.
-  *Defines* the TCB rather than shrinking it; makes "everything else verifies" a checkable claim.
+- **K0 — declare + pin the substrate floor** as trusted axioms, pinned to `soundness.test`. ✅
+  **LANDED 2026-06-27.** A "SUBSTRATE FLOOR (K0)" block in `soundness.test.disp` pins the boundary
+  precisely: the 4 sanctioned readers (`pair_fst`/`neutral_type`/`tree_eq`/identity) verify on a hyp,
+  while the floor readers (`pair_snd`/`is_fork`/`is_leaf`/`type_meta`/`is_closed`) are walker-REJECTED
+  — that rejection *is* the proof they're trusted-by-construction. (`checker_sig` reads via the
+  `pair_fst` carve-out, so it's trusted but not a direct-triage floor reader.) *Defines* the TCB and
+  makes "everything else verifies" a checkable claim.
 - **K1 — verify everything above the floor** (builders, formers, recursors, structural types). 🟢-🟡.
   Much validated (the Tier-1 sweep: `inductive_respond : InductiveRespondShape`,
   `type_predicate_h_rule : RespondShape`, `is_neutral : Tree -> Bool`,
-  `extend_neutral_meta : NeutralMeta -> Type -> Frame -> NeutralMeta`, `InvalidType : Type`). The
+  `extend_neutral_meta : NeutralMeta -> Type -> Frame -> NeutralMeta`, `InvalidType : Type`), made a
+  checkable claim by the per-fragment `verify {cut,engine,types}_mod = Ok TT` (use_raw.test) + an
+  "ABOVE THE FLOOR (K1)" block in `soundness.test` (former/structural-type/recursor reps). The
   arena/memo blocker is fixed (watermark memo, committed), so auto-verify load no longer OOMs.
+  **Residual:** `list_rec` / list builders are not yet annotated → not in the fragment sweep (tracked).
   *Memory: `project_kernel_self_typing_metashape`, `project_rust_eager_shared_session_memo`.*
 - **K2 — responds** = Track 1. 🟡/🟠.
 - **K3 — self-type the walker / Σ-ops via the sealing modality.** 🔴 research (see §1).
@@ -216,6 +224,8 @@ instead of five traversals. Deferrable; its uncertainty is engineering, not rese
    (hand-written `coh_list`, threads the element-type param). Remaining: **R2** (`derive_gate`, for the
    generic `Coproduct`) + **R3-rest** (generic `Coproduct`, gated on R2).*
 2. **K0 + K1** — pin the floor, sweep the above-floor verifications. Cheap, clarifies the TCB.
+   *✅ LANDED 2026-06-27: K0 floor-boundary block + K1 above-floor block in `soundness.test`; residual =
+   `list_rec`/list builders un-annotated.*
 3. *Fork:* **Track 2 (O1–O3)** to unify the cell machinery *before* the harder verification, OR
    **R4–R6** for the in-language behavioral proof. Lean optics-first — a clean `(optic, role)`
    substrate makes R4–R6 and K4 far less hairy.

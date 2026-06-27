@@ -82,3 +82,49 @@ test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n) = Ok TT   // the sound path st
 test (Sigma Nat ({_} -> Bool)) { fst := zero; snd := TT } = Ok TT   // raw Sigma: a verdict, not fail-fast
 test Nat (succ zero)       = Ok TT
 test (Eq Nat zero zero) refl = Ok TT
+
+// ================================================================
+// THE SUBSTRATE FLOOR (K0) — the trusted base, declared and pinned
+// ================================================================
+// "Full verified" != "zero trust" (ACTIVE_PLAN.md §1). The floor is every primitive that
+// RAW-INSPECTS a tree's payload: it cannot self-verify, because verifying `f : Tree -> X`
+// mints a Tree-hyp and `f` triages it — which the walker rejects by the SAME parametricity
+// that makes the kernel sound. So the floor is irreducible TCB; the goal is to MINIMIZE and
+// PIN it, not remove it. The walker sanctions exactly FOUR readers as carve-outs — they read
+// a neutral WITHOUT triaging its payload — and rejects all other payload-reading. This block
+// pins that boundary: the carve-outs verify, the floor does not.
+
+// (a) the 4 SANCTIONED READERS are usable on a hypothesis (engine.disp param_walker carve-outs):
+test param_apply (Pi Nat ({_} -> Tree)) ({x} -> pair_fst x)     = Ok TT  // root signature
+test param_apply (Pi Nat ({_} -> Tree)) ({x} -> neutral_type x) = Ok TT  // stored type
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> tree_eq x x)    = Ok TT  // conversion (O(1) hash-cons)
+test param_apply (Pi Nat ({_} -> Nat))  ({x} -> x)              = Ok TT  // identity
+
+// (b) the FLOOR readers are REJECTED on a hypothesis — they triage its payload, so they
+// CANNOT be verified. This rejection IS the proof they are trusted-by-construction (TCB):
+test param_apply (Pi Nat ({_} -> Tree)) ({x} -> pair_snd x)  = Err  // raw 2nd projection
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x)   = Err  // shape triage
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_leaf x)   = Err  // shape triage
+test param_apply (Pi Nat ({_} -> Tree)) ({x} -> type_meta x) = Err  // metadata read (pair_snd . pair_snd)
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_closed x) = Err  // support/closedness scan
+// equivalently, a floor primitive cannot be verified as its own `Tree -> X` type:
+test param_apply (Pi Tree ({_} -> Bool)) is_fork  = Err
+test param_apply (Pi Tree ({_} -> Tree)) pair_snd = Err
+// (checker_sig is trusted too, but reads the sig THROUGH the pair_fst carve-out after a wrap,
+//  so it is not a direct-triage floor reader — it is not walker-rejected.)
+
+// ================================================================
+// ABOVE THE FLOOR (K1) — everything else is meant to verify
+// ================================================================
+// The claim "everything above the floor verifies" is made checkable by the per-fragment
+// self-check `verify {cut,engine,types}_mod = Ok TT` in use_raw.test.disp (the kernel
+// typechecking its own annotated exports, under the walker) plus the Tier-1 annotations in
+// the kernel sources (is_neutral : Tree -> Bool, inductive_respond : InductiveRespondShape,
+// type_predicate_h_rule : RespondShape, extend_neutral_meta : NeutralMeta -> ..., InvalidType
+// : Type, make_meta : Tree -> Tree -> MetaShape, inert_respond : RespondShape). Representative
+// above-floor checks (formers, structural types, a recursor's own type) verify here too:
+test param_apply Type Nat = Ok TT                              // Nat : Type (a former verifies)
+test typecheck NeutralMeta (type_meta (make_hyp Nat 0)) = Ok TT // structural type inhabited
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok TT // recursor's own use verifies
+// NOTE (K1 residual): list_rec / list builders are not yet annotated, so they are not in the
+// fragment self-check sweep — tracked, not closed (ACTIVE_PLAN.md K1).
