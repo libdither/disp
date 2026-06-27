@@ -404,8 +404,48 @@ Coproduct_resp_p := {params, respond, variants} -> wait (make_rec_recognizer
   {self, meta, v} -> (coproduct_at params self meta.recognizer_params v)
 ) (make_meta_f variants iso_id respond)
 Coproduct_resp := {respond, variants}  -> Coproduct_resp_p t respond variants
-Coproduct : Tree -> Type := {variants}  -> Coproduct_resp inductive_respond variants
-Coproduct_p := {params, variants}       -> Coproduct_resp_p params inductive_respond variants
+
+// ── R2: derive_gate — the GENERIC application-form coherence gate (POSITIVE_TYPES §3c). coh_nat/
+// coh_ord/coh_list generalized over arbitrary constructors. For each variant (tag, argspec): MINT
+// each arg (bind_hyp at T for `Rec`, `params i` for `Param i`, the type otherwise) + one IH (bind_hyp
+// (motive arg)) per Rec arg, APPLY the case to (args… ihs…), and RECOGNIZE the result against
+// `motive (inj tag (build_payload args))`. AND over all variants. APPLICATION-form (NOT the
+// recognition-form `param_apply (case-telescope) cases` = derive_case_telescope, which breaks
+// recursors + fails self-typing — coh_gate_proto.test). The OUTER bind_hyp is SEALED (apply_policed,
+// R1); inner mints run raw under the walker the seal opened. The recursive `dg_go` EMITS inline
+// bind_hyp continuations — the bind_hyp-inline constraint is about RECEIVING a passed kont, not
+// emitting one, so a 2-rec-arg body using all hyps does NOT trip the occurs-check (validated, R2).
+build_payload := fix ({self, args} ->                          // [a1..ak] -> the right-nested payload
+  if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
+let dg_reverse_go = fix ({self, l, acc} -> if (is_fork l) then (self (pair_snd l) (cons (pair_fst l) acc)) else acc)
+let dg_reverse = {l} -> dg_reverse_go l t
+let dg_spine = fix ({self, f, args} -> if (is_fork args) then (self (f (pair_fst args)) (pair_snd args)) else f)
+let dg_argty = {marker, T, params} ->
+  if (is_recunder_marker marker) then T
+  else (if (is_param_marker marker) then (param_nth params (pair_snd marker)) else marker)
+let dg_go = fix ({self, T, params, motive, tag, cfn, spec, ar, ih} ->
+  if (is_leaf spec)
+    then ((motive (inj tag (build_payload (dg_reverse ar)))) (dg_spine (dg_spine cfn (dg_reverse ar)) (dg_reverse ih)))
+    else (if (is_recunder_marker (pair_fst spec))
+      then (bind_hyp T ({a} -> bind_hyp (motive a) ({i} -> self T params motive tag cfn (pair_snd spec) (cons a ar) (cons i ih))))
+      else (bind_hyp (dg_argty (pair_fst spec) T params) ({a} -> self T params motive tag cfn (pair_snd spec) (cons a ar) ih))))
+let dg_check = {T, params, motive, tag, cfn, argspec} ->
+  if (is_leaf argspec)
+    then ((motive (inj tag t)) cfn)
+    else (match (apply_policed (bind_hyp (dg_argty (pair_fst argspec) T params)) ({a0} ->
+            (if (is_recunder_marker (pair_fst argspec))
+              then (bind_hyp (motive a0) ({i0} -> dg_go T params motive tag cfn (pair_snd argspec) (cons a0 t) (cons i0 t)))
+              else (dg_go T params motive tag cfn (pair_snd argspec) (cons a0 t) t))))
+          { Ok v => v; Err _ => Err })
+let dg_all = fix ({self, T, params, motive, cases, variants} ->
+  if (is_leaf variants) then (Ok TT)
+  else (bind (dg_check T params motive (pair_fst (pair_fst variants)) (field cases (pair_fst (pair_fst variants))) (pair_snd (pair_fst variants)))
+             ({ok} -> if ok then (self T params motive cases (pair_snd variants)) else (Ok FF))))
+// derive_gate variants params : a coh-fn `{T, motive, cases} -> Ok TT/FF/Err`, ready for gated_inductive_respond.
+derive_gate := {variants, params} -> {T, motive, cases} -> dg_all T params motive cases variants
+
+Coproduct : Tree -> Type := {variants}  -> Coproduct_resp_p t (gated_inductive_respond (derive_gate variants t)) variants
+Coproduct_p := {params, variants}       -> Coproduct_resp_p params (gated_inductive_respond (derive_gate variants params)) variants
 
 // (`Mu`/`Mu_resp` RETIRED (Path B): recursion is a `RecUnder F` cell, the self-aware sum ties its own
 // knot via make_rec_recognizer (rs=self); mutual recursion is `Coproduct_ctx` + `RecAt i`.)
@@ -624,9 +664,7 @@ bimap_rec := {T, f, g, r}   -> fmap_rec T ({i} -> if (tree_eq i zero) then f els
 // type T), insert one IH premise `P aⱼ` per recursive position, and conclude the motive at the
 // RECONSTRUCTED constructor value `c args = inj tag (build_payload args)`. (Nested `RecUnder F` args
 // would need the F-lifted IH `All P` — deferred with fmap; Rec/Id covered.)
-let build_payload = fix ({self, args} ->                          // [a1..ak] -> the right-nested payload
-  if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
-let cell_argty = {cell, T} -> if (is_rec_cell cell) then T else ((type_meta cell).ty)  // a rec arg has type T
+let cell_argty = {cell, T} -> if (is_rec_cell cell) then T else ((type_meta cell).ty)  // a rec arg has type T (build_payload moved above Coproduct for derive_gate)
 let wrap_ihs = fix ({self, cells, args, P, concl} ->             // one `P aⱼ →` per rec cell, around concl
   if (is_fork cells) then {
     let rest = self ((pair_snd cells) t) (pair_snd args) P concl

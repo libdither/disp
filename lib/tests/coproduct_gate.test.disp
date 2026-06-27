@@ -1,0 +1,36 @@
+// R2 + R3-rest — the GENERIC `Coproduct`/`Coproduct_p` are now GATED (derive_gate, types.disp).
+// derive_gate = coh_nat/coh_ord/coh_list generalized over arbitrary constructors (application-form:
+// mint args + IHs, apply the case, recognize the result against motive(rebuilt value); AND over
+// variants). This closes the type-coherence gap (ACTIVE_PLAN.md R0/R2/R3) for EVERY inductive built
+// from the generic former — no per-type hand-written gate. Validated here directly + end-to-end via
+// the generic recursor `rec_value` (which keys cases by tag, like the gate).
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+// generic inj-tagged inductives (NOT shape-encoded): MyNat = [z, s:[Rec]], MyTree = [leaf, node:[Rec,Rec]]
+let myNatV  = [pair "z" [], pair "s" [Rec]]
+let myTreeV = [pair "leaf" [], pair "node" [Rec, Rec]]
+let MyNat  = Coproduct myNatV
+let MyTree = Coproduct myTreeV
+let cNat = {_} -> Nat
+
+// ── derive_gate directly (the kernel export): coherent accept, incoherent reject ──
+test derive_gate myNatV t MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } = Ok TT   // coherent
+test derive_gate myNatV t MyNat cNat { z := TT;   s := ({p, ih} -> succ ih) } = Ok FF   // base : not Nat
+test derive_gate myNatV t MyNat cNat { z := zero; s := ({p, ih} -> TT) } = Ok FF        // step : not Nat
+// 2 rec args + 2 IHs (the make-or-break: body uses both outer hyps) — no occurs-check false-reject:
+test derive_gate myTreeV t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> add iha ihb) } = Ok TT
+test derive_gate myTreeV t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> TT) } = Ok FF
+// dependent motive P x = Eq MyNat x x:
+let dNat = {x} -> Eq MyNat x x
+test derive_gate myNatV t MyNat dNat { z := refl; s := ({p, ih} -> refl) } = Ok TT
+test derive_gate myNatV t MyNat dNat { z := TT;   s := ({p, ih} -> refl) } = Ok FF
+
+// ── END-TO-END via the generic recursor `rec_value`: a neutral target routes through the gated
+//    respond, so a lying recursor is REJECTED at the function (the gap, CLOSED) ──
+test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } x) = Ok TT  // honest
+test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> TT) } x)       = Ok FF  // GAP CLOSED
+test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := TT;   s := ({p, ih} -> succ ih) } x)  = Ok FF  // GAP CLOSED
+// honest recursor still COMPUTES on concrete values (gating is transparent to real elimination):
+test rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } (inj "s" (inj "z" t)) = succ zero

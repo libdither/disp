@@ -20,7 +20,7 @@ walk over the same telescope of cells**, and the kernel verifies the cells:
 |---|---|---|---|
 | build / recognize | `at TT` over the cells | ✅ | `NEGATIVE_TYPES.md`, `KERNEL_DESIGN.md §Telescopes` |
 | eliminate — negative (Pi/Σ/Record) | `at FF` over the cells | ✅ (§7B) | `STRICTTYPE.md §7`, `NEGATIVE_TYPES.md` |
-| eliminate — positive (gate the cases) | derived from the **case-telescope** | 🟡 the work | `POSITIVE_TYPES.md`, `coh_gate_proto.test.disp` |
+| eliminate — positive (gate the cases) | `derive_gate` (application-form) over the variants | ✅ | `POSITIVE_TYPES.md`, `coproduct_gate.test.disp` |
 | map / fold | `fmap_n` / `fold_value` over the cells | ✅ | `CELL_OPTICS.md` |
 | "is this respond sound?" | `GoodRespond` (behavioral) | 🟡 prototyped | this file §T1-L2 |
 | the cell representation itself | one `(optic, role)` | 🟠 refactor | `CELL_OPTICS.md §3-§5` |
@@ -118,22 +118,27 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
   Runtime-identical. `inductive_respond`/`coh_bool` have **no raw `param_apply`** so they need no
   seal (audit: only `coh_nat` and any new `coh_*` do). Required so the gate is checkable (Level 2)
   and self-types. *File: `lib/kernel/types.disp`.*
-- **R2 — `derive_gate`: generate the application-form gate from a type's constructors.** 🟡 (the hard
-  piece). For a type `T` with variants `[(tag, argspec)…]` and a motive, build:
+- **R2 — `derive_gate`: generate the application-form gate from a type's constructors.** ✅ **LANDED
+  2026-06-27** (`derive_gate` in `lib/kernel/types.disp`; `coproduct_gate.test.disp`). For a type `T`
+  with variants `[(tag, argspec)…]` and a motive:
   ```
-  derive_gate T motive cases = ∧ over constructors c:  check_case c
-  check_case c = mint args (bind_hyp argty; rec arg → T, else its type),
-                 mint IH per rec arg (bind_hyp (motive arg)),
-                 recognize (cases.tag  args… ihs…)  :  motive (inj tag (build_payload args))
+  derive_gate variants params T motive cases = ∧ over (tag, argspec):
+    mint args (bind_hyp T for Rec | params i for Param i | the type otherwise),
+    mint IH per Rec arg (bind_hyp (motive arg)),
+    recognize ((field cases tag) args… ihs…)  :  motive (inj tag (build_payload args))
   ```
-  This is `coh_nat` generalized over (multiple constructors, multiple rec args + IHs, dependent
-  motives, the `base/step`↔`zero/succ` naming). **The blocker:** minting a *variable* number of args
-  via `bind_hyp` in a recursive walk hits the **bind_hyp-must-be-inline** constraint (CLAUDE.md
-  §Compiler workarounds) — a continuation passed *through* a function to `bind_hyp` miscompiles. The
-  fix mirrors the telescope `at` walker: a **Step-based** harness with `bind_hyp` inline, the per-cell
-  algebra returning data (see `at` in `types.disp` and `KERNEL_DESIGN.md §Telescopes`). Reuse
-  `derive_case_telescope` for the case-*types*, `pos_tele` for the argspec, `build_payload` for
-  reconstruction. **Test every recursor per former** (the thing burned twice). *Docs: `POSITIVE_TYPES.md`
+  `coh_nat` generalized over (multiple constructors, multiple rec args + IHs, dependent motives,
+  arbitrary tags). **The feared blocker did NOT materialize:** the recursive `dg_go` **EMITS** inline
+  `bind_hyp` continuations (the bind_hyp-inline constraint is about *receiving* a passed kont, not
+  emitting) — a 2-rec-arg body using *both* outer hyps does not trip the occurs-check (validated
+  MyTree `[leaf, node:[Rec,Rec]]`). So **no** Step-based harness was needed. The outer mint is sealed
+  (`apply_policed`, R1); inner mints run raw under the walker the seal opened. **Integration friction
+  (the real work):** cases must be **field-readable** (`list_const`-wrapped, keyed by tag — the same
+  convention `rec_value` uses), so `option_rec`/`result_rec`/`either_rec` neutral branches switched
+  from ad-hoc positional pairs to `mk_record [tags] [list_const case…]`. Reuses `build_payload`
+  (moved above `Coproduct`), `is_param_marker`/`is_recunder_marker`/`param_nth`. (`derive_case_telescope`
+  is the recognition-form / recursor-*type*, NOT the gate.) Tested every recursor (nat/ord/list/option/
+  result/either + generic MyNat/MyTree). *Docs: `POSITIVE_TYPES.md`
   §4 (case-telescope derivation), `coh_gate_proto.test.disp` (what self-types and what doesn't).*
 - **R3 — gate Ord/Unit/Coproduct/List.** **Ord ✅ LANDED 2026-06-27** (`coh_ord`, application-form,
   sealed; gap closed — incoherent `ord_rec`→`Ok FF`, raw incoherent elim→`InvalidType`; `ord_rec`'s
@@ -145,12 +150,15 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
   PARAMETERIZED former: cons's head is at the element type `A`, not `T`) is handled by threading `A`
   via partial application (`gated_inductive_respond (coh_list A)`), which **de-risks R2's param story**.
   **Unit:** no recursor exists → gap unreachable via a recursor → deferred (gate it only if a raw-elim
-  threat is shown). **Coproduct (generic):** the user supplies arbitrary variants → genuinely
-  constructor-generic → **needs R2** (`derive_gate`); the remaining `Coproduct_viewed …` (non-gated)
-  ones still carry the gap. Pattern (proven 3× now: nat/ord/list): switch the former from
-  `Coproduct_viewed …` (non-gated) to `Coproduct_viewed_resp … (gated_inductive_respond coh_X) …`.
-  Verify: (a) its recursor's *own type* still verifies (kernel loads), (b) the gap-closing test
-  (`bad_fn` now → `InvalidType`/`Ok FF`), (c) `metashape.test`/`adversarial.test` green.
+  threat is shown). **Coproduct/Coproduct_p (generic) ✅ LANDED 2026-06-27** via **R2 `derive_gate`** —
+  both convenience formers now carry `gated_inductive_respond (derive_gate variants params)`, so EVERY
+  inductive built from them (incl. Option/Result/Either + the kernel's `Coproduct_of` →
+  `CheckerResult`/`Action`) is gated with no per-type hand-written gate (`coproduct_gate.test.disp`;
+  full suite 44 files green). The remaining non-gated surface is only the bespoke `Coproduct_viewed …`
+  / `Coproduct_ctx` instances *that don't supply a gated respond* (none currently: Nat/Bool/Ord/List
+  are gated). Pattern (proven for nat/ord/list and now generic): switch the former to a
+  `gated_inductive_respond`. Verify: (a) recursors' *own types* still verify (kernel loads),
+  (b) the gap-closing test (`bad_fn` now → `InvalidType`/`Ok FF`), (c) `metashape`/`adversarial` green.
 
 ### Level 2 — verify responds behave (the respond metacircle)
 
@@ -220,9 +228,9 @@ instead of five traversals. Deferrable; its uncertainty is engineering, not rese
 
 1. **R1 + R2 + R3** — seal, derive the gates, close the gap. *Highest value:* turns a confirmed
    soundness bug into a sound, uniformly-derived elimination story. (Pre-step **R0** to set urgency.)
-   *Progress: R0 ✅ (gap = subject-reduction bug, not inconsistency), R1 ✅ (seal), R3-Ord ✅, R3-List ✅
-   (hand-written `coh_list`, threads the element-type param). Remaining: **R2** (`derive_gate`, for the
-   generic `Coproduct`) + **R3-rest** (generic `Coproduct`, gated on R2).*
+   *✅ COMPLETE 2026-06-27: R0 ✅ (gap = subject-reduction bug, not inconsistency), R1 ✅ (seal),
+   R3-Ord ✅, R3-List ✅ (`coh_list`), **R2 ✅** (`derive_gate`, generic), **R3-rest ✅** (Coproduct/
+   Coproduct_p gated). The type-coherence gap is CLOSED across every kernel + std inductive former.*
 2. **K0 + K1** — pin the floor, sweep the above-floor verifications. Cheap, clarifies the TCB.
    *✅ LANDED 2026-06-27: K0 floor-boundary block + K1 above-floor block in `soundness.test`; residual =
    `list_rec`/list builders un-annotated.*
@@ -237,15 +245,18 @@ instead of five traversals. Deferrable; its uncertainty is engineering, not rese
    but caps "full verified").
 2. 🟠 **Is `GoodRespond` a sound spec or a new trusted checker (R5)?** Derive-and-trust sidesteps it.
 3. 🟠 **Optic collapse vs the StrictType metacircle (O3).** Could break the metacircle we have.
-4. 🟡 **`derive_gate` preserving every recursor (R2).** The application-form *template* (`coh_nat`)
-   is known-good; risk is in generalizing it under the bind_hyp-inline constraint.
+4. ✅ **`derive_gate` preserving every recursor (R2) — RESOLVED.** Generalized; the bind_hyp-inline
+   constraint was a non-issue (`dg_go` emits inline conts). All recursors preserved (44 files green).
 5. ✅ **Severity of the gap (R0) — RESOLVED.** Subject-reduction violation, *not* inconsistency; no closed
    `False` proof (use-site re-checking defends). `gap_severity.test.disp`.
 
-**Bottom line:** a **sound** kernel (gap closed, gates derived) is reachable at 🟡 — concrete,
-mostly-known work. A **verified** kernel in the strong sense is gated on `GoodRespond`'s status (🟠)
-and walker self-typing (🔴). Realistic end-state: *"everything above a small, pinned, soundness-tested
-trusted base is verified, and both faces of every type are derived from its cells."*
+**Bottom line:** a **sound** kernel (gap closed, gates derived) is **ACHIEVED** (2026-06-27) — the
+type-coherence gap is closed across every kernel + std inductive former, with the gate *derived* from
+the variants (`derive_gate`) rather than hand-written. What remains is **verification** in the strong
+sense: gated on `GoodRespond`'s status (🟠, R4–R6) and walker self-typing (🔴, K3). Realistic
+end-state: *"everything above a small, pinned, soundness-tested trusted base is verified, and both
+faces of every type are derived from its cells."* — the soundness half now holds; the verified half is
+the open frontier.
 
 ## 8. Doc index
 
@@ -259,4 +270,5 @@ trusted base is verified, and both faces of every type are derived from its cell
 - `TYPE_NORMALIZATION.md` — canonical forms / `tree_lt` ordering.
 - Tests that pin the facts in §2: `soundness.test.disp`, `metashape.test.disp`,
   `adversarial.test.disp`, `coh_gate_proto.test.disp`, `coh_why_proto.test.disp`, `kernel.test.disp`,
-  `gap_severity.test.disp` (R0 — gap severity + the use-site-recheck defense).
+  `gap_severity.test.disp` (R0 — gap severity + the use-site-recheck defense),
+  `coproduct_gate.test.disp` (R2/R3 — the generic `derive_gate`, gap closed end-to-end).

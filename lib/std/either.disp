@@ -21,6 +21,6 @@ is_right : Tree -> Bool := {e} -> tree_eq (pair_fst e) right_tag
 // neutral hypothesis -> a {motive; cases} frame routed through the respond.
 either_rec := {motive, on_left, on_right, e} ->
   select_lazy
-    ({_} -> e { motive := motive; cases := pair on_left on_right })
+    ({_} -> e { motive := motive; cases := mk_record [left_tag, right_tag] [list_const on_left, list_const on_right] }) // tag-keyed, field-readable cases (derive_gate reads `field cases tag`)
     ({_} -> mk_record [left_tag, right_tag] [on_left, on_right] e)
     (is_neutral e)

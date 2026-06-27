@@ -26,7 +26,7 @@ is_err_result : Tree -> Bool := {r} -> tree_eq (pair_fst r) err_tag
 // concrete -> the §2.6 cut; neutral hypothesis -> frame route through the respond.
 result_rec := {motive, on_ok, on_err, r} ->
   select_lazy
-    ({_} -> r { motive := motive; cases := pair on_ok on_err })
+    ({_} -> r { motive := motive; cases := mk_record [ok_tag, err_tag] [list_const on_ok, list_const on_err] }) // tag-keyed, field-readable cases (derive_gate reads `field cases tag`)
     ({_} -> mk_record [ok_tag, err_tag] [on_ok, on_err] r)
     (is_neutral r)
 
