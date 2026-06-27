@@ -1,7 +1,8 @@
-// rust-ic-net Session backend — the MATERIALIZED interaction-net evaluator (M0:
-// sequential). Unlike rust-eager (a hash-consed tree reducer), the agents/ports are
-// real arena nodes and active pairs sit in a redex bag — the substrate M2 parallelizes.
-// See research/interaction-combinator/RUST_IC_NET_DESIGN.md.
+// rust-ic-net Session backend — the MATERIALIZED interaction-net evaluator. Unlike
+// rust-eager (a hash-consed tree reducer), the agents/ports are real arena nodes and
+// active pairs sit in a redex bag. This wasm build is the SEQUENTIAL oracle (one schedule
+// of the confluent net); the native crate build adds the parallel drain (M2c) + a napi
+// binding. See research/interaction-combinator/RUST_IC_NET_DESIGN.md.
 //
 // NOT a checker backend (no hash-consing ⇒ no O(1) conversion); registers only when
 // built, never the default. Validated DIFFERENTIALLY against rust-eager / disp-eager

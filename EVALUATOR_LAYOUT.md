@@ -45,7 +45,8 @@ src/eval/                  # the engine-facing layer — TypeScript only
     lambada.ts             #     FFI wrapper: spawns evaluators/lambada's binary,
                            #       registers ITS several evaluators (lambada-lazy,
                            #       lambada-memo, …) — same subprocess, configured per evaluator
-    tcnet.ts               #     FFI wrapper: a Session over evaluators/tc-net's wasm
+    rust-eager.ts          #     FFI wrapper: a Session over evaluators/rust-eager's wasm
+    ic-net.ts              #     FFI wrapper: a Session over evaluators/rust-ic-net's wasm
 
 evaluators/                # one self-contained folder per FOREIGN PROJECT
                            # (its own language + build; NOT in the TS build path)
@@ -54,9 +55,13 @@ evaluators/                # one self-contained folder per FOREIGN PROJECT
     artifacts/             #   gitignored build output the wrapper loads/spawns
     vendor/                #   only if the upstream is multi-file; lambada is a
                            #   single main.js, so its build.sh just pins+fetches
-  tc-net/                  # (future) first-party Rust -> WASM
+  rust-eager/              # first-party Rust -> WASM (hash-consed reducer; default backend)
+    crate/                 #   Cargo.toml, src/ (arena/reduce/codec/ffi modules)
+    build.sh               #   cargo build --target wasm32 -> artifacts/rust_eager.wasm
+    artifacts/             #   gitignored
+  rust-ic-net/             # first-party Rust -> WASM (materialized parallel net; optimizer substrate)
     crate/                 #   Cargo.toml, src/
-    build.sh               #   cargo build --target wasm32 -> artifacts/tcnet.wasm
+    build.sh               #   cargo build --target wasm32 -> artifacts/rust_ic_net.wasm
     artifacts/             #   gitignored
 ```
 
