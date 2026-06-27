@@ -73,6 +73,27 @@
   the design might fail.
 ]
 
+#v(0.6em)
+
+#block(
+  width: 100%,
+  inset: 12pt,
+  stroke: 0.5pt + luma(120),
+  radius: 4pt,
+  fill: luma(246),
+)[
+  *Staleness note (this predates the kernel cutover).* The code pointers below cite the
+  legacy kernel file `lib/kernel/handlers.disp` (with line numbers), and the argument cites
+  `CATEGORY_THEORY_FOUNDATIONS_PROPOSAL.typ`. Both are gone: the kernel migrated off the
+  7-primitive shape to the two-Σ-op kernel (`lib/kernel/{cut,engine,types}.disp`;
+  `handlers.disp`/`walker.disp` deleted), and the category-theory proposal was merged into
+  `TYPE_THEORY.typ` and deleted (commit `4992b94`; recover via `git log --all
+  --diff-filter=D`). Read this doc for its *architecture* — the forward/backward-DAG framing,
+  the `sup_λ` superposition agent on the materialized net (now `rust-ic-net`, see
+  `RUST_IC_NET_DESIGN.md` §9), and the synthesis loop — not its code line-numbers or doc
+  references. The reading-map for the wider optimizer program is `research/OPTIMIZER.md`.
+]
+
 // ═══════════════════════════════════════════════════════════════
 = Introduction
 // ═══════════════════════════════════════════════════════════════
