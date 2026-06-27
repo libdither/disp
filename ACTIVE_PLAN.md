@@ -60,10 +60,13 @@ The honest target metric is **the size of the TCB**, and "everything above it ve
   `is_fork p` is rejected). It is the clause that gives the eliminator **subject reduction**.
 - **Dropping the gate is unsound** — proven: yields a function accepted as `Nat->Nat` that returns
   `TT:Bool` (type confusion). Don't drop it.
-- **Ord/Unit/Coproduct/List are non-gated** (`inductive_respond`) → they have the *same* latent
-  type-coherence gap. PROVEN: `bad_fn = λo. ord_rec (const Nat) TT (…TT…) o` is accepted as
-  `Ord->Nat` yet `bad_fn zero_ord = TT`. **The gate is the correct universal design; non-gated
-  formers are the bug.** (Open: whether the gap is exploitable to a `False` proof — UNKNOWN, see R0.)
+- **Unit and the generic `Coproduct` are non-gated** (`inductive_respond`) → they carry the *same* latent
+  type-coherence gap (**Ord ✅ and List ✅ were closed by R3**). PROVEN: `bad_fn = λo. ord_rec (const Nat)
+  TT (…TT…) o` was accepted as `Ord->Nat` yet `bad_fn zero_ord = TT` (pre-gate); reproduced + closed for
+  List (`gap_severity.test.disp`). The live analogue is now the generic `Coproduct` (arbitrary variants →
+  needs R2). **The gate is the correct universal design; non-gated formers are the bug.** (Severity —
+  **R0 RESOLVED**: a subject-reduction violation, **not** inconsistency; no closed `False` proof,
+  defended by use-site re-checking. See R0.)
 - **Sealing `coh_nat`'s internal `bind_hyp`** (`apply_policed` instead of raw `param_apply`) is
   **runtime-identical** (`apply_policed M x ≡ param_walker M x`, which `param_apply` unwraps) and
   makes the gate self-type / be behaviorally checkable under the walker. PROVEN (kernel/adversarial/
@@ -90,9 +93,18 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
 
 ### Level 1 — close the gap (derive the gates)
 
-- **R0 — how exploitable is the gap?** 🟡. Probe whether the Ord/Coproduct type-confusion cascades to
-  a proof of `False` (e.g. `param_apply False <term built via the gap>`), or is "merely" a
-  type-safety violation. Sets urgency. *No code; an adversarial probe.*
+- **R0 — how exploitable is the gap?** ✅ **RESOLVED 2026-06-27** (`gap_severity.test.disp`). The gap is
+  a **subject-reduction / canonicity violation, NOT a logical inconsistency** — it does **not** cascade to
+  a closed proof of `False`. Probed via List (still non-gated) with an `elim`-routed recursor (the route
+  the closed `ord_rec` exploit used): `lying` is accepted as `NatList -> Nat` yet returns `TT:Bool`, and
+  the mistyped `bad_eq : (xs) -> Eq NatList nil xs` is accepted — **but** the forged proof, used at its
+  claimed type, is rejected (`param_apply (Eq nil (cons zero nil)) refl = Ok FF`), and the
+  transport-to-`False` cascade is `Ok FF`. **Why structural:** disp re-checks every value against its type
+  at the use site (`apply(T,v)=TT`), so gap-junk fails the target recognizer (Eq endpoints / False) and
+  gap-neutrals are open (fail closedness). **Urgency verdict:** R2/R3 are needed for subject-reduction
+  soundness (a real bug — `lying : NatList -> Nat` returns Bool), but the logic is intact, so this is not
+  an emergency; the cheaper K0/K1 may precede R2. *Caveat: empirical over the Eq-transport + direct-False
+  routes, not a proof — a cleverer exploit is not formally excluded.*
 - **R1 — seal the gate's internal `bind_hyp`.** ✅ **LANDED 2026-06-27** (sealed `coh_nat`;
   runtime-identical; full suite green; flips the now-resolved `metashape:78`/`coh_gate_proto:32`
   residual assertions, which were updated). Replaced, in `coh_nat`:
@@ -126,15 +138,19 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
 - **R3 — gate Ord/Unit/Coproduct/List.** **Ord ✅ LANDED 2026-06-27** (`coh_ord`, application-form,
   sealed; gap closed — incoherent `ord_rec`→`Ok FF`, raw incoherent elim→`InvalidType`; `ord_rec`'s
   own type still verifies; suite green). This *proves the pattern extends* to a recursive, 2-rec-arg
-  former without R2. **Unit:** no recursor exists → gap unreachable via a recursor → deferred (gate it
-  only if a raw-elim threat is shown). **Coproduct/List:** constructor-generic → **need R2**
-  (`derive_gate`). The remaining `Coproduct_viewed …` (non-gated) ones still carry the gap.
-  Originally: 🟡 (depends on R2 for the generic ones). Fixed-constructor formers are hand-writable
-  `coh_X` (like `coh_nat`), which prove the pattern and close those gaps without R2. **Coproduct** and **List** are constructor-generic
-  → need `derive_gate`. Switch each former from `Coproduct_viewed …` (non-gated) to
-  `Coproduct_viewed_resp … (gated_inductive_respond coh_X) …`. Verify: (a) its recursor's *own type*
-  still verifies (kernel loads), (b) the gap-closing test (`bad_fn` now → `InvalidType`/`Ok FF`),
-  (c) `metashape.test`/`adversarial.test` green.
+  former without R2. **List ✅ LANDED 2026-06-27** (`coh_list`, std/list.disp; the demonstrated gap —
+  `gap_severity.test.disp` — closed: lying recursor + dishonest proof-builder both → `Ok FF`; recursors
+  + recognition intact, full suite green). List **disproved its own "needs R2" classification**: it has
+  *fixed* constructors (`nil`/`cons`), so it's hand-writable like `coh_nat` — the new wrinkle (a
+  PARAMETERIZED former: cons's head is at the element type `A`, not `T`) is handled by threading `A`
+  via partial application (`gated_inductive_respond (coh_list A)`), which **de-risks R2's param story**.
+  **Unit:** no recursor exists → gap unreachable via a recursor → deferred (gate it only if a raw-elim
+  threat is shown). **Coproduct (generic):** the user supplies arbitrary variants → genuinely
+  constructor-generic → **needs R2** (`derive_gate`); the remaining `Coproduct_viewed …` (non-gated)
+  ones still carry the gap. Pattern (proven 3× now: nat/ord/list): switch the former from
+  `Coproduct_viewed …` (non-gated) to `Coproduct_viewed_resp … (gated_inductive_respond coh_X) …`.
+  Verify: (a) its recursor's *own type* still verifies (kernel loads), (b) the gap-closing test
+  (`bad_fn` now → `InvalidType`/`Ok FF`), (c) `metashape.test`/`adversarial.test` green.
 
 ### Level 2 — verify responds behave (the respond metacircle)
 
@@ -196,6 +212,9 @@ instead of five traversals. Deferrable; its uncertainty is engineering, not rese
 
 1. **R1 + R2 + R3** — seal, derive the gates, close the gap. *Highest value:* turns a confirmed
    soundness bug into a sound, uniformly-derived elimination story. (Pre-step **R0** to set urgency.)
+   *Progress: R0 ✅ (gap = subject-reduction bug, not inconsistency), R1 ✅ (seal), R3-Ord ✅, R3-List ✅
+   (hand-written `coh_list`, threads the element-type param). Remaining: **R2** (`derive_gate`, for the
+   generic `Coproduct`) + **R3-rest** (generic `Coproduct`, gated on R2).*
 2. **K0 + K1** — pin the floor, sweep the above-floor verifications. Cheap, clarifies the TCB.
 3. *Fork:* **Track 2 (O1–O3)** to unify the cell machinery *before* the harder verification, OR
    **R4–R6** for the in-language behavioral proof. Lean optics-first — a clean `(optic, role)`
@@ -210,7 +229,8 @@ instead of five traversals. Deferrable; its uncertainty is engineering, not rese
 3. 🟠 **Optic collapse vs the StrictType metacircle (O3).** Could break the metacircle we have.
 4. 🟡 **`derive_gate` preserving every recursor (R2).** The application-form *template* (`coh_nat`)
    is known-good; risk is in generalizing it under the bind_hyp-inline constraint.
-5. 🟡 **Severity of the Ord/Coproduct gap (R0).** Confirmed type-confusion; unconfirmed inconsistency.
+5. ✅ **Severity of the gap (R0) — RESOLVED.** Subject-reduction violation, *not* inconsistency; no closed
+   `False` proof (use-site re-checking defends). `gap_severity.test.disp`.
 
 **Bottom line:** a **sound** kernel (gap closed, gates derived) is reachable at 🟡 — concrete,
 mostly-known work. A **verified** kernel in the strong sense is gated on `GoodRespond`'s status (🟠)
@@ -228,4 +248,5 @@ trusted base is verified, and both faces of every type are derived from its cell
 - `KERNEL_SELF_TYPING.md` — the sealing program (K3, §1 ceiling).
 - `TYPE_NORMALIZATION.md` — canonical forms / `tree_lt` ordering.
 - Tests that pin the facts in §2: `soundness.test.disp`, `metashape.test.disp`,
-  `adversarial.test.disp`, `coh_gate_proto.test.disp`, `coh_why_proto.test.disp`, `kernel.test.disp`.
+  `adversarial.test.disp`, `coh_gate_proto.test.disp`, `coh_why_proto.test.disp`, `kernel.test.disp`,
+  `gap_severity.test.disp` (R0 — gap severity + the use-site-recheck defense).
