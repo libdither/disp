@@ -542,7 +542,15 @@ let view_ord = {v} -> triage
   v
 // encode_ord: inj-form -> shape (the inverse of view_ord). zero_ord -> leaf; omega_plus (a,b) -> fork(stem a, b).
 let encode_ord = {x} -> if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair_fst (pair_snd x))) (pair_snd (pair_snd x))) else t
-Ord : Type := Coproduct_viewed t (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
+// R3: gate Ord (was non-gated → the type-coherence gap, ACTIVE_PLAN.md §2). coh_ord checks each case
+// inhabits the motive at its constructor — case_z : motive zero_ord ; case_op : Π a b. P a → P b →
+// P (omega_plus a b) — by APPLICATION (mint args+IHs, apply the case, recognize the result), the robust
+// form. Internal bind_hyp SEALED (R1). T = neutral_type self = Ord at runtime; inner bind_hyps are walked.
+let coh_ord = {T, motive, cases} -> {
+  let op_coherent = (match (apply_policed (bind_hyp T) ({a} -> bind_hyp T ({b} -> bind_hyp (motive a) ({iha} -> bind_hyp (motive b) ({ihb} -> (motive (omega_plus a b)) ((((cases.case_op a) b) iha) ihb)))))) { Ok v => v; Err _ => Err })
+  bind ((motive zero_ord) cases.case_z) ({okz} -> if okz then op_coherent else (Ok FF))
+}
+Ord : Type := Coproduct_viewed_resp t (gated_inductive_respond coh_ord) (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
 
 // Bool: TT/FF are opaque combinators, so view_bool decodes by tree_eq COMPARISON (a real view, not iso_id). Non-recursive (self unused).
 // Gated coherence respond (cases.ct : motive TT, cases.cf : motive FF) via gated_inductive_respond.
@@ -558,8 +566,11 @@ Bool : Type := Coproduct_viewed_resp t (gated_inductive_respond coh_bool) (pair 
 // predecessor); Coproduct_viewed_resp ties the knot. Gated coherence respond (base : motive zero,
 // step : Π n. motive n -> motive (succ n)) — the §8/Track B residual.
 let coh_nat = {T, motive, cases} -> {
-  let step_coherent = (param_apply (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
-    (motive (succ n)) ((cases.step n) ih))))
+  // R1 seal: the internal bind_hyp invocation goes through apply_policed (the §7A sealed token),
+  // not raw param_apply — runtime-identical (apply_policed M x ≡ param_walker M x, which param_apply
+  // unwraps), but the sealed token keeps the gate behaviorally CHECKABLE under the walker. See ACTIVE_PLAN.md R1.
+  let step_coherent = (match (apply_policed (bind_hyp T) ({n} -> bind_hyp (motive n) ({ih} ->
+    (motive (succ n)) ((cases.step n) ih)))) { Ok v => v; Err _ => Err })
   bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF))
 }
 let view_nat = {v} -> triage

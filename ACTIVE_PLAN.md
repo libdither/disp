@@ -1,0 +1,231 @@
+# ACTIVE_PLAN.md — the path to a verified, cell-derived kernel
+
+**Status (2026-06-27):** active working plan, synthesized from the respond-verification
+investigation. Supersedes the scattered "next steps" notes in `STRICTTYPE.md`/`KERNEL_SELF_TYPING.md`
+for *sequencing* (those remain authoritative for their respective mechanisms). This file is the
+map; the per-topic docs are the territory.
+
+**Uncertainty legend:** ✅ done/proven · 🟢 low (mechanical, clear how) · 🟡 medium (clear approach,
+untested details, plausible obstacles) · 🟠 high (real obstacles, conjectured resolution) ·
+🔴 research (genuinely open; may be impossible in the strong form).
+
+---
+
+## 0. The destination — a type *is* its cells
+
+A type `T = wait recognizer meta`. The end-state is that **every operation on a type is a uniform
+walk over the same telescope of cells**, and the kernel verifies the cells:
+
+| operation | mechanism | status | doc |
+|---|---|---|---|
+| build / recognize | `at TT` over the cells | ✅ | `NEGATIVE_TYPES.md`, `KERNEL_DESIGN.md §Telescopes` |
+| eliminate — negative (Pi/Σ/Record) | `at FF` over the cells | ✅ (§7B) | `STRICTTYPE.md §7`, `NEGATIVE_TYPES.md` |
+| eliminate — positive (gate the cases) | derived from the **case-telescope** | 🟡 the work | `POSITIVE_TYPES.md`, `coh_gate_proto.test.disp` |
+| map / fold | `fmap_n` / `fold_value` over the cells | ✅ | `CELL_OPTICS.md` |
+| "is this respond sound?" | `GoodRespond` (behavioral) | 🟡 prototyped | this file §T1-L2 |
+| the cell representation itself | one `(optic, role)` | 🟠 refactor | `CELL_OPTICS.md §3-§5` |
+
+"Full verified kernel" = the kernel checks that every type's cells are well-formed and **both faces
+are derived from those cells**, on top of a *minimal, pinned trusted base*.
+
+---
+
+## 1. The trust ceiling — what stays trusted (read first)
+
+"Full verified" ≠ "zero trust." Two parts of the kernel are trusted by construction:
+
+- **The substrate floor — PERMANENT.** `pair_snd`, `triage`, `type_meta`, `checker_sig`, `is_fork`,
+  `support_set`, … — anything that *raw-inspects* a tree — cannot self-verify, because verifying
+  `f : Tree -> X` mints a `Tree`-hyp and `f` triages it, which the walker rejects by the *same*
+  parametricity that makes it sound (pinned by `lib/tests/soundness.test.disp`). Certainty it's a
+  ceiling: ✅. Goal = **minimize and pin** this set, not eliminate it. The 4 *sanctioned readers*
+  (`pair_fst`, `neutral_type`, `tree_eq`, `I`) are the carve-outs; everything else payload-reading
+  is irreducible TCB.
+- **The walker / Σ-op core — RESEARCH (🔴).** `param_walker` triages its argument and *is* the
+  policer — it cannot police itself without circularity. Same for `hyp_reduce`/`bind_hyp`/`make_hyp`
+  (`make_hyp` literally forges a neutral = the stem-forge the walker rejects). The conjectured escape
+  is a **sealing modality** (`KERNEL_SELF_TYPING.md`, `project_sealing_framework` memory). It may be
+  unachievable; then this core stays trusted permanently. That's *fine* — it caps "full verified" at
+  "everything above a small pinned TCB."
+
+The honest target metric is **the size of the TCB**, and "everything above it verifies."
+
+---
+
+## 2. Established facts (proven this investigation — don't re-derive)
+
+- The gate (`coh_nat`/`coh_bool` via `gated_inductive_respond`) enforces **type-coherence of
+  recursor cases**: a `step` returning `TT:Bool` under a `Nat` motive is rejected (`kernel.test`
+  #31-39). It also polices **parametricity** of cases (`adversarial.test:20`: a `step` doing
+  `is_fork p` is rejected). It is the clause that gives the eliminator **subject reduction**.
+- **Dropping the gate is unsound** — proven: yields a function accepted as `Nat->Nat` that returns
+  `TT:Bool` (type confusion). Don't drop it.
+- **Ord/Unit/Coproduct/List are non-gated** (`inductive_respond`) → they have the *same* latent
+  type-coherence gap. PROVEN: `bad_fn = λo. ord_rec (const Nat) TT (…TT…) o` is accepted as
+  `Ord->Nat` yet `bad_fn zero_ord = TT`. **The gate is the correct universal design; non-gated
+  formers are the bug.** (Open: whether the gap is exploitable to a `False` proof — UNKNOWN, see R0.)
+- **Sealing `coh_nat`'s internal `bind_hyp`** (`apply_policed` instead of raw `param_apply`) is
+  **runtime-identical** (`apply_policed M x ≡ param_walker M x`, which `param_apply` unwraps) and
+  makes the gate self-type / be behaviorally checkable under the walker. PROVEN (kernel/adversarial/
+  soundness green with the seal). The "structured/dependent frame" was a **red herring** — the seal
+  alone matters.
+- **`RespondShape` inhabitance = totality = VACUOUS** for correctness: `vac_coh`(always accept),
+  `rej_coh`(always reject), and the real gate all inhabit it. So inhabiting `RespondShape` is *not*
+  the property worth proving.
+- **`GoodRespond`** — a type whose check is `is_good R = (R accepts coherent cases → motive self)
+  ∧ (R rejects unknown/`Tree`-cases → InvalidType)`, both via **`tree_eq` (conversion), not the `Eq`
+  type** — *does* distinguish good from bad (gate=good, `inductive_respond`/vac/rej=bad), and
+  condemns Ord/Unit/Coproduct (they share `inductive_respond`). PROTOTYPED. It needs the responds
+  **sealed** to run under the walker (the bad ones already are; the gate needs R1).
+- The **recognition-form** gate (`param_apply (case-telescope) cases`) **breaks `nat_rec`** —
+  recognizing a `step`-HYP against the `Π` type uses the H-rule (tree-identity), which rejects the
+  recursor's legitimately-typed hyp. The **application-form** gate (`coh_nat`: apply the case to
+  fresh args, recognize the *result*) is robust. **`derive_gate` MUST be application-form.**
+
+---
+
+## 3. Track 1 — Verified responds
+
+Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is the critical path.
+
+### Level 1 — close the gap (derive the gates)
+
+- **R0 — how exploitable is the gap?** 🟡. Probe whether the Ord/Coproduct type-confusion cascades to
+  a proof of `False` (e.g. `param_apply False <term built via the gap>`), or is "merely" a
+  type-safety violation. Sets urgency. *No code; an adversarial probe.*
+- **R1 — seal the gate's internal `bind_hyp`.** ✅ **LANDED 2026-06-27** (sealed `coh_nat`;
+  runtime-identical; full suite green; flips the now-resolved `metashape:78`/`coh_gate_proto:32`
+  residual assertions, which were updated). Replaced, in `coh_nat`:
+  ```
+  let step_coherent = (param_apply (bind_hyp T) ({n} -> …))
+  ```
+  with
+  ```
+  let step_coherent = (match (apply_policed (bind_hyp T) ({n} -> …)) { Ok v => v; Err _ => Err })
+  ```
+  Runtime-identical. `inductive_respond`/`coh_bool` have **no raw `param_apply`** so they need no
+  seal (audit: only `coh_nat` and any new `coh_*` do). Required so the gate is checkable (Level 2)
+  and self-types. *File: `lib/kernel/types.disp`.*
+- **R2 — `derive_gate`: generate the application-form gate from a type's constructors.** 🟡 (the hard
+  piece). For a type `T` with variants `[(tag, argspec)…]` and a motive, build:
+  ```
+  derive_gate T motive cases = ∧ over constructors c:  check_case c
+  check_case c = mint args (bind_hyp argty; rec arg → T, else its type),
+                 mint IH per rec arg (bind_hyp (motive arg)),
+                 recognize (cases.tag  args… ihs…)  :  motive (inj tag (build_payload args))
+  ```
+  This is `coh_nat` generalized over (multiple constructors, multiple rec args + IHs, dependent
+  motives, the `base/step`↔`zero/succ` naming). **The blocker:** minting a *variable* number of args
+  via `bind_hyp` in a recursive walk hits the **bind_hyp-must-be-inline** constraint (CLAUDE.md
+  §Compiler workarounds) — a continuation passed *through* a function to `bind_hyp` miscompiles. The
+  fix mirrors the telescope `at` walker: a **Step-based** harness with `bind_hyp` inline, the per-cell
+  algebra returning data (see `at` in `types.disp` and `KERNEL_DESIGN.md §Telescopes`). Reuse
+  `derive_case_telescope` for the case-*types*, `pos_tele` for the argspec, `build_payload` for
+  reconstruction. **Test every recursor per former** (the thing burned twice). *Docs: `POSITIVE_TYPES.md`
+  §4 (case-telescope derivation), `coh_gate_proto.test.disp` (what self-types and what doesn't).*
+- **R3 — gate Ord/Unit/Coproduct/List.** **Ord ✅ LANDED 2026-06-27** (`coh_ord`, application-form,
+  sealed; gap closed — incoherent `ord_rec`→`Ok FF`, raw incoherent elim→`InvalidType`; `ord_rec`'s
+  own type still verifies; suite green). This *proves the pattern extends* to a recursive, 2-rec-arg
+  former without R2. **Unit:** no recursor exists → gap unreachable via a recursor → deferred (gate it
+  only if a raw-elim threat is shown). **Coproduct/List:** constructor-generic → **need R2**
+  (`derive_gate`). The remaining `Coproduct_viewed …` (non-gated) ones still carry the gap.
+  Originally: 🟡 (depends on R2 for the generic ones). Fixed-constructor formers are hand-writable
+  `coh_X` (like `coh_nat`), which prove the pattern and close those gaps without R2. **Coproduct** and **List** are constructor-generic
+  → need `derive_gate`. Switch each former from `Coproduct_viewed …` (non-gated) to
+  `Coproduct_viewed_resp … (gated_inductive_respond coh_X) …`. Verify: (a) its recursor's *own type*
+  still verifies (kernel loads), (b) the gap-closing test (`bad_fn` now → `InvalidType`/`Ok FF`),
+  (c) `metashape.test`/`adversarial.test` green.
+
+### Level 2 — verify responds behave (the respond metacircle)
+
+- **R4 — universal + generic `GoodRespond`.** 🟠. Lift the two-point prototype: mint the coherent
+  cases as a hyp **of the case-telescope** (∀ coherent) and the unknown as a `Tree`-hyp (∀
+  unverifiable); derive the test frames per-type from `derive_case_telescope`. *Prototype lives in
+  the git history of this session's scratch; see §2.*
+- **R5 — `GoodRespond` is itself sound.** 🟠. Prove `accept-coherent ∧ reject-unknown ⟹ subject
+  reduction` for *all* cases (not sampled). `GoodRespond` applies responds + uses `tree_eq`, so it may
+  itself enter the TCB — **risk: "verified" becomes "trusted-checker-says-so."** The
+  **derive-and-trust** alternative (Level 1) sidesteps this: derived responds are correct *by
+  construction*, so `GoodRespond` becomes the *spec* + a userland checker, not a kernel step.
+- **R6 — wire respond-checking into `Type`.** 🟠. Needs *per-former-kind* behavioral specs (the
+  universe's own respond is `type_predicate_h_rule`, an H-rule, not a gate — `GoodRespond` doesn't
+  apply to it), and `StrictType : StrictType` must survive. *Doc: `STRICTTYPE.md §7`, `metashape.test`.*
+
+**Strategy verdict:** prefer **Level 1 (derive)** for the kernel's own formers — correct by
+construction, sidesteps R5's trust question. Keep `GoodRespond` (Level 2) as the *spec* and the
+userland/validation checker.
+
+---
+
+## 4. Track 2 — Full optics (parallel enabler, NOT on the soundness path)
+
+Unifies the cell machinery so recognize/respond/gate/map are one walk. *Doc: `CELL_OPTICS.md`.*
+
+- **O0** `over`-half + `fmap`/`fold` + `Param`/`Coproduct_p`/`Record_p`. ✅ landed.
+- **O1** add `{get, over}` optic under existing cells (pure addition). 🟢.
+- **O2** re-seat extractive cells (`proj`/`pos`/`rec`/`qid`/…) on optics, byte-for-byte. 🟡 (touches
+  every cell).
+- **O3** collapse the 9 per-kind ops → one `cell_op` over `(optic, role)`. 🟠 — re-seats the `qid`
+  cells carrying the **StrictType metacircle** (`metashape.test` must stay green) and adds an
+  indirection on the **hot `at` path** (already ~2× the old walkers). The one refactor that could
+  *break* the recognize-face metacircle we already have.
+- **O4** migrate types onto `Param`; delete `build_payload`/`mk_record` duplication. 🟡.
+
+**Role:** the substrate that makes "derive everything from cells" (R2, K-track) *one* machinery
+instead of five traversals. Deferrable; its uncertainty is engineering, not research.
+
+---
+
+## 5. Track 3 — Full verified kernel (the umbrella)
+
+- **K0 — declare + pin the substrate floor** as trusted axioms, pinned to `soundness.test`. 🟢.
+  *Defines* the TCB rather than shrinking it; makes "everything else verifies" a checkable claim.
+- **K1 — verify everything above the floor** (builders, formers, recursors, structural types). 🟢-🟡.
+  Much validated (the Tier-1 sweep: `inductive_respond : InductiveRespondShape`,
+  `type_predicate_h_rule : RespondShape`, `is_neutral : Tree -> Bool`,
+  `extend_neutral_meta : NeutralMeta -> Type -> Frame -> NeutralMeta`, `InvalidType : Type`). The
+  arena/memo blocker is fixed (watermark memo, committed), so auto-verify load no longer OOMs.
+  *Memory: `project_kernel_self_typing_metashape`, `project_rust_eager_shared_session_memo`.*
+- **K2 — responds** = Track 1. 🟡/🟠.
+- **K3 — self-type the walker / Σ-ops via the sealing modality.** 🔴 research (see §1).
+- **K4 — metacircular closure** (`Type` certifies all of the above incl. itself). 🟠 (gated on K2+K3).
+
+---
+
+## 6. Critical path (recommended order)
+
+1. **R1 + R2 + R3** — seal, derive the gates, close the gap. *Highest value:* turns a confirmed
+   soundness bug into a sound, uniformly-derived elimination story. (Pre-step **R0** to set urgency.)
+2. **K0 + K1** — pin the floor, sweep the above-floor verifications. Cheap, clarifies the TCB.
+3. *Fork:* **Track 2 (O1–O3)** to unify the cell machinery *before* the harder verification, OR
+   **R4–R6** for the in-language behavioral proof. Lean optics-first — a clean `(optic, role)`
+   substrate makes R4–R6 and K4 far less hairy.
+4. **K3 (sealing)** last — research; everything else delivers value without it.
+
+## 7. Biggest unknowns (ranked)
+
+1. 🔴 **Walker self-typing (sealing, K3).** May be unachievable → walker core stays trusted (fine,
+   but caps "full verified").
+2. 🟠 **Is `GoodRespond` a sound spec or a new trusted checker (R5)?** Derive-and-trust sidesteps it.
+3. 🟠 **Optic collapse vs the StrictType metacircle (O3).** Could break the metacircle we have.
+4. 🟡 **`derive_gate` preserving every recursor (R2).** The application-form *template* (`coh_nat`)
+   is known-good; risk is in generalizing it under the bind_hyp-inline constraint.
+5. 🟡 **Severity of the Ord/Coproduct gap (R0).** Confirmed type-confusion; unconfirmed inconsistency.
+
+**Bottom line:** a **sound** kernel (gap closed, gates derived) is reachable at 🟡 — concrete,
+mostly-known work. A **verified** kernel in the strong sense is gated on `GoodRespond`'s status (🟠)
+and walker self-typing (🔴). Realistic end-state: *"everything above a small, pinned, soundness-tested
+trusted base is verified, and both faces of every type are derived from its cells."*
+
+## 8. Doc index
+
+- `GOALS.md` — north star. `TYPE_THEORY.typ` — authoritative spec (target).
+- `KERNEL_DESIGN.md` — implementation idioms (`§Telescopes`, `§Signatures`, the bind_hyp-inline rule).
+- `NEGATIVE_TYPES.md` — telescope/`at` design. `TELESCOPE_FIXPOINT.md` — recursion-as-cells.
+- `POSITIVE_TYPES.md` — inductives as coproduct-of-telescopes; case-telescope derivation (R2).
+- `CELL_OPTICS.md` — the optic factoring (Track 2).
+- `STRICTTYPE.md` — §7 respond self-typing (§7A `apply_policed`, §7B structured frames).
+- `KERNEL_SELF_TYPING.md` — the sealing program (K3, §1 ceiling).
+- `TYPE_NORMALIZATION.md` — canonical forms / `tree_lt` ordering.
+- Tests that pin the facts in §2: `soundness.test.disp`, `metashape.test.disp`,
+  `adversarial.test.disp`, `coh_gate_proto.test.disp`, `coh_why_proto.test.disp`, `kernel.test.disp`.

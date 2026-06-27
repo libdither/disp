@@ -27,10 +27,12 @@ let dmotive = {n} -> Eq Nat n n                   // DEPENDENT motive P n = (n =
 test coh_tele Nat dmotive { base := refl; step := {n} -> {ih} -> refl } = Ok TT     // dependent, coherent
 test coh_tele Nat dmotive { base := TT;   step := {n} -> {ih} -> refl } = Ok FF     // base : not a proof
 
-// ════════ (B) THE BET — self-typing — FAILS ════════
-// baseline: hand-rolled coh_nat does NOT inhabit ProjectingRespondShape (the residual):
-test tree_eq (param_apply ProjectingRespondShape ((type_meta Nat).respond (type_meta Nat).recognizer_params)) (Ok TT) = FF
-// the bet: the telescope-gated respond ALSO does NOT (Ok FF, not Ok TT) — bet lost:
+// ════════ (B) THE BET — RESOLVED by the SEAL (R1), not by a structured frame (ACTIVE_PLAN.md §2) ════════
+// baseline UPDATED: hand-rolled coh_nat, with its internal bind_hyp SEALED (R1, apply_policed,
+// runtime-identical), now INHABITS ProjectingRespondShape (totality). The seal is what flips it:
+test param_apply ProjectingRespondShape ((type_meta Nat).respond (type_meta Nat).recognizer_params) = Ok TT
+// the telescope/RECOGNITION-form gated respond (coh_tele, UNsealed) still does NOT — confirming it's the
+// seal that matters, and that inhabiting RespondShape is TOTALITY not correctness (the §WHY below stands):
 test tree_eq (param_apply ProjectingRespondShape (resp_tele unit_witness)) (Ok TT) = FF
 
 // ════════ (WHY) the wall is "concrete recognizer applied to the cases-hyp" ════════
