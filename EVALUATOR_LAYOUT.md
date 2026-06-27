@@ -5,9 +5,13 @@ externally-vendored evaluators stay conceptually isolated and the engine never
 has to care about anyone's build system. This refines `EVALUATOR_PLAN.md` §5
 (which now points here); the ABI itself is unchanged (`src/eval/types.ts`).
 
-Status: PLAN — agreed shape, not yet migrated. The current tree is the flat
-`src/eval/{types,eager,naive,registry,batch}.ts` + `src/core/tree.ts` from the
-landed phases; this doc is the target it moves to.
+Status: PARTIALLY LANDED. The flat `src/eval/` layout has shipped and grown well past the
+original phases — `{types,eager,naive,registry,batch}.ts` + `src/core/tree.ts` plus the
+three backend wrappers `{rust-eager,ic-net,lambada}.ts` and their foreign projects
+`evaluators/{rust-eager,rust-ic-net,lambada}/`. What remains UNBUILT is only the optional
+`src/eval/impl/` reshuffle below (a pure file-move grouping each evaluator's internals;
+deferred — "done when convenient," no functional value). So read the `evaluators/` half of
+the tree below as **current reality** and the `src/eval/impl/` half as a **deferred target**.
 
 ## Principles
 
@@ -78,7 +82,7 @@ foreign dir to `runtimes/` or `native/` if that bugs you — purely cosmetic.)
 **A foreign project folder** (`evaluators/<project>/`) contains exactly:
 - `build.sh` — produces everything into `artifacts/` (gitignored) and nothing
   else. Pins its upstream (a commit SHA + a content hash it verifies). For
-  lambada that's a fetch of one `main.js`; for tc-net it's `cargo build`.
+  lambada that's a fetch of one `main.js`; for rust-eager / rust-ic-net it's `cargo build`.
 - `artifacts/` — gitignored; a clean clone rebuilds it from the pin.
 - optionally `vendor/` — a pinned checkout, only for multi-file upstreams.
 
@@ -116,6 +120,11 @@ That's it — no shared base to subclass, no manifest to update.
 
 ## Migration (from the current landed tree)
 
+> **Mostly done.** The backend *additions* (steps 3–4 — lambada, rust-eager, rust-ic-net)
+> all landed in the **flat** `src/eval/` layout (2026-06). Only the `src/eval/impl/`
+> *reshuffle* (steps 1–2 — grouping each evaluator's internals under `impl/`) is still
+> deferred; it's a pure file-move with no functional value, so it happens when convenient.
+
 Small — most files only move, no behavior change, suite stays green:
 
 1. `src/core/tree.ts` → `src/eval/impl/eager/tree.ts`;
@@ -133,4 +142,5 @@ Small — most files only move, no behavior change, suite stays green:
    confirmed against the lambada repo; can land *before* steps 1–2, since a batch
    peer only adds `evaluators/lambada/` + a flat `src/eval/lambada.ts`, no
    reshuffle).
-4. tc-net later slots into the identical shape.
+4. rust-eager / rust-ic-net slot into the identical shape (already landed flat; only the
+   `impl/` move is what's deferred).
