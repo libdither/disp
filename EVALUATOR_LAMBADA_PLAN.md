@@ -5,8 +5,8 @@
 The concrete next step after the Session ABI (phases 1–4). Wires the first
 **external** evaluator — a lambada (`lambada-llc/tree-calculus`) reducer — as a
 batch-tier peer, and proves disp's ternary interchange against it by differential
-conformance. This implements `EVALUATOR_PLAN.md` §4.5 and expands
-`EVALUATOR_LAYOUT.md`'s migration step 3 with the reconciliation homework done.
+conformance. This implements `EVALUATOR_PLAN.md` §4.5 and wires the first
+batch-tier peer (the layout: `EVALUATOR.md` § Layout) with the reconciliation homework done.
 
 Status: **LANDED 2026-06-22.** All pieces built and green; full suite 243 (was
 164, +79 lambada conformance). **All 11 lambada evaluators wired** (not just
@@ -80,7 +80,7 @@ would actually surface — the highest-information, lowest-cost validation
 available right now.
 
 It is also strictly additive and **does not require the on-disk layout
-migration** (`EVALUATOR_LAYOUT.md` steps 1–2, the `src/eval/impl/` reshuffle):
+migration** (the deferred `src/eval/impl/` reshuffle — `EVALUATOR.md` § Layout):
 a batch peer is out-of-process (`EVALUATOR_PLAN.md` §4.4/§4.5 — a `BatchRunner`,
 never a `Session`), so it needs only a subprocess adapter + a peer entry + a
 test. The one layout piece it does touch — a new `evaluators/lambada/`
@@ -144,7 +144,7 @@ elaborator or the kernel.
 
 ## 4. Pieces to build
 
-1. **`evaluators/lambada/`** — the foreign-project folder (`EVALUATOR_LAYOUT.md`
+1. **`evaluators/lambada/`** — the foreign-project folder (`EVALUATOR.md` § Layout
    conventions), created fresh:
    - `build.sh` — pins lambada (commit SHA + a content hash it verifies),
      fetches `implementation/typescript/`, runs its build (node + `tsc`/bundle)
@@ -163,7 +163,7 @@ elaborator or the kernel.
      fine for bench + tests).
    - Registers the project's several reducers (`lambada-memo`, `lambada-lazy`) as
      distinct `BatchRunner`s configured off the same vendored entry — "a project
-     ships several evaluators" (`EVALUATOR_LAYOUT.md`).
+     ships several evaluators" (`EVALUATOR.md` § Layout).
    - Budget is honored as a wall-clock **timeout** only (the peer has its own
      internal limits); the `Budget` step/interaction unit does not cross.
 

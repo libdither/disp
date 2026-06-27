@@ -66,13 +66,33 @@ confluence). It is the evaluator's authoritative spec, the way `TYPE_THEORY.typ`
 system's. The hash-consed backends are "just" the standard graph-reduction realization of it;
 rust-ic-net is the literal materialization.
 
+## Layout & adding a backend
+
+- **A *project* is the build/vendoring unit; an *evaluator* is the registration unit.** One
+  foreign project can ship several evaluators (lambada's `lambada-lazy`, `lambada-memo`, …).
+- **On disk:** `src/eval/` is the TS engine layer — `types.ts` (the ABI), `registry.ts`, and
+  one thin wrapper per backend (`eager.ts` / `naive.ts` / `rust-eager.ts` / `ic-net.ts` /
+  `lambada.ts`). `evaluators/` holds one self-contained folder per *foreign project*
+  (`lambada/`, `rust-eager/`, `rust-ic-net/`) — each just a `build.sh` + gitignored
+  `artifacts/` (+ a `vendor/` only for multi-file upstreams), **excluded from the TS build**.
+  *(Deferred: an optional `src/eval/impl/` reshuffle grouping each evaluator's internals — a
+  pure file-move, no functional value.)*
+- **Graceful degradation:** the registry registers `eager`+`naive` unconditionally and each
+  foreign backend only if its build artifact exists (skip-if-unbuilt), so `npm test` and the
+  default loop never need cargo/curl.
+- **Adding a backend:** (1) if foreign, `evaluators/<project>/build.sh` pins its upstream →
+  `artifacts/`; (2) `src/eval/<name>.ts` exports an `EvalBackend` (implement `Session`, or
+  wrap the artifact); (3) one line in `registry.ts`. No shared base to subclass.
+- **Shared vs not:** shared is *only* `types.ts` (the ABI) + `registry.ts`; each backend owns
+  its own reducer, ternary codec, and FFI mechanism — that's correct, not duplication to fix.
+
 ## Where to read what
 
 | You want… | Read |
 |---|---|
 | this overview + the backend map | **this doc** |
 | the ABI in detail / FFI classes / phase history / decisions | `EVALUATOR_PLAN.md` (§3 ABI, §4 FFI classes, §6 phases, §7 decisions) |
-| the on-disk layout (`src/eval/` + `evaluators/`) | [`EVALUATOR_LAYOUT.md`](EVALUATOR_LAYOUT.md) |
+| the on-disk layout / how to add a backend | this doc, **§ Layout & adding a backend** (above) |
 | the batch-tier (lambada) integration | [`EVALUATOR_LAMBADA_PLAN.md`](EVALUATOR_LAMBADA_PLAN.md) |
 | the calculus spec | `research/interaction-combinator/tc-net.typ` |
 | the materialized net (strategy 2) design | `research/interaction-combinator/RUST_IC_NET_DESIGN.md` |

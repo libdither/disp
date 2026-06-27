@@ -24,7 +24,7 @@ the compiled `tree_eq` handle to the session once, after the prelude compiles �
 `compile.ts:1014`). The suite is green without the hash-registry machinery, which
 re-grades recognition from "load-bearing, phase 2" to a foreign/batch-tier
 *optimization* (see the §3.1 re-grade). Remaining: the on-disk layout migration
-([`EVALUATOR_LAYOUT.md`](EVALUATOR_LAYOUT.md)), §3.1 recognition itself, phase 5
+(the layout, now [`EVALUATOR.md`](EVALUATOR.md) § Layout), §3.1 recognition itself, phase 5
 bench, phase 6 TC-Net.
 
 > **TC-Net update (post-2026-06-22).** The single "Rust/WASM TC-Net runtime" above has since
@@ -609,9 +609,9 @@ Cross-cutting calls:
 ## 5. Repo re-org
 
 > The **on-disk layout** (project-per-folder isolation, `src/eval/impl/`,
-> foreign builds under `evaluators/`) is now detailed in
-> [`EVALUATOR_LAYOUT.md`](EVALUATOR_LAYOUT.md). The tree below is the original
-> flat sketch, superseded by that doc.
+> foreign builds under `evaluators/`) is now in
+> [`EVALUATOR.md`](EVALUATOR.md) § Layout & adding a backend. The tree below is the original
+> flat sketch, superseded by that section.
 
 ```
 src/

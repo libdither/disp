@@ -17,7 +17,7 @@ const backends = new Map<string, EvalBackend>([
 ])
 
 // Foreign in-process backends register only if their build artifact exists, so
-// the everyday loop needs no foreign toolchain (EVALUATOR_LAYOUT.md). rust-eager is
+// the everyday loop needs no foreign toolchain (EVALUATOR.md § Layout). rust-eager is
 // a Rust→WASM Session backend; absent until evaluators/rust-eager/build.sh runs.
 if (rustEagerAvailable()) backends.set(rustEagerBackend.name, rustEagerBackend as unknown as EvalBackend)
 
