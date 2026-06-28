@@ -20,7 +20,7 @@ walk over the same telescope of cells**, and the kernel verifies the cells:
 |---|---|---|---|
 | build / recognize | `at TT` over the cells | ✅ | `NEGATIVE_TYPES.md`, `KERNEL_DESIGN.md §Telescopes` |
 | eliminate — negative (Pi/Σ/Record) | `at FF` over the cells | ✅ (§7B) | `STRICTTYPE.md §7`, `NEGATIVE_TYPES.md` |
-| eliminate — positive (gate the cases) | `derive_gate` (application-form) over the variants | ✅ | `POSITIVE_TYPES.md`, `coproduct_gate.test.disp` |
+| eliminate — positive (gate the cases) | `coh_check` = `check cases (case-telescope)` — η-readback, ONE gate for ALL inductives | ✅ | `coproduct_gate.test.disp` |
 | map / fold | `fmap_n` / `fold_value` over the cells | ✅ | `CELL_OPTICS.md` |
 | "is this respond sound?" | `GoodRespond` (behavioral) | 🟡 prototyped | this file §T1-L2 |
 | the cell representation itself | one `(optic, role)` | 🟠 refactor | `CELL_OPTICS.md §3-§5` |
@@ -88,6 +88,22 @@ The honest target metric is **the size of the TCB**, and "everything above it ve
 ---
 
 ## 3. Track 1 — Verified responds
+
+> **✅ UPDATE 2026-06-28 — the gate is now ONE generic, self-typing, η-readback `coh_check`.**
+> `derive_gate` and the four hand-written `coh_nat`/`coh_bool`/`coh_ord`/`coh_list` are **deleted**;
+> every inductive (Nat/Bool/Ord/List + Coproduct/Coproduct_p → Option/Result/Either/CheckerResult/
+> Action) now routes through `coh_check params = {T, motive, cases} -> check_fields (dct_go params …) cases`.
+> `check v T` is **η-readback** (bidirectional Π-introduction): a Π-headed type → mint the domain, check
+> `(v h)` against the codomain; a neutral/base type → recognize raw `T v`. The combination of sig-dispatch
+> (lead-cell-mints, via `pair_fst`) + **raw base** `T v` (never `param_apply` on a hyp) is what lets it
+> **self-type** AND verify a recursor's **own type** (hyp cases) — the two things the recognition-form
+> couldn't do. Shape-encoded types reconstruct the constructor value through the `encode` iso
+> (`pair_snd (type_meta T).functor`; identity for inj-tagged). The case-telescope (`dct_go`) is the spec
+> the gate checks against — recognize/respond/gate are now nearly one walk (Track 2's goal, partially
+> realized). **Caveat:** `ProjectingRespondShape` self-typing remains *totality* (vacuous at `self:Tree`),
+> the same as before — the *behavioral* GoodRespond (R4–R6) is unchanged and still open; `check` is its
+> substrate. Commits: Stage A (inj-tagged) + Stage B (shape-encoded), full suite green (44 files).
+> *The R0–R3 history below is the path that got here; the destination is `coh_check`.*
 
 Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is the critical path.
 
@@ -244,16 +260,21 @@ instead of five traversals. Deferrable; its uncertainty is engineering, not rese
 1. 🔴 **Walker self-typing (sealing, K3).** May be unachievable → walker core stays trusted (fine,
    but caps "full verified").
 2. 🟠 **Is `GoodRespond` a sound spec or a new trusted checker (R5)?** Derive-and-trust sidesteps it.
-3. 🟠 **Optic collapse vs the StrictType metacircle (O3).** Could break the metacircle we have.
-4. ✅ **`derive_gate` preserving every recursor (R2) — RESOLVED.** Generalized; the bind_hyp-inline
-   constraint was a non-issue (`dg_go` emits inline conts). All recursors preserved (44 files green).
+3. 🟢 **Optic collapse vs the StrictType metacircle (O3) — partly realized.** The η-readback `check`
+   landed as ONE gate over the case-telescope without breaking the metacircle (metashape 35/35); it is
+   the substrate for collapsing recognize/respond/gate into one walk. Remaining: re-seat the negative
+   cells on the same `check`/role axis.
+4. ✅ **One gate preserving every recursor (R2) — RESOLVED, then UNIFIED.** `derive_gate` generalized the
+   hand gates; `coh_check` (η-readback) then *replaced* all of them with one self-typing gate that also
+   verifies recursor own-types (hyp cases). All recursors preserved (44 files green).
 5. ✅ **Severity of the gap (R0) — RESOLVED.** Subject-reduction violation, *not* inconsistency; no closed
    `False` proof (use-site re-checking defends). `gap_severity.test.disp`.
 
-**Bottom line:** a **sound** kernel (gap closed, gates derived) is **ACHIEVED** (2026-06-27) — the
-type-coherence gap is closed across every kernel + std inductive former, with the gate *derived* from
-the variants (`derive_gate`) rather than hand-written. What remains is **verification** in the strong
-sense: gated on `GoodRespond`'s status (🟠, R4–R6) and walker self-typing (🔴, K3). Realistic
+**Bottom line:** a **sound** kernel (gap closed, gates derived) is **ACHIEVED** — the type-coherence gap
+is closed across every kernel + std inductive former by **ONE** self-typing, η-readback gate (`coh_check`,
+2026-06-28), no hand-written per-type gates. What remains is **verification** in the strong sense: gated
+on `GoodRespond`'s status (🟠, R4–R6 — *behavioral*, non-vacuous self-typing) and walker self-typing
+(🔴, K3). Realistic
 end-state: *"everything above a small, pinned, soundness-tested trusted base is verified, and both
 faces of every type are derived from its cells."* — the soundness half now holds; the verified half is
 the open frontier.
