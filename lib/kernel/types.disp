@@ -405,47 +405,55 @@ Coproduct_resp_p := {params, respond, variants} -> wait (make_rec_recognizer
 ) (make_meta_f variants iso_id respond)
 Coproduct_resp := {respond, variants}  -> Coproduct_resp_p t respond variants
 
-// ── R2: derive_gate — the GENERIC application-form coherence gate (POSITIVE_TYPES §3c). coh_nat/
-// coh_ord/coh_list generalized over arbitrary constructors. For each variant (tag, argspec): MINT
-// each arg (bind_hyp at T for `Rec`, `params i` for `Param i`, the type otherwise) + one IH (bind_hyp
-// (motive arg)) per Rec arg, APPLY the case to (args… ihs…), and RECOGNIZE the result against
-// `motive (inj tag (build_payload args))`. AND over all variants. APPLICATION-form (NOT the
-// recognition-form `param_apply (case-telescope) cases` = derive_case_telescope, which breaks
-// recursors + fails self-typing — coh_gate_proto.test). The OUTER bind_hyp is SEALED (apply_policed,
-// R1); inner mints run raw under the walker the seal opened. The recursive `dg_go` EMITS inline
-// bind_hyp continuations — the bind_hyp-inline constraint is about RECEIVING a passed kont, not
-// emitting one, so a 2-rec-arg body using all hyps does NOT trip the occurs-check (validated, R2).
+// ── The coherence gate (POSITIVE_TYPES §3c), shared by every gated inductive. The case-TYPES form a
+// telescope (`dct_go`/`derive_case_telescope` below); `coh_check` verifies the cases against it with
+// the η-readback `check`. `build_payload` reconstructs a constructor's `inj` payload from its args.
 build_payload := fix ({self, args} ->                          // [a1..ak] -> the right-nested payload
   if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
-let dg_reverse_go = fix ({self, l, acc} -> if (is_fork l) then (self (pair_snd l) (cons (pair_fst l) acc)) else acc)
-let dg_reverse = {l} -> dg_reverse_go l t
-let dg_spine = fix ({self, f, args} -> if (is_fork args) then (self (f (pair_fst args)) (pair_snd args)) else f)
-let dg_argty = {marker, T, params} ->
-  if (is_recunder_marker marker) then T
-  else (if (is_param_marker marker) then (param_nth params (pair_snd marker)) else marker)
-let dg_go = fix ({self, T, params, motive, tag, cfn, spec, ar, ih} ->
-  if (is_leaf spec)
-    then ((motive (inj tag (build_payload (dg_reverse ar)))) (dg_spine (dg_spine cfn (dg_reverse ar)) (dg_reverse ih)))
-    else (if (is_recunder_marker (pair_fst spec))
-      then (bind_hyp T ({a} -> bind_hyp (motive a) ({i} -> self T params motive tag cfn (pair_snd spec) (cons a ar) (cons i ih))))
-      else (bind_hyp (dg_argty (pair_fst spec) T params) ({a} -> self T params motive tag cfn (pair_snd spec) (cons a ar) ih))))
-let dg_check = {T, params, motive, tag, cfn, argspec} ->
-  if (is_leaf argspec)
-    then ((motive (inj tag t)) cfn)
-    else (match (apply_policed (bind_hyp (dg_argty (pair_fst argspec) T params)) ({a0} ->
-            (if (is_recunder_marker (pair_fst argspec))
-              then (bind_hyp (motive a0) ({i0} -> dg_go T params motive tag cfn (pair_snd argspec) (cons a0 t) (cons i0 t)))
-              else (dg_go T params motive tag cfn (pair_snd argspec) (cons a0 t) t))))
-          { Ok v => v; Err _ => Err })
-let dg_all = fix ({self, T, params, motive, cases, variants} ->
-  if (is_leaf variants) then (Ok TT)
-  else (bind (dg_check T params motive (pair_fst (pair_fst variants)) (field cases (pair_fst (pair_fst variants))) (pair_snd (pair_fst variants)))
-             ({ok} -> if ok then (self T params motive cases (pair_snd variants)) else (Ok FF))))
-// derive_gate variants params : a coh-fn `{T, motive, cases} -> Ok TT/FF/Err`, ready for gated_inductive_respond.
-derive_gate := {variants, params} -> {T, motive, cases} -> dg_all T params motive cases variants
+let cat = fix ({self, xs, ys} -> if (is_fork xs) then (cons (pair_fst xs) (self (pair_snd xs) ys)) else ys)
+// dct_go T P: the case-telescope's field list `[(tag, Π args. (P aj ->)* P (c args))]` — one Pi cell per
+// arg, one IH premise per recursive position, conclusion at the reconstructed constructor value.
+let cell_argty = {cell, T} -> if (is_rec_cell cell) then T else ((type_meta cell).ty)  // a rec arg has type T
+let wrap_ihs = fix ({self, cells, args, P, concl} ->            // one `P aj ->` per rec cell, around concl
+  if (is_fork cells) then {
+    let rest = self ((pair_snd cells) t) (pair_snd args) P concl
+    if (is_rec_cell (pair_fst cells)) then (Arrow (P (pair_fst args)) rest) else rest
+  } else concl)
+let case_type_go = fix ({self, cells, orig, tag, T, P, args} ->
+  if (is_fork cells)
+    then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (cat args (cons a nil))))
+    else (wrap_ihs orig args P (P (inj tag (build_payload args)))))
+let dct_go = fix ({self, params, variants, T, P} ->
+  if (is_fork variants) then {
+    let var = pair_fst variants
+    let cells = pos_tele_p params (pair_snd var)   // `Param i` args resolved against the type's params
+    cons (pair (pair_fst var) (case_type_go cells cells (pair_fst var) T P nil)) (self params (pair_snd variants) T P)
+  } else nil)
+// check v T: η-readback (bidirectional Π-introduction). The lead cell of a Π MINTS, so: neutral/base
+// T -> recognize raw `T v`; Π-headed -> mint the domain, check (v h) against the codomain. Each Π mint
+// is SEALED (apply_policed) + unwrapped; the base is RAW `T v` (a neutral conclusion routes via its
+// respond, never a concrete recognizer on a hyp) — the combination reproduces the gate AND self-types.
+let cells_of = {T} -> (type_meta T).recognizer_params
+let pi_dom = {T} -> (type_meta (pair_fst (cells_of T))).ty
+let pi_cod = {T, h} -> (type_meta (pair_fst ((pair_snd (cells_of T)) h))).ty
+let SIG_MINT = pair_fst (mint_cell t)
+check := fix ({self, v, T} ->
+  if (is_neutral T) then (T v)
+  else (if (and (is_fork (cells_of T)) (tree_eq (pair_fst (pair_fst (cells_of T))) SIG_MINT))
+    then (match (apply_policed (bind_hyp (pi_dom T)) ({h} -> self (v h) (pi_cod T h))) { Ok r => r; Err _ => Err })
+    else (T v)))
+let check_fields = fix ({self, fields, cases} ->
+  if (is_fork fields)
+    then (bind (check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok FF)))
+    else (Ok TT))
+// coh_check params: THE generic coherence gate — η-readback-check the cases against the case-telescope
+// fields. `params` (pinned, like the recognizer's closure) resolves `Param i` constructor args.
+// Replaces the hand-rolled per-constructor gate AND coh_nat/coh_ord/coh_list; self-types (unlike the
+// recognition-form `param_apply (case-tele) cases`, coh_gate_proto.test).
+coh_check := {params} -> {T, motive, cases} -> check_fields (dct_go params (cells_of T) T motive) cases
 
-Coproduct : Tree -> Type := {variants}  -> Coproduct_resp_p t (gated_inductive_respond (derive_gate variants t)) variants
-Coproduct_p := {params, variants}       -> Coproduct_resp_p params (gated_inductive_respond (derive_gate variants params)) variants
+Coproduct : Tree -> Type := {variants}  -> Coproduct_resp_p t (gated_inductive_respond (coh_check t)) variants
+Coproduct_p := {params, variants}       -> Coproduct_resp_p params (gated_inductive_respond (coh_check params)) variants
 
 // (`Mu`/`Mu_resp` RETIRED (Path B): recursion is a `RecUnder F` cell, the self-aware sum ties its own
 // knot via make_rec_recognizer (rs=self); mutual recursion is `Coproduct_ctx` + `RecAt i`.)
@@ -519,7 +527,6 @@ let ih_args = fix ({self, cells, payload, rec} ->
     let rest = self ((pair_snd cells) t) payload rec
     if (is_rec_cell cell) then (cons (rec (((type_meta cell).acc) payload)) rest) else rest
   } else nil)
-let cat = fix ({self, xs, ys} -> if (is_fork xs) then (cons (pair_fst xs) (self (pair_snd xs) ys)) else ys)
 let rec_dispatcher = {T} -> fix ({self, motive, cases, v} -> {
   let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t })
   apply_all (field cases (pair_fst v)) (cat (all_args cells (pair_snd v)) (ih_args cells (pair_snd v) (elim self motive cases)))
@@ -658,29 +665,10 @@ let at_map_fields = fix ({self, fns, fields, record} ->
 fmap_rec  := {T, fns, r}    -> at_map_fields fns (type_meta T).recognizer_params r
 bimap_rec := {T, f, g, r}   -> fmap_rec T ({i} -> if (tree_eq i zero) then f else g) r
 
-// derive_case_telescope T P: the RECURSOR'S case-types, DERIVED from the cells (POSITIVE §4) — so
-// `rec_value`'s type is `{P} -> derive_case_telescope T P -> {x:T} -> P x`, GENERATED not hand-written.
-// For each constructor `c` it builds `Π args. (P aⱼ →)* P (c args)` — Π-bind each arg (a rec arg has
-// type T), insert one IH premise `P aⱼ` per recursive position, and conclude the motive at the
-// RECONSTRUCTED constructor value `c args = inj tag (build_payload args)`. (Nested `RecUnder F` args
-// would need the F-lifted IH `All P` — deferred with fmap; Rec/Id covered.)
-let cell_argty = {cell, T} -> if (is_rec_cell cell) then T else ((type_meta cell).ty)  // a rec arg has type T (build_payload moved above Coproduct for derive_gate)
-let wrap_ihs = fix ({self, cells, args, P, concl} ->             // one `P aⱼ →` per rec cell, around concl
-  if (is_fork cells) then {
-    let rest = self ((pair_snd cells) t) (pair_snd args) P concl
-    if (is_rec_cell (pair_fst cells)) then (Arrow (P (pair_fst args)) rest) else rest
-  } else concl)
-let case_type_go = fix ({self, cells, orig, tag, T, P, args} -> // Π over args (collecting), then IHs, then P(c args)
-  if (is_fork cells)
-    then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (cat args (cons a nil))))
-    else (wrap_ihs orig args P (P (inj tag (build_payload args)))))
-let dct_go = fix ({self, variants, T, P} ->
-  if (is_fork variants) then {
-    let var = pair_fst variants
-    let cells = pos_tele (pair_snd var)
-    cons (pair (pair_fst var) (case_type_go cells cells (pair_fst var) T P nil)) (self (pair_snd variants) T P)
-  } else nil)
-derive_case_telescope := {T, P} -> Record (dct_go (type_meta T).recognizer_params T P)
+// derive_case_telescope T P: the recursor's case-record TYPE (`rec_value`'s type is
+// `{P} -> derive_case_telescope T P -> {x:T} -> P x`). Wraps `dct_go` (defined above, with the
+// coherence gate that consumes the same case-types) in a Record.
+derive_case_telescope := {T, P} -> Record (dct_go t (type_meta T).recognizer_params T P)
 
 // Coproduct_of: build a coproduct from a variant RECORD `{ Tag := payloadType, … }` instead of the
 // positional `Coproduct [pair "Tag" T, …]` — each field `Tag := T` is a SINGLE-arg variant `[T]`:
