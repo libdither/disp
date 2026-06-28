@@ -59,8 +59,8 @@ test param_apply (bind_hyp Nat) ({x} -> Ok (is_stem x)) = Err // triage on hyp -
 // exercised end-to-end — a Nat-neutral eliminated by a case frame runs the
 // registered hyp_reduce and extends the spine:
 // the respond gates the cases against the motive (§B), so they must be coherent:
-// with motive Bool, base : Bool and step returns its ih : Bool.
-let stuck = param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({pred, ih} -> ih) } }
+// with motive Bool, zero : Bool and succ returns its ih : Bool (cases keyed by variant tag).
+let stuck = param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({pred, ih} -> ih) } }
 test is_neutral stuck = TT // bare stuck neutral (Option A §7.5)
 test neutral_type stuck = Bool
 

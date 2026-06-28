@@ -20,19 +20,12 @@ let view_list = {v} -> triage
   v
 // encode_list: inj-form -> shape (inverse of view_list). nil -> leaf; cons (h,tl) -> fork(h,tl).
 let encode_list = {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
-// R3 (ACTIVE_PLAN.md): gate List, closing the type-coherence gap (gap_severity.test.disp). coh_list
-// is the application-form, sealed gate (cf. coh_nat/coh_ord), generalized to a PARAMETERIZED former:
-// the element type `A` is threaded by partial application (`gated_inductive_respond (coh_list A)`),
-// since cons's head is at `A` (not the recursive type `T`). nil = t (leaf); cons h tl = t h tl — used
-// raw so no reorder is needed. cons : Π h:A. Π tl:T. motive tl -> motive (cons h tl), checked by
-// APPLICATION (mint head + tail + IH, apply the case, recognize the result). Internal bind_hyp SEALED.
-let coh_list = {A} -> {T, motive, cases} -> {
-  let cons_coherent = (match (apply_policed (bind_hyp A) ({h} -> bind_hyp T ({tl} -> bind_hyp (motive tl) ({ih} -> (motive (t h tl)) ((cases.cons_case h tl) ih))))) { Ok v => v; Err _ => Err })
-  bind ((motive t) cases.nil_case) ({okn} -> if okn then cons_coherent else (Ok FF))
-}
-// cons's head is `Param 0` (the element A) — so the generic `fmap (List A) f` maps it; params = [A].
+// List is gated by the GENERIC kernel gate `coh_check`. params = `[A]` (`cons A nil`) resolves cons's
+// head `Param 0` to the element type A; from the `[Param 0, Rec]` argspec (+ the encode iso) `coh_check`
+// derives the cons case-type `Π h:A. Π tl:List A. P tl -> P (cons h tl)`. cons's head being `Param 0`
+// also lets the generic `fmap (List A) f` map it.
 List : Type -> Type := {A} ->
-  Coproduct_viewed_resp (cons A nil) (gated_inductive_respond (coh_list A)) (pair view_list encode_list) [pair "nil" [], pair "cons" [Param zero, Rec]]
+  Coproduct_viewed_resp (cons A nil) (gated_inductive_respond (coh_check (cons A nil))) (pair view_list encode_list) [pair "nil" [], pair "cons" [Param zero, Rec]]
 
 NatList : Type := List Nat
 

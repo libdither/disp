@@ -17,11 +17,11 @@ let reflects = {n} -> select_lazy ({_} -> Nat) ({_} -> Bool) (is_fork n)   // no
 test param_apply (Pi Nat reflects) ({n} -> n)        = Err                 // codomain family reflects
 test param_apply (Intersection Nat reflects) zero    = Err                 // predicate reflects
 test neutral_type (param_apply (make_hyp (Sigma Nat reflects) 0) (acc "snd")) = InvalidType   // Sigma family reflects
-test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({p, ih} -> is_fork p) } }) = InvalidType  // step reflects
+test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({p, ih} -> is_fork p) } }) = InvalidType  // succ reflects
 // valid analogues still pass (the policing only rejects reflection)
 test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n)            = Ok TT
 test param_apply (Pi Nat ({n} -> Eq Nat n n)) ({n} -> refl)  = Ok TT
-test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { base := TT; step := ({p, ih} -> ih) } }) = Bool
+test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({p, ih} -> ih) } }) = Bool
 
 // ================================================================
 // A typed function cannot reflect on / extract from its argument (the walker
