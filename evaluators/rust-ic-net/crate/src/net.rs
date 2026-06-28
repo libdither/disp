@@ -8,6 +8,12 @@
 use crate::port::*;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+/// Intrusive free-list "empty" sentinel. No real base / var index equals `u32::MAX` (the
+/// arena caps at 2^21), so it is unambiguous as the end-of-chain / empty marker. The
+/// next-free link lives in the freed cell itself, so the per-arity free lists need no side
+/// `Vec` (no heap, no bounds check, no length tracking on the hot alloc/free path).
+const NULL_FREE: u32 = u32::MAX;
+
 /// The SHARED net state — one per session, borrowed `&self` by all workers. Fixed atomic
 /// arena (no realloc under sharing) + atomic bump cursors + atomic counters.
 pub(crate) struct Net {
@@ -63,8 +69,9 @@ pub(crate) struct Worker {
     /// into a per-worker crossbeam work-stealing deque after each interaction — `bag`
     /// itself stays a plain `Vec` in both modes.
     pub(crate) bag: Vec<(u32, u32)>,
-    pub(crate) free: [Vec<u32>; 5], // reusable node bases by arity (free-on-consume)
-    pub(crate) free_vars: Vec<u32>, // reusable wire cells
+    pub(crate) free_heads: [u32; 5], // intrusive free-list head per arity (free-on-consume);
+    // the next-free base is stored IN the freed node's first cell (NULL_FREE = empty).
+    pub(crate) free_var_head: u32, // intrusive free-list head for wire cells (next link in the cell)
     pub(crate) node_rgn: (u32, u32), // (next, end) of this worker's leased node region (Stage 3)
     pub(crate) var_rgn: (u32, u32),  // (next, end) of this worker's leased var region
 }
@@ -72,8 +79,8 @@ impl Worker {
     pub(crate) fn new() -> Self {
         Worker {
             bag: Vec::new(),
-            free: Default::default(),
-            free_vars: Vec::new(),
+            free_heads: [NULL_FREE; 5],
+            free_var_head: NULL_FREE,
             node_rgn: (0, 0),
             var_rgn: (0, 0),
         }
@@ -102,7 +109,10 @@ impl<'a> Ctx<'a> {
     #[inline]
     pub(crate) fn alloc(&mut self, aux: &[u32]) -> u32 {
         let size = aux.len();
-        let base = if let Some(b) = self.w.free[size].pop() {
+        let base = if self.w.free_heads[size] != NULL_FREE {
+            // pop: the freed node's first cell holds the next-free base of this arity.
+            let b = self.w.free_heads[size];
+            self.w.free_heads[size] = self.nd(b);
             b
         } else {
             // bump within the local region; lease a fresh region when `size` won't fit.
@@ -127,13 +137,18 @@ impl<'a> Ctx<'a> {
     #[inline]
     pub(crate) fn free_node(&mut self, base: u32, ar: usize) {
         if ar > 0 {
-            self.w.free[ar].push(base);
+            // push: stash the old head in this node's first cell, then point the head here.
+            self.set_nd(base, self.w.free_heads[ar]);
+            self.w.free_heads[ar] = base;
         }
     }
     /// A fresh substitution cell (wire); reuses a freed cell when available.
     #[inline]
     pub(crate) fn new_var(&mut self) -> u32 {
-        if let Some(v) = self.w.free_vars.pop() {
+        if self.w.free_var_head != NULL_FREE {
+            // pop: the freed cell holds the next-free var index; reset it to NUL for reuse.
+            let v = self.w.free_var_head;
+            self.w.free_var_head = self.net.vars[v as usize].load(Ordering::Relaxed);
             self.net.vars[v as usize].store(NUL, Ordering::Relaxed);
             return v;
         }
@@ -188,7 +203,10 @@ impl<'a> Ctx<'a> {
             if prev == NUL {
                 return; // parked b; the far end will find it
             }
-            self.w.free_vars.push(v as u32);
+            // intrusive free: the var is fully resolved (both occurrences arrived) and now
+            // exclusively ours — stash the old head in the dead cell, point the head here.
+            self.net.vars[v].store(self.w.free_var_head, Ordering::Relaxed);
+            self.w.free_var_head = v as u32;
             a = prev;
             // loop with (prev, b)
         }

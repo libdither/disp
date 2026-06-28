@@ -10,16 +10,22 @@ use std::sync::atomic::Ordering;
 
 impl<'a> Ctx<'a> {
     /// Drive the local bag to quiescence or until the budget runs out (returns false).
+    /// The interaction counter is accumulated LOCALLY and flushed ONCE at the end — the
+    /// sequential analogue of the parallel drain's thread-local `local_int` (parallel.rs).
+    /// (Was a `lock xadd` per interaction; the counter is a stat, not a synchronization point.)
     pub(crate) fn drain(&mut self, budget: &mut i64) -> bool {
-        while let Some((x, y)) = self.w.bag.pop() {
+        let mut n: u64 = 0;
+        let ok = loop {
+            let Some((x, y)) = self.w.bag.pop() else { break true };
             if *budget <= 0 {
-                return false;
+                break false;
             }
             *budget -= 1;
-            self.net.interactions.fetch_add(1, Ordering::Relaxed);
+            n += 1;
             self.interact(x, y);
-        }
-        true
+        };
+        self.net.interactions.fetch_add(n, Ordering::Relaxed);
+        ok
     }
 
     /// One interaction (consumer ⊗ producer). tc-net.typ §Demand/Dispatch/Sharing.
