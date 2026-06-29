@@ -200,6 +200,8 @@ function exprMentions(e: Expr, name: string): boolean {
     case "recType":
       return e.fields.some(f => (f.type !== null && exprMentions(f.type, name)) ||
         ((f as any).value != null && exprMentions((f as any).value, name)))
+    case "sumType":
+      return e.variants.some(v => v.type !== null && exprMentions(v.type, name))
     case "recValue": {
       if (e.fields.some(f => exprMentions(f.value, name) || (f.type && exprMentions(f.type, name))))
         return true
@@ -370,6 +372,37 @@ function exprToCir(
         teleCir = cap(cap(leafCir, entryCir), { tag: "lam", x: f.name, body: teleCir })
       }
       return cap({ tag: "lit", t: TelescopeEntry.tree }, teleCir)
+    }
+    case "sumType": {
+      // A sum-type literal `< Tag : T, … >` IS a `Coproduct` over a list of
+      // variants — the DUAL of recType → Telescope. Each variant desugars to
+      // `pair "Tag" [argTypes]`: `Tag : T` → `pair "Tag" [T]` (single-arg),
+      // `Tag` → `pair "Tag" []` (nullary). The variant list and per-variant arg
+      // list are leaf-based cons-chains (cons = `t h tl`, nil = leaf), matching
+      // the `[…]` array sugar — so `< … >` is tree-identical to the hand-written
+      // `Coproduct [pair "Tag" […]]`. A payload type compiles in TYPE position
+      // (binderToPi), exactly like a recType field type. (Coproduct/pair must be
+      // in scope, like recType needs Telescope.)
+      const CoproductEntry = lookupEntry("Coproduct")
+      const pairEntry = lookupEntry("pair")
+      if (!CoproductEntry?.tree || !pairEntry?.tree)
+        throw new Error("sum type literal '< Tag : T >': 'Coproduct' and 'pair' must be in scope (open the kernel prelude)")
+      const leafCir: Cir = { tag: "lit", t: cs.leaf() }
+      const consCir = (h: Cir, tl: Cir): Cir => cap(cap(leafCir, h), tl)
+      const pairCir: Cir = { tag: "lit", t: pairEntry.tree }
+      let variantsCir: Cir = leafCir
+      for (let i = e.variants.length - 1; i >= 0; i--) {
+        const v = e.variants[i]
+        const nameCir: Cir = { tag: "lit", t: stringToTree(v.name) }
+        // arg list: single-element [T] when `Tag : T`, else nullary [].
+        const argsCir: Cir = v.type != null
+          ? consCir(
+              exprToCir(lookupEntry("Pi")?.tree ? binderToPi(v.type) : v.type, lookupEntry, resolveUse, sinks),
+              leafCir)
+          : leafCir
+        variantsCir = consCir(cap(cap(pairCir, nameCir), argsCir), variantsCir)
+      }
+      return cap({ tag: "lit", t: CoproductEntry.tree }, variantsCir)
     }
     case "recValue": {
       // If this recValue has members (let/test/open alongside fields),

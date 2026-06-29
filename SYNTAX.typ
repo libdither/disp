@@ -192,6 +192,7 @@ simple    ::= \"(\" expr (\":\" expr)? \")\"
             | match
             | if
             | braced
+            | coproductType
             | \"use\" STRING
             | STRING
             | LEAF
@@ -208,6 +209,8 @@ recValue  ::= \"{\" \"}\"
             | \"{\" recBody \"}\"
 recType   ::= \"{\" typedField (COMMA typedField)* COMMA? \"}\"
 block     ::= \"{\" (stmt SEMI)* expr SEMI? \"}\"
+coproductType ::= \"<\" (sumVariant (COMMA sumVariant)* COMMA?)? \">\"
+sumVariant ::= IDENT (\":\" expr)?
 typedField ::= IDENT (\":\" expr)? (\":=\" expr)?
 stmt       ::= let | test | \"open\" expr",
   "(f x : Nat)                    // parenthesized ascription
@@ -229,6 +232,17 @@ reparsed as a `binder`: `{x : A}` alone is a recType;
 `{x : A} -> e` is a binder. The empty `{}` is a 0-field recValue
 (Church unit; see `COMPILATION.typ` § Record encoding). Duplicate
 field names in recValues and recTypes are rejected.
+
+A `coproductType` `< Tag1 : T1, Tag2, … >` is the sum-type (coproduct)
+literal — the dual of a `recType`. It desugars to a `Coproduct`
+application: `< Tag1 : T1, Tag2 >` ⟶ `Coproduct [pair "Tag1" [T1], pair
+"Tag2" []]`. A `Tag : T` variant is single-arg (`pair "Tag" [T]`, with `T`
+in type position); a bare `Tag` is nullary (`pair "Tag" []`); the empty
+`<>` is the empty sum `Coproduct []` (⊥). `COMMA` is `,` or NEWLINE and a
+trailing comma is allowed (as in record fields); duplicate variant names
+are rejected. `<` / `>` are single-char tokens distinct from `->`/`=>`/`→`,
+so a variant's `expr` type (e.g. `A -> B`) stops cleanly at the closing
+`>`. Requires `Coproduct`/`pair` in scope (as `recType` needs `Telescope`).
 
 Three telescope-era refinements. (1) *Field puns*: inside a recValue, a
 bare `IDENT` member is shorthand for `name := name`, the value resolving

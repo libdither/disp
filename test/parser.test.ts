@@ -27,6 +27,7 @@ const binder = (params: { name: string | null; type: Expr | null }[], body: Expr
 const ann = (expr: Expr, type: Expr): Expr => ({ tag: "ann", expr, type })
 const proj = (target: Expr, field: string): Expr => ({ tag: "proj", target, field })
 const recType = (fields: { name: string; type: Expr | null }[]): Expr => ({ tag: "recType", fields })
+const sumType = (variants: { name: string; type: Expr | null }[]): Expr => ({ tag: "sumType", variants })
 const recValue = (fields: { name: string; type: Expr | null; value: Expr }[]): Expr =>
   ({ tag: "recValue", fields })
 const use = (path: string): Expr => ({ tag: "use", path })
@@ -260,6 +261,30 @@ describe("parse: expressions", () => {
     // {x : A} -> x  is a binder, not a recType
     expect(parseExpr("{x : A} -> x")).toEqual(
       binder([{ name: "x", type: v("A") }], v("x")),
+    )
+  })
+
+  it("sum-type literal (single-arg + nullary variants)", () => {
+    // < Tag : T > is a single-arg variant; bare < Tag > is nullary.
+    expect(parseExpr("<a : Nat, b>")).toEqual(
+      sumType([{ name: "a", type: v("Nat") }, { name: "b", type: null }]),
+    )
+  })
+
+  it("empty sum-type literal <>", () => {
+    expect(parseExpr("<>")).toEqual(sumType([]))
+  })
+
+  it("sum-type literal with trailing comma + record payload", () => {
+    expect(parseExpr("< ok : {v : Nat}, err, >")).toEqual(
+      sumType([{ name: "ok", type: recType([{ name: "v", type: v("Nat") }]) }, { name: "err", type: null }]),
+    )
+  })
+
+  it("sum-type variant type with arrow stops at '>'", () => {
+    // `>` is a distinct token from `->`, so `A -> B` parses cleanly inside `<…>`.
+    expect(parseExpr("< f : A -> B >")).toEqual(
+      sumType([{ name: "f", type: binder([{ name: null, type: v("A") }], v("B")) }]),
     )
   })
 

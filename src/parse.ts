@@ -21,7 +21,10 @@ export type Tok =
 
 const KEYWORDS = new Set(["let", "test", "use", "open", "match", "if", "then", "else"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
-const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]"] as const
+// `<`/`>` are the sum-type-literal delimiters (`< Tag : T, … >`). They are single
+// chars with no multi-char punctuation built on them, and `->`/`=>`/`→` are
+// matched first, so a bare `>` never steals an arrow's tail.
+const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -90,6 +93,9 @@ export type Expr =
   | { tag: "ann"; expr: Expr; type: Expr }
   | { tag: "proj"; target: Expr; field: string }
   | { tag: "recType"; fields: TypedField[] }
+  // `< Tag1 : T1, Tag2, … >` — the coproduct (sum) type literal; the DUAL of
+  // recType. Desugars (compile.ts) to `Coproduct [pair "Tag1" [T1], pair "Tag2" []]`.
+  | { tag: "sumType"; variants: SumVariant[] }
   | { tag: "recValue"; fields: NamedField[]; members?: RecMember[]; trailing?: Expr }
   | { tag: "use"; path: string; raw?: boolean }
   // `if c then a else b` — the boolean conditional. Desugars to `cond` (a
@@ -102,6 +108,8 @@ export type Expr =
 
 export type Param = { name: string | null; type: Expr | null }
 export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
+// A coproduct variant: `Tag : T` (single-arg, `type` set) or `Tag` (nullary, null).
+export type SumVariant = { name: string; type: Expr | null }
 export type NamedField = { name: string; type: Expr | null; value: Expr }
 
 // Unified record body member — shared by file bodies and inline { ... } recValues.
@@ -300,6 +308,7 @@ const makeSimple = (bracedP: () => P<Expr>, ifAtom: () => P<Expr>): P<Expr> => l
   lazy(() => matchP),
   lazy(ifAtom),
   lazy(() => arrayP),
+  lazy(() => sumTypeP),
   lazy(bracedP),
   map(seq(kwP("use"), optional(rawKwP), strP), ([, raw, path]): Expr => raw !== null ? { tag: "use", path, raw: true } : { tag: "use", path }),
   map(strP, (value): Expr => ({ tag: "str", value })),
@@ -565,6 +574,46 @@ const arrayP: P<Expr> = (ts, i) => {
   const close = punctP("]")(ts, pos)
   if (!close.ok) return close
   return ok(mkConsChain(elemsR.v), close.pos)
+}
+
+// sumVariant = IDENT (":" expr)? — `Tag : T` is a single-arg variant, `Tag` is
+// nullary. The payload type is a full `expr` (newlines are insignificant inside
+// `<…>`, like array elements), compiled in TYPE position by the desugar.
+const sumVariantP: P<SumVariant> = nl((ts, i) => {
+  if (ts[i].t === "id" && (ts[i] as any).v === "_") return err(`sum variant cannot be '_'`, i)
+  const r = idP(ts, i)
+  if (!r.ok) return r
+  const name = r.v
+  let pos = r.pos
+  let type: Expr | null = null
+  const withType = seq(nl(punctP(":")), skipNl, lazy(() => expr))(ts, pos)
+  if (withType.ok) { type = withType.v[2] as Expr; pos = withType.pos }
+  return ok({ name, type }, pos)
+})
+
+// Sum-type literal: `< variant (COMMA variant)* COMMA? >` (COMMA = "," or NEWLINE,
+// like record fields). Empty `<>` is the empty sum (⊥). Desugars in compile.ts to
+// `Coproduct [pair "Tag" [T]…]` — the DUAL of recType → Telescope. `>` is a token
+// distinct from `->`/`=>`, so a variant's `expr` type (incl. `A -> B`) stops cleanly
+// at the closing `>`.
+const sumTypeP: P<Expr> = (ts, i) => {
+  const open = punctP("<")(ts, i)
+  if (!open.ok) return open
+  let pos = open.pos
+  while (ts[pos].t === "nl") pos++
+  if (ts[pos].t === "punct" && (ts[pos] as any).v === ">") // empty <>
+    return ok({ tag: "sumType", variants: [] }, pos + 1)
+  const varsR = sepBy1(sumVariantP, commaP)(ts, pos)
+  if (!varsR.ok) return varsR
+  pos = varsR.pos
+  const trail = commaP(ts, pos) // optional trailing COMMA (sepBy1 leaves it unconsumed)
+  if (trail.ok) pos = trail.pos
+  while (ts[pos].t === "nl") pos++
+  const close = punctP(">")(ts, pos)
+  if (!close.ok) return close
+  const dup = duplicateName(varsR.v)
+  if (dup) return err(`duplicate sum variant '${dup}'`, i)
+  return ok({ tag: "sumType" as const, variants: varsR.v }, close.pos)
 }
 
 // field = IDENT (":" expr)? ":=" valParser
