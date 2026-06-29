@@ -476,16 +476,16 @@ piece is *label-coordinated duplication* for the non-affine case (§11).
 
 #note[
   *Can they be merged?* ic-net cannot *natively be* an e-graph — linearity (one principal port,
-  variables occur twice) forbids the structural id-sharing — but it can *hold* one as **data**: a
+  variables occur twice) forbids the structural id-sharing — but it can *hold* one as *data*: a
   flat `class-id → {e-nodes}` table where sharing and cycles become *logical* id-references in a
   linear tree (no structural pointer cycle). The obstruction is then not representation but
-  **purity**: an in-language e-graph gets *persistent* structures, not the *mutable* union-find +
+  *purity*: an in-language e-graph gets *persistent* structures, not the *mutable* union-find +
   hashcons an imperative e-graph runs on, so it is correct-but-slow — and ic-net (no-memo,
   sequential-hostile for these ops) is the *worst* host; the e-graph data belongs on the hash-consed
-  backend. The real merge is the **bootstrap** (§10): the e-graph as a tree-program *spec* compiled
+  backend. The real merge is the *bootstrap* (§10): the e-graph as a tree-program *spec* compiled
   to a fast native implementation (a verified pure→imperative rewrite), so "everything is a tree
   program" *without* ic-net being an e-graph. And the merge↔distinct tension is *only at the search
-  frontier*: an e-graph **with explanations** (proof-producing saturation) merges equal terms *and*
+  frontier*: an e-graph *with explanations* (proof-producing saturation) merges equal terms *and*
   records why — and that explanation *is* the certificate (§7). So merge what is *proven equal*
   (compact, certificate-bearing) and keep distinct what is *still being chosen* (superposition,
   blame-bearing); the tightest hybrid — an e-graph with superposition-frontiers at its open leaves —
