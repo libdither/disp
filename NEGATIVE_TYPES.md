@@ -14,8 +14,11 @@ choices (§1). The current design is a faithful realization of the ideal in §2.
 **(c) architectural move** — collapsing recognition and respond into a single
 mode-polymorphic walk (the NbE move) — has now **landed** (one walker `at`, wait-form
 cells; §4c), so the remaining distance is just **(a) cosmetic** encoding and **(b)
-completeness** (folding the rest of the negative lattice in — `qid`/Intersection,
-and frame-tagging for mixed/callable records, now pluggable as new wait-form ops). A
+completeness** (folding the rest of the negative lattice in). The `qid`/Intersection
+piece **landed (2026-06-29)**: Intersection/Refinement/Eq are now telescope hybrids
+(`qid`/`mint` + `refine`/`imeet`/`eqends` cells) and `GoodRespond` a telescope of `probe`
+cells — all pluggable as new wait-form ops. Frame-tagging for mixed/callable records
+remains. A
 *genuinely different* optimum requires breaking the chain — intrinsic typing — which
 means a different substrate, i.e. a different project (§6).
 

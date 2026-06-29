@@ -22,8 +22,9 @@ walk over the same telescope of cells**, and the kernel verifies the cells:
 | eliminate — negative (Pi/Σ/Record) | `at FF` over the cells | ✅ (§7B) | `STRICTTYPE.md §7`, `NEGATIVE_TYPES.md` |
 | eliminate — positive (gate the cases) | `coh_check` = `check cases (case-telescope)` — η-readback, ONE gate for ALL inductives | ✅ | `coproduct_gate.test.disp` |
 | map / fold | `fmap_n` / `fold_value` over the cells | ✅ | `CELL_OPTICS.md` |
-| "is this respond sound?" | `GoodRespond` (behavioral) | 🟡 prototyped | this file §T1-L2 |
-| the cell representation itself | one `(optic, role)` | 🟠 refactor | `CELL_OPTICS.md §3-§5` |
+| "is this respond sound?" | `GoodRespond` = a TELESCOPE of `probe` cells (coh + per-case junk; reflect out-of-band) | ✅ landed; `verify_good` = `param_apply (GoodRespond T) R` composes under the walker (R6 mechanism unblocked) | `goodrespond.test.disp`, this file §T1-L2 |
+| meet types (Intersection/Refinement/Eq) | telescope hybrids: `qid`/`mint` + `refine`/`imeet`/`eqends` cells + type-specific respond | ✅ migrated off hand-written recognizers (2026-06-29) | `types.test.disp` |
+| the cell representation itself | one `(optic, role)` | 🟠 refactor (probe/refine/imeet/eqends/qid added — the role vocabulary is filling in) | `CELL_OPTICS.md §3-§5` |
 
 "Full verified kernel" = the kernel checks that every type's cells are well-formed and **both faces
 are derived from those cells**, on top of a *minimal, pinned trusted base*.
@@ -178,22 +179,40 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
 
 ### Level 2 — verify responds behave (the respond metacircle)
 
-- **R4 — universal + generic `GoodRespond`.** 🟠. Lift the two-point prototype: mint the coherent
-  cases as a hyp **of the case-telescope** (∀ coherent) and the unknown as a `Tree`-hyp (∀
-  unverifiable); derive the test frames per-type from `derive_case_telescope`. *Prototype lives in
-  the git history of this session's scratch; see §2.*
-- **R5 — `GoodRespond` is itself sound.** 🟠. Prove `accept-coherent ∧ reject-unknown ⟹ subject
-  reduction` for *all* cases (not sampled). `GoodRespond` applies responds + uses `tree_eq`, so it may
-  itself enter the TCB — **risk: "verified" becomes "trusted-checker-says-so."** The
-  **derive-and-trust** alternative (Level 1) sidesteps this: derived responds are correct *by
-  construction*, so `GoodRespond` becomes the *spec* + a userland checker, not a kernel step.
-- **R6 — wire respond-checking into `Type`.** 🟠. Needs *per-former-kind* behavioral specs (the
-  universe's own respond is `type_predicate_h_rule`, an H-rule, not a gate — `GoodRespond` doesn't
-  apply to it), and `StrictType : StrictType` must survive. *Doc: `STRICTTYPE.md §7`, `metashape.test`.*
+- **R4 — universal + generic `GoodRespond`.** ✅ **LANDED** (`lib/kernel/types.disp`; pinned
+  `lib/tests/goodrespond.test.disp`). `verify_good`/`good_resp`/`good_resp_reflect`/`GoodRespond`,
+  generic over `T`'s variants, ABSTRACT motive + self (so the obligations are ∀ by parametricity), test
+  frames derived per-type from `derive_case_telescope`. Reuses `check` verbatim via `CONV x = MEM
+  (Singleton x)` (conversion = singleton-membership → no new walker mode). Validated on MyNat/3-variant/
+  Nat/Bool/Ord — incl. the **recursive eliminator** (the structural-self-typing RESIDUAL wall), which
+  the *behavioral* check covers.
+- **R5 — `GoodRespond` is itself sound.** ✅ **mechanism LANDED + characterized.** The soundness-
+  critical direction is "reject incoherent," and incoherence is a **gradient of dimensions**, not one
+  predicate: (1) **per-case** type-junk (NOT single-slot — the `R_lazy` adversary, which only checks the
+  first case, passes a naive probe but is caught per-case); (2) **reflection/parametricity** — a separate
+  dimension (the `R_unpoliced` adversary is type-sound yet reflection-unsound). **FUSION finding:**
+  `check` polices its mints, so any check-based respond rejects reflection *for free* → reflect only
+  matters for hand-rolled unpoliced responds (the out-of-band `good_resp_reflect`). The complete spec
+  `R ≡ coh_check` is sound+complete but **circular** for self-verification, so an independent
+  `GoodRespond` is necessarily the dimension-enumerating gradient. Resolves the TCB worry: `GoodRespond`
+  is the **spec + a BOUNDARY checker**, not a kernel step (derived responds stay correct by construction).
+- **R6 — wire respond-checking into `Type`.** 🟢 **composability UNBLOCKED** (telescope refactor,
+  2026-06-29). The CONTAINMENT obstacle was self-inflicted by *hand-rolling* `good_resp` from nested
+  `check`/`apply_policed`. Re-expressed as a **TELESCOPE** — `GoodRespond T` = `[mint case_tele ; probe
+  coh ; (mint junk_i ; probe InvalidType)*]`, a `probe` cell = "apply R to a frame, check result ≡
+  Singleton(outcome)" — it is ONE `at` walk, so `param_apply (GoodRespond T) R` (= `verify_good`)
+  **composes under the walker** (validated: real responds → `Ok TT`, lazy/inert/over-permissive →
+  `Ok FF`, all under `param_apply`). coh + per-case junk are cells; reflection stays out-of-band (its
+  rejection is a non-local triage-abort, genuinely not a cell — but FUSION makes it redundant for
+  check-based responds). **Remaining for the actual StrictType cell:** respond-KIND dispatch — only
+  gated-inductive responds get `GoodRespond`-checked; non-inductive formers (Pi/Record/Eq/…) have
+  inert/J/H-rule responds that need their own (cheaper) specs. So the *mechanism* is unblocked; the
+  *wiring* is a dispatch design (which respond-kinds get which behavioral spec). *Doc: `STRICTTYPE.md §7`,
+  `goodrespond.test`.*
 
 **Strategy verdict:** prefer **Level 1 (derive)** for the kernel's own formers — correct by
-construction, sidesteps R5's trust question. Keep `GoodRespond` (Level 2) as the *spec* and the
-userland/validation checker.
+construction, sidesteps R5's trust question. `GoodRespond` (Level 2) **landed as the spec + boundary
+checker**; promoting it to a StrictType recognizer cell is gated on the R6 containment carve-out.
 
 ---
 

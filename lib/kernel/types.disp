@@ -63,6 +63,27 @@ is_derive := {cell} -> tree_eq (pair_fst cell) (op_sig deriv_op)
 let pos_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.ty) // positional slot
 pos_cell : Tree -> Tree -> Tree := {acc, ty} -> wait pos_op { acc := acc; ty := ty }
 
+// MEET ops (CELL_OPTICS roles) for the CONJUNCTION types — each observes v and CHECKS; pluggable like
+// the rest (a Step; no `at` edit). The recognize face of Intersection/Refinement/Eq is then a 2-cell
+// telescope; their respond stays type-specific (a HYBRID wait-form, like StrictType: telescope
+// recognizer + custom respond). refine: v satisfies a Bool predicate (Refinement). imeet: v : (P hyp)
+// — the dependent-intersection check against the minted A-hyp threaded as `prior` (Intersection).
+// eqends: Eq's endpoint cell — STORES (type, lhs, rhs) so `Eq A x y`'s tree is identity-faithful (as the
+// old {type;lhs;rhs} meta was), and checks the endpoints convert (tree_eq lhs rhs); independent of v.
+// qid: observe v ITSELF (the self optic) and check it : ty — the base self-conjunction cell (StrictType's
+// recognizer face; Refinement's `v : A`). [qid_meta — observe type_meta v — needs MetaShape, stays below.]
+let qid_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.ty)
+qid_cell := {ty} -> wait qid_op { ty := ty }
+let refine_op = {meta, mode, source, prior, frame, rs} -> if mode then (if (meta.pred source) then (SThread source) else SReject) else (SDone (Extend InvalidType))
+refine_cell : Tree -> Tree := {P} -> wait refine_op { pred := P }
+let imeet_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.pred prior)
+imeet_cell : Tree -> Tree := {P} -> wait imeet_op { pred := P }
+let eqends_op = {meta, mode, source, prior, frame, rs} -> if mode then (if (tree_eq (meta.lhs) (meta.rhs)) then (SThread source) else SReject) else (SDone (Extend InvalidType))
+eqends_cell : Tree -> Tree -> Tree -> Tree := {A, x, y} -> wait eqends_op { type := A; lhs := x; rhs := y }
+// Singleton x: the 1-point type (recognizer = tree_eq v x). The CONV x = MEM (Singleton x) collapse —
+// used by Eq (`v : Singleton refl`) and the GoodRespond probe (`result : Singleton outcome`).
+Singleton := {x} -> wait (make_recognizer ({m, v} -> Ok (tree_eq v x))) (make_meta unit_witness inert_respond)
+
 // ── Path B: recursion + corecursion as CELLS over the self-aware `at`. `rec`/`rec_at` RECURSE via
 // the threaded `rs` (μ — well-founded, finite ⇒ terminates); `gen` GUARDS on `is_gen` (ν — codata is
 // infinite: recognize the finite generator, NEVER descend). The recursive former ties its OWN knot
@@ -150,6 +171,11 @@ Telescope : Tree -> Type := {tele} -> wait (make_recognizer
   {meta, v} -> at t TT (meta.recognizer_params) v t t
 ) (make_meta tele ({params, self, frame} -> at t FF params self frame t))
 
+// tele_with cells respond: a HYBRID wait-form — the telescope RECOGNIZER (`at TT` over the cells) with
+// a CUSTOM respond instead of the negative `at FF`. The shape StrictType uses (telescope recognizer +
+// H-rule respond); Intersection/Refinement (inert respond) and Eq (J respond) below are instances.
+tele_with := {cells, respond} -> wait (make_recognizer ({meta, v} -> at t TT (meta.recognizer_params) v t t)) (make_meta cells respond)
+
 // Pi A B = the 2-cell telescope [ mint x:A ; apply out:(B x) ] — a thin Telescope
 // instance. Self-referential (its annotation mentions Pi via `->`). The mint_cell is
 // the ∀-intro (binds the argument); the apply_cell observes v applied to it (codomain).
@@ -222,34 +248,27 @@ refl := t
 // Eq recognizer: a candidate inhabits Eq A x y iff it IS refl and the endpoints x,y match.
 // The respond is J: eliminating a stuck `p : Eq A x y` lands the motive at the RHS
 // endpoint `y` (not the proof), giving `motive y` — the J rule `C : (y:A) ⊢ C y`.
-Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer
-  {meta, v} -> {
-    let p = meta.recognizer_params // { type, lhs, rhs }
-    Ok (and (tree_eq v refl) (tree_eq p.lhs p.rhs))
-  }
-) (make_meta { type := A; lhs := x; rhs := y } ({params, self, frame} ->
-  match (apply_policed frame.motive params.rhs) { Ok ty => Extend ty; Err _ => Extend InvalidType }))
+// Telescope hybrid: recognizer = [ qid (Singleton refl) ; eqends A x y ] (v IS refl ∧ endpoints convert);
+// respond = J, closing over the endpoint `y` directly (lands motive at the RHS — `C : (y:A) ⊢ C y`).
+Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> tele_with (
+  t (qid_cell (Singleton refl)) ({_} ->
+  t (eqends_cell A x y) ({_} -> t)))
+  ({params, self, frame} -> match (apply_policed frame.motive y) { Ok ty => Extend ty; Err _ => Extend InvalidType })
 
 // Equality lemmas via eq_J (compute on refl, stay stuck on a neutral proof).
 eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} -> eq_J A x y motive base p
 eq_sym : {A : Type} -> {x : A} -> {y : A} -> Eq A x y -> Eq A y x := {A, x, y, p} -> eq_J A x y ({y_} -> Eq A y_ x) refl p
 eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A x y -> Eq B (f x) (f y) := {A, B, f, x, y, p} -> eq_J A x y ({y_} -> Eq B (f x) (f y_)) refl p
 
-Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> wait (make_recognizer
-  {meta, v} -> {
-    let params = meta.recognizer_params
-    bind (params.base v) ({va} -> if va then (Ok (params.pred v)) else (Ok FF)) // pred is a bare-Bool predicate
-  }
-) (make_meta { base := A; pred := P } inert_respond)
+// Refinement A P (P : A -> Bool): { v : A | P v }. A 2-cell telescope [ qid A ; refine P ] — a HYBRID
+// wait-form (telescope recognizer + inert respond), recognize-equivalent to the old hand-written form.
+Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> tele_with (
+  t (qid_cell A) ({_} -> t (refine_cell P) ({_} -> t))) inert_respond
 
-// Intersection A P: v inhabits iff (P hyp) v holds for a fresh A-hyp — like Pi
-// but P is applied to the hypothesis and checked against the SAME v.
-Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> wait (make_recognizer
-  {meta, v} -> {
-    let params = meta.recognizer_params
-    bind_hyp params.base ({hyp} -> (params.pred hyp) v)  // under the walker: walk polices pred's use of hyp, then typecheck v against (pred hyp)
-  }
-) (make_meta { base := A; pred := P } inert_respond)
+// Intersection A P (P : A -> Type): mint a fresh A-hyp, check v : (P hyp) — the dependent intersection
+// (the walk polices P's use of the hyp). A 2-cell telescope [ mint A ; imeet P ] (HYBRID, inert respond).
+Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> tele_with (
+  t (mint_cell A) ({_} -> t (imeet_cell P) ({_} -> t))) inert_respond
 
 zero_ord : Ord := t
 omega_plus : Ord -> Ord -> Ord := {a, b} -> t (t a) b // fork(stem a, b)
@@ -692,13 +711,12 @@ MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, 
 // universe H-rule `type_predicate_h_rule`, not a placeholder — see the StrictType definition below.)
 CheckerResult : Type := Coproduct_of { Ok := Tree; Err := Unit }
 
-let qid_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.ty) // observe v itself (self optic)
 // qid_meta: observe type_meta v, check it : meta.ty — but THREAD v (not the meta), so it stays separate.
+// (qid_op/qid_cell — the plain self optic — moved up to the cell-ops block; qid_meta needs MetaShape.)
 let qid_meta_op = {meta, mode, source, prior, frame, rs} -> // observe type_meta v, check it : meta.ty
   if mode
     then (match ((meta.ty) (type_meta source)) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
     else (SDone (Extend (meta.ty)))
-qid_cell := {ty} -> wait qid_op { ty := ty }
 qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
 
 // StrictType: v is a type iff v is a recognizer (Tree -> CheckerResult) AND type_meta v : MetaShape.
@@ -749,3 +767,67 @@ ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
 // self-type under abstract motive/cases. Non-recursive gated (Bool: flat cases ct/cf, no IH) DOES
 // inhabit; non-gated (Coproduct/Ord/Unit, respond uses only the motive) DOES. So the open frontier
 // is precisely the recursive inductive ELIMINATOR (the IH-bearing case), not projection or structure.
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// GoodRespond (R4-R6): the BEHAVIORAL self-typing of the respond face — does a respond `R` actually
+// GATE correctly for inductive `T`? The NON-VACUOUS answer to the RESIDUAL above (structural
+// `respond : ProjectingRespondShape` self-typing is vacuous totality; this checks BEHAVIOR and covers
+// the recursive eliminator, validated Nat/MyNat). `GoodRespond T` is a real TELESCOPE walked by `at`:
+// each obligation is a `probe` cell — "apply R to a frame, check the result ≡ Singleton(outcome)" via
+// the collapse CONV x = MEM (Singleton x). Two dimensions are cells (WALKER-CLEAN — they reject via a
+// contained SReject, so `param_apply (GoodRespond T) R` is ONE `at` walk that COMPOSES under the
+// walker — no boundary limitation): coh (coherent cases -> Extend(motive self)) + per-case junk (junk
+// in slot i -> Extend InvalidType; catches over-permissive incl. LAZY gates). The THIRD dimension,
+// reflection, CANNOT be a cell — it rejects via a triage-on-hyp walker ABORT (non-local), not a value
+// verdict — so it stays an OUT-OF-BAND probe (`good_resp_reflect`); FUSION (a check-based respond
+// polices its mints) makes it redundant for the kernel's own responds anyway. Pinned: goodrespond.test.
+// (Singleton is defined up with the meet cells.)
+let ctele_fields = {T, M} -> (type_meta (derive_case_telescope T M)).recognizer_params
+let map_nth = fix ({self, i, g, xs} ->
+  if (is_fork xs)
+    then (if (tree_eq i zero) then (cons (g (pair_fst xs)) (pair_snd xs)) else (cons (pair_fst xs) (self (nat_pred i) g (pair_snd xs))))
+    else nil)
+// probe cell: apply source(=R) to a frame built by meta.apply from (source, prior=minted cases), check
+// the result : Singleton(meta.outcome). The one new op the behavioral telescope needs (pluggable).
+let probe_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
+let probe_cell = {ap, out} -> wait probe_op { apply := ap; outcome := out }
+// abstract motive (M) + self (s) — make_hyp'd so the obligations are universal by parametricity; `ap`
+// applies R to {M; the minted cases}. Each obligation = [ mint (a case-telescope) ; probe outcome ].
+let gr_M = {T} -> make_hyp (Arrow T Type) t
+let gr_s = {T} -> make_hyp T (succ t)
+let gr_ap = {T} -> {R, cases} -> R (gr_s T) { motive := (gr_M T); cases := cases }
+// the per-variant junk cells: for each slot i, [ mint (case-tele with slot i := Tree) ; probe Extend InvalidType ].
+let gr_junk_cells = fix ({self, ap, fields, fs, i} ->
+  if (is_fork fs)
+    then (t (mint_cell (Record (map_nth i ({f} -> pair (pair_fst f) Tree) fields))) ({_} -> t (probe_cell ap (Extend InvalidType)) ({_} -> self ap fields (pair_snd fs) (succ i))))
+    else t)
+// GoodRespond T : the telescope [ mint case_tele ; probe coh ; (mint junk_i ; probe InvalidType)* ].
+GoodRespond := {T} -> Telescope (
+  t (mint_cell (derive_case_telescope T (gr_M T))) ({_} ->
+  t (probe_cell (gr_ap T) (Extend (gr_M T (gr_s T)))) ({_} ->
+  gr_junk_cells (gr_ap T) (ctele_fields T (gr_M T)) (ctele_fields T (gr_M T)) zero)))
+// verify_good / good_resp : run the telescope recognizer under the walker — composes (the prize).
+verify_good := {T, R} -> param_apply (GoodRespond T) R
+good_resp   := {R, T} -> param_apply (GoodRespond T) R
+
+// ── good_resp_reflect: the OUT-OF-BAND reflection dimension. NOT a cell (a reflect probe rejects via a
+// triage-on-hyp walker ABORT that escapes containment); kept as a boundary η-readback `check` probe. ──
+let gr_nth = fix ({self, xs, i} -> if (tree_eq i zero) then (pair_fst xs) else (self (pair_snd xs) (nat_pred i)))
+let gr_tags = fix ({self, fields} -> if (is_fork fields) then (cons (pair_fst (pair_fst fields)) (self (pair_snd fields))) else nil)
+let gr_nest = fix ({self, m, x} -> if (tree_eq m zero) then x else (list_const (self (nat_pred m) x)))
+let gr_is_pi = {T} -> and (is_fork (cells_of T)) (tree_eq (pair_fst (pair_fst (cells_of T))) SIG_MINT)
+let gr_depth = fix ({self, T} -> if (gr_is_pi T) then (succ (self (pi_cod T (make_hyp (pi_dom T) t)))) else zero)
+let gr_reflect_case = {d} -> {a0} -> gr_nest (nat_pred d) (is_fork a0)
+let gr_ov_payload = fix ({self, fields, cs, i, val, j} ->
+  if (is_fork fields)
+    then (cons (list_const (if (tree_eq j i) then val else (field cs (pair_fst (pair_fst fields))))) (self (pair_snd fields) cs i val (succ j)))
+    else nil)
+let gr_override = {fields, cs, i, val} -> mk_record (gr_tags fields) (build_payload (gr_ov_payload fields cs i val zero))
+let gr_reflect_i = {R, M, s, fields, ctele, i} -> check ({cs} -> R s { motive := M; cases := gr_override fields cs i (gr_reflect_case (gr_depth (pair_snd (gr_nth fields i)))) }) (Pi ctele ({_} -> Singleton (Extend InvalidType)))
+let gr_all_reflect = fix ({self, R, M, s, fields, ctele, fs, i} ->
+  if (is_fork fs)
+    then (if (tree_eq (gr_depth (pair_snd (pair_fst fs))) zero)
+            then (self R M s fields ctele (pair_snd fs) (succ i))
+            else (match (gr_reflect_i R M s fields ctele i) { Ok b => (if b then (self R M s fields ctele (pair_snd fs) (succ i)) else (Ok FF)); Err _ => Ok FF }))
+    else (Ok TT))
+good_resp_reflect := {R, T} -> gr_all_reflect R (gr_M T) (gr_s T) (ctele_fields T (gr_M T)) (derive_case_telescope T (gr_M T)) (ctele_fields T (gr_M T)) zero
