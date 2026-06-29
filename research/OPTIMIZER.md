@@ -9,6 +9,49 @@ form one stack, and this is the order to read them in.
 **None of it is landed yet.** The *substrate* mostly exists (see "Status"); the optimizer
 itself is research.
 
+## The staging axis: one mechanism, memo to AOT
+
+Before the stack, the frame that unifies it. **Memoization, partial evaluation, JIT, and
+ahead-of-time optimization are the *same* mechanism** — the verified rewrite `φ` + certificate
++ re-check (`VERIFIED_OPTIMIZER_IMPLEMENTATION.md` §4) — applied at different points on one
+axis: **how much of the input is fixed when the rewrite is chosen.**
+
+| corner | input fixed | what it is |
+|---|---|---|
+| **AOT optimization** | nothing (valid ∀ inputs) | the whole current stack (docs 1–4) |
+| **partial evaluation** | some args | a residual program specialized to the known args |
+| **JIT** | the input, decided at runtime | online specialization on observed data |
+| **memoization** | the input, decided automatically + cached | the **degenerate, zero-intelligence corner** |
+
+`φ` is **stage-agnostic**: "swap `e` for a proven-equal cheaper `e'`." No data → AOT; some
+inputs fixed → partial evaluation; runtime facts → JIT. **Memo is the same rewrite —
+`f(x) ⤳ cached f(x)`, licensed by referential transparency `f(x) ~ f(x)` — made uniformly for
+every `x`, by the substrate, with no cost model and no choice.** Three consequences:
+
+- **It demotes memo from substrate-primitive to "the optimizer's dumbest rewrite," and *that*
+  is the deep justification for `rust-ic-net`.** The substrate must not hardwire an optimization
+  decision the optimizer should own. `rust-eager`'s hash-consing is *borrowed automatic
+  optimization* — convenient, but it entangles candidates' costs (no per-candidate attribution).
+  ic-net refuses the degenerate corner, so the optimizer owns the **entire** axis with honest,
+  attributable cost. "ic-net is ~600× slower," "ic-net preserves provenance," and "memo is the
+  optimizer's degenerate corner" are **one fact** seen three ways.
+- **The axis is closed under self-application.** The optimizer is a disp program optimizing disp
+  programs; applying it to *itself* with the interpreter fixed is the **Futamura projection** —
+  and `GOALS.md`'s "have the optimizer produce an ideal version of itself" is exactly that. JIT
+  and self-improvement are the same operation at different points.
+- **It re-files two VERIFIED_OPTIMIZER open questions as the *online corner*.** Its §2 cost model
+  ("measure on representative inputs") is the AOT *guess* at the input distribution; the honest
+  version measures the **runtime** distribution — the cost model *is* the online signal
+  (`GOALS.md`'s time/memory measurement primitive). Its §9.7 "refinement vs equivalence" is where
+  data-conditioned rewrites live: a rewrite valid only for *observed* data is a **refinement**,
+  not an unconditional `~`.
+
+Honest scope: in a *pure* calculus the memo **structure** (table-threading / self-memoizing code)
+is AOT-insertable as an ordinary verified rewrite, so the genuinely-online part is the **decision**
+(whether/where to specialize, informed by profile), not the mechanism. The formal tool for "code
+as a later stage" is the modal `□`=code staging in `research/effects-and-coeffects.typ`; the
+elegance is the unification, the engineering is staged decisions over the one `φ`-machinery.
+
 ## The stack (read top-to-bottom)
 
 | # | Doc | Layer | One-line takeaway |
