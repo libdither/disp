@@ -546,6 +546,7 @@ codebase; the *substrate* and *search* tracks run alongside.
   over the runtime's canonical ids; a Tier-1 (tested) rule set; extract by *measured* cost via the
   Session ABI; validate output by re-running the program's tests + `param_apply`. Translation
   validation — sound w.r.t. tests and types, not yet `~`. Proves the pipeline + cost model.
+  *Concrete build plan: `OPTIMIZER_DESIGN.md`* (the language decision is TypeScript; rationale there).
 - *M1 — certificate checker + rule book (in-language).* `lib/opt/{rulebook,checker}.disp` (§7);
   rewrites carry certs the kernel validates. Soundness rests on rule-book soundness (Tier-0/1) +
   checker correctness + Howe congruence (assumed).
