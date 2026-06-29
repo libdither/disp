@@ -201,10 +201,11 @@ eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> E
 unit_val : Unit := t t t
 Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
-False : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness inert_respond)
-Not : Type -> Type := {P} -> Pi P ({_} -> False)
-
+// String = ⊤ conceptually (= the nullary telescope), but kept lean: the trivial `Ok TT` recognizer
+// avoids the telescope walker's per-check reduction cost (which inflates the suite's memo footprint).
 String : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
+False : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness inert_respond)  // ⊥ (= the empty sum), kept lean
+Not : Type -> Type := {P} -> Pi P ({_} -> False)
 
 // refl: the canonical proof VALUE `t` (proofs erase to one value; eq_body checks a candidate
 // IS it). Bare — typing it `{A}->{x:A}->Eq A x x` forces a function vs. this value idiom.
@@ -408,8 +409,8 @@ let check_fields = fix ({self, fields, cases} ->
 // recognition-form `param_apply (case-tele) cases`, coh_gate_proto.test).
 coh_check := {params} -> {T, motive, cases} -> check_fields (dct_go params (cells_of T) T motive) cases
 
-Coproduct : Tree -> Type := {variants}  -> Coproduct_resp_p t (gated_inductive_respond (coh_check t)) variants
 Coproduct_p := {params, variants}       -> Coproduct_resp_p params (gated_inductive_respond (coh_check params)) variants
+Coproduct : Tree -> Type := Coproduct_p t   // the common case: gated, no params
 
 // (`Mu`/`Mu_resp` RETIRED (Path B): recursion is a `RecUnder F` cell, the self-aware sum ties its own
 // knot via make_rec_recognizer (rs=self); mutual recursion is `Coproduct_ctx` + `RecAt i`.)
@@ -601,6 +602,9 @@ Coproduct_of := {decl} -> Coproduct (variants_of decl (pair_fst (type_meta decl)
 // The kernel's own structural types (§11.2 / §12.6), built from the library formers above
 // so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
 // Tree: the permissive "any tree" type (recognizer = Ok TT), the de-facto top type.
+// Tree = ⊤ conceptually (= the nullary telescope `Telescope t`), but kept as the lean direct
+// recognizer: Tree is referenced pervasively (every `: Tree`, MetaShape), so the bigger telescope
+// tree inflates the interned-node/memo footprint enough to tip the suite's cumulative-memo OOM.
 Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
 Frame : Type := Tree
