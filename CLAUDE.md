@@ -83,6 +83,7 @@ Three issues affect kernel-level code involving recursion or multi-line conditio
 
 ## Operating notes
 
+- **Git workflow — work on `main` directly.** Do all work on `main` and push to `origin/main`; do NOT create feature/topic branches (or branch "to be safe") unless the user explicitly asks. This overrides the default "if on the default branch, branch first" caution for this repo. (Isolated agent worktrees for parallel subagents are a separate tooling concern and remain fine.)
 - Type checking is raw `apply(T, v) = TT`. Types are wait-based raw functions.
 - `is_neutral` is an O(1) signature check (`pair_fst v` against `hyp_sig`); `is_hyp_fork` adds the fork-shape guard where partial wait-forms could share the bare signature.
 - Prefer editing existing files over creating new ones.
