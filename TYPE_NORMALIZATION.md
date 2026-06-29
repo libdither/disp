@@ -132,7 +132,7 @@ normal form is fully canonical bottom-up.
 
 The first column is the **free commutative monoid / row** normal form: associativity + commutativity
 + unit is confluent and terminating (AC-rewriting with a canonical sort), so `tree_eq` decides it.
-The second column is the **decidability frontier** — the same line `research/EQUALITY_FOR_VERIFIED_OPTIMIZATION.md`
+The second column is the **decidability frontier** — the same line `OPTIMIZER.typ`
 draws (structural laws are free; the rest needs the licensing relation / transport). It stays
 *intensional* (per-spelling, with explicit transport), by design (disp is set-level).
 
@@ -226,7 +226,7 @@ Concrete checklist, smallest-to-largest:
   `&`-fragment to its unique form; the place it *halts* (the positive `Coproduct` phase, and the `→`
   boundary) is the polarity wall.
 - **The decidability frontier.** Structural = free (normalize); deep = proof (transport). This is the
-  set-level-intensional + OTT/licensing stance of `research/EQUALITY_FOR_VERIFIED_OPTIMIZATION.md`.
+  set-level-intensional + OTT/licensing stance of `OPTIMIZER.typ`.
 - **The deterministic-elaboration discipline.** Normalization *strengthens* it from "same spelling →
   same tree" to "same *semantics* → same tree" on the structural fragment — additive, no conflict.
 
@@ -349,4 +349,4 @@ invariance tests (§6g) rather than editing these in place.
   `recType` desugar to extend (6c/6e).
 - Companions: `NEGATIVE_TYPES.md` (telescope shape, §4b `qid`/Intersection, the polarity boundary),
   `STRICTTYPE.md` (the metacircle — `StrictType` is itself `And(recognize-face, meta-face)`),
-  `research/EQUALITY_FOR_VERIFIED_OPTIMIZATION.md` (the decidability frontier / transport).
+  `OPTIMIZER.typ` (the decidability frontier / transport).

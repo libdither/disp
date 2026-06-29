@@ -97,4 +97,4 @@ rust-ic-net is the literal materialization.
 | the calculus spec | `research/interaction-combinator/tc-net.typ` |
 | the materialized net (strategy 2) design | `research/interaction-combinator/RUST_IC_NET_DESIGN.md` |
 | a native backend's internals | its crate `crate/src/lib.rs` module-map doc-comment |
-| why this exists (the optimizer it feeds) | [`research/OPTIMIZER.md`](research/OPTIMIZER.md) |
+| why this exists (the optimizer it feeds) | [`OPTIMIZER.typ`](OPTIMIZER.typ) |

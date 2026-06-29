@@ -8,7 +8,7 @@ is a genuine **parked agent** — the structure required to distribute reduction
 threads, which the hash-consed collapse structurally cannot give.
 
 > Calculus spec: [`tc-net.typ`](tc-net.typ) (authoritative for agents + rules).
-> Consumer: [`DISP_BACKPROP.typ`](DISP_BACKPROP.typ) (the optimizer this exists for).
+> Consumer: [`OPTIMIZER.typ`](../../OPTIMIZER.typ) (the optimizer this exists for).
 > This doc synthesizes a 5-track deep-dive (HVM2, materialization, scheduler/GC,
 > prior art, host integration). The CPU engine has since been **built through M2d**
 > (see §10 for the landed milestones); read this doc for rationale, the crate for truth.
@@ -20,7 +20,7 @@ threads, which the hash-consed collapse structurally cannot give.
 - Its value is twofold and tied to the optimizer: **(a) parallel throughput** (Theorem 2),
   and **(b) provenance** — abandoning hash-consing is a *prerequisite* for the
   reverse-mode optimizer, because hash-consing merges equal-by-evaluation terms and
-  destroys per-candidate blame attribution (DISP_BACKPROP Open-Q 7).
+  destroys per-candidate blame attribution (OPTIMIZER.typ §3).
 - It owes only the **batch-fold differential** vs `rust-eager` + the optimizer surface —
   not full `lib/tests` elaboration conformance (that's `rust-eager`'s gate, decision 7).
 
@@ -282,7 +282,7 @@ into multiple positions (forces `δ`).
 
 ## 9. Optimizer interface — three tiers beyond Session
 
-DISP_BACKPROP's pattern is "build one net with many superposed/independent subcomputations,
+The optimizer's pattern (OPTIMIZER.typ §8) is "build one net with many superposed/independent subcomputations,
 reduce all at once with maximal parallelism, read back a structured result." Three tiers on
 the same rayon-drained bag, each with its own validation oracle:
 
@@ -290,11 +290,11 @@ the same rayon-drained bag, each with its own validation oracle:
    agents*. Validatable vs rust-eager **immediately** (run each job sequentially, compare).
    Ships first; already exercises the parallel substrate.
 2. **`sup(label,a,b)` / `collapse(root) -> SupTree`** — superposition search (adds the
-   `sup_λ` agent; DISP_BACKPROP §4). `n^k` candidate leaves *shared* in one net (Theorem 6).
+   `sup_λ` agent; OPTIMIZER.typ §8). `n^k` candidate leaves *shared* in one net (Theorem 6).
    Oracle = the Step-B enumerator (`collapse(SUP) == {candidates Step B accepts}`).
    Soundness obligation: `sup_λ` must be neutral/opaque to triage (Conjectures 1/2).
 3. **`reduceWithWitness(root,labels) -> {nf, conflicts}`** — reverse-mode / provenance
-   (DISP_BACKPROP §5–6). *This is why hash-consing is abandoned* (Open-Q 7: distinct-but-equal
+   (OPTIMIZER.typ §8). *This is why hash-consing is abandoned* (OPTIMIZER.typ §3: distinct-but-equal
    subterms must stay distinct to attribute blame).
 
 ## 10. Build sequencing & gates
@@ -492,7 +492,7 @@ named lambada gate). Ordered by how much they shape the path.
 
 6. **`sup_λ` (optimizer tier 2) is the research-risky frontier.** It requires triage to
    *distribute over superposition* (a `sup_λ(a,b)` meeting a `T₁`/`T₂` must split), which
-   is unproven (DISP_BACKPROP Conjectures 1/2) and is exactly where HVM's own superposition
+   is unproven (OPTIMIZER.typ §8/§12) and is exactly where HVM's own superposition
    carries soundness caveats. Tier 1 (`foldMany`, pure tree calculus) is safe and
    validatable vs rust-eager *now*; gate tiers 2–3 behind that conjecture.
 
@@ -518,5 +518,5 @@ Atkey *QTT* + McBride *I Got Plenty o' Nuttin'* (quantitative types), Petricek�
 *coeffects*; the parallel optimal-reduction systems that hit the work/span wall — Asperti
 **BOHM**, Pedicini–Quaglia **PELCR**, **Lambdascope**; Arvind–Nikhil *Id/pH* (lenient
 dataflow); Blelloch–Greiner (work-span cost semantics). Internal: `tc-net.typ`,
-`DISP_BACKPROP.typ`, `research/effects-and-coeffects.typ`,
+`OPTIMIZER.typ`, `research/effects-and-coeffects.typ`,
 `research/MODAL_TYPES_INVESTIGATION.md`, `src/eval/types.ts`, the `rust-eager` crate + seam.
