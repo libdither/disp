@@ -207,8 +207,20 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
   check-based responds). **Remaining for the actual StrictType cell:** respond-KIND dispatch — only
   gated-inductive responds get `GoodRespond`-checked; non-inductive formers (Pi/Record/Eq/…) have
   inert/J/H-rule responds that need their own (cheaper) specs. So the *mechanism* is unblocked; the
-  *wiring* is a dispatch design (which respond-kinds get which behavioral spec). *Doc: `STRICTTYPE.md §7`,
-  `goodrespond.test`.*
+  *wiring* is a dispatch design (which respond-kinds get which behavioral spec). **Blocker found
+  (2026-06-29):** wiring the GoodRespond check into StrictType's walk is a *nested* `param_walker` that
+  ABORTS for RECURSIVE inductives — the outer `w_fork` triage-on-neutral fires on the inner walk's hyps
+  (non-recursive `Bool` checks fine; `Nat` `Err`s). **Instrumented trace (2026-06-29) — mechanical, NOT
+  fundamental:** `apply_policed` nested = `Ok` (§7A handles it; not the culprit); the abort is a `w_stem`
+  **stem-forge** whose primary cause is GoodRespond's **raw `make_hyp`** (`gr_M`/`gr_s`) — constructing
+  `t hyp_sig …` under the outer walker's reduction looks like forging a hyp; **`bind_hyp` avoids it via
+  its carve-out** (why nested `Pi` composes). **Universe levels are NOT the wall** (prototyped 6/6 — the
+  impredicative mint `ih:(M p)` works nested; R6's trap is mechanical, orthogonal to `Type:Type`
+  consistency). **Sealing NOT needed** (earlier "needs Option B relativity" SUPERSEDED). Known fix =
+  route `M`/`s` through `bind_hyp`; RESIDUAL = a still-unpinned `unreachable` in the recursive case (not
+  the impredicative mint), needs non-mutating instrumentation. Authoritative: memory
+  `project_telescope_meet_unification` FOLLOW-UP 3. *Doc: `SEALING.md` (Option-A forgeability only),
+  `STRICTTYPE.md §7`, `goodrespond.test`.*
 
 **Strategy verdict:** prefer **Level 1 (derive)** for the kernel's own formers — correct by
 construction, sidesteps R5's trust question. `GoodRespond` (Level 2) **landed as the spec + boundary
