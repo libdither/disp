@@ -206,21 +206,21 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
   rejection is a non-local triage-abort, genuinely not a cell — but FUSION makes it redundant for
   check-based responds). **Remaining for the actual StrictType cell:** respond-KIND dispatch — only
   gated-inductive responds get `GoodRespond`-checked; non-inductive formers (Pi/Record/Eq/…) have
-  inert/J/H-rule responds that need their own (cheaper) specs. So the *mechanism* is unblocked; the
-  *wiring* is a dispatch design (which respond-kinds get which behavioral spec). **Blocker found
-  (2026-06-29):** wiring the GoodRespond check into StrictType's walk is a *nested* `param_walker` that
-  ABORTS for RECURSIVE inductives — the outer `w_fork` triage-on-neutral fires on the inner walk's hyps
-  (non-recursive `Bool` checks fine; `Nat` `Err`s). **Instrumented trace (2026-06-29) — mechanical, NOT
-  fundamental:** `apply_policed` nested = `Ok` (§7A handles it; not the culprit); the abort is a `w_stem`
-  **stem-forge** whose primary cause is GoodRespond's **raw `make_hyp`** (`gr_M`/`gr_s`) — constructing
-  `t hyp_sig …` under the outer walker's reduction looks like forging a hyp; **`bind_hyp` avoids it via
-  its carve-out** (why nested `Pi` composes). **Universe levels are NOT the wall** (prototyped 6/6 — the
-  impredicative mint `ih:(M p)` works nested; R6's trap is mechanical, orthogonal to `Type:Type`
-  consistency). **Sealing NOT needed** (earlier "needs Option B relativity" SUPERSEDED). Known fix =
-  route `M`/`s` through `bind_hyp`; RESIDUAL = a still-unpinned `unreachable` in the recursive case (not
-  the impredicative mint), needs non-mutating instrumentation. Authoritative: memory
-  `project_telescope_meet_unification` FOLLOW-UP 3. *Doc: `SEALING.md` (Option-A forgeability only),
-  `STRICTTYPE.md §7`, `goodrespond.test`.*
+  inert/J/H-rule responds that need their own (cheaper) specs. **The right wiring is the MERGE
+  (2026-06-29):** inline GoodRespond's cells as a dependent TAIL of StrictType's own telescope (deriving
+  `R = resp_of v` in the probe) — no sub-`param_apply`, no nested walker. Validated top-level:
+  `param_apply MergedST Nat = Ok TT` (recursive, ~1.4M steps, cross-validated 3 ways), discriminates bad
+  responds, self-types (`lib/tests/r6_merge_proto.test.disp`). **The real blocker is COST, not a bug
+  (2026-06-29, definitively diagnosed):** the only check-site is module auto-verify (`verify mod`), which
+  checks `T : Type` *nested* under its walker — and running the merged check there is OUT-OF-MEMORY on
+  EVERY backend (rust-eager OOM 3.4GiB → raw `unreachable` via `handle_alloc_error`; eager-TS 8GiB heap;
+  naive ~4e9-node "Invalid array length"). The outer walker re-materializes the whole deep GoodRespond
+  computation with no sharing. So earlier "stem-forge / route M/s through bind_hyp / nested-walker abort"
+  framings are SUPERSEDED — there is NO backend bug and NO sealing needed. **Path:** run the self-check at
+  **definition-time, top-level** (cheap, where it works) — NOT inline in the universe recognizer (which
+  forces every nested `T:Type` to pay the blowup) — OR make GoodRespond dramatically cheaper. Authoritative:
+  memory `project_telescope_meet_unification` FOLLOW-UP 4-6. *Doc: `STRICTTYPE.md §7`, `goodrespond.test`,
+  `r6_merge_proto.test`.*
 
 **Strategy verdict:** prefer **Level 1 (derive)** for the kernel's own formers — correct by
 construction, sidesteps R5's trust question. `GoodRespond` (Level 2) **landed as the spec + boundary

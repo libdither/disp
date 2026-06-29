@@ -1,15 +1,11 @@
-// Kernel entry point. `open use "../kernel/prelude.disp"` brings the full surface:
-// substrate combinators (../prelude.disp) + the kernel, split across three fragments —
-// cut.disp (the §2.6 value cut), engine.disp (the walker + Σ-ops), types.disp (formers).
+// Kernel entry point: `open use "../kernel/prelude.disp"` brings substrate combinators
+// (../prelude.disp) + the kernel's 3 fragments — cut (value cut) / engine (walker + Σ-ops) / types (formers).
 
 open use "../prelude.disp"
 
-// Deferred-typecheck bootstrap. `use raw` loads each fragment's VALUES without processing
-// annotations — a complete unchecked snapshot — so forward/mutual annotation refs (a
-// fragment's `: T` mentions types defined in a later fragment) resolve. The checked
-// re-imports then elaborate annotations against that snapshot and auto-verify each
-// fragment's typed exports. Raw-load ALL before checking ANY, so every fragment's
-// forward refs see the full raw surface; the `open` conflict-check enforces value-identity.
+// Deferred-typecheck bootstrap: `use raw` loads each fragment's VALUES without processing
+// annotations, so forward/mutual annotation refs resolve. Raw-load ALL before checking ANY
+// (so every fragment's forward refs see the full raw surface); checked re-imports then auto-verify.
 open use raw "cut.disp"
 open use raw "engine.disp"
 open use raw "types.disp"

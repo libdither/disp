@@ -33,7 +33,7 @@ is_some : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) some_tag
 // well-typed stuck form), unlike a raw `triage`/`make_hyp` which the walker bars.
 option_rec := {motive, on_none, on_some, opt} ->
   select_lazy
-    ({_} -> opt { motive := motive; cases := mk_record [some_tag, none_tag] [list_const on_some, list_const ({_} -> on_none)] }) // tag-keyed, field-readable cases (derive_gate reads `field cases tag`)
+    ({_} -> opt { motive := motive; cases := mk_record [some_tag, none_tag] [list_const on_some, list_const ({_} -> on_none)] }) // tag-keyed, field-readable cases (coh_check reads `field cases tag`)
     ({_} -> mk_record [some_tag, none_tag] [on_some, {_} -> on_none] opt)
     (is_neutral opt)
 

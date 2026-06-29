@@ -1,19 +1,9 @@
-// GoodRespond — validates the LANDED kernel exports (lib/kernel/types.disp): verify_good / good_resp /
-// good_resp_reflect / GoodRespond. Does a respond R actually GATE correctly for inductive T? (the
-// behavioral / R4-R6 self-typing of the respond face). `GoodRespond T` is a TELESCOPE walked by `at`:
-// each obligation is a `probe` cell — "apply R to a frame, check result ≡ Singleton(outcome)" (the
-// collapse CONV x = MEM (Singleton x)). So verify_good = `param_apply (GoodRespond T) R` is ONE walk
-// that COMPOSES under the walker (no nested-check boundary limitation — the R6-unblocking result).
-//
-// THREE soundness dimensions, each catching a distinct class of bad respond:
-//   coh       — coherent cases -> Extend (motive self)            catches over-RESTRICTIVE (R_inert)
-//   junk_i    — junk in slot i -> Extend InvalidType  (PER-CASE)  catches over-PERMISSIVE type (R_ind, lazy gate)
-//   reflect_i — a slot REFLECTS on a neutral arg -> Extend InvalidType   catches reflection-blind UNPOLICED responds
-//
-// coh + per-case junk are CELLS (probe) — walker-clean (reject via a contained SReject). Reflection is
-// the exception, kept OUT-OF-BAND (good_resp_reflect): a reflect probe rejects via a triage-on-hyp walker
-// ABORT (non-local), so it can't be a cell — but FUSION (a check-based respond polices its mints) makes
-// it redundant for the kernel's own responds anyway.
+// GoodRespond — validates verify_good / good_resp / GoodRespond (lib/kernel/types.disp): does a respond R
+// GATE correctly for inductive T? `GoodRespond T` is a TELESCOPE of `probe` cells, so verify_good =
+// `param_apply (GoodRespond T) R` is ONE walk that composes under the walker.
+// Three soundness dimensions: coh (catches over-RESTRICTIVE), per-case junk (over-PERMISSIVE), and
+// reflection — the last needs no probe: it's caught for free by FUSION (a check-based respond polices its
+// mints, so an unpoliced/reflecting respond makes verify_good Err).
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
@@ -41,7 +31,8 @@ let coh_lazy = {T, mtv, cases} -> (check (field cases (pair_fst (pair_fst (type_
 let R_lazy = gated_inductive_respond coh_lazy unit_witness
 test verify_good MyNat R_lazy = Ok FF              // a NAIVE single-slot probe would MISS this; per-case catches it
 
-// ── the REFLECTION dimension (out-of-band): catches the UNPOLICED reflection-blind gate ──
+// ── the REFLECTION dimension: caught by FUSION (no separate probe). R_unpoliced is an adversary gate
+// that is TYPE-sound yet reflection-UNSOUND (its check doesn't police mints, so it accepts `is_fork p`).
 let cells_of = {T} -> (type_meta T).recognizer_params
 let SIG_MINT = pair_fst (mint_cell t)
 let is_pih = {T} -> and (is_fork (cells_of T)) (tree_eq (pair_fst (pair_fst (cells_of T))) SIG_MINT)
@@ -50,11 +41,9 @@ let pcod = {T, h} -> (type_meta (pair_fst ((pair_snd (cells_of T)) h))).ty
 let ucheck = fix ({self, v, T} -> if (is_neutral T) then (T v) else (if (is_pih T) then (self (v (make_hyp (pdom T) t)) (pcod T (make_hyp (pdom T) t))) else (T v)))
 let ucheck_fields = fix ({self, flds, cases} -> if (is_fork flds) then (bind (ucheck (field cases (pair_fst (pair_fst flds))) (pair_snd (pair_fst flds))) ({ok} -> if ok then (self (pair_snd flds) cases) else (Ok FF))) else (Ok TT))
 let R_unpoliced = gated_inductive_respond ({T, mtv, cases} -> ucheck_fields (type_meta (derive_case_telescope T mtv)).recognizer_params cases) unit_witness
-test good_resp_reflect (resp_of MyNat) MyNat = Ok TT   // the real respond rejects reflection (check polices)
-test good_resp_reflect R_unpoliced     MyNat = Ok FF   // the unpoliced gate accepts reflection -> caught
-// reflection is INDEPENDENT of type-coherence: the unpoliced gate is TYPE-sound yet reflection-UNSOUND.
-test (R_unpoliced (make_hyp MyNat 0) { motive := ({_} -> Nat); cases := { z := "junk"; s := ({p, ih} -> ih) } }) = Extend InvalidType   // concrete type-junk: STILL rejected
-test tree_eq (R_unpoliced (make_hyp MyNat 0) { motive := ({_} -> Bool); cases := { z := TT; s := ({p, ih} -> is_fork p) } }) (Extend InvalidType) = FF   // reflection: ACCEPTED -> BAD
+test verify_good MyNat R_unpoliced = Err   // FUSION: an unpoliced/reflecting respond -> walker abort (Err) -> rejected
+test (R_unpoliced (make_hyp MyNat 0) { motive := ({_} -> Nat); cases := { z := "junk"; s := ({p, ih} -> ih) } }) = Extend InvalidType   // it IS type-sound: concrete type-junk rejected
+test tree_eq (R_unpoliced (make_hyp MyNat 0) { motive := ({_} -> Bool); cases := { z := TT; s := ({p, ih} -> is_fork p) } }) (Extend InvalidType) = FF   // ...yet reflection-UNSOUND: accepts is_fork p
 
 // ── GoodRespond T : Type (a telescope; self-types). verify_good = param_apply (GoodRespond T) R — composes under the walker. ──
 test param_apply Type (GoodRespond MyNat) = Ok TT

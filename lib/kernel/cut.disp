@@ -1,6 +1,5 @@
 // Kernel fragment: the §2.6 value-level cut + control coproducts + MetaShape builder.
-// Assembled by kernel/prelude.disp's raw-then-checked barrel; not a standalone module
-// (annotations forward-ref types in types.disp, resolved against the raw layer).
+// Assembled by prelude.disp's barrel; not standalone (annotations forward-ref types.disp via the raw layer).
 
 // Value-level cut primitives (§2.6): a value is fork(descriptor, payload); one
 // elimination (the cut) drives projection, match, and application.
@@ -11,9 +10,8 @@ list_const : Tree -> Tree := {x} -> t t x // const x y = x (K); ignores the cut 
 inj : Tree -> Tree -> Tree := {tag, pay} -> t tag pay // a coproduct value: tag + payload
 acc : Tree -> Tree := {name} -> inj name t // accessor: nullary coproduct (unit payload)
 
-// Constructor declarators: `C := injN "C"` declares an N-field coproduct
-// constructor (payload = right-nested pairs, the shape match-arm binders
-// destructure). The §2.6 cut's "data declaration" until surface syntax grows one.
+// Constructor declarators: `C := injN "C"` declares an N-field coproduct constructor (payload =
+// right-nested pairs the match-arm binders destructure). The §2.6 cut's "data declaration".
 inj0 : Tree -> Tree := {tag} -> inj tag t
 inj1 : Tree -> Tree -> Tree := {tag, a} -> inj tag a
 inj2 : Tree -> Tree -> Tree -> Tree := {tag, a, b} -> inj tag (pair a b)
@@ -40,13 +38,9 @@ annihilate_sig := checker_sig annihilate
 mk_record : Tree -> Tree -> Tree := {names, payload} -> prod (pair names payload)
 field := {r, name} -> r (acc name) // r.name resolves to this
 
-// Action + CheckerResult: control coproducts via the §2.6 cut. Eliminating a
-// neutral has exactly TWO outcomes: it stays stuck (`Extend new_type` — the
-// spine grows; reject = Extend InvalidType) or it computes (`Reduce value` —
-// bare, mirroring Extend's bare stuck; §7.5 Option A). A checker returns
-// `Ok v | Err`. `Return v = Reduce (Ok v)` is a library ALIAS for the verdict
-// case (the H-rule predicate): a verdict is just a value that happens to be a
-// CheckerResult — not a third arm.
+// Action + CheckerResult: control coproducts via the §2.6 cut. Eliminating a neutral has TWO
+// outcomes — stuck `Extend new_type` (reject = Extend InvalidType) or computes `Reduce value` (bare,
+// §7.5 Option A). Checker returns `Ok v | Err`; `Return v = Reduce (Ok v)` is a verdict ALIAS, NOT a third arm.
 Extend : Type -> Action := inj1 "Extend"
 Reduce : Tree -> Action := inj1 "Reduce"
 Ok : Tree -> Tree := inj1 "Ok"
@@ -55,12 +49,10 @@ Return : Tree -> Action := {v} -> Reduce (Ok v)
 
 bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind
 
-// lookup_field: the CHECKING-layer sibling of `field`. `field`/`proj`/`annihilate`
-// are TOTAL — they trust that a projected name is present (well-typed records always
-// are), which is what keeps the runtime cut a plain application. A recognizer is what
-// ESTABLISHES that invariant, so it looks up HONESTLY: `Ok value` if `name` is a
-// field of record `r`, else `Err`. (Without this a record MISSING `name` projects to
-// junk `t t`, which a permissive field type — Tree, String — would silently accept.)
+// lookup_field: the CHECKING-layer sibling of `field`. `field`/`proj`/`annihilate` are TOTAL (trust
+// the projected name is present — keeps the runtime cut a plain application); the recognizer ESTABLISHES
+// presence, so it looks up HONESTLY (`Ok value` / `Err`). Else a record MISSING `name` projects to junk
+// `t t` that a permissive field type (Tree/String) would silently accept.
 let lookup_field_at = fix ({self, names, payload, name} ->
   if (is_fork names)
     then (if (tree_eq (pair_fst names) name)
