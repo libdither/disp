@@ -621,7 +621,7 @@ MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, 
 // observes `v` itself, `qid_meta` observes `type_meta v`. `StrictType` RECOGNIZES via a two-qid-cell
 // telescope walked by the same `at`, and inhabits ITSELF (`StrictType : StrictType`) — the metacircular
 // fixed point. A HYBRID wait-form (its respond is the real universe H-rule `type_predicate_h_rule`).
-CheckerResult : Type := Coproduct_of { Ok := Tree; Err := Unit }
+CheckerResult : Type := < Ok : Tree, Err : Unit >
 
 // qid_meta: observe type_meta v, check it : meta.ty — but THREAD v (not the meta), so it stays separate.
 // (qid_op/qid_cell — the plain self optic — moved up to the cell-ops block; qid_meta needs MetaShape.)
@@ -652,7 +652,7 @@ Type := StrictType
 NeutralMeta : Type := { stored_type : Type, payload : Tree }
 // Action: a respond's result — stuck (`Extend new_type`, payload Type) or computes
 // (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the verdict ALIAS.
-Action : Type := Coproduct_of { Extend := Type; Reduce := Tree }
+Action : Type := < Extend : Type, Reduce : Tree >
 // RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
 RespondShape : Type := Tree -> Tree -> Frame -> Action
 
