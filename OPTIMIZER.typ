@@ -113,7 +113,7 @@ The optimizer runs on `rust-ic-net` (spec: `tc-net.typ`; design: `RUST_IC_NET_DE
 *materialized* interaction-net reducer — agents and ports are real arena nodes, active pairs sit
 in a schedulable bag — not the default hash-consed reducer `rust-eager`. The difference is one
 property: *ic-net does no automatic cross-occurrence memoization.* That looks like a 600× raw-speed
-loss (measured); it is in fact the design's foundation, for two reasons that §5 shows are one:
+loss (measured); it is in fact the design's foundation. Two consequences:
 
 - *Provenance.* Hash-consing merges equal-by-evaluation terms. The reverse-mode optimizer (§8)
   must attribute blame/credit *per candidate*; merging two candidates' shared sub-results
@@ -123,19 +123,20 @@ loss (measured); it is in fact the design's foundation, for two reasons that §5
   program's structure*, not of session-global hash-cons state. The cost you minimize is the cost
   the program actually has, attributable to the decisions that caused it.
 
-*The unification (the load-bearing claim).* "ic-net is ~600× slower," "ic-net preserves
-provenance," and "memo is the optimizer's job, not the substrate's" (§5) are *one fact seen three
-ways*: the absence of automatic memo. `rust-eager`'s hash-consing is *borrowed* optimization the
-real system must make explicit and verified.
+*The unification (the load-bearing claim).* The 600× slowdown, the preserved provenance, and the
+honest, attributable cost are *one property seen three ways* — the absence of automatic memo, which
+§5 reframes as "memo is the optimizer's job, not the substrate's." `rust-eager`'s hash-consing is
+*borrowed* optimization the real system must make explicit and verified.
 
 #note[
   *The honest cost boundary.* Interaction count is a *reasonable but space-biased proxy*, provably
   *not* wall-clock: token/GoI machines can be exponentially time-slower than an environment
   machine (Accattoli–Dal Lago, *The (In)Efficiency of Interaction*, POPL 2021). So (a) the net
   exposes *two* intrinsic readouts — interactions (a time proxy) and peak live nodes (space) —
-  giving a 2-D cost vector for "efficient among the desired axes," and (b) *modeled-hardware cost*
-  (§9) is a *separate*, coarser axis, reached through `GOALS.md`'s measurement primitive, not by
-  conflating it with interaction count.
+  giving a 2-D cost vector for "efficient among the desired axes," and (b) *faithful hardware cost*
+  is a *separate, coarser* axis — reached either by reducing a hardware *model* encoded in the
+  calculus (§9), or, for the real thing, through `GOALS.md`'s measurement primitive — never read off
+  the raw interaction count.
 ]
 
 Strong confluence (`tc-net.typ`, Theorem 2) makes the net deterministic under any schedule — so
@@ -159,10 +160,11 @@ demands *from* its context) form a graded *comonad/semiring* on the assumptions.
 - *The cost incurred is an effect.* "This run *spent* $N$ interactions" is a measurement on the
   *result* side — the net's interaction counter.
 
-These are linked by a *cost-soundness theorem*: if a term has cost-bound coeffect $≤ B$, its
-incurred cost (effect) is $≤ B$ (the Resource-Bounded Type Theory result). *That link is exactly
-the §2 guidance/soundness split:* the incurred effect is the untrusted measurement that *guides*;
-the bound coeffect is the type-level fact that makes a no-regression guarantee *sound*. The formal
+These are linked by a *cost-soundness theorem*: a term whose cost-bound coeffect is $≤ B$ has
+incurred cost (effect) $≤ B$ (the Resource-Bounded Type Theory result). *This dual has the same
+shape as §2's guidance/soundness split:* the incurred effect is the measured side that *guides*
+(untrusted); a *proven* type-level cost fact is the trusted side that makes a guarantee *sound* — an
+absolute bound here, or §6's relative improvement direction for no-regression. The formal
 bridge between a coeffect grade and an effect grade is a *graded distributive law* (Gaboardi et
 al., ICFP 2016) — a matched pair $(iota, kappa)$ whose archetype is the differential-privacy
 mechanism "sensitivity-coeffect $c$ times per-query budget $epsilon$ gives privacy-effect
@@ -210,8 +212,8 @@ no choice.* Three consequences:
   degenerate corner, so the optimizer owns the entire axis with honest, attributable cost.
 - *The axis is closed under self-application.* Applying the optimizer to itself with the
   interpreter fixed is the *Futamura projection*; `GOALS.md`'s "have the optimizer produce an ideal
-  version of itself" is exactly that. JIT and self-improvement are one operation at different
-  points.
+  version of itself" is exactly that — the *third Futamura projection*. JIT and self-improvement are
+  one operation at different points.
 - *It re-files two soundness questions as the online corner.* The AOT cost model (§4) measures on a
   *guessed* input distribution; the honest version measures the *runtime* distribution (the cost
   model *is* the online signal — `GOALS.md`'s measurement primitive). And a data-conditioned rewrite
@@ -352,6 +354,27 @@ incompleteness is harmless (missed rules = missed speedups, never unsoundness).
 
 == The certificate and the in-language checker
 
+The pipeline is an untrusted producer feeding a trusted gate:
+
+```
+   e : T
+     │
+     ▼
+   OPTIMIZER  (host · UNTRUSTED — may be neural, buggy, wrong)
+     · e-graph over tree-ids · apply rule library · saturate · extract cheapest
+     · cost = measured session stats           (guidance only)
+     │
+     ▼  emits (e', certificate)
+   CHECKER  (TRUSTED · ~30 lines · in-language)
+     1. check_cert      e ⤳* e'                (each cert step matches a rule)
+     2. re-type-check   param_apply T e' = Ok TT   (belt & suspenders)
+     accept ⇒ φ emits the bare e'              (zero runtime residue)
+```
+
+A bad rewrite — from any bug in the optimizer, the e-matcher, or the neural policy — either
+fails `check_cert` or fails the independent re-type-check. Nothing the optimizer does can
+produce an unsound or ill-typed result; the optimizer is therefore *fully outside* the trusted base.
+
 An egg-style flat explanation: navigate to a redex, apply a rule instance, repeat.
 
 ```disp
@@ -367,7 +390,8 @@ verify_rewrite := {book, e, e', cert} ->
   match (check_cert book e cert) { Ok t => tree_eq t e'; Err => FF }
 ```
 
-It is decidable, total under budget, ~30 lines, and — being a disp program — itself
+(`at`/`replace` walk and splice a `Path` over the tree by folding over `Dir`; `apply_all`
+instantiates the rule program on its substitution list.) It is decidable, total under budget, ~30 lines, and — being a disp program — itself
 type-checkable, satisfying the metacircular discipline. The acceptance combinator `φ` (an
 elaborator construct, wired like `Pi`/`tree_eq`): *verify the certificate*, *re-type-check the
 result independently* (`param_apply T e' == Ok TT` — belt and suspenders), *emit the bare `e'`*
@@ -388,7 +412,7 @@ which runs the same two checks.
 
 Hole-filling synthesis *is* reverse-mode evaluation — the same shape as backpropagation and CDCL,
 parameterized only by the carrier and the feedback semiring (the categorical development is in
-git: `DISP_BACKPROP.typ`). Disp already has the *forward* DAG (type propagation along application
+git history — the former `DISP_BACKPROP.typ`). Disp already has the *forward* DAG (type propagation along application
 spines); synthesis adds the *backward* slot: a functor carrying blame/credit from a goal failure
 back to the responsible hole, accumulating *learned conflict clauses* (NeoGen-style).
 
@@ -441,7 +465,9 @@ through-line: *a program, an effect, and a machine model are the same kind of tr
 handling, and simulating-hardware are the same net interaction — a pure consumer agent reducing an
 inert producer that reifies "program as data."* This is the Reynolds/Danvy chain (monadic
 evaluator → CPS + defunctionalize → abstract machine → interaction rules) made structural;
-`tc-net.typ` already states its premise ("the same constructors represent code and data").
+`tc-net.typ` already states its premise ("the same constructors represent code and data"). Three
+unifications carry this frontier: *one shape* (program = effect = machine, here), *one ledger* (cost
+as a graded coeffect, §4), and *one derivative* (search as differentiation, §8).
 
 == Effects are values, which makes effectful programs optimizable
 
@@ -520,6 +546,8 @@ corner (§5) is future, gated on the measurement primitive and the refinement re
 
 = Open questions
 
+The genuinely unresolved core, ordered roughly by how load-bearing.
+
 #openq[
   *Label-coordinated duplication (the load-bearing one).* Conjecture 2 fails for non-affine
   recognizers (§8). Can a recognizer's internal $delta$ be made to carry the hole's label so it
@@ -550,7 +578,7 @@ corner (§5) is future, gated on the measurement primitive and the refinement re
 #openq[
   *The differential-category comonoid laws.* The §8 reading ($delta$ = bang, backward = $partial$)
   needs $delta$ to satisfy the comonoid laws a differential category requires. Does the walker's
-  parametricity discipline force them (DISP_BACKPROP Open-Q 6), or is there a counterexample?
+  parametricity discipline force them (the former DISP_BACKPROP's Open-Q 6, in git), or a counterexample?
 ]
 #openq[
   *Refinement vs equivalence vs improvement.* Some transforms are not equivalences: dead-code
