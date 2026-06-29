@@ -493,14 +493,27 @@ from "effects are inspectable data":
   because the walker treats `sup` as neutral *and* effects are not dispatch targets (both guards).
 ]
 
-== A hardware model is a tree program; its interaction count is its cost
+== A hardware model is a tree program; its cost is its output
 
-`GOALS.md` wants a deterministic hardware/assembly model encoded *in the calculus*. Such a model is
-just another pure consumer (above) over an instruction-stream producer; running a candidate through
-it = reducing the model, whose interaction count is the *modeled* cost — a graded refinement of the
-intrinsic interaction count (§4). Codegen is then the §5 axis's bottom corner: a `φ`-rewrite
-swapping a high-level term for an assembly-model term proven equivalent via the model's semantics;
-AOT-codegen and JIT-codegen differ only in how much input is fixed.
+`GOALS.md` wants a deterministic hardware/assembly model encoded *in the calculus* — an ordinary
+tree program `run_model : Asm → Input → (Output, Cost)`. Keep three levels distinct: the *host
+evaluator* (`rust-eager`/`rust-ic-net`, the only thing "built in" — it reduces every tree), the
+*model* (a *pure* library function that simulates the CPU), and the *assembly* (a tree of type `Asm`
+the model interprets). Then:
+
+- *Running assembly is pure reduction* — "run `asm` on `x`" = reduce `run_model(asm, x)` on the host
+  evaluator; the simulation *is* the reduction. Not an effect, and not an evaluator feature — the
+  model is library code the generic engine reduces like any other tree.
+- *Cost is the model's explicit output* — the modeled cycle count `run_model` *computes*, *not* the
+  §4 intrinsic interaction count, which measures the cost of *simulating*, not what the simulated
+  hardware costs.
+- *Correctness is a type* — `Refines spec asm := ∀ x. fst (run_model asm x) ≡ spec x`, checked
+  symbolically (reduce the model, compare), never by running on silicon. This is *why* the model
+  must exist: real hardware is opaque (measurable, never provable); a model is type-checkable.
+
+Codegen is then the §5 axis's bottom corner: a `φ`-rewrite swapping a high-level term for an
+assembly-model term proven equivalent via the model's semantics; AOT- and JIT-codegen differ only in
+how much input is fixed.
 
 *The payoff, and the loop closing.* Because ic-net keeps candidates distinct, provenance attributes
 *modeled-hardware cost per decision* — "this design choice cost $N$ cycles on the encoded CPU." That
@@ -509,9 +522,19 @@ no-memo design. The 600× slowness, the provenance, the cost-as-coeffect ledger,
 hardware-cost gradient are one property.
 
 #note[
-  *Do not ISA-simulate per candidate.* Full instruction-level simulation inside the inner search
-  loop is too slow. Use a *graded cost annotation validated against a reference machine*; reserve
-  faithful simulation for the final winner / last-mile resource exploitation (GPU occupancy, cache).
+  *Four ways to cost a candidate, and the invariant that keeps them safe.* (0) *Static grade* — the
+  §4 cost coeffect, read off by type-checking, no run at all. (1) *Intrinsic* — interaction count to
+  reduce it on the net: pure, crude. (2) *Modeled* — `run_model`'s explicit cycle output: pure and
+  *verifiable* (a provable bound), but you pay to simulate. (3) *Measured* — run it on real silicon
+  via the driver above (`GOALS.md`'s "outsource execution, get time + memory"): an *effect* — fast,
+  real, but non-deterministic and *untrusted*. The invariant: *soundness* (correctness + no-regression)
+  is always symbolic — it never runs a candidate, so it never needs an effect; only *guidance*
+  (ranking) runs candidates, and guidance is untrusted, so rung 3 is safe there. Practically: rank by
+  the cheap static grade in the inner loop; reserve simulation/measurement for finalists. The bootstrap
+  (§5) makes the *verifiable* rung fast — the optimizer compiles `run_model` itself to native, so
+  modeled cost runs at native speed; the real-silicon effect then only ground-truths the model or
+  prices what it omits. *The net never becomes effectful:* real measurement is the library driver
+  compiled to a syscall, never a net primitive.
 ]
 
 = Build order
