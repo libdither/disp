@@ -567,6 +567,21 @@ label-coordinated duplication next (gates non-affine recognizers); then the opti
 graded-knob lowering (§4) are the next substrate work. *Staging track.* AOT is M0–M5; the online
 corner (§5) is future, gated on the measurement primitive and the refinement relation (§11).
 
+#note[
+  *The bootstrap (no chicken-and-egg).* The first optimizer (M0) is untrusted *host* code — already
+  native, not a tree program — so nothing slow optimizes itself to get started (the self-hosting-
+  compiler seed). The optimizer-as-a-*tree-program* appears only later, for two reasons that are *not*
+  speed: so it can *read and improve itself* (it operates on trees, so to optimize itself it must
+  *be* one), and so the stack is verifiable. That tree form is never run interpreted in the loop —
+  the *current native* optimizer compiles the *next* source to native (`O_native(O') = O_native'`), a
+  sequence of build-time compiles; worst case without the host seed is a *single* slow self-compile
+  (pay once, native forever). Trust is laundered through the *checker*, not the seed: the bootstrap
+  producer may be an arbitrary hack, yet every output is certificate-checked, so an untrusted fast
+  seed yields a *verified* fast optimizer. The optimizer thus lives in two corresponding forms — a
+  tree-program *spec* (verifiable, self-readable, what is improved) and a native *implementation*
+  (fast, what runs) — exactly a self-hosting compiler, plus type-checking and cost.
+]
+
 = Open questions
 
 The genuinely unresolved core, ordered roughly by how load-bearing.
