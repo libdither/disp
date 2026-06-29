@@ -458,6 +458,22 @@ reduction — useful only when it is reduction-materialized (chained uses) — a
 world per pass; it is deterministic/confluent but not needed for soundness. The genuinely open
 piece is *label-coordinated duplication* for the non-affine case (§11).
 
+#note[
+  *E-graph vs. superposition — opposite ends of the merge↔distinct axis (§3), complementary not
+  redundant.* Both pack many terms into one structure, and the structural map is real: an e-class is
+  a "sup" of forms, and e-graph *congruence* (`a ≡ b ⟹ f(a) ≡ f(b)`) is exactly sup *distribution*
+  (`f(sup(a,b)) → sup(f(a),f(b))`). But they sit at opposite poles. An *e-graph MERGES* semantic
+  equivalents (union-find over e-classes, on the *hash-consed* backend) — maximal sharing is its
+  power; a *superposition KEEPS candidates distinct* (no merge, on ic-net) — provenance is *its*.
+  So an e-graph's three efficiency sources — *id-sharing*, *union-find merge*, and *cycles*
+  (recursive/infinite equivalence classes held finitely) — are exactly what ic-net drops; you would
+  *not* build an e-graph via sup over ic-net (it loses all three and re-materializes everything).
+  And their *construction* differs: an e-graph grows by *applying rewrite rules* (equivalences); a
+  sup is built by *enumerating candidates at holes* (choices). Different tools for different phases:
+  the e-graph saturates *rewrites* (M0, rust-eager) to find the cheapest *equivalent*; superposition
+  searches a *candidate space* with blame (ic-net) for reverse-mode synthesis.
+]
+
 = The low-level frontier: effects, machines, and the gradient
 
 The same machinery extends *downward* to effectful programs and a modeled hardware target. The
