@@ -582,6 +582,23 @@ corner (§5) is future, gated on the measurement primitive and the refinement re
   (fast, what runs) — exactly a self-hosting compiler, plus type-checking and cost.
 ]
 
+#note[
+  *Incrementally, not monolithically — and it automates the project's core discipline.* Self-improvement
+  is not one whole-optimizer recompile; it is a chain of *verified fragment swaps*. Each replaces one
+  definition `f` with a proven-equivalent cheaper `f'` — an ordinary `φ`-rewrite (§7) pointed at the
+  optimizer's *own* body, gated by the same checker, and *targeted* by self-profiling (the net's
+  per-candidate cost attribution, §3, says which fragment is hot). Two kinds: *algorithmic* (a better
+  algorithm, verified by observational equivalence, §6) and *compilation* (native codegen, verified by
+  the hardware model, §9). In a pure system this is incremental *versioning*, not in-place mutation —
+  each version is one cheaply-verified, behavior-preserving fragment better than the last, so
+  improvements compose and cost falls monotonically (to a *local* optimum; the superposition search, §8,
+  is for bigger jumps). This is disp's own discipline — "the object language is the spec; host
+  implementations are optimizations" — *automated and proven*: today a human hand-writes a fast path
+  (`tree_eq`, the elaborator's `compileExpr`) and differential-tests it; the optimizer *generates* the
+  fragment and *certifies* the equivalence. The hand-built spec/fast-path elaborator is the manual
+  rehearsal of this loop.
+]
+
 = Open questions
 
 The genuinely unresolved core, ordered roughly by how load-bearing.
