@@ -19,8 +19,30 @@ hashbrown = { version = "0.15", default-features = false }
 # FxHash: the deterministic, dependency-light hasher for the forced/memo maps + the
 # intern table's node hashing (replaces the hand-rolled FxHasher; same algorithm family).
 rustc-hash = "2"
+# napi: the in-process NATIVE Session addon (feature `napi`, native target only — see
+# src/native.rs / build-native.sh). Optional + off by default so the wasm artifact and a
+# toolchain-free `npm test` never pull it; the wasm Session backend is unaffected.
+napi = { version = "2", optional = true, features = ["napi8"] }
+napi-derive = { version = "2", optional = true }
+
+[build-dependencies]
+# Always compiled (cheap host build code); `setup()` runs ONLY under the `napi` feature
+# (see build.rs), so the wasm/CLI builds are untouched.
+napi-build = "2"
+
+[features]
+# Build the native N-API addon: `cargo build --profile napi --features napi --lib`
+# (see build-native.sh). Never enabled for the wasm artifact.
+napi = ["dep:napi", "dep:napi-derive"]
 
 [profile.release]
 opt-level = 3
 lto = true
 panic = "abort"     # no unwinding across the wasm boundary; budget exhaustion is a sentinel return, not a panic
+
+# The native N-API addon needs unwinding — napi-rs turns a Rust panic into a thrown JS
+# Error via catch_unwind, which `panic = "abort"` would instead crash the process. The wasm
+# artifact stays on `release` (abort); the addon builds under `--profile napi`.
+[profile.napi]
+inherits = "release"
+panic = "unwind"

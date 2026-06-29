@@ -20,8 +20,11 @@ const testsDir = join(import.meta.dirname, "..", "lib", "tests")
 // Opt out with DISP_INDEPENDENT_SESSIONS=1 for an isolated arena per file (bounds
 // peak memory at one file's worth, at the cost of re-elaborating the kernel each).
 const SHARE_SESSIONS = process.env.DISP_INDEPENDENT_SESSIONS !== "1"
+// Backend override for the shared session: DISP_EVALUATOR=<name> (e.g. rust-eager-native)
+// runs the whole suite on that backend without changing the global default.
+const backendName = process.env.DISP_EVALUATOR ?? defaultBackendName
 const sharedSession = SHARE_SESSIONS
-  ? (getBackend(defaultBackendName).createSession() as unknown as Session<Tree>)
+  ? (getBackend(backendName).createSession() as unknown as Session<Tree>)
   : undefined
 
 // Recursively find all .test.disp files under lib/tests/.

@@ -22,22 +22,37 @@
 
 mod arena;
 mod codec;
+// The wasm Session C-ABI (`tc_*`, thread_local arena). wasm-only: a native `.node` is one
+// shared dylib per process, so a global arena would alias every session — the native
+// backend owns its arena per `#[napi]` object instead (see `native`).
+#[cfg(target_arch = "wasm32")]
 mod ffi;
 mod memo;
 mod reduce;
+// The in-process native N-API Session backend (host RAM, no wasm32 4 GiB ceiling; -O3 with
+// no wasm sandbox tax on the reduce loop). Native target + `napi` feature only — the wasm
+// artifact and the native CLI never build it.
+#[cfg(all(not(target_arch = "wasm32"), feature = "napi"))]
+mod native;
 #[cfg(test)]
 mod tests;
 
-use arena::{Arena, LEAF_ID};
-use std::cell::RefCell;
+use arena::Arena;
+// LEAF_ID is used only by the native bench helpers below (cfg-out on wasm).
+#[cfg(not(target_arch = "wasm32"))]
+use arena::LEAF_ID;
 
+// One `WebAssembly.Instance` = one session = one `thread_local` arena (dropped wholesale on
+// dispose). The native backend (src/native.rs) instead owns its arena per `#[napi]` object.
+#[cfg(target_arch = "wasm32")]
 thread_local! {
     /// The single per-instance session arena (one WASM instance = one session).
-    static ARENA: RefCell<Arena> = RefCell::new(Arena::new());
+    static ARENA: std::cell::RefCell<Arena> = std::cell::RefCell::new(Arena::new());
 }
 
 /// Borrow the session arena mutably for one operation — the entry point every `tc_*`
 /// export funnels through.
+#[cfg(target_arch = "wasm32")]
 #[inline]
 pub(crate) fn with<T>(f: impl FnOnce(&mut Arena) -> T) -> T {
     ARENA.with(|a| f(&mut a.borrow_mut()))
