@@ -609,13 +609,18 @@ The genuinely unresolved core, ordered roughly by how load-bearing.
   *annihilates* (correlates) rather than *commutes* (cross-products)? Annihilation alone gives the
   positional unzip, not the diagonal — so the fix is subtler than "share the label." This decides
   whether tier-2/3 superposition is sound for the recognizers that matter (relational / project-
-  twice). The `research/sup-prototype` harness is ready to test candidates.
+  twice). The `research/sup-prototype` harness is ready to test candidates. *Direction:* gate
+  superposition to affine / readback-correlatable recognizers and *enumerate* candidates for the
+  non-affine ones (correct, just slower) — that ships now; the full fix (a duplication discipline
+  yielding the diagonal for non-affine recognizers) is the open research.
 ]
 #openq[
   *The eager Improvement Theorem (M4).* Sands is call-by-name/need with a function-call metric;
   disp is eager. Pick the metric and re-derive the theorem + a context lemma + improvement induction
   for the eager strategy. Feasible (a CBV improvement theory exists, Sands 1997) but the one real
-  theory port.
+  theory port. *Direction:* fix the metric (`sRules + triageForkRules`) and re-derive the context
+  lemma + improvement induction for eager reduction; deferrable to M4 — only *asymptotic* /
+  no-regression guarantees need it.
 ]
 #openq[
   *`~_T` concretely, and is it the Type:Type consistency relation?* Define the licensing logical
@@ -623,35 +628,46 @@ The genuinely unresolved core, ordered roughly by how load-bearing.
   sound for the applicative observer class, (c) hosts the `behavioral_specs` rule library. The
   sealing-framework / step-indexed-LR conjecture (`TYPE_THEORY.typ` §11.6) suggests `~_T` and the
   Type:Type consistency argument may be *the same* logical relation — if so, soundness of the
-  optimizer and consistency of the (semantic) kernel are one proof.
+  optimizer and consistency of the (semantic) kernel are one proof. *Direction:* build it as a
+  step-indexed logical relation over the walker's observer class (the sealing recipe) — likely the
+  *same* relation as the PER model below, so prove the two together.
 ]
 #openq[
   *Howe congruence for tree calculus.* `~`/`⊵~` must be a *congruence* for step-wise rewriting to
   compose. Binder-free tree calculus makes the hard clause vanish, but the proof must be discharged
-  to put it in the trusted base.
+  to put it in the trusted base. *Direction:* run Howe's precongruence-candidate construction;
+  binder-freeness deletes its one hard case — the most tractable item here, clearable soon.
 ]
 #openq[
   *The differential-category comonoid laws.* The §8 reading ($delta$ = bang, backward = $partial$)
   needs $delta$ to satisfy the comonoid laws a differential category requires. Does the walker's
   parametricity discipline force them (the former DISP_BACKPROP's Open-Q 6, in git), or a counterexample?
+  *Direction:* write the comonoid laws and check `δ` against them — verify or refute; *low stakes*,
+  since if they fail "search = differentiation" is merely a metaphor and the optimizer is unaffected.
 ]
 #openq[
   *Refinement vs equivalence vs improvement.* Some transforms are not equivalences: dead-code
   elimination of a *diverging* unused subterm changes termination — a *refinement*, not `~`. And a
   data-conditioned (online, §5) rewrite is valid only for observed data — also a refinement.
   Catalogue which transforms need which of {cost-equivalence, strong-improvement, refinement}; the
-  architecture must carry all three.
+  architecture must carry all three. *Direction:* a taxonomy, not a proof — tabulate
+  transform-kind → relation, adopt a standard approximation preorder for the divergence-changing
+  cases, and surface the choice in the rule's `kind` field; clearable soon.
 ]
 #openq[
   *Does a sound graded distributive law exist for disp's grades?* §4 couples cost, usage, and
   staging via a matched pair $(iota, kappa)$. Such a pair is *not* guaranteed (Gaboardi et al.);
   the matched-pair equations are the concrete pass/fail test. Work them out for disp's specific
-  $("cost", "usage", "staging")$ semirings, or find the obstruction.
+  $("cost", "usage", "staging")$ semirings, or find the obstruction. *Direction:* a concrete algebra
+  check; if no sound matched pair exists, keep the grades *separate* (lower each onto the net's knobs
+  independently) — the unification is elegant, not required.
 ]
 #openq[
   *A disp realizability / PER model.* The consistency anchor. Cedille's and Nuprl's proofs do not
   transfer mechanically; the sealing / step-indexed-LR recipe is the candidate. It must be carried
   out at least informally before the optimizer is "verified" rather than "empirically sound."
+  *Direction:* the step-indexed realizability model from the sealing framework (= the `~_T` question
+  above); deferrable, since M0–M3 are empirically sound (tests + certificates) before it exists.
 ]
 #openq[
   *Heterogeneous `Eq` / `~` over stripped trees.* `φ` needs a *heterogeneous* equality (the cheap
@@ -659,16 +675,21 @@ The genuinely unresolved core, ordered roughly by how load-bearing.
   the walker are unworked. And `φ`'s zero-cost story has a hard limit: when representations have
   *genuinely different runtime structure* (unary vs binary `Nat`, list vs tree) there is no identity
   coercion — the best is an ordinary coercion that does real work. Do not oversell zero-cost.
+  *Direction:* define `HEq` over erased forms with the strip clauses, routed through `param_apply`
+  for non-leakage; where runtime structures genuinely differ, accept an ordinary (non-identity) coercion.
 ]
 #openq[
   *Modeled-hardware fidelity, and the online corner's feasibility.* How faithful must the encoded
   hardware model (§9) be before its modeled cost tracks real cost, given interaction count is only a
   space-biased proxy? And is the online corner (§5) ever worth the staged-decision machinery over
-  just emitting self-memoizing code AOT?
+  just emitting self-memoizing code AOT? *Direction:* empirical — build a model, measure its
+  divergence from real silicon and iterate fidelity; prototype profiled specialization and compare
+  it to AOT self-memoizing code. Gated on the measurement primitive + a first model.
 ]
 #openq[
   *Does the optimizer ever need black-box univalence?* Concretely: is there a target optimization
   expressible *neither* as a `~`-equation *nor* a white-box (parametric) free theorem, that *requires*
   transport along a named non-identity equivalence? If not, cubical/HOTT (§6-D) stays off the roadmap
-  permanently.
+  permanently. *Direction:* try to exhibit one such optimization; the parametricity argument predicts
+  none, which *closes* the question (cubical off permanently).
 ]
