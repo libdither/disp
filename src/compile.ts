@@ -12,7 +12,7 @@ import { type Tree, EagerSession, defaultSession } from "./eval/eager.js"
 import type { Session, EvalStats, Budget } from "./eval/types.js"
 import {
   parseItems,
-  type Expr, type RecMember,
+  type Expr, type RecMember, type Param,
 } from "./parse.js"
 
 // The evaluator session the elaborator runs on. Set per-call by parseProgram
@@ -165,7 +165,15 @@ interface ScopeEntry {
   fields?: string[]
   fieldTrees?: Tree[]
   fieldTypes?: (Tree | null)[]  // per-field types for open
+  params?: SigParam[]   // named-argument signature (leading binder params + defaults)
 }
+
+// A binding's named-argument signature: the leading run of its value-lambda's
+// (and/or type's) parameters, in declared order, each with its optional default
+// recipe. Drives reorderable / default / partial named calls — see § named-arg
+// resolution. `name` is the canonical position key; `default` (Expr | null) is
+// the omitted-arg fallback.
+type SigParam = { name: string; default: Expr | null }
 
 // Detect `{_} -> body` / `{x} -> body` thunks where the parameter is unused.
 // Returns the thunk body if `e` is a single-param binder whose param is not
@@ -274,6 +282,145 @@ function tryRewriteSelectLazy(
   return rewritten
 }
 
+// ───────────────── Named / default / reorderable arguments ──────────────────
+// A function signature is a "shopping list" of named requirements: a named call
+// `f { name := val, … }` supplies them in ANY order, omitted ones fall back to
+// their defaults, and a non-total supply yields a residual function awaiting the
+// rest (partial application). The whole feature is a pure ELABORATION-TIME rewrite
+// to the canonical positional form, so the load-bearing property is free:
+// reorderings and default-fills produce the IDENTICAL tree as `f a b` (same
+// rewritten AST → same tree, modulo the η-collapse the bracket abstractor already
+// does). No kernel/runtime representation changes — the domain telescope (Pi cells)
+// is untouched; the names live in a host-side per-binding signature.
+
+// Collect the leading run of binder parameters across nested/curried binders.
+// `{a, b} -> {c} -> body` and `{a} -> {b} -> {c} -> body` both yield [a,b,c].
+// Stops at the first non-binder body (e.g. an `if`/`fix`/application head).
+function peelBinderParams(e: Expr): Param[] {
+  const out: Param[] = []
+  let cur = e
+  while (cur.tag === "binder") { out.push(...cur.params); cur = cur.body }
+  return out
+}
+
+// Build a binding's named-argument signature from its value lambda (authoritative
+// for NAMES — bracket abstraction binds exactly those) and, secondarily, its type
+// annotation (a `{x:A} -> {y:B := d} -> R` Pi-binder, for doc-style defaults). A
+// value param's own `:= d` wins; otherwise the type param at the same position
+// supplies the default. Anonymous params (`_`) get a synthetic, un-supplyable name
+// so partial application past them still works structurally. Returns undefined when
+// the value isn't a leading-lambda (e.g. `fix (…)`), i.e. no addressable params.
+function extractSignature(valueExpr: Expr, typeExpr: Expr | null | undefined): SigParam[] | undefined {
+  const vparams = peelBinderParams(valueExpr)
+  if (vparams.length === 0) return undefined
+  const tparams = typeExpr ? peelBinderParams(typeExpr) : []
+  const sig: SigParam[] = []
+  for (let i = 0; i < vparams.length; i++) {
+    const vp = vparams[i]
+    const name = vp.name ?? `__arg${i}`
+    const tdef = i < tparams.length ? (tparams[i].default ?? null) : null
+    sig.push({ name, default: vp.default ?? tdef })
+  }
+  return sig.length > 0 ? sig : undefined
+}
+
+// Simultaneous capture-avoiding substitution over the surface AST. Used to fill a
+// default recipe that references PRIOR parameters (`b := double a`) with the
+// already-resolved argument for each prior. Binders / match arms / recValue
+// members that rebind a name shadow it (conservative: a shadowed name is simply
+// not substituted — safe for the closed default recipes this serves).
+function substExpr(e: Expr, map: Map<string, Expr>): Expr {
+  if (map.size === 0) return e
+  const without = (names: (string | null)[]): Map<string, Expr> => {
+    const live = names.filter((n): n is string => n !== null && map.has(n))
+    if (live.length === 0) return map
+    const m = new Map(map); for (const n of live) m.delete(n); return m
+  }
+  switch (e.tag) {
+    case "leaf": case "num": case "str": case "hole": case "use": return e
+    case "var": return map.get(e.name) ?? e
+    case "app": return { tag: "app", f: substExpr(e.f, map), x: substExpr(e.x, map) }
+    case "ann": return { tag: "ann", expr: substExpr(e.expr, map), type: substExpr(e.type, map) }
+    case "proj": return { tag: "proj", target: substExpr(e.target, map), field: e.field }
+    case "if": return { tag: "if", cond: substExpr(e.cond, map), thenBody: substExpr(e.thenBody, map), elseBody: substExpr(e.elseBody, map) }
+    case "binder": {
+      const inner = without(e.params.map(p => p.name))
+      return { tag: "binder",
+        params: e.params.map(p => ({ name: p.name, type: p.type ? substExpr(p.type, inner) : null,
+          default: p.default ? substExpr(p.default, inner) : p.default })),
+        body: substExpr(e.body, inner) }
+    }
+    case "recType":
+      return { tag: "recType", fields: e.fields.map(f => ({ name: f.name,
+        type: f.type ? substExpr(f.type, map) : null,
+        value: f.value != null ? substExpr(f.value, map) : f.value })) }
+    case "recValue":
+      // Field values are substituted (their own names bind only for LATER fields,
+      // which is beyond what defaults need); members keep their structure.
+      return { tag: "recValue", fields: e.fields.map(f => ({ name: f.name, type: f.type, value: substExpr(f.value, map) })),
+        members: e.members, trailing: e.trailing ? substExpr(e.trailing, map) : e.trailing }
+    case "match":
+      return { tag: "match", cond: substExpr(e.cond, map),
+        arms: e.arms.map(a => ({ pat: a.pat, binders: a.binders, body: substExpr(a.body, without(a.binders)) })) }
+  }
+}
+
+// Resolve a named call `head { fields }` against `head`'s tracked signature to the
+// canonical positional/partial form. Returns null when this isn't a named call
+// (so the caller falls back to ordinary record application): a field names a
+// non-parameter, the record has members/trailing, or it's empty. Otherwise:
+//   • each param, in DECLARED order, takes its supplied field, else its default
+//     (with prior args substituted), else becomes an awaited binder (missing);
+//   • the result is `head a0 a1 … an` wrapped in binders for the missing params.
+// Missing params that are a trailing suffix η-collapse to plain currying via the
+// bracket abstractor (`{n} -> f a n` → `f a`), so prefix partial application and
+// full application share this one construction.
+function resolveNamedCall(headExpr: Expr, rec: Extract<Expr, { tag: "recValue" }>, sig: SigParam[]): Expr | null {
+  if ((rec.members && rec.members.length > 0) || rec.trailing) return null
+  if (rec.fields.length === 0) return null
+  const paramNames = new Set(sig.map(p => p.name))
+  const supplied = new Map<string, Expr>()
+  for (const f of rec.fields) {
+    if (!paramNames.has(f.name)) return null  // not a named-arg call → ordinary application
+    supplied.set(f.name, f.value)
+  }
+  const argExprs: Expr[] = []
+  const missing: SigParam[] = []
+  const priorMap = new Map<string, Expr>()   // prior param name → its resolved arg, for default substitution
+  for (const p of sig) {
+    let arg: Expr
+    if (supplied.has(p.name)) arg = supplied.get(p.name)!
+    else if (p.default !== null) arg = substExpr(p.default, priorMap)
+    else { arg = { tag: "var", name: p.name }; missing.push(p) }
+    argExprs.push(arg)
+    priorMap.set(p.name, arg)
+  }
+  let body: Expr = headExpr
+  for (const a of argExprs) body = { tag: "app", f: body, x: a }
+  if (missing.length > 0)
+    body = { tag: "binder", params: missing.map(p => ({ name: p.name, type: null })), body }
+  return body
+}
+
+// Recognise `f { … } [extra…]` where `f`'s tracked signature has named params and
+// the record's fields are a subset of them; rewrite to the canonical positional/
+// partial form, re-applying any trailing positional args. Returns null otherwise
+// (ordinary application — including record-domain functions, whose single param
+// name won't match a multi-field record's names).
+function tryNamedCall(e: Expr, lookupEntry: (name: string) => ScopeEntry | undefined): Expr | null {
+  if (e.tag !== "app") return null
+  const { head, args } = peelApp(e)
+  if (head.tag !== "var" || args.length === 0) return null
+  const sig = lookupEntry(head.name)?.params
+  if (!sig) return null
+  if (args[0].tag !== "recValue") return null
+  const resolved = resolveNamedCall(head, args[0], sig)
+  if (resolved === null) return null
+  let out = resolved
+  for (let i = 1; i < args.length; i++) out = { tag: "app", f: out, x: args[i] }
+  return out
+}
+
 // Optional callbacks threaded through Expr compilation. `recordTest` lets
 // inline `{ ... test lhs = rhs ... }` blocks emit Test decls into the
 // driver's `decls` array (Q2). `recordItem` mirrors parseProgram's
@@ -316,6 +463,11 @@ function exprToCir(
       // tryRewriteSelectLazy for details.
       const rewritten = tryRewriteSelectLazy(e, lookupEntry)
       if (rewritten !== null) return exprToCir(rewritten, lookupEntry, resolveUse, sinks)
+      // Named / default / reorderable arguments: if the head has a tracked
+      // signature and the first arg is a matching record, rewrite to the
+      // canonical positional/partial call (see § named-arg resolution).
+      const named = tryNamedCall(e, lookupEntry)
+      if (named !== null) return exprToCir(named, lookupEntry, resolveUse, sinks)
       return { tag: "app",
         f: exprToCir(e.f, lookupEntry, resolveUse, sinks),
         x: exprToCir(e.x, lookupEntry, resolveUse, sinks),
@@ -1069,7 +1221,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // a §2.6 record (`E := Enum {…}`, any `mk_record` result) is `open`-able and
     // projects at compile time.
     const record = resolveExprRecord(body, lookupEntry, resolveUse) ?? recordFieldsFromTree(tree, lookupEntry)
-    define(name, { tree, type: inferredType, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes })
+    // Track the named-argument signature (leading lambda params + defaults) so a
+    // later `name { … }` call resolves by field name. Pure metadata — the tree is
+    // unchanged. Skipped for raw imports (their bodies bypass annotations anyway).
+    const params = extractSignature(body, type)
+    define(name, { tree, type: inferredType, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes, params })
     return { tree, type: inferredType }
   }
 

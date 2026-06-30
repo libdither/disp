@@ -169,20 +169,25 @@ f x",
 #rule(
   "binder",
   "binder      ::= \"{\" binderParam (COMMA binderParam)* COMMA? \"}\" ARROW expr
-binderParam ::= (IDENT | \"_\") (\":\" expr)?",
+binderParam ::= (IDENT | \"_\") (\":\" expr)? (\":=\" expr)?",
   "{x} -> x                       // inferred type
 {x : Nat} -> x                 // annotated
 {A : Type, x : A} -> x         // multi-param sugar (right-assoc)
+{x : Nat, t : Nat := 30} -> x  // named-arg default on `t`
 {_ : Nat} -> t                 // anonymous (same as Nat -> t)",
-  note: [Lambda or Pi depending on expected type (`Type` ⇒ Pi, else lambda). A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn} -> body` desugars right-associatively to `{p1} -> ... -> {pn} -> body`. Example: `{A : Type, x : A} -> x` means `{A : Type} -> ({x : A} -> x)`, not `({A : Type, x : A}) -> x` — each additional param wraps the remainder on the right.],
+  note: [Lambda or Pi depending on expected type (`Type` ⇒ Pi, else lambda). A binder must have at least one param; `{} ARROW body` is a parse error. Multi-param `{p1, ..., pn} -> body` desugars right-associatively to `{p1} -> ... -> {pn} -> body`. Example: `{A : Type, x : A} -> x` means `{A : Type} -> ({x : A} -> x)`, not `({A : Type, x : A}) -> x` — each additional param wraps the remainder on the right. A param's optional `:= expr` is a *named-argument default* (see § Calling convention): pure caller-side metadata, dropped from the binder itself (`{y := d} -> b` compiles as `{y} -> b`). Because `:=` otherwise classifies a brace as a recValue, a brace whose params carry defaults is recognised as a binder by its trailing `ARROW` (`{ y : B := d } -> body`).],
 )
 
 #rule(
   "app",
   "app      ::= atom atom*",
   "f x y                          // ((f x) y) -- left-associative
-F A B",
-  note: [Left-associative juxtaposition; no separator between function and argument. After crossing a newline, `IDENT \":=\"` is _not_ consumed as an atom (it starts a field definition).],
+F A B
+f { x := a, y := b }           // named call (any order; == f a b)
+f { x := a }                   // omitted args default / partial-apply",
+  note: [Left-associative juxtaposition; no separator between function and argument. After crossing a newline, `IDENT \":=\"` is _not_ consumed as an atom (it starts a field definition).
+
+  *Calling convention (named / default / reorderable arguments).* A juxtaposition `f r` where `r` is a `recValue` is a *named call* when `f` has a tracked parameter signature (it is bound to a leading lambda — see `COMPILATION.typ` § Named arguments) AND every field of `r` names one of `f`'s parameters. Then `r`'s fields are matched to parameters *by name* (any order), omitted parameters fall back to their `:= default`, and a missing-without-default parameter makes the call a *partial application* (the result is a function awaiting it). The whole thing rewrites at elaboration time to the canonical positional call, so `f { x := a, y := b }`, `f { y := b, x := a }` and `f a b` are the *same tree* (conversion is O(1) hash-cons identity). Otherwise — `f`'s untracked, or `r`'s field names are not all parameters (e.g. a record-domain function `{r} -> r.x` applied to `{ x := … }`) — `f r` is *ordinary* application with `r` passed as a record value.],
 )
 
 #rule(
@@ -244,6 +249,10 @@ are rejected. `<` / `>` are single-char tokens distinct from `->`/`=>`/`→`,
 so a variant's `expr` type (e.g. `A -> B`) stops cleanly at the closing
 `>`. Requires `Coproduct`/`pair` in scope (as `recType` needs `Telescope`).
 
+recValue field members may be separated by `,` as well as `SEMI`
+(`;` / newline), so a named call reads as `f { host := "h", port := 8000 }`
+(see § Calling convention under `app`).
+
 Three telescope-era refinements. (1) *Field puns*: inside a recValue, a
 bare `IDENT` member is shorthand for `name := name`, the value resolving
 in the *outer* scope (a field's value always compiles before its own
@@ -291,7 +300,7 @@ Ann      { expr: Expr, type: Expr }
 Use      { path: string }
 Match    { cond: Expr, thenBody: Expr, elseBody: Expr }
 
-Param      { name: string | null, type: Expr | null }
+Param      { name: string | null, type: Expr | null, default?: Expr | null }  -- default ⇒ named-arg fallback
 TypedField { name: string, type: Expr | null, value?: Expr | null }  -- value ⇒ derived entry
 NamedField { name: string, type: Expr | null, value: Expr }
 

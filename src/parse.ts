@@ -106,7 +106,12 @@ export type Expr =
   | { tag: "if"; cond: Expr; thenBody: Expr; elseBody: Expr }
   | { tag: "match"; cond: Expr; arms: Arm[] }
 
-export type Param = { name: string | null; type: Expr | null }
+// A binder parameter. `default` (a `:= expr` suffix) is the named-argument
+// fallback: when a function declared `{x : A, y : B := d} -> …` is *named-called*
+// `f { x := a }`, the omitted `y` falls back to `d`. The default is metadata for
+// callers only — a plain (positional) compilation of the binder ignores it
+// (the lambda is `{x} -> {y} -> …`); see compile.ts § named-argument resolution.
+export type Param = { name: string | null; type: Expr | null; default?: Expr | null }
 export type TypedField = { name: string; type: Expr | null; value?: Expr | null }
 // A coproduct variant: `Tag : T` (single-arg, `type` set) or `Tag` (nullary, null).
 export type SumVariant = { name: string; type: Expr | null }
@@ -437,10 +442,18 @@ const matchApp: P<Expr> = map(
 )
 const matchExpr: P<Expr> = makeExpr(matchApp)
 
-// binderParam = (IDENT | "_") (":" expr)?
+// binderParam = (IDENT | "_") (":" expr)? (":=" expr)?
+// The trailing `:= expr` is a named-argument default (see Param). `expr` stops
+// before `:=` (it isn't an operator in expr), so the type parses cleanly first.
 const binderParam: P<Param> = nl(map(
-  seq(idP, optional(seq(nl(punctP(":")), skipNl, lazy(() => expr)))),
-  ([v, ann]) => ({ name: v === "_" ? null : v, type: ann ? ann[2] : null }),
+  seq(idP,
+    optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
+    optional(seq(nl(punctP(":=")), skipNl, lazy(() => expr)))),
+  // Omit `default` when absent so the AST shape is unchanged for plain params
+  // (mirrors TypedField omitting `value`); extractSignature reads `?? null`.
+  ([v, ann, def]) => def
+    ? { name: v === "_" ? null : v, type: ann ? ann[2] : null, default: def[2] }
+    : { name: v === "_" ? null : v, type: ann ? ann[2] : null },
 ))
 
 // Parse binder: params "}" ARROW body. Parameterized by bodyParser.
@@ -652,12 +665,20 @@ const bracedOpenP: P<RecMember> = map(
   ([, , e]) => ({ tag: "open" as const, expr: e }),
 )
 
-// bracedFieldP already defined above; wrap it as a RecMember with optional SEMI.
+// recValue field separator: ";" | "," | NEWLINE. recValues historically used
+// SEMI/newline; "," is also accepted so named-argument calls read naturally
+// (`f { host := "h", port := 8000 }`, the design-doc spelling).
+const fieldSepP: P<null> = (ts, i) => {
+  const c = commaP(ts, i)
+  return c.ok ? c : semiP(ts, i)
+}
+
+// bracedFieldP already defined above; wrap it as a RecMember with optional separator.
 const bracedFieldMemberP: P<RecMember> = (ts, i) => {
   const r = bracedFieldP(ts, i)
   if (!r.ok) return r
   let pos = r.pos
-  const s = semiP(ts, pos)
+  const s = fieldSepP(ts, pos)
   if (s.ok) pos = s.pos
   return ok(r.v as RecMember, pos)
 }
@@ -672,11 +693,11 @@ const bracedPunP: P<RecMember> = (ts, i) => {
   const name = r.v
   if (name === "_") return err("'_' cannot be a field pun", i)
   const punMember = { tag: "field" as const, name, type: null, value: { tag: "var" as const, name }, pun: true }
-  const s = semiP(ts, r.pos)
+  const s = fieldSepP(ts, r.pos)
   if (s.ok) return ok(punMember as RecMember, s.pos)
   if (ts[r.pos].t === "punct" && (ts[r.pos] as any).v === "}")
     return ok(punMember as RecMember, r.pos)
-  return err("bare identifier is not a member (pun needs ';', newline, or '}')", i)
+  return err("bare identifier is not a member (pun needs ';', ',', newline, or '}')", i)
 }
 
 const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedOpenP, bracedFieldMemberP, bracedPunP))
@@ -829,7 +850,17 @@ function parseBraced(binderParser: P<Expr>): P<Expr> {
     }
 
     const shape = classifyBracedContent(ts, pos)
-    if (shape === "recValue") return unifiedBracedInner(ts, pos)
+    if (shape === "recValue") {
+      // A `:=`-bearing brace followed by `->` is a binder whose params have
+      // defaults (`{ y : B := d } -> body`), not a record value. Try the binder
+      // parser first in that case; it only succeeds with a trailing ARROW, so a
+      // plain recValue (no arrow) still falls through to unifiedBracedInner.
+      if (bracedFollowedByArrow(ts, pos)) {
+        const b = binderParser(ts, pos)
+        if (b.ok) return b
+      }
+      return unifiedBracedInner(ts, pos)
+    }
     if (shape === "binder") {
       const binderAttempt = binderParser(ts, pos)
       if (binderAttempt.ok) return binderAttempt
@@ -856,6 +887,30 @@ function scanForFieldAssign(ts: Tok[], q: number, stopAtCommaSemi: boolean): boo
       else if (v === ")" || v === "}") { if (depth === 0) return false; depth-- }
       else if (depth === 0 && v === ":=") return true
       else if (depth === 0 && stopAtCommaSemi && (v === "," || v === ";")) return false
+    }
+    q++
+  }
+  return false
+}
+
+// From the position just after a "{", find the matching "}" and report whether
+// the next significant token is an ARROW. Such a brace group is a *binder* (its
+// params may carry `:= default` suffixes, which otherwise look like recValue
+// fields) — `{ x : A, y : B := d } -> body`. Depth-tracks nested braces/parens.
+function bracedFollowedByArrow(ts: Tok[], pos: number): boolean {
+  let depth = 0, q = pos
+  while (q < ts.length && ts[q].t !== "eof") {
+    if (ts[q].t === "punct") {
+      const v = (ts[q] as any).v
+      if (v === "{" || v === "(" || v === "[") depth++
+      else if (v === "}" || v === ")" || v === "]") {
+        if (depth === 0) { // this is our matching "}"
+          let r = q + 1
+          while (ts[r]?.t === "nl") r++
+          return ts[r]?.t === "punct" && ((ts[r] as any).v === "->" || (ts[r] as any).v === "→")
+        }
+        depth--
+      }
     }
     q++
   }

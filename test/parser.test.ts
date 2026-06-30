@@ -318,6 +318,53 @@ describe("parse: expressions", () => {
   })
 })
 
+// ─────────────────── named / default / reorderable args ──────────────────
+
+describe("parse: named-argument syntax", () => {
+  it("binder param with a default (`:= d`)", () => {
+    // A single-param binder with a default, followed by `->`, is a binder —
+    // even though `:=` would otherwise classify the brace as a recValue.
+    expect(parseExpr("{ y : B := d } -> y")).toEqual(
+      binder([{ name: "y", type: v("B"), default: v("d") } as any], v("y")),
+    )
+  })
+
+  it("multi-param binder with a default on the last param", () => {
+    expect(parseExpr("{ x : A, y : B := d } -> x")).toEqual(
+      binder([
+        { name: "x", type: v("A") },
+        { name: "y", type: v("B"), default: v("d") } as any,
+      ], v("x")),
+    )
+  })
+
+  it("default with no type annotation", () => {
+    expect(parseExpr("{ y := t } -> y")).toEqual(
+      binder([{ name: "y", type: null, default: leaf } as any], v("y")),
+    )
+  })
+
+  it("plain params carry no `default` key (AST shape unchanged)", () => {
+    // toEqual is strict about absent vs null: a plain param must NOT gain a key.
+    expect(parseExpr("{ x : A } -> x")).toEqual(
+      binder([{ name: "x", type: v("A") }], v("x")),
+    )
+  })
+
+  it("recValue fields may be comma-separated (named-call spelling)", () => {
+    expect(parseExpr("{ x := t, y := t t }")).toEqual(
+      recValue([
+        { name: "x", type: null, value: leaf },
+        { name: "y", type: null, value: ap(leaf, leaf) },
+      ]),
+    )
+  })
+
+  it("comma- and semicolon-separated recValues agree", () => {
+    expect(parseExpr("{ a := t, b := t t }")).toEqual(parseExpr("{ a := t; b := t t }"))
+  })
+})
+
 // ─────────────────────────── items ──────────────────────────────────────
 
 describe("parse: items", () => {

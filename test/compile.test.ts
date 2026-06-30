@@ -11,6 +11,8 @@ import { describe, it, expect } from "vitest"
 import { resolve } from "node:path"
 import { parseProgram, stringToTree } from "../src/compile.js"
 import { eagerBackend } from "../src/eval/eager.js"
+import { getBackend } from "../src/eval/registry.js"
+import { rustEagerAvailable } from "../src/eval/rust-eager.js"
 import type { Tree } from "../src/eval/eager.js"
 
 // Ported to the Session ABI (EVALUATOR_PLAN decision 8): build/apply/compare go
@@ -286,3 +288,75 @@ describe("Stages 2+3: in-language compile_expr/compile_type vs host", () => {
     }
   })
 })
+
+// Named / default / reorderable arguments desugar to the canonical positional
+// call. The load-bearing property: conversion is O(1) hash-cons identity, so
+// every reordering / default-fill must compile to the IDENTICAL tree as `f a b`.
+// Runs on rust-eager (host RAM, no eager-budget ceiling); skipped if unbuilt.
+describe("named-argument desugar: tree identity vs positional", () => {
+  const naSession = rustEagerAvailable()
+    ? (getBackend("rust-eager").createSession() as unknown as Tree extends never ? never : any)
+    : null
+  const it_ = naSession ? it : it.skip
+
+  // Compile a program and return a name→tree map of its Defs.
+  const defsOf = (body: string): Map<string, any> => {
+    const src = [
+      'open use "../prelude.disp"',
+      'open use "../kernel/prelude.disp"',
+      'open use "../std/nat/arith.disp"',
+      'open use "../std/nat/ops.disp"',
+      body,
+    ].join("\n")
+    const decls = parseProgram(src, resolve("lib/tests/__named_host.disp"), { session: naSession })
+    const m = new Map<string, any>()
+    for (const d of decls) if (d.kind === "Def") m.set(d.name, d.tree)
+    return m
+  }
+
+  it_("reordering + positional all compile to one tree", () => {
+    const d = defsOf([
+      "f := {x} -> {y} -> add x (double y)",
+      "a := f { x := 1, y := 2 }",
+      "b := f { y := 2, x := 1 }",
+      "c := f 1 2",
+    ].join("\n"))
+    expect(naSession.equal(d.get("a"), d.get("b"))).toBe(true)
+    expect(naSession.equal(d.get("a"), d.get("c"))).toBe(true)
+  })
+
+  it_("default-fill is tree-identical to the explicit positional fill", () => {
+    const d = defsOf([
+      "g := {x} -> {y := 10} -> add x y",
+      "a := g { x := 5 }",
+      "b := g 5 10",
+    ].join("\n"))
+    expect(naSession.equal(d.get("a"), d.get("b"))).toBe(true)
+  })
+
+  it_("prefix partial application η-collapses to currying", () => {
+    const d = defsOf([
+      "f := {x} -> {y} -> add x (double y)",
+      "a := f { x := 100 }",
+      "b := f 100",
+    ].join("\n"))
+    expect(naSession.equal(d.get("a"), d.get("b"))).toBe(true)
+  })
+
+  it_("non-matching record fields fall back to ordinary record application", () => {
+    // getx's only param is `r`; a `{ x := … }` record has no `r` field, so it is
+    // passed as a value — NOT resolved as named args.
+    const d = defsOf([
+      "getx := {r} -> r.x",
+      "a := getx { x := 42 }",
+    ].join("\n"))
+    expect(naSession.equal(d.get("a"), natOf(naSession, 42))).toBe(true)
+  })
+})
+
+// Build the canonical lib Nat (zero = leaf, succ m = fork(leaf, m)) for comparison.
+function natOf(s: any, n: number): any {
+  let r = s.leaf()
+  for (let i = 0; i < n; i++) r = s.fork(s.leaf(), r)
+  return r
+}

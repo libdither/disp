@@ -338,6 +338,50 @@ Duplicate field names in a RecValue or RecType are parse errors.
 This keeps projection metadata unambiguous; there is no first-wins or
 last-wins shadowing rule for exported fields.
 
+== Named / default / reorderable arguments
+
+A function's parameters form a "shopping list" of named requirements. A
+*named call* `f { name := val, … }` supplies them in any order, omits the
+ones with defaults, and may supply a strict subset to get a residual
+function (partial application). This is a pure elaboration-time rewrite to
+the canonical *positional* call --- it introduces no kernel or runtime
+representation: the `Pi` domain telescope is untouched and the parameter
+names live in a host-side per-binding signature.
+
+*Signature tracking.* When the driver compiles a binding `name := value`
+(or `name : type := value`), it records `name`'s signature in scope: the
+leading run of `value`'s lambda parameters (authoritative for *names* ---
+bracket abstraction binds exactly those), each with its optional default
+recipe. A default is the param's `:= d` suffix (`{ x : A, y : B := d } ->
+…`, now allowed on a binder param) taken from the value lambda, or, failing
+that, from the type annotation's `Pi`-binder at the same position (the
+doc-style `f : { … , t : Nat := 30 } -> R`). Bindings whose value is not a
+leading lambda (e.g. `fix (…)`) get no signature.
+
+*Resolution.* A juxtaposition `f arg …` is a named call when `f` has a
+tracked signature and `arg` is a `RecValue` whose field names are all
+parameters. (A record whose fields are *not* a subset --- e.g. a
+record-domain function `{r} -> r.x` applied to `{ x := … }` --- falls back
+to ordinary record application, so positional calls and record-passing are
+unaffected.) Resolution walks the parameters in *declared order*; each takes
+its supplied field, else its default (with prior parameters' resolved
+arguments substituted in, for dependent defaults like `b := double a`), else
+becomes a *missing* parameter. The result is `f a0 a1 … an` wrapped in a
+binder for each missing parameter.
+
+*The load-bearing property.* Because the rewrite produces an ordinary
+positional AST, conversion (O(1) hash-cons identity) makes every
+reordering and default-fill compile to the *identical* tree as `f a b`.
+Partial application is uniform: missing parameters that form a trailing
+suffix η-collapse (the bracket abstractor's `[n] (f a n) → f a`) so a
+*prefix* subset is just currying (`f { x := a }` ≡ `f a`); a *non-prefix*
+subset (`f { y := b }`, awaiting `x`) yields a genuine residual lambda
+`{x} -> f x b` whose later application equals the full call. A residual is
+itself positional-only (it carries no tracked signature).
+
+*Surface note.* RecValue fields may be separated by `,` (as well as `;` /
+newline), so a named call reads as `f { host := "h", port := 8000 }`.
+
 = Error reporting
 
 Current compile errors carry parser/driver messages, but source-span
