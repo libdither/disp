@@ -1,0 +1,53 @@
+// Proofs as Functions — the Haskell "same thing" slide, transliterated to disp.
+//
+// Haskell (the slide):                       disp (this file):
+//   data Sum a b = Inl a | Inr b             Sum := {a,b} -> < Inl : a, Inr : b >
+//   data False                               Falsity := <>            -- the empty sum
+//   type Neg p = p -> False                  Neg := {p} -> Pi p (_ -> Falsity)
+//   triv :: False -> q                       triv : <> -> q           -- ex falso
+//   triv x = case x of {}
+//   theorem :: Sum p q -> Neg p -> q         theorem : Sum p q -> Neg p -> q
+//   theorem s g = case s of                  -- disjunctive syllogism
+//     Inl p -> triv (g p)
+//     Inr q -> q
+//
+// `< Inl : a, Inr : b >` is disp's coproduct (sum) literal: it desugars to
+// `Coproduct [pair "Inl" [a], pair "Inr" [b]]`. Values are `inj "Tag" payload`,
+// and `match` is the §2.6 cut that eliminates them (Haskell's `case … of`).
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// data Sum a b = Inl a | Inr b
+let Sum = {a, b} -> < Inl : a, Inr : b >
+let Inl = {x} -> inj "Inl" x
+let Inr = {y} -> inj "Inr" y
+
+// data False — an empty data type is the empty sum (no constructors / no inhabitants).
+let Falsity = <>
+
+// type Neg p = p -> False
+let Neg = {p} -> Pi p ({_} -> Falsity)
+
+// triv :: False -> q ; triv x = case x of {}
+// Ex falso: eliminate the empty sum with zero cases. There is no inhabitant of
+// `<>`, so this body is never actually reached — exactly Haskell's empty `case`.
+let triv = {x} -> mk_record [] [] x
+
+// theorem :: Sum p q -> Neg p -> q  (disjunctive syllogism: from (p ∨ q) and ¬p, derive q)
+// theorem s g = case s of { Inl p -> triv (g p) ; Inr q -> q }
+let theorem = {s, g} ->
+  (match s {
+    Inl p => triv (g p)
+    Inr q => q
+  })
+
+// ── the type-former and constructors check through the kernel ──
+test typecheck Type (Sum Bool Nat) = Ok TT      // Sum Bool Nat is a real Type
+test param_apply (Sum Nat Nat) (Inl 3) = Ok TT  // Inl 3 inhabits Sum Nat Nat
+test param_apply (Sum Nat Nat) (Inr 4) = Ok TT  // Inr 4 inhabits Sum Nat Nat
+test typecheck Type (Neg Bool) = Ok TT          // Neg Bool = Bool -> <> is a (Pi) type
+
+// ── the proof computes: the inhabited (Inr) branch returns its payload ──
+// `g` is the ¬p assumption; it is never invoked on this branch.
+test theorem (Inr 7) ({p} -> p) = 7
