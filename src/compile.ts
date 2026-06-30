@@ -168,6 +168,27 @@ interface ScopeEntry {
   params?: SigParam[]   // named-argument signature (leading binder params + defaults)
 }
 
+// Collect every evaluator handle the session holds ACROSS .disp file boundaries — the module
+// cache's exported binding/type trees. This is the root set for rust-eager's scoped
+// reclamation (Session.endScope): at a shared-session file boundary everything allocated in
+// the scope is freed EXCEPT what's reachable from these. (`verifiedModules` holds only path
+// strings; per-file `decls`/scope are dropped when `runFile` returns; the native `tree_eq`
+// handle is rooted inside the arena; `SigParam.default` is an Expr, not a handle.) MUST stay
+// in sync with any new cross-file handle holder — a missed root frees a live node (which the
+// differential oracle catches: the suite goes red).
+export function collectSessionRoots(session: Session<Tree>): Tree[] {
+  const cache = moduleCacheBySession.get(session)
+  if (!cache) return []
+  const roots: Tree[] = []
+  for (const e of cache.values()) {
+    if (e.tree != null) roots.push(e.tree)
+    if (e.type != null) roots.push(e.type)
+    if (e.fieldTrees) for (const t of e.fieldTrees) if (t != null) roots.push(t)
+    if (e.fieldTypes) for (const t of e.fieldTypes) if (t != null) roots.push(t)
+  }
+  return roots
+}
+
 // A binding's named-argument signature: the leading run of its value-lambda's
 // (and/or type's) parameters, in declared order, each with its optional default
 // recipe. Drives reorderable / default / partial named calls — see § named-arg
