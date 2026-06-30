@@ -73,6 +73,14 @@ pub(crate) struct Arena {
     /// Scott `TT`/`FF` (the tree_eq fast-path results), built once at session init.
     pub(crate) tt: u32,
     pub(crate) ff: u32,
+    /// Scoped-reclamation watermark stack (`begin_scope`/`end_scope`). Each entry is the node
+    /// high-water at a scope's start; `end_scope(keep)` reclaims everything allocated in the
+    /// scope that is NOT reachable from `keep`. Empty = no active scope.
+    scopes: Vec<u32>,
+    /// Slots freed by `end_scope` (interior holes below the new high-water), reused by `mk`
+    /// before bumping. Hash-consing stays consistent: a freed slot's intern entry is removed,
+    /// and a freed id is never live (it survived no `keep`), so reuse can't alias a live node.
+    free_list: Vec<u32>,
 }
 
 impl Arena {
@@ -86,6 +94,8 @@ impl Arena {
             tree_eq_id: 0,
             tt: 0,
             ff: 0,
+            scopes: Vec::new(),
+            free_list: Vec::new(),
         };
         // index 0: reserved null sentinel (never interned, never returned) so no valid
         // handle is JS-falsy — see LEAF_ID.
@@ -112,12 +122,20 @@ impl Arena {
     #[inline]
     fn mk(&mut self, n: Node) -> u32 {
         let h = node_hash(n);
-        let Arena { nodes, intern, .. } = self;
+        let Arena { nodes, intern, free_list, .. } = self;
         if let Some(&id) = intern.find(h, |&id| nodes[id as usize] == n) {
             return id;
         }
-        let id = nodes.len() as u32;
-        nodes.push(n);
+        // Reuse a slot freed by `end_scope` before extending the arena (so a scoped
+        // workload's peak — not its cumulative allocation — bounds `nodes.len()`).
+        let id = if let Some(reused) = free_list.pop() {
+            nodes[reused as usize] = n;
+            reused
+        } else {
+            let id = nodes.len() as u32;
+            nodes.push(n);
+            id
+        };
         intern.insert_unique(h, id, |&id| node_hash(nodes[id as usize]));
         id
     }
@@ -132,6 +150,13 @@ impl Arena {
     pub(crate) fn node_count(&self) -> u32 {
         self.nodes.len() as u32
     }
+    /// Reusable holes freed by `end_scope` (live nodes = `node_count - free_count`). A
+    /// non-moving collector can't lower `node_count` below a surviving top node, but these
+    /// holes absorb future allocations, so cumulative growth is bounded by the live peak.
+    #[inline]
+    pub(crate) fn free_count(&self) -> u32 {
+        self.free_list.len() as u32
+    }
     #[inline]
     pub(crate) fn stem(&mut self, c: u32) -> u32 {
         self.mk(Node::Stem(c))
@@ -143,5 +168,89 @@ impl Arena {
     #[inline]
     pub(crate) fn susp(&mut self, f: u32, a: u32) -> u32 {
         self.mk(Node::Susp(f, a))
+    }
+
+    // ── scoped reclamation (Session.beginScope / endScope) ──
+    /// Open a reclamation scope: remember the current node high-water. Everything allocated
+    /// after this is reclaimable by the matching `end_scope` unless reachable from its `keep`.
+    pub(crate) fn begin_scope(&mut self) {
+        self.scopes.push(self.nodes.len() as u32);
+    }
+
+    /// Close the innermost scope: reclaim every node allocated in it that is NOT reachable
+    /// from `keep` (a mark-sweep over `[base, top)`). Survivors keep their ids (non-moving);
+    /// interior dead slots go to the free list, the trailing dead run is truncated, and the
+    /// intern/memo/forced caches drop entries touching freed nodes (kept entries stay valid).
+    /// Nodes below `base` (older scopes / the permanent base) are never touched — and by
+    /// construction-order immutability they can't reference anything in `[base, top)`, so they
+    /// need no marking. A no-op if `keep` is complete-but-empty: the scope fully rolls back.
+    pub(crate) fn end_scope(&mut self, keep: &[u32]) {
+        let base = match self.scopes.pop() {
+            Some(b) => b,
+            None => return,
+        };
+        let top = self.nodes.len() as u32;
+        if top <= base {
+            return; // nothing allocated in the scope
+        }
+        let span = (top - base) as usize;
+        let mut marked = vec![false; span];
+        let mut work: Vec<u32> = Vec::new();
+        // Mark a node IN-SCOPE (>= base); below-base nodes are permanent and stop the trace.
+        macro_rules! visit {
+            ($id:expr) => {{
+                let id = $id;
+                if id >= base {
+                    let i = (id - base) as usize;
+                    if !marked[i] {
+                        marked[i] = true;
+                        work.push(id);
+                    }
+                }
+            }};
+        }
+        for &k in keep {
+            visit!(k);
+        }
+        // The arena's own permanent roots (in case any landed in-scope).
+        visit!(self.tt);
+        visit!(self.ff);
+        if self.tree_eq_id != 0 {
+            visit!(self.tree_eq_id);
+        }
+        while let Some(id) = work.pop() {
+            match self.nodes[id as usize] {
+                Node::Leaf => {}
+                Node::Stem(c) => visit!(c),
+                Node::Fork(l, r) => {
+                    visit!(l);
+                    visit!(r);
+                }
+                Node::Susp(f, a) => {
+                    visit!(f);
+                    visit!(a);
+                }
+            }
+        }
+        // new_top = one past the highest surviving id (the trailing dead run is truncated).
+        let mut new_top = base;
+        for i in (0..span).rev() {
+            if marked[i] {
+                new_top = base + i as u32 + 1;
+                break;
+            }
+        }
+        // Interior dead slots (< new_top, unmarked) become reusable holes.
+        for id in base..new_top {
+            if !marked[(id - base) as usize] {
+                self.free_list.push(id);
+            }
+        }
+        self.nodes.truncate(new_top as usize);
+        // A node id survives iff it is below base (permanent) or a marked survivor.
+        let live = |id: u32| id < base || (id < new_top && marked[(id - base) as usize]);
+        self.intern.retain(|id| live(*id));
+        self.memo.retain(|id| live(id)); // drop only entries touching freed nodes
+        self.forced.retain(|&k, v| live(k) && live(*v));
     }
 }

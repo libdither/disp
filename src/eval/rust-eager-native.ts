@@ -40,6 +40,9 @@ interface EagerSessionNative {
   child1(h: number): number
   equal(a: number, b: number, budget: number): number       // 0=false 1=true 2=exhausted
   interactions(): number
+  nodeCount(): number
+  beginScope(): void
+  endScope(keep: number[]): void
   recognizeTreeEq(handle: number): void
   setMemoLimit(n: number): void
   clearCaches(): void
@@ -128,7 +131,13 @@ class RustEagerNativeSession implements Session<number> {
   }
 
   // Interaction count (the backend-declared unit, never compared to eager's steps).
-  stats(): EvalStats { return { steps: this.#s.interactions() } }
+  // `nodes` exposes the live arena high-water (for observing scoped reclamation).
+  stats(): EvalStats { return { steps: this.#s.interactions(), nodes: this.#s.nodeCount() } }
+
+  // Scoped reclamation: beginScope() marks a point; endScope(keep) frees everything
+  // allocated since, except nodes reachable from `keep`. See types.ts / src/native.rs.
+  beginScope(): void { this.#s.beginScope() }
+  endScope(keep: number[]): void { this.#s.endScope(keep) }
 
   recognizeNative(name: string, handle: number): void {
     if (name === "tree_eq") this.#s.recognizeTreeEq(handle)

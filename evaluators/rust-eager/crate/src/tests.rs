@@ -83,6 +83,57 @@ fn ternary_roundtrip() {
     assert_eq!(&out, s);
 }
 
+// Scoped reclamation (Session.beginScope/endScope): keep-nothing fully rolls back; a kept
+// survivor and its reachable subtree are preserved (ids stable) while interior+trailing
+// garbage is reclaimed; hash-consing stays consistent (re-mint hits the survivor); freed
+// slots are reused; and reduction over a survivor still works.
+#[test]
+fn scoped_reclamation() {
+    let mut a = Arena::new();
+    let k = a.stem(LEAF_ID); // K = S(L) — permanent base
+    let base = a.node_count();
+
+    // (1) keep-nothing → full rollback to the scope base.
+    a.begin_scope();
+    let t1 = a.stem(k);
+    let t2 = a.fork(t1, k);
+    let _ = a.fork(t2, t1);
+    assert!(a.node_count() > base);
+    a.end_scope(&[]);
+    assert_eq!(a.node_count(), base, "keep-nothing rolls fully back to base");
+
+    // (2) keep a survivor with a subtree; disconnected interior garbage + trailing garbage.
+    a.begin_scope();
+    let g1 = a.stem(k); // interior garbage (disconnected from the survivor)
+    let _g2 = a.fork(g1, g1); // interior garbage
+    let s0 = a.fork(k, LEAF_ID); // survivor's dep
+    let s = a.stem(s0); // SURVIVOR root (reaches only s0, k, leaf — not g1/g2)
+    let mut junk = a.fork(s, g1);
+    for _ in 0..10 {
+        junk = a.fork(junk, k); // trailing garbage (highest ids)
+    }
+    let top_before = a.node_count();
+    assert!(top_before > base);
+    a.end_scope(&[s]);
+
+    // trailing garbage truncated; survivor + base intact via hash-cons re-mint.
+    assert!(a.node_count() < top_before, "trailing garbage truncated");
+    assert_eq!(a.fork(k, LEAF_ID), s0, "survivor dep re-mints to its id");
+    assert_eq!(a.stem(s0), s, "survivor re-mints to its id");
+    assert_eq!(a.stem(LEAF_ID), k, "permanent base intact");
+
+    // freed interior slots are reused: a novel node does not grow the arena.
+    let nc = a.node_count();
+    let _fresh = a.fork(s, s); // novel — must reuse a freed hole (g1/g2's slot)
+    assert_eq!(a.node_count(), nc, "novel alloc reused a freed slot (no growth)");
+
+    // reduction over a survivor still works: I s = s (I rebuilt from base nodes).
+    let ll = a.fork(LEAF_ID, LEAF_ID);
+    let i = a.fork(ll, LEAF_ID); // I = F(F(L,L), L) — re-mints to the base I
+    let mut b = 1_000_000i64;
+    assert_eq!(a.reduce(i, s, &mut b).ok().unwrap(), s, "I s = s over a survivor");
+}
+
 // Eager and lazy must agree on NF (confluence).
 #[test]
 fn eager_lazy_agree() {

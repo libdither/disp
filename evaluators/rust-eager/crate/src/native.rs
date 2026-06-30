@@ -148,6 +148,30 @@ impl EagerSession {
     pub fn interactions(&self) -> f64 {
         self.arena.interactions as f64
     }
+    /// Live node high-water (for observing reclamation / memory pressure).
+    #[napi]
+    pub fn node_count(&self) -> u32 {
+        self.arena.node_count()
+    }
+    /// Reusable holes freed by `endScope` (live nodes = nodeCount − freeCount).
+    #[napi]
+    pub fn free_count(&self) -> u32 {
+        self.arena.free_count()
+    }
+
+    // ── scoped reclamation (Session.beginScope / endScope) ──
+    /// Mark a reclamation point: nodes allocated after this are reclaimable by the matching
+    /// `endScope` unless reachable from its `keep` set.
+    #[napi]
+    pub fn begin_scope(&mut self) {
+        self.arena.begin_scope();
+    }
+    /// Close the innermost scope: free every node allocated in it that is NOT reachable from
+    /// `keep` (the handles to preserve). Survivors keep their ids; freed slots are reused.
+    #[napi]
+    pub fn end_scope(&mut self, keep: Vec<u32>) {
+        self.arena.end_scope(&keep);
+    }
 }
 
 impl EagerSession {

@@ -62,6 +62,15 @@ impl Memo {
         self.limit = if n == 0 { usize::MAX } else { n };
     }
 
+    /// Keep only entries all of whose ids (`f`, `x`, AND the result `r`) are still live, per
+    /// the caller's predicate — for `Arena::end_scope`, which frees nodes a stale memo entry
+    /// would otherwise point at. Pure cache, so dropping a still-valid-but-now-uncached entry
+    /// only costs a re-reduction.
+    pub(crate) fn retain(&mut self, live: impl Fn(u32) -> bool) {
+        self.map.retain(|&(f, x), r| live(f) && live(x) && live(*r));
+        self.map.shrink_to_fit();
+    }
+
     /// Shed file-local entries (or, before a baseline exists, everything).
     fn shed(&mut self) {
         if self.baseline == 0 {

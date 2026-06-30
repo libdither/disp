@@ -92,6 +92,17 @@ export interface Session<H = unknown> {
   // recognition-not-registration) is the planned refinement.
   recognizeNative?(name: string, handle: H): void
 
+  // OPTIONAL scoped reclamation. beginScope() marks a reclamation point; endScope(keep)
+  // frees every node the session allocated since the matching beginScope EXCEPT those
+  // reachable from `keep` (the handles to preserve out of the scope). For backends with an
+  // explicit arena the host can't GC (rust-eager): a scoped evaluation that produces a few
+  // results but lots of intermediate garbage (a module's exports, an optimizer candidate's
+  // NF) reclaims the garbage in one step. Absent on GC'd backends (eager: V8 collects
+  // unreachable Trees). Trust model: the host must list every handle it keeps live past the
+  // scope — a forgotten survivor dangles (caught by the differential oracle / a debug poison).
+  beginScope?(): void
+  endScope?(keep: H[]): void
+
   // True iff handles are canonical (a === b implies equal(a,b)). The engine may
   // use this ONLY as an optimization gate (e.g. the run.ts name registry).
   readonly canonicalHandles: boolean
