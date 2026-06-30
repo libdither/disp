@@ -33,11 +33,40 @@ pub(crate) const LEAF_ID: u32 = 1;
 pub(crate) struct Exhausted;
 pub(crate) type R = Result<u32, Exhausted>;
 
-/// FxHash of a node, for the intern table.
+// Packed node layout: each node is ONE u64, not a 12-byte enum — `[tag:2][child0:31]
+// [child1:31]`. Tree calculus has only 0/1/2-child nodes, so 31-bit child ids (2.1B nodes,
+// far above any real workload) leave room for a 2-bit tag in one word: ~33% less memory and
+// denser cache lines (8/line vs 5.3). `node()` unpacks to the `Node` enum so every reader
+// (reduce/codec/end_scope) is unchanged; only the storage + `mk` touch the raw word. (Same
+// kind-in-pointer trick rust-ic-net uses — port.rs.)
+const TAG_STEM: u64 = 1;
+const TAG_FORK: u64 = 2;
+const TAG_SUSP: u64 = 3;
+const CHILD_MASK: u64 = (1 << 31) - 1;
+
 #[inline]
-fn node_hash(n: Node) -> u64 {
+fn pack(n: Node) -> u64 {
+    match n {
+        Node::Leaf => 0, // tag 0, both children 0
+        Node::Stem(c) => TAG_STEM | ((c as u64) << 2),
+        Node::Fork(l, r) => TAG_FORK | ((l as u64) << 2) | ((r as u64) << 33),
+        Node::Susp(f, a) => TAG_SUSP | ((f as u64) << 2) | ((a as u64) << 33),
+    }
+}
+#[inline]
+fn unpack(w: u64) -> Node {
+    match w & 0b11 {
+        0 => Node::Leaf,
+        1 => Node::Stem(((w >> 2) & CHILD_MASK) as u32),
+        2 => Node::Fork(((w >> 2) & CHILD_MASK) as u32, (w >> 33) as u32),
+        _ => Node::Susp(((w >> 2) & CHILD_MASK) as u32, (w >> 33) as u32),
+    }
+}
+/// FxHash of a packed node, for the intern table.
+#[inline]
+fn word_hash(w: u64) -> u64 {
     let mut h = FxHasher::default();
-    n.hash(&mut h);
+    w.hash(&mut h);
     h.finish()
 }
 
@@ -45,7 +74,8 @@ fn node_hash(n: Node) -> u64 {
 /// structurally-identical nodes share one id (so `δˢ` copy is reference sharing and
 /// identical `Susp`s share one `forced` memo cell).
 pub(crate) struct Arena {
-    nodes: Vec<Node>,
+    /// Packed nodes — one u64 each (`[tag:2][child0:31][child1:31]`, see `pack`/`unpack`).
+    nodes: Vec<u64>,
     /// Hash-cons table: a SwissTable storing node IDS (not Nodes), hashed and compared
     /// THROUGH `nodes`, so each interned node is stored once (in `nodes`), not twice — a
     /// `HashTable<Node>` would duplicate every Node as its key (~half the arena's
@@ -99,7 +129,7 @@ impl Arena {
         };
         // index 0: reserved null sentinel (never interned, never returned) so no valid
         // handle is JS-falsy — see LEAF_ID.
-        a.nodes.push(Node::Leaf);
+        a.nodes.push(pack(Node::Leaf));
         let id = a.mk(Node::Leaf); // real LEAF interned at index 1
         debug_assert_eq!(id, LEAF_ID);
         // Scott TT/FF — the exact trees the prelude's TT/FF compile to. Mirror
@@ -121,29 +151,31 @@ impl Arena {
     /// read `nodes` while `intern` is borrowed.
     #[inline]
     fn mk(&mut self, n: Node) -> u32 {
-        let h = node_hash(n);
+        let w = pack(n);
+        let h = word_hash(w);
         let Arena { nodes, intern, free_list, .. } = self;
-        if let Some(&id) = intern.find(h, |&id| nodes[id as usize] == n) {
+        if let Some(&id) = intern.find(h, |&id| nodes[id as usize] == w) {
             return id;
         }
         // Reuse a slot freed by `end_scope` before extending the arena (so a scoped
         // workload's peak — not its cumulative allocation — bounds `nodes.len()`).
         let id = if let Some(reused) = free_list.pop() {
-            nodes[reused as usize] = n;
+            nodes[reused as usize] = w;
             reused
         } else {
             let id = nodes.len() as u32;
-            nodes.push(n);
+            debug_assert!(id < (1u32 << 31), "node id exceeds the 31-bit packing limit");
+            nodes.push(w);
             id
         };
-        intern.insert_unique(h, id, |&id| node_hash(nodes[id as usize]));
+        intern.insert_unique(h, id, |&id| word_hash(nodes[id as usize]));
         id
     }
 
     // ── term algebra (Session.leaf / stem / fork + the lazy susp) ──
     #[inline]
     pub(crate) fn node(&self, id: u32) -> Node {
-        self.nodes[id as usize]
+        unpack(self.nodes[id as usize])
     }
     /// Current node high-water (interned count) — the watermark backend's baseline source.
     #[inline]
@@ -219,7 +251,7 @@ impl Arena {
             visit!(self.tree_eq_id);
         }
         while let Some(id) = work.pop() {
-            match self.nodes[id as usize] {
+            match unpack(self.nodes[id as usize]) {
                 Node::Leaf => {}
                 Node::Stem(c) => visit!(c),
                 Node::Fork(l, r) => {
