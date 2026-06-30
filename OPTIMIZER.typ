@@ -650,6 +650,25 @@ The genuinely unresolved core, ordered roughly by how load-bearing.
   yielding the diagonal for non-affine recognizers) is the open research.
 ]
 #openq[
+  *The affine fragment as a (valuated-)matroid search island.* The boundary where Conjecture 2 fails —
+  non-affine / project-twice recognizers, where the recognizer's $delta$ duplicates — is the *same*
+  boundary where matroid exchange fails: shared subterms break the exchange property that makes
+  greedy/local cost-extraction optimal (the reason e-graph extraction is NP-hard and non-submodular).
+  On the *affine* (bang-free) side this cuts two ways. *Feasibility:* an affine, *first-order* recognizer
+  lives in the decidable part of linear logic — inhabitation is NP-complete multiplicatively (Kanovich),
+  PSPACE-complete with additives (Lincoln–Mitchell–Scedrov–Shankar); the bang `!` (= $delta$, §8) is the
+  LL undecidability cliff, and dependent $Pi$-over-`Tree` is undecidable *independently* of affineness.
+  So the affine-and-first-order fragment is a complete, terminating synthesis island (guess-and-check,
+  verifier-cheap) on a boundary disp already computes (project-once vs -twice) — a principled split
+  between a decision procedure and neural search. *Optimality:* among feasible affine candidates, if the
+  cost coeffect (§4) is *valuated-matroid*-shaped (a tropical / min-plus Plücker vector — Dress–Wenzl,
+  "a new look at the greedy algorithm"; Murota M-concavity), greedy extraction is optimal in poly time.
+  *Open:* does disp's affine condition land *exactly* in the decidable LL fragment (needs the $delta$ =
+  bang identification of §8 made exact), and does any wanted cost grading meet the valuated exchange
+  axiom? Refs: Rado–Edmonds (greedy optimal for all weights iff matroid); a telescope's admissible
+  binding orders are the antimatroid of linear extensions of its dependency DAG (Korte–Lovász–Schrader).
+]
+#openq[
   *The eager Improvement Theorem (M4).* Sands is call-by-name/need with a function-call metric;
   disp is eager. Pick the metric and re-derive the theorem + a context lemma + improvement induction
   for the eager strategy. Feasible (a CBV improvement theory exists, Sands 1997) but the one real
