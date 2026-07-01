@@ -104,36 +104,36 @@ HBin : Type := wait (make_rec_recognizer
 ) (make_meta unit_witness inductive_respond)
 
 
-// mk: the builder — fill derived fields from their recipes, take opaque ones
+// build: the builder — fill derived fields from their recipes, take opaque ones
 // from `given`, emit the full §2.6 record (which the recognizer then re-pins).
-let mk_fold = fix ({self, tele, given} ->
+let build_fold = fix ({self, tele, given} ->
   if (is_fork tele) then {
     let m = type_meta (pair_fst tele) // inspect the wait-form cell's meta
     let x = if (is_derive (pair_fst tele)) then (m.recipe) else (field given (m.name))
     let rest = self ((pair_snd tele) x) given
     pair (cons (m.name) (pair_fst rest)) (cons (list_const x) (pair_snd rest))
   } else (pair nil nil))
-// mk takes the Telescope TYPE (reads the telescope off its meta), so call sites write `mk T { … }`.
+// build takes the Telescope TYPE (reads the telescope off its meta), so call sites write `build T { … }`.
 // (Unannotated: the fold triages its arg, so a `Tree -> …` typing would mint hyps it inspects.)
-mk := {T, given} -> {
-  let nv = mk_fold ((type_meta T).recognizer_params) given
-  mk_record (pair_fst nv) (pair_snd nv)
+build := {T, given} -> {
+  let nv = build_fold ((type_meta T).recognizer_params) given
+  make_record (pair_fst nv) (pair_snd nv)
 }
 
-// mk_curried T: the CURRIED constructor — takes the opaque fields one at a time (a lambda each), computing
-// derived fields from the priors. Fully applied = the SAME record as `mk T { … }`; a partial application is
-// a record-under-construction with the residual type (the Π/Σ bridge: `mk_curried T : Π Δ_opaque. T`).
+// build_curried T: the CURRIED constructor — takes the opaque fields one at a time (a lambda each), computing
+// derived fields from the priors. Fully applied = the SAME record as `build T { … }`; a partial application is
+// a record-under-construction with the residual type (the Π/Σ bridge: `build_curried T : Π Δ_opaque. T`).
 let list_rev = fix ({self, xs, acc} -> if (is_fork xs) then (self (pair_snd xs) (cons (pair_fst xs) acc)) else acc)
-let mkc_go = fix ({self, tele, names, vals} ->
+let build_curried_go = fix ({self, tele, names, vals} ->
   if (is_fork tele) then {
     let m = type_meta (pair_fst tele)
     if (is_derive (pair_fst tele))
       then (self ((pair_snd tele) (m.recipe)) (cons (m.name) names) (cons (list_const (m.recipe)) vals)) // derived: compute now
       else ({x} -> self ((pair_snd tele) x) (cons (m.name) names) (cons (list_const x) vals)) // opaque: await x
-  } else (mk_record (list_rev names nil) (list_rev vals nil)))
-mk_curried := {T} -> mkc_go ((type_meta T).recognizer_params) nil nil
+  } else (make_record (list_rev names nil) (list_rev vals nil)))
+build_curried := {T} -> build_curried_go ((type_meta T).recognizer_params) nil nil
 
-// constructor_type T: the type of `mk_curried T` — a Π-chain over the OPAQUE fields ending in T (derived
+// constructor_type T: the type of `build_curried T` — a Π-chain over the OPAQUE fields ending in T (derived
 // skipped). Each opaque field's codomain is the residual constructor type, so a partial application has the
 // shrunk residual (a typestate). A *dependent* field's residual is an unreduced family (intensional under tree_eq).
 let ctype_go = fix ({self, tele, T} ->

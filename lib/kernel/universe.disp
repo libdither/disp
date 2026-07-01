@@ -39,7 +39,7 @@ MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, 
 // A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the recognizer ->
 // CheckerResult) and PROJECTED (`type_meta T` -> MetaShape). So `T : Type` iff BOTH faces hold: `qid`
 // observes `v` itself, `qid_meta` observes `type_meta v`. `StrictType` RECOGNIZES via a two-qid-cell
-// telescope walked by the same `at`, and inhabits ITSELF (`StrictType : StrictType`) — the metacircular
+// telescope walked by the same `tele_walk`, and inhabits ITSELF (`StrictType : StrictType`) — the metacircular
 // fixed point. A HYBRID wait-form (its respond is the real universe H-rule `type_predicate_h_rule`).
 CheckerResult : Type := < Ok : Tree, Err : Unit >
 
@@ -52,8 +52,8 @@ let qid_meta_op = {meta, mode, source, prior, frame, rs} -> // observe type_meta
 qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
 
 // StrictType: v is a type iff v is a recognizer (Tree -> CheckerResult) AND type_meta v : MetaShape.
-// A `tele_with` HYBRID (like Eq/Refinement/Intersection): the telescope RECOGNIZER (`at TT` over the two
-// qid cells) + the real universe respond `type_predicate_h_rule` instead of the negative `at FF`. That
+// A `tele_with` HYBRID (like Eq/Refinement/Intersection): the telescope RECOGNIZER (`tele_walk TT` over the two
+// qid cells) + the real universe respond `type_predicate_h_rule` instead of the negative `tele_walk FF`. That
 // respond makes a StrictType-HYP usable as a polymorphic Pi domain: a type-hyp `A` applied as a predicate
 // accepts neutrals of stored type A (predicate-side H-rule). So StrictType is a real universe (not just
 // a recognizer) and can replace legacy `Type` (recognizer = Telescope's; only respond differs).
@@ -98,9 +98,9 @@ ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
 // GoodRespond (R4-R6): the BEHAVIORAL self-typing of the respond face — does respond `R` actually GATE
 // correctly for inductive `T`? The NON-VACUOUS answer to the RESIDUAL above (structural `ProjectingRespondShape`
 // self-typing is vacuous totality; this checks BEHAVIOR and covers the recursive eliminator, validated Nat/MyNat).
-// `GoodRespond T` is a real TELESCOPE walked by `at`: each obligation is a `probe` cell — "apply R to a frame,
+// `GoodRespond T` is a real TELESCOPE walked by `tele_walk`: each obligation is a `probe` cell — "apply R to a frame,
 // check the result ≡ Singleton(outcome)" (the collapse CONV x = MEM (Singleton x)). Two dimensions are cells
-// (WALKER-CLEAN — they reject via a contained SReject, so `param_apply (GoodRespond T) R` is ONE `at` walk that
+// (WALKER-CLEAN — they reject via a contained SReject, so `param_apply (GoodRespond T) R` is ONE `tele_walk` walk that
 // COMPOSES under the walker): coh (coherent cases -> Extend(motive self)) + per-case junk (junk in slot i ->
 // Extend InvalidType; catches over-permissive incl. LAZY gates). The THIRD dimension, reflection, is handled
 // out-of-band by FUSION (a check-based respond polices its mints), so it needs no probe. Pinned: goodrespond.test.

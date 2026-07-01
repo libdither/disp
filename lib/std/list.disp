@@ -25,7 +25,7 @@ let encode_list = {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pai
 // derives the cons case-type `Π h:A. Π tl:List A. P tl -> P (cons h tl)`. cons's head being `Param 0`
 // also lets the generic `fmap (List A) f` map it.
 List : Type -> Type := {A} ->
-  Coproduct_viewed_resp (cons A nil) (gated_inductive_respond (coh_check (cons A nil))) (pair view_list encode_list) [pair "nil" [], pair "cons" [Param zero, Rec]]
+  Coproduct_viewed_respond (cons A nil) (gated_inductive_respond (coh_check (cons A nil))) (pair view_list encode_list) [pair "nil" [], pair "cons" [Param zero, Rec]]
 
 NatList : Type := List Nat
 

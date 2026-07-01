@@ -17,7 +17,7 @@ let m = use "typed_mod.disp"
 test param_apply m.typ m.record = Ok TT
 
 // Non-vacuous: applying the SAME typ to a record whose `foo` isn't a type fails.
-test param_apply m.typ (mk_record ["foo", "bar", "baz"] [list_const zero, list_const Nat, list_const Bool]) = Ok FF
+test param_apply m.typ (make_record ["foo", "bar", "baz"] [list_const zero, list_const Nat, list_const Bool]) = Ok FF
 
 // The value record projects by name through the cut.
 test m.record.foo = Bool

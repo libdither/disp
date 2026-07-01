@@ -514,16 +514,16 @@ function exprToCir(
     }
     case "recType": {
       // A record-type literal IS a telescope type: each field becomes a WAIT-FORM
-      // cell — `proj_cell name ty`, or `deriv_cell name recipe` for a derived
+      // cell — `proj_cell name ty`, or `derive_cell name recipe` for a derived
       // `name := e` member — consed into `t cell (λname. rest)` and wrapped in
       // `Telescope`. Later fields' types and derived recipes compile under lams
       // binding the PRIOR field names, so `{ a : Nat, b := double a }` scopes
       // naturally. (Pi/Sigma emit the same cells, so surface and manual agree.)
       const TelescopeEntry = lookupEntry("Telescope")
       const projCellEntry = lookupEntry("proj_cell")
-      const derivCellEntry = lookupEntry("deriv_cell")
+      const derivCellEntry = lookupEntry("derive_cell")
       if (!TelescopeEntry?.tree || !projCellEntry?.tree || !derivCellEntry?.tree)
-        throw new Error("record type literal '{ name : T }': 'Telescope', 'proj_cell', and 'deriv_cell' must be in scope (open the kernel prelude)")
+        throw new Error("record type literal '{ name : T }': 'Telescope', 'proj_cell', and 'derive_cell' must be in scope (open the kernel prelude)")
       const leafCir: Cir = { tag: "lit", t: cs.leaf() }
       let teleCir: Cir = leafCir
       for (let i = e.fields.length - 1; i >= 0; i--) {
@@ -532,7 +532,7 @@ function exprToCir(
         const shadowed = (n: string): ScopeEntry | undefined =>
           priorNames.has(n) ? {} : lookupEntry(n)
         const nameCir: Cir = { tag: "lit", t: stringToTree(f.name) }
-        // derived field `name := e` -> deriv_cell name recipe; else proj_cell name ty.
+        // derived field `name := e` -> derive_cell name recipe; else proj_cell name ty.
         // A field's type is a TYPE position: desugar binders to `Pi` (so `s : T -> T`
         // is a `Pi`, not a value-lambda), exactly as a binding annotation does.
         const entryCir: Cir = f.value != null
@@ -641,13 +641,13 @@ function exprToCir(
           throw new Error("recValue: 'trailing' is only valid when fields are empty")
         return exprToCir(e.trailing, fieldLookup, resolveUse, sinks)
       }
-      // §2.6 record: {x := a; y := b} → mk_record ["x","y"] [list_const a, list_const b]
+      // §2.6 record: {x := a; y := b} → make_record ["x","y"] [list_const a, list_const b]
       // — a `prod` over a string-interned name header, read by name through the
-      // cut. (mk_record/list_const must be in scope, like `match` needs `prod`.)
-      const recordValEntry = lookupEntry("mk_record")
+      // cut. (make_record/list_const must be in scope, like `match` needs `prod`.)
+      const recordValEntry = lookupEntry("make_record")
       const listConstEntry = lookupEntry("list_const")
       if (!recordValEntry?.tree || !listConstEntry?.tree)
-        throw new Error("record literal '{ := }': 'mk_record' and 'list_const' must be in scope (open the kernel prelude)")
+        throw new Error("record literal '{ := }': 'make_record' and 'list_const' must be in scope (open the kernel prelude)")
       const recordVal: Cir = { tag: "lit", t: recordValEntry.tree }
       const listConst: Cir = { tag: "lit", t: listConstEntry.tree }
       // names header: a closed cons-chain of string tags.
@@ -690,15 +690,15 @@ function exprToCir(
       // `use raw "f"` skips the file's annotations (no `typ`); it falls through to
       // the bare value record below since `entry.fieldTypes` are all null.
       const entry = resolveUse(e.path, e.raw)
-      const mk_record = lookupEntry("mk_record")?.tree
+      const make_record = lookupEntry("make_record")?.tree
       const list_const = lookupEntry("list_const")?.tree
       const Record = lookupEntry("Record")?.tree
-      if (!mk_record || !list_const || !Record || !entry.fields || !entry.fieldTrees)
+      if (!make_record || !list_const || !Record || !entry.fields || !entry.fieldTrees)
         return { tag: "lit", t: entry.tree! }
       const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => cs.fork(h, acc), cs.leaf())
       const constWrap = (v: Tree): Tree => cs.apply(list_const, v, B())
       const mkRecord = (names: string[], vals: Tree[]): Tree =>
-        cs.apply(cs.apply(mk_record, consList(names.map(stringToTree)), B()), consList(vals.map(constWrap)), B())
+        cs.apply(cs.apply(make_record, consList(names.map(stringToTree)), B()), consList(vals.map(constWrap)), B())
       const names = entry.fields, vals = entry.fieldTrees, types = entry.fieldTypes ?? []
       const valuesRecord = mkRecord(names, vals)
       // typ = Record [ pair name type ]  over annotated exports (pair = fork(name,type))
@@ -982,7 +982,7 @@ function treeToString(t: Tree): string {
 }
 
 // recordFieldsFromTree(tree): if `tree` is a §2.6 record VALUE (an annihilate-
-// rooted product — e.g. the output of `mk_record` / `Enum`), read its field-name
+// rooted product — e.g. the output of `make_record` / `Enum`), read its field-name
 // header and extract each field via the cut, so `open` works on a *computed*
 // record, not only on statically-known `use` modules. Returns undefined for
 // anything that isn't such a record — in particular library TYPES are
@@ -1121,7 +1121,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         runItem(it, fileDecls, !hasFields, raw)
       }
       const pa = lookupEntry("param_apply")?.tree, rec = lookupEntry("Record")?.tree
-      const mkr = lookupEntry("mk_record")?.tree, lc = lookupEntry("list_const")?.tree
+      const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
       const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("TT")?.tree
       if (pa && rec && mkr && lc && ok && tt) vFormers = { paramApply: pa, Record: rec, mkRecord: mkr, listConst: lc, ok, tt }
     } finally {
@@ -1239,7 +1239,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // Module metadata propagation (`let m = use "f"`): `open m` and projection
     // on the module's Church-record fallback need the export list. Falls back to
     // reading the field header off the compiled tree, so a binding whose value is
-    // a §2.6 record (`E := Enum {…}`, any `mk_record` result) is `open`-able and
+    // a §2.6 record (`E := Enum {…}`, any `make_record` result) is `open`-able and
     // projects at compile time.
     const record = resolveExprRecord(body, lookupEntry, resolveUse) ?? recordFieldsFromTree(tree, lookupEntry)
     // Track the named-argument signature (leading lambda params + defaults) so a

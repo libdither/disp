@@ -55,7 +55,7 @@ test is_gated MergedST = FF      // a negative former — not gated (else-branch
 test tree_eq (param_apply MergedST Bool) (Ok TT) = TT     // non-recursive
 test tree_eq (param_apply MergedST Nat)  (Ok TT) = TT     // RECURSIVE — the nested design's wall, dissolved
 // discrimination (coh dim): an over-restrictive (inert) respond is caught -> Ok FF (so it's not folded-constant)
-let BadMyNat = Coproduct_resp inert_respond [pair "z" [], pair "s" [Rec]]
+let BadMyNat = Coproduct_respond inert_respond [pair "z" [], pair "s" [Rec]]
 test tree_eq (param_apply MergedST BadMyNat) (Ok FF) = TT
 // non-gated former passes the else-branch: self-types
 test tree_eq (param_apply MergedST MergedST) (Ok TT) = TT

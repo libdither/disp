@@ -81,13 +81,13 @@ let handle = {c} -> match c { tag_a n => succ n; tag_b x => x }
 test handle (inj tag_a zero) = succ zero // a-handler runs on zero
 test handle (inj tag_b TT) = TT // b-handler runs on TT
 // the underlying library cut (what `match` expands to):
-test mk_record [tag_a, tag_b] [{n} -> succ n, {x} -> x] (inj tag_a zero) = succ zero
+test make_record [tag_a, tag_b] [{n} -> succ n, {x} -> x] (inj tag_a zero) = succ zero
 
 // Record [(a, Nat), (b, Bool)] and projection via the cut
 let MyRec = Record [pair tag_a Nat, pair tag_b Bool]
-let r = mk_record [tag_a, tag_b] [list_const zero, list_const TT]
+let r = make_record [tag_a, tag_b] [list_const zero, list_const TT]
 test typecheck MyRec r = Ok TT
-test param_apply MyRec (mk_record [tag_a, tag_b] [list_const TT, list_const TT]) = Ok FF
+test param_apply MyRec (make_record [tag_a, tag_b] [list_const TT, list_const TT]) = Ok FF
 test field r tag_a = zero // r.a
 test field r tag_b = TT // r.b
 

@@ -1,0 +1,68 @@
+// Q1 micro-experiment — MAIN. Scale the warm-up's licensing (Nat `add n zero ~ n`) to LIST free
+// theorems via GENUINE, gate-checked list induction.
+//
+// KEY FINDING (the reason this needed care). A function used in a DEPENDENT MOTIVE is applied by the
+// coherence gate to a HYPOTHESIS (the induction variable, minted fresh). So it must be WALKER-SAFE:
+// it must reduce to a clean stuck neutral on a hyp, NOT raw-`triage` on it. The std `list_length` /
+// `list_map` are defined by raw `triage`/`fix` on the shape (for runtime speed), so applying them to a
+// hyp trips the walker's triage-on-neutral abort — they CANNOT appear in a motive. (Confirmed by
+// bisection: a motive applying `list_length xs_` is rejected; constants and fixed-list applications
+// pass.) This mirrors `add`, which `std/nat/arith.disp` deliberately routes through `nat_rec` "to keep
+// the body walker-safe". So we use walker-safe `len`/`mp` built from the kernel recursor `rec_value`.
+
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/list.disp"
+
+// Genuine, gate-checked List recursor for the WITNESS (routes through `elim` → List's gated respond;
+// gap_severity.test.disp shows a lying recursor here is rejected `Ok FF`).
+let my_list_disp = fix ({self, motive, cases, target} ->
+  if (is_leaf target) then cases.nil
+  else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
+let my_list_rec = {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
+
+// WALKER-SAFE length and map, via `my_list_rec` (= `elim my_list_disp`): handles the SHAPE encoding
+// directly (unlike `rec_value`, whose generic dispatcher keys on `pair_fst` as a tag — wrong for
+// shape-encoded List) AND is walker-safe (a neutral target routes to `hyp_reduce`, never `is_leaf`).
+let len = {xs} -> my_list_rec ({_} -> Nat) zero ({h, tl, ih} -> succ ih) xs
+let mp  = {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+
+let FnNN = Pi Nat ({_} -> Nat)
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Target 1 — len (mp f xs) ~ len xs   (a free theorem; funext-free; the rhs deletes all f-applications)
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//   nil  : len (mp f nil) ⤳ len nil ⤳ 0                                       → refl
+//   cons : len (mp f (cons h tl)) ⤳ succ (len (mp f tl));  len (cons h tl) ⤳ succ (len tl);
+//          ih : Eq Nat (len (mp f tl)) (len tl)                               → eq_cong succ ih
+let law_lenmap = Pi FnNN ({f} -> Pi NatList ({xs} -> Eq Nat (len (mp f xs)) (len xs)))
+let len_map = {f} -> {xs} -> my_list_rec ({xs_} -> Eq Nat (len (mp f xs_)) (len xs_)) refl ({h, tl, ih} -> eq_cong Nat Nat ({k} -> succ k) (len (mp f tl)) (len tl) ih) xs
+
+// (a) PAST tree_eq: refl alone fails — `len (mp f xs)` is a stuck term, not tree_eq to `len xs`.
+test param_apply law_lenmap ({f} -> {xs} -> refl) = Ok FF
+// (b) the GENUINE witness type-checks (gate-checked list induction, f abstract).
+test param_apply law_lenmap len_map = Ok TT
+// (c) NON-VACUITY: a lying cons-case (refl, ignoring ih) is REJECTED — the gate verifies the step.
+let bad_lenmap = {f} -> {xs} -> my_list_rec ({xs_} -> Eq Nat (len (mp f xs_)) (len xs_)) refl ({h, tl, ih} -> refl) xs
+test param_apply law_lenmap bad_lenmap = Ok FF
+// (d) behaviour preserved on a concrete input ([1,2], f = succ): both sides ⤳ 2.
+let lst12 = cons (succ zero) (cons (succ (succ zero)) nil)
+test len (mp succ lst12) = succ (succ zero)
+test tree_eq (len (mp succ lst12)) (len lst12) = TT
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Target 2 — mp f (mp g xs) ~ mp (compose f g) xs   (map fusion; one traversal instead of two)
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//   cons : both sides head `cons (f (g h)) …` (compose reduces; heads tree_eq); tails by ih →
+//          eq_cong (cons (f (g h)) _) ih.  Funext-free: f,g stay abstract, never compared as functions.
+let compose = {f, g, x} -> f (g x)
+let law_fusion = Pi FnNN ({f} -> Pi FnNN ({g} -> Pi NatList ({xs} -> Eq NatList (mp f (mp g xs)) (mp (compose f g) xs))))
+let map_fusion = {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> eq_cong NatList NatList ({tail_} -> cons (f (g h)) tail_) (mp f (mp g tl)) (mp (compose f g) tl) ih) xs
+
+// (b) the genuine fusion witness type-checks.
+test param_apply law_fusion map_fusion = Ok TT
+// (c) NON-VACUITY: lying cons-case rejected.
+let bad_fusion = {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> refl) xs
+test param_apply law_fusion bad_fusion = Ok FF
+// (d) behaviour preserved: mp succ (mp succ [1,2]) ⤳ mp (compose succ succ) [1,2] ⤳ [3,4].
+test tree_eq (mp succ (mp succ lst12)) (mp (compose succ succ) lst12) = TT

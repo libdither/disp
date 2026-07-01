@@ -86,12 +86,12 @@ let lookup_arm_p = fix ({self, variants, tag} ->
   } else Err)
 let coproduct_at_p = {rs, variants, v} ->
   match (lookup_arm_p variants (pair_fst v)) {
-    Ok argspec => (at rs TT (pos_tele_p argspec) (pair_snd v) t t)
+    Ok argspec => (tele_walk rs TT (pos_tele_p argspec) (pair_snd v) t t)
     Err _ => (Ok FF)
   }
 // Coproduct_p params variants: a parameterized inductive. params = the type-arg list (indexed by
 // `Param i`); variants keep the markers (so nmap can read them via `recognizer_params`). rs = (self,
-// params) ties the recursive knot AND supplies the parameters. Mirrors the kernel `Coproduct_resp`.
+// params) ties the recursive knot AND supplies the parameters. Mirrors the kernel `Coproduct_respond`.
 let Coproduct_p = {params, variants} -> wait (make_rec_recognizer
   {self, meta, v} -> (coproduct_at_p (pair self params) meta.recognizer_params v)
 ) (make_meta variants inductive_respond)

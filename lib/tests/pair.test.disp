@@ -7,25 +7,25 @@ test pair_fst (pair 1 2) = 1
 test pair_snd (pair 1 2) = 2
 
 // Pair A B is a Sigma (2-entry telescope); values are records
-test typecheck (Pair Nat Nat) (mk_pair 0 0) = Ok TT
-test typecheck (Pair Nat Nat) (mk_pair 3 7) = Ok TT
-test typecheck (Pair Nat Bool) (mk_pair 1 TT) = Ok TT
-test typecheck (Pair Bool Nat) (mk_pair FF 5) = Ok TT
-test mk_pair 4 7 = { fst := 4; snd := 7 }
+test typecheck (Pair Nat Nat) (make_pair 0 0) = Ok TT
+test typecheck (Pair Nat Nat) (make_pair 3 7) = Ok TT
+test typecheck (Pair Nat Bool) (make_pair 1 TT) = Ok TT
+test typecheck (Pair Bool Nat) (make_pair FF 5) = Ok TT
+test make_pair 4 7 = { fst := 4; snd := 7 }
 
 // Rejects ill-typed contents
-test typecheck (Pair Bool Nat) (mk_pair 1 5) = Ok FF
+test typecheck (Pair Bool Nat) (make_pair 1 5) = Ok FF
 
 // Helpers
-test pair_map_fst succ (mk_pair 1 9) = mk_pair 2 9
-test pair_map_snd succ (mk_pair 1 9) = mk_pair 1 10
-test pair_swap (mk_pair 1 9) = mk_pair 9 1
+test pair_map_fst succ (make_pair 1 9) = make_pair 2 9
+test pair_map_snd succ (make_pair 1 9) = make_pair 1 10
+test pair_swap (make_pair 1 9) = make_pair 9 1
 
 // Pair under a Pi binder — `.fst`/`.snd` projection is uniform: the §2.6 cut
 // on a concrete record, Telescope's respond on a Pair-hypothesis. No is_neutral
 // dispatch needed (the old proj_fst/proj_snd select_lazy hack is gone).
 let snd_of_nats : Pair Nat Nat -> Nat = {p} -> p.snd
-test snd_of_nats (mk_pair 4 7) = 7
+test snd_of_nats (make_pair 4 7) = 7
 let fst_of_nats : Pair Nat Nat -> Nat = {p} -> p.fst
-test fst_of_nats (mk_pair 4 7) = 4
+test fst_of_nats (make_pair 4 7) = 4
 test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> p.snd) = Ok TT // verifies through the walker

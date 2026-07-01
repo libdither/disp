@@ -1,5 +1,5 @@
 // Micro-benchmark: per-operation cost of the current tagged-union encoding
-// vs the §2.6 coproduct (inj / mk_record) for CheckerResult and Action.
+// vs the §2.6 coproduct (inj / make_record) for CheckerResult and Action.
 //
 // Each driver folds an elimination over 100 DISTINCT Nats (k = 0..99) so the
 // apply-memo never fires — every iteration is a fresh reduction. The nat_rec /
@@ -16,11 +16,11 @@ let N = 100
 
 // ---- CheckerResult: construct Ok k, then eliminate back to k ----
 let cur_cr = {k} -> if (tree_eq (pair_fst (Ok k)) "Ok") then (pair_snd (Ok k)) else zero
-let cop_cr = {k} -> mk_record ["ok", "fail"] [{v} -> v, {_} -> zero] (inj "ok" k)
+let cop_cr = {k} -> make_record ["ok", "fail"] [{v} -> v, {_} -> zero] (inj "ok" k)
 
 // ---- Action: construct Extend k, dispatch, extract payload ----
 let cur_act = {k} -> if (is_extend (Extend k)) then (pair_snd (Extend k)) else (pair_snd (Extend k))
-let cop_act = {k} -> mk_record ["Extend", "Return"] [{v} -> v, {v} -> v] (inj "Extend" k)
+let cop_act = {k} -> make_record ["Extend", "Return"] [{v} -> v, {v} -> v] (inj "Extend" k)
 
 // drivers: sum elim(k) over k = 0..N-1 (distinct inputs, no memo reuse)
 let drive = {f, n} -> nat_rec ({_} -> Nat) zero ({k, acc} -> add (f k) acc) n

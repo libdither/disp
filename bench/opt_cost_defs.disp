@@ -1,0 +1,37 @@
+// Definitions for the Q1 cost experiment (bench/opt-cost.ts measures these).
+// Each rewrite's two sides are FUNCTIONS of the input (so they are NOT pre-reduced at
+// elaboration); the harness applies them to concrete inputs and measures cold step counts.
+// The functions are the SAME walker-safe ones the rewrites were PROVEN equivalent for
+// (opt_q1_main / opt_q1_cert) — so the cost measured is the cost of the licensed rewrite.
+
+open use "../lib/prelude.disp"
+open use "../lib/kernel/prelude.disp"
+open use "../lib/std/list.disp"
+open use "../lib/std/nat/arith.disp"
+
+my_list_disp := fix ({self, motive, cases, target} ->
+  if (is_leaf target) then cases.nil
+  else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
+my_list_rec := {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
+mp  := {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+len := {xs} -> my_list_rec ({_} -> Nat) zero ({h, tl, ih} -> succ ih) xs
+compose := {f, g, x} -> f (g x)
+
+// range n : a concrete NatList of length n (elements irrelevant to cost).
+range := {n} -> nat_rec ({_} -> NatList) nil ({k, ih} -> cons (succ k) ih) n
+
+// re-export primitives the harness needs (only `:=` bindings are emitted in export mode).
+e_zero := zero
+e_succ := succ
+e_cons := cons
+e_nil  := nil
+
+// the three licensed rewrites, each as (lhs, rhs) functions of the input:
+addzero_lhs := {n} -> add n zero
+addzero_rhs := {n} -> n
+lenmap_lhs  := {xs} -> len (mp succ xs)
+lenmap_rhs  := {xs} -> len xs
+fusion_lhs  := {xs} -> mp succ (mp succ xs)
+fusion_rhs  := {xs} -> mp (compose succ succ) xs
+// fused AND specialized: the composite inlined to a direct lambda (no generic `compose` closure).
+fusion_spec_rhs := {xs} -> mp ({x} -> succ (succ x)) xs

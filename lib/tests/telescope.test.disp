@@ -9,9 +9,9 @@ open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
 
 // entry builders: a telescope cell is now a wait-form (`proj_cell name ty` /
-// `deriv_cell name recipe`) — the same trees the surface recType desugar emits.
+// `derive_cell name recipe`) — the same trees the surface recType desugar emits.
 let ent = {name, ty} -> proj_cell name ty
-let dent = {name, e} -> deriv_cell name e
+let dent = {name, e} -> derive_cell name e
 
 // ---- empty telescope = ⊤ (the empty meet of obligations = Top, = Tree). Guard-free:
 // a non-empty record telescope still rejects non-records via the proj cell's lookup_field,
@@ -111,13 +111,13 @@ let TIf = Telescope (t (ent "a" Nat) ({a} ->
   t (ent "b" (if (is_zero a) then Nat else Bool)) ({_b} -> t)))
 test typecheck TIf { a := 0; b := 3 } = Ok TT
 
-// ---- mk: fill derived fields from the recipe, take opaque ones from `given` ----
-test mk TD { a := 2 } = { a := 2; b := 4 }
-test typecheck TD (mk TD { a := 2 }) = Ok TT
-test mk TDC { a := 1; c := refl } = { a := 1; b := 2; c := refl }
-test typecheck TDC (mk TDC { a := 1; c := refl }) = Ok TT
-// mk on an opaque-only telescope is the identity reshape
-test mk T2 { a := 1; b := FF } = { a := 1; b := FF }
+// ---- build: fill derived fields from the recipe, take opaque ones from `given` ----
+test build TD { a := 2 } = { a := 2; b := 4 }
+test typecheck TD (build TD { a := 2 }) = Ok TT
+test build TDC { a := 1; c := refl } = { a := 1; b := 2; c := refl }
+test typecheck TDC (build TDC { a := 1; c := refl }) = Ok TT
+// build on an opaque-only telescope is the identity reshape
+test build T2 { a := 1; b := FF } = { a := 1; b := FF }
 
 // ---- a function over a telescope record: Pi (Telescope ...) — named args ----
 f : Arrow T2 Nat := {r} -> succ (r.a)
@@ -148,18 +148,18 @@ test typecheck TDeps { T := Nat; x := 3 } = Ok TT
 let TDs = { a : Nat, b := double a }
 test typecheck TDs { a := 2; b := 4 } = Ok TT
 test param_apply TDs { a := 2; b := 5 } = Ok FF
-test mk TDs { a := 3 } = { a := 3; b := 6 }
+test build TDs { a := 3 } = { a := 3; b := 6 }
 
 // typed derived member + later field over it
 let TDCs = { a : Nat, b : Nat := succ a, c : Eq Nat b (succ a) }
-test typecheck TDCs (mk TDCs { a := 1; c := refl }) = Ok TT
+test typecheck TDCs (build TDCs { a := 1; c := refl }) = Ok TT
 
 // the headline: named-argument calls over a dependent record domain
 add_fields : Arrow { a : Nat, b : Nat } Nat := {r} -> add r.a r.b
 test add_fields { a := 1; b := 2 } = 3
-// with a derived field filled by mk
+// with a derived field filled by build
 scale : Arrow { n : Nat, twice := double n } Nat := {r} -> r.twice
-test scale (mk { n : Nat, twice := double n } { n := 5 }) = 10
+test scale (build { n : Nat, twice := double n } { n := 5 }) = 10
 
 // binder-param recType annotation gives projections AND the real type
 let getb = {r : { a : Nat, b : Bool }} -> r.b

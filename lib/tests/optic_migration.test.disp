@@ -12,7 +12,7 @@
 //      pos/deriv/rec/param/qid). `proj` vs `pos` differ ONLY in the optic; `rec`/`param`/`rec_at`
 //      differ ONLY in where the checked type comes from (a SHARED `spec_to_role`).
 //   2. The optic's `over` is the missing half: `at_map` REBUILDS by composing position-wise `over`s,
-//      so NO `build_payload` (positional) and NO `mk_record` (named) by hand. fmap works over a
+//      so NO `build_payload` (positional) and NO `make_record` (named) by hand. fmap works over a
 //      Coproduct (slot.over) AND a Record (key.over) with the same engine.
 //   3. `key name = on_values names (slot (index_of names name))` — named addressing IS positional
 //      addressing + a name-table (CELL_OPTICS §2). Made executable below.
@@ -119,28 +119,28 @@ let key_cells = {fields} -> key_cells_go (map_fst fields) fields
 // WALKER 1 — recognize/respond: the kernel `at` REUSED UNCHANGED (it reads cells via the Step
 // protocol only, so the generic op plugs straight in). rs = pair self params (step-0 bundling).
 // ─────────────────────────────────────────────────────────────────────────────────────────
-let tele_respond = {params, self, frame} -> at (pair t t) FF params self frame t
+let tele_respond = {params, self, frame} -> tele_walk (pair t t) FF params self frame t
 
 // Pi/Arrow/Intersection — negative dependent product (Telescope). mint + app + self optics.
-let Telescope_o = {tele} -> wait (make_recognizer {meta, v} -> at (pair t t) TT (meta.recognizer_params) v t t) (make_meta tele tele_respond)
+let Telescope_o = {tele} -> wait (make_recognizer {meta, v} -> tele_walk (pair t t) TT (meta.recognizer_params) v t t) (make_meta tele tele_respond)
 let Pi_o    = {A, B} -> Telescope_o (t (mk_cell mk_fresh (r_bind A)) ({h} -> t (mk_cell mk_app (r_lit (B h))) ({_} -> t)))
 let Arrow_o = {A, B} -> Pi_o A ({_} -> B)
 let Inter   = {A, B} -> Telescope_o (t (mk_cell mk_self_optic (r_lit A)) ({_} -> t (mk_cell mk_self_optic (r_lit B)) ({_} -> t)))
 
 // Record — the only `key` former. Plain/derived fields; params threaded for fmap.
-let record_walk = {rs, fields, v} -> at rs TT (key_cells fields) v t t
+let record_walk = {rs, fields, v} -> tele_walk rs TT (key_cells fields) v t t
 let Record_p = {params, fields} -> wait (make_recognizer {meta, v} -> (record_walk (pair t params) (meta.recognizer_params) v)) (make_meta fields tele_respond)
 let Record_o = {fields} -> Record_p t fields
 
 // Coproduct — the `slot` former. Self-aware (rec cells) + param-aware. Value = inj tag arglist.
-let coproduct_walk = {rs, variants, v} -> (match (lookup_arm variants (pair_fst v)) { Ok argspec => (at rs TT (slot_cells argspec) (pair_snd v) t t); Err _ => (Ok FF) })
+let coproduct_walk = {rs, variants, v} -> (match (lookup_arm variants (pair_fst v)) { Ok argspec => (tele_walk rs TT (slot_cells argspec) (pair_snd v) t t); Err _ => (Ok FF) })
 let Coproduct_p = {params, variants} -> wait (make_rec_recognizer {self, meta, v} -> (coproduct_walk (pair self params) (meta.recognizer_params) v)) (make_meta variants inductive_respond)
 let Coproduct_o = {variants} -> Coproduct_p t variants
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
 // WALKER 2 — at_map: the sibling that uses the optic's `over`. The ONLY new walker. For each cell it
 // selects a (whole->whole) transform from the role (param -> map fns i ; rec -> recurse ; else leave)
-// and COMPOSES them over the whole — so reconstruction = composed `over`s, NO build_payload/mk_record.
+// and COMPOSES them over the whole — so reconstruction = composed `over`s, NO build_payload/make_record.
 // ─────────────────────────────────────────────────────────────────────────────────────────
 let at_map_cells = fix ({self, nm, fns, cells, whole} ->
   if (is_fork cells) then {
@@ -155,7 +155,7 @@ let fmap_cop = fix ({self, T, fns, v} -> {
   let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (slot_cells a); Err _ => t })
   inj (pair_fst v) (at_map_cells (wait self T) fns cells (pair_snd v))
 })
-// fmap over a Record: whole = the record, rebuilt by the composed key.overs (no mk_record). Non-recursive.
+// fmap over a Record: whole = the record, rebuilt by the composed key.overs (no make_record). Non-recursive.
 let fmap_rec = {T, fns, rec} -> at_map_cells t fns (key_cells (type_meta T).recognizer_params) rec
 
 let fmap      = {T, f, v}    -> fmap_cop T ({i} -> f) v
@@ -177,7 +177,7 @@ let bnode  = {l, r} -> inj "node" (cons l (cons r nil))
 
 let mk_rec  = {names, vals} -> pair names vals
 let Pair    = {A, B} -> Record_p (cons A (cons B nil)) [pair "fst" (Param zero), pair "snd" (Param (succ zero))]
-let mk_pair = {a, b} -> mk_rec ["fst", "snd"] (cons a (cons b nil))
+let make_pair = {a, b} -> mk_rec ["fst", "snd"] (cons a (cons b nil))
 // a record with a DERIVED field (Pin role): y is pinned to 42.
 let DRec = Record_o [pair "x" Nat, pair "y" (Deriv 42)]
 
@@ -187,8 +187,8 @@ let DRec = Record_o [pair "x" Nat, pair "y" (Deriv 42)]
 
 // (3) the unification, made executable: key = slot ∘ index_of, re-attaching names
 test ((mk_slot (succ zero)).get) (cons 7 (cons 9 nil)) t                 = 9          // slot 1 get
-test ((mk_key ["fst", "snd"] "snd").get) (mk_pair 7 9) t                 = 9          // key get = slot (index_of …) on values
-test ((mk_key ["a", "b"] "b").over) succ (mk_rec ["a", "b"] (cons 1 (cons 2 nil))) = mk_rec ["a", "b"] (cons 1 (cons 3 nil))  // key over = mk_record-with-one-mapped
+test ((mk_key ["fst", "snd"] "snd").get) (make_pair 7 9) t                 = 9          // key get = slot (index_of …) on values
+test ((mk_key ["a", "b"] "b").over) succ (mk_rec ["a", "b"] (cons 1 (cons 2 nil))) = mk_rec ["a", "b"] (cons 1 (cons 3 nil))  // key over = make_record-with-one-mapped
 
 // (5 + 4) recognition through the REUSED kernel `at`, every former on the generic op
 test typecheck (Arrow Nat Nat) ({x} -> x)                 = Ok TT       // Pi: fresh->bind ; app->check (+ H-rule)
@@ -200,17 +200,17 @@ test typecheck (List Nat) (eleft 3)                       = Ok FF       // wrong
 test typecheck (List Bool) (lcons 1 lnil)                 = Ok FF       // param check: 1 is not a Bool
 test typecheck (Either Nat Bool) (eleft 5)               = Ok TT
 test typecheck (Either Nat Bool) (eright TT)             = Ok TT
-test typecheck (Pair Nat Nat) (mk_pair 3 5)             = Ok TT       // Record: key->check (param)
-test typecheck (Pair Nat Bool) (mk_pair 3 9)            = Ok FF       // record param reject (9 not Bool)
+test typecheck (Pair Nat Nat) (make_pair 3 5)             = Ok TT       // Record: key->check (param)
+test typecheck (Pair Nat Bool) (make_pair 3 9)            = Ok FF       // record param reject (9 not Bool)
 test typecheck DRec (mk_rec ["x", "y"] (cons 5 (cons 42 nil))) = Ok TT // Pin role: present AND pinned
 test typecheck DRec (mk_rec ["x", "y"] (cons 5 (cons 7 nil)))  = Ok FF // Pin role: wrong pinned value
 
-// (2) fmap/bimap via the optic's `over` — NO build_payload (coproduct) and NO mk_record (record)
+// (2) fmap/bimap via the optic's `over` — NO build_payload (coproduct) and NO make_record (record)
 test fmap (List Nat) succ lnil                                       = lnil
 test fmap (List Nat) succ (lcons 1 (lcons 2 (lcons 3 lnil)))        = lcons 2 (lcons 3 (lcons 4 lnil))   // slot.over, recurse at rec
 test bimap (Either Nat Nat) succ double (eleft 5)                   = eleft 6        // succ at param 0
 test bimap (Either Nat Nat) succ double (eright 5)                  = eright 10      // double at param 1
 test fmap (BTree Nat) succ (bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3))) = bnode (bleaf 2) (bnode (bleaf 3) (bleaf 4))
-test bimap_rec (Pair Nat Nat) succ double (mk_pair 3 5)            = mk_pair 4 10   // key.over rebuilds the record
+test bimap_rec (Pair Nat Nat) succ double (make_pair 3 5)            = make_pair 4 10   // key.over rebuilds the record
 // fmap preserves recognition (List Nat -> List Nat)
 test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok TT

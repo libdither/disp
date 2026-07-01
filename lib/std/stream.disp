@@ -13,7 +13,7 @@ open use "../kernel/prelude.disp"
 //   out    : Stream A -> { head : A ; tail : Stream A }           -- observe one step
 //
 // This is the dual of `List`: List is recognized by DESCENDING a finite value (`Rec` cell recurses);
-// Stream is recognized by GUARDING a finite generator (`gen` cell stops). Same self-aware `at`.
+// Stream is recognized by GUARDING a finite generator (`gen` cell stops). Same self-aware `tele_walk`.
 
 stream_head := {r} -> field r "head"
 stream_tail := {r} -> field r "tail"
@@ -37,7 +37,7 @@ let stream_respond = {params, self, frame} -> {
 }
 
 // Stream A: GUARD `is_gen v`, then walk the one-step observation telescope [ head : A ; gen tail ]
-// over `out v` via the self-aware `at` (rs is unused here — gen guards by is_gen, pos checks A).
+// over `out v` via the self-aware `tele_walk` (rs is unused here — gen guards by is_gen, pos checks A).
 // The element type A is stored WRAPPED in a record `{ elem := A }` as recognizer_params — NOT bare:
 // `recognizer_params : Tree` is checked at load (the `Type -> Type` self-verify), and Tree's H-rule
 // rejects a BARE abstract type (a Type-typed neutral's stored type is Type, not Tree -> Ok FF). A
@@ -45,7 +45,7 @@ let stream_respond = {params, self, frame} -> {
 // is why every parameterized former — Eq's `{type,lhs,rhs}`, List's variants list — wraps its params.)
 Stream : Type -> Type := {A} -> wait (make_recognizer
   {meta, v} -> (if (is_gen v)
-    then (at t TT (t (pos_cell stream_head ((meta.recognizer_params).elem)) ({_} -> t (gen_cell stream_tail) ({_} -> t))) (out v) t t)
+    then (tele_walk t TT (t (pos_cell stream_head ((meta.recognizer_params).elem)) ({_} -> t (gen_cell stream_tail) ({_} -> t))) (out v) t t)
     else (Ok FF))
 ) (make_meta { elem := A } stream_respond)
 

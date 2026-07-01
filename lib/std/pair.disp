@@ -7,10 +7,10 @@ open use "../kernel/prelude.disp"
 // respond (the `at FF` walk) on a Pair-hypothesis. Prelude's fork-pairs (`pair`,
 // `pair_fst`, `pair_snd`) remain the RAW substrate idiom for kernel-internal trees.
 
-mk_pair : Tree -> Tree -> Tree := {a, b} -> { fst := a; snd := b }
+make_pair : Tree -> Tree -> Tree := {a, b} -> { fst := a; snd := b }
 
 Pair : Type -> Type -> Type := {A, B} -> Sigma A ({_} -> B)
 
-pair_map_fst := {f, p} -> mk_pair (f p.fst) p.snd
-pair_map_snd := {g, p} -> mk_pair p.fst (g p.snd)
-pair_swap := {p} -> mk_pair p.snd p.fst
+pair_map_fst := {f, p} -> make_pair (f p.fst) p.snd
+pair_map_snd := {g, p} -> make_pair p.fst (g p.snd)
+pair_swap := {p} -> make_pair p.snd p.fst

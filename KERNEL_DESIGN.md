@@ -70,19 +70,19 @@ well-foundedness is structural (tails see only priors).
 (observe a record field by HONEST `lookup_field`), `apply` (observe `v`
 applied to the prior — a function codomain), or `deriv name recipe` (a
 derived/δ field pinned by `tree_eq`). The constructors `mint_cell` /
-`apply_cell` / `proj_cell` / `deriv_cell` are exported, and the
+`apply_cell` / `proj_cell` / `derive_cell` are exported, and the
 elaborator emits the same ones, so surface `{a:Nat}`, manual
 `Telescope (proj_cell "a" Nat)`, and `Pi`/`Sigma` all build identical
 trees. New observation modes plug in as new ops — no walker edit (the
 kernel's "types are open wait-forms" discipline, at the cell level).
 
-**One walker, two modes.** A single `at mode tele source frame prior`
-serves BOTH recognition (`at TT`) and projection-response (`at FF`).
-`at` applies each cell op, which returns a **Step** — pure data:
+**One walker, two modes.** A single `tele_walk mode tele source frame prior`
+serves BOTH recognition (`tele_walk TT`) and projection-response (`tele_walk FF`).
+`tele_walk` applies each cell op, which returns a **Step** — pure data:
 `SMint ty` (mint a ∀-hyp), `SThread x` (observed value `x`: thread +
 continue), `SReject` (not a member), or `SDone action` (stuck: emit this
-`Action`). `at` interprets the Step with the recursion and `bind_hyp`
-INLINE — the op is the per-cell *algebra*, `at` the fixed recursion
+`Action`). `tele_walk` interprets the Step with the recursion and `bind_hyp`
+INLINE — the op is the per-cell *algebra*, `tele_walk` the fixed recursion
 harness (recursion-schemes split). Because the per-cell logic for both
 faces lives in one op, the recognizer and respond cannot disagree about a
 cell. The walker is **guard-free**: a non-record is rejected by `proj`'s
@@ -91,16 +91,16 @@ empty meet of obligations = `⊤` = `Tree` (the nullary negative product /
 terminal). `Coproduct` (a sum / positive type) is the dual and is NOT a
 telescope.
 
-`bind_hyp` lives in `at`, not the op, by necessity: a continuation passed
+`bind_hyp` lives in `tele_walk`, not the op, by necessity: a continuation passed
 *through* a function to `bind_hyp` miscompiles under nested binders (the
 hyp leaks and trips the occurs-check — see CLAUDE.md § Compiler
-workarounds), which is exactly why the op returns a `Step` for `at` to
+workarounds), which is exactly why the op returns a `Step` for `tele_walk` to
 interpret rather than calling `bind_hyp` with a passed `kont`.
 
-`at TT` (recognition) runs under the ambient walker, so the mint
+`tele_walk TT` (recognition) runs under the ambient walker, so the mint
 `bind_hyp` and the `source prior` application are policed automatically;
 each cell type-checks the observed value (`SThread x`), with derived
-cells pinning by `tree_eq` (conversion, no `Eq` proofs). `at FF`
+cells pinning by `tree_eq` (conversion, no `Eq` proofs). `tele_walk FF`
 (response) runs off-walker (driven by `hyp_reduce`), so it instantiates
 each tail EXPLICITLY under `param_walker` (a tail that raw-triages a
 neutral prior routes to `InvalidType` — the GAP-2 regime): a mint-lead
@@ -124,7 +124,7 @@ Derived recipes built from constructors or elim-routed functions work
 over neutrals (e.g. `succ a` unfolds; `double a` = `add` via `nat_rec`
 goes STUCK as a clean elimination); only raw-triaging recipes are
 policed to the dead state. Derived fields are STORED in record values —
-the recognizer's pin keeps them honest; `mk T given` fills them from the
+the recognizer's pin keeps them honest; `build T given` fills them from the
 recipes (it takes the Telescope TYPE and reads the telescope off its
 meta). Dependent-tail trees are canonical per *spelling* (deterministic
 elaboration), not across different constructions — the same conversion
@@ -133,7 +133,7 @@ discipline as Pi codomains.
 For *why* the telescope is shaped this way (the forced-choice chain), the ideal it
 approximates (observation interfaces / NbE), and the remaining improvements from
 local to global — the recognition/respond unification into one mode-polymorphic walk
-*landed* (it is the `at`/Step machinery above); the open frontier is now frame-tagging
+*landed* (it is the `tele_walk`/Step machinery above); the open frontier is now frame-tagging
 for *mixed/callable* records — see [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md).
 
 ## Signatures

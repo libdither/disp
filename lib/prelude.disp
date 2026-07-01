@@ -72,8 +72,8 @@ not := {a} -> select FF TT a
 wait := {a, b, c} -> t (t a) (t t c) b
 
 // Self-applicator and fixed-point combinator
-m := {x} -> x x
-fix := {f} -> wait m ({x} -> f (wait m x))
+omega := {x} -> x x
+fix := {f} -> wait omega ({x} -> f (wait omega x))
 
 // ================================================================
 // Tree / Nat helpers

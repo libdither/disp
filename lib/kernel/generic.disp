@@ -60,7 +60,7 @@ let rec_children = fix ({self, cells, payload} ->
 children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t }) (pair_snd v)
 
 // ── fmap / fmap_n — the cell-derived functorial map (CELL_OPTICS §3).
-// `at_map` (sibling of `at`) walks an inj-tagged value's argspec and REBUILDS via the optic's `over`
+// `walk_map` (sibling of `tele_walk`) walks an inj-tagged value's argspec and REBUILDS via the optic's `over`
 // (`slot_over`, position-wise): maps a `Param i` arg with `fns i`, recurses at a `Rec` arg, leaves the
 // rest. `fmap`/`bimap` are 1-/2-param specializations; `fmap_n` view-decodes shape-encoded types via the
 // `functor` iso (List/Nat/Ord work too). Deferred: nested `RecUnder F` (F≠Id, needs F's map).
@@ -68,7 +68,7 @@ let slot_over = fix ({self, depth, is_last, f, p} ->
   if (tree_eq depth zero)
     then (if is_last then (f p) else (pair (f (pair_fst p)) (pair_snd p)))
     else (pair (pair_fst p) (self (nat_pred depth) is_last f (pair_snd p))))
-let at_map_args = fix ({self, nm, fns, argspec, payload, depth} ->
+let walk_map_args = fix ({self, nm, fns, argspec, payload, depth} ->
   if (is_fork argspec) then {
     let marker = pair_fst argspec
     let is_last = is_leaf (pair_snd argspec)
@@ -79,7 +79,7 @@ let at_map_args = fix ({self, nm, fns, argspec, payload, depth} ->
 // recursing at Rec cells) -> re-encode. Identity iso = plain inj map; a real iso makes the SAME `fmap`
 // work on shape values. `fmap_step` splits out the map+encode so the match arm ends in the arm-bound `tg`.
 let fmap_step = {self, T, fns, encode, tg} ->
-  encode (inj (pair_fst tg) (at_map_args (wait self T) fns (match (lookup_arm (type_meta T).recognizer_params (pair_fst tg)) { Ok a => a; Err _ => t }) (pair_snd tg) zero))
+  encode (inj (pair_fst tg) (walk_map_args (wait self T) fns (match (lookup_arm (type_meta T).recognizer_params (pair_fst tg)) { Ok a => a; Err _ => t }) (pair_snd tg) zero))
 fmap_n := fix ({self, T, fns, v} -> {
   let iso = (type_meta T).functor
   match ((pair_fst iso) v) {
@@ -97,14 +97,14 @@ let list_set = fix ({self, idx, v, l} -> if (tree_eq idx zero) then (cons v (pai
 key_over := {name, f, record} -> { // rebuild the §2.6 record with field `name` mapped (payload = list_const-wrapped)
   let np = type_meta record
   let idx = name_index (pair_fst np) name
-  mk_record (pair_fst np) (list_set idx (list_const (f ((param_nth (pair_snd np) idx) t))) (pair_snd np))
+  make_record (pair_fst np) (list_set idx (list_const (f ((param_nth (pair_snd np) idx) t))) (pair_snd np))
 }
-// at_map over a record: map each `Param i` field via key.over (compose). fmap_rec/bimap_rec derive.
-let at_map_fields = fix ({self, fns, fields, record} ->
+// walk_map over a record: map each `Param i` field via key.over (compose). fmap_rec/bimap_rec derive.
+let walk_map_fields = fix ({self, fns, fields, record} ->
   if (is_fork fields) then {
     let arm = pair_fst fields
     let record2 = if (is_param_marker (pair_snd arm)) then (key_over (pair_fst arm) (fns (pair_snd (pair_snd arm))) record) else record
     self fns (pair_snd fields) record2
   } else record)
-fmap_rec  := {T, fns, r}    -> at_map_fields fns (type_meta T).recognizer_params r
+fmap_rec  := {T, fns, r}    -> walk_map_fields fns (type_meta T).recognizer_params r
 bimap_rec := {T, f, g, r}   -> fmap_rec T ({i} -> if (tree_eq i zero) then f else g) r

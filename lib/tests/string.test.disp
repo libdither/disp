@@ -16,12 +16,12 @@ test tree_eq "respond" "functor" = FF
 test tree_eq "ab" "ba" = FF
 
 // Usable as a record field-name tag through the cut.
-let r = mk_record ["x", "y"] [list_const zero, list_const TT]
+let r = make_record ["x", "y"] [list_const zero, list_const TT]
 test field r "x" = zero
 test field r "y" = TT
 
-// And as coproduct tags through the cut (mk_record takes the names as a list of
+// And as coproduct tags through the cut (make_record takes the names as a list of
 // string terms; match-arm *patterns* are still identifiers, a separate feature).
-let handle = mk_record ["inc", "id"] [{n} -> succ n, {x} -> x]
+let handle = make_record ["inc", "id"] [{n} -> succ n, {x} -> x]
 test handle (inj "inc" zero) = succ zero
 test handle (inj "id" TT) = TT

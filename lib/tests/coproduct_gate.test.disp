@@ -27,9 +27,9 @@ test coh_check t MyNat dNat { z := refl; s := ({p, ih} -> refl) } = Ok TT
 test coh_check t MyNat dNat { z := TT;   s := ({p, ih} -> refl) } = Ok FF
 
 // ── `check` directly: η-readback a value against a Π / a base type ──
-test check ({n} -> n) (Pi Nat ({_} -> Nat)) = Ok TT                          // id : Nat -> Nat
-test check ({n} -> TT) (Pi Nat ({_} -> Nat)) = Ok FF                         // body returns Bool
-test check zero Nat = Ok TT                                                  // base: recognize
+test eta_check ({n} -> n) (Pi Nat ({_} -> Nat)) = Ok TT                          // id : Nat -> Nat
+test eta_check ({n} -> TT) (Pi Nat ({_} -> Nat)) = Ok FF                         // body returns Bool
+test eta_check zero Nat = Ok TT                                                  // base: recognize
 
 // ── END-TO-END via the generic recursor `rec_value`: a neutral target routes through the gated
 //    respond, so a lying recursor is REJECTED at the function (the gap, CLOSED) ──

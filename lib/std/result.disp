@@ -26,19 +26,19 @@ is_err_result : Tree -> Bool := {r} -> tree_eq (pair_fst r) err_tag
 // concrete -> the §2.6 cut; neutral hypothesis -> frame route through the respond.
 result_rec := {motive, on_ok, on_err, r} ->
   select_lazy
-    ({_} -> r { motive := motive; cases := mk_record [ok_tag, err_tag] [list_const on_ok, list_const on_err] }) // tag-keyed, field-readable cases (coh_check reads `field cases tag`)
-    ({_} -> mk_record [ok_tag, err_tag] [on_ok, on_err] r)
+    ({_} -> r { motive := motive; cases := make_record [ok_tag, err_tag] [list_const on_ok, list_const on_err] }) // tag-keyed, field-readable cases (coh_check reads `field cases tag`)
+    ({_} -> make_record [ok_tag, err_tag] [on_ok, on_err] r)
     (is_neutral r)
 
 // Concrete-only conveniences (no motive, so they do not lift to a hypothesis).
 result_map := {f, r} ->
-  mk_record [ok_tag, err_tag] [{v} -> ok (f v), {e} -> err e] r
+  make_record [ok_tag, err_tag] [{v} -> ok (f v), {e} -> err e] r
 
 result_map_err := {g, r} ->
-  mk_record [ok_tag, err_tag] [{v} -> ok v, {e} -> err (g e)] r
+  make_record [ok_tag, err_tag] [{v} -> ok v, {e} -> err (g e)] r
 
 result_and_then := {r, k} ->
-  mk_record [ok_tag, err_tag] [{v} -> k v, {e} -> err e] r
+  make_record [ok_tag, err_tag] [{v} -> k v, {e} -> err e] r
 
 result_unwrap_or := {default, r} ->
-  mk_record [ok_tag, err_tag] [{v} -> v, {_} -> default] r
+  make_record [ok_tag, err_tag] [{v} -> v, {_} -> default] r

@@ -38,7 +38,7 @@ proj := {P, name} -> path_at (index_of (pair_fst P) name) (pair_snd P)
 annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
 prod : Tree -> Tree := {P} -> wait annihilate P // a callable product; field table is its meta
 annihilate_sig := checker_sig annihilate
-mk_record : Tree -> Tree -> Tree := {names, payload} -> prod (pair names payload)
+make_record : Tree -> Tree -> Tree := {names, payload} -> prod (pair names payload)
 field := {r, name} -> r (acc name) // r.name resolves to this
 
 // Action + CheckerResult: control coproducts via the §2.6 cut. Eliminating a neutral has TWO

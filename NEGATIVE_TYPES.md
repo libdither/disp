@@ -12,7 +12,7 @@ The telescope is close to a *global* optimum, not merely a local one — because
 disp's substrate and foundations nearly **determine** it via a chain of forced
 choices (§1). The current design is a faithful realization of the ideal in §2. The
 **(c) architectural move** — collapsing recognition and respond into a single
-mode-polymorphic walk (the NbE move) — has now **landed** (one walker `at`, wait-form
+mode-polymorphic walk (the NbE move) — has now **landed** (one walker `tele_walk`, wait-form
 cells; §4c), so the remaining distance is just **(a) cosmetic** encoding and **(b)
 completeness** (folding the rest of the negative lattice in). The `qid`/Intersection
 piece **landed (2026-06-29)**: Intersection/Refinement/Eq are now telescope hybrids
@@ -71,11 +71,11 @@ completeness.
 `Telescope` is THE negative n-ary former, **guard-free**; `Pi A B = Telescope [mint
 x:A ; apply out:(B x)]` and `Sigma` are thin instances; `Record` shares the engine
 but keeps its own wait-form (lazy `fields_to_tele` lift, for self-verification). The
-recognition/respond split collapsed into ONE walker `at` (the §4c move, landed), and
+recognition/respond split collapsed into ONE walker `tele_walk` (the §4c move, landed), and
 a cell is now a **wait-form** `wait op meta` — inspectable (signature = which
 observation, meta = its data) AND runnable. The op is the observation
 (`mint`/`proj name`/`apply`/`deriv name recipe`) and returns a *Step* (`SMint`,
-`SThread`, `SReject`, `SDone`) that `at` interprets, recursion + `bind_hyp` inline.
+`SThread`, `SReject`, `SDone`) that `tele_walk` interprets, recursion + `bind_hyp` inline.
 New observation modes plug in as new ops with no walker edit. `{} = Telescope t = ⊤ =
 Tree`. See `KERNEL_DESIGN.md` § Telescopes and `TYPE_THEORY.typ` §12.7.
 
@@ -85,10 +85,10 @@ Tree`. See `KERNEL_DESIGN.md` § Telescopes and `TYPE_THEORY.typ` §12.7.
 
 The §4c landing chose **wait-form cells** `wait op meta`: the op *is* the
 defunctionalized observation (signature = kind, meta = data), so the old `src`/`def`
-axes collapsed into the op identity, and `mk`/`constructor_type` inspect cells by
+axes collapsed into the op identity, and `build`/`constructor_type` inspect cells by
 op-signature (`is_derive`) + `type_meta`. This is the inspectable-AND-runnable point
 the encoding debate (tag vs stored-query vs coproduct-of-kinds vs closures) converged
-on — a closure would be a black box to `mk`/`constructor_type`, but a wait-form is
+on — a closure would be a black box to `build`/`constructor_type`, but a wait-form is
 not. The op carries the genuine duality (intro `mint` vs the observations
 `proj`/`apply`/`deriv`); openness (new observation = new op) is what §4b builds on.
 Residual tightening (a query value folding `proj`'s name into a single cut-value) is
@@ -106,7 +106,7 @@ The telescope currently covers `⊤`/`Π`/`Σ`/records. The rest of the *negativ
   frame-routing as callable records below.
 - **positional / `Fin` observations → tuples** (the prelude fork-pair idiom as a
   telescope instance, distinct from named §2.6 records).
-- **The unified single-frame respond for *mixed*/callable interfaces.** `at FF`
+- **The unified single-frame respond for *mixed*/callable interfaces.** `tele_walk FF`
   routes a neutral elimination by the lead cell (mint-lead ⟹ Pi-application; else ⟹
   projection) — sound for *pure* formers. A value that is both projected *and*
   applied (a callable record = `Neg` over a sum index `Q = Tags ⊕ A`) needs the
@@ -122,13 +122,13 @@ The telescope currently covers `⊤`/`Π`/`Σ`/records. The rest of the *negativ
   a type is a wait-form observed two ways — applied (`T v` → `CheckerResult`) and
   projected (`type_meta T` → `MetaShape`) — so `StrictType` is a plain `Telescope`
   of two `qid` cells (the recognize-face `Tree -> CheckerResult` and the meta-face
-  `MetaShape`), walked by the same `at`, and it **inhabits itself**
+  `MetaShape`), walked by the same `tele_walk`, and it **inhabits itself**
   (`StrictType : StrictType`) with no privileged kinding rule
   (`lib/tests/strict_type.test.disp`). What remains is the *respond* side: a strict
   `respond : RespondShape` needs a **dependent `MetaShape`** (respond typed
   `params_ty -> Self -> frame_ty -> Action` against the former's structured frame).
   That makes *projecting* responds (inductive/eq) checkable, but the negative-former
-  respond (`at FF`, which raw-walks the cell spine) needs an `Entry` type for cells
+  respond (`tele_walk FF`, which raw-walks the cell spine) needs an `Entry` type for cells
   + a shape-type for the spine — fully typing it needs dependent/higher-order
   machinery, since the spine is *dependent* (the λ-tails). Self-*description*, not
   simplification.
@@ -158,12 +158,12 @@ co-located in one op, the recognizer and respond **cannot disagree** about a cel
 The realization went *further* than the §4c sketch by also taking the wait-form-cell
 encoding (§4b's "cells carry their semantics"): the per-cell logic moved OUT of the
 walker into a wait-form **op** that returns a `Step` (`SMint | SThread | SReject |
-SDone`), and `at` is the interpreter. This is the recursion-schemes split (op =
-algebra, `at` = harness), and it is what makes new observation modes (§4b) pluggable
+SDone`), and `tele_walk` is the interpreter. This is the recursion-schemes split (op =
+algebra, `tele_walk` = harness), and it is what makes new observation modes (§4b) pluggable
 without a walker edit. One non-obvious constraint forced this shape rather than the
 naive "op calls `bind_hyp kont`": a `bind_hyp` continuation passed *through* a
 function miscompiles under nested binders (the hyp leaks, trips the occurs-check), so
-the recursion/`bind_hyp` had to stay inline in `at` and the op had to return data
+the recursion/`bind_hyp` had to stay inline in `tele_walk` and the op had to return data
 (see CLAUDE.md § Compiler workarounds). See `KERNEL_DESIGN.md` § Telescopes.
 
 ## 5. The boundary that is *not* a gap (the positive dual)
@@ -189,7 +189,7 @@ improvement to this one. Given erased trees, everything from §1.2 onward follow
 ## 7. Recommended order (if pursued)
 
 0. **§4c — DONE.** The recognition/respond unification + wait-form-cell encoding
-   landed (one walker `at`, ops returning `Step`s). This reshaped everything below: a
+   landed (one walker `tele_walk`, ops returning `Step`s). This reshaped everything below: a
    new observation mode is now a new wait-form op, no walker edit.
 1. **§4b `qid`** — Intersection/Refinement as a `qid_cell` op (observe `v` itself).
    Recognition is validated; design the subsumption respond, shared with the

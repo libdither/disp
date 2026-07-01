@@ -42,9 +42,9 @@ test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok T
 
 // ── NAMED side: the optic `over` generalizes to records (key.over), same engine ──
 let Pair    = {A, B} -> Record_p (cons A (cons B nil)) [pair "fst" (Param zero), pair "snd" (Param (succ zero))]
-let mk_pair = {a, b} -> mk_record ["fst", "snd"] (cons (list_const a) (cons (list_const b) nil))
-test typecheck (Pair Nat Nat) (mk_pair 3 5)              = Ok TT       // Record_p recognizes (Param resolved)
-test typecheck (Pair Nat Bool) (mk_pair 3 9)             = Ok FF       // param 1: 9 is not Bool
-test bimap_rec (Pair Nat Nat) succ double (mk_pair 3 5)  = mk_pair 4 10 // key.over rebuilds the record
-test fmap_rec (Pair Nat Nat) ({i} -> succ) (mk_pair 3 5) = mk_pair 4 6  // uniform map over both fields
-test typecheck (Pair Nat Nat) (bimap_rec (Pair Nat Nat) succ double (mk_pair 3 5)) = Ok TT
+let make_pair = {a, b} -> make_record ["fst", "snd"] (cons (list_const a) (cons (list_const b) nil))
+test typecheck (Pair Nat Nat) (make_pair 3 5)              = Ok TT       // Record_p recognizes (Param resolved)
+test typecheck (Pair Nat Bool) (make_pair 3 9)             = Ok FF       // param 1: 9 is not Bool
+test bimap_rec (Pair Nat Nat) succ double (make_pair 3 5)  = make_pair 4 10 // key.over rebuilds the record
+test fmap_rec (Pair Nat Nat) ({i} -> succ) (make_pair 3 5) = make_pair 4 6  // uniform map over both fields
+test typecheck (Pair Nat Nat) (bimap_rec (Pair Nat Nat) succ double (make_pair 3 5)) = Ok TT
