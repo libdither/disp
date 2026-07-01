@@ -4,7 +4,8 @@ open use "../kernel/prelude.disp"
 // Either A B — a two-armed sum (left A | right B), a `Coproduct_p` BIFUNCTOR (CELL_OPTICS): `left`
 // carries `Param 0` (= A), `right` carries `Param 1` (= B). The markers make it mappable —
 // `bimap (Either A B) f g` maps both arms (generic, from the kernel); a value is `inj tag payload`.
-// A real coproduct (carries `inductive_respond`), so a neutral Either is eliminable via `either_rec`.
+// A real coproduct (carries `inductive_respond`), so a neutral Either eliminates via a
+// `{motive; cases}` frame routed through the respond (see option_rec for the idiom).
 
 left_tag  : String := "left"
 right_tag : String := "right"
@@ -13,14 +14,3 @@ Either : Type -> Type -> Type := {A, B} -> Coproduct_p (cons A (cons B nil)) [pa
 
 left  : Tree -> Tree := {a} -> inj left_tag a
 right : Tree -> Tree := {b} -> inj right_tag b
-
-is_left  : Tree -> Bool := {e} -> tree_eq (pair_fst e) left_tag
-is_right : Tree -> Bool := {e} -> tree_eq (pair_fst e) right_tag
-
-// either_rec — the parametric dependent eliminator (see option_rec): concrete -> the §2.6 cut;
-// neutral hypothesis -> a {motive; cases} frame routed through the respond.
-either_rec := {motive, on_left, on_right, e} ->
-  select_lazy
-    ({_} -> e { motive := motive; cases := mk_record [left_tag, right_tag] [list_const on_left, list_const on_right] }) // tag-keyed, field-readable cases (coh_check reads `field cases tag`)
-    ({_} -> mk_record [left_tag, right_tag] [on_left, on_right] e)
-    (is_neutral e)

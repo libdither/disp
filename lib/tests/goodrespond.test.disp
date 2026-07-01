@@ -24,7 +24,6 @@ test verify_good MyNat R_ind   = Ok FF             // over-permissive (accepts j
 test verify_good MyNat R_inert = Ok FF             // over-restrictive (rejects coherent) -> coh dim
 test verify_good Three R_ind   = Ok FF
 test verify_good Nat   R_inert = Ok FF
-test good_resp (resp_of MyNat) MyNat = Ok TT       // good_resp is the same predicate, arg-flipped
 
 // ── PER-CASE necessity (R5): a LAZY gate checks only the FIRST case — caught by the per-case junk dim ──
 let coh_lazy = {T, mtv, cases} -> (check (field cases (pair_fst (pair_fst (type_meta (derive_case_telescope T mtv)).recognizer_params))) (pair_snd (pair_fst (type_meta (derive_case_telescope T mtv)).recognizer_params)))

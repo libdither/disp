@@ -488,7 +488,7 @@ let rec_children = fix ({self, cells, payload} ->
   } else nil)
 children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t }) (pair_snd v)
 
-// ── fmap / nmap — the cell-derived functorial map (CELL_OPTICS §3).
+// ── fmap / fmap_n — the cell-derived functorial map (CELL_OPTICS §3).
 // `at_map` (sibling of `at`) walks an inj-tagged value's argspec and REBUILDS via the optic's `over`
 // (`slot_over`, position-wise): maps a `Param i` arg with `fns i`, recurses at a `Rec` arg, leaves the
 // rest. `fmap`/`bimap` are 1-/2-param specializations; `fmap_n` view-decodes shape-encoded types via the
@@ -518,7 +518,6 @@ fmap_n := fix ({self, T, fns, v} -> {
 })
 fmap  := {T, f, v}    -> fmap_n T ({i} -> f) v
 bimap := {T, f, g, v} -> fmap_n T ({i} -> if (tree_eq i zero) then f else g) v
-nmap  := fmap_n
 
 // Ord: shape-encoded recursive ordinal sum — zero_ord = leaf, omega_plus a b = fork(stem a, b). `view_ord`
 // decodes to inj-tagged form; omega_plus's two `Rec` children tie the knot via self-aware Coproduct_viewed.
@@ -589,15 +588,6 @@ bimap_rec := {T, f, g, r}   -> fmap_rec T ({i} -> if (tree_eq i zero) then f els
 // derive_case_telescope T P: the recursor's case-record TYPE (`rec_value : {P} -> derive_case_telescope T P
 // -> {x:T} -> P x`). Wraps `dct_go` (the same case-types the coherence gate consumes) in a Record.
 derive_case_telescope := {T, P} -> Record (dct_go t (type_meta T).recognizer_params T P)
-
-// Coproduct_of: build a coproduct from a variant RECORD `{ Tag := payloadType, … }` — each field `Tag := T`
-// is a SINGLE-arg variant `[T]` (e.g. `Action := Coproduct_of { Extend := Type; Reduce := Tree }`). Multi-
-// arg/recursive variants use the positional `Coproduct [pair tag [A, Rec, …]]` directly.
-let variants_of = fix ({self, decl, names} ->
-  if (is_fork names)
-    then (cons (pair (pair_fst names) (cons (field decl (pair_fst names)) nil)) (self decl (pair_snd names)))
-    else nil)
-Coproduct_of := {decl} -> Coproduct (variants_of decl (pair_fst (type_meta decl)))
 
 // The kernel's own structural types (§11.2 / §12.6), built from the library formers above
 // so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
@@ -707,8 +697,7 @@ GoodRespond := {T} -> Telescope (
   t (mint_cell (derive_case_telescope T (gr_M T))) ({_} ->
   t (probe_cell (gr_ap T) (Extend (gr_M T (gr_s T)))) ({_} ->
   gr_junk_cells (gr_ap T) (ctele_fields T (gr_M T)) (ctele_fields T (gr_M T)) zero)))
-// verify_good / good_resp : run the telescope recognizer under the walker — composes (the prize).
+// verify_good : run the telescope recognizer under the walker — composes (the prize).
 verify_good := {T, R} -> param_apply (GoodRespond T) R
-good_resp   := {R, T} -> param_apply (GoodRespond T) R
 // Reflection (the 3rd soundness dimension) needs no separate probe: a check-based respond polices its own
 // mints, so an unpoliced/reflecting respond makes `verify_good` Err (walker abort) — caught for free (FUSION).

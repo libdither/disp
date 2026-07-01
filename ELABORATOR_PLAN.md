@@ -1,10 +1,13 @@
 # Elaborator-in-disp: the self-hosting plan
 
-**Status: ACTIVE — Stages 0–3 landed (Stage 0: 2026-06-11, commit 4ae9e9f5;
-the match-desugar fix + Stages 1–3: 2026-06-12). The full AST→tree pipeline
-(`compile_expr`/`compile_type` in `lib/elab/compile.disp`) is in-language;
-the host `compileExpr` is now a validated fast path. Stages 4 (parser) and 5
-(driver boundary) open.** Companion: `EVALUATOR_PLAN.md` (evaluator backends;
+**Status: SHELVED 2026-07-01 — the Stage 0–3 implementation (`lib/elab/` +
+its lib/tests and host cross-validation tests) was DELETED as unused
+scaffolding, to be redone properly once the language is more mature; recover
+via `git log --diff-filter=D -- lib/elab`. This document remains the roadmap
+for that future attempt. Historical status: Stages 0–3 landed (Stage 0:
+2026-06-11, commit 4ae9e9f5; the match-desugar fix + Stages 1–3: 2026-06-12) —
+the full AST→tree pipeline was in-language with host `compileExpr` the
+validated fast path; Stages 4 (parser) and 5 (driver boundary) never started.** Companion: `EVALUATOR_PLAN.md` (evaluator backends;
 touches the same `src/` layering — see §7). Related: Appendix A (sharing-
 aware bracket abstraction, formerly `ABSTRACTION_SHARING.md`) — the
 S-duplication blow-up is the remaining member of the compile-time blow-up

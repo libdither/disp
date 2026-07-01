@@ -1,5 +1,5 @@
 // Kernel integration of CELL_OPTICS (stage 1): `Param` + the optic's `over` (`slot_over`) + `fmap`/
-// `bimap`/`nmap` now live in the KERNEL (lib/kernel/types.disp), exported. This test uses the REAL
+// `bimap`/`fmap_n` now live in the KERNEL (lib/kernel/types.disp), exported. This test uses the REAL
 // kernel formers — `Coproduct_p` (parameterized inj-tagged sum) + `fmap`/`bimap` — with NO local
 // machinery, proving the integration: a param-marked type recognizes (params resolved at build time)
 // AND fmaps (rebuilt via the optic's `over`, no hand `build_payload`). Additive: the rest of the suite
