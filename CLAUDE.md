@@ -24,9 +24,15 @@ Every component participating in checking, elaboration, or conversion must have 
 
 ### Source
 - `src/core/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, `tree_eq` native fast-path. (The dispatcher/parametric-walker runs in-language via `param_apply` in `lib/kernel/engine.disp`; there is no native dispatcher fast-path.)
-- `src/parse.ts` — tokenizer / parser / bracket-abstraction / driver. Implements `SYNTAX.typ` grammar. Bracket abstraction with η-reduction + K-composition optimizations.
-- `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests.
-- `src/compile.ts` — elaborator: typed bindings, kernel-helpers, `tree_eq` native-fast-path tree-id registration.
+- `src/parse.ts` — tokenizer / parser. Implements `SYNTAX.typ` grammar.
+- `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests (failure printer decodes via the Session ABI on handle backends).
+- `src/compile.ts` — the elaborator's public surface, a re-export barrel over `src/elab/`:
+  - `elab/state.ts` — shared session/budget/caches + `ScopeEntry`/`SigParam`/`CompileSinks` + `collectSessionRoots`.
+  - `elab/cir.ts` — CIR + bracket abstraction (η-reduction + K-composition optimizations); part of definitional equality.
+  - `elab/sugar.ts` — surface rewrites: select_lazy→if, named/default/reorderable args, `binderToPi`.
+  - `elab/literals.ts` — Nat/String/accessor encoding + record-header decoding.
+  - `elab/expr.ts` — `exprToCir` (the one fold over the surface AST) + `compileExpr`/`compileType`.
+  - `elab/driver.ts` — `parseProgram`: scope stack, `use`/`use raw` + per-session module cache, deferred auto-verification, `tree_eq` native-fast-path registration.
 
 ### Library layout (`.disp` files in `lib/`)
 - `prelude.disp` — fundamental combinators (TT/FF Scott-encoded, triage, select, pair, wait/fix, tree_eq, nat_le, zero/succ).

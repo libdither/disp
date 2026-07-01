@@ -28,6 +28,23 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
   for (const d of decls) {
     if (d.kind === "Def" && !names.has(d.tree.id)) names.set(d.tree.id, d.name)
   }
+  // Failure printer. prettyTree expects a JS Tree (eager backend); on a
+  // handle backend (e.g. rust-eager-native, where handles are numbers) it
+  // garbage-decodes — every side printed as the first def's name. Route by
+  // representation: JS trees keep the named pretty; handles decode
+  // structurally via the Session ABI's classify (depth-capped).
+  const prettyViaClassify = (h: Tree, depth: number): string => {
+    if (!session.classify) return `<handle ${String(h)}>`
+    if (depth <= 0) return "…"
+    const c = session.classify(h)
+    switch (c.tag) {
+      case "leaf": return "t"
+      case "stem": return `t(${prettyViaClassify(c.child, depth - 1)})`
+      case "fork": return `t(${prettyViaClassify(c.left, depth - 1)})(${prettyViaClassify(c.right, depth - 1)})`
+    }
+  }
+  const pretty = (h: Tree): string =>
+    (h !== null && typeof h === "object" && "id" in (h as object)) ? prettyTree(h, names) : prettyViaClassify(h, 12)
   const result: RunResult = { defs: 0, tests: 0, passed: 0, failed: [] }
   let testIdx = 0
   for (const d of decls) {
@@ -40,7 +57,7 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
       } else {
         result.failed.push({
           i: testIdx,
-          msg: `mismatch:\n    lhs = ${prettyTree(d.lhs, names)}\n    rhs = ${prettyTree(d.rhs, names)}`,
+          msg: `mismatch:\n    lhs = ${pretty(d.lhs)}\n    rhs = ${pretty(d.rhs)}`,
         })
       }
     }
