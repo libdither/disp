@@ -167,7 +167,8 @@ neutral_type := {v}      -> (type_meta v).stored_type
 Applying a neutral routes to `hyp_reduce`, which consults the stored
 type's `respond`. The `respond` returns an `Action` (itself a §2.6
 coproduct): `Extend new_type` appends to the spine with a new stored
-type, `Return v` yields a value directly. Rejection extends with
+type, `Reduce v` computes to a bare value (`Return v = Reduce (Ok v)` is
+the verdict alias, not a third arm). Rejection extends with
 `InvalidType`, which is itself inert — an absorbing dead state, so any
 later check on the stored type fails deterministically.
 

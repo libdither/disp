@@ -31,7 +31,7 @@ const B = (): Budget => ({ remaining: APPLY_BUDGET })
 // enough that elaboration of any well-formed program terminates; small
 // enough that runaway evaluation aborts before exhausting host memory.
 // (Raised 10M -> 40M when Pi/Record/Sigma unified onto the generic negative-
-// telescope recognizer `neg_check`: the kernel self-check at load now costs
+// telescope recognizer (the `tele_walk` walker): the kernel self-check at load now costs
 // ~16M steps vs ~8M for the old specialized recognizers — a more general
 // recognizer, ~2x heavier per Pi-check; a validated lean fast path could
 // reclaim it later, cf. the tree_eq native-fast-path discipline.)

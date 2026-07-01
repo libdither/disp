@@ -193,7 +193,7 @@ Turing-complete and equi-expressive with the untyped lambda calculus.
 == Hash-cons identity
 
 Trees are *hash-consed*: any two structurally-equal trees share the same
-host-side identity. The host (`src/tree.ts`) maintains a table mapping
+host-side identity. The host (`src/core/tree.ts`) maintains a table mapping
 `(constructor, child ids)` to existing tree objects, so `fork(a, b)`
 returns an existing node if one exists.
 
@@ -245,7 +245,7 @@ of §5.4.
 
 == Native runtime
 
-The host runtime in `src/tree.ts` implements hash-consing and `apply`.
+The host runtime in `src/core/tree.ts` implements hash-consing and `apply`.
 Performance-critical operations (`tree_eq`, the dispatcher, the
 parametric walker) have native fast-paths that produce bit-identical
 results to the in-language reference implementations. The in-language

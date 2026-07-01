@@ -24,7 +24,7 @@ npm test
 ## Layout
 
 ```
-src/tree.ts        -- Tree calculus runtime + tree_eq native fast-path
+src/core/tree.ts        -- Tree calculus runtime + tree_eq native fast-path
 src/parse.ts       -- Tokenizer / parser
 src/compile.ts     -- Bracket abstraction, elaborator, program driver
 src/run.ts         -- File runner

@@ -314,9 +314,8 @@ the open frontier.
 
 - `GOALS.md` — north star. `TYPE_THEORY.typ` — authoritative spec (target).
 - `KERNEL_DESIGN.md` — implementation idioms (`§Telescopes`, `§Signatures`, the bind_hyp-inline rule).
-- `NEGATIVE_TYPES.md` — telescope/`at` design. `TELESCOPE_FIXPOINT.md` — recursion-as-cells.
-- `POSITIVE_TYPES.md` — inductives as coproduct-of-telescopes; case-telescope derivation (R2).
-- `CELL_OPTICS.md` — the optic factoring (Track 2).
+- `NEGATIVE_TYPES.md` — telescope/`tele_walk` design.
+- (DELETED 2026-07-01, landed + superseded — recover via git: `TELESCOPE_FIXPOINT.md` recursion-as-cells; `POSITIVE_TYPES.md` inductives as coproduct-of-telescopes; `CELL_OPTICS.md` the optic factoring. Code comments still cite their § numbers as historical references.)
 - `STRICTTYPE.md` — §7 respond self-typing (§7A `apply_policed`, §7B structured frames).
 - `KERNEL_SELF_TYPING.md` — the sealing program (K3, §1 ceiling).
 - `TYPE_NORMALIZATION.md` — canonical forms / `tree_lt` ordering.
