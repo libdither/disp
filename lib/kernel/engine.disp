@@ -1,9 +1,16 @@
 // Kernel fragment: the checker engine — Σ-ops (hyp_reduce, bind_hyp), the recognizer shim,
 // the parametric walker param_walker/param_apply, the boundary, elim. Assembled by prelude.disp's barrel.
+//
+// Typing discipline: every export is either ANNOTATED (the annotation is machine-verified through
+// the walker at module check) or marked SEALED(<why>) — constitutively untypeable because its body
+// IS the reflection/forging the walker exists to reject (the seal(Σ) boundary, SEALING.md). A SEALED
+// export's correctness is pinned behaviorally (soundness/metashape/goodrespond tests), not
+// structurally. Exports whose honest type is DEPENDENT (param_apply/typecheck/elim) are noted inline.
 
 // hyp_reduce (Σ-op): push a frame onto a neutral via its stored type's respond. Makes the
 // one raw metadata read and hands the respond `{recognizer_params, self, frame}` (§12.6).
-extend_neutral_meta : NeutralMeta -> Type -> Frame -> NeutralMeta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
+let extend_neutral_meta = {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
+// SEALED(Σ-op): reads the neutral's raw metadata and reconstructs self — the one trusted elimination step.
 hyp_reduce := fix ({self, meta, frame} -> {
   let tmeta = type_meta meta.stored_type
   let me = wait self meta // the reconstructed self-neutral
@@ -13,13 +20,16 @@ hyp_reduce := fix ({self, meta, frame} -> {
   }
 })
 
+// SEALED(forge): builds a hyp-fork from raw parts — the exact stem-forge the walker rejects (w_stem).
 make_hyp := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := id }
 
-hyp_sig := checker_sig hyp_reduce
-is_neutral : Tree -> Bool := {v} -> tree_eq (pair_fst v) hyp_sig // root-sig read; verifies via the pair_fst/tree_eq carve-outs
+hyp_sig : Tree := checker_sig hyp_reduce
+is_neutral : Tree -> Bool := {v} -> tree_eq (pair_fst v) hyp_sig // self-types via the pair_fst/tree_eq carve-outs
+// SEALED(reflection): is_fork triages its argument — a walk rejects triage-on-neutral by design.
 is_concrete_fork := {v} -> and (is_fork v) (not (is_neutral v)) // a fork that isn't a neutral
-// fetch stored type of neutral
-neutral_type := {v} -> (type_meta v).stored_type
+// neutral_type: a neutral's stored type. Self-types via its OWN walker carve-out (the walker
+// applies the sanctioned reader natively, so the minted hyp reads back its stored type : Type).
+neutral_type : Tree -> Type := {v} -> (type_meta v).stored_type
 
 // The recognizer shim: runs the H-rule (a neutral inhabits a type iff its stored type IS
 // it), threading `self` so recursive recognizers (Nat, Ord) re-enter it on children (§A).
@@ -29,10 +39,12 @@ let recognizer_wrap = fix ({wrap, body, meta, v} -> {
     then (Ok (tree_eq self (neutral_type v))) // H-rule
     else (body self meta v) // concrete: body may recurse via `self`
 })
-make_rec_recognizer := {body} -> wait recognizer_wrap body
+// Annotated: under the check only the H-rule branch runs (the minted candidate IS a neutral),
+// and that branch is carve-out-clean; `body` stays an opaque Tree (its branch never fires).
+make_rec_recognizer : Tree -> MetaShape -> Tree -> CheckerResult := {body} -> wait recognizer_wrap body
 // A non-recursive recognizer ignores `self` (most types: Type, Pi, Unit, String, …;
 // Bool/Nat/Ord are now Coproduct types built via make_rec_recognizer, see types.disp).
-make_recognizer := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
+make_recognizer : Tree -> MetaShape -> Tree -> CheckerResult := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
 
 // InvalidType: the absorbing dead-state type (§12.3) — a real empty type (recognizer always
 // Ok FF) whose inert respond returns `Extend (neutral_type self)`. Distinct from False.
@@ -43,9 +55,11 @@ InvalidType : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_w
 inert_respond : RespondShape := {params, self, frame} -> Extend InvalidType
 
 // support / occurs / is_closed: the §8.1 dependency scan (descends through neutrals).
+// SEALED(reflection): the scan triages arbitrary trees (incl. neutrals) — these are the
+// boundary's trusted eyes and can never self-type through the walker they serve.
 let t_union = fix ({self, a, b} ->
   if (is_fork a) then (t (pair_fst a) (self (pair_snd a) b)) else b)
-let set_member = fix ({self, x, s} ->
+let support_member = fix ({self, x, s} ->
   if (is_fork s)
     then (if (tree_eq (pair_fst s) x) then TT else (self x (pair_snd s)))
     else FF)
@@ -56,19 +70,20 @@ let support_set = fix ({self, v} ->
   if (is_hyp_fork v)
     then (t (type_meta v) (self (type_meta v)))
     else (triage t ({c} -> self c) ({l, r} -> t_union (self l) (self r)) v))
-occurs := {h, v} -> set_member (type_meta h) (support_set v)
+occurs := {h, v} -> support_member (type_meta h) (support_set v)
 is_closed := {v} -> is_leaf (support_set v)
 
 // bind_hyp (Σ-op): merged into the walker (is_bind_hyp). `bind_hyp A` is the bare op-tag;
-// raw contexts route it via `param_apply (bind_hyp A) body`. The marker fails closed (Err).
-bind_hyp_marker := {domain, body} -> Err
-bind_hyp := {A} -> wait bind_hyp_marker A
-bind_hyp_sig := checker_sig bind_hyp_marker
+// raw contexts route it via `param_apply (bind_hyp A) body`. The marker fails closed (Err),
+// so the annotation is honest: raw application of the tag to a body Errs (: Tree).
+let bind_hyp_marker = {domain, body} -> Err
+bind_hyp : Type -> Tree -> Tree := {A} -> wait bind_hyp_marker A
+bind_hyp_sig : Tree := checker_sig bind_hyp_marker
 let is_bind_hyp = {f} -> and (is_fork f) (tree_eq (pair_fst f) bind_hyp_sig)
 
-// TEQ_WAIT_SIG lets the walker spot a partial `tree_eq a` (its lazy O(1) form).
-TEQ_WAIT_SIG := checker_sig tree_eq
-let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) TEQ_WAIT_SIG)
+// tree_eq_sig lets the walker spot a partial `tree_eq a` (its lazy O(1) form).
+let tree_eq_sig = checker_sig tree_eq
+let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) tree_eq_sig)
 
 // apply_policed (§7A): the trusted policing token = `wait param_walker M`; `apply_policed M s` reduces to
 // `param_walker M s`. Root sig = `checker_sig param_walker` (independent of M) → the walker's §7A carve-out
@@ -109,6 +124,8 @@ let w_bind_hyp = {self, f, x} -> {
 
 // param_walker: dispatch `f x` — short-circuit special heads (tree_eq, the Σ-ops, the sanctioned readers
 // pair_fst/neutral_type/identity), else a neutral-rejecting triage. Exported so responds can match its Ok/Err.
+// SEALED(interpreter): the walker triages every head, so it cannot walk itself — typing the
+// walker is the KERNEL_SELF_TYPING program, not an annotation.
 param_walker := fix ({self, f, x} ->
   if (tree_eq f tree_eq) then (Ok (wait tree_eq x)) // tree_eq stage 1: defer to `wait tree_eq a`
   else if (is_teq_partial f) then (Ok (f x)) // tree_eq stage 2: complete it — `(wait tree_eq a) x` (host O(1), neutral-safe)
@@ -121,10 +138,13 @@ param_walker := fix ({self, f, x} ->
   else (triage (Ok (t x)) ({a} -> w_stem a x) ({a, b} -> w_fork self a b x) f))
 
 // responds use apply_policed to walk a user sub-term (motive/codomain/predicate) against the neutral.
-apply_policed := {M} -> wait param_walker M
+apply_policed : Tree -> Tree -> Tree := {M} -> wait param_walker M
 
 // param_apply returns the bare reduct (wrapping invariant §7.5): unwrap param_walker's
-// success-Ok; a routed/recognizer CheckerResult passes through.
+// success-Ok; a routed/recognizer CheckerResult passes through. Unannotated: its honest type
+// is the DEPENDENT checked application (§12.16 `checked`: {A : Type} -> {B : A -> Type} ->
+// Pi A B -> {x : A} -> B x) — flat `Tree -> Tree -> Tree` is wrong (an abstract f applied
+// to x extends to an InvalidType-neutral, which Tree's H-rule rejects).
 param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
 
 // inductive_respond: extend the neutral's spine at `motive self`, routed through the
@@ -133,15 +153,22 @@ inductive_respond : InductiveRespondShape := {params, self, frame} ->
   match (apply_policed frame.motive self) { Ok ty => Extend ty; Err _ => Extend InvalidType }
 
 // Boundary: param_lift gates on closedness; typecheck = lift then check.
+// SEALED(reflection): both ride the is_closed scan; typecheck's honest type additionally
+// awaits the dependent checked application (see param_apply).
 param_lift := {v} -> if (is_closed v) then (Ok v) else Err
 typecheck := {T, v} -> bind (param_lift v) ({sv} -> param_apply T sv)
 
-// verify: the module self-check — param_apply mod.typ mod.record. Routes through the
-// walker (raw `mod.typ mod.record` would bypass it and slip a bad export through).
-verify := {mod} -> param_apply mod.typ mod.record
+// verify: the module self-check — check the export record against the export-types record
+// (raw `mod.typ mod.record` juxtaposition would bypass the walker and slip a bad export
+// through). Routed via the POLICED token, which is runtime-identical to `param_apply
+// mod.typ mod.record` but — unlike a raw param_walker call — SELF-TYPES: the walker cannot
+// walk itself, but it can walk the token. Module is the first-class shape of a file's
+// `{ typ; record }` tuple (types.disp).
+verify : Module -> CheckerResult := {mod} -> match (apply_policed (mod.typ) (mod.record)) { Ok v => v; Err _ => Err }
 
 // Library eliminator: concrete target -> dispatcher; neutral -> hyp_reduce via the
-// stored type's respond (juxtaposition, so an enclosing walker routes it once).
+// stored type's respond (juxtaposition, so an enclosing walker routes it once). Unannotated:
+// the honest type is the dependent recursor shape, carried by the INSTANCES (nat_rec/bool_rec/ord_rec).
 elim := {dispatcher, motive, cases, target} ->
   select_lazy
     ({_} -> target { motive := motive; cases := cases }) // bare stuck (Option A): hyp_reduce's Extend is already bare
@@ -150,6 +177,8 @@ elim := {dispatcher, motive, cases, target} ->
 
 // Inductive case-coherence (§B): cases must inhabit the motive. The gate lives in the
 // respond (keyed off the neutral's stored type); incoherent cases route to InvalidType.
+// Unannotated: with an ABSTRACT coh the gate's match sticks on a neutral verdict; each
+// SATURATED instance (coh + params pinned) inhabits ProjectingRespondShape (metashape.test).
 gated_inductive_respond := {coh, params, self, frame} -> {
   let r = coh (neutral_type self) frame.motive frame.cases
   match r {

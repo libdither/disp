@@ -118,10 +118,11 @@ test param_apply (Pi Tree ({_} -> Tree)) pair_snd = Err
 // ================================================================
 // The claim "everything above the floor verifies" is made checkable by the per-fragment
 // self-check `verify {cut,engine,types}_mod = Ok TT` in use_raw.test.disp (the kernel
-// typechecking its own annotated exports, under the walker) plus the Tier-1 annotations in
-// the kernel sources (is_neutral : Tree -> Bool, inductive_respond : InductiveRespondShape,
-// type_predicate_h_rule : RespondShape, extend_neutral_meta : NeutralMeta -> ..., InvalidType
-// : Type, make_meta : Tree -> Tree -> MetaShape, inert_respond : RespondShape). Representative
+// typechecking its own annotated exports, under the walker) plus the annotations in the
+// kernel sources — every engine/cut export is either ANNOTATED (machine-verified: is_neutral,
+// neutral_type, bind_hyp, make_recognizer/make_rec_recognizer, apply_policed, the sigs,
+// verify : Module -> CheckerResult, InvalidType, the parametric responds, checker_sig,
+// make_meta) or marked SEALED(<why>) at the definition (see engine.disp's header). Representative
 // above-floor checks (formers, structural types, a recursor's own type) verify here too:
 test param_apply Type Nat = Ok TT                              // Nat : Type (a former verifies)
 test typecheck NeutralMeta (type_meta (make_hyp Nat 0)) = Ok TT // structural type inhabited

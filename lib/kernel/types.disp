@@ -640,6 +640,9 @@ Type := StrictType
 
 // NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).
 NeutralMeta : Type := { stored_type : Type, payload : Tree }
+// Module: the first-class shape of a file's export tuple `{ record; typ }` — what the
+// boundary's `verify` (engine.disp) checks, and what auto-verify runs per typed module.
+Module : Type := { typ : Type, record : Tree }
 // Action: a respond's result — stuck (`Extend new_type`, payload Type) or computes
 // (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the verdict ALIAS.
 Action : Type := < Extend : Type, Reduce : Tree >
