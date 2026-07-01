@@ -113,6 +113,17 @@ test param_apply (Pi Tree ({_} -> Tree)) pair_snd = Err
 // (checker_sig is trusted too, but reads the sig THROUGH the pair_fst carve-out after a wrap,
 //  so it is not a direct-triage floor reader — it is not walker-rejected.)
 
+// ── H-rule NOMINALITY on neutrals (characterization, 2026-07-01): a REFINEMENT cannot
+// classify EXISTING neutrals. make_recognizer's H-rule short-circuits EVERY neutral
+// candidate to "is your stored type THIS type?" — so a hyp minted at Tree is Ok FF against
+// `Refinement Tree is_neutral`, even though the refinement predicate holds for it. Types
+// are NOMINAL on neutrals; a structural `Neutral A` classifier would need a recognizer
+// that bypasses the H-rule shim, which reopens the level-confusion question (the hyp's OWN
+// neutrality vs the values it stands for). Pinned so any change here is a conscious one.
+let NeutralT = Refinement Tree is_neutral
+test tree_eq (param_apply NeutralT (make_hyp Tree 0)) (Ok TT) = FF // a real neutral: NOT a member (H-rule nominality)
+test param_apply NeutralT zero = Ok FF                             // a concrete non-neutral: predicate rejects, as expected
+
 // ================================================================
 // ABOVE THE FLOOR (K1) — everything else is meant to verify
 // ================================================================

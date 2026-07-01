@@ -95,12 +95,13 @@ InductiveRespondShape : Type := Tree -> Tree -> InductiveFrame -> Action
 // recognizer_params, then check the residual `self -> frame -> Action`.
 ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
 
-// RESIDUAL — RECURSIVE gated formers (Nat). The blocker is the coherence GATE itself, not the frame
-// structure: even fed cleanly-typed neutral fields DIRECTLY (no frame projection), the respond does not
-// reduce to a typeable Action. The wall is the recursive case-coherence check `step : Π n. motive n ->
-// motive (succ n)` (minting n+ih under nested `bind_hyp` doesn't self-type under abstract motive/cases).
-// Non-recursive gated (Bool) + non-gated (Coproduct/Ord/Unit) DO inhabit; the open frontier is the
-// recursive inductive ELIMINATOR (the IH-bearing case).
+// (RESOLVED — the old residual here claimed the RECURSIVE gated former (Nat) does not
+// self-type. Two fixes closed it: R1 sealed the gate's internal bind_hyp (apply_policed,
+// runtime-identical), making the gate TOTAL, so Nat's respond inhabits ProjectingRespondShape
+// like every other (metashape.test:78); and param_apply's token routing (2026-07-01) made even
+// recognition-form gates walkable (coh_gate_proto/coh_why_proto). CAVEAT: inhabiting a
+// RespondShape is TOTALITY, not gate-CORRECTNESS — a reject-everything gate inhabits it too.
+// Behavioral correctness is GoodRespond's job, below.)
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // GoodRespond (R4-R6): the BEHAVIORAL self-typing of the respond face — does respond `R` actually GATE
