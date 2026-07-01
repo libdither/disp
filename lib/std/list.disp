@@ -38,28 +38,29 @@ list_cons : Nat -> NatList -> NatList :=
 
 singleton : Tree -> Tree := {x} -> cons x nil
 
-// list_rec motive nil_case cons_case xs
-// Neutral targets produce make_hyp (motive xs).
-// Internal `xs`-first binder order avoids the bracket-abstraction
-// η-on-innermost-binder edge case (see list_map note).
-let list_rec_inner = fix ({self, xs, motive, nil_case, cons_case} ->
-  select_lazy
-    ({_} -> make_hyp (motive xs) xs)
-    ({_} ->
-      select_lazy
-        ({_} -> nil_case)
-        ({_} ->
-          select_lazy
-            ({_} -> cons_case (pair_fst xs) (pair_snd xs) (self (pair_snd xs) motive nil_case cons_case))
-            ({_} -> nil_case)
-            (is_concrete_fork xs))
-        (tree_eq xs t))
-    (is_neutral xs))
-list_rec := {motive, nil_case, cons_case, xs} -> list_rec_inner xs motive nil_case cons_case
+// list_rec: the dependent eliminator, elim-ROUTED like nat_rec — a neutral target becomes a
+// stuck elimination via the stored type's respond, running List's coherence gate (the old
+// version forged `make_hyp (motive xs) xs` raw, BYPASSING the gate). cases keyed by VARIANT
+// TAG (nil/cons) so the gate's `field cases tag` and the dispatcher agree.
+let list_dispatcher = fix ({self, motive, cases, target} ->
+  if (is_leaf target)
+    then cases.nil
+    else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
+// The IMPLICIT-∀ dependent recursor type: Intersection mints the element type A abstractly,
+// then the nat_rec-shaped dependent chain. Spelled with explicit Pi/Arrow — binder sugar does
+// not desugar inside application arguments (only annotation-position binders become Pis).
+list_rec : Intersection Type ({A} ->
+  Pi (Arrow (List A) Type) ({P} ->
+    Arrow (P nil)
+      (Arrow (Pi A ({h} -> Pi (List A) ({tl} -> Arrow (P tl) (P (cons h tl)))))
+        (Pi (List A) ({xs} -> P xs))))) := {motive, nil_case, cons_case, xs} -> elim list_dispatcher motive { nil := nil_case; cons := cons_case } xs
 
-list_length :=
-  fix ({self, xs} ->
-    triage 0 ({_} -> 0) ({_head, tail} -> succ (self tail)) xs)
+// list_length: written over list_rec (not raw triage) so the annotation is checkable — on a
+// minted hyp the recursion is a stuck elimination inhabiting the motive (the std/nat/ops
+// discipline). The remaining raw-triage functions below are the substrate-idiom versions;
+// rewriting them over list_rec is the same mechanical move when their annotations are wanted.
+list_length : Intersection Type ({A} -> Arrow (List A) Nat) :=
+  {xs} -> list_rec ({_} -> Nat) 0 ({h, tl, ih} -> succ ih) xs
 
 list_append :=
   fix ({self, xs, ys} ->

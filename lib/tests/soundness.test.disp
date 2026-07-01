@@ -127,5 +127,8 @@ test param_apply (Pi Tree ({_} -> Tree)) pair_snd = Err
 test param_apply Type Nat = Ok TT                              // Nat : Type (a former verifies)
 test typecheck NeutralMeta (type_meta (make_hyp Nat 0)) = Ok TT // structural type inhabited
 test param_apply (Pi Nat ({_} -> Nat)) ({y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok TT // recursor's own use verifies
-// NOTE (K1 residual): list_rec / list builders are not yet annotated, so they are not in the
-// fragment self-check sweep — tracked, not closed (ACTIVE_PLAN.md K1).
+// NOTE (K1, updated 2026-07-01): list_rec is now elim-ROUTED (neutral targets run List's gate,
+// no more raw make_hyp bypass) and ANNOTATED at the implicit-∀ dependent recursor type
+// (Intersection Type ({A} -> …)); list_length carries Intersection Type ({A} -> Arrow (List A)
+// Nat). The remaining raw-triage list functions (map/append/fold/…) are unannotated
+// substrate-idiom versions — same mechanical rewrite when their annotations are wanted.
