@@ -41,7 +41,10 @@ MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, 
 // observes `v` itself, `qid_meta` observes `type_meta v`. `StrictType` RECOGNIZES via a two-qid-cell
 // telescope walked by the same `tele_walk`, and inhabits ITSELF (`StrictType : StrictType`) — the metacircular
 // fixed point. A HYBRID wait-form (its respond is the real universe H-rule `type_predicate_h_rule`).
-CheckerResult : Type := < Ok : Tree, Err : Unit >
+// (Err's variant is BARE/nullary: `Err = inj0 "Err"` carries payload `t`, which the empty
+// positional telescope (⊤) accepts — an `Err : Unit` variant would demand payload `unit_val
+// = t t t` and Err would NOT inhabit its own result type. Pinned in metashape.test.)
+CheckerResult : Type := < Ok : Tree, Err >
 
 // qid_meta: observe type_meta v, check it : meta.ty — but THREAD v (not the meta), so it stays separate.
 // (qid_op/qid_cell — the plain self optic — moved up to the cell-ops block; qid_meta needs MetaShape.)
@@ -74,6 +77,11 @@ Module : Type := { typ : Type, record : Tree }
 // Action: a respond's result — stuck (`Extend new_type`, payload Type) or computes
 // (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the verdict ALIAS.
 Action : Type := < Extend : Type, Reduce : Tree >
+// Step: what a cell op answers the tele_walk harness (cells.disp) — mint a hyp, thread a
+// value, reject, or finish with an Action. The constructors (cells.disp) are annotated
+// against this; the OPS stay unannotated (they branch on `mode`, so a minted Bool-hyp
+// sticks — the one-generic-point limit of the Pi check).
+Step : Type := < SMint : Type, SThread : Tree, SReject, SDone : Action >
 // RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
 RespondShape : Type := Tree -> Tree -> Frame -> Action
 

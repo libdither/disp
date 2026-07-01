@@ -28,6 +28,17 @@ test param_apply Action (Extend Nat)                             = Ok TT
 test param_apply Action (Reduce zero)                            = Ok TT
 test param_apply Action (Return zero)                            = Ok TT // alias: Reduce (Ok zero)
 test tree_eq (Return zero) (Reduce (Ok zero))                    = TT    // Return IS the alias, definitionally
+// CheckerResult: BOTH constructors inhabit it. (Err's variant is bare/nullary — Err carries
+// payload `t`; the old `Err : Unit` variant demanded `unit_val` and Err did NOT inhabit.)
+test param_apply CheckerResult (Ok TT)                           = Ok TT
+test param_apply CheckerResult Err                               = Ok TT
+test param_apply CheckerResult zero                              = Ok FF
+// Step: the cell-op answer vocabulary (constructors annotated in cells.disp).
+test param_apply Step (SMint Nat)                                = Ok TT
+test param_apply Step (SThread zero)                             = Ok TT
+test param_apply Step SReject                                    = Ok TT
+test param_apply Step (SDone (Extend Nat))                       = Ok TT
+test param_apply Step zero                                       = Ok FF
 // a real neutral's meta is a NeutralMeta
 test typecheck NeutralMeta (type_meta (make_hyp Nat 0))          = Ok TT
 

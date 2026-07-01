@@ -12,11 +12,13 @@
 // schemes split: op = per-cell ALGEBRA, `tele_walk` = harness). New modes plug in as new ops, no `tele_walk` edit. CHECK
 // runs under the ambient walker (mint `bind_hyp` + `source prior` policed); STUCK instantiates each tail
 // EXPLICITLY under `param_walker`. Steps: SMint ty (∀-hyp), SThread x (thread+continue), SReject, SDone action.
-// (The Step constructors + do_check are EXPORTED: they are the vocabulary a userland cell op speaks.)
-SMint   := inj1 "SMint"
-SThread := inj1 "SThread"
-SReject := inj0 "SReject"
-SDone   := inj1 "SDone"
+// (The Step constructors + do_check are EXPORTED: they are the vocabulary a userland cell op
+// speaks. Annotated against the Step coproduct (universe.disp); the OPS stay unannotated —
+// they branch on `mode`, which sticks on a minted Bool-hyp: the one-generic-point limit.)
+SMint   : Type -> Step := inj1 "SMint"
+SThread : Tree -> Step := inj1 "SThread"
+SReject : Step := inj0 "SReject"
+SDone   : Action -> Step := inj1 "SDone"
 let op_sig = {op} -> pair_fst (wait op t) // a cell's kind = its op's signature (like is_neutral)
 
 // The observation ops: op meta mode source prior frame rs -> Step. `source` = candidate (CHECK) or
