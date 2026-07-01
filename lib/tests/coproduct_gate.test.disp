@@ -1,4 +1,4 @@
-// The GENERIC `Coproduct`/`Coproduct_p` are gated by `coh_check` (types.disp): the η-readback gate
+// The GENERIC `Coproduct`/`Coproduct_p` are gated by `coh_check` (kernel/positive.disp): the η-readback gate
 // `check cases (case-telescope)`. `check` is bidirectional Π-introduction — it verifies each case
 // inhabits the motive at its constructor by η-EXPANSION (mint a witness per Π arg/IH, recurse), not
 // recognition. One gate replaces the old hand-rolled per-constructor gate; it closes the

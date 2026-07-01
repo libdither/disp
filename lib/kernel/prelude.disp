@@ -1,5 +1,12 @@
 // Kernel entry point: `open use "../kernel/prelude.disp"` brings substrate combinators
-// (../prelude.disp) + the kernel's 3 fragments — cut (value cut) / engine (walker + Σ-ops) / types (formers).
+// (../prelude.disp) + the kernel's 7 fragments, in value-dependency order:
+//   cut      — the §2.6 value cut + control coproducts + MetaShape builder
+//   engine   — the walker + Σ-ops (hyp_reduce/bind_hyp/param_apply) + the boundary
+//   cells    — wait-form cells + the `at` walker + the negative formers (Telescope/Pi/Sigma/Record)
+//   base     — first-order library types (Unit/Eq/Refinement/…) + recursors + builders
+//   positive — Coproduct + the coherence gate + Bool/Nat/Ord
+//   generic  — the cell-derived generics (fold_value/rec_value/fmap/…)
+//   universe — StrictType/Type + the kernel's structural types + GoodRespond
 
 open use "../prelude.disp"
 
@@ -8,7 +15,15 @@ open use "../prelude.disp"
 // (so every fragment's forward refs see the full raw surface); checked re-imports then auto-verify.
 open use raw "cut.disp"
 open use raw "engine.disp"
-open use raw "types.disp"
+open use raw "cells.disp"
+open use raw "base.disp"
+open use raw "positive.disp"
+open use raw "generic.disp"
+open use raw "universe.disp"
 open use "cut.disp"
 open use "engine.disp"
-open use "types.disp"
+open use "cells.disp"
+open use "base.disp"
+open use "positive.disp"
+open use "generic.disp"
+open use "universe.disp"

@@ -1,4 +1,4 @@
-// GoodRespond — validates verify_good / good_resp / GoodRespond (lib/kernel/types.disp): does a respond R
+// GoodRespond — validates verify_good / GoodRespond (lib/kernel/universe.disp): does a respond R
 // GATE correctly for inductive T? `GoodRespond T` is a TELESCOPE of `probe` cells, so verify_good =
 // `param_apply (GoodRespond T) R` is ONE walk that composes under the walker.
 // Three soundness dimensions: coh (catches over-RESTRICTIVE), per-case junk (over-PERMISSIVE), and

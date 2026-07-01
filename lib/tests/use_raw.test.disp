@@ -5,10 +5,18 @@
 open use "../prelude.disp"
 open use raw "../kernel/cut.disp"
 open use raw "../kernel/engine.disp"
-open use raw "../kernel/types.disp"
+open use raw "../kernel/cells.disp"
+open use raw "../kernel/base.disp"
+open use raw "../kernel/positive.disp"
+open use raw "../kernel/generic.disp"
+open use raw "../kernel/universe.disp"
 open use "../kernel/cut.disp"
 open use "../kernel/engine.disp"
-open use "../kernel/types.disp"
+open use "../kernel/cells.disp"
+open use "../kernel/base.disp"
+open use "../kernel/positive.disp"
+open use "../kernel/generic.disp"
+open use "../kernel/universe.disp"
 
 // kernel names are in scope and usable
 test param_apply Type Nat = Ok TT
@@ -18,10 +26,18 @@ test typecheck Type (Pi Nat ({_} -> Bool)) = Ok TT
 // { record, typ } carries its annotated exports, resolved against the raw snapshot.
 // `verify` routes through `param_apply` (the checker entry) — NOT raw `typ record`
 // juxtaposition, which would bypass the walker's parametricity guards. This is the kernel
-// typechecking the kernel, under the walker.
+// typechecking the kernel, under the walker (verify itself is one of the annotated exports).
 let cut_mod = use "../kernel/cut.disp"
 let engine_mod = use "../kernel/engine.disp"
-let types_mod = use "../kernel/types.disp"
+let cells_mod = use "../kernel/cells.disp"
+let base_mod = use "../kernel/base.disp"
+let positive_mod = use "../kernel/positive.disp"
+let generic_mod = use "../kernel/generic.disp"
+let universe_mod = use "../kernel/universe.disp"
 test verify cut_mod = Ok TT
 test verify engine_mod = Ok TT
-test verify types_mod = Ok TT
+test verify cells_mod = Ok TT
+test verify base_mod = Ok TT
+test verify positive_mod = Ok TT
+test verify generic_mod = Ok TT
+test verify universe_mod = Ok TT

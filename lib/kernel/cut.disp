@@ -1,5 +1,5 @@
 // Kernel fragment: the §2.6 value-level cut + control coproducts + MetaShape builder.
-// Assembled by prelude.disp's barrel; not standalone (annotations forward-ref types.disp via the raw layer).
+// Assembled by prelude.disp's barrel; not standalone (annotations forward-ref universe.disp via the raw layer).
 
 // Value-level cut primitives (§2.6): a value is fork(descriptor, payload); one
 // elimination (the cut) drives projection, match, and application.

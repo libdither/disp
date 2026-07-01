@@ -1,0 +1,146 @@
+// Kernel fragment: the first-order LIBRARY TYPES + their recursors + the record builders.
+// Unit/String/False/Not, Eq (+ J and lemmas), Refinement/Intersection (tele_with hybrids), HBin,
+// and the dependently-typed recursors nat_rec/bool_rec/ord_rec (via `elim`). Bool/Nat/Ord (the TYPES)
+// live in positive.disp (they need the Coproduct machinery); the `: Bool`/`: Nat`/`: Ord` annotations
+// here forward-ref via the raw-load layer, and Ord's CONSTRUCTORS live here (HBin builds on them).
+
+// Inductive recursors. Recursive calls route through `elim` (not raw `self`), so a neutral
+// predecessor yields a clean stuck elimination (§A). nat_rec/bool_rec/ord_rec are dependently typed.
+let nat_dispatcher = fix ({self, motive, cases, target} ->
+  if (tree_eq target zero)
+    then cases.zero // base
+    else (cases.succ (nat_pred target) (elim self motive cases (nat_pred target)))) // step n rec
+// cases keyed by VARIANT TAG (zero/succ) so the gate's `field cases tag` and the dispatcher agree.
+nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n := {motive, base, step, target} -> elim nat_dispatcher motive { zero := base; succ := step } target
+
+let bool_dispatcher = {motive, cases, target} -> select (cases.true) (cases.false) target
+bool_rec : {P : Bool -> Type} -> P TT -> P FF -> {b : Bool} -> P b := {motive, ct, cf, target} -> elim bool_dispatcher motive { true := ct; false := cf } target
+
+// ord_rec: zero_ord -> case_z; omega_plus a b -> case_op a b (rec a) (rec b).
+let ord_dispatcher = fix ({self, motive, cases, target} ->
+  if (is_leaf target) then cases.zero_ord
+  else {
+    let a = stem_child (pair_fst target) // pair_fst/snd here destructure
+    let b = pair_snd target // the ord value omega_plus a b
+    cases.omega_plus a b (elim self motive cases a) (elim self motive cases b) // recurse via elim (gate neutrals)
+  })
+ord_rec : {P : Ord -> Type} -> P zero_ord -> ({a : Ord} -> {b : Ord} -> P a -> P b -> P (omega_plus a b)) -> {o : Ord} -> P o := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { zero_ord := case_z; omega_plus := case_op } target
+
+// eq_J: concrete refl -> base; neutral proof -> stuck elim. The A,x,y binders (the
+// equality endpoints) only fix the dependent type; the body ignores them.
+eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> Eq A x y -> motive y := {A, x, y, motive, base, proof} -> elim
+  ({motive, cases, target} -> cases.base)
+  motive { base := base }
+  proof
+
+// First-order library types: Unit, False, Not, String, Eq, Refinement, Intersection, HBin (+ Ord's
+// constructors zero_ord/omega_plus; Sigma lives in cells.disp, the Ord type in positive.disp).
+unit_val : Unit := t t t
+Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
+
+// String = ⊤ conceptually (= the nullary telescope), but kept lean: the trivial `Ok TT` recognizer
+// avoids the telescope walker's per-check reduction cost (which inflates the suite's memo footprint).
+String : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
+False : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness inert_respond)  // ⊥ (= the empty sum), kept lean
+Not : Type -> Type := {P} -> Pi P ({_} -> False)
+
+// refl: the canonical proof VALUE `t` (proofs erase to one value; eq_body checks a candidate
+// IS it). Bare — typing it `{A}->{x:A}->Eq A x x` forces a function vs. this value idiom.
+refl := t
+// Eq recognizer: a candidate inhabits Eq A x y iff it IS refl and endpoints x,y match. Telescope hybrid:
+// recognizer = [ qid (Singleton refl) ; eqends A x y ]; respond = J — eliminating a stuck `p : Eq A x y`
+// lands the motive at the RHS endpoint `y` (not the proof), giving `motive y` (the J rule `C : (y:A) ⊢ C y`).
+Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> tele_with (
+  t (qid_cell (Singleton refl)) ({_} ->
+  t (eqends_cell A x y) ({_} -> t)))
+  ({params, self, frame} -> match (apply_policed frame.motive y) { Ok ty => Extend ty; Err _ => Extend InvalidType })
+
+// Equality lemmas via eq_J (compute on refl, stay stuck on a neutral proof).
+eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} -> eq_J A x y motive base p
+eq_sym : {A : Type} -> {x : A} -> {y : A} -> Eq A x y -> Eq A y x := {A, x, y, p} -> eq_J A x y ({y_} -> Eq A y_ x) refl p
+eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A x y -> Eq B (f x) (f y) := {A, B, f, x, y, p} -> eq_J A x y ({y_} -> Eq B (f x) (f y_)) refl p
+
+// Refinement A P (P : A -> Bool): { v : A | P v }. A 2-cell telescope [ qid A ; refine P ] — a HYBRID
+// wait-form (telescope recognizer + inert respond), recognize-equivalent to the old hand-written form.
+Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> tele_with (
+  t (qid_cell A) ({_} -> t (refine_cell P) ({_} -> t))) inert_respond
+
+// Intersection A P (P : A -> Type): mint a fresh A-hyp, check v : (P hyp) — the dependent intersection
+// (the walk polices P's use of the hyp). A 2-cell telescope [ mint A ; imeet P ] (HYBRID, inert respond).
+Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> tele_with (
+  t (mint_cell A) ({_} -> t (imeet_cell P) ({_} -> t))) inert_respond
+
+zero_ord : Ord := t
+omega_plus : Ord -> Ord -> Ord := {a, b} -> t (t a) b // fork(stem a, b)
+// `Ord` (the TYPE) is defined in positive.disp (after the Coproduct machinery it reuses): a shape-encoded
+// recursive sum `Coproduct_viewed view_ord [zero_ord:[], omega_plus:[Rec, Rec]]`. `: Ord` forward-refs via raw-load.
+
+// HBin: hereditarily binary naturals (Tarau, arXiv:1306.1128) — run-length compressed bijective base-2,
+// with the digit counts themselves HBins (so giant numbers stay small trees). Encoding (leaf-or-fork, a
+// stem tags W): hb_e = t; hb_v x xs = fork(stem x, xs); hb_w x xs = fork(stem(stem x), xs); blocks pair-chained.
+// Bare like refl: typing the constructors would make the recognizer triage an abstract count/block hypothesis.
+hb_e := t
+hb_v := {x, xs} -> t (t x) xs
+hb_w := {x, xs} -> t (t (t x)) xs
+let hb_blocks = fix ({go, hb, xs} ->
+  triage
+    (Ok TT) // nil
+    ({_} -> Ok FF) // stem -> not a block list
+    ({y, ys} -> bind (hb y) ({oky} -> if oky then (go hb ys) else (Ok FF)))
+    xs)
+// HBin recurses via `self` into the head count and every block count, so a
+// neutral count is recognised by the H-rule, not triaged (§A).
+HBin : Type := wait (make_rec_recognizer
+  {self, m, v} ->
+  triage
+    (Ok TT) // hb_e = zero
+    ({_} -> Ok FF) // bare stem -> not an HBin
+    ({l, r} -> if (is_stem l) then {
+      let lx = stem_child l // hb_v: the count; hb_w: stem(count)
+      let cnt = if (is_stem lx) then (stem_child lx) else lx
+      bind (self cnt) ({okc} -> if okc then (hb_blocks self r) else (Ok FF))
+    } else (Ok FF))
+    v
+) (make_meta unit_witness inductive_respond)
+
+
+// mk: the builder — fill derived fields from their recipes, take opaque ones
+// from `given`, emit the full §2.6 record (which the recognizer then re-pins).
+let mk_fold = fix ({self, tele, given} ->
+  if (is_fork tele) then {
+    let m = type_meta (pair_fst tele) // inspect the wait-form cell's meta
+    let x = if (is_derive (pair_fst tele)) then (m.recipe) else (field given (m.name))
+    let rest = self ((pair_snd tele) x) given
+    pair (cons (m.name) (pair_fst rest)) (cons (list_const x) (pair_snd rest))
+  } else (pair nil nil))
+// mk takes the Telescope TYPE (reads the telescope off its meta), so call sites write `mk T { … }`.
+// (Unannotated: the fold triages its arg, so a `Tree -> …` typing would mint hyps it inspects.)
+mk := {T, given} -> {
+  let nv = mk_fold ((type_meta T).recognizer_params) given
+  mk_record (pair_fst nv) (pair_snd nv)
+}
+
+// mk_curried T: the CURRIED constructor — takes the opaque fields one at a time (a lambda each), computing
+// derived fields from the priors. Fully applied = the SAME record as `mk T { … }`; a partial application is
+// a record-under-construction with the residual type (the Π/Σ bridge: `mk_curried T : Π Δ_opaque. T`).
+let list_rev = fix ({self, xs, acc} -> if (is_fork xs) then (self (pair_snd xs) (cons (pair_fst xs) acc)) else acc)
+let mkc_go = fix ({self, tele, names, vals} ->
+  if (is_fork tele) then {
+    let m = type_meta (pair_fst tele)
+    if (is_derive (pair_fst tele))
+      then (self ((pair_snd tele) (m.recipe)) (cons (m.name) names) (cons (list_const (m.recipe)) vals)) // derived: compute now
+      else ({x} -> self ((pair_snd tele) x) (cons (m.name) names) (cons (list_const x) vals)) // opaque: await x
+  } else (mk_record (list_rev names nil) (list_rev vals nil)))
+mk_curried := {T} -> mkc_go ((type_meta T).recognizer_params) nil nil
+
+// constructor_type T: the type of `mk_curried T` — a Π-chain over the OPAQUE fields ending in T (derived
+// skipped). Each opaque field's codomain is the residual constructor type, so a partial application has the
+// shrunk residual (a typestate). A *dependent* field's residual is an unreduced family (intensional under tree_eq).
+let ctype_go = fix ({self, tele, T} ->
+  if (is_fork tele) then {
+    let m = type_meta (pair_fst tele)
+    if (is_derive (pair_fst tele))
+      then (self ((pair_snd tele) (m.recipe)) T)               // derived -> skip (computed)
+      else (Pi (m.ty) ({x} -> self ((pair_snd tele) x) T))     // opaque -> a Pi
+  } else T)
+constructor_type := {T} -> ctype_go ((type_meta T).recognizer_params) T

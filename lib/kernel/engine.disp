@@ -43,7 +43,7 @@ let recognizer_wrap = fix ({wrap, body, meta, v} -> {
 // and that branch is carve-out-clean; `body` stays an opaque Tree (its branch never fires).
 make_rec_recognizer : Tree -> MetaShape -> Tree -> CheckerResult := {body} -> wait recognizer_wrap body
 // A non-recursive recognizer ignores `self` (most types: Type, Pi, Unit, String, …;
-// Bool/Nat/Ord are now Coproduct types built via make_rec_recognizer, see types.disp).
+// Bool/Nat/Ord are now Coproduct types built via make_rec_recognizer, see positive.disp).
 make_recognizer : Tree -> MetaShape -> Tree -> CheckerResult := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
 
 // InvalidType: the absorbing dead-state type (§12.3) — a real empty type (recognizer always
@@ -163,7 +163,7 @@ typecheck := {T, v} -> bind (param_lift v) ({sv} -> param_apply T sv)
 // through). Routed via the POLICED token, which is runtime-identical to `param_apply
 // mod.typ mod.record` but — unlike a raw param_walker call — SELF-TYPES: the walker cannot
 // walk itself, but it can walk the token. Module is the first-class shape of a file's
-// `{ typ; record }` tuple (types.disp).
+// `{ typ; record }` tuple (universe.disp).
 verify : Module -> CheckerResult := {mod} -> match (apply_policed (mod.typ) (mod.record)) { Ok v => v; Err _ => Err }
 
 // Library eliminator: concrete target -> dispatcher; neutral -> hyp_reduce via the

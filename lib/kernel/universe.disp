@@ -1,0 +1,134 @@
+// Kernel fragment: the METACIRCULAR UNIVERSE + the kernel's own structural types + the behavioral
+// respond-checker. StrictType recognizes a type by its two observable faces (applied + projected),
+// inhabits itself, and IS `Type`; Tree/Frame/MetaShape/NeutralMeta/Module/Action/RespondShape make
+// the kernel's internals annotatable; GoodRespond behaviorally verifies a respond gates correctly.
+// `Type := StrictType` lands mid-file: `: Type` annotations everywhere resolve via the raw-load
+// snapshot, and the structural types whose VALUES mention Type/Action follow it (sequential value refs).
+// Host note: `isUniverseTree` keys on EXACT tree identity, so a `: Type` binding is detected as
+// universe-typed even though StrictType shares Telescope's root sig.
+
+// Type universe + the predicate-side H-rule (unlocks polymorphic Pi).
+// has_metashape_layout: the meta is an annihilate-rooted §2.6 record with the canonical MetaShape header (O(1) tree_eq).
+has_metashape_layout := {m} ->
+  and (tree_eq (pair_fst m) annihilate_sig) (tree_eq (pair_fst (type_meta m)) metashape_header)
+
+// type_predicate_h_rule: a Type-typed neutral, applied as a predicate to a candidate
+// `frame`, holds iff frame is a neutral whose stored type IS this hypothesis (§6.3).
+type_predicate_h_rule : RespondShape := {params, self, frame} ->
+  if (is_neutral frame)
+    then (Return (tree_eq (neutral_type frame) self))
+    else (Return FF)
+
+// The kernel's own structural types (§11.2 / §12.6), built from the library formers above
+// so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
+// Tree: the permissive "any tree" type (recognizer = Ok TT), the de-facto top type.
+// Tree = ⊤ conceptually (= the nullary telescope `Telescope t`), but kept as the lean direct
+// recognizer: Tree is referenced pervasively (every `: Tree`, MetaShape), so the bigger telescope
+// tree inflates the interned-node/memo footprint enough to tip the suite's cumulative-memo OOM.
+Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
+// Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
+Frame : Type := Tree
+// NeutralMeta / Action / RespondShape + the per-former RespondShapes use `Type`/`Action` in VALUE
+// position, so they are defined AFTER `Type := StrictType` below (within-file value refs are sequential).
+// MetaShape uses only Tree, so it stays here (StrictType's qid_meta_cell needs it).
+// MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
+// (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
+MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }
+
+// ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
+// A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the recognizer ->
+// CheckerResult) and PROJECTED (`type_meta T` -> MetaShape). So `T : Type` iff BOTH faces hold: `qid`
+// observes `v` itself, `qid_meta` observes `type_meta v`. `StrictType` RECOGNIZES via a two-qid-cell
+// telescope walked by the same `at`, and inhabits ITSELF (`StrictType : StrictType`) — the metacircular
+// fixed point. A HYBRID wait-form (its respond is the real universe H-rule `type_predicate_h_rule`).
+CheckerResult : Type := < Ok : Tree, Err : Unit >
+
+// qid_meta: observe type_meta v, check it : meta.ty — but THREAD v (not the meta), so it stays separate.
+// (qid_op/qid_cell — the plain self optic — moved up to the cell-ops block; qid_meta needs MetaShape.)
+let qid_meta_op = {meta, mode, source, prior, frame, rs} -> // observe type_meta v, check it : meta.ty
+  if mode
+    then (match ((meta.ty) (type_meta source)) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
+    else (SDone (Extend (meta.ty)))
+qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
+
+// StrictType: v is a type iff v is a recognizer (Tree -> CheckerResult) AND type_meta v : MetaShape.
+// A `tele_with` HYBRID (like Eq/Refinement/Intersection): the telescope RECOGNIZER (`at TT` over the two
+// qid cells) + the real universe respond `type_predicate_h_rule` instead of the negative `at FF`. That
+// respond makes a StrictType-HYP usable as a polymorphic Pi domain: a type-hyp `A` applied as a predicate
+// accepts neutrals of stored type A (predicate-side H-rule). So StrictType is a real universe (not just
+// a recognizer) and can replace legacy `Type` (recognizer = Telescope's; only respond differs).
+StrictType : Type := tele_with (
+  t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
+  t (qid_meta_cell MetaShape) ({_} -> t)))
+  type_predicate_h_rule
+
+// Type := StrictType: the universe IS the strict type (recognize-face + MetaShape meta-face + H-rule
+// respond). Structural types whose values mention Type/Action follow here (sequential value refs).
+Type := StrictType
+
+// NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).
+NeutralMeta : Type := { stored_type : Type, payload : Tree }
+// Module: the first-class shape of a file's export tuple `{ record; typ }` — what the
+// boundary's `verify` (engine.disp) checks, and what auto-verify runs per typed module.
+Module : Type := { typ : Type, record : Tree }
+// Action: a respond's result — stuck (`Extend new_type`, payload Type) or computes
+// (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the verdict ALIAS.
+Action : Type := < Extend : Type, Reduce : Tree >
+// RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
+RespondShape : Type := Tree -> Tree -> Frame -> Action
+
+// ── Per-former STRUCTURED RespondShapes (§7A/§7B → StrictType wiring).
+// The flat RespondShape loosens `frame` to Tree, so a PROJECTING respond (`frame.motive`) can't inhabit it;
+// giving the frame STRUCTURE per former makes the projection well-formed (the §7A apply_policed carve-out
+// type-checks the policed body). Inductive: frame `{ motive ; cases }`, respond answers `Extend (motive self)`.
+InductiveFrame : Type := { motive : Tree -> Type, cases : Tree }
+InductiveRespondShape : Type := Tree -> Tree -> InductiveFrame -> Action
+// ProjectingRespondShape: the params-PINNED form — apply the respond to the type's OWN
+// recognizer_params, then check the residual `self -> frame -> Action`.
+ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
+
+// RESIDUAL — RECURSIVE gated formers (Nat). The blocker is the coherence GATE itself, not the frame
+// structure: even fed cleanly-typed neutral fields DIRECTLY (no frame projection), the respond does not
+// reduce to a typeable Action. The wall is the recursive case-coherence check `step : Π n. motive n ->
+// motive (succ n)` (minting n+ih under nested `bind_hyp` doesn't self-type under abstract motive/cases).
+// Non-recursive gated (Bool) + non-gated (Coproduct/Ord/Unit) DO inhabit; the open frontier is the
+// recursive inductive ELIMINATOR (the IH-bearing case).
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// GoodRespond (R4-R6): the BEHAVIORAL self-typing of the respond face — does respond `R` actually GATE
+// correctly for inductive `T`? The NON-VACUOUS answer to the RESIDUAL above (structural `ProjectingRespondShape`
+// self-typing is vacuous totality; this checks BEHAVIOR and covers the recursive eliminator, validated Nat/MyNat).
+// `GoodRespond T` is a real TELESCOPE walked by `at`: each obligation is a `probe` cell — "apply R to a frame,
+// check the result ≡ Singleton(outcome)" (the collapse CONV x = MEM (Singleton x)). Two dimensions are cells
+// (WALKER-CLEAN — they reject via a contained SReject, so `param_apply (GoodRespond T) R` is ONE `at` walk that
+// COMPOSES under the walker): coh (coherent cases -> Extend(motive self)) + per-case junk (junk in slot i ->
+// Extend InvalidType; catches over-permissive incl. LAZY gates). The THIRD dimension, reflection, is handled
+// out-of-band by FUSION (a check-based respond polices its mints), so it needs no probe. Pinned: goodrespond.test.
+let ctele_fields = {T, M} -> (type_meta (derive_case_telescope T M)).recognizer_params
+let map_nth = fix ({self, i, g, xs} ->
+  if (is_fork xs)
+    then (if (tree_eq i zero) then (cons (g (pair_fst xs)) (pair_snd xs)) else (cons (pair_fst xs) (self (nat_pred i) g (pair_snd xs))))
+    else nil)
+// probe cell: apply source(=R) to a frame built by meta.apply from (source, prior=minted cases), check
+// the result : Singleton(meta.outcome). The one new op the behavioral telescope needs (pluggable).
+let probe_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
+let probe_cell = {ap, out} -> wait probe_op { apply := ap; outcome := out }
+// abstract motive (M) + self (s) — make_hyp'd so the obligations are universal by parametricity; `ap`
+// applies R to {M; the minted cases}. Each obligation = [ mint (a case-telescope) ; probe outcome ].
+let gr_M = {T} -> make_hyp (Arrow T Type) t
+let gr_s = {T} -> make_hyp T (succ t)
+let gr_ap = {T} -> {R, cases} -> R (gr_s T) { motive := (gr_M T); cases := cases }
+// the per-variant junk cells: for each slot i, [ mint (case-tele with slot i := Tree) ; probe Extend InvalidType ].
+let gr_junk_cells = fix ({self, ap, fields, fs, i} ->
+  if (is_fork fs)
+    then (t (mint_cell (Record (map_nth i ({f} -> pair (pair_fst f) Tree) fields))) ({_} -> t (probe_cell ap (Extend InvalidType)) ({_} -> self ap fields (pair_snd fs) (succ i))))
+    else t)
+// GoodRespond T : the telescope [ mint case_tele ; probe coh ; (mint junk_i ; probe InvalidType)* ].
+GoodRespond := {T} -> Telescope (
+  t (mint_cell (derive_case_telescope T (gr_M T))) ({_} ->
+  t (probe_cell (gr_ap T) (Extend (gr_M T (gr_s T)))) ({_} ->
+  gr_junk_cells (gr_ap T) (ctele_fields T (gr_M T)) (ctele_fields T (gr_M T)) zero)))
+// verify_good : run the telescope recognizer under the walker — composes (the prize).
+verify_good := {T, R} -> param_apply (GoodRespond T) R
+// Reflection (the 3rd soundness dimension) needs no separate probe: a check-based respond polices its own
+// mints, so an unpoliced/reflecting respond makes `verify_good` Err (walker abort) — caught for free (FUSION).
