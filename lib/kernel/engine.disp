@@ -5,7 +5,8 @@
 // the walker at module check) or marked SEALED(<why>) — constitutively untypeable because its body
 // IS the reflection/forging the walker exists to reject (the seal(Σ) boundary, SEALING.md). A SEALED
 // export's correctness is pinned behaviorally (soundness/metashape/goodrespond tests), not
-// structurally. Exports whose honest type is DEPENDENT (param_apply/typecheck/elim) are noted inline.
+// structurally. Exports whose honest type is DEPENDENT and still open (typecheck/elim) are
+// noted inline; param_apply/checked carry theirs (the §12.16 checked application).
 
 // hyp_reduce (Σ-op): push a frame onto a neutral via its stored type's respond. Makes the
 // one raw metadata read and hands the respond `{recognizer_params, self, frame}` (§12.6).
@@ -140,12 +141,21 @@ param_walker := fix ({self, f, x} ->
 // responds use apply_policed to walk a user sub-term (motive/codomain/predicate) against the neutral.
 apply_policed : Tree -> Tree -> Tree := {M} -> wait param_walker M
 
-// param_apply returns the bare reduct (wrapping invariant §7.5): unwrap param_walker's
-// success-Ok; a routed/recognizer CheckerResult passes through. Unannotated: its honest type
-// is the DEPENDENT checked application (§12.16 `checked`: {A : Type} -> {B : A -> Type} ->
-// Pi A B -> {x : A} -> B x) — flat `Tree -> Tree -> Tree` is wrong (an abstract f applied
-// to x extends to an InvalidType-neutral, which Tree's H-rule rejects).
-param_apply := {f, x} -> match (param_walker f x) { Ok v => v; Err _ => Err }
+// param_apply returns the bare reduct (wrapping invariant §7.5): unwrap the walk's
+// success-Ok; a routed/recognizer CheckerResult passes through. Routed via the POLICED
+// token — `(wait param_walker f) x` reduces to exactly `param_walker f x`, so direct calls
+// are unchanged, but the token form is WALKABLE (§7A), which lets the annotation below be
+// machine-checked. The type is the IMPLICIT-∀ form of §12.16's checked application
+// (Intersection = the implicit binder: mint the type args abstractly, check the 2-ary value);
+// flat `Tree -> Tree -> Tree` would be wrong — an abstract f applied to x extends to an
+// InvalidType-neutral, which Tree's H-rule rejects.
+param_apply : Intersection Type ({A} -> Intersection (Pi A ({_} -> Type)) ({B} -> Pi (Pi A B) ({f} -> Pi A ({x} -> B x)))) := {f, x} -> match (apply_policed f x) { Ok v => v; Err _ => Err }
+
+// checked (§12.16): the EXPLICIT-type-args form of the same operation — `checked A B f x`
+// is checked application at `Pi A B`. The type args are dispatch/documentation anchors the
+// body ignores (the eq_J idiom: value binds every annotation binder), which is what lets
+// the fully dependent annotation be machine-checked.
+checked : {A : Type} -> {B : A -> Type} -> Pi A B -> {x : A} -> B x := {A, B, f, x} -> param_apply f x
 
 // inductive_respond: extend the neutral's spine at `motive self`, routed through the
 // walker so a motive that raw-reflects on the neutral is rejected (-> dead state).
