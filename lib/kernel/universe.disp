@@ -91,12 +91,26 @@ let claims_gate = {v} -> not (tree_eq ((type_meta v).respond) inductive_respond)
 let resp_of = {T} -> (type_meta T).respond (type_meta T).recognizer_params
 // per-variant junk dims (the over-permissive/R5 adversary catch): for each case slot i, mint a
 // cases-record with slot i junked to Tree and probe that the respond REJECTS (Extend InvalidType).
-let bt_junk = fix ({self, M, s, fields, fs, i} ->
+// `get_R` maps the walked SOURCE to the respond under test: `resp_of` for the universe (source =
+// the candidate type), `Id` for the standalone GoodRespond (source = the respond itself).
+let bt_junk = fix ({self, get_R, M, s, fields, fs, i} ->
   if (is_fork fs)
     then (t (mint_cell (Record (map_nth i ({f} -> pair (pair_fst f) Tree) fields))) ({junk} ->
-          t (probe_cell ({src, _} -> (resp_of src) s { motive := M; cases := junk }) (Extend InvalidType)) ({_} ->
-          self M s fields (pair_snd fs) (succ i))))
+          t (probe_cell ({src, _} -> (get_R src) s { motive := M; cases := junk }) (Extend InvalidType)) ({_} ->
+          self get_R M s fields (pair_snd fs) (succ i))))
     else t)
+// behavioral_cells: THE GoodRespond obligation chain, shared by the universe's tail and the
+// standalone checker — mint an abstract motive M (at StrictType: the probes only need its H-rule
+// respond), an abstract self s, the coherent cases; probe coh (-> Extend (M s)); optionally the
+// per-variant junk dims. Universality of the obligations = parametricity of the managed mints.
+let behavioral_cells = {get_R, T, junk_dims} ->
+  t (mint_cell (Arrow T StrictType)) ({M} ->
+  t (mint_cell T) ({s} ->
+  t (mint_cell (derive_case_telescope T M)) ({cases} ->
+  t (probe_cell ({src, _} -> (get_R src) s { motive := M; cases := cases }) (Extend (M s))) ({_} ->
+  (if junk_dims
+    then (bt_junk get_R M s (ctele_fields T M) (ctele_fields T M) zero)
+    else t)))))
 // BehavioralType: [ qid recognizer ; qid_meta MetaShape ; IF gated: (mint M ; mint s ; mint cases ;
 // probe coh ; IF claims_gate: (mint junk_i ; probe InvalidType)*) ] — ONE telescope, ONE walk, deriving
 // R = resp_of v inside each probe (no sub-walker). The motive is minted at `Arrow v StrictType` (the
@@ -106,14 +120,7 @@ BehavioralType := tele_with (
   t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
   t (qid_meta_cell MetaShape) ({v} ->
     if (is_gated v)
-      then (
-        t (mint_cell (Arrow v StrictType)) ({M} ->
-        t (mint_cell v) ({s} ->
-        t (mint_cell (derive_case_telescope v M)) ({cases} ->
-        t (probe_cell ({src, _} -> (resp_of src) s { motive := M; cases := cases }) (Extend (M s))) ({_} ->
-        (if (claims_gate v)
-          then (bt_junk M s (ctele_fields v M) (ctele_fields v M) zero)
-          else t))))))
+      then (behavioral_cells resp_of v (claims_gate v))
       else t)))
   type_predicate_h_rule
 
@@ -166,22 +173,13 @@ ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
 // COMPOSES under the walker): coh (coherent cases -> Extend(motive self)) + per-case junk (junk in slot i ->
 // Extend InvalidType; catches over-permissive incl. LAZY gates). The THIRD dimension, reflection, is handled
 // out-of-band by FUSION (a check-based respond polices its mints), so it needs no probe. Pinned: goodrespond.test.
-// (probe_op/probe_cell/ctele_fields/map_nth are defined above, shared with BehavioralType.)
-// abstract motive (M) + self (s) — make_hyp'd so the obligations are universal by parametricity; `ap`
-// applies R to {M; the minted cases}. Each obligation = [ mint (a case-telescope) ; probe outcome ].
-let gr_M = {T} -> make_hyp (Arrow T Type) t
-let gr_s = {T} -> make_hyp T (succ t)
-let gr_ap = {T} -> {R, cases} -> R (gr_s T) { motive := (gr_M T); cases := cases }
-// the per-variant junk cells: for each slot i, [ mint (case-tele with slot i := Tree) ; probe Extend InvalidType ].
-let gr_junk_cells = fix ({self, ap, fields, fs, i} ->
-  if (is_fork fs)
-    then (t (mint_cell (Record (map_nth i ({f} -> pair (pair_fst f) Tree) fields))) ({_} -> t (probe_cell ap (Extend InvalidType)) ({_} -> self ap fields (pair_snd fs) (succ i))))
-    else t)
-// GoodRespond T : the telescope [ mint case_tele ; probe coh ; (mint junk_i ; probe InvalidType)* ].
-GoodRespond := {T} -> Telescope (
-  t (mint_cell (derive_case_telescope T (gr_M T))) ({_} ->
-  t (probe_cell (gr_ap T) (Extend (gr_M T (gr_s T)))) ({_} ->
-  gr_junk_cells (gr_ap T) (ctele_fields T (gr_M T)) (ctele_fields T (gr_M T)) zero)))
+// GoodRespond T: the SAME obligation cells as the universe's tail (behavioral_cells), with the
+// walked source being the respond R itself (get_R = Id) and the junk dims always on (R is explicitly
+// under test — the universe's declared-ungated exemption is a Type-policy, not a GoodRespond one).
+// All hyps are MANAGED mints (telescope cells -> bind_hyp): the old raw make_hyp'd gr_M/gr_s forges
+// are RETIRED — they read as stem-forgery when GoodRespond's own code was distributed by an
+// enclosing walker (the original R6 nested-abort culprit).
+GoodRespond := {T} -> Telescope (behavioral_cells Id T TT)
 // verify_good : run the telescope recognizer under the walker — composes (the prize).
 verify_good := {T, R} -> param_apply (GoodRespond T) R
 // Reflection (the 3rd soundness dimension) needs no separate probe: a check-based respond polices its own
