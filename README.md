@@ -12,49 +12,161 @@ Rust is fast, but you can't verify your programs. In lean you can verify your pr
 
 In order to create a language where all you are required to do is define the high-level constraints, as detailed and rigorous as you require, and then it automatically derives an implementation, you need a language where the constraint-checking itself is optimized and ideally modular. This is the problem disp solves. 
 
-## Example
+## Disp by example
+
+This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked.
 
 ```disp
-open use "../kernel/prelude.disp"   // the type system, an ordinary library
-open use "../std/nat/ops.disp"      // double, pred, is_zero
-
-// A definition: `name : Type := value`. A lambda is `{args} -> body`.
-quadruple : Nat -> Nat := {n} -> double (double n)
-
-// `test` declarations run at load time: both sides must reduce to the
-// same tree.
-test quadruple 3 = 12
-
-// A record type, written like a value. Later fields may depend on earlier
-// ones, and `b := double a` is a DERIVED field whose value is computed.
-let TDs = { a : Nat, b := double a }
-
-// Types are programs: checking a value is running the type on it.
-test typecheck TDs { a := 2; b := 4 } = Ok TT
-test param_apply TDs { a := 2; b := 5 } = Ok FF   // 5 is not double 2
-
-// `build` fills derived fields in for you:
-test build TDs { a := 3 } = { a := 3; b := 6 }
-
-// Full dependency: the TYPE of field `x` is the VALUE of field `T`.
-let TDep = { T : Type, x : T }
-test typecheck TDep { T := Nat; x := 3 } = Ok TT
-test typecheck TDep { T := Bool; x := FF } = Ok TT
+open use "../prelude.disp"          // raw combinators (tree_eq, is_fork, succ, ...)
+open use "../kernel/prelude.disp"   // the entire type system, an ordinary library
+open use "../std/nat/ops.disp"      // double
 ```
 
-Types are first-class values that can be bound with `let` and passed to functions. The record former above is the same one that provides function types, pairs, and the unit type. The entire type system arrived through the `open use` of a library file.
+### Everything is a tree
 
-## Design
+```disp
+// Disp compiles to tree calculus: three rewrite rules over binary trees grown
+// from a single leaf `t`. Numbers, lambdas, types, proofs, and the type
+// checker itself are all such trees. Some of them are small:
 
-Each of these is a deliberate decision, argued with precedents and failure modes in [`FOUNDATIONS.md`](FOUNDATIONS.md). Implementation detail lives in the linked documents.
+// from the prelude:  TT : Bool := {m, ct, cf} -> ct
+test TT = t t (t t)                             // "true" is this four-leaf tree
+test tree_eq 3 (succ (succ (succ zero))) = TT   // 3 is sugar, and the trees are identical
 
-1. **Programs are trees; equality is structural.** Type checking constantly compares terms for equality, and in disp that comparison asks whether two terms are literally the same tree (`tree_eq`). Deterministic elaboration guarantees that the same program produces the same tree, and the checker backends hash-cons every term, which turns the comparison into an O(1) pointer check. The O(1) part is a backend property, not a calculus property: the interaction-net backend drops hash-consing deliberately so the optimizer can attribute cost per candidate. ([`KERNEL_DESIGN.md`](KERNEL_DESIGN.md))
-2. **Types are predicates.** A type is a function from raw trees to yes/no, in the NuPRL tradition. There is no separate language of typed terms. ([`TYPE_THEORY.typ`](TYPE_THEORY.typ))
-3. **The object language is the specification.** Every checker and elaborator component has an in-language definition. Host fast paths must produce bit-identical results and are validated against the in-language reference. The one live native fast path is `tree_eq`.
-4. **A small sealed kernel.** The trusted center is two operations (`hyp_reduce`, `bind_hyp`) plus one dispatcher (`param_apply`) that polices reflection, in the LCF tradition: untrusted library code can consume evidence of well-typedness but cannot forge or inspect it. Everything else, including Pi, Sigma, Nat, Bool, equality, and the universe, is ordinary library code in `lib/kernel/`. The universe is metacircular: `Type` is a type that passes its own checker. ([`SEALING.md`](SEALING.md), `lib/kernel/engine.disp`)
-5. **One negative former, one positive former.** Function types, pair types, records, and the unit type are a single telescope former differing only in a per-field observation; sums are its dual (`Coproduct`); recursion and corecursion are cells on the same walker rather than special-cased fixpoint machinery. New type formers plug in as new cell operations with no changes to the core walk. ([`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md))
-6. **The substrate stays pure; effects are values.** An effect is data describing an action, interpreted by handlers, with a single impure driver at the program boundary. (Design: [`TYPE_THEORY.typ`](TYPE_THEORY.typ) §15.)
-7. **Many evaluators, one truth.** Five reduction backends sit behind one `Session` ABI: the TypeScript reference oracle, a naive honesty backend, a fast Rust reducer, a parallel interaction-net substrate for the future optimizer, and external peers. They are held to byte-identical agreement as a standing differential oracle. No single evaluator is trusted; agreement is checked, not assumed. ([`EVALUATOR.md`](EVALUATOR.md))
+// Elaboration is deterministic, so equal programs are literally the same tree
+// (the checker backends hash-cons this down to a pointer comparison). And
+// since trees are data, programs can take programs apart. The rest of the
+// language is built on that, and the kernel exists to police it.
+```
+
+### Syntax is sugar
+
+```disp
+// Surface constructs expand to library calls. Expansions are trees, so pin them:
+
+test tree_eq ({r} -> r.x) ({r} -> r (acc "x")) = TT   // projection is application
+
+let Point = { x : Nat, y : Nat }
+let PointCells = Telescope (t (proj_cell "x" Nat) ({_x} -> t (proj_cell "y" Nat) ({_y} -> t)))
+test tree_eq Point PointCells = TT                    // the literal is exactly the library call
+
+// Telescope is the one former behind functions, pairs, records, and unit;
+// sums are its dual; recursion is one more cell kind. A new type former is
+// library code, not kernel surgery (NEGATIVE_TYPES.md).
+```
+
+### Checking is running
+
+```disp
+// A type is a predicate. To check data, apply the type. Raw application,
+// no checker in sight:
+
+test Nat 3 = Ok TT
+test Nat TT = Ok FF
+
+// Structure runs too: b's recipe is evaluated during the check.
+
+let TDs = { a : Nat, b := double a }
+test typecheck TDs { a := 2; b := 4 } = Ok TT
+test param_apply TDs { a := 2; b := 5 } = Ok FF   // ran double 2, compared, rejected
+```
+
+### Functions need a promise
+
+```disp
+// This annotation claims something about infinitely many inputs:
+
+quadruple : Nat -> Nat := {n} -> double (double n)
+test quadruple 3 = 12
+
+// No amount of running visits them all, and raw application, which worked
+// for data above, yields no verdict:
+
+test tree_eq ((Pi Nat ({_} -> Nat)) quadruple) (Ok TT) = FF   // raw: nothing
+test param_apply (Pi Nat ({_} -> Nat)) quadruple = Ok TT      // dispatcher: yes
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> TT) = Ok FF    // wrong codomain: no
+
+// The difference: checking a function requires minting a hypothesis, a fresh
+// opaque tree carrying a type and nothing else: a promise that a Nat will be
+// here. A type that could forge promises could forge evidence, so minting is
+// kernel operation #1 (bind_hyp), and kernel operations fire only under the
+// kernel's dispatcher, param_apply. Raw application never reaches the kernel:
+// no mint, no verdict. Under the dispatcher, Pi mints the promise, applies
+// the body to it, and watches what comes out.
+```
+
+### What a promise can do
+
+```disp
+// So quadruple's body ran double on a value with no digits, and double got
+// stuck. That stuckness is the mechanism. The only legal move on a promise is
+// an observation (apply it, project it, eliminate it), and every observation
+// routes through kernel operation #2, hyp_reduce: read the promise's stored
+// type, forward the observation to that type's `respond`. A respond has
+// exactly two moves, and you can watch both:
+
+let hN = make_hyp Nat 0
+test param_apply Nat hN = Ok TT                   // a promise of a Nat counts as a Nat
+
+let hPi = make_hyp (Pi Nat ({_} -> Bool)) 0
+test neutral_type (param_apply hPi zero) = Bool   // Extend: stuck, at the codomain type
+
+let Pt = { a : Nat, b := succ a }
+let hPt = make_hyp Pt 0
+test neutral_type (param_apply hPt (acc "a")) = Nat                               // Extend: opaque field
+test tree_eq (param_apply hPt (acc "b")) (succ (param_apply hPt (acc "a"))) = TT  // Reduce: derived field
+                                                                                  // computes through it
+
+// And this is what double did: its recursor parked on the promise as a stuck
+// elimination, typed by the motive. quadruple's body finished as a stuck tree
+// of type Nat, the codomain matched, and the definition was accepted. This
+// technique is called neutral evaluation.
+
+test is_neutral (nat_rec ({_} -> Bool) TT ({n, rec} -> FF) hN) = TT
+
+// Reading the promise's raw shape is missing from that list on purpose. The
+// walker refuses the question instead of answering it, since either answer
+// would leak information the promise does not contain:
+
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err   // illegal question
+
+// Everything above hangs on promises staying unforgeable and uninspectable.
+// bind_hyp, hyp_reduce, and the dispatcher enforce that, and they are the
+// entire trusted core of disp (SEALING.md, lib/kernel/engine.disp). Pi,
+// records, Nat, and equality are library code consuming them.
+```
+
+### Who checks the types?
+
+```disp
+// A respond answers every observation under every binder, so a wrong respond
+// breaks every check downstream. Responds get checked in two ways. Types are
+// values with a recognizable shape, so the universe is a predicate like any
+// other, and it accepts itself:
+
+test typecheck Type Nat = Ok TT
+test typecheck Type zero = Ok FF   // not a type
+test typecheck Type Type = Ok TT   // the universe passes its own checker
+
+// The deeper check is behavioral. GoodRespond aims the promise machinery at
+// the type itself: its probes mint hypotheses and fire observations through
+// hyp_reduce at a candidate respond, comparing answers against the type's
+// constructors. A respond can lie in two directions, and both are caught:
+
+let MyNat = Coproduct [pair "z" [], pair "s" [Rec]]   // a home-made Nat: zero and successor
+test typecheck Type MyNat = Ok TT
+
+let resp_of = {T} -> (type_meta T).respond (type_meta T).recognizer_params
+test verify_good MyNat (resp_of MyNat) = Ok TT                    // its real respond: honest
+test verify_good MyNat (inductive_respond unit_witness) = Ok FF   // waves junk through
+test verify_good MyNat (inert_respond unit_witness) = Ok FF       // refuses everything
+
+// So the checker checks the checkers, using the same two kernel operations
+// it uses on everything else. This loop is the "self-verified" in the first
+// sentence of this README.
+```
+
+The TypeScript and Rust hosts only accelerate these in-language definitions and are validated bit-for-bit against them; five evaluator backends sit behind one ABI and must agree byte-identically, so no single evaluator has to be trusted ([`EVALUATOR.md`](EVALUATOR.md)). Each decision above is argued against its historical precedents in [`FOUNDATIONS.md`](FOUNDATIONS.md).
 
 ## Status
 
@@ -64,8 +176,8 @@ Working today:
 - The two-op kernel and the library type system on top of it (`lib/kernel/`), including the self-inhabiting strict universe and automatic verification of typed module exports through the kernel.
 - A standard library (`lib/std/`): naturals, lists, options, results, pairs, sets, and streams, with generic derived operations (folds, recursors, functorial maps) read off type structure rather than hand-written per type.
 - About 1,000 object-language tests across 50 files (`lib/tests/`), including soundness tests that pin what the checker must reject, plus host-level parser and runtime unit tests (`test/`).
-- Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, roughly 2x the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential and parallel-under-cargo.
-- A first end-to-end slice of the optimizer story: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (`lib/tests/opt_q1_*.test.disp`).
+- Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, roughly 2x the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests.
+- A first end-to-end slice of the optimizer: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (`lib/tests/opt_q1_*.test.disp`).
 
 Designed but not built: the optimizer itself ([`OPTIMIZER.typ`](OPTIMIZER.typ)), effects as a library, cost as a typing-level resource, cubical path types, and the neural proposer. The open research risks, most sharply whether a decidable fragment of behavioral equivalence is rich enough to license the rewrites an optimizer needs, are catalogued as falsifiable questions in [`FOUNDATIONS.md`](FOUNDATIONS.md) §V.
 
@@ -112,7 +224,7 @@ Suggested reading order:
 ## Repository Layout
 
 ```
-src/                        -- the host implementation (TypeScript; an accelerator, not the spec)
+src/                        -- the host implementation (TypeScript; an accelerator for the in-language spec)
   core/tree.ts              --   tree-calculus runtime: hash-consed trees, apply, tree_eq fast-path
   parse.ts                  --   tokenizer / parser (implements SYNTAX.typ)
   compile.ts, elab/         --   elaborator: surface AST -> trees (bracket abstraction, sugar, driver)
