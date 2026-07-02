@@ -196,7 +196,15 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
   `R ≡ coh_check` is sound+complete but **circular** for self-verification, so an independent
   `GoodRespond` is necessarily the dimension-enumerating gradient. Resolves the TCB worry: `GoodRespond`
   is the **spec + a BOUNDARY checker**, not a kernel step (derived responds stay correct by construction).
-- **R6 — wire respond-checking into `Type`.** 🟢 **composability UNBLOCKED** (telescope refactor,
+- **R6 — wire respond-checking into `Type`.** ✅ **LANDED 2026-07-01: `Type := BehavioralType`** —
+  the MERGE (below) is the universe, with coh + per-variant junk dims (junk only for responds that
+  CLAIM to gate; declared-ungated `inductive_respond` types — mutual/`Coproduct_ctx` — skip them and
+  stay defended downstream). The COST blocker dissolved: `do_check` routes membership through
+  `param_apply`, whose §7A token flattens each nesting level to a fresh NATIVE walk — the every-backend
+  OOM is gone (double-nesting green; `behavioral_type.test.disp` pins OOM-shapes + discrimination:
+  BadMyNat/BadList/LyingNat rejected AT CERTIFICATION, Nat/Bool/Ord/List/GoodList accepted, abstract-
+  variants formers take the structural branch). Suite cost 52s→77s. Historical record below:
+  (was) 🟢 **composability UNBLOCKED** (telescope refactor,
   2026-06-29). The CONTAINMENT obstacle was self-inflicted by *hand-rolling* `good_resp` from nested
   `check`/`apply_policed`. Re-expressed as a **TELESCOPE** — `GoodRespond T` = `[mint case_tele ; probe
   coh ; (mint junk_i ; probe InvalidType)*]`, a `probe` cell = "apply R to a frame, check result ≡

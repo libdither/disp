@@ -8,7 +8,11 @@
 // (GoodRespond source) ...) gives Err. Faithful (not folded — the BadMyNat discrimination test proves
 // the walk runs). This is the basic `T : Type` self-check, recursive INCLUDED.
 //
-// RESIDUAL (not shown — it errors): when MergedST is itself nested ONE level under ANOTHER walker
+// RESIDUAL — RESOLVED 2026-07-01 (see behavioral_type.test.disp): do_check now routes membership
+// through param_apply, whose SS7A token flattens each nesting level to a fresh native walk, so the
+// blowup below is GONE and this merge IS the landed universe (Type := BehavioralType, universe.disp).
+// Historical record of the diagnosis:
+// (was) when MergedST is itself nested ONE level under ANOTHER walker
 // (`param_apply (recognizer-running-param_apply-MergedST-v) v`, the module-auto-verify scenario), it
 // fails for BOTH Bool and Nat — and the cause is a genuine MEMORY/WORK BLOWUP, NOT a backend bug
 // (confirmed 2026-06-29 by instrumenting rust-eager: the "unreachable" is an OUT-OF-MEMORY abort at

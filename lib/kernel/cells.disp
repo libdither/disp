@@ -24,9 +24,13 @@ let op_sig = {op} -> pair_fst (wait op t) // a cell's kind = its op's signature 
 // The observation ops: op meta mode source prior frame rs -> Step. `source` = candidate (CHECK) or
 // self-neutral (STUCK); `prior` = the previous cell's observed value. Most ops share `do_check` (the
 // `check ty` obligation), differing only in the optic's get (`getr`, DEFERRED) and the type `ty`.
+// The membership check routes through param_apply (NOT raw `ty part`): under an AMBIENT walk the
+// SS7A token gives the sub-check a FRESH NATIVE walker instead of having ty's recognizer DISTRIBUTED
+// by the outer walk — flattening nested checks to top-level cost (the R6 blow-up fix). Verdicts are
+// unchanged (raw and routed reduce identically up to walker rejections, which map to SReject anyway).
 do_check := {mode, getr, ty} ->
   if mode
-    then (match (getr t) { Ok part => (match (ty part) { Ok b => (if b then (SThread part) else SReject); Err _ => SReject }); Err _ => SReject })
+    then (match (getr t) { Ok part => (match (param_apply ty part) { Ok b => (if b then (SThread part) else SReject); Err _ => SReject }); Err _ => SReject })
     else (SDone (Extend ty))
 let mint_op = {meta, mode, source, prior, frame, rs} -> SMint (meta.ty) // ∀-intro: `tele_walk` mints (CHECK) / lands the codomain (STUCK)
 let apply_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (source prior)) (meta.ty) // Pi codomain: observe `source prior`
