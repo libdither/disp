@@ -1,30 +1,8 @@
-// Kernel fragment: the first-order LIBRARY TYPES + their recursors + the record builders.
-// Unit/String/False/Not, Eq (+ J and lemmas), Refinement/Intersection (tele_with hybrids), and
-// the dependently-typed recursors nat_rec/bool_rec/ord_rec (via `elim`). Bool/Nat/Ord (types AND
-// constructors) live in positive.disp (they need the Coproduct machinery); the `: Bool`/`: Nat`/
-// `: Ord` annotations here forward-ref via the raw-load layer.
-
-// Inductive recursors. Recursive calls route through `elim` (not raw `self`), so a neutral
-// predecessor yields a clean stuck elimination (§A). nat_rec/bool_rec/ord_rec are dependently typed.
-let nat_dispatcher = fix ({self, motive, cases, target} ->
-  if (tree_eq target zero)
-    then cases.zero // base
-    else (cases.succ (nat_pred target) (elim self motive cases (nat_pred target)))) // step n rec
-// cases keyed by VARIANT TAG (zero/succ) so the gate's `field cases tag` and the dispatcher agree.
-nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n := {motive, base, step, target} -> elim nat_dispatcher motive { zero := base; succ := step } target
-
-let bool_dispatcher = {motive, cases, target} -> select (cases.true) (cases.false) target
-bool_rec : {P : Bool -> Type} -> P TT -> P FF -> {b : Bool} -> P b := {motive, ct, cf, target} -> elim bool_dispatcher motive { true := ct; false := cf } target
-
-// ord_rec: zero_ord -> case_z; omega_plus a b -> case_op a b (rec a) (rec b).
-let ord_dispatcher = fix ({self, motive, cases, target} ->
-  if (is_leaf target) then cases.zero_ord
-  else {
-    let a = stem_child (pair_fst target) // pair_fst/snd here destructure
-    let b = pair_snd target // the ord value omega_plus a b
-    cases.omega_plus a b (elim self motive cases a) (elim self motive cases b) // recurse via elim (gate neutrals)
-  })
-ord_rec : {P : Ord -> Type} -> P zero_ord -> ({a : Ord} -> {b : Ord} -> P a -> P b -> P (omega_plus a b)) -> {o : Ord} -> P o := {motive, case_z, case_op, target} -> elim ord_dispatcher motive { zero_ord := case_z; omega_plus := case_op } target
+// Kernel fragment: the first-order LIBRARY TYPES + the record builders.
+// Unit/String/False/Not, Eq (+ J and lemmas), Refinement/Intersection (tele_with hybrids).
+// Bool/Nat/Ord (types AND constructors) live in positive.disp (they need the Coproduct
+// machinery); their recursors nat_rec/bool_rec/ord_rec are rec_value instances in generic.disp.
+// The `: Bool`/`: Nat` annotations here forward-ref via the raw-load layer.
 
 // eq_J: concrete refl -> base; neutral proof -> stuck elim. The A,x,y binders (the
 // equality endpoints) only fix the dependent type; the body ignores them.

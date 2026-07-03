@@ -15,6 +15,13 @@ let pn_to_nat = rec_value PN ({_} -> Nat) { zero := zero; succ := ({pred, ih} ->
 test pn_to_nat pz              = 0
 test pn_to_nat (ps (ps pz))   = 2
 
+// ── shape-encoded types dispatch too: rec_value decodes through the functor view (like
+//    fold_value), so cases key by variant tag even when the tag lives in the tree shape.
+//    (The kernel's nat_rec/bool_rec/ord_rec are exactly these instances, annotated.) ──
+test rec_value Nat ({_} -> Nat) { zero := zero; succ := ({n, ih} -> succ (succ ih)) } 3 = 6
+test rec_value Bool ({_} -> Nat) { true := 1; false := 0 } TT = 1
+test rec_value Ord ({_} -> Nat) { zero_ord := zero; omega_plus := ({a, b, iha, ihb} -> succ ihb) } (omega_plus zero_ord (omega_plus zero_ord zero_ord)) = 2
+
 // ── a binary tree: the case gets raw children AND their recursive results ──
 let BT = Coproduct [pair "leaf" [Nat], pair "node" [Rec, Rec]]
 let lf = {n}    -> inj "leaf" n

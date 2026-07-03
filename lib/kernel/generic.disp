@@ -31,10 +31,12 @@ fold_value_via := {view} -> fix ({fold, T, alg, v} -> {
 // so `fold_value T` works on shape-encoded (Nat/List/Ord) AND inj-tagged (iso_id view = Ok) alike.
 fold_value := {T} -> fold_value_via (pair_fst (type_meta T).functor) T
 
-// rec_value (the dependent RECURSOR derived from cells — generalizes nat_rec/ord_rec to ANY inductive).
+// rec_value (the dependent RECURSOR derived from cells — one recursor for ANY inductive).
 // Unlike fold_value, a recursor case gets the RAW args AND the IH per recursive position — the §4 case-type
 // `Π args. (IH per rec) → P (c args)`. Routes through `elim`, so a NEUTRAL target becomes a stuck elimination
 // at `motive self` (usable under a Pi binder). all_args = raw args; ih_args = elim-recursion at each rec cell.
+// Decodes the target through the functor view first (like fold_value), so shape-encoded types
+// (Nat/Bool/Ord/List) dispatch by variant tag too.
 let all_args = fix ({self, cells, payload} ->
   if (is_fork cells) then (cons (((type_meta (pair_fst cells)).acc) payload) (self ((pair_snd cells) t) payload)) else nil)
 let ih_args = fix ({self, cells, payload, rec} ->
@@ -44,10 +46,18 @@ let ih_args = fix ({self, cells, payload, rec} ->
     if (is_rec_cell cell) then (cons (rec (((type_meta cell).acc) payload)) rest) else rest
   } else nil)
 let rec_dispatcher = {T} -> fix ({self, motive, cases, v} -> {
-  let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t })
-  apply_all (field cases (pair_fst v)) (list_cat (all_args cells (pair_snd v)) (ih_args cells (pair_snd v) (elim self motive cases)))
+  let dec = match ((pair_fst (type_meta T).functor) v) { Ok tg => tg; Err _ => v }
+  let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
+  apply_all (field cases (pair_fst dec)) (list_cat (all_args cells (pair_snd dec)) (ih_args cells (pair_snd dec) (elim self motive cases)))
 })
 rec_value := {T, motive, cases, target} -> elim (rec_dispatcher T) motive cases target
+
+// The kernel recursors are rec_value at the kernel inductives: one-line instances carrying the
+// honest dependent-recursor annotations (rec_value itself stays unannotated; its type depends
+// on the target type's declaration, see derive_case_telescope).
+nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n := {motive, base, step, target} -> rec_value Nat motive { zero := base; succ := step } target
+bool_rec : {P : Bool -> Type} -> P TT -> P FF -> {b : Bool} -> P b := {motive, ct, cf, target} -> rec_value Bool motive { true := ct; false := cf } target
+ord_rec : {P : Ord -> Type} -> P zero_ord -> ({a : Ord} -> {b : Ord} -> P a -> P b -> P (omega_plus a b)) -> {o : Ord} -> P o := {motive, case_z, case_op, target} -> rec_value Ord motive { zero_ord := case_z; omega_plus := case_op } target
 
 // children (generic TRAVERSAL): the immediate recursive sub-values of `v`, read off the cells (the
 // `is_rec_cell` positions, not folded) — raw material for size/depth over ANY inductive, no per-type code.
