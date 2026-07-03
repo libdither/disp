@@ -21,7 +21,7 @@ let pos_tele_go = fix ({self, params, types, depth} ->
   if (is_fork types) then {
     let acc = if (is_fork (pair_snd types)) then ({x} -> pair_fst (snd_n depth x)) else ({x} -> snd_n depth x) // last arg -> identity
     let ty = pair_fst types
-    let cell = (if (is_param_marker ty) then (pos_cell acc (param_nth params (pair_snd ty)))   // Param i -> check params i
+    let cell = (if (is_param_marker ty) then (pos_cell acc (list_nth params (pair_snd ty)))    // Param i -> check params i
                 else (if (is_recunder_marker ty) then (rec_cell (pair_snd ty) acc)             // RecUnder F / Rec -> μ cell
                 else (if (is_recat_marker ty) then (rec_at_cell (pair_snd ty) acc)             // RecAt i -> mutual cell
                 else (pos_cell acc ty))))                                                      // a type -> a data cell
@@ -56,7 +56,6 @@ Coproduct_respond := {respond, variants}  -> Coproduct_respond_p t respond varia
 // `eta_check`. `build_payload` reconstructs a constructor's `inj` payload from its args.
 build_payload := fix ({self, args} ->                          // [a1..ak] -> the right-nested payload
   if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
-cat := fix ({self, xs, ys} -> if (is_fork xs) then (cons (pair_fst xs) (self (pair_snd xs) ys)) else ys) // list concat (also used by rec_value)
 // case_types_go T P: the case-telescope's field list `[(tag, Π args. (P aj ->)* P (c args))]` — one Pi cell per
 // arg, one IH premise per recursive position, conclusion at the reconstructed constructor value.
 let cell_argty = {cell, T} -> if (is_rec_cell cell) then T else ((type_meta cell).ty)  // a rec arg has type T
@@ -69,7 +68,7 @@ let wrap_ihs = fix ({self, cells, args, P, concl} ->            // one `P aj ->`
 // inj-tagged types, maps inj-form -> shape for shape-encoded ones (Nat/Bool/Ord/List), so one gate covers both.
 let case_type_go = fix ({self, cells, orig, tag, T, P, args} ->
   if (is_fork cells)
-    then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (cat args (cons a nil))))
+    then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (list_cat args (cons a nil))))
     else (wrap_ihs orig args P (P ((pair_snd (type_meta T).functor) (inj tag (build_payload args))))))
 let case_types_go = fix ({self, params, variants, T, P} ->
   if (is_fork variants) then {

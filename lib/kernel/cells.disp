@@ -111,10 +111,6 @@ is_recunder_marker := {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@RecUnder
 is_recat_marker := {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@RecAt")
 is_param_marker := {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@Param")
 
-// param_nth: element i of a cons-list (used here by Record's field lift; by pos_tele_go and
-// key_over in later fragments — exported since `let`s do not cross fragment boundaries).
-param_nth := fix ({self, l, i} -> if (tree_eq i zero) then (pair_fst l) else (self (pair_snd l) (nat_pred i)))
-
 // const_tail / is_const_tail: the NON-DEPENDENT spine tail. A telescope node is `t cell tail`; an
 // INDEPENDENT cell's tail ignores the prior value — the `K rest` shape `t t rest` (what a closed
 // `{_} -> rest` compiles to). `is_const_tail` is the §4/§10 dependency-split proxy the canonical sort keys on.
@@ -173,7 +169,7 @@ Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
 let fields_to_tele_go = fix ({self, params, fields} ->
   if (is_fork fields) then {
     let arm = pair_fst fields
-    let ty = if (is_param_marker (pair_snd arm)) then (param_nth params (pair_snd (pair_snd arm))) else (pair_snd arm)
+    let ty = if (is_param_marker (pair_snd arm)) then (list_nth params (pair_snd (pair_snd arm))) else (pair_snd arm)
     t (proj_cell (pair_fst arm) ty) (const_tail (self params (pair_snd fields)))
   } else t)
 Record_p := {params, fields} -> wait (make_recognizer

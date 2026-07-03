@@ -70,10 +70,6 @@ StrictType : Type := tele_with (
 let probe_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
 let probe_cell = {ap, out} -> wait probe_op { apply := ap; outcome := out }
 let ctele_fields = {T, M} -> (type_meta (derive_case_telescope T M)).recognizer_params
-let map_nth = fix ({self, i, g, xs} ->
-  if (is_fork xs)
-    then (if (tree_eq i zero) then (cons (g (pair_fst xs)) (pair_snd xs)) else (cons (pair_fst xs) (self (nat_pred i) g (pair_snd xs))))
-    else nil)
 // respond-KIND dispatch: gated inductives carry a real shape↔inj iso in `functor` (Coproduct family);
 // negative/hybrid formers carry trivial_functor = t. Only the former get the behavioral tail — and only
 // with CONCRETE variants: a former applied to a variants-HYP (`Coproduct x : Type` under `x : Tree`) has
@@ -91,7 +87,7 @@ let resp_of = {T} -> (type_meta T).respond (type_meta T).recognizer_params
 // the candidate type), `Id` for the standalone GoodRespond (source = the respond itself).
 let bt_junk = fix ({self, get_R, M, s, fields, fs, i} ->
   if (is_fork fs)
-    then (t (mint_cell (Record (map_nth i ({f} -> pair (pair_fst f) Tree) fields))) ({junk} ->
+    then (t (mint_cell (Record (list_update i ({f} -> pair (pair_fst f) Tree) fields))) ({junk} ->
           t (probe_cell ({src, _} -> (get_R src) s { motive := M; cases := junk }) (Extend InvalidType)) ({_} ->
           self get_R M s fields (pair_snd fs) (succ i))))
     else t)

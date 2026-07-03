@@ -45,7 +45,7 @@ let ih_args = fix ({self, cells, payload, rec} ->
   } else nil)
 let rec_dispatcher = {T} -> fix ({self, motive, cases, v} -> {
   let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t })
-  apply_all (field cases (pair_fst v)) (cat (all_args cells (pair_snd v)) (ih_args cells (pair_snd v) (elim self motive cases)))
+  apply_all (field cases (pair_fst v)) (list_cat (all_args cells (pair_snd v)) (ih_args cells (pair_snd v) (elim self motive cases)))
 })
 rec_value := {T, motive, cases, target} -> elim (rec_dispatcher T) motive cases target
 
@@ -92,12 +92,9 @@ bimap := {T, f, g, v} -> fmap_n T ({i} -> if (tree_eq i zero) then f else g) v
 
 // key.over (CELL_OPTICS, the NAMED side): `key name = slot (index_of names name)` — the §2.6 cut run
 // BACKWARD, so `fmap`/`bimap` work over records (compose key.overs) by the same engine as positional slot.over.
-let name_index = fix ({self, names, name} -> if (is_fork names) then (if (tree_eq (pair_fst names) name) then zero else (succ (self (pair_snd names) name))) else zero)
-let list_set = fix ({self, idx, v, l} -> if (tree_eq idx zero) then (cons v (pair_snd l)) else (cons (pair_fst l) (self (nat_pred idx) v (pair_snd l))))
-key_over := {name, f, record} -> { // rebuild the §2.6 record with field `name` mapped (payload = list_const-wrapped)
+key_over := {name, f, record} -> { // rebuild the §2.6 record with field `name` mapped (stored values are list_const-wrapped)
   let np = type_meta record
-  let idx = name_index (pair_fst np) name
-  make_record (pair_fst np) (list_set idx (list_const (f ((param_nth (pair_snd np) idx) t))) (pair_snd np))
+  make_record (pair_fst np) (list_update (list_index_of (pair_fst np) name) ({w} -> list_const (f (w t))) (pair_snd np))
 }
 // walk_map over a record: map each `Param i` field via key.over (compose). fmap_rec/bimap_rec derive.
 let walk_map_fields = fix ({self, fns, fields, record} ->
