@@ -19,7 +19,6 @@ SMint   : Type -> Step := inj1 "SMint"
 SThread : Tree -> Step := inj1 "SThread"
 SReject : Step := inj0 "SReject"
 SDone   : Action -> Step := inj1 "SDone"
-let op_sig = {op} -> pair_fst (wait op t) // a cell's kind = its op's signature (like is_neutral)
 
 // The observation ops: op meta mode source prior frame rs -> Step. `source` = candidate (CHECK) or
 // self-neutral (STUCK); `prior` = the previous cell's observed value. Most ops share `do_check` (the
@@ -44,12 +43,14 @@ let derive_op = {meta, mode, source, prior, frame, rs} -> // a δ field: present
     else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Reduce (meta.recipe))) else (SThread (meta.recipe)))
 
 // Cell constructors — the Pi/Sigma/Record wrappers AND the elaborator (recType desugar)
-// emit these. is_derive inspects a cell by op-signature (used by mk / constructor_type).
+// emit these. is_derive/is_mint_cell inspect a cell by op-signature (a cell's kind is its
+// op's checker_sig, the same trick as is_neutral).
 mint_cell : Tree -> Tree := {ty} -> wait mint_op { ty := ty }
 apply_cell : Tree -> Tree := {ty} -> wait apply_op { ty := ty }
 proj_cell : Tree -> Tree -> Tree := {name, ty} -> wait proj_op { name := name; ty := ty }
 derive_cell : Tree -> Tree -> Tree := {name, recipe} -> wait derive_op { name := name; recipe := recipe }
-is_derive := {cell} -> tree_eq (pair_fst cell) (op_sig derive_op)
+is_derive := {cell} -> tree_eq (pair_fst cell) (checker_sig derive_op)
+is_mint_cell := {cell} -> tree_eq (pair_fst cell) (checker_sig mint_op)
 
 // pos_cell (POSITIVE_TYPES §5a): a POSITIONAL cell — observe a component of a RAW `inj` payload (not a
 // named record) via a stored accessor, then check it : ty. Lets `tele_walk` walk a constructor's arg tuple (pluggable).
@@ -93,7 +94,7 @@ gen_cell : Tree -> Tree := {acc} -> wait gen_op { acc := acc }
 rec_at_cell : Tree -> Tree -> Tree := {idx, acc} -> wait rec_at_op { idx := idx; acc := acc }
 // is_rec_cell: marks the functor's RECURSIVE positions (by op-signature, like is_derive) — the data a
 // generic fold/map reads to know where to recurse.
-is_rec_cell := {cell} -> tree_eq (pair_fst cell) (op_sig rec_op)
+is_rec_cell := {cell} -> tree_eq (pair_fst cell) (checker_sig rec_op)
 
 // RecUnder F / Rec / RecAt i: arg-list markers lifted by `pos_tele` to recursive cells. `RecUnder F` ->
 // recurse under F (`acc source : F self`); `Rec` = `RecUnder Id` (direct); `RecAt i` -> rec_at_cell (mutual).

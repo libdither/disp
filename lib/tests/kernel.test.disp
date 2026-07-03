@@ -117,8 +117,11 @@ test (type_meta Type).respond = type_predicate_h_rule
 let m = make_meta zero FF
 test m.recognizer_params = zero
 test m.respond = FF
-test has_metashape_layout m = TT
-test has_metashape_layout (pair zero (pair TT (pair FF unit_val))) = FF // old positional shape is no longer a meta
+// meta layout: an annihilate-rooted record with the canonical header (pinned here; the
+// kernel-side has_metashape_layout helper was retired, nothing in the kernel consumed it)
+let has_meta_layout = {mm} -> and (tree_eq (pair_fst mm) annihilate_sig) (tree_eq (pair_fst (type_meta mm)) ["recognizer_params", "functor", "respond", "behavioral_specs"])
+test has_meta_layout m = TT
+test has_meta_layout (pair zero (pair TT (pair FF unit_val))) = FF // old positional shape is no longer a meta
 // recognizer_params is now Pi's [ mint x:A ; apply out:(B x) ] telescope; each cell is
 // a WAIT-FORM `wait op meta`. The lead cell is the minted domain (a mint_cell, ty A),
 // read by signature (the cell IS a mint_cell) and meta (its ty).

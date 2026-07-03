@@ -116,24 +116,16 @@ tree_lt := fix ({self, a, b} ->
         ({bx, by} -> or (self ax bx) (and (tree_eq ax bx) (self ay by))) b)
     a)
 
-// nat_le(a, b): true if natural number a <= b
-// Uses select-then-apply with fix for recursive comparison.
-let nat_le_zero_fn = {self, a, b} -> TT
-let nat_le_succ_fn = {self, a, b} ->
-  select
-    ({self, a, b} -> self (pair_snd a) (pair_snd b))
-    ({self, a, b} -> FF)
-    (is_fork b)
-    self a b
-let nat_le_nonzero_fn = {self, a, b} ->
-  select nat_le_succ_fn ({self, a, b} -> FF) (is_fork a)
-    self a b
+// nat_le(a, b): true if natural number a <= b (zero <= anything; succ steps both sides).
 nat_le := fix ({self, a, b} ->
-  select nat_le_zero_fn nat_le_nonzero_fn (tree_eq a t)
-    self a b)
+  if (is_leaf a) then TT
+  else (if (and (is_fork a) (is_fork b)) then (self (pair_snd a) (pair_snd b)) else FF))
 
 nat_lt := {a, b} -> nat_le (t t a) b
 
 // Nat data constructors (also used by parser for numeric literals)
 zero : Nat := t
 succ : Nat -> Nat := {n} -> t t n
+// nat_pred reads succ's payload (succ n = t t n). A raw pair_snd read: stays untyped like
+// the projections above (a Pi annotation would mint a hyp the projection then triages).
+nat_pred := {n} -> pair_snd n

@@ -26,8 +26,6 @@ make_hyp := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := id }
 
 hyp_sig : Tree := checker_sig hyp_reduce
 is_neutral : Tree -> Bool := {v} -> tree_eq (pair_fst v) hyp_sig // self-types via the pair_fst/tree_eq carve-outs
-// SEALED(reflection): is_fork triages its argument — a walk rejects triage-on-neutral by design.
-is_concrete_fork := {v} -> and (is_fork v) (not (is_neutral v)) // a fork that isn't a neutral
 // neutral_type: a neutral's stored type. Self-types via its OWN walker carve-out (the walker
 // applies the sanctioned reader natively, so the minted hyp reads back its stored type : Type).
 neutral_type : Tree -> Type := {v} -> (type_meta v).stored_type
@@ -79,7 +77,7 @@ is_closed := {v} -> is_leaf (support_set v)
 // so the annotation is honest: raw application of the tag to a body Errs (: Tree).
 let bind_hyp_marker = {domain, body} -> Err
 bind_hyp : Type -> Tree -> Tree := {A} -> wait bind_hyp_marker A
-bind_hyp_sig : Tree := checker_sig bind_hyp_marker
+let bind_hyp_sig = checker_sig bind_hyp_marker
 let is_bind_hyp = {f} -> and (is_fork f) (tree_eq (pair_fst f) bind_hyp_sig)
 
 // tree_eq_sig lets the walker spot a partial `tree_eq a` (its lazy O(1) form).
@@ -114,13 +112,11 @@ let w_fork = {self, a, b, x} ->
 
 // w_bind_hyp: mint a fresh hyp of the domain (type_meta f), walk `body hyp` UNDER the
 // walker (so raw reflection on the hyp is rejected), then occurs-escape-check the result.
+// Two binds: the outer is over the walk itself, the inner over the body's own verdict.
 let w_bind_hyp = {self, f, x} -> {
   let dom = type_meta f
   let h = make_hyp dom (pair dom x)
-  Ok (match (self x h) {
-    Ok body_cr => bind body_cr ({result} -> if (occurs h result) then Err else (Ok result))
-    Err _ => Err
-  })
+  Ok (bind (self x h) ({body_cr} -> bind body_cr ({result} -> if (occurs h result) then Err else (Ok result))))
 }
 
 // param_walker: dispatch `f x` — short-circuit special heads (tree_eq, the Σ-ops, the sanctioned readers

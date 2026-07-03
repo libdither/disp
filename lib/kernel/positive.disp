@@ -83,10 +83,9 @@ let case_types_go = fix ({self, params, variants, T, P} ->
 let cells_of = {T} -> (type_meta T).recognizer_params
 let pi_dom = {T} -> (type_meta (pair_fst (cells_of T))).ty
 let pi_cod = {T, h} -> (type_meta (pair_fst ((pair_snd (cells_of T)) h))).ty
-let mint_sig = pair_fst (mint_cell t)
 eta_check := fix ({self, v, T} ->
   if (is_neutral T) then (T v)
-  else (if (and (is_fork (cells_of T)) (tree_eq (pair_fst (pair_fst (cells_of T))) mint_sig))
+  else (if (and (is_fork (cells_of T)) (is_mint_cell (pair_fst (cells_of T))))
     then (match (apply_policed (bind_hyp (pi_dom T)) ({h} -> self (v h) (pi_cod T h))) { Ok r => r; Err _ => Err })
     else (T v)))
 let check_fields = fix ({self, fields, cases} ->

@@ -3,7 +3,6 @@
 
 // Value-level cut primitives (§2.6): a value is fork(descriptor, payload); one
 // elimination (the cut) drives projection, match, and application.
-nat_pred := {n} -> pair_snd n // succ n = t t n
 nil : Tree := t
 cons : Tree -> Tree -> Tree := {h, tl} -> t h tl
 list_const : Tree -> Tree := {x} -> t t x // const x y = x (K); ignores the cut payload
@@ -62,7 +61,10 @@ let lookup_field_at = fix ({self, names, payload, name} ->
             then (Ok ((pair_fst payload) t)) // unwrap the list_const-wrapped value
             else (self (pair_snd names) (pair_snd payload) name))
     else Err)
-lookup_field := {r, name} -> lookup_field_at (pair_fst (type_meta r)) (pair_snd (type_meta r)) name
+lookup_field := {r, name} -> {
+  let m = type_meta r
+  lookup_field_at (pair_fst m) (pair_snd m) name
+}
 
 
 // MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
@@ -74,4 +76,3 @@ trivial_functor := t
 make_meta_f : Tree -> Tree -> Tree -> MetaShape := {params, functor, respond} ->
   { recognizer_params := params; functor; respond; behavioral_specs := t }
 make_meta : Tree -> Tree -> MetaShape := {params, respond} -> make_meta_f params trivial_functor respond
-metashape_header := ["recognizer_params", "functor", "respond", "behavioral_specs"]

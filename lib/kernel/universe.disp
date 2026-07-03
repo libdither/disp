@@ -8,10 +8,6 @@
 // universe-typed even though StrictType shares Telescope's root sig.
 
 // Type universe + the predicate-side H-rule (unlocks polymorphic Pi).
-// has_metashape_layout: the meta is an annihilate-rooted §2.6 record with the canonical MetaShape header (O(1) tree_eq).
-has_metashape_layout := {m} ->
-  and (tree_eq (pair_fst m) annihilate_sig) (tree_eq (pair_fst (type_meta m)) metashape_header)
-
 // type_predicate_h_rule: a Type-typed neutral, applied as a predicate to a candidate
 // `frame`, holds iff frame is a neutral whose stored type IS this hypothesis (§6.3).
 type_predicate_h_rule : RespondShape := {params, self, frame} ->
