@@ -107,3 +107,26 @@ test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Record (cons (pa
 //   non-verdict (≠ Ok TT) under the single-walk `at`.
 test tree_eq (param_apply RespondShape ((type_meta Nat).respond)) (Ok TT) = FF
 test tree_eq (param_apply RespondShape ((type_meta (Pi Nat ({_} -> Bool))).respond)) (Ok TT) = FF
+
+// ---- meta_of: typed meta access (the @meta arm of the universe respond) ----
+// meta_of : Type -> MetaShape is annotated in universe.disp (auto-verified); re-pinned here:
+test param_apply (Arrow Type MetaShape) meta_of = Ok TT
+test tree_eq (meta_of Nat) (type_meta Nat) = TT               // concrete face = type_meta
+// on an abstract type the meta is a well-typed STUCK record; projections land field types
+let TA = make_hyp Type 0
+let mTA = meta_of TA
+test is_neutral mTA = TT
+test neutral_type mTA = MetaShape
+test neutral_type (mTA.recognizer_params) = Tree
+test neutral_type (mTA.respond) = Tree
+// collision pin: the one candidate literally shaped like the meta frame goes STUCK under
+// an abstract predicate (incompleteness for that tree, not unsoundness; a walked
+// membership check maps the non-verdict to rejection)...
+test is_neutral (param_apply TA meta_frame) = TT
+// ...while ordinary candidates still get verdicts (the predicate face is intact)
+test param_apply TA zero = Ok FF
+// and a VALUE-hyp answers no meta: the gate mis-fires on the junk frame and the
+// application computes to junk, like any malformed raw frame today (no MetaShape and
+// no meta content leaks off a value-hyp)
+test is_neutral ((make_hyp Nat 0) meta_frame) = FF
+test tree_eq (neutral_type ((make_hyp Nat 0) meta_frame)) MetaShape = FF

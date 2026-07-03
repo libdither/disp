@@ -7,16 +7,8 @@
 // Host note: `isUniverseTree` keys on EXACT tree identity, so a `: Type` binding is detected as
 // universe-typed even though StrictType shares Telescope's root sig.
 
-// Type universe + the predicate-side H-rule (unlocks polymorphic Pi).
-// type_predicate_h_rule: a Type-typed neutral, applied as a predicate to a candidate
-// `frame`, holds iff frame is a neutral whose stored type IS this hypothesis (§6.3).
-type_predicate_h_rule : RespondShape := {params, self, frame} ->
-  if (is_neutral frame)
-    then (Return (tree_eq (neutral_type frame) self))
-    else (Return FF)
-
-// The kernel's own structural types (§11.2 / §12.6), built from the library formers above
-// so the kernel can typecheck its internals (annotations forward-ref Type/Coproduct/Record).
+// The kernel's own structural types (§11.2 / §12.6), built from the library formers of the
+// earlier fragments (annotations forward-ref Type/Coproduct/Record via the raw layer).
 // Tree: the permissive "any tree" type (recognizer = Ok TT), the de-facto top type.
 // Tree = ⊤ conceptually (= the nullary telescope `Telescope t`), but kept as the lean direct
 // recognizer: Tree is referenced pervasively (every `: Tree`, MetaShape), so the bigger telescope
@@ -26,10 +18,37 @@ Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness 
 Frame : Type := Tree
 // NeutralMeta / Action / RespondShape + the per-former RespondShapes use `Type`/`Action` in VALUE
 // position, so they are defined AFTER `Type := BehavioralType` below (within-file value refs are sequential).
-// MetaShape uses only Tree, so it stays here (StrictType's qid_meta_cell needs it).
+// MetaShape uses only Tree, so it stays here (StrictType's qid_meta_cell and the universe
+// respond's meta arm need it).
 // MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
 MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }
+
+// Type universe + the predicate-side H-rule (unlocks polymorphic Pi).
+// meta_frame: the reserved elimination frame for reading a type's metadata (the @ marker
+// namespace, like @RecUnder/@Param). Eliminating a TYPE-hyp with it answers a stuck
+// MetaShape instead of a membership verdict; that arm is what makes meta_of annotatable.
+meta_frame := inj "@meta" t
+// type_predicate_h_rule: a Type-typed neutral, applied as a predicate to a candidate
+// `frame`, holds iff frame is a neutral whose stored type IS this hypothesis (§6.3).
+// The meta frame is carved out first, so a candidate literally shaped `inj "@meta" t`
+// goes stuck under an abstract predicate: incompleteness for that one tree, not
+// unsoundness (a walked membership check maps the non-verdict to rejection; pinned
+// in metashape.test).
+type_predicate_h_rule : RespondShape := {params, self, frame} ->
+  if (tree_eq frame meta_frame) then (Extend MetaShape)
+  else (if (is_neutral frame)
+    then (Return (tree_eq (neutral_type frame) self))
+    else (Return FF))
+
+// meta_of: read a type's metadata, typed. A concrete type gives its real meta record
+// (same as type_meta); an abstract type-hyp gives a stuck MetaShape (the meta_frame arm
+// of the universe respond), whose projections land their declared field types. The
+// annotation checks by the dead-concrete-branch pattern: under the check T is a minted
+// hyp, so only the neutral branch runs, and it is carve-out clean (like the H-rule
+// branch of make_recognizer). Concrete metas are public data; the seal protects only
+// neutrals, and on a neutral this yields a fresh symbol carrying no information.
+meta_of : Type -> MetaShape := {T} -> if (is_neutral T) then (T meta_frame) else (type_meta T)
 
 // ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
 // A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the recognizer ->
