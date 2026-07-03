@@ -6,6 +6,7 @@
 // (shrinking) type. This is the substrate for modules / type-classes.
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
+open use "../std/build.disp"
 
 // ── derived-field record { a : Nat; b := succ a } ────────────────────────────
 Td := { a : Nat, b := succ a }

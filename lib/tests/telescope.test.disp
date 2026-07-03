@@ -7,6 +7,7 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
+open use "../std/build.disp"
 
 // entry builders: a telescope cell is now a wait-form (`proj_cell name ty` /
 // `derive_cell name recipe`) — the same trees the surface recType desugar emits.

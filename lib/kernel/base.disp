@@ -1,5 +1,6 @@
-// Kernel fragment: the first-order LIBRARY TYPES + the record builders.
+// Kernel fragment: the first-order LIBRARY TYPES.
 // Unit/String/False/Not, Eq (+ J and lemmas), Refinement/Intersection (tele_with hybrids).
+// The record builders (build/build_curried/constructor_type) live in std/build.disp.
 // Bool/Nat/Ord (types AND constructors) live in positive.disp (they need the Coproduct
 // machinery); their recursors nat_rec/bool_rec/ord_rec are rec_value instances in generic.disp.
 // The `: Bool`/`: Nat` annotations here forward-ref via the raw-load layer.
@@ -48,42 +49,3 @@ Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> tele_with (
 Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> tele_with (
   t (mint_cell A) ({_} -> t (imeet_cell P) ({_} -> t))) inert_respond
 
-// build: the builder — fill derived fields from their recipes, take opaque ones
-// from `given`, emit the full §2.6 record (which the recognizer then re-pins).
-let build_fold = fix ({self, tele, given} ->
-  if (is_fork tele) then {
-    let m = type_meta (pair_fst tele) // inspect the wait-form cell's meta
-    let x = if (is_derive (pair_fst tele)) then (m.recipe) else (field given (m.name))
-    let rest = self ((pair_snd tele) x) given
-    pair (cons (m.name) (pair_fst rest)) (cons (list_const x) (pair_snd rest))
-  } else (pair nil nil))
-// build takes the Telescope TYPE (reads the telescope off its meta), so call sites write `build T { … }`.
-// (Unannotated: the fold triages its arg, so a `Tree -> …` typing would mint hyps it inspects.)
-build := {T, given} -> {
-  let nv = build_fold ((type_meta T).recognizer_params) given
-  make_record (pair_fst nv) (pair_snd nv)
-}
-
-// build_curried T: the CURRIED constructor — takes the opaque fields one at a time (a lambda each), computing
-// derived fields from the priors. Fully applied = the SAME record as `build T { … }`; a partial application is
-// a record-under-construction with the residual type (the Π/Σ bridge: `build_curried T : Π Δ_opaque. T`).
-let build_curried_go = fix ({self, tele, names, vals} ->
-  if (is_fork tele) then {
-    let m = type_meta (pair_fst tele)
-    if (is_derive (pair_fst tele))
-      then (self ((pair_snd tele) (m.recipe)) (cons (m.name) names) (cons (list_const (m.recipe)) vals)) // derived: compute now
-      else ({x} -> self ((pair_snd tele) x) (cons (m.name) names) (cons (list_const x) vals)) // opaque: await x
-  } else (make_record (list_rev names nil) (list_rev vals nil)))
-build_curried := {T} -> build_curried_go ((type_meta T).recognizer_params) nil nil
-
-// constructor_type T: the type of `build_curried T` — a Π-chain over the OPAQUE fields ending in T (derived
-// skipped). Each opaque field's codomain is the residual constructor type, so a partial application has the
-// shrunk residual (a typestate). A *dependent* field's residual is an unreduced family (intensional under tree_eq).
-let ctype_go = fix ({self, tele, T} ->
-  if (is_fork tele) then {
-    let m = type_meta (pair_fst tele)
-    if (is_derive (pair_fst tele))
-      then (self ((pair_snd tele) (m.recipe)) T)               // derived -> skip (computed)
-      else (Pi (m.ty) ({x} -> self ((pair_snd tele) x) T))     // opaque -> a Pi
-  } else T)
-constructor_type := {T} -> ctype_go ((type_meta T).recognizer_params) T
