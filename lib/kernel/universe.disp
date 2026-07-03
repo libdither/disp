@@ -148,8 +148,21 @@ BehavioralType := tele_with (
 // values mention Type/Action follow here (sequential value refs).
 Type := BehavioralType
 
+// Neutral: the type of stuck values, whatever their stored type. A plain structural
+// recognizer, deliberately NOT built with make_recognizer: its H-rule shortcut compares
+// stored types nominally and would reject every foreign neutral. is_neutral is
+// carve-out clean (a root-sig read + tree_eq), so this checker is walker-safe.
+let neutral_check = {m, v} -> Ok (is_neutral v)
+Neutral : Type := wait neutral_check (make_meta unit_witness inert_respond)
+
+// Spine: what a neutral's payload IS — a mint (the freshness id) or an extension: the
+// PARENT NEUTRAL itself plus the frame it was applied to (storing the parent neutral,
+// not its meta, is what lets the escape scan see through extension chains). The parent
+// slot is typed Neutral because the nominal H-rule means no other type admits a foreign
+// neutral. Emitted by make_hyp / extend_neutral_meta (engine.disp).
+Spine : Type := Coproduct [pair "Mint" [Tree], pair "Ext" [Neutral, Frame]]
 // NeutralMeta: a neutral's metadata record { stored_type; payload } (§6.1).
-NeutralMeta : Type := { stored_type : Type, payload : Tree }
+NeutralMeta : Type := { stored_type : Type, payload : Spine }
 // Module: the first-class shape of a file's export tuple `{ record; typ }` — what the
 // boundary's `verify` (engine.disp) checks, and what auto-verify runs per typed module.
 Module : Type := { typ : Type, record : Tree }

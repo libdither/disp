@@ -23,7 +23,21 @@ test param_apply InvalidType zero  = Ok FF   // nothing inhabits it (recognizer 
 
 // ---- real kernel values inhabit them ----
 test param_apply Tree zero                                       = Ok TT // Tree is permissive (any tree)
-test param_apply NeutralMeta { stored_type := Nat; payload := zero } = Ok TT
+test param_apply NeutralMeta { stored_type := Nat; payload := (inj "Mint" zero) } = Ok TT
+test param_apply NeutralMeta { stored_type := Nat; payload := zero } = Ok FF // payload must be a Spine now
+// Neutral: the type of stuck values (no H-rule nominality — ANY neutral inhabits)
+test typecheck Type Neutral = Ok TT
+test param_apply Neutral (make_hyp Nat 0) = Ok TT
+test param_apply Neutral zero = Ok FF
+// Spine: the payload's honest type — a mint (freshness id) or an extension (the PARENT
+// NEUTRAL + the frame; storing the parent neutral is how occurs sees through spines)
+test typecheck Type Spine = Ok TT
+test typecheck Spine ((type_meta (make_hyp Nat 0)).payload) = Ok TT   // a minted payload is closed
+let stuckB = (make_hyp Nat 1) { motive := ({_} -> Bool); cases := { zero := TT; succ := ({p, ih} -> ih) } }
+// an extended payload CONTAINS the parent neutral, so it is not closed (typecheck Errs at
+// the boundary by design); param_apply checks membership directly
+test param_apply Spine ((type_meta stuckB).payload) = Ok TT
+test param_apply NeutralMeta (type_meta stuckB) = Ok TT
 test param_apply Action (Extend Nat)                             = Ok TT
 test param_apply Action (Reduce zero)                            = Ok TT
 test param_apply Action (Return zero)                            = Ok TT // alias: Reduce (Ok zero)

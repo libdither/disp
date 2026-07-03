@@ -22,7 +22,7 @@
 // computes a value (Reduce); the respond receives (recognizer_params, self, frame). This
 // is the kernel's one trusted read of a neutral's metadata, which is why it is sealed.
 // (Spec: TYPE_THEORY §12.6.)
-let extend_neutral_meta = {old_meta, result_type, arg} -> { stored_type := result_type; payload := (cons old_meta arg) }
+let extend_neutral_meta = {old_meta, result_type, arg} -> { stored_type := result_type; payload := (inj "Ext" (pair old_meta arg)) } // payload : Spine (universe.disp)
 // SEALED(Σ-op): reads the neutral's raw metadata and reconstructs self, the one trusted elimination step.
 hyp_reduce := fix ({self, meta, frame} -> {
   let tmeta = type_meta meta.stored_type
@@ -34,7 +34,7 @@ hyp_reduce := fix ({self, meta, frame} -> {
 })
 
 // SEALED(forge): builds a hyp-fork from raw parts — the exact stem-forge the walker rejects (w_stem).
-make_hyp := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := id }
+make_hyp := {ty, id} -> wait hyp_reduce { stored_type := ty; payload := (inj "Mint" id) } // payload : Spine (universe.disp)
 
 hyp_sig : Tree := checker_sig hyp_reduce
 is_neutral : Tree -> Bool := {v} -> tree_eq (pair_fst v) hyp_sig // self-types via the pair_fst/tree_eq carve-outs

@@ -41,8 +41,8 @@ test typecheck TTop { a := zero; b := TT } = Ok TT // present -> accepted
 test lookup_field { a := zero; b := TT } "a" = Ok zero
 test lookup_field { a := zero; b := TT } "zzz" = Err // absent name -> Err
 // the kernel's own structural records require all their fields too:
-test param_apply NeutralMeta { stored_type := Nat } = Ok FF // missing payload:Tree
-test param_apply NeutralMeta { stored_type := Nat; payload := zero } = Ok TT
+test param_apply NeutralMeta { stored_type := Nat } = Ok FF // missing payload:Spine
+test param_apply NeutralMeta { stored_type := Nat; payload := (inj "Mint" zero) } = Ok TT
 
 // ---- the H-rule: a Telescope-typed neutral inhabits its own type ----
 test param_apply T2 (make_hyp T2 0) = Ok TT
