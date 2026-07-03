@@ -42,14 +42,17 @@ let coproduct_walk = {params, rs, variants, v} ->
     Ok argspec => (tele_walk rs TT (pos_tele_p params argspec) (pair_snd v) t t)
     Err _ => (Ok FF) // unknown tag
   }
-// Coproduct_respond_p: THE positive former — self-aware (rs=self lets `Rec` cells recurse), respond-parametric
-// (Nat/Bool supply a gated respond), Param-aware (CELL_OPTICS markers resolved against `params`, surviving
-// in recognizer_params for `fmap`). `functor` carries the shape↔inj ISO read by `fmap`/`fold_value`; inj-tagged types use the IDENTITY iso.
+// Coproduct_viewed_respond: THE positive maker — self-aware (rs=self lets `Rec` cells recurse),
+// respond-parametric, Param-aware (markers resolved against `params`, surviving in
+// recognizer_params for `fmap`), and viewed: `iso = pair view encode`, where `view` maps a raw
+// tree to inj-tagged form (else `Err`) and `encode` rebuilds the shape. The iso is stored in
+// `functor` (what generic `fmap`/`fold_value` read); an inj-tagged sum passes the identity iso,
+// so every other Coproduct_* below is a one-line specialization of this maker.
 iso_id := pair ({v} -> Ok v) ({x} -> x)   // decode = Ok, encode = id
-Coproduct_respond_p := {params, respond, variants} -> wait (make_rec_recognizer
-  {self, meta, v} -> (coproduct_walk params self meta.recognizer_params v)
-) (make_meta_f variants iso_id respond)
-Coproduct_respond := {respond, variants}  -> Coproduct_respond_p t respond variants
+Coproduct_viewed_respond := {params, respond, iso, variants} -> wait (make_rec_recognizer
+  {self, meta, v} -> (match ((pair_fst iso) v) { Ok tg => (coproduct_walk params self meta.recognizer_params tg); Err _ => (Ok FF) })
+) (make_meta_f variants iso respond)
+Coproduct_respond := {respond, variants} -> Coproduct_viewed_respond t respond iso_id variants
 
 // ── The coherence gate (POSITIVE_TYPES §3c), shared by every gated inductive.
 // Case-TYPES form a telescope (`case_types_go` below); `coh_check` verifies the cases against it via the η-readback
@@ -96,20 +99,15 @@ let check_fields = fix ({self, fields, cases} ->
 // recognition-form `param_apply (case-tele) cases`, coh_gate_proto.test).
 coh_check := {params} -> {T, motive, cases} -> check_fields (case_types_go params (cells_of T) T motive) cases
 
-Coproduct_p := {params, variants}       -> Coproduct_respond_p params (gated_inductive_respond (coh_check params)) variants
-Coproduct : Tree -> Type := Coproduct_p t   // the common case: gated, no params
+Coproduct_p := {params, variants} -> Coproduct_viewed_respond params (gated_inductive_respond (coh_check params)) iso_id variants
+Coproduct : Tree -> Type := Coproduct_p t   // the common case: gated, no params, inj-tagged
 
 // (`Mu`/`Mu_resp` RETIRED (Path B): recursion is a `RecUnder F` cell, the self-aware sum ties its own
 // knot via make_rec_recognizer (rs=self); mutual recursion is `Coproduct_ctx` + `RecAt i`.)
 
-// Coproduct_viewed params iso variants: a coproduct over a SHAPE-encoded value (POSITIVE_TYPES §5b),
-// param-aware. `iso` = `pair view encode`: `view` maps the raw tree to inj-tagged form (else `Err`),
-// `encode` rebuilds the shape. Stored in `functor`, so generic `fmap`/`fold_value` work on shape-encoded
-// types (Nat/List/Ord) via the SAME `tele_walk` dispatch — no Mu needed.
-Coproduct_viewed_respond := {params, respond, iso, variants} -> wait (make_rec_recognizer
-  {self, meta, v} -> (match ((pair_fst iso) v) { Ok tg => (coproduct_walk params self meta.recognizer_params tg); Err _ => (Ok FF) })
-) (make_meta_f variants iso respond)
-Coproduct_viewed := {params, iso, variants} -> Coproduct_viewed_respond params inductive_respond iso variants
+// Coproduct_viewed params iso variants: the common shape-encoded sum (Nat/Bool/Ord/List) —
+// the maker with the standard gated respond filled in.
+Coproduct_viewed := {params, iso, variants} -> Coproduct_viewed_respond params (gated_inductive_respond (coh_check params)) iso variants
 
 // Coproduct_ctx ctx variants: a sum for MUTUAL recursion (Path B). Threads rs = `ctx`, a CONTEXT FUNCTION
 // (i -> recognizer); `RecAt i` cells recurse into `ctx i`. The context is a `fix` FUNCTION whose entries
@@ -130,7 +128,7 @@ let view_ord = {v} -> triage
 let encode_ord = {x} -> if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair_fst (pair_snd x))) (pair_snd (pair_snd x))) else t
 // Ord (recursive, 2 rec args): the generic `coh_check` derives `omega_plus`'s case-type
 // `Π a b. P a -> P b -> P (omega_plus a b)` from the [Rec, Rec] argspec (via the encode iso).
-Ord : Type := Coproduct_viewed_respond t (gated_inductive_respond (coh_check t)) (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
+Ord : Type := Coproduct_viewed t (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
 
 // Bool: TT/FF are opaque combinators, so view_bool decodes by tree_eq COMPARISON. Non-recursive
 // (both constructors nullary), so `coh_check` reduces to recognizing `cases.true : P TT`, `cases.false : P FF`.
@@ -138,7 +136,7 @@ let view_bool = {v} ->
   if (tree_eq v TT) then (Ok (inj "true" t)) else (if (tree_eq v FF) then (Ok (inj "false" t)) else Err)
 // encode_bool: inj-form -> shape combinator. true -> TT; false -> FF. (Bool has no param: fmap = id.)
 let encode_bool = {x} -> if (tree_eq (pair_fst x) "true") then TT else FF
-Bool : Type := Coproduct_viewed_respond t (gated_inductive_respond (coh_check t)) (pair view_bool encode_bool) [pair "true" [], pair "false" []]
+Bool : Type := Coproduct_viewed t (pair view_bool encode_bool) [pair "true" [], pair "false" []]
 
 // Nat: zero = leaf, succ r = fork(t, r). view_nat decodes the shape; the gate is the generic
 // `coh_check` (via the encode iso, the succ case-type is `Π n. P n -> P (succ n)`).
@@ -149,7 +147,7 @@ let view_nat = {v} -> triage
   v
 // encode_nat: inj-form -> shape. zero -> leaf; succ r -> fork(t, r). (Nat has no param: fmap = id.)
 let encode_nat = {x} -> if (tree_eq (pair_fst x) "succ") then (t t (pair_snd x)) else t
-Nat : Type := Coproduct_viewed_respond t (gated_inductive_respond (coh_check t)) (pair view_nat encode_nat) [pair "zero" [], pair "succ" [Rec]]
+Nat : Type := Coproduct_viewed t (pair view_nat encode_nat) [pair "zero" [], pair "succ" [Rec]]
 
 // derive_case_telescope T P: the recursor's case-record TYPE (`rec_value : {P} -> derive_case_telescope T P
 // -> {x:T} -> P x`). Wraps `case_types_go` (the same case-types the coherence gate consumes) in a Record.
