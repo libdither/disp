@@ -1,8 +1,8 @@
 // Kernel fragment: the first-order LIBRARY TYPES + their recursors + the record builders.
-// Unit/String/False/Not, Eq (+ J and lemmas), Refinement/Intersection (tele_with hybrids), HBin,
-// and the dependently-typed recursors nat_rec/bool_rec/ord_rec (via `elim`). Bool/Nat/Ord (the TYPES)
-// live in positive.disp (they need the Coproduct machinery); the `: Bool`/`: Nat`/`: Ord` annotations
-// here forward-ref via the raw-load layer, and Ord's CONSTRUCTORS live here (HBin builds on them).
+// Unit/String/False/Not, Eq (+ J and lemmas), Refinement/Intersection (tele_with hybrids), and
+// the dependently-typed recursors nat_rec/bool_rec/ord_rec (via `elim`). Bool/Nat/Ord (types AND
+// constructors) live in positive.disp (they need the Coproduct machinery); the `: Bool`/`: Nat`/
+// `: Ord` annotations here forward-ref via the raw-load layer.
 
 // Inductive recursors. Recursive calls route through `elim` (not raw `self`), so a neutral
 // predecessor yields a clean stuck elimination (§A). nat_rec/bool_rec/ord_rec are dependently typed.
@@ -33,8 +33,8 @@ eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> E
   motive { base := base }
   proof
 
-// First-order library types: Unit, False, Not, String, Eq, Refinement, Intersection, HBin (+ Ord's
-// constructors zero_ord/omega_plus; Sigma lives in cells.disp, the Ord type in positive.disp).
+// First-order library types: Unit, False, Not, String, Eq, Refinement, Intersection
+// (Sigma lives in cells.disp; Ord/Bool/Nat live in positive.disp).
 unit_val : Unit := t t t
 Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
@@ -69,40 +69,6 @@ Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> tele_with (
 // (the walk polices P's use of the hyp). A 2-cell telescope [ mint A ; imeet P ] (HYBRID, inert respond).
 Intersection : {A : Type} -> (A -> Type) -> Type := {A, P} -> tele_with (
   t (mint_cell A) ({_} -> t (imeet_cell P) ({_} -> t))) inert_respond
-
-zero_ord : Ord := t
-omega_plus : Ord -> Ord -> Ord := {a, b} -> t (t a) b // fork(stem a, b)
-// `Ord` (the TYPE) is defined in positive.disp (after the Coproduct machinery it reuses): a shape-encoded
-// recursive sum `Coproduct_viewed view_ord [zero_ord:[], omega_plus:[Rec, Rec]]`. `: Ord` forward-refs via raw-load.
-
-// HBin: hereditarily binary naturals (Tarau, arXiv:1306.1128) — run-length compressed bijective base-2,
-// with the digit counts themselves HBins (so giant numbers stay small trees). Encoding (leaf-or-fork, a
-// stem tags W): hb_e = t; hb_v x xs = fork(stem x, xs); hb_w x xs = fork(stem(stem x), xs); blocks pair-chained.
-// Bare like refl: typing the constructors would make the recognizer triage an abstract count/block hypothesis.
-hb_e := t
-hb_v := {x, xs} -> t (t x) xs
-hb_w := {x, xs} -> t (t (t x)) xs
-let hb_blocks = fix ({go, hb, xs} ->
-  triage
-    (Ok TT) // nil
-    ({_} -> Ok FF) // stem -> not a block list
-    ({y, ys} -> bind (hb y) ({oky} -> if oky then (go hb ys) else (Ok FF)))
-    xs)
-// HBin recurses via `self` into the head count and every block count, so a
-// neutral count is recognised by the H-rule, not triaged (§A).
-HBin : Type := wait (make_rec_recognizer
-  {self, m, v} ->
-  triage
-    (Ok TT) // hb_e = zero
-    ({_} -> Ok FF) // bare stem -> not an HBin
-    ({l, r} -> if (is_stem l) then {
-      let lx = stem_child l // hb_v: the count; hb_w: stem(count)
-      let cnt = if (is_stem lx) then (stem_child lx) else lx
-      bind (self cnt) ({okc} -> if okc then (hb_blocks self r) else (Ok FF))
-    } else (Ok FF))
-    v
-) (make_meta unit_witness inductive_respond)
-
 
 // build: the builder — fill derived fields from their recipes, take opaque ones
 // from `given`, emit the full §2.6 record (which the recognizer then re-pins).

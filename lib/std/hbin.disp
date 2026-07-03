@@ -1,0 +1,31 @@
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// HBin: hereditarily binary naturals (Tarau, arXiv:1306.1128), run-length compressed
+// bijective base-2 with the digit counts themselves HBins, so giant numbers stay small
+// trees. Encoding (leaf-or-fork, a stem tags W): hb_e = t; hb_v x xs = fork(stem x, xs);
+// hb_w x xs = fork(stem(stem x), xs); blocks pair-chained. Constructors stay bare like
+// refl: typing them would make the recognizer triage an abstract count/block hypothesis.
+hb_e := t
+hb_v := {x, xs} -> t (t x) xs
+hb_w := {x, xs} -> t (t (t x)) xs
+let hb_blocks = fix ({go, hb, xs} ->
+  triage
+    (Ok TT) // nil
+    ({_} -> Ok FF) // stem -> not a block list
+    ({y, ys} -> bind (hb y) ({oky} -> if oky then (go hb ys) else (Ok FF)))
+    xs)
+// HBin recurses via `self` into the head count and every block count, so a
+// neutral count is recognised by the H-rule, not triaged.
+HBin : Type := wait (make_rec_recognizer
+  {self, m, v} ->
+  triage
+    (Ok TT) // hb_e = zero
+    ({_} -> Ok FF) // bare stem -> not an HBin
+    ({l, r} -> if (is_stem l) then {
+      let lx = stem_child l // hb_v: the count; hb_w: stem(count)
+      let cnt = if (is_stem lx) then (stem_child lx) else lx
+      bind (self cnt) ({okc} -> if okc then (hb_blocks self r) else (Ok FF))
+    } else (Ok FF))
+    v
+) (make_meta unit_witness inductive_respond)
