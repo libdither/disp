@@ -1,11 +1,18 @@
-// Kernel fragment: the §2.6 value-level cut + control coproducts + MetaShape builder.
-// Assembled by prelude.disp's barrel; not standalone (annotations forward-ref universe.disp via the raw layer).
-
-// Value-level cut primitives (§2.6): a value is fork(descriptor, payload); one
-// elimination (the cut) drives projection, match, and application.
+// cut.disp: plain values. Records, sums, and the one elimination that runs both, plus
+// the CheckerResult/Action control coproducts, the list toolkit, and make_meta.
+//
+// The idea to hold: a record is a pair of a name list and a payload list, made callable
+// by `prod`. Applying it to an accessor `acc "x"` finds "x" in the names and runs that
+// field's stored entry on the accessor's payload (`annihilate`, the cut). Stored record
+// values are wrapped as constant functions (`list_const v`), so a projection returns the
+// value unchanged; a match table stores real functions that destructure the payload. One
+// mechanism serves records, match, and field access.
+//
+// Loaded by kernel/prelude.disp's barrel; not standalone (annotations forward-ref later
+// fragments via the raw layer). Spec: TYPE_THEORY §2.6. Pins: record.test, match.test.
 nil : Tree := t
 cons : Tree -> Tree -> Tree := {h, tl} -> t h tl
-list_const : Tree -> Tree := {x} -> t t x // const x y = x (K); ignores the cut payload
+list_const : Tree -> Tree := {x} -> t t x // const x y = x (K): a stored record value ignores the cut payload
 inj : Tree -> Tree -> Tree := {tag, pay} -> t tag pay // a coproduct value: tag + payload
 acc : Tree -> Tree := {name} -> inj name t // accessor: nullary coproduct (unit payload)
 
@@ -49,9 +56,10 @@ annihilate_sig := checker_sig annihilate
 make_record : Tree -> Tree -> Tree := {names, payload} -> prod (pair names payload)
 field := {r, name} -> r (acc name) // r.name resolves to this
 
-// Action + CheckerResult: control coproducts via the §2.6 cut. Eliminating a neutral has TWO
-// outcomes — stuck `Extend new_type` (reject = Extend InvalidType) or computes `Reduce value` (bare,
-// §7.5 Option A). Checker returns `Ok v | Err`; `Return v = Reduce (Ok v)` is a verdict ALIAS, NOT a third arm.
+// Action + CheckerResult, the two control coproducts. Eliminating a neutral has exactly
+// two outcomes: it stays stuck (`Extend new_type`; rejection is `Extend InvalidType`) or
+// it computes (`Reduce value`, bare, §7.5 Option A). A checker returns `Ok v | Err`.
+// `Return v` is only an alias for `Reduce (Ok v)`, the verdict case; not a third arm.
 Extend : Type -> Action := inj1 "Extend"
 Reduce : Tree -> Action := inj1 "Reduce"
 Ok : Tree -> Tree := inj1 "Ok"
@@ -60,10 +68,11 @@ Return : Tree -> Action := {v} -> Reduce (Ok v)
 
 bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind
 
-// lookup_field: the CHECKING-layer sibling of `field`. `field`/`proj`/`annihilate` are TOTAL (trust
-// the projected name is present — keeps the runtime cut a plain application); the recognizer ESTABLISHES
-// presence, so it looks up HONESTLY (`Ok value` / `Err`). Else a record MISSING `name` projects to junk
-// `t t` that a permissive field type (Tree/String) would silently accept.
+// lookup_field: the checking-layer sibling of `field`. The runtime cut (`field`/`proj`/
+// `annihilate`) is total: it trusts the projected name is present, which keeps projection
+// a plain application. The recognizer is what establishes presence, so it looks up
+// honestly (`Ok value` / `Err`); without this, a record missing `name` projects to junk
+// `t t`, which a permissive field type (Tree/String) would silently accept.
 let lookup_field_at = fix ({self, names, payload, name} ->
   if (is_fork names)
     then (if (tree_eq (pair_fst names) name)
@@ -76,8 +85,8 @@ lookup_field := {r, name} -> {
 }
 
 
-// MetaShape: a §2.6 headered record { recognizer_params, functor, respond,
-// behavioral_specs }, read by name; conformance is an O(1) tree_eq on the header.
+// MetaShape: the metadata record every type carries, { recognizer_params, functor,
+// respond, behavioral_specs }, read by name through the cut (m.respond, ...).
 unit_witness := t
 trivial_functor := t
 // make_meta_f sets the `functor` field explicitly; coproducts store their shape↔inj ISO there

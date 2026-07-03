@@ -1,7 +1,9 @@
-// Kernel fragment: the POSITIVE former (Coproduct) + the coherence gate + the shape-encoded
-// instances Bool/Nat/Ord. A datatype is a sum of positional telescopes walked by the SAME `tele_walk`
-// as the negative formers; recursion is a CELL (`Rec`/`RecAt`, Path B) and the former ties its
-// own knot. The gate (`coh_check`, η-readback) lives in the RESPOND, so every inductive is gated.
+// positive.disp: sums. A datatype is a coproduct of positional telescopes, walked by the
+// same tele_walk as the negative formers; recursion is a cell (Rec/RecAt) and the former
+// ties its own knot. The coherence gate (coh_check, an η-readback check that eliminator
+// cases actually inhabit the motive) lives in the respond, so every inductive is gated.
+// Bool/Nat/Ord live here as shape-encoded instances. Pins: positive.test,
+// coproduct_gate.test, path_b_inductive/codata/mutual.test.
 
 // lookup_arm: resolve an inj tag to its variant arg-list (exported: the generic fold/recursor/
 // traversal in generic.disp dispatch through it too).
@@ -30,13 +32,12 @@ let pos_tele_go = fix ({self, params, types, depth} ->
 pos_tele   := {types}         -> pos_tele_go t types zero        // plain (no Param markers)
 pos_tele_p := {params, types} -> pos_tele_go params types zero   // CELL_OPTICS: Param i resolved against params
 
-// Coproduct [(tag, [arg-types])]: v = inj tag (a0,a1,…) inhabits iff tag is a variant and its args
-// inhabit that variant's arg telescope. THE positive former — a PLAIN n-ary sum recognized by the
-// SELF-AWARE `tele_walk` over per-variant positional telescopes (same walker as Pi/Sigma/Record). Recursion is
-// a CELL (Path B): `Rec` (μ) / `RecAt i` (mutual) lift to rec cells recursing via rs = self; the former
-// ties its OWN knot (make_rec_recognizer), no `Mu`. Respond supplied — inductive_respond or a gated one (Nat/Bool).
-// coproduct_walk: the shared dispatch — look up the inj-tag's arg list, walk the args by `tele_walk`.
-// `params` resolves `Param i` arg markers (CELL_OPTICS); pass `t` for non-parameterized sums.
+// A coproduct value is `inj tag (a0,a1,…)`; it inhabits the sum iff its tag names a
+// variant and its args inhabit that variant's positional telescope (the same tele_walk
+// as Pi/Sigma/Record). Recursion is a cell: Rec (direct) / RecAt i (mutual) lift to rec
+// cells recursing via rs = self, so the former ties its own knot via make_rec_recognizer.
+// coproduct_walk is the shared dispatch: look up the inj-tag's arg list, walk the args.
+// `params` resolves `Param i` arg markers; pass `t` for non-parameterized sums.
 let coproduct_walk = {params, rs, variants, v} ->
   match (lookup_arm variants (pair_fst v)) {
     Ok argspec => (tele_walk rs TT (pos_tele_p params argspec) (pair_snd v) t t)
@@ -117,13 +118,14 @@ Coproduct_ctx := {ctx, variants} -> wait (make_recognizer
   {meta, v} -> (coproduct_walk t ctx meta.recognizer_params v)
 ) (make_meta_f variants iso_id inductive_respond)
 
-// ── The kernel's shape-encoded inductives: Ord, Bool, Nat. Constructors first — the values
-// are raw tree shapes; their `: Ord` annotations resolve against the types below via raw-load.
+// ── The kernel's shape-encoded inductives: Ord, Bool, Nat. Each is a Coproduct_viewed
+// over a view/encode pair: `view` decodes a raw tree shape to inj-tagged form (or Err),
+// `encode` rebuilds the shape. Constructors first; the values are raw tree shapes, and
+// their `: Ord` annotations resolve against the types below via raw-load.
 zero_ord : Ord := t
 omega_plus : Ord -> Ord -> Ord := {a, b} -> t (t a) b // fork(stem a, b)
 
-// Ord: shape-encoded recursive ordinal sum — zero_ord = leaf, omega_plus a b = fork(stem a, b). `view_ord`
-// decodes to inj-tagged form; omega_plus's two `Rec` children tie the knot via self-aware Coproduct_viewed.
+// Ord: zero_ord = leaf, omega_plus a b = fork(stem a, b); the two Rec children tie the knot.
 let view_ord = {v} -> triage
   (Ok (inj "zero_ord" t))                                                 // leaf -> zero_ord
   ({_} -> Err)                                                            // bare stem -> not an ord
@@ -135,16 +137,15 @@ let encode_ord = {x} -> if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair_
 // `Π a b. P a -> P b -> P (omega_plus a b)` from the [Rec, Rec] argspec (via the encode iso).
 Ord : Type := Coproduct_viewed t (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
 
-// Bool: TT/FF are opaque combinators, so view_bool decodes by tree_eq COMPARISON. Non-recursive
-// (both constructors nullary), so `coh_check` reduces to recognizing `cases.true : P TT`, `cases.false : P FF`.
+// Bool: TT/FF are opaque combinators, so view_bool decodes by tree_eq comparison. Both
+// constructors nullary, so the gate reduces to `cases.true : P TT`, `cases.false : P FF`.
 let view_bool = {v} ->
   if (tree_eq v TT) then (Ok (inj "true" t)) else (if (tree_eq v FF) then (Ok (inj "false" t)) else Err)
 // encode_bool: inj-form -> shape combinator. true -> TT; false -> FF. (Bool has no param: fmap = id.)
 let encode_bool = {x} -> if (tree_eq (pair_fst x) "true") then TT else FF
 Bool : Type := Coproduct_viewed t (pair view_bool encode_bool) [pair "true" [], pair "false" []]
 
-// Nat: zero = leaf, succ r = fork(t, r). view_nat decodes the shape; the gate is the generic
-// `coh_check` (via the encode iso, the succ case-type is `Π n. P n -> P (succ n)`).
+// Nat: zero = leaf, succ r = fork(t, r); the succ case-type derives as `Π n. P n -> P (succ n)`.
 let view_nat = {v} -> triage
   (Ok (inj "zero" t))                                              // leaf -> zero
   ({_} -> Err)                                                     // bare stem -> not a Nat
