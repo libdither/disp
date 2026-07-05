@@ -1,0 +1,131 @@
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+// Observational equivalence: a type's fourth face.
+//
+// A type already answers three questions through its wait-form: membership (the
+// recognizer), elimination (the respond), and mapping (the functor iso). This file adds
+// the fourth: when do two inhabitants count as the same? The answer is a SETOID (the
+// relation plus its three laws), derived from the type's own cells and overridable
+// through the type's `behavioral_specs` meta field:
+//
+//   setoid_of T =
+//     the declared setoid, if behavioral_specs carries one    (quotients)
+//     the pointwise lift, if T is a Pi                        (funext, by definition)
+//     the componentwise lift, if T is a non-dependent record  (paths in products)
+//     the Eq setoid otherwise                                 (data: observational = intensional)
+//
+// The descent rule and its boundary: setoid_of descends structurally exactly where
+// relatedness of the parts can be STATED without transporting anything (Pi codomains
+// are instantiated per point; independent record fields are compared in place). A
+// dependent tail would need coercion along the earlier components' relatedness even to
+// state the later components' relation — that is the coe/§13 rung — so dependent
+// records (and, for now, sum payloads) fall back to the Eq base. Coarser is never
+// claimed where it can't be justified.
+//
+// oeq/oeq_refl/oeq_sym/oeq_trans are the setoid's four projections. LinkedPi is the
+// relational binder (two inhabitants and their link: the set-level interval).
+// image_setoid is quotient-by-observation, laws inherited from Eq.
+//
+// What is deliberately NOT here: elimination of oeq into arbitrary motives (funext-
+// with-J is inconsistent against tree_eq, the intensional observer conversion needs).
+// oeq is consumed three ways instead: instantiate + Eq-lemmas inside proofs; respect
+// witnesses over LinkedPi for abstract pairs; licensed replacement at definition
+// boundaries, where transport is the identity (extensionally equal predicates share
+// members, so the use-site re-check IS the coercion). Pinned in oeq.test.disp; the
+// motive-extensionality gate lives in ext_gate_proto.test.disp.
+//
+// (setoid_of and friends are unannotated: they dispatch on the type's meta, which is a
+// raw read — the same one-generic-point wall as the other cell-derived generics.)
+
+// A setoid packages the relation with its laws. Field arities:
+//   rel x y : Type ; srefl x : rel x x ; ssym x y (p : rel x y) : rel y x ;
+//   strans x y z (p : rel x y) (q : rel y z) : rel x z
+make_setoid := {rel, srefl, ssym, strans} -> { rel := rel; srefl := srefl; ssym := ssym; strans := strans }
+
+// The base layer: intensional equality with its kernel lemmas.
+eq_setoid := {T} -> make_setoid (Eq T) ({x} -> refl) (eq_sym T) (eq_trans T)
+
+// The pointwise lift: the setoid for functions, from the codomain's setoid family.
+// This clause IS funext: relatedness at a function type is defined as pointwise
+// relatedness, so no axiom is ever eliminated.
+let lift_setoid = {dom, codS} -> make_setoid
+  ({f, g} -> Pi dom ({a} -> ((codS a).rel) (f a) (g a)))
+  ({f} -> {a} -> (codS a).srefl (f a))
+  ({f, g, p} -> {a} -> (codS a).ssym (f a) (g a) (p a))
+  ({f, g, h, p, q} -> {a} -> (codS a).strans (f a) (g a) (h a) (p a) (q a))
+
+// Type-shape probes (the eta_check dispatch). A Pi is a mint-lead telescope whose
+// second cell is an apply cell (Intersection is mint-lead too, but imeet-second); a
+// record is a proj-lead telescope, componentwise only when every tail is constant.
+let cells_of = {T} -> (type_meta T).recognizer_params
+let apply_sig = pair_fst (apply_cell t)
+let proj_sig = pair_fst (proj_cell t t)
+let is_pi_ty = {T} -> {
+  let cs = cells_of T
+  and (is_fork cs) (and (is_mint_cell (pair_fst cs)) (tree_eq (pair_fst (pair_fst ((pair_snd cs) t))) apply_sig))
+}
+let is_record_ty = {T} -> {
+  let cs = cells_of T
+  and (is_fork cs) (tree_eq (pair_fst (pair_fst cs)) proj_sig)
+}
+let all_const = fix ({self, tele} ->
+  if (is_fork tele) then (and (is_const_tail (pair_snd tele)) (self ((pair_snd tele) t))) else TT)
+let pi_dom = {T} -> (type_meta (pair_fst (cells_of T))).ty
+let pi_cod = {T, a} -> (type_meta (pair_fst ((pair_snd (cells_of T)) a))).ty
+
+// The componentwise lift for non-dependent records: the relation is itself a RECORD of
+// the fields' relations, and each law builds the record of the fields' law instances.
+let rel_fields = fix ({self, sof, tele, r0, r1} ->
+  if (is_fork tele) then {
+    let m = type_meta (pair_fst tele)
+    cons (pair (m.name) (((sof (m.ty)).rel) (field r0 (m.name)) (field r1 (m.name)))) (self sof ((pair_snd tele) t) r0 r1)
+  } else nil)
+let law_fields = fix ({self, get, tele} ->
+  if (is_fork tele) then {
+    let m = type_meta (pair_fst tele)
+    let rest = self get ((pair_snd tele) t)
+    pair (cons (m.name) (pair_fst rest)) (cons (list_const (get (m.name) (m.ty))) (pair_snd rest))
+  } else (pair nil nil))
+let rec_record = {get, tele} -> {
+  let nv = law_fields get tele
+  make_record (pair_fst nv) (pair_snd nv)
+}
+let lift_record = {sof, tele} -> make_setoid
+  ({r0, r1} -> Record (rel_fields sof tele r0 r1))
+  ({r} -> rec_record ({n, ty} -> (sof ty).srefl (field r n)) tele)
+  ({r0, r1, p} -> rec_record ({n, ty} -> (sof ty).ssym (field r0 n) (field r1 n) (field p n)) tele)
+  ({r0, r1, r2, p, q} -> rec_record ({n, ty} -> (sof ty).strans (field r0 n) (field r1 n) (field r2 n) (field p n) (field q n)) tele)
+
+// setoid_of: derive the type's setoid. behavioral_specs is a NAMED record (so the field
+// stays shareable with other spec kinds); a declared `setoid` entry wins outright.
+setoid_of := fix ({self, T} ->
+  match (lookup_field ((type_meta T).behavioral_specs) "setoid") {
+    Ok s => s
+    Err _ => (if (is_pi_ty T)
+      then (lift_setoid (pi_dom T) ({a} -> self (pi_cod T a)))
+      else (if (and (is_record_ty T) (all_const (cells_of T)))
+        then (lift_record self (cells_of T))
+        else (eq_setoid T)))
+  })
+
+// The four projections: the equivalence family and its laws, for any type.
+oeq       := {T} -> (setoid_of T).rel
+oeq_refl  := {T} -> (setoid_of T).srefl
+oeq_sym   := {T} -> (setoid_of T).ssym
+oeq_trans := {T} -> (setoid_of T).strans
+
+// LinkedPi: the relational binder — two inhabitants of T and the link between them
+// (three mint cells; the set-level interval). A respect/transport witness for a motive
+// P is an inhabitant of `LinkedPi T ({x0} -> {x1} -> {rho} -> Arrow (P x0) (P x1))`.
+LinkedPi := {T, B} -> Pi T ({x0} -> Pi T ({x1} -> Pi (oeq T x0 x1) ({rho} -> B x0 x1 rho)))
+
+// Quotient-by-observation: the setoid induced by a map obs : T -> B. The laws are
+// inherited from Eq at B, so the package is total with no user obligations. Store
+// `{ setoid := image_setoid obs B }` in a type's behavioral_specs to make its oeq
+// coarser than tree identity (e.g. Nat modulo parity via `image_setoid is_even Bool`).
+image_setoid := {obs, B} -> make_setoid
+  ({x, y} -> Eq B (obs x) (obs y))
+  ({x} -> refl)
+  ({x, y, p} -> eq_sym B (obs x) (obs y) p)
+  ({x, y, z, p, q} -> eq_trans B (obs x) (obs y) (obs z) p q)

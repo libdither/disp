@@ -38,6 +38,7 @@ Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> tele_with (
 eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} -> eq_J A x y motive base p
 eq_sym : {A : Type} -> {x : A} -> {y : A} -> Eq A x y -> Eq A y x := {A, x, y, p} -> eq_J A x y ({y_} -> Eq A y_ x) refl p
 eq_cong : {A : Type} -> {B : Type} -> {f : A -> B} -> {x : A} -> {y : A} -> Eq A x y -> Eq B (f x) (f y) := {A, B, f, x, y, p} -> eq_J A x y ({y_} -> Eq B (f x) (f y_)) refl p
+eq_trans : {A : Type} -> {x : A} -> {y : A} -> {z : A} -> Eq A x y -> Eq A y z -> Eq A x z := {A, x, y, z, p, q} -> eq_subst A y z ({w} -> Eq A x w) q p
 
 // Refinement A P (P : A -> Bool): { v : A | P v }. A 2-cell telescope [ qid A ; refine P ] — a HYBRID
 // wait-form (telescope recognizer + inert respond), recognize-equivalent to the old hand-written form.

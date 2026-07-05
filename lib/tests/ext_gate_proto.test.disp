@@ -1,0 +1,74 @@
+// The motive-extensionality gate: the operational check behind eliminating oeq
+// (std/oeq.disp) into a motive. OTT and cubical get "every context respects
+// equivalence" as a global metatheorem by banning intensional observation from the
+// whole language; disp keeps tree_eq (it IS conversion), so respect is checked per
+// motive instead — GoodRespond-style: probe the motive on a fresh hyp under a walker
+// whose intensional carve-outs are removed. Pins:
+//  (1) the unary membership check canNOT separate intensional from extensional motives
+//      (tree_eq answers FF uniformly on hyps, so intensional branches are invisible);
+//  (2) the unsoundness is real (the intensional motive's fibers diverge across
+//      pointwise-equal functions, while the extensional motive's fibers share refl);
+//  (3) the probe separates them (observation must factor through application).
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/list.disp"
+
+let FnT = Arrow NatList NatList
+
+// P_bad pins one specific TREE (intensional); P_good observes only by APPLYING.
+let P_bad  = {h} -> if (tree_eq h ({xs} -> xs)) then Unit else False
+let P_good = {h} -> Eq NatList (h nil) nil
+
+// ── (1) unary membership does not separate them
+test param_apply (Arrow FnT Type) P_bad  = Ok TT
+test param_apply (Arrow FnT Type) P_good = Ok TT
+
+// ── (2) the unsoundness, concretely: pointwise-equal, tree-distinct identities
+let idA = {xs} -> xs
+let idB = {xs} -> list_map ({x} -> x) xs
+test tree_eq (P_bad idA) Unit  = TT
+test tree_eq (P_bad idB) False = TT
+test typecheck (P_good idA) refl = Ok TT
+test typecheck (P_good idB) refl = Ok TT
+
+// ── (3) the gate: param_walker with the intensional observations de-carved on neutrals
+let is_hyp_fork_x = {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let teq_sig = checker_sig tree_eq
+let is_teq_partial_x = {f} -> and (is_fork f) (tree_eq (pair_fst f) teq_sig)
+let bh_sig = pair_fst (bind_hyp t)
+let is_bind_hyp_x = {f} -> and (is_fork f) (tree_eq (pair_fst f) bh_sig)
+let w_stem_x = {a, x} -> {
+  let r = t a x
+  if (is_hyp_fork_x r) then Err else (Ok r)
+}
+let w_s_x = {self, c, b, x} -> bind (self c x) ({cx} -> bind (self b x) ({bx} -> self cx bx))
+let w_tfk_x = {self, b, l, r} -> bind (self b l) ({bl} -> self bl r)
+let w_fork_x = {self, a, b, x} ->
+  triage
+    (Ok b)
+    ({c} -> w_s_x self c b x)
+    ({tc, td} ->
+      if (is_hyp_fork_x x)
+        then Err
+        else (triage (Ok tc) ({ci} -> self td ci) ({l, r} -> w_tfk_x self b l r) x))
+    a
+let w_bh_x = {self, f, x} -> {
+  let dom = type_meta f
+  let h = make_hyp dom (pair dom x)
+  Ok (bind (self x h) ({cr} -> bind cr ({res} -> if (occurs h res) then Err else (Ok res))))
+}
+// the one change vs param_walker: tree_eq completion, pair_fst, neutral_type each Err
+// when their subject is a neutral (observation must factor through application).
+ext_walker := fix ({self, f, x} ->
+  if (tree_eq f tree_eq) then (Ok (wait tree_eq x))
+  else if (is_teq_partial_x f) then (if (or (is_hyp_fork_x x) (is_hyp_fork_x (type_meta f))) then Err else (Ok (f x)))
+  else if (is_bind_hyp_x f) then (w_bh_x self f x)
+  else if (is_hyp_fork_x f) then (Ok (f x))
+  else if (tree_eq f pair_fst) then (if (is_hyp_fork_x x) then Err else (Ok (pair_fst x)))
+  else if (tree_eq f neutral_type) then (if (is_hyp_fork_x x) then Err else (Ok (neutral_type x)))
+  else if (tree_eq f ({x_} -> x_)) then (Ok x)
+  else (triage (Ok (t x)) ({a} -> w_stem_x a x) ({a, b} -> w_fork_x self a b x) f))
+
+let hF = make_hyp FnT "probe"
+test ext_walker P_bad hF = Err                       // intensional: dies at the tree_eq
+test tree_eq (ext_walker P_good hF) Err = FF         // extensional: survives (Ok <type>)
