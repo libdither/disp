@@ -176,6 +176,12 @@ Action : Type := < Extend : Type, Reduce : Tree >
 Step : Type := < SMint : Type, SThread : Tree, SReject, SDone : Action >
 // RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
 RespondShape : Type := Tree -> Tree -> Frame -> Action
+// GuardAction: a guard's answer at the declaration boundary (COMPILATION.typ
+// § Declarations as requests): bind a value, install a guard, or both; refusal is
+// CheckerResult's Err around it. Request: what a declaration asks for (value/ty/guard
+// are stem-options, loosened to Tree like MetaShape's fields).
+GuardAction : Type := Coproduct [pair "Bind" [Tree], pair "Install" [Tree], pair "Both" [Tree, Tree]]
+Request : Type := { value : Tree, ty : Tree, guard : Tree, private : Bool }
 
 // ── Per-former STRUCTURED RespondShapes (§7A/§7B → StrictType wiring).
 // The flat RespondShape loosens `frame` to Tree, so a PROJECTING respond (`frame.motive`) can't inhabit it;

@@ -14,8 +14,15 @@ import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree } from "./expr.js"
 
 export type Decl =
-  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null }
+  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null }
   | { kind: "Test"; lhs: Tree; rhs: Tree }
+
+// The pristine `default_guard` tree per session, captured at its first definition
+// (cut.disp). The declaration fast path applies only while the ambient default is
+// pristine; a scope that shadows `default_guard` opts its unguarded names into the
+// consulting path. (The fast path mirrors the disp definition's semantics exactly —
+// the tree_eq native-fast-path discipline: the in-language definition is normative.)
+const pristineDefaultGuard = new WeakMap<Session<Tree>, Tree>()
 
 export type ParseItemStats = {
   kind: "let" | "test" | "open" | "field"
@@ -132,11 +139,13 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const fieldNames: string[] = []
     const fieldTrees: Tree[] = []
     const fieldTypes: (Tree | null)[] = []
+    const fieldGuards: (Tree | null)[] = []
     for (const d of fileDecls) {
       if (d.kind === "Def") {
         fieldNames.push(d.name)
         fieldTrees.push(d.tree)
         fieldTypes.push(d.type ?? null)
+        fieldGuards.push(d.guard ?? null)
       }
     }
     // Auto-verification: check the module's typed exports through the kernel
@@ -176,7 +185,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes }
+    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldGuards }
     modCache.set(cacheKey, record)
     return record
   }
@@ -192,13 +201,16 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     })
   }
 
-  function compileBinding(
+  // compileParts: compile a binding's value (and annotation) WITHOUT touching scope.
+  // The declaration pipeline (declareBinding) decides what actually gets bound — for
+  // guarded names the bound tree may differ from the compiled value (the guard's Bind).
+  function compileParts(
     name: string,
     type: Expr | null | undefined,
     body: Expr,
     sinks?: CompileSinks,
     raw = false,
-  ): { tree: Tree; type?: Tree | null; fields?: string[]; fieldTrees?: Tree[] } {
+  ): { tree: Tree; type: Tree | null } {
     let tree: Tree, inferredType: Tree | null = null
     const Type = lookupEntry("Type")?.tree
 
@@ -233,19 +245,123 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       // Untyped, raw value, or no kernel — plain value compilation.
       tree = compileExpr(body, lookupEntry, resolveUse, sinks)
     }
+    return { tree, type: inferredType }
+  }
 
+  // finishDefine: bind a tree in scope with its metadata. `body` is the source
+  // expression when the tree came straight from one (fast path / idempotent rebind),
+  // else null (a guard-produced tree: record metadata is read off the tree itself and
+  // the named-arg signature is dropped).
+  function finishDefine(
+    name: string,
+    tree: Tree,
+    typeTree: Tree | null,
+    body: Expr | null,
+    typeExpr: Expr | null | undefined,
+    guard: Tree | undefined,
+  ): void {
     // Module metadata propagation (`let m = use "f"`): `open m` and projection
     // on the module's Church-record fallback need the export list. Falls back to
     // reading the field header off the compiled tree, so a binding whose value is
     // a §2.6 record (`E := Enum {…}`, any `make_record` result) is `open`-able and
     // projects at compile time.
-    const record = resolveExprRecord(body, lookupEntry, resolveUse) ?? recordFieldsFromTree(tree, lookupEntry)
+    const record = (body ? resolveExprRecord(body, lookupEntry, resolveUse) : undefined) ?? recordFieldsFromTree(tree, lookupEntry)
     // Track the named-argument signature (leading lambda params + defaults) so a
     // later `name { … }` call resolves by field name. Pure metadata — the tree is
     // unchanged. Skipped for raw imports (their bodies bypass annotations anyway).
-    const params = extractSignature(body, type)
-    define(name, { tree, type: inferredType, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes, params })
-    return { tree, type: inferredType }
+    const params = body ? extractSignature(body, typeExpr ?? null) : undefined
+    define(name, { tree, type: typeTree, fields: record?.fields, fieldTrees: record?.fieldTrees, fieldTypes: record?.fieldTypes, params, guard })
+  }
+
+  function compileBinding(
+    name: string,
+    type: Expr | null | undefined,
+    body: Expr,
+    sinks?: CompileSinks,
+    raw = false,
+  ): { tree: Tree; type?: Tree | null } {
+    const r = compileParts(name, type, body, sinks, raw)
+    finishDefine(name, r.tree, r.type, body, type, lookupEntry(name)?.guard)
+    return r
+  }
+
+  // declareBinding: the declaration pipeline (COMPILATION.typ § Declarations as
+  // requests). Fast path = the pre-guard behavior, taken when there is no head, no
+  // installed guard on the name, and the ambient default_guard is pristine (or the
+  // kernel isn't loaded yet). Slow path builds the request record, applies the head
+  // decorator, consults the incumbent guard, and applies its GuardAction.
+  function declareBinding(
+    name: string,
+    typeE: Expr | null | undefined,
+    valueE: Expr | null,
+    headE: Expr | undefined,
+    isLet: boolean,
+    sinks: CompileSinks,
+    raw: boolean,
+  ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean } {
+    const S = elab.cs
+    const existing = lookupEntry(name)
+    const dg = lookupEntry("default_guard")?.tree
+    const pristine = pristineDefaultGuard.get(S)
+    const ambientShadowed = dg != null && !(pristine != null && S.equal!(dg, pristine))
+    if (raw || (!headE && !existing?.guard && !ambientShadowed)) {
+      // Fast path. (The parser guarantees headless declarations carry a value.)
+      const r = compileBinding(name, typeE, valueE!, sinks, raw)
+      return { pushDef: true, tree: r.tree, type: r.type, guard: existing?.guard, viaFast: true }
+    }
+    // Slow path: compile the pieces.
+    let valueTree: Tree | null = null
+    let typeTree: Tree | null = null
+    if (valueE != null) {
+      const p = compileParts(name, typeE, valueE, sinks, raw)
+      valueTree = p.tree
+      typeTree = p.type
+    } else if (typeE != null) {
+      typeTree = compileType(typeE, lookupEntry, resolveUse)
+    }
+    // Idempotence: a headless, tree-identical rebind changes nothing — no consultation.
+    if (!headE && valueTree != null && existing?.tree != null && S.equal!(existing.tree, valueTree)) {
+      finishDefine(name, valueTree, typeTree, valueE, typeE ?? null, existing.guard)
+      return { pushDef: true, tree: valueTree, type: typeTree, guard: existing.guard, viaFast: false }
+    }
+    const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
+    const tt = lookupEntry("TT")?.tree, ff = lookupEntry("FF")?.tree
+    const g = existing?.guard ?? dg
+    if (!mkr || !lc || !tt || !ff || !g)
+      throw new Error(`declaration of '${name}': guarded declarations need the kernel prelude in scope`)
+    const opt = (x: Tree | null): Tree => (x == null ? S.leaf() : S.stem(x))
+    const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => S.fork(h, acc), S.leaf())
+    const names = consList(["value", "ty", "guard", "private"].map(stringToTree))
+    const payload = consList([opt(valueTree), opt(typeTree), S.leaf(), isLet ? tt : ff].map(v => S.apply(lc, v, B())))
+    let request = S.apply(S.apply(mkr, names, B()), payload, B())
+    if (headE) {
+      const headTree = compileExpr(headE, lookupEntry, resolveUse, sinks)
+      request = S.apply(headTree, request, B())
+    }
+    const oldOpt = existing?.tree != null ? S.stem(existing.tree) : S.leaf()
+    const answer = S.apply(S.apply(g, oldOpt, B()), request, B())
+    const top = S.classify!(answer)
+    if (top.tag !== "fork" || !S.equal!(top.left, stringToTree("Ok")))
+      throw new Error(`declaration of '${name}': rejected by its guard`)
+    const act = S.classify!(top.right)
+    if (act.tag !== "fork")
+      throw new Error(`declaration of '${name}': guard returned a malformed action`)
+    if (S.equal!(act.left, stringToTree("Bind"))) {
+      finishDefine(name, act.right, typeTree, null, typeE ?? null, existing?.guard)
+      return { pushDef: true, tree: act.right, type: typeTree, guard: existing?.guard, viaFast: false }
+    }
+    if (S.equal!(act.left, stringToTree("Install"))) {
+      define(name, { ...(existing ?? {}), guard: act.right })
+      return { pushDef: false, guard: act.right, viaFast: false }
+    }
+    if (S.equal!(act.left, stringToTree("Both"))) {
+      const p = S.classify!(act.right)
+      if (p.tag !== "fork")
+        throw new Error(`declaration of '${name}': guard returned a malformed Both action`)
+      finishDefine(name, p.left, typeTree, null, typeE ?? null, p.right)
+      return { pushDef: true, tree: p.left, type: typeTree, guard: p.right, viaFast: false }
+    }
+    throw new Error(`declaration of '${name}': guard returned an unknown action`)
   }
 
   // Build a CompileSinks for the given target/decl array. Tests emitted by
@@ -267,20 +383,34 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const sinks = makeSinks(target)
     switch (it.tag) {
       case "field": {
-        const result = compileBinding(it.name, it.type, it.value, sinks, raw)
-        target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
-        // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
-        if (it.name === "tree_eq") elab.cs.recognizeNative?.("tree_eq", result.tree)
+        const r = declareBinding(it.name, it.type, it.value, it.head, false, sinks, raw)
+        if (r.pushDef) {
+          // Redefinition of an exported field is guard-mediated (a rebind): the final
+          // binding wins. An UNGUARDED (fast-path) duplicate is still the old accident
+          // error, relocated here from the parser (the parser can't see guards).
+          const idx = target.findIndex(d => d.kind === "Def" && d.name === it.name)
+          const decl: Decl = { kind: "Def", name: it.name, tree: r.tree!, type: r.type, guard: r.guard ?? null }
+          if (idx >= 0) {
+            if (r.viaFast) throw new Error(`duplicate exported field '${it.name}'`)
+            target[idx] = decl
+          } else target.push(decl)
+          // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
+          if (it.name === "tree_eq") elab.cs.recognizeNative?.("tree_eq", r.tree!)
+        }
+        if (it.name === "default_guard" && r.tree != null && !pristineDefaultGuard.has(elab.cs))
+          pristineDefaultGuard.set(elab.cs, r.tree)
         recordItem("field", it.name)
         return
       }
       case "let": {
-        const result = compileBinding(it.name, it.type, it.body, sinks, raw)
-        if (isExport) {
+        const r = declareBinding(it.name, it.type, it.body, undefined, true, sinks, raw)
+        if (isExport && r.pushDef) {
           // Legacy mode: top-level let exports (for files not yet migrated)
-          target.push({ kind: "Def", name: it.name, tree: result.tree, type: result.type })
+          target.push({ kind: "Def", name: it.name, tree: r.tree!, type: r.type })
         }
-        if (it.name === "tree_eq") elab.cs.recognizeNative?.("tree_eq", result.tree)
+        if (it.name === "tree_eq" && r.tree != null) elab.cs.recognizeNative?.("tree_eq", r.tree)
+        if (it.name === "default_guard" && r.tree != null && !pristineDefaultGuard.has(elab.cs))
+          pristineDefaultGuard.set(elab.cs, r.tree)
         recordItem("let", it.name)
         return
       }
@@ -309,8 +439,13 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             if (existing.tree && elab.cs.equal!(existing.tree, fieldTree)) continue
             throw new Error(`open: name '${name}' already in scope with different value`)
           }
+          // A guarded binding in an OUTER frame may not be silently shadowed by an
+          // import: rebinding an owned name goes through its guard, explicitly.
+          const outer = lookupEntry(name)
+          if (outer?.guard && !(outer.tree != null && elab.cs.equal!(outer.tree, fieldTree)))
+            throw new Error(`open: '${name}' is guarded; rebind it explicitly through its guard`)
           const fieldType = record.fieldTypes?.[i] ?? null
-          define(name, { tree: fieldTree, type: fieldType })
+          define(name, { tree: fieldTree, type: fieldType, guard: record.fieldGuards?.[i] ?? undefined })
           if (isExport) {
             // Legacy mode: open re-exports opened names.
             target.push({ kind: "Def", name, tree: fieldTree, type: fieldType })

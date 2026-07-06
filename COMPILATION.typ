@@ -382,6 +382,280 @@ itself positional-only (it carries no tracked signature).
 *Surface note.* RecValue fields may be separated by `,` (as well as `;` /
 newline), so a named call reads as `f { host := "h", port := 8000 }`.
 
+= Declarations as requests: the guard layer
+
+*Status: implemented (2026-07-05).* Pins: `lib/tests/guards.test.disp`
+(the positive lifecycle) and `test/guards.test.ts` (rejections are load
+failures, asserted host-side). Guard-free files compile byte-identically
+(the fast path below); nothing in this section changes the meaning of
+any existing program. One v1 boundary: `Install`-only names (interface
+entries) are file-local — a module's export record carries guards only
+alongside values, so contract-only names travel once `Module` grows a
+guards slot (the reification at the end of this section).
+
+The layer unifies three things as one elaborator operation plus library
+policy: private bindings (`let`), licensed redefinition (a name whose
+owner demands an equivalence proof before it may be rebound), and
+interface modules (names carrying contracts with no implementation
+yet). A name's guard is its permanent owner; a declaration is a request
+that the owner mediates.
+
+== The model
+
+The elaborator has exactly one state-writing operation:
+
+```
+Declare : Name -> Request -> ElabOp Unit
+```
+
+A `Request` packages what the declarer wants (optional fields use the
+stem-option convention, `t` absent / `t x` present):
+
+```
+Request = { value : Opt Tree, ty : Opt Tree, guard : Opt Tree, private : Bool }
+```
+
+A guard is a policy function owned by the name. It receives the
+incumbent value (a stem-option) and the request, and answers a
+`GuardAction` through the ordinary `CheckerResult`:
+
+```
+guard       : Opt Tree -> Request -> CheckerResult
+GuardAction = < Bind : Tree, Install : Tree, Both : (Tree, Tree) >
+-- Ok (Bind v)      bind v as the value
+-- Ok (Install g)   set the name's guard, value untouched
+-- Ok (Both v g)    both
+-- Err              the guard refuses; the module fails to load
+```
+
+The handler is the entire elaborator-native mechanism (the fold step of
+the future state-monad elaborator):
+
+```
+step st (Declare name req):
+  old = scope(st)[name]                          -- stem-option
+  if present(req.value) and present(old)
+     and tree_eq(old, req.value) and absent(req.guard):
+       return st                                 -- idempotent redefinition: no consultation
+  g = guards(st)[name] or default_guard
+  case eval (g old req) of
+    Err             -> fail GuardRejected(name)
+    Ok (Bind v)     -> scope[name] := v
+                       record[name] := v unless req.private
+                       queue check (req.ty, v)   -- deferred, abort-only
+    Ok (Install g') -> guards[name] := g'
+    Ok (Both v g')  -> both of the above
+```
+
+Two laws the handler preserves. They are what keep elaboration a clean
+state monad and keep hash-cons conversion sound:
+
+1. Scope, record, and guard writes are pure functions of the source.
+   Guard evaluation is eager (its output is the bound value) but pure.
+2. Checks gate acceptance, never shape. Annotation checks stay deferred
+   and abort-only; no check outcome ever selects which tree a name
+   binds.
+
+The idempotence rule (a tree-identical rebind with no guard proposal
+passes without consultation) is required by the raw-then-checked
+bootstrap, and it makes diamond imports of the same definition
+harmless. Import collisions on a guarded name are otherwise ordinary
+rebinds: a plain imported value hitting a license-guarded name is
+refused, and the importing module must rebind explicitly with a
+payload the guard accepts.
+
+== Surface and desugaring
+
+```
+decl := head? NAME (":" expr)? (":=" expr)?
+head := one expression, the request decorator
+```
+
+The name is the last atom before `:` or `:=`; everything before it is
+the head. At least one of the annotation, the value, or a
+guard-proposing decorator must be present. Decorator composition is
+ordinary function composition inside the head expression. Head atoms
+are line-local, and the newline-crossing expression parser refuses to
+consume a line whose bracket-depth-0 tokens reach `:` or `:=`
+(`isDeclStart`, the generalization of the `IDENT :=` lookahead): bare
+top-level colons never occur mid-expression, so a decorated declaration
+can follow a multi-line expression without being swallowed by it.
+
+#table(
+  columns: (auto, 1fr),
+  stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
+  inset: (x: 6pt, y: 4pt),
+  table.header[*Surface*][*Desugars to*],
+  [`X := v`],                        [`Declare "X" (base v)`],
+  [`X : T := v`],                    [`Declare "X" (base v with ty T)`],
+  [`let X := v`],                    [`Declare "X" (let_dec (base v))`],
+  [`guard g X : T := v`],            [`Declare "X" (guard g (base v with ty T))`],
+  [`guard g X : T`],                 [`Declare "X" (guard g (sig T))` (an interface entry)],
+  [`guard_eq X : T := v`],           [`Declare "X" (guard_eq (base v with ty T))` (a user-defined head; see below)],
+  [`X := { new := f, proof := p }`], [`Declare "X" (base <that record>)` (payload records are guard convention, not grammar)],
+)
+
+The decorators are ordinary values, not keywords (home: `cut.disp` —
+they build Request records and answer through `Ok`/`Err`, which the
+dependency-free prelude deliberately lacks; record-update spelling
+below is illustrative). The driver references `default_guard` *by name
+in the module scope*, with a host fast path of identical semantics
+taken while the ambient default is pristine and for the bootstrap
+lines before `cut.disp` loads; this is the established
+helper-discovery pattern (§ Kernel Helper Discovery) plus the `tree_eq`
+native-fast-path discipline (the disp definition is normative).
+
+```disp
+base    := {v}   -> { value := (t v); ty := t; guard := t; private := FF }
+let_dec := {req} -> req with private := TT
+guard   := {g}   -> {req} -> req with guard := (t g)
+```
+
+*Custom declaration heads are plain definitions.* Because the desugar
+fills the request (value, then annotation) *before* applying the head,
+a decorator receives the annotation and may compute from it. In
+particular, guard constructors that derive their contract from the
+declared type are one-liners:
+
+```disp
+guard_eq := {req} -> req with guard := (t (license_guard (oeq (stem_child (req.ty)))))
+```
+
+```disp
+guard_eq sort : Arrow NatList NatList := impl
+//  Declare "sort" (guard_eq (base impl with ty (Arrow NatList NatList)))
+//  guard_eq reads req.ty and installs license_guard (oeq (Arrow NatList NatList))
+```
+
+There is no macro layer: a "new keyword" is a request transformer bound
+to a name, definable in any library, shadowable, and (being an ordinary
+name) itself guardable.
+
+*Why block `let` stays syntactic.* In declaration position `let`
+denotes the `let_dec` value, because module scope is reified (names are
+strings in a state, and the desugar quotes them). Inside an expression
+block, `let x := e; rest` must bind `x` *lexically* in `rest`, and `e`
+may be open in enclosing binder parameters, so `x` cannot be a tree in
+any state; introducing a lexical binding into subsequent syntax is the
+one thing a value cannot do, in this or any lambda calculus. If local
+scopes are ever reified (the self-hosted elaborator evaluates over an
+environment), block `let` can join; until then the word means "bind in
+the current frame" with two implementations chosen by frame kind.
+
+*Literal names.* The surface desugar only emits literal names, so
+dynamic declaration (computing a name and declaring it) is unreachable
+from source. This is a legibility choice, not a soundness one: the
+handler mediates every `Declare` regardless of how the name was
+produced, so the restriction can be dropped in the §15 endgame (module
+values containing computed requests) without redesign. Note that
+dynamically declared names could not be *referenced* by later source
+anyway, which bounds their usefulness to generated-module tooling.
+
+Alongside this change: migrate declaration-position `let x = e` to
+`let x := e` (the parser dual-accepts during the transition), retiring
+the legacy all-lets-export file mode; `=` remains the `test` operator.
+
+== The bootstrap policy and the inaugural guards
+
+The default guard honors the declarer verbatim. It is *defined in disp*
+(`prelude.disp`) and looked up by name at each `Declare`, with a host
+fallback of identical semantics for the bootstrap lines before it
+exists. Because the lookup is scope-relative, shadowing `default_guard`
+changes the ambient policy for *unguarded* names in that scope (a
+module can open a stricter ambient, e.g. freeze-by-default); names with
+installed guards are unaffected, since their own guard is consulted
+instead. The normative definition:
+
+```disp
+default_guard := {old, req} ->
+  if (is_stem (req.guard))
+    then (if (is_stem (req.value))
+      then (Ok (Both (stem_child (req.value)) (stem_child (req.guard))))
+      else (Ok (Install (stem_child (req.guard)))))
+    else (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
+```
+
+(A request with neither a value nor a guard proposal has nothing to do
+and is refused, so a stray valueless declaration is a load error rather
+than a silent bind of junk.)
+
+`license_guard` (library, `std/oeq.disp`): rebinding an owned name
+means presenting a `{ new, proof }` payload whose proof inhabits
+`R old new`. The first implementation of a contract-only name needs no
+license (there is nothing to be equivalent to); ownership is never
+surrendered (guard proposals are refused).
+
+```disp
+license_guard := {R} -> {old, req} ->
+  if (is_stem (req.guard)) then Err
+  else {
+    let v = stem_child (req.value)
+    if (is_leaf old) then (Ok (Bind v))
+    else (match (param_apply (R (stem_child old) (v.new)) (v.proof)) {
+      Ok b  => (if b then (Ok (Bind (v.new))) else Err)
+      Err _ => Err
+    })
+  }
+```
+
+Other policies are one-liners in the same shape: `freeze := {old, req}
+-> Err` (an immutable name); an append-only guard merges `old` with the
+payload instead of replacing it. The policy zoo is library code; the
+elaborator knows none of it.
+
+== Worked example: an owned name
+
+The owning module states the contract once:
+
+```disp
+guard (license_guard TypeFaceEq) Tree : Type := <the full inductive>
+```
+
+An optimizations module rebinds by presenting credentials:
+
+```disp
+Tree : Type := { new := FastTree; proof := FastTree_eq_Tree }
+```
+
+The handler consults `license_guard`, which runs
+`param_apply (TypeFaceEq <old Tree> FastTree) FastTree_eq_Tree`
+in-language and answers `Bind FastTree`; the annotation check
+(`Type FastTree`) is queued as usual. Failure modes, all load
+failures: editing `FastTree` so the proof no longer matches; rebinding
+with a plain value instead of a payload; proposing a replacement guard.
+A contract-only variant makes an interface module:
+
+```disp
+guard (license_guard (oeq (Arrow NatList NatList))) sort : Arrow NatList NatList
+```
+
+a signature file entry: a name with an ownership contract and no
+implementation, satisfiable later by any module whose first bind
+type-checks and whose subsequent rebinds present licenses.
+
+== The effects reading and migration
+
+This layer is the elaborator instantiated as the first consumer of the
+`TYPE_THEORY.typ` §15 effects design: a module is a value of the free
+monad over the elaboration signature (`Declare`, plus `Test` and
+`Import`), interpreted by the driver; a guard is a per-name deep
+handler installed over `Declare`; the namespace is a handler stack.
+Enforcement today is mediation (surface syntax can only file requests;
+the handler owns the state). Once `Eff` exists as a library type,
+`mod : Eff ElabSig Unit` becomes an ordinary checkable annotation and
+guard-respect becomes a property of module values rather than an
+elaborator promise.
+
+Migration stages: (0) this section; (1) parser: head-spine declaration
+grammar + `let x := e` dual-accept; (2) driver restructured as
+request-plus-handler with no behavior change for guard-free files;
+(3) `Request`/`GuardAction` as kernel structural types beside
+`Action`/`Step`, `license_guard` landed in `std/oeq.disp`, the Tree
+walkthrough recast as the inaugural owned name; (4) the self-hosted
+handler: requests carry ASTs and the in-language elaborator compiles,
+which is the planned `lib/elab` resurrection with its effect signature
+fixed in advance.
+
 = Error reporting
 
 Current compile errors carry parser/driver messages, but source-span

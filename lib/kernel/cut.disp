@@ -94,3 +94,34 @@ trivial_functor := t
 make_meta_f : Tree -> Tree -> Tree -> MetaShape := {params, functor, respond} ->
   { recognizer_params := params; functor; respond; behavioral_specs := t }
 make_meta : Tree -> Tree -> MetaShape := {params, respond} -> make_meta_f params trivial_functor respond
+
+// ── The declaration protocol (COMPILATION.typ § Declarations as requests).
+// A declaration is a request that the declared name's guard mediates. The elaborator
+// looks up `default_guard` by name at each declaration (and the decorators are what
+// declaration heads denote), with host fallbacks of identical semantics for the
+// bootstrap lines above this point. A guard answers through CheckerResult: Ok carries
+// a GuardAction, Err refuses (the module fails to load).
+Bind    : Tree -> GuardAction := inj1 "Bind"          // bind this value
+Install : Tree -> GuardAction := inj1 "Install"       // set the name's guard; value untouched
+Both    : Tree -> Tree -> GuardAction := inj2 "Both"  // bind AND set the guard
+// Request decorators: ordinary values a declaration head applies to the built request.
+// `base v` is the plain declaration; `let_dec` marks the write private; `sig T` is a
+// valueless interface entry; `guard g` fills the proposal slot. (Unannotated: they
+// build/rebuild Request records; the elaborator consumes them by shape.)
+base    := {v} -> { value := (t v); ty := t; guard := t; private := FF }
+let_dec := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT }
+sig     := {T} -> { value := t; ty := (t T); guard := t; private := FF }
+guard   := {g} -> {req} -> { value := req.value; ty := req.ty; guard := (t g); private := req.private }
+// default_guard: the ambient policy for unguarded names — honor the declarer verbatim;
+// a request with nothing to do is refused. Shadowing this name changes the ambient
+// policy for the shadowing scope's unguarded declarations (owned names are unaffected:
+// their own guard is consulted instead). The elaborator's fast path mirrors THIS
+// definition (the tree_eq native-fast-path discipline: this is the normative
+// semantics). (Unannotated: it branches on stem-option fields of its request, which
+// sticks on a minted hyp — the cell-op mode-branch wall.)
+default_guard := {old, req} ->
+  if (is_stem (req.guard))
+    then (if (is_stem (req.value))
+      then (Ok (Both (stem_child (req.value)) (stem_child (req.guard))))
+      else (Ok (Install (stem_child (req.guard)))))
+    else (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)

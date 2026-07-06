@@ -54,7 +54,9 @@ export interface ScopeEntry {
   fields?: string[]
   fieldTrees?: Tree[]
   fieldTypes?: (Tree | null)[]  // per-field types for open
+  fieldGuards?: (Tree | null)[] // per-field guards for open (owned names travel with their owner)
   params?: SigParam[]   // named-argument signature (leading binder params + defaults)
+  guard?: Tree          // the name's guard (its rebind policy); undefined = default-governed
 }
 
 // A binding's named-argument signature: the leading run of its value-lambda's
@@ -88,8 +90,10 @@ export function collectSessionRoots(session: Session<Tree>): Tree[] {
   for (const e of cache.values()) {
     if (e.tree != null) roots.push(e.tree)
     if (e.type != null) roots.push(e.type)
+    if (e.guard != null) roots.push(e.guard)
     if (e.fieldTrees) for (const t of e.fieldTrees) if (t != null) roots.push(t)
     if (e.fieldTypes) for (const t of e.fieldTypes) if (t != null) roots.push(t)
+    if (e.fieldGuards) for (const t of e.fieldGuards) if (t != null) roots.push(t)
   }
   return roots
 }

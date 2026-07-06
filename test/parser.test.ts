@@ -571,8 +571,29 @@ describe("parse errors", () => {
   })
 
   it("rejects duplicate exported fields", () => {
-    expect(() => parseItems("x := t\nx := t t")).toThrow(/duplicate exported field 'x'/)
+    // Top-level redefinition is now legal SYNTAX (a guard-mediated rebind request);
+    // the UNGUARDED-duplicate accident check moved to the driver, which still throws.
+    expect(parseItems("x := t\nx := t t").length).toBe(2)
+    expect(() => parseProgram("x := t\nx := t t")).toThrow(/duplicate exported field 'x'/)
+    // Braced records are not declarations: still a parse error.
     expect(() => parseExpr("{ x := t; x := t t }")).toThrow(/duplicate exported field 'x'/)
+  })
+
+  it("parses decorated declarations (head spines)", () => {
+    const items = parseItems("guard g X : T := v")
+    expect(items.length).toBe(1)
+    const f = items[0] as Extract<ReturnType<typeof parseItems>[number], { tag: "field" }>
+    expect(f.tag).toBe("field")
+    expect(f.name).toBe("X")
+    expect(f.head).toBeTruthy()
+    expect(f.value).toBeTruthy()
+    // interface entry: head + annotation, no value
+    const iface = parseItems("guard g X : T")[0] as typeof f
+    expect(iface.name).toBe("X")
+    expect(iface.value).toBeNull()
+    // let dual-accepts := and =
+    expect(parseItems("let x := t").length).toBe(1)
+    expect(parseItems("let x = t").length).toBe(1)
   })
 
   it("rejects duplicate record type fields", () => {

@@ -120,10 +120,15 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
 export type RecMember =
-  | { tag: "field"; name: string; type: Expr | null; value: Expr; pun?: boolean }
+  | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr }
   | { tag: "open"; expr: Expr }
+// A "field" is a DECLARATION: `head? NAME (: T)? (:= v)?` (COMPILATION.typ
+// § Declarations as requests). `head` is the optional request-decorator expression
+// (e.g. `guard g`); `value` is null only for interface entries (`guard g X : T`),
+// which the parser only produces when a head is present. Braced record members
+// always carry a value and no head.
 
 // (Item alias removed; callers now use RecMember directly.)
 
@@ -346,6 +351,31 @@ function isFieldStart(ts: Tok[], i: number): boolean {
   return false
 }
 
+// Generalization of isFieldStart to DECORATED declarations (`guard g X : T := v`),
+// which have no leading `IDENT :=` signature: after a newline, a line whose top-level
+// (bracket-depth-0) tokens reach `:` or `:=` before the line ends is a declaration,
+// not an application continuation. Bare top-level `:`/`:=` never occur mid-expression
+// (ascriptions are parenthesized, binder/record colons live inside braces), so this
+// cannot cut a legitimate expression.
+function isDeclStart(ts: Tok[], i: number): boolean {
+  if (ts[i].t !== "id" && !(ts[i].t === "punct" && (ts[i] as any).v === "(")) return false
+  let depth = 0, q = i
+  while (q < ts.length) {
+    const t = ts[q]
+    if (t.t === "eof" || (t.t === "nl" && depth === 0)) return false
+    if (t.t === "kw" && depth === 0) return false
+    if (t.t === "punct") {
+      const v = (t as any).v
+      if (v === "(" || v === "{" || v === "[") depth++
+      else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
+      else if (depth === 0 && (v === ":=" || v === ":")) return true
+      else if (depth === 0 && (v === "=" || v === ";" || v === "=>" || v === "->")) return false
+    }
+    q++
+  }
+  return false
+}
+
 // Check if position starts a match arm pattern: a constructor followed by zero
 // or more binder idents and then `=>` (e.g. `Ctor =>`, `Ctor x =>`,
 // `Ctor a b c =>`). Used to stop multi-line arm bodies before the next arm.
@@ -365,7 +395,7 @@ function isArmStart(ts: Tok[], i: number): boolean {
 const atom: P<Expr> = withProj((ts, i) => {
   const hadNewline = ts[i].t === "nl"
   while (ts[i].t === "nl") i++
-  if (hadNewline && isFieldStart(ts, i))
+  if (hadNewline && (isFieldStart(ts, i) || isDeclStart(ts, i)))
     return err(`field definition, not an atom`, i)
   return simple(ts, i)
 })
@@ -648,7 +678,7 @@ const topFieldP = makeFieldP(lazy(() => expr))
 const bracedLetP: P<RecMember> = map(
   seq(kwP("let"), nl(idP),
     optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
-    nl(punctP("=")), skipNl, lazy(() => lineExpr), semiP),
+    nl(alt(punctP(":="), punctP("="))), skipNl, lazy(() => lineExpr), semiP),
   ([, name, ann, , , body]) => ({
     tag: "let" as const, name, type: ann ? ann[2] : null, body,
   }),
@@ -736,7 +766,7 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
     if (m.tag === "field") {
       if (exportedFields.some(f => f.name === m.name))
         return err(`duplicate exported field '${m.name}'`, startPos)
-      exportedFields.push({ name: m.name, type: m.type, value: m.value })
+      exportedFields.push({ name: m.name, type: m.type, value: m.value! }) // braced fields always carry a value
     }
     if (m.tag === "let") bindings.push({ name: m.name, type: m.type, body: m.body })
   }
@@ -956,7 +986,7 @@ const letItem: P<RecMember> = map(
   seq(
     kwP("let"), idP,
     optional(seq(punctP(":"), skipNl, lazy(() => expr))),
-    nl(punctP("=")), skipNl, lazy(() => expr),
+    nl(alt(punctP(":="), punctP("="))), skipNl, lazy(() => expr),
   ),
   ([, name, ann, , , body]) => ({
     tag: "let" as const,
@@ -976,23 +1006,51 @@ const openItem: P<RecMember> = map(
   ([, expr]) => ({ tag: "open" as const, expr }),
 )
 
-const itemP: P<RecMember> = nl(alt(openItem, letItem, testItem, topFieldP))
+// A decorated declaration: `head… NAME (: T)? (:= v)?` — one or more head atoms
+// before the name (COMPILATION.typ § Declarations as requests). The name is the last
+// atom of the pre-`:`/`:=` spine; the head is everything before it (a request
+// decorator, applied to the built request by the driver). Head atoms are line-local
+// so the spine cannot swallow the next item. A head with only an annotation is an
+// interface entry (value = null); a bare spine with neither `:` nor `:=` is not an
+// item. Tried after topFieldP, so plain `NAME := v` fields are unaffected.
+const headFieldP: P<RecMember> = (ts, i) => {
+  const atoms: Expr[] = []
+  let pos = i
+  for (;;) {
+    const r = lineAtom(ts, pos)
+    if (!r.ok) break
+    atoms.push(r.v)
+    pos = r.pos
+  }
+  if (atoms.length < 2) return err(`decorated declaration`, i)
+  const last = atoms[atoms.length - 1]
+  if (last.tag !== "var") return err(`decorated declaration: the declared name must be a plain identifier`, pos)
+  const head = atoms.slice(0, -1).reduce((f, x) => ({ tag: "app" as const, f, x }))
+  let type: Expr | null = null
+  const ann = optional(seq(nl(punctP(":")), skipNl, lazy(() => expr)))(ts, pos)
+  if (ann.ok && ann.v) { type = ann.v[2]; pos = ann.pos }
+  let value: Expr | null = null
+  const asn = optional(seq(nl(punctP(":=")), skipNl, lazy(() => expr)))(ts, pos)
+  if (asn.ok && asn.v) { value = asn.v[2]; pos = asn.pos }
+  if (type === null && value === null) return err(`decorated declaration: expected ':' or ':='`, pos)
+  return ok({ tag: "field" as const, name: last.name, type, value, head }, pos)
+}
+
+const itemP: P<RecMember> = nl(alt(openItem, letItem, testItem, topFieldP, headFieldP))
 
 // Parse source into items.
 export function parseItems(src: string): RecMember[] {
   const toks = tokenize(src)
   const items: RecMember[] = []
-  const exportedNames = new Set<string>()
   let pos = 0
   while (toks[pos].t === "nl") pos++
   while (toks[pos].t !== "eof") {
     const r = itemP(toks, pos)
     if (!r.ok) throw new Error(`parse: ${r.msg}`)
-    if (r.v.tag === "field") {
-      if (exportedNames.has(r.v.name))
-        throw new Error(`parse: duplicate exported field '${r.v.name}'`)
-      exportedNames.add(r.v.name)
-    }
+    // Top-level field redefinition is now guard-mediated (a rebind request), so it is
+    // legal syntax; the driver rejects UNGUARDED duplicates (the old accident check
+    // moved there, where guard knowledge lives). Braced records still reject
+    // duplicates at parse time.
     items.push(r.v)
     pos = r.pos
     while (toks[pos].t === "nl" || (toks[pos].t === "punct" && (toks[pos] as any).v === ";")) pos++
