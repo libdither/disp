@@ -13,6 +13,21 @@
 // Tree = ⊤ conceptually (= the nullary telescope `Telescope t`), but kept as the lean direct
 // recognizer: Tree is referenced pervasively (every `: Tree`, MetaShape), so the bigger telescope
 // tree inflates the interned-node/memo footprint enough to tip the suite's cumulative-memo OOM.
+// Hermetic (MODULES.md): prelude + raw earlier siblings. `given Type : Type` is the
+// SELF-forward universe knot: `: Type` annotations above the mid-file `Type :=
+// BehavioralType` compile against the barrel's raw-pass fill of this very file, and
+// the given's annotation checks the fill against itself (R6).
+open use "../prelude.disp"
+open use raw "cut.disp"
+open use raw "engine.disp"
+open use raw "cells.disp"
+open use raw "base.disp"
+open use raw "positive.disp"
+open use raw "generic.disp"
+
+given Type : Type
+given RespondShape : Type
+
 Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
 Frame : Type := Tree

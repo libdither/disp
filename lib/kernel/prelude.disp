@@ -21,10 +21,14 @@ open use raw "base.disp"
 open use raw "positive.disp"
 open use raw "generic.disp"
 open use raw "universe.disp"
-open use "cut.disp"
-open use "engine.disp"
-open use "cells.disp"
-open use "base.disp"
-open use "positive.disp"
-open use "generic.disp"
-open use "universe.disp"
+// The checked pass INSTANTIATES each fragment: the raw pass above built the fill
+// environment (raw fills a fragment's givens with `t`; givens are annotation-only in
+// the kernel), and each fill record below supplies the annotation-forward type names
+// from this frame — the mutual-recursion staging, now explicit (MODULES.md).
+open use "cut.disp" { Type := Type, Tree, Pi, Action, MetaShape, GuardAction, Request }
+open use "engine.disp" { Type := Type, Tree, Pi, Bool, CheckerResult, Intersection, MetaShape, Module, RespondShape, InductiveRespondShape }
+open use "cells.disp" { Type := Type, Tree, Pi, Action, Step }
+open use "base.disp" { Type := Type, Tree, Unit, Bool, Eq }
+open use "positive.disp" { Type := Type, Tree, Ord }
+open use "generic.disp" { Type := Type }
+open use "universe.disp" { Type := Type, RespondShape }

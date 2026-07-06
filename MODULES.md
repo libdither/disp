@@ -1,9 +1,20 @@
 # Modules as telescope-typed functions
 
-Status: design for review (2026-07-06). The type-theory half is validated by
+Status: slice 1 LANDED (2026-07-06) — the given layer (explicit fills,
+instantiation cache, well-typed linking) plus hermetic per-file scoping and
+the kernel fragment headers. The type-theory half was validated first by
 `lib/tests/functor_module_proto.test.disp` (commit 5449c59, 15 pins, zero
-kernel changes). This document maps the elaborator half: surface, semantics,
-driver mechanics, the kernel bootstrap, and a slicing into landable arcs.
+kernel changes); slice 1 pins live in `lib/tests/given.test.disp` and
+`test/modules.test.ts`. Slice 2 (the functor face: readback, unfilled `use`
+as the functor tuple, abstract verification) and slice 3 (dividends) remain.
+
+Landed details that refined the design: in-file forward annotation references
+are ALSO givens, self-filled by the barrel's raw pass (`Eq`/`Unit` in base,
+`Ord` in positive, `Type`/`RespondShape` in universe — the scan is
+`given`-order-sensitive: a given's annotation compiles against earlier givens
+plus itself); elaboration errors now carry the file they arose in (hermetic
+scoping turns a missing import into an unbound-variable error naming the
+forgetful file).
 
 ## The design in one paragraph
 

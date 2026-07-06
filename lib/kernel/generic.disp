@@ -5,6 +5,16 @@
 // fmap/bimap/fmap_n (positional maps over Param markers) with their record-side duals
 // key_over/fmap_rec/bimap_rec.
 
+// Hermetic (MODULES.md): prelude + raw earlier siblings; givens for forward types.
+open use "../prelude.disp"
+open use raw "cut.disp"
+open use raw "engine.disp"
+open use raw "cells.disp"
+open use raw "base.disp"
+open use raw "positive.disp"
+
+given Type : Type
+
 // fold_value (the cell-derived catamorphism — the SHAPE FUNCTOR read straight off the cells). For an
 // inj-tagged value `v = inj tag (a0,…)`: look up the variant's cell telescope, extract each arg by its
 // stored accessor, RECURSE the fold at `rec` cells, apply the algebra case `alg.tag`. ONE generic fold for

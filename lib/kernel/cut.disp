@@ -8,8 +8,24 @@
 // value unchanged; a match table stores real functions that destructure the payload. One
 // mechanism serves records, match, and field access.
 //
-// Loaded by kernel/prelude.disp's barrel; not standalone (annotations forward-ref later
-// fragments via the raw layer). Spec: TYPE_THEORY §2.6. Pins: record.test, match.test.
+// Loaded by kernel/prelude.disp's barrel. Spec: TYPE_THEORY §2.6. Pins: record.test,
+// match.test. Hermetic (MODULES.md): value deps are the explicit prelude open below;
+// the type names its ANNOTATIONS mention live in later fragments (mutual recursion),
+// so they are declared as givens — the barrel fills them from its raw pass (`given
+// Type : Type` is self-typed: the fill binds first and checks against itself, R6).
+// `Pi : Tree` is the one substrate-typed given: arrows in annotations compile
+// through the in-scope Pi, and Pi's own honest annotation needs arrows (circular),
+// so it enters at the substrate type.
+open use "../prelude.disp"
+
+given Type : Type
+given Tree : Type
+given Pi : Tree
+given Action : Type
+given MetaShape : Type
+given GuardAction : Type
+given Request : Type
+
 nil : Tree := t
 cons : Tree -> Tree -> Tree := {h, tl} -> t h tl
 list_const : Tree -> Tree := {x} -> t t x // const x y = x (K): a stored record value ignores the cut payload

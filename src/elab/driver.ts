@@ -162,8 +162,14 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     loadedFiles.add(abs)
     dirStack.push(dirname(abs))
     sourceStack.push(abs)
-    // Push a new scope frame for the used file.
-    stack.push(new Map())
+    // Hermetic scoping (MODULES.md): the used file elaborates against a FRESH
+    // stack — its own definitions, its own opens, its givens — never the use
+    // site's ambient scope. This is what makes the instantiation cache sound
+    // (a module is a pure function of its content and fills), keeps policy
+    // shadowing (`let`/`test`/`default_guard`) file-local, and turns silent
+    // capture into an unbound-variable error naming the file that forgot an
+    // import.
+    const savedFrames = stack.splice(0, stack.length, new Map())
     const fileDecls: Decl[] = []
     // A file that exports nothing of its own (no non-`let` fields — e.g. the kernel
     // barrel, which is pure `open`s) re-exports what it opens; a field-bearing file
@@ -177,14 +183,23 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     let vFormers: { paramApply: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; ok: Tree; tt: Tree } | null = null
     try {
       for (const it of items) {
-        runItem(it, fileDecls, !hasFields, ctx)
+        try {
+          runItem(it, fileDecls, !hasFields, ctx)
+        } catch (err) {
+          // Attach the file to elaboration errors (hermetic scoping makes a missing
+          // import an unbound-variable error naming the file that forgot it).
+          const msg = err instanceof Error ? err.message : String(err)
+          if (msg.startsWith("in ")) throw err // already attributed by a nested use
+          const name = it.tag === "field" ? ` (at '${it.name}')` : it.tag === "open" ? " (at an open)" : ""
+          throw new Error(`in ${abs}${name}: ${msg}`)
+        }
       }
       const pa = lookupEntry("param_apply")?.tree, rec = lookupEntry("Record")?.tree
       const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
       const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("TT")?.tree
       if (pa && rec && mkr && lc && ok && tt) vFormers = { paramApply: pa, Record: rec, mkRecord: mkr, listConst: lc, ok, tt }
     } finally {
-      const fileScope = stack.pop()!
+      stack.splice(0, stack.length, ...savedFrames)
       dirStack.pop()
       sourceStack.pop()
       loadedFiles.delete(abs)

@@ -10,13 +10,13 @@ open use raw "../kernel/base.disp"
 open use raw "../kernel/positive.disp"
 open use raw "../kernel/generic.disp"
 open use raw "../kernel/universe.disp"
-open use "../kernel/cut.disp"
-open use "../kernel/engine.disp"
-open use "../kernel/cells.disp"
-open use "../kernel/base.disp"
-open use "../kernel/positive.disp"
-open use "../kernel/generic.disp"
-open use "../kernel/universe.disp"
+open use "../kernel/cut.disp" { Type := Type, Tree, Pi, Action, MetaShape, GuardAction, Request }
+open use "../kernel/engine.disp" { Type := Type, Tree, Pi, Bool, CheckerResult, Intersection, MetaShape, Module, RespondShape, InductiveRespondShape }
+open use "../kernel/cells.disp" { Type := Type, Tree, Pi, Action, Step }
+open use "../kernel/base.disp" { Type := Type, Tree, Unit, Bool, Eq }
+open use "../kernel/positive.disp" { Type := Type, Tree, Ord }
+open use "../kernel/generic.disp" { Type := Type }
+open use "../kernel/universe.disp" { Type := Type, RespondShape }
 
 // kernel names are in scope and usable
 test param_apply Type Nat = Ok TT
@@ -27,13 +27,13 @@ test typecheck Type (Pi Nat ({_} -> Bool)) = Ok TT
 // `verify` routes through `param_apply` (the checker entry) — NOT raw `typ record`
 // juxtaposition, which would bypass the walker's parametricity guards. This is the kernel
 // typechecking the kernel, under the walker (verify itself is one of the annotated exports).
-let cut_mod := use "../kernel/cut.disp"
-let engine_mod := use "../kernel/engine.disp"
-let cells_mod := use "../kernel/cells.disp"
-let base_mod := use "../kernel/base.disp"
-let positive_mod := use "../kernel/positive.disp"
-let generic_mod := use "../kernel/generic.disp"
-let universe_mod := use "../kernel/universe.disp"
+let cut_mod := use "../kernel/cut.disp" { Type := Type, Tree, Pi, Action, MetaShape, GuardAction, Request }
+let engine_mod := use "../kernel/engine.disp" { Type := Type, Tree, Pi, Bool, CheckerResult, Intersection, MetaShape, Module, RespondShape, InductiveRespondShape }
+let cells_mod := use "../kernel/cells.disp" { Type := Type, Tree, Pi, Action, Step }
+let base_mod := use "../kernel/base.disp" { Type := Type, Tree, Unit, Bool, Eq }
+let positive_mod := use "../kernel/positive.disp" { Type := Type, Tree, Ord }
+let generic_mod := use "../kernel/generic.disp" { Type := Type }
+let universe_mod := use "../kernel/universe.disp" { Type := Type, RespondShape }
 test verify cut_mod = Ok TT
 test verify engine_mod = Ok TT
 test verify cells_mod = Ok TT

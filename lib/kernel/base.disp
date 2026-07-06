@@ -5,6 +5,18 @@
 // machinery); their recursors nat_rec/bool_rec/ord_rec are rec_value instances in generic.disp.
 // The `: Bool`/`: Nat` annotations here forward-ref via the raw-load layer.
 
+// Hermetic (MODULES.md): prelude + raw earlier siblings; givens for forward types.
+open use "../prelude.disp"
+open use raw "cut.disp"
+open use raw "engine.disp"
+open use raw "cells.disp"
+
+given Type : Type
+given Tree : Type
+given Unit : Type
+given Bool : Type
+given Eq : Tree
+
 // eq_J: concrete refl -> base; neutral proof -> stuck elim. The A,x,y binders (the
 // equality endpoints) only fix the dependent type; the body ignores them.
 eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> Eq A x y -> motive y := {A, x, y, motive, base, proof} -> elim

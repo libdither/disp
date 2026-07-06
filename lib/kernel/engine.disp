@@ -17,6 +17,23 @@
 // dependent and still open (typecheck/elim) are noted inline; param_apply/checked carry
 // theirs (the §12.16 checked application).
 
+// Hermetic (MODULES.md): value deps = the prelude + raw cut (values identical raw or
+// checked, verified once at cut's own checked import); annotation-forward type names
+// (later fragments) are givens the barrel fills from its raw pass.
+open use "../prelude.disp"
+open use raw "cut.disp"
+
+given Type : Type
+given Tree : Type
+given Pi : Tree
+given Bool : Type
+given CheckerResult : Type
+given Intersection : Tree
+given MetaShape : Type
+given Module : Type
+given RespondShape : Type
+given InductiveRespondShape : Type
+
 // hyp_reduce: what happens when a neutral is applied to something. The neutral's stored
 // type's respond decides whether the application stays stuck at a new type (Extend) or
 // computes a value (Reduce); the respond receives (recognizer_params, self, frame). This

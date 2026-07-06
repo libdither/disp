@@ -5,6 +5,17 @@
 // Bool/Nat/Ord live here as shape-encoded instances. Pins: positive.test,
 // coproduct_gate.test, path_b_inductive/codata/mutual.test.
 
+// Hermetic (MODULES.md): prelude + raw earlier siblings; givens for forward types.
+open use "../prelude.disp"
+open use raw "cut.disp"
+open use raw "engine.disp"
+open use raw "cells.disp"
+open use raw "base.disp"
+
+given Type : Type
+given Tree : Type
+given Ord : Type
+
 // lookup_arm: resolve an inj tag to its variant arg-list (exported: the generic fold/recursor/
 // traversal in generic.disp dispatch through it too).
 lookup_arm := fix ({self, variants, tag} ->

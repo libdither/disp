@@ -70,6 +70,22 @@ describe("module dependencies (given) rejections", () => {
       .toThrow(/needs a type annotation/)
   }, 120000)
 
+  it("hermetic: a used module cannot see the use site's scope", () => {
+    const p = tmpModule("leaky.disp", `x := secret\n`)
+    expect(() => run(K + `secret := t\nm := use "${p}"\n`))
+      .toThrow(/unresolved free variable secret/)
+  }, 120000)
+
+  it("hermetic: policy shadowing is file-local (a shadowed `let` does not leak into used modules)", () => {
+    const p = tmpModule("polmod.disp", `let hidden := t\nvisible := t t\n`)
+    const shadow = `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := FF; param := FF }\n`
+    // The module elaborates under its OWN pristine `let`: hidden stays private
+    // even though the use site shadowed `let` into an exporting decorator.
+    expect(() => run(K + shadow + `m := use "${p}"\nopen m\ncheck := visible\n`)).not.toThrow()
+    expect(() => run(K + shadow + `m := use "${p}"\nopen m\ncheck := hidden\n`))
+      .toThrow(/unresolved free variable hidden/)
+  }, 120000)
+
   it("a shadowed `given` producing a param request is rejected (dynamic givens)", () => {
     expect(() => run(K
       + `given := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := FF; param := TT }\n`
