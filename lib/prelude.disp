@@ -22,6 +22,7 @@
 // The host's tree_eq fast-path (src/core/tree.ts) returns these exact shapes
 // so a tree-level identity test still matches predicate semantics.
 
+// TODO: rename this to true and false, and think about having alternative bools or doing optimization to make them t and stem(t) as oppoesd to scott-encoded.
 TT : Bool := {m, ct, cf} -> ct
 FF : Bool := {m, ct, cf} -> cf
 
