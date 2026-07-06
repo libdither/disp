@@ -52,6 +52,24 @@ export const moduleCacheBySession = new WeakMap<Session<Tree>, Map<string, Scope
 // shadowing value actually runs on its equations' lhs.
 export const pristineTest = new WeakMap<Session<Tree>, Tree>()
 
+// Session-scoped tree intern ids: a stable small key per distinct handle, used to
+// key module instantiations by their fills (MODULES.md § Hermetic scoping).
+// Hash-consing makes handle identity coincide with tree identity within a session,
+// for object handles (eager TS) and numeric handles (rust backends) alike.
+const treeIntern = new WeakMap<Session<Tree>, { map: Map<unknown, number>; next: number }>()
+export function internTreeId(s: Session<Tree>, t: Tree): number {
+  let st = treeIntern.get(s)
+  if (!st) { st = { map: new Map(), next: 1 }; treeIntern.set(s, st) }
+  let id = st.map.get(t as unknown)
+  if (id == null) { id = st.next++; st.map.set(t as unknown, id) }
+  return id
+}
+
+// Verified instantiations of FILLED modules, per session. Fill intern ids are
+// session-scoped, so a process-global set (verifiedModules, for fill-free files)
+// would collide across sessions.
+export const verifiedFilledBySession = new WeakMap<Session<Tree>, Set<string>>()
+
 // Scope entry: a compiled tree plus optional MODULE export metadata (set by
 // resolveUse, propagated through `let m = use "f"`). Needed because a module's
 // fallback value is a Church-encoded record the runtime cut can't read; for

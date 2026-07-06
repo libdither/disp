@@ -130,13 +130,17 @@ Both    : Tree -> Tree -> GuardAction := inj2 "Both"  // bind AND set the guard
 // is nothing but a decorated declaration — `let` is THIS value, not syntax; the
 // elaborator's fast path mirrors it while it is unbound or pristine, and shadowing
 // it changes what the shadowing scope's `let`s mean); `sig T` is a valueless
-// interface entry; `guard g` fills the proposal slot. All four carry
-// machine-checked annotations (Request is the universe's structural record; a
-// projected field of an abstract request is a stuck Tree, which the field types admit).
-base    : Tree -> Request := {v} -> { value := (t v); ty := t; guard := t; private := FF }
-let     : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT }
-sig     : Type -> Request := {T} -> { value := t; ty := (t T); guard := t; private := FF }
-guard   : Tree -> Request -> Request := {g} -> {req} -> { value := req.value; ty := req.ty; guard := (t g); private := req.private }
+// interface entry; `guard g` fills the proposal slot; `given` marks a MODULE
+// DEPENDENCY (MODULES.md) — a binder introduction the elaborator interprets directly
+// (never consulted with a guard): `given X : T` must be filled at the use site,
+// `given X : T := d` defaults to d. All five carry machine-checked annotations
+// (Request is the universe's structural record; a projected field of an abstract
+// request is a stuck Tree, which the field types admit).
+base    : Tree -> Request := {v} -> { value := (t v); ty := t; guard := t; private := FF; param := FF }
+let     : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT; param := FF }
+sig     : Type -> Request := {T} -> { value := t; ty := (t T); guard := t; private := FF; param := FF }
+guard   : Tree -> Request -> Request := {g} -> {req} -> { value := req.value; ty := req.ty; guard := (t g); private := req.private; param := req.param }
+given   : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT; param := TT }
 // default_guard: the ambient policy for unguarded names — honor the declarer verbatim;
 // a request with nothing to do is refused. Shadowing this name changes the ambient
 // policy for the shadowing scope's unguarded declarations (owned names are unaffected:

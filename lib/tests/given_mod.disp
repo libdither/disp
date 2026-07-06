@@ -1,0 +1,12 @@
+// Fixture module for given.test.disp (MODULES.md slice 1): a module
+// parameterized over its dependencies. `add` must be filled at the use site;
+// `start` defaults. The annotated exports auto-verify per instantiation, and
+// each fill is checked against its given's declared type (well-typed linking).
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+given add : Nat -> Nat -> Nat
+given start : Nat := 0
+
+double : Nat -> Nat := {x} -> add x x
+from_start : Nat -> Nat := {x} -> add start x

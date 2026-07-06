@@ -2,12 +2,12 @@
 // the per-session module cache, deferred end-of-parse auto-verification of typed
 // exports through the kernel, and per-item stats reporting.
 
-import { readFileSync } from "node:fs"
 import { dirname, resolve as pathResolve } from "node:path"
 import { type Tree, defaultSession } from "../eval/eager.js"
 import type { Session, EvalStats } from "../eval/types.js"
 import { parseItems, type Expr, type RecMember } from "../parse.js"
-import { elab, B, verifiedModules, moduleCacheBySession, pristineTest, type ScopeEntry, type CompileSinks } from "./state.js"
+import { elab, B, verifiedModules, moduleCacheBySession, pristineTest, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks } from "./state.js"
+import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modscan.js"
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
 import { extractSignature } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
@@ -28,16 +28,36 @@ const pristineDefaultGuard = new WeakMap<Session<Tree>, Tree>()
 // kernel — the host fallback of identical semantics) or pristine; a scope that
 // shadows `let` routes its lets through the shadowing decorator.
 const pristineLet = new WeakMap<Session<Tree>, Tree>()
+// And the pristine `given` decorator (cut.disp): a `given`-headed declaration is a
+// MODULE DEPENDENCY (MODULES.md) handled by the driver directly while `given` is
+// unbound or pristine; a shadowed `given` routes the slow path, where a request
+// arriving with `param := TT` is rejected (dynamic givens are unsupported — fills
+// resolve against the syntactic pre-scan).
+const pristineGiven = new WeakMap<Session<Tree>, Tree>()
 
 // A `let x := e` declaration is an ordinary decorated declaration whose head is the
 // single identifier `let` (the private-write request decorator).
 const isLetHead = (head: Expr | undefined): boolean => head?.tag === "var" && head.name === "let"
-// Fields that EXPORT: every field except `let`-headed ones (those are private writes).
+// Fields that EXPORT: every field except `let`-headed and `given`-headed ones
+// (private writes and dependency binders respectively).
 const hasExportFields = (items: RecMember[]): boolean =>
-  items.some(it => it.tag === "field" && !isLetHead(it.head))
+  items.some(it => it.tag === "field" && !isLetHead(it.head) && !isGivenHead(it.head))
+
+// Per-file elaboration context: the module dependencies (givens) declared by the
+// file's pre-scan, the fills supplied at the use site, and bookkeeping.
+type FileCtx = {
+  isRoot: boolean
+  raw: boolean
+  abs?: string
+  fills: Map<string, Tree>
+  givens: GivenSpec[]
+  givenSeen: Set<string>
+}
+const rootCtx = (): FileCtx =>
+  ({ isRoot: true, raw: false, fills: new Map(), givens: [], givenSeen: new Set() })
 
 export type ParseItemStats = {
-  kind: "let" | "test" | "open" | "field"
+  kind: "let" | "test" | "open" | "field" | "given"
   name?: string
   testIndex?: number
   sourcePath?: string
@@ -79,7 +99,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // where work-sharing — and, later, parallel reduction — applies. `scheduled` dedups
   // a module across its many `use` sites; the global `verifiedModules` dedups across
   // files. DISP_EAGER_VERIFY=1 forces eager build (an A/B + debug escape hatch).
-  const pendingVerifications: { abs: string; verdict: Tree; okTT: Tree }[] = []
+  // Entries are module-export checks (marked verified in markSet on success) and
+  // given-fill checks (`param_apply T fill`, the well-typed-linking half — no memo:
+  // the instantiation cache already dedups them per fill).
+  const pendingVerifications: { label: string; verdict: Tree; okTT: Tree; markKey?: string; markSet?: Set<string> }[] = []
   const scheduledForVerification = new Set<string>()
   // Lazy verification is OPT-IN (DISP_LAZY_VERIFY=1), eager by default. It is
   // acceptance-equivalent (the verdict is fully forced against `Ok TT`, so confluence
@@ -105,38 +128,56 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   }
   const define = (name: string, entry: ScopeEntry) => stack[stack.length - 1].set(name, entry)
 
-  function resolveUse(path: string, raw = false): ScopeEntry {
+  function resolveUse(path: string, raw = false, fills?: Map<string, Tree>): ScopeEntry {
     const abs = pathResolve(dirStack[dirStack.length - 1], path)
-    // Module cache (per session): return the already-elaborated record if present.
-    // Checked BEFORE cycle detection on purpose — a cached module is fully loaded, so
-    // returning it can't mask a real cycle (a module still mid-load is not yet cached,
-    // so it still trips the loadedFiles guard below).
+    const items = parseFileItems(abs)
+    // Module dependencies (MODULES.md): validate the supplied fills against the
+    // file's declared givens BEFORE elaborating. Fills are explicit; a missing
+    // fill without a default is an error (raw fills missing givens with `t` —
+    // kernel givens are annotation-only, and raw drops annotations).
+    const givens = scanGivens(items)
+    const supplied = fills ?? new Map<string, Tree>()
+    for (const k of supplied.keys())
+      if (!givens.some(g => g.name === k))
+        throw new Error(`use ${path}: unknown fill '${k}' (givens: ${givens.map(g => g.name).join(", ") || "none"})`)
+    if (!raw) {
+      const missing = givens.filter(g => !supplied.has(g.name) && g.dflt == null).map(g => g.name)
+      if (missing.length > 0)
+        throw new Error(`use ${path}: unfilled given(s) ${missing.join(", ")} — supply them: use "${path}" { ${missing.map(n => `${n} := …`).join(", ")} }`)
+    }
+    // Instantiation key: one component per given — explicit fill = session intern
+    // id of the fill tree, default = "d" (per-file constant), raw-missing = "t".
+    const fillKey = givens.map(g =>
+      supplied.has(g.name) ? `#${internTreeId(elab.cs, supplied.get(g.name)!)}` : (g.dflt != null && !raw ? "d" : "t")).join(",")
+    // Module cache (per session): return the already-elaborated instantiation if
+    // present. Checked BEFORE cycle detection on purpose — a cached module is fully
+    // loaded, so returning it can't mask a real cycle (a module still mid-load is
+    // not yet cached, so it still trips the loadedFiles guard below).
     let modCache = moduleCacheBySession.get(elab.cs)
     if (!modCache) { modCache = new Map(); moduleCacheBySession.set(elab.cs, modCache) }
-    const cacheKey = raw ? `${abs}\0raw` : abs
+    const cacheKey = `${abs}\0${raw ? "raw" : ""}\0${fillKey}`
     const hit = modCache.get(cacheKey)
     if (hit) return hit
     if (loadedFiles.has(abs)) throw new Error(`use: circular dependency on ${abs}`)
     loadedFiles.add(abs)
-    const fileSrc = readFileSync(abs, "utf-8")
     dirStack.push(dirname(abs))
     sourceStack.push(abs)
     // Push a new scope frame for the used file.
     stack.push(new Map())
     const fileDecls: Decl[] = []
-    const items = parseItems(fileSrc)
     // A file that exports nothing of its own (no non-`let` fields — e.g. the kernel
     // barrel, which is pure `open`s) re-exports what it opens; a field-bearing file
     // exports only its fields. (The old legacy mode where top-level lets exported is
     // gone: `let` marks the write private everywhere.)
     const hasFields = hasExportFields(items)
+    const ctx: FileCtx = { isRoot: false, raw, abs, fills: supplied, givens, givenSeen: new Set() }
     // Kernel formers needed to auto-verify this module, captured while its own scope
     // is still on the stack (popped in `finally`). Null if the kernel isn't in scope
     // (a file with no checkable annotations) — verification is then skipped.
     let vFormers: { paramApply: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; ok: Tree; tt: Tree } | null = null
     try {
       for (const it of items) {
-        runItem(it, fileDecls, !hasFields, raw)
+        runItem(it, fileDecls, !hasFields, ctx)
       }
       const pa = lookupEntry("param_apply")?.tree, rec = lookupEntry("Record")?.tree
       const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
@@ -167,7 +208,17 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // the walker (param_apply), so the parametricity guards apply. Skipped for raw
     // imports (annotations dropped) and for files without the kernel in scope (no
     // checkable annotations). The scope is already popped, so a throw here is clean.
-    if (!raw && vFormers && !verifiedModules.has(abs) && !scheduledForVerification.has(abs)) {
+    // A FILLED instantiation verifies per fill; its memo is per session (fill intern
+    // ids are session-scoped), while fill-free files keep the process-global memo.
+    const filled = givens.length > 0
+    const verKey = filled ? `${abs}\0${fillKey}` : abs
+    let verSet: Set<string>
+    if (filled) {
+      let s = verifiedFilledBySession.get(elab.cs)
+      if (!s) { s = new Set(); verifiedFilledBySession.set(elab.cs, s) }
+      verSet = s
+    } else verSet = verifiedModules
+    if (!raw && vFormers && !verSet.has(verKey) && !scheduledForVerification.has(verKey)) {
       const typEntries: Tree[] = []
       for (let i = 0; i < fieldNames.length; i++)
         if (fieldTypes[i]) typEntries.push(elab.cs.fork(stringToTree(fieldNames[i]), fieldTypes[i]!))
@@ -181,8 +232,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         // whole-record form; the parallelism/laziness transfers to the final force.
         const verdict = vApply(vApply(vFormers.paramApply, typVal), recordVal)
         const okTT = elab.cs.apply(vFormers.ok, vFormers.tt, B())
-        pendingVerifications.push({ abs, verdict, okTT })
-        scheduledForVerification.add(abs)
+        pendingVerifications.push({ label: `module ${abs}`, verdict, okTT, markKey: verKey, markSet: verSet })
+        scheduledForVerification.add(verKey)
       }
     }
     // Church-encode: \sel. sel v1 v2 ... vn
@@ -203,7 +254,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     return record
   }
 
-  function recordItem(kind: "let" | "test" | "open" | "field", name?: string, testIndex?: number): void {
+  function recordItem(kind: "let" | "test" | "open" | "field" | "given", name?: string, testIndex?: number): void {
     options.onItem?.({
       kind,
       name,
@@ -353,10 +404,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       throw new Error(`declaration of '${name}': guarded declarations need the kernel prelude in scope`)
     const opt = (x: Tree | null): Tree => (x == null ? S.leaf() : S.stem(x))
     const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => S.fork(h, acc), S.leaf())
-    // The base request is public (`private := FF`), exactly `base v` in cut.disp;
-    // privacy is the head's job (the `let` decorator sets it).
-    const names = consList(["value", "ty", "guard", "private"].map(stringToTree))
-    const payload = consList([opt(valueTree), opt(typeTree), S.leaf(), ff].map(v => S.apply(lc, v, B())))
+    // The base request is public and non-param (`private := FF; param := FF`),
+    // exactly `base v` in cut.disp; privacy and param are the head's job (the
+    // `let` and `given` decorators set them).
+    const names = consList(["value", "ty", "guard", "private", "param"].map(stringToTree))
+    const payload = consList([opt(valueTree), opt(typeTree), S.leaf(), ff, ff].map(v => S.apply(lc, v, B())))
     let request = S.apply(S.apply(mkr, names, B()), payload, B())
     if (headE) {
       const headTree = compileExpr(headE, lookupEntry, resolveUse, sinks)
@@ -366,6 +418,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // `let` may set it), not off the guard's answer.
     const privTree = S.apply(request, accTree("private"), B())
     const isPrivate = S.equal!(privTree, tt)
+    // A param request arriving through a CUSTOM decorator: dynamic givens are
+    // unsupported — fills resolve against the syntactic pre-scan (modscan.ts).
+    const paramTree = S.apply(request, accTree("param"), B())
+    if (S.equal!(paramTree, tt))
+      throw new Error(`declaration of '${name}': the decorator produced a param (given) request — dynamic givens are unsupported; declare with a literal 'given' head`)
     const oldOpt = existing?.tree != null ? S.stem(existing.tree) : S.leaf()
     const answer = S.apply(S.apply(g, oldOpt, B()), request, B())
     const top = S.classify!(answer)
@@ -407,10 +464,65 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     }
   }
 
-  function runItem(it: RecMember, target: Decl[], isExport: boolean, raw = false): void {
+  // handleGiven: a module dependency declaration (MODULES.md). Not a bind request —
+  // a binder introduction the driver interprets directly: bind the fill (explicit
+  // beats default; raw fills missing ones with `t`), and schedule the well-typed-
+  // linking check `param_apply T fill` into the deferred batch (skipped raw, and
+  // gradual when the kernel is not in this module's scope, like annotations).
+  function handleGiven(it: Extract<RecMember, { tag: "field" }>, sinks: CompileSinks, ctx: FileCtx): void {
+    if (ctx.isRoot)
+      throw new Error(`given '${it.name}': the root module cannot declare dependencies (givens are filled at a use site)`)
+    if (ctx.givenSeen.has(it.name))
+      throw new Error(`given '${it.name}': duplicate dependency`)
+    ctx.givenSeen.add(it.name)
+    if (stack[stack.length - 1].has(it.name))
+      throw new Error(`given '${it.name}': the name is already bound in this module`)
+    if (lookupEntry(it.name)?.guard)
+      throw new Error(`given '${it.name}': collides with a guarded name`)
+    if (it.type == null && !ctx.raw)
+      throw new Error(`given '${it.name}': a dependency needs a type annotation`)
+    let fill = ctx.fills.get(it.name)
+    if (fill == null && it.value != null && !ctx.raw)
+      fill = compileExpr(it.value, lookupEntry, resolveUse, sinks) // the default, in module scope
+    if (fill == null) {
+      if (!ctx.raw) throw new Error(`given '${it.name}': unfilled`) // pre-checked in resolveUse; defensive
+      fill = elab.cs.leaf()
+    }
+    // The fill binds BEFORE the annotation compiles, so a given's type may reference
+    // the given itself (the self-typed universe dependency `given Type : Type`
+    // checks the fill against itself, which is R6) as well as earlier givens.
+    define(it.name, { tree: fill })
+    const typeTree = !ctx.raw && it.type != null ? compileType(it.type, lookupEntry, resolveUse) : null
+    if (typeTree != null) define(it.name, { tree: fill, type: typeTree })
+    if (!ctx.raw && typeTree != null) {
+      const pa = lookupEntry("param_apply")?.tree, ok = lookupEntry("Ok")?.tree, tt = lookupEntry("TT")?.tree
+      if (pa && ok && tt) {
+        pendingVerifications.push({
+          label: `given '${it.name}' of ${ctx.abs}`,
+          verdict: vApply(vApply(pa, typeTree), fill),
+          okTT: elab.cs.apply(ok, tt, B()),
+        })
+      }
+    }
+  }
+
+  function runItem(it: RecMember, target: Decl[], isExport: boolean, ctx: FileCtx): void {
     const sinks = makeSinks(target)
+    const raw = ctx.raw
     switch (it.tag) {
       case "field": {
+        // A `given`-headed declaration is a module dependency, interpreted by the
+        // driver while `given` is unbound or pristine; a shadowed `given` falls
+        // through to the request machinery, where a param request is rejected.
+        if (isGivenHead(it.head)) {
+          const g = lookupEntry("given")?.tree
+          const pg = pristineGiven.get(elab.cs)
+          if (g == null || (pg != null && elab.cs.equal!(g, pg))) {
+            handleGiven(it, sinks, ctx)
+            recordItem("given", it.name)
+            return
+          }
+        }
         // `let x := e` arrives here as a decorated declaration (head = `let`);
         // the tag "let" member only survives inside braces (the lexical form).
         const r = declareBinding(it.name, it.type, it.value, it.head, sinks, raw)
@@ -434,6 +546,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           pristineLet.set(elab.cs, r.tree)
         if (it.name === "test" && r.tree != null && !pristineTest.has(elab.cs))
           pristineTest.set(elab.cs, r.tree)
+        if (it.name === "given" && r.tree != null && !pristineGiven.has(elab.cs))
+          pristineGiven.set(elab.cs, r.tree)
         recordItem(isLetHead(it.head) ? "let" : "field", it.name)
         return
       }
@@ -484,16 +598,18 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
 
   const items = parseItems(src)
   const hasFields = hasExportFields(items)
-  for (const it of items) runItem(it, decls, !hasFields)
-  // Force ALL deferred module verifications at once. On a lazy backend this is where
-  // the kernel verification walks actually run — one end-of-parse batch over a shared
-  // hash-consed arena, so identical sub-checks across modules share work (and a future
-  // parallel backend can fan the independent verdicts out). `equal` forces each verdict
-  // to NF and compares to `Ok TT` — a closed force, so the result equals eager's.
-  for (const { abs, verdict, okTT } of pendingVerifications) {
-    if (!elab.cs.equal!(verdict, okTT))
-      throw new Error(`type check failed for module ${abs}: an export does not inhabit its declared type (verify returned non-(Ok TT))`)
-    verifiedModules.add(abs)
+  const rc = rootCtx()
+  for (const it of items) runItem(it, decls, !hasFields, rc)
+  // Force ALL deferred verifications at once (module exports + given fills). On a
+  // lazy backend this is where the kernel verification walks actually run — one
+  // end-of-parse batch over a shared hash-consed arena, so identical sub-checks
+  // across modules share work (and a future parallel backend can fan the independent
+  // verdicts out). `equal` forces each verdict to NF and compares to `Ok TT` — a
+  // closed force, so the result equals eager's.
+  for (const p of pendingVerifications) {
+    if (!elab.cs.equal!(p.verdict, p.okTT))
+      throw new Error(`type check failed for ${p.label}: the value does not inhabit its declared type (returned non-(Ok TT))`)
+    if (p.markKey && p.markSet) p.markSet.add(p.markKey)
   }
   return decls
 }

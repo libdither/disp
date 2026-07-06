@@ -65,6 +65,12 @@ test pvt = 3
 test typecheck Request (guard freeze (base zero)) = Ok TT
 test typecheck Request (let (base zero)) = Ok TT
 test typecheck Request (sig Nat) = Ok TT
+test typecheck Request (given (sig Nat)) = Ok TT
+
+// ── `given` marks a module dependency (MODULES.md): param rides the request ──
+test (given (base zero)).param = TT
+test (base zero).param = FF
+test (let (base zero)).param = FF
 
 // ── the equation item and its marker (SYNTAX.typ § Tests): `test` is the prelude
 // IDENTITY, an ordinary value — `test e` ≡ `e` — so the marker is style, not syntax.

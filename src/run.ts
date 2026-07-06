@@ -116,7 +116,9 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
         const triage = (s.triageLeafRules + s.triageStemRules + s.triageForkRules) -
           (prev.triageLeafRules + prev.triageStemRules + prev.triageForkRules)
         const label = item.kind === "let" ? `let ${item.name}` :
-          item.kind === "test" ? `test ${item.testIndex}` : "open"
+          item.kind === "test" ? `test ${item.testIndex}` :
+          item.kind === "given" ? `given ${item.name}` :
+          item.kind === "field" ? `field ${item.name}` : "open"
         const source = item.sourcePath ? item.sourcePath.replace(process.cwd() + "/", "") : "<anonymous>"
         deltas.push(
           `item: ${source} ${label} steps=${s.steps - prev.steps}, calls=${s.calls - prev.calls}, ` +

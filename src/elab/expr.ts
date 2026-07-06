@@ -10,11 +10,64 @@ import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars 
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 
+// moduleTupleCir: a resolved file's module tuple { record, typ } (§2.6 records):
+//   record = a product of the file's exported values, keyed by name;
+//   typ    = `Record [(name, declaredType)…]` over the *annotated* exports.
+// Verification goes through the kernel's `verify` helper —
+// `verify (use "f")` = `param_apply (use "f").typ (use "f").record` — so it
+// runs UNDER the walker (parametricity guards apply to every export). It must
+// NOT be the raw juxtaposition `(use "f").typ (use "f").record`, which bypasses
+// the walker and would let a non-parametric export slip through. (Gradual:
+// unannotated exports are absent from `typ`, so skipped.) Falls back to the bare
+// value record when the cut/Record formers aren't in scope (e.g. files that don't
+// open the kernel — they carry no checkable annotations anyway). `open use` is
+// unaffected: it splices the export metadata, not this value. `use raw "f"` skips
+// the file's annotations (no `typ`); it falls through to the bare value record
+// since `entry.fieldTypes` are all null.
+function moduleTupleCir(entry: ScopeEntry, lookupEntry: (name: string) => ScopeEntry | undefined): Cir {
+  const make_record = lookupEntry("make_record")?.tree
+  const list_const = lookupEntry("list_const")?.tree
+  const Record = lookupEntry("Record")?.tree
+  if (!make_record || !list_const || !Record || !entry.fields || !entry.fieldTrees)
+    return { tag: "lit", t: entry.tree! }
+  const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => elab.cs.fork(h, acc), elab.cs.leaf())
+  const constWrap = (v: Tree): Tree => elab.cs.apply(list_const, v, B())
+  const mkRecord = (names: string[], vals: Tree[]): Tree =>
+    elab.cs.apply(elab.cs.apply(make_record, consList(names.map(stringToTree)), B()), consList(vals.map(constWrap)), B())
+  const names = entry.fields, vals = entry.fieldTrees, types = entry.fieldTypes ?? []
+  const valuesRecord = mkRecord(names, vals)
+  // typ = Record [ pair name type ]  over annotated exports (pair = fork(name,type))
+  const typEntries: Tree[] = []
+  for (let i = 0; i < names.length; i++)
+    if (types[i]) typEntries.push(elab.cs.fork(stringToTree(names[i]), types[i]!))
+  const typ = elab.cs.apply(Record, consList(typEntries), B())
+  return { tag: "lit", t: mkRecord(["record", "typ"], [valuesRecord, typ]) }
+}
+
+// compileFills: the record literal of a module instantiation `use "f" { … }` —
+// plain `name := value` fields (puns included), each compiled in the CURRENT
+// scope. Members/trailing (a block in fill position) are rejected.
+function compileFills(
+  rv: Extract<Expr, { tag: "recValue" }>,
+  lookupEntry: (name: string) => ScopeEntry | undefined,
+  resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
+  sinks?: CompileSinks,
+): Map<string, Tree> {
+  if ((rv.members && rv.members.some(m => m.tag !== "field")) || rv.trailing != null)
+    throw new Error("use fills: the fill record must be plain `name := value` fields")
+  const fills = new Map<string, Tree>()
+  for (const f of rv.fields) {
+    if (f.value == null) throw new Error(`use fills: fill '${f.name}' has no value`)
+    fills.set(f.name, compileExpr(f.value, lookupEntry, resolveUse, sinks))
+  }
+  return fills
+}
+
 // Expr → Cir, with scope lookup and use-resolution.
 export function exprToCir(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
+  resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
   sinks?: CompileSinks,
 ): Cir {
   const lookup = (name: string) => lookupEntry(name)?.tree
@@ -37,6 +90,14 @@ export function exprToCir(
     }
     case "hole": throw new Error("hole '_' cannot appear in untyped compilation")
     case "app": {
+      // Module instantiation: `use "f" { fills }` — a record literal applied
+      // directly to a use-atom supplies the file's declared givens (MODULES.md).
+      // Detected structurally; resolveUse validates the fills against the
+      // pre-scanned given list (unknown names / missing fills error there).
+      if (e.f.tag === "use" && e.x.tag === "recValue") {
+        const entry = resolveUse(e.f.path, e.f.raw, compileFills(e.x, lookupEntry, resolveUse, sinks))
+        return moduleTupleCir(entry, lookupEntry)
+      }
       // S2: rewrite `select_lazy (\_ -> A) (\_ -> B) cond [args...]` to
       // `if cond then A else B [args...]` so the recursive branch
       // bodies don't hit cirToTree's eager K-body reduction. See
@@ -234,38 +295,12 @@ export function exprToCir(
       return result
     }
     case "use": {
-      // A file resolves to a module tuple { record, typ } (§2.6 records):
-      //   record = a product of the file's exported values, keyed by name;
-      //   typ    = `Record [(name, declaredType)…]` over the *annotated* exports.
-      // Verification goes through the kernel's `verify` helper —
-      // `verify (use "f")` = `param_apply (use "f").typ (use "f").record` — so it
-      // runs UNDER the walker (parametricity guards apply to every export). It must
-      // NOT be the raw juxtaposition `(use "f").typ (use "f").record`, which bypasses
-      // the walker and would let a non-parametric export slip through. (Gradual:
-      // unannotated exports are absent from `typ`, so skipped.) Falls back to the bare value record when
-      // the cut/Record formers aren't in scope (e.g. files that don't open the
-      // kernel — they carry no checkable annotations anyway). `open use` is
-      // unaffected: it splices the export metadata, not this value.
-      // `use raw "f"` skips the file's annotations (no `typ`); it falls through to
-      // the bare value record below since `entry.fieldTypes` are all null.
+      // A file resolves to a module tuple { record, typ } — see moduleTupleCir.
+      // A file with declared givens must be filled (`use "f" { … }`, the app case
+      // above); resolveUse errors here listing them (defaults permitting, a bare
+      // use instantiates with the defaults).
       const entry = resolveUse(e.path, e.raw)
-      const make_record = lookupEntry("make_record")?.tree
-      const list_const = lookupEntry("list_const")?.tree
-      const Record = lookupEntry("Record")?.tree
-      if (!make_record || !list_const || !Record || !entry.fields || !entry.fieldTrees)
-        return { tag: "lit", t: entry.tree! }
-      const consList = (items: Tree[]): Tree => items.reduceRight<Tree>((acc, h) => elab.cs.fork(h, acc), elab.cs.leaf())
-      const constWrap = (v: Tree): Tree => elab.cs.apply(list_const, v, B())
-      const mkRecord = (names: string[], vals: Tree[]): Tree =>
-        elab.cs.apply(elab.cs.apply(make_record, consList(names.map(stringToTree)), B()), consList(vals.map(constWrap)), B())
-      const names = entry.fields, vals = entry.fieldTrees, types = entry.fieldTypes ?? []
-      const valuesRecord = mkRecord(names, vals)
-      // typ = Record [ pair name type ]  over annotated exports (pair = fork(name,type))
-      const typEntries: Tree[] = []
-      for (let i = 0; i < names.length; i++)
-        if (types[i]) typEntries.push(elab.cs.fork(stringToTree(names[i]), types[i]!))
-      const typ = elab.cs.apply(Record, consList(typEntries), B())
-      return { tag: "lit", t: mkRecord(["record", "typ"], [valuesRecord, typ]) }
+      return moduleTupleCir(entry, lookupEntry)
     }
     case "proj": {
       // r.x is the §2.6 cut `r (acc x)`. When the target is a statically-known
@@ -416,7 +451,7 @@ export function exprToCir(
 export function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
+  resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
 ): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[] } | undefined {
   // fieldGuards rides along so `open` can propagate a module export's installed
   // guard (dropping it here silently un-guarded opened names).
@@ -428,13 +463,20 @@ export function resolveExprRecord(
     const entry = resolveUse(e.path, e.raw)
     return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards } : undefined
   }
+  // A filled instantiation `use "f" { … }` resolves like a plain use — this is what
+  // lets `open use "f" { … }` and module-metadata propagation see the instantiated
+  // export list.
+  if (e.tag === "app" && e.f.tag === "use" && e.x.tag === "recValue") {
+    const entry = resolveUse(e.f.path, e.f.raw, compileFills(e.x, lookupEntry, resolveUse))
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards } : undefined
+  }
   return undefined
 }
 
 export function compileExpr(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
+  resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
   sinks?: CompileSinks,
 ): Tree {
   return cirToTree(eliminateLams(exprToCir(e, lookupEntry, resolveUse, sinks)))
@@ -472,7 +514,7 @@ export function isUniverseTree(t: Tree, Type: Tree): boolean {
 export function compileType(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-  resolveUse: (path: string, raw?: boolean) => ScopeEntry,
+  resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
 ): Tree {
   const desugared = lookupEntry("Pi")?.tree ? binderToPi(e) : e
   return compileExpr(desugared, lookupEntry, resolveUse)

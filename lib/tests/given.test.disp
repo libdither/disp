@@ -1,0 +1,33 @@
+// The given layer end to end (MODULES.md slice 1): explicit fills, defaults,
+// per-fill instantiations sharing what they can, fill verification. The
+// rejections (missing fill, unknown fill, ill-typed fill, root-level given)
+// are LOAD failures, pinned host-side in test/modules.test.ts.
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"   // add
+
+// ── explicit fill; the default covers `start` ──
+m := use "given_mod.disp" { add := add }
+test m.record.double 3 = 6
+test m.record.from_start 5 = 5
+
+// ── opening an instantiation splices its exports ──
+open use "given_mod.disp" { add := add }
+test double 4 = 8
+
+// ── overriding the default is a DIFFERENT instantiation ──
+m2 := use "given_mod.disp" { add := add, start := 10 }
+test m2.record.from_start 5 = 15
+
+// ── same fills = the same instantiation (cache identity) ──
+m3 := use "given_mod.disp" { add := add }
+test tree_eq m.record m3.record = TT
+
+// ── different fills differ exactly where the fill matters: from_start sees
+// start, double does not (hash-cons sharing across instantiations) ──
+test tree_eq m.record.from_start m2.record.from_start = FF
+test tree_eq m.record.double m2.record.double = TT
+
+// ── linking semantics: a different (well-typed) fill changes the exports ──
+m4 := use "given_mod.disp" { add := ({x} -> {y} -> x) }
+test m4.record.double 3 = 3
