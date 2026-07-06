@@ -72,14 +72,19 @@ Record spread (`{ ..ctx }`) subsumes this later (planned alongside the synth
 work, independent of this arc). Ordinary files have no givens, so `open use`
 stays fill-free everywhere outside the kernel and future functor libraries.
 
-`use raw` is not an exception to explicitness: raw binds NOTHING for an
-unfilled, undefaulted given. The name is simply absent from the module's
-scope; nothing implicit flows, and a value referencing it errors as unbound,
-attributed to the file. This is what lets the kernel fragments raw-open
-earlier siblings bare: their givens are annotation-only, raw drops
-annotations, so the absent names are never referenced. Explicit fills compose
-with raw, and defaults compile under raw too (defaults are values; raw drops
-only the annotation layer).
+A given-bearing module may not be used without a context AT ALL, raw
+included: bare `use "f"` on it is an error, and the empty context is passed
+explicitly as `use "f" {}`. So "this module takes context" is always visible
+at the use site, while the empty record avoids restating the given list
+(which lives one screen away in the module's own header and would drift).
+Under a checked `{}` the defaults apply and a missing-without-default given
+still errors; under a raw `{}` an unfilled given binds NOTHING. The name is
+simply absent from the module's scope; nothing implicit flows, and a value
+referencing it errors as unbound, attributed to the file. This is what lets
+the kernel fragments raw-open earlier siblings with `{}`: their givens are
+annotation-only, raw drops annotations, so the absent names are never
+referenced. Explicit fills compose with raw, and defaults compile under raw
+too (defaults are values; raw drops only the annotation layer).
 
 A RECORD-typed given is one telescope-typed dependency and needs no new
 machinery: `given ctx : { add : Nat -> Nat -> Nat, start : Nat }` followed by

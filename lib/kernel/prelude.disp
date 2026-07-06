@@ -14,13 +14,13 @@ open use "../prelude.disp"
 // Deferred-typecheck bootstrap: `use raw` loads each fragment's VALUES without processing
 // annotations, so forward/mutual annotation refs resolve. Raw-load ALL before checking ANY
 // (so every fragment's forward refs see the full raw surface); checked re-imports then auto-verify.
-open use raw "cut.disp"
-open use raw "engine.disp"
-open use raw "cells.disp"
-open use raw "base.disp"
-open use raw "positive.disp"
-open use raw "generic.disp"
-open use raw "universe.disp"
+open use raw "cut.disp" {}
+open use raw "engine.disp" {}
+open use raw "cells.disp" {}
+open use raw "base.disp" {}
+open use raw "positive.disp" {}
+open use raw "generic.disp" {}
+open use raw "universe.disp" {}
 // The checked pass INSTANTIATES each fragment: the raw pass above built the fill
 // environment (raw binds NO fill for a given: the name is absent from scope, which is
 // safe because kernel givens are annotation-only and raw drops annotations), and each

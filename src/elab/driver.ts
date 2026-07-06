@@ -136,6 +136,12 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // fill without a default is an error (raw binds nothing for a missing given —
     // the name is absent from scope; kernel givens are annotation-only and raw drops annotations).
     const givens = scanGivens(items)
+    // A given-bearing module may not be used WITHOUT a context: even the empty
+    // context is passed explicitly (`use "f" {}` — defaults apply checked; raw
+    // leaves unfilled givens out of scope). Bare use is reserved for dep-free
+    // modules, so "this module takes context" is always visible at the use site.
+    if (givens.length > 0 && fills === undefined)
+      throw new Error(`use ${path}: this module declares given(s) ${givens.map(g => g.name).join(", ")} — pass a context explicitly: use ${JSON.stringify(path)} { … } ({} passes the empty context)`)
     const supplied = fills ?? new Map<string, Tree>()
     for (const k of supplied.keys())
       if (!givens.some(g => g.name === k))

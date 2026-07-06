@@ -21,7 +21,7 @@
 // checked, verified once at cut's own checked import); annotation-forward type names
 // (later fragments) are givens the barrel fills from its raw pass.
 open use "../prelude.disp"
-open use raw "cut.disp"
+open use raw "cut.disp" {}
 
 given Type : Type
 given Tree : Type

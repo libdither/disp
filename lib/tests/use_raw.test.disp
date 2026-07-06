@@ -3,13 +3,13 @@
 // re-import produces value-identical trees (the second `open` is a no-op iff every name
 // matches the raw one — the open conflict check enforces it).
 open use "../prelude.disp"
-open use raw "../kernel/cut.disp"
-open use raw "../kernel/engine.disp"
-open use raw "../kernel/cells.disp"
-open use raw "../kernel/base.disp"
-open use raw "../kernel/positive.disp"
-open use raw "../kernel/generic.disp"
-open use raw "../kernel/universe.disp"
+open use raw "../kernel/cut.disp" {}
+open use raw "../kernel/engine.disp" {}
+open use raw "../kernel/cells.disp" {}
+open use raw "../kernel/base.disp" {}
+open use raw "../kernel/positive.disp" {}
+open use raw "../kernel/generic.disp" {}
+open use raw "../kernel/universe.disp" {}
 open use "../kernel/cut.disp" { Type := Type, Tree, Pi, Action, MetaShape, GuardAction, Request }
 open use "../kernel/engine.disp" { Type := Type, Tree, Pi, Bool, CheckerResult, Intersection, MetaShape, Module, RespondShape, InductiveRespondShape }
 open use "../kernel/cells.disp" { Type := Type, Tree, Pi, Action, Step }

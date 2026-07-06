@@ -7,10 +7,10 @@
 
 // Hermetic (MODULES.md): prelude + raw earlier siblings; givens for forward types.
 open use "../prelude.disp"
-open use raw "cut.disp"
-open use raw "engine.disp"
-open use raw "cells.disp"
-open use raw "base.disp"
+open use raw "cut.disp" {}
+open use raw "engine.disp" {}
+open use raw "cells.disp" {}
+open use raw "base.disp" {}
 
 given Type : Type
 given Tree : Type

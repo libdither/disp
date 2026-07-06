@@ -33,9 +33,13 @@ function tmpModule(name: string, body: string): string {
 }
 
 describe("module dependencies (given) rejections", () => {
-  it("a bare use of a given-bearing module errors, listing the givens", () => {
+  it("a bare use of a given-bearing module errors: context must be passed explicitly", () => {
+    // Even the empty context is explicit (`use "f" {}`); bare use is reserved
+    // for dep-free modules, raw included.
     expect(() => run(K + `m := use "given_mod.disp"\n`))
-      .toThrow(/unfilled given\(s\) add/)
+      .toThrow(/declares given\(s\) add.*pass a context explicitly/)
+    expect(() => run(K + `open use raw "given_mod.disp"\n`))
+      .toThrow(/declares given\(s\) add.*pass a context explicitly/)
   }, 300000)
 
   it("an empty fill record still misses the required given", () => {
@@ -71,14 +75,14 @@ describe("module dependencies (given) rejections", () => {
   }, 120000)
 
   it("raw binds NOTHING for an unfilled given: values referencing it error as unbound", () => {
-    // Nothing implicit flows under `use raw` — an unfilled, undefaulted given is
-    // simply absent from the module's scope.
+    // Nothing implicit flows under `use raw {}` — an unfilled, undefaulted given
+    // is simply absent from the module's scope.
     const p = tmpModule("rawval.disp", `given f : Nat -> Nat\napplied := f zero\n`)
-    expect(() => run(K + `open use raw "${p}"\n`))
+    expect(() => run(K + `open use raw "${p}" {}\n`))
       .toThrow(/unresolved free variable f/)
     // annotation-only givens load fine raw (annotations drop — the kernel bootstrap)
     const q = tmpModule("rawann.disp", `given T : Type\nx : T := zero\n`)
-    expect(() => run(K + `open use raw "${q}"\n`)).not.toThrow()
+    expect(() => run(K + `open use raw "${q}" {}\n`)).not.toThrow()
     // and an explicit fill under raw binds as usual
     expect(() => run(K + `open use raw "${p}" { f := succ }\ncheck := applied\n`)).not.toThrow()
   }, 120000)

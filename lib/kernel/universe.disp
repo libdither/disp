@@ -18,12 +18,12 @@
 // BehavioralType` compile against the barrel's raw-pass fill of this very file, and
 // the given's annotation checks the fill against itself (R6).
 open use "../prelude.disp"
-open use raw "cut.disp"
-open use raw "engine.disp"
-open use raw "cells.disp"
-open use raw "base.disp"
-open use raw "positive.disp"
-open use raw "generic.disp"
+open use raw "cut.disp" {}
+open use raw "engine.disp" {}
+open use raw "cells.disp" {}
+open use raw "base.disp" {}
+open use raw "positive.disp" {}
+open use raw "generic.disp" {}
 
 given Type : Type
 given RespondShape : Type
