@@ -15,32 +15,32 @@ test typecheck Type zero = Ok FF // not a type
 test typecheck Type TT = Ok FF
 
 // ---- predicate-side H-rule (a Type-hyp used as a predicate) ----
-let A_hyp = make_hyp Type 0
-let B_hyp = make_hyp Type 1
-let x_of_A = make_hyp A_hyp t
+let A_hyp := make_hyp Type 0
+let B_hyp := make_hyp Type 1
+let x_of_A := make_hyp A_hyp t
 test param_apply A_hyp x_of_A = Ok TT // x:A_hyp inhabits the predicate A_hyp
 test param_apply B_hyp x_of_A = Ok FF // distinct Type-hyp
 test param_apply A_hyp zero = Ok FF // closed value: not a neutral
 
 // ---- polymorphic Pi: the polymorphic identity inhabits Pi Type (A -> A -> A) ----
-let polyid = {A} -> {x} -> x
+let polyid := {A} -> {x} -> x
 test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) polyid = Ok TT
 // a non-identity polymorphic body does NOT inhabit it (can't produce an A from nothing):
-let polywrong = {A} -> {x} -> zero
+let polywrong := {A} -> {x} -> zero
 test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) polywrong = Ok FF
 
 // ---- inductive recursors via elim ----
-let double = nat_rec ({_} -> Nat) zero ({n, rec} -> succ (succ rec))
+let double := nat_rec ({_} -> Nat) zero ({n, rec} -> succ (succ rec))
 test double zero = zero
 test double (succ zero) = succ (succ zero)
 test double (succ (succ zero)) = succ (succ (succ (succ zero)))
 
-let neg = bool_rec ({_} -> Bool) FF TT // not: TT->FF, FF->TT
+let neg := bool_rec ({_} -> Bool) FF TT // not: TT->FF, FF->TT
 test neg TT = FF
 test neg FF = TT
 
 // recursor on a neutral target -> stuck elimination stored at motive(self)
-let hN = make_hyp Nat 0
+let hN := make_hyp Nat 0
 test is_neutral (nat_rec ({_} -> Bool) TT ({n, rec} -> FF) hN) = TT
 
 // ---- first-order types ----
@@ -60,15 +60,15 @@ test param_apply Ord TT = Ok FF
 
 // ---- Coproduct / Record / the cut (§2.6), using [..] array-literal sugar ----
 // Tags are string names, so `match`'s arm spellings agree with `inj`/Coproduct.
-let tag_a = "tag_a"
-let tag_b = "tag_b"
+let tag_a := "tag_a"
+let tag_b := "tag_b"
 
 // array literal desugars to the cons-chain (cons = `t a b`, nil = leaf)
 test [zero, succ zero] = cons zero (cons (succ zero) nil)
 test [] = nil
 
 // Coproduct [(a, [Nat]), (b, [Bool])] — each variant carries its arg list (here single-arg).
-let MySum = Coproduct [pair tag_a [Nat], pair tag_b [Bool]]
+let MySum := Coproduct [pair tag_a [Nat], pair tag_b [Bool]]
 test param_apply MySum (inj tag_a zero) = Ok TT
 test param_apply MySum (inj tag_b TT) = Ok TT
 test param_apply MySum (inj tag_a TT) = Ok FF // a expects Nat, got Bool
@@ -77,15 +77,15 @@ test param_apply MySum (inj (t t t) zero) = Ok FF // unknown tag
 // n-ary `match` desugars to the cut: dispatch on the tag, feed the payload to
 // the matching handler. Arm constructor names are tags by spelling (strings),
 // so `tag_a`/`tag_b` here are the strings "tag_a"/"tag_b" — matching the lets.
-let handle = {c} -> match c { tag_a n => succ n; tag_b x => x }
+let handle := {c} -> match c { tag_a n => succ n; tag_b x => x }
 test handle (inj tag_a zero) = succ zero // a-handler runs on zero
 test handle (inj tag_b TT) = TT // b-handler runs on TT
 // the underlying library cut (what `match` expands to):
 test make_record [tag_a, tag_b] [{n} -> succ n, {x} -> x] (inj tag_a zero) = succ zero
 
 // Record [(a, Nat), (b, Bool)] and projection via the cut
-let MyRec = Record [pair tag_a Nat, pair tag_b Bool]
-let r = make_record [tag_a, tag_b] [list_const zero, list_const TT]
+let MyRec := Record [pair tag_a Nat, pair tag_b Bool]
+let r := make_record [tag_a, tag_b] [list_const zero, list_const TT]
 test typecheck MyRec r = Ok TT
 test param_apply MyRec (make_record [tag_a, tag_b] [list_const TT, list_const TT]) = Ok FF
 test field r tag_a = zero // r.a
@@ -93,22 +93,22 @@ test field r tag_b = TT // r.b
 
 // ---- neutral projection through respond (§12.1) ----
 // A Sigma-hyp projected by field name (`acc`) yields a stuck component.
-let hAB = make_hyp (Sigma Nat ({_} -> Bool)) 0
+let hAB := make_hyp (Sigma Nat ({_} -> Bool)) 0
 // Option A (§7.5): param_apply of a neutral is the BARE stuck component, not Ok(stuck).
 test neutral_type (param_apply hAB (acc "fst")) = Nat // fst : A = Nat
 test neutral_type (param_apply hAB (acc "snd")) = Bool // snd : B fst = Bool
 // dependency is preserved: snd of (n : Nat, _ : Eq Nat n n) lands at Eq Nat fst fst
-let hDep = make_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
-let fstp = param_apply hDep (acc "fst")
+let hDep := make_hyp (Sigma Nat ({n} -> Eq Nat n n)) 0
+let fstp := param_apply hDep (acc "fst")
 test neutral_type (param_apply hDep (acc "snd")) = Eq Nat fstp fstp
 
 // A Pi-hyp applied to an argument lands at the codomain (Pi's respond reads
 // the cod field of the recognizer_params record by name).
-let hPi = make_hyp (Pi Nat ({_} -> Bool)) 0
+let hPi := make_hyp (Pi Nat ({_} -> Bool)) 0
 test neutral_type (param_apply hPi zero) = Bool
 
 // A Record-hyp projects each field at its declared type, read by name.
-let hR = make_hyp MyRec 0
+let hR := make_hyp MyRec 0
 test neutral_type (param_apply hR (acc tag_a)) = Nat // r.a : Nat
 test neutral_type (param_apply hR (acc tag_b)) = Bool // r.b : Bool
 
@@ -123,14 +123,14 @@ test eq_cong Nat Nat ({n} -> n) zero zero refl = refl
 test param_apply (Eq Nat (succ zero) (succ zero)) (eq_cong Nat Nat ({n} -> succ n) zero zero refl) = Ok TT
 // A neutral (hypothesis) proof routes eq_J to a stuck elimination stored at
 // `motive self` (Eq's respond is inductive_respond, §12 — not the dead state).
-let hEq = make_hyp (Eq Nat zero (succ zero)) 0
-let stuck_eqJ = eq_J Nat zero (succ zero) ({_} -> Bool) zero hEq
+let hEq := make_hyp (Eq Nat zero (succ zero)) 0
+let stuck_eqJ := eq_J Nat zero (succ zero) ({_} -> Bool) zero hEq
 test is_neutral stuck_eqJ = TT
 test neutral_type stuck_eqJ = Bool
 
 // ---- ord_rec (ordinal recursor via elim) ----
 // depth along the right child of omega_plus.
-let ord_depth = ord_rec ({_} -> Nat) zero ({a, b, ra, rb} -> succ rb)
+let ord_depth := ord_rec ({_} -> Nat) zero ({a, b, ra, rb} -> succ rb)
 test ord_depth zero_ord = zero
 test ord_depth (omega_plus zero_ord zero_ord) = succ zero
 test ord_depth (omega_plus zero_ord (omega_plus zero_ord zero_ord)) = succ (succ zero)
@@ -148,8 +148,8 @@ test param_apply (Intersection Nat ({_} -> Nat)) (succ zero) = Ok TT
 test param_apply (Intersection Nat ({_} -> Nat)) TT = Ok FF
 
 // ---- inert respond: eliminating a neutral of an inert type -> dead state ----
-let hF = make_hyp False 0
-let stuckF = param_apply hF zero // inert_respond ignores the frame
+let hF := make_hyp False 0
+let stuckF := param_apply hF zero // inert_respond ignores the frame
 test is_neutral stuckF = TT // bare stuck neutral (Option A §7.5)
 test (tree_eq (pair_fst stuckF) "Ok") = FF // ...NOT Ok-wrapped
 test neutral_type stuckF = InvalidType // absorbing dead state

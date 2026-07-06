@@ -19,7 +19,11 @@ export type Tok =
   | { t: "nl" }
   | { t: "eof" }
 
-const KEYWORDS = new Set(["let", "test", "use", "open", "match", "if", "then", "else"])
+// `let` and `test` are NOT keywords: `let` is a library request decorator (cut.disp)
+// consumed through the decorated-declaration grammar, and `test` is the prelude
+// identity prefixing the equation item `lhs = rhs`. The parser knows them only as
+// identifiers (plus the braced `let` member, the lexical binding form).
+const KEYWORDS = new Set(["use", "open", "match", "if", "then", "else"])
 // Order matters: longer punctuation first so ":=" isn't chopped into ":" "=".
 // `<`/`>` are the sum-type-literal delimiters (`< Tag : T, … >`). They are single
 // chars with no multi-char punctuation built on them, and `->`/`=>`/`→` are
@@ -126,9 +130,15 @@ export type RecMember =
   | { tag: "open"; expr: Expr }
 // A "field" is a DECLARATION: `head? NAME (: T)? (:= v)?` (COMPILATION.typ
 // § Declarations as requests). `head` is the optional request-decorator expression
-// (e.g. `guard g`); `value` is null only for interface entries (`guard g X : T`),
-// which the parser only produces when a head is present. Braced record members
-// always carry a value and no head.
+// (e.g. `guard g`, or `let` — the private-write decorator, an ordinary library
+// value); `value` is null only for interface entries (`guard g X : T`), which the
+// parser only produces when a head is present.
+// A top-level `let x := e` is therefore a plain decorated declaration (head = the
+// identifier `let`). Inside braces `let` is instead the LEXICAL binding form (tag
+// "let", desugared to a lambda redex) — a value cannot introduce a lexical binder,
+// so the braced member parser recognizes the identifier structurally.
+// "test" is produced by the EQUATION item `lhs = rhs` (no keyword; the conventional
+// `test` prefix is the prelude identity, so `test lhs` ≡ `lhs`).
 
 // (Item alias removed; callers now use RecMember directly.)
 
@@ -212,6 +222,9 @@ const describe = (t: Tok): string => {
 const punctP = (v: string): P<Tok> => tokP(t => t.t === "punct" && t.v === v, `'${v}'`)
 const kwP    = (v: string): P<Tok> => tokP(t => t.t === "kw" && t.v === v, `'${v}'`)
 const idP:     P<string>  = map(tokP(t => t.t === "id", "identifier"), t => (t as Tok & {v: string}).v)
+// Match one SPECIFIC identifier (e.g. the braced `let` member's marker — an ordinary
+// identifier the member grammar recognizes structurally, not a keyword).
+const idVarP = (v: string): P<string> => map(tokP(t => t.t === "id" && (t as any).v === v, `'${v}'`), t => (t as Tok & {v: string}).v)
 const numP:    P<number>  = map(tokP(t => t.t === "num", "number"), t => (t as Tok & {v: number}).v)
 const leafP:   P<Tok>     = tokP(t => t.t === "leaf", "leaf")
 const strP:    P<string>  = map(tokP(t => t.t === "str", "string literal"), t => (t as Tok & {v: string}).v)
@@ -376,6 +389,32 @@ function isDeclStart(ts: Tok[], i: number): boolean {
   return false
 }
 
+// The equation-item cousin of isDeclStart: after a newline, a line whose top-level
+// (bracket-depth-0) tokens reach a bare `=` before the line ends is an equation item
+// (`lhs = rhs`, the test form), not an application continuation. Bare `=` never
+// occurs mid-expression (`:=`/`=>`/`->` are single tokens and there is no infix `=`),
+// so this cannot cut a legitimate expression. Keyword-bearing lines are conservatively
+// exempt (a `then`/`else` continuation of a multi-line `if` must not be cut); an
+// equation lhs that needs a depth-0 keyword must parenthesize it.
+function isEquationStart(ts: Tok[], i: number): boolean {
+  if (ts[i].t !== "id" && ts[i].t !== "leaf" && !(ts[i].t === "punct" && (ts[i] as any).v === "(")) return false
+  let depth = 0, q = i
+  while (q < ts.length) {
+    const t = ts[q]
+    if (t.t === "eof" || (t.t === "nl" && depth === 0)) return false
+    if (t.t === "kw" && depth === 0) return false
+    if (t.t === "punct") {
+      const v = (t as any).v
+      if (v === "(" || v === "{" || v === "[") depth++
+      else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
+      else if (depth === 0 && v === "=") return true
+      else if (depth === 0 && (v === ":=" || v === ":" || v === ";" || v === "=>" || v === "->")) return false
+    }
+    q++
+  }
+  return false
+}
+
 // Check if position starts a match arm pattern: a constructor followed by zero
 // or more binder idents and then `=>` (e.g. `Ctor =>`, `Ctor x =>`,
 // `Ctor a b c =>`). Used to stop multi-line arm bodies before the next arm.
@@ -389,13 +428,13 @@ function isArmStart(ts: Tok[], i: number): boolean {
 
 // atom = simple ("." IDENT)*
 // Newlines before atoms are insignificant — expressions can span lines.
-// Item separation works because keywords (let, test, open) can't start an atom,
-// and field definitions (IDENT ":=") are detected via lookahead so expressions
-// don't accidentally consume the start of a field.
+// Item separation works via lookahead: after a newline, a line that starts a
+// declaration (reaches `:`/`:=` at depth 0) or an equation (reaches `=`) is a new
+// item, so expressions don't accidentally consume the start of the next item.
 const atom: P<Expr> = withProj((ts, i) => {
   const hadNewline = ts[i].t === "nl"
   while (ts[i].t === "nl") i++
-  if (hadNewline && (isFieldStart(ts, i) || isDeclStart(ts, i)))
+  if (hadNewline && (isFieldStart(ts, i) || isDeclStart(ts, i) || isEquationStart(ts, i)))
     return err(`field definition, not an atom`, i)
   return simple(ts, i)
 })
@@ -459,7 +498,10 @@ const lineExpr: P<Expr> = makeExpr(lineApp)
 const matchAtom: P<Expr> = withProj((ts, i) => {
   const hadNewline = ts[i].t === "nl"
   while (ts[i].t === "nl") i++
-  if (hadNewline && (isFieldStart(ts, i) || isArmStart(ts, i)))
+  // Same next-item lookahead as `atom` (a declaration or equation on the next line
+  // ends this body — `let x := e` after an if/match body used to stop on the `let`
+  // keyword; now the decl/equation scans do that job), plus the arm boundary.
+  if (hadNewline && (isFieldStart(ts, i) || isArmStart(ts, i) || isDeclStart(ts, i) || isEquationStart(ts, i)))
     return err(`arm boundary, not an atom`, i)
   return simple(ts, i)
 })
@@ -675,20 +717,44 @@ const topFieldP = makeFieldP(lazy(() => expr))
 // --- Braced member combinators (let/test/open/field inside { ... }) ---
 // Each parses one member + trailing SEMI, returning a RecMember.
 
+// Braced `let` is the LEXICAL binding form (desugars to a lambda redex / a scoped
+// member); the parser recognizes the identifier `let` structurally. `:=` only —
+// the legacy `let x = e` spelling is gone (`=` is the equation form).
 const bracedLetP: P<RecMember> = map(
-  seq(kwP("let"), nl(idP),
+  seq(idVarP("let"), nl(idP),
     optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
-    nl(alt(punctP(":="), punctP("="))), skipNl, lazy(() => lineExpr), semiP),
+    nl(punctP(":=")), skipNl, lazy(() => lineExpr), semiP),
   ([, name, ann, , , body]) => ({
     tag: "let" as const, name, type: ann ? ann[2] : null, body,
   }),
 )
 
-const bracedTestP: P<RecMember> = map(
-  seq(kwP("test"), skipNl, lazy(() => lineExpr),
-    nl(punctP("=")), skipNl, lazy(() => lineExpr), semiP),
-  ([, , lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
-)
+// Shared post-parse checks for an equation's lhs. A bare-atom lhs is almost always
+// a typo for a `:=` declaration, and a `let`-headed equation is the retired legacy
+// binding spelling — reject both with targeted messages. Returns null when fine.
+function equationLhsError(lhs: Expr): string | null {
+  let hd: Expr = lhs
+  while (hd.tag === "app") hd = hd.f
+  if (hd.tag === "var" && hd.name === "let")
+    return "'let NAME = value' is no longer a binding — write 'let NAME := value'"
+  if (lhs.tag === "var" || lhs.tag === "num" || lhs.tag === "str" || lhs.tag === "leaf" || lhs.tag === "hole")
+    return "'lhs = rhs' is the equation (test) item and needs a compound lhs (write 'test lhs = rhs'); for a binding, use ':='"
+  return null
+}
+
+// The braced equation member: `lhs = rhs` (conventionally `test lhs = rhs`; the
+// `test` prefix is the prelude identity, an ordinary value in the lhs).
+const bracedEquationP: P<RecMember> = (ts, i) => {
+  const lhsR = lineExpr(ts, i)
+  if (!lhsR.ok) return lhsR
+  const eqR = nl(punctP("="))(ts, lhsR.pos)
+  if (!eqR.ok) return eqR
+  const bad = equationLhsError(lhsR.v)
+  if (bad) return err(bad, lhsR.pos)
+  const restR = seq(skipNl, lazy(() => lineExpr), semiP)(ts, eqR.pos)
+  if (!restR.ok) return restR
+  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: restR.v[1] }, restR.pos)
+}
 
 const bracedOpenP: P<RecMember> = map(
   seq(kwP("open"), skipNl, lazy(() => lineExpr), semiP),
@@ -730,7 +796,7 @@ const bracedPunP: P<RecMember> = (ts, i) => {
   return err("bare identifier is not a member (pun needs ';', ',', newline, or '}')", i)
 }
 
-const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedTestP, bracedOpenP, bracedFieldMemberP, bracedPunP))
+const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedOpenP, bracedFieldMemberP, bracedEquationP, bracedPunP))
 
 // Unified braced body parser: handles blocks, recValues, and mixed members.
 // Parses members (let/test/open/field). Then:
@@ -874,8 +940,9 @@ function parseBraced(binderParser: P<Expr>): P<Expr> {
       return ok({ tag: "recValue" as const, fields: [] }, pos + 1)
     }
 
-    // Keyword → unified body (let/test/open, possibly mixed with fields)
-    if (ts[pos].t === "kw" && ((ts[pos] as any).v === "let" || (ts[pos] as any).v === "test" || (ts[pos] as any).v === "open")) {
+    // `open` (still a keyword) → unified body. `let`/`test` members are plain
+    // identifiers now, classified structurally by classifyBracedContent below.
+    if (ts[pos].t === "kw" && (ts[pos] as any).v === "open") {
       return unifiedBracedInner(ts, pos)
     }
 
@@ -947,8 +1014,29 @@ function bracedFollowedByArrow(ts: Tok[], pos: number): boolean {
   return false
 }
 
+// Scan forward for a bare `=` at depth 0, stopping at the enclosing "}" — an
+// equation member (`test lhs = rhs`) anywhere in the brace body marks it a
+// recValue/block. Bare `=` cannot occur in binder or recType content (defaults are
+// `:=`, arms are `=>`), so this cannot misroute those shapes; crossing newlines is
+// fine because a hit merely routes to unifiedBracedInner, which parses members
+// properly.
+function scanForBareEq(ts: Tok[], q: number): boolean {
+  let depth = 0
+  while (q < ts.length && ts[q].t !== "eof") {
+    if (ts[q].t === "punct") {
+      const v = (ts[q] as any).v
+      if (v === "(" || v === "{" || v === "[") depth++
+      else if (v === ")" || v === "}" || v === "]") { if (depth === 0) return false; depth-- }
+      else if (depth === 0 && v === "=") return true
+    }
+    q++
+  }
+  return false
+}
+
 // Peek at tokens after "{" to classify the braced content.
 function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | "recTypeOrBinder" {
+  if (scanForBareEq(ts, pos)) return "recValue" // an equation member → block/recValue body
   let p = pos
   while (ts[p].t === "nl") p++
   if (ts[p].t === "id") {
@@ -961,6 +1049,9 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
       return "binder"
     }
     if (ts[p].t === "punct" && ((ts[p] as any).v === "}" || (ts[p] as any).v === ",")) return "binder"
+    // `let x …` — a braced `let` member ({ let, x } binder commas and a lone
+    // `{let}` param are caught by the puncts above).
+    if (name === "let" && ts[p].t === "id") return "recValue"
     if (ts[p].t === "punct" && (ts[p] as any).v === ":=") return "recValue"
     if (ts[p].t === "punct" && (ts[p] as any).v === ":") {
       // `name : T …` — a later ":=" in this member means a typed field.
@@ -982,24 +1073,22 @@ const expr: P<Expr> = makeExpr(app)
 
 // --- Items ---
 
-const letItem: P<RecMember> = map(
-  seq(
-    kwP("let"), idP,
-    optional(seq(punctP(":"), skipNl, lazy(() => expr))),
-    nl(alt(punctP(":="), punctP("="))), skipNl, lazy(() => expr),
-  ),
-  ([, name, ann, , , body]) => ({
-    tag: "let" as const,
-    name,
-    type: ann ? ann[2] : null,
-    body,
-  }),
-)
-
-const testItem: P<RecMember> = map(
-  seq(kwP("test"), lazy(() => expr), nl(punctP("=")), skipNl, lazy(() => expr)),
-  ([, lhs, , , rhs]) => ({ tag: "test" as const, lhs, rhs }),
-)
+// The equation item: `lhs = rhs` asserts both sides evaluate to equal trees (the
+// test form). Conventionally written `test lhs = rhs` — `test` is the prelude
+// identity, so the marker is an ordinary library value in the lhs, not syntax.
+// The `=` may sit on the lhs's line or the next; the rhs may continue onto
+// following lines (it stops before the next item via the atom lookahead).
+const equationItem: P<RecMember> = (ts, i) => {
+  const lhsR = expr(ts, i)
+  if (!lhsR.ok) return lhsR
+  const eqR = nl(punctP("="))(ts, lhsR.pos)
+  if (!eqR.ok) return eqR
+  const bad = equationLhsError(lhsR.v)
+  if (bad) return err(bad, lhsR.pos)
+  const rhsR = seq(skipNl, lazy(() => expr))(ts, eqR.pos)
+  if (!rhsR.ok) return rhsR
+  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: rhsR.v[1] }, rhsR.pos)
+}
 
 const openItem: P<RecMember> = map(
   seq(kwP("open"), lazy(() => expr)),
@@ -1036,7 +1125,7 @@ const headFieldP: P<RecMember> = (ts, i) => {
   return ok({ tag: "field" as const, name: last.name, type, value, head }, pos)
 }
 
-const itemP: P<RecMember> = nl(alt(openItem, letItem, testItem, topFieldP, headFieldP))
+const itemP: P<RecMember> = nl(alt(openItem, topFieldP, headFieldP, equationItem))
 
 // Parse source into items.
 export function parseItems(src: string): RecMember[] {

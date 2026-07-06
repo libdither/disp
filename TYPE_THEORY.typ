@@ -1750,8 +1750,8 @@ the spine (`Extend`) or resolves to a value (`Reduce`).
 
 ```disp
 hyp_reduce := fix ({self, meta, frame} -> {     // hyp_reduce sub-evaluates nothing
-  let tmeta = type_meta meta.stored_type   // `respond` is constitutive — every type has one (§11.2)
-  let me    = wait self meta               // the reconstructed self-neutral (= reconstruct_self meta)
+  let tmeta := type_meta meta.stored_type   // `respond` is constitutive — every type has one (§11.2)
+  let me    := wait self meta               // the reconstructed self-neutral (= reconstruct_self meta)
   match (tmeta.respond tmeta.recognizer_params me frame) {
     Extend new_type => wait self (extend_neutral_meta me new_type frame)  // stuck: extend the spine (bare)
     Reduce v        => v                                                  // computes: the value (bare)
@@ -1801,9 +1801,9 @@ the body, where it would have no binder.
 *Disp source:*
 
 ```disp
-let bind_hyp = {domain, body} -> {
-  let h = wait hyp_reduce (make_neutral_meta domain (t domain body))
-  let h_use = match (is_pi domain) {
+let bind_hyp := {domain, body} -> {
+  let h := wait hyp_reduce (make_neutral_meta domain (t domain body))
+  let h_use := match (is_pi domain) {
     TT => checked (pi_dom domain) h   // wrap with the domain's *input* type, so applying
     FF => h                           // h_use checks its arg against `pi_dom domain` (§8, §12)
   }
@@ -1963,7 +1963,7 @@ lookup_handler := {sig} -> list_find ({h} -> tree_eq sig (checker_sig h)) Σ
 param_apply := fix ({self, f, x} ->
   match (and (is_wait_form f) (is_some (lookup_handler (pair_fst f)))) {
     TT => (
-      let h = unwrap (lookup_handler (pair_fst f))
+      let h := unwrap (lookup_handler (pair_fst f))
       h (wait_meta f) x)                       // registered kernel handler: recovered meta, arg —
                                                // already returns a CheckerResult, passed through un-nested (§7.5)
     FF => walker_step self f x                 // walker (§4)
@@ -2247,7 +2247,7 @@ defers the rest. A *false* contract — an `f` whose body does not land
 in the claimed codomain — is caught the moment the value is recognized
 against a `Pi A B`.
 
-Example: user writes `let bogus = checked Nat ({n} -> TT)` and asserts
+Example: user writes `let bogus := checked Nat ({n} -> TT)` and asserts
 `bogus : Pi Nat ({_} -> Nat)` (a lie — the body returns a `Bool`).
 - `typecheck (Pi Nat ({_} -> Nat)) bogus` runs Pi's recognizer (§12.9):
   - `bogus` is a `checked` wait-form whose stored domain is `Nat` —
@@ -2330,7 +2330,7 @@ The elaboration steps:
 + *Test emission.* At each `let name : T = body`, emit two operations:
 
 ```
-let name = body_tree
+let name := body_tree
 test typecheck T name = TT
 ```
 
@@ -2371,7 +2371,7 @@ Common test idioms are sugar:
 - `test typecheck T v` is the standard "type-check test."
 
 The `: T` annotation is sugar for this last form. `let X : T = body`
-desugars to `let X = body; test typecheck T X`.
+desugars to `let X := body; test typecheck T X`.
 
 == Tests reduce under `param_apply`; effects need a handler
 
@@ -2421,7 +2421,7 @@ the standard library is expected to satisfy. The catalog is browsable
 in source and runnable as a whole by re-elaborating the library.
 
 ```disp
-let Bool = wait bool_recognizer bool_meta
+let Bool := wait bool_recognizer bool_meta
 test typecheck Type Bool             // Bool is a type
 test typecheck StrictType Bool       // Bool passes deep validation too
 test bool_recognizer unit TT = Ok TT // recognizer accepts TT
@@ -2502,7 +2502,7 @@ For `let foo : Pi Nat ({_} -> Bool) = {x} -> is_zero x`:
 + Body `is_zero x` compiles to `apply(is_zero_compiled, x)`.
 + Wrap the binder: `checked Nat ({x} -> apply(is_zero_compiled, x))`.
 + Bracket-abstract `{x}` over the body.
-+ Emit: `let foo = wrapped_tree` plus `test typecheck (Pi Nat ({_} -> Bool)) foo = TT`.
++ Emit: `let foo := wrapped_tree` plus `test typecheck (Pi Nat ({_} -> Bool)) foo = TT`.
 
 The test reduces `typecheck (Pi Nat ({_} -> Bool)) foo` via the
 kernel dispatcher. Pi's recognizer fires the outer `checked` handler
@@ -3200,18 +3200,18 @@ ranges over the closed tag set `Tags [V1..Vn]`.
 
 ```disp
 // Tags [V1..Vn]: the finite type of the declared constructor tags (discrete).
-let tags_recognizer = make_recognizer ({meta, v} ->
+let tags_recognizer := make_recognizer ({meta, v} ->
   Ok (list_mem v meta.recognizer_params.names))   // v is one of the declared tags
 
-let tags_meta_for = {names} -> {
+let tags_meta_for := {names} -> {
   recognizer_params := { names := names },
   functor := trivial_functor, respond := inert_respond, behavioral_specs := none
 }
-let Tags = {names} -> wait tags_recognizer (tags_meta_for names)
+let Tags := {names} -> wait tags_recognizer (tags_meta_for names)
 
 // Coproduct [(Vi,Si)]: tag ∈ {Vi}, payload inhabits S_tag.
-let coproduct_recognizer = make_recognizer ({meta, v} ->
-  let variants = meta.recognizer_params.variants         // [(V1,S1), …]
+let coproduct_recognizer := make_recognizer ({meta, v} ->
+  let variants := meta.recognizer_params.variants         // [(V1,S1), …]
   bind (lookup_arm variants (pair_fst v)) ({arm} ->       // arm whose tag = v's tag
     match (is_some arm) {
       TT => param_apply (unwrap arm) (pair_snd v)          // payload must inhabit S_tag
@@ -3221,13 +3221,13 @@ let coproduct_recognizer = make_recognizer ({meta, v} ->
 // Elimination is the cut: a neutral coproduct routes a case-product frame
 // through `hyp_reduce`, exactly like a (non-recursive) inductive type — so it
 // carries the shared `inductive_respond` (§12.3).
-let coproduct_meta_for = {variants} -> {
+let coproduct_meta_for := {variants} -> {
   recognizer_params := { variants := variants },
   functor := coproduct_functor,
   respond := inductive_respond,
   behavioral_specs := none
 }
-let Coproduct = {variants} -> wait coproduct_recognizer (coproduct_meta_for variants)
+let Coproduct := {variants} -> wait coproduct_recognizer (coproduct_meta_for variants)
 //   Coproduct [(Vi, Si)]  ≅  Sigma (Tags [V1..Vn]) ({t} -> arm_type variants t)
 
 test typecheck Type Coproduct
@@ -3309,7 +3309,7 @@ Each inductive type's meta therefore carries `respond := inductive_respond`
   // reconstructed neutral. On the coherent branch the motive is *policed*
   // through `param_walker self` (§12.18), exactly as in `inductive_respond`.
   gated_inductive_respond := {coh, params, self, frame} -> {
-    let r = coh (neutral_type self) frame.motive frame.cases    // T read off the neutral
+    let r := coh (neutral_type self) frame.motive frame.cases    // T read off the neutral
     match r {
       Err _ => Extend InvalidType                               // a case triaged a hyp, etc.
       Ok v  => if v
@@ -3321,7 +3321,7 @@ Each inductive type's meta therefore carries `respond := inductive_respond`
     // step : Π n. motive n -> motive (succ n). The step gate runs in a RAW
     // context, so its outer binder routes into the walker via `param_apply
     // (bind_hyp T)` (§7.2); `cases.base`/`cases.step` read by name.
-    let step_coherent = param_apply (bind_hyp T) ({n} ->
+    let step_coherent := param_apply (bind_hyp T) ({n} ->
       bind_hyp (motive n) ({ih} -> (motive (succ n)) ((cases.step n) ih)))
     bind ((motive zero) cases.base) ({okb} -> if okb then step_coherent else (Ok FF)) }
 
@@ -3465,7 +3465,7 @@ self-verifies:
 // tail is `t t (rest)` (the K-stem — ignores the bound field).
 fields_to_tele := fix ({self, fields} ->
   if (is_fork fields) then {
-    let arm = pair_fst fields
+    let arm := pair_fst fields
     t (proj_cell (pair_fst arm) (pair_snd arm)) (t t (self (pair_snd fields)))
   } else t)
 
@@ -3601,8 +3601,8 @@ state):
 ```disp
 Refinement : {A : Type} -> (A -> Bool) -> Type := {A, P} -> wait (make_recognizer
   {meta, v} -> {
-    let A = meta.recognizer_params.base
-    let P = meta.recognizer_params.pred
+    let A := meta.recognizer_params.base
+    let P := meta.recognizer_params.pred
     bind (A v) ({va} -> if va then (Ok (P v)) else (Ok FF))   // v : A, then P v (a bare Bool)
   }
 ) (make_meta { base := A; pred := P } inert_respond)
@@ -3696,9 +3696,9 @@ before the function runs.
 // payload (recovered by the wait reduction), read by name — the same
 // one-record discipline type metas follow (§2.6, §11.2). `dom` is the
 // function's input (domain) type; `fn` is the underlying function.
-let checked_apply = {meta, arg} ->
-  let A  = meta.dom
-  let fn = meta.fn
+let checked_apply := {meta, arg} ->
+  let A  := meta.dom
+  let fn := meta.fn
   bind (param_apply A arg) ({verdict} ->
     match verdict {
       // Domain holds. Apply `fn`, which is *always* one of two things:
@@ -3716,7 +3716,7 @@ let checked_apply = {meta, arg} ->
       FF => Err (TypeMismatch { expected = A, actual = arg, span })
     })
 
-let checked = {A, f} -> wait checked_apply { dom := A, fn := f }
+let checked := {A, f} -> wait checked_apply { dom := A, fn := f }
 ```
 
 `checked` stores only the *domain*: that is all the input-check needs,
@@ -3854,18 +3854,18 @@ logic. The library provides `make_recognizer` so per-type authors
 write only the concrete-case body:
 
 ```disp
-let recognizer_wrap_fn = fix ({wrap, body, meta, v} ->
+let recognizer_wrap_fn := fix ({wrap, body, meta, v} ->
   // Reconstruct this type via the `fix` self-param `wrap` (= recognizer_wrap_fn),
   // not the external let-name: `wrap` is in scope here without a forward
   // reference, and the two are the same tree, so `self_type` hash-cons-equals
   // any externally-built `wait (make_recognizer body) meta` (cf. §14 openq).
-  let self_type = wait (wait wrap body) meta in
+  let self_type := wait (wait wrap body) meta in
   match (is_neutral v) {                                 // Σ-independent
     TT => Ok (tree_eq self_type (neutral_type v))   // H-rule
     FF => body meta v                                    // concrete dispatch
   })
 
-let make_recognizer = {body} -> wait recognizer_wrap_fn body
+let make_recognizer := {body} -> wait recognizer_wrap_fn body
 ```
 
 The check `is_neutral` (§12.8) accepts any wait-form rooted at
@@ -3890,7 +3890,7 @@ structurally distinguishable and is rejected by `Type`.
 Library convention: every type-former author writes:
 
 ```disp
-let my_recognizer = make_recognizer ({meta, v} -> /* concrete-only body */)
+let my_recognizer := make_recognizer ({meta, v} -> /* concrete-only body */)
 ```
 
 The body sees only concrete v values; the wrapper handles hypothesis
@@ -3916,20 +3916,20 @@ need `safe_*` helpers, because they never run with hypothesis args.
   depends on (§14).
 
   ```disp
-  let recursive_recognizer_wrap = fix ({wrap, body, meta, v} ->
-    let self = wait (wait wrap body) meta in
+  let recursive_recognizer_wrap := fix ({wrap, body, meta, v} ->
+    let self := wait (wait wrap body) meta in
     match (is_neutral v) {
       TT => Ok (tree_eq self (neutral_type v))   // H-rule, unchanged
       FF => body self meta v                          // pass `self`: recurse via the H-rule
     })
-  let make_rec_recognizer = {body} -> wait recursive_recognizer_wrap body
+  let make_rec_recognizer := {body} -> wait recursive_recognizer_wrap body
 
   // Nat's body recurses through `self`, so `succ hyp` is a Nat (the neutral
   // predecessor is recognised by the H-rule, not triaged):
-  let nat_body = {self, m, v} ->
+  let nat_body := {self, m, v} ->
     triage (Ok TT) ({_} -> Ok FF)
       ({l, r} -> match (tree_eq l t) { FF => Ok FF; TT => self r }) v
-  let Nat = wait (make_rec_recognizer nat_body) nat_meta
+  let Nat := wait (make_rec_recognizer nat_body) nat_meta
   ```
 
   `Nat` and `Ord` (the recognisers with structural recursion into children) use
@@ -3947,7 +3947,7 @@ need `safe_*` helpers, because they never run with hypothesis args.
 relocated to library):
 
 ```disp
-let type_recognizer = make_recognizer ({meta, v} ->
+let type_recognizer := make_recognizer ({meta, v} ->
   bind (safe_is_fork v) ({is_pair} ->
     match is_pair {
       FF => Ok FF
@@ -3980,17 +3980,17 @@ failure surfaces at type-construction time.
 == `Bool`
 
 ```disp
-let bool_recognizer = make_recognizer ({_, v} ->
+let bool_recognizer := make_recognizer ({_, v} ->
   Ok (or (tree_eq v TT) (tree_eq v FF)))
 
-let bool_meta = {
+let bool_meta := {
   recognizer_params := unit_witness,
   functor := trivial_functor,            // discrete: identity transport
   respond := inductive_respond,          // case-elimination on a neutral Bool (§12.3)
   behavioral_specs := none
 }
 
-let Bool = wait bool_recognizer bool_meta
+let Bool := wait bool_recognizer bool_meta
 
 test typecheck Type Bool
 test typecheck StrictType Bool
@@ -4009,7 +4009,7 @@ and (via H-rule) accepts hypothesis arguments.
 == `Nat`
 
 ```disp
-let nat_recognizer = make_recognizer ({_, v} ->
+let nat_recognizer := make_recognizer ({_, v} ->
   // v is Nat iff v is zero (= LEAF) or v = fork(LEAF, n) where n is Nat.
   Ok (fix ({self, x} ->
         triage TT                          // leaf: zero
@@ -4018,14 +4018,14 @@ let nat_recognizer = make_recognizer ({_, v} ->
             and (tree_eq l t) (self r))
           x) v))
 
-let nat_meta = {
+let nat_meta := {
   recognizer_params := unit_witness,
   functor := trivial_functor,
   respond := inductive_respond,          // case-elimination on a neutral Nat (§12.3)
   behavioral_specs := none
 }
 
-let Nat = wait nat_recognizer nat_meta
+let Nat := wait nat_recognizer nat_meta
 
 test typecheck Type Nat
 test typecheck StrictType Nat
@@ -4048,8 +4048,8 @@ manifest-contract machinery is not in the minimal kernel — see the note):
 ```disp
 Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> wait (make_recognizer
   {meta, v} -> {
-    let A = meta.recognizer_params.dom
-    let B = meta.recognizer_params.cod
+    let A := meta.recognizer_params.dom
+    let B := meta.recognizer_params.cod
     bind_hyp A ({hyp} -> (B hyp) (v hyp))   // walk polices hyp; typecheck (v hyp) against (B hyp)
   }
 ) (make_meta { dom := A; cod := B }
@@ -4092,17 +4092,17 @@ Single-inhabitant type. The recognizer accepts exactly `unit_witness`
 (which is the substrate `LEAF`, i.e. `t`).
 
 ```disp
-let unit_recognizer = make_recognizer ({_, v} ->
+let unit_recognizer := make_recognizer ({_, v} ->
   Ok (tree_eq v unit_witness))
 
-let unit_meta = {
+let unit_meta := {
   recognizer_params := unit_witness,
   functor           := trivial_functor,
   respond           := some inductive_respond,   // case-elimination on a neutral Unit (§12.3)
   behavioral_specs  := none
 }
 
-let Unit = wait unit_recognizer unit_meta
+let Unit := wait unit_recognizer unit_meta
 
 test typecheck Type Unit
 test unit_recognizer unit_meta unit_witness = Ok TT
@@ -4121,7 +4121,7 @@ canonical discrete witness) exactly when `tree_eq x y = TT`. Cubical
 // the bare value `refl := t` (proofs erase to one value).
 Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> wait (make_recognizer
   {meta, v} -> {
-    let p = meta.recognizer_params                       // { type; lhs; rhs }
+    let p := meta.recognizer_params                       // { type; lhs; rhs }
     Ok (and (tree_eq v refl) (tree_eq p.lhs p.rhs))      // v ≡ refl AND endpoints hash-cons-equal
   }
 ) (make_meta { type := A; lhs := x; rhs := y }
@@ -4147,19 +4147,19 @@ Countable ordinals: `zero_ord`, `succ_ord o`, `omega_plus o`. Used as
 a recursion measure in proofs and well-founded induction.
 
 ```disp
-let ord_recognizer = make_recognizer ({_, v} ->
+let ord_recognizer := make_recognizer ({_, v} ->
   // v is in Ord iff v is zero_ord, succ_ord o' for o' in Ord, or
   // omega_plus o' for o' in Ord. Structural recursion bottoms out.
   Ok (fix ({self, x} -> /* tagged-shape recursion */) v))
 
-let ord_meta = {
+let ord_meta := {
   recognizer_params := unit_witness,
   functor           := trivial_functor,        // discrete transport
   respond           := some inductive_respond,  // ord_rec on a neutral Ord (§12.3)
   behavioral_specs  := none
 }
 
-let Ord = wait ord_recognizer ord_meta
+let Ord := wait ord_recognizer ord_meta
 
 test typecheck Type Ord
 test typecheck StrictType Ord
@@ -4175,18 +4175,18 @@ Sequences of characters. `String` is library-defined (a list of
 character-tagged trees); shown here for completeness.
 
 ```disp
-let string_recognizer = make_recognizer ({_, v} ->
+let string_recognizer := make_recognizer ({_, v} ->
   // v is a String iff v is a list whose elements are valid char tags
   Ok (and (is_list v) (list_all is_char_tag v)))
 
-let string_meta = {
+let string_meta := {
   recognizer_params := unit_witness,
   functor           := trivial_functor,
   respond           := inert_respond,    // String is inert under elimination (§12.3)
   behavioral_specs  := none
 }
 
-let String = wait string_recognizer string_meta
+let String := wait string_recognizer string_meta
 
 test typecheck Type String
 test string_recognizer string_meta empty_string            = Ok TT
@@ -4228,9 +4228,9 @@ Type := wait (make_recognizer
 test typecheck Type Type         // Type is a type (lax)
 
 // Predicate-side H-rule tests (the load-bearing case for polymorphism).
-let A_hyp  = make_hyp Type 0
-let B_hyp  = make_hyp Type 1
-let x_of_A = make_hyp A_hyp t
+let A_hyp  := make_hyp Type 0
+let B_hyp  := make_hyp Type 1
+let x_of_A := make_hyp A_hyp t
 
 // Applying a Type-hyp routes through hyp_reduce's `Reduce` arm. The respond
 // returns `Return b = Reduce (Ok b)`, and `Reduce` hands back its payload BARE
@@ -4405,31 +4405,31 @@ the free De Morgan algebra:
 ```disp
 // In disp source, the stem(x) constructor is written `t x`.
 // Tags are distinct stems-of-leaf chains.
-let tag_zero = t t                     // stem(LEAF):           0
-let tag_one  = t (t t)                 // stem(stem(LEAF)):     1
-let tag_and  = t (t (t t))             // stem^3(LEAF):         ∧
-let tag_or   = t (t (t (t t)))         // stem^4(LEAF):         ∨
-let tag_inv  = t (t (t (t (t t))))     // stem^5(LEAF):         ¬
+let tag_zero := t t                     // stem(LEAF):           0
+let tag_one  := t (t t)                 // stem(stem(LEAF)):     1
+let tag_and  := t (t (t t))             // stem^3(LEAF):         ∧
+let tag_or   := t (t (t (t t)))         // stem^4(LEAF):         ∨
+let tag_inv  := t (t (t (t (t t))))     // stem^5(LEAF):         ¬
 
-let I_zero = pair tag_zero t
-let I_one  = pair tag_one  t
-let I_and  = {a, b} -> pair tag_and (pair a b)
-let I_or   = {a, b} -> pair tag_or  (pair a b)
-let I_inv  = {a}    -> pair tag_inv a
+let I_zero := pair tag_zero t
+let I_one  := pair tag_one  t
+let I_and  := {a, b} -> pair tag_and (pair a b)
+let I_or   := {a, b} -> pair tag_or  (pair a b)
+let I_inv  := {a}    -> pair tag_inv a
 
-let I_recognizer = {_, v} -> ...
+let I_recognizer := {_, v} -> ...
   // v is in I iff it's I_zero, I_one, a tagged operation, or a neutral
   // of stored type I. Library smart constructors normalize formulas to
   // DNF so De-Morgan-equivalent formulas hash-cons to identical trees.
 
-let I_meta = {
+let I_meta := {
   recognizer_params := unit_witness,
   functor := trivial_functor,         // I doesn't transport
   respond := inert_respond,           // the interval is inert under elimination (§12.3)
   behavioral_specs := none
 }
 
-let I = wait I_recognizer I_meta
+let I := wait I_recognizer I_meta
 
 test typecheck Type I
 ```
@@ -4471,7 +4471,7 @@ phi A := IsOne phi -> A`. Walker-safe smart constructors for face
 systems.
 
 ```disp
-let IsOne = {i} -> wait isone_recognizer {
+let IsOne := {i} -> wait isone_recognizer {
   recognizer_params := i,
   functor := trivial_functor,
   respond := inert_respond,
@@ -4483,7 +4483,7 @@ test typecheck Type IsOne
 Partial := {phi, A} -> Pi (IsOne phi) ({_} -> A)
 
 // The empty partial element (used when phi = I_zero):
-let empty_partial = {A} -> {_proof_false} -> /* unreachable */
+let empty_partial := {A} -> {_proof_false} -> /* unreachable */
 ```
 
 (The full `Partial` / face-system design is the standard CCHM one
@@ -4515,8 +4515,8 @@ type functors that ignore the cofibration / partial-element side (the
 // and hand it the full 5-tuple. A `trivial_functor` (the discrete
 // marker) means *trivial Kan structure*: comp returns u0 directly.
 comp := fix ({self, P, phi, u, u0} -> {
-  let T0 = apply P I_zero
-  let action = meta_get (type_meta T0) "functor"
+  let T0 := apply P I_zero
+  let action := meta_get (type_meta T0) "functor"
   match (tree_eq action trivial_functor) {
     TT => u0                              // discrete: trivial Kan structure
     FF => apply action self P phi u u0    // real functor handles family + cofibration
@@ -4571,22 +4571,22 @@ convention above):
 
 // Pair: component-wise recursion. Splits u/u0 into component
 // partials/endpoints and recurses on each side.
-let pair_functor  = {self, P, phi, u, u0} ->
+let pair_functor  := {self, P, phi, u, u0} ->
   pair (self (P_fst P) phi (u_fst u) (pair_fst u0))
        (self (P_snd P) phi (u_snd u) (pair_snd u0))
 
 // Sigma: dependent second component via the first component's
 // trajectory. The B(a) family is reconstructed at each interval point
 // by transporting a along P_fst.
-let sigma_functor = {self, P, phi, u, u0} -> /* CCHM Sigma rule */ ...
+let sigma_functor := {self, P, phi, u, u0} -> /* CCHM Sigma rule */ ...
 
 // Pi: contravariant in A, covariant in B; threads the a-trajectory
 // through B's family. Body application happens at the source endpoint;
 // result is transported forward.
-let pi_functor    = {self, P, phi, u, u0} -> /* CCHM Pi rule */ ...
+let pi_functor    := {self, P, phi, u, u0} -> /* CCHM Pi rule */ ...
 
 // Eq: refl at the new endpoints. The path-of-refls case is structural.
-let eq_functor    = {self, P, phi, u, u0} -> /* CCHM Eq rule */ ...
+let eq_functor    := {self, P, phi, u, u0} -> /* CCHM Eq rule */ ...
 ```
 
 Each value above is dropped directly into the corresponding type's
@@ -4605,7 +4605,7 @@ with partial type information (T, e) at the face phi. Its non-trivial
 `functor` field implements equivalence-mediated transport.
 
 ```disp
-let Glue = {B, T, e} -> wait glue_recognizer {
+let Glue := {B, T, e} -> wait glue_recognizer {
   recognizer_params := glue_params_for B T e,
   functor := glue_functor,             // applies the equivalence on transport
   respond := inert_respond,            // Glue is eliminated via unglue, not a respond frame
@@ -4876,7 +4876,7 @@ typecheck T v:
     Some (Final r)    => r           // memoized result
     None              =>
       memo[T, v] := InProgress
-      let r = ... actual validation ...
+      let r := ... actual validation ...
       memo[T, v] := Final r
       r
 ```
@@ -5114,8 +5114,8 @@ The `Eff` recognizer checks one thing: every `Op`'s effect-label lies in
 
 ```disp
 eff_recognizer := make_recognizer ({meta, v} ->
-  let R = meta.recognizer_params.row in
-  let X = meta.recognizer_params.result in
+  let R := meta.recognizer_params.row in
+  let X := meta.recognizer_params.result in
   match v {                                   // (concrete v; H-rule handles neutral v)
     Pure x => param_apply X x                              // payload inhabits X; no row constraint
     Op p   => and (label_in_row (effect_of p.op) R)        // this op's effect ∈ R

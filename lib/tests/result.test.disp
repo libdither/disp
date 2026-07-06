@@ -34,7 +34,7 @@ test result_map_err succ (ok 4) = ok 4
 test result_map_err succ (err 9) = err 10
 
 // result_and_then
-let succ_ok = {n} -> ok (succ n)
+let succ_ok := {n} -> ok (succ n)
 test result_and_then (ok 5) succ_ok = ok 6
 test result_and_then (err FF) succ_ok = err FF
 
@@ -44,7 +44,7 @@ test result_unwrap_or 99 (err TT) = 99
 
 // Under a Pi binder — the PARAMETRIC eliminator result_rec routes a neutral
 // Result through the coproduct respond, so this typed binding VERIFIES.
-let or_zero : Result Bool Nat -> Nat = {r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r
+let or_zero : Result Bool Nat -> Nat := {r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r
 test param_apply (Arrow (Result Bool Nat) Nat) ({r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r) = Ok TT
 test or_zero (ok 8) = 8
 test or_zero (err TT) = 0

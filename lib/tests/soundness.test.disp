@@ -6,7 +6,7 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-let hN = make_hyp Nat 0
+let hN := make_hyp Nat 0
 
 // ================================================================
 // PRESENT protections (permanent — these must always hold)
@@ -15,7 +15,7 @@ let hN = make_hyp Nat 0
 // Stem-forge rejection (§4.2): user code cannot construct a neutral-rooted fork.
 // `forge` tries to build fork(hyp_sig, x) = a fake hypothesis; the walker's
 // stem rule rejects it, so dispatching the application fails.
-let forge = {x} -> t hyp_sig x
+let forge := {x} -> t hyp_sig x
 test param_apply forge zero = Err
 test param_apply forge (succ zero) = Err
 
@@ -60,7 +60,7 @@ test param_apply (bind_hyp Nat) ({x} -> Ok (is_stem x)) = Err // triage on hyp -
 // registered hyp_reduce and extends the spine:
 // the respond gates the cases against the motive (§B), so they must be coherent:
 // with motive Bool, zero : Bool and succ returns its ih : Bool (cases keyed by variant tag).
-let stuck = param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({pred, ih} -> ih) } }
+let stuck := param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({pred, ih} -> ih) } }
 test is_neutral stuck = TT // bare stuck neutral (Option A §7.5)
 test neutral_type stuck = Bool
 
@@ -120,7 +120,7 @@ test param_apply (Pi Tree ({_} -> Tree)) pair_snd = Err
 // are NOMINAL on neutrals; a structural `Neutral A` classifier would need a recognizer
 // that bypasses the H-rule shim, which reopens the level-confusion question (the hyp's OWN
 // neutrality vs the values it stands for). Pinned so any change here is a conscious one.
-let NeutralT = Refinement Tree is_neutral
+let NeutralT := Refinement Tree is_neutral
 test tree_eq (param_apply NeutralT (make_hyp Tree 0)) (Ok TT) = FF // a real neutral: NOT a member (H-rule nominality)
 test param_apply NeutralT zero = Ok FF                             // a concrete non-neutral: predicate rejects, as expected
 

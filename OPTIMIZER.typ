@@ -398,7 +398,7 @@ Step := { rule : String, path : List Dir, subst : List Tree }
 Cert := List Step
 
 check_step := {book, t, s} ->
-  let lr = apply_all (lookup book s.rule).rule s.subst in   // rule m1..mk -> (lhs,rhs)
+  let lr := apply_all (lookup book s.rule).rule s.subst in   // rule m1..mk -> (lhs,rhs)
   if (tree_eq (at s.path t) (pair_fst lr)) then Ok (replace s.path (pair_snd lr) t) else Err
 check_cert := {book, e, cert} -> foldM check_step (Ok e) cert
 verify_rewrite := {book, e, e', cert} ->

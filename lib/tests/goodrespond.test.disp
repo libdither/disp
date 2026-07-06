@@ -8,11 +8,11 @@ open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
-let resp_of = {T} -> (type_meta T).respond (type_meta T).recognizer_params
-let R_ind   = inductive_respond unit_witness
-let R_inert = inert_respond unit_witness
-let MyNat = Coproduct [pair "z" [], pair "s" [Rec]]
-let Three = Coproduct [pair "a" [], pair "b" [Rec], pair "c" [Rec, Rec]]
+let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
+let R_ind   := inductive_respond unit_witness
+let R_inert := inert_respond unit_witness
+let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]
+let Three := Coproduct [pair "a" [], pair "b" [Rec], pair "c" [Rec, Rec]]
 
 // ── the WALKER-CLEAN predicate (coh + per-case junk): real responds good, bad ones caught ──
 test verify_good MyNat (resp_of MyNat) = Ok TT
@@ -26,20 +26,20 @@ test verify_good Three R_ind   = Ok FF
 test verify_good Nat   R_inert = Ok FF
 
 // ── PER-CASE necessity (R5): a LAZY gate checks only the FIRST case — caught by the per-case junk dim ──
-let coh_lazy = {T, mtv, cases} -> (eta_check (field cases (pair_fst (pair_fst (type_meta (derive_case_telescope T mtv)).recognizer_params))) (pair_snd (pair_fst (type_meta (derive_case_telescope T mtv)).recognizer_params)))
-let R_lazy = gated_inductive_respond coh_lazy unit_witness
+let coh_lazy := {T, mtv, cases} -> (eta_check (field cases (pair_fst (pair_fst (type_meta (derive_case_telescope T mtv)).recognizer_params))) (pair_snd (pair_fst (type_meta (derive_case_telescope T mtv)).recognizer_params)))
+let R_lazy := gated_inductive_respond coh_lazy unit_witness
 test verify_good MyNat R_lazy = Ok FF              // a NAIVE single-slot probe would MISS this; per-case catches it
 
 // ── the REFLECTION dimension: caught by FUSION (no separate probe). R_unpoliced is an adversary gate
 // that is TYPE-sound yet reflection-UNSOUND (its check doesn't police mints, so it accepts `is_fork p`).
-let cells_of = {T} -> (type_meta T).recognizer_params
-let mint_sig = pair_fst (mint_cell t)
-let is_pih = {T} -> and (is_fork (cells_of T)) (tree_eq (pair_fst (pair_fst (cells_of T))) mint_sig)
-let pdom = {T} -> (type_meta (pair_fst (cells_of T))).ty
-let pcod = {T, h} -> (type_meta (pair_fst ((pair_snd (cells_of T)) h))).ty
-let ucheck = fix ({self, v, T} -> if (is_neutral T) then (T v) else (if (is_pih T) then (self (v (make_hyp (pdom T) t)) (pcod T (make_hyp (pdom T) t))) else (T v)))
-let ucheck_fields = fix ({self, flds, cases} -> if (is_fork flds) then (bind (ucheck (field cases (pair_fst (pair_fst flds))) (pair_snd (pair_fst flds))) ({ok} -> if ok then (self (pair_snd flds) cases) else (Ok FF))) else (Ok TT))
-let R_unpoliced = gated_inductive_respond ({T, mtv, cases} -> ucheck_fields (type_meta (derive_case_telescope T mtv)).recognizer_params cases) unit_witness
+let cells_of := {T} -> (type_meta T).recognizer_params
+let mint_sig := pair_fst (mint_cell t)
+let is_pih := {T} -> and (is_fork (cells_of T)) (tree_eq (pair_fst (pair_fst (cells_of T))) mint_sig)
+let pdom := {T} -> (type_meta (pair_fst (cells_of T))).ty
+let pcod := {T, h} -> (type_meta (pair_fst ((pair_snd (cells_of T)) h))).ty
+let ucheck := fix ({self, v, T} -> if (is_neutral T) then (T v) else (if (is_pih T) then (self (v (make_hyp (pdom T) t)) (pcod T (make_hyp (pdom T) t))) else (T v)))
+let ucheck_fields := fix ({self, flds, cases} -> if (is_fork flds) then (bind (ucheck (field cases (pair_fst (pair_fst flds))) (pair_snd (pair_fst flds))) ({ok} -> if ok then (self (pair_snd flds) cases) else (Ok FF))) else (Ok TT))
+let R_unpoliced := gated_inductive_respond ({T, mtv, cases} -> ucheck_fields (type_meta (derive_case_telescope T mtv)).recognizer_params cases) unit_witness
 test verify_good MyNat R_unpoliced = Err   // FUSION: an unpoliced/reflecting respond -> walker abort (Err) -> rejected
 test (R_unpoliced (make_hyp MyNat 0) { motive := ({_} -> Nat); cases := { z := "junk"; s := ({p, ih} -> ih) } }) = Extend InvalidType   // it IS type-sound: concrete type-junk rejected
 test tree_eq (R_unpoliced (make_hyp MyNat 0) { motive := ({_} -> Bool); cases := { z := TT; s := ({p, ih} -> is_fork p) } }) (Extend InvalidType) = FF   // ...yet reflection-UNSOUND: accepts is_fork p

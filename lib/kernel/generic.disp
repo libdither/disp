@@ -10,23 +10,23 @@
 // stored accessor, RECURSE the fold at `rec` cells, apply the algebra case `alg.tag`. ONE generic fold for
 // every inductive; the dependent recursor, fmap, and (once §13) cubical transport are this fold with other algebras.
 // apply_all: saturate a curried case with the positional (folded) args.
-let apply_all = fix ({self, fn, args} -> if (is_fork args) then (self (fn (pair_fst args)) (pair_snd args)) else fn)
+let apply_all := fix ({self, fn, args} -> if (is_fork args) then (self (fn (pair_fst args)) (pair_snd args)) else fn)
 // collect_args: walk the cell telescope, extracting each arg (`acc payload`) and folding it at rec cells
 // via `fold alg raw`. GOTCHA: `fold`/`alg` are threaded SEPARATELY (never pre-formed as `fold alg` — that
 // closed redex unfolds forever at compile time; `fold alg raw` forms only at the runtime rec site).
-let collect_args = fix ({self, cells, payload, fold, alg} ->
+let collect_args := fix ({self, cells, payload, fold, alg} ->
   if (is_fork cells) then {
-    let cell = pair_fst cells
-    let raw = ((type_meta cell).acc) payload
-    let x = if (is_rec_cell cell) then (fold alg raw) else raw
+    let cell := pair_fst cells
+    let raw := ((type_meta cell).acc) payload
+    let x := if (is_rec_cell cell) then (fold alg raw) else raw
     cons x (self ((pair_snd cells) t) payload fold alg)
   } else nil)
 // fold_value_via view: first DECODE v via `view` (the from-iso for SHAPE-encoded Nat/List/Ord), then fold
 // the inj-tagged form — so ONE fold covers inj-tagged AND shape-encoded. `fold_value_via` takes the view
 // explicitly; `fold_value` below AUTO-READS it from the `functor` iso (iso_id's view = `Ok` passes through).
 fold_value_via := {view} -> fix ({fold, T, alg, v} -> {
-  let dec = (match (view v) { Ok tg => tg; Err _ => v })
-  let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
+  let dec := (match (view v) { Ok tg => tg; Err _ => v })
+  let cells := (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
   apply_all (field alg (pair_fst dec)) (collect_args cells (pair_snd dec) (wait fold T) alg)
 })
 // fold_value: like fold_value_via but AUTO-READS the decode `view` from the type's iso (functor),
@@ -39,17 +39,17 @@ fold_value := {T} -> fold_value_via (pair_fst (type_meta T).functor) T
 // at `motive self` (usable under a Pi binder). all_args = raw args; ih_args = elim-recursion at each rec cell.
 // Decodes the target through the functor view first (like fold_value), so shape-encoded types
 // (Nat/Bool/Ord/List) dispatch by variant tag too.
-let all_args = fix ({self, cells, payload} ->
+let all_args := fix ({self, cells, payload} ->
   if (is_fork cells) then (cons (((type_meta (pair_fst cells)).acc) payload) (self ((pair_snd cells) t) payload)) else nil)
-let ih_args = fix ({self, cells, payload, rec} ->
+let ih_args := fix ({self, cells, payload, rec} ->
   if (is_fork cells) then {
-    let cell = pair_fst cells
-    let rest = self ((pair_snd cells) t) payload rec
+    let cell := pair_fst cells
+    let rest := self ((pair_snd cells) t) payload rec
     if (is_rec_cell cell) then (cons (rec (((type_meta cell).acc) payload)) rest) else rest
   } else nil)
-let rec_dispatcher = {T} -> fix ({self, motive, cases, v} -> {
-  let dec = match ((pair_fst (type_meta T).functor) v) { Ok tg => tg; Err _ => v }
-  let cells = (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
+let rec_dispatcher := {T} -> fix ({self, motive, cases, v} -> {
+  let dec := match ((pair_fst (type_meta T).functor) v) { Ok tg => tg; Err _ => v }
+  let cells := (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
   apply_all (field cases (pair_fst dec)) (list_cat (all_args cells (pair_snd dec)) (ih_args cells (pair_snd dec) (elim self motive cases)))
 })
 rec_value := {T, motive, cases, target} -> elim (rec_dispatcher T) motive cases target
@@ -63,10 +63,10 @@ ord_rec : {P : Ord -> Type} -> P zero_ord -> ({a : Ord} -> {b : Ord} -> P a -> P
 
 // children (generic TRAVERSAL): the immediate recursive sub-values of `v`, read off the cells (the
 // `is_rec_cell` positions, not folded) — raw material for size/depth over ANY inductive, no per-type code.
-let rec_children = fix ({self, cells, payload} ->
+let rec_children := fix ({self, cells, payload} ->
   if (is_fork cells) then {
-    let cell = pair_fst cells
-    let rest = self ((pair_snd cells) t) payload
+    let cell := pair_fst cells
+    let rest := self ((pair_snd cells) t) payload
     if (is_rec_cell cell) then (cons (((type_meta cell).acc) payload) rest) else rest
   } else nil)
 children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t }) (pair_snd v)
@@ -76,24 +76,24 @@ children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_p
 // (`slot_over`, position-wise): maps a `Param i` arg with `fns i`, recurses at a `Rec` arg, leaves the
 // rest. `fmap`/`bimap` are 1-/2-param specializations; `fmap_n` view-decodes shape-encoded types via the
 // `functor` iso (List/Nat/Ord work too). Deferred: nested `RecUnder F` (F≠Id, needs F's map).
-let slot_over = fix ({self, depth, is_last, f, p} ->
+let slot_over := fix ({self, depth, is_last, f, p} ->
   if (tree_eq depth zero)
     then (if is_last then (f p) else (pair (f (pair_fst p)) (pair_snd p)))
     else (pair (pair_fst p) (self (nat_pred depth) is_last f (pair_snd p))))
-let walk_map_args = fix ({self, nm, fns, argspec, payload, depth} ->
+let walk_map_args := fix ({self, nm, fns, argspec, payload, depth} ->
   if (is_fork argspec) then {
-    let marker = pair_fst argspec
-    let is_last = is_leaf (pair_snd argspec)
-    let trans = (if (is_param_marker marker) then (fns (pair_snd marker)) else (if (and (is_recunder_marker marker) (tree_eq (pair_snd marker) Id)) then (nm fns) else Id))
+    let marker := pair_fst argspec
+    let is_last := is_leaf (pair_snd argspec)
+    let trans := (if (is_param_marker marker) then (fns (pair_snd marker)) else (if (and (is_recunder_marker marker) (tree_eq (pair_snd marker) Id)) then (nm fns) else Id))
     self nm fns (pair_snd argspec) (slot_over depth is_last trans payload) (succ depth)
   } else payload)
 // fmap_n: map a value via the type's iso (functor) — decode (view) -> map the inj form (slot_over,
 // recursing at Rec cells) -> re-encode. Identity iso = plain inj map; a real iso makes the SAME `fmap`
 // work on shape values. `fmap_step` splits out the map+encode so the match arm ends in the arm-bound `tg`.
-let fmap_step = {self, T, fns, encode, tg} ->
+let fmap_step := {self, T, fns, encode, tg} ->
   encode (inj (pair_fst tg) (walk_map_args (wait self T) fns (match (lookup_arm (type_meta T).recognizer_params (pair_fst tg)) { Ok a => a; Err _ => t }) (pair_snd tg) zero))
 fmap_n := fix ({self, T, fns, v} -> {
-  let iso = (type_meta T).functor
+  let iso := (type_meta T).functor
   match ((pair_fst iso) v) {
     Ok tg => (fmap_step self T fns (pair_snd iso) tg)
     Err _ => v
@@ -105,14 +105,14 @@ bimap := {T, f, g, v} -> fmap_n T ({i} -> if (tree_eq i zero) then f else g) v
 // key.over (CELL_OPTICS, the NAMED side): `key name = slot (index_of names name)` — the §2.6 cut run
 // BACKWARD, so `fmap`/`bimap` work over records (compose key.overs) by the same engine as positional slot.over.
 key_over := {name, f, record} -> { // rebuild the §2.6 record with field `name` mapped (stored values are list_const-wrapped)
-  let np = type_meta record
+  let np := type_meta record
   make_record (pair_fst np) (list_update (list_index_of (pair_fst np) name) ({w} -> list_const (f (w t))) (pair_snd np))
 }
 // walk_map over a record: map each `Param i` field via key.over (compose). fmap_rec/bimap_rec derive.
-let walk_map_fields = fix ({self, fns, fields, record} ->
+let walk_map_fields := fix ({self, fns, fields, record} ->
   if (is_fork fields) then {
-    let arm = pair_fst fields
-    let record2 = if (is_param_marker (pair_snd arm)) then (key_over (pair_fst arm) (fns (pair_snd (pair_snd arm))) record) else record
+    let arm := pair_fst fields
+    let record2 := if (is_param_marker (pair_snd arm)) then (key_over (pair_fst arm) (fns (pair_snd (pair_snd arm))) record) else record
     self fns (pair_snd fields) record2
   } else record)
 fmap_rec  := {T, fns, r}    -> walk_map_fields fns (type_meta T).recognizer_params r

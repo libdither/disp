@@ -45,7 +45,7 @@ test ({x, y} -> if x
   else (if y then 3 else 4)) FF TT = 3
 
 // else-if chain (right-associative; the trailing else needs no parens)
-let bucket = {n} ->
+let bucket := {n} ->
   if (tree_eq n 0) then 100
   else if (tree_eq n 1) then 200
   else 300
@@ -62,7 +62,7 @@ test bucket 2 = 300
 // If it were broken (eager thunks), bracket abstraction over `y` would
 // eagerly evaluate `loops y` and the test would hit budget.
 
-let loops = fix ({self, x} -> self x)
+let loops := fix ({self, x} -> self x)
 
 test ({x, y} -> if x then y else loops y) TT 5 = 5
 
@@ -76,7 +76,7 @@ test ({x, y} -> if x then loops y else y) FF 5 = 5
 // As a block-let member body (line mode: the else body ends at the newline,
 // so the block's trailing `r` is left untouched)
 test ({x} -> {
-  let r = if x then 10 else 20
+  let r := if x then 10 else 20
   r
 }) TT = 10
 
@@ -84,7 +84,7 @@ test ({x} -> {
 test (({x} -> if x then 1 else 0) TT) = 1
 
 // Scrutinee is an application
-let is_zero = {n} -> tree_eq n 0
+let is_zero := {n} -> tree_eq n 0
 test (if (is_zero 0) then 1 else 0) = 1
 test (if (is_zero 1) then 1 else 0) = 0
 
@@ -96,7 +96,7 @@ test (if (is_zero 1) then 1 else 0) = 0
 // invoked only when the success branch is selected — otherwise the
 // "Err short-circuit" property is broken.
 
-let succ_only = {c, k, x} ->
+let succ_only := {c, k, x} ->
   if c then k x else loops x
 
 // When c=TT, k is invoked with x.
@@ -115,7 +115,7 @@ test succ_only TT ({y} -> succ y) 4 = 5
 // rewrites `select_lazy ({_} -> A) ({_} -> B) cond` to
 // `if cond then A else B`, side-stepping the eager reduction.
 
-let count_down = fix ({self, n} ->
+let count_down := fix ({self, n} ->
   select_lazy
     ({_} -> 0)
     ({_} -> succ (self (pair_snd n)))
@@ -125,7 +125,7 @@ test count_down 0 = 0
 test count_down 3 = 3
 
 // Nested select_lazy with self-recursion under both arms.
-let count_down2 = fix ({self, n} ->
+let count_down2 := fix ({self, n} ->
   select_lazy
     ({_} -> 0)
     ({_} ->
@@ -144,19 +144,19 @@ test count_down2 3 = 3
 // ================================================================
 
 // Arm constructor names are TAGS BY SPELLING (strings) — no tag in scope needed.
-let classify = {c} -> match c { inc n => succ n; id x => x; _ => zero }
+let classify := {c} -> match c { inc n => succ n; id x => x; _ => zero }
 test classify (inj "inc" zero) = succ zero
 test classify (inj "id" (succ zero)) = succ zero
 test classify (inj "other" TT) = zero // wildcard: unmatched tag -> default
 
 // Nullary arm ignores the (unit) payload.
-let opt = {c} -> match c { none => zero; some x => x }
+let opt := {c} -> match c { none => zero; some x => x }
 test opt (inj "none" t) = zero
 test opt (inj "some" (succ zero)) = succ zero
 
 // Multi-binder arm destructures a right-nested-pair payload (Σ-chain layout):
 //   pt a b c   ≡   inj "pt" (pair a (pair b c))
-let p3 = inj "pt" (pair zero (pair (succ zero) (succ (succ zero))))
+let p3 := inj "pt" (pair zero (pair (succ zero) (succ (succ zero))))
 test (match p3 { pt x y z => x }) = zero // x = fst
 test (match p3 { pt x y z => y }) = succ zero // y = fst snd
 test (match p3 { pt x y z => z }) = succ (succ zero) // z = snd snd

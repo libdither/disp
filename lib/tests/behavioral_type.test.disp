@@ -13,28 +13,28 @@ open use "../std/nat/arith.disp"
 // ── the old OOM pins: the universe check nested under other walkers ──
 test tree_eq (param_apply Type Bool) (Ok TT) = TT
 test tree_eq (param_apply Type Nat)  (Ok TT) = TT
-let OuterCheck = wait (make_recognizer ({m, v} -> param_apply Type v)) (make_meta unit_witness inert_respond)
+let OuterCheck := wait (make_recognizer ({m, v} -> param_apply Type v)) (make_meta unit_witness inert_respond)
 test tree_eq (param_apply OuterCheck Bool) (Ok TT) = TT   // was OOM on every backend
 test tree_eq (param_apply OuterCheck Nat)  (Ok TT) = TT   // was OOM (recursive)
-let Outer2 = wait (make_recognizer ({m, v} -> param_apply OuterCheck v)) (make_meta unit_witness inert_respond)
+let Outer2 := wait (make_recognizer ({m, v} -> param_apply OuterCheck v)) (make_meta unit_witness inert_respond)
 test tree_eq (param_apply Outer2 Nat) (Ok TT) = TT        // two levels — flattening, not one-shot relief
 
 // ── discrimination: the behavioral dimensions actually bite at certification ──
 // inert respond (over-restrictive): not a Type
-let BadMyNat = Coproduct_respond inert_respond [pair "z" [], pair "s" [Rec]]
+let BadMyNat := Coproduct_respond inert_respond [pair "z" [], pair "s" [Rec]]
 test tree_eq (param_apply Type BadMyNat) (Ok FF) = TT
 // Param-marked (List-shaped): good gate accepted, inert rejected — discrimination is genuine for params
-let view_l = {v} -> triage (Ok (inj "nil" t)) ({_} -> Err) ({h, tl} -> Ok (inj "cons" (pair h tl))) v
-let encode_l = {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
-let GoodList = Coproduct_viewed_respond (cons Nat nil) (gated_inductive_respond (coh_check (cons Nat nil))) (pair view_l encode_l) [pair "nil" [], pair "cons" [Param zero, Rec]]
+let view_l := {v} -> triage (Ok (inj "nil" t)) ({_} -> Err) ({h, tl} -> Ok (inj "cons" (pair h tl))) v
+let encode_l := {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
+let GoodList := Coproduct_viewed_respond (cons Nat nil) (gated_inductive_respond (coh_check (cons Nat nil))) (pair view_l encode_l) [pair "nil" [], pair "cons" [Param zero, Rec]]
 test tree_eq (param_apply Type GoodList) (Ok TT) = TT
-let BadList = Coproduct_viewed_respond (cons Nat nil) inert_respond (pair view_l encode_l) [pair "nil" [], pair "cons" [Param zero, Rec]]
+let BadList := Coproduct_viewed_respond (cons Nat nil) inert_respond (pair view_l encode_l) [pair "nil" [], pair "cons" [Param zero, Rec]]
 test tree_eq (param_apply Type BadList) (Ok FF) = TT
 // a LYING gate (claims to gate, accepts everything): caught by the junk dims
-let LyingNat = Coproduct_respond (gated_inductive_respond ({T, m, c} -> Ok TT)) [pair "z" [], pair "s" [Rec]]
+let LyingNat := Coproduct_respond (gated_inductive_respond ({T, m, c} -> Ok TT)) [pair "z" [], pair "s" [Rec]]
 test tree_eq (param_apply Type LyingNat) (Ok FF) = TT
 // declared-ungated (respond IS inductive_respond): junk dims skipped — a visible, accepted category
-let UngatedNat = Coproduct_respond inductive_respond [pair "z" [], pair "s" [Rec]]
+let UngatedNat := Coproduct_respond inductive_respond [pair "z" [], pair "s" [Rec]]
 test tree_eq (param_apply Type UngatedNat) (Ok TT) = TT
 
 // ── the dispatch boundaries ──

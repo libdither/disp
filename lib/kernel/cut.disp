@@ -73,14 +73,14 @@ bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic b
 // a plain application. The recognizer is what establishes presence, so it looks up
 // honestly (`Ok value` / `Err`); without this, a record missing `name` projects to junk
 // `t t`, which a permissive field type (Tree/String) would silently accept.
-let lookup_field_at = fix ({self, names, payload, name} ->
+let lookup_field_at := fix ({self, names, payload, name} ->
   if (is_fork names)
     then (if (tree_eq (pair_fst names) name)
             then (Ok ((pair_fst payload) t)) // unwrap the list_const-wrapped value
             else (self (pair_snd names) (pair_snd payload) name))
     else Err)
 lookup_field := {r, name} -> {
-  let m = type_meta r
+  let m := type_meta r
   lookup_field_at (pair_fst m) (pair_snd m) name
 }
 
@@ -105,12 +105,15 @@ Bind    : Tree -> GuardAction := inj1 "Bind"          // bind this value
 Install : Tree -> GuardAction := inj1 "Install"       // set the name's guard; value untouched
 Both    : Tree -> Tree -> GuardAction := inj2 "Both"  // bind AND set the guard
 // Request decorators: ordinary values a declaration head applies to the built request.
-// `base v` is the plain declaration; `let_dec` marks the write private; `sig T` is a
-// valueless interface entry; `guard g` fills the proposal slot. All four carry
+// `base v` is the plain declaration; `let` marks the write private (so `let x := e`
+// is nothing but a decorated declaration — `let` is THIS value, not syntax; the
+// elaborator's fast path mirrors it while it is unbound or pristine, and shadowing
+// it changes what the shadowing scope's `let`s mean); `sig T` is a valueless
+// interface entry; `guard g` fills the proposal slot. All four carry
 // machine-checked annotations (Request is the universe's structural record; a
 // projected field of an abstract request is a stuck Tree, which the field types admit).
 base    : Tree -> Request := {v} -> { value := (t v); ty := t; guard := t; private := FF }
-let_dec : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT }
+let     : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT }
 sig     : Type -> Request := {T} -> { value := t; ty := (t T); guard := t; private := FF }
 guard   : Tree -> Request -> Request := {g} -> {req} -> { value := req.value; ty := req.ty; guard := (t g); private := req.private }
 // default_guard: the ambient policy for unguarded names — honor the declarer verbatim;

@@ -21,11 +21,11 @@ test tree_eq (oeq_sym Nat 3 3 refl) refl = TT
 test tree_eq (oeq_trans Nat 3 3 3 refl refl) refl = TT
 
 // ── function layer: two pointwise-equal, tree-distinct programs and their license ──
-let FnT = Arrow NatList NatList
-let mp = {f, xs} -> list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
-let idA = {xs} -> xs
-let idB = {xs} -> mp ({x} -> x) xs
-let map_id_law = {a} -> list_rec
+let FnT := Arrow NatList NatList
+let mp := {f, xs} -> list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+let idA := {xs} -> xs
+let idB := {xs} -> mp ({x} -> x) xs
+let map_id_law := {a} -> list_rec
   ({xs_} -> Eq NatList xs_ (mp ({x} -> x) xs_))
   refl
   ({h, tl, ih} -> eq_cong NatList NatList ({t_} -> cons h t_) tl (mp ({x} -> x) tl) ih)
@@ -38,8 +38,8 @@ test param_apply (oeq FnT idB idA) (oeq_sym FnT idA idB map_id_law) = Ok TT
 test param_apply (oeq FnT idA idB) (oeq_trans FnT idA idA idB (oeq_refl FnT idA) map_id_law) = Ok TT
 
 // ── linked pairs: a respect witness for an extensional motive, checked abstractly ──
-let P_good = {h} -> Eq NatList (h nil) nil
-let resp_good = {h0, h1, rho, x} ->
+let P_good := {h} -> Eq NatList (h nil) nil
+let resp_good := {h0, h1, rho, x} ->
   eq_subst NatList (h0 nil) (h1 nil) ({z} -> Eq NatList z nil) (rho nil) x
 test param_apply (LinkedPi FnT ({h0} -> {h1} -> {rho} -> Arrow (P_good h0) (P_good h1))) resp_good = Ok TT
 // transport at concretes is the identity: the fibers share the inhabitant, and the
@@ -50,27 +50,27 @@ test tree_eq (resp_good idA idB map_id_law refl) refl = TT
 // the limit (why the ext-gate probe exists): an INTENSIONAL motive's fibers collapse on
 // hyps, so its respect obligation is vacuously checkable; the concrete fraud is caught
 // by the use-site re-check
-let P_bad = {h} -> if (tree_eq h idA) then Unit else False
+let P_bad := {h} -> if (tree_eq h idA) then Unit else False
 test param_apply (LinkedPi FnT ({h0} -> {h1} -> {rho} -> Arrow (P_bad h0) (P_bad h1))) ({h0, h1, rho, x} -> x) = Ok TT
 test tree_eq (P_bad idA) Unit  = TT
 test tree_eq (P_bad idB) False = TT
 test typecheck (P_bad idB) unit_val = Ok FF
 
 // ── records: componentwise (non-dependent fields), the licensed-module shape ──
-let PP = { f : (Arrow NatList NatList), g : (Arrow NatList NatList) }
-let rA = { f := idA; g := idA }
-let rB = { f := idB; g := idB }
+let PP := { f : (Arrow NatList NatList), g : (Arrow NatList NatList) }
+let rA := { f := idA; g := idA }
+let rB := { f := idB; g := idB }
 test param_apply (oeq PP rA rB) { f := map_id_law; g := map_id_law } = Ok TT
 test param_apply (oeq PP rA rA) (oeq_refl PP rA) = Ok TT
 test param_apply (oeq PP rB rA) (oeq_sym PP rA rB { f := map_id_law; g := map_id_law }) = Ok TT
 // a DEPENDENT record falls back to the Eq base (stating componentwise relatedness there
 // would need transport along the earlier components — the coe rung, deliberately absent)
-let DepT = { a : Nat, p : (Eq Nat a 3) }
+let DepT := { a : Nat, p : (Eq Nat a 3) }
 test tree_eq (oeq DepT { a := 3; p := refl } { a := 3; p := refl }) (Eq DepT { a := 3; p := refl } { a := 3; p := refl }) = TT
 
 // ── quotients: Parity = Nat with oeq coarsened by an observation ──
-let is_even = {n} -> nat_rec ({_} -> Bool) TT ({p, ih} -> not ih) n
-let Parity = wait (make_recognizer ({m, v} -> param_apply Nat v))
+let is_even := {n} -> nat_rec ({_} -> Bool) TT ({p, ih} -> not ih) n
+let Parity := wait (make_recognizer ({m, v} -> param_apply Nat v))
   { recognizer_params := unit_witness; functor := trivial_functor; respond := inert_respond;
     behavioral_specs := { setoid := image_setoid is_even Bool } }
 test typecheck Type Parity = Ok TT

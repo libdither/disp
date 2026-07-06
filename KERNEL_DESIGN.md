@@ -252,11 +252,13 @@ A declaration is a request the declared name's guard mediates
 (COMPILATION.typ § Declarations as requests is normative). The
 kernel-side vocabulary lives at the end of `cut.disp`: the
 `GuardAction` constructors `Bind`/`Install`/`Both`, the request
-decorators `base`/`let_dec`/`sig`/`guard` (all four annotated), and
-`default_guard` (unannotated — it branches on stem-option fields, the
-cell-op mode-branch wall; its disp definition is normative and the
-elaborator's fast path mirrors it, taken only while the ambient default
-is pristine). Policies live in `lib/std/oeq.disp`: `license_guard R`
+decorators `base`/`let`/`sig`/`guard` (all four annotated — `let` IS
+the surface `let`: not a keyword, an ordinary head whose decorator
+marks the write private), and `default_guard` (unannotated — it
+branches on stem-option fields, the cell-op mode-branch wall; its disp
+definition is normative and the elaborator's fast path mirrors it,
+taken only while the ambient default is pristine; `let` and the `test`
+equation marker get the same pristine-capture treatment). Policies live in `lib/std/oeq.disp`: `license_guard R`
 (rebinds need `{ new; proof }` with `proof : R old new`; first bind of
 a contract-only name is licensed by its annotation alone; ownership is
 never surrendered), `guard_eq` (derives the license from the declared

@@ -24,8 +24,8 @@ test pair_swap (make_pair 1 9) = make_pair 9 1
 // Pair under a Pi binder — `.fst`/`.snd` projection is uniform: the §2.6 cut
 // on a concrete record, Telescope's respond on a Pair-hypothesis. No is_neutral
 // dispatch needed (the old proj_fst/proj_snd select_lazy hack is gone).
-let snd_of_nats : Pair Nat Nat -> Nat = {p} -> p.snd
+let snd_of_nats : Pair Nat Nat -> Nat := {p} -> p.snd
 test snd_of_nats (make_pair 4 7) = 7
-let fst_of_nats : Pair Nat Nat -> Nat = {p} -> p.fst
+let fst_of_nats : Pair Nat Nat -> Nat := {p} -> p.fst
 test fst_of_nats (make_pair 4 7) = 4
 test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> p.snd) = Ok TT // verifies through the walker

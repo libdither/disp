@@ -51,7 +51,7 @@ span multiple lines and do not nest.
 
 ```disp
 // line comment
-let x = t   // trailing comments work too
+let x := t   // trailing comments work too
 /* block
    comment */
 ```
@@ -63,7 +63,7 @@ let x = t   // trailing comments work too
   align: (left, left, left),
   stroke: (x, y) => if y == 0 { (bottom: 0.6pt) } else { none },
   table.header[*Category*][*Pattern / members*][*Example*],
-  [Keyword],     [`let`, `test`, `use`, `open`, `match`, `if`, `then`, `else`],     [`let`],
+  [Keyword],     [`use`, `open`, `match`, `if`, `then`, `else` — NOTE: `let` and `test` are *not* keywords; they are ordinary library identifiers (the private-write request decorator in `kernel/cut.disp` and the prelude identity marking equations)],     [`use`],
   [Identifier],  [`[A-Za-z_][A-Za-z0-9_']*`, excluding keywords and the bare leaf `t`], [`foo_bar`, `x'`, `_priv`],
   [Leaf],        [`t` (not followed by an identifier char) or `△`],       [`t`, `△`],
   [String],      [`"..."` (no escape sequences). A `use` argument, or a term: a string literal is the `List` of its codepoint `Nat`s (so `"A"` ≡ `[65]`), giving a deterministic, distinct tree per spelling — used as record/coproduct field-name tags.], [`"lib/foo.disp"`, `"respond"`],
@@ -107,8 +107,9 @@ Trailing separators are always allowed.
 
 A file body and an inline `{ ... }` record value share the same grammar:
 an ordered sequence of *members* separated by `SEMI`. Members come in
-two flavours --- *fields* (`name := expr`) that are exported, and
-*statements* (`let`, `test`, `open`) that are local side-effects.
+three flavours --- *declarations* (`head? name (: T)? (:= expr)?`, with
+`let`-headed ones private), *equations* (`lhs = rhs`, the test form),
+and `open` imports.
 
 #rule(
   "program",
@@ -116,16 +117,16 @@ two flavours --- *fields* (`name := expr`) that are exported, and
   "open use \"lib/prelude.disp\"
 id := {A} -> {x} -> x
 test id t = t",
-  note: [A file body is a `recBody`. When loaded via `use`, the file's exported fields become the record's fields. `let` bindings are private; `test` and `open` are side-effects.],
+  note: [A file body is a `recBody`. When loaded via `use`, the file's exported fields become the record's fields. `let`-headed declarations are private; equations and `open` are side-effects.],
 )
 
 #rule(
   "recBody",
   "recBody  ::= (recMember SEMI)* recMember? SEMI?
-recMember ::= field | let | test | \"open\" expr",
-  "let helper = {x} -> x x    // private
+recMember ::= field | let | equation | \"open\" expr",
+  "let helper := {x} -> x x    // private (a `let`-decorated declaration)
 add := fix ({self, n, m} -> ...) // exported
-test add 2 3 = 5              // assertion
+test add 2 3 = 5              // equation (the `test` marker is the prelude identity)
 open use \"prelude.disp\"     // import",
   note: [Shared by file bodies and inline `{ ... }` record values. Members are processed in order; later members can reference earlier ones.],
 )
@@ -145,18 +146,19 @@ guard g iface : T                                // interface entry (no value)",
 
 #rule(
   "let",
-  "let      ::= \"let\" IDENT (\":\" expr)? (\":=\" | \"=\") expr",
+  "let      ::= \"let\" IDENT (\":\" expr)? \":=\" expr    // = field with head `let`",
   "let K := {x} -> {y} -> x
 let id : {A : Type} -> A -> A
-       = {A} -> {x} -> x",
-  note: [Private name binding; visible to subsequent members but NOT exported. `:=` and legacy `=` both parse (migration toward one binding operator; `=` stays the `test` operator). Within a block expression, desugars to `App(Binder, body)`. In declaration position, `let` denotes the `let_dec` request decorator semantically (a private write); inside blocks it remains a lexical binding form (a value cannot introduce a lexical binder).],
+       := {A} -> {x} -> x",
+  note: [Private name binding; visible to subsequent members but NOT exported. At the top level this is *not its own production*: `let` is an ordinary identifier, so `let x := e` parses by the `field` rule as a decorated declaration whose head is `let` — the private-write request decorator defined in `kernel/cut.disp` (`{req} -> req with private := TT`). The elaborator's fast path mirrors that value while `let` is unbound (bootstrap files before the kernel) or pristine; *shadowing `let` changes what the shadowing scope's `let`s mean* (the shadowing decorator runs on each request). Inside braces, `let` remains a lexical binding form recognized structurally (a value cannot introduce a lexical binder): in a block it desugars to `App(Binder, body)`. The legacy `let x = e` spelling was removed (a targeted parse error points to `:=`; `=` is the equation operator).],
 )
 
 #rule(
-  "test",
-  "test     ::= \"test\" expr \"=\" expr",
-  "test ({x} -> x) t = t",
-  note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees.],
+  "equation (tests)",
+  "equation ::= expr \"=\" expr",
+  "test ({x} -> x) t = t
+test pred two = one",
+  note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees. There is no `test` keyword — the conventional `test` prefix is the *prelude identity* (`test : Tree -> Tree := {x} -> x`), so `test lhs` ≡ `lhs` and the marker is style, not syntax. While `test` is unbound or pristine the elaborator peels the marker before compiling (identical semantics, and it restores the true application head so named-argument calls in the lhs resolve); a scope that shadows `test` has its marker-written equations preprocessed by the shadowing value. The lhs must be a *compound* expression (application, projection, …): a bare-name lhs like `x = 5` is rejected as an almost-certain `:=` typo, which in practice keeps every equation marker-led. The `=` must be reachable on the lhs's opening line for the next-item lookahead (`isEquationStart`) — bracketed sub-expressions may span lines freely; keyword-led lhs (`if`/`match` at depth 0) must be parenthesized.],
 )
 
 == Expressions
@@ -221,12 +223,12 @@ block     ::= \"{\" (stmt SEMI)* expr SEMI? \"}\"
 coproductType ::= \"<\" (sumVariant (COMMA sumVariant)* COMMA?)? \">\"
 sumVariant ::= IDENT (\":\" expr)?
 typedField ::= IDENT (\":\" expr)? (\":=\" expr)?
-stmt       ::= let | test | \"open\" expr",
+stmt       ::= let | equation | \"open\" expr",
   "(f x : Nat)                    // parenthesized ascription
 { x := t; y := t t }           // recValue (2 exported fields)
-{ let h = t; x := h }          // recValue (1 exported field, 1 private let)
+{ let h := t; x := h }         // recValue (1 exported field, 1 private let)
 { x : A, y : B }               // recType
-{ let a = t; f a }             // block (no fields, trailing expr)
+{ let a := t; f a }            // block (no fields, trailing expr)
 use \"../prelude.disp\"        // loads file, yields the module tuple { record, typ }
 point.x.fst                    // chained projection",
   note: [`atom`'s postfix `.IDENT` binds tighter than application: `f.a b` is `(f.a) b`. `(e : T)` is the only way to ascribe outside a `let` or record field. `use STRING` loads and elaborates the referenced file and yields a *module tuple* `{ record, typ }`: `record` is the §2.6 product of the file's exported values (keyed by name), and `typ` is `Record [(name, declaredType)…]` over the *annotated* exports — so a file is verified by ordinary application, `(use f).typ (use f).record = Ok TT` (gradual: unannotated exports are absent from `typ`). `open use f` splices the *values* into scope (the export metadata), independent of this value. (When the cut/`Record` formers aren't in scope, `use` falls back to the bare value record.) `if c then a else b` is the boolean conditional: it desugars to the prelude `cond` (`cond c a b`, a select-then-apply over the Scott Bool, motive `t`), with each branch closed over the free vars the two share so only the taken branch is forced (and recursive bodies dodge the eager compile-time K-reduction). `then`/`else` (keywords) bound the first two parts; the else body's tail is mode-sensitive (multi-line `matchExpr` vs newline-terminated). `else if …` chains right-associatively. `match` is now exclusively the *coproduct* cut: arms `Ctor binder* => body` where the constructor name is the tag *by spelling* (a string), desugaring to the §2.6 cut `(prod (pair [\"Ctor\"…] [handlers…])) c` (needs `prod` in scope). (The old boolean `match { TT/FF }` surface was removed.) A `_` constructor is the wildcard/default arm (its handler is appended past the names, so an unmatched tag falls to it). Multiple binders destructure a right-nested-pair payload (`Ctor a b c` ⇔ `inj \"Ctor\" (pair a (pair b c))`). Each arm body is `matchExpr`, which can span multiple lines — it stops before the next arm pattern.],
@@ -234,9 +236,12 @@ point.x.fst                    // chained projection",
 
 The `braced` alternatives are distinguished by member shape. A braced
 body that contains any `name := expr` field is a `recValue`; one with
-only `let`/`test`/`open` statements and a trailing expression is a
-`block`; one with only `let`/`test`/`open` statements and no trailing
-expression is an empty `recValue`. A `braced` followed by `ARROW` is
+only `let`/equation/`open` statements and a trailing expression is a
+`block`; one with only `let`/equation/`open` statements and no trailing
+expression is an empty `recValue`. (The braced classifier keys on
+structure: a leading `let` followed by an identifier, a depth-0 `:=`,
+or a depth-0 bare `=` each mark a recValue/block body — none of these
+can occur in binder or recType content.) A `braced` followed by `ARROW` is
 reparsed as a `binder`: `{x : A}` alone is a recType;
 `{x : A} -> e` is a binder. The empty `{}` is a 0-field recValue
 (Church unit; see `COMPILATION.typ` § Record encoding). Duplicate
@@ -342,17 +347,18 @@ A `recBody` (file or inline `{ ... }`) distinguishes *exported* and
   inset: (x: 6pt, y: 4pt),
   table.header[*Member kind*][*Visibility*],
   [`name := expr`],       [*Exported* --- becomes a field of the enclosing record],
-  [`let name = expr`],    [*Private* --- in scope for subsequent members, not exported],
-  [`test lhs = rhs`],     [Side-effect: assertion discharged at compile time],
+  [`let name := expr`],   [*Private* --- in scope for subsequent members, not exported (the `let` head marks the request private)],
+  [`test lhs = rhs`],     [Side-effect: equation discharged at compile time],
   [`open expr`],          [Side-effect: brings record fields into scope as private bindings],
 )
 
-When a file is loaded via `use`, files with at least one `field` member
-export only those fields. `let` bindings, `test` assertions, and names
-imported via `open` are local to the file. A legacy compatibility mode
-remains for fieldless shim files: if a file has no `:=` fields, its
-top-level lets and opened names are re-exported. New library files
-should use explicit field exports.
+When a file is loaded via `use`, a file with at least one exported
+`field` member exports only those fields; `let`-headed declarations,
+equations, and names imported via `open` are local to the file. A file
+that exports *nothing of its own* (e.g. the kernel barrel, which is
+pure `open`s) re-exports what it opens — the barrel rule. (The old
+legacy mode where fieldless files exported their top-level lets is
+gone: `let` marks the write private everywhere.)
 
 == What the elaborator sees
 
@@ -374,13 +380,13 @@ Each non-core node's parser-time behavior, in one line:
   [`Field { name, type, value }`],
     [compiles `value`, binds `name` in scope, and records as an exported `Def` in the output.],
   [`Let { name, type, body }`],
-    [binds `name` in the surrounding scope; body is rewritten as `Ann(body, type)` if typed. Within a Block, produces the equivalent shape `App(Binder([{name}], rest), body')`. Not exported.],
+    [(braced form; at the top level a `let` arrives as a `Field` with head `let`) binds `name` in the surrounding scope; body is rewritten as `Ann(body, type)` if typed. Within a Block, produces the equivalent shape `App(Binder([{name}], rest), body')`. Not exported.],
   [`Use { path }`],
     [recursively parses and elaborates the referenced file (firing its tests as a side effect), then replaces itself with a `RecValue` whose fields are the file's exported `field` members. Cycles are parse-time errors.],
   [`Test { lhs, rhs }`],
-    [calls the elaborator on `lhs` and `rhs` in the current scope, then asserts hash-cons equality of the resulting trees. Fails as a compile error.],
+    [(produced by the equation item) peels a pristine/unbound `test` marker off `lhs`, calls the elaborator on both sides in the current scope, then asserts hash-cons equality of the resulting trees. Fails as a compile error.],
   [`Open { expr }`],
-    [resolves `expr` as a record and brings each field into scope. It is private in field-export files and re-exported only in legacy fieldless files.],
+    [resolves `expr` as a record and brings each field into scope. Private in field-export files; re-exported only in pure-open barrel files (a file with no exported fields of its own).],
   [`Block { members, trailing }`],
     [processes `members` in order (desugaring lets, discharging tests), leaving the Block reduced to `trailing`. Collapses to `trailing` when `members` is empty.],
   [`Program { members }`],

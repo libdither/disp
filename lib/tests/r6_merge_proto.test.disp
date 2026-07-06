@@ -27,18 +27,18 @@ open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
-let SThread = inj1 "SThread"
-let SReject = inj0 "SReject"
-let SDone   = inj1 "SDone"
-let do_check = {mode, getr, ty} -> if mode then (match (getr t) { Ok part => (match (ty part) { Ok b => (if b then (SThread part) else SReject); Err _ => SReject }); Err _ => SReject }) else (SDone (Extend ty))
-let resp_of = {T} -> (type_meta T).respond (type_meta T).recognizer_params
-let is_gated = {v} -> is_fork ((type_meta v).functor)   // inductives store a real iso; negatives store trivial_functor = t
-let probe_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
-let probe_cell = {ap, out} -> wait probe_op { apply := ap; outcome := out }
+let SThread := inj1 "SThread"
+let SReject := inj0 "SReject"
+let SDone   := inj1 "SDone"
+let do_check := {mode, getr, ty} -> if mode then (match (getr t) { Ok part => (match (ty part) { Ok b => (if b then (SThread part) else SReject); Err _ => SReject }); Err _ => SReject }) else (SDone (Extend ty))
+let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
+let is_gated := {v} -> is_fork ((type_meta v).functor)   // inductives store a real iso; negatives store trivial_functor = t
+let probe_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
+let probe_cell := {ap, out} -> wait probe_op { apply := ap; outcome := out }
 
 // MERGED StrictType: [ qid recognizer ; qid_meta MetaShape ; IF gated: (mint M ; mint s ; mint cases ; probe coh) ].
 // ONE telescope, ONE `at` walk. (coh-only here — the over-permissive `junk` dim would append more cells.)
-let MergedST = tele_with (
+let MergedST := tele_with (
   t (qid_cell (Arrow Tree CheckerResult)) ({_} ->
   t (qid_meta_cell MetaShape) ({v} ->
     if (is_gated v)
@@ -59,7 +59,7 @@ test is_gated MergedST = FF      // a negative former — not gated (else-branch
 test tree_eq (param_apply MergedST Bool) (Ok TT) = TT     // non-recursive
 test tree_eq (param_apply MergedST Nat)  (Ok TT) = TT     // RECURSIVE — the nested design's wall, dissolved
 // discrimination (coh dim): an over-restrictive (inert) respond is caught -> Ok FF (so it's not folded-constant)
-let BadMyNat = Coproduct_respond inert_respond [pair "z" [], pair "s" [Rec]]
+let BadMyNat := Coproduct_respond inert_respond [pair "z" [], pair "s" [Rec]]
 test tree_eq (param_apply MergedST BadMyNat) (Ok FF) = TT
 // non-gated former passes the else-branch: self-types
 test tree_eq (param_apply MergedST MergedST) (Ok TT) = TT

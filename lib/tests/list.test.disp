@@ -3,8 +3,8 @@ open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/list.disp"
 
-let xs = list_cons 1 (list_cons 2 (list_cons 3 nil))
-let ys = list_cons 4 (list_cons 5 nil)
+let xs := list_cons 1 (list_cons 2 (list_cons 3 nil))
+let ys := list_cons 4 (list_cons 5 nil)
 
 test NatList nil = Ok TT
 test NatList xs = Ok TT
@@ -57,7 +57,7 @@ test list_is_nil xs = FF
 test list_head xs = 1
 test list_tail xs = list_cons 2 (list_cons 3 nil)
 
-let is_two = {n} -> tree_eq n 2
+let is_two := {n} -> tree_eq n 2
 test list_find is_two xs = 2
 test list_find is_two (list_cons 5 (list_cons 6 nil)) = nil
 

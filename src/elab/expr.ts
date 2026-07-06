@@ -5,9 +5,9 @@
 
 import type { Tree } from "../eval/eager.js"
 import type { Expr } from "../parse.js"
-import { elab, B, type ScopeEntry, type CompileSinks } from "./state.js"
+import { elab, B, pristineTest, type ScopeEntry, type CompileSinks } from "./state.js"
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
-import { tryRewriteSelectLazy, tryNamedCall, binderToPi } from "./sugar.js"
+import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 
 // Expr → Cir, with scope lookup and use-resolution.
@@ -164,7 +164,7 @@ export function exprToCir(
             // inline elaboration of a typed binding, where tests would be
             // re-evaluated on every typecheck).
             if (sinks?.recordTest) {
-              const lhs = compileExpr(m.lhs, fieldLookup, resolveUse, sinks)
+              const lhs = compileExpr(equationLhs(m.lhs, fieldLookup), fieldLookup, resolveUse, sinks)
               const rhs = compileExpr(m.rhs, fieldLookup, resolveUse, sinks)
               sinks.recordTest(lhs, rhs)
             }
@@ -417,14 +417,16 @@ export function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string, raw?: boolean) => ScopeEntry,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[] } | undefined {
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[] } | undefined {
+  // fieldGuards rides along so `open` can propagate a module export's installed
+  // guard (dropping it here silently un-guarded opened names).
   if (e.tag === "var") {
     const entry = lookupEntry(e.name)
-    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes } : undefined
+    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards } : undefined
   }
   if (e.tag === "use") {
     const entry = resolveUse(e.path, e.raw)
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes } : undefined
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards } : undefined
   }
   return undefined
 }
@@ -436,6 +438,20 @@ export function compileExpr(
   sinks?: CompileSinks,
 ): Tree {
   return cirToTree(eliminateLams(exprToCir(e, lookupEntry, resolveUse, sinks)))
+}
+
+// The lhs an equation actually compiles. The conventional `test` marker is peeled
+// while `test` is unbound (host fallback of identical semantics — the prelude value
+// is the identity) or pristine — peeling then ALSO restores the true application
+// head, so head-keyed elaboration (named-argument calls: `test f { x := 1 } = …`)
+// sees `f`, not `(test f)`. A shadowed `test` keeps the marker and runs.
+export function equationLhs(lhs: Expr, lookupEntry: (name: string) => ScopeEntry | undefined): Expr {
+  const bound = lookupEntry("test")?.tree
+  if (bound != null) {
+    const pt = pristineTest.get(elab.cs)
+    if (!(pt != null && elab.cs.equal!(bound, pt))) return lhs // shadowed: marker runs
+  }
+  return peelTestMarker(lhs)
 }
 
 // isUniverseTree(t, Type): is the annotation `t` EXACTLY the universe `Type`?

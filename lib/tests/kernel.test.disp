@@ -24,8 +24,8 @@ test is_closed (make_hyp Nat 0) = FF
 test is_closed (succ zero) = TT
 
 // ---- H-rule via param_apply (reached directly, not through typecheck) ----
-let hB = make_hyp Bool 0
-let hN = make_hyp Nat 0
+let hB := make_hyp Bool 0
+let hN := make_hyp Nat 0
 test param_apply Bool hB = Ok TT // Bool-hyp inhabits Bool (H-rule)
 test param_apply Nat hN = Ok TT
 test param_apply Bool hN = Ok FF // Nat-hyp does not inhabit Bool
@@ -37,15 +37,15 @@ test param_apply Nat hB = Ok FF
 // hyp_reduce's Extend is BARE, so `stuck` is the neutral itself, not Ok(neutral).
 // The respond now gates the cases against the motive (§B), so the cases must be
 // COHERENT: with motive Bool, base : Bool and step : Π n. Bool -> Bool.
-let motive = {n} -> Bool
-let cases = { zero := TT; succ := ({pred, ih} -> ih) } // cases keyed by variant tag; zero TT : Bool ; succ returns ih : Bool
-let stuck = param_apply hN { motive := motive; cases := cases }
+let motive := {n} -> Bool
+let cases := { zero := TT; succ := ({pred, ih} -> ih) } // cases keyed by variant tag; zero TT : Bool ; succ returns ih : Bool
+let stuck := param_apply hN { motive := motive; cases := cases }
 test is_neutral stuck = TT // bare stuck neutral (Option A)
 test (tree_eq (pair_fst stuck) "Ok") = FF // ...NOT Ok-wrapped
 test neutral_type stuck = Bool // motive applied to the reconstructed self
 
 // elim drives the same: concrete target runs the dispatcher, neutral routes here
-let nat_dispatcher = {motive, cases, target} -> cases.zero // toy: returns the zero case
+let nat_dispatcher := {motive, cases, target} -> cases.zero // toy: returns the zero case
 test elim nat_dispatcher motive cases zero = TT // concrete branch -> base (TT)
 test is_neutral (elim nat_dispatcher motive cases hN) = TT // neutral branch
 
@@ -63,8 +63,8 @@ test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err // x inside a us
 // const, and constructor-building bodies (e.g. `succ y`) qualify — the recogniser
 // is H-rule-aware at every level (§A). Genuinely case-analysing bodies still route
 // through the eliminator, which gates its cases against the motive (§B).
-let id_nat = {n} -> n
-let const_true = {n} -> TT
+let id_nat := {n} -> n
+let const_true := {n} -> TT
 test param_apply (Pi Nat ({_} -> Nat)) id_nat = Ok TT // id : Nat -> Nat
 test typecheck (Arrow Nat Nat) id_nat = Ok TT // same via Arrow + typecheck
 test param_apply (Pi Nat ({_} -> Bool)) const_true = Ok TT // const TT : Nat -> Bool
@@ -78,9 +78,9 @@ test param_apply (Pi Nat ({_} -> Nat)) ({y} -> succ y) = Ok TT
 // (§B) the eliminator's cases must inhabit the motive. Enforced in the TYPE's
 // respond (keyed off the neutral's stored type), so it is UNBYPASSABLE: the kernel
 // recursor, a hand-rolled recursor, and raw neutral application are all gated.
-let lying  = {y} -> nat_rec ({_} -> Nat) TT ({p, ih} -> TT) y // base/step Bool, motive says Nat
-let lying2 = {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> TT) y // correct base, lying step
-let honest = {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y
+let lying  := {y} -> nat_rec ({_} -> Nat) TT ({p, ih} -> TT) y // base/step Bool, motive says Nat
+let lying2 := {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> TT) y // correct base, lying step
+let honest := {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y
 test param_apply (Pi Nat ({_} -> Nat)) lying  = Ok FF // incoherent cases -> rejected
 test param_apply (Pi Nat ({_} -> Nat)) lying2 = Ok FF // step lie also caught
 test param_apply (Pi Nat ({_} -> Nat)) honest = Ok TT // coherent -> accepted
@@ -88,9 +88,9 @@ test honest (succ (succ zero)) = succ (succ zero) // value-transparent on concre
 
 // adversarial: a USER's OWN recursor (own dispatcher, via elim) is gated identically,
 // because on a neutral target elim applies the neutral -> the type's respond -> gate.
-let my_dispatcher = fix ({self, motive, cases, target} ->
+let my_dispatcher := fix ({self, motive, cases, target} ->
   if (tree_eq target zero) then cases.zero else (cases.succ (pair_snd target) (self motive cases (pair_snd target))))
-let my_rec = {motive, base, step, target} -> elim my_dispatcher motive { zero := base; succ := step } target
+let my_rec := {motive, base, step, target} -> elim my_dispatcher motive { zero := base; succ := step } target
 test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) TT ({p, ih} -> TT) y)        = Ok FF
 test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok TT
 // applying the neutral to a hand-built frame directly is also gated (Option A:
@@ -114,12 +114,12 @@ test ((pair_snd (type_meta Nat).functor) (inj "succ" zero)) = succ zero       //
 test (type_meta Type).functor = trivial_functor                              // non-coproducts keep trivial
 test (type_meta Type).respond = type_predicate_h_rule
 // a hand-built meta round-trips field-by-field
-let m = make_meta zero FF
+let m := make_meta zero FF
 test m.recognizer_params = zero
 test m.respond = FF
 // meta layout: an annihilate-rooted record with the canonical header (pinned here; the
 // kernel-side has_metashape_layout helper was retired, nothing in the kernel consumed it)
-let has_meta_layout = {mm} -> and (tree_eq (pair_fst mm) annihilate_sig) (tree_eq (pair_fst (type_meta mm)) ["recognizer_params", "functor", "respond", "behavioral_specs"])
+let has_meta_layout := {mm} -> and (tree_eq (pair_fst mm) annihilate_sig) (tree_eq (pair_fst (type_meta mm)) ["recognizer_params", "functor", "respond", "behavioral_specs"])
 test has_meta_layout m = TT
 test has_meta_layout (pair zero (pair TT (pair FF unit_val))) = FF // old positional shape is no longer a meta
 // recognizer_params is now Pi's [ mint x:A ; apply out:(B x) ] telescope; each cell is

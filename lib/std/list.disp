@@ -13,13 +13,13 @@ open use "nat/ops.disp"
 // former ties its OWN knot (no `Mu` wrapper). `List A : Type` is recognized by the same `at` as every
 // other type — head : A then tail : List A — with neutrals handled by the H-rule (so `List A` still
 // appears under Pi binders). The hand-rolled fix + bracket-abstraction caveats are gone.
-let view_list = {v} -> triage
+let view_list := {v} -> triage
   (Ok (inj "nil" t))                         // leaf            -> nil
   ({_} -> Err)                               // bare stem       -> not a list
   ({h, tl} -> Ok (inj "cons" (pair h tl)))   // fork(head,tail) -> cons
   v
 // encode_list: inj-form -> shape (inverse of view_list). nil -> leaf; cons (h,tl) -> fork(h,tl).
-let encode_list = {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
+let encode_list := {x} -> if (tree_eq (pair_fst x) "cons") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t
 // List is gated by the GENERIC kernel gate `coh_check`. params = `[A]` (`cons A nil`) resolves cons's
 // head `Param 0` to the element type A; from the `[Param 0, Rec]` argspec (+ the encode iso) `coh_check`
 // derives the cons case-type `Π h:A. Π tl:List A. P tl -> P (cons h tl)`. cons's head being `Param 0`
@@ -42,7 +42,7 @@ singleton : Tree -> Tree := {x} -> cons x nil
 // stuck elimination via the stored type's respond, running List's coherence gate (the old
 // version forged `make_hyp (motive xs) xs` raw, BYPASSING the gate). cases keyed by VARIANT
 // TAG (nil/cons) so the gate's `field cases tag` and the dispatcher agree.
-let list_dispatcher = fix ({self, motive, cases, target} ->
+let list_dispatcher := fix ({self, motive, cases, target} ->
   if (is_leaf target)
     then cases.nil
     else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
@@ -72,7 +72,7 @@ list_append :=
 // produces a tree that doesn't terminate under compile-time partial
 // application. The user-facing wrapper restores the natural
 // `(f, xs)` argument order.
-let list_map_inner = fix ({self, xs, f} ->
+let list_map_inner := fix ({self, xs, f} ->
   triage nil ({_} -> nil) ({head, tail} -> cons (f head) (self tail f)) xs)
 list_map := {f, xs} -> list_map_inner xs f
 
@@ -93,11 +93,11 @@ list_tail_or :=
 // Same bracket-abstraction quirk as list_map: the inner fix binder
 // order is xs-first so the trailing arg of `triage ... xs` isn't the
 // innermost binder. The user-facing wrappers restore natural arg order.
-let list_foldl_inner = fix ({self, xs, f, acc} ->
+let list_foldl_inner := fix ({self, xs, f, acc} ->
   triage acc ({_} -> acc) ({head, tail} -> self tail f (f acc head)) xs)
 list_foldl := {f, acc, xs} -> list_foldl_inner xs f acc
 
-let list_foldr_inner = fix ({self, xs, f, init} ->
+let list_foldr_inner := fix ({self, xs, f, init} ->
   triage init ({_} -> init) ({head, tail} -> f head (self tail f init)) xs)
 list_foldr := {f, init, xs} -> list_foldr_inner xs f init
 
@@ -110,7 +110,7 @@ list_tail := {xs} -> pair_snd xs
 
 // First element satisfying `pred`, or `nil` if none. Caller-side checks
 // (e.g., via a Refinement) are responsible for non-empty guarantees.
-let list_find_inner = fix ({self, xs, pred} ->
+let list_find_inner := fix ({self, xs, pred} ->
   triage nil ({_} -> nil)
     ({head, tail} -> select head (self tail pred) (pred head))
     xs)

@@ -7,8 +7,8 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-let hN = make_hyp Nat 0
-let reflects = {n} -> select_lazy ({_} -> Nat) ({_} -> Bool) (is_fork n)   // non-parametric: branches on n's shape
+let hN := make_hyp Nat 0
+let reflects := {n} -> select_lazy ({_} -> Nat) ({_} -> Bool) (is_fork n)   // non-parametric: branches on n's shape
 
 // ================================================================
 // GAP-2 regression: a USER sub-term that reflects on a hyp/neutral is caught

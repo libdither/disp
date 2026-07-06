@@ -7,7 +7,7 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-let m = use "typed_mod.disp"
+let m := use "typed_mod.disp"
 
 // The whole module verifies in one application: (typ) (record) = Ok TT.
 // This checks foo:Type, bar:Type, baz:Type — names and types — at once. Routed through

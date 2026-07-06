@@ -46,7 +46,7 @@ export function exprMentions(e: Expr, name: string): boolean {
       if (e.members) {
         for (const m of e.members) {
           if (m.tag === "field") {
-            if (exprMentions(m.value, name)) return true
+            if (m.value && exprMentions(m.value, name)) return true
             if (m.type && exprMentions(m.type, name)) return true
           } else if (m.tag === "let") {
             if (exprMentions(m.body, name)) return true
@@ -67,6 +67,18 @@ export function exprMentions(e: Expr, name: string): boolean {
       return exprMentions(e.cond, name) ||
         e.arms.some(a => !a.binders.includes(name) && exprMentions(a.body, name))
   }
+}
+
+// Peel the `test` equation marker off an lhs: `test e1 e2 …` → `e1 e2 …`.
+// Pure AST surgery; returns lhs unchanged when it isn't marker-led. Whether to
+// peel (marker pristine/unbound) is the caller's session-aware decision — see
+// equationLhs in expr.ts.
+export function peelTestMarker(lhs: Expr): Expr {
+  let hd: Expr = lhs
+  const args: Expr[] = []
+  while (hd.tag === "app") { args.unshift(hd.x); hd = hd.f }
+  if (!(hd.tag === "var" && hd.name === "test") || args.length === 0) return lhs
+  return args.slice(1).reduce<Expr>((f, x) => ({ tag: "app", f, x }), args[0])
 }
 
 // Peel a left-leaning app chain into head + args.

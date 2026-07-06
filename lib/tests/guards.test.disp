@@ -20,7 +20,7 @@ let map_id_law := {a} -> list_rec
   refl
   ({h, tl, ih} -> eq_cong NatList NatList ({t_} -> cons h t_) tl (mp ({x} -> x) tl) ih)
   a
-let FnT = Arrow NatList NatList
+let FnT := Arrow NatList NatList
 
 // ── the constructors and the default guard are ordinary, typed kernel values ──
 test typecheck GuardAction (Bind zero) = Ok TT
@@ -57,11 +57,16 @@ test tree_eq iface idA = TT
 guard freeze VERSION : Nat := 3
 test VERSION = 3
 
-// ── let_dec as a head: binds locally, marks the write private (the export-absence
+// ── `let` as a head: binds locally, marks the write private (the export-absence
 // half is pinned host-side in test/guards.test.ts) ──
-let_dec pvt : Nat := 3
+let pvt : Nat := 3
 test pvt = 3
 // the decorators are typed kernel values (annotations auto-verified at load; re-pinned)
 test typecheck Request (guard freeze (base zero)) = Ok TT
-test typecheck Request (let_dec (base zero)) = Ok TT
+test typecheck Request (let (base zero)) = Ok TT
 test typecheck Request (sig Nat) = Ok TT
+
+// ── the equation item and its marker (SYNTAX.typ § Tests): `test` is the prelude
+// IDENTITY, an ordinary value — `test e` ≡ `e` — so the marker is style, not syntax.
+test tree_eq (test pvt) pvt = TT      // marker in expression position: identity
+pair_fst (pair pvt zero) = 3          // a markerless equation is the same item

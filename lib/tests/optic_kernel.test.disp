@@ -11,15 +11,15 @@ open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"
 
 // inj-tagged, param-marked types via the kernel `Coproduct_p` (Param 0/1 = type params; Rec = direct μ).
-let List   = {A}    -> Coproduct_p (cons A nil) [pair "nil" [], pair "cons" [Param zero, Rec]]
-let lnil   = inj1 "nil" t
-let lcons  = {h, tl} -> inj2 "cons" h tl
-let Either = {A, B} -> Coproduct_p (cons A (cons B nil)) [pair "left" [Param zero], pair "right" [Param (succ zero)]]
-let eleft  = {a} -> inj1 "left" a
-let eright = {b} -> inj1 "right" b
-let BTree  = {A}    -> Coproduct_p (cons A nil) [pair "leaf" [Param zero], pair "node" [Rec, Rec]]
-let bleaf  = {a} -> inj1 "leaf" a
-let bnode  = {l, r} -> inj2 "node" l r
+let List   := {A}    -> Coproduct_p (cons A nil) [pair "nil" [], pair "cons" [Param zero, Rec]]
+let lnil   := inj1 "nil" t
+let lcons  := {h, tl} -> inj2 "cons" h tl
+let Either := {A, B} -> Coproduct_p (cons A (cons B nil)) [pair "left" [Param zero], pair "right" [Param (succ zero)]]
+let eleft  := {a} -> inj1 "left" a
+let eright := {b} -> inj1 "right" b
+let BTree  := {A}    -> Coproduct_p (cons A nil) [pair "leaf" [Param zero], pair "node" [Rec, Rec]]
+let bleaf  := {a} -> inj1 "leaf" a
+let bnode  := {l, r} -> inj2 "node" l r
 
 // ── recognition: Param resolved at build time → byte-identical to the un-parameterized check ──
 test typecheck (List Nat) lnil                              = Ok TT
@@ -41,8 +41,8 @@ test fmap (BTree Nat) succ (bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3))) = bnode
 test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok TT
 
 // ── NAMED side: the optic `over` generalizes to records (key.over), same engine ──
-let Pair    = {A, B} -> Record_p (cons A (cons B nil)) [pair "fst" (Param zero), pair "snd" (Param (succ zero))]
-let make_pair = {a, b} -> make_record ["fst", "snd"] (cons (list_const a) (cons (list_const b) nil))
+let Pair    := {A, B} -> Record_p (cons A (cons B nil)) [pair "fst" (Param zero), pair "snd" (Param (succ zero))]
+let make_pair := {a, b} -> make_record ["fst", "snd"] (cons (list_const a) (cons (list_const b) nil))
 test typecheck (Pair Nat Nat) (make_pair 3 5)              = Ok TT       // Record_p recognizes (Param resolved)
 test typecheck (Pair Nat Bool) (make_pair 3 9)             = Ok FF       // param 1: 9 is not Bool
 test bimap_rec (Pair Nat Nat) succ double (make_pair 3 5)  = make_pair 4 10 // key.over rebuilds the record

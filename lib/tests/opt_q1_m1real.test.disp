@@ -11,40 +11,40 @@ open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 
 // walker-safe map/length (reference_walker_safe_motive_functions) + helpers, as in opt_q1_cert.
-let my_list_disp = fix ({self, motive, cases, target} ->
+let my_list_disp := fix ({self, motive, cases, target} ->
   if (is_leaf target) then cases.nil
   else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
-let my_list_rec = {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
-let mp = {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
-let len = {xs} -> my_list_rec ({_} -> Nat) zero ({h, tl, ih} -> succ ih) xs
-let compose = {f, g, x} -> f (g x)
-let apply_all = fix ({self, fn, args} -> if (is_fork args) then (self (fn (pair_fst args)) (pair_snd args)) else fn)
+let my_list_rec := {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
+let mp := {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+let len := {xs} -> my_list_rec ({_} -> Nat) zero ({h, tl, ih} -> succ ih) xs
+let compose := {f, g, x} -> f (g x)
+let apply_all := fix ({self, fn, args} -> if (is_fork args) then (self (fn (pair_fst args)) (pair_snd args)) else fn)
 
 // the §7 certificate checker (verbatim from opt_q1_cert).
-let at_dir      = {d, tr} -> triage tr ({c} -> c) ({l, r} -> if (tree_eq d "L") then l else r) tr
-let replace_dir = {d, new, tr} -> triage tr ({c} -> t new) ({l, r} -> if (tree_eq d "L") then (t new r) else (t l new)) tr
-let at_path      = fix ({self, path, tr} -> if (is_leaf path) then tr else (self (pair_snd path) (at_dir (pair_fst path) tr)))
-let replace_path = fix ({self, path, new, tr} -> if (is_leaf path) then new else (replace_dir (pair_fst path) (self (pair_snd path) new (at_dir (pair_fst path) tr)) tr))
-let check_step = {bk, e, s} -> {
-  let lr = apply_all (field (field bk s.rule) "rule") s.subst
+let at_dir      := {d, tr} -> triage tr ({c} -> c) ({l, r} -> if (tree_eq d "L") then l else r) tr
+let replace_dir := {d, new, tr} -> triage tr ({c} -> t new) ({l, r} -> if (tree_eq d "L") then (t new r) else (t l new)) tr
+let at_path      := fix ({self, path, tr} -> if (is_leaf path) then tr else (self (pair_snd path) (at_dir (pair_fst path) tr)))
+let replace_path := fix ({self, path, new, tr} -> if (is_leaf path) then new else (replace_dir (pair_fst path) (self (pair_snd path) new (at_dir (pair_fst path) tr)) tr))
+let check_step := {bk, e, s} -> {
+  let lr := apply_all (field (field bk s.rule) "rule") s.subst
   if (tree_eq (at_path s.path e) (pair_fst lr)) then (Ok (replace_path s.path (pair_snd lr) e)) else Err
 }
-let check_cert = fix ({self, bk, e, cert} ->
+let check_cert := fix ({self, bk, e, cert} ->
   if (is_leaf cert) then (Ok e)
   else (match (check_step bk e (pair_fst cert)) { Ok e2 => (self bk e2 (pair_snd cert)); Err _ => Err }))
-let verify_rewrite = {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => FF }
+let verify_rewrite := {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => FF }
 
-let map_fusion_rule = {f, g, xs} -> pair (mp f (mp g xs)) (mp (compose f g) xs)
-let book = { map_fusion := { name := "map_fusion"; rule := map_fusion_rule } }
+let map_fusion_rule := {f, g, xs} -> pair (mp f (mp g xs)) (mp (compose f g) xs)
+let book := { map_fusion := { name := "map_fusion"; rule := map_fusion_rule } }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // A REAL function with the redex NESTED in its body, and its independently-written optimized form.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-let prog     = {xs} -> pair (len xs) (mp succ (mp succ xs))
-let prog_opt = {xs} -> pair (len xs) (mp (compose succ succ) xs)
+let prog     := {xs} -> pair (len xs) (mp succ (mp succ xs))
+let prog_opt := {xs} -> pair (len xs) (mp (compose succ succ) xs)
 
 // nx : a neutral standing for the argument (what bind_hyp mints when checking under the `{xs}` binder).
-let nx = make_hyp NatList "argx"
+let nx := make_hyp NatList "argx"
 
 // (1) EXTRACTION is faithful: applying the real function to the neutral yields the body-under-neutral —
 //     identical to the hand-built shape the checker expects. (Bracket abstraction round-trips.)
@@ -52,8 +52,8 @@ test tree_eq (prog nx) (pair (len nx) (mp succ (mp succ nx))) = TT
 
 // (2) the checker rewrites the REAL function's body (redex at path ["R"] inside the pair) and the
 //     result IS the optimized function's body — so the rewrite takes `prog` to `prog_opt`.
-let body = prog nx
-let cert = cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons succ (cons succ (cons nx nil))) } nil
+let body := prog nx
+let cert := cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons succ (cons succ (cons nx nil))) } nil
 test verify_rewrite book body (prog_opt nx) cert = TT
 
 // (3) non-trivial: the two function bodies are genuinely different trees.
@@ -63,19 +63,19 @@ test tree_eq body (prog_opt nx) = FF
 test verify_rewrite book body (prog_opt nx) (cons { rule := "map_fusion"; path := (cons "L" nil); subst := (cons succ (cons succ (cons nx nil))) } nil) = FF
 
 // (5) behaviour preserved: prog and prog_opt agree on a concrete input (the differential check).
-let lst123 = cons (succ zero) (cons (succ (succ zero)) (cons (succ (succ (succ zero))) nil))
+let lst123 := cons (succ zero) (cons (succ (succ zero)) (cons (succ (succ (succ zero))) nil))
 test tree_eq (prog lst123) (prog_opt lst123) = TT
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // FULLY PARAMETRIC: a real multi-arg function `{f,g,xs} -> map f (map g xs)`, all three metavariables
 // extracted as neutrals — the general rule, verified on a real function (not a fixed succ/succ).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-let prog3     = {f, g, xs} -> mp f (mp g xs)
-let prog3_opt = {f, g, xs} -> mp (compose f g) xs
-let nf = make_hyp (Pi Nat ({_} -> Nat)) "nf"
-let ng = make_hyp (Pi Nat ({_} -> Nat)) "ng"
-let body3 = prog3 nf ng nx                         // = mp nf (mp ng nx): the whole body is the redex
-let cert3 = cons { rule := "map_fusion"; path := nil; subst := (cons nf (cons ng (cons nx nil))) } nil
+let prog3     := {f, g, xs} -> mp f (mp g xs)
+let prog3_opt := {f, g, xs} -> mp (compose f g) xs
+let nf := make_hyp (Pi Nat ({_} -> Nat)) "nf"
+let ng := make_hyp (Pi Nat ({_} -> Nat)) "ng"
+let body3 := prog3 nf ng nx                         // = mp nf (mp ng nx): the whole body is the redex
+let cert3 := cons { rule := "map_fusion"; path := nil; subst := (cons nf (cons ng (cons nx nil))) } nil
 test verify_rewrite book body3 (prog3_opt nf ng nx) cert3 = TT
 test tree_eq body3 (prog3_opt nf ng nx) = FF
 // behaviour preserved for the parametric form on concrete f,g = succ:

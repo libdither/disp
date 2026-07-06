@@ -12,18 +12,18 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-let case_tele = {mv} ->
+let case_tele := {mv} ->
   t (proj_cell "base" (mv zero)) ({_} ->
   t (proj_cell "step" (Pi Nat ({n} -> Arrow (mv n) (mv (succ n))))) ({_} -> t))
-let coh_tele  = {T, motive, cases} -> param_apply (Telescope (case_tele motive)) cases
-let resp_tele = gated_inductive_respond coh_tele
+let coh_tele  := {T, motive, cases} -> param_apply (Telescope (case_tele motive)) cases
+let resp_tele := gated_inductive_respond coh_tele
 
 // ════════ (A) RUNTIME CORRECTNESS — the unification, validated ════════
-let cmotive = {_} -> Nat                          // constant motive P n = Nat
+let cmotive := {_} -> Nat                          // constant motive P n = Nat
 test coh_tele Nat cmotive { base := zero; step := {n} -> {ih} -> succ ih } = Ok TT  // coherent
 test coh_tele Nat cmotive { base := TT;   step := {n} -> {ih} -> succ ih } = Ok FF  // base : not Nat
 test coh_tele Nat cmotive { base := zero; step := {n} -> {ih} -> TT }      = Ok FF  // step : not Nat
-let dmotive = {n} -> Eq Nat n n                   // DEPENDENT motive P n = (n = n)
+let dmotive := {n} -> Eq Nat n n                   // DEPENDENT motive P n = (n = n)
 test coh_tele Nat dmotive { base := refl; step := {n} -> {ih} -> refl } = Ok TT     // dependent, coherent
 test coh_tele Nat dmotive { base := TT;   step := {n} -> {ih} -> refl } = Ok FF     // base : not a proof
 
@@ -41,5 +41,5 @@ test param_apply ProjectingRespondShape (resp_tele unit_witness) = Ok TT
 test param_apply ProjectingRespondShape ((type_meta Bool).respond (type_meta Bool).recognizer_params) = Ok TT
 // the EMPTY-telescope gate (⊤, no cells, no IH) was the minimal trigger of the old failure —
 // `param_apply (Telescope t) c` itself — and now self-types with the rest:
-let empty_gate = {T, m, c} -> param_apply (Telescope t) c
+let empty_gate := {T, m, c} -> param_apply (Telescope t) c
 test param_apply ProjectingRespondShape ((gated_inductive_respond empty_gate) unit_witness) = Ok TT

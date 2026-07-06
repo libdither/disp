@@ -27,13 +27,13 @@ test typecheck Type (Pi Nat ({_} -> Bool)) = Ok TT
 // `verify` routes through `param_apply` (the checker entry) — NOT raw `typ record`
 // juxtaposition, which would bypass the walker's parametricity guards. This is the kernel
 // typechecking the kernel, under the walker (verify itself is one of the annotated exports).
-let cut_mod = use "../kernel/cut.disp"
-let engine_mod = use "../kernel/engine.disp"
-let cells_mod = use "../kernel/cells.disp"
-let base_mod = use "../kernel/base.disp"
-let positive_mod = use "../kernel/positive.disp"
-let generic_mod = use "../kernel/generic.disp"
-let universe_mod = use "../kernel/universe.disp"
+let cut_mod := use "../kernel/cut.disp"
+let engine_mod := use "../kernel/engine.disp"
+let cells_mod := use "../kernel/cells.disp"
+let base_mod := use "../kernel/base.disp"
+let positive_mod := use "../kernel/positive.disp"
+let generic_mod := use "../kernel/generic.disp"
+let universe_mod := use "../kernel/universe.disp"
 test verify cut_mod = Ok TT
 test verify engine_mod = Ok TT
 test verify cells_mod = Ok TT

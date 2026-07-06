@@ -2,8 +2,8 @@ open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/set.disp"
 
-let odds = set_union (singleton_set 1) (singleton_set 3)
-let small = set_insert 2 odds
+let odds := set_union (singleton_set 1) (singleton_set 3)
+let small := set_insert 2 odds
 
 test set_member empty_set 0 = FF
 test set_member full_set 4 = TT

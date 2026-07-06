@@ -9,12 +9,12 @@ open use "../kernel/prelude.disp" // record values { := } compile to the §2.6 c
 // ================================================================
 // Inline tests in a block-with-trailing-expression
 // ================================================================
-// A block `{ let x = a; test b = c; expr }` parses as a recValue with
+// A block `{ let x := a; test b = c; expr }` parses as a recValue with
 // members; the block desugars to the trailing expr at the call site,
 // but the inline test still emits a Decl into the driver.
 
-let probe = {
-  let one = succ zero
+let probe := {
+  let one := succ zero
   test one = succ zero
   test succ one = succ (succ zero)
   one
@@ -27,8 +27,8 @@ test probe = succ zero
 // Inline tests in a recValue (exported fields)
 // ================================================================
 
-let r = {
-  let n = succ (succ zero)
+let r := {
+  let n := succ (succ zero)
   test n = succ (succ zero)
   test pair_fst (t n t) = n
   x := n
@@ -43,9 +43,9 @@ test r.y = succ (succ (succ zero))
 // members, including subsequent tests.
 // ================================================================
 
-let r2 = {
+let r2 := {
   open use "../prelude.disp"
-  let x = succ zero
+  let x := succ zero
   test pair_fst (t x t) = x
   x
 }

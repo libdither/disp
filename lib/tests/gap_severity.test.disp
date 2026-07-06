@@ -16,16 +16,16 @@ open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 
 // A List recursor routed through `elim` (a neutral target hits List's now-GATED respond).
-let my_list_disp = fix ({self, motive, cases, target} ->
+let my_list_disp := fix ({self, motive, cases, target} ->
   if (is_leaf target) then cases.nil
   else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
-let my_list_rec = {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
+let my_list_rec := {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
 
 // ── R3: the gate CLOSES the gap (each line was Ok TT pre-gate) ──
-let lying = {xs} -> my_list_rec ({_} -> Nat) TT ({h, tl, ih} -> TT) xs
+let lying := {xs} -> my_list_rec ({_} -> Nat) TT ({h, tl, ih} -> TT) xs
 test param_apply (Pi NatList ({_} -> Nat)) lying = Ok FF                  // gate rejects the lie at the function
 test lying nil = TT                                                       // the raw value is still junk (TT) — but now untypeable
-let bad_eq = {xs} -> my_list_rec ({z} -> Eq NatList nil z) refl ({h, tl, ih} -> refl) xs
+let bad_eq := {xs} -> my_list_rec ({z} -> Eq NatList nil z) refl ({h, tl, ih} -> refl) xs
 test param_apply (Pi NatList ({z} -> Eq NatList nil z)) bad_eq = Ok FF    // gate rejects the dishonest cons-case
 
 // ── R0: the structural defense (use-site re-check) — why the gap was never an inconsistency ──

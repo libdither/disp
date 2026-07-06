@@ -15,25 +15,25 @@ open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 
 // ── walker-safe map (see reference_walker_safe_motive_functions): map via the gate-routed recursor ──
-let my_list_disp = fix ({self, motive, cases, target} ->
+let my_list_disp := fix ({self, motive, cases, target} ->
   if (is_leaf target) then cases.nil
   else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
-let my_list_rec = {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
-let mp = {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
-let compose = {f, g, x} -> f (g x)
+let my_list_rec := {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
+let mp := {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+let compose := {f, g, x} -> f (g x)
 // apply_all fn [a,b,c] = fn a b c  (local copy — generic.disp's is a non-exported `let`)
-let apply_all = fix ({self, fn, args} -> if (is_fork args) then (self (fn (pair_fst args)) (pair_snd args)) else fn)
+let apply_all := fix ({self, fn, args} -> if (is_fork args) then (self (fn (pair_fst args)) (pair_snd args)) else fn)
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // 1. The path walker — `at`/`replace` over Dir = {"L" fork-left, "R" fork-right, "S" into-stem}
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-let at_dir      = {d, tr} -> triage tr ({c} -> c) ({l, r} -> if (tree_eq d "L") then l else r) tr
-let replace_dir = {d, new, tr} -> triage tr ({c} -> t new) ({l, r} -> if (tree_eq d "L") then (t new r) else (t l new)) tr
-let at_path      = fix ({self, path, tr} -> if (is_leaf path) then tr else (self (pair_snd path) (at_dir (pair_fst path) tr)))
-let replace_path = fix ({self, path, new, tr} -> if (is_leaf path) then new else (replace_dir (pair_fst path) (self (pair_snd path) new (at_dir (pair_fst path) tr)) tr))
+let at_dir      := {d, tr} -> triage tr ({c} -> c) ({l, r} -> if (tree_eq d "L") then l else r) tr
+let replace_dir := {d, new, tr} -> triage tr ({c} -> t new) ({l, r} -> if (tree_eq d "L") then (t new r) else (t l new)) tr
+let at_path      := fix ({self, path, tr} -> if (is_leaf path) then tr else (self (pair_snd path) (at_dir (pair_fst path) tr)))
+let replace_path := fix ({self, path, new, tr} -> if (is_leaf path) then new else (replace_dir (pair_fst path) (self (pair_snd path) new (at_dir (pair_fst path) tr)) tr))
 
 // nav sanity: read & splice the right child's left child of  pair "a" (pair "b" "c")
-let p_abc = cons "a" (cons "b" "c")
+let p_abc := cons "a" (cons "b" "c")
 test tree_eq (at_path (cons "R" (cons "L" nil)) p_abc) "b" = TT
 test tree_eq (replace_path (cons "R" (cons "L" nil)) "X" p_abc) (cons "a" (cons "X" "c")) = TT
 
@@ -41,36 +41,36 @@ test tree_eq (replace_path (cons "R" (cons "L" nil)) "X" p_abc) (cons "a" (cons 
 // 2. The rule (parametric program), its Tier-2 witness, and the rule book
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // rule : metavars -> (lhs, rhs).  apply_all rule [f,g,xs] rebuilds the exact occurrence (pair_fst) + rhs.
-let map_fusion_rule = {f, g, xs} -> pair (mp f (mp g xs)) (mp (compose f g) xs)
+let map_fusion_rule := {f, g, xs} -> pair (mp f (mp g xs)) (mp (compose f g) xs)
 // the SOUNDNESS witness = the gate-checked proof from opt_q1_main (induction; funext-free).
-let map_fusion_proof = {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> eq_cong NatList NatList ({tail_} -> cons (f (g h)) tail_) (mp f (mp g tl)) (mp (compose f g) tl) ih) xs
-let law_fusion = Pi (Pi Nat ({_} -> Nat)) ({f} -> Pi (Pi Nat ({_} -> Nat)) ({g} -> Pi NatList ({xs} -> Eq NatList (mp f (mp g xs)) (mp (compose f g) xs))))
+let map_fusion_proof := {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> eq_cong NatList NatList ({tail_} -> cons (f (g h)) tail_) (mp f (mp g tl)) (mp (compose f g) tl) ih) xs
+let law_fusion := Pi (Pi Nat ({_} -> Nat)) ({f} -> Pi (Pi Nat ({_} -> Nat)) ({g} -> Pi NatList ({xs} -> Eq NatList (mp f (mp g xs)) (mp (compose f g) xs))))
 
-let book = { map_fusion := { name := "map_fusion"; rule := map_fusion_rule; arity := (succ (succ (succ zero))); kind := "CostEq"; witness := map_fusion_proof } }
+let book := { map_fusion := { name := "map_fusion"; rule := map_fusion_rule; arity := (succ (succ (succ zero))); kind := "CostEq"; witness := map_fusion_proof } }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // 3. The trusted checker (~30 lines, in-language, itself type-checkable). OPTIMIZER.typ §7.
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // check_step: instantiate the named rule on the step's subst; if the redex at `path` matches lhs,
 // splice rhs; else reject. check_cert folds it; verify_rewrite re-checks the final tree == e'.
-let check_step = {bk, e, s} -> {
-  let lr = apply_all (field (field bk s.rule) "rule") s.subst
+let check_step := {bk, e, s} -> {
+  let lr := apply_all (field (field bk s.rule) "rule") s.subst
   if (tree_eq (at_path s.path e) (pair_fst lr)) then (Ok (replace_path s.path (pair_snd lr) e)) else Err
 }
-let check_cert = fix ({self, bk, e, cert} ->
+let check_cert := fix ({self, bk, e, cert} ->
   if (is_leaf cert) then (Ok e)
   else (match (check_step bk e (pair_fst cert)) { Ok e2 => (self bk e2 (pair_snd cert)); Err _ => Err }))
-let verify_rewrite = {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => FF }
+let verify_rewrite := {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => FF }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // 4. Carry an actual map-fusion rewrite end to end, on a program with the redex NESTED at path ["R"].
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-let f  = make_hyp (Pi Nat ({_} -> Nat)) "idf"
-let g  = make_hyp (Pi Nat ({_} -> Nat)) "idg"
-let xs = make_hyp NatList "idxs"
-let prog  = pair "ctx" (mp f (mp g xs))                 // the program: redex sits in the right child
-let prog2 = pair "ctx" (mp (compose f g) xs)            // the optimized program
-let cert  = cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons f (cons g (cons xs nil))) } nil
+let f  := make_hyp (Pi Nat ({_} -> Nat)) "idf"
+let g  := make_hyp (Pi Nat ({_} -> Nat)) "idg"
+let xs := make_hyp NatList "idxs"
+let prog  := pair "ctx" (mp f (mp g xs))                 // the program: redex sits in the right child
+let prog2 := pair "ctx" (mp (compose f g) xs)            // the optimized program
+let cert  := cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons f (cons g (cons xs nil))) } nil
 
 // (1) the certificate VALIDATES the rewrite prog ⤳ prog2.
 test verify_rewrite book prog prog2 cert = TT

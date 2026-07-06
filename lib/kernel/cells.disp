@@ -53,13 +53,13 @@ do_check := {mode, getr, ty} ->
   if mode
     then (match (getr t) { Ok part => (match (param_apply ty part) { Ok b => (if b then (SThread part) else SReject); Err _ => SReject }); Err _ => SReject })
     else (SDone (Extend ty))
-let mint_op = {meta, mode, source, prior, frame, rs} -> SMint (meta.ty) // ∀-intro: `tele_walk` mints (CHECK) / lands the codomain (STUCK)
-let apply_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (source prior)) (meta.ty) // Pi codomain: observe `source prior`
-let proj_op = {meta, mode, source, prior, frame, rs} -> // a record field: honest lookup (key optic); STUCK frame-routes (§7B)
+let mint_op := {meta, mode, source, prior, frame, rs} -> SMint (meta.ty) // ∀-intro: `tele_walk` mints (CHECK) / lands the codomain (STUCK)
+let apply_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (source prior)) (meta.ty) // Pi codomain: observe `source prior`
+let proj_op := {meta, mode, source, prior, frame, rs} -> // a record field: honest lookup (key optic); STUCK frame-routes (§7B)
   if mode
     then (do_check TT ({_} -> lookup_field source (meta.name)) (meta.ty))
     else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Extend (meta.ty))) else (SThread (source (acc (meta.name))))) // §7B: thread field-value via the SANCTIONED elimination source.name
-let derive_op = {meta, mode, source, prior, frame, rs} -> // a δ field: present AND pinned to recipe (Pin role)
+let derive_op := {meta, mode, source, prior, frame, rs} -> // a δ field: present AND pinned to recipe (Pin role)
   if mode
     then (match (lookup_field source (meta.name)) { Err _ => SReject; Ok x => (if (tree_eq x (meta.recipe)) then (SThread (meta.recipe)) else SReject) })
     else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Reduce (meta.recipe))) else (SThread (meta.recipe)))
@@ -76,7 +76,7 @@ is_mint_cell := {cell} -> tree_eq (pair_fst cell) (checker_sig mint_op)
 
 // pos_cell (POSITIVE_TYPES §5a): a POSITIONAL cell — observe a component of a RAW `inj` payload (not a
 // named record) via a stored accessor, then check it : ty. Lets `tele_walk` walk a constructor's arg tuple (pluggable).
-let pos_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.ty) // positional slot
+let pos_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.ty) // positional slot
 pos_cell : Tree -> Tree -> Tree := {acc, ty} -> wait pos_op { acc := acc; ty := ty }
 
 // The meet ops, used by the conjunction types. Intersection/Refinement/Eq recognize via a
@@ -87,13 +87,13 @@ pos_cell : Tree -> Tree -> Tree := {acc, ty} -> wait pos_op { acc := acc; ty := 
 // (Intersection). eqends stores (type, lhs, rhs) so `Eq A x y`'s tree is
 // identity-faithful, and accepts when the endpoints convert. (qid_meta, which needs
 // MetaShape, lives in universe.disp.)
-let qid_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.ty)
+let qid_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.ty)
 qid_cell := {ty} -> wait qid_op { ty := ty }
-let refine_op = {meta, mode, source, prior, frame, rs} -> if mode then (if (meta.pred source) then (SThread source) else SReject) else (SDone (Extend InvalidType))
+let refine_op := {meta, mode, source, prior, frame, rs} -> if mode then (if (meta.pred source) then (SThread source) else SReject) else (SDone (Extend InvalidType))
 refine_cell : Tree -> Tree := {P} -> wait refine_op { pred := P }
-let imeet_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.pred prior)
+let imeet_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok source) (meta.pred prior)
 imeet_cell : Tree -> Tree := {P} -> wait imeet_op { pred := P }
-let eqends_op = {meta, mode, source, prior, frame, rs} -> if mode then (if (tree_eq (meta.lhs) (meta.rhs)) then (SThread source) else SReject) else (SDone (Extend InvalidType))
+let eqends_op := {meta, mode, source, prior, frame, rs} -> if mode then (if (tree_eq (meta.lhs) (meta.rhs)) then (SThread source) else SReject) else (SDone (Extend InvalidType))
 eqends_cell : Tree -> Tree -> Tree -> Tree := {A, x, y} -> wait eqends_op { type := A; lhs := x; rhs := y }
 // Singleton x: the 1-point type (recognizer = tree_eq v x). The CONV x = MEM (Singleton x) collapse —
 // used by Eq (`v : Singleton refl`) and the GoodRespond probe (`result : Singleton outcome`).
@@ -110,10 +110,10 @@ gen_tag := "gen"
 is_gen := {v} -> tree_eq (pair_fst v) gen_tag
 // rec_op is parameterized by a FUNCTOR `F`: a recursive position checks `acc source : (F self)`. Direct
 // recursion is `F = Id`, NESTED is `F = List` etc. ONE op covers both — `rec` is just `rec_under Id`.
-let rec_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.F rs)        // μ: acc source : F self
-let gen_op = {meta, mode, source, prior, frame, rs} ->        // ν: GUARD `is_gen (acc source)`, no descent (Guard role)
+let rec_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.F rs)        // μ: acc source : F self
+let gen_op := {meta, mode, source, prior, frame, rs} ->        // ν: GUARD `is_gen (acc source)`, no descent (Guard role)
   if mode then (if (is_gen (meta.acc source)) then (SThread (meta.acc source)) else SReject) else (SDone (Extend rs))
-let rec_at_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (rs (meta.idx)) // mutual: acc source : ctx idx
+let rec_at_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (rs (meta.idx)) // mutual: acc source : ctx idx
 rec_cell : Tree -> Tree -> Tree := {F, acc} -> wait rec_op { F := F; acc := acc }
 gen_cell : Tree -> Tree := {acc} -> wait gen_op { acc := acc }
 rec_at_cell : Tree -> Tree -> Tree := {idx, acc} -> wait rec_at_op { idx := idx; acc := acc }
@@ -151,7 +151,7 @@ is_const_tail := {tail} -> and (is_fork tail) (is_leaf (pair_fst tail))
 // the tail under param_walker. SReject means not a member; SDone emits the Action as-is.
 tele_walk := fix ({self, rs, mode, tele, source, frame, prior} ->
   if (is_fork tele) then {
-    let cell = pair_fst tele
+    let cell := pair_fst tele
     match (cell mode source prior frame rs) {
       SMint ty => (if mode
                     then (bind_hyp ty ({h} -> self rs TT ((pair_snd tele) h) source frame h))
@@ -194,10 +194,10 @@ Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
 // `Param i` fields resolve to `proj_cell name (params i)`. Lifted LAZILY inside the recognizer (not at
 // formation) so `Record : Tree -> Type` self-verifies (its param is a neutral there; an eager triage would
 // trip the walker). Guard-free like Telescope: a non-record is rejected by `tele_walk`'s lookup_field; `Record []` = ⊤.
-let fields_to_tele_go = fix ({self, params, fields} ->
+let fields_to_tele_go := fix ({self, params, fields} ->
   if (is_fork fields) then {
-    let arm = pair_fst fields
-    let ty = if (is_param_marker (pair_snd arm)) then (list_nth params (pair_snd (pair_snd arm))) else (pair_snd arm)
+    let arm := pair_fst fields
+    let ty := if (is_param_marker (pair_snd arm)) then (list_nth params (pair_snd (pair_snd arm))) else (pair_snd arm)
     t (proj_cell (pair_fst arm) ty) (const_tail (self params (pair_snd fields)))
   } else t)
 Record_p := {params, fields} -> wait (make_recognizer

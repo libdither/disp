@@ -12,27 +12,27 @@ open use "../std/nat/arith.disp"
 // ================================================================
 // A. OPERATOR-POSITION NESTING AT DEPTH (the fix's core) — all Ok TT
 // ================================================================
-let appT  = Arrow (Arrow Nat Nat) (Arrow Nat Nat)
+let appT  := Arrow (Arrow Nat Nat) (Arrow Nat Nat)
 test param_apply appT ({f} -> {x} -> f x)             = Ok TT
 test param_apply appT ({f} -> {x} -> f (f x))         = Ok TT // double
 test param_apply appT ({f} -> {x} -> f (f (f x)))     = Ok TT // triple
 
 // flip / reverse-args (stuck neutral in operator position)
-let flip2T = Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat (Arrow Nat Nat))
+let flip2T := Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat (Arrow Nat Nat))
 test param_apply flip2T ({f} -> {x} -> {y} -> f y x)  = Ok TT
-let flip3T = Arrow (Arrow Nat (Arrow Nat (Arrow Nat Nat))) (Arrow Nat (Arrow Nat (Arrow Nat Nat)))
+let flip3T := Arrow (Arrow Nat (Arrow Nat (Arrow Nat Nat))) (Arrow Nat (Arrow Nat (Arrow Nat Nat)))
 test param_apply flip3T ({f} -> {a} -> {b} -> {c} -> f c b a) = Ok TT // reverse 3 args
 
 // stuck-applied-to-itself: (f x) x  — operator-position stuck re-applied
-let selfappT = Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat)
+let selfappT := Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat)
 test param_apply selfappT ({f} -> {x} -> f x x)       = Ok TT
 
 // f x used in BOTH argument slots of a binary g (nesting in arg AND operator chains)
-let g2T = Arrow (Arrow Nat Nat) (Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat))
+let g2T := Arrow (Arrow Nat Nat) (Arrow (Arrow Nat (Arrow Nat Nat)) (Arrow Nat Nat))
 test param_apply g2T ({f} -> {g} -> {x} -> g (f x) (f x)) = Ok TT
 
 // deep compose: f (g (h x))
-let compose3T = Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow Nat Nat)))
+let compose3T := Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow (Arrow Nat Nat) (Arrow Nat Nat)))
 test param_apply compose3T ({f} -> {g} -> {h} -> {x} -> f (g (h x))) = Ok TT
 
 // ================================================================
@@ -48,10 +48,10 @@ test param_apply (Arrow Nat Nat) ({f} -> {x} -> x)    = Ok FF // {f}->I : return
 // ================================================================
 // C. PARAMETRICITY VIOLATIONS — must be a CLEAN Err, reliably
 // ================================================================
-let hN = make_hyp Nat 0
+let hN := make_hyp Nat 0
 test param_apply ({x} -> is_fork x) hN                = Err // triage on hyp
 test param_apply (Arrow Nat Nat) ({n} -> is_fork n)   = Err // body triages its hyp
-let forge = {x} -> t hyp_sig x
+let forge := {x} -> t hyp_sig x
 test param_apply forge zero                           = Err // stem-forge
 
 // ================================================================
@@ -69,9 +69,9 @@ test param_apply (Pi Nat ({n} -> Eq Nat (add n zero) n)) ({n} -> refl) = Ok FF
 // ================================================================
 // E. BARE-STUCK INVARIANT under multi-step spine extension
 // ================================================================
-let hF2 = make_hyp (Arrow Nat (Arrow Nat Nat)) 0
-let s1 = param_apply hF2 zero // stuck : Arrow Nat Nat
-let s2 = param_apply s1 zero // stuck : Nat  (second spine extension)
+let hF2 := make_hyp (Arrow Nat (Arrow Nat Nat)) 0
+let s1 := param_apply hF2 zero // stuck : Arrow Nat Nat
+let s2 := param_apply s1 zero // stuck : Nat  (second spine extension)
 test (tree_eq (pair_fst s1) "Ok") = FF // bare (Option A)
 test is_neutral s1 = TT
 test neutral_type s1 = Arrow Nat Nat

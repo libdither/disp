@@ -18,7 +18,7 @@ open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
 // The law as a dependent type (a ∀ over Nat); its INHABITANT is the licensing witness.
-let the_law = Pi Nat ({n} -> Eq Nat (add n zero) n)
+let the_law := Pi Nat ({n} -> Eq Nat (add n zero) n)
 
 // ── (a) PAST tree_eq: `refl` alone does NOT inhabit the law. ──
 // For a neutral n, `add n zero` (a stuck nat_rec elimination) is not tree_eq to `n` (the bare hyp),
@@ -29,13 +29,13 @@ test param_apply the_law ({n} -> refl) = Ok FF
 //   base  n=zero       : add zero zero ⤳ zero                      → refl : Eq Nat zero zero
 //   step  n=succ pred  : add (succ pred) zero ⤳ succ (add pred zero);  ih : Eq Nat (add pred zero) pred
 //                        → eq_cong succ ih : Eq Nat (succ (add pred zero)) (succ pred)
-let add_n_zero = {n} -> nat_rec ({n_} -> Eq Nat (add n_ zero) n_) refl ({pred, ih} -> eq_cong Nat Nat ({k} -> succ k) (add pred zero) pred ih) n
+let add_n_zero := {n} -> nat_rec ({n_} -> Eq Nat (add n_ zero) n_) refl ({pred, ih} -> eq_cong Nat Nat ({k} -> succ k) (add pred zero) pred ih) n
 test param_apply the_law add_n_zero = Ok TT
 
 // ── (c) NON-VACUITY: a LYING witness is REJECTED — the checker really verifies the step. ──
 // This step ignores `ih` and offers `refl`, which would need `add (succ pred) zero` ≡ `succ pred`
 // (false for neutral pred). The gate catches it. This is what separates a proof from `make_hyp` junk.
-let bad_witness = {n} -> nat_rec ({n_} -> Eq Nat (add n_ zero) n_) refl ({pred, ih} -> refl) n
+let bad_witness := {n} -> nat_rec ({n_} -> Eq Nat (add n_ zero) n_) refl ({pred, ih} -> refl) n
 test param_apply the_law bad_witness = Ok FF
 
 // ── (d) The rewrite is BEHAVIOR-PRESERVING on concrete inputs (the differential check, in miniature). ──
@@ -44,5 +44,5 @@ test tree_eq (add (succ (succ zero)) zero) (succ (succ zero)) = TT
 
 // ── (e) The witness is a first-class Eq proof — composes with the Eq combinators, SYMBOLICALLY. ──
 // eq_sym carries it to the flipped law `n ~ add n zero`, type-checking under a binder (no reduction).
-let flipped = {n} -> eq_sym Nat (add n zero) n (add_n_zero n)
+let flipped := {n} -> eq_sym Nat (add n zero) n (add_n_zero n)
 test param_apply (Pi Nat ({n} -> Eq Nat n (add n zero))) flipped = Ok TT

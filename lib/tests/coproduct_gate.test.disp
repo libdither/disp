@@ -8,11 +8,11 @@ open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
 // generic inj-tagged inductives (NOT shape-encoded): MyNat = [z, s:[Rec]], MyTree = [leaf, node:[Rec,Rec]]
-let myNatV  = [pair "z" [], pair "s" [Rec]]
-let myTreeV = [pair "leaf" [], pair "node" [Rec, Rec]]
-let MyNat  = Coproduct myNatV
-let MyTree = Coproduct myTreeV
-let cNat = {_} -> Nat
+let myNatV  := [pair "z" [], pair "s" [Rec]]
+let myTreeV := [pair "leaf" [], pair "node" [Rec, Rec]]
+let MyNat  := Coproduct myNatV
+let MyTree := Coproduct myTreeV
+let cNat := {_} -> Nat
 
 // ── coh_check directly (the kernel gate): coherent accept, incoherent reject ──
 test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } = Ok TT   // coherent
@@ -22,7 +22,7 @@ test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> TT) } = Ok FF        /
 test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> add iha ihb) } = Ok TT
 test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> TT) } = Ok FF
 // dependent motive P x = Eq MyNat x x:
-let dNat = {x} -> Eq MyNat x x
+let dNat := {x} -> Eq MyNat x x
 test coh_check t MyNat dNat { z := refl; s := ({p, ih} -> refl) } = Ok TT
 test coh_check t MyNat dNat { z := TT;   s := ({p, ih} -> refl) } = Ok FF
 
@@ -39,6 +39,6 @@ test rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } (inj "s" (inj
 
 // ── the new wins vs the old hand-rolled gate: the recursor's OWN TYPE verifies (HYP cases), and
 //    the gate's respond SELF-TYPES (η-readback, sig-dispatch, raw base — coh_gate_proto's wall avoided) ──
-let rec_type = {T} -> Pi (Arrow T Type) ({P} -> Arrow (derive_case_telescope T P) (Pi T ({x} -> P x)))
+let rec_type := {T} -> Pi (Arrow T Type) ({P} -> Arrow (derive_case_telescope T P) (Pi T ({x} -> P x)))
 test typecheck (rec_type MyNat) (rec_value MyNat) = Ok TT                                               // recursor own type (hyp cases)
 test param_apply ProjectingRespondShape ((type_meta MyNat).respond (type_meta MyNat).recognizer_params) = Ok TT  // SELF-TYPES

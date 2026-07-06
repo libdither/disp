@@ -76,9 +76,9 @@ inside braces bind only within those braces. Name lookup walks scope
 frames inner-to-outer; inner bindings shadow outer.
 
 ```disp
-let x = t
+let x := t
 {
-  let x = t t                  // shadows outer x within this scope
+  let x := t t                 // shadows outer x within this scope
   test x = t t                 // passes against inner x
 }
 test x = t                     // passes against outer x
@@ -89,10 +89,11 @@ test x = t                     // passes against outer x
 Every `let` is compiled in source order. A typed `let` first compiles
 the annotation as a type, then checks the body against that type.
 
-Both `let x := body` and legacy `let x = body` parse (declaration and
-block position alike).
+The binding operator is `:=` only. (The legacy `let x = body` spelling
+was removed when `=` became the equation operator; the parser gives a
+targeted error pointing at `:=`.)
 
-*Internal* `let x (: T)? = body; rest` (inside a Block): compile
+*Internal* `let x (: T)? := body; rest` (inside a Block): compile
 `body`, bind `x` in the local scope, then compile `rest` with `x`
 available. Equivalently:
 
@@ -102,11 +103,13 @@ App(Binder([{name: "x", type: null}], rest_as_expr), body')
 
 where `body'` is checked against `T` if typed else `body`.
 
-*Top-level* `let x (: T)? = body`: compile and bind `x`, routed through
-the declaration pipeline as a private request (§ Declarations as
-requests; the fast path is byte-identical to direct binding). In a
-field-export file, top-level lets are private. In legacy fieldless
-files, top-level lets are exported for compatibility.
+*Top-level* `let x (: T)? := body`: an ordinary decorated declaration —
+`let` is not a keyword; the head is the library `let` decorator and the
+request is private (§ Declarations as requests; the pristine fast path
+is byte-identical to direct binding). Top-level lets are private
+everywhere. A file that exports nothing of its own (a pure-`open`
+barrel) re-exports its opens; the old fieldless mode where top-level
+lets exported is gone.
 
 Recursive `let` is not implicit. The new binding takes effect only
 after its body compiles; recursive definitions use `fix` explicitly.
@@ -495,7 +498,7 @@ can follow a multi-line expression without being swallowed by it.
   table.header[*Surface*][*Desugars to*],
   [`X := v`],                        [`Declare "X" (base v)`],
   [`X : T := v`],                    [`Declare "X" (base v with ty T)`],
-  [`let X := v`],                    [`Declare "X" (let_dec (base v))`],
+  [`let X := v`],                    [`Declare "X" (let (base v))` — NOT a special form: `let` is an ordinary head],
   [`guard g X : T := v`],            [`Declare "X" (guard g (base v with ty T))`],
   [`guard g X : T`],                 [`Declare "X" (guard g (sig T))` (an interface entry)],
   [`guard_eq X : T := v`],           [`Declare "X" (guard_eq (base v with ty T))` (a user-defined head; see below)],
@@ -505,16 +508,23 @@ can follow a multi-line expression without being swallowed by it.
 The decorators are ordinary values, not keywords (home: `cut.disp` —
 they build Request records and answer through `Ok`/`Err`, which the
 dependency-free prelude deliberately lacks; record-update spelling
-below is illustrative). The driver references `default_guard` *by name
-in the module scope*, with a host fast path of identical semantics
-taken while the ambient default is pristine and for the bootstrap
-lines before `cut.disp` loads; this is the established
-helper-discovery pattern (§ Kernel Helper Discovery) plus the `tree_eq`
-native-fast-path discipline (the disp definition is normative).
+below is illustrative). `let` itself is one of them: the tokenizer has
+no `let` keyword, so `let X := v` reaches the driver as a decorated
+declaration whose head is the identifier `let`. The driver references
+`default_guard`, `let`, and the `test` equation marker *by name in the
+module scope*, with host fast paths of identical semantics taken while
+each is unbound (the bootstrap lines before its `cut.disp`/prelude
+definition) or pristine (tree-identical to the captured first
+definition); this is the established helper-discovery pattern
+(§ Kernel Helper Discovery) plus the `tree_eq` native-fast-path
+discipline (the disp definition is normative). Shadowing any of the
+three re-routes the shadowing scope through the shadowing value: a
+custom `let` decorator changes what that scope's `let`s do, a custom
+`test` preprocesses its marker-written equation lhs.
 
 ```disp
 base    := {v}   -> { value := (t v); ty := t; guard := t; private := FF }
-let_dec := {req} -> req with private := TT
+let     := {req} -> req with private := TT
 guard   := {g}   -> {req} -> req with guard := (t g)
 ```
 
@@ -539,15 +549,27 @@ to a name, definable in any library, shadowable, and (being an ordinary
 name) itself guardable.
 
 *Why block `let` stays syntactic.* In declaration position `let`
-denotes the `let_dec` value, because module scope is reified (names are
-strings in a state, and the desugar quotes them). Inside an expression
-block, `let x := e; rest` must bind `x` *lexically* in `rest`, and `e`
-may be open in enclosing binder parameters, so `x` cannot be a tree in
-any state; introducing a lexical binding into subsequent syntax is the
-one thing a value cannot do, in this or any lambda calculus. If local
-scopes are ever reified (the self-hosted elaborator evaluates over an
-environment), block `let` can join; until then the word means "bind in
-the current frame" with two implementations chosen by frame kind.
+denotes the library decorator, because module scope is reified (names
+are strings in a state, and the desugar quotes them). Inside an
+expression block, `let x := e; rest` must bind `x` *lexically* in
+`rest`, and `e` may be open in enclosing binder parameters, so `x`
+cannot be a tree in any state; introducing a lexical binding into
+subsequent syntax is the one thing a value cannot do, in this or any
+lambda calculus. If local scopes are ever reified (the self-hosted
+elaborator evaluates over an environment), block `let` can join; until
+then the word means "bind in the current frame" with two
+implementations chosen by frame kind — and the braced parser
+recognizes the *identifier* `let` structurally (it is not a keyword
+even there).
+
+*Tests are equations.* `test lhs = rhs` is likewise not a keyword form:
+the item grammar has an *equation* production `lhs = rhs` (compound lhs
+required), and `test` is the prelude identity, so the conventional
+marker is an ordinary value riding in the lhs. While `test` is
+unbound or pristine the driver peels the marker before compiling —
+identical semantics, and peeling restores the true application head so
+head-keyed elaboration (named-argument calls) resolves; a shadowed
+`test` stays in the compiled lhs and runs.
 
 *Literal names.* The surface desugar only emits literal names, so
 dynamic declaration (computing a name and declaring it) is unreachable
@@ -558,9 +580,10 @@ values containing computed requests) without redesign. Note that
 dynamically declared names could not be *referenced* by later source
 anyway, which bounds their usefulness to generated-module tooling.
 
-Alongside this change: migrate declaration-position `let x = e` to
-`let x := e` (the parser dual-accepts during the transition), retiring
-the legacy all-lets-export file mode; `=` remains the `test` operator.
+This migration is COMPLETE (2026-07-05): declaration-position `let x = e`
+became `let x := e` corpus-wide, the legacy all-lets-export file mode is
+retired (the pure-`open` barrel rule replaces it), and `=` is exclusively
+the equation (test) operator.
 
 == The bootstrap policy and the inaugural guards
 
@@ -596,7 +619,7 @@ surrendered (guard proposals are refused).
 license_guard := {R} -> {old, req} ->
   if (is_stem (req.guard)) then Err
   else {
-    let v = stem_child (req.value)
+    let v := stem_child (req.value)
     if (is_leaf old) then (Ok (Bind v))
     else (match (param_apply (R (stem_child old) (v.new)) (v.proof)) {
       Ok b  => (if b then (Ok (Bind (v.new))) else Err)

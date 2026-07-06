@@ -9,7 +9,7 @@ open use "../kernel/prelude.disp"
 hb_e := t
 hb_v := {x, xs} -> t (t x) xs
 hb_w := {x, xs} -> t (t (t x)) xs
-let hb_blocks = fix ({go, hb, xs} ->
+let hb_blocks := fix ({go, hb, xs} ->
   triage
     (Ok TT) // nil
     ({_} -> Ok FF) // stem -> not a block list
@@ -23,8 +23,8 @@ HBin : Type := wait (make_rec_recognizer
     (Ok TT) // hb_e = zero
     ({_} -> Ok FF) // bare stem -> not an HBin
     ({l, r} -> if (is_stem l) then {
-      let lx = stem_child l // hb_v: the count; hb_w: stem(count)
-      let cnt = if (is_stem lx) then (stem_child lx) else lx
+      let lx := stem_child l // hb_v: the count; hb_w: stem(count)
+      let cnt := if (is_stem lx) then (stem_child lx) else lx
       bind (self cnt) ({okc} -> if okc then (hb_blocks self r) else (Ok FF))
     } else (Ok FF))
     v

@@ -6,7 +6,7 @@ open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // ---- a record value is a product, read by name ----
-let r = { a := zero; b := TT }
+let r := { a := zero; b := TT }
 test r.a = zero // statically-known record: compile-time collapse
 test r.b = TT
 
@@ -16,49 +16,49 @@ test field r "b" = TT
 
 // ---- projection on an UN-annotated runtime value uses the runtime cut ----
 // (this is the step-3 metadata-read scenario: m.field on a plain parameter)
-let get_a = {rec} -> rec.a
-let get_b = {rec} -> rec.b
+let get_a := {rec} -> rec.a
+let get_b := {rec} -> rec.b
 test get_a { a := zero; b := TT } = zero
 test get_b { a := zero; b := TT } = TT
 
 // ---- surface records interoperate with the Record TYPE via string names ----
-let MyRec = Record [pair "a" Nat, pair "b" Bool]
+let MyRec := Record [pair "a" Nat, pair "b" Bool]
 test typecheck MyRec { a := zero; b := TT } = Ok TT
 test param_apply MyRec { a := TT; b := TT } = Ok FF // a should be a Nat
 
 // ---- a record literal as kernel metadata: read a field by name at runtime ----
 // (the shape step 3 relies on: a 4-field record projected by an accessor fn)
-let meta = { recognizer_params := zero; functor := t; respond := TT; behavioral_specs := t }
-let get_respond = {m} -> m.respond
+let meta := { recognizer_params := zero; functor := t; respond := TT; behavioral_specs := t }
+let get_respond := {m} -> m.respond
 test get_respond meta = TT
 
 // ---- sequential field scope: later fields see earlier ones by name ----
 open use "../std/nat/ops.disp"
-let rd = { a := 2; b := double a }
+let rd := { a := 2; b := double a }
 test rd.a = 2
 test rd.b = 4
-let rchain = { x := 1; y := succ x; z := succ y }
+let rchain := { x := 1; y := succ x; z := succ y }
 test rchain.z = 3
 
 // a field's value compiles BEFORE its own name binds: a self-named field
 // resolves outward (the `respond := respond` kernel-meta pattern)
-let outer_v = 7
-let rself = { outer_v := outer_v; w := succ outer_v }
+let outer_v := 7
+let rself := { outer_v := outer_v; w := succ outer_v }
 test rself.outer_v = 7
 test rself.w = 8
 
 // sequential scope under a binder (open field values)
-let mkrec = {n} -> { a := n; b := double a }
+let mkrec := {n} -> { a := n; b := double a }
 test (mkrec 3).b = 6
 
 // ---- field pun: a bare IDENT member is `name := name` (outer scope) ----
-let respond = 42
-let rpun = { tag := 1; respond }
+let respond := 42
+let rpun := { tag := 1; respond }
 test rpun.respond = 42
 test rpun.tag = 1
-let rpun2 = { respond; tag := 2 } // pun-first, field after
+let rpun2 := { respond; tag := 2 } // pun-first, field after
 test rpun2.respond = 42
 
 // a block's trailing bare ident is still a block, not a pun
-let blk = {n} -> { let m = double n; m }
+let blk := {n} -> { let m := double n; m }
 test blk 5 = 10

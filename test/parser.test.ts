@@ -32,12 +32,16 @@ const recValue = (fields: { name: string; type: Expr | null; value: Expr }[]): E
   ({ tag: "recValue", fields })
 const use = (path: string): Expr => ({ tag: "use", path })
 
+// A top-level `let x := e` is a decorated declaration: tag "field" whose head is
+// the identifier `let` (the library private-write decorator).
 function soleLet(src: string): { name: string; type: Expr | null; body: Expr } {
   const items = parseItems(src)
   expect(items).toHaveLength(1)
   const it = items[0]
-  if (it.tag !== "let") throw new Error(`expected let, got ${it.tag}`)
-  return { name: it.name, type: it.type, body: it.body }
+  if (it.tag !== "field") throw new Error(`expected field, got ${it.tag}`)
+  expect(it.head).toEqual({ tag: "var", name: "let" })
+  if (it.value == null) throw new Error("expected a value")
+  return { name: it.name, type: it.type, body: it.value }
 }
 
 function tmpFile(name: string, contents: string): string {
@@ -75,11 +79,13 @@ describe("tokenize", () => {
   })
 
   it("classifies keywords vs identifiers", () => {
-    const toks = tokenize("let test use lets tests")
+    // `let` and `test` are ordinary identifiers now (library values, not syntax);
+    // the keyword set is use/open/match/if/then/else.
+    const toks = tokenize("let test use open lets tests")
     const nonNl = toks.filter(t => t.t !== "nl" && t.t !== "eof")
     expect(nonNl).toEqual([
-      { t: "kw", v: "let" }, { t: "kw", v: "test" }, { t: "kw", v: "use" },
-      { t: "id", v: "lets" }, { t: "id", v: "tests" },
+      { t: "id", v: "let" }, { t: "id", v: "test" }, { t: "kw", v: "use" },
+      { t: "kw", v: "open" }, { t: "id", v: "lets" }, { t: "id", v: "tests" },
     ])
   })
 
@@ -369,18 +375,21 @@ describe("parse: named-argument syntax", () => {
 
 describe("parse: items", () => {
   it("let and test in sequence", () => {
-    const items = parseItems("let a = t\ntest a = a")
-    expect(items.map(i => i.tag)).toEqual(["let", "test"])
+    // `let a := t` is a decorated declaration (field with head `let`);
+    // `test a = a` is an equation whose lhs carries the `test` marker var.
+    const items = parseItems("let a := t\ntest a = a")
+    expect(items.map(i => i.tag)).toEqual(["field", "test"])
     const d = items[0]; const t = items[1]
-    if (d.tag !== "let" || t.tag !== "test") throw new Error("shape")
+    if (d.tag !== "field" || t.tag !== "test") throw new Error("shape")
     expect(d.name).toBe("a")
-    expect(d.body).toEqual(leaf)
-    expect(t.lhs).toEqual(v("a"))
+    expect(d.head).toEqual(v("let"))
+    expect(d.value).toEqual(leaf)
+    expect(t.lhs).toEqual(ap(v("test"), v("a")))
     expect(t.rhs).toEqual(v("a"))
   })
 
   it("let with type annotation", () => {
-    const d = soleLet("let x : A = t")
+    const d = soleLet("let x : A := t")
     expect(d.name).toBe("x")
     expect(d.type).toEqual(v("A"))
     expect(d.body).toEqual(leaf)
@@ -392,7 +401,7 @@ describe("parse: items", () => {
   })
 
   it("semicolon as separator", () => {
-    const items = parseItems("let a = t; let b = t")
+    const items = parseItems("let a := t; let b := t")
     expect(items).toHaveLength(2)
   })
 })
@@ -400,19 +409,18 @@ describe("parse: items", () => {
 // ─────────────────────────── compile / driver ───────────────────────────
 
 describe("parseProgram (compile + driver)", () => {
-  it("`let x = t` binds x to LEAF", () => {
-    const decls = parseProgram("let x = t\ntest x = t")
-    expect(decls).toHaveLength(2)
-    expect(decls[0].kind).toBe("Def")
-    expect(decls[1].kind).toBe("Test")
-    if (decls[1].kind !== "Test") return
-    expect(treeEqual(decls[1].lhs, LEAF)).toBe(true)
-    expect(treeEqual(decls[1].rhs, LEAF)).toBe(true)
+  it("`let x := t` binds x to LEAF and is PRIVATE (no Def exported)", () => {
+    const decls = parseProgram("let x := t\ntest x = t")
+    expect(decls).toHaveLength(1) // the let is a private write: no Def
+    expect(decls[0].kind).toBe("Test")
+    if (decls[0].kind !== "Test") return
+    expect(treeEqual(decls[0].lhs, LEAF)).toBe(true)
+    expect(treeEqual(decls[0].rhs, LEAF)).toBe(true)
   })
 
   it("`{x} -> x` compiles to I", () => {
     const I_TREE = fork(fork(LEAF, LEAF), LEAF)
-    const decls = parseProgram("let id = {x} -> x\ntest id = id")
+    const decls = parseProgram("id := {x} -> x\ntest id = id")
     const def = decls.find(d => d.kind === "Def" && d.name === "id")
     if (!def || def.kind !== "Def") throw new Error("missing")
     expect(treeEqual(def.tree, I_TREE)).toBe(true)
@@ -429,7 +437,7 @@ describe("parseProgram (compile + driver)", () => {
   it("multi-param binder compiles correctly", () => {
     // {x, y} -> x  desugars to \x.\y.x = K = stem(LEAF)
     const K_TREE = stem(LEAF)
-    const decls = parseProgram("let K = {x, y} -> x")
+    const decls = parseProgram("K := {x, y} -> x")
     const def = decls[0]
     if (def.kind !== "Def") throw new Error("def")
     expect(treeEqual(def.tree, K_TREE)).toBe(true)
@@ -440,7 +448,7 @@ describe("parseProgram (compile + driver)", () => {
     // which is K(B). With B = t, that's K(LEAF) = stem(LEAF) applied... no.
     // Actually {_ : A} -> B erases to \anon -> B which is K(B) since anon is unused.
     // K(LEAF) = stem(LEAF). Let's verify:
-    const decls = parseProgram("let f = t -> t")
+    const decls = parseProgram("f := t -> t")
     const def = decls[0]
     if (def.kind !== "Def") throw new Error("def")
     // \anon -> t = K t = stem(LEAF)... wait, K = stem(LEAF), K(t) = stem(LEAF)(LEAF) = fork(LEAF, LEAF)
@@ -452,14 +460,14 @@ describe("parseProgram (compile + driver)", () => {
   it("scoping: inner let doesn't leak", () => {
     // We don't have block scoping in items yet (blocks are deferred).
     // But we can test that sequential lets see prior defs.
-    const decls = parseProgram("let x = t\nlet y = x\ntest y = t")
+    const decls = parseProgram("let x := t\nlet y := x\ntest y = t")
     const test = decls.find(d => d.kind === "Test")
     if (!test || test.kind !== "Test") throw new Error("test")
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
   })
 
   it("numeric literals compile through in-scope zero/succ", () => {
-    const decls = parseProgram("let zero = t\nlet succ = {n} -> t t n\ntest 2 = succ (succ zero)")
+    const decls = parseProgram("let zero := t\nlet succ := {n} -> t t n\ntest 2 = succ (succ zero)")
     const test = decls.find(d => d.kind === "Test")
     if (!test || test.kind !== "Test") throw new Error("test")
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
@@ -470,9 +478,9 @@ describe("parseProgram (compile + driver)", () => {
   })
 
   it("`use` inlines another file's defs via projection", () => {
-    const dep = tmpFile("dep.disp", "let y = t t\n")
+    const dep = tmpFile("dep.disp", "y := t t\n")
     const decls = parseProgram(
-      `let lib = use "${dep}"\ntest lib.y = t t`,
+      `let lib := use "${dep}"\ntest lib.y = t t`,
       process.cwd() + "/anon.disp",
     )
     const test = decls.find(d => d.kind === "Test")
@@ -481,21 +489,21 @@ describe("parseProgram (compile + driver)", () => {
   })
 
   it("`use` path resolves relative to the including file", () => {
-    const dep = tmpFile("dep.disp", "let y = t\n")
+    const dep = tmpFile("dep.disp", "y := t\n")
     const mainPath = join(dep.slice(0, dep.lastIndexOf("/")), "main.disp")
-    writeFileSync(mainPath, `let lib = use "dep.disp"\ntest lib.y = t\n`)
-    const decls = parseProgram(`let m = use "${mainPath}"`, process.cwd() + "/anon.disp")
+    writeFileSync(mainPath, `let lib := use "dep.disp"\ntest lib.y = t\n`)
+    const decls = parseProgram(`m := use "${mainPath}"`, process.cwd() + "/anon.disp")
     // Should not throw (the nested use resolves correctly)
     expect(decls.length).toBeGreaterThan(0)
   })
 
   it("`open use` brings names into scope but does not re-export them", () => {
-    const dep = tmpFile("dep.disp", "let y = t\n")
+    const dep = tmpFile("dep.disp", "y := t\n")
     const midPath = join(dep.slice(0, dep.lastIndexOf("/")), "mid.disp")
-    // mid.disp opens dep but exports nothing (no := fields, legacy let exports dep's y)
+    // mid.disp is a pure-open barrel (no fields of its own): open re-exports
     writeFileSync(midPath, `open use "dep.disp"\n`)
-    // In legacy mode (no := fields), open still pushes Defs
-    const decls = parseProgram(`let mid = use "${midPath}"\ntest mid.y = t`, process.cwd() + "/anon.disp")
+    // (the barrel rule: a file exporting nothing of its own re-exports its opens)
+    const decls = parseProgram(`let mid := use "${midPath}"\ntest mid.y = t`, process.cwd() + "/anon.disp")
     const test = decls.find(d => d.kind === "Test")
     if (!test || test.kind !== "Test") throw new Error("missing")
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
@@ -506,7 +514,7 @@ describe("parseProgram (compile + driver)", () => {
     const midPath = join(dep.slice(0, dep.lastIndexOf("/")), "mid2.disp")
     // mid2.disp uses new field syntax: open brings y into scope, re-export explicitly
     writeFileSync(midPath, `open use "dep.disp"\nre_y := y\n`)
-    const decls = parseProgram(`let mid = use "${midPath}"\ntest mid.re_y = t`, process.cwd() + "/anon.disp")
+    const decls = parseProgram(`let mid := use "${midPath}"\ntest mid.re_y = t`, process.cwd() + "/anon.disp")
     const test = decls.find(d => d.kind === "Test")
     if (!test || test.kind !== "Test") throw new Error("missing")
     expect(treeEqual(test.lhs, test.rhs)).toBe(true)
@@ -542,7 +550,7 @@ describe("parse errors", () => {
 
   it("trailing tokens fail", () => {
     // A closing brace with no matching open brace is a trailing token error.
-    expect(() => parseItems("let f = t\n}")).toThrow()
+    expect(() => parseItems("let f := t\n}")).toThrow()
   })
 
   it("unmatched `}`", () => {
@@ -554,18 +562,20 @@ describe("parse errors", () => {
   })
 
   it("block without trailing expression", () => {
-    expect(() => parseExpr("{ let x = t }")).toThrow()
+    expect(() => parseExpr("{ let x := t }")).toThrow()
   })
 
   it("test inside braced body parses as block with test", () => {
-    // { test t = t; t } parses as a recValue carrying the test member
+    // { test t = t; t } parses as a recValue carrying the equation member
     // alongside a `trailing` expression. compile.ts evaluates the trailing
     // body after compiling each member (firing inline tests via sinks).
+    // The lhs carries the `test` marker var (peeled at compile time while
+    // `test` is unbound or pristine).
     const result = parseExpr("{ test t = t; t }")
     expect(result).toEqual({
       tag: "recValue",
       fields: [],
-      members: [{ tag: "test", lhs: leaf, rhs: leaf }],
+      members: [{ tag: "test", lhs: ap(v("test"), leaf), rhs: leaf }],
       trailing: leaf,
     })
   })
@@ -591,9 +601,15 @@ describe("parse errors", () => {
     const iface = parseItems("guard g X : T")[0] as typeof f
     expect(iface.name).toBe("X")
     expect(iface.value).toBeNull()
-    // let dual-accepts := and =
-    expect(parseItems("let x := t").length).toBe(1)
-    expect(parseItems("let x = t").length).toBe(1)
+    // `let x := t` is itself a decorated declaration (head = the identifier `let`)
+    const letItem = parseItems("let x := t")[0] as typeof f
+    expect(letItem.tag).toBe("field")
+    expect(letItem.name).toBe("x")
+    expect(letItem.head).toEqual({ tag: "var", name: "let" })
+    // the legacy binding spelling is gone, with a targeted error
+    expect(() => parseItems("let x = t")).toThrow(/no longer a binding/)
+    // a bare-variable equation lhs is rejected (almost always a ':=' typo)
+    expect(() => parseItems("x = t")).toThrow(/compound lhs|expected/)
   })
 
   it("rejects duplicate record type fields", () => {
@@ -605,15 +621,15 @@ describe("parse errors", () => {
 // ──────────────────────── Block expressions ────────────────────────────
 describe("block expressions", () => {
   it("single let binding", () => {
-    // { let x = t; x } → App(Binder([x], Var(x)), Leaf)
-    expect(parseExpr("{ let x = t; x }")).toEqual(
+    // { let x := t; x } → App(Binder([x], Var(x)), Leaf)
+    expect(parseExpr("{ let x := t; x }")).toEqual(
       ap(binder([{ name: "x", type: null }], v("x")), leaf)
     )
   })
 
   it("two let bindings", () => {
-    // { let x = t; let y = t t; y } → App(Binder([x], App(Binder([y], Var(y)), App(Leaf, Leaf))), Leaf)
-    expect(parseExpr("{ let x = t; let y = t t; y }")).toEqual(
+    // { let x := t; let y := t t; y } → App(Binder([x], App(Binder([y], Var(y)), App(Leaf, Leaf))), Leaf)
+    expect(parseExpr("{ let x := t; let y := t t; y }")).toEqual(
       ap(
         binder([{ name: "x", type: null }],
           ap(binder([{ name: "y", type: null }], v("y")), ap(leaf, leaf))),
@@ -623,15 +639,15 @@ describe("block expressions", () => {
   })
 
   it("let binding with type annotation", () => {
-    // { let x : A = t; x } → App(Binder([x], Var(x)), Ann(Leaf, Var(A)))
-    expect(parseExpr("{ let x : A = t; x }")).toEqual(
+    // { let x : A := t; x } → App(Binder([x], Var(x)), Ann(Leaf, Var(A)))
+    expect(parseExpr("{ let x : A := t; x }")).toEqual(
       ap(binder([{ name: "x", type: null }], v("x")), ann(leaf, v("A")))
     )
   })
 
   it("trailing expression uses binding", () => {
-    // { let f = {x} -> x; f t } → App(Binder([f], App(Var(f), Leaf)), Binder([x], Var(x)))
-    expect(parseExpr("{ let f = {x} -> x; f t }")).toEqual(
+    // { let f := {x} -> x; f t } → App(Binder([f], App(Var(f), Leaf)), Binder([x], Var(x)))
+    expect(parseExpr("{ let f := {x} -> x; f t }")).toEqual(
       ap(
         binder([{ name: "f", type: null }], ap(v("f"), leaf)),
         binder([{ name: "x", type: null }], v("x")),
@@ -642,8 +658,8 @@ describe("block expressions", () => {
   it("newline-separated let bindings", () => {
     // Newlines work as separators between let bindings and before trailing expr.
     const src = `{
-      let x = t
-      let y = t t
+      let x := t
+      let y := t t
       y
     }`
     expect(parseExpr(src)).toEqual(
@@ -656,10 +672,10 @@ describe("block expressions", () => {
   })
 
   it("block as binder body (multi-line)", () => {
-    // { let y = x\n y } as body of {x} -> ...
+    // { let y := x\n y } as body of {x} -> ...
     // The newline should separate the let body from the trailing expression.
     const src = `{x} -> {
-      let y = x
+      let y := x
       y
     }`
     expect(parseExpr(src)).toEqual(
@@ -669,10 +685,10 @@ describe("block expressions", () => {
   })
 
   it("binder as block-let body", () => {
-    // let y = {z} -> z inside a block — the binder body should not consume
+    // let y := {z} -> z inside a block — the binder body should not consume
     // past the newline into the trailing expression.
     const src = `{x} -> {
-      let f = {z} -> z
+      let f := {z} -> z
       f x
     }`
     expect(parseExpr(src)).toEqual(
@@ -685,8 +701,8 @@ describe("block expressions", () => {
 
   it("nested blocks", () => {
     const src = `{x} -> {
-      let y = {z} -> {
-        let w = z
+      let y := {z} -> {
+        let w := z
         w
       }
       y x
@@ -701,9 +717,9 @@ describe("block expressions", () => {
   })
 
   it("multi-arg application in block-let body stays on line", () => {
-    // let z = x y should parse as App(x, y), not consume the trailing expr
+    // let z := x y should parse as App(x, y), not consume the trailing expr
     const src = `{x, y} -> {
-      let z = x y
+      let z := x y
       z
     }`
     expect(parseExpr(src)).toEqual(

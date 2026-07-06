@@ -44,6 +44,14 @@ export const verifiedModules = new Set<string>()
 // and can yield a different tree than `use`).
 export const moduleCacheBySession = new WeakMap<Session<Tree>, Map<string, ScopeEntry>>()
 
+// The pristine `test` marker per session (the prelude identity), captured at its
+// first definition. An equation lhs `test e1 e2 …` strips the marker while `test`
+// is unbound or pristine — identical semantics (identity), and it restores the real
+// application head so elaboration-time features keyed on it (named-argument calls)
+// see through the marker. A scope that shadows `test` keeps the marker: the
+// shadowing value actually runs on its equations' lhs.
+export const pristineTest = new WeakMap<Session<Tree>, Tree>()
+
 // Scope entry: a compiled tree plus optional MODULE export metadata (set by
 // resolveUse, propagated through `let m = use "f"`). Needed because a module's
 // fallback value is a Church-encoded record the runtime cut can't read; for

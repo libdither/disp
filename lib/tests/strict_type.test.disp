@@ -31,7 +31,7 @@ test param_apply StrictType ({n} -> n) = Ok FF            // a bare function is 
 // StrictType-hyp works as the domain of a polymorphic Pi — `∀(A : StrictType). A -> A`
 // recognizes the polymorphic identity (the H-rule accepts a hyp's own neutrals). This is
 // what lets StrictType replace the legacy `Type`.
-let polyid = {A} -> {x} -> x
+let polyid := {A} -> {x} -> x
 test param_apply (Pi StrictType ({A} -> Arrow A A)) polyid = Ok TT
 
 // ===== the fixed point: the universe inhabits itself =====

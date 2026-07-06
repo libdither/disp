@@ -35,18 +35,18 @@ test param_apply HBin (make_hyp HBin 0) = Ok TT
 // n(V x xs) = o^(n(x)+1) (n(W y ys))  for xs = (y:ys), o^(n(x)+1) (0) for [];
 // dually for W with i. The head block is applied OUTERMOST; the tag
 // alternates down the list.
-let dbl = fix ({self, n} -> if (tree_eq n zero) then zero else (succ (succ (self (nat_pred n)))))
-let o_op = {n} -> succ (dbl n) // o(x) = 2x+1
-let i_op = {n} -> succ (succ (dbl n)) // i(x) = 2x+2
-let iter_op = fix ({self, f, k, acc} -> if (tree_eq k zero) then acc else (self f (nat_pred k) (f acc)))
-let hb_nat = fix ({self, hb} ->
+let dbl := fix ({self, n} -> if (tree_eq n zero) then zero else (succ (succ (self (nat_pred n)))))
+let o_op := {n} -> succ (dbl n) // o(x) = 2x+1
+let i_op := {n} -> succ (succ (dbl n)) // i(x) = 2x+2
+let iter_op := fix ({self, f, k, acc} -> if (tree_eq k zero) then acc else (self f (nat_pred k) (f acc)))
+let hb_nat := fix ({self, hb} ->
   if (is_leaf hb) then zero
   else {
-    let lx = stem_child (pair_fst hb) // hb_v: the count; hb_w: stem(count)
-    let xs = pair_snd hb
-    let vtag = not (is_stem lx)
-    let k = succ (self (if (is_stem lx) then (stem_child lx) else lx)) // block length n(x)+1
-    let rest = if (is_leaf xs) then zero else (self ((select hb_w hb_v vtag) (pair_fst xs) (pair_snd xs)))
+    let lx := stem_child (pair_fst hb) // hb_v: the count; hb_w: stem(count)
+    let xs := pair_snd hb
+    let vtag := not (is_stem lx)
+    let k := succ (self (if (is_stem lx) then (stem_child lx) else lx)) // block length n(x)+1
+    let rest := if (is_leaf xs) then zero else (self ((select hb_w hb_v vtag) (pair_fst xs) (pair_snd xs)))
     iter_op (select o_op i_op vtag) k rest
   })
 

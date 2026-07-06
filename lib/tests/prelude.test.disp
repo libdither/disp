@@ -11,7 +11,7 @@ test pair_snd (t (t t) t) = t
 // wait + fix
 test wait ({x, y} -> x) t (t t) = t
 
-let countdown = fix ({self, n} -> triage t ({c} -> self c) ({l, r} -> self r) n)
+let countdown := fix ({self, n} -> triage t ({c} -> self c) ({l, r} -> self r) n)
 test countdown t = t
 test countdown (t t t) = t
 test countdown (t t (t t t)) = t

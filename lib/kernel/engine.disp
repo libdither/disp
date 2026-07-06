@@ -22,11 +22,11 @@
 // computes a value (Reduce); the respond receives (recognizer_params, self, frame). This
 // is the kernel's one trusted read of a neutral's metadata, which is why it is sealed.
 // (Spec: TYPE_THEORY §12.6.)
-let extend_neutral_meta = {old_meta, result_type, arg} -> { stored_type := result_type; payload := (inj "Ext" (pair old_meta arg)) } // payload : Spine (universe.disp)
+let extend_neutral_meta := {old_meta, result_type, arg} -> { stored_type := result_type; payload := (inj "Ext" (pair old_meta arg)) } // payload : Spine (universe.disp)
 // SEALED(Σ-op): reads the neutral's raw metadata and reconstructs self, the one trusted elimination step.
 hyp_reduce := fix ({self, meta, frame} -> {
-  let tmeta = type_meta meta.stored_type
-  let me = wait self meta // the reconstructed self-neutral
+  let tmeta := type_meta meta.stored_type
+  let me := wait self meta // the reconstructed self-neutral
   match (tmeta.respond tmeta.recognizer_params me frame) {
     Extend new_type => wait self (extend_neutral_meta me new_type frame) // stuck: bare neutral (Option A, §7.5/§9)
     Reduce v => v // computes: bare value (verdicts arrive as Reduce (Ok v) via the Return alias)
@@ -44,8 +44,8 @@ neutral_type : Tree -> Type := {v} -> (type_meta v).stored_type
 
 // The recognizer shim: runs the H-rule (a neutral inhabits a type iff its stored type IS
 // it), threading `self` so recursive recognizers (Nat, Ord) re-enter it on children (§A).
-let recognizer_wrap = fix ({wrap, body, meta, v} -> {
-  let self = wait (wait wrap body) meta
+let recognizer_wrap := fix ({wrap, body, meta, v} -> {
+  let self := wait (wait wrap body) meta
   if (is_neutral v)
     then (Ok (tree_eq self (neutral_type v))) // H-rule
     else (body self meta v) // concrete: body may recurse via `self`
@@ -68,16 +68,16 @@ inert_respond : RespondShape := {params, self, frame} -> Extend InvalidType
 // support / occurs / is_closed: the §8.1 dependency scan (descends through neutrals).
 // SEALED(reflection): the scan triages arbitrary trees (incl. neutrals) — these are the
 // boundary's trusted eyes and can never self-type through the walker they serve.
-let t_union = fix ({self, a, b} ->
+let t_union := fix ({self, a, b} ->
   if (is_fork a) then (t (pair_fst a) (self (pair_snd a) b)) else b)
-let support_member = fix ({self, x, s} ->
+let support_member := fix ({self, x, s} ->
   if (is_fork s)
     then (if (tree_eq (pair_fst s) x) then TT else (self x (pair_snd s)))
     else FF)
 // is_hyp_fork: a genuine hyp_reduce neutral is a FORK with the hyp sig (partial
 // `wait hyp_reduce` recipes in metadata are stems sharing the bare sig — §2.6 collision).
-let is_hyp_fork = {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
-let support_set = fix ({self, v} ->
+let is_hyp_fork := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let support_set := fix ({self, v} ->
   if (is_hyp_fork v)
     then (t (type_meta v) (self (type_meta v)))
     else (triage t ({c} -> self c) ({l, r} -> t_union (self l) (self r)) v))
@@ -87,30 +87,30 @@ is_closed := {v} -> is_leaf (support_set v)
 // bind_hyp (Σ-op): merged into the walker (is_bind_hyp). `bind_hyp A` is the bare op-tag;
 // raw contexts route it via `param_apply (bind_hyp A) body`. The marker fails closed (Err),
 // so the annotation is honest: raw application of the tag to a body Errs (: Tree).
-let bind_hyp_marker = {domain, body} -> Err
+let bind_hyp_marker := {domain, body} -> Err
 bind_hyp : Type -> Tree -> Tree := {A} -> wait bind_hyp_marker A
-let bind_hyp_sig = checker_sig bind_hyp_marker
-let is_bind_hyp = {f} -> and (is_fork f) (tree_eq (pair_fst f) bind_hyp_sig)
+let bind_hyp_sig := checker_sig bind_hyp_marker
+let is_bind_hyp := {f} -> and (is_fork f) (tree_eq (pair_fst f) bind_hyp_sig)
 
 // tree_eq_sig lets the walker spot a partial `tree_eq a` (its lazy O(1) form).
-let tree_eq_sig = checker_sig tree_eq
-let is_teq_partial = {f} -> and (is_fork f) (tree_eq (pair_fst f) tree_eq_sig)
+let tree_eq_sig := checker_sig tree_eq
+let is_teq_partial := {f} -> and (is_fork f) (tree_eq (pair_fst f) tree_eq_sig)
 
 // ── The walker: dispatch `f x` one application at a time, rejecting reflection on hyps.
 
-let w_stem = {a, x} -> {
-  let r = t a x
+let w_stem := {a, x} -> {
+  let r := t a x
   if (is_hyp_fork r) then Err else (Ok r) // stem-forge rejection
 }
 // w_s/w_tfk are named `let`s, not inlined into w_fork: inlining over-expands under bracket
 // abstraction + cirToTree past the compile budget. (Manual CSE; see ELABORATOR_PLAN.md Appendix A.)
-let w_s = {self, c, b, x} ->
+let w_s := {self, c, b, x} ->
   bind (self c x) ({cx} -> bind (self b x) ({bx} -> self cx bx))
 
-let w_tfk = {self, b, l, r} ->
+let w_tfk := {self, b, l, r} ->
   bind (self b l) ({bl} -> self bl r)
 
-let w_fork = {self, a, b, x} ->
+let w_fork := {self, a, b, x} ->
   triage
     (Ok b)
     ({c} -> w_s self c b x)
@@ -123,9 +123,9 @@ let w_fork = {self, a, b, x} ->
 // w_bind_hyp: mint a fresh hyp of the domain (type_meta f), walk `body hyp` UNDER the
 // walker (so raw reflection on the hyp is rejected), then occurs-escape-check the result.
 // Two binds: the outer is over the walk itself, the inner over the body's own verdict.
-let w_bind_hyp = {self, f, x} -> {
-  let dom = type_meta f
-  let h = make_hyp dom (pair dom x)
+let w_bind_hyp := {self, f, x} -> {
+  let dom := type_meta f
+  let h := make_hyp dom (pair dom x)
   Ok (bind (self x h) ({body_cr} -> bind body_cr ({result} -> if (occurs h result) then Err else (Ok result))))
 }
 
@@ -202,7 +202,7 @@ elim := {dispatcher, motive, cases, target} ->
 // Unannotated: with an ABSTRACT coh the gate's match sticks on a neutral verdict; each
 // SATURATED instance (coh + params pinned) inhabits ProjectingRespondShape (metashape.test).
 gated_inductive_respond := {coh, params, self, frame} -> {
-  let r = coh (neutral_type self) frame.motive frame.cases
+  let r := coh (neutral_type self) frame.motive frame.cases
   match r {
     Err _ => Extend InvalidType // gate errored (e.g. a case triaged a hyp)
     Ok v => if v

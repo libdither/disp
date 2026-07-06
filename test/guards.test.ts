@@ -51,8 +51,32 @@ describe("guard layer rejections", () => {
       .toThrow(/rejected by its guard/)
   }, 120000)
 
-  it("let_dec as a head makes the binding private (bound, not exported)", () => {
-    const decls = run(K + `let_dec p : Nat := 3\ntest p = 3\n`)
+  it("`let` as a head makes the binding private (bound, not exported)", () => {
+    const decls = run(K + `let p : Nat := 3\ntest p = 3\n`)
     expect(decls.some(d => d.kind === "Def" && d.name === "p")).toBe(false)
+  }, 120000)
+
+  it("shadowing `let` changes what the scope's lets mean (a let that exports)", () => {
+    // `let` is an ordinary library value: rebind it to a decorator that leaves the
+    // request public, and subsequent `let`s in the scope EXPORT. (The pristine
+    // fast path only applies while `let` is tree-identical to the cut.disp value.)
+    const decls = run(K
+      + `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := FF }\n`
+      + `let vis : Nat := 7\ntest vis = 7\n`)
+    expect(decls.some(d => d.kind === "Def" && d.name === "vis")).toBe(true)
+  }, 120000)
+
+  it("the `test` marker is a value: shadowing it preprocesses equation lhs", () => {
+    const testOf = (src: string) => {
+      const t = run(K + src).find(d => d.kind === "Test")
+      if (!t || t.kind !== "Test") throw new Error("missing test")
+      return t
+    }
+    // Pristine marker: `test zero = succ zero` peels to zero vs succ zero — unequal.
+    const pristine = testOf(`test zero = succ zero\n`)
+    expect(session.equal!(pristine.lhs, pristine.rhs)).toBe(false)
+    // Shadowed marker RUNS (no peel): lhs = succ zero — equal.
+    const shadowed = testOf(`test := succ\ntest zero = succ zero\n`)
+    expect(session.equal!(shadowed.lhs, shadowed.rhs)).toBe(true)
   }, 120000)
 })

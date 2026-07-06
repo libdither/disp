@@ -5,20 +5,20 @@ open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 
-let one = succ zero
+let one := succ zero
 
 // ── Tree A / Forest A (the canonical mutual pair): Tree = leaf A | node Forest ;
 //    Forest = empty | cons Tree Forest. (A Tree's children are a Forest — nested-via-mutual.) ──
-let mkTF = {A} -> fix ({self, i} ->
+let mkTF := {A} -> fix ({self, i} ->
   if (tree_eq i zero)
     then (Coproduct_ctx self [pair "leaf" [A], pair "node" [RecAt one]])
     else (Coproduct_ctx self [pair "empty" [], pair "cons" [RecAt zero, RecAt one]]))
-let Tree   = {A} -> (mkTF A) zero
-let Forest = {A} -> (mkTF A) one
-let leaf  = {a}      -> inj "leaf" a
-let node  = {f}      -> inj "node" f
-let empty = inj "empty" t
-let fcons = {tr, fr} -> inj "cons" (pair tr fr)
+let Tree   := {A} -> (mkTF A) zero
+let Forest := {A} -> (mkTF A) one
+let leaf  := {a}      -> inj "leaf" a
+let node  := {f}      -> inj "node" f
+let empty := inj "empty" t
+let fcons := {tr, fr} -> inj "cons" (pair tr fr)
 test typecheck (Tree Nat) (leaf 5)                                       = Ok TT
 test typecheck (Tree Nat) (node empty)                                   = Ok TT
 test typecheck (Tree Nat) (node (fcons (leaf 1) (fcons (leaf 2) empty))) = Ok TT  // Tree -> Forest -> Tree -> …
@@ -30,17 +30,17 @@ test typecheck Type (Forest Nat)                                         = Ok TT
 
 // ── a PARSER AST: mutually recursive Expr and Stmt (the modern-PL motivation) ──
 //   Expr = Num Nat | Add Expr Expr ;  Stmt = Assign Expr | Seq Stmt Stmt | ExprStmt Expr
-let mkAST = fix ({self, i} ->
+let mkAST := fix ({self, i} ->
   if (tree_eq i zero)
     then (Coproduct_ctx self [pair "num" [Nat], pair "add" [RecAt zero, RecAt zero]])
     else (Coproduct_ctx self [pair "assign" [RecAt zero], pair "seq" [RecAt one, RecAt one], pair "exprstmt" [RecAt zero]]))
-let Expr = mkAST zero
-let Stmt = mkAST one
-let num = {n} -> inj "num" n
-let eadd = {a, b} -> inj "add" (pair a b)
-let assign = {e} -> inj "assign" e
-let sseq = {a, b} -> inj "seq" (pair a b)
-let exprstmt = {e} -> inj "exprstmt" e
+let Expr := mkAST zero
+let Stmt := mkAST one
+let num := {n} -> inj "num" n
+let eadd := {a, b} -> inj "add" (pair a b)
+let assign := {e} -> inj "assign" e
+let sseq := {a, b} -> inj "seq" (pair a b)
+let exprstmt := {e} -> inj "exprstmt" e
 test typecheck Expr (eadd (num 1) (num 2))                                  = Ok TT
 test typecheck Stmt (assign (num 5))                                        = Ok TT   // Stmt -> Expr
 test typecheck Stmt (sseq (assign (num 1)) (exprstmt (eadd (num 2) (num 3))))= Ok TT   // Stmt -> Stmt + Expr

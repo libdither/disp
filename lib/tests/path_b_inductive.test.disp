@@ -8,19 +8,19 @@ open use "../std/nat/arith.disp"
 open use "../std/list.disp"
 
 // ── direct recursion: a binary tree of Nats (Rec = RecUnder Id) ──
-let BTree = Coproduct [pair "leaf" [Nat], pair "node" [Rec, Rec]]
-let bleaf = {n} -> inj "leaf" n
-let bnode = {l, r} -> inj "node" (pair l r)
+let BTree := Coproduct [pair "leaf" [Nat], pair "node" [Rec, Rec]]
+let bleaf := {n} -> inj "leaf" n
+let bnode := {l, r} -> inj "node" (pair l r)
 test typecheck BTree (bleaf 7)                                    = Ok TT
 test typecheck BTree (bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3)))= Ok TT
 test typecheck BTree (bnode (bleaf 1) (bleaf TT))                 = Ok FF   // non-Nat leaf rejected
 test typecheck Type BTree                                        = Ok TT   // a real Type
 
 // ── NESTED recursion: Expr = Lit Nat | Call Expr (List Expr) ──
-let Expr = Coproduct [pair "lit" [Nat], pair "call" [Rec, RecUnder List]]
-let lit  = {n} -> inj "lit" n
-let call = {f, args} -> inj "call" (pair f args)
-let e1 = call (lit 0) (cons (lit 1) (cons (lit 2) nil))
+let Expr := Coproduct [pair "lit" [Nat], pair "call" [Rec, RecUnder List]]
+let lit  := {n} -> inj "lit" n
+let call := {f, args} -> inj "call" (pair f args)
+let e1 := call (lit 0) (cons (lit 1) (cons (lit 2) nil))
 test typecheck Expr (lit 9)                          = Ok TT
 test typecheck Expr e1                               = Ok TT   // nested: a List of Exprs as args
 test typecheck Expr (call (lit 0) (cons TT nil))     = Ok FF   // a non-Expr IN the arg list

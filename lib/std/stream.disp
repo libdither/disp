@@ -22,17 +22,17 @@ stream_tail := {r} -> field r "tail"
 // the tail as the next generator — so observing never forces more than one level.
 unfold := {step, seed} -> inj gen_tag (pair step seed)
 out := {v} -> {
-  let sp = pair_snd v
-  let step = pair_fst sp
-  let one = step (pair_snd sp)
+  let sp := pair_snd v
+  let step := pair_fst sp
+  let one := step (pair_snd sp)
   { head := (field one "head"); tail := (unfold step (field one "tail")) }
 }
 
 // stream_respond: eliminating a Stream-neutral observes ONE level — delegate to the observation
 // Record [head:A; tail:Stream A]'s projection respond (self = the neutral, so tail lands Stream A).
 // `params.elem` is the element type A (see the recognizer_params wrapping below).
-let stream_respond = {params, self, frame} -> {
-  let obs = Record [pair "head" (params.elem), pair "tail" (neutral_type self)]
+let stream_respond := {params, self, frame} -> {
+  let obs := Record [pair "head" (params.elem), pair "tail" (neutral_type self)]
   ((type_meta obs).respond (type_meta obs).recognizer_params self frame)
 }
 

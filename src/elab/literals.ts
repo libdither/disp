@@ -63,7 +63,7 @@ export function treeToString(t: Tree): string {
 export function recordFieldsFromTree(
   tree: Tree,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[] } | undefined {
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[] } | undefined {
   const annihilateSig = lookupEntry("annihilate_sig")?.tree
   const typeMeta = lookupEntry("type_meta")?.tree
   const pairFst = lookupEntry("pair_fst")?.tree

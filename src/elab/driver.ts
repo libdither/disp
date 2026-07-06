@@ -7,11 +7,11 @@ import { dirname, resolve as pathResolve } from "node:path"
 import { type Tree, defaultSession } from "../eval/eager.js"
 import type { Session, EvalStats } from "../eval/types.js"
 import { parseItems, type Expr, type RecMember } from "../parse.js"
-import { elab, B, verifiedModules, moduleCacheBySession, type ScopeEntry, type CompileSinks } from "./state.js"
+import { elab, B, verifiedModules, moduleCacheBySession, pristineTest, type ScopeEntry, type CompileSinks } from "./state.js"
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
 import { extractSignature } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
-import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree } from "./expr.js"
+import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree, equationLhs } from "./expr.js"
 
 export type Decl =
   | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null }
@@ -23,6 +23,18 @@ export type Decl =
 // consulting path. (The fast path mirrors the disp definition's semantics exactly —
 // the tree_eq native-fast-path discipline: the in-language definition is normative.)
 const pristineDefaultGuard = new WeakMap<Session<Tree>, Tree>()
+// Likewise the pristine `let` decorator (cut.disp): a `let`-headed declaration takes
+// the fast private path while `let` is unbound (bootstrap: files before/without the
+// kernel — the host fallback of identical semantics) or pristine; a scope that
+// shadows `let` routes its lets through the shadowing decorator.
+const pristineLet = new WeakMap<Session<Tree>, Tree>()
+
+// A `let x := e` declaration is an ordinary decorated declaration whose head is the
+// single identifier `let` (the private-write request decorator).
+const isLetHead = (head: Expr | undefined): boolean => head?.tag === "var" && head.name === "let"
+// Fields that EXPORT: every field except `let`-headed ones (those are private writes).
+const hasExportFields = (items: RecMember[]): boolean =>
+  items.some(it => it.tag === "field" && !isLetHead(it.head))
 
 export type ParseItemStats = {
   kind: "let" | "test" | "open" | "field"
@@ -113,10 +125,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     stack.push(new Map())
     const fileDecls: Decl[] = []
     const items = parseItems(fileSrc)
-    // Detect whether this file uses the new field syntax.
-    // If any field members exist, only fields export. Otherwise fall back
-    // to legacy mode where all lets export (for backward compat during migration).
-    const hasFields = items.some(it => it.tag === "field")
+    // A file that exports nothing of its own (no non-`let` fields — e.g. the kernel
+    // barrel, which is pure `open`s) re-exports what it opens; a field-bearing file
+    // exports only its fields. (The old legacy mode where top-level lets exported is
+    // gone: `let` marks the write private everywhere.)
+    const hasFields = hasExportFields(items)
     // Kernel formers needed to auto-verify this module, captured while its own scope
     // is still on the stack (popped in `finally`). Null if the kernel isn't in scope
     // (a file with no checkable annotations) — verification is then skipped.
@@ -286,28 +299,37 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   }
 
   // declareBinding: the declaration pipeline (COMPILATION.typ § Declarations as
-  // requests). Fast path = the pre-guard behavior, taken when there is no head, no
-  // installed guard on the name, and the ambient default_guard is pristine (or the
-  // kernel isn't loaded yet). Slow path builds the request record, applies the head
-  // decorator, consults the incumbent guard, and applies its GuardAction.
+  // requests). Fast path = the pre-guard behavior, taken when there is no head (or
+  // the head is the pristine/unbound `let` decorator), no installed guard on the
+  // name, and the ambient default_guard is pristine (or the kernel isn't loaded
+  // yet). Slow path builds the request record, applies the head decorator, consults
+  // the incumbent guard, and applies its GuardAction.
   function declareBinding(
     name: string,
     typeE: Expr | null | undefined,
     valueE: Expr | null,
     headE: Expr | undefined,
-    isLet: boolean,
     sinks: CompileSinks,
     raw: boolean,
   ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean; priv?: boolean } {
     const S = elab.cs
     const existing = lookupEntry(name)
+    const letHeaded = isLetHead(headE)
     const dg = lookupEntry("default_guard")?.tree
     const pristine = pristineDefaultGuard.get(S)
     const ambientShadowed = dg != null && !(pristine != null && S.equal!(dg, pristine))
-    if (raw || (!headE && !existing?.guard && !ambientShadowed)) {
-      // Fast path. (The parser guarantees headless declarations carry a value.)
-      const r = compileBinding(name, typeE, valueE!, sinks, raw)
-      return { pushDef: true, tree: r.tree, type: r.type, guard: existing?.guard, viaFast: true }
+    // A `let` head fast-paths while it means the library decorator verbatim: unbound
+    // (bootstrap fallback of identical semantics) or tree-identical to the pristine
+    // capture. A shadowed `let` falls through to the slow path, where the head
+    // compiles to the shadowing decorator and actually runs.
+    const letTree = letHeaded ? lookupEntry("let")?.tree : undefined
+    const pLet = pristineLet.get(S)
+    const letPristine = letHeaded && (letTree == null || (pLet != null && S.equal!(letTree, pLet)))
+    if ((raw || ((!headE || letPristine) && !existing?.guard && !ambientShadowed)) && valueE != null) {
+      // Fast path. (The parser guarantees headless declarations carry a value;
+      // a valueless decorated declaration always consults, below.)
+      const r = compileBinding(name, typeE, valueE, sinks, raw)
+      return { pushDef: true, tree: r.tree, type: r.type, guard: existing?.guard, viaFast: true, priv: letHeaded || undefined }
     }
     // Slow path: compile the pieces.
     let valueTree: Tree | null = null
@@ -331,15 +353,17 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       throw new Error(`declaration of '${name}': guarded declarations need the kernel prelude in scope`)
     const opt = (x: Tree | null): Tree => (x == null ? S.leaf() : S.stem(x))
     const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => S.fork(h, acc), S.leaf())
+    // The base request is public (`private := FF`), exactly `base v` in cut.disp;
+    // privacy is the head's job (the `let` decorator sets it).
     const names = consList(["value", "ty", "guard", "private"].map(stringToTree))
-    const payload = consList([opt(valueTree), opt(typeTree), S.leaf(), isLet ? tt : ff].map(v => S.apply(lc, v, B())))
+    const payload = consList([opt(valueTree), opt(typeTree), S.leaf(), ff].map(v => S.apply(lc, v, B())))
     let request = S.apply(S.apply(mkr, names, B()), payload, B())
     if (headE) {
       const headTree = compileExpr(headE, lookupEntry, resolveUse, sinks)
       request = S.apply(headTree, request, B())
     }
     // Privacy is declarer intent, so it is read off the FINAL request (a head like
-    // let_dec may set it), not off the guard's answer.
+    // `let` may set it), not off the guard's answer.
     const privTree = S.apply(request, accTree("private"), B())
     const isPrivate = S.equal!(privTree, tt)
     const oldOpt = existing?.tree != null ? S.stem(existing.tree) : S.leaf()
@@ -387,7 +411,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const sinks = makeSinks(target)
     switch (it.tag) {
       case "field": {
-        const r = declareBinding(it.name, it.type, it.value, it.head, false, sinks, raw)
+        // `let x := e` arrives here as a decorated declaration (head = `let`);
+        // the tag "let" member only survives inside braces (the lexical form).
+        const r = declareBinding(it.name, it.type, it.value, it.head, sinks, raw)
         if (r.pushDef && !r.priv) {
           // Redefinition of an exported field is guard-mediated (a rebind): the final
           // binding wins. An UNGUARDED (fast-path) duplicate is still the old accident
@@ -398,36 +424,31 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
             if (r.viaFast) throw new Error(`duplicate exported field '${it.name}'`)
             target[idx] = decl
           } else target.push(decl)
-          // Register the canonical tree_eq tree id with the runtime fast-path on first definition.
-          if (it.name === "tree_eq") elab.cs.recognizeNative?.("tree_eq", r.tree!)
         }
+        // Register the canonical tree_eq tree id with the runtime fast-path on first
+        // definition (also when bound privately via `let`).
+        if (it.name === "tree_eq" && r.pushDef && r.tree != null) elab.cs.recognizeNative?.("tree_eq", r.tree)
         if (it.name === "default_guard" && r.tree != null && !pristineDefaultGuard.has(elab.cs))
           pristineDefaultGuard.set(elab.cs, r.tree)
-        recordItem("field", it.name)
-        return
-      }
-      case "let": {
-        const r = declareBinding(it.name, it.type, it.body, undefined, true, sinks, raw)
-        if (isExport && r.pushDef) {
-          // Legacy mode: top-level let exports (for files not yet migrated)
-          target.push({ kind: "Def", name: it.name, tree: r.tree!, type: r.type })
-        }
-        if (it.name === "tree_eq" && r.tree != null) elab.cs.recognizeNative?.("tree_eq", r.tree)
-        if (it.name === "default_guard" && r.tree != null && !pristineDefaultGuard.has(elab.cs))
-          pristineDefaultGuard.set(elab.cs, r.tree)
-        recordItem("let", it.name)
+        if (it.name === "let" && r.tree != null && !pristineLet.has(elab.cs))
+          pristineLet.set(elab.cs, r.tree)
+        if (it.name === "test" && r.tree != null && !pristineTest.has(elab.cs))
+          pristineTest.set(elab.cs, r.tree)
+        recordItem(isLetHead(it.head) ? "let" : "field", it.name)
         return
       }
       case "test": {
         compiledTestIndex++
         target.push({
           kind: "Test",
-          lhs: compileExpr(it.lhs, lookupEntry, resolveUse, sinks),
+          lhs: compileExpr(equationLhs(it.lhs, lookupEntry), lookupEntry, resolveUse, sinks),
           rhs: compileExpr(it.rhs, lookupEntry, resolveUse, sinks),
         })
         recordItem("test", undefined, compiledTestIndex)
         return
       }
+      case "let": // the lexical (braced) form never reaches item level
+        throw new Error(`internal: lexical let member '${it.name}' at item level`)
       case "open": {
         const record = resolveExprRecord(it.expr, lookupEntry, resolveUse)
           ?? recordFieldsFromTree(compileExpr(it.expr, lookupEntry, resolveUse, sinks), lookupEntry)
@@ -462,7 +483,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   }
 
   const items = parseItems(src)
-  const hasFields = items.some(it => it.tag === "field")
+  const hasFields = hasExportFields(items)
   for (const it of items) runItem(it, decls, !hasFields)
   // Force ALL deferred module verifications at once. On a lazy backend this is where
   // the kernel verification walks actually run — one end-of-parse batch over a shared

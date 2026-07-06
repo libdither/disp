@@ -71,7 +71,7 @@ CheckerResult : Type := < Ok : Tree, Err >
 
 // qid_meta: observe type_meta v, check it : meta.ty — but THREAD v (not the meta), so it stays separate.
 // (qid_op/qid_cell — the plain self optic — moved up to the cell-ops block; qid_meta needs MetaShape.)
-let qid_meta_op = {meta, mode, source, prior, frame, rs} -> // observe type_meta v, check it : meta.ty
+let qid_meta_op := {meta, mode, source, prior, frame, rs} -> // observe type_meta v, check it : meta.ty
   if mode
     then (match (param_apply (meta.ty) (type_meta source)) { Ok b => (if b then (SThread source) else SReject); Err _ => SReject })
     else (SDone (Extend (meta.ty)))
@@ -94,25 +94,25 @@ StrictType : Type := tele_with (
 // token flattens nested checks to fresh native walks — the former every-backend OOM is gone).
 // probe cell: apply meta.apply to (source=v, prior=the just-minted cases), check the resulting
 // Action : Singleton(outcome) — the CONV x = MEM (Singleton x) collapse. (Shared with GoodRespond below.)
-let probe_op = {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
-let probe_cell = {ap, out} -> wait probe_op { apply := ap; outcome := out }
-let ctele_fields = {T, M} -> (type_meta (derive_case_telescope T M)).recognizer_params
+let probe_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.apply source prior)) (Singleton (meta.outcome))
+let probe_cell := {ap, out} -> wait probe_op { apply := ap; outcome := out }
+let ctele_fields := {T, M} -> (type_meta (derive_case_telescope T M)).recognizer_params
 // respond-KIND dispatch: gated inductives carry a real shape↔inj iso in `functor` (Coproduct family);
 // negative/hybrid formers carry trivial_functor = t. Only the former get the behavioral tail — and only
 // with CONCRETE variants: a former applied to a variants-HYP (`Coproduct x : Type` under `x : Tree`) has
 // no declaration to derive obligations from, so it takes the structural branch (the ground instances
 // built from it are behaviorally checked when THEY are certified).
-let is_gated = {v} -> and (is_fork ((type_meta v).functor)) (not (is_neutral ((type_meta v).recognizer_params)))
+let is_gated := {v} -> and (is_fork ((type_meta v).functor)) (not (is_neutral ((type_meta v).recognizer_params)))
 // claims_gate: DECLARED-ungated inductives (respond ≡ inductive_respond exactly — Coproduct_ctx/mutual,
 // plain Coproduct_viewed) skip the junk dims: they visibly make no gating claim, and their eliminations
 // stay defended by use-site re-checking (the R0 status quo). Everything else that gates must gate WELL.
-let claims_gate = {v} -> not (tree_eq ((type_meta v).respond) inductive_respond)
-let resp_of = {T} -> (type_meta T).respond (type_meta T).recognizer_params
+let claims_gate := {v} -> not (tree_eq ((type_meta v).respond) inductive_respond)
+let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
 // per-variant junk dims (the over-permissive/R5 adversary catch): for each case slot i, mint a
 // cases-record with slot i junked to Tree and probe that the respond REJECTS (Extend InvalidType).
 // `get_R` maps the walked SOURCE to the respond under test: `resp_of` for the universe (source =
 // the candidate type), `Id` for the standalone GoodRespond (source = the respond itself).
-let bt_junk = fix ({self, get_R, M, s, fields, fs, i} ->
+let bt_junk := fix ({self, get_R, M, s, fields, fs, i} ->
   if (is_fork fs)
     then (t (mint_cell (Record (list_update i ({f} -> pair (pair_fst f) Tree) fields))) ({junk} ->
           t (probe_cell ({src, _} -> (get_R src) s { motive := M; cases := junk }) (Extend InvalidType)) ({_} ->
@@ -122,7 +122,7 @@ let bt_junk = fix ({self, get_R, M, s, fields, fs, i} ->
 // standalone checker — mint an abstract motive M (at StrictType: the probes only need its H-rule
 // respond), an abstract self s, the coherent cases; probe coh (-> Extend (M s)); optionally the
 // per-variant junk dims. Universality of the obligations = parametricity of the managed mints.
-let behavioral_cells = {get_R, T, junk_dims} ->
+let behavioral_cells := {get_R, T, junk_dims} ->
   t (mint_cell (Arrow T StrictType)) ({M} ->
   t (mint_cell T) ({s} ->
   t (mint_cell (derive_case_telescope T M)) ({cases} ->
@@ -152,7 +152,7 @@ Type := BehavioralType
 // recognizer, deliberately NOT built with make_recognizer: its H-rule shortcut compares
 // stored types nominally and would reject every foreign neutral. is_neutral is
 // carve-out clean (a root-sig read + tree_eq), so this checker is walker-safe.
-let neutral_check = {m, v} -> Ok (is_neutral v)
+let neutral_check := {m, v} -> Ok (is_neutral v)
 Neutral : Type := wait neutral_check (make_meta unit_witness inert_respond)
 
 // Spine: what a neutral's payload IS — a mint (the freshness id) or an extension: the

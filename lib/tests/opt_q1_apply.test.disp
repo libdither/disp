@@ -12,30 +12,30 @@ open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 open use "../std/pair.disp"
 
-let my_list_disp = fix ({self, motive, cases, target} ->
+let my_list_disp := fix ({self, motive, cases, target} ->
   if (is_leaf target) then cases.nil
   else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
-let my_list_rec = {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
-let mp = {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
-let compose = {f, g, x} -> f (g x)
+let my_list_rec := {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
+let mp := {f, xs} -> my_list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+let compose := {f, g, x} -> f (g x)
 // the map-fusion proof (from opt_q1_main): ∀ f g xs. Eq NatList (mp f (mp g xs)) (mp (compose f g) xs)
-let map_fusion_proof = {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> eq_cong NatList NatList ({tail_} -> cons (f (g h)) tail_) (mp f (mp g tl)) (mp (compose f g) tl) ih) xs
+let map_fusion_proof := {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> eq_cong NatList NatList ({tail_} -> cons (f (g h)) tail_) (mp f (mp g tl)) (mp (compose f g) tl) ih) xs
 
 // the thing being optimized
-let slow = {xs} -> mp succ (mp succ xs)
+let slow := {xs} -> mp succ (mp succ xs)
 
 // THE TRANSFORMER: pointwise, returns (new body, proof it equals the old body).
 // type: (xs : NatList) -> Σ (y : NatList). Eq NatList (slow xs) y
-let transformer_type = Pi NatList ({xs} -> Sigma NatList ({y} -> Eq NatList (mp succ (mp succ xs)) y))
-let transformer = {xs} -> make_pair (mp (compose succ succ) xs) (map_fusion_proof succ succ xs)
+let transformer_type := Pi NatList ({xs} -> Sigma NatList ({y} -> Eq NatList (mp succ (mp succ xs)) y))
+let transformer := {xs} -> make_pair (mp (compose succ succ) xs) (map_fusion_proof succ succ xs)
 
 // ── THE GATE IS JUST THE TYPE CHECK. If this passes, the rewrite is certified equivalence-preserving. ──
 test param_apply transformer_type transformer = Ok TT
 
 // EXTRACTION. `apply` projects the new value. It is BEHAVIOURALLY correct ...
-let apply = {tf} -> {xs} -> field (tf xs) "fst"
-let fast = apply transformer
-let lst = cons (succ zero) (cons (succ (succ zero)) nil)
+let apply := {tf} -> {xs} -> field (tf xs) "fst"
+let fast := apply transformer
+let lst := cons (succ zero) (cons (succ (succ zero)) nil)
 test tree_eq (fast lst) (mp (compose succ succ) lst) = TT        // fast lst = the fused result
 // ... but the typed-transformer route does NOT give zero residue. `field (make_pair new proof) "fst"`
 // projects `new`, yet eager `make_pair` forces BOTH — so `fast` carries the make_pair/proof wrapper and
@@ -47,5 +47,5 @@ test tree_eq fast slow = FF                                      // (and genuine
 
 // ── NEGATIVE CONTROL: a LYING transformer (claims y = mp succ xs, but the proof is for the fused form)
 //    FAILS the type check — the proof's endpoints don't match the claimed new value. The type is the gate. ──
-let bad_transformer = {xs} -> make_pair (mp succ xs) (map_fusion_proof succ succ xs)
+let bad_transformer := {xs} -> make_pair (mp succ xs) (map_fusion_proof succ succ xs)
 test param_apply transformer_type bad_transformer = Ok FF

@@ -33,7 +33,7 @@ test param_apply Neutral zero = Ok FF
 // NEUTRAL + the frame; storing the parent neutral is how occurs sees through spines)
 test typecheck Type Spine = Ok TT
 test typecheck Spine ((type_meta (make_hyp Nat 0)).payload) = Ok TT   // a minted payload is closed
-let stuckB = (make_hyp Nat 1) { motive := ({_} -> Bool); cases := { zero := TT; succ := ({p, ih} -> ih) } }
+let stuckB := (make_hyp Nat 1) { motive := ({_} -> Bool); cases := { zero := TT; succ := ({p, ih} -> ih) } }
 // an extended payload CONTAINS the parent neutral, so it is not closed (typecheck Errs at
 // the boundary by design); param_apply checks membership directly
 test param_apply Spine ((type_meta stuckB).payload) = Ok TT
@@ -127,8 +127,8 @@ test tree_eq (param_apply RespondShape ((type_meta (Pi Nat ({_} -> Bool))).respo
 test param_apply (Arrow Type MetaShape) meta_of = Ok TT
 test tree_eq (meta_of Nat) (type_meta Nat) = TT               // concrete face = type_meta
 // on an abstract type the meta is a well-typed STUCK record; projections land field types
-let TA = make_hyp Type 0
-let mTA = meta_of TA
+let TA := make_hyp Type 0
+let mTA := meta_of TA
 test is_neutral mTA = TT
 test neutral_type mTA = MetaShape
 test neutral_type (mTA.recognizer_params) = Tree

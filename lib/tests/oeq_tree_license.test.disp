@@ -20,25 +20,25 @@ open use "../std/oeq.disp"
 // TreeI: raw trees as an honest inductive — leaf | stem child | fork left right.
 // The view is TOTAL (every tree is one of the three), which is the whole reason the
 // optimization below is available.
-let view_tree = {v} -> triage
+let view_tree := {v} -> triage
   (Ok (inj "leaf" t))
   ({c} -> Ok (inj "stem" c))
   ({l, r} -> Ok (inj "fork" (pair l r)))
   v
-let encode_tree = {x} ->
+let encode_tree := {x} ->
   if (tree_eq (pair_fst x) "stem") then (t (pair_snd x))
   else (if (tree_eq (pair_fst x) "fork") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t)
-let TreeI = Coproduct_viewed t (pair view_tree encode_tree) [pair "leaf" [], pair "stem" [Rec], pair "fork" [Rec, Rec]]
+let TreeI := Coproduct_viewed t (pair view_tree encode_tree) [pair "leaf" [], pair "stem" [Rec], pair "fork" [Rec, Rec]]
 test typecheck Type TreeI = Ok TT
 test typecheck TreeI (t (t t) (t t t)) = Ok TT
 
 // spec: the full structural check, written over the inductive's own recursor. rec_value
 // computes every induction hypothesis, so this genuinely VISITS EVERY NODE: O(size).
-let deep = {v} -> rec_value TreeI ({_} -> CheckerResult)
+let deep := {v} -> rec_value TreeI ({_} -> CheckerResult)
   { leaf := (Ok TT); stem := ({c, ih} -> ih); fork := ({l, r, ihl, ihr} -> ihr) } v
 
 // fast: the optimization. O(1), and tree-distinct from deep.
-let fast = {v} -> Ok TT
+let fast := {v} -> Ok TT
 
 // The license. Its type unfolds (pointwise clause of setoid_of) to
 //   Pi TreeI ({v} -> Eq CheckerResult (deep v) (Ok TT))

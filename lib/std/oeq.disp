@@ -49,7 +49,7 @@ eq_setoid := {T} -> make_setoid (Eq T) ({x} -> refl) (eq_sym T) (eq_trans T)
 // The pointwise lift: the setoid for functions, from the codomain's setoid family.
 // This clause IS funext: relatedness at a function type is defined as pointwise
 // relatedness, so no axiom is ever eliminated.
-let lift_setoid = {dom, codS} -> make_setoid
+let lift_setoid := {dom, codS} -> make_setoid
   ({f, g} -> Pi dom ({a} -> ((codS a).rel) (f a) (g a)))
   ({f} -> {a} -> (codS a).srefl (f a))
   ({f, g, p} -> {a} -> (codS a).ssym (f a) (g a) (p a))
@@ -58,40 +58,40 @@ let lift_setoid = {dom, codS} -> make_setoid
 // Type-shape probes (the eta_check dispatch). A Pi is a mint-lead telescope whose
 // second cell is an apply cell (Intersection is mint-lead too, but imeet-second); a
 // record is a proj-lead telescope, componentwise only when every tail is constant.
-let cells_of = {T} -> (type_meta T).recognizer_params
-let apply_sig = pair_fst (apply_cell t)
-let proj_sig = pair_fst (proj_cell t t)
-let is_pi_ty = {T} -> {
-  let cs = cells_of T
+let cells_of := {T} -> (type_meta T).recognizer_params
+let apply_sig := pair_fst (apply_cell t)
+let proj_sig := pair_fst (proj_cell t t)
+let is_pi_ty := {T} -> {
+  let cs := cells_of T
   and (is_fork cs) (and (is_mint_cell (pair_fst cs)) (tree_eq (pair_fst (pair_fst ((pair_snd cs) t))) apply_sig))
 }
-let is_record_ty = {T} -> {
-  let cs = cells_of T
+let is_record_ty := {T} -> {
+  let cs := cells_of T
   and (is_fork cs) (tree_eq (pair_fst (pair_fst cs)) proj_sig)
 }
-let all_const = fix ({self, tele} ->
+let all_const := fix ({self, tele} ->
   if (is_fork tele) then (and (is_const_tail (pair_snd tele)) (self ((pair_snd tele) t))) else TT)
-let pi_dom = {T} -> (type_meta (pair_fst (cells_of T))).ty
-let pi_cod = {T, a} -> (type_meta (pair_fst ((pair_snd (cells_of T)) a))).ty
+let pi_dom := {T} -> (type_meta (pair_fst (cells_of T))).ty
+let pi_cod := {T, a} -> (type_meta (pair_fst ((pair_snd (cells_of T)) a))).ty
 
 // The componentwise lift for non-dependent records: the relation is itself a RECORD of
 // the fields' relations, and each law builds the record of the fields' law instances.
-let rel_fields = fix ({self, sof, tele, r0, r1} ->
+let rel_fields := fix ({self, sof, tele, r0, r1} ->
   if (is_fork tele) then {
-    let m = type_meta (pair_fst tele)
+    let m := type_meta (pair_fst tele)
     cons (pair (m.name) (((sof (m.ty)).rel) (field r0 (m.name)) (field r1 (m.name)))) (self sof ((pair_snd tele) t) r0 r1)
   } else nil)
-let law_fields = fix ({self, get, tele} ->
+let law_fields := fix ({self, get, tele} ->
   if (is_fork tele) then {
-    let m = type_meta (pair_fst tele)
-    let rest = self get ((pair_snd tele) t)
+    let m := type_meta (pair_fst tele)
+    let rest := self get ((pair_snd tele) t)
     pair (cons (m.name) (pair_fst rest)) (cons (list_const (get (m.name) (m.ty))) (pair_snd rest))
   } else (pair nil nil))
-let rec_record = {get, tele} -> {
-  let nv = law_fields get tele
+let rec_record := {get, tele} -> {
+  let nv := law_fields get tele
   make_record (pair_fst nv) (pair_snd nv)
 }
-let lift_record = {sof, tele} -> make_setoid
+let lift_record := {sof, tele} -> make_setoid
   ({r0, r1} -> Record (rel_fields sof tele r0 r1))
   ({r} -> rec_record ({n, ty} -> (sof ty).srefl (field r n)) tele)
   ({r0, r1, p} -> rec_record ({n, ty} -> (sof ty).ssym (field r0 n) (field r1 n) (field p n)) tele)
@@ -140,7 +140,7 @@ license_guard := {R} -> {old, req} ->
   else (if (is_leaf old)
     then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
     else {
-      let u = stem_child (req.value)
+      let u := stem_child (req.value)
       match (param_apply (R (stem_child old) (u.new)) (u.proof)) {
         Ok b  => (if b then (Ok (Bind (u.new))) else Err)
         Err _ => Err

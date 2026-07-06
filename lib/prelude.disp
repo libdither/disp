@@ -25,6 +25,15 @@
 TT : Bool := {m, ct, cf} -> ct
 FF : Bool := {m, ct, cf} -> cf
 
+// The equation marker. `test lhs = rhs` is the equation ITEM (SYNTAX.typ § Tests) —
+// the parser has no `test` keyword; this identity is what the conventional marker
+// denotes, so `test lhs` ≡ `lhs` and every marker-written equation reads unchanged.
+// An ordinary, shadowable value: a shadowed `test` preprocesses every marker-written
+// lhs in its scope; while unbound or pristine the elaborator peels the marker
+// (identical semantics, and it restores the lhs's true application head so
+// named-argument calls resolve — src/elab/expr.ts equationLhs).
+test : Tree -> Tree := {x} -> x
+
 // triage(on_leaf, on_stem, on_fork) x:
 //   x=leaf -> on_leaf, x=stem(u) -> on_stem u, x=fork(u,v) -> on_fork u v
 triage := {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
