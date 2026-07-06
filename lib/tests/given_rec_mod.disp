@@ -1,0 +1,12 @@
+// Fixture for given.test.disp: a RECORD-typed given — one dependency whose type
+// is a telescope — spliced into scope with a plain `open`. The interface-record
+// pattern: the module names one context, the use site fills it with any record
+// inhabiting the type (a literal, a bound record, another module's .record).
+open use "../prelude.disp"
+open use "../kernel/prelude.disp"
+
+given ctx : { add : Nat -> Nat -> Nat, start : Nat }
+open ctx
+
+double : Nat -> Nat := {x} -> add x x
+from_start : Nat -> Nat := {x} -> add start x

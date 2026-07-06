@@ -1,6 +1,6 @@
 # Modules as telescope-typed functions
 
-Status: slice 1 LANDED (2026-07-06) — the given layer (explicit fills,
+Status: slice 1 LANDED (2026-07-06): the given layer (explicit fills,
 instantiation cache, well-typed linking) plus hermetic per-file scoping and
 the kernel fragment headers. The type-theory half was validated first by
 `lib/tests/functor_module_proto.test.disp` (commit 5449c59, 15 pins, zero
@@ -10,7 +10,7 @@ as the functor tuple, abstract verification) and slice 3 (dividends) remain.
 
 Landed details that refined the design: in-file forward annotation references
 are ALSO givens, self-filled by the barrel's raw pass (`Eq`/`Unit` in base,
-`Ord` in positive, `Type`/`RespondShape` in universe — the scan is
+`Ord` in positive, `Type`/`RespondShape` in universe; the scan is
 `given`-order-sensitive: a given's annotation compiles against earlier givens
 plus itself); elaboration errors now carry the file they arose in (hermetic
 scoping turns a missing import into an unbound-variable error naming the
@@ -71,6 +71,26 @@ as a bare recType/binder, so at least one field must be written with `:=`.
 Record spread (`{ ..ctx }`) subsumes this later (planned alongside the synth
 work, independent of this arc). Ordinary files have no givens, so `open use`
 stays fill-free everywhere outside the kernel and future functor libraries.
+
+`use raw` is not an exception to explicitness: raw binds NOTHING for an
+unfilled, undefaulted given. The name is simply absent from the module's
+scope; nothing implicit flows, and a value referencing it errors as unbound,
+attributed to the file. This is what lets the kernel fragments raw-open
+earlier siblings bare: their givens are annotation-only, raw drops
+annotations, so the absent names are never referenced. Explicit fills compose
+with raw, and defaults compile under raw too (defaults are values; raw drops
+only the annotation layer).
+
+A RECORD-typed given is one telescope-typed dependency and needs no new
+machinery: `given ctx : { add : Nat -> Nat -> Nat, start : Nat }` followed by
+`open ctx` splices the fields into the module's scope (pinned in
+given.test.disp with the given_rec_mod fixture). The fill is any record
+inhabiting the type: a literal, a bound record, or another module's `.record`
+(module-to-module wiring). The interface-record pattern composes with
+telescope derived fields for per-field defaults, and in slice 2 an `open` on
+an ABSTRACT record-given can read its field names off the given's TYPE
+instead of the fill. A fused `open given ctx : { … }` spelling is possible
+sugar later; the two-line form works today.
 
 Parser changes: none. `given X : T` and `given X : T := d` are decorated
 declarations (`headFieldP` accepts them today); `use "f" { ... }` is an

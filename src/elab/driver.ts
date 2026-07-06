@@ -133,8 +133,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const items = parseFileItems(abs)
     // Module dependencies (MODULES.md): validate the supplied fills against the
     // file's declared givens BEFORE elaborating. Fills are explicit; a missing
-    // fill without a default is an error (raw fills missing givens with `t` —
-    // kernel givens are annotation-only, and raw drops annotations).
+    // fill without a default is an error (raw binds nothing for a missing given —
+    // the name is absent from scope; kernel givens are annotation-only and raw drops annotations).
     const givens = scanGivens(items)
     const supplied = fills ?? new Map<string, Tree>()
     for (const k of supplied.keys())
@@ -145,10 +145,14 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       if (missing.length > 0)
         throw new Error(`use ${path}: unfilled given(s) ${missing.join(", ")} — supply them: use "${path}" { ${missing.map(n => `${n} := …`).join(", ")} }`)
     }
+    // (Raw tolerates missing fills by BINDING NOTHING: the given name is simply
+    // absent from the module's scope — nothing implicit flows — and a value
+    // referencing it errors as unbound, naming this file. The kernel bootstrap
+    // rides this: fragment givens are annotation-only, and raw drops annotations.)
     // Instantiation key: one component per given — explicit fill = session intern
-    // id of the fill tree, default = "d" (per-file constant), raw-missing = "t".
+    // id of the fill tree, default = "d" (per-file constant), raw-unbound = "u".
     const fillKey = givens.map(g =>
-      supplied.has(g.name) ? `#${internTreeId(elab.cs, supplied.get(g.name)!)}` : (g.dflt != null && !raw ? "d" : "t")).join(",")
+      supplied.has(g.name) ? `#${internTreeId(elab.cs, supplied.get(g.name)!)}` : (g.dflt != null ? "d" : "u")).join(",")
     // Module cache (per session): return the already-elaborated instantiation if
     // present. Checked BEFORE cycle detection on purpose — a cached module is fully
     // loaded, so returning it can't mask a real cycle (a module still mid-load is
@@ -481,7 +485,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
 
   // handleGiven: a module dependency declaration (MODULES.md). Not a bind request —
   // a binder introduction the driver interprets directly: bind the fill (explicit
-  // beats default; raw fills missing ones with `t`), and schedule the well-typed-
+  // beats default; raw binds nothing for a missing one), and schedule the well-typed-
   // linking check `param_apply T fill` into the deferred batch (skipped raw, and
   // gradual when the kernel is not in this module's scope, like annotations).
   function handleGiven(it: Extract<RecMember, { tag: "field" }>, sinks: CompileSinks, ctx: FileCtx): void {
@@ -497,11 +501,14 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     if (it.type == null && !ctx.raw)
       throw new Error(`given '${it.name}': a dependency needs a type annotation`)
     let fill = ctx.fills.get(it.name)
-    if (fill == null && it.value != null && !ctx.raw)
-      fill = compileExpr(it.value, lookupEntry, resolveUse, sinks) // the default, in module scope
+    if (fill == null && it.value != null)
+      fill = compileExpr(it.value, lookupEntry, resolveUse, sinks) // the default, in module scope (raw included: defaults are values)
     if (fill == null) {
       if (!ctx.raw) throw new Error(`given '${it.name}': unfilled`) // pre-checked in resolveUse; defensive
-      fill = elab.cs.leaf()
+      // Raw, no fill, no default: bind NOTHING. The dependency is simply not in
+      // scope (fills are explicit; nothing flows implicitly) — a value that
+      // references it errors as unbound, attributed to this file.
+      return
     }
     // The fill binds BEFORE the annotation compiles, so a given's type may reference
     // the given itself (the self-typed universe dependency `given Type : Type`

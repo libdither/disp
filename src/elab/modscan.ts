@@ -21,7 +21,11 @@ export function parseFileItems(abs: string): RecMember[] {
 export const isGivenHead = (head: Expr | undefined): boolean =>
   head?.tag === "var" && head.name === "given"
 
-// A module dependency: `given name : type (:= dflt)?`.
+// A module dependency: `given name : type (:= dflt)?`. Fills are explicit
+// everywhere; under `use raw` an unfilled, undefaulted given is simply NOT IN
+// SCOPE (nothing implicit flows — a value referencing it errors as unbound,
+// naming the file). The kernel bootstrap rides this: fragment givens are
+// annotation-only, and raw drops annotations.
 export type GivenSpec = { name: string; type: Expr | null; dflt: Expr | null }
 
 export function scanGivens(items: RecMember[]): GivenSpec[] {

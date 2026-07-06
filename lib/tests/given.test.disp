@@ -31,3 +31,10 @@ test tree_eq m.record.double m2.record.double = TT
 // ── linking semantics: a different (well-typed) fill changes the exports ──
 m4 := use "given_mod.disp" { add := ({x} -> {y} -> x) }
 test m4.record.double 3 = 3
+
+// ── a RECORD-typed given is one telescope-typed dependency; `open` splices its
+// fields inside the module (given_rec_mod.disp), and the fill is any record
+// inhabiting the type ──
+mr := use "given_rec_mod.disp" { ctx := { add := add, start := 3 } }
+test mr.record.double 3 = 6
+test mr.record.from_start 5 = 8

@@ -70,6 +70,19 @@ describe("module dependencies (given) rejections", () => {
       .toThrow(/needs a type annotation/)
   }, 120000)
 
+  it("raw binds NOTHING for an unfilled given: values referencing it error as unbound", () => {
+    // Nothing implicit flows under `use raw` — an unfilled, undefaulted given is
+    // simply absent from the module's scope.
+    const p = tmpModule("rawval.disp", `given f : Nat -> Nat\napplied := f zero\n`)
+    expect(() => run(K + `open use raw "${p}"\n`))
+      .toThrow(/unresolved free variable f/)
+    // annotation-only givens load fine raw (annotations drop — the kernel bootstrap)
+    const q = tmpModule("rawann.disp", `given T : Type\nx : T := zero\n`)
+    expect(() => run(K + `open use raw "${q}"\n`)).not.toThrow()
+    // and an explicit fill under raw binds as usual
+    expect(() => run(K + `open use raw "${p}" { f := succ }\ncheck := applied\n`)).not.toThrow()
+  }, 120000)
+
   it("hermetic: a used module cannot see the use site's scope", () => {
     const p = tmpModule("leaky.disp", `x := secret\n`)
     expect(() => run(K + `secret := t\nm := use "${p}"\n`))
