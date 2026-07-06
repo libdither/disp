@@ -1,6 +1,7 @@
 // Kernel entry point: `open use "../kernel/prelude.disp"` brings substrate combinators
 // (../prelude.disp) + the kernel's 7 fragments, in value-dependency order:
-//   cut      — records/sums + the cut, control coproducts, the list toolkit, make_meta
+//   cut      — records/sums + the cut, control coproducts, the list toolkit, make_meta,
+//              and the declaration protocol (GuardAction constructors, request decorators, default_guard)
 //   engine   — the walker + Σ-ops (hyp_reduce/bind_hyp/param_apply) + the boundary
 //   cells    — wait-form cells + the tele_walk walker + the negative formers (Telescope/Pi/Sigma/Record)
 //   base     — first-order library types (Unit/String/Eq/Refinement/Intersection)

@@ -4366,6 +4366,17 @@ the effect system proper.
 
 = Cubical extensions <sec:cubical>
 
+*(Status note, 2026-07-05: the set-level fragment of this section's
+motivation landed as library code — `lib/std/oeq.disp`: a type's
+equivalence is a setoid derived from its cells by `setoid_of`
+(pointwise at Pi = funext by definition, componentwise at non-dependent
+records, `Eq` at data), overridable through `behavioral_specs` =
+quotients, with `LinkedPi` as the relational binder. Deliberately NO
+elimination of the equivalence into arbitrary motives — funext-with-J
+is inconsistent against `tree_eq` — so the coercion half of this
+section (per-type morphism actions computing transport) remains the
+planned route for dependent families.)*
+
 This section folds in the cubical proposal. Cubical operations live
 in each library type's `meta.functor` field (the *morphism-action*
 function, per MetaShape's §11 convention) — no new kernel primitives,
@@ -4916,6 +4927,14 @@ meta` (constructed externally), tree_eq comparisons in the H-rule
   test in the implementation.]
 
 = Effects <sec:effects>
+
+*(Status note, 2026-07-05: the elaborator's declaration layer is
+designed as this section's first consumer — a module is a value of the
+free monad over the elaboration signature (`Declare`/`Test`/`Import`),
+interpreted by the driver, with per-name *guards* as deep handlers over
+`Declare`; see COMPILATION.typ § Declarations as requests. Once `Eff`
+exists as a library type, `mod : Eff ElabSig Unit` becomes an ordinary
+checkable annotation and guard-respect a property of module values.)*
 
 Disp's effect system is *entirely a library construction* — a free monad
 over a signature of operations, interpreted by handlers, with one impure

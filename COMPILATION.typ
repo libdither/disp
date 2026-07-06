@@ -59,9 +59,11 @@ the relevant type predicate evaluates to `TT`.
 - Disambiguate braced forms (`recValue`, `recType`, `block`,
   `binder`) using local syntax shape.
 - Reject shape errors (empty binder `{} -> body`, `:=`/`:` mixing,
-  duplicate exported fields, duplicate record-type fields,
+  duplicate BRACED record fields and record-type fields,
   intermediate bare expressions in a Block,
-  etc.).
+  etc.). Top-level field *redefinition* is legal syntax (a guard-mediated
+  rebind request, § Declarations as requests); the unguarded-duplicate
+  accident check lives in the driver.
 
 Non-responsibilities: the parser does *no* tree construction and *no*
 type checking. Name resolution, file loading, projection metadata,
@@ -87,6 +89,9 @@ test x = t                     // passes against outer x
 Every `let` is compiled in source order. A typed `let` first compiles
 the annotation as a type, then checks the body against that type.
 
+Both `let x := body` and legacy `let x = body` parse (declaration and
+block position alike).
+
 *Internal* `let x (: T)? = body; rest` (inside a Block): compile
 `body`, bind `x` in the local scope, then compile `rest` with `x`
 available. Equivalently:
@@ -97,7 +102,9 @@ App(Binder([{name: "x", type: null}], rest_as_expr), body')
 
 where `body'` is checked against `T` if typed else `body`.
 
-*Top-level* `let x (: T)? = body`: compile and bind `x`. In a
+*Top-level* `let x (: T)? = body`: compile and bind `x`, routed through
+the declaration pipeline as a private request (§ Declarations as
+requests; the fast path is byte-identical to direct binding). In a
 field-export file, top-level lets are private. In legacy fieldless
 files, top-level lets are exported for compatibility.
 
@@ -671,7 +678,8 @@ plumbing is future work.
   [*failed test*],              [parser: `test`'s two sides elaborate to trees that disagree by hash-cons identity],
   [*unsolved hole*],            [elab: `Hole` not yet supported; compile error],
   [*projection mismatch*],      [elab: `Proj.field` not found on target's record type, or target is not a RecValue],
-  [*duplicate field*],          [parser: two exported fields or record-type fields share a name],
+  [*duplicate field*],          [parser for braced records / record types; DRIVER for top-level exported fields (an unguarded fast-path redefinition — guarded rebinds are legal)],
+  [*guard rejected*],           [driver: a declaration request refused by the name's guard (or by a shadowed ambient `default_guard`) — the module fails to load],
   [*import cycle*],             [parser: a `use` transitively references an ancestor file in the parse stack],
   [*braced-form mixing*],       [parser: `:=` with a `NAME : EXPR` field, intermediate bare expressions, `->` on an incompatible shape],
 )

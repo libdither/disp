@@ -315,6 +315,21 @@ the semantic relation that licenses rewrites):
   interval) — not full cubical — is the fit. (See §11: catalogue whether any target rewrite truly
   needs it.)
 
+*Landed (2026-07-05).* (A) and (C) have first implementations in `lib/std/oeq.disp`: `setoid_of`
+derives each type's equivalence from its cells (pointwise at Π = funext by definition,
+componentwise at non-dependent records, `Eq` at data; a declared setoid in `behavioral_specs`
+overrides = quotients) — it lives in the meta a type already carries rather than a new `eq` field,
+and the pointwise licenses are exactly `~_T` restricted to applicative observers. The
+motive-extensionality obligation is operational: the `ext_walker` probe
+(`lib/tests/ext_gate_proto.test.disp`), a `param_walker` variant whose intensional carve-outs
+refuse neutrals — the per-motive residue of the fundamental lemma. The licensed-*replacement*
+mechanism exists as the elaborator's guard layer (COMPILATION.typ § Declarations as requests):
+`license_guard R` makes redefinition of an owned name demand `proof : R old new`, re-verified at
+every load. End-to-end walkthrough pinned in `lib/tests/oeq_tree_license.test.disp` (the
+deep-recognizer-to-`Ok TT` rewrite, licensed by tree induction). Still open here: (B) `φ` as a
+term-level cast (replacement is definition-level today), cost-aware `⊵~ₛ`, and dependent-family
+transport (the §13 coe rung).
+
 #note[
   *2LTT is the equality layering, not staged compilation.* Disp is already two-level in spirit:
   the strict level = `tree_eq`/hash-cons definitional equality (the optimizer's fast path); the
@@ -583,7 +598,11 @@ codebase; the *substrate* and *search* tracks run alongside.
   *Concrete build plan: `OPTIMIZER_DESIGN.md`* (the language decision is TypeScript; rationale there).
 - *M1 — certificate checker + rule book (in-language).* `lib/opt/{rulebook,checker}.disp` (§7);
   rewrites carry certs the kernel validates. Soundness rests on rule-book soundness (Tier-0/1) +
-  checker correctness + Howe congruence (assumed).
+  checker correctness + Howe congruence (assumed). *(Partially landed 2026-07-05: the license TYPE
+  (`oeq`, std/oeq.disp), Tier-2 witnesses (the Q1 proofs), a prototype cert checker
+  (`opt_q1_cert/m1real`), and the licensed-replacement mechanism (the guard layer — owned names
+  whose redefinition demands equivalence proofs, enforced at every load) exist; the standing
+  in-language rulebook/checker modules remain.)*
 - *M2 — `φ` cast (elaborator).* Wire `phi`: verify cert + re-type-check + emit `e'`. User-facing
   zero-cost swaps; the optimizer gets its kernel-blessed accept step.
 - *M3 — observational `Eq` (funext) + Tier-2 rule proofs.* Add the `eq` meta-field (§6-A); re-prove

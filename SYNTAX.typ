@@ -132,20 +132,24 @@ open use \"prelude.disp\"     // import",
 
 #rule(
   "field",
-  "field    ::= IDENT (\":\" expr)? \":=\" expr",
+  "field    ::= head? IDENT (\":\" expr)? (\":=\" expr)?
+head     ::= expr        // top-level only; one decorator expression",
   "TT := t
 id : {A : Type} -> A -> A
-   := {A} -> {x} -> x",
-  note: [Exported record member. Visible as a field when the enclosing body is loaded via `use` or accessed via projection. Duplicate exported field names are parse errors.],
+   := {A} -> {x} -> x
+guard (license_guard (oeq T)) sort : T := impl   // owned name
+guard_eq fast : T := impl                        // contract derived from T
+guard g iface : T                                // interface entry (no value)",
+  note: [Exported record member — a *declaration request* (see COMPILATION.typ § Declarations as requests). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:` or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
 )
 
 #rule(
   "let",
-  "let      ::= \"let\" IDENT (\":\" expr)? \"=\" expr",
-  "let K = {x} -> {y} -> x
+  "let      ::= \"let\" IDENT (\":\" expr)? (\":=\" | \"=\") expr",
+  "let K := {x} -> {y} -> x
 let id : {A : Type} -> A -> A
        = {A} -> {x} -> x",
-  note: [Private name binding; visible to subsequent members but NOT exported. Within a block expression, desugars to `App(Binder, body)`.],
+  note: [Private name binding; visible to subsequent members but NOT exported. `:=` and legacy `=` both parse (migration toward one binding operator; `=` stays the `test` operator). Within a block expression, desugars to `App(Binder, body)`. In declaration position, `let` denotes the `let_dec` request decorator semantically (a private write); inside blocks it remains a lexical binding form (a value cannot introduce a lexical binder).],
 )
 
 #rule(
