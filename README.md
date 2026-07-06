@@ -1,22 +1,28 @@
 # Disp
 
-Disp is a self-verified dependently-typed programming language built on the self-reflective [tree calculus](https://github.com/barry-jay-personal/tree-calculus). Because the underlying computation model is self-reflective, types in disp can be written as just functions that take in other functions and return true (if it typechecks) or false. The long-term goals are to:
- - Create the ultimate programming language that can essentially re-create and transpile all other programming languages into it.
- - Create a "decentralized" programming language, where development and new features (syntax, types) can be used independently by different programmers and automatically translated between.
- - Use disp to create a general-purpose program optimizer, i.e. a program that takes a type (predicate, or more generally, a loss function) and returns something that maximally satisfies the function. Then write a type that specifies the class of such functions and have it create itself, for the goal of creating interpretable (symbolic) recursive self-improving optimizers.
- - Create accurate models of various detail for hardware and have an optimizer optimize for the model.
+Disp is a self-verified dependently-typed programming language built on the [tree calculus](https://github.com/barry-jay-personal/tree-calculus), a computation model whose programs can inspect other programs. That reflection is what lets types be ordinary functions: a type takes a value and returns true or false. The long-term goals are to:
+ - Create the ultimate programming language, one that other programming languages can be re-created in and transpiled to.
+ - Create a "decentralized" programming language, where different programmers can build and adopt new features (syntax, types) independently, with automatic translation between their dialects.
+ - Use disp to create a general-purpose program optimizer: a program that takes a specification (a type, a predicate, or more generally a loss function) and returns something that maximally satisfies it.
+ - Write the type of such optimizers and have the optimizer create itself, yielding an interpretable (symbolic) recursively self-improving optimizer.
+ - Create hardware cost models at varying levels of detail and have the optimizer target to produce behaviorally equivalent code that minimizes cost for those hardware models.
 
 ## Why Disp?
 
-Rust is fast, but you can't verify your programs. In lean you can verify your programs, but with much effort and its usually not very fast. In all languages, you usually can't have an optimizer take a high-level specification and satisfy it. The closest thing we have to this is claude-code but its pretty expensive in practice to do at a large scale (and of course you would need a language that supports formal specifications first, and Lean does not make this as easy as it could be).
+[Rust](https://www.rust-lang.org/) is fast, but you can't verify your programs. [Lean](https://lean-lang.org/) can verify your programs, but it takes real effort and the result is usually not fast. And in every language you still write the implementation yourself: no toolchain takes a high-level specification and satisfies it for you. The closest thing today is a coding agent like Claude Code, which gets expensive at scale and still needs a language that can state formal specifications in the first place (Lean does not make this as easy as it could be).
 
-In order to create a language where all you are required to do is define the high-level constraints, as detailed and rigorous as you require, and then it automatically derives an implementation, you need a language where the constraint-checking itself is optimized and ideally modular. This is the problem disp solves. 
+A language where all you write is the constraints, as detailed and rigorous as you need, with the implementation derived automatically, requires constraint checking that is itself fast and modular. This is the problem disp solves.
 
 ## Disp by example
 
-This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked.
+This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked. Code blocks are tagged `rust` only to borrow GitHub's syntax highlighting; the code is disp.
 
-```disp
+<!-- Literate-code invariant: the blocks below concatenate to one .disp file that must pass.
+     After editing them, re-verify with:
+       awk '/^```rust$/{f=1;next} /^```$/{f=0;next} f' README.md > lib/tests/readme_check_tmp.disp
+       npm run disp -- lib/tests/readme_check_tmp.disp && rm lib/tests/readme_check_tmp.disp -->
+
+```rust
 open use "../prelude.disp"          // raw combinators (tree_eq, is_fork, succ, ...)
 open use "../kernel/prelude.disp"   // the entire type system, an ordinary library
 open use "../std/nat/ops.disp"      // double
@@ -24,9 +30,9 @@ open use "../std/nat/ops.disp"      // double
 
 ### Everything is a tree
 
-```disp
-// Disp compiles to tree calculus: three rewrite rules over binary trees grown
-// from a single leaf `t`. Numbers, lambdas, types, proofs, and the type
+```rust
+// Disp compiles to the tree calculus: three rewrite rules over binary trees
+// grown from a single leaf `t`. Numbers, lambdas, types, proofs, and the type
 // checker itself are all such trees. Some of them are small:
 
 // from the prelude:  TT : Bool := {m, ct, cf} -> ct
@@ -41,7 +47,7 @@ test tree_eq 3 (succ (succ (succ zero))) = TT   // 3 is sugar, and the trees are
 
 ### Syntax is sugar
 
-```disp
+```rust
 // Surface constructs expand to library calls. Expansions are trees, so pin them:
 
 test tree_eq ({r} -> r.x) ({r} -> r (acc "x")) = TT   // projection is application
@@ -57,7 +63,7 @@ test tree_eq Point PointCells = TT                    // the literal is exactly 
 
 ### Checking is running
 
-```disp
+```rust
 // A type is a predicate. To check data, apply the type. Raw application,
 // no checker in sight:
 
@@ -73,7 +79,7 @@ test param_apply TDs { a := 2; b := 5 } = Ok FF   // ran double 2, compared, rej
 
 ### Functions need a promise
 
-```disp
+```rust
 // This annotation claims something about infinitely many inputs:
 
 quadruple : Nat -> Nat := {n} -> double (double n)
@@ -97,7 +103,7 @@ test param_apply (Pi Nat ({_} -> Nat)) ({n} -> TT) = Ok FF    // wrong codomain:
 
 ### What a promise can do
 
-```disp
+```rust
 // So quadruple's body ran double on a value with no digits, and double got
 // stuck. That stuckness is the mechanism. The only legal move on a promise is
 // an observation (apply it, project it, eliminate it), and every observation
@@ -138,7 +144,7 @@ test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err   // illegal qu
 
 ### Who checks the types?
 
-```disp
+```rust
 // A respond answers every observation under every binder, so a wrong respond
 // breaks every check downstream. Responds get checked in two ways. Types are
 // values with a recognizable shape, so the universe is a predicate like any
@@ -166,7 +172,7 @@ test verify_good MyNat (inert_respond unit_witness) = Ok FF       // refuses eve
 // sentence of this README.
 ```
 
-The TypeScript and Rust hosts only accelerate these in-language definitions and are validated bit-for-bit against them; five evaluator backends sit behind one ABI and must agree byte-identically, so no single evaluator has to be trusted ([`EVALUATOR.md`](EVALUATOR.md)). Each decision above is argued against its historical precedents in [`FOUNDATIONS.md`](FOUNDATIONS.md).
+The TypeScript and Rust hosts only accelerate these in-language definitions and are validated against them. Five evaluator backends sit behind one ABI and must agree byte for byte, so no single evaluator has to be trusted ([`EVALUATOR.md`](EVALUATOR.md)). Each decision above is argued against its historical precedents in [`FOUNDATIONS.md`](FOUNDATIONS.md).
 
 ## Status
 
@@ -176,7 +182,7 @@ Working today:
 - The two-op kernel and the library type system on top of it (`lib/kernel/`), including the self-inhabiting strict universe and automatic verification of typed module exports through the kernel.
 - A standard library (`lib/std/`): naturals, lists, options, results, pairs, sets, and streams, with generic derived operations (folds, recursors, functorial maps) read off type structure rather than hand-written per type.
 - About 1,000 object-language tests across 50 files (`lib/tests/`), including soundness tests that pin what the checker must reject, plus host-level parser and runtime unit tests (`test/`).
-- Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, roughly 2x the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests.
+- Rust evaluator backends (`evaluators/`): `rust-eager`, the fast checker backend, about twice as fast as the TypeScript oracle on the full suite; and `rust-ic-net` M0-M2, the materialized interaction net, sequential, with parallel reduction under cargo tests.
 - A first end-to-end slice of the optimizer: machine-checked equality witnesses licensing real rewrites (map fusion among them) past syntactic equality, with zero kernel changes (`lib/tests/opt_q1_*.test.disp`).
 
 Designed but not built: the optimizer itself ([`OPTIMIZER.typ`](OPTIMIZER.typ)), effects as a library, cost as a typing-level resource, cubical path types, and the neural proposer. The open research risks, most sharply whether a decidable fragment of behavioral equivalence is rich enough to license the rewrites an optimizer needs, are catalogued as falsifiable questions in [`FOUNDATIONS.md`](FOUNDATIONS.md) §V.
