@@ -54,15 +54,25 @@ while unbound, exactly the `let` discipline), and the rest is existing
 syntax.
 
 ```rust
-// declaring dependencies (file level, like all heads)
-given add : Nat -> Nat -> Nat            // must be filled at link
-given cmp : Nat -> Nat -> Bool := nat_le // optional: default fill
+// declaring dependencies: one header block per file (the canonical spelling)
+open given {
+  add : Nat -> Nat -> Nat            // must be filled at link
+  cmp : Nat -> Nat -> Bool := nat_le // optional: default fill
+}
 
 // filling them: application of the use-atom to a record, i.e. the existing
 // named-argument call surface (reordering, puns, defaults all apply)
 m := use "sort.disp" { add := my_add }
 open use "sort.disp" { add := my_add }
 ```
+
+The block is parser sugar: each entry desugars to the line form
+`given add : Nat -> Nat -> Nat`, a decorated declaration whose head is the
+library value `given`, so the pre-scan, fills, ordering, and driver semantics
+are those of the per-name declarations (entries separate by newline/','/';';
+entry order is binder order). The line form remains the substrate and still
+parses; the block is the one spelling usage should take, and it reads as what
+slice 2 makes literal: the dependency record being opened into scope.
 
 Fills are EXPLICIT (decided): there is no silent fill-from-scope. The pun
 spelling already gives extract-from-scope ergonomics for same-name fills
@@ -94,12 +104,14 @@ inhabiting the type: a literal, a bound record, or another module's `.record`
 (module-to-module wiring). The interface-record pattern composes with
 telescope derived fields for per-field defaults, and in slice 2 an `open` on
 an ABSTRACT record-given can read its field names off the given's TYPE
-instead of the fill. A fused `open given ctx : { … }` spelling is possible
-sugar later; the two-line form works today.
+instead of the fill. In the block spelling this is
+`open given { ctx : { … } }` followed by `open ctx` (the block declares the
+dependency; the second `open` splices the record's fields).
 
-Parser changes: none. `given X : T` and `given X : T := d` are decorated
-declarations (`headFieldP` accepts them today); `use "f" { ... }` is an
-application expression; `open` already takes an expression.
+Parser changes: one item form, `open given { … }` (pure sugar, above).
+`given X : T` and `given X : T := d` are decorated declarations
+(`headFieldP` accepts them); `use "f" { ... }` is an application expression;
+`open` already takes an expression.
 
 Notes on the surface:
 
@@ -224,15 +236,17 @@ they become givens, filled by the barrel. Each fragment gets a header:
 ```rust
 // cut.disp
 open use "../prelude.disp"
-given Type : Type
-given Tree : Type
-given Request : Type
-given GuardAction : Type
-given MetaShape : Type
-given Action : Type
+open given {
+  Type : Type
+  Tree : Type
+  Request : Type
+  GuardAction : Type
+  MetaShape : Type
+  Action : Type
+}
 
 // engine.disp adds:
-open use raw "cut.disp"     // values of earlier siblings, raw = value layer
+open use raw "cut.disp" {}  // values of earlier siblings, raw = value layer
 ```
 
 Fragments open earlier siblings raw, matching the existing rule that values

@@ -1,4 +1,7 @@
-// cells.disp: telescopes. One observation = one cell; a telescope is a chain of cells; one
+/// cells.disp
+/// 
+
+// telescopes. One observation = one cell; a telescope is a chain of cells; one
 // walker (tele_walk) runs the chain for both faces: recognition (mode TT, does this value
 // satisfy every cell?) and respond (mode FF, route this elimination frame through the
 // cells). Pi, Sigma, Record, and the meet types are telescopes differing only in which
@@ -22,11 +25,7 @@ open use "../prelude.disp"
 open use raw "cut.disp" {}
 open use raw "engine.disp" {}
 
-given Type : Type
-given Tree : Type
-given Pi : Tree
-given Action : Type
-given Step : Type
+open given { Type : Type, Tree : Type, Pi : Tree, Action : Type, Step : Type }
 
 // (Step constructors + do_check are exported: they are the vocabulary a userland cell op
 // speaks. The ops themselves stay unannotated: they branch on `mode`, which sticks on a

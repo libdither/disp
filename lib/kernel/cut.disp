@@ -18,13 +18,15 @@
 // so it enters at the substrate type.
 open use "../prelude.disp"
 
-given Type : Type
-given Tree : Type
-given Pi : Tree
-given Action : Type
-given MetaShape : Type
-given GuardAction : Type
-given Request : Type
+open given {
+  Type : Type
+  Tree : Type
+  Pi : Tree
+  Action : Type
+  MetaShape : Type
+  GuardAction : Type
+  Request : Type
+}
 
 nil : Tree := t
 cons : Tree -> Tree -> Tree := {h, tl} -> t h tl

@@ -109,7 +109,9 @@ A file body and an inline `{ ... }` record value share the same grammar:
 an ordered sequence of *members* separated by `SEMI`. Members come in
 three flavours --- *declarations* (`head? name (: T)? (:= expr)?`, with
 `let`-headed ones private), *equations* (`lhs = rhs`, the test form),
-and `open` imports.
+and `open` imports. At file level `open given { ... }` is a fourth
+spelling, sugar for a run of `given`-headed declarations (the module
+dependency header).
 
 #rule(
   "program",
@@ -123,7 +125,7 @@ test id t = t",
 #rule(
   "recBody",
   "recBody  ::= (recMember SEMI)* recMember? SEMI?
-recMember ::= field | let | equation | \"open\" expr",
+recMember ::= field | let | equation | \"open\" expr | givenBlock   // givenBlock: file level only",
   "let helper := {x} -> x x    // private (a `let`-decorated declaration)
 add := fix ({self, n, m} -> ...) // exported
 test add 2 3 = 5              // equation (the `test` marker is the prelude identity)
@@ -159,6 +161,17 @@ let id : {A : Type} -> A -> A
   "test ({x} -> x) t = t
 test pred two = one",
   note: [Compile-time assertion: both sides must elaborate to hash-cons-equal trees. There is no `test` keyword — the conventional `test` prefix is the *prelude identity* (`test : Tree -> Tree := {x} -> x`), so `test lhs` ≡ `lhs` and the marker is style, not syntax. While `test` is unbound or pristine the elaborator peels the marker before compiling (identical semantics, and it restores the true application head so named-argument calls in the lhs resolve); a scope that shadows `test` has its marker-written equations preprocessed by the shadowing value. The lhs must be a *compound* expression (application, projection, …): a bare-name lhs like `x = 5` is rejected as an almost-certain `:=` typo, which in practice keeps every equation marker-led. The `=` must be reachable on the lhs's opening line for the next-item lookahead (`isEquationStart`) — bracketed sub-expressions may span lines freely; keyword-led lhs (`if`/`match` at depth 0) must be parenthesized.],
+)
+
+#rule(
+  "givenBlock (module dependencies)",
+  "givenBlock ::= \"open\" \"given\" \"{\" givenEntry ((NL | \",\" | \";\") givenEntry)* \"}\"
+givenEntry ::= IDENT \":\" lineExpr (\":=\" lineExpr)?",
+  "open given {
+  add : Nat -> Nat -> Nat
+  start : Nat := 0
+}",
+  note: [The module-dependency header (MODULES.md). Pure sugar: each entry desugars to the line form `given add : Nat -> Nat -> Nat`, a `field` whose head is the library value `given` (the param-request decorator in `kernel/cut.disp`), so ordering, fills, and driver semantics are those of the per-name declarations. `given` is not a keyword: after `open` it is matched structurally, and `open given` without a following `{` parses as a plain `open` of the expression `given`; once the `{` is seen the form is committed and a malformed entry is a parse error. Entry types and defaults are line-local expressions (parenthesize to span lines). A dependency needs a type annotation; `:= d` supplies an optional default fill. Fills come from the use site (`use \"f\" { add := my_add }`); the line form still parses and remains the substrate.],
 )
 
 == Expressions

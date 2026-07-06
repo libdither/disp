@@ -25,8 +25,7 @@ open use raw "base.disp" {}
 open use raw "positive.disp" {}
 open use raw "generic.disp" {}
 
-given Type : Type
-given RespondShape : Type
+open given { Type : Type, RespondShape : Type }
 
 Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).

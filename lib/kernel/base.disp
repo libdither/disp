@@ -11,11 +11,7 @@ open use raw "cut.disp" {}
 open use raw "engine.disp" {}
 open use raw "cells.disp" {}
 
-given Type : Type
-given Tree : Type
-given Unit : Type
-given Bool : Type
-given Eq : Tree
+open given { Type : Type, Tree : Type, Unit : Type, Bool : Type, Eq : Tree }
 
 // eq_J: concrete refl -> base; neutral proof -> stuck elim. The A,x,y binders (the
 // equality endpoints) only fix the dependent type; the body ignores them.

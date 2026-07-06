@@ -12,9 +12,7 @@ open use raw "engine.disp" {}
 open use raw "cells.disp" {}
 open use raw "base.disp" {}
 
-given Type : Type
-given Tree : Type
-given Ord : Type
+open given { Type : Type, Tree : Type, Ord : Type }
 
 // lookup_arm: resolve an inj tag to its variant arg-list (exported: the generic fold/recursor/
 // traversal in generic.disp dispatch through it too).

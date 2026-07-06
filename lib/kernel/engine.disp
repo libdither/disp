@@ -23,16 +23,18 @@
 open use "../prelude.disp"
 open use raw "cut.disp" {}
 
-given Type : Type
-given Tree : Type
-given Pi : Tree
-given Bool : Type
-given CheckerResult : Type
-given Intersection : Tree
-given MetaShape : Type
-given Module : Type
-given RespondShape : Type
-given InductiveRespondShape : Type
+open given {
+  Type : Type
+  Tree : Type
+  Pi : Tree
+  Bool : Type
+  CheckerResult : Type
+  Intersection : Tree
+  MetaShape : Type
+  Module : Type
+  RespondShape : Type
+  InductiveRespondShape : Type
+}
 
 // hyp_reduce: what happens when a neutral is applied to something. The neutral's stored
 // type's respond decides whether the application stays stuck at a new type (Extend) or

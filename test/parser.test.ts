@@ -404,6 +404,39 @@ describe("parse: items", () => {
     const items = parseItems("let a := t; let b := t")
     expect(items).toHaveLength(2)
   })
+
+  // `open given { … }` — the module-dependency header block (MODULES.md § Surface).
+  // Pure sugar: one member per entry, identical to the line form `given a : A (:= d)`.
+  it("open given block desugars to per-name given declarations, in order", () => {
+    const items = parseItems("open given {\n  a : A\n  b : B := d\n}\nx := t\n")
+    expect(items).toHaveLength(3)
+    const line = parseItems("given a : A\ngiven b : B := d\nx := t\n")
+    expect(items).toEqual(line)
+    const [a, b] = items
+    if (a.tag !== "field" || b.tag !== "field") throw new Error("expected fields")
+    expect(a.head).toEqual(v("given"))
+    expect(a.name).toBe("a")
+    expect(b.value).toEqual(v("d"))
+  })
+
+  it("open given block: comma-separated single line, record-typed entry", () => {
+    const items = parseItems("open given { x : Nat, ctx : { add : Nat, start : Nat } }")
+    expect(items).toHaveLength(2)
+    const ctx = items[1]
+    if (ctx.tag !== "field") throw new Error("expected field")
+    expect(ctx.name).toBe("ctx")
+    expect(ctx.type?.tag).toBe("recType")
+  })
+
+  it("open given without a block falls through to a plain open item", () => {
+    const items = parseItems("open given")
+    expect(items).toEqual([{ tag: "open", expr: v("given") }])
+  })
+
+  it("open given block: malformed entries and the empty block are parse errors", () => {
+    expect(() => parseItems("open given { a Nat }")).toThrow(/needs a type annotation/)
+    expect(() => parseItems("open given {}")).toThrow(/empty dependency block/)
+  })
 })
 
 // ─────────────────────────── compile / driver ───────────────────────────

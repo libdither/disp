@@ -1095,6 +1095,45 @@ const openItem: P<RecMember> = map(
   ([, expr]) => ({ tag: "open" as const, expr }),
 )
 
+// `open given { a : A, b : B := d }` — the module-dependency header block
+// (MODULES.md § Surface). Pure sugar: each entry desugars to the line form
+// `given a : A (:= d)`, a decorated declaration with head `given`, so the
+// given pre-scan, fills, and driver semantics are untouched. Entry order is
+// binder order; entries separate by newline/','/';'; types and defaults are
+// line-local (parenthesize to span lines). `given` is a library value matched
+// structurally, so `open given` without a following '{' falls through to the
+// plain open item. Once the '{' is seen the form is committed: a malformed
+// entry is a parse error, not a fall-through to an open-expression reading.
+const openGivenItem: P<RecMember[]> = (ts, i) => {
+  const kw = seq(kwP("open"), idVarP("given"), nl(punctP("{")))(ts, i)
+  if (!kw.ok) return kw
+  const head: Expr = { tag: "var", name: "given" }
+  const out: RecMember[] = []
+  let pos = kw.pos
+  for (;;) {
+    while (ts[pos].t === "nl" || (ts[pos].t === "punct" && (((ts[pos] as any).v === ",") || ((ts[pos] as any).v === ";")))) pos++
+    if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") { pos++; break }
+    const n = idP(ts, pos)
+    if (!n.ok) throw new Error(`open given: expected a dependency name or '}', got ${describe(ts[pos])}`)
+    const c = punctP(":")(ts, n.pos)
+    if (!c.ok) throw new Error(`open given: dependency '${n.v}' needs a type annotation ('${n.v} : T')`)
+    const ty = seq(skipNl, lazy(() => lineExpr))(ts, c.pos)
+    if (!ty.ok) throw new Error(`open given: dependency '${n.v}': ${ty.msg}`)
+    pos = ty.pos
+    let value: Expr | null = null
+    const asn = punctP(":=")(ts, pos)
+    if (asn.ok) {
+      const dflt = seq(skipNl, lazy(() => lineExpr))(ts, asn.pos)
+      if (!dflt.ok) throw new Error(`open given: default for '${n.v}': ${dflt.msg}`)
+      value = dflt.v[1]
+      pos = dflt.pos
+    }
+    out.push({ tag: "field", name: n.v, type: ty.v[1], value, head })
+  }
+  if (out.length === 0) throw new Error(`open given: empty dependency block`)
+  return ok(out, pos)
+}
+
 // A decorated declaration: `head… NAME (: T)? (:= v)?` — one or more head atoms
 // before the name (COMPILATION.typ § Declarations as requests). The name is the last
 // atom of the pre-`:`/`:=` spine; the head is everything before it (a request
@@ -1125,7 +1164,7 @@ const headFieldP: P<RecMember> = (ts, i) => {
   return ok({ tag: "field" as const, name: last.name, type, value, head }, pos)
 }
 
-const itemP: P<RecMember> = nl(alt(openItem, topFieldP, headFieldP, equationItem))
+const itemP: P<RecMember | RecMember[]> = nl(alt<RecMember | RecMember[]>(openGivenItem, openItem, topFieldP, headFieldP, equationItem))
 
 // Parse source into items.
 export function parseItems(src: string): RecMember[] {
@@ -1139,8 +1178,10 @@ export function parseItems(src: string): RecMember[] {
     // Top-level field redefinition is now guard-mediated (a rebind request), so it is
     // legal syntax; the driver rejects UNGUARDED duplicates (the old accident check
     // moved there, where guard knowledge lives). Braced records still reject
-    // duplicates at parse time.
-    items.push(r.v)
+    // duplicates at parse time. An `open given { … }` block yields one member per
+    // dependency (the desugar to the line form), spliced here.
+    if (Array.isArray(r.v)) items.push(...r.v)
+    else items.push(r.v)
     pos = r.pos
     while (toks[pos].t === "nl" || (toks[pos].t === "punct" && (toks[pos] as any).v === ";")) pos++
   }

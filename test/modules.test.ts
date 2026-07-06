@@ -60,6 +60,9 @@ describe("module dependencies (given) rejections", () => {
   it("the root module cannot declare dependencies", () => {
     expect(() => run(`given x : Nat\nfoo := t\n`))
       .toThrow(/root module cannot declare dependencies/)
+    // the block form desugars to the same declarations, so the same driver rule fires
+    expect(() => run(`open given { x : Nat }\nfoo := t\n`))
+      .toThrow(/root module cannot declare dependencies/)
   }, 120000)
 
   it("duplicate givens are rejected", () => {

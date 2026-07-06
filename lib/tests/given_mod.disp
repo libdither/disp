@@ -5,8 +5,10 @@
 open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
-given add : Nat -> Nat -> Nat
-given start : Nat := 0
+open given {
+  add : Nat -> Nat -> Nat
+  start : Nat := 0
+}
 
 double : Nat -> Nat := {x} -> add x x
 from_start : Nat -> Nat := {x} -> add start x

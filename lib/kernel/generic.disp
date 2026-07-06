@@ -13,7 +13,7 @@ open use raw "cells.disp" {}
 open use raw "base.disp" {}
 open use raw "positive.disp" {}
 
-given Type : Type
+open given { Type : Type }
 
 // fold_value (the cell-derived catamorphism — the SHAPE FUNCTOR read straight off the cells). For an
 // inj-tagged value `v = inj tag (a0,…)`: look up the variant's cell telescope, extract each arg by its
