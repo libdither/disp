@@ -106,12 +106,13 @@ Install : Tree -> GuardAction := inj1 "Install"       // set the name's guard; v
 Both    : Tree -> Tree -> GuardAction := inj2 "Both"  // bind AND set the guard
 // Request decorators: ordinary values a declaration head applies to the built request.
 // `base v` is the plain declaration; `let_dec` marks the write private; `sig T` is a
-// valueless interface entry; `guard g` fills the proposal slot. (Unannotated: they
-// build/rebuild Request records; the elaborator consumes them by shape.)
-base    := {v} -> { value := (t v); ty := t; guard := t; private := FF }
-let_dec := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT }
-sig     := {T} -> { value := t; ty := (t T); guard := t; private := FF }
-guard   := {g} -> {req} -> { value := req.value; ty := req.ty; guard := (t g); private := req.private }
+// valueless interface entry; `guard g` fills the proposal slot. All four carry
+// machine-checked annotations (Request is the universe's structural record; a
+// projected field of an abstract request is a stuck Tree, which the field types admit).
+base    : Tree -> Request := {v} -> { value := (t v); ty := t; guard := t; private := FF }
+let_dec : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT }
+sig     : Type -> Request := {T} -> { value := t; ty := (t T); guard := t; private := FF }
+guard   : Tree -> Request -> Request := {g} -> {req} -> { value := req.value; ty := req.ty; guard := (t g); private := req.private }
 // default_guard: the ambient policy for unguarded names — honor the declarer verbatim;
 // a request with nothing to do is refused. Shadowing this name changes the ambient
 // policy for the shadowing scope's unguarded declarations (owned names are unaffected:

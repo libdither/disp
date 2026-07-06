@@ -50,4 +50,9 @@ describe("guard layer rejections", () => {
     expect(() => run(K + `let default_guard := freeze\nx : Nat := 3\n`))
       .toThrow(/rejected by its guard/)
   }, 120000)
+
+  it("let_dec as a head makes the binding private (bound, not exported)", () => {
+    const decls = run(K + `let_dec p : Nat := 3\ntest p = 3\n`)
+    expect(decls.some(d => d.kind === "Def" && d.name === "p")).toBe(false)
+  }, 120000)
 })

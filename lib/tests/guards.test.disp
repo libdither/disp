@@ -56,3 +56,12 @@ test tree_eq iface idA = TT
 // ── freeze: install alongside a value; the name still reads normally ──
 guard freeze VERSION : Nat := 3
 test VERSION = 3
+
+// ── let_dec as a head: binds locally, marks the write private (the export-absence
+// half is pinned host-side in test/guards.test.ts) ──
+let_dec pvt : Nat := 3
+test pvt = 3
+// the decorators are typed kernel values (annotations auto-verified at load; re-pinned)
+test typecheck Request (guard freeze (base zero)) = Ok TT
+test typecheck Request (let_dec (base zero)) = Ok TT
+test typecheck Request (sig Nat) = Ok TT

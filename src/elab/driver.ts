@@ -298,7 +298,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     isLet: boolean,
     sinks: CompileSinks,
     raw: boolean,
-  ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean } {
+  ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean; priv?: boolean } {
     const S = elab.cs
     const existing = lookupEntry(name)
     const dg = lookupEntry("default_guard")?.tree
@@ -338,6 +338,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       const headTree = compileExpr(headE, lookupEntry, resolveUse, sinks)
       request = S.apply(headTree, request, B())
     }
+    // Privacy is declarer intent, so it is read off the FINAL request (a head like
+    // let_dec may set it), not off the guard's answer.
+    const privTree = S.apply(request, accTree("private"), B())
+    const isPrivate = S.equal!(privTree, tt)
     const oldOpt = existing?.tree != null ? S.stem(existing.tree) : S.leaf()
     const answer = S.apply(S.apply(g, oldOpt, B()), request, B())
     const top = S.classify!(answer)
@@ -348,7 +352,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       throw new Error(`declaration of '${name}': guard returned a malformed action`)
     if (S.equal!(act.left, stringToTree("Bind"))) {
       finishDefine(name, act.right, typeTree, null, typeE ?? null, existing?.guard)
-      return { pushDef: true, tree: act.right, type: typeTree, guard: existing?.guard, viaFast: false }
+      return { pushDef: true, tree: act.right, type: typeTree, guard: existing?.guard, viaFast: false, priv: isPrivate }
     }
     if (S.equal!(act.left, stringToTree("Install"))) {
       define(name, { ...(existing ?? {}), guard: act.right })
@@ -359,7 +363,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       if (p.tag !== "fork")
         throw new Error(`declaration of '${name}': guard returned a malformed Both action`)
       finishDefine(name, p.left, typeTree, null, typeE ?? null, p.right)
-      return { pushDef: true, tree: p.left, type: typeTree, guard: p.right, viaFast: false }
+      return { pushDef: true, tree: p.left, type: typeTree, guard: p.right, viaFast: false, priv: isPrivate }
     }
     throw new Error(`declaration of '${name}': guard returned an unknown action`)
   }
@@ -384,7 +388,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     switch (it.tag) {
       case "field": {
         const r = declareBinding(it.name, it.type, it.value, it.head, false, sinks, raw)
-        if (r.pushDef) {
+        if (r.pushDef && !r.priv) {
           // Redefinition of an exported field is guard-mediated (a rebind): the final
           // binding wins. An UNGUARDED (fast-path) duplicate is still the old accident
           // error, relocated here from the parser (the parser can't see guards).
