@@ -31,7 +31,6 @@
 // the StrictType self-typing metacircle (stage-2 gate) needs the actual kernel wiring; nested
 // `RecUnder F` fmap needs F's map (deferred, as in step 0).
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"

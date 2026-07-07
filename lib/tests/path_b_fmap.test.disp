@@ -21,7 +21,6 @@
 // discipline). Promotion (§5: a second context param on the real `at`, or `Param` in `Coproduct`)
 // is deliberately NOT done here — this is the semantics proof, not the integration.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"

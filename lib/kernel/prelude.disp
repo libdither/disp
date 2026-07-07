@@ -9,7 +9,11 @@
 //   generic  — the cell-derived generics (fold_value/rec_value/fmap/…) + nat_rec/bool_rec/ord_rec
 //   universe — StrictType/Type + the kernel's structural types + GoodRespond
 
-open use "../prelude.disp"
+// The prelude is fragment -1: a given-bearing module. The raw open binds its
+// VALUES (givens absent, safe: no prelude value references one); the checked
+// re-import at the BOTTOM of this file fills the givens with the kernel's own
+// types, which activates and auto-verifies the prelude's annotations.
+open use raw "../prelude.disp" {}
 
 // Deferred-typecheck bootstrap: `use raw` loads each fragment's VALUES without processing
 // annotations, so forward/mutual annotation refs resolve. Raw-load ALL before checking ANY
@@ -33,3 +37,9 @@ open use "base.disp" { Type := Type, Tree, Unit, Bool, Eq }
 open use "positive.disp" { Type := Type, Tree, Ord }
 open use "generic.disp" { Type := Type }
 open use "universe.disp" { Type := Type, RespondShape }
+// Fragment -1's checked instantiation: fill the prelude's givens (its annotation
+// type names + the auto-verification formers the driver reads in-scope), so its
+// annotations compile for real and the annotated exports verify through the
+// kernel. Values are identical to the raw pass above — the open-dedupe pins the
+// bootstrap fixpoint condition (raw ≡ checked per name).
+open use "../prelude.disp" { Type := Type, Tree, Bool, Nat, Pi, param_apply, Record, make_record, list_const, Ok }

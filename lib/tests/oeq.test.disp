@@ -6,7 +6,6 @@
 //                  check abstractly; transport at concretes is the IDENTITY
 //   quotients — behavioral_specs overrides the setoid (image_setoid = quotient by
 //               observation); respecting eliminators check, non-respecting ones reject
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 open use "../std/nat/ops.disp"

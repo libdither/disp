@@ -1,4 +1,3 @@
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // Record builders over telescope types. `build T { ... }` fills derived fields from their

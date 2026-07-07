@@ -23,7 +23,6 @@
 // the whole deep computation without sharing). The top-level check (above) is cheap (~1.4M steps) and
 // cross-validated real (tree_eq vs match-destructure vs payload-emit all agree Ok TT). Open — needs a
 // cheaper check or a definition-time-only (top-level) self-check, NOT a backend fix.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

@@ -9,7 +9,6 @@
 //  (2) the unsoundness is real (the intensional motive's fibers diverge across
 //      pointwise-equal functions, while the extensional motive's fibers share refl);
 //  (3) the probe separates them (observation must factor through application).
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 

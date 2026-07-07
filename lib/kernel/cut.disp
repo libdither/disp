@@ -16,7 +16,7 @@
 // `Pi : Tree` is the one substrate-typed given: arrows in annotations compile
 // through the in-scope Pi, and Pi's own honest annotation needs arrows (circular),
 // so it enters at the substrate type.
-open use "../prelude.disp"
+open use raw "../prelude.disp" {}
 
 open given {
   Type : Type

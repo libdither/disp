@@ -2,7 +2,6 @@
 //   Rec            = RecUnder Id    — direct recursion (acc source : self)
 //   RecUnder List  — NESTED recursion: a constructor carrying a List of sub-terms (AST arg lists).
 // This is the make-or-break case for parsers/PLs: a call node carries `List Expr`.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/list.disp"

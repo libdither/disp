@@ -1,7 +1,6 @@
 // Type universe, predicate-side H-rule, polymorphic Pi, inductive recursors,
 // and the first-order library types — all on the new two-Σ-op core.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // ---- Type universe: which things are types ----

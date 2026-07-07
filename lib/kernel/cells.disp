@@ -21,7 +21,7 @@
 // annotation-forward type names. `given Pi : Tree` is a SELF-forward: annotations
 // above Pi's own definition compile arrows through the in-scope Pi, so the barrel
 // fills it from the raw pass of this very file.
-open use "../prelude.disp"
+open use raw "../prelude.disp" {}
 open use raw "cut.disp" {}
 open use raw "engine.disp" {}
 

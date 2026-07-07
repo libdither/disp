@@ -9,7 +9,6 @@
 //      through the §7A policed token, so the recognition-form gate now ALSO inhabits
 //      ProjectingRespondShape (totality — coh_check remains the production gate, whose
 //      CORRECTNESS GoodRespond checks; see coh_why_proto for the minimal-trigger pins).
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 let case_tele := {mv} ->

@@ -2,7 +2,6 @@
 // parameterized over its dependencies. `add` must be filled at the use site;
 // `start` defaults. The annotated exports auto-verify per instantiation, and
 // each fill is checked against its given's declared type (well-typed linking).
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 open given {

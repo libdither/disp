@@ -2,7 +2,6 @@
 // (cons = `t a b`, nil = leaf) — bit-identical to the array of its codepoints,
 // giving a deterministic, distinct tree per spelling. Used as field-name tags.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // A string is the array of its codepoints.

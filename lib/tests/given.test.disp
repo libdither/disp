@@ -2,7 +2,6 @@
 // per-fill instantiations sharing what they can, fill verification. The
 // rejections (missing fill, unknown fill, ill-typed fill, root-level given)
 // are LOAD failures, pinned host-side in test/modules.test.ts.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"   // add
 

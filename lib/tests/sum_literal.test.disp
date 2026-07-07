@@ -4,7 +4,6 @@
 // recType field type); bare `Tag` is nullary `pair "Tag" []`; empty `<>` is the
 // empty sum `Coproduct []` (⊥). ORACLE: each `<…>` must be tree_eq IDENTICAL to the
 // hand-written `Coproduct […]`.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // ── oracle: the desugared tree IS the hand-written former (tree_eq) ──

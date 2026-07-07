@@ -2,7 +2,6 @@
 // to end — param_apply dispatch, recognition + H-rule, hyp_reduce spine
 // extension via respond, typecheck, and the boundary scan.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // ---- recognition via param_apply (the dispatcher) ----

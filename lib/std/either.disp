@@ -1,4 +1,3 @@
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // Either A B — a two-armed sum (left A | right B), a `Coproduct_p` BIFUNCTOR (CELL_OPTICS): `left`

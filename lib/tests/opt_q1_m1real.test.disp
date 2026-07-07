@@ -6,7 +6,6 @@
 // extract the body via neutral application, rewrite it, and check the result equals the body of the
 // independently-written OPTIMIZED function — the rewrite genuinely takes `prog` to `prog_opt`.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 

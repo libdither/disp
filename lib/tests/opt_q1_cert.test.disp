@@ -10,7 +10,6 @@
 // is genuinely SYMBOLIC — f,g,xs are neutrals, so `mp f (mp g xs)` is a stuck tree distinct from
 // `mp (compose f g) xs` (feasibility-checked) — so this is a REAL rewrite, not a reduction (Tier-0).
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 

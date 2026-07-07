@@ -1,7 +1,6 @@
 // B1: the dependent RECURSOR `rec_value`, derived from the cells — generalizes nat_rec/ord_rec to ANY
 // inductive. Each case gets the RAW args AND the IH per recursive position; neutrals route through
 // `elim` to a stuck elimination at `motive self` (a real dependent eliminator, usable under a binder).
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/list.disp"

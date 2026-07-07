@@ -4,7 +4,6 @@
 // Verification is direct application of the type record to the value record —
 // no bespoke checker: the Record recognizer checks every named field's type.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 let m := use "typed_mod.disp"

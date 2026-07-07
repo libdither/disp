@@ -1,7 +1,6 @@
 // Real-world MUTUAL recursion via Path B: `Coproduct_ctx` threads a CONTEXT function (i -> recognizer)
 // and `RecAt i` cells recurse into entry i. The context is a `fix` function whose entries capture it
 // without forcing one another (resolved at walk time), so the block builds with no inter-type loop.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

@@ -10,7 +10,6 @@
 // pass.) This mirrors `add`, which `std/nat/arith.disp` deliberately routes through `nat_rec` "to keep
 // the body walker-safe". So we use walker-safe `len`/`mp` built from the kernel recursor `rec_value`.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 

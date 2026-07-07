@@ -3,7 +3,6 @@
 // real kernel values inhabit them, (b) the kernel self-typing its metadata via
 // auto-verify (make_meta : Tree -> Tree -> MetaShape ; inert_respond : RespondShape),
 // and (c) the Rung-3 wall: an INSPECTING respond does not inhabit RespondShape.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // ---- the structural types are types ----

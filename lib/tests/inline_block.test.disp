@@ -3,7 +3,6 @@
 // Before the fix, `test x = y` inside a recValue/block was silently
 // skipped; now it's compiled and registered as a real Test decl.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp" // record values { := } compile to the §2.6 cut (make_record)
 
 // ================================================================
@@ -44,7 +43,7 @@ test r.y = succ (succ (succ zero))
 // ================================================================
 
 let r2 := {
-  open use "../prelude.disp"
+  open use raw "../prelude.disp" {}
   let x := succ zero
   test pair_fst (t x t) = x
   x

@@ -2,7 +2,6 @@
 // `Param` markers, so the kernel's GENERIC `fmap`/`bimap` work on them — no per-type map code. This
 // test pins that, and that the generic subsumes the hand-written `option_map`/`result_map`.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"

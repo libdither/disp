@@ -4,7 +4,6 @@
 // Three soundness dimensions: coh (catches over-RESTRICTIVE), per-case junk (over-PERMISSIVE), and
 // reflection — the last needs no probe: it's caught for free by FUSION (a check-based respond polices its
 // mints, so an unpoliced/reflecting respond makes verify_good Err).
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

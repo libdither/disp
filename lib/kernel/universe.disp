@@ -17,7 +17,7 @@
 // SELF-forward universe knot: `: Type` annotations above the mid-file `Type :=
 // BehavioralType` compile against the barrel's raw-pass fill of this very file, and
 // the given's annotation checks the fill against itself (R6).
-open use "../prelude.disp"
+open use raw "../prelude.disp" {}
 open use raw "cut.disp" {}
 open use raw "engine.disp" {}
 open use raw "cells.disp" {}

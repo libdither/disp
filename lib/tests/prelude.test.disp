@@ -1,4 +1,4 @@
-open use "../prelude.disp"
+open use raw "../prelude.disp" {}
 
 // select (eager if-then-else)
 test select (t t) (t (t t) t) TT = t t

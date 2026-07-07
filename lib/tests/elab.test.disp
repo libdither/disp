@@ -2,7 +2,6 @@
 // Opening the kernel prelude activates the elaborator's kernel-aware dispatch.
 // All typed bindings are verified by the kernel's type predicates at compile time.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

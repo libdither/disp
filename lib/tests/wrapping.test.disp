@@ -5,7 +5,6 @@
 // the §5 uniformity trap (Eq proofs), and the bare-stuck invariant across multi-
 // step spine extension. (Design background was WRAPPING_INVARIANT.md, deleted
 // once the fix landed — `git log` recovers it for the failed-fix catalog.)
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

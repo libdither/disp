@@ -6,7 +6,6 @@
 // Tractable EVERYWHERE because do_check routes membership through param_apply: under an ambient
 // walk the SS7A token gives each nested check a FRESH NATIVE walker, so nesting FLATTENS —
 // the former every-backend OOM (r6_merge_proto RESIDUAL: rust-eager 3.4GiB abort) is gone.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

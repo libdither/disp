@@ -2,7 +2,6 @@
 // with closed-branch free-variable capture) and the coproduct `match` keyword
 // (the §2.6 cut — string-tag arms, wildcard, multi-binder destructuring).
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp" // coproduct match uses the cut (prod/inj)
 
 // ================================================================

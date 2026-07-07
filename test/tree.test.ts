@@ -196,8 +196,12 @@ describe("constants", () => {
 // recursive-triage reduct the spec would produce, which the old marker was not.
 describe("tree_eq suspension (P node)", () => {
   const teq = (() => {
-    const src = readFileSync(resolve("lib/prelude.disp"), "utf-8")
-    const decls = parseProgram(src, resolve("lib/prelude.disp"))
+    // The prelude is a given-bearing module now (fragment -1), so it cannot be
+    // parsed as a ROOT (root files may not declare givens). Load it through a
+    // raw import instead: a fieldless root re-exports its opens, so the decls
+    // carry the prelude's names with the same trees.
+    const src = `open use raw "../prelude.disp" {}\n`
+    const decls = parseProgram(src, resolve("lib/tests/_tree_host.disp"))
     return (decls.find((d: any) => d.kind === "Def" && d.name === "tree_eq") as any).tree as Tree
   })()
   const a1 = fork(stem(LEAF), LEAF)          // a distinctive 4-node operand

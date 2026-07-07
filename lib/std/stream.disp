@@ -1,4 +1,3 @@
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // Stream A — codata, the ν (greatest-fixpoint) dual of List, via Path B's `gen` cell. A Stream VALUE

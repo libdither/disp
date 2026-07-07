@@ -13,7 +13,6 @@
 //  - The witness goes through `nat_rec`, which is GATE-CHECKED (kernel.test: lying recursors are
 //    rejected) — so "it type-checks" means "the induction is correct", NOT vacuous totality.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

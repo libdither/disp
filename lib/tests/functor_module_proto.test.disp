@@ -24,7 +24,6 @@
 // Design thread: COMPILATION.typ § Declarations as requests (module values
 // containing computed requests); the module-dependency discussion 2026-07-06.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"   // add
 

@@ -2,7 +2,6 @@
 // walker as Pi/Sigma/Record: a constructor's args are a positional telescope (kernel `pos_cell`),
 // and a datatype is the generic `Coproduct` former — multi-arg AND recursive (via `REC`), with NO
 // hand-written recognizer. Everything below uses the KERNEL's exports (no test-local machinery).
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

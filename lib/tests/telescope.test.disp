@@ -4,7 +4,6 @@
 // derived recipes see earlier fields. Opaque/transparent maps onto the Action
 // coproduct: projecting a hyp answers Extend ty (opaque) | Return e (derived).
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
 open use "../std/build.disp"

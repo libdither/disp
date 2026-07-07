@@ -5,7 +5,6 @@
 // AND fmaps (rebuilt via the optic's `over`, no hand `build_payload`). Additive: the rest of the suite
 // is untouched (no `rs` change, existing ops/fold/recursor unchanged).
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"

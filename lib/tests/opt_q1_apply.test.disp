@@ -7,7 +7,6 @@
 // Funext-free trick: work POINTWISE (transformer at the RESULT type B, on the body under the binder),
 // NOT at the function type A->B (which would need funext). The Eq is at NatList — provable by induction.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 open use "../std/pair.disp"

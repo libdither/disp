@@ -6,7 +6,7 @@
 // key_over/fmap_rec/bimap_rec.
 
 // Hermetic (MODULES.md): prelude + raw earlier siblings; givens for forward types.
-open use "../prelude.disp"
+open use raw "../prelude.disp" {}
 open use raw "cut.disp" {}
 open use raw "engine.disp" {}
 open use raw "cells.disp" {}

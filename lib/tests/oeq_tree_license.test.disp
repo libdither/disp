@@ -13,7 +13,6 @@
 //
 // The example: trees-as-a-full-inductive, and the recognizer optimization from the
 // Tree design discussion — the deep structural walk is provably the constant Ok TT.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/oeq.disp"
 

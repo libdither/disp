@@ -3,7 +3,7 @@
 // two-arg applications to an O(1) hash-cons identity check; this file
 // exercises the predicate's behavior on representative inputs.
 
-open use "../prelude.disp"
+open use raw "../prelude.disp" {}
 
 // ================================================================
 // Leaves, stems, forks

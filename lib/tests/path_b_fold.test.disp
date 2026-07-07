@@ -1,7 +1,6 @@
 // A1: the cell-derived catamorphism `fold_value` — ONE generic fold for every inductive, reading the
 // recursive positions straight off the cells (the dormant `functor` field made concrete). No per-type
 // recursor: `fold_value T { c := case }` recurses at `Rec`/`RecUnder` cells and applies the case.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

@@ -2,7 +2,7 @@
 // context. Proves `use raw` loads values without annotation processing, and the checked
 // re-import produces value-identical trees (the second `open` is a no-op iff every name
 // matches the raw one — the open conflict check enforces it).
-open use "../prelude.disp"
+open use raw "../prelude.disp" {}
 open use raw "../kernel/cut.disp" {}
 open use raw "../kernel/engine.disp" {}
 open use raw "../kernel/cells.disp" {}

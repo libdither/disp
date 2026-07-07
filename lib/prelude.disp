@@ -1,11 +1,40 @@
-// Prelude: fundamental combinators, wait/fix.
-// No RUNTIME dependencies — every value here is pure substrate and compiles
-// without the type system. A few VALUE CONSTRUCTORS carry type annotations that
-// forward-reference kernel types (TT/FF : Bool, zero/succ : Nat, pair/tree_eq :
-// Tree -> …); these resolve via the use-raw layer and are checked only when
-// the kernel is in scope. The raw inspectors/eliminators (pair_fst, triage, is_fork,
-// and/or/not, …) are deliberately UNtyped: they raw-triage or Scott-eliminate their
-// argument, which the parametric walker rejects on an abstract hypothesis.
+// Prelude: fundamental combinators, wait/fix — fragment -1 of the kernel bootstrap.
+// No RUNTIME dependencies: every value here is pure substrate and compiles without
+// the type system. The file is a GIVEN-BEARING module: the type names its
+// annotations mention (plus the verification formers the driver reads in-scope)
+// are declared as givens below, and the file loads in two flavors:
+//   raw     — `open use raw "../prelude.disp" {}`: values only, givens absent.
+//             What the kernel fragments and the barrel's first pass consume
+//             (safe: no VALUE here references a given name).
+//   checked — the barrel's final `open use "../prelude.disp" { … }`: the kernel
+//             fills the givens with its own types, the annotations compile for
+//             real, and the annotated exports auto-verify through the kernel.
+// Values are identical either way (an annotation never changes a value tree), so
+// the barrel's open-dedupe — raw ≡ checked per name, the bootstrap fixpoint
+// condition — holds.
+//
+// The raw inspectors/eliminators (pair_fst/pair_snd, is_fork/is_stem/is_leaf,
+// stem_child, tree_lt, nat_le, and/or/not, select/cond) stay deliberately UNtyped:
+// they raw-triage or Scott-eliminate their argument, which the parametric walker
+// rejects on an abstract hypothesis. Their typeable faces are eliminator-routed
+// twins licensed against these raw payloads (the nat_rec_fast pattern,
+// lib/std/nat/arith.disp) — dispatch IS elimination; the raw form is the fused
+// compiled shape.
+
+open given {
+  Type : Type
+  Tree : Type
+  Bool : Type
+  Nat : Type
+  Pi : Tree
+  // Auto-verification formers: the driver reads these from the module's OWN scope
+  // (hermetic) to build the deferred export check `param_apply typ record`.
+  param_apply : Tree
+  Record : Tree
+  make_record : Tree
+  list_const : Tree
+  Ok : Tree
+}
 
 // ================================================================
 // Fundamental combinators
@@ -37,7 +66,10 @@ test : Tree -> Tree := {x} -> x
 
 // triage(on_leaf, on_stem, on_fork) x:
 //   x=leaf -> on_leaf, x=stem(u) -> on_stem u, x=fork(u,v) -> on_fork u v
-triage := {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
+// Typed as the case-table BUILDER (it just constructs the dispatch tree); the
+// DISPATCH itself (the 4th application) is the untyped substrate eliminator —
+// its typed face is a Tree recursor (dispatch is elimination), not this shallow type.
+triage : Tree -> Tree -> Tree -> Tree := {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
 
 // select(then_v, else_v, cond): apply the Scott Bool as its own
 // eliminator. The motive `t` is irrelevant for the value-level
@@ -79,9 +111,14 @@ not := {a} -> select FF TT a
 // ================================================================
 
 // wait a b c = a(b)(c), but wait(a)(b) does NOT evaluate a(b) eagerly.
+// Untyped: SATURATED wait applies its first argument, so the Pi check applies an
+// abstract Tree — Tree's respond sends hyp applications to the dead state, and
+// the H-rule then rejects the InvalidType-neutral. Typing this is the Tree
+// ELIMINATION question (the tree_rec rung), not an annotation away.
 wait := {a, b, c} -> t (t a) (t t c) b
 
-// Self-applicator and fixed-point combinator
+// Self-applicator and fixed-point combinator. Untyped: omega self-applies its
+// argument, and fix's honest type needs the totality story (wf_fix / Total).
 omega := {x} -> x x
 fix := {f} -> wait omega ({x} -> f (wait omega x))
 

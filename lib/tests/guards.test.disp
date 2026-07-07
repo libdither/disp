@@ -6,7 +6,6 @@
 // license-free; idempotent rebinds pass without consultation. Rejections (freeze,
 // lying proofs, plain rebinds of owned names) are LOAD failures, pinned host-side
 // in test/guards.test.ts.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 open use "../std/oeq.disp"

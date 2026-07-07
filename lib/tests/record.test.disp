@@ -2,7 +2,6 @@
 // a record value is a `prod` over a string-interned name header, and r.x is
 // the cut `r (acc "x")`. (Replaces the old Church-encoded record.)
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // ---- a record value is a product, read by name ----

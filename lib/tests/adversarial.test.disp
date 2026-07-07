@@ -4,7 +4,6 @@
 // a hard-break pass on GAP-1 (the raw bind_hyp body). See
 // project_targeted_fix_policing_user_subterms in memory.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 let hN := make_hyp Nat 0

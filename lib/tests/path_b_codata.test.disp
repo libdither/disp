@@ -1,6 +1,5 @@
 // Real-world CODATA via Path B: Stream A as a coalgebra (gen cell), the ν dual of List. Recognition
 // GUARDS the generator (never descends), so it terminates on infinite data; elimination PROJECTS.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/stream.disp"

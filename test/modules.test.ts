@@ -13,8 +13,7 @@ import type { Session } from "../src/eval/types.js"
 import type { Tree } from "../src/eval/eager.js"
 
 const HERE = join(process.cwd(), "lib/tests/_modules_host.disp")
-const K = `open use "../prelude.disp"
-open use "../kernel/prelude.disp"
+const K = `open use "../kernel/prelude.disp"
 `
 // One shared native-backend session (the guards.test.ts pattern): the kernel is
 // elaborated once for all cases.
@@ -28,7 +27,7 @@ const LIB = join(process.cwd(), "lib")
 function tmpModule(name: string, body: string): string {
   const dir = mkdtempSync(join(tmpdir(), "disp-mod-"))
   const path = join(dir, name)
-  writeFileSync(path, `open use "${LIB}/prelude.disp"\nopen use "${LIB}/kernel/prelude.disp"\n` + body)
+  writeFileSync(path, `open use "${LIB}/kernel/prelude.disp"\n` + body)
   return path
 }
 

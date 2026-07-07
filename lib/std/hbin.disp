@@ -1,4 +1,3 @@
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // HBin: hereditarily binary naturals (Tarau, arXiv:1306.1128), run-length compressed

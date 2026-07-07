@@ -3,7 +3,6 @@
 // inhabits the motive at its constructor by η-EXPANSION (mint a witness per Π arg/IH, recurse), not
 // recognition. One gate replaces the old hand-rolled per-constructor gate; it closes the
 // type-coherence gap for EVERY inductive built from the generic former AND self-types.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

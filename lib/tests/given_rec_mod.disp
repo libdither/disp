@@ -2,7 +2,6 @@
 // is a telescope — spliced into scope with a plain `open`. The interface-record
 // pattern: the module names one context, the use site fills it with any record
 // inhabiting the type (a literal, a bound record, another module's .record).
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 open given { ctx : { add : Nat -> Nat -> Nat, start : Nat } }

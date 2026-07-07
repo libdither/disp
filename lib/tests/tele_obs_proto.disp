@@ -2,7 +2,6 @@
 // check op `obs {get, ty}` = "observe (get source prior), check it : ty". Which ALSO subsumes qid/apply/
 // pos. Only `mint` (∀-intro, returns SMint not a check) is genuinely a separate primitive. So the
 // recognize-face cell vocabulary collapses to TWO primitives: `mint` + `obs`.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 

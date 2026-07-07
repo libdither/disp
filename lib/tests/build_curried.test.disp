@@ -4,7 +4,6 @@
 // T. Together they realize the Π/Σ-over-a-telescope bridge: the constructor is a
 // function (Π) that builds a record (Σ); partial application has the residual
 // (shrinking) type. This is the substrate for modules / type-classes.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/build.disp"
 

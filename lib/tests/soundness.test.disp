@@ -3,7 +3,6 @@
 // route-to-registered §5.4) so it stays visible. GAP 1 (raw bind_hyp body) is now
 // CLOSED — the body runs under the walker — and its tests assert the sound behavior.
 
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 let hN := make_hyp Nat 0

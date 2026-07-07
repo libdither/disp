@@ -1,4 +1,3 @@
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 open use "../std/pair.disp"
 

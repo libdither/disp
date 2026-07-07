@@ -10,8 +10,7 @@ import type { Session } from "../src/eval/types.js"
 import type { Tree } from "../src/eval/eager.js"
 
 const HERE = join(process.cwd(), "lib/tests/_guards_host.disp")
-const K = `open use "../prelude.disp"
-open use "../kernel/prelude.disp"
+const K = `open use "../kernel/prelude.disp"
 open use "../std/oeq.disp"
 `
 // One shared native-backend session (the disp.test.ts pattern): the kernel is

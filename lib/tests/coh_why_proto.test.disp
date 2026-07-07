@@ -5,7 +5,6 @@
 // through the §7A policed token, so `param_apply T <hyp>` inside a checked body now runs the
 // recognizer through the SANCTIONED native path (the H-rule verdict — no more information
 // than the already-sanctioned neutral_type + tree_eq reads). All three flipped to Ok TT.
-open use "../prelude.disp"
 open use "../kernel/prelude.disp"
 
 // R0: constant gate — never touches `cases`. Self-types (Ok TT).
