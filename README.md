@@ -23,15 +23,15 @@ This section is one file, top to bottom, and it loads and passes as-is. A `test 
        npm run disp -- lib/tests/readme_check_tmp.disp && rm lib/tests/readme_check_tmp.disp -->
 
 ```rust
-open use "../prelude.disp"          // raw combinators (tree_eq, is_fork, succ, ...)
 open use "../kernel/prelude.disp"   // the entire type system, an ordinary library
+                                    // (re-exports the raw combinators: tree_eq, is_fork, succ, ...)
 open use "../std/nat/ops.disp"      // double
 ```
 
 ### Everything is a tree
 
 ```rust
-// Disp compiles to the tree calculus: three rewrite rules over binary trees
+// Disp compiles to the tree calculus: five rewrite rules over binary trees
 // grown from a single leaf `t`. Numbers, lambdas, types, proofs, and the type
 // checker itself are all such trees. Some of them are small:
 
@@ -39,10 +39,20 @@ open use "../std/nat/ops.disp"      // double
 test TT = t t (t t)                             // "true" is this four-leaf tree
 test tree_eq 3 (succ (succ (succ zero))) = TT   // 3 is sugar, and the trees are identical
 
+// Three of the five rules dispatch on the shape of a tree (leaf, stem, or
+// fork), so case analysis over arbitrary data is a rewrite rule, not library
+// code. This is the self-reflection everything else builds on:
+
+let shape_of := t (t "leaf" ({u} -> "stem")) ({u, v} -> "fork")
+test shape_of t = "leaf"
+test shape_of (t t) = "stem"
+test shape_of (t t t) = "fork"
+
 // Elaboration is deterministic, so equal programs are literally the same tree
-// (the checker backends hash-cons this down to a pointer comparison). And
-// since trees are data, programs can take programs apart. The rest of the
-// language is built on that, and the kernel exists to police it.
+// (the checker backends hash-cons this down to a pointer comparison). Trees
+// are data, so programs can take programs apart, exactly as shape_of just
+// did. The rest of the language is built on that power, and the kernel
+// exists to police it.
 ```
 
 ### Syntax is sugar
@@ -52,8 +62,8 @@ test tree_eq 3 (succ (succ (succ zero))) = TT   // 3 is sugar, and the trees are
 
 test tree_eq ({r} -> r.x) ({r} -> r (acc "x")) = TT   // projection is application
 
-let Point = { x : Nat, y : Nat }
-let PointCells = Telescope (t (proj_cell "x" Nat) ({_x} -> t (proj_cell "y" Nat) ({_y} -> t)))
+let Point := { x : Nat, y : Nat }
+let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} -> t (proj_cell "y" Nat) ({_y} -> t)))
 test tree_eq Point PointCells = TT                    // the literal is exactly the library call
 
 // Telescope is the one former behind functions, pairs, records, and unit;
@@ -72,9 +82,9 @@ test Nat TT = Ok FF
 
 // Structure runs too: b's recipe is evaluated during the check.
 
-let TDs = { a : Nat, b := double a }
-test typecheck TDs { a := 2; b := 4 } = Ok TT
-test param_apply TDs { a := 2; b := 5 } = Ok FF   // ran double 2, compared, rejected
+let TDs := { a : Nat, b := double a }
+test TDs { a := 2; b := 4 } = Ok TT
+test TDs { a := 2; b := 5 } = Ok FF   // ran double 2, compared, rejected
 ```
 
 ### Functions need a promise
@@ -88,9 +98,10 @@ test quadruple 3 = 12
 // No amount of running visits them all, and raw application, which worked
 // for data above, yields no verdict:
 
-test tree_eq ((Pi Nat ({_} -> Nat)) quadruple) (Ok TT) = FF   // raw: nothing
-test param_apply (Pi Nat ({_} -> Nat)) quadruple = Ok TT      // dispatcher: yes
-test param_apply (Pi Nat ({_} -> Nat)) ({n} -> TT) = Ok FF    // wrong codomain: no
+let NatToNat := Pi Nat ({_} -> Nat)                // the annotation above, desugared
+test tree_eq (NatToNat quadruple) (Ok TT) = FF    // raw: no verdict comes back
+test param_apply NatToNat quadruple = Ok TT       // the dispatcher: yes
+test param_apply NatToNat ({n} -> TT) = Ok FF     // wrong codomain: no
 
 // The difference: checking a function requires minting a hypothesis, a fresh
 // opaque tree carrying a type and nothing else: a promise that a Nat will be
@@ -111,14 +122,14 @@ test param_apply (Pi Nat ({_} -> Nat)) ({n} -> TT) = Ok FF    // wrong codomain:
 // type, forward the observation to that type's `respond`. A respond has
 // exactly two moves, and you can watch both:
 
-let hN = make_hyp Nat 0
+let hN := make_hyp Nat 0                           // mint one by hand (the 0 is a fresh id)
 test param_apply Nat hN = Ok TT                   // a promise of a Nat counts as a Nat
 
-let hPi = make_hyp (Pi Nat ({_} -> Bool)) 0
+let hPi := make_hyp (Pi Nat ({_} -> Bool)) 0
 test neutral_type (param_apply hPi zero) = Bool   // Extend: stuck, at the codomain type
 
-let Pt = { a : Nat, b := succ a }
-let hPt = make_hyp Pt 0
+let Pt := { a : Nat, b := succ a }
+let hPt := make_hyp Pt 0
 test neutral_type (param_apply hPt (acc "a")) = Nat                               // Extend: opaque field
 test tree_eq (param_apply hPt (acc "b")) (succ (param_apply hPt (acc "a"))) = TT  // Reduce: derived field
                                                                                   // computes through it
@@ -142,6 +153,29 @@ test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err   // illegal qu
 // records, Nat, and equality are library code consuming them.
 ```
 
+### Proving is running
+
+```rust
+// Propositions are types too. An equality type has exactly one proof value,
+// and it is the leaf itself:
+
+test refl = t
+
+// Whether refl proves an equation is decided by running both sides. Raw
+// application is back, because proofs are data:
+
+test (Eq Nat (double 2) 4) refl = Ok TT   // double 2 and 4 meet at the same tree
+test (Eq Nat 3 4) refl = Ok FF
+
+// A statement about every Nat is a Pi into a proposition, so checking it
+// takes one promise. Here is a theorem in surface form, the kernel's verdict
+// on it, and a false statement refl cannot prove (the stuck ends differ):
+
+n_eq_n : {n : Nat} -> Eq Nat n n := {n} -> refl
+test param_apply (Pi Nat ({n} -> Eq Nat n n)) n_eq_n = Ok TT
+test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl) = Ok FF
+```
+
 ### Who checks the types?
 
 ```rust
@@ -150,19 +184,20 @@ test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err   // illegal qu
 // values with a recognizable shape, so the universe is a predicate like any
 // other, and it accepts itself:
 
-test typecheck Type Nat = Ok TT
-test typecheck Type zero = Ok FF   // not a type
-test typecheck Type Type = Ok TT   // the universe passes its own checker
+test param_apply Type Nat = Ok TT
+test param_apply Type zero = Ok FF   // not a type
+test param_apply Type Type = Ok TT   // the universe passes its own checker
 
 // The deeper check is behavioral. GoodRespond aims the promise machinery at
 // the type itself: its probes mint hypotheses and fire observations through
 // hyp_reduce at a candidate respond, comparing answers against the type's
 // constructors. A respond can lie in two directions, and both are caught:
 
-let MyNat = Coproduct [pair "z" [], pair "s" [Rec]]   // a home-made Nat: zero and successor
-test typecheck Type MyNat = Ok TT
+let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]   // a home-made Nat: zero and successor
+test param_apply Type MyNat = Ok TT
 
-let resp_of = {T} -> (type_meta T).respond (type_meta T).recognizer_params
+// read a type's respond out of its metadata:
+let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
 test verify_good MyNat (resp_of MyNat) = Ok TT                    // its real respond: honest
 test verify_good MyNat (inductive_respond unit_witness) = Ok FF   // waves junk through
 test verify_good MyNat (inert_respond unit_witness) = Ok FF       // refuses everything

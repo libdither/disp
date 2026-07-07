@@ -128,6 +128,8 @@ lookup_field := {r, name} -> {
 // respond, behavioral_specs }, read by name through the cut (m.respond, ...).
 unit_witness := t
 trivial_functor := t
+
+// TODO: delete make_meta_f, and we should delete all of this once we have full records.
 // make_meta_f sets the `functor` field explicitly; coproducts store their shape↔inj ISO there
 // (CELL_OPTICS — what generic `fmap`/`fold_value` read). make_meta keeps the trivial default.
 make_meta_f : Tree -> Tree -> Tree -> MetaShape := {params, functor, respond} ->

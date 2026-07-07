@@ -54,6 +54,7 @@ let tree_app_or_elim := {params, self, frame} -> {
     then (gated_inductive_respond (coh_check t) params self frame)
     else (Extend (neutral_type self))
 }
+/// The type of all trees
 Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta_f tree_variants (pair view_tree encode_tree) tree_app_or_elim)
 // tree_rec: the dependent Tree recursor, read off the cells like nat_rec — the
 // typed face of shape dispatch. Concrete targets fold through the view; abstract
@@ -69,6 +70,8 @@ Frame : Type := Tree
 // respond's meta arm need it).
 // MetaShape: the metadata record every type carries (§11.2). Fields loosened to Tree
 // (structural membership); deep ascriptions like `respond : RespondShape` are StrictType's job.
+
+/// Data associated with a type: contains a  
 MetaShape : Type := { recognizer_params : Tree, functor : Tree, respond : Tree, behavioral_specs : Tree }
 
 // Type universe + the predicate-side H-rule (unlocks polymorphic Pi).
@@ -95,12 +98,11 @@ type_predicate_h_rule : RespondShape := {params, self, frame} ->
 // hyp, so only the neutral branch runs, and it is carve-out clean (like the H-rule
 // branch of make_recognizer). Concrete metas are public data; the seal protects only
 // neutrals, and on a neutral this yields a fresh symbol carrying no information.
+/// take a type and return its various components
 meta_of : Type -> MetaShape := {T} -> if (is_neutral T) then (T meta_frame) else (type_meta T)
-// The annotated field accessors: projections through meta_of whose codomains are the
-// fields' declared types. On an abstract T each is a stuck, well-typed read — the first
-// machine-checked annotations over meta reads of an abstract type. (A consumer that goes
-// on to BRANCH on the projected field still hits the one-generic-point wall: is_fork on
-// a stuck Tree is triage-on-neutral. The accessors are the annotatable frontier.)
+
+
+// TODO: delete these and use meta_of by default in tests.
 meta_params  : Type -> Tree := {T} -> (meta_of T).recognizer_params
 meta_functor : Type -> Tree := {T} -> (meta_of T).functor
 meta_respond : Type -> Tree := {T} -> (meta_of T).respond
