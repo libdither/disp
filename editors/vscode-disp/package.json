@@ -2,7 +2,7 @@
   "name": "disp-lang",
   "displayName": "Disp",
   "description": "Syntax highlighting for the Disp language (.disp)",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "zyansheep",
   "engines": { "vscode": "^1.70.0" },
   "categories": ["Programming Languages"],

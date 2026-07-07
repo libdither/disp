@@ -5,11 +5,13 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
+    { "include": "#module" },
+    { "include": "#declarations" },
+    { "include": "#binders" },
+    { "include": "#applications" },
     { "include": "#keywords" },
-    { "include": "#leaf" },
-    { "include": "#hole" },
+    { "include": "#constants" },
     { "include": "#numbers" },
-    { "include": "#definition" },
     { "include": "#projection" },
     { "include": "#operators" },
     { "include": "#types" },
@@ -34,47 +36,132 @@
       "begin": "\"",
       "end": "\""
     },
-    "keywords": {
+    "module": {
+      "comment": "Module system. `use`/`open` are true keywords; `raw` (only after `use`) and `given` (only after `open`) are identifiers the parser recognizes structurally, so they are highlighted positionally, never as bare words.",
       "patterns": [
         {
-          "name": "keyword.control.disp",
-          "match": "(?<![A-Za-z0-9_'])(match|if|then|else)(?![A-Za-z0-9_'])"
-        },
-        {
-          "name": "keyword.other.disp",
-          "match": "(?<![A-Za-z0-9_'])(let|test|use|open|raw)(?![A-Za-z0-9_'])"
-        }
-      ]
-    },
-    "leaf": {
-      "name": "constant.language.leaf.disp",
-      "match": "(?<![A-Za-z0-9_'])t(?![A-Za-z0-9_'])|△"
-    },
-    "hole": {
-      "name": "constant.language.hole.disp",
-      "match": "(?<![A-Za-z0-9_'])_(?![A-Za-z0-9_'])"
-    },
-    "numbers": {
-      "name": "constant.numeric.disp",
-      "match": "(?<![A-Za-z0-9_'])[0-9]+(?![A-Za-z0-9_'])"
-    },
-    "definition": {
-      "comment": "Exported field `name := e` / `name : T := e` or `let name = e` — highlight the bound name",
-      "patterns": [
-        {
-          "match": "(?<![A-Za-z0-9_'])(let)\\s+([A-Za-z_][A-Za-z0-9_']*)",
+          "match": "(?<![A-Za-z0-9_'])(open)\\s+(given)(?![A-Za-z0-9_'])",
           "captures": {
-            "1": { "name": "keyword.other.disp" },
-            "2": { "name": "entity.name.function.disp" }
+            "1": { "name": "keyword.other.import.disp" },
+            "2": { "name": "storage.modifier.given.disp" }
           }
         },
         {
+          "match": "(?<![A-Za-z0-9_'])(use)(?:\\s+(raw))?(?![A-Za-z0-9_'])",
+          "captures": {
+            "1": { "name": "keyword.other.import.disp" },
+            "2": { "name": "storage.modifier.raw.disp" }
+          }
+        },
+        {
+          "name": "keyword.other.import.disp",
+          "match": "(?<![A-Za-z0-9_'])open(?![A-Za-z0-9_'])"
+        }
+      ]
+    },
+    "declarations": {
+      "comment": "Declarations are requests (COMPILATION.typ § Declarations as requests): `head? NAME (: T)? (:= v)?`. The heads — let / sig / base / given, guard <policy>, guard_eq — are LIBRARY VALUES (cut.disp, std/oeq.disp), not keywords. They are highlighted only in head position (member start followed by a declared name and ':'/':='), mirroring the parser's isDeclStart; mid-expression uses stay plain identifiers. Custom decorator heads exist but are not in this closed set, so they stay plain too.",
+      "patterns": [
+        {
+          "comment": "guard <policy atoms…> NAME / guard_eq NAME — decorator head atoms are line-local (parser guarantee), so one line-rule is faithful. The gap excludes ':' (a top-level colon ends a head) plus comment/string starts, so `guard : T := v` — the definition of guard itself — falls through to the plain-declaration rule.",
+          "match": "(^|(?<=[{,;]))\\s*(guard_eq|guard)(?![A-Za-z0-9_'])\\s*((?:(?!//)[^:\"])*?)([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
+          "captures": {
+            "2": { "name": "storage.type.declaration.disp" },
+            "3": {
+              "patterns": [
+                { "include": "#guard-policies" },
+                { "include": "#types" },
+                { "include": "#identifiers" }
+              ]
+            },
+            "4": { "name": "entity.name.function.disp" }
+          }
+        },
+        {
+          "comment": "let / sig / base / given NAME — covers the top-level decorators and the braced lexical `let`",
+          "match": "(^|(?<=[{,;]))\\s*(let|sig|base|given)(?![A-Za-z0-9_'])\\s+([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
+          "captures": {
+            "2": { "name": "storage.type.declaration.disp" },
+            "3": { "name": "entity.name.function.disp" }
+          }
+        },
+        {
+          "comment": "conventional `test` prefix on an equation item `lhs = rhs` (the prelude identity, peeled by the elaborator) — member-start only; `test : T := v` (the prelude's definition of test itself) is a plain declaration, excluded by the lookahead. The optional trailing capture colors the equation's applied head like any call site.",
+          "match": "(^|(?<=[{,;]))\\s*(test)(?![A-Za-z0-9_'])(?!\\s*(?::=|:[^=]))(?:\\s+(?!(?:match|if|then|else|use|open|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[]))?",
+          "captures": {
+            "2": { "name": "keyword.other.test.disp" },
+            "3": { "name": "entity.name.function.disp" }
+          }
+        },
+        {
+          "comment": "plain declaration `NAME := v` / `NAME : T := v` — highlight the bound name",
           "match": "^\\s*([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
           "captures": {
             "1": { "name": "entity.name.function.disp" }
           }
+        },
+        {
+          "comment": "member position inside braces: record fields, `use \"f\" { x := v }` fills, `open given { X : T }` entries, named args",
+          "match": "(?<=[{,;])\\s*([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
+          "captures": {
+            "1": { "name": "variable.other.member.disp" }
+          }
         }
       ]
+    },
+    "binders": {
+      "comment": "Lambda binder `{a, b, c} -> body` — a comma list of plain names directly before an arrow. Names get parameter scope (the Rust-like light blue); annotated braces (`{A : Type}`) contain ':' so they fall through to the member/type rules.",
+      "match": "(\\{)\\s*([A-Za-z_][A-Za-z0-9_']*(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_']*)*)\\s*(\\})(?=\\s*(?:->|→))",
+      "captures": {
+        "2": {
+          "patterns": [
+            { "name": "constant.language.hole.disp", "match": "(?<![A-Za-z0-9_'])_(?![A-Za-z0-9_'])" },
+            { "name": "variable.parameter.disp", "match": "[A-Za-z_][A-Za-z0-9_']*" }
+          ]
+        }
+      }
+    },
+    "applications": {
+      "comment": "Function-position identifiers — the Rust-like call-site yellow. In disp application is juxtaposition, so the head of an application spine is an identifier that STARTS an expression (line start, after an opening bracket, separator, ':='/':'/'='/arrows, or if/then/else) AND is applied to at least one atom. The exclusion list keeps keywords, decorator heads, literals, and the leaf out of head position; the starter prefix is re-scoped by the included rules so consumed operators/keywords keep their colors.",
+      "match": "((?::=|=>|->|→|[=:({\\[,;])|^|(?<![A-Za-z0-9_'])(?:if|then|else)(?![A-Za-z0-9_']))\\s*(?!(?:match|if|then|else|use|open|let|sig|base|given|guard|guard_eq|test|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[])",
+      "captures": {
+        "1": {
+          "patterns": [
+            { "include": "#keywords" },
+            { "include": "#operators" }
+          ]
+        },
+        "2": { "name": "entity.name.function.disp" }
+      }
+    },
+    "keywords": {
+      "name": "keyword.control.disp",
+      "match": "(?<![A-Za-z0-9_'])(match|if|then|else)(?![A-Za-z0-9_'])"
+    },
+    "guard-policies": {
+      "comment": "std/oeq guard policies — colored only inside a guard head (included from the declarations rule), plain values elsewhere",
+      "name": "storage.modifier.policy.disp",
+      "match": "(?<![A-Za-z0-9_'])(freeze|license_guard|guard_eq)(?![A-Za-z0-9_'])"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.disp",
+          "match": "(?<![A-Za-z0-9_'])(true|false)(?![A-Za-z0-9_'])"
+        },
+        {
+          "name": "constant.language.leaf.disp",
+          "match": "(?<![A-Za-z0-9_'])t(?![A-Za-z0-9_'])|△"
+        },
+        {
+          "name": "constant.language.hole.disp",
+          "match": "(?<![A-Za-z0-9_'])_(?![A-Za-z0-9_'])"
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.disp",
+      "match": "(?<![A-Za-z0-9_'])[0-9]+(?![A-Za-z0-9_'])"
     },
     "projection": {
       "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_']*)",
@@ -96,6 +183,7 @@
       "match": "(?<![A-Za-z0-9_'])[A-Z][A-Za-z0-9_']*(?![A-Za-z0-9_'])"
     },
     "identifiers": {
+      "comment": "Everything else lowercase = variables/arguments, the Rust-like light-blue body color; the applications rule has already claimed the heads",
       "name": "variable.other.disp",
       "match": "(?<![A-Za-z0-9_'])[a-z_][A-Za-z0-9_']*(?![A-Za-z0-9_'])"
     }
