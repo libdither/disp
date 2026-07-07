@@ -33,14 +33,22 @@ function tmpModule(name: string, body: string): string {
 }
 
 describe("module dependencies (given) rejections", () => {
-  it("a bare use of a given-bearing module errors: context must be passed explicitly", () => {
-    // Even the empty context is explicit (`use "f" {}`); bare use is reserved
-    // for dep-free modules, raw included.
-    expect(() => run(K + `m := use "given_mod.disp"\n`))
-      .toThrow(/declares given\(s\) add.*pass a context explicitly/)
+  it("a bare CHECKED use denotes the functor face; a bare RAW use still errors", () => {
+    // Slice 2: `use "f"` on a given-bearing module is the module-as-function
+    // tuple (positive pins in given.test.disp). Raw has no typ and no hyp to
+    // mint, so its context stays explicit (`use raw "f" {}`).
+    expect(() => run(K + `m := use "given_mod.disp"\nx := m.typ\n`)).not.toThrow()
     expect(() => run(K + `open use raw "given_mod.disp"\n`))
       .toThrow(/declares given\(s\) add.*pass a context explicitly/)
   }, 300000)
+
+  it("a module the abstract pass cannot elaborate falls back to the explicit-context error", () => {
+    // A SELF-typed given (`given T : T`, the kernel-universe knot) cannot mint a
+    // hyp without its fill: the annotation compiles before anything binds T.
+    const p = tmpModule("selfty.disp", `given T : T\nx : T := t\n`)
+    expect(() => run(K + `m := use "${p}"\n`))
+      .toThrow(/cannot build the functor face.*pass a context explicitly/)
+  }, 120000)
 
   it("an empty fill record still misses the required given", () => {
     expect(() => run(K + `m := use "given_mod.disp" {}\n`))

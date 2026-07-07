@@ -38,3 +38,29 @@ test m4.record.double 3 = 3
 mr := use "given_rec_mod.disp" { ctx := { add := add, start := 3 } }
 test mr.record.double 3 = 6
 test mr.record.from_start 5 = 8
+
+// ── THE FUNCTOR FACE (MODULES.md slice 2): a bare use of a given-bearing module
+// denotes the module as a FUNCTION of its dependencies — `record` the readback
+// lambda, `typ` the Pi-into-Record over the given telescope. ──
+fm := use "given_mod.disp"
+
+// The one ABSTRACT check: verify walks the lambda with each given minted as a
+// hyp; exports land by the H-rule. This covers from_start's PARTIAL application
+// `add start` (readback rebuilds the extension neutral as the application that
+// created it, so the walk re-extends against its own mints).
+test verify fm = Ok TT
+
+// Instantiation is application, and it RECONVERGES: the readback lambda applied
+// to fills is tree-identical to template instantiation with those fills.
+test tree_eq (fm.record add 0) m.record = TT
+test tree_eq (fm.record add 10) m2.record = TT
+
+// Applied functor exports compute like the instantiation's.
+test (fm.record add 0) (acc "double") 3 = 6
+test (fm.record add 10) (acc "from_start") 5 = 15
+
+// The record-typed given's face: `open ctx` inside the module splices ABSTRACT
+// projections of the ctx hyp; replay against a concrete record re-projects.
+fmr := use "given_rec_mod.disp"
+test verify fmr = Ok TT
+test tree_eq (fmr.record { add := add, start := 3 }) mr.record = TT

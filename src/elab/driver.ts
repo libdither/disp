@@ -45,6 +45,9 @@ const hasExportFields = (items: RecMember[]): boolean =>
 
 // Per-file elaboration context: the module dependencies (givens) declared by the
 // file's pre-scan, the fills supplied at the use site, and bookkeeping.
+// `abstract` is the FUNCTOR FACE mode (MODULES.md slice 2): a bare `use "f"` on a
+// given-bearing module elaborates the file ONCE with each given bound to a fresh
+// minted hyp; `givenHyps` collects them in binder order for the readback.
 type FileCtx = {
   isRoot: boolean
   raw: boolean
@@ -52,9 +55,143 @@ type FileCtx = {
   fills: Map<string, Tree>
   givens: GivenSpec[]
   givenSeen: Set<string>
+  abstract?: boolean
+  givenHyps?: { name: string; type: Tree; hyp: Tree }[]
 }
 const rootCtx = (): FileCtx =>
   ({ isRoot: true, raw: false, fills: new Map(), givens: [], givenSeen: new Set() })
+
+// ── Functor-face readback (MODULES.md slice 2) ──
+// Rebuild a tree as CIR with each given's minted hyp (matched by handle identity —
+// hash-consing makes that tree identity) replaced by a variable. Subtrees free of
+// every hyp stay shared `lit` nodes; a hyp-bearing spine is rebuilt as constructive
+// leaf applications (`t a` = stem a, `t a b` = fork a b), so bracket-abstracting the
+// result and applying it to fills reconstructs the substituted tree EXACTLY — replay
+// equals template instantiation for exports that keep their dependencies under
+// binders or in argument position (the parametric-module shape). A dependency
+// applied to saturation at a value's top level reduces DURING the abstract pass (raw
+// hyp application runs hyp_reduce, leaving an extension neutral), and replay keeps
+// that structure rather than re-reducing — such modules should be used with fills.
+// (`verify` is unaffected either way: it walks the lambda under param_apply, which
+// interprets hyps properly.)
+function hypContains(root: Tree, subst: Map<Tree, string>, memo: Map<Tree, boolean>): boolean {
+  // Iterative post-order over the hash-consed DAG (host recursion would overflow on
+  // deep kernel-value trees); memo shared across one face build.
+  type F = { t: Tree; kids?: Tree[]; i: number }
+  const stack: F[] = [{ t: root, i: 0 }]
+  while (stack.length > 0) {
+    const f = stack[stack.length - 1]
+    if (memo.get(f.t) !== undefined) { stack.pop(); continue }
+    if (subst.has(f.t)) { memo.set(f.t, true); stack.pop(); continue }
+    if (f.kids === undefined) {
+      const c = elab.cs.classify!(f.t, B())
+      f.kids = c.tag === "leaf" ? [] : c.tag === "stem" ? [c.child] : [c.left, c.right]
+    }
+    let descended = false
+    while (f.i < f.kids.length) {
+      const k = f.kids[f.i]
+      if (memo.get(k) === undefined && !subst.has(k)) { stack.push({ t: k, i: 0 }); f.i++; descended = true; break }
+      f.i++
+    }
+    if (descended) continue
+    memo.set(f.t, f.kids.some(k => subst.has(k) || memo.get(k) === true))
+    stack.pop()
+  }
+  return subst.has(root) || memo.get(root) === true
+}
+
+// decodeExt: is `t` a hyp_reduce EXTENSION neutral (payload `Ext parent frame`)?
+// A neutral is `fork(hyp_sig, fork(_, meta))` with `meta.payload = inj "Ext" (pair
+// parent frame)`; the payload is read through the runtime cut (layout-agnostic).
+// Used by substToCir to rebuild a hyp-bearing extension as the APPLICATION that
+// created it — see the comment there.
+function decodeExt(t: Tree, hypSig: Tree): { parent: Tree; frame: Tree } | null {
+  const c = elab.cs.classify!(t, B())
+  if (c.tag !== "fork" || !elab.cs.equal!(c.left, hypSig)) return null
+  const r1 = elab.cs.classify!(c.right, B())
+  if (r1.tag !== "fork") return null
+  const payload = elab.cs.apply(r1.right, accTree("payload"), B())
+  const p = elab.cs.classify!(payload, B())
+  if (p.tag !== "fork" || !elab.cs.equal!(p.left, stringToTree("Ext"))) return null
+  const pr = elab.cs.classify!(p.right, B())
+  if (pr.tag !== "fork") return null
+  return { parent: pr.left, frame: pr.right }
+}
+
+function substToCir(t: Tree, subst: Map<Tree, string>, containsMemo: Map<Tree, boolean>, cirMemo: Map<Tree, Cir>, hypSig: Tree | null): Cir {
+  const hit = cirMemo.get(t)
+  if (hit) return hit
+  let r: Cir
+  const v = subst.get(t)
+  if (v != null) r = { tag: "var", name: v }
+  else if (!hypContains(t, subst, containsMemo)) r = { tag: "lit", t }
+  else {
+    // A hyp-bearing EXTENSION neutral is rebuilt as the application that created
+    // it (`parent frame`), not structurally: a dependency partially applied during
+    // the abstract pass (`add start` under an η-exposed binder, a record-given
+    // projection `ctx (acc name)`) raw-reduces to an extension of OUR hyp, and a
+    // structural rebuild would freeze that stuck shape into the lambda — replay
+    // with a real fill would keep a fake neutral where instantiation computes.
+    // Rebuilt as an application, replay re-reduces against the fill and the
+    // abstract check re-extends against the walker's own mints. Hyp-FREE neutrals
+    // (user-built) are untouched (`lit`, via the containment guard above).
+    const ext = hypSig != null ? decodeExt(t, hypSig) : null
+    if (ext != null) {
+      r = cap(substToCir(ext.parent, subst, containsMemo, cirMemo, hypSig), substToCir(ext.frame, subst, containsMemo, cirMemo, hypSig))
+    } else {
+      // Recursion depth is bounded by the hyp-bearing spine, which pruning keeps shallow.
+      const c = elab.cs.classify!(t, B())
+      if (c.tag === "stem") r = cap({ tag: "lit", t: elab.cs.leaf() }, substToCir(c.child, subst, containsMemo, cirMemo, hypSig))
+      else if (c.tag === "fork") r = cap(cap({ tag: "lit", t: elab.cs.leaf() }, substToCir(c.left, subst, containsMemo, cirMemo, hypSig)), substToCir(c.right, subst, containsMemo, cirMemo, hypSig))
+      else r = { tag: "lit", t } // leaf: cannot contain a hyp (unreachable via the guard above)
+    }
+  }
+  cirMemo.set(t, r)
+  return r
+}
+
+// buildFunctorFace: the module tuple { record, typ } of an ABSTRACTLY elaborated
+// given-bearing module. record = λg1…gn. make_record names values′ (the readback
+// lambda); typ = Pi T1′ (λg1. … Pi Tn′ (λgn. Record entries′)) built by APPLYING
+// the in-scope Pi/Record values — the same route surface annotations take, so a
+// matching written functor annotation shares the tree by hash-consing (the
+// prototype pins that hand-assembled cells do NOT). `verify` of the tuple is then
+// `param_apply typ record`: the one abstract check of the module.
+function buildFunctorFace(
+  givenHyps: { name: string; type: Tree; hyp: Tree }[],
+  exports: { name: string; tree: Tree; type: Tree | null }[],
+  formers: { Pi: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; hypSig: Tree | null },
+): Tree {
+  const subst = new Map<Tree, string>()
+  for (const g of givenHyps) subst.set(g.hyp, g.name)
+  const containsMemo = new Map<Tree, boolean>()
+  const cirMemo = new Map<Tree, Cir>()
+  const lit = (t: Tree): Cir => ({ tag: "lit", t })
+  const toCir = (t: Tree): Cir => substToCir(t, subst, containsMemo, cirMemo, formers.hypSig)
+  const leafT = elab.cs.leaf()
+  const cirFork = (a: Cir, b: Cir): Cir => cap(cap(lit(leafT), a), b)
+  const cirConsList = (xs: Cir[]): Cir => xs.reduceRight<Cir>((acc, h) => cirFork(h, acc), lit(leafT))
+  const consT = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => elab.cs.fork(h, acc), leafT)
+  const wrapLams = (body: Cir): Cir => {
+    let b = body
+    for (let i = givenHyps.length - 1; i >= 0; i--) b = { tag: "lam", x: givenHyps[i].name, body: b }
+    return b
+  }
+  const namesTree = consT(exports.map(e => stringToTree(e.name)))
+  const recBody = cap(cap(lit(formers.mkRecord), lit(namesTree)),
+    cirConsList(exports.map(e => cap(lit(formers.listConst), toCir(e.tree)))))
+  const recordFace = cirToTree(eliminateLams(wrapLams(recBody)))
+  const typEntries = exports.filter(e => e.type != null)
+    .map(e => cirFork(lit(stringToTree(e.name)), toCir(e.type!)))
+  let typCir: Cir = cap(lit(formers.Record), cirConsList(typEntries))
+  for (let i = givenHyps.length - 1; i >= 0; i--)
+    typCir = cap(cap(lit(formers.Pi), toCir(givenHyps[i].type)), { tag: "lam", x: givenHyps[i].name, body: typCir })
+  const typFace = cirToTree(eliminateLams(typCir))
+  const cw = (v: Tree): Tree => elab.cs.apply(formers.listConst, v, B())
+  return elab.cs.apply(
+    elab.cs.apply(formers.mkRecord, consT([stringToTree("record"), stringToTree("typ")]), B()),
+    consT([cw(recordFace), cw(typFace)]), B())
+}
 
 export type ParseItemStats = {
   kind: "let" | "test" | "open" | "field" | "given"
@@ -136,17 +273,21 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // fill without a default is an error (raw binds nothing for a missing given —
     // the name is absent from scope; kernel givens are annotation-only and raw drops annotations).
     const givens = scanGivens(items)
-    // A given-bearing module may not be used WITHOUT a context: even the empty
-    // context is passed explicitly (`use "f" {}` — defaults apply checked; raw
-    // leaves unfilled givens out of scope). Bare use is reserved for dep-free
-    // modules, so "this module takes context" is always visible at the use site.
-    if (givens.length > 0 && fills === undefined)
-      throw new Error(`use ${path}: this module declares given(s) ${givens.map(g => g.name).join(", ")} — pass a context explicitly: use ${JSON.stringify(path)} { … } ({} passes the empty context)`)
+    // A given-bearing module used WITHOUT a context (MODULES.md slice 2): a bare
+    // CHECKED `use "f"` denotes the FUNCTOR FACE — the file elaborated once with
+    // each given bound to a fresh minted hyp, read back as the module lambda, with
+    // `typ` the Pi-into-Record over the given telescope. Filling stays explicit
+    // (`use "f" { … }`, `{}` for the empty context with defaults). A bare RAW use
+    // still errors: raw drops annotations, so there is no typ and no hyp to mint —
+    // the value layer needs its context spelled out.
+    const abstract = givens.length > 0 && fills === undefined && !raw
+    if (givens.length > 0 && fills === undefined && raw)
+      throw new Error(`use raw ${path}: this module declares given(s) ${givens.map(g => g.name).join(", ")} — pass a context explicitly: use raw ${JSON.stringify(path)} { … } ({} passes the empty context)`)
     const supplied = fills ?? new Map<string, Tree>()
     for (const k of supplied.keys())
       if (!givens.some(g => g.name === k))
         throw new Error(`use ${path}: unknown fill '${k}' (givens: ${givens.map(g => g.name).join(", ") || "none"})`)
-    if (!raw) {
+    if (!raw && !abstract) {
       const missing = givens.filter(g => !supplied.has(g.name) && g.dflt == null).map(g => g.name)
       if (missing.length > 0)
         throw new Error(`use ${path}: unfilled given(s) ${missing.join(", ")} — supply them: use "${path}" { ${missing.map(n => `${n} := …`).join(", ")} }`)
@@ -157,7 +298,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // rides this: fragment givens are annotation-only, and raw drops annotations.)
     // Instantiation key: one component per given — explicit fill = session intern
     // id of the fill tree, default = "d" (per-file constant), raw-unbound = "u".
-    const fillKey = givens.map(g =>
+    // The functor face is one more instantiation, keyed by a sentinel no fill key
+    // can collide with (real keys are #id/d/u joined by commas).
+    const fillKey = abstract ? "FUNCTOR" : givens.map(g =>
       supplied.has(g.name) ? `#${internTreeId(elab.cs, supplied.get(g.name)!)}` : (g.dflt != null ? "d" : "u")).join(",")
     // Module cache (per session): return the already-elaborated instantiation if
     // present. Checked BEFORE cycle detection on purpose — a cached module is fully
@@ -186,11 +329,15 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     // exports only its fields. (The old legacy mode where top-level lets exported is
     // gone: `let` marks the write private everywhere.)
     const hasFields = hasExportFields(items)
-    const ctx: FileCtx = { isRoot: false, raw, abs, fills: supplied, givens, givenSeen: new Set() }
+    const ctx: FileCtx = { isRoot: false, raw, abs, fills: supplied, givens, givenSeen: new Set(), abstract, givenHyps: abstract ? [] : undefined }
     // Kernel formers needed to auto-verify this module, captured while its own scope
     // is still on the stack (popped in `finally`). Null if the kernel isn't in scope
     // (a file with no checkable annotations) — verification is then skipped.
     let vFormers: { paramApply: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; ok: Tree; tt: Tree } | null = null
+    // Formers for the functor face (abstract mode), captured from the MODULE's own
+    // scope: the typ must be built by applying ITS Pi/Record (the surface route).
+    // hyp_sig drives the extension-neutral decode in readback (null = skip it).
+    let fFormers: { Pi: Tree; Record: Tree; mkRecord: Tree; listConst: Tree; hypSig: Tree | null } | null = null
     try {
       for (const it of items) {
         try {
@@ -208,6 +355,19 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
       const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("TT")?.tree
       if (pa && rec && mkr && lc && ok && tt) vFormers = { paramApply: pa, Record: rec, mkRecord: mkr, listConst: lc, ok, tt }
+      if (abstract) {
+        const pi = lookupEntry("Pi")?.tree
+        if (!pi || !rec || !mkr || !lc || !elab.cs.classify || !elab.cs.equal)
+          throw new Error(`in ${abs}: the functor face needs Pi, Record, make_record, and list_const in the module's scope (open the kernel prelude)`)
+        fFormers = { Pi: pi, Record: rec, mkRecord: mkr, listConst: lc, hypSig: lookupEntry("hyp_sig")?.tree ?? null }
+      }
+    } catch (err) {
+      if (!abstract) throw err
+      // The functor face couldn't be built (e.g. a self-typed given like the
+      // kernel's `given Type : Type` cannot mint without its fill, or the module
+      // relies on a filled value at elaboration time). Filling remains the way in.
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`use ${path}: cannot build the functor face (${msg}) — pass a context explicitly: use ${JSON.stringify(path)} { … } ({} passes the empty context)`)
     } finally {
       stack.splice(0, stack.length, ...savedFrames)
       dirStack.pop()
@@ -226,6 +386,21 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         fieldTypes.push(d.type ?? null)
         fieldGuards.push(d.guard ?? null)
       }
+    }
+    // The functor face (abstract mode): read the module lambda back off the
+    // hyp-closed exports and return the tuple { record, typ }. No verification is
+    // scheduled — the abstract check runs only when someone calls `verify` on the
+    // tuple (`param_apply typ record`), and instantiations keep their own per-fill
+    // checks. The entry carries no field metadata: `use "f"` is the tuple VALUE
+    // (projections go through the runtime cut / the tuple's own record header).
+    if (abstract) {
+      const tuple = buildFunctorFace(
+        ctx.givenHyps!,
+        fieldNames.map((n, i) => ({ name: n, tree: fieldTrees[i], type: fieldTypes[i] })),
+        fFormers!)
+      const entry: ScopeEntry = { tree: tuple }
+      modCache.set(cacheKey, entry)
+      return entry
     }
     // Auto-verification: check the module's typed exports through the kernel
     // (`verify mod` = `param_apply typ record`), so an export that doesn't inhabit
@@ -506,6 +681,23 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       throw new Error(`given '${it.name}': collides with a guarded name`)
     if (it.type == null && !ctx.raw)
       throw new Error(`given '${it.name}': a dependency needs a type annotation`)
+    // Abstract mode (the functor face): no fill — bind the given to a FRESH minted
+    // hyp of its declared type. The type compiles in the scope so far, so a later
+    // given's annotation may use earlier hyps (dependent givens); a SELF-typed
+    // given (`given Type : Type`) cannot compile without its fill and lands in the
+    // face-build fallback error. Hyp id = pair(<abs path>, <ordinal string>) —
+    // collision-proof against user smallint ids and walker mints.
+    if (ctx.abstract) {
+      const typeTree = compileType(it.type!, lookupEntry, resolveUse)
+      const makeHyp = lookupEntry("make_hyp")?.tree
+      if (makeHyp == null)
+        throw new Error(`given '${it.name}': 'make_hyp' is not in scope (open the kernel prelude before the givens)`)
+      const id = elab.cs.fork(stringToTree(ctx.abs ?? "?"), stringToTree(String(ctx.givenHyps!.length)))
+      const hyp = elab.cs.apply(elab.cs.apply(makeHyp, typeTree, B()), id, B())
+      define(it.name, { tree: hyp, type: typeTree })
+      ctx.givenHyps!.push({ name: it.name, type: typeTree, hyp })
+      return
+    }
     let fill = ctx.fills.get(it.name)
     if (fill == null && it.value != null)
       fill = compileExpr(it.value, lookupEntry, resolveUse, sinks) // the default, in module scope (raw included: defaults are values)
@@ -580,6 +772,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         return
       }
       case "test": {
+        // Abstract mode compiles no equations: tests are instantiation-time
+        // obligations (they discharge per fill), and with givens bound to hyps a
+        // saturated lhs would reduce symbolically at compile time for no value.
+        if (ctx.abstract) return
         compiledTestIndex++
         target.push({
           kind: "Test",
@@ -592,6 +788,22 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       case "let": // the lexical (braced) form never reaches item level
         throw new Error(`internal: lexical let member '${it.name}' at item level`)
       case "open": {
+        // Abstract mode: `open <given>` on a RECORD-typed given splices the fields
+        // as sanctioned projections of the hyp — `hyp (acc name)` runs hyp_reduce
+        // through the record type's respond, yielding a field-typed extension
+        // neutral. Field names come off the given's recType ANNOTATION (there is
+        // no fill to read them from; MODULES.md slice 2).
+        if (ctx.abstract && it.expr.tag === "var") {
+          const openName = it.expr.name
+          const g = ctx.givenHyps?.find(h => h.name === openName)
+          const spec = ctx.givens.find(s => s.name === openName)
+          if (g && spec?.type?.tag === "recType") {
+            for (const f of spec.type.fields)
+              define(f.name, { tree: elab.cs.apply(g.hyp, accTree(f.name), B()) })
+            recordItem("open")
+            return
+          }
+        }
         const record = resolveExprRecord(it.expr, lookupEntry, resolveUse)
           ?? recordFieldsFromTree(compileExpr(it.expr, lookupEntry, resolveUse, sinks), lookupEntry)
         if (!record || record.fields.length === 0)

@@ -5,8 +5,13 @@ instantiation cache, well-typed linking) plus hermetic per-file scoping and
 the kernel fragment headers. The type-theory half was validated first by
 `lib/tests/functor_module_proto.test.disp` (commit 5449c59, 15 pins, zero
 kernel changes); slice 1 pins live in `lib/tests/given.test.disp` and
-`test/modules.test.ts`. Slice 2 (the functor face: readback, unfilled `use`
-as the functor tuple, abstract verification) and slice 3 (dividends) remain.
+`test/modules.test.ts`. Slice 2 LANDED (2026-07-06): bare `use "f"` on a
+given-bearing module denotes the functor tuple (record = the readback
+lambda, typ = the Pi-into-Record over the given telescope), `verify` of the
+tuple is the one abstract check, and replay reconverges tree-identically
+with template instantiation (see the slice 2 section for the two landed
+refinements: the extension-neutral rebuild, and the fallback for modules
+the abstract pass cannot elaborate). Slice 3 (dividends) remains.
 
 Landed details that refined the design: in-file forward annotation references
 are ALSO givens, self-filled by the barrel's raw pass (`Eq`/`Unit` in base,
@@ -369,19 +374,47 @@ the kernel load path (budgets, caches, pristine captures, tree_eq
 registration all touch the stack). The pristine WeakMaps are per-session and
 capture-first, so re-elaboration per fill does not disturb them.
 
-### Slice 2: the functor face
+### Slice 2: the functor face — LANDED 2026-07-06
 
 Tree-to-CIR hyp substitution plus the existing `eliminateLams` gives
 readback; unfilled `use "f"` stops erroring and denotes the functor tuple,
 with `typ` built via the Pi route (finding 2) and `record` the readback
-lambda. The face is built for every given-bearing module (readback is cheap
-and needs no judgment call); ABSTRACT verification only runs when someone
-calls `verify` on the unfilled tuple, so kernel fragments need no
-special-casing: their faces exist and nobody abstractly verifies them.
-Pins: readback lambda applied to a fill is tree-identical to template
-instantiation with that fill (the driver-side reconvergence, extending
-prototype pin 4); a parametric std module's unfilled tuple verifies `Ok TT`.
-Estimate: one session.
+lambda. ABSTRACT verification only runs when someone calls `verify` on the
+unfilled tuple. Pins: readback lambda applied to a fill is tree-identical
+to template instantiation with that fill (the driver-side reconvergence,
+extending prototype pin 4) and the tuple verifies `Ok TT` abstractly, for
+both the per-name fixture and the record-typed-given fixture
+(given.test.disp); the raw/self-typed fallbacks are host pins
+(modules.test.ts).
+
+Two refinements landed with it:
+
+1. The extension-neutral rebuild. A dependency APPLIED during the abstract
+   pass (a partial application like `add start` that bracket abstraction
+   eta-exposes, or a record-given projection `ctx (acc name)` from `open
+   ctx`) raw-reduces to an extension neutral of the minted hyp. A structural
+   readback would freeze that stuck shape into the lambda, so replay with a
+   real fill would keep a fake neutral where instantiation computes, and the
+   abstract walk would see foreign pre-baked extensions. Readback therefore
+   decodes hyp-bearing extension neutrals (payload `Ext parent frame`, read
+   through the runtime cut) and rebuilds them as the APPLICATION that
+   created them: replay re-reduces against the fill, and `verify`'s walk
+   re-extends against its own mints. Hyp-free neutrals are untouched.
+2. The fallback. The face is built on demand (at a bare use), and a module
+   the abstract pass cannot elaborate falls back to the explicit-context
+   error, naming the reason. The kernel fragments land here by design:
+   a SELF-typed given (`given Type : Type`) cannot mint a hyp without its
+   fill, since the annotation compiles before anything binds the name. So
+   fragment faces do not exist, bare use of a fragment stays an error, and
+   nothing abstractly verifies the kernel (it verifies at instantiation, as
+   before).
+
+Also landed: in abstract mode `open <given>` on a RECORD-typed given splices
+the fields as sanctioned projections of the hyp, reading the field names off
+the given's recType annotation (there is no fill to read them from) — the
+"read field names off the TYPE" note from the record-given section. Abstract
+elaboration compiles no equation items (tests are instantiation-time
+obligations and discharge per fill, as before).
 
 ### Slice 3: dividends
 
@@ -429,5 +462,6 @@ fragment header discipline; CLAUDE.md operating notes.
 4. DECIDED: fills are explicit; no silent fill-from-scope. Puns cover the
    same-name case today (modulo the all-pun parse wart); record spread
    (`{ ..ctx }`) is the future ergonomics, planned with the synth work.
-5. DECIDED: unfilled `use "f"` on a given-bearing file errors in slice 1;
-   slice 2 makes it the functor tuple.
+5. DECIDED (and landed): unfilled `use "f"` on a given-bearing file errored
+   in slice 1; slice 2 makes it the functor tuple. Unfilled `use raw` still
+   errors (raw has no typ and no hyp to mint; its context stays explicit).
