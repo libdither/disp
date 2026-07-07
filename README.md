@@ -7,7 +7,7 @@ Disp is a self-verified dependently-typed programming language built on the [tre
  - Write the type of such optimizers and have the optimizer create itself, yielding an interpretable (symbolic) recursively self-improving optimizer.
  - Create hardware cost models at varying levels of detail and have the optimizer target to produce behaviorally equivalent code that minimizes cost for those hardware models.
 
-## Why Disp? 🤖
+## Why Disp?
 
 [Rust](https://www.rust-lang.org/) is fast, but you can't verify your programs. [Lean](https://lean-lang.org/) can verify your programs, but it takes real effort and the result is usually not fast. And in every language you still write the implementation yourself: no toolchain takes a high-level specification and satisfies it for you. The closest thing today is a coding agent like Claude Code, which gets expensive at scale and still needs a language that can state formal specifications in the first place (Lean does not make this as easy as it could be).
 
