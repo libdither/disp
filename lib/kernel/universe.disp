@@ -99,13 +99,11 @@ type_predicate_h_rule : RespondShape := {params, self, frame} ->
 // branch of make_recognizer). Concrete metas are public data; the seal protects only
 // neutrals, and on a neutral this yields a fresh symbol carrying no information.
 /// take a type and return its various components
+// (The one meta reader: field projections of its result land their declared field
+// types even on an abstract T, so `{T} -> (meta_of T).respond : Type -> Tree` checks
+// — pinned in metashape.test. The former per-field accessor exports are deleted;
+// spell the projection at the use site.)
 meta_of : Type -> MetaShape := {T} -> if (is_neutral T) then (T meta_frame) else (type_meta T)
-
-
-// TODO: delete these and use meta_of by default in tests.
-meta_params  : Type -> Tree := {T} -> (meta_of T).recognizer_params
-meta_functor : Type -> Tree := {T} -> (meta_of T).functor
-meta_respond : Type -> Tree := {T} -> (meta_of T).respond
 
 // ── The metacircular universe: a TYPE as a wait-form-cell-telescope, checked by one.
 // A type `T = wait recognizer meta` is observed two ways: APPLIED (`T candidate` runs the recognizer ->

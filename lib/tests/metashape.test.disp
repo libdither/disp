@@ -131,12 +131,12 @@ test is_neutral mTA = TT
 test neutral_type mTA = MetaShape
 test neutral_type (mTA.recognizer_params) = Tree
 test neutral_type (mTA.respond) = Tree
-// the annotated accessor family: projections through meta_of, codomain = the field's
-// declared type (auto-verified in universe.disp; re-pinned here)
-test param_apply (Arrow Type Tree) meta_params  = Ok TT
-test param_apply (Arrow Type Tree) meta_respond = Ok TT
-test tree_eq (meta_params Nat) ((type_meta Nat).recognizer_params) = TT
-test tree_eq (meta_respond Nat) ((type_meta Nat).respond) = TT
+// projecting through meta_of TYPES: a field projection of the stuck meta lands the
+// field's declared type, so the projecting lambda inhabits Type -> Tree. (This is the
+// property the former meta_params/meta_respond accessor exports pinned; deleted
+// 2026-07-07 — spell the projection at the use site.)
+test param_apply (Arrow Type Tree) ({T} -> (meta_of T).recognizer_params) = Ok TT
+test param_apply (Arrow Type Tree) ({T} -> (meta_of T).respond)           = Ok TT
 // collision pin: the one candidate literally shaped like the meta frame goes STUCK under
 // an abstract predicate (incompleteness for that tree, not unsoundness; a walked
 // membership check maps the non-verdict to rejection)...
