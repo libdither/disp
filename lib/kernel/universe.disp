@@ -27,7 +27,40 @@ open use raw "generic.disp" {}
 
 open given { Type : Type, RespondShape : Type }
 
-Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
+// ── Tree: the substrate floor AND an inductive (the tree_rec rung). Membership
+// stays the floor (recognizer Ok TT; make_recognizer's H-rule for neutrals); the
+// META gives Tree its two missing faces:
+//   elimination — variants [leaf | stem Rec | fork Rec Rec] + the TOTAL view iso
+//     (every tree decodes), so the generic machinery derives the dependent
+//     recursor `tree_rec` below. Raw shape-dispatch (triage) is the FUSED form of
+//     Tree-elimination; the dispatchers' typed twins become writable.
+//   application — a non-elimination frame answers `Extend (neutral_type self)`:
+//     a tree applied to a tree is a tree, stuck at Tree. This is what lets
+//     `wait`/`omega` carry annotations (their checks apply an abstract Tree; the
+//     old inert respond dead-ended those applications at InvalidType).
+// The respond dispatches on the frame's SHAPE (an Ok "motive" lookup = an
+// elimination request) — the frame-tagging frontier, resolved for Tree by the
+// fact that Extend-at-Tree is semantically correct for EVERY frame, so routing a
+// motive-shaped frame to elimination can over-reject but never unsound. Pinned in
+// tree_rec_proto.test.
+let view_tree := {v} -> triage (Ok (inj "leaf" t)) ({c} -> Ok (inj "stem" c)) ({l, r} -> Ok (inj "fork" (pair l r))) v
+let encode_tree := {x} ->
+  if (tree_eq (pair_fst x) "stem") then (t (pair_snd x))
+  else (if (tree_eq (pair_fst x) "fork") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t)
+let tree_variants := [pair "leaf" [], pair "stem" [Rec], pair "fork" [Rec, Rec]]
+let tree_app_or_elim := {params, self, frame} -> {
+  let r := lookup_field frame "motive"
+  if (tree_eq (pair_fst r) "Ok")
+    then (gated_inductive_respond (coh_check t) params self frame)
+    else (Extend (neutral_type self))
+}
+Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta_f tree_variants (pair view_tree encode_tree) tree_app_or_elim)
+// tree_rec: the dependent Tree recursor, read off the cells like nat_rec — the
+// typed face of shape dispatch. Concrete targets fold through the view; abstract
+// targets become stuck eliminations gated by coh_check (the same machinery as
+// every inductive; POSITIVE_TYPES §3c).
+tree_rec : {P : Tree -> Type} -> P t -> ({c : Tree} -> P c -> P (t c)) -> ({l : Tree} -> {r : Tree} -> P l -> P r -> P (t l r)) -> {v : Tree} -> P v :=
+  {motive, on_leaf, on_stem, on_fork, target} -> rec_value Tree motive { leaf := on_leaf; stem := on_stem; fork := on_fork } target
 // Frame: an elimination frame; untagged, the stored type interprets it (§7.1).
 Frame : Type := Tree
 // NeutralMeta / Action / RespondShape + the per-former RespondShapes use `Type`/`Action` in VALUE

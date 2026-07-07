@@ -111,16 +111,17 @@ not := {a} -> select FF TT a
 // ================================================================
 
 // wait a b c = a(b)(c), but wait(a)(b) does NOT evaluate a(b) eagerly.
-// Untyped: SATURATED wait applies its first argument, so the Pi check applies an
-// abstract Tree — Tree's respond sends hyp applications to the dead state, and
-// the H-rule then rejects the InvalidType-neutral. Typing this is the Tree
-// ELIMINATION question (the tree_rec rung), not an annotation away.
-wait := {a, b, c} -> t (t a) (t t c) b
+// Typed via Tree's APPLICATION face (the tree_rec rung): saturated wait applies
+// an abstract Tree, and a non-elimination frame now answers a stuck extension AT
+// Tree (a tree applied to a tree is a tree), which the H-rule accepts.
+wait : Tree -> Tree -> Tree -> Tree := {a, b, c} -> t (t a) (t t c) b
 
-// Self-applicator and fixed-point combinator. Untyped: omega self-applies its
-// argument, and fix's honest type needs the totality story (wf_fix / Total).
-omega := {x} -> x x
-fix := {f} -> wait omega ({x} -> f (wait omega x))
+// Self-applicator and fixed-point combinator. omega rides the same application
+// face (x x extends at Tree); fix's body only CONSTRUCTS (partial waits). The
+// honest FUNCTION-space type for fix still needs the totality story (wf_fix /
+// Total) — Tree -> Tree is the substrate-stratum truth, not the recursion scheme.
+omega : Tree -> Tree := {x} -> x x
+fix : Tree -> Tree := {f} -> wait omega ({x} -> f (wait omega x))
 
 // ================================================================
 // Tree / Nat helpers
