@@ -260,36 +260,27 @@ The 🧑/🤖 column estimates who typed the words; git does not record the spli
 | Document | What it is | 🧑/🤖? | Quality |
 |---|---|---|---|
 | [`README.md`](README.md) | This file. The example section is machine-checked literate code. | 🧑 25% · 🤖 75% | 9/10 |
-| [`GOALS.md`](GOALS.md) | The long-term vision: neural-guided synthesis, self-improving optimizer. | 🧑 85% · 🤖 15% | 6/10 |
-| [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. | 🤖 | 9/10 |
-| [`TYPE_THEORY.typ`](TYPE_THEORY.typ) | Authoritative type-theory spec: the two-op kernel, manifest contracts, library types, validators. | 🤖 | 8/10 |
-| [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. | 🤖 | 8/10 |
-| [`COMPILATION.typ`](COMPILATION.typ) | Parse, elaborate, emit pipeline. | 🤖 | 6/10 |
-| [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) | Tree-calculus implementation idioms: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 8/10 |
-| [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) | Why function types, pairs, records, and unit are one telescope former; the cell/walker architecture. | 🤖 | 8/10 |
-| [`MODULES.md`](MODULES.md) | The module system: hermetic files, explicit `given` dependencies, bare use as a functor. | 🤖 | 6/10 |
+| [`GOALS.md`](GOALS.md) | The long-term vision: neural-guided synthesis, self-improving optimizer. | 🧑 85% · 🤖 15% | 8/10 |
+| [`INTERACTIVE_WALKTHROUGH.html`](INTERACTIVE_WALKTHROUGH.html) | A walkthrough of various parts of disp. *Outdated* | 🧑 50% 🤖 50% | 7/10 |
+| [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. *Interesting Read* | 🤖 | 7/10 |
+| [`TYPE_THEORY.typ`](TYPE_THEORY.typ) | Authoritative type-theory spec: the two-op kernel, manifest contracts, library types, validators. *Long* | 🤖 | 5/10 |
 | [`EVALUATOR.md`](EVALUATOR.md) | The reduction-backend subsystem: the `Session` ABI, the five backends, the differential-oracle discipline. | 🤖 | 6/10 |
-| [`OPTIMIZER.typ`](OPTIMIZER.typ) | Unified design for the verified self-improving optimizer (unbuilt). | 🤖 | 6/10 |
-| [`SEALING.md`](SEALING.md) | The kernel's trust discipline as generative sealing and noninterference. | 🤖 | 6/10 |
-| [`CLAUDE.md`](CLAUDE.md) | Working context for the AI: code layout, implementation status, known workarounds. | 🤖 | 4/10 |
-| [`INTERACTIVE_WALKTHROUGH.html`](INTERACTIVE_WALKTHROUGH.html) | A generated single-page tour. Unlike the README's examples, nothing in it is machine-checked. | 🤖 | 4/10 |
-| `research/` | Deeper research notes (interaction combinators, equality for verified optimization, and more). | 🤖 | 4/10 |
-| `*_PLAN.md`, `TOWER.md`, `STRICTTYPE.md`, ... | Root-level planning and investigation notes, of varying staleness; the code is the status. | 🤖 | 2/10 |
-| `archive/` | Superseded proposals, kept for the record. | 🤖 | 2/10 |
+| [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) | Tree-calculus implementation idioms: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 6/10 |
+| [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. | 🤖 | 7/10 |
+| [`COMPILATION.typ`](COMPILATION.typ) | Parse, elaborate, emit pipeline. *Outdated* | 🤖 | 6/10 |
 
 The kernel is source code written to be read: the type system is a library, so these files are the type theory's implementation and its documentation at once.
 
 | Source file | What it is | 🧑/🤖? | Quality |
 |---|---|---|---|
 | [`lib/prelude.disp`](lib/prelude.disp) | The raw substrate below the type system: booleans, pairs, triage, wait/fix, tree_eq. | 🤖 | 8/10 |
-| [`lib/kernel/prelude.disp`](lib/kernel/prelude.disp) | The bootstrap barrel: loads the seven fragments raw, re-imports them checked, verifies as it goes. | 🤖 | 6/10 |
-| [`lib/kernel/cut.disp`](lib/kernel/cut.disp) | Products, records, lists; the `Action`/`CheckerResult` coproducts; the declaration protocol. | 🤖 | 8/10 |
-| [`lib/kernel/engine.disp`](lib/kernel/engine.disp) | The trusted core: `bind_hyp`, `hyp_reduce`, and the `param_apply` dispatcher. | 🤖 | 9/10 |
-| [`lib/kernel/cells.disp`](lib/kernel/cells.disp) | Wait-form cells, the one telescope walker, the negative formers (`Pi`, `Sigma`, `Record`, `⊤`). | 🤖 | 8/10 |
-| [`lib/kernel/base.disp`](lib/kernel/base.disp) | First-order types: `Unit`, `String`, `False`, `Eq`, `Refinement`, `Intersection`. | 🤖 | 6/10 |
-| [`lib/kernel/positive.disp`](lib/kernel/positive.disp) | Sums and recursion cells, the coherence gate, `Bool`, `Nat`, `Ord`. | 🤖 | 8/10 |
-| [`lib/kernel/generic.disp`](lib/kernel/generic.disp) | Recursors, folds, and functor maps read off type structure: one implementation for every inductive. | 🤖 | 6/10 |
-| [`lib/kernel/universe.disp`](lib/kernel/universe.disp) | The universe: `Type` as a behavioral check, the kernel's structural types, `GoodRespond`. | 🤖 | 8/10 |
+| [`lib/kernel/cut.disp`](lib/kernel/cut.disp) | Products, records, lists; the `Action`/`CheckerResult` coproducts; the declaration protocol. | 🤖 | 7/10 |
+| [`lib/kernel/engine.disp`](lib/kernel/engine.disp) | The trusted core: `bind_hyp`, `hyp_reduce`, and the `param_apply` dispatcher. | 🤖 | 5/10 |
+| [`lib/kernel/cells.disp`](lib/kernel/cells.disp) | Wait-form cells, the one telescope walker, the negative formers (`Pi`, `Sigma`, `Record`, `⊤`). | 🤖 | 5/10 |
+| [`lib/kernel/base.disp`](lib/kernel/base.disp) | First-order types: `Unit`, `String`, `False`, `Eq`, `Refinement`, `Intersection`. | 🤖 | 5/10 |
+| [`lib/kernel/positive.disp`](lib/kernel/positive.disp) | Sums and recursion cells, the coherence gate, `Bool`, `Nat`, `Ord`. | 🤖 | 5/10 |
+| [`lib/kernel/generic.disp`](lib/kernel/generic.disp) | Recursors, folds, and functor maps read off type structure: one implementation for every inductive. | 🤖 | 5/10 |
+| [`lib/kernel/universe.disp`](lib/kernel/universe.disp) | The universe: `Type` as a behavioral check, the kernel's structural types, `GoodRespond`. | 🤖 | 6/10 |
 
 `.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`TYPE_THEORY.pdf`, `SYNTAX.pdf`, `COMPILATION.pdf`) sit alongside them.
 
@@ -319,10 +310,10 @@ perf_logs/                  -- checked-in benchmark logs
 *.md, *.typ                 -- design docs and working notes (rated in the Documentation table above)
 ```
 
-## Acknowledgments 🤖
+## Acknowledgments
 
 Disp builds directly on Barry Jay's [tree calculus](https://github.com/barry-jay-personal/tree-calculus) and stands in the NuPRL tradition of types as predicates. [`FOUNDATIONS.md`](FOUNDATIONS.md) credits the full ancestry, from LCF and the Futamura projections to equality saturation and verifier-filtered neural search.
 
-## License 🤖
+## License
 
-Public domain, under the [Unlicense](LICENSE).
+This is licensed under the [Unlicense](LICENSE), i.e. it is dedicated to the public domain.
