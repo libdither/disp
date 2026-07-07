@@ -79,8 +79,10 @@ describe("disp", () => {
       finalNodes = scoped?.stats?.().nodes ?? finalNodes
       finalFree = scoped?.stats?.().free ?? finalFree
       if (r.failed.length > 0) {
-        // TODO: figure out how to return specific line in test file that failed (e.g. via spans)
-        const msgs = r.failed.map(f => `[test ${f.i}] ${f.msg}`).join("\n")
+        // Each failure names its source line (stamped on the equation item by the
+        // tokenizer's line tracking); file:line is clickable in most terminals.
+        const msgs = r.failed.map(f =>
+          `[${f.line != null ? `${join(testsDir, file)}:${f.line}` : `test ${f.i}`}] ${f.msg}`).join("\n")
         throw new Error(`${file}:\n${msgs}`)
       }
       expect(r.passed).toBe(r.tests)

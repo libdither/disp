@@ -54,23 +54,32 @@ function tmpFile(name: string, contents: string): string {
 // ─────────────────────────── tokenizer ──────────────────────────────────
 
 describe("tokenize", () => {
+  // Tokens carry a source `line` (test-failure reporting); these pins are about
+  // classification, so strip it before comparing.
+  const tok = (src: string) => tokenize(src).map(({ line: _line, ...rest }) => rest)
+
   it("emits eof sentinel", () => {
-    const toks = tokenize("")
+    const toks = tok("")
     expect(toks).toEqual([{ t: "eof" }])
   })
 
+  it("stamps 1-based source lines (block comments and strings span them)", () => {
+    expect(tokenize("a\nb").map(t => t.line)).toEqual([1, 1, 2, 2]) // a, nl, b, eof
+    expect(tokenize("/* x\ny */ c").map(t => t.line)).toEqual([2, 2]) // c, eof
+  })
+
   it("skips spaces/tabs, preserves newlines", () => {
-    const toks = tokenize("  \t foo \t ")
+    const toks = tok("  \t foo \t ")
     expect(toks.filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "foo" }, { t: "eof" }])
   })
 
   it("// line comments", () => {
-    const toks = tokenize("// a comment\nfoo // tail\n")
+    const toks = tok("// a comment\nfoo // tail\n")
     expect(toks.filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "foo" }, { t: "eof" }])
   })
 
   it("/* block comments */", () => {
-    const toks = tokenize("/* block\n   comment */foo")
+    const toks = tok("/* block\n   comment */foo")
     expect(toks.filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "foo" }, { t: "eof" }])
   })
 
@@ -81,7 +90,7 @@ describe("tokenize", () => {
   it("classifies keywords vs identifiers", () => {
     // `let` and `test` are ordinary identifiers now (library values, not syntax);
     // the keyword set is use/open/match/if/then/else.
-    const toks = tokenize("let test use open lets tests")
+    const toks = tok("let test use open lets tests")
     const nonNl = toks.filter(t => t.t !== "nl" && t.t !== "eof")
     expect(nonNl).toEqual([
       { t: "id", v: "let" }, { t: "id", v: "test" }, { t: "kw", v: "use" },
@@ -90,7 +99,7 @@ describe("tokenize", () => {
   })
 
   it("numeric literals", () => {
-    const toks = tokenize("0 12")
+    const toks = tok("0 12")
     expect(toks.filter(t => t.t !== "nl" && t.t !== "eof")).toEqual([
       { t: "num", v: 0 },
       { t: "num", v: 12 },
@@ -98,19 +107,19 @@ describe("tokenize", () => {
   })
 
   it("treats bare t as leaf, t-prefix as identifier", () => {
-    expect(tokenize("t").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "eof" }])
-    expect(tokenize("ty").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "ty" }, { t: "eof" }])
-    expect(tokenize("t1").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "t1" }, { t: "eof" }])
-    expect(tokenize("t t").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "leaf" }, { t: "eof" }])
-    expect(tokenize("t'").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "t'" }, { t: "eof" }])
+    expect(tok("t").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "eof" }])
+    expect(tok("ty").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "ty" }, { t: "eof" }])
+    expect(tok("t1").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "t1" }, { t: "eof" }])
+    expect(tok("t t").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "leaf" }, { t: "eof" }])
+    expect(tok("t'").filter(t => t.t !== "nl")).toEqual([{ t: "id", v: "t'" }, { t: "eof" }])
   })
 
   it("accepts △ as leaf", () => {
-    expect(tokenize("△").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "eof" }])
+    expect(tok("△").filter(t => t.t !== "nl")).toEqual([{ t: "leaf" }, { t: "eof" }])
   })
 
   it("identifier extras (underscore, digits, primes)", () => {
-    const toks = tokenize("foo_bar Foo1 x' _private").filter(t => t.t !== "nl" && t.t !== "eof")
+    const toks = tok("foo_bar Foo1 x' _private").filter(t => t.t !== "nl" && t.t !== "eof")
     expect(toks).toEqual([
       { t: "id", v: "foo_bar" }, { t: "id", v: "Foo1" },
       { t: "id", v: "x'" }, { t: "id", v: "_private" },
@@ -118,14 +127,14 @@ describe("tokenize", () => {
   })
 
   it("multi-char punctuation before single-char", () => {
-    const toks = tokenize(":= -> → . , ; = : ( ) { }").filter(t => t.t !== "nl" && t.t !== "eof")
+    const toks = tok(":= -> → . , ; = : ( ) { }").filter(t => t.t !== "nl" && t.t !== "eof")
     expect(toks).toEqual(
       [":=", "->", "→", ".", ",", ";", "=", ":", "(", ")", "{", "}"].map(v => ({ t: "punct", v })),
     )
   })
 
   it("parses string literals without escapes", () => {
-    expect(tokenize(`"a/b.disp"`).filter(t => t.t !== "nl")).toEqual([{ t: "str", v: "a/b.disp" }, { t: "eof" }])
+    expect(tok(`"a/b.disp"`).filter(t => t.t !== "nl")).toEqual([{ t: "str", v: "a/b.disp" }, { t: "eof" }])
   })
 
   it("throws on unterminated strings", () => {
@@ -608,7 +617,7 @@ describe("parse errors", () => {
     expect(result).toEqual({
       tag: "recValue",
       fields: [],
-      members: [{ tag: "test", lhs: ap(v("test"), leaf), rhs: leaf }],
+      members: [{ tag: "test", lhs: ap(v("test"), leaf), rhs: leaf, line: 1 }],
       trailing: leaf,
     })
   })

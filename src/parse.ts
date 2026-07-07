@@ -9,7 +9,9 @@
 
 // ───────────────────────────── 1. Tokens ─────────────────────────────────
 
-export type Tok =
+// Every token carries the 1-based source line it starts on (`line`), stamped by
+// tokenize — the runner uses it to report which test equation failed.
+export type Tok = (
   | { t: "id"; v: string }
   | { t: "num"; v: number }
   | { t: "punct"; v: string }
@@ -18,6 +20,7 @@ export type Tok =
   | { t: "str"; v: string }
   | { t: "nl" }
   | { t: "eof" }
+) & { line?: number }
 
 // `let` and `test` are NOT keywords: `let` is a library request decorator (cut.disp)
 // consumed through the decorated-declaration grammar, and `test` is the prelude
@@ -35,53 +38,63 @@ const IDENT_TAIL = /[A-Za-z0-9_']/
 export function tokenize(src: string): Tok[] {
   const toks: Tok[] = []
   let i = 0
+  let line = 1
+  const push = (tok: Tok) => { tok.line = line; toks.push(tok) }
   while (i < src.length) {
     const c = src[i]
-    // Newlines are significant (SEMI/COMMA separator).
-    if (c === "\n") { toks.push({ t: "nl" }); i++; continue }
+    // Newlines are significant (SEMI/COMMA separator). The nl token belongs to
+    // the line it terminates.
+    if (c === "\n") { push({ t: "nl" }); line++; i++; continue }
     if (/[ \t\r]/.test(c)) { i++; continue }
     // Line comment: //
     if (c === "/" && i + 1 < src.length && src[i + 1] === "/") {
       while (i < src.length && src[i] !== "\n") i++
       continue
     }
-    // Block comment: /* */
+    // Block comment: /* */ (count the newlines it spans)
     if (c === "/" && i + 1 < src.length && src[i + 1] === "*") {
       i += 2
-      while (i + 1 < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++
+      while (i + 1 < src.length && !(src[i] === "*" && src[i + 1] === "/")) { if (src[i] === "\n") line++; i++ }
       if (i + 1 >= src.length) throw new Error(`tokenize: unterminated block comment`)
       i += 2; continue
     }
     if (c === '"') {
       const j = src.indexOf('"', i + 1)
       if (j < 0) throw new Error(`tokenize: unterminated string at offset ${i}`)
-      toks.push({ t: "str", v: src.slice(i + 1, j) })
+      push({ t: "str", v: src.slice(i + 1, j) })
+      for (let k = i + 1; k < j; k++) if (src[k] === "\n") line++
       i = j + 1; continue
     }
-    if (c === "△") { toks.push({ t: "leaf" }); i++; continue }
+    if (c === "△") { push({ t: "leaf" }); i++; continue }
     // Bare `t` (not followed by an ident char) is the leaf; otherwise an ident.
     if (c === "t" && !(i + 1 < src.length && IDENT_TAIL.test(src[i + 1]))) {
-      toks.push({ t: "leaf" }); i++; continue
+      push({ t: "leaf" }); i++; continue
     }
     if (/[0-9]/.test(c)) {
       let j = i + 1
       while (j < src.length && /[0-9]/.test(src[j])) j++
-      toks.push({ t: "num", v: Number(src.slice(i, j)) })
+      push({ t: "num", v: Number(src.slice(i, j)) })
       i = j; continue
     }
     const p = PUNCT.find(p => src.startsWith(p, i))
-    if (p) { toks.push({ t: "punct", v: p }); i += p.length; continue }
+    if (p) { push({ t: "punct", v: p }); i += p.length; continue }
     if (IDENT_HEAD.test(c)) {
       let j = i + 1
       while (j < src.length && IDENT_TAIL.test(src[j])) j++
       const word = src.slice(i, j)
-      toks.push(KEYWORDS.has(word) ? { t: "kw", v: word } : { t: "id", v: word })
+      push(KEYWORDS.has(word) ? { t: "kw", v: word } : { t: "id", v: word })
       i = j; continue
     }
     throw new Error(`tokenize: unexpected ${JSON.stringify(c)} at offset ${i}`)
   }
-  toks.push({ t: "eof" })
+  push({ t: "eof" })
   return toks
+}
+
+// First non-newline token's line at/after `i` — the line an item starts on.
+export function tokLine(ts: Tok[], i: number): number | undefined {
+  for (let k = i; k < ts.length; k++) if (ts[k].t !== "nl") return ts[k].line
+  return ts[ts.length - 1]?.line
 }
 
 // ──────────────────────────── 2. AST types ───────────────────────────────
@@ -127,7 +140,7 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 export type RecMember =
   | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
-  | { tag: "test"; lhs: Expr; rhs: Expr }
+  | { tag: "test"; lhs: Expr; rhs: Expr; line?: number }
   | { tag: "open"; expr: Expr }
 // A "field" is a DECLARATION: `head? NAME (: T)? (:= v)?` (COMPILATION.typ
 // § Declarations as requests). `head` is the optional request-decorator expression
@@ -756,7 +769,7 @@ const bracedEquationP: P<RecMember> = (ts, i) => {
   if (bad) return err(bad, lhsR.pos)
   const restR = seq(skipNl, lazy(() => lineExpr), semiP)(ts, eqR.pos)
   if (!restR.ok) return restR
-  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: restR.v[1] }, restR.pos)
+  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: restR.v[1], line: tokLine(ts, i) }, restR.pos)
 }
 
 const bracedOpenP: P<RecMember> = map(
@@ -1090,7 +1103,7 @@ const equationItem: P<RecMember> = (ts, i) => {
   if (bad) return err(bad, lhsR.pos)
   const rhsR = seq(skipNl, lazy(() => expr))(ts, eqR.pos)
   if (!rhsR.ok) return rhsR
-  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: rhsR.v[1] }, rhsR.pos)
+  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: rhsR.v[1], line: tokLine(ts, i) }, rhsR.pos)
 }
 
 const openItem: P<RecMember> = map(

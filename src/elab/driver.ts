@@ -15,7 +15,9 @@ import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree,
 
 export type Decl =
   | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null }
-  | { kind: "Test"; lhs: Tree; rhs: Tree }
+  // `line` is the equation's 1-based source line (absent for tests emitted by
+  // inline recValue blocks, which have no surface line of their own).
+  | { kind: "Test"; lhs: Tree; rhs: Tree; line?: number }
 
 // The pristine `default_guard` tree per session, captured at its first definition
 // (cut.disp). The declaration fast path applies only while the ambient default is
@@ -781,6 +783,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           kind: "Test",
           lhs: compileExpr(equationLhs(it.lhs, lookupEntry), lookupEntry, resolveUse, sinks),
           rhs: compileExpr(it.rhs, lookupEntry, resolveUse, sinks),
+          line: it.line,
         })
         recordItem("test", undefined, compiledTestIndex)
         return

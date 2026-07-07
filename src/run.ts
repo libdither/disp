@@ -9,7 +9,7 @@ import type { Session, EvalStats } from "./eval/types.js"
 import { getBackend, defaultBackendName } from "./eval/registry.js"
 import { emitBlob } from "./format/export.js"
 
-interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string }[] }
+interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string; line?: number }[] }
 interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: Session<Tree> }
 
 export function runFile(path: string, options: RunOptions = {}): RunResult {
@@ -57,6 +57,7 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
       } else {
         result.failed.push({
           i: testIdx,
+          line: d.line,
           msg: `mismatch:\n    lhs = ${pretty(d.lhs)}\n    rhs = ${pretty(d.rhs)}`,
         })
       }
@@ -137,7 +138,7 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       console.log(showStatsAll ? "items:" : "top-items:")
       for (const line of selected) console.log(line)
     }
-    for (const f of r.failed) console.error(`  [${f.i}] ${f.msg}`)
+    for (const f of r.failed) console.error(`  [${f.line != null ? `${file}:${f.line}` : `test ${f.i}`}] ${f.msg}`)
     process.exit(r.failed.length > 0 ? 1 : 0)
   } catch (e) {
     console.error(`error: ${(e as Error).message}`)
