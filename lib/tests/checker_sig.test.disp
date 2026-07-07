@@ -18,4 +18,4 @@ test tree_eq (pair_fst (wait pair_snd zero)) (checker_sig pair_snd) = TT
 
 // the kernel instances are cached projections of the same shape
 test tree_eq hyp_sig (checker_sig hyp_reduce) = TT
-test tree_eq annihilate_sig (checker_sig annihilate) = TT
+test tree_eq cut_sig (checker_sig cut) = TT

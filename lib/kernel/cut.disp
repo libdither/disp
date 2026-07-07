@@ -3,7 +3,7 @@
 //
 // The idea to hold: a record is a pair of a name list and a payload list, made callable
 // by `prod`. Applying it to an accessor `acc "x"` finds "x" in the names and runs that
-// field's stored entry on the accessor's payload (`annihilate`, the cut). Stored record
+// field's stored entry on the accessor's payload (`cut`, the §2.6 elimination). Stored record
 // values are wrapped as constant functions (`list_const v`), so a projection returns the
 // value unchanged; a match table stores real functions that destructure the payload. One
 // mechanism serves records, match, and field access.
@@ -79,16 +79,16 @@ list_rev := fix ({self, l, out} -> if (is_fork l) then (self (pair_snd l) (cons 
 // Concatenate list
 list_cat := fix ({self, l, ys} -> if (is_fork l) then (cons (pair_fst l) (self (pair_snd l) ys)) else ys)
 
-// proj resolves a record by field name; annihilate is the cut: apply a record to an
-// enum value -> index the record by the enum's tag, run that field on the payload.
+// proj resolves a record by field name; cut is the one elimination: apply a record
+// to an enum value -> index the record by the enum's tag, run that field on the
+// payload. (Named annihilate until 2026-07-07; renamed to match the file and §2.6.)
 
 /// Project record/product `P` with `name`
 /// Impl: Records are pairs (name_list, items). Get index from name_list via `name`, use index to fetch correct item from payload.
 proj := {P, name} -> list_nth (pair_snd P) (list_index_of (pair_fst P) name)
 /// Take record/product `P` and destruct with coproduct `c`. Products are by default records of >=1-arg functions. Coproducts contain a payload to select a function and then call with arguments
 /// Impl: get name tag from coproduct `c`, project out function from `P` using proj, call function with payload arguments of `c`.
-/// TODO: rename annihilate to something more reasonable like `cut` or `product_elim`.
-annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
+cut := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
 /// Products are represented as wait-forms to allow for destruction to be application. (Applying a product to a coproduct destructs it).
 /// (Why products are the callable side, not coproducts Scott-style: a Scott coproduct is a
 /// closure — its tag and payload are hidden in a compiled lambda body, so a recognizer could
@@ -97,12 +97,12 @@ annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
 /// carrying that field name). And a record-as-wait-form shares one shape with types and
 /// neutrals, so `.field`, `match`, and hyp projection are a single mechanism. Note `match`
 /// already IS `product coproduct`: an accessor is a nullary coproduct, `acc name`.)
-prod : Tree -> Tree := {P} -> wait annihilate P // a callable product; field table is its meta
-/// tree signature of annihilate function.
-annihilate_sig := checker_sig annihilate
+prod : Tree -> Tree := {P} -> wait cut P // a callable product; field table is its meta
+/// tree signature of the cut function (what marks a value as a §2.6 record).
+cut_sig := checker_sig cut
 /// Raw record constructor
 make_record : Tree -> Tree -> Tree := {names, payload} -> prod (pair names payload)
-/// take a record a project using coproduct annihilate destructor (by first converting name to coproduct)
+/// take a record and project using the coproduct cut (by first converting name to a coproduct)
 /// ELAB: elaborator resolves field access `r.name` to this
 field := {r, name} -> r (acc name)
 
@@ -124,7 +124,7 @@ Err : Tree := inj0 "Err"
 bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind
 
 // lookup_field: the checking-layer sibling of `field`. The runtime cut (`field`/`proj`/
-// `annihilate`) is total: it trusts the projected name is present, which keeps projection
+// `cut`) is total: it trusts the projected name is present, which keeps projection
 // a plain application. The recognizer is what establishes presence, so it looks up
 // honestly (`Ok value` / `Err`); without this, a record missing `name` projects to junk
 // `t t`, which a permissive field type (Tree/String) would silently accept.

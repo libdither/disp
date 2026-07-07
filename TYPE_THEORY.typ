@@ -380,7 +380,7 @@ Selects a field by name: reads the table's name header for the field's position,
 then indexes the payload. Internal to the cut — no surface syntax of its own.
 
 ```disp
-annihilate : FieldTable -> (c : Variant) -> B (tag c) :=
+cut : FieldTable -> (c : Variant) -> B (tag c) :=
   {P, c} -> (proj P (pair_fst c)) (pair_snd c)
 ```
 The *cut body*: select `P`'s field named by `c`'s tag, then feed that field `c`'s
@@ -388,7 +388,7 @@ payload.
 
 ```disp
 prod : FieldTable -> Product :=
-  {P} -> wait annihilate P
+  {P} -> wait cut P
 ```
 Makes a field table *callable* — the product behind both `{ a := x }` and
 `match`. `prod P` is a wait-form (§5.4), so applying it is raw substrate
@@ -453,7 +453,7 @@ its header; the `prod` wrapper makes that table callable so the cut drives both.
 Projection is the cut against a nullary accessor — not a positional shortcut:
 
 ```disp
-r.a   ≡   r (acc a)   →   annihilate F (inj a unit)
+r.a   ≡   r (acc a)   →   cut F (inj a unit)
                        →   (proj F a) unit   →   (const x) unit   →   x
 ```
 

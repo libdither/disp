@@ -52,24 +52,24 @@ export function treeToString(t: Tree): string {
   return codes.length ? String.fromCodePoint(...codes) : ""
 }
 
-// recordFieldsFromTree(tree): if `tree` is a §2.6 record VALUE (an annihilate-
-// rooted product — e.g. the output of `make_record` / `Enum`), read its field-name
+// recordFieldsFromTree(tree): if `tree` is a §2.6 record VALUE (a cut-rooted
+// product — e.g. the output of `make_record` / `Enum`), read its field-name
 // header and extract each field via the cut, so `open` works on a *computed*
 // record, not only on statically-known `use` modules. Returns undefined for
 // anything that isn't such a record — in particular library TYPES are
-// recognizer-rooted (not annihilate-rooted), so they are correctly excluded.
-// Needs the kernel in scope (`annihilate_sig`/`type_meta`/`pair_fst`); without
+// recognizer-rooted (not cut-rooted), so they are correctly excluded.
+// Needs the kernel in scope (`cut_sig`/`type_meta`/`pair_fst`); without
 // it, returns undefined.
 export function recordFieldsFromTree(
   tree: Tree,
   lookupEntry: (name: string) => ScopeEntry | undefined,
 ): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[] } | undefined {
-  const annihilateSig = lookupEntry("annihilate_sig")?.tree
+  const cutSig = lookupEntry("cut_sig")?.tree
   const typeMeta = lookupEntry("type_meta")?.tree
   const pairFst = lookupEntry("pair_fst")?.tree
-  if (!annihilateSig || !typeMeta || !pairFst) return undefined
+  if (!cutSig || !typeMeta || !pairFst) return undefined
   const sig = treePairFst(tree)
-  if (!sig || !elab.cs.equal!(sig, annihilateSig)) return undefined
+  if (!sig || !elab.cs.equal!(sig, cutSig)) return undefined
   // names = pair_fst (type_meta tree): a cons-chain of interned string tags.
   const namesTree = elab.cs.apply(pairFst, elab.cs.apply(typeMeta, tree, B()), B())
   const fields: string[] = []

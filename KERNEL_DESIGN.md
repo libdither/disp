@@ -237,7 +237,7 @@ caveats.)
 
 Field names and field trees are compile-time metadata used for
 projection and `open`. The value-level §2.6 records the kernel uses for
-metadata are `prod`/`annihilate` forms read by name through the cut
+metadata are `prod`/`cut` forms read by name through the cut
 (`field` / `proj`).
 
 Files with any `name := expr` field export only those fields. A legacy

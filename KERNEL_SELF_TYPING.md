@@ -41,7 +41,7 @@ Scratch suites, all green (negative results asserted as `≠ Ok TT`, so green = 
 - **`lib/tests/positive_proto.test.disp`** — the recognizer/dispatcher MERGE works on RAW
   `inj` values with ZERO kernel edits: a `pos_cell` op (defined in the test) lets `at` walk a
   raw pair; a fresh recursive `NatList` is recognized end-to-end via the generic
-  nested-telescope recognizer; surface `match` (= the cut `annihilate`) is the eliminator.
+  nested-telescope recognizer; surface `match` (= the cut function `cut`) is the eliminator.
 - **`lib/tests/coh_gate_proto.test.disp`** — the gate-as-telescope (`coh = param_apply
   (Telescope (case_tele motive)) cases`) **runs correctly at runtime, incl. a DEPENDENT motive**
   (`P n = Eq Nat n n`). But **self-typing FAILS** (`param_apply ProjectingRespondShape

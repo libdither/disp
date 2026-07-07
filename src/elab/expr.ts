@@ -393,7 +393,7 @@ export function exprToCir(
       }
 
       // The handler an arm contributes: the cut applies it to the payload
-      // (annihilate: `(proj P tag) (pair_snd c)`); binders destructure it.
+      // (cut: `(proj P tag) (pair_snd c)`); binders destructure it.
       //   0 binders → ignore the payload;  1 → the payload IS the binder;
       //   n≥2 → a right-nested pair (pair b0 (pair b1 …)), projected.
       const handlerCir = (a: typeof arms[number]): Cir => {

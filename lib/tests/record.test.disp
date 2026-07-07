@@ -9,7 +9,7 @@ let r := { a := zero; b := TT }
 test r.a = zero // statically-known record: compile-time collapse
 test r.b = TT
 
-// it IS a §2.6 product (annihilate-rooted), so the cut combinators work on it
+// it IS a §2.6 product (cut-rooted), so the cut combinators work on it
 test field r "a" = zero
 test field r "b" = TT
 

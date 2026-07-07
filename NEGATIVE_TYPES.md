@@ -112,7 +112,7 @@ The telescope currently covers `⊤`/`Π`/`Σ`/records. The rest of the *negativ
   applied (a callable record = `Neg` over a sum index `Q = Tags ⊕ A`) needs the
   elimination *frame* to carry an accessor-vs-argument tag so one walk dispatches it.
   Validated in scratch with **tagged queries** (`inj "apply" arg`); blocked on `acc`
-  being load-bearing for the §2.6 value cut (`annihilate` indexes records by the
+  being load-bearing for the §2.6 value cut (`cut` indexes records by the
   accessor's tag), so it cannot be naively retagged. This is now the live frontier
   (§7).
 - **Metacircular self-typing of the telescope machinery.** Cells are now wait-forms

@@ -67,7 +67,7 @@ list_length : Intersection Type ({A} -> Arrow (List A) Nat) :=
 // barrel. (The reverse direction is impossible: raw-importing std/list into a
 // kernel fragment is a load cycle — this file checked-imports the kernel barrel —
 // and cut/engine cannot route through kernel machinery anyway, since match ->
-// annihilate -> proj -> list ops is the checker's own inner loop.)
+// cut -> proj -> list ops is the checker's own inner loop.)
 list_append := list_cat
 
 // Generic map. The internal recursion is `(xs, f)`-ordered to dodge a
