@@ -4194,8 +4194,9 @@ test string_recognizer string_meta empty_string            = Ok true
 test string_recognizer string_meta (cons (char "a") empty_string) = Ok true
 ```
 
-(Full definitions live in `lib/types/`; the spec mandates the
-recognizer / meta shape above and the tests below.)
+(Full definitions live across the kernel fragments in `lib/kernel/` —
+String in `base.disp`; the spec mandates the recognizer / meta shape
+above and the tests below.)
 
 == `Type` itself
 

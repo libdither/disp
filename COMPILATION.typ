@@ -737,4 +737,7 @@ has that the disp-hosted elaborator need not replicate verbatim:
 - *The parser and driver* (tokenizer, grammar, `use` resolution, scope
   management) stay TS-side until the disp self-hosting story matures.
 
-Points of divergence are flagged in the TS source with `TODO(tree-host)`.
+(The TS source used to flag divergence points with `TODO(tree-host)` markers;
+they were removed with the deleted in-language elaborator, `lib/elab/`,
+2026-07-01. The list above is the surviving record; see `ELABORATOR_PLAN.md`
+for the shelved self-hosting roadmap.)
