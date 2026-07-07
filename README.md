@@ -7,23 +7,21 @@ Disp is a self-verified dependently-typed programming language built on the [tre
  - Write the type of such optimizers and have the optimizer create itself, yielding an interpretable (symbolic) recursively self-improving optimizer.
  - Create hardware cost models at varying levels of detail and have the optimizer target to produce behaviorally equivalent code that minimizes cost for those hardware models.
 
-## Why Disp?
+## Why Disp? 🤖
 
 [Rust](https://www.rust-lang.org/) is fast, but you can't verify your programs. [Lean](https://lean-lang.org/) can verify your programs, but it takes real effort and the result is usually not fast. And in every language you still write the implementation yourself: no toolchain takes a high-level specification and satisfies it for you. The closest thing today is a coding agent like Claude Code, which gets expensive at scale and still needs a language that can state formal specifications in the first place (Lean does not make this as easy as it could be).
 
 A language where all you write is the constraints, as detailed and rigorous as you need, with the implementation derived automatically, requires constraint checking that is itself fast and modular. This is the problem disp solves.
 
-## AI disclosure
+## AI disclosure 🤖
 
 Most of this repository was written by an AI. The current implementation (2026 onward) is a collaboration with Anthropic's Claude models running in Claude Code: nearly all of the TypeScript host, the kernel and standard library, the tests, the Rust evaluator backends, and the documentation, including most of this README, were drafted by Claude and landed through the maintainer's review. The commit history does not mark the split.
 
 What is not AI-written: the goals and the judgment. Disp started in 2021 as years of solo prototypes (lambda calculi over a content-addressed store, in Rust), and the vision in [`GOALS.md`](GOALS.md), the choice of what to attempt next, and the accept or reject call on every design are human. So is the editing hand on the prose.
 
-"AI-written" is accurate but incomplete for the designs themselves. The two-op kernel, types as raw predicates, telescopes as the one negative former: these came out of long design dialogues in which the human supplies goals, constraints, and taste, the AI drafts, argues, and implements, and each side regularly kills the other's proposals. For most of the load-bearing decisions neither party could honestly claim sole authorship. That seems to be the real shape of AI collaborative design at this scale: not code generation and not autocomplete, but a fast, well-read collaborator whose ideas still have to survive a human's sense of what the project is for.
+Authorship and polish both vary file by file. The [Documentation](#documentation) table below marks each document, kernel source files included, with an estimated human/AI split and a quality rating, so you can see what is AI-written, what is human-written, and what is worth reading.
 
-The working discipline is the project's own thesis applied to its construction: trust the checker, not the author. AI-written code fails in characteristic ways (confident overstatement, quiet drift between claim and implementation), so nothing here rests on trusting its provenance. Every claim in this README is a machine-checked test, the kernel verifies the library built on top of it, and the evaluator backends must agree byte for byte. Disp is an attempt at a language in which machine-generated code can be verified rather than trusted, built by the kind of author it is designed to police. Errors that survive all of that are the maintainer's responsibility.
-
-## Disp by example
+## Disp by example 🤖
 
 This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked. Code blocks are tagged `rust` only to borrow GitHub's syntax highlighting; the code is disp.
 
@@ -219,7 +217,7 @@ test verify_good MyNat (inert_respond unit_witness) = Ok false       // refuses 
 
 The TypeScript and Rust hosts only accelerate these in-language definitions and are validated against them. Five evaluator backends sit behind one ABI and must agree byte for byte, so no single evaluator has to be trusted ([`EVALUATOR.md`](EVALUATOR.md)). Each decision above is argued against its historical precedents in [`FOUNDATIONS.md`](FOUNDATIONS.md).
 
-## Status
+## Status 🤖
 
 Working today:
 
@@ -232,7 +230,7 @@ Working today:
 
 Designed but not built: the optimizer itself ([`OPTIMIZER.typ`](OPTIMIZER.typ)), effects as a library, cost as a typing-level resource, cubical path types, and the neural proposer. The open research risks, most sharply whether a decidable fragment of behavioral equivalence is rich enough to license the rewrites an optimizer needs, are catalogued as falsifiable questions in [`FOUNDATIONS.md`](FOUNDATIONS.md) §V.
 
-## Getting Started
+## Getting Started 🤖
 
 Requires Node.js. The Rust backends are optional; the test suite runs without a Rust toolchain.
 
@@ -253,26 +251,49 @@ Suggested reading order:
 4. [`SYNTAX.typ`](SYNTAX.typ) and [`TYPE_THEORY.typ`](TYPE_THEORY.typ): the formal surface grammar and type-theory spec.
 5. `lib/kernel/`: the type system's source. Reading order: `cut`, `engine`, `cells`, `base`, `positive`, `generic`, `universe`.
 
-## Documentation
+<a id="documentation"></a>
 
-| Document | What it is |
-|---|---|
-| [`GOALS.md`](GOALS.md) | The long-term vision: neural-guided synthesis, self-improving optimizer. |
-| [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. |
-| [`TYPE_THEORY.typ`](TYPE_THEORY.typ) | Authoritative type-theory spec: the two-op kernel, manifest contracts, library types, validators. |
-| [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. |
-| [`COMPILATION.typ`](COMPILATION.typ) | Parse, elaborate, emit pipeline. |
-| [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) | Tree-calculus implementation idioms: wait/fix, signatures, neutrals, bracket abstraction. |
-| [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) | Why function types, pairs, records, and unit are one telescope former; the cell/walker architecture. |
-| [`EVALUATOR.md`](EVALUATOR.md) | The reduction-backend subsystem: the `Session` ABI, the five backends, the differential-oracle discipline. |
-| [`OPTIMIZER.typ`](OPTIMIZER.typ) | Unified design for the verified self-improving optimizer (unbuilt). |
-| [`SEALING.md`](SEALING.md) | The kernel's trust discipline as generative sealing and noninterference. |
-| [`CLAUDE.md`](CLAUDE.md) | Working context: code layout, implementation status, known workarounds. |
-| `research/` | Deeper research notes (interaction combinators, equality for verified optimization, and more). |
+## Documentation 🤖
+
+The 🧑/🤖 column estimates who typed the words; git does not record the split, so the percentages are honest guesses, and a plain 🤖 means the human share is under 10%. Everything passed through both hands regardless: AI drafts land through human review, and the human prose has picked up AI-written annotations. Quality is a reading guide, from 10/10 (polished and current) down to 1/10 (working notes, possibly stale, kept for the record).
+
+| Document | What it is | 🧑/🤖? | Quality |
+|---|---|---|---|
+| [`README.md`](README.md) | This file. The example section is machine-checked literate code. | 🧑 25% · 🤖 75% | 9/10 |
+| [`GOALS.md`](GOALS.md) | The long-term vision: neural-guided synthesis, self-improving optimizer. | 🧑 85% · 🤖 15% | 6/10 |
+| [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. | 🤖 | 9/10 |
+| [`TYPE_THEORY.typ`](TYPE_THEORY.typ) | Authoritative type-theory spec: the two-op kernel, manifest contracts, library types, validators. | 🤖 | 8/10 |
+| [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. | 🤖 | 8/10 |
+| [`COMPILATION.typ`](COMPILATION.typ) | Parse, elaborate, emit pipeline. | 🤖 | 6/10 |
+| [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) | Tree-calculus implementation idioms: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 8/10 |
+| [`NEGATIVE_TYPES.md`](NEGATIVE_TYPES.md) | Why function types, pairs, records, and unit are one telescope former; the cell/walker architecture. | 🤖 | 8/10 |
+| [`MODULES.md`](MODULES.md) | The module system: hermetic files, explicit `given` dependencies, bare use as a functor. | 🤖 | 6/10 |
+| [`EVALUATOR.md`](EVALUATOR.md) | The reduction-backend subsystem: the `Session` ABI, the five backends, the differential-oracle discipline. | 🤖 | 6/10 |
+| [`OPTIMIZER.typ`](OPTIMIZER.typ) | Unified design for the verified self-improving optimizer (unbuilt). | 🤖 | 6/10 |
+| [`SEALING.md`](SEALING.md) | The kernel's trust discipline as generative sealing and noninterference. | 🤖 | 6/10 |
+| [`CLAUDE.md`](CLAUDE.md) | Working context for the AI: code layout, implementation status, known workarounds. | 🤖 | 4/10 |
+| [`INTERACTIVE_WALKTHROUGH.html`](INTERACTIVE_WALKTHROUGH.html) | A generated single-page tour. Unlike the README's examples, nothing in it is machine-checked. | 🤖 | 4/10 |
+| `research/` | Deeper research notes (interaction combinators, equality for verified optimization, and more). | 🤖 | 4/10 |
+| `*_PLAN.md`, `TOWER.md`, `STRICTTYPE.md`, ... | Root-level planning and investigation notes, of varying staleness; the code is the status. | 🤖 | 2/10 |
+| `archive/` | Superseded proposals, kept for the record. | 🤖 | 2/10 |
+
+The kernel is source code written to be read: the type system is a library, so these files are the type theory's implementation and its documentation at once.
+
+| Source file | What it is | 🧑/🤖? | Quality |
+|---|---|---|---|
+| [`lib/prelude.disp`](lib/prelude.disp) | The raw substrate below the type system: booleans, pairs, triage, wait/fix, tree_eq. | 🤖 | 8/10 |
+| [`lib/kernel/prelude.disp`](lib/kernel/prelude.disp) | The bootstrap barrel: loads the seven fragments raw, re-imports them checked, verifies as it goes. | 🤖 | 6/10 |
+| [`lib/kernel/cut.disp`](lib/kernel/cut.disp) | Products, records, lists; the `Action`/`CheckerResult` coproducts; the declaration protocol. | 🤖 | 8/10 |
+| [`lib/kernel/engine.disp`](lib/kernel/engine.disp) | The trusted core: `bind_hyp`, `hyp_reduce`, and the `param_apply` dispatcher. | 🤖 | 9/10 |
+| [`lib/kernel/cells.disp`](lib/kernel/cells.disp) | Wait-form cells, the one telescope walker, the negative formers (`Pi`, `Sigma`, `Record`, `⊤`). | 🤖 | 8/10 |
+| [`lib/kernel/base.disp`](lib/kernel/base.disp) | First-order types: `Unit`, `String`, `False`, `Eq`, `Refinement`, `Intersection`. | 🤖 | 6/10 |
+| [`lib/kernel/positive.disp`](lib/kernel/positive.disp) | Sums and recursion cells, the coherence gate, `Bool`, `Nat`, `Ord`. | 🤖 | 8/10 |
+| [`lib/kernel/generic.disp`](lib/kernel/generic.disp) | Recursors, folds, and functor maps read off type structure: one implementation for every inductive. | 🤖 | 6/10 |
+| [`lib/kernel/universe.disp`](lib/kernel/universe.disp) | The universe: `Type` as a behavioral check, the kernel's structural types, `GoodRespond`. | 🤖 | 8/10 |
 
 `.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`TYPE_THEORY.pdf`, `SYNTAX.pdf`, `COMPILATION.pdf`) sit alongside them.
 
-## Repository Layout
+## Repository Layout 🤖
 
 ```
 src/                        -- the host implementation (TypeScript; an accelerator for the in-language spec)
@@ -283,21 +304,25 @@ src/                        -- the host implementation (TypeScript; an accelerat
   run.ts                    --   file runner / CLI
 
 lib/                        -- the language, written in itself
-  prelude.disp              --   fundamental combinators (booleans, pairs, wait/fix, triage)
-  kernel/                   --   the type system: 7 fragments around a 2-op trusted core
-  std/                      --   standard library (nat, list, option, result, set, stream, ...)
-  tests/                    --   ~1,000 object-language tests, 50 files
+  prelude.disp              --   the raw substrate: booleans, pairs, wait/fix, triage, tree_eq
+  kernel/                   --   the type system: seven fragments + a bootstrap barrel, around a 2-op trusted core
+  std/                      --   standard library (nat, list, option, result, pair, set, stream, oeq, effect, ...)
+  tests/                    --   ~1,200 object-language tests across ~60 files
 
 evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers)
 test/                       -- vitest harness + host unit tests
 bench/                      -- evaluator benchmarks
 research/                   -- research notes and designs
+archive/                    -- superseded proposals, kept for the record
+editors/                    -- editor support (vscode-disp)
+perf_logs/                  -- checked-in benchmark logs
+*.md, *.typ                 -- design docs and working notes (rated in the Documentation table above)
 ```
 
-## Acknowledgments
+## Acknowledgments 🤖
 
 Disp builds directly on Barry Jay's [tree calculus](https://github.com/barry-jay-personal/tree-calculus) and stands in the NuPRL tradition of types as predicates. [`FOUNDATIONS.md`](FOUNDATIONS.md) credits the full ancestry, from LCF and the Futamura projections to equality saturation and verifier-filtered neural search.
 
-## License
+## License 🤖
 
 Public domain, under the [Unlicense](LICENSE).
