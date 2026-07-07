@@ -99,15 +99,21 @@ let lift_record := {sof, tele} -> make_setoid
 
 // setoid_of: derive the type's setoid. behavioral_specs is a NAMED record (so the field
 // stays shareable with other spec kinds); a declared `setoid` entry wins outright.
+// A NEUTRAL type takes the Eq base FIRST, before any meta read: a stuck type (a Pi
+// codomain like `P n` under a minted P) has no cells to descend, and reading its meta
+// is the reflection the walker rejects — without this branch a dependent license
+// relation (guard_eq at a recursor type) errs when the walker instantiates it.
+// `is_neutral` rides the pair_fst/tree_eq carve-outs, so the dispatch is walker-safe.
 setoid_of := fix ({self, T} ->
-  match (lookup_field ((type_meta T).behavioral_specs) "setoid") {
+  if (is_neutral T) then (eq_setoid T)
+  else (match (lookup_field ((type_meta T).behavioral_specs) "setoid") {
     Ok s => s
     Err _ => (if (is_pi_ty T)
       then (lift_setoid (pi_dom T) ({a} -> self (pi_cod T a)))
       else (if (and (is_record_ty T) (all_const (cells_of T)))
         then (lift_record self (cells_of T))
         else (eq_setoid T)))
-  })
+  }))
 
 // The four projections: the equivalence family and its laws, for any type.
 oeq       := {T} -> (setoid_of T).rel

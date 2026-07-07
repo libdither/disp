@@ -62,9 +62,14 @@ list_rec : Intersection Type ({A} ->
 list_length : Intersection Type ({A} -> Arrow (List A) Nat) :=
   {xs} -> list_rec ({_} -> Nat) 0 ({h, tl, ih} -> succ ih) xs
 
-list_append :=
-  fix ({self, xs, ys} ->
-    triage ys ({_} -> ys) ({head, tail} -> cons head (self tail ys)) xs)
+// list_append: the kernel cut's list_cat IS this function (same algorithm, same
+// junk behavior: non-fork -> ys), so reuse it rather than re-implement — the
+// substrate list toolkit lives in cut.disp and flows DOWN into std through the
+// barrel. (The reverse direction is impossible: raw-importing std/list into a
+// kernel fragment is a load cycle — this file checked-imports the kernel barrel —
+// and cut/engine cannot route through kernel machinery anyway, since match ->
+// annihilate -> proj -> list ops is the checker's own inner loop.)
+list_append := list_cat
 
 // Generic map. The internal recursion is `(xs, f)`-ordered to dodge a
 // bracket-abstraction edge case: when the innermost fix binder appears
