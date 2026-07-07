@@ -19,8 +19,8 @@ open use "../kernel/generic.disp" { Type := Type }
 open use "../kernel/universe.disp" { Type := Type, RespondShape }
 
 // kernel names are in scope and usable
-test param_apply Type Nat = Ok TT
-test typecheck Type (Pi Nat ({_} -> Bool)) = Ok TT
+test param_apply Type Nat = Ok true
+test typecheck Type (Pi Nat ({_} -> Bool)) = Ok true
 
 // Deferred self-check: with the raw layer in scope, each fragment's CHECKED module tuple
 // { record, typ } carries its annotated exports, resolved against the raw snapshot.
@@ -34,10 +34,10 @@ let base_mod := use "../kernel/base.disp" { Type := Type, Tree, Unit, Bool, Eq }
 let positive_mod := use "../kernel/positive.disp" { Type := Type, Tree, Ord }
 let generic_mod := use "../kernel/generic.disp" { Type := Type }
 let universe_mod := use "../kernel/universe.disp" { Type := Type, RespondShape }
-test verify cut_mod = Ok TT
-test verify engine_mod = Ok TT
-test verify cells_mod = Ok TT
-test verify base_mod = Ok TT
-test verify positive_mod = Ok TT
-test verify generic_mod = Ok TT
-test verify universe_mod = Ok TT
+test verify cut_mod = Ok true
+test verify engine_mod = Ok true
+test verify cells_mod = Ok true
+test verify base_mod = Ok true
+test verify positive_mod = Ok true
+test verify generic_mod = Ok true
+test verify universe_mod = Ok true

@@ -8,11 +8,11 @@ open use "../std/nat/arith.disp"
 // ── pos_cell (kernel): walk a RAW inj-pair positionally, no boxing. Name-lookup can't (it needs
 // a record header); positional reads pair_fst/pair_snd directly — same `at`, new op.
 let ByName := Telescope (t (proj_cell "fst" Nat) ({_} -> t (proj_cell "snd" Bool) ({_} -> t)))
-test typecheck ByName (pair 2 TT) = Ok FF                            // proj-by-name fails on a raw pair
+test typecheck ByName (pair 2 true) = Ok false                            // proj-by-name fails on a raw pair
 let ByPos := Telescope (t (pos_cell pair_fst Nat) ({_} -> t (pos_cell pair_snd Bool) ({_} -> t)))
-test typecheck ByPos (pair 2 TT)  = Ok TT                            // positional: raw pair recognized
-test typecheck ByPos (pair 2 zero) = Ok FF                           // snd not a Bool
-test typecheck ByPos (pair TT TT) = Ok FF                            // fst not a Nat
+test typecheck ByPos (pair 2 true)  = Ok true                            // positional: raw pair recognized
+test typecheck ByPos (pair 2 zero) = Ok false                           // snd not a Bool
+test typecheck ByPos (pair true true) = Ok false                            // fst not a Nat
 
 // ── a recursive, multi-arg datatype as a ONE-LINE spec — NO recognizer body:
 //      NatList = nil | cons (head : Nat) (tail : NatList)
@@ -22,15 +22,15 @@ let NatList := Coproduct [pair "nil" [], pair "cons" [Nat, Rec]]
 let nl_nil := inj "nil" t
 let nl_cons := {h, tl} -> inj "cons" (pair h tl)
 
-test typecheck NatList nl_nil                              = Ok TT   // base case (nullary, empty arg telescope)
-test typecheck NatList (nl_cons 2 nl_nil)                  = Ok TT   // one element
-test typecheck NatList (nl_cons 2 (nl_cons 3 nl_nil))      = Ok TT   // RECURSION via REC -> self
-test typecheck NatList (nl_cons 2 (nl_cons 3 (nl_cons 4 nl_nil))) = Ok TT
-test typecheck NatList (nl_cons TT nl_nil)                 = Ok FF   // head not a Nat
-test typecheck NatList (nl_cons 2 (nl_cons TT nl_nil))     = Ok FF   // nested head not a Nat
-test typecheck NatList (nl_cons 2 TT)                      = Ok FF   // tail not a NatList
-test typecheck NatList (inj "bogus" t)                     = Ok FF   // unknown tag
-test typecheck Type NatList                               = Ok TT   // the self-aware sum is a real Type
+test typecheck NatList nl_nil                              = Ok true   // base case (nullary, empty arg telescope)
+test typecheck NatList (nl_cons 2 nl_nil)                  = Ok true   // one element
+test typecheck NatList (nl_cons 2 (nl_cons 3 nl_nil))      = Ok true   // RECURSION via REC -> self
+test typecheck NatList (nl_cons 2 (nl_cons 3 (nl_cons 4 nl_nil))) = Ok true
+test typecheck NatList (nl_cons true nl_nil)                 = Ok false   // head not a Nat
+test typecheck NatList (nl_cons 2 (nl_cons true nl_nil))     = Ok false   // nested head not a Nat
+test typecheck NatList (nl_cons 2 true)                      = Ok false   // tail not a NatList
+test typecheck NatList (inj "bogus" t)                     = Ok false   // unknown tag
+test typecheck Type NatList                               = Ok true   // the self-aware sum is a real Type
 
 // ── a 3-ARG recursive constructor exercises pos_tele's right-nested accessor decode (inj3),
 //    with TWO recursive positions (self both sides):
@@ -38,11 +38,11 @@ test typecheck Type NatList                               = Ok TT   // the self-
 let BinTree := Coproduct [pair "leaf" [], pair "node" [Rec, Nat, Rec]]
 let bt_leaf := inj "leaf" t
 let bt_node := {l, x, r} -> inj "node" (pair l (pair x r))            // inj3 layout
-test typecheck BinTree bt_leaf                                              = Ok TT
-test typecheck BinTree (bt_node bt_leaf 5 bt_leaf)                          = Ok TT
-test typecheck BinTree (bt_node (bt_node bt_leaf 1 bt_leaf) 2 bt_leaf)      = Ok TT  // nested left
-test typecheck BinTree (bt_node bt_leaf TT bt_leaf)                         = Ok FF  // middle arg not a Nat
-test typecheck BinTree (bt_node bt_leaf 5 zero)                             = Ok FF  // right arg not a BinTree
+test typecheck BinTree bt_leaf                                              = Ok true
+test typecheck BinTree (bt_node bt_leaf 5 bt_leaf)                          = Ok true
+test typecheck BinTree (bt_node (bt_node bt_leaf 1 bt_leaf) 2 bt_leaf)      = Ok true  // nested left
+test typecheck BinTree (bt_node bt_leaf true bt_leaf)                         = Ok false  // middle arg not a Nat
+test typecheck BinTree (bt_node bt_leaf 5 zero)                             = Ok false  // right arg not a BinTree
 
 // ── eliminator = the §2.6 cut (surface `match`): project the case, spread args, recurse on REC.
 let nl_sum := fix ({self, target} ->

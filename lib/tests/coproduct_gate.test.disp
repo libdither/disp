@@ -14,30 +14,30 @@ let MyTree := Coproduct myTreeV
 let cNat := {_} -> Nat
 
 // ── coh_check directly (the kernel gate): coherent accept, incoherent reject ──
-test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } = Ok TT   // coherent
-test coh_check t MyNat cNat { z := TT;   s := ({p, ih} -> succ ih) } = Ok FF   // base : not Nat
-test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> TT) } = Ok FF        // step : not Nat
+test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } = Ok true   // coherent
+test coh_check t MyNat cNat { z := true;   s := ({p, ih} -> succ ih) } = Ok false   // base : not Nat
+test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> true) } = Ok false        // step : not Nat
 // 2 rec args + 2 IHs (the make-or-break: body uses both outer hyps):
-test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> add iha ihb) } = Ok TT
-test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> TT) } = Ok FF
+test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> add iha ihb) } = Ok true
+test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> true) } = Ok false
 // dependent motive P x = Eq MyNat x x:
 let dNat := {x} -> Eq MyNat x x
-test coh_check t MyNat dNat { z := refl; s := ({p, ih} -> refl) } = Ok TT
-test coh_check t MyNat dNat { z := TT;   s := ({p, ih} -> refl) } = Ok FF
+test coh_check t MyNat dNat { z := refl; s := ({p, ih} -> refl) } = Ok true
+test coh_check t MyNat dNat { z := true;   s := ({p, ih} -> refl) } = Ok false
 
 // ── `check` directly: η-readback a value against a Π / a base type ──
-test eta_check ({n} -> n) (Pi Nat ({_} -> Nat)) = Ok TT                          // id : Nat -> Nat
-test eta_check ({n} -> TT) (Pi Nat ({_} -> Nat)) = Ok FF                         // body returns Bool
-test eta_check zero Nat = Ok TT                                                  // base: recognize
+test eta_check ({n} -> n) (Pi Nat ({_} -> Nat)) = Ok true                          // id : Nat -> Nat
+test eta_check ({n} -> true) (Pi Nat ({_} -> Nat)) = Ok false                         // body returns Bool
+test eta_check zero Nat = Ok true                                                  // base: recognize
 
 // ── END-TO-END via the generic recursor `rec_value`: a neutral target routes through the gated
 //    respond, so a lying recursor is REJECTED at the function (the gap, CLOSED) ──
-test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } x) = Ok TT  // honest
-test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> TT) } x)       = Ok FF  // GAP CLOSED
+test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } x) = Ok true  // honest
+test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> true) } x)       = Ok false  // GAP CLOSED
 test rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } (inj "s" (inj "z" t)) = succ zero          // computes concretely
 
 // ── the new wins vs the old hand-rolled gate: the recursor's OWN TYPE verifies (HYP cases), and
 //    the gate's respond SELF-TYPES (η-readback, sig-dispatch, raw base — coh_gate_proto's wall avoided) ──
 let rec_type := {T} -> Pi (Arrow T Type) ({P} -> Arrow (derive_case_telescope T P) (Pi T ({x} -> P x)))
-test typecheck (rec_type MyNat) (rec_value MyNat) = Ok TT                                               // recursor own type (hyp cases)
-test param_apply ProjectingRespondShape ((type_meta MyNat).respond (type_meta MyNat).recognizer_params) = Ok TT  // SELF-TYPES
+test typecheck (rec_type MyNat) (rec_value MyNat) = Ok true                                               // recursor own type (hyp cases)
+test param_apply ProjectingRespondShape ((type_meta MyNat).respond (type_meta MyNat).recognizer_params) = Ok true  // SELF-TYPES

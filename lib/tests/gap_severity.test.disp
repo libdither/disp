@@ -3,13 +3,13 @@
 // R0 FINDING: the gap (a non-gated inductive former accepting an eliminator whose cases lie about
 // the motive) is a SUBJECT-REDUCTION / canonicity violation, NOT a logical inconsistency. It does
 // not cascade to a closed proof of False, because disp re-checks every value against its type at
-// the USE SITE (raw apply(T,v)=TT): a forged proof fails the target recognizer (Eq endpoints /
+// the USE SITE (raw apply(T,v)=true): a forged proof fails the target recognizer (Eq endpoints /
 // False). That structural defense is why the gap is "merely" a type-safety bug. (Full probe +
 // urgency verdict: ACTIVE_PLAN.md R0.)
 //
 // R3 (ACTIVE_PLAN.md): List is now GATED (coh_list, std/list.disp), so the gap is CLOSED for List —
-// an elim-routed recursor that lies about the motive is rejected at the FUNCTION (Ok FF), before
-// any use site. (Pre-gate these were Ok TT; the generic non-gated `Coproduct` still carries the gap
+// an elim-routed recursor that lies about the motive is rejected at the FUNCTION (Ok false), before
+// any use site. (Pre-gate these were Ok true; the generic non-gated `Coproduct` still carries the gap
 // pending R2/derive_gate — there only the use-site defense below applies.)
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
@@ -20,15 +20,15 @@ let my_list_disp := fix ({self, motive, cases, target} ->
   else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
 let my_list_rec := {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
 
-// ── R3: the gate CLOSES the gap (each line was Ok TT pre-gate) ──
-let lying := {xs} -> my_list_rec ({_} -> Nat) TT ({h, tl, ih} -> TT) xs
-test param_apply (Pi NatList ({_} -> Nat)) lying = Ok FF                  // gate rejects the lie at the function
-test lying nil = TT                                                       // the raw value is still junk (TT) — but now untypeable
+// ── R3: the gate CLOSES the gap (each line was Ok true pre-gate) ──
+let lying := {xs} -> my_list_rec ({_} -> Nat) true ({h, tl, ih} -> true) xs
+test param_apply (Pi NatList ({_} -> Nat)) lying = Ok false                  // gate rejects the lie at the function
+test lying nil = true                                                       // the raw value is still junk (true) — but now untypeable
 let bad_eq := {xs} -> my_list_rec ({z} -> Eq NatList nil z) refl ({h, tl, ih} -> refl) xs
-test param_apply (Pi NatList ({z} -> Eq NatList nil z)) bad_eq = Ok FF    // gate rejects the dishonest cons-case
+test param_apply (Pi NatList ({z} -> Eq NatList nil z)) bad_eq = Ok false    // gate rejects the dishonest cons-case
 
 // ── R0: the structural defense (use-site re-check) — why the gap was never an inconsistency ──
 // Even handed the forged proof directly, the use site rejects it (endpoints nil != cons zero nil):
-test param_apply (Eq NatList nil (list_cons zero nil)) refl = Ok FF
+test param_apply (Eq NatList nil (list_cons zero nil)) refl = Ok false
 // hence no transport across it can inhabit False:
-test typecheck False (eq_subst NatList nil (list_cons zero nil) ({_} -> False) refl unit_val) = Ok FF
+test typecheck False (eq_subst NatList nil (list_cons zero nil) ({_} -> False) refl unit_val) = Ok false

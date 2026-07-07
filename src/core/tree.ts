@@ -589,7 +589,7 @@ export const I = fork(fork(LEAF, LEAF), LEAF)
 
 // Scott-encoded Bool constants (per spec §4.5). These are the exact
 // hash-cons-identity trees produced when the prelude compiles
-// `TT := {m,ct,cf} -> ct` (= K K) and `FF := {m,ct,cf} -> cf`
+// `true := {m,ct,cf} -> ct` (= K K) and `false := {m,ct,cf} -> cf`
 // (= K (K I)). Captured here so the tree_eq fast-path can return them
 // directly without needing a runtime hook from compile.ts.
 export const SCOTT_TT = fork(LEAF, K)               // K K
@@ -600,7 +600,7 @@ export const SCOTT_FF = fork(LEAF, fork(LEAF, I))   // K (K I)
 // captures its compiled tree id at boot (via setTreeEqId) and short-circuits
 // two-arg applications to an O(1) hash-cons identity check, in two stages:
 //   apply(tree_eq, a)         → susp(tree_eq, a)            (P node, stage 1)
-//   apply(susp(tree_eq, a), b) → treeEqual(a, b) ? TT : FF  (stage 2)
+//   apply(susp(tree_eq, a), b) → treeEqual(a, b) ? true : false  (stage 2)
 // The intermediate is the honest suspended application P(tree_eq, a): no synthetic
 // marker, and fully transparent — `force` materializes the genuine recursive-triage
 // reduct the moment the partial is inspected structurally instead of applied. The
@@ -634,7 +634,7 @@ export function force(t: Tree): Tree {
 // name (built by the driver from the program's definitions). At each node we try
 // the lookup FIRST — so the largest named subtree wins — and only descend into
 // children that aren't themselves named, bottoming out at △. A node that *is* a
-// named definition (a type like `Nat`, a value like `Err`/`TT`) prints as that
+// named definition (a type like `Nat`, a value like `Err`/`true`) prints as that
 // name instead of △-spam. The lookup runs before `force` so a named wait-form
 // (e.g. `Nat`, a stuck susp) matches as-is rather than being expanded. With no
 // `names` map this degrades to the raw △ representation (back-compat).

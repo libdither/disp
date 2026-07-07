@@ -31,7 +31,7 @@ let check_step := {bk, e, s} -> {
 let check_cert := fix ({self, bk, e, cert} ->
   if (is_leaf cert) then (Ok e)
   else (match (check_step bk e (pair_fst cert)) { Ok e2 => (self bk e2 (pair_snd cert)); Err _ => Err }))
-let verify_rewrite := {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => FF }
+let verify_rewrite := {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => false }
 
 let map_fusion_rule := {f, g, xs} -> pair (mp f (mp g xs)) (mp (compose f g) xs)
 let book := { map_fusion := { name := "map_fusion"; rule := map_fusion_rule } }
@@ -47,23 +47,23 @@ let nx := make_hyp NatList "argx"
 
 // (1) EXTRACTION is faithful: applying the real function to the neutral yields the body-under-neutral —
 //     identical to the hand-built shape the checker expects. (Bracket abstraction round-trips.)
-test tree_eq (prog nx) (pair (len nx) (mp succ (mp succ nx))) = TT
+test tree_eq (prog nx) (pair (len nx) (mp succ (mp succ nx))) = true
 
 // (2) the checker rewrites the REAL function's body (redex at path ["R"] inside the pair) and the
 //     result IS the optimized function's body — so the rewrite takes `prog` to `prog_opt`.
 let body := prog nx
 let cert := cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons succ (cons succ (cons nx nil))) } nil
-test verify_rewrite book body (prog_opt nx) cert = TT
+test verify_rewrite book body (prog_opt nx) cert = true
 
 // (3) non-trivial: the two function bodies are genuinely different trees.
-test tree_eq body (prog_opt nx) = FF
+test tree_eq body (prog_opt nx) = false
 
 // (4) the path/subst really matter even on the real body (a real gate, not a stamp):
-test verify_rewrite book body (prog_opt nx) (cons { rule := "map_fusion"; path := (cons "L" nil); subst := (cons succ (cons succ (cons nx nil))) } nil) = FF
+test verify_rewrite book body (prog_opt nx) (cons { rule := "map_fusion"; path := (cons "L" nil); subst := (cons succ (cons succ (cons nx nil))) } nil) = false
 
 // (5) behaviour preserved: prog and prog_opt agree on a concrete input (the differential check).
 let lst123 := cons (succ zero) (cons (succ (succ zero)) (cons (succ (succ (succ zero))) nil))
-test tree_eq (prog lst123) (prog_opt lst123) = TT
+test tree_eq (prog lst123) (prog_opt lst123) = true
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // FULLY PARAMETRIC: a real multi-arg function `{f,g,xs} -> map f (map g xs)`, all three metavariables
@@ -75,7 +75,7 @@ let nf := make_hyp (Pi Nat ({_} -> Nat)) "nf"
 let ng := make_hyp (Pi Nat ({_} -> Nat)) "ng"
 let body3 := prog3 nf ng nx                         // = mp nf (mp ng nx): the whole body is the redex
 let cert3 := cons { rule := "map_fusion"; path := nil; subst := (cons nf (cons ng (cons nx nil))) } nil
-test verify_rewrite book body3 (prog3_opt nf ng nx) cert3 = TT
-test tree_eq body3 (prog3_opt nf ng nx) = FF
+test verify_rewrite book body3 (prog3_opt nf ng nx) cert3 = true
+test tree_eq body3 (prog3_opt nf ng nx) = false
 // behaviour preserved for the parametric form on concrete f,g = succ:
-test tree_eq (prog3 succ succ lst123) (prog3_opt succ succ lst123) = TT
+test tree_eq (prog3 succ succ lst123) (prog3_opt succ succ lst123) = true

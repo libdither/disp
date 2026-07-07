@@ -18,9 +18,9 @@ open use "../std/nat/ops.disp"     // double
 let f := {x} -> {y} -> add x (double y)
 
 // ── Reorderable: field order is irrelevant; all equal the positional call. ──
-test tree_eq (f { x := 1, y := 2 }) (f { y := 2, x := 1 }) = TT
-test tree_eq (f { x := 1, y := 2 }) (f 1 2) = TT
-test tree_eq (f { y := 2, x := 1 }) (f 1 2) = TT
+test tree_eq (f { x := 1, y := 2 }) (f { y := 2, x := 1 }) = true
+test tree_eq (f { x := 1, y := 2 }) (f 1 2) = true
+test tree_eq (f { y := 2, x := 1 }) (f 1 2) = true
 test f { x := 1, y := 2 } = 5         // 1 + 2*2
 test f { y := 2, x := 1 } = 5         // reordered, same result
 test f { x := 2, y := 1 } = 4         // 2 + 2*1 — distinct from the above (order matters)
@@ -28,37 +28,37 @@ test f { x := 2, y := 1 } = 4         // 2 + 2*1 — distinct from the above (or
 // ── Defaults (value-binder `:=`): an omitted arg falls back to its default,
 //    tree-identical to the explicit positional fill; supplying it overrides. ──
 let g := {x} -> {y := 10} -> add x y
-test tree_eq (g { x := 5 }) (g 5 10) = TT       // default-fill tree identity
+test tree_eq (g { x := 5 }) (g 5 10) = true       // default-fill tree identity
 test g { x := 5 } = 15
 test g { x := 5, y := 2 } = 7                    // override the default
-test tree_eq (g { x := 5, y := 2 }) (g 5 2) = TT
+test tree_eq (g { x := 5, y := 2 }) (g 5 2) = true
 
 // ── Defaults declared in the TYPE annotation (the design-doc style). ──
 let h : { x : Nat } -> { y : Nat := 30 } -> Nat := {x} -> {y} -> add x y
-test tree_eq (h { x := 1 }) (h 1 30) = TT
+test tree_eq (h { x := 1 }) (h 1 30) = true
 test h { x := 1 } = 31
 test h { x := 1, y := 1 } = 2
 
 // ── A default that references a PRIOR parameter (telescope discipline): the
 //    prior's resolved argument is substituted into the default recipe. ──
 let q := {a} -> {b := double a} -> add a b
-test tree_eq (q { a := 3 }) (q 3 (double 3)) = TT
+test tree_eq (q { a := 3 }) (q 3 (double 3)) = true
 test q { a := 3 } = 9                            // 3 + double 3
 test q { a := 3, b := 1 } = 4                    // override
 
 // ── Partial application: a strict subset yields a residual function. ──
 //    PREFIX subset == plain currying (η-collapses to the positional partial).
 let pc := f { x := 100 }                          // awaits y
-test tree_eq pc (f 100) = TT                     // prefix partial IS currying
+test tree_eq pc (f 100) = true                     // prefix partial IS currying
 test pc 3 = 106                                  // residual applied later == full call
-test tree_eq (pc 3) (f { x := 100, y := 3 }) = TT
-test tree_eq (pc 3) (f 100 3) = TT
+test tree_eq (pc 3) (f { x := 100, y := 3 }) = true
+test tree_eq (pc 3) (f 100 3) = true
 
 //    NON-PREFIX subset (the hard case): supply y, await x → residual {x} -> f x 5.
 let pb := f { y := 5 }
 test pb 2 = 12                                    // 2 + 2*5
-test tree_eq (pb 2) (f { x := 2, y := 5 }) = TT
-test tree_eq (pb 2) (f 2 5) = TT
+test tree_eq (pb 2) (f { x := 2, y := 5 }) = true
+test tree_eq (pb 2) (f 2 5) = true
 
 // ── Ordinary record application is unaffected: a record whose field names do
 //    NOT match the parameter names is passed as a value (record-domain

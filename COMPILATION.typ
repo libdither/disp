@@ -45,7 +45,7 @@ annotations.
 There is no `trust` keyword or provenance side table. Elaborator
 privilege is type-based: names like `Pi`, `Type`, and `Hyp` are found
 in the ordinary scope after imports, and typed terms are accepted when
-the relevant type predicate evaluates to `TT`.
+the relevant type predicate evaluates to `true`.
 
 = Parser
 
@@ -178,7 +178,7 @@ compile(e: Expr, mode: "term" | "type"): Tree
 - *Mode* — determines whether binders compile to lambdas or Pi types.
 - *Output* — a tree-calculus term. In type mode, the output is a
   kernel predicate (a function that accepts values and returns
-  `TT`/`FF`).
+  `true`/`false`).
 
 == The binder/Pi correspondence
 
@@ -269,7 +269,7 @@ At an `Ann` node (`(e : T)`) or a typed `let` (`let x : T = body`):
 1. Compile `T` in type mode → `T_tree` (a kernel predicate).
 2. Compile `e`/`body` in term mode → `e_tree` (a value).
 3. Apply: `result = applyTree(T_tree, e_tree, budget)`.
-4. Assert: `FAST_EQ(result, TT)`. If not, report a type error.
+4. Assert: `FAST_EQ(result, true)`. If not, report a type error.
 5. Return `e_tree` (the type is erased after checking).
 
 Type checking is function application. The kernel does all the work
@@ -523,8 +523,8 @@ custom `let` decorator changes what that scope's `let`s do, a custom
 `test` preprocesses its marker-written equation lhs.
 
 ```disp
-base    := {v}   -> { value := (t v); ty := t; guard := t; private := FF }
-let     := {req} -> req with private := TT
+base    := {v}   -> { value := (t v); ty := t; guard := t; private := false }
+let     := {req} -> req with private := true
 guard   := {g}   -> {req} -> req with guard := (t g)
 ```
 
@@ -697,7 +697,7 @@ plumbing is future work.
   inset: (x: 6pt, y: 4pt),
   table.header[*Kind*][*Source*],
   [*unresolved name*],         [compiler: a `Var` whose name matches neither a scope entry nor a binder param],
-  [*type mismatch*],            [elab: type predicate returns FF on a typed `let` body or `Ann`],
+  [*type mismatch*],            [elab: type predicate returns false on a typed `let` body or `Ann`],
   [*failed test*],              [parser: `test`'s two sides elaborate to trees that disagree by hash-cons identity],
   [*unsolved hole*],            [elab: `Hole` not yet supported; compile error],
   [*projection mismatch*],      [elab: `Proj.field` not found on target's record type, or target is not a RecValue],

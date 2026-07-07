@@ -2,7 +2,7 @@
 // the rewrite is a function whose TYPE certifies equivalence: a transformer takes a value and returns
 // a new value of the same type PLUS a proof they're equal. If the transformer type-checks, the rewrite
 // is sound BY CONSTRUCTION; `apply` just projects the new value (proof erases). The "check" is just
-// `param_apply transformer_type transformer == Ok TT` — reusing the kernel, no new machinery.
+// `param_apply transformer_type transformer == Ok true` — reusing the kernel, no new machinery.
 //
 // Funext-free trick: work POINTWISE (transformer at the RESULT type B, on the body under the binder),
 // NOT at the function type A->B (which would need funext). The Eq is at NatList — provable by induction.
@@ -29,22 +29,22 @@ let transformer_type := Pi NatList ({xs} -> Sigma NatList ({y} -> Eq NatList (mp
 let transformer := {xs} -> make_pair (mp (compose succ succ) xs) (map_fusion_proof succ succ xs)
 
 // ── THE GATE IS JUST THE TYPE CHECK. If this passes, the rewrite is certified equivalence-preserving. ──
-test param_apply transformer_type transformer = Ok TT
+test param_apply transformer_type transformer = Ok true
 
 // EXTRACTION. `apply` projects the new value. It is BEHAVIOURALLY correct ...
 let apply := {tf} -> {xs} -> field (tf xs) "fst"
 let fast := apply transformer
 let lst := cons (succ zero) (cons (succ (succ zero)) nil)
-test tree_eq (fast lst) (mp (compose succ succ) lst) = TT        // fast lst = the fused result
+test tree_eq (fast lst) (mp (compose succ succ) lst) = true        // fast lst = the fused result
 // ... but the typed-transformer route does NOT give zero residue. `field (make_pair new proof) "fst"`
 // projects `new`, yet eager `make_pair` forces BOTH — so `fast` carries the make_pair/proof wrapper and
 // recomputes the discarded proof EVERY call. Getting the clean, cheap fused function needs φ-ERASURE
 // (OPTIMIZER §6-B / LOCAL_SYNTH): φ types at T but erases to `new`, dropping the proof at elaboration.
 // The typed transformer is the GATE (certification); φ is the EXTRACTOR. Sigma-projection can't erase.
-test tree_eq fast ({xs} -> mp (compose succ succ) xs) = FF       // a wrapper, NOT the clean tree
-test tree_eq fast slow = FF                                      // (and genuinely different from slow)
+test tree_eq fast ({xs} -> mp (compose succ succ) xs) = false       // a wrapper, NOT the clean tree
+test tree_eq fast slow = false                                      // (and genuinely different from slow)
 
 // ── NEGATIVE CONTROL: a LYING transformer (claims y = mp succ xs, but the proof is for the fused form)
 //    FAILS the type check — the proof's endpoints don't match the claimed new value. The type is the gate. ──
 let bad_transformer := {xs} -> make_pair (mp succ xs) (map_fusion_proof succ succ xs)
-test param_apply transformer_type bad_transformer = Ok FF
+test param_apply transformer_type bad_transformer = Ok false

@@ -9,38 +9,38 @@ open use raw "../prelude.disp" {}
 // Leaves, stems, forks
 // ================================================================
 
-test tree_eq t t = TT
-test tree_eq t (t t) = FF
-test tree_eq (t t) t = FF
-test tree_eq (t t) (t t) = TT
-test tree_eq (t t t) (t t t) = TT
-test tree_eq (t t t) (t t (t t)) = FF
-test tree_eq (t (t t) t) (t (t t) t) = TT
-test tree_eq (t (t t) t) (t t (t t)) = FF
+test tree_eq t t = true
+test tree_eq t (t t) = false
+test tree_eq (t t) t = false
+test tree_eq (t t) (t t) = true
+test tree_eq (t t t) (t t t) = true
+test tree_eq (t t t) (t t (t t)) = false
+test tree_eq (t (t t) t) (t (t t) t) = true
+test tree_eq (t (t t) t) (t t (t t)) = false
 
 // ================================================================
 // Mixed shapes
 // ================================================================
 
-test tree_eq t (t t t) = FF
-test tree_eq (t t) (t (t t)) = FF
-test tree_eq (t (t t)) (t (t t)) = TT
-test tree_eq (t (t t)) (t t t) = FF
+test tree_eq t (t t t) = false
+test tree_eq (t t) (t (t t)) = false
+test tree_eq (t (t t)) (t (t t)) = true
+test tree_eq (t (t t)) (t t t) = false
 
 // ================================================================
 // Deeper trees
 // ================================================================
 
-test tree_eq (t (t t t) (t t)) (t (t t t) (t t)) = TT
-test tree_eq (t (t t t) (t t)) (t (t t t) (t (t t))) = FF
-test tree_eq (t (t t (t t)) (t (t t) t)) (t (t t (t t)) (t (t t) t)) = TT
+test tree_eq (t (t t t) (t t)) (t (t t t) (t t)) = true
+test tree_eq (t (t t t) (t t)) (t (t t t) (t (t t))) = false
+test tree_eq (t (t t (t t)) (t (t t) t)) (t (t t (t t)) (t (t t) t)) = true
 
 // ================================================================
 // Numeric literals (Nat trees: zero=leaf, succ=fork(t, n))
 // ================================================================
 
-test tree_eq 0 0 = TT
-test tree_eq 0 1 = FF
-test tree_eq 3 3 = TT
-test tree_eq 3 4 = FF
-test tree_eq 5 5 = TT
+test tree_eq 0 0 = true
+test tree_eq 0 1 = false
+test tree_eq 3 3 = true
+test tree_eq 3 4 = false
+test tree_eq 5 5 = true

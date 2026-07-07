@@ -77,8 +77,8 @@ make_rec_recognizer : Tree -> MetaShape -> Tree -> CheckerResult := {body} -> wa
 make_recognizer : Tree -> MetaShape -> Tree -> CheckerResult := {body} -> make_rec_recognizer ({self, meta, v} -> body meta v)
 
 // InvalidType: the absorbing dead-state type (§12.3) — a real empty type (recognizer always
-// Ok FF) whose inert respond returns `Extend (neutral_type self)`. Distinct from False.
-InvalidType : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness ({params, self, frame} -> Extend (neutral_type self)))
+// Ok false) whose inert respond returns `Extend (neutral_type self)`. Distinct from False.
+InvalidType : Type := wait (make_recognizer ({m, v} -> Ok false)) (make_meta unit_witness ({params, self, frame} -> Extend (neutral_type self)))
 
 // inert_respond: ignores all three args, returns the dead state. Parametric, so it
 // inhabits RespondShape. (inductive_respond is defined after param_walker, which it uses.)
@@ -91,8 +91,8 @@ let t_union := fix ({self, a, b} ->
   if (is_fork a) then (t (pair_fst a) (self (pair_snd a) b)) else b)
 let support_member := fix ({self, x, s} ->
   if (is_fork s)
-    then (if (tree_eq (pair_fst s) x) then TT else (self x (pair_snd s)))
-    else FF)
+    then (if (tree_eq (pair_fst s) x) then true else (self x (pair_snd s)))
+    else false)
 // is_hyp_fork: a genuine hyp_reduce neutral is a FORK with the hyp sig (partial
 // `wait hyp_reduce` recipes in metadata are stems sharing the bare sig — §2.6 collision).
 let is_hyp_fork := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)

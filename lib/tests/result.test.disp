@@ -3,28 +3,28 @@ open use "../std/nat/ops.disp"
 open use "../std/result.disp"
 
 // Constructors distinguishable
-test is_ok_result (ok 7) = TT
-test is_err_result (ok 7) = FF
-test is_ok_result (err 9) = FF
-test is_err_result (err 9) = TT
+test is_ok_result (ok 7) = true
+test is_err_result (ok 7) = false
+test is_ok_result (err 9) = false
+test is_err_result (err 9) = true
 
 // Result Bool Nat: error is Bool, success is Nat
-test Result Bool Nat (ok 0) = Ok TT
-test Result Bool Nat (ok 5) = Ok TT
-test Result Bool Nat (err TT) = Ok TT
-test Result Bool Nat (err FF) = Ok TT
+test Result Bool Nat (ok 0) = Ok true
+test Result Bool Nat (ok 5) = Ok true
+test Result Bool Nat (err true) = Ok true
+test Result Bool Nat (err false) = Ok true
 
 // Type mismatches
-test Result Bool Nat (ok TT) = Ok FF
-test Result Bool Nat (err 3) = Ok FF
+test Result Bool Nat (ok true) = Ok false
+test Result Bool Nat (err 3) = Ok false
 
 // Bad shapes / unknown tags
-test Result Nat Nat t = Ok FF
-test Result Nat Nat (inj "huh" 5) = Ok FF
+test Result Nat Nat t = Ok false
+test Result Nat Nat (inj "huh" 5) = Ok false
 
 // result_rec dispatches by branch
 test result_rec ({_} -> Nat) ({v} -> succ v) ({e} -> 0) (ok 4) = 5
-test result_rec ({_} -> Nat) ({v} -> succ v) ({e} -> 0) (err TT) = 0
+test result_rec ({_} -> Nat) ({v} -> succ v) ({e} -> 0) (err true) = 0
 
 // result_map / result_map_err
 test result_map succ (ok 4) = ok 5
@@ -35,15 +35,15 @@ test result_map_err succ (err 9) = err 10
 // result_and_then
 let succ_ok := {n} -> ok (succ n)
 test result_and_then (ok 5) succ_ok = ok 6
-test result_and_then (err FF) succ_ok = err FF
+test result_and_then (err false) succ_ok = err false
 
 // result_unwrap_or
 test result_unwrap_or 99 (ok 5) = 5
-test result_unwrap_or 99 (err TT) = 99
+test result_unwrap_or 99 (err true) = 99
 
 // Under a Pi binder — the PARAMETRIC eliminator result_rec routes a neutral
 // Result through the coproduct respond, so this typed binding VERIFIES.
 let or_zero : Result Bool Nat -> Nat := {r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r
-test param_apply (Arrow (Result Bool Nat) Nat) ({r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r) = Ok TT
+test param_apply (Arrow (Result Bool Nat) Nat) ({r} -> result_rec ({_} -> Nat) ({v} -> v) ({_} -> 0) r) = Ok true
 test or_zero (ok 8) = 8
-test or_zero (err TT) = 0
+test or_zero (err true) = 0

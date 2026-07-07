@@ -39,13 +39,13 @@ let stream_respond := {params, self, frame} -> {
 // over `out v` via the self-aware `tele_walk` (rs is unused here — gen guards by is_gen, pos checks A).
 // The element type A is stored WRAPPED in a record `{ elem := A }` as recognizer_params — NOT bare:
 // `recognizer_params : Tree` is checked at load (the `Type -> Type` self-verify), and Tree's H-rule
-// rejects a BARE abstract type (a Type-typed neutral's stored type is Type, not Tree -> Ok FF). A
+// rejects a BARE abstract type (a Type-typed neutral's stored type is Type, not Tree -> Ok false). A
 // concrete record wrapper is a fine Tree regardless of A, so `Stream : Type -> Type` verifies. (This
 // is why every parameterized former — Eq's `{type,lhs,rhs}`, List's variants list — wraps its params.)
 Stream : Type -> Type := {A} -> wait (make_recognizer
   {meta, v} -> (if (is_gen v)
-    then (tele_walk t TT (t (pos_cell stream_head ((meta.recognizer_params).elem)) ({_} -> t (gen_cell stream_tail) ({_} -> t))) (out v) t t)
-    else (Ok FF))
+    then (tele_walk t true (t (pos_cell stream_head ((meta.recognizer_params).elem)) ({_} -> t (gen_cell stream_tail) ({_} -> t))) (out v) t t)
+    else (Ok false))
 ) (make_meta { elem := A } stream_respond)
 
 // stream_take n s : a List of the first n observed heads. The finite eliminator for an infinite value.

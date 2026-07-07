@@ -140,15 +140,15 @@ Notes on the surface:
 
 `Request : Type := { value : Tree, ty : Tree, guard : Tree, private : Bool }`
 (universe.disp). The first three fields are stem-options (`t` absent, `t x`
-present); `base v` is `{ value := (t v); ty := t; guard := t; private := FF }`.
+present); `base v` is `{ value := (t v); ty := t; guard := t; private := false }`.
 A request lives for one declaration: the driver builds it, the head decorator
 transforms it, the incumbent guard (or `default_guard`) answers
 `Ok (Bind v | Install g | Both v g) | Err`, the driver applies the action,
 and the request is gone. It is a protocol message, not an accumulator.
 
 `given` extends the message vocabulary: `Request` grows `param : Bool`, the
-`given` decorator sets `param := TT` (and `private := TT`), and the four
-existing decorators emit `param := FF` so that concrete requests keep
+`given` decorator sets `param := true` (and `private := true`), and the four
+existing decorators emit `param := false` so that concrete requests keep
 inhabiting the grown `Request` type (the `typecheck Request (base zero)`
 pins stay green). A param-request tells the driver "this declaration lands
 on the mint side of the module telescope"; it is interpreted by the driver
@@ -311,7 +311,7 @@ pre-reduces the closed cell. Two answers:
   the in-scope `Pi`/`Record` values, the same route surface annotations take,
   and hash-consing gives identity for free ("deterministic elaboration
   ensures same type, same tree"). This is sufficient for the module arc and
-  is pinned (`tree_eq FlatPiT SimpleModT = FF` documents the hazard).
+  is pinned (`tree_eq FlatPiT SimpleModT = false` documents the hazard).
 - Later, yes: normalization at formation would resolve it, and it is exactly
   the NbE ideal NEGATIVE_TYPES.md already names as the telescope's frontier.
   Mechanism: when a telescope is formed, apply each continuation to a fresh
@@ -328,7 +328,7 @@ pre-reduces the closed cell. Two answers:
 ### Slice 1: hermetic scoping plus `given` (one arc; the kernel needs both)
 
 Library edits: `given` in cut.disp; `Request` grows `param : Bool` in
-universe.disp; `base`/`let`/`sig`/`guard` emit `param := FF` (so concrete
+universe.disp; `base`/`let`/`sig`/`guard` emit `param := false` (so concrete
 requests keep inhabiting the grown type and the existing typecheck pins stay
 green); `default_guard` untouched (name-keyed reads).
 
@@ -382,7 +382,7 @@ with `typ` built via the Pi route (finding 2) and `record` the readback
 lambda. ABSTRACT verification only runs when someone calls `verify` on the
 unfilled tuple. Pins: readback lambda applied to a fill is tree-identical
 to template instantiation with that fill (the driver-side reconvergence,
-extending prototype pin 4) and the tuple verifies `Ok TT` abstractly, for
+extending prototype pin 4) and the tuple verifies `Ok true` abstractly, for
 both the per-name fixture and the record-typed-given fixture
 (given.test.disp); the raw/self-typed fallbacks are host pins
 (modules.test.ts).

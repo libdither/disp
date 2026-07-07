@@ -25,10 +25,10 @@ eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> E
 unit_val : Unit := t t t
 Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
 
-// String = ⊤ conceptually (= the nullary telescope), but kept lean: the trivial `Ok TT` recognizer
+// String = ⊤ conceptually (= the nullary telescope), but kept lean: the trivial `Ok true` recognizer
 // avoids the telescope walker's per-check reduction cost (which inflates the suite's memo footprint).
-String : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta unit_witness inert_respond)
-False : Type := wait (make_recognizer ({m, v} -> Ok FF)) (make_meta unit_witness inert_respond)  // ⊥ (= the empty sum), kept lean
+String : Type := wait (make_recognizer ({m, v} -> Ok true)) (make_meta unit_witness inert_respond)
+False : Type := wait (make_recognizer ({m, v} -> Ok false)) (make_meta unit_witness inert_respond)  // ⊥ (= the empty sum), kept lean
 Not : Type -> Type := {P} -> Pi P ({_} -> False)
 
 // refl: the canonical proof VALUE `t` (proofs erase to one value; eq_body checks a candidate

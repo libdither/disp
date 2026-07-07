@@ -16,11 +16,11 @@ let reflects := {n} -> select_lazy ({_} -> Nat) ({_} -> Bool) (is_fork n)   // n
 test param_apply (Pi Nat reflects) ({n} -> n)        = Err                 // codomain family reflects
 test param_apply (Intersection Nat reflects) zero    = Err                 // predicate reflects
 test neutral_type (param_apply (make_hyp (Sigma Nat reflects) 0) (acc "snd")) = InvalidType   // Sigma family reflects
-test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({p, ih} -> is_fork p) } }) = InvalidType  // succ reflects
+test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := true; succ := ({p, ih} -> is_fork p) } }) = InvalidType  // succ reflects
 // valid analogues still pass (the policing only rejects reflection)
-test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n)            = Ok TT
-test param_apply (Pi Nat ({n} -> Eq Nat n n)) ({n} -> refl)  = Ok TT
-test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({p, ih} -> ih) } }) = Bool
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n)            = Ok true
+test param_apply (Pi Nat ({n} -> Eq Nat n n)) ({n} -> refl)  = Ok true
+test neutral_type (param_apply hN { motive := ({_} -> Bool); cases := { zero := true; succ := ({p, ih} -> ih) } }) = Bool
 
 // ================================================================
 // A typed function cannot reflect on / extract from its argument (the walker
@@ -59,6 +59,6 @@ test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero
 // minted inside a bind_hyp body (an independent open neutral) is rejected at the
 // closed-world boundary (is_closed / param_lift). This is the standing backstop.
 // ================================================================
-test param_apply False zero  = Ok FF
+test param_apply False zero  = Ok false
 test typecheck False (make_hyp False 0) = Err   // a False-neutral is open -> not closed
 test typecheck False (pair_snd (param_apply (bind_hyp False) ({x} -> Ok (make_hyp False 0)))) = Err

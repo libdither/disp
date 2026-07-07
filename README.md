@@ -13,6 +13,16 @@ Disp is a self-verified dependently-typed programming language built on the [tre
 
 A language where all you write is the constraints, as detailed and rigorous as you need, with the implementation derived automatically, requires constraint checking that is itself fast and modular. This is the problem disp solves.
 
+## AI disclosure
+
+Most of this repository was written by an AI. The current implementation (2026 onward) is a collaboration with Anthropic's Claude models running in Claude Code: nearly all of the TypeScript host, the kernel and standard library, the tests, the Rust evaluator backends, and the documentation, including most of this README, were drafted by Claude and landed through the maintainer's review. The commit history does not mark the split.
+
+What is not AI-written: the goals and the judgment. Disp started in 2021 as years of solo prototypes (lambda calculi over a content-addressed store, in Rust), and the vision in [`GOALS.md`](GOALS.md), the choice of what to attempt next, and the accept or reject call on every design are human. So is the editing hand on the prose.
+
+"AI-written" is accurate but incomplete for the designs themselves. The two-op kernel, types as raw predicates, telescopes as the one negative former: these came out of long design dialogues in which the human supplies goals, constraints, and taste, the AI drafts, argues, and implements, and each side regularly kills the other's proposals. For most of the load-bearing decisions neither party could honestly claim sole authorship. That seems to be the real shape of AI collaborative design at this scale: not code generation and not autocomplete, but a fast, well-read collaborator whose ideas still have to survive a human's sense of what the project is for.
+
+The working discipline is the project's own thesis applied to its construction: trust the checker, not the author. AI-written code fails in characteristic ways (confident overstatement, quiet drift between claim and implementation), so nothing here rests on trusting its provenance. Every claim in this README is a machine-checked test, the kernel verifies the library built on top of it, and the evaluator backends must agree byte for byte. Disp is an attempt at a language in which machine-generated code can be verified rather than trusted, built by the kind of author it is designed to police. Errors that survive all of that are the maintainer's responsibility.
+
 ## Disp by example
 
 This section is one file, top to bottom, and it loads and passes as-is. A `test lhs = rhs` passes when both sides reduce to the identical tree, so everything this section claims is machine-checked. Code blocks are tagged `rust` only to borrow GitHub's syntax highlighting; the code is disp.
@@ -35,9 +45,9 @@ open use "../std/nat/ops.disp"      // double
 // grown from a single leaf `t`. Numbers, lambdas, types, proofs, and the type
 // checker itself are all such trees. Some of them are small:
 
-// from the prelude:  TT : Bool := {m, ct, cf} -> ct
-test TT = t t (t t)                             // "true" is this four-leaf tree
-test tree_eq 3 (succ (succ (succ zero))) = TT   // 3 is sugar, and the trees are identical
+// from the prelude:  true : Bool := {m, ct, cf} -> ct
+test true = t t (t t)                             // the four-leaf tree behind the name
+test tree_eq 3 (succ (succ (succ zero))) = true   // 3 is sugar, and the trees are identical
 
 // Three of the five rules dispatch on the shape of a tree (leaf, stem, or
 // fork), so case analysis over arbitrary data is a rewrite rule, not library
@@ -60,11 +70,11 @@ test shape_of (t t t) = "fork"
 ```rust
 // Surface constructs expand to library calls. Expansions are trees, so pin them:
 
-test tree_eq ({r} -> r.x) ({r} -> r (acc "x")) = TT   // projection is application
+test tree_eq ({r} -> r.x) ({r} -> r (acc "x")) = true   // projection is application
 
 let Point := { x : Nat, y : Nat }
 let PointCells := Telescope (t (proj_cell "x" Nat) ({_x} -> t (proj_cell "y" Nat) ({_y} -> t)))
-test tree_eq Point PointCells = TT                    // the literal is exactly the library call
+test tree_eq Point PointCells = true                    // the literal is exactly the library call
 
 // Telescope is the one former behind functions, pairs, records, and unit;
 // sums are its dual; recursion is one more cell kind. A new type former is
@@ -77,14 +87,14 @@ test tree_eq Point PointCells = TT                    // the literal is exactly 
 // A type is a predicate. To check data, apply the type. Raw application,
 // no checker in sight:
 
-test Nat 3 = Ok TT
-test Nat TT = Ok FF
+test Nat 3 = Ok true
+test Nat true = Ok false
 
 // Structure runs too: b's recipe is evaluated during the check.
 
 let TDs := { a : Nat, b := double a }
-test TDs { a := 2; b := 4 } = Ok TT
-test TDs { a := 2; b := 5 } = Ok FF   // ran double 2, compared, rejected
+test TDs { a := 2; b := 4 } = Ok true
+test TDs { a := 2; b := 5 } = Ok false   // ran double 2, compared, rejected
 ```
 
 ### Functions need a promise
@@ -99,9 +109,9 @@ test quadruple 3 = 12
 // for data above, yields no verdict:
 
 let NatToNat := Pi Nat ({_} -> Nat)                // the annotation above, desugared
-test tree_eq (NatToNat quadruple) (Ok TT) = FF    // raw: no verdict comes back
-test param_apply NatToNat quadruple = Ok TT       // the dispatcher: yes
-test param_apply NatToNat ({n} -> TT) = Ok FF     // wrong codomain: no
+test tree_eq (NatToNat quadruple) (Ok true) = false    // raw: no verdict comes back
+test param_apply NatToNat quadruple = Ok true       // the dispatcher: yes
+test param_apply NatToNat ({n} -> true) = Ok false     // wrong codomain: no
 
 // The difference: checking a function requires minting a hypothesis, a fresh
 // opaque tree carrying a type and nothing else: a promise that a Nat will be
@@ -123,7 +133,7 @@ test param_apply NatToNat ({n} -> TT) = Ok FF     // wrong codomain: no
 // exactly two moves, and you can watch both:
 
 let hN := make_hyp Nat 0                           // mint one by hand (the 0 is a fresh id)
-test param_apply Nat hN = Ok TT                   // a promise of a Nat counts as a Nat
+test param_apply Nat hN = Ok true                   // a promise of a Nat counts as a Nat
 
 let hPi := make_hyp (Pi Nat ({_} -> Bool)) 0
 test neutral_type (param_apply hPi zero) = Bool   // Extend: stuck, at the codomain type
@@ -131,7 +141,7 @@ test neutral_type (param_apply hPi zero) = Bool   // Extend: stuck, at the codom
 let Pt := { a : Nat, b := succ a }
 let hPt := make_hyp Pt 0
 test neutral_type (param_apply hPt (acc "a")) = Nat                               // Extend: opaque field
-test tree_eq (param_apply hPt (acc "b")) (succ (param_apply hPt (acc "a"))) = TT  // Reduce: derived field
+test tree_eq (param_apply hPt (acc "b")) (succ (param_apply hPt (acc "a"))) = true  // Reduce: derived field
                                                                                   // computes through it
 
 // And this is what double did: its recursor parked on the promise as a stuck
@@ -139,7 +149,7 @@ test tree_eq (param_apply hPt (acc "b")) (succ (param_apply hPt (acc "a"))) = TT
 // of type Nat, the codomain matched, and the definition was accepted. This
 // technique is called neutral evaluation.
 
-test is_neutral (nat_rec ({_} -> Bool) TT ({n, rec} -> FF) hN) = TT
+test is_neutral (nat_rec ({_} -> Bool) true ({n, rec} -> false) hN) = true
 
 // Reading the promise's raw shape is missing from that list on purpose. The
 // walker refuses the question instead of answering it, since either answer
@@ -164,16 +174,16 @@ test refl = t
 // Whether refl proves an equation is decided by running both sides. Raw
 // application is back, because proofs are data:
 
-test (Eq Nat (double 2) 4) refl = Ok TT   // double 2 and 4 meet at the same tree
-test (Eq Nat 3 4) refl = Ok FF
+test (Eq Nat (double 2) 4) refl = Ok true   // double 2 and 4 meet at the same tree
+test (Eq Nat 3 4) refl = Ok false
 
 // A statement about every Nat is a Pi into a proposition, so checking it
 // takes one promise. Here is a theorem in surface form, the kernel's verdict
 // on it, and a false statement refl cannot prove (the stuck ends differ):
 
 n_eq_n : {n : Nat} -> Eq Nat n n := {n} -> refl
-test param_apply (Pi Nat ({n} -> Eq Nat n n)) n_eq_n = Ok TT
-test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl) = Ok FF
+test param_apply (Pi Nat ({n} -> Eq Nat n n)) n_eq_n = Ok true
+test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl) = Ok false
 ```
 
 ### Who checks the types?
@@ -184,9 +194,9 @@ test param_apply (Pi Nat ({n} -> Eq Nat n (succ n))) ({n} -> refl) = Ok FF
 // values with a recognizable shape, so the universe is a predicate like any
 // other, and it accepts itself:
 
-test param_apply Type Nat = Ok TT
-test param_apply Type zero = Ok FF   // not a type
-test param_apply Type Type = Ok TT   // the universe passes its own checker
+test param_apply Type Nat = Ok true
+test param_apply Type zero = Ok false   // not a type
+test param_apply Type Type = Ok true   // the universe passes its own checker
 
 // The deeper check is behavioral. GoodRespond aims the promise machinery at
 // the type itself: its probes mint hypotheses and fire observations through
@@ -194,13 +204,13 @@ test param_apply Type Type = Ok TT   // the universe passes its own checker
 // constructors. A respond can lie in two directions, and both are caught:
 
 let MyNat := Coproduct [pair "z" [], pair "s" [Rec]]   // a home-made Nat: zero and successor
-test param_apply Type MyNat = Ok TT
+test param_apply Type MyNat = Ok true
 
 // read a type's respond out of its metadata:
 let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
-test verify_good MyNat (resp_of MyNat) = Ok TT                    // its real respond: honest
-test verify_good MyNat (inductive_respond unit_witness) = Ok FF   // waves junk through
-test verify_good MyNat (inert_respond unit_witness) = Ok FF       // refuses everything
+test verify_good MyNat (resp_of MyNat) = Ok true                    // its real respond: honest
+test verify_good MyNat (inductive_respond unit_witness) = Ok false   // waves junk through
+test verify_good MyNat (inert_respond unit_witness) = Ok false       // refuses everything
 
 // So the checker checks the checkers, using the same two kernel operations
 // it uses on everything else. This loop is the "self-verified" in the first

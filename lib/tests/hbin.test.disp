@@ -6,29 +6,29 @@
 open use "../kernel/prelude.disp"
 open use "../std/hbin.disp"
 
-test typecheck Type HBin = Ok TT
+test typecheck Type HBin = Ok true
 
 // the paper's first naturals (§3.2):
 // 0 = E   1 = V E []   2 = W E []   3 = V (V E []) []   4 = W E [E]   5 = V E [E]
-test param_apply HBin hb_e = Ok TT
-test param_apply HBin (hb_v hb_e t) = Ok TT
-test param_apply HBin (hb_w hb_e t) = Ok TT
-test param_apply HBin (hb_v (hb_v hb_e t) t) = Ok TT
-test param_apply HBin (hb_w hb_e (pair hb_e t)) = Ok TT
-test param_apply HBin (hb_v hb_e (pair hb_e t)) = Ok TT
+test param_apply HBin hb_e = Ok true
+test param_apply HBin (hb_v hb_e t) = Ok true
+test param_apply HBin (hb_w hb_e t) = Ok true
+test param_apply HBin (hb_v (hb_v hb_e t) t) = Ok true
+test param_apply HBin (hb_w hb_e (pair hb_e t)) = Ok true
+test param_apply HBin (hb_v hb_e (pair hb_e t)) = Ok true
 
 // rejections: a bare stem, a fork without the stem head, a stem block list,
 // and a non-HBin count (counts must be HBins, hereditarily). NB a STEM count
 // is not rejectable garbage: hb_v (t t) xs IS hb_w hb_e xs — the W tag is
 // exactly a stem on the count, and HBin values are never stems.
-test param_apply HBin (t t) = Ok FF
-test param_apply HBin (t t t) = Ok FF
-test param_apply HBin (hb_v hb_e (t t)) = Ok FF
-test param_apply HBin (hb_v (t t t) t) = Ok FF
-test tree_eq (hb_v (t t) t) (hb_w hb_e t) = TT // the stem-count pun, pinned
+test param_apply HBin (t t) = Ok false
+test param_apply HBin (t t t) = Ok false
+test param_apply HBin (hb_v hb_e (t t)) = Ok false
+test param_apply HBin (hb_v (t t t) t) = Ok false
+test tree_eq (hb_v (t t) t) (hb_w hb_e t) = true // the stem-count pun, pinned
 
 // H-rule: an HBin hypothesis inhabits HBin (reached via param_apply, §6.3)
-test param_apply HBin (make_hyp HBin 0) = Ok TT
+test param_apply HBin (make_hyp HBin 0) = Ok true
 
 // ---- denotation: eq. 19 read through the o/i digit ops ----
 // n(V x xs) = o^(n(x)+1) (n(W y ys))  for xs = (y:ys), o^(n(x)+1) (0) for [];

@@ -27,15 +27,15 @@ test tsize t = 1
 test tsize (t t) = 2
 test tsize (t (t t) (t t t)) = 6
 // abstract elimination inhabits the motive
-test param_apply Bool (tree_rec ({_} -> Bool) TT ({c, ih} -> ih) ({l, r, il, ir} -> FF) (make_hyp Tree 0)) = Ok TT
+test param_apply Bool (tree_rec ({_} -> Bool) true ({c, ih} -> ih) ({l, r, il, ir} -> false) (make_hyp Tree 0)) = Ok true
 // the honest dependent type, re-pinned from the test side (the export's own
 // annotation already verified at kernel load)
 TreeRecT : Type := {P : Tree -> Type} -> P t -> ({c : Tree} -> P c -> P (t c)) -> ({l : Tree} -> {r : Tree} -> P l -> P r -> P (t l r)) -> {v : Tree} -> P v
-test typecheck TreeRecT tree_rec = Ok TT
+test typecheck TreeRecT tree_rec = Ok true
 
 // ── (b) typed twins for the raw dispatchers
-is_fork_t : Tree -> Bool := {v} -> tree_rec ({_} -> Bool) FF ({c, ih} -> FF) ({l, r, il, ir} -> TT) v
-is_leaf_t : Tree -> Bool := {v} -> tree_rec ({_} -> Bool) TT ({c, ih} -> FF) ({l, r, il, ir} -> FF) v
+is_fork_t : Tree -> Bool := {v} -> tree_rec ({_} -> Bool) false ({c, ih} -> false) ({l, r, il, ir} -> true) v
+is_leaf_t : Tree -> Bool := {v} -> tree_rec ({_} -> Bool) true ({c, ih} -> false) ({l, r, il, ir} -> false) v
 stem_child_t : Tree -> Tree := {v} -> tree_rec ({_} -> Tree) t ({c, ih} -> c) ({l, r, il, ir} -> l) v
 test is_fork_t t = is_fork t
 test is_fork_t (t t) = is_fork (t t)
@@ -46,17 +46,17 @@ test stem_child_t (t (t t t)) = stem_child (t (t t t))
 // the licensed fast twin (the nat_rec_fast pattern, one rung lower): delegate
 // neutrals to the TYPED twin, run concretes through the raw dispatcher
 let is_fork_fast := {v} -> if (is_neutral v) then (is_fork_t v) else (is_fork v)
-test param_apply (oeq (Arrow Tree Bool) is_fork_t is_fork_fast) ({v} -> refl) = Ok TT
-// a lying twin is refused (constant TT differs on the abstract path)
-test tree_eq (param_apply (oeq (Arrow Tree Bool) is_fork_t ({v} -> TT)) ({v} -> refl)) (Ok TT) = FF
+test param_apply (oeq (Arrow Tree Bool) is_fork_t is_fork_fast) ({v} -> refl) = Ok true
+// a lying twin is refused (constant true differs on the abstract path)
+test tree_eq (param_apply (oeq (Arrow Tree Bool) is_fork_t ({v} -> true)) ({v} -> refl)) (Ok true) = false
 
 // ── (c) the application face (the annotations live in the prelude and verified at
 // kernel load; re-pinned here directly)
-test typecheck (Arrow Tree (Arrow Tree (Arrow Tree Tree))) wait = Ok TT
-test typecheck (Arrow Tree Tree) omega = Ok TT
-test typecheck (Arrow Tree Tree) ({x} -> x x x) = Ok TT
-test typecheck (Arrow Tree (Arrow Tree Tree)) ({x, y} -> x (y x)) = Ok TT
+test typecheck (Arrow Tree (Arrow Tree (Arrow Tree Tree))) wait = Ok true
+test typecheck (Arrow Tree Tree) omega = Ok true
+test typecheck (Arrow Tree Tree) ({x} -> x x x) = Ok true
+test typecheck (Arrow Tree (Arrow Tree Tree)) ({x, y} -> x (y x)) = Ok true
 
 // ── (d) the completeness loss, pinned visible
 let looks_like_elim := { motive := ({_} -> Bool); cases := t }
-test tree_eq (typecheck (Arrow Tree Tree) ({x} -> x looks_like_elim)) (Ok TT) = FF
+test tree_eq (typecheck (Arrow Tree Tree) ({x} -> x looks_like_elim)) (Ok true) = false

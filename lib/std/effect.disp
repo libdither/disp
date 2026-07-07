@@ -99,8 +99,8 @@ row1 := {e} -> cons e nil
 row_cons := {e, R} -> cons e R
 label_in_row := fix ({self, e, R} ->
   if (is_fork R)
-    then (if (tree_eq (pair_fst R) e) then TT else (self e (pair_snd R)))
-    else FF)
+    then (if (tree_eq (pair_fst R) e) then true else (self e (pair_snd R)))
+    else false)
 // eff_check R v: support(v) ⊆ R. Containment is what makes WEAKENING free —
 // a {State} computation checks at {State, IO} with no coercion and no
 // subtyping judgment ("a type is a predicate that checks ⊆, not an index
@@ -110,9 +110,9 @@ label_in_row := fix ({self, e, R} ->
 // which is what handles branching continuations.
 eff_check := fix ({self, R, v} ->
   match v {
-    Pure x => TT
-    Op op arg k => (if (label_in_row (effect_of op) R) then (self R (k t)) else FF)
-    _ => FF
+    Pure x => true
+    Op op arg k => (if (label_in_row (effect_of op) R) then (self R (k t)) else false)
+    _ => false
   })
 // Effect safety as an ordinary TYPE, today: refine Tree by the row check.
 // (The self-referential `Eff R X` recognizer supersedes this in production —

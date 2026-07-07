@@ -22,10 +22,10 @@ let map_id_law := {a} -> list_rec
 let FnT := Arrow NatList NatList
 
 // ── the constructors and the default guard are ordinary, typed kernel values ──
-test typecheck GuardAction (Bind zero) = Ok TT
-test typecheck GuardAction (Install zero) = Ok TT
-test typecheck GuardAction (Both zero zero) = Ok TT
-test typecheck Request (base zero) = Ok TT
+test typecheck GuardAction (Bind zero) = Ok true
+test typecheck GuardAction (Install zero) = Ok true
+test typecheck GuardAction (Both zero zero) = Ok true
+test typecheck Request (base zero) = Ok true
 test default_guard t (base zero) = Ok (Bind zero)                    // plain bind
 test default_guard t (guard freeze (base zero)) = Ok (Both zero freeze)  // bind + install
 test default_guard t (guard freeze (sig Nat)) = Ok (Install freeze)  // install only
@@ -33,24 +33,24 @@ test default_guard t (sig Nat) = Err                                 // nothing 
 
 // ── an owned name: install + bind in one declaration, rebind with credentials ──
 guard (license_guard (oeq FnT)) ident : Arrow NatList NatList := ({xs} -> xs)
-test tree_eq ident idA = TT
+test tree_eq ident idA = true
 ident : Arrow NatList NatList := { new := ({xs} -> mp ({x} -> x) xs); proof := map_id_law }
-test tree_eq ident idB = TT                       // the name now binds the licensed replacement
+test tree_eq ident idB = true                       // the name now binds the licensed replacement
 test ident (cons 2 nil) = cons 2 nil              // and still behaves
 
 // ── idempotent rebind: tree-identical, no consultation, no credentials needed ──
 ident : Arrow NatList NatList := ({xs} -> mp ({x} -> x) xs)
-test tree_eq ident idB = TT
+test tree_eq ident idB = true
 
 // ── guard_eq: the ownership contract derived from the declared type ──
 guard_eq ident2 : Arrow NatList NatList := ({xs} -> xs)
 ident2 : Arrow NatList NatList := { new := ({xs} -> mp ({x} -> x) xs); proof := map_id_law }
-test tree_eq ident2 idB = TT
+test tree_eq ident2 idB = true
 
 // ── interface entry: contract first, first implementation license-free ──
 guard (license_guard (oeq FnT)) iface : Arrow NatList NatList
 iface : Arrow NatList NatList := ({xs} -> xs)
-test tree_eq iface idA = TT
+test tree_eq iface idA = true
 
 // ── freeze: install alongside a value; the name still reads normally ──
 guard freeze VERSION : Nat := 3
@@ -61,17 +61,17 @@ test VERSION = 3
 let pvt : Nat := 3
 test pvt = 3
 // the decorators are typed kernel values (annotations auto-verified at load; re-pinned)
-test typecheck Request (guard freeze (base zero)) = Ok TT
-test typecheck Request (let (base zero)) = Ok TT
-test typecheck Request (sig Nat) = Ok TT
-test typecheck Request (given (sig Nat)) = Ok TT
+test typecheck Request (guard freeze (base zero)) = Ok true
+test typecheck Request (let (base zero)) = Ok true
+test typecheck Request (sig Nat) = Ok true
+test typecheck Request (given (sig Nat)) = Ok true
 
 // ── `given` marks a module dependency (MODULES.md): param rides the request ──
-test (given (base zero)).param = TT
-test (base zero).param = FF
-test (let (base zero)).param = FF
+test (given (base zero)).param = true
+test (base zero).param = false
+test (let (base zero)).param = false
 
 // ── the equation item and its marker (SYNTAX.typ § Tests): `test` is the prelude
 // IDENTITY, an ordinary value — `test e` ≡ `e` — so the marker is style, not syntax.
-test tree_eq (test pvt) pvt = TT      // marker in expression position: identity
+test tree_eq (test pvt) pvt = true      // marker in expression position: identity
 pair_fst (pair pvt zero) = 3          // a markerless equation is the same item

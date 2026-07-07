@@ -6,14 +6,14 @@ test pair_fst (pair 1 2) = 1
 test pair_snd (pair 1 2) = 2
 
 // Pair A B is a Sigma (2-entry telescope); values are records
-test typecheck (Pair Nat Nat) (make_pair 0 0) = Ok TT
-test typecheck (Pair Nat Nat) (make_pair 3 7) = Ok TT
-test typecheck (Pair Nat Bool) (make_pair 1 TT) = Ok TT
-test typecheck (Pair Bool Nat) (make_pair FF 5) = Ok TT
+test typecheck (Pair Nat Nat) (make_pair 0 0) = Ok true
+test typecheck (Pair Nat Nat) (make_pair 3 7) = Ok true
+test typecheck (Pair Nat Bool) (make_pair 1 true) = Ok true
+test typecheck (Pair Bool Nat) (make_pair false 5) = Ok true
 test make_pair 4 7 = { fst := 4; snd := 7 }
 
 // Rejects ill-typed contents
-test typecheck (Pair Bool Nat) (make_pair 1 5) = Ok FF
+test typecheck (Pair Bool Nat) (make_pair 1 5) = Ok false
 
 // Helpers
 test pair_map_fst succ (make_pair 1 9) = make_pair 2 9
@@ -27,4 +27,4 @@ let snd_of_nats : Pair Nat Nat -> Nat := {p} -> p.snd
 test snd_of_nats (make_pair 4 7) = 7
 let fst_of_nats : Pair Nat Nat -> Nat := {p} -> p.fst
 test fst_of_nats (make_pair 4 7) = 4
-test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> p.snd) = Ok TT // verifies through the walker
+test param_apply (Arrow (Pair Nat Nat) Nat) ({p} -> p.snd) = Ok true // verifies through the walker

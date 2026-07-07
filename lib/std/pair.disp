@@ -3,7 +3,7 @@ open use "../kernel/prelude.disp"
 // Typed pairs are 2-field records ({ fst := a; snd := b }): Pair A B is the
 // non-dependent Sigma, itself a 2-entry telescope. Projection is UNIFORM —
 // `p.fst` is the §2.6 cut on a concrete record and routes through Telescope's
-// respond (the `at FF` walk) on a Pair-hypothesis. Prelude's fork-pairs (`pair`,
+// respond (the `at false` walk) on a Pair-hypothesis. Prelude's fork-pairs (`pair`,
 // `pair_fst`, `pair_snd`) remain the RAW substrate idiom for kernel-internal trees.
 
 make_pair : Tree -> Tree -> Tree := {a, b} -> { fst := a; snd := b }

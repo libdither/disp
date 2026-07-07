@@ -7,15 +7,15 @@
 open use "../kernel/prelude.disp"
 
 // not identity: the sig differs from the raw checker
-test tree_eq (checker_sig pair_snd) pair_snd = FF
-test tree_eq (checker_sig tree_eq) tree_eq = FF
+test tree_eq (checker_sig pair_snd) pair_snd = false
+test tree_eq (checker_sig tree_eq) tree_eq = false
 
 // constant across the metadata slot (the property that makes it a signature)
-test tree_eq (pair_fst (wait pair_snd zero)) (pair_fst (wait pair_snd (succ zero))) = TT
+test tree_eq (pair_fst (wait pair_snd zero)) (pair_fst (wait pair_snd (succ zero))) = true
 
 // no separate storage: the sig of a live wait-form is a projection of the term itself
-test tree_eq (pair_fst (wait pair_snd zero)) (checker_sig pair_snd) = TT
+test tree_eq (pair_fst (wait pair_snd zero)) (checker_sig pair_snd) = true
 
 // the kernel instances are cached projections of the same shape
-test tree_eq hyp_sig (checker_sig hyp_reduce) = TT
-test tree_eq cut_sig (checker_sig cut) = TT
+test tree_eq hyp_sig (checker_sig hyp_reduce) = true
+test tree_eq cut_sig (checker_sig cut) = true

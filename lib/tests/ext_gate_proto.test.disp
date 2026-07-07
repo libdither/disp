@@ -5,7 +5,7 @@
 // motive instead — GoodRespond-style: probe the motive on a fresh hyp under a walker
 // whose intensional carve-outs are removed. Pins:
 //  (1) the unary membership check canNOT separate intensional from extensional motives
-//      (tree_eq answers FF uniformly on hyps, so intensional branches are invisible);
+//      (tree_eq answers false uniformly on hyps, so intensional branches are invisible);
 //  (2) the unsoundness is real (the intensional motive's fibers diverge across
 //      pointwise-equal functions, while the extensional motive's fibers share refl);
 //  (3) the probe separates them (observation must factor through application).
@@ -19,16 +19,16 @@ let P_bad  := {h} -> if (tree_eq h ({xs} -> xs)) then Unit else False
 let P_good := {h} -> Eq NatList (h nil) nil
 
 // ── (1) unary membership does not separate them
-test param_apply (Arrow FnT Type) P_bad  = Ok TT
-test param_apply (Arrow FnT Type) P_good = Ok TT
+test param_apply (Arrow FnT Type) P_bad  = Ok true
+test param_apply (Arrow FnT Type) P_good = Ok true
 
 // ── (2) the unsoundness, concretely: pointwise-equal, tree-distinct identities
 let idA := {xs} -> xs
 let idB := {xs} -> list_map ({x} -> x) xs
-test tree_eq (P_bad idA) Unit  = TT
-test tree_eq (P_bad idB) False = TT
-test typecheck (P_good idA) refl = Ok TT
-test typecheck (P_good idB) refl = Ok TT
+test tree_eq (P_bad idA) Unit  = true
+test tree_eq (P_bad idB) False = true
+test typecheck (P_good idA) refl = Ok true
+test typecheck (P_good idB) refl = Ok true
 
 // ── (3) the gate: param_walker with the intensional observations de-carved on neutrals
 let is_hyp_fork_x := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
@@ -70,4 +70,4 @@ ext_walker := fix ({self, f, x} ->
 
 let hF := make_hyp FnT "probe"
 test ext_walker P_bad hF = Err                       // intensional: dies at the tree_eq
-test tree_eq (ext_walker P_good hF) Err = FF         // extensional: survives (Ok <type>)
+test tree_eq (ext_walker P_good hF) Err = false         // extensional: survives (Ok <type>)

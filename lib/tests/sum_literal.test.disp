@@ -8,30 +8,30 @@ open use "../kernel/prelude.disp"
 
 // ── oracle: the desugared tree IS the hand-written former (tree_eq) ──
 // nullary + recursive single-arg variant (the design doc's Peano shape; `Rec` is a kernel value)
-test tree_eq (< zero, succ : Rec >) (Coproduct [pair "zero" [], pair "succ" [Rec]]) = TT
+test tree_eq (< zero, succ : Rec >) (Coproduct [pair "zero" [], pair "succ" [Rec]]) = true
 // record-payload variant ({v:Nat} desugars to a Telescope in both forms)
-test tree_eq (< ok : {v : Nat} >) (Coproduct [pair "ok" [{v : Nat}]]) = TT
+test tree_eq (< ok : {v : Nat} >) (Coproduct [pair "ok" [{v : Nat}]]) = true
 // empty sum
-test tree_eq (<>) (Coproduct []) = TT
+test tree_eq (<>) (Coproduct []) = true
 // multi-variant, mixed arities
-test tree_eq (< a : Nat, b : Bool, c >) (Coproduct [pair "a" [Nat], pair "b" [Bool], pair "c" []]) = TT
+test tree_eq (< a : Nat, b : Bool, c >) (Coproduct [pair "a" [Nat], pair "b" [Bool], pair "c" []]) = true
 // trailing comma is allowed (like record fields)
-test tree_eq (< a : Nat, b, >) (Coproduct [pair "a" [Nat], pair "b" []]) = TT
+test tree_eq (< a : Nat, b, >) (Coproduct [pair "a" [Nat], pair "b" []]) = true
 
 // ── recognition: a `<…>`-typed value type-checks through the kernel ──
 // the design doc's example (payloads simplified to non-record types):
 let Event := < Error : Nat, Success : Bool, Done >
-test param_apply Event (inj "Error" zero)   = Ok TT
-test param_apply Event (inj "Success" TT)   = Ok TT
-test param_apply Event (inj "Done" t)       = Ok TT   // nullary value: payload is t
-test param_apply Event (inj "Error" TT)     = Ok FF   // Error expects Nat, got Bool
-test param_apply Event (inj "Nope" t)       = Ok FF   // unknown tag
-test typecheck Type Event                   = Ok TT   // Event is a real Type
+test param_apply Event (inj "Error" zero)   = Ok true
+test param_apply Event (inj "Success" true)   = Ok true
+test param_apply Event (inj "Done" t)       = Ok true   // nullary value: payload is t
+test param_apply Event (inj "Error" true)     = Ok false   // Error expects Nat, got Bool
+test param_apply Event (inj "Nope" t)       = Ok false   // unknown tag
+test typecheck Type Event                   = Ok true   // Event is a real Type
 
 // ── a recursive sum (Peano) recognizes exactly like the hand form ──
 let PN := < zero, succ : Rec >
 let pz := inj "zero" t
 let ps := {n} -> inj "succ" n
-test typecheck PN pz              = Ok TT
-test typecheck PN (ps (ps pz))    = Ok TT
-test typecheck Type PN            = Ok TT
+test typecheck PN pz              = Ok true
+test typecheck PN (ps (ps pz))    = Ok true
+test typecheck Type PN            = Ok true

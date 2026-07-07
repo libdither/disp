@@ -10,17 +10,17 @@ test "ab" = [97, 98]
 test "" = nil
 
 // Deterministic + distinct: equal spellings hash-cons equal, distinct differ.
-test tree_eq "respond" "respond" = TT
-test tree_eq "respond" "functor" = FF
-test tree_eq "ab" "ba" = FF
+test tree_eq "respond" "respond" = true
+test tree_eq "respond" "functor" = false
+test tree_eq "ab" "ba" = false
 
 // Usable as a record field-name tag through the cut.
-let r := make_record ["x", "y"] [list_const zero, list_const TT]
+let r := make_record ["x", "y"] [list_const zero, list_const true]
 test field r "x" = zero
-test field r "y" = TT
+test field r "y" = true
 
 // And as coproduct tags through the cut (make_record takes the names as a list of
 // string terms; match-arm *patterns* are still identifiers, a separate feature).
 let handle := make_record ["inc", "id"] [{n} -> succ n, {x} -> x]
 test handle (inj "inc" zero) = succ zero
-test handle (inj "id" TT) = TT
+test handle (inj "id" true) = true

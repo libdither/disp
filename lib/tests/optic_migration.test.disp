@@ -26,7 +26,7 @@
 // right-nested-with-last-arg-identity. This makes `slot j` regular (`get = nth j`, `over = update j`)
 // so the optic story is clean; the kernel migration would pick this or pay one `nil`/ctor.
 //
-// Out of prototype scope (the REAL migration's risk, can't be reproduced in isolation): the FF
+// Out of prototype scope (the REAL migration's risk, can't be reproduced in isolation): the false
 // respond path is implemented for totality but only lightly exercised (Pi application via the H-rule);
 // the StrictType self-typing metacircle (stage-2 gate) needs the actual kernel wiring; nested
 // `RecUnder F` fmap needs F's map (deferred, as in step 0).
@@ -90,7 +90,7 @@ let spec_to_role := {s} -> (if (and (is_fork s) (tree_eq (pair_fst s) "@Param"))
 // ─────────────────────────────────────────────────────────────────────────────────────────
 // THE ONE GENERIC CELL OP — interprets (optic, role). Replaces mint/apply/proj/pos/deriv/rec/param.
 // ─────────────────────────────────────────────────────────────────────────────────────────
-// mode TT = recognize (check & continue) ; mode FF = respond (extend the stuck neutral's spine).
+// mode true = recognize (check & continue) ; mode false = respond (extend the stuck neutral's spine).
 let check_step := {mode, part, ty} -> (if mode then (match (ty part) { Ok b => (if b then (SThread part) else SReject); Err _ => SReject }) else (SDone (Extend ty)))
 // role_type: the `check`'s type, by where it comes from — literal / params i / F self (CELL_OPTICS §1:
 // "the type T of a check may come from a literal, the recursive self, … or a parameter params i").
@@ -118,21 +118,21 @@ let key_cells := {fields} -> key_cells_go (map_fst fields) fields
 // WALKER 1 — recognize/respond: the kernel `at` REUSED UNCHANGED (it reads cells via the Step
 // protocol only, so the generic op plugs straight in). rs = pair self params (step-0 bundling).
 // ─────────────────────────────────────────────────────────────────────────────────────────
-let tele_respond := {params, self, frame} -> tele_walk (pair t t) FF params self frame t
+let tele_respond := {params, self, frame} -> tele_walk (pair t t) false params self frame t
 
 // Pi/Arrow/Intersection — negative dependent product (Telescope). mint + app + self optics.
-let Telescope_o := {tele} -> wait (make_recognizer {meta, v} -> tele_walk (pair t t) TT (meta.recognizer_params) v t t) (make_meta tele tele_respond)
+let Telescope_o := {tele} -> wait (make_recognizer {meta, v} -> tele_walk (pair t t) true (meta.recognizer_params) v t t) (make_meta tele tele_respond)
 let Pi_o    := {A, B} -> Telescope_o (t (mk_cell mk_fresh (r_bind A)) ({h} -> t (mk_cell mk_app (r_lit (B h))) ({_} -> t)))
 let Arrow_o := {A, B} -> Pi_o A ({_} -> B)
 let Inter   := {A, B} -> Telescope_o (t (mk_cell mk_self_optic (r_lit A)) ({_} -> t (mk_cell mk_self_optic (r_lit B)) ({_} -> t)))
 
 // Record — the only `key` former. Plain/derived fields; params threaded for fmap.
-let record_walk := {rs, fields, v} -> tele_walk rs TT (key_cells fields) v t t
+let record_walk := {rs, fields, v} -> tele_walk rs true (key_cells fields) v t t
 let Record_p := {params, fields} -> wait (make_recognizer {meta, v} -> (record_walk (pair t params) (meta.recognizer_params) v)) (make_meta fields tele_respond)
 let Record_o := {fields} -> Record_p t fields
 
 // Coproduct — the `slot` former. Self-aware (rec cells) + param-aware. Value = inj tag arglist.
-let coproduct_walk := {rs, variants, v} -> (match (lookup_arm variants (pair_fst v)) { Ok argspec => (tele_walk rs TT (slot_cells argspec) (pair_snd v) t t); Err _ => (Ok FF) })
+let coproduct_walk := {rs, variants, v} -> (match (lookup_arm variants (pair_fst v)) { Ok argspec => (tele_walk rs true (slot_cells argspec) (pair_snd v) t t); Err _ => (Ok false) })
 let Coproduct_p := {params, variants} -> wait (make_rec_recognizer {self, meta, v} -> (coproduct_walk (pair self params) (meta.recognizer_params) v)) (make_meta variants inductive_respond)
 let Coproduct_o := {variants} -> Coproduct_p t variants
 
@@ -190,19 +190,19 @@ test ((mk_key ["fst", "snd"] "snd").get) (make_pair 7 9) t                 = 9  
 test ((mk_key ["a", "b"] "b").over) succ (mk_rec ["a", "b"] (cons 1 (cons 2 nil))) = mk_rec ["a", "b"] (cons 1 (cons 3 nil))  // key over = make_record-with-one-mapped
 
 // (5 + 4) recognition through the REUSED kernel `at`, every former on the generic op
-test typecheck (Arrow Nat Nat) ({x} -> x)                 = Ok TT       // Pi: fresh->bind ; app->check (+ H-rule)
-test typecheck (Inter Nat Nat) 5                          = Ok TT       // Intersection: self->check, twice
-test typecheck (Inter Nat Nat) TT                         = Ok FF       // self->check rejects (TT is not Nat)
-test typecheck (List Nat) lnil                            = Ok TT
-test typecheck (List Nat) (lcons 1 (lcons 2 lnil))        = Ok TT
-test typecheck (List Nat) (eleft 3)                       = Ok FF       // wrong tag
-test typecheck (List Bool) (lcons 1 lnil)                 = Ok FF       // param check: 1 is not a Bool
-test typecheck (Either Nat Bool) (eleft 5)               = Ok TT
-test typecheck (Either Nat Bool) (eright TT)             = Ok TT
-test typecheck (Pair Nat Nat) (make_pair 3 5)             = Ok TT       // Record: key->check (param)
-test typecheck (Pair Nat Bool) (make_pair 3 9)            = Ok FF       // record param reject (9 not Bool)
-test typecheck DRec (mk_rec ["x", "y"] (cons 5 (cons 42 nil))) = Ok TT // Pin role: present AND pinned
-test typecheck DRec (mk_rec ["x", "y"] (cons 5 (cons 7 nil)))  = Ok FF // Pin role: wrong pinned value
+test typecheck (Arrow Nat Nat) ({x} -> x)                 = Ok true       // Pi: fresh->bind ; app->check (+ H-rule)
+test typecheck (Inter Nat Nat) 5                          = Ok true       // Intersection: self->check, twice
+test typecheck (Inter Nat Nat) true                         = Ok false       // self->check rejects (true is not Nat)
+test typecheck (List Nat) lnil                            = Ok true
+test typecheck (List Nat) (lcons 1 (lcons 2 lnil))        = Ok true
+test typecheck (List Nat) (eleft 3)                       = Ok false       // wrong tag
+test typecheck (List Bool) (lcons 1 lnil)                 = Ok false       // param check: 1 is not a Bool
+test typecheck (Either Nat Bool) (eleft 5)               = Ok true
+test typecheck (Either Nat Bool) (eright true)             = Ok true
+test typecheck (Pair Nat Nat) (make_pair 3 5)             = Ok true       // Record: key->check (param)
+test typecheck (Pair Nat Bool) (make_pair 3 9)            = Ok false       // record param reject (9 not Bool)
+test typecheck DRec (mk_rec ["x", "y"] (cons 5 (cons 42 nil))) = Ok true // Pin role: present AND pinned
+test typecheck DRec (mk_rec ["x", "y"] (cons 5 (cons 7 nil)))  = Ok false // Pin role: wrong pinned value
 
 // (2) fmap/bimap via the optic's `over` — NO build_payload (coproduct) and NO make_record (record)
 test fmap (List Nat) succ lnil                                       = lnil
@@ -212,4 +212,4 @@ test bimap (Either Nat Nat) succ double (eright 5)                  = eright 10 
 test fmap (BTree Nat) succ (bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3))) = bnode (bleaf 2) (bnode (bleaf 3) (bleaf 4))
 test bimap_rec (Pair Nat Nat) succ double (make_pair 3 5)            = make_pair 4 10   // key.over rebuilds the record
 // fmap preserves recognition (List Nat -> List Nat)
-test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok TT
+test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok true

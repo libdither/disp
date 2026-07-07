@@ -4,22 +4,22 @@ open use "../std/set.disp"
 let odds := set_union (singleton_set 1) (singleton_set 3)
 let small := set_insert 2 odds
 
-test set_member empty_set 0 = FF
-test set_member full_set 4 = TT
+test set_member empty_set 0 = false
+test set_member full_set 4 = true
 
-test set_member (singleton_set 2) 2 = TT
-test set_member (singleton_set 2) 3 = FF
+test set_member (singleton_set 2) 2 = true
+test set_member (singleton_set 2) 3 = false
 
-test set_member odds 1 = TT
-test set_member odds 2 = FF
-test set_member odds 3 = TT
+test set_member odds 1 = true
+test set_member odds 2 = false
+test set_member odds 3 = true
 
-test set_member small 1 = TT
-test set_member small 2 = TT
-test set_member small 3 = TT
+test set_member small 1 = true
+test set_member small 2 = true
+test set_member small 3 = true
 
-test set_member (set_inter odds (singleton_set 3)) 1 = FF
-test set_member (set_inter odds (singleton_set 3)) 3 = TT
-test set_member (set_complement odds) 1 = FF
-test set_member (set_complement odds) 2 = TT
+test set_member (set_inter odds (singleton_set 3)) 1 = false
+test set_member (set_inter odds (singleton_set 3)) 3 = true
+test set_member (set_complement odds) 1 = false
+test set_member (set_complement odds) 2 = true
 

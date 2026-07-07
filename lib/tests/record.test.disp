@@ -5,31 +5,31 @@
 open use "../kernel/prelude.disp"
 
 // ---- a record value is a product, read by name ----
-let r := { a := zero; b := TT }
+let r := { a := zero; b := true }
 test r.a = zero // statically-known record: compile-time collapse
-test r.b = TT
+test r.b = true
 
 // it IS a §2.6 product (cut-rooted), so the cut combinators work on it
 test field r "a" = zero
-test field r "b" = TT
+test field r "b" = true
 
 // ---- projection on an UN-annotated runtime value uses the runtime cut ----
 // (this is the step-3 metadata-read scenario: m.field on a plain parameter)
 let get_a := {rec} -> rec.a
 let get_b := {rec} -> rec.b
-test get_a { a := zero; b := TT } = zero
-test get_b { a := zero; b := TT } = TT
+test get_a { a := zero; b := true } = zero
+test get_b { a := zero; b := true } = true
 
 // ---- surface records interoperate with the Record TYPE via string names ----
 let MyRec := Record [pair "a" Nat, pair "b" Bool]
-test typecheck MyRec { a := zero; b := TT } = Ok TT
-test param_apply MyRec { a := TT; b := TT } = Ok FF // a should be a Nat
+test typecheck MyRec { a := zero; b := true } = Ok true
+test param_apply MyRec { a := true; b := true } = Ok false // a should be a Nat
 
 // ---- a record literal as kernel metadata: read a field by name at runtime ----
 // (the shape step 3 relies on: a 4-field record projected by an accessor fn)
-let meta := { recognizer_params := zero; functor := t; respond := TT; behavioral_specs := t }
+let meta := { recognizer_params := zero; functor := t; respond := true; behavioral_specs := t }
 let get_respond := {m} -> m.respond
-test get_respond meta = TT
+test get_respond meta = true
 
 // ---- sequential field scope: later fields see earlier ones by name ----
 open use "../std/nat/ops.disp"

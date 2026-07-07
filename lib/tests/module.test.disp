@@ -8,15 +8,15 @@ open use "../kernel/prelude.disp"
 
 let m := use "typed_mod.disp"
 
-// The whole module verifies in one application: (typ) (record) = Ok TT.
+// The whole module verifies in one application: (typ) (record) = Ok true.
 // This checks foo:Type, bar:Type, baz:Type — names and types — at once. Routed through
 // `param_apply` (= how `verify` actually checks a module): the strict universe's recognize
 // face is `v : Arrow Tree CheckerResult`, which mints a hyp, so it must run under the walker
 // (raw `m.typ m.record` would fail fast on the mint — the lean universe didn't mint).
-test param_apply m.typ m.record = Ok TT
+test param_apply m.typ m.record = Ok true
 
 // Non-vacuous: applying the SAME typ to a record whose `foo` isn't a type fails.
-test param_apply m.typ (make_record ["foo", "bar", "baz"] [list_const zero, list_const Nat, list_const Bool]) = Ok FF
+test param_apply m.typ (make_record ["foo", "bar", "baz"] [list_const zero, list_const Nat, list_const Bool]) = Ok false
 
 // The value record projects by name through the cut.
 test m.record.foo = Bool

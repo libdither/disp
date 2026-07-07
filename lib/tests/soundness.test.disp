@@ -38,7 +38,7 @@ test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err
 // walker's own `self`, so reflection on the hypothesis INSIDE the body is now
 // caught exactly as at the top level (the param_apply tests above). A body that
 // triages on the hypothesis is rejected with `Err` — no structural verdict leaks.
-// (These RHSs were the pinned leaky `Ok TT`/`Ok FF` before the fix landed.)
+// (These RHSs were the pinned leaky `Ok true`/`Ok false` before the fix landed.)
 test param_apply (bind_hyp Nat) ({x} -> Ok (is_fork x)) = Err // triage on hyp -> rejected
 test param_apply (bind_hyp Nat) ({x} -> Ok (is_leaf x)) = Err // triage on hyp -> rejected
 test param_apply (bind_hyp Nat) ({x} -> Ok (is_stem x)) = Err // triage on hyp -> rejected
@@ -59,8 +59,8 @@ test param_apply (bind_hyp Nat) ({x} -> Ok (is_stem x)) = Err // triage on hyp -
 // registered hyp_reduce and extends the spine:
 // the respond gates the cases against the motive (§B), so they must be coherent:
 // with motive Bool, zero : Bool and succ returns its ih : Bool (cases keyed by variant tag).
-let stuck := param_apply hN { motive := ({_} -> Bool); cases := { zero := TT; succ := ({pred, ih} -> ih) } }
-test is_neutral stuck = TT // bare stuck neutral (Option A §7.5)
+let stuck := param_apply hN { motive := ({_} -> Bool); cases := { zero := true; succ := ({pred, ih} -> ih) } }
+test is_neutral stuck = true // bare stuck neutral (Option A §7.5)
 test neutral_type stuck = Bool
 
 // ================================================================
@@ -73,14 +73,14 @@ test neutral_type stuck = Bool
 // `verify`.
 test (Pi Nat ({_} -> Nat)) ({n} -> n)         = Err     // raw -> fail fast (recognizer mints a hyp)
 test (Intersection Nat ({_} -> Nat)) zero     = Err     // raw -> fail fast (recognizer mints a hyp)
-test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n) = Ok TT   // the sound path still works
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> n) = Ok true   // the sound path still works
 // A type whose recognizer does NOT mint a hyp applies raw to a CONCRETE value safely
 // — no parametricity surface. Sigma's recognizer (the telescope fold) checks a
 // concrete record (its family is only abstracted in its respond), so raw Sigma
 // yields a verdict, NOT fail-fast; recognizers rely on this raw composition internally.
-test (Sigma Nat ({_} -> Bool)) { fst := zero; snd := TT } = Ok TT   // raw Sigma: a verdict, not fail-fast
-test Nat (succ zero)       = Ok TT
-test (Eq Nat zero zero) refl = Ok TT
+test (Sigma Nat ({_} -> Bool)) { fst := zero; snd := true } = Ok true   // raw Sigma: a verdict, not fail-fast
+test Nat (succ zero)       = Ok true
+test (Eq Nat zero zero) refl = Ok true
 
 // ================================================================
 // THE SUBSTRATE FLOOR (K0) — the trusted base, declared and pinned
@@ -94,10 +94,10 @@ test (Eq Nat zero zero) refl = Ok TT
 // pins that boundary: the carve-outs verify, the floor does not.
 
 // (a) the 4 SANCTIONED READERS are usable on a hypothesis (engine.disp param_walker carve-outs):
-test param_apply (Pi Nat ({_} -> Tree)) ({x} -> pair_fst x)     = Ok TT  // root signature
-test param_apply (Pi Nat ({_} -> Tree)) ({x} -> neutral_type x) = Ok TT  // stored type
-test param_apply (Pi Nat ({_} -> Bool)) ({x} -> tree_eq x x)    = Ok TT  // conversion (O(1) hash-cons)
-test param_apply (Pi Nat ({_} -> Nat))  ({x} -> x)              = Ok TT  // identity
+test param_apply (Pi Nat ({_} -> Tree)) ({x} -> pair_fst x)     = Ok true  // root signature
+test param_apply (Pi Nat ({_} -> Tree)) ({x} -> neutral_type x) = Ok true  // stored type
+test param_apply (Pi Nat ({_} -> Bool)) ({x} -> tree_eq x x)    = Ok true  // conversion (O(1) hash-cons)
+test param_apply (Pi Nat ({_} -> Nat))  ({x} -> x)              = Ok true  // identity
 
 // (b) the FLOOR readers are REJECTED on a hypothesis — they triage its payload, so they
 // CANNOT be verified. This rejection IS the proof they are trusted-by-construction (TCB):
@@ -114,14 +114,14 @@ test param_apply (Pi Tree ({_} -> Tree)) pair_snd = Err
 
 // ── H-rule NOMINALITY on neutrals (characterization, 2026-07-01): a REFINEMENT cannot
 // classify EXISTING neutrals. make_recognizer's H-rule short-circuits EVERY neutral
-// candidate to "is your stored type THIS type?" — so a hyp minted at Tree is Ok FF against
+// candidate to "is your stored type THIS type?" — so a hyp minted at Tree is Ok false against
 // `Refinement Tree is_neutral`, even though the refinement predicate holds for it. Types
 // are NOMINAL on neutrals; a structural `Neutral A` classifier would need a recognizer
 // that bypasses the H-rule shim, which reopens the level-confusion question (the hyp's OWN
 // neutrality vs the values it stands for). Pinned so any change here is a conscious one.
 let NeutralT := Refinement Tree is_neutral
-test tree_eq (param_apply NeutralT (make_hyp Tree 0)) (Ok TT) = FF // a real neutral: NOT a member (H-rule nominality)
-test param_apply NeutralT zero = Ok FF                             // a concrete non-neutral: predicate rejects, as expected
+test tree_eq (param_apply NeutralT (make_hyp Tree 0)) (Ok true) = false // a real neutral: NOT a member (H-rule nominality)
+test param_apply NeutralT zero = Ok false                             // a concrete non-neutral: predicate rejects, as expected
 
 // ── THE WALKER'S SEAL IS IRREDUCIBLE (characterization, 2026-07-07): why
 // param_walker itself is on the floor, at one-line resolution. A typed FACADE for
@@ -134,41 +134,41 @@ test param_apply NeutralT zero = Ok FF                             // a concrete
 // hyp-reflection, not where construction put it.
 let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
 let forged_stem := t hyp_sig               // a stem wearing the neutral signature
-test is_neutral forged_stem = TT           // the cheap guard is fooled...
-test is_hyp_fork_l forged_stem = FF        // ...the fork-shape guard is not
+test is_neutral forged_stem = true           // the cheap guard is fooled...
+test is_hyp_fork_l forged_stem = false        // ...the fork-shape guard is not
 // horn 1 — the is_neutral facade CHECKS but is not the walker: on the forged stem
 // it manufactures the counterfeit hyp-fork the real walker rejects (stem-forge).
 let walker_n := {f, x} -> if (is_neutral f) then (Ok (f x)) else (param_walker f x)
-test typecheck (Arrow Tree (Arrow Tree CheckerResult)) walker_n = Ok TT
+test typecheck (Arrow Tree (Arrow Tree CheckerResult)) walker_n = Ok true
 test param_walker forged_stem t = Err
-test tree_eq (walker_n forged_stem t) (param_walker forged_stem t) = FF
+test tree_eq (walker_n forged_stem t) (param_walker forged_stem t) = false
 // horn 2 — the is_hyp_fork facade routes exactly like the walker, but its guard
 // triages the minted head, so it CANNOT be checked (the guard is the reflection):
 let walker_h := {f, x} -> if (is_hyp_fork_l f) then (Ok (f x)) else (param_walker f x)
 test walker_h forged_stem t = param_walker forged_stem t
-test tree_eq (typecheck (Arrow Tree (Arrow Tree CheckerResult)) walker_h) (Ok TT) = FF
+test tree_eq (typecheck (Arrow Tree (Arrow Tree CheckerResult)) walker_h) (Ok true) = false
 // on GENUINE neutrals all three agree (the routing they share; horns differ only
 // at the forge boundary). The walker's INTERFACE stays typed via param_apply/
 // checked + the §7A token; growing the sanctioned-reader set (hyp-fork-ness) or
 // the sealing modality are the two avenues to type the BODY.
 let hW := make_hyp Tree 0
-test tree_eq (walker_n hW t) (param_walker hW t) = TT
-test tree_eq (walker_h hW t) (param_walker hW t) = TT
+test tree_eq (walker_n hW t) (param_walker hW t) = true
+test tree_eq (walker_h hW t) (param_walker hW t) = true
 
 // ================================================================
 // ABOVE THE FLOOR (K1) — everything else is meant to verify
 // ================================================================
 // The claim "everything above the floor verifies" is made checkable by the per-fragment
-// self-check `verify {cut,engine,types}_mod = Ok TT` in use_raw.test.disp (the kernel
+// self-check `verify {cut,engine,types}_mod = Ok true` in use_raw.test.disp (the kernel
 // typechecking its own annotated exports, under the walker) plus the annotations in the
 // kernel sources — every engine/cut export is either ANNOTATED (machine-verified: is_neutral,
 // neutral_type, bind_hyp, make_recognizer/make_rec_recognizer, apply_policed, the sigs,
 // verify : Module -> CheckerResult, InvalidType, the parametric responds, checker_sig,
 // make_meta) or marked SEALED(<why>) at the definition (see engine.disp's header). Representative
 // above-floor checks (formers, structural types, a recursor's own type) verify here too:
-test param_apply Type Nat = Ok TT                              // Nat : Type (a former verifies)
-test typecheck NeutralMeta (type_meta (make_hyp Nat 0)) = Ok TT // structural type inhabited
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok TT // recursor's own use verifies
+test param_apply Type Nat = Ok true                              // Nat : Type (a former verifies)
+test typecheck NeutralMeta (type_meta (make_hyp Nat 0)) = Ok true // structural type inhabited
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok true // recursor's own use verifies
 // NOTE (K1, updated 2026-07-01): list_rec is now elim-ROUTED (neutral targets run List's gate,
 // no more raw make_hyp bypass) and ANNOTATED at the implicit-∀ dependent recursor type
 // (Intersection Type ({A} -> …)); list_length carries Intersection Type ({A} -> Arrow (List A)

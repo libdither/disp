@@ -31,7 +31,7 @@ const pristineLet = new WeakMap<Session<Tree>, Tree>()
 // And the pristine `given` decorator (cut.disp): a `given`-headed declaration is a
 // MODULE DEPENDENCY (MODULES.md) handled by the driver directly while `given` is
 // unbound or pristine; a shadowed `given` routes the slow path, where a request
-// arriving with `param := TT` is rejected (dynamic givens are unsupported — fills
+// arriving with `param := true` is rejected (dynamic givens are unsupported — fills
 // resolve against the syntactic pre-scan).
 const pristineGiven = new WeakMap<Session<Tree>, Tree>()
 
@@ -231,7 +231,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // Deferred module verification: instead of forcing each module's `param_apply
   // typ record` verdict at its `use` site, build it LAZILY (a suspended computation,
   // via the backend's applyLazy) and force them ALL at once at the end of the parse.
-  // Lazy is acceptance-equivalent here (the verdict is fully forced against `Ok TT`,
+  // Lazy is acceptance-equivalent here (the verdict is fully forced against `Ok true`,
   // so confluence gives the same NF as eager), and the single end-of-parse force is
   // where work-sharing — and, later, parallel reduction — applies. `scheduled` dedups
   // a module across its many `use` sites; the global `verifiedModules` dedups across
@@ -242,7 +242,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   const pendingVerifications: { label: string; verdict: Tree; okTT: Tree; markKey?: string; markSet?: Set<string> }[] = []
   const scheduledForVerification = new Set<string>()
   // Lazy verification is OPT-IN (DISP_LAZY_VERIFY=1), eager by default. It is
-  // acceptance-equivalent (the verdict is fully forced against `Ok TT`, so confluence
+  // acceptance-equivalent (the verdict is fully forced against `Ok true`, so confluence
   // gives eager's NF — see project_eager_normative_is_scaffolding), but EMPIRICALLY
   // the M1 lazy reducer OOMs on kernel verification: it materializes every suspended
   // sub-application as a node and has no reachability GC, so the fully-demanded walk
@@ -353,7 +353,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       }
       const pa = lookupEntry("param_apply")?.tree, rec = lookupEntry("Record")?.tree
       const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
-      const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("TT")?.tree
+      const ok = lookupEntry("Ok")?.tree, tt = lookupEntry("true")?.tree
       if (pa && rec && mkr && lc && ok && tt) vFormers = { paramApply: pa, Record: rec, mkRecord: mkr, listConst: lc, ok, tt }
       if (abstract) {
         const pi = lookupEntry("Pi")?.tree
@@ -598,13 +598,13 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       return { pushDef: true, tree: valueTree, type: typeTree, guard: existing.guard, viaFast: false }
     }
     const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
-    const tt = lookupEntry("TT")?.tree, ff = lookupEntry("FF")?.tree
+    const tt = lookupEntry("true")?.tree, ff = lookupEntry("false")?.tree
     const g = existing?.guard ?? dg
     if (!mkr || !lc || !tt || !ff || !g)
       throw new Error(`declaration of '${name}': guarded declarations need the kernel prelude in scope`)
     const opt = (x: Tree | null): Tree => (x == null ? S.leaf() : S.stem(x))
     const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => S.fork(h, acc), S.leaf())
-    // The base request is public and non-param (`private := FF; param := FF`),
+    // The base request is public and non-param (`private := false; param := false`),
     // exactly `base v` in cut.disp; privacy and param are the head's job (the
     // `let` and `given` decorators set them).
     const names = consList(["value", "ty", "guard", "private", "param"].map(stringToTree))
@@ -715,7 +715,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const typeTree = !ctx.raw && it.type != null ? compileType(it.type, lookupEntry, resolveUse) : null
     if (typeTree != null) define(it.name, { tree: fill, type: typeTree })
     if (!ctx.raw && typeTree != null) {
-      const pa = lookupEntry("param_apply")?.tree, ok = lookupEntry("Ok")?.tree, tt = lookupEntry("TT")?.tree
+      const pa = lookupEntry("param_apply")?.tree, ok = lookupEntry("Ok")?.tree, tt = lookupEntry("true")?.tree
       if (pa && ok && tt) {
         pendingVerifications.push({
           label: `given '${it.name}' of ${ctx.abs}`,
@@ -844,11 +844,11 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
   // lazy backend this is where the kernel verification walks actually run — one
   // end-of-parse batch over a shared hash-consed arena, so identical sub-checks
   // across modules share work (and a future parallel backend can fan the independent
-  // verdicts out). `equal` forces each verdict to NF and compares to `Ok TT` — a
+  // verdicts out). `equal` forces each verdict to NF and compares to `Ok true` — a
   // closed force, so the result equals eager's.
   for (const p of pendingVerifications) {
     if (!elab.cs.equal!(p.verdict, p.okTT))
-      throw new Error(`type check failed for ${p.label}: the value does not inhabit its declared type (returned non-(Ok TT))`)
+      throw new Error(`type check failed for ${p.label}: the value does not inhabit its declared type (returned non-(Ok true))`)
     if (p.markKey && p.markSet) p.markSet.add(p.markKey)
   }
   return decls

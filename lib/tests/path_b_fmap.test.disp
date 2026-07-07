@@ -47,7 +47,7 @@ let is_recunder_marker := {ty} -> and (is_fork ty) (tree_eq (pair_fst ty) "@RecU
 
 // param_op: observe the positional slot `acc source`, check it against `params i` (= `pair_snd rs` i).
 // Identical SHAPE to the kernel's pos_op/rec_op — the only difference is WHERE the type comes from
-// (the threaded parameter context). FF branch present for totality (responds don't run `at FF` on sums).
+// (the threaded parameter context). false branch present for totality (responds don't run `at false` on sums).
 let param_op := {meta, mode, source, prior, frame, rs} ->
   if mode
     then (match ((nth (pair_snd rs) (meta.idx)) (meta.acc source)) { Ok b => (if b then (SThread (meta.acc source)) else SReject); Err _ => SReject })
@@ -85,8 +85,8 @@ let lookup_arm_p := fix ({self, variants, tag} ->
   } else Err)
 let coproduct_at_p := {rs, variants, v} ->
   match (lookup_arm_p variants (pair_fst v)) {
-    Ok argspec => (tele_walk rs TT (pos_tele_p argspec) (pair_snd v) t t)
-    Err _ => (Ok FF)
+    Ok argspec => (tele_walk rs true (pos_tele_p argspec) (pair_snd v) t t)
+    Err _ => (Ok false)
   }
 // Coproduct_p params variants: a parameterized inductive. params = the type-arg list (indexed by
 // `Param i`); variants keep the markers (so nmap can read them via `recognizer_params`). rs = (self,
@@ -136,21 +136,21 @@ let bleaf := {a} -> inj "leaf" a
 let bnode := {l, r} -> inj "node" (pair l r)
 
 // ── recognition (Param is a real recognizer cell, threaded through the real `at`) ──
-test typecheck (List Nat) lnil                              = Ok TT     // []
-test typecheck (List Nat) (lcons 1 (lcons 2 (lcons 3 lnil))) = Ok TT   // [1,2,3] : List Nat
-test typecheck (List Bool) (lcons TT (lcons FF lnil))      = Ok TT     // [TT,FF] : List Bool
-test typecheck (List Nat) (eleft 3)                        = Ok FF     // wrong tag -> rejected
-test typecheck (List Bool) (lcons 1 lnil)                  = Ok FF     // param check: 1 is not a Bool
-test typecheck (Either Nat Bool) (eleft 5)                 = Ok TT     // 5 : Nat (param 0)
-test typecheck (Either Nat Bool) (eright TT)               = Ok TT     // TT : Bool (param 1)
-test typecheck (Either Nat Bool) (eright 9)                = Ok FF     // param 1: 9 is not a Bool
+test typecheck (List Nat) lnil                              = Ok true     // []
+test typecheck (List Nat) (lcons 1 (lcons 2 (lcons 3 lnil))) = Ok true   // [1,2,3] : List Nat
+test typecheck (List Bool) (lcons true (lcons false lnil))      = Ok true     // [true,false] : List Bool
+test typecheck (List Nat) (eleft 3)                        = Ok false     // wrong tag -> rejected
+test typecheck (List Bool) (lcons 1 lnil)                  = Ok false     // param check: 1 is not a Bool
+test typecheck (Either Nat Bool) (eleft 5)                 = Ok true     // 5 : Nat (param 0)
+test typecheck (Either Nat Bool) (eright true)               = Ok true     // true : Bool (param 1)
+test typecheck (Either Nat Bool) (eright 9)                = Ok false     // param 1: 9 is not a Bool
 
 // ── fmap over List (recursion into `rec` cells + map at `param` cells) ──
 test fmap (List Nat) succ lnil                                       = lnil
 test fmap (List Nat) succ (lcons 1 (lcons 2 (lcons 3 lnil)))        = lcons 2 (lcons 3 (lcons 4 lnil))
 test fmap (List Nat) double (lcons 2 (lcons 5 lnil))               = lcons 4 (lcons 10 lnil)
 // fmap preserves recognition (List Nat -> List Nat)
-test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok TT
+test typecheck (List Nat) (fmap (List Nat) succ (lcons 1 (lcons 2 lnil))) = Ok true
 
 // ── bimap over Either (distinct functions at param 0 vs param 1) ──
 test bimap (Either Nat Nat) succ double (eleft 5)  = eleft 6         // succ at param 0

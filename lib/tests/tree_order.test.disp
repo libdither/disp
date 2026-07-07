@@ -8,50 +8,50 @@ open use "../kernel/prelude.disp"
 // ================================================================
 
 // reflexive elements are NOT strictly less than themselves
-test tree_lt t t = FF
-test tree_lt (t t) (t t) = FF
-test tree_lt (t t t) (t t t) = FF
+test tree_lt t t = false
+test tree_lt (t t) (t t) = false
+test tree_lt (t t t) (t t t) = false
 
 // constructor order: leaf < stem < fork
-test tree_lt t (t t) = TT          // leaf < stem
-test tree_lt t (t t t) = TT        // leaf < fork
-test tree_lt (t t) (t t t) = TT    // stem < fork
-test tree_lt (t t) t = FF
-test tree_lt (t t t) t = FF
-test tree_lt (t t t) (t t) = FF
+test tree_lt t (t t) = true          // leaf < stem
+test tree_lt t (t t t) = true        // leaf < fork
+test tree_lt (t t) (t t t) = true    // stem < fork
+test tree_lt (t t) t = false
+test tree_lt (t t t) t = false
+test tree_lt (t t t) (t t) = false
 
 // stems compare by child
-test tree_lt (t t) (t (t t)) = TT  // stem(leaf) < stem(stem)
-test tree_lt (t (t t)) (t t) = FF
+test tree_lt (t t) (t (t t)) = true  // stem(leaf) < stem(stem)
+test tree_lt (t (t t)) (t t) = false
 
 // forks compare lexicographically (first child, then second)
-test tree_lt (t t t) (t (t t) t) = TT   // fork: leaf < stem in first child
-test tree_lt (t t t) (t t (t t)) = TT   // fork: equal first, leaf < stem in second
-test tree_lt (t t (t t)) (t t t) = FF
+test tree_lt (t t t) (t (t t) t) = true   // fork: leaf < stem in first child
+test tree_lt (t t t) (t t (t t)) = true   // fork: equal first, leaf < stem in second
+test tree_lt (t t (t t)) (t t t) = false
 
 // trichotomy spot-check: for a ≠ b, exactly one of lt a b / lt b a holds
-test or (tree_lt (t t) (t (t t))) (tree_lt (t (t t)) (t t)) = TT
-test and (tree_lt (t t) (t (t t))) (tree_lt (t (t t)) (t t)) = FF
+test or (tree_lt (t t) (t (t t))) (tree_lt (t (t t)) (t t)) = true
+test and (tree_lt (t t) (t (t t))) (tree_lt (t (t t)) (t t)) = false
 
 // ================================================================
 // const_tail / is_const_tail — the non-dependent (K-shaped) spine tail
 // ================================================================
 
 // const_tail rest = t t rest (= what a closed `{_} -> rest` compiles to)
-test tree_eq (const_tail (t t)) (t t (t t)) = TT
+test tree_eq (const_tail (t t)) (t t (t t)) = true
 
 // K-shaped tails are recognized; non-K trees are not
-test is_const_tail (const_tail (t t t)) = TT
-test is_const_tail (t t t) = TT          // K t
-test is_const_tail (t t (t t)) = TT       // K (t t)
-test is_const_tail (t (t t) t) = FF       // fork with non-leaf left = not K
-test is_const_tail t = FF                 // leaf
-test is_const_tail (t t) = FF             // stem
+test is_const_tail (const_tail (t t t)) = true
+test is_const_tail (t t t) = true          // K t
+test is_const_tail (t t (t t)) = true       // K (t t)
+test is_const_tail (t (t t) t) = false       // fork with non-leaf left = not K
+test is_const_tail t = false                 // leaf
+test is_const_tail (t t) = false             // stem
 
 // on REAL spines: the structural test is the §4 CONSERVATIVE proxy. A surface record
 // inlines each field's concrete type, so a non-dependent field yields a genuine K-tail
-// (TT). Sigma's generic former always threads `B a` through its tail, so the tail is
-// S-shaped (FF) even when the codomain ignores `fst` — only the exact occurs/support
+// (true). Sigma's generic former always threads `B a` through its tail, so the tail is
+// S-shaped (false) even when the codomain ignores `fst` — only the exact occurs/support
 // analysis distinguishes that case. Both are correct; they answer different questions.
-test is_const_tail (pair_snd ((type_meta { a : Nat, b : Bool }).recognizer_params)) = TT
-test is_const_tail (pair_snd ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params)) = FF
+test is_const_tail (pair_snd ((type_meta { a : Nat, b : Bool }).recognizer_params)) = true
+test is_const_tail (pair_snd ((type_meta (Sigma Nat ({_} -> Bool))).recognizer_params)) = false

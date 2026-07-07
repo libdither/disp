@@ -9,7 +9,7 @@
 
 // The kernel's own structural types (§11.2 / §12.6), built from the library formers of the
 // earlier fragments (annotations forward-ref Type/Coproduct/Record via the raw layer).
-// Tree: the permissive "any tree" type (recognizer = Ok TT), the de-facto top type.
+// Tree: the permissive "any tree" type (recognizer = Ok true), the de-facto top type.
 // Tree = ⊤ conceptually (= the nullary telescope `Telescope t`), but kept as the lean direct
 // recognizer: Tree is referenced pervasively (every `: Tree`, MetaShape), so the bigger telescope
 // tree inflates the interned-node/memo footprint enough to tip the suite's cumulative-memo OOM.
@@ -28,7 +28,7 @@ open use raw "generic.disp" {}
 open given { Type : Type, RespondShape : Type }
 
 // ── Tree: the substrate floor AND an inductive (the tree_rec rung). Membership
-// stays the floor (recognizer Ok TT; make_recognizer's H-rule for neutrals); the
+// stays the floor (recognizer Ok true; make_recognizer's H-rule for neutrals); the
 // META gives Tree its two missing faces:
 //   elimination — variants [leaf | stem Rec | fork Rec Rec] + the TOTAL view iso
 //     (every tree decodes), so the generic machinery derives the dependent
@@ -55,7 +55,7 @@ let tree_app_or_elim := {params, self, frame} -> {
     else (Extend (neutral_type self))
 }
 /// The type of all trees
-Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) { recognizer_params := tree_variants; functor := (pair view_tree encode_tree); respond := tree_app_or_elim; behavioral_specs := t }
+Tree : Type := wait (make_recognizer ({m, v} -> Ok true)) { recognizer_params := tree_variants; functor := (pair view_tree encode_tree); respond := tree_app_or_elim; behavioral_specs := t }
 // tree_rec: the dependent Tree recursor, read off the cells like nat_rec — the
 // typed face of shape dispatch. Concrete targets fold through the view; abstract
 // targets become stuck eliminations gated by coh_check (the same machinery as
@@ -89,7 +89,7 @@ type_predicate_h_rule : RespondShape := {params, self, frame} ->
   if (tree_eq frame meta_frame) then (Extend MetaShape)
   else (if (is_neutral frame)
     then (Reduce (Ok (tree_eq (neutral_type frame) self)))
-    else (Reduce (Ok FF)))
+    else (Reduce (Ok false)))
 
 // meta_of: read a type's metadata, typed. A concrete type gives its real meta record
 // (same as type_meta); an abstract type-hyp gives a stuck MetaShape (the meta_frame arm
@@ -125,8 +125,8 @@ let qid_meta_op := {meta, mode, source, prior, frame, rs} -> // observe type_met
 qid_meta_cell := {ty} -> wait qid_meta_op { ty := ty }
 
 // StrictType: v is a type iff v is a recognizer (Tree -> CheckerResult) AND type_meta v : MetaShape.
-// A `tele_with` HYBRID (like Eq/Refinement/Intersection): the telescope RECOGNIZER (`tele_walk TT` over the two
-// qid cells) + the real universe respond `type_predicate_h_rule` instead of the negative `tele_walk FF`. That
+// A `tele_with` HYBRID (like Eq/Refinement/Intersection): the telescope RECOGNIZER (`tele_walk true` over the two
+// qid cells) + the real universe respond `type_predicate_h_rule` instead of the negative `tele_walk false`. That
 // respond makes a StrictType-HYP usable as a polymorphic Pi domain: a type-hyp `A` applied as a predicate
 // accepts neutrals of stored type A (predicate-side H-rule). So StrictType is a real universe (not just
 // a recognizer) and can replace legacy `Type` (recognizer = Telescope's; only respond differs).
@@ -266,7 +266,7 @@ ProjectingRespondShape : Type := Tree -> InductiveFrame -> Action
 // All hyps are MANAGED mints (telescope cells -> bind_hyp): the old raw make_hyp'd gr_M/gr_s forges
 // are RETIRED — they read as stem-forgery when GoodRespond's own code was distributed by an
 // enclosing walker (the original R6 nested-abort culprit).
-GoodRespond := {T} -> Telescope (behavioral_cells Id T TT)
+GoodRespond := {T} -> Telescope (behavioral_cells Id T true)
 // verify_good : run the telescope recognizer under the walker — composes (the prize).
 verify_good := {T, R} -> param_apply (GoodRespond T) R
 // Reflection (the 3rd soundness dimension) needs no separate probe: a check-based respond polices its own

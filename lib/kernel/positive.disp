@@ -49,8 +49,8 @@ pos_tele_p := {params, types} -> pos_tele_go params types zero   // CELL_OPTICS:
 // `params` resolves `Param i` arg markers; pass `t` for non-parameterized sums.
 let coproduct_walk := {params, rs, variants, v} ->
   match (lookup_arm variants (pair_fst v)) {
-    Ok argspec => (tele_walk rs TT (pos_tele_p params argspec) (pair_snd v) t t)
-    Err _ => (Ok FF) // unknown tag
+    Ok argspec => (tele_walk rs true (pos_tele_p params argspec) (pair_snd v) t t)
+    Err _ => (Ok false) // unknown tag
   }
 // Coproduct_viewed_respond: THE positive maker — self-aware (rs=self lets `Rec` cells recurse),
 // respond-parametric, Param-aware (markers resolved against `params`, surviving in
@@ -60,7 +60,7 @@ let coproduct_walk := {params, rs, variants, v} ->
 // so every other Coproduct_* below is a one-line specialization of this maker.
 iso_id := pair ({v} -> Ok v) ({x} -> x)   // decode = Ok, encode = id
 Coproduct_viewed_respond := {params, respond, iso, variants} -> wait (make_rec_recognizer
-  {self, meta, v} -> (match ((pair_fst iso) v) { Ok tg => (coproduct_walk params self meta.recognizer_params tg); Err _ => (Ok FF) })
+  {self, meta, v} -> (match ((pair_fst iso) v) { Ok tg => (coproduct_walk params self meta.recognizer_params tg); Err _ => (Ok false) })
 ) { recognizer_params := variants; functor := iso; respond; behavioral_specs := t }
 Coproduct_respond := {respond, variants} -> Coproduct_viewed_respond t respond iso_id variants
 
@@ -102,8 +102,8 @@ eta_check := fix ({self, v, T} ->
     else (T v)))
 let check_fields := fix ({self, fields, cases} ->
   if (is_fork fields)
-    then (bind (eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok FF)))
-    else (Ok TT))
+    then (bind (eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok false)))
+    else (Ok true))
 // coh_check params: THE generic coherence gate — η-readback-check the cases against the case-telescope
 // fields (`params` resolves `Param i` args). Replaces coh_nat/coh_ord/coh_list and self-types (unlike the
 // recognition-form `param_apply (case-tele) cases`, coh_gate_proto.test).
@@ -146,12 +146,12 @@ let encode_ord := {x} -> if (tree_eq (pair_fst x) "omega_plus") then (t (t (pair
 // `Π a b. P a -> P b -> P (omega_plus a b)` from the [Rec, Rec] argspec (via the encode iso).
 Ord : Type := Coproduct_viewed t (pair view_ord encode_ord) [pair "zero_ord" [], pair "omega_plus" [Rec, Rec]]
 
-// Bool: TT/FF are opaque combinators, so view_bool decodes by tree_eq comparison. Both
-// constructors nullary, so the gate reduces to `cases.true : P TT`, `cases.false : P FF`.
+// Bool: true/false are opaque combinators, so view_bool decodes by tree_eq comparison. Both
+// constructors nullary, so the gate reduces to `cases.true : P true`, `cases.false : P false`.
 let view_bool := {v} ->
-  if (tree_eq v TT) then (Ok (inj "true" t)) else (if (tree_eq v FF) then (Ok (inj "false" t)) else Err)
-// encode_bool: inj-form -> shape combinator. true -> TT; false -> FF. (Bool has no param: fmap = id.)
-let encode_bool := {x} -> if (tree_eq (pair_fst x) "true") then TT else FF
+  if (tree_eq v true) then (Ok (inj "true" t)) else (if (tree_eq v false) then (Ok (inj "false" t)) else Err)
+// encode_bool: inj-form -> shape combinator. true -> true; false -> false. (Bool has no param: fmap = id.)
+let encode_bool := {x} -> if (tree_eq (pair_fst x) "true") then true else false
 Bool : Type := Coproduct_viewed t (pair view_bool encode_bool) [pair "true" [], pair "false" []]
 
 // Nat: zero = leaf, succ r = fork(t, r); the succ case-type derives as `Π n. P n -> P (succ n)`.

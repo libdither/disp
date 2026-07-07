@@ -69,7 +69,7 @@ let is_record_ty := {T} -> {
   and (is_fork cs) (tree_eq (pair_fst (pair_fst cs)) proj_sig)
 }
 let all_const := fix ({self, tele} ->
-  if (is_fork tele) then (and (is_const_tail (pair_snd tele)) (self ((pair_snd tele) t))) else TT)
+  if (is_fork tele) then (and (is_const_tail (pair_snd tele)) (self ((pair_snd tele) t))) else true)
 let pi_dom := {T} -> (type_meta (pair_fst (cells_of T))).ty
 let pi_cod := {T, a} -> (type_meta (pair_fst ((pair_snd (cells_of T)) a))).ty
 

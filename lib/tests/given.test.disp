@@ -20,12 +20,12 @@ test m2.record.from_start 5 = 15
 
 // ── same fills = the same instantiation (cache identity) ──
 m3 := use "given_mod.disp" { add := add }
-test tree_eq m.record m3.record = TT
+test tree_eq m.record m3.record = true
 
 // ── different fills differ exactly where the fill matters: from_start sees
 // start, double does not (hash-cons sharing across instantiations) ──
-test tree_eq m.record.from_start m2.record.from_start = FF
-test tree_eq m.record.double m2.record.double = TT
+test tree_eq m.record.from_start m2.record.from_start = false
+test tree_eq m.record.double m2.record.double = true
 
 // ── linking semantics: a different (well-typed) fill changes the exports ──
 m4 := use "given_mod.disp" { add := ({x} -> {y} -> x) }
@@ -47,12 +47,12 @@ fm := use "given_mod.disp"
 // hyp; exports land by the H-rule. This covers from_start's PARTIAL application
 // `add start` (readback rebuilds the extension neutral as the application that
 // created it, so the walk re-extends against its own mints).
-test verify fm = Ok TT
+test verify fm = Ok true
 
 // Instantiation is application, and it RECONVERGES: the readback lambda applied
 // to fills is tree-identical to template instantiation with those fills.
-test tree_eq (fm.record add 0) m.record = TT
-test tree_eq (fm.record add 10) m2.record = TT
+test tree_eq (fm.record add 0) m.record = true
+test tree_eq (fm.record add 10) m2.record = true
 
 // Applied functor exports compute like the instantiation's.
 test (fm.record add 0) (acc "double") 3 = 6
@@ -61,5 +61,5 @@ test (fm.record add 10) (acc "from_start") 5 = 15
 // The record-typed given's face: `open ctx` inside the module splices ABSTRACT
 // projections of the ctx hyp; replay against a concrete record re-projects.
 fmr := use "given_rec_mod.disp"
-test verify fmr = Ok TT
-test tree_eq (fmr.record { add := add, start := 3 }) mr.record = TT
+test verify fmr = Ok true
+test tree_eq (fmr.record { add := add, start := 3 }) mr.record = true

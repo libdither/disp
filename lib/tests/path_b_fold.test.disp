@@ -39,7 +39,7 @@ let encode_un := {x} -> if (tree_eq (pair_fst x) "s") then (t t (pair_snd x)) el
 let UN := Coproduct_viewed t (pair view_un encode_un) [pair "z" [], pair "s" [Rec]]
 let z := t
 let s := {n} -> t t n
-test typecheck UN (s (s z))                                = Ok TT       // recognized (via the view)
+test typecheck UN (s (s z))                                = Ok true       // recognized (via the view)
 let un_to_nat := fold_value_via view_un UN { z := zero; s := ({r} -> succ r) }
 test un_to_nat (s (s z))                                   = 2           // raw unary -> Nat (recursive decode)
 let un_depth := fold_value_via view_un UN { z := zero; s := ({r} -> succ r) }

@@ -5,9 +5,9 @@ open use "../std/list.disp"
 let xs := list_cons 1 (list_cons 2 (list_cons 3 nil))
 let ys := list_cons 4 (list_cons 5 nil)
 
-test NatList nil = Ok TT
-test NatList xs = Ok TT
-test NatList (t FF nil) = Ok FF
+test NatList nil = Ok true
+test NatList xs = Ok true
+test NatList (t false nil) = Ok false
 
 test singleton 7 = list_cons 7 nil
 test list_length nil = 0
@@ -20,10 +20,10 @@ test list_head_or 9 xs = 1
 test list_map_succ xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
 
 // Generic List A: parameterised by element type.
-test List Bool nil = Ok TT
-test List Bool (cons TT (cons FF nil)) = Ok TT
-test List Bool (cons 5 nil) = Ok FF
-test List Nat (cons 1 (cons TT nil)) = Ok FF
+test List Bool nil = Ok true
+test List Bool (cons true (cons false nil)) = Ok true
+test List Bool (cons 5 nil) = Ok false
+test List Nat (cons 1 (cons true nil)) = Ok false
 
 // list_map applied to a simple closed function.
 test list_map ({n} -> succ n) xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
@@ -51,8 +51,8 @@ test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) nil = 0
 test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) xs = 3
 
 // Partial accessors and list_find.
-test list_is_nil nil = TT
-test list_is_nil xs = FF
+test list_is_nil nil = true
+test list_is_nil xs = false
 test list_head xs = 1
 test list_tail xs = list_cons 2 (list_cons 3 nil)
 

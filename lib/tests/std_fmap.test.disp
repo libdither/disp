@@ -11,13 +11,13 @@ open use "../std/either.disp"
 open use "../std/list.disp"
 
 // ── recognition still holds after the Coproduct_p migration ──
-test typecheck (Option Nat) (some 5)   = Ok TT
-test typecheck (Option Nat) none       = Ok TT
-test typecheck (Option Nat) (some TT)  = Ok FF       // payload not a Nat
-test typecheck (Result Nat Bool) (ok TT)  = Ok TT    // ok holds A=Bool
-test typecheck (Result Nat Bool) (err 3)  = Ok TT    // err holds E=Nat
-test typecheck (Either Nat Bool) (left 3) = Ok TT
-test typecheck (Either Nat Bool) (right TT) = Ok TT
+test typecheck (Option Nat) (some 5)   = Ok true
+test typecheck (Option Nat) none       = Ok true
+test typecheck (Option Nat) (some true)  = Ok false       // payload not a Nat
+test typecheck (Result Nat Bool) (ok true)  = Ok true    // ok holds A=Bool
+test typecheck (Result Nat Bool) (err 3)  = Ok true    // err holds E=Nat
+test typecheck (Either Nat Bool) (left 3) = Ok true
+test typecheck (Either Nat Bool) (right true) = Ok true
 
 // ── Option is a FUNCTOR: fmap maps `some`, leaves `none` ──
 test fmap (Option Nat) succ (some 5) = some 6
@@ -37,15 +37,15 @@ test bimap (Result Nat Nat) ({x} -> x) double (ok 5)  = result_map double (ok 5)
 test bimap (Result Nat Nat) ({x} -> x) double (err 5) = result_map double (err 5)
 
 // ── fmap preserves recognition ──
-test typecheck (Option Nat) (fmap (Option Nat) succ (some 5)) = Ok TT
-test typecheck (Either Nat Bool) (bimap (Either Nat Bool) succ ({b} -> b) (left 5)) = Ok TT
+test typecheck (Option Nat) (fmap (Option Nat) succ (some 5)) = Ok true
+test typecheck (Either Nat Bool) (bimap (Either Nat Bool) succ ({b} -> b) (left 5)) = Ok true
 
 // ── the SHAPE-ENCODED win: generic fmap/fold_value now work on List (via the iso in `functor`),
 // not just inj-tagged types. (Nat/Ord are shape-encoded too; they carry no Param, so fmap = id.) ──
 test fmap (List Nat) succ nil                              = nil
 test fmap (List Nat) succ (cons 1 (cons 2 (cons 3 nil)))  = cons 2 (cons 3 (cons 4 nil))   // maps each element through the iso
 test fmap (List Nat) succ (cons 1 (cons 2 nil))           = list_map succ (cons 1 (cons 2 nil)) // generic == bespoke list_map
-test typecheck (List Nat) (fmap (List Nat) succ (cons 1 nil)) = Ok TT
+test typecheck (List Nat) (fmap (List Nat) succ (cons 1 nil)) = Ok true
 // fold_value auto-reads the type's view from `functor` -> works on shape-encoded List with NO explicit view
 test fold_value (List Nat) { nil := zero; cons := add } (cons 1 (cons 2 (cons 3 nil))) = 6  // sum
 test fold_value (List Nat) { nil := zero; cons := ({_h} -> {acc} -> succ acc) } (cons 7 (cons 8 nil)) = 2 // length

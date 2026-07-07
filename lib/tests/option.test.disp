@@ -3,24 +3,24 @@ open use "../std/nat/ops.disp"
 open use "../std/option.disp"
 
 // Constructors are distinct
-test is_none none = TT
-test is_some none = FF
-test is_some (some 7) = TT
-test is_none (some 7) = FF
+test is_none none = true
+test is_some none = false
+test is_some (some 7) = true
+test is_none (some 7) = false
 
 // Option Nat accepts/rejects
-test Option Nat none = Ok TT
-test Option Nat (some 0) = Ok TT
-test Option Nat (some 42) = Ok TT
-test Option Nat (some TT) = Ok FF
+test Option Nat none = Ok true
+test Option Nat (some 0) = Ok true
+test Option Nat (some 42) = Ok true
+test Option Nat (some true) = Ok false
 // A value with an unknown tag (not some/none) is rejected
-test Option Nat (inj "huh" 5) = Ok FF
+test Option Nat (inj "huh" 5) = Ok false
 
 // Option Bool
-test Option Bool (some TT) = Ok TT
-test Option Bool (some FF) = Ok TT
-test Option Bool none = Ok TT
-test Option Bool (some 3) = Ok FF
+test Option Bool (some true) = Ok true
+test Option Bool (some false) = Ok true
+test Option Bool none = Ok true
+test Option Bool (some 3) = Ok false
 
 // option_rec dispatches the right branch
 test option_rec ({_} -> Nat) 0 ({v} -> succ v) none = 0
@@ -47,6 +47,6 @@ test option_or none none = none
 // Under a Pi binder — the PARAMETRIC eliminator option_rec routes a neutral
 // Option through the coproduct respond, so this typed binding VERIFIES.
 let first_or_zero : Option Nat -> Nat := {o} -> option_rec ({_} -> Nat) 0 ({v} -> v) o
-test param_apply (Arrow (Option Nat) Nat) ({o} -> option_rec ({_} -> Nat) 0 ({v} -> v) o) = Ok TT
+test param_apply (Arrow (Option Nat) Nat) ({o} -> option_rec ({_} -> Nat) 0 ({v} -> v) o) = Ok true
 test first_or_zero (some 8) = 8
 test first_or_zero none = 0

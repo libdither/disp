@@ -172,11 +172,11 @@ Both    : Tree -> Tree -> GuardAction := inj2 "Both"  // bind AND set the guard
 // `given X : T := d` defaults to d. All five carry machine-checked annotations
 // (Request is the universe's structural record; a projected field of an abstract
 // request is a stuck Tree, which the field types admit).
-base    : Tree -> Request := {v} -> { value := (t v); ty := t; guard := t; private := FF; param := FF }
-let     : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT; param := FF }
-sig     : Type -> Request := {T} -> { value := t; ty := (t T); guard := t; private := FF; param := FF }
+base    : Tree -> Request := {v} -> { value := (t v); ty := t; guard := t; private := false; param := false }
+let     : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := true; param := false }
+sig     : Type -> Request := {T} -> { value := t; ty := (t T); guard := t; private := false; param := false }
 guard   : Tree -> Request -> Request := {g} -> {req} -> { value := req.value; ty := req.ty; guard := (t g); private := req.private; param := req.param }
-given   : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := TT; param := TT }
+given   : Request -> Request := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := true; param := true }
 // default_guard: the ambient policy for unguarded names — honor the declarer verbatim;
 // a request with nothing to do is refused. Shadowing this name changes the ambient
 // policy for the shadowing scope's unguarded declarations (owned names are unaffected:

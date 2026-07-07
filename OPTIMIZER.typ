@@ -86,7 +86,7 @@ binder-free congruence theorem, and the cost metric.
 = The goal: specification → score → search
 
 A *specification* is a type `T`. The type checker, applied to a candidate `e`, is already a
-function returning a verdict; collapse it to $0/1$ (`param_apply T e == Ok TT`). Multiply by a
+function returning a verdict; collapse it to $0/1$ (`param_apply T e == Ok true`). Multiply by a
 *cost/size* score read from running `e` (§4). The product is the objective; the optimizer
 searches the space of trees for an `e` maximizing it.
 
@@ -326,7 +326,7 @@ refuse neutrals — the per-motive residue of the fundamental lemma. The license
 mechanism exists as the elaborator's guard layer (COMPILATION.typ § Declarations as requests):
 `license_guard R` makes redefinition of an owned name demand `proof : R old new`, re-verified at
 every load. End-to-end walkthrough pinned in `lib/tests/oeq_tree_license.test.disp` (the
-deep-recognizer-to-`Ok TT` rewrite, licensed by tree induction). Still open here: (B) `φ` as a
+deep-recognizer-to-`Ok true` rewrite, licensed by tree induction). Still open here: (B) `φ` as a
 term-level cast (replacement is definition-level today), cost-aware `⊵~ₛ`, and dependent-family
 transport (the §13 coe rung).
 
@@ -382,7 +382,7 @@ The pipeline is an untrusted producer feeding a trusted gate:
      ▼  emits (e', certificate)
    CHECKER  (TRUSTED · ~30 lines · in-language)
      1. check_cert      e ⤳* e'                (each cert step matches a rule)
-     2. re-type-check   param_apply T e' = Ok TT   (belt & suspenders)
+     2. re-type-check   param_apply T e' = Ok true   (belt & suspenders)
      accept ⇒ φ emits the bare e'              (zero runtime residue)
 ```
 
@@ -402,14 +402,14 @@ check_step := {book, t, s} ->
   if (tree_eq (at s.path t) (pair_fst lr)) then Ok (replace s.path (pair_snd lr) t) else Err
 check_cert := {book, e, cert} -> foldM check_step (Ok e) cert
 verify_rewrite := {book, e, e', cert} ->
-  match (check_cert book e cert) { Ok t => tree_eq t e'; Err => FF }
+  match (check_cert book e cert) { Ok t => tree_eq t e'; Err => false }
 ```
 
 (`at`/`replace` walk and splice a `Path` over the tree by folding over `Dir`; `apply_all`
 instantiates the rule program on its substitution list.) It is decidable, total under budget, ~30 lines, and — being a disp program — itself
 type-checkable, satisfying the metacircular discipline. The acceptance combinator `φ` (an
 elaborator construct, wired like `Pi`/`tree_eq`): *verify the certificate*, *re-type-check the
-result independently* (`param_apply T e' == Ok TT` — belt and suspenders), *emit the bare `e'`*
+result independently* (`param_apply T e' == Ok true` — belt and suspenders), *emit the bare `e'`*
 (zero residue). The optimizer pipeline needs no surface `φ`; it hands `(e', cert)` to the build,
 which runs the same two checks.
 
@@ -434,7 +434,7 @@ back to the responsible hole, accumulating *learned conflict clauses* (NeoGen-st
 *The loop.* (1) Enumerate per-hole candidate streams (type-correct by construction, ordered by a
 prior — size, library frequency, an LLM's logits). (2) Superpose: replace hole $i$'s hypothesis
 with nested `sup` agents over its candidates. (3) Reduce the goal recognizer over the superposition.
-(4) *Collapse* — read back the candidate combinations whose leaf is `TT`. (5) On empty collapse,
+(4) *Collapse* — read back the candidate combinations whose leaf is `true`. (5) On empty collapse,
 *reify the conflict* (an instrumented checker returns a witness — a tree position + expected/actual
 type — the conflict graph), and learn a predicate that prunes the search.
 

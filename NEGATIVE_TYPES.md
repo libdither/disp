@@ -106,7 +106,7 @@ The telescope currently covers `⊤`/`Π`/`Σ`/records. The rest of the *negativ
   frame-routing as callable records below.
 - **positional / `Fin` observations → tuples** (the prelude fork-pair idiom as a
   telescope instance, distinct from named §2.6 records).
-- **The unified single-frame respond for *mixed*/callable interfaces.** `tele_walk FF`
+- **The unified single-frame respond for *mixed*/callable interfaces.** `tele_walk false`
   routes a neutral elimination by the lead cell (mint-lead ⟹ Pi-application; else ⟹
   projection) — sound for *pure* formers. A value that is both projected *and*
   applied (a callable record = `Neg` over a sum index `Q = Tags ⊕ A`) needs the
@@ -128,7 +128,7 @@ The telescope currently covers `⊤`/`Π`/`Σ`/records. The rest of the *negativ
   `respond : RespondShape` needs a **dependent `MetaShape`** (respond typed
   `params_ty -> Self -> frame_ty -> Action` against the former's structured frame).
   That makes *projecting* responds (inductive/eq) checkable, but the negative-former
-  respond (`tele_walk FF`, which raw-walks the cell spine) needs an `Entry` type for cells
+  respond (`tele_walk false`, which raw-walks the cell spine) needs an `Entry` type for cells
   + a shape-type for the spine — fully typing it needs dependent/higher-order
   machinery, since the spine is *dependent* (the λ-tails). Self-*description*, not
   simplification.
@@ -143,9 +143,9 @@ dependency-threading, and the observe-dispatch, differing only at the **leaf**
 projection-neutral). They are now one walker:
 
 ```
-at(mode, tele, source, frame, prior)               // mode = TT (check / concrete) | FF (stuck / neutral)
-recognize v       = at(TT, tele, v, t, t)          // ∀ frame, folding; mint a hyp at mint cells
-respond   v frame = at(FF, tele, v, frame, t)       // answer one frame
+at(mode, tele, source, frame, prior)               // mode = true (check / concrete) | false (stuck / neutral)
+recognize v       = at(true, tele, v, t, t)          // ∀ frame, folding; mint a hyp at mint cells
+respond   v frame = at(false, tele, v, frame, t)       // answer one frame
 ```
 
 How the prediction played out (it was right): the merge **relocated** the duality

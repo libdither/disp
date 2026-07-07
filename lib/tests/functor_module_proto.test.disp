@@ -11,7 +11,7 @@
 //   3. The FLAT spelling: requires ARE mint cells, and the composition with
 //      the exports happens through a delegating apply cell ([mint ; apply
 //      out:ExportsT] accepts the functor — it is Pi-into-Record by hand).
-//      A mint→proj chain WITHOUT the delegation is pinned as Ok FF: `source`
+//      A mint→proj chain WITHOUT the delegation is pinned as Ok false: `source`
 //      is stable per walk by design, so instantiate-then-project across cells
 //      would need one new source-rebinding op. Nothing needs it today.
 //   4. INSTANTIATION is plain application, and an instantiated export is
@@ -38,20 +38,20 @@ simple_mod : SimpleModT := {add} -> {
   double := {x} -> add x x
   quad := {x} -> add (add x x) (add x x)
 }
-test param_apply SimpleModT simple_mod = Ok TT
+test param_apply SimpleModT simple_mod = Ok true
 
 // ── 2. rejection ──
 let bad_arity := {add} -> { double := {x} -> add x; quad := {x} -> x }   // add x : Nat -> Nat, not Nat
-test param_apply SimpleModT bad_arity = Ok FF
+test param_apply SimpleModT bad_arity = Ok false
 let bad_missing := {add} -> { double := {x} -> add x x }                 // no quad
-test param_apply SimpleModT bad_missing = Ok FF
+test param_apply SimpleModT bad_missing = Ok false
 
 // type-parameterized: the export types USE the minted dep
 IdModT : Type := {A : Type} -> { id : A -> A, konst : A -> A -> A }
 id_mod : IdModT := {A} -> { id := {x} -> x; konst := {x} -> {_} -> x }
-test param_apply IdModT id_mod = Ok TT
+test param_apply IdModT id_mod = Ok true
 let bad_leaf := {A} -> { id := {_} -> t; konst := {x} -> {_} -> x }      // t is not abstractly A
-test param_apply IdModT bad_leaf = Ok FF
+test param_apply IdModT bad_leaf = Ok false
 
 // ── 3. the FLAT spelling: requires ARE literal mint cells — but composition
 // happens through the apply cell's TYPE, not by threading. A hand-built
@@ -61,8 +61,8 @@ test param_apply IdModT bad_leaf = Ok FF
 FlatPiT := Telescope (
   t (mint_cell BinOp) ({h} ->
   t (apply_cell ExportsT) ({_} -> t)))
-test param_apply FlatPiT simple_mod = Ok TT
-test param_apply FlatPiT bad_arity = Ok FF
+test param_apply FlatPiT simple_mod = Ok true
+test param_apply FlatPiT bad_arity = Ok false
 
 // The mint→proj spelling WITHOUT the delegating apply cell does NOT compose,
 // pinned deliberately: `tele_walk` threads a cell's observation to the NEXT
@@ -75,17 +75,17 @@ FlatMintProjT := Telescope (
   t (apply_cell Tree) ({_inst} ->
   t (proj_cell "double" (Arrow Nat Nat)) ({_} ->
   t (proj_cell "quad" (Arrow Nat Nat)) ({_} -> t)))))
-test param_apply FlatMintProjT simple_mod = Ok FF
+test param_apply FlatMintProjT simple_mod = Ok false
 
 // ── 4. instantiation = application; exports reconverge to direct trees ──
 inst := simple_mod add
 test inst.double 3 = 6
 test inst.quad 2 = 8
 let direct_double := {x} -> add x x
-test tree_eq inst.double direct_double = TT
+test tree_eq inst.double direct_double = true
 
 // ── 5. the ctx-record call is the existing named-argument surface ──
-test tree_eq (simple_mod { add := add }).double direct_double = TT
+test tree_eq (simple_mod { add := add }).double direct_double = true
 
 // ── 6. elimination: consume a module you don't have yet. A hyp OF functor
 // type applies (extends at ExportsT) and projects (extends at the field
@@ -94,8 +94,8 @@ test tree_eq (simple_mod { add := add }).double direct_double = TT
 // (the same rule as Spine payloads). ──
 let hM := make_hyp SimpleModT 40
 let habs := (hM add).double        // neutral : Nat -> Nat
-test param_apply (Arrow Nat Nat) habs = Ok TT
-test param_apply Nat (habs 3) = Ok TT
+test param_apply (Arrow Nat Nat) habs = Ok true
+test param_apply Nat (habs 3) = Ok true
 
 // The surface type and the hand-built two-cell telescope are behaviorally one
 // former (both accept simple_mod above) but NOT tree-identical: Pi's own body
@@ -103,4 +103,4 @@ test param_apply Nat (habs 3) = Ok TT
 // spelling pre-reduces the closed cell. Conversion is tree_eq by design, so a
 // future module-typ builder must construct through Pi/the surface route (not
 // hand-assembled cells) to share hash-cons identity with written annotations.
-test tree_eq FlatPiT SimpleModT = FF
+test tree_eq FlatPiT SimpleModT = false

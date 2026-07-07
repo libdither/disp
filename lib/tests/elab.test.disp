@@ -14,8 +14,8 @@ test nat_id 0 = 0
 test nat_id 5 = 5
 
 let bool_id : Bool -> Bool := {x} -> x
-test bool_id TT = TT
-test bool_id FF = FF
+test bool_id true = true
+test bool_id false = false
 
 let always_zero : Nat -> Nat := {_} -> 0
 test always_zero 42 = 0
@@ -34,7 +34,7 @@ test choose_third 3 2 1 = 1
 
 // Mixed base types across arrows
 let nat_to_bool_to_nat : Nat -> Bool -> Nat := {n} -> {_} -> n
-test nat_to_bool_to_nat 5 TT = 5
+test nat_to_bool_to_nat 5 true = 5
 
 // ================================================================
 // Explicit Pi constructor (backward compat with verbose form)
@@ -65,7 +65,7 @@ test dep_refl 2 = t
 
 let poly_id : {A : Type} -> A -> A := {A} -> {x} -> x
 test poly_id Nat 4 = 4
-test poly_id Bool TT = TT
+test poly_id Bool true = true
 
 // ================================================================
 // Ann nodes (inline type annotations)
@@ -75,7 +75,7 @@ let ann_id := (({x} -> x) : Nat -> Nat)
 test ann_id 3 = 3
 
 let ann_const := (({x} -> {_} -> x) : Nat -> Bool -> Nat)
-test ann_const 7 FF = 7
+test ann_const 7 false = 7
 
 let ann_zero := (0 : Nat)
 test ann_zero = 0
@@ -155,12 +155,12 @@ test comm_2_3 = t
 // fail the Pi checker because select doesn't produce make_hyp on neutrals.
 // Use bool_rec for correct typed Bool elimination:
 let bool_to_nat : Bool -> Nat := {b} -> bool_rec ({_} -> Nat) 1 0 b
-test bool_to_nat TT = 1
-test bool_to_nat FF = 0
+test bool_to_nat true = 1
+test bool_to_nat false = 0
 
-let bool_not : Bool -> Bool := {b} -> bool_rec ({_} -> Bool) FF TT b
-test bool_not TT = FF
-test bool_not FF = TT
+let bool_not : Bool -> Bool := {b} -> bool_rec ({_} -> Bool) false true b
+test bool_not true = false
+test bool_not false = true
 
 // ================================================================
 // Edge cases
@@ -170,8 +170,8 @@ test bool_not FF = TT
 let typed_zero : Nat := 0
 test typed_zero = 0
 
-let typed_tt : Bool := TT
-test typed_tt = TT
+let typed_tt : Bool := true
+test typed_tt = true
 
 let big : Nat := 10
 test big = 10

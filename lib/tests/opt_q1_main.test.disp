@@ -14,7 +14,7 @@ open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 
 // Genuine, gate-checked List recursor for the WITNESS (routes through `elim` → List's gated respond;
-// gap_severity.test.disp shows a lying recursor here is rejected `Ok FF`).
+// gap_severity.test.disp shows a lying recursor here is rejected `Ok false`).
 let my_list_disp := fix ({self, motive, cases, target} ->
   if (is_leaf target) then cases.nil
   else (cases.cons (pair_fst target) (pair_snd target) (elim self motive cases (pair_snd target))))
@@ -38,16 +38,16 @@ let law_lenmap := Pi FnNN ({f} -> Pi NatList ({xs} -> Eq Nat (len (mp f xs)) (le
 let len_map := {f} -> {xs} -> my_list_rec ({xs_} -> Eq Nat (len (mp f xs_)) (len xs_)) refl ({h, tl, ih} -> eq_cong Nat Nat ({k} -> succ k) (len (mp f tl)) (len tl) ih) xs
 
 // (a) PAST tree_eq: refl alone fails — `len (mp f xs)` is a stuck term, not tree_eq to `len xs`.
-test param_apply law_lenmap ({f} -> {xs} -> refl) = Ok FF
+test param_apply law_lenmap ({f} -> {xs} -> refl) = Ok false
 // (b) the GENUINE witness type-checks (gate-checked list induction, f abstract).
-test param_apply law_lenmap len_map = Ok TT
+test param_apply law_lenmap len_map = Ok true
 // (c) NON-VACUITY: a lying cons-case (refl, ignoring ih) is REJECTED — the gate verifies the step.
 let bad_lenmap := {f} -> {xs} -> my_list_rec ({xs_} -> Eq Nat (len (mp f xs_)) (len xs_)) refl ({h, tl, ih} -> refl) xs
-test param_apply law_lenmap bad_lenmap = Ok FF
+test param_apply law_lenmap bad_lenmap = Ok false
 // (d) behaviour preserved on a concrete input ([1,2], f = succ): both sides ⤳ 2.
 let lst12 := cons (succ zero) (cons (succ (succ zero)) nil)
 test len (mp succ lst12) = succ (succ zero)
-test tree_eq (len (mp succ lst12)) (len lst12) = TT
+test tree_eq (len (mp succ lst12)) (len lst12) = true
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // Target 2 — mp f (mp g xs) ~ mp (compose f g) xs   (map fusion; one traversal instead of two)
@@ -59,9 +59,9 @@ let law_fusion := Pi FnNN ({f} -> Pi FnNN ({g} -> Pi NatList ({xs} -> Eq NatList
 let map_fusion := {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> eq_cong NatList NatList ({tail_} -> cons (f (g h)) tail_) (mp f (mp g tl)) (mp (compose f g) tl) ih) xs
 
 // (b) the genuine fusion witness type-checks.
-test param_apply law_fusion map_fusion = Ok TT
+test param_apply law_fusion map_fusion = Ok true
 // (c) NON-VACUITY: lying cons-case rejected.
 let bad_fusion := {f} -> {g} -> {xs} -> my_list_rec ({xs_} -> Eq NatList (mp f (mp g xs_)) (mp (compose f g) xs_)) refl ({h, tl, ih} -> refl) xs
-test param_apply law_fusion bad_fusion = Ok FF
+test param_apply law_fusion bad_fusion = Ok false
 // (d) behaviour preserved: mp succ (mp succ [1,2]) ⤳ mp (compose succ succ) [1,2] ⤳ [3,4].
-test tree_eq (mp succ (mp succ lst12)) (mp (compose succ succ) lst12) = TT
+test tree_eq (mp succ (mp succ lst12)) (mp (compose succ succ) lst12) = true

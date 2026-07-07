@@ -56,13 +56,13 @@ describe("apply (cold cache)", () => {
     applyTree(I, LEAF, BIG_BUDGET)
   })
 
-  bench("tree_eq T T (fast-path TT)", () => {
+  bench("tree_eq T T (fast-path true)", () => {
     clearApplyCache()
     const t1 = applyTree(trees.bench_tree_eq, trees.bench_small_tree, BIG_BUDGET)
     applyTree(t1, trees.bench_small_tree, BIG_BUDGET)
   })
 
-  bench("tree_eq 3 5 (fast-path FF)", () => {
+  bench("tree_eq 3 5 (fast-path false)", () => {
     clearApplyCache()
     const t1 = applyTree(trees.bench_tree_eq, trees.bench_three, BIG_BUDGET)
     applyTree(t1, trees.bench_five, BIG_BUDGET)

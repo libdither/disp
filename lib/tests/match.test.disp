@@ -8,40 +8,40 @@ open use "../kernel/prelude.disp" // coproduct match uses the cut (prod/inj)
 // Basic correctness — closed scrutinees
 // ================================================================
 
-test (if TT then 1 else 0) = 1
-test (if FF then 1 else 0) = 0
+test (if true then 1 else 0) = 1
+test (if false then 1 else 0) = 0
 
 // ================================================================
 // Free-var capture: branches reference outer binders
 // ================================================================
 
 // Single free var
-test ({x} -> if x then 1 else 0) TT = 1
-test ({x} -> if x then 1 else 0) FF = 0
+test ({x} -> if x then 1 else 0) true = 1
+test ({x} -> if x then 1 else 0) false = 0
 
 // Multiple free vars; both branches use them
-test ({x, a, b} -> if x then a else b) TT 5 7 = 5
-test ({x, a, b} -> if x then a else b) FF 5 7 = 7
+test ({x, a, b} -> if x then a else b) true 5 7 = 5
+test ({x, a, b} -> if x then a else b) false 5 7 = 7
 
 // Asymmetric: only one branch uses the free var
-test ({x, a} -> if x then a else 0) TT 9 = 9
-test ({x, a} -> if x then a else 0) FF 9 = 0
+test ({x, a} -> if x then a else 0) true 9 = 9
+test ({x, a} -> if x then a else 0) false 9 = 0
 
 // ================================================================
 // Nested if
 // ================================================================
 
-test (if TT then (if FF then 1 else 2) else 3) = 2
-test (if FF then 1 else (if TT then 4 else 5)) = 4
+test (if true then (if false then 1 else 2) else 3) = 2
+test (if false then 1 else (if true then 4 else 5)) = 4
 
 // Nested with shared free vars across both levels (multi-line bodies)
 test ({x, y} -> if x
   then (if y then 1 else 2)
-  else (if y then 3 else 4)) TT FF = 2
+  else (if y then 3 else 4)) true false = 2
 
 test ({x, y} -> if x
   then (if y then 1 else 2)
-  else (if y then 3 else 4)) FF TT = 3
+  else (if y then 3 else 4)) false true = 3
 
 // else-if chain (right-associative; the trailing else needs no parens)
 let bucket := {n} ->
@@ -57,16 +57,16 @@ test bucket 2 = 300
 // ================================================================
 // `loops y` diverges when applied (infinite recursion via fix).
 // If the desugar is correct (select-then-apply with closed branches),
-// the else branch's body never fires when x = TT, so the test terminates.
+// the else branch's body never fires when x = true, so the test terminates.
 // If it were broken (eager thunks), bracket abstraction over `y` would
 // eagerly evaluate `loops y` and the test would hit budget.
 
 let loops := fix ({self, x} -> self x)
 
-test ({x, y} -> if x then y else loops y) TT 5 = 5
+test ({x, y} -> if x then y else loops y) true 5 = 5
 
-// Symmetric case: FF selected, the then-branch has the divergent body
-test ({x, y} -> if x then loops y else y) FF 5 = 5
+// Symmetric case: false selected, the then-branch has the divergent body
+test ({x, y} -> if x then loops y else y) false 5 = 5
 
 // ================================================================
 // `if` composes with other constructs
@@ -77,10 +77,10 @@ test ({x, y} -> if x then loops y else y) FF 5 = 5
 test ({x} -> {
   let r := if x then 10 else 20
   r
-}) TT = 10
+}) true = 10
 
 // As the body of a binder
-test (({x} -> if x then 1 else 0) TT) = 1
+test (({x} -> if x then 1 else 0) true) = 1
 
 // Scrutinee is an application
 let is_zero := {n} -> tree_eq n 0
@@ -98,12 +98,12 @@ test (if (is_zero 1) then 1 else 0) = 0
 let succ_only := {c, k, x} ->
   if c then k x else loops x
 
-// When c=TT, k is invoked with x.
-test succ_only TT ({y} -> y) 7 = 7
+// When c=true, k is invoked with x.
+test succ_only true ({y} -> y) 7 = 7
 
-// When c=FF, the else branch runs `loops x` which diverges. So the test
-// budget would blow up if we ever reached the else branch via c=TT.
-test succ_only TT ({y} -> succ y) 4 = 5
+// When c=false, the else branch runs `loops x` which diverges. So the test
+// budget would blow up if we ever reached the else branch via c=true.
+test succ_only true ({y} -> succ y) 4 = 5
 
 // ================================================================
 // S2 regression: select_lazy + self-recursion compiles via auto-rewrite
@@ -146,7 +146,7 @@ test count_down2 3 = 3
 let classify := {c} -> match c { inc n => succ n; id x => x; _ => zero }
 test classify (inj "inc" zero) = succ zero
 test classify (inj "id" (succ zero)) = succ zero
-test classify (inj "other" TT) = zero // wildcard: unmatched tag -> default
+test classify (inj "other" true) = zero // wildcard: unmatched tag -> default
 
 // Nullary arm ignores the (unit) payload.
 let opt := {c} -> match c { none => zero; some x => x }
@@ -162,4 +162,4 @@ test (match p3 { pt x y z => z }) = succ (succ zero) // z = snd snd
 test (match p3 { pt x y z => t x (t y z) }) = t zero (t (succ zero) (succ (succ zero)))
 
 // Wildcard with no named arms is a total default.
-test (match (inj "anything" TT) { _ => zero }) = zero
+test (match (inj "anything" true) { _ => zero }) = zero

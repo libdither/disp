@@ -2,15 +2,15 @@ open use "../kernel/prelude.disp"
 open use "../std/list.disp"
 open use "../std/fin.disp"
 
-test Fin 3 0 = Ok TT
-test Fin 3 2 = Ok TT
-test Fin 3 3 = Ok FF
+test Fin 3 0 = Ok true
+test Fin 3 2 = Ok true
+test Fin 3 3 = Ok false
 
 test fin0 4 = 0
 test fin_one_of_three = 1
 test fin_two_of_three = 2
 
-test VecNat 0 vnil = Ok TT
-test VecNat 1 (vsingleton 8) = Ok TT
-test VecNat 2 (list_cons 1 (list_cons 2 nil)) = Ok TT
-test VecNat 3 (vappend 1 2 (vsingleton 1) (list_cons 2 (list_cons 3 nil))) = Ok TT
+test VecNat 0 vnil = Ok true
+test VecNat 1 (vsingleton 8) = Ok true
+test VecNat 2 (list_cons 1 (list_cons 2 nil)) = Ok true
+test VecNat 3 (vappend 1 2 (vsingleton 1) (list_cons 2 (list_cons 3 nil))) = Ok true

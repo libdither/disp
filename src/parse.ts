@@ -104,9 +104,10 @@ export type Expr =
   | { tag: "use"; path: string; raw?: boolean }
   // `if c then a else b` — the boolean conditional. Desugars to `cond` (a
   // select-then-apply over the Scott Bool, closure-wrapped per arm). The old
-  // `match c { TT => a; FF => b }` boolean-match surface was removed in favour
-  // of this; coproduct `match` (the §2.6 cut) desugars in compile.ts, where
-  // arm bodies are closed over their free vars the way `if` branches are.
+  // boolean-match surface (`match c { true => a; false => b }`, or the pre-rename
+  // TT/FF spelling) was removed in favour of this; coproduct `match` (the §2.6
+  // cut) desugars in compile.ts, where arm bodies are closed over their free
+  // vars the way `if` branches are.
   | { tag: "if"; cond: Expr; thenBody: Expr; elseBody: Expr }
   | { tag: "match"; cond: Expr; arms: Arm[] }
 
@@ -493,8 +494,9 @@ const makeExpr = (appP: P<Expr>): P<Expr> => {
 
 const lineExpr: P<Expr> = makeExpr(lineApp)
 
-// matchAtom: like atom but also stops before "TT =>" or "FF =>" after a newline.
-// Used in match arm bodies so multi-line arms don't consume the next arm's pattern.
+// matchAtom: like atom but also stops before the next `Ctor … =>` arm pattern
+// after a newline. Used in match arm bodies so multi-line arms don't consume
+// the next arm's pattern.
 const matchAtom: P<Expr> = withProj((ts, i) => {
   const hadNewline = ts[i].t === "nl"
   while (ts[i].t === "nl") i++
@@ -507,7 +509,7 @@ const matchAtom: P<Expr> = withProj((ts, i) => {
 })
 
 // matchApp / matchExpr: full multi-line expression parser for match arm bodies.
-// Spans newlines freely but stops before the next arm pattern (TT/FF =>).
+// Spans newlines freely but stops before the next arm pattern (`Ctor … =>`).
 const matchApp: P<Expr> = map(
   seq(matchAtom, many(matchAtom)),
   ([h, xs]) => xs.reduce<Expr>((f, x) => ({ tag: "app", f, x }), h),
@@ -567,9 +569,6 @@ const recTypeInner: P<Expr> = (ts, i) => {
   return ok({ tag: "recType" as const, fields }, r.pos)
 }
 
-// match arm: IDENT "=>" expr (where IDENT is "TT" or "FF").
-// Body uses matchExpr so it can span multiple lines; it stops before the next
-// "TT =>" or "FF =>" pattern (via matchAtom's isArmStart lookahead).
 // match arm: `Ctor b0 b1 ... => body` — a constructor and zero or more binders
 // (each may be `_`). `Ctor` is the tag (a string, by spelling); `_` as the
 // constructor is the wildcard/default arm.
@@ -598,13 +597,17 @@ const matchP: P<Expr> = (ts, i) => {
   )(ts, i)
   if (!r.ok) return r
   const [, , cond, , arms] = r.v
+  const boolArms = (a: string, b: string) =>
+    arms.some(x => x.pat === a) && arms.some(x => x.pat === b)
   const isBool = arms.length === 2 && !arms.some(a => a.binders.length > 0)
-    && arms.some(a => a.pat === "TT") && arms.some(a => a.pat === "FF")
+    && (boolArms("true", "false") || boolArms("TT", "FF"))
   if (isBool) {
     // Boolean match was removed in favour of `if c then a else b` (which desugars
-    // to the prelude `cond`). `match` is now exclusively the §2.6 coproduct cut.
+    // to the prelude `cond`): Scott bools are not inj-tagged, so the §2.6 cut has
+    // nothing to dispatch on (matching one would run the arm table as junk).
+    // TT/FF is the pre-2026-07-07 spelling, caught for the same reason.
     // Report at r.pos (past the arms) so this beats the generic idP error in `alt`.
-    return err(`boolean 'match c { TT => …; FF => … }' was removed — use 'if c then … else …'`, r.pos)
+    return err(`boolean 'match c { ${arms[0].pat} => …; ${arms[1].pat} => … }' was removed — use 'if c then … else …'`, r.pos)
   }
   return ok({ tag: "match", cond, arms }, r.pos)
 }

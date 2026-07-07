@@ -7,23 +7,23 @@ open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
 
 // the two faces, independently
-test param_apply (Arrow Tree CheckerResult) Bool = Ok TT     // recognize-face: Bool IS a recognizer
-test param_apply MetaShape (type_meta Bool)      = Ok TT     // meta-face: its env is a MetaShape
+test param_apply (Arrow Tree CheckerResult) Bool = Ok true     // recognize-face: Bool IS a recognizer
+test param_apply MetaShape (type_meta Bool)      = Ok true     // meta-face: its env is a MetaShape
 
 // StrictType recognizes the kernel's real types via BOTH faces at once
-test param_apply StrictType Bool = Ok TT
-test param_apply StrictType Nat  = Ok TT
-test param_apply StrictType (Pi Nat ({_} -> Bool))    = Ok TT
-test param_apply StrictType (Sigma Nat ({_} -> Bool)) = Ok TT
-test param_apply StrictType (Eq Nat zero zero)        = Ok TT
-test param_apply StrictType Action     = Ok TT              // a coproduct type
-test param_apply StrictType Type       = Ok TT              // recognizes the legacy universe
-test param_apply StrictType MetaShape  = Ok TT
+test param_apply StrictType Bool = Ok true
+test param_apply StrictType Nat  = Ok true
+test param_apply StrictType (Pi Nat ({_} -> Bool))    = Ok true
+test param_apply StrictType (Sigma Nat ({_} -> Bool)) = Ok true
+test param_apply StrictType (Eq Nat zero zero)        = Ok true
+test param_apply StrictType Action     = Ok true              // a coproduct type
+test param_apply StrictType Type       = Ok true              // recognizes the legacy universe
+test param_apply StrictType MetaShape  = Ok true
 // non-types are rejected: zero is not a recognizer; bare `Coproduct` is a type CONSTRUCTOR
 // (Tree -> Type), not a type — StrictType correctly tells them apart.
-test param_apply StrictType zero = Ok FF
-test param_apply StrictType Coproduct = Ok FF              // a constructor, not a type
-test param_apply StrictType ({n} -> n) = Ok FF            // a bare function is not a type
+test param_apply StrictType zero = Ok false
+test param_apply StrictType Coproduct = Ok false              // a constructor, not a type
+test param_apply StrictType ({n} -> n) = Ok false            // a bare function is not a type
 
 // ===== a real UNIVERSE, not just a recognizer: the H-rule respond =====
 // StrictType's respond is now type_predicate_h_rule (not the §4b placeholder), so a
@@ -31,10 +31,10 @@ test param_apply StrictType ({n} -> n) = Ok FF            // a bare function is 
 // recognizes the polymorphic identity (the H-rule accepts a hyp's own neutrals). This is
 // what lets StrictType replace the legacy `Type`.
 let polyid := {A} -> {x} -> x
-test param_apply (Pi StrictType ({A} -> Arrow A A)) polyid = Ok TT
+test param_apply (Pi StrictType ({A} -> Arrow A A)) polyid = Ok true
 
 // ===== the fixed point: the universe inhabits itself =====
-test param_apply StrictType StrictType = Ok TT
+test param_apply StrictType StrictType = Ok true
 // and the legacy `Type` agrees StrictType is a type
-test param_apply Type StrictType = Ok TT
-test typecheck Type CheckerResult = Ok TT
+test param_apply Type StrictType = Ok true
+test typecheck Type CheckerResult = Ok true

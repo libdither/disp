@@ -815,7 +815,8 @@ describe("if expression", () => {
       mkIf(v("c"), v("a"), ap(ap(v("triage"), v("arg1")), v("arg2"))))
   })
 
-  it("rejects the removed boolean 'match { TT/FF }' surface", () => {
+  it("rejects the removed boolean-match surface (true/false and legacy TT/FF)", () => {
+    expect(() => parseExpr(`match c { true => a; false => b }`)).toThrow(/boolean/)
     expect(() => parseExpr(`match c { TT => a; FF => b }`)).toThrow(/boolean/)
   })
 })

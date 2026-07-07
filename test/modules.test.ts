@@ -105,7 +105,7 @@ describe("module dependencies (given) rejections", () => {
 
   it("hermetic: policy shadowing is file-local (a shadowed `let` does not leak into used modules)", () => {
     const p = tmpModule("polmod.disp", `let hidden := t\nvisible := t t\n`)
-    const shadow = `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := FF; param := FF }\n`
+    const shadow = `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := false; param := false }\n`
     // The module elaborates under its OWN pristine `let`: hidden stays private
     // even though the use site shadowed `let` into an exporting decorator.
     expect(() => run(K + shadow + `m := use "${p}"\nopen m\ncheck := visible\n`)).not.toThrow()
@@ -115,7 +115,7 @@ describe("module dependencies (given) rejections", () => {
 
   it("a shadowed `given` producing a param request is rejected (dynamic givens)", () => {
     expect(() => run(K
-      + `given := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := FF; param := TT }\n`
+      + `given := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := false; param := true }\n`
       + `given x : Nat := zero\n`))
       .toThrow(/dynamic givens are unsupported/)
   }, 120000)

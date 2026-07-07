@@ -93,7 +93,7 @@ kernel's "types are open wait-forms" discipline, at the cell level).
 **One walker, two modes.** A single `tele_walk rs mode tele source frame prior`
 (`rs` = the recursion environment: the recursive type itself for `rec` cells,
 a context fn for `rec_at`, a dummy `t` for non-recursive formers)
-serves BOTH recognition (`tele_walk _ TT`) and projection-response (`tele_walk _ FF`).
+serves BOTH recognition (`tele_walk _ true`) and projection-response (`tele_walk _ false`).
 `tele_walk` applies each cell op, which returns a **Step** — pure data:
 `SMint ty` (mint a ∀-hyp), `SThread x` (observed value `x`: thread +
 continue), `SReject` (not a member), or `SDone action` (stuck: emit this
@@ -113,10 +113,10 @@ hyp leaks and trips the occurs-check — see CLAUDE.md § Compiler
 workarounds), which is exactly why the op returns a `Step` for `tele_walk` to
 interpret rather than calling `bind_hyp` with a passed `kont`.
 
-`tele_walk TT` (recognition) runs under the ambient walker, so the mint
+`tele_walk true` (recognition) runs under the ambient walker, so the mint
 `bind_hyp` and the `source prior` application are policed automatically;
 each cell type-checks the observed value (`SThread x`), with derived
-cells pinning by `tree_eq` (conversion, no `Eq` proofs). `tele_walk FF`
+cells pinning by `tree_eq` (conversion, no `Eq` proofs). `tele_walk false`
 (response) runs off-walker (driven by `hyp_reduce`), so it instantiates
 each tail EXPLICITLY under `param_walker` (a tail that raw-triages a
 neutral prior routes to `InvalidType` — the GAP-2 regime): a mint-lead
@@ -209,7 +209,7 @@ dispatcher fast-path (the legacy native walker was removed in the
 cutover, and re-introducing one would require restoring an equivalence
 test). The only live native fast-path is `tree_eq`, which short-
 circuits to a hash-cons identity check and returns the exact Scott
-`TT`/`FF` trees — bit-identical to the in-language reference, which is
+`true`/`false` trees — bit-identical to the in-language reference, which is
 the spec.
 
 The walker's reader carve-outs (run raw instead of being reduced) are

@@ -12,7 +12,7 @@
 // LOAD. Applying the optimization = using `fast`; nothing proof-shaped survives into it.
 //
 // The example: trees-as-a-full-inductive, and the recognizer optimization from the
-// Tree design discussion — the deep structural walk is provably the constant Ok TT.
+// Tree design discussion — the deep structural walk is provably the constant Ok true.
 open use "../kernel/prelude.disp"
 open use "../std/oeq.disp"
 
@@ -28,34 +28,34 @@ let encode_tree := {x} ->
   if (tree_eq (pair_fst x) "stem") then (t (pair_snd x))
   else (if (tree_eq (pair_fst x) "fork") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t)
 let TreeI := Coproduct_viewed t (pair view_tree encode_tree) [pair "leaf" [], pair "stem" [Rec], pair "fork" [Rec, Rec]]
-test typecheck Type TreeI = Ok TT
-test typecheck TreeI (t (t t) (t t t)) = Ok TT
+test typecheck Type TreeI = Ok true
+test typecheck TreeI (t (t t) (t t t)) = Ok true
 
 // spec: the full structural check, written over the inductive's own recursor. rec_value
 // computes every induction hypothesis, so this genuinely VISITS EVERY NODE: O(size).
 let deep := {v} -> rec_value TreeI ({_} -> CheckerResult)
-  { leaf := (Ok TT); stem := ({c, ih} -> ih); fork := ({l, r, ihl, ihr} -> ihr) } v
+  { leaf := (Ok true); stem := ({c, ih} -> ih); fork := ({l, r, ihl, ihr} -> ihr) } v
 
 // fast: the optimization. O(1), and tree-distinct from deep.
-let fast := {v} -> Ok TT
+let fast := {v} -> Ok true
 
 // The license. Its type unfolds (pointwise clause of setoid_of) to
-//   Pi TreeI ({v} -> Eq CheckerResult (deep v) (Ok TT))
+//   Pi TreeI ({v} -> Eq CheckerResult (deep v) (Ok true))
 // and the proof is tree induction whose cases MIRROR the program: leaf computes to
 // refl's endpoints; stem/fork reduce one step and hand the goal to the IH. Because this
 // is an annotated export, the elaborator verifies it every time the module loads.
 fast_license : oeq (Arrow TreeI CheckerResult) deep fast := {v} ->
-  rec_value TreeI ({v_} -> Eq CheckerResult (deep v_) (Ok TT))
+  rec_value TreeI ({v_} -> Eq CheckerResult (deep v_) (Ok true))
     { leaf := refl; stem := ({c, ih} -> ih); fork := ({l, r, ihl, ihr} -> ihr) } v
 
 // re-pin the auto-verified fact, and the differential view on a sample
-test param_apply (oeq (Arrow TreeI CheckerResult) deep fast) fast_license = Ok TT
-test tree_eq (deep (t (t t) (t t t))) (Ok TT) = TT
-test tree_eq (fast (t (t t) (t t t))) (Ok TT) = TT
-test tree_eq deep fast = FF   // a REAL rewrite: different trees, same behavior, licensed
+test param_apply (oeq (Arrow TreeI CheckerResult) deep fast) fast_license = Ok true
+test tree_eq (deep (t (t t) (t t t))) (Ok true) = true
+test tree_eq (fast (t (t t) (t t t))) (Ok true) = true
+test tree_eq deep fast = false   // a REAL rewrite: different trees, same behavior, licensed
 
 // the gate is not a rubber stamp:
 // the license does NOT transfer to a wrong optimization (endpoints are part of the type)...
-test param_apply (oeq (Arrow TreeI CheckerResult) deep ({v} -> Err)) fast_license = Ok FF
+test param_apply (oeq (Arrow TreeI CheckerResult) deep ({v} -> Err)) fast_license = Ok false
 // ...and a lazy fake proof of the true claim rejects (refl's endpoints don't convert on a hyp)
-test param_apply (oeq (Arrow TreeI CheckerResult) deep fast) ({v} -> refl) = Ok FF
+test param_apply (oeq (Arrow TreeI CheckerResult) deep fast) ({v} -> refl) = Ok false

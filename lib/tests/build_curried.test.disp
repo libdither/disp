@@ -9,23 +9,23 @@ open use "../std/build.disp"
 
 // ── derived-field record { a : Nat; b := succ a } ────────────────────────────
 Td := { a : Nat, b := succ a }
-test tree_eq (build_curried Td 3) (build Td { a := 3 })           = TT  // curried == all-at-once
-test param_apply Td (build_curried Td 3)                       = Ok TT  // full app inhabits Td (b computed)
+test tree_eq (build_curried Td 3) (build Td { a := 3 })           = true  // curried == all-at-once
+test param_apply Td (build_curried Td 3)                       = Ok true  // full app inhabits Td (b computed)
 test (build_curried Td 3).b                                    = (succ 3)  // derived field computed at apply
-test param_apply (constructor_type Td) (build_curried Td)      = Ok TT  // build_curried Td : Nat -> Td
+test param_apply (constructor_type Td) (build_curried Td)      = Ok true  // build_curried Td : Nat -> Td
 
 // ── dependent pair Sigma Nat (_ -> Bool) ──────────────────────────────────────
 SP := Sigma Nat ({_} -> Bool)
-test param_apply SP (build_curried SP 2 TT)                    = Ok TT  // (x:Nat)(y:Bool) curried, full
-test param_apply (constructor_type SP) (build_curried SP)      = Ok TT  // build_curried SP : Nat -> Bool -> SP
-test param_apply (Pi Bool ({_} -> SP)) (build_curried SP 2)    = Ok TT  // PARTIAL: residual (shrunk) type Bool -> SP
+test param_apply SP (build_curried SP 2 true)                    = Ok true  // (x:Nat)(y:Bool) curried, full
+test param_apply (constructor_type SP) (build_curried SP)      = Ok true  // build_curried SP : Nat -> Bool -> SP
+test param_apply (Pi Bool ({_} -> SP)) (build_curried SP 2)    = Ok true  // PARTIAL: residual (shrunk) type Bool -> SP
 
 // ── a type-class / module signature, as a telescope ───────────────────────────
 // `{ T : Type; z : T; s : T -> T }` — a pointed type with an endo. The field
 // types DEPEND on the carrier `T`. Its constructor is the (polymorphic) instance
 // builder; an instance is `build_curried PointedEndo <carrier> <z> <s>`.
 PointedEndo := { T : Type, z : T, s : T -> T }
-test param_apply PointedEndo (build_curried PointedEndo Nat zero succ) = Ok TT  // the Nat/zero/succ instance
+test param_apply PointedEndo (build_curried PointedEndo Nat zero succ) = Ok true  // the Nat/zero/succ instance
 test (build_curried PointedEndo Nat zero succ).s                       = succ   // project a method
 // the instance constructor is polymorphic over the carrier: (T:Type)(z:T)(s:T->T) -> PointedEndo
-test param_apply (constructor_type PointedEndo) (build_curried PointedEndo) = Ok TT
+test param_apply (constructor_type PointedEndo) (build_curried PointedEndo) = Ok true

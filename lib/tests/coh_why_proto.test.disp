@@ -4,24 +4,24 @@
 // unwalkable: the walker cannot walk itself). RESOLVED 2026-07-01: param_apply is routed
 // through the §7A policed token, so `param_apply T <hyp>` inside a checked body now runs the
 // recognizer through the SANCTIONED native path (the H-rule verdict — no more information
-// than the already-sanctioned neutral_type + tree_eq reads). All three flipped to Ok TT.
+// than the already-sanctioned neutral_type + tree_eq reads). All three flipped to Ok true.
 open use "../kernel/prelude.disp"
 
-// R0: constant gate — never touches `cases`. Self-types (Ok TT).
-test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> Ok FF)) unit_witness) = Ok TT
+// R0: constant gate — never touches `cases`. Self-types (Ok true).
+test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> Ok false)) unit_witness) = Ok true
 
 // R1: gate applies a CONCRETE recognizer (Nat) to the cases-hyp. Since the token routing,
-// this SELF-TYPES: the walk completes with the H-rule verdict (Ok FF -> Extend InvalidType).
-test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> param_apply Nat c)) unit_witness) = Ok TT
+// this SELF-TYPES: the walk completes with the H-rule verdict (Ok false -> Extend InvalidType).
+test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> param_apply Nat c)) unit_witness) = Ok true
 
 // R2: the SANCTIONED pattern — inductive_respond applies the NEUTRAL motive to self via
-// apply_policed. Self-types (Ok TT) — this is Unit's/Ord's respond (metashape.test).
-test param_apply ProjectingRespondShape (inductive_respond unit_witness) = Ok TT
+// apply_policed. Self-types (Ok true) — this is Unit's/Ord's respond (metashape.test).
+test param_apply ProjectingRespondShape (inductive_respond unit_witness) = Ok true
 
 // R3: concrete recognizer on the MOTIVE-hyp m (not cases). Also walkable now.
-test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> param_apply Bool m)) unit_witness) = Ok TT
+test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> param_apply Bool m)) unit_witness) = Ok true
 
-// R4: concrete recognizer on the cases-hyp, result DISCARDED (both arms Ok FF). The old
+// R4: concrete recognizer on the cases-hyp, result DISCARDED (both arms Ok false). The old
 // failure here proved the wall was the walker rejecting the redex `Nat c` STRUCTURALLY,
 // not the value it produced; the token removes exactly that structural rejection.
-test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> match (param_apply Nat c) { Ok v => Ok FF; Err _ => Ok FF })) unit_witness) = Ok TT
+test param_apply ProjectingRespondShape ((gated_inductive_respond ({T, m, c} -> match (param_apply Nat c) { Ok v => Ok false; Err _ => Ok false })) unit_witness) = Ok true

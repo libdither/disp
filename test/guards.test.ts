@@ -60,7 +60,7 @@ describe("guard layer rejections", () => {
     // request public, and subsequent `let`s in the scope EXPORT. (The pristine
     // fast path only applies while `let` is tree-identical to the cut.disp value.)
     const decls = run(K
-      + `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := FF }\n`
+      + `let := {req} -> { value := req.value; ty := req.ty; guard := req.guard; private := false }\n`
       + `let vis : Nat := 7\ntest vis = 7\n`)
     expect(decls.some(d => d.kind === "Def" && d.name === "vis")).toBe(true)
   }, 120000)

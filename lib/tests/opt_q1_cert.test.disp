@@ -33,8 +33,8 @@ let replace_path := fix ({self, path, new, tr} -> if (is_leaf path) then new els
 
 // nav sanity: read & splice the right child's left child of  pair "a" (pair "b" "c")
 let p_abc := cons "a" (cons "b" "c")
-test tree_eq (at_path (cons "R" (cons "L" nil)) p_abc) "b" = TT
-test tree_eq (replace_path (cons "R" (cons "L" nil)) "X" p_abc) (cons "a" (cons "X" "c")) = TT
+test tree_eq (at_path (cons "R" (cons "L" nil)) p_abc) "b" = true
+test tree_eq (replace_path (cons "R" (cons "L" nil)) "X" p_abc) (cons "a" (cons "X" "c")) = true
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // 2. The rule (parametric program), its Tier-2 witness, and the rule book
@@ -59,7 +59,7 @@ let check_step := {bk, e, s} -> {
 let check_cert := fix ({self, bk, e, cert} ->
   if (is_leaf cert) then (Ok e)
   else (match (check_step bk e (pair_fst cert)) { Ok e2 => (self bk e2 (pair_snd cert)); Err _ => Err }))
-let verify_rewrite := {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => FF }
+let verify_rewrite := {bk, e, e2, cert} -> match (check_cert bk e cert) { Ok tr => tree_eq tr e2; Err _ => false }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // 4. Carry an actual map-fusion rewrite end to end, on a program with the redex NESTED at path ["R"].
@@ -72,20 +72,20 @@ let prog2 := pair "ctx" (mp (compose f g) xs)            // the optimized progra
 let cert  := cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons f (cons g (cons xs nil))) } nil
 
 // (1) the certificate VALIDATES the rewrite prog ⤳ prog2.
-test verify_rewrite book prog prog2 cert = TT
+test verify_rewrite book prog prog2 cert = true
 // (2) and it is NON-TRIVIAL: prog ≠ prog2 as trees (a real rewrite, not reduction).
-test tree_eq prog prog2 = FF
+test tree_eq prog prog2 = false
 
 // ── the checker REJECTS bad certificates (it is a real gate, not a rubber stamp) ──
 // wrong claimed result:
-test verify_rewrite book prog (pair "ctx" (mp f (mp g xs))) cert = FF
+test verify_rewrite book prog (pair "ctx" (mp f (mp g xs))) cert = false
 // wrong path (["L"] points at "ctx", which is not the redex → no match):
-test verify_rewrite book prog prog2 (cons { rule := "map_fusion"; path := (cons "L" nil); subst := (cons f (cons g (cons xs nil))) } nil) = FF
+test verify_rewrite book prog prog2 (cons { rule := "map_fusion"; path := (cons "L" nil); subst := (cons f (cons g (cons xs nil))) } nil) = false
 // wrong subst (swap g for xs → instantiated lhs ≠ the occurrence):
-test verify_rewrite book prog prog2 (cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons f (cons xs (cons g nil))) } nil) = FF
+test verify_rewrite book prog prog2 (cons { rule := "map_fusion"; path := (cons "R" nil); subst := (cons f (cons xs (cons g nil))) } nil) = false
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // 5. The rule CARRIES its soundness witness — the loop closes: checker accepts the rewrite AND the
 //    rule's witness is a genuine Tier-2 proof of map fusion (so acceptance is sound, not just tested).
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-test param_apply law_fusion (field (field book "map_fusion") "witness") = Ok TT
+test param_apply law_fusion (field (field book "map_fusion") "witness") = Ok true

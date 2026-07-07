@@ -2,8 +2,8 @@
 /// 
 
 // telescopes. One observation = one cell; a telescope is a chain of cells; one
-// walker (tele_walk) runs the chain for both faces: recognition (mode TT, does this value
-// satisfy every cell?) and respond (mode FF, route this elimination frame through the
+// walker (tele_walk) runs the chain for both faces: recognition (mode true, does this value
+// satisfy every cell?) and respond (mode false, route this elimination frame through the
 // cells). Pi, Sigma, Record, and the meet types are telescopes differing only in which
 // cells they chain, so a new type former is a new cell op, not a walker edit.
 // Pins: telescope.test, tree_order.test. Design rationale: NEGATIVE_TYPES.md.
@@ -36,7 +36,7 @@ SReject : Step := inj0 "SReject"
 SDone   : Action -> Step := inj1 "SDone"
 
 // The cell ops. Every op has the same shape: {meta, mode, source, prior, frame, rs} -> Step.
-//   mode    TT = recognize a candidate, FF = answer an elimination frame
+//   mode    true = recognize a candidate, false = answer an elimination frame
 //   source  the candidate value (recognize) or the stuck neutral (respond)
 //   prior   the value observed by the previous cell in the chain
 //   frame   the elimination frame (respond face only)
@@ -49,7 +49,7 @@ SDone   : Action -> Step := inj1 "SDone"
 //   derive  field `name` of source   equals recipe         Reduce recipe
 //   pos     acc source (a raw slot)  : ty                  extend at ty
 //   qid     source itself            : ty                  extend at ty
-//   refine  source itself            pred source = TT      reject (inert)
+//   refine  source itself            pred source = true      reject (inert)
 //   imeet   source itself            : pred prior          extend at pred prior
 //   eqends  nothing                  stored lhs = rhs      reject (inert)
 //   rec     acc source               : F rs                (dead: sums respond via their respond)
@@ -70,7 +70,7 @@ let mint_op := {meta, mode, source, prior, frame, rs} -> SMint (meta.ty) // ∀-
 let apply_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (source prior)) (meta.ty) // Pi codomain: observe `source prior`
 let proj_op := {meta, mode, source, prior, frame, rs} -> // a record field: honest lookup (key optic); STUCK frame-routes (§7B)
   if mode
-    then (do_check TT ({_} -> lookup_field source (meta.name)) (meta.ty))
+    then (do_check true ({_} -> lookup_field source (meta.name)) (meta.ty))
     else (if (tree_eq (pair_fst frame) (meta.name)) then (SDone (Extend (meta.ty))) else (SThread (source (acc (meta.name))))) // §7B: thread field-value via the SANCTIONED elimination source.name
 let derive_op := {meta, mode, source, prior, frame, rs} -> // a δ field: present AND pinned to recipe (Pin role)
   if mode
@@ -118,7 +118,7 @@ Singleton := {x} -> wait (make_recognizer ({m, v} -> Ok (tree_eq v x))) (make_me
 // its own knot (rs = self); mutual recursion threads a context fn instead. The
 // respond-face branches of these ops are dead for sums/codata (they respond via their
 // responds) and exist only for totality. `is_gen` reads only the sanctioned pair_fst root
-// sig, like is_neutral, so it answers FF on a hyp and is walker-safe.
+// sig, like is_neutral, so it answers false on a hyp and is walker-safe.
 gen_tag := "gen"
 is_gen := {v} -> tree_eq (pair_fst v) gen_tag
 // rec_op is parameterized by a FUNCTOR `F`: a recursive position checks `acc source : (F self)`. Direct
@@ -167,27 +167,27 @@ tele_walk := fix ({self, rs, mode, tele, source, frame, prior} ->
     let cell := pair_fst tele
     match (cell mode source prior frame rs) {
       SMint ty => (if mode
-                    then (bind_hyp ty ({h} -> self rs TT ((pair_snd tele) h) source frame h))
-                    else (match (apply_policed (pair_snd tele) frame) { Ok rest => self rs FF rest source frame frame; Err _ => Extend InvalidType }))
+                    then (bind_hyp ty ({h} -> self rs true ((pair_snd tele) h) source frame h))
+                    else (match (apply_policed (pair_snd tele) frame) { Ok rest => self rs false rest source frame frame; Err _ => Extend InvalidType }))
       SThread x => (if mode
-                    then (self rs TT ((pair_snd tele) x) source frame x)
-                    else (match (apply_policed (pair_snd tele) x) { Ok rest => self rs FF rest source frame frame; Err _ => Extend InvalidType }))
-      SReject _ => Ok FF
+                    then (self rs true ((pair_snd tele) x) source frame x)
+                    else (match (apply_policed (pair_snd tele) x) { Ok rest => self rs false rest source frame frame; Err _ => Extend InvalidType }))
+      SReject _ => Ok false
       SDone a => a
     }
-  } else (if mode then (Ok TT) else (Extend InvalidType)))
+  } else (if mode then (Ok true) else (Extend InvalidType)))
 
 // tele_with cells respond: the wait-form shape every telescope shares, a telescope
-// recognizer (`tele_walk TT` over the cells) plus the given respond. Telescope below is
-// the negative instance (`tele_walk FF` respond); hybrids keep the recognizer but swap in
+// recognizer (`tele_walk true` over the cells) plus the given respond. Telescope below is
+// the negative instance (`tele_walk false` respond); hybrids keep the recognizer but swap in
 // a type-specific respond (Eq's J, StrictType's H-rule).
-tele_with := {cells, respond} -> wait (make_recognizer ({meta, v} -> tele_walk t TT (meta.recognizer_params) v t t)) (make_meta cells respond)
+tele_with := {cells, respond} -> wait (make_recognizer ({meta, v} -> tele_walk t true (meta.recognizer_params) v t t)) (make_meta cells respond)
 
 // Telescope: the negative n-ary former, the dependent product over a chain of cells.
 // Guard-free: a telescope is the meet of its cells' obligations, so the empty telescope
 // is the empty meet, the all-trees predicate (⊤ = Tree). Pi/Sigma are thin instances
 // below; Record lifts its flat field list lazily.
-Telescope : Tree -> Type := {tele} -> tele_with tele ({params, self, frame} -> tele_walk t FF params self frame t)
+Telescope : Tree -> Type := {tele} -> tele_with tele ({params, self, frame} -> tele_walk t false params self frame t)
 
 // Pi A B = the 2-cell telescope [ mint x:A ; apply out:(B x) ] — a thin Telescope instance,
 // self-referential (annotation mentions Pi via `->`). mint = ∀-intro (binds arg); apply observes the codomain.
@@ -198,7 +198,7 @@ Pi : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
 Arrow : Type -> Type -> Type := {A, B} -> Pi A ({_} -> B)
 
 // Sigma A B: the dependent pair as a 2-entry telescope { fst : A, snd : B fst }. Values are §2.6 records;
-// a Sigma-hyp projects via `acc "fst"`/`acc "snd"` through the telescope respond (`tele_walk FF`, dependency preserved).
+// a Sigma-hyp projects via `acc "fst"`/`acc "snd"` through the telescope respond (`tele_walk false`, dependency preserved).
 Sigma : {A : Type} -> (A -> Type) -> Type := {A, B} -> Telescope (
   t (proj_cell "fst" A) ({a} ->
   t (proj_cell "snd" (B a)) ({_} -> t)))
@@ -214,6 +214,6 @@ let fields_to_tele_go := fix ({self, params, fields} ->
     t (proj_cell (pair_fst arm) ty) (const_tail (self params (pair_snd fields)))
   } else t)
 Record_p := {params, fields} -> wait (make_recognizer
-  {meta, v} -> tele_walk t TT (fields_to_tele_go params meta.recognizer_params) v t t
-) (make_meta fields ({flds, self, frame} -> tele_walk t FF (fields_to_tele_go params flds) self frame t))
+  {meta, v} -> tele_walk t true (fields_to_tele_go params meta.recognizer_params) v t t
+) (make_meta fields ({flds, self, frame} -> tele_walk t false (fields_to_tele_go params flds) self frame t))
 Record : Tree -> Type := {fields} -> Record_p t fields

@@ -23,9 +23,9 @@ open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"
 
 // ── (a) the license, exactly as the guard checked it at arith load
-test param_apply (oeq NatRecT nat_rec nat_rec_fast) ({P} -> {z} -> {s} -> {n} -> refl) = Ok TT
+test param_apply (oeq NatRecT nat_rec nat_rec_fast) ({P} -> {z} -> {s} -> {n} -> refl) = Ok true
 // a lying replacement (ignores the target; different abstract path) is refused
-test tree_eq (param_apply (oeq NatRecT nat_rec ({motive, base, step, target} -> base)) ({P} -> {z} -> {s} -> {n} -> refl)) (Ok TT) = FF
+test tree_eq (param_apply (oeq NatRecT nat_rec ({motive, base, step, target} -> base)) ({P} -> {z} -> {s} -> {n} -> refl)) (Ok true) = false
 
 // ── (b) differential: the fast path agrees with the generic route on concretes
 // (this scope's nat_rec is the kernel's: the prelude binds it first, arith's
@@ -36,7 +36,7 @@ test add 0 7 = 7
 test add 7 0 = 7
 test add 3 4 = add_gen 3 4
 test add 25 17 = add_gen 25 17
-test tree_eq (add 2 2) 4 = TT
+test tree_eq (add 2 2) 4 = true
 let dbl_fast := {n} -> nat_rec_fast ({_} -> Nat) zero ({k, ih} -> succ (succ ih)) n
 let dbl_gen  := {n} -> nat_rec ({_} -> Nat) zero ({k, ih} -> succ (succ ih)) n
 test dbl_fast 0 = dbl_gen 0
@@ -54,12 +54,12 @@ routes_agree : {n : Nat} -> (Eq Nat
 
 // ── (d) setoid_of at a neutral type: the Eq base, walker-usably
 let stuck := (make_hyp (Pi Nat ({_} -> Type)) 0) zero
-test tree_eq (setoid_of stuck) (eq_setoid stuck) = TT
-test param_apply ((setoid_of stuck).rel zero zero) refl = Ok TT
+test tree_eq (setoid_of stuck) (eq_setoid stuck) = true
+test param_apply ((setoid_of stuck).rel zero zero) refl = Ok true
 
 // ── (e) ops rides the fast trees (its proofs re-verify at load; spot checks here)
 test pred 5 = 4
-test is_zero 0 = TT
-test is_zero 3 = FF
+test is_zero 0 = true
+test is_zero 3 = false
 test double 21 = 42
 test add1 41 = 42

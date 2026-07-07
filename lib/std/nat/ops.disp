@@ -20,7 +20,7 @@ pred : Nat -> Nat :=
   {n} -> nat_rec ({_} -> Nat) 0 ({k, _prev} -> k) n
 
 is_zero : Nat -> Bool :=
-  {n} -> nat_rec ({_} -> Bool) TT ({_k, _prev} -> FF) n
+  {n} -> nat_rec ({_} -> Bool) true ({_k, _prev} -> false) n
 
 double : Nat -> Nat :=
   {n} -> add n n

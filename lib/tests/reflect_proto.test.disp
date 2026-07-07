@@ -81,9 +81,9 @@ test run_reflect (tsize_eff (t (t t) (t t t))) = 6
 // looking is untyped (the standing K0 floor pin, restated for contrast):
 test param_apply (Pi Tree ({_} -> Bool)) is_fork = Err
 // asking is typed — the same query, as an effect value, carries a real type:
-test param_apply (Arrow Tree (EffAt reflect_row)) is_fork_eff = Ok TT
+test param_apply (Arrow Tree (EffAt reflect_row)) is_fork_eff = Ok true
 // and a request about an ABSTRACT tree is itself a well-typed value:
-test param_apply (EffAt reflect_row) (is_fork_eff (make_hyp Tree 0)) = Ok TT
+test param_apply (EffAt reflect_row) (is_fork_eff (make_hyp Tree 0)) = Ok true
 
 // ── (c) walk_spec: the walker's algorithm, asking instead of looking ──
 let teq_sig := checker_sig tree_eq
@@ -151,4 +151,4 @@ test step (t t) hT = param_walker (t t) hT                              // stem 
 test step (apply_policed Nat) 3 = param_walker (apply_policed Nat) 3
 
 // the headline: the walker's algorithm carries a machine-checked type
-test param_apply (Arrow Tree (Arrow Tree (EffAt reflect_row))) walk_spec = Ok TT
+test param_apply (Arrow Tree (Arrow Tree (EffAt reflect_row))) walk_spec = Ok true
