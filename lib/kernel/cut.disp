@@ -44,12 +44,20 @@ inj3 : Tree -> Tree -> Tree -> Tree -> Tree := {tag, a, b, c} -> inj tag (pair a
 // Type & spine metadata of a wait-form type wait(checker)(meta).
 // SEALED(reflection): a pair_snd² payload read — reading a NEUTRAL's metadata is the
 // extraction leak the walker closes (pair_fst/neutral_type are the only sanctioned readers).
-// TODO: since meta is typed now (and is a record) can we use a field accessor here?
+// (Not a field accessor, even though the meta is a typed record now: T is a wait-form,
+// not a record — applying T to an accessor runs the RECOGNIZER on the accessor as a
+// membership candidate, it does not project. Only this outer extraction is a raw read;
+// the meta's own fields go by name, and the typed face is meta_of in universe.disp.)
 type_meta := {T} -> pair_snd (pair_snd T)
 
 // Signature of a wait-form checker: constant across all metadata for that checker.
 // Self-types: builds a concrete wait-form, then a plain pair_fst read (never a neutral's).
-// Q: Can't this just be replaced with identity? We are creating and then projecting from a structure what we just used to create it aren't we?
+// (Not identity: pair_fst of a wait-form is its left fork child — the checker inside the
+// partial-application wrapping, not the checker verbatim. Comparison sites read pair_fst
+// off real wait-form VALUES, so the known checker must be wrapped the same way before
+// comparing. Nothing is stored separately: a sig is a projection of the term, and the
+// named sigs below are cached projections hash-consing makes O(1). Pinned in
+// lib/tests/checker_sig.test.disp.)
 checker_sig : Tree -> Tree := {checker} -> pair_fst (wait checker t)
 
 // List helpers
@@ -82,7 +90,13 @@ proj := {P, name} -> list_nth (pair_snd P) (list_index_of (pair_fst P) name)
 /// TODO: rename annihilate to something more reasonable like `cut` or `product_elim`.
 annihilate := {P, c} -> (proj P (pair_fst c)) (pair_snd c)
 /// Products are represented as wait-forms to allow for destruction to be application. (Applying a product to a coproduct destructs it).
-/// Q: Why not the other way around? That would make more sense from a scott-encoding perspective and then match would just be `coproduct product`
+/// (Why products are the callable side, not coproducts Scott-style: a Scott coproduct is a
+/// closure — its tag and payload are hidden in a compiled lambda body, so a recognizer could
+/// not walk the payload and the case table's arity/order is fixed at construction. Inj-pairs
+/// keep the tag readable (pair_fst) and dispatch open (the same value runs against any record
+/// carrying that field name). And a record-as-wait-form shares one shape with types and
+/// neutrals, so `.field`, `match`, and hyp projection are a single mechanism. Note `match`
+/// already IS `product coproduct`: an accessor is a nullary coproduct, `acc name`.)
 prod : Tree -> Tree := {P} -> wait annihilate P // a callable product; field table is its meta
 /// tree signature of annihilate function.
 annihilate_sig := checker_sig annihilate
@@ -96,7 +110,11 @@ field := {r, name} -> r (acc name)
 // two outcomes: it stays stuck (`Extend new_type`; rejection is `Extend InvalidType`) or
 // it computes (`Reduce value`, bare, §7.5 Option A). A checker returns `Ok v | Err`.
 // `Return v` is only an alias for `Reduce (Ok v)`, the verdict case; not a third arm.
-// Q: Why can't we use coproduct syntax for this?
+// (Not coproduct syntax `< ... >` for two reasons: the literal desugars to a `Coproduct`
+// application — a positive.disp VALUE this fragment may not forward-reference (values
+// only flow from earlier fragments; only annotations ride givens) — and constructors
+// must exist here as plain values the engine itself uses. universe.disp later declares
+// `CheckerResult : Type := < Ok : Tree, Err >` as the TYPE over these same values.)
 Extend : Type -> Action := inj1 "Extend"
 Reduce : Tree -> Action := inj1 "Reduce"
 Ok : Tree -> Tree := inj1 "Ok"
