@@ -1,0 +1,34 @@
+open use "../../prelude.disp"
+open use "../../kernel/prelude.disp"
+
+// arith.opt: the optimization payload for arith.disp — implementation only, no
+// contract. The CONTRACT (guard ownership, the licensed rebind, and what the license
+// does and does not certify) lives in arith.disp; the differential pins live in
+// lib/tests/guard_opt.test.disp. This file is meant to be replaceable: a future
+// optimizer emits files of exactly this shape (OPTIMIZER.typ's (e', cert) at the
+// definition boundary — the cert is carried by the rebind in the spec file, checked
+// by the guard at load).
+
+// The kernel recursor's honest dependent type, named so the license relation can
+// cite it (`oeq NatRecT` is nat_rec's pointwise equivalence).
+NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
+
+// nat_rec_fast: the kernel recursor with a fast CONCRETE path. A neutral target
+// delegates to nat_rec VERBATIM, so checking-time behavior is tree-identical (the same
+// stuck elimination); a concrete target runs a direct loop on the unary shape
+// (zero = leaf, succ k = fork(t, k)) — one is_neutral + one triage per step instead of
+// the generic elim -> dispatcher -> view-decode -> case-lookup round. The neutrality
+// check sits INSIDE the loop so reduction under binders is preserved: `succ k` with k
+// abstract peels one constructor and then delegates, exactly like the generic route
+// (the conversion `add (succ k) m = succ (add k m)` that inductive proofs rely on).
+// A stem is never a Nat; that junk arm answers `base` (total-and-trusting, the
+// list-toolkit style — the recognizer, not the recursor, establishes shape).
+nat_rec_fast : NatRecT := {motive, base, step, target} ->
+  (fix ({go, k} ->
+    if (is_neutral k)
+      then (nat_rec motive base step k)
+      else (triage
+        base
+        ({_} -> base)
+        ({_l, kk} -> step kk (go kk))
+        k))) target

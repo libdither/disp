@@ -1,44 +1,28 @@
 open use "../../prelude.disp"
 open use "../../kernel/prelude.disp"
+open use "arith.opt.disp"
 open use "../oeq.disp"
 
 // ================================================================
 // Arithmetic
 // ================================================================
 
-// The kernel recursor's honest dependent type, named so the license relation below
-// can cite it (`oeq NatRecT` is nat_rec's pointwise equivalence).
-NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
-
-// nat_rec_fast: the kernel recursor with a fast CONCRETE path. A neutral target
-// delegates to nat_rec VERBATIM, so checking-time behavior is tree-identical (the same
-// stuck elimination); a concrete target runs a direct loop on the unary shape
-// (zero = leaf, succ k = fork(t, k)) — one is_neutral + one triage per step instead of
-// the generic elim -> dispatcher -> view-decode -> case-lookup round. The neutrality
-// check sits INSIDE the loop so reduction under binders is preserved: `succ k` with k
-// abstract peels one constructor and then delegates, exactly like the generic route
-// (the conversion `add (succ k) m = succ (add k m)` that inductive proofs rely on).
-// A stem is never a Nat; that junk arm answers `base` (total-and-trusting, the
-// list-toolkit style — the recognizer, not the recursor, establishes shape).
-nat_rec_fast : NatRecT := {motive, base, step, target} ->
-  (fix ({go, k} ->
-    if (is_neutral k)
-      then (nat_rec motive base step k)
-      else (triage
-        base
-        ({_} -> base)
-        ({_l, kk} -> step kk (go kk))
-        k))) target
+// Re-export the optimization surface (arith.opt.disp) so this module stays the one
+// entry point: NatRecT is the license's relation anchor, nat_rec_fast the payload
+// consumers may cite explicitly (ops.disp's shadow, the guard_opt pins).
+NatRecT := NatRecT
+nat_rec_fast := nat_rec_fast
 
 // ── The licensed replacement ceremony (guards + std/oeq; the definition-boundary form
 // of OPTIMIZER.typ's licensed rewriting). Own the kernel recursor at its pointwise
-// equivalence, then rebind it FILE-LOCALLY to the fast form. The guard checks the proof
-// in-language: at a minted target both implementations reduce to the same stuck
-// elimination, so pointwise refl inhabits the relation — the license machine-checks
-// exactly "the abstract path is untouched". It does NOT cover the concrete path
-// (is_neutral is intensionally visible at a mint, so only the delegation branch is
-// exercised); concretes are pinned differentially in lib/tests/guard_opt.test.disp,
-// the in-language half of the tree_eq native-fast-path discipline.
+// equivalence, then rebind it FILE-LOCALLY to the fast form from arith.opt.disp. The
+// guard checks the proof in-language: at a minted target both implementations reduce
+// to the same stuck elimination, so pointwise refl inhabits the relation — the license
+// machine-checks exactly "the abstract path is untouched". It does NOT cover the
+// concrete path (is_neutral is intensionally visible at a mint, so only the delegation
+// branch is exercised); concretes are pinned differentially in
+// lib/tests/guard_opt.test.disp, the in-language half of the tree_eq native-fast-path
+// discipline.
 // The install re-exports nat_rec's ORIGINAL tree (so downstream opens dedupe against
 // the kernel's), and the rebind is `let`-private: only this file's exports carry the
 // fast trees.

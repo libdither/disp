@@ -1,6 +1,7 @@
 // The licensed-replacement ceremony end to end (guard_eq survey, candidates 1-2):
 // std/nat/arith owns nat_rec at `oeq NatRecT` and rebinds it file-locally to
-// nat_rec_fast — neutral targets delegate to the kernel recursor verbatim, concrete
+// nat_rec_fast (the payload module is arith.opt.disp; arith.disp carries the
+// contract and re-exports the surface) — neutral targets delegate verbatim, concrete
 // targets run a direct triage loop (~17 steps/unit vs ~200 through the generic
 // elim -> dispatcher -> view-decode -> case-lookup route). Pins:
 //   (a) the license: pointwise refl inhabits `oeq NatRecT nat_rec nat_rec_fast` (both
