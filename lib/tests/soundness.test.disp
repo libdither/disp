@@ -123,6 +123,38 @@ let NeutralT := Refinement Tree is_neutral
 test tree_eq (param_apply NeutralT (make_hyp Tree 0)) (Ok TT) = FF // a real neutral: NOT a member (H-rule nominality)
 test param_apply NeutralT zero = Ok FF                             // a concrete non-neutral: predicate rejects, as expected
 
+// ── THE WALKER'S SEAL IS IRREDUCIBLE (characterization, 2026-07-07): why
+// param_walker itself is on the floor, at one-line resolution. A typed FACADE for
+// the walker would route the abstract head first (the typecheck-twin pattern) and
+// delegate the rest. Its head guard must be BOTH walkable (runnable under the
+// annotation check, which mints the head) AND forge-proof (the neutral SIGNATURE
+// is shared by stems — pair_fst (t hyp_sig) = hyp_sig, the §2.6 collision). The
+// two candidate guards satisfy exactly one each, so the minimal facade is either
+// unsound or uncheckable — the seal sits exactly where semantics needs
+// hyp-reflection, not where construction put it.
+let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let forged_stem := t hyp_sig               // a stem wearing the neutral signature
+test is_neutral forged_stem = TT           // the cheap guard is fooled...
+test is_hyp_fork_l forged_stem = FF        // ...the fork-shape guard is not
+// horn 1 — the is_neutral facade CHECKS but is not the walker: on the forged stem
+// it manufactures the counterfeit hyp-fork the real walker rejects (stem-forge).
+let walker_n := {f, x} -> if (is_neutral f) then (Ok (f x)) else (param_walker f x)
+test typecheck (Arrow Tree (Arrow Tree CheckerResult)) walker_n = Ok TT
+test param_walker forged_stem t = Err
+test tree_eq (walker_n forged_stem t) (param_walker forged_stem t) = FF
+// horn 2 — the is_hyp_fork facade routes exactly like the walker, but its guard
+// triages the minted head, so it CANNOT be checked (the guard is the reflection):
+let walker_h := {f, x} -> if (is_hyp_fork_l f) then (Ok (f x)) else (param_walker f x)
+test walker_h forged_stem t = param_walker forged_stem t
+test tree_eq (typecheck (Arrow Tree (Arrow Tree CheckerResult)) walker_h) (Ok TT) = FF
+// on GENUINE neutrals all three agree (the routing they share; horns differ only
+// at the forge boundary). The walker's INTERFACE stays typed via param_apply/
+// checked + the §7A token; growing the sanctioned-reader set (hyp-fork-ness) or
+// the sealing modality are the two avenues to type the BODY.
+let hW := make_hyp Tree 0
+test tree_eq (walker_n hW t) (param_walker hW t) = TT
+test tree_eq (walker_h hW t) (param_walker hW t) = TT
+
 // ================================================================
 // ABOVE THE FLOOR (K1) — everything else is meant to verify
 // ================================================================
