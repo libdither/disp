@@ -1,0 +1,154 @@
+// PROTOTYPE — triage-as-effect: intensional analysis as a CAPABILITY (§15 meets
+// the walker's seal; the reify-and-check avenue over std/effect.disp).
+//
+// The two-horns pin (soundness.test) shows a PURE facade for the walker is
+// either unsound or uncheckable: any function that LOOKS at a head's shape is
+// the reflection the walker rejects. But a function that ASKS — emitting a
+// classify request as free-monad data and continuing from the answer — only
+// CONSTRUCTS, and construction over hyps is walkable. The one place that looks
+// is the handler: the floor, one clause wide.
+//
+//   looking is untyped;  asking is typed;  the row is the modality.
+//
+// The Reflect effect has ONE op, `classify v`, whose answer is the observation
+// interface itself: leaf | stem child | fork l r | hyp stored-type. The `hyp`
+// arm is what dissolves the two horns for programs (not facades): the spec
+// never guards on is_neutral (unsound) or is_hyp_fork (unwalkable) — the
+// SEALED handler makes that distinction, where the knowledge lives, and the
+// spec handles `hyp` as an ordinary case. The carve-out set becomes an effect
+// SIGNATURE: growing the sanctioned readers = adding ops to Reflect, a library
+// decision with a visible type instead of a walker edit.
+//
+// Pinned below:
+//   (a) effectful twins of the raw dispatchers run correctly (differential);
+//   (b) the modality demo: `is_fork : Tree -> Bool` is walker-REJECTED while
+//       `is_fork_eff : Tree -> EffAt [Reflect]` CHECKS, and a program built
+//       over an abstract tree is itself a well-typed value;
+//   (c) walk_spec — the WALKER'S OWN ALGORITHM as an effect program (pure
+//       tree_eq head checks; every shape decision a classify request; the
+//       stem-forge check ASKS about the tree it just built) — agrees with
+//       param_walker across dispatch rules, carve-outs, the hyp route, and
+//       both rejections, and itself carries `Tree -> Tree -> EffAt [Reflect]`;
+//   (d) known proto limits: the row check probes continuations with `t`
+//       (std/effect.disp), so branchy programs need a junk-tolerant default
+//       arm and only first ops are row-visible — the deferred `Eff R X`
+//       recognizer (k under Pi) is the shared critical path of the effects
+//       arc and this one. The bind_hyp route (minting = another floor
+//       capability, a second Reflect op in the production shape) and the §7A
+//       policed route are DELEGATED verbatim, marked inline.
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/effect.disp"
+
+// ── the Reflect effect: one op, the observation interface as its answer ──
+let classify := mk_op "Reflect" "classify" Tree Tree
+let reflect_row := row1 "Reflect"
+let sh_leaf := inj0 "leaf"
+let sh_stem := {c} -> inj1 "stem" c
+let sh_fork := {l, r} -> inj2 "fork" l r
+let sh_hyp  := {ty} -> inj1 "hyp" ty
+let sh_tag  := {s} -> pair_fst s
+
+// ── the floor handler: THE one clause that looks. A genuine neutral is never
+// triaged (is_hyp_fork first); everything else is raw shape triage. This runs
+// at handle time on values-as-data — the walker's prohibition is about
+// checks, not about the floor.
+let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let classify_clause := {op} -> {v, resume} -> resume
+  (if (is_hyp_fork_l v)
+    then (sh_hyp (neutral_type v))
+    else (triage sh_leaf sh_stem sh_fork v))
+let reflect_h := mk_handler (covers_eff "Reflect") io_pure classify_clause
+let run_reflect := {m} -> run_pure (handle reflect_h m)
+
+// ── (a) effectful twins ──
+let is_fork_eff := {v} -> eff_bind (classify v) ({s} -> io_pure (tree_eq (sh_tag s) "fork"))
+let stem_child_eff := {v} -> eff_bind (classify v) ({s} ->
+  if (tree_eq (sh_tag s) "stem") then (io_pure (pair_snd s)) else (io_pure t))
+let tsize_eff := fix ({self, v} -> eff_bind (classify v) ({s} ->
+  if (tree_eq (sh_tag s) "stem") then (eff_bind (self (pair_snd s)) ({n} -> io_pure (succ n)))
+  else (if (tree_eq (sh_tag s) "fork")
+    then (eff_bind (self (pair_fst (pair_snd s))) ({nl} -> eff_bind (self (pair_snd (pair_snd s))) ({nr} -> io_pure (succ (add nl nr)))))
+    else (io_pure 1))))
+
+test run_reflect (is_fork_eff t) = is_fork t
+test run_reflect (is_fork_eff (t t)) = is_fork (t t)
+test run_reflect (is_fork_eff (t t t)) = is_fork (t t t)
+test run_reflect (stem_child_eff (t (t t t))) = stem_child (t (t t t))
+test run_reflect (tsize_eff (t (t t) (t t t))) = 6
+
+// ── (b) the modality demo ──
+// looking is untyped (the standing K0 floor pin, restated for contrast):
+test param_apply (Pi Tree ({_} -> Bool)) is_fork = Err
+// asking is typed — the same query, as an effect value, carries a real type:
+test param_apply (Arrow Tree (EffAt reflect_row)) is_fork_eff = Ok TT
+// and a request about an ABSTRACT tree is itself a well-typed value:
+test param_apply (EffAt reflect_row) (is_fork_eff (make_hyp Tree 0)) = Ok TT
+
+// ── (c) walk_spec: the walker's algorithm, asking instead of looking ──
+let teq_sig := checker_sig tree_eq
+let bh_sig  := pair_fst (bind_hyp Tree)      // constant across A
+let pw_sig  := checker_sig param_walker      // = the §7A token's signature
+// CheckerResult-bind lifted into Eff (the walker's `bind`, effectfully)
+let eff_bind_cr := {m, g} -> eff_bind m ({cr} ->
+  if (tree_eq (pair_fst cr) "Ok") then (g (pair_snd cr)) else (io_pure Err))
+// the S rule and the two fork sub-rules (w_s / w_tfk / the triage rule)
+let w_s_spec := {self, c, b, x} -> eff_bind_cr (self c x) ({cx} -> eff_bind_cr (self b x) ({bx} -> self cx bx))
+let w_tfk_spec := {self, b, l2, r2} -> eff_bind_cr (self b l2) ({bl} -> self bl r2)
+let w_tri_spec := {self, b, tc, td, x} -> eff_bind (classify x) ({sx} ->
+  if (tree_eq (sh_tag sx) "hyp") then (io_pure Err)                     // triage-on-neutral rejection
+  else (if (tree_eq (sh_tag sx) "leaf") then (io_pure (Ok tc))
+  else (if (tree_eq (sh_tag sx) "stem") then (self td (pair_snd sx))
+  else (if (tree_eq (sh_tag sx) "fork") then (w_tfk_spec self b (pair_fst (pair_snd sx)) (pair_snd (pair_snd sx)))
+  else (io_pure Err)))))
+// the stem rule: build fork(a, x), then ASK whether what we built wears the
+// hyp shape — a forged fork answers hyp, exactly w_stem's rejection
+let w_stem_spec := {self, a, x} -> {
+  let r := t a x
+  eff_bind (classify r) ({sr} ->
+    if (tree_eq (sh_tag sr) "hyp") then (io_pure Err) else (io_pure (Ok r)))
+}
+let walk_fork := {self, f, l, r, x} -> (
+  if (tree_eq l teq_sig) then (io_pure (Ok (f x)))                      // complete a suspended tree_eq (host O(1))
+  else (if (tree_eq l bh_sig) then (io_pure (param_walker f x))         // DELEGATED: minting is its own floor op
+  else (if (tree_eq l pw_sig) then (io_pure (param_walker f x))         // DELEGATED: the §7A policed route
+  else (eff_bind (classify l) ({sl} ->
+    if (tree_eq (sh_tag sl) "leaf") then (io_pure (Ok r))               // K rule
+    else (if (tree_eq (sh_tag sl) "stem") then (w_s_spec self (pair_snd sl) r x)
+    else (if (tree_eq (sh_tag sl) "fork") then (w_tri_spec self r (pair_fst (pair_snd sl)) (pair_snd (pair_snd sl)) x)
+    else (io_pure Err))))))))
+let walk_spec := fix ({self, f, x} ->
+  if (tree_eq f tree_eq) then (io_pure (Ok (wait tree_eq x)))
+  else (if (tree_eq f pair_fst) then (io_pure (Ok (pair_fst x)))
+  else (if (tree_eq f neutral_type) then (io_pure (Ok (neutral_type x)))
+  else (if (tree_eq f ({y} -> y)) then (io_pure (Ok x))
+  else (eff_bind (classify f) ({s} ->
+    if (tree_eq (sh_tag s) "hyp") then (io_pure (Ok (f x)))             // the hyp route: extend the spine
+    else (if (tree_eq (sh_tag s) "leaf") then (io_pure (Ok (t x)))
+    else (if (tree_eq (sh_tag s) "stem") then (w_stem_spec self (pair_snd s) x)
+    else (if (tree_eq (sh_tag s) "fork") then (walk_fork self f (pair_fst (pair_snd s)) (pair_snd (pair_snd s)) x)
+    else (io_pure Err))))))))))
+let step := {f, x} -> run_reflect (walk_spec f x)
+
+// dispatch rules agree with the live walker
+test step t zero = param_walker t zero
+test step (t t) zero = param_walker (t t) zero
+test step (t t t) 5 = param_walker (t t t) 5
+test step succ 3 = param_walker succ 3
+test step (add 2) 3 = param_walker (add 2) 3
+test step is_fork (t t) = param_walker is_fork (t t)
+// carve-outs agree
+test step tree_eq zero = param_walker tree_eq zero
+test step pair_fst (pair 1 2) = param_walker pair_fst (pair 1 2)
+test step neutral_type (make_hyp Nat 1) = param_walker neutral_type (make_hyp Nat 1)
+// the hyp route and both rejections agree
+let hT := make_hyp Tree 0
+test step hT zero = param_walker hT zero
+test step is_fork hT = param_walker is_fork hT                          // triage-on-neutral: both Err
+test step (t hyp_sig) 7 = param_walker (t hyp_sig) 7                    // stem-forge: both Err
+test step (t t) hT = param_walker (t t) hT                              // stem head over a hyp arg
+// the delegated routes agree trivially (marked; production = more Reflect ops)
+test step (apply_policed Nat) 3 = param_walker (apply_policed Nat) 3
+
+// the headline: the walker's algorithm carries a machine-checked type
+test param_apply (Arrow Tree (Arrow Tree (EffAt reflect_row))) walk_spec = Ok TT
