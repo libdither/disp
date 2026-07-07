@@ -88,8 +88,8 @@ meta_frame := inj "@meta" t
 type_predicate_h_rule : RespondShape := {params, self, frame} ->
   if (tree_eq frame meta_frame) then (Extend MetaShape)
   else (if (is_neutral frame)
-    then (Return (tree_eq (neutral_type frame) self))
-    else (Return FF))
+    then (Reduce (Ok (tree_eq (neutral_type frame) self)))
+    else (Reduce (Ok FF)))
 
 // meta_of: read a type's metadata, typed. A concrete type gives its real meta record
 // (same as type_meta); an abstract type-hyp gives a stuck MetaShape (the meta_frame arm
@@ -216,7 +216,7 @@ NeutralMeta : Type := { stored_type : Type, payload : Spine }
 // boundary's `verify` (engine.disp) checks, and what auto-verify runs per typed module.
 Module : Type := { typ : Type, record : Tree }
 // Action: a respond's result — stuck (`Extend new_type`, payload Type) or computes
-// (`Reduce value`, payload Tree). `Return v = Reduce (Ok v)` is the verdict ALIAS.
+// (`Reduce value`, payload Tree). The verdict (H-rule) case is spelled `Reduce (Ok v)`.
 Action : Type := < Extend : Type, Reduce : Tree >
 // Step: what a cell op answers the tele_walk harness (cells.disp) — mint a hyp, thread a
 // value, reject, or finish with an Action. The constructors (cells.disp) are annotated

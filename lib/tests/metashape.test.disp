@@ -39,8 +39,7 @@ test param_apply Spine ((type_meta stuckB).payload) = Ok TT
 test param_apply NeutralMeta (type_meta stuckB) = Ok TT
 test param_apply Action (Extend Nat)                             = Ok TT
 test param_apply Action (Reduce zero)                            = Ok TT
-test param_apply Action (Return zero)                            = Ok TT // alias: Reduce (Ok zero)
-test tree_eq (Return zero) (Reduce (Ok zero))                    = TT    // Return IS the alias, definitionally
+test param_apply Action (Reduce (Ok zero))                       = Ok TT // the verdict case is an ordinary Reduce
 // CheckerResult: BOTH constructors inhabit it. (Err's variant is bare/nullary — Err carries
 // payload `t`; the old `Err : Unit` variant demanded `unit_val` and Err did NOT inhabit.)
 test param_apply CheckerResult (Ok TT)                           = Ok TT

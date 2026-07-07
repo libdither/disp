@@ -51,8 +51,9 @@
   (non-optional) field with a two-tag `Action`.
 
   *2026-06-13 — reconciled with the implementation.* `Action`'s second arm is
-  `Reduce Tree` (`Return v := Reduce (Ok v)` is a verdict *alias*, not a third
-  arm), both arms *bare* — `hyp_reduce` returns the reduct unwrapped, so
+  `Reduce Tree` (this spec writes `Return v` for the verdict case `Reduce (Ok
+  v)` — notation only, not a third arm; the library spells it out), both arms
+  *bare* — `hyp_reduce` returns the reduct unwrapped, so
   `Ok <neutral>` never arises (the §7.5 "Option A" invariant). `respond` is
   `recognizer_params → self → frame → Action`, typed `RespondShape` (§12.6). The
   dependent record former `Telescope` (§12.7) subsumes `Sigma`/`Record`, so
@@ -283,7 +284,7 @@ to avoid re-introducing them inline:
     [`Tree_p`. The thing applied to a neutral — an argument (Π), a projection-by-name selector (`acc`; Σ/Record/Telescope), a case-pair (inductive), a dimension (Path), a candidate value (Type). Untagged; the stored type interprets it.],
 
     [`Action`],
-    [`Extend Type | Reduce Tree`. The protocol `hyp_reduce` consumes from a type's `respond` (§7): `Extend T'` keeps the elimination stuck at a new stored type; `Reduce v` resolves it to a value (both *bare* — §7.5). A frame a type does not accept is rejected as `Extend InvalidType` (§12.3) — the dead-state type — so there is no third "reject" tag. `Return v := Reduce (Ok v)` is a library *alias* for the verdict (H-rule) case, not a third arm.],
+    [`Extend Type | Reduce Tree`. The protocol `hyp_reduce` consumes from a type's `respond` (§7): `Extend T'` keeps the elimination stuck at a new stored type; `Reduce v` resolves it to a value (both *bare* — §7.5). A frame a type does not accept is rejected as `Extend InvalidType` (§12.3) — the dead-state type — so there is no third "reject" tag. `Return v := Reduce (Ok v)` is this spec's *notation* for the verdict (H-rule) case, not a third arm (the library writes `Reduce (Ok v)` out).],
 
     [`Spec`],
     [A runnable behavioral property attached to a type's meta (the `behavioral_specs` field, §11.2). Layer-neutral name so the core metadata convention does not depend on the cubical extension; realized concretely as `Path` once §13 is in scope.],
@@ -2766,7 +2767,7 @@ validator), not by a kernel-side sig table.
 //                                       //   `recognizer_params` the former's params.
 //                                       //   Typed `RespondShape` (§12.6).
 //   Action  := Extend Type | Reduce Tree     // reject = Extend InvalidType (§12.3);
-//                                       //   Return v := Reduce (Ok v) is the verdict alias
+//                                       //   Return v := Reduce (Ok v) is verdict notation
 //   Frame   := Tree_p                   // untagged; the stored type
 //                                       //   interprets it
 
@@ -3634,7 +3635,7 @@ Frame       : Type := Tree                                   // a frame; the sto
 NeutralMeta : Type := Record [(stored_type, Type), (payload, Tree)]   // a neutral's metadata (§6.1)
 
 // The two-tag elimination protocol (§7, §12.3) as a library coproduct.
-Action      : Type := Coproduct [(Extend, Type), (Reduce, Tree)]      // Return v := Reduce (Ok v) (alias)
+Action      : Type := Coproduct [(Extend, Type), (Reduce, Tree)]      // Return v := Reduce (Ok v) (notation)
 
 // The metadata record every type carries (§11.2): a plain `Record`, fields
 // loosened to `Tree` so structural membership suffices.
@@ -4215,7 +4216,7 @@ and the *predicate-side H-rule* in its `respond` slot.
 // `hyp_reduce`'s raw arm and never reach the `make_recognizer` wrapper. The
 // 3-arg respond (§7.1) gets `self` directly; raw `is_neutral` / `neutral_type`
 // are walker-safe because the respond runs inside `hyp_reduce`'s handler.
-// `Return` is the verdict alias `Reduce (Ok ·)`.
+// `Return v` abbreviates the verdict `Reduce (Ok v)` (spec notation; the library spells it out).
 type_predicate_h_rule := {params, self, frame} ->
   if (is_neutral frame)
     then (Return (tree_eq (neutral_type frame) self))

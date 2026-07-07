@@ -109,7 +109,7 @@ field := {r, name} -> r (acc name)
 // Action + CheckerResult, the two control coproducts. Eliminating a neutral has exactly
 // two outcomes: it stays stuck (`Extend new_type`; rejection is `Extend InvalidType`) or
 // it computes (`Reduce value`, bare, §7.5 Option A). A checker returns `Ok v | Err`.
-// `Return v` is only an alias for `Reduce (Ok v)`, the verdict case; not a third arm.
+// The verdict (H-rule) case is spelled out as `Reduce (Ok v)`; there is no third arm.
 // (Not coproduct syntax `< ... >` for two reasons: the literal desugars to a `Coproduct`
 // application — a positive.disp VALUE this fragment may not forward-reference (values
 // only flow from earlier fragments; only annotations ride givens) — and constructors
@@ -119,8 +119,6 @@ Extend : Type -> Action := inj1 "Extend"
 Reduce : Tree -> Action := inj1 "Reduce"
 Ok : Tree -> Tree := inj1 "Ok"
 Err : Tree := inj0 "Err"
-// TODO: delete this from codebase, we don't really need the alias lol.
-Return : Tree -> Action := {v} -> Reduce (Ok v)
 
 // Q: I wonder if we can isolate this to a more general monad library and just derive monad for Extend/Reduce
 bind := {r, k} -> match r { Ok v => k v; Err _ => r } // CheckerResult monadic bind

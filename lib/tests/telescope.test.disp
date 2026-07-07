@@ -2,7 +2,7 @@
 // (def a stem-option: t = opaque, t e = derived/transparent); a telescope is
 // `t entry (λx. rest)` — the tail binds the entry's value, so later types and
 // derived recipes see earlier fields. Opaque/transparent maps onto the Action
-// coproduct: projecting a hyp answers Extend ty (opaque) | Return e (derived).
+// coproduct: projecting a hyp answers Extend ty (opaque) | Reduce e (derived).
 
 open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
@@ -82,7 +82,7 @@ let hT := param_apply hDep (acc "T")
 test neutral_type hT = Type
 test tree_eq (neutral_type (param_apply hDep (acc "x"))) hT = TT
 
-// ---- derived projection on a hyp: δ-transparency (Return, not Extend) ----
+// ---- derived projection on a hyp: δ-transparency (Reduce, not Extend) ----
 // constructor-only recipe (succ) is walker-safe: r.b unfolds to succ <a-neutral>
 let TS := Telescope (t (ent "a" Nat) ({a} -> t (dent "b" (succ a)) ({_b} -> t)))
 let hTS := make_hyp TS 0
