@@ -1,0 +1,86 @@
+// Algebraic effects — the §15 operational prototype over std/effect.disp.
+// Effects are VALUES interpreted by pure deep handlers; the driver here is a
+// pure projection (run_pure) because every pin is fully handled — no host.
+// Pinned: state (parameter-passing, with forward-threading), exceptions
+// (catch is a handler; recovery drops resume), multi-shot nondeterminism
+// (resume called per candidate — free by purity), handler composition (state
+// threads through a catch boundary; the §15 worked example, a user effect
+// over IO discharged by a mock-IO test handler), and the row layer
+// (weakening = containment; a handler DISCHARGES its row entry; effect
+// safety as an ordinary Refinement type through param_apply).
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/nat/ops.disp"
+open use "../std/effect.disp"
+
+// ── the State effect over Nat, by hand (what `effect State { … }` expands to) ──
+let st_get := (mk_op "State" "get" Unit Nat) t
+let st_put := mk_op "State" "put" Nat Unit
+// Parameter-passing handler: clauses answer in the carrier S -> Eff …, so its
+// forward clause threads s through forwarded ops (the mk_handler default
+// would drop it — the proto's `forward` finding).
+let state_h := {
+  covers := covers_eff "State"
+  return := {x} -> {s} -> io_pure (pair x s)
+  on := {op} -> {arg, resume} -> (if (tree_eq (op_name op) "get")
+    then ({s} -> (resume s) s)
+    else ({s_old} -> (resume t) arg))
+  forward := {op, arg, resumek} -> {s} -> io_op op arg ({r} -> (resumek r) s)
+}
+let run_state := {s0, m} -> (handle state_h m) s0
+
+// read; bump the state; return the double of what was read
+let prog1 := eff_bind st_get ({n} -> eff_bind (st_put (succ n)) ({u} -> io_pure (double n)))
+test pair_fst (run_pure (run_state 3 prog1)) = 6
+test pair_snd (run_pure (run_state 3 prog1)) = 4
+
+// ── exceptions: recovery drops the continuation ──
+test run_pure (catch (eff_bind (throw "boom") ({x} -> io_pure 1)) ({e} -> io_pure 0)) = 0
+test run_pure (catch (io_pure 5) ({e} -> io_pure 0)) = 5
+
+// State threads straight through the catch boundary (the §15 catch example):
+// put 2; throw; put 3 — the outer state handler sees put 2 (forwarded through
+// catch), recovery reads it back, and put 3 dies with the dropped resume.
+let prog2 := eff_bind (st_put 2) ({u} -> eff_bind (throw "e") ({x} -> st_put 3))
+let caught := catch prog2 ({e} -> st_get)
+test pair_fst (run_pure (run_state 0 caught)) = 2
+test pair_snd (run_pure (run_state 0 caught)) = 2
+
+// ── nondeterminism: the clause calls resume PER CANDIDATE — multi-shot is
+// free because a continuation is a pure value ──
+let concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+let choose := mk_op "Nondet" "choose" Tree Tree
+let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map resume cands)
+let progN := eff_bind (choose (cons 1 (cons 2 nil))) ({n} -> io_pure (double n))
+test tree_eq (handle nondet_h progN) (cons 2 (cons 4 nil)) = TT
+
+// ── the §15 worked example: a user effect (State) over IO, the IO discharged
+// by a mock test handler standing in for the driver — checking never performs
+// effects, and testing needs no host either ──
+let st_write := mk_op "IO" "write" Tree Unit
+let mock_io := {
+  covers := covers_eff "IO"
+  return := {x} -> {log} -> io_pure (pair x log)
+  on := {op} -> {msg, resume} -> {log} -> (resume t) (cons msg log)
+  forward := {op, arg, resumek} -> {log} -> io_op op arg ({r} -> (resumek r) log)
+}
+let prog3 := eff_bind st_get ({n} -> eff_bind (st_write n) ({u} -> st_put (succ n)))
+// handle State first (write forwards, s threads through), then mock-IO:
+// result = pair (state result = pair t 6) (log = [5])
+let ran := run_pure ((handle mock_io ((handle state_h prog3) 5)) nil)
+test pair_snd (pair_fst ran) = 6
+test tree_eq (pair_snd ran) (cons 5 nil) = TT
+
+// ── rows: support(v) ⊆ R ──
+test label_in_row "State" (row_cons "IO" (row1 "State")) = TT
+test eff_check (row1 "State") prog1 = TT
+// weakening is containment, so it is FREE: the same value at a bigger row
+test eff_check (row_cons "IO" (row1 "State")) prog1 = TT
+test eff_check (row1 "IO") prog1 = FF
+// prog3 performs both effects; handling State DISCHARGES its row entry
+test eff_check (row1 "State") prog3 = FF
+test eff_check (row_cons "State" (row1 "IO")) prog3 = TT
+test eff_check (row1 "IO") ((handle state_h prog3) 5) = TT
+// effect safety as an ordinary type, today: Refinement over the row check
+test param_apply (EffAt (row1 "State")) prog1 = Ok TT
+test param_apply (EffAt (row1 "IO")) prog1 = Ok FF

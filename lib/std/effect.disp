@@ -1,0 +1,120 @@
+// std/effect.disp — algebraic effects as a library free monad (TYPE_THEORY §15).
+// PROTOTYPE (2026-07-07), validated by lib/tests/effect_proto.test.disp.
+//
+// An effectful computation is a VALUE — a description the substrate never
+// performs. Purity is forced, not chosen: hash-consing shares structurally
+// equal subtrees, so a side-effecting apply would run an effect a
+// sharing-dependent number of times. Real IO happens only when an impure
+// DRIVER at the program boundary walks the value; every handler here is pure,
+// and a test handler replaces the driver entirely (effectful code tests with
+// no host). The flip side is the §15 payoff: resume is an ordinary function
+// value, so calling it 0/1/many times is free — abort, state, and multi-shot
+// nondeterminism come from ONE fold, differing only in how the clause uses
+// resume. handle is `reset`, resume is the captured delimited continuation;
+// no shift/reset primitive exists or is needed.
+//
+// The production shape this file grows into (spec order, all deferred):
+//   - canonical rows: name-sorted deduplicated label lists (closed-row
+//     conversion = O(1) tree_eq) and OPEN rows as a Row-typed hyp improper
+//     tail (row polymorphism = ordinary Pi Row; one trailing row variable is
+//     the exact case). The proto uses exact label lists + tree_eq membership;
+//     canonicity changes no verdict below, only row-equality cost.
+//   - `Eff R X : Type` as a self-referential wait-form: the §15 recognizer
+//     (Pure payload : X; each Op's label ∈ R; k : op.result -> Eff R X via
+//     param_apply, so branching continuations walk under real minted hyps).
+//     The clean route is the Coproduct/Rec machinery — the k arm is recursion
+//     UNDER a Pi, i.e. RecUnder with a reader functor — or a make_recognizer +
+//     fix knot. The proto lifts eff_check with Refinement instead (effect
+//     safety as an ordinary recognizer TODAY; weakening is containment either
+//     way, so no subtyping judgment ever appears).
+//   - the impure driver (src/run.ts): `run : Eff {IO} X -> X` = run_pure's
+//     loop + a perform_host op map + the §8.1 is_closed sanitizer; async =
+//     the driver defers apply(k, result) until the bytes arrive.
+//   - scoped/higher-order operations (§15 open question): one `Scoped` arm +
+//     weave. The handler's `forward` clause below is already the degenerate
+//     weave — see its comment.
+open use "../kernel/prelude.disp"
+
+// ── the free monad: Pure x | Op op arg k ──
+// k is an ordinary function-tree awaiting the op's result.
+io_pure := {x} -> inj1 "Pure" x
+io_op := {op, arg, k} -> inj3 "Op" op arg k
+
+// eff_bind: the free-monad graft — walk to the Pure leaf, attach f.
+eff_bind := fix ({self, m, f} ->
+  match m {
+    Pure x => f x
+    Op op arg k => io_op op arg ({r} -> self (k r) f)
+  })
+eff_map := {f, m} -> eff_bind m ({x} -> io_pure (f x))
+
+// ── self-describing operations ──
+// An occurrence carries its label and param/result types INLINE (op.result is
+// a projection, not a global-table lookup). declare_op is what a surface
+// `effect` declaration expands to, per operation; labels group by effect via
+// pair(effect-name, op-name).
+declare_op := {label, ParamTy, ResultTy} -> {arg} -> io_op { label := label, param := ParamTy, result := ResultTy } arg ({r} -> io_pure r)
+mk_op := {eff, name, ParamTy, ResultTy} -> declare_op (pair eff name) ParamTy ResultTy
+effect_of := {op} -> pair_fst (op.label)
+op_name := {op} -> pair_snd (op.label)
+covers_eff := {eff} -> {op} -> tree_eq (effect_of op) eff
+
+// ── deep handlers ──
+// handler = { covers, return, on, forward }. On a covered op the clause runs
+// with resume reified (resume = handle the tail under this same handler); on
+// an uncovered op the handler FORWARDS it and stays installed on the tail.
+// `forward` is handler-supplied — a finding of this prototype: a
+// parameter-passing handler (state, a write log) answers in a carrier
+// `S -> …`, so its forward clause must thread the parameter through the
+// forwarded op ({s} -> io_op op arg ({r} -> (resumek r) s)); plain handlers
+// take default_forward. This is exactly the degenerate case of §15's `weave`
+// (pushing handler state through a forwarded sub-computation).
+default_forward := {op, arg, resumek} -> io_op op arg resumek
+mk_handler := {covers, ret, on} -> { covers := covers, return := ret, on := on, forward := default_forward }
+handle := {h} -> fix ({self, m} ->
+  match m {
+    Pure x => h.return x
+    Op op arg k => (if (h.covers op)
+      then ((h.on op) arg ({r} -> self (k r)))
+      else (h.forward op arg ({r} -> self (k r))))
+  })
+
+// run_pure: the pure skeleton of the driver. A fully-handled computation is a
+// Pure leaf, so collapsing it is a projection; the real driver is this loop
+// plus perform_host on IO ops (and the is_closed backstop), at the boundary.
+run_pure := {m} -> match m { Pure x => x; _ => t }
+
+// ── exceptions: catch is a HANDLER, not an operation ──
+// A locally-installed Exn handler whose recovery DROPS the continuation; the
+// body is the delimited region, throws after the catch live in the outer
+// continuation the fold never touches. Other effects thread straight through
+// the boundary (default_forward) — pinned with state in the proto tests.
+throw := mk_op "Exn" "throw" Tree Tree
+catch := {body, recover} -> handle { covers := covers_eff "Exn", return := {x} -> io_pure x, on := {op} -> {e, resume} -> recover e, forward := default_forward } body
+
+// ── rows: which effects a value may perform ──
+// Proto representation: an exact list of effect labels.
+row_nil := nil
+row1 := {e} -> cons e nil
+row_cons := {e, R} -> cons e R
+label_in_row := fix ({self, e, R} ->
+  if (is_fork R)
+    then (if (tree_eq (pair_fst R) e) then TT else (self e (pair_snd R)))
+    else FF)
+// eff_check R v: support(v) ⊆ R. Containment is what makes WEAKENING free —
+// a {State} computation checks at {State, IO} with no coercion and no
+// subtyping judgment ("a type is a predicate that checks ⊆, not an index
+// that must match ="). Proto limits: the Pure payload is not checked against
+// X, and continuations are probed with `t` (straight-line programs); the
+// production recognizer walks k under param_apply with a real minted hyp,
+// which is what handles branching continuations.
+eff_check := fix ({self, R, v} ->
+  match v {
+    Pure x => TT
+    Op op arg k => (if (label_in_row (effect_of op) R) then (self R (k t)) else FF)
+    _ => FF
+  })
+// Effect safety as an ordinary TYPE, today: refine Tree by the row check.
+// (The self-referential `Eff R X` recognizer supersedes this in production —
+// same verdicts on concrete values, plus the H-rule for Eff-typed hyps.)
+EffAt := {R} -> Refinement Tree ({v} -> eff_check R v)
