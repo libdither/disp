@@ -55,7 +55,7 @@ let tree_app_or_elim := {params, self, frame} -> {
     else (Extend (neutral_type self))
 }
 /// The type of all trees
-Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) (make_meta_f tree_variants (pair view_tree encode_tree) tree_app_or_elim)
+Tree : Type := wait (make_recognizer ({m, v} -> Ok TT)) { recognizer_params := tree_variants; functor := (pair view_tree encode_tree); respond := tree_app_or_elim; behavioral_specs := t }
 // tree_rec: the dependent Tree recursor, read off the cells like nat_rec — the
 // typed face of shape dispatch. Concrete targets fold through the view; abstract
 // targets become stuck eliminations gated by coh_check (the same machinery as

@@ -145,12 +145,12 @@ lookup_field := {r, name} -> {
 unit_witness := t
 trivial_functor := t
 
-// TODO: delete make_meta_f, and we should delete all of this once we have full records.
-// make_meta_f sets the `functor` field explicitly; coproducts store their shape↔inj ISO there
-// (CELL_OPTICS — what generic `fmap`/`fold_value` read). make_meta keeps the trivial default.
-make_meta_f : Tree -> Tree -> Tree -> MetaShape := {params, functor, respond} ->
-  { recognizer_params := params; functor; respond; behavioral_specs := t }
-make_meta : Tree -> Tree -> MetaShape := {params, respond} -> make_meta_f params trivial_functor respond
+// make_meta: the MetaShape builder for the common case (trivial functor). A type with
+// a real functor payload (coproducts store their shape↔inj ISO there — CELL_OPTICS,
+// what generic `fmap`/`fold_value` read) writes the four-field record literal directly
+// at its build site (Coproduct_viewed_respond, Coproduct_ctx, Tree).
+make_meta : Tree -> Tree -> MetaShape := {params, respond} ->
+  { recognizer_params := params; functor := trivial_functor; respond; behavioral_specs := t }
 
 // ── The declaration protocol (COMPILATION.typ § Declarations as requests).
 // A declaration is a request that the declared name's guard mediates. The elaborator

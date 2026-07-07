@@ -61,7 +61,7 @@ let coproduct_walk := {params, rs, variants, v} ->
 iso_id := pair ({v} -> Ok v) ({x} -> x)   // decode = Ok, encode = id
 Coproduct_viewed_respond := {params, respond, iso, variants} -> wait (make_rec_recognizer
   {self, meta, v} -> (match ((pair_fst iso) v) { Ok tg => (coproduct_walk params self meta.recognizer_params tg); Err _ => (Ok FF) })
-) (make_meta_f variants iso respond)
+) { recognizer_params := variants; functor := iso; respond; behavioral_specs := t }
 Coproduct_respond := {respond, variants} -> Coproduct_viewed_respond t respond iso_id variants
 
 // ── The coherence gate (POSITIVE_TYPES §3c), shared by every gated inductive.
@@ -125,7 +125,7 @@ Coproduct_viewed := {params, iso, variants} -> Coproduct_viewed_respond params (
 // so `Tree A = (mkctx A) 0` / `Forest A = (mkctx A) 1` build with no loop. Elimination = ordinary inductive_respond.
 Coproduct_ctx := {ctx, variants} -> wait (make_recognizer
   {meta, v} -> (coproduct_walk t ctx meta.recognizer_params v)
-) (make_meta_f variants iso_id inductive_respond)
+) { recognizer_params := variants; functor := iso_id; respond := inductive_respond; behavioral_specs := t }
 
 // ── The kernel's shape-encoded inductives: Ord, Bool, Nat. Each is a Coproduct_viewed
 // over a view/encode pair: `view` decodes a raw tree shape to inj-tagged form (or Err),
