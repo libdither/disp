@@ -1,0 +1,40 @@
+// Constructor auto-declaration: a declaration whose value is a sum-type literal
+// `< Tag : T, … >` also binds each variant's constructor (driver, 2026-07-07):
+// nullary `Tag := inj "Tag" t`, single-arg `Tag := inj "Tag"`. A variant name
+// already in scope is skipped — the kernel's own `CheckerResult := < Ok : Tree,
+// Err >` keeps the engine's constructors. Parameterized sums bind the same
+// constructors (they never mention the params).
+open use "../kernel/prelude.disp"
+open use "../std/nat/ops.disp"
+
+// ---- a plain enum: nullary constructors bind ----
+Color : Type := < red, green, blue >
+test tree_eq red (inj "red" t) = true
+test param_apply Color red = Ok true
+test param_apply Color green = Ok true
+test param_apply Color zero = Ok false      // not a Color
+test (match red { red => 1; green => 2; blue => 3 }) = 1
+
+// ---- payload variants: the single-arg constructor is inj "Tag" ----
+Wrap : Type := < box : Nat, empty >
+test tree_eq (box 3) (inj "box" 3) = true
+test param_apply Wrap (box 3) = Ok true
+test param_apply Wrap (box true) = Ok false // payload not a Nat
+test param_apply Wrap empty = Ok true
+test (match (box 4) { box n => (double n); empty => 0 }) = 8
+
+// ---- parameterized: constructors bind from under the binder chain ----
+MyOpt : Type -> Type := {A} -> < mysome : A, mynone >
+test tree_eq (mysome 5) (inj "mysome" 5) = true
+test param_apply (MyOpt Nat) (mysome 3) = Ok true
+test param_apply (MyOpt Nat) mynone = Ok true
+test param_apply (MyOpt Nat) (mysome true) = Ok false
+
+// ---- skip-if-bound: a variant named after an existing binding is untouched ----
+Weird : Type := < zero, wonly >
+test tree_eq zero t = true                  // Nat's zero survives (leaf, not inj "zero" t)
+test param_apply Weird (inj "zero" t) = Ok true // the VARIANT still exists in the type
+test param_apply Weird wonly = Ok true      // fresh names still bind
+
+// ---- the eliminator face: a hyp of an auto-ctor sum eliminates via its respond ----
+test param_apply (Pi Color ({_} -> Nat)) ({c} -> c { motive := ({_} -> Nat); cases := { red := 1; green := 2; blue := 3 } }) = Ok true

@@ -271,6 +271,17 @@ are rejected. `<` / `>` are single-char tokens distinct from `->`/`=>`/`→`,
 so a variant's `expr` type (e.g. `A -> B`) stops cleanly at the closing
 `>`. Requires `Coproduct`/`pair` in scope (as `recType` needs `Telescope`).
 
+*Constructor auto-declaration.* A top-level declaration whose value is a
+coproduct literal — directly (`Color := < red, green, blue >`) or under a
+binder chain (`Option := {A} -> < some : A, none >`; constructors never
+mention the params) — also binds each variant's constructor through the
+ordinary declaration path (so they export): a nullary variant binds
+`Tag := inj "Tag" t`, a single-arg variant `Tag := inj "Tag"` (the η-form
+of `{a} -> inj "Tag" a`). A variant whose name is already in scope is
+*skipped* — the kernel's `CheckerResult : Type := < Ok : Tree, Err >`
+types the engine's existing constructor values rather than rebinding
+them. Pinned in `lib/tests/sum_ctors.test.disp`.
+
 recValue field members may be separated by `,` as well as `SEMI`
 (`;` / newline), so a named call reads as `f { host := "h", port := 8000 }`
 (see § Calling convention under `app`).

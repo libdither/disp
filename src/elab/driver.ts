@@ -771,6 +771,29 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         if (it.name === "given" && r.tree != null && !pristineGiven.has(elab.cs))
           pristineGiven.set(elab.cs, r.tree)
         recordItem(isLetHead(it.head) ? "let" : "field", it.name)
+        // Constructor auto-declaration (SYNTAX.typ § sum types): a declaration whose
+        // value is a sum-type literal — possibly under a binder chain, the
+        // parameterized case (`{A} -> < some : A, none >`; constructors don't mention
+        // the params) — also binds each variant's constructor over `inj`: nullary
+        // `Tag := inj "Tag" t`, single-arg `Tag := inj "Tag"` (the η-form of
+        // `{a} -> inj "Tag" a`). A variant name already in scope is SKIPPED — the
+        // kernel's `CheckerResult : Type := < Ok : Tree, Err >` types the engine's
+        // existing constructor values rather than rebinding them. Bound through the
+        // ordinary declaration path, so constructors export like any field.
+        if (r.pushDef && it.value != null) {
+          let body: Expr = it.value
+          while (body.tag === "binder") body = body.body
+          if (body.tag === "sumType" && body.variants.length > 0 && lookupEntry("inj")) {
+            for (const sv of body.variants) {
+              if (lookupEntry(sv.name)) continue
+              const injTag: Expr = { tag: "app", f: { tag: "var", name: "inj" }, x: { tag: "str", value: sv.name } }
+              const ctor: Expr = sv.type == null ? { tag: "app", f: injTag, x: { tag: "leaf" } } : injTag
+              const cr = declareBinding(sv.name, null, ctor, undefined, sinks, raw)
+              if (cr.pushDef && !cr.priv) target.push({ kind: "Def", name: sv.name, tree: cr.tree!, type: cr.type, guard: cr.guard ?? null })
+              recordItem("field", sv.name)
+            }
+          }
+        }
         return
       }
       case "test": {
