@@ -151,7 +151,6 @@
     label: string | null
     vname: string | null // a named leaf's name — always shown
     fresh?: boolean // no prior position: genuinely new growth
-    gdelay?: number // extra grow-in delay (staged triage: new joints wait for docking)
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
   interface VEdge {
@@ -176,17 +175,12 @@
     dx: number
     rot: number
     tint: string
-    delay: number
     label?: string // a discarded named leaf falls with its name on
   }
   interface GhostEdge {
     id: number
     d: string
     w: number
-    delay: number
-    fx?: number // staged triage: the ghost rides the argument's flight…
-    fy?: number
-    flyMs?: number // …for this long before dissolving
   }
   // consumed pattern pieces shrink away where they stood
   interface Vanishing {
@@ -196,65 +190,6 @@
     tag: T['tag']
     tint: string
     tilt: number
-    delay: number
-    fx?: number // staged triage: consumed argument shells fly to the branch…
-    fy?: number
-    flyMs?: number // …and dissolve on arrival
-  }
-
-  // ---- staged triage -------------------------------------------------------
-  // The F rule gets a two-beat animation: the SELECTED branch and the ARGUMENT
-  // both descend to the redex site — the bottom junction where the reduction
-  // happens — and merge there while the consumed spine dissolves under them;
-  // then the merged pair reflows into the new tree (the new root, when the
-  // redex was the root) as the rejected branches let go. A flight is a rigid
-  // translation of one on-screen subtree, keyed by path prefix (paths are
-  // /[01]*/ so prefix matching is exact).
-  interface Flight {
-    prefix: string
-    dx: number
-    dy: number
-  }
-  interface Stage {
-    flights: Flight[]
-    p1: number // flight duration; phase 2 (reflow) follows
-  }
-  const flightFor = (stage: Stage | undefined, path: string | undefined): Flight | null => {
-    if (!stage || !path) return null
-    for (const fl of stage.flights) if (path.startsWith(fl.prefix)) return fl
-    return null
-  }
-  function stageFor(sites: (T & { tag: 'apply' })[]): Stage | undefined {
-    const prevByPath = new Map(nodes.map((n) => [n.path, n]))
-    const flights: Flight[] = []
-    for (const site of sites) {
-      if (readyRule(site) !== 'F') continue
-      // a shared redex ref rewrites at every occurrence; fly each one
-      for (const occ of nodes) {
-        if (occ.tree !== site) continue
-        const xPath = occ.path + '1'
-        const xN = prevByPath.get(xPath)
-        const bPath =
-          site.x.tag === 'leaf' ? occ.path + '000' : site.x.tag === 'stem' ? occ.path + '001' : occ.path + '01'
-        const bN = prevByPath.get(bPath)
-        if (!xN || !bN) continue
-        // meet at the site: the branch (the result's head) lands just above-
-        // left of the junction, the argument just above-right; a leaf argument
-        // is absorbed dead-center into the branch's base
-        const leafArg = site.x.tag === 'leaf'
-        flights.push({
-          prefix: bPath,
-          dx: occ.x + (leafArg ? 0 : -14) - bN.x,
-          dy: occ.y + (leafArg ? -12 : -8) - bN.y
-        })
-        flights.push({
-          prefix: xPath,
-          dx: occ.x + (leafArg ? 0 : 14) - xN.x,
-          dy: occ.y + (leafArg ? 0 : -8) - xN.y
-        })
-      }
-    }
-    return flights.length ? { flights, p1: 340 } : undefined
   }
 
   let nodes = $state<VNode[]>([])
@@ -387,9 +322,7 @@
     const u = t - 1
     return 1 + (c + 1) * u * u * u + c * u * u
   }
-  // the flight's curve: accelerate, arrive softly (no overshoot mid-air)
-  const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
-  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>, stage?: Stage) {
+  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>) {
     cancelAnimationFrame(anim!)
     if (!motion || nodes.length === 0) {
       nodes = l.nodes
@@ -398,87 +331,62 @@
     }
     const nFrom = new Map(nodes.map((n) => [n.path, n]))
     const eFrom = new Map(edges.map((e) => [e.id, e]))
-    // Reference correspondence is the general rewrite-animation rule: a
-    // target node whose path survived stays put and glides; failing that, a
-    // node whose TREE REFERENCE existed before glides (or splits, when a rule
-    // duplicated it) from the reference's old position; only genuinely new
-    // structure grows in from nothing.
-    const fromFor = (tn: VNode): VNode | undefined => nFrom.get(tn.path) ?? oldByRef.get(tn.tree)
-    // Staged (triage) tween: phase 1 flies the argument's subtree to a mid
-    // waypoint (everything else holds), phase 2 settles the world into the
-    // new layout. mid = from + its flight, or from itself (hold).
+    // Correspondence, the general rewrite-animation rule: a node that kept
+    // BOTH its path and its tree didn't move — it stays and glides with the
+    // layout. Otherwise find the tree wherever it stood before: a kept
+    // subtree glides down from there to its place in the result (this is
+    // the K rule's keep and triage's selected branch), and a duplicated ref
+    // splits from one origin. Otherwise inherit the position of whatever
+    // stood at your path — a joint grown by the rewrite emerges from the
+    // redex site it replaced. Only then is a node genuinely new growth.
+    const fromFor = (tn: VNode): VNode | undefined => {
+      const byPath = nFrom.get(tn.path)
+      if (byPath && byPath.tree === tn.tree) return byPath
+      return oldByRef.get(tn.tree) ?? byPath
+    }
     const nPairs = l.nodes.map((tn) => {
       const f = fromFor(tn)
-      const fl = flightFor(stage, f?.path)
-      return {
-        tn: { ...tn, fresh: !f, gdelay: !f && stage ? stage.p1 : 0 },
-        f,
-        mid: f ? (fl ? { x: f.x + fl.dx, y: f.y + fl.dy } : { x: f.x, y: f.y }) : null
-      }
+      return { tn: { ...tn, fresh: !f }, f }
     })
-    const pairByPath = new Map(nPairs.map((p) => [p.tn.path, p]))
     const newByPath = new Map(l.nodes.map((n) => [n.path, n]))
     const ePairs = l.edges.map((te) => {
+      const cPath = te.trunk ? 'r' : te.id.replace('>', '')
+      const child = newByPath.get(cPath)
       let f = eFrom.get(te.id)
-      if (!f && !te.trunk) {
-        // the child node may have moved here from elsewhere: bring its old
-        // incoming branch along instead of growing a new one
-        const childPath = te.id.replace('>', '')
-        const child = newByPath.get(childPath)
-        const old = child && !nFrom.get(childPath) ? oldByRef.get(child.tree) : undefined
+      // an edge is the SAME edge only if it still carries the same child
+      // tree; otherwise its id collided with an unrelated old branch
+      if (f && !te.trunk) {
+        const oldChild = nFrom.get(cPath)
+        if (!oldChild || !child || oldChild.tree !== child.tree) f = undefined
+      }
+      if (!f && !te.trunk && child) {
+        // the child moved here from elsewhere: bring its old incoming
+        // branch along instead of growing a new one
+        const old = oldByRef.get(child.tree)
         if (old && old.path !== 'r') {
           f = eFrom.get(`${old.path.slice(0, -1)}>${old.path.slice(-1)}`)
         }
       }
       // otherwise a NEW branch grows out of its parent endpoint
-      const from = f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 }
-      // an edge belongs to its child's subtree: it rides the child's flight,
-      // so branches stay glued to the trees they carry
-      const cPath = te.trunk ? 'r' : te.id.replace('>', '')
-      const chFl = flightFor(stage, pairByPath.get(cPath)?.f?.path)
-      const mid = chFl
-        ? {
-            x1: from.x1 + chFl.dx,
-            y1: from.y1 + chFl.dy,
-            cx: from.cx + chFl.dx,
-            cy: from.cy + chFl.dy,
-            x2: from.x2 + chFl.dx,
-            y2: from.y2 + chFl.dy
-          }
-        : { x1: from.x1, y1: from.y1, cx: from.cx, cy: from.cy, x2: from.x2, y2: from.y2 }
-      return { te, f: from, mid }
+      return { te, f: f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 } }
     })
     const t0 = performance.now()
-    const D = stage ? stage.p1 + 420 : 550
-    const split = stage ? stage.p1 / D : 0
-    const lerpN = (tn: VNode, a: { x: number; y: number }, b: { x: number; y: number }, k: number) => ({
-      ...tn,
-      x: a.x + (b.x - a.x) * k,
-      y: a.y + (b.y - a.y) * k
-    })
-    const lerpE = (te: VEdge, a: Omit<VEdge, 'id' | 'w' | 'trunk'>, b: Omit<VEdge, 'id' | 'w' | 'trunk'>, k: number) => ({
-      ...te,
-      x1: a.x1 + (b.x1 - a.x1) * k,
-      y1: a.y1 + (b.y1 - a.y1) * k,
-      cx: a.cx + (b.cx - a.cx) * k,
-      cy: a.cy + (b.cy - a.cy) * k,
-      x2: a.x2 + (b.x2 - a.x2) * k,
-      y2: a.y2 + (b.y2 - a.y2) * k
-    })
+    const D = 550
     const frame = (now: number) => {
       const t = Math.min(1, (now - t0) / D)
-      if (stage && t < split) {
-        const k = easeInOut(t / split)
-        nodes = nPairs.map(({ tn, f, mid }) => (f && mid ? lerpN(tn, f, mid, k) : tn))
-        edges = ePairs.map(({ te, f, mid }) => lerpE(te, f, mid, k))
-      } else {
-        const k = ease(stage ? (t - split) / (1 - split) : t)
-        nodes = nPairs.map(({ tn, f, mid }) => {
-          const a = stage ? mid : f && { x: f.x, y: f.y }
-          return a ? lerpN(tn, a, tn, k) : tn
-        })
-        edges = ePairs.map(({ te, f, mid }) => lerpE(te, stage ? mid : f, te, k))
-      }
+      const k = ease(t)
+      nodes = nPairs.map(({ tn, f }) =>
+        f ? { ...tn, x: f.x + (tn.x - f.x) * k, y: f.y + (tn.y - f.y) * k } : tn
+      )
+      edges = ePairs.map(({ te, f }) => ({
+        ...te,
+        x1: f.x1 + (te.x1 - f.x1) * k,
+        y1: f.y1 + (te.y1 - f.y1) * k,
+        cx: f.cx + (te.cx - f.cx) * k,
+        cy: f.cy + (te.cy - f.cy) * k,
+        x2: f.x2 + (te.x2 - f.x2) * k,
+        y2: f.y2 + (te.y2 - f.y2) * k
+      }))
       if (t < 1) anim = requestAnimationFrame(frame)
     }
     anim = requestAnimationFrame(frame)
@@ -505,11 +413,8 @@
     return out
   }
 
-  function show(
-    tree: T,
-    opts: { spine?: Set<T>; allShrink?: boolean; exitDelay?: number; stage?: Stage } = {}
-  ) {
-    const { spine, allShrink = false, exitDelay = 0, stage } = opts
+  function show(tree: T, opts: { spine?: Set<T>; allShrink?: boolean } = {}) {
+    const { spine, allShrink = false } = opts
     const prevNodes = nodes
     const prevEdges = edges
     const l = layout(tree)
@@ -519,14 +424,10 @@
       const survivors = new Set(l.nodes.map((n) => n.tree))
       const removed = prevNodes.filter((n) => !survivors.has(n.tree))
       const removedPaths = new Set(removed.map((n) => n.path))
-      const prevByPath = new Map(prevNodes.map((n) => [n.path, n]))
       const fresh: Debris[] = []
       const shrunk: Vanishing[] = []
       for (const n of removed) {
         const consumed = allShrink || (spine?.has(n.tree) ?? false)
-        // consumed pattern pieces exit with the join; discarded data waits
-        const delay = consumed ? 0 : exitDelay
-        const fl = consumed ? flightFor(stage, n.path) : null
         if ((n.tag === 'leaf' || n.tag === 'var') && !consumed) {
           // fruit drops heavier than leaves: less drift, less spin
           const damp = n.tag === 'var' ? 0.35 : 1
@@ -538,25 +439,10 @@
             dx: ((hash(n.path) % 36) - 18) * 1.1 * damp,
             rot: ((hash(n.path) % 160) - 80) * damp,
             tint: n.tint,
-            delay,
             label: n.vname ?? undefined
           })
-        } else if (fl) {
-          // a consumed argument shell rides the triage flight, then dissolves
-          shrunk.push({
-            id: debrisId++,
-            x: n.x,
-            y: n.y,
-            tag: n.tag,
-            tint: n.tint,
-            tilt: n.tilt,
-            delay: stage!.p1,
-            fx: fl.dx,
-            fy: fl.dy,
-            flyMs: stage!.p1
-          })
         } else {
-          shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt, delay })
+          shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt })
         }
       }
       if (fresh.length) {
@@ -565,14 +451,14 @@
         const ids = fresh.map((d) => d.id)
         setTimeout(() => {
           debris = debris.filter((d) => !ids.includes(d.id))
-        }, 6400 + exitDelay)
+        }, 6400)
       }
       if (shrunk.length) {
         vanishing.push(...shrunk)
         const ids = shrunk.map((v) => v.id)
         setTimeout(() => {
           vanishing = vanishing.filter((v) => !ids.includes(v.id))
-        }, 460 + exitDelay + (stage?.p1 ?? 0))
+        }, 460)
       }
       // branches that lost their subtree fade out in place
       const newIds = new Set(l.edges.map((e) => e.id))
@@ -580,29 +466,15 @@
         (e) => !e.trunk && !newIds.has(e.id) && removedPaths.has(e.id.replace('>', ''))
       )
       if (gone.length) {
-        const fading: GhostEdge[] = gone.map((e) => {
-          const childPath = e.id.replace('>', '')
-          const child = prevByPath.get(childPath)
-          const consumed = allShrink || (child !== undefined && (spine?.has(child.tree) ?? false))
-          const fl = consumed ? flightFor(stage, childPath) : null
-          return {
-            id: debrisId++,
-            d: edgeD(e),
-            w: e.w,
-            delay: consumed ? (fl ? stage!.p1 : 0) : exitDelay,
-            fx: fl?.dx,
-            fy: fl?.dy,
-            flyMs: fl ? stage!.p1 : undefined
-          }
-        })
+        const fading: GhostEdge[] = gone.map((e) => ({ id: debrisId++, d: edgeD(e), w: e.w }))
         ghosts.push(...fading)
         const ids = fading.map((g) => g.id)
         setTimeout(() => {
           ghosts = ghosts.filter((g) => !ids.includes(g.id))
-        }, 500 + exitDelay + (stage?.p1 ?? 0))
+        }, 500)
       }
     }
-    animateTo(l, oldByRef, stage)
+    animateTo(l, oldByRef)
   }
 
   // ---- the run loop ----------------------------------------------------------
@@ -656,14 +528,12 @@
   function fire(): boolean {
     if (!cur) return false
     // gather the pattern spines BEFORE stepping: these pieces are consumed
-    // (they shrink); anything else that vanishes was discarded (it falls).
-    // Triage sites also get a stage plan (the argument's flight to its branch),
-    // computed against the CURRENT on-screen positions.
+    // (they shrink); anything else that vanishes was discarded (it falls or
+    // fades) — concurrently with the kept trees gliding into the result
     const sites = (parallel ? readySites(cur) : [nextApplyToFire(cur)].filter((s) => s !== null)) as (T & {
       tag: 'apply'
     })[]
     const spine = new Set(sites.flatMap((s) => spineOf(s)))
-    const stage = stageFor(sites)
     if (parallel) {
       const s = stepParallel(cur)
       if (!s) {
@@ -678,9 +548,7 @@
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
           : `${s.fired.length} redexes fired in parallel (${s.fired.join(' ')})`
-      // triage in two beats: the argument flies to its branch, and only once
-      // it docks do the rejected branches let go
-      show(cur, { spine, exitDelay: stage?.p1 ?? 0, stage })
+      show(cur, { spine })
       return true
     }
     const s = stepOnce(cur)
@@ -693,7 +561,7 @@
     cur = s.next
     stepCount++
     ruleMsg = s.rule
-    show(cur, { spine, exitDelay: stage?.p1 ?? 0, stage })
+    show(cur, { spine })
     return true
   }
 
@@ -897,8 +765,8 @@
       <!-- pruned leaves fall; their branches disintegrate where they stood -->
       {#each debris as d (d.id)}
         <g style="transform: translate({d.x}px, {d.y}px)">
-          <g class="debris" class:fruit={!!d.label} style="--dy: {d.dy}px; --dx: {d.dx}px; --xdelay: {d.delay}ms">
-            <g class="dspin" style="--rot: {d.rot}deg; animation-delay: {d.delay}ms">
+          <g class="debris" class:fruit={!!d.label} style="--dy: {d.dy}px; --dx: {d.dx}px">
+            <g class="dspin" style="--rot: {d.rot}deg">
               {#if d.label}
                 <circle r="9" class="fruitbody" />
                 <text
@@ -919,37 +787,25 @@
         </g>
       {/each}
       {#each ghosts as g (g.id)}
-        {#if g.flyMs}
-          <g class="vfly" style="--fx: {g.fx}px; --fy: {g.fy}px; --fms: {g.flyMs}ms">
-            <path class="branch ghost" d={g.d} style="stroke-width:{g.w}; animation-delay: {g.delay}ms" />
-          </g>
-        {:else}
-          <path class="branch ghost" d={g.d} style="stroke-width:{g.w}; animation-delay: {g.delay}ms" />
-        {/if}
+        <path class="branch ghost" d={g.d} style="stroke-width:{g.w}" />
       {/each}
-      <!-- consumed pattern pieces shrink away where they stood (or, on a
-           triage flight, where they landed) -->
+      <!-- consumed pattern pieces shrink away where they stood -->
       {#each vanishing as v (v.id)}
         <g style="transform: translate({v.x}px, {v.y}px)">
-          <g
-            class="vfly"
-            style={v.flyMs ? `--fx: ${v.fx}px; --fy: ${v.fy}px; --fms: ${v.flyMs}ms` : '--fx: 0px; --fy: 0px; --fms: 1ms'}
-          >
-            <g class="vshrink" style="animation-delay: {v.delay}ms">
-              {#if v.tag === 'leaf'}
-                <path
-                  class="leafshape"
-                  d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
-                  style="fill:{v.tint}; transform: rotate({v.tilt}deg)"
-                />
-              {:else if v.tag === 'var'}
-                <circle r="9" class="fruitbody" />
-              {:else if v.tag === 'apply'}
-                <circle r="6" class="bud-ring" />
-              {:else}
-                <circle r="3.6" class="knot" />
-              {/if}
-            </g>
+          <g class="vshrink">
+            {#if v.tag === 'leaf'}
+              <path
+                class="leafshape"
+                d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
+                style="fill:{v.tint}; transform: rotate({v.tilt}deg)"
+              />
+            {:else if v.tag === 'var'}
+              <circle r="9" class="fruitbody" />
+            {:else if v.tag === 'apply'}
+              <circle r="6" class="bud-ring" />
+            {:else}
+              <circle r="3.6" class="knot" />
+            {/if}
           </g>
         </g>
       {/each}
@@ -960,11 +816,7 @@
         {/each}
         {#each nodes as n (n.path)}
           <g class="node" style="transform: translate({n.x}px, {n.y}px)">
-            <g
-              class="inner"
-              class:growing={motion && styled && n.fresh !== false}
-              style="--gd: {(n.gdelay ?? 0) + n.depth * 55}ms"
-            >
+            <g class="inner" class:growing={motion && styled && n.fresh !== false} style="--gd: {n.depth * 55}ms">
               {#if n.tag === 'apply'}
                 <circle r={styled ? 8.5 : 8} class="bud-ring" />
                 {#if !styled}<text class="at">@</text>{:else}<circle r="3" class="bud-core" />{/if}
@@ -1315,21 +1167,19 @@
     font-size: 10px;
   }
 
-  /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ----
-     --xdelay staggers the whole exit (triage's rejected branches wait for
-     the chosen one to join before they drop) */
+  /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ---- */
   .debris {
     animation:
       dfall 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards,
       dfade 3.4s linear forwards;
-    animation-delay: var(--xdelay, 0ms), calc(2.4s + var(--xdelay, 0ms));
+    animation-delay: 0s, 2.4s;
   }
   /* fruit drops quicker and dissolves mid-air — it never reaches the ground */
   .debris.fruit {
     animation:
       dfall 0.85s cubic-bezier(0.5, 0.05, 0.8, 0.6) forwards,
       dfade 0.45s ease-out forwards;
-    animation-delay: var(--xdelay, 0ms), calc(0.22s + var(--xdelay, 0ms));
+    animation-delay: 0s, 0.22s;
   }
   .dspin {
     animation: dspin 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards;
@@ -1357,16 +1207,6 @@
     to {
       transform: scale(0);
       opacity: 0;
-    }
-  }
-  /* a triage flight: consumed argument shells (and their branches) ride to
-     the chosen branch before dissolving there */
-  .vfly {
-    animation: vfly var(--fms, 1ms) cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards;
-  }
-  @keyframes vfly {
-    to {
-      transform: translate(var(--fx, 0px), var(--fy, 0px));
     }
   }
 
