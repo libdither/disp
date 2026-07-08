@@ -5,13 +5,44 @@ inside each stage section; every item of the definition of done in §6 is
 marked). The spec twins live in `lib/std/kernel_spec.disp` (row annotations
 verify at every load; the final ledger and the stage 6 bridge target are its
 header), with the batteries and the fixed-point pin in
-`lib/tests/kernel_spec_proto.test.disp`. The prototype's open follow-ups,
-each noted where it arose: rewriting the twins' if-chain branching onto the
-elim idiom so certificates deepen beyond the shallow EffAt convention (which
-would also let tele_prog carry a row); route two for `Eff` (a stock Coproduct
-with a RecUnder reader functor, the path to a typed `handle`); open rows; the
-impure driver; and the stage 6 license, which belongs to the OPTIMIZER.typ
-arc. Canonical rows and the deep `Eff R X`
+`lib/tests/kernel_spec_proto.test.disp`.
+
+Follow-up pass, landed 2026-07-08 (pins in `lib/tests/eff2_proto.test.disp`
+and the open-row section of `eff_deep_proto`):
+
+- CERTIFICATE DEEPENING, for the class that can: a branchy Reflect program
+  written with rec_value over the response Coproduct carries the DEEP
+  `Eff [Reflect] Bool` certificate (every arm gate-checked, flip pinned).
+  The shallow EffAt cannot even see the elim idiom (its leaf probe turns
+  rec_value into junk, pinned as the contrast), so the two conventions split
+  by idiom: EffAt certifies if-chain programs shallowly, the deep Eff
+  certifies elim-written programs per-arm. What still cannot deepen, each
+  with its precise wall: `hyp_reduce_spec`'s hyp arm applies a stuck
+  `m.respond`, and MetaShape's respond field is loosened to Tree (the §11
+  deferred ascription), so the stuck application lands at Tree and no Action
+  elimination can gate it; `walk_spec2` and `tele_prog` are generally
+  recursive (the walker recurses on computed results, the fold applies
+  telescope tails), so their recursion cannot ride an eliminator and a deep
+  check of a fix-form would re-enter itself (the knot that types recursive
+  PROGRAMS is eliminator-routed recursion, which EffE now makes reachable).
+- ROUTE TWO, landed as `EffE`/`eff_rec`/`handle2` in `std/effect.disp`. Not
+  the literal stock Coproduct (a positional telescope cannot express
+  `arg : op.param`, which is slot-dependent); instead the same deep
+  recognizer with a GATED respond over hand-written Pure/Op case types in
+  the reader shape. Membership agrees with `Eff` by construction (pinned);
+  an EffE-typed hypothesis eliminates with every arm checked (pinned with
+  flips); handle2 is a one-line eliminator client whose resume IS the
+  recursor's IH, behaviorally identical to handle including multishot
+  (pinned). `EffE : Tree -> Type -> Type` verifies under R6.
+- OPEN ROWS, landed: `Row` is a type (labels then nil, or a Row-typed hyp as
+  improper tail, accepted by H-rule); the row toolkit is neutral-guarded
+  (closed-row behavior unchanged); canonical open rows are sorted prefixes
+  ending in the tail variable; membership past the prefix answers the
+  conservative false; row polymorphism is ordinary Pi Row and the
+  one-trailing-variable case is exact (pinned).
+
+Still open: the impure driver (mapped below, not built) and the stage 6
+license, which belongs to the OPTIMIZER.typ arc. Canonical rows and the deep `Eff R X`
 recognizer are in `lib/std/effect.disp` (`EffAt` is the shallow compatibility
 form), pinned with the branchy exit demonstration in
 `lib/tests/eff_deep_proto.test.disp` (38 pins); the kernel signature, floor
@@ -715,6 +746,55 @@ fixed-point pin over what exists) is about three sessions.
   are handlers." Still worth having; the docs must then say exactly that.
 - If the differential battery finds a real spec/fused divergence that is not a
   spec bug, that is a kernel finding; stop and report before continuing.
+
+### The impure driver, mapped (2026-07-08; designed, not built)
+
+The driver is the ONE impure component in the whole story: a small host-side
+loop (src/run.ts, or a src/driver.ts it calls) that walks a fully-handled
+program value and performs its residual operations against the world. Its
+design follows from three facts already pinned: effects are values, handlers
+are pure, and testing replaces the driver with mock handlers in-language.
+
+The convention. A runnable file exports `main : Eff io_row X` (or EffE), the
+deep annotation verifying at load like any other. Everything a pure handler
+can discharge is discharged in-language before the boundary; the driver
+interprets only the residual row, typically [IO].
+
+The loop. Evaluate `main` through the session ABI, then repeat: decode one
+node. `Pure x`: decode x, exit with it. `Op op arg k`: read the label off the
+occurrence (host-side decode of the pair(effect, op) strings), look it up in
+the HOST OP MAP, a TS table like { "IO/write": (argTree) => Promise<Tree>,
+"IO/read": ... }, perform the real effect, encode the answer r as a tree, and
+continue with session.apply(k, r), which is the next program node. The map is
+total over the declared row or the driver refuses to start: the row the type
+certified is the capability set the driver enforces operationally.
+
+The sanitizer. Before performing an op, is_closed(arg) must hold (the §8.1
+residue, the occurs finding's boundary half): a neutral reaching the driver
+is a checking artifact leaking into the world; the driver aborts with a
+diagnostic naming the op. Only closed data crosses the boundary, ever.
+
+Async and scheduling. The loop is naturally asynchronous: perform returns a
+promise, and the resolution applies k to the encoded answer, resuming the
+pure world exactly once per answer. Concurrent pending operations are the
+driver's queue, so task-level parallelism lives entirely in the driver (the
+two-strata map from the evaluator notes); the net stays pure and confluent,
+because an effectful reduction would run an effect a sharing-dependent number
+of times, which is the §15 forcing argument restated.
+
+Purity of everything else. There is exactly one driver, at main. Handlers
+never perform; they fold. The driver never folds; it performs. A test run
+never constructs the driver at all (mock handlers already replace it,
+pinned), so CI needs no host capabilities.
+
+The measurement hook. The driver is also where GOALS.md's measurement
+primitive naturally sits: it sees every residual op with its wall-clock and
+answer, which is the empirical face of cost-as-coeffect (the OPTIMIZER.typ
+ledger), with no in-language change.
+
+Estimated shape: ~60 lines of TypeScript (decode node, op map, sanitizer,
+async apply loop) plus a `--main` entry in run.ts and one worked example
+(an echo program at row [IO]) with a mocked differential test.
 
 ### The one-paragraph summary to re-anchor on
 
