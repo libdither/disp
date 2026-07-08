@@ -1,11 +1,14 @@
 # Effect bootstrap: types as protocols, the walker as a handler
 
-Status: plan, 2026-07-07; de-risk pass landed the same day. Canonical rows are
-in `lib/std/effect.disp`; the hazard 0a mechanism is corrected below (the elim
-idiom, not `match`) and pinned in `lib/tests/eff_deep_proto.test.disp`; hazard
-1a was probed empirically and does not reproduce (pins in
-`lib/tests/tele_spec_proto.test.disp`). The stages proper are not built. It is
-written to be read cold: Part I gives the background a fresh session needs,
+Status: plan, 2026-07-07; the de-risk pass and STAGE 0 landed the same day.
+Canonical rows and the deep `Eff R X` recognizer are in `lib/std/effect.disp`
+(`EffAt` is marked as the shallow compatibility form); the hazard 0a mechanism
+is corrected below (the elim idiom, not `match`) and pinned together with the
+recognizer in `lib/tests/eff_deep_proto.test.disp` (38 pins, including the
+branchy-continuation-through-Eff exit demonstration); hazard 1a was probed
+empirically and does not reproduce (pins in
+`lib/tests/tele_spec_proto.test.disp`). Stages 1 through 5 are not built. It
+is written to be read cold: Part I gives the background a fresh session needs,
 Part II is the staged plan, Part III is logistics and rules of engagement. Companion pieces:
 [`REFLECT.md`](REFLECT.md) (reflection as an effect, the move this plan
 generalizes), [`TOWER.md`](TOWER.md) (the self-checking architecture this plan
@@ -53,9 +56,10 @@ A row is the set of effects a value may perform. `eff_check R v` walks the
 value and checks every op's label is in R, so weakening is free (a `[State]`
 program checks at `[State, IO]` because containment is containment) and
 handling an effect discharges its row entry. `EffAt R` lifts the check to an
-ordinary type via Refinement. One known limit, central to this plan: the
-current check is shallow. It probes continuations with a leaf, so it follows
-one path through the program and only certifies the first operations.
+ordinary type via Refinement. One known limit was central to this plan: that
+check is shallow (it probes continuations with a leaf, follows one path, and
+only certifies the first operations). Stage 0 closed it: the deep `Eff R X`
+recognizer landed 2026-07-07, and `EffAt` remains as the compatibility form.
 
 ### 2. Telescopes here, in sixty seconds
 
@@ -187,7 +191,7 @@ or "trusted, here, one clause wide, for this reason." Concretely the prototype
 is done when:
 
 1. `Eff R X` has a deep recognizer (continuations checked under real minted
-   answers, all branches).
+   answers, all branches). Landed 2026-07-07.
 2. The kernel signature exists as ops with a single floor handler whose
    clauses wrap the existing sealed bodies.
 3. `tele_spec` (the telescope walker as a program, modes as handlers) agrees
@@ -320,6 +324,24 @@ version restates it through the Eff recognizer itself.
 
 Exit. `EffAt` marked as the shallow compatibility form; new pins use the deep
 type. Estimate: one to two sessions; the ShapeR/match chain is where it grows.
+
+LANDED 2026-07-07, route one (the hand knot; route two stays open as optional
+cleanup). `eff_body`/`Eff` live in `lib/std/effect.disp`, and
+`Eff : Tree -> Type -> Type` is machine-verified at load. Pinned in
+`eff_deep_proto` (38 pins, ~22s): the Pure payload checked at X; the
+label/arg/k checks each with a rejection twin; the H-rule; weakening free;
+agreement with `eff_check` on the composed prog1 (whose continuation computes
+`double n` over the minted answer — walkable exactly because the std Nat
+helpers are elim-routed); and the exit demonstration, a branchy continuation
+whose answer is eliminated through ShapeC's gated respond, certified Ok true
+at its row through the Eff recognizer, flipped to Ok false by one ill-typed
+arm, and run concretely under a handler (one value, checked and executed).
+Hazard 0b did not bite: recognizer_wrap's reconstructed self is
+hash-cons-identical to `Eff R X`, so sub-computations land by one H-rule hit
+each. Dividend: the deep arg check caught a real ill-typing the shallow form
+passes (the M0 proto spelled get's Unit argument as the leaf; Unit's
+inhabitant is `unit_val`), pinned as a shallow-vs-deep contrast and fixed in
+`effect_proto`.
 
 ### Stage 1: the kernel signature and the floor handler
 
@@ -503,7 +525,7 @@ OPTIMIZER.typ arc.
 
 ### Sequencing and effort
 
-    stage 0   deep Eff recognizer          1-2 sessions   gates everything
+    stage 0   deep Eff recognizer          LANDED 2026-07-07 (route 2 optional)
     stage 1   signature + floor handler    1 session      mint hazard probed: stale
     stage 2   tele_spec + two handlers     1 session
     stage 3   walk/hyp_reduce/occurs specs 1 session
