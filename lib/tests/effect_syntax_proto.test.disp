@@ -17,32 +17,23 @@
 //     The win AND the hole are pinned: value-directed dispatch cannot NAME a
 //     program as data (it sequences it instead), and any value that merely
 //     WEARS the Pure/Op shape gets sequenced too (the collision hole).
-// Baseline (rust-eager-native, 2026-07-08): ~25s wall, 14 pins.
+// Baseline (rust-eager-native, 2026-07-08): ~23s wall, 30 pins (grew from the
+// investigation into the landing: op/op0/ops + the arrow member + the
+// request-sum face all pinned here).
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/effect.disp"
 
-// ── Q1: the effect is a record type ──
+// ── Q1: the effect is a record type (op/op0/ops now live in std/effect.disp) ──
 let StateE := { get : Unit -> Nat, put : Nat -> Unit }
-// read a field's type off the record type's proj cells:
-let eff_field_ty := fix ({self, cells, name} ->
-  if (is_fork cells) then {
-    let m := type_meta (pair_fst cells)
-    if (tree_eq (m.name) name) then (m.ty) else (self ((pair_snd cells) t) name)
-  } else t)
-// an Arrow's dom/cod, read off its Pi cells (constant codomain):
-let arrow_dom := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
-let arrow_cod := {T} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) t))).ty
-// the generic occurrence builder: mk_op derived from the type's own fields,
-// with the TYPE as the effect identity:
-let op := {E, name} -> {arg} -> {
-  let fty := eff_field_ty ((type_meta E).recognizer_params) name
-  io_op { label := pair E name; param := arrow_dom fty; result := arrow_cod fty } arg ({r} -> io_pure r)
-}
 test arrow_dom (eff_field_ty ((type_meta StateE).recognizer_params) "put") = Nat
 test arrow_cod (eff_field_ty ((type_meta StateE).recognizer_params) "get") = Nat
-let getE := (op StateE "get") unit_val
+let getE := op0 StateE "get"
 let putE := op StateE "put"
+// ops E: the whole record of builders, for splicing or dotted access:
+let S := ops StateE
+test tree_eq ((S.get) unit_val) getE = true
+test tree_eq (op0 StateE "get") getE = true
 let progE := eff_bind getE ({n} -> eff_bind (putE (succ n)) ({u} -> io_pure (add n n)))
 // the deep recognizer is unchanged: rows of TYPE identities, checked deep:
 test param_apply (Eff (row1 StateE) Nat) progE = Ok true
@@ -83,3 +74,39 @@ test tree_eq (smart_bind getE ({p} -> io_pure p)) (io_pure getE) = false
 // unwrapped — shape-sniffing semantics cannot be abstract:
 let fake := inj1 "Pure" 9
 test smart_bind fake ({x} -> succ x) = 10
+
+// ── the ARROW MEMBER (landed 2026-07-08): `x <- e` in a block is the bind ──
+// A block with arrows IS the eff_bind pyramid, tree-identically; `let` keeps
+// meaning naming; a block without arrows is unchanged:
+test tree_eq ({ n <- getE; io_pure (add n n) }) (eff_bind getE ({n} -> io_pure (add n n))) = true
+test tree_eq ({ n <- getE; u <- putE (succ n); io_pure (add n n) }) progE = true
+// lets and arrows interleave in order (behavioral pin — the lexical redex
+// compiles through bracket abstraction, so tree forms differ):
+let mixed := { n <- getE; let m := succ n; u <- putE m; io_pure (add n n) }
+test pair_fst (run_pure ((handle state_hE mixed) 3)) = 6
+test pair_snd (run_pure ((handle state_hE mixed) 3)) = 4
+// and the deep certificate reads straight off the block form:
+test param_apply (Eff (row1 StateE) Nat) mixed = Ok true
+
+// ── V2: the request-sum face — handlers as gate-checked case records ──
+// requests StateE is the derived Coproduct of op requests:
+let ReqS := requests StateE
+test param_apply ReqS (inj1 "get" unit_val) = Ok true
+test param_apply ReqS (inj1 "put" 3) = Ok true
+test param_apply ReqS (inj1 "put" false) = Ok false
+test param_apply ReqS (inj1 "oops" 3) = Ok false
+// handler_sig StateE M is the DERIVED handler type: each clause
+// Π arg. (result -> M) -> M with the resume typed per op, and the case
+// record is checked by the same gate as every eliminator's:
+let count_h := { get := {a} -> {k} -> succ (k 0); put := {a} -> {k} -> succ (k unit_val) }
+test param_apply (handler_sig StateE Nat) count_h = Ok true
+let missing_h := { get := {a} -> {k} -> succ (k 0) }
+test param_apply (handler_sig StateE Nat) missing_h = Ok false
+let bad_h := { get := {a} -> {k} -> succ (k 0); put := {a} -> {k} -> false }
+test param_apply (handler_sig StateE Nat) bad_h = Ok false
+// handle_via runs the case-record handler deep: counting the ops of progE,
+// and the state semantics through the case-record form:
+test handle_via StateE ({x} -> 0) count_h progE = 2
+let state_cases := { get := {a} -> {k} -> {s} -> (k s) s; put := {a} -> {k} -> {s_old} -> (k unit_val) a }
+test pair_fst (run_pure ((handle_via StateE ({x} -> {s} -> io_pure (pair x s)) state_cases progE) 3)) = 6
+test pair_snd (run_pure ((handle_via StateE ({x} -> {s} -> io_pure (pair x s)) state_cases progE) 3)) = 4

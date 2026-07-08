@@ -59,6 +59,63 @@ effect_of := {op} -> pair_fst (op.label)
 op_name := {op} -> pair_snd (op.label)
 covers_eff := {eff} -> {op} -> tree_eq (effect_of op) eff
 
+// ── effects AS record types (the syntax investigation, landed 2026-07-08) ──
+// An effect needs no keyword: it is an ordinary record TYPE whose fields are
+// the op signatures — `State := { get : Unit -> Nat, put : Nat -> Unit }`.
+// `op` derives an occurrence builder from the field (name, then the Arrow's
+// dom/cod read off the type's own cells), and the TYPE VALUE is the effect
+// identity: rows hold types, so a misspelled effect is an unbound identifier
+// instead of a silent string mismatch. `ops E` is the whole record of
+// builders (for splicing or dotted access). Pins: effect_syntax_proto.
+eff_field_ty := fix ({self, cells, name} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (tree_eq (m.name) name) then (m.ty) else (self ((pair_snd cells) t) name)
+  } else t)
+arrow_dom := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
+arrow_cod := {T} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) t))).ty
+op := {E, name} -> {arg} -> {
+  let fty := eff_field_ty ((type_meta E).recognizer_params) name
+  io_op { label := pair E name; param := arrow_dom fty; result := arrow_cod fty } arg ({r} -> io_pure r)
+}
+op0 := {E, name} -> (op E name) unit_val
+let ops_go := fix ({self, E, cells} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    let rest := self E ((pair_snd cells) t)
+    pair (cons (m.name) (pair_fst rest)) (cons (list_const (op E (m.name))) (pair_snd rest))
+  } else (pair nil nil))
+ops := {E} -> {
+  let nv := ops_go E ((type_meta E).recognizer_params)
+  make_record (pair_fst nv) (pair_snd nv)
+}
+
+// ── the request-sum face: handlers as gate-checked case records (2026-07-08) ──
+// The SECOND derived face of an effect type (the §2.7 polarity pair): the
+// record view is the SIGNATURE, what checking consumes (negative); the
+// request SUM is the data a handler eliminates (positive). `requests E`
+// derives the Coproduct of op requests (`inj name arg`); `handler_sig E M`
+// derives the TYPE of a handler answering in M — each clause
+// `Π arg. (result -> M) -> M`, the resume typed PER OP by reading the result
+// off the tag — and it is checked by the SAME coherence machinery as every
+// eliminator's case record (a missing or ill-typed clause fails, pinned).
+// `handle_via` runs a case-record handler deep (resume = the interpreted
+// tail, multishot free as always).
+let req_variants := fix ({self, cells} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    cons (pair (m.name) (cons (arrow_dom (m.ty)) nil)) (self ((pair_snd cells) t))
+  } else nil)
+requests := {E} -> Coproduct (req_variants ((type_meta E).recognizer_params))
+result_for := {E, req} -> arrow_cod (eff_field_ty ((type_meta E).recognizer_params) (pair_fst req))
+handler_motive := {E, M} -> {req} -> Arrow (Arrow (result_for E req) M) M
+handler_sig := {E, M} -> derive_case_telescope (requests E) (handler_motive E M)
+handle_via := {E, ret, cases} -> fix ({self, m} -> match m {
+  Pure x => (ret x)
+  Op o arg k => (if (tree_eq (effect_of o) E) then (((field cases (op_name o)) arg) ({r} -> self (k r))) else (io_op o arg ({r} -> self (k r))))
+  _ => t
+})
+
 // ── deep handlers ──
 // handler = { covers, return, on, forward }. On a covered op the clause runs
 // with resume reified (resume = handle the tail under this same handler); on
