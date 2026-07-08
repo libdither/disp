@@ -1,0 +1,81 @@
+// tele_spec_proto — the stages 1-2 file for EFFECT_BOOTSTRAP_PLAN.md (kernel
+// signature, floor handler, tele_spec). SEEDED (2026-07-07) with hazard 1a's
+// empirical pins: the stage-1 mint clause must hand a continuation to the
+// bind_hyp route, and CLAUDE.md's compiler-workarounds section documents that
+// a continuation passed THROUGH a function miscompiles under nested binders
+// (the fresh hyp leaks into the result and trips the escape check). These pins
+// establish, on the live compiler, which shapes are actually safe:
+//
+//   control     inline lambdas at the route (the tele_walk shape) — safe;
+//   mint_via    the continuation as a helper PARAMETER, passed on unapplied —
+//               the documented wall's minimal form;
+//   mint_naive  the innocent wrapper {h} -> kont h — bracket abstraction's
+//               eta rule collapses it back to the bare parameter;
+//   go_letbound the continuation as a mid-body `let`, closed over the OUTER
+//               hyp — the shape the historical miscompile was observed in;
+//   mint_keep   {h} -> kont (keep h), keep a top-level identity — the inner
+//               application blocks the eta, and keep arriving as a scope
+//               literal (not the CIR `I` sentinel) blocks the S (K p) I
+//               collapse (the plan's keep trick);
+//   floor_rec   the clause as a RECORD field (the stage-1 handler shape);
+//   mint_loop   the continuation references a fix `self` and reaches the
+//               route through a helper (the walker's historical context).
+//
+// Every continuation body below USES the outer hyp (`t a b`), the dataflow
+// that historically failed, and returns a hyp-free verdict (no real escape).
+//
+// FINDING (2026-07-07): the documented miscompile does NOT reproduce in any
+// of these forms — all ten pins pass on the live compiler. Either an
+// intervening compiler change fixed it (candidates: the 2026-06-12 match
+// desugar closing the cut over arm free vars; the 2026-07-05 let rework), or
+// the failure needed a context these minimal forms still miss. Consequences:
+// the stage-1 mint clause can be written in the natural shape
+// `{ty, resume} -> param_apply (bind_hyp ty) resume` (mint_via IS that
+// clause, pinned nested + fix-self + record-field); the keep trick works and
+// stays available if an unpinned context fails; and this file is the
+// regression guard either way. CLAUDE.md's inline-lambda rule stays the law
+// for KERNEL code (tele_walk's inline mint is not relaxed by these pins).
+// Baseline (rust-eager-native, 2026-07-07): ~21s wall, 10 pins.
+open use "../kernel/prelude.disp"
+
+// control: inline continuations, nested binders — the safe shape:
+test param_apply (bind_hyp Tree) ({a} -> param_apply (bind_hyp Tree) ({b} -> Ok (is_fork (t a b)))) = Ok true
+
+// the helper parameter pass (unapplied):
+let mint_via := {ty, kont} -> param_apply (bind_hyp ty) kont
+test mint_via Tree ({a} -> Ok (is_fork (t t a))) = Ok true
+test mint_via Tree ({a} -> mint_via Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
+
+// the eta-trap wrapper (collapses to the bare parameter):
+let mint_naive := {ty, kont} -> param_apply (bind_hyp ty) ({h} -> kont h)
+test mint_naive Tree ({a} -> mint_naive Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
+
+// the mid-body let-bound continuation over the outer hyp:
+test param_apply (bind_hyp Tree) ({a} -> {
+  let go := {b} -> Ok (is_fork (t a b))
+  param_apply (bind_hyp Tree) go
+}) = Ok true
+
+// the keep trick (the stage-1 mint clause shape):
+let keep := {x} -> x
+let mint_keep := {ty, kont} -> param_apply (bind_hyp ty) ({h} -> kont (keep h))
+test mint_keep Tree ({a} -> Ok (is_fork (t t a))) = Ok true
+test mint_keep Tree ({a} -> mint_keep Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
+test param_apply (bind_hyp Tree) ({a} -> {
+  let go := {b} -> Ok (is_fork (t a b))
+  param_apply (bind_hyp Tree) ({h} -> go (keep h))
+}) = Ok true
+
+// the clause as a record field (how the stage-1 floor handler will carry it):
+let floor_rec := { on_mint := {ty, kont} -> param_apply (bind_hyp ty) ({h} -> kont (keep h)) }
+test (floor_rec.on_mint) Tree ({a} -> (floor_rec.on_mint) Tree ({b} -> Ok (is_fork (t a b)))) = Ok true
+
+// the closest repro of the HISTORICAL context: the continuation references a
+// fix `self` (the walker's shape — "a continuation {h} -> self ... h passed
+// THROUGH a function") and reaches the route through the helper. This is the
+// exact dataflow the stage-1 handler has (handle's fold hands the clause a
+// resume that closes over the fold's self):
+let mint_loop := fix ({self, n, acc} ->
+  if (tree_eq n zero) then (Ok acc)
+  else (mint_via Tree ({h} -> self (nat_pred n) (is_fork (t acc h)))))
+test mint_loop 2 t = Ok true
