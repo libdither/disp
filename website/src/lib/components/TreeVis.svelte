@@ -104,12 +104,14 @@
     closePicker()
     if (o) load(o.expr)
   }
-  // shift+←/→ hops through the examples (also bound in the widget's onKey)
+  // shift+←/→ hops through the examples (also bound in the widget's onKey);
+  // stops at the ends rather than wrapping
   function cyclePreset(dir: 1 | -1) {
     const opts = exampleOptions
     if (!opts.length) return
     const cur = matchIdx()
-    const next = cur === -1 ? (dir === 1 ? 0 : opts.length - 1) : (cur + dir + opts.length) % opts.length
+    const next = cur === -1 ? (dir === 1 ? 0 : opts.length - 1) : cur + dir
+    if (next < 0 || next >= opts.length) return
     load(opts[next].expr)
   }
   function onInputKey(e: KeyboardEvent) {
@@ -201,12 +203,13 @@
   }
 
   // ---- staged triage -------------------------------------------------------
-  // The F rule gets a two-beat animation: the ARGUMENT physically flies to the
-  // branch its shape selects (everything else holds still and the consumed
-  // spine dissolves), then the docked pair reflows into the new tree — the new
-  // root, when the redex was the root — while the rejected branches let go.
-  // A flight is a rigid translation of one on-screen subtree, keyed by path
-  // prefix (paths are /[01]*/ so prefix matching is exact).
+  // The F rule gets a two-beat animation: the SELECTED branch and the ARGUMENT
+  // both descend to the redex site — the bottom junction where the reduction
+  // happens — and merge there while the consumed spine dissolves under them;
+  // then the merged pair reflows into the new tree (the new root, when the
+  // redex was the root) as the rejected branches let go. A flight is a rigid
+  // translation of one on-screen subtree, keyed by path prefix (paths are
+  // /[01]*/ so prefix matching is exact).
   interface Flight {
     prefix: string
     dx: number
@@ -221,10 +224,6 @@
     for (const fl of stage.flights) if (path.startsWith(fl.prefix)) return fl
     return null
   }
-  // where the argument's flight lands, relative to the chosen branch: a leaf
-  // is absorbed dead-on; stems and forks dock just beside it, where the new
-  // application will place them
-  const LAND = { leaf: { dx: 0, dy: 0 }, beside: { dx: 20, dy: 14 } }
   function stageFor(sites: (T & { tag: 'apply' })[]): Stage | undefined {
     const prevByPath = new Map(nodes.map((n) => [n.path, n]))
     const flights: Flight[] = []
@@ -239,8 +238,20 @@
           site.x.tag === 'leaf' ? occ.path + '000' : site.x.tag === 'stem' ? occ.path + '001' : occ.path + '01'
         const bN = prevByPath.get(bPath)
         if (!xN || !bN) continue
-        const land = site.x.tag === 'leaf' ? LAND.leaf : LAND.beside
-        flights.push({ prefix: xPath, dx: bN.x + land.dx - xN.x, dy: bN.y + land.dy - xN.y })
+        // meet at the site: the branch (the result's head) lands just above-
+        // left of the junction, the argument just above-right; a leaf argument
+        // is absorbed dead-center into the branch's base
+        const leafArg = site.x.tag === 'leaf'
+        flights.push({
+          prefix: bPath,
+          dx: occ.x + (leafArg ? 0 : -14) - bN.x,
+          dy: occ.y + (leafArg ? -12 : -8) - bN.y
+        })
+        flights.push({
+          prefix: xPath,
+          dx: occ.x + (leafArg ? 0 : 14) - xN.x,
+          dy: occ.y + (leafArg ? 0 : -8) - xN.y
+        })
       }
     }
     return flights.length ? { flights, p1: 340 } : undefined
@@ -886,7 +897,7 @@
       <!-- pruned leaves fall; their branches disintegrate where they stood -->
       {#each debris as d (d.id)}
         <g style="transform: translate({d.x}px, {d.y}px)">
-          <g class="debris" style="--dy: {d.dy}px; --dx: {d.dx}px; --xdelay: {d.delay}ms">
+          <g class="debris" class:fruit={!!d.label} style="--dy: {d.dy}px; --dx: {d.dx}px; --xdelay: {d.delay}ms">
             <g class="dspin" style="--rot: {d.rot}deg; animation-delay: {d.delay}ms">
               {#if d.label}
                 <circle r="9" class="fruitbody" />
@@ -1312,6 +1323,13 @@
       dfall 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards,
       dfade 3.4s linear forwards;
     animation-delay: var(--xdelay, 0ms), calc(2.4s + var(--xdelay, 0ms));
+  }
+  /* fruit drops quicker and dissolves mid-air — it never reaches the ground */
+  .debris.fruit {
+    animation:
+      dfall 0.85s cubic-bezier(0.5, 0.05, 0.8, 0.6) forwards,
+      dfade 0.45s ease-out forwards;
+    animation-delay: var(--xdelay, 0ms), calc(0.22s + var(--xdelay, 0ms));
   }
   .dspin {
     animation: dspin 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards;

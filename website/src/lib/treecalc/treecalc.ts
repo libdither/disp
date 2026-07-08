@@ -418,8 +418,29 @@ export function parseTree(input: string, defs: Record<string, T> = DEFS): T {
     return varLeaf(tok)
   }
   function expr(): T {
+    // Partial applications of S denote VALUES: `S a` is entered directly as
+    // its normal form t (t a) — the same pre-assembly bracket abstraction
+    // performs — so the widget shows ONE S firing at saturation instead of
+    // the partial application constructing itself first. (K needs no such
+    // help: `K a` is a silent stem→fork construction already.) After the
+    // first argument, the ordinary construction rules keep the chain silent:
+    // t (t a) b forks to t (t a) b, and the third argument materializes the
+    // one visible redex.
+    const sHead =
+      tokens[p] === 'S' &&
+      Object.prototype.hasOwnProperty.call(defs, 'S') &&
+      treeEq(defs.S, S_TREE)
     let e = atom()
-    while (p < tokens.length && tokens[p] !== ')') e = app(e, atom())
+    let sPending = sHead
+    while (p < tokens.length && tokens[p] !== ')') {
+      const arg = atom()
+      if (sPending) {
+        e = stem(stem(arg))
+        sPending = false
+      } else {
+        e = app(e, arg)
+      }
+    }
     return e
   }
   const r = expr()
