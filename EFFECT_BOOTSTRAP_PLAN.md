@@ -1,7 +1,12 @@
 # Effect bootstrap: types as protocols, the walker as a handler
 
-Status: plan, 2026-07-07; STAGES 0, 1, AND 2 landed 2026-07-07/08 (see the
-landed notes inside each stage section). Canonical rows and the deep `Eff R X`
+Status: plan, 2026-07-07; STAGES 0, 1, 2, AND 5 landed 2026-07-07/08 (see the
+landed notes inside each stage section; the handler zoo is
+`lib/tests/handler_zoo_proto.test.disp`, 12 pins, including the synthesis
+headline). Remaining: stage 3 (spec twins; walk_spec's elim rewrite wants its
+own session and coordination) and stage 4 (whose fixed-point pin needs stage
+3, since tele_prog must become a Reflect program before it can carry a row
+annotation). Canonical rows and the deep `Eff R X`
 recognizer are in `lib/std/effect.disp` (`EffAt` is the shallow compatibility
 form), pinned with the branchy exit demonstration in
 `lib/tests/eff_deep_proto.test.disp` (38 pins); the kernel signature, floor
@@ -205,7 +210,7 @@ is done when:
 5. Every `SEALED` marker in `engine.disp`/`cut.disp` maps to a spec twin or a
    handler clause (enumerated in a ledger table).
 6. At least three alternative handlers run the same spec programs (cost,
-   explanation, synthesis), pinned.
+   explanation, synthesis), pinned. Landed 2026-07-08.
 7. The behavioral fixed-point pin: `verify` of the spec module returns
    `Ok true` under the live kernel.
 
@@ -553,6 +558,21 @@ Same spec programs, four interpreters, each about a page:
 
 Pin explicitly: one program, at least three interpreters, listed side by side.
 
+LANDED 2026-07-08 in `handler_zoo_proto` (12 pins, first run green). The
+semantics face for Tele programs is stage 2's recognize handler (stage 1's
+floor handler serves kernel-signature programs). Cost: parameter-passing
+(mints, checks) counters with acceptance identical to the floor face, pinned
+at the real telescope shapes (Pi and Intersection cost 1 mint 1 check; a
+2-field record costs 0 and 2); its mint clause answers a raw make_hyp because
+the parameter-passing carrier cannot feed the escape bind (the stage 1
+carrier contract), so the cost face measures and the floor face certifies.
+Explanation: the trace is the error report (`(Ok false, [rejected b, a])` on
+the ill-typed record). Synthesis, the headline: mint = enumerate with
+multishot resume, obs/guard = filters; `Pair Bool Bool` yields exactly four
+values, each re-checking Ok true under the live kernel, and one guard makes
+propose-and-check a single program (`mint a Nat, keep the zeros` answers
+`[0]`). GOALS.md's loop is one handler clause, as predicted.
+
 ### Stage 6: the bridge, scoped honestly
 
 The spec-to-fused relation stays differential in this prototype. Write the
@@ -571,7 +591,10 @@ OPTIMIZER.typ arc.
     stage 1   signature + floor handler    LANDED 2026-07-08 (natural mint clause)
     stage 2   tele_spec + two handlers     LANDED 2026-07-08 (over the LIVE cells)
     stage 3   walk/hyp_reduce/occurs specs 1 session
-    stage 4+5 ledger, fixed point, zoo     1 session
+    stage 4   ledger + fixed point         1 session      (fixed point needs stage 3:
+                                                          tele_prog must become a
+                                                          Reflect program to annotate)
+    stage 5   handler zoo                  LANDED 2026-07-08
     stage 6   note only
 
 A convincing core (0, 1, 2, plus cost and synthesis handlers, plus the
@@ -590,7 +613,9 @@ fixed-point pin over what exists) is about three sessions.
   ~23s, 29 pins).
 - `lib/tests/kernel_spec_proto.test.disp`: stage 3 twins, stage 4 ledger and
   fixed-point pin.
-- `lib/tests/handler_zoo_proto.test.disp`: stage 5.
+- `lib/tests/handler_zoo_proto.test.disp`: stage 5 (landed 2026-07-08: cost,
+  explanation, synthesis over the stage 2 vocabulary, local copy; ~23s, 12
+  pins).
 - Docs: a signature-and-ledger section, either in REFLECT.md (coordinate) or a
   new PROTOCOL.md; update this file's status line per stage.
 
