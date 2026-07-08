@@ -3,14 +3,15 @@
 
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { parseProgram, type ParseItemStats } from "./compile.js"
+import { parseProgram, type Decl, type ParseItemStats } from "./compile.js"
 import { prettyTree, type Tree } from "./eval/eager.js"
 import type { Session, EvalStats } from "./eval/types.js"
 import { getBackend, defaultBackendName } from "./eval/registry.js"
 import { emitBlob } from "./format/export.js"
+import { driveMain, findMain } from "./driver.js"
 
 interface RunResult { defs: number; tests: number; passed: number; failed: { i: number; msg: string; line?: number }[] }
-interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: Session<Tree> }
+interface RunOptions { onParseItem?: (item: ParseItemStats) => void; session?: Session<Tree>; onDecls?: (decls: Decl[]) => void }
 
 export function runFile(path: string, options: RunOptions = {}): RunResult {
   // One fresh session per file: isolates the apply memo / stats (replacing the
@@ -21,6 +22,7 @@ export function runFile(path: string, options: RunOptions = {}): RunResult {
   const abs = resolve(path)
   const src = readFileSync(abs, "utf-8")
   const decls = parseProgram(src, abs, { onItem: options.onParseItem, session })
+  options.onDecls?.(decls)
   // Name registry for prettyTree: map each definition's hash-consed tree id to its
   // name (first definition wins on id collisions — many atoms share one leaf id).
   // Includes opened/imported names, which land in `decls` as Defs in legacy mode.
@@ -92,7 +94,8 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       process.exit(0)
     }
     const itemStats: ParseItemStats[] = []
-    const r = runFile(file, { session, onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
+    let decls: Decl[] = []
+    const r = runFile(file, { session, onDecls: ds => { decls = ds }, onParseItem: showStatsDetail ? item => itemStats.push(item) : undefined })
     console.log(`defs: ${r.defs}, tests: ${r.tests}, passed: ${r.passed}, failed: ${r.failed.length} [${backendName}]`)
     if (showStats) {
       const s = (session.stats?.() ?? { steps: 0 }) as EvalStats
@@ -139,7 +142,17 @@ if (process.argv[1] && process.argv[1].endsWith("run.ts")) {
       for (const line of selected) console.log(line)
     }
     for (const f of r.failed) console.error(`  [${f.line != null ? `${file}:${f.line}` : `test ${f.i}`}] ${f.msg}`)
-    process.exit(r.failed.length > 0 ? 1 : 0)
+    // The impure driver: a file exporting `main : Eff io_row X` runs after
+    // its tests pass (the annotation itself was already kernel-verified at
+    // load; the driver enforces the operational half — see src/driver.ts).
+    if (r.failed.length === 0 && findMain(decls)) {
+      driveMain(session, decls).then(
+        () => process.exit(0),
+        e => { console.error(`driver error: ${(e as Error).message}`); process.exit(1) },
+      )
+    } else {
+      process.exit(r.failed.length > 0 ? 1 : 0)
+    }
   } catch (e) {
     console.error(`error: ${(e as Error).message}`)
     process.exit(1)

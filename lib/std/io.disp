@@ -1,0 +1,15 @@
+// std/io.disp — the IO operation vocabulary the host driver interprets
+// (EFFECT_BOOTSTRAP_PLAN § The impure driver; src/driver.ts is the loop).
+// Ops are self-describing occurrences, so the driver keys on their labels
+// (pair "IO" <name>) and reads param/result types off the occurrence. A
+// program at row [IO] built from these runs under the driver when its file
+// exports `main : Eff io_row X`; tests replace the driver with mock handlers
+// in-language (the effect_proto mock_io pattern), so CI never needs a host.
+open use "../kernel/prelude.disp"
+open use "effect.disp"
+
+io_row := row1 "IO"
+// print s: write the string s and a newline to stdout; answers unit.
+print := mk_op "IO" "print" String Unit
+// read_line: read one line from stdin (the empty string at end of input).
+read_line := (mk_op "IO" "read_line" Unit String) unit_val

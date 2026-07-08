@@ -1,0 +1,7 @@
+// Read one line from stdin, print it back.
+//   echo "hi" | npm run disp -- examples/echo.disp
+open use "../lib/kernel/prelude.disp"
+open use "../lib/std/effect.disp"
+open use "../lib/std/io.disp"
+
+main : Eff io_row Unit := eff_bind read_line ({line} -> print line)

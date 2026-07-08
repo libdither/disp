@@ -1,0 +1,9 @@
+// The driver POC: a runnable effectful program.
+//   npm run disp -- examples/hello.disp
+// `main`'s Eff annotation is verified by the kernel at load (the deep row
+// certificate); src/driver.ts then performs the residual IO ops.
+open use "../lib/kernel/prelude.disp"
+open use "../lib/std/effect.disp"
+open use "../lib/std/io.disp"
+
+main : Eff io_row Unit := print "Hello, world!"
