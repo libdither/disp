@@ -6,9 +6,9 @@
 
   const labPresets = [
     { expr: 'not false', tip: 'Booleans are the two smallest trees (true = t, false = t t); not is one triage: the F rule reads the argument\'s shape and picks a branch.' },
-    { expr: 'K x y', tip: 'Any name that isn\'t a known definition parses as a named leaf — a free variable with no shape of its own. K keeps x and discards y; watch y fall.' },
+    { expr: 'K x y', tip: 'Any name that isn\'t a known definition parses as a named leaf — a free variable, drawn as a fruit. K keeps x and discards y; watch y drop.' },
     { expr: 'S f g x', tip: 'The S rule on paper: x is shared between f and g, giving (f x)(g x). Free variables have no shape, so the result is stuck — a symbolic normal form.' },
-    { expr: 't (t a b) c (t t)', tip: 'The F rule in the raw: the argument t t is a stem, so triage picks b and hands it the stem\'s child; the a and c branches are pruned.' },
+    { expr: 't (t a b) c (t t)', tip: 'The F rule in the raw: the argument t t is a stem, so it flies to branch b and hands it the stem\'s child; the a and c branches are pruned.' },
     { expr: 'S K K (t t)', tip: 'S K K is the identity, assembled from S and K: the S rule duplicates the argument, then two K rules collapse it back out.' },
     { expr: 'S K K (S K K (t t))', tip: 'Two identities, nested. Try the parallel toggle here: independent redexes fire in the same round, and confluence promises the same answer.' }
   ]
@@ -102,7 +102,7 @@
   </Aside>
   <p>
     The lab below evaluates any expression you type. Names that aren't known definitions parse
-    as <em>named leaves</em> — free variables with no shape of their own — so
+    as <em>named leaves</em> — free variables with no shape of their own, drawn as fruit — so
     <code>K x y</code> and <code>S f g x</code> reduce exactly as they do on paper. Press
     <em>Step</em> to fire the next reduction and watch which rule carries it: the amber letter
     marks the next

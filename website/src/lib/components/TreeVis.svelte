@@ -105,6 +105,7 @@
     label: string | null
     vname: string | null // a named leaf's name — always shown
     fresh?: boolean // no prior position: genuinely new growth
+    gdelay?: number // extra grow-in delay (staged triage: new joints wait for docking)
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
   interface VEdge {
@@ -137,6 +138,9 @@
     d: string
     w: number
     delay: number
+    fx?: number // staged triage: the ghost rides the argument's flight…
+    fy?: number
+    flyMs?: number // …for this long before dissolving
   }
   // consumed pattern pieces shrink away where they stood
   interface Vanishing {
@@ -147,6 +151,55 @@
     tint: string
     tilt: number
     delay: number
+    fx?: number // staged triage: consumed argument shells fly to the branch…
+    fy?: number
+    flyMs?: number // …and dissolve on arrival
+  }
+
+  // ---- staged triage -------------------------------------------------------
+  // The F rule gets a two-beat animation: the ARGUMENT physically flies to the
+  // branch its shape selects (everything else holds still and the consumed
+  // spine dissolves), then the docked pair reflows into the new tree — the new
+  // root, when the redex was the root — while the rejected branches let go.
+  // A flight is a rigid translation of one on-screen subtree, keyed by path
+  // prefix (paths are /[01]*/ so prefix matching is exact).
+  interface Flight {
+    prefix: string
+    dx: number
+    dy: number
+  }
+  interface Stage {
+    flights: Flight[]
+    p1: number // flight duration; phase 2 (reflow) follows
+  }
+  const flightFor = (stage: Stage | undefined, path: string | undefined): Flight | null => {
+    if (!stage || !path) return null
+    for (const fl of stage.flights) if (path.startsWith(fl.prefix)) return fl
+    return null
+  }
+  // where the argument's flight lands, relative to the chosen branch: a leaf
+  // is absorbed dead-on; stems and forks dock just beside it, where the new
+  // application will place them
+  const LAND = { leaf: { dx: 0, dy: 0 }, beside: { dx: 20, dy: 14 } }
+  function stageFor(sites: (T & { tag: 'apply' })[]): Stage | undefined {
+    const prevByPath = new Map(nodes.map((n) => [n.path, n]))
+    const flights: Flight[] = []
+    for (const site of sites) {
+      if (readyRule(site) !== 'F') continue
+      // a shared redex ref rewrites at every occurrence; fly each one
+      for (const occ of nodes) {
+        if (occ.tree !== site) continue
+        const xPath = occ.path + '1'
+        const xN = prevByPath.get(xPath)
+        const bPath =
+          site.x.tag === 'leaf' ? occ.path + '000' : site.x.tag === 'stem' ? occ.path + '001' : occ.path + '01'
+        const bN = prevByPath.get(bPath)
+        if (!xN || !bN) continue
+        const land = site.x.tag === 'leaf' ? LAND.leaf : LAND.beside
+        flights.push({ prefix: xPath, dx: bN.x + land.dx - xN.x, dy: bN.y + land.dy - xN.y })
+      }
+    }
+    return flights.length ? { flights, p1: 340 } : undefined
   }
 
   let nodes = $state<VNode[]>([])
@@ -279,7 +332,9 @@
     const u = t - 1
     return 1 + (c + 1) * u * u * u + c * u * u
   }
-  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>) {
+  // the flight's curve: accelerate, arrive softly (no overshoot mid-air)
+  const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
+  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>, stage?: Stage) {
     cancelAnimationFrame(anim!)
     if (!motion || nodes.length === 0) {
       nodes = l.nodes
@@ -294,10 +349,19 @@
     // duplicated it) from the reference's old position; only genuinely new
     // structure grows in from nothing.
     const fromFor = (tn: VNode): VNode | undefined => nFrom.get(tn.path) ?? oldByRef.get(tn.tree)
+    // Staged (triage) tween: phase 1 flies the argument's subtree to a mid
+    // waypoint (everything else holds), phase 2 settles the world into the
+    // new layout. mid = from + its flight, or from itself (hold).
     const nPairs = l.nodes.map((tn) => {
       const f = fromFor(tn)
-      return { tn: { ...tn, fresh: !f }, f }
+      const fl = flightFor(stage, f?.path)
+      return {
+        tn: { ...tn, fresh: !f, gdelay: !f && stage ? stage.p1 : 0 },
+        f,
+        mid: f ? (fl ? { x: f.x + fl.dx, y: f.y + fl.dy } : { x: f.x, y: f.y }) : null
+      }
     })
+    const pairByPath = new Map(nPairs.map((p) => [p.tn.path, p]))
     const newByPath = new Map(l.nodes.map((n) => [n.path, n]))
     const ePairs = l.edges.map((te) => {
       let f = eFrom.get(te.id)
@@ -312,25 +376,54 @@
         }
       }
       // otherwise a NEW branch grows out of its parent endpoint
-      return { te, f: f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 } }
+      const from = f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 }
+      // an edge belongs to its child's subtree: it rides the child's flight,
+      // so branches stay glued to the trees they carry
+      const cPath = te.trunk ? 'r' : te.id.replace('>', '')
+      const chFl = flightFor(stage, pairByPath.get(cPath)?.f?.path)
+      const mid = chFl
+        ? {
+            x1: from.x1 + chFl.dx,
+            y1: from.y1 + chFl.dy,
+            cx: from.cx + chFl.dx,
+            cy: from.cy + chFl.dy,
+            x2: from.x2 + chFl.dx,
+            y2: from.y2 + chFl.dy
+          }
+        : { x1: from.x1, y1: from.y1, cx: from.cx, cy: from.cy, x2: from.x2, y2: from.y2 }
+      return { te, f: from, mid }
     })
     const t0 = performance.now()
-    const D = 550
+    const D = stage ? stage.p1 + 420 : 550
+    const split = stage ? stage.p1 / D : 0
+    const lerpN = (tn: VNode, a: { x: number; y: number }, b: { x: number; y: number }, k: number) => ({
+      ...tn,
+      x: a.x + (b.x - a.x) * k,
+      y: a.y + (b.y - a.y) * k
+    })
+    const lerpE = (te: VEdge, a: Omit<VEdge, 'id' | 'w' | 'trunk'>, b: Omit<VEdge, 'id' | 'w' | 'trunk'>, k: number) => ({
+      ...te,
+      x1: a.x1 + (b.x1 - a.x1) * k,
+      y1: a.y1 + (b.y1 - a.y1) * k,
+      cx: a.cx + (b.cx - a.cx) * k,
+      cy: a.cy + (b.cy - a.cy) * k,
+      x2: a.x2 + (b.x2 - a.x2) * k,
+      y2: a.y2 + (b.y2 - a.y2) * k
+    })
     const frame = (now: number) => {
       const t = Math.min(1, (now - t0) / D)
-      const k = ease(t)
-      nodes = nPairs.map(({ tn, f }) =>
-        f ? { ...tn, x: f.x + (tn.x - f.x) * k, y: f.y + (tn.y - f.y) * k } : tn
-      )
-      edges = ePairs.map(({ te, f }) => ({
-        ...te,
-        x1: f.x1 + (te.x1 - f.x1) * k,
-        y1: f.y1 + (te.y1 - f.y1) * k,
-        cx: f.cx + (te.cx - f.cx) * k,
-        cy: f.cy + (te.cy - f.cy) * k,
-        x2: f.x2 + (te.x2 - f.x2) * k,
-        y2: f.y2 + (te.y2 - f.y2) * k
-      }))
+      if (stage && t < split) {
+        const k = easeInOut(t / split)
+        nodes = nPairs.map(({ tn, f, mid }) => (f && mid ? lerpN(tn, f, mid, k) : tn))
+        edges = ePairs.map(({ te, f, mid }) => lerpE(te, f, mid, k))
+      } else {
+        const k = ease(stage ? (t - split) / (1 - split) : t)
+        nodes = nPairs.map(({ tn, f, mid }) => {
+          const a = stage ? mid : f && { x: f.x, y: f.y }
+          return a ? lerpN(tn, a, tn, k) : tn
+        })
+        edges = ePairs.map(({ te, f, mid }) => lerpE(te, stage ? mid : f, te, k))
+      }
       if (t < 1) anim = requestAnimationFrame(frame)
     }
     anim = requestAnimationFrame(frame)
@@ -357,7 +450,11 @@
     return out
   }
 
-  function show(tree: T, spine?: Set<T>, allShrink = false, exitDelay = 0) {
+  function show(
+    tree: T,
+    opts: { spine?: Set<T>; allShrink?: boolean; exitDelay?: number; stage?: Stage } = {}
+  ) {
+    const { spine, allShrink = false, exitDelay = 0, stage } = opts
     const prevNodes = nodes
     const prevEdges = edges
     const l = layout(tree)
@@ -374,17 +471,34 @@
         const consumed = allShrink || (spine?.has(n.tree) ?? false)
         // consumed pattern pieces exit with the join; discarded data waits
         const delay = consumed ? 0 : exitDelay
+        const fl = consumed ? flightFor(stage, n.path) : null
         if ((n.tag === 'leaf' || n.tag === 'var') && !consumed) {
+          // fruit drops heavier than leaves: less drift, less spin
+          const damp = n.tag === 'var' ? 0.35 : 1
           fresh.push({
             id: debrisId++,
             x: n.x,
             y: n.y,
             dy: height - GROUND + 4 - n.y + (hash(n.path) % 8),
-            dx: ((hash(n.path) % 36) - 18) * 1.1,
-            rot: (hash(n.path) % 160) - 80,
+            dx: ((hash(n.path) % 36) - 18) * 1.1 * damp,
+            rot: ((hash(n.path) % 160) - 80) * damp,
             tint: n.tint,
             delay,
             label: n.vname ?? undefined
+          })
+        } else if (fl) {
+          // a consumed argument shell rides the triage flight, then dissolves
+          shrunk.push({
+            id: debrisId++,
+            x: n.x,
+            y: n.y,
+            tag: n.tag,
+            tint: n.tint,
+            tilt: n.tilt,
+            delay: stage!.p1,
+            fx: fl.dx,
+            fy: fl.dy,
+            flyMs: stage!.p1
           })
         } else {
           shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt, delay })
@@ -403,7 +517,7 @@
         const ids = shrunk.map((v) => v.id)
         setTimeout(() => {
           vanishing = vanishing.filter((v) => !ids.includes(v.id))
-        }, 460 + exitDelay)
+        }, 460 + exitDelay + (stage?.p1 ?? 0))
       }
       // branches that lost their subtree fade out in place
       const newIds = new Set(l.edges.map((e) => e.id))
@@ -412,18 +526,28 @@
       )
       if (gone.length) {
         const fading: GhostEdge[] = gone.map((e) => {
-          const child = prevByPath.get(e.id.replace('>', ''))
+          const childPath = e.id.replace('>', '')
+          const child = prevByPath.get(childPath)
           const consumed = allShrink || (child !== undefined && (spine?.has(child.tree) ?? false))
-          return { id: debrisId++, d: edgeD(e), w: e.w, delay: consumed ? 0 : exitDelay }
+          const fl = consumed ? flightFor(stage, childPath) : null
+          return {
+            id: debrisId++,
+            d: edgeD(e),
+            w: e.w,
+            delay: consumed ? (fl ? stage!.p1 : 0) : exitDelay,
+            fx: fl?.dx,
+            fy: fl?.dy,
+            flyMs: fl ? stage!.p1 : undefined
+          }
         })
         ghosts.push(...fading)
         const ids = fading.map((g) => g.id)
         setTimeout(() => {
           ghosts = ghosts.filter((g) => !ids.includes(g.id))
-        }, 500 + exitDelay)
+        }, 500 + exitDelay + (stage?.p1 ?? 0))
       }
     }
-    animateTo(l, oldByRef)
+    animateTo(l, oldByRef, stage)
   }
 
   // ---- the run loop ----------------------------------------------------------
@@ -476,9 +600,14 @@
   function fire(): boolean {
     if (!cur) return false
     // gather the pattern spines BEFORE stepping: these pieces are consumed
-    // (they shrink); anything else that vanishes was discarded (it falls)
-    const sites = parallel ? readySites(cur) : [nextApplyToFire(cur)].filter((s) => s !== null)
-    const spine = new Set(sites.flatMap((s) => spineOf(s as T & { tag: 'apply' })))
+    // (they shrink); anything else that vanishes was discarded (it falls).
+    // Triage sites also get a stage plan (the argument's flight to its branch),
+    // computed against the CURRENT on-screen positions.
+    const sites = (parallel ? readySites(cur) : [nextApplyToFire(cur)].filter((s) => s !== null)) as (T & {
+      tag: 'apply'
+    })[]
+    const spine = new Set(sites.flatMap((s) => spineOf(s)))
+    const stage = stageFor(sites)
     if (parallel) {
       const s = stepParallel(cur)
       if (!s) {
@@ -493,9 +622,9 @@
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
           : `${s.fired.length} redexes fired in parallel (${s.fired.join(' ')})`
-      // triage in two beats: the chosen branch joins first, then the
-      // rejected branches let go
-      show(cur, spine, false, s.fired.includes('F') ? 560 : 0)
+      // triage in two beats: the argument flies to its branch, and only once
+      // it docks do the rejected branches let go
+      show(cur, { spine, exitDelay: stage?.p1 ?? 0, stage })
       return true
     }
     const s = stepOnce(cur)
@@ -508,7 +637,7 @@
     cur = s.next
     stepCount++
     ruleMsg = s.rule
-    show(cur, spine, false, s.tag === 'F' ? 560 : 0)
+    show(cur, { spine, exitDelay: stage?.p1 ?? 0, stage })
     return true
   }
 
@@ -524,7 +653,7 @@
     ruleMsg = h.msg || 'stepped back'
     atNormalForm = false
     // undoing a rewrite: the rule's products shrink away, its inputs regrow
-    show(cur, undefined, true)
+    show(cur, { allShrink: true })
   }
 
   function schedule() {
@@ -605,29 +734,35 @@
 >
   {#if showControls}
     <div class="controls">
-      <select
-        class="expicker"
-        value={exampleOptions.some((o) => o.expr === input) ? input : '__custom'}
-        onchange={(e) => {
-          const v = (e.target as HTMLSelectElement).value
-          if (v !== '__custom') load(v)
-        }}
-        aria-label="pick an example expression"
-      >
-        {#each exampleOptions as o}
-          <option value={o.expr}>{o.expr}</option>
-        {/each}
-        {#if !exampleOptions.some((o) => o.expr === input)}
-          <option value="__custom">(custom)</option>
-        {/if}
-      </select>
-      <input
-        type="text"
-        bind:value={input}
-        onkeydown={(e) => e.key === 'Enter' && load(input)}
-        spellcheck="false"
-        aria-label="tree-calculus expression"
-      />
+      <!-- the picker is a caret INSIDE the input: an invisible native select
+           sits over the arrow, so picking an example overrides the input, and
+           whatever you type highlights its own entry when it matches one -->
+      <div class="inputwrap">
+        <input
+          type="text"
+          bind:value={input}
+          onkeydown={(e) => e.key === 'Enter' && load(input)}
+          spellcheck="false"
+          aria-label="tree-calculus expression"
+        />
+        <select
+          class="expicker"
+          value={exampleOptions.some((o) => o.expr === input) ? input : '__custom'}
+          onchange={(e) => {
+            const v = (e.target as HTMLSelectElement).value
+            if (v !== '__custom') load(v)
+          }}
+          aria-label="pick an example expression"
+        >
+          {#each exampleOptions as o}
+            <option value={o.expr}>{o.expr}</option>
+          {/each}
+          {#if !exampleOptions.some((o) => o.expr === input)}
+            <option value="__custom">(custom)</option>
+          {/if}
+        </select>
+        <span class="caret" aria-hidden="true">▾</span>
+      </div>
       <button class="cbtn" onclick={back} disabled={historyLen === 0} title="step backwards (←)">◀</button>
       <button class="cbtn primary" onclick={step} title="fire the next reduction (→)">Step</button>
       <button class="cbtn" onclick={toggleRun} title="run/pause (space)">{running ? 'Pause' : 'Run'}</button>
@@ -667,34 +802,57 @@
         <g style="transform: translate({d.x}px, {d.y}px)">
           <g class="debris" style="--dy: {d.dy}px; --dx: {d.dx}px; --xdelay: {d.delay}ms">
             <g class="dspin" style="--rot: {d.rot}deg; animation-delay: {d.delay}ms">
-              <path
-                class="leafshape"
-                d="M0,-7 C4.5,-4 4.5,2.5 0,7 C-4.5,2.5 -4.5,-4 0,-7 Z"
-                style="fill:{d.tint}"
-              />
-              {#if d.label}<text class="vname" y="0.5">{d.label}</text>{/if}
+              {#if d.label}
+                <circle r="9" class="fruitbody" />
+                <text
+                  class="vname"
+                  y="0.5"
+                  style="font-size: {d.label.length === 1 ? 9.5 : d.label.length === 2 ? 8 : 6.5}px"
+                  >{d.label.length <= 3 ? d.label : d.label.slice(0, 3)}</text
+                >
+              {:else}
+                <path
+                  class="leafshape"
+                  d="M0,-7 C4.5,-4 4.5,2.5 0,7 C-4.5,2.5 -4.5,-4 0,-7 Z"
+                  style="fill:{d.tint}"
+                />
+              {/if}
             </g>
           </g>
         </g>
       {/each}
       {#each ghosts as g (g.id)}
-        <path class="branch ghost" d={g.d} style="stroke-width:{g.w}; animation-delay: {g.delay}ms" />
+        {#if g.flyMs}
+          <g class="vfly" style="--fx: {g.fx}px; --fy: {g.fy}px; --fms: {g.flyMs}ms">
+            <path class="branch ghost" d={g.d} style="stroke-width:{g.w}; animation-delay: {g.delay}ms" />
+          </g>
+        {:else}
+          <path class="branch ghost" d={g.d} style="stroke-width:{g.w}; animation-delay: {g.delay}ms" />
+        {/if}
       {/each}
-      <!-- consumed pattern pieces shrink away where they stood -->
+      <!-- consumed pattern pieces shrink away where they stood (or, on a
+           triage flight, where they landed) -->
       {#each vanishing as v (v.id)}
         <g style="transform: translate({v.x}px, {v.y}px)">
-          <g class="vshrink" style="animation-delay: {v.delay}ms">
-            {#if v.tag === 'leaf' || v.tag === 'var'}
-              <path
-                class="leafshape"
-                d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
-                style="fill:{v.tint}; transform: rotate({v.tilt}deg)"
-              />
-            {:else if v.tag === 'apply'}
-              <circle r="6" class="bud-ring" />
-            {:else}
-              <circle r="3.6" class="knot" />
-            {/if}
+          <g
+            class="vfly"
+            style={v.flyMs ? `--fx: ${v.fx}px; --fy: ${v.fy}px; --fms: ${v.flyMs}ms` : '--fx: 0px; --fy: 0px; --fms: 1ms'}
+          >
+            <g class="vshrink" style="animation-delay: {v.delay}ms">
+              {#if v.tag === 'leaf'}
+                <path
+                  class="leafshape"
+                  d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
+                  style="fill:{v.tint}; transform: rotate({v.tilt}deg)"
+                />
+              {:else if v.tag === 'var'}
+                <circle r="9" class="fruitbody" />
+              {:else if v.tag === 'apply'}
+                <circle r="6" class="bud-ring" />
+              {:else}
+                <circle r="3.6" class="knot" />
+              {/if}
+            </g>
           </g>
         </g>
       {/each}
@@ -705,7 +863,11 @@
         {/each}
         {#each nodes as n (n.path)}
           <g class="node" style="transform: translate({n.x}px, {n.y}px)">
-            <g class="inner" class:growing={motion && styled && n.fresh !== false} style="--gd: {n.depth * 55}ms">
+            <g
+              class="inner"
+              class:growing={motion && styled && n.fresh !== false}
+              style="--gd: {(n.gdelay ?? 0) + n.depth * 55}ms"
+            >
               {#if n.tag === 'apply'}
                 <circle r={styled ? 8.5 : 8} class="bud-ring" />
                 {#if !styled}<text class="at">@</text>{:else}<circle r="3" class="bud-core" />{/if}
@@ -721,20 +883,22 @@
                   <circle r="4.5" class="dot leafdot" />
                 {/if}
               {:else if n.tag === 'var'}
-                {#if styled}
-                  <path
-                    class="leafshape"
-                    d="M0,-9 C5.8,-5.5 5.8,3 0,9 C-5.8,3 -5.8,-5.5 0,-9 Z"
-                    style="fill:{n.tint}; transform: rotate({n.tilt * 0.3}deg)"
-                  />
-                {:else}
-                  <circle r="4.5" class="dot vardot" />
-                {/if}
-                {#if n.vname && n.vname.length <= 2 && styled}
-                  <text class="vname" y="0.5">{n.vname}</text>
-                {:else}
-                  <text class="vname above" y="-13">{n.vname}</text>
-                {/if}
+                <!-- a named leaf is FRUIT: rounder, bigger, unmistakably not foliage -->
+                <g class="fruit" style="transform: rotate({n.tilt * 0.12}deg)">
+                  {#if styled}<path class="fstalk" d="M0,-9 Q1,-13 3.5,-14.5" />{/if}
+                  <circle r="10" class="fruitbody" />
+                  {#if styled}<ellipse cx="-3.4" cy="-3.8" rx="2.9" ry="1.8" class="fshine" />{/if}
+                  {#if n.vname && n.vname.length <= 3}
+                    <text
+                      class="vname"
+                      y="0.5"
+                      style="font-size: {n.vname.length === 1 ? 10 : n.vname.length === 2 ? 8.5 : 7}px"
+                      >{n.vname}</text
+                    >
+                  {:else}
+                    <text class="vname above" y="-17">{n.vname}</text>
+                  {/if}
+                </g>
               {:else}
                 <circle r={styled ? 4 : 5.5} class="knot" />
               {/if}
@@ -822,16 +986,23 @@
     flex-wrap: wrap;
     margin-bottom: 0.5rem;
   }
-  input {
+  .inputwrap {
+    position: relative;
     flex: 1;
     min-width: 170px;
+    display: flex;
+  }
+  input {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
     background: var(--bg-code);
     border: 1px solid var(--border-strong);
     border-radius: 8px;
     color: var(--fg);
     font-family: var(--font-mono);
     font-size: 0.85rem;
-    padding: 0.42em 0.7em;
+    padding: 0.42em 2em 0.42em 0.7em;
     outline: none;
   }
   input:focus { border-color: var(--accent); }
@@ -852,19 +1023,31 @@
     color: #f7fcf5;
     border: none;
   }
+  /* the example picker: an invisible native select over the input's caret —
+     the popup list is the browser's, the closed state is just the arrow */
   .expicker {
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: 38%;
-    background: var(--bg-elev);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
-    color: var(--fg);
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    bottom: 1px;
+    width: 2em;
+    opacity: 0;
+    cursor: pointer;
     font-family: var(--font-mono);
-    font-size: 0.76rem;
-    padding: 0.3em 0.4em;
+    font-size: 0.85rem;
   }
-  .expicker:focus { border-color: var(--accent); outline: none; }
+  .expicker option { color: var(--fg); background: var(--bg-elev); }
+  .caret {
+    position: absolute;
+    right: 0.65em;
+    top: 50%;
+    transform: translateY(-52%);
+    color: var(--fg-faint);
+    font-size: 0.8rem;
+    pointer-events: none;
+  }
+  .inputwrap:hover .caret,
+  .inputwrap:focus-within .caret { color: var(--accent); }
   .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.45rem 0 0; font-style: italic; }
   .toggles { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.55rem; }
   .tog {
@@ -961,11 +1144,24 @@
     font-family: var(--font-mono);
   }
 
-  /* named leaves (free variables): amber, letter worn on the leaf */
+  /* named leaves (free variables) are FRUIT: big, round, name worn on the skin */
+  .fruitbody {
+    fill: #e79a3f;
+    stroke: color-mix(in oklab, #8a5410 55%, transparent);
+    stroke-width: 0.8;
+  }
+  .plain .fruitbody { fill: #dfa050; stroke: var(--fg-faint); }
+  .fshine { fill: rgba(255, 255, 255, 0.42); }
+  .fstalk {
+    stroke: var(--bark);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-linecap: round;
+  }
   .vname {
-    fill: #4a3208;
+    fill: #45290a;
     font-size: 8px;
-    font-weight: 650;
+    font-weight: 700;
     text-anchor: middle;
     dominant-baseline: middle;
     font-family: var(--font-mono);
@@ -974,7 +1170,6 @@
     fill: var(--warn);
     font-size: 10px;
   }
-  .dot.vardot { fill: #dcaa5e; }
 
   /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ----
      --xdelay staggers the whole exit (triage's rejected branches wait for
@@ -1011,6 +1206,16 @@
     to {
       transform: scale(0);
       opacity: 0;
+    }
+  }
+  /* a triage flight: consumed argument shells (and their branches) ride to
+     the chosen branch before dissolving there */
+  .vfly {
+    animation: vfly var(--fms, 1ms) cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards;
+  }
+  @keyframes vfly {
+    to {
+      transform: translate(var(--fx, 0px), var(--fy, 0px));
     }
   }
 
