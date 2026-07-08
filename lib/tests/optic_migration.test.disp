@@ -192,7 +192,7 @@ test ((mk_key ["a", "b"] "b").over) succ (mk_rec ["a", "b"] (cons 1 (cons 2 nil)
 // (5 + 4) recognition through the REUSED kernel `at`, every former on the generic op
 test typecheck (Arrow Nat Nat) ({x} -> x)                 = Ok true       // Pi: fresh->bind ; app->check (+ H-rule)
 test typecheck (Inter Nat Nat) 5                          = Ok true       // Intersection: self->check, twice
-test typecheck (Inter Nat Nat) true                         = Ok false       // self->check rejects (true is not Nat)
+test typecheck (Inter Nat Nat) false                        = Ok false       // self->check rejects (false is not Nat)
 test typecheck (List Nat) lnil                            = Ok true
 test typecheck (List Nat) (lcons 1 (lcons 2 lnil))        = Ok true
 test typecheck (List Nat) (eleft 3)                       = Ok false       // wrong tag

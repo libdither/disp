@@ -12,7 +12,7 @@ test is_none (some 7) = false
 test Option Nat none = Ok true
 test Option Nat (some 0) = Ok true
 test Option Nat (some 42) = Ok true
-test Option Nat (some true) = Ok false
+test Option Nat (some false) = Ok false // false = △ △, no Nat shape (true = △ = zero would pass)
 // A value with an unknown tag (not some/none) is rejected
 test Option Nat (inj "huh" 5) = Ok false
 

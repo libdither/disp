@@ -100,7 +100,8 @@ pub(crate) struct Arena {
     /// compare (the two-stage susp scheme), so conversion checking is cheap — without
     /// it, in-language `tree_eq` makes kernel verification blow the host's apply budget.
     pub(crate) tree_eq_id: u32,
-    /// Scott `TT`/`FF` (the tree_eq fast-path results), built once at session init.
+    /// Bool `true`/`false` (the tree_eq fast-path results), built once at session
+    /// init: raw shapes `△` / `△ △` per TYPE_THEORY §2.7 (Scott until 2026-07-07).
     pub(crate) tt: u32,
     pub(crate) ff: u32,
     /// Scoped-reclamation watermark stack (`begin_scope`/`end_scope`). Each entry is the node
@@ -132,15 +133,13 @@ impl Arena {
         a.nodes.push(pack(Node::Leaf));
         let id = a.mk(Node::Leaf); // real LEAF interned at index 1
         debug_assert_eq!(id, LEAF_ID);
-        // Scott TT/FF — the exact trees the prelude's TT/FF compile to. Mirror
-        // src/core/tree.ts:595-596: TT = K K = fork(L, K); FF = K (K I) = fork(L, K I).
+        // Bool true/false — the exact trees the prelude's `true := t` and
+        // `false := t t` compile to (raw shapes per TYPE_THEORY §2.7). Mirror
+        // src/core/tree.ts TREE_TRUE/TREE_FALSE: true = LEAF, false = stem(LEAF).
+        // (Scott K K / K (K I) until 2026-07-07 — the §2.7 polarity migration.)
         let l = LEAF_ID;
-        let k = a.stem(l); // K = △△
-        a.tt = a.fork(l, k); // TT = fork(L, K) = K K
-        let ll = a.fork(l, l);
-        let i = a.fork(ll, l); // I = fork(fork(L,L), L)
-        let ki = a.fork(l, i); // K I = fork(L, I)
-        a.ff = a.fork(l, ki); // FF = fork(L, K I) = K (K I)
+        a.tt = l; // true = △
+        a.ff = a.stem(l); // false = △ △ (K's tree)
         a
     }
 

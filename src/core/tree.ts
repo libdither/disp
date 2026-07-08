@@ -475,7 +475,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
       if (st.treeEqId !== -1 && curF.f.id === st.treeEqId) {
         traceApply("tree_eq", curF, curX, stackTop)
         counters.treeEqRules++
-        const r = deliver(treeEqual(curF.a, curX) ? SCOTT_TT : SCOTT_FF)
+        const r = deliver(treeEqual(curF.a, curX) ? TREE_TRUE : TREE_FALSE)
         if (r !== null) return r; continue
       }
       curF = force(curF); continue
@@ -587,13 +587,13 @@ export const K = stem(LEAF)
 //   I(fork(u,v)): Rule 3c → apply(apply(LEAF, u), v) = fork(u,v) ✓
 export const I = fork(fork(LEAF, LEAF), LEAF)
 
-// Scott-encoded Bool constants (per spec §4.5). These are the exact
-// hash-cons-identity trees produced when the prelude compiles
-// `true := {m,ct,cf} -> ct` (= K K) and `false := {m,ct,cf} -> cf`
-// (= K (K I)). Captured here so the tree_eq fast-path can return them
-// directly without needing a runtime hook from compile.ts.
-export const SCOTT_TT = fork(LEAF, K)               // K K
-export const SCOTT_FF = fork(LEAF, fork(LEAF, I))   // K (K I)
+// Bool constants (raw shapes per TYPE_THEORY §2.7). These are the exact
+// hash-cons-identity trees the prelude's `true := t` and `false := t t`
+// compile to. Captured here so the tree_eq fast-path can return them
+// directly without needing a runtime hook from compile.ts. (Scott-encoded
+// K K / K (K I) until 2026-07-07 — the §2.7 polarity migration.)
+export const TREE_TRUE = LEAF                       // △
+export const TREE_FALSE = K                         // △ △ = stem(LEAF)
 
 // --- tree_eq host fast path ---
 // `tree_eq` is defined as a recursive tree program in lib/prelude.disp. The host

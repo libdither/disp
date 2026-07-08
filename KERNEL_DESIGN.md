@@ -208,9 +208,9 @@ later check on the stored type fails deterministically.
 dispatcher fast-path (the legacy native walker was removed in the
 cutover, and re-introducing one would require restoring an equivalence
 test). The only live native fast-path is `tree_eq`, which short-
-circuits to a hash-cons identity check and returns the exact Scott
-`true`/`false` trees — bit-identical to the in-language reference, which is
-the spec.
+circuits to a hash-cons identity check and returns the exact `true`/`false`
+trees (raw shapes `△` / `△ △`, TYPE_THEORY §2.7) — bit-identical to the
+in-language reference, which is the spec.
 
 The walker's reader carve-outs (run raw instead of being reduced) are
 `ROOT_SIG` (`pair_fst`), `STORED_TYPE` (`neutral_type`), `I_canonical`

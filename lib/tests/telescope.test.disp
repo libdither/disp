@@ -53,7 +53,7 @@ test typecheck Type T2 = Ok true
 let TDep := Telescope (t (ent "T" Type) ({T} -> t (ent "x" T) ({_x} -> t)))
 test typecheck TDep { T := Nat; x := 3 } = Ok true
 test typecheck TDep { T := Bool; x := false } = Ok true
-test param_apply TDep { T := Nat; x := true } = Ok false // x not a Nat
+test param_apply TDep { T := Nat; x := false } = Ok false // x not a Nat
 
 // ---- derived field: { a : Nat, b := double a } ----
 let TD := Telescope (t (ent "a" Nat) ({a} -> t (dent "b" (double a)) ({_b} -> t)))

@@ -13,7 +13,7 @@ open use "../std/list.disp"
 // ── recognition still holds after the Coproduct_p migration ──
 test typecheck (Option Nat) (some 5)   = Ok true
 test typecheck (Option Nat) none       = Ok true
-test typecheck (Option Nat) (some true)  = Ok false       // payload not a Nat
+test typecheck (Option Nat) (some false) = Ok false       // payload not a Nat
 test typecheck (Result Nat Bool) (ok true)  = Ok true    // ok holds A=Bool
 test typecheck (Result Nat Bool) (err 3)  = Ok true    // err holds E=Nat
 test typecheck (Either Nat Bool) (left 3) = Ok true

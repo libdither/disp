@@ -24,7 +24,7 @@ let Event := < Error : Nat, Success : Bool, Done >
 test param_apply Event (inj "Error" zero)   = Ok true
 test param_apply Event (inj "Success" true)   = Ok true
 test param_apply Event (inj "Done" t)       = Ok true   // nullary value: payload is t
-test param_apply Event (inj "Error" true)     = Ok false   // Error expects Nat, got Bool
+test param_apply Event (inj "Error" false)    = Ok false   // Error expects Nat, got Bool
 test param_apply Event (inj "Nope" t)       = Ok false   // unknown tag
 test typecheck Type Event                   = Ok true   // Event is a real Type
 

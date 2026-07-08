@@ -21,9 +21,9 @@ let my_list_disp := fix ({self, motive, cases, target} ->
 let my_list_rec := {motive, nil_case, cons_case, target} -> elim my_list_disp motive { nil := nil_case; cons := cons_case } target
 
 // ── R3: the gate CLOSES the gap (each line was Ok true pre-gate) ──
-let lying := {xs} -> my_list_rec ({_} -> Nat) true ({h, tl, ih} -> true) xs
+let lying := {xs} -> my_list_rec ({_} -> Nat) false ({h, tl, ih} -> false) xs
 test param_apply (Pi NatList ({_} -> Nat)) lying = Ok false                  // gate rejects the lie at the function
-test lying nil = true                                                       // the raw value is still junk (true) — but now untypeable
+test lying nil = false                                                      // the raw value is still junk (false) — but now untypeable
 let bad_eq := {xs} -> my_list_rec ({z} -> Eq NatList nil z) refl ({h, tl, ih} -> refl) xs
 test param_apply (Pi NatList ({z} -> Eq NatList nil z)) bad_eq = Ok false    // gate rejects the dishonest cons-case
 

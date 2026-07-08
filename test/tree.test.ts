@@ -3,7 +3,7 @@ import {
   LEAF, stem, fork, isLeaf, isStem, isFork,
   treeEqual, treeApply, apply, applyTree, BudgetExhausted,
   K, I, prettyTree, force,
-  SCOTT_TT, SCOTT_FF, setTreeEqId, getTreeEqId, clearApplyCache, resetApplyStats, getApplyStats,
+  TREE_TRUE, TREE_FALSE, setTreeEqId, getTreeEqId, clearApplyCache, resetApplyStats, getApplyStats,
   type Tree,
 } from "../src/core/tree.js"
 import { parseProgram } from "../src/compile.js"
@@ -191,7 +191,7 @@ describe("constants", () => {
 
 // The tree_eq fast-path represents `tree_eq a` as the honest suspended-application
 // P(tree_eq, a) instead of a synthetic marker. These tests pin the two properties
-// that justify it: (1) correctness — full application yields the right Scott bool;
+// that justify it: (1) correctness — full application yields the right bool verdict;
 // (2) TRANSPARENCY — the partial is observationally identical to the genuine
 // recursive-triage reduct the spec would produce, which the old marker was not.
 describe("tree_eq suspension (P node)", () => {
@@ -223,10 +223,10 @@ describe("tree_eq suspension (P node)", () => {
     expect(getApplyStats().steps).toBe(0)            // interception, no reduction
   })
 
-  it("two-step application gives the right Scott bool", () => {
-    expect(treeEqual(apply(apply(teq, a1), a1), SCOTT_TT)).toBe(true)
-    expect(treeEqual(apply(apply(teq, a1), a2), SCOTT_FF)).toBe(true)
-    expect(treeEqual(apply(apply(teq, LEAF), LEAF), SCOTT_TT)).toBe(true)
+  it("two-step application gives the right bool verdict", () => {
+    expect(treeEqual(apply(apply(teq, a1), a1), TREE_TRUE)).toBe(true)
+    expect(treeEqual(apply(apply(teq, a1), a2), TREE_FALSE)).toBe(true)
+    expect(treeEqual(apply(apply(teq, LEAF), LEAF), TREE_TRUE)).toBe(true)
   })
 
   it("the partial is TRANSPARENT: indistinguishable from the genuine reduct", () => {

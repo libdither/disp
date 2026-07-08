@@ -14,7 +14,7 @@ test stream_take (succ (succ (succ zero))) nats = cons zero (cons (succ zero) (c
 // ── recognition TERMINATES on the infinite stream (checks the generator, not the stream) ──
 test typecheck (Stream Nat) nats   = Ok true
 test typecheck Type (Stream Nat)   = Ok true                       // Stream A is a real Type
-test param_apply (Stream Nat) (unfold ({n} -> { head := true; tail := n }) zero) = Ok false  // bad head
+test param_apply (Stream Nat) (unfold ({n} -> { head := false; tail := n }) zero) = Ok false  // bad head
 test param_apply (Stream Nat) zero = Ok false                       // not a generator at all
 
 // ── Fibonacci stream (seed = (a,b); head = a; tail = (b, a+b)) ──

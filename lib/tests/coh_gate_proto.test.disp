@@ -20,11 +20,11 @@ let resp_tele := gated_inductive_respond coh_tele
 // ════════ (A) RUNTIME CORRECTNESS — the unification, validated ════════
 let cmotive := {_} -> Nat                          // constant motive P n = Nat
 test coh_tele Nat cmotive { base := zero; step := {n} -> {ih} -> succ ih } = Ok true  // coherent
-test coh_tele Nat cmotive { base := true;   step := {n} -> {ih} -> succ ih } = Ok false  // base : not Nat
-test coh_tele Nat cmotive { base := zero; step := {n} -> {ih} -> true }      = Ok false  // step : not Nat
+test coh_tele Nat cmotive { base := false;  step := {n} -> {ih} -> succ ih } = Ok false  // base : not Nat (false = △ △; true = △ = zero)
+test coh_tele Nat cmotive { base := zero; step := {n} -> {ih} -> false }     = Ok false  // step : not Nat
 let dmotive := {n} -> Eq Nat n n                   // DEPENDENT motive P n = (n = n)
 test coh_tele Nat dmotive { base := refl; step := {n} -> {ih} -> refl } = Ok true     // dependent, coherent
-test coh_tele Nat dmotive { base := true;   step := {n} -> {ih} -> refl } = Ok false     // base : not a proof
+test coh_tele Nat dmotive { base := false;  step := {n} -> {ih} -> refl } = Ok false     // base : not a proof (true = △ = refl)
 
 // ════════ (B) THE BET — now fully closed: seal (R1) + walkable param_apply (2026-07-01) ════════
 // hand-rolled coh_nat, with its internal bind_hyp SEALED (R1, apply_policed, runtime-identical),

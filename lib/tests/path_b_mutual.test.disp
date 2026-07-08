@@ -22,8 +22,8 @@ test typecheck (Tree Nat) (leaf 5)                                       = Ok tr
 test typecheck (Tree Nat) (node empty)                                   = Ok true
 test typecheck (Tree Nat) (node (fcons (leaf 1) (fcons (leaf 2) empty))) = Ok true  // Tree -> Forest -> Tree -> …
 test typecheck (Forest Nat) (fcons (leaf 1) empty)                       = Ok true
-test typecheck (Tree Nat) (node (fcons (leaf true) empty))                 = Ok false  // a leaf carries a non-Nat
-test typecheck (Tree Nat) (leaf true)                                      = Ok false
+test typecheck (Tree Nat) (node (fcons (leaf false) empty))                 = Ok false  // a leaf carries a non-Nat
+test typecheck (Tree Nat) (leaf false)                                      = Ok false
 test typecheck Type (Tree Nat)                                           = Ok true  // both are real Types
 test typecheck Type (Forest Nat)                                         = Ok true
 

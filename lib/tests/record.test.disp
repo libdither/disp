@@ -23,7 +23,7 @@ test get_b { a := zero; b := true } = true
 // ---- surface records interoperate with the Record TYPE via string names ----
 let MyRec := Record [pair "a" Nat, pair "b" Bool]
 test typecheck MyRec { a := zero; b := true } = Ok true
-test param_apply MyRec { a := true; b := true } = Ok false // a should be a Nat
+test param_apply MyRec { a := false; b := true } = Ok false // a should be a Nat (false = △ △; true = △ = zero)
 
 // ---- a record literal as kernel metadata: read a field by name at runtime ----
 // (the shape step 3 relies on: a 4-field record projected by an accessor fn)

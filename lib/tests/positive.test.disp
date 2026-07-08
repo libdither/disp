@@ -11,8 +11,8 @@ let ByName := Telescope (t (proj_cell "fst" Nat) ({_} -> t (proj_cell "snd" Bool
 test typecheck ByName (pair 2 true) = Ok false                            // proj-by-name fails on a raw pair
 let ByPos := Telescope (t (pos_cell pair_fst Nat) ({_} -> t (pos_cell pair_snd Bool) ({_} -> t)))
 test typecheck ByPos (pair 2 true)  = Ok true                            // positional: raw pair recognized
-test typecheck ByPos (pair 2 zero) = Ok false                           // snd not a Bool
-test typecheck ByPos (pair true true) = Ok false                            // fst not a Nat
+test typecheck ByPos (pair 2 (succ zero)) = Ok false                    // snd not a Bool (zero = △ = true)
+test typecheck ByPos (pair false true) = Ok false                           // fst not a Nat
 
 // ── a recursive, multi-arg datatype as a ONE-LINE spec — NO recognizer body:
 //      NatList = nil | cons (head : Nat) (tail : NatList)
@@ -26,8 +26,8 @@ test typecheck NatList nl_nil                              = Ok true   // base c
 test typecheck NatList (nl_cons 2 nl_nil)                  = Ok true   // one element
 test typecheck NatList (nl_cons 2 (nl_cons 3 nl_nil))      = Ok true   // RECURSION via REC -> self
 test typecheck NatList (nl_cons 2 (nl_cons 3 (nl_cons 4 nl_nil))) = Ok true
-test typecheck NatList (nl_cons true nl_nil)                 = Ok false   // head not a Nat
-test typecheck NatList (nl_cons 2 (nl_cons true nl_nil))     = Ok false   // nested head not a Nat
+test typecheck NatList (nl_cons false nl_nil)                = Ok false   // head not a Nat
+test typecheck NatList (nl_cons 2 (nl_cons false nl_nil))    = Ok false   // nested head not a Nat
 test typecheck NatList (nl_cons 2 true)                      = Ok false   // tail not a NatList
 test typecheck NatList (inj "bogus" t)                     = Ok false   // unknown tag
 test typecheck Type NatList                               = Ok true   // the self-aware sum is a real Type
@@ -41,7 +41,7 @@ let bt_node := {l, x, r} -> inj "node" (pair l (pair x r))            // inj3 la
 test typecheck BinTree bt_leaf                                              = Ok true
 test typecheck BinTree (bt_node bt_leaf 5 bt_leaf)                          = Ok true
 test typecheck BinTree (bt_node (bt_node bt_leaf 1 bt_leaf) 2 bt_leaf)      = Ok true  // nested left
-test typecheck BinTree (bt_node bt_leaf true bt_leaf)                         = Ok false  // middle arg not a Nat
+test typecheck BinTree (bt_node bt_leaf false bt_leaf)                        = Ok false  // middle arg not a Nat
 test typecheck BinTree (bt_node bt_leaf 5 zero)                             = Ok false  // right arg not a BinTree
 
 // ── eliminator = the §2.6 cut (surface `match`): project the case, spread args, recurse on REC.

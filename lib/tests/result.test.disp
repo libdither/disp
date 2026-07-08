@@ -15,7 +15,7 @@ test Result Bool Nat (err true) = Ok true
 test Result Bool Nat (err false) = Ok true
 
 // Type mismatches
-test Result Bool Nat (ok true) = Ok false
+test Result Bool Nat (ok false) = Ok false // ok payload must be Nat; false = △ △ is none (true = △ = zero would pass)
 test Result Bool Nat (err 3) = Ok false
 
 // Bad shapes / unknown tags

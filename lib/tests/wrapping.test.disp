@@ -38,7 +38,7 @@ test param_apply compose3T ({f} -> {g} -> {h} -> {x} -> f (g (h x))) = Ok true
 // B. ILL-TYPED — must be a CLEAN Ok false (genuine type mismatch), reliably
 // ================================================================
 test param_apply (Arrow Nat Bool) ({n} -> n)          = Ok false // Nat body for Bool codomain
-test param_apply (Arrow Nat Nat) ({n} -> true)          = Ok false // Bool body for Nat codomain
+test param_apply (Arrow Nat Nat) ({n} -> false)         = Ok false // Bool body for Nat codomain (false = △ △; true = △ = zero would pass)
 test param_apply appT ({f} -> {x} -> f x x)           = Ok false // f:Nat->Nat applied to 2 args
 test param_apply flip2T ({f} -> {x} -> {y} -> f x y)  = Ok true // η: {x}{y}->f x y = f, inhabits
 test param_apply (Arrow Nat Nat) ({f} -> {x} -> f x)  = Ok true // η: {f}{x}->f x = identity

@@ -7,15 +7,20 @@ open use "../kernel/prelude.disp"
 // ---- recognition via param_apply (the dispatcher) ----
 test param_apply Bool true = Ok true
 test param_apply Bool false = Ok true
-test param_apply Bool zero = Ok false
+test param_apply Bool (succ zero) = Ok false // fork(△,△): neither bool shape
 test param_apply Nat zero = Ok true
 test param_apply Nat (succ (succ zero)) = Ok true
-test param_apply Nat true = Ok false
+test param_apply Nat false = Ok false // stem(△): not a Nat shape
+// Shape collisions are doctrine, not accident (TYPE_THEORY §2.6/§2.7):
+// true = △ = zero, so each type claims the other's constant. Recognizers are
+// decision procedures among type-respecting candidates, not tree classifiers.
+test param_apply Bool zero = Ok true // zero IS true structurally
+test param_apply Nat true = Ok true  // true IS zero structurally
 
 // ---- typecheck (sanitize + recognize); closed queries only ----
 test typecheck Bool true = Ok true
 test typecheck Nat (succ zero) = Ok true
-test typecheck Bool zero = Ok false
+test typecheck Bool (succ zero) = Ok false
 
 // param_lift rejects a public neutral
 test param_lift (make_hyp Nat 0) = Err
@@ -62,12 +67,14 @@ test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err // x inside a us
 // const, and constructor-building bodies (e.g. `succ y`) qualify — the recogniser
 // is H-rule-aware at every level (§A). Genuinely case-analysing bodies still route
 // through the eliminator, which gates its cases against the motive (§B).
+// (`false` is the canonical wrong-type value below: true = △ = zero collides
+// with Nat, false = △ △ is no Nat shape — TYPE_THEORY §2.7 collision doctrine.)
 let id_nat := {n} -> n
-let const_true := {n} -> true
+let const_false := {n} -> false
 test param_apply (Pi Nat ({_} -> Nat)) id_nat = Ok true // id : Nat -> Nat
 test typecheck (Arrow Nat Nat) id_nat = Ok true // same via Arrow + typecheck
-test param_apply (Pi Nat ({_} -> Bool)) const_true = Ok true // const true : Nat -> Bool
-test param_apply (Pi Nat ({_} -> Nat)) const_true = Ok false // body returns Bool, not Nat
+test param_apply (Pi Nat ({_} -> Bool)) const_false = Ok true // const false : Nat -> Bool
+test param_apply (Pi Nat ({_} -> Nat)) const_false = Ok false // body returns Bool, not Nat
 test param_apply (Pi Bool ({_} -> Nat)) id_nat = Ok false // domain mismatch -> clean verdict
 
 // (§A) constructor-over-the-argument now checks: the recogniser re-applies the
@@ -77,8 +84,8 @@ test param_apply (Pi Nat ({_} -> Nat)) ({y} -> succ y) = Ok true
 // (§B) the eliminator's cases must inhabit the motive. Enforced in the TYPE's
 // respond (keyed off the neutral's stored type), so it is UNBYPASSABLE: the kernel
 // recursor, a hand-rolled recursor, and raw neutral application are all gated.
-let lying  := {y} -> nat_rec ({_} -> Nat) true ({p, ih} -> true) y // base/step Bool, motive says Nat
-let lying2 := {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> true) y // correct base, lying step
+let lying  := {y} -> nat_rec ({_} -> Nat) false ({p, ih} -> false) y // base/step Bool, motive says Nat
+let lying2 := {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> false) y // correct base, lying step
 let honest := {y} -> nat_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y
 test param_apply (Pi Nat ({_} -> Nat)) lying  = Ok false // incoherent cases -> rejected
 test param_apply (Pi Nat ({_} -> Nat)) lying2 = Ok false // step lie also caught
@@ -90,15 +97,15 @@ test honest (succ (succ zero)) = succ (succ zero) // value-transparent on concre
 let my_dispatcher := fix ({self, motive, cases, target} ->
   if (tree_eq target zero) then cases.zero else (cases.succ (pair_snd target) (self motive cases (pair_snd target))))
 let my_rec := {motive, base, step, target} -> elim my_dispatcher motive { zero := base; succ := step } target
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) true ({p, ih} -> true) y)        = Ok false
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) false ({p, ih} -> false) y)        = Ok false
 test param_apply (Pi Nat ({_} -> Nat)) ({y} -> my_rec ({_} -> Nat) zero ({p, ih} -> succ ih) y) = Ok true
 // applying the neutral to a hand-built frame directly is also gated (Option A:
 // `y frame` is already a bare stuck neutral, so no must_ok_or_self to unwrap):
-test param_apply (Pi Nat ({_} -> Nat)) ({y} -> y { motive := ({_} -> Nat); cases := { zero := true; succ := ({p, ih} -> true) } }) = Ok false
+test param_apply (Pi Nat ({_} -> Nat)) ({y} -> y { motive := ({_} -> Nat); cases := { zero := false; succ := ({p, ih} -> false) } }) = Ok false
 // and you cannot bypass by DESTRUCTURING the neutral -- triage on a hyp is rejected:
 test param_apply (Pi Nat ({_} -> Nat)) ({y} -> pair_snd y) = Err
 // the gate is general: Bool's recursor is gated the same way (no recursive args).
-test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) true true b)            = Ok false
+test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) false false b)            = Ok false
 test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) zero (succ zero) b)  = Ok true
 
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----

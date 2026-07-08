@@ -23,7 +23,7 @@ test list_map_succ xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
 test List Bool nil = Ok true
 test List Bool (cons true (cons false nil)) = Ok true
 test List Bool (cons 5 nil) = Ok false
-test List Nat (cons 1 (cons true nil)) = Ok false
+test List Nat (cons 1 (cons false nil)) = Ok false // false = △ △, no Nat shape (true = △ = zero would pass)
 
 // list_map applied to a simple closed function.
 test list_map ({n} -> succ n) xs = list_cons 2 (list_cons 3 (list_cons 4 nil))

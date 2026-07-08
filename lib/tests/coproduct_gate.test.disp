@@ -15,25 +15,25 @@ let cNat := {_} -> Nat
 
 // ── coh_check directly (the kernel gate): coherent accept, incoherent reject ──
 test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } = Ok true   // coherent
-test coh_check t MyNat cNat { z := true;   s := ({p, ih} -> succ ih) } = Ok false   // base : not Nat
-test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> true) } = Ok false        // step : not Nat
+test coh_check t MyNat cNat { z := false;  s := ({p, ih} -> succ ih) } = Ok false   // base : not Nat
+test coh_check t MyNat cNat { z := zero; s := ({p, ih} -> false) } = Ok false       // step : not Nat
 // 2 rec args + 2 IHs (the make-or-break: body uses both outer hyps):
 test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> add iha ihb) } = Ok true
-test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> true) } = Ok false
+test coh_check t MyTree cNat { leaf := zero; node := ({a, b, iha, ihb} -> false) } = Ok false
 // dependent motive P x = Eq MyNat x x:
 let dNat := {x} -> Eq MyNat x x
 test coh_check t MyNat dNat { z := refl; s := ({p, ih} -> refl) } = Ok true
-test coh_check t MyNat dNat { z := true;   s := ({p, ih} -> refl) } = Ok false
+test coh_check t MyNat dNat { z := false;  s := ({p, ih} -> refl) } = Ok false
 
 // ── `check` directly: η-readback a value against a Π / a base type ──
 test eta_check ({n} -> n) (Pi Nat ({_} -> Nat)) = Ok true                          // id : Nat -> Nat
-test eta_check ({n} -> true) (Pi Nat ({_} -> Nat)) = Ok false                         // body returns Bool
+test eta_check ({n} -> false) (Pi Nat ({_} -> Nat)) = Ok false                         // body returns Bool
 test eta_check zero Nat = Ok true                                                  // base: recognize
 
 // ── END-TO-END via the generic recursor `rec_value`: a neutral target routes through the gated
 //    respond, so a lying recursor is REJECTED at the function (the gap, CLOSED) ──
 test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } x) = Ok true  // honest
-test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> true) } x)       = Ok false  // GAP CLOSED
+test param_apply (Arrow MyNat Nat) ({x} -> rec_value MyNat cNat { z := zero; s := ({p, ih} -> false) } x)      = Ok false  // GAP CLOSED
 test rec_value MyNat cNat { z := zero; s := ({p, ih} -> succ ih) } (inj "s" (inj "z" t)) = succ zero          // computes concretely
 
 // ── the new wins vs the old hand-rolled gate: the recursor's OWN TYPE verifies (HYP cases), and

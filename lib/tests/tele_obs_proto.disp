@@ -36,4 +36,4 @@ test param_apply (Eq_o Nat zero (succ zero)) refl       = param_apply (Eq Nat ze
 test param_apply (Eq_o Nat zero zero) (succ zero)       = Ok false       // only refl inhabits
 // also confirm qid itself is just obs(self, ty): obs-based vs the kernel qid_cell on a plain membership
 test param_apply (tele_with (t (obs_cell self_optic Nat) ({_} -> t)) inert_respond) zero = Ok true
-test param_apply (tele_with (t (obs_cell self_optic Nat) ({_} -> t)) inert_respond) true   = Ok false
+test param_apply (tele_with (t (obs_cell self_optic Nat) ({_} -> t)) inert_respond) false   = Ok false

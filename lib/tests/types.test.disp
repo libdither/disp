@@ -50,12 +50,12 @@ test typecheck String unit_val = Ok true // String is permissive
 test typecheck (Eq Nat zero zero) refl = Ok true
 test param_apply (Eq Nat zero (succ zero)) refl = Ok false
 test typecheck (Sigma Nat ({_} -> Bool)) { fst := zero; snd := true } = Ok true
-test param_apply (Sigma Nat ({_} -> Bool)) { fst := zero; snd := zero } = Ok false
+test param_apply (Sigma Nat ({_} -> Bool)) { fst := zero; snd := (succ zero) } = Ok false // snd not a Bool (zero = △ = true)
 test typecheck (Refinement Nat ({n} -> tree_eq n zero)) zero = Ok true
 test param_apply (Refinement Nat ({n} -> tree_eq n zero)) (succ zero) = Ok false
 test typecheck Ord zero_ord = Ok true
 test typecheck Ord (omega_plus zero_ord zero_ord) = Ok true
-test param_apply Ord true = Ok false
+test param_apply Ord false = Ok false // stem shape: no Ord (true = △ = zero_ord)
 
 // ---- Coproduct / Record / the cut (§2.6), using [..] array-literal sugar ----
 // Tags are string names, so `match`'s arm spellings agree with `inj`/Coproduct.
@@ -70,7 +70,7 @@ test [] = nil
 let MySum := Coproduct [pair tag_a [Nat], pair tag_b [Bool]]
 test param_apply MySum (inj tag_a zero) = Ok true
 test param_apply MySum (inj tag_b true) = Ok true
-test param_apply MySum (inj tag_a true) = Ok false // a expects Nat, got Bool
+test param_apply MySum (inj tag_a false) = Ok false // a expects Nat, got Bool
 test param_apply MySum (inj (t t t) zero) = Ok false // unknown tag
 
 // n-ary `match` desugars to the cut: dispatch on the tag, feed the payload to
@@ -86,7 +86,7 @@ test make_record [tag_a, tag_b] [{n} -> succ n, {x} -> x] (inj tag_a zero) = suc
 let MyRec := Record [pair tag_a Nat, pair tag_b Bool]
 let r := make_record [tag_a, tag_b] [list_const zero, list_const true]
 test typecheck MyRec r = Ok true
-test param_apply MyRec (make_record [tag_a, tag_b] [list_const true, list_const true]) = Ok false
+test param_apply MyRec (make_record [tag_a, tag_b] [list_const false, list_const true]) = Ok false
 test field r tag_a = zero // r.a
 test field r tag_b = true // r.b
 
@@ -144,7 +144,7 @@ test param_apply (Not Unit) ({_} -> unit_val) = Ok false // can't produce False 
 // ---- Intersection A P: v inhabits iff (P hyp) v for a fresh A-hyp ----
 test typecheck Type (Intersection Nat ({_} -> Nat)) = Ok true
 test param_apply (Intersection Nat ({_} -> Nat)) (succ zero) = Ok true
-test param_apply (Intersection Nat ({_} -> Nat)) true = Ok false
+test param_apply (Intersection Nat ({_} -> Nat)) false = Ok false
 
 // ---- inert respond: eliminating a neutral of an inert type -> dead state ----
 let hF := make_hyp False 0

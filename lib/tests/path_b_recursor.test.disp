@@ -58,8 +58,8 @@ test PN_rec ({_} -> Nat) zero ({n, ih} -> succ ih) (ps (ps pz)) = 2
 //    (_->Nat) it computes Record [(zero, Nat), (succ, PN -> Nat -> Nat)] — args Π-bound, IH per rec
 //    position, conclusion at the reconstructed constructor. ──
 test typecheck (derive_case_telescope PN ({_} -> Nat)) { zero := zero; succ := ({n, ih} -> succ ih) } = Ok true
-test param_apply (derive_case_telescope PN ({_} -> Nat)) { zero := true; succ := ({n, ih} -> succ ih) }   = Ok false  // zero must be a Nat
-test param_apply (derive_case_telescope PN ({_} -> Nat)) { zero := zero; succ := ({n, ih} -> true) }       = Ok false  // succ must return a Nat
+test param_apply (derive_case_telescope PN ({_} -> Nat)) { zero := false; succ := ({n, ih} -> succ ih) }  = Ok false  // zero must be a Nat
+test param_apply (derive_case_telescope PN ({_} -> Nat)) { zero := zero; succ := ({n, ih} -> false) }      = Ok false  // succ must return a Nat
 // rec_value PN is now FULLY typed with the GENERATED cases telescope — no hand-written recursor type:
 PN_rec2 : {P : PN -> Type} -> derive_case_telescope PN P -> {x : PN} -> P x := rec_value PN
 test PN_rec2 ({_} -> Nat) { zero := zero; succ := ({n, ih} -> succ ih) } (ps (ps pz)) = 2
@@ -68,6 +68,6 @@ test PN_rec2 ({_} -> Nat) { zero := zero; succ := ({n, ih} -> succ ih) } (ps (ps
 // (two IHs), leaf's is `Π n:Nat. P (leaf n)`. So for motive (_->Nat) the derived telescope is
 // Record [(leaf, Nat -> Nat), (node, BT -> BT -> Nat -> Nat -> Nat)].
 test typecheck (derive_case_telescope BT ({_} -> Nat)) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> add ihl ihr) } = Ok true
-test param_apply (derive_case_telescope BT ({_} -> Nat)) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> true) }       = Ok false
+test param_apply (derive_case_telescope BT ({_} -> Nat)) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> false) }       = Ok false
 BT_rec : {P : BT -> Type} -> derive_case_telescope BT P -> {x : BT} -> P x := rec_value BT
 test BT_rec ({_} -> Nat) { leaf := ({n} -> n); node := ({l, r, ihl, ihr} -> add ihl ihr) } bt = 6

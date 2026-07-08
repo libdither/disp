@@ -267,7 +267,7 @@ to avoid re-introducing them inline:
     [*Name*], [*Meaning*],
     [`Tree`], [Any tree in the substrate (§2.1).],
     [`Tree_p`], [Trees on which the parametric walker is closed under `Ok` (§4).],
-    [`Bool`], [`true` / `false` Scott encoding (`lib/prelude.disp`); see §12.],
+    [`Bool`], [`true = △` / `false = △ △` — raw shapes branded by the Bool view (`lib/prelude.disp`, §2.7); see §12.],
     [`List X`], [Standard cons/nil list of `X`-trees; iterated `pair`s.],
     [`Optional X`], [`Some x` / `None`; sentinel-tagged.],
     [`Span`],
@@ -553,13 +553,13 @@ subsumes `select` (the two-constructor Bool case), the per-type recursors of
   because they are needed during bootstrap, before `Coproduct` itself exists.
   Same cut, same tag policy.
 
-  `Bool` is the nullary coproduct `< true, false >`; it keeps its Scott encoding
-  (§12) because it is the substrate's branching primitive and must apply
-  directly as `select`. The Scott encoding *is* the cut internalized — the value
-  carries its own handler-selection instead of waiting for a product — so it
-  optimizes the general eliminator rather than being a separate mechanism. It is
-  also the one value left on the wrong side of §2.7's polarity line (data that
-  drives), and §2.7 closes with the case for retiring it.
+  `Bool` is the nullary coproduct `< true, false >`, shape-encoded on the raw
+  trees `true = △`, `false = △ △` (§2.7) and branded by the view iso in its
+  meta — exactly `Nat`'s mechanism. It is the substrate's branching primitive:
+  `select`/`cond` build the triage table and apply it to the bool, the
+  consumer-drives direction §2.7 fixes. (Scott-encoded until 2026-07-07 — the
+  cut internalized, a value carrying its own handler-selection; §2.7 records
+  why that pole was retired.)
 ]
 
 == Polarity: who drives an elimination <sec:polarity>
@@ -676,15 +676,16 @@ raw trees:
   Ariola, Peyton Jones, "Codata in action" (ESOP 2019).
 ]
 
-One value class still sits on the wrong side of the line: Scott-encoded
-`true`/`false` (§2.6 note). A Scott bool is data that drives (`cond c a b`
-applies the bool to its branches), the one refunctionalized citizen left in the
-kernel. It has been tolerable because both variants are nullary and
-fixed-shape, so recognition is two exact `tree_eq`s with no payload to walk,
-but the discipline points the same way as the substrate: re-encode `Bool` as
-raw shapes with a view (`true = △`, `false = △ △`, branching by triage), a
-shape-encoded coproduct exactly like `Nat` and `Ord`. Tracked in
-`lib/prelude.disp`.
+One value class used to sit on the wrong side of the line: Scott-encoded
+`true`/`false` were data that drives (`cond c a b` applied the bool to its
+branches), the one refunctionalized citizen in the kernel — tolerable because
+both variants were nullary and fixed-shape, so recognition was two exact
+`tree_eq`s with no payload to walk. Re-encoded 2026-07-07 to the raw shapes
+`true = △`, `false = △ △`, with branching by triage (`select`/`cond` build the
+case table and apply it to the bool): a shape-encoded coproduct exactly like
+`Nat` and `Ord`, branded by the view iso in its meta. No exceptions remain.
+(One consequence to know: `true = △ = zero = nil = refl` — the smallest
+constants of different types share one tree, per the §2.6 collision doctrine.)
 
 = The `CheckerResult` monad <sec:result-monad>
 
@@ -2746,9 +2747,8 @@ here. The latter is the one genuinely *type-directed* step, and the only place
   `Coproduct [(Vi, Si)]`, rewrites each value's tag `Vi` to
   `index_of [V1..Vn] Vi`, and lowers the `cases` product to a positional branch
   tuple keyed by that same index — consistent because both sides use the one
-  variant order. A single-variant sum needs no index (one branch); the Scott
-  encoding (`Bool`) carries its selector in the value and needs no table at all
-  (§2.6). Everywhere else — `checked`, record — the value is self-describing and
+  variant order. A single-variant sum needs no index (one branch); `Bool`'s raw
+  shapes are already the bare index (`△` / `△ △`, §2.7) — no tag to rewrite. Everywhere else — `checked`, record — the value is self-describing and
   `strip` needs no type. This is the no-typing-derivation analogue of
   type-directed erasure (§17): the schema is threaded from the enclosing `checked`
   ascription and the value's own headers, not from a typing tree.
@@ -2765,8 +2765,8 @@ the elided contract and name-resolution overhead.
 (every field present, in order), so it lowers to a bare positional tuple. For a
 sum, one residue: the variant *index*, the genuinely dynamic "which one." It is
 no longer a name but a minimal positional tag (≈ `log₂` variants of structure;
-in the Scott encoding not even a data field, just which branch the value picks;
-a single-variant sum strips even that). That residue is the operational content
+for `Bool`'s raw shapes not even a data field — the shape itself is the index
+(§2.7); a single-variant sum strips even that). That residue is the operational content
 of *polarity* (§17): a product is negative and fully static, a sum positive with
 one dynamic index.
 
@@ -3567,10 +3567,10 @@ a coherence law that `BehavioralType` can run.
   to the handful of `Return`-using responds.
 ]
 
-The concrete branch's `dispatcher` is walker-safe: for Scott-encoded
-types it's plain application (no triage); for tagged-sum types it
-triages on `target`, which the gate guarantees is concrete (triage on
-concrete values is walker-safe).
+The concrete branch's `dispatcher` is walker-safe: it triages on
+`target` — directly for tagged sums, through the functor view for
+shape-encoded types (`Bool`/`Nat`/`Ord`, §2.7) — and the gate guarantees
+`target` is concrete (triage on concrete values is walker-safe).
 
 The
 distinction is purely about how the payload was constructed:
@@ -4438,17 +4438,20 @@ the formers are built on, and the dependency runs one way only:
 - `proj`'s `index_of` / `path_at` count positions — that is `Nat`.
 
 Defining the primitives *through* the formers would therefore be circular. `Bool`
-is the sharpest case: it must keep its Scott encoding because it *is* the
-substrate's branch (`select` / `triage`), and a
-`Coproduct [(True, Unit), (False, Unit)]` recognizer would reject the actual `true`
-— a Scott value carries no tag in `pair_fst` to match against. The hand-built
-minimal-tag enums `Result` and `Action` are primitive for the same reason (§2.6).
+is the sharpest case: it *is* the substrate's branch (`select` / `triage`), so it
+stays primitive — hand-built raw shapes `true = △`, `false = △ △` (§2.7;
+Scott-encoded until 2026-07-07), branded `Bool` by the view iso in its meta
+exactly like `Nat`'s zero/succ. A bare `Coproduct [(true, Unit), (false, Unit)]`
+recognizer would still reject the actual values — a raw shape carries no tag in
+`pair_fst` to match against — which is exactly what the view bridges. The
+hand-built minimal-tag enums `Result` and `Action` are primitive for the same
+reason (§2.6).
 
 What the floor *shares* with the derived formers is the elimination, not the
-encoding. A neutral `Bool` and a neutral `Coproduct [(True, Unit), (False, Unit)]`
+encoding. A neutral `Bool` and a neutral `Coproduct [(true, Unit), (false, Unit)]`
 both respond through `inductive_respond` (§12.3), and the concrete branch of
-`elim` abstracts the encoding gap — plain application for Scott types, a triage
-for tagged sums. So the unification is real but lives at the level of *the cut's
+`elim` abstracts the encoding gap — the functor view decodes a shape-encoded
+value to its tagged form in front of the cut. So the unification is real but lives at the level of *the cut's
 semantics and the `Σ`/`Π` grid*, not at the level of definitions: minimizing
 primitives (the metacircular goal) leaves an irreducible floor — the tree-calculus
 substrate plus this handful of encodings — rather than eliminating it.

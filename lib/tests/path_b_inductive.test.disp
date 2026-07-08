@@ -12,7 +12,7 @@ let bleaf := {n} -> inj "leaf" n
 let bnode := {l, r} -> inj "node" (pair l r)
 test typecheck BTree (bleaf 7)                                    = Ok true
 test typecheck BTree (bnode (bleaf 1) (bnode (bleaf 2) (bleaf 3)))= Ok true
-test typecheck BTree (bnode (bleaf 1) (bleaf true))                 = Ok false   // non-Nat leaf rejected
+test typecheck BTree (bnode (bleaf 1) (bleaf false))                 = Ok false   // non-Nat leaf rejected
 test typecheck Type BTree                                        = Ok true   // a real Type
 
 // ── NESTED recursion: Expr = Lit Nat | Call Expr (List Expr) ──
@@ -29,4 +29,4 @@ test typecheck Type Expr                             = Ok true
 // ── kernel recursive types (Ord/List) recognize as before, now via Rec = RecUnder Id ──
 test typecheck Ord (omega_plus (omega_plus zero_ord zero_ord) zero_ord) = Ok true
 test typecheck (List Nat) (cons 1 (cons 2 nil))                         = Ok true
-test typecheck (List Nat) (cons 1 (cons true nil))                        = Ok false
+test typecheck (List Nat) (cons 1 (cons false nil))                       = Ok false // false = △ △, no Nat shape

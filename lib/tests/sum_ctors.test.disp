@@ -19,7 +19,7 @@ test (match red { red => 1; green => 2; blue => 3 }) = 1
 Wrap : Type := < box : Nat, empty >
 test tree_eq (box 3) (inj "box" 3) = true
 test param_apply Wrap (box 3) = Ok true
-test param_apply Wrap (box true) = Ok false // payload not a Nat
+test param_apply Wrap (box false) = Ok false // payload not a Nat
 test param_apply Wrap empty = Ok true
 test (match (box 4) { box n => (double n); empty => 0 }) = 8
 
@@ -28,7 +28,7 @@ MyOpt : Type -> Type := {A} -> < mysome : A, mynone >
 test tree_eq (mysome 5) (inj "mysome" 5) = true
 test param_apply (MyOpt Nat) (mysome 3) = Ok true
 test param_apply (MyOpt Nat) mynone = Ok true
-test param_apply (MyOpt Nat) (mysome true) = Ok false
+test param_apply (MyOpt Nat) (mysome false) = Ok false // false = △ △, no Nat shape
 
 // ---- skip-if-bound: a variant named after an existing binding is untouched ----
 Weird : Type := < zero, wonly >

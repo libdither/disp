@@ -40,26 +40,23 @@ open given {
 // Fundamental combinators
 // ================================================================
 //
-// Bool is Scott-encoded per spec §4.5: a value is its own eliminator,
-// taking a motive and one case-handler per constructor and dispatching
-// to the matching case.
+// Bool is raw shape data (TYPE_THEORY §2.7, the polarity discipline): the two
+// smallest trees, branded Bool by the view iso in positive.disp exactly like
+// Nat's zero/succ. A bool does not drive its own elimination — branching is
+// triage-driven (`cond`/`select` below build the case table and apply it to
+// the bool), the consumer-drives direction the substrate's rule 3 fixes.
 //
-// Compiled tree shapes (after bracket abstraction + η):
-//   true  = K K       = fork(LEAF, stem(LEAF))
-//   false = K (K I)   = fork(LEAF, fork(LEAF, fork(fork(LEAF, LEAF), LEAF)))
+// Tree shapes:
+//   true  = △          (LEAF — shared with zero/nil: recognizers are scoped
+//   false = △ △        (stem(LEAF), K's tree)  to type-respecting inputs, §2.6)
 //
-// The host's tree_eq fast-path (src/core/tree.ts) returns these exact shapes
-// so a tree-level identity test still matches predicate semantics.
-// (Named TT/FF until 2026-07-07. Open question from that TODO, not yet taken:
-// an alternative leaf/stem(leaf) representation — smaller trees, O(1) is_leaf
-// dispatch, consonant with zero = t — at the cost of the self-eliminator
-// property `cond`/`select`/`if` lean on and the host fast-path verdict shapes.
-// A representation change needs the differential-oracle discipline first.
-// TYPE_THEORY §2.7 (polarity) makes the case FOR the change: Scott bools are
-// the kernel's one remaining self-eliminating datum — data that drives — and
-// the discipline everywhere else is raw positives + triage-driven consumers.)
-true : Bool := {m, ct, cf} -> ct
-false : Bool := {m, ct, cf} -> cf
+// The host's tree_eq fast-path (src/core/tree.ts; rust-eager's arena) returns
+// these exact shapes so a tree-level identity test still matches predicate
+// semantics. (Scott-encoded `{m, ct, cf} -> ct/cf` until 2026-07-07 — the
+// kernel's last self-eliminating datum, retired per §2.7; named TT/FF until
+// the same day.)
+true : Bool := t
+false : Bool := t t
 
 // The equation marker. `test lhs = rhs` is the equation ITEM (SYNTAX.typ § Tests) —
 // the parser has no `test` keyword; this identity is what the conventional marker
@@ -77,28 +74,28 @@ test : Tree -> Tree := {x} -> x
 // its typed face is a Tree recursor (dispatch is elimination), not this shallow type.
 triage : Tree -> Tree -> Tree -> Tree := {on_leaf, on_stem, on_fork} -> t (t on_leaf on_stem) on_fork
 
-// select(then_v, else_v, cond): apply the Scott Bool as its own
-// eliminator. The motive `t` is irrelevant for the value-level
-// dispatch; we pass it as a placeholder. Both branches are values
-// (no laziness) — for deferred branches use `select_lazy`.
+// select(then_v, else_v, c): triage-driven branch — build the case table and
+// apply it to the bool (the consumer drives; the bool is raw data, §2.7).
+// Both branches are values (no laziness) — for deferred branches use
+// `select_lazy`.
 //
 // Also used in select-then-apply: select fn1 fn2 cond shared_args ...
-// Scott Bool has fixed arity 3 (motive, ct, cf); supplying further
-// args after dispatch applies them to the chosen branch.
-select := {then_v, else_v, cond} -> cond t then_v else_v
+// Dispatch consumes exactly the bool; supplying further args after dispatch
+// applies them to the chosen branch. (The fork arm is dead for well-typed
+// bools; it answers else_v so garbage stays deterministic.)
+select := {then_v, else_v, c} -> triage then_v ({_} -> else_v) ({_l, _r} -> else_v) c
 
-// select_lazy(then_thunk, else_thunk, cond): DEFERRED — branches are
+// select_lazy(then_thunk, else_thunk, c): DEFERRED — branches are
 // {_}->value thunks. Only the chosen branch is forced (by applying
 // the trailing `t`); the discarded branch is built but not invoked.
-select_lazy := {then_thunk, else_thunk, cond} -> cond t then_thunk else_thunk t
+select_lazy := {then_thunk, else_thunk, c} -> triage then_thunk ({_} -> else_thunk) ({_l, _r} -> else_thunk) c t
 
-// cond(cond, then_v, else_v): condition-first conditional — the desugar target
-// for `if c then a else b`. Identical to `select` with the condition moved to
-// the front (apply the Scott Bool as its own eliminator; motive `t` is a
-// placeholder). Supports select-then-apply: trailing args after the three
-// apply to the chosen branch, which is how the `if` desugar restores the
-// free vars it abstracted over each arm (compile.ts).
-cond := {c, then_v, else_v} -> c t then_v else_v
+// cond(c, then_v, else_v): condition-first conditional — the desugar target
+// for `if c then a else b`. `select` with the condition moved to the front.
+// Supports select-then-apply: trailing args after the three apply to the
+// chosen branch, which is how the `if` desugar restores the free vars it
+// abstracted over each arm (compile.ts).
+cond := {c, then_v, else_v} -> triage then_v ({_} -> else_v) ({_l, _r} -> else_v) c
 
 // pair = fork(l, r). The constructor is typed (it just builds a fork); pair_fst/
 // pair_snd extract via triage's fork branch and stay UNtyped (they raw-triage their
