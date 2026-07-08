@@ -29,6 +29,7 @@ mod ffi;
 mod net;
 mod port;
 mod reduce;
+mod trace;
 
 // crossbeam/threads (parallel) and the native CLI helpers don't build on wasm32 — the wasm
 // build is the single-threaded oracle, so they are `#[cfg]`-excluded there.
@@ -38,7 +39,7 @@ mod bench;
 mod parallel;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use bench::{reduce_fold_timed, reduce_wide_timed};
+pub use bench::{reduce_fold_timed, reduce_fold_traced, reduce_wide_timed, TraceReport};
 
 #[cfg(test)]
 mod tests;

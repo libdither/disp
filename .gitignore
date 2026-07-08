@@ -3,3 +3,10 @@ dist
 .direnv
 dither-spec/
 .claude/
+bench/e1/*.bin
+bench/e1/*.bin.meta.json
+bench/e1/*.terms
+bench/e1/*.nf
+bench/e1/*.log
+bench/e1/*.rent
+bench/e1/*.json

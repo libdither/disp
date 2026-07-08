@@ -21,8 +21,11 @@ distance as a first-class cost grade. Not competitive as a simulated runtime on 
 CPUs/GPUs; strong as (a) the honest hardware-cost model `OPTIMIZER.typ` §4/§9 explicitly
 leaves open, (b) a scheduler insight (tiling + migration) applicable to `rust-ic-net` and
 HVM2-class GPU reducers now, and (c) a long-range hardware thesis whose substrate class has
-shipped silicon precedent (Cerebras-scale meshes). The whole bet is hostage to one unmeasured
-number: the effective Rent exponent of real disp reduction traces (§4.3, §10).
+shipped silicon precedent (Cerebras-scale meshes). The whole bet hangs on one number, the
+effective Rent exponent of real disp reduction traces (§4.3, §10), and the first rung C
+measurements now exist (§10.3): four raw-tree-calculus disp workloads fit p ≈ 0.40–0.52, at
+or below the 2D boundary; the kernel-elaborated class (checker walks, kernel arithmetic)
+exceeds what the no-memo backend can trace today and stays open.
 
 A finding worth flagging up front: **this repo's calculus is unusually suited to cellular
 realization**. TC-Net's no-oracle theorem (`tc-net.typ` §Two Species Coexist) means the agent
@@ -245,10 +248,13 @@ above it in 2D. Real placed logic sits at p ≈ 0.5–0.7. The decision bands:
   survive.
 
 **Whether disp reduction traces have effective p below or above 0.5 decides whether the
-spatial bet is sound, and nobody has measured it for interaction nets.** It is measurable now
-on existing backends (§10). Expect heterogeneity across workloads (checker walks plausibly
-tree-local; S-combinator/duplication-heavy code plausibly higher); report per-workload, not
-one number.
+spatial bet is sound, and no one had measured it for interaction nets.** First measurements
+landed 2026-07-08 (§10.3, rung C): four raw-tree-calculus workloads sit at p = 0.40–0.52,
+two below 0.45 outright (fib, a self-application) and two at the boundary (exponentiation,
+merge-sort at ≈ 0.51), none anywhere near the death band. The expected heterogeneity is real
+(0.40 vs 0.52 across classes) but spans a tenth, not bands. The kernel-elaborated class
+(checker walks, kernel arithmetic) is still unmeasured (§10.3 finding 4) and is where the
+remaining empirical exposure concentrates; report per-workload stays the rule.
 
 None of this is a defect. Every physical machine pays these costs; this design is the one
 where the optimizer can *see* them. The no-memo substrate already gives per-decision cost
@@ -615,6 +621,18 @@ is the computation's intrinsic communication structure, independent of any embed
 schedule, or allocator, and it lower-bounds every physical realization. Its effective Rent
 exponent is the number the whole design hangs on.
 
+A care point when reading the DAG's p against §4.3's bands: Donath's law is a statement
+about a static circuit laid out all at once, while the interaction DAG is a spacetime
+object, and a physical mesh reuses each region for temporally separated interactions. The
+exponent transfers as a per-level bound on the blocks any placement must form (Donath's
+argument applies level by level), but the sharp physical constraint is bandwidth:
+dependencies crossing a balanced spatial cut per unit of schedule depth (rung C's traffic
+bisection) against the mesh's O(√A) cut capacity. So read two numbers per workload: p for
+whether wire length stays bounded as blocks grow, and traffic/depth for whether required
+bandwidth fits the cut. A workload with high p but low parallelism under-fills the mesh
+rather than overloading it; the static bands are conservative in that direction, so a
+band failure prompts the bandwidth check before a verdict, never instead of one.
+
 ### 10.2 Three measurement rungs
 
 - **Rung A, hours: address-distance histogram.** In the reduce loop, log
@@ -622,20 +640,79 @@ exponent is the number the whole design hangs on.
   Caveat: this measures one particular embedding (allocation order), which a bump allocator
   makes meaningful, but reuse and frees pollute it. Asymmetric evidence: mostly-short
   distances *confirm* embeddability (allocation order is itself a witness embedding); long
-  distances refute nothing. Cheap first signal only.
+  distances refute nothing. Cheap first signal only. Built: node-distance and var-chain
+  histograms in `rust-ic-net`'s tracer, dumped as a JSON sidecar per run.
 - **Rung B, days: snapshot Rent fit.** Every N interactions dump the live net as a graph;
   run recursive balanced partitioning (KL/FM or METIS-style); at each level record part size
   g and boundary count T; fit log T against log g for the slope p. Also compute bisection
   width growth across snapshots, and one 2D spectral/force layout per snapshot to read the
-  realized wire-length distribution directly.
+  realized wire-length distribution directly. Not built (rung C subsumed it for the first
+  pass).
 - **Rung C, the real one: partition the interaction DAG.** Log every interaction with its
   consumed/produced port ids (10⁷–10⁸ events is fine offline); build the DAG; same recursive
   partition and fit. Schedule-free and embedding-free, and it additionally yields the
   work/span profile (depth = span) and the *traffic bisection*: dependencies crossing a
-  balanced cut per unit depth, which is the bandwidth a mesh must supply.
+  balanced cut per unit depth, which is the bandwidth a mesh must supply. Built and run
+  (§10.3): tracer in `evaluators/rust-ic-net/crate/src/trace.rs` (opt-in on the sequential
+  drain; `-trace` on `ic-net-cli`), analyzer in `crate/src/bin/rent.rs`, drivers in
+  `bench/e1-workloads.ts` + `bench/e1-run.sh` + `bench/e1-summary.sh`.
 
-Decision bands in §4.3. Workload set: a kernel self-verification run, nat/HBin arithmetic
-benches, list and stream std tests, and a sup-prototype search trace.
+Decision bands in §4.3. Workload set as originally scoped: a kernel self-verification run,
+nat/HBin arithmetic benches, list and stream std tests, and a sup-prototype search trace. As
+realized (§10.3): the raw-tree-calculus tier landed (recursive fib, exponentiation,
+merge-sort, a self-application); the kernel-elaborated tier (membership checks, nat_rec
+arithmetic, tree_eq conversion) exceeded the traceable range (finding 4), which also rules
+out kernel self-verification and sup traces at this rung until the same unblocks land.
+
+### 10.3 First measurements (rung C, 2026-07-08)
+
+Method, compressed. The tracer records one event per interaction with in-edges at two
+grains, both real communication in an embedding: *flow* (the interaction that last moved
+each side of the redex into contact, threaded through the exchange linker's parked cells)
+and *birth* (the interaction that allocated each consumed node's cells). Ids are assigned in
+firing order by the sequential drain, so the log is a topological order and any prefix is a
+downward-closed sub-DAG: big traces are fit on an exact prefix, never a sample. The analyzer
+builds the deduped undirected dependency graph, recursively bisects it (multilevel
+heavy-edge matching, BFS seed, FM refinement with rollback), counts each block's
+full-graph external edges (the Landman–Russo T), and fits log2 mean T against log2 mean g
+across levels. Calibration brackets the trust region: torus grid2 fits 0.523 (theory 0.5),
+grid3 0.668 (theory 2/3), binary tree 0.10, chain −0.03, random 3-regular 0.90 (an
+expander, theory ≈ 1). Near-exact inside the decision band, slightly compressed at the
+extremes.
+
+| workload | events (fit window) | span | avg par | traffic/depth | p | r² |
+|---|---|---|---|---|---|---|
+| size(size) | 439 K (full) | 894 | 491 | 1.20 | 0.413 | 0.973 |
+| exp(5) | 2.9 M (full) | 2 055 | 1 435 | 2.42 | 0.518 | 0.999 |
+| fib(14) | 40 M prefix of 69 M | 3 181 | 12 575 | 0.54 | 0.404 | 0.951 |
+| merge-sort(32) | 6 M prefix of 85 M | 2 957 | 2 029 | 0.82 | 0.511 | 0.997 |
+
+Findings:
+
+1. **Every measurable workload sits at p = 0.40–0.52**: two below 0.45 outright, two at the
+   2D boundary, none near the p > 0.7 death band. The heterogeneity §10.2 predicted is real
+   but spans a tenth, not bands. First contact favors the mesh thesis.
+2. **Bandwidth is nowhere near binding.** Traffic/depth is 0.5–2.4 crossing dependencies per
+   unit of depth, orders of magnitude inside any plausible mesh's cut capacity at these
+   scales; p is the operative readout so far (§10.1's two-number rule).
+3. **The interaction economy is mostly transport-shaped already.** δⁿ + ε dominate every
+   trace (97% of size(size); a 50/50 split of merge-sort's prefix), with dispatch (A/T1/T2)
+   under 1%. Real programs spend the net's time on demand-copy and erasure wavefronts, both
+   spatially local by construction (§1), consistent with the low exponents.
+4. **The kernel-elaborated class is out of rung C's reach on this backend.** One
+   `param_apply Bool true` membership check exceeds 2×10⁸ interactions (so do `param_apply
+   Nat n` and 24-layer `nat_rec` addition), and in-language `tree_eq` over a 12.5 MB
+   kernel term strands more than 2.7×10⁸ live cells (the parked-δⁿ leak; wire-RC is the
+   standing M2 item, `RUST_IC_NET_DESIGN.md` §5). Two readings. As a measurement gap: the
+   checker-shaped exponent, the one §4.3 guessed "plausibly tree-local", stays open until
+   wire-RC lands plus either a native tree_eq machine on the net or a leaner check path. As
+   positioning: §14.4 item 5's "not a checker speedup" is now an empirical bound (a
+   membership check that costs ≥ 2×10⁸ interactions here is ~10⁴ steps on the hash-consed
+   backend), quantifying the memo dividend by its absence.
+5. **Read the numbers with their error bars.** Four workloads, 10⁵–10⁸ events, one seed,
+   prefix windows on the two big traces, dependencies deduped per pair, and a partitioner
+   that reads ~0.02 high at 0.5 and ~0.1 low at 1.0. The band verdict survives all of that;
+   a p = 0.65 workload would not hide.
 
 ## 11. E2 — the transport grade in the ledger
 
@@ -751,8 +828,12 @@ pad, trees being planar-embeddable).
 
 ### 14.3 To measure (empirics)
 
-- **The Rent exponent** of real disp workloads (§10) — the single largest unknown in the
-  entire design; everything downstream is conditional on it.
+- **The Rent exponent of the kernel-elaborated tier** (§10.3 finding 4). The
+  raw-tree-calculus tier measured p = 0.40–0.52 (§10.3); checker walks and kernel
+  arithmetic exceed the traceable range until wire-RC lands (plus a native tree_eq machine
+  on the net, or a leaner check path). The thesis's remaining empirical exposure sits
+  there, plus scale (10⁸+ events per fit), seed variation, and workload breadth (streams,
+  sup traces).
 - The **jamming threshold** and the weight/temperature schedules (§13 items 3, 8).
 - **Representation costs**: unary Nat is transport poison; HBin/word representations via
   licensed rep-change (the arith.opt overlay pattern), which is a real coercion with real
@@ -774,7 +855,8 @@ pad, trees being planar-embeddable).
 
 ### 14.5 What blocks what
 
-§10 (Rent) is blocked by nothing and gates the thesis. §11 (grade) needs only §14.1's
+§10 (Rent) ran first (§10.3) and the thesis survived contact on the measurable tier; its
+kernel-class completion is blocked on `rust-ic-net` wire-RC. §11 (grade) needs only §14.1's
 theorem written carefully. §12 (tiled) has no conceptual blocker; policy knobs are guessable.
 §13 (CA sim) is the design-complete gate: it needs §14.1 and §14.2's first three items, and
 writing its full rule table is a bounded task about the size of `tc-net.typ`'s rules section
@@ -904,7 +986,10 @@ Neumann substrate) and Vericert (certified circuits, no recognition).
   §3: per-region attribution extends to data movement and, on real hardware, to energy
   metering.
 - `RUST_IC_NET_DESIGN.md`: §12 here (tiled scheduler) is an M2-adjacent experiment; the
-  wide-block T₁/T₂ decision and the `Ref` tag both prefigure Part II's shapes.
+  wide-block T₁/T₂ decision and the `Ref` tag both prefigure Part II's shapes. E1's rung
+  A/C instrumentation lives in that crate (`src/trace.rs`, `src/bin/rent.rs`, drivers in
+  `bench/e1-*`): opt-in, sequential-only, one never-taken branch in normal runs; wire-RC
+  (its §5) is now also what unblocks the kernel-tier Rent measurement.
 - `TYPE_THEORY.typ` §15: effectful machines stay at the driver boundary; pure machines are
   agents; §6 here reads the whole effects arc as the machine economy's source-level face.
 - `GOALS.md`: §8 here is its optimizer loop verbatim; §7 here is its "deterministic models of

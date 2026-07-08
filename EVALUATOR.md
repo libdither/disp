@@ -56,6 +56,10 @@ build artifact exists, so `npm test` never needs a toolchain.
   backend is validated by reducing the same terms and comparing normal forms. Strong
   confluence (tc-net.typ Theorem 2) makes rust-ic-net's NF *schedule-invariant*, so its
   differential against rust-eager doubles as a parallel **race detector**.
+- **E1 instrumentation** (SPATIAL_IC.md §10): rust-ic-net's sequential drain carries an
+  opt-in interaction-DAG tracer (`crate/src/trace.rs`; `-trace` on `ic-net-cli`) plus the
+  offline Rent-exponent analyzer (`crate/src/bin/rent.rs`, calibrated on synthetic grids);
+  drivers in `bench/e1-*`. Off by default (one never-taken branch); sequential-only.
 - **Discard-laziness is parity-critical.** Values agree across schedules by confluence, but
   the *termination domain* does not: an eager backend's K-discard shortcuts (skip evaluating
   `(b x)` when `(c x)` reduces K-headed in the S rule) decide which diverging-but-discarded

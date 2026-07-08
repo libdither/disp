@@ -66,6 +66,55 @@ pub fn reduce_fold_timed(terms: &[Vec<u8>], threads: usize, budget: i64) -> Opti
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     Some((nf, ms, net.interactions.load(Ordering::Relaxed)))
 }
+/// E1 trace run summary (SPATIAL_IC.md §10; see trace.rs for the semantics).
+pub struct TraceReport {
+    pub events: u64,
+    pub pop_hist: [u64; 33],
+    pub var_hist: [u64; 33],
+    pub peak_nodes: u64,
+}
+
+/// `reduce_fold_timed` with E1 instrumentation: sequential only, custom arena sizes
+/// (checker-shaped terms outgrow the default 2M-cell arena), the rung C event log
+/// streamed to `trace_path`, rung A histograms returned in the report.
+pub fn reduce_fold_traced(
+    terms: &[Vec<u8>],
+    budget: i64,
+    trace_path: &str,
+    node_cap: usize,
+    var_cap: usize,
+    trace_limit: u64,
+) -> std::io::Result<Option<(String, f64, u64, TraceReport)>> {
+    let net = Net::new(node_cap, var_cap);
+    let mut w = Worker::new();
+    w.tracer = Some(Box::new(crate::trace::Tracer::new(trace_path, node_cap, var_cap, trace_limit)?));
+    let t0 = std::time::Instant::now();
+    let nf = {
+        let mut c = net.ctx(&mut w);
+        let mut acc: Option<u32> = None;
+        for t in terms {
+            let mut i = 0usize;
+            let term = c.parse(t, &mut i);
+            acc = Some(acc.map_or(term, |f| c.susp(f, term)));
+        }
+        let Some(h) = acc else { return Ok(None) };
+        let mut b = budget;
+        let Some(nf) = c.full_nf(h, &mut b) else { return Ok(None) };
+        let mut out = Vec::new();
+        c.emit(nf, &mut out);
+        String::from_utf8(out).expect("ternary is ascii")
+    };
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let (events, pop_hist, var_hist) = w.tracer.take().unwrap().finish();
+    let report = TraceReport {
+        events,
+        pop_hist,
+        var_hist,
+        peak_nodes: net.node_top.load(Ordering::Relaxed) as u64,
+    };
+    Ok(Some((nf, ms, net.interactions.load(Ordering::Relaxed), report)))
+}
+
 /// Build + reduce the wide independent-chain workload (the parallelism benchmark).
 pub fn reduce_wide_timed(depth: usize, chain: usize, threads: usize, budget: i64) -> Option<(String, f64, u64)> {
     let net = Net::new(NODE_CAP, VAR_CAP);

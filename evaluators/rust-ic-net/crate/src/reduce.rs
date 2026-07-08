@@ -17,6 +17,9 @@ impl<'a> Ctx<'a> {
         let mut n: u64 = 0;
         let ok = loop {
             let Some((x, y)) = self.w.bag.pop() else { break true };
+            if let Some(t) = self.w.tracer.as_mut() {
+                t.pending = t.prov_bag.pop().expect("trace: prov_bag desync");
+            }
             if *budget <= 0 {
                 break false;
             }
@@ -24,6 +27,9 @@ impl<'a> Ctx<'a> {
             n += 1;
             self.interact(x, y);
         };
+        if let Some(t) = self.w.tracer.as_mut() {
+            t.cur = 0; // links outside a firing (readback, next load) are the loader's
+        }
         self.net.interactions.fetch_add(n, Ordering::Relaxed);
         ok
     }
@@ -33,6 +39,9 @@ impl<'a> Ctx<'a> {
         let (c, p) = if is_producer(tag(x)) { (y, x) } else { (x, y) };
         let ct = tag(c);
         let pt = tag(p);
+        if self.w.tracer.is_some() {
+            self.trace_interaction(c, p);
+        }
         if !is_producer(pt) {
             // consumer ⊗ consumer cannot arise in a well-formed net: every consumer's lone
             // principal faces a producer. Assert it in debug/test builds (a violation means
@@ -285,6 +294,40 @@ impl<'a> Ctx<'a> {
         if !reuse_c {
             self.free_node(cb, arity(ct));
         }
+    }
+
+    /// E1 rung C (trace.rs): record this interaction's DAG node. In-edges: the flow
+    /// provenance of both redex sides (who last moved them into contact, popped off
+    /// `prov_bag` by `drain`) plus the birth of each node-bearing consumed agent (who
+    /// allocated the cells being read). Read BEFORE the rule body frees/reuses the nodes.
+    /// Also rung A: the allocation-order distance between the two consumed nodes.
+    #[cold]
+    fn trace_interaction(&mut self, c: u32, p: u32) {
+        let t = self.w.tracer.as_mut().unwrap();
+        let (pa, pb) = t.pending;
+        let mut edges = [0u32; 4];
+        let mut n = 0usize;
+        let push = |edges: &mut [u32; 4], n: &mut usize, e: u32| {
+            if !edges[..*n].contains(&e) {
+                edges[*n] = e;
+                *n += 1;
+            }
+        };
+        push(&mut edges, &mut n, pa);
+        push(&mut edges, &mut n, pb);
+        let (ct, pt) = (tag(c), tag(p));
+        let (ca, pr) = (arity(ct), arity(pt));
+        if ca > 0 {
+            push(&mut edges, &mut n, t.node_birth[val(c)]);
+        }
+        if pr > 0 {
+            push(&mut edges, &mut n, t.node_birth[val(p)]);
+        }
+        if ca > 0 && pr > 0 {
+            let d = (val(c) as i64 - val(p) as i64).unsigned_abs();
+            t.pop_hist[crate::trace::dist_bucket(d)] += 1;
+        }
+        t.event(ct, pt, &edges[..n]);
     }
 
     /// Reduce `h` to full normal form by connecting an `N` normalizer and draining.

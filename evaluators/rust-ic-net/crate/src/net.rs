@@ -6,6 +6,7 @@
 //! cells are the cross-thread rendezvous — the exchange linker (`swap`/AcqRel, no CAS).
 
 use crate::port::*;
+use crate::trace::{dist_bucket, Tracer};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Intrusive free-list "empty" sentinel. No real base / var index equals `u32::MAX` (the
@@ -74,6 +75,9 @@ pub(crate) struct Worker {
     pub(crate) free_var_head: u32, // intrusive free-list head for wire cells (next link in the cell)
     pub(crate) node_rgn: (u32, u32), // (next, end) of this worker's leased node region (Stage 3)
     pub(crate) var_rgn: (u32, u32),  // (next, end) of this worker's leased var region
+    /// E1 instrumentation (trace.rs). `None` in every normal run — the hot paths pay one
+    /// never-taken branch. Sequential-only (the parallel drain never sets it).
+    pub(crate) tracer: Option<Box<Tracer>>,
 }
 impl Worker {
     pub(crate) fn new() -> Self {
@@ -83,6 +87,7 @@ impl Worker {
             free_var_head: NULL_FREE,
             node_rgn: (0, 0),
             var_rgn: (0, 0),
+            tracer: None,
         }
     }
 }
@@ -130,6 +135,9 @@ impl<'a> Ctx<'a> {
         };
         for (i, &v) in aux.iter().enumerate() {
             self.set_nd(base + i as u32, v);
+        }
+        if let Some(t) = self.w.tracer.as_mut() {
+            t.node_birth[base as usize] = t.cur;
         }
         base
     }
@@ -190,6 +198,11 @@ impl<'a> Ctx<'a> {
     /// second arrival wins, frees the spent cell, and links the two (chaining onward).
     /// Two principals form an active pair → the local bag.
     pub(crate) fn link(&mut self, mut a: u32, mut b: u32) {
+        if self.w.tracer.is_some() {
+            // Traced path: both ports enter from the current interaction's rule code.
+            let cur = self.w.tracer.as_ref().unwrap().cur;
+            return self.link_prov(a, cur, b, cur);
+        }
         loop {
             if !is_var(a) && !is_var(b) {
                 self.w.bag.push((a, b));
@@ -208,6 +221,43 @@ impl<'a> Ctx<'a> {
             self.net.vars[v].store(self.w.free_var_head, Ordering::Relaxed);
             self.w.free_var_head = v as u32;
             a = prev;
+            // loop with (prev, b)
+        }
+    }
+
+    /// `link` with flow provenance (trace.rs): same control flow, plus each side carries
+    /// the id of the interaction that last moved it — rule code passes `cur`, a port
+    /// swapped out of a var cell carries that cell's recorded parker (`var_writer`).
+    /// Sequential-only: the read-around-swap of `var_writer` is unsynchronized.
+    fn link_prov(&mut self, mut a: u32, mut pa: u32, mut b: u32, mut pb: u32) {
+        loop {
+            if !is_var(a) && !is_var(b) {
+                self.w.bag.push((a, b));
+                let t = self.w.tracer.as_mut().unwrap();
+                t.prov_bag.push((pa, pb));
+                return;
+            }
+            if !is_var(a) {
+                std::mem::swap(&mut a, &mut b);
+                std::mem::swap(&mut pa, &mut pb);
+            }
+            let v = val(a);
+            let prev = self.net.vars[v].swap(b, Ordering::AcqRel);
+            let t = self.w.tracer.as_mut().unwrap();
+            if prev == NUL {
+                t.var_writer[v] = pb;
+                return; // parked b; the far end will find it (and read its parker)
+            }
+            let pprev = t.var_writer[v];
+            if is_var(prev) {
+                // rung A: var-var chain step distance in the var arena.
+                let d = (val(prev) as i64 - v as i64).unsigned_abs();
+                t.var_hist[dist_bucket(d)] += 1;
+            }
+            self.net.vars[v].store(self.w.free_var_head, Ordering::Relaxed);
+            self.w.free_var_head = v as u32;
+            a = prev;
+            pa = pprev;
             // loop with (prev, b)
         }
     }

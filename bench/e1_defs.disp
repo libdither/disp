@@ -1,0 +1,20 @@
+// E1 workload definitions (research/interaction-combinator/SPATIAL_IC.md §10).
+// bench/e1-workloads.ts elaborates this file and dumps each value to ternary; the traced
+// ic-net CLI left-folds a term file back into an application and reduces it. Values only —
+// the runner picks argument sizes.
+
+open use "../lib/kernel/prelude.disp"
+open use "../lib/std/nat/arith.disp"
+
+e1_add := add
+e1_param_apply := param_apply
+e1_nat_ty := Nat
+e1_bool_ty := Bool
+e1_true := true
+e1_tree_eq := tree_eq
+e1_n6 := 6
+e1_n8 := 8
+e1_n12 := 12
+e1_n24 := 24
+e1_n48 := 48
+e1_n96 := 96
