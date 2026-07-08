@@ -100,7 +100,9 @@ eta_check := fix ({self, v, T} ->
   else (if (and (is_fork (cells_of T)) (is_mint_cell (pair_fst (cells_of T))))
     then (match (apply_policed (bind_hyp (pi_dom T)) ({h} -> self (v h) (pi_cod T h))) { Ok r => r; Err _ => Err })
     else (T v)))
-let check_fields := fix ({self, fields, cases} ->
+// (exported 2026-07-08: std/effect.disp's handler gate consumes it — the
+// second consumer, so the private-until-needed clone there is retired)
+check_fields := fix ({self, fields, cases} ->
   if (is_fork fields)
     then (bind (eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok false)))
     else (Ok true))
