@@ -1,8 +1,12 @@
 # Effect bootstrap: types as protocols, the walker as a handler
 
-Status: plan, 2026-07-07. Nothing in this file is built. It is written to be read
-cold: Part I gives the background a fresh session needs, Part II is the staged
-plan, Part III is logistics and rules of engagement. Companion pieces:
+Status: plan, 2026-07-07; de-risk pass landed the same day. Canonical rows are
+in `lib/std/effect.disp`; the hazard 0a mechanism is corrected below (the elim
+idiom, not `match`) and pinned in `lib/tests/eff_deep_proto.test.disp`; hazard
+1a was probed empirically and does not reproduce (pins in
+`lib/tests/tele_spec_proto.test.disp`). The stages proper are not built. It is
+written to be read cold: Part I gives the background a fresh session needs,
+Part II is the staged plan, Part III is logistics and rules of engagement. Companion pieces:
 [`REFLECT.md`](REFLECT.md) (reflection as an effect, the move this plan
 generalizes), [`TOWER.md`](TOWER.md) (the self-checking architecture this plan
 feeds), `lib/std/effect.disp` (the effects library this plan builds on, commit
@@ -253,36 +257,66 @@ branch with tag tests: `if (tree_eq (sh_tag s) "fork") ...` where
 `sh_tag = pair_fst`. On a minted `s`, `pair_fst` (a sanctioned reader) answers
 the hypothesis signature, a concrete tree unequal to every tag string, so every
 test answers false and the walk silently follows the all-else path. The
-certificate covers one branch and claims all. The fix is a chain, and it is
-REFLECT.md's own path item 2 made load-bearing:
+certificate covers one branch and claims all. Note that the deep recognizer
+alone does not fix this, and cannot: a walk takes one concrete path by
+construction, so an if-chain body stays one-path-certified under it. Depth
+comes from changing the branching idiom. The fix is a chain (REFLECT.md's path
+item 2 made load-bearing, with the mechanism named precisely; updated
+2026-07-07, pinned in `lib/tests/eff_deep_proto.test.disp`):
 
   1. `ShapeR` (and any other op-response vocabulary) becomes a real Coproduct.
-  2. Continuations are written with `match` over the response, not tag tests.
-  3. `match` on a Coproduct-typed hypothesis routes through the gated respond,
-     and the case-record machinery checks every arm.
+  2. Continuations eliminate the response through the type's gated respond:
+     the hypothesis is applied to a `{ motive; cases }` frame (via `rec_value`,
+     `elim`, or the frame directly), the motive spelling the continuation's
+     result type. An earlier draft of this plan said "written with `match`";
+     that was wrong. Surface `match` compiles to the consumer-driven cut (the
+     tag read via the `pair_fst` carve-out answers the hyp signature, and the
+     payload read via `pair_snd` is unsanctioned triage), so a match-written
+     continuation fails closed on a minted answer; it never routes through the
+     respond and cannot become the certified idiom at runtime.
+  3. The frame application routes through `hyp_reduce` into the gated respond,
+     and `coh_check` verifies every case against the motive under per-variant
+     minted payloads. This is the machinery that already verifies `nat_rec`'s
+     annotation at load, so nothing new has to exist; what is new in stage 0
+     is only this composition running inside the Eff recognizer.
 
-Consequence: programs written with raw tag tests remain only shallowly
-certified. Rewriting the reflect prototype's twins onto `match` is stage 3
-work; stage 0 just needs one branchy test program written the right way to
-prove depth.
+The seed file pins all four behaviors on a 4-variant response vocabulary
+(`ShapeC`, the ShapeR shape, including a 2-arg variant and a Type payload):
+the elim-written continuation deep-checks Ok true and its annotation verifies
+at load (`shape_size`); flipping one arm ill-typed flips the verdict, so the
+arms are demonstrably visited; a missing arm also fails; the match twin is
+correct on concrete values and Errs under the check; the if-chain twin
+certifies despite an ill-typed untaken branch (the conserved limit, pinned so
+it is a documented boundary rather than a surprise).
+
+Consequence: certified branchy continuations carry an explicit motive, which
+is heavier ergonomics than `match`. A motive-carrying match (or a
+match-to-elim lowering where the scrutinee type is known) would be elaborator
+work; it stays out of scope for this prototype, and the elim idiom is the
+certified spelling. Programs written with raw tag tests remain only shallowly
+certified. Rewriting the reflect prototype's twins onto the elim idiom is
+stage 3 work; the branchy program stage 0 needs is already pinned.
 
 Hazard 0b. `param_apply (Arrow T self) k` needs `Arrow` and needs `self` to be
 the applied type; confirm `recognizer_wrap`'s `self` is what lands in stored
 types (it is: `wait (wait wrap body) meta`), so the recursive H-rule fires for
 sub-computations.
 
-Also in this stage: canonical rows. Name-sorted, deduplicated label lists so
-two closed rows are the same tree exactly when they are the same set (row
-conversion becomes tree_eq). Needs a structural label comparison; a raw
-cut-style fold is fine. Open rows (a Row-typed hypothesis as improper tail)
-can be declared and constructed here but their deep story is not a blocker for
-later stages.
+Also in this stage: canonical rows. Landed 2026-07-07: `mk_row`/`row_insert`/
+`row_union` in `lib/std/effect.disp`, over a raw structural label order
+(leaf < stem < fork, children lexicographically); order- and
+duplicate-insensitivity, nil canonicity, and verdict-blindness of the row
+checks are pinned in `eff_deep_proto`. Open rows (a Row-typed hypothesis as
+improper tail) can be declared and constructed here but their deep story is
+not a blocker for later stages.
 
 Pins. A branchy continuation checks Ok true at its row and the check demonstrably
 visits both arms (make one arm ill-typed, watch it flip); wrong row rejects;
 `Eff [State] Nat` hypothesis accepted by H-rule; weakening still free;
 `eff_check` and the deep recognizer agree on the straight-line programs from
-`effect_proto.test.disp`.
+`effect_proto.test.disp`. The visits-both-arms half is already demonstrated at
+the mechanism level in `eff_deep_proto` (the flip pin on `ShapeC`); the stage 0
+version restates it through the Eff recognizer itself.
 
 Exit. `EffAt` marked as the shallow compatibility form; new pins use the deep
 type. Estimate: one to two sessions; the ShapeR/match chain is where it grows.
@@ -311,27 +345,37 @@ already typed and concrete-type metadata is public data, so stage 3's
 `hyp_reduce` spec goes through the front door and the extraction leak never
 becomes an op.
 
-Hazard 1a, the mint clause meets the bind_hyp compiler wall (budget a real
-session for this; it is the most likely place the prototype fights back).
-The clause wants `on mint := {ty, resume} -> bind_hyp ty resume`, which is the
-documented miscompile: a continuation passed through a function into
-`bind_hyp` leaks the fresh hypothesis under nested binders. The innocent fix
-`{h} -> resume h` does not survive compilation: bracket abstraction's eta rule
-(`[x](f x) = f` when x is not free in f) reduces it right back to `resume`.
-The working defeat, verified against the optimizer rules in `src/elab/cir.ts`:
+Hazard 1a, the mint clause meets the bind_hyp compiler wall (updated
+2026-07-07: probed empirically, and the wall does not reproduce; ten pins in
+`lib/tests/tele_spec_proto.test.disp`). The fear was that
+`on mint := {ty, resume} -> param_apply (bind_hyp ty) resume` is the
+documented miscompile (a continuation passed through a function into the
+bind_hyp route leaks the fresh hypothesis under nested binders), that the
+innocent wrapper `{h} -> resume h` eta-collapses right back to `resume`
+(bracket abstraction's `[x](f x) = f`), and that the clause would need the
+keep trick:
 
     let keep := {x} -> x        // top-level, so it arrives as a compiled literal
     on mint := {ty, resume} -> bind_hyp ty ({h} -> resume (keep h))
 
-The inner application blocks the outer eta, and because `keep` is a scope
-literal (not the CIR `I` sentinel) the `S (K p) I` collapse does not fire
-either; `resume` stays applied inside an inline lambda, which is the safe
-shape. Pin the historically-miscompiling case (a function using an outer
-binder, `{a} -> {b} -> t a b`, wrongly rejected under the broken shape).
-Fallback if this proves brittle: a mint-aware `handle` variant that interprets
-the mint op inline in its fold, exactly as `tele_walk` does today. That is
-doctrinally clean (mint is a floor op; the floor handler is allowed to be
-fused) and costs only the claim "the interpreter is a completely generic
+(the inner application blocks the eta, and `keep` arriving as a scope literal
+rather than the CIR `I` sentinel blocks the `S (K p) I` collapse). The pins
+now say: on the live compiler every tested shape passes, including the
+helper-parameter pass (which is byte-for-byte the natural clause), the
+eta-trap wrapper, a mid-body let-bound continuation closed over the outer
+hypothesis, a continuation referencing a fix `self` reaching the route through
+a helper (the walker's historical context), the record-field clause form, and
+the keep spelling itself. So either an intervening compiler change fixed the
+miscompile (candidates: the 2026-06-12 match desugar closing the cut over arm
+free vars, the 2026-07-05 let rework) or it needs a context the minimal forms
+still miss. Write the stage 1 clause in the natural shape; keep the keep
+spelling in reserve; the seed file is the regression guard either way. Note
+CLAUDE.md's inline-lambda rule remains the law for kernel code (tele_walk's
+inline mint is not to be relaxed on the strength of these pins). Fallback if
+an unpinned context still fights back: a mint-aware `handle` variant that
+interprets the mint op inline in its fold, exactly as `tele_walk` does today.
+That is doctrinally clean (mint is a floor op; the floor handler is allowed to
+be fused) and costs only the claim "the interpreter is a completely generic
 handle."
 
 Deliverables. `KernelSig` ops via `mk_op`; `floor_h` via `mk_handler` plus the
@@ -395,13 +439,19 @@ Work items:
             _ => io_pure (n frame)               // concrete head: plain application
           })
 
+  (Spelled with `match` for readability; the certified form eliminates `s`
+  through ShapeR's gated respond per hazard 0a.)
+
   Differential pins: Pi-hypothesis application, gated Nat elimination, record
   projection, both Action arms, against live `hyp_reduce`.
 - `occurs_spec` / `is_closed_spec` as classify-programs (they are folds with
   one shape question per node); retires two more SEALED(reflection) markers
   cheaply. `elim_spec` falls out (concrete dispatch or `hyp_reduce_spec`).
-- Rewrite the reflect prototype's tag-test twins onto `match` over the
-  ShapeR Coproduct so their certificates deepen (per hazard 0a).
+- Rewrite the reflect prototype's tag-test twins onto the elim idiom over the
+  ShapeR Coproduct so their certificates deepen (per hazard 0a; surface
+  `match` is not the vehicle, motive-carrying eliminations are). For
+  `walk_spec` this is a real rewrite of its dispatch if-chains: budget it as
+  its own session, in a new file per the coordination rules.
 
 Exit criterion, enumerable: list every `SEALED(...)` in `engine.disp` and
 `cut.disp`; each maps to a spec twin or a stage-1 clause. No stragglers.
@@ -454,7 +504,7 @@ OPTIMIZER.typ arc.
 ### Sequencing and effort
 
     stage 0   deep Eff recognizer          1-2 sessions   gates everything
-    stage 1   signature + floor handler    1 session      mint hazard budgeted
+    stage 1   signature + floor handler    1 session      mint hazard probed: stale
     stage 2   tele_spec + two handlers     1 session
     stage 3   walk/hyp_reduce/occurs specs 1 session
     stage 4+5 ledger, fixed point, zoo     1 session
@@ -465,11 +515,13 @@ fixed-point pin over what exists) is about three sessions.
 
 ### File plan (all additive, zero kernel edits)
 
-- `lib/std/effect.disp`: deep `Eff`, canonical rows. Additive only; the
-  reflect prototype now depends on this file.
-- `lib/tests/eff_deep_proto.test.disp`: stage 0 pins.
+- `lib/std/effect.disp`: deep `Eff`, canonical rows (rows landed 2026-07-07).
+  Additive only; the reflect prototype now depends on this file.
+- `lib/tests/eff_deep_proto.test.disp`: stage 0 pins (seeded 2026-07-07: row
+  canonicity + the hazard 0a quartet on `ShapeC`; ~20s, 21 pins).
 - `lib/tests/tele_spec_proto.test.disp`: stages 1 and 2 (signature, floor
-  handler, tele_spec, differential battery), or split if it grows.
+  handler, tele_spec, differential battery), or split if it grows (seeded
+  2026-07-07: the hazard 1a empirical pins; ~21s, 10 pins).
 - `lib/tests/kernel_spec_proto.test.disp`: stage 3 twins, stage 4 ledger and
   fixed-point pin.
 - `lib/tests/handler_zoo_proto.test.disp`: stage 5.
