@@ -147,3 +147,28 @@ test param_apply EffS branchy_bad = Ok false
 // dispatches, the handler folds (one value, checked and executed):
 let shape_h := mk_handler (covers_eff "Shape") io_pure ({op} -> {v, resume} -> resume (inj2 "SFork" v v))
 test run_pure (handle shape_h branchy) = 3
+
+// ── (5) OPEN rows (landed 2026-07-08): a Row-typed hyp as improper tail ──
+// Row membership: closed rows, nil, the open tail by H-rule, junk rejected:
+test param_apply Row (cons "IO" (cons "State" nil)) = Ok true
+test param_apply Row nil = Ok true
+let rho := make_hyp Row 41
+test param_apply Row rho = Ok true
+test param_apply Row (cons "IO" rho) = Ok true
+// (labels are unconstrained in v1, so Row = any right spine ending in nil or
+// a Row-hyp; a spine ending in a bare stem is the honest non-Row)
+test param_apply Row (pair 1 (t t)) = Ok false
+// canonical open rows: sorted deduplicated prefix, the tail preserved —
+// same prefix set + same tail = the same tree:
+test tree_eq (mk_row (cons "IO" (cons "State" rho))) (mk_row (cons "State" (cons "IO" rho))) = true
+test tree_eq (mk_row (cons "State" (cons "State" rho))) (row_insert "State" rho) = true
+// membership over an open row: present in the prefix is true; past the
+// prefix the answer is the CONSERVATIVE false ("not provably present"):
+test label_in_row "State" (row_insert "State" rho) = true
+test label_in_row "IO" (row_insert "State" rho) = false
+// the row check at an open row: prog1 performs only State, and State is in
+// the prefix, so the open tail never matters:
+test eff_check (row_insert "State" rho) p1 = true
+// row polymorphism is ordinary Pi Row — the effect-safety type is FORMED
+// from the abstract row and the check runs concretely against its prefix:
+test param_apply (Pi Row ({p} -> EffAt (row_insert "State" p))) ({p} -> p1) = Ok true

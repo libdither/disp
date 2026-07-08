@@ -14,10 +14,10 @@
 // no shift/reset primitive exists or is needed.
 //
 // The production shape this file grows into (spec order, all deferred):
-//   - canonical rows: LANDED 2026-07-07 (mk_row/row_insert/row_union at the
-//     bottom of this file; closed-row conversion = O(1) tree_eq). Still
-//     deferred: OPEN rows as a Row-typed hyp improper tail (row polymorphism
-//     = ordinary Pi Row; one trailing row variable is the exact case).
+//   - canonical rows: LANDED 2026-07-07 (mk_row/row_insert/row_union;
+//     closed-row conversion = O(1) tree_eq). OPEN rows: LANDED 2026-07-08
+//     (`Row` below; a Row-typed hyp as improper tail, neutral-guarded
+//     toolkit, row polymorphism = ordinary Pi Row, pinned).
 //   - `Eff R X : Type` as a self-referential wait-form: LANDED 2026-07-07
 //     (the deep recognizer at the bottom of this file, the make_rec_recognizer
 //     knot route; Pure payload : X, each Op's label ∈ R, k : op.result ->
@@ -27,7 +27,8 @@
 //     way, so no subtyping judgment ever appears.
 //   - the impure driver (src/run.ts): `run : Eff {IO} X -> X` = run_pure's
 //     loop + a perform_host op map + the §8.1 is_closed sanitizer; async =
-//     the driver defers apply(k, result) until the bytes arrive.
+//     the driver defers apply(k, result) until the bytes arrive. MAPPED
+//     2026-07-08 (the design section in EFFECT_BOOTSTRAP_PLAN.md); not built.
 //   - scoped/higher-order operations (§15 open question): one `Scoped` arm +
 //     weave. The handler's `forward` clause below is already the degenerate
 //     weave — see its comment.
@@ -95,10 +96,17 @@ catch := {body, recover} -> handle { covers := covers_eff "Exn", return := {x} -
 row_nil := nil
 row1 := {e} -> cons e nil
 row_cons := {e, R} -> cons e R
+// label_in_row: membership in the CONCRETE PREFIX. An OPEN row (a Row-typed
+// hyp as improper tail, below) answers false past its prefix: "not provably
+// present", the conservative answer, so a program needing an op the prefix
+// does not name REJECTS at an open row (sound), and weakening happens by
+// extending the prefix. Closed-row behavior is unchanged (the neutral guard
+// never fires on a cons cell or nil).
 label_in_row := fix ({self, e, R} ->
-  if (is_fork R)
+  if (is_neutral R) then false
+  else (if (is_fork R)
     then (if (tree_eq (pair_fst R) e) then true else (self e (pair_snd R)))
-    else false)
+    else false))
 // eff_check R v: support(v) ⊆ R. Containment is what makes WEAKENING free —
 // a {State} computation checks at {State, IO} with no coercion and no
 // subtyping judgment ("a type is a predicate that checks ⊆, not an index
@@ -137,13 +145,28 @@ let tcmp := fix ({self, a, b} -> triage
     if (tree_eq c 1) then (self ra rb) else c
   }) b)
   a)
+// row_insert/mk_row are OPEN-ROW AWARE (landed with open rows, 2026-07-08): a
+// Row-typed hyp as improper tail is kept as the tail, so a canonical open row
+// is a sorted deduplicated prefix ending in the tail variable — two open rows
+// with the same prefix set and the same tail are tree_eq. Closed-row behavior
+// is byte-unchanged (the guards fire only on neutrals).
 row_insert := fix ({self, e, R} ->
-  if (is_fork R) then {
+  if (is_neutral R) then (cons e R)
+  else (if (is_fork R) then {
     let c := tcmp e (pair_fst R)
     if (tree_eq c 1) then R else (if (tree_eq c 0) then (cons e R) else (cons (pair_fst R) (self e (pair_snd R))))
-  } else (cons e nil))
-mk_row := fix ({self, ls} -> if (is_fork ls) then (row_insert (pair_fst ls) (self (pair_snd ls))) else nil)
+  } else (cons e nil)))
+mk_row := fix ({self, ls} -> if (is_neutral ls) then ls else (if (is_fork ls) then (row_insert (pair_fst ls) (self (pair_snd ls))) else nil))
 row_union := {R1, R2} -> mk_row (list_cat R1 R2)
+
+// Row: the type of rows — a label list, possibly ending in a Row-typed hyp
+// (the OPEN row; the H-rule accepts the tail, make_rec_recognizer's knot).
+// Labels are unconstrained trees in v1. Row polymorphism is ordinary Pi Row;
+// the one-trailing-variable case is exact (pinned in eff_deep_proto).
+Row : Type := wait (make_rec_recognizer ({self, m, v} ->
+  if (is_leaf v) then (Ok true)
+  else (if (is_fork v) then (param_apply self (pair_snd v)) else (Ok false))))
+  (make_meta unit_witness inert_respond)
 
 // ── the deep `Eff R X` recognizer (EFFECT_BOOTSTRAP_PLAN stage 0, landed 2026-07-07) ──
 // The §15 production type, as a self-referential wait-form (the
@@ -172,3 +195,55 @@ let eff_body := {self, m, v} -> {
   }
 }
 Eff : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (make_meta { row := R; result := X } inert_respond)
+
+// ── route two: the ELIMINABLE Eff (EffE), landed 2026-07-08 ──
+// Same deep recognizer (same eff_body, so membership verdicts agree with Eff
+// by construction — pinned), but the respond is GATED over hand-written
+// Pure/Op case types, so an EffE-typed hypothesis eliminates through a
+// {motive; cases} frame with every arm checked, and HANDLERS become
+// eliminator clients: handle2's resume is literally the recursor's IH (the
+// reader-functor induction hypothesis, one interpretation of the tail per
+// answer — multishot for free). The Op case type is the reader shape:
+//   Pi OpShape (op -> Pi op.param (a -> Pi (op.result -> T) (k ->
+//     (Pi op.result (r -> P (k r))) -> P (io_op op a k))))
+// This is not the plan's literal "stock Coproduct" route (a positional
+// telescope cannot express arg : op.param, which is slot-dependent); it
+// delivers route two's value instead: elimination and a typed handle path,
+// without losing route one's deep semantic checks.
+OpShape : Type := Record [pair "label" Tree, pair "param" Type, pair "result" Type]
+// local clones of positive.disp's PRIVATE eta_check/check_fields (same code,
+// exported deps only; promote to kernel exports if a third consumer appears):
+let e_cells_of := {T} -> (type_meta T).recognizer_params
+let e_pi_dom := {T} -> (type_meta (pair_fst (e_cells_of T))).ty
+let e_pi_cod := {T, h} -> (type_meta (pair_fst ((pair_snd (e_cells_of T)) h))).ty
+let e_eta_check := fix ({self, v, T} ->
+  if (is_neutral T) then (T v)
+  else (if (and (is_fork (e_cells_of T)) (is_mint_cell (pair_fst (e_cells_of T))))
+    then (match (apply_policed (bind_hyp (e_pi_dom T)) ({h} -> self (v h) (e_pi_cod T h))) { Ok r => r; Err _ => Err })
+    else (T v)))
+let e_check_fields := fix ({self, fields, cases} ->
+  if (is_fork fields)
+    then (bind (e_eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok false)))
+    else (Ok true))
+let eff_case_types := {T, P} -> {
+  let rp := (type_meta T).recognizer_params
+  cons (pair "Pure" (Pi (rp.result) ({x} -> P (io_pure x))))
+    (cons (pair "Op" (Pi OpShape ({op} -> Pi (op.param) ({a} -> Pi (Arrow (op.result) T) ({k} -> Arrow (Pi (op.result) ({r} -> P (k r))) (P (io_op op a k)))))))
+      nil)
+}
+let eff_coh := {T, motive, cases} -> e_check_fields (eff_case_types T motive) cases
+EffE : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (make_meta { row := R; result := X } (gated_inductive_respond eff_coh))
+
+// eff_rec: the dependent eliminator for EffE (concrete programs dispatch by
+// tag; a hypothesis eliminates through the gated respond). The Op case
+// receives (op, arg, k, ih) with ih the interpreted tail per answer.
+let eff_dispatcher := fix ({self, motive, cases, v} -> match v {
+  Pure x => ((cases.Pure) x)
+  Op op arg k => ((cases.Op) op arg k ({r} -> elim self motive cases (k r)))
+  _ => t
+})
+eff_rec := {motive, cases, m} -> elim eff_dispatcher motive cases m
+
+// handle2: the deep handler as an ELIMINATOR CLIENT — resume IS the IH.
+// Behaviorally identical to handle on the same handler records (pinned).
+handle2 := {h, m} -> eff_rec ({_} -> Tree) { Pure := h.return; Op := {op, arg, k, resume} -> (if (h.covers op) then ((h.on op) arg resume) else (h.forward op arg resume)) } m
