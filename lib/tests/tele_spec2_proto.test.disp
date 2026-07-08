@@ -1,0 +1,163 @@
+// tele_spec2_proto — STAGE 2 of EFFECT_BOOTSTRAP_PLAN.md (split out of
+// tele_spec_proto, which carries stage 1): the telescope walker as a free-monad
+// program, with the mode boolean replaced by a choice of handler.
+//
+// tele_prog folds a LIVE cell chain (the real telescopes, read by op signature
+// via pair_fst and meta via type_meta, exactly as positive.disp reads them)
+// into ONE Eff program over a small Tele signature:
+//   mint ty            answer: a value of ty
+//   obs ty getr        answer: the observed value (getr mirrors do_check's
+//                      thunk; note the substrate is EAGER, so the closure
+//                      evaluates its captured observation at construction —
+//                      see the adversarial section's finding)
+//   guard pred v       answer: v (refine's boolean gate)
+//   proj name ty getr thread   answer: the field value
+// The program says only "ask, bind, continue". EVERYTHING modal lives in the
+// two handlers:
+//   spec_recognize     mint -> the bind_hyp route (fresh hyp + escape check);
+//                      obs/proj -> run getr POLICED (apply_policed getr t —
+//                      this reintroduces the ambient walker's soundness at the
+//                      one clause that observes; a raw getr would triage hyps
+//                      and wrongly accept is_fork), check : ty, resume the
+//                      value or DROP resume with Ok false; guard -> policed
+//                      pred, resume or Ok false; return -> the landed verdict.
+//   spec_respond frame mint -> resume the FRAME (instantiate the binder, no
+//                      mint); obs -> drop resume, Extend ty (the observation
+//                      never runs — the thunk design carried into the
+//                      signature); guard -> Extend InvalidType; proj -> on
+//                      frame-name match Extend ty, else resume (thread t)
+//                      (the sanctioned field elimination, dependency kept);
+//                      return -> Extend InvalidType (the live empty-spine
+//                      answer).
+// So recognition and elimination are the SAME program under two interpreters,
+// and rejection/stuckness are handler decisions, not program structure.
+//
+// Coverage note (no silent caps): the fold speaks mint/apply/proj/qid/refine/
+// imeet — the negative formers and the meet types. pos/rec/derive/eqends
+// (sums, derived fields, Eq) are not folded here; sums respond via their own
+// gated responds (stage 0's branchy pins cover that face). Verdict mapping:
+// acceptance sets agree with the live walker everywhere; the REJECTION FORM
+// (Err vs Ok false) varies by where the rejection surfaces under eager
+// evaluation — pinned side by side in the adversarial section.
+// Baseline (rust-eager-native, 2026-07-08): ~23s wall, 29 pins.
+open use "../kernel/prelude.disp"
+open use "../std/nat/ops.disp"
+open use "../std/effect.disp"
+
+// ── the Tele signature (self-describing occurrences; results are dependent) ──
+let t_mint := {ty} -> io_op { label := pair "Tele" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
+let t_obs := {ty, getr} -> io_op { label := pair "Tele" "obs"; param := Tree; result := Tree } (pair ty getr) ({r} -> io_pure r)
+let t_guard := {pred, v} -> io_op { label := pair "Tele" "guard"; param := Tree; result := Tree } (pair pred v) ({r} -> io_pure r)
+let t_proj := {name, ty, getr, thread} -> io_op { label := pair "Tele" "proj"; param := Tree; result := Tree } (pair name (pair ty (pair getr thread))) ({r} -> io_pure r)
+
+// ── tele_prog: fold a live cell chain into one program ──
+let s_mint_sig := pair_fst (mint_cell t)
+let s_apply_sig := pair_fst (apply_cell t)
+let s_proj_sig := pair_fst (proj_cell t t)
+let s_qid_sig := pair_fst (qid_cell t)
+let s_refine_sig := pair_fst (refine_cell t)
+let s_imeet_sig := pair_fst (imeet_cell t)
+let tele_prog := fix ({self, tele, source, prior} ->
+  if (is_fork tele) then {
+    let cell := pair_fst tele
+    let m := type_meta cell
+    let sig := pair_fst cell
+    (if (tree_eq sig s_mint_sig) then (eff_bind (t_mint (m.ty)) ({h} -> self ((pair_snd tele) h) source h))
+    else (if (tree_eq sig s_apply_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok (source prior))) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_qid_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_imeet_sig) then (eff_bind (t_obs ((m.pred) prior) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_refine_sig) then (eff_bind (t_guard (m.pred) source) ({x} -> self ((pair_snd tele) x) source x))
+    else (eff_bind (t_proj (m.name) (m.ty) ({_} -> lookup_field source (m.name)) ({_} -> source (acc (m.name)))) ({x} -> self ((pair_snd tele) x) source x)))))))
+  } else (io_pure (Ok true)))
+
+// ── the two handlers ──
+let s_obs_check := {ty, getr, resume} -> (
+  match (apply_policed getr t) {
+    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else (Ok false)); Err _ => (Ok false) }); Err _ => (Ok false) })
+    Err _ => (Ok false)
+  })
+let spec_recognize := {
+  covers := covers_eff "Tele"
+  return := {x} -> x
+  on := {op} -> {arg, resume} -> (
+    if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
+    else (if (tree_eq (op_name op) "obs") then (s_obs_check (pair_fst arg) (pair_snd arg) resume)
+    else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else (Ok false)); Err _ => (Ok false) })
+    else (s_obs_check (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
+  forward := default_forward
+}
+let spec_respond_on := {frame} -> {op} -> {arg, resume} -> (
+  if (tree_eq (op_name op) "mint") then (resume frame)
+  else (if (tree_eq (op_name op) "obs") then (Extend (pair_fst arg))
+  else (if (tree_eq (op_name op) "guard") then (Extend InvalidType)
+  else (if (tree_eq (pair_fst arg) (pair_fst frame)) then (Extend (pair_fst (pair_snd arg))) else (resume ((pair_snd (pair_snd (pair_snd arg))) t))))))
+let spec_respond := {frame} -> mk_handler (covers_eff "Tele") ({_} -> Extend InvalidType) (spec_respond_on frame)
+let rec_spec := {cells, v} -> handle spec_recognize (tele_prog cells v t)
+let resp_spec := {frame, cells, n} -> handle (spec_respond frame) (tele_prog cells n t)
+
+// ── the differential battery, recognize face (spec vs live, side by side) ──
+// Pi, simple codomain, accept and reject:
+let pi_nn_cells := (type_meta (Arrow Nat Nat)).recognizer_params
+test rec_spec pi_nn_cells succ = Ok true
+test param_apply (Arrow Nat Nat) succ = Ok true
+test rec_spec pi_nn_cells ({n} -> false) = Ok false
+test param_apply (Arrow Nat Nat) ({n} -> false) = Ok false
+// Pi, dependent codomain:
+let pi_dep := Pi Nat ({n} -> Eq Nat n n)
+let pi_dep_cells := (type_meta pi_dep).recognizer_params
+test rec_spec pi_dep_cells ({n} -> refl) = Ok true
+test param_apply pi_dep ({n} -> refl) = Ok true
+// Record: present / ill-typed / missing field (cells built with the exported
+// constructors; Record's meta stores the flat list and lifts lazily):
+let rcells := t (proj_cell "a" Nat) (const_tail (t (proj_cell "b" Bool) (const_tail t)))
+let RecT := Record [pair "a" Nat, pair "b" Bool]
+test rec_spec rcells { a := 3; b := true } = Ok true
+test param_apply RecT { a := 3; b := true } = Ok true
+test rec_spec rcells { a := 3; b := 5 } = Ok false
+test rec_spec rcells { a := 3 } = Ok false
+test param_apply RecT { a := 3 } = Ok false
+// Refinement:
+let refi := Refinement Nat is_zero
+let refi_cells := (type_meta refi).recognizer_params
+test rec_spec refi_cells 0 = Ok true
+test param_apply refi 0 = Ok true
+test rec_spec refi_cells 3 = Ok false
+test param_apply refi 3 = Ok false
+// Intersection: the id-at-forall classic, and a concretely-decidable reject:
+let inter_id := Intersection Type ({A} -> Arrow A A)
+test rec_spec ((type_meta inter_id).recognizer_params) ({x} -> x) = Ok true
+test param_apply inter_id ({x} -> x) = Ok true
+let inter_sing := Intersection Nat Singleton
+test rec_spec ((type_meta inter_sing).recognizer_params) zero = Ok false
+test param_apply (Intersection Nat Singleton) zero = Ok false
+// the adversarial cases, reproduced through the spec. FINDING (2026-07-08):
+// the substrate is EAGER, so a getr closure evaluates its captured
+// observation at CONSTRUCTION time — a walker-rejected observation inside
+// the mint region therefore surfaces as Err (propagating through the body
+// walk) before any clause can map it, in the spec AND in the live walker
+// (live is_fork below is Err too). The forge case surfaces differently live
+// (Ok false) because the substrate reduces the stem application before the
+// walk sees it. The acceptance sets agree everywhere; the REJECTION FORM
+// (Err vs Ok false) varies by where the rejection surfaces, pinned as-is:
+let pi_tb_cells := (type_meta (Pi Tree ({_} -> Bool))).recognizer_params
+test rec_spec pi_tb_cells is_fork = Err
+test param_apply (Pi Tree ({_} -> Bool)) is_fork = Err
+let pi_tt_cells := (type_meta (Arrow Tree Tree)).recognizer_params
+test rec_spec pi_tt_cells (t hyp_sig) = Err
+test param_apply (Arrow Tree Tree) (t hyp_sig) = Ok false
+
+// ── the respond face: the same fold under spec_respond answers eliminations ──
+let hf := make_hyp (Arrow Nat Nat) 21
+test resp_spec 3 pi_nn_cells hf = Extend Nat
+let hdep := make_hyp pi_dep 22
+test resp_spec 3 pi_dep_cells hdep = Extend (Eq Nat 3 3)
+let hr := make_hyp RecT 23
+test resp_spec (acc "b") rcells hr = Extend Bool
+// the spec's Extend + stage 1's extend op = the live elimination tree:
+let extend_build := {n, ty, frame} -> wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
+test extend_build hf Nat 3 = param_apply hf 3
+
+// ── THE HEADLINE: one program value, two interpreters, two faces ──
+let one_prog := tele_prog pi_nn_cells hf t
+test handle spec_recognize one_prog = Ok true
+test handle (spec_respond 3) one_prog = Extend Nat
