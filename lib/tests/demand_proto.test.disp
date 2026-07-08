@@ -1,0 +1,129 @@
+// demand_proto — DAG-subset extraction from record types (2026-07-08): the
+// fourth face of the telescope story (recognize, respond, derive, DEMAND).
+//
+// The question "what is field f of T" is answered in the honest form "what
+// you must satisfy first, then what you get": the dependency CLOSURE of f
+// through the binder-usage edges, presented as a Pi chain over the demanded
+// prefix landing in f's type. Three mechanical facts make this cheap:
+//
+//   1. Bracket abstraction already computed the edges: an unused binder's
+//      tail is the K shape (is_const_tail), a used one a real closure.
+//   2. The transitive oracle is marker instantiation + hash-consing: flip
+//      one binder between two opaque markers (hyps) and compare the target's
+//      type tree. Exact for CONSTRUCTIVE type families (families that build
+//      over their argument); a family that raw-inspects its argument could
+//      fool the pointwise comparison — the proto's honest caveat.
+//   3. No readback is needed: the demanded Pi's codomain is a COMPOSITION —
+//      apply the telescope's own tail to the Pi binder and extract the
+//      target's type from the rest. Pointwise it computes to exactly the
+//      right type value, so membership checking works; only the lambda's
+//      spelling differs from a hand-written one.
+//
+// Closure is ONE right-to-left pass (dependencies only point leftward): walk
+// positions from the end, include a binder if any already-demanded field's
+// type changes under its marker flip.
+//
+// Derived faces pinned below: field_deps (the DAG answer), field_pi (the
+// context as a REAL Pi type, membership-checked with accept and reject),
+// sub_record (the record type on a closure — width subtyping computed, extra
+// fields tolerated) and project_sub (the lens's view half), plus the functor
+// face in miniature (a module-shaped record: demanding an export yields the
+// Pi over its givens).
+// Baseline (rust-eager-native, 2026-07-08): ~25s wall, 16 pins.
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+let not_b := {b} -> if b then false else true
+let list_len := fix ({self, l} -> if (is_fork l) then (succ (self (pair_snd l))) else 0)
+let in_list := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then true else (self (pair_snd l2))) else false)) l
+let filter_ne := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then (self (pair_snd l2)) else (cons (pair_fst l2) (self (pair_snd l2)))) else nil)) l
+
+// opaque markers for the dependency oracle:
+let mk0 := make_hyp Tree 90
+let mk1 := make_hyp Tree 91
+let mk2 := make_hyp Tree 92
+let cells_of_t := {T} -> (type_meta T).recognizer_params
+let names_go := fix ({self, cells} ->
+  if (is_fork cells) then (cons ((type_meta (pair_fst cells)).name) (self ((pair_snd cells) mk0))) else nil)
+
+// ty_under: field fname's type with binder at position i set to mk, all
+// other binders at the base marker.
+let ty_under := fix ({self, cells, fname, i, mk, pos} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (tree_eq (m.name) fname) then (m.ty)
+    else (self ((pair_snd cells) (if (tree_eq pos i) then mk else mk0)) fname i mk (succ pos))
+  } else t)
+let depends_on := {T, fname, i} -> not_b (tree_eq (ty_under (cells_of_t T) fname i mk1 0) (ty_under (cells_of_t T) fname i mk2 0))
+let any_dep := {T, set, i} -> (fix ({self, l} -> if (is_fork l) then (if (depends_on T (pair_fst l) i) then true else (self (pair_snd l))) else false)) set
+
+// closure: seed with the targets, one right-to-left pass over all positions.
+let closure_go := fix ({self, T, names, set, pos} ->
+  if (tree_eq pos 0) then set
+  else {
+    let i := nat_pred pos
+    let nm := list_nth names i
+    self T names (if (in_list nm set) then set else (if (any_dep T set i) then (cons nm set) else set)) i
+  })
+let closure_of := {T, targets} -> {
+  let names := names_go (cells_of_t T)
+  closure_go T names targets (list_len names)
+}
+let field_deps := {T, fname} -> filter_ne fname (closure_of T (cons fname nil))
+
+// field_pi: the demanded context as a REAL Pi chain, by composition.
+let field_pi_go := fix ({self, cells, fname, set} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (tree_eq (m.name) fname) then (m.ty)
+    else (if (in_list (m.name) set)
+      then (Pi (m.ty) ({x} -> self ((pair_snd cells) x) fname set))
+      else (self ((pair_snd cells) t) fname set))
+  } else InvalidType)
+let field_pi := {T, fname} -> field_pi_go (cells_of_t T) fname (closure_of T (cons fname nil))
+
+// sub_record: the record type on a closure (kept cells re-chained by the
+// same composition; skipped tails instantiated — safe, since the closure
+// guarantees no kept type uses a skipped binder). project_sub: the lens.
+let sub_cells_go := fix ({self, cells, set} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (in_list (m.name) set)
+      then (t (proj_cell (m.name) (m.ty)) ({x} -> self ((pair_snd cells) x) set))
+      else (self ((pair_snd cells) t) set)
+  } else t)
+let sub_record := {T, targets} -> Telescope (sub_cells_go (cells_of_t T) (closure_of T targets))
+let project_sub := {v, names} -> make_record names ((fix ({self, l} -> if (is_fork l) then (cons (list_const (field v (pair_fst l))) (self (pair_snd l))) else nil)) names)
+
+// ── the worked example: d depends on a and c, skipping b ──
+let R4 := { a : Nat, b : Bool, c : Nat, d : Eq Nat (add a c) (add a c) }
+test field_deps R4 "d" = cons "a" (cons "c" nil)
+test field_deps R4 "b" = nil
+test field_deps R4 "c" = nil
+// independent fields come back BARE (empty context, tree-identical):
+test field_pi R4 "b" = Bool
+test field_pi R4 "a" = Nat
+// the demanded context as a real Pi: accept and reject:
+test param_apply (field_pi R4 "d") ({x} -> {y} -> refl) = Ok true
+test param_apply (field_pi R4 "d") ({x} -> {y} -> 5) = Ok false
+// pointwise, the composed codomain computes to exactly the right type:
+test param_apply (Eq Nat (add 1 2) (add 1 2)) refl = Ok true
+
+// ── sub_record and the lens ──
+let vR4 := { a := 1; b := true; c := 2; d := refl }
+test param_apply R4 vR4 = Ok true
+let subT := sub_record R4 (cons "d" nil)
+// the projected value inhabits the sub type (the lens law's view half):
+test param_apply subT (project_sub vR4 (closure_of R4 (cons "d" nil))) = Ok true
+// width subtyping computed: the FULL value also inhabits the sub type:
+test param_apply subT vR4 = Ok true
+test param_apply subT { a := 1; c := 2; d := refl } = Ok true
+test param_apply subT { a := 1; c := 2; d := 5 } = Ok false
+test param_apply subT { a := 1; d := refl } = Ok false
+
+// ── the functor face in miniature: a module-shaped record ──
+// "what must you satisfy to get val? a Dep : Type first" — the demanded
+// context of an export over its given, exactly the modules functor face:
+let ModT := { Dep : Type, val : Dep -> Dep }
+test field_deps ModT "val" = cons "Dep" nil
+test param_apply (field_pi ModT "val") ({D} -> {x} -> x) = Ok true
