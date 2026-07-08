@@ -7,6 +7,10 @@ import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome } from './pro
 
 export type DispStatus = 'cold' | 'booting' | 'loading-kernel' | 'ready' | 'running' | 'dead'
 
+// Omit that distributes over the request union (a plain Omit collapses the
+// variants and loses their distinct payload keys)
+type RequestBody = WorkerRequest extends infer R ? (R extends WorkerRequest ? Omit<R, 'id'> : never) : never
+
 type Pending = {
   resolve: (o: RunOutcome) => void
   reject: (e: Error) => void
@@ -52,7 +56,7 @@ class DispClient {
     return w
   }
 
-  #request(msg: Omit<WorkerRequest, 'id'>): Promise<RunOutcome> {
+  #request(msg: RequestBody): Promise<RunOutcome> {
     const id = this.#nextId++
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject })
@@ -94,7 +98,8 @@ class DispClient {
         this.status = 'ready'
         return out
       } catch (e) {
-        this.status = this.status === 'dead' ? 'dead' : 'ready'
+        // the worker's onerror may have flipped us to 'dead' concurrently
+        if ((this.status as DispStatus) !== 'dead') this.status = 'ready'
         this.#kernelPromise = null
         throw e
       }

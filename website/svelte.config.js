@@ -15,6 +15,10 @@ const config = {
     paths: {
       // GitHub Pages serves the site at https://libdither.github.io/disp
       base: process.env.BASE_PATH ?? ''
+    },
+    prerender: {
+      // hash links may target anchors rendered client-side (Learn's sections)
+      handleMissingId: 'warn'
     }
   }
 }

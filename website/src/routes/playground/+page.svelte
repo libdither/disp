@@ -193,18 +193,24 @@
 
   let initialDoc = examples[0].source
   onMount(() => {
-    try {
-      const saved = localStorage.getItem(LS_DOC)
-      const savedEx = localStorage.getItem(LS_EX)
-      if (savedEx && examples.some((x) => x.id === savedEx)) exampleId = savedEx
-      if (saved) {
-        currentDoc = saved
-        editorApi?.setDoc(saved)
-      } else {
+    // ?example=<id> deep-links (landing page showcase) override the saved doc
+    const wanted = new URLSearchParams(location.search).get('example')
+    if (wanted && examples.some((x) => x.id === wanted)) {
+      loadExample(wanted)
+    } else {
+      try {
+        const saved = localStorage.getItem(LS_DOC)
+        const savedEx = localStorage.getItem(LS_EX)
+        if (savedEx && examples.some((x) => x.id === savedEx)) exampleId = savedEx
+        if (saved) {
+          currentDoc = saved
+          editorApi?.setDoc(saved)
+        } else {
+          currentDoc = initialDoc
+        }
+      } catch {
         currentDoc = initialDoc
       }
-    } catch {
-      currentDoc = initialDoc
     }
     void disp.init()
   })

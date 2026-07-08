@@ -156,6 +156,18 @@ pre {
   background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--g2) 45%, transparent), color-mix(in oklab, var(--g3) 45%, transparent), transparent);
 }
 
+/* ---- static disp syntax highlighting (highlight.ts output) ---- */
+.hl-comment { color: #5d6a82; font-style: italic; }
+.hl-string { color: #4ade80; }
+.hl-number { color: #22d3ee; }
+.hl-kw { color: #c084fc; }
+.hl-op { color: #94a3b8; }
+.hl-punct { color: #7c8aa5; }
+.hl-atom { color: #f0abfc; }
+.hl-type { color: #5eead4; }
+.hl-fn { color: #fbbf24; }
+.hl-var { color: #e9edf6; }
+
 /* reduced motion: kill decorative animation */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

@@ -24,6 +24,8 @@ export const dispStream = StreamLanguage.define<S>({
   name: 'disp',
   startState: () => ({ exprStart: true, inBlockComment: false }),
   token(stream, state) {
+    // a fresh line is (almost always) a fresh declaration/expression head
+    if (stream.sol()) state.exprStart = true
     if (state.inBlockComment) {
       if (stream.match(/^.*?\*\//)) state.inBlockComment = false
       else stream.skipToEnd()
