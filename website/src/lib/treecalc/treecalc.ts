@@ -133,12 +133,71 @@ export function replaceNode(root: T, target: T, repl: T): T {
   return f === root.f && x === root.x ? root : { tag: 'apply', f, x }
 }
 
+// Which rule (if any) is READY to fire at this node right now, without other
+// applies resolving first. Confluence makes every ready redex independent.
+export function readyRule(node: T): StepResult['tag'] {
+  if (node.tag !== 'apply') return null
+  const f = node.f
+  if (f.tag === 'leaf') return 'L'
+  if (f.tag === 'stem') return 's'
+  if (f.tag === 'fork') {
+    const a = f.l
+    if (a.tag === 'leaf') return 'K'
+    if (a.tag === 'stem') return 'S'
+    if (a.tag === 'fork') return node.x.tag === 'apply' ? null : 'F'
+    return null // f.l is itself pending
+  }
+  return null // f is pending
+}
+
+// Every redex that is ready in the CURRENT tree (by reference).
+export function readySites(root: T, out: (T & { tag: 'apply' })[] = []): (T & { tag: 'apply' })[] {
+  if (readyRule(root)) out.push(root as T & { tag: 'apply' })
+  for (const c of childrenOf(root)) readySites(c, out)
+  return out
+}
+
 // One visible step at the next redex; null at normal form.
 export function stepOnce(root: T): { next: T; rule: string; tag: StepResult['tag'] } | null {
   const site = nextApplyToFire(root)
   if (!site) return null
   const { result, rule, tag } = reduceStep(site.f, site.x)
   return { next: replaceNode(root, site, result), rule, tag }
+}
+
+// One PARALLEL step: fire every redex that is ready in the current tree, in a
+// single bottom-up pass (Tait–Martin-Löf style). Returns null at normal form.
+export function stepParallel(root: T): { next: T; fired: NonNullable<StepResult['tag']>[] } | null {
+  const fired: NonNullable<StepResult['tag']>[] = []
+  function go(t: T): T {
+    if (t.tag === 'leaf') return t
+    if (t.tag === 'stem') {
+      const c = go(t.c)
+      return c === t.c ? t : stem(c)
+    }
+    if (t.tag === 'fork') {
+      const l = go(t.l)
+      const r = go(t.r)
+      return l === t.l && r === t.r ? t : fork(l, r)
+    }
+    // an apply: rewrite children first, then fire here if ready
+    const tag = readyRule(t)
+    const f = go(t.f)
+    const x = go(t.x)
+    const rebuilt: T = f === t.f && x === t.x ? t : { tag: 'apply', f, x }
+    if (tag) {
+      // readiness was judged on the ORIGINAL node; children of a ready redex
+      // are untouched by construction (they contain no ready applies for
+      // L/s/K/S, and F additionally required x in normal form)
+      const s = reduceStep(rebuilt.tag === 'apply' ? rebuilt.f : f, rebuilt.tag === 'apply' ? rebuilt.x : x)
+      fired.push(tag)
+      return s.result
+    }
+    return rebuilt
+  }
+  const next = go(root)
+  if (fired.length === 0) return null
+  return { next, fired }
 }
 
 export function normalize(root: T, limit = 2000): T {

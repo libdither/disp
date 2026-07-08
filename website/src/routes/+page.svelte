@@ -1,71 +1,82 @@
 <script lang="ts">
-  import { base } from '$app/paths'
-  import NatureTree from '$lib/components/NatureTree.svelte'
-  import RuleRail from '$lib/components/RuleRail.svelte'
-  import { highlightDisp } from '$lib/editor/highlight'
-  import { examples } from '$lib/disp/examples'
+  import { base } from "$app/paths";
+  import TreeVis from "$lib/components/TreeVis.svelte";
+  import RuleRail from "$lib/components/RuleRail.svelte";
+  import { highlightDisp } from "$lib/editor/highlight";
+  import { examples } from "$lib/disp/examples";
 
-  const REPO = 'https://github.com/libdither/disp'
-  const JAY = 'https://github.com/barry-jay-personal'
-  const TREECALC = 'https://treecalcul.us/'
+  const REPO = "https://github.com/libdither/disp";
+  const JAY = "https://github.com/barry-jay-personal";
+  const TREECALC = "https://treecalcul.us/";
 
   // the field guide: one fixed card, entries swap on hover
   interface Entry {
-    term: string
-    pos: string
-    text: string
+    term: string;
+    pos: string;
+    text: string;
   }
   const entries: Record<string, Entry> = {
     disp: {
-      term: 'disp',
-      pos: 'n.',
-      text: 'A language grown from one leaf and five rewrite rules, currently teaching itself to check its own homework. The dotted words below have entries of their own.'
+      term: "disp",
+      pos: "n.",
+      text: "A language grown from one leaf and five rewrite rules, currently teaching itself to check its own homework. The dotted words below have entries of their own.",
     },
     decentralized: {
-      term: 'decentralized',
-      pos: 'adj.',
-      text: 'Features spread the way libraries do. Anyone can build new syntax or types, anyone can adopt them, and dialects translate into one another automatically. No committee, no release train, no waiting.'
+      term: "decentralized",
+      pos: "adj.",
+      text: "Features spread the way libraries do. Anyone can build new syntax or types, anyone can adopt them, and dialects translate into one another automatically. No committee, no release train, no waiting.",
     },
     lisp: {
-      term: 'lisp',
-      pos: 'n.',
-      text: 'Programs are data here too, but there is no quote/eval loop to cross. Reduction itself reads tree shape, so a program that rewrites programs is simply a program. Lisp walked so trees could branch.'
+      term: "lisp",
+      pos: "n.",
+      text: "Programs are data here too, but there is no quote/eval loop to cross. Reduction itself reads tree shape, so a program that rewrites programs is simply a program. Lisp walked so trees could branch.",
     },
     universal: {
-      term: 'universal',
-      pos: 'adj.',
-      text: 'One substrate that other languages can be rebuilt in and transpiled to. The ambition is a language that absorbs languages, not another island with good weather.'
+      term: "universal",
+      pos: "adj.",
+      text: "One substrate that other languages can be rebuilt in and transpiled to. The ambition is a language that absorbs languages, not another island with good weather.",
     },
     parsers: {
-      term: 'user-definable parsers',
-      pos: 'n. pl.',
-      text: 'The grammar is a library, not a constitution. A project can define its own notation, elaborate to the same trees underneath, and still talk to everything else.'
+      term: "user-definable parsers",
+      pos: "n. pl.",
+      text: "The grammar is a library, not a constitution. A project can define its own notation, elaborate to the same trees underneath, and still talk to everything else.",
     },
     typesystems: {
-      term: 'type systems',
-      pos: 'n. pl.',
-      text: 'Functions, records, induction, and the universe itself: all library code over two trusted kernel operations, re-verified on every load. Different logic is a library you write, not a compiler you fork.'
+      term: "type systems",
+      pos: "n. pl.",
+      text: "Functions, records, induction, and the universe itself: all library code over two trusted kernel operations, re-verified on every load. Different logic is a library you write, not a compiler you fork.",
     },
     optimizer: {
-      term: 'self-optimizing optimizer',
-      pos: 'n.',
-      text: 'Give it a specification: a type, a predicate, a loss function. It derives implementations, each rewrite licensed by a machine-checked certificate. It has a disp type of its own, so it qualifies for its own attention.'
+      term: "self-optimizing optimizer",
+      pos: "n.",
+      text: "Give it a specification: a type, a predicate, a loss function. It derives implementations, each rewrite licensed by a machine-checked certificate. It has a disp type of its own, so it qualifies for its own attention.",
     },
     nets: {
-      term: 'interaction nets',
-      pos: 'n. pl.',
-      text: 'A model of computation where programs are graphs and every step is a small local rewrite. Steps become countable, so cost can be charged to the exact decision that spent it.'
-    }
-  }
-  let entryKey = $state('disp')
-  const entry = $derived(entries[entryKey] ?? entries.disp)
-  const look = (k: string) => () => (entryKey = k)
-  const lookAway = () => (entryKey = 'disp')
+      term: "interaction nets",
+      pos: "n. pl.",
+      text: "A model of computation where programs are graphs and every step is a small local rewrite. Steps become countable, so cost can be charged to the exact decision that spent it.",
+    },
+  };
+  let entryKey = $state("disp");
+  const entry = $derived(entries[entryKey] ?? entries.disp);
+  const look = (k: string) => () => (entryKey = k);
+  const lookAway = () => (entryKey = "disp");
 
-  let showcaseIdx = $state(0)
-  const showcase = examples.filter((e) => ['trees', 'records', 'proofs', 'universe'].includes(e.id))
+  let showcaseIdx = $state(0);
+  const showcase = examples.filter((e) =>
+    ["trees", "records", "proofs", "universe"].includes(e.id),
+  );
 
-  const kernelChain = ['prelude', 'cut', 'engine', 'cells', 'base', 'positive', 'generic', 'universe']
+  const kernelChain = [
+    "prelude",
+    "cut",
+    "engine",
+    "cells",
+    "base",
+    "positive",
+    "generic",
+    "universe",
+  ];
 </script>
 
 <svelte:head>
@@ -77,24 +88,82 @@
   <div class="aurora" aria-hidden="true"></div>
   <div class="container hero-grid">
     <div class="hero-copy">
-      <h1>
-        <span class="grad-text">disp</span>
-      </h1>
-      <p class="abbr">
-        <span class="abbr-label">abbr.</span>
-        <button class="dterm" onmouseenter={look('decentralized')} onmouseleave={lookAway} onfocus={look('decentralized')} onblur={lookAway}>decentralized</button>
-        <button class="dterm" onmouseenter={look('lisp')} onmouseleave={lookAway} onfocus={look('lisp')} onblur={lookAway}>lisp</button>
-      </p>
+      <div class="head-row">
+        <div class="head-words">
+          <h1>
+            <span class="grad-text">disp</span>
+          </h1>
+          <p class="abbr">
+            <span class="abbr-label">abbr.</span>
+            <button
+              class="dterm"
+              onmouseenter={look("decentralized")}
+              onmouseleave={lookAway}
+              onfocus={look("decentralized")}
+              onblur={lookAway}>decentralized</button
+            >
+            <button
+              class="dterm"
+              onmouseenter={look("lisp")}
+              onmouseleave={lookAway}
+              onfocus={look("lisp")}
+              onblur={lookAway}>lisp</button
+            >
+          </p>
+        </div>
+        <!-- one definition box: hover a dotted term and its entry appears -->
+        <aside
+          class="defbox"
+          class:looking={entryKey !== "disp"}
+          aria-live="polite"
+        >
+          <span class="def-head">
+            <span class="def-term">{entry.term}</span>
+            <span class="def-pos">{entry.pos}</span>
+          </span>
+          <p class="def-text">{entry.text}</p>
+        </aside>
+      </div>
       <p class="sub">
         disp is an aspiring
-        <button class="dterm" onmouseenter={look('universal')} onmouseleave={lookAway} onfocus={look('universal')} onblur={lookAway}>universal</button>
+        <button
+          class="dterm"
+          onmouseenter={look("universal")}
+          onmouseleave={lookAway}
+          onfocus={look("universal")}
+          onblur={lookAway}>universal</button
+        >
         general-purpose programming language with
-        <button class="dterm" onmouseenter={look('parsers')} onmouseleave={lookAway} onfocus={look('parsers')} onblur={lookAway}>user-definable parsers</button>
+        <button
+          class="dterm"
+          onmouseenter={look("parsers")}
+          onmouseleave={lookAway}
+          onfocus={look("parsers")}
+          onblur={lookAway}>user-definable parsers</button
+        >
         and
-        <button class="dterm" onmouseenter={look('typesystems')} onmouseleave={lookAway} onfocus={look('typesystems')} onblur={lookAway}>type systems</button>, and a
-        <button class="dterm" onmouseenter={look('optimizer')} onmouseleave={lookAway} onfocus={look('optimizer')} onblur={lookAway}>self-optimizing optimizer</button>
+        <button
+          class="dterm"
+          onmouseenter={look("typesystems")}
+          onmouseleave={lookAway}
+          onfocus={look("typesystems")}
+          onblur={lookAway}>type systems</button
+        >, and a
+        <button
+          class="dterm"
+          onmouseenter={look("optimizer")}
+          onmouseleave={lookAway}
+          onfocus={look("optimizer")}
+          onblur={lookAway}>self-optimizing optimizer</button
+        >
         based on
-        <button class="dterm" onmouseenter={look('nets')} onmouseleave={lookAway} onfocus={look('nets')} onblur={lookAway}>interaction nets</button>
+        <button
+          class="dterm"
+          onmouseenter={look("nets")}
+          onmouseleave={lookAway}
+          onfocus={look("nets")}
+          onblur={lookAway}>interaction nets</button
+        >
         that models hardware as imperfect interaction-net reduction. Based on
         <a href={JAY} target="_blank" rel="noopener">Barry Jay</a>'s
         <a href={TREECALC} target="_blank" rel="noopener">tree calculus</a>.
@@ -105,21 +174,14 @@
       </div>
       <div class="term">
         <span class="term-dollar">$</span>
-        <code>git clone {REPO.replace('https://', '')} && npm i && npm test</code>
+        <code
+          >git clone {REPO.replace("https://", "")} && npm i && npm test</code
+        >
       </div>
     </div>
     <div class="hero-viz">
-      <NatureTree />
+      <TreeVis />
     </div>
-    <!-- the field guide: hover a dotted term and its entry appears here -->
-    <aside class="defbox" class:looking={entryKey !== 'disp'} aria-live="polite">
-      <span class="def-head">
-        <span class="def-term">{entry.term}</span>
-        <span class="def-pos">{entry.pos}</span>
-      </span>
-      <p class="def-text">{entry.text}</p>
-      <span class="def-foot">field guide · entry {Object.keys(entries).indexOf(entryKey) + 1} of {Object.keys(entries).length}</span>
-    </aside>
   </div>
 </section>
 
@@ -129,48 +191,69 @@
 <section class="features container">
   <h2 class="sect-title">Why <span class="grad-text">disp</span>?</h2>
   <p class="sect-sub">
-    The type system, the self-verifying kernel, and five byte-agreeing evaluators run today.
-    The rest is what they were built to reach.
-    <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener">FOUNDATIONS.md</a>
+    The type system, the self-verifying kernel, and five byte-agreeing
+    evaluators run today. The rest is what they were built to reach.
+    <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener"
+      >FOUNDATIONS.md</a
+    >
     keeps honest score of which is which.
   </p>
   <div class="feat-grid">
     <div class="card feat">
-      <h3><span class="feat-dot" aria-hidden="true"></span>Homoiconic, past lisp</h3>
+      <h3>
+        <span class="feat-dot" aria-hidden="true"></span>Programs are data are
+        trees
+      </h3>
       <p>
-        Programs are binary trees, and trees are plain data. There is no quote/eval border to
-        smuggle code across: the rewrite rules themselves read tree shape, so a macro, an
-        optimizer, or a type checker is an ordinary program that happens to eat programs. Equal
-        programs are even the same pointer, courtesy of hash-consing.
+        Disp is homoiconic like lisp, except there is no quote/eval border to
+        deal with. Programs can just take other programs as input and use the
+        `triage` reduction rule to inspect them.
       </p>
     </div>
     <div class="card feat">
-      <h3><span class="feat-dot" aria-hidden="true"></span>Type systems you can replace</h3>
+      <h3>
+        <span class="feat-dot" aria-hidden="true"></span>Type-as-predicates
+      </h3>
       <p>
-        A type is a predicate. Apply it to a value and it answers. Functions, records,
-        induction, and the universe itself are library code sitting on
-        <strong>two trusted kernel operations</strong>, and the whole stack re-verifies itself
-        every time it loads. If you want different logic, you write a library, not a fork of
-        the compiler.
+        A type is a function that takes a tree and returns `true`, `false`, or
+        `Err`. You can trivially implement new type theories by just writing new
+        functions, but the best part is that you don't have to think about type
+        systems in terms of confusing sequence calculus diagrams, <i
+          >they're just programs</i
+        >.
       </p>
     </div>
     <div class="card feat">
-      <h3><span class="feat-dot" aria-hidden="true"></span>Your syntax, your dialect</h3>
+      <h3>
+        <span class="feat-dot" aria-hidden="true"></span>You should be able to
+        just define the parser
+      </h3>
       <p>
-        Parsers you can define, features that spread by adoption rather than by committee, and
-        automatic translation between the dialects that result. The point is one substrate that
-        other languages can be rebuilt in and transpiled to, not one more island with a nice
-        standard library.
+        I've never understood why programming languages don't just allow you to
+        entirely replace the parser. Well, I guess lisp and some ML languages
+        (Haskell, Agda) allows you to do this kinda but not super well or not
+        completely. Disp doesn't have this feature <i>yet</i>, but its pretty
+        much just a matter of time at this point. The goal is to be able to
+        literally change syntax or program representation with a simple dropdown
+        menu. Users can make their own by defining a parser |- pretty-printer
+        adjoint functor pair.
       </p>
     </div>
     <div class="card feat">
-      <h3><span class="feat-dot" aria-hidden="true"></span>An optimizer aimed at itself</h3>
+      <h3>
+        <span class="feat-dot" aria-hidden="true"></span>An optimizer aimed at
+        itself
+      </h3>
       <p>
-        Programs materialize as <a href="{REPO}/blob/main/OPTIMIZER.typ" target="_blank" rel="noopener">interaction nets</a>,
-        where every reduction is a local rewrite you can count, and hardware is modeled as
-        imperfect net reduction. Cost lands on individual decisions. Rewrites need
-        machine-checked equivalence certificates, and since the optimizer has a disp type too,
-        nothing stops it from taking a pass at itself.
+        Programs materialize as <a
+          href="{REPO}/blob/main/OPTIMIZER.typ"
+          target="_blank"
+          rel="noopener">interaction nets</a
+        >, where every reduction is a local rewrite you can count, and hardware
+        is modeled as imperfect net reduction. Cost lands on individual
+        decisions. Rewrites need machine-checked equivalence certificates, and
+        since the optimizer has a disp type too, nothing stops it from taking a
+        pass at itself.
       </p>
     </div>
   </div>
@@ -182,21 +265,31 @@
 <section class="showcase container">
   <h2 class="sect-title">The features, in code</h2>
   <p class="sect-sub">
-    Every block below passes the real compiler. The playground runs that same compiler in your
-    tab, kernel self-verification included, so the code and the claims can't drift apart.
+    Every block below passes the real compiler. The playground runs that same
+    compiler in your tab, kernel self-verification included, so the code and the
+    claims can't drift apart.
   </p>
   <div class="tabs">
     {#each showcase as ex, i}
-      <button class="tab" class:active={showcaseIdx === i} onclick={() => (showcaseIdx = i)}>
-        {ex.label.replace(/ \(.*\)/, '')}
+      <button
+        class="tab"
+        class:active={showcaseIdx === i}
+        onclick={() => (showcaseIdx = i)}
+      >
+        {ex.label.replace(/ \(.*\)/, "")}
       </button>
     {/each}
     <div class="tab-space"></div>
-    <a class="btn tab-run" href="{base}/playground/?example={showcase[showcaseIdx].id}">
+    <a
+      class="btn tab-run"
+      href="{base}/playground/?example={showcase[showcaseIdx].id}"
+    >
       ▶ Open in playground
     </a>
   </div>
-  <pre class="show-code">{@html highlightDisp(showcase[showcaseIdx].source.trim())}</pre>
+  <pre class="show-code">{@html highlightDisp(
+      showcase[showcaseIdx].source.trim(),
+    )}</pre>
 </section>
 
 <hr class="keyline container" />
@@ -205,11 +298,16 @@
 <section class="selfcheck container">
   <h2 class="sect-title">No pre-checked kernel ships</h2>
   <p class="sect-sub">
-    When the playground boots the type system, your browser re-elaborates the kernel's fragments
-    in dependency order and re-verifies every typed export through the kernel itself. The last
-    thing checked is the universe, by the universe.
+    When the playground boots the type system, your browser re-elaborates the
+    kernel's fragments in dependency order and re-verifies every typed export
+    through the kernel itself. The last thing checked is the universe, by the
+    universe.
   </p>
-  <div class="chain" role="img" aria-label="kernel bootstrap chain: {kernelChain.join(', ')}">
+  <div
+    class="chain"
+    role="img"
+    aria-label="kernel bootstrap chain: {kernelChain.join(', ')}"
+  >
     {#each kernelChain as frag, i}
       <span class="chip" style="--d:{i}">{frag}</span>
       {#if i < kernelChain.length - 1}<span class="chev">→</span>{/if}
@@ -230,20 +328,26 @@
   <div class="inv-grid">
     <a class="card inv" href="{base}/learn/">
       <h3>Learn the theory</h3>
-      <p>A first-principles walkthrough: from five rewrite rules to a self-verifying universe.</p>
+      <p>
+        A first-principles walkthrough: from five rewrite rules to a
+        self-verifying universe.
+      </p>
       <span class="inv-cta">Start reading →</span>
     </a>
     <a class="card inv" href={REPO} target="_blank" rel="noopener">
       <h3>Read the source</h3>
       <p>
-        The kernel is ~1k lines of literate disp. The docs rate every file's quality and origin,
-        honestly.
+        The kernel is ~1k lines of literate disp. The docs rate every file's
+        quality and origin, honestly.
       </p>
       <span class="inv-cta">github.com/libdither/disp ↗</span>
     </a>
     <a class="card inv" href="{base}/funding/">
       <h3>Support the work</h3>
-      <p>Independent research, public domain output. Every bit of support extends the runway.</p>
+      <p>
+        Independent research, public domain output. Every bit of support extends
+        the runway.
+      </p>
       <span class="inv-cta">Funding →</span>
     </a>
   </div>
@@ -260,16 +364,33 @@
   .aurora {
     position: absolute;
     inset: -20% -10%;
-    background:
-      radial-gradient(38% 45% at 18% 22%, color-mix(in oklab, var(--g1) 20%, transparent), transparent 70%),
-      radial-gradient(42% 50% at 78% 18%, color-mix(in oklab, var(--g4) 16%, transparent), transparent 70%),
-      radial-gradient(50% 55% at 60% 85%, color-mix(in oklab, var(--blossom) 14%, transparent), transparent 70%),
-      radial-gradient(35% 40% at 38% 60%, color-mix(in oklab, var(--g3) 12%, transparent), transparent 70%);
+    background: radial-gradient(
+        38% 45% at 18% 22%,
+        color-mix(in oklab, var(--g1) 20%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        42% 50% at 78% 18%,
+        color-mix(in oklab, var(--g4) 16%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        50% 55% at 60% 85%,
+        color-mix(in oklab, var(--blossom) 14%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        35% 40% at 38% 60%,
+        color-mix(in oklab, var(--g3) 12%, transparent),
+        transparent 70%
+      );
     animation: drift 26s ease-in-out infinite alternate;
     pointer-events: none;
   }
   @keyframes drift {
-    to { transform: translate3d(2.5%, -2%, 0) scale(1.06) rotate(1.2deg); }
+    to {
+      transform: translate3d(2.5%, -2%, 0) scale(1.06) rotate(1.2deg);
+    }
   }
   .hero-grid {
     position: relative;
@@ -296,22 +417,33 @@
     color: var(--g2);
     outline: none;
   }
+  /* the wordmark and the definition box share a row: words left, box right */
+  .head-row {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 1.2rem;
+    margin-bottom: 0.4rem;
+  }
+  .head-words {
+    flex: none;
+  }
   .defbox {
-    position: absolute;
-    top: -1.2rem;
-    right: 0;
-    width: 306px;
-    height: 218px;
+    flex: 1;
+    max-width: 270px;
+    min-height: 176px;
+    align-self: center;
     background: color-mix(in oklab, var(--g4) 5%, var(--bg-elev));
     border: 1px solid var(--border-strong);
     border-radius: 12px;
-    padding: 0.9rem 1.05rem 0.7rem;
+    padding: 0.75rem 0.95rem;
     box-shadow: var(--shadow-soft);
     transform: rotate(1.1deg);
-    transition: transform 0.25s ease, border-color 0.25s ease;
+    transition:
+      transform 0.25s ease,
+      border-color 0.25s ease;
     display: flex;
     flex-direction: column;
-    z-index: 3;
     overflow: hidden;
   }
   .defbox.looking {
@@ -323,41 +455,38 @@
     align-items: baseline;
     gap: 0.5em;
     border-bottom: 1px solid var(--border);
-    padding-bottom: 0.35rem;
+    padding-bottom: 0.3rem;
   }
   .def-term {
     font-family: var(--font-display);
-    font-variation-settings: 'SOFT' 60, 'WONK' 1;
+    font-variation-settings:
+      "SOFT" 60,
+      "WONK" 1;
     font-weight: 620;
-    font-size: 1.12rem;
+    font-size: 1.02rem;
     color: var(--fg);
+    line-height: 1.2;
   }
   .def-pos {
     font-family: var(--font-display);
     font-style: italic;
     color: var(--fg-faint);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
   }
   .def-text {
     flex: 1;
-    margin: 0.5rem 0 0;
-    font-size: 0.83rem;
-    line-height: 1.55;
+    margin: 0.45rem 0 0;
+    font-size: 0.77rem;
+    line-height: 1.5;
     color: var(--fg-muted);
-  }
-  .def-foot {
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    color: var(--fg-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    padding-top: 0.4rem;
   }
   h1 {
     font-size: clamp(4.2rem, 9vw, 6.8rem);
     margin: 0;
     line-height: 0.95;
-    font-variation-settings: 'SOFT' 80, 'WONK' 1;
+    font-variation-settings:
+      "SOFT" 80,
+      "WONK" 1;
     font-weight: 640;
     letter-spacing: -0.02em;
   }
@@ -365,7 +494,9 @@
     font-family: var(--font-display);
     font-size: clamp(1.15rem, 2.2vw, 1.5rem);
     font-style: italic;
-    font-variation-settings: 'SOFT' 60, 'WONK' 1;
+    font-variation-settings:
+      "SOFT" 60,
+      "WONK" 1;
     color: var(--fg-muted);
     margin: 0.5rem 0 1rem;
   }
@@ -385,8 +516,16 @@
     line-height: 1.75;
     margin: 0 0 1.6rem;
   }
-  .cta-row { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 1.4rem; }
-  .cta-row.center { justify-content: center; margin-top: 1.6rem; }
+  .cta-row {
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.4rem;
+  }
+  .cta-row.center {
+    justify-content: center;
+    margin-top: 1.6rem;
+  }
   .term {
     display: inline-flex;
     align-items: center;
@@ -400,25 +539,39 @@
     max-width: 100%;
     overflow-x: auto;
   }
-  .term-dollar { color: var(--g1); font-family: var(--font-mono); }
-  .term code { white-space: nowrap; }
+  .term-dollar {
+    color: var(--g1);
+    font-family: var(--font-mono);
+  }
+  .term code {
+    white-space: nowrap;
+  }
   .hero-viz {
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: 16px;
-    background:
-      radial-gradient(120% 130% at 50% 0%, color-mix(in oklab, var(--g3) 7%, transparent), transparent 60%),
+    background: radial-gradient(
+        120% 130% at 50% 0%,
+        color-mix(in oklab, var(--g3) 7%, transparent),
+        transparent 60%
+      ),
       var(--bg-panel);
     padding: 1rem 0.6rem 0.4rem;
   }
 
   /* ---------- features ---------- */
-  .features { padding-top: 3.4rem; }
+  .features {
+    padding-top: 3.4rem;
+  }
   .sect-title {
     font-size: clamp(1.9rem, 4vw, 2.6rem);
     margin: 0 0 0.5rem;
   }
-  .sect-sub { color: var(--fg-muted); max-width: 44rem; margin-top: 0; }
+  .sect-sub {
+    color: var(--fg-muted);
+    max-width: 44rem;
+    margin-top: 0;
+  }
   .feat-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -432,7 +585,11 @@
     align-items: center;
     gap: 0.5em;
   }
-  .feat p { color: var(--fg-muted); font-size: 0.94rem; margin: 0; }
+  .feat p {
+    color: var(--fg-muted);
+    font-size: 0.94rem;
+    margin: 0;
+  }
   .feat-dot {
     width: 10px;
     height: 10px;
@@ -441,7 +598,12 @@
     flex: none;
     transform: rotate(45deg);
   }
-  .features, .showcase, .selfcheck, .involve { padding-block: 3.2rem; }
+  .features,
+  .showcase,
+  .selfcheck,
+  .involve {
+    padding-block: 3.2rem;
+  }
 
   /* ---------- showcase ---------- */
   .tabs {
@@ -461,15 +623,23 @@
     border-radius: 999px;
     cursor: pointer;
   }
-  .tab:hover { color: var(--fg); background: var(--bg-panel-hover); }
+  .tab:hover {
+    color: var(--fg);
+    background: var(--bg-panel-hover);
+  }
   .tab.active {
     color: var(--fg);
     border-color: var(--border-strong);
     background: var(--bg-panel);
     box-shadow: inset 0 -2px 0 -0.5px var(--accent);
   }
-  .tab-space { flex: 1; }
-  .tab-run { font-size: 0.84rem; padding: 0.4em 1em; }
+  .tab-space {
+    flex: 1;
+  }
+  .tab-run {
+    font-size: 0.84rem;
+    padding: 0.4em 1em;
+  }
   .show-code {
     font-size: 0.8rem;
     max-height: 430px;
@@ -478,8 +648,12 @@
   }
 
   /* ---------- self-check band ---------- */
-  .selfcheck { text-align: center; }
-  .selfcheck .sect-sub { margin-inline: auto; }
+  .selfcheck {
+    text-align: center;
+  }
+  .selfcheck .sect-sub {
+    margin-inline: auto;
+  }
   .chain {
     display: flex;
     flex-wrap: wrap;
@@ -498,14 +672,23 @@
     animation: chipglow 6s ease-in-out calc(var(--d) * 0.75s) infinite;
   }
   @keyframes chipglow {
-    0%, 100% { border-color: var(--border-strong); box-shadow: none; }
+    0%,
+    100% {
+      border-color: var(--border-strong);
+      box-shadow: none;
+    }
     8% {
       border-color: var(--g2);
       box-shadow: 0 0 14px -2px color-mix(in oklab, var(--g2) 55%, transparent);
     }
-    16% { border-color: var(--border-strong); box-shadow: none; }
+    16% {
+      border-color: var(--border-strong);
+      box-shadow: none;
+    }
   }
-  .chev { color: var(--fg-faint); }
+  .chev {
+    color: var(--fg-faint);
+  }
   .loop {
     margin-left: 0.5rem;
     color: var(--g1);
@@ -521,25 +704,53 @@
     gap: 1.1rem;
     margin-top: 1.4rem;
   }
-  a.inv { display: block; text-decoration: none !important; transition: transform 0.15s ease, border-color 0.15s ease; }
-  a.inv:hover { transform: translateY(-3px); border-color: var(--fg-faint); }
-  .inv h3 { margin: 0 0 0.4rem; font-size: 1.15rem; color: var(--fg); }
-  .inv p { color: var(--fg-muted); font-size: 0.9rem; min-height: 3.2em; }
-  .inv-cta { color: var(--accent); font-size: 0.9rem; }
+  a.inv {
+    display: block;
+    text-decoration: none !important;
+    transition:
+      transform 0.15s ease,
+      border-color 0.15s ease;
+  }
+  a.inv:hover {
+    transform: translateY(-3px);
+    border-color: var(--fg-faint);
+  }
+  .inv h3 {
+    margin: 0 0 0.4rem;
+    font-size: 1.15rem;
+    color: var(--fg);
+  }
+  .inv p {
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+    min-height: 3.2em;
+  }
+  .inv-cta {
+    color: var(--accent);
+    font-size: 0.9rem;
+  }
 
   /* ---------- responsive ---------- */
   @media (max-width: 880px) {
-    .hero-grid { grid-template-columns: 1fr; }
-    .hero-viz { order: -1; }
-    .feat-grid, .inv-grid { grid-template-columns: 1fr; }
-    /* the field guide joins the flow on small screens */
+    .hero-grid {
+      grid-template-columns: 1fr;
+    }
+    .hero-viz {
+      order: -1;
+    }
+    .feat-grid,
+    .inv-grid {
+      grid-template-columns: 1fr;
+    }
+    /* the definition box drops under the wordmark on small screens */
+    .head-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
     .defbox {
-      position: static;
-      width: 100%;
-      height: auto;
+      max-width: none;
       min-height: 0;
       transform: none;
-      order: 3;
     }
   }
 </style>

@@ -2,7 +2,15 @@
   import Aside from '../Aside.svelte'
   import Deep from '../Deep.svelte'
   import Gloss from '../Gloss.svelte'
-  import TreeLab from '../TreeLab.svelte'
+  import TreeVis from '$lib/components/TreeVis.svelte'
+
+  const labPresets = [
+    { expr: 'not false', tip: 'Booleans are the two smallest trees (true = t, false = t t); not is one triage: the F rule reads the argument\'s shape and picks a branch.' },
+    { expr: 'shape_code (t t t)', tip: 'The F rule as a value: shape_code answers 0 for a leaf, 1 for a stem, 2 for a fork. Case analysis over arbitrary data is a rewrite rule.' },
+    { expr: 'K t (t t)', tip: 'K discards its second argument. One K-rule firing, after the stem rule assembles the redex.' },
+    { expr: 'S K K (t t)', tip: 'S K K is the identity, assembled from S and K: the S rule duplicates the argument, then two K rules collapse it back out.' },
+    { expr: 'S K K (S K K (t t))', tip: 'Two identities, nested. Try the parallel toggle here: independent redexes fire in the same round, and confluence promises the same answer.' }
+  ]
 </script>
 
 <section>
@@ -92,11 +100,14 @@
     </p>
   </Aside>
   <p>
-    The lab below evaluates any expression you type — press <em>Step</em> to fire the next
-    reduction and watch which rule carries it. The pulsing ring marks the next
-    <Gloss tip="a reducible expression: an application whose function (and, for triage, argument) is in the right shape for a rule to fire">redex</Gloss>.
+    The lab below evaluates any expression you type. Press <em>Step</em> to fire the next
+    reduction and watch which rule carries it: the amber letter marks the next
+    <Gloss tip="a reducible expression: an application whose function (and, for triage, argument) is in the right shape for a rule to fire">redex</Gloss>,
+    and pruned leaves fall where all pruned leaves go. The toggles are worth a poke:
+    <em>parallel</em> fires every ready redex per round, which is legal because tree calculus is
+    confluent, and <em>nature</em> off turns the grove back into a plain diagram.
   </p>
-  <TreeLab />
+  <TreeVis variant="lab" presets={labPresets} exprs={[labPresets[0].expr]} height={330} />
 
   <h3 id="bracket">2.4 · Bracket abstraction: compiling λ to trees</h3>
   <p>
