@@ -41,8 +41,25 @@ and the open-row section of `eff_deep_proto`):
   conservative false; row polymorphism is ordinary Pi Row and the
   one-trailing-variable case is exact (pinned).
 
-Still open: the impure driver (mapped below, not built) and the stage 6
-license, which belongs to the OPTIMIZER.typ arc. Canonical rows and the deep `Eff R X`
+- SYNTAX, landed 2026-07-08 (the investigation and its landing are both in
+  `lib/tests/effect_syntax_proto.test.disp`, 30 pins): effects need NO
+  keyword. An effect is a record type; `op`/`op0`/`ops` (std/effect.disp)
+  derive the occurrence builders off its field cells, and the type value is
+  the row identity (a misspelled effect is an unbound identifier). The
+  request-sum face is derived from the same type: `requests E` (the
+  Coproduct of op requests), `handler_sig E M` (the handler TYPE — each
+  clause `Π arg. (result -> M) -> M`, resume typed per op — checked by the
+  same coherence gate as every eliminator's case record; missing and
+  ill-typed clauses rejected, pinned), and `handle_via` (runs case-record
+  handlers deep). Blocks gained the arrow member `x <- e`, monadic bind
+  desugaring to `eff_bind` and interleaving with lexical `let`s
+  (SYNTAX.typ § block); let-as-bind was explicitly rejected on two pinned
+  holes (a value-directed binder cannot name a program as data, and it
+  hijacks anything wearing the Pure shape).
+
+Still open: the stage 6 license (the OPTIMIZER.typ arc), the recursive
+twins' deep rows (MetaShape §11 and eliminator-routed recursion), and the
+production driver beyond the POC. Canonical rows and the deep `Eff R X`
 recognizer are in `lib/std/effect.disp` (`EffAt` is the shallow compatibility
 form), pinned with the branchy exit demonstration in
 `lib/tests/eff_deep_proto.test.disp` (38 pins); the kernel signature, floor
