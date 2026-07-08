@@ -79,7 +79,6 @@
     try {
       const out = await disp.run(source)
       endProgress()
-      if (kernelItemsThisRun > 100 && !out.error) disp.kernelLoaded = true
       pushEntry({ kind: 'run', label, outcome: out, kernelItems: kernelItemsThisRun })
       editorApi?.setMarks(marksFromOutcome(out))
     } catch (e) {
@@ -112,7 +111,6 @@
     try {
       const out = await disp.evalExpr(editorApi?.getDoc() ?? currentDoc, expr)
       endProgress()
-      if (kernelItemsThisRun > 100 && !out.error) disp.kernelLoaded = true
       pushEntry({ kind: 'eval', expr, outcome: out })
     } catch (e) {
       endProgress()

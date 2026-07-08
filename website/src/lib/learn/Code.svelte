@@ -28,9 +28,7 @@
     kernelNote = !disp.kernelLoaded
     try {
       const src = context ? context.trimEnd() + '\n' + code + '\n' : code + '\n'
-      const out = await disp.run(src)
-      outcome = out
-      if (!out.error) disp.kernelLoaded = disp.kernelLoaded || true
+      outcome = await disp.run(src)
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
     } finally {

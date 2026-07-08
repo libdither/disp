@@ -31,11 +31,16 @@ class DispClient {
   // live feed of elaboration items (drained by whoever renders progress)
   onItem: ((e: ItemEvent) => void) | null = null
 
+  // module-depth items seen this session; once a successful run has streamed
+  // a kernel's worth, the session module cache holds it — later runs are warm
+  #moduleItems = 0
+
   #spawn(): Worker {
     const w = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
     w.onmessage = (e: MessageEvent<WorkerResponse>) => {
       const msg = e.data
       if (msg.type === 'item') {
+        if (msg.depth > 0) this.#moduleItems++
         this.onItem?.(msg)
         return
       }
@@ -45,6 +50,7 @@ class DispClient {
       if (msg.type === 'fatal') p.reject(new Error(msg.error))
       else if (msg.type === 'result') {
         this.memBytes = msg.outcome.memBytes
+        if (!msg.outcome.error && this.#moduleItems > 100) this.kernelLoaded = true
         p.resolve(msg.outcome)
       } else p.resolve({ ok: true, defs: [], tests: [], elapsedMs: 0, steps: 0, memBytes: 0 })
     }
@@ -136,6 +142,7 @@ class DispClient {
     if (!this.#worker) return
     this.#kernelPromise = null
     this.kernelLoaded = false
+    this.#moduleItems = 0
     await this.#request({ type: 'reset' })
     this.status = 'ready'
   }
@@ -149,6 +156,7 @@ class DispClient {
     this.#initPromise = null
     this.#kernelPromise = null
     this.kernelLoaded = false
+    this.#moduleItems = 0
     this.status = 'cold'
   }
 }

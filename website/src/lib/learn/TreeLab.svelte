@@ -125,11 +125,15 @@
 
   const XS = 40
   const YS = 46
-  let W = $state(620)
-  let H = $state(300)
 
   const laid = $derived.by(() => {
-    if (!cur) return { nodes: [] as VNode[], edges: [] as { id: string; x1: number; y1: number; x2: number; y2: number }[] }
+    if (!cur)
+      return {
+        nodes: [] as VNode[],
+        edges: [] as { id: string; x1: number; y1: number; x2: number; y2: number }[],
+        W: 620,
+        H: 300
+      }
     const tree = cur
     const out: { path: string; tree: T; x: number; depth: number }[] = []
     function go(t: T, path: string, depth: number): { rootX: number; width: number } {
@@ -159,8 +163,6 @@
     const maxD = Math.max(...out.map((n) => n.depth), 1)
     const width = Math.max(340, Math.min(860, maxX * XS + 80))
     const height = Math.max(180, Math.min(460, maxD * YS + 80))
-    W = width
-    H = height
     const sx = (width - 60) / Math.max(maxX, 1)
     const sy = (height - 64) / Math.max(maxD, 1)
     const hotSite = nextApplyToFire(tree)
@@ -186,7 +188,7 @@
         if (c) edges.push({ id: n.path + '>' + i, x1: px(n), y1: py(n), x2: px(c), y2: py(c) })
       }
     }
-    return { nodes, edges }
+    return { nodes, edges, W: width, H: height }
   })
 </script>
 
@@ -217,7 +219,7 @@
   {#if err}
     <p class="err">{err}</p>
   {:else if cur}
-    <svg viewBox="0 0 {W} {H}" style="aspect-ratio: {W} / {H}">
+    <svg viewBox="0 0 {laid.W} {laid.H}" style="aspect-ratio: {laid.W} / {laid.H}">
       <defs>
         <linearGradient id="labg" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stop-color="var(--g1)" />
@@ -307,7 +309,7 @@
   .preset:hover { color: var(--fg); border-color: var(--border-strong); }
   .preset.active { color: var(--g2); border-color: color-mix(in oklab, var(--g2) 50%, transparent); }
   .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.5rem 0 0; font-style: italic; }
-  svg { width: 100%; margin-top: 0.6rem; }
+  svg { width: 100%; max-height: 340px; margin-top: 0.6rem; }
   line { stroke: color-mix(in oklab, var(--g3) 30%, transparent); stroke-width: 1.3; }
   .node { transition: transform 0.4s cubic-bezier(0.4, 0.1, 0.2, 1); }
   .node circle { fill: url(#labg); }
@@ -346,7 +348,7 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     flex: none;
-    width: 3.2em;
+    min-width: 3.6em;
   }
   .forms code { white-space: nowrap; background: none; border: none; padding: 0; }
 </style>
