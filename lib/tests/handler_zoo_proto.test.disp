@@ -25,43 +25,13 @@
 // Baseline (rust-eager-native, 2026-07-08): ~25s wall, 12 pins.
 open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
+open use "../std/list.disp"
 open use "../std/effect.disp"
 open use "../std/pair.disp"
+open use "../std/tele_spec.disp"
 
-// ── stage 2's Tele vocabulary, local copy (promotion to a std module is the
-// stage 4 decision) ──
-let t_mint := {ty} -> io_op { label := pair "Tele" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
-let t_obs := {ty, getr} -> io_op { label := pair "Tele" "obs"; param := Tree; result := Tree } (pair ty getr) ({r} -> io_pure r)
-let t_guard := {pred, v} -> io_op { label := pair "Tele" "guard"; param := Tree; result := Tree } (pair pred v) ({r} -> io_pure r)
-let t_proj := {name, ty, getr, thread} -> io_op { label := pair "Tele" "proj"; param := Tree; result := Tree } (pair name (pair ty (pair getr thread))) ({r} -> io_pure r)
-let s_mint_sig := pair_fst (mint_cell t)
-let s_apply_sig := pair_fst (apply_cell t)
-let s_qid_sig := pair_fst (qid_cell t)
-let s_refine_sig := pair_fst (refine_cell t)
-let s_imeet_sig := pair_fst (imeet_cell t)
-let tele_prog := fix ({self, tele, source, prior} ->
-  if (is_fork tele) then {
-    let cell := pair_fst tele
-    let m := type_meta cell
-    let sig := pair_fst cell
-    (if (tree_eq sig s_mint_sig) then (eff_bind (t_mint (m.ty)) ({h} -> self ((pair_snd tele) h) source h))
-    else (if (tree_eq sig s_apply_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok (source prior))) ({x} -> self ((pair_snd tele) x) source x))
-    else (if (tree_eq sig s_qid_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
-    else (if (tree_eq sig s_imeet_sig) then (eff_bind (t_obs ((m.pred) prior) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
-    else (if (tree_eq sig s_refine_sig) then (eff_bind (t_guard (m.pred) source) ({x} -> self ((pair_snd tele) x) source x))
-    else (eff_bind (t_proj (m.name) (m.ty) ({_} -> lookup_field source (m.name)) ({_} -> source (acc (m.name)))) ({x} -> self ((pair_snd tele) x) source x)))))))
-  } else (io_pure (Ok true)))
-let s_obs_check := {ty, getr, resume} -> (
-  match (apply_policed getr t) {
-    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else (Ok false)); Err _ => (Ok false) }); Err _ => (Ok false) })
-    Err _ => (Ok false)
-  })
-let recognize_on := {op} -> {arg, resume} -> (
-  if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
-  else (if (tree_eq (op_name op) "obs") then (s_obs_check (pair_fst arg) (pair_snd arg) resume)
-  else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else (Ok false)); Err _ => (Ok false) })
-  else (s_obs_check (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
-let spec_recognize := mk_handler (covers_eff "Tele") ({x} -> x) recognize_on
+// (the Tele vocabulary, tele_prog, and spec_recognize come from
+// std/tele_spec.disp — the promotion this file's header once deferred)
 
 // ── the cost handler: counts = make_pair mints checks ──
 let bump_fst := {c} -> make_pair (succ (c.fst)) (c.snd)
@@ -95,7 +65,7 @@ let run_expl := {prog} -> (handle expl_h prog) nil
 
 // ── the synthesis handler: mint = enumerate (multishot), obs/guard = filter ──
 let enum_of := {ty} -> (if (tree_eq ty Bool) then (cons true (cons false nil)) else (if (tree_eq ty Nat) then (cons 0 (cons 1 (cons 2 nil))) else nil))
-let concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+// (concat_map comes from std/list.disp)
 let synth_obs := {ty, getr, resume} -> (
   match (apply_policed getr t) {
     Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else nil); Err _ => nil }); Err _ => nil })

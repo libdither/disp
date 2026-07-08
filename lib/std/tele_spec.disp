@@ -1,0 +1,65 @@
+// std/tele_spec.disp — the telescope walker as a free-monad program, with
+// the mode boolean replaced by a choice of handler (EFFECT_BOOTSTRAP_PLAN
+// stage 2; promoted 2026-07-08 from the two proto files that each carried a
+// copy — tele_spec2_proto keeps the differential battery, handler_zoo_proto
+// the cost/explanation/synthesis interpreters; the design narrative lives in
+// tele_spec2_proto's header).
+//
+// tele_prog folds a LIVE cell chain (the real telescopes, read by op
+// signature and type_meta as positive.disp reads them) into ONE Eff program
+// over the Tele signature: mint ty / obs ty getr / guard pred v /
+// proj name ty getr thread. The program says only "ask, bind, continue";
+// rejection, stuckness, and the empty-spine answer are handler decisions.
+// Note the substrate is EAGER, so a getr closure evaluates its captured
+// observation at construction (the tele_spec2_proto adversarial finding).
+//
+// spec_recognize: mint through the bind_hyp route (escape discipline rides
+// along); observations run POLICED (apply_policed getr t — the ambient
+// walker's soundness made one explicit clause; a raw getr would triage hyps
+// and wrongly accept is_fork); failures drop the resume with Ok false.
+// spec_respond frame: mint resumes the FRAME; obs drops the resume with
+// Extend ty; proj routes by field name; the return clause answers the live
+// empty-spine Extend InvalidType.
+open use "../kernel/prelude.disp"
+open use "effect.disp"
+
+t_mint := {ty} -> io_op { label := pair "Tele" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
+t_obs := {ty, getr} -> io_op { label := pair "Tele" "obs"; param := Tree; result := Tree } (pair ty getr) ({r} -> io_pure r)
+t_guard := {pred, v} -> io_op { label := pair "Tele" "guard"; param := Tree; result := Tree } (pair pred v) ({r} -> io_pure r)
+t_proj := {name, ty, getr, thread} -> io_op { label := pair "Tele" "proj"; param := Tree; result := Tree } (pair name (pair ty (pair getr thread))) ({r} -> io_pure r)
+let s_mint_sig := pair_fst (mint_cell t)
+let s_apply_sig := pair_fst (apply_cell t)
+let s_qid_sig := pair_fst (qid_cell t)
+let s_refine_sig := pair_fst (refine_cell t)
+let s_imeet_sig := pair_fst (imeet_cell t)
+tele_prog := fix ({self, tele, source, prior} ->
+  if (is_fork tele) then {
+    let cell := pair_fst tele
+    let m := type_meta cell
+    let sig := pair_fst cell
+    (if (tree_eq sig s_mint_sig) then (eff_bind (t_mint (m.ty)) ({h} -> self ((pair_snd tele) h) source h))
+    else (if (tree_eq sig s_apply_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok (source prior))) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_qid_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_imeet_sig) then (eff_bind (t_obs ((m.pred) prior) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_refine_sig) then (eff_bind (t_guard (m.pred) source) ({x} -> self ((pair_snd tele) x) source x))
+    else (eff_bind (t_proj (m.name) (m.ty) ({_} -> lookup_field source (m.name)) ({_} -> source (acc (m.name)))) ({x} -> self ((pair_snd tele) x) source x)))))))
+  } else (io_pure (Ok true)))
+let s_obs_check := {ty, getr, resume} -> (
+  match (apply_policed getr t) {
+    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else (Ok false)); Err _ => (Ok false) }); Err _ => (Ok false) })
+    Err _ => (Ok false)
+  })
+let recognize_on := {op} -> {arg, resume} -> (
+  if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
+  else (if (tree_eq (op_name op) "obs") then (s_obs_check (pair_fst arg) (pair_snd arg) resume)
+  else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else (Ok false)); Err _ => (Ok false) })
+  else (s_obs_check (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
+spec_recognize := mk_handler (covers_eff "Tele") ({x} -> x) recognize_on
+let spec_respond_on := {frame} -> {op} -> {arg, resume} -> (
+  if (tree_eq (op_name op) "mint") then (resume frame)
+  else (if (tree_eq (op_name op) "obs") then (Extend (pair_fst arg))
+  else (if (tree_eq (op_name op) "guard") then (Extend InvalidType)
+  else (if (tree_eq (pair_fst arg) (pair_fst frame)) then (Extend (pair_fst (pair_snd arg))) else (resume ((pair_snd (pair_snd (pair_snd arg))) t))))))
+spec_respond := {frame} -> mk_handler (covers_eff "Tele") ({_} -> Extend InvalidType) (spec_respond_on frame)
+rec_spec := {cells, v} -> handle spec_recognize (tele_prog cells v t)
+resp_spec := {frame, cells, n} -> handle (spec_respond frame) (tele_prog cells n t)

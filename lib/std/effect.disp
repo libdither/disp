@@ -34,7 +34,7 @@
 //     weave. The handler's `forward` clause below is already the degenerate
 //     weave — see its comment.
 open use "../kernel/prelude.disp"
-open use "demand.disp"   // field_ty/arrow_dom/arrow_cod — the one reader family
+open use "demand.disp"   // field_ty/pi_dom/pi_cod/map_fields — the one reader family
 
 // ── the free monad: Pure x | Op op arg k ──
 // k is an ordinary function-tree awaiting the op's result.
@@ -71,19 +71,10 @@ covers_eff := {eff} -> {op} -> tree_eq (effect_of op) eff
 // demand.disp (the one reader family). Pins: effect_syntax_proto.
 op := {E, name} -> {arg} -> {
   let fty := field_ty ((type_meta E).recognizer_params) name
-  io_op { label := pair E name; param := arrow_dom fty; result := arrow_cod fty } arg ({r} -> io_pure r)
+  io_op { label := pair E name; param := pi_dom fty; result := pi_cod fty t } arg ({r} -> io_pure r)
 }
 op0 := {E, name} -> (op E name) unit_val
-let ops_go := fix ({self, E, cells} ->
-  if (is_fork cells) then {
-    let m := type_meta (pair_fst cells)
-    let rest := self E ((pair_snd cells) t)
-    pair (cons (m.name) (pair_fst rest)) (cons (list_const (op E (m.name))) (pair_snd rest))
-  } else (pair nil nil))
-ops := {E} -> {
-  let nv := ops_go E ((type_meta E).recognizer_params)
-  make_record (pair_fst nv) (pair_snd nv)
-}
+ops := {E} -> map_fields ({n, ty} -> op E n) E
 
 // ── the request-sum face: handlers as gate-checked case records (2026-07-08) ──
 // The SECOND derived face of an effect type (the §2.7 polarity pair): the
@@ -99,10 +90,10 @@ ops := {E} -> {
 let req_variants := fix ({self, cells} ->
   if (is_fork cells) then {
     let m := type_meta (pair_fst cells)
-    cons (pair (m.name) (cons (arrow_dom (m.ty)) nil)) (self ((pair_snd cells) t))
+    cons (pair (m.name) (cons (pi_dom (m.ty)) nil)) (self ((pair_snd cells) t))
   } else nil)
 requests := {E} -> Coproduct (req_variants ((type_meta E).recognizer_params))
-result_for := {E, req} -> arrow_cod (field_ty ((type_meta E).recognizer_params) (pair_fst req))
+result_for := {E, req} -> pi_cod (field_ty ((type_meta E).recognizer_params) (pair_fst req)) t
 handler_motive := {E, M} -> {req} -> Arrow (Arrow (result_for E req) M) M
 handler_sig := {E, M} -> derive_case_telescope (requests E) (handler_motive E M)
 handle_via := {E, ret, cases} -> fix ({self, m} -> match m {
@@ -264,27 +255,15 @@ Eff : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (mak
 // delivers route two's value instead: elimination and a typed handle path,
 // without losing route one's deep semantic checks.
 OpShape : Type := Record [pair "label" Tree, pair "param" Type, pair "result" Type]
-// local clones of positive.disp's PRIVATE eta_check/check_fields (same code,
-// exported deps only; promote to kernel exports if a third consumer appears):
-let e_cells_of := {T} -> (type_meta T).recognizer_params
-let e_pi_dom := {T} -> (type_meta (pair_fst (e_cells_of T))).ty
-let e_pi_cod := {T, h} -> (type_meta (pair_fst ((pair_snd (e_cells_of T)) h))).ty
-let e_eta_check := fix ({self, v, T} ->
-  if (is_neutral T) then (T v)
-  else (if (and (is_fork (e_cells_of T)) (is_mint_cell (pair_fst (e_cells_of T))))
-    then (match (apply_policed (bind_hyp (e_pi_dom T)) ({h} -> self (v h) (e_pi_cod T h))) { Ok r => r; Err _ => Err })
-    else (T v)))
-let e_check_fields := fix ({self, fields, cases} ->
-  if (is_fork fields)
-    then (bind (e_eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok false)))
-    else (Ok true))
+// (the gate rides the kernel's own eta_check/check_fields — the former
+// local clones retired when check_fields was exported, 2026-07-08)
 let eff_case_types := {T, P} -> {
   let rp := (type_meta T).recognizer_params
   cons (pair "Pure" (Pi (rp.result) ({x} -> P (io_pure x))))
     (cons (pair "Op" (Pi OpShape ({op} -> Pi (op.param) ({a} -> Pi (Arrow (op.result) T) ({k} -> Arrow (Pi (op.result) ({r} -> P (k r))) (P (io_op op a k)))))))
       nil)
 }
-let eff_coh := {T, motive, cases} -> e_check_fields (eff_case_types T motive) cases
+let eff_coh := {T, motive, cases} -> check_fields (eff_case_types T motive) cases
 EffE : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (make_meta { row := R; result := X } (gated_inductive_respond eff_coh))
 
 // eff_rec: the dependent eliminator for EffE (concrete programs dispatch by

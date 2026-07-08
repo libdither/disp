@@ -70,6 +70,11 @@ list_length : Intersection Type ({A} -> Arrow (List A) Nat) :=
 // cut -> proj -> list ops is the checker's own inner loop.)
 list_append := list_cat
 
+// concat_map f xs: map then flatten — the multishot fold's workhorse (the
+// nondeterminism handler's resume-per-candidate shape; retired four local
+// copies from the effect proto files, 2026-07-08).
+concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+
 // Generic map. The internal recursion is `(xs, f)`-ordered to dodge a
 // bracket-abstraction edge case: when the innermost fix binder appears
 // as the trailing arg of the body's last application, η-reduction

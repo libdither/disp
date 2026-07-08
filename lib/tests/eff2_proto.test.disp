@@ -21,6 +21,7 @@
 // Baseline (rust-eager-native, 2026-07-08): ~24s wall, 19 pins.
 open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
+open use "../std/list.disp"
 open use "../std/effect.disp"
 
 // ── (1) route two ──
@@ -46,7 +47,7 @@ let state_h := {
 }
 test pair_fst (run_pure ((handle2 state_h prog1) 3)) = pair_fst (run_pure ((handle state_h prog1) 3))
 test pair_snd (run_pure ((handle2 state_h prog1) 3)) = 4
-let concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+// (concat_map comes from std/list.disp)
 let choose := mk_op "Nondet" "choose" Tree Tree
 let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map resume cands)
 let progN := eff_bind (choose (cons 1 (cons 2 nil))) ({n} -> io_pure (double n))

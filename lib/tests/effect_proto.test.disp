@@ -11,6 +11,7 @@
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"
+open use "../std/list.disp"
 open use "../std/effect.disp"
 
 // ── the State effect over Nat, by hand (what `effect State { … }` expands to) ──
@@ -51,7 +52,7 @@ test pair_snd (run_pure (run_state 0 caught)) = 2
 
 // ── nondeterminism: the clause calls resume PER CANDIDATE — multi-shot is
 // free because a continuation is a pure value ──
-let concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+// (concat_map comes from std/list.disp)
 let choose := mk_op "Nondet" "choose" Tree Tree
 let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map resume cands)
 let progN := eff_bind (choose (cons 1 (cons 2 nil))) ({n} -> io_pure (double n))

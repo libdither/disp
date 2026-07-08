@@ -43,57 +43,9 @@
 open use "../kernel/prelude.disp"
 open use "../std/nat/ops.disp"
 open use "../std/effect.disp"
-
-// ── the Tele signature (self-describing occurrences; results are dependent) ──
-let t_mint := {ty} -> io_op { label := pair "Tele" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
-let t_obs := {ty, getr} -> io_op { label := pair "Tele" "obs"; param := Tree; result := Tree } (pair ty getr) ({r} -> io_pure r)
-let t_guard := {pred, v} -> io_op { label := pair "Tele" "guard"; param := Tree; result := Tree } (pair pred v) ({r} -> io_pure r)
-let t_proj := {name, ty, getr, thread} -> io_op { label := pair "Tele" "proj"; param := Tree; result := Tree } (pair name (pair ty (pair getr thread))) ({r} -> io_pure r)
-
-// ── tele_prog: fold a live cell chain into one program ──
-let s_mint_sig := pair_fst (mint_cell t)
-let s_apply_sig := pair_fst (apply_cell t)
-let s_proj_sig := pair_fst (proj_cell t t)
-let s_qid_sig := pair_fst (qid_cell t)
-let s_refine_sig := pair_fst (refine_cell t)
-let s_imeet_sig := pair_fst (imeet_cell t)
-let tele_prog := fix ({self, tele, source, prior} ->
-  if (is_fork tele) then {
-    let cell := pair_fst tele
-    let m := type_meta cell
-    let sig := pair_fst cell
-    (if (tree_eq sig s_mint_sig) then (eff_bind (t_mint (m.ty)) ({h} -> self ((pair_snd tele) h) source h))
-    else (if (tree_eq sig s_apply_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok (source prior))) ({x} -> self ((pair_snd tele) x) source x))
-    else (if (tree_eq sig s_qid_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
-    else (if (tree_eq sig s_imeet_sig) then (eff_bind (t_obs ((m.pred) prior) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
-    else (if (tree_eq sig s_refine_sig) then (eff_bind (t_guard (m.pred) source) ({x} -> self ((pair_snd tele) x) source x))
-    else (eff_bind (t_proj (m.name) (m.ty) ({_} -> lookup_field source (m.name)) ({_} -> source (acc (m.name)))) ({x} -> self ((pair_snd tele) x) source x)))))))
-  } else (io_pure (Ok true)))
-
-// ── the two handlers ──
-let s_obs_check := {ty, getr, resume} -> (
-  match (apply_policed getr t) {
-    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else (Ok false)); Err _ => (Ok false) }); Err _ => (Ok false) })
-    Err _ => (Ok false)
-  })
-let spec_recognize := {
-  covers := covers_eff "Tele"
-  return := {x} -> x
-  on := {op} -> {arg, resume} -> (
-    if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
-    else (if (tree_eq (op_name op) "obs") then (s_obs_check (pair_fst arg) (pair_snd arg) resume)
-    else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else (Ok false)); Err _ => (Ok false) })
-    else (s_obs_check (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
-  forward := default_forward
-}
-let spec_respond_on := {frame} -> {op} -> {arg, resume} -> (
-  if (tree_eq (op_name op) "mint") then (resume frame)
-  else (if (tree_eq (op_name op) "obs") then (Extend (pair_fst arg))
-  else (if (tree_eq (op_name op) "guard") then (Extend InvalidType)
-  else (if (tree_eq (pair_fst arg) (pair_fst frame)) then (Extend (pair_fst (pair_snd arg))) else (resume ((pair_snd (pair_snd (pair_snd arg))) t))))))
-let spec_respond := {frame} -> mk_handler (covers_eff "Tele") ({_} -> Extend InvalidType) (spec_respond_on frame)
-let rec_spec := {cells, v} -> handle spec_recognize (tele_prog cells v t)
-let resp_spec := {frame, cells, n} -> handle (spec_respond frame) (tele_prog cells n t)
+open use "../std/tele_spec.disp"
+// (the Tele signature, tele_prog, and the two handlers were promoted to
+// std/tele_spec.disp, 2026-07-08 — this file keeps the differential battery)
 
 // ── the differential battery, recognize face (spec vs live, side by side) ──
 // Pi, simple codomain, accept and reject:
