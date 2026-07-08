@@ -59,39 +59,49 @@
     <div class="card">
       <h3>Monero</h3>
       <p>
-        For the privacy-minded (or the simply crypto-curious): one-off
-        donations in XMR, no middleman, no fees skimmed.
+        For the privacy-minded (or the simply crypto-curious): one-off donations
+        in XMR, no middleman, no fees skimmed.
       </p>
       <a class="btn" href="{base}/funding/monero/">Donate Monero</a>
-    </div>
-
-    <div class="card">
-      <h3>Where money goes</h3>
-      <p>
-        Compute for the neural-guided synthesis experiments, AI-assisted
-        development costs, and focused development time on the optimizer: the
-        parts of
-        <a href="{REPO}/blob/main/GOALS.md" target="_blank" rel="noopener"
-          >GOALS.md</a
-        > that are designed but not yet built.
-      </p>
     </div>
   </div>
 
   <!-- ================= the runway, as a garden ================= -->
   <section class="runway">
-    <h2>The runway, measured</h2>
+    <h2>Donation goals</h2>
     <p class="runway-sub">
-      Monthly support so far: <strong>{fmt(CURRENT_MONTHLY)}</strong> of the
-      {fmt(MAX)} dream. Every grove starts with one seed.
+      Monthly support so far: <strong>{fmt(CURRENT_MONTHLY)}</strong> of
+      {fmt(MAX)}.
     </p>
-    <svg viewBox="0 0 {BW} 150" class="gardenbar" role="img" aria-label="funding progress: {fmt(CURRENT_MONTHLY)} per month toward milestones at {GOALS.map((g) => `${g.label} ${fmt(g.amount)}`).join(', ')}">
+    <svg
+      viewBox="0 0 {BW} 150"
+      class="gardenbar"
+      role="img"
+      aria-label="funding progress: {fmt(
+        CURRENT_MONTHLY,
+      )} per month toward milestones at {GOALS.map(
+        (g) => `${g.label} ${fmt(g.amount)}`,
+      ).join(', ')}"
+    >
       <defs>
         <!-- the infill: a hedge of little leaves -->
-        <pattern id="leafpat" width="26" height="26" patternUnits="userSpaceOnUse">
+        <pattern
+          id="leafpat"
+          width="26"
+          height="26"
+          patternUnits="userSpaceOnUse"
+        >
           <rect width="26" height="26" fill="#bfe0c4" />
-          <path d="M6,13 C10,9 10,4 6,1 C2,4 2,9 6,13 Z" fill="#58b368" transform="rotate(18 6 7)" />
-          <path d="M19,25 C23,21 23,16 19,13 C15,16 15,21 19,25 Z" fill="#2f9e6e" transform="rotate(-14 19 19)" />
+          <path
+            d="M6,13 C10,9 10,4 6,1 C2,4 2,9 6,13 Z"
+            fill="#58b368"
+            transform="rotate(18 6 7)"
+          />
+          <path
+            d="M19,25 C23,21 23,16 19,13 C15,16 15,21 19,25 Z"
+            fill="#2f9e6e"
+            transform="rotate(-14 19 19)"
+          />
           <path d="M20,8 C23,5 23,2 20,0 C17,2 17,5 20,8 Z" fill="#8fce9d" />
           <path d="M4,24 C7,21 7,18 4,16 C1,18 1,21 4,24 Z" fill="#3d9b74" />
         </pattern>
@@ -105,15 +115,27 @@
       <!-- leafy fill -->
       {#if pct > 0}
         <g clip-path="url(#trackclip)">
-          <rect x={BX} y={TY} width={pct * TW} height={TH} fill="url(#leafpat)" />
+          <rect
+            x={BX}
+            y={TY}
+            width={pct * TW}
+            height={TH}
+            fill="url(#leafpat)"
+          />
         </g>
       {/if}
 
       <!-- the seed/sprout at the current mark -->
       <g style="transform: translate({xOf(CURRENT_MONTHLY)}px, {TY - 4}px)">
         <path d="M0,0 C0,-6 0,-8 0,-11" class="sproutstem" />
-        <path d="M0,-8 C-4,-9 -6,-12 -6.5,-15 C-3,-14.5 -0.5,-11.5 0,-8 Z" class="sproutleaf a" />
-        <path d="M0,-9.5 C3.5,-10.5 5.5,-13 6,-16 C2.5,-15.5 0.5,-12.5 0,-9.5 Z" class="sproutleaf b" />
+        <path
+          d="M0,-8 C-4,-9 -6,-12 -6.5,-15 C-3,-14.5 -0.5,-11.5 0,-8 Z"
+          class="sproutleaf a"
+        />
+        <path
+          d="M0,-9.5 C3.5,-10.5 5.5,-13 6,-16 C2.5,-15.5 0.5,-12.5 0,-9.5 Z"
+          class="sproutleaf b"
+        />
       </g>
 
       <!-- milestones: little signposts along the path -->
@@ -122,37 +144,73 @@
         {@const above = i % 2 === 0}
         {@const reached = CURRENT_MONTHLY >= g.amount}
         <g class="milestone" class:reached>
-          <line x1={x} y1={above ? TY - 14 : TY + TH + 2} x2={x} y2={above ? TY : TY + TH + 14} class="post" />
+          <line
+            x1={x}
+            y1={above ? TY - 14 : TY + TH + 2}
+            x2={x}
+            y2={above ? TY : TY + TH + 14}
+            class="post"
+          />
           {#if reached}
             <!-- a bloom for every goal reached -->
-            <g style="transform: translate({x}px, {above ? TY - 18 : TY + TH + 18}px)">
+            <g
+              style="transform: translate({x}px, {above
+                ? TY - 18
+                : TY + TH + 18}px)"
+            >
               {#each [0, 72, 144, 216, 288] as a}
-                <circle r="2.4" cx={5 * Math.cos((a * Math.PI) / 180)} cy={5 * Math.sin((a * Math.PI) / 180)} class="petal" />
+                <circle
+                  r="2.4"
+                  cx={5 * Math.cos((a * Math.PI) / 180)}
+                  cy={5 * Math.sin((a * Math.PI) / 180)}
+                  class="petal"
+                />
               {/each}
               <circle r="2" class="pollen" />
             </g>
           {:else}
-            <circle cx={x} cy={above ? TY - 17 : TY + TH + 17} r="3" class="bud" />
+            <circle
+              cx={x}
+              cy={above ? TY - 17 : TY + TH + 17}
+              r="3"
+              class="bud"
+            />
           {/if}
           <text
-            x={x}
+            {x}
             y={above ? TY - 28 : TY + TH + 34}
             class="mlabel"
-            text-anchor={g.amount / MAX > 0.9 ? 'end' : g.amount / MAX < 0.1 ? 'start' : 'middle'}
-          >{g.label}</text>
+            text-anchor={g.amount / MAX > 0.9
+              ? "end"
+              : g.amount / MAX < 0.1
+                ? "start"
+                : "middle"}>{g.label}</text
+          >
           <text
-            x={x}
+            {x}
             y={above ? TY - 41 : TY + TH + 47}
             class="mamount"
-            text-anchor={g.amount / MAX > 0.9 ? 'end' : g.amount / MAX < 0.1 ? 'start' : 'middle'}
-          >{fmt(g.amount)}/mo</text>
+            text-anchor={g.amount / MAX > 0.9
+              ? "end"
+              : g.amount / MAX < 0.1
+                ? "start"
+                : "middle"}>{fmt(g.amount)}/mo</text
+          >
         </g>
       {/each}
 
       <!-- ground dressing -->
       <g class="grass">
-        <path d="M {BX + 40} {TY + TH + 8} q 2 -9 6 -12 M {BX + 46} {TY + TH + 8} q 3 -6 7 -8" />
-        <path d="M {BX + TW * 0.38} {TY + TH + 10} q 2 -9 6 -12 M {BX + TW * 0.38 + 6} {TY + TH + 10} q 3 -6 7 -8" />
+        <path
+          d="M {BX + 40} {TY + TH + 8} q 2 -9 6 -12 M {BX + 46} {TY +
+            TH +
+            8} q 3 -6 7 -8"
+        />
+        <path
+          d="M {BX + TW * 0.38} {TY + TH + 10} q 2 -9 6 -12 M {BX +
+            TW * 0.38 +
+            6} {TY + TH + 10} q 3 -6 7 -8"
+        />
         <path d="M {BX + TW * 0.68} {TY + TH + 8} q 2 -9 6 -12" />
       </g>
       <circle cx={BX + TW * 0.3} cy={TY + TH + 6} r="2" class="daisy" />
@@ -160,8 +218,8 @@
     </svg>
     <p class="runway-note">
       Numbers update by hand when something changes, honestly. The last post is
-      the U.S. median individual income, at which point disp becomes a real
-      job.
+      the U.S. median individual income, at which point disp becomes a real job
+      and my mom will finally be proud of me.
     </p>
   </section>
 
