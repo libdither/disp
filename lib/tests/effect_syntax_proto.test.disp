@@ -22,12 +22,13 @@
 // request-sum face all pinned here).
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
+open use "../std/demand.disp"
 open use "../std/effect.disp"
 
 // ── Q1: the effect is a record type (op/op0/ops now live in std/effect.disp) ──
 let StateE := { get : Unit -> Nat, put : Nat -> Unit }
-test arrow_dom (eff_field_ty ((type_meta StateE).recognizer_params) "put") = Nat
-test arrow_cod (eff_field_ty ((type_meta StateE).recognizer_params) "get") = Nat
+test arrow_dom (field_ty ((type_meta StateE).recognizer_params) "put") = Nat
+test arrow_cod (field_ty ((type_meta StateE).recognizer_params) "get") = Nat
 let getE := op0 StateE "get"
 let putE := op StateE "put"
 // ops E: the whole record of builders, for splicing or dotted access:

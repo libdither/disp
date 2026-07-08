@@ -52,6 +52,18 @@ test mod_export_deps (fx.typ) "just_a" = cons 0 nil
 test mod_export_deps (fx.typ) "both" = cons 0 (cons 1 nil)
 test param_apply (mod_export_pi (fx.typ) "just_a") ({D} -> {x} -> x) = Ok true
 test param_apply (mod_export_pi (fx.typ) "just_a") ({D} -> {x} -> 5) = Ok false
+// mod_extract: PARTIAL USE in-language — fill only what the export demands
+// (position 0 for just_a; B is junk-padded, certified unused by the deps):
+let pj := mod_extract fx "just_a" (cons Nat nil)
+test pj 5 = 5
+test param_apply (Arrow Nat Nat) pj = Ok true
+// THE AGREEMENT PIN: the partial extraction is TREE-IDENTICAL to the same
+// export of a FULL instantiation (the readback rebuilds an export from
+// exactly the givens it mentions — junk never reaches it):
+let inst := use "demand_mod.disp" { A := Nat, B := Bool }
+test tree_eq pj (inst.record.just_a) = true
+// an export demanding both givens extracts with both fills:
+test (mod_extract fx "both" (cons Nat (cons Bool nil))) 3 true = true
 
 // ── (3) demand times synthesis: propose-and-check over dependent records ──
 let enum_of := {ty} -> (if (tree_eq ty Bool) then (cons true (cons false nil)) else (if (tree_eq ty Nat) then (cons 0 (cons 1 (cons 2 nil))) else (cons refl nil)))

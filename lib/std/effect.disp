@@ -34,6 +34,7 @@
 //     weave. The handler's `forward` clause below is already the degenerate
 //     weave — see its comment.
 open use "../kernel/prelude.disp"
+open use "demand.disp"   // field_ty/arrow_dom/arrow_cod — the one reader family
 
 // ── the free monad: Pure x | Op op arg k ──
 // k is an ordinary function-tree awaiting the op's result.
@@ -66,16 +67,10 @@ covers_eff := {eff} -> {op} -> tree_eq (effect_of op) eff
 // dom/cod read off the type's own cells), and the TYPE VALUE is the effect
 // identity: rows hold types, so a misspelled effect is an unbound identifier
 // instead of a silent string mismatch. `ops E` is the whole record of
-// builders (for splicing or dotted access). Pins: effect_syntax_proto.
-eff_field_ty := fix ({self, cells, name} ->
-  if (is_fork cells) then {
-    let m := type_meta (pair_fst cells)
-    if (tree_eq (m.name) name) then (m.ty) else (self ((pair_snd cells) t) name)
-  } else t)
-arrow_dom := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
-arrow_cod := {T} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) t))).ty
+// builders (for splicing or dotted access). The field/arrow readers live in
+// demand.disp (the one reader family). Pins: effect_syntax_proto.
 op := {E, name} -> {arg} -> {
-  let fty := eff_field_ty ((type_meta E).recognizer_params) name
+  let fty := field_ty ((type_meta E).recognizer_params) name
   io_op { label := pair E name; param := arrow_dom fty; result := arrow_cod fty } arg ({r} -> io_pure r)
 }
 op0 := {E, name} -> (op E name) unit_val
@@ -107,7 +102,7 @@ let req_variants := fix ({self, cells} ->
     cons (pair (m.name) (cons (arrow_dom (m.ty)) nil)) (self ((pair_snd cells) t))
   } else nil)
 requests := {E} -> Coproduct (req_variants ((type_meta E).recognizer_params))
-result_for := {E, req} -> arrow_cod (eff_field_ty ((type_meta E).recognizer_params) (pair_fst req))
+result_for := {E, req} -> arrow_cod (field_ty ((type_meta E).recognizer_params) (pair_fst req))
 handler_motive := {E, M} -> {req} -> Arrow (Arrow (result_for E req) M) M
 handler_sig := {E, M} -> derive_case_telescope (requests E) (handler_motive E M)
 handle_via := {E, ret, cases} -> fix ({self, m} -> match m {

@@ -426,6 +426,23 @@ ownership design (interface exports crossing module boundaries) riding the
 same Module shape work. Record spread joins whenever the synth work lands,
 independent of this arc.
 
+**Partial fills, the semantic half (landed 2026-07-08, in-language)** —
+`std/demand.disp`'s module face answers the per-export question this slice
+needs: `mod_export_deps ftyp name` computes which given POSITIONS one export
+actually uses (marker instantiation over the functor typ's Pi layers, the
+same oracle as the record face), `mod_export_pi` presents that as the
+export's own demanded Pi, and `mod_extract fx name fills` performs a partial
+use TODAY: fills for the demanded positions only, junk for the rest, which
+is provably harmless because the readback rebuilds an export from exactly
+the givens it mentions — pinned TREE-IDENTICAL to the full instantiation's
+export (demand_proto). What remains for the host half: a partial
+`use "f" { … }` yielding a RESIDUAL functor over the unfilled givens. That
+is a mixed elaboration mode (supplied givens bind fills, missing ones mint
+hyps, readback and the Pi-typ run over the missing subset only), and it
+touches the instantiation cache key, the one-abstract-check discipline, and
+the deferred-verification batch — its own session, with this in-language
+half as both the spec and the differential oracle.
+
 **License replay at the splice (landed 2026-07-07)** — the first bite of the
 module-guards face, host-side. An open field colliding with a GUARDED
 incumbent is consulted through the incumbent guard, with the incoming export

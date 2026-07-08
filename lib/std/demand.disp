@@ -87,6 +87,18 @@ let sub_cells_go := fix ({self, cells, set} ->
 sub_record := {T, targets} -> Telescope (sub_cells_go (cells_of_t T) (closure_of T targets))
 project_sub := {v, names} -> make_record names ((fix ({self, l} -> if (is_fork l) then (cons (list_const (field v (pair_fst l))) (self (pair_snd l))) else nil)) names)
 
+// field_ty / arrow_dom / arrow_cod: the direct readers (moved here from
+// effect.disp, 2026-07-08 — one exported reader family; effect.disp's
+// op/requests/result_for consume these now). field_ty is the degenerate
+// no-context lookup; field_pi is its dependency-honest general form.
+field_ty := fix ({self, cells, name} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (tree_eq (m.name) name) then (m.ty) else (self ((pair_snd cells) t) name)
+  } else t)
+arrow_dom := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
+arrow_cod := {T} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) t))).ty
+
 // fields_of T: the flat field table AS a record (dotted access after one
 // derivation). Honest only on independent prefixes — a dependent field's
 // entry comes back instantiated; field_pi is the general face.
@@ -135,3 +147,23 @@ let mod_pi_go := fix ({self, T, name, deps, pos} ->
       else (self (pi_cod_at T t) name deps (succ pos)))
   else (flat_ty ((type_meta T).recognizer_params) name))
 mod_export_pi := {ftyp, name} -> mod_pi_go ftyp name (mod_export_deps ftyp name) 0
+
+// mod_extract: PARTIAL USE, in-language. Extract one export from a functor
+// tuple supplying fills ONLY for the positions the export demands
+// (mod_export_deps); the remaining positions are padded with a junk leaf,
+// which is provably harmless — the readback rebuilds an export from exactly
+// the givens it mentions, so junked positions never reach it (pinned: the
+// partial extraction is TREE-IDENTICAL to the full instantiation's export).
+// The host half (a partial `use "f" {…}` yielding a RESIDUAL functor over
+// the remaining givens) is the ergonomic sibling — MODULES.md slice 3.
+let apply_list := fix ({self, f, l} -> if (is_fork l) then (self (f (pair_fst l)) (pair_snd l)) else f)
+mod_extract := {fx, name, fills} -> {
+  let ftyp := fx.typ
+  let deps := mod_export_deps ftyp name
+  let args := (fix ({self, pos, fl} ->
+    if (tree_eq pos (pi_depth ftyp)) then nil
+    else (if (in_list pos deps)
+      then (cons (pair_fst fl) (self (succ pos) (pair_snd fl)))
+      else (cons t (self (succ pos) fl))))) 0 fills
+  field (apply_list (fx.record) args) name
+}
