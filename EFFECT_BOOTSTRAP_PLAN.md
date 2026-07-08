@@ -1,12 +1,17 @@
 # Effect bootstrap: types as protocols, the walker as a handler
 
-Status: plan, 2026-07-07; STAGES 0, 1, 2, AND 5 landed 2026-07-07/08 (see the
-landed notes inside each stage section; the handler zoo is
-`lib/tests/handler_zoo_proto.test.disp`, 12 pins, including the synthesis
-headline). Remaining: stage 3 (spec twins; walk_spec's elim rewrite wants its
-own session and coordination) and stage 4 (whose fixed-point pin needs stage
-3, since tele_prog must become a Reflect program before it can carry a row
-annotation). Canonical rows and the deep `Eff R X`
+Status: plan, 2026-07-07; ALL STAGES LANDED 2026-07-07/08 (landed notes
+inside each stage section; every item of the definition of done in §6 is
+marked). The spec twins live in `lib/std/kernel_spec.disp` (row annotations
+verify at every load; the final ledger and the stage 6 bridge target are its
+header), with the batteries and the fixed-point pin in
+`lib/tests/kernel_spec_proto.test.disp`. The prototype's open follow-ups,
+each noted where it arose: rewriting the twins' if-chain branching onto the
+elim idiom so certificates deepen beyond the shallow EffAt convention (which
+would also let tele_prog carry a row); route two for `Eff` (a stock Coproduct
+with a RecUnder reader functor, the path to a typed `handle`); open rows; the
+impure driver; and the stage 6 license, which belongs to the OPTIMIZER.typ
+arc. Canonical rows and the deep `Eff R X`
 recognizer are in `lib/std/effect.disp` (`EffAt` is the shallow compatibility
 form), pinned with the branchy exit demonstration in
 `lib/tests/eff_deep_proto.test.disp` (38 pins); the kernel signature, floor
@@ -206,13 +211,15 @@ is done when:
    with the live `tele_walk` on a differential battery, both faces. Landed
    2026-07-08.
 4. `walk_spec` covers the full special-case table (no delegated routes), and
-   `hyp_reduce` has a spec twin.
+   `hyp_reduce` has a spec twin. Landed 2026-07-08 (`walk_spec2`).
 5. Every `SEALED` marker in `engine.disp`/`cut.disp` maps to a spec twin or a
-   handler clause (enumerated in a ledger table).
+   handler clause (enumerated in a ledger table). Landed 2026-07-08 (the
+   ledger is `kernel_spec.disp`'s header; occurs/is_closed map to a clause,
+   not a twin — see the stage 3 finding).
 6. At least three alternative handlers run the same spec programs (cost,
    explanation, synthesis), pinned. Landed 2026-07-08.
 7. The behavioral fixed-point pin: `verify` of the spec module returns
-   `Ok true` under the live kernel.
+   `Ok true` under the live kernel. Landed 2026-07-08 (`kernel_spec_proto`).
 
 Explicitly out of scope: rewriting the live fused kernel (the fused forms stay
 the inner loop; a handler round per reduction step is not viable, the same
@@ -525,6 +532,34 @@ Work items:
 Exit criterion, enumerable: list every `SEALED(...)` in `engine.disp` and
 `cut.disp`; each maps to a spec twin or a stage-1 clause. No stragglers.
 
+LANDED 2026-07-08 in `lib/std/kernel_spec.disp` (the twins as a real std
+module; the ledger is its header) and `lib/tests/kernel_spec_proto.test.disp`
+(the differential batteries). `hyp_reduce_spec` follows the sketch above and
+agrees with the live kernel on all four routes (Pi-hyp application, record
+projection, gated Nat elimination, and the Reduce arm via the type-hyp
+H-rule) plus the concrete head. `walk_spec2` completes the reflect
+prototype's walk_spec in a NEW file per the coordination rules: the two
+delegated routes are the mint and check ops, so the special-case table has no
+residue, pinned including nested mints and the escape case through the op
+route. Two corrections to this stage's original text, both findings:
+
+- `occurs_spec` / `is_closed_spec` as classify-programs are IMPOSSIBLE as
+  stated: the scan descends through neutral PAYLOADS (spines), and payload
+  visibility is exactly the extraction boundary classify exists to keep. They
+  map to bucket (c) instead: the mint clause's internal escape bookkeeping
+  plus the load boundary; programs never perform them, so they need no op.
+  The ledger states this.
+- The op routes and the live walker differ by one wrapper on Err paths: the
+  mint and check clauses route through `param_apply`, whose unwrap collapses
+  the walker-Err/verdict-Err distinction (live `w_bind_hyp` answers
+  `Ok(Err)` on an escape, the op route answers `Err`). Both reject; pinned
+  side by side.
+
+Still open from this stage (as budgeted): rewriting the twins' if-chain
+branching onto the elim idiom so their certificates deepen (the EffAt row
+annotations are the shallow walk_spec convention), which is also what stands
+between tele_prog and a row annotation.
+
 ### Stage 4: rows as the ledger, and the fixed-point pin
 
 Annotate every spec at its row. Add the parametric-fragment pin: one
@@ -536,6 +571,17 @@ behavioral fixed-point pin, and write the honest header: this is a capability
 certificate plus differential agreement, issued by the artifact being
 described; it is the `Type : Type` epistemic shape, on purpose; it is not a
 soundness proof of the floor.
+
+LANDED 2026-07-08. `hyp_reduce_spec : Tree -> Tree -> EffAt [Reflect,
+Extend]` and `walk_spec2 : Tree -> Tree -> EffAt [Reflect, Mint, Check]`
+carry machine-checked annotations that verify at every load of
+`kernel_spec.disp`. The parametric pin is `polyid` at the implicit forall
+with its free theorem witnessed on instances (including naturality against
+succ). The fixed-point pin is `verify spec_mod = Ok true` in
+`kernel_spec_proto`, with the honest header verbatim. Depth caveat, stated in
+the module: the row annotations are the shallow EffAt convention (the
+walk_spec precedent); deep certificates await the elim-idiom rewrite noted
+under stage 3.
 
 ### Stage 5: the handler zoo (the payoff demonstration)
 
@@ -590,12 +636,10 @@ OPTIMIZER.typ arc.
     stage 0   deep Eff recognizer          LANDED 2026-07-07 (route 2 optional)
     stage 1   signature + floor handler    LANDED 2026-07-08 (natural mint clause)
     stage 2   tele_spec + two handlers     LANDED 2026-07-08 (over the LIVE cells)
-    stage 3   walk/hyp_reduce/occurs specs 1 session
-    stage 4   ledger + fixed point         1 session      (fixed point needs stage 3:
-                                                          tele_prog must become a
-                                                          Reflect program to annotate)
+    stage 3   walk/hyp_reduce specs        LANDED 2026-07-08 (occurs = clause, a finding)
+    stage 4   ledger + fixed point         LANDED 2026-07-08 (shallow rows; deep = follow-up)
     stage 5   handler zoo                  LANDED 2026-07-08
-    stage 6   note only
+    stage 6   note only                    STANDS (the target is in kernel_spec.disp's header)
 
 A convincing core (0, 1, 2, plus cost and synthesis handlers, plus the
 fixed-point pin over what exists) is about three sessions.
@@ -611,8 +655,12 @@ fixed-point pin over what exists) is about three sessions.
 - `lib/tests/tele_spec2_proto.test.disp`: stage 2, split out (tele_prog over
   the live cells, the two handlers, the differential battery, the headline;
   ~23s, 29 pins).
-- `lib/tests/kernel_spec_proto.test.disp`: stage 3 twins, stage 4 ledger and
-  fixed-point pin.
+- `lib/std/kernel_spec.disp`: the spec twins as a real module (stages 3+4,
+  landed 2026-07-08): ShapeR, the kernel signature, the floor handler,
+  `hyp_reduce_spec` and `walk_spec2` with row annotations that verify at
+  load, the final ledger, and the stage 6 bridge target.
+- `lib/tests/kernel_spec_proto.test.disp`: stage 3 differential batteries,
+  the parametric-fragment pin, and the fixed-point pin (~60s, 30 pins).
 - `lib/tests/handler_zoo_proto.test.disp`: stage 5 (landed 2026-07-08: cost,
   explanation, synthesis over the stage 2 vocabulary, local copy; ~23s, 12
   pins).
