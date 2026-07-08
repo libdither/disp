@@ -1,0 +1,84 @@
+// eff2_proto — route two (the eliminable EffE) + the certificate deepening
+// (EFFECT_BOOTSTRAP_PLAN follow-ups, 2026-07-08).
+//
+// (1) EffE agrees with Eff on membership by construction (same recognizer
+//     body), and adds ELIMINATION: an EffE-typed hypothesis consumed through
+//     eff_rec gets every case checked against the Pure/Op case types (the
+//     reader-functor shape), so effectful-value CONSUMERS carry real
+//     per-arm certificates; handle2 (handlers as eliminator clients, resume
+//     = the IH) reproduces handle on the same handler records, multishot
+//     included.
+//
+// (2) THE DEEPENING: a branchy Reflect twin written with rec_value over the
+//     response Coproduct carries the DEEP `Eff [Reflect] Bool` annotation —
+//     the deep recognizer walks its continuation under a real minted answer
+//     and the gated respond checks every arm (flip pinned). The shallow
+//     EffAt CANNOT even see the elim idiom (its leaf probe turns rec_value
+//     into junk), pinned as the contrast. So: EffAt certifies if-chain
+//     programs shallowly; the deep Eff certifies elim-written programs
+//     per-arm; if-chain programs under the deep Eff stay one-path (the
+//     standing hazard-0a limit, pinned in eff_deep_proto).
+// Baseline (rust-eager-native, 2026-07-08): ~24s wall, 19 pins.
+open use "../kernel/prelude.disp"
+open use "../std/nat/ops.disp"
+open use "../std/effect.disp"
+
+// ── (1) route two ──
+let rowS := row1 "State"
+let st_get := (mk_op "State" "get" Unit Nat) unit_val
+let st_put := mk_op "State" "put" Nat Unit
+let prog1 := eff_bind st_get ({n} -> eff_bind (st_put (succ n)) ({u} -> io_pure (double n)))
+// membership agrees with Eff (same recognizer body):
+test param_apply (EffE rowS Nat) prog1 = param_apply (Eff rowS Nat) prog1
+test param_apply (EffE (row1 "IO") Nat) prog1 = param_apply (Eff (row1 "IO") Nat) prog1
+test param_apply (EffE row_nil Nat) (io_pure false) = param_apply (Eff row_nil Nat) (io_pure false)
+test param_apply (EffE rowS Nat) (make_hyp (EffE rowS Nat) 51) = Ok true
+// eff_rec on concrete programs (the recursor face):
+test eff_rec ({_} -> Nat) { Pure := {x} -> x; Op := {op, a, k, ih} -> ih a } (io_pure 7) = 7
+// handle2 = handle, state (parameter-passing) and nondet (multishot):
+let state_h := {
+  covers := covers_eff "State"
+  return := {x} -> {s} -> io_pure (pair x s)
+  on := {op} -> {arg, resume} -> (if (tree_eq (op_name op) "get")
+    then ({s} -> (resume s) s)
+    else ({s_old} -> (resume t) arg))
+  forward := {op, arg, resumek} -> {s} -> io_op op arg ({r} -> (resumek r) s)
+}
+test pair_fst (run_pure ((handle2 state_h prog1) 3)) = pair_fst (run_pure ((handle state_h prog1) 3))
+test pair_snd (run_pure ((handle2 state_h prog1) 3)) = 4
+let concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+let choose := mk_op "Nondet" "choose" Tree Tree
+let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map resume cands)
+let progN := eff_bind (choose (cons 1 (cons 2 nil))) ({n} -> io_pure (double n))
+test tree_eq (handle2 nondet_h progN) (handle nondet_h progN) = true
+test tree_eq (handle2 nondet_h progN) (cons 2 (cons 4 nil)) = true
+// THE TYPED ELIMINATION: a consumer of an ABSTRACT effectful value, every
+// arm checked through EffE's gated respond; one ill-typed arm flips it:
+test param_apply (Pi (EffE rowS Nat) ({_} -> Nat)) ({m} -> eff_rec ({_} -> Nat) { Pure := {x} -> x; Op := {op, a, k, ih} -> 0 } m) = Ok true
+test param_apply (Pi (EffE rowS Nat) ({_} -> Nat)) ({m} -> eff_rec ({_} -> Nat) { Pure := {x} -> false; Op := {op, a, k, ih} -> 0 } m) = Ok false
+test param_apply (Pi (EffE rowS Nat) ({_} -> Nat)) ({m} -> eff_rec ({_} -> Nat) { Pure := {x} -> x; Op := {op, a, k, ih} -> false } m) = Ok false
+
+// ── (2) the deepening ──
+let ShapeR2 : Type := Coproduct [pair "leaf" [], pair "stem" [Tree], pair "fork" [Tree, Tree], pair "hyp" [Type]]
+let cls2 := mk_op "Reflect" "classify" Tree ShapeR2
+let EffRB := Eff (row1 "Reflect") Bool
+let fork_arms := { leaf := io_pure false; stem := {c} -> io_pure false; fork := {l, r} -> io_pure true; hyp := {ty} -> io_pure false }
+let is_fork_eff2 := {v} -> eff_bind (cls2 v) ({s} -> rec_value ShapeR2 ({_} -> EffRB) fork_arms s)
+// the DEEP certificate: the continuation is walked under a real minted
+// ShapeR2 answer and every arm is gate-checked:
+test param_apply (Arrow Tree EffRB) is_fork_eff2 = Ok true
+// flip one arm ill-typed and the deep certificate flips:
+let bad_arms := { leaf := io_pure false; stem := {c} -> io_pure false; fork := {l, r} -> io_pure 5; hyp := {ty} -> io_pure false }
+let is_fork_bad := {v} -> eff_bind (cls2 v) ({s} -> rec_value ShapeR2 ({_} -> EffRB) bad_arms s)
+test param_apply (Arrow Tree EffRB) is_fork_bad = Ok false
+// the shallow EffAt cannot SEE the elim idiom at all (its leaf probe turns
+// rec_value into junk), so it rejects even the good twin — the deep Eff is
+// the certificate that both sees the idiom and visits the arms:
+test param_apply (Arrow Tree (EffAt (row1 "Reflect"))) is_fork_eff2 = Ok false
+// behavior: the same twin runs correctly under a classify handler:
+let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let cls_h := mk_handler (covers_eff "Reflect") io_pure ({op} -> {v, resume} -> resume (if (is_hyp_fork_l v) then (inj1 "hyp" (neutral_type v)) else (triage (inj0 "leaf") ({c} -> inj1 "stem" c) ({l, r} -> inj2 "fork" l r) v)))
+test run_pure (handle cls_h (is_fork_eff2 t)) = false
+test run_pure (handle cls_h (is_fork_eff2 (t t))) = false
+test run_pure (handle cls_h (is_fork_eff2 (t t t))) = true
+test run_pure (handle2 cls_h (is_fork_eff2 (t t t))) = true
