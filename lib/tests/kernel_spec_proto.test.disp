@@ -1,0 +1,84 @@
+// kernel_spec_proto — STAGES 3+4 of EFFECT_BOOTSTRAP_PLAN.md: the differential
+// batteries for the spec twins in std/kernel_spec.disp, the parametric-fragment
+// pin, and the behavioral fixed-point pin.
+//
+// hyp_reduce_spec vs live: the four routes (a Pi-hyp application, a record
+// projection, a gated Nat elimination, and the Reduce arm via the type-hyp
+// H-rule), plus the concrete head. walk_spec2 vs param_walker: the dispatch
+// rules, the carve-outs, the hyp route, both rejections, AND the two routes
+// the reflect prototype delegated, now running through the mint and check
+// ops. The fixed-point pin at the bottom carries the honest header the plan
+// demands.
+// Baseline (rust-eager-native, 2026-07-08): ~60s wall, 30 pins (the load-time
+// verification of kernel_spec.disp's two row annotations dominates).
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/effect.disp"
+open use "../std/kernel_spec.disp"
+
+// ── hyp_reduce_spec vs live hyp_reduce (through param_apply) ──
+let hf := make_hyp (Arrow Nat Nat) 31
+test run_kernel (hyp_reduce_spec hf 3) = param_apply hf 3
+let RecT := Record [pair "a" Nat, pair "b" Bool]
+let hr := make_hyp RecT 32
+test run_kernel (hyp_reduce_spec hr (acc "b")) = param_apply hr (acc "b")
+let hn := make_hyp Nat 33
+let nat_frame := { motive := ({_} -> Nat); cases := { zero := 0; succ := {k, ih} -> succ ih } }
+test run_kernel (hyp_reduce_spec hn nat_frame) = param_apply hn nat_frame
+// the Reduce arm: a neutral stored at a TYPE-hyp answers the predicate-side
+// H-rule as a computed verdict:
+let hT := make_hyp Type 34
+let hv := make_hyp hT 35
+test param_apply hT hv = Ok true
+test run_kernel (hyp_reduce_spec hT hv) = Ok true
+// concrete head: plain application:
+test run_kernel (hyp_reduce_spec succ 3) = 4
+
+// ── walk_spec2 vs the live walker ──
+let step2 := {f, x} -> run_kernel (walk_spec2 f x)
+test step2 t zero = param_walker t zero
+test step2 (t t) zero = param_walker (t t) zero
+test step2 (t t t) 5 = param_walker (t t t) 5
+test step2 succ 3 = param_walker succ 3
+test step2 (add 2) 3 = param_walker (add 2) 3
+test step2 is_fork (t t) = param_walker is_fork (t t)
+// carve-outs:
+test step2 tree_eq zero = param_walker tree_eq zero
+test step2 pair_fst (pair 1 2) = param_walker pair_fst (pair 1 2)
+test step2 neutral_type (make_hyp Nat 1) = param_walker neutral_type (make_hyp Nat 1)
+// the hyp route and both rejections:
+let hTr := make_hyp Tree 36
+test step2 hTr zero = param_walker hTr zero
+test step2 is_fork hTr = param_walker is_fork hTr
+test step2 (t hyp_sig) 7 = param_walker (t hyp_sig) 7
+test step2 (t t) hTr = param_walker (t t) hTr
+// the two formerly-delegated routes, now THROUGH the ops:
+test step2 (bind_hyp Tree) ({h} -> Ok zero) = param_walker (bind_hyp Tree) ({h} -> Ok zero)
+// the escape case: both REJECT, one wrapper apart — the mint clause routes
+// through param_apply, whose unwrap collapses the walker-Err/verdict-Err
+// distinction (live w_bind_hyp answers Ok(Err), the op route answers Err):
+test step2 (bind_hyp Tree) ({h} -> Ok h) = Err
+test param_walker (bind_hyp Tree) ({h} -> Ok h) = Ok Err
+test step2 (bind_hyp Tree) ({a} -> param_apply (bind_hyp Tree) ({b} -> Ok (is_fork (t a b)))) = param_walker (bind_hyp Tree) ({a} -> param_apply (bind_hyp Tree) ({b} -> Ok (is_fork (t a b))))
+test step2 (apply_policed Nat) 3 = param_walker (apply_policed Nat) 3
+test step2 (apply_policed Nat) false = param_walker (apply_policed Nat) false
+
+// ── stage 4: the parametric-fragment pin ──
+// A Reflect-free (indeed effect-free) polymorphic inhabitant: the parametric
+// fragment is where free theorems live. polyid is certified at the implicit
+// forall, and its free theorem (it can only be the identity) is witnessed
+// empirically on instances, including naturality against succ:
+let polyid := {x} -> x
+test param_apply (Intersection Type ({A} -> Arrow A A)) polyid = Ok true
+test polyid 3 = 3
+test polyid true = true
+test polyid (succ 2) = succ (polyid 2)
+
+// ── stage 4: the behavioral fixed-point pin ──
+// verify of the spec module under the live kernel. The honest header, per the
+// plan: this is a capability certificate plus differential agreement, issued
+// by the artifact being described. It is the Type : Type epistemic shape, on
+// purpose. It is not a soundness proof of the floor; the floor is conserved,
+// enumerated in kernel_spec.disp's ledger, one clause table wide.
+let spec_mod := use "../std/kernel_spec.disp"
+test verify spec_mod = Ok true
