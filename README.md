@@ -13,13 +13,11 @@ Disp is a self-verified dependently-typed programming language built on the [tre
 
 A language where all you write is the constraints, as detailed and rigorous as you need, with the implementation derived automatically, requires constraint checking that is itself fast and modular. This is the problem disp solves.
 
-## AI disclosure 🤖
+## AI usage
 
-Most of this repository was written by an AI. The current implementation (2026 onward) is a collaboration with Anthropic's Claude models running in Claude Code: nearly all of the TypeScript host, the kernel and standard library, the tests, the Rust evaluator backends, and the documentation, including most of this README, were drafted by Claude and landed through the maintainer's review. The commit history does not mark the split.
+For disp in its current state, AI is heavily used for development. AI is mostly good for writing code and idea generation / reflection but still needs a lot of oversight for design decisions, especially for the field of PL design where good design is rather rare. AI use should be rather obvious based on how it writes, but as of 7/7/26 nearly all of the TypeScript host, type system kernel, standard library, tests, evaluator backends and documentation were written using Claude Opus 4.8 and Fable 5.
 
-What is not AI-written: the goals and the judgment. Disp started in 2021 as years of solo prototypes (lambda calculi over a content-addressed store, in Rust), and the vision in [`GOALS.md`](GOALS.md), the choice of what to attempt next, and the accept or reject call on every design are human. So is the editing hand on the prose.
-
-Authorship and polish both vary file by file. The [Documentation](#documentation) table below marks each document, kernel source files included, with an estimated human/AI split and a quality rating, so you can see what is AI-written, what is human-written, and what is worth reading.
+The [Documentation](#documentation) section below details important docs and source files, whether they are human or AI-written, and how important they might be to read for understanding. A full pedagogy of disp is coming soon!
 
 ## Disp by example 🤖
 
@@ -31,9 +29,8 @@ This section is one file, top to bottom, and it loads and passes as-is. A `test 
        npm run disp -- lib/tests/readme_check_tmp.disp && rm lib/tests/readme_check_tmp.disp -->
 
 ```rust
-open use "../kernel/prelude.disp"   // the entire type system, an ordinary library
-                                    // (re-exports the raw combinators: tree_eq, is_fork, succ, ...)
-open use "../std/nat/ops.disp"      // double
+open use "../kernel/prelude.disp" // common operations
+open use "../std/nat/ops.disp" // `double`
 ```
 
 ### Everything is a tree
