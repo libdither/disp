@@ -1,15 +1,18 @@
 # Effect bootstrap: types as protocols, the walker as a handler
 
-Status: plan, 2026-07-07; the de-risk pass and STAGE 0 landed the same day.
-Canonical rows and the deep `Eff R X` recognizer are in `lib/std/effect.disp`
-(`EffAt` is marked as the shallow compatibility form); the hazard 0a mechanism
-is corrected below (the elim idiom, not `match`) and pinned together with the
-recognizer in `lib/tests/eff_deep_proto.test.disp` (38 pins, including the
-branchy-continuation-through-Eff exit demonstration); hazard 1a was probed
-empirically and does not reproduce (pins in
-`lib/tests/tele_spec_proto.test.disp`). Stages 1 through 5 are not built. It
-is written to be read cold: Part I gives the background a fresh session needs,
-Part II is the staged plan, Part III is logistics and rules of engagement. Companion pieces:
+Status: plan, 2026-07-07; STAGES 0, 1, AND 2 landed 2026-07-07/08 (see the
+landed notes inside each stage section). Canonical rows and the deep `Eff R X`
+recognizer are in `lib/std/effect.disp` (`EffAt` is the shallow compatibility
+form), pinned with the branchy exit demonstration in
+`lib/tests/eff_deep_proto.test.disp` (38 pins); the kernel signature, floor
+handler, and ledger are in `lib/tests/tele_spec_proto.test.disp` (28 pins,
+which also carry the hazard 1a probe: the mint wall does not reproduce);
+`tele_spec` with the recognize/respond handler pair and its differential
+battery is in `lib/tests/tele_spec2_proto.test.disp` (29 pins, including the
+one-program-two-interpreters headline). Hazard 0a is corrected below (the elim
+idiom, not `match`). Stages 3 through 5 are not built. It is written to be
+read cold: Part I gives the background a fresh session needs, Part II is the
+staged plan, Part III is logistics and rules of engagement. Companion pieces:
 [`REFLECT.md`](REFLECT.md) (reflection as an effect, the move this plan
 generalizes), [`TOWER.md`](TOWER.md) (the self-checking architecture this plan
 feeds), `lib/std/effect.disp` (the effects library this plan builds on, commit
@@ -193,9 +196,10 @@ is done when:
 1. `Eff R X` has a deep recognizer (continuations checked under real minted
    answers, all branches). Landed 2026-07-07.
 2. The kernel signature exists as ops with a single floor handler whose
-   clauses wrap the existing sealed bodies.
+   clauses wrap the existing sealed bodies. Landed 2026-07-08.
 3. `tele_spec` (the telescope walker as a program, modes as handlers) agrees
-   with the live `tele_walk` on a differential battery, both faces.
+   with the live `tele_walk` on a differential battery, both faces. Landed
+   2026-07-08.
 4. `walk_spec` covers the full special-case table (no delegated routes), and
    `hyp_reduce` has a spec twin.
 5. Every `SEALED` marker in `engine.disp`/`cut.disp` maps to a spec twin or a
@@ -408,6 +412,22 @@ behaviors on concrete data (classify on all four shapes, mint freshness,
 check agreeing with `param_apply`, extend agreeing with a walker-produced
 extension tree).
 
+LANDED 2026-07-08 in `tele_spec_proto` (the ledger table is the file header).
+The four ops are one effect family each (Reflect/Mint/Check/Extend), so rows
+carry capability granularity; self-describing occurrences make the dependent
+results free (mint's result type is its own argument, extend's is the
+requested stored type), both pinned at their rows. The mint clause is the
+NATURAL shape (`param_apply (bind_hyp arg) resume`, no keep trick needed per
+the hazard 1a probe), and the floor handler's bare return clause feeds the
+handled tail straight into the escape bind, so the floor inherits bind_hyp's
+escape discipline (a leaked `Ok h` answers Err, pinned). New finding, in the
+ledger: the mint clause has a CARRIER CONTRACT. The handled tail must be a
+CheckerResult; a violating tail (the bare mint request, whose tail is the hyp
+itself) makes the escape bind a mis-tagged cut, so the result is inert junk,
+not Err and not the hyp (pinned). All sealed behaviors reproduce: classify on
+all four shapes, check verdict-identical to `param_apply`, extend
+tree-identical to the walker's extension, mint freshness across nested mints.
+
 ### Stage 2: `tele_spec`, the telescope walker as a program
 
 Goal. A parallel cell vocabulary (four or five cells suffice: mint, apply,
@@ -435,6 +455,28 @@ elimination respectively, one program, two interpreters.
 
 Exit. The sentence "a telescope is a free-monad program and tele_walk is its
 handler" is a passing test, not an analogy.
+
+LANDED 2026-07-08 in `tele_spec2_proto`, one strengthening and two findings.
+The strengthening: `tele_prog` folds the LIVE cell chains (read by op
+signature and `type_meta`, as positive.disp reads them), not a parallel
+vocabulary, so the differential battery runs over the real telescopes; the
+Tele signature is mint/obs/guard/proj, and rejection, stuckness, and the
+empty-spine answer are all handler decisions (obs under respond drops the
+resume, exactly like catch). Finding one, soundness-critical: the
+recognize-handler must run observations POLICED (`apply_policed getr t`); the
+spec floor runs raw, and a raw getr would triage hypotheses and wrongly
+accept `is_fork`. This is the ambient walker's implicit soundness made into
+one explicit clause. Finding two: the substrate is EAGER, so a getr closure
+evaluates its captured observation at construction; thunk deferral is not
+real, walker-rejected observations inside the mint region surface as Err
+before any clause can map them (live and spec alike), and the rejection FORM
+(Err vs Ok false) varies by where the rejection surfaces. Acceptance sets
+agree with the live walker across the whole battery (Pi simple and dependent,
+Record present/ill-typed/missing, Refinement, Intersection, the adversarial
+pair); the respond face reproduces the live eliminations (with stage 1's
+extend op closing the loop tree-identically); and the headline pin passes:
+one program value, `handle spec_recognize` = Ok true and
+`handle (spec_respond 3)` = Extend Nat.
 
 ### Stage 3: spec twins for the remaining sealed algorithms
 
@@ -526,8 +568,8 @@ OPTIMIZER.typ arc.
 ### Sequencing and effort
 
     stage 0   deep Eff recognizer          LANDED 2026-07-07 (route 2 optional)
-    stage 1   signature + floor handler    1 session      mint hazard probed: stale
-    stage 2   tele_spec + two handlers     1 session
+    stage 1   signature + floor handler    LANDED 2026-07-08 (natural mint clause)
+    stage 2   tele_spec + two handlers     LANDED 2026-07-08 (over the LIVE cells)
     stage 3   walk/hyp_reduce/occurs specs 1 session
     stage 4+5 ledger, fixed point, zoo     1 session
     stage 6   note only
@@ -541,9 +583,11 @@ fixed-point pin over what exists) is about three sessions.
   Additive only; the reflect prototype now depends on this file.
 - `lib/tests/eff_deep_proto.test.disp`: stage 0 pins (seeded 2026-07-07: row
   canonicity + the hazard 0a quartet on `ShapeC`; ~20s, 21 pins).
-- `lib/tests/tele_spec_proto.test.disp`: stages 1 and 2 (signature, floor
-  handler, tele_spec, differential battery), or split if it grows (seeded
-  2026-07-07: the hazard 1a empirical pins; ~21s, 10 pins).
+- `lib/tests/tele_spec_proto.test.disp`: stage 1 (the hazard 1a probe, the
+  kernel signature, the floor handler, the ledger; ~20s, 28 pins).
+- `lib/tests/tele_spec2_proto.test.disp`: stage 2, split out (tele_prog over
+  the live cells, the two handlers, the differential battery, the headline;
+  ~23s, 29 pins).
 - `lib/tests/kernel_spec_proto.test.disp`: stage 3 twins, stage 4 ledger and
   fixed-point pin.
 - `lib/tests/handler_zoo_proto.test.disp`: stage 5.
