@@ -21,7 +21,7 @@
     disp: {
       term: "disp",
       pos: "n.",
-      html: "Ingredients: <ul><li>one leaf</li> <li>five rewrite rules</li> <li>predicates</li> <li>nets</li> <li>and a dream...</li></ul>",
+      html: 'Ingredients: <ul><li>one leaf</li> <li>five rewrite rules</li> <li>types-as-predicates</li> <li>interaction nets</li> <li>and <a href="https://dither.link/">a dream</a>...</li></ul>',
     },
     decentralized: {
       term: "decentralized",

@@ -6,7 +6,6 @@
   // ground, rest a while, and fade; surviving branches glide to their new
   // positions; ready redexes wear the letter of the rule about to fire.
   import { onMount, onDestroy } from 'svelte'
-  import { backOut } from 'svelte/easing'
   import {
     parseTree,
     stepOnce,
@@ -93,21 +92,26 @@
     w: number
     trunk?: boolean
   }
-  // a pruned SUBTREE falls as one piece: branches with their leaves attached
-  interface DebrisGroup {
+  // a pruned leaf falls on its own; pruned branches disintegrate in place
+  interface Debris {
     id: number
-    ox: number // rotation origin (group centroid)
-    oy: number
-    dx: number
+    x: number
+    y: number
     dy: number
+    dx: number
     rot: number
-    nodes: { x: number; y: number; tag: T['tag']; tint: string; tilt: number }[]
-    edges: { d: string; w: number }[]
+    tint: string
+  }
+  interface GhostEdge {
+    id: number
+    d: string
+    w: number
   }
 
   let nodes = $state<VNode[]>([])
   let edges = $state<VEdge[]>([])
-  let debris = $state<DebrisGroup[]>([])
+  let debris = $state<Debris[]>([])
+  let ghosts = $state<GhostEdge[]>([])
   let debrisId = 0
   const W = 560
   const XSTEP = 46
@@ -221,39 +225,51 @@
 
   const edgeD = (e: VEdge) => `M ${e.x1} ${e.y1} Q ${e.cx} ${e.cy} ${e.x2} ${e.y2}`
 
-  // ---- edge tweening: branches glide with their nodes ------------------------
+  // ---- one tween for everything: nodes and branches share the same clock
+  // and the same easing, so a branch endpoint never drifts from its leaf ----
 
-  let edgeAnim: number | undefined
-  function setEdges(target: VEdge[]) {
-    cancelAnimationFrame(edgeAnim!)
-    if (!motion || edges.length === 0) {
-      edges = target
+  let anim: number | undefined
+  // ease-out with a small overshoot; both nodes and edges ride this curve
+  const ease = (t: number) => {
+    const c = 0.9
+    const u = t - 1
+    return 1 + (c + 1) * u * u * u + c * u * u
+  }
+  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }) {
+    cancelAnimationFrame(anim!)
+    if (!motion || nodes.length === 0) {
+      nodes = l.nodes
+      edges = l.edges
       return
     }
-    const from = new Map(edges.map((e) => [e.id, e]))
-    const pairs = target.map((te) => {
-      const f = from.get(te.id)
+    const nFrom = new Map(nodes.map((n) => [n.path, n]))
+    const eFrom = new Map(edges.map((e) => [e.id, e]))
+    const nPairs = l.nodes.map((tn) => ({ tn, f: nFrom.get(tn.path) }))
+    const ePairs = l.edges.map((te) => ({
+      te,
       // a NEW branch grows out of its parent endpoint
-      const start: VEdge = f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 }
-      return { start, te }
-    })
+      f: eFrom.get(te.id) ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 }
+    }))
     const t0 = performance.now()
-    const D = 520
+    const D = 550
     const frame = (now: number) => {
       const t = Math.min(1, (now - t0) / D)
-      const k = 1 - Math.pow(1 - t, 3)
-      edges = pairs.map(({ start, te }) => ({
+      const k = ease(t)
+      nodes = nPairs.map(({ tn, f }) =>
+        f ? { ...tn, x: f.x + (tn.x - f.x) * k, y: f.y + (tn.y - f.y) * k } : tn
+      )
+      edges = ePairs.map(({ te, f }) => ({
         ...te,
-        x1: start.x1 + (te.x1 - start.x1) * k,
-        y1: start.y1 + (te.y1 - start.y1) * k,
-        cx: start.cx + (te.cx - start.cx) * k,
-        cy: start.cy + (te.cy - start.cy) * k,
-        x2: start.x2 + (te.x2 - start.x2) * k,
-        y2: start.y2 + (te.y2 - start.y2) * k
+        x1: f.x1 + (te.x1 - f.x1) * k,
+        y1: f.y1 + (te.y1 - f.y1) * k,
+        cx: f.cx + (te.cx - f.cx) * k,
+        cy: f.cy + (te.cy - f.cy) * k,
+        x2: f.x2 + (te.x2 - f.x2) * k,
+        y2: f.y2 + (te.y2 - f.y2) * k
       }))
-      if (t < 1) edgeAnim = requestAnimationFrame(frame)
+      if (t < 1) anim = requestAnimationFrame(frame)
     }
-    edgeAnim = requestAnimationFrame(frame)
+    anim = requestAnimationFrame(frame)
   }
 
   function show(tree: T) {
@@ -261,56 +277,46 @@
     const prevEdges = edges
     const l = layout(tree)
     if (motion && styled && prevNodes.length > 0) {
-      // Anything whose tree REFERENCE survives into the next state merely
-      // moved (rewrites share untouched subtrees), so it glides. Anything
-      // whose reference is gone was truly pruned, and a pruned subtree
-      // breaks off as one piece: branches with their leaves attached.
+      // Anything whose tree REFERENCE survives merely moved (rewrites share
+      // untouched subtrees), so it glides. A pruned LEAF falls to the ground;
+      // pruned branches disintegrate where they stood.
       const survivors = new Set(l.nodes.map((n) => n.tree))
-      const removedByPath = new Map(prevNodes.filter((n) => !survivors.has(n.tree)).map((n) => [n.path, n]))
-      // group roots: removed nodes whose old parent is not itself removed
-      const groups: DebrisGroup[] = []
-      for (const [path, n] of removedByPath) {
-        const parentPath = path.slice(0, -1)
-        if (path !== 'r' && removedByPath.has(parentPath)) continue
-        const members = [...removedByPath.values()].filter((m) => m.path.startsWith(path))
-        const memberPaths = new Set(members.map((m) => m.path))
-        const gedges = prevEdges
-          .filter((e) => !e.trunk)
-          .filter((e) => {
-            const child = e.id.replace('>', '')
-            return memberPaths.has(child)
-          })
-          .map((e) => ({ d: edgeD(e), w: e.w }))
-        const cx = members.reduce((s, m) => s + m.x, 0) / members.length
-        const cy = members.reduce((s, m) => s + m.y, 0) / members.length
-        const maxY = Math.max(...members.map((m) => m.y))
-        groups.push({
+      const removed = prevNodes.filter((n) => !survivors.has(n.tree))
+      const removedPaths = new Set(removed.map((n) => n.path))
+      const fresh: Debris[] = removed
+        .filter((n) => n.tag === 'leaf')
+        .map((n) => ({
           id: debrisId++,
-          ox: cx,
-          oy: cy,
-          dx: ((hash(path) % 44) - 22) * 1.1,
-          dy: height - GROUND + 2 - maxY + (hash(path) % 8),
-          rot: (hash(path) % 64) - 32,
-          nodes: members.map((m) => ({ x: m.x, y: m.y, tag: m.tag, tint: m.tint, tilt: m.tilt })),
-          edges: gedges
-        })
-      }
-      if (groups.length) {
-        debris.push(...groups)
-        // keep the ground tidy: cap total debris nodes, oldest first
-        let total = debris.reduce((s, g) => s + g.nodes.length, 0)
-        while (total > 140 && debris.length > 1) {
-          total -= debris[0].nodes.length
-          debris.shift()
-        }
-        const ids = groups.map((g) => g.id)
+          x: n.x,
+          y: n.y,
+          dy: height - GROUND + 4 - n.y + (hash(n.path) % 8),
+          dx: ((hash(n.path) % 36) - 18) * 1.1,
+          rot: (hash(n.path) % 160) - 80,
+          tint: n.tint
+        }))
+      if (fresh.length) {
+        debris.push(...fresh)
+        while (debris.length > 90) debris.shift()
+        const ids = fresh.map((d) => d.id)
         setTimeout(() => {
-          debris = debris.filter((g) => !ids.includes(g.id))
+          debris = debris.filter((d) => !ids.includes(d.id))
         }, 6400)
       }
+      // branches that lost their subtree fade out in place
+      const newIds = new Set(l.edges.map((e) => e.id))
+      const gone = prevEdges.filter(
+        (e) => !e.trunk && !newIds.has(e.id) && removedPaths.has(e.id.replace('>', ''))
+      )
+      if (gone.length) {
+        const fading: GhostEdge[] = gone.map((e) => ({ id: debrisId++, d: edgeD(e), w: e.w }))
+        ghosts.push(...fading)
+        const ids = fading.map((g) => g.id)
+        setTimeout(() => {
+          ghosts = ghosts.filter((g) => !ids.includes(g.id))
+        }, 500)
+      }
     }
-    nodes = l.nodes
-    setEdges(l.edges)
+    animateTo(l)
   }
 
   // ---- the run loop ----------------------------------------------------------
@@ -327,6 +333,7 @@
     stepCount = 0
     atNormalForm = false
     debris = []
+    ghosts = []
     input = src
     activeTip = presets.find((p) => p.expr === src)?.tip ?? ''
     try {
@@ -467,31 +474,20 @@
         <circle cx={W / 2 + 122} cy={height - 26} r="2.3" class="daisy alt" />
       {/if}
 
-      <!-- pruned subtrees: they break off whole, land, rest, and let go -->
-      {#each debris as g (g.id)}
-        <g
-          class="dgroup"
-          style="--dy: {g.dy}px; --dx: {g.dx}px; --rot: {g.rot}deg; transform-origin: {g.ox}px {g.oy}px"
-        >
-          {#each g.edges as e}
-            <path class="branch fallen" d={e.d} style="stroke-width:{e.w}" />
-          {/each}
-          {#each g.nodes as n}
-            <g style="transform: translate({n.x}px, {n.y}px)">
-              {#if n.tag === 'leaf'}
-                <path
-                  class="leafshape"
-                  d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
-                  style="fill:{n.tint}; transform: rotate({n.tilt}deg)"
-                />
-              {:else if n.tag === 'apply'}
-                <circle r="3" class="bud-core faded" />
-              {:else}
-                <circle r="3.4" class="knot" />
-              {/if}
-            </g>
-          {/each}
+      <!-- pruned leaves fall; their branches disintegrate where they stood -->
+      {#each debris as d (d.id)}
+        <g style="transform: translate({d.x}px, {d.y}px)">
+          <g class="debris" style="--dy: {d.dy}px; --dx: {d.dx}px">
+            <path
+              class="leafshape dspin"
+              d="M0,-7 C4.5,-4 4.5,2.5 0,7 C-4.5,2.5 -4.5,-4 0,-7 Z"
+              style="fill:{d.tint}; --rot: {d.rot}deg"
+            />
+          </g>
         </g>
+      {/each}
+      {#each ghosts as g (g.id)}
+        <path class="branch ghost" d={g.d} style="stroke-width:{g.w}" />
       {/each}
 
       <g class="tree" class:swaying={styled && motion}>
@@ -499,7 +495,7 @@
           <path d={edgeD(e)} class="branch" class:trunk={e.trunk} style="stroke-width:{e.w}" />
         {/each}
         {#each nodes as n (n.path)}
-          <g class="node" class:gliding={motion} style="transform: translate({n.x}px, {n.y}px)">
+          <g class="node" style="transform: translate({n.x}px, {n.y}px)">
             <g class="inner" class:growing={motion && styled} style="--gd: {n.depth * 55}ms">
               {#if n.tag === 'apply'}
                 <circle r={styled ? 8.5 : 8} class="bud-ring" />
@@ -687,7 +683,6 @@
   .trunk { stroke-width: 5; }
 
   /* ---- nodes ---- */
-  .node.gliding { transition: transform 0.55s cubic-bezier(0.34, 1.2, 0.4, 1); }
   .inner.growing { animation: grow 0.5s var(--gd) cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
   @keyframes grow {
     from { transform: scale(0); opacity: 0; }
@@ -735,27 +730,39 @@
     font-family: var(--font-mono);
   }
 
-  /* ---- pruned subtrees: fall (1s), rest (~2.4s), let go (3.4s) ---- */
-  .dgroup {
+  /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ---- */
+  .debris {
     animation:
-      dgfall 1.05s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards,
-      dgfade 3.4s 2.5s linear forwards;
+      dfall 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards,
+      dfade 3.4s 2.4s linear forwards;
   }
-  @keyframes dgfall {
+  .dspin {
+    animation: dspin 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards;
+  }
+  @keyframes dfall {
     to {
-      transform: translate(var(--dx), var(--dy)) rotate(var(--rot));
+      transform: translate(var(--dx), var(--dy));
     }
   }
-  @keyframes dgfade {
+  @keyframes dspin {
+    to {
+      transform: rotate(var(--rot));
+    }
+  }
+  @keyframes dfade {
     to {
       opacity: 0;
     }
   }
-  .branch.fallen {
-    opacity: 0.6;
+  /* pruned branches disintegrate where they stood */
+  .branch.ghost {
+    animation: eghost 0.45s ease-out forwards;
   }
-  .bud-core.faded {
-    opacity: 0.5;
+  @keyframes eghost {
+    to {
+      opacity: 0;
+      transform: translateY(5px);
+    }
   }
 
   /* ---- readout ---- */
