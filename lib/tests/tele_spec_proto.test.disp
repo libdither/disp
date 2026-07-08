@@ -1,10 +1,11 @@
-// tele_spec_proto — the stages 1-2 file for EFFECT_BOOTSTRAP_PLAN.md (kernel
-// signature, floor handler, tele_spec). SEEDED (2026-07-07) with hazard 1a's
-// empirical pins: the stage-1 mint clause must hand a continuation to the
-// bind_hyp route, and CLAUDE.md's compiler-workarounds section documents that
-// a continuation passed THROUGH a function miscompiles under nested binders
-// (the fresh hyp leaks into the result and trips the escape check). These pins
-// establish, on the live compiler, which shapes are actually safe:
+// tele_spec_proto — STAGE 1 of EFFECT_BOOTSTRAP_PLAN.md: the kernel signature
+// and the floor handler (stage 2, tele_spec, split to tele_spec2_proto).
+// First seeded (2026-07-07) with hazard 1a's empirical pins: the stage-1 mint
+// clause must hand a continuation to the bind_hyp route, and CLAUDE.md's
+// compiler-workarounds section documents that a continuation passed THROUGH a
+// function miscompiles under nested binders (the fresh hyp leaks into the
+// result and trips the escape check). These pins establish, on the live
+// compiler, which shapes are actually safe:
 //
 //   control     inline lambdas at the route (the tele_walk shape) — safe;
 //   mint_via    the continuation as a helper PARAMETER, passed on unapplied —
@@ -35,8 +36,9 @@
 // stays available if an unpinned context fails; and this file is the
 // regression guard either way. CLAUDE.md's inline-lambda rule stays the law
 // for KERNEL code (tele_walk's inline mint is not relaxed by these pins).
-// Baseline (rust-eager-native, 2026-07-07): ~21s wall, 10 pins.
+// Baseline (rust-eager-native, 2026-07-08): ~20s wall, 28 pins (stage 1 landed).
 open use "../kernel/prelude.disp"
+open use "../std/effect.disp"
 
 // control: inline continuations, nested binders — the safe shape:
 test param_apply (bind_hyp Tree) ({a} -> param_apply (bind_hyp Tree) ({b} -> Ok (is_fork (t a b)))) = Ok true
@@ -79,3 +81,88 @@ let mint_loop := fix ({self, n, acc} ->
   if (tree_eq n zero) then (Ok acc)
   else (mint_via Tree ({h} -> self (nat_pred n) (is_fork (t acc h)))))
 test mint_loop 2 t = Ok true
+
+// ═══ STAGE 1: the kernel signature and the floor handler ═══
+// One op table for exactly the capabilities the walker cannot walk (seal(Σ)),
+// one handler interpreting them, clauses wrapping the sealed bodies verbatim.
+// Sanctioned-pure operations (tree_eq, the plain pair_fst read) are NOT ops:
+// they run natively under the walker already. Self-describing occurrences
+// make DEPENDENT result types free: mint's result is its own argument, and
+// extend's is the requested new stored type.
+//
+// THE LEDGER — op | clause wraps | replaces | soundness note:
+//   classify v     is_hyp_fork guard + raw triage | the SEALED(reflection)
+//                  reads | answers `hyp` for anything wearing the hyp shape,
+//                  forged forks included — exactly the answer w_stem needs;
+//                  the payload stays unreadable (only neutral_type escapes).
+//   mint ty        param_apply (bind_hyp ty) resume | SEALED(forge) make_hyp
+//                  + the Σ route | the handled carrier must be CheckerResult:
+//                  the escape check BINDS the tail, so the floor inherits
+//                  bind_hyp's escape discipline (a leaked `Ok h` answers Err,
+//                  pinned). A tail that is NOT a CheckerResult (e.g. the bare
+//                  request, whose tail is the hyp itself) makes the escape
+//                  bind a mis-tagged cut: the result is INERT JUNK, not Err
+//                  and not the hyp (pinned). The carrier discipline is the
+//                  program author's obligation.
+//   check ty v     param_apply | the policed §7A route (do_check's) | a pure
+//                  wrapper; verdicts identical by construction, pinned.
+//   extend n ty f  the wait hyp_reduce { stored_type; Ext(n, f) } build |
+//                  SEALED(Σ-op) hyp_reduce's Extend branch | does NOT consult
+//                  the respond — the requester chooses ty, which is the forge
+//                  power; floor-only by design (forge(Σ) as a table row).
+//
+// the response vocabulary as a real Coproduct (hazard 0a chain, item 1). The
+// tags match the reflect prototype's raw inj forms, so these answers are
+// tree-identical to that arc's handler answers:
+ShapeR : Type := Coproduct [pair "leaf" [], pair "stem" [Tree], pair "fork" [Tree, Tree], pair "hyp" [Type]]
+
+let k_classify := mk_op "Reflect" "classify" Tree ShapeR
+let k_mint := {ty} -> io_op { label := pair "Mint" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
+let k_check := {ty, v} -> (mk_op "Check" "check" Tree CheckerResult) (pair ty v)
+let k_extend := {n, ty, frame} -> io_op { label := pair "Extend" "extend"; param := Tree; result := ty } (pair n (pair ty frame)) ({r} -> io_pure r)
+let kernel_row := mk_row (cons "Reflect" (cons "Mint" (cons "Check" (cons "Extend" nil))))
+
+// the floor handler: THE enumerated place that looks. return is bare (the
+// carrier is CheckerResult or a kernel answer, never re-wrapped) so the mint
+// clause can feed the handled tail straight into the escape check.
+let is_hyp_fork_l := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_sig)
+let classify_answer := {v} -> if (is_hyp_fork_l v) then (inj1 "hyp" (neutral_type v)) else (triage (inj0 "leaf") ({c} -> inj1 "stem" c) ({l, r} -> inj2 "fork" l r) v)
+let extend_build := {n, ty, frame} -> wait hyp_reduce { stored_type := ty; payload := inj "Ext" (pair n frame) }
+let floor_on := {op} -> {arg, resume} ->
+  if (tree_eq (op_name op) "classify") then (resume (classify_answer arg))
+  else (if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
+  else (if (tree_eq (op_name op) "check") then (resume (param_apply (pair_fst arg) (pair_snd arg)))
+  else (resume (extend_build (pair_fst arg) (pair_fst (pair_snd arg)) (pair_snd (pair_snd arg))))))
+let floor_h := { covers := {op} -> label_in_row (effect_of op) kernel_row; return := {x} -> x; on := floor_on; forward := default_forward }
+let run_floor := handle floor_h
+
+// requests are typed VALUES at their rows (asking is typed), including over
+// a hypothesis, and mint/extend demonstrate the dependent result:
+test param_apply (Eff (row1 "Reflect") ShapeR) (k_classify t) = Ok true
+test param_apply (Eff (row1 "Reflect") ShapeR) (k_classify (make_hyp Tree 0)) = Ok true
+test param_apply (Eff (row1 "Mint") Nat) (k_mint Nat) = Ok true
+test param_apply (Eff (row1 "Check") CheckerResult) (k_check Nat 3) = Ok true
+let hf := make_hyp (Arrow Nat Nat) 7
+test param_apply (Eff (row1 "Extend") Nat) (k_extend hf Nat 3) = Ok true
+test param_apply (Eff (row1 "Reflect") ShapeR) (k_mint Nat) = Ok false     // wrong row rejects
+
+// the handler reproduces the sealed behaviors on concrete data —
+// classify, all four shapes:
+test run_floor (k_classify t) = inj0 "leaf"
+test run_floor (k_classify (t t)) = inj1 "stem" t
+test run_floor (k_classify (t t t)) = inj2 "fork" t t
+test run_floor (k_classify (make_hyp Nat 0)) = inj1 "hyp" Nat
+// check agrees with param_apply by construction:
+test run_floor (k_check Nat 3) = param_apply Nat 3
+test run_floor (k_check Nat false) = param_apply Nat false
+// extend builds the SAME tree the walker's hyp_reduce Extend builds:
+test run_floor (k_extend hf Nat 3) = param_apply hf 3
+// mint: freshness, use, and the inherited escape discipline:
+test run_floor (eff_bind (k_mint Nat) ({h} -> io_pure (Ok (is_neutral h)))) = Ok true
+test run_floor (eff_bind (k_mint Nat) ({a} -> eff_bind (k_mint Nat) ({b} -> io_pure (Ok (tree_eq a b))))) = Ok false
+test run_floor (eff_bind (k_mint Nat) ({h} -> io_pure (Ok h))) = Err
+// a bare mint request violates the carrier contract (its tail is the hyp,
+// not a CheckerResult): the escape bind becomes a mis-tagged cut and the
+// result is inert junk — not Err, and not the hyp:
+test is_neutral (run_floor (k_mint Nat)) = false
+test tree_eq (run_floor (k_mint Nat)) Err = false
