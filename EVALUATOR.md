@@ -56,6 +56,23 @@ build artifact exists, so `npm test` never needs a toolchain.
   backend is validated by reducing the same terms and comparing normal forms. Strong
   confluence (tc-net.typ Theorem 2) makes rust-ic-net's NF *schedule-invariant*, so its
   differential against rust-eager doubles as a parallel **race detector**.
+- **Discard-laziness is parity-critical.** Values agree across schedules by confluence, but
+  the *termination domain* does not: an eager backend's K-discard shortcuts (skip evaluating
+  `(b x)` when `(c x)` reduces K-headed in the S rule) decide which diverging-but-discarded
+  subterms are survivable, and the kernel's checking paths lean on that discard (since the
+  2026-06/07 coherence-gate arcs). Every eager backend must implement the discard at the
+  SAME depth — a backend that is stricter than its peers hangs on kernel loads its peers
+  pass (this bit disp-eager's S-rule pre-shortcut until 2026-07-07; see the comment at the
+  fix site in `src/core/tree.ts`). A new backend should differential-test *termination on a
+  kernel load*, not only NFs of terminating fixtures.
+- **disp-eager's operating envelope (2026-07-07).** Per-file runs work (`tsx src/run.ts
+  --evaluator=eager <file>`; a kernel-loading file ≈ 2min, ~40M-step budget suffices on a
+  warm memo). The full suite in ONE process does not: the JS arena is grow-only (no scoped
+  reclamation, unlike rust-eager-native's `endScope`), and ~65 files of interned nodes
+  exceed an 8GB heap. The V8 per-Map entry ceiling that used to fire first is gone (intern
+  tables are sharded); the remaining wall is heap volume. Use per-file processes for eager
+  differentials, or implement eager `beginScope`/`endScope` (watermark + sweep-unreachable,
+  mirroring the rust backend) if the full-suite oracle is wanted routinely.
 
 ## The calculus underneath
 

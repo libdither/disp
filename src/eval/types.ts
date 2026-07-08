@@ -19,6 +19,9 @@
 // backends.
 export interface Budget {
   remaining: number
+  // Optional: the budget's original limit, reported by the exhaustion error
+  // (absent = the message omits the number).
+  limit?: number
 }
 
 // Weak-head classification of a node (the result of one triage observation).

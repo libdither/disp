@@ -25,7 +25,7 @@ export const elab: { cs: Session<Tree> } = { cs: defaultSession }
 // recognizer, ~2x heavier per Pi-check; a validated lean fast path could
 // reclaim it later, cf. the tree_eq native-fast-path discipline.)
 export const APPLY_BUDGET = 40_000_000
-export const B = (): Budget => ({ remaining: APPLY_BUDGET })
+export const B = (): Budget => ({ remaining: APPLY_BUDGET, limit: APPLY_BUDGET })
 
 // Auto-verification cache (§ module checking): each module's typed exports are
 // checked through the kernel once per process (file content is immutable, and a

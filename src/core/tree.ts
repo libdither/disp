@@ -45,8 +45,14 @@ export type Tree = {
 // --- Hash-consing (global arena: node identity is process-wide) ---
 
 let nextId = 0
-const stemCache = new Map<number, Tree>()
-const forkCache = new Map<number, Map<number, Tree>>()
+// The intern tables are SHARDED 64 ways (by low id bits): a single V8 Map caps
+// at ~16.7M entries (RangeError: Map maximum size exceeded), and a full suite on
+// the eager backend interns more stems than that in one process (the grow-only
+// arena has no GC). Sharding lifts the ceiling to ~1B per node kind; the extra
+// array index is noise next to the Map op.
+const SHARDS = 64
+const stemCache: Map<number, Tree>[] = Array.from({ length: SHARDS }, () => new Map())
+const forkCache: Map<number, Map<number, Tree>>[] = Array.from({ length: SHARDS }, () => new Map())
 
 // Global node-creation counter. Unique nodes are a property of the shared arena,
 // not of any one session, so this stays module-global (incremented by the
@@ -56,22 +62,24 @@ export const nodeStats = { uniqueNodes: 0 }
 export const LEAF: Tree = { tag: "leaf", id: nextId++ }
 
 export function stem(child: Tree): Tree {
-  const cached = stemCache.get(child.id)
+  const shard = stemCache[child.id & (SHARDS - 1)]
+  const cached = shard.get(child.id)
   if (cached) return cached
   const node: Tree = { tag: "stem", child, id: nextId++ }
-  stemCache.set(child.id, node)
+  shard.set(child.id, node)
   nodeStats.uniqueNodes++
   return node
 }
 
 export function fork(left: Tree, right: Tree): Tree {
-  let inner = forkCache.get(left.id)
+  const shard = forkCache[left.id & (SHARDS - 1)]
+  let inner = shard.get(left.id)
   if (inner) {
     const cached = inner.get(right.id)
     if (cached) return cached
   } else {
     inner = new Map()
-    forkCache.set(left.id, inner)
+    shard.set(left.id, inner)
   }
   const node: Tree = { tag: "fork", left, right, id: nextId++ }
   inner.set(right.id, node)
@@ -82,15 +90,18 @@ export function fork(left: Tree, right: Tree): Tree {
 // susp(f, a) = the suspended application `f a` (P node). Hash-consed like the
 // constructors, so two identical partials share one node (O(1) treeEqual) and a
 // forced value memoized on it is seen by every reference.
-const suspCache = new Map<number, Map<number, Tree>>()
+// Sharded by the ARGUMENT id: the operator set is tiny (today only tree_eq), so
+// per-operator inner maps are what would hit the V8 entry ceiling.
+const suspCache: Map<number, Map<number, Tree>>[] = Array.from({ length: SHARDS }, () => new Map())
 export function susp(f: Tree, a: Tree): Tree {
-  let inner = suspCache.get(f.id)
+  const shard = suspCache[a.id & (SHARDS - 1)]
+  let inner = shard.get(f.id)
   if (inner) {
     const cached = inner.get(a.id)
     if (cached) return cached
   } else {
     inner = new Map()
-    suspCache.set(f.id, inner)
+    shard.set(f.id, inner)
   }
   const node: Tree = { tag: "susp", f, a, forced: null, id: nextId++ }
   inner.set(a.id, node)
@@ -350,9 +361,11 @@ export function getApplyStats(): ApplyStats {
 // apply(△ (△ c d) b, △ u) = apply(d, u)            (Rule 3b: triage stem)
 // apply(△ (△ c d) b, △ u v) = apply(apply(b,u), v) (Rule 3c: triage fork)
 
+// The argument is the exhausted budget's LIMIT (for the message); 0 = unknown
+// (a caller that built its budget without a `limit` field).
 export class BudgetExhausted extends Error {
   constructor(budget: number) {
-    super(`Evaluation budget exhausted (${budget} steps)`)
+    super(budget > 0 ? `Evaluation budget exhausted (${budget}-step limit)` : `Evaluation budget exhausted`)
   }
 }
 
@@ -401,7 +414,7 @@ function ensureStackSlot(): void {
   if (stackTop >= stack.length) fillSlots(stack.length)
 }
 
-export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): Tree {
+export function apply(fInit: Tree, xInit: Tree, budget: { remaining: number; limit?: number } = { remaining: 10000 }): Tree {
   const st = active
   const counters = st.counters
   counters.calls++
@@ -459,7 +472,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
   }
 
   while (true) {
-    if (budget.remaining <= 0) throw new BudgetExhausted(0)
+    if (budget.remaining <= 0) throw new BudgetExhausted(budget.limit ?? 0)
     if (stackTop > counters.maxStack) counters.maxStack = stackTop
 
     // Leaf/Stem: immediate result
@@ -506,7 +519,7 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
 
     budget.remaining--
     counters.steps++
-    if (budget.remaining <= 0) throw new BudgetExhausted(0)
+    if (budget.remaining <= 0) throw new BudgetExhausted(budget.limit ?? 0)
 
     const a = curF.left, b = curF.right
 
@@ -537,10 +550,21 @@ export function apply(fInit: Tree, xInit: Tree, budget = { remaining: 10000 }): 
       counters.sRules++
       const c = a.child
       if (isFork(c) && isLeaf(c.left)) {
-        if (isFork(b) && isLeaf(b.left)) { curF = c.right; curX = b.right; continue }
+        // (c x) = c.right =: v without an application. BEFORE scheduling (b x),
+        // apply the same K-discard SAfterCx uses: if v = K(w), the result is w and
+        // (b x) is never evaluated. Skipping this check here made the JS schedule
+        // STRICTER than rust-eager's on S (K (K w)) b x — nested constant thunks,
+        // the K-composition shapes bracket abstraction emits — and a discarded
+        // divergent (b x) then hung the eager backend where rust terminated
+        // (the 2026-07 kernel leans on that discard; found via the R6-check regress).
+        const v = c.right
+        if (isFork(v) && isLeaf(v.left)) {
+          const r = deliver(v.right); if (r !== null) return r; continue
+        }
+        if (isFork(b) && isLeaf(b.left)) { curF = v; curX = b.right; continue }
         ensureStackSlot()
         const s = stack[stackTop++]
-        s.kind = ContKind.ApplyResultTo; s.func = c.right
+        s.kind = ContKind.ApplyResultTo; s.func = v
         curF = b; continue  // curX unchanged
       }
       // General S: compute c(x), then SAfterCx handles the rest
