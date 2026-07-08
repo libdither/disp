@@ -2,16 +2,13 @@
   import { base } from '$app/paths'
   import NatureTree from '$lib/components/NatureTree.svelte'
   import RuleRail from '$lib/components/RuleRail.svelte'
+  import Gloss from '$lib/learn/Gloss.svelte'
   import { highlightDisp } from '$lib/editor/highlight'
   import { examples } from '$lib/disp/examples'
-  import { snippetById } from '$lib/disp/landing-snippets'
 
   const REPO = 'https://github.com/libdither/disp'
-
-  const snippetChecking = snippetById.checking
-  const snippetKernel = snippetById.kernel
-  const snippetEq = snippetById.eq
-  const snippetUniverse = snippetById.universe
+  const JAY = 'https://github.com/barry-jay-personal'
+  const TREECALC = 'https://treecalcul.us/'
 
   let showcaseIdx = $state(0)
   const showcase = examples.filter((e) => ['trees', 'records', 'proofs', 'universe'].includes(e.id))
@@ -20,7 +17,7 @@
 </script>
 
 <svelte:head>
-  <title>disp — the language that checks itself</title>
+  <title>disp — a decentralized lisp</title>
 </svelte:head>
 
 <!-- ============================== hero ============================== -->
@@ -31,11 +28,38 @@
       <h1>
         <span class="grad-text">disp</span>
       </h1>
-      <p class="tagline">A language that <em>checks itself</em>.</p>
+      <p class="abbr">
+        <span class="abbr-label">abbr.</span>
+        <Gloss
+          tip="different programmers can build and adopt language features — syntax, types — independently, with automatic translation between dialects. No committee, no release train: features spread by being adopted."
+          >decentralized</Gloss>
+        &nbsp;<Gloss
+          tip="like lisp, disp is homoiconic: programs are data you can compute on. Unlike lisp there is no quote/eval loop to cross — programs are trees, and reduction itself inspects tree shape — so program-rewriting programs (macros, optimizers, type checkers) are just ordinary programs."
+          >lisp</Gloss>
+      </p>
       <p class="sub">
-        disp is a dependently-typed language built on the tree calculus. Types are ordinary
-        programs, proofs are runs, and the whole type system — Π, records, induction, the universe
-        — is library code re-verified from <strong>two trusted operations</strong>.
+        disp is an aspiring
+        <Gloss
+          tip="one substrate other languages can be re-created in and transpiled to — a language for absorbing languages, rather than another island."
+          >universal</Gloss>
+        general-purpose programming language with
+        <Gloss
+          tip="the surface grammar is a library concern, not a constitution: projects will define their own notations that elaborate to the same trees and interoperate."
+          >user-definable parsers</Gloss>
+        and
+        <Gloss
+          tip="the entire type system — Π, records, induction, the universe itself — is library code over a two-operation kernel, and re-verifies itself when it loads. Extend it or replace it without kernel surgery."
+          >type systems</Gloss>, and a
+        <Gloss
+          tip="an optimizer that takes a specification (a type, a predicate, a loss function) and derives implementations — with machine-checked equivalence certificates licensing every rewrite. Being a disp program with a disp type, it is a candidate for its own improvement."
+          >self-optimizing optimizer</Gloss>
+        based on
+        <Gloss
+          tip="a model of computation where programs are graphs and reduction is local and parallel — so work is countable per rewrite, and cost is attributable to individual decisions."
+          >interaction nets</Gloss>
+        that models hardware as imperfect interaction-net reduction. Based on
+        <a href={JAY} target="_blank" rel="noopener">Barry Jay</a>'s
+        <a href={TREECALC} target="_blank" rel="noopener">tree calculus</a>.
       </p>
       <div class="cta-row">
         <a class="btn primary" href="{base}/learn/">Get started</a>
@@ -54,67 +78,61 @@
 
 <RuleRail />
 
-<!-- ============================== stats ============================== -->
-<section class="stats">
-  <div class="container stats-row">
-    <div class="stat"><b>2</b><span>trusted kernel operations</span></div>
-    <div class="stat"><b>~1,200</b><span>machine-checked tests</span></div>
-    <div class="stat"><b>5</b><span>evaluator backends, byte-agreeing</span></div>
-    <div class="stat"><b>0</b><span>rights reserved — public domain</span></div>
-  </div>
-</section>
-
 <!-- ============================== features ============================== -->
 <section class="features container">
   <h2 class="sect-title">Why <span class="grad-text">disp</span>?</h2>
+  <p class="sect-sub">
+    Some of this runs today — the type system, the self-verifying kernel, five byte-agreeing
+    evaluators. Some is the design goal the rest is built toward.
+    <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener">FOUNDATIONS.md</a>
+    keeps score honestly.
+  </p>
   <div class="feat-grid">
     <div class="card feat">
-      <h3>Checking is running</h3>
+      <h3><span class="feat-dot" aria-hidden="true"></span>Homoiconic, past lisp</h3>
       <p>
-        A type is a predicate: apply it to a value and it answers. There is no separate judgment
-        layer and no meta-language — the type checker is a tree program like everything else.
-      </p>
-      <pre class="feat-code">{@html highlightDisp(snippetChecking)}</pre>
-    </div>
-    <div class="card feat">
-      <h3>Two operations to trust</h3>
-      <p>
-        The kernel mints unforgeable hypotheses and routes every observation through them —
-        that's it. Functions, records, equality, induction, and the universe itself are readable
-        library code, replaceable without kernel surgery.
-      </p>
-      <pre class="feat-code">{@html highlightDisp(snippetKernel)}</pre>
-    </div>
-    <div class="card feat">
-      <h3>Equality is a pointer</h3>
-      <p>
+        Programs are binary trees, and trees are data — with no quote/eval boundary between the
+        two. Case analysis over programs is a <em>rewrite rule</em> (the triage), so a program
+        that rewrites programs — a macro, an optimizer, a type checker — is just a program.
         Elaboration is deterministic and trees are hash-consed, so equal programs are literally
-        the same tree. Conversion checking — the hot loop of every proof assistant — is O(1) here.
+        the same pointer.
       </p>
-      <pre class="feat-code">{@html highlightDisp(snippetEq)}</pre>
     </div>
     <div class="card feat">
-      <h3>The universe answers for itself</h3>
+      <h3><span class="feat-dot" aria-hidden="true"></span>Type systems you can replace</h3>
       <p>
-        <code>Type</code> is a behavioral check that probes a candidate type's responses — and it
-        passes its own probe. The checker checks the checkers, using the same two kernel
-        operations it uses on everything else.
+        A type is a predicate: apply it to a value and it answers. The entire type system —
+        Π, records, induction, the universe itself — is library code over a kernel of
+        <strong>two trusted operations</strong>, and it re-verifies itself every time it loads.
+        Want different formers, different logic? That's a library, not kernel surgery.
       </p>
-      <pre class="feat-code">{@html highlightDisp(snippetUniverse)}</pre>
+    </div>
+    <div class="card feat">
+      <h3><span class="feat-dot" aria-hidden="true"></span>Your syntax, your dialect</h3>
+      <p>
+        The decentralized ambition: user-definable parsers and independently adoptable language
+        features, with automatic translation between dialects — one universal substrate that
+        other languages can be re-created in and transpiled to, instead of another island.
+      </p>
+    </div>
+    <div class="card feat">
+      <h3><span class="feat-dot" aria-hidden="true"></span>An optimizer aimed at itself</h3>
+      <p>
+        Programs materialize as <a href="{REPO}/blob/main/OPTIMIZER.typ">interaction nets</a>,
+        where reduction is local, parallel, and countable — hardware is modeled as imperfect net
+        reduction, so cost attaches to individual decisions. Machine-checked equivalence
+        certificates license every rewrite, and the optimizer's own disp type makes it a
+        candidate for its own improvement.
+      </p>
     </div>
   </div>
-  <p class="feat-foot">
-    The long game: a <a href="{REPO}/blob/main/OPTIMIZER.typ">verified self-improving optimizer</a>
-    — you write constraints as detailed as you need, and implementations are derived, with
-    machine-checked equivalence certificates licensing every rewrite.
-  </p>
 </section>
 
 <hr class="keyline container" />
 
 <!-- ============================== showcase ============================== -->
 <section class="showcase container">
-  <h2 class="sect-title">See it, then run it</h2>
+  <h2 class="sect-title">The features, in code</h2>
   <p class="sect-sub">
     Every block below passes the real compiler — and the playground runs that same compiler in
     your tab, kernel self-verification included.
@@ -220,18 +238,28 @@
     font-weight: 640;
     letter-spacing: -0.02em;
   }
-  .tagline {
+  .abbr {
     font-family: var(--font-display);
-    font-size: clamp(1.5rem, 3vw, 2.1rem);
-    margin: 0.7rem 0 0.9rem;
-    color: var(--fg);
-    font-variation-settings: 'SOFT' 50, 'WONK' 0;
+    font-size: clamp(1.15rem, 2.2vw, 1.5rem);
+    font-style: italic;
+    font-variation-settings: 'SOFT' 60, 'WONK' 1;
+    color: var(--fg-muted);
+    margin: 0.5rem 0 1rem;
   }
-  .tagline em { font-style: italic; color: var(--g2); }
+  .abbr-label {
+    font-family: var(--font-mono);
+    font-style: normal;
+    font-size: 0.62em;
+    color: var(--fg-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-right: 0.35em;
+  }
   .sub {
     color: var(--fg-muted);
-    max-width: 34rem;
-    font-size: 1.05rem;
+    max-width: 36rem;
+    font-size: 1.03rem;
+    line-height: 1.75;
     margin: 0 0 1.6rem;
   }
   .cta-row { display: flex; gap: 0.8rem; flex-wrap: wrap; margin-bottom: 1.4rem; }
@@ -261,29 +289,6 @@
     padding: 1rem 0.6rem 0.4rem;
   }
 
-  /* ---------- stats ---------- */
-  .stats {
-    border-block: 1px solid var(--border);
-    background: var(--bg-elev);
-  }
-  .stats-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    padding-block: 1.1rem;
-  }
-  .stat { text-align: center; }
-  .stat b {
-    display: block;
-    font-family: var(--font-display);
-    font-size: 1.9rem;
-    background: var(--grad-brand);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-  .stat span { color: var(--fg-muted); font-size: 0.82rem; }
-
   /* ---------- features ---------- */
   .features { padding-top: 3.4rem; }
   .sect-title {
@@ -297,18 +302,21 @@
     gap: 1.1rem;
     margin-top: 1.6rem;
   }
-  .feat h3 { margin: 0 0 0.5rem; font-size: 1.25rem; }
-  .feat p { color: var(--fg-muted); font-size: 0.94rem; margin: 0 0 0.9rem; }
-  .feat-code {
-    font-size: 0.76rem;
-    margin: 0;
-    background: var(--bg-code);
+  .feat h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
   }
-  .feat-foot {
-    color: var(--fg-muted);
-    margin-top: 1.6rem;
-    font-size: 0.95rem;
-    max-width: 52rem;
+  .feat p { color: var(--fg-muted); font-size: 0.94rem; margin: 0; }
+  .feat-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50% 50% 50% 2px;
+    background: var(--grad-brand);
+    flex: none;
+    transform: rotate(45deg);
   }
   .features, .showcase, .selfcheck, .involve { padding-block: 3.2rem; }
 
@@ -400,7 +408,6 @@
   @media (max-width: 880px) {
     .hero-grid { grid-template-columns: 1fr; }
     .hero-viz { order: -1; }
-    .stats-row { grid-template-columns: repeat(2, 1fr); row-gap: 1.2rem; }
     .feat-grid, .inv-grid { grid-template-columns: 1fr; }
   }
 </style>
