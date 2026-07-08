@@ -2,7 +2,7 @@
 // their decoders, plus reading a SS2.6 record's field header off a compiled tree.
 
 import type { Tree } from "../eval/eager.js"
-import { elab, B, type ScopeEntry } from "./state.js"
+import { elab, B, type ScopeEntry, type LicenseCert } from "./state.js"
 
 // treePairFst(p): the left projection of a wait-form fork. A type is a
 // wait-form; its left projection is the constant former-signature.
@@ -63,7 +63,7 @@ export function treeToString(t: Tree): string {
 export function recordFieldsFromTree(
   tree: Tree,
   lookupEntry: (name: string) => ScopeEntry | undefined,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[] } | undefined {
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[]; fieldCerts?: (LicenseCert | null)[] } | undefined {
   const cutSig = lookupEntry("cut_sig")?.tree
   const typeMeta = lookupEntry("type_meta")?.tree
   const pairFst = lookupEntry("pair_fst")?.tree

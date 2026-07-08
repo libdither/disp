@@ -1,15 +1,17 @@
 open use "../../kernel/prelude.disp"
 
-// arith.opt: the optimization payload for arith.disp — implementation only, no
-// contract. The CONTRACT (guard ownership, the licensed rebind, and what the license
-// does and does not certify) lives in arith.disp; the differential pins live in
-// lib/tests/guard_opt.test.disp. This file is meant to be replaceable: a future
-// optimizer emits files of exactly this shape (OPTIMIZER.typ's (e', cert) at the
-// definition boundary — the cert is carried by the rebind in the spec file, checked
-// by the guard at load).
+// arith.opt: the optimization overlay for arith.disp — the (e', cert) bundle of
+// OPTIMIZER.typ at the definition boundary. arith.disp opens this file LAST; each
+// export below that collides with a name arith owns is a license payload
+// { new, proof }, replayed through the incumbent guard at the splice (the
+// licensed-collision rules in the driver's open handling). This file never opens
+// arith (that would be a load cycle): fast bodies are written against local names
+// (nat_rec_fast), and the proofs are checked at the boundary that owns the names,
+// not here. A future optimizer emits files of exactly this shape.
 
-// The kernel recursor's honest dependent type, named so the license relation can
-// cite it (`oeq NatRecT` is nat_rec's pointwise equivalence).
+// The kernel recursor's honest dependent type. arith.disp needs it BEFORE this
+// file loads (its guard_eq cites it), so both files define it; hash-consing makes
+// the two copies one tree and the collision at the trailing open dedupes.
 NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
 
 // nat_rec_fast: the kernel recursor with a fast CONCRETE path. A neutral target
@@ -31,3 +33,17 @@ nat_rec_fast : NatRecT := {motive, base, step, target} ->
         ({_} -> base)
         ({_l, kk} -> step kk (go kk))
         k))) target
+
+// ── The rebind payloads. Each shadows a spec name with a { new, proof } record:
+// meaningless as the function itself (this module is not a drop-in arith), but
+// exactly the request the incumbent license checks — proof : oeq T old new, with
+// `old` supplied by the boundary doing the check. Pointwise refl inhabits both
+// relations because the fast forms delegate verbatim on the neutral path (the
+// abstract paths are untouched); the concrete paths are pinned differentially in
+// lib/tests/guard_opt.test.disp.
+nat_rec := { new := nat_rec_fast ; proof := {P} -> {z} -> {s} -> {n} -> refl }
+
+// add's fast body is written against nat_rec_fast BY NAME (nat_rec here is now the
+// payload record above, not a recursor) — the optimizer re-emits dependent bodies
+// rather than reaching back into already-baked trees.
+add := { new := {n, m} -> nat_rec_fast ({_} -> Nat) m ({pred, ih} -> succ ih) n ; proof := {n} -> {m} -> refl }

@@ -1,34 +1,36 @@
 open use "../../kernel/prelude.disp"
-open use "arith.opt.disp"
 open use "../oeq.disp"
 
 // ================================================================
-// Arithmetic
+// Arithmetic — the SPEC. Optimizations arrive at the very end.
 // ================================================================
+// Names are owned with guard_eq (license = oeq of the declared type). The trailing
+// open of arith.opt.disp is the licensed-replacement ceremony in MODULE form
+// (OPTIMIZER.typ's (e', cert) at the definition boundary): each of its exports that
+// collides with a name owned here is a { new, proof } payload, replayed through the
+// guard installed here — the proof is machine-checked at this boundary, a junk
+// payload fails the load (probe pins in guards.test.disp / guard_opt.test.disp).
+// On success the driver stamps a cert (old tree, approved payload) on the export,
+// and downstream openers use the stamps to reconcile this module's fast trees with
+// the kernel originals they also import (licensed-collision rules at the splice).
+// What the license does and does not cover: at a minted target both implementations
+// reduce to the same stuck elimination, so pointwise refl certifies exactly "the
+// abstract path is untouched"; the concrete path is pinned differentially in
+// lib/tests/guard_opt.test.disp (the in-language half of the tree_eq
+// native-fast-path discipline).
 
-// Re-export the optimization surface (arith.opt.disp) so this module stays the one
-// entry point: NatRecT is the license's relation anchor, nat_rec_fast the payload
-// consumers may cite explicitly (ops.disp's shadow, the guard_opt pins).
-NatRecT := NatRecT
-nat_rec_fast := nat_rec_fast
+// The recursor's honest dependent type — cited by the guard_eq below, so it must
+// exist before the overlay loads; tree-identical to arith.opt.disp's copy
+// (hash-consing dedupes the collision).
+NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
 
-// ── The licensed replacement ceremony (guards + std/oeq; the definition-boundary form
-// of OPTIMIZER.typ's licensed rewriting). Own the kernel recursor at its pointwise
-// equivalence, then rebind it FILE-LOCALLY to the fast form from arith.opt.disp. The
-// guard checks the proof in-language: at a minted target both implementations reduce
-// to the same stuck elimination, so pointwise refl inhabits the relation — the license
-// machine-checks exactly "the abstract path is untouched". It does NOT cover the
-// concrete path (is_neutral is intensionally visible at a mint, so only the delegation
-// branch is exercised); concretes are pinned differentially in
-// lib/tests/guard_opt.test.disp, the in-language half of the tree_eq native-fast-path
-// discipline.
-// The install re-exports nat_rec's ORIGINAL tree (so downstream opens dedupe against
-// the kernel's), and the rebind is `let`-private: only this file's exports carry the
-// fast trees.
-guard (license_guard (oeq NatRecT)) nat_rec := nat_rec
-let nat_rec : NatRecT := { new := nat_rec_fast; proof := {P} -> {z} -> {s} -> {n} -> refl }
+// Own the kernel recursor at its pointwise equivalence. The first bind re-binds the
+// kernel tree verbatim (default_guard installs the license; a first bind needs no
+// proof), so until the overlay lands this module is observationally the kernel's.
+guard_eq nat_rec : NatRecT := nat_rec
 
-// add: Nat addition via nat_rec (kernel-routed eliminator).
+// add: Nat addition via nat_rec (kernel-routed eliminator) — the SPEC body, written
+// against the spec recursor.
 //   zero + m = m
 //   succ n + m = succ (add n m)
 // nat_rec's step receives (predecessor, recursive_result) Mendler-style,
@@ -37,8 +39,16 @@ let nat_rec : NatRecT := { new := nat_rec_fast; proof := {P} -> {z} -> {s} -> {n
 // Pi-checked at `Nat -> Nat -> Nat`, the kernel mints a hypothesis for
 // `n`; nat_rec's handler runs raw and produces a stuck neutral via
 // hyp_reduce, rather than triaging on the hypothesis (which would be
-// rejected by parametric mode). (The nat_rec baked in here is the fast
-// rebind above, so concrete adds skip the generic dispatch.)
-// Declared with guard_eq: the name is owned at `oeq (Nat -> Nat -> Nat)`,
-// so rebinding `add` downstream needs a { new, proof } license.
+// rejected by parametric mode). Declared with guard_eq: the name is owned at
+// `oeq (Nat -> Nat -> Nat)`, so rebinding it — including by the overlay below —
+// needs a { new, proof } license.
 guard_eq add : Nat -> Nat -> Nat := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
+
+// ── The overlay: licensed fast replacements for nat_rec AND add. Each colliding
+// export is checked by the guards installed above; the exports of THIS module then
+// carry the fast trees (plus stamps), and every body declared below this line —
+// there are none — would bake them.
+open use "arith.opt.disp"
+
+// Re-export the optimization surface for consumers/pins that cite it explicitly.
+nat_rec_fast := nat_rec_fast

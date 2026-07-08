@@ -6,7 +6,7 @@ import { dirname, resolve as pathResolve } from "node:path"
 import { type Tree, defaultSession } from "../eval/eager.js"
 import type { Session, EvalStats } from "../eval/types.js"
 import { parseItems, type Expr, type RecMember } from "../parse.js"
-import { elab, B, verifiedModules, moduleCacheBySession, pristineTest, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks } from "./state.js"
+import { elab, B, verifiedModules, moduleCacheBySession, pristineTest, internTreeId, verifiedFilledBySession, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
 import { parseFileItems, scanGivens, isGivenHead, type GivenSpec } from "./modscan.js"
 import { type Cir, cap, cirToTree, eliminateLams } from "./cir.js"
 import { extractSignature } from "./sugar.js"
@@ -14,7 +14,7 @@ import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
 import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree, equationLhs } from "./expr.js"
 
 export type Decl =
-  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null }
+  | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null; cert?: LicenseCert | null }
   // `line` is the equation's 1-based source line (absent for tests emitted by
   // inline recValue blocks, which have no surface line of their own).
   | { kind: "Test"; lhs: Tree; rhs: Tree; line?: number }
@@ -381,12 +381,14 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const fieldTrees: Tree[] = []
     const fieldTypes: (Tree | null)[] = []
     const fieldGuards: (Tree | null)[] = []
+    const fieldCerts: (LicenseCert | null)[] = []
     for (const d of fileDecls) {
       if (d.kind === "Def") {
         fieldNames.push(d.name)
         fieldTrees.push(d.tree)
         fieldTypes.push(d.type ?? null)
         fieldGuards.push(d.guard ?? null)
+        fieldCerts.push(d.cert ?? null)
       }
     }
     // The functor face (abstract mode): read the module lambda back off the
@@ -451,7 +453,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     for (const ft of fieldTrees) body = cap(body, { tag: "lit", t: ft })
     const cir: Cir = { tag: "lam", x: selName, body }
     const tree = cirToTree(eliminateLams(cir))
-    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldGuards }
+    const record: ScopeEntry = { tree, fields: fieldNames, fieldTrees, fieldTypes, fieldGuards, fieldCerts }
     modCache.set(cacheKey, record)
     return record
   }
@@ -551,6 +553,49 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     return r
   }
 
+  // buildBaseRequest: the base request record (`base v` in cut.disp) — public,
+  // non-param. Shared by declareBinding (which may wrap it in a head decorator)
+  // and the open splice's guard consult. Null when the kernel isn't in scope.
+  function buildBaseRequest(valueTree: Tree | null, typeTree: Tree | null): Tree | null {
+    const S = elab.cs
+    const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
+    const ff = lookupEntry("false")?.tree
+    if (!mkr || !lc || !ff) return null
+    const opt = (x: Tree | null): Tree => (x == null ? S.leaf() : S.stem(x))
+    const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => S.fork(h, acc), S.leaf())
+    const names = consList(["value", "ty", "guard", "private", "param"].map(stringToTree))
+    const payload = consList([opt(valueTree), opt(typeTree), S.leaf(), ff, ff].map(v => S.apply(lc, v, B())))
+    return S.apply(S.apply(mkr, names, B()), payload, B())
+  }
+
+  // consultGuardAtOpen: run an incumbent guard against an incoming open field —
+  // the same in-language check a declaration runs, with the incoming export as
+  // the request value (under license_guard that value is the { new, proof }
+  // payload). Throws on rejection; returns the guard's action.
+  function consultGuardAtOpen(name: string, guardTree: Tree, oldTree: Tree | undefined, incoming: Tree): { tree?: Tree; guard?: Tree } {
+    const S = elab.cs
+    const request = buildBaseRequest(incoming, null)
+    if (!request)
+      throw new Error(`open: '${name}' is guarded — consulting its guard needs the kernel prelude in scope`)
+    const oldOpt = oldTree != null ? S.stem(oldTree) : S.leaf()
+    const answer = S.apply(S.apply(guardTree, oldOpt, B()), request, B())
+    const top = S.classify!(answer)
+    if (top.tag !== "fork" || !S.equal!(top.left, stringToTree("Ok")))
+      throw new Error(`open: rebind of '${name}' rejected by its guard`)
+    const act = S.classify!(top.right)
+    if (act.tag !== "fork")
+      throw new Error(`open: rebind of '${name}': guard returned a malformed action`)
+    if (S.equal!(act.left, stringToTree("Bind"))) return { tree: act.right }
+    if (S.equal!(act.left, stringToTree("Install"))) return { guard: act.right }
+    if (S.equal!(act.left, stringToTree("Both"))) {
+      const p = S.classify!(act.right)
+      if (p.tag !== "fork")
+        throw new Error(`open: rebind of '${name}': guard returned a malformed Both action`)
+      return { tree: p.left, guard: p.right }
+    }
+    throw new Error(`open: rebind of '${name}': guard returned an unknown action`)
+  }
+
   // declareBinding: the declaration pipeline (COMPILATION.typ § Declarations as
   // requests). Fast path = the pre-guard behavior, taken when there is no head (or
   // the head is the pristine/unbound `let` decorator), no installed guard on the
@@ -564,7 +609,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     headE: Expr | undefined,
     sinks: CompileSinks,
     raw: boolean,
-  ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean; priv?: boolean } {
+  ): { pushDef: boolean; tree?: Tree; type?: Tree | null; guard?: Tree; viaFast: boolean; priv?: boolean; cert?: LicenseCert } {
     const S = elab.cs
     const existing = lookupEntry(name)
     const letHeaded = isLetHead(headE)
@@ -599,19 +644,15 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       finishDefine(name, valueTree, typeTree, valueE, typeE ?? null, existing.guard)
       return { pushDef: true, tree: valueTree, type: typeTree, guard: existing.guard, viaFast: false }
     }
-    const mkr = lookupEntry("make_record")?.tree, lc = lookupEntry("list_const")?.tree
-    const tt = lookupEntry("true")?.tree, ff = lookupEntry("false")?.tree
+    const tt = lookupEntry("true")?.tree
     const g = existing?.guard ?? dg
-    if (!mkr || !lc || !tt || !ff || !g)
-      throw new Error(`declaration of '${name}': guarded declarations need the kernel prelude in scope`)
-    const opt = (x: Tree | null): Tree => (x == null ? S.leaf() : S.stem(x))
-    const consList = (xs: Tree[]): Tree => xs.reduceRight<Tree>((acc, h) => S.fork(h, acc), S.leaf())
     // The base request is public and non-param (`private := false; param := false`),
     // exactly `base v` in cut.disp; privacy and param are the head's job (the
     // `let` and `given` decorators set them).
-    const names = consList(["value", "ty", "guard", "private", "param"].map(stringToTree))
-    const payload = consList([opt(valueTree), opt(typeTree), S.leaf(), ff, ff].map(v => S.apply(lc, v, B())))
-    let request = S.apply(S.apply(mkr, names, B()), payload, B())
+    const base = buildBaseRequest(valueTree, typeTree)
+    if (!tt || !g || base == null)
+      throw new Error(`declaration of '${name}': guarded declarations need the kernel prelude in scope`)
+    let request = base
     if (headE) {
       const headTree = compileExpr(headE, lookupEntry, resolveUse, sinks)
       request = S.apply(headTree, request, B())
@@ -633,9 +674,18 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     const act = S.classify!(top.right)
     if (act.tag !== "fork")
       throw new Error(`declaration of '${name}': guard returned a malformed action`)
+    // A guard-approved rebind gets a driver-stamped cert: (old tree, approved
+    // request value). The open splice uses these stamps to reconcile a licensed
+    // export with the original it replaced (licensed-collision rules below).
+    const stamp = (bound: Tree): LicenseCert | undefined =>
+      existing?.tree != null && valueTree != null && !S.equal!(existing.tree, bound)
+        ? { old: existing.tree, payload: valueTree }
+        : undefined
     if (S.equal!(act.left, stringToTree("Bind"))) {
+      const cert = stamp(act.right)
       finishDefine(name, act.right, typeTree, null, typeE ?? null, existing?.guard)
-      return { pushDef: true, tree: act.right, type: typeTree, guard: existing?.guard, viaFast: false, priv: isPrivate }
+      if (cert) define(name, { ...lookupEntry(name)!, cert })
+      return { pushDef: true, tree: act.right, type: typeTree, guard: existing?.guard, viaFast: false, priv: isPrivate, cert }
     }
     if (S.equal!(act.left, stringToTree("Install"))) {
       define(name, { ...(existing ?? {}), guard: act.right })
@@ -645,8 +695,10 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       const p = S.classify!(act.right)
       if (p.tag !== "fork")
         throw new Error(`declaration of '${name}': guard returned a malformed Both action`)
+      const cert = stamp(p.left)
       finishDefine(name, p.left, typeTree, null, typeE ?? null, p.right)
-      return { pushDef: true, tree: p.left, type: typeTree, guard: p.right, viaFast: false, priv: isPrivate }
+      if (cert) define(name, { ...lookupEntry(name)!, cert })
+      return { pushDef: true, tree: p.left, type: typeTree, guard: p.right, viaFast: false, priv: isPrivate, cert }
     }
     throw new Error(`declaration of '${name}': guard returned an unknown action`)
   }
@@ -753,10 +805,13 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           // binding wins. An UNGUARDED (fast-path) duplicate is still the old accident
           // error, relocated here from the parser (the parser can't see guards).
           const idx = target.findIndex(d => d.kind === "Def" && d.name === it.name)
-          const decl: Decl = { kind: "Def", name: it.name, tree: r.tree!, type: r.type, guard: r.guard ?? null }
+          const decl: Decl = { kind: "Def", name: it.name, tree: r.tree!, type: r.type, guard: r.guard ?? null, cert: r.cert ?? null }
           if (idx >= 0) {
             if (r.viaFast) throw new Error(`duplicate exported field '${it.name}'`)
-            target[idx] = decl
+            // A rebind without its own annotation keeps the name's contract: the
+            // original Def's type survives (and re-verifies against the new tree).
+            const prev = target[idx] as Extract<Decl, { kind: "Def" }>
+            target[idx] = { ...decl, type: decl.type ?? prev.type }
           } else target.push(decl)
         }
         // Register the canonical tree_eq tree id with the runtime fast-path on first
@@ -839,18 +894,61 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
         for (let i = 0; i < n; i++) {
           const fieldTree = record.fieldTrees ? record.fieldTrees[i] : elab.cs.apply(tree!, accTree(record.fields[i]), B())
           const name = record.fields[i]
+          const fieldType = record.fieldTypes?.[i] ?? null
+          const inGuard = record.fieldGuards?.[i] ?? undefined
+          const inCert = record.fieldCerts?.[i] ?? undefined
+          // Licensed-collision resolution. Certs are DRIVER-STAMPED: written only by
+          // this driver on a successful guard consult in this session, never read from
+          // module-declared data — so rules (2)/(3) are the driver consulting its own
+          // memo, and rule (4) runs the incumbent's guard right here. An import still
+          // cannot silently shadow anything: unguarded conflicts stay hard errors.
+          const collide = (incumbent: ScopeEntry): boolean => {
+            // (1) same tree — plain dedupe.
+            if (incumbent.tree && elab.cs.equal!(incumbent.tree, fieldTree)) return true
+            // (2) the incumbent was licensed over exactly this incoming tree (the
+            //     kernel original arriving after the optimized module) — keep it.
+            if (incumbent.tree && incumbent.cert && elab.cs.equal!(incumbent.cert.old, fieldTree)) return true
+            // (3) the incoming export was licensed over exactly the incumbent tree
+            //     (the optimized module arriving after the kernel) — the licensed
+            //     upgrade replaces the original, stamps and guard riding along.
+            if (incumbent.tree && inCert && elab.cs.equal!(inCert.old, incumbent.tree)) {
+              define(name, { tree: fieldTree, type: fieldType, guard: inGuard, cert: inCert })
+              return true
+            }
+            // (4) the opener owns the name — consult the incumbent guard with the
+            //     incoming value as the request (under license_guard: a { new, proof }
+            //     payload). On Bind the rebind also updates this file's export.
+            if (incumbent.guard) {
+              const r = consultGuardAtOpen(name, incumbent.guard, incumbent.tree, fieldTree)
+              const newGuard = r.guard ?? incumbent.guard
+              if (r.tree != null) {
+                const cert = incumbent.tree != null && !elab.cs.equal!(incumbent.tree, r.tree)
+                  ? { old: incumbent.tree, payload: fieldTree }
+                  : undefined
+                define(name, { ...incumbent, tree: r.tree, guard: newGuard, cert })
+                const idx = target.findIndex(d => d.kind === "Def" && d.name === name)
+                if (idx >= 0) {
+                  const prev = target[idx] as Extract<Decl, { kind: "Def" }>
+                  target[idx] = { kind: "Def", name, tree: r.tree, type: prev.type, guard: newGuard, cert: cert ?? null }
+                }
+              } else define(name, { ...incumbent, guard: newGuard })
+              return true
+            }
+            return false
+          }
           const existing = stack[stack.length - 1].get(name)
           if (existing) {
-            if (existing.tree && elab.cs.equal!(existing.tree, fieldTree)) continue
-            throw new Error(`open: name '${name}' already in scope with different value`)
+            if (!collide(existing)) throw new Error(`open: name '${name}' already in scope with different value`)
+            continue
           }
           // A guarded binding in an OUTER frame may not be silently shadowed by an
-          // import: rebinding an owned name goes through its guard, explicitly.
+          // import: the same licensed rules apply, else the rebind must be explicit.
           const outer = lookupEntry(name)
-          if (outer?.guard && !(outer.tree != null && elab.cs.equal!(outer.tree, fieldTree)))
-            throw new Error(`open: '${name}' is guarded; rebind it explicitly through its guard`)
-          const fieldType = record.fieldTypes?.[i] ?? null
-          define(name, { tree: fieldTree, type: fieldType, guard: record.fieldGuards?.[i] ?? undefined })
+          if (outer?.guard && !(outer.tree != null && elab.cs.equal!(outer.tree, fieldTree))) {
+            if (!collide(outer)) throw new Error(`open: '${name}' is guarded; rebind it explicitly through its guard`)
+            continue
+          }
+          define(name, { tree: fieldTree, type: fieldType, guard: inGuard, cert: inCert })
           if (isExport) {
             // Legacy mode: open re-exports opened names.
             target.push({ kind: "Def", name, tree: fieldTree, type: fieldType })

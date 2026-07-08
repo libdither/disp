@@ -1,36 +1,46 @@
-// The licensed-replacement ceremony end to end (guard_eq survey, candidates 1-2):
-// std/nat/arith owns nat_rec at `oeq NatRecT` and rebinds it file-locally to
-// nat_rec_fast (the payload module is arith.opt.disp; arith.disp carries the
-// contract and re-exports the surface) — neutral targets delegate verbatim, concrete
-// targets run a direct triage loop (~17 steps/unit vs ~200 through the generic
-// elim -> dispatcher -> view-decode -> case-lookup route). Pins:
-//   (a) the license: pointwise refl inhabits `oeq NatRecT nat_rec nat_rec_fast` (both
-//       sides reduce to the SAME stuck elimination at a minted target), and a
+// The licensed-replacement ceremony end to end — MODULE FORM (guard_eq survey,
+// candidates 1-2; the trailing-open overlay): std/nat/arith owns nat_rec AND add
+// with guard_eq and ENDS with `open use "arith.opt.disp"`, whose colliding exports
+// are { new, proof } payloads replayed through the incumbent guards (the splice's
+// licensed-collision rules; certs are driver-stamped and travel with the exports,
+// which is how this file's own opens reconcile arith's fast trees with the kernel
+// originals the prelude bound first). Pins:
+//   (a) the license: pointwise refl inhabits `oeq NatRecT nat_rec_gen nat_rec_fast`
+//       (both sides reduce to the SAME stuck elimination at a minted target), and a
 //       replacement with a different abstract path is refused;
 //   (b) what the license does NOT cover: is_neutral is intensionally visible at a
 //       mint, so the refl license certifies the neutral path only — the concrete path
-//       is pinned differentially here (the in-language half of the tree_eq
-//       native-fast-path discipline);
+//       is pinned differentially against the generic recursor captured BEFORE the
+//       overlay (the in-language half of the tree_eq native-fast-path discipline);
 //   (c) reduction under binders: the fast route steps `succ n` to `step n <stuck at n>`
 //       tree-identically to the generic route — the conversion that type-level
 //       arithmetic (ops.disp's add_succ_r) rides on;
 //   (d) setoid_of at a NEUTRAL type takes the Eq base first, through the walker-safe
 //       is_neutral dispatch — the hardening that makes dependent license relations
-//       instantiable under the walker at all.
+//       instantiable under the walker at all;
+//   (e) the overlay LANDED: this scope's nat_rec/add ARE the fast trees, and
+//       ops.disp rides them with no local shadow.
 open use "../kernel/prelude.disp"
 open use "../std/oeq.disp"
+
+// The generic (kernel) recursor, captured before arith's overlay replaces the name.
+let nat_rec_gen := nat_rec
+
 open use "../std/nat/arith.disp"
 open use "../std/nat/ops.disp"
 
+// ── (e) the overlay landed: the in-scope names are the fast trees
+test tree_eq nat_rec nat_rec_fast = true
+test tree_eq nat_rec nat_rec_gen = false
+test tree_eq add ({n, m} -> nat_rec_fast ({_} -> Nat) m ({pred, ih} -> succ ih) n) = true
+
 // ── (a) the license, exactly as the guard checked it at arith load
-test param_apply (oeq NatRecT nat_rec nat_rec_fast) ({P} -> {z} -> {s} -> {n} -> refl) = Ok true
+test param_apply (oeq NatRecT nat_rec_gen nat_rec_fast) ({P} -> {z} -> {s} -> {n} -> refl) = Ok true
 // a lying replacement (ignores the target; different abstract path) is refused
-test tree_eq (param_apply (oeq NatRecT nat_rec ({motive, base, step, target} -> base)) ({P} -> {z} -> {s} -> {n} -> refl)) (Ok true) = false
+test tree_eq (param_apply (oeq NatRecT nat_rec_gen ({motive, base, step, target} -> base)) ({P} -> {z} -> {s} -> {n} -> refl)) (Ok true) = false
 
 // ── (b) differential: the fast path agrees with the generic route on concretes
-// (this scope's nat_rec is the kernel's: the prelude binds it first, arith's
-// re-export is tree-identical and dedupes)
-let add_gen := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
+let add_gen := {n, m} -> nat_rec_gen ({_} -> Nat) m ({pred, ih} -> succ ih) n
 test add 0 0 = 0
 test add 0 7 = 7
 test add 7 0 = 7
@@ -38,7 +48,7 @@ test add 3 4 = add_gen 3 4
 test add 25 17 = add_gen 25 17
 test tree_eq (add 2 2) 4 = true
 let dbl_fast := {n} -> nat_rec_fast ({_} -> Nat) zero ({k, ih} -> succ (succ ih)) n
-let dbl_gen  := {n} -> nat_rec ({_} -> Nat) zero ({k, ih} -> succ (succ ih)) n
+let dbl_gen  := {n} -> nat_rec_gen ({_} -> Nat) zero ({k, ih} -> succ (succ ih)) n
 test dbl_fast 0 = dbl_gen 0
 test dbl_fast 9 = dbl_gen 9
 // scale headroom on the concrete path
@@ -50,7 +60,7 @@ succ_frontier : {n : Nat} -> (Eq Nat
     (succ (nat_rec_fast ({_} -> Nat) 0 ({k, ih} -> succ ih) n))) := {n} -> refl
 routes_agree : {n : Nat} -> (Eq Nat
     (nat_rec_fast ({_} -> Nat) 0 ({k, ih} -> succ ih) n)
-    (nat_rec ({_} -> Nat) 0 ({k, ih} -> succ ih) n)) := {n} -> refl
+    (nat_rec_gen ({_} -> Nat) 0 ({k, ih} -> succ ih) n)) := {n} -> refl
 
 // ── (d) setoid_of at a neutral type: the Eq base, walker-usably
 let stuck := (make_hyp (Pi Nat ({_} -> Type)) 0) zero

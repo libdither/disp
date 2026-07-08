@@ -425,6 +425,27 @@ ownership design (interface exports crossing module boundaries) riding the
 same Module shape work. Record spread joins whenever the synth work lands,
 independent of this arc.
 
+**License replay at the splice (landed 2026-07-07)** — the first bite of the
+module-guards face, host-side. An open field colliding with a GUARDED
+incumbent is consulted through the incumbent guard, with the incoming export
+as the request value (under `license_guard` that is the `{ new, proof }`
+payload) — the same in-language check a declaration runs, so a junk payload
+fails the load. A successful guarded rebind (declaration or splice) gets a
+DRIVER-STAMPED cert `(old, payload)` — written only by the driver on its own
+successful consult, never read from module-declared data — which travels with
+the export like its guard. The splice then reconciles licensed exports with
+the originals downstream: keep-existing when the incumbent was licensed over
+exactly the incoming tree, licensed-upgrade (replace) when the incoming
+export was licensed over exactly the incumbent. Unguarded different-tree
+collisions still error. This is what makes the trailing-overlay ceremony a
+module form: `arith.disp` = pure spec (`guard_eq nat_rec/add`) ending with
+`open use "arith.opt.disp"`, the overlay = one `{ new, proof }` export per
+optimized name (dependent bodies re-emitted, OPTIMIZER.typ's `(e', cert)` at
+the definition boundary), and every consumer's own opens resolve fast-vs-
+original via the stamps. The in-language Module-carries-requests form (and
+`Module` growing a guards field) remains the slice-3 destination; certs are
+host metadata exactly like `fieldGuards`. Pins: `lib/tests/guard_opt.test.disp`.
+
 Docs per slice: COMPILATION.typ grows a Modules section (module = telescope-
 typed function, instantiation, the barrel staging made explicit, given/sig
 polarity); SYNTAX.typ notes `given` and use-application; KERNEL_DESIGN.md the

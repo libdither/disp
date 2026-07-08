@@ -5,7 +5,7 @@
 
 import type { Tree } from "../eval/eager.js"
 import type { Expr } from "../parse.js"
-import { elab, B, pristineTest, type ScopeEntry, type CompileSinks } from "./state.js"
+import { elab, B, pristineTest, type ScopeEntry, type CompileSinks, type LicenseCert } from "./state.js"
 import { type Cir, cap, cirToTree, eliminateLams, containsFree, collectFreeVars } from "./cir.js"
 import { tryRewriteSelectLazy, tryNamedCall, binderToPi, peelTestMarker } from "./sugar.js"
 import { stringToTree, accTree, recordFieldsFromTree } from "./literals.js"
@@ -452,23 +452,24 @@ export function resolveExprRecord(
   e: Expr,
   lookupEntry: (name: string) => ScopeEntry | undefined,
   resolveUse: (path: string, raw?: boolean, fills?: Map<string, Tree>) => ScopeEntry,
-): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[] } | undefined {
-  // fieldGuards rides along so `open` can propagate a module export's installed
-  // guard (dropping it here silently un-guarded opened names).
+): { fields: string[]; fieldTrees?: Tree[]; fieldTypes?: (Tree | null)[]; fieldGuards?: (Tree | null)[]; fieldCerts?: (LicenseCert | null)[] } | undefined {
+  // fieldGuards/fieldCerts ride along so `open` can propagate a module export's
+  // installed guard and license stamps (dropping them here silently un-guarded
+  // opened names).
   if (e.tag === "var") {
     const entry = lookupEntry(e.name)
-    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards } : undefined
+    return entry?.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts } : undefined
   }
   if (e.tag === "use") {
     const entry = resolveUse(e.path, e.raw)
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards } : undefined
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts } : undefined
   }
   // A filled instantiation `use "f" { … }` resolves like a plain use — this is what
   // lets `open use "f" { … }` and module-metadata propagation see the instantiated
   // export list.
   if (e.tag === "app" && e.f.tag === "use" && e.x.tag === "recValue") {
     const entry = resolveUse(e.f.path, e.f.raw, compileFills(e.x, lookupEntry, resolveUse))
-    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards } : undefined
+    return entry.fields ? { fields: entry.fields, fieldTrees: entry.fieldTrees, fieldTypes: entry.fieldTypes, fieldGuards: entry.fieldGuards, fieldCerts: entry.fieldCerts } : undefined
   }
   return undefined
 }

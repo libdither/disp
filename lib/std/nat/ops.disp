@@ -3,14 +3,10 @@ open use "arith.disp"
 
 // Standard Nat helpers and proof terms. Functions that branch on a Nat use
 // nat_rec so Pi checking sees make_hyp instead of raw triage on hypotheses.
-
-// Ride the licensed fast recursor (the arith.disp ceremony): a file-local shadow, so
-// the bodies below stay written against the spec name while compiling fast trees.
-// (Open order matters: the kernel prelude binds nat_rec first, and arith's re-export
-// is tree-identical, so it dedupes without carrying the guard into this scope — with
-// arith opened first the name would arrive guarded and this plain shadow would be
-// refused, loudly, at load.)
-let nat_rec := nat_rec_fast
+// arith's nat_rec/add arrive ALREADY optimized (the trailing overlay in arith.disp;
+// the splice's licensed-collision rules reconcile them with the kernel originals the
+// prelude open bound first), so the bodies below bake the fast trees with no local
+// shadow ceremony.
 
 one : Nat := 1
 two : Nat := 2

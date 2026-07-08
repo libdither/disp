@@ -81,9 +81,20 @@ export interface ScopeEntry {
   fieldTrees?: Tree[]
   fieldTypes?: (Tree | null)[]  // per-field types for open
   fieldGuards?: (Tree | null)[] // per-field guards for open (owned names travel with their owner)
+  fieldCerts?: (LicenseCert | null)[] // per-field license stamps for open (travel like guards)
   params?: SigParam[]   // named-argument signature (leading binder params + defaults)
   guard?: Tree          // the name's guard (its rebind policy); undefined = default-governed
+  cert?: LicenseCert    // driver-stamped license: this binding replaced `old` via a
+                        // guard-approved `payload` request. Written ONLY by the driver on a
+                        // successful guard consult (never read from module-declared data), so
+                        // the open splice can reconcile a licensed export with the original
+                        // it replaced without re-trusting the exporting module.
 }
+
+// The driver's memo of a successful licensed rebind: `old` is the tree the guard
+// let the binding replace, `payload` the request value it approved ({ new, proof }
+// under license_guard). Both are session trees (rooted below).
+export type LicenseCert = { old: Tree; payload: Tree }
 
 // A binding's named-argument signature: the leading run of its value-lambda's
 // (and/or type's) parameters, in declared order, each with its optional default
@@ -120,6 +131,8 @@ export function collectSessionRoots(session: Session<Tree>): Tree[] {
     if (e.fieldTrees) for (const t of e.fieldTrees) if (t != null) roots.push(t)
     if (e.fieldTypes) for (const t of e.fieldTypes) if (t != null) roots.push(t)
     if (e.fieldGuards) for (const t of e.fieldGuards) if (t != null) roots.push(t)
+    if (e.cert) { roots.push(e.cert.old); roots.push(e.cert.payload) }
+    if (e.fieldCerts) for (const c of e.fieldCerts) if (c != null) { roots.push(c.old); roots.push(c.payload) }
   }
   return roots
 }
