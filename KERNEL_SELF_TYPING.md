@@ -42,11 +42,11 @@ Scratch suites, all green (negative results asserted as `≠ Ok TT`, so green = 
   `inj` values with ZERO kernel edits: a `pos_cell` op (defined in the test) lets `at` walk a
   raw pair; a fresh recursive `NatList` is recognized end-to-end via the generic
   nested-telescope recognizer; surface `match` (= the cut function `cut`) is the eliminator.
-- **`lib/tests/coh_gate_proto.test.disp`** — the gate-as-telescope (`coh = param_apply
+- **`lib/tests/coh_gate_proto.test.disp`** (deleted 2026-07-08 — the wall it probed is resolved and pinned in `coproduct_gate.test.disp`; recover via git) — the gate-as-telescope (`coh = param_apply
   (Telescope (case_tele motive)) cases`) **runs correctly at runtime, incl. a DEPENDENT motive**
   (`P n = Eq Nat n n`). But **self-typing FAILS** (`param_apply ProjectingRespondShape
   (resp unit_witness) = Ok FF`), same as hand-rolled `coh_nat`.
-- **`lib/tests/coh_why_proto.test.disp`** — the wall, isolated: applying a CONCRETE recognizer
+- **`lib/tests/coh_why_proto.test.disp`** (deleted 2026-07-08 — the §7A resolution is pinned in `behavioral_type.test.disp`; recover via git) — the wall, isolated: applying a CONCRETE recognizer
   to *any* hyp inside a respond body breaks self-typing, even when the result is DISCARDED
   (R4), even with an EMPTY telescope. The sanctioned `apply_policed` of a NEUTRAL self-types
   (R2). So the wall is **concrete-recognizer-on-hyp**, NOT the IH/`bind_hyp` (correcting
@@ -191,4 +191,4 @@ skipped `eval-naive-elaborate` test — a reproducibility limit of that reducer,
   `apply_policed`, `recognizer_wrap` H-rule, `gated_inductive_respond`), `types.disp`
   (`coh_nat`, `ProjectingRespondShape`, the per-former RespondShapes), `cut.disp` (`type_meta`,
   the §2.6 cut).
-- Scratch evidence (this session): `lib/tests/{positive_proto,coh_gate_proto,coh_why_proto}.test.disp`.
+- Scratch evidence (this session): `lib/tests/{positive_proto,coh_gate_proto,coh_why_proto}.test.disp` (all since deleted — the arcs landed with their own pins; recover via `git log --diff-filter=D -- lib/tests`).

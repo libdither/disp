@@ -4,7 +4,8 @@ Status: slice 1 LANDED (2026-07-06): the given layer (explicit fills,
 instantiation cache, well-typed linking) plus hermetic per-file scoping and
 the kernel fragment headers. The type-theory half was validated first by
 `lib/tests/functor_module_proto.test.disp` (commit 5449c59, 15 pins, zero
-kernel changes); slice 1 pins live in `lib/tests/given.test.disp` and
+kernel changes; the proto was deleted 2026-07-08 once the landed pins
+covered it); slice 1 pins live in `lib/tests/given.test.disp` and
 `test/modules.test.ts`. Slice 2 LANDED (2026-07-06): bare `use "f"` on a
 given-bearing module denotes the functor tuple (record = the readback
 lambda, typ = the Pi-into-Record over the given telescope), `verify` of the

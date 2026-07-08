@@ -227,8 +227,8 @@ Two levels: **Level 1 makes the kernel SOUND; Level 2 PROVES it.** Level 1 is th
   framings are SUPERSEDED — there is NO backend bug and NO sealing needed. **Path:** run the self-check at
   **definition-time, top-level** (cheap, where it works) — NOT inline in the universe recognizer (which
   forces every nested `T:Type` to pay the blowup) — OR make GoodRespond dramatically cheaper. Authoritative:
-  memory `project_telescope_meet_unification` FOLLOW-UP 4-6. *Doc: `STRICTTYPE.md §7`, `goodrespond.test`,
-  `r6_merge_proto.test`.*
+  memory `project_telescope_meet_unification` FOLLOW-UP 4-6. *Doc: `STRICTTYPE.md §7`, `goodrespond.test`;
+  the `r6_merge_proto.test` prototype was deleted 2026-07-08 (`behavioral_type.test.disp` is the landed pin).*
 
 **Strategy verdict:** prefer **Level 1 (derive)** for the kernel's own formers — correct by
 construction, sidesteps R5's trust question. `GoodRespond` (Level 2) **landed as the spec + boundary
@@ -328,6 +328,7 @@ the open frontier.
 - `KERNEL_SELF_TYPING.md` — the sealing program (K3, §1 ceiling).
 - `TYPE_NORMALIZATION.md` — canonical forms / `tree_lt` ordering.
 - Tests that pin the facts in §2: `soundness.test.disp`, `metashape.test.disp`,
-  `adversarial.test.disp`, `coh_gate_proto.test.disp`, `coh_why_proto.test.disp`, `kernel.test.disp`,
+  `adversarial.test.disp`, `kernel.test.disp`,
   `gap_severity.test.disp` (R0 — gap severity + the use-site-recheck defense),
-  `coproduct_gate.test.disp` (R2/R3 — the generic `derive_gate`, gap closed end-to-end).
+  `coproduct_gate.test.disp` (R2/R3 — the generic `derive_gate`, gap closed end-to-end;
+  also absorbs what the deleted `coh_gate_proto`/`coh_why_proto` protos pinned).
