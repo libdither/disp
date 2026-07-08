@@ -195,7 +195,7 @@ is done when:
 6. At least three alternative handlers run the same spec programs (cost,
    explanation, synthesis), pinned.
 7. The behavioral fixed-point pin: `verify` of the spec module returns
-   `Ok TT` under the live kernel.
+   `Ok true` under the live kernel.
 
 Explicitly out of scope: rewriting the live fused kernel (the fused forms stay
 the inner loop; a handler round per reduction step is not viable, the same
@@ -278,7 +278,7 @@ cut-style fold is fine. Open rows (a Row-typed hypothesis as improper tail)
 can be declared and constructed here but their deep story is not a blocker for
 later stages.
 
-Pins. A branchy continuation checks Ok TT at its row and the check demonstrably
+Pins. A branchy continuation checks Ok true at its row and the check demonstrably
 visits both arms (make one arm ill-typed, watch it flip); wrong row rejects;
 `Eff [State] Nat` hypothesis accepted by H-rule; weakening still free;
 `eff_check` and the deep recognizer agree on the straight-line programs from
@@ -412,7 +412,7 @@ Annotate every spec at its row. Add the parametric-fragment pin: one
 Reflect-free polymorphic function plus a cheap empirical free-theorem witness
 (naturality on a test instance), to make "rows without Reflect are where free
 theorems live" a demonstrated sentence. Then the centerpiece, one test file:
-`verify` of the spec module returns `Ok TT` under the live kernel. Name it the
+`verify` of the spec module returns `Ok true` under the live kernel. Name it the
 behavioral fixed-point pin, and write the honest header: this is a capability
 certificate plus differential agreement, issued by the artifact being
 described; it is the `Type : Type` epistemic shape, on purpose; it is not a
@@ -433,7 +433,7 @@ Same spec programs, four interpreters, each about a page:
   candidates (multishot resume, the nondet pattern; small-type enumeration
   table: Bool, small Nat, pairs). `tele_spec`-recognize under it becomes a
   generator. Pin: synthesizing at `Pair Bool Bool` yields four values, each
-  re-checking Ok TT under the floor handler. This is GOALS.md's
+  re-checking Ok true under the floor handler. This is GOALS.md's
   propose-and-check loop as one handler clause, and the strongest single piece
   of evidence the factoring is right.
 
