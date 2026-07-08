@@ -1,0 +1,162 @@
+/* ============================================================
+   disp.dev design system — dark, luminous, gradient-forward
+   ============================================================ */
+
+:root {
+  /* surfaces */
+  --bg: #0a0d14;
+  --bg-elev: #10141f;
+  --bg-panel: rgba(255, 255, 255, 0.028);
+  --bg-panel-hover: rgba(255, 255, 255, 0.055);
+  --bg-code: #0d1119;
+  --border: rgba(148, 163, 184, 0.16);
+  --border-strong: rgba(148, 163, 184, 0.3);
+
+  /* ink */
+  --fg: #e9edf6;
+  --fg-muted: #97a3ba;
+  --fg-faint: #5d6a82;
+
+  /* the brand gradient: emerald → cyan → indigo → violet.
+     a grove of trees under aurora light. */
+  --g1: #4ade80;
+  --g2: #22d3ee;
+  --g3: #818cf8;
+  --g4: #c084fc;
+  --grad-brand: linear-gradient(118deg, var(--g1) 0%, var(--g2) 36%, var(--g3) 68%, var(--g4) 100%);
+  --grad-brand-soft: linear-gradient(118deg,
+      color-mix(in oklab, var(--g1) 24%, transparent) 0%,
+      color-mix(in oklab, var(--g2) 24%, transparent) 36%,
+      color-mix(in oklab, var(--g3) 24%, transparent) 68%,
+      color-mix(in oklab, var(--g4) 24%, transparent) 100%);
+
+  --accent: #22d3ee;
+  --accent-2: #818cf8;
+  --ok: #4ade80;
+  --err: #fb7185;
+  --warn: #fbbf24;
+
+  /* type */
+  --font-display: 'Fraunces Variable', 'Fraunces', Georgia, serif;
+  --font-body: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  --maxw: 1160px;
+  --nav-h: 62px;
+  --radius: 12px;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16.5px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: color-mix(in oklab, var(--g3) 40%, transparent); }
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-variation-settings: 'SOFT' 40, 'WONK' 0;
+  font-weight: 560;
+  letter-spacing: -0.015em;
+  line-height: 1.16;
+  color: var(--fg);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+code, pre, kbd { font-family: var(--font-mono); }
+code { font-size: 0.88em; }
+
+:not(pre) > code {
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  padding: 0.08em 0.38em;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem;
+  overflow-x: auto;
+  line-height: 1.55;
+  font-size: 0.86rem;
+}
+
+/* ---- shared utilities ---- */
+
+.container {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 2.4rem);
+}
+
+.grad-text {
+  background: var(--grad-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.62em 1.35em;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 550;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
+  text-decoration: none !important;
+}
+.btn:hover { background: var(--bg-panel-hover); border-color: var(--fg-faint); transform: translateY(-1px); }
+
+.btn.primary {
+  border: none;
+  background: var(--grad-brand);
+  color: #071018;
+  font-weight: 650;
+  box-shadow: 0 0 0 0 transparent;
+}
+.btn.primary:hover {
+  box-shadow: 0 6px 30px -6px color-mix(in oklab, var(--g2) 55%, transparent);
+  transform: translateY(-1px);
+}
+
+.card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.4rem 1.5rem;
+}
+
+/* thin gradient keyline used as a section divider */
+.keyline {
+  height: 1px;
+  border: none;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--g2) 45%, transparent), color-mix(in oklab, var(--g3) 45%, transparent), transparent);
+}
+
+/* reduced motion: kill decorative animation */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
