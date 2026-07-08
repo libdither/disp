@@ -1,0 +1,85 @@
+// effect_syntax_proto — the syntax investigation (2026-07-08): can the
+// effect vocabulary collapse into forms the language already has?
+//
+// Q1: effects ARE record types. `{ get : Unit -> Nat, put : Nat -> Unit }`
+//     is an ordinary record-type literal; a generic `op` derives occurrence
+//     builders from its FIELDS (name, Arrow dom cod read off the proj
+//     cells), and the TYPE VALUE ITSELF is the row label (hash-consed
+//     identity, so a typo is an unbound identifier, not a silent string
+//     mismatch). No `effect` keyword, no strings as identity.
+//
+// Q2: handler dispatch IS a match. One retag (`inj (op_name o) (pair arg
+//     resume)`) turns the received op into an inj-tagged request, and the
+//     existing match dispatches per-op with destructuring arms.
+//
+// Q3: let-as-bind. `smart_bind` sequences computation nodes and plain-binds
+//     everything else (the literal "reduce it if we aren't doing an op").
+//     The win AND the hole are pinned: value-directed dispatch cannot NAME a
+//     program as data (it sequences it instead), and any value that merely
+//     WEARS the Pure/Op shape gets sequenced too (the collision hole).
+// Baseline (rust-eager-native, 2026-07-08): ~25s wall, 14 pins.
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+open use "../std/effect.disp"
+
+// ── Q1: the effect is a record type ──
+let StateE := { get : Unit -> Nat, put : Nat -> Unit }
+// read a field's type off the record type's proj cells:
+let eff_field_ty := fix ({self, cells, name} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (tree_eq (m.name) name) then (m.ty) else (self ((pair_snd cells) t) name)
+  } else t)
+// an Arrow's dom/cod, read off its Pi cells (constant codomain):
+let arrow_dom := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
+let arrow_cod := {T} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) t))).ty
+// the generic occurrence builder: mk_op derived from the type's own fields,
+// with the TYPE as the effect identity:
+let op := {E, name} -> {arg} -> {
+  let fty := eff_field_ty ((type_meta E).recognizer_params) name
+  io_op { label := pair E name; param := arrow_dom fty; result := arrow_cod fty } arg ({r} -> io_pure r)
+}
+test arrow_dom (eff_field_ty ((type_meta StateE).recognizer_params) "put") = Nat
+test arrow_cod (eff_field_ty ((type_meta StateE).recognizer_params) "get") = Nat
+let getE := (op StateE "get") unit_val
+let putE := op StateE "put"
+let progE := eff_bind getE ({n} -> eff_bind (putE (succ n)) ({u} -> io_pure (add n n)))
+// the deep recognizer is unchanged: rows of TYPE identities, checked deep:
+test param_apply (Eff (row1 StateE) Nat) progE = Ok true
+test param_apply (Eff (row1 Nat) Nat) progE = Ok false
+test param_apply (Eff (row1 StateE) Nat) (eff_bind getE ({n} -> io_pure false)) = Ok false
+
+// ── Q2: the handler's dispatch is a MATCH over the retagged request ──
+let state_on := {o} -> {arg, resume} -> (
+  match (inj (op_name o) (pair arg resume)) {
+    get a k => ({s} -> (k s) s)
+    put a k => ({s_old} -> (k t) a)
+  })
+let state_hE := {
+  covers := {o} -> tree_eq (effect_of o) StateE
+  return := {x} -> {s} -> io_pure (pair x s)
+  on := state_on
+  forward := {o, arg, resumek} -> {s} -> io_op o arg ({r} -> (resumek r) s)
+}
+test pair_fst (run_pure ((handle state_hE progE) 3)) = 6
+test pair_snd (run_pure ((handle state_hE progE) 3)) = 4
+
+// ── Q3: let-as-bind — the win and the hole ──
+let smart_bind := fix ({self, e, f} -> match e {
+  Pure x => (f x)
+  Op o arg k => (io_op o arg ({r} -> self (k r) f))
+  _ => (f e)
+})
+// the win: ONE binder covers plain values, finished computations, and ops:
+test smart_bind 5 ({x} -> succ x) = 6
+test tree_eq (smart_bind (io_pure 7) ({x} -> io_pure (succ x))) (io_pure 8) = true
+test pair_fst (run_pure ((handle state_hE (smart_bind getE ({n} -> io_pure (add n n)))) 3)) = 6
+// THE HOLE, pinned as documentation. (1) naming a program as DATA is
+// impossible under value-directed bind — p receives get's ANSWER (the state,
+// 3), proving the binder sequenced the program instead of naming it:
+test pair_fst (run_pure ((handle state_hE (smart_bind getE ({p} -> io_pure p))) 3)) = 3
+test tree_eq (smart_bind getE ({p} -> io_pure p)) (io_pure getE) = false
+// (2) the collision hole: any value merely WEARING the Pure shape is
+// unwrapped — shape-sniffing semantics cannot be abstract:
+let fake := inj1 "Pure" 9
+test smart_bind fake ({x} -> succ x) = 10
