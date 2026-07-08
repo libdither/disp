@@ -454,7 +454,7 @@ rhs = {t.rhs}</pre>
     width: 68px;
     height: 6px;
     border-radius: 3px;
-    background: rgba(148, 163, 184, 0.15);
+    background: rgba(74, 104, 82, 0.14);
     overflow: hidden;
   }
   .mem-fill { height: 100%; background: var(--grad-brand); transition: width 0.3s ease; }
@@ -495,7 +495,7 @@ rhs = {t.rhs}</pre>
   .empty-title { font-size: 1.25rem; font-family: var(--font-display); color: var(--fg); margin: 0 0 0.5rem; }
   .hint-row { margin-bottom: 0; }
   kbd {
-    background: rgba(148, 163, 184, 0.14);
+    background: rgba(74, 104, 82, 0.12);
     border: 1px solid var(--border);
     border-radius: 5px;
     padding: 0.05em 0.4em;
@@ -519,7 +519,7 @@ rhs = {t.rhs}</pre>
   .prog-bar {
     height: 7px;
     border-radius: 4px;
-    background: rgba(148, 163, 184, 0.15);
+    background: rgba(74, 104, 82, 0.14);
     overflow: hidden;
     margin-bottom: 0.35rem;
   }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { toc } from '$lib/learn/toc'
+  import RuleRail from '$lib/components/RuleRail.svelte'
   import Ch1Motivation from '$lib/learn/chapters/Ch1Motivation.svelte'
   import Ch2Trees from '$lib/learn/chapters/Ch2Trees.svelte'
   import Ch3Source from '$lib/learn/chapters/Ch3Source.svelte'
@@ -43,7 +44,16 @@
   />
 </svelte:head>
 
-<div class="progressbar" style="width:{progress}%" aria-hidden="true"></div>
+<!-- the leaf turns as you read: spring green → summer → gold → russet -->
+<div class="progressbar" style="width:{progress}%" aria-hidden="true">
+  <svg class="tipleaf" viewBox="0 0 16 16" style="transform: rotate({progress * 2.2 - 20}deg)">
+    <path
+      d="M8,1 C12.5,4 12.5,10 8,15 C3.5,10 3.5,4 8,1 Z"
+      fill={progress < 40 ? '#58b368' : progress < 65 ? '#2f9e6e' : progress < 85 ? '#e2b04a' : '#d97b4f'}
+    />
+    <path d="M8,4 L8,12" stroke="rgba(255,255,255,0.6)" stroke-width="1" />
+  </svg>
+</div>
 
 <div class="learn container">
   <button class="nav-toggle" onclick={() => (navOpen = !navOpen)} aria-expanded={navOpen}>
@@ -81,6 +91,7 @@
       <div class="side-foot">
         <span class="pct">{progress.toFixed(0)}%</span> read
       </div>
+      <RuleRail inline />
     </div>
   </nav>
 
@@ -116,10 +127,19 @@
     position: fixed;
     top: 0;
     left: 0;
-    height: 2.5px;
-    background: var(--grad-brand);
+    height: 3px;
+    background: var(--grad-seasons);
+    background-size: 100vw 100%;
     z-index: 200;
     transition: width 0.1s linear;
+  }
+  .tipleaf {
+    position: absolute;
+    right: -7px;
+    top: 0.5px;
+    width: 15px;
+    height: 15px;
+    transition: transform 0.2s ease;
   }
 
   .learn {
@@ -284,7 +304,7 @@
       font: inherit;
       font-size: 0.85rem;
       cursor: pointer;
-      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+      box-shadow: var(--shadow-lift);
     }
     .sidebar {
       display: none;
@@ -296,7 +316,7 @@
       border-radius: 14px;
       padding: 1rem;
       z-index: 140;
-      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+      box-shadow: var(--shadow-lift);
     }
     .sidebar.open { display: block; }
   }

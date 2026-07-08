@@ -1,6 +1,7 @@
 <script lang="ts">
   import { base } from '$app/paths'
-  import TreeAnimation from '$lib/components/TreeAnimation.svelte'
+  import NatureTree from '$lib/components/NatureTree.svelte'
+  import RuleRail from '$lib/components/RuleRail.svelte'
   import { highlightDisp } from '$lib/editor/highlight'
   import { examples } from '$lib/disp/examples'
   import { snippetById } from '$lib/disp/landing-snippets'
@@ -46,10 +47,12 @@
       </div>
     </div>
     <div class="hero-viz">
-      <TreeAnimation />
+      <NatureTree />
     </div>
   </div>
 </section>
+
+<RuleRail />
 
 <!-- ============================== stats ============================== -->
 <section class="stats">
@@ -187,14 +190,15 @@
     overflow: hidden;
     padding: clamp(3rem, 9vh, 6.5rem) 0 2.5rem;
   }
+  /* dappled midmorning light through a canopy */
   .aurora {
     position: absolute;
     inset: -20% -10%;
     background:
-      radial-gradient(38% 45% at 18% 22%, color-mix(in oklab, var(--g1) 13%, transparent), transparent 70%),
-      radial-gradient(42% 50% at 78% 18%, color-mix(in oklab, var(--g3) 14%, transparent), transparent 70%),
-      radial-gradient(50% 55% at 60% 85%, color-mix(in oklab, var(--g4) 10%, transparent), transparent 70%),
-      radial-gradient(35% 40% at 38% 60%, color-mix(in oklab, var(--g2) 9%, transparent), transparent 70%);
+      radial-gradient(38% 45% at 18% 22%, color-mix(in oklab, var(--g1) 20%, transparent), transparent 70%),
+      radial-gradient(42% 50% at 78% 18%, color-mix(in oklab, var(--g4) 16%, transparent), transparent 70%),
+      radial-gradient(50% 55% at 60% 85%, color-mix(in oklab, var(--blossom) 14%, transparent), transparent 70%),
+      radial-gradient(35% 40% at 38% 60%, color-mix(in oklab, var(--g3) 12%, transparent), transparent 70%);
     animation: drift 26s ease-in-out infinite alternate;
     pointer-events: none;
   }
@@ -255,7 +259,6 @@
       radial-gradient(120% 130% at 50% 0%, color-mix(in oklab, var(--g3) 7%, transparent), transparent 60%),
       var(--bg-panel);
     padding: 1rem 0.6rem 0.4rem;
-    backdrop-filter: blur(4px);
   }
 
   /* ---------- stats ---------- */

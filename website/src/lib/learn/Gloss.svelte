@@ -27,9 +27,10 @@
     transform: translateX(-50%);
     width: max-content;
     max-width: 24em;
-    background: #1a2030;
+    background: #fdfef9;
     color: var(--fg);
     border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--g2);
     border-radius: 8px;
     padding: 0.5em 0.8em;
     font-size: 0.78rem;
@@ -39,7 +40,7 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s ease;
-    box-shadow: 0 8px 30px -8px rgba(0, 0, 0, 0.6);
+    box-shadow: var(--shadow-lift);
   }
   .gloss:hover .tipbox,
   .gloss:focus .tipbox {

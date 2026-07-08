@@ -1,16 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4ade80"/>
-      <stop offset="0.5" stop-color="#22d3ee"/>
-      <stop offset="1" stop-color="#c084fc"/>
+      <stop offset="0" stop-color="#58b368"/>
+      <stop offset="0.55" stop-color="#2f9e6e"/>
+      <stop offset="1" stop-color="#2e8f83"/>
     </linearGradient>
   </defs>
-  <rect width="32" height="32" rx="7" fill="#0a0d14"/>
-  <g stroke="url(#g)" stroke-width="2.4" stroke-linecap="round" fill="none">
-    <path d="M16 8 L9 23 M16 8 L23 23"/>
+  <rect width="32" height="32" rx="7" fill="#f5f8f0"/>
+  <g stroke="#8f9d7e" stroke-width="2.2" stroke-linecap="round" fill="none">
+    <path d="M16 24 L16 15 M16 17 C16 13 11 12 9 9 M16 19 C16 15 21 14 23 11"/>
   </g>
-  <circle cx="16" cy="8" r="3" fill="url(#g)"/>
-  <circle cx="9" cy="23" r="3" fill="url(#g)"/>
-  <circle cx="23" cy="23" r="3" fill="url(#g)"/>
+  <circle cx="9" cy="9" r="3.2" fill="url(#g)"/>
+  <circle cx="23" cy="11" r="3.2" fill="url(#g)"/>
+  <circle cx="16" cy="13" r="2.6" fill="url(#g)"/>
+  <ellipse cx="16" cy="25.5" rx="7" ry="1.6" fill="#8f9d7e" opacity="0.35"/>
 </svg>

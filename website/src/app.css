@@ -1,40 +1,45 @@
 /* ============================================================
-   disp.dev design system — dark, luminous, gradient-forward
+   disp design system — "a grove at midmorning"
+   light, soft pastel, nature-forward: sage paper, leaf greens,
+   blossom pink and honey gold accents, deep forest ink.
    ============================================================ */
 
 :root {
-  /* surfaces */
-  --bg: #0a0d14;
-  --bg-elev: #10141f;
-  --bg-panel: rgba(255, 255, 255, 0.028);
-  --bg-panel-hover: rgba(255, 255, 255, 0.055);
-  --bg-code: #0d1119;
-  --border: rgba(148, 163, 184, 0.16);
-  --border-strong: rgba(148, 163, 184, 0.3);
+  /* surfaces — warm sage-tinted paper */
+  --bg: #f5f8f0;
+  --bg-elev: #fbfcf8;
+  --bg-panel: rgba(47, 94, 63, 0.045);
+  --bg-panel-hover: rgba(47, 94, 63, 0.09);
+  --bg-code: #eef4e7;
+  --border: rgba(74, 104, 82, 0.18);
+  --border-strong: rgba(74, 104, 82, 0.34);
 
-  /* ink */
-  --fg: #e9edf6;
-  --fg-muted: #97a3ba;
-  --fg-faint: #5d6a82;
+  /* ink — deep forest, never pure black */
+  --fg: #253829;
+  --fg-muted: #55695b;
+  --fg-faint: #7f927f;
 
-  /* the brand gradient: emerald → cyan → indigo → violet.
-     a grove of trees under aurora light. */
-  --g1: #4ade80;
-  --g2: #22d3ee;
-  --g3: #818cf8;
-  --g4: #c084fc;
-  --grad-brand: linear-gradient(118deg, var(--g1) 0%, var(--g2) 36%, var(--g3) 68%, var(--g4) 100%);
+  /* the canopy gradient: spring leaf → deep leaf → teal moss → sunlight */
+  --g1: #58b368;
+  --g2: #2f9e6e;
+  --g3: #2e8f83;
+  --g4: #e2b04a;
+  --grad-brand: linear-gradient(118deg, var(--g1) 0%, var(--g2) 38%, var(--g3) 70%, var(--g4) 100%);
   --grad-brand-soft: linear-gradient(118deg,
-      color-mix(in oklab, var(--g1) 24%, transparent) 0%,
-      color-mix(in oklab, var(--g2) 24%, transparent) 36%,
-      color-mix(in oklab, var(--g3) 24%, transparent) 68%,
-      color-mix(in oklab, var(--g4) 24%, transparent) 100%);
+      color-mix(in oklab, var(--g1) 22%, transparent) 0%,
+      color-mix(in oklab, var(--g2) 22%, transparent) 38%,
+      color-mix(in oklab, var(--g3) 22%, transparent) 70%,
+      color-mix(in oklab, var(--g4) 22%, transparent) 100%);
+  /* the seasons gradient: a leaf aging as you read */
+  --grad-seasons: linear-gradient(90deg, #58b368 0%, #2f9e6e 34%, #b5a83a 62%, #e2b04a 80%, #d97b4f 100%);
 
-  --accent: #22d3ee;
-  --accent-2: #818cf8;
-  --ok: #4ade80;
-  --err: #fb7185;
-  --warn: #fbbf24;
+  --accent: #2f9e6e;
+  --accent-2: #2e8f83;
+  --ok: #3a9d63;
+  --err: #c95f6d;
+  --warn: #d99a2b;
+  --bark: #8f9d7e;
+  --blossom: #e8a7b6;
 
   /* type */
   --font-display: 'Fraunces Variable', 'Fraunces', Georgia, serif;
@@ -45,7 +50,10 @@
   --nav-h: 62px;
   --radius: 12px;
 
-  color-scheme: dark;
+  --shadow-soft: 0 2px 14px -4px rgba(47, 74, 55, 0.12);
+  --shadow-lift: 0 10px 30px -10px rgba(47, 74, 55, 0.22);
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -62,7 +70,7 @@ html, body {
   text-rendering: optimizeLegibility;
 }
 
-::selection { background: color-mix(in oklab, var(--g3) 40%, transparent); }
+::selection { background: color-mix(in oklab, var(--g1) 30%, transparent); }
 
 h1, h2, h3 {
   font-family: var(--font-display);
@@ -80,8 +88,8 @@ code, pre, kbd { font-family: var(--font-mono); }
 code { font-size: 0.88em; }
 
 :not(pre) > code {
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.1);
+  background: rgba(74, 104, 82, 0.1);
+  border: 1px solid rgba(74, 104, 82, 0.12);
   padding: 0.08em 0.38em;
   border-radius: 6px;
   white-space: nowrap;
@@ -119,7 +127,7 @@ pre {
   padding: 0.62em 1.35em;
   border-radius: 10px;
   border: 1px solid var(--border-strong);
-  background: var(--bg-panel);
+  background: var(--bg-elev);
   color: var(--fg);
   font-family: var(--font-body);
   font-size: 0.95rem;
@@ -127,46 +135,49 @@ pre {
   cursor: pointer;
   transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.2s ease;
   text-decoration: none !important;
+  box-shadow: var(--shadow-soft);
 }
-.btn:hover { background: var(--bg-panel-hover); border-color: var(--fg-faint); transform: translateY(-1px); }
+.btn:hover { background: #ffffff; border-color: var(--accent); transform: translateY(-1px); }
 
 .btn.primary {
   border: none;
-  background: var(--grad-brand);
-  color: #071018;
+  background: linear-gradient(118deg, #4caf6d, #2f9e6e 60%, #2e8f83);
+  color: #f7fcf5;
   font-weight: 650;
-  box-shadow: 0 0 0 0 transparent;
 }
 .btn.primary:hover {
-  box-shadow: 0 6px 30px -6px color-mix(in oklab, var(--g2) 55%, transparent);
+  box-shadow: 0 8px 26px -8px color-mix(in oklab, var(--g2) 65%, transparent);
   transform: translateY(-1px);
 }
 
 .card {
-  background: var(--bg-panel);
+  background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.4rem 1.5rem;
+  box-shadow: var(--shadow-soft);
 }
 
 /* thin gradient keyline used as a section divider */
 .keyline {
   height: 1px;
   border: none;
-  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--g2) 45%, transparent), color-mix(in oklab, var(--g3) 45%, transparent), transparent);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--g1) 45%, transparent), color-mix(in oklab, var(--g3) 45%, transparent), transparent);
 }
 
-/* ---- static disp syntax highlighting (highlight.ts output) ---- */
-.hl-comment { color: #5d6a82; font-style: italic; }
-.hl-string { color: #4ade80; }
-.hl-number { color: #22d3ee; }
-.hl-kw { color: #c084fc; }
-.hl-op { color: #94a3b8; }
-.hl-punct { color: #7c8aa5; }
-.hl-atom { color: #f0abfc; }
-.hl-type { color: #5eead4; }
-.hl-fn { color: #fbbf24; }
-.hl-var { color: #e9edf6; }
+/* ---- static disp syntax highlighting (highlight.ts output) ----
+   pastel botanicals: sage comments, leaf strings, teal numbers,
+   wisteria keywords, honey call-sites, blossom atoms */
+.hl-comment { color: #7c8b74; font-style: italic; }
+.hl-string { color: #2b8a52; }
+.hl-number { color: #1d7f8a; }
+.hl-kw { color: #7c5cbf; }
+.hl-op { color: #66766b; }
+.hl-punct { color: #85937f; }
+.hl-atom { color: #bf5a92; }
+.hl-type { color: #0f766e; }
+.hl-fn { color: #a8770f; }
+.hl-var { color: #2e4034; }
 
 /* reduced motion: kill decorative animation */
 @media (prefers-reduced-motion: reduce) {

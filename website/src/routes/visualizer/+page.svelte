@@ -1,5 +1,5 @@
 <script lang="ts">
-  import TreeAnimation from '$lib/components/TreeAnimation.svelte'
+  import NatureTree from '$lib/components/NatureTree.svelte'
 </script>
 
 <svelte:head>
@@ -14,7 +14,7 @@
     the five rules on loop.
   </p>
   <div class="teaser">
-    <TreeAnimation height={420} stepMs={1100} />
+    <NatureTree height={420} stepMs={1100} />
   </div>
 </div>
 

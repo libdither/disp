@@ -327,7 +327,7 @@
     font-family: var(--font-mono);
   }
   .node.hot .ring { animation: labpulse 0.9s ease-in-out infinite; }
-  .node.hot circle { filter: drop-shadow(0 0 6px color-mix(in oklab, var(--g2) 75%, transparent)); }
+  .node.hot circle { stroke: var(--g2); stroke-width: 2; }
   @keyframes labpulse { 50% { opacity: 0.35; } }
   .badge {
     fill: var(--g1);

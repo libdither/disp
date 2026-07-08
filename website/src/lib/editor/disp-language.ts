@@ -114,52 +114,52 @@ export const dispStream = StreamLanguage.define<S>({
   }
 })
 
-// palette wired to the site design tokens
+// pastel botanical palette (kept in step with app.css's .hl-* classes)
 export const dispHighlight = HighlightStyle.define([
-  { tag: t.comment, color: '#5d6a82', fontStyle: 'italic' },
-  { tag: t.string, color: '#4ade80' },
-  { tag: t.number, color: '#22d3ee' },
-  { tag: t.keyword, color: '#c084fc' },
-  { tag: t.operator, color: '#94a3b8' },
-  { tag: t.punctuation, color: '#7c8aa5' },
-  { tag: t.atom, color: '#f0abfc' },
-  { tag: t.typeName, color: '#5eead4' },
-  { tag: [t.function(t.variableName)], color: '#fbbf24' },
-  { tag: t.variableName, color: '#e9edf6' }
+  { tag: t.comment, color: '#7c8b74', fontStyle: 'italic' },
+  { tag: t.string, color: '#2b8a52' },
+  { tag: t.number, color: '#1d7f8a' },
+  { tag: t.keyword, color: '#7c5cbf' },
+  { tag: t.operator, color: '#66766b' },
+  { tag: t.punctuation, color: '#85937f' },
+  { tag: t.atom, color: '#bf5a92' },
+  { tag: t.typeName, color: '#0f766e' },
+  { tag: [t.function(t.variableName)], color: '#a8770f' },
+  { tag: t.variableName, color: '#2e4034' }
 ])
 
 export const dispEditorTheme = EditorView.theme(
   {
     '&': {
       backgroundColor: 'transparent',
-      color: '#e9edf6',
+      color: '#2e4034',
       fontSize: '13.5px',
       height: '100%'
     },
     '.cm-content': {
       fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
       padding: '12px 0',
-      caretColor: '#22d3ee'
+      caretColor: '#2f9e6e'
     },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#22d3ee' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#2f9e6e' },
     '&.cm-focused': { outline: 'none' },
     '.cm-gutters': {
       backgroundColor: 'transparent',
-      color: '#5d6a82',
+      color: '#8ea08b',
       border: 'none',
       fontFamily: "'JetBrains Mono Variable', monospace",
       fontSize: '12px'
     },
-    '.cm-activeLineGutter': { backgroundColor: 'rgba(148,163,184,0.08)' },
-    '.cm-activeLine': { backgroundColor: 'rgba(148,163,184,0.05)' },
+    '.cm-activeLineGutter': { backgroundColor: 'rgba(74,104,82,0.08)' },
+    '.cm-activeLine': { backgroundColor: 'rgba(74,104,82,0.05)' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
-      backgroundColor: 'rgba(129,140,248,0.25) !important'
+      backgroundColor: 'rgba(88,179,104,0.22) !important'
     },
-    '.cm-line.disp-line-pass': { backgroundColor: 'rgba(74,222,128,0.07)' },
-    '.cm-line.disp-line-fail': { backgroundColor: 'rgba(251,113,133,0.12)' },
-    '.cm-line.disp-line-error': { backgroundColor: 'rgba(251,191,36,0.12)' }
+    '.cm-line.disp-line-pass': { backgroundColor: 'rgba(58,157,99,0.1)' },
+    '.cm-line.disp-line-fail': { backgroundColor: 'rgba(201,95,109,0.13)' },
+    '.cm-line.disp-line-error': { backgroundColor: 'rgba(217,154,43,0.15)' }
   },
-  { dark: true }
+  { dark: false }
 )
 
 export const dispLanguageExtensions = [dispStream, syntaxHighlighting(dispHighlight), dispEditorTheme]
