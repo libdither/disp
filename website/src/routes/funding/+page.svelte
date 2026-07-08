@@ -217,17 +217,11 @@
       <circle cx={BX + TW * 0.86} cy={TY + TH + 8} r="2" class="daisy alt" />
     </svg>
     <p class="runway-note">
-      Numbers update by hand when something changes, honestly. The last post is
-      the U.S. median individual income, at which point disp becomes a real job
-      and my mom will finally be proud of me.
+      Numbers update by hand when something changes (I will setup github actions
+      for this). The last post is the U.S. median individual income, at which
+      point disp becomes a real job!
     </p>
   </section>
-
-  <p class="note">
-    Everything produced stays under the <a href="{REPO}/blob/main/LICENSE"
-      >Unlicense</a
-    >. funding buys the world more public-domain research, not access to it.
-  </p>
 </div>
 
 <style>
