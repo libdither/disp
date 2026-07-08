@@ -14,7 +14,10 @@ open use "../std/nat/ops.disp"
 open use "../std/effect.disp"
 
 // ── the State effect over Nat, by hand (what `effect State { … }` expands to) ──
-let st_get := (mk_op "State" "get" Unit Nat) t
+// (get's argument is unit_val, Unit's real inhabitant — the deep recognizer
+// checks args, and the original leaf spelling is pinned as a rejection in
+// eff_deep_proto's shallow-vs-deep contrast.)
+let st_get := (mk_op "State" "get" Unit Nat) unit_val
 let st_put := mk_op "State" "put" Nat Unit
 // Parameter-passing handler: clauses answer in the carrier S -> Eff …, so its
 // forward clause threads s through forwarded ops (the mk_handler default

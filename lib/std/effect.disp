@@ -18,14 +18,13 @@
 //     bottom of this file; closed-row conversion = O(1) tree_eq). Still
 //     deferred: OPEN rows as a Row-typed hyp improper tail (row polymorphism
 //     = ordinary Pi Row; one trailing row variable is the exact case).
-//   - `Eff R X : Type` as a self-referential wait-form: the §15 recognizer
-//     (Pure payload : X; each Op's label ∈ R; k : op.result -> Eff R X via
-//     param_apply, so branching continuations walk under real minted hyps).
-//     The clean route is the Coproduct/Rec machinery — the k arm is recursion
-//     UNDER a Pi, i.e. RecUnder with a reader functor — or a make_recognizer +
-//     fix knot. The proto lifts eff_check with Refinement instead (effect
-//     safety as an ordinary recognizer TODAY; weakening is containment either
-//     way, so no subtyping judgment ever appears).
+//   - `Eff R X : Type` as a self-referential wait-form: LANDED 2026-07-07
+//     (the deep recognizer at the bottom of this file, the make_rec_recognizer
+//     knot route; Pure payload : X, each Op's label ∈ R, k : op.result ->
+//     Eff R X as a real Pi check, so continuations walk under real minted
+//     answers). The optional cleanup route (Eff as a stock Coproduct with a
+//     RecUnder reader functor) remains open. Weakening is containment either
+//     way, so no subtyping judgment ever appears.
 //   - the impure driver (src/run.ts): `run : Eff {IO} X -> X` = run_pure's
 //     loop + a perform_host op map + the §8.1 is_closed sanitizer; async =
 //     the driver defers apply(k, result) until the bytes arrive.
@@ -113,9 +112,11 @@ eff_check := fix ({self, R, v} ->
     Op op arg k => (if (label_in_row (effect_of op) R) then (self R (k t)) else false)
     _ => false
   })
-// Effect safety as an ordinary TYPE, today: refine Tree by the row check.
-// (The self-referential `Eff R X` recognizer supersedes this in production —
-// same verdicts on concrete values, plus the H-rule for Eff-typed hyps.)
+// Effect safety as an ordinary TYPE — the SHALLOW COMPATIBILITY FORM.
+// eff_check probes continuations with a leaf, so only a program's first
+// operations are row-checked and the Pure payload is not checked against X.
+// The deep `Eff R X` recognizer below supersedes it; new pins use the deep
+// type (EFFECT_BOOTSTRAP_PLAN stage 0 exit).
 EffAt := {R} -> Refinement Tree ({v} -> eff_check R v)
 
 // ── canonical rows (EFFECT_BOOTSTRAP_PLAN stage 0, landed 2026-07-07) ──
@@ -143,3 +144,31 @@ row_insert := fix ({self, e, R} ->
   } else (cons e nil))
 mk_row := fix ({self, ls} -> if (is_fork ls) then (row_insert (pair_fst ls) (self (pair_snd ls))) else nil)
 row_union := {R1, R2} -> mk_row (list_cat R1 R2)
+
+// ── the deep `Eff R X` recognizer (EFFECT_BOOTSTRAP_PLAN stage 0, landed 2026-07-07) ──
+// The §15 production type, as a self-referential wait-form (the
+// make_rec_recognizer knot, the same shape as Nat). Per node:
+//   Pure x       x : X                      (closes the shallow form's gap)
+//   Op op arg k  op's label ∈ R,  arg : op.param,  k : op.result -> Eff R X
+// The k check is a REAL Pi check: mint an answer of op.result, walk every use
+// of it through the walker, land the result back at `self` (the fully-applied
+// type recognizer_wrap reconstructs, hash-cons-identical to `Eff R X`, so the
+// recursion is one H-rule hit per sub-computation). Depth therefore reaches
+// exactly as far as the continuation consumes its answer through typed means:
+// constructors, annotated (elim-routed) functions, and eliminations through a
+// gated respond (the hazard-0a idiom); raw tag tests stay one-path and raw
+// triage fails closed — pinned in lib/tests/eff_deep_proto.test.disp.
+// The respond stays inert for v1 (an Eff-typed hyp travels by H-rule; it is
+// not eliminable). Handlers stay interpreter-shaped library code.
+let eff_body := {self, m, v} -> {
+  let rp := m.recognizer_params
+  match v {
+    Pure x => param_apply (rp.result) x
+    Op op arg k => (if (label_in_row (effect_of op) (rp.row))
+      then (bind (param_apply (op.param) arg) ({ok} ->
+        if ok then (param_apply (Arrow (op.result) self) k) else (Ok false)))
+      else (Ok false))
+    _ => Ok false
+  }
+}
+Eff : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (make_meta { row := R; result := X } inert_respond)

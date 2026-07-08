@@ -1,5 +1,6 @@
-// eff_deep_proto — stage 0 seed for EFFECT_BOOTSTRAP_PLAN.md (2026-07-07).
-// Two de-risk layers, pinned BEFORE the deep `Eff R X` recognizer is built.
+// eff_deep_proto — THE stage 0 file for EFFECT_BOOTSTRAP_PLAN.md (2026-07-07).
+// Four layers: (1)-(2) were the de-risk pass, (3)-(4) are stage 0 proper (the
+// deep `Eff R X` recognizer and its exit demonstration).
 //
 // (1) canonical rows (std/effect.disp): sorted deduplicated label lists, so
 //     closed-row equality is tree_eq (order- and duplicate-insensitive by
@@ -25,8 +26,20 @@
 //          the one-path limit is conserved by construction (a walk takes one
 //          concrete path); depth comes from the elim idiom, not from the deep
 //          recognizer alone.
-// Baseline (rust-eager-native, 2026-07-07): ~20s wall, 21 pins.
+//
+// (3) the deep `Eff R X` recognizer (std/effect.disp): Pure payload at X, op
+//     label in R, arg at op.param, k at op.result -> Eff R X (a real Pi
+//     check; sub-computations land back at self by one H-rule hit each).
+//     Includes the stage-0 dividend: the deep arg check catches a junk Unit
+//     argument the shallow eff_check is blind to.
+//
+// (4) the stage-0 exit demonstration: a BRANCHY continuation (its answer
+//     eliminated through ShapeC's gated respond) certified Ok true at its row
+//     THROUGH the Eff recognizer, flipped to Ok false by one ill-typed arm,
+//     and executed concretely under a handler — one value, checked and run.
+// Baseline (rust-eager-native, 2026-07-07): ~22s wall, 38 pins.
 open use "../kernel/prelude.disp"
+open use "../std/nat/ops.disp"
 open use "../std/effect.disp"
 
 // ── (1) canonical rows ──
@@ -81,3 +94,56 @@ test param_apply (Pi ShapeC ({_} -> Nat)) k_match = Err
 // not notice. Certified branchy code must use the elim idiom above.
 let k_if := {s} -> if (tree_eq (pair_fst s) "SStem") then false else 1
 test param_apply (Pi ShapeC ({_} -> Nat)) k_if = Ok true
+
+// ── (3) the deep `Eff R X` recognizer (stage 0) ──
+let rowS := row1 "State"
+let rowSIO := mk_row (cons "IO" (cons "State" nil))
+// Pure: the payload is checked against X (closing the shallow form's gap):
+test param_apply (Eff row_nil Nat) (io_pure 5) = Ok true
+test param_apply (Eff row_nil Nat) (io_pure false) = Ok false
+test param_apply (Eff row_nil Nat) zero = Ok false
+// Op: label in R, arg : op.param, k : op.result -> Eff R X:
+let st_get := (mk_op "State" "get" Unit Nat) unit_val
+let st_put := mk_op "State" "put" Nat Unit
+// stage-0 dividend: the deep arg check catches a real ill-typing the shallow
+// form is blind to — the M0 proto spelled get's Unit argument as the leaf
+// `t`, but Unit's inhabitant is unit_val:
+let sloppy_get := (mk_op "State" "get" Unit Nat) t
+test eff_check rowS sloppy_get = true
+test param_apply (Eff rowS Nat) sloppy_get = Ok false
+test param_apply (Eff rowS Unit) (st_put 3) = Ok true
+test param_apply (Eff rowS Unit) (st_put false) = Ok false      // bad ARG rejects
+test param_apply (Eff (row1 "IO") Unit) (st_put 3) = Ok false   // wrong row rejects
+// a composed program (effect_proto's prog1: get, put the successor, return
+// the double — the continuation computes over the minted answer via the
+// elim-routed std arithmetic, which is what keeps it walkable):
+let prog1 := eff_bind st_get ({n} -> eff_bind (st_put (succ n)) ({u} -> io_pure (double n)))
+test param_apply (Eff rowS Nat) prog1 = Ok true
+test param_apply (Eff (row1 "IO") Nat) prog1 = Ok false
+test param_apply (Eff rowSIO Nat) prog1 = Ok true               // weakening still free
+test eff_check rowS prog1 = true                                 // agrees with the shallow form
+// a bad continuation RESULT rejects (k's landing type is checked):
+test param_apply (Eff rowS Nat) (eff_bind st_get ({n} -> io_pure false)) = Ok false
+// H-rule: an Eff-typed hypothesis inhabits by its stored type:
+test param_apply (Eff rowS Nat) (make_hyp (Eff rowS Nat) 0) = Ok true
+
+// ── (4) the stage-0 exit demonstration: a BRANCHY continuation certified
+// through the Eff recognizer — the hazard-0a elim idiom composed with the
+// deep k check. The op answers in ShapeC; the continuation eliminates the
+// answer through ShapeC's gated respond, so coh_check verifies EVERY arm
+// lands Eff [Shape] Nat under per-variant minted payloads. ──
+let cls := mk_op "Shape" "classify" Tree ShapeC
+let rowShape := row1 "Shape"
+let EffS := Eff rowShape Nat
+let good_arms := { SLeaf := io_pure 1; SStem := {c} -> io_pure 2; SFork := {l, r} -> io_pure 3; SHyp := {ty} -> io_pure 4 }
+let branchy := eff_bind (cls t) ({s} -> rec_value ShapeC ({_} -> EffS) good_arms s)
+test param_apply EffS branchy = Ok true
+// flip one arm to land the wrong type and the deep certificate flips —
+// the arms are visited THROUGH the recognizer:
+let bad_arms := { SLeaf := io_pure 1; SStem := {c} -> io_pure false; SFork := {l, r} -> io_pure 3; SHyp := {ty} -> io_pure 4 }
+let branchy_bad := eff_bind (cls t) ({s} -> rec_value ShapeC ({_} -> EffS) bad_arms s)
+test param_apply EffS branchy_bad = Ok false
+// and the SAME certified value runs: answer the op concretely, the recursor
+// dispatches, the handler folds (one value, checked and executed):
+let shape_h := mk_handler (covers_eff "Shape") io_pure ({op} -> {v, resume} -> resume (inj2 "SFork" v v))
+test run_pure (handle shape_h branchy) = 3
