@@ -27,20 +27,38 @@
     tip: string
   }
 
+  type ExprSpec = string | { expr: string; stepMs?: number }
+
   interface Props {
     variant?: 'ambient' | 'lab'
-    exprs?: string[]
+    exprs?: ExprSpec[]
     presets?: Preset[]
     stepMs?: number
     height?: number
   }
   let {
     variant = 'ambient',
-    exprs = ['not false', 'S K K (t t)', 'shape_code (t t t)', 'S K K (S K K (t t))'],
+    // the ambient tour: one demo per rule, then programs that mean something
+    exprs = [
+      'K t t t', // ends on the leaf rule (△)
+      'K (t t) t t', // ends on fork-construction (f)
+      'K t (t t)', // K discards
+      'S t t t', // S duplicates
+      'shape_code (t t t)', // triage reads a shape
+      'not true',
+      'and false true',
+      { expr: 'add 2 3', stepMs: 90 } // the computation storm finale
+    ],
     presets = [],
     stepMs = 1050,
     height = 360
   }: Props = $props()
+
+  const exprOf = (e: ExprSpec) => (typeof e === 'string' ? e : e.expr)
+  const speedOf = (e: ExprSpec) => (typeof e === 'string' ? undefined : e.stepMs)
+
+  // the letters redexes wear: △ builds a stem from the leaf, f builds a fork
+  const RULE_GLYPH = { L: '△', s: 'f', K: 'K', S: 'S', F: 'F' } as const
 
   // ---- instrument state ----------------------------------------------------
   // props are read once here on purpose: variant/exprs/presets are static at
@@ -58,12 +76,12 @@
   let showControls = $state(variant === 'lab')
 
   // svelte-ignore state_referenced_locally
-  let input = $state(exprs[0] ?? 'not false')
+  let input = $state(exprOf(exprs[0] ?? 'not false'))
   // svelte-ignore state_referenced_locally
   let activeTip = $state(presets.find((p) => p.expr === input)?.tip ?? '')
   // the dropdown offers the presets when there are any, else the cycle list
   const exampleOptions = $derived(
-    presets.length ? presets : exprs.map((e) => ({ expr: e, tip: '' }))
+    presets.length ? presets : exprs.map((e) => ({ expr: exprOf(e), tip: '' }))
   )
   let cur = $state<T | null>(null)
   let ruleMsg = $state('')
@@ -98,7 +116,9 @@
     w: number
     trunk?: boolean
   }
-  // a pruned leaf falls on its own; pruned branches disintegrate in place
+  // a pruned leaf falls on its own; pruned branches disintegrate in place.
+  // `delay` staggers the exit: triage joins the chosen branch FIRST, and only
+  // then do the rejected branches let go.
   interface Debris {
     id: number
     x: number
@@ -107,11 +127,13 @@
     dx: number
     rot: number
     tint: string
+    delay: number
   }
   interface GhostEdge {
     id: number
     d: string
     w: number
+    delay: number
   }
   // consumed pattern pieces shrink away where they stood
   interface Vanishing {
@@ -121,6 +143,7 @@
     tag: T['tag']
     tint: string
     tilt: number
+    delay: number
   }
 
   let nodes = $state<VNode[]>([])
@@ -329,7 +352,7 @@
     return out
   }
 
-  function show(tree: T, spine?: Set<T>, allShrink = false) {
+  function show(tree: T, spine?: Set<T>, allShrink = false, exitDelay = 0) {
     const prevNodes = nodes
     const prevEdges = edges
     const l = layout(tree)
@@ -339,10 +362,13 @@
       const survivors = new Set(l.nodes.map((n) => n.tree))
       const removed = prevNodes.filter((n) => !survivors.has(n.tree))
       const removedPaths = new Set(removed.map((n) => n.path))
+      const prevByPath = new Map(prevNodes.map((n) => [n.path, n]))
       const fresh: Debris[] = []
       const shrunk: Vanishing[] = []
       for (const n of removed) {
         const consumed = allShrink || (spine?.has(n.tree) ?? false)
+        // consumed pattern pieces exit with the join; discarded data waits
+        const delay = consumed ? 0 : exitDelay
         if (n.tag === 'leaf' && !consumed) {
           fresh.push({
             id: debrisId++,
@@ -351,10 +377,11 @@
             dy: height - GROUND + 4 - n.y + (hash(n.path) % 8),
             dx: ((hash(n.path) % 36) - 18) * 1.1,
             rot: (hash(n.path) % 160) - 80,
-            tint: n.tint
+            tint: n.tint,
+            delay
           })
         } else {
-          shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt })
+          shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt, delay })
         }
       }
       if (fresh.length) {
@@ -363,14 +390,14 @@
         const ids = fresh.map((d) => d.id)
         setTimeout(() => {
           debris = debris.filter((d) => !ids.includes(d.id))
-        }, 6400)
+        }, 6400 + exitDelay)
       }
       if (shrunk.length) {
         vanishing.push(...shrunk)
         const ids = shrunk.map((v) => v.id)
         setTimeout(() => {
           vanishing = vanishing.filter((v) => !ids.includes(v.id))
-        }, 460)
+        }, 460 + exitDelay)
       }
       // branches that lost their subtree fade out in place
       const newIds = new Set(l.edges.map((e) => e.id))
@@ -378,12 +405,16 @@
         (e) => !e.trunk && !newIds.has(e.id) && removedPaths.has(e.id.replace('>', ''))
       )
       if (gone.length) {
-        const fading: GhostEdge[] = gone.map((e) => ({ id: debrisId++, d: edgeD(e), w: e.w }))
+        const fading: GhostEdge[] = gone.map((e) => {
+          const child = prevByPath.get(e.id.replace('>', ''))
+          const consumed = allShrink || (child !== undefined && (spine?.has(child.tree) ?? false))
+          return { id: debrisId++, d: edgeD(e), w: e.w, delay: consumed ? 0 : exitDelay }
+        })
         ghosts.push(...fading)
         const ids = fading.map((g) => g.id)
         setTimeout(() => {
           ghosts = ghosts.filter((g) => !ids.includes(g.id))
-        }, 500)
+        }, 500 + exitDelay)
       }
     }
     animateTo(l, oldByRef)
@@ -394,6 +425,13 @@
   let timer: ReturnType<typeof setTimeout> | undefined
   let exprIdx = 0
   let atNormalForm = $state(false)
+  // some expressions bring their own clock (add 2 3 runs a few hundred steps)
+  // svelte-ignore state_referenced_locally
+  let curStepMs = stepMs
+  const speedFor = (src: string) => {
+    const e = exprs.find((x) => exprOf(x) === src)
+    return (e && speedOf(e)) || stepMs
+  }
 
   function load(src: string, opts: { keepAuto?: boolean } = {}) {
     clearTimeout(timer)
@@ -402,6 +440,7 @@
     ruleMsg = ''
     stepCount = 0
     atNormalForm = false
+    curStepMs = speedFor(src)
     debris = []
     ghosts = []
     vanishing = []
@@ -448,7 +487,9 @@
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
           : `${s.fired.length} redexes fired in parallel (${s.fired.join(' ')})`
-      show(cur, spine)
+      // triage in two beats: the chosen branch joins first, then the
+      // rejected branches let go
+      show(cur, spine, false, s.fired.includes('F') ? 560 : 0)
       return true
     }
     const s = stepOnce(cur)
@@ -461,7 +502,7 @@
     cur = s.next
     stepCount++
     ruleMsg = s.rule
-    show(cur, spine)
+    show(cur, spine, false, s.tag === 'F' ? 560 : 0)
     return true
   }
 
@@ -488,17 +529,17 @@
       if (went) {
         schedule()
       } else if (autoCycle) {
-        timer = setTimeout(nextExpr, stepMs * 2.2)
+        timer = setTimeout(nextExpr, Math.max(curStepMs * 2.2, 2000))
       } else {
         running = false
       }
-    }, stepMs)
+    }, curStepMs)
   }
 
   function nextExpr() {
     exprIdx = (exprIdx + 1) % exprs.length
     running = true
-    load(exprs[exprIdx], { keepAuto: true })
+    load(exprOf(exprs[exprIdx]), { keepAuto: true })
   }
 
   const step = () => {
@@ -592,22 +633,22 @@
       <!-- pruned leaves fall; their branches disintegrate where they stood -->
       {#each debris as d (d.id)}
         <g style="transform: translate({d.x}px, {d.y}px)">
-          <g class="debris" style="--dy: {d.dy}px; --dx: {d.dx}px">
+          <g class="debris" style="--dy: {d.dy}px; --dx: {d.dx}px; --xdelay: {d.delay}ms">
             <path
               class="leafshape dspin"
               d="M0,-7 C4.5,-4 4.5,2.5 0,7 C-4.5,2.5 -4.5,-4 0,-7 Z"
-              style="fill:{d.tint}; --rot: {d.rot}deg"
+              style="fill:{d.tint}; --rot: {d.rot}deg; animation-delay: {d.delay}ms"
             />
           </g>
         </g>
       {/each}
       {#each ghosts as g (g.id)}
-        <path class="branch ghost" d={g.d} style="stroke-width:{g.w}" />
+        <path class="branch ghost" d={g.d} style="stroke-width:{g.w}; animation-delay: {g.delay}ms" />
       {/each}
       <!-- consumed pattern pieces shrink away where they stood -->
       {#each vanishing as v (v.id)}
         <g style="transform: translate({v.x}px, {v.y}px)">
-          <g class="vshrink">
+          <g class="vshrink" style="animation-delay: {v.delay}ms">
             {#if v.tag === 'leaf'}
               <path
                 class="leafshape"
@@ -647,10 +688,10 @@
               {:else}
                 <circle r={styled ? 4 : 5.5} class="knot" />
               {/if}
-              {#if n.ready && (parallel || n.next)}
+              {#if n.ready}
                 <g class="firemark" class:next={n.next || parallel}>
                   <circle r="7.5" class="fire-ring" />
-                  <text class="fire-letter" y="0.5">{n.ready}</text>
+                  <text class="fire-letter" y="0.5">{RULE_GLYPH[n.ready]}</text>
                 </g>
               {/if}
               {#if n.next && styled}
@@ -867,11 +908,14 @@
     font-family: var(--font-mono);
   }
 
-  /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ---- */
+  /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ----
+     --xdelay staggers the whole exit (triage's rejected branches wait for
+     the chosen one to join before they drop) */
   .debris {
     animation:
       dfall 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards,
-      dfade 3.4s 2.4s linear forwards;
+      dfade 3.4s linear forwards;
+    animation-delay: var(--xdelay, 0ms), calc(2.4s + var(--xdelay, 0ms));
   }
   .dspin {
     animation: dspin 1s cubic-bezier(0.45, 0.05, 0.75, 0.6) forwards;

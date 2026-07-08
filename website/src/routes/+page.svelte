@@ -695,14 +695,18 @@
     font-size: 0.8rem;
     color: var(--fg-muted);
     max-width: 100%;
-    overflow-x: auto;
   }
   .term-dollar {
     color: var(--g1);
     font-family: var(--font-mono);
+    flex: none;
   }
+  /* the command scrolls; the copy button stays put */
   .term code {
     white-space: nowrap;
+    overflow-x: auto;
+    min-width: 0;
+    flex: 1;
   }
   .hero-viz {
     min-width: 0;

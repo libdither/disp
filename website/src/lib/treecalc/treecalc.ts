@@ -58,8 +58,9 @@ export interface StepResult {
 }
 
 export function reduceStep(f: T, x: T): StepResult {
-  if (f.tag === 'leaf') return { result: stem(x), rule: 'leaf rule: t ▷ x = t x', tag: 'L' }
-  if (f.tag === 'stem') return { result: fork(f.c, x), rule: 'stem rule: t u ▷ x = t u x', tag: 's' }
+  if (f.tag === 'leaf') return { result: stem(x), rule: 'leaf rule (△): t ▷ x = t x', tag: 'L' }
+  if (f.tag === 'stem')
+    return { result: fork(f.c, x), rule: 'fork-construction rule (f): t u ▷ x = t u x', tag: 's' }
   if (f.tag === 'fork') {
     const a = f.l
     const b = f.r
@@ -279,6 +280,9 @@ export function lam(params: string[], body: Cir): T {
 export const v = (name: string): Cir => ({ tag: 'var', name })
 export const a = (...es: Cir[]): Cir => es.reduce((f, x) => ({ tag: 'app', f, x }))
 export const tr = (tree: T): Cir => ({ tag: 'tree', tree })
+/** A cir-level lambda, for lambdas nested inside a larger lam() body. */
+export const cl = (params: string[], body: Cir): Cir =>
+  params.reduceRight((b, p) => ({ tag: 'lam', param: p, body: b }), body)
 
 // ---- named trees (kept aligned with the CURRENT lib encodings) ------------
 
@@ -289,8 +293,45 @@ const FALSE = stem(leaf)
 // triage-built not: true(leaf) -> false; false(stem u) -> true
 const NOT = fork(fork(FALSE, fork(leaf, TRUE)), fork(leaf, fork(leaf, TRUE)))
 
+// K x as a tree (fork(leaf, x), by the fork-construction rule)
+const kOf = (x: T): T => fork(leaf, x)
+
+// and: triage on a — true(leaf) -> b (the identity), false(stem) -> false
+const AND = fork(fork(I_TREE, kOf(kOf(FALSE))), kOf(kOf(FALSE)))
+// or: true(leaf) -> true regardless, false(stem) -> b
+const OR = fork(fork(kOf(TRUE), kOf(I_TREE)), kOf(kOf(I_TREE)))
+
 // shape_code: leaf -> 0, stem -> 1, fork -> 2 (the F rule as a value)
 const SHAPE_CODE = fork(fork(nat(0), fork(leaf, nat(1))), fork(leaf, fork(leaf, nat(2))))
+
+// recursion the tree-calculus way (the walkthrough's construction):
+//   wait a b c = a b c, but wait a b does NOT evaluate a b
+//   fix f = wait m (λx. f (wait m x))   with m = λx. x x
+const WAIT = lam(
+  ['a', 'b', 'c'],
+  a(tr(leaf), a(tr(leaf), v('a')), a(tr(leaf), tr(leaf), v('c')), v('b'))
+)
+const MFIX = lam(['x'], a(v('x'), v('x')))
+const FIX = lam(
+  ['f'],
+  a(tr(WAIT), tr(MFIX), cl(['x'], a(v('f'), a(tr(WAIT), tr(MFIX), v('x')))))
+)
+// add n m: triage on n — zero(leaf) -> m; succ(fork t pred) -> succ (add pred m)
+// (succ IS K at the tree level: K x = fork(leaf, x))
+const ADD = normalize(
+  app(
+    FIX,
+    lam(
+      ['self', 'n', 'm'],
+      a(
+        tr(leaf),
+        a(tr(leaf), v('m'), cl(['u'], v('m'))),
+        cl(['l', 'pred'], a(tr(K_TREE), a(v('self'), v('pred'), v('m')))),
+        v('n')
+      )
+    )
+  )
+)
 
 export const DEFS: Record<string, T> = {
   K: K_TREE,
@@ -299,6 +340,9 @@ export const DEFS: Record<string, T> = {
   true: TRUE,
   false: FALSE,
   not: NOT,
+  and: AND,
+  or: OR,
+  add: ADD,
   shape_code: SHAPE_CODE
 }
 
