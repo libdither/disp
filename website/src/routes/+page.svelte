@@ -281,11 +281,7 @@
 <section class="features container">
   <h2 class="sect-title">Why <span class="grad-text">disp</span>?</h2>
   <p class="sect-sub">
-    <i>Because its cool, that's why</i>
-    <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener"
-      >FOUNDATIONS.md</a
-    >
-    keeps honest score of which is which.
+    <i>"Because its cool, that's why."</i>
   </p>
   <div class="feat-grid">
     <div class="card feat">
@@ -355,12 +351,8 @@
 
 <!-- ============================== showcase ============================== -->
 <section class="showcase container">
-  <h2 class="sect-title">The features, in code</h2>
-  <p class="sect-sub">
-    Every block below passes the real compiler. The playground runs that same
-    compiler in your tab, kernel self-verification included, so the code and the
-    claims can't drift apart.
-  </p>
+  <h2 class="sect-title">Examples</h2>
+  <p class="sect-sub">Click open in playground to check them out!</p>
   <div class="tabs">
     {#each showcase as ex, i}
       <button
@@ -387,7 +379,7 @@
 <hr class="keyline container" />
 
 <!-- ============================== self-verify band ============================== -->
-<section class="selfcheck container">
+<!-- <section class="selfcheck container">
   <h2 class="sect-title">No pre-checked kernel ships</h2>
   <p class="sect-sub">
     When the playground boots the type system, your browser re-elaborates the
@@ -412,7 +404,7 @@
   </div>
 </section>
 
-<hr class="keyline container" />
+<hr class="keyline container" /> -->
 
 <!-- ============================== involvement ============================== -->
 <section class="involve container">
