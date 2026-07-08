@@ -1,0 +1,10 @@
+// The optimized prelude: the kernel surface with the std overlays applied.
+// A pure barrel (no own exports, so it re-exports its opens); each overlay's
+// licensed rebinds arrive with driver-stamped certs, the splice's
+// licensed-collision rules resolve them against the kernel originals, and the
+// re-export carries the winning tree WITH its guard and stamps. Consumers open
+// THIS instead of the kernel prelude to ride every landed optimization; open
+// the kernel prelude / the spec modules directly for the spec faces. New
+// overlays join by adding one open here.
+open use "../kernel/prelude.disp"
+open use "nat/arith.opt.disp"

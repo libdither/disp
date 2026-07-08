@@ -1,31 +1,32 @@
+// arith.opt: the optimized face of arith — a PARALLEL module, not a trailing
+// overlay. It opens the spec (each name arrives with its guard and its contract
+// riding the open) and rebinds under those licenses: every rebind below is a
+// { new, proof } payload the incumbent guard checks HERE, at this file's load —
+// a junk proof fails the load. The driver stamps each success with a cert
+// (old tree, approved payload) that travels with the export, so any consumer
+// scope reconciles these fast trees with the spec/kernel originals whichever
+// order its opens arrive (the splice's licensed-collision rules). No givens and
+// no shared type names: the contract rides the name itself (the rebound Defs
+// inherit the spec annotations and re-verify the fast trees at them). A future
+// optimizer emits files of exactly this shape — (e', cert) per definition.
+open use "arith.disp"
 open use "../../kernel/prelude.disp"
 
-// arith.opt: the optimization overlay for arith.disp — the (e', cert) bundle of
-// OPTIMIZER.typ at the definition boundary. arith.disp opens this file LAST; each
-// export below that collides with a name arith owns is a license payload
-// { new, proof }, replayed through the incumbent guard at the splice (the
-// licensed-collision rules in the driver's open handling). This file never opens
-// arith (that would be a load cycle): the spec vocabulary it cites arrives as a
-// GIVEN (the module-fixpoint discipline — same move as the kernel barrel), fast
-// bodies are written against local names (nat_rec_fast), and the proofs are
-// checked at the boundary that owns the names, not here. A future optimizer emits
-// files of exactly this shape: a functor over the spec's contract vocabulary.
-
-// The recursor's contract, owned and defined by arith.disp; the fill at its
-// trailing open (`{ NatRecT := NatRecT }`) is what ties the knot.
-open given { NatRecT : Type }
-
 // nat_rec_fast: the kernel recursor with a fast CONCRETE path. A neutral target
-// delegates to nat_rec VERBATIM, so checking-time behavior is tree-identical (the same
-// stuck elimination); a concrete target runs a direct loop on the unary shape
-// (zero = leaf, succ k = fork(t, k)) — one is_neutral + one triage per step instead of
-// the generic elim -> dispatcher -> view-decode -> case-lookup round. The neutrality
-// check sits INSIDE the loop so reduction under binders is preserved: `succ k` with k
-// abstract peels one constructor and then delegates, exactly like the generic route
-// (the conversion `add (succ k) m = succ (add k m)` that inductive proofs rely on).
-// A stem is never a Nat; that junk arm answers `base` (total-and-trusting, the
-// list-toolkit style — the recognizer, not the recursor, establishes shape).
-nat_rec_fast : NatRecT := {motive, base, step, target} ->
+// delegates to nat_rec VERBATIM — the SPEC nat_rec baked below, before the
+// rebind — so checking-time behavior is tree-identical (the same stuck
+// elimination); a concrete target runs a direct loop on the unary shape
+// (zero = leaf, succ k = fork(t, k)) — one is_neutral + one triage per step
+// instead of the generic elim -> dispatcher -> view-decode -> case-lookup round.
+// The neutrality check sits INSIDE the loop so reduction under binders is
+// preserved: `succ k` with k abstract peels one constructor and then delegates,
+// exactly like the generic route (the conversion `add (succ k) m = succ (add k m)`
+// that inductive proofs rely on). A stem is never a Nat; that junk arm answers
+// `base` (total-and-trusting, the list-toolkit style — the recognizer, not the
+// recursor, establishes shape). Untyped here: the contract lands on the rebound
+// nat_rec Def below (inherited from the kernel annotation) and is re-verified
+// against this tree at this file's load.
+nat_rec_fast := {motive, base, step, target} ->
   (fix ({go, k} ->
     if (is_neutral k)
       then (nat_rec motive base step k)
@@ -35,16 +36,10 @@ nat_rec_fast : NatRecT := {motive, base, step, target} ->
         ({_l, kk} -> step kk (go kk))
         k))) target
 
-// ── The rebind payloads. Each shadows a spec name with a { new, proof } record:
-// meaningless as the function itself (this module is not a drop-in arith), but
-// exactly the request the incumbent license checks — proof : oeq T old new, with
-// `old` supplied by the boundary doing the check. Pointwise refl inhabits both
-// relations because the fast forms delegate verbatim on the neutral path (the
-// abstract paths are untouched); the concrete paths are pinned differentially in
-// lib/tests/guard_opt.test.disp.
+// ── The licensed rebinds. nat_rec first: after it, the spec name IS the fast
+// recursor, so add's fast body bakes it by its spec name. Pointwise refl
+// inhabits both relations because the fast forms delegate verbatim on the
+// neutral path (the abstract paths are untouched); the concrete paths are
+// pinned differentially in lib/tests/guard_opt.test.disp.
 nat_rec := { new := nat_rec_fast ; proof := {P} -> {z} -> {s} -> {n} -> refl }
-
-// add's fast body is written against nat_rec_fast BY NAME (nat_rec here is now the
-// payload record above, not a recursor) — the optimizer re-emits dependent bodies
-// rather than reaching back into already-baked trees.
-add := { new := {n, m} -> nat_rec_fast ({_} -> Nat) m ({pred, ih} -> succ ih) n ; proof := {n} -> {m} -> refl }
+add := { new := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n ; proof := {n} -> {m} -> refl }

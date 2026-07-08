@@ -437,15 +437,29 @@ the export like its guard. The splice then reconciles licensed exports with
 the originals downstream: keep-existing when the incumbent was licensed over
 exactly the incoming tree, licensed-upgrade (replace) when the incoming
 export was licensed over exactly the incumbent. Unguarded different-tree
-collisions still error. This is what makes the trailing-overlay ceremony a
-module form: `arith.disp` = pure spec (`guard_eq nat_rec/add`) ending with
-`open use "arith.opt.disp" { NatRecT := NatRecT }`, the overlay = a functor
-over the spec's contract vocabulary (`open given { NatRecT : Type }` — the
-same fixpoint discipline as the kernel barrel, so the contract has ONE
-definition site and no import cycle) with one `{ new, proof }` export per
-optimized name (dependent bodies re-emitted, OPTIMIZER.typ's `(e', cert)` at
-the definition boundary), and every consumer's own opens resolve fast-vs-
-original via the stamps. The in-language Module-carries-requests form (and
+collisions still error. The dedupe also ADOPTS a late-arriving guard/cert
+onto a same-tree incumbent (an owner's policy must not be stripped by open
+order), and barrel re-exports carry guard+cert, so ownership and stamps
+survive re-export.
+
+This is what makes optimization a PARALLEL LIBRARY LAYER rather than an edit
+to the spec: `arith.disp` = pure spec (`guard_eq nat_rec` at an inline
+annotation, `guard_eq add`), `arith.opt.disp` opens the spec — the guards and
+contracts ride the names, so it needs no givens and no shared type aliases —
+and rebinds both names under those licenses (each `{ new, proof }` checked at
+the overlay's own load; dependent bodies re-emitted, OPTIMIZER.typ's
+`(e', cert)` at the definition boundary); `std/prelude.opt.disp` is the
+optimized barrel (kernel surface ⊕ overlays, one open per overlay). Consumers
+pick a face — the spec modules or the `.opt` layer — and mixed scopes
+reconcile via the stamps. One found edge: the kernel BARREL's re-exports are
+typeless (the bootstrap raw-loads first and the checked re-imports dedupe
+tree-identically, so annotations never land on the barrel's Defs) — hence the
+spec's guard_eq spells its type inline; adopting types on dedupe the way
+guards are adopted would enable annotation-free `guard_eq nat_rec := nat_rec`
+but makes the whole kernel surface typed (a verification-cost question), so
+it is left as a candidate follow-up. Rebinds without their own annotation
+inherit the incumbent's type (request + Def), which is what keeps the
+overlay's fast exports typed and re-verified at the spec contracts. The in-language Module-carries-requests form (and
 `Module` growing a guards field) remains the slice-3 destination; certs are
 host metadata exactly like `fieldGuards`. Pins: `lib/tests/guard_opt.test.disp`.
 

@@ -1,10 +1,10 @@
-// The licensed-replacement ceremony end to end — MODULE FORM (guard_eq survey,
-// candidates 1-2; the trailing-open overlay): std/nat/arith owns nat_rec AND add
-// with guard_eq and ENDS with `open use "arith.opt.disp"`, whose colliding exports
-// are { new, proof } payloads replayed through the incumbent guards (the splice's
-// licensed-collision rules; certs are driver-stamped and travel with the exports,
-// which is how this file's own opens reconcile arith's fast trees with the kernel
-// originals the prelude bound first). Pins:
+// The licensed-replacement ceremony end to end — the PARALLEL-OVERLAY form:
+// std/nat/arith is the pure spec (guard_eq owns nat_rec at the kernel's own
+// inherited annotation, add at its declared type); arith.opt.disp opens the spec
+// and rebinds BOTH names under those licenses ({ new, proof } payloads checked at
+// its load); std/prelude.opt.disp is the optimized barrel. Certs are
+// driver-stamped and travel with exports, which is how this file's opens
+// reconcile the barrel's fast trees with the kernel originals bound first. Pins:
 //   (a) the license: pointwise refl inhabits `oeq NatRecT nat_rec_gen nat_rec_fast`
 //       (both sides reduce to the SAME stuck elimination at a minted target), and a
 //       replacement with a different abstract path is refused;
@@ -23,10 +23,14 @@
 open use "../kernel/prelude.disp"
 open use "../std/oeq.disp"
 
-// The generic (kernel) recursor, captured before arith's overlay replaces the name.
+// The generic (kernel) recursor, captured before the optimized barrel replaces
+// the name; and the license's relation anchor, spelled ONCE here test-locally
+// (hash-cons-identical to the kernel annotation guard_eq inherited — the library
+// itself never names this type).
 let nat_rec_gen := nat_rec
+NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
 
-open use "../std/nat/arith.disp"
+open use "../std/prelude.opt.disp"
 open use "../std/nat/ops.disp"
 
 // ── (e) the overlay landed: the in-scope names are the fast trees

@@ -1,12 +1,9 @@
-open use "../../kernel/prelude.disp"
-open use "arith.disp"
+open use "../prelude.opt.disp"
 
 // Standard Nat helpers and proof terms. Functions that branch on a Nat use
 // nat_rec so Pi checking sees make_hyp instead of raw triage on hypotheses.
-// arith's nat_rec/add arrive ALREADY optimized (the trailing overlay in arith.disp;
-// the splice's licensed-collision rules reconcile them with the kernel originals the
-// prelude open bound first), so the bodies below bake the fast trees with no local
-// shadow ceremony.
+// One open: the optimized prelude (kernel surface + the arith overlay), so the
+// bodies below bake the fast licensed trees with no local shadow ceremony.
 
 one : Nat := 1
 two : Nat := 2

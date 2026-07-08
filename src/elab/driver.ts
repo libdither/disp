@@ -639,6 +639,12 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     } else if (typeE != null) {
       typeTree = compileType(typeE, lookupEntry, resolveUse)
     }
+    // Rebinds inherit the incumbent's contract: an un-annotated declaration on an
+    // already-bound name carries the existing type in its request — so guard_eq
+    // can derive the license from the name's OWN annotation (`guard_eq nat_rec :=
+    // nat_rec` owns the kernel recursor at the kernel's type) — and onto the new
+    // Def, which re-verifies the incoming tree at it.
+    if (typeTree == null && existing?.type != null) typeTree = existing.type
     // Idempotence: a headless, tree-identical rebind changes nothing — no consultation.
     if (!headE && valueTree != null && existing?.tree != null && S.equal!(existing.tree, valueTree)) {
       finishDefine(name, valueTree, typeTree, valueE, typeE ?? null, existing.guard)
@@ -903,16 +909,28 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           // memo, and rule (4) runs the incumbent's guard right here. An import still
           // cannot silently shadow anything: unguarded conflicts stay hard errors.
           const collide = (incumbent: ScopeEntry): boolean => {
-            // (1) same tree — plain dedupe.
-            if (incumbent.tree && elab.cs.equal!(incumbent.tree, fieldTree)) return true
+            // (1) same tree — dedupe, but ADOPT a late-arriving guard/cert (an
+            //     owner's policy travels with its export; the dedupe must not
+            //     strip it, or open order would decide whether a name is owned).
+            if (incumbent.tree && elab.cs.equal!(incumbent.tree, fieldTree)) {
+              if ((inGuard && !incumbent.guard) || (inCert && !incumbent.cert))
+                define(name, { ...incumbent, guard: incumbent.guard ?? inGuard, cert: incumbent.cert ?? inCert })
+              return true
+            }
             // (2) the incumbent was licensed over exactly this incoming tree (the
             //     kernel original arriving after the optimized module) — keep it.
             if (incumbent.tree && incumbent.cert && elab.cs.equal!(incumbent.cert.old, fieldTree)) return true
             // (3) the incoming export was licensed over exactly the incumbent tree
             //     (the optimized module arriving after the kernel) — the licensed
-            //     upgrade replaces the original, stamps and guard riding along.
+            //     upgrade replaces the original, stamps and guard riding along;
+            //     an already-pushed re-export (a barrel's, or an own field) follows.
             if (incumbent.tree && inCert && elab.cs.equal!(inCert.old, incumbent.tree)) {
-              define(name, { tree: fieldTree, type: fieldType, guard: inGuard, cert: inCert })
+              define(name, { tree: fieldTree, type: fieldType ?? incumbent.type, guard: inGuard, cert: inCert })
+              const idx = target.findIndex(d => d.kind === "Def" && d.name === name)
+              if (idx >= 0) {
+                const prev = target[idx] as Extract<Decl, { kind: "Def" }>
+                target[idx] = { kind: "Def", name, tree: fieldTree, type: fieldType ?? prev.type, guard: inGuard ?? null, cert: inCert }
+              }
               return true
             }
             // (4) the opener owns the name — consult the incumbent guard with the
@@ -950,8 +968,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           }
           define(name, { tree: fieldTree, type: fieldType, guard: inGuard, cert: inCert })
           if (isExport) {
-            // Legacy mode: open re-exports opened names.
-            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType })
+            // Barrel re-export: guard and cert ride along, so an owned/licensed
+            // name keeps its policy and its stamps through the re-export.
+            target.push({ kind: "Def", name, tree: fieldTree, type: fieldType, guard: inGuard ?? null, cert: inCert ?? null })
           }
         }
         recordItem("open")
