@@ -75,7 +75,7 @@
   async function execute(source: string, label: string) {
     if (busy) return
     busy = true
-    beginProgress(disp.kernelLoaded ? label : `${label} — first kernel touch self-verifies it`)
+    beginProgress(disp.kernelLoaded ? label : `${label} (first run checks the kernel too)`)
     try {
       const out = await disp.run(source)
       endProgress()
@@ -145,7 +145,7 @@
       pushEntry({
         kind: 'sys',
         text: out.ok
-          ? `kernel loaded + verified · ${(out.elapsedMs / 1000).toFixed(1)}s · ${fmtSteps(out.steps)} steps — later runs reuse it`
+          ? `kernel loaded + verified · ${(out.elapsedMs / 1000).toFixed(1)}s · ${fmtSteps(out.steps)} steps. later runs reuse it`
           : `kernel load failed: ${out.error}`
       })
     } catch (e) {
@@ -160,13 +160,13 @@
     disp.interrupt()
     endProgress()
     busy = false
-    pushEntry({ kind: 'sys', text: 'interrupted — engine reset (kernel cache cleared)' })
+    pushEntry({ kind: 'sys', text: 'interrupted. engine reset, kernel cache cleared' })
   }
 
   async function resetSession() {
     if (busy) return
     await disp.reset()
-    pushEntry({ kind: 'sys', text: 'session reset — fresh arena, kernel cache cleared' })
+    pushEntry({ kind: 'sys', text: 'session reset. fresh arena, kernel cache cleared' })
   }
 
   function loadExample(id: string) {
@@ -226,7 +226,7 @@
       : disp.status === 'booting'
         ? 'booting…'
         : disp.status === 'dead'
-          ? 'engine crashed — reset'
+          ? 'engine crashed, hit reset'
           : busy
             ? 'running…'
             : disp.kernelLoaded
@@ -236,7 +236,7 @@
 </script>
 
 <svelte:head>
-  <title>Playground — disp</title>
+  <title>Playground · disp</title>
 </svelte:head>
 
 <div class="pg">
@@ -298,11 +298,11 @@
             <p class="empty-title">The <span class="grad-text">real toolchain</span>, in your tab.</p>
             <p>
               This playground runs disp's actual elaborator and its Rust evaluator (compiled to
-              WebAssembly) — the same code that checks the test suite. Nothing is sent to a server.
+              WebAssembly), the same code that checks the test suite. Nothing is sent to a server.
             </p>
             <p>
               The first run that touches the type system elaborates <em>and re-verifies</em> the
-              kernel — about a minute of genuine self-checking, cached for the session.
+              kernel: about a minute of genuine self-checking, cached for the session.
               <button class="linkbtn" onclick={preloadKernel}>Start it now</button>, or pick the
               raw tree-calculus example for instant gratification.
             </p>
@@ -379,7 +379,7 @@ rhs = {t.rhs}</pre>
           type="text"
           bind:value={replInput}
           onkeydown={replKeydown}
-          placeholder={busy ? 'running…' : 'evaluate an expression against the buffer — try  double 21'}
+          placeholder={busy ? 'running…' : 'evaluate an expression against the buffer, e.g.  double 21'}
           disabled={busy}
           spellcheck="false"
           autocomplete="off"

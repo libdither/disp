@@ -2,13 +2,65 @@
   import { base } from '$app/paths'
   import NatureTree from '$lib/components/NatureTree.svelte'
   import RuleRail from '$lib/components/RuleRail.svelte'
-  import Gloss from '$lib/learn/Gloss.svelte'
   import { highlightDisp } from '$lib/editor/highlight'
   import { examples } from '$lib/disp/examples'
 
   const REPO = 'https://github.com/libdither/disp'
   const JAY = 'https://github.com/barry-jay-personal'
   const TREECALC = 'https://treecalcul.us/'
+
+  // the field guide: one fixed card, entries swap on hover
+  interface Entry {
+    term: string
+    pos: string
+    text: string
+  }
+  const entries: Record<string, Entry> = {
+    disp: {
+      term: 'disp',
+      pos: 'n.',
+      text: 'A language grown from one leaf and five rewrite rules, currently teaching itself to check its own homework. The dotted words below have entries of their own.'
+    },
+    decentralized: {
+      term: 'decentralized',
+      pos: 'adj.',
+      text: 'Features spread the way libraries do. Anyone can build new syntax or types, anyone can adopt them, and dialects translate into one another automatically. No committee, no release train, no waiting.'
+    },
+    lisp: {
+      term: 'lisp',
+      pos: 'n.',
+      text: 'Programs are data here too, but there is no quote/eval loop to cross. Reduction itself reads tree shape, so a program that rewrites programs is simply a program. Lisp walked so trees could branch.'
+    },
+    universal: {
+      term: 'universal',
+      pos: 'adj.',
+      text: 'One substrate that other languages can be rebuilt in and transpiled to. The ambition is a language that absorbs languages, not another island with good weather.'
+    },
+    parsers: {
+      term: 'user-definable parsers',
+      pos: 'n. pl.',
+      text: 'The grammar is a library, not a constitution. A project can define its own notation, elaborate to the same trees underneath, and still talk to everything else.'
+    },
+    typesystems: {
+      term: 'type systems',
+      pos: 'n. pl.',
+      text: 'Functions, records, induction, and the universe itself: all library code over two trusted kernel operations, re-verified on every load. Different logic is a library you write, not a compiler you fork.'
+    },
+    optimizer: {
+      term: 'self-optimizing optimizer',
+      pos: 'n.',
+      text: 'Give it a specification: a type, a predicate, a loss function. It derives implementations, each rewrite licensed by a machine-checked certificate. It has a disp type of its own, so it qualifies for its own attention.'
+    },
+    nets: {
+      term: 'interaction nets',
+      pos: 'n. pl.',
+      text: 'A model of computation where programs are graphs and every step is a small local rewrite. Steps become countable, so cost can be charged to the exact decision that spent it.'
+    }
+  }
+  let entryKey = $state('disp')
+  const entry = $derived(entries[entryKey] ?? entries.disp)
+  const look = (k: string) => () => (entryKey = k)
+  const lookAway = () => (entryKey = 'disp')
 
   let showcaseIdx = $state(0)
   const showcase = examples.filter((e) => ['trees', 'records', 'proofs', 'universe'].includes(e.id))
@@ -17,7 +69,7 @@
 </script>
 
 <svelte:head>
-  <title>disp — a decentralized lisp</title>
+  <title>disp · a decentralized lisp</title>
 </svelte:head>
 
 <!-- ============================== hero ============================== -->
@@ -30,33 +82,19 @@
       </h1>
       <p class="abbr">
         <span class="abbr-label">abbr.</span>
-        <Gloss
-          tip="different programmers can build and adopt language features — syntax, types — independently, with automatic translation between dialects. No committee, no release train: features spread by being adopted."
-          >decentralized</Gloss>
-        &nbsp;<Gloss
-          tip="like lisp, disp is homoiconic: programs are data you can compute on. Unlike lisp there is no quote/eval loop to cross — programs are trees, and reduction itself inspects tree shape — so program-rewriting programs (macros, optimizers, type checkers) are just ordinary programs."
-          >lisp</Gloss>
+        <button class="dterm" onmouseenter={look('decentralized')} onmouseleave={lookAway} onfocus={look('decentralized')} onblur={lookAway}>decentralized</button>
+        <button class="dterm" onmouseenter={look('lisp')} onmouseleave={lookAway} onfocus={look('lisp')} onblur={lookAway}>lisp</button>
       </p>
       <p class="sub">
         disp is an aspiring
-        <Gloss
-          tip="one substrate other languages can be re-created in and transpiled to — a language for absorbing languages, rather than another island."
-          >universal</Gloss>
+        <button class="dterm" onmouseenter={look('universal')} onmouseleave={lookAway} onfocus={look('universal')} onblur={lookAway}>universal</button>
         general-purpose programming language with
-        <Gloss
-          tip="the surface grammar is a library concern, not a constitution: projects will define their own notations that elaborate to the same trees and interoperate."
-          >user-definable parsers</Gloss>
+        <button class="dterm" onmouseenter={look('parsers')} onmouseleave={lookAway} onfocus={look('parsers')} onblur={lookAway}>user-definable parsers</button>
         and
-        <Gloss
-          tip="the entire type system — Π, records, induction, the universe itself — is library code over a two-operation kernel, and re-verifies itself when it loads. Extend it or replace it without kernel surgery."
-          >type systems</Gloss>, and a
-        <Gloss
-          tip="an optimizer that takes a specification (a type, a predicate, a loss function) and derives implementations — with machine-checked equivalence certificates licensing every rewrite. Being a disp program with a disp type, it is a candidate for its own improvement."
-          >self-optimizing optimizer</Gloss>
+        <button class="dterm" onmouseenter={look('typesystems')} onmouseleave={lookAway} onfocus={look('typesystems')} onblur={lookAway}>type systems</button>, and a
+        <button class="dterm" onmouseenter={look('optimizer')} onmouseleave={lookAway} onfocus={look('optimizer')} onblur={lookAway}>self-optimizing optimizer</button>
         based on
-        <Gloss
-          tip="a model of computation where programs are graphs and reduction is local and parallel — so work is countable per rewrite, and cost is attributable to individual decisions."
-          >interaction nets</Gloss>
+        <button class="dterm" onmouseenter={look('nets')} onmouseleave={lookAway} onfocus={look('nets')} onblur={lookAway}>interaction nets</button>
         that models hardware as imperfect interaction-net reduction. Based on
         <a href={JAY} target="_blank" rel="noopener">Barry Jay</a>'s
         <a href={TREECALC} target="_blank" rel="noopener">tree calculus</a>.
@@ -73,6 +111,15 @@
     <div class="hero-viz">
       <NatureTree />
     </div>
+    <!-- the field guide: hover a dotted term and its entry appears here -->
+    <aside class="defbox" class:looking={entryKey !== 'disp'} aria-live="polite">
+      <span class="def-head">
+        <span class="def-term">{entry.term}</span>
+        <span class="def-pos">{entry.pos}</span>
+      </span>
+      <p class="def-text">{entry.text}</p>
+      <span class="def-foot">field guide · entry {Object.keys(entries).indexOf(entryKey) + 1} of {Object.keys(entries).length}</span>
+    </aside>
   </div>
 </section>
 
@@ -82,47 +129,48 @@
 <section class="features container">
   <h2 class="sect-title">Why <span class="grad-text">disp</span>?</h2>
   <p class="sect-sub">
-    Some of this runs today — the type system, the self-verifying kernel, five byte-agreeing
-    evaluators. Some is the design goal the rest is built toward.
+    The type system, the self-verifying kernel, and five byte-agreeing evaluators run today.
+    The rest is what they were built to reach.
     <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener">FOUNDATIONS.md</a>
-    keeps score honestly.
+    keeps honest score of which is which.
   </p>
   <div class="feat-grid">
     <div class="card feat">
       <h3><span class="feat-dot" aria-hidden="true"></span>Homoiconic, past lisp</h3>
       <p>
-        Programs are binary trees, and trees are data — with no quote/eval boundary between the
-        two. Case analysis over programs is a <em>rewrite rule</em> (the triage), so a program
-        that rewrites programs — a macro, an optimizer, a type checker — is just a program.
-        Elaboration is deterministic and trees are hash-consed, so equal programs are literally
-        the same pointer.
+        Programs are binary trees, and trees are plain data. There is no quote/eval border to
+        smuggle code across: the rewrite rules themselves read tree shape, so a macro, an
+        optimizer, or a type checker is an ordinary program that happens to eat programs. Equal
+        programs are even the same pointer, courtesy of hash-consing.
       </p>
     </div>
     <div class="card feat">
       <h3><span class="feat-dot" aria-hidden="true"></span>Type systems you can replace</h3>
       <p>
-        A type is a predicate: apply it to a value and it answers. The entire type system —
-        Π, records, induction, the universe itself — is library code over a kernel of
-        <strong>two trusted operations</strong>, and it re-verifies itself every time it loads.
-        Want different formers, different logic? That's a library, not kernel surgery.
+        A type is a predicate. Apply it to a value and it answers. Functions, records,
+        induction, and the universe itself are library code sitting on
+        <strong>two trusted kernel operations</strong>, and the whole stack re-verifies itself
+        every time it loads. If you want different logic, you write a library, not a fork of
+        the compiler.
       </p>
     </div>
     <div class="card feat">
       <h3><span class="feat-dot" aria-hidden="true"></span>Your syntax, your dialect</h3>
       <p>
-        The decentralized ambition: user-definable parsers and independently adoptable language
-        features, with automatic translation between dialects — one universal substrate that
-        other languages can be re-created in and transpiled to, instead of another island.
+        Parsers you can define, features that spread by adoption rather than by committee, and
+        automatic translation between the dialects that result. The point is one substrate that
+        other languages can be rebuilt in and transpiled to, not one more island with a nice
+        standard library.
       </p>
     </div>
     <div class="card feat">
       <h3><span class="feat-dot" aria-hidden="true"></span>An optimizer aimed at itself</h3>
       <p>
-        Programs materialize as <a href="{REPO}/blob/main/OPTIMIZER.typ">interaction nets</a>,
-        where reduction is local, parallel, and countable — hardware is modeled as imperfect net
-        reduction, so cost attaches to individual decisions. Machine-checked equivalence
-        certificates license every rewrite, and the optimizer's own disp type makes it a
-        candidate for its own improvement.
+        Programs materialize as <a href="{REPO}/blob/main/OPTIMIZER.typ" target="_blank" rel="noopener">interaction nets</a>,
+        where every reduction is a local rewrite you can count, and hardware is modeled as
+        imperfect net reduction. Cost lands on individual decisions. Rewrites need
+        machine-checked equivalence certificates, and since the optimizer has a disp type too,
+        nothing stops it from taking a pass at itself.
       </p>
     </div>
   </div>
@@ -134,8 +182,8 @@
 <section class="showcase container">
   <h2 class="sect-title">The features, in code</h2>
   <p class="sect-sub">
-    Every block below passes the real compiler — and the playground runs that same compiler in
-    your tab, kernel self-verification included.
+    Every block below passes the real compiler. The playground runs that same compiler in your
+    tab, kernel self-verification included, so the code and the claims can't drift apart.
   </p>
   <div class="tabs">
     {#each showcase as ex, i}
@@ -158,8 +206,8 @@
   <h2 class="sect-title">No pre-checked kernel ships</h2>
   <p class="sect-sub">
     When the playground boots the type system, your browser re-elaborates the kernel's fragments
-    in dependency order and re-verifies every typed export through the kernel itself — ending
-    with the universe passing its own checker.
+    in dependency order and re-verifies every typed export through the kernel itself. The last
+    thing checked is the universe, by the universe.
   </p>
   <div class="chain" role="img" aria-label="kernel bootstrap chain: {kernelChain.join(', ')}">
     {#each kernelChain as frag, i}
@@ -229,6 +277,81 @@
     grid-template-columns: minmax(0, 7fr) minmax(0, 6fr);
     gap: 2.5rem;
     align-items: center;
+  }
+
+  /* ---- the field guide (one card, fixed size, pinned beside the wordmark) ---- */
+  .dterm {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: help;
+    text-decoration: underline dotted var(--g2);
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 3px;
+  }
+  .dterm:hover,
+  .dterm:focus-visible {
+    color: var(--g2);
+    outline: none;
+  }
+  .defbox {
+    position: absolute;
+    top: -1.2rem;
+    right: 0;
+    width: 306px;
+    height: 218px;
+    background: color-mix(in oklab, var(--g4) 5%, var(--bg-elev));
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 0.9rem 1.05rem 0.7rem;
+    box-shadow: var(--shadow-soft);
+    transform: rotate(1.1deg);
+    transition: transform 0.25s ease, border-color 0.25s ease;
+    display: flex;
+    flex-direction: column;
+    z-index: 3;
+    overflow: hidden;
+  }
+  .defbox.looking {
+    transform: rotate(0deg);
+    border-color: var(--g2);
+  }
+  .def-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5em;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.35rem;
+  }
+  .def-term {
+    font-family: var(--font-display);
+    font-variation-settings: 'SOFT' 60, 'WONK' 1;
+    font-weight: 620;
+    font-size: 1.12rem;
+    color: var(--fg);
+  }
+  .def-pos {
+    font-family: var(--font-display);
+    font-style: italic;
+    color: var(--fg-faint);
+    font-size: 0.9rem;
+  }
+  .def-text {
+    flex: 1;
+    margin: 0.5rem 0 0;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: var(--fg-muted);
+  }
+  .def-foot {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    color: var(--fg-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding-top: 0.4rem;
   }
   h1 {
     font-size: clamp(4.2rem, 9vw, 6.8rem);
@@ -409,5 +532,14 @@
     .hero-grid { grid-template-columns: 1fr; }
     .hero-viz { order: -1; }
     .feat-grid, .inv-grid { grid-template-columns: 1fr; }
+    /* the field guide joins the flow on small screens */
+    .defbox {
+      position: static;
+      width: 100%;
+      height: auto;
+      min-height: 0;
+      transform: none;
+      order: 3;
+    }
   }
 </style>

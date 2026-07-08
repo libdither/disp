@@ -47,7 +47,7 @@
         {#each links as l}
           {#if l.external}
             <a class="navlink" href={l.href} target="_blank" rel="noopener">
-              {l.label}<span class="ext" aria-hidden="true">↗</span>
+              {l.label}
             </a>
           {:else}
             <a class="navlink" class:active={isActive(l.href)} href={l.href}>
@@ -91,9 +91,9 @@
       </div>
       <div class="footcol">
         <h4>Project</h4>
-        <a href={REPO} target="_blank" rel="noopener">Source ↗</a>
-        <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener">Foundations ↗</a>
-        <a href="{REPO}/blob/main/GOALS.md" target="_blank" rel="noopener">Goals ↗</a>
+        <a href={REPO} target="_blank" rel="noopener">Source</a>
+        <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener">Foundations</a>
+        <a href="{REPO}/blob/main/GOALS.md" target="_blank" rel="noopener">Goals</a>
         <a href="{base}/funding/">Funding</a>
       </div>
     </div>
@@ -165,7 +165,6 @@
   .sprout .l2 { fill: var(--g2); }
   .navlink:hover .sprout { transform: translateX(-50%) scale(0.6); }
   .navlink.active .sprout { transform: translateX(-50%) scale(1); }
-  .ext { font-size: 0.75em; margin-left: 0.25em; opacity: 0.7; }
 
   .content { flex: 1; display: flex; flex-direction: column; }
 

@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>Funding — disp</title>
+  <title>Funding · disp</title>
 </svelte:head>
 
 <div class="container page">
@@ -11,7 +11,7 @@
   <p class="lede">
     disp is independent research: a self-verifying language, an optimizer meant to improve
     itself, and every line of it dedicated to the public domain. There is no company behind it
-    and no rights are reserved — which also means no revenue model. Support extends the runway
+    and no rights are reserved, which also means no revenue model. Support extends the runway
     directly.
   </p>
 
@@ -19,11 +19,11 @@
     <div class="card">
       <h3>Right now</h3>
       <p>
-        Formal sponsorship channels aren't set up yet. If you want to fund this work — as an
-        individual, a lab, or a company interested in verified synthesis — open an issue or reach
+        Formal sponsorship channels aren't set up yet. If you want to fund this work, whether as an
+        individual, a lab, or a company interested in verified synthesis, open an issue or reach
         out through GitHub and we'll figure out the mechanics.
       </p>
-      <a class="btn" href="{REPO}/issues" target="_blank" rel="noopener">Open an issue ↗</a>
+      <a class="btn" href="{REPO}/issues" target="_blank" rel="noopener">Open an issue</a>
     </div>
     <div class="card">
       <h3>Zero-dollar support</h3>
@@ -32,13 +32,13 @@
         <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener">FOUNDATIONS.md</a>
         and poking holes in its falsifiable questions helps even more.
       </p>
-      <a class="btn" href={REPO} target="_blank" rel="noopener">Star on GitHub ↗</a>
+      <a class="btn" href={REPO} target="_blank" rel="noopener">Star on GitHub</a>
     </div>
     <div class="card">
       <h3>Where money goes</h3>
       <p>
         Compute for the neural-guided synthesis experiments, AI-assisted development costs, and
-        focused development time on the optimizer — the parts of
+        focused development time on the optimizer: the parts of
         <a href="{REPO}/blob/main/GOALS.md" target="_blank" rel="noopener">GOALS.md</a> that are
         designed but not yet built.
       </p>
@@ -46,7 +46,7 @@
   </div>
 
   <p class="note">
-    Everything produced stays under the <a href="{REPO}/blob/main/LICENSE">Unlicense</a> —
+    Everything produced stays under the <a href="{REPO}/blob/main/LICENSE">Unlicense</a>.
     funding buys the world more public-domain research, not access to it.
   </p>
 </div>

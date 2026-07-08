@@ -37,7 +37,7 @@
 </script>
 
 <svelte:head>
-  <title>Learn — disp</title>
+  <title>Learn · disp</title>
   <meta
     name="description"
     content="A first-principles walkthrough of disp: from five rewrite rules over binary trees to a dependently-typed language whose universe passes its own checker."
@@ -104,7 +104,7 @@
         real compiler, in your tab.
       </p>
       <p class="provenance">
-        Updated for the current two-operation kernel. This walkthrough is pedagogical commentary —
+        Updated for the current two-operation kernel. This walkthrough is pedagogical commentary;
         <a href="https://github.com/libdither/disp/blob/main/TYPE_THEORY.typ">TYPE_THEORY.typ</a>
         and the <code>lib/kernel/*.disp</code> sources are the ground truth.
       </p>

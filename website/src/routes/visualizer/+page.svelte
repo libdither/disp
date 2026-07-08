@@ -3,14 +3,14 @@
 </script>
 
 <svelte:head>
-  <title>Visualizer — disp</title>
+  <title>Visualizer · disp</title>
 </svelte:head>
 
 <div class="container page">
   <h1><span class="grad-text">Visualizer</span></h1>
   <p class="lede">
     Reserved for the reduction visualizer: step through real programs as trees and interaction
-    nets, watch sharing happen, and profile where the work goes. Not built yet — for now, enjoy
+    nets, watch sharing happen, and profile where the work goes. Not built yet. For now, enjoy
     the five rules on loop.
   </p>
   <div class="teaser">
