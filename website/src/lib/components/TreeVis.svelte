@@ -182,7 +182,7 @@
     d: string
     w: number
   }
-  // consumed pattern pieces shrink away where they stood
+  // consumed pattern pieces dissolve while being drawn into the redex site
   interface Vanishing {
     id: number
     x: number
@@ -190,6 +190,15 @@
     tag: T['tag']
     tint: string
     tilt: number
+    sx: number // glide-to-the-site delta while shrinking (0 = in place)
+    sy: number
+  }
+  // a fired redex occurrence on screen: where its consumed machinery sinks,
+  // and the region whose edges travel with their subtrees
+  interface SitePin {
+    path: string
+    x: number
+    y: number
   }
 
   let nodes = $state<VNode[]>([])
@@ -322,7 +331,7 @@
     const u = t - 1
     return 1 + (c + 1) * u * u * u + c * u * u
   }
-  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>) {
+  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>, sitePaths: string[] = []) {
     cancelAnimationFrame(anim!)
     if (!motion || nodes.length === 0) {
       nodes = l.nodes
@@ -351,13 +360,20 @@
     const newByPath = new Map(l.nodes.map((n) => [n.path, n]))
     const ePairs = l.edges.map((te) => {
       const cPath = te.trunk ? 'r' : te.id.replace('>', '')
+      const pPath = te.trunk ? '' : te.id.split('>')[0]
       const child = newByPath.get(cPath)
       let f = eFrom.get(te.id)
-      // an edge is the SAME edge only if it still carries the same child
-      // tree; otherwise its id collided with an unrelated old branch
       if (f && !te.trunk) {
         const oldChild = nFrom.get(cPath)
-        if (!oldChild || !child || oldChild.tree !== child.tree) f = undefined
+        const sameChild = oldChild && child && oldChild.tree === child.tree
+        // The port rule: an edge whose parent survives OUTSIDE the rewritten
+        // region is a stable port — the branch stays and receives the
+        // arriving child (K's kept leaf lands on the waiting branch). An
+        // edge whose parent is part of the RESULT re-wires: it travels with
+        // its child instead (triage's selected branch and S's shared
+        // argument bring their branches along).
+        const inResult = sitePaths.some((sp) => pPath.startsWith(sp))
+        if (!sameChild && inResult) f = undefined
       }
       if (!f && !te.trunk && child) {
         // the child moved here from elsewhere: bring its old incoming
@@ -413,13 +429,20 @@
     return out
   }
 
-  function show(tree: T, opts: { spine?: Set<T>; allShrink?: boolean } = {}) {
-    const { spine, allShrink = false } = opts
+  function show(tree: T, opts: { spine?: Set<T>; allShrink?: boolean; sites?: SitePin[] } = {}) {
+    const { spine, allShrink = false, sites = [] } = opts
     const prevNodes = nodes
     const prevEdges = edges
     const l = layout(tree)
     const oldByRef = new Map<T, VNode>()
     for (const n of prevNodes) if (!oldByRef.has(n.tree)) oldByRef.set(n.tree, n)
+    // a consumed piece sinks into the innermost fired site containing it
+    const sinkFor = (path: string): SitePin | null => {
+      let best: SitePin | null = null
+      for (const s of sites)
+        if (path.startsWith(s.path) && (!best || s.path.length > best.path.length)) best = s
+      return best
+    }
     if (motion && styled && prevNodes.length > 0) {
       const survivors = new Set(l.nodes.map((n) => n.tree))
       const removed = prevNodes.filter((n) => !survivors.has(n.tree))
@@ -442,7 +465,19 @@
             label: n.vname ?? undefined
           })
         } else {
-          shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt })
+          // consumed machinery is drawn into the reduction point as it
+          // dissolves — knots merge down the branch into the new joint
+          const s = consumed && !allShrink ? sinkFor(n.path) : null
+          shrunk.push({
+            id: debrisId++,
+            x: n.x,
+            y: n.y,
+            tag: n.tag,
+            tint: n.tint,
+            tilt: n.tilt,
+            sx: s ? s.x - n.x : 0,
+            sy: s ? s.y - n.y : 0
+          })
         }
       }
       if (fresh.length) {
@@ -474,7 +509,7 @@
         }, 500)
       }
     }
-    animateTo(l, oldByRef)
+    animateTo(l, oldByRef, sites.map((s) => s.path))
   }
 
   // ---- the run loop ----------------------------------------------------------
@@ -534,6 +569,11 @@
       tag: 'apply'
     })[]
     const spine = new Set(sites.flatMap((s) => spineOf(s)))
+    // every on-screen occurrence of a fired site: consumed machinery sinks
+    // there, and edges inside those regions re-wire with their subtrees
+    const sitePins: SitePin[] = nodes
+      .filter((n) => sites.some((s) => s === n.tree))
+      .map((n) => ({ path: n.path, x: n.x, y: n.y }))
     if (parallel) {
       const s = stepParallel(cur)
       if (!s) {
@@ -548,7 +588,7 @@
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
           : `${s.fired.length} redexes fired in parallel (${s.fired.join(' ')})`
-      show(cur, { spine })
+      show(cur, { spine, sites: sitePins })
       return true
     }
     const s = stepOnce(cur)
@@ -561,7 +601,7 @@
     cur = s.next
     stepCount++
     ruleMsg = s.rule
-    show(cur, { spine })
+    show(cur, { spine, sites: sitePins })
     return true
   }
 
@@ -789,10 +829,10 @@
       {#each ghosts as g (g.id)}
         <path class="branch ghost" d={g.d} style="stroke-width:{g.w}" />
       {/each}
-      <!-- consumed pattern pieces shrink away where they stood -->
+      <!-- consumed pattern pieces dissolve into the reduction point -->
       {#each vanishing as v (v.id)}
         <g style="transform: translate({v.x}px, {v.y}px)">
-          <g class="vshrink">
+          <g class="vshrink" style="--sx: {v.sx}px; --sy: {v.sy}px">
             {#if v.tag === 'leaf'}
               <path
                 class="leafshape"
@@ -1199,13 +1239,14 @@
       opacity: 0;
     }
   }
-  /* consumed pattern pieces shrink away (absorbed by the rewrite) */
+  /* consumed pattern pieces are drawn into the reduction point as they
+     dissolve — spine knots merge down the branch into the new joint */
   .vshrink {
     animation: vshrink 0.42s ease-in forwards;
   }
   @keyframes vshrink {
     to {
-      transform: scale(0);
+      transform: translate(var(--sx, 0px), var(--sy, 0px)) scale(0);
       opacity: 0;
     }
   }
