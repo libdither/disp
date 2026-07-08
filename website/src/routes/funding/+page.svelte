@@ -5,9 +5,9 @@
   // the runway, measured. update CURRENT by hand, honestly.
   const CURRENT_MONTHLY = 0;
   const GOALS = [
-    { label: "pay claude code", amount: 200 },
-    { label: "pay rent and food", amount: 2000 },
-    { label: "invest in compute", amount: 3000 },
+    { label: "claude code", amount: 200 },
+    { label: "rent and food", amount: 2000 },
+    { label: "self-optimizing optimizer compute", amount: 3000 },
     { label: "median individual US income", amount: 3761 },
   ];
   const MAX = GOALS[GOALS.length - 1].amount;
@@ -38,8 +38,8 @@
     <div class="card">
       <h3>Support for free!</h3>
       <p>
-        Star, watch, open issues, talk about disp in my dms, are all Very Cool™
-        things to do.
+        Star, watch, use, open issues, contribute, talk about disp in my dms:
+        these are are all Very Cool™ things to do.
       </p>
       <a class="btn" href={REPO} target="_blank" rel="noopener"
         >Star on GitHub</a
@@ -58,11 +58,8 @@
 
     <div class="card">
       <h3>Monero</h3>
-      <p>
-        For the privacy-minded (or the simply crypto-curious): one-off donations
-        in XMR, no middleman, no fees skimmed.
-      </p>
-      <a class="btn" href="{base}/funding/monero/">Donate Monero</a>
+      <p>For Very Cool People who Like Privacy: fund this work with Monero!</p>
+      <a class="btn" href="{base}/funding/monero/">Donate XMR</a>
     </div>
   </div>
 
@@ -73,6 +70,7 @@
       Monthly support so far: <strong>{fmt(CURRENT_MONTHLY)}</strong> of
       {fmt(MAX)}.
     </p>
+    <div class="runway-scroll">
     <svg
       viewBox="0 0 {BW} 150"
       class="gardenbar"
@@ -216,6 +214,7 @@
       <circle cx={BX + TW * 0.3} cy={TY + TH + 6} r="2" class="daisy" />
       <circle cx={BX + TW * 0.86} cy={TY + TH + 8} r="2" class="daisy alt" />
     </svg>
+    </div>
     <p class="runway-note">
       Numbers update by hand when something changes (I will setup github actions
       for this). The last post is the U.S. median individual income, at which
@@ -252,15 +251,16 @@
     color: var(--fg-muted);
     font-size: 0.93rem;
   }
-  .note {
-    color: var(--fg-faint);
-    font-size: 0.9rem;
-    margin-top: 2.2rem;
-  }
 
   /* ---- the runway garden ---- */
   .runway {
     margin-top: 3rem;
+  }
+  /* on a phone the garden scrolls sideways instead of shrinking to moss */
+  .runway-scroll {
+    overflow-x: auto;
+    max-width: 100%;
+    padding-bottom: 0.3rem;
   }
   .runway h2 {
     font-size: 1.6rem;
@@ -273,6 +273,7 @@
   }
   .gardenbar {
     width: 100%;
+    min-width: 560px;
     overflow: visible;
   }
   .track {

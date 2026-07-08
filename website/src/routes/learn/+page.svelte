@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { toc } from '$lib/learn/toc'
-  import RuleRail from '$lib/components/RuleRail.svelte'
   import Ch1Motivation from '$lib/learn/chapters/Ch1Motivation.svelte'
   import Ch2Trees from '$lib/learn/chapters/Ch2Trees.svelte'
   import Ch3Source from '$lib/learn/chapters/Ch3Source.svelte'
@@ -91,7 +90,6 @@
       <div class="side-foot">
         <span class="pct">{progress.toFixed(0)}%</span> read
       </div>
-      <RuleRail inline />
     </div>
   </nav>
 
@@ -289,7 +287,9 @@
   }
 
   @media (max-width: 980px) {
-    .learn { grid-template-columns: 1fr; }
+    .learn { grid-template-columns: minmax(0, 1fr); }
+    /* a plain 1fr lets the article min-content (tables, code) widen the page */
+    .article :global(table) { display: block; overflow-x: auto; }
     .nav-toggle {
       display: block;
       position: fixed;

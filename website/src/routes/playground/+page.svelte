@@ -612,7 +612,7 @@ rhs = {t.rhs}</pre>
 
   @media (max-width: 860px) {
     .pg { height: auto; }
-    .split { grid-template-columns: 1fr; }
+    .split { grid-template-columns: minmax(0, 1fr); }
     .ed { height: 46dvh; border-right: none; border-bottom: 1px solid var(--border); }
     .out { height: 44dvh; }
   }

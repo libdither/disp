@@ -117,6 +117,11 @@ pre {
 /* ---- shared utilities ---- */
 
 .container {
+  /* width: 100% is load-bearing: containers live in a flex column, and auto
+     cross-axis margins disable stretch, so without it a page's width becomes
+     fit-content and any wide child (a table, a code line, an svg min-width)
+     drags the whole page past the viewport on phones */
+  width: 100%;
   max-width: var(--maxw);
   margin: 0 auto;
   padding: 0 clamp(1rem, 4vw, 2.4rem);
@@ -187,6 +192,14 @@ pre {
 .hl-type { color: #0f766e; }
 .hl-fn { color: #a8770f; }
 .hl-var { color: #2e4034; }
+
+/* phones: long inline code chips may wrap rather than widen the page */
+@media (max-width: 720px) {
+  :not(pre) > code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
 
 /* reduced motion: kill decorative animation */
 @media (prefers-reduced-motion: reduce) {

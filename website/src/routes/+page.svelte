@@ -1,7 +1,6 @@
 <script lang="ts">
   import { base } from "$app/paths";
   import TreeVis from "$lib/components/TreeVis.svelte";
-  import RuleRail from "$lib/components/RuleRail.svelte";
   import { highlightDisp } from "$lib/editor/highlight";
   import { examples } from "$lib/disp/examples";
 
@@ -275,7 +274,6 @@
   </div>
 </section>
 
-<RuleRail />
 
 <!-- ============================== features ============================== -->
 <section class="features container">
@@ -734,16 +732,13 @@
   }
   .feat-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1.1rem;
     margin-top: 1.6rem;
   }
   .feat h3 {
     margin: 0 0 0.5rem;
     font-size: 1.25rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5em;
   }
   .feat p {
     color: var(--fg-muted);
@@ -751,11 +746,12 @@
     margin: 0;
   }
   .feat-dot {
+    display: inline-block;
     width: 10px;
     height: 10px;
+    margin-right: 0.45em;
     border-radius: 50% 50% 50% 2px;
     background: var(--grad-brand);
-    flex: none;
     transform: rotate(45deg);
   }
   .features,
@@ -860,7 +856,7 @@
   /* ---------- involve ---------- */
   .inv-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1.1rem;
     margin-top: 1.4rem;
   }
@@ -893,14 +889,14 @@
   /* ---------- responsive ---------- */
   @media (max-width: 880px) {
     .hero-grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
     .hero-viz {
       order: -1;
     }
     .feat-grid,
     .inv-grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
     /* the definition box drops under the wordmark on small screens */
     .head-row {

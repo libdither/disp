@@ -37,13 +37,14 @@
     font-family: var(--font-body);
     line-height: 1.45;
     z-index: 50;
-    opacity: 0;
+    /* display, not opacity: an invisible-but-laid-out tip is still scrollable
+       overflow, which gave phones a phantom horizontal scrollbar */
+    display: none;
     pointer-events: none;
-    transition: opacity 0.15s ease;
     box-shadow: var(--shadow-lift);
   }
   .gloss:hover .tipbox,
   .gloss:focus .tipbox {
-    opacity: 1;
+    display: block;
   }
 </style>
