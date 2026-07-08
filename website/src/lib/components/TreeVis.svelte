@@ -84,6 +84,50 @@
   const exampleOptions = $derived(
     presets.length ? presets : exprs.map((e) => ({ expr: exprOf(e), tip: '' }))
   )
+
+  // ---- the example picker: a combobox panel under the input ---------------
+  const uid = $props.id()
+  let pickerOpen = $state(false)
+  let activeIdx = $state(-1) // keyboard/hover highlight in the open panel
+  let inputEl: HTMLInputElement | undefined = $state()
+  let wrapEl: HTMLDivElement | undefined = $state()
+  const matchIdx = () => exampleOptions.findIndex((o) => o.expr === input)
+  function openPicker() {
+    if (!exampleOptions.length) return
+    const m = matchIdx()
+    activeIdx = m >= 0 ? m : 0
+    pickerOpen = true
+  }
+  const closePicker = () => (pickerOpen = false)
+  function pickIdx(i: number) {
+    const o = exampleOptions[i]
+    closePicker()
+    if (o) load(o.expr)
+  }
+  // shift+←/→ hops through the examples (also bound in the widget's onKey)
+  function cyclePreset(dir: 1 | -1) {
+    const opts = exampleOptions
+    if (!opts.length) return
+    const cur = matchIdx()
+    const next = cur === -1 ? (dir === 1 ? 0 : opts.length - 1) : (cur + dir + opts.length) % opts.length
+    load(opts[next].expr)
+  }
+  function onInputKey(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      if (pickerOpen && activeIdx >= 0) pickIdx(activeIdx)
+      else load(input)
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (!pickerOpen) openPicker()
+      else if (activeIdx < exampleOptions.length - 1) activeIdx++
+    } else if (e.key === 'ArrowUp' && pickerOpen) {
+      e.preventDefault()
+      if (activeIdx > 0) activeIdx--
+    } else if (e.key === 'Escape' && pickerOpen) {
+      e.stopPropagation()
+      closePicker()
+    }
+  }
   let cur = $state<T | null>(null)
   let ruleMsg = $state('')
   let stepCount = $state(0)
@@ -566,6 +610,7 @@
   function load(src: string, opts: { keepAuto?: boolean } = {}) {
     clearTimeout(timer)
     if (!opts.keepAuto) autoCycle = false
+    pickerOpen = false
     err = ''
     ruleMsg = ''
     stepCount = 0
@@ -698,9 +743,20 @@
   }
 
   // keyboard drive when the widget itself is focused (clicking it focuses it):
-  // space runs/pauses, ◀ steps back, ▶ steps forward. Keys landing on the
-  // input, picker, or buttons keep their normal meaning.
+  // space runs/pauses, ◀ steps back, ▶ steps forward, shift+◀/▶ hops through
+  // the examples. Keys landing on the input or buttons keep their normal
+  // meaning — except the shift-hop, which works anywhere but the text input
+  // (where shift+arrows select text).
   function onKey(e: KeyboardEvent) {
+    if (
+      e.shiftKey &&
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+      (e.target as HTMLElement).tagName !== 'INPUT'
+    ) {
+      e.preventDefault()
+      cyclePreset(e.key === 'ArrowRight' ? 1 : -1)
+      return
+    }
     if (e.target !== e.currentTarget) return
     if (e.key === ' ') {
       e.preventDefault()
@@ -720,6 +776,12 @@
   onDestroy(() => clearTimeout(timer))
 </script>
 
+<svelte:document
+  onpointerdown={(e) => {
+    if (pickerOpen && wrapEl && !wrapEl.contains(e.target as Node)) closePicker()
+  }}
+/>
+
 <!-- the widget is a keyboard-drivable instrument: focus it, then space
   runs/pauses and the arrow keys step — hence the tabindex on a div -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -734,34 +796,58 @@
 >
   {#if showControls}
     <div class="controls">
-      <!-- the picker is a caret INSIDE the input: an invisible native select
-           sits over the arrow, so picking an example overrides the input, and
-           whatever you type highlights its own entry when it matches one -->
-      <div class="inputwrap">
+      <!-- input and example picker are ONE control: the caret opens a panel
+           attached under the input; picking overrides the input, and whatever
+           you type highlights its own entry when it matches one -->
+      <div class="inputwrap" bind:this={wrapEl}>
         <input
+          bind:this={inputEl}
           type="text"
+          class:open={pickerOpen}
           bind:value={input}
-          onkeydown={(e) => e.key === 'Enter' && load(input)}
+          onkeydown={onInputKey}
           spellcheck="false"
+          autocomplete="off"
+          role="combobox"
+          aria-expanded={pickerOpen}
+          aria-controls="{uid}-droplist"
+          aria-autocomplete="list"
           aria-label="tree-calculus expression"
         />
-        <select
-          class="expicker"
-          value={exampleOptions.some((o) => o.expr === input) ? input : '__custom'}
-          onchange={(e) => {
-            const v = (e.target as HTMLSelectElement).value
-            if (v !== '__custom') load(v)
+        <button
+          type="button"
+          class="caretbtn"
+          class:open={pickerOpen}
+          onclick={() => {
+            if (pickerOpen) closePicker()
+            else openPicker()
+            inputEl?.focus()
           }}
-          aria-label="pick an example expression"
+          aria-label="show example expressions"
+          aria-expanded={pickerOpen}
+          title="examples — shift+←/→ cycles them"
         >
-          {#each exampleOptions as o}
-            <option value={o.expr}>{o.expr}</option>
-          {/each}
-          {#if !exampleOptions.some((o) => o.expr === input)}
-            <option value="__custom">(custom)</option>
-          {/if}
-        </select>
-        <span class="caret" aria-hidden="true">▾</span>
+          ▾
+        </button>
+        {#if pickerOpen}
+          <div class="droplist" id="{uid}-droplist" role="listbox" tabindex="-1">
+            {#each exampleOptions as o, i}
+              <button
+                type="button"
+                class="dropitem"
+                class:active={i === activeIdx}
+                class:current={o.expr === input}
+                role="option"
+                aria-selected={o.expr === input}
+                onpointerenter={() => (activeIdx = i)}
+                onclick={() => pickIdx(i)}
+              >
+                <span class="dexpr">{o.expr}</span>
+                {#if o.tip}<span class="dtip">{o.tip}</span>{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
       <button class="cbtn" onclick={back} disabled={historyLen === 0} title="step backwards (←)">◀</button>
       <button class="cbtn primary" onclick={step} title="fire the next reduction (→)">Step</button>
@@ -942,6 +1028,7 @@
       class="instrument"
       onclick={() => {
         showControls = !showControls
+        pickerOpen = false
         if (showControls) {
           autoCycle = false
         }
@@ -1006,6 +1093,11 @@
     outline: none;
   }
   input:focus { border-color: var(--accent); }
+  /* open state: the input and the panel fuse into one combobox */
+  input.open {
+    border-color: var(--accent);
+    border-radius: 8px 8px 0 0;
+  }
   .cbtn {
     border: 1px solid var(--border-strong);
     background: var(--bg-elev);
@@ -1023,31 +1115,72 @@
     color: #f7fcf5;
     border: none;
   }
-  /* the example picker: an invisible native select over the input's caret —
-     the popup list is the browser's, the closed state is just the arrow */
-  .expicker {
+  /* the example picker: a caret button inside the input opens a panel
+     attached flush under it — input + dropdown as one control */
+  .caretbtn {
     position: absolute;
     top: 1px;
     right: 1px;
     bottom: 1px;
     width: 2em;
-    opacity: 0;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-  }
-  .expicker option { color: var(--fg); background: var(--bg-elev); }
-  .caret {
-    position: absolute;
-    right: 0.65em;
-    top: 50%;
-    transform: translateY(-52%);
+    border: none;
+    background: none;
     color: var(--fg-faint);
     font-size: 0.8rem;
-    pointer-events: none;
+    cursor: pointer;
+    border-radius: 0 7px 7px 0;
+    transition: transform 0.15s ease, color 0.15s ease;
   }
-  .inputwrap:hover .caret,
-  .inputwrap:focus-within .caret { color: var(--accent); }
+  .caretbtn:hover { color: var(--accent); }
+  .caretbtn.open {
+    color: var(--accent);
+    transform: rotate(180deg);
+    border-radius: 7px 0 0 7px;
+  }
+  .droplist {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-code);
+    border: 1px solid var(--accent);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    box-shadow: 0 14px 28px -14px color-mix(in oklab, var(--fg) 35%, transparent);
+    max-height: 264px;
+    overflow-y: auto;
+  }
+  .dropitem {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7em;
+    padding: 0.42em 0.75em;
+    border: none;
+    background: none;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+  }
+  .dropitem.active { background: color-mix(in oklab, var(--accent) 13%, transparent); }
+  .dropitem.current .dexpr { color: var(--accent); font-weight: 650; }
+  .dexpr { flex: none; white-space: nowrap; }
+  .dtip {
+    flex: 1;
+    min-width: 0;
+    color: var(--fg-faint);
+    font-size: 0.7rem;
+    font-style: italic;
+    font-family: var(--font-body);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.45rem 0 0; font-style: italic; }
   .toggles { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.55rem; }
   .tog {

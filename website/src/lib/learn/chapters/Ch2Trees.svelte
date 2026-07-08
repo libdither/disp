@@ -108,7 +108,8 @@
     marks the next
     <Gloss tip="a reducible expression: an application whose function (and, for triage, argument) is in the right shape for a rule to fire">redex</Gloss>,
     and pruned leaves fall where all pruned leaves go. Click the grove and drive it from the
-    keyboard — space runs and pauses, ←/→ step back and forward. The toggles are worth a poke:
+    keyboard — space runs and pauses, ←/→ step back and forward, shift+←/→ hop between the
+    examples. The toggles are worth a poke:
     <em>parallel</em> fires every ready redex per round, which is legal because tree calculus is
     confluent, and <em>nature</em> off turns the grove back into a plain diagram.
   </p>
