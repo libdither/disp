@@ -21,7 +21,7 @@
     disp: {
       term: "disp",
       pos: "n.",
-      html: "Ingredients: \none leaf, five rewrite rules, predicates, nets, and a dream...",
+      html: "Ingredients: <ul><li>one leaf</li> <li>five rewrite rules</li> <li>predicates</li>, <li>nets</li> <li>and a dream...</li></ul>",
     },
     decentralized: {
       term: "decentralized",
@@ -60,19 +60,48 @@
     },
   };
   let entryKey = $state("disp");
-  const entry = $derived(entries[entryKey] ?? entries.disp);
+  // clicking a term PINS its note (the tack goes in, hover stops mattering);
+  // clicking the same term again, or anywhere outside the card, lets it go
+  let pinned = $state<string | null>(null);
+  const entry = $derived(entries[pinned ?? entryKey] ?? entries.disp);
   // leaving a term starts a short grace period, and hovering the box itself
   // holds the entry open, so links inside the card are reachable
   let resetTimer: ReturnType<typeof setTimeout> | undefined;
   const look = (k: string) => () => {
     clearTimeout(resetTimer);
-    entryKey = k;
+    if (!pinned) entryKey = k;
   };
   const lookAway = () => {
     clearTimeout(resetTimer);
-    resetTimer = setTimeout(() => (entryKey = "disp"), 300);
+    if (pinned) return;
+    resetTimer = setTimeout(() => (entryKey = "disp"), 650);
   };
   const holdEntry = () => clearTimeout(resetTimer);
+  const togglePin = (k: string) => () => {
+    clearTimeout(resetTimer);
+    pinned = pinned === k ? null : k;
+    entryKey = k;
+  };
+  const onWindowClick = (e: MouseEvent) => {
+    if (!pinned) return;
+    const t = e.target as Element | null;
+    if (t?.closest(".defbox") || t?.closest(".dterm")) return;
+    pinned = null;
+    entryKey = "disp";
+  };
+
+  // the git-clone chip's copy button
+  const CLONE_CMD = `git clone ${REPO.replace("https://", "")} && npm i && npm test`;
+  let copied = $state(false);
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  async function copyClone() {
+    try {
+      await navigator.clipboard.writeText(CLONE_CMD);
+      copied = true;
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => (copied = false), 1600);
+    } catch {}
+  }
 
   let showcaseIdx = $state(0);
   const showcase = examples.filter((e) =>
@@ -95,6 +124,8 @@
   <title>disp · a decentralized lisp</title>
 </svelte:head>
 
+<svelte:window onclick={onWindowClick} />
+
 <!-- ============================== hero ============================== -->
 <section class="hero">
   <div class="aurora" aria-hidden="true"></div>
@@ -112,6 +143,7 @@
               onmouseenter={look("decentralized")}
               onmouseleave={lookAway}
               onfocus={look("decentralized")}
+              onclick={togglePin("decentralized")}
               onblur={lookAway}>decentralized</button
             >
             <button
@@ -119,6 +151,7 @@
               onmouseenter={look("lisp")}
               onmouseleave={lookAway}
               onfocus={look("lisp")}
+              onclick={togglePin("lisp")}
               onblur={lookAway}>lisp</button
             >
           </p>
@@ -126,7 +159,8 @@
         <!-- one definition box: hover a dotted term and its entry appears -->
         <aside
           class="defbox"
-          class:looking={entryKey !== "disp"}
+          class:looking={entryKey !== "disp" || pinned !== null}
+          class:pinned={pinned !== null}
           aria-live="polite"
           onmouseenter={holdEntry}
           onmouseleave={lookAway}
@@ -145,6 +179,7 @@
           onmouseenter={look("universal")}
           onmouseleave={lookAway}
           onfocus={look("universal")}
+          onclick={togglePin("universal")}
           onblur={lookAway}>universal</button
         >
         general-purpose programming language with
@@ -153,6 +188,7 @@
           onmouseenter={look("parsers")}
           onmouseleave={lookAway}
           onfocus={look("parsers")}
+          onclick={togglePin("parsers")}
           onblur={lookAway}>user-definable parsers</button
         >
         and
@@ -161,6 +197,7 @@
           onmouseenter={look("typesystems")}
           onmouseleave={lookAway}
           onfocus={look("typesystems")}
+          onclick={togglePin("typesystems")}
           onblur={lookAway}>type systems</button
         >, and a
         <button
@@ -168,6 +205,7 @@
           onmouseenter={look("optimizer")}
           onmouseleave={lookAway}
           onfocus={look("optimizer")}
+          onclick={togglePin("optimizer")}
           onblur={lookAway}>self-optimizing optimizer</button
         >
         based on
@@ -176,6 +214,7 @@
           onmouseenter={look("nets")}
           onmouseleave={lookAway}
           onfocus={look("nets")}
+          onclick={togglePin("nets")}
           onblur={lookAway}>interaction nets</button
         >
         that models hardware as imperfect interaction-net reduction. Based on
@@ -188,9 +227,46 @@
       </div>
       <div class="term">
         <span class="term-dollar">$</span>
-        <code
-          >git clone {REPO.replace("https://", "")} && npm i && npm test</code
+        <code>{CLONE_CMD}</code>
+        <button
+          class="copybtn"
+          class:copied
+          onclick={copyClone}
+          title="copy to clipboard"
+          aria-label="copy the clone command"
         >
+          {#if copied}
+            <svg viewBox="0 0 16 16" aria-hidden="true"
+              ><path
+                d="M3 8.5 L6.5 12 L13 4.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              /></svg
+            >
+          {:else}
+            <svg viewBox="0 0 16 16" aria-hidden="true"
+              ><rect
+                x="5.5"
+                y="5.5"
+                width="8"
+                height="8"
+                rx="1.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              /><path
+                d="M10.5 3.5 H4 A1.5 1.5 0 0 0 2.5 5 v6.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              /></svg
+            >
+          {/if}
+        </button>
       </div>
     </div>
     <div class="hero-viz">
@@ -442,6 +518,7 @@
     flex: none;
   }
   .defbox {
+    position: relative;
     flex: 1;
     max-width: 270px;
     min-height: 176px;
@@ -462,6 +539,30 @@
   .defbox.looking {
     transform: rotate(0deg);
     border-color: var(--g2);
+  }
+  /* pinned: the tack goes in and the note tilts the other way */
+  .defbox.pinned {
+    transform: rotate(-1.3deg) scale(1.02);
+    border-color: var(--g2);
+    box-shadow: var(--shadow-lift);
+  }
+  .defbox.pinned::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle at 35% 32%,
+      #f0d9a8,
+      #c99a3e 55%,
+      #8a6414
+    );
+    border: 1px solid #8a6414;
+    box-shadow: 0 2px 3px rgba(47, 74, 55, 0.35);
   }
   .def-head {
     display: flex;
@@ -506,6 +607,15 @@
   }
   .def-text :global(p) {
     margin: 0 0 0.4rem;
+  }
+  .def-text :global(ul) {
+    margin: 0.15rem 0 0;
+    padding-left: 1.15em;
+    white-space: normal;
+  }
+  .def-text :global(li) {
+    margin: 0;
+    line-height: 1.45;
   }
   h1 {
     font-size: clamp(4.2rem, 9vw, 6.8rem);
@@ -552,6 +662,34 @@
   .cta-row.center {
     justify-content: center;
     margin-top: 1.6rem;
+  }
+  .copybtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg-faint);
+    cursor: pointer;
+    padding: 3px;
+    transition: all 0.15s ease;
+  }
+  .copybtn:hover {
+    color: var(--g2);
+    border-color: var(--g2);
+  }
+  .copybtn.copied {
+    color: var(--g2);
+    border-color: var(--g2);
+    background: color-mix(in oklab, var(--g1) 12%, transparent);
+  }
+  .copybtn svg {
+    width: 100%;
+    height: 100%;
   }
   .term {
     display: inline-flex;
