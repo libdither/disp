@@ -34,9 +34,11 @@ jobs:
       - name: Install
         working-directory: website
         run: npm ci
-      - name: Build (base path /disp)
+      # the site lives at the custom domain root (disp-lang.net), so no base
+      # path; github.io/disp URLs 301 there with the project prefix stripped
+      - name: Build
         working-directory: website
-        run: BASE_PATH=/disp npm run build
+        run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
