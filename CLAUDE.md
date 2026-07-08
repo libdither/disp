@@ -25,7 +25,8 @@ Every component participating in checking, elaboration, or conversion must have 
 ### Source
 - `src/core/tree.ts` — tree calculus runtime: hash-consed trees, eager iterative `apply`, `tree_eq` native fast-path. (The dispatcher/parametric-walker runs in-language via `param_apply` in `lib/kernel/engine.disp`; there is no native dispatcher fast-path.)
 - `src/parse.ts` — tokenizer / parser. Implements `SYNTAX.typ` grammar.
-- `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests (failure printer decodes via the Session ABI on handle backends).
+- `src/run.ts` — file runner: loads `.disp`, parses, compiles, executes tests (failure printer decodes via the Session ABI on handle backends). A file exporting `main : Eff io_row X` then runs under the driver.
+- `src/driver.ts` — the impure driver POC (2026-07-08): checks `main` against its Eff type through the kernel, then walks Pure/Op nodes, enforcing the row + `is_closed` per op, performing via a host op map (`lib/std/io.disp`'s print/read_line), resuming with `apply(k, r)`. Examples in `examples/`; host tests in `test/driver.test.ts`.
 - `src/compile.ts` — the elaborator's public surface, a re-export barrel over `src/elab/`:
   - `elab/state.ts` — shared session/budget/caches + `ScopeEntry`/`SigParam`/`CompileSinks` + `collectSessionRoots`.
   - `elab/cir.ts` — CIR + bracket abstraction (η-reduction + K-composition optimizations); part of definitional equality.

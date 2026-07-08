@@ -747,7 +747,21 @@ fixed-point pin over what exists) is about three sessions.
 - If the differential battery finds a real spec/fused divergence that is not a
   spec bug, that is a kernel finding; stop and report before continuing.
 
-### The impure driver, mapped (2026-07-08; designed, not built)
+### The impure driver, mapped (2026-07-08; POC BUILT the same day)
+
+POC status: `src/driver.ts` (the loop below, ~150 lines), `lib/std/io.disp`
+(the IO vocabulary: `io_row`, `print`, `read_line`), `examples/hello.disp`
+and `examples/echo.disp` (run: `npm run disp -- examples/hello.disp`), a
+`main`-detecting hook in `src/run.ts`, and host tests in
+`test/driver.test.ts` (spawn the CLI, observe stdout/stdin). One design
+addition discovered building it: a ROOT file's own exports are not
+self-verified at load (module exports verify when the file is `use`d), so
+the driver runs the kernel membership check itself before performing
+anything — `param_apply mainType main = Ok true`, pulled from the session's
+module cache — and a wrong-row `main` dies with "the kernel's deep row
+certificate failed" before any effect happens. The row read and the
+label/effect-name distinction are the other two operational details (rows
+hold effect names; `eff_check` keys on `effect_of op`).
 
 The driver is the ONE impure component in the whole story: a small host-side
 loop (src/run.ts, or a src/driver.ts it calls) that walks a fully-handled

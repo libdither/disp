@@ -25,10 +25,11 @@
 //     answers). The optional cleanup route (Eff as a stock Coproduct with a
 //     RecUnder reader functor) remains open. Weakening is containment either
 //     way, so no subtyping judgment ever appears.
-//   - the impure driver (src/run.ts): `run : Eff {IO} X -> X` = run_pure's
-//     loop + a perform_host op map + the §8.1 is_closed sanitizer; async =
-//     the driver defers apply(k, result) until the bytes arrive. MAPPED
-//     2026-07-08 (the design section in EFFECT_BOOTSTRAP_PLAN.md); not built.
+//   - the impure driver: POC BUILT 2026-07-08 (src/driver.ts + std/io.disp +
+//     examples/hello.disp, echo.disp; design in EFFECT_BOOTSTRAP_PLAN.md).
+//     The loop classifies Pure/Op, checks main against its Eff type through
+//     the kernel first, enforces the row and is_closed per op, performs via
+//     a host op map, and resumes with apply(k, r); async answers await.
 //   - scoped/higher-order operations (§15 open question): one `Scoped` arm +
 //     weave. The handler's `forward` clause below is already the degenerate
 //     weave — see its comment.
