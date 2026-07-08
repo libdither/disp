@@ -12,6 +12,7 @@
     stepParallel,
     nextApplyToFire,
     readyRule,
+    readySites,
     childrenOf,
     pretty,
     natValue,
@@ -60,6 +61,10 @@
   let input = $state(exprs[0] ?? 'not false')
   // svelte-ignore state_referenced_locally
   let activeTip = $state(presets.find((p) => p.expr === input)?.tip ?? '')
+  // the dropdown offers the presets when there are any, else the cycle list
+  const exampleOptions = $derived(
+    presets.length ? presets : exprs.map((e) => ({ expr: e, tip: '' }))
+  )
   let cur = $state<T | null>(null)
   let ruleMsg = $state('')
   let stepCount = $state(0)
@@ -79,6 +84,7 @@
     tint: string
     tilt: number
     label: string | null
+    fresh?: boolean // no prior position: genuinely new growth
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
   interface VEdge {
@@ -107,11 +113,21 @@
     d: string
     w: number
   }
+  // consumed pattern pieces shrink away where they stood
+  interface Vanishing {
+    id: number
+    x: number
+    y: number
+    tag: T['tag']
+    tint: string
+    tilt: number
+  }
 
   let nodes = $state<VNode[]>([])
   let edges = $state<VEdge[]>([])
   let debris = $state<Debris[]>([])
   let ghosts = $state<GhostEdge[]>([])
+  let vanishing = $state<Vanishing[]>([])
   let debrisId = 0
   const W = 560
   const XSTEP = 46
@@ -235,7 +251,7 @@
     const u = t - 1
     return 1 + (c + 1) * u * u * u + c * u * u
   }
-  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }) {
+  function animateTo(l: { nodes: VNode[]; edges: VEdge[] }, oldByRef: Map<T, VNode>) {
     cancelAnimationFrame(anim!)
     if (!motion || nodes.length === 0) {
       nodes = l.nodes
@@ -244,12 +260,32 @@
     }
     const nFrom = new Map(nodes.map((n) => [n.path, n]))
     const eFrom = new Map(edges.map((e) => [e.id, e]))
-    const nPairs = l.nodes.map((tn) => ({ tn, f: nFrom.get(tn.path) }))
-    const ePairs = l.edges.map((te) => ({
-      te,
-      // a NEW branch grows out of its parent endpoint
-      f: eFrom.get(te.id) ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 }
-    }))
+    // Reference correspondence is the general rewrite-animation rule: a
+    // target node whose path survived stays put and glides; failing that, a
+    // node whose TREE REFERENCE existed before glides (or splits, when a rule
+    // duplicated it) from the reference's old position; only genuinely new
+    // structure grows in from nothing.
+    const fromFor = (tn: VNode): VNode | undefined => nFrom.get(tn.path) ?? oldByRef.get(tn.tree)
+    const nPairs = l.nodes.map((tn) => {
+      const f = fromFor(tn)
+      return { tn: { ...tn, fresh: !f }, f }
+    })
+    const newByPath = new Map(l.nodes.map((n) => [n.path, n]))
+    const ePairs = l.edges.map((te) => {
+      let f = eFrom.get(te.id)
+      if (!f && !te.trunk) {
+        // the child node may have moved here from elsewhere: bring its old
+        // incoming branch along instead of growing a new one
+        const childPath = te.id.replace('>', '')
+        const child = newByPath.get(childPath)
+        const old = child && !nFrom.get(childPath) ? oldByRef.get(child.tree) : undefined
+        if (old && old.path !== 'r') {
+          f = eFrom.get(`${old.path.slice(0, -1)}>${old.path.slice(-1)}`)
+        }
+      }
+      // otherwise a NEW branch grows out of its parent endpoint
+      return { te, f: f ?? { ...te, x2: te.x1, y2: te.y1, cx: te.x1, cy: te.y1 } }
+    })
     const t0 = performance.now()
     const D = 550
     const frame = (now: number) => {
@@ -272,28 +308,55 @@
     anim = requestAnimationFrame(frame)
   }
 
-  function show(tree: T) {
+  // The redex's own pattern (the apply node, the rule's matched spine, and
+  // for triage the argument's shell) is CONSUMED by a rule: it shrinks away.
+  // Everything else that disappears was DISCARDED data: leaves fall, branches
+  // disintegrate. This split is derivable from any pattern-matching rule, not
+  // just these five.
+  function spineOf(site: T & { tag: 'apply' }): T[] {
+    const out: T[] = [site]
+    const f = site.f
+    if (f.tag === 'leaf' || f.tag === 'stem') out.push(f)
+    else if (f.tag === 'fork') {
+      out.push(f)
+      const a = f.l
+      if (a.tag === 'leaf' || a.tag === 'stem') out.push(a) // K, S
+      else if (a.tag === 'fork') {
+        out.push(a) // F
+        out.push(site.x) // triage consumes the argument's shell
+      }
+    }
+    return out
+  }
+
+  function show(tree: T, spine?: Set<T>, allShrink = false) {
     const prevNodes = nodes
     const prevEdges = edges
     const l = layout(tree)
+    const oldByRef = new Map<T, VNode>()
+    for (const n of prevNodes) if (!oldByRef.has(n.tree)) oldByRef.set(n.tree, n)
     if (motion && styled && prevNodes.length > 0) {
-      // Anything whose tree REFERENCE survives merely moved (rewrites share
-      // untouched subtrees), so it glides. A pruned LEAF falls to the ground;
-      // pruned branches disintegrate where they stood.
       const survivors = new Set(l.nodes.map((n) => n.tree))
       const removed = prevNodes.filter((n) => !survivors.has(n.tree))
       const removedPaths = new Set(removed.map((n) => n.path))
-      const fresh: Debris[] = removed
-        .filter((n) => n.tag === 'leaf')
-        .map((n) => ({
-          id: debrisId++,
-          x: n.x,
-          y: n.y,
-          dy: height - GROUND + 4 - n.y + (hash(n.path) % 8),
-          dx: ((hash(n.path) % 36) - 18) * 1.1,
-          rot: (hash(n.path) % 160) - 80,
-          tint: n.tint
-        }))
+      const fresh: Debris[] = []
+      const shrunk: Vanishing[] = []
+      for (const n of removed) {
+        const consumed = allShrink || (spine?.has(n.tree) ?? false)
+        if (n.tag === 'leaf' && !consumed) {
+          fresh.push({
+            id: debrisId++,
+            x: n.x,
+            y: n.y,
+            dy: height - GROUND + 4 - n.y + (hash(n.path) % 8),
+            dx: ((hash(n.path) % 36) - 18) * 1.1,
+            rot: (hash(n.path) % 160) - 80,
+            tint: n.tint
+          })
+        } else {
+          shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt })
+        }
+      }
       if (fresh.length) {
         debris.push(...fresh)
         while (debris.length > 90) debris.shift()
@@ -301,6 +364,13 @@
         setTimeout(() => {
           debris = debris.filter((d) => !ids.includes(d.id))
         }, 6400)
+      }
+      if (shrunk.length) {
+        vanishing.push(...shrunk)
+        const ids = shrunk.map((v) => v.id)
+        setTimeout(() => {
+          vanishing = vanishing.filter((v) => !ids.includes(v.id))
+        }, 460)
       }
       // branches that lost their subtree fade out in place
       const newIds = new Set(l.edges.map((e) => e.id))
@@ -316,7 +386,7 @@
         }, 500)
       }
     }
-    animateTo(l)
+    animateTo(l, oldByRef)
   }
 
   // ---- the run loop ----------------------------------------------------------
@@ -334,6 +404,8 @@
     atNormalForm = false
     debris = []
     ghosts = []
+    vanishing = []
+    history = []
     input = src
     activeTip = presets.find((p) => p.expr === src)?.tip ?? ''
     try {
@@ -346,8 +418,22 @@
     }
   }
 
+  // each fired step remembers where it came from, so ◀ can walk back
+  let history: { tree: T; msg: string; steps: number }[] = []
+  let historyLen = $state(0)
+  const remember = () => {
+    if (!cur) return
+    history.push({ tree: cur, msg: ruleMsg, steps: stepCount })
+    if (history.length > 400) history.shift()
+    historyLen = history.length
+  }
+
   function fire(): boolean {
     if (!cur) return false
+    // gather the pattern spines BEFORE stepping: these pieces are consumed
+    // (they shrink); anything else that vanishes was discarded (it falls)
+    const sites = parallel ? readySites(cur) : [nextApplyToFire(cur)].filter((s) => s !== null)
+    const spine = new Set(sites.flatMap((s) => spineOf(s as T & { tag: 'apply' })))
     if (parallel) {
       const s = stepParallel(cur)
       if (!s) {
@@ -355,13 +441,14 @@
         atNormalForm = true
         return false
       }
+      remember()
       cur = s.next
       stepCount++
       ruleMsg =
         s.fired.length === 1
           ? `1 redex fired (${s.fired[0]})`
           : `${s.fired.length} redexes fired in parallel (${s.fired.join(' ')})`
-      show(cur)
+      show(cur, spine)
       return true
     }
     const s = stepOnce(cur)
@@ -370,11 +457,27 @@
       atNormalForm = true
       return false
     }
+    remember()
     cur = s.next
     stepCount++
     ruleMsg = s.rule
-    show(cur)
+    show(cur, spine)
     return true
+  }
+
+  function back() {
+    const h = history.pop()
+    if (!h) return
+    historyLen = history.length
+    running = false
+    autoCycle = false
+    clearTimeout(timer)
+    cur = h.tree
+    stepCount = h.steps
+    ruleMsg = h.msg || 'stepped back'
+    atNormalForm = false
+    // undoing a rewrite: the rule's products shrink away, its inputs regrow
+    show(cur, undefined, true)
   }
 
   function schedule() {
@@ -434,18 +537,30 @@
         spellcheck="false"
         aria-label="tree-calculus expression"
       />
+      <button class="cbtn" onclick={back} disabled={historyLen === 0} title="step backwards">◀</button>
       <button class="cbtn primary" onclick={step}>Step</button>
       <button class="cbtn" onclick={toggleRun}>{running ? 'Pause' : 'Run'}</button>
       <button class="cbtn" onclick={reset}>Reset</button>
     </div>
-    {#if presets.length}
-      <div class="presets">
-        {#each presets as p}
-          <button class="preset" class:active={input === p.expr} onclick={() => load(p.expr)}>{p.expr}</button>
+    <div class="picker-row">
+      <select
+        class="expicker"
+        value={exampleOptions.some((o) => o.expr === input) ? input : '__custom'}
+        onchange={(e) => {
+          const v = (e.target as HTMLSelectElement).value
+          if (v !== '__custom') load(v)
+        }}
+        aria-label="pick an example expression"
+      >
+        {#each exampleOptions as o}
+          <option value={o.expr}>{o.expr}</option>
         {/each}
-      </div>
+        {#if !exampleOptions.some((o) => o.expr === input)}
+          <option value="__custom">(custom)</option>
+        {/if}
+      </select>
       {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
-    {/if}
+    </div>
     <div class="toggles">
       <button class="tog" class:on={parallel} onclick={() => { parallel = !parallel; if (cur) show(cur) }}
         title="fire every ready redex per step (confluence says the answer agrees)">parallel</button>
@@ -489,6 +604,24 @@
       {#each ghosts as g (g.id)}
         <path class="branch ghost" d={g.d} style="stroke-width:{g.w}" />
       {/each}
+      <!-- consumed pattern pieces shrink away where they stood -->
+      {#each vanishing as v (v.id)}
+        <g style="transform: translate({v.x}px, {v.y}px)">
+          <g class="vshrink">
+            {#if v.tag === 'leaf'}
+              <path
+                class="leafshape"
+                d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
+                style="fill:{v.tint}; transform: rotate({v.tilt}deg)"
+              />
+            {:else if v.tag === 'apply'}
+              <circle r="6" class="bud-ring" />
+            {:else}
+              <circle r="3.6" class="knot" />
+            {/if}
+          </g>
+        </g>
+      {/each}
 
       <g class="tree" class:swaying={styled && motion}>
         {#each edges as e (e.id)}
@@ -496,7 +629,7 @@
         {/each}
         {#each nodes as n (n.path)}
           <g class="node" style="transform: translate({n.x}px, {n.y}px)">
-            <g class="inner" class:growing={motion && styled} style="--gd: {n.depth * 55}ms">
+            <g class="inner" class:growing={motion && styled && n.fresh !== false} style="--gd: {n.depth * 55}ms">
               {#if n.tag === 'apply'}
                 <circle r={styled ? 8.5 : 8} class="bud-ring" />
                 {#if !styled}<text class="at">@</text>{:else}<circle r="3" class="bud-core" />{/if}
@@ -621,19 +754,23 @@
     color: #f7fcf5;
     border: none;
   }
-  .presets { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.35rem; }
-  .preset {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    padding: 0.25em 0.7em;
-    cursor: pointer;
+  .picker-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    margin-top: 0.4rem;
   }
-  .preset:hover { color: var(--fg); border-color: var(--border-strong); }
-  .preset.active { color: var(--g2); border-color: color-mix(in oklab, var(--g2) 50%, transparent); }
+  .expicker {
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    padding: 0.3em 0.55em;
+    max-width: 100%;
+  }
   .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.45rem 0 0; font-style: italic; }
   .toggles { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.55rem; }
   .tog {
@@ -754,6 +891,17 @@
       opacity: 0;
     }
   }
+  /* consumed pattern pieces shrink away (absorbed by the rewrite) */
+  .vshrink {
+    animation: vshrink 0.42s ease-in forwards;
+  }
+  @keyframes vshrink {
+    to {
+      transform: scale(0);
+      opacity: 0;
+    }
+  }
+
   /* pruned branches disintegrate where they stood */
   .branch.ghost {
     animation: eghost 0.45s ease-out forwards;

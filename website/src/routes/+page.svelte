@@ -51,7 +51,7 @@
     optimizer: {
       term: "self-optimizing optimizer",
       pos: "n.",
-      html: "Eliezer Yudkowsky called me and said this was probably a bad idea but idk man, I'd rather interpretable recursive self-improvement than whatever Anthropic and OpenAI be up to.",
+      html: "Eliezer Yudkowsky called me and said this was probably a bad idea but idk man, I'd rather my recursive self-improvement loop be interpretable than whatever Anthropic and OpenAI be up to.",
     },
     nets: {
       term: "interaction nets",
@@ -281,8 +281,7 @@
 <section class="features container">
   <h2 class="sect-title">Why <span class="grad-text">disp</span>?</h2>
   <p class="sect-sub">
-    The type system, the self-verifying kernel, and five byte-agreeing
-    evaluators run today. The rest is what they were built to reach.
+    <i>Because its cool, that's why</i>
     <a href="{REPO}/blob/main/FOUNDATIONS.md" target="_blank" rel="noopener"
       >FOUNDATIONS.md</a
     >
@@ -342,7 +341,11 @@
           rel="noopener">interaction nets</a
         >, and have another interaction net search the original interaction nets
         to find-and-replace certain nets with native operations. Possibly using
-        <a href="https://egraphs-good.github.io/">e-graphs</a>.
+        <a href="https://egraphs-good.github.io/">e-graphs</a>. Then buy a
+        dedicated hyper-parallel chip that basically runs a cellular automata
+        specialized to simulate agent reduction where agents are connected by
+        other agents through the physical space of the chip and reduce at a
+        billion parallel reductions per second or something.
       </p>
     </div>
   </div>
