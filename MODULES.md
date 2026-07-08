@@ -439,7 +439,10 @@ exactly the incoming tree, licensed-upgrade (replace) when the incoming
 export was licensed over exactly the incumbent. Unguarded different-tree
 collisions still error. This is what makes the trailing-overlay ceremony a
 module form: `arith.disp` = pure spec (`guard_eq nat_rec/add`) ending with
-`open use "arith.opt.disp"`, the overlay = one `{ new, proof }` export per
+`open use "arith.opt.disp" { NatRecT := NatRecT }`, the overlay = a functor
+over the spec's contract vocabulary (`open given { NatRecT : Type }` — the
+same fixpoint discipline as the kernel barrel, so the contract has ONE
+definition site and no import cycle) with one `{ new, proof }` export per
 optimized name (dependent bodies re-emitted, OPTIMIZER.typ's `(e', cert)` at
 the definition boundary), and every consumer's own opens resolve fast-vs-
 original via the stamps. The in-language Module-carries-requests form (and

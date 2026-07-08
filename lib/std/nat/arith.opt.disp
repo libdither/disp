@@ -5,14 +5,15 @@ open use "../../kernel/prelude.disp"
 // export below that collides with a name arith owns is a license payload
 // { new, proof }, replayed through the incumbent guard at the splice (the
 // licensed-collision rules in the driver's open handling). This file never opens
-// arith (that would be a load cycle): fast bodies are written against local names
-// (nat_rec_fast), and the proofs are checked at the boundary that owns the names,
-// not here. A future optimizer emits files of exactly this shape.
+// arith (that would be a load cycle): the spec vocabulary it cites arrives as a
+// GIVEN (the module-fixpoint discipline — same move as the kernel barrel), fast
+// bodies are written against local names (nat_rec_fast), and the proofs are
+// checked at the boundary that owns the names, not here. A future optimizer emits
+// files of exactly this shape: a functor over the spec's contract vocabulary.
 
-// The kernel recursor's honest dependent type. arith.disp needs it BEFORE this
-// file loads (its guard_eq cites it), so both files define it; hash-consing makes
-// the two copies one tree and the collision at the trailing open dedupes.
-NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
+// The recursor's contract, owned and defined by arith.disp; the fill at its
+// trailing open (`{ NatRecT := NatRecT }`) is what ties the knot.
+open given { NatRecT : Type }
 
 // nat_rec_fast: the kernel recursor with a fast CONCRETE path. A neutral target
 // delegates to nat_rec VERBATIM, so checking-time behavior is tree-identical (the same

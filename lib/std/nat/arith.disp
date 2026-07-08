@@ -19,9 +19,9 @@ open use "../oeq.disp"
 // lib/tests/guard_opt.test.disp (the in-language half of the tree_eq
 // native-fast-path discipline).
 
-// The recursor's honest dependent type — cited by the guard_eq below, so it must
-// exist before the overlay loads; tree-identical to arith.opt.disp's copy
-// (hash-consing dedupes the collision).
+// The recursor's honest dependent type — the contract this module owns. The
+// overlay cites it as a given, filled at the trailing open below (ONE definition
+// site; no copy in arith.opt.disp).
 NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
 
 // Own the kernel recursor at its pointwise equivalence. The first bind re-binds the
@@ -44,11 +44,12 @@ guard_eq nat_rec : NatRecT := nat_rec
 // needs a { new, proof } license.
 guard_eq add : Nat -> Nat -> Nat := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
 
-// ── The overlay: licensed fast replacements for nat_rec AND add. Each colliding
-// export is checked by the guards installed above; the exports of THIS module then
+// ── The overlay: licensed fast replacements for nat_rec AND add. The fill hands
+// the overlay this module's contract vocabulary (its one given); each colliding
+// export is then checked by the guards installed above; the exports of THIS module
 // carry the fast trees (plus stamps), and every body declared below this line —
 // there are none — would bake them.
-open use "arith.opt.disp"
+open use "arith.opt.disp" { NatRecT := NatRecT }
 
 // Re-export the optimization surface for consumers/pins that cite it explicitly.
 nat_rec_fast := nat_rec_fast
