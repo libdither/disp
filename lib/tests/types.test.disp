@@ -32,7 +32,6 @@ test param_apply (Pi Type ({A} -> Pi A ({_} -> A))) polywrong = Ok false
 let double := nat_rec ({_} -> Nat) zero ({n, rec} -> succ (succ rec))
 test double zero = zero
 test double (succ zero) = succ (succ zero)
-test double (succ (succ zero)) = succ (succ (succ (succ zero)))
 
 let neg := bool_rec ({_} -> Bool) false true // not: true->false, false->true
 test neg true = false

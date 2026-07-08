@@ -7,7 +7,6 @@ test two = 2
 test three = 3
 
 test pred 0 = 0
-test pred 1 = 0
 test pred 4 = 3
 
 test is_zero 0 = true

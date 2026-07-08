@@ -58,7 +58,7 @@ test is_neutral (elim nat_dispatcher motive cases hN) = true // neutral branch
 // with `param_apply (bind_hyp A) body` so the interception (w_bind_hyp) fires.
 test param_apply (bind_hyp Nat) ({x} -> Ok zero) = Ok zero // result independent of x
 test param_apply (bind_hyp Nat) ({x} -> Ok x) = Err // x at public position -> escape
-test param_apply (bind_hyp Nat) ({x} -> Ok (pair x zero)) = Err // x inside a user pair -> escape
+// (escape-through-a-structure is pinned in soundness.test + adversarial.test — the home of the escape family)
 
 // ---- raw functions + Pi (monomorphic dependent function) ----
 // Functions are raw bracket-abstracted lambdas — no `checked` wrapper. Pi binds

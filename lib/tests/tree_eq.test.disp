@@ -6,41 +6,29 @@
 open use raw "../prelude.disp" {}
 
 // ================================================================
-// Leaves, stems, forks
+// The full shape matrix: tree_eq dispatches on a's shape then b's, so the nine
+// (leaf|stem|fork) pairs are the code paths, plus same-shape inequality through
+// each recursion arm. (Consolidated 2026-07-08: dropped same-path duplicates,
+// ADDED the previously missing fork-vs-leaf / fork-vs-stem / stem-vs-fork pairs.)
 // ================================================================
 
 test tree_eq t t = true
 test tree_eq t (t t) = false
+test tree_eq t (t t t) = false
 test tree_eq (t t) t = false
 test tree_eq (t t) (t t) = true
+test tree_eq (t t) (t (t t)) = false        // stem arm: child recursion differs
+test tree_eq (t t) (t t t) = false
+test tree_eq (t t t) t = false
+test tree_eq (t t t) (t t) = false
 test tree_eq (t t t) (t t t) = true
-test tree_eq (t t t) (t t (t t)) = false
-test tree_eq (t (t t) t) (t (t t) t) = true
-test tree_eq (t (t t) t) (t t (t t)) = false
+test tree_eq (t (t t) t) (t t (t t)) = false // fork arm: first child differs
+test tree_eq (t t t) (t t (t t)) = false     // fork arm: second child differs
 
-// ================================================================
-// Mixed shapes
-// ================================================================
-
-test tree_eq t (t t t) = false
-test tree_eq (t t) (t (t t)) = false
-test tree_eq (t (t t)) (t (t t)) = true
-test tree_eq (t (t t)) (t t t) = false
-
-// ================================================================
-// Deeper trees
-// ================================================================
-
-test tree_eq (t (t t t) (t t)) (t (t t t) (t t)) = true
-test tree_eq (t (t t t) (t t)) (t (t t t) (t (t t))) = false
+// deep recursion through both children
 test tree_eq (t (t t (t t)) (t (t t) t)) (t (t t (t t)) (t (t t) t)) = true
+test tree_eq (t (t t t) (t t)) (t (t t t) (t (t t))) = false
 
-// ================================================================
-// Numeric literals (Nat trees: zero=leaf, succ=fork(t, n))
-// ================================================================
-
+// numeric literals ride the same fork encoding; one boundary + one interior pin
 test tree_eq 0 0 = true
-test tree_eq 0 1 = false
-test tree_eq 3 3 = true
 test tree_eq 3 4 = false
-test tree_eq 5 5 = true

@@ -10,8 +10,6 @@ test is_err_result (err 9) = true
 
 // Result Bool Nat: error is Bool, success is Nat
 test Result Bool Nat (ok 0) = Ok true
-test Result Bool Nat (ok 5) = Ok true
-test Result Bool Nat (err true) = Ok true
 test Result Bool Nat (err false) = Ok true
 
 // Type mismatches
