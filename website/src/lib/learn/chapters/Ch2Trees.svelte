@@ -6,8 +6,9 @@
 
   const labPresets = [
     { expr: 'not false', tip: 'Booleans are the two smallest trees (true = t, false = t t); not is one triage: the F rule reads the argument\'s shape and picks a branch.' },
-    { expr: 'shape_code (t t t)', tip: 'The F rule as a value: shape_code answers 0 for a leaf, 1 for a stem, 2 for a fork. Case analysis over arbitrary data is a rewrite rule.' },
-    { expr: 'K t (t t)', tip: 'K discards its second argument. One K-rule firing, after the stem rule assembles the redex.' },
+    { expr: 'K x y', tip: 'Any name that isn\'t a known definition parses as a named leaf — a free variable with no shape of its own. K keeps x and discards y; watch y fall.' },
+    { expr: 'S f g x', tip: 'The S rule on paper: x is shared between f and g, giving (f x)(g x). Free variables have no shape, so the result is stuck — a symbolic normal form.' },
+    { expr: 't (t a b) c (t t)', tip: 'The F rule in the raw: the argument t t is a stem, so triage picks b and hands it the stem\'s child; the a and c branches are pruned.' },
     { expr: 'S K K (t t)', tip: 'S K K is the identity, assembled from S and K: the S rule duplicates the argument, then two K rules collapse it back out.' },
     { expr: 'S K K (S K K (t t))', tip: 'Two identities, nested. Try the parallel toggle here: independent redexes fire in the same round, and confluence promises the same answer.' }
   ]
@@ -100,10 +101,14 @@
     </p>
   </Aside>
   <p>
-    The lab below evaluates any expression you type. Press <em>Step</em> to fire the next
-    reduction and watch which rule carries it: the amber letter marks the next
+    The lab below evaluates any expression you type. Names that aren't known definitions parse
+    as <em>named leaves</em> — free variables with no shape of their own — so
+    <code>K x y</code> and <code>S f g x</code> reduce exactly as they do on paper. Press
+    <em>Step</em> to fire the next reduction and watch which rule carries it: the amber letter
+    marks the next
     <Gloss tip="a reducible expression: an application whose function (and, for triage, argument) is in the right shape for a rule to fire">redex</Gloss>,
-    and pruned leaves fall where all pruned leaves go. The toggles are worth a poke:
+    and pruned leaves fall where all pruned leaves go. Click the grove and drive it from the
+    keyboard — space runs and pauses, ←/→ step back and forward. The toggles are worth a poke:
     <em>parallel</em> fires every ready redex per round, which is legal because tree calculus is
     confluent, and <em>nature</em> off turns the grove back into a plain diagram.
   </p>

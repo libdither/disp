@@ -38,13 +38,14 @@
   }
   let {
     variant = 'ambient',
-    // the ambient tour: one demo per rule, then programs that mean something
+    // the ambient tour: one demo per rule (on named leaves, so the reductions
+    // read like they do on paper), then programs that mean something
     exprs = [
-      'K t t t', // ends on the leaf rule (△)
-      'K (t t) t t', // ends on fork-construction (f)
-      'K t (t t)', // K discards
-      'S t t t', // S duplicates
-      'shape_code (t t t)', // triage reads a shape
+      'K x y', // K keeps x, discards y
+      'K t x y', // …after K resolves, the leaf rule (△) grows a stem: t y
+      'K (t t) x y', // …and fork-construction (f) finishes a triple: t t y
+      'S f g x', // S shares x between f and g: (f x)(g x)
+      't (t a b) c (t t)', // triage: the F rule reads the argument's shape
       'not true',
       'and false true',
       { expr: 'add 2 3', stepMs: 90 } // the computation storm finale
@@ -102,6 +103,7 @@
     tint: string
     tilt: number
     label: string | null
+    vname: string | null // a named leaf's name — always shown
     fresh?: boolean // no prior position: genuinely new growth
   }
   // edges carry coordinates (not a baked path string) so they can be tweened
@@ -128,6 +130,7 @@
     rot: number
     tint: string
     delay: number
+    label?: string // a discarded named leaf falls with its name on
   }
   interface GhostEdge {
     id: number
@@ -158,6 +161,7 @@
   const GROUND = 46
 
   const LEAF_TINTS = ['#6dbd7e', '#4aa96c', '#8fce9d', '#3d9b74', '#5cb787']
+  const VAR_TINT = '#dcaa5e' // named leaves are the grove's autumn leaves
   const hash = (s: string) => {
     let h = 0
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
@@ -216,9 +220,10 @@
       depth: n.depth,
       ready: readyRule(n.tree),
       next: nextSite !== null && n.tree === nextSite,
-      tint: LEAF_TINTS[hash(n.path) % LEAF_TINTS.length],
+      tint: n.tree.tag === 'var' ? VAR_TINT : LEAF_TINTS[hash(n.path) % LEAF_TINTS.length],
       tilt: (hash(n.path) % 70) - 35,
-      label: nameOf(n.tree)
+      label: nameOf(n.tree),
+      vname: n.tree.tag === 'var' ? n.tree.name : null
     }))
     const byPath = new Map(out.map((n) => [n.path, n]))
     const vedges: VEdge[] = []
@@ -369,7 +374,7 @@
         const consumed = allShrink || (spine?.has(n.tree) ?? false)
         // consumed pattern pieces exit with the join; discarded data waits
         const delay = consumed ? 0 : exitDelay
-        if (n.tag === 'leaf' && !consumed) {
+        if ((n.tag === 'leaf' || n.tag === 'var') && !consumed) {
           fresh.push({
             id: debrisId++,
             x: n.x,
@@ -378,7 +383,8 @@
             dx: ((hash(n.path) % 36) - 18) * 1.1,
             rot: (hash(n.path) % 160) - 80,
             tint: n.tint,
-            delay
+            delay,
+            label: n.vname ?? undefined
           })
         } else {
           shrunk.push({ id: debrisId++, x: n.x, y: n.y, tag: n.tag, tint: n.tint, tilt: n.tilt, delay })
@@ -562,28 +568,43 @@
     load(input, { keepAuto: variant === 'ambient' })
   }
 
+  // keyboard drive when the widget itself is focused (clicking it focuses it):
+  // space runs/pauses, ◀ steps back, ▶ steps forward. Keys landing on the
+  // input, picker, or buttons keep their normal meaning.
+  function onKey(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget) return
+    if (e.key === ' ') {
+      e.preventDefault()
+      toggleRun()
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      back()
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      step()
+    }
+  }
+
   onMount(() => {
     load(input, { keepAuto: autoCycle })
   })
   onDestroy(() => clearTimeout(timer))
 </script>
 
-<div class="vis" class:plain={!styled} class:lab={variant === 'lab'}>
+<!-- the widget is a keyboard-drivable instrument: focus it, then space
+  runs/pauses and the arrow keys step — hence the tabindex on a div -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+<div
+  class="vis"
+  class:plain={!styled}
+  class:lab={variant === 'lab'}
+  tabindex="0"
+  role="application"
+  aria-label="tree-calculus visualizer — space runs or pauses, arrow keys step back and forward"
+  onkeydown={onKey}
+>
   {#if showControls}
     <div class="controls">
-      <input
-        type="text"
-        bind:value={input}
-        onkeydown={(e) => e.key === 'Enter' && load(input)}
-        spellcheck="false"
-        aria-label="tree-calculus expression"
-      />
-      <button class="cbtn" onclick={back} disabled={historyLen === 0} title="step backwards">◀</button>
-      <button class="cbtn primary" onclick={step}>Step</button>
-      <button class="cbtn" onclick={toggleRun}>{running ? 'Pause' : 'Run'}</button>
-      <button class="cbtn" onclick={reset}>Reset</button>
-    </div>
-    <div class="picker-row">
       <select
         class="expicker"
         value={exampleOptions.some((o) => o.expr === input) ? input : '__custom'}
@@ -600,8 +621,19 @@
           <option value="__custom">(custom)</option>
         {/if}
       </select>
-      {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
+      <input
+        type="text"
+        bind:value={input}
+        onkeydown={(e) => e.key === 'Enter' && load(input)}
+        spellcheck="false"
+        aria-label="tree-calculus expression"
+      />
+      <button class="cbtn" onclick={back} disabled={historyLen === 0} title="step backwards (←)">◀</button>
+      <button class="cbtn primary" onclick={step} title="fire the next reduction (→)">Step</button>
+      <button class="cbtn" onclick={toggleRun} title="run/pause (space)">{running ? 'Pause' : 'Run'}</button>
+      <button class="cbtn" onclick={reset}>Reset</button>
     </div>
+    {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
     <div class="toggles">
       <button class="tog" class:on={parallel} onclick={() => { parallel = !parallel; if (cur) show(cur) }}
         title="fire every ready redex per step (confluence says the answer agrees)">parallel</button>
@@ -634,11 +666,14 @@
       {#each debris as d (d.id)}
         <g style="transform: translate({d.x}px, {d.y}px)">
           <g class="debris" style="--dy: {d.dy}px; --dx: {d.dx}px; --xdelay: {d.delay}ms">
-            <path
-              class="leafshape dspin"
-              d="M0,-7 C4.5,-4 4.5,2.5 0,7 C-4.5,2.5 -4.5,-4 0,-7 Z"
-              style="fill:{d.tint}; --rot: {d.rot}deg; animation-delay: {d.delay}ms"
-            />
+            <g class="dspin" style="--rot: {d.rot}deg; animation-delay: {d.delay}ms">
+              <path
+                class="leafshape"
+                d="M0,-7 C4.5,-4 4.5,2.5 0,7 C-4.5,2.5 -4.5,-4 0,-7 Z"
+                style="fill:{d.tint}"
+              />
+              {#if d.label}<text class="vname" y="0.5">{d.label}</text>{/if}
+            </g>
           </g>
         </g>
       {/each}
@@ -649,7 +684,7 @@
       {#each vanishing as v (v.id)}
         <g style="transform: translate({v.x}px, {v.y}px)">
           <g class="vshrink" style="animation-delay: {v.delay}ms">
-            {#if v.tag === 'leaf'}
+            {#if v.tag === 'leaf' || v.tag === 'var'}
               <path
                 class="leafshape"
                 d="M0,-8 C5.2,-5 5.2,2.5 0,8 C-5.2,2.5 -5.2,-5 0,-8 Z"
@@ -684,6 +719,21 @@
                   <path class="vein" d="M0,-6 L0,6" style="transform: rotate({n.tilt}deg)" />
                 {:else}
                   <circle r="4.5" class="dot leafdot" />
+                {/if}
+              {:else if n.tag === 'var'}
+                {#if styled}
+                  <path
+                    class="leafshape"
+                    d="M0,-9 C5.8,-5.5 5.8,3 0,9 C-5.8,3 -5.8,-5.5 0,-9 Z"
+                    style="fill:{n.tint}; transform: rotate({n.tilt * 0.3}deg)"
+                  />
+                {:else}
+                  <circle r="4.5" class="dot vardot" />
+                {/if}
+                {#if n.vname && n.vname.length <= 2 && styled}
+                  <text class="vname" y="0.5">{n.vname}</text>
+                {:else}
+                  <text class="vname above" y="-13">{n.vname}</text>
                 {/if}
               {:else}
                 <circle r={styled ? 4 : 5.5} class="knot" />
@@ -744,6 +794,13 @@
   .vis {
     position: relative;
     width: 100%;
+    outline: none;
+    border-radius: var(--radius, 12px);
+  }
+  /* keyboard drive: a visible ring only when focus came from the keyboard —
+     clicking to grab space/arrow control stays visually quiet */
+  .vis:focus-visible {
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 55%, transparent);
   }
   .vis.lab {
     border: 1px solid var(--border);
@@ -795,23 +852,19 @@
     color: #f7fcf5;
     border: none;
   }
-  .picker-row {
-    display: flex;
-    align-items: baseline;
-    gap: 0.7rem;
-    flex-wrap: wrap;
-    margin-top: 0.4rem;
-  }
   .expicker {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 38%;
     background: var(--bg-elev);
     border: 1px solid var(--border-strong);
     border-radius: 8px;
     color: var(--fg);
     font-family: var(--font-mono);
     font-size: 0.76rem;
-    padding: 0.3em 0.55em;
-    max-width: 100%;
+    padding: 0.3em 0.4em;
   }
+  .expicker:focus { border-color: var(--accent); outline: none; }
   .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.45rem 0 0; font-style: italic; }
   .toggles { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.55rem; }
   .tog {
@@ -907,6 +960,21 @@
     text-anchor: middle;
     font-family: var(--font-mono);
   }
+
+  /* named leaves (free variables): amber, letter worn on the leaf */
+  .vname {
+    fill: #4a3208;
+    font-size: 8px;
+    font-weight: 650;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    font-family: var(--font-mono);
+  }
+  .vname.above {
+    fill: var(--warn);
+    font-size: 10px;
+  }
+  .dot.vardot { fill: #dcaa5e; }
 
   /* ---- pruned leaves: fall (1s), rest (~2.4s), let go (3.4s) ----
      --xdelay staggers the whole exit (triage's rejected branches wait for

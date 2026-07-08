@@ -9,10 +9,15 @@ export type T =
   | { tag: 'stem'; c: T }
   | { tag: 'fork'; l: T; r: T }
   | { tag: 'apply'; f: T; x: T }
+  // a named leaf: a free variable. It has no shape of its own, so nothing can
+  // fire on it — applications with a var head (and triage on a var) stay stuck,
+  // which is exactly how reductions read on paper: K x y ▷ x, symbolically.
+  | { tag: 'var'; name: string }
 
 export const leaf: T = { tag: 'leaf' }
 export const stem = (c: T): T => ({ tag: 'stem', c })
 export const fork = (l: T, r: T): T => ({ tag: 'fork', l, r })
+export const varLeaf = (name: string): T => ({ tag: 'var', name })
 
 // Construction rules 1–2 fire immediately; a fork application materializes an
 // apply node for the stepper to fire visibly.
@@ -39,11 +44,12 @@ export function natValue(t: T): number | null {
 }
 
 export const childrenOf = (t: T): T[] =>
-  t.tag === 'leaf' ? [] : t.tag === 'stem' ? [t.c] : t.tag === 'fork' ? [t.l, t.r] : [t.f, t.x]
+  t.tag === 'stem' ? [t.c] : t.tag === 'fork' ? [t.l, t.r] : t.tag === 'apply' ? [t.f, t.x] : []
 
 export function treeEq(a: T, b: T): boolean {
   if (a === b) return true
   if (a.tag !== b.tag) return false
+  if (a.tag === 'var') return a.name === (b as T & { tag: 'var' }).name
   const ca = childrenOf(a)
   const cb = childrenOf(b)
   return ca.length === cb.length && ca.every((c, i) => treeEq(c, cb[i]))
@@ -88,7 +94,9 @@ export function reduceStep(f: T, x: T): StepResult {
 }
 
 // Which apply node fires next under the leftmost-innermost order the widget
-// animates (descend into f, then f.l, then — for triage — into x).
+// animates (descend into f, then f.l, then — for triage — into x). Free
+// variables leave stuck applies behind; a stuck node is skipped, but its
+// argument may still hold live redexes.
 export function nextApplyToFire(n: T): (T & { tag: 'apply' }) | null {
   if (n.tag === 'apply') {
     const f = n.f
@@ -96,7 +104,6 @@ export function nextApplyToFire(n: T): (T & { tag: 'apply' }) | null {
       const inner = nextApplyToFire(f)
       if (inner) return inner
     }
-    if (f.tag === 'leaf' || f.tag === 'stem') return n
     if (f.tag === 'fork') {
       const a = f.l
       if (a.tag === 'apply') {
@@ -107,9 +114,11 @@ export function nextApplyToFire(n: T): (T & { tag: 'apply' }) | null {
         const inner = nextApplyToFire(n.x)
         if (inner) return inner
       }
-      return n as T & { tag: 'apply' }
     }
-    return null
+    if (readyRule(n)) return n as T & { tag: 'apply' }
+    // stuck here (var head, or triage waiting on a shapeless argument):
+    // reductions may still hide in either side
+    return nextApplyToFire(f) ?? nextApplyToFire(n.x)
   }
   if (n.tag === 'fork') return nextApplyToFire(n.l) ?? nextApplyToFire(n.r)
   if (n.tag === 'stem') return nextApplyToFire(n.c)
@@ -119,7 +128,7 @@ export function nextApplyToFire(n: T): (T & { tag: 'apply' }) | null {
 // Replace `target` (by reference) with `repl` inside `root`.
 export function replaceNode(root: T, target: T, repl: T): T {
   if (root === target) return repl
-  if (root.tag === 'leaf') return root
+  if (root.tag === 'leaf' || root.tag === 'var') return root
   if (root.tag === 'stem') {
     const c = replaceNode(root.c, target, repl)
     return c === root.c ? root : stem(c)
@@ -145,10 +154,12 @@ export function readyRule(node: T): StepResult['tag'] {
     const a = f.l
     if (a.tag === 'leaf') return 'K'
     if (a.tag === 'stem') return 'S'
-    if (a.tag === 'fork') return node.x.tag === 'apply' ? null : 'F'
-    return null // f.l is itself pending
+    // triage reads x's shape: pending applies and shapeless free variables
+    // both leave it waiting
+    if (a.tag === 'fork') return node.x.tag === 'apply' || node.x.tag === 'var' ? null : 'F'
+    return null // f.l is itself pending or a free variable
   }
-  return null // f is pending
+  return null // f is pending or a free variable
 }
 
 // Every redex that is ready in the CURRENT tree (by reference).
@@ -171,7 +182,7 @@ export function stepOnce(root: T): { next: T; rule: string; tag: StepResult['tag
 export function stepParallel(root: T): { next: T; fired: NonNullable<StepResult['tag']>[] } | null {
   const fired: NonNullable<StepResult['tag']>[] = []
   function go(t: T): T {
-    if (t.tag === 'leaf') return t
+    if (t.tag === 'leaf' || t.tag === 'var') return t
     if (t.tag === 'stem') {
       const c = go(t.c)
       return c === t.c ? t : stem(c)
@@ -301,9 +312,6 @@ const AND = fork(fork(I_TREE, kOf(kOf(FALSE))), kOf(kOf(FALSE)))
 // or: true(leaf) -> true regardless, false(stem) -> b
 const OR = fork(fork(kOf(TRUE), kOf(I_TREE)), kOf(kOf(I_TREE)))
 
-// shape_code: leaf -> 0, stem -> 1, fork -> 2 (the F rule as a value)
-const SHAPE_CODE = fork(fork(nat(0), fork(leaf, nat(1))), fork(leaf, fork(leaf, nat(2))))
-
 // recursion the tree-calculus way (the walkthrough's construction):
 //   wait a b c = a b c, but wait a b does NOT evaluate a b
 //   fix f = wait m (λx. f (wait m x))   with m = λx. x x
@@ -317,17 +325,22 @@ const FIX = lam(
   a(tr(WAIT), tr(MFIX), cl(['x'], a(v('f'), a(tr(WAIT), tr(MFIX), v('x')))))
 )
 // add n m: triage on n — zero(leaf) -> m; succ(fork t pred) -> succ (add pred m)
-// (succ IS K at the tree level: K x = fork(leaf, x))
+// (succ IS K at the tree level: K x = fork(leaf, x)). Same equations as the
+// lib's add, compiled small so the storm stays watchable: the recursive body
+// takes only the deferred self and RETURNS the triage fork directly (no λn —
+// the dispatcher's own F rule consumes n), a K wrap eats triage's junk leaf
+// where λl would, and `self p m` η-collapses under bracket abstraction.
+// 89 nodes vs 160 for the λself λn λm spelling; peak mid-reduction ~880 vs
+// ~3500 on add 2 3.
 const ADD = normalize(
   app(
     FIX,
     lam(
-      ['self', 'n', 'm'],
+      ['s'],
       a(
         tr(leaf),
-        a(tr(leaf), v('m'), cl(['u'], v('m'))),
-        cl(['l', 'pred'], a(tr(K_TREE), a(v('self'), v('pred'), v('m')))),
-        v('n')
+        a(tr(leaf), tr(I_TREE), tr(leaf)),
+        a(tr(K_TREE), cl(['p', 'm'], a(tr(K_TREE), a(v('s'), v('p'), v('m')))))
       )
     )
   )
@@ -342,8 +355,7 @@ export const DEFS: Record<string, T> = {
   not: NOT,
   and: AND,
   or: OR,
-  add: ADD,
-  shape_code: SHAPE_CODE
+  add: ADD
 }
 
 // ---- parser: t, △, (), numbers, names ------------------------------------
@@ -400,7 +412,10 @@ export function parseTree(input: string, defs: Record<string, T> = DEFS): T {
       p++
       return structuredClone(defs[tok])
     }
-    throw new Error('unknown name: ' + tok + ' (known: ' + Object.keys(defs).join(', ') + ')')
+    // any other name is a named leaf — a free variable to compute with
+    // symbolically (K x y ▷ x, S f g x ▷ (f x)(g x))
+    p++
+    return varLeaf(tok)
   }
   function expr(): T {
     let e = atom()
@@ -430,6 +445,7 @@ export function pretty(t: T, opts: { names?: boolean } = { names: true }): strin
   }
   const go = (t: T, atomPos: boolean): string => {
     if (t.tag === 'leaf') return 't'
+    if (t.tag === 'var') return t.name
     const inner =
       t.tag === 'stem'
         ? `t ${go(t.c, true)}`
