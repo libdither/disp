@@ -9,8 +9,11 @@
 // the reflect prototype delegated, now running through the mint and check
 // ops. The fixed-point pin at the bottom carries the honest header the plan
 // demands.
-// Baseline (rust-eager-native, 2026-07-08): ~60s wall, 30 pins (the load-time
-// verification of kernel_spec.disp's two row annotations dominates).
+// Baseline (rust-eager-native, 2026-07-08): ~37s in-suite, 30 pins. The cost is
+// TWO differential pins, not the loads: the nested-mint walk_spec2 differential
+// (~186M steps — both sides run the in-language spec twin) and one other at
+// ~27M; the file's opens total ~17M. Shrinking the nested differential's term
+// is the lever if this file's cost ever needs reclaiming.
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
 open use "../std/effect.disp"

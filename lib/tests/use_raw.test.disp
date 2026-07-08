@@ -22,22 +22,17 @@ open use "../kernel/universe.disp" { Type := Type, RespondShape }
 test param_apply Type Nat = Ok true
 test typecheck Type (Pi Nat ({_} -> Bool)) = Ok true
 
-// Deferred self-check: with the raw layer in scope, each fragment's CHECKED module tuple
+// Deferred self-check: with the raw layer in scope, a fragment's CHECKED module tuple
 // { record, typ } carries its annotated exports, resolved against the raw snapshot.
 // `verify` routes through `param_apply` (the checker entry) — NOT raw `typ record`
 // juxtaposition, which would bypass the walker's parametricity guards. This is the kernel
 // typechecking the kernel, under the walker (verify itself is one of the annotated exports).
+// TWO witnesses pin the mechanism — the first fragment (cut) and the metacircular one
+// (universe). The other five fragments' checks are not repeated here: the driver's
+// load-time auto-verification runs the SAME `param_apply typ record` for every fragment
+// at every kernel load (each in-language repeat cost ~2-3s of suite time for no new
+// discrimination — the 2026-07-08 audit trimmed them).
 let cut_mod := use "../kernel/cut.disp" { Type := Type, Tree, Pi, Action, MetaShape, GuardAction, Request }
-let engine_mod := use "../kernel/engine.disp" { Type := Type, Tree, Pi, Bool, CheckerResult, Intersection, MetaShape, Module, RespondShape, InductiveRespondShape }
-let cells_mod := use "../kernel/cells.disp" { Type := Type, Tree, Pi, Action, Step }
-let base_mod := use "../kernel/base.disp" { Type := Type, Tree, Unit, Bool, Eq }
-let positive_mod := use "../kernel/positive.disp" { Type := Type, Tree, Ord }
-let generic_mod := use "../kernel/generic.disp" { Type := Type }
 let universe_mod := use "../kernel/universe.disp" { Type := Type, RespondShape }
 test verify cut_mod = Ok true
-test verify engine_mod = Ok true
-test verify cells_mod = Ok true
-test verify base_mod = Ok true
-test verify positive_mod = Ok true
-test verify generic_mod = Ok true
 test verify universe_mod = Ok true

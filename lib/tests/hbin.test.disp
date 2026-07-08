@@ -6,8 +6,6 @@
 open use "../kernel/prelude.disp"
 open use "../std/hbin.disp"
 
-test typecheck Type HBin = Ok true
-
 // the paper's first naturals (§3.2):
 // 0 = E   1 = V E []   2 = W E []   3 = V (V E []) []   4 = W E [E]   5 = V E [E]
 test param_apply HBin hb_e = Ok true

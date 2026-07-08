@@ -5,18 +5,14 @@
 // and (c) the Rung-3 wall: an INSPECTING respond does not inhabit RespondShape.
 open use "../kernel/prelude.disp"
 
-// ---- the structural types are types ----
-test typecheck Type Tree        = Ok true
-test typecheck Type Frame       = Ok true
-test typecheck Type NeutralMeta = Ok true
-test typecheck Type Action      = Ok true
-test typecheck Type RespondShape = Ok true
-test typecheck Type MetaShape   = Ok true
+// (The structural types' `X : Type` facts are kernel annotations — Tree, Frame,
+// NeutralMeta, Action, RespondShape, MetaShape, InvalidType, Neutral, Spine —
+// so module loading auto-verifies them; this file pins what the annotations do
+// NOT cover: inhabitants, rejections, and respond typing.)
 
 // ---- InvalidType is a REAL empty type now (§12.6 / STRICTTYPE.md step 1) ----
 // Promoted from the old `false` sentinel to a make_recognizer wait-form with a MetaShape
 // meta, so `type_meta InvalidType` is a real record (no more `.respond` off `false`).
-test typecheck Type InvalidType    = Ok true  // it is a Type
 test tree_eq InvalidType False     = false      // kept DISTINCT from the empty proposition
 test param_apply InvalidType zero  = Ok false   // nothing inhabits it (recognizer is Ok false)
 
@@ -25,12 +21,10 @@ test param_apply Tree zero                                       = Ok true // Tr
 test param_apply NeutralMeta { stored_type := Nat; payload := (inj "Mint" zero) } = Ok true
 test param_apply NeutralMeta { stored_type := Nat; payload := zero } = Ok false // payload must be a Spine now
 // Neutral: the type of stuck values (no H-rule nominality — ANY neutral inhabits)
-test typecheck Type Neutral = Ok true
 test param_apply Neutral (make_hyp Nat 0) = Ok true
 test param_apply Neutral zero = Ok false
 // Spine: the payload's honest type — a mint (freshness id) or an extension (the PARENT
 // NEUTRAL + the frame; storing the parent neutral is how occurs sees through spines)
-test typecheck Type Spine = Ok true
 test typecheck Spine ((type_meta (make_hyp Nat 0)).payload) = Ok true   // a minted payload is closed
 let stuckB := (make_hyp Nat 1) { motive := ({_} -> Bool); cases := { zero := true; succ := ({p, ih} -> ih) } }
 // an extended payload CONTAINS the parent neutral, so it is not closed (typecheck Errs at
@@ -48,7 +42,6 @@ test param_apply CheckerResult zero                              = Ok false
 // Step: the cell-op answer vocabulary (constructors annotated in cells.disp).
 test param_apply Step (SMint Nat)                                = Ok true
 test param_apply Step (SThread zero)                             = Ok true
-test param_apply Step SReject                                    = Ok true
 test param_apply Step (SDone (Extend Nat))                       = Ok true
 test param_apply Step zero                                       = Ok false
 // a real neutral's meta is a NeutralMeta

@@ -4,11 +4,11 @@
 open use "../kernel/prelude.disp"
 
 // ---- Type universe: which things are types ----
-test typecheck Type Bool = Ok true
-test typecheck Type Nat = Ok true
+// (`Bool : Type` / `Nat : Type` / `Unit : Type` are kernel annotations, so
+// module loading auto-verifies them; the pins here are the metacircle, the
+// APPLIED formers, and the rejections.)
 test typecheck Type Type = Ok true // Type : Type
 test typecheck Type (Pi Nat ({_} -> Bool)) = Ok true
-test typecheck Type Unit = Ok true
 test typecheck Type (Eq Nat zero zero) = Ok true
 test typecheck Type zero = Ok false // not a type
 test typecheck Type true = Ok false
