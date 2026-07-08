@@ -236,7 +236,8 @@ block     ::= \"{\" (stmt SEMI)* expr SEMI? \"}\"
 coproductType ::= \"<\" (sumVariant (COMMA sumVariant)* COMMA?)? \">\"
 sumVariant ::= IDENT (\":\" expr)?
 typedField ::= IDENT (\":\" expr)? (\":=\" expr)?
-stmt       ::= let | equation | \"open\" expr",
+stmt       ::= let | bind | equation | \"open\" expr
+bind       ::= IDENT \"<-\" expr",
   "(f x : Nat)                    // parenthesized ascription
 { x := t; y := t t }           // recValue (2 exported fields)
 { let h := t; x := h }         // recValue (1 exported field, 1 private let)
@@ -249,12 +250,21 @@ point.x.fst                    // chained projection",
 
 The `braced` alternatives are distinguished by member shape. A braced
 body that contains any `name := expr` field is a `recValue`; one with
-only `let`/equation/`open` statements and a trailing expression is a
-`block`; one with only `let`/equation/`open` statements and no trailing
-expression is an empty `recValue`. (The braced classifier keys on
-structure: a leading `let` followed by an identifier, a depth-0 `:=`,
-or a depth-0 bare `=` each mark a recValue/block body — none of these
-can occur in binder or recType content.) A `braced` followed by `ARROW` is
+only `let`/`bind`/equation/`open` statements and a trailing expression
+is a `block`; one with only `let`/equation/`open` statements and no
+trailing expression is an empty `recValue`. (The braced classifier keys
+on structure: a leading `let` followed by an identifier, a depth-0 `:=`,
+a leading `IDENT <-`, or a depth-0 bare `=` each mark a recValue/block
+body — none of these can occur in binder or recType content.) The
+`bind` member `x <- e` is monadic sequencing: the block desugars it to
+`eff_bind e ({x} -> rest)` (`eff_bind` resolves in the ambient scope,
+like `prod` for `match`), interleaving with lexical `let`s in member
+order; a block with a `bind` requires a trailing expression, and `bind`
+members are rejected in record literals and (for now) in blocks that
+also carry equation/`open` members. `let` keeps meaning naming — the
+arrow declares sequencing intent, so effects-as-values stays intact
+(the value-directed alternative has two pinned holes; see
+`lib/tests/effect_syntax_proto.test.disp`). A `braced` followed by `ARROW` is
 reparsed as a `binder`: `{x : A}` alone is a recType;
 `{x : A} -> e` is a binder. The empty `{}` is a 0-field recValue
 (Church unit; see `COMPILATION.typ` § Record encoding). Duplicate

@@ -31,7 +31,7 @@ const KEYWORDS = new Set(["use", "open", "match", "if", "then", "else"])
 // `<`/`>` are the sum-type-literal delimiters (`< Tag : T, … >`). They are single
 // chars with no multi-char punctuation built on them, and `->`/`=>`/`→` are
 // matched first, so a bare `>` never steals an arrow's tail.
-const PUNCT = [":=", "=>", "->", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
+const PUNCT = [":=", "=>", "->", "<-", "→", ".", ",", ";", "(", ")", "=", ":", "{", "}", "[", "]", "<", ">"] as const
 const IDENT_HEAD = /[A-Za-z_]/
 const IDENT_TAIL = /[A-Za-z0-9_']/
 
@@ -140,6 +140,7 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 export type RecMember =
   | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
+  | { tag: "bind"; name: string; expr: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr; line?: number }
   | { tag: "open"; expr: Expr }
 // A "field" is a DECLARATION: `head? NAME (: T)? (:= v)?` (COMPILATION.typ
@@ -777,6 +778,16 @@ const bracedOpenP: P<RecMember> = map(
   ([, , e]) => ({ tag: "open" as const, expr: e }),
 )
 
+// The arrow member `x <- e`: monadic bind inside a BLOCK. Desugars to
+// `eff_bind e ({x} -> rest-of-block)` — eff_bind resolves in the ambient
+// scope, like `prod` for match or `cond` for if. `let` keeps meaning naming;
+// the arrow declares sequencing intent, so effects-as-values stays intact
+// (no value-directed dispatch — the two pinned holes in effect_syntax_proto).
+const bracedBindP: P<RecMember> = map(
+  seq(idP, nl(punctP("<-")), skipNl, lazy(() => lineExpr), semiP),
+  ([name, , , e]) => ({ tag: "bind" as const, name, expr: e }),
+)
+
 // recValue field separator: ";" | "," | NEWLINE. recValues historically used
 // SEMI/newline; "," is also accepted so named-argument calls read naturally
 // (`f { host := "h", port := 8000 }`, the design-doc spelling).
@@ -812,7 +823,7 @@ const bracedPunP: P<RecMember> = (ts, i) => {
   return err("bare identifier is not a member (pun needs ';', ',', newline, or '}')", i)
 }
 
-const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedOpenP, bracedFieldMemberP, bracedEquationP, bracedPunP))
+const bracedMemberP: P<RecMember> = nl(alt<RecMember>(bracedLetP, bracedOpenP, bracedBindP, bracedFieldMemberP, bracedEquationP, bracedPunP))
 
 // Unified braced body parser: handles blocks, recValues, and mixed members.
 // Parses members (let/test/open/field). Then:
@@ -843,15 +854,21 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   }
 
   const exportedFields: NamedField[] = []
-  const bindings: { name: string; type: Expr | null; body: Expr }[] = []
+  // Block steps in member ORDER: lexical lets and monadic binds interleave.
+  type BlockStep = { k: "let"; name: string; type: Expr | null; body: Expr } | { k: "bind"; name: string; expr: Expr }
+  const steps: BlockStep[] = []
   for (const m of members) {
     if (m.tag === "field") {
       if (exportedFields.some(f => f.name === m.name))
         return err(`duplicate exported field '${m.name}'`, startPos)
       exportedFields.push({ name: m.name, type: m.type, value: m.value! }) // braced fields always carry a value
     }
-    if (m.tag === "let") bindings.push({ name: m.name, type: m.type, body: m.body })
+    if (m.tag === "let") steps.push({ k: "let", name: m.name, type: m.type, body: m.body })
+    if (m.tag === "bind") steps.push({ k: "bind", name: m.name, expr: m.expr })
   }
+  const hasBinds = steps.some(s => s.k === "bind")
+  if (hasBinds && exportedFields.length > 0)
+    return err("'<-' is a block member (monadic bind), not valid in a record literal", startPos)
 
   while (ts[pos].t === "nl") pos++
 
@@ -870,13 +887,15 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
 
   // No exported fields: "}" → empty recValue, or trailing expr → block
   if (preTrailing === null && ts[pos].t === "punct" && (ts[pos] as any).v === "}") {
+    if (hasBinds)
+      return err("a block with '<-' needs a final expression (the computation's result)", pos)
     pos++
     const rv: Expr = { tag: "recValue", fields: [] }
     if (membersOrUndef) (rv as any).members = membersOrUndef
     return ok(rv, pos)
   }
 
-  if (preTrailing === null && bindings.length === 0 && members.length === 0)
+  if (preTrailing === null && steps.length === 0 && members.length === 0)
     return err(`expected '}' or expression, got ${describe(ts[pos])}`, pos)
 
   // Block with trailing expression (a converted final pun arrives pre-parsed).
@@ -905,21 +924,33 @@ const unifiedBracedInner: P<Expr> = (ts, startPos) => {
   // let-blocks (which still produce App(Binder, val) for back-compat).
   const hasTestOrOpen = members.some(m => m.tag === "test" || m.tag === "open")
   if (hasTestOrOpen) {
+    if (hasBinds)
+      return err("'<-' cannot mix with test/open members in one block (yet)", startPos)
     const rv: Expr = { tag: "recValue", fields: [], members, trailing }
     return ok(rv, pos)
   }
 
-  // Desugar block: right-to-left wrap trailing expr in nested App(Binder, body)
+  // Desugar block: right-to-left wrap trailing expr in nested App(Binder, body).
+  // A `let` step is the lexical redex; a `<-` step is the monadic graft
+  // `eff_bind e ({x} -> rest)` (steps interleave in member order).
   let result: Expr = trailing
-  for (let i = bindings.length - 1; i >= 0; i--) {
-    const b = bindings[i]
-    const val: Expr = b.type
-      ? { tag: "ann", expr: b.body, type: b.type }
-      : b.body
-    result = {
-      tag: "app",
-      f: { tag: "binder", params: [{ name: b.name, type: null }], body: result },
-      x: val,
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i]
+    if (s.k === "let") {
+      const val: Expr = s.type
+        ? { tag: "ann", expr: s.body, type: s.type }
+        : s.body
+      result = {
+        tag: "app",
+        f: { tag: "binder", params: [{ name: s.name, type: null }], body: result },
+        x: val,
+      }
+    } else {
+      result = {
+        tag: "app",
+        f: { tag: "app", f: { tag: "var", name: "eff_bind" }, x: s.expr },
+        x: { tag: "binder", params: [{ name: s.name, type: null }], body: result },
+      }
     }
   }
   return ok(result, pos)
@@ -1069,6 +1100,8 @@ function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | 
     // `{let}` param are caught by the puncts above).
     if (name === "let" && ts[p].t === "id") return "recValue"
     if (ts[p].t === "punct" && (ts[p] as any).v === ":=") return "recValue"
+    // `name <- e` — the arrow (bind) member opens a block body.
+    if (ts[p].t === "punct" && (ts[p] as any).v === "<-") return "recValue"
     if (ts[p].t === "punct" && (ts[p] as any).v === ":") {
       // `name : T …` — a later ":=" in this member means a typed field.
       return scanForFieldAssign(ts, p + 1, true) ? "recValue" : "recTypeOrBinder"
