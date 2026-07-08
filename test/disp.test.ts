@@ -28,11 +28,11 @@ const sharedSession = SHARE_SESSIONS
   ? (getBackend(backendName).createSession() as unknown as Session<Tree>)
   : undefined
 
-// Per-file scoped reclamation (rust-eager native): open a scope before each file, close it
-// after keeping only the module cache's cross-file roots — so the file's elaboration +
-// auto-verify garbage is freed instead of leaking into the grow-only arena. DISP_NO_SCOPE=1
-// falls back to the prior memo-shed-only behavior (for A/B measurement). Native-only: the
-// scope methods are absent on wasm/eager, which keep using clearCaches.
+// Per-file scoped reclamation (rust-eager native + the eager TS backend): open a scope
+// before each file, close it after keeping only the module cache's cross-file roots — so
+// the file's elaboration + auto-verify garbage is freed instead of leaking into the
+// grow-only arena. DISP_NO_SCOPE=1 falls back to the prior memo-shed-only behavior (for
+// A/B measurement). The scope methods are absent on wasm, which keeps using clearCaches.
 const USE_SCOPE = process.env.DISP_NO_SCOPE !== "1"
 const scoped = sharedSession as unknown as
   | { beginScope?(): void; endScope?(keep: Tree[]): void; clearCaches?(): void; stats?(): { nodes?: number; free?: number } }

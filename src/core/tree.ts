@@ -68,6 +68,7 @@ export function stem(child: Tree): Tree {
   const node: Tree = { tag: "stem", child, id: nextId++ }
   shard.set(child.id, node)
   nodeStats.uniqueNodes++
+  if (scopeStack.length > 0) scopeLog.push(node)
   return node
 }
 
@@ -84,6 +85,7 @@ export function fork(left: Tree, right: Tree): Tree {
   const node: Tree = { tag: "fork", left, right, id: nextId++ }
   inner.set(right.id, node)
   nodeStats.uniqueNodes++
+  if (scopeStack.length > 0) scopeLog.push(node)
   return node
 }
 
@@ -106,6 +108,7 @@ export function susp(f: Tree, a: Tree): Tree {
   const node: Tree = { tag: "susp", f, a, forced: null, id: nextId++ }
   inner.set(a.id, node)
   nodeStats.uniqueNodes++
+  if (scopeStack.length > 0) scopeLog.push(node)
   return node
 }
 
@@ -119,6 +122,101 @@ export function isStem(t: Tree): t is Tree & { tag: "stem" } {
 }
 export function isFork(t: Tree): t is Tree & { tag: "fork" } {
   return t.tag === "fork"
+}
+
+// --- Scoped reclamation (the eager side of Session.beginScope/endScope) ---
+//
+// V8 cannot collect an interned Tree: the intern tables above hold strong
+// references to every node ever built, so a long shared-session run accumulates
+// its whole workload (a full test suite exceeds the heap). Scoped reclamation is
+// the GC-world mirror of rust-eager's watermark arena: beginScope starts logging
+// newly interned nodes; endScope(keep) un-interns every logged node NOT
+// reachable from `keep` and drops the active session's memo entries touching
+// them, releasing the objects to V8. Ids are never reused (unlike the rust
+// arena's slots), so a stale reference to a freed node cannot alias a NEW node;
+// the soundness contract is the ABI's: the host must list every tree it keeps
+// live past the scope — a kept-but-unlisted tree stays alive as a JS object but
+// loses its intern slot, so a later structural rebuild gets a fresh id and
+// id-equality (tree_eq) between the two copies wrongly answers false.
+// collectSessionRoots (elab/state.ts) is the engine-side inventory. The memo
+// prune touches only the ACTIVE session's memo, so scoping assumes one scoping
+// session per process (the shared-session harness).
+
+interface ScopeFrame { watermarkId: number; logStart: number }
+const scopeStack: ScopeFrame[] = []
+const scopeLog: Tree[] = []
+// Cumulative count of un-interned nodes, reported via stats().free.
+export const scopeStats = { freed: 0 }
+
+export function beginScope(): void {
+  scopeStack.push({ watermarkId: nextId, logStart: scopeLog.length })
+}
+
+export function endScope(keep: Tree[]): void {
+  const frame = scopeStack.pop()
+  if (!frame) return
+  const wm = frame.watermarkId
+
+  // Mark every node reachable from `keep`. The walk cannot skip pre-scope nodes:
+  // `susp.forced` is assigned after construction, so an OLD susp can point at an
+  // in-scope reduct (the one edge that breaks the children-are-older invariant).
+  const marked = new Set<number>()
+  const work: Tree[] = []
+  const visit = (n: Tree): void => { if (!marked.has(n.id)) { marked.add(n.id); work.push(n) } }
+  for (const r of keep) if (r != null) visit(r)
+  while (work.length > 0) {
+    const n = work.pop()!
+    if (n.tag === "stem") visit(n.child)
+    else if (n.tag === "fork") { visit(n.left); visit(n.right) }
+    else if (n.tag === "susp") { visit(n.f); visit(n.a); if (n.forced !== null) visit(n.forced) }
+  }
+
+  // Sweep this scope's log: un-intern unmarked nodes. Under a nested scope the
+  // survivors are re-logged (still candidates for the enclosing scope).
+  const nested = scopeStack.length > 0
+  const survivors: Tree[] = []
+  for (let i = frame.logStart; i < scopeLog.length; i++) {
+    const n = scopeLog[i]
+    if (marked.has(n.id)) { if (nested) survivors.push(n); continue }
+    if (n.tag === "stem") {
+      stemCache[n.child.id & (SHARDS - 1)].delete(n.child.id)
+    } else if (n.tag === "fork") {
+      const shard = forkCache[n.left.id & (SHARDS - 1)]
+      const inner = shard.get(n.left.id)
+      if (inner !== undefined) { inner.delete(n.right.id); if (inner.size === 0) shard.delete(n.left.id) }
+    } else if (n.tag === "susp") {
+      const shard = suspCache[n.a.id & (SHARDS - 1)]
+      const inner = shard.get(n.f.id)
+      if (inner !== undefined) { inner.delete(n.a.id); if (inner.size === 0) shard.delete(n.f.id) }
+    }
+    scopeStats.freed++
+  }
+  scopeLog.length = frame.logStart
+  for (const s of survivors) scopeLog.push(s)
+
+  // Prune the active session's memo of entries touching freed nodes. Freed ids
+  // are never reused, so a stale entry could never be looked up again — but it
+  // would pin the freed objects against V8's collection. deadId is exact:
+  // in-this-scope and unreachable = freed just now (ids freed by an inner scope
+  // were pruned by that scope's own endScope).
+  const st = active
+  const deadId = (id: number): boolean => id >= wm && !marked.has(id)
+  for (const [fid, inner] of st.applyMemo) {
+    if (deadId(fid)) { st.applyMemoEntries -= inner.size; st.applyMemo.delete(fid); continue }
+    let removed = 0
+    for (const [xid, res] of inner) {
+      if (deadId(xid) || deadId(res.id)) { inner.delete(xid); removed++ }
+    }
+    if (removed > 0) st.applyMemoEntries -= removed
+    if (inner.size === 0) st.applyMemo.delete(fid)
+  }
+
+  // The continuation stack's recycled slots retain the last run's Tree refs;
+  // reset them so they don't pin freed nodes (apply never runs across endScope).
+  for (let i = 0; i < stack.length; i++) {
+    const s = stack[i]
+    s.f = LEAF; s.x = LEAF; s.arg = LEAF; s.func = LEAF; s.origX = LEAF; s.b = LEAF; s.innerMap = null
+  }
 }
 
 // --- Per-session evaluator state ---
@@ -143,6 +241,10 @@ export type ApplyStats = {
   maxStack: number
   cacheEntries: number
   uniqueNodes: number
+  // Scoped-reclamation view (harness [scope] log): nodes = cumulative created,
+  // free = cumulative un-interned; live = nodes - free.
+  nodes: number
+  free: number
 }
 
 // The mutable counters carried per session (the ApplyStats fields that are
@@ -342,6 +444,8 @@ export function statsOf(st: EagerState): ApplyStats {
     memoWrites: st.memoWrites,
     cacheEntries: st.applyMemoEntries,
     uniqueNodes: nodeStats.uniqueNodes,
+    nodes: nodeStats.uniqueNodes,
+    free: scopeStats.freed,
   }
 }
 

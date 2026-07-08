@@ -4,8 +4,10 @@ import {
   treeEqual, treeApply, apply, applyTree, BudgetExhausted,
   K, I, prettyTree, force,
   TREE_TRUE, TREE_FALSE, setTreeEqId, getTreeEqId, clearApplyCache, resetApplyStats, getApplyStats,
+  beginScope, endScope,
   type Tree,
 } from "../src/core/tree.js"
+import { EagerSession } from "../src/eval/eager.js"
 import { parseProgram } from "../src/compile.js"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
@@ -242,5 +244,74 @@ describe("tree_eq suspension (P node)", () => {
   it("identical partials share one node; distinct operands do not", () => {
     expect(apply(teq, a1)).toBe(apply(teq, a1))      // hash-consed susp
     expect(treeEqual(apply(teq, a1), apply(teq, a2))).toBe(false)
+  })
+})
+
+// Scoped reclamation (core/tree.ts § Scoped reclamation; the eager side of the
+// Session beginScope/endScope ABI). The intern tables pin every node against
+// V8's GC, so endScope(keep) un-interns the scope's nodes not reachable from
+// `keep`. These pins cover the contract's two sides: a kept tree's intern slot
+// survives (a structural rebuild is the SAME object), and an unkept tree's slot
+// is cleared (a rebuild is a fresh object — which is also the documented
+// forgotten-survivor hazard: id-equality across the free is lost).
+describe("scoped reclamation (beginScope/endScope)", () => {
+  // A structure exotic enough that no other test interns it, parameterized so
+  // each `it` gets fresh in-scope nodes. Built THROUGH the interning
+  // constructors, like all trees.
+  function novel(depth: number): Tree {
+    let t: Tree = fork(fork(LEAF, stem(stem(fork(LEAF, stem(LEAF))))), stem(fork(stem(LEAF), LEAF)))
+    for (let i = 0; i < depth; i++) t = stem(fork(t, stem(fork(LEAF, t))))
+    return t
+  }
+
+  it("a kept tree survives with its intern slot: rebuild is the same object", () => {
+    beginScope()
+    const a = novel(31)
+    endScope([a])
+    expect(novel(31)).toBe(a)
+    expect(treeEqual(novel(31), a)).toBe(true)
+  })
+
+  it("an unkept tree is un-interned: rebuild is a fresh object", () => {
+    beginScope()
+    const a = novel(33)
+    endScope([])
+    const b = novel(33)
+    expect(b).not.toBe(a)
+    // The documented forgotten-survivor hazard: a stale reference to a freed
+    // tree no longer shares its id with the structural rebuild. This is WHY
+    // `keep` must list everything held past the scope (collectSessionRoots).
+    expect(treeEqual(a, b)).toBe(false)
+  })
+
+  it("keeping a parent keeps its whole DAG", () => {
+    beginScope()
+    const child = novel(35)
+    const parent = fork(stem(child), fork(LEAF, child))
+    endScope([parent])
+    expect(novel(35)).toBe(child)
+  })
+
+  it("endScope prunes the active session's memo entries touching freed nodes", () => {
+    const s = new EagerSession()
+    s.beginScope()
+    // apply(I, x) with an in-scope x: the memo entry's key and result both name
+    // in-scope nodes, so endScope([]) must drop it (and the intern slots).
+    const x = novel(37)
+    const before = s.applyCacheSize()
+    expect(s.apply(I, x, { remaining: 1000 })).toBe(x)
+    expect(s.applyCacheSize()).toBeGreaterThan(before)
+    s.endScope([])
+    expect(s.applyCacheSize()).toBe(before)
+  })
+
+  it("nested scopes: inner survivors stay candidates for the outer sweep", () => {
+    beginScope()
+    beginScope()
+    const a = novel(39)
+    endScope([a])          // inner: a survives
+    expect(novel(39)).toBe(a)
+    endScope([])           // outer: nothing kept — a is swept now
+    expect(novel(39)).not.toBe(a)
   })
 })

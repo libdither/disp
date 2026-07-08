@@ -24,7 +24,16 @@ export const elab: { cs: Session<Tree> } = { cs: defaultSession }
 // ~16M steps vs ~8M for the old specialized recognizers — a more general
 // recognizer, ~2x heavier per Pi-check; a validated lean fast path could
 // reclaim it later, cf. the tree_eq native-fast-path discipline.)
-export const APPLY_BUDGET = 40_000_000
+// 400M (raised from 40M, 2026-07-08): the budget is a DIVERGENCE bound, not a
+// semantic gate (eval/types.ts § Budget) — it must admit every total program.
+// The heaviest single elaborator call today is use_raw.test's kernel-fragment
+// `verify` compiled COLD on the eager backend (per-file scoped reclamation
+// prunes the freed-node memo entries, so late files recompute): >40M eager
+// steps warm-less, well under 400M. The rust backends floor their per-call
+// budget at 4G and never bind here; a genuinely diverging call on eager burns
+// ~1-2min before erroring, which the S-rule K-discard parity fix (2026-07-07)
+// made an abnormal event rather than a kernel-load certainty.
+export const APPLY_BUDGET = 400_000_000
 export const B = (): Budget => ({ remaining: APPLY_BUDGET, limit: APPLY_BUDGET })
 
 // Auto-verification cache (§ module checking): each module's typed exports are

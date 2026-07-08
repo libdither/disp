@@ -12,6 +12,7 @@ import {
   encodeTernary, decodeTernary, prettyTree,
   type EagerState, type ApplyStats, freshState, freshCounters, statsOf, trimApplyMemo, nodeStats,
   getActive, setActive,
+  beginScope as coreBeginScope, endScope as coreEndScope,
 } from "../core/tree.js"
 import type { Session, EvalBackend, SessionOpts, Budget, EvalStats, Classification } from "./types.js"
 
@@ -99,6 +100,17 @@ export class EagerSession implements Session<Tree> {
     try { trimApplyMemo() } finally { setActive(prev) }
   }
   applyCacheSize(): number { return this.st.applyMemoEntries }
+
+  // ── scoped reclamation (Session ABI) ──
+  // The arena is global, so scope state lives in core/tree.ts; the session swap
+  // matters for endScope's memo prune (it prunes the ACTIVE session's memo).
+  // Contract per the ABI + the core comment: one scoping session per process,
+  // and `keep` must list every tree held live past the scope.
+  beginScope(): void { coreBeginScope() }
+  endScope(keep: Tree[]): void {
+    const prev = getActive(); setActive(this.st)
+    try { coreEndScope(keep) } finally { setActive(prev) }
+  }
 
   // ── lifecycle ──
   dispose(): void { this.clear() }

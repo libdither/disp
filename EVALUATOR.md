@@ -65,14 +65,19 @@ build artifact exists, so `npm test` never needs a toolchain.
   pass (this bit disp-eager's S-rule pre-shortcut until 2026-07-07; see the comment at the
   fix site in `src/core/tree.ts`). A new backend should differential-test *termination on a
   kernel load*, not only NFs of terminating fixtures.
-- **disp-eager's operating envelope (2026-07-07).** Per-file runs work (`tsx src/run.ts
-  --evaluator=eager <file>`; a kernel-loading file ≈ 2min, ~40M-step budget suffices on a
-  warm memo). The full suite in ONE process does not: the JS arena is grow-only (no scoped
-  reclamation, unlike rust-eager-native's `endScope`), and ~65 files of interned nodes
-  exceed an 8GB heap. The V8 per-Map entry ceiling that used to fire first is gone (intern
-  tables are sharded); the remaining wall is heap volume. Use per-file processes for eager
-  differentials, or implement eager `beginScope`/`endScope` (watermark + sweep-unreachable,
-  mirroring the rust backend) if the full-suite oracle is wanted routinely.
+- **disp-eager's operating envelope.** Both oracle modes work. Per-file:
+  `tsx src/run.ts --evaluator=eager <file>` (a kernel-loading file ≈ 2min, 8GB heap).
+  Full suite in one process: `DISP_EVALUATOR=eager NODE_OPTIONS=--max-old-space-size=12288
+  npx vitest run test/disp.test.ts` (≈ 22min vs rust-native's ≈ 2.5min) — viable because
+  eager implements the scope ABI (`core/tree.ts` § Scoped reclamation): V8 cannot collect
+  an interned Tree, so `endScope(keep)` un-interns each file's unreachable nodes (a suite
+  creates and reclaims ~340M nodes; the intern tables are also sharded, since a single V8
+  Map caps at ~16.7M entries). The 12GB heap covers the one cold re-verification spike
+  (use_raw.test re-verifies the kernel fragments with a memo whose intermediates were
+  reclaimed with file 1's garbage — several GB transient at V8 node sizes, where rust's
+  16-byte arena nodes shrug). The same cold call calibrates `APPLY_BUDGET` (400M): the
+  budget is a divergence bound and must admit every total program; the rust backends floor
+  per-call at 4G and never bind.
 
 ## The calculus underneath
 

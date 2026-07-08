@@ -100,9 +100,13 @@ export interface Session<H = unknown> {
   // reachable from `keep` (the handles to preserve out of the scope). For backends with an
   // explicit arena the host can't GC (rust-eager): a scoped evaluation that produces a few
   // results but lots of intermediate garbage (a module's exports, an optimizer candidate's
-  // NF) reclaims the garbage in one step. Absent on GC'd backends (eager: V8 collects
-  // unreachable Trees). Trust model: the host must list every handle it keeps live past the
-  // scope — a forgotten survivor dangles (caught by the differential oracle / a debug poison).
+  // NF) reclaims the garbage in one step. The eager TS backend needs it too — V8 cannot
+  // collect an INTERNED Tree (the hash-cons tables pin every node), so its endScope
+  // un-interns the scope's unreachable nodes to release them (core/tree.ts § Scoped
+  // reclamation). Trust model: the host must list every handle it keeps live past the
+  // scope — a forgotten survivor dangles (rust: freed slot; eager: an un-interned tree
+  // whose structural rebuild no longer shares its id), caught by the differential oracle
+  // / a debug poison.
   beginScope?(): void
   endScope?(keep: H[]): void
 
