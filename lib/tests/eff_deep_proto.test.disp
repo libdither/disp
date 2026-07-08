@@ -1,0 +1,83 @@
+// eff_deep_proto — stage 0 seed for EFFECT_BOOTSTRAP_PLAN.md (2026-07-07).
+// Two de-risk layers, pinned BEFORE the deep `Eff R X` recognizer is built.
+//
+// (1) canonical rows (std/effect.disp): sorted deduplicated label lists, so
+//     closed-row equality is tree_eq (order- and duplicate-insensitive by
+//     hash-consing), and canonicity changes no membership/row-check verdict.
+//
+// (2) the hazard-0a quartet: HOW a branchy continuation gets a certificate
+//     that really covers its arms. The certified idiom is ELIMINATION through
+//     the type's gated respond (the hyp applied to a { motive; cases } frame,
+//     via rec_value / elim / the frame directly): coh_check verifies every
+//     case against the motive under per-variant minted payloads — the same
+//     machinery that verifies nat_rec's annotation at load. Pinned on a
+//     4-variant response vocabulary (the ShapeR shape from REFLECT.md,
+//     including a 2-arg variant and a Type payload):
+//       a. the elim-written continuation deep-checks Ok true, and the same
+//          definition dispatches correctly on concrete values (both faces);
+//       b. flipping one arm ill-typed flips the verdict (arms are VISITED);
+//       c. a missing arm also fails (totality is part of the certificate);
+//       d. the match-written twin FAILS CLOSED: surface match compiles to the
+//          consumer-driven cut — the pair_fst tag read answers the hyp
+//          signature and the pair_snd payload read is unsanctioned triage —
+//          so it never routes through the respond and never certifies;
+//       e. the if-chain twin still certifies with an ill-typed UNTAKEN branch:
+//          the one-path limit is conserved by construction (a walk takes one
+//          concrete path); depth comes from the elim idiom, not from the deep
+//          recognizer alone.
+// Baseline (rust-eager-native, 2026-07-07): ~20s wall, 21 pins.
+open use "../kernel/prelude.disp"
+open use "../std/effect.disp"
+
+// ── (1) canonical rows ──
+// raw list constructors are order-sensitive (the thing canonicity fixes):
+test tree_eq (row_cons "IO" (row1 "State")) (row_cons "State" (row1 "IO")) = false
+// mk_row: order-insensitive, duplicate-collapsing, nil-canonical:
+test tree_eq (mk_row (cons "IO" (cons "State" nil))) (mk_row (cons "State" (cons "IO" nil))) = true
+test tree_eq (mk_row (cons "State" (cons "IO" (cons "State" nil)))) (mk_row (cons "IO" (cons "State" nil))) = true
+test tree_eq (row_union (row1 "State") (row1 "IO")) (mk_row (cons "State" (cons "IO" nil))) = true
+test tree_eq (row_union (row1 "State") (row1 "State")) (row1 "State") = true
+test tree_eq (mk_row nil) row_nil = true
+// membership and the row check are canonicity-blind:
+test label_in_row "State" (mk_row (cons "IO" (cons "State" nil))) = true
+test label_in_row "Exn" (mk_row (cons "IO" (cons "State" nil))) = false
+let p_get := (mk_op "State" "get" Unit Nat) t
+let p1 := eff_bind p_get ({n} -> io_pure n)
+test eff_check (mk_row (cons "IO" (cons "State" nil))) p1 = true
+test eff_check (mk_row (cons "IO" nil)) p1 = false
+
+// ── (2) the response vocabulary as a REAL Coproduct ──
+ShapeC : Type := Coproduct [pair "SLeaf" [], pair "SStem" [Tree], pair "SFork" [Tree, Tree], pair "SHyp" [Type]]
+let shape_cases := { SLeaf := 1; SStem := {c} -> 2; SFork := {l, r} -> 3; SHyp := {ty} -> 4 }
+
+// (a) the certified idiom, production face: rec_value (elim inside) serves
+// BOTH faces, and the annotation below is machine-verified at load exactly
+// like nat_rec's (the crux: a branchy continuation with a real certificate).
+shape_size : {s : ShapeC} -> Nat := {s} -> rec_value ShapeC ({_} -> Nat) shape_cases s
+test shape_size (inj0 "SLeaf") = 1
+test shape_size (inj1 "SStem" (t t)) = 2
+test shape_size (inj2 "SFork" t (t t)) = 3
+test shape_size (inj1 "SHyp" Nat) = 4
+test param_apply (Pi ShapeC ({_} -> Nat)) shape_size = Ok true
+// the frame applied directly (what elim does on the neutral face):
+test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> s { motive := ({_} -> Nat); cases := shape_cases }) = Ok true
+
+// (b) the FLIP: one arm ill-typed (SStem lands false, which is no Nat) — the
+// gate rejects, the elimination extends at InvalidType, the H-rule says no:
+let bad_cases := { SLeaf := 1; SStem := {c} -> false; SFork := {l, r} -> 3; SHyp := {ty} -> 4 }
+test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> s { motive := ({_} -> Nat); cases := bad_cases }) = Ok false
+
+// (c) a MISSING arm fails too:
+let partial_cases := { SLeaf := 1; SStem := {c} -> 2; SFork := {l, r} -> 3 }
+test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> s { motive := ({_} -> Nat); cases := partial_cases }) = Ok false
+
+// (d) the match twin: correct concretely, fails CLOSED abstractly:
+let k_match := {s} -> match s { SLeaf => 1; SStem c => 2; SFork l r => 3; SHyp ty => 4 }
+test k_match (inj1 "SStem" t) = 2
+test param_apply (Pi ShapeC ({_} -> Nat)) k_match = Err
+
+// (e) the standing limit, pinned: an if-chain tag test one-paths SILENTLY —
+// the untaken branch is ill-typed (false is no Nat) and the certificate does
+// not notice. Certified branchy code must use the elim idiom above.
+let k_if := {s} -> if (tree_eq (pair_fst s) "SStem") then false else 1
+test param_apply (Pi ShapeC ({_} -> Nat)) k_if = Ok true

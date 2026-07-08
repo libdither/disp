@@ -14,11 +14,10 @@
 // no shift/reset primitive exists or is needed.
 //
 // The production shape this file grows into (spec order, all deferred):
-//   - canonical rows: name-sorted deduplicated label lists (closed-row
-//     conversion = O(1) tree_eq) and OPEN rows as a Row-typed hyp improper
-//     tail (row polymorphism = ordinary Pi Row; one trailing row variable is
-//     the exact case). The proto uses exact label lists + tree_eq membership;
-//     canonicity changes no verdict below, only row-equality cost.
+//   - canonical rows: LANDED 2026-07-07 (mk_row/row_insert/row_union at the
+//     bottom of this file; closed-row conversion = O(1) tree_eq). Still
+//     deferred: OPEN rows as a Row-typed hyp improper tail (row polymorphism
+//     = ordinary Pi Row; one trailing row variable is the exact case).
 //   - `Eff R X : Type` as a self-referential wait-form: the §15 recognizer
 //     (Pure payload : X; each Op's label ∈ R; k : op.result -> Eff R X via
 //     param_apply, so branching continuations walk under real minted hyps).
@@ -118,3 +117,29 @@ eff_check := fix ({self, R, v} ->
 // (The self-referential `Eff R X` recognizer supersedes this in production —
 // same verdicts on concrete values, plus the H-rule for Eff-typed hyps.)
 EffAt := {R} -> Refinement Tree ({v} -> eff_check R v)
+
+// ── canonical rows (EFFECT_BOOTSTRAP_PLAN stage 0, landed 2026-07-07) ──
+// A canonical row is a sorted, deduplicated label list: two closed rows are
+// the same tree exactly when they are the same SET, so closed-row conversion
+// is tree_eq (O(1) by hash-consing). Labels are ordered by a raw structural
+// fold (leaf < stem < fork, then children lexicographically; the order is
+// arbitrary but total and deterministic). Rows are library DATA built at
+// construction time, never code walked over hyps, so raw triage is the right
+// tool here. The raw constructors above (row1/row_cons) stay as building
+// blocks; code that compares rows should build them with mk_row/row_insert/
+// row_union. Pins: lib/tests/eff_deep_proto.test.disp.
+let tcmp := fix ({self, a, b} -> triage
+  (triage 1 ({_} -> 0) ({_, _} -> 0) b)
+  ({ca} -> triage 2 ({cb} -> self ca cb) ({_, _} -> 0) b)
+  ({la, ra} -> triage 2 ({_} -> 2) ({lb, rb} -> {
+    let c := self la lb
+    if (tree_eq c 1) then (self ra rb) else c
+  }) b)
+  a)
+row_insert := fix ({self, e, R} ->
+  if (is_fork R) then {
+    let c := tcmp e (pair_fst R)
+    if (tree_eq c 1) then R else (if (tree_eq c 0) then (cons e R) else (cons (pair_fst R) (self e (pair_snd R))))
+  } else (cons e nil))
+mk_row := fix ({self, ls} -> if (is_fork ls) then (row_insert (pair_fst ls) (self (pair_snd ls))) else nil)
+row_union := {R1, R2} -> mk_row (list_cat R1 R2)
