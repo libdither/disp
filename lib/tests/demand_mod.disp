@@ -1,0 +1,8 @@
+// Fixture for demand_proto: a given-bearing module whose exports demand
+// DIFFERENT subsets of its givens — the per-export-demand (slice-3 partial
+// fills) worked example. `just_a` needs only A; `both` needs A and B.
+open use "../kernel/prelude.disp"
+open given { A : Type, B : Type }
+
+just_a : A -> A := {x} -> x
+both : A -> B -> B := {x, y} -> y

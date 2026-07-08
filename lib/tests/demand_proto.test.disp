@@ -1,129 +1,80 @@
-// demand_proto — DAG-subset extraction from record types (2026-07-08): the
-// fourth face of the telescope story (recognize, respond, derive, DEMAND).
+// demand_proto — pins for std/demand.disp (the DEMAND face of telescopes:
+// DAG-subset extraction answered as "what you must satisfy first, then what
+// you get"; design notes in the module header) plus the two promotions:
 //
-// The question "what is field f of T" is answered in the honest form "what
-// you must satisfy first, then what you get": the dependency CLOSURE of f
-// through the binder-usage edges, presented as a Pi chain over the demanded
-// prefix landing in f's type. Three mechanical facts make this cheap:
+//   (2) per-export given demand on a REAL module's functor face (the
+//       slice-3 partial-fills question, answered in-language): the fixture
+//       demand_mod.disp has givens A, B; its export just_a demands only
+//       position 0, both demands both — and the per-export Pi is a real,
+//       membership-checked type SMALLER than the module's full functor typ.
 //
-//   1. Bracket abstraction already computed the edges: an unused binder's
-//      tail is the K shape (is_const_tail), a used one a real closure.
-//   2. The transitive oracle is marker instantiation + hash-consing: flip
-//      one binder between two opaque markers (hyps) and compare the target's
-//      type tree. Exact for CONSTRUCTIVE type families (families that build
-//      over their argument); a family that raw-inspects its argument could
-//      fool the pointwise comparison — the proto's honest caveat.
-//   3. No readback is needed: the demanded Pi's codomain is a COMPOSITION —
-//      apply the telescope's own tail to the Pi binder and extract the
-//      target's type from the rest. Pointwise it computes to exactly the
-//      right type value, so membership checking works; only the lambda's
-//      spelling differs from a hand-written one.
-//
-// Closure is ONE right-to-left pass (dependencies only point leftward): walk
-// positions from the end, include a binder if any already-demanded field's
-// type changes under its marker flip.
-//
-// Derived faces pinned below: field_deps (the DAG answer), field_pi (the
-// context as a REAL Pi type, membership-checked with accept and reject),
-// sub_record (the record type on a closure — width subtyping computed, extra
-// fields tolerated) and project_sub (the lens's view half), plus the functor
-// face in miniature (a module-shaped record: demanding an export yields the
-// Pi over its givens).
-// Baseline (rust-eager-native, 2026-07-08): ~25s wall, 16 pins.
+//   (3) demand composed with synthesis: enumerate the demanded context =
+//       generate inhabitants of DEPENDENT records by propose-and-check
+//       (the synthesis handler's mint clause fused: enumerate, filter by
+//       membership, thread survivors multishot through the tails). The
+//       solver pin: a dependent constraint prunes the search to the unique
+//       answer. The proof-candidate table's else arm is principled here:
+//       proofs erase to one value in this system, so refl is THE candidate.
+// Baseline (rust-eager-native, 2026-07-08): ~22s wall, 26 pins.
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"
+open use "../std/demand.disp"
 
-let not_b := {b} -> if b then false else true
-let list_len := fix ({self, l} -> if (is_fork l) then (succ (self (pair_snd l))) else 0)
-let in_list := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then true else (self (pair_snd l2))) else false)) l
-let filter_ne := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then (self (pair_snd l2)) else (cons (pair_fst l2) (self (pair_snd l2)))) else nil)) l
-
-// opaque markers for the dependency oracle:
-let mk0 := make_hyp Tree 90
-let mk1 := make_hyp Tree 91
-let mk2 := make_hyp Tree 92
-let cells_of_t := {T} -> (type_meta T).recognizer_params
-let names_go := fix ({self, cells} ->
-  if (is_fork cells) then (cons ((type_meta (pair_fst cells)).name) (self ((pair_snd cells) mk0))) else nil)
-
-// ty_under: field fname's type with binder at position i set to mk, all
-// other binders at the base marker.
-let ty_under := fix ({self, cells, fname, i, mk, pos} ->
-  if (is_fork cells) then {
-    let m := type_meta (pair_fst cells)
-    if (tree_eq (m.name) fname) then (m.ty)
-    else (self ((pair_snd cells) (if (tree_eq pos i) then mk else mk0)) fname i mk (succ pos))
-  } else t)
-let depends_on := {T, fname, i} -> not_b (tree_eq (ty_under (cells_of_t T) fname i mk1 0) (ty_under (cells_of_t T) fname i mk2 0))
-let any_dep := {T, set, i} -> (fix ({self, l} -> if (is_fork l) then (if (depends_on T (pair_fst l) i) then true else (self (pair_snd l))) else false)) set
-
-// closure: seed with the targets, one right-to-left pass over all positions.
-let closure_go := fix ({self, T, names, set, pos} ->
-  if (tree_eq pos 0) then set
-  else {
-    let i := nat_pred pos
-    let nm := list_nth names i
-    self T names (if (in_list nm set) then set else (if (any_dep T set i) then (cons nm set) else set)) i
-  })
-let closure_of := {T, targets} -> {
-  let names := names_go (cells_of_t T)
-  closure_go T names targets (list_len names)
-}
-let field_deps := {T, fname} -> filter_ne fname (closure_of T (cons fname nil))
-
-// field_pi: the demanded context as a REAL Pi chain, by composition.
-let field_pi_go := fix ({self, cells, fname, set} ->
-  if (is_fork cells) then {
-    let m := type_meta (pair_fst cells)
-    if (tree_eq (m.name) fname) then (m.ty)
-    else (if (in_list (m.name) set)
-      then (Pi (m.ty) ({x} -> self ((pair_snd cells) x) fname set))
-      else (self ((pair_snd cells) t) fname set))
-  } else InvalidType)
-let field_pi := {T, fname} -> field_pi_go (cells_of_t T) fname (closure_of T (cons fname nil))
-
-// sub_record: the record type on a closure (kept cells re-chained by the
-// same composition; skipped tails instantiated — safe, since the closure
-// guarantees no kept type uses a skipped binder). project_sub: the lens.
-let sub_cells_go := fix ({self, cells, set} ->
-  if (is_fork cells) then {
-    let m := type_meta (pair_fst cells)
-    if (in_list (m.name) set)
-      then (t (proj_cell (m.name) (m.ty)) ({x} -> self ((pair_snd cells) x) set))
-      else (self ((pair_snd cells) t) set)
-  } else t)
-let sub_record := {T, targets} -> Telescope (sub_cells_go (cells_of_t T) (closure_of T targets))
-let project_sub := {v, names} -> make_record names ((fix ({self, l} -> if (is_fork l) then (cons (list_const (field v (pair_fst l))) (self (pair_snd l))) else nil)) names)
-
-// ── the worked example: d depends on a and c, skipping b ──
+// ── the record face: d depends on a and c, skipping b ──
 let R4 := { a : Nat, b : Bool, c : Nat, d : Eq Nat (add a c) (add a c) }
 test field_deps R4 "d" = cons "a" (cons "c" nil)
 test field_deps R4 "b" = nil
 test field_deps R4 "c" = nil
-// independent fields come back BARE (empty context, tree-identical):
 test field_pi R4 "b" = Bool
 test field_pi R4 "a" = Nat
-// the demanded context as a real Pi: accept and reject:
 test param_apply (field_pi R4 "d") ({x} -> {y} -> refl) = Ok true
 test param_apply (field_pi R4 "d") ({x} -> {y} -> 5) = Ok false
-// pointwise, the composed codomain computes to exactly the right type:
 test param_apply (Eq Nat (add 1 2) (add 1 2)) refl = Ok true
 
 // ── sub_record and the lens ──
 let vR4 := { a := 1; b := true; c := 2; d := refl }
 test param_apply R4 vR4 = Ok true
 let subT := sub_record R4 (cons "d" nil)
-// the projected value inhabits the sub type (the lens law's view half):
 test param_apply subT (project_sub vR4 (closure_of R4 (cons "d" nil))) = Ok true
-// width subtyping computed: the FULL value also inhabits the sub type:
 test param_apply subT vR4 = Ok true
 test param_apply subT { a := 1; c := 2; d := refl } = Ok true
 test param_apply subT { a := 1; c := 2; d := 5 } = Ok false
 test param_apply subT { a := 1; d := refl } = Ok false
 
-// ── the functor face in miniature: a module-shaped record ──
-// "what must you satisfy to get val? a Dep : Type first" — the demanded
-// context of an export over its given, exactly the modules functor face:
-let ModT := { Dep : Type, val : Dep -> Dep }
-test field_deps ModT "val" = cons "Dep" nil
-test param_apply (field_pi ModT "val") ({D} -> {x} -> x) = Ok true
+// ── fields_of: the flat table as a record (independent prefixes) ──
+let FT := { u : Nat, v : Bool }
+test (fields_of FT).u = Nat
+test (fields_of FT).v = Bool
+
+// ── (2) per-export demand on the REAL functor face ──
+let fx := use "demand_mod.disp"
+test mod_export_deps (fx.typ) "just_a" = cons 0 nil
+test mod_export_deps (fx.typ) "both" = cons 0 (cons 1 nil)
+test param_apply (mod_export_pi (fx.typ) "just_a") ({D} -> {x} -> x) = Ok true
+test param_apply (mod_export_pi (fx.typ) "just_a") ({D} -> {x} -> 5) = Ok false
+
+// ── (3) demand times synthesis: propose-and-check over dependent records ──
+let enum_of := {ty} -> (if (tree_eq ty Bool) then (cons true (cons false nil)) else (if (tree_eq ty Nat) then (cons 0 (cons 1 (cons 2 nil))) else (cons refl nil)))
+let member := {ty, c} -> tree_eq (param_apply ty c) (Ok true)
+let filter_mem := {ty, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (member ty (pair_fst l2)) then (cons (pair_fst l2) (self (pair_snd l2))) else (self (pair_snd l2))) else nil)) l
+let concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+let synth_go := fix ({self, cells, names, vals} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    concat_map ({c} -> self ((pair_snd cells) c) (cons (m.name) names) (cons (list_const c) vals)) (filter_mem (m.ty) (enum_of (m.ty)))
+  } else (cons (make_record (list_rev names nil) (list_rev vals nil)) nil))
+let synth_record := {T} -> synth_go ((type_meta T).recognizer_params) nil nil
+let llen := fix ({self, l} -> if (is_fork l) then (succ (self (pair_snd l))) else 0)
+// an independent record enumerates the full product:
+test llen (synth_record { x : Bool, y : Bool }) = 4
+// THE SOLVER PIN: the dependent constraint prunes the search to the answer —
+// synthesis solved x = 1 by proposing and checking through the telescope:
+let SolveT := { x : Nat, y : Eq Nat x 1 }
+test llen (synth_record SolveT) = 1
+// the synthesized record IS the literal, tree-identically (make_record with
+// plain wrapped values is exactly what a record literal compiles to):
+test tree_eq (synth_record SolveT) (cons { x := 1; y := refl } nil) = true
+let solved := pair_fst (synth_record SolveT)
+test solved.x = 1
+test tree_eq (solved.y) refl = true
+test param_apply SolveT solved = Ok true

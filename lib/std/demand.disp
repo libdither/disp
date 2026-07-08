@@ -1,0 +1,137 @@
+// std/demand.disp — the DEMAND face of telescopes (promoted 2026-07-08 from
+// demand_proto): DAG-subset extraction from record types, answered in the
+// honest form "what you must satisfy first, then what you get".
+//
+// "What is field f of T" = the dependency CLOSURE of f through the
+// binder-usage edges, presented as a Pi chain over the demanded prefix
+// landing in f's type. The same operation the codebase already hand-rolls
+// three times (the modules functor face, case_types_go's eliminator
+// obligations, handler_sig's handler obligations), exported once.
+//
+// Three mechanical facts keep it small:
+//   1. Bracket abstraction already computed the edges: an unused binder's
+//      tail is the K shape, a used one a real closure.
+//   2. The transitive oracle is marker instantiation + hash-consing: flip
+//      one binder between two opaque hyp markers and tree_eq the target's
+//      type. EXACT for constructive type families; a family that
+//      raw-inspects its argument could fool the pointwise comparison.
+//   3. No readback: a demanded Pi's codomain is a COMPOSITION (apply the
+//      telescope's own tail to the Pi binder, extract downstream), so it
+//      computes pointwise to exactly the right type value. Membership
+//      agrees with a hand-written Pi; tree identity holds only in the
+//      empty-context case (independent fields come back bare).
+//
+// Closure is ONE right-to-left pass: dependencies only point leftward.
+// These functions are interpreter-shaped over cells (type_meta reads), so
+// they carry no annotations — the usual limit. Pins: demand_proto.test.disp.
+open use "../kernel/prelude.disp"
+
+let not_b := {b} -> if b then false else true
+let list_len := fix ({self, l} -> if (is_fork l) then (succ (self (pair_snd l))) else 0)
+let in_list := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then true else (self (pair_snd l2))) else false)) l
+let filter_ne := {x, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (tree_eq (pair_fst l2) x) then (self (pair_snd l2)) else (cons (pair_fst l2) (self (pair_snd l2)))) else nil)) l
+
+// the oracle's opaque markers (the floor forge, used at type-analysis time
+// on concrete telescopes — never under a check):
+let mk0 := make_hyp Tree 90
+let mk1 := make_hyp Tree 91
+let mk2 := make_hyp Tree 92
+let cells_of_t := {T} -> (type_meta T).recognizer_params
+let names_go := fix ({self, cells} ->
+  if (is_fork cells) then (cons ((type_meta (pair_fst cells)).name) (self ((pair_snd cells) mk0))) else nil)
+let ty_under := fix ({self, cells, fname, i, mk, pos} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (tree_eq (m.name) fname) then (m.ty)
+    else (self ((pair_snd cells) (if (tree_eq pos i) then mk else mk0)) fname i mk (succ pos))
+  } else t)
+let depends_on := {T, fname, i} -> not_b (tree_eq (ty_under (cells_of_t T) fname i mk1 0) (ty_under (cells_of_t T) fname i mk2 0))
+let any_dep := {T, set, i} -> (fix ({self, l} -> if (is_fork l) then (if (depends_on T (pair_fst l) i) then true else (self (pair_snd l))) else false)) set
+let closure_go := fix ({self, T, names, set, pos} ->
+  if (tree_eq pos 0) then set
+  else {
+    let i := nat_pred pos
+    let nm := list_nth names i
+    self T names (if (in_list nm set) then set else (if (any_dep T set i) then (cons nm set) else set)) i
+  })
+
+// closure_of T targets: the demanded field names (targets included), in
+// field order. field_deps: one target's context names.
+closure_of := {T, targets} -> {
+  let names := names_go (cells_of_t T)
+  closure_go T names targets (list_len names)
+}
+field_deps := {T, fname} -> filter_ne fname (closure_of T (cons fname nil))
+
+// field_pi T f: the demanded context as a REAL Pi chain landing in f's type.
+let field_pi_go := fix ({self, cells, fname, set} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (tree_eq (m.name) fname) then (m.ty)
+    else (if (in_list (m.name) set)
+      then (Pi (m.ty) ({x} -> self ((pair_snd cells) x) fname set))
+      else (self ((pair_snd cells) t) fname set))
+  } else InvalidType)
+field_pi := {T, fname} -> field_pi_go (cells_of_t T) fname (closure_of T (cons fname nil))
+
+// sub_record T targets: the record type on the closure — width subtyping
+// COMPUTED (skipped tails instantiate safely: the closure guarantees no kept
+// type uses a skipped binder). project_sub: the lens's view half.
+let sub_cells_go := fix ({self, cells, set} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    if (in_list (m.name) set)
+      then (t (proj_cell (m.name) (m.ty)) ({x} -> self ((pair_snd cells) x) set))
+      else (self ((pair_snd cells) t) set)
+  } else t)
+sub_record := {T, targets} -> Telescope (sub_cells_go (cells_of_t T) (closure_of T targets))
+project_sub := {v, names} -> make_record names ((fix ({self, l} -> if (is_fork l) then (cons (list_const (field v (pair_fst l))) (self (pair_snd l))) else nil)) names)
+
+// fields_of T: the flat field table AS a record (dotted access after one
+// derivation). Honest only on independent prefixes — a dependent field's
+// entry comes back instantiated; field_pi is the general face.
+let fields_go := fix ({self, cells} ->
+  if (is_fork cells) then {
+    let m := type_meta (pair_fst cells)
+    let rest := self ((pair_snd cells) t)
+    pair (cons (m.name) (pair_fst rest)) (cons (list_const (m.ty)) (pair_snd rest))
+  } else (pair nil nil))
+fields_of := {T} -> {
+  let nv := fields_go (cells_of_t T)
+  make_record (pair_fst nv) (pair_snd nv)
+}
+
+// ── the MODULE face ──
+// A given-bearing module's functor typ is a Pi chain over its givens landing
+// in the Record of exports (MODULES.md slice 2). Per-export demand answers
+// the slice-3 partial-fills question: which givens does THIS export need?
+// Direct dependencies (given types are usually mutually independent; the
+// record face above carries the full closure story). Positions, not names —
+// Pi binders are anonymous.
+let is_pi_head := {T} -> {
+  let cs := (type_meta T).recognizer_params
+  and (is_fork cs) (is_mint_cell (pair_fst cs))
+}
+let pi_dom_of := {T} -> (type_meta (pair_fst ((type_meta T).recognizer_params))).ty
+let pi_cod_at := {T, x} -> (type_meta (pair_fst ((pair_snd ((type_meta T).recognizer_params)) x))).ty
+let flat_ty := fix ({self, fields, name} ->
+  if (is_fork fields) then {
+    let arm := pair_fst fields
+    if (tree_eq (pair_fst arm) name) then (pair_snd arm) else (self (pair_snd fields) name)
+  } else t)
+let mod_ty_under := fix ({self, T, name, i, mk, pos} ->
+  if (is_pi_head T) then (self (pi_cod_at T (if (tree_eq pos i) then mk else mk0)) name i mk (succ pos))
+  else (flat_ty ((type_meta T).recognizer_params) name))
+let pi_depth := fix ({self, T} -> if (is_pi_head T) then (succ (self (pi_cod_at T mk0))) else 0)
+mod_export_deps := {ftyp, name} -> (fix ({self, i} ->
+  if (tree_eq i (pi_depth ftyp)) then nil
+  else (if (not_b (tree_eq (mod_ty_under ftyp name i mk1 0) (mod_ty_under ftyp name i mk2 0)))
+    then (cons i (self (succ i)))
+    else (self (succ i))))) 0
+let mod_pi_go := fix ({self, T, name, deps, pos} ->
+  if (is_pi_head T) then (
+    if (in_list pos deps)
+      then (Pi (pi_dom_of T) ({x} -> self (pi_cod_at T x) name deps (succ pos)))
+      else (self (pi_cod_at T t) name deps (succ pos)))
+  else (flat_ty ((type_meta T).recognizer_params) name))
+mod_export_pi := {ftyp, name} -> mod_pi_go ftyp name (mod_export_deps ftyp name) 0
