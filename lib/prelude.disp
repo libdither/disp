@@ -54,7 +54,10 @@ open given {
 // an alternative leaf/stem(leaf) representation — smaller trees, O(1) is_leaf
 // dispatch, consonant with zero = t — at the cost of the self-eliminator
 // property `cond`/`select`/`if` lean on and the host fast-path verdict shapes.
-// A representation change needs the differential-oracle discipline first.)
+// A representation change needs the differential-oracle discipline first.
+// TYPE_THEORY §2.7 (polarity) makes the case FOR the change: Scott bools are
+// the kernel's one remaining self-eliminating datum — data that drives — and
+// the discipline everywhere else is raw positives + triage-driven consumers.)
 true : Bool := {m, ct, cf} -> ct
 false : Bool := {m, ct, cf} -> cf
 

@@ -553,12 +553,138 @@ subsumes `select` (the two-constructor Bool case), the per-type recursors of
   because they are needed during bootstrap, before `Coproduct` itself exists.
   Same cut, same tag policy.
 
-  `Bool` is the coproduct `True Unit | False Unit`; it keeps its Scott encoding
+  `Bool` is the nullary coproduct `< true, false >`; it keeps its Scott encoding
   (§12) because it is the substrate's branching primitive and must apply
   directly as `select`. The Scott encoding *is* the cut internalized — the value
   carries its own handler-selection instead of waiting for a product — so it
-  optimizes the general eliminator rather than being a separate mechanism.
+  optimizes the general eliminator rather than being a separate mechanism. It is
+  also the one value left on the wrong side of §2.7's polarity line (data that
+  drives), and §2.7 closes with the case for retiring it.
 ]
+
+== Polarity: who drives an elimination <sec:polarity>
+
+§2.6 ends on a convention it does not justify: the table is the callable side
+(`prod P = wait cut P`) and data stays bare. The cut as a specification is
+symmetric (a variant meets a field table; the tag selects a field), but
+application is not: one operand must be the function. This subsection fixes the
+direction as a principle rather than a habit, because the same choice recurs at
+every level of the system. In its general form it is the choice between *data
+with an attached eliminator* (a value that dispatches when applied) and *raw
+data with an external eliminator* (an inert tree that its consumer inspects).
+
+=== One negative former
+
+Everything in the kernel that is defined by how it *responds* is a single
+construction, a handler wait-adjoined to state:
+
+```disp
+prod P   =  wait cut         (names, fields)           // records and match tables
+T        =  wait recognizer  meta                      // types (§11)
+h        =  wait hyp_reduce  {stored_type, payload}    // neutrals
+cell     =  wait op          meta                      // telescope cells (§12)
+```
+
+A wait-form is a coalgebra: state in the meta, behaviour in the handler. These
+are the *negative* values, the ones defined by observation. Everything defined
+by how it is *built* stays a raw tree: `inj`-tagged variants, `zero = △` and
+`succ n = fork(△, n)`, `cons` chains, interned strings. Even codata keeps its
+state raw: a `Stream` value is `inj "gen" (pair step seed)`, a defunctionalized
+generator that `out` observes one step at a time, not a self-dispatching
+object. These are the *positive* values.
+
+=== The shift happens at abstraction, not construction
+
+The fragments meet in the neutral. A hypothesis of a positive type has no
+structure to inspect, so the kernel hands out a variable wrapped in its type's
+behaviour: `wait hyp_reduce {stored_type := Nat, ...}` is Nat's `respond`
+attached to a variable. Concrete positives are inspected (recognizers, the cut
+reading a tag, `triage`); abstract positives respond (a frame routed through
+`hyp_reduce` to the respond). The direction rule of the whole system is then
+one sentence:
+
+*A value drives its own elimination exactly when it is a wait-form (every
+neutral, every product); otherwise its consumer drives, exactly as the
+substrate's triage rule does.*
+
+Both poles of the classical duality are therefore present, assigned by polarity
+rather than chosen globally. Eliminating a concrete positive is consumer-driven
+(`cases v`; `triage l s f x`). Eliminating anything negative or abstract is
+scrutinee-driven (`r (acc a)`; `h {motive, cases}`). And the abstract direction
+is not a preference: a hypothesis in argument position is invisible to the
+machinery, so only a hypothesis in function position can route its frame to a
+respond. The one genuine decision the kernel ever made here is *when* the shift
+into the negative fragment happens — at abstraction time, not at construction
+time — so that concrete data stays raw.
+
+=== The substrate picked a side, and its sibling picked the other
+
+The concrete direction is not a kernel invention either. Rule 3 of the
+substrate (§2.1) is triage: a table in function position inspects its
+argument's shape. Tree calculus has a sibling formulation — the fork rule of
+Jay's book (*Reflective Programs in Tree Calculus*) —
+
+```
+△(△ w x) y z  ⟶  z w x
+```
+
+in which the function's own fork children are handed *to the argument*: data in
+function position feeds itself to whatever consumer arrives, the visitor
+pattern as a reduction rule. Both formulations are universal; they differ in
+which pole is primitive. A language whose types are predicates that walk
+candidate values wants intensional inspection to be the one-rule operation, so
+disp sits on the triage formulation, and the §2.6 cut is that rule lifted from
+shapes to names.
+
+=== Reflection makes the choice semantic
+
+In an ordinary language the two poles are observationally equivalent:
+defunctionalizing a Scott-encoded sum into tags-plus-dispatch, or
+refunctionalizing back, preserves behaviour, so the choice is style and
+performance. Disp's kernel is an observer that can tell the poles apart: types
+are recognizers that walk raw structure, conversion is `tree_eq`, and the
+elaborator reads record headers off compiled trees. Under that much reflection
+the encoding of data is semantics, and three costs pin the positive fragment to
+raw trees:
+
+- every self-dispatching datum would carry its wrapper (the unbounded runtime
+  population pays, and nested data pays per level), while wrapping the table
+  side is paid once per hash-consed table;
+- a raw tree could no longer inhabit an inductive type, so the shape encodings
+  and their view isos (§12) lose their subject: `zero = △` stops being true;
+- the substrate's own values become second-class citizens of the language
+  built on them, forfeiting the floor (§2.1) and the Tree-as-inductive rung
+  (§11.2).
+
+#note[
+  *The duality has a literature.* ADTs versus objects: Reynolds, "User-defined
+  types and procedural data structures as complementary approaches to data
+  abstraction" (1975); Cook, "On understanding data abstraction, revisited"
+  (2009). The transform between the poles: defunctionalization (Reynolds 1972)
+  and refunctionalization (Danvy and collaborators); a callable sum
+  (`wait cut_flip c`) would be the refunctionalized form of §2.6's
+  tags-plus-cut. Polarity and shifts: Levy's call-by-push-value (value types
+  against computation types; the wait-form is the shift into the negative
+  fragment, made visible as a dozen substrate nodes); focusing (Andreoli;
+  Zeilberger). Who drives as a critical pair: Curien and Herbelin, "The duality
+  of computation" (the symmetric cut of λ̄μμ̃ reduces either way, and choosing
+  the winner is choosing call-by-value against call-by-name); "Grokking the
+  Sequent Calculus" (ICFP 2024) is a readable entry. Codata by observations:
+  copatterns (Abel, Pientka, Thibodeau, Setzer, POPL 2013); a type's `respond`
+  is a copattern table over frames. Interconversion as a whole-program
+  transform: Rendel, Trieflinger, Ostermann (ICFP 2015); Downen, Sullivan,
+  Ariola, Peyton Jones, "Codata in action" (ESOP 2019).
+]
+
+One value class still sits on the wrong side of the line: Scott-encoded
+`true`/`false` (§2.6 note). A Scott bool is data that drives (`cond c a b`
+applies the bool to its branches), the one refunctionalized citizen left in the
+kernel. It has been tolerable because both variants are nullary and
+fixed-shape, so recognition is two exact `tree_eq`s with no payload to walk,
+but the discipline points the same way as the substrate: re-encode `Bool` as
+raw shapes with a view (`true = △`, `false = △ △`, branching by triage), a
+shape-encoded coproduct exactly like `Nat` and `Ord`. Tracked in
+`lib/prelude.disp`.
 
 = The `CheckerResult` monad <sec:result-monad>
 
