@@ -9,58 +9,70 @@
   const JAY = "https://github.com/barry-jay-personal";
   const TREECALC = "https://treecalcul.us/";
 
-  // the field guide: one fixed card, entries swap on hover
+  // the field guide: one fixed card, entries swap on hover.
+  // `html` is trusted author-written markup: links, <em>, <code> all work,
+  // and plain \n newlines render as line breaks (white-space: pre-line).
   interface Entry {
     term: string;
     pos: string;
-    text: string;
+    html: string;
   }
   const entries: Record<string, Entry> = {
     disp: {
       term: "disp",
       pos: "n.",
-      text: "A language grown from one leaf and five rewrite rules, currently teaching itself to check its own homework. The dotted words below have entries of their own.",
+      html: "Ingredients: \none leaf, five rewrite rules, predicates, nets, and a dream...",
     },
     decentralized: {
       term: "decentralized",
       pos: "adj.",
-      text: "Features spread the way libraries do. Anyone can build new syntax or types, anyone can adopt them, and dialects translate into one another automatically. No committee, no release train, no waiting.",
+      html: "Is your favorite programming language is being sensible and not including your new pet feature into the language? Well in disp you can implement that feature yourself! Just need to formally prove it plays nice with everything else ofc :)",
     },
     lisp: {
       term: "lisp",
       pos: "n.",
-      text: "Programs are data here too, but there is no quote/eval loop to cross. Reduction itself reads tree shape, so a program that rewrites programs is simply a program. Lisp walked so trees could branch.",
+      html: "Disp is like Lisp but no quote/eval on S-expressions required, just <code>triage</code> on a tree! Honestly, who even liked S-expressions anyway, too many parentheses...",
     },
     universal: {
       term: "universal",
       pos: "adj.",
-      text: "One substrate that other languages can be rebuilt in and transpiled to. The ambition is a language that absorbs languages, not another island with good weather.",
+      html: "The goal is for disp to be a singular substrate that other languages can be rebuilt in and transpiled to. Disp shall become the <em>grey goo of programming languages</em> mwahahahaHAHAHAHA",
     },
     parsers: {
       term: "user-definable parsers",
       pos: "n. pl.",
-      text: "The grammar is a library, not a constitution. A project can define its own notation, elaborate to the same trees underneath, and still talk to everything else.",
+      html: '"A parser for things is a function from strings to potentially a pair of that thing and its string" and in disp, compilation is just a function man...',
     },
     typesystems: {
       term: "type systems",
       pos: "n. pl.",
-      text: "Functions, records, induction, and the universe itself: all library code over two trusted kernel operations, re-verified on every load. Different logic is a library you write, not a compiler you fork.",
+      html: "A type system is just a system of types. Types are just predicates on programs. A type system is just a collection of predicates on programs. Why does no one teach it this way?!?",
     },
     optimizer: {
       term: "self-optimizing optimizer",
       pos: "n.",
-      text: "Give it a specification: a type, a predicate, a loss function. It derives implementations, each rewrite licensed by a machine-checked certificate. It has a disp type of its own, so it qualifies for its own attention.",
+      html: "Eliezer Yudkowsky called me and said this was probably a bad idea but idk man, I'd rather interpretable recursive self-improvement than whatever Anthropic and OpenAI be up to.",
     },
     nets: {
       term: "interaction nets",
       pos: "n. pl.",
-      text: "A model of computation where programs are graphs and every step is a small local rewrite. Steps become countable, so cost can be charged to the exact decision that spent it.",
+      html: 'Okay, so imagine like feynman diagrams where particles are splitting apart and annihilating but in doing so they are doing computation, oh hi there <a href="https://github.com/VictorTaelin" target="_blank" rel="noopener">@VictorTaelin</a> didn\'t see you there',
     },
   };
   let entryKey = $state("disp");
   const entry = $derived(entries[entryKey] ?? entries.disp);
-  const look = (k: string) => () => (entryKey = k);
-  const lookAway = () => (entryKey = "disp");
+  // leaving a term starts a short grace period, and hovering the box itself
+  // holds the entry open, so links inside the card are reachable
+  let resetTimer: ReturnType<typeof setTimeout> | undefined;
+  const look = (k: string) => () => {
+    clearTimeout(resetTimer);
+    entryKey = k;
+  };
+  const lookAway = () => {
+    clearTimeout(resetTimer);
+    resetTimer = setTimeout(() => (entryKey = "disp"), 300);
+  };
+  const holdEntry = () => clearTimeout(resetTimer);
 
   let showcaseIdx = $state(0);
   const showcase = examples.filter((e) =>
@@ -116,12 +128,14 @@
           class="defbox"
           class:looking={entryKey !== "disp"}
           aria-live="polite"
+          onmouseenter={holdEntry}
+          onmouseleave={lookAway}
         >
           <span class="def-head">
             <span class="def-term">{entry.term}</span>
             <span class="def-pos">{entry.pos}</span>
           </span>
-          <p class="def-text">{entry.text}</p>
+          <div class="def-text">{@html entry.html}</div>
         </aside>
       </div>
       <p class="sub">
@@ -241,19 +255,18 @@
     </div>
     <div class="card feat">
       <h3>
-        <span class="feat-dot" aria-hidden="true"></span>An optimizer aimed at
-        itself
+        <span class="feat-dot" aria-hidden="true"></span>Optimize
+        <a href="https://www.youtube.com/watch?v=VtzvlXL9gXk">ZA WARUDO</a> (with
+        a self-optimizing optimizer)
       </h3>
       <p>
-        Programs materialize as <a
+        Idea: have tree programs compile to <a
           href="{REPO}/blob/main/OPTIMIZER.typ"
           target="_blank"
           rel="noopener">interaction nets</a
-        >, where every reduction is a local rewrite you can count, and hardware
-        is modeled as imperfect net reduction. Cost lands on individual
-        decisions. Rewrites need machine-checked equivalence certificates, and
-        since the optimizer has a disp type too, nothing stops it from taking a
-        pass at itself.
+        >, and have another interaction net search the original interaction nets
+        to find-and-replace certain nets with native operations. Possibly using
+        <a href="https://egraphs-good.github.io/">e-graphs</a>.
       </p>
     </div>
   </div>
@@ -479,6 +492,20 @@
     font-size: 0.77rem;
     line-height: 1.5;
     color: var(--fg-muted);
+    white-space: pre-line; /* \n in an entry renders as a line break */
+  }
+  .def-text :global(a) {
+    color: var(--accent);
+  }
+  .def-text :global(em) {
+    color: var(--fg);
+  }
+  .def-text :global(code) {
+    font-size: 0.92em;
+    white-space: nowrap;
+  }
+  .def-text :global(p) {
+    margin: 0 0 0.4rem;
   }
   h1 {
     font-size: clamp(4.2rem, 9vw, 6.8rem);
