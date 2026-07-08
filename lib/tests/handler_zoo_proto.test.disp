@@ -1,0 +1,135 @@
+// handler_zoo_proto — STAGE 5 of EFFECT_BOOTSTRAP_PLAN.md: the payoff
+// demonstration. The SAME spec programs (stage 2's tele_prog over the live
+// cells, plus two hand-written mint programs), four interpreters:
+//
+//   spec_recognize   the floor face (stage 2, local copy): the semantics.
+//   cost_h           parameter-passing counter (mints, checks) with the same
+//                    acceptance semantics — cost-as-coeffect attached to
+//                    checking itself, empirically. Its mint clause answers a
+//                    RAW make_hyp: the parameter-passing carrier cannot feed
+//                    bind_hyp's escape bind (the stage-1 carrier contract),
+//                    so the cost face MEASURES and the floor face CERTIFIES —
+//                    run it on programs the floor already accepted.
+//   expl_h           threads a trace of observations; on rejection the trace
+//                    IS the error report (the richer CheckerError vocabulary,
+//                    nearly free). Same raw-mint note as cost.
+//   synth_h          the headline: interpret mint by ENUMERATING candidates
+//                    (multishot resume, the nondet pattern), and interpret
+//                    obs/guard as FILTERS (a failing branch answers nil).
+//                    Synthesis at Pair Bool Bool yields four values, each
+//                    re-checking Ok true under the live kernel; a guard turns
+//                    it into propose-and-check in one program (GOALS.md's
+//                    loop as one handler clause).
+//
+// Pinned side by side at the bottom: one program, several interpreters.
+// Baseline (rust-eager-native, 2026-07-08): ~25s wall, 12 pins.
+open use "../kernel/prelude.disp"
+open use "../std/nat/ops.disp"
+open use "../std/effect.disp"
+open use "../std/pair.disp"
+
+// ── stage 2's Tele vocabulary, local copy (promotion to a std module is the
+// stage 4 decision) ──
+let t_mint := {ty} -> io_op { label := pair "Tele" "mint"; param := Type; result := ty } ty ({r} -> io_pure r)
+let t_obs := {ty, getr} -> io_op { label := pair "Tele" "obs"; param := Tree; result := Tree } (pair ty getr) ({r} -> io_pure r)
+let t_guard := {pred, v} -> io_op { label := pair "Tele" "guard"; param := Tree; result := Tree } (pair pred v) ({r} -> io_pure r)
+let t_proj := {name, ty, getr, thread} -> io_op { label := pair "Tele" "proj"; param := Tree; result := Tree } (pair name (pair ty (pair getr thread))) ({r} -> io_pure r)
+let s_mint_sig := pair_fst (mint_cell t)
+let s_apply_sig := pair_fst (apply_cell t)
+let s_qid_sig := pair_fst (qid_cell t)
+let s_refine_sig := pair_fst (refine_cell t)
+let s_imeet_sig := pair_fst (imeet_cell t)
+let tele_prog := fix ({self, tele, source, prior} ->
+  if (is_fork tele) then {
+    let cell := pair_fst tele
+    let m := type_meta cell
+    let sig := pair_fst cell
+    (if (tree_eq sig s_mint_sig) then (eff_bind (t_mint (m.ty)) ({h} -> self ((pair_snd tele) h) source h))
+    else (if (tree_eq sig s_apply_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok (source prior))) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_qid_sig) then (eff_bind (t_obs (m.ty) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_imeet_sig) then (eff_bind (t_obs ((m.pred) prior) ({_} -> Ok source)) ({x} -> self ((pair_snd tele) x) source x))
+    else (if (tree_eq sig s_refine_sig) then (eff_bind (t_guard (m.pred) source) ({x} -> self ((pair_snd tele) x) source x))
+    else (eff_bind (t_proj (m.name) (m.ty) ({_} -> lookup_field source (m.name)) ({_} -> source (acc (m.name)))) ({x} -> self ((pair_snd tele) x) source x)))))))
+  } else (io_pure (Ok true)))
+let s_obs_check := {ty, getr, resume} -> (
+  match (apply_policed getr t) {
+    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else (Ok false)); Err _ => (Ok false) }); Err _ => (Ok false) })
+    Err _ => (Ok false)
+  })
+let recognize_on := {op} -> {arg, resume} -> (
+  if (tree_eq (op_name op) "mint") then (param_apply (bind_hyp arg) resume)
+  else (if (tree_eq (op_name op) "obs") then (s_obs_check (pair_fst arg) (pair_snd arg) resume)
+  else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else (Ok false)); Err _ => (Ok false) })
+  else (s_obs_check (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
+let spec_recognize := mk_handler (covers_eff "Tele") ({x} -> x) recognize_on
+
+// ── the cost handler: counts = make_pair mints checks ──
+let bump_fst := {c} -> make_pair (succ (c.fst)) (c.snd)
+let bump_snd := {c} -> make_pair (c.fst) (succ (c.snd))
+let cost_obs := {ty, getr, resume} -> {c} -> (
+  match (apply_policed getr t) {
+    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then ((resume part) (bump_snd c)) else (make_pair (Ok false) (bump_snd c))); Err _ => (make_pair Err (bump_snd c)) }); Err _ => (make_pair Err (bump_snd c)) })
+    Err _ => (make_pair Err (bump_snd c))
+  })
+let cost_on := {op} -> {arg, resume} -> (
+  if (tree_eq (op_name op) "mint") then ({c} -> (resume (make_hyp arg (pair arg (c.fst)))) (bump_fst c))
+  else (if (tree_eq (op_name op) "obs") then (cost_obs (pair_fst arg) (pair_snd arg) resume)
+  else (if (tree_eq (op_name op) "guard") then ({c} -> (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then ((resume (pair_snd arg)) (bump_snd c)) else (make_pair (Ok false) (bump_snd c))); Err _ => (make_pair Err (bump_snd c)) }))
+  else (cost_obs (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
+let cost_h := mk_handler (covers_eff "Tele") ({x} -> {c} -> make_pair x c) cost_on
+let run_cost := {prog} -> (handle cost_h prog) (make_pair 0 0)
+
+// ── the explanation handler: the trace is the error report ──
+let expl_obs := {label, ty, getr, resume} -> {tr} -> (
+  match (apply_policed getr t) {
+    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then ((resume part) (cons label tr)) else (make_pair (Ok false) (cons (pair "rejected" label) tr))); Err _ => (make_pair Err (cons (pair "rejected" label) tr)) }); Err _ => (make_pair Err (cons (pair "rejected" label) tr)) })
+    Err _ => (make_pair Err (cons (pair "rejected" label) tr))
+  })
+let expl_on := {op} -> {arg, resume} -> (
+  if (tree_eq (op_name op) "mint") then ({tr} -> (resume (make_hyp arg (pair arg tr))) (cons "mint" tr))
+  else (if (tree_eq (op_name op) "obs") then (expl_obs "obs" (pair_fst arg) (pair_snd arg) resume)
+  else (if (tree_eq (op_name op) "guard") then ({tr} -> (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then ((resume (pair_snd arg)) (cons "guard" tr)) else (make_pair (Ok false) (cons (pair "rejected" "guard") tr))); Err _ => (make_pair Err (cons (pair "rejected" "guard") tr)) }))
+  else (expl_obs (pair_fst arg) (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
+let expl_h := mk_handler (covers_eff "Tele") ({x} -> {tr} -> make_pair x tr) expl_on
+let run_expl := {prog} -> (handle expl_h prog) nil
+
+// ── the synthesis handler: mint = enumerate (multishot), obs/guard = filter ──
+let enum_of := {ty} -> (if (tree_eq ty Bool) then (cons true (cons false nil)) else (if (tree_eq ty Nat) then (cons 0 (cons 1 (cons 2 nil))) else nil))
+let concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+let synth_obs := {ty, getr, resume} -> (
+  match (apply_policed getr t) {
+    Ok gr => (match gr { Ok part => (match (param_apply ty part) { Ok b => (if b then (resume part) else nil); Err _ => nil }); Err _ => nil })
+    Err _ => nil
+  })
+let synth_on := {op} -> {arg, resume} -> (
+  if (tree_eq (op_name op) "mint") then (concat_map resume (enum_of arg))
+  else (if (tree_eq (op_name op) "obs") then (synth_obs (pair_fst arg) (pair_snd arg) resume)
+  else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else nil); Err _ => nil })
+  else (synth_obs (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))
+let synth_h := mk_handler (covers_eff "Tele") ({x} -> cons x nil) synth_on
+
+// ── synthesis: four inhabitants of Pair Bool Bool, each re-checked live ──
+let syn_pair := {A, B} -> eff_bind (t_mint A) ({a} -> eff_bind (t_mint B) ({b} -> io_pure (make_pair a b)))
+let syn_bb := handle synth_h (syn_pair Bool Bool)
+test tree_eq syn_bb (cons (make_pair true true) (cons (make_pair true false) (cons (make_pair false true) (cons (make_pair false false) nil)))) = true
+let all_pairs_ok := fix ({self, l} -> if (is_fork l) then (if (tree_eq (param_apply (Pair Bool Bool) (pair_fst l)) (Ok true)) then (self (pair_snd l)) else false) else true)
+test all_pairs_ok syn_bb = true
+// propose-and-check in one program: synthesize a Nat, a guard keeps the zeros:
+let syn_zero := eff_bind (t_mint Nat) ({n} -> eff_bind (t_guard is_zero n) ({m} -> io_pure m))
+test tree_eq (handle synth_h syn_zero) (cons 0 nil) = true
+
+// ── one program, several interpreters, side by side ──
+let pi_nn_cells := (type_meta (Arrow Nat Nat)).recognizer_params
+let rcells := t (proj_cell "a" Nat) (const_tail (t (proj_cell "b" Bool) (const_tail t)))
+let good_pi := tele_prog pi_nn_cells succ t
+let good_rec := tele_prog rcells { a := 3; b := true } t
+let bad_rec := tele_prog rcells { a := 3; b := 5 } t
+test handle spec_recognize good_pi = Ok true
+test run_cost good_pi = make_pair (Ok true) (make_pair 1 1)
+test handle spec_recognize good_rec = Ok true
+test run_cost good_rec = make_pair (Ok true) (make_pair 0 2)
+test run_expl good_rec = make_pair (Ok true) (cons "b" (cons "a" nil))
+test handle spec_recognize bad_rec = Ok false
+test run_cost bad_rec = make_pair (Ok false) (make_pair 0 2)
+test run_expl bad_rec = make_pair (Ok false) (cons (pair "rejected" "b") (cons "a" nil))
+test run_cost (tele_prog ((type_meta (Intersection Type ({A} -> Arrow A A))).recognizer_params) ({x} -> x) t) = make_pair (Ok true) (make_pair 1 1)
