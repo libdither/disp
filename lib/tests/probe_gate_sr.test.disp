@@ -1,0 +1,48 @@
+// REGRESSION PIN (was an SR probe): the coherence gate now checks that a gated type's
+// view/encode iso is FAITHFUL before trusting it. The gate reconstructs each constructor's
+// value via `encode` (case_type_go: `P (encode (inj tag payload))`); `iso_faithful` (positive.disp)
+// round-trips `view (encode (inj tag placeholders))` against the sound `view` side, so a lying
+// encode is caught and both the gate AND the universe reject the type. See ACTIVE_BUGS.md item 2.
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+let one := succ zero
+
+// shared dispatcher over the raw Nat shape (zero = leaf, succ r = fork(t, r))
+let nat_disp := fix ({self, motive, cases, target} ->
+  if (is_leaf target) then cases.zero
+  else (cases.succ (pair_snd target) (elim self motive cases (pair_snd target))))
+let recX := {motive, zc, sc, target} -> elim nat_disp motive { zero := zc; succ := sc } target
+
+// motive M n = (Eq Nat n zero): inhabited by refl ONLY at n = zero.
+// The lying recursor returns refl at succ too -> a "proof" of Eq Nat (succ p) zero.
+
+// A. REAL Nat (gated, honest encode): the gate MUST reject the lie.
+let liar_real := {n} -> recX ({k} -> Eq Nat k zero) refl ({p, ih} -> refl) n
+test param_apply (Pi Nat ({k} -> Eq Nat k zero)) liar_real = Ok false
+
+// B. BadNat: same shape + same recognition as Nat, but encode is BOGUS (always zero).
+let view_n := {v} -> triage (Ok (inj "zero" t)) ({_} -> Err)
+  ({l, r} -> if (tree_eq l t) then (Ok (inj "succ" r)) else Err) v
+let encode_bogus := {x} -> t
+let BadNat := Coproduct_viewed t (pair view_n encode_bogus) [pair "zero" [], pair "succ" [Rec]]
+
+// recognition is identical to Nat (recognition uses view, not encode):
+test typecheck BadNat zero = Ok true
+test typecheck BadNat (succ (succ zero)) = Ok true
+
+// the SAME lying recursor, now at BadNat: the gate USED to check the succ-case at
+// M(encode(succ p)) = M(zero) = Eq Nat zero zero (where refl is honest) and be fooled;
+// now `iso_faithful` rejects the bogus encode first, so the gate errs -> the recursor is rejected.
+let liar_bad := {n} -> recX ({k} -> Eq Nat k zero) refl ({p, ih} -> refl) n
+test param_apply (Pi BadNat ({k} -> Eq Nat k zero)) liar_bad = Ok false  // GATED: iso_faithful catches the bogus encode
+
+// The universe also rejects the bogus iso: BadNat's coh probe fails, so BadNat is not a valid Type.
+test typecheck Type BadNat = Ok false
+
+// C. the forged proof still fails the use-site endpoint re-check (R0 structural defense):
+test param_apply (Eq Nat one zero) (liar_bad (succ zero)) = Ok false
+
+// D. baseline gate sanity: a plainly ill-typed base case is caught on real Nat.
+let liar2 := {n} -> recX ({_} -> Nat) false ({p, ih} -> succ ih) n
+test param_apply (Pi Nat ({_} -> Nat)) liar2 = Ok false

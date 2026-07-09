@@ -111,7 +111,7 @@ test param_apply (Pi Bool ({_} -> Nat)) ({b} -> bool_rec ({_} -> Nat) zero (succ
 // ---- MetaShape metadata is a §2.6 headered record, read BY NAME (the cut) ----
 // make_meta builds a `prod`; fields are read by name with the §2.6 cut (.field),
 // not positional pair projections.
-test (type_meta Unit).respond = inductive_respond // an ungated inductive type
+test tree_eq (type_meta Unit).respond inductive_respond = false // Unit now GATES its eliminator (coh_unit; formerly ungated inductive_respond)
 test (type_meta False).respond = inert_respond
 // Nat now carries its shape↔inj ISO in `functor` (CELL_OPTICS — what generic fmap/fold_value read).
 test tree_eq (type_meta Nat).functor trivial_functor = false                     // no longer trivial

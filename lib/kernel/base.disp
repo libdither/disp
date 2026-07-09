@@ -23,7 +23,12 @@ eq_J : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> motive x -> E
 // First-order library types: Unit, False, Not, String, Eq, Refinement, Intersection
 // (Sigma lives in cells.disp; Ord/Bool/Nat live in positive.disp).
 unit_val : Unit := t t t
-Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness inductive_respond)
+// coh_unit: Unit's one-constructor coherence gate — the eliminator's `unit` case must inhabit
+// `motive unit_val`, else a hand-rolled elim with a lying case forges the motive (probe_eq_unit_sr).
+// Keyed by the constructor tag "unit" (the Nat/Bool convention: a case record over tags). Unit is
+// not is_gated (functor = t), so this gate is exercised only when a Unit-neutral is eliminated.
+let coh_unit := {T, motive, cases} -> param_apply (motive unit_val) (field cases "unit")
+Unit : Type := wait (make_recognizer ({m, v} -> Ok (tree_eq v unit_val))) (make_meta unit_witness (gated_inductive_respond coh_unit))
 
 // String = ⊤ conceptually (= the nullary telescope), but kept lean: the trivial `Ok true` recognizer
 // avoids the telescope walker's per-check reduction cost (which inflates the suite's memo footprint).
@@ -37,10 +42,22 @@ refl := t
 // Eq recognizer: a candidate inhabits Eq A x y iff it IS refl and endpoints x,y match. Telescope hybrid:
 // recognizer = [ qid (Singleton refl) ; eqends A x y ]; respond = J — eliminating a stuck `p : Eq A x y`
 // lands the motive at the RHS endpoint `y` (not the proof), giving `motive y` (the J rule `C : (y:A) ⊢ C y`).
+// eq_respond x y: the J respond, GATED. Before J lands `motive y`, the base case must inhabit
+// `motive x` (`param_apply (motive x) cases.base`); else a hand-rolled elim with a lying base
+// forges `motive y` (probe_eq_unit_sr). The safe eq_J API always passes base : motive x, so it
+// self-verifies unchanged (the gate re-confirms it via the H-rule); only the raw-elim bypass is
+// caught. x/y are the endpoints, closed over per (A,x,y).
+let eq_respond := {x, y} -> {params, self, frame} -> {
+  let base := field (field frame "cases") "base"
+  match (param_apply (frame.motive x) base) {
+    Ok v => (if v then (match (apply_policed frame.motive y) { Ok ty => Extend ty; Err _ => Extend InvalidType }) else (Extend InvalidType))
+    Err _ => (Extend InvalidType)
+  }
+}
 Eq : {A : Type} -> A -> A -> Type := {A, x, y} -> tele_with (
   t (qid_cell (Singleton refl)) ({_} ->
   t (eqends_cell A x y) ({_} -> t)))
-  ({params, self, frame} -> match (apply_policed frame.motive y) { Ok ty => Extend ty; Err _ => Extend InvalidType })
+  (eq_respond x y)
 
 // Equality lemmas via eq_J (compute on refl, stay stuck on a neutral proof).
 eq_subst : {A : Type} -> {x : A} -> {y : A} -> {motive : A -> Type} -> Eq A x y -> motive x -> motive y := {A, x, y, motive, p, base} -> eq_J A x y motive base p

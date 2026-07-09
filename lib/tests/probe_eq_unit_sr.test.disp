@@ -1,0 +1,34 @@
+// REGRESSION PIN (was an SR probe): Eq and Unit now GATE their eliminating responds, so a
+// hand-rolled `elim` with a lying base/case is REJECTED at the function type, not merely
+// defended at use. Eq checks base : motive x before J lands motive y (base.disp `eq_respond`);
+// Unit checks its `unit` case : motive unit_val (base.disp `coh_unit`). The safe eq_J API is
+// unaffected (it always passes base : motive x). See ACTIVE_BUGS.md item 1.
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+let one := succ zero
+
+// Eq: hand-rolled J-eliminator with a lying base (bypasses the safe eq_J API) is now rejected.
+let bad_eqJ := {p} -> elim ({m, c, tgt} -> c.base) ({_} -> Nat) { base := false } p
+test param_apply (Pi (Eq Nat zero zero) ({_} -> Nat)) bad_eqJ = Ok false  // GATED: base `false` is not : motive zero = Nat
+test bad_eqJ refl = false                                                 // concrete dispatch unchanged: returns a Bool
+test param_apply Nat (bad_eqJ refl) = Ok false                            // ...still not a Nat, now unreachable at the type
+
+// pointing the motive at a false proposition is also rejected up front (base refl is not : Eq Nat 0 1):
+let bad_eqJ2 := {p} -> elim ({m, c, tgt} -> c.base) ({_} -> Eq Nat zero one) { base := refl } p
+test param_apply (Pi (Eq Nat zero zero) ({_} -> Eq Nat zero one)) bad_eqJ2 = Ok false
+test param_apply (Eq Nat zero one) (bad_eqJ2 refl) = Ok false             // and no transport into a contradiction
+
+// (the safe eq_J API staying well-typed is pinned in types.test.disp: eq_sym/eq_cong over real proofs.)
+
+// Unit: hand-rolled eliminator with a lying `unit` case is now rejected (elim routes the neutral
+// through Unit's gated respond). Cases are keyed by the constructor tag `unit` (the Nat/Bool convention).
+let unit_lie := {u} -> elim ({m, c, tgt} -> c.unit) ({_} -> Nat) { unit := false } u
+test param_apply (Pi Unit ({_} -> Nat)) unit_lie = Ok false               // GATED: `unit` case false is not : motive unit_val = Nat
+test unit_lie unit_val = false                                            // concrete dispatch unchanged
+test param_apply Nat (unit_lie unit_val) = Ok false                       // still not a Nat, now unreachable at the type
+
+// contrast: inert-respond types (Refinement/Intersection/String/False) send every frame to
+// InvalidType, so a hand-rolled eliminator on their neutrals cannot claim the motive.
+let rhyp := make_hyp (Refinement Nat ({_} -> true)) 0
+test neutral_type (rhyp { motive := ({_} -> Nat); cases := { u := false } }) = InvalidType

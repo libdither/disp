@@ -1,0 +1,48 @@
+// REGRESSION PIN (was an SR probe): mutual-recursion types (Coproduct_ctx) now GATE their
+// eliminating respond (gated_inductive_respond + coh_check, single-motive), so an eliminator that
+// lies about the motive is REJECTED at the function type. The gate types a `RecAt i` arg at `ctx i`
+// (stored in behavioral_specs.ctx) and gives self-sort args an IH. See ACTIVE_BUGS.md item 1.
+open use "../kernel/prelude.disp"
+open use "../std/nat/arith.disp"
+
+let one := succ zero
+
+// Expr = num Nat | add Expr Expr  (self-mutual; RecAt zero = recurse into Expr)
+let mkAST := fix ({self, i} ->
+  if (tree_eq i zero)
+    then (Coproduct_ctx self [pair "num" [Nat], pair "add" [RecAt zero, RecAt zero]])
+    else (Coproduct_ctx self [pair "assign" [RecAt zero]]))
+let Expr := mkAST zero
+let num := {n} -> inj "num" n
+let eadd := {a, b} -> inj "add" (pair a b)
+
+// sanity: recognition works
+test typecheck Expr (num 5) = Ok true
+test typecheck Expr (eadd (num 1) (num 2)) = Ok true
+
+// an elim-routed recursor over Expr (neutral target -> Expr's respond = inductive_respond, UNGATED)
+let my_expr_disp := fix ({self, motive, cases, target} ->
+  if (tree_eq (pair_fst target) "num")
+    then (cases.num (pair_snd target))
+    else (cases.add (pair_fst (pair_snd target)) (pair_snd (pair_snd target))
+                    (elim self motive cases (pair_fst (pair_snd target)))
+                    (elim self motive cases (pair_snd (pair_snd target)))))
+let my_expr_rec := {motive, num_case, add_case, target} ->
+  elim my_expr_disp motive { num := num_case; add := add_case } target
+
+// LYING recursor: claims Expr -> Nat, returns `false` (a Bool) at every case.
+let lying := {e} -> my_expr_rec ({_} -> Nat) ({n} -> false) ({a, b, iha, ihb} -> false) e
+
+// (1) THE GATE: the lie is REJECTED at Expr -> Nat (gated, like every other inductive).
+test param_apply (Pi Expr ({_} -> Nat)) lying = Ok false
+
+// (2) preservation fails concretely: lying : Expr -> Nat, but its output escapes Nat
+test lying (num 5) = false
+test param_apply Nat (lying (num 5)) = Ok false
+
+// (3) the forged proof-producer is likewise rejected up front (num_case refl is not : Pi n. Eq Nat 0 1);
+//     the R0 use-site defenses still hold too, so even a bypass cannot reach a closed False.
+let bad_eq := {e} -> my_expr_rec ({_} -> Eq Nat zero one) refl ({a, b, iha, ihb} -> refl) e
+test param_apply (Pi Expr ({_} -> Eq Nat zero one)) bad_eq = Ok false     // forged proof-producer now REJECTED at the function
+test param_apply (Eq Nat zero one) (bad_eq (num 5)) = Ok false            // and the concrete proof still fails the endpoint re-check
+test typecheck False (eq_subst Nat zero one ({_} -> False) (bad_eq (num 5)) unit_val) = Ok false  // no closed False

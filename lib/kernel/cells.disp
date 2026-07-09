@@ -133,6 +133,9 @@ rec_at_cell : Tree -> Tree -> Tree := {idx, acc} -> wait rec_at_op { idx := idx;
 // is_rec_cell: marks the functor's RECURSIVE positions (by op-signature, like is_derive) — the data a
 // generic fold/map reads to know where to recurse.
 is_rec_cell := {cell} -> tree_eq (pair_fst cell) (checker_sig rec_op)
+// is_rec_at_cell: marks a MUTUAL-recursive position (RecAt i -> rec_at_cell). The coherence gate
+// reads it (positive.disp) to build the mutual case-types (arg : ctx idx; a self-sort IH).
+is_rec_at_cell := {cell} -> tree_eq (pair_fst cell) (checker_sig rec_at_op)
 
 // RecUnder F / Rec / RecAt i: arg-list markers lifted by `pos_tele` to recursive cells. `RecUnder F` ->
 // recurse under F (`acc source : F self`); `Rec` = `RecUnder Id` (direct); `RecAt i` -> rec_at_cell (mutual).

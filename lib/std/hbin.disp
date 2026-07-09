@@ -27,4 +27,4 @@ HBin : Type := wait (make_rec_recognizer
       bind (self cnt) ({okc} -> if okc then (hb_blocks self r) else (Ok false))
     } else (Ok false))
     v
-) (make_meta unit_witness inductive_respond)
+) (make_meta unit_witness inert_respond)  // no recursor ships; inert over-rejects any HBin-neutral elimination (SR-safe). Swap for a bespoke coh gate when an HBin recursor is wanted.

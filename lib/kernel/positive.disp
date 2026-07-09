@@ -71,18 +71,30 @@ build_payload := fix ({self, args} ->                          // [a1..ak] -> th
   if (is_fork args) then (if (is_fork (pair_snd args)) then (pair (pair_fst args) (self (pair_snd args))) else (pair_fst args)) else t)
 // case_types_go T P: the case-telescope's field list `[(tag, Π args. (P aj ->)* P (c args))]` — one Pi cell per
 // arg, one IH premise per recursive position, conclusion at the reconstructed constructor value.
-let cell_argty := {cell, T} -> if (is_rec_cell cell) then T else ((type_meta cell).ty)  // a rec arg has type T
-let wrap_ihs := fix ({self, cells, args, P, concl} ->            // one `P aj ->` per rec cell, around concl
+// mutual_ctx T: the sort-context fn a mutual type (Coproduct_ctx) stores in behavioral_specs; a
+// `RecAt i` arg has type `ctx i`. Read only for rec_at cells (mutual types), so non-mutual types
+// (behavioral_specs = t, no rec_at cells) never evaluate it.
+let mutual_ctx := {T} -> field ((type_meta T).behavioral_specs) "ctx"
+let rec_at_argty := {cell, T} -> (mutual_ctx T) ((type_meta cell).idx)
+let cell_argty := {cell, T} -> if (is_rec_cell cell) then T else (if (is_rec_at_cell cell) then (rec_at_argty cell T) else ((type_meta cell).ty))  // rec arg -> T; RecAt i -> ctx i
+// wrap_ihs: one `P aj ->` premise per recursive position, around concl. A direct `rec` arg always gets
+// an IH; a mutual `rec_at i` arg gets one only when it points at THIS sort (ctx i = T) — a single-motive
+// recursor treats cross-sort children as opaque data (no IH). (Full mutual induction = motive families, future work.)
+let wrap_ihs := fix ({self, cells, args, P, concl, T} ->
   if (is_fork cells) then {
-    let rest := self ((pair_snd cells) t) (pair_snd args) P concl
-    if (is_rec_cell (pair_fst cells)) then (Arrow (P (pair_fst args)) rest) else rest
+    let c := pair_fst cells
+    let rest := self ((pair_snd cells) t) (pair_snd args) P concl T
+    if (is_rec_cell c) then (Arrow (P (pair_fst args)) rest)
+    else (if (is_rec_at_cell c)                                  // rec_at_argty is computed ONLY here (mutual types)
+      then (if (tree_eq (rec_at_argty c T) T) then (Arrow (P (pair_fst args)) rest) else rest)  // self-sort -> IH
+      else rest)
   } else concl)
 // conclude at the type's REAL constructor value `encode (inj tag payload)` — the encode iso is identity for
 // inj-tagged types, maps inj-form -> shape for shape-encoded ones (Nat/Bool/Ord/List), so one gate covers both.
 let case_type_go := fix ({self, cells, orig, tag, T, P, args} ->
   if (is_fork cells)
     then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (list_cat args (cons a nil))))
-    else (wrap_ihs orig args P (P ((pair_snd (type_meta T).functor) (inj tag (build_payload args))))))
+    else (wrap_ihs orig args P (P ((pair_snd (type_meta T).functor) (inj tag (build_payload args)))) T))
 let case_types_go := fix ({self, params, variants, T, P} ->
   if (is_fork variants) then {
     let var := pair_fst variants
@@ -106,10 +118,32 @@ check_fields := fix ({self, fields, cases} ->
   if (is_fork fields)
     then (bind (eta_check (field cases (pair_fst (pair_fst fields))) (pair_snd (pair_fst fields))) ({ok} -> if ok then (self (pair_snd fields) cases) else (Ok false)))
     else (Ok true))
+// iso_faithful T: the type's view/encode pair round-trips on every variant —
+// `view (encode (inj tag placeholders)) = Ok (inj tag placeholders)`. The gate reconstructs each
+// constructor value via `encode` (case_type_go), so a LYING encode would check cases against the wrong
+// value (probe_gate_sr, BadNat). Anchoring on `view` (the sound recognizer side) with opaque placeholder
+// args catches it; one direction suffices for the gate (the encode∘view direction matters for fmap, not
+// SR). Payload-agnostic isos only (the kernel's Nat/Bool/Ord/Tree and every iso_id sum qualify).
+let ph_payload := fix ({self, argspec, i} ->
+  if (is_fork argspec) then (cons (inj "@ph" i) (self (pair_snd argspec) (succ i))) else nil)
+let variant_faithful := {view, encode, var} -> {
+  let form := inj (pair_fst var) (build_payload (ph_payload (pair_snd var) zero))
+  tree_eq (view (encode form)) (Ok form)
+}
+let all_variants_faithful := fix ({self, view, encode, variants} ->
+  if (is_fork variants)
+    then (if (variant_faithful view encode (pair_fst variants)) then (self view encode (pair_snd variants)) else false)
+    else true)
+iso_faithful := {T} -> {
+  let iso := (type_meta T).functor
+  all_variants_faithful (pair_fst iso) (pair_snd iso) ((type_meta T).recognizer_params)
+}
+
 // coh_check params: THE generic coherence gate — η-readback-check the cases against the case-telescope
 // fields (`params` resolves `Param i` args). Replaces coh_nat/coh_ord/coh_list and self-types (unlike the
-// recognition-form `param_apply (case-tele) cases`, coh_gate_proto.test).
-coh_check := {params} -> {T, motive, cases} -> check_fields (case_types_go params (cells_of T) T motive) cases
+// recognition-form `param_apply (case-tele) cases`, coh_gate_proto.test). Guarded by iso_faithful so a
+// bogus view/encode can't hand the gate a mis-reconstructed constructor value (probe_gate_sr).
+coh_check := {params} -> {T, motive, cases} -> if (iso_faithful T) then (check_fields (case_types_go params (cells_of T) T motive) cases) else (Ok false)
 
 Coproduct_p := {params, variants} -> Coproduct_viewed_respond params (gated_inductive_respond (coh_check params)) iso_id variants
 Coproduct : Tree -> Type := Coproduct_p t   // the common case: gated, no params, inj-tagged
@@ -124,10 +158,13 @@ Coproduct_viewed := {params, iso, variants} -> Coproduct_viewed_respond params (
 // Coproduct_ctx ctx variants: a sum for MUTUAL recursion (Path B). Threads rs = `ctx`, a CONTEXT FUNCTION
 // (i -> recognizer); `RecAt i` cells recurse into `ctx i`. The context is a `fix` FUNCTION whose entries
 // capture it without forcing one another (a fix over a data pair would loop at build; resolved at WALK time),
-// so `Tree A = (mkctx A) 0` / `Forest A = (mkctx A) 1` build with no loop. Elimination = ordinary inductive_respond.
+// so `Tree A = (mkctx A) 0` / `Forest A = (mkctx A) 1` build with no loop. Elimination is GATED
+// (`coh_check`, single-motive): `ctx` is stored in `behavioral_specs.ctx` so the gate can type a
+// `RecAt i` arg at `ctx i` and give it a self-sort IH (cross-sort children stay opaque data). This
+// closes probe_mutual_sr; full mutual induction (motive families) remains future work.
 Coproduct_ctx := {ctx, variants} -> wait (make_recognizer
   {meta, v} -> (coproduct_walk t ctx meta.recognizer_params v)
-) { recognizer_params := variants; functor := iso_id; respond := inductive_respond; behavioral_specs := t }
+) { recognizer_params := variants; functor := iso_id; respond := (gated_inductive_respond (coh_check t)); behavioral_specs := { ctx := ctx } }
 
 // ── The kernel's shape-encoded inductives: Ord, Bool, Nat. Each is a Coproduct_viewed
 // over a view/encode pair: `view` decodes a raw tree shape to inj-tagged form (or Err),

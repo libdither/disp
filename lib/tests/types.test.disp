@@ -119,8 +119,8 @@ test eq_sym Nat zero zero refl = refl
 test param_apply (Eq Nat zero zero) (eq_sym Nat zero zero refl) = Ok true
 test eq_cong Nat Nat ({n} -> n) zero zero refl = refl
 test param_apply (Eq Nat (succ zero) (succ zero)) (eq_cong Nat Nat ({n} -> succ n) zero zero refl) = Ok true
-// A neutral (hypothesis) proof routes eq_J to a stuck elimination stored at
-// `motive self` (Eq's respond is inductive_respond, §12 — not the dead state).
+// A neutral (hypothesis) proof routes eq_J to a stuck elimination at `motive y`
+// (Eq's respond is the gated J rule `eq_respond`, §12 — not the dead state).
 let hEq := make_hyp (Eq Nat zero (succ zero)) 0
 let stuck_eqJ := eq_J Nat zero (succ zero) ({_} -> Bool) zero hEq
 test is_neutral stuck_eqJ = true
