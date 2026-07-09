@@ -81,8 +81,10 @@ embedded net E_π(N) replaces each wire by an oriented ι-chain of its path leng
 independently validates the representation: its wires are literally paths of forwarder
 cells.)
 
-**Theorem (simulation and cost decomposition), to be written out — the formal core of the
-design:**
+**Theorem (simulation and cost decomposition)**, now written out in `EMBEDDING_THEOREM.md`
+(the polarity lemma and created-short lemma proven by case analysis; the projection invariant
+proven; drift charged via the ι-count accounting identity). The formal core of the design, in
+outline:
 
 1. *Simulation.* N → N′ in TC-Net iff E_π(N) →* E_π′(N′) in TC-Net+ι where the extra steps
    are ι-eliminations; readback (erase ι) is a bisimulation up to transport. Normal forms
@@ -815,8 +817,14 @@ pad, trees being planar-embeddable).
 ### 14.1 To write (theory)
 
 - The **polarity lemma** (§2.2): TC-Net wires are orientable; gates the embedding theorem.
+  Written: `EMBEDDING_THEOREM.md` §1, proven by full case analysis over the whole rule table
+  (no rule fails; the calculus is uniformly polarizable).
 - The **embedding simulation theorem** itself (§2.2), including the created-short lemma.
+  Written: `EMBEDDING_THEOREM.md` §4 (projection invariant proven; bisimulation lift reduced
+  to inherited metatheory) and §6 (created-short, proven); §5 charges drift and closes the
+  ledger via the ι-count accounting identity.
 - A **liveness argument** for the tension layer (potential function), or accept the watchdog.
+  Still open.
 
 ### 14.2 To design (protocol and interfaces)
 
