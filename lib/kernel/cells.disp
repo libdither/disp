@@ -52,9 +52,8 @@ SDone   : Action -> Step := inj1 "SDone"
 //   refine  source itself            pred source = true      reject (inert)
 //   imeet   source itself            : pred prior          extend at pred prior
 //   eqends  nothing                  stored lhs = rhs      reject (inert)
-//   rec     acc source               : F rs                (dead: sums respond via their respond)
+//   rec     acc source               : F (resolve rs key)  (dead: sums respond via their respond; key=self direct, sibling mutual)
 //   gen     acc source               is_gen                extend at rs (codata: never descend)
-//   rec_at  acc source               : rs idx              (dead, as rec)
 //
 // Most ops delegate to do_check, whose `getr` is a thunk so the respond face never runs
 // the observation on a neutral. The membership check routes through param_apply rather
@@ -121,24 +120,26 @@ Singleton := {x} -> wait (make_recognizer ({m, v} -> Ok (tree_eq v x))) (make_me
 // sig, like is_neutral, so it answers false on a hyp and is walker-safe.
 gen_tag := "gen"
 is_gen := {v} -> tree_eq (pair_fst v) gen_tag
-// rec_op is parameterized by a FUNCTOR `F`: a recursive position checks `acc source : (F self)`. Direct
-// recursion is `F = Id`, NESTED is `F = List` etc. ONE op covers both — `rec` is just `rec_under Id`.
-let rec_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.F rs)        // μ: acc source : F self
+// rec_op is ONE recursion op over a KEY and a FUNCTOR `F`: a recursive position checks
+// `acc source : F (resolve rs key)`. The key selects WHICH recognizer to recurse into —
+// `rec_self` = this type (direct recursion, resolve = rs = self), any other key = a sibling
+// in a mutual group (resolve = `rs key`, rs = the group container). So `Rec`/`RecUnder`/`RecAt`
+// all lift to this one cell (direct = self key + F; mutual = sibling key + Id), and nested-mutual
+// (F on a mutual position) comes for free. Subsumes the old rec_at_op.
+rec_self := inj "@self" t     // the key meaning "recurse into rs itself" (direct recursion)
+let rec_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (meta.F (if (tree_eq (meta.key) rec_self) then rs else (rs (meta.key))))
 let gen_op := {meta, mode, source, prior, frame, rs} ->        // ν: GUARD `is_gen (acc source)`, no descent (Guard role)
   if mode then (if (is_gen (meta.acc source)) then (SThread (meta.acc source)) else SReject) else (SDone (Extend rs))
-let rec_at_op := {meta, mode, source, prior, frame, rs} -> do_check mode ({_} -> Ok (meta.acc source)) (rs (meta.idx)) // mutual: acc source : ctx idx
-rec_cell : Tree -> Tree -> Tree := {F, acc} -> wait rec_op { F := F; acc := acc }
+rec_cell : Tree -> Tree -> Tree -> Tree := {key, F, acc} -> wait rec_op { key := key; F := F; acc := acc }
 gen_cell : Tree -> Tree := {acc} -> wait gen_op { acc := acc }
-rec_at_cell : Tree -> Tree -> Tree := {idx, acc} -> wait rec_at_op { idx := idx; acc := acc }
-// is_rec_cell: marks the functor's RECURSIVE positions (by op-signature, like is_derive) — the data a
-// generic fold/map reads to know where to recurse.
+// is_rec_cell: marks a RECURSIVE position (by op-signature, like is_derive). is_self_rec narrows to
+// DIRECT recursion (self key): the generic fold/map recurses only there; a mutual position carries a
+// sibling key it leaves to the mutual machinery (positive.disp gate / a future mutual fold).
 is_rec_cell := {cell} -> tree_eq (pair_fst cell) (checker_sig rec_op)
-// is_rec_at_cell: marks a MUTUAL-recursive position (RecAt i -> rec_at_cell). The coherence gate
-// reads it (positive.disp) to build the mutual case-types (arg : ctx idx; a self-sort IH).
-is_rec_at_cell := {cell} -> tree_eq (pair_fst cell) (checker_sig rec_at_op)
+is_self_rec := {cell} -> if (is_rec_cell cell) then (tree_eq (type_meta cell).key rec_self) else false
 
 // RecUnder F / Rec / RecAt i: arg-list markers lifted by `pos_tele` to recursive cells. `RecUnder F` ->
-// recurse under F (`acc source : F self`); `Rec` = `RecUnder Id` (direct); `RecAt i` -> rec_at_cell (mutual).
+// recurse under F (`acc source : F self`); `Rec` = `RecUnder Id` (direct); `RecAt i` -> a mutual rec cell (sibling key i).
 // So `[A, Rec]` reads `head:A ; tail:self`, `[Sym, RecUnder List]` reads `tag:Sym ; kids:List self`.
 Id := {x} -> x                                  // the identity functor: Id self = self
 RecUnder := {F} -> inj "@RecUnder" F

@@ -28,7 +28,7 @@ let collect_args := fix ({self, cells, payload, fold, alg} ->
   if (is_fork cells) then {
     let cell := pair_fst cells
     let raw := ((type_meta cell).acc) payload
-    let x := if (is_rec_cell cell) then (fold alg raw) else raw
+    let x := if (is_self_rec cell) then (fold alg raw) else raw
     cons x (self ((pair_snd cells) t) payload fold alg)
   } else nil)
 // fold_value_via view: first DECODE v via `view` (the from-iso for SHAPE-encoded Nat/List/Ord), then fold
@@ -55,7 +55,7 @@ let ih_args := fix ({self, cells, payload, rec} ->
   if (is_fork cells) then {
     let cell := pair_fst cells
     let rest := self ((pair_snd cells) t) payload rec
-    if (is_rec_cell cell) then (cons (rec (((type_meta cell).acc) payload)) rest) else rest
+    if (is_self_rec cell) then (cons (rec (((type_meta cell).acc) payload)) rest) else rest
   } else nil)
 let rec_dispatcher := {T} -> fix ({self, motive, cases, v} -> {
   let dec := match ((pair_fst (type_meta T).functor) v) { Ok tg => tg; Err _ => v }
@@ -77,7 +77,7 @@ let rec_children := fix ({self, cells, payload} ->
   if (is_fork cells) then {
     let cell := pair_fst cells
     let rest := self ((pair_snd cells) t) payload
-    if (is_rec_cell cell) then (cons (((type_meta cell).acc) payload) rest) else rest
+    if (is_self_rec cell) then (cons (((type_meta cell).acc) payload) rest) else rest
   } else nil)
 children := {T, v} -> rec_children (match (lookup_arm (type_meta T).recognizer_params (pair_fst v)) { Ok a => (pos_tele a); Err _ => t }) (pair_snd v)
 

@@ -33,8 +33,8 @@ let pos_tele_go := fix ({self, params, types, depth} ->
     let acc := if (is_fork (pair_snd types)) then ({x} -> pair_fst (snd_n depth x)) else ({x} -> snd_n depth x) // last arg -> identity
     let ty := pair_fst types
     let cell := (if (is_param_marker ty) then (pos_cell acc (list_nth params (pair_snd ty)))    // Param i -> check params i
-                else (if (is_recunder_marker ty) then (rec_cell (pair_snd ty) acc)             // RecUnder F / Rec -> μ cell
-                else (if (is_recat_marker ty) then (rec_at_cell (pair_snd ty) acc)             // RecAt i -> mutual cell
+                else (if (is_recunder_marker ty) then (rec_cell rec_self (pair_snd ty) acc)     // RecUnder F / Rec -> direct rec cell (self key)
+                else (if (is_recat_marker ty) then (rec_cell (pair_snd ty) Id acc)             // RecAt i -> mutual rec cell (sibling key i, functor Id)
                 else (pos_cell acc ty))))                                                      // a type -> a data cell
     t cell ({_} -> self params (pair_snd types) (succ depth))
   } else t)
@@ -75,8 +75,8 @@ build_payload := fix ({self, args} ->                          // [a1..ak] -> th
 // `RecAt i` arg has type `ctx i`. Read only for rec_at cells (mutual types), so non-mutual types
 // (behavioral_specs = t, no rec_at cells) never evaluate it.
 let mutual_ctx := {T} -> field ((type_meta T).behavioral_specs) "ctx"
-let rec_at_argty := {cell, T} -> (mutual_ctx T) ((type_meta cell).idx)
-let cell_argty := {cell, T} -> if (is_rec_cell cell) then T else (if (is_rec_at_cell cell) then (rec_at_argty cell T) else ((type_meta cell).ty))  // rec arg -> T; RecAt i -> ctx i
+let rec_at_argty := {cell, T} -> (mutual_ctx T) ((type_meta cell).key)   // the sibling key resolved against the group ctx
+let cell_argty := {cell, T} -> if (is_self_rec cell) then T else (if (is_rec_cell cell) then (rec_at_argty cell T) else ((type_meta cell).ty))  // direct rec -> T; sibling -> ctx key
 // wrap_ihs: one `P aj ->` premise per recursive position, around concl. A direct `rec` arg always gets
 // an IH; a mutual `rec_at i` arg gets one only when it points at THIS sort (ctx i = T) — a single-motive
 // recursor treats cross-sort children as opaque data (no IH). (Full mutual induction = motive families, future work.)
@@ -84,8 +84,8 @@ let wrap_ihs := fix ({self, cells, args, P, concl, T} ->
   if (is_fork cells) then {
     let c := pair_fst cells
     let rest := self ((pair_snd cells) t) (pair_snd args) P concl T
-    if (is_rec_cell c) then (Arrow (P (pair_fst args)) rest)
-    else (if (is_rec_at_cell c)                                  // rec_at_argty is computed ONLY here (mutual types)
+    if (is_self_rec c) then (Arrow (P (pair_fst args)) rest)     // direct self-rec: always an IH
+    else (if (is_rec_cell c)                                     // a sibling (mutual) position; rec_at_argty computed ONLY here
       then (if (tree_eq (rec_at_argty c T) T) then (Arrow (P (pair_fst args)) rest) else rest)  // self-sort -> IH
       else rest)
   } else concl)
