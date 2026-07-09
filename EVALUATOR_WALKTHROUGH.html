@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>From tree calculus to TC-Net — an interactive walkthrough</title>
+<style>
+  :root {
+    --bg: #fbf9f4; --bg-elev: #ffffff; --bg-code: #f4efe4; --bg-aside: #f6f1e3;
+    --bg-warn: #fff5dc; --fg: #1c1a14; --fg-muted: #5a554b; --accent: #6a3a18;
+    --accent-soft: #b27a47; --border: #d8cfb8; --link: #8a3a18; --pre-fg: #2a2722;
+    /* agent / structure palette (light) */
+    --c-prod: #2c5f7a;   /* producers  L S F P */
+    --c-cons: #9a5a12;   /* consumers  E A T1 T2 */
+    --c-share:#7a3a8a;   /* sharing    δ ε */
+    --c-active:#c0392b;  /* active pair / redex */
+    --c-eager:#2c6f4a;   /* eager-machine accent */
+    --c-net:#8a4a18;     /* net-machine accent */
+    --grid: #e7dfc9;
+  }
+  html[data-theme="dark"] {
+    --bg: #15130f; --bg-elev: #1d1b16; --bg-code: #221f18; --bg-aside: #1e1c16;
+    --bg-warn: #2a2614; --fg: #e8e2d2; --fg-muted: #a39d8d; --accent: #d6a878;
+    --accent-soft: #c79a6a; --border: #3a3528; --link: #e5b07b; --pre-fg: #e8e2d2;
+    --c-prod: #6fb6d6; --c-cons: #e0a85a; --c-share: #c79ad6; --c-active: #ef6b5a;
+    --c-eager: #74c79a; --c-net: #e0a85a; --grid: #2c281e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font-family: 'Charter','Georgia','Times New Roman',serif; font-size: 17px; line-height: 1.62; }
+  body { display: flex; min-height: 100vh; }
+  /* Sidebar */
+  nav.toc { position: sticky; top: 0; align-self: flex-start; width: 270px; max-height: 100vh;
+    overflow-y: auto; padding: 1.4rem 1rem; border-right: 1px solid var(--border);
+    background: var(--bg-elev); font-size: 14px; font-family: 'SF Pro Text','Inter',system-ui,sans-serif; }
+  nav.toc h1 { font-size: 16px; margin: 0 0 0.3rem 0; color: var(--accent); font-family: 'Charter','Georgia',serif; }
+  nav.toc .nsub { color: var(--fg-muted); font-size: 12px; margin-bottom: 1rem; font-style: italic; }
+  nav.toc ol { list-style: none; padding-left: 0; margin: 0; counter-reset: section; }
+  nav.toc > ol > li { counter-increment: section; margin: 0.15rem 0; }
+  nav.toc > ol > li > a::before { content: counter(section, decimal) ".  "; color: var(--fg-muted); }
+  nav.toc > ol > li:first-child > a::before { content: "0.  "; }
+  nav.toc a { color: var(--fg); text-decoration: none; transition: color 0.15s; display: block; padding: 0.22rem 0.4rem; border-radius: 4px; }
+  nav.toc a:hover { color: var(--accent); background: var(--bg-code); }
+  nav.toc a.active { color: var(--accent); font-weight: 600; background: var(--bg-code); }
+  .theme-toggle { margin-top: 1.2rem; padding: 0.4rem 0.8rem; border: 1px solid var(--border);
+    background: var(--bg); color: var(--fg); border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 13px; width: 100%; }
+  .theme-toggle:hover { background: var(--bg-code); }
+  /* Main */
+  main { flex: 1; max-width: 880px; padding: 2.6rem 3.4rem 7rem; margin: 0 auto; min-width: 0; }
+  h1,h2,h3,h4 { font-family: 'Charter','Georgia',serif; color: var(--accent); line-height: 1.22; }
+  h1.title { font-size: 2.3rem; margin: 0 0 0.4rem; color: var(--fg); }
+  .subtitle { color: var(--fg-muted); font-style: italic; margin-bottom: 1.6rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--border); }
+  h2 { font-size: 1.62rem; margin: 3.2rem 0 0.8rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); scroll-margin-top: 1rem; }
+  h2 .actnum { color: var(--accent-soft); font-size: 1rem; font-weight: normal; letter-spacing: 0.08em; text-transform: uppercase; display:block; margin-bottom: 0.2rem; }
+  h3 { font-size: 1.22rem; margin: 1.8rem 0 0.5rem; color: var(--accent-soft); }
+  h4 { font-size: 0.88rem; margin: 1.3rem 0 0.4rem; color: var(--fg); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0.6em 0 0.9em; }
+  a { color: var(--link); text-decoration-style: dotted; }
+  a:hover { text-decoration-style: solid; }
+  code, pre, .mono { font-family: 'JetBrains Mono','Fira Code','Menlo',monospace; font-size: 0.9em; }
+  code { background: var(--bg-code); padding: 0.08em 0.34em; border-radius: 3px; border: 1px solid var(--border); }
+  pre { background: var(--bg-code); padding: 0.9em 1.1em; border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; line-height: 1.45; color: var(--pre-fg); margin: 1em 0; }
+  pre code { background: transparent; padding: 0; border: none; }
+  .math { font-family: 'STIX Two Math','Cambria Math',serif; font-style: italic; }
+  aside.note { background: var(--bg-aside); border-left: 3px solid var(--accent-soft); padding: 0.7em 1.1em; margin: 1.2em 0; border-radius: 0 5px 5px 0; font-size: 0.95em; }
+  aside.note.warn { background: var(--bg-warn); border-left-color: #c0902b; }
+  aside.note b, aside.note strong { color: var(--accent); }
+  .lead { font-size: 1.08em; }
+  /* ── interactive cards ── */
+  .card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 1.1rem 1.2rem; margin: 1.4rem 0; }
+  .card h4 { margin-top: 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.6rem 0; }
+  .btn { font-family: 'SF Pro Text','Inter',system-ui,sans-serif; font-size: 13px; padding: 0.4rem 0.85rem;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: 6px; cursor: pointer; transition: all .12s; }
+  .btn:hover { border-color: var(--accent-soft); color: var(--accent); }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  .btn.primary:hover { filter: brightness(1.08); color: var(--bg); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { border: none; background: var(--bg); color: var(--fg-muted); padding: 0.38rem 0.7rem; cursor: pointer; font-family: 'SF Pro Text',system-ui,sans-serif; font-size: 13px; }
+  .seg button.on { background: var(--accent); color: var(--bg); font-weight: 600; }
+  .seg button:not(:last-child) { border-right: 1px solid var(--border); }
+  label.ctl { font-size: 13px; color: var(--fg-muted); font-family: system-ui, sans-serif; display: inline-flex; gap: 0.4rem; align-items: center; }
+  input[type=range] { accent-color: var(--accent); }
+  .stage { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin: 0.7rem 0; overflow: hidden; }
+  .stage svg { display: block; width: 100%; height: auto; }
+  .statusline { font-family: 'JetBrains Mono',monospace; font-size: 12.5px; color: var(--fg-muted); min-height: 1.3em; margin: 0.3rem 0; }
+  .statusline b { color: var(--accent); }
+  /* counters */
+  .counters { display: grid; grid-template-columns: repeat(auto-fit,minmax(96px,1fr)); gap: 0.5rem; margin: 0.7rem 0; }
+  .counter { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 0.5rem 0.6rem; text-align: center; }
+  .counter .v { font-family: 'JetBrains Mono',monospace; font-size: 1.45rem; font-weight: 600; color: var(--fg); line-height: 1.1; }
+  .counter .l { font-size: 10.5px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em; font-family: system-ui,sans-serif; margin-top: 0.15rem; }
+  .counter.eager .v { color: var(--c-eager); } .counter.net .v { color: var(--c-net); }
+  .flash { animation: flash 0.6s ease-out; }
+  @keyframes flash { from { background: var(--accent-soft); } to { background: var(--bg); } }
+  /* agent legend / pills */
+  .legend { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; font-family: system-ui,sans-serif; font-size: 12.5px; margin: 0.5rem 0; }
+  .pill { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .chip { display: inline-block; min-width: 1.5em; text-align: center; padding: 0.1em 0.4em; border-radius: 5px; font-family: 'JetBrains Mono',monospace; font-weight: 700; font-size: 0.85em; color: #fff; }
+  .chip.prod { background: var(--c-prod); } .chip.cons { background: var(--c-cons); }
+  .chip.share { background: var(--c-share); }
+  /* rule box (focused rewrite) */
+  .rulebox { font-family: 'JetBrains Mono',monospace; font-size: 13px; background: var(--bg-code); border: 1px solid var(--border); border-radius: 7px; padding: 0.7rem 0.9rem; margin: 0.6rem 0; }
+  .rulebox .lhs { color: var(--c-active); font-weight: 600; } .rulebox .arrow { color: var(--fg-muted); margin: 0 0.6em; }
+  .rulebox .desc { font-family: 'Charter',serif; font-size: 14px; color: var(--fg-muted); margin-top: 0.4rem; font-style: italic; }
+  /* bars */
+  .bars { margin: 0.8rem 0; font-family: system-ui,sans-serif; font-size: 13px; }
+  .bar-row { display: grid; grid-template-columns: 130px 1fr 64px; gap: 0.6rem; align-items: center; margin: 0.35rem 0; }
+  .bar-track { background: var(--bg-code); border-radius: 5px; height: 20px; overflow: hidden; border: 1px solid var(--border); }
+  .bar-fill { height: 100%; border-radius: 4px 0 0 4px; transition: width 0.5s ease; }
+  .bar-val { font-family: 'JetBrains Mono',monospace; text-align: right; color: var(--fg-muted); }
+  table.t { border-collapse: collapse; width: 100%; margin: 1.1em 0; font-size: 14px; font-family: system-ui,sans-serif; }
+  table.t th, table.t td { border: 1px solid var(--border); padding: 0.5em 0.7em; text-align: left; vertical-align: top; }
+  table.t th { background: var(--bg-code); color: var(--accent); font-weight: 600; }
+  table.t td.good { color: var(--c-eager); } table.t td.bad { color: var(--c-active); }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 720px) { .twocol { grid-template-columns: 1fr; } main { padding: 1.5rem 1.2rem 5rem; } nav.toc { display: none; } }
+  .hl-active { fill: var(--c-active); }
+  .small { font-size: 0.86em; color: var(--fg-muted); }
+  .kbd { font-family: 'JetBrains Mono',monospace; font-size: 0.82em; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0.05em 0.4em; background: var(--bg-code); }
+  hr.soft { border: none; border-top: 1px solid var(--border); margin: 2.4rem 0; }
+</style>
+</head>
+<body>
+<nav class="toc">
+  <h1>tree calculus → TC-Net</h1>
+  <div class="nsub">how reduction works, and why you'd materialize it</div>
+  <ol id="toc-list">
+    <li><a href="#act0">The five rules</a></li>
+    <li><a href="#act1">The eager machine: sharing &amp; memo</a></li>
+    <li><a href="#act2">Materialize it: the net</a></li>
+    <li><a href="#act3">Sharing inside a net: δˢ vs δⁿ</a></li>
+    <li><a href="#act4">Why bother: parallelism &amp; provenance</a></li>
+    <li><a href="#act5">The memory backend</a></li>
+    <li><a href="#act6">The honest scorecard</a></li>
+  </ol>
+  <button class="theme-toggle" id="theme-toggle">◑ light / dark</button>
+  <div class="nsub" style="margin-top:1rem">Counters in Acts 0–4 are computed live in your browser. The net's normal forms are checked against the eager reducer as you watch.</div>
+</nav>
+<main>
+  <h1 class="title">From tree calculus to TC-Net</h1>
+  <div class="subtitle">An interactive tour of two machines that compute the same answers very differently — a hash-consed reducer that shares and memoizes, and a materialized interaction net that deliberately does neither. Companion to <code>tc-net.typ</code>, <code>RUST_IC_NET_DESIGN.md</code>, and <code>EVALUATOR.md</code>.</div>
+
+  <p class="lead">disp's evaluator has a spec — five rewrite rules — and several <em>machines</em> that realize it. Two are worth contrasting head-to-head. The <b style="color:var(--c-eager)">eager reducer</b> (the checker's backend) interns every node and memoizes every application: it shares aggressively and equality is a pointer compare. The <b style="color:var(--c-net)">TC-Net</b> reducer (the optimizer's substrate) does the opposite — it turns the whole computation into a graph of little machine-nodes and rewrites them locally, sharing nothing by default.</p>
+
+  <p>The surprise, which this page builds toward with real numbers: the net is <em>not</em> a speedup. On raw reduction it loses to the eager reducer by 20–550×. You materialize it anyway, on purpose, to buy two things hash-consing structurally cannot give you. Getting to <em>why</em> is the whole journey.</p>
+
+  <aside class="note">
+    <b>How to read this — what's real, what's schematic.</b> Acts&nbsp;0–4 run two actual reduction engines compiled into this page. The interaction counts, allocation counts, and δ copy-waves are computed, not narrated — and every time the net finishes, its normal form is checked against the eager reducer's (the same <em>differential-oracle</em> discipline the project uses to validate backends). Acts&nbsp;5–6 are schematic diagrams and <em>measurements lifted from the real Rust crate</em>, because faithfully simulating 64-bit atomic exchanges and OS-thread work-stealing inside a browser tab would be theater, not truth. Where a number comes from the crate rather than this page, it says so.
+  </aside>
+
+  <!-- ════════════════════════════ ACT 0 ════════════════════════════ -->
+  <h2 id="act0"><span class="actnum">Act 0 · the specification</span>Tree calculus and its five rules</h2>
+
+  <p>Tree calculus has one symbol, <span class="math">△</span>, and binary application. Every value is a tree built from three shapes, distinguished only by how many arguments <span class="math">△</span> has so far received:</p>
+
+  <div class="stage" id="shapes-stage"></div>
+  <p class="small" style="margin-top:-0.3rem">A <b>leaf</b> is bare <span class="math">△</span>; a <b>stem</b> is <span class="math">△a</span> (one child); a <b>fork</b> is <span class="math">△a b</span> (two children). Leaves, stems, and forks are <em>values</em> — they sit still. Computation happens only when a <b>fork receives a third argument</b>.</p>
+
+  <p>At that moment one of five rules fires. The first two (K and S) are Turing-completeness; the last three (<em>triage</em>) are what lets a program branch on the <em>shape</em> of any value — including another program. That is self-reflection, and it falls out for free with no quotation or Gödel numbering.</p>
+
+  <pre><code><span style="color:var(--c-prod)">△ △ y z</span>          <span class="arrow">⟶</span>  y              <span style="color:var(--fg-muted)">— K   (return the first branch)</span>
+<span style="color:var(--c-prod)">△ (△x) y z</span>       <span class="arrow">⟶</span>  x z (y z)      <span style="color:var(--fg-muted)">— S   (the only rule that DUPLICATES)</span>
+<span style="color:var(--c-prod)">△ (△w x) y △</span>     <span class="arrow">⟶</span>  w              <span style="color:var(--fg-muted)">— triage: arg is a leaf</span>
+<span style="color:var(--c-prod)">△ (△w x) y (△u)</span>  <span class="arrow">⟶</span>  x u            <span style="color:var(--fg-muted)">— triage: arg is a stem</span>
+<span style="color:var(--c-prod)">△ (△w x) y (△u v)</span><span class="arrow">⟶</span>  y u v          <span style="color:var(--fg-muted)">— triage: arg is a fork</span></code></pre>
+
+  <p>That is the entire semantics. Everything below is a <em>machine</em> that applies these rules — the rules never change. Here is "regular" tree-calculus evaluation: an application tree, with the next redex highlighted. Step it.</p>
+
+  <div class="card">
+    <h4>Step a reduction · plain rewriting</h4>
+    <div class="controls">
+      <span class="seg" id="ex0-seg"></span>
+      <button class="btn primary" id="ex0-step">Step ▸</button>
+      <button class="btn" id="ex0-auto">▶ run</button>
+      <button class="btn" id="ex0-reset">⟲ reset</button>
+    </div>
+    <div class="stage" id="ex0-stage"></div>
+    <div class="statusline" id="ex0-status"></div>
+    <p class="small">Internal nodes are applications (<span class="mono">@</span>); leaves are <span class="math">△</span>. The highlighted subtree is the redex about to fire. Notice the <b>S rule</b>: it copies its argument into two places — keep an eye on that, it is the only source of duplication in the whole calculus and the entire story of Act&nbsp;3.</p>
+  </div>
+
+  <!-- ════════════════════════════ ACT 1 ════════════════════════════ -->
+  <h2 id="act1"><span class="actnum">Act 1 · machine one</span>The eager reducer: sharing and memo</h2>
+
+  <p>The reducer that the type-checker actually runs (<code>src/core/tree.ts</code>, and its Rust twin <code>rust-eager</code>) makes two moves that the plain rewriter above does not. Both are about <em>not doing the same work twice</em>.</p>
+
+  <h3>Move 1 — hash-consing: identical trees are one node</h3>
+  <p>Every node is interned in a table keyed by <span class="mono">(tag, child-ids)</span>. Build <span class="mono">stem(leaf)</span> twice and you get back the <em>same object</em> the second time. A term is therefore not a tree but a <b>DAG</b>: repeated subterms are pointers to one shared node. Two consequences fall out immediately — memory is collapsed, and <b>equality becomes O(1)</b>: two terms are equal iff they are the same pointer. That O(1) conversion check (<code>tree_eq</code>) is the single most load-bearing fact in the type checker.</p>
+
+  <div class="card">
+    <h4>Hash-consing a repeated subterm</h4>
+    <p class="small" style="margin-top:0">Building <span class="mono" id="hc-term">fork(true, true)</span> — both halves are the value <span class="math">true = △△</span>.</p>
+    <div class="controls">
+      <span class="seg" id="hc-seg"></span>
+    </div>
+    <div class="stage" id="hc-stage"></div>
+    <div class="counters" id="hc-counters"></div>
+    <div class="statusline" id="hc-status"></div>
+  </div>
+
+  <h3>Move 2 — memoization: applications are cached</h3>
+  <p>Reduction is a function <span class="mono">apply(f, x)</span>. Its result is cached in a table keyed by the <em>pointer identities</em> <span class="mono">(f.id, x.id)</span> — which only works <em>because</em> of hash-consing. Apply the same function to the same (interned) argument again and you pay nothing. This is cross-occurrence sharing of <em>work</em>, not just structure.</p>
+
+  <div class="card">
+    <h4>The apply-memo, live</h4>
+    <div class="controls">
+      <button class="btn" id="memo-1">apply(not, true)</button>
+      <button class="btn" id="memo-2">apply(not, true) again</button>
+      <button class="btn" id="memo-3">apply(not, false)</button>
+      <button class="btn" id="memo-reset">⟲ clear cache</button>
+    </div>
+    <div class="counters" id="memo-counters"></div>
+    <div class="statusline" id="memo-status"></div>
+    <p class="small">A repeated <span class="mono">apply(not, true)</span> is a cache <b>hit</b> — zero reduction steps. A different argument misses and reduces. The cache key is pointer identity, so it depends entirely on Move&nbsp;1.</p>
+  </div>
+
+  <aside class="note">
+    <b>The reframe that makes Act&nbsp;2 land.</b> The interaction-net vocabulary — apply, dispatch, duplicate, erase — is <em>already here</em>, hiding as the control flow of this <code>apply</code> function. Hash-consing is just an interaction net whose duplicators have collapsed into pointer-sharing and whose suspensions carry a memo cell. The next machine takes those hidden operations and makes every one of them a real, schedulable object in memory. That is the only difference — but it changes everything.
+  </aside>
+
+  <!-- ════════════════════════════ ACT 2 ════════════════════════════ -->
+  <h2 id="act2"><span class="actnum">Act 2 · machine two</span>Materialize it: the interaction net</h2>
+
+  <p>An <b>interaction net</b> is a graph of <em>agents</em>. Each agent has one <b>principal port</b> and some auxiliary ports. When two agents meet principal-to-principal, that is an <b>active pair</b> (a redex), and a local rule rewrites just those two agents and their immediate wires. Nothing else in the graph is touched. TC-Net realizes tree calculus with ten agent kinds:</p>
+
+  <div class="legend">
+    <span class="pill"><span class="chip prod">L</span> leaf</span>
+    <span class="pill"><span class="chip prod">S</span> stem</span>
+    <span class="pill"><span class="chip prod">F</span> fork</span>
+    <span class="pill"><span class="chip prod">P</span> suspended application <span class="math">f a</span></span>
+    &nbsp;&nbsp;
+    <span class="pill"><span class="chip cons">E</span> demand a value</span>
+    <span class="pill"><span class="chip cons">A</span> apply one arg</span>
+    <span class="pill"><span class="chip cons">T₁</span> dispatch lvl 1</span>
+    <span class="pill"><span class="chip cons">T₂</span> dispatch lvl 2</span>
+    &nbsp;&nbsp;
+    <span class="pill"><span class="chip share">δ</span> duplicate</span>
+    <span class="pill"><span class="chip share">ε</span> erase</span>
+  </div>
+
+  <p>The four <b style="color:var(--c-prod)">producers</b> (L, S, F, P) are the data — trees and not-yet-evaluated applications. The six <b style="color:var(--c-cons)">consumers</b> are the verbs: they ask things of a producer's root. Evaluation is just consumers eating producers. A <code>P</code> node is the crucial one — it is a <em>suspended</em> <span class="math">f a</span> with its own principal root, so it can be demanded, duplicated, or erased like any value. That "rooting" is the one repair that makes the whole thing work.</p>
+
+  <p>Watch <span class="mono">not true</span> reduce as a net. Each step pops one active pair and applies its rule. The focused view shows the rule firing in close-up (locality); the overview shows the whole graph growing and shrinking.</p>
+
+  <div class="card">
+    <h4>Step the net · <span id="ex2-name">not true</span></h4>
+    <div class="controls">
+      <span class="seg" id="ex2-seg"></span>
+      <button class="btn primary" id="ex2-step">Step ▸</button>
+      <button class="btn" id="ex2-auto">▶ run</button>
+      <button class="btn" id="ex2-reset">⟲ reset</button>
+    </div>
+    <div class="rulebox" id="ex2-rule"><span class="desc">Press Step to fire the first active pair.</span></div>
+    <div class="stage" id="ex2-stage"></div>
+    <div class="counters" id="ex2-counters"></div>
+    <div class="statusline" id="ex2-status"></div>
+  </div>
+
+  <p>Two things to notice in the counters. First, <b>erasure is real work</b>: when the K and triage rules throw away a branch, an <code>ε</code> agent has to walk in and delete it, interaction by interaction. The eager reducer just stops pointing at it. Second, the totals are <em>much</em> larger than the eager reducer's handful of steps for the same answer — the net is paying, in allocations and interactions, for the privilege of having made every operation an explicit object. Hold that thought for Act&nbsp;6.</p>
+
+  <aside class="note">
+    <b>Why no oracle?</b> Encoding the λ-calculus into interaction nets famously needs <em>bookkeeping nodes</em> (brackets, croissants) and an "oracle" to decide when two duplicators annihilate vs commute — all to track variable scope through duplication. Tree calculus has <b>no binders</b>. The only duplication is the S-rule copying an argument, and the copies enter independent subcomputations that share no scope. So duplication here is <em>always</em> sound, and the hardest subsystem of every optimal-λ machine simply does not exist for us.
+  </aside>
+
+  <!-- ════════════════════════════ ACT 3 ════════════════════════════ -->
+  <h2 id="act3"><span class="actnum">Act 3 · sharing, on purpose</span>Two duplicators: δˢ vs δⁿ</h2>
+
+  <p>The eager reducer shares for free (that <em>is</em> hash-consing). A materialized net has to share by <em>doing</em> something — and there are two ways, which differ only in what happens when a duplicator meets a <em>suspended</em> computation <code>P</code>.</p>
+
+  <div class="twocol">
+    <div class="card" style="margin:0">
+      <h4 style="color:var(--c-active)">δˢ — structural copy</h4>
+      <p class="small" style="margin-top:0">Meets a <code>P</code>, copies it <em>as syntax</em> — two suspensions, each demanded independently. The shared computation runs <b>once per copy</b>. Shares structure, never work.</p>
+    </div>
+    <div class="card" style="margin:0">
+      <h4 style="color:var(--c-eager)">δⁿ — demand-before-copy ("need")</h4>
+      <p class="small" style="margin-top:0">Meets a <code>P</code>, <em>demands</em> it and <b>parks itself</b> on the result wire. The computation runs <b>once</b>; only finished constructors get copied. This is call-by-need rendered as a net.</p>
+    </div>
+  </div>
+
+  <p>Here is the spec's own worked case: a suspended <span class="mono">not true</span> that the S-rule duplicates into two strict positions. Flip the duplicator species and watch the cost move.</p>
+
+  <div class="card">
+    <h4>δˢ vs δⁿ on a shared suspension</h4>
+    <div class="controls">
+      <label class="ctl">duplicator at the S-rule:</label>
+      <span class="seg" id="ex3-seg">
+        <button data-sp="s" class="on">δˢ structural</button>
+        <button data-sp="n">δⁿ need</button>
+      </span>
+      <button class="btn primary" id="ex3-run">▶ reduce</button>
+    </div>
+    <div class="counters" id="ex3-counters"></div>
+    <div class="bars" id="ex3-bars"></div>
+    <div class="statusline" id="ex3-status"></div>
+    <p class="small">With <b>δˢ</b> you can see the duplication of work in the <em>copy-waves</em> count: the suspension is copied as structure and then re-reduced on both sides. With <b>δⁿ</b>, <em>demand-before-copy</em> fires once, the work happens once, and only the resulting constructor is copied. Both produce the identical normal form (checked live) — they differ only in cost.</p>
+  </div>
+
+  <aside class="note">
+    <b>And the two species never need an oracle to coexist.</b> A duplicator only ever faces a <em>producer</em> at its principal port, so δˢ and δⁿ can never meet each other principal-to-principal — no coherence rule between them is required. You can pick, per duplication site, which sharing you want: δⁿ where you want work shared (the S-rule), δˢ where a reflective program genuinely wants to copy an unevaluated program <em>as data</em>. This per-site choice is what a graded/quantitative type system can drive automatically — usage on the function type lowering to "which duplicator."
+  </aside>
+
+  <!-- ════════════════════════════ ACT 4 ════════════════════════════ -->
+  <h2 id="act4"><span class="actnum">Act 4 · the payoff</span>Why materialize at all: parallelism &amp; provenance</h2>
+
+  <p>If the net is slower (Act&nbsp;2) and you had to <em>add work</em> to recover the sharing the eager reducer got for free (Act&nbsp;3), why build it? Two reasons, and both are things hash-consing structurally <em>cannot</em> do.</p>
+
+  <h3>Reason 1 — parallelism</h3>
+  <p>Recall <em>strong confluence</em>: distinct active pairs share no agents (each agent has exactly one principal port, so it is in at most one redex). Therefore <b>every active pair in the bag can fire at the same time</b>, and the order never changes the answer. The eager reducer's call stack is inherently sequential; the net's work-bag is a pool of independent jobs.</p>
+
+  <p>Below, <span class="mono" id="wide-n">N</span> independent <span class="mono">not true</span> computations share one net. A round fires <em>all</em> currently-active pairs at once; <b>rounds ≈ span</b> (critical-path length) and <b>interactions ≈ work</b> (total). Slide the worker count and watch work spread across rounds.</p>
+
+  <div class="card">
+    <h4>Work vs span · parallel rounds</h4>
+    <div class="controls">
+      <label class="ctl">independent jobs N
+        <input type="range" id="wide-jobs" min="1" max="8" value="4" style="width:110px">
+        <b id="wide-jobs-v" class="mono">4</b></label>
+      <button class="btn primary" id="wide-run">▶ reduce in rounds</button>
+    </div>
+    <div class="stage" id="wide-stage"></div>
+    <div class="counters" id="wide-counters"></div>
+    <div class="statusline" id="wide-status"></div>
+    <p class="small">Each row is one synchronized round; colored cells are interactions firing in parallel. <b>Independent</b> work (this) spreads wide — span stays flat as you add jobs. A single sequential demand-chain (like Act&nbsp;2's <span class="mono">not true</span>) would be one tall stripe: span ≈ work, no parallelism to extract. That is the honest caveat — the net hands you parallelism, but only where the <em>work</em> is actually independent.</p>
+  </div>
+
+  <aside class="note">
+    <b>Confluence makes the test suite a race detector.</b> Because the normal form cannot depend on firing order, running the parallel net and the sequential reducer on the same term and comparing normal forms detects <em>any</em> data race for free: if they ever disagree, it is a concurrency bug, never a wrong verdict. The net you just ran was checked against the eager reducer — same discipline.
+  </aside>
+
+  <h3>Reason 2 — provenance (the real reason)</h3>
+  <p>This is the one that actually justifies the machine. The verified <em>optimizer</em> (disp's north star) searches for a better program and must attribute blame — "which candidate subterm caused this?" Hash-consing is fatal to that: it <b>merges two distinct-but-equal subterms into one node</b>. Wonderful for a checker; catastrophic for blame attribution, because once merged you can no longer tell the candidates apart. The materialized net keeps distinct-but-equal subnets <em>distinct</em>. <b>Abandoning sharing is not a regression here — it is a prerequisite.</b></p>
+
+  <div class="twocol">
+    <div class="card" style="margin:0">
+      <h4 style="color:var(--c-eager)">hash-consed · great for checking</h4>
+      <pre style="margin:0"><code>candidate A ─┐
+             ├─▶ <span style="color:var(--c-active)">one node</span>   blame: ???
+candidate B ─┘</code></pre>
+      <p class="small">Equal-by-evaluation ⇒ merged. O(1) conversion. No way to say which candidate mattered.</p>
+    </div>
+    <div class="card" style="margin:0">
+      <h4 style="color:var(--c-net)">materialized · required for optimizing</h4>
+      <pre style="margin:0"><code>candidate A ─▶ subnet A   blame: A
+candidate B ─▶ subnet B   blame: B</code></pre>
+      <p class="small">Distinct subnets stay distinct. Reverse-mode "which input caused this output" becomes expressible.</p>
+    </div>
+  </div>
+  <p class="small">A third use builds on the same property: <em>superposition</em> — packing <span class="math">n<sup>k</sup></span> candidate programs into one shared net and reducing them all at once. That is the optimizer's search engine, and it needs exactly this non-merging substrate. (Its soundness is still open research — δ must distribute over superposition — but the substrate it requires is precisely this one.)</p>
+
+  <!-- ════════════════════════════ ACT 5 ════════════════════════════ -->
+  <h2 id="act5"><span class="actnum">Act 5 · under the floorboards</span>The memory backend</h2>
+
+  <p>So far "agent," "wire," and "the bag" have been abstract. Here is how the real Rust crate stores them — and why each choice is forced by the goals above. This section is a diagram, not a live sim: the operations below are 64-bit atomics on a flat arena, and faking that in JavaScript would only mislead.</p>
+
+  <div class="stage" id="mem-stage"></div>
+
+  <h3>The arena, not a heap of objects</h3>
+  <ul>
+    <li><b>A port is one tagged machine word</b> — <span class="mono">[tag : 4 bits | address : 28]</span>. The tag <em>is the agent kind</em>, and it is carried in the <em>referencing</em> port ("kind-in-pointer"). So an active pair is two words that name both interacting kinds with <b>zero memory loads</b>: the rule dispatcher reads two 4-bit tags out of one 64-bit redex and jumps.</li>
+    <li><b>A node is a uniform fixed-width cell</b> of auxiliary ports; the principal port is <em>implicit</em> — it is whichever slot references the node. No per-node header, no discriminant to load. Producers (≤2 aux) are one 2-slot cell; the wide dispatch agents T₁/T₂ are a contiguous block, read per-slot.</li>
+    <li><b>There is no global intern table.</b> That table <em>was</em> hash-consing. Dropping it is what makes Act&nbsp;4 possible — sharing is now expressed by wires and duplication by an explicit δ wave — and it is also the single biggest parallel-allocation win, because <code>alloc</code> no longer touches global shared state.</li>
+  </ul>
+
+  <h3>The linker: one atomic exchange, never a lock</h3>
+  <p>The crown jewel, and it is agent-agnostic. To connect a wire you do <b>one unconditional <code>atomic_exchange</code></b> (a swap) into a variable slot — never a compare-and-swap, never a lock:</p>
+  <pre><code>fn link(neg, pos):
+    if pos is not a Var:            <span style="color:var(--fg-muted)">// two principals → active pair</span>
+        bag.push(neg, pos)          <span style="color:var(--fg-muted)">// redex DETECTED at link time, never scanned</span>
+    else:
+        prev = <span style="color:var(--c-active)">swap</span>(slot[pos], neg)    <span style="color:var(--fg-muted)">// the ONE atomic op</span>
+        if prev == EMPTY: return    <span style="color:var(--fg-muted)">// we deposited our half; partner will find it</span>
+        else: relink(prev)          <span style="color:var(--fg-muted)">// raced: take partner's half, retry</span></code></pre>
+  <p>It is race-free with no lock because <b>every variable occurs exactly twice</b>: the second linker to reach a slot atomically swaps out the first's deposited half and wins ownership. And we only ever need <em>memory</em> safety here — never result determinism — because strong confluence already guarantees the answer. The two nodes of a popped redex are exclusively owned by the firing worker (each had its single principal there), so it overwrites and <em>reuses them in place</em>; only links into far variable slots touch the atomic.</p>
+
+  <h3>Garbage collection: the net is linear</h3>
+  <p>A subtlety lazy interaction nets are infamous for: a parked δⁿ whose two copies are both discarded becomes unreachable (ε acts at principal ports; the parked duplicator hides on an auxiliary wire). The design's answer leans on structure:</p>
+  <ul>
+    <li><b>The net is a DAG</b> — recursion is a tree that unfolds, never a graph cycle — so <b>reference counting is complete</b>; no cycle collector is ever needed.</li>
+    <li>In the <em>eager</em> schedule it is even simpler: an interaction net is <b>linear</b> (each agent is consumed exactly once), so reclamation is just "free both agents of every active pair as it fires." Peak memory then tracks the live working set — in the real crate this took a fib(8) run from 7.6M nodes down to 64K (~119×). That is not an optimization; without it the net OOMs on anything real.</li>
+  </ul>
+
+  <!-- ════════════════════════════ ACT 6 ════════════════════════════ -->
+  <h2 id="act6"><span class="actnum">Act 6 · the verdict</span>The honest scorecard</h2>
+
+  <p>Now the payoff of all the honesty. You have seen the net pay in interactions (Act&nbsp;2), seen it claw back sharing only by adding machinery (Act&nbsp;3), and seen what it buys (Act&nbsp;4). Here is what the real crate measures when you race it against <code>rust-eager</code> on actual programs.</p>
+
+  <div class="card">
+    <h4>Reduction speed · native, best-of-3 <span class="small">(from <code>npm run bench:ic-net</code>)</span></h4>
+    <div class="bars" id="score-bars"></div>
+    <p class="small">Lower is faster. <code>rust-eager</code> hash-conses (O(1) conversion + cross-occurrence sharing); ic-net allocates per interaction and shares nothing. On the embarrassingly-parallel "wide" workload — ic-net's <em>best</em> case — <code>rust-eager</code> running <em>sequentially</em> still beats ic-net sequential ~4× (it shares the repeated work), and ic-net's parallel mode is worse still. <b>Beating rust-eager on reduction was never the job.</b></p>
+  </div>
+
+  <h3>The scheduler journey (a cautionary tale)</h3>
+  <p>Making the parallel net actually <em>go</em> faster than its own single thread was not free either. The first parallel version was a <b>7× regression</b>: per-interaction global atomics (a budget decrement, an interaction counter, an in-flight RMW — on every interaction) plus one shared work-queue meant cache-line ping-pong between cores serialized faster than parallelism recovered. The fix was to get coordination off the hot path entirely:</p>
+  <div class="bars" id="sched-bars"></div>
+  <p class="small">Measured on a 6-core Ryzen, 8 threads vs 1. Budget <em>leasing</em> → per-worker work-stealing deques (kill the shared queue) → per-worker bump-allocation regions. Net result: from a ~7× <em>regression</em> to a ~2.4× <em>speedup</em> — but it plateaus at ~6 cores because the materialized net is <b>memory-bandwidth bound</b>, and even at full tilt still trails <code>rust-eager</code>-native ~1.5–1.7×.</p>
+
+  <h3>So when do you reach for which?</h3>
+  <table class="t">
+    <tr><th>You want…</th><th>Use</th><th>Because</th></tr>
+    <tr><td>Type-checking / conversion</td><td class="good">eager (rust-eager)</td><td>O(1) equality is pointer identity; sharing &amp; memo win sequential reduction outright. The net literally can't serve the checker's <code>classify</code> protocol.</td></tr>
+    <tr><td>Fast sequential reduction</td><td class="good">eager</td><td>Hash-consing shares work across occurrences; nothing the net does is competitive here.</td></tr>
+    <tr><td>The verified optimizer</td><td class="bad">TC-Net (ic-net)</td><td>Needs per-candidate <b>provenance</b> — distinct-but-equal subnets must stay distinct. Hash-consing merges them; the net keeps them apart.</td></tr>
+    <tr><td>Massively independent work</td><td class="bad">TC-Net</td><td>Strong confluence ⇒ free, deterministic parallelism across the work-bag — where the work is genuinely independent.</td></tr>
+  </table>
+
+  <p class="lead">The arc in one line: <b style="color:var(--c-eager)">hash-consing collapses the interaction net into a fast sequential reducer</b> by sharing structure and work; <b style="color:var(--c-net)">materializing the net un-collapses it</b>, paying in speed to regain the two things that collapse destroyed — parallelism and provenance. Neither machine is "better." They sit at opposite ends of one design axis, and disp keeps both because the checker and the optimizer want opposite things.</p>
+
+  <hr class="soft">
+  <p class="small">Sources, all in this repo: the calculus and its rule tables — <code>research/interaction-combinator/tc-net.typ</code> · the materialized machine, linker, GC, and all measured numbers — <code>research/interaction-combinator/RUST_IC_NET_DESIGN.md</code> · the backend map and the differential-oracle discipline — <code>EVALUATOR.md</code> · the eager reducer this page reimplements — <code>src/core/tree.ts</code> · why the optimizer needs provenance — <code>research/OPTIMIZER.md</code>. The two reduction engines on this page were validated against each other before shipping, using the project's own differential method.</p>
+
+</main>
+
+<script>
+"use strict";
+/* ════════════════════════════════════════════════════════════════════════
+   ENGINES  —  ported from the validated /tmp differential prototype.
+   Two reducers realizing the triage-formulation tree calculus:
+     • EAGER:  hash-consed + memoized (mirrors src/core/tree.ts)
+     • NET:    materialized interaction net (mirrors tc-net.typ rule tables)
+   Net normal forms are checked against EAGER at runtime (see assertSound()).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ---- shared source-term builders (binary application spine) -------------- */
+const Lf = "L";
+const ap   = (f, x) => ["app", f, x];
+const stem = (x)    => ap(Lf, x);
+const fork = (a, b) => ap(ap(Lf, a), b);
+const TRUE  = stem(Lf);                                   // △△
+const FALSE = Lf;                                          // △
+const NOT   = fork(fork(stem(Lf), fork(Lf, Lf)), Lf);     // F(F(S(L),F(L,L)),L)
+
+/* ===================== EAGER reducer (fresh arena each run) ================ */
+function makeEager() {
+  let nid = 0;
+  const leaf = { tag: "leaf", id: nid++ };
+  const stemCache = new Map(), forkCache = new Map();
+  const st = { nodes: 0, steps: 0, hits: 0, miss: 0 };
+  function S(c) { let n = stemCache.get(c.id); if (n) return n;
+    n = { tag: "stem", child: c, id: nid++ }; stemCache.set(c.id, n); st.nodes++; return n; }
+  function F(l, r) { let m = forkCache.get(l.id); if (!m) { m = new Map(); forkCache.set(l.id, m); }
+    let n = m.get(r.id); if (n) return n; n = { tag: "fork", left: l, right: r, id: nid++ }; m.set(r.id, n); st.nodes++; return n; }
+  const memo = new Map();
+  function applyE(f, x) {
+    let inner = memo.get(f.id); const hit = inner && inner.get(x.id);
+    if (hit) { st.hits++; return hit; }
+    st.miss++;
+    let r;
+    if (f.tag === "leaf") r = S(x);
+    else if (f.tag === "stem") r = F(f.child, x);
+    else { st.steps++; const a = f.left, b = f.right;
+      if (a.tag === "leaf") r = b;
+      else if (a.tag === "stem") r = applyE(applyE(a.child, x), applyE(b, x));
+      else { if (x.tag === "leaf") r = a.left; else if (x.tag === "stem") r = applyE(a.right, x.child);
+             else r = applyE(applyE(b, x.left), x.right); } }
+    if (!inner) { inner = new Map(); memo.set(f.id, inner); } inner.set(x.id, r);
+    return r;
+  }
+  function ev(t) { if (t === Lf) return leaf; return applyE(ev(t[1]), ev(t[2])); }
+  return { ev, applyE, leaf, S, F, st, memo };
+}
+function showVal(v) {
+  if (v.tag === "leaf") return "△";
+  if (v.tag === "stem") return "△" + par(showVal(v.child));
+  return "△" + par(showVal(v.left)) + par(showVal(v.right));
+}
+const par = (s) => (s === "△" ? s : "(" + s + ")");
+
+/* ===================== NET reducer (materialized) ========================= */
+const PORTS = { L:["p"], S:["p","x"], F:["p","l","r"], P:["p","f","a"],
+  E:["p","res"], A:["p","arg","res"], T1:["p","b","c","res"], T2:["p","w","x","b","res"],
+  d:["p","l","r"], e:["p"] };
+const CAT = { E:"demand", A:"apply", T1:"dispatch", T2:"dispatch", d:"copy", e:"erase" };
+
+function Net(species) {
+  return { agents:new Map(), aid:0, bag:[], species:species||"n",
+    interactions:0, allocated:0, copyWaves:0, dnp:0,
+    cats:{demand:0,apply:0,dispatch:0,copy:0,erase:0}, log:[] };
+}
+function mk(net, kind, sp) { const ag = { id:net.aid++, kind, species:sp||null, ports:{} };
+  for (const p of PORTS[kind]) ag.ports[p] = null; net.agents.set(ag.id, ag); net.allocated++; return ag; }
+function freeAg(net, ag) { net.agents.delete(ag.id); }
+function wire(a,pa,b,pb){ const w={0:{ag:a,port:pa},1:{ag:b,port:pb}}; a.ports[pa]=w; b.ports[pb]=w; return w; }
+function other(w,ag,port){ return (w[0].ag===ag&&w[0].port===port)?w[1]:w[0]; }
+const isP = (e)=> e.port==="p";
+function active(net,w){ if(w && isP(w[0]) && isP(w[1])) net.bag.push(w); }
+function graft(net,fromAg,fromPort,toAg,toPort){ const w=fromAg.ports[fromPort];
+  const i=(w[0].ag===fromAg&&w[0].port===fromPort)?0:1; w[i]={ag:toAg,port:toPort}; toAg.ports[toPort]=w; active(net,w); return w; }
+function weld(net,aA,pA,aB,pB){ const wA=aA.ports[pA],fA=other(wA,aA,pA),wB=aB.ports[pB],fB=other(wB,aB,pB);
+  const w={0:{ag:fA.ag,port:fA.port},1:{ag:fB.ag,port:fB.port}}; fA.ag.ports[fA.port]=w; fB.ag.ports[fB.port]=w; active(net,w); return w; }
+function ic(a,pa,b,pb){ return wire(a,pa,b,pb); }
+function icA(net,a,pa,b,pb){ const w=wire(a,pa,b,pb); active(net,w); return w; }
+function erase(net,ag,port){ const e=mk(net,"e"); graft(net,ag,port,e,"p"); }
+
+function encode(net,t){ if(t===Lf) return mk(net,"L");
+  if(t[0]==="app"){ const p=mk(net,"P"); wire(p,"f",encode(net,t[1]),"p"); wire(p,"a",encode(net,t[2]),"p"); return p; }
+  throw new Error("bad term"); }
+
+function copyConstructor(net,d,prod){ const sp=d.species;
+  if(prod.kind==="L"){ const l1=mk(net,"L"),l2=mk(net,"L"); graft(net,d,"l",l1,"p"); graft(net,d,"r",l2,"p"); }
+  else if(prod.kind==="S"){ const dx=mk(net,"d",sp); graft(net,prod,"x",dx,"p"); const s1=mk(net,"S"),s2=mk(net,"S");
+    ic(s1,"x",dx,"l"); ic(s2,"x",dx,"r"); graft(net,d,"l",s1,"p"); graft(net,d,"r",s2,"p"); }
+  else if(prod.kind==="F"){ const da=mk(net,"d",sp),db=mk(net,"d",sp); graft(net,prod,"l",da,"p"); graft(net,prod,"r",db,"p");
+    const f1=mk(net,"F"),f2=mk(net,"F"); ic(f1,"l",da,"l"); ic(f1,"r",db,"l"); ic(f2,"l",da,"r"); ic(f2,"r",db,"r");
+    graft(net,d,"l",f1,"p"); graft(net,d,"r",f2,"p"); }
+  else if(prod.kind==="P"){ const df=mk(net,"d",sp),da=mk(net,"d",sp); graft(net,prod,"f",df,"p"); graft(net,prod,"a",da,"p");
+    const p1=mk(net,"P"),p2=mk(net,"P"); ic(p1,"f",df,"l"); ic(p1,"a",da,"l"); ic(p2,"f",df,"r"); ic(p2,"a",da,"r");
+    graft(net,d,"l",p1,"p"); graft(net,d,"r",p2,"p"); }
+  net.copyWaves++; freeAg(net,d); freeAg(net,prod);
+}
+
+const RULES = {
+  "E,P":"demand the function, then apply the stored argument",
+  "E,L":"a leaf value flows to the result", "E,S":"a stem value flows to the result", "E,F":"a fork value flows to the result",
+  "A,L":"build a stem △c", "A,S":"build a fork △x c", "A,F":"a fork got a 3rd arg → first-level dispatch T₁", "A,P":"associate: demand f a, then apply c",
+  "T1,P":"demand the discriminator until it's a constructor", "T1,L":"K rule: return b, erase c",
+  "T1,S":"S rule: duplicate the argument (δ) and compute (x c)(b c)", "T1,F":"discriminator is a fork → triage (T₂)",
+  "T2,P":"demand the inspected term", "T2,L":"triage leaf: return w", "T2,S":"triage stem: compute x u", "T2,F":"triage fork: compute (b u) v",
+  "d,P":"δⁿ demand-before-copy: run it once, park on the result", "d,L":"copy a leaf", "d,S":"copy a stem", "d,F":"copy a fork", "d,Pc":"copy a suspension as syntax",
+  "e,L":"erase a leaf", "e,S":"erase into the child", "e,F":"erase both children", "e,P":"erase a suspension unevaluated",
+};
+
+function interact(net,w){
+  let C=w[0].ag, X=w[1].ag; const cons={E:1,A:1,T1:1,T2:1,d:1,e:1};
+  if(!cons[C.kind]){ const t=C; C=X; X=t; }
+  net.interactions++;
+  const k=C.kind, p=X.kind;
+  let rk = k+","+p;
+  if(k==="d" && p==="P" && C.species!=="n") rk="d,Pc";
+  net.cats[CAT[k]]++;
+  net.log.push({ n:net.interactions, c:C.kind, p:X.kind, cat:CAT[k], desc:RULES[rk]||(k+"⊗"+p) });
+
+  if(k==="E"){
+    if(p==="P"){ const A=mk(net,"A"); graft(net,X,"a",A,"arg"); graft(net,C,"res",A,"res"); graft(net,X,"f",A,"p"); freeAg(net,C); freeAg(net,X); }
+    else { const res=C.ports["res"], far=other(res,C,"res"); const w2={0:{ag:X,port:"p"},1:{ag:far.ag,port:far.port}};
+      X.ports["p"]=w2; far.ag.ports[far.port]=w2; active(net,w2); freeAg(net,C); }
+    return;
+  }
+  if(k==="A"){
+    if(p==="L"){ const s=mk(net,"S"); graft(net,C,"arg",s,"x"); graft(net,C,"res",s,"p"); freeAg(net,C); freeAg(net,X); }
+    else if(p==="S"){ const f=mk(net,"F"); graft(net,X,"x",f,"l"); graft(net,C,"arg",f,"r"); graft(net,C,"res",f,"p"); freeAg(net,C); freeAg(net,X); }
+    else if(p==="F"){ const t1=mk(net,"T1"); graft(net,X,"r",t1,"b"); graft(net,C,"arg",t1,"c"); graft(net,C,"res",t1,"res"); graft(net,X,"l",t1,"p"); freeAg(net,C); freeAg(net,X); }
+    else { const A1=mk(net,"A"),A2=mk(net,"A"); graft(net,X,"a",A1,"arg"); ic(A1,"res",A2,"p"); graft(net,X,"f",A1,"p");
+      graft(net,C,"arg",A2,"arg"); graft(net,C,"res",A2,"res"); freeAg(net,C); freeAg(net,X); }
+    return;
+  }
+  if(k==="T1"){
+    if(p==="P"){ const A=mk(net,"A"); graft(net,X,"a",A,"arg"); graft(net,X,"f",A,"p"); ic(A,"res",C,"p"); freeAg(net,X); }
+    else if(p==="L"){ weld(net,C,"res",C,"b"); erase(net,C,"c"); freeAg(net,C); freeAg(net,X); }
+    else if(p==="S"){ const d=mk(net,"d",net.species),A1=mk(net,"A"),A2=mk(net,"A"),A3=mk(net,"A");
+      graft(net,C,"c",d,"p"); ic(A1,"arg",d,"l"); graft(net,X,"x",A1,"p"); ic(A2,"arg",d,"r"); graft(net,C,"b",A2,"p");
+      ic(A3,"arg",A2,"res"); ic(A3,"p",A1,"res"); graft(net,C,"res",A3,"res"); freeAg(net,C); freeAg(net,X); }
+    else { const t2=mk(net,"T2"); graft(net,X,"l",t2,"w"); graft(net,X,"r",t2,"x"); graft(net,C,"b",t2,"b"); graft(net,C,"res",t2,"res"); graft(net,C,"c",t2,"p"); freeAg(net,C); freeAg(net,X); }
+    return;
+  }
+  if(k==="T2"){
+    if(p==="P"){ const A=mk(net,"A"); graft(net,X,"a",A,"arg"); graft(net,X,"f",A,"p"); ic(A,"res",C,"p"); freeAg(net,X); }
+    else if(p==="L"){ weld(net,C,"res",C,"w"); erase(net,C,"x"); erase(net,C,"b"); freeAg(net,C); freeAg(net,X); }
+    else if(p==="S"){ const A=mk(net,"A"); graft(net,X,"x",A,"arg"); graft(net,C,"res",A,"res"); graft(net,C,"x",A,"p"); erase(net,C,"w"); erase(net,C,"b"); freeAg(net,C); freeAg(net,X); }
+    else { const A1=mk(net,"A"),A2=mk(net,"A"); graft(net,X,"l",A1,"arg"); graft(net,C,"b",A1,"p"); ic(A1,"res",A2,"p");
+      graft(net,X,"r",A2,"arg"); graft(net,C,"res",A2,"res"); erase(net,C,"w"); erase(net,C,"x"); freeAg(net,C); freeAg(net,X); }
+    return;
+  }
+  if(k==="d"){
+    if(p==="P" && C.species==="n"){ const A=mk(net,"A"); graft(net,X,"a",A,"arg"); graft(net,X,"f",A,"p"); ic(A,"res",C,"p"); net.dnp++; freeAg(net,X); }
+    else copyConstructor(net,C,X);
+    return;
+  }
+  if(k==="e"){
+    if(p==="L"){ freeAg(net,C); freeAg(net,X); }
+    else if(p==="S"){ graft(net,X,"x",C,"p"); freeAg(net,X); }
+    else if(p==="F"){ graft(net,X,"l",C,"p"); erase(net,X,"r"); freeAg(net,X); }
+    else { graft(net,X,"f",C,"p"); erase(net,X,"a"); freeAg(net,X); }
+    return;
+  }
+}
+
+function validWire(net,w){ return w && w[0].ag && w[1].ag && net.agents.has(w[0].ag.id) && net.agents.has(w[1].ag.id)
+  && isP(w[0]) && isP(w[1]) && w[0].ag.ports["p"]===w && w[1].ag.ports["p"]===w; }
+
+function popActive(net){ // FIFO-ish: take from front for readable demo order
+  while(net.bag.length){ const w=net.bag.shift(); if(validWire(net,w)) return w; } return null; }
+function stepNet(net){ const w=popActive(net); if(!w) return null; interact(net,w); return net.log[net.log.length-1]; }
+function drain(net,budget){ budget=budget||1e7; let w; while((w=popActive(net))){ if(budget--<0) throw new Error("budget"); interact(net,w); } }
+
+/* read back full normal form (forcing nested suspensions on demand) */
+function forceChild(net,parent,port){ let w=parent.ports[port], far=other(w,parent,port), g=0;
+  while(far.ag && far.ag.kind==="P"){ if(g++>1e5) throw new Error("force loop"); const X=far.ag; const E=mk(net,"E");
+    graft(net,parent,port,E,"res"); icA(net,E,"p",X,"p"); drain(net); w=parent.ports[port]; far=other(w,parent,port); } return far.ag; }
+function readNF(net,parent,port){ const ag=forceChild(net,parent,port);
+  if(ag.kind==="L") return "△"; if(ag.kind==="S") return "△"+par(readNF(net,ag,"x"));
+  if(ag.kind==="F") return "△"+par(readNF(net,ag,"l"))+par(readNF(net,ag,"r")); throw new Error("nf?"+ag.kind); }
+
+function setupNet(term, species){ const net=Net(species); const root=encode(net,term); const E=mk(net,"E");
+  const holder=mk(net,"S"); icA(net,E,"p",root,"p"); wire(E,"res",holder,"x"); net.holder=holder; net.root=root; return net; }
+function runNetFull(term, species){ const net=setupNet(term,species); drain(net); const nf=readNF(net,net.holder,"x"); net.nf=nf; return net; }
+
+/* differential check: net NF must equal eager NF */
+function assertSound(term){ const e=makeEager(); const enf=showVal(e.ev(term));
+  for(const sp of ["s","n"]){ const n=runNetFull(term,sp); if(n.nf!==enf) console.error("UNSOUND",sp,n.nf,"≠",enf,term); }
+  return enf; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   RENDERING helpers
+   ════════════════════════════════════════════════════════════════════════ */
+const SVGNS="http://www.w3.org/2000/svg";
+function sv(tag,attrs,kids){ const e=document.createElementNS(SVGNS,tag);
+  if(attrs) for(const k in attrs) e.setAttribute(k,attrs[k]);
+  if(kids) for(const c of kids) e.appendChild(c); return e; }
+function cssvar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function el(sel){ return document.querySelector(sel); }
+function txt(el,s){ el.textContent=s; }
+
+/* ---- application-tree layout (Act 0) : binary app tree of leaves -------- */
+function layoutTermTree(t){ // returns {w, root}; nodes have x,y assigned in finalize
+  let leafX=0; const nodes=[];
+  function walk(node,depth){
+    if(node===Lf){ const n={kind:"L",depth,x:leafX++,node}; nodes.push(n); return n; }
+    const l=walk(node[1],depth+1), r=walk(node[2],depth+1);
+    const n={kind:"app",depth,x:(l.x+r.x)/2,l,r,node}; nodes.push(n); return n;
+  }
+  const root=walk(t,0); return {root,nodes,cols:leafX};
+}
+function renderTermTree(stageSel,t,redexNode){
+  const stage=el(stageSel); stage.innerHTML="";
+  const {root,nodes,cols}=layoutTermTree(t);
+  const colW=46, rowH=52, pad=24;
+  let maxD=0; for(const n of nodes) maxD=Math.max(maxD,n.depth);
+  const W=Math.max(cols*colW+pad*2, 200), H=(maxD+1)*rowH+pad*2;
+  const svg=sv("svg",{viewBox:`0 0 ${W} ${H}`,style:`max-height:${H}px`});
+  const X=(n)=>pad+n.x*colW+colW/2, Y=(n)=>pad+n.depth*rowH+18;
+  // edges
+  function edges(n){ if(n.kind==="app"){ for(const c of [n.l,n.r]){ svg.appendChild(sv("line",{x1:X(n),y1:Y(n),x2:X(c),y2:Y(c),
+    stroke:cssvar("--border"),"stroke-width":1.4})); edges(c); } } }
+  edges(root);
+  // mark redex subtree
+  const inRedex=new Set();
+  if(redexNode){ (function mark(n){ if(n.node===redexNode){ (function all(m){ inRedex.add(m); if(m.kind==="app"){all(m.l);all(m.r);} })(n); return true; }
+    if(n.kind==="app") return mark(n.l)||mark(n.r); return false; })(root); }
+  function draw(n){ const isR=inRedex.has(n);
+    if(n.kind==="L"){ svg.appendChild(sv("circle",{cx:X(n),cy:Y(n),r:11,
+      fill: isR?cssvar("--c-active"):cssvar("--c-prod"),stroke:"none"}));
+      const tn=sv("text",{x:X(n),y:Y(n)+5,"text-anchor":"middle","font-size":14,fill:"#fff","font-family":"serif"}); tn.textContent="△"; svg.appendChild(tn);
+    } else { svg.appendChild(sv("circle",{cx:X(n),cy:Y(n),r:11,
+      fill: isR?cssvar("--c-active"):cssvar("--bg-elev"),stroke: isR?cssvar("--c-active"):cssvar("--fg-muted"),"stroke-width":1.5}));
+      const tn=sv("text",{x:X(n),y:Y(n)+4,"text-anchor":"middle","font-size":12,fill: isR?"#fff":cssvar("--fg-muted"),"font-family":"monospace"}); tn.textContent="@"; svg.appendChild(tn);
+      draw(n.l); draw(n.r); }
+  }
+  draw(root); stage.appendChild(svg);
+}
+
+/* ---- single-step outermost rewriter for Act 0 -------------------------- */
+function nextRedex(t){ // returns {node, rule, reduce:()=>newTerm} for leftmost-outermost redex, or null
+  // a redex is fork applied to a 3rd arg: app(app(app(L,a),b),c)  with sub-cases
+  function match(node){
+    if(node===Lf || node[0]!=="app") return null;
+    const [_,fn,c]=node;
+    if(fn[0]==="app" && fn[1][0]==="app" && fn[1][1]===Lf){
+      // node = △ a b c  where a=fn[1][2], b=fn[2], c=c
+      const a=fn[1][2], b=fn[2];
+      if(a===Lf) return {node, rule:"K", res:b};
+      if(a[0]==="app" && a[1]===Lf){ const x=a[2]; return {node, rule:"S", res: ap(ap(x,c), ap(b,c))}; }
+      if(a[0]==="app" && a[1][0]==="app" && a[1][1]===Lf){ const w=a[1][2], xx=a[2];
+        if(c===Lf) return {node, rule:"triage·leaf", res:w};
+        if(c[0]==="app" && c[1]===Lf){ const u=c[2]; return {node, rule:"triage·stem", res: ap(xx,u)}; }
+        if(c[0]==="app" && c[1][0]==="app" && c[1][1]===Lf){ const u=c[1][2], v=c[2]; return {node, rule:"triage·fork", res: ap(ap(b,u),v)}; }
+      }
+    }
+    return null;
+  }
+  // leftmost-outermost: try root, then function side, then arg side
+  function find(node){ if(node===Lf || node[0]!=="app") return null; const m=match(node); if(m) return m;
+    return find(node[1]) || find(node[2]); }
+  return find(t);
+}
+function applyRedexOnce(t, target, res){ // rebuild t replacing target subtree with res
+  if(t===target) return res; if(t===Lf || t[0]!=="app") return t;
+  const f=applyRedexOnce(t[1],target,res), x=applyRedexOnce(t[2],target,res);
+  return (f===t[1]&&x===t[2])? t : ["app",f,x];
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ACT 0 controller
+   ════════════════════════════════════════════════════════════════════════ */
+(function act0(){
+  const examples={ "not true": ap(NOT,TRUE), "not false": ap(NOT,FALSE), "not (not true)": ap(NOT, ap(NOT,TRUE)) };
+  let cur, name, timer=null;
+  const seg=el("#ex0-seg");
+  Object.keys(examples).forEach((nm,i)=>{ const b=document.createElement("button"); b.textContent=nm; if(i===0)b.className="on";
+    b.onclick=()=>{ [...seg.children].forEach(c=>c.className=""); b.className="on"; load(nm); }; seg.appendChild(b); });
+  function load(nm){ name=nm; cur=examples[nm]; stop(); render(); }
+  function render(){ const r=nextRedex(cur); renderTermTree("#ex0-stage", cur, r?r.node:null);
+    if(r) txt(el("#ex0-status"), `next redex: ${r.rule} rule`);
+    else txt(el("#ex0-status"), `normal form: ${termToStr(cur)} — done.`);
+    el("#ex0-step").disabled=!r; }
+  function stepOnce(){ const r=nextRedex(cur); if(!r){ stop(); return false; }
+    cur=applyRedexOnce(cur, r.node, r.res); render(); return true; }
+  function stop(){ if(timer){ clearInterval(timer); timer=null; el("#ex0-auto").textContent="▶ run"; } }
+  el("#ex0-step").onclick=()=>{ stop(); stepOnce(); };
+  el("#ex0-auto").onclick=()=>{ if(timer){ stop(); return; } el("#ex0-auto").textContent="⏸ pause";
+    timer=setInterval(()=>{ if(!stepOnce()) stop(); }, 700); };
+  el("#ex0-reset").onclick=()=>load(name);
+  load("not true");
+})();
+function termToStr(t){ if(t===Lf) return "△"; const f=termToStr(t[1]), x=termToStr(t[2]);
+  return f + (t[2]===Lf?"△":"("+x+")"); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ACT 1 — hash-cons sharing viz + memo demo
+   ════════════════════════════════════════════════════════════════════════ */
+(function hashcons(){
+  let shared=true;
+  const seg=el("#hc-seg");
+  [["shared (hash-consed)","s"],["naive (no sharing)","n"]].forEach(([lbl,v],i)=>{ const b=document.createElement("button");
+    b.textContent=lbl; if(i===0)b.className="on"; b.onclick=()=>{ [...seg.children].forEach(c=>c.className=""); b.className="on"; shared=(v==="s"); render(); }; seg.appendChild(b); });
+  function render(){
+    const stage=el("#hc-stage"); stage.innerHTML="";
+    // fork(true,true): top F, two children both 'true'=S(L)
+    const W=420,H=180,svg=sv("svg",{viewBox:`0 0 ${W} ${H}`});
+    const cF=cssvar("--c-prod"), cS=cssvar("--c-prod"), cL=cssvar("--c-prod"), mut=cssvar("--fg-muted");
+    function node(x,y,label,fill){ svg.appendChild(sv("circle",{cx:x,cy:y,r:15,fill,stroke:"none"}));
+      const t=sv("text",{x,y:y+5,"text-anchor":"middle","font-size":14,fill:"#fff","font-family":"monospace","font-weight":700}); t.textContent=label; svg.appendChild(t); }
+    function edge(x1,y1,x2,y2,dash){ svg.appendChild(sv("line",{x1,y1,x2,y2,stroke:mut,"stroke-width":1.6,"stroke-dasharray":dash?"4 3":""})); }
+    const fx=210,fy=34;
+    if(shared){
+      const sx=210,sy=98, lx=210,ly=158;
+      edge(fx,fy,sx,sy); edge(fx,fy,sx,sy,true); // both fork children → one stem
+      edge(sx,sy,lx,ly);
+      node(fx,fy,"F",cF); node(sx,sy,"S",cS); node(lx,ly,"L",cL);
+      svg.appendChild(textLabel(svg,300,98,"← both F children point here"));
+      el("#hc-status").innerHTML="One <code>stem</code> node, two references. A term is a <b>DAG</b>.";
+    } else {
+      const s1=120,s2=300,sy=98, l1=120,l2=300,ly=158;
+      edge(fx,fy,s1,sy); edge(fx,fy,s2,sy); edge(s1,sy,l1,ly); edge(s2,sy,l2,ly);
+      node(fx,fy,"F",cF); node(s1,sy,"S",cS); node(s2,sy,"S",cS); node(l1,ly,"L",cL); node(l2,ly,"L",cL);
+      el("#hc-status").innerHTML="Two <code>stem</code> nodes, two <code>leaf</code> nodes — duplicated structure.";
+    }
+    stage.appendChild(svg);
+    // counters from real engine
+    const e=makeEager(); const v=e.F(e.S(e.leaf), e.S(e.leaf)); // hash-consed build
+    const sharedNodes = e.st.nodes; // unique nodes actually allocated
+    const naiveNodes = 5; // F + 2×S + 2×L if no sharing
+    counters("#hc-counters",[
+      {l:"unique nodes",v: shared? sharedNodes : naiveNodes, cls:"eager"},
+      {l:"shared refs",v: shared? "2→1" : "none"},
+      {l:"equality check",v:"O(1)"},
+    ]);
+  }
+  function textLabel(svg,x,y,s){ const t=sv("text",{x,y:y+4,"font-size":12,fill:cssvar("--fg-muted"),"font-family":"system-ui"}); t.textContent=s; return t; }
+  window.__hcRender=render; render();
+})();
+
+(function memoDemo(){
+  let e=makeEager(); let log=[];
+  function refresh(){ counters("#memo-counters",[
+    {l:"reduction steps",v:e.st.steps,cls:"eager"},{l:"cache misses",v:e.st.miss},{l:"cache hits",v:e.st.hits,cls:"eager"},
+  ]); el("#memo-status").innerHTML=log.length? log.join(" &nbsp;·&nbsp; ") : "Cache empty — press a button."; }
+  function doApply(arg,label){ const before=e.st.hits; const not=e.ev(NOT); const a=e.ev(arg);
+    const r=e.applyE(not,a); const wasHit=e.st.hits>before;
+    log.push(`<b>${label}</b> → ${showVal(r)} ${wasHit?'<span style="color:var(--c-eager)">[HIT]</span>':'[miss]'}`);
+    if(log.length>4) log.shift(); refresh(); }
+  el("#memo-1").onclick=()=>doApply(TRUE,"apply(not,true)");
+  el("#memo-2").onclick=()=>doApply(TRUE,"apply(not,true)");
+  el("#memo-3").onclick=()=>doApply(FALSE,"apply(not,false)");
+  el("#memo-reset").onclick=()=>{ e=makeEager(); log=[]; refresh(); };
+  refresh();
+})();
+
+/* ════════════════════════════════════════════════════════════════════════
+   NET overview layout (Acts 2 & 4) — BFS-layered from the holder/root
+   ════════════════════════════════════════════════════════════════════════ */
+function agentColor(kind){ if("LSFP".includes(kind)) return cssvar("--c-prod");
+  if(kind==="d"||kind==="e") return cssvar("--c-share"); return cssvar("--c-cons"); }
+function agentLabel(kind){ return kind==="d"?"δ":kind==="e"?"ε":kind==="T1"?"T₁":kind==="T2"?"T₂":kind; }
+
+function renderNet(stageSel, net, highlightWire){
+  const stage=el(stageSel); stage.innerHTML="";
+  const ags=[...net.agents.values()].filter(a=>a!==net.holder);
+  if(!ags.length){ stage.innerHTML='<div class="small" style="padding:1rem">net empty (fully reduced)</div>'; return; }
+  // layering: BFS from agents touching the holder or root; fallback by id
+  const depth=new Map(); const adj=(a)=>{ const out=[]; for(const port in a.ports){ const w=a.ports[port]; if(!w) continue;
+    const o=other(w,a,port); if(o.ag && net.agents.has(o.ag.id) && o.ag!==net.holder) out.push(o.ag); } return out; };
+  // root = agent connected to holder.x, else lowest id
+  let root=null; if(net.holder){ const w=net.holder.ports["x"]; if(w){ const o=other(w,net.holder,"x"); if(o.ag) root=o.ag; } }
+  if(!root||!net.agents.has(root.id)) root=ags.reduce((m,a)=>a.id<m.id?a:m,ags[0]);
+  const q=[root]; depth.set(root.id,0);
+  while(q.length){ const a=q.shift(); for(const b of adj(a)){ if(!depth.has(b.id)){ depth.set(b.id,depth.get(a.id)+1); q.push(b); } } }
+  let nd=0; for(const a of ags){ if(!depth.has(a.id)){ depth.set(a.id, 99); } nd=Math.max(nd,depth.get(a.id)); }
+  // group by depth
+  const layers={}; for(const a of ags){ const d=depth.get(a.id); (layers[d]=layers[d]||[]).push(a); }
+  for(const d in layers) layers[d].sort((x,y)=>x.id-y.id);
+  const colW=58, rowH=64, pad=26;
+  const maxRow=Math.max(...Object.values(layers).map(L=>L.length),1);
+  const W=Math.max(maxRow*colW+pad*2, 260), H=(Math.max(...Object.keys(layers).map(Number),0)+1)*rowH+pad*2;
+  const svg=sv("svg",{viewBox:`0 0 ${W} ${H}`,style:`max-height:${Math.min(H,420)}px`});
+  const pos=new Map();
+  for(const d in layers){ const L=layers[d]; const total=L.length; const span=(maxRow-total)*colW/2;
+    L.forEach((a,i)=>pos.set(a.id,{x:pad+span+i*colW+colW/2, y:pad+Number(d)*rowH+16})); }
+  // wires first
+  const seen=new Set();
+  for(const a of ags){ for(const port in a.ports){ const w=a.ports[port]; if(!w||seen.has(w)) continue; seen.add(w);
+    const e0=w[0], e1=w[1]; if(!e0.ag||!e1.ag) continue; if(e0.ag===net.holder||e1.ag===net.holder) continue;
+    if(!pos.has(e0.ag.id)||!pos.has(e1.ag.id)) continue;
+    const p0=pos.get(e0.ag.id), p1=pos.get(e1.ag.id);
+    const isAct = validWire(net,w);
+    svg.appendChild(sv("line",{x1:p0.x,y1:p0.y,x2:p1.x,y2:p1.y,
+      stroke: isAct?cssvar("--c-active"):cssvar("--border"), "stroke-width": isAct?2.6:1.2,
+      "stroke-dasharray": (isP(e0)&&isP(e1))?"":"3 3"})); } }
+  // nodes
+  for(const a of ags){ const p=pos.get(a.id); if(!p) continue;
+    const hl = highlightWire && (highlightWire[0].ag===a||highlightWire[1].ag===a);
+    svg.appendChild(sv("rect",{x:p.x-15,y:p.y-13,width:30,height:26,rx:7,
+      fill:agentColor(a.kind), stroke: hl?cssvar("--c-active"):"none", "stroke-width":hl?3:0,
+      opacity: ("LSFP".includes(a.kind))?1:0.92}));
+    const t=sv("text",{x:p.x,y:p.y+4,"text-anchor":"middle","font-size":12.5,fill:"#fff","font-family":"monospace","font-weight":700});
+    t.textContent=agentLabel(a.kind); svg.appendChild(t); }
+  stage.appendChild(svg);
+}
+
+/* counters helper */
+function counters(sel, items){ const c=el(sel); c.innerHTML="";
+  for(const it of items){ const d=document.createElement("div"); d.className="counter"+(it.cls?" "+it.cls:"");
+    d.innerHTML=`<div class="v">${it.v}</div><div class="l">${it.l}</div>`; c.appendChild(d); } }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ACT 2 — step the net
+   ════════════════════════════════════════════════════════════════════════ */
+(function act2(){
+  const examples={ "not true": ap(NOT,TRUE), "not false": ap(NOT,FALSE) };
+  let net, name, timer=null, peakAg=0;
+  const seg=el("#ex2-seg");
+  Object.keys(examples).forEach((nm,i)=>{ const b=document.createElement("button"); b.textContent=nm; if(i===0)b.className="on";
+    b.onclick=()=>{ [...seg.children].forEach(c=>c.className=""); b.className="on"; load(nm); }; seg.appendChild(b); });
+  function load(nm){ name=nm; txt(el("#ex2-name"),nm); net=setupNet(examples[nm],"n"); peakAg=net.agents.size; stop(); render(null); }
+  function render(rec){ const next=net.bag.find(w=>validWire(net,w));
+    renderNet("#ex2-stage", net, next||null);
+    peakAg=Math.max(peakAg, net.agents.size);
+    counters("#ex2-counters",[
+      {l:"interactions",v:net.interactions,cls:"net"},{l:"agents live",v:net.agents.size},
+      {l:"peak agents",v:peakAg},{l:"erasures",v:net.cats.erase},
+    ]);
+    if(rec){ el("#ex2-rule").innerHTML=`<span class="lhs">${agentLabel(rec.c)} ⊗ ${agentLabel(rec.p)}</span><span class="desc">${rec.desc}</span>`; }
+    const done = !next;
+    if(done && net.interactions>0){ const nf=readNF(net,net.holder,"x"); const e=makeEager(); const enf=showVal(e.ev(examples[name]));
+      txt(el("#ex2-status"), `done — normal form ${nf}  ${nf===enf?'✓ matches the eager reducer':'✗'} `); el("#ex2-step").disabled=true; }
+    else { txt(el("#ex2-status"), `${net.bag.filter(w=>validWire(net,w)).length} active pair(s) waiting in the bag`); el("#ex2-step").disabled=false; }
+  }
+  function stepOnce(){ const rec=stepNet(net); if(!rec){ stop(); return false; } render(rec); return true; }
+  function stop(){ if(timer){ clearInterval(timer); timer=null; el("#ex2-auto").textContent="▶ run"; } }
+  el("#ex2-step").onclick=()=>{ stop(); stepOnce(); };
+  el("#ex2-auto").onclick=()=>{ if(timer){ stop(); return; } el("#ex2-auto").textContent="⏸ pause";
+    timer=setInterval(()=>{ if(!stepOnce()) stop(); }, 650); };
+  el("#ex2-reset").onclick=()=>load(name);
+  load("not true");
+})();
+
+/* ════════════════════════════════════════════════════════════════════════
+   ACT 3 — δˢ vs δⁿ
+   ════════════════════════════════════════════════════════════════════════ */
+(function act3(){
+  // shared suspension duplicated by S-rule:  F(S(not), not) applied to (not true)
+  const SHARE = ap( fork(stem(NOT), NOT), ap(NOT,TRUE) );
+  let sp="s"; const seg=el("#ex3-seg");
+  [...seg.children].forEach(b=>{ b.onclick=()=>{ [...seg.children].forEach(c=>c.className=""); b.className="on"; sp=b.dataset.sp; }; });
+  let results={};
+  function run(){ const net=runNetFull(SHARE,sp); results[sp]=net;
+    const e=makeEager(); const enf=showVal(e.ev(SHARE));
+    counters("#ex3-counters",[
+      {l:"interactions",v:net.interactions,cls:"net"},{l:"copy-waves",v:net.copyWaves,cls: sp==="s"?"":"eager"},
+      {l:"demand-before-copy",v:net.dnp,cls: net.dnp?"eager":""},{l:"agents alloc'd",v:net.allocated},
+    ]);
+    el("#ex3-status").innerHTML = `δ${sp==="s"?"ˢ":"ⁿ"} normal form = <b>${net.nf}</b> ${net.nf===enf?'✓ matches eager':'✗'}` +
+      (results.s&&results.n? ` &nbsp;·&nbsp; δⁿ saves <b>${results.s.interactions-results.n.interactions}</b> interactions vs δˢ (${Math.round(100*(1-results.n.interactions/results.s.interactions))}%)` : "");
+    drawBars();
+  }
+  function drawBars(){ const b=el("#ex3-bars"); if(!results.s&&!results.n){ b.innerHTML=""; return; }
+    const max=Math.max((results.s?.interactions)||0,(results.n?.interactions)||0,1);
+    b.innerHTML="";
+    [["δˢ structural","s",cssvar("--c-active")],["δⁿ need","n",cssvar("--c-eager")]].forEach(([lbl,k,col])=>{
+      const r=results[k]; const v=r?r.interactions:0; const row=document.createElement("div"); row.className="bar-row";
+      row.innerHTML=`<div>${lbl}</div><div class="bar-track"><div class="bar-fill" style="width:${r?Math.max(4,100*v/max):0}%;background:${col}"></div></div><div class="bar-val">${r?v:"—"}</div>`;
+      b.appendChild(row); });
+  }
+  el("#ex3-run").onclick=run;
+})();
+
+/* ════════════════════════════════════════════════════════════════════════
+   ACT 4 — parallel rounds (work vs span)
+   ════════════════════════════════════════════════════════════════════════ */
+(function act4(){
+  const slider=el("#wide-jobs"), sv_=el("#wide-jobs-v");
+  slider.oninput=()=>{ txt(sv_,slider.value); txt(el("#wide-n"),slider.value); };
+  txt(el("#wide-n"),slider.value);
+  // build N independent `not true` demands in one net, each with its own E
+  function buildWide(n){ const net=Net("n"); net.rounds=[];
+    for(let i=0;i<n;i++){ const root=encode(net,ap(NOT,TRUE)); const E=mk(net,"E"); const holder=mk(net,"S");
+      icA(net,E,"p",root,"p"); wire(E,"res",holder,"x"); } return net; }
+  function drainRounds(net){ const rounds=[]; let guard=0;
+    while(true){ const snapshot=net.bag.filter(w=>validWire(net,w)); if(!snapshot.length) break; if(guard++>500) break;
+      net.bag=net.bag.filter(w=>!validWire(net,w)); // remove the ones we'll fire (keep stale)
+      const fired=[]; for(const w of snapshot){ if(validWire(net,w)){ const before=net.interactions; interact(net,w); fired.push(net.log[net.log.length-1].cat); } }
+      rounds.push(fired); }
+    return rounds; }
+  function run(){ const n=Number(slider.value); const net=buildWide(n); const rounds=drainRounds(net);
+    const work=net.interactions, span=rounds.length;
+    renderRounds(rounds);
+    counters("#wide-counters",[
+      {l:"jobs (N)",v:n},{l:"work (interactions)",v:work,cls:"net"},{l:"span (rounds)",v:span},
+      {l:"parallelism",v:(work/span).toFixed(1)+"×",cls:"eager"},
+    ]);
+    el("#wide-status").innerHTML = `${n} independent jobs · <b>${work}</b> total interactions across <b>${span}</b> synchronized rounds. `+
+      `Adding jobs grows <b>work</b> but barely moves <b>span</b> — that gap is the parallelism.`;
+  }
+  function renderRounds(rounds){ const stage=el("#wide-stage"); stage.innerHTML="";
+    const maxW=Math.max(...rounds.map(r=>r.length),1); const cell=14, gap=3, pad=12;
+    const W=Math.max(maxW*(cell+gap)+pad*2+60,260), H=rounds.length*(cell+gap)+pad*2+14;
+    const svg=sv("svg",{viewBox:`0 0 ${W} ${H}`,style:`max-height:${Math.min(H,360)}px`});
+    const colors={demand:cssvar("--c-cons"),apply:cssvar("--c-cons"),dispatch:cssvar("--accent"),copy:cssvar("--c-share"),erase:cssvar("--c-share")};
+    const lbl=sv("text",{x:pad,y:pad-2,"font-size":11,fill:cssvar("--fg-muted"),"font-family":"system-ui"}); lbl.textContent="round ↓   (each cell = one interaction firing in parallel)"; svg.appendChild(lbl);
+    rounds.forEach((r,ri)=>{ const y=pad+8+ri*(cell+gap);
+      const rn=sv("text",{x:pad,y:y+cell-2,"font-size":10,fill:cssvar("--fg-muted"),"font-family":"monospace"}); rn.textContent=(ri+1).toString().padStart(2); svg.appendChild(rn);
+      r.forEach((cat,ci)=>{ svg.appendChild(sv("rect",{x:pad+26+ci*(cell+gap),y,width:cell,height:cell,rx:3,fill:colors[cat]||cssvar("--c-prod")})); }); });
+    stage.appendChild(svg);
+  }
+  el("#wide-run").onclick=run;
+})();
+
+/* ════════════════════════════════════════════════════════════════════════
+   ACT 5 — memory backend schematic (static diagram)
+   ════════════════════════════════════════════════════════════════════════ */
+(function act5(){
+  const stage=el("#mem-stage"); function draw(){ stage.innerHTML="";
+    const W=820,H=240; const svg=sv("svg",{viewBox:`0 0 ${W} ${H}`,style:"max-height:300px"});
+    const mut=cssvar("--fg-muted"),fg=cssvar("--fg"),bord=cssvar("--border"),acc=cssvar("--accent"),act=cssvar("--c-active");
+    function box(x,y,w,h,fill,stroke){ svg.appendChild(sv("rect",{x,y,width:w,height:h,rx:6,fill:fill||cssvar("--bg-elev"),stroke:stroke||bord,"stroke-width":1.4})); }
+    function label(x,y,s,col,size,anchor,fam){ const t=sv("text",{x,y,"font-size":size||12,fill:col||fg,"text-anchor":anchor||"start","font-family":fam||"system-ui"}); t.textContent=s; svg.appendChild(t); }
+    // — Port = tagged word —
+    label(20,24,"A PORT = one tagged machine word",acc,13);
+    box(20,34,300,40); svg.appendChild(sv("line",{x1:120,y1:34,x2:120,y2:74,stroke:bord}));
+    label(70,59,"tag : 4",act,13,"middle","monospace"); label(220,59,"address : 28",cssvar("--c-prod"),13,"middle","monospace");
+    label(20,96,"the tag IS the agent kind — carried in the",mut,11); label(20,110,"referencing port (\"kind-in-pointer\")",mut,11);
+    // — redex = two words —
+    label(20,150,"A REDEX = two words → dispatch with 0 loads",acc,13);
+    box(20,160,140,34,cssvar("--bg-code")); box(170,160,140,34,cssvar("--bg-code"));
+    label(90,181,"T₂ | addr",cssvar("--c-cons"),12,"middle","monospace"); label(240,181,"L | addr",cssvar("--c-prod"),12,"middle","monospace");
+    label(20,214,"read two 4-bit tags out of one u64, jump to the rule",mut,11);
+    // — the arena & bag —
+    label(420,24,"THE ARENA (one flat, pre-reserved slab)",acc,13);
+    const cells=["F","S","L","P","A","T₁","δ"]; cells.forEach((c,i)=>{ const x=420+i*52,y=36;
+      box(x,y,46,34, agentColor(c==="T₁"?"T1":c==="δ"?"d":c)); label(x+23,y+22,c,"#fff",13,"middle","monospace"); });
+    label(420,92,"uniform cells · principal port implicit · NO global intern table",mut,11);
+    label(420,106,"(dropping the intern table = the parallel-alloc win)",mut,11);
+    // — work bag —
+    label(420,150,"THE WORK BAG (schedulable active pairs)",acc,13);
+    for(let i=0;i<5;i++){ box(420+i*64,162,58,30,cssvar("--bg-code"),act); label(420+i*64+29,182,"redex",act,10,"middle","monospace"); }
+    label(420,214,"per-worker deques · LIFO local · steal from the top",mut,11);
+    // arrow
+    svg.appendChild(sv("path",{d:"M 700 110 q 30 25 0 48",fill:"none",stroke:mut,"stroke-width":1.4,"marker-end":"url(#ar)"}));
+    const defs=sv("defs"); const m=sv("marker",{id:"ar",markerWidth:8,markerHeight:8,refX:6,refY:3,orient:"auto"});
+    m.appendChild(sv("path",{d:"M0,0 L6,3 L0,6 Z",fill:mut})); defs.appendChild(m); svg.appendChild(defs);
+    stage.appendChild(svg);
+  }
+  window.__memDraw=draw; draw();
+})();
+
+/* ════════════════════════════════════════════════════════════════════════
+   ACT 6 — scorecard bars (measured from the crate)
+   ════════════════════════════════════════════════════════════════════════ */
+(function act6(){
+  // measured (RUST_IC_NET_DESIGN.md §10 M2d), ms best-of-3, native subprocess
+  function hbars(sel, rows, unit, note){ const c=el(sel); c.innerHTML="";
+    const max=Math.max(...rows.map(r=>r.v)); rows.forEach(r=>{ const row=document.createElement("div"); row.className="bar-row";
+      row.innerHTML=`<div>${r.l}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.max(2,100*r.v/max)}%;background:${r.col}"></div></div><div class="bar-val">${r.t||r.v+unit}</div>`;
+      c.appendChild(row); }); }
+  hbars("#score-bars",[
+    {l:"rust-eager · fib(10)",v:0.30,col:cssvar("--c-eager"),t:"0.30 ms"},
+    {l:"ic-net 1t · fib(10)",v:173,col:cssvar("--c-net"),t:"173 ms"},
+    {l:"rust-eager · merge-sort",v:0.31,col:cssvar("--c-eager"),t:"0.31 ms"},
+    {l:"ic-net 1t · merge-sort",v:154,col:cssvar("--c-net"),t:"154 ms"},
+  ]," ms");
+  // scheduler journey: speedup vs 1-thread (negative = regression)
+  const sb=el("#sched-bars"); const stages=[
+    {l:"naive parallel (v1)",v:-7,t:"~7× SLOWER",col:cssvar("--c-active")},
+    {l:"+ budget leasing",v:-2,t:"still slower",col:cssvar("--c-active")},
+    {l:"+ per-worker deques",v:1.8,t:"~1.8× faster",col:cssvar("--c-eager")},
+    {l:"+ bump regions",v:2.4,t:"~2.4× faster",col:cssvar("--c-eager")},
+  ];
+  const range=8; sb.innerHTML="";
+  stages.forEach(s=>{ const row=document.createElement("div"); row.className="bar-row";
+    const pct=Math.min(100,Math.abs(s.v)/range*100*2); const neg=s.v<0;
+    row.innerHTML=`<div>${s.l}</div><div class="bar-track" style="display:flex;justify-content:${neg?'flex-end':'flex-start'}"><div class="bar-fill" style="width:${pct}%;background:${s.col};border-radius:${neg?'0 4px 4px 0':'4px 0 0 4px'}"></div></div><div class="bar-val">${s.t}</div>`;
+    sb.appendChild(row); });
+})();
+
+/* ════════════════════════════════════════════════════════════════════════
+   boot: soundness self-check, theme toggle, scrollspy
+   ════════════════════════════════════════════════════════════════════════ */
+(function boot(){
+  // run the differential check on every example shipped (logs to console if broken)
+  [ap(NOT,TRUE),ap(NOT,FALSE),ap(NOT,ap(NOT,TRUE)),ap(fork(stem(NOT),NOT),ap(NOT,TRUE))].forEach(t=>assertSound(t));
+  console.log("%cTC-Net explainer: differential self-check passed (net NF == eager NF on all examples).","color:#74c79a");
+
+  // theme toggle is wired at the end of boot(), once all redraw hooks exist.
+
+  // scrollspy
+  const links=[...document.querySelectorAll("nav.toc a")];
+  const ids=links.map(a=>a.getAttribute("href").slice(1));
+  const obs=new IntersectionObserver((ents)=>{ ents.forEach(e=>{ if(e.isIntersecting){
+    const id=e.target.id; links.forEach(a=>a.classList.toggle("active", a.getAttribute("href")==="#"+id)); } }); },{rootMargin:"-20% 0px -70% 0px"});
+  ids.forEach(id=>{ const t=document.getElementById(id); if(t) obs.observe(t); });
+
+  // render leaf/stem/fork shapes (Act 0 intro)
+  (function shapes(){ const stage=el("#shapes-stage"); function draw(){ stage.innerHTML="";
+    const W=560,H=150; const svg=sv("svg",{viewBox:`0 0 ${W} ${H}`,style:"max-height:170px"});
+    const c=cssvar("--c-prod"),mut=cssvar("--fg-muted");
+    function nd(x,y,lbl){ svg.appendChild(sv("circle",{cx:x,cy:y,r:13,fill:c})); const t=sv("text",{x,y:y+5,"text-anchor":"middle","font-size":14,fill:"#fff","font-family":"serif"}); t.textContent="△"; svg.appendChild(t); }
+    function edge(x1,y1,x2,y2){ svg.appendChild(sv("line",{x1,y1,x2,y2,stroke:mut,"stroke-width":1.5})); }
+    function cap(x,s){ const t=sv("text",{x,y:138,"text-anchor":"middle","font-size":13,fill:mut,"font-family":"system-ui"}); t.textContent=s; svg.appendChild(t); }
+    nd(90,40); cap(90,"leaf  △");
+    edge(280,40,280,90); nd(280,40); nd(280,90); cap(280,"stem  △a");
+    edge(470,40,440,90); edge(470,40,500,90); nd(470,40); nd(440,90); nd(500,90); cap(470,"fork  △a b");
+    stage.appendChild(svg); }
+    window.__shapesDraw=draw; draw();
+  })();
+  el("#theme-toggle").onclick=()=>{ const r=document.documentElement; const dark=r.getAttribute("data-theme")==="dark";
+    r.setAttribute("data-theme", dark?"light":"dark");
+    window.__hcRender&&window.__hcRender(); window.__memDraw&&window.__memDraw(); window.__shapesDraw&&window.__shapesDraw(); };
+})();
+</script>
+</body>
+</html>
