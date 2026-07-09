@@ -5825,8 +5825,6 @@ inline tests are canonical.
 - `archive/RECORDS_PROPOSAL.md` — records and projection (archived; record
   *theory* now in §2.6/§12, the file retains the forward-looking design for
   recursive records and the encoding migration).
-- `INTERACTIVE_WALKTHROUGH.html` — pedagogical introduction.
-
 #v(2em)
 
 #note[
