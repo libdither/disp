@@ -28,6 +28,7 @@ fn main() {
     let mut budget: i64 = 8_000_000_000;
     let mut tiled = false;
     let mut rc = false;
+    let mut load_aware = false;
     let mut wide: Option<(usize, usize)> = None;
     let mut trace: Option<String> = None;
     let mut trace_limit: u64 = 200_000_000;
@@ -50,6 +51,12 @@ fn main() {
             }
             "-rc" => {
                 rc = true;
+            }
+            "-load-aware" => {
+                // Tile-aware loading (SPATIAL_IC.md 12.1): build the initial term across
+                // tiles at construction. Implies -tiled.
+                tiled = true;
+                load_aware = true;
             }
             "-wide" => {
                 let d = args[i + 1].parse().unwrap_or(0);
@@ -171,15 +178,18 @@ fn main() {
     // E3 tiled drain: same stdout contract; stderr additionally carries the tiling
     // metrics (same/cross-tile routing = the live coarse Rent readout, SPATIAL_IC.md 10).
     if tiled {
-        let result = match wide {
-            Some((d, ch)) => rust_ic_net::reduce_wide_tiled(d, ch, threads, budget, node_cap, var_cap),
-            None => rust_ic_net::reduce_fold_tiled(&terms, threads, budget, node_cap, var_cap),
+        let result = match (wide, load_aware) {
+            (Some((d, ch)), false) => rust_ic_net::reduce_wide_tiled(d, ch, threads, budget, node_cap, var_cap),
+            (Some((d, ch)), true) => rust_ic_net::reduce_wide_tiled_aware(d, ch, threads, budget, node_cap, var_cap),
+            (None, false) => rust_ic_net::reduce_fold_tiled(&terms, threads, budget, node_cap, var_cap),
+            (None, true) => rust_ic_net::reduce_fold_tiled_aware(&terms, threads, budget, node_cap, var_cap),
         };
+        let tag = if load_aware { "tiled-aware" } else { "tiled" };
         match result {
             Some((nf, ms, interactions, st)) => {
                 println!("{nf}");
                 eprintln!(
-                    "reduce_ms={ms:.3} evaluator=ic-net-tiled-{threads}t interactions={interactions} \
+                    "reduce_ms={ms:.3} evaluator=ic-net-{tag}-{threads}t interactions={interactions} \
                      same_tile={} cross_tile={} cross_frac={:.4} inbox_pushes={} steals={} donated={} \
                      births_hinted={} births_foreign={} births_default={} alloc_fallback={}",
                     st.same_tile,
@@ -195,7 +205,7 @@ fn main() {
                 );
             }
             None => {
-                eprintln!("reduce_ms=NaN evaluator=ic-net-tiled-{threads}t (budget exhausted)");
+                eprintln!("reduce_ms=NaN evaluator=ic-net-{tag}-{threads}t (budget exhausted)");
                 std::process::exit(1);
             }
         }

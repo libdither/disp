@@ -8,8 +8,9 @@
 
 use crate::net::{Ctx, Net, Worker};
 use crate::port::*;
-use crate::tiled::TiledStats;
+use crate::tiled::{TileShared, TileState, TiledStats};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 fn build_not(c: &mut Ctx) -> u32 {
     let sl = c.stem(pack(L, 0)); // S(L) = true
@@ -34,6 +35,42 @@ pub(crate) fn build_wide(c: &mut Ctx, d: usize, chain: usize) -> u32 {
         c.fork(l, r)
     }
 }
+/// Tile-aware `build_wide` (SPATIAL_IC.md 12.1). Same term, but each of the `2^d`
+/// independent chains is allocated whole into a distinct tile (round-robin), so the layout
+/// starts partitioned along the natural parallel-frontier boundary instead of being loaded
+/// contiguously into one stripe and split by the drain afterward. The caller's worker must
+/// carry a `TileState` (the loader builds the tiling before load); this function drives
+/// `ts.tile` so plain `alloc` (own-tile) places each subtree where we want it.
+///
+/// Returns `(root, leftmost_chain_tile)`: a spine fork is placed in the tile of its left
+/// subtree, keeping it next to real work; the chains (which dominate the node count) drive
+/// the split.
+fn build_wide_tiled(c: &mut Ctx, d: usize, chain: usize, next: &mut usize, tiles: usize) -> (u32, usize) {
+    if d == 0 {
+        let t = *next % tiles;
+        *next += 1;
+        set_loader_tile(c, t);
+        let mut e = pack(L, 0); // false
+        for _ in 0..chain {
+            let not = build_not(c);
+            e = c.susp(not, e);
+        }
+        (e, t)
+    } else {
+        let (l, lt) = build_wide_tiled(c, d - 1, chain, next, tiles);
+        let (r, _rt) = build_wide_tiled(c, d - 1, chain, next, tiles);
+        set_loader_tile(c, lt);
+        (c.fork(l, r), lt)
+    }
+}
+
+/// Point the loader worker's current-tile at `t`, so its next plain allocations land in
+/// tile `t`'s stripe (`alloc` -> `alloc_in_tile(own)`; net.rs). Only valid while the worker
+/// carries a loader `TileState`.
+fn set_loader_tile(c: &mut Ctx, t: usize) {
+    c.w.tiled.as_mut().expect("set_loader_tile: loader has no tiling").tile = t;
+}
+
 /// Full NF of a root, sequential (`threads<=1`) or parallel, then serialize to ternary.
 fn force_emit(net: &Net, h: u32, threads: usize, budget: i64) -> Option<String> {
     let nf = if threads <= 1 {
@@ -52,6 +89,13 @@ fn force_emit_tiled(net: &Net, h: u32, threads: usize, budget: i64) -> Option<(S
     let (nf, stats) = net.full_nf_tiled(h, threads, budget)?;
     Some((emit_string(net, nf)?, stats))
 }
+/// `force_emit_tiled` over a tiling that already governed the load (tile-aware loaders):
+/// drives `full_nf_tiled_with` so the drain reuses the load-time stripe partition instead
+/// of rebuilding one from node addresses.
+fn force_emit_tiled_with(net: &Net, shared: Arc<TileShared>, h: u32, budget: i64) -> Option<(String, TiledStats)> {
+    let (nf, stats) = net.full_nf_tiled_with(shared, h, budget)?;
+    Some((emit_string(net, nf)?, stats))
+}
 fn emit_string(net: &Net, nf: u32) -> Option<String> {
     let mut out = Vec::new();
     let mut w = Worker::new();
@@ -67,6 +111,24 @@ fn load_fold(net: &Net, terms: &[Vec<u8>]) -> Option<u32> {
         let mut i = 0usize;
         let term = c.parse(t, &mut i);
         acc = Some(acc.map_or(term, |f| c.susp(f, term)));
+    }
+    acc
+}
+/// Tile-aware `load_fold` (SPATIAL_IC.md 12.1): parse round-robin across tiles
+/// (`parse_tiled`), so a big folded term is spread over the stripes at construction. The
+/// worker must carry a loader `TileState`; a shared round-robin cursor is threaded across
+/// terms and the fold's own susp nodes. Byte-identical tree to `load_fold`.
+fn load_fold_tiled(c: &mut Ctx, terms: &[Vec<u8>], rr: &mut usize, tiles: usize) -> Option<u32> {
+    let mut acc: Option<u32> = None;
+    for t in terms {
+        let mut i = 0usize;
+        let term = c.parse_tiled(t, &mut i, rr, tiles);
+        acc = Some(acc.map_or(term, |f| {
+            let tt = *rr % tiles;
+            *rr += 1;
+            c.w.tiled.as_mut().expect("load_fold_tiled: loader has no tiling").tile = tt;
+            c.susp(f, term)
+        }));
     }
     acc
 }
@@ -154,6 +216,32 @@ pub fn reduce_fold_rc(
     (nf, ms, net.interactions.load(Ordering::Relaxed), report)
 }
 
+/// `reduce_fold_tiled` with TILE-AWARE loading (SPATIAL_IC.md 12.1): parse round-robin
+/// across tiles at construction. For a demand-spine term (fib) the spine drives its own
+/// consumer-tile placement anyway, so this is mostly a non-regression check; the point of
+/// the round-robin is to not concentrate the initial term in one stripe.
+pub fn reduce_fold_tiled_aware(
+    terms: &[Vec<u8>],
+    threads: usize,
+    budget: i64,
+    node_cap: usize,
+    var_cap: usize,
+) -> Option<(String, f64, u64, TiledStats)> {
+    let net = Net::new(node_cap, var_cap);
+    let tiles = threads.max(1);
+    let t0 = std::time::Instant::now();
+    let shared = Arc::new(TileShared::new(&net, tiles));
+    let h = {
+        let mut w = Worker::new();
+        w.tiled = Some(Box::new(TileState::new(Arc::clone(&shared), 0)));
+        let mut c = net.ctx(&mut w);
+        let mut rr = 0usize;
+        load_fold_tiled(&mut c, terms, &mut rr, tiles)?
+    };
+    let (nf, stats) = force_emit_tiled_with(&net, Arc::clone(&shared), h, budget)?;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    Some((nf, ms, net.interactions.load(Ordering::Relaxed), stats))
+}
 /// E1 trace run summary (SPATIAL_IC.md §10; see trace.rs for the semantics).
 pub struct TraceReport {
     pub events: u64,
@@ -241,6 +329,37 @@ pub fn reduce_wide_tiled(
         build_wide(&mut c, depth, chain)
     };
     let (nf, stats) = force_emit_tiled(&net, h, threads, budget)?;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    Some((nf, ms, net.interactions.load(Ordering::Relaxed), stats))
+}
+/// `reduce_wide_tiled` with TILE-AWARE loading (SPATIAL_IC.md 12.1): create the tiling
+/// before load and build each independent chain into its own tile, so the initial layout
+/// is already partitioned. Same NF and interaction count as the naive-load tiled path (only
+/// node addresses differ); the tiling metrics should show a lower cross-tile fraction.
+pub fn reduce_wide_tiled_aware(
+    depth: usize,
+    chain: usize,
+    threads: usize,
+    budget: i64,
+    node_cap: usize,
+    var_cap: usize,
+) -> Option<(String, f64, u64, TiledStats)> {
+    let net = Net::new(node_cap, var_cap);
+    let tiles = threads.max(1);
+    let t0 = std::time::Instant::now();
+    // Tiling built BEFORE load; the loader worker carries a TileState so `alloc` targets a
+    // chosen tile. `TileShared::new` reads node_top (0 here), so each tile's cursor starts
+    // at its stripe head; the load then advances each tile's cursor past its own prefix.
+    let shared = Arc::new(TileShared::new(&net, tiles));
+    let h = {
+        let mut w = Worker::new();
+        w.tiled = Some(Box::new(TileState::new(Arc::clone(&shared), 0)));
+        let mut c = net.ctx(&mut w);
+        let mut next = 0usize;
+        let (root, _) = build_wide_tiled(&mut c, depth, chain, &mut next, tiles);
+        root
+    };
+    let (nf, stats) = force_emit_tiled_with(&net, Arc::clone(&shared), h, budget)?;
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     Some((nf, ms, net.interactions.load(Ordering::Relaxed), stats))
 }

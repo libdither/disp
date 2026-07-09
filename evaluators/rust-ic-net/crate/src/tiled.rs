@@ -347,17 +347,41 @@ impl<'a> Ctx<'a> {
 impl Net {
     /// Reduce `h` to full NF with `threads` tile-pinned workers sharing this net.
     /// Returns the NF root and the tiling metrics, or None on budget exhaustion.
+    ///
+    /// The tiling is built here from a plain (untiled) load: the initial term already
+    /// lives in the arena and `TileShared::new` partitions it by address. This is the
+    /// "naive load" path — a term loaded into one contiguous bump region lands in one
+    /// tile's stripe, so wide (many independent subtrees) starts unpartitioned and the
+    /// drain fights the partition. `full_nf_tiled_with` takes a tiling that was already
+    /// present during a tile-aware load (bench.rs) instead, so the layout starts split.
     pub(crate) fn full_nf_tiled(
         &self,
         h: u32,
         threads: usize,
         budget: i64,
     ) -> Option<(u32, TiledStats)> {
+        let tiles = threads.max(1);
+        let shared = Arc::new(TileShared::new(self, tiles));
+        self.full_nf_tiled_with(shared, h, budget)
+    }
+
+    /// The tiled drain proper, over an already-built `TileShared`. Used two ways:
+    /// `full_nf_tiled` passes a tiling derived from a plain load; the tile-aware loaders
+    /// (bench.rs) pass the tiling they built the term into, so each tile's bump cursor
+    /// already sits past that tile's own loaded prefix.
+    pub(crate) fn full_nf_tiled_with(
+        &self,
+        shared: Arc<TileShared>,
+        h: u32,
+        budget: i64,
+    ) -> Option<(u32, TiledStats)> {
         use crossbeam_utils::CachePadded;
         use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize};
 
-        let tiles = threads.max(1);
+        let tiles = shared.tiles;
         // Seed with an untiled worker (loader semantics unchanged), then route its bag.
+        // The seed's one var node bumps the global cursor, not a tile stripe; harmless
+        // (it is a var, routed by the consumer's tile like any other redex).
         let mut setup = Worker::new();
         let v = {
             let mut c = self.ctx(&mut setup);
@@ -366,7 +390,6 @@ impl Net {
             c.link(pack(N, n), h);
             v
         };
-        let shared = Arc::new(TileShared::new(self, tiles));
         if setup.bag.is_empty() {
             return Some((self.resolve(pack(VAR, v)), TiledStats::default()));
         }

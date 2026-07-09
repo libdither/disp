@@ -28,6 +28,60 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Tile-aware parse (SPATIAL_IC.md 12.1): identical to `parse`, but round-robins the
+    /// loader worker's current tile across the `tiles` stripes as it allocates each stem /
+    /// fork node, so a big parsed term is spread across tiles at construction instead of
+    /// bump-loaded into one stripe. `rr` is the shared round-robin cursor (threaded across
+    /// terms in a fold). Only valid while the worker carries a loader `TileState`; the
+    /// produced tree is byte-identical to `parse`'s (only node addresses differ).
+    pub(crate) fn parse_tiled(&mut self, s: &[u8], i: &mut usize, rr: &mut usize, tiles: usize) -> u32 {
+        enum Frame {
+            Stem,
+            ForkL,
+            ForkR(u32),
+        }
+        // Place the next node in tile `*rr % tiles`, then advance the cursor.
+        macro_rules! place {
+            () => {{
+                let t = *rr % tiles;
+                *rr += 1;
+                self.w.tiled.as_mut().expect("parse_tiled: loader has no tiling").tile = t;
+            }};
+        }
+        let mut stack: Vec<Frame> = Vec::new();
+        loop {
+            let mut value = loop {
+                if *i >= s.len() {
+                    break self.leaf();
+                }
+                let ch = s[*i];
+                *i += 1;
+                match ch {
+                    b'1' => stack.push(Frame::Stem),
+                    b'2' => stack.push(Frame::ForkL),
+                    _ => break self.leaf(),
+                }
+            };
+            loop {
+                match stack.pop() {
+                    None => return value,
+                    Some(Frame::Stem) => {
+                        place!();
+                        value = self.stem(value);
+                    }
+                    Some(Frame::ForkL) => {
+                        stack.push(Frame::ForkR(value));
+                        break;
+                    }
+                    Some(Frame::ForkR(left)) => {
+                        place!();
+                        value = self.fork(left, value);
+                    }
+                }
+            }
+        }
+    }
+
     /// Parse one preorder ternary term (leaf "0", stem "1"+child, fork "2"+l+r).
     pub(crate) fn parse(&mut self, s: &[u8], i: &mut usize) -> u32 {
         enum Frame {

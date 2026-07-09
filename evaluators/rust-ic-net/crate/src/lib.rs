@@ -49,8 +49,9 @@ mod parallel;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use bench::{
-    reduce_fold_rc, reduce_fold_tiled, reduce_fold_timed, reduce_fold_traced,
-    reduce_wide_tiled, reduce_wide_timed, RcReport, TraceReport,
+    reduce_fold_rc, reduce_fold_tiled, reduce_fold_tiled_aware, reduce_fold_timed,
+    reduce_fold_traced, reduce_wide_tiled, reduce_wide_tiled_aware, reduce_wide_timed,
+    RcReport, TraceReport,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tiled::TiledStats;
