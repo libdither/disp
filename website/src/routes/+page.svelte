@@ -274,12 +274,14 @@
   </div>
 </section>
 
-
 <!-- ============================== features ============================== -->
 <section class="features container">
   <h2 class="sect-title">Why <span class="grad-text">disp</span>?</h2>
   <p class="sect-sub">
-    <i>"Because its cool, that's why."</i>
+    <i
+      >Because when AGI comes and our code isn't formally verified yet, we're
+      gonna be screwed.</i
+    >
   </p>
   <div class="feat-grid">
     <div class="card feat">
