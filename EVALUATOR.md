@@ -119,7 +119,7 @@ rust-ic-net is the literal materialization.
 | this overview + the backend map | **this doc** |
 | the ABI in detail / FFI classes / phase history / decisions | `EVALUATOR_PLAN.md` (§3 ABI, §4 FFI classes, §6 phases, §7 decisions) |
 | the on-disk layout / how to add a backend | this doc, **§ Layout & adding a backend** (above) |
-| the batch-tier (lambada) integration | [`EVALUATOR_LAMBADA_PLAN.md`](EVALUATOR_LAMBADA_PLAN.md) |
+| the batch-tier (lambada) integration | `EVALUATOR_PLAN.md` §4.5 |
 | the calculus spec | `research/interaction-combinator/tc-net.typ` |
 | the materialized net (strategy 2) design | `research/interaction-combinator/RUST_IC_NET_DESIGN.md` |
 | a native backend's internals | its crate `crate/src/lib.rs` module-map doc-comment |

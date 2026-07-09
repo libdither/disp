@@ -154,7 +154,7 @@ test param_apply (Pi Nat ({_} -> Bool)) ({x} -> is_fork x) = Err   // illegal qu
 
 // Everything above hangs on promises staying unforgeable and uninspectable.
 // bind_hyp, hyp_reduce, and the dispatcher enforce that, and they are the
-// entire trusted core of disp (SEALING.md, lib/kernel/engine.disp). Pi,
+// entire trusted core of disp (lib/kernel/engine.disp). Pi,
 // records, Nat, and equality are library code consuming them.
 ```
 

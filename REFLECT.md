@@ -91,7 +91,7 @@ carries it, machine-checked, today (via the `EffAt` Refinement lift; the deep `E
 recognizer is the production form). A classify request built over an abstract tree is
 itself a well-typed value; both are pinned.
 
-This is the sealing modality from `SEALING.md`, realized as a library effect row
+This is the sealing modality, realized as a library effect row
 instead of a new judgment. The `SEALED(reflection)` markers in kernel comments have
 been informal types all along: "this code inspects representations". `Eff [Reflect] X`
 is that sentence as a checkable type. The intended theory attaches here too: rows
