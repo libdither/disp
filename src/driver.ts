@@ -10,7 +10,7 @@
 // (`main : Eff io_row X := ...`) — the kernel already checked the program
 // against its row at load (the elaborator's deferred auto-verification), so
 // the driver's own checks are the operational half only:
-//   - the annotation must BE an Eff/EffE type (former-signature compare);
+//   - the annotation must BE an Eff type (former-signature compare);
 //   - each performed op's label must be in the declared row (label_in_row,
 //     run in-language when the kernel is in the session's module cache);
 //   - each op's argument must be CLOSED (is_closed — a neutral reaching the
@@ -63,13 +63,13 @@ export async function driveMain(session: Session<Tree>, decls: Decl[]): Promise<
       return c.tag === "fork" ? c : null
     }
 
-    // The annotation must be an Eff/EffE type: compare the wait-form's
-    // constant former signature against a reference application.
+    // The annotation must be an Eff type: compare the wait-form's constant
+    // former signature against a reference application. (Eff is now the single
+    // eliminable recognizer — the former inert Eff / gated EffE split collapsed.)
     const sigOf = (t: Tree | undefined) => (t == null ? null : treePairFst(session.apply(session.apply(t, leaf, B()), leaf, B())))
     const mainSig = treePairFst(main.type)
     const effSig = sigOf(findExport(session, "Eff"))
-    const effESig = sigOf(findExport(session, "EffE"))
-    const isEff = mainSig != null && ((effSig != null && session.equal!(mainSig, effSig)) || (effESig != null && session.equal!(mainSig, effESig)))
+    const isEff = mainSig != null && effSig != null && session.equal!(mainSig, effSig)
     if (!isEff) throw new Error("driver: `main`'s annotation is not an Eff type (open std/effect.disp and annotate main : Eff io_row X)")
 
     // The declared row, read through the record cuts: the type's meta record

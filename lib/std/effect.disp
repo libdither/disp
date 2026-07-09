@@ -49,6 +49,18 @@ eff_bind := fix ({self, m, f} ->
   })
 eff_map := {f, m} -> eff_bind m ({x} -> io_pure (f x))
 
+// eff_rec: the free monad's dependent eliminator (concrete programs dispatch by
+// tag; an Eff-typed hypothesis eliminates through Eff's gated respond, resume =
+// the IH). The Op case receives (op, arg, k, ih), ih the interpreted tail per
+// answer. handle (below) is its client, so there is ONE eliminator, two entry
+// points (raw recursor / handler record).
+let eff_dispatcher := fix ({self, motive, cases, v} -> match v {
+  Pure x => ((cases.Pure) x)
+  Op op arg k => ((cases.Op) op arg k ({r} -> elim self motive cases (k r)))
+  _ => t
+})
+eff_rec := {motive, cases, m} -> elim eff_dispatcher motive cases m
+
 // ── self-describing operations ──
 // An occurrence carries its label and param/result types INLINE (op.result is
 // a projection, not a global-table lookup). declare_op is what a surface
@@ -114,13 +126,12 @@ handle_via := {E, ret, cases} -> fix ({self, m} -> match m {
 // (pushing handler state through a forwarded sub-computation).
 default_forward := {op, arg, resumek} -> io_op op arg resumek
 mk_handler := {covers, ret, on} -> { covers := covers, return := ret, on := on, forward := default_forward }
-handle := {h} -> fix ({self, m} ->
-  match m {
-    Pure x => h.return x
-    Op op arg k => (if (h.covers op)
-      then ((h.on op) arg ({r} -> self (k r)))
-      else (h.forward op arg ({r} -> self (k r))))
-  })
+// handle is an ELIMINATOR CLIENT: resume IS the recursor's IH (eff_rec's
+// per-answer interpreted tail). On a concrete program it dispatches by tag; on
+// an abstract (Eff-typed) one it routes through Eff's gated respond, certifying
+// every clause. The one is_neutral guard inside elim is the only cost over a
+// bare match — so the former hand-written match-fold `handle` is gone.
+handle := {h, m} -> eff_rec ({_} -> Tree) { Pure := h.return; Op := {op, arg, k, resume} -> (if (h.covers op) then ((h.on op) arg resume) else (h.forward op arg resume)) } m
 
 // run_pure: the pure skeleton of the driver. A fully-handled computation is a
 // Pure leaf, so collapsing it is a projection; the real driver is this loop
@@ -225,8 +236,9 @@ Row : Type := wait (make_rec_recognizer ({self, m, v} ->
 // constructors, annotated (elim-routed) functions, and eliminations through a
 // gated respond (the hazard-0a idiom); raw tag tests stay one-path and raw
 // triage fails closed — pinned in lib/tests/eff_deep_proto.test.disp.
-// The respond stays inert for v1 (an Eff-typed hyp travels by H-rule; it is
-// not eliminable). Handlers stay interpreter-shaped library code.
+// The respond is GATED (defined just below eff_body), so an Eff-typed hyp is
+// eliminable through a {motive; cases} frame; recognition (eff_body) is
+// independent of the respond, so a recognize-only use pays nothing for it.
 let eff_body := {self, m, v} -> {
   let rp := m.recognizer_params
   match v {
@@ -238,22 +250,17 @@ let eff_body := {self, m, v} -> {
     _ => Ok false
   }
 }
-Eff : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (make_meta { row := R; result := X } inert_respond)
-
-// ── route two: the ELIMINABLE Eff (EffE), landed 2026-07-08 ──
-// Same deep recognizer (same eff_body, so membership verdicts agree with Eff
-// by construction — pinned), but the respond is GATED over hand-written
-// Pure/Op case types, so an EffE-typed hypothesis eliminates through a
-// {motive; cases} frame with every arm checked, and HANDLERS become
-// eliminator clients: handle2's resume is literally the recursor's IH (the
-// reader-functor induction hypothesis, one interpretation of the tail per
-// answer — multishot for free). The Op case type is the reader shape:
+// ── the gated respond (Eff is ELIMINABLE) ──
+// The respond is GATED over hand-written Pure/Op case types, so an Eff-typed
+// hypothesis eliminates through a {motive; cases} frame with every arm checked,
+// and HANDLERS are eliminator clients (handle above): resume is the recursor's
+// IH, one interpretation of the tail per answer (multishot for free). The Op
+// case type is the reader shape:
 //   Pi OpShape (op -> Pi op.param (a -> Pi (op.result -> T) (k ->
 //     (Pi op.result (r -> P (k r))) -> P (io_op op a k))))
-// This is not the plan's literal "stock Coproduct" route (a positional
-// telescope cannot express arg : op.param, which is slot-dependent); it
-// delivers route two's value instead: elimination and a typed handle path,
-// without losing route one's deep semantic checks.
+// A positional telescope cannot express arg : op.param (slot-dependent), so the
+// case types are hand-written; recognition (eff_body) is unchanged, so a
+// recognize-only use costs exactly what the former inert Eff did.
 OpShape : Type := Record [pair "label" Tree, pair "param" Type, pair "result" Type]
 // (the gate rides the kernel's own eta_check/check_fields — the former
 // local clones retired when check_fields was exported, 2026-07-08)
@@ -264,18 +271,4 @@ let eff_case_types := {T, P} -> {
       nil)
 }
 let eff_coh := {T, motive, cases} -> check_fields (eff_case_types T motive) cases
-EffE : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (make_meta { row := R; result := X } (gated_inductive_respond eff_coh))
-
-// eff_rec: the dependent eliminator for EffE (concrete programs dispatch by
-// tag; a hypothesis eliminates through the gated respond). The Op case
-// receives (op, arg, k, ih) with ih the interpreted tail per answer.
-let eff_dispatcher := fix ({self, motive, cases, v} -> match v {
-  Pure x => ((cases.Pure) x)
-  Op op arg k => ((cases.Op) op arg k ({r} -> elim self motive cases (k r)))
-  _ => t
-})
-eff_rec := {motive, cases, m} -> elim eff_dispatcher motive cases m
-
-// handle2: the deep handler as an ELIMINATOR CLIENT — resume IS the IH.
-// Behaviorally identical to handle on the same handler records (pinned).
-handle2 := {h, m} -> eff_rec ({_} -> Tree) { Pure := h.return; Op := {op, arg, k, resume} -> (if (h.covers op) then ((h.on op) arg resume) else (h.forward op arg resume)) } m
+Eff : Tree -> Type -> Type := {R, X} -> wait (make_rec_recognizer eff_body) (make_meta { row := R; result := X } (gated_inductive_respond eff_coh))
