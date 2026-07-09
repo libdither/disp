@@ -53,30 +53,32 @@ impl<'a> Ctx<'a> {
         let pb = val(p) as u32;
         match ct {
             // ── A (apply) ──
+            // Each alloc passes the port its new agent's principal will link to as a
+            // birth-placement hint (alloc_to, a no-op outside tiled runs).
             A => {
                 let arg = self.nd(cb);
                 let res = self.nd(cb + 1);
                 match pt {
                     L => {
-                        let s = self.stem(arg);
-                        self.link(res, s);
+                        let s = self.alloc_to(res, &[arg]);
+                        self.link(res, pack(S, s));
                     }
                     S => {
                         let x = self.nd(pb);
-                        let f = self.fork(x, arg);
-                        self.link(res, f);
+                        let f = self.alloc_to(res, &[x, arg]);
+                        self.link(res, pack(F, f));
                     }
                     F => {
                         let l = self.nd(pb);
                         let r = self.nd(pb + 1);
-                        let t = self.alloc(&[r, arg, res]);
+                        let t = self.alloc_to(l, &[r, arg, res]);
                         self.link(pack(T1, t), l);
                     }
                     P => {
                         let pf = self.nd(pb);
                         let pa = self.nd(pb + 1);
                         let t = self.new_var();
-                        let a1 = self.alloc(&[pa, pack(VAR, t)]);
+                        let a1 = self.alloc_to(pf, &[pa, pack(VAR, t)]);
                         let a2 = self.alloc(&[arg, res]);
                         self.link(pack(A, a1), pf);
                         self.link(pack(VAR, t), pack(A, a2));
@@ -94,7 +96,7 @@ impl<'a> Ctx<'a> {
                         let pf = self.nd(pb);
                         let pa = self.nd(pb + 1);
                         let t = self.new_var();
-                        let a1 = self.alloc(&[pa, pack(VAR, t)]);
+                        let a1 = self.alloc_to(pf, &[pa, pack(VAR, t)]);
                         self.link(pack(A, a1), pf);
                         self.link(pack(VAR, t), c);
                     }
@@ -110,11 +112,11 @@ impl<'a> Ctx<'a> {
                         let c2 = self.new_var();
                         let u = self.new_var();
                         let w = self.new_var();
-                        let d = self.alloc(&[pack(VAR, c1), pack(VAR, c2)]);
+                        let d = self.alloc_to(carg, &[pack(VAR, c1), pack(VAR, c2)]);
                         self.link(pack(DN, d), carg);
-                        let a1 = self.alloc(&[pack(VAR, c1), pack(VAR, u)]);
+                        let a1 = self.alloc_to(x, &[pack(VAR, c1), pack(VAR, u)]);
                         self.link(pack(A, a1), x);
-                        let a2 = self.alloc(&[pack(VAR, c2), pack(VAR, w)]);
+                        let a2 = self.alloc_to(b, &[pack(VAR, c2), pack(VAR, w)]);
                         self.link(pack(A, a2), b);
                         let a3 = self.alloc(&[pack(VAR, w), res]);
                         self.link(pack(VAR, u), pack(A, a3));
@@ -123,7 +125,7 @@ impl<'a> Ctx<'a> {
                         // triage: △(△w x) b c → T2(w,x,b,res) faces c
                         let w = self.nd(pb);
                         let x = self.nd(pb + 1);
-                        let t = self.alloc(&[w, x, b, res]);
+                        let t = self.alloc_to(carg, &[w, x, b, res]);
                         self.link(pack(T2, t), carg);
                     }
                     _ => {}
@@ -140,7 +142,7 @@ impl<'a> Ctx<'a> {
                         let pf = self.nd(pb);
                         let pa = self.nd(pb + 1);
                         let t = self.new_var();
-                        let a1 = self.alloc(&[pa, pack(VAR, t)]);
+                        let a1 = self.alloc_to(pf, &[pa, pack(VAR, t)]);
                         self.link(pack(A, a1), pf);
                         self.link(pack(VAR, t), c);
                     }
@@ -151,7 +153,7 @@ impl<'a> Ctx<'a> {
                     }
                     S => {
                         let u = self.nd(pb);
-                        let a1 = self.alloc(&[u, res]);
+                        let a1 = self.alloc_to(x, &[u, res]);
                         self.link(pack(A, a1), x);
                         self.link(pack(EPS, 0), w);
                         self.link(pack(EPS, 0), b);
@@ -160,7 +162,7 @@ impl<'a> Ctx<'a> {
                         let u = self.nd(pb);
                         let v = self.nd(pb + 1);
                         let t = self.new_var();
-                        let a1 = self.alloc(&[u, pack(VAR, t)]);
+                        let a1 = self.alloc_to(b, &[u, pack(VAR, t)]);
                         self.link(pack(A, a1), b);
                         let a2 = self.alloc(&[v, res]);
                         self.link(pack(VAR, t), pack(A, a2));
@@ -186,10 +188,10 @@ impl<'a> Ctx<'a> {
                         let x = self.nd(pb);
                         let a = self.new_var();
                         let b = self.new_var();
-                        let d = self.alloc(&[pack(VAR, a), pack(VAR, b)]);
+                        let d = self.alloc_to(x, &[pack(VAR, a), pack(VAR, b)]);
                         self.link(pack(sp, d), x);
-                        let s1 = self.alloc(&[pack(VAR, a)]);
-                        let s2 = self.alloc(&[pack(VAR, b)]);
+                        let s1 = self.alloc_to(dl, &[pack(VAR, a)]);
+                        let s2 = self.alloc_to(dr, &[pack(VAR, b)]);
                         self.link(dl, pack(S, s1));
                         self.link(dr, pack(S, s2));
                     }
@@ -198,12 +200,12 @@ impl<'a> Ctx<'a> {
                         let r = self.nd(pb + 1);
                         let (ll, lr, rl, rr) =
                             (self.new_var(), self.new_var(), self.new_var(), self.new_var());
-                        let da = self.alloc(&[pack(VAR, ll), pack(VAR, lr)]);
+                        let da = self.alloc_to(l, &[pack(VAR, ll), pack(VAR, lr)]);
                         self.link(pack(sp, da), l);
-                        let db = self.alloc(&[pack(VAR, rl), pack(VAR, rr)]);
+                        let db = self.alloc_to(r, &[pack(VAR, rl), pack(VAR, rr)]);
                         self.link(pack(sp, db), r);
-                        let f1 = self.alloc(&[pack(VAR, ll), pack(VAR, rl)]);
-                        let f2 = self.alloc(&[pack(VAR, lr), pack(VAR, rr)]);
+                        let f1 = self.alloc_to(dl, &[pack(VAR, ll), pack(VAR, rl)]);
+                        let f2 = self.alloc_to(dr, &[pack(VAR, lr), pack(VAR, rr)]);
                         self.link(dl, pack(F, f1));
                         self.link(dr, pack(F, f2));
                     }
@@ -214,19 +216,19 @@ impl<'a> Ctx<'a> {
                             // δⁿ: demand-before-copy — force `f a` once, park on the wire.
                             self.net.dnp.fetch_add(1, Ordering::Relaxed);
                             let t = self.new_var();
-                            let a1 = self.alloc(&[pa, pack(VAR, t)]);
+                            let a1 = self.alloc_to(pf, &[pa, pack(VAR, t)]);
                             self.link(pack(A, a1), pf);
                             self.link(pack(VAR, t), c);
                         } else {
                             // δˢ: structural copy of the unevaluated suspension.
                             let (fl, fr, al, ar) =
                                 (self.new_var(), self.new_var(), self.new_var(), self.new_var());
-                            let df = self.alloc(&[pack(VAR, fl), pack(VAR, fr)]);
+                            let df = self.alloc_to(pf, &[pack(VAR, fl), pack(VAR, fr)]);
                             self.link(pack(sp, df), pf);
-                            let da = self.alloc(&[pack(VAR, al), pack(VAR, ar)]);
+                            let da = self.alloc_to(pa, &[pack(VAR, al), pack(VAR, ar)]);
                             self.link(pack(sp, da), pa);
-                            let p1 = self.alloc(&[pack(VAR, fl), pack(VAR, al)]);
-                            let p2 = self.alloc(&[pack(VAR, fr), pack(VAR, ar)]);
+                            let p1 = self.alloc_to(dl, &[pack(VAR, fl), pack(VAR, al)]);
+                            let p2 = self.alloc_to(dr, &[pack(VAR, fr), pack(VAR, ar)]);
                             self.link(dl, pack(P, p1));
                             self.link(dr, pack(P, p2));
                         }

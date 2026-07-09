@@ -8,6 +8,7 @@
 
 use crate::net::{Ctx, Net, Worker};
 use crate::port::*;
+use crate::tiled::TiledStats;
 use std::sync::atomic::Ordering;
 
 fn build_not(c: &mut Ctx) -> u32 {
@@ -18,7 +19,8 @@ fn build_not(c: &mut Ctx) -> u32 {
 }
 /// A balanced depth-`d` fork tree whose every leaf is `not^chain false` — a workload of
 /// 2^d INDEPENDENT reduction chains (the parallel frontier the demand-spine programs lack).
-fn build_wide(c: &mut Ctx, d: usize, chain: usize) -> u32 {
+/// Crate-visible: the tiled race-detector test (tests.rs) reduces the same build.
+pub(crate) fn build_wide(c: &mut Ctx, d: usize, chain: usize) -> u32 {
     if d == 0 {
         let mut e = pack(L, 0); // false
         for _ in 0..chain {
@@ -42,29 +44,62 @@ fn force_emit(net: &Net, h: u32, threads: usize, budget: i64) -> Option<String> 
     } else {
         net.full_nf_parallel(h, threads, budget)?
     };
+    emit_string(net, nf)
+}
+/// Full NF via the E3 tiled drain (tiled.rs), then serialize; also returns the tiling
+/// metrics (same/cross-tile routing, births, steals).
+fn force_emit_tiled(net: &Net, h: u32, threads: usize, budget: i64) -> Option<(String, TiledStats)> {
+    let (nf, stats) = net.full_nf_tiled(h, threads, budget)?;
+    Some((emit_string(net, nf)?, stats))
+}
+fn emit_string(net: &Net, nf: u32) -> Option<String> {
     let mut out = Vec::new();
     let mut w = Worker::new();
     net.ctx(&mut w).emit(nf, &mut out);
     String::from_utf8(out).ok()
 }
+/// Left-fold apply ternary `terms` into a fresh worker's net; None when `terms` is empty.
+fn load_fold(net: &Net, terms: &[Vec<u8>]) -> Option<u32> {
+    let mut w = Worker::new();
+    let mut c = net.ctx(&mut w);
+    let mut acc: Option<u32> = None;
+    for t in terms {
+        let mut i = 0usize;
+        let term = c.parse(t, &mut i);
+        acc = Some(acc.map_or(term, |f| c.susp(f, term)));
+    }
+    acc
+}
 /// Left-fold apply over ternary `terms`, force full NF, serialize — the batch.ts contract.
-pub fn reduce_fold_timed(terms: &[Vec<u8>], threads: usize, budget: i64) -> Option<(String, f64, u64)> {
-    let net = Net::new(NODE_CAP, VAR_CAP);
+/// `node_cap`/`var_cap` size the arenas (the CLI's `-nodes`/`-vars`; NODE_CAP default).
+pub fn reduce_fold_timed(
+    terms: &[Vec<u8>],
+    threads: usize,
+    budget: i64,
+    node_cap: usize,
+    var_cap: usize,
+) -> Option<(String, f64, u64)> {
+    let net = Net::new(node_cap, var_cap);
     let t0 = std::time::Instant::now();
-    let h = {
-        let mut w = Worker::new();
-        let mut c = net.ctx(&mut w);
-        let mut acc: Option<u32> = None;
-        for t in terms {
-            let mut i = 0usize;
-            let term = c.parse(t, &mut i);
-            acc = Some(acc.map_or(term, |f| c.susp(f, term)));
-        }
-        acc?
-    };
+    let h = load_fold(&net, terms)?;
     let nf = force_emit(&net, h, threads, budget)?;
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     Some((nf, ms, net.interactions.load(Ordering::Relaxed)))
+}
+/// `reduce_fold_timed` on the tiled drain; the fourth field is the tiling metrics.
+pub fn reduce_fold_tiled(
+    terms: &[Vec<u8>],
+    threads: usize,
+    budget: i64,
+    node_cap: usize,
+    var_cap: usize,
+) -> Option<(String, f64, u64, TiledStats)> {
+    let net = Net::new(node_cap, var_cap);
+    let t0 = std::time::Instant::now();
+    let h = load_fold(&net, terms)?;
+    let (nf, stats) = force_emit_tiled(&net, h, threads, budget)?;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    Some((nf, ms, net.interactions.load(Ordering::Relaxed), stats))
 }
 /// E1 trace run summary (SPATIAL_IC.md §10; see trace.rs for the semantics).
 pub struct TraceReport {
@@ -116,8 +151,15 @@ pub fn reduce_fold_traced(
 }
 
 /// Build + reduce the wide independent-chain workload (the parallelism benchmark).
-pub fn reduce_wide_timed(depth: usize, chain: usize, threads: usize, budget: i64) -> Option<(String, f64, u64)> {
-    let net = Net::new(NODE_CAP, VAR_CAP);
+pub fn reduce_wide_timed(
+    depth: usize,
+    chain: usize,
+    threads: usize,
+    budget: i64,
+    node_cap: usize,
+    var_cap: usize,
+) -> Option<(String, f64, u64)> {
+    let net = Net::new(node_cap, var_cap);
     let t0 = std::time::Instant::now();
     let h = {
         let mut w = Worker::new();
@@ -127,4 +169,24 @@ pub fn reduce_wide_timed(depth: usize, chain: usize, threads: usize, budget: i64
     let nf = force_emit(&net, h, threads, budget)?;
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     Some((nf, ms, net.interactions.load(Ordering::Relaxed)))
+}
+/// `reduce_wide_timed` on the tiled drain; the fourth field is the tiling metrics.
+pub fn reduce_wide_tiled(
+    depth: usize,
+    chain: usize,
+    threads: usize,
+    budget: i64,
+    node_cap: usize,
+    var_cap: usize,
+) -> Option<(String, f64, u64, TiledStats)> {
+    let net = Net::new(node_cap, var_cap);
+    let t0 = std::time::Instant::now();
+    let h = {
+        let mut w = Worker::new();
+        let mut c = net.ctx(&mut w);
+        build_wide(&mut c, depth, chain)
+    };
+    let (nf, stats) = force_emit_tiled(&net, h, threads, budget)?;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    Some((nf, ms, net.interactions.load(Ordering::Relaxed), stats))
 }

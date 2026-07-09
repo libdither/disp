@@ -6,13 +6,17 @@
 //
 //   ic-net-cli -threads N -budget B -ternary t0 t1 …   # left-fold apply the terms
 //   ic-net-cli -threads N -wide DEPTH CHAIN            # 2^DEPTH independent not^CHAIN chains
+//   ic-net-cli -tiled -threads N …                     # E3 tiled drain (tiled.rs); prints
+//                                                      # same/cross-tile metrics on stderr
 //
 // E1 instrumentation (SPATIAL_IC.md §10; trace.rs):
 //   ic-net-cli -trace out.bin [-trace-limit N] [-nodes N] [-vars N] [-file terms.txt] t0 …
 // Sequential only; writes the rung C event log to out.bin, a JSON sidecar (histograms,
 // counts) to out.bin.meta.json. `-file` reads whitespace-separated ternary terms (argv
 // caps out near 128 KB per arg; elaborated terms are bigger). `-nodes`/`-vars` size the
-// arenas in cells (default 2^21, max 2^28 — the port encoding's index width).
+// arenas in cells for every mode (default 2^21, max 2^28 — the port encoding's index
+// width); tiled runs of near-arena-filling loads want headroom, since only stripes above
+// the loaded prefix have bump room until freed cells accumulate.
 
 use std::io::Write;
 
@@ -20,6 +24,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut threads = 1usize;
     let mut budget: i64 = 8_000_000_000;
+    let mut tiled = false;
     let mut wide: Option<(usize, usize)> = None;
     let mut trace: Option<String> = None;
     let mut trace_limit: u64 = 200_000_000;
@@ -36,6 +41,9 @@ fn main() {
             "-budget" => {
                 i += 1;
                 budget = args[i].parse().unwrap_or(budget);
+            }
+            "-tiled" => {
+                tiled = true;
             }
             "-wide" => {
                 let d = args[i + 1].parse().unwrap_or(0);
@@ -75,7 +83,7 @@ fn main() {
     assert!(node_cap <= 1 << 28 && var_cap <= 1 << 28, "arena cap exceeds the 28-bit port index");
 
     if let Some(path) = trace {
-        if threads > 1 {
+        if threads > 1 || tiled {
             eprintln!("ic-net-cli: -trace is sequential-only (provenance tables are unsynchronized)");
             std::process::exit(2);
         }
@@ -119,15 +127,49 @@ fn main() {
         return;
     }
 
-    let result = match wide {
-        Some((d, ch)) => rust_ic_net::reduce_wide_timed(d, ch, threads, budget),
-        None => {
-            if terms.is_empty() {
-                eprintln!("ic-net-cli: no ternary terms (or -wide D CHAIN) given");
-                std::process::exit(2);
+    if wide.is_none() && terms.is_empty() {
+        eprintln!("ic-net-cli: no ternary terms (or -wide D CHAIN) given");
+        std::process::exit(2);
+    }
+
+    // E3 tiled drain: same stdout contract; stderr additionally carries the tiling
+    // metrics (same/cross-tile routing = the live coarse Rent readout, SPATIAL_IC.md 10).
+    if tiled {
+        let result = match wide {
+            Some((d, ch)) => rust_ic_net::reduce_wide_tiled(d, ch, threads, budget, node_cap, var_cap),
+            None => rust_ic_net::reduce_fold_tiled(&terms, threads, budget, node_cap, var_cap),
+        };
+        match result {
+            Some((nf, ms, interactions, st)) => {
+                println!("{nf}");
+                eprintln!(
+                    "reduce_ms={ms:.3} evaluator=ic-net-tiled-{threads}t interactions={interactions} \
+                     same_tile={} cross_tile={} cross_frac={:.4} inbox_pushes={} steals={} donated={} \
+                     births_hinted={} births_foreign={} births_default={} alloc_fallback={}",
+                    st.same_tile,
+                    st.cross_tile,
+                    st.cross_frac(),
+                    st.inbox_pushes,
+                    st.steals,
+                    st.donated,
+                    st.births_hinted,
+                    st.births_foreign,
+                    st.births_default,
+                    st.alloc_fallback
+                );
             }
-            rust_ic_net::reduce_fold_timed(&terms, threads, budget)
+            None => {
+                eprintln!("reduce_ms=NaN evaluator=ic-net-tiled-{threads}t (budget exhausted)");
+                std::process::exit(1);
+            }
         }
+        let _ = std::io::stdout().flush();
+        return;
+    }
+
+    let result = match wide {
+        Some((d, ch)) => rust_ic_net::reduce_wide_timed(d, ch, threads, budget, node_cap, var_cap),
+        None => rust_ic_net::reduce_fold_timed(&terms, threads, budget, node_cap, var_cap),
     };
 
     match result {

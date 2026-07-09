@@ -6,6 +6,7 @@
 //! cells are the cross-thread rendezvous — the exchange linker (`swap`/AcqRel, no CAS).
 
 use crate::port::*;
+use crate::tiled::TileState;
 use crate::trace::{dist_bucket, Tracer};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -78,6 +79,11 @@ pub(crate) struct Worker {
     /// E1 instrumentation (trace.rs). `None` in every normal run — the hot paths pay one
     /// never-taken branch. Sequential-only (the parallel drain never sets it).
     pub(crate) tracer: Option<Box<Tracer>>,
+    /// E3 tiling (tiled.rs). `None` in every non-tiled run (the sequential drain, the
+    /// work-stealing drain, the wasm oracle): alloc/free/link then behave exactly as
+    /// before, paying one never-taken branch, the same pattern as the tracer. Set only
+    /// by the tiled drain's workers; never combined with `tracer`.
+    pub(crate) tiled: Option<Box<TileState>>,
 }
 impl Worker {
     pub(crate) fn new() -> Self {
@@ -88,6 +94,7 @@ impl Worker {
             node_rgn: (0, 0),
             var_rgn: (0, 0),
             tracer: None,
+            tiled: None,
         }
     }
 }
@@ -111,8 +118,15 @@ impl<'a> Ctx<'a> {
     }
 
     /// Allocate a node with the given aux ports; reuses a freed same-arity node else bumps.
+    /// In a tiled run an unhinted alloc births into the firing worker's own tile.
     #[inline]
     pub(crate) fn alloc(&mut self, aux: &[u32]) -> u32 {
+        if self.w.tiled.is_some() {
+            let ts = self.w.tiled.as_mut().unwrap();
+            ts.births_default += 1;
+            let own = ts.tile;
+            return self.alloc_in_tile(own, aux);
+        }
         let size = aux.len();
         let base = if self.w.free_heads[size] != NULL_FREE {
             // pop: the freed node's first cell holds the next-free base of this arity.
@@ -141,10 +155,45 @@ impl<'a> Ctx<'a> {
         }
         base
     }
+    /// Placement at birth (SPATIAL_IC.md 12.1): allocate a node whose principal wire is
+    /// known to end at `hint`. In a tiled run a node-bearing hint places the birth in
+    /// that node's tile (where the future interaction fires); a var or nullary hint
+    /// falls back to the worker's own tile. In a non-tiled run this is exactly `alloc`.
+    #[inline]
+    pub(crate) fn alloc_to(&mut self, hint: u32, aux: &[u32]) -> u32 {
+        if self.w.tiled.is_some() {
+            // A var hint names an unresolved wire; peek its cell one hop (rule code
+            // reads aux ports long before it resolves them, so most hints arrive as
+            // vars). Safe: our own occurrence of the var is still unlinked, so the
+            // cell cannot have been resolved-and-freed; a racy or NUL read only costs
+            // placement quality (the hint is advisory), never correctness.
+            let hint =
+                if is_var(hint) { self.net.vars[val(hint)].load(Ordering::Relaxed) } else { hint };
+            let ts = self.w.tiled.as_mut().unwrap();
+            if !is_var(hint) && arity(tag(hint)) > 0 {
+                let t = ts.shared.tile_of(val(hint) as u32);
+                ts.births_hinted += 1;
+                if t != ts.tile {
+                    ts.births_foreign += 1;
+                }
+                return self.alloc_in_tile(t, aux);
+            }
+            ts.births_default += 1;
+            let own = ts.tile;
+            return self.alloc_in_tile(own, aux);
+        }
+        self.alloc(aux)
+    }
     /// Return a consumed node's cells to the free list for reuse (`ar` = its arity).
+    /// Tiled runs key the free list by the node's home tile, so reuse preserves
+    /// placement (a freed cell only ever hosts a birth aimed at its own stripe).
     #[inline]
     pub(crate) fn free_node(&mut self, base: u32, ar: usize) {
         if ar > 0 {
+            if self.w.tiled.is_some() {
+                self.free_node_tiled(base, ar);
+                return;
+            }
             // push: stash the old head in this node's first cell, then point the head here.
             self.set_nd(base, self.w.free_heads[ar]);
             self.w.free_heads[ar] = base;
@@ -205,7 +254,13 @@ impl<'a> Ctx<'a> {
         }
         loop {
             if !is_var(a) && !is_var(b) {
-                self.w.bag.push((a, b));
+                // Redex detected. Tiled runs route it to the tile owning the consumer
+                // node (tiled.rs); everything else pushes to the local bag as before.
+                if self.w.tiled.is_some() {
+                    self.route_redex(a, b);
+                } else {
+                    self.w.bag.push((a, b));
+                }
                 return;
             }
             if !is_var(a) {

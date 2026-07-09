@@ -202,3 +202,51 @@ fn parallel_matches_sequential() {
         assert_eq!(seq_int, par_int, "interaction count deterministic across threads");
     }
 }
+
+// E3 tiled race detector: the tiled drain (per-tile arena stripes, placement at birth,
+// inbox routing, idle-fallback stealing; tiled.rs) must agree with the sequential drain
+// on both NF and interaction count (strong confluence, Theorem 2) on the wide workload
+// (bench.rs's builder), across thread counts. Repeated: concurrency bugs flake.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn tiled_matches_sequential() {
+    let (seq_nf, seq_int) = {
+        let n = Net::new(1 << 20, 1 << 20);
+        let mut w = Worker::new();
+        let mut c = n.ctx(&mut w);
+        let h = crate::bench::build_wide(&mut c, 6, 8);
+        let mut b = 1_000_000_000i64;
+        let nf = c.full_nf(h, &mut b).expect("seq nf");
+        let mut o = Vec::new();
+        c.emit(nf, &mut o);
+        (o, n.interactions.load(Ordering::Relaxed))
+    };
+    for threads in [1usize, 2, 4] {
+        for _ in 0..10 {
+            let n = Net::new(1 << 20, 1 << 20);
+            let h = {
+                let mut w = Worker::new();
+                let mut c = n.ctx(&mut w);
+                crate::bench::build_wide(&mut c, 6, 8)
+            };
+            let (nf, stats) = n.full_nf_tiled(h, threads, 1_000_000_000).expect("tiled nf");
+            let tiled_nf = {
+                let mut w = Worker::new();
+                let c = n.ctx(&mut w);
+                let mut o = Vec::new();
+                c.emit(nf, &mut o);
+                o
+            };
+            assert_eq!(seq_nf, tiled_nf, "tiled NF must equal sequential ({threads} threads)");
+            assert_eq!(
+                seq_int,
+                n.interactions.load(Ordering::Relaxed),
+                "interaction count deterministic under tiling ({threads} threads)"
+            );
+            if threads == 1 {
+                // One tile owns the whole arena: every routed redex is same-tile.
+                assert_eq!(stats.cross_tile, 0, "single-tile run cannot route cross-tile");
+            }
+        }
+    }
+}

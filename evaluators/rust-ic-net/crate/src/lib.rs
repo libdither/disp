@@ -19,9 +19,10 @@
 //! Module map: [`port`] (the tagged-word encoding + agent tags) · [`net`] (the shared
 //! atomic arena, the exchange linker, the term algebra) · [`reduce`] (the `interact` rule
 //! kernel + `drain` + `full_nf`/`equal`) · [`codec`] (ternary interchange) · [`parallel`]
-//! (the M2c parallel drain) · [`bench`] (native CLI helpers) · [`ffi`] (the wasm `tc_*`
-//! Session C-ABI). The wasm build is the SEQUENTIAL oracle; the native build additionally
-//! compiles `parallel` + `bench`.
+//! (the M2c parallel drain) · [`tiled`] (the E3 tiled drain: per-thread arena stripes,
+//! placement at birth, inbox routing) · [`bench`] (native CLI helpers) · [`ffi`] (the wasm
+//! `tc_*` Session C-ABI). The wasm build is the SEQUENTIAL oracle; the native build
+//! additionally compiles `parallel` + `bench`.
 #![allow(clippy::missing_safety_doc)]
 
 mod codec;
@@ -29,6 +30,10 @@ mod ffi;
 mod net;
 mod port;
 mod reduce;
+// The tile types ride `Worker` (net.rs), so the module compiles on wasm too; the driver
+// (threads) is cfg-excluded there, leaving the driver-only constructors dead on wasm.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+mod tiled;
 mod trace;
 
 // crossbeam/threads (parallel) and the native CLI helpers don't build on wasm32 — the wasm
@@ -39,7 +44,12 @@ mod bench;
 mod parallel;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use bench::{reduce_fold_timed, reduce_fold_traced, reduce_wide_timed, TraceReport};
+pub use bench::{
+    reduce_fold_tiled, reduce_fold_timed, reduce_fold_traced, reduce_wide_tiled,
+    reduce_wide_timed, TraceReport,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use tiled::TiledStats;
 
 #[cfg(test)]
 mod tests;
