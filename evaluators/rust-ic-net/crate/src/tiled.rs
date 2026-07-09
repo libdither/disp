@@ -379,10 +379,17 @@ impl Net {
         use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize};
 
         let tiles = shared.tiles;
-        // Seed with an untiled worker (loader semantics unchanged), then route its bag.
-        // The seed's one var node bumps the global cursor, not a tile stripe; harmless
-        // (it is a var, routed by the consumer's tile like any other redex).
+        // Seed the root normalizer through the tiling (tile 0), NOT the global bump cursor.
+        // The tiling may have been built two ways: from a plain load (`full_nf_tiled`, where
+        // `node_top` already covers the term and tile 0's cursor sits past it) or from a
+        // tile-aware load (bench.rs, where the term went into per-tile stripes and the global
+        // `node_top` is still ~0). An untiled seed alloc would bump the global cursor and, in
+        // the tile-aware case, land ON tile 0's loaded prefix. Placing the seed node via the
+        // tiling advances tile 0's own cursor, so it is always safely past that tile's prefix.
+        // `route_redex` is not used at the seed (we drain `setup.bag` ourselves below), so the
+        // setup worker's per-tile stat counters stay local and are never flushed.
         let mut setup = Worker::new();
+        setup.tiled = Some(Box::new(TileState::new(Arc::clone(&shared), 0)));
         let v = {
             let mut c = self.ctx(&mut setup);
             let v = c.new_var();
@@ -390,13 +397,18 @@ impl Net {
             c.link(pack(N, n), h);
             v
         };
-        if setup.bag.is_empty() {
+        // The tiled `link` above already routed the root redex: a same-tile-0 hit lands on
+        // the setup worker's own bag, a cross-tile hit went straight to a tile inbox. Move
+        // any same-tile leftovers into tile 0's inbox so the drain threads pick everything up
+        // uniformly; if nothing is pending anywhere, the root was already a value.
+        let seeded = !setup.bag.is_empty()
+            || shared.inboxes.iter().any(|ib| !ib.lock().unwrap().is_empty());
+        if !seeded {
             return Some((self.resolve(pack(VAR, v)), TiledStats::default()));
         }
         for (x, y) in setup.bag.drain(..) {
-            let route = route_of(&shared, x, y, 0);
             shared.inbox_pushes.fetch_add(1, Ordering::Relaxed);
-            shared.inboxes[route].lock().unwrap().push((x, y));
+            shared.inboxes[0].lock().unwrap().push((x, y));
         }
 
         const BUDGET_LEASE: i64 = 1 << 16;
