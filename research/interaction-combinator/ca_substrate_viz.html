@@ -64,6 +64,11 @@
     <button data-m="demand">demand-driven</button>
   </div>
   <div class="grp">
+    <label style="display:flex;gap:5px;align-items:center;cursor:pointer;color:var(--dim)">
+      <input type="checkbox" id="tensionChk" checked> tension (straighten slack)
+    </label>
+  </div>
+  <div class="grp">
     <button id="playBtn" class="primary">&#9654; play</button>
     <button id="stepBtn">tick</button>
     <input type="range" id="speed" min="1" max="40" value="10" style="width:80px">
@@ -107,10 +112,12 @@
   <div class="note">
     This toy differs from the real design (SPATIAL_IC.md &sect;13, the E4 simulator) in:
     parallel ticks commit through a global arbiter rather than a Margolus block handshake;
-    no tension/migration (agents move only to deliver values; nothing reels wires in or
-    drifts to shorten them); no pressure field or vacancy diffusion (births spiral-search);
-    unlimited wire layers under agents (real cells get 2-3 plus vias); no wire-RC death
-    pulse (see demand_schedule_viz.html for that mechanism at the net level).
+    tension is only HALF present (the checkbox re-lays over-long wires, approximating
+    straightening; reel-in and drift, agents moving to shorten their own wires, are
+    absent, so slack from moves lingers until erased or straightened); no pressure field
+    or vacancy diffusion (births spiral-search); unlimited wire layers under agents (real
+    cells get 2-3 plus vias); no wire-RC death pulse (see demand_schedule_viz.html for
+    that mechanism at the net level).
   </div>
   <h3>legend</h3>
   <div id="legend">
@@ -154,13 +161,13 @@ const SLOTNAME = {
 };
 const key = (x, y) => x + "," + y;
 
-function makeNet(mode) {
+function makeNet(mode, tension) {
   const net = {
-    mode, agents: new Map(), nextId: 1, wires: new Map(), nextWid: 1,
+    mode, tension: !!tension, agents: new Map(), nextId: 1, wires: new Map(), nextWid: 1,
     cellAgent: new Map(),          // "x,y" -> agentId
     wireLoad: new Map(),           // "x,y" -> count of wires through the cell
     redexes: [],                   // {c, p, wid} pending contact or fire
-    ints: 0, transport: 0, inserted: 0, ticks: 0, peak: 0, overflow: 0,
+    ints: 0, transport: 0, inserted: 0, straightened: 0, ticks: 0, peak: 0, overflow: 0,
     effects: [], quiet: false,
   };
 
@@ -443,8 +450,36 @@ function makeNet(mode) {
     kill(c); kill(pr);
   }
 
+  // ---- tension, straightening half (SPATIAL_IC 2.3): slack diffuses away. The real
+  // rule is per-cell (a kinked chain cell retracts into a free corner); this approximates
+  // it chain-locally by re-laying a few over-long wires per tick at elbow length. Reel-in
+  // and drift (agents moving to shorten wires) remain absent.
+  function straighten(budgetWires) {
+    let n = 0;
+    // Hot (pending-redex) wires are owned by the transport process: a blocked mover may
+    // be on a BFS detour around structure, and re-laying its path through the obstacle
+    // livelocks the delivery. Straightening is for COLD slack only.
+    const hot = new Set(net.redexes.map(r => r.wid));
+    for (const w of net.wires.values()) {
+      if (n >= budgetWires) break;
+      if (hot.has(w.id)) continue;
+      const A_ = get(w.pa.a), B_ = get(w.pb.a);
+      if (!A_ || !B_ || !A_.pos || !B_.pos) continue;
+      const man = Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
+      if (w.path.length <= Math.max(0, man - 1) + 2) continue;
+      const fresh = elbowRoute(net, A_, B_);
+      if (fresh.length >= w.path.length) continue;
+      for (const [x, y] of w.path) loadInc(x, y, -1);
+      net.straightened += w.path.length - fresh.length;
+      w.path = fresh;
+      for (const [x, y] of w.path) loadInc(x, y, 1);
+      n++;
+    }
+  }
+
   // ---- ticks ----
   function tick(parallel) {
+    if (net.tension) straighten(8);
     net.redexes = net.redexes.filter(r => {
       const c = get(r.c), p = get(r.p);
       return c && p && !c.dead && !p.dead;
@@ -631,8 +666,8 @@ const EXAMPLES = [
 ];
 
 // ---------- headless comparison (seq vs par ticks) ----------
-function runHeadless(ex, mode, parallel) {
-  const net = makeNet(mode);
+function runHeadless(ex, mode, parallel, tension) {
+  const net = makeNet(mode, tension);
   const B = builders(net);
   const root = ex.build(B);
   layoutTerm(net, root, 3);
@@ -645,13 +680,13 @@ function runHeadless(ex, mode, parallel) {
 }
 
 // ---------- app ----------
-let SIM = null, EXEC = "seq", MODE = "fire", RUNNING = false, CUR = EXAMPLES[0];
+let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, RUNNING = false, CUR = EXAMPLES[0];
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 let view = { x: 0, y: 0, scale: 26 };
 let hover = null;
 
 function boot() {
-  SIM = makeNet(MODE);
+  SIM = makeNet(MODE, TENSION);
   const B = builders(SIM);
   const root = CUR.build(B);
   layoutTerm(SIM, root, 3);
@@ -679,7 +714,7 @@ function refreshPanel() {
   let html = "<tr><th>execution</th><th>ticks</th><th>work</th><th>transport</th><th>slack</th></tr>";
   const res = [];
   for (const [nm, par] of rows) {
-    const r = runHeadless(CUR, MODE, par);
+    const r = runHeadless(CUR, MODE, par, TENSION);
     res.push(r);
     const cls = (par ? "par" : "seq") === EXEC ? ' style="color:var(--accent)"' : "";
     html += `<tr${cls}><td>${nm}</td><td>${r.ticks}</td><td>${r.ints}</td><td>${r.tr}</td><td>${r.ins}</td></tr>`;
@@ -828,6 +863,7 @@ for (const b of document.querySelectorAll("#modeSeg button")) {
     boot(); };
 }
 document.getElementById("toggleSide").onclick = () => document.getElementById("side").classList.toggle("hidden");
+document.getElementById("tensionChk").onchange = e => { TENSION = e.target.checked; boot(); };
 
 let panning = false, px0 = 0, py0 = 0;
 cv.addEventListener("mousedown", e => { panning = true; cv.classList.add("panning"); px0 = e.clientX; py0 = e.clientY; });
