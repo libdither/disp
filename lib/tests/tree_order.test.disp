@@ -1,5 +1,5 @@
 // tree_lt (prelude) + const_tail/is_const_tail (kernel): the structural sort key
-// and the dependency-split vocabulary that TYPE_NORMALIZATION §10a/§10b introduce.
+// and the dependency-split vocabulary that archive/TYPE_NORMALIZATION.md §10a/§10b introduce.
 
 open use "../kernel/prelude.disp"
 

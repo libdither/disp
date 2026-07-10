@@ -10,7 +10,7 @@ open use "../kernel/prelude.disp"
 // so module loading auto-verifies them; this file pins what the annotations do
 // NOT cover: inhabitants, rejections, and respond typing.)
 
-// ---- InvalidType is a REAL empty type now (§12.6 / STRICTTYPE.md step 1) ----
+// ---- InvalidType is a REAL empty type now (§12.6 / archive/STRICTTYPE.md step 1) ----
 // Promoted from the old `false` sentinel to a make_recognizer wait-form with a MetaShape
 // meta, so `type_meta InvalidType` is a real record (no more `.respond` off `false`).
 test tree_eq InvalidType False     = false      // kept DISTINCT from the empty proposition
@@ -104,7 +104,7 @@ test param_apply (Arrow Tree (Arrow Nat Action)) ((type_meta (Pi Nat ({_} -> Boo
 // Tree and the field-name branch doesn't block. Shape `Self -> Frame -> Action`.
 test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Sigma Nat ({_} -> Bool))).respond (type_meta (Sigma Nat ({_} -> Bool))).recognizer_params) = Ok true
 test param_apply (Arrow Tree (Arrow Frame Action)) ((type_meta (Record (cons (pair "a" Nat) t))).respond (type_meta (Record (cons (pair "a" Nat) t))).recognizer_params) = Ok true
-// - Pi's / Nat's responds now TERMINATE (STRICTTYPE.md step 1): with InvalidType a
+// - Pi's / Nat's responds now TERMINATE (archive/STRICTTYPE.md step 1): with InvalidType a
 //   real empty type, eliminating an InvalidType-neutral runs a well-defined inert
 //   respond instead of projecting `.respond` out of `false` and looping. They still do
 //   NOT inhabit RespondShape (the Part-C reason: `params`/`frame` are unstructured

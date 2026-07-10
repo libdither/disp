@@ -249,7 +249,7 @@ duplicate exported field is rejected by the driver.
 ## Declarations and Guards
 
 A declaration is a request the declared name's guard mediates
-(COMPILATION.typ § Declarations as requests is normative). The
+(SYNTAX.typ's declaration-request note is normative for the surface). The
 kernel-side vocabulary lives at the end of `cut.disp`: the
 `GuardAction` constructors `Bind`/`Install`/`Both`, the request
 decorators `base`/`let`/`sig`/`guard` (all four annotated — `let` IS

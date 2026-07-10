@@ -596,8 +596,8 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     throw new Error(`open: rebind of '${name}': guard returned an unknown action`)
   }
 
-  // declareBinding: the declaration pipeline (COMPILATION.typ § Declarations as
-  // requests). Fast path = the pre-guard behavior, taken when there is no head (or
+  // declareBinding: the declaration pipeline (the declaration protocol; SYNTAX.typ
+  // § record members, vocabulary in cut.disp). Fast path = the pre-guard behavior, taken when there is no head (or
   // the head is the pristine/unbound `let` decorator), no installed guard on the
   // name, and the ambient default_guard is pristine (or the kernel isn't loaded
   // yet). Slow path builds the request record, applies the head decorator, consults

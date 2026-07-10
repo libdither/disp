@@ -223,8 +223,8 @@ Action : Type := < Extend : Type, Reduce : Tree >
 Step : Type := < SMint : Type, SThread : Tree, SReject, SDone : Action >
 // RespondShape: a respond `{params,self,frame} -> Action` (params/self loosened to Tree).
 RespondShape : Type := Tree -> Tree -> Frame -> Action
-// GuardAction: a guard's answer at the declaration boundary (COMPILATION.typ
-// § Declarations as requests): bind a value, install a guard, or both; refusal is
+// GuardAction: a guard's answer at the declaration boundary (the declaration
+// protocol, cut.disp): bind a value, install a guard, or both; refusal is
 // CheckerResult's Err around it. Request: what a declaration asks for (value/ty/guard
 // are stem-options, loosened to Tree like MetaShape's fields). `param` marks a module
 // dependency (`given X : T` — MODULES.md): a binder introduction the driver interprets

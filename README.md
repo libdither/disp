@@ -257,12 +257,12 @@ The 🧑/🤖 column estimates who typed the words; git does not record the spli
 | Document | What it is | 🧑/🤖? | Quality |
 |---|---|---|---|
 | [`README.md`](README.md) | This file. The example section is machine-checked literate code. | 🧑 25% · 🤖 75% | 9/10 |
-| [`GOALS.md`](GOALS.md) | The long-term vision: neural-guided synthesis, self-improving optimizer. | 🧑 85% · 🤖 15% | 8/10 || [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. *Interesting Read* | 🤖 | 7/10 |
+| [`GOALS.md`](GOALS.md) | The long-term vision: neural-guided synthesis, self-improving optimizer. | 🧑 85% · 🤖 15% | 8/10 |
+| [`FOUNDATIONS.md`](FOUNDATIONS.md) | Every design piece's precedent, why prior attempts stalled, disp's bet, and the make-or-break questions. *Interesting Read* | 🤖 | 7/10 |
 | [`TYPE_THEORY.typ`](TYPE_THEORY.typ) | Authoritative type-theory spec: the two-op kernel, manifest contracts, library types, validators. *Long* | 🤖 | 5/10 |
 | [`EVALUATOR.md`](EVALUATOR.md) | The reduction-backend subsystem: the `Session` ABI, the five backends, the differential-oracle discipline. | 🤖 | 6/10 |
 | [`KERNEL_DESIGN.md`](KERNEL_DESIGN.md) | Tree-calculus implementation idioms: wait/fix, signatures, neutrals, bracket abstraction. | 🤖 | 6/10 |
 | [`SYNTAX.typ`](SYNTAX.typ) | Surface grammar and AST. Authoritative for the parser. | 🤖 | 7/10 |
-| [`COMPILATION.typ`](COMPILATION.typ) | Parse, elaborate, emit pipeline. *Outdated* | 🤖 | 6/10 |
 
 The kernel is source code written to be read: the type system is a library, so these files are the type theory's implementation and its documentation at once.
 
@@ -277,7 +277,7 @@ The kernel is source code written to be read: the type system is a library, so t
 | [`lib/kernel/generic.disp`](lib/kernel/generic.disp) | Recursors, folds, and functor maps read off type structure: one implementation for every inductive. | 🤖 | 5/10 |
 | [`lib/kernel/universe.disp`](lib/kernel/universe.disp) | The universe: `Type` as a behavioral check, the kernel's structural types, `GoodRespond`. | 🤖 | 6/10 |
 
-`.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`TYPE_THEORY.pdf`, `SYNTAX.pdf`, `COMPILATION.pdf`) sit alongside them.
+`.typ` files are [Typst](https://typst.app/) sources; prebuilt PDFs (`TYPE_THEORY.pdf`, `SYNTAX.pdf`) sit alongside them.
 
 ## Repository Layout 🤖
 

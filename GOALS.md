@@ -15,7 +15,7 @@ To do this we basically need a universal self-improving optimizer, but to bootst
    - Must handle combinatorial search over programs
    - Must be able to self-play, continually improve by generating score functions itself to then satisfy.
 
-*(Status 2026-07-05: the licensing half of the loop exists in miniature — observational equivalence as a per-type setoid (`lib/std/oeq.disp`), machine-checked rewrite licenses proven by induction, and guard-owned names whose redefinition demands an equivalence proof re-verified at every load (COMPILATION.typ § Declarations as requests). The search/scoring half — the external optimizer — remains.)*
+*(Status 2026-07-05: the licensing half of the loop exists in miniature — observational equivalence as a per-type setoid (`lib/std/oeq.disp`), machine-checked rewrite licenses proven by induction, and guard-owned names whose redefinition demands an equivalence proof re-verified at every load (the declaration protocol: SYNTAX.typ § record members, `lib/kernel/cut.disp`). The search/scoring half — the external optimizer — remains.)*
 
 Once I have this baseline, and the external optimizer works well enough for a wide variety of programs. It should be able to bootstrap itself and be used to redesign the whole process from the ground up. The following should happen gradually to different parts.
  - We should be able to figure out the best host calculus base formulation and evolve it alongside the relevant type systems to improve type checking and execution speed. Type checking functions should be optimizable for improved speed of iteration for satisfying a given type.

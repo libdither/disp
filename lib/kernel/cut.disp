@@ -152,7 +152,7 @@ trivial_functor := t
 make_meta : Tree -> Tree -> MetaShape := {params, respond} ->
   { recognizer_params := params; functor := trivial_functor; respond; behavioral_specs := t }
 
-// ── The declaration protocol (COMPILATION.typ § Declarations as requests).
+// ── The declaration protocol (surface grammar: SYNTAX.typ § record members).
 // A declaration is a request that the declared name's guard mediates. The elaborator
 // looks up `default_guard` by name at each declaration (and the decorators are what
 // declaration heads denote), with host fallbacks of identical semantics for the

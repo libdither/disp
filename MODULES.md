@@ -128,7 +128,8 @@ Notes on the surface:
   an implementation later, under the name's guard (Install polarity). A
   `given` says the linker provides it now (mint polarity). They are the two
   directions of the same valueless-typed-name shape; both belong in the module
-  story, and the symmetry should be stated in COMPILATION.typ.
+  story, and the symmetry should be stated alongside the declaration protocol
+  (SYNTAX.typ § record members).
 - Given defaults compile in the module's own scope and may reference earlier
   givens, the same rule as binder-parameter defaults. Given order is binder
   order, and a given's annotation compiles in the scope so far (so
@@ -162,8 +163,8 @@ declaration: each given appends a mint cell, each annotated export a proj
 cell. But the compiled telescope VALUE cannot be extended as you go: a cell's
 continuation is a function (`t cell ({x} -> rest)`), and appending on the
 right would mean inserting new syntax under the existing binders, the one
-thing a value cannot do (the same impossibility COMPILATION.typ records for
-block `let`). So the accumulator stays unassembled in elaborator state: a
+thing a value cannot do (the same impossibility the block-`let` desugar
+runs into). So the accumulator stays unassembled in elaborator state: a
 flat list of (name, tree, type, guard, given?) entries, with dependency
 openness represented by hyps so every tree stays closed. The driver already
 holds most of this (`fieldNames`/`fieldTrees`/`fieldTypes`/`fieldGuards`);
@@ -481,10 +482,10 @@ overlay's fast exports typed and re-verified at the spec contracts. The in-langu
 `Module` growing a guards field) remains the slice-3 destination; certs are
 host metadata exactly like `fieldGuards`. Pins: `lib/tests/guard_opt.test.disp`.
 
-Docs per slice: COMPILATION.typ grows a Modules section (module = telescope-
-typed function, instantiation, the barrel staging made explicit, given/sig
-polarity); SYNTAX.typ notes `given` and use-application; KERNEL_DESIGN.md the
-fragment header discipline; CLAUDE.md operating notes.
+Docs per slice: this file states the module theory (module = telescope-typed
+function, instantiation, the barrel staging made explicit, given/sig polarity);
+SYNTAX.typ notes `given` and use-application; KERNEL_DESIGN.md the fragment
+header discipline; CLAUDE.md operating notes.
 
 ## Test plan
 

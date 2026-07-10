@@ -143,8 +143,8 @@ export type RecMember =
   | { tag: "bind"; name: string; expr: Expr }
   | { tag: "test"; lhs: Expr; rhs: Expr; line?: number }
   | { tag: "open"; expr: Expr }
-// A "field" is a DECLARATION: `head? NAME (: T)? (:= v)?` (COMPILATION.typ
-// § Declarations as requests). `head` is the optional request-decorator expression
+// A "field" is a DECLARATION: `head? NAME (: T)? (:= v)?` (the declaration
+// protocol; SYNTAX.typ § record members). `head` is the optional request-decorator expression
 // (e.g. `guard g`, or `let` — the private-write decorator, an ordinary library
 // value); `value` is null only for interface entries (`guard g X : T`), which the
 // parser only produces when a head is present.
@@ -1184,7 +1184,7 @@ const openGivenItem: P<RecMember[]> = (ts, i) => {
 }
 
 // A decorated declaration: `head… NAME (: T)? (:= v)?` — one or more head atoms
-// before the name (COMPILATION.typ § Declarations as requests). The name is the last
+// before the name (the declaration protocol; SYNTAX.typ § record members). The name is the last
 // atom of the pre-`:`/`:=` spine; the head is everything before it (a request
 // decorator, applied to the built request by the driver). Head atoms are line-local
 // so the spine cannot swallow the next item. A head with only an annotation is an

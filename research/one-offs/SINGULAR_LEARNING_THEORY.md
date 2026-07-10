@@ -1,7 +1,7 @@
 # Singular Learning Theory — a reference, and its relation to disp
 
 > **Status.** Research note (2026-06-29). External-theory survey + a disp-connection analysis,
-> in the genre of `FOUNDATIONS.md` / `research/EFFECT_SYSTEMS_SURVEY.md`. Part I is settled
+> in the genre of `FOUNDATIONS.md` / `research/one-offs/EFFECT_SYSTEMS_SURVEY.md`. Part I is settled
 > mathematics (Watanabe); Parts III–V are *proposed* connections, tagged **[load-bearing]** /
 > **[speculative]** / **[breaks]** with the same discipline `FOUNDATIONS.md` uses. Nothing here is
 > built. Companion reading: `OPTIMIZER.typ` (§2 objective, §4 cost coeffect, §6 equality, §8

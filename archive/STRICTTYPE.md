@@ -1,6 +1,15 @@
 # Completing §12.6: `StrictType`, structured Frames (Part C), and a real `InvalidType`
 
-**Status:** design note (2026-06-08). What it takes to make the kernel's `respond`s
+**Status: archived 2026-07-09, superseded by the landed universe.** Step 1
+(`InvalidType`) and the recognize-side `StrictType` landed as designed (update
+notes below). The coherence rung landed 2026-07-01 as `Type := BehavioralType`
+via GoodRespond probe telescopes, without cubical (contra the validator table in
+§0). The open remainder is the structural `respond : RespondShape` ascription in
+MetaShape, tracked in TYPE_THEORY.typ §11-§12 and pinned in `metashape.test.disp`.
+Kept for the Part B/C structured-Frame buildout sketches. (File references such as
+`lib/kernel/core.disp` predate the seven-fragment kernel split.)
+
+**Original status:** design note (2026-06-08). What it takes to make the kernel's `respond`s
 (and recognizers) inhabit `RespondShape` / `RecognizerShape` so the deep validator
 `StrictType` (TYPE_THEORY §11.4 / §12.6) can check them — and the two concrete
 problems Part A surfaced, with solution sketches.

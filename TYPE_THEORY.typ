@@ -5063,7 +5063,7 @@ meta` (constructed externally), tree_eq comparisons in the H-rule
 designed as this section's first consumer — a module is a value of the
 free monad over the elaboration signature (`Declare`/`Test`/`Import`),
 interpreted by the driver, with per-name *guards* as deep handlers over
-`Declare`; see COMPILATION.typ § Declarations as requests. Once `Eff`
+`Declare` (the declaration protocol: SYNTAX.typ § record members, `cut.disp`). Once `Eff`
 exists as a library type, `mod : Eff ElabSig Unit` becomes an ordinary
 checkable annotation and guard-respect a property of module values.)*
 
@@ -5821,7 +5821,6 @@ inline tests are canonical.
 - `GOALS.md` — north star and metacircular discipline.
 - `KERNEL_DESIGN.md` — host-side implementation idioms.
 - `SYNTAX.typ` — surface grammar.
-- `COMPILATION.typ` — parse / elaborate / emit pipeline.
 - `archive/RECORDS_PROPOSAL.md` — records and projection (archived; record
   *theory* now in §2.6/§12, the file retains the forward-looking design for
   recursive records and the encoding migration).

@@ -37,7 +37,7 @@
 #align(center)[
   Surface grammar and AST of `.disp` source files.\
   #raw("src/parse.ts") implements the grammar and defines the AST;
-  elaboration and desugaring live in #raw("COMPILATION.typ").
+  elaboration and desugaring live in #raw("src/compile.ts") + #raw("src/elab/").
 ]
 #v(1em)
 
@@ -143,7 +143,7 @@ id : {A : Type} -> A -> A
 guard (license_guard (oeq T)) sort : T := impl   // owned name
 guard_eq fast : T := impl                        // contract derived from T
 guard g iface : T                                // interface entry (no value)",
-  note: [Exported record member — a *declaration request* (see COMPILATION.typ § Declarations as requests). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:` or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
+  note: [Exported record member — a *declaration request* (this note is normative; the protocol vocabulary lives in `lib/kernel/cut.disp`, idioms in KERNEL_DESIGN.md § Declarations and Guards). The optional `head` is a request-decorator expression; the declared name is the *last atom* of the pre-`:`/`:=` spine, and head atoms are line-local. At least one of the annotation, the value, or a guard-proposing head must be present (`head IDENT ":" expr` with no value is an interface entry). Heads apply at the top level only; braced record members keep the plain `IDENT (":" expr)? ":=" expr` form. Redefining a name is legal *syntax* (a rebind request mediated by the name's guard); an UNGUARDED duplicate is rejected by the driver, and braced-record duplicates remain parse errors. Disambiguation: a newline-crossing expression never consumes a line whose bracket-depth-0 tokens reach `:` or `:=` (`isDeclStart`) — bare top-level colons cannot occur mid-expression, so declarations always win.],
 )
 
 #rule(
@@ -206,7 +206,7 @@ f { x := a, y := b }           // named call (any order; == f a b)
 f { x := a }                   // omitted args default / partial-apply",
   note: [Left-associative juxtaposition; no separator between function and argument. After crossing a newline, `IDENT \":=\"` is _not_ consumed as an atom (it starts a field definition).
 
-  *Calling convention (named / default / reorderable arguments).* A juxtaposition `f r` where `r` is a `recValue` is a *named call* when `f` has a tracked parameter signature (it is bound to a leading lambda — see `COMPILATION.typ` § Named arguments) AND every field of `r` names one of `f`'s parameters. Then `r`'s fields are matched to parameters *by name* (any order), omitted parameters fall back to their `:= default`, and a missing-without-default parameter makes the call a *partial application* (the result is a function awaiting it). The whole thing rewrites at elaboration time to the canonical positional call, so `f { x := a, y := b }`, `f { y := b, x := a }` and `f a b` are the *same tree* (conversion is O(1) hash-cons identity). Otherwise — `f`'s untracked, or `r`'s field names are not all parameters (e.g. a record-domain function `{r} -> r.x` applied to `{ x := … }`) — `f r` is *ordinary* application with `r` passed as a record value.],
+  *Calling convention (named / default / reorderable arguments).* A juxtaposition `f r` where `r` is a `recValue` is a *named call* when `f` has a tracked parameter signature (it is bound to a leading lambda — the rewrite lives in `src/elab/sugar.ts`) AND every field of `r` names one of `f`'s parameters. Then `r`'s fields are matched to parameters *by name* (any order), omitted parameters fall back to their `:= default`, and a missing-without-default parameter makes the call a *partial application* (the result is a function awaiting it). The whole thing rewrites at elaboration time to the canonical positional call, so `f { x := a, y := b }`, `f { y := b, x := a }` and `f a b` are the *same tree* (conversion is O(1) hash-cons identity). Otherwise — `f`'s untracked, or `r`'s field names are not all parameters (e.g. a record-domain function `{r} -> r.x` applied to `{ x := … }`) — `f r` is *ordinary* application with `r` passed as a record value.],
 )
 
 #rule(
@@ -267,7 +267,7 @@ arrow declares sequencing intent, so effects-as-values stays intact
 `lib/tests/effect_syntax_proto.test.disp`). A `braced` followed by `ARROW` is
 reparsed as a `binder`: `{x : A}` alone is a recType;
 `{x : A} -> e` is a binder. The empty `{}` is a 0-field recValue
-(Church unit; see `COMPILATION.typ` § Record encoding). Duplicate
+(Church unit; the record encoding lives in `src/elab/`). Duplicate
 field names in recValues and recTypes are rejected.
 
 A `coproductType` `< Tag1 : T1, Tag2, … >` is the sum-type (coproduct)
@@ -427,6 +427,7 @@ Each non-core node's parser-time behavior, in one line:
     [the root node. The driver iterates `members` in order, emitting each exported `Field`'s tree and discharging each `Test`.],
 )
 
-See `COMPILATION.typ` for the full parse / elaborate / emit pipeline,
-name-resolution algorithm, `let` desugaring rules, record encoding, and
-error-reporting contract.
+The full parse / elaborate / emit pipeline, name resolution, `let`
+desugaring, record encoding, and error reporting live in the host
+elaborator (`src/parse.ts`, `src/compile.ts` + `src/elab/`); the retired
+`COMPILATION.typ` spec is in git history.

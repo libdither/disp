@@ -2,8 +2,8 @@
 
 Syntax highlighting for `.disp` files (TextMate grammar, no language server).
 
-The grammar mirrors the parser's design (SYNTAX.typ, COMPILATION.typ § Declarations
-as requests): almost nothing is a keyword, so highlighting is mostly positional
+The grammar mirrors the parser's design (SYNTAX.typ, § record members /
+declaration requests): almost nothing is a keyword, so highlighting is mostly positional
 rather than lexical.
 
 - True keywords: `match`/`if`/`then`/`else` (control), `use`/`open` (modules).

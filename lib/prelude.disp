@@ -152,7 +152,7 @@ tree_eq : Tree -> Tree -> Bool := fix ({self, a, b} ->
 
 // tree_lt: a STRICT structural total order on trees — leaf < stem < fork, then
 // lexicographic on children. The canonical sort key for telescope-cell ordering
-// (TYPE_NORMALIZATION §3/§10b): a DETERMINISTIC, structure-derived order, NOT the
+// (archive/TYPE_NORMALIZATION.md §3/§10b): a DETERMINISTIC, structure-derived order, NOT the
 // hash-cons id (ids are allocation-counter values, so id-order would make a normal
 // form depend on elaboration order). Mirrors tree_eq's recursion; total + irreflexive,
 // and exactly one of `tree_lt a b` / `tree_eq a b` / `tree_lt b a` holds.

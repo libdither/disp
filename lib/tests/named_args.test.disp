@@ -7,7 +7,7 @@
 // canonical positional call `f a b`, so THE load-bearing property is automatic:
 // conversion is O(1) hash-cons identity, so every reordering / default-fill must
 // produce the IDENTICAL tree as the positional form — each group pins it below
-// with `tree_eq`. (See COMPILATION.typ § Named arguments / SYNTAX.typ.)
+// with `tree_eq`. (See SYNTAX.typ § application — the calling convention.)
 
 open use "../kernel/prelude.disp"
 open use "../std/nat/arith.disp"   // add

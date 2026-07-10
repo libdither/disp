@@ -1,4 +1,4 @@
-// The guard layer end to end (COMPILATION.typ § Declarations as requests).
+// The guard layer end to end (the declaration protocol; SYNTAX.typ + cut.disp).
 // Pins: plain declarations are untouched (fast path); `guard <policy> NAME : T := v`
 // installs ownership and binds in one declaration; rebinding an owned name is an
 // ordinary-looking declaration whose payload carries credentials; guard_eq derives

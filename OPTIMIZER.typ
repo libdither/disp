@@ -323,7 +323,7 @@ and the pointwise licenses are exactly `~_T` restricted to applicative observers
 motive-extensionality obligation is operational: the `ext_walker` probe
 (`lib/tests/ext_gate_proto.test.disp`), a `param_walker` variant whose intensional carve-outs
 refuse neutrals — the per-motive residue of the fundamental lemma. The licensed-*replacement*
-mechanism exists as the elaborator's guard layer (COMPILATION.typ § Declarations as requests):
+mechanism exists as the elaborator's guard layer (the declaration protocol: SYNTAX.typ, `lib/kernel/cut.disp`):
 `license_guard R` makes redefinition of an owned name demand `proof : R old new`, re-verified at
 every load. End-to-end walkthrough pinned in `lib/tests/oeq_tree_license.test.disp` (the
 deep-recognizer-to-`Ok true` rewrite, licensed by tree induction). Still open here: (B) `φ` as a
@@ -595,7 +595,7 @@ codebase; the *substrate* and *search* tracks run alongside.
   over the runtime's canonical ids; a Tier-1 (tested) rule set; extract by *measured* cost via the
   Session ABI; validate output by re-running the program's tests + `param_apply`. Translation
   validation — sound w.r.t. tests and types, not yet `~`. Proves the pipeline + cost model.
-  *Concrete build plan: `OPTIMIZER_DESIGN.md`* (the language decision is TypeScript; rationale there).
+  *Concrete build plan: `OPTIMIZER_DESIGN.md` (removed 2026-07-09, in git history; the language decision is TypeScript).*
 - *M1 — certificate checker + rule book (in-language).* `lib/opt/{rulebook,checker}.disp` (§7);
   rewrites carry certs the kernel validates. Soundness rests on rule-book soundness (Tier-0/1) +
   checker correctness + Howe congruence (assumed). *(Partially landed 2026-07-05: the license TYPE

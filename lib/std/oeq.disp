@@ -135,7 +135,7 @@ image_setoid := {obs, B} -> make_setoid
   ({x, y, p} -> eq_sym B (obs x) (obs y) p)
   ({x, y, z, p, q} -> eq_trans B (obs x) (obs y) (obs z) p q)
 
-// ── Guard policies (the declaration protocol, COMPILATION.typ § guards).
+// ── Guard policies (the declaration protocol; vocabulary in kernel cut.disp).
 // license_guard R: own a name at relation R. Rebinding requires a { new, proof }
 // payload with proof : R old new, checked in-language via param_apply. The FIRST bind
 // of a contract-only name is licensed by its annotation alone (there is nothing to be
