@@ -1,11 +1,13 @@
 // case_opt — the licensed fast face of case_value (std/case.opt.disp).
-// The rebind's license (case.disp's case_equiv: pointwise oeq at the field-
-// bound Nat instance) is checked at case.opt's LOAD; this file pins what it
-// does not cover — the CONCRETE paths. The cut-class fast dispatch must agree
-// with the raw cut (match) per constructor (abstract payloads, machine-checked
-// below), certificates must still complete through the verbatim neutral
-// delegation, and non-cut-class types must fall through to the spec.
+// The rebind's license (case.disp's case_equiv) is checked at case.opt's LOAD
+// and covers BOTH faces: the pointwise Nat oeq (neutral path) and the
+// per-constructor LicSum spine equalities with abstract arms + payloads
+// (concrete path). This file pins the rest: agreement with the raw cut
+// (match) on a FRESH sum, certificates through the verbatim neutral
+// delegation, non-cut-class fall-through, junk-tag inertness — and the
+// negative control that the relation itself rejects a misdispatcher.
 open use "../kernel/prelude.disp"
+open use "../std/case.disp"
 open use "../std/case.opt.disp"
 
 // an inj-tagged sum: cut-class (identity iso) — the fast tag-cut path fires
@@ -43,3 +45,12 @@ test param_apply (Pi Nat ({_} -> Nat)) ({n} -> case_value Nat ({_} -> Nat) { zer
 // unknown tag projects a non-fork spec and answers the unapplied junk, no
 // divergence) — it does not accidentally hit a real arm:
 test tree_eq (k_fast (inj0 "Bogus")) 1 = false
+
+// the license has TEETH on the concrete face (negative control): a candidate
+// that misdispatches every target to the L0 arm fails case_equiv — its
+// at_cut1 obligation would need refl to relate the L0 arm to (L1-arm c):
+let misdispatch := {T, motive, cases, target} -> case_value T motive cases (inj0 "L0")
+let all_refl := { at_nat := {P} -> {z} -> {s} -> {n} -> refl; at_cut0 := {z} -> {o} -> {w} -> refl; at_cut1 := {z} -> {o} -> {w} -> {c} -> refl; at_cut2 := {z} -> {o} -> {w} -> {l} -> {r} -> refl }
+test tree_eq (param_apply (case_equiv case_value misdispatch) all_refl) (Ok true) = false
+// ...and the honest rebind inhabits it (the load-time check, replayed in-suite):
+test param_apply (case_equiv case_value case_value) all_refl = Ok true

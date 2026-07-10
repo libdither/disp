@@ -17,20 +17,42 @@ open use "oeq.disp"
 // both sides walk to the same stuck elimination at abstract arguments;
 // anything that changes checking-time behavior cannot.
 //
-// The instance binds the arms as FIELDS, not as one record hyp: the coherence
+// The instances bind the arms as FIELDS, not as one record hyp: the coherence
 // gate reads arms off a CONCRETE case record (built here from the bound
 // fields); an abstract case record cannot drive it, and a bare ∀-motive Pi
 // certificate is not standalone-decidable either (its codomain membership goes
 // stuck) — the pointwise oeq is exactly the form that avoids both, comparing
 // the two sides' WALKS at shared hyps instead of re-certifying at the Pi.
+//
+// The relation is a CONJUNCTION (a record type) because one obligation cannot
+// see both faces. The pointwise oeq mints a hyp for the target, so it only
+// ever exercises the NEUTRAL path — a rebind that delegates on neutrals but
+// breaks concrete dispatch would pass it. And no single hypothesis can stand
+// for "an arbitrary concrete member": a hyp IS the neutral face. The way to
+// reach the concrete path in a machine-checkable statement is per-constructor
+// — tag CONCRETE (so the dispatch actually fires), arms and payloads ABSTRACT
+// (so nothing else is pinned) — and by canonicity (every concrete member is in
+// constructor form) the per-arity family covers the whole concrete domain.
 
-// The instance type: one-level dependent Nat elimination, CASE-shaped arms.
+// The neutral-face instance: one-level dependent Nat elimination (recursive,
+// shape-encoded — exercises the functor-view decode, the arm pad, the gate).
 NatCaseT : Type := {P : Nat -> Type} -> P zero -> ({k : Nat} -> P (succ k)) -> {n : Nat} -> P n
 
-// The ownership relation: pointwise oeq at the field-bound instance.
-case_equiv := {old, new} -> oeq NatCaseT
-  ({P, z, s, n} -> old Nat P { zero := z; succ := s } n)
-  ({P, z, s, n} -> new Nat P { zero := z; succ := s } n)
+// The concrete-face instance: an inj-tagged (cut-class) sum with one variant
+// per spine arity 0/1/2 — the empty/last/cons cases of any argspec walk.
+LicSum : Type := Coproduct [pair "L0" [], pair "L1" [Tree], pair "L2" [Tree, Tree]]
+
+// The ownership relation: pointwise oeq at the field-bound Nat instance
+// (neutral face: both sides' walks tree-identical at shared hyps) AND a
+// per-constructor spine equality at LicSum for each arity (concrete face:
+// dispatch reaches the projected arm applied to the payload spine — for EVERY
+// arm and payload, since those are hyps). Proof shape: a record of refls.
+case_equiv := {old, new} -> {
+  at_nat : oeq NatCaseT ({P, z, s, n} -> old Nat P { zero := z; succ := s } n) ({P, z, s, n} -> new Nat P { zero := z; succ := s } n),
+  at_cut0 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> Eq Nat (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")),
+  at_cut1 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {c : Tree} -> Eq Nat (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)),
+  at_cut2 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {l : Tree} -> {r : Tree} -> Eq Nat (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r))
+}
 
 // Own the name. The value is unchanged — this declaration only attaches the
 // guard (the kernel barrel's export is typeless, so no annotation is inherited

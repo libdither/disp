@@ -36,8 +36,16 @@ case_fast := {T} -> {
       else (case_value T motive cases target))
 }
 
-// The licensed rebind: pointwise refl inhabits case_equiv (case.disp) because
-// case_fast delegates verbatim on the neutral path — both sides walk to the
-// same stuck elimination at abstract arguments. The concrete paths are pinned
-// differentially in lib/tests/case_opt.test.disp.
-case_value := { new := case_fast ; proof := {P} -> {z} -> {s} -> {n} -> refl }
+// The licensed rebind. Refl inhabits every case_equiv obligation (case.disp):
+// at_nat because case_fast delegates verbatim on the neutral path (both sides
+// walk to the same stuck elimination at shared hyps); at_cut0/1/2 because the
+// fast tag-cut spine and the spec's accessor walk apply the SAME projected arm
+// to the SAME payload args (hash-consed identical, for abstract arms AND
+// payloads). A rebind that broke either face would fail its refl at THIS
+// file's load. Differential pins on concrete members: lib/tests/case_opt.test.disp.
+case_value := { new := case_fast ; proof := {
+  at_nat := {P} -> {z} -> {s} -> {n} -> refl;
+  at_cut0 := {z} -> {o} -> {w} -> refl;
+  at_cut1 := {z} -> {o} -> {w} -> {c} -> refl;
+  at_cut2 := {z} -> {o} -> {w} -> {l} -> {r} -> refl
+} }
