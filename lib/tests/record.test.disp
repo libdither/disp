@@ -32,7 +32,7 @@ let get_respond := {m} -> m.respond
 test get_respond meta = true
 
 // ---- sequential field scope: later fields see earlier ones by name ----
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 let rd := { a := 2; b := double a }
 test rd.a = 2
 test rd.b = 4

@@ -2,7 +2,7 @@
 // inductive. Each case gets the RAW args AND the IH per recursive position; neutrals route through
 // `elim` to a stuck elimination at `motive self` (a real dependent eliminator, usable under a binder).
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 open use "../std/list.disp"
 
 // ── inj-tagged Peano nat ──
@@ -42,7 +42,7 @@ test children BT (lf 9)            = nil           // a leaf has no recursive ch
 test list_length (children BT bt) = 2             // a node has two
 test list_length (children PN (ps (ps pz))) = 1   // succ has one
 // node-count = 1 + sum of children's counts. Generic: never names a constructor.
-let bt_size := fix ({self, v} -> succ (list_foldl add zero (list_map self (children BT v))))
+let bt_size := fix ({self, v} -> succ (list_foldl Nat add zero (list_map Nat self (children BT v))))
 test bt_size (lf 5)               = 1
 test bt_size bt                   = 5             // 3 leaves + 2 internal nodes
 

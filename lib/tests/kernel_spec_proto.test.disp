@@ -15,7 +15,7 @@
 // ~27M; the file's opens total ~17M. Shrinking the nested differential's term
 // is the lever if this file's cost ever needs reclaiming.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 open use "../std/effect.disp"
 open use "../std/kernel_spec.disp"
 

@@ -4,7 +4,7 @@
 // recognition. One gate replaces the old hand-rolled per-constructor gate; it closes the
 // type-coherence gap for EVERY inductive built from the generic former AND self-types.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 // generic inj-tagged inductives (NOT shape-encoded): MyNat = [z, s:[Rec]], MyTree = [leaf, node:[Rec,Rec]]
 let myNatV  := [pair "z" [], pair "s" [Rec]]

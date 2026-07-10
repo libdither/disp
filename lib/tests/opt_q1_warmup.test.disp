@@ -6,7 +6,7 @@
 // This file establishes that proof for one law and shows it is the real thing, not a vacuous pass.
 //
 // Target: `add n zero ~ n` (right-identity of addition).
-//  - `add` (std/nat/arith.disp) recurses on its FIRST arg (`add zero m = m`), so `add n zero` is STUCK
+//  - `add` (std/nat.disp) recurses on its FIRST arg (`add zero m = m`), so `add n zero` is STUCK
 //    on a neutral `n` — the law is genuinely INDUCTIVE, not a mere reduction.
 //  - It is COST-REDUCING: the rhs `n` skips the entire addition, so `add e zero ⤳ e` is exactly the
 //    kind of rewrite the optimizer wants (it deletes work).
@@ -14,7 +14,7 @@
 //    rejected) — so "it type-checks" means "the induction is correct", NOT vacuous totality.
 
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 // The law as a dependent type (a ∀ over Nat); its INHABITANT is the licensing witness.
 let the_law := Pi Nat ({n} -> Eq Nat (add n zero) n)

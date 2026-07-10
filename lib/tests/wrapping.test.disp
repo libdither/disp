@@ -6,7 +6,7 @@
 // step spine extension. (Design background was WRAPPING_INVARIANT.md, deleted
 // once the fix landed — `git log` recovers it for the failed-fix catalog.)
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 // ================================================================
 // A. OPERATOR-POSITION NESTING AT DEPTH (the fix's core) — all Ok true

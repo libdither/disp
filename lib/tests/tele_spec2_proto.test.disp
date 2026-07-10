@@ -41,7 +41,7 @@
 // evaluation — pinned side by side in the adversarial section.
 // Baseline (rust-eager-native, 2026-07-08): ~23s wall, 29 pins.
 open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 open use "../std/effect.disp"
 open use "../std/tele_spec.disp"
 // (the Tele signature, tele_prog, and the two handlers were promoted to

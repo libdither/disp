@@ -4,7 +4,7 @@
 // two `qid` cells (walked by the same `tele_walk`) + the universe H-rule respond
 // `type_predicate_h_rule` — and it inhabits ITSELF: the metacircular fixed point closes.
 open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 
 // the two faces, independently
 test param_apply (Arrow Tree CheckerResult) Bool = Ok true     // recognize-face: Bool IS a recognizer

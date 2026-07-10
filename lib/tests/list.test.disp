@@ -1,6 +1,7 @@
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 open use "../std/list.disp"
+open use "../std/option.disp"
 
 let xs := list_cons 1 (list_cons 2 (list_cons 3 nil))
 let ys := list_cons 4 (list_cons 5 nil)
@@ -12,12 +13,12 @@ test NatList (t false nil) = Ok false
 test singleton 7 = list_cons 7 nil
 test list_length nil = 0
 test list_length xs = 3
-test list_length (list_append xs ys) = 5
-test list_length (list_map_succ xs) = 3
+test list_length (list_append Nat xs ys) = 5
+test list_length (list_map Nat succ xs) = 3
 
-test list_head_or 9 nil = 9
-test list_head_or 9 xs = 1
-test list_map_succ xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
+test list_head_or Nat 9 nil = 9
+test list_head_or Nat 9 xs = 1
+test list_map Nat succ xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
 
 // Generic List A: parameterised by element type.
 test List Bool nil = Ok true
@@ -26,22 +27,22 @@ test List Bool (cons 5 nil) = Ok false
 test List Nat (cons 1 (cons false nil)) = Ok false // false = △ △, no Nat shape (true = △ = zero would pass)
 
 // list_map applied to a simple closed function.
-test list_map ({n} -> succ n) xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
+test list_map Nat ({n} -> succ n) xs = list_cons 2 (list_cons 3 (list_cons 4 nil))
 
 // list_tail_or / list_foldl
-test list_tail_or nil xs = list_cons 2 (list_cons 3 nil)
-test list_tail_or nil nil = nil
-test list_foldl ({a, h} -> succ a) 0 xs = 3
+test list_tail_or Nat nil xs = list_cons 2 (list_cons 3 nil)
+test list_tail_or Nat nil nil = nil
+test list_foldl Nat ({a, h} -> succ a) 0 xs = 3
 
 // list_foldr: fold from the right
-test list_foldr ({h, a} -> succ a) 0 nil = 0
-test list_foldr ({h, a} -> succ a) 0 xs = 3
+test list_foldr Nat ({h, a} -> succ a) 0 nil = 0
+test list_foldr Nat ({h, a} -> succ a) 0 xs = 3
 
 // list_append: further coverage
-test list_append nil nil = nil
-test list_append nil xs = xs
-test list_append xs nil = xs
-test list_length (list_append xs nil) = 3
+test list_append Nat nil nil = nil
+test list_append Nat nil xs = xs
+test list_append Nat xs nil = xs
+test list_length (list_append Nat xs nil) = 3
 
 // list_rec: per-element eliminator. Previously hit the select_lazy +
 // self-recursion compile-time budget overrun (CLAUDE.md "Compiler
@@ -50,14 +51,13 @@ test list_length (list_append xs nil) = 3
 test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) nil = 0
 test list_rec ({_} -> Nat) 0 ({_h, _t, r} -> succ r) xs = 3
 
-// Partial accessors and list_find.
-test list_is_nil nil = true
-test list_is_nil xs = false
+// Partial substrate accessors (raw, untyped by nature) and the typed one-level faces.
+test list_is_nil Nat nil = true
+test list_is_nil Nat xs = false
 test list_head xs = 1
 test list_tail xs = list_cons 2 (list_cons 3 nil)
 
+// list_find answers at the honest Option A.
 let is_two := {n} -> tree_eq n 2
-test list_find is_two xs = 2
-test list_find is_two (list_cons 5 (list_cons 6 nil)) = nil
-
-
+test list_find Nat is_two xs = some 2
+test list_find Nat is_two (list_cons 5 (list_cons 6 nil)) = none

@@ -1,10 +1,6 @@
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 
-test one = 1
-test two = 2
-test three = 3
 
 test pred 0 = 0
 test pred 4 = 3
@@ -13,7 +9,6 @@ test is_zero 0 = true
 test is_zero 3 = false
 
 test double 4 = 8
-test add1 5 = 6
 
 test add_zero_l 4 = t
 test add_zero_r 4 = t

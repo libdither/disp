@@ -4,7 +4,7 @@
 // round-trips `view (encode (inj tag placeholders))` against the sound `view` side, so a lying
 // encode is caught and both the gate AND the universe reject the type. See ACTIVE_BUGS.md item 2.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 let one := succ zero
 

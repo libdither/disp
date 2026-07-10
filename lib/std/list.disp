@@ -1,6 +1,4 @@
 open use "../kernel/prelude.disp"
-open use "nat/arith.disp"
-open use "nat/ops.disp"
 
 // Lists parameterised by element type `A`. Tree shape (shape-encoded, NOT inj-tagged):
 //   nil           = t                     (LEAF)
@@ -54,72 +52,67 @@ list_rec : Intersection Type ({A} ->
       (Arrow (Pi A ({h} -> Pi (List A) ({tl} -> Arrow (P tl) (P (cons h tl)))))
         (Pi (List A) ({xs} -> P xs))))) := {motive, nil_case, cons_case, xs} -> elim list_dispatcher motive { nil := nil_case; cons := cons_case } xs
 
-// list_length: written over list_rec (not raw triage) so the annotation is checkable — on a
-// minted hyp the recursion is a stuck elimination inhabiting the motive (the std/nat/ops
-// discipline). The remaining raw-triage functions below are the substrate-idiom versions;
-// rewriting them over list_rec is the same mechanical move when their annotations are wanted.
 list_length : Intersection Type ({A} -> Arrow (List A) Nat) :=
   {xs} -> list_rec ({_} -> Nat) 0 ({h, tl, ih} -> succ ih) xs
 
-// list_append: the kernel cut's list_cat IS this function (same algorithm, same
-// junk behavior: non-fork -> ys), so reuse it rather than re-implement — the
-// substrate list toolkit lives in cut.disp and flows DOWN into std through the
-// barrel. (The reverse direction is impossible: raw-importing std/list into a
-// kernel fragment is a load cycle — this file checked-imports the kernel barrel —
-// and cut/engine cannot route through kernel machinery anyway, since match ->
-// cut -> proj -> list ops is the checker's own inner loop.)
-list_append := list_cat
+// ── the annotated toolkit ──
+// Every function below is ANNOTATED and eliminator-routed (list_rec for real
+// recursion, case_value for one-level branches), so each certifies at load and
+// each is walker-safe (usable in motives — on a hyp it becomes a stuck
+// elimination, never a raw triage). A RESULT type that varies (List B, the
+// accumulator B, the element A of a returned head) must appear in the body's
+// motive, and an erased ∀ cannot name it — so those functions take the type as
+// a REAL leading argument (the rec_value/case_value convention); types that
+// never enter a motive stay erased (the Intersection ∀, list_rec's own idiom).
+// The raw substrate list toolkit (list_cat & co) lives in cut.disp: those are
+// the checker's own inner-loop trees and stay raw there; this file is the
+// typed face. (Raw-importing std/list into a kernel fragment is a load cycle —
+// this file checked-imports the kernel barrel.)
+open use "option.disp"
 
-// concat_map f xs: map then flatten — the multishot fold's workhorse (the
-// nondeterminism handler's resume-per-candidate shape).
-concat_map := fix ({self, f, l} -> if (is_fork l) then (list_cat (f (pair_fst l)) (self f (pair_snd l))) else nil)
+// list_append A xs ys — the typed face of the kernel cut's list_cat.
+list_append : Pi Type ({A} -> Arrow (List A) (Arrow (List A) (List A))) :=
+  {A, xs, ys} -> list_rec ({_} -> List A) ys ({h, tl, ih} -> cons h ih) xs
 
-// Generic map. The internal recursion is `(xs, f)`-ordered to dodge a
-// bracket-abstraction edge case: when the innermost fix binder appears
-// as the trailing arg of the body's last application, η-reduction
-// produces a tree that doesn't terminate under compile-time partial
-// application. The user-facing wrapper restores the natural
-// `(f, xs)` argument order.
-let list_map_inner := fix ({self, xs, f} ->
-  triage nil ({_} -> nil) ({head, tail} -> cons (f head) (self tail f)) xs)
-list_map := {f, xs} -> list_map_inner xs f
+// list_map B f xs: A is erased (never in a motive); B is real (the motive is
+// ({_} -> List B)).
+list_map : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow A B) (Arrow (List A) (List B)))) :=
+  {B, f, xs} -> list_rec ({_} -> List B) nil ({h, tl, ih} -> cons (f h) ih) xs
 
-// Self-contained succ-map. Avoids `list_map succ` partial application
-// at top-level (which would unfold the fix at compile time).
-list_map_succ :=
-  fix ({self, xs} ->
-    triage nil ({_} -> nil) ({head, tail} -> cons (succ head) (self tail)) xs)
+// concat_map B f xs: map then flatten — the multishot fold's workhorse (the
+// nondeterminism handler's resume-per-candidate shape). Appends via the typed
+// list_append so the cons arm stays walker-safe.
+concat_map : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow A (List B)) (Arrow (List A) (List B)))) :=
+  {B, f, xs} -> list_rec ({_} -> List B) nil ({h, tl, ih} -> list_append B (f h) ih) xs
 
-list_head_or :=
-  {default} -> {xs} ->
-    triage default ({_} -> default) ({head, _tail} -> head) xs
+// Folds: the accumulator type B is real. foldl threads the accumulator through
+// the motive (Arrow B B — the standard accumulator-through-motive form).
+list_foldl : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow B (Arrow A B)) (Arrow B (Arrow (List A) B)))) :=
+  {B, f, acc, xs} -> list_rec ({_} -> Arrow B B) ({a} -> a) ({h, tl, ih} -> {a} -> ih (f a h)) xs acc
 
-list_tail_or :=
-  {default} -> {xs} ->
-    triage default ({_} -> default) ({_head, tail} -> tail) xs
+list_foldr : Intersection Type ({A} -> Pi Type ({B} -> Arrow (Arrow A (Arrow B B)) (Arrow B (Arrow (List A) B)))) :=
+  {B, f, init, xs} -> list_rec ({_} -> B) init ({h, tl, ih} -> f h ih) xs
 
-// Same bracket-abstraction quirk as list_map: the inner fix binder
-// order is xs-first so the trailing arg of `triage ... xs` isn't the
-// innermost binder. The user-facing wrappers restore natural arg order.
-let list_foldl_inner := fix ({self, xs, f, acc} ->
-  triage acc ({_} -> acc) ({head, tail} -> self tail f (f acc head)) xs)
-list_foldl := {f, acc, xs} -> list_foldl_inner xs f acc
+// One-level accessors: case_value (no recursion, no IH — the raw sub-structure
+// in O(1)); the element type A is real (it is the motive).
+list_head_or : Pi Type ({A} -> Arrow A (Arrow (List A) A)) :=
+  {A, default, xs} -> case_value (List A) ({_} -> A) { nil := default; cons := {h, _tl} -> h } xs
 
-let list_foldr_inner := fix ({self, xs, f, init} ->
-  triage init ({_} -> init) ({head, tail} -> f head (self tail f init)) xs)
-list_foldr := {f, init, xs} -> list_foldr_inner xs f init
+list_tail_or : Pi Type ({A} -> Arrow (List A) (Arrow (List A) (List A))) :=
+  {A, default, xs} -> case_value (List A) ({_} -> List A) { nil := default; cons := {_h, tl} -> tl } xs
 
-// Partial accessors: caller must ensure xs is a non-nil list. On nil
-// (leaf) these return `t` / `t`; on a stem (malformed list) behavior is
-// unspecified. Use list_head_or / list_tail_or for total versions.
-list_is_nil := {xs} -> is_leaf xs
+list_is_nil : Pi Type ({A} -> Arrow (List A) Bool) :=
+  {A, xs} -> case_value (List A) ({_} -> Bool) { nil := true; cons := {_h, _tl} -> false } xs
+
+// list_find A pred xs: first element satisfying pred, at the honest type
+// Option A (the former element-or-nil answer conflated "found nil" with
+// "absent"). The per-element branch goes through bool_rec so a stuck predicate
+// stays a stuck elimination.
+list_find : Pi Type ({A} -> Arrow (Arrow A Bool) (Arrow (List A) (Option A))) :=
+  {A, pred, xs} -> list_rec ({_} -> Option A) none ({h, tl, ih} -> bool_rec ({_} -> Option A) (some h) ih (pred h)) xs
+
+// Partial substrate accessors: caller must ensure xs is a non-nil list (on
+// nil these answer `t`; on a stem, unspecified). Unannotatable BY NATURE
+// (partial), not by omission — the typed faces are list_head_or/list_tail_or.
 list_head := {xs} -> pair_fst xs
 list_tail := {xs} -> pair_snd xs
-
-// First element satisfying `pred`, or `nil` if none. Caller-side checks
-// (e.g., via a Refinement) are responsible for non-empty guarantees.
-let list_find_inner := fix ({self, xs, pred} ->
-  triage nil ({_} -> nil)
-    ({head, tail} -> select head (self tail pred) (pred head))
-    xs)
-list_find := {pred, xs} -> list_find_inner xs pred

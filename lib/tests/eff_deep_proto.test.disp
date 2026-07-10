@@ -39,7 +39,7 @@
 //     and executed concretely under a handler — one value, checked and run.
 // Baseline (rust-eager-native, 2026-07-07): ~22s wall, 38 pins.
 open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 open use "../std/effect.disp"
 
 // ── (1) canonical rows ──

@@ -5,7 +5,7 @@
 // reflection — the last needs no probe: it's caught for free by FUSION (a check-based respond polices its
 // mints, so an unpoliced/reflecting respond makes verify_good Err).
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
 let R_ind   := inductive_respond unit_witness

@@ -3,7 +3,7 @@
 // All typed bindings are verified by the kernel's type predicates at compile time.
 
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 // ================================================================
 // Arrow types (non-dependent Pi)

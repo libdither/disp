@@ -3,7 +3,7 @@
 // lies about the motive is REJECTED at the function type. The gate types a `RecAt i` arg at `ctx i`
 // (stored in behavioral_specs.ctx) and gives self-sort args an IH. See ACTIVE_BUGS.md item 1.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 let one := succ zero
 

@@ -5,7 +5,7 @@
 // coproduct: projecting a hyp answers Extend ty (opaque) | Reduce e (derived).
 
 open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 open use "../std/build.disp"
 
 // entry builders: a telescope cell is now a wait-form (`proj_cell name ty` /
@@ -127,7 +127,6 @@ g : Arrow TDep Nat := {_r} -> 0
 test g { T := Bool; x := true } = 0
 
 // ==== surface syntax: a recType literal IS a telescope type ====
-open use "../std/nat/arith.disp"
 
 // non-dependent literal = the same tree as the hand-built telescope
 let T2s := { a : Nat, b : Bool }

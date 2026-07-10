@@ -1,0 +1,77 @@
+open use "../kernel/prelude.disp"
+open use "oeq.disp"
+
+// ================================================================
+// Nat — the SPEC face: owned arithmetic, derived ops, proof terms.
+// ================================================================
+// Names are OWNED (guard_eq: license = oeq of the contract), and that is this
+// module's whole relationship to optimization: rebinding nat_rec or add,
+// anywhere downstream, takes a { new, proof } payload the license checks
+// in-language. The fast implementations live in the PARALLEL overlay
+// nat.opt.disp, which opens this file (the guards and contracts ride the
+// names) and rebinds under these licenses; std/prelude.opt.disp is the
+// optimized barrel. Consumers pick a face: this module = the spec trees, the
+// .opt modules = the fast trees, and the splice's licensed-collision rules
+// reconcile the two in any mixed scope.
+//
+// Everything here is ANNOTATED and eliminator-routed (case_value for one-level
+// branches, nat_rec for real induction) so Pi checking sees make_hyp instead
+// of raw triage on hypotheses; the only unannotated trees in the Nat story are
+// nat.opt.disp's licensed rebinds — proven-equivalent optimizations, whose
+// contracts land on the rebound Defs.
+
+// Own the kernel recursor at its honest dependent type — spelled INLINE (no
+// named type alias): guard_eq derives the license from the annotation, and the
+// overlay's rebind inherits this Def type, so the type never needs a name.
+// (An annotation-free `guard_eq nat_rec := nat_rec` would inherit the incumbent
+// type, but the kernel BARREL's re-exports are typeless — the bootstrap dedupes
+// raw-first — so the inline spelling is the honest one-copy form for now.)
+guard_eq nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n := nat_rec
+
+// add: Nat addition via nat_rec (kernel-routed eliminator) — the SPEC body.
+//   zero + m = m
+//   succ n + m = succ (add n m)
+// nat_rec's step receives (predecessor, recursive_result) Mendler-style, so
+// `succ ih` is `succ (add pred m)`. Declared with guard_eq: the name is owned
+// at `oeq (Nat -> Nat -> Nat)`, so rebinding it — including by the overlay —
+// needs a { new, proof } license.
+guard_eq add : Nat -> Nat -> Nat := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
+
+// ── derived ops ──
+// pred/is_zero are ONE-LEVEL branches, so they ride case_value, not nat_rec:
+// same certificate (case_value pads the arms and routes them through the same
+// gated respond), but the discarded IH is never computed — O(1) instead of the
+// recursor's O(n). Arms are CASE-shaped: raw args only, no phantom-IH binder.
+pred : Nat -> Nat :=
+  {n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> k } n
+
+is_zero : Nat -> Bool :=
+  {n} -> case_value Nat ({_} -> Bool) { zero := true; succ := {_k} -> false } n
+
+double : Nat -> Nat :=
+  {n} -> add n n
+
+// ── proof terms ──
+add_zero_l : {n : Nat} -> Eq Nat (add 0 n) n :=
+  {n} -> refl
+
+add_zero_r : {n : Nat} -> Eq Nat (add n 0) n :=
+  {n} ->
+    nat_rec
+      ({k} -> Eq Nat (add k 0) k)
+      refl
+      ({k, ih} -> eq_cong Nat Nat succ (add k 0) k ih)
+      n
+
+add_succ_r : {n : Nat} -> Eq Nat (add n 1) (succ n) :=
+  {n} ->
+    nat_rec
+      ({k} -> Eq Nat (add k 1) (succ k))
+      refl
+      ({k, ih} -> eq_cong Nat Nat succ (add k 1) (succ k) ih) // succ both sides of ih
+      n
+
+// add_comm is intentionally omitted: a `{m} -> refl` base would claim
+// Eq Nat (add 0 m) (add m 0), but `add m 0` does not reduce to `m` for a
+// symbolic `m`, so it is not refl-provable. A real commutativity proof needs
+// induction with eq_cong/eq_subst.

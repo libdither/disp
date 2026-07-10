@@ -24,7 +24,7 @@ test param_apply (Arrow FnT Type) P_good = Ok true
 
 // ── (2) the unsoundness, concretely: pointwise-equal, tree-distinct identities
 let idA := {xs} -> xs
-let idB := {xs} -> list_map ({x} -> x) xs
+let idB := {xs} -> list_map Nat ({x} -> x) xs
 test tree_eq (P_bad idA) Unit  = true
 test tree_eq (P_bad idB) False = true
 test typecheck (P_good idA) refl = Ok true

@@ -20,7 +20,7 @@
 //     the deep Eff stay one-path (the standing hazard-0a limit, eff_deep_proto).
 // Baseline (rust-eager-native, 2026-07-08): ~24s wall.
 open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 open use "../std/list.disp"
 open use "../std/effect.disp"
 
@@ -47,7 +47,7 @@ test pair_fst (run_pure ((handle state_h prog1) 3)) = 6
 test pair_snd (run_pure ((handle state_h prog1) 3)) = 4
 // (concat_map comes from std/list.disp)
 let choose := mk_op "Nondet" "choose" Tree Tree
-let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map resume cands)
+let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map Tree resume cands)
 let progN := eff_bind (choose (cons 1 (cons 2 nil))) ({n} -> io_pure (double n))
 test tree_eq (handle nondet_h progN) (cons 2 (cons 4 nil)) = true
 // THE TYPED ELIMINATION: a consumer of an ABSTRACT effectful value, every arm

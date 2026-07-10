@@ -24,7 +24,7 @@
 // Pinned side by side at the bottom: one program, several interpreters.
 // Baseline (rust-eager-native, 2026-07-08): ~25s wall, 12 pins.
 open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 open use "../std/list.disp"
 open use "../std/effect.disp"
 open use "../std/pair.disp"
@@ -72,7 +72,7 @@ let synth_obs := {ty, getr, resume} -> (
     Err _ => nil
   })
 let synth_on := {op} -> {arg, resume} -> (
-  if (tree_eq (op_name op) "mint") then (concat_map resume (enum_of arg))
+  if (tree_eq (op_name op) "mint") then (concat_map Tree resume (enum_of arg))
   else (if (tree_eq (op_name op) "obs") then (synth_obs (pair_fst arg) (pair_snd arg) resume)
   else (if (tree_eq (op_name op) "guard") then (match (apply_policed (pair_fst arg) (pair_snd arg)) { Ok b => (if b then (resume (pair_snd arg)) else nil); Err _ => nil })
   else (synth_obs (pair_fst (pair_snd arg)) (pair_fst (pair_snd (pair_snd arg))) resume))))

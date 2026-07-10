@@ -3,7 +3,7 @@
 // rejections (missing fill, unknown fill, ill-typed fill, root-level given)
 // are LOAD failures, pinned host-side in test/modules.test.ts.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"   // add
+open use "../std/nat.disp"   // add
 
 // ── explicit fill; the default covers `start` ──
 m := use "given_mod.disp" { add := add }

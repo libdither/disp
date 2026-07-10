@@ -9,8 +9,7 @@
 // (weakening = containment; a handler DISCHARGES its row entry; effect
 // safety as an ordinary Refinement type through param_apply).
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 open use "../std/list.disp"
 open use "../std/effect.disp"
 
@@ -54,7 +53,7 @@ test pair_snd (run_pure (run_state 0 caught)) = 2
 // free because a continuation is a pure value ──
 // (concat_map comes from std/list.disp)
 let choose := mk_op "Nondet" "choose" Tree Tree
-let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map resume cands)
+let nondet_h := mk_handler (covers_eff "Nondet") ({x} -> cons x nil) ({op} -> {cands, resume} -> concat_map Tree resume cands)
 let progN := eff_bind (choose (cons 1 (cons 2 nil))) ({n} -> io_pure (double n))
 test tree_eq (handle nondet_h progN) (cons 2 (cons 4 nil)) = true
 

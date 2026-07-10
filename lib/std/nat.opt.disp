@@ -1,4 +1,4 @@
-// arith.opt: the optimized face of arith — a PARALLEL module, not a trailing
+// nat.opt: the optimized face of nat — a PARALLEL module, not a trailing
 // overlay. It opens the spec (each name arrives with its guard and its contract
 // riding the open) and rebinds under those licenses: every rebind below is a
 // { new, proof } payload the incumbent guard checks HERE, at this file's load —
@@ -9,8 +9,8 @@
 // no shared type names: the contract rides the name itself (the rebound Defs
 // inherit the spec annotations and re-verify the fast trees at them). A future
 // optimizer emits files of exactly this shape — (e', cert) per definition.
-open use "arith.disp"
-open use "../../kernel/prelude.disp"
+open use "nat.disp"
+open use "../kernel/prelude.disp"
 
 // nat_rec_fast: the kernel recursor with a fast CONCRETE path. A neutral target
 // delegates to nat_rec VERBATIM — the SPEC nat_rec baked below, before the

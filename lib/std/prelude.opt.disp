@@ -7,4 +7,5 @@
 // the kernel prelude / the spec modules directly for the spec faces. New
 // overlays join by adding one open here.
 open use "../kernel/prelude.disp"
-open use "nat/arith.opt.disp"
+open use "nat.opt.disp"
+open use "case.opt.disp"

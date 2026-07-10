@@ -30,5 +30,5 @@ vsingleton : Nat -> VecNat 1 :=
   {x} -> singleton x
 
 vappend :=
-  {n} -> {m} -> {xs} -> {ys} -> list_append xs ys
+  {n} -> {m} -> {xs} -> {ys} -> list_append Nat xs ys
 

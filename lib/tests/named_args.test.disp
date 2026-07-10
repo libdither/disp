@@ -10,8 +10,8 @@
 // with `tree_eq`. (See SYNTAX.typ § application — the calling convention.)
 
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"   // add
-open use "../std/nat/ops.disp"     // double
+open use "../std/nat.disp"   // add
+open use "../std/nat.disp"     // double
 
 // An order-SENSITIVE 2-arg function: f x y = x + 2y. (A wrong arg→param mapping
 // would compute a different Nat, so the compute-correctness tests are real.)

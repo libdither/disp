@@ -37,7 +37,7 @@
 //       capability, a second Reflect op in the production shape) and the §7A
 //       policed route are DELEGATED verbatim, marked inline.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 open use "../std/effect.disp"
 
 // ── the Reflect effect: one op, the observation interface as its answer ──

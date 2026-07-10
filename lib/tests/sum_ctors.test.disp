@@ -5,7 +5,7 @@
 // Err >` keeps the engine's constructors. Parameterized sums bind the same
 // constructors (they never mention the params).
 open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 
 // ---- a plain enum: nullary constructors bind ----
 Color : Type := < red, green, blue >

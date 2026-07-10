@@ -31,7 +31,7 @@ let nat_rec_gen := nat_rec
 NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
 
 open use "../std/prelude.opt.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 
 // ── (e) the overlay landed: the in-scope names are the fast trees
 test tree_eq nat_rec nat_rec_fast = true
@@ -76,4 +76,3 @@ test pred 5 = 4
 test is_zero 0 = true
 test is_zero 3 = false
 test double 21 = 42
-test add1 41 = 42

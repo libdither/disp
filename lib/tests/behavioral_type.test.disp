@@ -7,7 +7,7 @@
 // walk the SS7A token gives each nested check a FRESH NATIVE walker, so nesting FLATTENS —
 // the former every-backend OOM (r6_merge_proto RESIDUAL: rust-eager 3.4GiB abort) is gone.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 // ── the old OOM pins: the universe check nested under other walkers ──
 test tree_eq (param_apply Type Bool) (Ok true) = true

@@ -17,7 +17,7 @@
 //       proofs erase to one value in this system, so refl is THE candidate.
 // Baseline (rust-eager-native, 2026-07-08): ~22s wall, 26 pins.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 open use "../std/list.disp"
 open use "../std/demand.disp"
 
@@ -74,7 +74,7 @@ let filter_mem := {ty, l} -> (fix ({self, l2} -> if (is_fork l2) then (if (membe
 let synth_go := fix ({self, cells, names, vals} ->
   if (is_fork cells) then {
     let m := type_meta (pair_fst cells)
-    concat_map ({c} -> self ((pair_snd cells) c) (cons (m.name) names) (cons (list_const c) vals)) (filter_mem (m.ty) (enum_of (m.ty)))
+    concat_map Tree ({c} -> self ((pair_snd cells) c) (cons (m.name) names) (cons (list_const c) vals)) (filter_mem (m.ty) (enum_of (m.ty)))
   } else (cons (make_record (list_rev names nil) (list_rev vals nil)) nil))
 let synth_record := {T} -> synth_go ((type_meta T).recognizer_params) nil nil
 // (list_length comes from std/list.disp)

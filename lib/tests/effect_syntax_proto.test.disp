@@ -21,7 +21,7 @@
 // investigation into the landing: op/op0/ops + the arrow member + the
 // request-sum face all pinned here).
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 open use "../std/demand.disp"
 open use "../std/effect.disp"
 

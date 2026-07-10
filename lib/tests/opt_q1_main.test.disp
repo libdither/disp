@@ -3,12 +3,14 @@
 //
 // KEY FINDING (the reason this needed care). A function used in a DEPENDENT MOTIVE is applied by the
 // coherence gate to a HYPOTHESIS (the induction variable, minted fresh). So it must be WALKER-SAFE:
-// it must reduce to a clean stuck neutral on a hyp, NOT raw-`triage` on it. The std `list_length` /
-// `list_map` are defined by raw `triage`/`fix` on the shape (for runtime speed), so applying them to a
-// hyp trips the walker's triage-on-neutral abort — they CANNOT appear in a motive. (Confirmed by
-// bisection: a motive applying `list_length xs_` is rejected; constants and fixed-list applications
-// pass.) This mirrors `add`, which `std/nat/arith.disp` deliberately routes through `nat_rec` "to keep
-// the body walker-safe". So we use walker-safe `len`/`mp` built from the kernel recursor `rec_value`.
+// it must reduce to a clean stuck neutral on a hyp, NOT raw-`triage` on it. At the time of this
+// experiment the std `list_length` / `list_map` were raw `triage`/`fix` on the shape, so applying
+// them to a hyp tripped the walker's triage-on-neutral abort — they could NOT appear in a motive.
+// (Confirmed by bisection: a motive applying `list_length xs_` was rejected; constants and
+// fixed-list applications passed.) That finding DROVE the std rewrite: list.disp's toolkit is now
+// eliminator-routed and annotated, mirroring `add`, which `std/nat.disp` deliberately routes
+// through `nat_rec` "to keep the body walker-safe". This file keeps its own local walker-safe
+// `len`/`mp` so the experiment stays self-contained.
 
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"

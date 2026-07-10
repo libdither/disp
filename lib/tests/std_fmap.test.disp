@@ -3,8 +3,7 @@
 // test pins that, and that the generic subsumes the hand-written `option_map`/`result_map`.
 
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 open use "../std/option.disp"
 open use "../std/result.disp"
 open use "../std/either.disp"
@@ -44,7 +43,7 @@ test typecheck (Either Nat Bool) (bimap (Either Nat Bool) succ ({b} -> b) (left 
 // not just inj-tagged types. (Nat/Ord are shape-encoded too; they carry no Param, so fmap = id.) ──
 test fmap (List Nat) succ nil                              = nil
 test fmap (List Nat) succ (cons 1 (cons 2 (cons 3 nil)))  = cons 2 (cons 3 (cons 4 nil))   // maps each element through the iso
-test fmap (List Nat) succ (cons 1 (cons 2 nil))           = list_map succ (cons 1 (cons 2 nil)) // generic == bespoke list_map
+test fmap (List Nat) succ (cons 1 (cons 2 nil))           = list_map Nat succ (cons 1 (cons 2 nil)) // generic == bespoke list_map
 test typecheck (List Nat) (fmap (List Nat) succ (cons 1 nil)) = Ok true
 // fold_value auto-reads the type's view from `functor` -> works on shape-encoded List with NO explicit view
 test fold_value (List Nat) { nil := zero; cons := add } (cons 1 (cons 2 (cons 3 nil))) = 6  // sum

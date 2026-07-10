@@ -6,8 +6,7 @@
 // is untouched (no `rs` change, existing ops/fold/recursor unchanged).
 
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 
 // inj-tagged, param-marked types via the kernel `Coproduct_p` (Param 0/1 = type params; Rec = direct μ).
 let List   := {A}    -> Coproduct_p (cons A nil) [pair "nil" [], pair "cons" [Param zero, Rec]]

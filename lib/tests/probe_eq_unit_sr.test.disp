@@ -4,7 +4,7 @@
 // Unit checks its `unit` case : motive unit_val (base.disp `coh_unit`). The safe eq_J API is
 // unaffected (it always passes base : motive x). See ACTIVE_BUGS.md item 1.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 let one := succ zero
 

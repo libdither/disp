@@ -3,7 +3,7 @@
 // the body is never checked against the neutral's domain (the Pi respond extends at the
 // codomain without checking arg : dom). So argument-position type errors pass.
 open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 // g claims (Nat -> Nat) -> Nat, but applies its argument k to `false` (not a Nat).
 let g := {k} -> succ (k false)
