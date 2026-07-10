@@ -52,6 +52,15 @@ export function collectFreeVars(e: Cir, bound: Set<string>, out: string[], seen:
   }
 }
 
+// [name]body — bracket abstraction of one binder, with the rewrites that keep
+// the emitted tree small. Every rewrite is part of definitional equality
+// (deterministic: same body always yields the same tree):
+//   x ∉ body               → K body
+//   [x]x                   → I
+//   [x](f x) with x ∉ f    → f          (η, before recursing into the app)
+//   S (K p) I              → p          (η, after recursing)
+//   S (K p) (K q)          → K (p q)    (K-composition — evaluates at compile time)
+// The lam case is nested abstraction, innermost binder first.
 function abstractName(name: string, body: Cir): Cir {
   if (!containsFree(body, name)) return cap(K, body)
   switch (body.tag) {

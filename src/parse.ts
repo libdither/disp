@@ -1081,7 +1081,15 @@ function scanForBareEq(ts: Tok[], q: number): boolean {
   return false
 }
 
-// Peek at tokens after "{" to classify the braced content.
+// Peek at tokens after "{" to classify the braced content. Decision order:
+//   bare `lhs = rhs` member anywhere       → recValue (block carrying an equation/test)
+//   `_ :`                                  → recTypeOrBinder; any other `_ …` → binder
+//   `x }` / `x ,`                          → binder (parameter list)
+//   `let x` / `x :=` / `x <-`              → recValue (member vocabulary opens a body)
+//   `x : T` with a `:=` later in the member → recValue (typed field), else recTypeOrBinder
+//   `x ;` / `x NL id` with a later `:=`    → recValue (leading field pun)
+//   anything else                          → binder
+// "recTypeOrBinder" is settled by the caller: a following `->` reparses as binder.
 function classifyBracedContent(ts: Tok[], pos: number): "recValue" | "binder" | "recTypeOrBinder" {
   if (scanForBareEq(ts, pos)) return "recValue" // an equation member → block/recValue body
   let p = pos

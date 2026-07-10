@@ -153,6 +153,10 @@ export function beginScope(): void {
 }
 
 export function endScope(keep: Tree[]): void {
+  // Three phases: (1) mark everything reachable from `keep`; (2) sweep this
+  // scope's intern log, un-interning unmarked nodes; (3) prune the apply memo
+  // of entries touching freed ids and clear the recycled stack slots, so
+  // nothing pins the freed objects against V8's collection.
   const frame = scopeStack.pop()
   if (!frame) return
   const wm = frame.watermarkId
@@ -475,6 +479,14 @@ export class BudgetExhausted extends Error {
 
 // Fully iterative apply with explicit continuation stack.
 // No recursive calls — all evaluation driven by the main loop.
+//
+// The loop is a defunctionalized CPS machine: a rule that needs a sub-result
+// pushes a frame and jumps to evaluating the sub-problem; `deliver` pops
+// frames until one wants more work (or the stack drains to baseTop = done).
+//   ApplyTo(arg)        — result is the operator: continue with result(arg)
+//   ApplyResultTo(func) — result is the operand:  continue with func(result)
+//   Memo(f, x)          — write result into the apply memo for (f, x); keep popping
+//   SAfterCx(b, origX)  — the S rule's join point after c(x); see deliver
 
 const enum ContKind { ApplyTo, ApplyResultTo, Memo, SAfterCx }
 
@@ -556,7 +568,10 @@ export function apply(fInit: Tree, xInit: Tree, budget: { remaining: number; lim
         }
         continue  // keep popping
       }
-      // SAfterCx
+      // SAfterCx: result = c(x) for the S rule (fork(stem(c), b) · x).
+      //   K-discard : c(x) = K(w) → answer is w, (b x) is dead and never evaluated
+      //   C fast-path: b = K(u)   → answer is c(x)(u), no (b x) application
+      //   general    : evaluate b(origX), then ApplyResultTo feeds it to c(x)
       const sb = slot.b, sOrigX = slot.origX
       stackTop = i
       const cx = result

@@ -224,6 +224,17 @@ export function parseProgram(src: string, sourcePath?: string, options: ParsePro
 }
 
 function parseProgramBody(src: string, sourcePath: string | undefined, options: ParseProgramOptions): Decl[] {
+  // The whole elaboration pipeline in one closure. Layout, top to bottom:
+  //   state                      — scope stack, decl sink, dir/source stacks,
+  //                                the deferred-verification queue (below)
+  //   lookupEntry/define         — scope access
+  //   resolveUse                 — module loading: hermetic cache, givens/fills,
+  //                                functor face, license replay
+  //   compileParts…declareBinding — expression compilation + the declaration
+  //                                protocol (guards); handleGiven = module deps
+  //   runItem                    — per-item dispatch (field/let/test/open/given)
+  //   tail (bottom of function)  — parse items, run each, force ALL deferred
+  //                                verifications in one batch, return decls
   const stack: Map<string, ScopeEntry>[] = [new Map()]
   const decls: Decl[] = []
   const dirStack = [sourcePath ? dirname(pathResolve(sourcePath)) : process.cwd()]
