@@ -73,24 +73,44 @@ ord_rec : {P : Ord -> Type} -> P zero_ord -> ({a : Ord} -> {b : Ord} -> P a -> P
 
 // case_value (the ONE-LEVEL case eliminator — match as polarized application). The same
 // dispatch as rec_value (functor-view decode, arm lookup, raw args by accessor) with NO
-// recursion: each recursive position receives an inert leaf where the recursor passes the
-// IH, so arms stay recursor-shaped (`succ := {k} -> {_ih} -> …`, the phantom-IH idiom) and
-// a NEUTRAL target routes through the SAME gated respond as rec_value — one gate, two
-// eliminators. Use it where a branch needs the raw sub-structure without paying the
-// recursor's eager IH (typed pred/is_zero drop O(n) -> O(1)); raw `match` stays the
-// substrate cut for raw sums and dispatcher internals (it fails closed on a hyp — pinned
-// in case_value.test.disp along with both of case_value's faces).
-let dummy_ih_args := fix ({self, cells} ->
-  if (is_fork cells) then {
-    let rest := self ((pair_snd cells) t)
-    if (is_self_rec (pair_fst cells)) then (cons t rest) else rest
-  } else nil)
+// recursion — and CASE-SHAPED arms: an arm takes exactly its constructor's raw args
+// (`succ := {k} -> k`), no phantom-IH binders. The concrete face applies raw args only;
+// the NEUTRAL face pads each arm to recursor shape at runtime (pad_cases below) and
+// routes through the SAME gated respond as rec_value — one gate, two eliminators, and
+// the padding runs only on the lazy neutral branch. Use it where a branch needs the raw
+// sub-structure without paying the recursor's eager IH (typed pred/is_zero drop
+// O(n) -> O(1)); raw `match` stays the substrate cut for raw sums and dispatcher
+// internals (it fails closed on a hyp — pinned in case_value.test.disp along with both
+// of case_value's faces).
 let case_dispatcher := {T, motive, cases, v} -> {
   let dec := match ((pair_fst (type_meta T).functor) v) { Ok tg => tg; Err _ => v }
   let cells := (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
-  apply_all (field cases (pair_fst dec)) (list_cat (all_args cells (pair_snd dec)) (dummy_ih_args cells))
+  apply_all (field cases (pair_fst dec)) (all_args cells (pair_snd dec))
 }
-case_value := {T, motive, cases, target} -> elim (case_dispatcher T) motive cases target
+// pad_cases: rebuild the case record over T's variant list (canonical order), each arm
+// padded to recursor shape for the gate — consume the raw args, then absorb one ignored
+// IH per Rec cell via `list_const` (fork(leaf, v): applied to the minted IH it answers v
+// by the K rule, no triage, so the absorber certifies and keeps the certificate honest).
+// A missing arm projects junk and the gate rejects (self-enforcing totality).
+let absorb_recs := fix ({self, cells, v} ->
+  if (is_fork cells) then {
+    let rest := self ((pair_snd cells) t) v
+    if (is_self_rec (pair_fst cells)) then (list_const rest) else rest
+  } else v)
+let pad_arm := fix ({self, cells, all, f} ->
+  if (is_fork cells) then ({x} -> self ((pair_snd cells) t) all (f x)) else (absorb_recs all f))
+let arm_names := fix ({self, vs} -> if (is_fork vs) then (cons (pair_fst (pair_fst vs)) (self (pair_snd vs))) else nil)
+let pad_go := fix ({self, vs, cases} ->
+  if (is_fork vs) then {
+    let cells := pos_tele (pair_snd (pair_fst vs))
+    cons (list_const (pad_arm cells cells (field cases (pair_fst (pair_fst vs))))) (self (pair_snd vs) cases)
+  } else nil)
+let pad_cases := {T, cases} -> make_record (arm_names ((type_meta T).recognizer_params)) (pad_go ((type_meta T).recognizer_params) cases)
+case_value := {T, motive, cases, target} ->
+  select_lazy
+    ({_} -> target { motive := motive; cases := pad_cases T cases })
+    ({_} -> case_dispatcher T motive cases target)
+    (is_neutral target)
 
 // children (generic TRAVERSAL): the immediate recursive sub-values of `v`, read off the cells (the
 // `is_rec_cell` positions, not folded) — raw material for size/depth over ANY inductive, no per-type code.

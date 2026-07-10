@@ -8,14 +8,16 @@
 // types (Nat/Bool/Ord carry no string tags), so match on those is wrong even
 // concretely.
 //
-// case_value T motive cases target = elim (case_dispatcher T) — the same
-// polarized application as rec_value (neutral drives through the type's gated
-// respond; concrete data is read by the dispatcher), with NO recursion: each
-// recursive position receives an inert leaf where the recursor passes the IH.
-// Arms stay recursor-shaped ({k} -> {_ih} -> …, the phantom-IH idiom), so the
-// neutral face rides the SAME coherence gate as rec_value — one gate, two
-// eliminators. For a NON-recursive inductive the two eliminators coincide
-// (no Rec cells = no IH args), pinned below.
+// case_value T motive cases target — the same polarized application as
+// rec_value (neutral drives through the type's gated respond; concrete data is
+// read by the dispatcher), with NO recursion and CASE-SHAPED arms: an arm takes
+// exactly its constructor's raw args ({k} -> k). The concrete face applies raw
+// args only; the neutral face pads each arm to recursor shape at runtime (one
+// `list_const` absorber per Rec position — fork(leaf, v) eats the ignored IH by
+// the K rule) and rides the SAME coherence gate as rec_value — one gate, two
+// eliminators, padding only on the lazy neutral branch. For a NON-recursive
+// inductive the two eliminators coincide (no Rec cells = no IH args), pinned
+// below.
 open use "../kernel/prelude.disp"
 
 // ── the gap (raw match, both failure modes) ──
@@ -43,15 +45,18 @@ test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> case_value ShapeC ({_} -> Nat)
 
 // ── case_value on a RECURSIVE shape-encoded inductive: one level, O(1) ──
 // binds the RAW predecessor (no recursion, no IH computation), certifies:
-pred_case : Nat -> Nat := {n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> {_ih} -> k } n
+pred_case : Nat -> Nat := {n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> k } n
 test pred_case 0 = 0
 test pred_case (succ zero) = zero
 test pred_case (succ (succ zero)) = succ zero
 test pred_case 7 = 6
-is_zero_case : Nat -> Bool := {n} -> case_value Nat ({_} -> Bool) { zero := true; succ := {_k} -> {_ih} -> false } n
+is_zero_case : Nat -> Bool := {n} -> case_value Nat ({_} -> Bool) { zero := true; succ := {_k} -> false } n
 test is_zero_case 0 = true
 test is_zero_case 3 = false
 // the certificates are real: flip an arm and the check flips:
-test param_apply (Pi Nat ({_} -> Nat)) ({n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> {_ih} -> false } n) = Ok false
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> false } n) = Ok false
 // dependent motive, written explicitly (the mandatory-motive doctrine):
-test param_apply (Pi Nat ({n} -> Eq Nat (pred_case (succ n)) n)) ({n} -> case_value Nat ({m} -> Eq Nat (pred_case (succ m)) m) { zero := refl; succ := {k} -> {_ih} -> refl } n) = Ok true
+test param_apply (Pi Nat ({n} -> Eq Nat (pred_case (succ n)) n)) ({n} -> case_value Nat ({m} -> Eq Nat (pred_case (succ m)) m) { zero := refl; succ := {k} -> refl } n) = Ok true
+// a STALE recursor-shaped arm ({k} -> {_ih} -> k) fails LOUDLY on the concrete
+// face (the raw args saturate it into the unapplied phantom lambda, not k):
+test tree_eq (case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> {_ih} -> k } (succ zero)) zero = false
