@@ -206,10 +206,26 @@ and layer-exhaustion rerouting.
   erasure release them; vacancy diffusion carries free space toward allocation pressure.
   Physical memory exhaustion appears as sustained pressure with no relief, i.e. OOM is a
   local, observable condition.
-- **GC**: ε waves work as-is. The δⁿ parked-agent leak that forces wire-RC in
-  `RUST_IC_NET_DESIGN.md` §5 gets a geometric answer: the refcount back-channel becomes a
-  physical pulse sent down the parked wire when both outputs die. Parked agents are idle
-  cells, so laziness is literally clock gating.
+- **GC**: ε waves work as-is. The δⁿ parked-agent problem that motivates wire-RC in
+  `RUST_IC_NET_DESIGN.md` §5 gets a geometric answer, now backed by the pointer-machine
+  implementation (its `rc.rs`): death is not counted, it propagates. An ε parked at a
+  wire's far end flips the wire's cells to a draining state one cell per tick, a back-pulse
+  traveling against value polarity as a substrate-level signal (the §2.2 note). The δⁿ
+  cell keeps a one-dead bit (the entire refcount is one bit of local agent state); the
+  second pulse transmutes it into an ε facing its parked principal, cascading the drain up
+  the demand chain. The pointer machine needed side tables as hints plus authoritative
+  re-checks against live cells; the lattice needs neither, because the wire is the
+  channel: a death pulse can only race the value arriving from the other end, whichever
+  reaches a cell first wins, and both orders are sound (pulse meets value as plain ε
+  against the value). The pulse is priced as transport (one unit per cell crossed), so
+  cancellation nets positive exactly when the erased subnet exceeds the wire length.
+  Parked agents are idle cells, so laziness is literally clock gating, and the death pulse
+  is the one signal that re-activates a parked cell. One measured caveat transfers
+  (§10.3 finding 4): doubly-dead cancellation is the local-rule-expressible part of GC,
+  and under an eager fire-everything drain it trims little, because that drain's real
+  costs are the live copy frontier and speculative evaluation of discarded branches. The
+  CA defaults to demand-driven firing (parked = idle), which is exactly where that
+  speculative waste never starts.
 - **Graded lowering unchanged**: the strictness bit injects `E` demands; the usage grade
   picks the δ species (`RUST_IC_NET_DESIGN.md` §7 transfers verbatim; the coeffect story is
   substrate-independent).
@@ -704,13 +720,19 @@ Findings:
 4. **The kernel-elaborated class is out of rung C's reach on this backend.** One
    `param_apply Bool true` membership check exceeds 2×10⁸ interactions (so do `param_apply
    Nat n` and 24-layer `nat_rec` addition), and in-language `tree_eq` over a 12.5 MB
-   kernel term strands more than 2.7×10⁸ live cells (the parked-δⁿ leak; wire-RC is the
-   standing M2 item, `RUST_IC_NET_DESIGN.md` §5). Two readings. As a measurement gap: the
+   kernel term exceeds 2.7×10⁸ live cells. A follow-up landed the doubly-dead δⁿ
+   cancellation (the targeted wire-RC of `RUST_IC_NET_DESIGN.md` §5, `rc.rs`) and
+   corrected the first attribution: cancellation is correct and fires where
+   doubly-discarded sharing exists (thousands of cancels on fib, NF byte-identical), but
+   the kernel tier's cells are not that leak (cancels ≈ 0 on the tree_eq workload); the
+   growth is the live copy-on-demand frontier plus the fire-everything drain speculatively
+   evaluating branches the checker discards. Two readings. As a measurement gap: the
    checker-shaped exponent, the one §4.3 guessed "plausibly tree-local", stays open until
-   wire-RC lands plus either a native tree_eq machine on the net or a leaner check path. As
-   positioning: §14.4 item 5's "not a checker speedup" is now an empirical bound (a
-   membership check that costs ≥ 2×10⁸ interactions here is ~10⁴ steps on the hash-consed
-   backend), quantifying the memo dividend by its absence.
+   the M2 demand-driven schedule lands (unneeded demands then never start, with full
+   wire-RC as its GC) or a native tree_eq machine shortcuts conversion. As positioning:
+   §14.4 item 5's "not a checker speedup" is now an empirical bound (a membership check
+   that costs ≥ 2×10⁸ interactions here is ~10⁴ steps on the hash-consed backend),
+   quantifying the memo dividend by its absence.
 5. **Read the numbers with their error bars.** Four workloads, 10⁵–10⁸ events, one seed,
    prefix windows on the two big traces, dependencies deduped per pair, and a partitioner
    that reads ~0.02 high at 0.5 and ~0.1 low at 1.0. The band verdict survives all of that;
@@ -749,6 +771,16 @@ zero copies moved. Concretely:
 - Metrics: cross-tile interaction fraction, LLC misses per interaction, throughput vs the
   work-stealing baseline, and tile-boundary traffic (a live coarse Rent readout
   cross-checking §10).
+
+Landed in `rust-ic-net` (`tiled.rs`), with two mechanisms the design above did not
+predict but needs: a one-hop var-cell peek at allocation (aux hints are almost always
+unresolved wires at birth time, so the naive principal-wire hint covers nothing) and
+oldest-half bag donation on idle (depth-first bags otherwise strand the whole frontier
+with one worker). Measured: birth placement is real on demand spines (fib at 98 to 100%
+same-tile up to 8 tiles, 6.6× internal scaling, within 11% of the work-stealing drain);
+the packed-load adversarial case is closed by tile-aware loading (build the initial term
+across stripes; wide cross-tile 0.21/0.15/0.28 down to 0.01/0.03/0.03 at 2/4/8 threads,
+1.5 to 3× faster, scaling restored where the naive load got worse with tile count).
 
 ### 12.2 GPU: persistent regions
 

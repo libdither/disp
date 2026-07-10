@@ -200,6 +200,20 @@ the lazy-verification experiment hit on `rust-eager`). The design:
    watermark — and a *validator*: in test builds assert "tracing frees ∅" (acyclic ⇒ RC
    should leave nothing), the same in-language-reference discipline as `tree_eq`.
 
+Status: the targeted fix landed in minimal form (`rc.rs`, sequential, opt-in `-rc`):
+doubly-dead parked-δⁿ cancellation by parked-ε detection instead of counters
+(`pack(EPS,0)` is a unique death certificate readable in one load), side tables as hints
+with every cancel condition re-derived from live cells, three sites (the ε-park
+back-pulse, a δⁿ⊗P park pre-check that erases the suspension unevaluated, a δ⊗value copy
+skip). Correct and firing (fib: ~2.2K cancels, NF byte-identical; tests pin NF
+preservation, the no-op trace on discard-free workloads, and the peak-cells win). The
+measured surprise: the kernel-tier explosions this leak was blamed for are mostly NOT
+doubly-dead sharing (cancels ≈ 0 on the tree_eq workload); they are the live
+copy-on-demand frontier plus the eager fire-everything drain speculating on discarded
+branches. So the counting RC of item 2 pays off together with the M2 demand schedule
+(where unneeded demands never start and the true strand appears), not before it; item 2's
+atomics + item 3's epoch reclamation remain the parallel/lazy plan.
+
 ## 6. Scheduler & allocator (crossbeam)
 
 - **Per-worker LIFO work-stealing deque** (`crossbeam-deque`: `Worker`/`Stealer` +

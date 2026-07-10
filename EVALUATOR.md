@@ -68,7 +68,9 @@ build artifact exists, so `npm test` never needs a toolchain.
   SAME depth — a backend that is stricter than its peers hangs on kernel loads its peers
   pass (this bit disp-eager's S-rule pre-shortcut until 2026-07-07; see the comment at the
   fix site in `src/core/tree.ts`). A new backend should differential-test *termination on a
-  kernel load*, not only NFs of terminating fixtures.
+  kernel load*, not only NFs of terminating fixtures. rust-ic-net's opt-in `-rc`
+  cancellation (`crate/src/rc.rs`) erases doubly-discarded shared demands, moving the net
+  toward the eager backends' discard domain (it only ever terminates more programs).
 - **disp-eager's operating envelope.** Both oracle modes work. Per-file:
   `tsx src/run.ts --evaluator=eager <file>` (a kernel-loading file ≈ 2min, 8GB heap).
   Full suite in one process: `DISP_EVALUATOR=eager NODE_OPTIONS=--max-old-space-size=12288
