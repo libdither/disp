@@ -29,6 +29,10 @@ mod codec;
 mod ffi;
 mod net;
 mod port;
+// Wire-RC rides `Worker` (net.rs) like the tracer/tiles, so the module compiles on wasm
+// too; only the native `-rc` entry point constructs it, leaving it dead on wasm.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+mod rc;
 mod reduce;
 // The tile types ride `Worker` (net.rs), so the module compiles on wasm too; the driver
 // (threads) is cfg-excluded there, leaving the driver-only constructors dead on wasm.
@@ -45,8 +49,8 @@ mod parallel;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use bench::{
-    reduce_fold_tiled, reduce_fold_timed, reduce_fold_traced, reduce_wide_tiled,
-    reduce_wide_timed, TraceReport,
+    reduce_fold_rc, reduce_fold_tiled, reduce_fold_timed, reduce_fold_traced,
+    reduce_wide_tiled, reduce_wide_timed, RcReport, TraceReport,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use tiled::TiledStats;

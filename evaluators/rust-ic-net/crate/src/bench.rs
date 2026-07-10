@@ -72,19 +72,22 @@ fn load_fold(net: &Net, terms: &[Vec<u8>]) -> Option<u32> {
 }
 /// Left-fold apply over ternary `terms`, force full NF, serialize — the batch.ts contract.
 /// `node_cap`/`var_cap` size the arenas (the CLI's `-nodes`/`-vars`; NODE_CAP default).
+/// The fourth field is peak node cells (the bump high-water), for peak comparisons
+/// against the rc/tiled modes.
 pub fn reduce_fold_timed(
     terms: &[Vec<u8>],
     threads: usize,
     budget: i64,
     node_cap: usize,
     var_cap: usize,
-) -> Option<(String, f64, u64)> {
+) -> Option<(String, f64, u64, u64)> {
     let net = Net::new(node_cap, var_cap);
     let t0 = std::time::Instant::now();
     let h = load_fold(&net, terms)?;
     let nf = force_emit(&net, h, threads, budget)?;
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
-    Some((nf, ms, net.interactions.load(Ordering::Relaxed)))
+    let peak = net.node_top.load(Ordering::Relaxed) as u64;
+    Some((nf, ms, net.interactions.load(Ordering::Relaxed), peak))
 }
 /// `reduce_fold_timed` on the tiled drain; the fourth field is the tiling metrics.
 pub fn reduce_fold_tiled(
@@ -101,6 +104,56 @@ pub fn reduce_fold_tiled(
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     Some((nf, ms, net.interactions.load(Ordering::Relaxed), stats))
 }
+/// Wire-RC run summary (rc.rs): cancellation counters + the peak-cell readout the
+/// mechanism exists to lower.
+pub struct RcReport {
+    pub cancels_at_eps: u64,
+    pub cancels_at_park: u64,
+    pub cancels_at_copy: u64,
+    pub peak_nodes: u64,
+}
+
+/// `reduce_fold_timed` with wire-RC cancellation on (rc.rs): sequential only, like the
+/// traced entry point. The NF is None on budget exhaustion, but the report (counters,
+/// peak) comes back either way: at-exhaustion counters are the diagnostic for whether
+/// cancellation is firing on a workload too big to finish.
+pub fn reduce_fold_rc(
+    terms: &[Vec<u8>],
+    budget: i64,
+    node_cap: usize,
+    var_cap: usize,
+) -> (Option<String>, f64, u64, RcReport) {
+    let net = Net::new(node_cap, var_cap);
+    let mut w = Worker::new();
+    w.rc = Some(Box::new(crate::rc::RcState::new(node_cap, var_cap)));
+    let t0 = std::time::Instant::now();
+    let nf = {
+        let mut c = net.ctx(&mut w);
+        let mut acc: Option<u32> = None;
+        for t in terms {
+            let mut i = 0usize;
+            let term = c.parse(t, &mut i);
+            acc = Some(acc.map_or(term, |f| c.susp(f, term)));
+        }
+        acc.and_then(|h| {
+            let mut b = budget;
+            let nf = c.full_nf(h, &mut b)?;
+            let mut out = Vec::new();
+            c.emit(nf, &mut out);
+            Some(String::from_utf8(out).expect("ternary is ascii"))
+        })
+    };
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let rc = w.rc.take().unwrap();
+    let report = RcReport {
+        cancels_at_eps: rc.cancels_at_eps,
+        cancels_at_park: rc.cancels_at_park,
+        cancels_at_copy: rc.cancels_at_copy,
+        peak_nodes: net.node_top.load(Ordering::Relaxed) as u64,
+    };
+    (nf, ms, net.interactions.load(Ordering::Relaxed), report)
+}
+
 /// E1 trace run summary (SPATIAL_IC.md §10; see trace.rs for the semantics).
 pub struct TraceReport {
     pub events: u64,
@@ -158,7 +211,7 @@ pub fn reduce_wide_timed(
     budget: i64,
     node_cap: usize,
     var_cap: usize,
-) -> Option<(String, f64, u64)> {
+) -> Option<(String, f64, u64, u64)> {
     let net = Net::new(node_cap, var_cap);
     let t0 = std::time::Instant::now();
     let h = {
@@ -168,7 +221,8 @@ pub fn reduce_wide_timed(
     };
     let nf = force_emit(&net, h, threads, budget)?;
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
-    Some((nf, ms, net.interactions.load(Ordering::Relaxed)))
+    let peak = net.node_top.load(Ordering::Relaxed) as u64;
+    Some((nf, ms, net.interactions.load(Ordering::Relaxed), peak))
 }
 /// `reduce_wide_timed` on the tiled drain; the fourth field is the tiling metrics.
 pub fn reduce_wide_tiled(

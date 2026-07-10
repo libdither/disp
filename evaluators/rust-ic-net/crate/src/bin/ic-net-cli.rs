@@ -8,6 +8,8 @@
 //   ic-net-cli -threads N -wide DEPTH CHAIN            # 2^DEPTH independent not^CHAIN chains
 //   ic-net-cli -tiled -threads N …                     # E3 tiled drain (tiled.rs); prints
 //                                                      # same/cross-tile metrics on stderr
+//   ic-net-cli -rc …                                   # wire-RC cancellation (rc.rs),
+//                                                      # sequential; counters on stderr
 //
 // E1 instrumentation (SPATIAL_IC.md §10; trace.rs):
 //   ic-net-cli -trace out.bin [-trace-limit N] [-nodes N] [-vars N] [-file terms.txt] t0 …
@@ -25,6 +27,7 @@ fn main() {
     let mut threads = 1usize;
     let mut budget: i64 = 8_000_000_000;
     let mut tiled = false;
+    let mut rc = false;
     let mut wide: Option<(usize, usize)> = None;
     let mut trace: Option<String> = None;
     let mut trace_limit: u64 = 200_000_000;
@@ -44,6 +47,9 @@ fn main() {
             }
             "-tiled" => {
                 tiled = true;
+            }
+            "-rc" => {
+                rc = true;
             }
             "-wide" => {
                 let d = args[i + 1].parse().unwrap_or(0);
@@ -83,8 +89,8 @@ fn main() {
     assert!(node_cap <= 1 << 28 && var_cap <= 1 << 28, "arena cap exceeds the 28-bit port index");
 
     if let Some(path) = trace {
-        if threads > 1 || tiled {
-            eprintln!("ic-net-cli: -trace is sequential-only (provenance tables are unsynchronized)");
+        if threads > 1 || tiled || rc {
+            eprintln!("ic-net-cli: -trace is sequential-only and exclusive of -tiled/-rc");
             std::process::exit(2);
         }
         if terms.is_empty() {
@@ -132,6 +138,36 @@ fn main() {
         std::process::exit(2);
     }
 
+    // Wire-RC cancellation (rc.rs): sequential fold only; stderr carries the counters.
+    if rc {
+        if threads > 1 || tiled {
+            eprintln!("ic-net-cli: -rc is sequential-only (cancellation state is unsynchronized)");
+            std::process::exit(2);
+        }
+        if terms.is_empty() {
+            eprintln!("ic-net-cli: -rc needs ternary terms (positional or -file)");
+            std::process::exit(2);
+        }
+        let (nf, ms, interactions, rep) =
+            rust_ic_net::reduce_fold_rc(&terms, budget, node_cap, var_cap);
+        let counters = format!(
+            "interactions={interactions} peak_nodes={} cancels_at_park={} cancels_at_copy={} cancels_at_eps={}",
+            rep.peak_nodes, rep.cancels_at_park, rep.cancels_at_copy, rep.cancels_at_eps
+        );
+        match nf {
+            Some(nf) => {
+                println!("{nf}");
+                eprintln!("reduce_ms={ms:.3} evaluator=ic-net-rc {counters}");
+            }
+            None => {
+                eprintln!("reduce_ms=NaN evaluator=ic-net-rc (budget exhausted) {counters}");
+                std::process::exit(1);
+            }
+        }
+        let _ = std::io::stdout().flush();
+        return;
+    }
+
     // E3 tiled drain: same stdout contract; stderr additionally carries the tiling
     // metrics (same/cross-tile routing = the live coarse Rent readout, SPATIAL_IC.md 10).
     if tiled {
@@ -173,9 +209,11 @@ fn main() {
     };
 
     match result {
-        Some((nf, ms, interactions)) => {
+        Some((nf, ms, interactions, peak)) => {
             println!("{nf}");
-            eprintln!("reduce_ms={ms:.3} evaluator=ic-net-{threads}t interactions={interactions}");
+            eprintln!(
+                "reduce_ms={ms:.3} evaluator=ic-net-{threads}t interactions={interactions} peak_nodes={peak}"
+            );
         }
         None => {
             eprintln!("reduce_ms=NaN evaluator=ic-net-{threads}t (budget exhausted)");

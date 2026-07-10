@@ -178,6 +178,29 @@ impl<'a> Ctx<'a> {
             DS | DN => {
                 let dl = self.nd(cb);
                 let dr = self.nd(cb + 1);
+                // Wire-RC (rc.rs): this duplicator just fired, so it is not parked; and if
+                // both its outputs are already discarded (a parked ε in each), forward the
+                // producer to ε instead of copying or demanding it — for δⁿ ⊗ P that
+                // erases the suspension unevaluated, killing the whole future demand
+                // chain. The producer node stays alive for the ε ⊗ producer redex.
+                if self.w.rc.is_some() {
+                    self.w.rc.as_mut().unwrap().dn_park[cb as usize] = crate::rc::RC_NULL;
+                    if self.rc_dead(dl) && self.rc_dead(dr) {
+                        {
+                            let rc = self.w.rc.as_mut().unwrap();
+                            if pt == P {
+                                rc.cancels_at_park += 1;
+                            } else {
+                                rc.cancels_at_copy += 1;
+                            }
+                        }
+                        self.rc_free_output(dl);
+                        self.rc_free_output(dr);
+                        self.link(pack(EPS, 0), p);
+                        self.free_node(cb, 2);
+                        return;
+                    }
+                }
                 let sp = ct;
                 match pt {
                     L => {

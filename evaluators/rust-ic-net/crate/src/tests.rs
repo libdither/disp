@@ -250,3 +250,97 @@ fn tiled_matches_sequential() {
         }
     }
 }
+
+// ── Wire-RC (rc.rs): doubly-dead parked-δⁿ cancellation ──
+
+/// `(△ (△ (K a)) (K b)) x` shares `x` through the S-rule's δⁿ, then both K-rules discard
+/// their copy: the δⁿ is doubly dead. With RC on, the (LIFO-ordered) ε-parks land before
+/// the δⁿ ⊗ P redex pops, so the pre-check at the park site forwards the suspension to ε
+/// unevaluated. NF is unchanged and the park-site cancel fires. What is saved on a linear
+/// chain is PEAK CELLS, not interactions: erasing an unevaluated not-chain costs about as
+/// many interactions as evaluating it (both O(size); measured 18013 vs 18014), but
+/// evaluation descends the whole demand spine before unwinding (live transients per
+/// level) while the ε wave frees as it goes. Interaction savings need discarded work
+/// whose evaluation exceeds its syntax (the kernel workloads); this pins the memory face.
+#[test]
+fn rc_cancels_doubly_discarded_shared_suspension() {
+    fn build(c: &mut Ctx) -> u32 {
+        let a = pack(L, 0); // K a -> a = leaf
+        let b = c.stem(pack(L, 0)); // K b -> b = S(L)
+        let ka = c.fork(pack(L, 0), a); // △△a: applied to z, K-rule returns a
+        let kb = c.fork(pack(L, 0), b);
+        let ska = c.stem(ka);
+        let head = c.fork(ska, kb); // △ (△ (K a)) (K b)
+        let mut x = pack(L, 0); // a fat unevaluated chain both copies will discard
+        for _ in 0..2000 {
+            let nt = build_not(c);
+            x = c.susp(nt, x);
+        }
+        c.susp(head, x)
+    }
+    // plain run
+    let n1 = net();
+    let (nf1, ints1) = {
+        let mut w = Worker::new();
+        let mut c = n1.ctx(&mut w);
+        let t = build(&mut c);
+        let s = nf_string(&mut c, t);
+        (s, n1.interactions.load(Ordering::Relaxed))
+    };
+    let peak1 = n1.node_top.load(Ordering::Relaxed);
+    // rc run
+    let n2 = net();
+    let (nf2, ints2, cancels) = {
+        let mut w = Worker::new();
+        w.rc = Some(Box::new(crate::rc::RcState::new(1 << 16, 1 << 16)));
+        let mut c = n2.ctx(&mut w);
+        let t = build(&mut c);
+        let s = nf_string(&mut c, t);
+        let rc = w.rc.take().unwrap();
+        (
+            s,
+            n2.interactions.load(Ordering::Relaxed),
+            (rc.cancels_at_park, rc.cancels_at_copy, rc.cancels_at_eps),
+        )
+    };
+    let peak2 = n2.node_top.load(Ordering::Relaxed);
+    assert_eq!(nf1, "110", "(K a x)(K b x) = a b = S(S(L))");
+    assert_eq!(nf1, nf2, "cancellation must not change the normal form");
+    assert!(cancels.0 >= 1, "the park-site pre-check should fire: {cancels:?}");
+    assert!(ints2 <= ints1, "cancellation must never add work (rc {ints2} vs plain {ints1})");
+    assert!(
+        peak2 < peak1,
+        "erase-as-you-go must beat descend-then-unwind on peak cells (rc {peak2} vs plain {peak1})"
+    );
+}
+
+/// No sharing is discarded in the wide workload: RC must be a strict no-op there,
+/// including the interaction count (identical trace).
+#[test]
+fn rc_is_noop_without_discarded_sharing() {
+    let n1 = net();
+    let (nf1, ints1) = {
+        let mut w = Worker::new();
+        let mut c = n1.ctx(&mut w);
+        let t = crate::bench::build_wide(&mut c, 5, 40);
+        let s = nf_string(&mut c, t);
+        (s, n1.interactions.load(Ordering::Relaxed))
+    };
+    let n2 = net();
+    let (nf2, ints2, cancels) = {
+        let mut w = Worker::new();
+        w.rc = Some(Box::new(crate::rc::RcState::new(1 << 16, 1 << 16)));
+        let mut c = n2.ctx(&mut w);
+        let t = crate::bench::build_wide(&mut c, 5, 40);
+        let s = nf_string(&mut c, t);
+        let rc = w.rc.take().unwrap();
+        (
+            s,
+            n2.interactions.load(Ordering::Relaxed),
+            rc.cancels_at_park + rc.cancels_at_copy + rc.cancels_at_eps,
+        )
+    };
+    assert_eq!(nf1, nf2);
+    assert_eq!(ints1, ints2, "no cancels -> identical interaction trace");
+    assert_eq!(cancels, 0);
+}

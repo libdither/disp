@@ -6,6 +6,7 @@
 //! cells are the cross-thread rendezvous — the exchange linker (`swap`/AcqRel, no CAS).
 
 use crate::port::*;
+use crate::rc::{RcState, RC_NULL};
 use crate::tiled::TileState;
 use crate::trace::{dist_bucket, Tracer};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -84,6 +85,10 @@ pub(crate) struct Worker {
     /// before, paying one never-taken branch, the same pattern as the tracer. Set only
     /// by the tiled drain's workers; never combined with `tracer`.
     pub(crate) tiled: Option<Box<TileState>>,
+    /// Wire-RC cancellation (rc.rs). `None` in every normal run (the tracer/tiled
+    /// pattern); sequential-only, set by the `-rc` entry point; never combined with
+    /// `tracer` or `tiled`.
+    pub(crate) rc: Option<Box<RcState>>,
 }
 impl Worker {
     pub(crate) fn new() -> Self {
@@ -95,6 +100,7 @@ impl Worker {
             var_rgn: (0, 0),
             tracer: None,
             tiled: None,
+            rc: None,
         }
     }
 }
@@ -207,6 +213,9 @@ impl<'a> Ctx<'a> {
             let v = self.w.free_var_head;
             self.w.free_var_head = self.net.vars[v as usize].load(Ordering::Relaxed);
             self.net.vars[v as usize].store(NUL, Ordering::Relaxed);
+            if let Some(rc) = self.w.rc.as_mut() {
+                rc.var_watch[v as usize] = RC_NULL; // belt-and-braces vs a stale hint
+            }
             return v;
         }
         if self.w.var_rgn.0 >= self.w.var_rgn.1 {
@@ -269,7 +278,29 @@ impl<'a> Ctx<'a> {
             let v = val(a);
             let prev = self.net.vars[v].swap(b, Ordering::AcqRel);
             if prev == NUL {
+                // Wire-RC (rc.rs): a δⁿ parking is registered (park cell + output
+                // watches); an ε parking into a watched output cell triggers the
+                // cancellation check on the watching duplicator.
+                if self.w.rc.is_some() {
+                    if tag(b) == DN {
+                        self.rc_register_park(val(b) as u32, v);
+                    } else if b == pack(EPS, 0) {
+                        let watch = self.w.rc.as_ref().unwrap().var_watch[v];
+                        if watch != RC_NULL {
+                            self.rc_try_cancel(watch);
+                        }
+                    }
+                }
                 return; // parked b; the far end will find it
+            }
+            // Wire-RC: the cell is resolving (dies below) — its watch hint dies with it,
+            // and a δⁿ swapped out is in flight as a redex, no longer parked.
+            if self.w.rc.is_some() {
+                let rc = self.w.rc.as_mut().unwrap();
+                rc.var_watch[v] = RC_NULL;
+                if tag(prev) == DN {
+                    rc.dn_park[val(prev)] = RC_NULL;
+                }
             }
             // intrusive free: the var is fully resolved (both occurrences arrived) and now
             // exclusively ours — stash the old head in the dead cell, point the head here.
