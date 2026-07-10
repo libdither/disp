@@ -3,6 +3,8 @@ dist
 .direnv
 dither-spec/
 .claude/
+.vscode/
+website/build/
 bench/e1/*.bin
 bench/e1/*.bin.meta.json
 bench/e1/*.terms
