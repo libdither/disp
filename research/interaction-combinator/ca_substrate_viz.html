@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TC-Net on the cellular substrate: wires are chains, transport is motion</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131824; --panel2: #0f1420; --ink: #d8dee9; --dim: #7a8494;
+    --accent: #56c8ff; --warn: #ff6b6b; --ok: #7ce38b; --sleep: #5a647a; --hot: #ffd866;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 13px/1.45 "SF Mono", "JetBrains Mono", Consolas, monospace; overflow: hidden; }
+  #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; gap: 10px;
+    align-items: center; flex-wrap: wrap; padding: 8px 12px; background: var(--panel);
+    border-bottom: 1px solid #232a3a; }
+  .grp { display: flex; gap: 6px; align-items: center; }
+  select, button { background: var(--panel2); color: var(--ink); border: 1px solid #2a3350;
+    border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; }
+  button:hover, select:hover { border-color: var(--accent); }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  .seg { display: flex; border: 1px solid #2a3350; border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 4px 12px; }
+  .seg button.on { background: #1c2c44; color: var(--accent); }
+  #stats { margin-left: auto; display: flex; gap: 12px; color: var(--dim); white-space: nowrap; }
+  #stats b { color: var(--ink); font-weight: 600; }
+  #stats .hot b { color: var(--hot); }
+  #side { position: fixed; top: 52px; right: 0; bottom: 0; width: 360px; z-index: 9;
+    background: var(--panel); border-left: 1px solid #232a3a; padding: 12px 14px;
+    overflow-y: auto; transition: transform .2s; }
+  #side.hidden { transform: translateX(360px); }
+  #side h3 { margin: 12px 0 6px; font-size: 12px; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .08em; }
+  #side h3:first-child { margin-top: 0; }
+  #side pre { background: var(--panel2); border: 1px solid #232a3a; border-radius: 6px;
+    padding: 8px 10px; overflow-x: auto; margin: 4px 0; font-size: 12px; }
+  #side .note { color: var(--dim); font-size: 12px; margin: 4px 0; }
+  #side table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 4px 0; }
+  #side td, #side th { border: 1px solid #232a3a; padding: 3px 6px; text-align: right; }
+  #side th { color: var(--dim); font-weight: 500; text-align: left; }
+  #side td:first-child { text-align: left; color: var(--dim); }
+  #legend div { margin: 2px 0; color: var(--dim); font-size: 12px; }
+  #legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 6px; vertical-align: -1px; }
+  #toggleSide { position: fixed; top: 60px; right: 8px; z-index: 11; }
+  canvas { display: block; position: fixed; inset: 0; cursor: grab; }
+  canvas.panning { cursor: grabbing; }
+  #tip { position: fixed; z-index: 20; pointer-events: none; background: #1a2233ee;
+    border: 1px solid #2a3350; border-radius: 6px; padding: 6px 9px; font-size: 12px;
+    max-width: 320px; display: none; white-space: pre; }
+  #help { position: fixed; left: 12px; bottom: 10px; color: #56607244; z-index: 5;
+    font-size: 12px; user-select: none; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <div class="grp"><select id="exSel"></select><button id="resetBtn">reset</button></div>
+  <div class="grp seg" id="execSeg">
+    <button data-e="seq" class="on">sequential</button>
+    <button data-e="par">parallel (CA tick)</button>
+  </div>
+  <div class="grp seg" id="modeSeg">
+    <button data-m="fire" class="on">fire-everything</button>
+    <button data-m="demand">demand-driven</button>
+  </div>
+  <div class="grp">
+    <button id="playBtn" class="primary">&#9654; play</button>
+    <button id="stepBtn">tick</button>
+    <input type="range" id="speed" min="1" max="40" value="10" style="width:80px">
+  </div>
+  <div id="stats">
+    <span class="hot">ticks (span) <b id="stTick">0</b></span>
+    <span>interactions <b id="stInt">0</b></span>
+    <span>transport <b id="stTr">0</b></span>
+    <span>&#215;par <b id="stPar">-</b></span>
+    <span>live <b id="stLive">0</b></span>
+  </div>
+</div>
+
+<button id="toggleSide">&#9776;</button>
+<div id="side">
+  <h3>what this shows</h3>
+  <div class="note" id="exNote"></div>
+  <h3>the substrate rules</h3>
+  <div class="note">
+    Agents occupy cells. A wire is a <b>routed chain of cells</b> (your intuition: chains of
+    forwarder agents, the &iota; of the embedding theorem). Nothing acts at a distance: a
+    redex may fire only when the two principals sit in <b>adjacent cells</b>, so a pending
+    redex first <b>walks</b>: the producer re-materializes one cell along the chain per step
+    (one &iota;-elimination = one unit of transport, watch the yellow-tinted cells slide).
+    A move drags the mover's other wires one cell longer (drift is charged: the ledger's
+    insertion rule, visible as trailing slack). Two wires may share a cell (a <b>via</b>,
+    drawn as a diamond: the second layer); wires may also pass under agent cells.
+    <b>Sequential</b> = one event per tick (a pointer machine's serial order).
+    <b>Parallel</b> = every enabled event fires in the same tick (the CA's synchronous
+    step): same total work, far fewer ticks wherever the net is wide.
+  </div>
+  <h3>sequential vs parallel, this term</h3>
+  <table id="cmpTbl"></table>
+  <div class="note"><b>work</b> is schedule-invariant (strong confluence: same interactions,
+    same normal form, either mode). <b>transport</b> wobbles a little between modes: blocked
+    movers take congestion detours, and which cells are congested depends on timing (the
+    embedding is dynamic even though the computation is not). <b>ticks</b> (the span, the
+    wall-clock proxy) is what collapses: the ratio is the free parallelism the
+    single-principal-port invariant hands the substrate.</div>
+  <h3>honest approximations</h3>
+  <div class="note">
+    This toy differs from the real design (SPATIAL_IC.md &sect;13, the E4 simulator) in:
+    parallel ticks commit through a global arbiter rather than a Margolus block handshake;
+    no tension/migration (agents move only to deliver values; nothing reels wires in or
+    drifts to shorten them); no pressure field or vacancy diffusion (births spiral-search);
+    unlimited wire layers under agents (real cells get 2-3 plus vias); no wire-RC death
+    pulse (see demand_schedule_viz.html for that mechanism at the net level).
+  </div>
+  <h3>legend</h3>
+  <div id="legend">
+    <div><span class="sw" style="background:#3fbf7f"></span>producers (L &Delta; &middot; S stem &middot; F fork &middot; P suspension)</div>
+    <div><span class="sw" style="background:#56c8ff"></span>consumers (A &middot; T1/T2 &middot; N) &middot; <span class="sw" style="background:#c792ea"></span>&delta;&#8319; &middot; <span class="sw" style="background:#ff6b6b"></span>&epsilon;</div>
+    <div><span class="sw" style="background:#2c3750"></span>wire cell (the chain) &middot; <span style="color:#ffd866">&#9670;</span> via = two wires, layer 2</div>
+    <div><span style="color:#ffd866">yellow glow</span> = redex wire being walked (transport happening)</div>
+    <div>dimmed + z = asleep (demand mode) &middot; flash cyan/red = interaction/erasure</div>
+  </div>
+</div>
+
+<canvas id="cv"></canvas>
+<div id="tip"></div>
+<div id="help">drag to pan &middot; wheel to zoom &middot; hover cells for detail</div>
+
+<script>
+"use strict";
+/* The same Rooted TC-Net rule table as demand_schedule_viz.html, but placed HONESTLY on
+   the substrate: wires are routed chains of cells, redexes fire only at adjacency, and a
+   pending redex closes its chain one cell per step (the iota-elimination of
+   EMBEDDING_THEOREM.md, priced as transport). Execution axis: sequential (one event per
+   tick) vs parallel (every enabled event per tick, the CA's synchronous step). */
+
+const KIND = {
+  L:  { glyph: "△", color: "#3fbf7f", slots: 1, producer: true,  name: "leaf" },
+  S:  { glyph: "S",      color: "#3fbf7f", slots: 2, producer: true,  name: "stem" },
+  F:  { glyph: "F",      color: "#3fbf7f", slots: 3, producer: true,  name: "fork" },
+  P:  { glyph: "@",      color: "#2f9f6f", slots: 3, producer: true,  name: "suspension (f a)" },
+  A:  { glyph: "A",      color: "#56c8ff", slots: 3, producer: false, name: "apply" },
+  T1: { glyph: "T₁", color: "#56c8ff", slots: 4, producer: false, name: "dispatch level 1" },
+  T2: { glyph: "T₂", color: "#56c8ff", slots: 5, producer: false, name: "dispatch level 2" },
+  DN: { glyph: "δⁿ", color: "#c792ea", slots: 3, producer: false, name: "need-duplicator" },
+  DS: { glyph: "δˢ", color: "#a06fd6", slots: 3, producer: false, name: "structural duplicator" },
+  E:  { glyph: "ε", color: "#ff6b6b", slots: 1, producer: false, name: "eraser" },
+  N:  { glyph: "N",      color: "#7ce38b", slots: 2, producer: false, name: "normalizer" },
+};
+const SLOTNAME = {
+  L: ["p"], S: ["p","x"], F: ["p","l","r"], P: ["p","f","a"], A: ["p","arg","res"],
+  T1: ["p","b","c","res"], T2: ["p","w","x","b","res"], DN: ["p","l","r"], DS: ["p","l","r"],
+  E: ["p"], N: ["p","res"],
+};
+const key = (x, y) => x + "," + y;
+
+function makeNet(mode) {
+  const net = {
+    mode, agents: new Map(), nextId: 1, wires: new Map(), nextWid: 1,
+    cellAgent: new Map(),          // "x,y" -> agentId
+    wireLoad: new Map(),           // "x,y" -> count of wires through the cell
+    redexes: [],                   // {c, p, wid} pending contact or fire
+    ints: 0, transport: 0, inserted: 0, ticks: 0, peak: 0, overflow: 0,
+    effects: [], quiet: false,
+  };
+
+  // ---- cells ----
+  function agentAt(x, y) { return net.cellAgent.get(key(x, y)); }
+  function occupy(a, x, y) { a.pos = { x, y }; net.cellAgent.set(key(x, y), a.id); }
+  function freeCell(a) { if (a.pos) net.cellAgent.delete(key(a.pos.x, a.pos.y)); }
+  function loadInc(x, y, d) {
+    const k = key(x, y), v = (net.wireLoad.get(k) || 0) + d;
+    if (v <= 0) net.wireLoad.delete(k); else net.wireLoad.set(k, v);
+  }
+
+  function spawn(kind, near, sleeping) {
+    const a = { id: net.nextId++, kind, slots: new Array(KIND[kind].slots).fill(null),
+      pos: null, sleeping: !!sleeping, dead: false, anim: null };
+    net.agents.set(a.id, a);
+    if (near) placeNear(a, near);
+    if (net.agents.size > net.peak) net.peak = net.agents.size;
+    return a;
+  }
+  function placeNear(a, near) {
+    const cx = Math.round(near.x), cy = Math.round(near.y);
+    for (let r = 0; r < 300; r++) {
+      for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (!agentAt(cx + dx, cy + dy)) { occupy(a, cx + dx, cy + dy); return; }
+      }
+    }
+    occupy(a, cx, cy);
+  }
+  function kill(a) {
+    if (a.dead) return;
+    a.dead = true;
+    for (let s = 0; s < a.slots.length; s++) dropWireAt(a.id, s);
+    freeCell(a);
+    net.agents.delete(a.id);
+  }
+  const get = id => net.agents.get(id);
+
+  // ---- wires as routed cell chains ----
+  // Cheap elbow routing (x-then-y or y-then-x, whichever crosses fewer agent cells).
+  // Wires may pass under agents and each other (drawn as vias/underpasses): the real
+  // design gives each cell 2-3 layers; this toy does not enforce the capacity.
+  function routePath(a, b) { return elbowRoute(net, a, b); }
+  function makeWire(p, q) {
+    const A_ = get(p.a), B_ = get(q.a);
+    const w = { id: net.nextWid++, pa: { ...p }, pb: { ...q }, path: [] };
+    if (A_.pos && B_.pos) {
+      const r = routePath(A_, B_);
+      w.path = r || straight(A_.pos, B_.pos);
+    }
+    for (const [x, y] of w.path) loadInc(x, y, 1);
+    net.wires.set(w.id, w);
+    A_.wire = A_.wire || {}; B_.wire = B_.wire || {};
+    A_.wire[p.s] = w.id; B_.wire[q.s] = w.id;
+    return w;
+  }
+  function straight(a, b) {
+    const cells = []; let x = a.x, y = a.y;
+    while (x !== b.x) { x += Math.sign(b.x - x); if (x === b.x && y === b.y) break; cells.push([x, y]); }
+    while (y !== b.y) { y += Math.sign(b.y - y); if (x === b.x && y === b.y) break; cells.push([x, y]); }
+    return cells;
+  }
+  function dropWireAt(aid, s) {
+    const a = get(aid) || { wire: {} };
+    const wid = a.wire && a.wire[s];
+    if (!wid) return;
+    const w = net.wires.get(wid);
+    if (w) { for (const [x, y] of w.path) loadInc(x, y, -1); net.wires.delete(wid); }
+    if (a.wire) delete a.wire[s];
+    const other = w && (w.pa.a === aid && w.pa.s === s ? w.pb : w.pa);
+    if (other) { const o = get(other.a); if (o && o.wire) delete o.wire[other.s]; }
+  }
+
+  // ---- port graph ----
+  function take(a, s) {
+    const q = a.slots[s];
+    a.slots[s] = null;
+    dropWireAt(a.id, s);
+    if (q) { const b = get(q.a); if (b && b.slots[q.s] && b.slots[q.s].a === a.id) b.slots[q.s] = null; }
+    return q;
+  }
+  const port = (a, s) => ({ a: a.id, s });
+
+  function link(p, q) {
+    if (!p || !q) return;
+    const A_ = get(p.a), B_ = get(q.a);
+    if (!A_ || !B_) return;
+    A_.slots[p.s] = { a: B_.id, s: q.s };
+    B_.slots[q.s] = { a: A_.id, s: p.s };
+    const w = makeWire(p, q);
+    if (net.mode === "demand") {
+      for (const [X, px, Y] of [[A_, p, B_], [B_, q, A_]]) {
+        if (px.s === 0 && !KIND[X.kind].producer && X.kind !== "E") {
+          if ((Y.kind === "DN" || Y.kind === "DS") && Y.sleeping) wakeD(Y);
+          if (Y.kind === "P" && Y.sleeping) Y.sleeping = false;
+        }
+      }
+    }
+    if (p.s === 0 && q.s === 0) addRedex(A_, B_, w);
+  }
+  function addRedex(a, b, w) {
+    const cons = KIND[a.kind].producer ? b : a;
+    const prod = KIND[a.kind].producer ? a : b;
+    if (KIND[cons.kind].producer || !KIND[prod.kind].producer) return;
+    net.redexes.push({ c: cons.id, p: prod.id, wid: w.id, held: cons.sleeping });
+  }
+  function wakeD(d) {
+    if (!d.sleeping) return;
+    d.sleeping = false;
+    for (const r of net.redexes) if (r.c === d.id) r.held = false;
+  }
+
+  // ---- transport: the producer re-materializes one cell along the chain ----
+  // Returns true iff the producer actually moved one cell (progress); false if blocked.
+  function advance(r) {
+    const prod = get(r.p), cons = get(r.c), w = net.wires.get(r.wid);
+    if (!prod || !cons || !w) return false;
+    if (!w.path.length) return false; // ready to fire; the fire scan owns it
+    // which end of the path is the producer's?
+    const prodFirst = w.pa.a === prod.id;
+    const cellArr = prodFirst ? w.path : w.path.slice().reverse();
+    const [nx, ny] = cellArr[0];
+    if (agentAt(nx, ny)) {
+      // Blocked by an agent (churn or static structure). The elbow cannot detour, so run
+      // a bounded unweighted BFS around agent cells (the local rerouting rule of
+      // SPATIAL_IC section 13 item 5); a failure means genuine enclosure and the mover
+      // waits (the stall detector stops the run loudly if nothing else can move either).
+      const r2 = bfsRoute(net, prod, cons);
+      if (r2) {
+        for (const [x, y] of w.path) loadInc(x, y, -1);
+        w.path = prodFirst ? r2 : r2.slice().reverse();
+        for (const [x, y] of w.path) loadInc(x, y, 1);
+        const head = prodFirst ? w.path[0] : w.path[w.path.length - 1];
+        if (head && !agentAt(head[0], head[1])) return advance(r);
+      }
+      return false;
+    }
+    // move: free old cell, occupy next; the redex wire loses one cell (iota-elimination),
+    // every OTHER wire of the producer gains the old cell at its producer end (drift charge)
+    const old = { x: prod.pos.x, y: prod.pos.y };
+    loadInc(nx, ny, -1);
+    if (prodFirst) w.path.shift(); else w.path.pop();
+    freeCell(prod);
+    prod.anim = { fx: old.x, fy: old.y, t: 0 };
+    occupy(prod, nx, ny);
+    net.transport++;
+    for (let s = 0; s < prod.slots.length; s++) {
+      const wid2 = prod.wire && prod.wire[s];
+      if (!wid2 || wid2 === w.id) continue;
+      const w2 = net.wires.get(wid2);
+      if (!w2) continue;
+      if (w2.pa.a === prod.id) w2.path.unshift([old.x, old.y]); else w2.path.push([old.x, old.y]);
+      loadInc(old.x, old.y, 1);
+      net.inserted++;
+    }
+    return true;
+  }
+  const adjacent = (a, b) => a.pos && b.pos && Math.abs(a.pos.x - b.pos.x) + Math.abs(a.pos.y - b.pos.y) <= 1;
+
+  // ---- the rule table (identical semantics to demand_schedule_viz.html) ----
+  function fire(r) {
+    const c = get(r.c), pr = get(r.p);
+    if (!c || !pr || c.dead || pr.dead) return;
+    net.ints++;
+    if (c.pos) net.effects.push({ t: "flash", x: c.pos.x, y: c.pos.y, age: 0, red: c.kind === "E" });
+    const at = { x: (c.pos.x + pr.pos.x) / 2, y: (c.pos.y + pr.pos.y) / 2 };
+    const ck = c.kind, pk = pr.kind;
+    // created-short discipline: a fresh agent is born ADJACENT to the far end of the wire
+    // its principal will meet, so new redexes start at contact and only genuine value
+    // deliveries (results flowing back to their demanders) pay transport.
+    const nearOf = p => { const t = p && get(p.a); return t && t.pos ? t.pos : at; };
+    const S_ = (k, sl, nearP) => spawn(k, nearP ? nearOf(nearP) : at, sl);
+    const erase = w => { if (!w || !get(w.a)) return; const e = S_("E", false, w); link(port(e, 0), w); };
+
+    if (ck === "A") {
+      const arg = take(c, 1), res = take(c, 2);
+      if (pk === "L") { const s = S_("S", false, res); link(port(s, 1), arg); link(res, port(s, 0)); }
+      else if (pk === "S") { const x = take(pr, 1); const f = S_("F", false, res);
+        link(port(f, 1), x); link(port(f, 2), arg); link(res, port(f, 0)); }
+      else if (pk === "F") { const l = take(pr, 1), rr = take(pr, 2); const t = S_("T1", false, l);
+        link(port(t, 1), rr); link(port(t, 2), arg); link(port(t, 3), res); link(port(t, 0), l); }
+      else if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
+        const A1 = S_("A", false, f), A2 = S_("A", false, f);
+        link(port(A1, 1), a2); link(port(A1, 2), port(A2, 0));
+        link(port(A2, 1), arg); link(port(A2, 2), res); link(port(A1, 0), f); }
+    }
+    else if (ck === "T1") {
+      const b = take(c, 1), carg = take(c, 2), res = take(c, 3);
+      if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
+        const A1 = S_("A", false, f), t = S_("T1", false, f);
+        link(port(t, 1), b); link(port(t, 2), carg); link(port(t, 3), res);
+        link(port(A1, 1), a2); link(port(A1, 2), port(t, 0)); link(port(A1, 0), f); }
+      else if (pk === "L") { link(res, b); erase(carg); }
+      else if (pk === "S") {
+        const x = take(pr, 1);
+        if (net.mode === "fire") {
+          const d = S_("DN", false, carg), A1 = S_("A", false, x), A2 = S_("A", false, b), A3 = S_("A", false, x);
+          link(port(A1, 1), port(d, 1)); link(port(A2, 1), port(d, 2));
+          link(port(A1, 2), port(A3, 0)); link(port(A2, 2), port(A3, 1));
+          link(port(A3, 2), res);
+          link(port(A1, 0), x); link(port(A2, 0), b); link(port(d, 0), carg);
+        } else {
+          const d = S_("DN", true, carg), P1 = S_("P", true, x), P2 = S_("P", true, b), P0 = S_("P", true, res);
+          link(port(P1, 1), x); link(port(P1, 2), port(d, 1));
+          link(port(P2, 1), b); link(port(P2, 2), port(d, 2));
+          link(port(P0, 1), port(P1, 0)); link(port(P0, 2), port(P2, 0));
+          link(res, port(P0, 0)); link(port(d, 0), carg);
+        }
+      }
+      else if (pk === "F") { const w = take(pr, 1), xx = take(pr, 2); const t2 = S_("T2", false, carg);
+        link(port(t2, 1), w); link(port(t2, 2), xx); link(port(t2, 3), b); link(port(t2, 4), res);
+        link(port(t2, 0), carg); }
+    }
+    else if (ck === "T2") {
+      const w = take(c, 1), x = take(c, 2), b = take(c, 3), res = take(c, 4);
+      if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
+        const A1 = S_("A", false, f), t = S_("T2", false, f);
+        link(port(t, 1), w); link(port(t, 2), x); link(port(t, 3), b); link(port(t, 4), res);
+        link(port(A1, 1), a2); link(port(A1, 2), port(t, 0)); link(port(A1, 0), f); }
+      else if (pk === "L") { link(res, w); erase(x); erase(b); }
+      else if (pk === "S") { const u = take(pr, 1); const A1 = S_("A", false, x);
+        link(port(A1, 1), u); link(port(A1, 2), res); link(port(A1, 0), x); erase(w); erase(b); }
+      else if (pk === "F") { const u = take(pr, 1), v = take(pr, 2);
+        const A1 = S_("A", false, b), A2 = S_("A", false, b);
+        link(port(A1, 1), u); link(port(A1, 2), port(A2, 0));
+        link(port(A2, 1), v); link(port(A2, 2), res); link(port(A1, 0), b);
+        erase(w); erase(x); }
+    }
+    else if (ck === "DN" || ck === "DS") {
+      const l = take(c, 1), rr = take(c, 2);
+      const asleep = net.mode === "demand";
+      if (pk === "L") { const l1 = S_("L", false, l), l2 = S_("L", false, rr);
+        link(l, port(l1, 0)); link(rr, port(l2, 0)); }
+      else if (pk === "S") { const x = take(pr, 1);
+        const d2 = S_(ck, asleep, x), s1 = S_("S", false, l), s2 = S_("S", false, rr);
+        link(port(s1, 1), port(d2, 1)); link(port(s2, 1), port(d2, 2));
+        link(l, port(s1, 0)); link(rr, port(s2, 0)); link(port(d2, 0), x); }
+      else if (pk === "F") { const fl = take(pr, 1), fr = take(pr, 2);
+        const da = S_(ck, asleep, fl), db = S_(ck, asleep, fr);
+        const f1 = S_("F", false, l), f2 = S_("F", false, rr);
+        link(port(f1, 1), port(da, 1)); link(port(f1, 2), port(db, 1));
+        link(port(f2, 1), port(da, 2)); link(port(f2, 2), port(db, 2));
+        link(l, port(f1, 0)); link(rr, port(f2, 0));
+        link(port(da, 0), fl); link(port(db, 0), fr); }
+      else if (pk === "P") {
+        const f = take(pr, 1), a2 = take(pr, 2);
+        if (ck === "DN") {
+          const A1 = S_("A", false, f), d = S_("DN", false, f);
+          link(port(d, 1), l); link(port(d, 2), rr);
+          link(port(A1, 1), a2); link(port(A1, 2), port(d, 0)); link(port(A1, 0), f);
+        } else {
+          const df = S_("DS", asleep, f), da = S_("DS", asleep, a2);
+          const p1 = S_("P", asleep, l), p2 = S_("P", asleep, rr);
+          link(port(p1, 1), port(df, 1)); link(port(p1, 2), port(da, 1));
+          link(port(p2, 1), port(df, 2)); link(port(p2, 2), port(da, 2));
+          link(l, port(p1, 0)); link(rr, port(p2, 0));
+          link(port(df, 0), f); link(port(da, 0), a2);
+        }
+      }
+    }
+    else if (ck === "E") {
+      if (pk === "S") erase(take(pr, 1));
+      else if (pk === "F" || pk === "P") { erase(take(pr, 1)); erase(take(pr, 2)); }
+    }
+    else if (ck === "N") {
+      const res = take(c, 1);
+      if (pk === "L") { const l = S_("L", false, res); link(res, port(l, 0)); }
+      else if (pk === "S") { const x = take(pr, 1); const n2 = S_("N", false, x), s2 = S_("S", false, res);
+        link(port(n2, 1), port(s2, 1)); link(res, port(s2, 0)); link(port(n2, 0), x); }
+      else if (pk === "F") { const fl = take(pr, 1), fr = take(pr, 2);
+        const nl = S_("N", false, fl), nr = S_("N", false, fr), f2 = S_("F", false, res);
+        link(port(nl, 1), port(f2, 1)); link(port(nr, 1), port(f2, 2));
+        link(res, port(f2, 0)); link(port(nl, 0), fl); link(port(nr, 0), fr); }
+      else if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
+        const A1 = S_("A", false, f), n2 = S_("N", false, res);
+        link(port(n2, 1), res);
+        link(port(A1, 1), a2); link(port(A1, 2), port(n2, 0)); link(port(A1, 0), f); }
+    }
+    kill(c); kill(pr);
+  }
+
+  // ---- ticks ----
+  function tick(parallel) {
+    net.redexes = net.redexes.filter(r => {
+      const c = get(r.c), p = get(r.p);
+      return c && p && !c.dead && !p.dead;
+    });
+    const live = net.redexes.filter(r => !r.held);
+    if (!live.length) { net.quiet = net.redexes.length === 0; return false; }
+    let didSomething = false;
+    if (parallel) {
+      const ready = [];
+      for (const r of live) {
+        const c = get(r.c), p = get(r.p), w = net.wires.get(r.wid);
+        if (adjacent(c, p) || !w || !w.path.length) ready.push(r);
+        else if (advance(r)) didSomething = true;
+      }
+      for (const r of ready) {
+        const c = get(r.c), p = get(r.p);
+        if (!c || !p || c.dead || p.dead) continue;
+        net.redexes = net.redexes.filter(x => x !== r);
+        fire(r); didSomething = true;
+      }
+    } else {
+      // one event per tick: prefer one ready fire, else walk the first walkable redex
+      for (const r of live) {
+        const c = get(r.c), p = get(r.p), w = net.wires.get(r.wid);
+        if (adjacent(c, p) || !w || !w.path.length) {
+          net.redexes = net.redexes.filter(x => x !== r);
+          fire(r); didSomething = true; break;
+        }
+      }
+      if (!didSomething) {
+        for (const r of live) if (advance(r)) { didSomething = true; break; }
+      }
+    }
+    if (didSomething) net.ticks++;
+    else net.quiet = true; // genuine stall (congestion with no route): stop loudly, not spin
+    return didSomething;
+  }
+
+  net.spawn = spawn; net.link = link; net.port = port; net.tick = tick;
+  net.occupyAt = (a, x, y) => { freeCell(a); occupy(a, x, y); };
+  return net;
+}
+
+// ---------- term builders + layout ----------
+function builders(net) {
+  function leaf() { const a = net.spawn("L", { x: 0, y: 0 }); return net.port(a, 0); }
+  function stem(x) { const a = net.spawn("S", { x: 0, y: 0 }); net.link(net.port(a, 1), x); return net.port(a, 0); }
+  function fork(l, r) { const a = net.spawn("F", { x: 0, y: 0 }); net.link(net.port(a, 1), l); net.link(net.port(a, 2), r); return net.port(a, 0); }
+  function app(f, x) { const a = net.spawn("P", { x: 0, y: 0 }); net.link(net.port(a, 1), f); net.link(net.port(a, 2), x); return net.port(a, 0); }
+  function notTree() { return fork(fork(stem(leaf()), fork(leaf(), leaf())), leaf()); }
+  function notChain(n) { let t = leaf(); for (let i = 0; i < n; i++) t = app(notTree(), t); return t; }
+  return { leaf, stem, fork, app, notTree, notChain };
+}
+function layoutTerm(net, rootPort, spacing) {
+  let nextX = 0;
+  const seen = new Set();
+  function walk(p, depth) {
+    if (!p) return;
+    const a = net.agents.get(p.a);
+    if (!a || seen.has(a.id)) return;
+    seen.add(a.id);
+    const kids = [];
+    for (let s = 1; s < a.slots.length; s++) if (a.slots[s]) kids.push(a.slots[s]);
+    if (!kids.length) { net.occupyAt(a, nextX * spacing, depth * spacing); nextX++; return; }
+    const x0 = nextX;
+    for (const k of kids) walk(k, depth + 1);
+    net.occupyAt(a, Math.round(((x0 + nextX - 1) / 2) * spacing), depth * spacing);
+  }
+  walk(rootPort, 1);
+  // wires were routed against pre-layout positions: re-route everything once
+  for (const w of net.wires.values()) {
+    const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
+    if (!A_ || !B_) continue;
+    for (const [x, y] of w.path) { /* clear load */ }
+  }
+  rebuildAllWires(net);
+}
+function rebuildAllWires(net) {
+  net.wireLoad.clear();
+  for (const w of net.wires.values()) {
+    const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
+    if (!A_ || !B_ || !A_.pos || !B_.pos) { w.path = []; continue; }
+    // straight-ish reroute via the same BFS the linker uses: cheap approx = manhattan L
+    w.path = [];
+  }
+  // route in order of manhattan length (short first claims less)
+  const ws = [...net.wires.values()].filter(w => net.agents.get(w.pa.a) && net.agents.get(w.pb.a));
+  ws.sort((u, v) => md(net, u) - md(net, v));
+  for (const w of ws) {
+    const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
+    const tmp = makeRouter(net)(A_, B_);
+    w.path = tmp || [];
+    for (const [x, y] of w.path) {
+      const k = x + "," + y, v = (net.wireLoad.get(k) || 0) + 1;
+      net.wireLoad.set(k, v);
+    }
+  }
+}
+function md(net, w) {
+  const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
+  return Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
+}
+// Unweighted BFS around agent cells (endpoints exempt); the detour router for blocked
+// movers. Plain FIFO queue, bounded; null on enclosure or bound.
+function bfsRoute(net, A_, B_) {
+  const sx = A_.pos.x, sy = A_.pos.y, tx = B_.pos.x, ty = B_.pos.y;
+  if (Math.abs(sx - tx) + Math.abs(sy - ty) <= 1) return [];
+  const prev = new Map(), seen = new Set([key(sx, sy)]);
+  const q = [[sx, sy]];
+  let found = false, ex = 0;
+  while (q.length && ex++ < 4000) {
+    const [x, y] = q.shift();
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx = x + dx, ny = y + dy, nk = key(nx, ny);
+      if (seen.has(nk)) continue;
+      if (Math.abs(nx - sx) > 80 || Math.abs(ny - sy) > 80) continue;
+      const isT = nx === tx && ny === ty;
+      if (!isT && net.cellAgent.get(nk)) continue;
+      seen.add(nk); prev.set(nk, key(x, y));
+      if (isT) { found = true; q.length = 0; break; }
+      q.push([nx, ny]);
+    }
+  }
+  if (!found) return null;
+  const cells = [];
+  let cur = prev.get(key(tx, ty));
+  while (cur && cur !== key(sx, sy)) { const [px, py] = cur.split(",").map(Number); cells.push([px, py]); cur = prev.get(cur); }
+  cells.reverse();
+  return cells;
+}
+
+function elbowRoute(net, A_, B_) {
+  const sx = A_.pos.x, sy = A_.pos.y, tx = B_.pos.x, ty = B_.pos.y;
+  if (Math.abs(sx - tx) + Math.abs(sy - ty) <= 1) return [];
+  const walk = (xFirst) => {
+    const cells = []; let x = sx, y = sy;
+    const stepx = () => { while (x !== tx) { x += Math.sign(tx - x); if (x === tx && y === ty) return; cells.push([x, y]); } };
+    const stepy = () => { while (y !== ty) { y += Math.sign(ty - y); if (x === tx && y === ty) return; cells.push([x, y]); } };
+    if (xFirst) { stepx(); stepy(); } else { stepy(); stepx(); }
+    return cells;
+  };
+  const p1 = walk(true), p2 = walk(false);
+  const hits = p => p.reduce((n, [x, y]) => n + (net.cellAgent.get(key(x, y)) ? 1 : 0), 0);
+  return hits(p2) < hits(p1) ? p2 : p1;
+}
+function makeRouter(net) { return (A_, B_) => elbowRoute(net, A_, B_); }
+
+// ---------- examples ----------
+const EXAMPLES = [
+  {
+    id: "wide",
+    label: "1 · wide frontier — where parallelism lives",
+    note: "A fork tree of 8 independent not-chains, all demanded by the normalizer. In " +
+          "sequential mode one event happens per tick, so the span equals the work plus the " +
+          "transport. In parallel mode every chain walks and fires in the same tick: same " +
+          "work, span collapses to roughly the longest single chain. This is the free " +
+          "parallelism of the single-principal-port invariant, made spatial.",
+    build(B) { const w = d => d === 0 ? B.notChain(3) : B.fork(w(d - 1), w(d - 1)); return w(3); },
+  },
+  {
+    id: "chain",
+    label: "2 · demand spine — parallelism ≈ 1",
+    note: "One chain of nots. The demand token walks the spine; there is never more than " +
+          "about one enabled event, so parallel mode barely beats sequential. This is the " +
+          "honest limit: spines do not parallelize, which is why the tiled reducer routes " +
+          "them to latency cores and why span is a first-class grade.",
+    build(B) { return B.notChain(10); },
+  },
+  {
+    id: "branch",
+    label: "3 · discarded branch — waste is spatial too",
+    note: "The example 1 term of the companion viz: the S-rule shares x, both K-rules " +
+          "discard it. Fire-everything walks values into the doomed branch (watch transport " +
+          "spent hauling material that ends up erased); demand-driven leaves the whole " +
+          "region dark and never pays the movement. On a substrate, wasted work is wasted " +
+          "TRANSPORT: the energy story of SPATIAL_IC section 4.",
+    build(B) {
+      const ka = B.fork(B.leaf(), B.leaf());
+      const kb = B.fork(B.leaf(), B.stem(B.leaf()));
+      const head = B.fork(B.stem(ka), kb);
+      return B.app(head, B.notChain(6));
+    },
+  },
+];
+
+// ---------- headless comparison (seq vs par ticks) ----------
+function runHeadless(ex, mode, parallel) {
+  const net = makeNet(mode);
+  const B = builders(net);
+  const root = ex.build(B);
+  layoutTerm(net, root, 3);
+  const rootAg = net.agents.get(root.a);
+  const n = net.spawn("N", { x: rootAg.pos.x, y: rootAg.pos.y - 1 }); // demand starts adjacent
+  net.link(net.port(n, 0), root);
+  let cap = 60000;
+  while (cap-- > 0 && net.tick(parallel)) {}
+  return { ticks: net.ticks, ints: net.ints, tr: net.transport, ins: net.inserted, live: net.agents.size };
+}
+
+// ---------- app ----------
+let SIM = null, EXEC = "seq", MODE = "fire", RUNNING = false, CUR = EXAMPLES[0];
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let view = { x: 0, y: 0, scale: 26 };
+let hover = null;
+
+function boot() {
+  SIM = makeNet(MODE);
+  const B = builders(SIM);
+  const root = CUR.build(B);
+  layoutTerm(SIM, root, 3);
+  const rootAg = SIM.agents.get(root.a);
+  const n = SIM.spawn("N", { x: rootAg.pos.x, y: rootAg.pos.y - 1 }); // demand starts adjacent
+  SIM.link(SIM.port(n, 0), root);
+  RUNNING = false;
+  document.getElementById("playBtn").innerHTML = "&#9654; play";
+  fitView(); refreshPanel(); updateStats();
+}
+function fitView() {
+  let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+  for (const a of SIM.agents.values()) if (a.pos) {
+    minX = Math.min(minX, a.pos.x); maxX = Math.max(maxX, a.pos.x);
+    minY = Math.min(minY, a.pos.y); maxY = Math.max(maxY, a.pos.y);
+  }
+  const w = innerWidth - 380, h = innerHeight - 60;
+  view.scale = Math.max(6, Math.min(34, Math.min(w / (maxX - minX + 8), h / (maxY - minY + 8))));
+  view.x = (minX + maxX) / 2 - (w / 2) / view.scale - 2;
+  view.y = (minY + maxY) / 2 - (h + 60) / 2 / view.scale;
+}
+function refreshPanel() {
+  document.getElementById("exNote").textContent = CUR.note;
+  const rows = [["sequential", false], ["parallel (CA)", true]];
+  let html = "<tr><th>execution</th><th>ticks</th><th>work</th><th>transport</th><th>slack</th></tr>";
+  const res = [];
+  for (const [nm, par] of rows) {
+    const r = runHeadless(CUR, MODE, par);
+    res.push(r);
+    const cls = (par ? "par" : "seq") === EXEC ? ' style="color:var(--accent)"' : "";
+    html += `<tr${cls}><td>${nm}</td><td>${r.ticks}</td><td>${r.ints}</td><td>${r.tr}</td><td>${r.ins}</td></tr>`;
+  }
+  const speedup = (res[0].ticks / Math.max(1, res[1].ticks)).toFixed(1);
+  html += `<tr><td>speedup</td><td colspan="4" style="text-align:left;color:var(--ok)">&#215;${speedup} in span, at identical semantics</td></tr>`;
+  document.getElementById("cmpTbl").innerHTML = html;
+}
+function updateStats() {
+  document.getElementById("stTick").textContent = SIM.ticks;
+  document.getElementById("stInt").textContent = SIM.ints;
+  document.getElementById("stTr").textContent = SIM.transport;
+  document.getElementById("stPar").textContent = SIM.ticks ? ((SIM.ints + SIM.transport) / SIM.ticks).toFixed(1) : "-";
+  document.getElementById("stLive").textContent = SIM.agents.size;
+}
+
+// ---------- render ----------
+function resize() { cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
+  cv.style.width = innerWidth + "px"; cv.style.height = innerHeight + "px"; }
+addEventListener("resize", resize); resize();
+const W2S = (x, y) => [(x - view.x) * view.scale, (y - view.y) * view.scale];
+const S2W = (px, py) => [px / view.scale + view.x, py / view.scale + view.y];
+
+function draw() {
+  const s = view.scale, dpr = devicePixelRatio;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  if (s > 6) {
+    ctx.strokeStyle = "#151b28"; ctx.lineWidth = 1;
+    const [wx0, wy0] = S2W(0, 0), [wx1, wy1] = S2W(innerWidth, innerHeight);
+    ctx.beginPath();
+    for (let gx = Math.floor(wx0); gx <= wx1; gx++) { const [px] = W2S(gx - .5, 0); ctx.moveTo(px, 0); ctx.lineTo(px, innerHeight); }
+    for (let gy = Math.floor(wy0); gy <= wy1; gy++) { const [, py] = W2S(0, gy - .5); ctx.moveTo(0, py); ctx.lineTo(innerWidth, py); }
+    ctx.stroke();
+  }
+  // wire cells (chains)
+  const hotWires = new Set();
+  for (const r of SIM.redexes) if (!r.held) hotWires.add(r.wid);
+  const viaSeen = new Map();
+  for (const w of SIM.wires.values()) {
+    const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
+    if (!A_ || !B_ || !A_.pos || !B_.pos) continue;
+    const hot = hotWires.has(w.id);
+    const sleepy = A_.sleeping || B_.sleeping;
+    const pts = [[A_.pos.x, A_.pos.y], ...w.path, [B_.pos.x, B_.pos.y]];
+    ctx.strokeStyle = hot ? "#8a6d1f" : sleepy ? "#232c40" : "#2c3750";
+    ctx.lineWidth = Math.max(1.5, s * (hot ? .16 : .11));
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const [px, py] = W2S(pts[i][0], pts[i][1]);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    // chain cells as beads
+    for (const [x, y] of w.path) {
+      const [px, py] = W2S(x, y);
+      const k = key(x, y);
+      viaSeen.set(k, (viaSeen.get(k) || 0) + 1);
+      ctx.fillStyle = hot ? "#ffd866" : sleepy ? "#2c3750" : "#3a4a6d";
+      ctx.beginPath(); ctx.arc(px, py, Math.max(1.5, s * (hot ? .12 : .09)), 0, 7); ctx.fill();
+    }
+  }
+  // vias
+  if (s > 10) for (const [k, n] of viaSeen) if (n > 1) {
+    const [x, y] = k.split(",").map(Number);
+    const [px, py] = W2S(x, y);
+    ctx.strokeStyle = "#ffd866"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px, py - s * .2); ctx.lineTo(px + s * .2, py); ctx.lineTo(px, py + s * .2); ctx.lineTo(px - s * .2, py);
+    ctx.closePath(); ctx.stroke();
+  }
+  // agents
+  for (const a of SIM.agents.values()) {
+    if (!a.pos) continue;
+    let ax = a.pos.x, ay = a.pos.y;
+    if (a.anim) { a.anim.t += .2; if (a.anim.t >= 1) a.anim = null;
+      else { ax = a.anim.fx + (ax - a.anim.fx) * a.anim.t; ay = a.anim.fy + (ay - a.anim.fy) * a.anim.t; } }
+    const [px, py] = W2S(ax, ay);
+    if (px < -40 || py < -40 || px > innerWidth + 40 || py > innerHeight + 40) continue;
+    const k = KIND[a.kind], r = s * .4;
+    ctx.globalAlpha = a.sleeping ? .4 : 1;
+    ctx.fillStyle = k.color;
+    roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.fill();
+    if (a === hover) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.stroke(); }
+    const pp = a.slots[0] && SIM.agents.get(a.slots[0].a);
+    let ang = -Math.PI / 2;
+    if (pp && pp.pos) ang = Math.atan2(pp.pos.y - a.pos.y, pp.pos.x - a.pos.x);
+    ctx.fillStyle = "#0b0e14";
+    ctx.beginPath(); ctx.arc(px + Math.cos(ang) * r * .95, py + Math.sin(ang) * r * .95, Math.max(2, r * .24), 0, 7); ctx.fill();
+    if (s > 12) {
+      ctx.fillStyle = "#0b0e14";
+      ctx.font = `bold ${Math.max(8, s * .36)}px monospace`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(k.glyph, px, py + 1);
+      if (a.sleeping) { ctx.fillStyle = "#9aa7bd"; ctx.font = `${Math.max(7, s * .24)}px monospace`; ctx.fillText("z", px + r * .95, py - r * .95); }
+    }
+    ctx.globalAlpha = 1;
+  }
+  for (const e of SIM.effects) {
+    e.age++;
+    const [px, py] = W2S(e.x, e.y);
+    ctx.strokeStyle = e.red ? `rgba(255,90,90,${1 - e.age / 12})` : `rgba(120,210,255,${1 - e.age / 12})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px, py, s * .3 + e.age * s * .07, 0, 7); ctx.stroke();
+  }
+  SIM.effects = SIM.effects.filter(e => e.age < 12);
+  requestAnimationFrame(draw);
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+// ---------- ticking ----------
+let acc = 0;
+setInterval(() => {
+  if (!RUNNING || !SIM) return;
+  const rate = +document.getElementById("speed").value;
+  acc += rate / 30;
+  while (acc >= 1) {
+    acc--;
+    if (!SIM.tick(EXEC === "par")) { RUNNING = false; document.getElementById("playBtn").innerHTML = "&#9654; play"; break; }
+  }
+  updateStats();
+}, 33);
+
+// ---------- controls ----------
+const exSel = document.getElementById("exSel");
+for (const ex of EXAMPLES) { const o = document.createElement("option"); o.value = ex.id; o.textContent = ex.label; exSel.appendChild(o); }
+exSel.onchange = () => { CUR = EXAMPLES.find(e => e.id === exSel.value); boot(); };
+document.getElementById("resetBtn").onclick = () => boot();
+document.getElementById("playBtn").onclick = () => {
+  RUNNING = !RUNNING;
+  document.getElementById("playBtn").innerHTML = RUNNING ? "&#10074;&#10074; pause" : "&#9654; play";
+};
+document.getElementById("stepBtn").onclick = () => { SIM.tick(EXEC === "par"); updateStats(); };
+for (const b of document.querySelectorAll("#execSeg button")) {
+  b.onclick = () => { EXEC = b.dataset.e;
+    for (const x of document.querySelectorAll("#execSeg button")) x.classList.toggle("on", x === b);
+    boot(); };
+}
+for (const b of document.querySelectorAll("#modeSeg button")) {
+  b.onclick = () => { MODE = b.dataset.m;
+    for (const x of document.querySelectorAll("#modeSeg button")) x.classList.toggle("on", x === b);
+    boot(); };
+}
+document.getElementById("toggleSide").onclick = () => document.getElementById("side").classList.toggle("hidden");
+
+let panning = false, px0 = 0, py0 = 0;
+cv.addEventListener("mousedown", e => { panning = true; cv.classList.add("panning"); px0 = e.clientX; py0 = e.clientY; });
+addEventListener("mouseup", () => { panning = false; cv.classList.remove("panning"); });
+addEventListener("mousemove", e => {
+  if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; }
+  const [wx, wy] = S2W(e.clientX, e.clientY);
+  hover = null;
+  for (const a of SIM ? SIM.agents.values() : []) {
+    if (a.pos && Math.abs(a.pos.x - wx) < .5 && Math.abs(a.pos.y - wy) < .5) { hover = a; break; }
+  }
+  const tip = document.getElementById("tip");
+  if (hover) {
+    const k = KIND[hover.kind];
+    let txt = `${k.glyph}  ${k.name}   cell (${hover.pos.x},${hover.pos.y})`;
+    if (hover.sleeping) txt += "\n  asleep: lazy, not yet demanded";
+    for (let s2 = 0; s2 < hover.slots.length; s2++) {
+      const q = hover.slots[s2]; const b = q && SIM.agents.get(q.a);
+      const wid = hover.wire && hover.wire[s2];
+      const w = wid && SIM.wires.get(wid);
+      txt += `\n  ${SLOTNAME[hover.kind][s2].padEnd(4)}→ ${b ? KIND[b.kind].glyph + " " + KIND[b.kind].name : "(loose)"}` +
+             (w ? `   chain ${w.path.length} cells` : "");
+    }
+    tip.textContent = txt;
+    tip.style.display = "block";
+    tip.style.left = Math.min(innerWidth - 340, e.clientX + 14) + "px";
+    tip.style.top = (e.clientY + 14) + "px";
+  } else tip.style.display = "none";
+});
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const f = Math.exp(-e.deltaY * .0012);
+  const [wx, wy] = S2W(e.clientX, e.clientY);
+  view.scale = Math.max(3, Math.min(90, view.scale * f));
+  view.x = wx - e.clientX / view.scale;
+  view.y = wy - e.clientY / view.scale;
+}, { passive: false });
+
+boot();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
