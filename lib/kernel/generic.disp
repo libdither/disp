@@ -71,6 +71,27 @@ nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n 
 bool_rec : {P : Bool -> Type} -> P true -> P false -> {b : Bool} -> P b := {motive, ct, cf, target} -> rec_value Bool motive { true := ct; false := cf } target
 ord_rec : {P : Ord -> Type} -> P zero_ord -> ({a : Ord} -> {b : Ord} -> P a -> P b -> P (omega_plus a b)) -> {o : Ord} -> P o := {motive, case_z, case_op, target} -> rec_value Ord motive { zero_ord := case_z; omega_plus := case_op } target
 
+// case_value (the ONE-LEVEL case eliminator — match as polarized application). The same
+// dispatch as rec_value (functor-view decode, arm lookup, raw args by accessor) with NO
+// recursion: each recursive position receives an inert leaf where the recursor passes the
+// IH, so arms stay recursor-shaped (`succ := {k} -> {_ih} -> …`, the phantom-IH idiom) and
+// a NEUTRAL target routes through the SAME gated respond as rec_value — one gate, two
+// eliminators. Use it where a branch needs the raw sub-structure without paying the
+// recursor's eager IH (typed pred/is_zero drop O(n) -> O(1)); raw `match` stays the
+// substrate cut for raw sums and dispatcher internals (it fails closed on a hyp — pinned
+// in case_value.test.disp along with both of case_value's faces).
+let dummy_ih_args := fix ({self, cells} ->
+  if (is_fork cells) then {
+    let rest := self ((pair_snd cells) t)
+    if (is_self_rec (pair_fst cells)) then (cons t rest) else rest
+  } else nil)
+let case_dispatcher := {T, motive, cases, v} -> {
+  let dec := match ((pair_fst (type_meta T).functor) v) { Ok tg => tg; Err _ => v }
+  let cells := (match (lookup_arm (type_meta T).recognizer_params (pair_fst dec)) { Ok a => (pos_tele a); Err _ => t })
+  apply_all (field cases (pair_fst dec)) (list_cat (all_args cells (pair_snd dec)) (dummy_ih_args cells))
+}
+case_value := {T, motive, cases, target} -> elim (case_dispatcher T) motive cases target
+
 // children (generic TRAVERSAL): the immediate recursive sub-values of `v`, read off the cells (the
 // `is_rec_cell` positions, not folded) — raw material for size/depth over ANY inductive, no per-type code.
 let rec_children := fix ({self, cells, payload} ->

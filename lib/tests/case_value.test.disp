@@ -1,0 +1,57 @@
+// case_value — the ONE-LEVEL case eliminator (match as polarized application).
+//
+// THE GAP it closes, pinned first: surface `match` compiles to the raw §2.6 cut
+// `prod cases c`, which reads the scrutinee's tag directly (pair_fst c). That
+// works on concrete inj-tagged data and FAILS CLOSED on a neutral (pair_fst of
+// a hyp is its signature, not a tag), so a match-written function cannot be
+// certified at `Pi T motive`. It also reads NOTHING useful off shape-encoded
+// types (Nat/Bool/Ord carry no string tags), so match on those is wrong even
+// concretely.
+//
+// case_value T motive cases target = elim (case_dispatcher T) — the same
+// polarized application as rec_value (neutral drives through the type's gated
+// respond; concrete data is read by the dispatcher), with NO recursion: each
+// recursive position receives an inert leaf where the recursor passes the IH.
+// Arms stay recursor-shaped ({k} -> {_ih} -> …, the phantom-IH idiom), so the
+// neutral face rides the SAME coherence gate as rec_value — one gate, two
+// eliminators. For a NON-recursive inductive the two eliminators coincide
+// (no Rec cells = no IH args), pinned below.
+open use "../kernel/prelude.disp"
+
+// ── the gap (raw match, both failure modes) ──
+ShapeC : Type := Coproduct [pair "SLeaf" [], pair "SStem" [Tree], pair "SFork" [Tree, Tree]]
+let k_match := {s} -> match s { SLeaf => 1; SStem c => 2; SFork l r => 3 }
+test k_match (inj0 "SLeaf") = 1
+test k_match (inj2 "SFork" t t) = 3
+// fails closed on an abstract scrutinee:
+test param_apply (Pi ShapeC ({_} -> Nat)) k_match = Err
+// and reads garbage on shape-encoded data (Nat has no string tags — pair_fst
+// (succ (succ zero)) is a leaf, which falls off the cut's table):
+let pred_match := {n} -> match n { zero => zero; succ m => m }
+test tree_eq (pred_match (succ (succ zero))) (succ zero) = false
+
+// ── case_value on a NON-recursive inductive: coincides with rec_value ──
+let cases3 := { SLeaf := 1; SStem := {c} -> 2; SFork := {l, r} -> 3 }
+let k_case := {s} -> case_value ShapeC ({_} -> Nat) cases3 s
+test k_case (inj0 "SLeaf") = 1
+test k_case (inj1 "SStem" (t t)) = 2
+test k_case (inj2 "SFork" t (t t)) = 3
+test param_apply (Pi ShapeC ({_} -> Nat)) k_case = Ok true
+test k_case (inj1 "SStem" t) = rec_value ShapeC ({_} -> Nat) cases3 (inj1 "SStem" t)
+// one ill-typed arm flips the certificate (arms are VISITED through the gate):
+test param_apply (Pi ShapeC ({_} -> Nat)) ({s} -> case_value ShapeC ({_} -> Nat) { SLeaf := 1; SStem := {c} -> false; SFork := {l, r} -> 3 } s) = Ok false
+
+// ── case_value on a RECURSIVE shape-encoded inductive: one level, O(1) ──
+// binds the RAW predecessor (no recursion, no IH computation), certifies:
+pred_case : Nat -> Nat := {n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> {_ih} -> k } n
+test pred_case 0 = 0
+test pred_case (succ zero) = zero
+test pred_case (succ (succ zero)) = succ zero
+test pred_case 7 = 6
+is_zero_case : Nat -> Bool := {n} -> case_value Nat ({_} -> Bool) { zero := true; succ := {_k} -> {_ih} -> false } n
+test is_zero_case 0 = true
+test is_zero_case 3 = false
+// the certificates are real: flip an arm and the check flips:
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> {_ih} -> false } n) = Ok false
+// dependent motive, written explicitly (the mandatory-motive doctrine):
+test param_apply (Pi Nat ({n} -> Eq Nat (pred_case (succ n)) n)) ({n} -> case_value Nat ({m} -> Eq Nat (pred_case (succ m)) m) { zero := refl; succ := {k} -> {_ih} -> refl } n) = Ok true

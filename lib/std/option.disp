@@ -24,17 +24,16 @@ some : Tree -> Tree := {v} -> inj some_tag v
 is_none : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) none_tag
 is_some : Tree -> Bool := {opt} -> tree_eq (pair_fst opt) some_tag
 
-// option_rec — the PARAMETRIC dependent eliminator. Dispatches on is_neutral:
-// a concrete value runs the matching handler via the §2.6 cut (make_record); a
-// neutral hypothesis is applied to a `{motive; cases}` frame, routing through the
-// coproduct's `inductive_respond` to a stuck elimination stored at `motive opt`.
-// So `{o : Option A} -> option_rec M n s o` type-checks (the neutral branch is a
-// well-typed stuck form), unlike a raw `triage`/`make_hyp` which the walker bars.
+// option_rec — the PARAMETRIC dependent eliminator, routed through `elim` (the
+// shared polarized application): a neutral hypothesis gets the `{motive; cases}`
+// frame through the coproduct's respond (a well-typed stuck elimination at
+// `motive opt`, unlike a raw `triage`/`make_hyp` which the walker bars); a
+// concrete value runs the tag-keyed field-record cut. ONE cases record serves
+// both faces (the frame/gate reads it by field — coh_check's `field cases tag`
+// — and the dispatcher unwraps the field and applies it to the payload).
+let option_dispatcher := {motive, cases, opt} -> (field cases (pair_fst opt)) (pair_snd opt)
 option_rec := {motive, on_none, on_some, opt} ->
-  select_lazy
-    ({_} -> opt { motive := motive; cases := make_record [some_tag, none_tag] [list_const on_some, list_const ({_} -> on_none)] }) // tag-keyed, field-readable cases (coh_check reads `field cases tag`)
-    ({_} -> make_record [some_tag, none_tag] [on_some, {_} -> on_none] opt)
-    (is_neutral opt)
+  elim option_dispatcher motive (make_record [some_tag, none_tag] [list_const on_some, list_const ({_} -> on_none)]) opt
 
 // Concrete-only conveniences (built on the cut; they carry no motive, so they do
 // not lift to a hypothesis — use option_rec with an explicit motive for that).
