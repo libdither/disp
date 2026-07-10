@@ -216,7 +216,7 @@ pub fn reduce_fold_rc(
     (nf, ms, net.interactions.load(Ordering::Relaxed), report)
 }
 
-/// `reduce_fold_tiled` with TILE-AWARE loading (SPATIAL_IC.md 12.1): parse round-robin
+/// `reduce_fold_tiled` with tile-aware loading (SPATIAL_IC.md 12.1): parse round-robin
 /// across tiles at construction. For a demand-spine term (fib) the spine drives its own
 /// consumer-tile placement anyway, so this is mostly a non-regression check; the point of
 /// the round-robin is to not concentrate the initial term in one stripe.
@@ -332,7 +332,7 @@ pub fn reduce_wide_tiled(
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     Some((nf, ms, net.interactions.load(Ordering::Relaxed), stats))
 }
-/// `reduce_wide_tiled` with TILE-AWARE loading (SPATIAL_IC.md 12.1): create the tiling
+/// `reduce_wide_tiled` with tile-aware loading (SPATIAL_IC.md 12.1): create the tiling
 /// before load and build each independent chain into its own tile, so the initial layout
 /// is already partitioned. Same NF and interaction count as the naive-load tiled path (only
 /// node addresses differ); the tiling metrics should show a lower cross-tile fraction.

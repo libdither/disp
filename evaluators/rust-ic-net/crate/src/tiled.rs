@@ -37,6 +37,18 @@
 //! router. Both are placement-policy findings the counters exist to surface, not
 //! correctness issues.
 //!
+//! Tile-aware loading (SPATIAL_IC.md 12.1; the `*_tiled_aware` loaders in bench.rs)
+//! closes the skeleton's initial-layout gap: a plain load bumps the whole term into one
+//! contiguous stripe, so a wide term starts unpartitioned in tile 0 and the drain pays
+//! cross-tile routing to split it. Building the term through a pre-made tiling (each
+//! independent wide chain whole into its own tile, fold terms round-robin per node)
+//! starts the layout partitioned: on wide-10-200 the cross-tile fraction drops from
+//! about 0.21/0.15/0.28 at 2/4/8 threads to 0.01/0.03/0.03 and reduce_ms falls by 1.5x
+//! to 3x (the naive 8-thread run also burns ~280k `alloc_fallback` misses on the packed
+//! stripe; the aware run has none). Demand-spine folds (fib-14) already place at birth,
+//! so aware loading is a non-regression there: same-tile stays ~0.98 and up at every
+//! thread count, NF and interaction counts identical throughout.
+//!
 //! Correctness rests on the same backbone as the work-stealing drain (parallel.rs):
 //! single-principal-port ownership means the worker firing a redex exclusively owns both
 //! agents' cells, and the var exchange (swap/AcqRel) stays the only cross-thread
