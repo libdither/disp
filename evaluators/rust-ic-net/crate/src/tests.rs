@@ -344,3 +344,36 @@ fn rc_is_noop_without_discarded_sharing() {
     assert_eq!(ints1, ints2, "no cancels -> identical interaction trace");
     assert_eq!(cancels, 0);
 }
+
+// Tile-aware loading (SPATIAL_IC.md 12.1): building the initial term across tiles at
+// construction must not change the result, since only node addresses change. The
+// tile-aware wide loader (each independent chain into its own tile) has to agree with
+// the sequential drain on NF and interaction count across thread counts; the cross-tile
+// fraction dropping below the naive-load tiled path is the bench readout (bench.rs).
+// Repeated: concurrency bugs flake.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn tiled_aware_matches_sequential() {
+    let budget = 1_000_000_000i64;
+    let (nodes, vars) = (1 << 18, 1 << 18);
+    let (seq_nf, _, seq_int, _peak) =
+        crate::reduce_wide_timed(6, 8, 1, budget, nodes, vars).expect("seq wide");
+    for threads in [1usize, 2, 4] {
+        for _ in 0..10 {
+            let (nf, _ms, int, _stats) = crate::reduce_wide_tiled_aware(6, 8, threads, budget, nodes, vars)
+                .expect("tile-aware wide nf");
+            assert_eq!(seq_nf, nf, "tile-aware NF must equal sequential ({threads} threads)");
+            assert_eq!(seq_int, int, "interaction count deterministic under tile-aware load ({threads} threads)");
+        }
+    }
+    // The aware fold path must also agree (round-robin parse); one big folded not-chain.
+    let terms = vec![b"2110".to_vec(), b"110".to_vec(), b"0".to_vec()];
+    let (seq_fold, _, seq_fold_int, _peak2) =
+        crate::reduce_fold_timed(&terms, 1, budget, nodes, vars).expect("seq fold");
+    for threads in [1usize, 2, 4] {
+        let (nf, _ms, int, _stats) = crate::reduce_fold_tiled_aware(&terms, threads, budget, nodes, vars)
+            .expect("tile-aware fold nf");
+        assert_eq!(seq_fold, nf, "tile-aware fold NF must equal sequential ({threads} threads)");
+        assert_eq!(seq_fold_int, int, "tile-aware fold interaction count deterministic ({threads} threads)");
+    }
+}

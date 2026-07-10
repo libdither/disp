@@ -34,6 +34,9 @@ impl<'a> Ctx<'a> {
     /// bump-loaded into one stripe. `rr` is the shared round-robin cursor (threaded across
     /// terms in a fold). Only valid while the worker carries a loader `TileState`; the
     /// produced tree is byte-identical to `parse`'s (only node addresses differ).
+    // Only the native bench (bench.rs) drives the tiled loaders; wasm is the sequential
+    // oracle and never tiles, so gate this off there to keep the oracle build warning-clean.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn parse_tiled(&mut self, s: &[u8], i: &mut usize, rr: &mut usize, tiles: usize) -> u32 {
         enum Frame {
             Stem,
