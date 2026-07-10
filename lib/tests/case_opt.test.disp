@@ -1,0 +1,45 @@
+// case_opt — the licensed fast face of case_value (std/case.opt.disp).
+// The rebind's license (case.disp's case_equiv: pointwise oeq at the field-
+// bound Nat instance) is checked at case.opt's LOAD; this file pins what it
+// does not cover — the CONCRETE paths. The cut-class fast dispatch must agree
+// with the raw cut (match) per constructor (abstract payloads, machine-checked
+// below), certificates must still complete through the verbatim neutral
+// delegation, and non-cut-class types must fall through to the spec.
+open use "../kernel/prelude.disp"
+open use "../std/case.opt.disp"
+
+// an inj-tagged sum: cut-class (identity iso) — the fast tag-cut path fires
+ShapeD : Type := Coproduct [pair "DLeaf" [], pair "DStem" [Tree], pair "DFork" [Tree, Tree]]
+let cases3 := { DLeaf := 1; DStem := {c} -> 2; DFork := {l, r} -> 3 }
+let k_fast := {s} -> case_value ShapeD ({_} -> Nat) cases3 s
+let k_cut  := {s} -> match s { DLeaf => 1; DStem c => 2; DFork l r => 3 }
+
+// concrete dispatch, all arities:
+test k_fast (inj0 "DLeaf") = 1
+test k_fast (inj1 "DStem" (t t)) = 2
+test k_fast (inj2 "DFork" t (t t)) = 3
+
+// the license evidence for the CUT relationship, per constructor with ABSTRACT
+// payloads (annotated exports auto-verify at load — every concrete member is in
+// constructor form, so by canonicity this family covers the whole cut class):
+lic_leaf : Eq Nat (k_cut (inj0 "DLeaf")) (k_fast (inj0 "DLeaf")) := refl
+lic_stem : {c : Tree} -> Eq Nat (k_cut (inj1 "DStem" c)) (k_fast (inj1 "DStem" c)) := {c} -> refl
+lic_fork : {l : Tree} -> {r : Tree} -> Eq Nat (k_cut (inj2 "DFork" l r)) (k_fast (inj2 "DFork" l r)) := {l, r} -> refl
+
+// the neutral face delegates verbatim: certificates complete under the rebind
+test param_apply (Pi ShapeD ({_} -> Nat)) k_fast = Ok true
+// ...and stay honest:
+test param_apply (Pi ShapeD ({_} -> Nat)) ({s} -> case_value ShapeD ({_} -> Nat) { DLeaf := 1; DStem := {c} -> false; DFork := {l, r} -> 3 } s) = Ok false
+// while the raw cut still fails closed on a hyp — the boundary the license
+// does NOT cover, and the reason match cannot BE case_value (no motive in the term):
+test param_apply (Pi ShapeD ({_} -> Nat)) k_cut = Err
+
+// non-cut-class (shape-encoded Nat, iso != iso_id): falls through to the spec
+// on both faces — same trees as the spec face, fast path never fires:
+test case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> k } 7 = 6
+test param_apply (Pi Nat ({_} -> Nat)) ({n} -> case_value Nat ({_} -> Nat) { zero := 0; succ := {k} -> k } n) = Ok true
+
+// a junk tag on the cut-class path is INERT (spine_go is argspec-guided: an
+// unknown tag projects a non-fork spec and answers the unapplied junk, no
+// divergence) — it does not accidentally hit a real arm:
+test tree_eq (k_fast (inj0 "Bogus")) 1 = false

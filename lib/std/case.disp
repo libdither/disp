@@ -1,0 +1,38 @@
+open use "../kernel/prelude.disp"
+open use "oeq.disp"
+
+// ================================================================
+// case_value — ownership (the SPEC face). The fast face is case.opt.disp.
+// ================================================================
+// case_value's honest type is target-type-dependent (like rec_value: the case
+// record type is derived per T), and its body reads T's metadata raw, so no
+// ∀T annotation can verify — an abstract T has no variant list for pad_cases
+// to walk, the same reason rec_value stays unannotated. The name is therefore
+// owned at an INSTANCE relation: a rebind's { new, proof } must relate old and
+// new pointwise at the Nat one-level eliminator instance — a dependent motive
+// over a RECURSIVE, SHAPE-ENCODED inductive, so the one instance exercises the
+// functor-view decode, the arm pad, and the coherence gate at once. A fast
+// face that delegates to the spec VERBATIM on the neutral path (the
+// nat_rec_fast discipline, arith.opt) inhabits it with pointwise refl, because
+// both sides walk to the same stuck elimination at abstract arguments;
+// anything that changes checking-time behavior cannot.
+//
+// The instance binds the arms as FIELDS, not as one record hyp: the coherence
+// gate reads arms off a CONCRETE case record (built here from the bound
+// fields); an abstract case record cannot drive it, and a bare ∀-motive Pi
+// certificate is not standalone-decidable either (its codomain membership goes
+// stuck) — the pointwise oeq is exactly the form that avoids both, comparing
+// the two sides' WALKS at shared hyps instead of re-certifying at the Pi.
+
+// The instance type: one-level dependent Nat elimination, CASE-shaped arms.
+NatCaseT : Type := {P : Nat -> Type} -> P zero -> ({k : Nat} -> P (succ k)) -> {n : Nat} -> P n
+
+// The ownership relation: pointwise oeq at the field-bound instance.
+case_equiv := {old, new} -> oeq NatCaseT
+  ({P, z, s, n} -> old Nat P { zero := z; succ := s } n)
+  ({P, z, s, n} -> new Nat P { zero := z; succ := s } n)
+
+// Own the name. The value is unchanged — this declaration only attaches the
+// guard (the kernel barrel's export is typeless, so no annotation is inherited
+// and none is declared): membership stays enforced by use, the license by rebind.
+guard (license_guard case_equiv) case_value := case_value

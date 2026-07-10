@@ -1,0 +1,43 @@
+// case.opt: the optimized face of case_value — a PARALLEL module (the arith.opt
+// pattern; a future optimizer emits files of exactly this shape, (e', cert) per
+// definition). case_fast STAGES at partial application: applying it to a TYPE
+// precomputes the type_meta reads (the iso class + a per-variant argspec table)
+// — eager evaluation makes the staging real, hash-consing memoizes it. A
+// cut-class T (identity iso — every inj-tagged sum, incl. Coproduct_p/ctx)
+// dispatches a concrete target by RAW TAG CUT: one tag read + one payload-spine
+// walk, no view call, no accessor round — the §2.6 cut, running under
+// case_value's name and license. A NEUTRAL target delegates to case_value
+// VERBATIM (the nat_rec_fast discipline), which is what makes the rebind's
+// proof pointwise-refl-provable: the abstract paths are tree-identical by
+// construction. Non-cut-class types (the shape-encoded Nat/Bool/Ord/List)
+// fall through to the spec on both faces.
+open use "case.disp"
+open use "../kernel/prelude.disp"
+
+// spine_go f args payload: saturate a curried case arm along the right-nested
+// inj payload (arg j = pair_fst∘pair_snd^j, the LAST arg is the bare snd-chain
+// — pos_tele's accessor layout), guided by the variant's argspec list so it is
+// TOTAL on junk tags (an unknown tag projects a non-fork spec and answers the
+// unapplied arm — inert, mirroring the spec's off-table behavior).
+let spine_go := fix ({self, f, args, payload} ->
+  if (is_fork args)
+    then (if (is_fork (pair_snd args)) then (self (f (pair_fst payload)) (pair_snd args) (pair_snd payload)) else (f payload))
+    else f)
+let names_go := fix ({self, vs} -> if (is_fork vs) then (cons (pair_fst (pair_fst vs)) (self (pair_snd vs))) else nil)
+let specs_go := fix ({self, vs} -> if (is_fork vs) then (cons (list_const (pair_snd (pair_fst vs))) (self (pair_snd vs))) else nil)
+
+case_fast := {T} -> {
+  let cut_class := tree_eq ((type_meta T).functor) iso_id
+  let argtab := make_record (names_go ((type_meta T).recognizer_params)) (specs_go ((type_meta T).recognizer_params))
+  {motive, cases, target} ->
+    if (is_neutral target) then (case_value T motive cases target)
+    else (if cut_class
+      then (spine_go (field cases (pair_fst target)) (field argtab (pair_fst target)) (pair_snd target))
+      else (case_value T motive cases target))
+}
+
+// The licensed rebind: pointwise refl inhabits case_equiv (case.disp) because
+// case_fast delegates verbatim on the neutral path — both sides walk to the
+// same stuck elimination at abstract arguments. The concrete paths are pinned
+// differentially in lib/tests/case_opt.test.disp.
+case_value := { new := case_fast ; proof := {P} -> {z} -> {s} -> {n} -> refl }
