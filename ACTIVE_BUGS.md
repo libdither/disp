@@ -6,7 +6,8 @@ application can reduce to a value outside `B`. In Disp these are not, so far, lo
 inconsistencies: they are all defended by use-site re-checking. This file records what is
 broken, why it stays contained, and how each item is closed.
 
-Items 1 and 2 are now fixed (see "Closed" below). Items 3 and 4 remain open.
+Items 1 and 2 are now fixed (see "Closed" below). Items 3-5 remain open (3 and 5 are
+recorded as design mechanisms rather than defects).
 
 ## The defense model (why these are gaps, not inconsistencies)
 
@@ -33,6 +34,7 @@ below are about subject reduction and canonicity, not consistency.
 | 2 | Coherence gate trusted an unchecked `view`/`encode` iso | `positive.disp` | Fixed (`iso_faithful` guard) |
 | 3 | Neutral application skips the domain check (result-shape-only) | `cells.disp:171` | Open (design mechanism) |
 | 4 | `Tree` respond with a non-function motive reduces case-dependently | `universe.disp` (`tree_app_or_elim`) | Open (minor) |
+| 5 | Intensional neutrality-branching: a body observes `is_neutral` and diverges on concrete values | `engine.disp` (the `pair_fst` carve-out) | Open (design invariant; defended + license discipline) |
 
 Probe files live in `lib/tests/probe_*_sr.test.disp`. The item-1 and item-2 probes are now
 regression pins (they assert the gates close); the item-3 probe still asserts its
@@ -119,6 +121,44 @@ call site, so it is reachable only by hand-routing a malformed frame past the ch
 elim surface. Minor and currently unpinned; a comment or pin that the gate should reject a
 non-function motive cleanly would close the rough edge.
 
+### 5. Intensional neutrality-branching (certificates are neutral-face statements)
+
+`is_neutral` is an O(1) root-signature read (`pair_fst` against `hyp_sig`), and `pair_fst`
+is a sanctioned reader on every value including hyps (`engine.disp`). So a body can
+observe which face it is on. Certification walks the body at a minted hyp — the checker's
+only spelling of "arbitrary input" IS the neutral face — so it only ever sees the
+`is_neutral = true` branch:
+
+```
+// [probe_intensional_sr]
+evil := {n} -> if (is_neutral n) then n else false
+param_apply (Pi Nat ({_} -> Nat)) evil = Ok true    // certified at the hyp
+evil 3 = false                                      // a stem, not a Nat
+param_apply Nat (evil 3) = Ok false                 // defense: use-site re-check
+```
+
+A Pi certificate is therefore a NEUTRAL-FACE statement, not a semantic forall over
+members. This is not `is_neutral`-specific (any root-signature comparison reconstructs
+the bit) and it is not removable: polarized application — `elim`, `case_value`, the
+H-rule, every licensed `.opt` fast path — dispatches on exactly this bit. Unsanctioning
+root-sig reads on hyps would take the eliminator architecture with it. The reverse attack
+(a concrete value FORGING the signature to look neutral) is separately pinned
+(`soundness.test.disp`, `forged_stem`).
+
+Defended by the standard model: the junk fails the next membership check (fact 1), and
+theorems cannot be faked — the neutral branch must genuinely inhabit the dependent
+codomain at the abstract point, where junk cannot help (pinned). The positive-side
+discipline is the license pattern (`std/case.disp`): per-constructor concrete
+obligations (tag concrete, payloads/arms abstract — `case_equiv`'s `at_cut` family)
+force the concrete branch into a checked walk, and canonicity covers the domain. The
+difference between dispatch-to-DELEGATE (benign; refl-provable) and dispatch-to-DIVERGE
+(this item) is exactly such an obligation.
+
+Forward constraint: the defense model rests on use-site re-checking, and `strip`/erasure
+(TYPE_THEORY §10) deletes exactly those checks — so item 5 upgrades from defended gap to
+real unsoundness under naive erasure. Erasure must demand two-face (canonicity-backed)
+certificates for anything it strips.
+
 ## What is sound (verified, do not re-investigate)
 
 - **The coherence gates.** After the fixes above, every eliminating respond gates:
@@ -147,5 +187,9 @@ non-function motive cleanly would close the rough edge.
 1. Item 3 is the design mechanism; document rather than fix unless bidirectional argument
    checking is wanted.
 2. Item 4 is a minor rough edge.
-3. Remaining from item 1: motive families for full mutual induction (the Coproduct_ctx
+3. Item 5 is a design invariant (the price of polarized application); the mitigation is
+   the two-face license discipline, already practiced (`case_equiv`). It becomes a hard
+   blocker only for §10 erasure, which must not strip use-site checks behind a
+   neutral-face-only certificate.
+4. Remaining from item 1: motive families for full mutual induction (the Coproduct_ctx
    gate is currently single-motive).
