@@ -1,5 +1,5 @@
 // std/effect.disp — algebraic effects as a library free monad (TYPE_THEORY §15).
-// PROTOTYPE (2026-07-07), validated by lib/tests/effect_proto.test.disp.
+// Pins: effect_proto / eff_deep_proto / eff2_proto / effect_syntax_proto tests.
 //
 // An effectful computation is a VALUE — a description the substrate never
 // performs. Purity is forced, not chosen: hash-consing shares structurally
@@ -13,26 +13,14 @@
 // resume. handle is `reset`, resume is the captured delimited continuation;
 // no shift/reset primitive exists or is needed.
 //
-// The production shape this file grows into (spec order, all deferred):
-//   - canonical rows: LANDED 2026-07-07 (mk_row/row_insert/row_union;
-//     closed-row conversion = O(1) tree_eq). OPEN rows: LANDED 2026-07-08
-//     (`Row` below; a Row-typed hyp as improper tail, neutral-guarded
-//     toolkit, row polymorphism = ordinary Pi Row, pinned).
-//   - `Eff R X : Type` as a self-referential wait-form: LANDED 2026-07-07
-//     (the deep recognizer at the bottom of this file, the make_rec_recognizer
-//     knot route; Pure payload : X, each Op's label ∈ R, k : op.result ->
-//     Eff R X as a real Pi check, so continuations walk under real minted
-//     answers). The optional cleanup route (Eff as a stock Coproduct with a
-//     RecUnder reader functor) remains open. Weakening is containment either
-//     way, so no subtyping judgment ever appears.
-//   - the impure driver: POC BUILT 2026-07-08 (src/driver.ts + std/io.disp +
-//     examples/hello.disp, echo.disp; design in EFFECT_BOOTSTRAP_PLAN.md).
-//     The loop classifies Pure/Op, checks main against its Eff type through
-//     the kernel first, enforces the row and is_closed per op, performs via
-//     a host op map, and resumes with apply(k, r); async answers await.
-//   - scoped/higher-order operations (§15 open question): one `Scoped` arm +
-//     weave. The handler's `forward` clause below is already the degenerate
-//     weave — see its comment.
+// Layout: rows (canonical + open, `Row`), the deep `Eff R X` recognizer with a
+// gated respond (bottom of file), handlers as eliminator clients. The impure
+// driver lives at the program boundary (src/driver.ts + std/io.disp;
+// examples/hello.disp, echo.disp). Still open (§15): scoped/higher-order
+// operations — one `Scoped` arm + weave (the handler's `forward` clause below
+// is already the degenerate weave) — and the optional cleanup route (Eff as a
+// stock Coproduct with a RecUnder reader functor). Weakening is containment,
+// so no subtyping judgment ever appears.
 open use "../kernel/prelude.disp"
 open use "demand.disp"   // field_ty/pi_dom/pi_cod/map_fields — the one reader family
 
@@ -72,7 +60,7 @@ effect_of := {op} -> pair_fst (op.label)
 op_name := {op} -> pair_snd (op.label)
 covers_eff := {eff} -> {op} -> tree_eq (effect_of op) eff
 
-// ── effects AS record types (the syntax investigation, landed 2026-07-08) ──
+// ── effects AS record types ──
 // An effect needs no keyword: it is an ordinary record TYPE whose fields are
 // the op signatures — `State := { get : Unit -> Nat, put : Nat -> Unit }`.
 // `op` derives an occurrence builder from the field (name, then the Arrow's
@@ -88,7 +76,7 @@ op := {E, name} -> {arg} -> {
 op0 := {E, name} -> (op E name) unit_val
 ops := {E} -> map_fields ({n, ty} -> op E n) E
 
-// ── the request-sum face: handlers as gate-checked case records (2026-07-08) ──
+// ── the request-sum face: handlers as gate-checked case records ──
 // The SECOND derived face of an effect type (the §2.7 polarity pair): the
 // record view is the SIGNATURE, what checking consumes (negative); the
 // request SUM is the data a handler eliminates (positive). `requests E`
@@ -178,11 +166,10 @@ eff_check := fix ({self, R, v} ->
 // Effect safety as an ordinary TYPE — the SHALLOW COMPATIBILITY FORM.
 // eff_check probes continuations with a leaf, so only a program's first
 // operations are row-checked and the Pure payload is not checked against X.
-// The deep `Eff R X` recognizer below supersedes it; new pins use the deep
-// type (EFFECT_BOOTSTRAP_PLAN stage 0 exit).
+// The deep `Eff R X` recognizer below supersedes it; new pins use the deep type.
 EffAt := {R} -> Refinement Tree ({v} -> eff_check R v)
 
-// ── canonical rows (EFFECT_BOOTSTRAP_PLAN stage 0, landed 2026-07-07) ──
+// ── canonical rows ──
 // A canonical row is a sorted, deduplicated label list: two closed rows are
 // the same tree exactly when they are the same SET, so closed-row conversion
 // is tree_eq (O(1) by hash-consing). Labels are ordered by a raw structural
@@ -192,6 +179,9 @@ EffAt := {R} -> Refinement Tree ({v} -> eff_check R v)
 // tool here. The raw constructors above (row1/row_cons) stay as building
 // blocks; code that compares rows should build them with mk_row/row_insert/
 // row_union. Pins: lib/tests/eff_deep_proto.test.disp.
+// tcmp a b: three-way structural compare — 1 = equal, 0 = a < b, 2 = a > b
+// (leaf < stem < fork, then children left-to-right; forks compare left child
+// first and fall through to the right on a tie).
 let tcmp := fix ({self, a, b} -> triage
   (triage 1 ({_} -> 0) ({_, _} -> 0) b)
   ({ca} -> triage 2 ({cb} -> self ca cb) ({_, _} -> 0) b)
@@ -200,7 +190,7 @@ let tcmp := fix ({self, a, b} -> triage
     if (tree_eq c 1) then (self ra rb) else c
   }) b)
   a)
-// row_insert/mk_row are OPEN-ROW AWARE (landed with open rows, 2026-07-08): a
+// row_insert/mk_row are OPEN-ROW AWARE: a
 // Row-typed hyp as improper tail is kept as the tail, so a canonical open row
 // is a sorted deduplicated prefix ending in the tail variable — two open rows
 // with the same prefix set and the same tail are tree_eq. Closed-row behavior
@@ -223,7 +213,7 @@ Row : Type := wait (make_rec_recognizer ({self, m, v} ->
   else (if (is_fork v) then (param_apply self (pair_snd v)) else (Ok false))))
   (make_meta unit_witness inert_respond)
 
-// ── the deep `Eff R X` recognizer (EFFECT_BOOTSTRAP_PLAN stage 0, landed 2026-07-07) ──
+// ── the deep `Eff R X` recognizer ──
 // The §15 production type, as a self-referential wait-form (the
 // make_rec_recognizer knot, the same shape as Nat). Per node:
 //   Pure x       x : X                      (closes the shallow form's gap)
@@ -262,8 +252,7 @@ let eff_body := {self, m, v} -> {
 // case types are hand-written; recognition (eff_body) is unchanged, so a
 // recognize-only use costs exactly what the former inert Eff did.
 OpShape : Type := Record [pair "label" Tree, pair "param" Type, pair "result" Type]
-// (the gate rides the kernel's own eta_check/check_fields — the former
-// local clones retired when check_fields was exported, 2026-07-08)
+// (the gate rides the kernel's own eta_check/check_fields)
 let eff_case_types := {T, P} -> {
   let rp := (type_meta T).recognizer_params
   cons (pair "Pure" (Pi (rp.result) ({x} -> P (io_pure x))))

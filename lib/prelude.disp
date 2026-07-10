@@ -52,9 +52,8 @@ open given {
 //
 // The host's tree_eq fast-path (src/core/tree.ts; rust-eager's arena) returns
 // these exact shapes so a tree-level identity test still matches predicate
-// semantics. (Scott-encoded `{m, ct, cf} -> ct/cf` until 2026-07-07 — the
-// kernel's last self-eliminating datum, retired per §2.7; named TT/FF until
-// the same day.)
+// semantics. (Raw shapes per the §2.7 polarity doctrine — data does not
+// self-eliminate; the triage-driven select/cond below dispatch on them.)
 true : Bool := t
 false : Bool := t t
 

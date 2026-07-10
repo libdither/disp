@@ -81,7 +81,7 @@ list_cat := fix ({self, l, ys} -> if (is_fork l) then (cons (pair_fst l) (self (
 
 // proj resolves a record by field name; cut is the one elimination: apply a record
 // to an enum value -> index the record by the enum's tag, run that field on the
-// payload. (Named annihilate until 2026-07-07; renamed to match the file and §2.6.)
+// payload.
 
 /// Project record/product `P` with `name`
 /// Impl: Records are pairs (name_list, items). Get index from name_list via `name`, use index to fetch correct item from payload.

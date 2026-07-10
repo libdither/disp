@@ -1,9 +1,7 @@
 // std/tele_spec.disp — the telescope walker as a free-monad program, with
-// the mode boolean replaced by a choice of handler (EFFECT_BOOTSTRAP_PLAN
-// stage 2; promoted 2026-07-08 from the two proto files that each carried a
-// copy — tele_spec2_proto keeps the differential battery, handler_zoo_proto
-// the cost/explanation/synthesis interpreters; the design narrative lives in
-// tele_spec2_proto's header).
+// the mode boolean replaced by a choice of handler (tele_spec2_proto keeps
+// the differential battery, handler_zoo_proto the cost/explanation/synthesis
+// interpreters; the design narrative lives in tele_spec2_proto's header).
 //
 // tele_prog folds a LIVE cell chain (the real telescopes, read by op
 // signature and type_meta as positive.disp reads them) into ONE Eff program

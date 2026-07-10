@@ -89,8 +89,11 @@ let wrap_ihs := fix ({self, cells, args, P, concl, T} ->
       then (if (tree_eq (rec_at_argty c T) T) then (Arrow (P (pair_fst args)) rest) else rest)  // self-sort -> IH
       else rest)
   } else concl)
-// conclude at the type's REAL constructor value `encode (inj tag payload)` — the encode iso is identity for
-// inj-tagged types, maps inj-form -> shape for shape-encoded ones (Nat/Bool/Ord/List), so one gate covers both.
+// case_type_go cells orig tag T P args: ONE variant's case type — a Pi per arg cell
+// (domain = cell_argty), accumulating the bound args; at the base, wrap_ihs adds the IH
+// premises and concludes at the REAL constructor value `P (encode (inj tag payload))`.
+// The encode iso is identity for inj-tagged types, inj-form -> shape for shape-encoded
+// ones (Nat/Bool/Ord/List), so one gate covers both.
 let case_type_go := fix ({self, cells, orig, tag, T, P, args} ->
   if (is_fork cells)
     then (Pi (cell_argty (pair_fst cells) T) ({a} -> self ((pair_snd cells) t) orig tag T P (list_cat args (cons a nil))))
@@ -124,7 +127,7 @@ check_fields := fix ({self, fields, cases} ->
 // value (probe_gate_sr, BadNat). Anchoring on `view` (the sound recognizer side) with opaque placeholder
 // args catches it; one direction suffices for the gate (the encode∘view direction matters for fmap, not
 // SR). Payload-agnostic isos only (the kernel's Nat/Bool/Ord/Tree and every iso_id sum qualify).
-let ph_payload := fix ({self, argspec, i} ->
+let ph_payload := fix ({self, argspec, i} ->   // one opaque `@ph i` marker per constructor arg (distinct + inert)
   if (is_fork argspec) then (cons (inj "@ph" i) (self (pair_snd argspec) (succ i))) else nil)
 let variant_faithful := {view, encode, var} -> {
   let form := inj (pair_fst var) (build_payload (ph_payload (pair_snd var) zero))

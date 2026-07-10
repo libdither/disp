@@ -1,6 +1,6 @@
-// std/demand.disp — the DEMAND face of telescopes (promoted 2026-07-08 from
-// demand_proto): DAG-subset extraction from record types, answered in the
-// honest form "what you must satisfy first, then what you get".
+// std/demand.disp — the DEMAND face of telescopes: DAG-subset extraction from
+// record types, answered in the honest form "what you must satisfy first,
+// then what you get".
 //
 // "What is field f of T" = the dependency CLOSURE of f through the
 // binder-usage edges, presented as a Pi chain over the demanded prefix
@@ -44,6 +44,8 @@ let ty_under := fix ({self, cells, fname, i, mk, pos} ->
     if (tree_eq (m.name) fname) then (m.ty)
     else (self ((pair_snd cells) (if (tree_eq pos i) then mk else mk0)) fname i mk (succ pos))
   } else t)
+// depends_on: the header's oracle in one line — f's type with binder i := mk1
+// vs := mk2; hash-consing makes the two trees differ iff f's type USES binder i.
 let depends_on := {T, fname, i} -> not (tree_eq (ty_under (cells_of_t T) fname i mk1 0) (ty_under (cells_of_t T) fname i mk2 0))
 let any_dep := {T, set, i} -> (fix ({self, l} -> if (is_fork l) then (if (depends_on T (pair_fst l) i) then true else (self (pair_snd l))) else false)) set
 let closure_go := fix ({self, T, names, set, pos} ->

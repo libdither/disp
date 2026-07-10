@@ -1,5 +1,5 @@
-// std/kernel_spec.disp — the spec twins of the sealed kernel algorithms
-// (EFFECT_BOOTSTRAP_PLAN stages 1+3+4, landed 2026-07-08). Every algorithm
+// std/kernel_spec.disp — the spec twins of the sealed kernel algorithms.
+// Every algorithm
 // here is the READABLE face of a sealed fused form, written as an effect
 // program over the kernel signature, differentially pinned against the live
 // kernel in lib/tests/kernel_spec_proto.test.disp, and annotated at its row
@@ -15,7 +15,7 @@
 //                              plus (c) the extend clause (the forge half).
 //   make_hyp (forge)           (c) the mint clause: param_apply (bind_hyp ty)
 //                              resume; the escape discipline rides the route.
-//   support/occurs/is_closed   (c) FINDING (2026-07-08): these are NOT
+//   support/occurs/is_closed   (c) FINDING: these are NOT
 //                              classify-programs as the plan hoped — the scan
 //                              descends through neutral PAYLOADS (spines),
 //                              and payload visibility is exactly the
