@@ -5,7 +5,14 @@
 import { base } from '$app/paths'
 import type { WorkerRequest, WorkerResponse, ItemEvent, RunOutcome } from './protocol.ts'
 
-export type DispStatus = 'cold' | 'booting' | 'loading-kernel' | 'ready' | 'running' | 'dead'
+export type DispStatus =
+  | 'cold'
+  | 'booting'
+  | 'restoring-kernel'
+  | 'loading-kernel'
+  | 'ready'
+  | 'running'
+  | 'dead'
 
 // Omit that distributes over the request union (a plain Omit collapses the
 // variants and loses their distinct payload keys)
@@ -70,28 +77,53 @@ class DispClient {
     })
   }
 
-  /** Spawn the worker + instantiate the WASM engine (fast; no kernel yet). */
+  /**
+   * Spawn the worker + instantiate the WASM engine, then install the shipped
+   * precompiled kernel (static/kernel.snap — seconds, not the ~1-minute
+   * self-verification). A missing or stale snapshot downgrades gracefully:
+   * the session starts cold and the first kernel-opening run elaborates from
+   * source exactly as before.
+   */
   init(): Promise<void> {
     if (this.#initPromise) return this.#initPromise
     this.status = 'booting'
     this.#worker = this.#spawn()
-    this.#initPromise = this.#request({
-      type: 'init',
-      wasmUrl: new URL(`${base}/rust_eager.wasm`, location.href).href
-    }).then(() => {
+    this.#initPromise = (async () => {
+      await this.#request({
+        type: 'init',
+        wasmUrl: new URL(`${base}/rust_eager.wasm`, location.href).href
+      })
+      await this.#restore()
       this.status = 'ready'
-    })
+    })()
     this.#initPromise.catch(() => {
       this.status = 'dead'
     })
     return this.#initPromise
   }
 
+  /** Install the precompiled kernel; resolves false when unavailable/stale. */
+  async #restore(): Promise<boolean> {
+    this.status = 'restoring-kernel'
+    try {
+      await this.#request({
+        type: 'restore',
+        snapshotUrl: new URL(`${base}/kernel.snap`, location.href).href
+      })
+      this.kernelLoaded = true
+      return true
+    } catch (e) {
+      console.warn('[disp] precompiled kernel unavailable, will elaborate from source:', e)
+      return false
+    }
+  }
+
   /**
-   * Elaborate + self-verify the kernel once per session. Slow (tens of
-   * seconds — it is genuinely re-checking the type theory); progress streams
-   * through onItem. Subsequent runs that `open use` the kernel hit the
-   * session module cache and are fast.
+   * Run `open use kernel/prelude` on the session. With the precompiled
+   * kernel restored (the default after init) this is a warm cache hit and
+   * returns in milliseconds; after `reset({ fromSource: true })` it is the
+   * genuine ~1-minute elaborate-and-self-verify, streaming progress through
+   * onItem — you are watching the type system check itself.
    */
   loadKernel(): Promise<RunOutcome> {
     if (this.#kernelPromise) return this.#kernelPromise
@@ -137,13 +169,19 @@ class DispClient {
     }
   }
 
-  /** Soft reset: fresh arena + session; kernel must reload. */
-  async reset(): Promise<void> {
+  /**
+   * Soft reset: fresh arena + session. By default the precompiled kernel is
+   * re-installed into the fresh session; `fromSource: true` leaves it cold so
+   * the next kernel load genuinely re-elaborates and self-verifies from
+   * source (the don't-trust-the-snapshot path).
+   */
+  async reset(opts?: { fromSource?: boolean }): Promise<void> {
     if (!this.#worker) return
     this.#kernelPromise = null
     this.kernelLoaded = false
     this.#moduleItems = 0
     await this.#request({ type: 'reset' })
+    if (!opts?.fromSource) await this.#restore()
     this.status = 'ready'
   }
 

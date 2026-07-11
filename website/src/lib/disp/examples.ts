@@ -18,14 +18,14 @@ export const examples: Example[] = [
 // This is the real compiler — the same elaborator and kernel that run in CI —
 // compiled to WebAssembly, running entirely in your tab.
 //
-// ▶ Run file (Ctrl/⌘-Enter) runs everything. The first run loads and
-//   SELF-VERIFIES the kernel (~a minute): you are watching the type system
-//   check itself. After that, runs are instant.
+// ▶ Run file (Ctrl/⌘-Enter) runs everything. The kernel arrives precompiled
+//   (restored in seconds); "Verify from source" re-elaborates and SELF-VERIFIES
+//   it (~a minute) — you are watching the type system check itself.
 // ▶ Run to cursor (Shift-Enter) elaborates the file up to the line you're on.
 // ▶ The prompt at the bottom right evaluates expressions against this file.
 
 open use "../kernel/prelude.disp"   // the type system (checked + cached)
-open use "../std/nat/ops.disp"      // double, pred, is_zero
+open use "../std/nat.disp"      // double, pred, is_zero
 
 // A test passes when both sides reduce to the identical tree:
 test double 2 = 4
@@ -78,7 +78,7 @@ test shape_of shape_of = "fork"
     label: 'Records & derived fields',
     kernel: true,
     source: `open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 
 // A record type with a DERIVED field: b's recipe runs during the check.
 let TDs := { a : Nat, b := double a }
@@ -102,7 +102,7 @@ test tree_eq Point PointCells = true
     label: 'Proofs & hypotheses',
     kernel: true,
     source: `open use "../kernel/prelude.disp"
-open use "../std/nat/arith.disp"
+open use "../std/nat.disp"
 
 // A statement about every Nat is a Pi into a proposition. Checking it mints
 // one promise (a hypothesis) and runs the body on it:
@@ -143,6 +143,26 @@ let resp_of := {T} -> (type_meta T).respond (type_meta T).recognizer_params
 test verify_good MyNat (resp_of MyNat) = Ok true
 test verify_good MyNat (inductive_respond unit_witness) = Ok false   // waves junk through
 test verify_good MyNat (inert_respond unit_witness) = Ok false       // refuses everything
+`
+  },
+  {
+    id: 'hello',
+    label: 'Hello (landing card)',
+    kernel: true,
+    source: `// Disp web editor recompiles as you type
+open use "../kernel/prelude.disp"
+open use "../std/nat.disp"
+
+quadruple : Nat -> Nat := {n} -> double (double n)
+
+test quadruple 3 = 12
+test double (quadruple 2) = 16
+
+// Types are predicates — apply one to check data:
+test Nat 5 = Ok true
+
+// Proofs run too: an equation's only inhabitant is the leaf.
+test (Eq Nat (double 2) 4) refl = Ok true
 `
   }
 ]

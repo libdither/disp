@@ -5,7 +5,11 @@
 // '/lib/...' under the virtual root (the playground buffer itself is passed
 // to parseProgram as source text, never read from disk).
 
-const modules = import.meta.glob('../../../../../lib/**/*.disp', {
+// (__site_example_* are transient files validate-examples.mts writes into
+// lib/tests/ while it runs — never part of the library, and letting them into
+// the vfs would skew the kernel-snapshot lib hash whenever validation overlaps
+// a dev session or build.)
+const modules = import.meta.glob(['../../../../../lib/**/*.disp', '!**/__site_example_*'], {
   query: '?raw',
   import: 'default',
   eager: true

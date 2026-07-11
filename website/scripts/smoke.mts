@@ -19,7 +19,7 @@ console.log('--- run 1: kernel load + user code ---')
 const t0 = Date.now()
 const out1 = runner.run(
   `open use "../kernel/prelude.disp"
-open use "../std/nat/ops.disp"
+open use "../std/nat.disp"
 quadruple : Nat -> Nat := {n} -> double (double n)
 test quadruple 3 = 12
 test param_apply Type Nat = Ok true
@@ -46,7 +46,7 @@ console.log(JSON.stringify({ ok: out2.ok, tests: out2.tests, error: out2.error, 
 
 console.log('--- run 3: eval expression ---')
 const out3 = runner.evalExpr(
-  `open use "../kernel/prelude.disp"\nopen use "../std/nat/ops.disp"`,
+  `open use "../kernel/prelude.disp"\nopen use "../std/nat.disp"`,
   'double (double 3)',
   onItem,
   PLAYGROUND

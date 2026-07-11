@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "npm run snapshot && vite build",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "snapshot": "tsx scripts/build-kernel-snapshot.mts",
+    "validate:examples": "tsx scripts/validate-examples.mts",
+    "vfs-check": "tsx scripts/vfs-check.mts"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.8",

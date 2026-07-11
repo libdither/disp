@@ -2,6 +2,12 @@
 
 export type WorkerRequest =
   | { id: number; type: 'init'; wasmUrl: string }
+  // Restore the shipped precompiled kernel (static/kernel.snap) into the
+  // session's module cache. Bytes are fetched once and kept for re-restores
+  // after 'reset'. Fails (fatal for this id, worker stays alive) when the
+  // snapshot is missing or was built against a different lib/ than the
+  // bundle serves — callers fall back to elaborating from source.
+  | { id: number; type: 'restore'; snapshotUrl: string }
   | {
       id: number
       type: 'run'

@@ -25,8 +25,7 @@ try {
     '/lib/prelude.disp',
     '/lib/kernel/prelude.disp',
     '/lib/kernel/engine.disp',
-    '/lib/std/nat/ops.disp',
-    '/lib/std/nat/arith.disp'
+    '/lib/std/nat.disp'
   ]
   let bad = 0
   for (const p of expected) {
@@ -41,7 +40,7 @@ try {
   const dir = path.dirname(path.resolve('/lib/tests/playground.disp'))
   const cases: [string, string][] = [
     ['../kernel/prelude.disp', '/lib/kernel/prelude.disp'],
-    ['../std/nat/ops.disp', '/lib/std/nat/ops.disp'],
+    ['../std/nat.disp', '/lib/std/nat.disp'],
     ['../prelude.disp', '/lib/prelude.disp']
   ]
   for (const [rel, want] of cases) {

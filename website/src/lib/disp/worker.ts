@@ -13,6 +13,9 @@ import type { WorkerRequest, WorkerResponse, ItemEvent } from './protocol.ts'
 import type { DispRunner } from './runner.ts'
 
 let runner: DispRunner | null = null
+// the shipped kernel snapshot, kept for re-restores after 'reset'
+let snapBytes: Uint8Array | null = null
+let snapUrl: string | null = null
 
 const post = (msg: WorkerResponse) => (self as unknown as Worker).postMessage(msg)
 
@@ -29,6 +32,18 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
           })
         ])
         runner = new DispRunner(bytes)
+        post({ type: 'ready', id: msg.id })
+        break
+      }
+      case 'restore': {
+        if (!runner) throw new Error('worker not initialized')
+        if (!snapBytes || snapUrl !== msg.snapshotUrl) {
+          const r = await fetch(msg.snapshotUrl)
+          if (!r.ok) throw new Error(`no kernel snapshot at ${msg.snapshotUrl}: ${r.status}`)
+          snapBytes = new Uint8Array(await r.arrayBuffer())
+          snapUrl = msg.snapshotUrl
+        }
+        await runner.restoreSnapshot(snapBytes)
         post({ type: 'ready', id: msg.id })
         break
       }

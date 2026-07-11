@@ -7,11 +7,30 @@ import { parseProgram, type Decl, type ParseItemStats } from '../../../../src/co
 import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
+import { restoreSnapshot, vfsHash, type RestoreStats } from './snapshot.ts'
+import { vfs } from './shims/fs.ts'
 import type { ItemEvent, RunOutcome } from './protocol.ts'
 
 const PLAYGROUND_PATH = '/lib/tests/playground.disp'
 const PRETTY_DEPTH = 14
 const PRETTY_LEN = 600
+
+// Best-effort line attribution for elaboration errors that carry no `line N`
+// (parse errors do; unresolved-variable and per-name errors name the culprit
+// instead): pull the identifier out of the message and point at its first
+// code occurrence in the buffer. Heuristic by design — the compiler has no
+// source-span diagnostics yet.
+function guessErrorLine(error: string, source: string): number | undefined {
+  const name = error.match(/free variable (\S+)/)?.[1] ?? error.match(/'([^']+)'/)?.[1]
+  if (!name || !/^[\w.]+$/.test(name)) return undefined
+  const re = new RegExp(`(?:^|[^\\w])${name.replace(/\./g, '\\.')}(?:[^\\w]|$)`)
+  const lines = source.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const code = lines[i].split('//')[0]
+    if (re.test(code)) return i + 1
+  }
+  return undefined
+}
 
 export class DispRunner {
   #session: RustEagerBrowserSession
@@ -30,6 +49,16 @@ export class DispRunner {
     this.#session.dispose()
     this.#session = new RustEagerBrowserSession(this.#wasmBytes)
     this.#names = new Map()
+  }
+
+  // Install the shipped precompiled kernel: pre-populate the elaborator's
+  // module cache so `open use ".../kernel/prelude.disp"` is a cache hit
+  // instead of the ~1-minute self-verification. Refuses (throws) when the
+  // snapshot's lib hash differs from this bundle's vfs — stale snapshots
+  // never load silently.
+  async restoreSnapshot(bytes: Uint8Array): Promise<RestoreStats> {
+    const expect = await vfsHash(vfs)
+    return restoreSnapshot(this.#session, bytes, expect)
   }
 
   memoryBytes(): number {
@@ -101,6 +130,7 @@ export class DispRunner {
       outcome.error = e instanceof Error ? e.message : String(e)
       const m = outcome.error.match(/line (\d+)/)
       if (m) outcome.errorLine = Number(m[1])
+      else outcome.errorLine = guessErrorLine(outcome.error, source)
     }
     outcome.elapsedMs = performance.now() - t0
     outcome.steps = this.#session.stats().steps - steps0

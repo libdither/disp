@@ -10,7 +10,7 @@ export interface Sample {
 }
 
 const KERNEL = 'open use "../kernel/prelude.disp"\n'
-const KERNEL_OPS = KERNEL + 'open use "../std/nat/ops.disp"\n'
+const KERNEL_OPS = KERNEL + 'open use "../std/nat.disp"\n'
 const RAW = 'open use raw "../prelude.disp" {}\n'
 
 export const samples: Record<string, Sample> = {}
