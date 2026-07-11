@@ -56,9 +56,6 @@
   #cellpop .k { color: var(--dim); }
   #cellpop .fld { border-bottom: 1px dotted #3a4a6d; cursor: help; }
   #cellpop .bits { color: var(--ok); }
-  #cellpop #popClose { position: absolute; top: 4px; right: 7px; cursor: pointer;
-    color: var(--dim); border: 0; background: none; font-size: 13px; }
-  #cellpop #popClose:hover { color: var(--warn); }
   #cellpop .pinhead { color: var(--hot); font-size: 10px; letter-spacing: .06em; }
   #help { position: fixed; left: 12px; bottom: 10px; color: #56607244; z-index: 5;
     font-size: 12px; user-select: none; }
@@ -78,6 +75,7 @@
   <div class="grp">
     <label class="chk"><input type="checkbox" id="tensionChk" checked> tension</label>
     <label class="chk"><input type="checkbox" id="migChk" checked> migration</label>
+    <label class="chk"><input type="checkbox" id="rectChk"> rectilinear</label>
     <span style="color:var(--dim)">T</span>
     <input type="range" id="tempSlider" min="1" max="250" value="40" style="width:70px">
     <span id="tempVal" style="color:var(--dim);min-width:32px">0.40</span>
@@ -147,7 +145,7 @@
 
 <canvas id="cv"></canvas>
 <div id="tip"></div>
-<div id="cellpop"><button id="popClose">&#10005;</button><div id="popBody"></div></div>
+<div id="cellpop"><div id="popBody"></div></div>
 <div id="help">drag to pan &middot; wheel to zoom &middot; click a cell to pin its state</div>
 
 <script>
@@ -211,9 +209,9 @@ const KIND_DOC = {
 };
 
 // ---------- the cell net ----------
-function makeNet(mode, tension, migration, temp) {
+function makeNet(mode, tension, migration, temp, rect) {
   const net = {
-    mode, tension: !!tension, migration: !!migration, temp: temp || 0.4,
+    mode, tension: !!tension, migration: !!migration, temp: temp || 0.4, rect: !!rect,
     grid: new Map(), agents: 0, reserved: null,
     ints: 0, transport: 0, migr: 0, straightened: 0, ticks: 0, peak: 0, layersMax: 0,
     blockedNow: [], blockedPrev: [], grace: 0, effects: [], quiet: false,
@@ -360,9 +358,13 @@ function makeNet(mode, tension, migration, temp) {
   // (wires may cross as layered segs, but never share a face). Dangling stub halves
   // mark their edges used, so completion faces are never stepped through. opts.blocked
   // and opts.freed overlay planned-but-uncommitted claims on the live grid (moveAgent).
-  // Dijkstra with octile costs (orthogonal 2, diagonal 3) plus a turn penalty, so taut
-  // wires come out Euclidean-straight with minimal kinks — Chebyshev-blind BFS made
-  // everything a 45-degree staircase. Returns the step directions, or null.
+  // Dijkstra over free edges with a turn penalty. Two cost profiles:
+  //   euclidean   (orthogonal 2, diagonal 3): straight taut runs, any of 8 headings
+  //   rectilinear (orthogonal 2, diagonal 6): an L beats any diagonal — chip routing;
+  //     diagonals become escape valves. Costs ~40% more cells per wire, so it needs
+  //     the roomier layout and runs slower.
+  // Diagonal FACES stay first-class either way: T2 carries five ports and four faces
+  // cannot host them — only the router's lay preference changes. Returns steps|null.
   function findPath(x0, y0, x1, y1, opts) {
     if (x0 === x1 && y0 === y1) return null; // a wire needs two distinct ends
     const bx0 = Math.min(x0, x1) - 24, bx1 = Math.max(x0, x1) + 24;
@@ -374,17 +376,18 @@ function makeNet(mode, tension, migration, temp) {
       if (freed && freed.has(ek)) return false;
       return edgeUsed(cell, d);
     };
-    // Dial's algorithm over states (cell, incoming dir); costs are small ints
-    const seen = new Map(); // "x,y:din" -> cost
-    const prev = new Map(); // state -> [prevState, d]
+    // Dial's algorithm over states (cell, incoming dir); numeric state keys
+    const H = by1 - by0 + 1;
+    const SK = (x, y, din) => ((x - bx0) * H + (y - by0)) * 9 + din + 1;
+    const seen = new Map(), prev = new Map(); // stateKey -> cost / [prevKey, d]
     const buckets = [[[x0, y0, -1]]];
-    seen.set(x0 + "," + y0 + ":-1", 0);
-    let goal = null, pops = 0;
-    for (let cost = 0; cost < buckets.length && !goal && pops < 60000; cost++) {
+    seen.set(SK(x0, y0, -1), 0);
+    let goal = -1, pops = 0;
+    for (let cost = 0; cost < buckets.length && goal < 0 && pops < 60000; cost++) {
       const bucket = buckets[cost];
       if (!bucket) continue;
       for (const [qx, qy, din] of bucket) {
-        const sk = qx + "," + qy + ":" + din;
+        const sk = SK(qx, qy, din);
         if (seen.get(sk) !== cost) continue; // stale entry
         pops++;
         if (qx === x1 && qy === y1) { goal = sk; break; }
@@ -399,8 +402,8 @@ function makeNet(mode, tension, migration, temp) {
             if (n && n.a && !(opts && opts.thruAgents)) continue;
             if (n && opts && opts.maxSegs !== undefined && n.segs.length > opts.maxSegs) continue;
           }
-          const c2 = cost + ((d & 1) ? 3 : 2) + (din >= 0 && d !== din ? 1 : 0);
-          const nk = tx + "," + ty + ":" + d;
+          const c2 = cost + ((d & 1) ? (net.rect ? 6 : 3) : 2) + (din >= 0 && d !== din ? 1 : 0);
+          const nk = SK(tx, ty, d);
           const old = seen.get(nk);
           if (old !== undefined && old <= c2) continue;
           seen.set(nk, c2);
@@ -409,7 +412,7 @@ function makeNet(mode, tension, migration, temp) {
         }
       }
     }
-    if (!goal) return null;
+    if (goal < 0) return null;
     const steps = [];
     for (let kk = goal; ; ) {
       const p = prev.get(kk);
@@ -421,6 +424,20 @@ function makeNet(mode, tension, migration, temp) {
   }
   // congestion-tiered routing: spread wires through sparse cells before stacking layers
   function route(x0, y0, x1, y1, extra) {
+    if (Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) === 1) {
+      // adjacent endpoints: the single-edge lay needs no search (the hot path of every
+      // walk and migration step); a taken edge falls through to the detour search.
+      // In rectilinear mode a diagonal must ALSO fall through: the search would lay
+      // the L, and shortcutting diagonals back in measurably jams the fabric.
+      const d = dirBetween(x0, y0, x1, y1);
+      if (!(d & 1) || !net.rect) {
+        const ek = edgeKey(x0, y0, d);
+        const used = extra && extra.blocked && extra.blocked.has(ek) ? true
+                   : extra && extra.freed && extra.freed.has(ek) ? false
+                   : edgeUsed(virt(x0, y0), d);
+        if (!used) return [d];
+      }
+    }
     const o = t => Object.assign({}, extra, t);
     return findPath(x0, y0, x1, y1, o({ maxSegs: 1 }))
       || findPath(x0, y0, x1, y1, o({ maxSegs: 2 }))
@@ -914,6 +931,30 @@ function makeNet(mode, tension, migration, temp) {
     h = Math.imul(h ^ (h >>> 16), 0x45D9F3B) >>> 0;
     return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
   }
+  // the tension force on an agent: weighted sum of first-hop directions over its wires
+  // (hot 12, principal 2, plumbing 1) = the discrete gradient of E = sum(w*len)
+  function pullOf(c) {
+    const a = c.a;
+    if (!a) return null;
+    let fx = 0, fy = 0;
+    for (let s = 0; s < a.ports.length; s++) {
+      const d = a.ports[s];
+      if (d === null) continue;
+      const n = nb(c, d);
+      let wt = 1;
+      if (n) for (const g of n.segs) if (g.a === opp(d) || g.b === opp(d)) { wt = g.hot ? 12 : g.cls; break; }
+      fx += wt * DX[d]; fy += wt * DY[d];
+    }
+    return { fx, fy, mag: Math.hypot(fx, fy) };
+  }
+  // slack = a kinked segment whose two neighbor attachments are already adjacent:
+  // reclaimable by retraction. An L corner on a taut run is NOT slack.
+  function isSlack(c, g) {
+    if (g.a === opp(g.b)) return false;
+    const ends = endpointsOfSeg(c, g);
+    return !!ends && ends[0].n !== ends[1].n &&
+      Math.max(Math.abs(ends[0].n.x - ends[1].n.x), Math.abs(ends[0].n.y - ends[1].n.y)) <= 1;
+  }
   function migrate() {
     const movers = [...net.grid.values()].filter(c => c.a && !c.a.sleep);
     for (const c of movers) {
@@ -926,15 +967,8 @@ function makeNet(mode, tension, migration, temp) {
         const n = nb(c, p);
         if (n && (n.a || n.segs.some(g => (g.a === opp(p) || g.b === opp(p)) && g.hot))) continue;
       }
-      let fx = 0, fy = 0;
-      for (let s = 0; s < a.ports.length; s++) {
-        const d = a.ports[s];
-        if (d === null) continue;
-        const n = nb(c, d);
-        let wt = 1;
-        if (n) for (const g of n.segs) if (g.a === opp(d) || g.b === opp(d)) { wt = g.hot ? 12 : g.cls; break; }
-        fx += wt * DX[d]; fy += wt * DY[d];
-      }
+      const pl = pullOf(c);
+      let fx = pl.fx, fy = pl.fy;
       for (const [bx, by] of net.blockedPrev) {
         if (Math.abs(c.x - bx) <= 3 && Math.abs(c.y - by) <= 3) { fx += 8 * Math.sign(c.x - bx); fy += 8 * Math.sign(c.y - by); }
       }
@@ -1013,6 +1047,7 @@ function makeNet(mode, tension, migration, temp) {
   net.at = at; net.agentAt = agentAt; net.placeAgent = placeAgent; net.connect = connect;
   net.P_ = P_; net.tick = tick; net.follow = follow;
   net.walkers = walkers; net.activePairs = activePairs; net.moveAgent = moveAgent;
+  net.pullOf = pullOf; net.isSlack = isSlack;
   return net;
 }
 
@@ -1080,9 +1115,9 @@ const EXAMPLES = [
 ];
 
 // ---------- headless ----------
-function runHeadless(ex, mode, parallel, tension, migration, temp) {
-  const net = makeNet(mode, tension, migration, temp);
-  const root = instantiate(net, ex.build(specs()), 3);
+function runHeadless(ex, mode, parallel, tension, migration, temp, rect) {
+  const net = makeNet(mode, tension, migration, temp, rect);
+  const root = instantiate(net, ex.build(specs()), rect ? 4 : 3); // rectilinear wiring needs the roomier lattice
   const n = net.placeAgent("N", { x: root.x, y: root.y - 1 });
   net.connect(net.P_(n, 0), net.P_(root, 0));
   let cap = 120000;
@@ -1091,14 +1126,14 @@ function runHeadless(ex, mode, parallel, tension, migration, temp) {
 }
 
 // ---------- app ----------
-let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, MIGRATION = true, TEMP = 0.4,
+let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, MIGRATION = true, RECT = false, TEMP = 0.4,
     RUNNING = false, CUR = EXAMPLES[1], PIN = null, hoverCell = null; // chain: runs to NF
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 let view = { x: 0, y: 0, scale: 26 };
 
 function boot() {
-  SIM = makeNet(MODE, TENSION, MIGRATION, TEMP);
-  const root = instantiate(SIM, CUR.build(specs()), 3);
+  SIM = makeNet(MODE, TENSION, MIGRATION, TEMP, RECT);
+  const root = instantiate(SIM, CUR.build(specs()), RECT ? 4 : 3);
   const n = SIM.placeAgent("N", { x: root.x, y: root.y - 1 });
   SIM.connect(SIM.P_(n, 0), SIM.P_(root, 0));
   RUNNING = false;
@@ -1146,8 +1181,8 @@ function runComparison() {
   const step = () => {
     if (ji >= jobs.length) { render(true); return; }
     if (!net) {
-      net = makeNet(MODE, TENSION, MIGRATION, TEMP);
-      const root = instantiate(net, CUR.build(specs()), 3);
+      net = makeNet(MODE, TENSION, MIGRATION, TEMP, RECT);
+      const root = instantiate(net, CUR.build(specs()), RECT ? 4 : 3);
       const nn = net.placeAgent("N", { x: root.x, y: root.y - 1 });
       net.connect(net.P_(nn, 0), net.P_(root, 0));
       budget = CAP;
@@ -1207,9 +1242,10 @@ function draw(ts) {
     const [cx, cy] = W2S(c.x, c.y);
     if (cx < -20 || cy < -20 || cx > innerWidth + 20 || cy > innerHeight + 20) continue;
     for (const g of c.segs) {
-      const kink = g.a !== opp(g.b);
+      // hue = tension class (hot 12 / principal 2 / plumbing 1); orange = reclaimable
+      // slack only (a taut L corner is NOT slack and keeps its class color)
       const base = g.hot ? "#ffd866" : g.cls === 2 ? "#5f96d1" : "#3a4a6d";
-      ctx.strokeStyle = kink && !g.hot ? lerpc(base, "#e08050", .55) : base;
+      ctx.strokeStyle = !g.hot && SIM.isSlack(c, g) ? lerpc(base, "#e08050", .55) : base;
       ctx.lineWidth = Math.max(1.2, s * (g.hot ? .14 : g.cls === 2 ? .1 : .07));
       ctx.beginPath();
       ctx.moveTo(cx + DX[g.a] * s * .5, cy + DY[g.a] * s * .5);
@@ -1252,6 +1288,22 @@ function draw(ts) {
       ctx.fillText(k.glyph, px, py + 1);
       if (c.a.sleep) { ctx.fillStyle = "#9aa7bd"; ctx.font = `${Math.max(7, s * .22)}px monospace`; ctx.fillText("z", px + r * .9, py - r * .9); }
     }
+    // net tension pull: the arrow migration would follow (unbalanced agents only)
+    if (s > 14 && !c.a.sleep) {
+      const pl = SIM.pullOf(c);
+      if (pl && pl.mag >= 2) {
+        const ux = pl.fx / pl.mag, uy = pl.fy / pl.mag;
+        const l = r * (1.15 + Math.min(1, pl.mag / 16) * .8);
+        const ex2 = px + ux * l, ey2 = py + uy * l;
+        ctx.strokeStyle = "#e0a060"; ctx.lineWidth = Math.max(1.2, s * .06);
+        ctx.beginPath(); ctx.moveTo(px + ux * r, py + uy * r); ctx.lineTo(ex2, ey2); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ex2, ey2);
+        ctx.lineTo(ex2 - (ux * .6 + uy * .35) * r * .4, ey2 - (uy * .6 - ux * .35) * r * .4);
+        ctx.lineTo(ex2 - (ux * .6 - uy * .35) * r * .4, ey2 - (uy * .6 + ux * .35) * r * .4);
+        ctx.closePath(); ctx.fillStyle = "#e0a060"; ctx.fill();
+      }
+    }
     ctx.globalAlpha = 1;
   }
   // pinned empty/wire cell highlight
@@ -1284,7 +1336,7 @@ const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 const fld = (label, val, doc) => `<div class="row"><span class="k">${esc(label)}</span> <span class="fld" data-doc="${esc(doc)}">${val}</span></div>`;
 function popHTML(x, y) {
   const c = SIM.at(x, y);
-  let h = `<div class="pinhead">CELL (${x}, ${y}) — pinned, live</div>`;
+  let h = `<div class="pinhead">CELL (${x}, ${y}) — pinned, live · click the cell again to release</div>`;
   if (!c || (!c.a && !c.segs.length)) return h + `<div class="row k">empty: free space. Births claim cells like this; walks and migration move agents through them.</div>`;
   if (c.a) {
     const a = c.a, k = KIND[a.tag], doc = KIND_DOC[a.tag];
@@ -1300,6 +1352,13 @@ function popHTML(x, y) {
           ? " Currently unwired: an open edge of the emerging result."
           : ` One direction of cell state: this port's connection leaves toward ${DNAME[d]}. Following segments cell to cell is how the chain exists; there is no wire object.`));
     }
+    const pl = SIM.pullOf(c);
+    if (pl) {
+      let pd = 0, pbest = -1e9;
+      for (let d2 = 0; d2 < 8; d2++) { const sc = pl.fx * DX[d2] + pl.fy * DY[d2]; if (sc > pbest) { pbest = sc; pd = d2; } }
+      h += fld("tension pull", pl.mag < 0.5 ? "balanced" : `&rarr; ${DNAME[pd]} &middot; ${pl.mag.toFixed(1)}`,
+        "net tension force on this agent: the weighted vector sum of first-hop directions over its wires (hot 12, principal 2, plumbing 1) = the discrete gradient of E = sum of weight times length. Migration drifts agents along this pull (Metropolis at temperature T); a tight bundle pulls against itself and locks, which is why knots stop contracting from the inside.");
+    }
     h += fld("cell state", `<span class="bits">${TAGBITS[a.tag]} + ${a.ports.filter(p => p !== null).length}&times;3b dirs + 1b phase</span>`,
       "the ENTIRE semantic state of this cell's agent: a 4-bit tag, one 3-bit direction per wired port, one phase bit. No ids, no pointers; identity is position (SPATIAL_IC section 3).");
   }
@@ -1307,11 +1366,14 @@ function popHTML(x, y) {
     h += `<div class="row k" style="margin-top:5px">wire segments (${c.segs.length} layer${c.segs.length > 1 ? "s" : ""})</div>`;
     c.segs.forEach((g, i) => {
       const kink = g.a !== opp(g.b);
-      h += fld(`layer ${i}`, `${DNAME[g.a]} &harr; ${DNAME[g.b]} &middot; w=${g.hot ? 12 : g.cls}${g.hot ? " hot" : ""}${kink ? " &middot; kinked" : ""}${g.hot && g.flowDir !== undefined ? ` &middot; flow &rarr; ${DNAME[g.flowDir]}` : ""}`,
-        `one wire segment: two 3-bit directions${kink ? " (kinked: not a straight pass-through; the straightening rule retracts kinks when the neighbors touch)" : ""}. ` +
-        (g.hot ? "HOT (weight 12): this chain connects two facing principals, a pending interaction; the value walks along flow, one cell per tick, one transport unit each."
-               : g.cls === 2 ? "principal-class (weight 2): one end of this chain is a principal port; a value or demand will eventually traverse it."
-                             : "plumbing (weight 1): aux-to-aux structure; pulled last by migration, kept bounded."));
+      const slack = kink && SIM.isSlack(c, g);
+      h += fld(`layer ${i}`, `${DNAME[g.a]} &harr; ${DNAME[g.b]} &middot; tension ${g.hot ? 12 : g.cls}${g.hot ? " hot" : g.cls === 2 ? " principal" : " plumbing"} &middot; ${slack ? "SLACK" : "taut"}${g.hot && g.flowDir !== undefined ? ` &middot; flow &rarr; ${DNAME[g.flowDir]}` : ""}`,
+        `one wire segment: two 3-bit directions. Tension = the weight this wire pulls its endpoints with${slack
+          ? ". SLACK: a kink whose neighbor attachments already touch; the straightening rule reclaims it (drawn orange)"
+          : kink ? ". Taut: a corner on a minimal route; nothing to reclaim here — shortening needs an endpoint to move" : ". Taut: a straight pass-through"}. ` +
+        (g.hot ? "HOT (12): this chain connects two facing principals, a pending interaction; the value walks along flow, one cell per tick, one transport unit each."
+               : g.cls === 2 ? "principal-class (2): one end of this chain is a principal port; a value or demand will eventually traverse it."
+                             : "plumbing (1): aux-to-aux structure; pulled last by migration, kept bounded."));
     });
   }
   return h;
@@ -1330,7 +1392,6 @@ function positionPop() {
   pop.style.left = Math.min(innerWidth - 360, px + view.scale * .6) + "px";
   pop.style.top = Math.max(56, Math.min(innerHeight - pop.offsetHeight - 10, py - view.scale * .6 - pop.offsetHeight * .2)) + "px";
 }
-document.getElementById("popClose").onclick = () => { PIN = null; refreshPop(); };
 // field-level explanations: hover an underlined value for its meaning
 document.getElementById("cellpop").addEventListener("mouseover", e => {
   const t = e.target.closest(".fld");
@@ -1388,6 +1449,7 @@ for (const b of document.querySelectorAll("#modeSeg button")) {
 document.getElementById("toggleSide").onclick = () => document.getElementById("side").classList.toggle("hidden");
 document.getElementById("tensionChk").onchange = e => { TENSION = e.target.checked; boot(); };
 document.getElementById("migChk").onchange = e => { MIGRATION = e.target.checked; boot(); };
+document.getElementById("rectChk").onchange = e => { RECT = e.target.checked; boot(); };
 document.getElementById("tempSlider").oninput = e => {
   TEMP = e.target.value / 100;
   document.getElementById("tempVal").textContent = TEMP.toFixed(2);
@@ -1401,7 +1463,8 @@ addEventListener("mouseup", e => {
     const [wx, wy] = S2W(e.clientX, e.clientY);
     const x = Math.round(wx), y = Math.round(wy);
     const c = SIM.at(x, y);
-    PIN = c && (c.a || c.segs.length) ? { x, y } : null;
+    if (PIN && PIN.x === x && PIN.y === y) PIN = null; // clicking the pinned cell releases it
+    else PIN = c && (c.a || c.segs.length) ? { x, y } : null;
     if (PIN) document.getElementById("tip").style.display = "none"; // the popup takes over
     refreshPop();
   }
