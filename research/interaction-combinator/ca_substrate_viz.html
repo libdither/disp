@@ -83,7 +83,7 @@
   <div class="grp">
     <button id="playBtn" class="primary">&#9654; play</button>
     <button id="stepBtn">tick</button>
-    <input type="range" id="speed" min="1" max="120" value="30" style="width:80px">
+    <input type="range" id="speed" min="1" max="400" value="200" style="width:80px">
   </div>
   <div id="stats">
     <span class="hot">ticks <b id="stTick">0</b></span>
@@ -1432,11 +1432,16 @@ function pump(ts) {
   if (!RUNNING || !SIM) return;
   const rate = +document.getElementById("speed").value;
   acc += rate * dt;
+  // 40ms compute budget per frame (~25fps floor) caps how many ticks a frame runs, so a
+  // high slider setting fast-forwards COMPUTE-BOUND — the A* router's headroom (~5x more
+  // ticks/frame than the old Dijkstra) is what the top of the slider now spends. Below
+  // that ceiling the slider rate-limits smoothly.
   const t0 = performance.now();
-  while (acc >= 1 && performance.now() - t0 < 120) {
+  while (acc >= 1 && performance.now() - t0 < 40) {
     acc--;
     if (!SIM.tick(EXEC === "par")) { RUNNING = false; document.getElementById("playBtn").innerHTML = "&#9654; play"; acc = 0; break; }
   }
+  if (acc > 4) acc = 4; // don't bank unbounded backlog when the tab was backgrounded
   updateStats();
 }
 
