@@ -1,12 +1,57 @@
 <script lang="ts">
+  import { flushSync } from "svelte";
   import { base } from "$app/paths";
-  import TreeVis from "$lib/components/TreeVis.svelte";
+  import HeroCard from "$lib/components/HeroCard.svelte";
   import { highlightDisp } from "$lib/editor/highlight";
   import { examples } from "$lib/disp/examples";
 
   const REPO = "https://github.com/libdither/disp";
   const JAY = "https://github.com/barry-jay-personal";
   const TREECALC = "https://treecalcul.us/";
+
+  // ---- hero card modes ----
+  // theatre reflows the hero grid (headline | description | field guide across
+  // the top, card full-width below); the swap is one class toggle animated by
+  // the View Transitions API where available (instant elsewhere / under
+  // prefers-reduced-motion), and the viewport follows: entering scrolls the
+  // now-lower card into view, exiting returns to the hero top. flipped turns
+  // the card over to the visualizer (HeroCard randomizes the initial face).
+  let theatre = $state(false);
+  let flipped = $state(false);
+  let heroEl: HTMLElement | undefined = $state();
+  let cardEl: HTMLDivElement | undefined = $state();
+
+  function toggleTheatre(): void {
+    const entering = !theatre;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Scroll the WINDOW explicitly — never scrollIntoView: the hero section is
+    // overflow:hidden, which makes it a programmatically-scrollable ancestor,
+    // and scrollIntoView would scroll the hero's own content out of view with
+    // no user-visible way to scroll it back.
+    const scroll = (behavior: ScrollBehavior) => {
+      const el = entering ? cardEl : heroEl;
+      if (!el) return;
+      // entering leaves extra headroom for the face picker hanging above the card
+      const offset = (document.querySelector("header")?.clientHeight ?? 64) + (entering ? 62 : 12);
+      window.scrollTo({
+        top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - offset),
+        behavior
+      });
+    };
+    const apply = () => flushSync(() => (theatre = entering));
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown };
+    if (doc.startViewTransition && !reduce) {
+      // scroll inside the transition callback: snapshots are captured after
+      // the jump, so the morph carries the camera move in one motion
+      doc.startViewTransition(() => {
+        apply();
+        scroll("auto");
+      });
+    } else {
+      apply();
+      scroll(reduce ? "auto" : "smooth");
+    }
+  }
 
   // the field guide: one fixed card, entries swap on hover.
   // `html` is trusted author-written markup: links, <em>, <code> all work,
@@ -126,16 +171,14 @@
 <svelte:window onclick={onWindowClick} />
 
 <!-- ============================== hero ============================== -->
-<section class="hero">
+<section class="hero" bind:this={heroEl}>
   <div class="aurora" aria-hidden="true"></div>
-  <div class="container hero-grid">
-    <div class="hero-copy">
-      <div class="head-row">
-        <div class="head-words">
-          <h1>
-            <span class="grad-text">disp</span>
-          </h1>
-          <p class="abbr">
+  <div class="container hero-grid" class:theatre>
+    <div class="head-words">
+      <h1>
+        <span class="grad-text">disp</span>
+      </h1>
+      <p class="abbr">
             <span class="abbr-label">abbr.</span>
             <button
               class="dterm"
@@ -153,24 +196,24 @@
               onclick={togglePin("lisp")}
               onblur={lookAway}>lisp</button
             >
-          </p>
-        </div>
-        <!-- one definition box: hover a dotted term and its entry appears -->
-        <aside
-          class="defbox"
-          class:looking={entryKey !== "disp" || pinned !== null}
-          class:pinned={pinned !== null}
-          aria-live="polite"
-          onmouseenter={holdEntry}
-          onmouseleave={lookAway}
-        >
-          <span class="def-head">
-            <span class="def-term">{entry.term}</span>
-            <span class="def-pos">{entry.pos}</span>
-          </span>
-          <div class="def-text">{@html entry.html}</div>
-        </aside>
-      </div>
+      </p>
+    </div>
+    <!-- one definition box: hover a dotted term and its entry appears -->
+    <aside
+      class="defbox"
+      class:looking={entryKey !== "disp" || pinned !== null}
+      class:pinned={pinned !== null}
+      aria-live="polite"
+      onmouseenter={holdEntry}
+      onmouseleave={lookAway}
+    >
+      <span class="def-head">
+        <span class="def-term">{entry.term}</span>
+        <span class="def-pos">{entry.pos}</span>
+      </span>
+      <div class="def-text">{@html entry.html}</div>
+    </aside>
+    <div class="hero-sub">
       <p class="sub">
         disp is an aspiring
         <button
@@ -221,8 +264,19 @@
         <a href={TREECALC} target="_blank" rel="noopener">tree calculus</a>.
       </p>
       <div class="cta-row">
-        <a class="btn primary" href="{base}/learn/">Get started</a>
-        <a class="btn" href="{base}/playground/">Try it in your browser</a>
+        <a class="btn" href="{base}/learn/">Read the Docs</a>
+        <!-- ghost of the longer label keeps the button width constant, so
+             flipping never reflows the row (in theatre that reflow used to
+             shift the card below) -->
+        <button class="btn flip-cta" onclick={() => (flipped = !flipped)}>
+          <span class="flip-label ghost" aria-hidden="true">
+            Visualize the Tree Calculus <span class="btn-arrow">⟶</span>
+          </span>
+          <span class="flip-label">
+            {flipped ? "See the code" : "Visualize the Tree Calculus"}
+            <span class="btn-arrow" aria-hidden="true">⟶</span>
+          </span>
+        </button>
       </div>
       <div class="term">
         <span class="term-dollar">$</span>
@@ -268,8 +322,8 @@
         </button>
       </div>
     </div>
-    <div class="hero-viz">
-      <TreeVis />
+    <div class="hero-code" bind:this={cardEl}>
+      <HeroCard {theatre} bind:flipped onToggleTheatre={toggleTheatre} />
     </div>
   </div>
 </section>
@@ -441,7 +495,10 @@
   /* ---------- hero ---------- */
   .hero {
     position: relative;
-    overflow: hidden;
+    /* clip, NOT hidden: hidden makes the section a programmatically
+       scrollable container, and any scroll-reveal (focus, find-in-page,
+       automation) can wedge its content permanently out of view */
+    overflow: clip;
     padding: clamp(3rem, 9vh, 6.5rem) 0 2.5rem;
   }
   /* dappled midmorning light through a canopy */
@@ -476,12 +533,97 @@
       transform: translate3d(2.5%, -2%, 0) scale(1.06) rotate(1.2deg);
     }
   }
+  /* Four direct children (head-words, defbox, hero-sub, hero-code) on named
+     areas, so theatre mode is ONE template swap — animated by the View
+     Transitions API (each block carries a view-transition-name below). */
   .hero-grid {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 7fr) minmax(0, 6fr);
-    gap: 2.5rem;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 6fr);
+    grid-template-areas:
+      "head def  card"
+      "sub  sub  card";
+    grid-template-rows: auto 1fr;
+    gap: 1.1rem 2.5rem;
+    align-items: start;
+  }
+  .hero-grid.theatre {
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, 19rem);
+    grid-template-areas:
+      "head sub  def"
+      "card card card";
+    grid-template-rows: auto auto;
+    /* wider row gap: the face picker hangs above the card in theatre */
+    gap: 3.4rem 2.5rem;
+  }
+  .head-words {
+    grid-area: head;
+  }
+  .defbox {
+    grid-area: def;
+    justify-self: end;
+  }
+  .hero-sub {
+    grid-area: sub;
+    min-width: 0;
+  }
+  .hero-code {
+    grid-area: card;
+    align-self: stretch;
+    min-width: 0;
+  }
+  .theatre .hero-code {
+    height: min(72vh, 46rem);
+  }
+  /* theatre trims the hero-sub column down to the pitch: no clone chip */
+  .hero-grid.theatre .term {
+    display: none;
+  }
+  .btn-arrow {
+    font-size: 1.05em;
+    line-height: 1;
+    transform: translateY(0.02em);
+  }
+  /* both labels share the button's grid cell; the invisible long one sets the width */
+  .flip-cta {
+    display: inline-grid;
+    justify-items: center;
+  }
+  .flip-label {
+    grid-area: 1 / 1;
+    display: inline-flex;
     align-items: center;
+    gap: 0.5em;
+    white-space: nowrap;
+  }
+  .flip-label.ghost {
+    visibility: hidden;
+  }
+  .head-words {
+    view-transition-name: hero-head;
+  }
+  .defbox {
+    view-transition-name: hero-def;
+  }
+  .hero-sub {
+    view-transition-name: hero-sub;
+  }
+  .hero-code {
+    view-transition-name: hero-card;
+  }
+  :global(::view-transition-group(hero-head)),
+  :global(::view-transition-group(hero-def)),
+  :global(::view-transition-group(hero-sub)),
+  :global(::view-transition-group(hero-card)) {
+    animation-duration: 0.45s;
+    animation-timing-function: cubic-bezier(0.35, 0.1, 0.22, 1);
+  }
+  /* the card morphs size: let both snapshots fill the group box */
+  :global(::view-transition-old(hero-card)),
+  :global(::view-transition-new(hero-card)) {
+    height: 100%;
+    object-fit: cover;
+    overflow: hidden;
   }
 
   /* ---- the field guide (one card, fixed size, pinned beside the wordmark) ---- */
@@ -501,23 +643,11 @@
     color: var(--g2);
     outline: none;
   }
-  /* the wordmark and the definition box share a row: words left, box right */
-  .head-row {
-    display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-    gap: 1.2rem;
-    margin-bottom: 0.4rem;
-  }
-  .head-words {
-    flex: none;
-  }
   .defbox {
     position: relative;
-    flex: 1;
+    width: 100%;
     max-width: 270px;
     min-height: 176px;
-    align-self: center;
     background: color-mix(in oklab, var(--g4) 5%, var(--bg-elev));
     border: 1px solid var(--border-strong);
     border-radius: 12px;
@@ -710,19 +840,6 @@
     min-width: 0;
     flex: 1;
   }
-  .hero-viz {
-    min-width: 0;
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    background: radial-gradient(
-        120% 130% at 50% 0%,
-        color-mix(in oklab, var(--g3) 7%, transparent),
-        transparent 60%
-      ),
-      var(--bg-panel);
-    padding: 1rem 0.6rem 0.4rem;
-  }
-
   /* ---------- features ---------- */
   .features {
     padding-top: 3.4rem;
@@ -894,25 +1011,30 @@
 
   /* ---------- responsive ---------- */
   @media (max-width: 880px) {
-    .hero-grid {
+    /* one column in either mode; theatre only adds height to the card */
+    .hero-grid,
+    .hero-grid.theatre {
       grid-template-columns: minmax(0, 1fr);
+      grid-template-areas:
+        "head"
+        "def"
+        "sub"
+        "card";
+      grid-template-rows: none;
     }
-    .hero-viz {
-      order: -1;
+    .hero-code {
+      height: min(70vh, 34rem);
     }
     .feat-grid,
     .inv-grid {
       grid-template-columns: minmax(0, 1fr);
     }
     /* the definition box drops under the wordmark on small screens */
-    .head-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
     .defbox {
       max-width: none;
       min-height: 0;
       transform: none;
+      justify-self: stretch;
     }
   }
 </style>

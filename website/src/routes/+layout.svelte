@@ -138,6 +138,12 @@
        rasterizer crawl (screenshots time out, scrolling pays for it too) */
     background: color-mix(in oklab, var(--bg-elev) 96%, var(--g1));
     border-bottom: 1px solid var(--border);
+    /* own view-transition layer: page morphs (theatre mode) must never
+       animate OVER the nav — see the group z-index below */
+    view-transition-name: site-nav;
+  }
+  :global(::view-transition-group(site-nav)) {
+    z-index: 100;
   }
   .navbar {
     height: var(--nav-h);
