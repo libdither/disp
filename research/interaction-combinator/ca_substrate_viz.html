@@ -85,6 +85,7 @@
     <span>transport <b id="stTr">0</b></span>
     <span>migr <b id="stMig">0</b></span>
     <span>&#215;par <b id="stPar">-</b></span>
+    <span title="tension energy: sum of weight x chain length over all wires (the liveness potential)">E <b id="stE">0</b></span>
     <span>live <b id="stLive">0</b></span>
   </div>
 </div>
@@ -119,22 +120,31 @@
   <div class="note">
     This toy differs from the real design (SPATIAL_IC.md &sect;13, the E4 simulator) in:
     parallel ticks commit through a global arbiter rather than a Margolus block handshake;
-    <b>migration</b> is the &sect;2.3 mechanism (per-tick Metropolis drift over the force
-    of each agent's wire first-hop directions, weights hot 8 / principal 3 / plumbing 1,
-    hash(agent,tick) PRNG so runs stay bit-reproducible; sleeping agents are clock-gated
-    and do not move) but blocked movers simply wait: no pressure field or vacancy
-    diffusion; unlimited wire layers under agents (real cells get 2-3 plus vias); no
-    wire-RC death pulse (see demand_schedule_viz.html for that mechanism at the net
-    level). Transport counts BOTH delivery steps and migration moves (the embedding
-    theorem's definition), so migration spends transport to save ticks; whether that
-    trade wins is exactly the knob-sweep question the E4 simulator exists to answer.
+    straightening is chain-local re-lay rather than per-cell retraction; pressure exists
+    only in minimal form (jam sites repel neighbors for a tick, plus a density cap and a
+    bounded stall grace) rather than a diffusing field with vacancy motion; wire layers
+    under agents are unlimited (real cells get 2-3 plus vias); no wire-RC death pulse
+    (see demand_schedule_viz.html for that mechanism at the net level).
+    <b>Migration</b> is the &sect;2.3 mechanism: per-tick Metropolis drift over the force
+    of each agent's wire first-hop directions (weights hot 12 / principal 2 / plumbing 1;
+    redex participants reel in only and HOLD at contact; sleeping agents are clock-gated),
+    hash(agent,tick) PRNG so runs stay bit-reproducible. Transport counts BOTH delivery
+    steps and migration moves (the embedding theorem's definition): migration spends
+    transport to buy span, and the four knobs it took to make every example complete
+    (weight dominance, hold-at-contact, jam pressure, density cap) are a live preview of
+    the &sect;13 knob-sweep and the &sect;14.1 liveness question.
   </div>
   <h3>legend</h3>
   <div id="legend">
     <div><span class="sw" style="background:#3fbf7f"></span>producers (L &Delta; &middot; S stem &middot; F fork &middot; P suspension)</div>
     <div><span class="sw" style="background:#56c8ff"></span>consumers (A &middot; T1/T2 &middot; N) &middot; <span class="sw" style="background:#c792ea"></span>&delta;&#8319; &middot; <span class="sw" style="background:#ff6b6b"></span>&epsilon;</div>
-    <div><span class="sw" style="background:#2c3750"></span>wire cell (the chain) &middot; <span style="color:#ffd866">&#9670;</span> via = two wires, layer 2</div>
-    <div><span style="color:#ffd866">yellow glow</span> = redex wire being walked (transport happening)</div>
+    <div>wire weight: <span style="color:#ffd866">gold thick</span> = pending redex (12) &middot;
+      <span style="color:#5f96d1">blue</span> = principal (2) &middot;
+      <span style="color:#3a4a6d">slate thin</span> = plumbing (1)</div>
+    <div><span style="color:#e08050">orange tint</span> = slack (chain beyond the taut minimum;
+      what straightening removes and moves insert)</div>
+    <div><span style="color:#ffd866">&#9670;</span> via = two wires in one cell (layer 2) &middot;
+      E = &Sigma; weight&times;length, the tension potential</div>
     <div>dimmed + z = asleep (demand mode) &middot; flash cyan/red = interaction/erasure</div>
   </div>
 </div>
@@ -179,7 +189,7 @@ function makeNet(mode, tension, migration, temp) {
     wireLoad: new Map(),           // "x,y" -> count of wires through the cell
     redexes: [],                   // {c, p, wid} pending contact or fire
     ints: 0, transport: 0, inserted: 0, straightened: 0, migr: 0, ticks: 0, peak: 0,
-    overflow: 0, effects: [], quiet: false,
+    overflow: 0, effects: [], quiet: false, blockedNow: [], blockedPrev: [],
   };
 
   // ---- cells ----
@@ -223,10 +233,11 @@ function makeNet(mode, tension, migration, temp) {
   // Wires may pass under agents and each other (drawn as vias/underpasses): the real
   // design gives each cell 2-3 layers; this toy does not enforce the capacity.
   function routePath(a, b) { return elbowRoute(net, a, b); }
-  function makeWire(p, q) {
+  function makeWire(p, q, prePath) {
     const A_ = get(p.a), B_ = get(q.a);
-    const w = { id: net.nextWid++, pa: { ...p }, pb: { ...q }, path: [] };
-    if (A_.pos && B_.pos) {
+    const w = { id: net.nextWid++, pa: { a: p.a, s: p.s }, pb: { a: q.a, s: q.s }, path: [] };
+    if (prePath) w.path = prePath;
+    else if (A_.pos && B_.pos) {
       const r = routePath(A_, B_);
       w.path = r || straight(A_.pos, B_.pos);
     }
@@ -235,6 +246,25 @@ function makeNet(mode, tension, migration, temp) {
     A_.wire = A_.wire || {}; B_.wire = B_.wire || {};
     A_.wire[p.s] = w.id; B_.wire[q.s] = w.id;
     return w;
+  }
+  // Fuse relic chains when both detached ends came off the SAME dying agent (a splice:
+  // far1 -> old chain -> anchor cell -> old chain -> far2), or reuse a single relic when
+  // the fresh partner sits at/next to the anchor (a re-aim at the dying site: the chain
+  // is inherited, not re-routed). Otherwise null: route fresh (a newborn wired short).
+  function fusePath(p, q) {
+    const rp = p && p.relic, rq = q && q.relic;
+    if (rp && rq && rp.anchor[0] === rq.anchor[0] && rp.anchor[1] === rq.anchor[1]) {
+      return [...rp.cells, rp.anchor, ...rq.cells.slice().reverse()];
+    }
+    for (const [withR, other, flip] of [[rq, p, true], [rp, q, false]]) {
+      if (!withR || (rp && rq)) continue;
+      const o = get(other.a);
+      if (!o || !o.pos) continue;
+      if (Math.abs(o.pos.x - withR.anchor[0]) + Math.abs(o.pos.y - withR.anchor[1]) > 1) continue;
+      const seg = [withR.anchor, ...withR.cells.slice().reverse()]; // anchor -> far
+      return flip ? seg : seg.slice().reverse();                    // orient p -> q
+    }
+    return null;
   }
   function straight(a, b) {
     const cells = []; let x = a.x, y = a.y;
@@ -254,11 +284,31 @@ function makeNet(mode, tension, migration, temp) {
   }
 
   // ---- port graph ----
+  // take() detaches a port and carries the dropped wire's chain as a RELIC (cells
+  // oriented far-survivor toward the dying agent, plus the dying agent's cell as the
+  // anchor). link() fuses relics into spliced chains, so wires never blink out at a
+  // distance: a splice is a physical fusion through the dead agent's cell (the
+  // created-short lemma: wires lengthen only by splicing), and erasure consumes chains
+  // by walking them rather than deleting them remotely.
   function take(a, s) {
     const q = a.slots[s];
     a.slots[s] = null;
+    let relic = null;
+    const wid = a.wire && a.wire[s];
+    if (wid && a.pos) {
+      const w = net.wires.get(wid);
+      if (w) {
+        const mineFirst = w.pa.a === a.id && w.pa.s === s;
+        relic = { cells: mineFirst ? w.path.slice().reverse() : w.path.slice(),
+                  anchor: [a.pos.x, a.pos.y] };
+      }
+    }
     dropWireAt(a.id, s);
-    if (q) { const b = get(q.a); if (b && b.slots[q.s] && b.slots[q.s].a === a.id) b.slots[q.s] = null; }
+    if (q) {
+      const b = get(q.a);
+      if (b && b.slots[q.s] && b.slots[q.s].a === a.id) b.slots[q.s] = null;
+      return { a: q.a, s: q.s, relic };
+    }
     return q;
   }
   const port = (a, s) => ({ a: a.id, s });
@@ -269,7 +319,7 @@ function makeNet(mode, tension, migration, temp) {
     if (!A_ || !B_) return;
     A_.slots[p.s] = { a: B_.id, s: q.s };
     B_.slots[q.s] = { a: A_.id, s: p.s };
-    const w = makeWire(p, q);
+    const w = makeWire(p, q, fusePath(p, q));
     if (net.mode === "demand") {
       for (const [X, px, Y] of [[A_, p, B_], [B_, q, A_]]) {
         if (px.s === 0 && !KIND[X.kind].producer && X.kind !== "E") {
@@ -293,31 +343,44 @@ function makeNet(mode, tension, migration, temp) {
   }
 
   // ---- transport: the producer re-materializes one cell along the chain ----
-  // Returns true iff the producer actually moved one cell (progress); false if blocked.
+  // Close a pending redex's chain by one cell. The mover is the PRODUCER (the value
+  // re-materializes toward its consumer), EXCEPT erasure: an eraser is the death pulse
+  // and travels INTO the wire toward the doomed structure (the wire-RC reading in
+  // SPATIAL_IC section 3) — and being nullary it drags no wires, so the pulse inserts
+  // zero slack. Returns true iff the mover actually moved (progress); false if blocked.
   function advance(r) {
     const prod = get(r.p), cons = get(r.c), w = net.wires.get(r.wid);
     if (!prod || !cons || !w) return false;
     if (!w.path.length) return false; // ready to fire; the fire scan owns it
-    // which end of the path is the producer's?
-    const prodFirst = w.pa.a === prod.id;
-    const cellArr = prodFirst ? w.path : w.path.slice().reverse();
+    const mover = cons.kind === "E" ? cons : prod;
+    const target = mover === cons ? prod : cons;
+    const moverFirst = w.pa.a === mover.id;
+    const cellArr = moverFirst ? w.path : w.path.slice().reverse();
     const [nx, ny] = cellArr[0];
     if (agentAt(nx, ny)) {
       // Blocked by an agent (churn or static structure). The elbow cannot detour, so run
       // a bounded unweighted BFS around agent cells (the local rerouting rule of
       // SPATIAL_IC section 13 item 5); a failure means genuine enclosure and the mover
       // waits (the stall detector stops the run loudly if nothing else can move either).
-      const r2 = bfsRoute(net, prod, cons);
+      const r2 = bfsRoute(net, mover, target);
       if (r2) {
         for (const [x, y] of w.path) loadInc(x, y, -1);
-        w.path = prodFirst ? r2 : r2.slice().reverse();
+        w.path = moverFirst ? r2 : r2.slice().reverse();
         for (const [x, y] of w.path) loadInc(x, y, 1);
-        const head = prodFirst ? w.path[0] : w.path[w.path.length - 1];
+        const head = moverFirst ? w.path[0] : w.path[w.path.length - 1];
         if (head && !agentAt(head[0], head[1])) return advance(r);
       }
+      // No route at all: the region has JAMMED (migration compacts the net into a solid
+      // blob and deliveries cannot thread it — the section 13 jamming problem, met
+      // empirically). Record the jam site as PRESSURE: next tick's migration adds a
+      // repulsive force term around it, so migration itself evacuates the corridor.
+      // (A separate push mechanism was tried first and lost a tug-of-war with the
+      // attraction field every tick; pressure must be a term in the SAME field, which
+      // is exactly the design's vacancies-drift-up-pressure-gradients formulation.)
+      net.blockedNow.push([mover.pos.x, mover.pos.y]);
       return false;
     }
-    moveAgent(prod, nx, ny);
+    moveAgent(mover, nx, ny);
     return true;
   }
 
@@ -375,15 +438,36 @@ function makeNet(mode, tension, migration, temp) {
   }
   function migrate() {
     const hot = new Set(net.redexes.filter(r => !r.held).map(r => r.wid));
+    // an agent participating in a live redex may only reel in along that wire, and if
+    // the wire is already at contact it must HOLD STILL: migration at the start of a
+    // tick pulling a ready participant away, with advance walking it back after the
+    // fire scan, oscillates forever out of phase with readiness (found by autopsy:
+    // adjacent N and P frozen at ints=3 while migr climbed 600k)
+    const inRedex = new Map();
+    for (const r of net.redexes) if (!r.held) { inRedex.set(r.c, r.wid); inRedex.set(r.p, r.wid); }
     const movers = [...net.agents.values()];
     for (const a of movers) {
       if (a.dead || a.sleeping || !a.pos) continue;
+      const rw = inRedex.get(a.id);
+      if (rw !== undefined) {
+        const hw = net.wires.get(rw);
+        if (!hw || !hw.path.length) continue; // at contact: stay for the fire
+      }
+      // pressure: last tick's jam sites repel nearby non-participants, evacuating a
+      // corridor for the blocked delivery (radius 2, strength 6)
+      let px = 0, py = 0;
+      if (rw === undefined) for (const [bx, by] of net.blockedPrev) {
+        if (Math.abs(a.pos.x - bx) <= 3 && Math.abs(a.pos.y - by) <= 3) {
+          px += 8 * Math.sign(a.pos.x - bx);
+          py += 8 * Math.sign(a.pos.y - by);
+        }
+      }
       // Weight doctrine (SPATIAL_IC 2.3): the pending-redex wire dominates outright.
       // With warm at 3 a four-operand dispatcher's bundle out-pulled its own redex and
       // drifted AWAY from its dispatch, livelocking delivery: hot must beat any bundle,
       // and an agent in a pending redex is further restricted to moves that shorten
       // that wire (reel-in only; its other pulls wait their turn).
-      let fx = 0, fy = 0, hotDir = null;
+      let fx = px, fy = py, hotDir = null;
       for (let s = 0; s < a.slots.length; s++) {
         const wid = a.wire && a.wire[s];
         if (!wid) continue;
@@ -405,7 +489,14 @@ function makeNet(mode, tension, migration, temp) {
       const c = cands[0];
       if (hotDir && c.dx * hotDir.dx + c.dy * hotDir.dy <= 0) continue; // reel-in only
       const nx = a.pos.x + c.dx, ny = a.pos.y + c.dy;
-      if (agentAt(nx, ny)) continue; // congestion: wait (vacancy diffusion is not modeled)
+      if (agentAt(nx, ny)) continue; // congestion: wait for pressure to clear it
+      // density cap: never migrate into a pocket with 3+ occupied neighbors, so the
+      // lattice keeps vacancies threaded through it and deliveries always have a seam
+      // (without this the tension field crystallizes the blob and the last deliveries
+      // jam terminally)
+      let crowd = 0;
+      for (const [ex2, ey2] of [[1,0],[-1,0],[0,1],[0,-1]]) if (agentAt(nx + ex2, ny + ey2)) crowd++;
+      if (crowd >= 3) continue;
       const accept = c.score > 0 || mrand(a.id) < Math.exp(c.score / net.temp);
       if (!accept) continue;
       moveAgent(a, nx, ny);
@@ -427,7 +518,10 @@ function makeNet(mode, tension, migration, temp) {
     // deliveries (results flowing back to their demanders) pay transport.
     const nearOf = p => { const t = p && get(p.a); return t && t.pos ? t.pos : at; };
     const S_ = (k, sl, nearP) => spawn(k, nearP ? nearOf(nearP) : at, sl);
-    const erase = w => { if (!w || !get(w.a)) return; const e = S_("E", false, w); link(port(e, 0), w); };
+    // Erasers are born AT the fire site (the anchor), so a discarded chain is inherited
+    // via its relic and the doomed value walks it to the eraser: remote erasure pays its
+    // wire length in transport instead of deleting at a distance.
+    const erase = w => { if (!w || !get(w.a)) return; const e = S_("E"); link(port(e, 0), w); };
 
     if (ck === "A") {
       const arg = take(c, 1), res = take(c, 2);
@@ -565,6 +659,8 @@ function makeNet(mode, tension, migration, temp) {
 
   // ---- ticks ----
   function tick(parallel) {
+    net.blockedPrev = net.blockedNow;
+    net.blockedNow = [];
     if (net.tension) straighten(8);
     if (net.migration) migrate(); // substrate physics, both execution modes
     net.redexes = net.redexes.filter(r => {
@@ -600,9 +696,21 @@ function makeNet(mode, tension, migration, temp) {
         for (const r of live) if (advance(r)) { didSomething = true; break; }
       }
     }
-    if (didSomething) net.ticks++;
-    else net.quiet = true; // genuine stall (congestion with no route): stop loudly, not spin
-    return didSomething;
+    if (didSomething) {
+      net.ticks++;
+      net.grace = 0;
+      return true;
+    }
+    // No reduction or delivery progress this tick. If deliveries are jammed and
+    // migration is on, the pressure recorded this tick acts on the NEXT one: grant a
+    // bounded grace (the section 13 impatience watchdog, pointed the other way) so the
+    // corridor can be evacuated. Exhausted grace = genuine stall: stop loudly.
+    if (net.migration && net.blockedNow.length && (net.grace = (net.grace || 0) + 1) < 200) {
+      net.ticks++;
+      return true;
+    }
+    net.quiet = true;
+    return false;
   }
 
   net.spawn = spawn; net.link = link; net.port = port; net.tick = tick;
@@ -816,6 +924,14 @@ function updateStats() {
   document.getElementById("stInt").textContent = SIM.ints;
   document.getElementById("stTr").textContent = SIM.transport;
   document.getElementById("stMig").textContent = SIM.migr;
+  // tension energy = sum of weight x chain length: the liveness sketch's potential
+  const hotW = new Set(SIM.redexes.filter(r => !r.held).map(r => r.wid));
+  let energy = 0;
+  for (const w of SIM.wires.values()) {
+    const wt = hotW.has(w.id) ? 12 : (w.pa.s === 0 || w.pb.s === 0) ? 2 : 1;
+    energy += wt * w.path.length;
+  }
+  document.getElementById("stE").textContent = energy;
   document.getElementById("stPar").textContent = SIM.ticks ? ((SIM.ints + SIM.transport) / SIM.ticks).toFixed(1) : "-";
   document.getElementById("stLive").textContent = SIM.agents.size;
 }
@@ -839,18 +955,28 @@ function draw() {
     for (let gy = Math.floor(wy0); gy <= wy1; gy++) { const [, py] = W2S(0, gy - .5); ctx.moveTo(0, py); ctx.lineTo(innerWidth, py); }
     ctx.stroke();
   }
-  // wire cells (chains)
+  // wire cells (chains): hue = weight class (gold hot 12 / blue principal 2 / slate
+  // plumbing 1), width = weight, orange tint = slack (chain beyond the taut minimum)
   const hotWires = new Set();
   for (const r of SIM.redexes) if (!r.held) hotWires.add(r.wid);
   const viaSeen = new Map();
+  const lerp = (c1, c2, t) => {
+    const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+    const m = sh => Math.round(((a >> sh) & 255) + (((b >> sh) & 255) - ((a >> sh) & 255)) * t);
+    return `rgb(${m(16)},${m(8)},${m(0)})`;
+  };
   for (const w of SIM.wires.values()) {
     const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
     if (!A_ || !B_ || !A_.pos || !B_.pos) continue;
     const hot = hotWires.has(w.id);
+    const warm = !hot && (w.pa.s === 0 || w.pb.s === 0);
     const sleepy = A_.sleeping || B_.sleeping;
+    const man = Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
+    const slack = Math.min(1, Math.max(0, (w.path.length - Math.max(0, man - 1)) / 12));
+    const base = hot ? "#8a6d1f" : warm ? "#3a6ea5" : "#2c3750";
     const pts = [[A_.pos.x, A_.pos.y], ...w.path, [B_.pos.x, B_.pos.y]];
-    ctx.strokeStyle = hot ? "#8a6d1f" : sleepy ? "#232c40" : "#2c3750";
-    ctx.lineWidth = Math.max(1.5, s * (hot ? .16 : .11));
+    ctx.strokeStyle = sleepy ? "#232c40" : slack > 0 ? lerp(base, "#8a4a2a", slack) : base;
+    ctx.lineWidth = Math.max(1.2, s * (hot ? .16 : warm ? .11 : .07));
     ctx.beginPath();
     for (let i = 0; i < pts.length; i++) {
       const [px, py] = W2S(pts[i][0], pts[i][1]);
@@ -858,12 +984,14 @@ function draw() {
     }
     ctx.stroke();
     // chain cells as beads
+    const bead = hot ? "#ffd866" : warm ? "#5f96d1" : "#3a4a6d";
+    const beadCol = sleepy ? "#2c3750" : slack > 0 ? lerp(bead, "#e08050", slack) : bead;
     for (const [x, y] of w.path) {
       const [px, py] = W2S(x, y);
       const k = key(x, y);
       viaSeen.set(k, (viaSeen.get(k) || 0) + 1);
-      ctx.fillStyle = hot ? "#ffd866" : sleepy ? "#2c3750" : "#3a4a6d";
-      ctx.beginPath(); ctx.arc(px, py, Math.max(1.5, s * (hot ? .12 : .09)), 0, 7); ctx.fill();
+      ctx.fillStyle = beadCol;
+      ctx.beginPath(); ctx.arc(px, py, Math.max(1.5, s * (hot ? .12 : warm ? .09 : .07)), 0, 7); ctx.fill();
     }
   }
   // vias
@@ -975,12 +1103,19 @@ addEventListener("mousemove", e => {
     const k = KIND[hover.kind];
     let txt = `${k.glyph}  ${k.name}   cell (${hover.pos.x},${hover.pos.y})`;
     if (hover.sleeping) txt += "\n  asleep: lazy, not yet demanded";
+    const hotIds = new Set(SIM.redexes.filter(r => !r.held).map(r => r.wid));
     for (let s2 = 0; s2 < hover.slots.length; s2++) {
       const q = hover.slots[s2]; const b = q && SIM.agents.get(q.a);
       const wid = hover.wire && hover.wire[s2];
       const w = wid && SIM.wires.get(wid);
-      txt += `\n  ${SLOTNAME[hover.kind][s2].padEnd(4)}→ ${b ? KIND[b.kind].glyph + " " + KIND[b.kind].name : "(loose)"}` +
-             (w ? `   chain ${w.path.length} cells` : "");
+      let wireInfo = "";
+      if (w && b && b.pos && hover.pos) {
+        const man = Math.abs(hover.pos.x - b.pos.x) + Math.abs(hover.pos.y - b.pos.y);
+        const slackN = Math.max(0, w.path.length - Math.max(0, man - 1));
+        const wt = hotIds.has(w.id) ? "12 hot" : (w.pa.s === 0 || w.pb.s === 0) ? "2" : "1";
+        wireInfo = `   chain ${w.path.length}  w=${wt}${slackN ? `  slack ${slackN}` : ""}`;
+      }
+      txt += `\n  ${SLOTNAME[hover.kind][s2].padEnd(4)}→ ${b ? KIND[b.kind].glyph + " " + KIND[b.kind].name : "(loose)"}` + wireInfo;
     }
     tip.textContent = txt;
     tip.style.display = "block";
