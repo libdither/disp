@@ -33,6 +33,16 @@ open use "oeq.disp"
 // — tag CONCRETE (so the dispatch actually fires), arms and payloads ABSTRACT
 // (so nothing else is pinned) — and by canonicity (every concrete member is in
 // constructor form) the per-arity family covers the whole concrete domain.
+//
+// Known limit (pinned in probe_license_sr.test.disp; ACTIVE_BUGS item 5): that
+// coverage holds only against candidates that cannot detect the certification
+// environment. Arms, payloads and the type argument are still hyps in every
+// obligation, so a candidate probing any of their faces (or dispatching on the
+// two instance types) passes all four obligations and junks at real call
+// sites. The license is an acceptance filter for the honest delegating shape,
+// not a semantic certificate; the concrete face rests on case_opt.test.disp's
+// differential pins until certification gets a strict mode (OPTIMIZER.typ,
+// "Certification is not yet observer-restricted").
 
 // The neutral-face instance: one-level dependent Nat elimination (recursive,
 // shape-encoded — exercises the functor-view decode, the arm pad, the gate).

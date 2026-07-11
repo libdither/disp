@@ -31,8 +31,14 @@ open use "../kernel/prelude.disp"
 // oeq is consumed three ways instead: instantiate + Eq-lemmas inside proofs; respect
 // witnesses over LinkedPi for abstract pairs; licensed replacement at definition
 // boundaries, where transport is the identity (extensionally equal predicates share
-// members, so the use-site re-check IS the coercion). Pinned in oeq.test.disp; the
-// motive-extensionality gate lives in ext_gate_proto.test.disp.
+// members, so the use-site re-check IS the coercion). Caveat on the third: a license
+// obligation is itself checked at a minted hyp, so it is a neutral-face statement, not
+// a members-forall; a candidate branching on is_neutral collapses it, and use-site
+// re-checking defends membership, never behavior (pinned in probe_license_sr.test.disp;
+// ACTIVE_BUGS item 5). Until certification gets a strict reflection-free mode
+// (OPTIMIZER.typ, "Certification is not yet observer-restricted"), licensed replacement
+// is trusted on differential pins. Pinned in oeq.test.disp; the motive-extensionality
+// gate lives in ext_gate_proto.test.disp.
 //
 // (setoid_of and friends are unannotated: they dispatch on the type's meta, which is a
 // raw read — the same one-generic-point wall as the other cell-derived generics.)

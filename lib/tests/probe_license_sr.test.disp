@@ -1,0 +1,87 @@
+// probe_license_sr: ACTIVE_BUGS item 5, the license extension. A Pi certificate
+// is a neutral-face statement (probe_intensional_sr); this file pins the
+// consequence for the guard layer: the pointwise-oeq license instantiates its
+// obligation at a minted hyp, so a candidate that branches on is_neutral inside
+// the obligation's own endpoints collapses the codomain to Eq h h. Refl then
+// certifies, the guarded rebind is accepted, and the replacement differs at
+// every concrete point while staying well-typed (both outputs are Nats), so the
+// defense model's use-site re-check catches nothing: membership and consistency
+// survive, program behavior does not. license_guard / guard_eq / case_equiv are
+// therefore not, today, proof-certified behavioral replacement; the concrete
+// face rests on the differential pins (guard_opt / case_opt), not on the license.
+//
+// Why the existing licenses stay honest: delegating fast faces (nat_rec_fast,
+// case_fast) are tree-identical to their spec at the hyp, and genuine
+// replacements (guards.test's ident, oeq_tree_license's fast) prove the Pi by
+// induction, whose cases instantiate at constructor-rooted values where the
+// face bit reads false; shift below can never be proven by induction (its zero
+// case demands Eq Nat 0 1). The open doors are top-level refl at a bare hyp,
+// and reflection through any residual hyp of a concrete-face obligation (the
+// case_equiv pins below).
+open use "../kernel/prelude.disp"
+open use "../std/effect.disp"
+open use "../std/oeq.disp"
+open use "../std/case.disp"
+
+// ── the decisive counterexample: a licensed rebind that changes behavior ──
+let id_fn := {n} -> n
+let shift := {n} -> if (is_neutral n) then n else (succ n)   // probe_intensional's `sneaky`
+
+test id_fn 0 = 0
+test shift 0 = 1                                             // type-preserving divergence
+
+// the license core accepts refl (the codomain collapses at the hyp)...
+test param_apply (oeq (Arrow Nat Nat) id_fn shift) ({n} -> refl) = Ok true
+// ...and it is the is_neutral collapse specifically, not a vacuous relation:
+test param_apply (oeq (Arrow Nat Nat) id_fn ({n} -> succ n)) ({n} -> refl) = Ok false
+
+// the guarded rebind lands; the owned name now computes differently:
+guard (license_guard (oeq (Arrow Nat Nat))) my_id := ({n} -> n)
+my_id := { new := shift ; proof := ({n} -> refl) }
+test my_id 0 = 1
+
+// ── quotients: the license relates values a well-typed observer separates ──
+// lift_setoid is the unary pointwise form, so no congruence is ever demanded of
+// consumers; a declared image setoid licenses a stem-to-fork replacement while
+// is_fork distinguishes the two.
+let TreeQ := wait (make_recognizer ({m, v} -> Ok true))
+  { recognizer_params := unit_witness; functor := trivial_functor; respond := inert_respond;
+    behavioral_specs := { setoid := image_setoid is_leaf Bool } }
+test typecheck Type TreeQ = Ok true
+test param_apply (oeq TreeQ (t t) (t t t)) refl = Ok true
+test is_fork (t t) = false
+test is_fork (t t t) = true
+
+// ── effect rows are not a reflection boundary ──
+// is_neutral is an ambient carve-out, not an op, so a row-empty computation
+// observes the face bit freely; a Reflect op only helps once raw reflection is
+// unavailable in the certified fragment.
+let covert := {n} -> io_pure (if (is_neutral n) then true else false)
+test param_apply (Pi Nat ({_} -> Eff row_nil Bool)) covert = Ok true
+
+// ── case_equiv: instance obligations cannot pin a polymorphic candidate ──
+let refls := {
+  at_nat := {P} -> {z} -> {s} -> {n} -> refl;
+  at_cut0 := {z} -> {o} -> {w} -> refl;
+  at_cut1 := {z} -> {o} -> {w} -> {c} -> refl;
+  at_cut2 := {z} -> {o} -> {w} -> {l} -> {r} -> refl
+}
+
+// evil2 dispatches on the type argument: it is case_value at the two licensed
+// instance types and junk at every other type.
+let evil2 := {T} -> {P} -> {cases} -> {v} -> (if (tree_eq T Nat) then (case_value T P cases v) else (if (tree_eq T LicSum) then (case_value T P cases v) else 0))
+test param_apply (case_equiv case_value evil2) refls = Ok true
+let Fresh := Coproduct [pair "A" [Tree]]
+test case_value Fresh ({_} -> Nat) { A := ({x} -> 5) } (inj1 "A" t) = 5
+test evil2 Fresh ({_} -> Nat) { A := ({x} -> 5) } (inj1 "A" t) = 0
+
+// evil1 probes an arm's face: every obligation binds arms as hyps, so the
+// candidate detects the certification environment itself and delegates exactly
+// there, junking at every real concrete-armed call site.
+let first_arm_name := {T} -> pair_fst (pair_fst ((type_meta T).recognizer_params))
+let evil1 := {T} -> {P} -> {cases} -> {v} -> (if (is_neutral (field cases (first_arm_name T))) then (case_value T P cases v) else 0)
+test param_apply (case_equiv case_value evil1) refls = Ok true
+let three := 3
+let seven := 7
+test case_value Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = three
+test evil1 Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = 0

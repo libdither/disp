@@ -246,16 +246,25 @@ equivalence licenses *nothing*.
 
 The licensing relation must therefore be a deliberately *coarser, observer-restricted* logical
 relation `~_T` — one that quantifies only over *applicative* uses (observers may *apply* abstract
-values, never *inspect* them). Disp already has the mechanism that defines exactly this observer
-class: *the walker* (`param_walker`) rejects `triage`/structural inspection of kernel-minted
-neutrals. That discipline *is* relational parametricity, so:
+values, never *inspect* them). The live walker (`param_walker`) is not that observer class. It
+rejects `triage`/structural inspection of kernel-minted neutrals, but it sanctions root-signature
+reads (`pair_fst`, hence `is_neutral`) on every value including hyps, because polarized
+application (`elim`, `case_value`, the H-rule, every `.opt` fast path) dispatches on exactly that
+bit (ACTIVE_BUGS item 5). A certificate produced under the live walker is a neutral-face
+statement, and `lib/tests/probe_license_sr.test.disp` pins the consequence for licensing:
+`{n} -> if (is_neutral n) then n else (succ n)` is licensed against the identity by `{n} -> refl`,
+and the `license_guard` rebind is accepted while the two functions differ at every concrete
+point. The observer class that defines `~_T` is the de-carved walker (the `ext_walker` prototype
+in `lib/tests/ext_gate_proto.test.disp`, where observation must factor through application);
+certification does not run under it today. See "Certification is not yet observer-restricted"
+below for the gap and the closing design.
 
 #note[
-  *The walker is not merely a source of rewrite rules — it is constitutive of which equivalence
-  exists at all.* Without the parametricity discipline restricting observers, intensionality would
-  leave the optimizer nothing but `tree_eq`. Free theorems (parametricity) are then sound rewrite
-  rules *for free*, and they supply the *white-box* half of representation-independence with no
-  equality machinery — which is why cubical/univalence is mostly unneeded (below).
+  *The walker mode is constitutive of which equivalence exists at all.* Without a parametricity
+  discipline restricting observers, intensionality leaves the optimizer nothing but `tree_eq`.
+  Free theorems (parametricity) become sound rewrite rules exactly for the fragment certified
+  under the strict mode, and they supply the *white-box* half of representation-independence with
+  no equality machinery, which is why cubical/univalence is mostly unneeded (below).
 ]
 
 == Cost-aware: Sands' strong improvement
@@ -318,8 +327,9 @@ the semantic relation that licenses rewrites):
 *Landed (2026-07-05).* (A) and (C) have first implementations in `lib/std/oeq.disp`: `setoid_of`
 derives each type's equivalence from its cells (pointwise at Π = funext by definition,
 componentwise at non-dependent records, `Eq` at data; a declared setoid in `behavioral_specs`
-overrides = quotients) — it lives in the meta a type already carries rather than a new `eq` field,
-and the pointwise licenses are exactly `~_T` restricted to applicative observers. The
+overrides = quotients) — it lives in the meta a type already carries rather than a new `eq` field.
+The pointwise licenses were intended as `~_T` restricted to applicative observers; as checked
+today they are neutral-face statements (the correction below). The
 motive-extensionality obligation is operational: the `ext_walker` probe
 (`lib/tests/ext_gate_proto.test.disp`), a `param_walker` variant whose intensional carve-outs
 refuse neutrals — the per-motive residue of the fundamental lemma. The licensed-*replacement*
@@ -327,8 +337,70 @@ mechanism exists as the elaborator's guard layer (the declaration protocol: SYNT
 `license_guard R` makes redefinition of an owned name demand `proof : R old new`, re-verified at
 every load. End-to-end walkthrough pinned in `lib/tests/oeq_tree_license.test.disp` (the
 deep-recognizer-to-`Ok true` rewrite, licensed by tree induction). Still open here: (B) `φ` as a
-term-level cast (replacement is definition-level today), cost-aware `⊵~ₛ`, and dependent-family
-transport (the §13 coe rung).
+term-level cast (replacement is definition-level today), cost-aware `⊵~ₛ`, dependent-family
+transport (the §13 coe rung), and the strict certification mode below.
+
+== Certification is not yet observer-restricted (the gap, and the fix)
+
+*The gap (2026-07-10, pinned in `lib/tests/probe_license_sr.test.disp`).* License obligations are
+checked under the live walker, whose sanctioned root-signature reads let a candidate observe
+which face it is on. Four pinned consequences. (1) `{n} -> if (is_neutral n) then n else (succ n)`
+is licensed against `id` at `oeq (Arrow Nat Nat)` by `{n} -> refl`, because instantiating the
+obligation's codomain at the minted hyp collapses it to `Eq Nat h h`; the `license_guard` rebind
+is accepted, and the replacement is type-preserving, so use-site re-checking never fires:
+downstream programs silently compute different numbers. (2) The unary pointwise lift demands no
+congruence, so a declared quotient (`image_setoid is_leaf Bool`) licenses a stem-to-fork
+replacement that the well-typed observer `is_fork` separates. (3) `case_equiv`'s concrete-face
+family is spoofable through its residual hyps: a candidate that delegates while an arm is neutral
+and junks when it is concrete passes all four obligations, as does one that dispatches on the two
+licensed instance types and junks on fresh coproducts. (4) Effect rows are not a reflection
+boundary; `is_neutral` is ambient, not an op, so a row-empty computation reads the face bit.
+
+*What stays sound, and why.* Membership and consistency are untouched (the ACTIVE_BUGS defense
+model). The licenses actually in tree survive on grounds the license itself does not check:
+delegating fast faces (`nat_rec_fast`, `case_fast`) are tree-identical to their spec at the hyp,
+with the concrete face covered by hand differential pins (`guard_opt.test.disp`,
+`case_opt.test.disp`); genuine replacements (`guards.test`'s `ident`, `oeq_tree_license`'s
+`fast`) prove their Pi by induction, whose cases instantiate at constructor-rooted values where
+the face bit reads false. An induction proof of the attack is impossible (its zero case demands
+`Eq Nat 0 1`). The doors are exactly: top-level refl at a bare hyp, and reflection through a
+residual hyp of a concrete-face obligation.
+
+*The fix: observer and phase separation.* One walker cannot serve both masters; elimination needs
+the root-signature read, certification needs it absent. So certification gets a mode.
+
++ *Strict certification mode.* A walker variant used for license checking only: root-signature
+  reads (`pair_fst`, `neutral_type`, `tree_eq` completion) answer `Err` when their subject is a
+  hyp (for `tree_eq`, when either side contains one and they are not hash-identical), exactly the
+  `ext_walker` prototype made total; kernel eliminators (`case_value`, `elim`, `rec_value`,
+  `nat_rec`, ...) become registered routes (the §5.4 routing-table generalization), so honest
+  recursion stays walkable while its internal neutral dispatch never reaches the candidate.
+  Face-blind candidates certify as today, and for that fragment the fundamental lemma is
+  restored: the neutral-face proof is a members-forall.
++ *Two-face protocol for face-observing candidates.* A candidate the strict probe rejects cannot
+  be certified by running it abstractly. Its rebind payload becomes parts rather than a finished
+  function: `{ fast := e; proof := ... }`, with the driver constructing
+  `new := {x} -> if (is_neutral x) then (old x) else (e x)` itself, so neutral-face delegation
+  holds by construction instead of by proof. The license obligation is then the concrete face
+  only: per-constructor equations over the domain's variant list (canonicity covers closed
+  members), discharged by induction where the type recurses, with every residual hyp of every
+  obligation walked in strict mode so the candidate cannot detect the proof environment through
+  arms, payloads, or IHs.
++ *First-order certificates for staged dispatchers.* A polymorphic fast face that reads
+  `type_meta T` (the `case_fast` shape) cannot quantify `T` abstractly at all. Do not license the
+  polymorphic name; license specializations (`case_fast T` at each concrete `T`), or replace the
+  free-form candidate with data: a `CutClass T` descriptor (variants, argspecs, the compiled case
+  table) validated against `T`'s meta by a small total checker, with the dispatch theorem proven
+  once by induction over the descriptor. Data cannot probe its verifier.
++ *PER lift where the domain is quotiented.* `lift_setoid` gains the binary form
+  `∀ a₀ a₁. R_A(a₀, a₁) -> R_B(f a₀, g a₁)` exactly when the domain setoid is coarser than the
+  `Eq` base (at the `Eq` base the unary form is equivalent by J and stays); a declared setoid
+  must carry respect witnesses (the `LinkedPi` binder already states them) before it licenses
+  replacement, since `image_setoid` alone supplies an equivalence, not congruence.
+
+Until the strict mode lands, `license_guard`/`guard_eq`/`case_equiv` rebinds are trusted on their
+differential pins, not on their proofs, and a rebind proof of the top-level-refl shape should be
+read as a delegation claim, not an equivalence proof.
 
 #note[
   *2LTT is the equality layering, not staged compilation.* Disp is already two-level in spirit:
