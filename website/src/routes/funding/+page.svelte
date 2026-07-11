@@ -282,8 +282,9 @@
       ${stats.xmrUsd.toLocaleString("en-US")}/XMR). The wallet's view key is
       <a href="{base}/funding/monero/">published</a>, so you can audit that number yourself on the
       <a href={XMR_EXPLORER} target="_blank" rel="noopener">block explorer</a> — the link carries
-      the address and view key, and each donation below decodes on its own explorer page — or by
-      importing them as a view-only wallet. Last refreshed
+      the address and view key, and every donation decodes on its own explorer page in
+      <a href="{base}/funding/monero/#ledger">the full ledger</a> — or by importing them as a
+      view-only wallet. Last refreshed
       {new Date(stats.updatedAt).toISOString().slice(0, 10)}.
     </p>
     {#if XMR_TXS.length > 0}

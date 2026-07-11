@@ -1,0 +1,62 @@
+name: Record donation ledger
+
+# Persists the donation stats/ledger (website/src/lib/dono-stats.json) back to
+# the repo, daily. The deploy workflow refreshes the same file at build time
+# for the LIVE site; this one makes the refresh durable: the committed file is
+# the incremental-scan baseline (without commits the scan window grows ~720
+# blocks/day until the sync deadline kills it) and gives the ledger an
+# auditable git history. Commits carry [skip ci] — the numbers are already
+# live via the build-time refresh, so no deploy loop.
+
+on:
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dono-ledger
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # dono-stats counts commits + first-commit date
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install
+        working-directory: website
+        run: npm ci
+      - name: Refresh donation stats
+        working-directory: website
+        env:
+          GITHUB_TOKEN: ${{ secrets.SPONSORS_TOKEN || secrets.GITHUB_TOKEN }}
+        # no fail-soft here: if the refresh fails, fail the job visibly and
+        # commit nothing (the script itself already degrades per-source)
+        run: timeout 360 npm run dono-stats
+      - name: Commit the ledger when it changed meaningfully
+        run: |
+          F=website/src/lib/dono-stats.json
+          # meaningful = new donations, sponsor changes, or the scan baseline
+          # drifting a bucket (~a week of blocks); price/timestamp wiggle alone
+          # must not produce a daily commit
+          norm() { jq '{txs: .xmr.txs, gh: [.github.sponsorCount, .github.monthlyUsd], hbucket: ((.xmr.scannedToHeight // 0) / 5000 | floor)}' "$1"; }
+          git show HEAD:$F > /tmp/ledger-old.json
+          if [ "$(norm /tmp/ledger-old.json)" = "$(norm $F)" ]; then
+            echo "ledger unchanged (ignoring price/timestamp wiggle)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $F
+          git commit -m "dono-ledger: record refreshed donation stats [skip ci]" -- $F
+          git pull --rebase origin main
+          git push origin main
