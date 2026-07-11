@@ -71,25 +71,35 @@ const prev: Stats | null = existsSync(OUT) ? JSON.parse(readFileSync(OUT, 'utf-8
 const now = new Date()
 
 // ---- XMR: incremental view-only scan ----------------------------------------
+// public nodes hang more often than they error: deadline every long call so a
+// bad node costs seconds, not a wedged CI job (the workflow adds an outer
+// `timeout` as the second belt)
+const deadline = <T>(p: Promise<T>, ms: number, what: string): Promise<T> =>
+  Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms}ms`)), ms).unref())])
+
 async function scanXmr(): Promise<Stats['xmr']> {
   const startFrom = Math.max(XMR_BIRTH_HEIGHT, (prev?.xmr.scannedToHeight ?? 0) - 720)
   let lastErr: unknown
   for (const uri of XMR_NODES) {
     let wallet: Awaited<ReturnType<typeof moneroTs.createWalletFull>> | undefined
     try {
-      wallet = await moneroTs.createWalletFull({
-        networkType: moneroTs.MoneroNetworkType.MAINNET,
-        primaryAddress: XMR_SCAN_PRIMARY,
-        privateViewKey: XMR_VIEW_KEY,
-        restoreHeight: startFrom,
-        server: { uri }
-      })
+      wallet = await deadline(
+        moneroTs.createWalletFull({
+          networkType: moneroTs.MoneroNetworkType.MAINNET,
+          primaryAddress: XMR_SCAN_PRIMARY,
+          privateViewKey: XMR_VIEW_KEY,
+          restoreHeight: startFrom,
+          server: { uri }
+        }),
+        60_000,
+        `wallet create via ${uri}`
+      )
       // the reconstruction proof: this wallet's subaddress (0,1) must BE the
       // published donation address, or scans would silently count nothing
       const derived = await wallet.getAddress(0, 1)
       if (derived !== XMR_DONATION_ADDRESS)
         throw new Error(`scan wallet does not derive the donation subaddress at (0,1): ${derived}`)
-      await wallet.sync()
+      await deadline(wallet.sync(), 240_000, `sync via ${uri}`)
       const tip = await wallet.getHeight()
       const transfers = (await wallet.getIncomingTransfers({ txQuery: { isConfirmed: true } })).filter(
         (tr) => tr.getAddress() === XMR_DONATION_ADDRESS
@@ -114,7 +124,7 @@ async function scanXmr(): Promise<Stats['xmr']> {
     } catch (e) {
       lastErr = e
       try {
-        await wallet?.close()
+        if (wallet) await deadline(wallet.close(), 10_000, 'wallet close')
       } catch {}
     }
   }
@@ -224,3 +234,6 @@ console.log(
     `github ${github.ok ? 'ok' : 'STALE'} (${github.sponsorCount} sponsors, $${github.monthlyUsd}/mo) · ` +
     `$${stats.totals.lifetimeUsd} lifetime / $${stats.totals.last30Usd} last 30d / $${stats.totals.perCommitUsd} per commit (${commits})`
 )
+// monero-ts worker threads can hold the event loop open after a failed close;
+// the stats are on disk, so end the process rather than trust the loop drains
+process.exit(0)

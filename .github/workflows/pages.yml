@@ -48,7 +48,9 @@ jobs:
         working-directory: website
         env:
           GITHUB_TOKEN: ${{ secrets.SPONSORS_TOKEN || secrets.GITHUB_TOKEN }}
-        run: npm run dono-stats || echo "stats refresh failed; committed snapshot stands"
+        # bounded: a hung chain sync must never wedge a deploy (the script also
+        # deadlines each node internally; this is the outer belt)
+        run: timeout 360 npm run dono-stats || echo "stats refresh failed/timed out; committed snapshot stands"
       # the site lives at the custom domain root (disp-lang.net), so no base
       # path; github.io/disp URLs 301 there with the project prefix stripped
       - name: Build
