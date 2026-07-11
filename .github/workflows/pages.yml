@@ -10,6 +10,10 @@ on:
       - 'lib/**'
       - 'src/**'
       - '.github/workflows/pages.yml'
+  schedule:
+    # weekly redeploy so the donation stats' 30-day window stays honest
+    # between pushes (the stats refresh runs as part of the build)
+    - cron: '17 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -26,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # dono-stats needs the commit count + first-commit date
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -34,6 +40,15 @@ jobs:
       - name: Install
         working-directory: website
         run: npm ci
+      # donation stats (GitHub Sponsors aggregates + XMR view-only scan);
+      # SPONSORS_TOKEN is an optional user PAT for richer sponsor data —
+      # without it the automatic token covers the public aggregates. Fails
+      # SOFT: the committed snapshot stands and the deploy proceeds.
+      - name: Refresh donation stats
+        working-directory: website
+        env:
+          GITHUB_TOKEN: ${{ secrets.SPONSORS_TOKEN || secrets.GITHUB_TOKEN }}
+        run: npm run dono-stats || echo "stats refresh failed; committed snapshot stands"
       # the site lives at the custom domain root (disp-lang.net), so no base
       # path; github.io/disp URLs 301 there with the project prefix stripped
       - name: Build

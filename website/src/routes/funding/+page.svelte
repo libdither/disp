@@ -1,9 +1,12 @@
 <script lang="ts">
   import { base } from "$app/paths";
+  import stats from "$lib/dono-stats.json";
   const REPO = "https://github.com/libdither/disp";
+  const SPONSOR = "https://github.com/sponsors/zyansheep";
 
-  // the runway, measured. update CURRENT by hand, honestly.
-  const CURRENT_MONTHLY = 0;
+  // the runway, measured — by scripts/build-dono-stats.mts at every deploy
+  // (GitHub Sponsors recurring + XMR received in the last 30 days, in USD)
+  const CURRENT_MONTHLY = Math.round(stats.totals.last30Usd);
   const GOALS = [
     { label: "claude code", amount: 200 },
     { label: "rent and food", amount: 2000 },
@@ -46,13 +49,13 @@
       >
     </div>
     <div class="card">
-      <h3>Reoccurring Patronage</h3>
+      <h3>GitHub Sponsors</h3>
       <p>
-        If you want to fund this work continuously, open an issue or add me
-        @Zyansheep on discord, and I'll setup Github sponsors or something :)
+        Monthly or one-time, card-payment easy. Recurring pledges water the
+        runway garden below directly.
       </p>
-      <a class="btn" href="{REPO}/issues" target="_blank" rel="noopener"
-        >Open an issue</a
+      <a class="btn primary" href={SPONSOR} target="_blank" rel="noopener"
+        >Sponsor on GitHub</a
       >
     </div>
 
@@ -216,9 +219,44 @@
     </svg>
     </div>
     <p class="runway-note">
-      Numbers update by hand when something changes (I will setup github actions
-      for this). The last post is the U.S. median individual income, at which
-      point disp becomes a real job!
+      The last post is the U.S. median individual income, at which point disp
+      becomes a real job!
+    </p>
+  </section>
+
+  <!-- ================= the books ================= -->
+  <section class="books">
+    <h2>The books</h2>
+    <div class="stat-grid">
+      <div class="stat">
+        <span class="stat-num">${stats.totals.last30Usd.toLocaleString("en-US")}</span>
+        <span class="stat-label">last 30 days</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">${stats.totals.lifetimeUsd.toLocaleString("en-US")}</span>
+        <span class="stat-label">lifetime</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">${stats.totals.avgMonthlyUsd.toLocaleString("en-US")}</span>
+        <span class="stat-label">per month, amortized over the project's life</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">${stats.totals.perCommitUsd.toLocaleString("en-US")}</span>
+        <span class="stat-label">per commit ({stats.repo.commits.toLocaleString("en-US")} commits)</span>
+      </div>
+    </div>
+    <p class="books-note">
+      Computed at every deploy by
+      <a href="{REPO}/blob/main/website/scripts/build-dono-stats.mts" target="_blank" rel="noopener"
+        >a build script</a
+      >: GitHub Sponsors ({stats.github.sponsorCount} sponsor{stats.github.sponsorCount === 1
+        ? ""
+        : "s"}, ${stats.github.monthlyUsd}/mo recurring; lifetime accrued as an estimate) plus a
+      view-only scan of the
+      <a href="{base}/funding/monero/">Monero wallet</a>
+      ({stats.xmr.txs.length} donation{stats.xmr.txs.length === 1 ? "" : "s"} on-chain, converted at
+      ${stats.xmrUsd.toLocaleString("en-US")}/XMR) — the wallet's view key is published, so you can
+      audit that number yourself. Last refreshed {new Date(stats.updatedAt).toISOString().slice(0, 10)}.
     </p>
   </section>
 </div>
@@ -341,5 +379,44 @@
     font-size: 0.82rem;
     font-style: italic;
     margin-top: 0.4rem;
+  }
+
+  /* ---- the books ---- */
+  .books {
+    margin-top: 3rem;
+  }
+  .books h2 {
+    font-size: 1.6rem;
+    margin: 0 0 0.9rem;
+  }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+  }
+  .stat {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .stat-num {
+    font-family: var(--font-mono);
+    font-size: 1.5rem;
+    font-weight: 650;
+    color: var(--g2);
+  }
+  .stat-label {
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+  }
+  .books-note {
+    color: var(--fg-faint);
+    font-size: 0.82rem;
+    margin-top: 0.9rem;
+    line-height: 1.6;
   }
 </style>

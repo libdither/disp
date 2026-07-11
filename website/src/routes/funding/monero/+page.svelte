@@ -1,8 +1,12 @@
 <script lang="ts">
   import { base } from "$app/paths";
 
-  // paste the wallet address here when it exists; the page does the rest
-  const MONERO_ADDRESS = "";
+  const MONERO_ADDRESS =
+    "87ErQFwijiDCqcPs1yy8qGdaLBA2BG1BqAy93aE4pGYe2KFbZuxJDiGjjgLtDrzgxFaK98YHv7rctYfyCfptAvmHDWN8MGv";
+  // view-only key, published ON PURPOSE: it can reveal incoming donations
+  // (that is the point — anyone can audit the ledger) but can never spend.
+  const MONERO_VIEW_KEY =
+    "e6cf097d491f78f5a8443436c43b54985a0c5a0702e683f2515a57ff29942306";
 
   let copied = $state(false);
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -29,9 +33,8 @@
       claude code subscription that co-wrote this very page.
     </p>
     <div class="card addrcard">
-      <div class="qr-slot">
-        <!-- QR code goes here -->
-        <span class="qr-soon">QR coming soon</span>
+      <div class="qr-slot has-qr">
+        <img src="{base}/xmr-donate-qr.png" alt="Monero donation QR code" width="168" height="168" />
       </div>
       <div class="addr-col">
         <span class="addr-label">address</span>
@@ -41,6 +44,17 @@
         </button>
       </div>
     </div>
+
+    <details class="transparency">
+      <summary>Transparency: the ledger is public</summary>
+      <p>
+        This wallet's <em>view key</em> is published, so anyone can audit
+        incoming donations (a view key can see, never spend). Import the
+        address + view key below as a view-only wallet in any Monero client to
+        verify the totals shown on the <a href="{base}/funding/">funding page</a>.
+      </p>
+      <code class="addr viewkey">{MONERO_VIEW_KEY}</code>
+    </details>
   {:else}
     <p class="lede">
       The wallet is still being set up, which is a fancy way of saying I
@@ -105,6 +119,33 @@
     place-items: center;
     color: var(--fg-faint);
     font-size: 0.8rem;
+  }
+  .qr-slot.has-qr {
+    border-style: solid;
+    background: #fff;
+    overflow: hidden;
+  }
+  .qr-slot img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .transparency {
+    margin-top: 1.4rem;
+    font-size: 0.9rem;
+    color: var(--fg-muted);
+  }
+  .transparency summary {
+    cursor: pointer;
+    color: var(--fg);
+    font-weight: 550;
+  }
+  .transparency p {
+    margin: 0.6rem 0;
+  }
+  .viewkey {
+    display: block;
+    font-size: 0.72rem;
   }
   .addr-col {
     flex: 1;

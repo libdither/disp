@@ -10,12 +10,14 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "snapshot": "tsx scripts/build-kernel-snapshot.mts",
     "validate:examples": "tsx scripts/validate-examples.mts",
-    "vfs-check": "tsx scripts/vfs-check.mts"
+    "vfs-check": "tsx scripts/vfs-check.mts",
+    "dono-stats": "tsx scripts/build-dono-stats.mts"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.8",
     "@sveltejs/kit": "^2.20.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "monero-ts": "^0.11.10",
     "svelte": "^5.25.0",
     "svelte-check": "^4.1.0",
     "tsx": "^4.23.0",
