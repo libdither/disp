@@ -158,6 +158,13 @@ make_meta : Tree -> Tree -> MetaShape := {params, respond} ->
 // declaration heads denote), with host fallbacks of identical semantics for the
 // bootstrap lines above this point. A guard answers through CheckerResult: Ok carries
 // a GuardAction, Err refuses (the module fails to load).
+//
+// Trust invariant (core-discipline corollary): the elaborator relays. It builds the
+// request, runs the guard, and binds exactly the tree the guard's action carries; it
+// never fabricates a bound tree, a proof, or glue. Every soundness-carrying tree is
+// built by kernel or guard code in-language (e.g. a licensed fast face's delegation
+// glue is the guard's own construction, never the driver's; OPTIMIZER.typ,
+// "Certification is not yet observer-restricted").
 Bind    : Tree -> GuardAction := inj1 "Bind"          // bind this value
 Install : Tree -> GuardAction := inj1 "Install"       // set the name's guard; value untouched
 Both    : Tree -> Tree -> GuardAction := inj2 "Both"  // bind AND set the guard

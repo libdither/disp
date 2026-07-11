@@ -366,41 +366,103 @@ the face bit reads false. An induction proof of the attack is impossible (its ze
 `Eq Nat 0 1`). The doors are exactly: top-level refl at a bare hyp, and reflection through a
 residual hyp of a concrete-face obligation.
 
-*The fix: observer and phase separation.* One walker cannot serve both masters; elimination needs
-the root-signature read, certification needs it absent. So certification gets a mode.
+*The fix: observer and phase separation, in layers.* One walker cannot serve both masters
+ambiently; elimination needs the root-signature read, certification needs it absent. The repair
+is not a second walker. The walker already reduces `apply(f, x)` by matching `f` against a small
+fixed table of canonical readers and routes (§4.3; the §5.4 route-to-registered-handler
+discipline); the fix makes that table a parameter of the walk. Four layers, ordered by
+independence:
 
-+ *Strict certification mode.* A walker variant used for license checking only: root-signature
-  reads (`pair_fst`, `neutral_type`, `tree_eq` completion) answer `Err` when their subject is a
-  hyp (for `tree_eq`, when either side contains one and they are not hash-identical), exactly the
-  `ext_walker` prototype made total; kernel eliminators (`case_value`, `elim`, `rec_value`,
-  `nat_rec`, ...) become registered routes (the §5.4 routing-table generalization), so honest
-  recursion stays walkable while its internal neutral dispatch never reaches the candidate.
-  Face-blind candidates certify as today, and for that fragment the fundamental lemma is
-  restored: the neutral-face proof is a members-forall.
-+ *Two-face protocol for face-observing candidates.* A candidate the strict probe rejects cannot
-  be certified by running it abstractly. Its rebind payload becomes parts rather than a finished
-  function: `{ fast := e; proof := ... }`, with the driver constructing
-  `new := {x} -> if (is_neutral x) then (old x) else (e x)` itself, so neutral-face delegation
-  holds by construction instead of by proof. The license obligation is then the concrete face
-  only: per-constructor equations over the domain's variant list (canonicity covers closed
-  members), discharged by induction where the type recurses, with every residual hyp of every
-  obligation walked in strict mode so the candidate cannot detect the proof environment through
-  arms, payloads, or IHs.
-+ *First-order certificates for staged dispatchers.* A polymorphic fast face that reads
-  `type_meta T` (the `case_fast` shape) cannot quantify `T` abstractly at all. Do not license the
-  polymorphic name; license specializations (`case_fast T` at each concrete `T`), or replace the
-  free-form candidate with data: a `CutClass T` descriptor (variants, argspecs, the compiled case
-  table) validated against `T`'s meta by a small total checker, with the dispatch theorem proven
-  once by induction over the descriptor. Data cannot probe its verifier.
-+ *PER lift where the domain is quotiented.* `lift_setoid` gains the binary form
-  `∀ a₀ a₁. R_A(a₀, a₁) -> R_B(f a₀, g a₁)` exactly when the domain setoid is coarser than the
-  `Eq` base (at the `Eq` base the unary form is equivalent by J and stays); a declared setoid
-  must carry respect witnesses (the `LinkedPi` binder already states them) before it licenses
-  replacement, since `image_setoid` alone supplies an equivalence, not congruence.
++ *Positive quantification by codes, not probes (no kernel change).* A license obligation whose
+  domain is a positive type is derived per-constructor from the domain's variant list, which is
+  already a first-order code (`recognizer_params`; `Coproduct` is its decoder, a universe a la
+  Tarski), and discharged by induction, with IHs at the recursive positions. For a polymorphic
+  dispatcher the obligation quantifies over the code itself and is proven by list induction.
+  This closes two of the pinned doors on its own: top-level refl at a bare hyp discharges
+  nothing (the zero case of `id ~ shift` demands `Eq Nat 0 1`, and the succ case demands
+  `Eq (succ k) (succ (succ k))`), and instance/type-identity dispatch dies during the induction
+  (no case ever presents the literal licensed type, so a candidate that special-cases it fails
+  its own obligations). The fit with `case_fast` is exact: its fast path fires only on cut-class
+  types, whose codes are pure data, so its license is precisely this induction; viewed types
+  fall through to the spec and owe nothing. What codes cannot cover is the negative positions
+  (arms, isos, continuations, any function-typed slot): functions have no constructor list to
+  induct over. Those keep hyps, which is what the next layer polices.
++ *Negative positions: sealed hyps with the ambient reader grant withdrawn.* A certification
+  walk runs the one walker at a certification table: the canonical readers (`pair_fst`,
+  `neutral_type`, `tree_eq` completion) answer `Err` on hyp-rooted subjects (`tree_eq` also on
+  hyp-containing subjects unless hash-identical), while trusted machinery (the eliminators,
+  `setoid_of`, the responds) is reached through registered routes, so honest recursion on the
+  hyps still walks and only free-form observation of them is refused. Membership checking keeps
+  the ambient table; nothing outside license certification changes. The boundary must be
+  operational rather than syntactic: hash-consing interns a structurally rebuilt tree to the
+  same node (`src/core/tree.ts`), so a candidate can assemble `pair_fst` from raw applications
+  at runtime and reach the carve-out, and no scan of a candidate's tree can define the fragment.
++ *Two-face rebinds: delegation by construction, glue built in-language.* A face-observing fast
+  face is not certified by running it abstractly. Its rebind payload is parts,
+  `{ fast := e; proof := ... }`, and the guard (an object-language value, `oeq.disp`) applies
+  the library combinator `two_face old e = {x} -> if (is_neutral x) then (old x) else (e x)`
+  and answers `Bind` with the result, so neutral-face delegation holds by construction. The
+  proof owes only the concrete face, which is the layer-one induction family. Trust invariant
+  (a corollary of the core discipline): the elaborator relays guard answers; it never
+  fabricates a bound tree, a proof, or glue. Every soundness-carrying tree is built by kernel
+  or guard code in-language.
++ *Quotients: respect is constitutive, not ambient.* `image_setoid` supplies an equivalence,
+  never congruence, and no operational gate can police observation of concrete quotient members
+  (both sides of `is_zero 2` vs `is_zero 4` are concrete). The observational lineage's rule
+  applies instead: consumption demands the respect witness. A function out of a quotient-
+  carrying type is a morphism pair (the function with its `LinkedPi` respect witness), demanded
+  at the quotient's own boundary (its respond gate and its function-type membership), and a
+  declared setoid licenses replacement only against morphism consumers. The PER lift
+  (`∀ a₀ a₁. R_A(a₀, a₁) -> R_B(f a₀, g a₁)`) applies exactly where the domain setoid is
+  coarser than the `Eq` base; at the base it is J-equivalent to the unary form, which stays.
 
-Until the strict mode lands, `license_guard`/`guard_eq`/`case_equiv` rebinds are trusted on their
-differential pins, not on their proofs, and a rebind proof of the top-level-refl shape should be
-read as a delegation claim, not an equivalence proof.
+Layer one and the quotient layer need no kernel change and can land first. Layer two wants the
+§5.4 routing generalization. Until it lands, `license_guard`/`guard_eq`/`case_equiv` rebinds are
+trusted on their differential pins, not on their proofs, and a rebind proof of the
+top-level-refl shape should be read as a delegation claim, not an equivalence proof.
+
+== What the observational lineage licenses (research pass, 2026-07-11)
+
+A source-verified literature pass (Altenkirch's setoid model, LICS 1999; Altenkirch-McBride-
+Swierstra OTT, PLPV 2007; Pujet-Tabareau TTobs, POPL 2022, and CCobs, POPL 2023; CICobs,
+ESOP 2024/TOPLAS 2025; Gilbert-Cockx-Sozeau-Tabareau SProp, POPL 2019; Narya) confirms this
+architecture rather than offering an alternative to it.
+
+- *The equality target is right and reachable.* TTobs/CCobs deliver funext, propositional
+  extensionality, definitional UIP, and quotients while keeping normalization, canonicity, and
+  decidable conversion (machine-checked in Agda), so extensional replace-equals-by-equals
+  obligations are decidable certificate checks. `oeq`'s derivation is the same mechanism:
+  their observational equality is an eliminator that weak-head-normalizes the type and
+  pattern-matches its head former, which is `setoid_of`'s dispatch exactly.
+- *The global respect metatheorem is constitutively closed-world.* Funext's justification is
+  calibrated to a language whose only observation on functions is application; funext plus
+  substitution plus an ambient structural-equality observer derives false (disp's own pin:
+  funext-with-J against `tree_eq`), and the lineage's consistency models cannot even interpret
+  such an observer. The lineage is therefore imported per-boundary, never globally; nothing in
+  it removes the need for the certification table.
+- *Kernel-routed intensional analysis is the lineage's own practice.* Their equality and cast
+  rules are, in the authors' words, non-parametric: a controlled typecase on type heads, with
+  injective type formers and labeled-code universe models, sound because the analysis is
+  performed only by fixed kernel operators that stay stuck on neutrals. CICobs further decides
+  its Cast-Refl coherence at the conversion boundary on neutral terms, deliberately not as a
+  reduction rule, in the same way eta is decided. The certification-table walker is this same
+  shape; the boundary approach is standard practice in the strongest current systems.
+- *Proof irrelevance is the actual cure for setoid bureaucracy.* SProp adds no axioms and
+  preserves consistency and decidable checking; respect and coherence proofs become
+  definitionally unique and erasable, which is what retires Proper-style rewriting overhead.
+  The setoid-model structure (relation, laws, respect) is not the disease; unpoliced consumers
+  are. Disp already sits in the irrelevant regime at the license layer: `refl := t` erases,
+  and license verdicts are load-time, never computed with.
+- *Residue warning for `φ` (B above).* Even inside the lineage, funext-licensed casts can stick
+  as new normal forms, and indexed inductives acquire noncanonical closed inhabitants unless
+  indices come from decidable-equality types. One more reason licenses prefer first-order
+  certificates and decidable-equality indices.
+- *Not ready, and not yet verified.* Higher OTT/Narya has no specified formal theory and its
+  internal parametricity is mutually exclusive with its observational mode today. The
+  dynamic-sealing leg (non-parametric parametricity: Neis-Dreyer-Rossberg; Sumii-Pierce) and
+  the layered-modal/2LTT leg did not survive to verification in this pass; they remain the
+  candidate metatheory for the certification table (a minted hyp is a dynamic seal; the table
+  is the observer class) but are directions, not results.
 
 #note[
   *2LTT is the equality layering, not staged compilation.* Disp is already two-level in spirit:
