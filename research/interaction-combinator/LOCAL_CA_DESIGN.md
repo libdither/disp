@@ -307,7 +307,18 @@ Cheap-first, each rung gating the next:
    the unified field with diffusion and Metropolis drift (§7), on a lattice of `ι` and `via`
    only (wires with no live agents). Watch straightening and reel-in relax a tangle. This rung
    alone tests the jamming threshold and the liveness watchdog, the riskiest unknowns, before
-   any reduction exists.
+   any reduction exists. Prototyped in `local_ca_field.html` (nodes as inert endpoints,
+   wires as forwarder chains, O(1) local reel-in and bend with no path search, the unified
+   tension-plus-pressure field). Findings so far: the local move is integrity-clean and
+   contracts a slack tangle to zero wire; the bead-box demand test confirms pressure evicts a
+   cell faster than random diffusion, the gap widening with fill (the liveness half). Two
+   honest results from building it: degree-2 structures (rings, chains) are frustrated because
+   every single-node step is length-neutral (reel one wire, bend another), a genuine local
+   minimum that coordinated moves or a better potential must solve; and on a 4-neighbor lattice
+   a monotone staircase is already Manhattan-minimal, so straightening only removes true
+   backtracks and reel-in is the primary relaxation. Still to add here: `via` crossings, the
+   Margolus commit (the prototype drifts sequentially), and a closed-region sweep for the hard
+   jamming transition (contraction alone frees space, so it never jams; only a demand does).
 2. **The rewrite executor and template ROM** (§5.1) for the value and dispatch families, with
    `T2` as a two-cell block (§4.3a).
 3. **The commit handshake** (§6) across block boundaries.

@@ -1,0 +1,549 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>Local CA field — rung 1 (wire-only lattice)</title>
+<style>
+  :root { --bg:#0b0e14; --fg:#c8d3e0; --accent:#56c8ff; --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.5 monospace; }
+  #wrap { display:flex; height:100vh; }
+  #cv { flex:1; display:block; }
+  #side { width:340px; padding:12px 14px; overflow:auto; border-left:1px solid #1b2436; }
+  h3 { color:var(--accent); font-size:12px; letter-spacing:.06em; margin:14px 0 6px; }
+  .row { display:flex; justify-content:space-between; margin:2px 0; }
+  .k { color:#8595ad; }
+  button { background:#16202f; color:var(--fg); border:1px solid #2a3a52; border-radius:5px; padding:4px 9px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  button.on { background:var(--accent); color:#04121c; }
+  input[type=range] { width:120px; vertical-align:middle; }
+  #stat b { color:var(--hot); }
+  .note { color:#8595ad; font-size:11px; }
+</style></head>
+<body><div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="side">
+    <h3>RUNG 1 — FIELD ON A WIRE-ONLY LATTICE</h3>
+    <div class="note">Von Neumann 4-neighbor. Nodes are inert (no firing). Wires are chains of
+    forwarder cells. Everything relaxes under one field: tension (shorten wires) + pressure
+    (make room). Tests the two riskiest unknowns before any reduction: the jamming threshold
+    and the liveness watchdog.</div>
+    <div style="margin:10px 0">
+      <button id="play">&#9654; play</button>
+      <button id="step">tick</button>
+      <button id="reset">reset</button>
+    </div>
+    <div class="row"><span class="k">scenario</span><select id="scen"></select></div>
+    <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="400" value="120"></div>
+    <div class="row"><span class="k">temperature</span><input type="range" id="temp" min="0" max="100" value="35"><span id="tempv"></span></div>
+    <div class="row"><span class="k">fill target</span><input type="range" id="fill" min="10" max="90" value="40"><span id="fillv"></span></div>
+    <h3>STATE</h3>
+    <div id="stat"></div>
+    <h3>WHAT TO WATCH</h3>
+    <div class="note" id="explain"></div>
+  </div>
+</div>
+<script>
+"use strict";
+let CFG = { fill: 0.6, boxL: 13, pitch: 7, gridN: 6 };
+// ---- lattice: von Neumann 4-neighbor ----
+const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0], DN = ["N","E","S","W"];
+const opp = d => (d + 2) & 3;
+const key = (x, y) => x + "," + y;
+
+// A cell holds at most one agent. kinds:
+//   node: an inert endpoint, ports[] = list of face directions it connects on
+//   fwd : a wire cell, faces a<->b (the wire passes through)
+// (via/pressure added in later stages). Wires are FOLLOWED cell to cell; there is no
+// wire object and no path search — every dynamics rule reads only a cell + its 4 neighbors.
+function makeField(scenario) {
+  const net = { grid: new Map(), pressure: new Map(), nodes: [], ticks: 0, moved: 0, straightened: 0, blocked: 0, seed: 1 };
+  const at = (x, y) => net.grid.get(key(x, y));
+  const nb = (c, d) => at(c.x + DX[d], c.y + DY[d]);
+  const del = (x, y) => net.grid.delete(key(x, y));
+  const put = c => { net.grid.set(key(c.x, c.y), c); return c; };
+  const empty = (x, y) => !net.grid.has(key(x, y));
+
+  // ---- edge usage (THE invariant: at most one attachment per edge) ----
+  const faceUsed = (c, d) => {
+    if (!c) return false;
+    if (c.k === "node") { for (const p of c.ports) if (p === d) return true; }
+    else if (c.k === "fwd") { if (c.a === d || c.b === d) return true; }
+    return false;
+  };
+  const edgeUsed = (x, y, d) => faceUsed(at(x, y), d) || faceUsed(at(x + DX[d], y + DY[d]), opp(d));
+
+  // ---- follow a wire (METRICS + RENDER ONLY; never a dynamics decision) ----
+  function follow(x, y, d) {
+    const cells = [];
+    let cx = x, cy = y, dir = d, guard = 100000;
+    while (guard-- > 0) {
+      const nx = cx + DX[dir], ny = cy + DY[dir];
+      const n = at(nx, ny);
+      if (!n) return { end: null, cells };
+      if (n.k === "node") {
+        for (let s = 0; s < n.ports.length; s++) if (n.ports[s] === opp(dir)) return { end: n, slot: s, cells };
+        return { end: null, cells };
+      }
+      // forwarder: continue out the other face
+      if (n.a !== opp(dir) && n.b !== opp(dir)) return { end: null, cells }; // broken
+      cells.push(n);
+      dir = n.a === opp(dir) ? n.b : n.a;
+      cx = nx; cy = ny;
+    }
+    return { end: null, cells };
+  }
+
+  // ---- integrity: every port/face resolves; every edge used at most once ----
+  function integrity() {
+    const bad = [];
+    for (const c of net.grid.values()) {
+      if (c.k === "node") {
+        const seen = new Set();
+        for (let s = 0; s < c.ports.length; s++) {
+          const d = c.ports[s];
+          if (seen.has(d)) bad.push(`node(${c.x},${c.y}) dup face ${DN[d]}`);
+          seen.add(d);
+          const f = follow(c.x, c.y, d);
+          if (!f.end) bad.push(`node(${c.x},${c.y})[${s}] dir ${DN[d]} dangles`);
+        }
+      } else if (c.k === "fwd") {
+        if (c.a === c.b) bad.push(`fwd(${c.x},${c.y}) a==b`);
+        for (const d of [c.a, c.b]) {
+          const n = at(c.x + DX[d], c.y + DY[d]);
+          if (!n || !faceUsed(n, opp(d))) bad.push(`fwd(${c.x},${c.y}) face ${DN[d]} unmatched`);
+        }
+      }
+    }
+    return bad;
+  }
+
+  // total wire length = the tension half of the field potential E
+  function wireLen() {
+    let n = 0;
+    for (const c of net.grid.values()) if (c.k === "fwd") n++;
+    return n;
+  }
+
+  // deterministic per-cell PRNG (bit-reproducible runs)
+  function rand(x, y) {
+    let h = ((x * 73856093) ^ (y * 19349663) ^ (net.ticks * 83492791) ^ (net.seed * 2654435761)) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+    return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
+  }
+
+  const dirTo = (x0, y0, x1, y1) => { for (let d = 0; d < 4; d++) if (x0 + DX[d] === x1 && y0 + DY[d] === y1) return d; return -1; };
+  const eKey = (x, y, d) => { const x2 = x + DX[d], y2 = y + DY[d]; return (y < y2 || (y === y2 && x <= x2)) ? key(x, y) + "|" + d : key(x2, y2) + "|" + opp(d); };
+  function repointFace(cell, from, to) {
+    if (cell.k === "node") { for (let s = 0; s < cell.ports.length; s++) if (cell.ports[s] === from) { cell.ports[s] = to; return; } }
+    else if (cell.k === "fwd") { if (cell.a === from) cell.a = to; else if (cell.b === from) cell.b = to; }
+  }
+  // ---- THE local node move: step to `dest` in dir d, re-embedding every wire locally ----
+  // Reel-in on the aligned port (eat one forwarder). Every other wire bends through the old
+  // cell (which the node vacates) or, if that edge is taken, a free far corner (which also
+  // repoints the wire's next cell). Blocked (no space) if any wire cannot be placed. Reads
+  // only cells within distance 2 of the node. O(1). The plan is checked against edge
+  // uniqueness before any mutation: `freed` = edges this move vacates (the node's own ports
+  // and the eaten forwarder), `claimed` = edges the plan adds.
+  function tryMoveNode(c, d) {
+    const dx = c.x + DX[d], dy = c.y + DY[d];
+    const dest = at(dx, dy);
+    let reelSlot = -1, reelNewDir = -1;
+    if (dest) {
+      if (dest.k !== "fwd") return false;                 // only step onto our own wire (reel-in)
+      const back = opp(d);
+      if (dest.a !== back && dest.b !== back) return false; // that forwarder isn't ours
+      reelNewDir = dest.a === back ? dest.b : dest.a;       // wire continues this way from dest
+      for (let s = 0; s < c.ports.length; s++) if (c.ports[s] === d) { reelSlot = s; break; }
+      if (reelSlot < 0) return false;                       // fwd there but no port toward it
+    } else {
+      for (const p of c.ports) if (p === d) return false;   // port toward an empty cell = broken
+    }
+    const freed = new Set(), claimed = new Set();
+    for (const p of c.ports) freed.add(eKey(c.x, c.y, p));   // the node leaves C: its edges vacate
+    if (dest) { freed.add(eKey(dx, dy, opp(d))); freed.add(eKey(dx, dy, reelNewDir)); } // eaten fwd
+    const avail = (x, y, dd) => { const e = eKey(x, y, dd); if (claimed.has(e)) return false; if (freed.has(e)) return true; return !edgeUsed(x, y, dd); };
+    const claim = (x, y, dd) => claimed.add(eKey(x, y, dd));
+
+    const newPorts = [], bendPlan = [], repoints = [];
+    for (let s = 0; s < c.ports.length; s++) {
+      if (s === reelSlot) { newPorts[s] = reelNewDir; continue; }
+      const pd = c.ports[s];
+      const tx = c.x + DX[pd], ty = c.y + DY[pd];           // the wire's next cell T (stays put)
+      let placed = false;
+      // option A: bend through the old cell (always a common neighbor of dest and T); T unchanged
+      {
+        const bx = c.x, by = c.y, toDest = dirTo(bx, by, dx, dy), toT = dirTo(bx, by, tx, ty);
+        if (toDest >= 0 && toT >= 0 && avail(bx, by, toDest) && avail(bx, by, toT)) {
+          claim(bx, by, toDest); claim(bx, by, toT);
+          bendPlan.push({ bx, by, a: toDest, b: toT });
+          newPorts[s] = opp(toDest);
+          placed = true;
+        }
+      }
+      // option B: bend through the far corner (perpendicular wire only); repoints T toward it
+      if (!placed && pd !== opp(d)) {
+        const bx = dx + DX[pd], by = dy + DY[pd];
+        if (empty(bx, by)) {
+          const toDest = dirTo(bx, by, dx, dy), toT = dirTo(bx, by, tx, ty);
+          if (toDest >= 0 && toT >= 0 && avail(bx, by, toDest) && avail(bx, by, toT)) {
+            claim(bx, by, toDest); claim(bx, by, toT);
+            bendPlan.push({ bx, by, a: toDest, b: toT });
+            newPorts[s] = opp(toDest);
+            repoints.push({ tx, ty, from: opp(pd), to: opp(toT) }); // T now faces the corner
+            placed = true;
+          }
+        }
+      }
+      if (!placed) return false;
+    }
+    // commit
+    if (dest) del(dx, dy);        // eat the reeled forwarder
+    del(c.x, c.y);                // vacate old cell
+    for (const b of bendPlan) put({ x: b.bx, y: b.by, k: "fwd", a: b.a, b: b.b });
+    for (const r of repoints) { const t = at(r.tx, r.ty); if (t) repointFace(t, r.from, r.to); }
+    c.x = dx; c.y = dy; c.ports = newPorts; put(c);
+    net.moved++;
+    return true;
+  }
+
+  // ---- forwarder straightening: remove a U-bump (the local slack-removal rule) ----
+  // A wire that goes P -> Q -> S -> R where P and R are adjacent took 3 steps for a 1-step
+  // displacement: retract Q and S, connect P to R directly (shortens by 2, frees 2 cells).
+  // The shortest removable detour on a 4-neighbor lattice (adjacent cells share no common
+  // neighbor, so no 2-step bump exists). Reads only Q and its neighbors out to radius 2.
+  function straightenAt(q) {
+    if (q.k !== "fwd") return false;
+    for (const [a, b] of [[q.a, q.b], [q.b, q.a]]) {
+      const S = at(q.x + DX[b], q.y + DY[b]);
+      if (!S || S.k !== "fwd") continue;
+      const sBack = opp(b);
+      if (S.a !== sBack && S.b !== sBack) continue;
+      const sOut = S.a === sBack ? S.b : S.a;
+      const rx = S.x + DX[sOut], ry = S.y + DY[sOut], R = at(rx, ry);
+      const px = q.x + DX[a], py = q.y + DY[a], P = at(px, py);
+      if (!P || !R) continue;
+      const dPR = dirTo(px, py, rx, ry);
+      if (dPR < 0) continue;                        // P and R not adjacent: not a U-bump
+      // the P-R edge must be free (P's face to Q and R's face to S are being removed)
+      if (edgeUsed(px, py, dPR)) continue;
+      // repoint P (was facing Q via opp(a)) and R (was facing S via opp(sOut)) at each other
+      repointFace(P, opp(a), dPR);
+      repointFace(R, opp(sOut), opp(dPR));
+      del(q.x, q.y); del(S.x, S.y);
+      net.straightened++;
+      return true;
+    }
+    return false;
+  }
+
+  // ---- the pressure half of the unified field (a per-cell scalar, diffusing) ----
+  const PMAX = 64, DECAY = 0.86;
+  const getP = (x, y) => net.pressure.get(key(x, y)) || 0;
+  const setP = (x, y, v) => { const k = key(x, y); if (v < 0.02) net.pressure.delete(k); else net.pressure.set(k, Math.min(v, PMAX)); };
+  function diffuse() {
+    const active = new Set();
+    for (const k of net.pressure.keys()) { active.add(k); const [x, y] = k.split(",").map(Number); for (let d = 0; d < 4; d++) active.add(key(x + DX[d], y + DY[d])); }
+    const next = new Map();
+    for (const k of active) {
+      const [x, y] = k.split(",").map(Number);
+      let sum = getP(x, y);
+      for (let d = 0; d < 4; d++) sum += getP(x + DX[d], y + DY[d]);
+      const v = (sum / 5) * DECAY;               // relax toward the local average, then decay
+      if (v >= 0.02) next.set(k, Math.min(v, PMAX));
+    }
+    net.pressure = next;
+  }
+
+  // ---- the unified field force on a node: tension (shorten wires) + pressure (flee crowding) ----
+  function force(c) {
+    let fx = 0, fy = 0;
+    for (const d of c.ports) { fx += DX[d]; fy += DY[d]; }             // tension: toward each wire's first hop
+    const b = net.beta || 1.2;
+    fx += b * (getP(c.x - 1, c.y) - getP(c.x + 1, c.y));               // pressure: down the gradient (flee crowding)
+    fy += b * (getP(c.x, c.y - 1) - getP(c.x, c.y + 1));
+    return { fx, fy, mag: Math.hypot(fx, fy) };
+  }
+
+  // ---- one relaxation attempt for a node: descend the unified potential (Metropolis) ----
+  // The energy is TRUE: wire length (forwarder count) + beta * pressure. A move's wire delta
+  // is (#ports - 2 if it reels a forwarder in, else #ports) since every non-reeled wire bends
+  // and gains one forwarder; the pressure delta is beta*(P_dest - P_here). Descending this,
+  // not force-alignment, is what makes a node settle adjacent to its partner (a perpendicular
+  // sidestep is +1 wire, so rare) yet flee a high-pressure cell even at a wire cost.
+  function driftNode(c) {
+    const P0 = getP(c.x, c.y), b = net.beta !== undefined ? net.beta : 1.2, np = c.ports.length;
+    const cand = [];
+    for (let d = 0; d < 4; d++) {
+      const dest = at(c.x + DX[d], c.y + DY[d]), hasPort = c.ports.includes(d);
+      if (dest && dest.k === "node") continue;            // can't step onto another agent
+      if (dest && dest.k === "fwd" && !hasPort) continue; // a wire that isn't ours: collision
+      if (!dest && hasPort) continue;                     // port toward empty = would break
+      const isReel = !!(dest && dest.k === "fwd" && hasPort);
+      const dWire = np - (isReel ? 2 : 0);
+      const dE = dWire + b * (getP(c.x + DX[d], c.y + DY[d]) - P0);
+      cand.push({ d, dE });
+    }
+    cand.sort((a, b) => a.dE - b.dE);
+    let wanted = false;
+    for (const { d, dE } of cand) {
+      if (dE < 0) wanted = true;
+      if (dE < 0 || rand(c.x, c.y) < Math.exp(-dE / net.temp)) {
+        if (tryMoveNode(c, d)) { c.age = 0; return true; }
+      }
+    }
+    // had a strictly-beneficial move but could not make it (no room), or sits under pressure:
+    // raise pressure here, with impatience (age raises the source so a starved node wins later)
+    if (wanted || P0 > 0.5) { c.age = (c.age || 0) + 1; setP(c.x, c.y, P0 + 1 + 0.4 * c.age); net.blocked++; }
+    return false;
+  }
+
+  net.tick = function () {
+    net.temp = net.tempVal || 0.35;
+    let did = false, moved0 = net.moved;
+    // straighten: remove slack from every forwarder (primary local relaxation)
+    for (const c of [...net.grid.values()]) if (c.k === "fwd" && net.grid.get(key(c.x, c.y)) === c) { if (straightenAt(c)) did = true; }
+    // a standing demand keeps raising pressure at its cell until a hole arrives (space made)
+    if (net.demand) {
+      const occupied = net.grid.has(key(net.demand.x, net.demand.y));
+      if (occupied) { setP(net.demand.x, net.demand.y, getP(net.demand.x, net.demand.y) + 4); net.demandOpenSince = -1; }
+      else if (net.demandOpenSince === undefined || net.demandOpenSince < 0) { net.demandOpenSince = net.ticks; }
+    }
+    // drift: nodes descend the unified field (Margolus commit comes in a later stage)
+    const order = net.nodes.slice().sort((a, b) => rand(a.x, a.y) - rand(b.x, b.y));
+    for (const c of order) if (c.k === "node" && net.grid.get(key(c.x, c.y)) === c) { if (driftNode(c)) did = true; }
+    diffuse();                                    // the pressure field relaxes toward its local average
+    net.lastMoves = net.moved - moved0;
+    net.ticks++;
+    return did;
+  };
+
+  net.at = at; net.follow = follow; net.integrity = integrity; net.wireLen = wireLen;
+  net.tryMoveNode = tryMoveNode; net.straightenAt = straightenAt; net.getP = getP;
+  net.totalP = () => { let s = 0; for (const v of net.pressure.values()) s += v; return s; };
+
+  scenario(net, put, empty);
+  return net;
+}
+
+// ---- scenarios: build an initial (deliberately slack/tangled) wire network ----
+// setup MAY use non-local helpers (it only builds the initial condition); dynamics may not.
+const dirBetween = (x0, y0, x1, y1) => { for (let d = 0; d < 4; d++) if (x0 + DX[d] === x1 && y0 + DY[d] === y1) return d; return -1; };
+function pathCells(waypoints) {
+  // Manhattan legs (X then Y) through the waypoints; returns the full adjacent-cell path
+  const cells = [[waypoints[0][0], waypoints[0][1]]];
+  for (let i = 1; i < waypoints.length; i++) {
+    let [x, y] = cells[cells.length - 1]; const [tx, ty] = waypoints[i];
+    while (x !== tx) { x += tx > x ? 1 : -1; cells.push([x, y]); }
+    while (y !== ty) { y += ty > y ? 1 : -1; cells.push([x, y]); }
+  }
+  return cells;
+}
+function layWire(net, put, A, B, waypoints) {
+  // A and B are nodes at the first and last waypoint; interior cells become forwarders
+  const cells = pathCells(waypoints);
+  for (let i = 1; i < cells.length - 1; i++) {
+    const [px, py] = cells[i - 1], [cx, cy] = cells[i], [nx, ny] = cells[i + 1];
+    put({ x: cx, y: cy, k: "fwd", a: dirBetween(cx, cy, px, py), b: dirBetween(cx, cy, nx, ny) });
+  }
+  A.ports.push(dirBetween(cells[0][0], cells[0][1], cells[1][0], cells[1][1]));
+  const n = cells.length;
+  B.ports.push(dirBetween(cells[n - 1][0], cells[n - 1][1], cells[n - 2][0], cells[n - 2][1]));
+}
+const mkNode = (net, put, x, y) => { const n = { x, y, k: "node", ports: [] }; put(n); net.nodes.push(n); return n; };
+
+const SCENARIOS = {
+  "two nodes, slack wire": (net, put, empty) => {
+    net.temp = 0.35; net.nodes = [];
+    const A = mkNode(net, put, -8, 0), B = mkNode(net, put, 8, 3);
+    layWire(net, put, A, B, [[-8, 0], [8, 3]]);              // L-wire (minimal, reels to 0)
+  },
+  "slack tangle": (net, put, empty) => {
+    // four wires each with a big triangular detour (a poke up-and-back); straightening must
+    // collapse each toward its straight run. The primary slack-removal test.
+    net.temp = 0.35; net.nodes = [];
+    for (let i = 0; i < 4; i++) {
+      const ax = -15 + i * 9, ay = i * 4;
+      const A = mkNode(net, put, ax, ay), B = mkNode(net, put, ax + 6, ay);
+      layWire(net, put, A, B, [[ax, ay], [ax + 3, ay - 5], [ax + 6, ay]]); // poke up 5, back down
+    }
+  },
+  "packed dumbbells": (net, put, empty) => {
+    // a grid of 2-node dumbbells, each wanting to contract to length 0. At a tight pitch the
+    // contractions crowd and block each other: the jamming / liveness test. `pitch` sets fill.
+    net.temp = 0.35; net.nodes = [];
+    const G = CFG.gridN, sep = 4, p = CFG.pitch, o = -Math.round((G - 1) * p / 2);
+    for (let r = 0; r < G; r++) for (let c = 0; c < G; c++) {
+      const ax = o + c * p, ay = o + r * p;
+      const A = mkNode(net, put, ax, ay), B = mkNode(net, put, ax + sep, ay);
+      layWire(net, put, A, B, [[ax, ay], [ax + sep, ay]]);
+    }
+  },
+  "bead box (demand test)": (net, put, empty) => {
+    // a box packed with inert beads (degree-0 nodes) at fill fraction f, and a standing
+    // DEMAND at the centre (each tick raises pressure there, as a fire would). Beads flee the
+    // pressure; holes flow toward the centre. Does a free cell ever reach the demand (space
+    // made = liveness), and at what fill does it stop (jamming)? The pure node-insertion test.
+    net.temp = 0.6; net.nodes = [];
+    const f = CFG.fill, L = CFG.boxL;
+    let s = 0x9e3779b9 ^ (net.seed || 1);
+    const rng = () => { s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    for (let y = -L; y <= L; y++) for (let x = -L; x <= L; x++) {
+      if (rng() < f) mkNode(net, put, x, y);        // an inert bead (no wires)
+    }
+    net.demand = { x: 0, y: 0 };                    // the standing space request
+  },
+  "ring of nodes": (net, put, empty) => {
+    net.temp = 0.35; net.nodes = [];
+    const R = 10, K = 8, ns = [];
+    for (let i = 0; i < K; i++) {
+      const a = (i / K) * Math.PI * 2;
+      ns.push(mkNode(net, put, Math.round(R * Math.cos(a)), Math.round(R * Math.sin(a))));
+    }
+    for (let i = 0; i < K; i++) layWire(net, put, ns[i], ns[(i + 1) % K], [[ns[i].x, ns[i].y], [ns[(i + 1) % K].x, ns[(i + 1) % K].y]]);
+  },
+};
+
+// ================= headless self-test (cut here for node) =================
+let SIM = null, RUNNING = false, CUR = "slack tangle", BETA = true;
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+let view = { x: 0, y: 0, scale: 16 };
+const S2W = (px, py) => [(px / view.scale) + view.x, (py / view.scale) + view.y];
+const W2S = (x, y) => [(x - view.x) * view.scale, (y - view.y) * view.scale];
+
+function boot() {
+  const f = +document.getElementById("fill").value / 100;
+  CFG = { fill: f, boxL: 13, pitch: Math.max(3, Math.round(9 - f * 7)), gridN: 6 };
+  SIM = makeField(SCENARIOS[CUR]);
+  applyControls();
+  RUNNING = false;
+  document.getElementById("play").innerHTML = "&#9654; play";
+  fitView(); updateStat();
+}
+function applyControls() {
+  if (!SIM) return;
+  SIM.tempVal = +document.getElementById("temp").value / 100;
+  SIM.beta = BETA ? 1.6 : 0;
+  // (build-time params live in CFG, set by boot before makeField)
+}
+function fitView() {
+  let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
+  for (const cell of SIM.grid.values()) { a = Math.min(a, cell.x); b = Math.max(b, cell.x); c = Math.min(c, cell.y); d = Math.max(d, cell.y); }
+  if (a > b) { a = -10; b = 10; c = -10; d = 10; }
+  const w = innerWidth - 370, h = innerHeight;
+  view.scale = Math.max(5, Math.min(30, Math.min(w / (b - a + 6), h / (d - c + 6))));
+  view.x = (a + b) / 2 - w / 2 / view.scale;
+  view.y = (c + d) / 2 - h / 2 / view.scale;
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  pump();
+  const dpr = devicePixelRatio, s = view.scale;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const CW = innerWidth - 370, CH = innerHeight;
+  ctx.clearRect(0, 0, CW, CH);
+  if (!SIM) return;
+  // pressure heatmap (the field, made visible)
+  for (const [k, v] of SIM.pressure) {
+    const [x, y] = k.split(",").map(Number), [px, py] = W2S(x, y);
+    if (px < -s || py < -s || px > CW || py > CH) continue;
+    const a = Math.min(0.72, v / 22);
+    ctx.fillStyle = `rgba(255,120,60,${a})`;
+    ctx.fillRect(px - s / 2, py - s / 2, s, s);
+  }
+  // wires (forwarders): draw each cell's pass-through segment
+  ctx.lineCap = "round";
+  for (const c of SIM.grid.values()) {
+    if (c.k !== "fwd") continue;
+    const [px, py] = W2S(c.x, c.y);
+    if (px < -s || py < -s || px > CW || py > CH) continue;
+    ctx.strokeStyle = "#5f96d1"; ctx.lineWidth = Math.max(1.2, s * .12);
+    ctx.beginPath();
+    ctx.moveTo(px + DX[c.a] * s * .5, py + DY[c.a] * s * .5);
+    ctx.lineTo(px, py);
+    ctx.lineTo(px + DX[c.b] * s * .5, py + DY[c.b] * s * .5);
+    ctx.stroke();
+  }
+  // nodes
+  for (const c of SIM.grid.values()) {
+    if (c.k !== "node") continue;
+    const [px, py] = W2S(c.x, c.y);
+    if (px < -s || py < -s || px > CW || py > CH) continue;
+    const r = s * .34;
+    ctx.fillStyle = c.ports.length === 0 ? "#5a6b86" : "#3fbf7f"; // beads grey, wired nodes green
+    ctx.beginPath(); ctx.rect(px - r, py - r, 2 * r, 2 * r); ctx.fill();
+    // port pips
+    ctx.fillStyle = "#0b0e14";
+    for (const pd of c.ports) ctx.fillRect(px + DX[pd] * r * .8 - 1.5, py + DY[pd] * r * .8 - 1.5, 3, 3);
+  }
+  // demand marker
+  if (SIM.demand) {
+    const [px, py] = W2S(SIM.demand.x, SIM.demand.y);
+    ctx.strokeStyle = SIM.grid.has(key(SIM.demand.x, SIM.demand.y)) ? "#ffd866" : "#3fbf7f";
+    ctx.lineWidth = 2; ctx.strokeRect(px - s / 2, py - s / 2, s, s);
+  }
+}
+
+let acc = 0, lastT = 0;
+function pump(ts) {
+  const now = performance.now();
+  const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0; lastT = now;
+  if (!RUNNING || !SIM) return;
+  const rate = +document.getElementById("speed").value;
+  acc += rate * dt;
+  const t0 = performance.now();
+  while (acc >= 1 && performance.now() - t0 < 40) { acc--; SIM.tick(); }
+  if (acc > 4) acc = 4;
+  updateStat();
+}
+
+function updateStat() {
+  if (!SIM) return;
+  const beads = SIM.nodes.length;
+  let dem = "";
+  if (SIM.demand) {
+    const open = !SIM.grid.has(key(SIM.demand.x, SIM.demand.y));
+    dem = `<div class="row"><span class="k">demand</span><span>${open ? '<b style="color:#3fbf7f">space made</b>' : '<b style="color:#ff6b6b">waiting</b>'}</span></div>`;
+  }
+  document.getElementById("stat").innerHTML =
+    `<div class="row"><span class="k">ticks</span><b>${SIM.ticks}</b></div>` +
+    `<div class="row"><span class="k">wire length E</span><b>${SIM.wireLen()}</b></div>` +
+    `<div class="row"><span class="k">nodes</span><span>${beads}</span></div>` +
+    `<div class="row"><span class="k">moves last tick</span><span>${SIM.lastMoves || 0}</span></div>` +
+    `<div class="row"><span class="k">blocked total</span><span>${SIM.blocked}</span></div>` +
+    `<div class="row"><span class="k">field pressure</span><span>${SIM.totalP().toFixed(0)}</span></div>` + dem;
+}
+
+const EXPLAIN = {
+  "slack tangle": "Four wires with big detours. Each contracts by reel-in (nodes stepping onto their own wire, eating a forwarder) until the pair is adjacent. No path search: every move is O(1) and reads only the node's neighborhood. Watch E fall to 0.",
+  "packed dumbbells": "A grid of pairs, each contracting to touching. Contraction FREES space, so this does not jam. The pure tension half of the field.",
+  "bead box (demand test)": "Inert beads packed at the fill fraction, with a standing demand at the centre (yellow) that raises pressure until a free cell arrives. With pressure ON, beads flee the gradient and a hole reaches the centre fast; toggle it OFF and the centre only clears by slow random diffusion. Raise the fill toward 1 to stress it. This is node-insertion-by-pressure, tested with no reduction.",
+  "ring of nodes": "A degree-2 ring. Every single-node step is length-neutral (reel one wire, bend another), so greedy descent is FRUSTRATED and it barely moves: the local-minimum problem the temperature and (later) coordinated moves must solve. An honest negative result.",
+  "two nodes, slack wire": "The simplest case: one wire reels itself in to nothing.",
+};
+
+// ---- controls ----
+const scenSel = document.getElementById("scen");
+for (const name in SCENARIOS) { const o = document.createElement("option"); o.value = name; o.textContent = name; scenSel.appendChild(o); }
+scenSel.value = CUR;
+scenSel.onchange = () => { CUR = scenSel.value; document.getElementById("explain").textContent = EXPLAIN[CUR] || ""; boot(); };
+document.getElementById("play").onclick = () => { RUNNING = !RUNNING; document.getElementById("play").innerHTML = RUNNING ? "&#10074;&#10074; pause" : "&#9654; play"; };
+document.getElementById("step").onclick = () => { if (SIM) { SIM.tick(); updateStat(); } };
+document.getElementById("reset").onclick = boot;
+document.getElementById("temp").oninput = e => { document.getElementById("tempv").textContent = (e.target.value / 100).toFixed(2); applyControls(); };
+document.getElementById("fill").oninput = e => { document.getElementById("fillv").textContent = e.target.value + "%"; };
+// a pressure toggle: append a button
+const pbtn = document.createElement("button"); pbtn.textContent = "pressure: ON"; pbtn.className = "on"; pbtn.style.marginTop = "6px";
+pbtn.onclick = () => { BETA = !BETA; pbtn.textContent = "pressure: " + (BETA ? "ON" : "OFF"); pbtn.classList.toggle("on", BETA); applyControls(); };
+document.getElementById("scen").parentElement.after(pbtn);
+
+let panning = false, px0 = 0, py0 = 0;
+cv.addEventListener("mousedown", e => { panning = true; px0 = e.clientX; py0 = e.clientY; });
+addEventListener("mouseup", () => panning = false);
+addEventListener("mousemove", e => { if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; } });
+cv.addEventListener("wheel", e => { e.preventDefault(); const [wx, wy] = S2W(e.clientX, e.clientY); view.scale = Math.max(3, Math.min(40, view.scale * (e.deltaY < 0 ? 1.1 : 0.9))); const [nx, ny] = S2W(e.clientX, e.clientY); view.x += wx - nx; view.y += wy - ny; }, { passive: false });
+function resize() { const w = innerWidth - 370, h = innerHeight; cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio; cv.style.width = w + "px"; cv.style.height = h + "px"; }
+addEventListener("resize", resize);
+document.getElementById("tempv").textContent = "0.35";
+document.getElementById("fillv").textContent = "40%";
+document.getElementById("explain").textContent = EXPLAIN[CUR];
+resize(); boot(); requestAnimationFrame(draw);
+</script>
+</body></html>
