@@ -6,12 +6,37 @@
   import { searchKeymap } from '@codemirror/search'
   import { bracketMatching } from '@codemirror/language'
   import { closeBrackets } from '@codemirror/autocomplete'
-  import { Decoration, type DecorationSet } from '@codemirror/view'
+  import { Decoration, WidgetType, type DecorationSet } from '@codemirror/view'
   import { dispLanguageExtensions } from '$lib/editor/disp-language'
 
   export interface LineMark {
     line: number
     kind: 'pass' | 'fail' | 'error'
+    // inline evaluation note rendered after the line's text
+    // (e.g. '✓', '✗ got 13, want 12', an error message)
+    note?: string
+  }
+
+  class NoteWidget extends WidgetType {
+    text: string
+    kind: string
+    constructor(text: string, kind: string) {
+      super()
+      this.text = text
+      this.kind = kind
+    }
+    override eq(other: NoteWidget): boolean {
+      return other.text === this.text && other.kind === this.kind
+    }
+    override toDOM(): HTMLElement {
+      const s = document.createElement('span')
+      s.className = `disp-note disp-note-${this.kind}`
+      s.textContent = this.text
+      return s
+    }
+    override ignoreEvent(): boolean {
+      return true
+    }
   }
 
   interface Props {
@@ -45,14 +70,36 @@
       if (tr.docChanged) deco = Decoration.none
       for (const e of tr.effects) {
         if (e.is(setMarksEffect)) {
-          const builder: { from: number; deco: Decoration }[] = []
+          const builder: { from: number; to?: number; deco: Decoration }[] = []
           for (const m of e.value) {
             if (m.line < 1 || m.line > tr.state.doc.lines) continue
             const l = tr.state.doc.line(m.line)
-            builder.push({ from: l.from, deco: Decoration.line({ class: `disp-line-${m.kind}` }) })
+            if (m.kind === 'error') {
+              // errors wear a red wavy underline over the line's text (the
+              // compiler reports errors by LINE — no finer spans yet)
+              const text = tr.state.doc.sliceString(l.from, l.to)
+              const start = text.search(/\S/)
+              if (start >= 0) {
+                const end = text.replace(/\s+$/, '').length
+                builder.push({
+                  from: l.from + start,
+                  to: l.from + end,
+                  deco: Decoration.mark({ class: 'disp-error-underline' })
+                })
+              }
+            } else {
+              builder.push({ from: l.from, deco: Decoration.line({ class: `disp-line-${m.kind}` }) })
+            }
+            if (m.note)
+              builder.push({
+                from: l.to,
+                deco: Decoration.widget({ widget: new NoteWidget(m.note, m.kind), side: 1 })
+              })
           }
-          builder.sort((a, b) => a.from - b.from)
-          deco = Decoration.set(builder.map((b) => b.deco.range(b.from)))
+          deco = Decoration.set(
+            builder.map((b) => (b.to != null ? b.deco.range(b.from, b.to) : b.deco.range(b.from))),
+            true
+          )
         }
       }
       return deco
@@ -73,6 +120,7 @@
           highlightActiveLineGutter(),
           bracketMatching(),
           closeBrackets(),
+          EditorView.lineWrapping,
           markField,
           keymap.of([
             {
@@ -132,7 +180,7 @@
 <style>
   .editor-host {
     height: 100%;
-    overflow: hidden;
+    overflow: clip; /* clip, not hidden: only .cm-scroller should ever scroll */
   }
   .editor-host :global(.cm-editor) {
     height: 100%;

@@ -67,7 +67,13 @@
 
   function marksFromOutcome(out: RunOutcome): LineMark[] {
     const marks: LineMark[] = []
-    for (const t of out.tests) if (t.line) marks.push({ line: t.line, kind: t.pass ? 'pass' : 'fail' })
+    for (const t of out.tests)
+      if (t.line)
+        marks.push(
+          t.pass
+            ? { line: t.line, kind: 'pass', note: '✓' }
+            : { line: t.line, kind: 'fail', note: `✗ got ${t.lhs ?? '?'}, want ${t.rhs ?? '?'}` }
+        )
     if (out.errorLine) marks.push({ line: out.errorLine, kind: 'error' })
     return marks
   }
@@ -156,6 +162,20 @@
     }
   }
 
+  // The don't-trust-the-snapshot path: drop the precompiled kernel and watch
+  // the type system genuinely re-check itself from source.
+  async function verifyKernel() {
+    if (busy) return
+    busy = true
+    try {
+      await disp.reset({ fromSource: true })
+      pushEntry({ kind: 'sys', text: 'precompiled kernel dropped — re-elaborating from source' })
+    } finally {
+      busy = false
+    }
+    await preloadKernel()
+  }
+
   function stop() {
     disp.interrupt()
     endProgress()
@@ -166,7 +186,12 @@
   async function resetSession() {
     if (busy) return
     await disp.reset()
-    pushEntry({ kind: 'sys', text: 'session reset. fresh arena, kernel cache cleared' })
+    pushEntry({
+      kind: 'sys',
+      text: disp.kernelLoaded
+        ? 'session reset. fresh arena; precompiled kernel re-installed'
+        : 'session reset. fresh arena, kernel cache cleared'
+    })
   }
 
   function loadExample(id: string) {
@@ -265,6 +290,14 @@
       {statusLabel}
       {#if !disp.kernelLoaded && !busy && disp.status !== 'dead'}
         <button class="linkbtn" onclick={preloadKernel}>load kernel</button>
+      {:else if disp.kernelLoaded && !busy && disp.status !== 'dead'}
+        <button
+          class="linkbtn"
+          onclick={verifyKernel}
+          title="drop the precompiled kernel and re-elaborate + self-verify it from source (~a minute)"
+        >
+          verify from source
+        </button>
       {/if}
     </div>
     {#if disp.memBytes > 0}
@@ -301,10 +334,10 @@
               WebAssembly), the same code that checks the test suite. Nothing is sent to a server.
             </p>
             <p>
-              The first run that touches the type system elaborates <em>and re-verifies</em> the
-              kernel: about a minute of genuine self-checking, cached for the session.
-              <button class="linkbtn" onclick={preloadKernel}>Start it now</button>, or pick the
-              raw tree-calculus example for instant gratification.
+              The kernel arrives <em>precompiled</em> — a small snapshot of the checked module
+              cache — so typed runs start in seconds. Don't trust it?
+              <button class="linkbtn" onclick={verifyKernel}>Verify from source</button>: about a
+              minute of the type system genuinely re-checking itself, right here.
             </p>
             <p class="hint-row">
               <kbd>⌘⏎</kbd> run file · <kbd>⇧⏎</kbd> run to cursor · the <kbd>▸</kbd> prompt below

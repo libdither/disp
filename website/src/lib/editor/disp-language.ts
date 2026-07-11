@@ -157,7 +157,24 @@ export const dispEditorTheme = EditorView.theme(
     },
     '.cm-line.disp-line-pass': { backgroundColor: 'rgba(58,157,99,0.1)' },
     '.cm-line.disp-line-fail': { backgroundColor: 'rgba(201,95,109,0.13)' },
-    '.cm-line.disp-line-error': { backgroundColor: 'rgba(217,154,43,0.15)' }
+    // errors underline the offending line (wavy red, IDE-style)
+    '.disp-error-underline': {
+      textDecoration: 'underline wavy #c95f6d',
+      textDecorationThickness: '1.2px',
+      textUnderlineOffset: '4px'
+    },
+    // inline evaluation notes (LineMark.note) rendered after the line's text
+    '.disp-note': {
+      marginLeft: '1.4em',
+      fontSize: '0.85em',
+      fontStyle: 'italic',
+      opacity: '0.9',
+      userSelect: 'none',
+      pointerEvents: 'none'
+    },
+    '.disp-note-pass': { color: '#3a9d63' },
+    '.disp-note-fail': { color: '#c95f6d' },
+    '.disp-note-error': { color: '#c95f6d' }
   },
   { dark: false }
 )
