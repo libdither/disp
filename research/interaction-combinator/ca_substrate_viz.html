@@ -65,8 +65,14 @@
   </div>
   <div class="grp">
     <label style="display:flex;gap:5px;align-items:center;cursor:pointer;color:var(--dim)">
-      <input type="checkbox" id="tensionChk" checked> tension (straighten slack)
+      <input type="checkbox" id="tensionChk" checked> tension
     </label>
+    <label style="display:flex;gap:5px;align-items:center;cursor:pointer;color:var(--dim)">
+      <input type="checkbox" id="migChk"> migration
+    </label>
+    <span style="color:var(--dim)">T</span>
+    <input type="range" id="tempSlider" min="1" max="250" value="40" style="width:70px">
+    <span id="tempVal" style="color:var(--dim);min-width:32px">0.40</span>
   </div>
   <div class="grp">
     <button id="playBtn" class="primary">&#9654; play</button>
@@ -77,6 +83,7 @@
     <span class="hot">ticks (span) <b id="stTick">0</b></span>
     <span>interactions <b id="stInt">0</b></span>
     <span>transport <b id="stTr">0</b></span>
+    <span>migr <b id="stMig">0</b></span>
     <span>&#215;par <b id="stPar">-</b></span>
     <span>live <b id="stLive">0</b></span>
   </div>
@@ -112,12 +119,15 @@
   <div class="note">
     This toy differs from the real design (SPATIAL_IC.md &sect;13, the E4 simulator) in:
     parallel ticks commit through a global arbiter rather than a Margolus block handshake;
-    tension is only HALF present (the checkbox re-lays over-long wires, approximating
-    straightening; reel-in and drift, agents moving to shorten their own wires, are
-    absent, so slack from moves lingers until erased or straightened); no pressure field
-    or vacancy diffusion (births spiral-search); unlimited wire layers under agents (real
-    cells get 2-3 plus vias); no wire-RC death pulse (see demand_schedule_viz.html for
-    that mechanism at the net level).
+    <b>migration</b> is the &sect;2.3 mechanism (per-tick Metropolis drift over the force
+    of each agent's wire first-hop directions, weights hot 8 / principal 3 / plumbing 1,
+    hash(agent,tick) PRNG so runs stay bit-reproducible; sleeping agents are clock-gated
+    and do not move) but blocked movers simply wait: no pressure field or vacancy
+    diffusion; unlimited wire layers under agents (real cells get 2-3 plus vias); no
+    wire-RC death pulse (see demand_schedule_viz.html for that mechanism at the net
+    level). Transport counts BOTH delivery steps and migration moves (the embedding
+    theorem's definition), so migration spends transport to save ticks; whether that
+    trade wins is exactly the knob-sweep question the E4 simulator exists to answer.
   </div>
   <h3>legend</h3>
   <div id="legend">
@@ -161,14 +171,15 @@ const SLOTNAME = {
 };
 const key = (x, y) => x + "," + y;
 
-function makeNet(mode, tension) {
+function makeNet(mode, tension, migration, temp) {
   const net = {
-    mode, tension: !!tension, agents: new Map(), nextId: 1, wires: new Map(), nextWid: 1,
+    mode, tension: !!tension, migration: !!migration, temp: temp || 0.4,
+    agents: new Map(), nextId: 1, wires: new Map(), nextWid: 1,
     cellAgent: new Map(),          // "x,y" -> agentId
     wireLoad: new Map(),           // "x,y" -> count of wires through the cell
     redexes: [],                   // {c, p, wid} pending contact or fire
-    ints: 0, transport: 0, inserted: 0, straightened: 0, ticks: 0, peak: 0, overflow: 0,
-    effects: [], quiet: false,
+    ints: 0, transport: 0, inserted: 0, straightened: 0, migr: 0, ticks: 0, peak: 0,
+    overflow: 0, effects: [], quiet: false,
   };
 
   // ---- cells ----
@@ -306,25 +317,100 @@ function makeNet(mode, tension) {
       }
       return false;
     }
-    // move: free old cell, occupy next; the redex wire loses one cell (iota-elimination),
-    // every OTHER wire of the producer gains the old cell at its producer end (drift charge)
-    const old = { x: prod.pos.x, y: prod.pos.y };
-    loadInc(nx, ny, -1);
-    if (prodFirst) w.path.shift(); else w.path.pop();
-    freeCell(prod);
-    prod.anim = { fx: old.x, fy: old.y, t: 0 };
-    occupy(prod, nx, ny);
+    moveAgent(prod, nx, ny);
+    return true;
+  }
+
+  // THE one move primitive (advance's delivery step and migration's reel-in/drift are
+  // the same physical act). Move `a` one cell to (nx,ny), free; per wire of `a`: if the
+  // move steps onto that wire's first chain cell, the wire shortens (an iota-elimination,
+  // reel-in); if the wire had no chain and the partner is still adjacent, it stays tight;
+  // otherwise the old cell splices in at the mover's end (the drift charge). Every move
+  // is one unit of transport (EMBEDDING_THEOREM section 5: transport = eliminations +
+  // moves; the ledger closes because insertions are counted too).
+  function moveAgent(a, nx, ny) {
+    const old = { x: a.pos.x, y: a.pos.y };
+    freeCell(a);
+    a.anim = { fx: old.x, fy: old.y, t: 0 };
+    occupy(a, nx, ny);
     net.transport++;
-    for (let s = 0; s < prod.slots.length; s++) {
-      const wid2 = prod.wire && prod.wire[s];
-      if (!wid2 || wid2 === w.id) continue;
-      const w2 = net.wires.get(wid2);
-      if (!w2) continue;
-      if (w2.pa.a === prod.id) w2.path.unshift([old.x, old.y]); else w2.path.push([old.x, old.y]);
+    for (let s = 0; s < a.slots.length; s++) {
+      const wid = a.wire && a.wire[s];
+      if (!wid) continue;
+      const w = net.wires.get(wid);
+      if (!w) continue;
+      const mineFirst = w.pa.a === a.id && w.pa.s === s;
+      const head = w.path.length ? (mineFirst ? w.path[0] : w.path[w.path.length - 1]) : null;
+      if (head && head[0] === nx && head[1] === ny) {
+        // stepped onto the chain: this wire shortens by one (reel-in / delivery step)
+        loadInc(nx, ny, -1);
+        if (mineFirst) w.path.shift(); else w.path.pop();
+        continue;
+      }
+      if (!w.path.length) {
+        const other = mineFirst ? w.pb : w.pa;
+        const o = get(other.a);
+        if (o && o.pos && Math.abs(o.pos.x - nx) + Math.abs(o.pos.y - ny) <= 1) continue; // still tight
+      }
+      if (mineFirst) w.path.unshift([old.x, old.y]); else w.path.push([old.x, old.y]);
       loadInc(old.x, old.y, 1);
       net.inserted++;
     }
-    return true;
+  }
+
+  // ---- tension, migration half (SPATIAL_IC 2.3): reel-in + Metropolis drift ----
+  // Each awake agent feels a force: the weighted sum of its wires' first-hop directions
+  // (purely local: which way do my wires leave, not where do they end). Weights encode
+  // need: a pending-redex wire pulls hardest (contracting it IS dispatching the redex),
+  // other principal wires medium, aux plumbing least. The best-aligned neighbor cell is
+  // proposed; accepted always if it lowers local weighted wire length, else with
+  // probability exp(score/T) (Metropolis: greedy descent provably deadlocks, stochastic
+  // moves provably compress in the amoebot literature). The PRNG is hash(agent, tick):
+  // runs stay bit-reproducible, the differential-oracle requirement.
+  function mrand(aid) {
+    let h = (aid * 0x9E3779B9 ^ net.ticks * 0x85EBCA6B) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45D9F3B) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 0x45D9F3B) >>> 0;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+  function migrate() {
+    const hot = new Set(net.redexes.filter(r => !r.held).map(r => r.wid));
+    const movers = [...net.agents.values()];
+    for (const a of movers) {
+      if (a.dead || a.sleeping || !a.pos) continue;
+      // Weight doctrine (SPATIAL_IC 2.3): the pending-redex wire dominates outright.
+      // With warm at 3 a four-operand dispatcher's bundle out-pulled its own redex and
+      // drifted AWAY from its dispatch, livelocking delivery: hot must beat any bundle,
+      // and an agent in a pending redex is further restricted to moves that shorten
+      // that wire (reel-in only; its other pulls wait their turn).
+      let fx = 0, fy = 0, hotDir = null;
+      for (let s = 0; s < a.slots.length; s++) {
+        const wid = a.wire && a.wire[s];
+        if (!wid) continue;
+        const w = net.wires.get(wid);
+        if (!w) continue;
+        const mineFirst = w.pa.a === a.id && w.pa.s === s;
+        if (!w.path.length) continue; // adjacent: already tight, no pull
+        const h2 = mineFirst ? w.path[0] : w.path[w.path.length - 1];
+        const dx = Math.sign(h2[0] - a.pos.x), dy = Math.sign(h2[1] - a.pos.y);
+        const isHot = hot.has(w.id);
+        if (isHot) hotDir = { dx, dy };
+        const wt = isHot ? 12 : (w.pa.s === 0 || w.pb.s === 0) ? 2 : 1;
+        fx += wt * dx;
+        fy += wt * dy;
+      }
+      if (!fx && !fy) continue;
+      const cands = [[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy]) => ({ dx, dy, score: fx*dx + fy*dy }));
+      cands.sort((u,v) => v.score - u.score);
+      const c = cands[0];
+      if (hotDir && c.dx * hotDir.dx + c.dy * hotDir.dy <= 0) continue; // reel-in only
+      const nx = a.pos.x + c.dx, ny = a.pos.y + c.dy;
+      if (agentAt(nx, ny)) continue; // congestion: wait (vacancy diffusion is not modeled)
+      const accept = c.score > 0 || mrand(a.id) < Math.exp(c.score / net.temp);
+      if (!accept) continue;
+      moveAgent(a, nx, ny);
+      net.migr++;
+    }
   }
   const adjacent = (a, b) => a.pos && b.pos && Math.abs(a.pos.x - b.pos.x) + Math.abs(a.pos.y - b.pos.y) <= 1;
 
@@ -480,6 +566,7 @@ function makeNet(mode, tension) {
   // ---- ticks ----
   function tick(parallel) {
     if (net.tension) straighten(8);
+    if (net.migration) migrate(); // substrate physics, both execution modes
     net.redexes = net.redexes.filter(r => {
       const c = get(r.c), p = get(r.p);
       return c && p && !c.dead && !p.dead;
@@ -666,8 +753,8 @@ const EXAMPLES = [
 ];
 
 // ---------- headless comparison (seq vs par ticks) ----------
-function runHeadless(ex, mode, parallel, tension) {
-  const net = makeNet(mode, tension);
+function runHeadless(ex, mode, parallel, tension, migration, temp) {
+  const net = makeNet(mode, tension, migration, temp);
   const B = builders(net);
   const root = ex.build(B);
   layoutTerm(net, root, 3);
@@ -680,13 +767,14 @@ function runHeadless(ex, mode, parallel, tension) {
 }
 
 // ---------- app ----------
-let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, RUNNING = false, CUR = EXAMPLES[0];
+let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, MIGRATION = false, TEMP = 0.4,
+    RUNNING = false, CUR = EXAMPLES[0];
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 let view = { x: 0, y: 0, scale: 26 };
 let hover = null;
 
 function boot() {
-  SIM = makeNet(MODE, TENSION);
+  SIM = makeNet(MODE, TENSION, MIGRATION, TEMP);
   const B = builders(SIM);
   const root = CUR.build(B);
   layoutTerm(SIM, root, 3);
@@ -714,7 +802,7 @@ function refreshPanel() {
   let html = "<tr><th>execution</th><th>ticks</th><th>work</th><th>transport</th><th>slack</th></tr>";
   const res = [];
   for (const [nm, par] of rows) {
-    const r = runHeadless(CUR, MODE, par, TENSION);
+    const r = runHeadless(CUR, MODE, par, TENSION, MIGRATION, TEMP);
     res.push(r);
     const cls = (par ? "par" : "seq") === EXEC ? ' style="color:var(--accent)"' : "";
     html += `<tr${cls}><td>${nm}</td><td>${r.ticks}</td><td>${r.ints}</td><td>${r.tr}</td><td>${r.ins}</td></tr>`;
@@ -727,6 +815,7 @@ function updateStats() {
   document.getElementById("stTick").textContent = SIM.ticks;
   document.getElementById("stInt").textContent = SIM.ints;
   document.getElementById("stTr").textContent = SIM.transport;
+  document.getElementById("stMig").textContent = SIM.migr;
   document.getElementById("stPar").textContent = SIM.ticks ? ((SIM.ints + SIM.transport) / SIM.ticks).toFixed(1) : "-";
   document.getElementById("stLive").textContent = SIM.agents.size;
 }
@@ -864,6 +953,12 @@ for (const b of document.querySelectorAll("#modeSeg button")) {
 }
 document.getElementById("toggleSide").onclick = () => document.getElementById("side").classList.toggle("hidden");
 document.getElementById("tensionChk").onchange = e => { TENSION = e.target.checked; boot(); };
+document.getElementById("migChk").onchange = e => { MIGRATION = e.target.checked; boot(); };
+document.getElementById("tempSlider").oninput = e => {
+  TEMP = e.target.value / 100;
+  document.getElementById("tempVal").textContent = TEMP.toFixed(2);
+  if (SIM) SIM.temp = TEMP; // live-tunable; headless table uses it on next reset
+};
 
 let panning = false, px0 = 0, py0 = 0;
 cv.addEventListener("mousedown", e => { panning = true; cv.classList.add("panning"); px0 = e.clientX; py0 = e.clientY; });
