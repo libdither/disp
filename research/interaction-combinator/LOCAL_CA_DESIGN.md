@@ -316,9 +316,16 @@ Cheap-first, each rung gating the next:
    every single-node step is length-neutral (reel one wire, bend another), a genuine local
    minimum that coordinated moves or a better potential must solve; and on a 4-neighbor lattice
    a monotone staircase is already Manhattan-minimal, so straightening only removes true
-   backtracks and reel-in is the primary relaxation. Still to add here: `via` crossings, the
-   Margolus commit (the prototype drifts sequentially), and a closed-region sweep for the hard
-   jamming transition (contraction alone frees space, so it never jams; only a demand does).
+   backtracks and reel-in is the primary relaxation. Since landed in the prototype: `via`
+   crossings (a wire cell holds one or two strands; two wires share a cell on separate layers,
+   rendered purple, integrity-clean, and a dragged wire forms one by crossing another), and the
+   Margolus commit (the tick is now synchronous: every node proposes from the frozen pre-tick
+   state, a conflict-free subset commits by rotating priority, footprints grown by one ring so
+   no two committed moves share a cell or an edge; this both parallelizes and cuts the moves to
+   converge, e.g. the two-node case 600 -> 44). Still to add: reel-in THROUGH a via (a wire
+   contracting past a crossing, currently it stops adjacent), and a closed-region sweep for the
+   hard jamming transition (contraction alone frees space, so it never jams; only a demand
+   does).
 2. **The rewrite executor and template ROM** (§5.1) for the value and dispatch families, with
    `T2` as a two-cell block (§4.3a).
 3. **The commit handshake** (§6) across block boundaries.

@@ -21,9 +21,11 @@
   <div id="side">
     <h3>RUNG 1 — FIELD ON A WIRE-ONLY LATTICE</h3>
     <div class="note">Von Neumann 4-neighbor. Nodes are inert (no firing). Wires are chains of
-    forwarder cells. Everything relaxes under one field: tension (shorten wires) + pressure
-    (make room). Tests the two riskiest unknowns before any reduction: the jamming threshold
-    and the liveness watchdog.</div>
+    forwarder cells; two can cross as a via (purple). Everything relaxes under one field:
+    tension (shorten wires) + pressure (make room). The tick is a synchronous Margolus-style
+    commit: all nodes propose from the same frozen state, a conflict-free subset commits by
+    rotating priority. Tests the two riskiest unknowns before any reduction: the jamming
+    threshold and the liveness watchdog.</div>
     <div style="margin:10px 0">
       <button id="play">&#9654; play</button>
       <button id="step">tick</button>
@@ -60,11 +62,17 @@ function makeField(scenario) {
   const put = c => { net.grid.set(key(c.x, c.y), c); return c; };
   const empty = (x, y) => !net.grid.has(key(x, y));
 
-  // ---- edge usage (THE invariant: at most one attachment per edge) ----
+  // A wire cell holds STRANDS: `s` is an array of [face,face] pairs. One strand is a plain
+  // forwarder; two strands is a via (a crossing) as long as the four faces are distinct. This
+  // is how non-planar nets embed: two wires share a cell on separate layers without touching.
+  const wHas = (c, f) => c.k === "wire" && c.s.some(st => st[0] === f || st[1] === f);
+  const wThrough = (c, f) => { for (const st of c.s) { if (st[0] === f) return st[1]; if (st[1] === f) return st[0]; } return -1; };
+
+  // ---- edge usage (THE invariant: at most one attachment per edge / face) ----
   const faceUsed = (c, d) => {
     if (!c) return false;
-    if (c.k === "node") { for (const p of c.ports) if (p === d) return true; }
-    else if (c.k === "fwd") { if (c.a === d || c.b === d) return true; }
+    if (c.k === "node") { for (const p of c.ports) if (p === d) return true; return false; }
+    if (c.k === "wire") return wHas(c, d);
     return false;
   };
   const edgeUsed = (x, y, d) => faceUsed(at(x, y), d) || faceUsed(at(x + DX[d], y + DY[d]), opp(d));
@@ -81,11 +89,10 @@ function makeField(scenario) {
         for (let s = 0; s < n.ports.length; s++) if (n.ports[s] === opp(dir)) return { end: n, slot: s, cells };
         return { end: null, cells };
       }
-      // forwarder: continue out the other face
-      if (n.a !== opp(dir) && n.b !== opp(dir)) return { end: null, cells }; // broken
+      const out = wThrough(n, opp(dir));                 // continue through the entered strand
+      if (out < 0) return { end: null, cells };          // broken
       cells.push(n);
-      dir = n.a === opp(dir) ? n.b : n.a;
-      cx = nx; cy = ny;
+      dir = out; cx = nx; cy = ny;
     }
     return { end: null, cells };
   }
@@ -103,21 +110,31 @@ function makeField(scenario) {
           const f = follow(c.x, c.y, d);
           if (!f.end) bad.push(`node(${c.x},${c.y})[${s}] dir ${DN[d]} dangles`);
         }
-      } else if (c.k === "fwd") {
-        if (c.a === c.b) bad.push(`fwd(${c.x},${c.y}) a==b`);
-        for (const d of [c.a, c.b]) {
-          const n = at(c.x + DX[d], c.y + DY[d]);
-          if (!n || !faceUsed(n, opp(d))) bad.push(`fwd(${c.x},${c.y}) face ${DN[d]} unmatched`);
+      } else if (c.k === "wire") {
+        const seen = new Set();
+        for (const st of c.s) {
+          if (st[0] === st[1]) bad.push(`wire(${c.x},${c.y}) strand a==b`);
+          for (const d of st) {
+            if (seen.has(d)) bad.push(`wire(${c.x},${c.y}) face ${DN[d]} shared by two strands`);
+            seen.add(d);
+            const n = at(c.x + DX[d], c.y + DY[d]);
+            if (!n || !faceUsed(n, opp(d))) bad.push(`wire(${c.x},${c.y}) face ${DN[d]} unmatched`);
+          }
         }
       }
     }
     return bad;
   }
 
-  // total wire length = the tension half of the field potential E
+  // total wire length = strand count = the tension half of the field potential E
   function wireLen() {
     let n = 0;
-    for (const c of net.grid.values()) if (c.k === "fwd") n++;
+    for (const c of net.grid.values()) if (c.k === "wire") n += c.s.length;
+    return n;
+  }
+  function viaCount() {
+    let n = 0;
+    for (const c of net.grid.values()) if (c.k === "wire" && c.s.length > 1) n++;
     return n;
   }
 
@@ -132,7 +149,18 @@ function makeField(scenario) {
   const eKey = (x, y, d) => { const x2 = x + DX[d], y2 = y + DY[d]; return (y < y2 || (y === y2 && x <= x2)) ? key(x, y) + "|" + d : key(x2, y2) + "|" + opp(d); };
   function repointFace(cell, from, to) {
     if (cell.k === "node") { for (let s = 0; s < cell.ports.length; s++) if (cell.ports[s] === from) { cell.ports[s] = to; return; } }
-    else if (cell.k === "fwd") { if (cell.a === from) cell.a = to; else if (cell.b === from) cell.b = to; }
+    else if (cell.k === "wire") { for (const st of cell.s) { if (st[0] === from) { st[0] = to; return; } if (st[1] === from) { st[1] = to; return; } } }
+  }
+  // place one strand [a,b] into a cell: empty -> new forwarder; a single-strand wire with
+  // disjoint faces -> a via (a crossing). Returns false if it would collide (a node, a via
+  // already there, or a face conflict). The edge-availability check upstream guarantees the
+  // faces are free, so this only has to pick create-vs-stack.
+  function addStrand(x, y, a, b) {
+    const c = at(x, y);
+    if (!c) { put({ x, y, k: "wire", s: [[a, b]] }); return true; }
+    if (c.k !== "wire" || c.s.length >= 2) return false;
+    if (wHas(c, a) || wHas(c, b)) return false;
+    c.s.push([a, b]); return true;
   }
   // ---- THE local node move: step to `dest` in dir d, re-embedding every wire locally ----
   // Reel-in on the aligned port (eat one forwarder). Every other wire bends through the old
@@ -141,23 +169,29 @@ function makeField(scenario) {
   // only cells within distance 2 of the node. O(1). The plan is checked against edge
   // uniqueness before any mutation: `freed` = edges this move vacates (the node's own ports
   // and the eaten forwarder), `claimed` = edges the plan adds.
-  function tryMoveNode(c, d) {
+  const canBend = (x, y) => { const b = at(x, y); return !b || (b.k === "wire" && b.s.length < 2); }; // empty or a stackable single strand
+  // Plan (do not commit) a node's step to `dest` in dir d, re-embedding every wire locally.
+  // Returns { written, foot, apply } or null. Splitting plan from apply lets the synchronous
+  // tick propose many moves from one frozen state and commit a conflict-free subset.
+  function planMove(c, d) {
     const dx = c.x + DX[d], dy = c.y + DY[d];
     const dest = at(dx, dy);
     let reelSlot = -1, reelNewDir = -1;
     if (dest) {
-      if (dest.k !== "fwd") return false;                 // only step onto our own wire (reel-in)
+      // reel only through a SINGLE-strand wire we own: eating it leaves the cell empty for us.
+      // A via (two strands) has no room for the node, so a move onto it is blocked.
+      if (dest.k !== "wire" || dest.s.length !== 1) return null;
       const back = opp(d);
-      if (dest.a !== back && dest.b !== back) return false; // that forwarder isn't ours
-      reelNewDir = dest.a === back ? dest.b : dest.a;       // wire continues this way from dest
+      if (!wHas(dest, back)) return null;                   // that wire isn't ours
+      reelNewDir = wThrough(dest, back);                    // wire continues this way from dest
       for (let s = 0; s < c.ports.length; s++) if (c.ports[s] === d) { reelSlot = s; break; }
-      if (reelSlot < 0) return false;                       // fwd there but no port toward it
+      if (reelSlot < 0) return null;                        // wire there but no port toward it
     } else {
-      for (const p of c.ports) if (p === d) return false;   // port toward an empty cell = broken
+      for (const p of c.ports) if (p === d) return null;    // port toward an empty cell = broken
     }
     const freed = new Set(), claimed = new Set();
     for (const p of c.ports) freed.add(eKey(c.x, c.y, p));   // the node leaves C: its edges vacate
-    if (dest) { freed.add(eKey(dx, dy, opp(d))); freed.add(eKey(dx, dy, reelNewDir)); } // eaten fwd
+    if (dest) { freed.add(eKey(dx, dy, opp(d))); freed.add(eKey(dx, dy, reelNewDir)); } // eaten strand
     const avail = (x, y, dd) => { const e = eKey(x, y, dd); if (claimed.has(e)) return false; if (freed.has(e)) return true; return !edgeUsed(x, y, dd); };
     const claim = (x, y, dd) => claimed.add(eKey(x, y, dd));
 
@@ -177,10 +211,11 @@ function makeField(scenario) {
           placed = true;
         }
       }
-      // option B: bend through the far corner (perpendicular wire only); repoints T toward it
+      // option B: bend through the far corner (perpendicular wire only); crossing an existing
+      // single wire there forms a VIA. repoints T toward the corner.
       if (!placed && pd !== opp(d)) {
         const bx = dx + DX[pd], by = dy + DY[pd];
-        if (empty(bx, by)) {
+        if (canBend(bx, by)) {
           const toDest = dirTo(bx, by, dx, dy), toT = dirTo(bx, by, tx, ty);
           if (toDest >= 0 && toT >= 0 && avail(bx, by, toDest) && avail(bx, by, toT)) {
             claim(bx, by, toDest); claim(bx, by, toT);
@@ -191,17 +226,26 @@ function makeField(scenario) {
           }
         }
       }
-      if (!placed) return false;
+      if (!placed) return null;
     }
-    // commit
-    if (dest) del(dx, dy);        // eat the reeled forwarder
-    del(c.x, c.y);                // vacate old cell
-    for (const b of bendPlan) put({ x: b.bx, y: b.by, k: "fwd", a: b.a, b: b.b });
-    for (const r of repoints) { const t = at(r.tx, r.ty); if (t) repointFace(t, r.from, r.to); }
-    c.x = dx; c.y = dy; c.ports = newPorts; put(c);
-    net.moved++;
-    return true;
+    // build the plan: the mutation, plus the cells it writes and its footprint (writes grown
+    // by one ring, so two committed moves never share a cell OR an edge). Nothing is mutated
+    // here, so many nodes can propose from the same frozen state (the synchronous tick).
+    const written = new Set([key(c.x, c.y), key(dx, dy)]);
+    for (const b of bendPlan) written.add(key(b.bx, b.by));
+    for (const r of repoints) written.add(key(r.tx, r.ty));
+    const foot = new Set(written);
+    for (const kk of [...written]) { const [x, y] = kk.split(",").map(Number); for (let dd = 0; dd < 4; dd++) foot.add(key(x + DX[dd], y + DY[dd])); }
+    const apply = () => {
+      if (dest) del(dx, dy);      // eat the reeled strand (single-strand cell -> gone)
+      del(c.x, c.y);              // vacate old cell
+      for (const b of bendPlan) addStrand(b.bx, b.by, b.a, b.b);
+      for (const r of repoints) { const t = at(r.tx, r.ty); if (t) repointFace(t, r.from, r.to); }
+      c.x = dx; c.y = dy; c.ports = newPorts; put(c);
+    };
+    return { written, foot, apply };
   }
+  function tryMoveNode(c, d) { const p = planMove(c, d); if (!p) return false; p.apply(); net.moved++; return true; }
 
   // ---- forwarder straightening: remove a U-bump (the local slack-removal rule) ----
   // A wire that goes P -> Q -> S -> R where P and R are adjacent took 3 steps for a 1-step
@@ -209,13 +253,13 @@ function makeField(scenario) {
   // The shortest removable detour on a 4-neighbor lattice (adjacent cells share no common
   // neighbor, so no 2-step bump exists). Reads only Q and its neighbors out to radius 2.
   function straightenAt(q) {
-    if (q.k !== "fwd") return false;
-    for (const [a, b] of [[q.a, q.b], [q.b, q.a]]) {
+    if (q.k !== "wire" || q.s.length !== 1) return false;   // vias are left to reel-in for now
+    for (const [a, b] of [[q.s[0][0], q.s[0][1]], [q.s[0][1], q.s[0][0]]]) {
       const S = at(q.x + DX[b], q.y + DY[b]);
-      if (!S || S.k !== "fwd") continue;
+      if (!S || S.k !== "wire" || S.s.length !== 1) continue;
       const sBack = opp(b);
-      if (S.a !== sBack && S.b !== sBack) continue;
-      const sOut = S.a === sBack ? S.b : S.a;
+      if (!wHas(S, sBack)) continue;
+      const sOut = wThrough(S, sBack);
       const rx = S.x + DX[sOut], ry = S.y + DY[sOut], R = at(rx, ry);
       const px = q.x + DX[a], py = q.y + DY[a], P = at(px, py);
       if (!P || !R) continue;
@@ -267,17 +311,21 @@ function makeField(scenario) {
   // and gains one forwarder; the pressure delta is beta*(P_dest - P_here). Descending this,
   // not force-alignment, is what makes a node settle adjacent to its partner (a perpendicular
   // sidestep is +1 wire, so rare) yet flee a high-pressure cell even at a wire cost.
-  function driftNode(c) {
+  // Propose (do not commit) a node's best move: rank the 4 directions by the true unified
+  // energy delta, pick the first that passes Metropolis AND plans, return its plan. If none,
+  // record impatience pressure (deferred to the caller so proposing stays side-effect-free on
+  // the grid). Returns { plan, pri } or null (with an optional pressure request).
+  function proposeDrift(c, pRaise) {
     const P0 = getP(c.x, c.y), b = net.beta !== undefined ? net.beta : 1.2, np = c.ports.length;
     const cand = [];
     for (let d = 0; d < 4; d++) {
       const dest = at(c.x + DX[d], c.y + DY[d]), hasPort = c.ports.includes(d);
-      if (dest && dest.k === "node") continue;            // can't step onto another agent
-      if (dest && dest.k === "fwd" && !hasPort) continue; // a wire that isn't ours: collision
-      if (!dest && hasPort) continue;                     // port toward empty = would break
-      const isReel = !!(dest && dest.k === "fwd" && hasPort);
-      const dWire = np - (isReel ? 2 : 0);
-      const dE = dWire + b * (getP(c.x + DX[d], c.y + DY[d]) - P0);
+      if (dest && dest.k === "node") continue;                       // can't step onto another agent
+      if (dest && dest.k === "wire" && !hasPort) continue;           // a wire that isn't ours: collision
+      if (dest && dest.k === "wire" && dest.s.length !== 1) continue; // a via: no room to reel through
+      if (!dest && hasPort) continue;                                // port toward empty = would break
+      const isReel = !!(dest && dest.k === "wire" && hasPort);
+      const dE = np - (isReel ? 2 : 0) + b * (getP(c.x + DX[d], c.y + DY[d]) - P0);
       cand.push({ d, dE });
     }
     cand.sort((a, b) => a.dE - b.dE);
@@ -285,36 +333,51 @@ function makeField(scenario) {
     for (const { d, dE } of cand) {
       if (dE < 0) wanted = true;
       if (dE < 0 || rand(c.x, c.y) < Math.exp(-dE / net.temp)) {
-        if (tryMoveNode(c, d)) { c.age = 0; return true; }
+        const plan = planMove(c, d);
+        if (plan) return { c, plan, pri: rand(c.x, c.y) };
       }
     }
-    // had a strictly-beneficial move but could not make it (no room), or sits under pressure:
-    // raise pressure here, with impatience (age raises the source so a starved node wins later)
-    if (wanted || P0 > 0.5) { c.age = (c.age || 0) + 1; setP(c.x, c.y, P0 + 1 + 0.4 * c.age); net.blocked++; }
-    return false;
+    // wanted to relieve pressure but could not: request impatience pressure (age raises source)
+    if (wanted || P0 > 0.5) { c.age = (c.age || 0) + 1; pRaise.push({ x: c.x, y: c.y, amt: 1 + 0.4 * c.age }); net.blocked++; }
+    return null;
   }
 
+  // ---- the tick: MARGOLUS-STYLE SYNCHRONOUS COMMIT ----
+  // Every node proposes from the SAME frozen pre-tick state (no move sees another's effect
+  // this tick); proposals commit in rotating-priority order iff their footprints are disjoint
+  // (footprint = written cells grown by one ring, so committed moves never share a cell or an
+  // edge). This is the design's propose/ack handshake with every move treated as a boundary
+  // crossing; the per-tick priority rotation via hash(cell, tick) is the alternating partition.
   net.tick = function () {
     net.temp = net.tempVal || 0.35;
-    let did = false, moved0 = net.moved;
-    // straighten: remove slack from every forwarder (primary local relaxation)
-    for (const c of [...net.grid.values()]) if (c.k === "fwd" && net.grid.get(key(c.x, c.y)) === c) { if (straightenAt(c)) did = true; }
-    // a standing demand keeps raising pressure at its cell until a hole arrives (space made)
+    const moved0 = net.moved;
+    for (const c of [...net.grid.values()]) if (c.k === "wire" && net.grid.get(key(c.x, c.y)) === c) straightenAt(c);
     if (net.demand) {
       const occupied = net.grid.has(key(net.demand.x, net.demand.y));
       if (occupied) { setP(net.demand.x, net.demand.y, getP(net.demand.x, net.demand.y) + 4); net.demandOpenSince = -1; }
       else if (net.demandOpenSince === undefined || net.demandOpenSince < 0) { net.demandOpenSince = net.ticks; }
     }
-    // drift: nodes descend the unified field (Margolus commit comes in a later stage)
-    const order = net.nodes.slice().sort((a, b) => rand(a.x, a.y) - rand(b.x, b.y));
-    for (const c of order) if (c.k === "node" && net.grid.get(key(c.x, c.y)) === c) { if (driftNode(c)) did = true; }
-    diffuse();                                    // the pressure field relaxes toward its local average
+    // 1) propose (read-only on the grid): each node's chosen plan, from the frozen state
+    const pRaise = [], props = [];
+    for (const c of net.nodes) if (c.k === "node" && net.grid.get(key(c.x, c.y)) === c) { const p = proposeDrift(c, pRaise); if (p) props.push(p); }
+    // 2) commit a conflict-free subset in rotating-priority order
+    props.sort((a, b) => a.pri - b.pri);
+    const locked = new Set();
+    for (const p of props) {
+      let clash = false;
+      for (const k of p.plan.foot) if (locked.has(k)) { clash = true; break; }
+      if (clash) continue;
+      p.plan.apply(); net.moved++; p.c.age = 0;
+      for (const k of p.plan.foot) locked.add(k);
+    }
+    for (const r of pRaise) setP(r.x, r.y, getP(r.x, r.y) + r.amt);   // impatience, applied after
+    diffuse();
     net.lastMoves = net.moved - moved0;
     net.ticks++;
-    return did;
+    return net.lastMoves > 0;
   };
 
-  net.at = at; net.follow = follow; net.integrity = integrity; net.wireLen = wireLen;
+  net.at = at; net.follow = follow; net.integrity = integrity; net.wireLen = wireLen; net.viaCount = viaCount;
   net.tryMoveNode = tryMoveNode; net.straightenAt = straightenAt; net.getP = getP;
   net.totalP = () => { let s = 0; for (const v of net.pressure.values()) s += v; return s; };
 
@@ -340,7 +403,10 @@ function layWire(net, put, A, B, waypoints) {
   const cells = pathCells(waypoints);
   for (let i = 1; i < cells.length - 1; i++) {
     const [px, py] = cells[i - 1], [cx, cy] = cells[i], [nx, ny] = cells[i + 1];
-    put({ x: cx, y: cy, k: "fwd", a: dirBetween(cx, cy, px, py), b: dirBetween(cx, cy, nx, ny) });
+    const a = dirBetween(cx, cy, px, py), b = dirBetween(cx, cy, nx, ny);
+    const ex = net.grid.get(key(cx, cy));
+    if (ex && ex.k === "wire") ex.s.push([a, b]);        // a crossing already there: make a via
+    else put({ x: cx, y: cy, k: "wire", s: [[a, b]] });
   }
   A.ports.push(dirBetween(cells[0][0], cells[0][1], cells[1][0], cells[1][1]));
   const n = cells.length;
@@ -388,6 +454,26 @@ const SCENARIOS = {
       if (rng() < f) mkNode(net, put, x, y);        // an inert bead (no wires)
     }
     net.demand = { x: 0, y: 0 };                    // the standing space request
+  },
+  "crossing wires (via)": (net, put, empty) => {
+    // a horizontal and a vertical wire meeting at the centre: they cross on two layers as a
+    // VIA (purple), not a connection. Each pair reels toward the crossing. Shows vias exist,
+    // render, and stay integrity-clean; reeling stops adjacent to the via (reel-through-via is
+    // a later rung).
+    net.temp = 0.35; net.nodes = [];
+    const A = mkNode(net, put, -7, 0), B = mkNode(net, put, 7, 0);
+    layWire(net, put, A, B, [[-7, 0], [7, 0]]);
+    const C = mkNode(net, put, 0, -7), D = mkNode(net, put, 0, 7);
+    layWire(net, put, C, D, [[0, -7], [0, 7]]);         // passes through (0,0) -> via
+  },
+  "sweep crossing (via forms)": (net, put, empty) => {
+    // a fixed vertical wire, and a dumbbell to its left whose contraction drags its wire ACROSS
+    // the fixed one: a via forms dynamically during a move, then the dumbbell reels up to it.
+    net.temp = 0.35; net.nodes = [];
+    const C = mkNode(net, put, 0, -6), D = mkNode(net, put, 0, 6);
+    layWire(net, put, C, D, [[0, -6], [0, 6]]);          // the fixed obstacle wire
+    const A = mkNode(net, put, -6, 0), B = mkNode(net, put, 6, 0);
+    layWire(net, put, A, B, [[-6, 0], [-6, 3], [6, 3], [6, 0]]); // detours OVER, must sweep down across C-D
   },
   "ring of nodes": (net, put, empty) => {
     net.temp = 0.35; net.nodes = [];
@@ -448,18 +534,21 @@ function draw() {
     ctx.fillStyle = `rgba(255,120,60,${a})`;
     ctx.fillRect(px - s / 2, py - s / 2, s, s);
   }
-  // wires (forwarders): draw each cell's pass-through segment
+  // wires: draw each strand's pass-through; a via (two strands) is drawn as a crossing
   ctx.lineCap = "round";
   for (const c of SIM.grid.values()) {
-    if (c.k !== "fwd") continue;
+    if (c.k !== "wire") continue;
     const [px, py] = W2S(c.x, c.y);
     if (px < -s || py < -s || px > CW || py > CH) continue;
-    ctx.strokeStyle = "#5f96d1"; ctx.lineWidth = Math.max(1.2, s * .12);
-    ctx.beginPath();
-    ctx.moveTo(px + DX[c.a] * s * .5, py + DY[c.a] * s * .5);
-    ctx.lineTo(px, py);
-    ctx.lineTo(px + DX[c.b] * s * .5, py + DY[c.b] * s * .5);
-    ctx.stroke();
+    const via = c.s.length > 1;
+    for (const st of c.s) {
+      ctx.strokeStyle = via ? "#c792ea" : "#5f96d1"; ctx.lineWidth = Math.max(1.2, s * .12);
+      ctx.beginPath();
+      ctx.moveTo(px + DX[st[0]] * s * .5, py + DY[st[0]] * s * .5);
+      ctx.lineTo(px, py);
+      ctx.lineTo(px + DX[st[1]] * s * .5, py + DY[st[1]] * s * .5);
+      ctx.stroke();
+    }
   }
   // nodes
   for (const c of SIM.grid.values()) {
@@ -508,6 +597,7 @@ function updateStat() {
     `<div class="row"><span class="k">nodes</span><span>${beads}</span></div>` +
     `<div class="row"><span class="k">moves last tick</span><span>${SIM.lastMoves || 0}</span></div>` +
     `<div class="row"><span class="k">blocked total</span><span>${SIM.blocked}</span></div>` +
+    `<div class="row"><span class="k">vias (crossings)</span><span>${SIM.viaCount()}</span></div>` +
     `<div class="row"><span class="k">field pressure</span><span>${SIM.totalP().toFixed(0)}</span></div>` + dem;
 }
 
@@ -517,6 +607,8 @@ const EXPLAIN = {
   "bead box (demand test)": "Inert beads packed at the fill fraction, with a standing demand at the centre (yellow) that raises pressure until a free cell arrives. With pressure ON, beads flee the gradient and a hole reaches the centre fast; toggle it OFF and the centre only clears by slow random diffusion. Raise the fill toward 1 to stress it. This is node-insertion-by-pressure, tested with no reduction.",
   "ring of nodes": "A degree-2 ring. Every single-node step is length-neutral (reel one wire, bend another), so greedy descent is FRUSTRATED and it barely moves: the local-minimum problem the temperature and (later) coordinated moves must solve. An honest negative result.",
   "two nodes, slack wire": "The simplest case: one wire reels itself in to nothing.",
+  "crossing wires (via)": "A horizontal and a vertical wire meet at the centre and cross as a VIA (purple), two strands sharing one cell on separate layers, not a connection. This is how non-planar nets embed on a planar lattice. Each pair reels toward the crossing and stops adjacent to it; reel-through-via is a later rung.",
+  "sweep crossing (via forms)": "A fixed wire and a dumbbell whose detour crosses it: the via is present and stays integrity-clean as the dumbbell contracts. The strand model handles crossings the same way everywhere.",
 };
 
 // ---- controls ----
