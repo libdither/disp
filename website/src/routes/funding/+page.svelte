@@ -3,15 +3,26 @@
   import stats from "$lib/dono-stats.json";
   const REPO = "https://github.com/libdither/disp";
   const SPONSOR = "https://github.com/sponsors/zyansheep";
-  // no public explorer offers a prefilled view-key scan page (xmrchain runs
-  // with the output checker disabled; the rest are dead), so the explorer
-  // links go to the instance itself + per-tx pages, where the published view
-  // key works via the per-transaction decode form
-  const XMR_EXPLORER = "https://xmrchain.net/";
-  const XMR_TX = (h: string) => `https://xmrchain.net/tx/${h}`;
+  const XMR_ADDRESS =
+    "87ErQFwijiDCqcPs1yy8qGdaLBA2BG1BqAy93aE4pGYe2KFbZuxJDiGjjgLtDrzgxFaK98YHv7rctYfyCfptAvmHDWN8MGv";
+  const XMR_VIEW_KEY =
+    "e6cf097d491f78f5a8443436c43b54985a0c5a0702e683f2515a57ff29942306"; // view-only, published for transparency
   // the committed JSON currently has an empty tx array, which TS infers as
   // never[] — give it the schema the stats script writes
   const XMR_TXS = stats.xmr.txs as { hash: string; xmr: number; ts: string; height: number }[];
+  // the explorer's per-transaction decode page takes the address + view key IN
+  // THE PATH and shows which outputs are ours, with amounts (verified live on
+  // xmrchain; an address-wide scan page doesn't exist publicly — the API caps
+  // at 5 blocks per request). Every recorded donation links to its own decode
+  // page; the standing link is the newest donation's page, or, before any
+  // donation exists, the explorer home carrying address + view key in the
+  // #fragment ready for its decode-outputs form.
+  const XMR_MYOUTPUTS = (h: string) =>
+    `https://xmrchain.net/myoutputs/${h}/${XMR_ADDRESS}/${XMR_VIEW_KEY}`;
+  const XMR_EXPLORER =
+    XMR_TXS.length > 0
+      ? XMR_MYOUTPUTS(XMR_TXS[XMR_TXS.length - 1].hash)
+      : `https://xmrchain.net/#address=${XMR_ADDRESS}&viewkey=${XMR_VIEW_KEY}`;
 
   // the runway, measured — by scripts/build-dono-stats.mts at every deploy
   // (GitHub Sponsors recurring + XMR received in the last 30 days, in USD)
@@ -270,16 +281,17 @@
       ({stats.xmr.txs.length} donation{stats.xmr.txs.length === 1 ? "" : "s"} on-chain, converted at
       ${stats.xmrUsd.toLocaleString("en-US")}/XMR). The wallet's view key is
       <a href="{base}/funding/monero/">published</a>, so you can audit that number yourself on the
-      <a href={XMR_EXPLORER} target="_blank" rel="noopener">block explorer</a> (paste address + view
-      key into a transaction's decode-outputs form) or by importing it as a view-only wallet. Last
-      refreshed {new Date(stats.updatedAt).toISOString().slice(0, 10)}.
+      <a href={XMR_EXPLORER} target="_blank" rel="noopener">block explorer</a> — the link carries
+      the address and view key, and each donation below decodes on its own explorer page — or by
+      importing them as a view-only wallet. Last refreshed
+      {new Date(stats.updatedAt).toISOString().slice(0, 10)}.
     </p>
     {#if XMR_TXS.length > 0}
       <p class="books-note txlist">
         On-chain donations:
         {#each XMR_TXS.slice(-8).reverse() as t, i}
           {#if i > 0}·{/if}
-          <a href={XMR_TX(t.hash)} target="_blank" rel="noopener" title={t.hash}
+          <a href={XMR_MYOUTPUTS(t.hash)} target="_blank" rel="noopener" title={t.hash}
             >{t.xmr.toLocaleString("en-US", { maximumFractionDigits: 4 })} XMR ({new Date(t.ts)
               .toISOString()
               .slice(0, 10)})</a
