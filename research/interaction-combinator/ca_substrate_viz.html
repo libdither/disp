@@ -48,6 +48,18 @@
   #tip { position: fixed; z-index: 20; pointer-events: none; background: #1a2233ee;
     border: 1px solid #2a3350; border-radius: 6px; padding: 6px 9px; font-size: 12px;
     max-width: 320px; display: none; white-space: pre; }
+  #inspect { position: fixed; left: 12px; top: 60px; z-index: 15; background: #131824f5;
+    border: 1px solid #2a3350; border-radius: 8px; padding: 10px 12px; font-size: 12px;
+    max-width: 380px; max-height: calc(100vh - 140px); overflow-y: auto; display: none; }
+  #inspect h4 { margin: 0 0 4px; color: var(--accent); font-size: 12px; }
+  #inspect .row { margin: 3px 0; }
+  #inspect .k { color: var(--dim); }
+  #inspect .expl { color: var(--dim); font-size: 11px; margin: 1px 0 6px 10px; }
+  #inspect .bits { color: var(--ok); font-size: 11px; }
+  #inspect #inspClose { position: absolute; top: 6px; right: 8px; cursor: pointer;
+    color: var(--dim); border: 0; background: none; font-size: 14px; }
+  #inspect #inspClose:hover { color: var(--warn); }
+  #inspect .pin { color: var(--seed); font-size: 11px; }
   #help { position: fixed; left: 12px; bottom: 10px; color: #56607244; z-index: 5;
     font-size: 12px; user-select: none; }
 </style>
@@ -151,6 +163,7 @@
 
 <canvas id="cv"></canvas>
 <div id="tip"></div>
+<div id="inspect"><button id="inspClose">&#10005;</button><div id="inspBody"></div></div>
 <div id="help">drag to pan &middot; wheel to zoom &middot; hover cells for detail</div>
 
 <script>
@@ -179,6 +192,32 @@ const SLOTNAME = {
   T1: ["p","b","c","res"], T2: ["p","w","x","b","res"], DN: ["p","l","r"], DS: ["p","l","r"],
   E: ["p"], N: ["p","res"],
 };
+// Inspector documentation: what each agent does and what each of its ports means.
+const KIND_DOC = {
+  L:  { role: "Leaf △: the smallest value. Inert until a consumer's principal meets it (dispatch, copy, erase, or normalize).",
+        slots: { p: "principal (out): emits the value to whoever consumes it" } },
+  S:  { role: "Stem △x: one-child constructor value.",
+        slots: { p: "principal (out): emits the value", x: "child subtree (in)" } },
+  F:  { role: "Fork △xy: two-child constructor value.",
+        slots: { p: "principal (out): emits the value", l: "left child (in)", r: "right child (in)" } },
+  P:  { role: "Suspension (f a): an application nobody has demanded yet. A producer: sits inert until forced by a consumer.",
+        slots: { p: "principal (out): where the eventual value emerges", f: "operator (in)", a: "argument (in)" } },
+  A:  { role: "Apply: forces its operator to weak-head form, then applies one argument (builds stem/fork, or enters dispatch on a fork).",
+        slots: { p: "principal (in): faces the operator being forced", arg: "the argument to apply (in)", res: "result wire (out): where the answer goes" } },
+  T1: { role: "Dispatch level 1 on the first argument of △ a b c: leaf = K rule (return b, erase c); stem = S rule (distribute c, sharing it); fork = descend to level 2.",
+        slots: { p: "principal (in): faces the discriminant a", b: "second argument (in): the K-rule result", c: "third argument (in): distributed by the S rule", res: "result wire (out)" } },
+  T2: { role: "Dispatch level 2 on z of △(△ w x) y z: leaf = return w; stem u = apply x to u; fork u v = apply (b u) to v. Unused arms are erased.",
+        slots: { p: "principal (in): faces z", w: "leaf-arm value (in)", x: "stem-arm operator (in)", b: "fork-arm operator (in)", res: "result wire (out)" } },
+  DN: { role: "Need-duplicator δⁿ: shares one subterm into two uses. Meeting a value copies one constructor layer; meeting a suspension demands it ONCE and parks on the result wire (call-by-need, Theorem 6).",
+        slots: { p: "principal (in): faces the shared source, or parks on its result wire", l: "first copy (out)", r: "second copy (out)" } },
+  DS: { role: "Structural duplicator δˢ: copies syntax blindly, suspensions included (reflection's copier; re-does work).",
+        slots: { p: "principal (in): faces the source", l: "first copy (out)", r: "second copy (out)" } },
+  E:  { role: "Eraser ε: the death pulse. Walks INTO doomed structure, consumes the root, recurses into the children.",
+        slots: { p: "principal (in): faces what it will erase" } },
+  N:  { role: "Normalizer: drives a term to full normal form (forces, rebuilds the constructor, recurses into children).",
+        slots: { p: "principal (in): faces the term being normalized", res: "normalized result (out)" } },
+};
+const TAGBITS = { L: "0001", S: "0010", F: "0011", P: "0100", A: "0101", T1: "0110", T2: "0111", DN: "1000", DS: "1001", E: "1010", N: "1011" };
 const key = (x, y) => x + "," + y;
 
 function makeNet(mode, tension, migration, temp) {
@@ -890,6 +929,7 @@ function boot() {
   const n = SIM.spawn("N", { x: rootAg.pos.x, y: rootAg.pos.y - 1 }); // demand starts adjacent
   SIM.link(SIM.port(n, 0), root);
   RUNNING = false;
+  SELECTED = null; // ids restart on reset; a stale pin would alias a different agent
   document.getElementById("playBtn").innerHTML = "&#9654; play";
   fitView(); refreshPanel(); updateStats();
 }
@@ -932,6 +972,7 @@ function updateStats() {
     energy += wt * w.path.length;
   }
   document.getElementById("stE").textContent = energy;
+  if (typeof refreshInspector === "function") refreshInspector();
   document.getElementById("stPar").textContent = SIM.ticks ? ((SIM.ints + SIM.transport) / SIM.ticks).toFixed(1) : "-";
   document.getElementById("stLive").textContent = SIM.agents.size;
 }
@@ -983,6 +1024,18 @@ function draw() {
       if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
     }
     ctx.stroke();
+    // hovered / pinned wire: white halo under the beads
+    if ((typeof hoverWire !== "undefined" && hoverWire === w) ||
+        (typeof SELECTED !== "undefined" && SELECTED && SELECTED.type === "wire" && SELECTED.id === w.id)) {
+      ctx.strokeStyle = "#ffffff88";
+      ctx.lineWidth = Math.max(3, s * .22);
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i++) {
+        const [px, py] = W2S(pts[i][0], pts[i][1]);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
     // chain cells as beads
     const bead = hot ? "#ffd866" : warm ? "#5f96d1" : "#3a4a6d";
     const beadCol = sleepy ? "#2c3750" : slack > 0 ? lerp(bead, "#e08050", slack) : bead;
@@ -1015,7 +1068,9 @@ function draw() {
     ctx.globalAlpha = a.sleeping ? .4 : 1;
     ctx.fillStyle = k.color;
     roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.fill();
-    if (a === hover) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.stroke(); }
+    if (a === hover || (SELECTED && SELECTED.type === "agent" && SELECTED.id === a.id)) {
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.stroke();
+    }
     const pp = a.slots[0] && SIM.agents.get(a.slots[0].a);
     let ang = -Math.PI / 2;
     if (pp && pp.pos) ang = Math.atan2(pp.pos.y - a.pos.y, pp.pos.x - a.pos.x);
@@ -1088,36 +1143,171 @@ document.getElementById("tempSlider").oninput = e => {
   if (SIM) SIM.temp = TEMP; // live-tunable; headless table uses it on next reset
 };
 
-let panning = false, px0 = 0, py0 = 0;
-cv.addEventListener("mousedown", e => { panning = true; cv.classList.add("panning"); px0 = e.clientX; py0 = e.clientY; });
-addEventListener("mouseup", () => { panning = false; cv.classList.remove("panning"); });
+// ---------- hover + selection ----------
+let hoverWire = null, SELECTED = null; // SELECTED = {type:'agent'|'wire', id}
+const DIRNAME = (dx, dy) => dy < 0 ? "N" : dy > 0 ? "S" : dx > 0 ? "E" : dx < 0 ? "W" : "·";
+
+function wireClass(w) {
+  const hot = SIM.redexes.some(r => !r.held && r.wid === w.id);
+  return hot ? { wt: 12, nm: "hot (pending redex)" }
+       : (w.pa.s === 0 || w.pb.s === 0) ? { wt: 2, nm: "principal" }
+       : { wt: 1, nm: "plumbing (aux-aux)" };
+}
+function wireSlack(w) {
+  const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
+  if (!A_ || !B_ || !A_.pos || !B_.pos) return 0;
+  const man = Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
+  return Math.max(0, w.path.length - Math.max(0, man - 1));
+}
+function findHover(wx, wy) {
+  hover = null; hoverWire = null;
+  for (const a of SIM.agents.values()) {
+    if (a.pos && Math.abs(a.pos.x - wx) < .5 && Math.abs(a.pos.y - wy) < .5) { hover = a; return; }
+  }
+  for (const w of SIM.wires.values()) {
+    for (const [x, y] of w.path) {
+      if (Math.abs(x - wx) < .45 && Math.abs(y - wy) < .45) { hoverWire = w; return; }
+    }
+  }
+}
+function wireTipText(w) {
+  const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
+  const cls = wireClass(w), sl = wireSlack(w);
+  const end = (X, pp) => X ? `${KIND[X.kind].glyph} ${KIND[X.kind].name}.${SLOTNAME[X.kind][pp.s]}` : "(gone)";
+  return `wire: ${end(A_, w.pa)}  ↔  ${end(B_, w.pb)}` +
+    `\n  weight ${cls.wt} (${cls.nm})` +
+    `\n  chain ${w.path.length} cells${sl ? `, slack ${sl}` : ", taut"}` +
+    (A_ && A_.sleeping || B_ && B_.sleeping ? "\n  asleep (undemanded region)" : "") +
+    `\n  click to pin details`;
+}
+function agentTipText(a) {
+  const k = KIND[a.kind];
+  let txt = `${k.glyph}  ${k.name}   cell (${a.pos.x},${a.pos.y})`;
+  if (a.sleeping) txt += "\n  asleep: lazy, not yet demanded";
+  for (let s2 = 0; s2 < a.slots.length; s2++) {
+    const q = a.slots[s2]; const b = q && SIM.agents.get(q.a);
+    const wid = a.wire && a.wire[s2];
+    const w = wid && SIM.wires.get(wid);
+    let wireInfo = "";
+    if (w) {
+      const cls = wireClass(w), sl = wireSlack(w);
+      wireInfo = `   chain ${w.path.length}  w=${cls.wt}${sl ? `  slack ${sl}` : ""}`;
+    }
+    txt += `\n  ${SLOTNAME[a.kind][s2].padEnd(4)}→ ${b ? KIND[b.kind].glyph + " " + KIND[b.kind].name : "(loose)"}` + wireInfo;
+  }
+  return txt + "\n  click to pin details";
+}
+
+// ---------- the pinned inspector ----------
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+function slotDir(a, s) {
+  const wid = a.wire && a.wire[s];
+  const w = wid && SIM.wires.get(wid);
+  if (w && w.path.length) {
+    const mineFirst = w.pa.a === a.id && w.pa.s === s;
+    const h = mineFirst ? w.path[0] : w.path[w.path.length - 1];
+    return DIRNAME(Math.sign(h[0] - a.pos.x), Math.sign(h[1] - a.pos.y));
+  }
+  const q = a.slots[s]; const b = q && SIM.agents.get(q.a);
+  if (b && b.pos) return DIRNAME(Math.sign(b.pos.x - a.pos.x), Math.sign(b.pos.y - a.pos.y));
+  return "·";
+}
+function agentInspectHTML(a) {
+  const k = KIND[a.kind], doc = KIND_DOC[a.kind];
+  let h = `<h4>${esc(k.glyph)} ${esc(k.name)} <span class="k">at (${a.pos.x}, ${a.pos.y})</span></h4>`;
+  h += `<div class="expl">${esc(doc.role)}</div>`;
+  // status
+  let status;
+  const red = SIM.redexes.find(r => !r.held && (r.c === a.id || r.p === a.id));
+  const heldRed = SIM.redexes.find(r => r.held && (r.c === a.id || r.p === a.id));
+  if (red) {
+    const other = SIM.agents.get(red.c === a.id ? red.p : red.c);
+    const w = SIM.wires.get(red.wid);
+    const d = w ? w.path.length : 0;
+    status = `in a pending redex with ${other ? esc(KIND[other.kind].glyph + " " + KIND[other.kind].name) : "?"}: ` +
+      (d ? `${d} chain cells to contact (walking)` : `at contact, fires on the next scan`);
+  } else if (heldRed) status = "held redex: asleep until a demand arrives (lazy)";
+  else if (a.sleeping) status = "asleep: no consumer has demanded this region yet; clock-gated (does not act or migrate)";
+  else if (a.slots[0]) {
+    const pp = a.slots[0]; const b = SIM.agents.get(pp.a);
+    status = pp.s === 0 ? "principal met, awaiting scheduling"
+      : `parked: principal rests on ${b ? esc(KIND[b.kind].name) : "?"}.${b ? esc(SLOTNAME[b.kind][pp.s]) : "?"} (an aux wire), waiting for a value to arrive there`;
+  } else status = KIND[a.kind].producer ? "free value (part of the emerging normal form)" : "idle";
+  h += `<div class="row"><span class="k">status</span> ${status}</div>`;
+  if (a.seeded) h += `<div class="row"><span class="k">seed</span> ⚡ strict-seeded at birth (the M2 bit: provably demanded, so launched immediately)</div>`;
+  // ports
+  h += `<div class="row"><span class="k">ports</span></div>`;
+  for (let s = 0; s < a.slots.length; s++) {
+    const nm = SLOTNAME[a.kind][s];
+    const q = a.slots[s]; const b = q && SIM.agents.get(q.a);
+    const wid = a.wire && a.wire[s]; const w = wid && SIM.wires.get(wid);
+    h += `<div class="row">&nbsp;&nbsp;<b>${nm}</b> → ${b ? esc(KIND[b.kind].glyph) + " " + esc(KIND[b.kind].name) : "(loose: an edge of the result)"}`;
+    if (w) {
+      const cls = wireClass(w), sl = wireSlack(w);
+      h += ` <span class="k">· w=${cls.wt} · ${w.path.length} cells${sl ? ` · slack ${sl}` : " · taut"}</span>`;
+    }
+    h += `</div><div class="expl">${esc(doc.slots[nm] || "")}</div>`;
+  }
+  // idealized finite cell state
+  const dirs = [];
+  for (let s = 0; s < a.slots.length; s++) if (a.slots[s]) dirs.push(`${SLOTNAME[a.kind][s]}:${slotDir(a, s)}`);
+  h += `<div class="row"><span class="k">idealized cell state</span> <span class="bits">tag ${TAGBITS[a.kind]} · ports ${dirs.join(" ") || "none"} · ${a.sleeping ? "asleep" : "awake"}</span></div>`;
+  h += `<div class="expl">what a real substrate cell stores (SPATIAL_IC §3): a ~4-bit tag, one direction per port, a phase bit — a few tens of bits, no ids, no pointers. The global ids/paths in this toy are simulation bookkeeping, not cell state.</div>`;
+  return h;
+}
+function wireInspectHTML(w) {
+  const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
+  const cls = wireClass(w), sl = wireSlack(w);
+  const end = (X, pp) => X ? `${esc(KIND[X.kind].glyph)} ${esc(KIND[X.kind].name)} <span class="k">port ${esc(SLOTNAME[X.kind][pp.s])} at (${X.pos.x}, ${X.pos.y})</span>` : "(gone)";
+  let h = `<h4>wire <span class="k">(a chain of ${w.path.length} cells)</span></h4>`;
+  h += `<div class="row"><span class="k">ends</span> ${end(A_, w.pa)} ↔ ${end(B_, w.pb)}</div>`;
+  h += `<div class="row"><span class="k">weight</span> ${cls.wt} (${cls.nm})</div>`;
+  h += `<div class="expl">${cls.wt === 12
+    ? "a pending redex in waiting: contracting this wire to zero IS dispatching the interaction, so it pulls hardest and its ends may only reel in"
+    : cls.wt === 2
+    ? "one end is a principal port: a value will eventually flow here (a demand or a delivery route)"
+    : "aux-to-aux plumbing: kept bounded, pulled last"}</div>`;
+  h += `<div class="row"><span class="k">tension</span> ${sl ? `${sl} cells of slack (orange tint): inserted by moves that dragged this wire; straightening re-lays it, migration tightens it` : "taut: at its minimal length for the current endpoint positions"}</div>`;
+  const red = SIM.redexes.find(r => r.wid === w.id);
+  if (red) h += `<div class="row"><span class="k">delivery</span> ${red.held ? "held: the consumer is asleep (a lazy region); wakes only if demanded" : "active: the " + (SIM.agents.get(red.c) && SIM.agents.get(red.c).kind === "E" ? "eraser walks INTO this chain (death pulse)" : "producer walks this chain toward its consumer") + ", one cell per tick, one transport unit each"}</div>`;
+  h += `<div class="expl">every chain cell is one ι-forwarder of the embedding theorem; the value re-materializes across them one cell at a time. E counts weight × length of every such chain.</div>`;
+  return h;
+}
+function refreshInspector() {
+  const box = document.getElementById("inspect"), body = document.getElementById("inspBody");
+  if (!SELECTED) { box.style.display = "none"; return; }
+  let html = null;
+  if (SELECTED.type === "agent") {
+    const a = SIM.agents.get(SELECTED.id);
+    html = a ? agentInspectHTML(a) : `<h4>agent consumed</h4><div class="expl">this agent fired its interaction (or was erased) and its cells were reclaimed.</div>`;
+  } else {
+    const w = SIM.wires.get(SELECTED.id);
+    html = w ? wireInspectHTML(w) : `<h4>wire gone</h4><div class="expl">this wire was consumed: either its interaction fired (the chain was spliced or walked away) or its endpoints were erased.</div>`;
+  }
+  body.innerHTML = `<div class="pin">pinned — updates live · click canvas background to close</div>` + html;
+  box.style.display = "block";
+}
+document.getElementById("inspClose").onclick = () => { SELECTED = null; refreshInspector(); };
+
+let panning = false, px0 = 0, py0 = 0, downX = 0, downY = 0;
+cv.addEventListener("mousedown", e => { panning = true; cv.classList.add("panning"); px0 = downX = e.clientX; py0 = downY = e.clientY; });
+addEventListener("mouseup", e => {
+  if (panning && Math.abs(e.clientX - downX) < 4 && Math.abs(e.clientY - downY) < 4 && e.target === cv) {
+    // a click, not a drag: pin whatever is under the cursor (agents win over wires)
+    const [wx, wy] = S2W(e.clientX, e.clientY);
+    findHover(wx, wy);
+    SELECTED = hover ? { type: "agent", id: hover.id } : hoverWire ? { type: "wire", id: hoverWire.id } : null;
+    refreshInspector();
+  }
+  panning = false; cv.classList.remove("panning");
+});
 addEventListener("mousemove", e => {
   if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; }
   const [wx, wy] = S2W(e.clientX, e.clientY);
-  hover = null;
-  for (const a of SIM ? SIM.agents.values() : []) {
-    if (a.pos && Math.abs(a.pos.x - wx) < .5 && Math.abs(a.pos.y - wy) < .5) { hover = a; break; }
-  }
+  findHover(wx, wy);
   const tip = document.getElementById("tip");
-  if (hover) {
-    const k = KIND[hover.kind];
-    let txt = `${k.glyph}  ${k.name}   cell (${hover.pos.x},${hover.pos.y})`;
-    if (hover.sleeping) txt += "\n  asleep: lazy, not yet demanded";
-    const hotIds = new Set(SIM.redexes.filter(r => !r.held).map(r => r.wid));
-    for (let s2 = 0; s2 < hover.slots.length; s2++) {
-      const q = hover.slots[s2]; const b = q && SIM.agents.get(q.a);
-      const wid = hover.wire && hover.wire[s2];
-      const w = wid && SIM.wires.get(wid);
-      let wireInfo = "";
-      if (w && b && b.pos && hover.pos) {
-        const man = Math.abs(hover.pos.x - b.pos.x) + Math.abs(hover.pos.y - b.pos.y);
-        const slackN = Math.max(0, w.path.length - Math.max(0, man - 1));
-        const wt = hotIds.has(w.id) ? "12 hot" : (w.pa.s === 0 || w.pb.s === 0) ? "2" : "1";
-        wireInfo = `   chain ${w.path.length}  w=${wt}${slackN ? `  slack ${slackN}` : ""}`;
-      }
-      txt += `\n  ${SLOTNAME[hover.kind][s2].padEnd(4)}→ ${b ? KIND[b.kind].glyph + " " + KIND[b.kind].name : "(loose)"}` + wireInfo;
-    }
-    tip.textContent = txt;
+  if (hover || hoverWire) {
+    tip.textContent = hover ? agentTipText(hover) : wireTipText(hoverWire);
     tip.style.display = "block";
     tip.style.left = Math.min(innerWidth - 340, e.clientX + 14) + "px";
     tip.style.top = (e.clientY + 14) + "px";
