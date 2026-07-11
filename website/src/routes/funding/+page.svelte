@@ -3,10 +3,21 @@
   import stats from "$lib/dono-stats.json";
   const REPO = "https://github.com/libdither/disp";
   const SPONSOR = "https://github.com/sponsors/zyansheep";
+  // no public explorer offers a prefilled view-key scan page (xmrchain runs
+  // with the output checker disabled; the rest are dead), so the explorer
+  // links go to the instance itself + per-tx pages, where the published view
+  // key works via the per-transaction decode form
+  const XMR_EXPLORER = "https://xmrchain.net/";
+  const XMR_TX = (h: string) => `https://xmrchain.net/tx/${h}`;
+  // the committed JSON currently has an empty tx array, which TS infers as
+  // never[] — give it the schema the stats script writes
+  const XMR_TXS = stats.xmr.txs as { hash: string; xmr: number; ts: string; height: number }[];
 
   // the runway, measured — by scripts/build-dono-stats.mts at every deploy
   // (GitHub Sponsors recurring + XMR received in the last 30 days, in USD)
-  const CURRENT_MONTHLY = Math.round(stats.totals.last30Usd);
+  const GH_MONTHLY = Math.round(stats.github.monthlyUsd);
+  const XMR_MONTHLY = Math.max(0, Math.round(stats.totals.last30Usd - stats.github.monthlyUsd));
+  const CURRENT_MONTHLY = GH_MONTHLY + XMR_MONTHLY;
   const GOALS = [
     { label: "claude code", amount: 200 },
     { label: "rent and food", amount: 2000 },
@@ -70,8 +81,10 @@
   <section class="runway">
     <h2>Donation goals</h2>
     <p class="runway-sub">
-      Monthly support so far: <strong>{fmt(CURRENT_MONTHLY)}</strong> of
-      {fmt(MAX)}.
+      Monthly support so far: <strong>{fmt(CURRENT_MONTHLY)}</strong>
+      (<a href={SPONSOR} target="_blank" rel="noopener">{fmt(GH_MONTHLY)} GitHub</a>
+      + <a href={XMR_EXPLORER} target="_blank" rel="noopener">{fmt(XMR_MONTHLY)} XMR</a>)
+      of {fmt(MAX)}.
     </p>
     <div class="runway-scroll">
     <svg
@@ -255,9 +268,25 @@
       view-only scan of the
       <a href="{base}/funding/monero/">Monero wallet</a>
       ({stats.xmr.txs.length} donation{stats.xmr.txs.length === 1 ? "" : "s"} on-chain, converted at
-      ${stats.xmrUsd.toLocaleString("en-US")}/XMR) — the wallet's view key is published, so you can
-      audit that number yourself. Last refreshed {new Date(stats.updatedAt).toISOString().slice(0, 10)}.
+      ${stats.xmrUsd.toLocaleString("en-US")}/XMR). The wallet's view key is
+      <a href="{base}/funding/monero/">published</a>, so you can audit that number yourself on the
+      <a href={XMR_EXPLORER} target="_blank" rel="noopener">block explorer</a> (paste address + view
+      key into a transaction's decode-outputs form) or by importing it as a view-only wallet. Last
+      refreshed {new Date(stats.updatedAt).toISOString().slice(0, 10)}.
     </p>
+    {#if XMR_TXS.length > 0}
+      <p class="books-note txlist">
+        On-chain donations:
+        {#each XMR_TXS.slice(-8).reverse() as t, i}
+          {#if i > 0}·{/if}
+          <a href={XMR_TX(t.hash)} target="_blank" rel="noopener" title={t.hash}
+            >{t.xmr.toLocaleString("en-US", { maximumFractionDigits: 4 })} XMR ({new Date(t.ts)
+              .toISOString()
+              .slice(0, 10)})</a
+          >
+        {/each}
+      </p>
+    {/if}
   </section>
 </div>
 
