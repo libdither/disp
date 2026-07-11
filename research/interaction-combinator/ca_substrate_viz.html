@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>TC-Net on the cellular substrate: wires are chains, transport is motion</title>
+<title>TC-Net on the cellular substrate: finite state per cell</title>
 <style>
   :root {
     --bg: #0b0e14; --panel: #131824; --panel2: #0f1420; --ink: #d8dee9; --dim: #7a8494;
@@ -22,6 +22,8 @@
   .seg { display: flex; border: 1px solid #2a3350; border-radius: 6px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; padding: 4px 12px; }
   .seg button.on { background: #1c2c44; color: var(--accent); }
+  label.chk { display: flex; gap: 5px; align-items: center; cursor: pointer; color: var(--dim); }
+  label.chk input { accent-color: var(--accent); }
   #stats { margin-left: auto; display: flex; gap: 12px; color: var(--dim); white-space: nowrap; }
   #stats b { color: var(--ink); font-weight: 600; }
   #stats .hot b { color: var(--hot); }
@@ -32,8 +34,6 @@
   #side h3 { margin: 12px 0 6px; font-size: 12px; color: var(--accent);
     text-transform: uppercase; letter-spacing: .08em; }
   #side h3:first-child { margin-top: 0; }
-  #side pre { background: var(--panel2); border: 1px solid #232a3a; border-radius: 6px;
-    padding: 8px 10px; overflow-x: auto; margin: 4px 0; font-size: 12px; }
   #side .note { color: var(--dim); font-size: 12px; margin: 4px 0; }
   #side table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 4px 0; }
   #side td, #side th { border: 1px solid #232a3a; padding: 3px 6px; text-align: right; }
@@ -45,21 +45,21 @@
   #toggleSide { position: fixed; top: 60px; right: 8px; z-index: 11; }
   canvas { display: block; position: fixed; inset: 0; cursor: grab; }
   canvas.panning { cursor: grabbing; }
-  #tip { position: fixed; z-index: 20; pointer-events: none; background: #1a2233ee;
+  #tip { position: fixed; z-index: 30; pointer-events: none; background: #1a2233f2;
     border: 1px solid #2a3350; border-radius: 6px; padding: 6px 9px; font-size: 12px;
-    max-width: 320px; display: none; white-space: pre; }
-  #inspect { position: fixed; left: 12px; top: 60px; z-index: 15; background: #131824f5;
-    border: 1px solid #2a3350; border-radius: 8px; padding: 10px 12px; font-size: 12px;
-    max-width: 380px; max-height: calc(100vh - 140px); overflow-y: auto; display: none; }
-  #inspect h4 { margin: 0 0 4px; color: var(--accent); font-size: 12px; }
-  #inspect .row { margin: 3px 0; }
-  #inspect .k { color: var(--dim); }
-  #inspect .expl { color: var(--dim); font-size: 11px; margin: 1px 0 6px 10px; }
-  #inspect .bits { color: var(--ok); font-size: 11px; }
-  #inspect #inspClose { position: absolute; top: 6px; right: 8px; cursor: pointer;
-    color: var(--dim); border: 0; background: none; font-size: 14px; }
-  #inspect #inspClose:hover { color: var(--warn); }
-  #inspect .pin { color: var(--seed); font-size: 11px; }
+    max-width: 330px; display: none; white-space: pre-wrap; }
+  #cellpop { position: fixed; z-index: 20; background: #131824f5; border: 1px solid #3a4a6d;
+    border-radius: 8px; padding: 8px 10px; font-size: 12px; min-width: 210px; max-width: 330px;
+    display: none; }
+  #cellpop h4 { margin: 0 0 4px; color: var(--accent); font-size: 12px; }
+  #cellpop .row { margin: 2px 0; }
+  #cellpop .k { color: var(--dim); }
+  #cellpop .fld { border-bottom: 1px dotted #3a4a6d; cursor: help; }
+  #cellpop .bits { color: var(--ok); }
+  #cellpop #popClose { position: absolute; top: 4px; right: 7px; cursor: pointer;
+    color: var(--dim); border: 0; background: none; font-size: 13px; }
+  #cellpop #popClose:hover { color: var(--warn); }
+  #cellpop .pinhead { color: var(--hot); font-size: 10px; letter-spacing: .06em; }
   #help { position: fixed; left: 12px; bottom: 10px; color: #56607244; z-index: 5;
     font-size: 12px; user-select: none; }
 </style>
@@ -76,12 +76,8 @@
     <button data-m="demand">demand-driven</button>
   </div>
   <div class="grp">
-    <label style="display:flex;gap:5px;align-items:center;cursor:pointer;color:var(--dim)">
-      <input type="checkbox" id="tensionChk" checked> tension
-    </label>
-    <label style="display:flex;gap:5px;align-items:center;cursor:pointer;color:var(--dim)">
-      <input type="checkbox" id="migChk"> migration
-    </label>
+    <label class="chk"><input type="checkbox" id="tensionChk" checked> tension</label>
+    <label class="chk"><input type="checkbox" id="migChk"> migration</label>
     <span style="color:var(--dim)">T</span>
     <input type="range" id="tempSlider" min="1" max="250" value="40" style="width:70px">
     <span id="tempVal" style="color:var(--dim);min-width:32px">0.40</span>
@@ -89,15 +85,15 @@
   <div class="grp">
     <button id="playBtn" class="primary">&#9654; play</button>
     <button id="stepBtn">tick</button>
-    <input type="range" id="speed" min="1" max="40" value="10" style="width:80px">
+    <input type="range" id="speed" min="1" max="120" value="30" style="width:80px">
   </div>
   <div id="stats">
-    <span class="hot">ticks (span) <b id="stTick">0</b></span>
+    <span class="hot">ticks <b id="stTick">0</b></span>
     <span>interactions <b id="stInt">0</b></span>
     <span>transport <b id="stTr">0</b></span>
     <span>migr <b id="stMig">0</b></span>
-    <span>&#215;par <b id="stPar">-</b></span>
-    <span title="tension energy: sum of weight x chain length over all wires (the liveness potential)">E <b id="stE">0</b></span>
+    <span title="tension energy: sum over wire cells of weight x segments (the liveness potential)">E <b id="stE">0</b></span>
+    <span title="most wire layers observed in one cell (real cells cap at 2-3)">layers <b id="stLay">0</b></span>
     <span>live <b id="stLive">0</b></span>
   </div>
 </div>
@@ -106,73 +102,69 @@
 <div id="side">
   <h3>what this shows</h3>
   <div class="note" id="exNote"></div>
-  <h3>the substrate rules</h3>
+  <h3>finite state per cell</h3>
   <div class="note">
-    Agents occupy cells. A wire is a <b>routed chain of cells</b> (your intuition: chains of
-    forwarder agents, the &iota; of the embedding theorem). Nothing acts at a distance: a
-    redex may fire only when the two principals sit in <b>adjacent cells</b>, so a pending
-    redex first <b>walks</b>: the producer re-materializes one cell along the chain per step
-    (one &iota;-elimination = one unit of transport, watch the yellow-tinted cells slide).
-    A move drags the mover's other wires one cell longer (drift is charged: the ledger's
-    insertion rule, visible as trailing slack). Two wires may share a cell (a <b>via</b>,
-    drawn as a diamond: the second layer); wires may also pass under agent cells.
-    <b>Sequential</b> = one event per tick (a pointer machine's serial order).
-    <b>Parallel</b> = every enabled event fires in the same tick (the CA's synchronous
-    step): same total work, far fewer ticks wherever the net is wide.
+    The simulation state IS a grid of cells now, nothing else. Each cell holds at most: one
+    agent (a ~4-bit tag, one direction per port, a sleep bit) and a small stack of wire
+    segments (each: two directions, a 2-bit class, a flow direction). No ids, no global
+    wire objects, no routed paths: a wire is whatever chain of segments physically connects
+    two ports, and following it is an act (the engine's chain-typing pulse after each
+    splice is the one instant shortcut, standing in for a signal that would really take a
+    tick per cell). Rewrites only touch the two dying cells, their adjacent stubs, and a
+    few neighboring free cells (the created-short lemma made mechanical); a splice is the
+    dying cell becoming wire; slack is your old cell becoming wire for the connections you
+    dragged. Click any cell to pin its state and hover the underlined fields for what each
+    component means.
   </div>
   <h3>sequential vs parallel, this term</h3>
   <table id="cmpTbl"></table>
-  <div class="note"><b>work</b> is schedule-invariant (strong confluence: same interactions,
-    same normal form, either mode). <b>transport</b> wobbles a little between modes: blocked
-    movers take congestion detours, and which cells are congested depends on timing (the
-    embedding is dynamic even though the computation is not). <b>ticks</b> (the span, the
-    wall-clock proxy) is what collapses: the ratio is the free parallelism the
-    single-principal-port invariant hands the substrate.</div>
+  <div class="note"><b>work</b> is schedule-invariant (strong confluence); <b>ticks</b>
+    (span) is what parallelism and migration move; transport varies with the realized
+    motion (every walk and migration step is priced).</div>
   <h3>honest approximations</h3>
   <div class="note">
-    This toy differs from the real design (SPATIAL_IC.md &sect;13, the E4 simulator) in:
-    parallel ticks commit through a global arbiter rather than a Margolus block handshake;
-    straightening is chain-local re-lay rather than per-cell retraction; pressure exists
-    only in minimal form (jam sites repel neighbors for a tick, plus a density cap and a
-    bounded stall grace) rather than a diffusing field with vacancy motion; wire layers
-    under agents are unlimited (real cells get 2-3 plus vias); no wire-RC death pulse
-    (see demand_schedule_viz.html for that mechanism at the net level).
-    <b>Migration</b> is the &sect;2.3 mechanism: per-tick Metropolis drift over the force
-    of each agent's wire first-hop directions (weights hot 12 / principal 2 / plumbing 1;
-    redex participants reel in only and HOLD at contact; sleeping agents are clock-gated),
-    hash(agent,tick) PRNG so runs stay bit-reproducible. Transport counts BOTH delivery
-    steps and migration moves (the embedding theorem's definition): migration spends
-    transport to buy span, and the four knobs it took to make every example complete
-    (weight dominance, hold-at-contact, jam pressure, density cap) are a live preview of
-    the &sect;13 knob-sweep and the &sect;14.1 liveness question.
+    Still engine conveniences rather than local rules: the parallel tick commits through a
+    global arbiter (no Margolus handshake); chain re-typing after a splice is instant
+    (really a pulse, one cell per tick); rewrite-site cell claiming spirals outward
+    (really pressure-mediated); wire layers per cell are unbounded but counted (real cells
+    get 2-3; watch the layers readout); pressure is jam-triggered repulsion, not a
+    diffusing field; no wire-RC death-pulse cancellation (demand_schedule_viz.html shows
+    that mechanism).
   </div>
   <h3>legend</h3>
   <div id="legend">
-    <div><span class="sw" style="background:#3fbf7f"></span>producers (L &Delta; &middot; S stem &middot; F fork &middot; P suspension)</div>
+    <div><span class="sw" style="background:#3fbf7f"></span>producers (&Delta; leaf &middot; S stem &middot; F fork &middot; @ suspension)</div>
     <div><span class="sw" style="background:#56c8ff"></span>consumers (A &middot; T1/T2 &middot; N) &middot; <span class="sw" style="background:#c792ea"></span>&delta;&#8319; &middot; <span class="sw" style="background:#ff6b6b"></span>&epsilon;</div>
-    <div>wire weight: <span style="color:#ffd866">gold thick</span> = pending redex (12) &middot;
+    <div>wire segments: <span style="color:#ffd866">gold</span> = pending redex (12) &middot;
       <span style="color:#5f96d1">blue</span> = principal (2) &middot;
-      <span style="color:#3a4a6d">slate thin</span> = plumbing (1)</div>
-    <div><span style="color:#e08050">orange tint</span> = slack (chain beyond the taut minimum;
-      what straightening removes and moves insert)</div>
-    <div><span style="color:#ffd866">&#9670;</span> via = two wires in one cell (layer 2) &middot;
-      E = &Sigma; weight&times;length, the tension potential</div>
-    <div>dimmed + z = asleep (demand mode) &middot; flash cyan/red = interaction/erasure</div>
+      <span style="color:#3a4a6d">slate</span> = plumbing (1)</div>
+    <div><span style="color:#e08050">orange tint</span> = kinked segment (what straightening retracts)</div>
+    <div><span style="color:#ffd866">&#9670;</span> = several segments in one cell (layers)</div>
+    <div>dimmed + z = asleep (undemanded; clock-gated) &middot; flash cyan/red = interaction/erasure</div>
+    <div>hover any cell &middot; click to pin its state popup to the cell</div>
   </div>
 </div>
 
 <canvas id="cv"></canvas>
 <div id="tip"></div>
-<div id="inspect"><button id="inspClose">&#10005;</button><div id="inspBody"></div></div>
-<div id="help">drag to pan &middot; wheel to zoom &middot; hover cells for detail</div>
+<div id="cellpop"><button id="popClose">&#10005;</button><div id="popBody"></div></div>
+<div id="help">drag to pan &middot; wheel to zoom &middot; click a cell to pin its state</div>
 
 <script>
 "use strict";
-/* The same Rooted TC-Net rule table as demand_schedule_viz.html, but placed HONESTLY on
-   the substrate: wires are routed chains of cells, redexes fire only at adjacency, and a
-   pending redex closes its chain one cell per step (the iota-elimination of
-   EMBEDDING_THEOREM.md, priced as transport). Execution axis: sequential (one event per
-   tick) vs parallel (every enabled event per tick, the CA's synchronous step). */
+/* Rooted TC-Net on a FINITE-STATE-PER-CELL grid. A cell holds at most one agent (tag +
+   one direction per port + sleep bit) and a stack of wire segments (two directions +
+   class + flow each). Wires have no identity: chains are positional. Values walk hot
+   chains one cell per tick; erasers walk INTO chains (the death pulse); rewrites fire
+   only between adjacent facing principals and rewire locally through the dying cells
+   (splice = the dying cell becomes wire). Tension: per-cell kink retraction + Metropolis
+   drift with jam pressure and a density cap. */
+
+// ---------- directions: Moore neighborhood (T2 has 5 ports; section 3's answer) ----------
+const DX = [0, 1, 1, 1, 0, -1, -1, -1], DY = [-1, -1, 0, 1, 1, 1, 0, -1];
+const DNAME = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+const opp = d => (d + 4) % 8;
+const key = (x, y) => x + "," + y;
 
 const KIND = {
   L:  { glyph: "△", color: "#3fbf7f", slots: 1, producer: true,  name: "leaf" },
@@ -192,704 +184,869 @@ const SLOTNAME = {
   T1: ["p","b","c","res"], T2: ["p","w","x","b","res"], DN: ["p","l","r"], DS: ["p","l","r"],
   E: ["p"], N: ["p","res"],
 };
-// Inspector documentation: what each agent does and what each of its ports means.
-const KIND_DOC = {
-  L:  { role: "Leaf △: the smallest value. Inert until a consumer's principal meets it (dispatch, copy, erase, or normalize).",
-        slots: { p: "principal (out): emits the value to whoever consumes it" } },
-  S:  { role: "Stem △x: one-child constructor value.",
-        slots: { p: "principal (out): emits the value", x: "child subtree (in)" } },
-  F:  { role: "Fork △xy: two-child constructor value.",
-        slots: { p: "principal (out): emits the value", l: "left child (in)", r: "right child (in)" } },
-  P:  { role: "Suspension (f a): an application nobody has demanded yet. A producer: sits inert until forced by a consumer.",
-        slots: { p: "principal (out): where the eventual value emerges", f: "operator (in)", a: "argument (in)" } },
-  A:  { role: "Apply: forces its operator to weak-head form, then applies one argument (builds stem/fork, or enters dispatch on a fork).",
-        slots: { p: "principal (in): faces the operator being forced", arg: "the argument to apply (in)", res: "result wire (out): where the answer goes" } },
-  T1: { role: "Dispatch level 1 on the first argument of △ a b c: leaf = K rule (return b, erase c); stem = S rule (distribute c, sharing it); fork = descend to level 2.",
-        slots: { p: "principal (in): faces the discriminant a", b: "second argument (in): the K-rule result", c: "third argument (in): distributed by the S rule", res: "result wire (out)" } },
-  T2: { role: "Dispatch level 2 on z of △(△ w x) y z: leaf = return w; stem u = apply x to u; fork u v = apply (b u) to v. Unused arms are erased.",
-        slots: { p: "principal (in): faces z", w: "leaf-arm value (in)", x: "stem-arm operator (in)", b: "fork-arm operator (in)", res: "result wire (out)" } },
-  DN: { role: "Need-duplicator δⁿ: shares one subterm into two uses. Meeting a value copies one constructor layer; meeting a suspension demands it ONCE and parks on the result wire (call-by-need, Theorem 6).",
-        slots: { p: "principal (in): faces the shared source, or parks on its result wire", l: "first copy (out)", r: "second copy (out)" } },
-  DS: { role: "Structural duplicator δˢ: copies syntax blindly, suspensions included (reflection's copier; re-does work).",
-        slots: { p: "principal (in): faces the source", l: "first copy (out)", r: "second copy (out)" } },
-  E:  { role: "Eraser ε: the death pulse. Walks INTO doomed structure, consumes the root, recurses into the children.",
-        slots: { p: "principal (in): faces what it will erase" } },
-  N:  { role: "Normalizer: drives a term to full normal form (forces, rebuilds the constructor, recurses into children).",
-        slots: { p: "principal (in): faces the term being normalized", res: "normalized result (out)" } },
-};
 const TAGBITS = { L: "0001", S: "0010", F: "0011", P: "0100", A: "0101", T1: "0110", T2: "0111", DN: "1000", DS: "1001", E: "1010", N: "1011" };
-const key = (x, y) => x + "," + y;
+const KIND_DOC = {
+  L:  { role: "Leaf △: the smallest value. Inert until a consumer's principal meets it.",
+        slots: { p: "principal (out): emits the value to its consumer" } },
+  S:  { role: "Stem △x: one-child constructor value.",
+        slots: { p: "principal (out)", x: "child subtree (in)" } },
+  F:  { role: "Fork △xy: two-child constructor value.",
+        slots: { p: "principal (out)", l: "left child (in)", r: "right child (in)" } },
+  P:  { role: "Suspension (f a): an application nobody demanded yet; inert until forced.",
+        slots: { p: "principal (out): where the value will emerge", f: "operator (in)", a: "argument (in)" } },
+  A:  { role: "Apply: forces its operator to weak-head form, then applies one argument.",
+        slots: { p: "principal (in): faces the operator", arg: "argument (in)", res: "result (out)" } },
+  T1: { role: "Dispatch on the first argument of △ a b c: leaf = K rule; stem = S rule (shares c); fork = descend.",
+        slots: { p: "principal (in): faces the discriminant", b: "second argument (in)", c: "third argument (in)", res: "result (out)" } },
+  T2: { role: "Dispatch level 2 on z: leaf = return w; stem u = x u; fork u v = (b u) v.",
+        slots: { p: "principal (in): faces z", w: "leaf arm (in)", x: "stem arm (in)", b: "fork arm (in)", res: "result (out)" } },
+  DN: { role: "Need-duplicator δⁿ: shares one subterm twice; demands a suspension ONCE and copies only the value.",
+        slots: { p: "principal (in): faces the shared source or its result wire", l: "first copy (out)", r: "second copy (out)" } },
+  DS: { role: "Structural duplicator δˢ: copies syntax blindly, suspensions included.",
+        slots: { p: "principal (in)", l: "first copy (out)", r: "second copy (out)" } },
+  E:  { role: "Eraser ε: the death pulse; walks into doomed structure, consumes the root, recurses.",
+        slots: { p: "principal (in): faces what it erases" } },
+  N:  { role: "Normalizer: drives full normal form (forces, rebuilds, recurses).",
+        slots: { p: "principal (in)", res: "normalized result (out)" } },
+};
 
+// ---------- the cell net ----------
 function makeNet(mode, tension, migration, temp) {
   const net = {
     mode, tension: !!tension, migration: !!migration, temp: temp || 0.4,
-    agents: new Map(), nextId: 1, wires: new Map(), nextWid: 1,
-    cellAgent: new Map(),          // "x,y" -> agentId
-    wireLoad: new Map(),           // "x,y" -> count of wires through the cell
-    redexes: [],                   // {c, p, wid} pending contact or fire
-    ints: 0, transport: 0, inserted: 0, straightened: 0, migr: 0, ticks: 0, peak: 0,
-    overflow: 0, effects: [], quiet: false, blockedNow: [], blockedPrev: [],
+    grid: new Map(), agents: 0, reserved: null,
+    ints: 0, transport: 0, migr: 0, straightened: 0, ticks: 0, peak: 0, layersMax: 0,
+    blockedNow: [], blockedPrev: [], grace: 0, effects: [], quiet: false,
   };
+  const at = (x, y) => net.grid.get(key(x, y));
+  const ensure = (x, y) => {
+    let c = net.grid.get(key(x, y));
+    if (!c) { c = { x, y, a: null, segs: [] }; net.grid.set(key(x, y), c); }
+    return c;
+  };
+  const clean = c => { if (!c.a && !c.segs.length) net.grid.delete(key(c.x, c.y)); };
+  const agentAt = (x, y) => { const c = at(x, y); return c && c.a ? c : null; };
+  const nb = (c, d) => at(c.x + DX[d], c.y + DY[d]);
+  const nbE = (c, d) => ensure(c.x + DX[d], c.y + DY[d]);
+  // THE physical invariant that makes identityless chains work: the edge between two
+  // cells carries at most one attachment. A half on either side (an agent port, or a
+  // seg end, including a dangling stub half waiting for completion) claims the edge.
+  const edgeUsed = (c, d) => {
+    if (c.a) { for (const pf of c.a.ports) if (pf === d) return true; }
+    for (const g of c.segs) if (g.a === d || g.b === d) return true;
+    const n = nb(c, d);
+    if (n) {
+      if (n.a) { for (const pf of n.a.ports) if (pf === opp(d)) return true; }
+      for (const g of n.segs) if (g.a === opp(d) || g.b === opp(d)) return true;
+    }
+    return false;
+  };
+  const virt = (x, y) => at(x, y) || { x, y, a: null, segs: [] };
 
-  // ---- cells ----
-  function agentAt(x, y) { return net.cellAgent.get(key(x, y)); }
-  function occupy(a, x, y) { a.pos = { x, y }; net.cellAgent.set(key(x, y), a.id); }
-  function freeCell(a) { if (a.pos) net.cellAgent.delete(key(a.pos.x, a.pos.y)); }
-  function loadInc(x, y, d) {
-    const k = key(x, y), v = (net.wireLoad.get(k) || 0) + d;
-    if (v <= 0) net.wireLoad.delete(k); else net.wireLoad.set(k, v);
-  }
-
-  function spawn(kind, near, sleeping) {
-    const a = { id: net.nextId++, kind, slots: new Array(KIND[kind].slots).fill(null),
-      pos: null, sleeping: !!sleeping, dead: false, anim: null };
-    net.agents.set(a.id, a);
-    if (near) placeNear(a, near);
-    if (net.agents.size > net.peak) net.peak = net.agents.size;
-    return a;
-  }
-  function placeNear(a, near) {
-    const cx = Math.round(near.x), cy = Math.round(near.y);
-    for (let r = 0; r < 300; r++) {
+  function placeAgent(tag, near, sleep) {
+    for (let r = 0; r < 200; r++) {
       for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        if (!agentAt(cx + dx, cy + dy)) { occupy(a, cx + dx, cy + dy); return; }
-      }
-    }
-    occupy(a, cx, cy);
-  }
-  function kill(a) {
-    if (a.dead) return;
-    a.dead = true;
-    for (let s = 0; s < a.slots.length; s++) dropWireAt(a.id, s);
-    freeCell(a);
-    net.agents.delete(a.id);
-  }
-  const get = id => net.agents.get(id);
-
-  // ---- wires as routed cell chains ----
-  // Cheap elbow routing (x-then-y or y-then-x, whichever crosses fewer agent cells).
-  // Wires may pass under agents and each other (drawn as vias/underpasses): the real
-  // design gives each cell 2-3 layers; this toy does not enforce the capacity.
-  function routePath(a, b) { return elbowRoute(net, a, b); }
-  function makeWire(p, q, prePath) {
-    const A_ = get(p.a), B_ = get(q.a);
-    const w = { id: net.nextWid++, pa: { a: p.a, s: p.s }, pb: { a: q.a, s: q.s }, path: [] };
-    if (prePath) w.path = prePath;
-    else if (A_.pos && B_.pos) {
-      const r = routePath(A_, B_);
-      w.path = r || straight(A_.pos, B_.pos);
-    }
-    for (const [x, y] of w.path) loadInc(x, y, 1);
-    net.wires.set(w.id, w);
-    A_.wire = A_.wire || {}; B_.wire = B_.wire || {};
-    A_.wire[p.s] = w.id; B_.wire[q.s] = w.id;
-    return w;
-  }
-  // Fuse relic chains when both detached ends came off the SAME dying agent (a splice:
-  // far1 -> old chain -> anchor cell -> old chain -> far2), or reuse a single relic when
-  // the fresh partner sits at/next to the anchor (a re-aim at the dying site: the chain
-  // is inherited, not re-routed). Otherwise null: route fresh (a newborn wired short).
-  function fusePath(p, q) {
-    const rp = p && p.relic, rq = q && q.relic;
-    if (rp && rq && rp.anchor[0] === rq.anchor[0] && rp.anchor[1] === rq.anchor[1]) {
-      return [...rp.cells, rp.anchor, ...rq.cells.slice().reverse()];
-    }
-    for (const [withR, other, flip] of [[rq, p, true], [rp, q, false]]) {
-      if (!withR || (rp && rq)) continue;
-      const o = get(other.a);
-      if (!o || !o.pos) continue;
-      if (Math.abs(o.pos.x - withR.anchor[0]) + Math.abs(o.pos.y - withR.anchor[1]) > 1) continue;
-      const seg = [withR.anchor, ...withR.cells.slice().reverse()]; // anchor -> far
-      return flip ? seg : seg.slice().reverse();                    // orient p -> q
-    }
-    return null;
-  }
-  function straight(a, b) {
-    const cells = []; let x = a.x, y = a.y;
-    while (x !== b.x) { x += Math.sign(b.x - x); if (x === b.x && y === b.y) break; cells.push([x, y]); }
-    while (y !== b.y) { y += Math.sign(b.y - y); if (x === b.x && y === b.y) break; cells.push([x, y]); }
-    return cells;
-  }
-  function dropWireAt(aid, s) {
-    const a = get(aid) || { wire: {} };
-    const wid = a.wire && a.wire[s];
-    if (!wid) return;
-    const w = net.wires.get(wid);
-    if (w) { for (const [x, y] of w.path) loadInc(x, y, -1); net.wires.delete(wid); }
-    if (a.wire) delete a.wire[s];
-    const other = w && (w.pa.a === aid && w.pa.s === s ? w.pb : w.pa);
-    if (other) { const o = get(other.a); if (o && o.wire) delete o.wire[other.s]; }
-  }
-
-  // ---- port graph ----
-  // take() detaches a port and carries the dropped wire's chain as a RELIC (cells
-  // oriented far-survivor toward the dying agent, plus the dying agent's cell as the
-  // anchor). link() fuses relics into spliced chains, so wires never blink out at a
-  // distance: a splice is a physical fusion through the dead agent's cell (the
-  // created-short lemma: wires lengthen only by splicing), and erasure consumes chains
-  // by walking them rather than deleting them remotely.
-  function take(a, s) {
-    const q = a.slots[s];
-    a.slots[s] = null;
-    let relic = null;
-    const wid = a.wire && a.wire[s];
-    if (wid && a.pos) {
-      const w = net.wires.get(wid);
-      if (w) {
-        const mineFirst = w.pa.a === a.id && w.pa.s === s;
-        relic = { cells: mineFirst ? w.path.slice().reverse() : w.path.slice(),
-                  anchor: [a.pos.x, a.pos.y] };
-      }
-    }
-    dropWireAt(a.id, s);
-    if (q) {
-      const b = get(q.a);
-      if (b && b.slots[q.s] && b.slots[q.s].a === a.id) b.slots[q.s] = null;
-      return { a: q.a, s: q.s, relic };
-    }
-    return q;
-  }
-  const port = (a, s) => ({ a: a.id, s });
-
-  function link(p, q) {
-    if (!p || !q) return;
-    const A_ = get(p.a), B_ = get(q.a);
-    if (!A_ || !B_) return;
-    A_.slots[p.s] = { a: B_.id, s: q.s };
-    B_.slots[q.s] = { a: A_.id, s: p.s };
-    const w = makeWire(p, q, fusePath(p, q));
-    if (net.mode === "demand") {
-      for (const [X, px, Y] of [[A_, p, B_], [B_, q, A_]]) {
-        if (px.s === 0 && !KIND[X.kind].producer && X.kind !== "E") {
-          if ((Y.kind === "DN" || Y.kind === "DS") && Y.sleeping) wakeD(Y);
-          if (Y.kind === "P" && Y.sleeping) Y.sleeping = false;
+        const cx = Math.round(near.x) + dx, cy = Math.round(near.y) + dy;
+        // dying cells keep their faces for classic stub completions during a fire
+        if (net.reserved && net.reserved.has(key(cx, cy))) continue;
+        const c0 = at(cx, cy);
+        if (!c0 || (!c0.a && !c0.segs.length)) {
+          const c = ensure(cx, cy);
+          c.a = { tag, ports: new Array(KIND[tag].slots).fill(null), sleep: !!sleep, seeded: false };
+          net.agents++;
+          if (net.agents > net.peak) net.peak = net.agents;
+          return c;
         }
       }
     }
-    if (p.s === 0 && q.s === 0) addRedex(A_, B_, w);
+    throw new Error("no free cell");
   }
-  function addRedex(a, b, w) {
-    const cons = KIND[a.kind].producer ? b : a;
-    const prod = KIND[a.kind].producer ? a : b;
-    if (KIND[cons.kind].producer || !KIND[prod.kind].producer) return;
-    net.redexes.push({ c: cons.id, p: prod.id, wid: w.id, held: cons.sleeping });
-  }
-  function wakeD(d) {
-    if (!d.sleeping) return;
-    d.sleeping = false;
-    for (const r of net.redexes) if (r.c === d.id) r.held = false;
-  }
+  function killAgent(c) { if (c.a) { c.a = null; net.agents--; clean(c); } }
 
-  // ---- transport: the producer re-materializes one cell along the chain ----
-  // Close a pending redex's chain by one cell. The mover is the PRODUCER (the value
-  // re-materializes toward its consumer), EXCEPT erasure: an eraser is the death pulse
-  // and travels INTO the wire toward the doomed structure (the wire-RC reading in
-  // SPATIAL_IC section 3) — and being nullary it drags no wires, so the pulse inserts
-  // zero slack. Returns true iff the mover actually moved (progress); false if blocked.
-  function advance(r) {
-    const prod = get(r.p), cons = get(r.c), w = net.wires.get(r.wid);
-    if (!prod || !cons || !w) return false;
-    if (!w.path.length) return false; // ready to fire; the fire scan owns it
-    const mover = cons.kind === "E" ? cons : prod;
-    const target = mover === cons ? prod : cons;
-    const moverFirst = w.pa.a === mover.id;
-    const cellArr = moverFirst ? w.path : w.path.slice().reverse();
-    const [nx, ny] = cellArr[0];
-    if (agentAt(nx, ny)) {
-      // Blocked by an agent (churn or static structure). The elbow cannot detour, so run
-      // a bounded unweighted BFS around agent cells (the local rerouting rule of
-      // SPATIAL_IC section 13 item 5); a failure means genuine enclosure and the mover
-      // waits (the stall detector stops the run loudly if nothing else can move either).
-      const r2 = bfsRoute(net, mover, target);
-      if (r2) {
-        for (const [x, y] of w.path) loadInc(x, y, -1);
-        w.path = moverFirst ? r2 : r2.slice().reverse();
-        for (const [x, y] of w.path) loadInc(x, y, 1);
-        const head = moverFirst ? w.path[0] : w.path[w.path.length - 1];
-        if (head && !agentAt(head[0], head[1])) return advance(r);
-      }
-      // No route at all: the region has JAMMED (migration compacts the net into a solid
-      // blob and deliveries cannot thread it — the section 13 jamming problem, met
-      // empirically). Record the jam site as PRESSURE: next tick's migration adds a
-      // repulsive force term around it, so migration itself evacuates the corridor.
-      // (A separate push mechanism was tried first and lost a tug-of-war with the
-      // attraction field every tick; pressure must be a term in the SAME field, which
-      // is exactly the design's vacancies-drift-up-pressure-gradients formulation.)
-      net.blockedNow.push([mover.pos.x, mover.pos.y]);
-      return false;
+  // ---- chains: purely positional. Step from `cell` leaving toward `d`. ----
+  function hop(cell, d) {
+    const n = nb(cell, d);
+    if (!n) return null;
+    // an agent port facing back?
+    if (n.a) {
+      for (let s = 0; s < n.a.ports.length; s++) if (n.a.ports[s] === opp(d)) return { cell: n, port: s };
     }
-    moveAgent(mover, nx, ny);
-    return true;
+    for (const g of n.segs) {
+      if (g.a === opp(d)) return { cell: n, seg: g, out: g.b };
+      if (g.b === opp(d)) return { cell: n, seg: g, out: g.a };
+    }
+    return n.a ? { cell: n, orphanAgent: true } : null;
   }
-
-  // THE one move primitive (advance's delivery step and migration's reel-in/drift are
-  // the same physical act). Move `a` one cell to (nx,ny), free; per wire of `a`: if the
-  // move steps onto that wire's first chain cell, the wire shortens (an iota-elimination,
-  // reel-in); if the wire had no chain and the partner is still adjacent, it stays tight;
-  // otherwise the old cell splices in at the mover's end (the drift charge). Every move
-  // is one unit of transport (EMBEDDING_THEOREM section 5: transport = eliminations +
-  // moves; the ledger closes because insertions are counted too).
-  function moveAgent(a, nx, ny) {
-    const old = { x: a.pos.x, y: a.pos.y };
-    freeCell(a);
-    a.anim = { fx: old.x, fy: old.y, t: 0 };
-    occupy(a, nx, ny);
-    net.transport++;
-    for (let s = 0; s < a.slots.length; s++) {
-      const wid = a.wire && a.wire[s];
-      if (!wid) continue;
-      const w = net.wires.get(wid);
-      if (!w) continue;
-      const mineFirst = w.pa.a === a.id && w.pa.s === s;
-      const head = w.path.length ? (mineFirst ? w.path[0] : w.path[w.path.length - 1]) : null;
-      if (head && head[0] === nx && head[1] === ny) {
-        // stepped onto the chain: this wire shortens by one (reel-in / delivery step)
-        loadInc(nx, ny, -1);
-        if (mineFirst) w.path.shift(); else w.path.pop();
-        continue;
+  // follow a chain from an agent port until the far port; returns ends + segs
+  function follow(cell, d) {
+    const segs = [];
+    let cur = cell, dir = d, guard = 4096;
+    while (guard-- > 0) {
+      const h = hop(cur, dir);
+      if (!h) return { end: null, segs };
+      if (h.port !== undefined) return { end: h.cell, slot: h.port, segs };
+      if (h.orphanAgent) return { end: null, segs };
+      segs.push({ cell: h.cell, seg: h.seg });
+      cur = h.cell; dir = h.out;
+    }
+    return { end: null, segs };
+  }
+  // retype the chain leaving (cell, slot): classes, hotness, flow, waking
+  function retype(cell, slot) {
+    const a = cell.a;
+    if (!a || a.ports[slot] === null) return;
+    const f = follow(cell, a.ports[slot]);
+    const endA = { cell, slot };
+    const endB = f.end ? { cell: f.end, slot: f.slot } : null;
+    const pA = slot === 0, pB = endB ? endB.slot === 0 : false;
+    const agA = a, agB = endB ? endB.cell.a : null;
+    let cls = pA || pB ? 2 : 1, hot = false, flowTowardB = null;
+    if (pA && pB && agB) {
+      const prod = KIND[agA.tag].producer ? endA : KIND[agB.tag].producer ? endB : null;
+      const cons = prod === endA ? endB : endA;
+      if (prod && KIND[cons.cell.a.tag].producer === false) {
+        const consE = cons.cell.a.tag === "E";
+        // a demand wakes a sleeping producer; an ERASER does not (erasure is not demand:
+        // the parked eraser plus the sleeping region is exactly the lazy strand)
+        if (!consE && !cons.cell.a.sleep && prod.cell.a.sleep) prod.cell.a.sleep = false;
+        if (!cons.cell.a.sleep && !(consE && prod.cell.a.sleep)) { hot = true; cls = 12; flowTowardB = cons === endB; }
       }
-      if (!w.path.length) {
-        const other = mineFirst ? w.pb : w.pa;
-        const o = get(other.a);
-        if (o && o.pos && Math.abs(o.pos.x - nx) + Math.abs(o.pos.y - ny) <= 1) continue; // still tight
+    }
+    // wake through aux too: awake consumer principal at one end, sleeping agent at other
+    if (!hot && endB) {
+      const wakeIf = (pSide, oSide) => {
+        if (pSide.slot === 0 && !KIND[pSide.cell.a.tag].producer && pSide.cell.a.tag !== "E" &&
+            !pSide.cell.a.sleep && oSide.cell.a.sleep) { oSide.cell.a.sleep = false; retype(cell, slot); return true; }
+        return false;
+      };
+      if (wakeIf(endA, endB)) return;
+      if (wakeIf(endB, endA)) return;
+    }
+    for (const { seg } of f.segs) {
+      seg.cls = cls; seg.hot = hot;
+      seg.flow = hot ? (flowTowardB ? "B" : "A") : null;
+    }
+    // orient flow per segment: mark the seg END pointing toward the consumer.
+    // Walking A->B through a seg, the end we entered from is opp(dir) (toward A)
+    // and the other end is fwd (toward B); pick by where the consumer sits.
+    if (hot) {
+      let dir = a.ports[slot];
+      for (const { seg } of f.segs) {
+        const fwd = seg.a === opp(dir) ? seg.b : seg.a;
+        seg.flowDir = flowTowardB ? fwd : opp(dir);
+        dir = fwd;
       }
-      if (mineFirst) w.path.unshift([old.x, old.y]); else w.path.push([old.x, old.y]);
-      loadInc(old.x, old.y, 1);
-      net.inserted++;
     }
   }
 
-  // ---- tension, migration half (SPATIAL_IC 2.3): reel-in + Metropolis drift ----
-  // Each awake agent feels a force: the weighted sum of its wires' first-hop directions
-  // (purely local: which way do my wires leave, not where do they end). Weights encode
-  // need: a pending-redex wire pulls hardest (contracting it IS dispatching the redex),
-  // other principal wires medium, aux plumbing least. The best-aligned neighbor cell is
-  // proposed; accepted always if it lowers local weighted wire length, else with
-  // probability exp(score/T) (Metropolis: greedy descent provably deadlocks, stochastic
-  // moves provably compress in the amoebot literature). The PRNG is hash(agent, tick):
-  // runs stay bit-reproducible, the differential-oracle requirement.
-  function mrand(aid) {
-    let h = (aid * 0x9E3779B9 ^ net.ticks * 0x85EBCA6B) >>> 0;
-    h = Math.imul(h ^ (h >>> 16), 0x45D9F3B) >>> 0;
-    h = Math.imul(h ^ (h >>> 13), 0x45D9F3B) >>> 0;
-    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  // ---- connect: lay segments between two attach points (ports or stubs) ----
+  // endpoints: {cell, slot} for a live agent port; {cell, dir, slot, principal} for a stub
+  // (a chain end resting at a dying agent's cell, entering from `dir`).
+  const dirBetween = (x0, y0, x1, y1) => {
+    const dx = Math.sign(x1 - x0), dy = Math.sign(y1 - y0);
+    for (let d = 0; d < 8; d++) if (DX[d] === dx && DY[d] === dy) return d;
+    return 0;
+  };
+  function addSeg(c, a, b) {
+    c.segs.push({ a, b, cls: 1, hot: false, flow: null });
+    if (c.segs.length > net.layersMax) net.layersMax = c.segs.length;
   }
-  function migrate() {
-    const hot = new Set(net.redexes.filter(r => !r.held).map(r => r.wid));
-    // an agent participating in a live redex may only reel in along that wire, and if
-    // the wire is already at contact it must HOLD STILL: migration at the start of a
-    // tick pulling a ready participant away, with advance walking it back after the
-    // fire scan, oscillates forever out of phase with readiness (found by autopsy:
-    // adjacent N and P frozen at ints=3 while migr climbed 600k)
-    const inRedex = new Map();
-    for (const r of net.redexes) if (!r.held) { inRedex.set(r.c, r.wid); inRedex.set(r.p, r.wid); }
-    const movers = [...net.agents.values()];
-    for (const a of movers) {
-      if (a.dead || a.sleeping || !a.pos) continue;
-      const rw = inRedex.get(a.id);
-      if (rw !== undefined) {
-        const hw = net.wires.get(rw);
-        if (!hw || !hw.path.length) continue; // at contact: stay for the fire
-      }
-      // pressure: last tick's jam sites repel nearby non-participants, evacuating a
-      // corridor for the blocked delivery (radius 2, strength 6)
-      let px = 0, py = 0;
-      if (rw === undefined) for (const [bx, by] of net.blockedPrev) {
-        if (Math.abs(a.pos.x - bx) <= 3 && Math.abs(a.pos.y - by) <= 3) {
-          px += 8 * Math.sign(a.pos.x - bx);
-          py += 8 * Math.sign(a.pos.y - by);
+  const edgeKey = (x, y, d) => {
+    const x2 = x + DX[d], y2 = y + DY[d];
+    return (y < y2 || (y === y2 && x <= x2)) ? x + "," + y + ":" + d : x2 + "," + y2 + ":" + opp(d);
+  };
+  // BFS a lay-path between two cells over free EDGES; intermediates are agent-free
+  // (wires may cross as layered segs, but never share a face). Dangling stub halves
+  // mark their edges used, so completion faces are never stepped through. opts.blocked
+  // and opts.freed overlay planned-but-uncommitted claims on the live grid (moveAgent).
+  // Returns the list of step directions, or null when boxed in.
+  function findPath(x0, y0, x1, y1, opts) {
+    const bx0 = Math.min(x0, x1) - 24, bx1 = Math.max(x0, x1) + 24;
+    const by0 = Math.min(y0, y1) - 24, by1 = Math.max(y0, y1) + 24;
+    const blocked = opts && opts.blocked, freed = opts && opts.freed;
+    const eUsed = (cell, d) => {
+      const ek = edgeKey(cell.x, cell.y, d);
+      if (blocked && blocked.has(ek)) return true;
+      if (freed && freed.has(ek)) return false;
+      return edgeUsed(cell, d);
+    };
+    const k1 = key(x0, y0), k2 = key(x1, y1);
+    const prev = new Map([[k1, null]]);
+    let frontier = [[x0, y0]], found = false;
+    while (frontier.length && !found) {
+      const nxt = [];
+      for (const [qx, qy] of frontier) {
+        const cur = virt(qx, qy);
+        for (let d = 0; d < 8; d++) {
+          if (eUsed(cur, d)) continue;
+          const tx = qx + DX[d], ty = qy + DY[d], nk = key(tx, ty);
+          if (tx < bx0 || tx > bx1 || ty < by0 || ty > by1 || prev.has(nk)) continue;
+          if (nk === k2) { prev.set(nk, [key(qx, qy), d]); found = true; break; }
+          const n = at(tx, ty);
+          if (n && n.a && !(opts && opts.thruAgents)) continue;
+          if (n && opts && opts.maxSegs !== undefined && n.segs.length > opts.maxSegs) continue;
+          prev.set(nk, [key(qx, qy), d]);
+          nxt.push([tx, ty]);
         }
+        if (found) break;
       }
-      // Weight doctrine (SPATIAL_IC 2.3): the pending-redex wire dominates outright.
-      // With warm at 3 a four-operand dispatcher's bundle out-pulled its own redex and
-      // drifted AWAY from its dispatch, livelocking delivery: hot must beat any bundle,
-      // and an agent in a pending redex is further restricted to moves that shorten
-      // that wire (reel-in only; its other pulls wait their turn).
-      let fx = px, fy = py, hotDir = null;
-      for (let s = 0; s < a.slots.length; s++) {
-        const wid = a.wire && a.wire[s];
-        if (!wid) continue;
-        const w = net.wires.get(wid);
-        if (!w) continue;
-        const mineFirst = w.pa.a === a.id && w.pa.s === s;
-        if (!w.path.length) continue; // adjacent: already tight, no pull
-        const h2 = mineFirst ? w.path[0] : w.path[w.path.length - 1];
-        const dx = Math.sign(h2[0] - a.pos.x), dy = Math.sign(h2[1] - a.pos.y);
-        const isHot = hot.has(w.id);
-        if (isHot) hotDir = { dx, dy };
-        const wt = isHot ? 12 : (w.pa.s === 0 || w.pb.s === 0) ? 2 : 1;
-        fx += wt * dx;
-        fy += wt * dy;
-      }
-      if (!fx && !fy) continue;
-      const cands = [[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy]) => ({ dx, dy, score: fx*dx + fy*dy }));
-      cands.sort((u,v) => v.score - u.score);
-      const c = cands[0];
-      if (hotDir && c.dx * hotDir.dx + c.dy * hotDir.dy <= 0) continue; // reel-in only
-      const nx = a.pos.x + c.dx, ny = a.pos.y + c.dy;
-      if (agentAt(nx, ny)) continue; // congestion: wait for pressure to clear it
-      // density cap: never migrate into a pocket with 3+ occupied neighbors, so the
-      // lattice keeps vacancies threaded through it and deliveries always have a seam
-      // (without this the tension field crystallizes the blob and the last deliveries
-      // jam terminally)
-      let crowd = 0;
-      for (const [ex2, ey2] of [[1,0],[-1,0],[0,1],[0,-1]]) if (agentAt(nx + ex2, ny + ey2)) crowd++;
-      if (crowd >= 3) continue;
-      const accept = c.score > 0 || mrand(a.id) < Math.exp(c.score / net.temp);
-      if (!accept) continue;
-      moveAgent(a, nx, ny);
-      net.migr++;
+      frontier = nxt;
     }
+    if (!found) return null;
+    const steps = [];
+    for (let kk = k2; kk !== k1; ) { const [pk, d] = prev.get(kk); steps.unshift(d); kk = pk; }
+    return steps;
   }
-  const adjacent = (a, b) => a.pos && b.pos && Math.abs(a.pos.x - b.pos.x) + Math.abs(a.pos.y - b.pos.y) <= 1;
+  // congestion-tiered routing: spread wires through sparse cells before stacking layers
+  function route(x0, y0, x1, y1, extra) {
+    const o = t => Object.assign({}, extra, t);
+    return findPath(x0, y0, x1, y1, o({ maxSegs: 1 }))
+      || findPath(x0, y0, x1, y1, o({ maxSegs: 2 }))
+      || findPath(x0, y0, x1, y1, o({}))
+      || findPath(x0, y0, x1, y1, o({ thruAgents: true }));
+  }
+  // Candidate attach points for one endpoint. A port has exactly one. A stub's dangling
+  // wire is reachable ALONG ITSELF: candidate 0 joins classically (a seg through the
+  // dying cell); deeper candidates reel the wire in, repointing it at successive chain
+  // cells and truncating what lies behind; the last consumes the chain into its far
+  // port. Deeper forms engage only when the neighborhood is saturated.
+  function candidatesOf(e) {
+    if (e.dir === undefined) return [{ x: e.cell.x, y: e.cell.y, slot: e.slot, del: [] }];
+    const list = [{ x: e.cell.x, y: e.cell.y, stubDir: e.dir, del: [] }];
+    const del = [];
+    let cx = e.cell.x, cy = e.cell.y, dir = e.dir, guard = 4096;
+    while (guard-- > 0) {
+      const nxx = cx + DX[dir], nyy = cy + DY[dir];
+      const ncell = at(nxx, nyy);
+      if (!ncell) break;
+      if (ncell.a) {
+        // a port facing back ends the wire; otherwise it may TRANSIT this agent's cell
+        let matched = false;
+        for (let s = 0; s < ncell.a.ports.length; s++)
+          if (ncell.a.ports[s] === opp(dir)) { list.push({ x: nxx, y: nyy, repointSlot: s, del: del.slice() }); matched = true; break; }
+        if (matched) break;
+      }
+      const g = ncell.segs.find(g2 => g2.a === opp(dir) || g2.b === opp(dir));
+      if (!g) break;
+      const back = opp(dir);
+      list.push({ x: nxx, y: nyy, seg: g, half: back, del: del.slice() });
+      del.push({ cell: ncell, seg: g });
+      cx = nxx; cy = nyy; dir = g.a === back ? g.b : g.a;
+    }
+    return list;
+  }
+  function connect(e1, e2) {
+    // NOTE cells are resolved by COORDINATES: a dying cell object may have been cleaned
+    // from the grid and re-created by a birth on the same spot (stubs hold stale refs)
+    const st1 = e1.dir !== undefined, st2 = e2.dir !== undefined;
+    if (e1.cell.x === e2.cell.x && e1.cell.y === e2.cell.y) {
+      const c1 = ensure(e1.cell.x, e1.cell.y);
+      if (st1 !== st2) {
+        // an agent born ON the freed cell a chain ends at: the port continues the chain
+        const pe = st1 ? e2 : e1, st = st1 ? e1 : e2;
+        if (!c1.segs.some(g => g.a === st.dir || g.b === st.dir)) {
+          c1.a.ports[pe.slot] = st.dir;
+          retype(c1, pe.slot);
+          return;
+        } // face squatted by transit: fall through to routing
+      } else if (st1 && st2) {
+        // two stubs of one dying cell: one joining segment when both faces are free
+        if (!c1.segs.some(g => g.a === e1.dir || g.b === e1.dir || g.a === e2.dir || g.b === e2.dir)) {
+          addSeg(c1, e1.dir, e2.dir);
+          const f = follow(c1, e1.dir);
+          if (f.end) retype(f.end, f.slot);
+          return;
+        }
+      } else throw new Error("connect: self-loop on one agent");
+    }
+    const attach = (cell, C, dir) => {
+      if (C.slot !== undefined) { cell.a.ports[C.slot] = dir; return; }
+      if (C.repointSlot !== undefined) { cell.a.ports[C.repointSlot] = dir; return; }
+      if (C.stubDir !== undefined) { addSeg(cell, C.stubDir, dir); return; }
+      if (C.seg.a === C.half) C.seg.a = dir; else C.seg.b = dir;
+    };
+    const applyDel = (C1, C2) => {
+      for (const D of [C1, C2]) for (const { cell: dc, seg } of D.del) {
+        const idx = dc.segs.indexOf(seg);
+        if (idx >= 0) { dc.segs.splice(idx, 1); clean(dc); }
+      }
+    };
+    const tryLocal = (C1, C2) => {
+      // the two attachments meet in ONE cell: fuse or consume locally, no routing
+      const cell = ensure(C1.x, C1.y);
+      const half1 = C1.seg !== undefined, half2 = C2.seg !== undefined;
+      if (half1 && half2) {
+        if (C1.seg === C2.seg) { applyDel(C1, C2); cell.segs.splice(cell.segs.indexOf(C1.seg), 1); clean(cell); return true; } // closed loop: garbage
+        applyDel(C1, C2);
+        const x = C1.seg.a === C1.half ? C1.seg.b : C1.seg.a;
+        const y = C2.seg.a === C2.half ? C2.seg.b : C2.seg.a;
+        cell.segs.splice(cell.segs.indexOf(C1.seg), 1);
+        cell.segs.splice(cell.segs.indexOf(C2.seg), 1);
+        addSeg(cell, x, y);
+        const f = follow(cell, x);
+        if (f.end) retype(f.end, f.slot);
+        return true;
+      }
+      const pC = C1.slot !== undefined || C1.repointSlot !== undefined ? C1
+               : C2.slot !== undefined || C2.repointSlot !== undefined ? C2 : null;
+      const hC = pC === C1 ? C2 : C1;
+      if (!pC || hC.seg === undefined) return false; // port+port or port+classic: no local form
+      applyDel(C1, C2);
+      const x = hC.seg.a === hC.half ? hC.seg.b : hC.seg.a;
+      cell.segs.splice(cell.segs.indexOf(hC.seg), 1);
+      const slot = pC.slot !== undefined ? pC.slot : pC.repointSlot;
+      cell.a.ports[slot] = x;
+      retype(cell, slot);
+      return true;
+    };
+    // Score combos by NET NEW WIRE (route segs + classic joins - reeled-in deletions)
+    // and take the best: fires then CONTRACT wire through dead sites instead of layering
+    // ever more approach chain into the neighborhood (the local-congestion runaway).
+    const cands1 = candidatesOf(e1), cands2 = candidatesOf(e2);
+    let bestPlan = null, bestScore = 1e9;
+    for (let r = 0; r < cands1.length + cands2.length - 1 && r <= 12 && bestScore > -6; r++) {
+      for (let i = Math.min(r, cands1.length - 1); i >= 0 && r - i < cands2.length; i--) {
+        const C1 = cands1[i], C2 = cands2[r - i];
+        if (C1.x === C2.x && C1.y === C2.y) {
+          if (tryLocal(C1, C2)) return; // a local join consumes wire; take it immediately
+          continue;
+        }
+        // never join a wire to itself through overlapping candidate segments
+        if (C1.seg && (C1.seg === C2.seg || C2.del.some(dd => dd.seg === C1.seg))) continue;
+        if (C2.seg && C1.del.some(dd => dd.seg === C2.seg)) continue;
+        const steps = route(C1.x, C1.y, C2.x, C2.y);
+        if (!steps) continue;
+        const score = (steps.length - 1)
+          + (C1.stubDir !== undefined ? 1 : 0) + (C2.stubDir !== undefined ? 1 : 0)
+          - C1.del.length - C2.del.length;
+        if (score < bestScore) { bestScore = score; bestPlan = { C1, C2, steps }; }
+      }
+    }
+    if (!bestPlan) throw new Error("connect: exhausted candidates (" + e1.cell.x + "," + e1.cell.y + ")->(" + e2.cell.x + "," + e2.cell.y + ")");
+    const { C1, C2, steps } = bestPlan;
+    applyDel(C1, C2);
+    const cc1 = ensure(C1.x, C1.y), cc2 = ensure(C2.x, C2.y);
+    attach(cc1, C1, steps[0]);
+    let cx = cc1;
+    for (let k = 0; k < steps.length - 1; k++) {
+      cx = nbE(cx, steps[k]);
+      addSeg(cx, opp(steps[k]), steps[k + 1]);
+    }
+    attach(cc2, C2, opp(steps[steps.length - 1]));
+    // re-mark the joined chain from a terminal port
+    if (C1.slot !== undefined) retype(cc1, C1.slot);
+    else if (C2.slot !== undefined) retype(cc2, C2.slot);
+    else if (C1.repointSlot !== undefined) retype(cc1, C1.repointSlot);
+    else if (C2.repointSlot !== undefined) retype(cc2, C2.repointSlot);
+    else { const f = follow(cc1, steps[0]); if (f.end) retype(f.end, f.slot); }
+  }
 
-  // ---- the rule table (identical semantics to demand_schedule_viz.html) ----
-  function fire(r) {
-    const c = get(r.c), pr = get(r.p);
-    if (!c || !pr || c.dead || pr.dead) return;
+  // ---- rewrites ----
+  function stubOf(cell, slot) {
+    const a = cell.a;
+    if (!a || a.ports[slot] === null) return null;
+    return { cell, dir: a.ports[slot], slot, principal: slot === 0 };
+  }
+  const P_ = (cell, slot) => ({ cell, slot });
+  function eraseTo(st, near) {
+    if (!st) return;
+    const e = placeAgent("E", near || st.cell);
+    connect(P_(e, 0), st);
+  }
+  function fire(cCell, pCell) {
+    const cA = cCell.a, pA = pCell.a;
+    if (!cA || !pA) return;
     net.ints++;
-    if (c.pos) net.effects.push({ t: "flash", x: c.pos.x, y: c.pos.y, age: 0, red: c.kind === "E" });
-    const at = { x: (c.pos.x + pr.pos.x) / 2, y: (c.pos.y + pr.pos.y) / 2 };
-    const ck = c.kind, pk = pr.kind;
-    // created-short discipline: a fresh agent is born ADJACENT to the far end of the wire
-    // its principal will meet, so new redexes start at contact and only genuine value
-    // deliveries (results flowing back to their demanders) pay transport.
-    const nearOf = p => { const t = p && get(p.a); return t && t.pos ? t.pos : at; };
-    const S_ = (k, sl, nearP) => spawn(k, nearP ? nearOf(nearP) : at, sl);
-    // Erasers are born AT the fire site (the anchor), so a discarded chain is inherited
-    // via its relic and the doomed value walks it to the eraser: remote erasure pays its
-    // wire length in transport instead of deleting at a distance.
-    const erase = w => { if (!w || !get(w.a)) return; const e = S_("E"); link(port(e, 0), w); };
+    net.effects.push({ t: "flash", x: cCell.x, y: cCell.y, age: 0, red: cA.tag === "E" });
+    const site = { x: (cCell.x + pCell.x) / 2, y: (cCell.y + pCell.y) / 2 };
+    const ck = cA.tag, pk = pA.tag;
+    // capture stubs, then remove both agents (their cells stay usable as wire space)
+    const cs = [], ps = [];
+    for (let s = 1; s < cA.ports.length; s++) cs[s] = stubOf(cCell, s);
+    for (let s = 1; s < pA.ports.length; s++) ps[s] = stubOf(pCell, s);
+    killAgent(cCell); killAgent(pCell);
+    net.reserved = new Set([key(cCell.x, cCell.y), key(pCell.x, pCell.y)]);
+    const NA = (tag, sleep) => placeAgent(tag, site, sleep);
 
     if (ck === "A") {
-      const arg = take(c, 1), res = take(c, 2);
-      if (pk === "L") { const s = S_("S", false, res); link(port(s, 1), arg); link(res, port(s, 0)); }
-      else if (pk === "S") { const x = take(pr, 1); const f = S_("F", false, res);
-        link(port(f, 1), x); link(port(f, 2), arg); link(res, port(f, 0)); }
-      else if (pk === "F") { const l = take(pr, 1), rr = take(pr, 2); const t = S_("T1", false, l);
-        link(port(t, 1), rr); link(port(t, 2), arg); link(port(t, 3), res); link(port(t, 0), l); }
-      else if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
-        const A1 = S_("A", false, f), A2 = S_("A", false, f);
-        link(port(A1, 1), a2); link(port(A1, 2), port(A2, 0));
-        link(port(A2, 1), arg); link(port(A2, 2), res); link(port(A1, 0), f); }
+      const arg = cs[1], res = cs[2];
+      if (pk === "L") { const s = NA("S"); if (arg) connect(P_(s, 1), arg); if (res) connect(res, P_(s, 0)); }
+      else if (pk === "S") { const f = NA("F");
+        if (ps[1]) connect(P_(f, 1), ps[1]); if (arg) connect(P_(f, 2), arg); if (res) connect(res, P_(f, 0)); }
+      else if (pk === "F") { const t = NA("T1");
+        if (ps[2]) connect(P_(t, 1), ps[2]); if (arg) connect(P_(t, 2), arg); if (res) connect(P_(t, 3), res);
+        if (ps[1]) connect(P_(t, 0), ps[1]); }
+      else if (pk === "P") { const A1 = NA("A"), A2 = NA("A");
+        if (ps[2]) connect(P_(A1, 1), ps[2]);
+        connect(P_(A1, 2), P_(A2, 0));
+        if (arg) connect(P_(A2, 1), arg); if (res) connect(P_(A2, 2), res);
+        if (ps[1]) connect(P_(A1, 0), ps[1]); }
     }
     else if (ck === "T1") {
-      const b = take(c, 1), carg = take(c, 2), res = take(c, 3);
-      if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
-        const A1 = S_("A", false, f), t = S_("T1", false, f);
-        link(port(t, 1), b); link(port(t, 2), carg); link(port(t, 3), res);
-        link(port(A1, 1), a2); link(port(A1, 2), port(t, 0)); link(port(A1, 0), f); }
-      else if (pk === "L") { link(res, b); erase(carg); }
+      const b = cs[1], carg = cs[2], res = cs[3];
+      if (pk === "P") { const A1 = NA("A"), t = NA("T1");
+        if (b) connect(P_(t, 1), b); if (carg) connect(P_(t, 2), carg); if (res) connect(P_(t, 3), res);
+        if (ps[2]) connect(P_(A1, 1), ps[2]); connect(P_(A1, 2), P_(t, 0));
+        if (ps[1]) connect(P_(A1, 0), ps[1]); }
+      else if (pk === "L") { if (res && b) connect(res, b); eraseTo(carg, site); }
       else if (pk === "S") {
-        const x = take(pr, 1);
         if (net.mode === "fire") {
-          const d = S_("DN", false, carg), A1 = S_("A", false, x), A2 = S_("A", false, b), A3 = S_("A", false, x);
-          link(port(A1, 1), port(d, 1)); link(port(A2, 1), port(d, 2));
-          link(port(A1, 2), port(A3, 0)); link(port(A2, 2), port(A3, 1));
-          link(port(A3, 2), res);
-          link(port(A1, 0), x); link(port(A2, 0), b); link(port(d, 0), carg);
+          const d = NA("DN"), A1 = NA("A"), A2 = NA("A"), A3 = NA("A");
+          connect(P_(A1, 1), P_(d, 1)); connect(P_(A2, 1), P_(d, 2));
+          connect(P_(A1, 2), P_(A3, 0)); connect(P_(A2, 2), P_(A3, 1));
+          if (res) connect(P_(A3, 2), res);
+          if (ps[1]) connect(P_(A1, 0), ps[1]); if (b) connect(P_(A2, 0), b);
+          if (carg) connect(P_(d, 0), carg);
         } else {
-          const d = S_("DN", true, carg), P1 = S_("P", true, x), P2 = S_("P", true, b), P0 = S_("P", true, res);
-          link(port(P1, 1), x); link(port(P1, 2), port(d, 1));
-          link(port(P2, 1), b); link(port(P2, 2), port(d, 2));
-          link(port(P0, 1), port(P1, 0)); link(port(P0, 2), port(P2, 0));
-          link(res, port(P0, 0)); link(port(d, 0), carg);
+          const d = NA("DN", true), Q1 = NA("P", true), Q2 = NA("P", true), Q0 = NA("P", true);
+          if (ps[1]) connect(P_(Q1, 1), ps[1]); connect(P_(Q1, 2), P_(d, 1));
+          if (b) connect(P_(Q2, 1), b); connect(P_(Q2, 2), P_(d, 2));
+          connect(P_(Q0, 1), P_(Q1, 0)); connect(P_(Q0, 2), P_(Q2, 0));
+          if (res) connect(res, P_(Q0, 0));
+          if (carg) connect(P_(d, 0), carg);
         }
       }
-      else if (pk === "F") { const w = take(pr, 1), xx = take(pr, 2); const t2 = S_("T2", false, carg);
-        link(port(t2, 1), w); link(port(t2, 2), xx); link(port(t2, 3), b); link(port(t2, 4), res);
-        link(port(t2, 0), carg); }
+      else if (pk === "F") { const t2 = NA("T2");
+        if (ps[1]) connect(P_(t2, 1), ps[1]); if (ps[2]) connect(P_(t2, 2), ps[2]);
+        if (b) connect(P_(t2, 3), b); if (res) connect(P_(t2, 4), res);
+        if (carg) connect(P_(t2, 0), carg); }
     }
     else if (ck === "T2") {
-      const w = take(c, 1), x = take(c, 2), b = take(c, 3), res = take(c, 4);
-      if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
-        const A1 = S_("A", false, f), t = S_("T2", false, f);
-        link(port(t, 1), w); link(port(t, 2), x); link(port(t, 3), b); link(port(t, 4), res);
-        link(port(A1, 1), a2); link(port(A1, 2), port(t, 0)); link(port(A1, 0), f); }
-      else if (pk === "L") { link(res, w); erase(x); erase(b); }
-      else if (pk === "S") { const u = take(pr, 1); const A1 = S_("A", false, x);
-        link(port(A1, 1), u); link(port(A1, 2), res); link(port(A1, 0), x); erase(w); erase(b); }
-      else if (pk === "F") { const u = take(pr, 1), v = take(pr, 2);
-        const A1 = S_("A", false, b), A2 = S_("A", false, b);
-        link(port(A1, 1), u); link(port(A1, 2), port(A2, 0));
-        link(port(A2, 1), v); link(port(A2, 2), res); link(port(A1, 0), b);
-        erase(w); erase(x); }
+      const w = cs[1], x = cs[2], b = cs[3], res = cs[4];
+      if (pk === "P") { const A1 = NA("A"), t = NA("T2");
+        if (w) connect(P_(t, 1), w); if (x) connect(P_(t, 2), x); if (b) connect(P_(t, 3), b); if (res) connect(P_(t, 4), res);
+        if (ps[2]) connect(P_(A1, 1), ps[2]); connect(P_(A1, 2), P_(t, 0));
+        if (ps[1]) connect(P_(A1, 0), ps[1]); }
+      else if (pk === "L") { if (res && w) connect(res, w); eraseTo(x, site); eraseTo(b, site); }
+      else if (pk === "S") { const A1 = NA("A");
+        if (ps[1]) connect(P_(A1, 1), ps[1]); if (res) connect(P_(A1, 2), res);
+        if (x) connect(P_(A1, 0), x); eraseTo(w, site); eraseTo(b, site); }
+      else if (pk === "F") { const A1 = NA("A"), A2 = NA("A");
+        if (ps[1]) connect(P_(A1, 1), ps[1]); connect(P_(A1, 2), P_(A2, 0));
+        if (ps[2]) connect(P_(A2, 1), ps[2]); if (res) connect(P_(A2, 2), res);
+        if (b) connect(P_(A1, 0), b); eraseTo(w, site); eraseTo(x, site); }
     }
     else if (ck === "DN" || ck === "DS") {
-      const l = take(c, 1), rr = take(c, 2);
+      const l = cs[1], r = cs[2];
       const asleep = net.mode === "demand";
-      if (pk === "L") { const l1 = S_("L", false, l), l2 = S_("L", false, rr);
-        link(l, port(l1, 0)); link(rr, port(l2, 0)); }
-      else if (pk === "S") { const x = take(pr, 1);
-        const d2 = S_(ck, asleep, x), s1 = S_("S", false, l), s2 = S_("S", false, rr);
-        link(port(s1, 1), port(d2, 1)); link(port(s2, 1), port(d2, 2));
-        link(l, port(s1, 0)); link(rr, port(s2, 0)); link(port(d2, 0), x); }
-      else if (pk === "F") { const fl = take(pr, 1), fr = take(pr, 2);
-        const da = S_(ck, asleep, fl), db = S_(ck, asleep, fr);
-        const f1 = S_("F", false, l), f2 = S_("F", false, rr);
-        link(port(f1, 1), port(da, 1)); link(port(f1, 2), port(db, 1));
-        link(port(f2, 1), port(da, 2)); link(port(f2, 2), port(db, 2));
-        link(l, port(f1, 0)); link(rr, port(f2, 0));
-        link(port(da, 0), fl); link(port(db, 0), fr); }
+      if (pk === "L") { const l1 = NA("L"), l2 = NA("L");
+        if (l) connect(l, P_(l1, 0)); if (r) connect(r, P_(l2, 0)); }
+      else if (pk === "S") { const d2 = NA(ck, asleep), s1 = NA("S"), s2 = NA("S");
+        connect(P_(s1, 1), P_(d2, 1)); connect(P_(s2, 1), P_(d2, 2));
+        if (l) connect(l, P_(s1, 0)); if (r) connect(r, P_(s2, 0));
+        if (ps[1]) connect(P_(d2, 0), ps[1]); }
+      else if (pk === "F") { const da = NA(ck, asleep), db = NA(ck, asleep), f1 = NA("F"), f2 = NA("F");
+        connect(P_(f1, 1), P_(da, 1)); connect(P_(f1, 2), P_(db, 1));
+        connect(P_(f2, 1), P_(da, 2)); connect(P_(f2, 2), P_(db, 2));
+        if (l) connect(l, P_(f1, 0)); if (r) connect(r, P_(f2, 0));
+        if (ps[1]) connect(P_(da, 0), ps[1]); if (ps[2]) connect(P_(db, 0), ps[2]); }
       else if (pk === "P") {
-        const f = take(pr, 1), a2 = take(pr, 2);
-        if (ck === "DN") {
-          const A1 = S_("A", false, f), d = S_("DN", false, f);
-          link(port(d, 1), l); link(port(d, 2), rr);
-          link(port(A1, 1), a2); link(port(A1, 2), port(d, 0)); link(port(A1, 0), f);
-        } else {
-          const df = S_("DS", asleep, f), da = S_("DS", asleep, a2);
-          const p1 = S_("P", asleep, l), p2 = S_("P", asleep, rr);
-          link(port(p1, 1), port(df, 1)); link(port(p1, 2), port(da, 1));
-          link(port(p2, 1), port(df, 2)); link(port(p2, 2), port(da, 2));
-          link(l, port(p1, 0)); link(rr, port(p2, 0));
-          link(port(df, 0), f); link(port(da, 0), a2);
-        }
+        if (ck === "DN") { const A1 = NA("A"), d = NA("DN");
+          if (l) connect(P_(d, 1), l); if (r) connect(P_(d, 2), r);
+          if (ps[2]) connect(P_(A1, 1), ps[2]); connect(P_(A1, 2), P_(d, 0));
+          if (ps[1]) connect(P_(A1, 0), ps[1]); }
+        else { const df = NA("DS", asleep), da = NA("DS", asleep), q1 = NA("P", asleep), q2 = NA("P", asleep);
+          connect(P_(q1, 1), P_(df, 1)); connect(P_(q1, 2), P_(da, 1));
+          connect(P_(q2, 1), P_(df, 2)); connect(P_(q2, 2), P_(da, 2));
+          if (l) connect(l, P_(q1, 0)); if (r) connect(r, P_(q2, 0));
+          if (ps[1]) connect(P_(df, 0), ps[1]); if (ps[2]) connect(P_(da, 0), ps[2]); }
       }
     }
     else if (ck === "E") {
-      if (pk === "S") erase(take(pr, 1));
-      else if (pk === "F" || pk === "P") { erase(take(pr, 1)); erase(take(pr, 2)); }
+      if (pk === "S") eraseTo(ps[1], site);
+      else if (pk === "F" || pk === "P") { eraseTo(ps[1], site); eraseTo(ps[2], site); }
     }
     else if (ck === "N") {
-      const res = take(c, 1);
-      if (pk === "L") { const l = S_("L", false, res); link(res, port(l, 0)); }
-      else if (pk === "S") { const x = take(pr, 1); const n2 = S_("N", false, x), s2 = S_("S", false, res);
-        link(port(n2, 1), port(s2, 1)); link(res, port(s2, 0)); link(port(n2, 0), x); }
-      else if (pk === "F") { const fl = take(pr, 1), fr = take(pr, 2);
-        const nl = S_("N", false, fl), nr = S_("N", false, fr), f2 = S_("F", false, res);
-        link(port(nl, 1), port(f2, 1)); link(port(nr, 1), port(f2, 2));
-        link(res, port(f2, 0)); link(port(nl, 0), fl); link(port(nr, 0), fr); }
-      else if (pk === "P") { const f = take(pr, 1), a2 = take(pr, 2);
-        const A1 = S_("A", false, f), n2 = S_("N", false, res);
-        link(port(n2, 1), res);
-        link(port(A1, 1), a2); link(port(A1, 2), port(n2, 0)); link(port(A1, 0), f); }
+      const res = cs[1];
+      if (pk === "L") { const l = NA("L"); if (res) connect(res, P_(l, 0)); }
+      else if (pk === "S") { const n2 = NA("N"), s2 = NA("S");
+        connect(P_(n2, 1), P_(s2, 1)); if (res) connect(res, P_(s2, 0));
+        if (ps[1]) connect(P_(n2, 0), ps[1]); }
+      else if (pk === "F") { const nl = NA("N"), nr = NA("N"), f2 = NA("F");
+        connect(P_(nl, 1), P_(f2, 1)); connect(P_(nr, 1), P_(f2, 2));
+        if (res) connect(res, P_(f2, 0));
+        if (ps[1]) connect(P_(nl, 0), ps[1]); if (ps[2]) connect(P_(nr, 0), ps[2]); }
+      else if (pk === "P") { const A1 = NA("A"), n2 = NA("N");
+        if (res) connect(P_(n2, 1), res);
+        if (ps[2]) connect(P_(A1, 1), ps[2]); connect(P_(A1, 2), P_(n2, 0));
+        if (ps[1]) connect(P_(A1, 0), ps[1]); }
     }
-    kill(c); kill(pr);
+    net.reserved = null;
   }
 
-  // ---- tension, straightening half (SPATIAL_IC 2.3): slack diffuses away. The real
-  // rule is per-cell (a kinked chain cell retracts into a free corner); this approximates
-  // it chain-locally by re-laying a few over-long wires per tick at elbow length. Reel-in
-  // and drift (agents moving to shorten wires) remain absent.
-  function straighten(budgetWires) {
-    let n = 0;
-    // Hot (pending-redex) wires are owned by the transport process: a blocked mover may
-    // be on a BFS detour around structure, and re-laying its path through the obstacle
-    // livelocks the delivery. Straightening is for COLD slack only.
-    const hot = new Set(net.redexes.map(r => r.wid));
-    for (const w of net.wires.values()) {
-      if (n >= budgetWires) break;
-      if (hot.has(w.id)) continue;
-      const A_ = get(w.pa.a), B_ = get(w.pb.a);
-      if (!A_ || !B_ || !A_.pos || !B_.pos) continue;
-      const man = Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
-      if (w.path.length <= Math.max(0, man - 1) + 2) continue;
-      const fresh = elbowRoute(net, A_, B_);
-      if (fresh.length >= w.path.length) continue;
-      for (const [x, y] of w.path) loadInc(x, y, -1);
-      net.straightened += w.path.length - fresh.length;
-      w.path = fresh;
-      for (const [x, y] of w.path) loadInc(x, y, 1);
-      n++;
+  // ---- active pairs + walkers (local scans) ----
+  function activePairs() {
+    const out = [], seen = new Set();
+    for (const c of net.grid.values()) {
+      if (!c.a) continue;
+      const p = c.a.ports[0];
+      if (p === null) continue;
+      const n = nb(c, p);
+      if (!n || !n.a || n.a.ports[0] !== opp(p)) continue;
+      const kk = c.x < n.x || (c.x === n.x && c.y <= n.y) ? key(c.x, c.y) + "|" + key(n.x, n.y) : key(n.x, n.y) + "|" + key(c.x, c.y);
+      if (seen.has(kk)) continue;
+      seen.add(kk);
+      const cons = KIND[c.a.tag].producer ? n : c;
+      const prod = cons === c ? n : c;
+      if (KIND[cons.a.tag].producer || !KIND[prod.a.tag].producer) continue;
+      if (cons.a.sleep) continue; // held: an undemanded lazy region
+      out.push([cons, prod]);
+    }
+    return out;
+  }
+  // a walker: an agent whose principal enters a HOT segment flowing away from it
+  // (a value moving to its consumer, or an eraser moving into its victim)
+  function walkerOf(c) {
+    if (!c.a || c.a.sleep) return null;
+    const isProd = KIND[c.a.tag].producer, isE = c.a.tag === "E";
+    if (!isProd && !isE) return null;
+    const p = c.a.ports[0];
+    if (p === null) return null;
+    const n = nb(c, p);
+    if (!n) return null;
+    if (n.a) {
+      // a port facing back = the far endpoint (a pair, or a delivered value): not a walk.
+      // An agent merely SQUATTING on the transit wire leaves the walker blocked; report
+      // it so the walk machinery can sidestep/evict and pressure can see the jam.
+      for (const pf of n.a.ports) if (pf === opp(p)) return null;
+    }
+    for (const g of n.segs) {
+      if ((g.a === opp(p) || g.b === opp(p)) && g.hot) {
+        const outDir = g.a === opp(p) ? g.b : g.a;
+        const flowOK = isProd ? g.flowDir === outDir : g.flowDir === opp(outDir) || g.flowDir === undefined;
+        if (flowOK || isE) return { cell: c, next: n, seg: g, outDir };
+        return null;
+      }
+    }
+    return null;
+  }
+  function walkers() {
+    const out = [];
+    for (const c of net.grid.values()) { const w = walkerOf(c); if (w) out.push(w); }
+    return out;
+  }
+  // relocate agent one cell (the ONE move primitive: walks and migration both use it).
+  // Every port reattachment is PLANNED under edge uniqueness before anything mutates;
+  // if any port cannot be rerouted the move is refused. The aligned port consumes one
+  // segment at the destination (walking eats the wire); every other port is a routing
+  // problem: findPath from the destination back to the old cell, whose face pd is the
+  // dangling stub the last segment completes. Dragged wires lengthen; tension reclaims.
+  function moveAgent(c, d) {
+    const a = c.a;
+    const dx1 = c.x + DX[d], dy1 = c.y + DY[d];
+    const dest0 = at(dx1, dy1);
+    if (dest0 && dest0.a) return false;
+    const destSegs = dest0 ? dest0.segs : [];
+    const blocked = new Set(), freed = new Set();
+    let consume = null, farDir = null;
+    const routes = [];
+    for (let s = 0; s < a.ports.length; s++) {
+      const pd = a.ports[s];
+      if (pd === null) continue;
+      if (pd === d) {
+        consume = destSegs.find(g => g.a === opp(d) || g.b === opp(d));
+        if (!consume) return false; // no segment to step onto (invalid chain)
+        farDir = consume.a === opp(d) ? consume.b : consume.a;
+        freed.add(edgeKey(c.x, c.y, d)); // eaten seg + departing port free this edge
+        blocked.add(edgeKey(dx1, dy1, farDir)); // the arriving port takes the far half
+        routes.push({ kind: "consume", s });
+        continue;
+      }
+      // drag = classic completion into the old cell (candidate 0); deeper candidates
+      // reel the wire in. Score by net wire delta so trailing slack gets EATEN as the
+      // agent walks (the reel-in of section 2.3) instead of silting up the corridor.
+      let picked = null, best = 1e9, scanned = 0;
+      for (const C of candidatesOf({ cell: c, dir: pd })) {
+        if (scanned++ > 12) break;
+        if (C.x === dx1 && C.y === dy1) continue; // the wire threads the destination; skip
+        const steps = route(dx1, dy1, C.x, C.y, { blocked, freed });
+        if (!steps) continue;
+        const score = (steps.length - 1) + (C.stubDir !== undefined ? 1 : 0) - C.del.length;
+        if (score < best) { best = score; picked = { C, steps }; }
+        if (best <= -2) break;
+      }
+      if (!picked) return false;
+      let ex = dx1, ey = dy1;
+      for (const st of picked.steps) { blocked.add(edgeKey(ex, ey, st)); ex += DX[st]; ey += DY[st]; }
+      for (const { cell: dc, seg } of picked.C.del) { // truncated segs free their edges
+        freed.add(edgeKey(dc.x, dc.y, seg.a)); freed.add(edgeKey(dc.x, dc.y, seg.b));
+      }
+      if (picked.C.stubDir === undefined) freed.add(edgeKey(c.x, c.y, pd)); // reel-in vacates the old edge
+      routes.push({ kind: "route", s, pd, C: picked.C, steps: picked.steps });
+    }
+    // commit
+    const dest = ensure(dx1, dy1);
+    if (consume) dest.segs.splice(dest.segs.indexOf(consume), 1);
+    dest.a = a; c.a = null;
+    net.transport++;
+    net.effects.push({ t: "slide", x0: c.x, y0: c.y, x1: dest.x, y1: dest.y, age: 0 });
+    for (const r of routes) {
+      if (r.kind === "consume") { a.ports[r.s] = farDir; continue; }
+      for (const { cell: dc, seg } of r.C.del) { dc.segs.splice(dc.segs.indexOf(seg), 1); clean(dc); }
+      a.ports[r.s] = r.steps[0];
+      let cx = dest;
+      for (let i = 0; i < r.steps.length - 1; i++) {
+        cx = nbE(cx, r.steps[i]);
+        addSeg(cx, opp(r.steps[i]), r.steps[i + 1]);
+      }
+      const fin = opp(r.steps[r.steps.length - 1]);
+      const tc = ensure(r.C.x, r.C.y);
+      if (r.C.stubDir !== undefined) addSeg(tc, r.C.stubDir, fin); // drag: old cell becomes wire
+      else if (r.C.repointSlot !== undefined) tc.a.ports[r.C.repointSlot] = fin;
+      else if (r.C.seg.a === r.C.half) r.C.seg.a = fin;
+      else r.C.seg.b = fin;
+    }
+    clean(c);
+    for (let s = 0; s < a.ports.length; s++) if (a.ports[s] !== null) retype(dest, s);
+    return true;
+  }
+
+  // ---- tension: per-cell kink retraction (the real straightening rule) ----
+  function endpointsOfSeg(c, g) {
+    // the two neighbors this segment attaches to; fix their pointers when retracting
+    const na = nb(c, g.a), nbb = nb(c, g.b);
+    if (!na || !nbb) return null;
+    return [ { n: na, back: opp(g.a) }, { n: nbb, back: opp(g.b) } ];
+  }
+  function retractSeg(c, g) {
+    if (g.hot) return false; // hot chains are being walked; leave them to transport
+    const ends = endpointsOfSeg(c, g);
+    if (!ends) return false;
+    const [ea, eb] = ends;
+    if (Math.max(Math.abs(ea.n.x - eb.n.x), Math.abs(ea.n.y - eb.n.y)) > 1) return false; // ends not adjacent
+    if (ea.n === eb.n) return false;
+    const dAB = dirBetween(ea.n.x, ea.n.y, eb.n.x, eb.n.y);
+    if (edgeUsed(ea.n, dAB)) return false; // the shortcut edge is taken; keep the kink
+    // repoint both sides at each other, drop this cell's segment
+    const repoint = (side, to) => {
+      if (side.n.a) {
+        for (let s = 0; s < side.n.a.ports.length; s++) if (side.n.a.ports[s] === side.back) { side.n.a.ports[s] = to; return true; }
+      }
+      for (const g2 of side.n.segs) {
+        if (g2.a === side.back) { g2.a = to; return true; }
+        if (g2.b === side.back) { g2.b = to; return true; }
+      }
+      return false;
+    };
+    if (!repoint(ea, dAB)) return false;
+    repoint(eb, opp(dAB));
+    c.segs.splice(c.segs.indexOf(g), 1);
+    net.straightened++;
+    clean(c);
+    return true;
+  }
+  function straighten(budget) {
+    let done = 0;
+    for (const c of net.grid.values()) {
+      if (done >= budget) break;
+      for (const g of c.segs) if (retractSeg(c, g)) { done++; break; }
+    }
+  }
+  // a blocked walker shoulders COLD slack out of the cell in front of it
+  function straightenAt(c) {
+    let did = false;
+    for (let i = c.segs.length - 1; i >= 0; i--) if (retractSeg(c, c.segs[i])) did = true;
+    return did;
+  }
+  // evict a transit segment from an occupied cell: re-route it around (repoint both
+  // neighbor halves along a detour), so a walker whose wire threads a squatting agent
+  // can pass. The displaced wire pays its detour in segments; tension reclaims later.
+  function evictWire(cellA, g) {
+    const ends = endpointsOfSeg(cellA, g);
+    if (!ends) return false;
+    const [ea, eb] = ends;
+    const blocked = new Set();
+    for (let d = 0; d < 8; d++) blocked.add(edgeKey(cellA.x, cellA.y, d));
+    const steps = route(ea.n.x, ea.n.y, eb.n.x, eb.n.y, { blocked });
+    if (!steps) return false;
+    const repoint = (side, to) => {
+      if (side.n.a) {
+        for (let s = 0; s < side.n.a.ports.length; s++) if (side.n.a.ports[s] === side.back) { side.n.a.ports[s] = to; return true; }
+      }
+      for (const g2 of side.n.segs) {
+        if (g2 === g) continue;
+        if (g2.a === side.back) { g2.a = to; return true; }
+        if (g2.b === side.back) { g2.b = to; return true; }
+      }
+      return false;
+    };
+    if (!repoint(ea, steps[0])) return false;
+    repoint(eb, opp(steps[steps.length - 1]));
+    let cx = ensure(ea.n.x, ea.n.y);
+    for (let i = 0; i < steps.length - 1; i++) {
+      cx = nbE(cx, steps[i]);
+      addSeg(cx, opp(steps[i]), steps[i + 1]);
+    }
+    cellA.segs.splice(cellA.segs.indexOf(g), 1);
+    clean(cellA);
+    const f = follow(ensure(ea.n.x, ea.n.y), steps[0]);
+    if (f.end) retype(f.end, f.slot);
+    return true;
+  }
+
+  // ---- migration: Metropolis drift over local port pulls + jam pressure ----
+  function mrand(x, y) {
+    let h = ((x * 73856093) ^ (y * 19349663) ^ (net.ticks * 83492791)) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45D9F3B) >>> 0;
+    return ((h ^ (h >>> 13)) >>> 0) / 4294967296;
+  }
+  function migrate() {
+    const movers = [...net.grid.values()].filter(c => c.a && !c.a.sleep);
+    for (const c of movers) {
+      if (!c.a) continue;
+      const a = c.a;
+      // hold at contact / walker: principal facing an agent or a hot segment is owned
+      // by the interaction machinery, not migration
+      const p = a.ports[0];
+      if (p !== null) {
+        const n = nb(c, p);
+        if (n && (n.a || n.segs.some(g => (g.a === opp(p) || g.b === opp(p)) && g.hot))) continue;
+      }
+      let fx = 0, fy = 0;
+      for (let s = 0; s < a.ports.length; s++) {
+        const d = a.ports[s];
+        if (d === null) continue;
+        const n = nb(c, d);
+        let wt = 1;
+        if (n) for (const g of n.segs) if (g.a === opp(d) || g.b === opp(d)) { wt = g.hot ? 12 : g.cls; break; }
+        fx += wt * DX[d]; fy += wt * DY[d];
+      }
+      for (const [bx, by] of net.blockedPrev) {
+        if (Math.abs(c.x - bx) <= 3 && Math.abs(c.y - by) <= 3) { fx += 8 * Math.sign(c.x - bx); fy += 8 * Math.sign(c.y - by); }
+      }
+      if (!fx && !fy) continue;
+      let best = -1, bs = -1e9;
+      for (let d = 0; d < 8; d++) {
+        const sc = fx * DX[d] + fy * DY[d];
+        if (sc > bs) { bs = sc; best = d; }
+      }
+      const dest = nb(c, best);
+      if (dest && dest.a) continue;
+      // density cap: keep vacancies threaded (8-way: refuse >=6 occupied neighbors)
+      let crowd = 0;
+      const dx2 = c.x + DX[best], dy2 = c.y + DY[best];
+      for (let d = 0; d < 8; d++) if (agentAt(dx2 + DX[d], dy2 + DY[d])) crowd++;
+      if (crowd >= 6) continue;
+      const acc = bs > 0 || mrand(c.x, c.y) < Math.exp(bs / net.temp);
+      if (!acc) continue;
+      if (moveAgent(c, best)) net.migr++;
     }
   }
 
-  // ---- ticks ----
+  // ---- tick ----
   function tick(parallel) {
     net.blockedPrev = net.blockedNow;
     net.blockedNow = [];
-    if (net.tension) straighten(8);
-    if (net.migration) migrate(); // substrate physics, both execution modes
-    net.redexes = net.redexes.filter(r => {
-      const c = get(r.c), p = get(r.p);
-      return c && p && !c.dead && !p.dead;
-    });
-    const live = net.redexes.filter(r => !r.held);
-    if (!live.length) { net.quiet = net.redexes.length === 0; return false; }
-    let didSomething = false;
-    if (parallel) {
-      const ready = [];
-      for (const r of live) {
-        const c = get(r.c), p = get(r.p), w = net.wires.get(r.wid);
-        if (adjacent(c, p) || !w || !w.path.length) ready.push(r);
-        else if (advance(r)) didSomething = true;
+    if (net.tension) straighten(10);
+    if (net.migration) migrate();
+    let did = false;
+    const pairs = activePairs();
+    const tryWalk = w => {
+      const d = w.cell.a.ports[0];
+      if (!w.next.a && moveAgent(w.cell, d)) return true;
+      // shoulder cold slack out of the cell ahead, then retry once
+      if (!w.next.a && straightenAt(w.next) && moveAgent(w.cell, d)) return true;
+      // an agent squats on our wire: evict the wire around it, then walk the new route
+      if (w.next.a && evictWire(w.next, w.seg)) {
+        const d2 = w.cell.a.ports[0];
+        if (moveAgent(w.cell, d2)) return true;
       }
-      for (const r of ready) {
-        const c = get(r.c), p = get(r.p);
-        if (!c || !p || c.dead || p.dead) continue;
-        net.redexes = net.redexes.filter(x => x !== r);
-        fire(r); didSomething = true;
+      // still stuck: WAIT, blocked (pressure's business). A sidestep here would drag
+      // all wires +1 per step with no bound; blocked walkers must not migrate.
+      return false;
+    };
+    if (parallel) {
+      // earlier fires/moves this tick invalidate later snapshot entries: re-validate
+      // each pair and walker against the LIVE grid before acting on it
+      for (const [cn, pr] of pairs) {
+        if (!cn.a || !pr.a) continue;
+        const p = cn.a.ports[0];
+        if (p === null || nb(cn, p) !== pr || pr.a.ports[0] !== opp(p)) continue;
+        if (KIND[cn.a.tag].producer || !KIND[pr.a.tag].producer || cn.a.sleep) continue;
+        fire(cn, pr); did = true;
+      }
+      for (const w0 of walkers()) {
+        const w = walkerOf(w0.cell);
+        if (!w) continue;
+        if (tryWalk(w)) did = true;
+        else net.blockedNow.push([w.cell.x, w.cell.y]);
       }
     } else {
-      // one event per tick: prefer one ready fire, else walk the first walkable redex
-      for (const r of live) {
-        const c = get(r.c), p = get(r.p), w = net.wires.get(r.wid);
-        if (adjacent(c, p) || !w || !w.path.length) {
-          net.redexes = net.redexes.filter(x => x !== r);
-          fire(r); didSomething = true; break;
+      if (pairs.length) { const [cn, pr] = pairs[0]; fire(cn, pr); did = true; }
+      else {
+        for (const w of walkers()) {
+          if (tryWalk(w)) { did = true; break; }
+          net.blockedNow.push([w.cell.x, w.cell.y]);
         }
       }
-      if (!didSomething) {
-        for (const r of live) if (advance(r)) { didSomething = true; break; }
-      }
     }
-    if (didSomething) {
-      net.ticks++;
-      net.grace = 0;
-      return true;
-    }
-    // No reduction or delivery progress this tick. If deliveries are jammed and
-    // migration is on, the pressure recorded this tick acts on the NEXT one: grant a
-    // bounded grace (the section 13 impatience watchdog, pointed the other way) so the
-    // corridor can be evacuated. Exhausted grace = genuine stall: stop loudly.
-    if (net.migration && net.blockedNow.length && (net.grace = (net.grace || 0) + 1) < 200) {
-      net.ticks++;
-      return true;
-    }
+    if (did) { net.ticks++; net.grace = 0; return true; }
+    if ((net.migration || net.tension) && net.blockedNow.length && ++net.grace < 200) { net.ticks++; return true; }
     net.quiet = true;
     return false;
   }
 
-  net.spawn = spawn; net.link = link; net.port = port; net.tick = tick;
-  net.occupyAt = (a, x, y) => { freeCell(a); occupy(a, x, y); };
+  net.at = at; net.agentAt = agentAt; net.placeAgent = placeAgent; net.connect = connect;
+  net.P_ = P_; net.tick = tick; net.follow = follow;
+  net.walkers = walkers; net.activePairs = activePairs; net.moveAgent = moveAgent;
   return net;
 }
 
-// ---------- term builders + layout ----------
-function builders(net) {
-  function leaf() { const a = net.spawn("L", { x: 0, y: 0 }); return net.port(a, 0); }
-  function stem(x) { const a = net.spawn("S", { x: 0, y: 0 }); net.link(net.port(a, 1), x); return net.port(a, 0); }
-  function fork(l, r) { const a = net.spawn("F", { x: 0, y: 0 }); net.link(net.port(a, 1), l); net.link(net.port(a, 2), r); return net.port(a, 0); }
-  function app(f, x) { const a = net.spawn("P", { x: 0, y: 0 }); net.link(net.port(a, 1), f); net.link(net.port(a, 2), x); return net.port(a, 0); }
-  function notTree() { return fork(fork(stem(leaf()), fork(leaf(), leaf())), leaf()); }
-  function notChain(n) { let t = leaf(); for (let i = 0; i < n; i++) t = app(notTree(), t); return t; }
+// ---------- term construction (spec tree -> placed cells) ----------
+function specs() {
+  const leaf = () => ({ tag: "L", ch: [] });
+  const stem = x => ({ tag: "S", ch: [x] });
+  const fork = (l, r) => ({ tag: "F", ch: [l, r] });
+  const app = (f, a) => ({ tag: "P", ch: [f, a] });
+  const notTree = () => fork(fork(stem(leaf()), fork(leaf(), leaf())), leaf());
+  const notChain = n => { let t = leaf(); for (let i = 0; i < n; i++) t = app(notTree(), t); return t; };
   return { leaf, stem, fork, app, notTree, notChain };
 }
-function layoutTerm(net, rootPort, spacing) {
+function instantiate(net, spec, spacing) {
   let nextX = 0;
-  const seen = new Set();
-  function walk(p, depth) {
-    if (!p) return;
-    const a = net.agents.get(p.a);
-    if (!a || seen.has(a.id)) return;
-    seen.add(a.id);
-    const kids = [];
-    for (let s = 1; s < a.slots.length; s++) if (a.slots[s]) kids.push(a.slots[s]);
-    if (!kids.length) { net.occupyAt(a, nextX * spacing, depth * spacing); nextX++; return; }
-    const x0 = nextX;
-    for (const k of kids) walk(k, depth + 1);
-    net.occupyAt(a, Math.round(((x0 + nextX - 1) / 2) * spacing), depth * spacing);
+  function walk(sp, depth) {
+    const kids = sp.ch.map(k => walk(k, depth + 1));
+    let x;
+    if (!kids.length) { x = nextX * spacing; nextX++; }
+    else x = Math.round((kids[0].cell.x + kids[kids.length - 1].cell.x) / 2);
+    const cell = net.placeAgent(sp.tag, { x, y: depth * spacing });
+    kids.forEach((k, i) => net.connect(net.P_(cell, i + 1), net.P_(k.cell, 0)));
+    return { cell };
   }
-  walk(rootPort, 1);
-  // wires were routed against pre-layout positions: re-route everything once
-  for (const w of net.wires.values()) {
-    const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
-    if (!A_ || !B_) continue;
-    for (const [x, y] of w.path) { /* clear load */ }
-  }
-  rebuildAllWires(net);
+  return walk(spec, 1).cell;
 }
-function rebuildAllWires(net) {
-  net.wireLoad.clear();
-  for (const w of net.wires.values()) {
-    const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
-    if (!A_ || !B_ || !A_.pos || !B_.pos) { w.path = []; continue; }
-    // straight-ish reroute via the same BFS the linker uses: cheap approx = manhattan L
-    w.path = [];
-  }
-  // route in order of manhattan length (short first claims less)
-  const ws = [...net.wires.values()].filter(w => net.agents.get(w.pa.a) && net.agents.get(w.pb.a));
-  ws.sort((u, v) => md(net, u) - md(net, v));
-  for (const w of ws) {
-    const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
-    const tmp = makeRouter(net)(A_, B_);
-    w.path = tmp || [];
-    for (const [x, y] of w.path) {
-      const k = x + "," + y, v = (net.wireLoad.get(k) || 0) + 1;
-      net.wireLoad.set(k, v);
-    }
-  }
-}
-function md(net, w) {
-  const A_ = net.agents.get(w.pa.a), B_ = net.agents.get(w.pb.a);
-  return Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
-}
-// Unweighted BFS around agent cells (endpoints exempt); the detour router for blocked
-// movers. Plain FIFO queue, bounded; null on enclosure or bound.
-function bfsRoute(net, A_, B_) {
-  const sx = A_.pos.x, sy = A_.pos.y, tx = B_.pos.x, ty = B_.pos.y;
-  if (Math.abs(sx - tx) + Math.abs(sy - ty) <= 1) return [];
-  const prev = new Map(), seen = new Set([key(sx, sy)]);
-  const q = [[sx, sy]];
-  let found = false, ex = 0;
-  while (q.length && ex++ < 4000) {
-    const [x, y] = q.shift();
-    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-      const nx = x + dx, ny = y + dy, nk = key(nx, ny);
-      if (seen.has(nk)) continue;
-      if (Math.abs(nx - sx) > 80 || Math.abs(ny - sy) > 80) continue;
-      const isT = nx === tx && ny === ty;
-      if (!isT && net.cellAgent.get(nk)) continue;
-      seen.add(nk); prev.set(nk, key(x, y));
-      if (isT) { found = true; q.length = 0; break; }
-      q.push([nx, ny]);
-    }
-  }
-  if (!found) return null;
-  const cells = [];
-  let cur = prev.get(key(tx, ty));
-  while (cur && cur !== key(sx, sy)) { const [px, py] = cur.split(",").map(Number); cells.push([px, py]); cur = prev.get(cur); }
-  cells.reverse();
-  return cells;
-}
-
-function elbowRoute(net, A_, B_) {
-  const sx = A_.pos.x, sy = A_.pos.y, tx = B_.pos.x, ty = B_.pos.y;
-  if (Math.abs(sx - tx) + Math.abs(sy - ty) <= 1) return [];
-  const walk = (xFirst) => {
-    const cells = []; let x = sx, y = sy;
-    const stepx = () => { while (x !== tx) { x += Math.sign(tx - x); if (x === tx && y === ty) return; cells.push([x, y]); } };
-    const stepy = () => { while (y !== ty) { y += Math.sign(ty - y); if (x === tx && y === ty) return; cells.push([x, y]); } };
-    if (xFirst) { stepx(); stepy(); } else { stepy(); stepx(); }
-    return cells;
-  };
-  const p1 = walk(true), p2 = walk(false);
-  const hits = p => p.reduce((n, [x, y]) => n + (net.cellAgent.get(key(x, y)) ? 1 : 0), 0);
-  return hits(p2) < hits(p1) ? p2 : p1;
-}
-function makeRouter(net) { return (A_, B_) => elbowRoute(net, A_, B_); }
 
 // ---------- examples ----------
 const EXAMPLES = [
   {
     id: "wide",
     label: "1 · wide frontier — where parallelism lives",
-    note: "A fork tree of 8 independent not-chains, all demanded by the normalizer. In " +
-          "sequential mode one event happens per tick, so the span equals the work plus the " +
-          "transport. In parallel mode every chain walks and fires in the same tick: same " +
-          "work, span collapses to roughly the longest single chain. This is the free " +
-          "parallelism of the single-principal-port invariant, made spatial.",
+    note: "A fork tree of 8 independent not-chains, all demanded by the normalizer. " +
+          "Sequential = one event per tick; parallel = the CA's synchronous step: same " +
+          "work, span collapses to about the longest chain. All eight results converge " +
+          "on one normalizer complex, and with wires occupying real faces the focus " +
+          "JAMS (section 13's congestion, live): tension alone stalls here; migration's " +
+          "crowd repulsion roughly doubles the depth before the core packs solid. The " +
+          "jam is the exhibit, not a bug: routing pressure is what the demand schedule " +
+          "and placement layers must solve.",
     build(B) { const w = d => d === 0 ? B.notChain(3) : B.fork(w(d - 1), w(d - 1)); return w(3); },
   },
   {
     id: "chain",
     label: "2 · demand spine — parallelism ≈ 1",
-    note: "One chain of nots. The demand token walks the spine; there is never more than " +
-          "about one enabled event, so parallel mode barely beats sequential. This is the " +
-          "honest limit: spines do not parallelize, which is why the tiled reducer routes " +
-          "them to latency cores and why span is a first-class grade.",
+    note: "One chain of nots: about one enabled event at any moment, so parallel mode " +
+          "barely helps; migration does (both ends of each delivery converge). Spines " +
+          "are why span is a first-class grade.",
     build(B) { return B.notChain(10); },
   },
   {
     id: "branch",
-    label: "3 · discarded branch — waste is spatial too",
-    note: "The example 1 term of the companion viz: the S-rule shares x, both K-rules " +
-          "discard it. Fire-everything walks values into the doomed branch (watch transport " +
-          "spent hauling material that ends up erased); demand-driven leaves the whole " +
-          "region dark and never pays the movement. On a substrate, wasted work is wasted " +
-          "TRANSPORT: the energy story of SPATIAL_IC section 4.",
+    label: "3 · discarded branch — waste is spatial",
+    note: "The S-rule shares x; both K-rules discard their copy. Fire-everything hauls " +
+          "values into the doomed branch and erases them; demand-driven leaves the region " +
+          "dark (asleep, clock-gated) and never pays the movement. The stranded sleeping " +
+          "duplicator is the lazy leak wire-RC exists for.",
     build(B) {
       const ka = B.fork(B.leaf(), B.leaf());
       const kb = B.fork(B.leaf(), B.stem(B.leaf()));
@@ -899,45 +1056,38 @@ const EXAMPLES = [
   },
 ];
 
-// ---------- headless comparison (seq vs par ticks) ----------
+// ---------- headless ----------
 function runHeadless(ex, mode, parallel, tension, migration, temp) {
   const net = makeNet(mode, tension, migration, temp);
-  const B = builders(net);
-  const root = ex.build(B);
-  layoutTerm(net, root, 3);
-  const rootAg = net.agents.get(root.a);
-  const n = net.spawn("N", { x: rootAg.pos.x, y: rootAg.pos.y - 1 }); // demand starts adjacent
-  net.link(net.port(n, 0), root);
-  let cap = 60000;
+  const root = instantiate(net, ex.build(specs()), 3);
+  const n = net.placeAgent("N", { x: root.x, y: root.y - 1 });
+  net.connect(net.P_(n, 0), net.P_(root, 0));
+  let cap = 120000;
   while (cap-- > 0 && net.tick(parallel)) {}
-  return { ticks: net.ticks, ints: net.ints, tr: net.transport, ins: net.inserted, live: net.agents.size };
+  return { ticks: net.ticks, ints: net.ints, tr: net.transport, mig: net.migr, live: net.agents, layers: net.layersMax };
 }
 
 // ---------- app ----------
 let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, MIGRATION = false, TEMP = 0.4,
-    RUNNING = false, CUR = EXAMPLES[0];
+    RUNNING = false, CUR = EXAMPLES[1], PIN = null, hoverCell = null; // chain: runs to NF
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 let view = { x: 0, y: 0, scale: 26 };
-let hover = null;
 
 function boot() {
   SIM = makeNet(MODE, TENSION, MIGRATION, TEMP);
-  const B = builders(SIM);
-  const root = CUR.build(B);
-  layoutTerm(SIM, root, 3);
-  const rootAg = SIM.agents.get(root.a);
-  const n = SIM.spawn("N", { x: rootAg.pos.x, y: rootAg.pos.y - 1 }); // demand starts adjacent
-  SIM.link(SIM.port(n, 0), root);
+  const root = instantiate(SIM, CUR.build(specs()), 3);
+  const n = SIM.placeAgent("N", { x: root.x, y: root.y - 1 });
+  SIM.connect(SIM.P_(n, 0), SIM.P_(root, 0));
   RUNNING = false;
-  SELECTED = null; // ids restart on reset; a stale pin would alias a different agent
+  PIN = null;
   document.getElementById("playBtn").innerHTML = "&#9654; play";
   fitView(); refreshPanel(); updateStats();
 }
 function fitView() {
   let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
-  for (const a of SIM.agents.values()) if (a.pos) {
-    minX = Math.min(minX, a.pos.x); maxX = Math.max(maxX, a.pos.x);
-    minY = Math.min(minY, a.pos.y); maxY = Math.max(maxY, a.pos.y);
+  for (const c of SIM.grid.values()) {
+    minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x);
+    minY = Math.min(minY, c.y); maxY = Math.max(maxY, c.y);
   }
   const w = innerWidth - 380, h = innerHeight - 60;
   view.scale = Math.max(6, Math.min(34, Math.min(w / (maxX - minX + 8), h / (maxY - minY + 8))));
@@ -946,35 +1096,62 @@ function fitView() {
 }
 function refreshPanel() {
   document.getElementById("exNote").textContent = CUR.note;
-  const rows = [["sequential", false], ["parallel (CA)", true]];
-  let html = "<tr><th>execution</th><th>ticks</th><th>work</th><th>transport</th><th>slack</th></tr>";
-  const res = [];
-  for (const [nm, par] of rows) {
-    const r = runHeadless(CUR, MODE, par, TENSION, MIGRATION, TEMP);
-    res.push(r);
-    const cls = (par ? "par" : "seq") === EXEC ? ' style="color:var(--accent)"' : "";
-    html += `<tr${cls}><td>${nm}</td><td>${r.ticks}</td><td>${r.ints}</td><td>${r.tr}</td><td>${r.ins}</td></tr>`;
-  }
-  const speedup = (res[0].ticks / Math.max(1, res[1].ticks)).toFixed(1);
-  html += `<tr><td>speedup</td><td colspan="4" style="text-align:left;color:var(--ok)">&#215;${speedup} in span, at identical semantics</td></tr>`;
-  document.getElementById("cmpTbl").innerHTML = html;
+  document.getElementById("cmpTbl").innerHTML =
+    `<tr><th>execution</th><th>ticks</th><th>work</th><th>transport</th><th>layers</th></tr>` +
+    `<tr><td colspan="5" style="text-align:left"><button id="cmpBtn" class="btn">run seq vs parallel comparison</button></td></tr>`;
+  document.getElementById("cmpBtn").onclick = runComparison;
+}
+// the comparison replays the example to quiescence twice; with routed wires that is
+// real work, so it runs on demand, chunked off the frame loop, with a tick cap
+function runComparison() {
+  const btn = document.getElementById("cmpBtn");
+  if (btn) btn.disabled = true;
+  const jobs = [["sequential", false], ["parallel (CA)", true]];
+  const rows = [];
+  const render = done => {
+    let html = "<tr><th>execution</th><th>ticks</th><th>work</th><th>transport</th><th>layers</th></tr>";
+    rows.forEach((r, i) => {
+      const cls = (jobs[i][1] ? "par" : "seq") === EXEC ? ' style="color:var(--accent)"' : "";
+      html += `<tr${cls}><td>${jobs[i][0]}</td><td>${r.capped ? "&ge;" : ""}${r.ticks}</td><td>${r.ints}</td><td>${r.tr}</td><td>${r.layers}</td></tr>`;
+    });
+    if (!done) html += `<tr><td colspan="5" style="text-align:left" class="k">computing&hellip;</td></tr>`;
+    else if (rows.length === 2) html += `<tr><td>speedup</td><td colspan="4" style="text-align:left;color:var(--ok)">&#215;${(rows[0].ticks / Math.max(1, rows[1].ticks)).toFixed(1)} in span, identical semantics</td></tr>`;
+    document.getElementById("cmpTbl").innerHTML = html;
+  };
+  const CHUNK = 1500, CAP = 60000;
+  let ji = 0, net = null, budget = 0;
+  const step = () => {
+    if (ji >= jobs.length) { render(true); return; }
+    if (!net) {
+      net = makeNet(MODE, TENSION, MIGRATION, TEMP);
+      const root = instantiate(net, CUR.build(specs()), 3);
+      const nn = net.placeAgent("N", { x: root.x, y: root.y - 1 });
+      net.connect(net.P_(nn, 0), net.P_(root, 0));
+      budget = CAP;
+    }
+    let slice = CHUNK, alive = true;
+    while (slice-- > 0 && budget-- > 0 && (alive = net.tick(jobs[ji][1]))) {}
+    if (!alive || budget <= 0) {
+      rows.push({ ticks: net.ticks, ints: net.ints, tr: net.transport, layers: net.layersMax, capped: budget <= 0 });
+      net = null; ji++;
+      render(ji >= jobs.length);
+    } else render(false);
+    if (ji < jobs.length) setTimeout(step, 0);
+  };
+  render(false);
+  setTimeout(step, 0);
 }
 function updateStats() {
   document.getElementById("stTick").textContent = SIM.ticks;
   document.getElementById("stInt").textContent = SIM.ints;
   document.getElementById("stTr").textContent = SIM.transport;
   document.getElementById("stMig").textContent = SIM.migr;
-  // tension energy = sum of weight x chain length: the liveness sketch's potential
-  const hotW = new Set(SIM.redexes.filter(r => !r.held).map(r => r.wid));
   let energy = 0;
-  for (const w of SIM.wires.values()) {
-    const wt = hotW.has(w.id) ? 12 : (w.pa.s === 0 || w.pb.s === 0) ? 2 : 1;
-    energy += wt * w.path.length;
-  }
+  for (const c of SIM.grid.values()) for (const g of c.segs) energy += g.hot ? 12 : g.cls;
   document.getElementById("stE").textContent = energy;
-  if (typeof refreshInspector === "function") refreshInspector();
-  document.getElementById("stPar").textContent = SIM.ticks ? ((SIM.ints + SIM.transport) / SIM.ticks).toFixed(1) : "-";
-  document.getElementById("stLive").textContent = SIM.agents.size;
+  document.getElementById("stLay").textContent = SIM.layersMax;
+  document.getElementById("stLive").textContent = SIM.agents;
+  refreshPop();
 }
 
 // ---------- render ----------
@@ -983,8 +1160,13 @@ function resize() { cv.width = innerWidth * devicePixelRatio; cv.height = innerH
 addEventListener("resize", resize); resize();
 const W2S = (x, y) => [(x - view.x) * view.scale, (y - view.y) * view.scale];
 const S2W = (px, py) => [px / view.scale + view.x, py / view.scale + view.y];
-
-function draw() {
+const lerpc = (c1, c2, t) => {
+  const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+  const m = sh => Math.round(((a >> sh) & 255) + (((b >> sh) & 255) - ((a >> sh) & 255)) * t);
+  return `rgb(${m(16)},${m(8)},${m(0)})`;
+};
+function draw(ts) {
+  pump(ts || performance.now());
   const s = view.scale, dpr = devicePixelRatio;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, innerWidth, innerHeight);
@@ -996,103 +1178,76 @@ function draw() {
     for (let gy = Math.floor(wy0); gy <= wy1; gy++) { const [, py] = W2S(0, gy - .5); ctx.moveTo(0, py); ctx.lineTo(innerWidth, py); }
     ctx.stroke();
   }
-  // wire cells (chains): hue = weight class (gold hot 12 / blue principal 2 / slate
-  // plumbing 1), width = weight, orange tint = slack (chain beyond the taut minimum)
-  const hotWires = new Set();
-  for (const r of SIM.redexes) if (!r.held) hotWires.add(r.wid);
-  const viaSeen = new Map();
-  const lerp = (c1, c2, t) => {
-    const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
-    const m = sh => Math.round(((a >> sh) & 255) + (((b >> sh) & 255) - ((a >> sh) & 255)) * t);
-    return `rgb(${m(16)},${m(8)},${m(0)})`;
-  };
-  for (const w of SIM.wires.values()) {
-    const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
-    if (!A_ || !B_ || !A_.pos || !B_.pos) continue;
-    const hot = hotWires.has(w.id);
-    const warm = !hot && (w.pa.s === 0 || w.pb.s === 0);
-    const sleepy = A_.sleeping || B_.sleeping;
-    const man = Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
-    const slack = Math.min(1, Math.max(0, (w.path.length - Math.max(0, man - 1)) / 12));
-    const base = hot ? "#8a6d1f" : warm ? "#3a6ea5" : "#2c3750";
-    const pts = [[A_.pos.x, A_.pos.y], ...w.path, [B_.pos.x, B_.pos.y]];
-    ctx.strokeStyle = sleepy ? "#232c40" : slack > 0 ? lerp(base, "#8a4a2a", slack) : base;
-    ctx.lineWidth = Math.max(1.2, s * (hot ? .16 : warm ? .11 : .07));
-    ctx.beginPath();
-    for (let i = 0; i < pts.length; i++) {
-      const [px, py] = W2S(pts[i][0], pts[i][1]);
-      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-    }
-    ctx.stroke();
-    // hovered / pinned wire: white halo under the beads
-    if ((typeof hoverWire !== "undefined" && hoverWire === w) ||
-        (typeof SELECTED !== "undefined" && SELECTED && SELECTED.type === "wire" && SELECTED.id === w.id)) {
-      ctx.strokeStyle = "#ffffff88";
-      ctx.lineWidth = Math.max(3, s * .22);
+  // segments: each cell draws its own (fully local rendering)
+  for (const c of SIM.grid.values()) {
+    if (!c.segs.length) continue;
+    const [cx, cy] = W2S(c.x, c.y);
+    if (cx < -20 || cy < -20 || cx > innerWidth + 20 || cy > innerHeight + 20) continue;
+    for (const g of c.segs) {
+      const kink = g.a !== opp(g.b);
+      const base = g.hot ? "#ffd866" : g.cls === 2 ? "#5f96d1" : "#3a4a6d";
+      ctx.strokeStyle = kink && !g.hot ? lerpc(base, "#e08050", .55) : base;
+      ctx.lineWidth = Math.max(1.2, s * (g.hot ? .14 : g.cls === 2 ? .1 : .07));
       ctx.beginPath();
-      for (let i = 0; i < pts.length; i++) {
-        const [px, py] = W2S(pts[i][0], pts[i][1]);
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      }
+      ctx.moveTo(cx + DX[g.a] * s * .5, cy + DY[g.a] * s * .5);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx + DX[g.b] * s * .5, cy + DY[g.b] * s * .5);
       ctx.stroke();
     }
-    // chain cells as beads
-    const bead = hot ? "#ffd866" : warm ? "#5f96d1" : "#3a4a6d";
-    const beadCol = sleepy ? "#2c3750" : slack > 0 ? lerp(bead, "#e08050", slack) : bead;
-    for (const [x, y] of w.path) {
-      const [px, py] = W2S(x, y);
-      const k = key(x, y);
-      viaSeen.set(k, (viaSeen.get(k) || 0) + 1);
-      ctx.fillStyle = beadCol;
-      ctx.beginPath(); ctx.arc(px, py, Math.max(1.5, s * (hot ? .12 : warm ? .09 : .07)), 0, 7); ctx.fill();
+    if (c.segs.length > 1 && s > 10) {
+      ctx.strokeStyle = "#ffd866"; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - s * .18); ctx.lineTo(cx + s * .18, cy); ctx.lineTo(cx, cy + s * .18); ctx.lineTo(cx - s * .18, cy);
+      ctx.closePath(); ctx.stroke();
     }
-  }
-  // vias
-  if (s > 10) for (const [k, n] of viaSeen) if (n > 1) {
-    const [x, y] = k.split(",").map(Number);
-    const [px, py] = W2S(x, y);
-    ctx.strokeStyle = "#ffd866"; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(px, py - s * .2); ctx.lineTo(px + s * .2, py); ctx.lineTo(px, py + s * .2); ctx.lineTo(px - s * .2, py);
-    ctx.closePath(); ctx.stroke();
   }
   // agents
-  for (const a of SIM.agents.values()) {
-    if (!a.pos) continue;
-    let ax = a.pos.x, ay = a.pos.y;
-    if (a.anim) { a.anim.t += .2; if (a.anim.t >= 1) a.anim = null;
-      else { ax = a.anim.fx + (ax - a.anim.fx) * a.anim.t; ay = a.anim.fy + (ay - a.anim.fy) * a.anim.t; } }
-    const [px, py] = W2S(ax, ay);
-    if (px < -40 || py < -40 || px > innerWidth + 40 || py > innerHeight + 40) continue;
-    const k = KIND[a.kind], r = s * .4;
-    ctx.globalAlpha = a.sleeping ? .4 : 1;
+  for (const c of SIM.grid.values()) {
+    if (!c.a) continue;
+    const [px, py] = W2S(c.x, c.y);
+    if (px < -30 || py < -30 || px > innerWidth + 30 || py > innerHeight + 30) continue;
+    const k = KIND[c.a.tag], r = s * .38;
+    ctx.globalAlpha = c.a.sleep ? .4 : 1;
     ctx.fillStyle = k.color;
     roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.fill();
-    if (a === hover || (SELECTED && SELECTED.type === "agent" && SELECTED.id === a.id)) {
-      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.stroke();
+    const isPin = PIN && PIN.x === c.x && PIN.y === c.y;
+    const isHov = hoverCell && hoverCell.x === c.x && hoverCell.y === c.y;
+    if (isPin || isHov) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; roundRect(px - r, py - r, 2 * r, 2 * r, r * .3); ctx.stroke(); }
+    // ports: principal = ring, aux = pip, each at its direction
+    for (let sl = 0; sl < c.a.ports.length; sl++) {
+      const d = c.a.ports[sl];
+      if (d === null) continue;
+      const ax = px + DX[d] * r * .95, ay = py + DY[d] * r * .95;
+      ctx.fillStyle = "#0b0e14";
+      if (sl === 0) { ctx.beginPath(); ctx.arc(ax, ay, Math.max(2, r * .24), 0, 7); ctx.fill(); }
+      else ctx.fillRect(ax - r * .1, ay - r * .1, r * .2, r * .2);
     }
-    const pp = a.slots[0] && SIM.agents.get(a.slots[0].a);
-    let ang = -Math.PI / 2;
-    if (pp && pp.pos) ang = Math.atan2(pp.pos.y - a.pos.y, pp.pos.x - a.pos.x);
-    ctx.fillStyle = "#0b0e14";
-    ctx.beginPath(); ctx.arc(px + Math.cos(ang) * r * .95, py + Math.sin(ang) * r * .95, Math.max(2, r * .24), 0, 7); ctx.fill();
     if (s > 12) {
       ctx.fillStyle = "#0b0e14";
-      ctx.font = `bold ${Math.max(8, s * .36)}px monospace`;
+      ctx.font = `bold ${Math.max(8, s * .34)}px monospace`;
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(k.glyph, px, py + 1);
-      if (a.sleeping) { ctx.fillStyle = "#9aa7bd"; ctx.font = `${Math.max(7, s * .24)}px monospace`; ctx.fillText("z", px + r * .95, py - r * .95); }
+      if (c.a.sleep) { ctx.fillStyle = "#9aa7bd"; ctx.font = `${Math.max(7, s * .22)}px monospace`; ctx.fillText("z", px + r * .9, py - r * .9); }
     }
     ctx.globalAlpha = 1;
   }
+  // pinned empty/wire cell highlight
+  if (PIN && (!SIM.agentAt(PIN.x, PIN.y))) {
+    const [px, py] = W2S(PIN.x, PIN.y);
+    ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 1.5;
+    ctx.strokeRect(px - s * .48, py - s * .48, s * .96, s * .96);
+  }
   for (const e of SIM.effects) {
     e.age++;
-    const [px, py] = W2S(e.x, e.y);
-    ctx.strokeStyle = e.red ? `rgba(255,90,90,${1 - e.age / 12})` : `rgba(120,210,255,${1 - e.age / 12})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(px, py, s * .3 + e.age * s * .07, 0, 7); ctx.stroke();
+    if (e.t === "flash") {
+      const [px, py] = W2S(e.x, e.y);
+      ctx.strokeStyle = e.red ? `rgba(255,90,90,${1 - e.age / 12})` : `rgba(120,210,255,${1 - e.age / 12})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(px, py, s * .3 + e.age * s * .07, 0, 7); ctx.stroke();
+    }
   }
   SIM.effects = SIM.effects.filter(e => e.age < 12);
+  positionPop();
   requestAnimationFrame(draw);
 }
 function roundRect(x, y, w, h, r) {
@@ -1101,22 +1256,95 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
 
+// ---------- the cell popup (pinned to the CELL, in world space) ----------
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const fld = (label, val, doc) => `<div class="row"><span class="k">${esc(label)}</span> <span class="fld" data-doc="${esc(doc)}">${val}</span></div>`;
+function popHTML(x, y) {
+  const c = SIM.at(x, y);
+  let h = `<div class="pinhead">CELL (${x}, ${y}) — pinned, live</div>`;
+  if (!c || (!c.a && !c.segs.length)) return h + `<div class="row k">empty: free space. Births claim cells like this; walks and migration move agents through them.</div>`;
+  if (c.a) {
+    const a = c.a, k = KIND[a.tag], doc = KIND_DOC[a.tag];
+    h += `<h4>${esc(k.glyph)} ${esc(k.name)}</h4>`;
+    h += fld("tag", `${esc(a.tag)} <span class="bits">${TAGBITS[a.tag]}</span>`, `the agent kind, 4 bits of cell state. ${doc.role}`);
+    h += fld("phase", a.sleep ? "asleep" : "awake", a.sleep
+      ? "sleep bit set: this region has never been demanded. A clock-gated cell: it does not fire, walk, or migrate until a demand pulse wakes it."
+      : "sleep bit clear: participates in firing, walking, and migration.");
+    for (let sl = 0; sl < a.ports.length; sl++) {
+      const nm = SLOTNAME[a.tag][sl], d = a.ports[sl];
+      h += fld("port " + nm, d === null ? "(loose)" : `&rarr; ${DNAME[d]}`,
+        (doc.slots[nm] || "") + (d === null
+          ? " Currently unwired: an open edge of the emerging result."
+          : ` One direction of cell state: this port's connection leaves toward ${DNAME[d]}. Following segments cell to cell is how the chain exists; there is no wire object.`));
+    }
+    h += fld("cell state", `<span class="bits">${TAGBITS[a.tag]} + ${a.ports.filter(p => p !== null).length}&times;3b dirs + 1b phase</span>`,
+      "the ENTIRE semantic state of this cell's agent: a 4-bit tag, one 3-bit direction per wired port, one phase bit. No ids, no pointers; identity is position (SPATIAL_IC section 3).");
+  }
+  if (c.segs.length) {
+    h += `<div class="row k" style="margin-top:5px">wire segments (${c.segs.length} layer${c.segs.length > 1 ? "s" : ""})</div>`;
+    c.segs.forEach((g, i) => {
+      const kink = g.a !== opp(g.b);
+      h += fld(`layer ${i}`, `${DNAME[g.a]} &harr; ${DNAME[g.b]} &middot; w=${g.hot ? 12 : g.cls}${g.hot ? " hot" : ""}${kink ? " &middot; kinked" : ""}${g.hot && g.flowDir !== undefined ? ` &middot; flow &rarr; ${DNAME[g.flowDir]}` : ""}`,
+        `one wire segment: two 3-bit directions${kink ? " (kinked: not a straight pass-through; the straightening rule retracts kinks when the neighbors touch)" : ""}. ` +
+        (g.hot ? "HOT (weight 12): this chain connects two facing principals, a pending interaction; the value walks along flow, one cell per tick, one transport unit each."
+               : g.cls === 2 ? "principal-class (weight 2): one end of this chain is a principal port; a value or demand will eventually traverse it."
+                             : "plumbing (weight 1): aux-to-aux structure; pulled last by migration, kept bounded."));
+    });
+  }
+  return h;
+}
+function refreshPop() {
+  const pop = document.getElementById("cellpop");
+  if (!PIN) { pop.style.display = "none"; return; }
+  document.getElementById("popBody").innerHTML = popHTML(PIN.x, PIN.y);
+  pop.style.display = "block";
+  positionPop();
+}
+function positionPop() {
+  if (!PIN) return;
+  const pop = document.getElementById("cellpop");
+  const [px, py] = W2S(PIN.x, PIN.y);
+  pop.style.left = Math.min(innerWidth - 360, px + view.scale * .6) + "px";
+  pop.style.top = Math.max(56, Math.min(innerHeight - pop.offsetHeight - 10, py - view.scale * .6 - pop.offsetHeight * .2)) + "px";
+}
+document.getElementById("popClose").onclick = () => { PIN = null; refreshPop(); };
+// field-level explanations: hover an underlined value for its meaning
+document.getElementById("cellpop").addEventListener("mouseover", e => {
+  const t = e.target.closest(".fld");
+  const tip = document.getElementById("tip");
+  if (t && t.dataset.doc) {
+    tip.textContent = t.dataset.doc;
+    tip.style.display = "block";
+    const r = t.getBoundingClientRect();
+    tip.style.left = Math.min(innerWidth - 340, r.left) + "px";
+    tip.style.top = (r.bottom + 6) + "px";
+  } else tip.style.display = "none";
+});
+document.getElementById("cellpop").addEventListener("mouseleave", () => {
+  document.getElementById("tip").style.display = "none";
+});
+
 // ---------- ticking ----------
-let acc = 0;
-setInterval(() => {
+// the pump lives in the rAF loop: setInterval gets clamped to 1Hz in unfocused tabs
+let acc = 0, lastFrameT = 0;
+function pump(ts) {
+  const dt = lastFrameT ? Math.min(0.1, (ts - lastFrameT) / 1000) : 0;
+  lastFrameT = ts;
   if (!RUNNING || !SIM) return;
   const rate = +document.getElementById("speed").value;
-  acc += rate / 30;
-  while (acc >= 1) {
+  acc += rate * dt;
+  const t0 = performance.now();
+  while (acc >= 1 && performance.now() - t0 < 120) {
     acc--;
-    if (!SIM.tick(EXEC === "par")) { RUNNING = false; document.getElementById("playBtn").innerHTML = "&#9654; play"; break; }
+    if (!SIM.tick(EXEC === "par")) { RUNNING = false; document.getElementById("playBtn").innerHTML = "&#9654; play"; acc = 0; break; }
   }
   updateStats();
-}, 33);
+}
 
 // ---------- controls ----------
 const exSel = document.getElementById("exSel");
 for (const ex of EXAMPLES) { const o = document.createElement("option"); o.value = ex.id; o.textContent = ex.label; exSel.appendChild(o); }
+exSel.value = CUR.id;
 exSel.onchange = () => { CUR = EXAMPLES.find(e => e.id === exSel.value); boot(); };
 document.getElementById("resetBtn").onclick = () => boot();
 document.getElementById("playBtn").onclick = () => {
@@ -1127,7 +1355,7 @@ document.getElementById("stepBtn").onclick = () => { SIM.tick(EXEC === "par"); u
 for (const b of document.querySelectorAll("#execSeg button")) {
   b.onclick = () => { EXEC = b.dataset.e;
     for (const x of document.querySelectorAll("#execSeg button")) x.classList.toggle("on", x === b);
-    boot(); };
+    refreshPanel(); }; // scheduling flavor only: the run (and any pinned cell) survives
 }
 for (const b of document.querySelectorAll("#modeSeg button")) {
   b.onclick = () => { MODE = b.dataset.m;
@@ -1140,174 +1368,45 @@ document.getElementById("migChk").onchange = e => { MIGRATION = e.target.checked
 document.getElementById("tempSlider").oninput = e => {
   TEMP = e.target.value / 100;
   document.getElementById("tempVal").textContent = TEMP.toFixed(2);
-  if (SIM) SIM.temp = TEMP; // live-tunable; headless table uses it on next reset
+  if (SIM) SIM.temp = TEMP;
 };
-
-// ---------- hover + selection ----------
-let hoverWire = null, SELECTED = null; // SELECTED = {type:'agent'|'wire', id}
-const DIRNAME = (dx, dy) => dy < 0 ? "N" : dy > 0 ? "S" : dx > 0 ? "E" : dx < 0 ? "W" : "·";
-
-function wireClass(w) {
-  const hot = SIM.redexes.some(r => !r.held && r.wid === w.id);
-  return hot ? { wt: 12, nm: "hot (pending redex)" }
-       : (w.pa.s === 0 || w.pb.s === 0) ? { wt: 2, nm: "principal" }
-       : { wt: 1, nm: "plumbing (aux-aux)" };
-}
-function wireSlack(w) {
-  const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
-  if (!A_ || !B_ || !A_.pos || !B_.pos) return 0;
-  const man = Math.abs(A_.pos.x - B_.pos.x) + Math.abs(A_.pos.y - B_.pos.y);
-  return Math.max(0, w.path.length - Math.max(0, man - 1));
-}
-function findHover(wx, wy) {
-  hover = null; hoverWire = null;
-  for (const a of SIM.agents.values()) {
-    if (a.pos && Math.abs(a.pos.x - wx) < .5 && Math.abs(a.pos.y - wy) < .5) { hover = a; return; }
-  }
-  for (const w of SIM.wires.values()) {
-    for (const [x, y] of w.path) {
-      if (Math.abs(x - wx) < .45 && Math.abs(y - wy) < .45) { hoverWire = w; return; }
-    }
-  }
-}
-function wireTipText(w) {
-  const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
-  const cls = wireClass(w), sl = wireSlack(w);
-  const end = (X, pp) => X ? `${KIND[X.kind].glyph} ${KIND[X.kind].name}.${SLOTNAME[X.kind][pp.s]}` : "(gone)";
-  return `wire: ${end(A_, w.pa)}  ↔  ${end(B_, w.pb)}` +
-    `\n  weight ${cls.wt} (${cls.nm})` +
-    `\n  chain ${w.path.length} cells${sl ? `, slack ${sl}` : ", taut"}` +
-    (A_ && A_.sleeping || B_ && B_.sleeping ? "\n  asleep (undemanded region)" : "") +
-    `\n  click to pin details`;
-}
-function agentTipText(a) {
-  const k = KIND[a.kind];
-  let txt = `${k.glyph}  ${k.name}   cell (${a.pos.x},${a.pos.y})`;
-  if (a.sleeping) txt += "\n  asleep: lazy, not yet demanded";
-  for (let s2 = 0; s2 < a.slots.length; s2++) {
-    const q = a.slots[s2]; const b = q && SIM.agents.get(q.a);
-    const wid = a.wire && a.wire[s2];
-    const w = wid && SIM.wires.get(wid);
-    let wireInfo = "";
-    if (w) {
-      const cls = wireClass(w), sl = wireSlack(w);
-      wireInfo = `   chain ${w.path.length}  w=${cls.wt}${sl ? `  slack ${sl}` : ""}`;
-    }
-    txt += `\n  ${SLOTNAME[a.kind][s2].padEnd(4)}→ ${b ? KIND[b.kind].glyph + " " + KIND[b.kind].name : "(loose)"}` + wireInfo;
-  }
-  return txt + "\n  click to pin details";
-}
-
-// ---------- the pinned inspector ----------
-const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-function slotDir(a, s) {
-  const wid = a.wire && a.wire[s];
-  const w = wid && SIM.wires.get(wid);
-  if (w && w.path.length) {
-    const mineFirst = w.pa.a === a.id && w.pa.s === s;
-    const h = mineFirst ? w.path[0] : w.path[w.path.length - 1];
-    return DIRNAME(Math.sign(h[0] - a.pos.x), Math.sign(h[1] - a.pos.y));
-  }
-  const q = a.slots[s]; const b = q && SIM.agents.get(q.a);
-  if (b && b.pos) return DIRNAME(Math.sign(b.pos.x - a.pos.x), Math.sign(b.pos.y - a.pos.y));
-  return "·";
-}
-function agentInspectHTML(a) {
-  const k = KIND[a.kind], doc = KIND_DOC[a.kind];
-  let h = `<h4>${esc(k.glyph)} ${esc(k.name)} <span class="k">at (${a.pos.x}, ${a.pos.y})</span></h4>`;
-  h += `<div class="expl">${esc(doc.role)}</div>`;
-  // status
-  let status;
-  const red = SIM.redexes.find(r => !r.held && (r.c === a.id || r.p === a.id));
-  const heldRed = SIM.redexes.find(r => r.held && (r.c === a.id || r.p === a.id));
-  if (red) {
-    const other = SIM.agents.get(red.c === a.id ? red.p : red.c);
-    const w = SIM.wires.get(red.wid);
-    const d = w ? w.path.length : 0;
-    status = `in a pending redex with ${other ? esc(KIND[other.kind].glyph + " " + KIND[other.kind].name) : "?"}: ` +
-      (d ? `${d} chain cells to contact (walking)` : `at contact, fires on the next scan`);
-  } else if (heldRed) status = "held redex: asleep until a demand arrives (lazy)";
-  else if (a.sleeping) status = "asleep: no consumer has demanded this region yet; clock-gated (does not act or migrate)";
-  else if (a.slots[0]) {
-    const pp = a.slots[0]; const b = SIM.agents.get(pp.a);
-    status = pp.s === 0 ? "principal met, awaiting scheduling"
-      : `parked: principal rests on ${b ? esc(KIND[b.kind].name) : "?"}.${b ? esc(SLOTNAME[b.kind][pp.s]) : "?"} (an aux wire), waiting for a value to arrive there`;
-  } else status = KIND[a.kind].producer ? "free value (part of the emerging normal form)" : "idle";
-  h += `<div class="row"><span class="k">status</span> ${status}</div>`;
-  if (a.seeded) h += `<div class="row"><span class="k">seed</span> ⚡ strict-seeded at birth (the M2 bit: provably demanded, so launched immediately)</div>`;
-  // ports
-  h += `<div class="row"><span class="k">ports</span></div>`;
-  for (let s = 0; s < a.slots.length; s++) {
-    const nm = SLOTNAME[a.kind][s];
-    const q = a.slots[s]; const b = q && SIM.agents.get(q.a);
-    const wid = a.wire && a.wire[s]; const w = wid && SIM.wires.get(wid);
-    h += `<div class="row">&nbsp;&nbsp;<b>${nm}</b> → ${b ? esc(KIND[b.kind].glyph) + " " + esc(KIND[b.kind].name) : "(loose: an edge of the result)"}`;
-    if (w) {
-      const cls = wireClass(w), sl = wireSlack(w);
-      h += ` <span class="k">· w=${cls.wt} · ${w.path.length} cells${sl ? ` · slack ${sl}` : " · taut"}</span>`;
-    }
-    h += `</div><div class="expl">${esc(doc.slots[nm] || "")}</div>`;
-  }
-  // idealized finite cell state
-  const dirs = [];
-  for (let s = 0; s < a.slots.length; s++) if (a.slots[s]) dirs.push(`${SLOTNAME[a.kind][s]}:${slotDir(a, s)}`);
-  h += `<div class="row"><span class="k">idealized cell state</span> <span class="bits">tag ${TAGBITS[a.kind]} · ports ${dirs.join(" ") || "none"} · ${a.sleeping ? "asleep" : "awake"}</span></div>`;
-  h += `<div class="expl">what a real substrate cell stores (SPATIAL_IC §3): a ~4-bit tag, one direction per port, a phase bit — a few tens of bits, no ids, no pointers. The global ids/paths in this toy are simulation bookkeeping, not cell state.</div>`;
-  return h;
-}
-function wireInspectHTML(w) {
-  const A_ = SIM.agents.get(w.pa.a), B_ = SIM.agents.get(w.pb.a);
-  const cls = wireClass(w), sl = wireSlack(w);
-  const end = (X, pp) => X ? `${esc(KIND[X.kind].glyph)} ${esc(KIND[X.kind].name)} <span class="k">port ${esc(SLOTNAME[X.kind][pp.s])} at (${X.pos.x}, ${X.pos.y})</span>` : "(gone)";
-  let h = `<h4>wire <span class="k">(a chain of ${w.path.length} cells)</span></h4>`;
-  h += `<div class="row"><span class="k">ends</span> ${end(A_, w.pa)} ↔ ${end(B_, w.pb)}</div>`;
-  h += `<div class="row"><span class="k">weight</span> ${cls.wt} (${cls.nm})</div>`;
-  h += `<div class="expl">${cls.wt === 12
-    ? "a pending redex in waiting: contracting this wire to zero IS dispatching the interaction, so it pulls hardest and its ends may only reel in"
-    : cls.wt === 2
-    ? "one end is a principal port: a value will eventually flow here (a demand or a delivery route)"
-    : "aux-to-aux plumbing: kept bounded, pulled last"}</div>`;
-  h += `<div class="row"><span class="k">tension</span> ${sl ? `${sl} cells of slack (orange tint): inserted by moves that dragged this wire; straightening re-lays it, migration tightens it` : "taut: at its minimal length for the current endpoint positions"}</div>`;
-  const red = SIM.redexes.find(r => r.wid === w.id);
-  if (red) h += `<div class="row"><span class="k">delivery</span> ${red.held ? "held: the consumer is asleep (a lazy region); wakes only if demanded" : "active: the " + (SIM.agents.get(red.c) && SIM.agents.get(red.c).kind === "E" ? "eraser walks INTO this chain (death pulse)" : "producer walks this chain toward its consumer") + ", one cell per tick, one transport unit each"}</div>`;
-  h += `<div class="expl">every chain cell is one ι-forwarder of the embedding theorem; the value re-materializes across them one cell at a time. E counts weight × length of every such chain.</div>`;
-  return h;
-}
-function refreshInspector() {
-  const box = document.getElementById("inspect"), body = document.getElementById("inspBody");
-  if (!SELECTED) { box.style.display = "none"; return; }
-  let html = null;
-  if (SELECTED.type === "agent") {
-    const a = SIM.agents.get(SELECTED.id);
-    html = a ? agentInspectHTML(a) : `<h4>agent consumed</h4><div class="expl">this agent fired its interaction (or was erased) and its cells were reclaimed.</div>`;
-  } else {
-    const w = SIM.wires.get(SELECTED.id);
-    html = w ? wireInspectHTML(w) : `<h4>wire gone</h4><div class="expl">this wire was consumed: either its interaction fired (the chain was spliced or walked away) or its endpoints were erased.</div>`;
-  }
-  body.innerHTML = `<div class="pin">pinned — updates live · click canvas background to close</div>` + html;
-  box.style.display = "block";
-}
-document.getElementById("inspClose").onclick = () => { SELECTED = null; refreshInspector(); };
 
 let panning = false, px0 = 0, py0 = 0, downX = 0, downY = 0;
 cv.addEventListener("mousedown", e => { panning = true; cv.classList.add("panning"); px0 = downX = e.clientX; py0 = downY = e.clientY; });
 addEventListener("mouseup", e => {
   if (panning && Math.abs(e.clientX - downX) < 4 && Math.abs(e.clientY - downY) < 4 && e.target === cv) {
-    // a click, not a drag: pin whatever is under the cursor (agents win over wires)
     const [wx, wy] = S2W(e.clientX, e.clientY);
-    findHover(wx, wy);
-    SELECTED = hover ? { type: "agent", id: hover.id } : hoverWire ? { type: "wire", id: hoverWire.id } : null;
-    refreshInspector();
+    const x = Math.round(wx), y = Math.round(wy);
+    const c = SIM.at(x, y);
+    PIN = c && (c.a || c.segs.length) ? { x, y } : null;
+    if (PIN) document.getElementById("tip").style.display = "none"; // the popup takes over
+    refreshPop();
   }
   panning = false; cv.classList.remove("panning");
 });
 addEventListener("mousemove", e => {
   if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; }
+  if (e.target !== cv) return;
   const [wx, wy] = S2W(e.clientX, e.clientY);
-  findHover(wx, wy);
+  const x = Math.round(wx), y = Math.round(wy);
+  const c = SIM && SIM.at(x, y);
+  hoverCell = c && (c.a || c.segs.length) ? { x, y } : null;
   const tip = document.getElementById("tip");
-  if (hover || hoverWire) {
-    tip.textContent = hover ? agentTipText(hover) : wireTipText(hoverWire);
+  // the pinned popup already shows this cell live; don't stack the summary on top
+  if (hoverCell && PIN && PIN.x === hoverCell.x && PIN.y === hoverCell.y) { tip.style.display = "none"; return; }
+  if (hoverCell) {
+    let txt = `cell (${x}, ${y})`;
+    if (c.a) {
+      txt += `\n${KIND[c.a.tag].glyph} ${KIND[c.a.tag].name}${c.a.sleep ? "  (asleep)" : ""}`;
+      for (let s2 = 0; s2 < c.a.ports.length; s2++) {
+        const d = c.a.ports[s2];
+        txt += `\n  ${SLOTNAME[c.a.tag][s2].padEnd(4)}${d === null ? "(loose)" : "→ " + DNAME[d]}`;
+      }
+    }
+    if (c.segs.length) txt += `\n${c.segs.length} wire segment${c.segs.length > 1 ? "s" : ""}: ` +
+      c.segs.map(g => `${DNAME[g.a]}↔${DNAME[g.b]}${g.hot ? " hot" : ""}`).join(", ");
+    txt += `\nclick to pin`;
+    tip.textContent = txt;
     tip.style.display = "block";
     tip.style.left = Math.min(innerWidth - 340, e.clientX + 14) + "px";
     tip.style.top = (e.clientY + 14) + "px";
