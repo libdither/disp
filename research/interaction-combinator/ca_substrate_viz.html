@@ -77,7 +77,7 @@
   </div>
   <div class="grp">
     <label class="chk"><input type="checkbox" id="tensionChk" checked> tension</label>
-    <label class="chk"><input type="checkbox" id="migChk"> migration</label>
+    <label class="chk"><input type="checkbox" id="migChk" checked> migration</label>
     <span style="color:var(--dim)">T</span>
     <input type="range" id="tempSlider" min="1" max="250" value="40" style="width:70px">
     <span id="tempVal" style="color:var(--dim);min-width:32px">0.40</span>
@@ -356,12 +356,15 @@ function makeNet(mode, tension, migration, temp) {
     const x2 = x + DX[d], y2 = y + DY[d];
     return (y < y2 || (y === y2 && x <= x2)) ? x + "," + y + ":" + d : x2 + "," + y2 + ":" + opp(d);
   };
-  // BFS a lay-path between two cells over free EDGES; intermediates are agent-free
+  // Route a lay-path between two cells over free EDGES; intermediates are agent-free
   // (wires may cross as layered segs, but never share a face). Dangling stub halves
   // mark their edges used, so completion faces are never stepped through. opts.blocked
   // and opts.freed overlay planned-but-uncommitted claims on the live grid (moveAgent).
-  // Returns the list of step directions, or null when boxed in.
+  // Dijkstra with octile costs (orthogonal 2, diagonal 3) plus a turn penalty, so taut
+  // wires come out Euclidean-straight with minimal kinks — Chebyshev-blind BFS made
+  // everything a 45-degree staircase. Returns the step directions, or null.
   function findPath(x0, y0, x1, y1, opts) {
+    if (x0 === x1 && y0 === y1) return null; // a wire needs two distinct ends
     const bx0 = Math.min(x0, x1) - 24, bx1 = Math.max(x0, x1) + 24;
     const by0 = Math.min(y0, y1) - 24, by1 = Math.max(y0, y1) + 24;
     const blocked = opts && opts.blocked, freed = opts && opts.freed;
@@ -371,31 +374,49 @@ function makeNet(mode, tension, migration, temp) {
       if (freed && freed.has(ek)) return false;
       return edgeUsed(cell, d);
     };
-    const k1 = key(x0, y0), k2 = key(x1, y1);
-    const prev = new Map([[k1, null]]);
-    let frontier = [[x0, y0]], found = false;
-    while (frontier.length && !found) {
-      const nxt = [];
-      for (const [qx, qy] of frontier) {
+    // Dial's algorithm over states (cell, incoming dir); costs are small ints
+    const seen = new Map(); // "x,y:din" -> cost
+    const prev = new Map(); // state -> [prevState, d]
+    const buckets = [[[x0, y0, -1]]];
+    seen.set(x0 + "," + y0 + ":-1", 0);
+    let goal = null, pops = 0;
+    for (let cost = 0; cost < buckets.length && !goal && pops < 60000; cost++) {
+      const bucket = buckets[cost];
+      if (!bucket) continue;
+      for (const [qx, qy, din] of bucket) {
+        const sk = qx + "," + qy + ":" + din;
+        if (seen.get(sk) !== cost) continue; // stale entry
+        pops++;
+        if (qx === x1 && qy === y1) { goal = sk; break; }
         const cur = virt(qx, qy);
         for (let d = 0; d < 8; d++) {
           if (eUsed(cur, d)) continue;
-          const tx = qx + DX[d], ty = qy + DY[d], nk = key(tx, ty);
-          if (tx < bx0 || tx > bx1 || ty < by0 || ty > by1 || prev.has(nk)) continue;
-          if (nk === k2) { prev.set(nk, [key(qx, qy), d]); found = true; break; }
-          const n = at(tx, ty);
-          if (n && n.a && !(opts && opts.thruAgents)) continue;
-          if (n && opts && opts.maxSegs !== undefined && n.segs.length > opts.maxSegs) continue;
-          prev.set(nk, [key(qx, qy), d]);
-          nxt.push([tx, ty]);
+          const tx = qx + DX[d], ty = qy + DY[d];
+          if (tx < bx0 || tx > bx1 || ty < by0 || ty > by1) continue;
+          const isGoal = tx === x1 && ty === y1;
+          if (!isGoal) {
+            const n = at(tx, ty);
+            if (n && n.a && !(opts && opts.thruAgents)) continue;
+            if (n && opts && opts.maxSegs !== undefined && n.segs.length > opts.maxSegs) continue;
+          }
+          const c2 = cost + ((d & 1) ? 3 : 2) + (din >= 0 && d !== din ? 1 : 0);
+          const nk = tx + "," + ty + ":" + d;
+          const old = seen.get(nk);
+          if (old !== undefined && old <= c2) continue;
+          seen.set(nk, c2);
+          prev.set(nk, [sk, d]);
+          (buckets[c2] = buckets[c2] || []).push([tx, ty, d]);
         }
-        if (found) break;
       }
-      frontier = nxt;
     }
-    if (!found) return null;
+    if (!goal) return null;
     const steps = [];
-    for (let kk = k2; kk !== k1; ) { const [pk, d] = prev.get(kk); steps.unshift(d); kk = pk; }
+    for (let kk = goal; ; ) {
+      const p = prev.get(kk);
+      if (!p) break;
+      steps.unshift(p[1]);
+      kk = p[0];
+    }
     return steps;
   }
   // congestion-tiered routing: spread wires through sparse cells before stacking layers
@@ -520,7 +541,8 @@ function makeNet(mode, tension, migration, temp) {
         const score = (steps.length - 1)
           + (C1.stubDir !== undefined ? 1 : 0) + (C2.stubDir !== undefined ? 1 : 0)
           - C1.del.length - C2.del.length;
-        if (score < bestScore) { bestScore = score; bestPlan = { C1, C2, steps }; }
+        // ties go to the deeper combo: contract through the dead site when it's free
+        if (score <= bestScore) { bestScore = score; bestPlan = { C1, C2, steps }; }
       }
     }
     if (!bestPlan) throw new Error("connect: exhausted candidates (" + e1.cell.x + "," + e1.cell.y + ")->(" + e2.cell.x + "," + e2.cell.y + ")");
@@ -763,7 +785,8 @@ function makeNet(mode, tension, migration, temp) {
         const steps = route(dx1, dy1, C.x, C.y, { blocked, freed });
         if (!steps) continue;
         const score = (steps.length - 1) + (C.stubDir !== undefined ? 1 : 0) - C.del.length;
-        if (score < best) { best = score; picked = { C, steps }; }
+        // ties go to the DEEPER candidate: eat slack rather than lay a parallel rail
+        if (score <= best) { best = score; picked = { C, steps }; }
         if (best <= -2) break;
       }
       if (!picked) return false;
@@ -1068,7 +1091,7 @@ function runHeadless(ex, mode, parallel, tension, migration, temp) {
 }
 
 // ---------- app ----------
-let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, MIGRATION = false, TEMP = 0.4,
+let SIM = null, EXEC = "seq", MODE = "fire", TENSION = true, MIGRATION = true, TEMP = 0.4,
     RUNNING = false, CUR = EXAMPLES[1], PIN = null, hoverCell = null; // chain: runs to NF
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
 let view = { x: 0, y: 0, scale: 26 };
