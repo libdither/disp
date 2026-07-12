@@ -6,6 +6,8 @@
   // ground, rest a while, and fade; surviving branches glide to their new
   // positions; ready redexes wear the letter of the rule about to fire.
   import { onMount, onDestroy } from 'svelte'
+  import { crossfade, fade, scale } from 'svelte/transition'
+  import { cubicOut, backOut } from 'svelte/easing'
   import {
     parseTree,
     stepOnce,
@@ -108,21 +110,38 @@
   let showSelectors = $state(false) // the ⚘ tree toggle reveals the view selectors
   let cassetteWrapEl: HTMLDivElement | undefined = $state()
   let selectorsWrapEl: HTMLDivElement | undefined = $state()
-  // the selector drag along the (stationary) tape
+  // the selector drag along the (stationary) tape. The selector is STICKY: it
+  // snaps cell-to-cell as you drag (each snap bounces, via CSS), and the tree
+  // changes to that piece live — frozen, not playing — as it passes.
   let selDragging = $state(false)
-  let selDX = $state(0) // live px offset of the selector while dragging
+  let selDX = 0 // pointer delta from the grab point, px
   let selStartX = 0
+  let selBaseX = 0 // the selector's x when the drag began
   let selMoved = false
-  // the selector's live x: its resting slot plus the clamped drag offset
-  const selX = $derived(selectedIdx * CELLW + (selDragging ? selDX : 0))
+  // the selector always rests on a cell → sticky; the bouncy CSS animates snaps
+  const selX = $derived(selectedIdx * CELLW)
 
-  // select a piece: load and run it (selector-drop, cell tap, and prev/next land here)
+  // select a piece: load and RUN it (cell tap, prev/next, and drag-release land here)
   function pickPalette(i: number) {
     const t = clampIdx(i)
     selectedIdx = t
     running = true
     load(PIECES[t].expr)
   }
+  // preview a piece WITHOUT playing — used live while dragging the selector, so
+  // the tree changes as you scrub but nothing runs. Cleared nodes = instant swap.
+  function loadFrozen(i: number) {
+    selectedIdx = clampIdx(i)
+    running = false
+    autoCycle = false
+    clearTimeout(timer)
+    nodes = []
+    edges = []
+    load(PIECES[selectedIdx].expr)
+  }
+  // the chip and the selector crossfade into each other: click the chip and it
+  // flies to the selector's slot as the tape unfurls (and back on close)
+  const [sendChip, recvChip] = crossfade({ duration: 300, easing: cubicOut })
   // opening the tape freezes the ambient cycle so the selector holds still
   // while you drag it (otherwise it auto-scrolls out from under the pointer)
   function openCassette() {
@@ -136,22 +155,25 @@
     selMoved = false
     selDX = 0
     selStartX = e.clientX
+    selBaseX = selectedIdx * CELLW
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
   function selectorMove(e: PointerEvent) {
     if (!selDragging) return
-    // keep the selector on the tape
-    const lo = -selectedIdx * CELLW
-    const hi = (PIECES.length - 1 - selectedIdx) * CELLW
+    const lo = -selBaseX // keep the selector on the tape
+    const hi = (PIECES.length - 1) * CELLW - selBaseX
     selDX = Math.max(lo, Math.min(hi, e.clientX - selStartX))
     if (Math.abs(selDX) > 3) selMoved = true
+    // snap to the nearest cell and preview it (frozen) as we pass
+    const li = clampIdx(Math.round((selBaseX + selDX) / CELLW))
+    if (li !== selectedIdx) loadFrozen(li)
   }
   function selectorUp() {
     if (!selDragging) return
-    const target = clampIdx(Math.round((selectedIdx * CELLW + selDX) / CELLW))
     selDragging = false
     selDX = 0
-    if (selMoved) pickPalette(target)
+    // land on the piece we scrubbed to and play it
+    pickPalette(selectedIdx)
   }
 
   const matchIdx = () => exampleOptions.findIndex((o) => o.expr === input)
@@ -163,6 +185,12 @@
     const next = cur === -1 ? (dir === 1 ? 0 : opts.length - 1) : cur + dir
     if (next < 0 || next >= opts.length) return
     load(opts[next].expr)
+  }
+  // focusing the edit box pauses the reduction so it holds still while you type
+  function pauseForEdit() {
+    autoCycle = false
+    running = false
+    clearTimeout(timer)
   }
   // the edit box is bare text: Enter loads it, Escape drops focus
   function onEditKey(e: KeyboardEvent) {
@@ -776,6 +804,11 @@
   role="application"
   aria-label="tree-calculus visualizer — space runs or pauses, arrow keys step back and forward"
   onkeydown={onKey}
+  onmousedown={(e) => {
+    // clicking a control shouldn't leave it focused (no stuck selection ring);
+    // keeps keyboard focus on the widget so the arrow keys keep working
+    if ((e.target as HTMLElement).closest('button')) e.preventDefault()
+  }}
 >
   <div class="topbar">
     <!-- media transport: circular buttons, centred at the top, always on
@@ -789,17 +822,28 @@
       <button class="mpi" onclick={reset} title="reset to the start" aria-label="reset">{@render icoReset()}</button>
     </div>
 
-    <!-- the edit box: bare editable text, centred directly under the transport -->
+    <!-- the edit box: bare editable text, centred under the transport, with an
+         (i) that explains what names you can type -->
     <div class="editrow">
       <input
         class="editbox"
         type="text"
         bind:value={input}
         onkeydown={onEditKey}
+        onfocus={pauseForEdit}
         spellcheck="false"
         autocomplete="off"
         aria-label="tree-calculus expression — edit and press Enter"
       />
+      <span class="info">
+        <button type="button" class="info-btn" aria-label="what can I type here?">i</button>
+        <span class="info-pop" role="tooltip">
+          Edit this and press <kbd>Enter</kbd>. Combinators: <code>t</code> (△), <code>K</code>,
+          <code>S</code>, <code>not</code>, <code>and</code>, <code>or</code>, <code>add</code>,
+          and plain numbers. Any other name — <code>x</code>, <code>y</code>, <code>f</code> … — is a
+          free variable: a named leaf the reductions carry along symbolically.
+        </span>
+      </span>
     </div>
     {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
 
@@ -954,13 +998,13 @@
          selector rides the tape and snaps to the nearest piece. Bottom-left. -->
     <div class="cassette-wrap" bind:this={cassetteWrapEl}>
       {#if cassetteOpen}
-        <div class="cassette-tape">
+        <div class="cassette-tape" out:fade={{ duration: 160 }}>
           {#each PIECES as it, i}
             <button
               type="button"
               class="tcell"
               class:on={i === selectedIdx}
-              style="width: {CELLW}px"
+              style="width: {CELLW}px; --ci: {i}"
               title={it.tip}
               aria-label={it.tip}
               onclick={() => pickPalette(i)}
@@ -973,6 +1017,7 @@
             style="width: {CELLW}px; transform: translateX({selX}px)"
             title="drag to choose a piece"
             aria-hidden="true"
+            in:recvChip={{ key: 'cass' }}
             onpointerdown={selectorDown}
             onpointermove={selectorMove}
             onpointerup={selectorUp}
@@ -987,6 +1032,8 @@
           aria-haspopup="true"
           aria-label={`tree pieces — now: ${PIECES[selectedIdx].tip}. Click to open the tape.`}
           title={`${PIECES[selectedIdx].tip} — click to open the tape`}
+          in:fade={{ duration: 150 }}
+          out:sendChip={{ key: 'cass' }}
         >{PIECES[selectedIdx].sym}{#if PIECES[selectedIdx].sub}<sub>{PIECES[selectedIdx].sub}</sub>{/if}</button>
       {/if}
     </div>
@@ -995,7 +1042,10 @@
          reveals the view selectors. Bottom-right. -->
     <div class="selectors-wrap" bind:this={selectorsWrapEl}>
       {#if showSelectors}
-        <div class="selectors-pop">{@render selectorButtons()}</div>
+        <div
+          class="selectors-pop"
+          transition:scale={{ duration: 200, start: 0.8, opacity: 0, easing: backOut }}
+        >{@render selectorButtons()}</div>
       {/if}
       <button
         class="tree-toggle"
@@ -1015,10 +1065,11 @@
     outline: none;
     border-radius: var(--radius, 12px);
   }
-  /* keyboard drive: a visible ring only when focus came from the keyboard —
-     clicking to grab space/arrow control stays visually quiet */
+  /* the widget grabs keyboard focus for space/arrow drive, but stays visually
+     quiet — no selection ring around the whole thing */
+  .vis:focus,
   .vis:focus-visible {
-    box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 55%, transparent);
+    outline: none;
   }
   .vis.lab {
     border: 1px solid var(--border);
@@ -1049,14 +1100,16 @@
   }
   /* the edit box: bare editable text, centred directly under the transport */
   .editrow {
+    position: relative;
     display: flex;
     justify-content: center;
+    align-items: center;
     width: 100%;
     min-width: 0;
   }
   .editbox {
     width: 100%;
-    max-width: 30rem;
+    max-width: min(24rem, calc(100% - 3rem));
     min-width: 0;
     background: none;
     border: none;
@@ -1065,10 +1118,93 @@
     font-family: var(--font-mono);
     font-size: 0.85rem;
     text-align: center;
-    padding: 0.1em 0.3em;
+    padding: 0.14em 0.5em;
+    border-radius: 7px;
     caret-color: var(--accent);
+    /* a quiet affordance that this is editable: a faint dashed underline that
+       firms up to the accent on hover / focus */
+    border-bottom: 1px dashed color-mix(in oklab, var(--fg-faint) 50%, transparent);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .editbox:hover {
+    border-bottom-color: var(--fg-muted);
+    background: color-mix(in oklab, var(--bg-code) 45%, transparent);
+  }
+  .editbox:focus {
+    border-bottom: 1px solid var(--accent);
+    background: color-mix(in oklab, var(--bg-code) 60%, transparent);
   }
   .editbox::selection { background: color-mix(in oklab, var(--accent) 28%, transparent); }
+  /* the (i) that explains what names you can type, at the row's right edge */
+  .info {
+    position: absolute;
+    right: 0.1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+  }
+  .info-btn {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: none;
+    color: var(--fg-faint);
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-style: italic;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-grid;
+    place-items: center;
+    cursor: help;
+    padding: 0;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .info-btn:hover,
+  .info-btn:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+  .info-pop {
+    position: absolute;
+    top: calc(100% + 9px);
+    right: -0.35rem;
+    width: 250px;
+    padding: 0.55rem 0.7rem;
+    border-radius: 9px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev);
+    box-shadow: 0 12px 28px -14px color-mix(in oklab, var(--fg) 42%, transparent);
+    color: var(--fg-muted);
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    text-align: left;
+    z-index: 50;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    pointer-events: none;
+  }
+  .info:hover .info-pop,
+  .info-btn:focus-visible + .info-pop {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+  .info-pop code {
+    background: color-mix(in oklab, var(--fg) 9%, transparent);
+    padding: 0 0.25em;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+  .info-pop kbd {
+    background: var(--bg-code);
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    padding: 0 0.3em;
+    font-size: 0.88em;
+    font-family: var(--font-mono);
+  }
   /* the lab's inline selector row (ambient uses the ⚘ pop-out instead) */
   .selectors {
     display: flex;
@@ -1352,12 +1488,14 @@
     border: 1px solid var(--border-strong);
     background: var(--bg-elev);
     box-shadow: 0 10px 24px -16px color-mix(in oklab, var(--fg) 45%, transparent);
-    animation: popIn 0.16s ease;
+    animation: tapeReveal 0.22s ease;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
   }
-  @keyframes popIn { from { opacity: 0; transform: translateY(4px) scale(0.97); } }
+  @keyframes tapeReveal { from { opacity: 0; } }
+  /* the cells stagger in left-to-right as the tape unfurls from the chip */
+  @keyframes cellIn { from { opacity: 0; transform: translateY(5px) scale(0.55); } }
   .tcell {
     flex: none;
     height: 28px;
@@ -1373,6 +1511,7 @@
     border-radius: 6px;
     cursor: pointer;
     transition: color 0.12s ease;
+    animation: cellIn 0.34s calc(var(--ci, 0) * 24ms) both cubic-bezier(0.34, 1.6, 0.5, 1);
   }
   .tcell sub { font-size: 0.62em; margin-left: 0.02em; }
   .tcell:hover { color: var(--accent); }
@@ -1391,20 +1530,24 @@
     touch-action: none;
   }
   .selector.grabbing { cursor: grabbing; }
-  .selector:not(.grabbing) { transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
+  /* sticky + bouncy: it always snaps to a cell, and rides there with an
+     overshoot so each step springs into place */
+  .selector { transition: transform 0.24s cubic-bezier(0.34, 1.7, 0.5, 1); }
 
   /* ---- the tree toggle (⚘) + its view-selector pop-out, bottom-right ---- */
+  /* the wrap holds only the toggle in flow (the pop floats above, absolute), so
+     revealing the selectors never nudges the toggle sideways */
   .selectors-wrap {
     position: absolute;
     right: 0.5rem;
     bottom: 2.1rem;
     z-index: 20;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.32rem;
   }
   .selectors-pop {
+    position: absolute;
+    bottom: calc(100% + 0.34rem);
+    right: 0;
+    transform-origin: bottom right; /* grows out of the toggle */
     display: flex;
     flex-direction: column;
     gap: 0.3rem;
@@ -1413,7 +1556,6 @@
     border: 1px solid var(--border-strong);
     background: var(--bg-elev);
     box-shadow: 0 10px 24px -16px color-mix(in oklab, var(--fg) 45%, transparent);
-    animation: popIn 0.16s ease;
   }
   .tree-toggle {
     width: 32px;
