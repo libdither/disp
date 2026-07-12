@@ -383,7 +383,24 @@ function reelToOut(net) {
 function wireWeight(net, w) {
   const spine = (w.a[1] === 0 || w.b[1] === 0);
   if (!spine) return 1;                                      // plumbing (aux–aux)
-  return (net.dem && (net.dem.has(w.a[0]) || net.dem.has(w.b[0]))) ? 8 : 3;   // hot vs principal
+  if (w.a[1] === 0 && w.b[1] === 0) {                        // both ends principal → a REDEX wire: HOT, so the field pulls the pair together to fire
+    const pa = net.agents.get(w.a[0]), pb = net.agents.get(w.b[0]);
+    if (pa && pb && pa.tag !== "OUT" && pb.tag !== "OUT" && (PRODUCERS.has(pa.tag) !== PRODUCERS.has(pb.tag))) return 10;
+  }
+  return 3;                                                  // principal (a value's output → its parent's input)
+}
+// the "distance to OUT along the wires" field: a per-agent scalar, computed by BFS from the pad
+// over the wire graph. It is both the demand front (defined = reached) and the attractor gradient
+// (an agent reels down it — toward its lower-distance neighbour — which is toward OUT ALONG A WIRE,
+// into the forwarder cells, so agents never collide the way a spatial pull toward one point does).
+function computeDistToOut(net) {
+  const dist = new Map(); let out = null;
+  for (const a of net.agents.values()) if (a.tag === "OUT") out = a;
+  if (out) {
+    const q = [out.id]; dist.set(out.id, 0); let h = 0;
+    while (h < q.length) { const id = q[h++], a = net.agents.get(id), d = dist.get(id); if (!a) continue; for (const e of a.p) if (e && !dist.has(e[0])) { dist.set(e[0], d + 1); q.push(e[0]); } }
+  }
+  net.distOut = dist;
 }
 // φ-DESCENT with TEMPERATURE (heat-bath): stepping in dir d reels the wire departing in d
 // (saves its weight) and bends the others (+1 each), so Δφ_d = total − 2·w(reeled). The agent
@@ -392,26 +409,35 @@ function wireWeight(net, w) {
 // uphill moves, so the layout anneals past the local minimum instead of stalling.
 function fieldStep(net) {
   buildOcc(net);
-  const T = Math.max(net.temp || 0, 0.05);
+  const T = Math.max(net.temp || 0, 0.05), BE = net.beta !== undefined ? net.beta : 1, OB = net.outboost !== undefined ? net.outboost : 6;
+  const D = net.distOut || new Map();
+  const dens = (x, y) => { let n = 0; for (let d = 0; d < 4; d++) if (net._ag.has(key(x + DX[d], y + DY[d]))) n++; return n; };
   for (const id of [...net.cell.keys()]) {
     const a = net.agents.get(id); if (!a || a.tag === "OUT") continue;   // OUT is the fixed I/O pad
-    const c = net.cell.get(id), inc = []; let ok = true;
-    for (let i = 0; i < a.p.length && ok; i++) {
+    const dself = D.get(id), c = net.cell.get(id), inc = [];
+    for (let i = 0; i < a.p.length; i++) {
       const e = a.p[i]; if (!e) continue;
-      const w = net.wire.get(lkey([id, i], e)); if (!w || w.direct) { ok = false; break; }
+      const w = net.wire.get(lkey([id, i], e)); if (!w || w.direct) continue;   // a taut/missing wire doesn't add tension; it follows
       const isA = (w.a[0] === id && w.a[1] === i);
       const near = w.path.length ? (isA ? w.path[0] : w.path[w.path.length - 1]) : net.cell.get(e[0]);
-      const dep = dirTo(c.x, c.y, near.x, near.y); if (dep < 0) { ok = false; break; }
-      inc.push({ dep, wt: wireWeight(net, w) });
+      const dep = dirTo(c.x, c.y, near.x, near.y); if (dep < 0) continue;
+      const dn = D.get(e[0]), outward = (dn !== undefined && dself !== undefined && dn < dself);   // this wire leads toward OUT
+      // POLARITY: only the PRINCIPAL wire (port 0) reeling toward OUT gets the attractor boost. A
+      // producer's principal points at its consumer (→OUT), so it delivers; a consumer's principal
+      // points back at its producer (away from OUT), so it stays put and waits to receive/fire.
+      inc.push({ dep, wt: wireWeight(net, w) + ((i === 0 && outward) ? OB : 0) });
     }
-    if (!ok || !inc.length) continue;
-    const total = inc.reduce((s, x) => s + x.wt, 0);
-    const opts = [{ d: -1, dphi: 0.5 }];                                 // "stay" (small bias so a settled agent tends to rest)
-    for (let d = 0; d < 4; d++) { const r = inc.find(x => x.dep === d); opts.push({ d, dphi: total - 2 * (r ? r.wt : 0) }); }
-    let Z = 0; for (const o of opts) { o.w = Math.exp(-o.dphi / T); Z += o.w; }
+    const total = inc.reduce((s, x) => s + x.wt, 0), cr0 = dens(c.x, c.y);
+    // φ = tension(wires, boosted toward OUT) + β·crowding(AGENTS repel). Reeling happens ALONG wires
+    // into forwarder cells, so no traffic jam; hot redex wires (weight 10) pull the specific pair together.
+    const opts = [{ d: -1, dphi: 0.5 }];
+    for (let d = 0; d < 4; d++) { const r = inc.find(x => x.dep === d), nx = c.x + DX[d], ny = c.y + DY[d]; opts.push({ d, dphi: (total - 2 * (r ? r.wt : 0)) + BE * (dens(nx, ny) - cr0) }); }
+    let mn = Infinity; for (const o of opts) if (o.dphi < mn) mn = o.dphi;                          // normalise so exp never overflows
+    let Z = 0; for (const o of opts) { o.w = Math.exp(-(o.dphi - mn) / T); Z += o.w; }
     let rr = rand(c.x, c.y, net.ticks, net.seed || 1) * Z, pick = opts[0];
     for (const o of opts) { rr -= o.w; if (rr <= 0) { pick = o; break; } }
-    if (pick.d >= 0 && tryLocalMove(net, id, pick.d) && net.dem && net.dem.has(id) && net.demCell) net.demCell.add(key(c.x, c.y));
+    if (pick.d >= 0 && !tryLocalMove(net, id, pick.d))                                              // blocked: fall back only to ANOTHER FAVOURABLE direction (never flee uphill), else stay
+      for (const o of [...opts].sort((x, y) => x.dphi - y.dphi)) if (o.d >= 0 && o.d !== pick.d && o.dphi < 0 && tryLocalMove(net, id, o.d)) break;
   }
 }
 // A rewrite is LOCAL: the two dying agents' external (aux) wires are PRESERVED — the fresh
@@ -472,16 +498,12 @@ function fireOne(net, C, Pr) {
 // Firing is ALWAYS spatially local: a redex fires only once its producer has been reeled
 // adjacent to its consumer (gate = 1 strict, 2 relaxed). So the connecting wire is consumed by
 // reel-in one cell per tick and is gone (or a single cell) by fire time — never deleted long.
-function fireStep(net, strict) {
-  let fired = 0; const base = strict ? 1 : 2;
+function fireStep(net) {
+  let fired = 0;
   for (const [C, Pr] of allActivePairs(net)) {
     if (!net.agents.has(C.id) || !net.agents.has(Pr.id)) continue;
-    if (net.dem && !net.dem.has(Pr.id)) continue;            // demand front must have reached it
     const cc = net.cell.get(C.id), pc = net.cell.get(Pr.id);
-    const dist = Math.abs(cc.x - pc.x) + Math.abs(cc.y - pc.y);
-    const gate = base + Math.floor((Pr.starve || 0) / 3);    // impatience watchdog (§7): a starved pair widens its gate
-    if (dist <= gate) { fireOne(net, C, Pr); fired++; }
-    else Pr.starve = (Pr.starve || 0) + 1;                   // reeled but still blocked: grow impatient
+    if (Math.abs(cc.x - pc.x) + Math.abs(cc.y - pc.y) <= 1) { fireOne(net, C, Pr); fired++; }   // strictly local: fire only when adjacent
   }
   return fired > 0;
 }
@@ -556,12 +578,10 @@ function stepNet(net, opts) {
   }
   if (net.done) return false;                                // already at normal form (pump dwells/loops)
   net.ticks = (net.ticks || 0) + 1;
-  advanceDemand(net);
-  reelPairs(net);                                            // ALWAYS reel demanded producers toward consumers (transport)
-  reelToOut(net);                                            // deliver the result spine to the fixed OUT pad
-  if (opts.field) fieldStep(net);
+  computeDistToOut(net);                                     // the distance-to-OUT field (attractor gradient + demand)
+  fieldStep(net);                                            // ONE field: wires attract (toward OUT), agents repel
   straightenWires(net);                                      // local relaxation: retract the detours per-cell bends leave
-  const fired = fireStep(net, opts.strict);                  // fire only pairs reeled adjacent
+  const fired = fireStep(net);                               // fire strictly on adjacency (no watchdog, no demand gate)
   buildOcc(net);                                             // repair: batch moves can transiently drop an agent onto a wire
   const clipped = []; for (const [, w] of net.wire) if (!w.direct && w.path.some(p => net._ag.has(key(p.x, p.y)))) clipped.push(w);
   for (const w of clipped) { buildOcc(net); embedLink(net, w.a, w.b); }
@@ -597,7 +617,7 @@ function diffuse(net) {
 // (5) RENDERER — four view modes over the same depth-2 state.
 // ================================================================================
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
-let SIM = null, RUNNING = false, CUR = "chain (reel-in spine)", MODE = "flat", SUB = "d2", SELECTED = null, TEMP = 0.12;
+let SIM = null, RUNNING = false, CUR = "chain (reel-in spine)", MODE = "flat", SUB = "d2", SELECTED = null, TEMP = 0.12, FIELDVIZ = true;
 let view = { x: 0, y: 0, scale: 20 };
 const COL = { L: "#3fbf7f", S: "#3fbf7f", F: "#3fbf7f", P: "#7ce38b", A: "#56c8ff", T1: "#56c8ff", T2: "#56c8ff", DN: "#c792ea", EPS: "#ff6b6b", NRM: "#ffd866", OUT: "#8595ad", BEAD: "#5a6b86", PIN: "#7ce38b" };
 
@@ -629,6 +649,21 @@ function draw() {
   }
   // pressure heatmap (field scenarios)
   if (SIM.pressure) for (const [k, v] of SIM.pressure) { const [x, y] = KV(k); const [px, py] = project(x, y, 0); const a = Math.min(0.72, v / 22); ctx.fillStyle = `rgba(255,120,60,${a})`; ctx.fillRect(px - s / 2, py - s / 2, s, s); }
+  // POTENTIAL FIELD: colour each cell by its distance to the OUT pad — the attractor gradient the
+  // agents descend (bright/warm at the pad = the sink, cool/dark far away).
+  if (FIELDVIZ && SIM.agents && SIM.kind === "term") {
+    let ox = null, oy = null; for (const a of SIM.agents.values()) if (a.tag === "OUT") { const c = SIM.cell.get(a.id); if (c) { ox = c.x; oy = c.y; } }
+    if (ox !== null) {
+      let maxD = 1; for (const [id, c] of SIM.cell) { if (SIM.agents.get(id).tag === "OUT") continue; maxD = Math.max(maxD, Math.abs(c.x - ox) + Math.abs(c.y - oy)); }
+      const x0 = Math.floor(view.x - CW / 2 / s) - 1, x1 = Math.ceil(view.x + CW / 2 / s) + 1, y0 = Math.floor(view.y - CH / 2 / s) - 1, y1 = Math.ceil(view.y + CH / 2 / s) + 1;
+      if ((x1 - x0) * (y1 - y0) < 24000) for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+        const t = Math.min(1, (Math.abs(x - ox) + Math.abs(y - oy)) / maxD), u = 1 - t, [px, py] = project(x, y, 0);
+        ctx.fillStyle = `rgba(${Math.round(255 * u + 34 * t)},${Math.round(190 * u + 44 * t)},${Math.round(96 * u + 104 * t)},${(0.10 + 0.30 * u).toFixed(3)})`;  // warm/bright at the pad → cool/dark far
+        ctx.fillRect(px - s / 2, py - s / 2, s, s);
+      }
+      const [px, py] = project(ox, oy, 0); ctx.strokeStyle = "#ffe08a"; ctx.lineWidth = 2; ctx.strokeRect(px - s / 2, py - s / 2, s, s);   // the OUT pad
+    }
+  }
   // wires: painter-sort by (x+y+layer) for iso; color by class; vias where paths cross
   drawWires(CW, CH, s);
   // agents
@@ -657,9 +692,14 @@ function drawWires(CW, CH, s) {
   for (const w of items) {
     const ca = net.cell.get(w.a[0]), cb = net.cell.get(w.b[0]); if (!ca || !cb) continue;
     const spine = (w.a[1] === 0 || w.b[1] === 0);             // a principal (redex) wire vs plumbing
+    if (w.direct) {                                           // taut / unrouted: draw an L (axis-aligned, NEVER diagonal), dashed
+      ctx.globalAlpha = 0.5; ctx.setLineDash([3, 3]); ctx.strokeStyle = spine ? "#5f96d1" : "#3a4a6d"; ctx.lineWidth = Math.max(1, s * (spine ? .1 : .07));
+      const [ax, ay] = project(ca.rx ?? ca.x, ca.ry ?? ca.y, 0), [bx, by] = project(cb.rx ?? cb.x, cb.ry ?? cb.y, 0), [mx, my] = project(cb.rx ?? cb.x, ca.ry ?? ca.y, 0);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(mx, my); ctx.lineTo(bx, by); ctx.stroke();
+      continue;
+    }
     let layer = 0; for (const p of w.path) if ((load.get(key(p.x, p.y)) || 0) >= 2 && !spine) layer = 1;
-    ctx.globalAlpha = depthAlpha(layer) * (w.direct ? 0.5 : 1);
-    ctx.setLineDash(w.direct ? [3, 3] : []);
+    ctx.globalAlpha = depthAlpha(layer); ctx.setLineDash([]);
     const logical = [{ x: ca.x, y: ca.y }, ...w.path, { x: cb.x, y: cb.y }];                 // integer cells, for the demand front
     const drawC = [{ x: ca.rx ?? ca.x, y: ca.ry ?? ca.y }, ...w.path, { x: cb.rx ?? cb.x, y: cb.ry ?? cb.y }];  // eased endpoints, for drawing
     for (let i = 0; i + 1 < logical.length; i++) {            // colour each SEGMENT: gold where the demand front has reached (§9)
@@ -757,9 +797,9 @@ document.getElementById("tempv").textContent = TEMP.toFixed(2);
 for (const btn of document.querySelectorAll("#mode button")) btn.onclick = () => { MODE = btn.dataset.m; for (const b of document.querySelectorAll("#mode button")) b.classList.toggle("on", b === btn); };
 for (const btn of document.querySelectorAll("#sub button")) btn.onclick = () => { SUB = btn.dataset.s; for (const b of document.querySelectorAll("#sub button")) b.classList.toggle("on", b === btn); };
 // adjacency toggle
-const adjBtn = document.createElement("button"); adjBtn.textContent = "gate: reel-adjacent"; adjBtn.style.marginTop = "6px";
-adjBtn.onclick = () => { ADJ = !ADJ; adjBtn.textContent = "gate: " + (ADJ ? "strict dist-1 (may jam)" : "reel-adjacent"); adjBtn.classList.toggle("on", ADJ); };
-document.getElementById("sub").parentElement.after(adjBtn);
+const fvBtn = document.createElement("button"); fvBtn.textContent = "potential field: ON"; fvBtn.className = "on"; fvBtn.style.marginTop = "6px";
+fvBtn.onclick = () => { FIELDVIZ = !FIELDVIZ; fvBtn.textContent = "potential field: " + (FIELDVIZ ? "ON" : "OFF"); fvBtn.classList.toggle("on", FIELDVIZ); };
+document.getElementById("sub").parentElement.after(fvBtn);
 
 // pan / zoom
 let panning = false, px0 = 0, py0 = 0, downX = 0, downY = 0;
