@@ -36,6 +36,11 @@ today it is a library plus tests.
 - `crate/tests/stage2.rs` — lattice vs oracle: correctness gated absolutely (zero wrong
   NFs, per-transition projection asserts, bit determinism); liveness measured.
 - `crate/src/bin/debug-stuck.rs`, `scan-pins.rs` — stall analyzers.
+- `crate/src/bin/dump-run.rs` — the instrumentation face: runs a term and emits one JSON
+  document (full grid snapshot + tick events per frame). The replay client is
+  `research/interaction-combinator/lattice_player.html` (embedded traces in
+  `lattice_traces.js`; drop any dump-run output onto it to view others). The engine is the
+  model; the visualization never simulates.
 
 ## Status (measured)
 

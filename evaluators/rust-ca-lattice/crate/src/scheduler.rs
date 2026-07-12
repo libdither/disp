@@ -18,9 +18,19 @@ pub enum CheckLevel {
     End,
 }
 
+/// What happened during a tick — observer data for tracing/visualization; the dynamics
+/// never read it.
+#[derive(Clone, Debug)]
+pub enum Event {
+    Fire { cpos: Pos, ppos: Pos, rule: (&'static str, &'static str), fresh: Vec<Pos> },
+    Reel { from: Pos, to: Pos, sid: u32 },
+}
+
 pub struct Sim {
     pub grid: Grid,
     pub shadow: Net,
+    /// Events of the most recent tick.
+    pub events: Vec<Event>,
 }
 
 impl Sim {
@@ -29,19 +39,25 @@ impl Sim {
         let root = shadow.build(term);
         shadow.drive(root);
         let grid = embed(&shadow);
-        Sim { grid, shadow }
+        Sim { grid, shadow, events: vec![] }
     }
 
     /// One sequential tick: fire every enabled pair (rescanning after each, since a fire
     /// invalidates positions), then give every producer/ε one reel step. Returns the
     /// number of transitions applied. Fully deterministic (BTreeMap coordinate order).
     pub fn tick(&mut self, check: CheckLevel) -> usize {
+        self.events.clear();
         let mut applied = 0;
         loop {
             let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
             let mut fired = false;
             for p in positions {
                 if let Some(plan) = plan_fire(&self.grid, p) {
+                    self.events.push(Event::Fire {
+                        cpos: plan.cpos, ppos: plan.ppos,
+                        rule: (plan.rule.consumer.name(), plan.rule.producer.name()),
+                        fresh: plan.fresh_cells.clone(),
+                    });
                     apply_fire(&mut self.grid, &mut self.shadow, &plan);
                     applied += 1;
                     fired = true;
@@ -54,6 +70,8 @@ impl Sim {
         let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
         for p in positions {
             if let Some(plan) = plan_reel(&self.grid, p) {
+                let sid = self.grid.agent(plan.apos).map(|a| a.sid).unwrap_or(0);
+                self.events.push(Event::Reel { from: plan.apos, to: plan.npos, sid });
                 apply_reel(&mut self.grid, &plan);
                 applied += 1;
                 if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }

@@ -1,0 +1,244 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>rust-ca-lattice player — rung 2 replay</title>
+<style>
+  :root { --bg:#0b0e14; --fg:#c8d3e0; --accent:#56c8ff; --ok:#3fbf7f; --warn:#ff6b6b; --hot:#ffd866; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.5 monospace; }
+  #wrap { display:flex; height:100vh; }
+  #cv { flex:1; display:block; cursor:grab; }
+  #side { width:360px; padding:12px 14px; overflow:auto; border-left:1px solid #1b2436; }
+  h3 { color:var(--accent); font-size:12px; letter-spacing:.06em; margin:14px 0 6px; }
+  .row { display:flex; justify-content:space-between; margin:3px 0; align-items:center; }
+  .k { color:#8595ad; }
+  button, select { background:#16202f; color:var(--fg); border:1px solid #2a3a52; border-radius:5px; padding:4px 9px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  input[type=range] { width:150px; vertical-align:middle; }
+  .note { color:#8595ad; font-size:11px; }
+  .ok { color:var(--ok); } .bad { color:var(--warn); } .hot { color:var(--hot); }
+  #stat b { color:var(--hot); }
+  #events { font-size:11px; max-height:150px; overflow:auto; }
+  #events div { color:#8595ad; }
+  #events div.f { color:var(--hot); }
+  .lg { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+</style></head>
+<body><div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="side">
+    <h3>RUNG 2 REPLAY — THE RUST LATTICE, FRAME BY FRAME</h3>
+    <div class="note">A replay client over <b>rust-ca-lattice</b> traces (the engine is the model;
+    this page only draws). Each frame is one TICK of the rung-2 sequential schedule:
+    <b>fire</b> every enabled adjacent facing pair (rescanning after each — a fire is one
+    footprint-atomic transition), then give every eligible producer one <b>reel</b> step along
+    its principal wire. Deterministic: cells are scanned in coordinate order, so the same term
+    always produces this exact movie. Regenerate or add traces with
+    <b>cargo run --release --bin dump-run &lt;name&gt;</b> and drop the JSON here.</div>
+    <div style="margin:8px 0">
+      <button id="play">&#9654; play</button>
+      <button id="step">step</button>
+      <button id="reset">reset</button>
+      <input type="file" id="load" accept=".json" style="display:none">
+      <button onclick="document.getElementById('load').click()">load trace…</button>
+    </div>
+    <div class="row"><span class="k">trace</span><select id="scen"></select></div>
+    <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="30" value="6"><span id="speedv" class="k"></span></div>
+    <div class="row"><span class="k">frame</span><input type="range" id="scrub" min="0" max="0" value="0"><span id="framev" class="k"></span></div>
+    <h3>STATUS</h3>
+    <div id="stat"></div>
+    <h3>THIS TICK</h3>
+    <div id="events" class="note"></div>
+    <h3>LEGEND</h3>
+    <div class="note">
+      <span class="lg" style="background:#3fbf7f"></span>value L/S/F &nbsp;<span class="lg" style="background:#7ce38b"></span>suspension P &nbsp;<span class="lg" style="background:#2fbfa8"></span>Pair<br>
+      <span class="lg" style="background:#56c8ff"></span>A/T&#8321;/Sel &nbsp;<span class="lg" style="background:#4fd8e8"></span>Unp &nbsp;<span class="lg" style="background:#c792ea"></span>&delta; Dn &nbsp;<span class="lg" style="background:#ff6b6b"></span>&epsilon; &nbsp;<span class="lg" style="background:#ffd866"></span>Nrm &nbsp;<span class="lg" style="background:#8595ad"></span>Out<br>
+      thick white stub = principal port; thin stubs = aux ports<br>
+      <span style="color:#6f9fd8">layer-0 strand</span> / <span style="color:#a97fd8">layer-1 strand</span>; ring = via (crossing);
+      dim strand under an agent = tucked behind it (depth-2)<br>
+      gold flash = fire (rule shown); agents glide = reel (one cell per tick)
+    </div>
+    <h3>WHAT THIS SHOWS (AND DOES NOT)</h3>
+    <div class="note">Correctness is schedule-independent by construction here: every
+    transition declares its cell footprint and the engine asserts writes stay inside it, and
+    every transition preserves the projection onto the shadow interaction net (checked each
+    tick in these traces). What this rung does NOT yet have: parallel schedules (Margolus /
+    async fuzz — rung 3 runs THESE SAME transitions in other orders and must produce the same
+    normal form) and liveness policies (no straighten, drift, or pressure yet — which is why
+    the <b>ksimple</b>, <b>share2</b> and <b>chain3</b> traces end STUCK in congested pockets:
+    the honest §13 residue, LOCAL_CA_DESIGN.md).</div>
+  </div>
+</div>
+<script src="lattice_traces.js"></script>
+<script>
+"use strict";
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const DIR = { N: [0, -1], E: [1, 0], S: [0, 1], W: [-1, 0] };
+const COL = { L: "#3fbf7f", S: "#3fbf7f", F: "#3fbf7f", P: "#7ce38b", Pair: "#2fbfa8",
+              A: "#56c8ff", T1: "#56c8ff", Sel: "#56c8ff", Unp: "#4fd8e8", Dn: "#c792ea",
+              Eps: "#ff6b6b", Nrm: "#ffd866", Out: "#8595ad" };
+const GLYPH = { L: "△", S: "S", F: "F", P: "@", Pair: "⟨⟩", A: "A", T1: "T₁", Sel: "T₂", Unp: "⌄", Dn: "δ", Eps: "ε", Nrm: "N", Out: "☉" };
+const LAYCOL = ["#6f9fd8", "#a97fd8"];
+
+let TR = null, FRAME = 0, SUB = 0, RUNNING = false;   // FRAME = integer frame; SUB = 0..1 interpolation into FRAME+1
+let view = { x: 0, y: 0, scale: 26 };
+
+function pick(name) {
+  TR = window.TRACES[name];
+  FRAME = 0; SUB = 0; RUNNING = false;
+  document.getElementById("play").innerHTML = "&#9654; play";
+  const sc = document.getElementById("scrub");
+  sc.max = TR.frames.length - 1; sc.value = 0;
+  fit(); hud();
+}
+function fit() {
+  let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
+  for (const f of TR.frames) for (const ag of f.grid.agents) { a = Math.min(a, ag[0]); b = Math.max(b, ag[0]); c = Math.min(c, ag[1]); d = Math.max(d, ag[1]); }
+  const w = innerWidth - 380, h = innerHeight - 40;
+  view.scale = Math.max(8, Math.min(34, Math.min(w / (b - a + 6), h / (d - c + 6))));
+  view.x = (a + b) / 2; view.y = (c + d) / 2;
+}
+const px = (x, y) => [(innerWidth - 360) / 2 + (x - view.x) * view.scale, innerHeight / 2 + (y - view.y) * view.scale];
+
+// index agents by sid for interpolation
+function bySid(frame) { const m = new Map(); for (const a of frame.grid.agents) m.set(a[3], a); return m; }
+
+function draw() {
+  requestAnimationFrame(draw);
+  const dpr = devicePixelRatio;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, innerWidth - 360, innerHeight);
+  if (!TR) return;
+  // advance playback
+  if (RUNNING) {
+    SUB += (+document.getElementById("speed").value) / 60;
+    while (SUB >= 1) {
+      SUB -= 1; FRAME++;
+      if (FRAME >= TR.frames.length - 1) { FRAME = TR.frames.length - 1; SUB = 0; RUNNING = false; document.getElementById("play").innerHTML = "&#9654; play"; break; }
+    }
+    document.getElementById("scrub").value = FRAME;
+    hud();
+  }
+  const s = view.scale;
+  const f0 = TR.frames[FRAME];
+  const f1 = TR.frames[Math.min(FRAME + 1, TR.frames.length - 1)];
+  const interp = RUNNING || SUB > 0 ? SUB : 0;
+
+  // faint lattice dots
+  if (s > 10) {
+    ctx.fillStyle = "#121a28";
+    const x0 = Math.floor(view.x - (innerWidth - 360) / 2 / s), x1 = Math.ceil(view.x + (innerWidth - 360) / 2 / s);
+    const y0 = Math.floor(view.y - innerHeight / 2 / s), y1 = Math.ceil(view.y + innerHeight / 2 / s);
+    if ((x1 - x0) * (y1 - y0) < 20000) for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) { const [a, b] = px(x, y); ctx.fillRect(a - 1, b - 1, 2, 2); }
+  }
+  // wires of the DEPARTING frame (f0), plus vias
+  const drawStrand = (x, y, sdesc, dim) => {
+    // sdesc like "N0S1": face,layer,face,layer
+    const d1 = sdesc[0], l1 = +sdesc[1], d2 = sdesc[2], l2 = +sdesc[3];
+    const [cx, cy] = px(x, y);
+    const m1 = [cx + DIR[d1][0] * s / 2, cy + DIR[d1][1] * s / 2];
+    const m2 = [cx + DIR[d2][0] * s / 2, cy + DIR[d2][1] * s / 2];
+    ctx.lineWidth = Math.max(1, s * 0.09);
+    ctx.globalAlpha = dim ? 0.4 : 0.9;
+    ctx.strokeStyle = LAYCOL[l1];
+    ctx.beginPath(); ctx.moveTo(m1[0], m1[1]); ctx.lineTo(cx, cy); ctx.stroke();
+    ctx.strokeStyle = LAYCOL[l2];
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(m2[0], m2[1]); ctx.stroke();
+    ctx.globalAlpha = 1;
+  };
+  for (const w of f0.grid.wires) {
+    for (const sd of w[2]) drawStrand(w[0], w[1], sd, false);
+    if (w[2].length >= 2) { const [a, b] = px(w[0], w[1]); ctx.strokeStyle = "#c792ea"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(a, b, Math.max(2.5, s * 0.12), 0, 7); ctx.stroke(); }
+  }
+  // agents: interpolate f0 -> f1 by sid
+  const m0 = bySid(f0), m1 = bySid(f1);
+  const seen = new Set();
+  const drawAgent = (a, x, y, alpha) => {
+    const [cx, cy] = px(x, y);
+    const tag = a[2], r = s * 0.34;
+    ctx.globalAlpha = alpha;
+    for (const t of a[5]) drawStrand(x, y, t, true);                    // tucks under the body
+    // port stubs
+    for (let i = 0; i < a[4].length; i++) {
+      const d = a[4][i][0];
+      ctx.strokeStyle = i === 0 ? "#ffffff" : "#8595ad";
+      ctx.lineWidth = i === 0 ? Math.max(1.5, s * 0.10) : Math.max(1, s * 0.05);
+      ctx.beginPath(); ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + DIR[d][0] * s / 2, cy + DIR[d][1] * s / 2); ctx.stroke();
+    }
+    ctx.fillStyle = COL[tag] || "#8595ad";
+    ctx.beginPath(); ctx.roundRect(cx - r, cy - r, 2 * r, 2 * r, r * 0.3); ctx.fill();
+    if (s > 12) { ctx.fillStyle = "#04121c"; ctx.font = `bold ${Math.round(s * 0.32)}px monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(GLYPH[tag] || tag, cx, cy + 1); }
+    ctx.globalAlpha = 1;
+  };
+  for (const [sid, a0] of m0) {
+    seen.add(sid);
+    const a1 = m1.get(sid);
+    if (a1) drawAgent(interp < 0.5 ? a0 : a1, a0[0] + (a1[0] - a0[0]) * interp, a0[1] + (a1[1] - a0[1]) * interp, 1);
+    else drawAgent(a0, a0[0], a0[1], 1 - interp);                       // dying in the next frame
+  }
+  for (const [sid, a1] of m1) if (!seen.has(sid)) drawAgent(a1, a1[0], a1[1], interp);  // born next frame
+  // fire flashes from the arriving frame's events
+  if (interp > 0) for (const e of f1.events) {
+    if (e.t !== "fire") continue;
+    const [ax, ay] = px((e.c[0] + e.p[0]) / 2, (e.c[1] + e.p[1]) / 2);
+    ctx.strokeStyle = "#ffd866"; ctx.globalAlpha = 1 - interp;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(ax, ay, s * (0.4 + interp * 1.4), 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1;
+    if (s > 10) { ctx.fillStyle = "#ffd866"; ctx.font = `${Math.round(s * 0.4)}px monospace`; ctx.textAlign = "center"; ctx.fillText(e.rule, ax, ay - s * (0.8 + interp)); }
+  }
+}
+
+function hud() {
+  const f = TR.frames[FRAME];
+  const last = FRAME === TR.frames.length - 1;
+  const badge = !last ? '<span class="hot">running…</span>'
+    : TR.status === "done" ? `<span class="ok">NORMAL FORM ✓ readback ${TR.readback}${TR.readback === TR.oracle ? " = oracle" : " ≠ oracle!"}</span>`
+    : `<span class="bad">STUCK — ${f.pairs} pair(s) remain, no transition enabled (liveness residue)</span>`;
+  document.getElementById("stat").innerHTML =
+    `<div class="row"><span class="k">term</span><span>${TR.term.length > 30 ? TR.term.slice(0, 30) + "…" : TR.term}</span></div>` +
+    `<div class="row"><span class="k">oracle NF</span><span>${TR.oracle}</span></div>` +
+    `<div class="row"><span class="k">tick</span><b>${f.tick} / ${TR.ticks}</b></div>` +
+    `<div class="row"><span class="k">interactions (work)</span><b>${f.ints}</b></div>` +
+    `<div class="row"><span class="k">transport (reels)</span><b>${f.transport}</b></div>` +
+    `<div class="row"><span class="k">live agents</span><b>${f.grid.agents.length}</b></div>` +
+    `<div class="row"><span class="k">active pairs</span><b>${f.pairs}</b></div>` +
+    `<div class="row"><span class="k">state</span><span>${badge}</span></div>`;
+  document.getElementById("framev").textContent = `${FRAME}/${TR.frames.length - 1}`;
+  const ev = document.getElementById("events");
+  ev.innerHTML = f.events.length === 0 ? '<div>(no transitions this tick)</div>'
+    : f.events.map(e => e.t === "fire"
+      ? `<div class="f">fire ${e.rule} @ (${e.c[0]},${e.c[1]})·(${e.p[0]},${e.p[1]}) → ${e.fresh.length} fresh</div>`
+      : `<div>reel sid ${e.sid}: (${e.from[0]},${e.from[1]}) → (${e.to[0]},${e.to[1]})</div>`).join("");
+}
+
+// controls
+const scen = document.getElementById("scen");
+for (const n in window.TRACES) { const o = document.createElement("option"); o.value = n; o.textContent = `${n} (${window.TRACES[n].status})`; scen.appendChild(o); }
+scen.onchange = () => pick(scen.value);
+document.getElementById("play").onclick = () => {
+  if (FRAME >= TR.frames.length - 1) { FRAME = 0; SUB = 0; }
+  RUNNING = !RUNNING;
+  document.getElementById("play").innerHTML = RUNNING ? "&#10074;&#10074; pause" : "&#9654; play";
+};
+document.getElementById("step").onclick = () => { RUNNING = false; SUB = 0; FRAME = Math.min(FRAME + 1, TR.frames.length - 1); document.getElementById("scrub").value = FRAME; hud(); };
+document.getElementById("reset").onclick = () => pick(scen.value);
+document.getElementById("scrub").oninput = e => { RUNNING = false; SUB = 0; FRAME = +e.target.value; hud(); };
+document.getElementById("speed").oninput = e => document.getElementById("speedv").textContent = e.target.value + " t/s";
+document.getElementById("speedv").textContent = "6 t/s";
+document.getElementById("load").onchange = async e => {
+  const file = e.target.files[0]; if (!file) return;
+  const j = JSON.parse(await file.text());
+  window.TRACES[j.name] = j;
+  const o = document.createElement("option"); o.value = j.name; o.textContent = `${j.name} (${j.status})`;
+  scen.appendChild(o); scen.value = j.name; pick(j.name);
+};
+// pan / zoom
+let panning = false, px0 = 0, py0 = 0;
+cv.addEventListener("mousedown", e => { panning = true; px0 = e.clientX; py0 = e.clientY; });
+addEventListener("mouseup", () => panning = false);
+addEventListener("mousemove", e => { if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; } });
+cv.addEventListener("wheel", e => { e.preventDefault(); view.scale = Math.max(5, Math.min(60, view.scale * (e.deltaY < 0 ? 1.1 : 0.9))); }, { passive: false });
+
+function resize() { const w = innerWidth - 360, h = innerHeight; cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio; cv.style.width = w + "px"; cv.style.height = h + "px"; }
+addEventListener("resize", resize);
+resize(); pick("fork"); requestAnimationFrame(draw);
+</script>
+</body></html>
