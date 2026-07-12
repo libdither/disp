@@ -44,7 +44,7 @@
     <div class="row"><span class="k">substrate</span><span class="seg" id="sub">
       <button data-s="d2" class="on">depth-2</button><button data-s="d3">3D (6-nbr)</button>
     </span></div>
-    <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="1200" value="120"></div>
+    <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="500" value="90"></div>
     <h3>COST VECTOR (the ledger)</h3>
     <div id="stat"></div>
     <h3>RESULT vs ORACLE</h3>
@@ -205,9 +205,9 @@ function buildOcc(net) {
 }
 function route(net, ax, ay, bx, by) {
   if (ax === bx && ay === by) return [];
-  const dist = Math.abs(ax - bx) + Math.abs(ay - by), radius = Math.min(70, dist + 14);
+  const dist = Math.abs(ax - bx) + Math.abs(ay - by), radius = Math.min(220, dist + 30);
   const start = key(ax, ay), goal = key(bx, by), q = [[ax, ay]], prev = new Map([[start, null]]);
-  let head = 0, budget = Math.min(14000, 24 * (dist + 14) + 400);
+  let head = 0, budget = Math.min(40000, 40 * (dist + 30) + 600);
   while (head < q.length) {
     if (budget-- <= 0) break;
     const [cx, cy] = q[head++];
@@ -292,7 +292,8 @@ function tryLocalMove(net, id, d) {
   const a = net.agents.get(id), wires = [];
   for (let i = 0; i < a.p.length; i++) {
     const e = a.p[i]; if (!e) continue;
-    const w = net.wire.get(lkey([id, i], e)); if (!w || w.direct) return false;   // taut/missing wire: no local step
+    const w = net.wire.get(lkey([id, i], e)); if (!w) return false;
+    if (w.direct) continue;                                   // a taut (unrouted) wire doesn't constrain the step; it just follows the endpoint
     const isA = (w.a[0] === id && w.a[1] === i);
     const near = w.path.length ? (isA ? w.path[0] : w.path[w.path.length - 1]) : net.cell.get(e[0]);
     const dep = dirTo(ox, oy, near.x, near.y); if (dep < 0) return false;
@@ -319,11 +320,14 @@ function reelPairs(net) {
     if (net.dem && !net.dem.has(Pr.id)) continue;
     const pc = net.cell.get(Pr.id), cc = net.cell.get(C.id);
     if (Math.abs(pc.x - cc.x) + Math.abs(pc.y - cc.y) <= 1) continue;   // adjacent: it will fire
-    const w = net.wire.get(lkey([Pr.id, 0], Pr.p[0]));                  // step ALONG the principal wire, eating one forwarder
-    let d = -1;
-    if (w && !w.direct && w.path.length) { const near = (w.a[0] === Pr.id) ? w.path[0] : w.path[w.path.length - 1]; d = dirTo(pc.x, pc.y, near.x, near.y); }
-    else d = dirTo(pc.x, pc.y, cc.x, cc.y);
-    if (d >= 0 && tryLocalMove(net, Pr.id, d) && net.demCell) net.demCell.add(key(pc.x, pc.y));
+    const dx = cc.x - pc.x, dy = cc.y - pc.y;
+    const toDom = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);          // toward the consumer, dominant axis
+    const toSub = Math.abs(dx) >= Math.abs(dy) ? (dy > 0 ? 2 : dy < 0 ? 0 : -1) : (dx > 0 ? 1 : dx < 0 ? 3 : -1);  // the other axis: to step AROUND a blocker
+    const cands = [];
+    const w = net.wire.get(lkey([Pr.id, 0], Pr.p[0]));                  // first choice: reel ALONG the principal wire (eat a forwarder)
+    if (w && !w.direct && w.path.length) { const near = (w.a[0] === Pr.id) ? w.path[0] : w.path[w.path.length - 1]; cands.push(dirTo(pc.x, pc.y, near.x, near.y)); }
+    cands.push(toDom, toSub);                                          // then head toward the consumer, then route around a block
+    for (const d of cands) if (d >= 0 && tryLocalMove(net, Pr.id, d)) { if (net.demCell) net.demCell.add(key(pc.x, pc.y)); break; }
   }
 }
 // LOCAL straightening (no router): drop any wire cell whose two path-neighbours are adjacent
@@ -341,15 +345,14 @@ function straightenWires(net) {
     items.push({ w, full });
   }
   for (const { w, full } of items) {
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (let i = 1; i < full.length - 1; i++) {
-        const p = full[i - 1], q = full[i + 1];
-        if (Math.abs(p.x - q.x) + Math.abs(p.y - q.y) === 1 && !used.has(ek(p.x, p.y, q.x, q.y))) {
-          used.delete(ek(p.x, p.y, full[i].x, full[i].y)); used.delete(ek(full[i].x, full[i].y, q.x, q.y)); used.add(ek(p.x, p.y, q.x, q.y));
-          full.splice(i, 1); changed = true; break;
-        }
+    for (let i = 0; i < full.length - 2; i++) {               // for each cell, jump to the FARTHEST later cell it is adjacent to, dropping the detour between
+      let best = -1;
+      for (let j = full.length - 1; j > i + 1; j--)
+        if (Math.abs(full[i].x - full[j].x) + Math.abs(full[i].y - full[j].y) === 1 && !used.has(ek(full[i].x, full[i].y, full[j].x, full[j].y))) { best = j; break; }
+      if (best > i + 1) {
+        for (let k = i; k < best; k++) used.delete(ek(full[k].x, full[k].y, full[k + 1].x, full[k + 1].y));
+        used.add(ek(full[i].x, full[i].y, full[best].x, full[best].y));
+        full.splice(i + 1, best - i - 1);
       }
     }
     w.path = full.slice(1, full.length - 1);
@@ -468,7 +471,7 @@ function fireStep(net, strict) {
     if (net.dem && !net.dem.has(Pr.id)) continue;            // demand front must have reached it
     const cc = net.cell.get(C.id), pc = net.cell.get(Pr.id);
     const dist = Math.abs(cc.x - pc.x) + Math.abs(cc.y - pc.y);
-    const gate = base + Math.floor((Pr.starve || 0) / 12);   // impatience watchdog (§7): a starved pair widens its gate
+    const gate = base + Math.floor((Pr.starve || 0) / 3);    // impatience watchdog (§7): a starved pair widens its gate
     if (dist <= gate) { fireOne(net, C, Pr); fired++; }
     else Pr.starve = (Pr.starve || 0) + 1;                   // reeled but still blocked: grow impatient
   }
