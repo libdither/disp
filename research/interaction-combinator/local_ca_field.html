@@ -19,6 +19,8 @@
   .note { color:#8595ad; font-size:11px; }
   .ok { color:var(--ok); } .bad { color:var(--warn); }
   .lg { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+  #tip { position:fixed; pointer-events:none; z-index:10; background:#0f1420; border:1px solid #2a3a52; border-radius:5px; padding:5px 8px; font:11px/1.45 monospace; color:#c8d3e0; white-space:pre; max-width:300px; display:none; box-shadow:0 4px 14px #0008; }
+  #tip b { color:#ffd866; }
 </style></head>
 <body><div id="wrap">
   <canvas id="cv"></canvas>
@@ -256,11 +258,25 @@ function embed(net) {
   relaxCollisions(net); buildOcc(net);
   eachLink(net, (ea, eb) => { buildOcc(net); embedLink(net, ea, eb); });
 }
-function propagateDemand(net) {
-  const dem = new Set(), stack = [];
-  for (const a of net.agents.values()) if (a.tag === "OUT" || a.tag === "NRM") stack.push(a.id);
-  while (stack.length) { const id = stack.pop(); if (dem.has(id)) continue; dem.add(id); const a = net.agents.get(id); if (!a) continue; for (const e of a.p) if (e && !dem.has(e[0])) stack.push(e[0]); }
-  net.dem = dem;
+// Demand travels ONE CELL per tick along the wires (§9), not instantly. `demCell` is the set
+// of cells the demand front has washed over; `dem` is the agents it has reached (both monotone:
+// once needed, stays needed, as in call-by-need). A redex is "hot" and may fire only once the
+// front has reached it — so wires light up progressively and reduction follows the front.
+function advanceDemand(net) {
+  if (!net.demCell) net.demCell = new Set();
+  if (!net.dem) net.dem = new Set();
+  for (const a of net.agents.values()) if (a.tag === "OUT" || a.tag === "NRM") { const c = net.cell.get(a.id); if (c) net.demCell.add(key(c.x, c.y)); }  // seed roots
+  // adjacency along the forwarder chains (consecutive cells + agent endpoints)
+  const adj = new Map(), ae = (p, q) => { if (!adj.has(p)) adj.set(p, []); adj.get(p).push(q); };
+  for (const w of net.wire.values()) {
+    const ca = net.cell.get(w.a[0]), cb = net.cell.get(w.b[0]); if (!ca || !cb) continue;
+    const chain = [{ x: ca.x, y: ca.y }, ...w.path, { x: cb.x, y: cb.y }];
+    for (let i = 0; i + 1 < chain.length; i++) { const p = key(chain[i].x, chain[i].y), q = key(chain[i + 1].x, chain[i + 1].y); ae(p, q); ae(q, p); }
+  }
+  const add = [];                                            // advance the front by exactly one cell
+  for (const ck of net.demCell) { const ns = adj.get(ck); if (ns) for (const nk of ns) if (!net.demCell.has(nk)) add.push(nk); }
+  for (const nk of add) net.demCell.add(nk);
+  for (const [id, c] of net.cell) if (net.demCell.has(key(c.x, c.y))) net.dem.add(id);
 }
 function rerouteAround(net, id) { const a = net.agents.get(id); if (!a) return; for (let i = 0; i < a.p.length; i++) { const e = a.p[i]; if (!e) continue; buildOcc(net); embedLink(net, [id, i], e); } }
 function reelPairs(net) {
@@ -274,7 +290,7 @@ function reelPairs(net) {
       if (!bx && !by) continue;
       const tx = pc.x + bx, ty = pc.y + by;
       if (net._ag.has(key(tx, ty))) continue;
-      net._ag.delete(key(pc.x, pc.y)); pc.x = tx; pc.y = ty; net._ag.set(key(tx, ty), Pr.id); net.transport++; rerouteAround(net, Pr.id); break;
+      net._ag.delete(key(pc.x, pc.y)); pc.x = tx; pc.y = ty; net._ag.set(key(tx, ty), Pr.id); net.transport++; if (net.demCell) net.demCell.add(key(tx, ty)); rerouteAround(net, Pr.id); break;
     }
   }
 }
@@ -292,7 +308,7 @@ function fieldStep(net) {
     if (!bx && !by) continue;
     const tx = c.x + bx, ty = c.y + by, tk = key(tx, ty);
     if (net._ag.has(tk)) continue;
-    net._ag.delete(key(c.x, c.y)); c.x = tx; c.y = ty; net._ag.set(tk, id); net.transport++; rerouteAround(net, id);
+    net._ag.delete(key(c.x, c.y)); c.x = tx; c.y = ty; net._ag.set(tk, id); net.transport++; if (net.dem && net.dem.has(id) && net.demCell) net.demCell.add(tk); rerouteAround(net, id);
   }
 }
 function fireOne(net, C, Pr) {
@@ -328,7 +344,10 @@ function fireStep(net, requireAdjacent) {
     }
     return fired > 0;
   }
-  const ap = activePair(net); if (!ap) return false; fireOne(net, ap[0], ap[1]); return true;
+  // demand-driven: fire one active pair the demand front has reached (redexes fire as demand
+  // arrives, so firing follows the same front that lights the wires)
+  for (const [C, Pr] of allActivePairs(net)) if (net.dem && net.dem.has(Pr.id)) { fireOne(net, C, Pr); return true; }
+  return false;
 }
 
 // ================================================================================
@@ -400,7 +419,7 @@ function stepNet(net, opts) {
     return true;
   }
   net.ticks = (net.ticks || 0) + 1;
-  propagateDemand(net);
+  advanceDemand(net);
   if (opts.requireAdjacent) reelPairs(net);
   if (opts.field) fieldStep(net);
   const fired = fireStep(net, opts.requireAdjacent);
@@ -456,6 +475,8 @@ function draw() {
   const dpr = devicePixelRatio, s = view.scale, CW = innerWidth - 348, CH = innerHeight;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, CW, CH);
   if (!SIM) return;
+  // ease each agent's render position toward its logical cell (smooth reel-in / migration)
+  if (SIM.cell) for (const c of SIM.cell.values()) { if (c.rx === undefined) { c.rx = c.x; c.ry = c.y; } else { c.rx += (c.x - c.rx) * 0.28; c.ry += (c.y - c.ry) * 0.28; } }
   // full-grid: draw the lattice
   if (MODE === "grid") {
     ctx.strokeStyle = "#141c2b"; ctx.lineWidth = 1;
@@ -473,36 +494,31 @@ function draw() {
   if (SIM.demand) { const [px, py] = project(SIM.demand.x, SIM.demand.y, 0); ctx.strokeStyle = SIM._ag && SIM._ag.has(key(SIM.demand.x, SIM.demand.y)) ? "#ffd866" : "#3fbf7f"; ctx.lineWidth = 2; ctx.strokeRect(px - s / 2, py - s / 2, s, s); }
   updateStat(); updateOracle();   // keep the ledger live even when paused / externally stepped
 }
-function wireClass(net, w) {                                  // hot (principal, demanded) / principal / plumbing
-  const a = net.agents.get(w.a[0]), b = net.agents.get(w.b[0]);
-  const principal = (w.a[1] === 0 || w.b[1] === 0);
-  const hot = principal && net.dem && (net.dem.has(w.a[0]) || net.dem.has(w.b[0])) && a && b && (!PRODUCERS.has(a.tag) || !PRODUCERS.has(b.tag));
-  return hot ? "hot" : principal ? "prin" : "plumb";
-}
 function drawWires(CW, CH, s) {
   const net = SIM; if (!net.wire) return;
-  // determine crossing cells (vias) for depth layering
   const load = new Map(); for (const w of net.wire.values()) for (const p of w.path) { const k = key(p.x, p.y); load.set(k, (load.get(k) || 0) + 1); }
   const items = [...net.wire.values()];
   if (MODE === "iso") items.sort((u, v) => midDepth(u) - midDepth(v));
   ctx.lineCap = "round";
-  for (const w of net.wire.values()) {
-    const cls = wireClass(net, w);
+  const demd = c => net.demCell && net.demCell.has(key(c.x, c.y));
+  for (const w of items) {
     const ca = net.cell.get(w.a[0]), cb = net.cell.get(w.b[0]); if (!ca || !cb) continue;
-    // a wire's layer: back (1) if it is plumbing crossing a busy cell, else front (0)
-    let layer = 0; for (const p of w.path) if ((load.get(key(p.x, p.y)) || 0) >= 2 && cls === "plumb") layer = 1;
-    const col = cls === "hot" ? "#ffd866" : cls === "prin" ? "#5f96d1" : (layer ? "#7a5a9a" : "#3a4a6d");
+    const spine = (w.a[1] === 0 || w.b[1] === 0);             // a principal (redex) wire vs plumbing
+    let layer = 0; for (const p of w.path) if ((load.get(key(p.x, p.y)) || 0) >= 2 && !spine) layer = 1;
     ctx.globalAlpha = depthAlpha(layer) * (w.direct ? 0.5 : 1);
-    ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, s * (cls === "hot" ? .14 : cls === "prin" ? .1 : .07) * depthScale(layer));
-    if (w.direct) ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    const chain = [{ x: ca.x, y: ca.y }, ...w.path, { x: cb.x, y: cb.y }];
-    for (let i = 0; i < chain.length; i++) { const [px, py] = project(chain[i].x, chain[i].y, layer); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
-    ctx.stroke(); ctx.setLineDash([]);
+    ctx.setLineDash(w.direct ? [3, 3] : []);
+    const logical = [{ x: ca.x, y: ca.y }, ...w.path, { x: cb.x, y: cb.y }];                 // integer cells, for the demand front
+    const drawC = [{ x: ca.rx ?? ca.x, y: ca.ry ?? ca.y }, ...w.path, { x: cb.rx ?? cb.x, y: cb.ry ?? cb.y }];  // eased endpoints, for drawing
+    for (let i = 0; i + 1 < logical.length; i++) {            // colour each SEGMENT: gold where the demand front has reached (§9)
+      const hot = spine && demd(logical[i]) && demd(logical[i + 1]);
+      ctx.strokeStyle = hot ? "#ffd866" : spine ? "#5f96d1" : (layer ? "#7a5a9a" : "#3a4a6d");
+      ctx.lineWidth = Math.max(1, s * (hot ? .14 : spine ? .1 : .07) * depthScale(layer));
+      const [ax, ay] = project(drawC[i].x, drawC[i].y, layer), [bx, by] = project(drawC[i + 1].x, drawC[i + 1].y, layer);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    }
   }
-  // via markers
-  ctx.globalAlpha = 1;
-  for (const [k, n] of load) if (n >= 2) { const [x, y] = KV(k); const [px, py] = project(x, y, 0); ctx.fillStyle = "#c792ea"; ctx.beginPath(); ctx.arc(px, py, Math.max(2, s * .1), 0, 7); ctx.fill(); }
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+  for (const [k, n] of load) if (n >= 2) { const [x, y] = KV(k); const [px, py] = project(x, y, 0); ctx.fillStyle = "#c792ea"; ctx.beginPath(); ctx.arc(px, py, Math.max(2, s * .1), 0, 7); ctx.fill(); }  // via markers
 }
 function midDepth(w) { const ps = w.path; if (!ps.length) return 0; const m = ps[ps.length >> 1]; return m.x + m.y; }
 function drawAgents(CW, CH, s) {
@@ -511,7 +527,7 @@ function drawAgents(CW, CH, s) {
   if (MODE === "iso") ids.sort((a, b) => { const ca = net.cell.get(a), cb = net.cell.get(b); return (ca.x + ca.y) - (cb.x + cb.y); });
   for (const id of ids) {
     const a = net.agents.get(id), c = net.cell.get(id); if (!a) continue;
-    const [px, py] = project(c.x, c.y, 0); if (px < -40 || py < -40 || px > CW + 40 || py > CH + 40) continue;
+    const [px, py] = project(c.rx ?? c.x, c.ry ?? c.y, 0); if (px < -40 || py < -40 || px > CW + 40 || py > CH + 40) continue;
     const demd = net.dem && net.dem.has(id);
     const r = s * .34 * (MODE === "front" ? (demd ? 1.12 : 0.92) : 1);
     ctx.globalAlpha = (net.dem && !demd && net.kind === "term") ? 0.5 : 1;   // undemanded = dim (laziness)
@@ -593,6 +609,48 @@ cv.addEventListener("mousedown", e => { panning = true; px0 = e.clientX; py0 = e
 addEventListener("mouseup", () => panning = false);
 addEventListener("mousemove", e => { if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; } });
 cv.addEventListener("wheel", e => { e.preventDefault(); view.scale = Math.max(4, Math.min(48, view.scale * (e.deltaY < 0 ? 1.1 : 0.9))); }, { passive: false });
+
+// ---- hover inspector: unproject the cursor to a cell, pick the agent/wire, describe it ----
+const PORTNAME = { L: ["prin"], S: ["prin", "child"], F: ["prin", "L", "R"], P: ["prin", "fn", "arg"], A: ["prin(op)", "arg", "res"], T1: ["prin(a)", "b", "c", "res"], T2: ["prin(z)", "w", "x", "b", "res"], DN: ["val", "copy₁", "copy₂"], EPS: ["prin"], NRM: ["prin", "res"], OUT: ["in"] };
+function unproject(sx, sy) {
+  const s = view.scale, cx = (innerWidth - 348) / 2, cy = innerHeight / 2;
+  if (MODE === "iso") { const u = ((sx - cx) / s) / 0.87, v = ((sy - cy) / s) / 0.5; return [view.x + (u + v) / 2, view.y + (v - u) / 2]; }
+  return [(sx - cx) / s + view.x, (sy - cy) / s + view.y];
+}
+function pick(cx, cy) {
+  const net = SIM; if (!net || !net.cell) return null;
+  for (const [id, c] of net.cell) if (Math.round(c.x) === cx && Math.round(c.y) === cy) return { kind: "agent", id, c, a: net.agents.get(id) };
+  for (const w of net.wire.values()) for (const p of w.path) if (p.x === cx && p.y === cy) return { kind: "wire", w, cell: [cx, cy] };
+  return { kind: "empty", cell: [cx, cy] };
+}
+function gl(net, id) { const a = net.agents.get(id); return a ? (GLYPH[a.tag] || a.tag) : "·"; }
+function describe(hit) {
+  const net = SIM;
+  if (hit.kind === "agent") {
+    const a = hit.a, names = PORTNAME[a.tag] || [];
+    const ports = a.p.map((e, i) => `${names[i] || "aux" + i}→${e ? gl(net, e[0]) : "·"}`).join("  ");
+    const dem = a.tag === "OUT" ? "result sink" : (net.dem && net.dem.has(hit.id)) ? "demanded (hot)" : "lazy — front not yet arrived";
+    const t2 = a.tag === "T2" ? (SUB === "d2" ? "\n⚠ 5 ports: does not fit 4 faces — flagged for binary split (§4.3)" : "\nfits (3D / 6-neighbour, a face to spare)") : "";
+    return { head: `${GLYPH[a.tag] || a.tag}  ${a.tag}  @(${hit.c.x},${hit.c.y})`, body: `ports: ${ports}\ndemand: ${dem}${t2}` };
+  }
+  if (hit.kind === "wire") {
+    const w = hit.w, spine = (w.a[1] === 0 || w.b[1] === 0);
+    const via = [...net.wire.values()].filter(x => x.path.some(p => p.x === hit.cell[0] && p.y === hit.cell[1])).length >= 2;
+    const dcell = net.demCell && net.demCell.has(key(hit.cell[0], hit.cell[1]));
+    return { head: `wire  @(${hit.cell[0]},${hit.cell[1]})`, body: `${gl(net, w.a[0])}.${w.a[1]} ↔ ${gl(net, w.b[0])}.${w.b[1]}\n${spine ? "principal (redex spine)" : "plumbing"}${via ? "  ·  via (crossing, 2 layers)" : ""}\nlength ${w.path.length}  ·  ${dcell ? "demand reached" : "cold"}` };
+  }
+  return { head: `empty cell  @(${hit.cell[0]},${hit.cell[1]})`, body: "the bare lattice" };
+}
+const tip = document.createElement("div"); tip.id = "tip"; document.body.appendChild(tip);
+cv.addEventListener("mousemove", e => {
+  if (panning || !SIM) { tip.style.display = "none"; return; }
+  const [wx, wy] = unproject(e.clientX, e.clientY), hit = pick(Math.round(wx), Math.round(wy));
+  if (!hit || (hit.kind === "empty" && MODE !== "grid")) { tip.style.display = "none"; return; }
+  const d = describe(hit); tip.innerHTML = `<b>${d.head}</b>\n${d.body}`;
+  tip.style.display = "block"; tip.style.left = Math.min(e.clientX + 14, innerWidth - 312) + "px"; tip.style.top = (e.clientY + 14) + "px";
+});
+cv.addEventListener("mouseleave", () => tip.style.display = "none");
+
 function resize() { const w = innerWidth - 348, h = innerHeight; cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio; cv.style.width = w + "px"; cv.style.height = h + "px"; }
 addEventListener("resize", resize);
 document.getElementById("legend").innerHTML =
