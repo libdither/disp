@@ -27,10 +27,11 @@
   <div id="side">
     <h3>RUNG 2 — IC EVALUATION ON A LOCAL LATTICE</h3>
     <div class="note">A tree-calculus interaction net reduced on a von Neumann lattice. Agents
-    (values <b>L S F P</b>, consumers <b>A T&#8321; T&#8322; &delta; &epsilon; N</b>) sit on cells; links are forwarder chains
-    that <b>reel in</b> under one &phi; field (tension + pressure). Reduction is
-    <b>demand-driven</b> from the root normalizer. The answer is checked live against an
-    independent normalizer (the differential oracle).</div>
+    (values <b>L S F P</b>, consumers <b>A T&#8321; T&#8322; &delta; &epsilon; N</b>) sit on cells; links are forwarder chains.
+    Every wire edit is <b>local</b> (an agent step reels/bends each wire by one cell, no router);
+    values <b>reel in</b> and fire only when adjacent, and erasers reel in to drain garbage
+    gradually. Reduction is <b>demand-driven</b>; the result is delivered to the fixed <b>OUT pad</b>
+    (&#9737;). Checked live against an independent normalizer (the differential oracle).</div>
     <div style="margin:8px 0">
       <button id="play">&#9654; play</button>
       <button id="step">tick</button>
@@ -43,7 +44,7 @@
     <div class="row"><span class="k">substrate</span><span class="seg" id="sub">
       <button data-s="d2" class="on">depth-2</button><button data-s="d3">3D (6-nbr)</button>
     </span></div>
-    <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="120" value="18"></div>
+    <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="600" value="80"></div>
     <h3>COST VECTOR (the ledger)</h3>
     <div id="stat"></div>
     <h3>RESULT vs ORACLE</h3>
@@ -189,6 +190,7 @@ function readback(net, ref, fuel) {
 const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
 const key = (x, y) => x + "," + y, KV = k => k.split(",").map(Number);
 const lkey = (a, b) => (a[0] * 8 + a[1]) < (b[0] * 8 + b[1]) ? `${a[0]}.${a[1]}|${b[0]}.${b[1]}` : `${b[0]}.${b[1]}|${a[0]}.${a[1]}`;
+const dirTo = (x0, y0, x1, y1) => { for (let d = 0; d < 4; d++) if (x0 + DX[d] === x1 && y0 + DY[d] === y1) return d; return -1; };
 function eachLink(net, fn) {
   for (const a of net.agents.values()) for (let i = 0; i < a.p.length; i++) {
     const e = a.p[i]; if (!e) continue;
@@ -265,7 +267,7 @@ function embed(net) {
 function advanceDemand(net) {
   if (!net.demCell) net.demCell = new Set();
   if (!net.dem) net.dem = new Set();
-  for (const a of net.agents.values()) if (a.tag === "OUT" || a.tag === "NRM") { const c = net.cell.get(a.id); if (c) net.demCell.add(key(c.x, c.y)); }  // seed roots
+  for (const a of net.agents.values()) if (a.tag === "OUT" || a.tag === "NRM" || a.tag === "EPS") { const c = net.cell.get(a.id); if (c) net.demCell.add(key(c.x, c.y)); }  // seed roots + erasers (GC reels in and drains gradually)
   // adjacency along the forwarder chains (consecutive cells + agent endpoints)
   const adj = new Map(), ae = (p, q) => { if (!adj.has(p)) adj.set(p, []); adj.get(p).push(q); };
   for (const w of net.wire.values()) {
@@ -278,37 +280,111 @@ function advanceDemand(net) {
   for (const nk of add) net.demCell.add(nk);
   for (const [id, c] of net.cell) if (net.demCell.has(key(c.x, c.y))) net.dem.add(id);
 }
-function rerouteAround(net, id) { const a = net.agents.get(id); if (!a) return; for (let i = 0; i < a.p.length; i++) { const e = a.p[i]; if (!e) continue; buildOcc(net); embedLink(net, [id, i], e); } }
+// PER-CELL wire dynamics (retires the router for moves): step agent `id` one cell in dir d,
+// editing every incident wire by ±1 locally. The wire departing in d REELS (agent eats its
+// first forwarder, -1); every other wire BENDS through a distinct corner (+1). Commits only if
+// all edits are collision-free, so the embedding stays contiguous and integrity-clean by
+// construction. Assumes net._ag / net._load are current (caller builds once); updates them
+// incrementally. Returns whether it moved.
+function tryLocalMove(net, id, d) {
+  const c = net.cell.get(id), ox = c.x, oy = c.y, nx = ox + DX[d], ny = oy + DY[d], nk = key(nx, ny), ok = key(ox, oy);
+  if (net._ag.has(nk)) return false;
+  const a = net.agents.get(id), wires = [];
+  for (let i = 0; i < a.p.length; i++) {
+    const e = a.p[i]; if (!e) continue;
+    const w = net.wire.get(lkey([id, i], e)); if (!w || w.direct) return false;   // taut/missing wire: no local step
+    const isA = (w.a[0] === id && w.a[1] === i);
+    const near = w.path.length ? (isA ? w.path[0] : w.path[w.path.length - 1]) : net.cell.get(e[0]);
+    const dep = dirTo(ox, oy, near.x, near.y); if (dep < 0) return false;
+    wires.push({ w, isA, dep });
+  }
+  const targLoad = net._load.get(nk) || 0, reeler = wires.find(wi => wi.dep === d);
+  if (reeler) { if (targLoad > 1) return false; }             // don't reel onto a via (would bury a strand)
+  else if (targLoad > 0) return false;                        // stepping onto a foreign wire
+  const claimed = new Set([nk]), bends = [];
+  for (const wi of wires) {
+    if (wi === reeler) continue;
+    const cx = nx + DX[wi.dep], cy = ny + DY[wi.dep], ck = key(cx, cy);
+    if ((net._ag.has(ck) && ck !== ok) || claimed.has(ck) || (net._load.get(ck) || 0) >= 2) return false;
+    claimed.add(ck); bends.push({ wi, cx, cy });
+  }
+  if (reeler) { reeler.isA ? reeler.w.path.shift() : reeler.w.path.pop(); net._load.set(nk, targLoad - 1); }
+  for (const b of bends) { const cell = { x: b.cx, y: b.cy }; b.wi.isA ? b.wi.w.path.unshift(cell) : b.wi.w.path.push(cell); net._load.set(key(b.cx, b.cy), (net._load.get(key(b.cx, b.cy)) || 0) + 1); }
+  net._ag.delete(ok); c.x = nx; c.y = ny; net._ag.set(nk, id); net.transport++;
+  return true;
+}
 function reelPairs(net) {
   buildOcc(net);
   for (const [C, Pr] of allActivePairs(net)) {
     if (net.dem && !net.dem.has(Pr.id)) continue;
-    const pc = net.cell.get(Pr.id), cc = net.cell.get(C.id), dx = cc.x - pc.x, dy = cc.y - pc.y;
-    if (Math.abs(dx) + Math.abs(dy) <= 2) continue;
-    const cand = Math.abs(dx) >= Math.abs(dy) ? [[Math.sign(dx), 0], [0, Math.sign(dy)]] : [[0, Math.sign(dy)], [Math.sign(dx), 0]];
-    for (const [bx, by] of cand) {
-      if (!bx && !by) continue;
-      const tx = pc.x + bx, ty = pc.y + by;
-      if (net._ag.has(key(tx, ty))) continue;
-      net._ag.delete(key(pc.x, pc.y)); pc.x = tx; pc.y = ty; net._ag.set(key(tx, ty), Pr.id); net.transport++; if (net.demCell) net.demCell.add(key(tx, ty)); rerouteAround(net, Pr.id); break;
-    }
+    const pc = net.cell.get(Pr.id), cc = net.cell.get(C.id);
+    if (Math.abs(pc.x - cc.x) + Math.abs(pc.y - cc.y) <= 1) continue;   // adjacent: it will fire
+    const w = net.wire.get(lkey([Pr.id, 0], Pr.p[0]));                  // step ALONG the principal wire, eating one forwarder
+    let d = -1;
+    if (w && !w.direct && w.path.length) { const near = (w.a[0] === Pr.id) ? w.path[0] : w.path[w.path.length - 1]; d = dirTo(pc.x, pc.y, near.x, near.y); }
+    else d = dirTo(pc.x, pc.y, cc.x, cc.y);
+    if (d >= 0 && tryLocalMove(net, Pr.id, d) && net.demCell) net.demCell.add(key(pc.x, pc.y));
   }
+}
+// LOCAL straightening (no router): drop any wire cell whose two path-neighbours are adjacent
+// (a removable detour), as long as the shortcut edge is free. Relaxes the zig-zag that per-cell
+// bends leave behind, keeping wires short the way rung-1's straighten rule did.
+function straightenWires(net) {
+  const used = new Set();
+  const ek = (x1, y1, x2, y2) => (y1 < y2 || (y1 === y2 && x1 <= x2)) ? `${x1},${y1}-${x2},${y2}` : `${x2},${y2}-${x1},${y1}`;
+  const items = [];
+  for (const w of net.wire.values()) {
+    if (w.direct) continue;
+    const ca = net.cell.get(w.a[0]), cb = net.cell.get(w.b[0]); if (!ca || !cb) continue;
+    const full = [{ x: ca.x, y: ca.y }, ...w.path, { x: cb.x, y: cb.y }];
+    for (let i = 1; i < full.length; i++) used.add(ek(full[i - 1].x, full[i - 1].y, full[i].x, full[i].y));
+    items.push({ w, full });
+  }
+  for (const { w, full } of items) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 1; i < full.length - 1; i++) {
+        const p = full[i - 1], q = full[i + 1];
+        if (Math.abs(p.x - q.x) + Math.abs(p.y - q.y) === 1 && !used.has(ek(p.x, p.y, q.x, q.y))) {
+          used.delete(ek(p.x, p.y, full[i].x, full[i].y)); used.delete(ek(full[i].x, full[i].y, q.x, q.y)); used.add(ek(p.x, p.y, q.x, q.y));
+          full.splice(i, 1); changed = true; break;
+        }
+      }
+    }
+    w.path = full.slice(1, full.length - 1);
+  }
+}
+// deliver the result to the fixed OUT pad: reel OUT's neighbour (the head of the result spine)
+// toward OUT, dragging the computation up to the pad. OUT stays put; the work comes to it.
+function reelToOut(net) {
+  let out = null; for (const a of net.agents.values()) if (a.tag === "OUT") { out = a; break; }
+  if (!out || !out.p[0]) return;
+  const nid = out.p[0][0], wk = lkey([out.id, 0], out.p[0]);
+  let w = net.wire.get(wk); const len = w ? (w.direct ? 999 : w.path.length) : 0;
+  if (len <= 5) return;                                       // only deliver once the pad wire is getting long
+  const nb = net.agents.get(nid);                             // don't pull the head away while it is interacting (would stall a fire)
+  if (nb && nb.p[0]) { const pp = net.agents.get(nb.p[0][0]); if (pp && (PRODUCERS.has(nb.tag) !== PRODUCERS.has(pp.tag))) return; }
+  buildOcc(net);
+  const nc = net.cell.get(nid), oc = net.cell.get(out.id); if (!nc || !oc) return;
+  if (w && w.direct) { embedLink(net, out.p[0], [out.id, 0]); w = net.wire.get(wk); buildOcc(net); }   // make the pad wire a reelable chain
+  let d = -1;
+  if (w && !w.direct && w.path.length) { const near = (w.a[0] === nid) ? w.path[0] : w.path[w.path.length - 1]; d = dirTo(nc.x, nc.y, near.x, near.y); }
+  else d = dirTo(nc.x, nc.y, oc.x, oc.y);
+  if (d >= 0) tryLocalMove(net, nid, d);
 }
 function fieldStep(net) {
   buildOcc(net);
-  for (const id of [...net.cell.keys()]) {
-    const a = net.agents.get(id); if (!a || a.tag === "OUT") continue;
+  for (const id of [...net.cell.keys()]) {                   // every agent relaxes tension locally
+    const a = net.agents.get(id); if (!a || a.tag === "OUT") continue;   // OUT is the fixed I/O pad: it never moves; the computation is delivered to it
     const c = net.cell.get(id); let fx = 0, fy = 0;
     for (let i = 0; i < a.p.length; i++) {
       const e = a.p[i]; if (!e) continue; const nc = net.cell.get(e[0]); if (!nc) continue;
       const dx = nc.x - c.x, dy = nc.y - c.y, dist = Math.abs(dx) + Math.abs(dy) || 1, w = (i === 0 ? 2 : 1);
       fx += w * dx / dist; fy += w * dy / dist;
     }
-    let bx = 0, by = 0; if (Math.abs(fx) >= Math.abs(fy)) bx = Math.sign(fx); else by = Math.sign(fy);
-    if (!bx && !by) continue;
-    const tx = c.x + bx, ty = c.y + by, tk = key(tx, ty);
-    if (net._ag.has(tk)) continue;
-    net._ag.delete(key(c.x, c.y)); c.x = tx; c.y = ty; net._ag.set(tk, id); net.transport++; if (net.dem && net.dem.has(id) && net.demCell) net.demCell.add(tk); rerouteAround(net, id);
+    let d = -1; if (Math.abs(fx) >= Math.abs(fy)) { if (fx) d = fx > 0 ? 1 : 3; } else if (fy) d = fy > 0 ? 2 : 0;
+    if (d >= 0 && tryLocalMove(net, id, d) && net.dem && net.dem.has(id) && net.demCell) net.demCell.add(key(c.x, c.y));
   }
 }
 // A rewrite is LOCAL: the two dying agents' external (aux) wires are PRESERVED — the fresh
@@ -455,7 +531,9 @@ function stepNet(net, opts) {
   net.ticks = (net.ticks || 0) + 1;
   advanceDemand(net);
   reelPairs(net);                                            // ALWAYS reel demanded producers toward consumers (transport)
+  reelToOut(net);                                            // deliver the result spine to the fixed OUT pad
   if (opts.field) fieldStep(net);
+  straightenWires(net);                                      // local relaxation: retract the detours per-cell bends leave
   const fired = fireStep(net, opts.strict);                  // fire only pairs reeled adjacent
   buildOcc(net);                                             // repair: batch moves can transiently drop an agent onto a wire
   const clipped = []; for (const [, w] of net.wire) if (!w.direct && w.path.some(p => net._ag.has(key(p.x, p.y)))) clipped.push(w);
@@ -612,8 +690,8 @@ function pump() {
   if (!RUNNING || !SIM) return;
   acc += (+document.getElementById("speed").value) * dt;
   const t0 = performance.now();
-  while (acc >= 1 && performance.now() - t0 < 30) { acc--; if (!stepNet(SIM, { field: true, strict: ADJ })) break; }
-  if (acc > 4) acc = 4;
+  while (acc >= 1 && performance.now() - t0 < 34) { acc--; if (!stepNet(SIM, { field: true, strict: ADJ })) break; }
+  if (acc > 80) acc = 80;                                     // per-cell dynamics need many ticks; let a high speed drive many per frame
   // do NOT auto-stop at normal form: dwell on the result (the field keeps tidying it), then
   // loop the example so play stays live. Field scenarios never reach done, so they just run.
   if (SIM.kind === "term" && SIM.done) { SIM._dwell = (SIM._dwell || 0) + 1; if (SIM._dwell > 200) { boot(); RUNNING = true; document.getElementById("play").innerHTML = "&#10074;&#10074; pause"; } }
