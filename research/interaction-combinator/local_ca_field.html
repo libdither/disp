@@ -418,6 +418,7 @@ function stepNet(net, opts) {
     else fieldRelax(net);                                    // bead box: pressure eviction
     return true;
   }
+  if (net.done) return false;                                // already at normal form (pump dwells/loops)
   net.ticks = (net.ticks || 0) + 1;
   advanceDemand(net);
   if (opts.requireAdjacent) reelPairs(net);
@@ -454,7 +455,7 @@ function diffuse(net) {
 // (5) RENDERER — four view modes over the same depth-2 state.
 // ================================================================================
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
-let SIM = null, RUNNING = false, CUR = "chain (reel-in spine)", MODE = "flat", SUB = "d2";
+let SIM = null, RUNNING = false, CUR = "chain (reel-in spine)", MODE = "flat", SUB = "d2", SELECTED = null;
 let view = { x: 0, y: 0, scale: 20 };
 const COL = { L: "#3fbf7f", S: "#3fbf7f", F: "#3fbf7f", P: "#7ce38b", A: "#56c8ff", T1: "#56c8ff", T2: "#56c8ff", DN: "#c792ea", EPS: "#ff6b6b", NRM: "#ffd866", OUT: "#8595ad", BEAD: "#5a6b86", PIN: "#7ce38b" };
 
@@ -492,6 +493,16 @@ function draw() {
   drawAgents(CW, CH, s);
   // demand marker (field)
   if (SIM.demand) { const [px, py] = project(SIM.demand.x, SIM.demand.y, 0); ctx.strokeStyle = SIM._ag && SIM._ag.has(key(SIM.demand.x, SIM.demand.y)) ? "#ffd866" : "#3fbf7f"; ctx.lineWidth = 2; ctx.strokeRect(px - s / 2, py - s / 2, s, s); }
+  // selected agent: a ring + the persisted tooltip, which follows the node (and clears if consumed)
+  if (SELECTED != null) {
+    if (SIM.agents && SIM.agents.has(SELECTED) && SIM.cell.has(SELECTED)) {
+      const sc = SIM.cell.get(SELECTED), [px, py] = project(sc.rx ?? sc.x, sc.ry ?? sc.y, 0);
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(px, py, s * .5, 0, 7); ctx.stroke();
+      const d = describe({ kind: "agent", id: SELECTED, c: sc, a: SIM.agents.get(SELECTED) });
+      tip.innerHTML = `<b>${d.head}</b>  <span style="color:#8595ad">▣ selected</span>\n${d.body}`;
+      tip.style.display = "block"; tip.style.left = Math.min(Math.max(6, px + 16), CW - 300) + "px"; tip.style.top = Math.max(6, py - 12) + "px";
+    } else { SELECTED = null; tip.style.display = "none"; }
+  }
   updateStat(); updateOracle();   // keep the ledger live even when paused / externally stepped
 }
 function drawWires(CW, CH, s) {
@@ -546,7 +557,7 @@ function drawAgents(CW, CH, s) {
 function boot() {
   const ex = EXAMPLES[CUR];
   SIM = ex.kind === "term" ? loadTerm(ex.term) : loadField(CUR);
-  SIM.ticks = 0; RUNNING = false;
+  SIM.ticks = 0; RUNNING = false; SELECTED = null;
   document.getElementById("play").innerHTML = "&#9654; play";
   fitView(); updateStat(); updateOracle();
   document.getElementById("explain").textContent = ex.note;
@@ -565,8 +576,11 @@ function pump() {
   if (!RUNNING || !SIM) return;
   acc += (+document.getElementById("speed").value) * dt;
   const t0 = performance.now();
-  while (acc >= 1 && performance.now() - t0 < 30) { acc--; if (!stepNet(SIM, { field: true, requireAdjacent: ADJ })) { RUNNING = false; document.getElementById("play").innerHTML = "&#9654; play"; break; } }
+  while (acc >= 1 && performance.now() - t0 < 30) { acc--; if (!stepNet(SIM, { field: true, requireAdjacent: ADJ })) break; }
   if (acc > 4) acc = 4;
+  // do NOT auto-stop at normal form: dwell on the result (the field keeps tidying it), then
+  // loop the example so play stays live. Field scenarios never reach done, so they just run.
+  if (SIM.kind === "term" && SIM.done) { SIM._dwell = (SIM._dwell || 0) + 1; if (SIM._dwell > 200) { boot(); RUNNING = true; document.getElementById("play").innerHTML = "&#10074;&#10074; pause"; } }
   updateStat(); updateOracle();
 }
 function updateStat() {
@@ -604,14 +618,27 @@ adjBtn.onclick = () => { ADJ = !ADJ; adjBtn.textContent = "fire: " + (ADJ ? "ree
 document.getElementById("sub").parentElement.after(adjBtn);
 
 // pan / zoom
-let panning = false, px0 = 0, py0 = 0;
-cv.addEventListener("mousedown", e => { panning = true; px0 = e.clientX; py0 = e.clientY; });
+let panning = false, px0 = 0, py0 = 0, downX = 0, downY = 0;
+cv.addEventListener("mousedown", e => { panning = true; px0 = e.clientX; py0 = e.clientY; downX = e.clientX; downY = e.clientY; });
 addEventListener("mouseup", () => panning = false);
 addEventListener("mousemove", e => { if (panning) { view.x -= (e.clientX - px0) / view.scale; view.y -= (e.clientY - py0) / view.scale; px0 = e.clientX; py0 = e.clientY; } });
 cv.addEventListener("wheel", e => { e.preventDefault(); view.scale = Math.max(4, Math.min(48, view.scale * (e.deltaY < 0 ? 1.1 : 0.9))); }, { passive: false });
 
 // ---- hover inspector: unproject the cursor to a cell, pick the agent/wire, describe it ----
 const PORTNAME = { L: ["prin"], S: ["prin", "child"], F: ["prin", "L", "R"], P: ["prin", "fn", "arg"], A: ["prin(op)", "arg", "res"], T1: ["prin(a)", "b", "c", "res"], T2: ["prin(z)", "w", "x", "b", "res"], DN: ["val", "copy₁", "copy₂"], EPS: ["prin"], NRM: ["prin", "res"], OUT: ["in"] };
+const DESC = {
+  L: "Leaf △. A value; applied to x it becomes S x.",
+  S: "Stem (△ x). A value; applied to y it becomes F x y.",
+  F: "Fork (△ x y). A value; applied to z it triages on x.",
+  P: "Suspension (f a). Inert until a consumer's principal forces it.",
+  A: "Apply. Forces the operator (principal), applies one arg; result on res.",
+  T1: "Triage-1 on a: leaf→b (K); stem→S-rule (shares c via δ); fork→T₂.",
+  T2: "Triage-2 on z: leaf→w; stem u→(x u); fork u v→(b u) v. Five ports → split.",
+  DN: "Need-duplicator δ. Forces the value once, then copies it to both outputs.",
+  EPS: "Eraser ε. Walks into a value and collects it (garbage collection).",
+  NRM: "Normalizer N. Drives normal form: force the head, recurse into children.",
+  OUT: "Result sink. Holds the final normal form; inert.",
+};
 function unproject(sx, sy) {
   const s = view.scale, cx = (innerWidth - 348) / 2, cy = innerHeight / 2;
   if (MODE === "iso") { const u = ((sx - cx) / s) / 0.87, v = ((sy - cy) / s) / 0.5; return [view.x + (u + v) / 2, view.y + (v - u) / 2]; }
@@ -631,7 +658,7 @@ function describe(hit) {
     const ports = a.p.map((e, i) => `${names[i] || "aux" + i}→${e ? gl(net, e[0]) : "·"}`).join("  ");
     const dem = a.tag === "OUT" ? "result sink" : (net.dem && net.dem.has(hit.id)) ? "demanded (hot)" : "lazy — front not yet arrived";
     const t2 = a.tag === "T2" ? (SUB === "d2" ? "\n⚠ 5 ports: does not fit 4 faces — flagged for binary split (§4.3)" : "\nfits (3D / 6-neighbour, a face to spare)") : "";
-    return { head: `${GLYPH[a.tag] || a.tag}  ${a.tag}  @(${hit.c.x},${hit.c.y})`, body: `ports: ${ports}\ndemand: ${dem}${t2}` };
+    return { head: `${GLYPH[a.tag] || a.tag}  ${a.tag}  @(${hit.c.x},${hit.c.y})`, body: `${DESC[a.tag] || ""}\nports: ${ports}\ndemand: ${dem}${t2}` };
   }
   if (hit.kind === "wire") {
     const w = hit.w, spine = (w.a[1] === 0 || w.b[1] === 0);
@@ -643,13 +670,22 @@ function describe(hit) {
 }
 const tip = document.createElement("div"); tip.id = "tip"; document.body.appendChild(tip);
 cv.addEventListener("mousemove", e => {
+  if (SELECTED != null) return;                              // a node is pinned; leave the tooltip on it
   if (panning || !SIM) { tip.style.display = "none"; return; }
   const [wx, wy] = unproject(e.clientX, e.clientY), hit = pick(Math.round(wx), Math.round(wy));
   if (!hit || (hit.kind === "empty" && MODE !== "grid")) { tip.style.display = "none"; return; }
   const d = describe(hit); tip.innerHTML = `<b>${d.head}</b>\n${d.body}`;
   tip.style.display = "block"; tip.style.left = Math.min(e.clientX + 14, innerWidth - 312) + "px"; tip.style.top = (e.clientY + 14) + "px";
 });
-cv.addEventListener("mouseleave", () => tip.style.display = "none");
+cv.addEventListener("mouseleave", () => { if (SELECTED == null) tip.style.display = "none"; });
+// click a node to select it (persist its tooltip); click empty space or press Esc to deselect
+cv.addEventListener("click", e => {
+  if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) return;   // a drag/pan, not a click
+  const [wx, wy] = unproject(e.clientX, e.clientY), hit = pick(Math.round(wx), Math.round(wy));
+  SELECTED = (hit && hit.kind === "agent") ? (SELECTED === hit.id ? null : hit.id) : null;
+  if (SELECTED == null) tip.style.display = "none";
+});
+addEventListener("keydown", e => { if (e.key === "Escape") { SELECTED = null; tip.style.display = "none"; } });
 
 function resize() { const w = innerWidth - 348, h = innerHeight; cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio; cv.style.width = w + "px"; cv.style.height = h + "px"; }
 addEventListener("resize", resize);
@@ -657,7 +693,8 @@ document.getElementById("legend").innerHTML =
   `<span class="lg" style="background:#3fbf7f"></span>value L/S/F/P &nbsp; <span class="lg" style="background:#56c8ff"></span>consumer A/T&#8321;/T&#8322;<br>` +
   `<span class="lg" style="background:#c792ea"></span>δ duplicator &nbsp; <span class="lg" style="background:#ff6b6b"></span>ε eraser &nbsp; <span class="lg" style="background:#ffd866"></span>N normalizer<br>` +
   `<span class="lg" style="background:#ffd866"></span>hot wire (redex) &nbsp; <span class="lg" style="background:#5f96d1"></span>principal &nbsp; <span class="lg" style="background:#3a4a6d"></span>plumbing<br>` +
-  `<span class="lg" style="background:#c792ea;border-radius:50%"></span>via (crossing) &nbsp; dim = undemanded (lazy) &nbsp; red box = T₂ needs split`;
+  `<span class="lg" style="background:#c792ea;border-radius:50%"></span>via (crossing) &nbsp; dim = undemanded (lazy) &nbsp; red box = T₂ needs split<br>` +
+  `<span style="color:#c8d3e0">hover</span> for details &nbsp;·&nbsp; <span style="color:#c8d3e0">click</span> a node to pin them (Esc to deselect)`;
 resize(); boot(); requestAnimationFrame(draw);
 </script>
 </body></html>
