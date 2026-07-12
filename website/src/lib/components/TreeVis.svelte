@@ -45,7 +45,7 @@
       'K t x y', // …after K resolves, the leaf rule (△) grows a stem: t y
       'K (t t) x y', // …and fork-construction (f) finishes a triple: t t y
       'S f g x', // S shares x between f and g: (f x)(g x)
-      't (t a b) c (t t)', // triage: the F rule reads the argument's shape
+      't (t a b) c (t u)', // triage (stem arg): the F rule reads the argument's shape → b u
       'not true',
       'and false true',
       { expr: 'add 2 3', stepMs: 90 } // the computation storm finale
@@ -91,6 +91,36 @@
   let activeIdx = $state(-1) // keyboard/hover highlight in the open panel
   let inputEl: HTMLInputElement | undefined = $state()
   let wrapEl: HTMLDivElement | undefined = $state()
+  // the piece palette (ambient only): a chip on the left, at the ⚘ button's
+  // y-level, showing the symbol of the piece currently playing. Clicking it
+  // unrolls a little tape of every piece with the current one magnified;
+  // picking one loads and runs its canonical example. sub = a subscript badge;
+  // sep marks the divide between the raw rules and the named programs.
+  let paletteOpen = $state(false)
+  let paletteWrapEl: HTMLDivElement | undefined = $state()
+  let paletteChanged = $state(false) // a pick happened since the tape opened
+  let paletteLeaveTimer: ReturnType<typeof setTimeout> | undefined
+  const PALETTE: { sym: string; sub?: string; expr: string; tip: string; sep?: boolean }[] = [
+    { sym: '△', expr: 'K t x y', tip: 'stem · the leaf rule △ grows a stem (t y)' },
+    { sym: 's', expr: 'K (t t) x y', tip: 'fork · applying a stem builds a fork (t t y)' },
+    { sym: 'K', expr: 'K x y', tip: 'K · keep the first argument, discard the second' },
+    { sym: 'S', expr: 'S f g x', tip: 'S · share x between both sides: (f x) (g x)' },
+    { sym: '△', sub: 't', expr: 't (t a b) c t', tip: 'triage · argument is a leaf → take the first branch (a)' },
+    { sym: '△', sub: 's', expr: 't (t a b) c (t u)', tip: 'triage · argument is a stem → second branch on its child (b u)' },
+    { sym: '△', sub: 'f', expr: 't (t a b) c (t u v)', tip: 'triage · argument is a fork → third branch on its children (c u v)' },
+    { sym: '¬', expr: 'not true', tip: 'not · negation, built from triage', sep: true },
+    { sym: '∧', expr: 'and false true', tip: 'and · conjunction' },
+    { sym: '+', expr: 'add 2 3', tip: 'add · the recursion storm' }
+  ]
+  const matchPaletteIdx = (s: string) => PALETTE.findIndex((it) => it.expr === s)
+  // the chip tracks whatever is playing: the ambient cycle drives `input`, and
+  // a match lights the matching symbol; a non-palette input keeps the last one
+  // svelte-ignore state_referenced_locally
+  let selectedIdx = $state(Math.max(0, matchPaletteIdx(input)))
+  $effect(() => {
+    const i = matchPaletteIdx(input)
+    if (i >= 0) selectedIdx = i
+  })
   const matchIdx = () => exampleOptions.findIndex((o) => o.expr === input)
   function openPicker() {
     if (!exampleOptions.length) return
@@ -660,6 +690,34 @@
     running = variant === 'ambient'
     load(input, { keepAuto: variant === 'ambient' })
   }
+  // opening the tape freezes the ambient cycle so the highlight holds still
+  // while you choose; the chip on its own stays a live indicator
+  function openPalette() {
+    paletteOpen = true
+    paletteChanged = false
+    // hard-freeze the scene so the magnified cell holds on whatever is playing:
+    // stop cycling AND cancel any already-scheduled step/next-expr timer
+    autoCycle = false
+    running = false
+    clearTimeout(timer)
+    clearTimeout(paletteLeaveTimer)
+  }
+  // a pick loads its example and runs it, and keeps the tape open — it only
+  // closes on a click-off or, once something has changed, 2s after the pointer
+  // leaves
+  function pickPalette(i: number) {
+    selectedIdx = i
+    paletteChanged = true
+    clearTimeout(paletteLeaveTimer)
+    running = true
+    load(PALETTE[i].expr)
+  }
+  const paletteEnter = () => clearTimeout(paletteLeaveTimer)
+  const paletteLeave = () => {
+    if (!paletteOpen || !paletteChanged) return
+    clearTimeout(paletteLeaveTimer)
+    paletteLeaveTimer = setTimeout(() => (paletteOpen = false), 2000)
+  }
 
   // keyboard drive when the widget itself is focused (clicking it focuses it):
   // space runs/pauses, ◀ steps back, ▶ steps forward, shift+◀/▶ hops through
@@ -692,12 +750,19 @@
   onMount(() => {
     load(input, { keepAuto: autoCycle })
   })
-  onDestroy(() => clearTimeout(timer))
+  onDestroy(() => {
+    clearTimeout(timer)
+    clearTimeout(paletteLeaveTimer)
+  })
 </script>
 
 <svelte:document
   onpointerdown={(e) => {
     if (pickerOpen && wrapEl && !wrapEl.contains(e.target as Node)) closePicker()
+    if (paletteOpen && paletteWrapEl && !paletteWrapEl.contains(e.target as Node)) {
+      paletteOpen = false
+      clearTimeout(paletteLeaveTimer)
+    }
   }}
 />
 
@@ -927,6 +992,42 @@
   {/if}
 
   {#if variant === 'ambient'}
+    <!-- the piece palette: a chip that unrolls into a tape (see the palette
+         comment above the state). Same y as the ⚘ button, opposite side. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="palette-wrap"
+      bind:this={paletteWrapEl}
+      onmouseenter={paletteEnter}
+      onmouseleave={paletteLeave}
+    >
+      {#if paletteOpen}
+        <div class="palette-tape" role="menu" aria-label="tree pieces">
+          {#each PALETTE as it, i}
+            {#if it.sep}<span class="psep" aria-hidden="true"></span>{/if}
+            <button
+              type="button"
+              class="pcell"
+              class:mag={i === selectedIdx}
+              role="menuitemradio"
+              aria-checked={i === selectedIdx}
+              title={it.tip}
+              aria-label={it.tip}
+              onclick={() => pickPalette(i)}
+            >{it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}</button>
+          {/each}
+        </div>
+      {:else}
+        <button
+          type="button"
+          class="palette-chip"
+          onclick={openPalette}
+          aria-label={`tree pieces — now: ${PALETTE[selectedIdx].tip}. Click to choose.`}
+          aria-haspopup="menu"
+          title={`${PALETTE[selectedIdx].tip} — click to choose a piece`}
+        >{PALETTE[selectedIdx].sym}{#if PALETTE[selectedIdx].sub}<sub>{PALETTE[selectedIdx].sub}</sub>{/if}</button>
+      {/if}
+    </div>
     <button
       class="instrument"
       onclick={() => {
@@ -1297,6 +1398,102 @@
   }
   .forms code { white-space: nowrap; background: none; border: none; padding: 0; }
   .err { color: var(--err); font-family: var(--font-mono); font-size: 0.82rem; }
+
+  /* ---- the piece palette (ambient, left): chip ⇄ tape ---- */
+  .palette-wrap {
+    position: absolute;
+    left: 0.4rem;
+    bottom: 2.2rem;
+    display: flex;
+    align-items: center;
+    z-index: 20;
+  }
+  /* collapsed: a chip wearing the symbol of whatever is playing */
+  .palette-chip {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev);
+    color: var(--g2);
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  }
+  .vis:hover .palette-chip { opacity: 1; }
+  .palette-chip:hover { border-color: var(--accent); color: var(--accent); transform: scale(1.06); }
+  .palette-chip sub { font-size: 0.6em; margin-left: 0.03em; }
+
+  /* expanded: a little tape, faint ruler ticks, the current piece magnified */
+  .palette-tape {
+    display: flex;
+    align-items: center;
+    gap: 0.05rem;
+    height: 34px;
+    padding: 0 0.3rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background:
+      repeating-linear-gradient(
+        90deg,
+        transparent 0 15px,
+        color-mix(in oklab, var(--border-strong) 40%, transparent) 15px 16px
+      ),
+      var(--bg-elev);
+    box-shadow:
+      0 10px 24px -16px color-mix(in oklab, var(--fg) 45%, transparent),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 6%, transparent),
+      inset 0 -1px 0 color-mix(in oklab, var(--fg) 6%, transparent);
+    max-width: 360px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    transform-origin: left center;
+    animation: tapeIn 0.18s ease;
+  }
+  .palette-tape::-webkit-scrollbar { display: none; }
+  @keyframes tapeIn {
+    from { opacity: 0; transform: translateX(-6px) scaleX(0.92); }
+  }
+  .pcell {
+    flex: none;
+    min-width: 1.55em;
+    height: 1.7em;
+    border: none;
+    background: none;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.18em;
+    transition: color 0.12s ease, background 0.12s ease;
+  }
+  .pcell sub { font-size: 0.62em; margin-left: 0.02em; }
+  .pcell:hover { color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
+  /* the current piece rides the tape magnified and accented */
+  .pcell.mag {
+    color: #f7fcf5;
+    font-size: 1.06rem;
+    font-weight: 650;
+    min-width: 1.95em;
+    background: linear-gradient(118deg, #4caf6d, #2f9e6e 70%);
+    box-shadow: 0 2px 8px -3px color-mix(in oklab, var(--g2) 70%, transparent);
+  }
+  .pcell.mag:hover { color: #fff; background: linear-gradient(118deg, #53b976, #35a877 70%); }
+  .psep { flex: none; width: 1px; height: 1.15em; background: var(--border-strong); margin: 0 0.2rem; }
 
   /* ---- the ambient instrument button ---- */
   .instrument {
