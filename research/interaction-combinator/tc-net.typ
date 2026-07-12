@@ -203,6 +203,34 @@ A tree calculus term is encoded as a TC-Net as follows:
 
 A source term by itself is inert graph structure. It reduces when a consumer is connected to its root. To evaluate a closed term to weak-head form, connect $E$ to the root. To apply a term to an argument, connect $A$ to the function root with the argument on $A."arg"$.
 
+== Reading the Rules: the $times.o$ Active Pair
+
+Every reduction below is written $alpha times.o beta : "right-hand side"$. Before the rule tables begin we fix what $times.o$ denotes and what happens when a rule fires, so that the tables read as wiring instructions rather than equations.
+
+#block(inset: (left: 1em))[
+  *Active pair.* $alpha times.o beta$ is not an operation applied to two agents. It names a _configuration_: the two agents whose _principal ports are joined by a wire_. This is the interaction-net notion of a redex. It is symmetric, so $alpha times.o beta$ and $beta times.o alpha$ are the same site (rules are indexed by the unordered pair of agent types); we write the consumer on the left by convention.
+]
+
+Because every agent has exactly one principal port, an agent belongs to at most one active pair at a time. That is the entire content of the independence property above, and it is what allows active pairs to fire in parallel.
+
+*Firing.* When $alpha times.o beta$ is an active pair and a rule exists for the unordered pair ${alpha, beta}$, the pair may _fire_. Firing is a purely local graph rewrite in three moves:
+
++ _Delete_ the two agents $alpha$ and $beta$ together with the wire joining their principal ports.
++ _Keep the interface._ Each auxiliary port of $alpha$ and $beta$ held a wire out to the rest of the net. Firing never touches the far ends of those wires; the right-hand side must reconnect every one of them exactly once. (Interaction rules are interface-preserving: the replacement net exposes exactly the free ports the two agents did.)
++ _Install the right-hand side_, minting the agents it names and attaching the interface wires to them as written.
+
+So the "reconnects ports" intuition is right, with one refinement: $times.o$ marks _where_ a rewrite is enabled, and the text after the colon _is_ the rewrite. Firing consumes the two principal-joined agents and re-attaches the wires that hung off their auxiliary ports, sometimes to freshly minted agents. Nothing outside the pair is read or moved; only wires whose near end was an auxiliary port of $alpha$ or $beta$ change.
+
+The right-hand side is assembled from three notations, each stating where an interface wire goes:
+
+- *A new agent with a placed principal port,* $C["port"_1 := w_1, dots, "port"_k := w_k].p -> w_0$: mint an agent $C$, wire its auxiliary port $"port"_i$ to interface wire $w_i$ and its principal port $p$ to $w_0$. A positional spelling $C(w_1, dots, w_k)$ fills the auxiliary ports in order; the reduction atlas often writes the same thing as $w_0 -> C(w_1, dots, w_k)$. Example: $A(c, r) times.o S(x)$ fires to $F[l := x, r := c].p -> r$. The applicator and the stem vanish, a fork appears, and the three interface wires that were $A."arg" = c$, $A."res" = r$, and $S.x$ are reattached to $F.r$, $F.p$, and $F.l$. This is exactly $tri space x space c$: the stem $tri x$ applied to $c$ is the fork $tri x c$.
+
+- *A bare wire,* $w_0 -> w_1$: splice two interface wires directly together, with no agent between them. This is how a rule returns one of its inputs untouched. Example: the K rule $T_1(b, c, r) times.o L$ fires to $(r -> b)$ and $(epsilon times.o c)$. The result wire $r$ is spliced onto the retained branch $b$, while the discarded branch $c$ is capped by a fresh eraser.
+
+- *A fresh active pair.* When the right-hand side places a consumer's principal port onto an interface wire that leads to a producer, it has created a new redex, which fires next. This is how computation chains. The table form $A["arg" := a, "res" := r].p -> f$ and the diagram form $A(a, r) times.o f$ used in the atlas denote the same net: $A$'s principal port meets the wire $f$, and once demand exposes a producer there, $A times.o "producer"$ is the next active pair. Writing it with $times.o$ only emphasizes that an interaction is now enabled.
+
+*Why firing is deterministic and parallel.* Two constraints govern it. The rule table is _functional_ (at most one rule per unordered pair), so an active pair fires in exactly one way. And distinct active pairs are vertex-disjoint (one principal port per agent), so firing one neither enables nor disables another. Together these give strong confluence (Theorem 2): every active pair present in a net may fire in the same parallel step, independently of order. The $times.o$ sites are precisely the places where parallel work happens.
+
 == Demand and Application Rules
 
 The demand agent exposes the weak-head constructor of a term:
