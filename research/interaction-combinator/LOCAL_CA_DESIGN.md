@@ -4,8 +4,9 @@ Design doc. Companion to `SPATIAL_IC.md` (the theory note; this is its §13 "E4"
 into a buildable specification), `EMBEDDING_THEOREM.md` (the simulation proof this relies
 on), `tc-net.typ` (the calculus), and `RUST_IC_NET_DESIGN.md` (the pointer machine whose
 §2/§5/§7 decisions transfer). Status: design, with rungs 1 through 2 prototyped in
-`local_ca_field.html` (a rung-2 evaluator: real reduction over the full agent alphabet, checked
-live against an independent normalizer, with four view modes; see §12).
+`local_ca_field.html` (a rung-2 evaluator: real reduction over the full agent alphabet, gated on
+demand and adjacency with per-cell moves, checked live against an independent normalizer, with
+four view modes; measured liveness findings in §12).
 
 The existing `ca_substrate_viz.html` is a *shortcut* realization: it stores wires as
 segment data on cells, re-embeds them with a global A* route on every move, propagates wire
@@ -131,7 +132,12 @@ so `T2` (five ports) must split; letting `T2` spend its fifth port on the depth 
 logic into the crossing channel and is exactly the inelegance to avoid. Binary (b) is then
 preferable to the two-cell block (a) for two compounding reasons: uniform at-most-3-port cells
 make a microcoded rewrite executor's cell FSM and template ROM uniform (no special wide cell),
-and the spare in-plane face on every binary cell carries the field/demand/commit signals. In
+and the spare in-plane face on every binary cell carries the field/demand/commit signals.
+Lowering is also a liveness lever (measured in §12): a cell with at most three ports bends at
+most two wires per step, exactly the two-strand capacity of the cell it vacates, so the §8.2
+local move becomes feasible by construction in the generic case. `T1`, the one four-port
+survivor of the current alphabet, is the overflow case; that is an argument for lowering it
+too. In
 UNBOUNDED 3D (six faces) the split is instead neutral — `T2` fits with a face to spare — so
 this recommendation is specific to the planar or depth-2 substrate. (The rung-1 prototype
 already embodies the invariant: agents carry only in-plane ports; the depth layer, realized as
@@ -185,6 +191,14 @@ state and neighbors enable. All five read only self plus four neighbors.
 4. **Drift.** Compute the field force on me (§7) and take a Metropolis step down it. Migration
    and space-making are the same move.
 5. **Signal.** Advance any demand or death pulse on my wire faces by one cell (§9).
+
+Rules 2 and 4 are separate mechanisms on purpose: Walk is directed transport (feasibility-first,
+monotone toward the consumer), Drift is stochastic relaxation. The rung-2 prototype initially
+asked Drift, with boosted wire weights, to do Walk's job, and redexes stranded; wiring Walk as
+its own rule was load-bearing (§12). Walk's polarity matters equally: producers and `ε` travel,
+a consumer parks and receives (its principal exerts no pull on it). Letting hot-wire tension
+drag consumers toward their producers sent every fire site stepping toward the tree and the
+whole computation walking off the fixed pad (§12).
 
 ### 5.1 The rewrite executor (microcoded, not hand-written)
 
@@ -251,7 +265,11 @@ expectation"). Two ingredients make the descent live rather than stuck: the Metr
 compress, amoebot PODC 2016, with a real phase transition in the bias), and an **impatience
 rule** as watchdog (an agent's age raises its weight, so a starved reservation eventually
 out-competes its neighbors). Whether `φ` is a true Lyapunov function for this dynamics, or the
-watchdog is load-bearing, is the one theory item to settle or to accept.
+watchdog is load-bearing, is the one theory item to settle or to accept. Temperature has a
+scope limit the rung-2 prototype measured directly: it repairs energy minima only. When the
+move set itself is infeasible (every candidate step refused for want of a free bend corner),
+the acceptance rule never gets a vote and the pass rate is exactly flat in `T`; feasibility has
+to be rebuilt into the move (§4.4, §12), it cannot be annealed in.
 
 **The jamming threshold** is the one empirical number. Expect a traffic-model-like phase
 transition in fill fraction: below it the field clears reservations quickly, above it it jams
@@ -373,9 +391,33 @@ Cheap-first, each rung gating the next:
    embedding. Each fire runs the abstract rule, then re-embeds its O(1) fresh agents locally with
    a bounded-window router rather than a global A*. `T2` is drawn as one agent with its depth-2
    non-fit flagged (red box), cleared on the 3D-substrate toggle, so the split is shown rather
-   than structurally lowered. The pure Margolus microcoded executor with no co-maintained oracle,
-   and firing gated strictly on 4-neighbor adjacency, stays the target: the co-maintained net is
-   the scaffold that got real reduction running and checkable end to end first.
+   than structurally lowered. Firing is now gated strictly on 4-neighbor adjacency plus the
+   demand front, with per-cell moves (no router on moves) and Walk as its own tick rule; the
+   pure Margolus microcoded executor with no co-maintained oracle stays the target, the
+   co-maintained net being the scaffold that got real reduction running and checkable end to
+   end first.
+   Liveness findings from making the gated dynamics actually reach normal form, measured by
+   ablation over a fixed 120-term corpus (every completion bit-matches the oracle, so the whole
+   gap is liveness, never correctness): (a) the original move primitive demanded a fresh forward
+   corner for every bent wire and refused any step onto wire; under it the layout froze solid
+   (0 of 6 curated examples, 70 of 120 random terms stuck), and the pass rate was flat in
+   temperature from 0.05 to 2.0, the signature of an infeasible move set rather than an energy
+   minimum. Restoring §4.4 fidelity in the move (reel onto a via with the strand tucking
+   behind, step onto a single foreign strand, bends overflowing through the just-vacated cell)
+   plus wiring Walk as its own rule recovered 100 of 120 and 4 of 6; neither ingredient
+   suffices alone (walk-only: no change at all; move-fix-only: 2 of 6). (b) Tucks must stay
+   transient: letting strands persist under agents silts the lattice until no bend fits
+   anywhere (the pass rate drops by a third); until a local strand-slip rule exists, the
+   bounded router is the janitor that keeps tucks transient, a known departure from full
+   locality. (c) Consumers must wait (the §5 Walk polarity): with hot-wire tension pulling both
+   endpoints, every fire site stepped toward the tree, the computation walked off the fixed pad
+   at about a cell per tick, and past the router radius the pad wire went taut (weightless) and
+   the net decoupled; parking consumers cut the measured drift from thousands of cells to about
+   a hundred. The residue (wide and branch among the curated six, about a sixth of random
+   terms) is pocket jamming near the fire site: pairs survive, demanded and adjacent-ish, but
+   their moves stay refused. That is the §13 liveness gap made measurable, and the next lever
+   on it is the §4.3 lowering (at most two bends per step, which the vacated cell can always
+   absorb).
 3. **The commit handshake** (§6) across block boundaries.
 4. **Signals** (§9): demand waking, `ε` death pulses, the one-dead bit. Demand is prototyped:
    reduction is demand-driven from the root normalizer and undemanded agents render dim (the
@@ -383,11 +425,11 @@ Cheap-first, each rung gating the next:
    abstract `ε` cascade.
 5. **The shadow harness** (§10): projection invariant per step, NF bit-equality vs
    `rust-eager`. Prototyped as a live differential oracle: every run's read-back is checked
-   in page against the independent normalizer. The default demand-driven schedule is embedding-
-   clean (50/50 random terms), and a `reel-to-adjacency` toggle reels each pair to a fire gate
-   and honestly jams on about 20 percent of random terms, the §7 jamming and §13 liveness
-   question made visible. Bit-equality against `rust-eager` specifically is still to wire, as is
-   the strict per-step projection assertion (the current check is at quiescence).
+   in page against the independent normalizer. The demand-driven, adjacency-gated schedule
+   reaches normal form on 100 of 120 random terms and four of the six curated examples (the
+   rest pocket-jam; rung 2 findings above), and every completion bit-matches the oracle.
+   Bit-equality against `rust-eager` specifically is still to wire, as is the strict per-step
+   projection assertion (the current check is at quiescence).
 
 Scope for v1: single-threaded simulation (it validates dynamics, it races nothing), one root
 pad at a fixed boundary cell (the loader unfolds a compiled tree H-tree-fashion, trees being

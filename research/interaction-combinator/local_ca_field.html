@@ -28,9 +28,11 @@
     <h3>RUNG 2 — IC EVALUATION ON A LOCAL LATTICE</h3>
     <div class="note">A tree-calculus interaction net reduced on a von Neumann lattice. Agents
     (values <b>L S F P</b>, consumers <b>A T&#8321; T&#8322; &delta; &epsilon; N</b>) sit on cells; links are forwarder chains.
-    Every wire edit is <b>local</b> (an agent step reels/bends each wire by one cell, no router);
-    values <b>reel in</b> and fire only when adjacent, and erasers reel in to drain garbage
-    gradually. Reduction is <b>demand-driven</b>; the result is delivered to the fixed <b>OUT pad</b>
+    Every wire edit is <b>local</b>: a step reels the wire ahead and bends the rest by one cell
+    (no router), overflow bends pass through the vacated cell, and a mover may sit on a crossing
+    with the strand <b>tucked behind</b> it (depth-2). Values <b>reel in</b> and fire only when
+    adjacent and reached by the <b>demand front</b> (gold wash, one cell per tick; dim = still lazy);
+    erasers reel in to drain garbage gradually. The result is delivered to the fixed <b>OUT pad</b>
     (&#9737;). Checked live against an independent normalizer (the differential oracle).</div>
     <div style="margin:8px 0">
       <button id="play">&#9654; play</button>
@@ -185,8 +187,11 @@ function readback(net, ref, fuel) {
 }
 
 // ================================================================================
-// (2) SPATIAL EMBEDDING — agents on a lattice, links as routed forwarder/via chains,
-//     relaxed by the phi field. Validated (field: 50/0/0, adj: 40/50 + honest jams).
+// (2) SPATIAL EMBEDDING — agents on a lattice, links as routed forwarder/via chains, moved
+//     per-cell (reel / bend / tuck-behind), relaxed by the phi field, and gated on demand +
+//     adjacency. Measured on a fixed 120-term corpus: 100/120 random + 4/6 curated reach NF,
+//     0 oracle mismatches ever (the whole gap is liveness, never correctness); the rest
+//     pocket-jam near the fire site — the §13 liveness residue (LOCAL_CA_DESIGN §12).
 // ================================================================================
 const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
 const key = (x, y) => x + "," + y, KV = k => k.split(",").map(Number);
@@ -285,10 +290,17 @@ function advanceDemand(net) {
 }
 // PER-CELL wire dynamics (retires the router for moves): step agent `id` one cell in dir d,
 // editing every incident wire by ±1 locally. The wire departing in d REELS (agent eats its
-// first forwarder, -1); every other wire BENDS through a distinct corner (+1). Commits only if
-// all edits are collision-free, so the embedding stays contiguous and integrity-clean by
-// construction. Assumes net._ag / net._load are current (caller builds once); updates them
-// incrementally. Returns whether it moved.
+// first forwarder, -1); every other wire BENDS (+1), into the corner ahead when free, else
+// back through the just-VACATED cell (guaranteed agent-free; it becomes a forwarder/via
+// behind the mover). Depth-2 coexistence (§4.4, proven out in rung 1) is honoured: an agent
+// may reel ONTO a via (the crossed strand tucks behind it) and may step onto one foreign
+// strand (a value sitting on a crossing). This feasibility is the liveness lever: the earlier
+// version demanded a fresh forward corner for every bend and refused any step onto wire, and
+// the layout froze solid (the corners self-congest, and no temperature unsticks a REFUSED
+// move — the failure was in the move set, not the energy). Commits only if every edit fits
+// the 2-strand budget, so the embedding stays contiguous by construction. Assumes net._ag /
+// net._load are current (caller builds once); updates them incrementally. Returns whether it
+// moved.
 function tryLocalMove(net, id, d) {
   const c = net.cell.get(id), ox = c.x, oy = c.y, nx = ox + DX[d], ny = oy + DY[d], nk = key(nx, ny), ok = key(ox, oy);
   if (net._ag.has(nk)) return false;
@@ -303,16 +315,18 @@ function tryLocalMove(net, id, d) {
     wires.push({ w, isA, dep });
   }
   const targLoad = net._load.get(nk) || 0, reeler = wires.find(wi => wi.dep === d);
-  if (reeler) { if (targLoad > 1) return false; }             // don't reel onto a via (would bury a strand)
-  else if (targLoad > 0) return false;                        // stepping onto a foreign wire
-  const claimed = new Set([nk]), bends = [];
+  if (reeler) { if (targLoad > 2) return false; }             // reel onto a via is fine: own strand is consumed, the crossed one tucks behind
+  else if (targLoad > 1) return false;                        // step onto ONE foreign strand (a value on a crossing), never two
+  const claimed = new Set(), bends = [];
+  let oLoad = net._load.get(ok) || 0;                         // strands already tucked behind the mover stay put and count against the vacated cell
   for (const wi of wires) {
     if (wi === reeler) continue;
     const cx = nx + DX[wi.dep], cy = ny + DY[wi.dep], ck = key(cx, cy);
-    if ((net._ag.has(ck) && ck !== ok) || claimed.has(ck) || (net._load.get(ck) || 0) >= 2) return false;
-    claimed.add(ck); bends.push({ wi, cx, cy });
+    if (ck !== ok && !net._ag.has(ck) && !claimed.has(ck) && (net._load.get(ck) || 0) < 2) { claimed.add(ck); bends.push({ wi, cx, cy }); }
+    else if (oLoad < 2) { oLoad++; bends.push({ wi, cx: ox, cy: oy }); }   // overflow: bend back through the vacated cell
+    else return false;
   }
-  if (reeler) { reeler.isA ? reeler.w.path.shift() : reeler.w.path.pop(); net._load.set(nk, targLoad - 1); }
+  if (reeler) { reeler.isA ? reeler.w.path.shift() : reeler.w.path.pop(); net._load.set(nk, Math.max(0, targLoad - 1)); }
   for (const b of bends) { const cell = { x: b.cx, y: b.cy }; b.wi.isA ? b.wi.w.path.unshift(cell) : b.wi.w.path.push(cell); net._load.set(key(b.cx, b.cy), (net._load.get(key(b.cx, b.cy)) || 0) + 1); }
   net._ag.delete(ok); c.x = nx; c.y = ny; net._ag.set(nk, id); net.transport++;
   return true;
@@ -402,6 +416,7 @@ function computeDistToOut(net) {
   }
   net.distOut = dist;
 }
+const WAITERS = new Set(["A", "T1", "T2", "DN", "EPS", "NRM"]);   // consumers park and receive; producers travel (§5.2)
 // φ-DESCENT with TEMPERATURE (heat-bath): stepping in dir d reels the wire departing in d
 // (saves its weight) and bends the others (+1 each), so Δφ_d = total − 2·w(reeled). The agent
 // picks among {stay, N, E, S, W} with probability ∝ e^(−Δφ/T). At T→0 this is greedy descent;
@@ -417,14 +432,20 @@ function fieldStep(net) {
     const dself = D.get(id), c = net.cell.get(id), inc = [];
     for (let i = 0; i < a.p.length; i++) {
       const e = a.p[i]; if (!e) continue;
+      // POLARITY (§5.2: producers and ε walk; consumers WAIT): a consumer's principal exerts no
+      // pull on the consumer — it parks and receives. Letting the hot-wire tension drag consumers
+      // toward their producers made every fire site step toward the tree, the whole computation
+      // walked off the fixed pad at ~a cell per tick, and past the router radius the pad wire went
+      // taut (weightless) and the net decoupled — measured drift of thousands of cells, now ~100.
+      // (Named alphabet, not "non-producer": the inert field-scenario PIN/BEAD tags must keep
+      // feeling tension or the rung-1 slack-tangle contraction dies.)
+      if (i === 0 && WAITERS.has(a.tag)) continue;
       const w = net.wire.get(lkey([id, i], e)); if (!w || w.direct) continue;   // a taut/missing wire doesn't add tension; it follows
       const isA = (w.a[0] === id && w.a[1] === i);
       const near = w.path.length ? (isA ? w.path[0] : w.path[w.path.length - 1]) : net.cell.get(e[0]);
       const dep = dirTo(c.x, c.y, near.x, near.y); if (dep < 0) continue;
       const dn = D.get(e[0]), outward = (dn !== undefined && dself !== undefined && dn < dself);   // this wire leads toward OUT
-      // POLARITY: only the PRINCIPAL wire (port 0) reeling toward OUT gets the attractor boost. A
-      // producer's principal points at its consumer (→OUT), so it delivers; a consumer's principal
-      // points back at its producer (away from OUT), so it stays put and waits to receive/fire.
+      // the attractor boost rides only a producer's principal headed toward OUT: it delivers.
       inc.push({ dep, wt: wireWeight(net, w) + ((i === 0 && outward) ? OB : 0) });
     }
     const total = inc.reduce((s, x) => s + x.wt, 0), cr0 = dens(c.x, c.y);
@@ -496,12 +517,14 @@ function fireOne(net, C, Pr) {
   for (let pass = 0; pass < 2; pass++) { let rep = false; for (const [, w] of [...net.wire]) { buildOcc(net); if (w.path.some(p => net._ag.has(key(p.x, p.y)))) { embedLink(net, w.a, w.b); rep = true; } } if (!rep) break; }
 }
 // Firing is ALWAYS spatially local: a redex fires only once its producer has been reeled
-// adjacent to its consumer (gate = 1 strict, 2 relaxed). So the connecting wire is consumed by
+// adjacent to its consumer, and only once the demand front has reached the pair (§5.1's
+// "awake consumer"; an undemanded redex stays lazy). So the connecting wire is consumed by
 // reel-in one cell per tick and is gone (or a single cell) by fire time — never deleted long.
 function fireStep(net) {
   let fired = 0;
   for (const [C, Pr] of allActivePairs(net)) {
     if (!net.agents.has(C.id) || !net.agents.has(Pr.id)) continue;
+    if (net.dem && !net.dem.has(C.id) && !net.dem.has(Pr.id)) continue;   // asleep: the front has not arrived
     const cc = net.cell.get(C.id), pc = net.cell.get(Pr.id);
     if (Math.abs(cc.x - pc.x) + Math.abs(cc.y - pc.y) <= 1) { fireOne(net, C, Pr); fired++; }   // strictly local: fire only when adjacent
   }
@@ -520,10 +543,10 @@ const dispT = AP(AP(F(F(L, L), L), S(L)), F(L, L));// drives A->T1->T2 (the spli
 const EXAMPLES = {
   "K combinator (erase)": { kind: "term", term: AP(AP(K, F(L, S(L))), S(S(L))), note: "K a b → a. The second argument is discarded: watch an ε eraser (red) walk into the dead subtree and collect it. The minimal erase/GC demo." },
   "chain (reel-in spine)": { kind: "term", term: chainK(6), note: "A linear spine of K-redexes. Each fires only after the value reels down to its consumer — watch the wire contract (transport) then the head reduce. Span-bound: little parallelism." },
-  "wide (parallelism)": { kind: "term", term: wideT(3), note: "A balanced fork tree of independent redexes normalized at the root. Many active pairs are enabled at once — the light cone the mesh exploits. Watch several fire per region." },
+  "wide (parallelism)": { kind: "term", term: wideT(3), note: "A balanced fork tree of independent redexes normalized at the root. Many active pairs are enabled at once — the light cone the mesh exploits. Watch several fire per region. On the default seed it reduces most of the way, then POCKET-JAMS: the surviving pairs' moves stay refused (LOCAL_CA_DESIGN §13's liveness gap, live — temperature will not unstick it)." },
   "sharing (δ duplicate)": { kind: "term", term: dupT, note: "The S-rule △(△x)yz = yz(xz) shares z, so a δ need-duplicator (purple) copies a subtree. The one rule that lengthens wires (§8.1) — watch δ fan out." },
   "dispatch (split T₂)": { kind: "term", term: dispT, note: "Drives A→T₁→T₂: two-level triage. T₂ has FIVE ports, so on the depth-2 substrate it cannot fit four faces — it is flagged for the binary split (§4.3). Toggle the substrate to 3D and it fits." },
-  "branch (lazy vs waste)": { kind: "term", term: branchT, note: "One live branch, one discarded. Demand-driven, the dead branch is never hauled in — it is erased in place. Fire-everything would pay to move it first (the branch example across the sims)." },
+  "branch (lazy vs waste)": { kind: "term", term: branchT, note: "One live branch, one discarded. Demand-driven, the dead branch is never hauled in — it is erased in place. Fire-everything would pay to move it first (the branch example across the sims). On the default seed the drain currently pocket-jams before finishing: the §13 liveness residue, visible." },
   "bead box (pressure field)": { kind: "field", note: "Inert beads packed at a fill fraction with a standing demand at the centre (yellow) that raises pressure until a free cell arrives. Pressure ON: beads flee the gradient, a hole reaches the centre fast. The node-insertion / jamming test, no reduction." },
   "slack tangle (reel-in)": { kind: "field", note: "Four wires with big detours contracting by reel-in. No path search: every move is O(1) and reads only a neighbourhood. Pure tension, the wire-only rung-1 relaxation." },
 };
@@ -578,11 +601,19 @@ function stepNet(net, opts) {
   }
   if (net.done) return false;                                // already at normal form (pump dwells/loops)
   net.ticks = (net.ticks || 0) + 1;
-  computeDistToOut(net);                                     // the distance-to-OUT field (attractor gradient + demand)
-  fieldStep(net);                                            // ONE field: wires attract (toward OUT), agents repel
-  straightenWires(net);                                      // local relaxation: retract the detours per-cell bends leave
-  const fired = fireStep(net);                               // fire strictly on adjacency (no watchdog, no demand gate)
-  buildOcc(net);                                             // repair: batch moves can transiently drop an agent onto a wire
+  computeDistToOut(net);                                     // the distance-to-OUT field (the delivery gradient)
+  advanceDemand(net);                                        // rule 5, Signal: the demand front advances one cell per tick
+  reelPairs(net);                                            // rule 2, Walk: each demanded producer reels one cell along its principal.
+  //   Directed transport is its own rule, NOT the field's job: asking the Metropolis drift to
+  //   also deliver values (via boosted weights) is the conflation that left redexes stranded.
+  fieldStep(net);                                            // rule 4, Drift: relaxation (tension + crowding + delivery toward OUT)
+  straightenWires(net);                                      // rule 3, Straighten: retract the detours per-cell bends leave
+  const fired = fireStep(net);                               // rule 1, Fire: adjacency-gated and demand-gated
+  buildOcc(net);
+  // strand hygiene: reroute any wire lingering under an agent. A tuck (agent over a strand) is
+  // legal §4.4 state WITHIN a move, but letting tucks persist silts the strand field up until
+  // no bend fits anywhere (measured: pass rate drops by a third). Until a local strand-slip
+  // rule exists, the bounded router is the janitor that keeps tucks transient.
   const clipped = []; for (const [, w] of net.wire) if (!w.direct && w.path.some(p => net._ag.has(key(p.x, p.y)))) clipped.push(w);
   for (const w of clipped) { buildOcc(net); embedLink(net, w.a, w.b); }
   for (const w of [...net.wire.values()]) if (w.direct) { buildOcc(net); embedLink(net, w.a, w.b); }   // retry taut wires as the net compacts, so they become reelable chains
@@ -841,8 +872,9 @@ function describe(hit) {
     const a = hit.a, names = PORTNAME[a.tag] || [];
     const ports = a.p.map((e, i) => `${names[i] || "aux" + i}→${e ? gl(net, e[0]) : "·"}`).join("  ");
     const dem = a.tag === "OUT" ? "result sink" : (net.dem && net.dem.has(hit.id)) ? "demanded (hot)" : "lazy — front not yet arrived";
+    const tuck = (net._load && (net._load.get(key(hit.c.x, hit.c.y)) || 0) > 0) ? "\ncarries a tucked strand behind it (a depth-2 crossing)" : "";
     const t2 = a.tag === "T2" ? (SUB === "d2" ? "\n⚠ 5 ports: does not fit 4 faces — flagged for binary split (§4.3)" : "\nfits (3D / 6-neighbour, a face to spare)") : "";
-    return { head: `${GLYPH[a.tag] || a.tag}  ${a.tag}  @(${hit.c.x},${hit.c.y})`, body: `${DESC[a.tag] || ""}\nports: ${ports}\ndemand: ${dem}${t2}` };
+    return { head: `${GLYPH[a.tag] || a.tag}  ${a.tag}  @(${hit.c.x},${hit.c.y})`, body: `${DESC[a.tag] || ""}\nports: ${ports}\ndemand: ${dem}${tuck}${t2}` };
   }
   if (hit.kind === "wire") {
     const w = hit.w, spine = (w.a[1] === 0 || w.b[1] === 0);
