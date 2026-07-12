@@ -1,8 +1,8 @@
 // case_opt — the licensed fast face of case_value (std/case.opt.disp).
 // The rebind's license (case.disp's CaseRelation) is checked at case.opt's LOAD
-// and covers BOTH faces: the explicit pointwise Nat relation (neutral path) and
-// the per-constructor LicSum spine equalities with abstract arms + payloads
-// (concrete path). This file pins the rest: agreement with the raw cut
+// builds the neutral/non-cut delegation itself, then checks a code-generated
+// per-constructor cut relation with an abstract typed case table + payloads.
+// This file pins the rest: agreement with the raw cut
 // (match) on a FRESH sum, certificates through the verbatim neutral
 // delegation, non-cut-class fall-through, junk-tag inertness — and the
 // negative control that the relation itself rejects a misdispatcher.
@@ -48,9 +48,18 @@ test tree_eq (k_fast (inj0 "Bogus")) 1 = false
 
 // the license has TEETH on the concrete face (negative control): a candidate
 // that misdispatches every target to the L0 arm fails CaseRelation — its
-// at_cut1 obligation would need refl to relate the L0 arm to (L1-arm c):
+// generated L1 obligation would need refl to relate the L0 arm to (L1-arm c):
 let misdispatch := {T, motive, cases, target} -> case_value T motive cases (inj0 "L0")
-let all_refl := { at_nat := {P} -> {z} -> {s} -> {n} -> refl; at_cut0 := {z} -> {o} -> {w} -> refl; at_cut1 := {z} -> {o} -> {w} -> {c} -> refl; at_cut2 := {z} -> {o} -> {w} -> {l} -> {r} -> refl }
+let all_refl := {
+  at_cut := {
+    L0 := {cases} -> refl;
+    L1 := {cases} -> {c} -> refl;
+    L2 := {cases} -> {l} -> {r} -> refl;
+    L3 := {cases} -> {a} -> {b} -> {c} -> refl
+  }
+}
 test tree_eq (param_apply (CaseRelation.rel case_value misdispatch) all_refl) (Ok true) = false
 // ...and the honest rebind inhabits it (the load-time check, replayed in-suite):
 test param_apply (CaseRelation.rel case_value case_value) all_refl = Ok true
+// The name is bound to the guard-constructed wrapper, not the raw proposal.
+test tree_eq case_value case_fast = true

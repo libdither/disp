@@ -62,15 +62,20 @@ test param_apply (Pi Nat ({_} -> Eff row_nil Bool)) covert = Ok true
 
 // ── CaseRelation: instance obligations cannot pin a polymorphic candidate ──
 let refls := {
-  at_nat := {P} -> {z} -> {s} -> {n} -> refl;
-  at_cut0 := {z} -> {o} -> {w} -> refl;
-  at_cut1 := {z} -> {o} -> {w} -> {c} -> refl;
-  at_cut2 := {z} -> {o} -> {w} -> {l} -> {r} -> refl
+  at_cut := {
+    L0 := {cases} -> refl;
+    L1 := {cases} -> {c} -> refl;
+    L2 := {cases} -> {l} -> {r} -> refl;
+    L3 := {cases} -> {a} -> {b} -> {c} -> refl
+  }
 }
 
-// evil2 dispatches on the type argument: it is case_value at the two licensed
-// instance types and junk at every other type.
-let evil2 := {T} -> {P} -> {cases} -> {v} -> (if (tree_eq T Nat) then (case_value T P cases v) else (if (tree_eq T LicSum) then (case_value T P cases v) else 0))
+// The relation's remaining representative-code limit: a whole candidate can
+// still dispatch on the licensed cut type and junk on a fresh cut type. The
+// specialized guard no longer binds such a whole candidate (it accepts only a
+// raw worker and builds neutral/non-cut delegation), but code quantification is
+// still needed to close this cut-code identity gap.
+let evil2 := {T} -> {P} -> {cases} -> {v} -> (if (tree_eq T CaseLicenseType) then (case_value T P cases v) else 0)
 test param_apply (CaseRelation.rel case_value evil2) refls = Ok true
 let Fresh := Coproduct [pair "A" [Tree]]
 test case_value Fresh ({_} -> Nat) { A := ({x} -> 5) } (inj1 "A" t) = 5
@@ -86,3 +91,13 @@ let three := 3
 let seven := 7
 test case_value Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = three
 test evil1 Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = 0
+
+// The specialized guard materially narrows the attack. It accepts this worker
+// because the representative cut code delegates, but it constructs the whole
+// replacement itself: Nat/non-cut calls remain the incumbent spec. A fresh cut
+// code still reaches the worker, pinning the exact code-quantification gap.
+let cut_code_spoof := {T} -> {P} -> {cases} -> {v} ->
+  if (tree_eq T CaseLicenseType) then (case_value T P cases v) else 0
+case_value := { fast := cut_code_spoof; proof := refls }
+test case_value Nat ({_} -> Nat) { zero := three; succ := ({k} -> seven) } 0 = three
+test case_value Fresh ({_} -> Nat) { A := ({x} -> 5) } (inj1 "A" t) = 0

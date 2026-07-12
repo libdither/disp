@@ -358,17 +358,19 @@ obligation's codomain at the minted hyp collapses it to `Eq Nat h h`; the `licen
 is accepted, and the replacement is type-preserving, so use-site re-checking never fires:
 downstream programs silently compute different numbers. (2) The unary pointwise lift demands no
 congruence, so a coarse pullback relation (`pullback_on Tree is_leaf EqBool`) licenses a stem-to-fork
-replacement that the well-typed observer `is_fork` separates. (3) `CaseRelation`'s concrete-face
-family is spoofable through its residual hyps: a candidate that delegates while an arm is neutral
-and junks when it is concrete passes all four obligations, as does one that dispatches on the two
-licensed instance types and junks on fresh coproducts. (4) Effect rows are not a reflection
+replacement that the well-typed observer `is_fork` separates. (3) `CaseRelation`'s generated
+concrete-face family remains spoofable through its residual hyps, and its representative concrete
+code does not yet quantify all coproduct codes. The specialized case guard now constructs
+neutral/non-cut delegation itself, but a worker that agrees at the representative code and junks
+on fresh cut codes is still accepted. (4) Effect rows are not a reflection
 boundary; `is_neutral` is ambient, not an op, so a row-empty computation reads the face bit.
 
 *What stays sound, and why.* Membership and consistency are untouched (the ACTIVE_BUGS defense
 model). The licenses actually in tree survive on grounds the license itself does not check:
-delegating fast faces (`nat_rec_fast`, `case_fast`) are tree-identical to their spec at the hyp,
-with the concrete face covered by hand differential pins (`guard_opt.test.disp`,
-`case_opt.test.disp`); genuine replacements (`guards.test`'s `ident`, `relation_tree_license`'s
+`nat_rec_fast` is tree-identical to its spec at the hyp; `case_fast` is now built by its owner
+guard so neutral and non-cut delegation cannot be replaced. Their concrete faces remain covered
+by generated obligations plus differential pins (`guard_opt.test.disp`, `case_opt.test.disp`).
+Genuine replacements (`guards.test`'s `ident`, `relation_tree_license`'s
 `fast`) prove their Pi by induction, whose cases instantiate at constructor-rooted values where
 the face bit reads false. An induction proof of the attack is impossible (its zero case demands
 `Eq Nat 0 1`). The doors are exactly: top-level refl at a bare hyp, and reflection through a
@@ -395,6 +397,15 @@ independence:
   fall through to the spec and owe nothing. What codes cannot cover is the negative positions
   (arms, isos, continuations, any function-typed slot): functions have no constructor list to
   induct over. Those keep hyps, which is what the next layer polices.
+  *Partial implementation (2026-07-12):* `PositiveCaseArms` and
+  `PositiveCaseCoverage` now generate the typed case table and every constructor obligation from
+  any concrete plain-`Coproduct` code, including arbitrary arities and direct recursive markers;
+  the hand-written Nat/LicSum probes are gone. The representative guard code exercises arities
+  zero through three. A typed code universe and its ordinary list induction both prototype
+  successfully, but checking the high-level `case_value` equality while that code remains a
+  hypothesis does not: its generated metadata/case application is the current one-generic-point
+  boundary. Thus the full Pi-over-codes theorem in this bullet remains open, and the exact
+  cut-code identity attack stays pinned.
 + *Negative positions: sealed hyps with the ambient reader grant withdrawn.* A certification
   walk runs the one walker at a certification table: the canonical readers (`pair_fst`,
   `neutral_type`, `tree_eq` completion) answer `Err` on hyp-rooted subjects (`tree_eq` also on
@@ -414,6 +425,10 @@ independence:
   (a corollary of the core discipline): the elaborator relays guard answers; it never
   fabricates a bound tree, a proof, or glue. Every soundness-carrying tree is built by kernel
   or guard code in-language.
+  *Landed for `case_value` (2026-07-12):* `case_license_guard` accepts only a raw cut worker and
+  binds `case_delegate old worker`; its proof contains only the concrete code-generated field.
+  A test rebind confirms that a malicious worker cannot change Nat/non-cut behavior, while the
+  still-open fresh-cut-code attack above remains visible.
 + *Quotients: respect is constitutive, not ambient.* A pullback supplies an equivalence,
   never congruence, and no operational gate can police observation of concrete quotient members
   (both sides of `is_zero 2` vs `is_zero 4` are concrete). The observational lineage's rule
@@ -427,10 +442,10 @@ independence:
   `relation.disp` currently supports the witness as `respects`; packaging it as a checked
   dependent record remains blocked by the checker issue noted above.
 
-Layer one and the quotient layer need no kernel change and can land first. Layer two wants the
-§5.4 routing generalization. Until it lands, `license_guard`/`CaseRelation` rebinds are
-trusted on their differential pins, not on their proofs, and a rebind proof of the
-top-level-refl shape should be read as a delegation claim, not an equivalence proof.
+The concrete-code generator and case-specific delegation layer have landed; full code
+quantification and the quotient carrier remain at the checker boundaries noted above. Layer two
+wants the §5.4 routing generalization. Until it lands, `license_guard` and the concrete part of
+`CaseRelation` remain trusted on their differential pins, not on reflective proof bodies.
 
 == What the observational lineage licenses (research pass, 2026-07-11)
 

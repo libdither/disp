@@ -7,74 +7,135 @@ open use "relation.disp"
 // case_value's honest type is target-type-dependent (like rec_value: the case
 // record type is derived per T), and its body reads T's metadata raw, so no
 // ∀T annotation can verify — an abstract T has no variant list for pad_cases
-// to walk, the same reason rec_value stays unannotated. The name is therefore
-// owned at an INSTANCE relation: a rebind's { new, proof } must relate old and
-// new pointwise at the Nat one-level eliminator instance — a dependent motive
-// over a RECURSIVE, SHAPE-ENCODED inductive, so the one instance exercises the
-// functor-view decode, the arm pad, and the coherence gate at once. A fast
-// face that delegates to the spec VERBATIM on the neutral path (the
-// nat_rec_fast discipline, arith.opt) inhabits it with pointwise refl, because
-// both sides walk to the same stuck elimination at abstract arguments;
-// anything that changes checking-time behavior cannot.
+// to walk, the same reason rec_value stays unannotated.
 //
-// The instances bind the arms as FIELDS, not as one record hyp: the coherence
-// gate reads arms off a CONCRETE case record (built here from the bound
-// fields); an abstract case record cannot drive it, and a bare ∀-motive Pi
-// certificate is not standalone-decidable either (its codomain membership goes
-// stuck) — an explicit pointwise relation is exactly the form that avoids both,
-// comparing the two sides' WALKS at shared hyps instead of re-certifying at the
-// Pi.
-//
-// The relation is a CONJUNCTION (a record type) because one obligation cannot
-// see both faces. The pointwise relation mints a hyp for the target, so it only
-// ever exercises the NEUTRAL path — a rebind that delegates on neutrals but
-// breaks concrete dispatch would pass it. And no single hypothesis can stand
-// for "an arbitrary concrete member": a hyp IS the neutral face. The way to
-// reach the concrete path in a machine-checkable statement is per-constructor
-// — tag CONCRETE (so the dispatch actually fires), arms and payloads ABSTRACT
-// (so nothing else is pinned) — and by canonicity (every concrete member is in
-// constructor form) the per-arity family covers the whole concrete domain.
+// Ownership therefore separates construction from certification. A rebind
+// supplies `{ fast, proof }`, where `fast` is only the raw cut-class worker.
+// The guard itself builds `case_delegate old fast`: neutral targets and every
+// non-cut-class type call the incumbent spec verbatim, while only concrete
+// identity-view coproducts may reach `fast`. Those two faces are guaranteed by
+// construction rather than inferred from a pointwise proof. The proof owes the
+// remaining concrete cut face, generated per constructor from a positive code.
 //
 // Known limit (pinned in probe_license_sr.test.disp; ACTIVE_BUGS item 5): that
-// coverage holds only against candidates that cannot detect the certification
-// environment. Arms, payloads and the type argument are still hyps in every
-// obligation, so a candidate probing any of their faces (or dispatching on the
-// two instance types) passes all four obligations and junks at real call
-// sites. The license is an acceptance filter for the honest delegating shape,
-// not a semantic certificate; the concrete face rests on case_opt.test.disp's
-// differential pins until certification gets a strict mode (OPTIMIZER.typ,
-// "Certification is not yet observer-restricted").
+// coverage still has the current certification limitation: case tables,
+// payloads and the type argument are hypotheses, so a cut worker may reflect
+// on them. Code quantification is also not yet checker-statable at the
+// high-level case_value interface; PositiveCaseCoverage therefore consumes a
+// concrete code. These remaining doors are pinned in probe_license_sr and need
+// observer-restricted certification plus the typed-code induction bridge.
 
-// The neutral-face instance: one-level dependent Nat elimination (recursive,
-// shape-encoded — exercises the functor-view decode, the arm pad, the gate).
-NatCaseT : Type := {P : Nat -> Type} -> P zero -> ({k : Nat} -> P (succ k)) -> {n : Nat} -> P n
+// Glue for a raw cut worker.  This is deliberately owned by the guard module:
+// a rebind cannot replace or bypass the neutral/non-cut delegation branches.
+case_delegate := {old, fast, T} -> {
+  let cut_class := tree_eq ((type_meta T).functor) iso_id
+  {motive, cases, target} ->
+    if (is_neutral target) then (old T motive cases target)
+    else (if cut_class
+      then (fast T motive cases target)
+      else (old T motive cases target))
+}
 
-// Give both implementations the same motive, zero arm, successor arm and
-// target, then compare their results with Eq in the resulting fiber P n.
-NatCaseRelation :=
-  pointwise (Pi Nat ({_} -> Type)) ({P} ->
-    pointwise (P zero) ({_z} ->
-      pointwise (Pi Nat ({k} -> P (succ k))) ({_succ} ->
-        pointwise Nat ({n} -> eq_relation (P n)))))
+// The concrete face is generated from an ordinary positive variant code.  For
+//
+//   [pair "leaf" [], pair "node" [Tree, Tree]]
+//
+// PositiveCaseArms builds the case-table type
+//
+//   { leaf : B, node : Tree -> Tree -> B }
+//
+// and PositiveCaseCoverage builds a record with one field per constructor.
+// Each field quantifies over a shared typed case table and that constructor's
+// payload telescope, then compares old/new at the concrete constructor value:
+//
+//   { leaf : {cases : Arms} -> Eq B (old ... cases leaf) (new ... cases leaf),
+//     node : {cases : Arms} -> {l : Tree} -> {r : Tree} ->
+//              Eq B (old ... cases (node l r)) (new ... cases (node l r)) }
+//
+// The code must be CONCRETE when these types are built.  The folds below are
+// raw Tree folds: an abstract code is a neutral and cannot reveal its variants.
+// This is the same one-generic-point checker boundary as the other metadata
+// generics; callers instantiate the combinator at concrete positive codes.
+// Plain Coproduct codes may contain ordinary argument types and Rec/RecUnder
+// markers. Param and RecAt need an ambient parameter/mutual context and are not
+// part of this cut-class license combinator.
+let positive_arg_type := {T, marker} ->
+  if (is_recunder_marker marker) then ((pair_snd marker) T)
+  else (if (or (is_param_marker marker) (is_recat_marker marker)) then InvalidType else marker)
 
-// The concrete-face instance: an inj-tagged (cut-class) sum with one variant
-// per spine arity 0/1/2 — the empty/last/cons cases of any argspec walk.
-LicSum : Type := Coproduct [pair "L0" [], pair "L1" [Tree], pair "L2" [Tree, Tree]]
+let positive_arm_type := fix ({self, T, B, argspec} ->
+  if (is_fork argspec)
+    then (Pi (positive_arg_type T (pair_fst argspec)) ({_arg} -> self T B (pair_snd argspec)))
+    else B)
 
-// The ownership relation: the explicit pointwise relation at the field-bound
-// Nat instance
-// (neutral face: both sides' walks tree-identical at shared hyps) AND a
-// per-constructor spine equality at LicSum for each arity (concrete face:
-// dispatch reaches the projected arm applied to the payload spine — for EVERY
-// arm and payload, since those are hyps). Proof shape: a record of refls.
+let positive_arm_fields := fix ({self, T, B, variants} ->
+  if (is_fork variants) then {
+    let variant := pair_fst variants
+    cons (pair (pair_fst variant) (positive_arm_type T B (pair_snd variant)))
+      (self T B (pair_snd variants))
+  } else nil)
+
+PositiveCaseArms := {variants, B} -> {
+  let T := Coproduct variants
+  Record (positive_arm_fields T B variants)
+}
+
+let positive_constructor_obligation := fix ({self, T, B, old, new, tag, argspec, cases, args} ->
+  if (is_fork argspec)
+    then (Pi (positive_arg_type T (pair_fst argspec)) ({arg} ->
+      self T B old new tag (pair_snd argspec) cases (list_cat args (cons arg nil))))
+    else ((eq_relation B).rel
+      (old T ({_} -> B) cases (inj tag (build_payload args)))
+      (new T ({_} -> B) cases (inj tag (build_payload args)))))
+
+let positive_coverage_fields := fix ({self, variants, T, B, old, new, Arms} ->
+  if (is_fork variants) then {
+    let variant := pair_fst variants
+    cons (pair (pair_fst variant) (Pi Arms ({cases} ->
+      positive_constructor_obligation T B old new (pair_fst variant) (pair_snd variant) cases nil)))
+      (self (pair_snd variants) T B old new Arms)
+  } else nil)
+
+PositiveCaseCoverage := {variants, B, old, new} -> {
+  let T := Coproduct variants
+  let Arms := PositiveCaseArms variants B
+  Record (positive_coverage_fields variants T B old new Arms)
+}
+
+// One concrete code exercises the empty spine, the last-argument spine and
+// repeated cons steps (including arity three).  PositiveCaseCoverage itself is
+// reusable at any concrete plain-Coproduct code; this code is only the guard's
+// representative cut-class contract.
+CaseLicenseCode := [
+  pair "L0" [],
+  pair "L1" [Tree],
+  pair "L2" [Tree, Tree],
+  pair "L3" [Tree, Tree, Tree]
+]
+CaseLicenseType : Type := Coproduct CaseLicenseCode
+
+// The ownership relation covers only the concrete cut face. The guard-built
+// `case_delegate` owns neutral and non-cut behavior. Proof shape: an at_cut
+// record whose fields mirror CaseLicenseCode.
 CaseRelation := relation_on Tree ({old, new} -> {
-  at_nat : NatCaseRelation.rel ({P, z, s, n} -> old Nat P { zero := z; succ := s } n) ({P, z, s, n} -> new Nat P { zero := z; succ := s } n),
-  at_cut0 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> (eq_relation Nat).rel (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")),
-  at_cut1 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {c : Tree} -> (eq_relation Nat).rel (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)),
-  at_cut2 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {l : Tree} -> {r : Tree} -> (eq_relation Nat).rel (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r))
+  at_cut : PositiveCaseCoverage CaseLicenseCode Nat old new
 })
 
-// Own the name. The value is unchanged — this declaration only attaches the
-// guard (the kernel barrel's export is typeless, so no annotation is inherited
-// and none is declared): membership stays enforced by use, the license by rebind.
-guard (license_guard CaseRelation.rel) case_value := case_value
+// Specialized ownership protocol. The first bind installs the incumbent. A
+// later `{ fast, proof }` proposal is never bound directly: the guard builds
+// the delegated whole function, checks the concrete relation, and binds only
+// that guard-constructed tree.
+case_license_guard := {old, req} ->
+  if (is_stem (req.guard)) then Err
+  else (if (is_leaf old)
+    then (if (is_stem (req.value)) then (Ok (Bind (stem_child (req.value)))) else Err)
+    else (if (is_stem (req.value)) then {
+      let proposal := stem_child (req.value)
+      let replacement := case_delegate (stem_child old) (proposal.fast)
+      match (param_apply (CaseRelation.rel (stem_child old) replacement) (proposal.proof)) {
+        Ok b  => (if b then (Ok (Bind replacement)) else Err)
+        Err _ => Err
+      }
+    } else Err))
+
+guard case_license_guard case_value := case_value

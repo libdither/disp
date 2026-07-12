@@ -1,0 +1,76 @@
+// Code-indexed concrete coverage for case_value. The generator consumes the
+// same positive variant lists as Coproduct and emits (1) a typed one-level case
+// table and (2) one old/new equality field per concrete constructor. Codes are
+// concrete at generation time; payloads and case tables remain abstract inside
+// each obligation.
+open use "../kernel/prelude.disp"
+open use "../std/relation.disp"
+open use "../std/case.disp"
+
+test typecheck Relation CaseRelation = Ok true
+
+// A heterogeneous 0/1/3-arity code. The generated arm and coverage records
+// follow the code rather than a hand-written L0/L1/L2 schema.
+CodeA := [
+  pair "A0" [],
+  pair "A1" [Tree],
+  pair "A3" [Tree, Bool, Nat]
+]
+TypeA : Type := Coproduct CodeA
+ArmsA : Type := PositiveCaseArms CodeA Nat
+
+let arms_a := {
+  A0 := 0;
+  A1 := {_x} -> 1;
+  A3 := {_x, _b, n} -> n
+}
+test param_apply ArmsA arms_a = Ok true
+test param_apply ArmsA {
+  A0 := 0;
+  A1 := {_x} -> 1;
+  A3 := {_x, _b, _n} -> false
+} = Ok false
+
+let refl_a := {
+  A0 := {cases} -> refl;
+  A1 := {cases} -> {x} -> refl;
+  A3 := {cases} -> {x} -> {b} -> {n} -> refl
+}
+test typecheck Type (PositiveCaseCoverage CodeA Nat case_value case_value) = Ok true
+test param_apply (PositiveCaseCoverage CodeA Nat case_value case_value) refl_a = Ok true
+
+// A distinct code exercises arity four and a direct recursive position. Rec
+// resolves to the generated Coproduct itself; case_value remains one-level and
+// therefore adds no induction-hypothesis argument.
+CodeB := [
+  pair "Stop" [],
+  pair "Wide" [Nat, Tree, Bool, Tree],
+  pair "Next" [Nat, Rec]
+]
+TypeB : Type := Coproduct CodeB
+ArmsB : Type := PositiveCaseArms CodeB Nat
+
+let arms_b := {
+  Stop := 0;
+  Wide := {n, _x, _b, _y} -> n;
+  Next := {n, _tail} -> n
+}
+test param_apply ArmsB arms_b = Ok true
+test param_apply ArmsB {
+  Stop := 0;
+  Wide := {n, _x, _b, _y} -> n;
+  Next := {_n, _tail} -> false
+} = Ok false
+
+let refl_b := {
+  Stop := {cases} -> refl;
+  Wide := {cases} -> {n} -> {x} -> {b} -> {y} -> refl;
+  Next := {cases} -> {n} -> {tail} -> refl
+}
+test param_apply (PositiveCaseCoverage CodeB Nat case_value case_value) refl_b = Ok true
+
+let stop_b := inj0 "Stop"
+let next_b := {n, tail} -> inj2 "Next" n tail
+let wide_b := {n, x, b, y} -> inj "Wide" (pair n (pair x (pair b y)))
+test case_value TypeB ({_} -> Nat) arms_b (next_b 4 stop_b) = 4
+test case_value TypeB ({_} -> Nat) arms_b (wide_b 7 t true (t t)) = 7

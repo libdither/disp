@@ -1,16 +1,11 @@
 // case.opt: the optimized face of case_value — a PARALLEL module (the arith.opt
 // pattern; a future optimizer emits files of exactly this shape, (e', cert) per
-// definition). case_fast STAGES at partial application: applying it to a TYPE
-// precomputes the type_meta reads (the iso class + a per-variant argspec table)
-// — eager evaluation makes the staging real, hash-consing memoizes it. A
-// cut-class T (identity iso — every inj-tagged sum, incl. Coproduct_p/ctx)
-// dispatches a concrete target by RAW TAG CUT: one tag read + one payload-spine
-// walk, no view call, no accessor round — the §2.6 cut, running under
-// case_value's name and license. A NEUTRAL target delegates to case_value
-// VERBATIM (the nat_rec_fast discipline), which is what makes the rebind's
-// proof pointwise-refl-provable: the abstract paths are tree-identical by
-// construction. Non-cut-class types (the shape-encoded Nat/Bool/Ord/List)
-// fall through to the spec on both faces.
+// definition). case_cut is only the raw identity-view coproduct worker. The
+// owner guard in case.disp wraps it with case_delegate, so neutral targets and
+// non-cut-class types cannot reach this untrusted part. Applying case_cut to a
+// TYPE precomputes its per-variant argspec table; eager evaluation makes the
+// staging real and hash-consing memoizes it. The concrete path is one raw tag
+// cut + one payload-spine walk, with no view or accessor round.
 open use "case.disp"
 open use "../kernel/prelude.disp"
 
@@ -26,26 +21,23 @@ let spine_go := fix ({self, f, args, payload} ->
 let names_go := fix ({self, vs} -> if (is_fork vs) then (cons (pair_fst (pair_fst vs)) (self (pair_snd vs))) else nil)
 let specs_go := fix ({self, vs} -> if (is_fork vs) then (cons (list_const (pair_snd (pair_fst vs))) (self (pair_snd vs))) else nil)
 
-case_fast := {T} -> {
-  let cut_class := tree_eq ((type_meta T).functor) iso_id
+case_cut := {T} -> {
   let argtab := make_record (names_go ((type_meta T).recognizer_params)) (specs_go ((type_meta T).recognizer_params))
   {motive, cases, target} ->
-    if (is_neutral target) then (case_value T motive cases target)
-    else (if cut_class
-      then (spine_go (field cases (pair_fst target)) (field argtab (pair_fst target)) (pair_snd target))
-      else (case_value T motive cases target))
+    spine_go (field cases (pair_fst target)) (field argtab (pair_fst target)) (pair_snd target)
 }
 
-// The licensed rebind. Refl inhabits every CaseRelation obligation (case.disp):
-// at_nat because case_fast delegates verbatim on the neutral path (both sides
-// walk to the same stuck elimination at shared hyps); at_cut0/1/2 because the
-// fast tag-cut spine and the spec's accessor walk apply the SAME projected arm
-// to the SAME payload args (hash-consed identical, for abstract arms AND
-// payloads). A rebind that broke either face would fail its refl at THIS
-// file's load. Differential pins on concrete members: lib/tests/case_opt.test.disp.
-case_value := { new := case_fast ; proof := {
-  at_nat := {P} -> {z} -> {s} -> {n} -> refl;
-  at_cut0 := {z} -> {o} -> {w} -> refl;
-  at_cut1 := {z} -> {o} -> {w} -> {c} -> refl;
-  at_cut2 := {z} -> {o} -> {w} -> {l} -> {r} -> refl
+// Public optimized tree, equal to the tree the guard constructs below.
+case_fast := case_delegate case_value case_cut
+
+// The rebind proposes only the cut worker. The guard constructs case_fast and
+// checks this generated concrete-face proof; neutral/non-cut delegation is not
+// part of the proposal and therefore cannot be forged.
+case_value := { fast := case_cut ; proof := {
+  at_cut := {
+    L0 := {cases} -> refl;
+    L1 := {cases} -> {c} -> refl;
+    L2 := {cases} -> {l} -> {r} -> refl;
+    L3 := {cases} -> {a} -> {b} -> {c} -> refl
+  }
 } }
