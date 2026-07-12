@@ -4500,8 +4500,12 @@ the effect system proper.
 *(Status note, 2026-07-11: the set-level fragment of this section's
 motivation landed as explicit library structure in `lib/std/relation.disp`:
 heterogeneous relation objects, same-input pointwise and binary dependent
-Pi lifts, checked homogeneous PER/equivalence/preorder laws, pullbacks, linked
-binders, and direct respect witnesses. A dependent-record morphism carrier is
+Pi lifts, checker-validated homogeneous PER/equivalence/preorder laws with
+explicit relation bridges, pullbacks, linked binders, and direct respect
+witnesses. These law checks share the current walker's observer-restriction
+gap: reflective bodies can distinguish minted hypotheses from concrete
+members, so they are not yet semantic universal quantification. A
+dependent-record morphism carrier is
 present only as an experimental checker probe: valid coarse-relation packages
 are currently checked through the equivalent `respects` predicate instead.
 Types no longer acquire one privileged equality by

@@ -327,14 +327,17 @@ the semantic relation that licenses rewrites):
 *Landed (reworked 2026-07-11).* (A) and (C) have first implementations in
 `lib/std/relation.disp`: relation objects are explicit and compositional rather than derived as
 one privileged equality from a type's metadata. The library supplies same-input pointwise and
-binary dependent Π lifts, checked homogeneous PER/equivalence/preorder packages, pullbacks,
+binary dependent Π lifts, checker-validated homogeneous PER/equivalence/preorder packages,
+explicit package-to-relation bridges, pullbacks,
 linked binders, and direct `respects` obligations. The dependent-record `Morphism` carrier is
 currently experimental: the checker replaces its earlier `map` field by a projection hypothesis
 while checking `respect`, which rejects valid packages over coarse relations even though the
 identical direct `respects` obligation checks. `NatRecRelation`, `AddRelation`, and `CaseRelation`
 state their optimizer contracts at their owners. Pointwise licenses are intended as `~_T`
 restricted to applicative observers; as checked today they remain neutral-face statements (the
-correction below). The
+correction below). The law packages have the same qualification: their fields are checked Pis,
+so reflective bodies can agree at minted hypotheses and disagree on concrete members until the
+observer-restricted certification mode lands. The
 motive-extensionality obligation is operational: the `ext_walker` probe
 (`lib/tests/ext_gate_proto.test.disp`), a `param_walker` variant whose intensional carve-outs
 refuse neutrals — the per-motive residue of the fundamental lemma. The licensed-*replacement*

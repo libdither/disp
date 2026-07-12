@@ -86,8 +86,11 @@ meet := {R, S} -> make_relation
 
 // Homogeneous relation laws.  Keeping the carrier and relation as indices is
 // important: these are checker-facing predicates, not merely records whose law
-// fields are trusted by convention.  General Relation stays heterogeneous;
-// symmetry/transitivity packages deliberately do not.
+// fields are accepted without checking.  As with every Pi checked by today's
+// reflective walker, a body may still distinguish minted hypotheses from
+// concrete members; these packages become semantic laws only in the planned
+// observer-restricted certification mode.  General Relation stays
+// heterogeneous; symmetry/transitivity packages deliberately do not.
 Reflexive : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} ->
   Pi A ({x} -> rel x x)
 
@@ -120,8 +123,14 @@ Preorder : Type := {
   trans : Transitive carrier rel
 }
 
-// The extra Relation-shaped projections preserve the convenient relation API;
-// PER/Equivalence/Preorder themselves check the homogeneous carrier and laws.
+// Checked bridges preserve abstraction: a package received merely at its
+// public law type can always be recovered as an ordinary Relation.
+per_relation : PER -> Relation := {P} -> relation_on P.carrier P.rel
+equivalence_relation : Equivalence -> Relation := {E} -> relation_on E.carrier E.rel
+preorder_relation : Preorder -> Relation := {P} -> relation_on P.carrier P.rel
+
+// Smart-constructor results also retain Relation-shaped projections as a
+// concrete-value convenience; abstract consumers should use the bridges above.
 make_per : {A : Type} -> {rel : A -> A -> Type} ->
   Symmetric A rel -> Transitive A rel -> PER := {A, rel, sym, trans} ->
   { carrier := A; left := A; right := A; rel := rel;

@@ -11,11 +11,26 @@ test typecheck Type Preorder = Ok true
 test typecheck PER (eq_per Nat) = Ok true
 test typecheck Equivalence (eq_equivalence Nat) = Ok true
 test typecheck Preorder (eq_preorder Nat) = Ok true
+test typecheck Relation (per_relation (eq_per Nat)) = Ok true
+test typecheck Relation (equivalence_relation (eq_equivalence Nat)) = Ok true
+test typecheck Relation (preorder_relation (eq_preorder Nat)) = Ok true
 
 let bogus_equivalence := {
   carrier := Nat; rel := Eq Nat; refl := 0; sym := 1; trans := 2
 }
 test typecheck Equivalence bogus_equivalence = Ok false
+
+// These are checker-validated law fields, not yet semantic quantification.  A
+// reflective relation can agree at every minted neutral and disagree on real
+// members; observer-restricted certification is what will close this gap.
+let face_relation := {x, _y} -> if (is_neutral x) then Unit else False
+let face_equivalence := make_equivalence Nat face_relation
+  ({_x} -> unit_val)
+  ({_x, _y, _p} -> unit_val)
+  ({_x, _y, _z, _p, _q} -> unit_val)
+test typecheck Equivalence face_equivalence = Ok true
+test tree_eq (face_relation 0 0) False = true
+test typecheck (face_relation 0 0) (face_equivalence.refl 0) = Ok false
 
 // Parity is a coarse relation defined entirely outside Nat's metadata.
 let parity_obs := {n} ->
