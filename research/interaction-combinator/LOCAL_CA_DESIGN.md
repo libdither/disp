@@ -120,11 +120,20 @@ arms `w`, `x`, `b`, and `res`. Two lowerings keep it on four faces:
   unpacks the pair to the arm `z`'s arity chooses and erases the rest. Lafont-standard (every
   agent at most 2 aux), at the cost of a few extra local interactions per dispatch.
 
-**Recommendation: (a) as the baseline.** Only `T2` exceeds four faces (`T1`'s four ports fit
-exactly), so (a) is the minimal change. Signals ride wire faces (§9) and pressure is a
-per-cell scalar (§7), so no agent needs a spare face for the substrate layer; the choice
-between (a) and (b) is about interaction-step count versus cell uniformity, not about
-signaling. Adopt (b) only if uniform at-most-3-port cells are wanted for their own sake.
+**Recommendation: split (lean toward (b), binary), because the depth-2 crossing model (§4.4)
+gives a positive reason to.** Crossings are carried on a depth layer (a wire tucks behind the
+front agent), and the clean division of labor is: the four in-plane faces are for agent ports
+and primary wires, and the depth axis is a pure crossing/overflow channel, never a port. That
+keeps depth meaning one thing. But it also means an agent may use only its four in-plane faces,
+so `T2` (five ports) must split; letting `T2` spend its fifth port on the depth face would mix
+logic into the crossing channel and is exactly the inelegance to avoid. Binary (b) is then
+preferable to the two-cell block (a) for two compounding reasons: uniform at-most-3-port cells
+make a microcoded rewrite executor's cell FSM and template ROM uniform (no special wide cell),
+and the spare in-plane face on every binary cell carries the field/demand/commit signals. In
+UNBOUNDED 3D (six faces) the split is instead neutral — `T2` fits with a face to spare — so
+this recommendation is specific to the planar or depth-2 substrate. (The rung-1 prototype
+already embodies the invariant: agents carry only in-plane ports; the depth layer, realized as
+per-cell background crossing strands, is used for crossings alone.)
 
 ### 4.4 Wire agents
 
@@ -133,6 +142,23 @@ signaling. Adopt (b) only if uniform at-most-3-port cells are wanted for their o
   `out` (a splice; `SPATIAL_IC.md` §2.2). Chains collapse one interaction per element.
 - `via` crossing, 4 ports on two layers (a straight-through on layer A, a straight-through on
   layer B), inert: it never forms an active pair, it only lets two wires cross.
+
+**Depth-2 realization (front surface + background).** The two "layers" are made concrete as a
+DEPTH-2 model: each cell has a front agent slot and a set of background crossing strands (the
+wires tucked behind the agent). A forwarder is a cell with one background strand and no agent;
+a via is a cell with two background strands; a value sitting on a crossing is an agent whose
+cell also carries the crossed strand behind it. Faces stay unique (an agent port and a
+background strand never share a face). This is what lets a value pass a crossing as an ordinary
+ONE-CELL move: it reels onto the via cell, the crossed strand tucks behind it, and next tick it
+reels off leaving that strand as a plain wire. No agent teleports two cells, and a value that
+carries children passes a crossing the same way (each step is one cell), so multi-wire
+through-via needs no special rule. An asymmetric field bias (prefer the front) keeps the front
+a clean, mostly-2D surface and uses the back only when a crossing forces it. Two background
+layers suffice for pairwise crossings, the way a 2-sided board routes anything by spreading
+crossings across cells; a third is a fallback knob. This is the finite (depth-2) case of the
+3D substrate: on a 6-neighbour lattice crossings become optional (route around in z) and `T2`
+fits without splitting, but the depth-2 planar prototype is the honest worst case, and the one
+that runs on today's 2.5D metal-stack silicon.
 
 Every occupied cell holds exactly one of these agents. The shortcut viz's segment stack and
 its `findPath` both disappear: a wire is forwarder agents, and re-embedding it is local agent
@@ -322,16 +348,21 @@ Cheap-first, each rung gating the next:
    Margolus commit (the tick is now synchronous: every node proposes from the frozen pre-tick
    state, a conflict-free subset commits by rotating priority, footprints grown by one ring so
    no two committed moves share a cell or an edge; this both parallelizes and cuts the moves to
-   converge, e.g. the two-node case 600 -> 44). Reel-in THROUGH a via also landed: a
-   degree-1 value does not rest on a crossing, it JUMPS to the cell beyond and the crossing
-   dissolves (its cell keeps only the other wire, becoming a plain forwarder); the value pays
-   -2 on its own wire and the crossed wire is untouched, so the two wires uncross as the value
-   passes (the crossing scenarios now contract fully, vias 1 -> 0, E -> 0). Still to add:
-   multi-wire through-via (a value with children stretches the other wires by two, so they need
-   more than a single bend), and a closed-region sweep for the hard jamming transition
-   (contraction alone frees space, so it never jams; only a demand does).
+   converge, e.g. the two-node case 600 -> 44). Reel-in THROUGH a via also landed, and was then
+   corrected to be genuinely local: the first version JUMPED the value two cells over the
+   crossing, which is not a valid one-cell CA step. It was replaced by the DEPTH-2 model (§4.4):
+   a value passes a crossing as an ordinary one-cell reel-onto the via cell (the crossed strand
+   tucks behind it as the cell's background, rendered gold-node-over-dim-wire), then reels off
+   the next tick leaving that strand a plain wire. This is strictly local, and multi-wire
+   through-via now works for free because every step is one cell (the reason the jump version
+   couldn't do it). The crossing scenarios contract fully (vias 1 -> 0, E -> 0), integrity clean
+   every tick, and the prototype now embodies the §4.3 invariant that agents use only in-plane
+   faces (depth is crossings-only). Still to add: a closed-region sweep for the hard jamming
+   transition (contraction alone frees space, so it never jams; only a demand does), and the
+   front-bias field term (currently the front/back split is structural, not yet an explicit
+   pressure).
 2. **The rewrite executor and template ROM** (§5.1) for the value and dispatch families, with
-   `T2` as a two-cell block (§4.3a).
+   `T2` split binary (§4.3) so cells stay uniform and depth stays crossings-only.
 3. **The commit handshake** (§6) across block boundaries.
 4. **Signals** (§9): demand waking, `ε` death pulses, the one-dead bit.
 5. **The shadow harness** (§10): projection invariant per step, NF bit-equality vs

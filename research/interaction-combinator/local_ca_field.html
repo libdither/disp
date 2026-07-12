@@ -62,18 +62,22 @@ function makeField(scenario) {
   const put = c => { net.grid.set(key(c.x, c.y), c); return c; };
   const empty = (x, y) => !net.grid.has(key(x, y));
 
-  // A wire cell holds STRANDS: `s` is an array of [face,face] pairs. One strand is a plain
-  // forwarder; two strands is a via (a crossing) as long as the four faces are distinct. This
-  // is how non-planar nets embed: two wires share a cell on separate layers without touching.
-  const wHas = (c, f) => c.k === "wire" && c.s.some(st => st[0] === f || st[1] === f);
-  const wThrough = (c, f) => { for (const st of c.s) { if (st[0] === f) return st[1]; if (st[1] === f) return st[0]; } return -1; };
+  // A cell has a FRONT agent (a node, with in-plane ports) and/or BACKGROUND crossing strands
+  // (wires passing BEHIND the agent, on the depth layer). `crossStrands` are those [face,face]
+  // pairs: a wire cell (k:"wire") keeps them in `s` (a forwarder = 1, a via/crossing = 2); a
+  // node keeps any it sits on top of in `bg`. This is the depth-2 model: the agent slot is the
+  // front surface, the strands are what is tucked behind, so a value can occupy a cell whose
+  // crossing wire passes behind it. Faces are still unique: an agent port and a background
+  // strand never share a face.
+  const crossStrands = c => (c.k === "wire" ? c.s : c.k === "node" ? (c.bg || (c.bg = [])) : []);
+  const wHas = (c, f) => { for (const st of crossStrands(c)) if (st[0] === f || st[1] === f) return true; return false; };
+  const wThrough = (c, f) => { for (const st of crossStrands(c)) { if (st[0] === f) return st[1]; if (st[1] === f) return st[0]; } return -1; };
 
   // ---- edge usage (THE invariant: at most one attachment per edge / face) ----
   const faceUsed = (c, d) => {
     if (!c) return false;
-    if (c.k === "node") { for (const p of c.ports) if (p === d) return true; return false; }
-    if (c.k === "wire") return wHas(c, d);
-    return false;
+    if (c.k === "node") { for (const p of c.ports) if (p === d) return true; }
+    return wHas(c, d);
   };
   const edgeUsed = (x, y, d) => faceUsed(at(x, y), d) || faceUsed(at(x + DX[d], y + DY[d]), opp(d));
 
@@ -87,6 +91,9 @@ function makeField(scenario) {
       if (!n) return { end: null, cells };
       if (n.k === "node") {
         for (let s = 0; s < n.ports.length; s++) if (n.ports[s] === opp(dir)) return { end: n, slot: s, cells };
+        // not a port of the agent: it may be a crossing passing BEHIND the agent, continue through it
+        const out = wThrough(n, opp(dir));
+        if (out >= 0) { cells.push(n); dir = out; cx = nx; cy = ny; continue; }
         return { end: null, cells };
       }
       const out = wThrough(n, opp(dir));                 // continue through the entered strand
@@ -101,40 +108,35 @@ function makeField(scenario) {
   function integrity() {
     const bad = [];
     for (const c of net.grid.values()) {
-      if (c.k === "node") {
-        const seen = new Set();
-        for (let s = 0; s < c.ports.length; s++) {
-          const d = c.ports[s];
-          if (seen.has(d)) bad.push(`node(${c.x},${c.y}) dup face ${DN[d]}`);
+      const seen = new Set();
+      if (c.k === "node") for (let s = 0; s < c.ports.length; s++) {
+        const d = c.ports[s];
+        if (seen.has(d)) bad.push(`node(${c.x},${c.y}) dup face ${DN[d]}`);
+        seen.add(d);
+        if (!follow(c.x, c.y, d).end) bad.push(`node(${c.x},${c.y})[${s}] dir ${DN[d]} dangles`);
+      }
+      for (const st of crossStrands(c)) {            // background/via strands (node.bg or wire.s)
+        if (st[0] === st[1]) bad.push(`(${c.x},${c.y}) strand a==b`);
+        for (const d of st) {
+          if (seen.has(d)) bad.push(`(${c.x},${c.y}) face ${DN[d]} shared`);
           seen.add(d);
-          const f = follow(c.x, c.y, d);
-          if (!f.end) bad.push(`node(${c.x},${c.y})[${s}] dir ${DN[d]} dangles`);
-        }
-      } else if (c.k === "wire") {
-        const seen = new Set();
-        for (const st of c.s) {
-          if (st[0] === st[1]) bad.push(`wire(${c.x},${c.y}) strand a==b`);
-          for (const d of st) {
-            if (seen.has(d)) bad.push(`wire(${c.x},${c.y}) face ${DN[d]} shared by two strands`);
-            seen.add(d);
-            const n = at(c.x + DX[d], c.y + DY[d]);
-            if (!n || !faceUsed(n, opp(d))) bad.push(`wire(${c.x},${c.y}) face ${DN[d]} unmatched`);
-          }
+          const n = at(c.x + DX[d], c.y + DY[d]);
+          if (!n || !faceUsed(n, opp(d))) bad.push(`(${c.x},${c.y}) strand face ${DN[d]} unmatched`);
         }
       }
     }
     return bad;
   }
 
-  // total wire length = strand count = the tension half of the field potential E
+  // total wire length = strand count (background strands included) = the tension potential E
   function wireLen() {
     let n = 0;
-    for (const c of net.grid.values()) if (c.k === "wire") n += c.s.length;
+    for (const c of net.grid.values()) n += crossStrands(c).length;
     return n;
   }
-  function viaCount() {
+  function viaCount() {                    // crossings: a via wire (2 strands), or a value on a crossing (a node with bg)
     let n = 0;
-    for (const c of net.grid.values()) if (c.k === "wire" && c.s.length > 1) n++;
+    for (const c of net.grid.values()) if ((c.k === "wire" && c.s.length > 1) || (c.k === "node" && c.bg && c.bg.length)) n++;
     return n;
   }
 
@@ -148,8 +150,8 @@ function makeField(scenario) {
   const dirTo = (x0, y0, x1, y1) => { for (let d = 0; d < 4; d++) if (x0 + DX[d] === x1 && y0 + DY[d] === y1) return d; return -1; };
   const eKey = (x, y, d) => { const x2 = x + DX[d], y2 = y + DY[d]; return (y < y2 || (y === y2 && x <= x2)) ? key(x, y) + "|" + d : key(x2, y2) + "|" + opp(d); };
   function repointFace(cell, from, to) {
-    if (cell.k === "node") { for (let s = 0; s < cell.ports.length; s++) if (cell.ports[s] === from) { cell.ports[s] = to; return; } }
-    else if (cell.k === "wire") { for (const st of cell.s) { if (st[0] === from) { st[0] = to; return; } if (st[1] === from) { st[1] = to; return; } } }
+    if (cell.k === "node") for (let s = 0; s < cell.ports.length; s++) if (cell.ports[s] === from) { cell.ports[s] = to; return; }
+    for (const st of crossStrands(cell)) { if (st[0] === from) { st[0] = to; return; } if (st[1] === from) { st[1] = to; return; } }
   }
   // place one strand [a,b] into a cell: empty -> new forwarder; a single-strand wire with
   // disjoint faces -> a via (a crossing). Returns false if it would collide (a node, a via
@@ -173,48 +175,28 @@ function makeField(scenario) {
   // Plan (do not commit) a node's step to `dest` in dir d, re-embedding every wire locally.
   // Returns { written, foot, apply } or null. Splitting plan from apply lets the synchronous
   // tick propose many moves from one frozen state and commit a conflict-free subset.
-  // reel-through-via: a degree-1 node whose wire crosses another (a via) does not rest on the
-  // crossing; it JUMPS to the cell beyond, and the crossing dissolves (its cell keeps only the
-  // OTHER wire, becoming a plain forwarder). The value pays -2 on its own wire; the crossed
-  // wire is untouched. Requires the wire to pass straight through the via and the cell beyond
-  // to be a reelable single strand. (Multi-wire through-via stretches the other wires by two
-  // and is a later rung.) Returns a plan or null.
-  function planViaJump(c, d, dest) {
-    if (c.ports.length !== 1 || c.ports[0] !== d) return null;
-    const back = opp(d);
-    if (wThrough(dest, back) !== d) return null;            // our wire must go straight through
-    const wx = dest.x + DX[d], wy = dest.y + DY[d], w2 = at(wx, wy);
-    if (!w2 || w2.k !== "wire" || w2.s.length !== 1 || !wHas(w2, back)) return null; // beyond must be reelable
-    const e2 = wThrough(w2, back);
-    const written = new Set([key(c.x, c.y), key(dest.x, dest.y), key(wx, wy)]);
-    const foot = new Set(written);
-    for (const kk of [...written]) { const [x, y] = kk.split(",").map(Number); for (let dd = 0; dd < 4; dd++) foot.add(key(x + DX[dd], y + DY[dd])); }
-    const apply = () => {
-      dest.s = dest.s.filter(st => !((st[0] === back && st[1] === d) || (st[0] === d && st[1] === back))); // via -> forwarder
-      del(wx, wy);              // eat the strand beyond the crossing
-      del(c.x, c.y);            // vacate old cell
-      c.x = wx; c.y = wy; c.ports = [e2]; put(c);
-    };
-    return { written, foot, apply };
-  }
   function planMove(c, d) {
     const dx = c.x + DX[d], dy = c.y + DY[d];
     const dest = at(dx, dy);
-    let reelSlot = -1, reelNewDir = -1;
+    let reelSlot = -1, reelNewDir = -1, throughBeta = null;
     if (dest) {
-      if (dest.k !== "wire") return null;
-      if (dest.s.length === 2) return planViaJump(c, d, dest);   // a crossing: jump over it
+      if (dest.k !== "wire") return null;                   // can't step onto another agent
       const back = opp(d);
-      if (!wHas(dest, back)) return null;                   // that wire isn't ours
-      reelNewDir = wThrough(dest, back);                    // wire continues this way from dest
+      if (!wHas(dest, back)) return null;                   // no strand of ours to reel here
+      reelNewDir = wThrough(dest, back);                    // our wire continues this way from dest
       for (let s = 0; s < c.ports.length; s++) if (c.ports[s] === d) { reelSlot = s; break; }
-      if (reelSlot < 0) return null;                        // wire there but no port toward it
+      if (reelSlot < 0) return null;
+      // REEL-THROUGH A CROSSING: if dest is a via (two strands), the value takes the front slot
+      // and the OTHER strand tucks behind it (becomes the node's bg). No jump: a plain one-cell
+      // move. Next tick the value reels off and leaves that strand as a wire again.
+      if (dest.s.length === 2) throughBeta = dest.s.find(st => !((st[0] === back && st[1] === reelNewDir) || (st[0] === reelNewDir && st[1] === back)));
     } else {
       for (const p of c.ports) if (p === d) return null;    // port toward an empty cell = broken
     }
+    const oldBg = crossStrands(c).slice();                  // crossings behind the node stay at C
     const freed = new Set(), claimed = new Set();
-    for (const p of c.ports) freed.add(eKey(c.x, c.y, p));   // the node leaves C: its edges vacate
-    if (dest) { freed.add(eKey(dx, dy, opp(d))); freed.add(eKey(dx, dy, reelNewDir)); } // eaten strand
+    for (const p of c.ports) freed.add(eKey(c.x, c.y, p));   // the node's own port edges vacate (bg does not)
+    if (dest) { freed.add(eKey(dx, dy, opp(d))); freed.add(eKey(dx, dy, reelNewDir)); } // eaten (alpha) strand
     const avail = (x, y, dd) => { const e = eKey(x, y, dd); if (claimed.has(e)) return false; if (freed.has(e)) return true; return !edgeUsed(x, y, dd); };
     const claim = (x, y, dd) => claimed.add(eKey(x, y, dd));
 
@@ -260,11 +242,12 @@ function makeField(scenario) {
     const foot = new Set(written);
     for (const kk of [...written]) { const [x, y] = kk.split(",").map(Number); for (let dd = 0; dd < 4; dd++) foot.add(key(x + DX[dd], y + DY[dd])); }
     const apply = () => {
-      if (dest) del(dx, dy);      // eat the reeled strand (single-strand cell -> gone)
-      del(c.x, c.y);              // vacate old cell
+      if (dest) del(dx, dy);      // reel into dest: eat the wire cell (its beta, if a via, moves to c.bg)
+      del(c.x, c.y);              // node leaves old cell
+      if (oldBg.length) put({ x: c.x, y: c.y, k: "wire", s: oldBg }); // crossings it sat on stay behind as wire
       for (const b of bendPlan) addStrand(b.bx, b.by, b.a, b.b);
       for (const r of repoints) { const t = at(r.tx, r.ty); if (t) repointFace(t, r.from, r.to); }
-      c.x = dx; c.y = dy; c.ports = newPorts; put(c);
+      c.x = dx; c.y = dy; c.ports = newPorts; c.bg = throughBeta ? [throughBeta] : []; put(c);
     };
     return { written, foot, apply };
   }
@@ -344,16 +327,10 @@ function makeField(scenario) {
     for (let d = 0; d < 4; d++) {
       const dx = c.x + DX[d], dy = c.y + DY[d], dest = at(dx, dy), hasPort = c.ports.includes(d);
       if (dest && dest.k === "node") continue;                       // can't step onto another agent
-      if (dest && dest.k === "wire" && dest.s.length === 2) {        // a crossing: reel THROUGH it?
-        if (np === 1 && c.ports[0] === d && wThrough(dest, opp(d)) === d) {
-          const w2 = at(dx + DX[d], dy + DY[d]);
-          if (w2 && w2.k === "wire" && w2.s.length === 1 && wHas(w2, opp(d)))
-            cand.push({ d, dE: -2 + b * (getP(dx + DX[d], dy + DY[d]) - P0) }); // lands beyond the via
-        }
-        continue;
-      }
       if (dest && dest.k === "wire" && !hasPort) continue;           // a wire that isn't ours: collision
       if (!dest && hasPort) continue;                                // port toward empty = would break
+      // a via (2 strands) is now reelable THROUGH (front slot for us, the other strand tucks
+      // behind), same wire cost as a plain reel: eat one strand, the tucked one is conserved.
       const isReel = !!(dest && dest.k === "wire" && hasPort);
       const dE = np - (isReel ? 2 : 0) + b * (getP(dx, dy) - P0);
       cand.push({ d, dE });
@@ -442,7 +419,7 @@ function layWire(net, put, A, B, waypoints) {
   const n = cells.length;
   B.ports.push(dirBetween(cells[n - 1][0], cells[n - 1][1], cells[n - 2][0], cells[n - 2][1]));
 }
-const mkNode = (net, put, x, y) => { const n = { x, y, k: "node", ports: [] }; put(n); net.nodes.push(n); return n; };
+const mkNode = (net, put, x, y) => { const n = { x, y, k: "node", ports: [], bg: [] }; put(n); net.nodes.push(n); return n; };
 
 const SCENARIOS = {
   "two nodes, slack wire": (net, put, empty) => {
@@ -580,15 +557,22 @@ function draw() {
       ctx.stroke();
     }
   }
-  // nodes
+  // nodes (draw any BACKGROUND crossing behind the agent first, dim, then the agent on top)
   for (const c of SIM.grid.values()) {
     if (c.k !== "node") continue;
     const [px, py] = W2S(c.x, c.y);
     if (px < -s || py < -s || px > CW || py > CH) continue;
     const r = s * .34;
-    ctx.fillStyle = c.ports.length === 0 ? "#5a6b86" : "#3fbf7f"; // beads grey, wired nodes green
+    for (const st of (c.bg || [])) {                                // the wire tucked behind the value
+      ctx.strokeStyle = "#7a5a9a"; ctx.lineWidth = Math.max(1.2, s * .12);
+      ctx.beginPath();
+      ctx.moveTo(px + DX[st[0]] * s * .5, py + DY[st[0]] * s * .5);
+      ctx.lineTo(px, py);
+      ctx.lineTo(px + DX[st[1]] * s * .5, py + DY[st[1]] * s * .5);
+      ctx.stroke();
+    }
+    ctx.fillStyle = c.ports.length === 0 ? "#5a6b86" : (c.bg && c.bg.length) ? "#ffd866" : "#3fbf7f"; // bead grey, on-crossing gold, wired green
     ctx.beginPath(); ctx.rect(px - r, py - r, 2 * r, 2 * r); ctx.fill();
-    // port pips
     ctx.fillStyle = "#0b0e14";
     for (const pd of c.ports) ctx.fillRect(px + DX[pd] * r * .8 - 1.5, py + DY[pd] * r * .8 - 1.5, 3, 3);
   }
