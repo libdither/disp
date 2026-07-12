@@ -24,11 +24,9 @@ pointwise := {A, codR} -> make_relation
   ({f, g} -> Pi A ({a} -> (codR a).rel (f a) (g a)))
 
 // Bind a related pair. `linked_rel` exposes the raw-family form while
-// `linked_pi` accepts a first-class Relation. Current checker limit: directly
-// certifying some coarse linked telescopes still fails even in the raw form;
-// packaging preservation in `Morphism` below takes the record-gated path and
-// is checker-pinned. Keep both forms so that staging is explicit rather than
-// hidden behind metadata dispatch.
+// `linked_pi` accepts a first-class Relation.  Both forms certify coarse
+// relations directly; unlike the legacy metadata-derived path, neither needs
+// the carrier to advertise a privileged equality.
 linked_rel := {left, right, rel, B} ->
   Pi left ({x0} ->
     Pi right ({x1} ->
@@ -86,52 +84,104 @@ meet := {R, S} -> make_relation
   (R.right)
   ({x, y} -> { first : (R.rel x y), second : (S.rel x y) })
 
-// Law packages are deliberately separate from Relation: useful relations need
-// not be equivalences (an optimizer may instead use a preorder/refinement).
-make_per := {relation, sym, trans} ->
-  { left := relation.left; right := relation.right; rel := relation.rel;
-    relation := relation; sym := sym; trans := trans }
+// Homogeneous relation laws.  Keeping the carrier and relation as indices is
+// important: these are checker-facing predicates, not merely records whose law
+// fields are trusted by convention.  General Relation stays heterogeneous;
+// symmetry/transitivity packages deliberately do not.
+Reflexive : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} ->
+  Pi A ({x} -> rel x x)
 
-make_equivalence := {relation, refl_, sym, trans} ->
-  { left := relation.left; right := relation.right; rel := relation.rel;
-    relation := relation; refl := refl_; sym := sym; trans := trans }
+Symmetric : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} ->
+  Pi A ({x} -> Pi A ({y} -> Pi (rel x y) ({_p} -> rel y x)))
 
-make_preorder := {relation, refl_, trans} ->
-  { left := relation.left; right := relation.right; rel := relation.rel;
-    relation := relation; refl := refl_; trans := trans }
+Transitive : {A : Type} -> (A -> A -> Type) -> Type := {A, rel} ->
+  Pi A ({x} -> Pi A ({y} -> Pi A ({z} ->
+    Pi (rel x y) ({_p} -> Pi (rel y z) ({_q} -> rel x z)))))
+
+PER : Type := {
+  carrier : Type,
+  rel : carrier -> carrier -> Type,
+  sym : Symmetric carrier rel,
+  trans : Transitive carrier rel
+}
+
+Equivalence : Type := {
+  carrier : Type,
+  rel : carrier -> carrier -> Type,
+  refl : Reflexive carrier rel,
+  sym : Symmetric carrier rel,
+  trans : Transitive carrier rel
+}
+
+Preorder : Type := {
+  carrier : Type,
+  rel : carrier -> carrier -> Type,
+  refl : Reflexive carrier rel,
+  trans : Transitive carrier rel
+}
+
+// The extra Relation-shaped projections preserve the convenient relation API;
+// PER/Equivalence/Preorder themselves check the homogeneous carrier and laws.
+make_per : {A : Type} -> {rel : A -> A -> Type} ->
+  Symmetric A rel -> Transitive A rel -> PER := {A, rel, sym, trans} ->
+  { carrier := A; left := A; right := A; rel := rel;
+    relation := relation_on A rel; sym := sym; trans := trans }
+
+make_equivalence : {A : Type} -> {rel : A -> A -> Type} ->
+  Reflexive A rel -> Symmetric A rel -> Transitive A rel -> Equivalence :=
+  {A, rel, refl_, sym, trans} ->
+    { carrier := A; left := A; right := A; rel := rel;
+      relation := relation_on A rel; refl := refl_; sym := sym; trans := trans }
+
+make_preorder : {A : Type} -> {rel : A -> A -> Type} ->
+  Reflexive A rel -> Transitive A rel -> Preorder :=
+  {A, rel, refl_, trans} ->
+    { carrier := A; left := A; right := A; rel := rel;
+      relation := relation_on A rel; refl := refl_; trans := trans }
 
 eq_per := {A} -> make_per
-  (eq_relation A)
+  A
+  (Eq A)
   (eq_sym A)
   (eq_trans A)
 
 eq_equivalence := {A} -> make_equivalence
-  (eq_relation A)
+  A
+  (Eq A)
   ({x} -> refl)
   (eq_sym A)
   (eq_trans A)
 
 eq_preorder := {A} -> make_preorder
-  (eq_relation A)
+  A
+  (Eq A)
   ({x} -> refl)
   (eq_trans A)
 
 // Pointwise and pullback preserve all equivalence laws componentwise.
-pointwise_equivalence := {A, codE} -> make_equivalence
-  (pointwise A codE)
-  ({f} -> {a} -> (codE a).refl (f a))
-  ({f, g, p} -> {a} -> (codE a).sym (f a) (g a) (p a))
-  ({f, g, h, p, q} -> {a} ->
-    (codE a).trans (f a) (g a) (h a) (p a) (q a))
+pointwise_equivalence := {A, codE} -> {
+  let C := Pi A ({a} -> (codE a).carrier)
+  let rel := {f, g} -> Pi A ({a} -> (codE a).rel (f a) (g a))
+  make_equivalence C rel
+    ({f} -> {a} -> (codE a).refl (f a))
+    ({f, g, p} -> {a} -> (codE a).sym (f a) (g a) (p a))
+    ({f, g, h, p, q} -> {a} ->
+      (codE a).trans (f a) (g a) (h a) (p a) (q a))
+}
 
 pullback_equivalence := {A, obs, E} -> make_equivalence
-  (pullback_on A obs E)
+  A
+  ({x, y} -> E.rel (obs x) (obs y))
   ({x} -> E.refl (obs x))
   ({x, y, p} -> E.sym (obs x) (obs y) p)
   ({x, y, z, p, q} -> E.trans (obs x) (obs y) (obs z) p q)
 
-// A total carrier of relation-respecting maps.  domR and codR are expected to
-// be homogeneous relations on A and B respectively.
+// Experimental dependent record packaging.  The checker currently replaces
+// `map` by a record-field hypothesis while checking `respect`; for a coarse
+// relation this loses the concrete map and can reject a valid package.  Use
+// `respects domR codR f` as the checked preservation obligation.  Morphism is
+// retained only as an Eq-domain compatibility prototype until dependent record
+// checking can preserve the earlier field's concrete identity.
 Morphism := {A, B, domR, codR} -> {
   map : A -> B,
   respect : (linked_pi domR ({x0} -> {x1} -> {_rho} ->

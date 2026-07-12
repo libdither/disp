@@ -6,7 +6,8 @@
 // (old tree, approved payload) that travels with the export, so any consumer
 // scope reconciles these fast trees with the spec/kernel originals whichever
 // order its opens arrive (the splice's licensed-collision rules). No givens and
-// no shared type names: the contract rides the name itself (the rebound Defs
+// the overlay need not repeat shared type names: the contract rides the name
+// itself (the rebound Defs
 // inherit the spec annotations and re-verify the fast trees at them). A future
 // optimizer emits files of exactly this shape — (e', cert) per definition.
 open use "nat.disp"

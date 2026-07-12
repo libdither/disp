@@ -1,0 +1,49 @@
+// Checked homogeneous laws and coarse-relation preservation.  This file keeps
+// the law-package boundary and the current Morphism checker limitation visible.
+open use "../kernel/prelude.disp"
+open use "../std/relation.disp"
+
+// PER/equivalence/preorder are real types: their law fields are checked against
+// the carrier-indexed relation rather than accepted as an untyped convention.
+test typecheck Type PER = Ok true
+test typecheck Type Equivalence = Ok true
+test typecheck Type Preorder = Ok true
+test typecheck PER (eq_per Nat) = Ok true
+test typecheck Equivalence (eq_equivalence Nat) = Ok true
+test typecheck Preorder (eq_preorder Nat) = Ok true
+
+let bogus_equivalence := {
+  carrier := Nat; rel := Eq Nat; refl := 0; sym := 1; trans := 2
+}
+test typecheck Equivalence bogus_equivalence = Ok false
+
+// Parity is a coarse relation defined entirely outside Nat's metadata.
+let parity_obs := {n} ->
+  nat_rec ({_} -> Bool) true ({_pred, ih} -> not ih) n
+let is_zero_r := {n} ->
+  nat_rec ({_} -> Bool) true ({_pred, _ih} -> false) n
+let BoolEqR := eq_relation Bool
+let ParityR := pullback_on Nat parity_obs BoolEqR
+
+// The binary Pi lift accepts a congruent observer and rejects a class-splitting
+// one.  These are independently chosen related inputs, not a pointwise probe.
+let parity_to_bool := rel_pi ParityR ({_} -> Bool) ({_} -> Bool)
+  ({_x0, _x1, _rho} -> BoolEqR)
+test param_apply (parity_to_bool.rel parity_obs parity_obs) ({x0, x1, rho} -> rho) = Ok true
+test param_apply (parity_to_bool.rel is_zero_r is_zero_r) ({x0, x1, rho} -> refl) = Ok false
+
+// `respects` is the supported checker-facing preservation obligation.
+test param_apply (respects ParityR BoolEqR parity_obs) ({x0, x1, rho} -> rho) = Ok true
+test param_apply (respects ParityR BoolEqR is_zero_r) ({x0, x1, rho} -> refl) = Ok false
+
+// Pullback constructs checked equivalence laws for the coarse relation.
+let ParityE := pullback_equivalence Nat parity_obs (eq_equivalence Bool)
+test typecheck Equivalence ParityE = Ok true
+test tree_eq (ParityE.sym 2 4 refl) refl = true
+test tree_eq (ParityE.trans 2 4 6 refl refl) refl = true
+
+// Current limitation: dependent Record checking replaces `map` with a field
+// hypothesis before checking `respect`, so this valid coarse Morphism package
+// is rejected even though the direct `respects` obligation above succeeds.
+let parity_morphism := make_morphism parity_obs ({x0, x1, rho} -> rho)
+test param_apply (Morphism Nat Bool ParityR BoolEqR) parity_morphism = Ok false

@@ -14,7 +14,7 @@
 // membership check (use-site re-check), and theorems cannot be faked — the
 // neutral branch must REALLY inhabit the dependent codomain at the abstract
 // point, where junk cannot help. The positive-side discipline is the license
-// pattern: per-constructor concrete obligations (case_equiv's at_cut family,
+// pattern: per-constructor concrete obligations (CaseRelation's at_cut family,
 // std/case.disp) force the concrete branch into a checked walk — the
 // difference between dispatch-to-DELEGATE (benign, refl-provable) and
 // dispatch-to-DIVERGE (this probe) is exactly a pointwise relation obligation.

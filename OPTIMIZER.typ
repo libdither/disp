@@ -327,8 +327,11 @@ the semantic relation that licenses rewrites):
 *Landed (reworked 2026-07-11).* (A) and (C) have first implementations in
 `lib/std/relation.disp`: relation objects are explicit and compositional rather than derived as
 one privileged equality from a type's metadata. The library supplies same-input pointwise and
-binary dependent Π lifts, separate PER/equivalence/preorder law bundles, pullbacks, linked
-binders, and respectful `Morphism` carriers. `NatRecRelation`, `AddRelation`, and `CaseRelation`
+binary dependent Π lifts, checked homogeneous PER/equivalence/preorder packages, pullbacks,
+linked binders, and direct `respects` obligations. The dependent-record `Morphism` carrier is
+currently experimental: the checker replaces its earlier `map` field by a projection hypothesis
+while checking `respect`, which rejects valid packages over coarse relations even though the
+identical direct `respects` obligation checks. `NatRecRelation`, `AddRelation`, and `CaseRelation`
 state their optimizer contracts at their owners. Pointwise licenses are intended as `~_T`
 restricted to applicative observers; as checked today they remain neutral-face statements (the
 correction below). The
@@ -412,11 +415,14 @@ independence:
   never congruence, and no operational gate can police observation of concrete quotient members
   (both sides of `is_zero 2` vs `is_zero 4` are concrete). The observational lineage's rule
   applies instead: consumption demands the respect witness. A function out of a quotient-
-  carrying type is a `Morphism` pair (the function with its `linked_pi` respect witness), demanded
-  at the quotient's own boundary (its respond gate and its function-type membership), and a
-  coarse relation licenses replacement only against morphism consumers. The `rel_pi` PER lift
+  carrying type is intended to be a morphism pair (the function with its `linked_pi` respect
+  witness), demanded at the quotient's own boundary (its respond gate and its function-type
+  membership); a coarse relation licenses replacement only against morphism consumers. The
+  `rel_pi` PER lift
   (`∀ a₀ a₁. R_A(a₀, a₁) -> R_B(f a₀, g a₁)`) applies exactly where the domain setoid is
   coarser than the `Eq` base; at the base it is J-equivalent to the unary form, which stays.
+  `relation.disp` currently supports the witness as `respects`; packaging it as a checked
+  dependent record remains blocked by the checker issue noted above.
 
 Layer one and the quotient layer need no kernel change and can land first. Layer two wants the
 §5.4 routing generalization. Until it lands, `license_guard`/`CaseRelation` rebinds are

@@ -4500,8 +4500,11 @@ the effect system proper.
 *(Status note, 2026-07-11: the set-level fragment of this section's
 motivation landed as explicit library structure in `lib/std/relation.disp`:
 heterogeneous relation objects, same-input pointwise and binary dependent
-Pi lifts, separate PER/equivalence/preorder laws, pullbacks, linked binders,
-and respectful morphisms. Types no longer acquire one privileged equality by
+Pi lifts, checked homogeneous PER/equivalence/preorder laws, pullbacks, linked
+binders, and direct respect witnesses. A dependent-record morphism carrier is
+present only as an experimental checker probe: valid coarse-relation packages
+are currently checked through the equivalent `respects` predicate instead.
+Types no longer acquire one privileged equality by
 reflecting over their metadata; clients choose and compose their relation.
 Deliberately NO elimination of an arbitrary relation into arbitrary motives —
 funext-with-J is inconsistent against `tree_eq` — so the coercion half of this
