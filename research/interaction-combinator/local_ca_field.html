@@ -311,43 +311,76 @@ function fieldStep(net) {
     net._ag.delete(key(c.x, c.y)); c.x = tx; c.y = ty; net._ag.set(tk, id); net.transport++; if (net.dem && net.dem.has(id) && net.demCell) net.demCell.add(tk); rerouteAround(net, id);
   }
 }
+// A rewrite is LOCAL: the two dying agents' external (aux) wires are PRESERVED — the fresh
+// agent that inherits a wire takes over the dying agent's cell, so the wire's path is kept
+// verbatim (no blink). Only genuinely new fresh↔fresh wires are routed, and the created-short
+// lemma (§8.1) keeps those O(1). The principal wire is consumed (it was reeled to ~nothing).
 function fireOne(net, C, Pr) {
-  const site = net.cell.get(C.id) || net.cell.get(Pr.id), before = new Set(net.agents.keys()), touched = [];
-  for (const G of [C, Pr]) for (let i = 0; i < G.p.length; i++) { const e = G.p[i]; if (e) touched.push(lkey([G.id, i], e)); }
-  for (const k of touched) net.wire.delete(k);
+  const cellC = net.cell.get(C.id), cellPr = net.cell.get(Pr.id), before = new Set(net.agents.keys());
+  const ext = [];                                            // the dying agents' aux wires, to preserve
+  for (const [G, gc] of [[C, cellC], [Pr, cellPr]]) for (let i = 1; i < G.p.length; i++) {
+    const e = G.p[i]; if (!e) continue;
+    ext.push({ farId: e[0], farPort: e[1], w: net.wire.get(lkey([G.id, i], e)), wk: lkey([G.id, i], e), dc: gc });
+  }
+  net.wire.delete(lkey([C.id, 0], [Pr.id, 0]));               // consume the (short, reeled) principal wire
   net.cell.delete(C.id); net.cell.delete(Pr.id);
   fire(net, C, Pr);
-  const fresh = [...net.agents.keys()].filter(id => !before.has(id)); buildOcc(net);
-  for (const id of fresh) {
-    let placed = null, fallback = null;
-    for (let r = 0; r < 10 && !placed; r++) for (let dx = -r; dx <= r && !placed; dx++) for (let dy = -r; dy <= r; dy++) {
+  const fresh = new Set([...net.agents.keys()].filter(id => !before.has(id)));
+  buildOcc(net);
+  // give each dying cell to the fresh agent that inherited its wire (keeps that wire's path)
+  for (const ex of ext) {
+    const fa = net.agents.get(ex.farId); if (!fa || !fa.p[ex.farPort]) continue;
+    const fid = fa.p[ex.farPort][0];
+    if (fresh.has(fid) && !net.cell.has(fid) && !net._ag.has(key(ex.dc.x, ex.dc.y))) { net.cell.set(fid, { x: ex.dc.x, y: ex.dc.y }); net._ag.set(key(ex.dc.x, ex.dc.y), fid); }
+  }
+  const site = cellC;                                        // place remaining fresh agents near the fire site
+  for (const id of fresh) if (!net.cell.has(id)) {
+    let spot = null;
+    for (let r = 0; r < 10 && !spot; r++) for (let dx = -r; dx <= r && !spot; dx++) for (let dy = -r; dy <= r; dy++) {
       if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-      const x = site.x + dx, y = site.y + dy, k = key(x, y);
-      if (net._ag.has(k)) continue;
-      if ((net._load.get(k) || 0) === 0) { placed = { x, y }; break; }
-      if (!fallback) fallback = { x, y };
+      const x = site.x + dx, y = site.y + dy; if (!net._ag.has(key(x, y)) && (net._load.get(key(x, y)) || 0) === 0) { spot = { x, y }; break; }
     }
-    const spot = placed || fallback || { x: site.x, y: site.y };
-    net.cell.set(id, spot); net._ag.set(key(spot.x, spot.y), id);
+    const s = spot || { x: site.x, y: site.y }; net.cell.set(id, s); net._ag.set(key(s.x, s.y), id);
+  }
+  buildOcc(net);
+  for (const ex of ext) {                                    // reconnect: reuse the exact path when the near end didn't move, else route locally
+    net.wire.delete(ex.wk);
+    const fa = net.agents.get(ex.farId); if (!fa) continue;
+    const near = fa.p[ex.farPort]; if (!near) continue;
+    const nc = net.cell.get(near[0]); if (!nc) continue;
+    let reused = false;
+    if (ex.w && nc.x === ex.dc.x && nc.y === ex.dc.y) {      // near end unchanged: try to keep the exact path
+      let A = [ex.farId, ex.farPort], B = near, path = ex.w.path.slice();
+      const oldStartFar = ex.w.a[0] === ex.farId;
+      if (A[0] * 8 + A[1] > B[0] * 8 + B[1]) { const t = A; A = B; B = t; }
+      if (oldStartFar !== (A[0] === ex.farId)) path.reverse();
+      const ca = net.cell.get(A[0]), cb = net.cell.get(B[0]);
+      const chain = [{ x: ca.x, y: ca.y }, ...path, { x: cb.x, y: cb.y }]; let good = true;
+      for (let j = 1; j < chain.length; j++) if (Math.abs(chain[j].x - chain[j - 1].x) + Math.abs(chain[j].y - chain[j - 1].y) !== 1) { good = false; break; }
+      if (good) for (const p of path) if (net._ag.has(key(p.x, p.y))) { good = false; break; }
+      if (good) { net.wire.set(lkey(A, B), { a: A, b: B, path }); reused = true; }   // validated: no blink
+    }
+    if (!reused) { buildOcc(net); embedLink(net, [ex.farId, ex.farPort], near); }
   }
   buildOcc(net);
   eachLink(net, (ea, eb) => { if (!net.wire.has(lkey(ea, eb))) { buildOcc(net); embedLink(net, ea, eb); } });
   for (let pass = 0; pass < 2; pass++) { let rep = false; for (const [, w] of [...net.wire]) { buildOcc(net); if (w.path.some(p => net._ag.has(key(p.x, p.y)))) { embedLink(net, w.a, w.b); rep = true; } } if (!rep) break; }
 }
-function fireStep(net, requireAdjacent) {
-  if (requireAdjacent) {
-    let fired = 0;
-    for (const [C, Pr] of allActivePairs(net)) {
-      if (!net.agents.has(C.id) || !net.agents.has(Pr.id)) continue;
-      const cc = net.cell.get(C.id), pc = net.cell.get(Pr.id);
-      if (Math.abs(cc.x - pc.x) + Math.abs(cc.y - pc.y) <= 2) { fireOne(net, C, Pr); fired++; }
-    }
-    return fired > 0;
+// Firing is ALWAYS spatially local: a redex fires only once its producer has been reeled
+// adjacent to its consumer (gate = 1 strict, 2 relaxed). So the connecting wire is consumed by
+// reel-in one cell per tick and is gone (or a single cell) by fire time — never deleted long.
+function fireStep(net, strict) {
+  let fired = 0; const base = strict ? 1 : 2;
+  for (const [C, Pr] of allActivePairs(net)) {
+    if (!net.agents.has(C.id) || !net.agents.has(Pr.id)) continue;
+    if (net.dem && !net.dem.has(Pr.id)) continue;            // demand front must have reached it
+    const cc = net.cell.get(C.id), pc = net.cell.get(Pr.id);
+    const dist = Math.abs(cc.x - pc.x) + Math.abs(cc.y - pc.y);
+    const gate = base + Math.floor((Pr.starve || 0) / 12);   // impatience watchdog (§7): a starved pair widens its gate
+    if (dist <= gate) { fireOne(net, C, Pr); fired++; }
+    else Pr.starve = (Pr.starve || 0) + 1;                   // reeled but still blocked: grow impatient
   }
-  // demand-driven: fire one active pair the demand front has reached (redexes fire as demand
-  // arrives, so firing follows the same front that lights the wires)
-  for (const [C, Pr] of allActivePairs(net)) if (net.dem && net.dem.has(Pr.id)) { fireOne(net, C, Pr); return true; }
-  return false;
+  return fired > 0;
 }
 
 // ================================================================================
@@ -421,9 +454,12 @@ function stepNet(net, opts) {
   if (net.done) return false;                                // already at normal form (pump dwells/loops)
   net.ticks = (net.ticks || 0) + 1;
   advanceDemand(net);
-  if (opts.requireAdjacent) reelPairs(net);
+  reelPairs(net);                                            // ALWAYS reel demanded producers toward consumers (transport)
   if (opts.field) fieldStep(net);
-  const fired = fireStep(net, opts.requireAdjacent);
+  const fired = fireStep(net, opts.strict);                  // fire only pairs reeled adjacent
+  buildOcc(net);                                             // repair: batch moves can transiently drop an agent onto a wire
+  const clipped = []; for (const [, w] of net.wire) if (!w.direct && w.path.some(p => net._ag.has(key(p.x, p.y)))) clipped.push(w);
+  for (const w of clipped) { buildOcc(net); embedLink(net, w.a, w.b); }
   net.peak = Math.max(net.peak, net.agents.size);
   if (!fired && !allActivePairs(net).length) { net.done = true; net.result = show(readback(net, Tp(net, net.out, 0), { n: 200000 })); return false; }
   return true;
@@ -576,7 +612,7 @@ function pump() {
   if (!RUNNING || !SIM) return;
   acc += (+document.getElementById("speed").value) * dt;
   const t0 = performance.now();
-  while (acc >= 1 && performance.now() - t0 < 30) { acc--; if (!stepNet(SIM, { field: true, requireAdjacent: ADJ })) break; }
+  while (acc >= 1 && performance.now() - t0 < 30) { acc--; if (!stepNet(SIM, { field: true, strict: ADJ })) break; }
   if (acc > 4) acc = 4;
   // do NOT auto-stop at normal form: dwell on the result (the field keeps tidying it), then
   // loop the example so play stays live. Field scenarios never reach done, so they just run.
@@ -601,7 +637,7 @@ function updateOracle() {
   el.innerHTML = h;
 }
 let ADJ = false;
-function tickOnce() { if (SIM) { stepNet(SIM, { field: true, requireAdjacent: ADJ }); updateStat(); updateOracle(); } }
+function tickOnce() { if (SIM) { stepNet(SIM, { field: true, strict: ADJ }); updateStat(); updateOracle(); } }
 
 // controls
 const scenSel = document.getElementById("scen");
@@ -613,8 +649,8 @@ document.getElementById("reset").onclick = boot;
 for (const btn of document.querySelectorAll("#mode button")) btn.onclick = () => { MODE = btn.dataset.m; for (const b of document.querySelectorAll("#mode button")) b.classList.toggle("on", b === btn); };
 for (const btn of document.querySelectorAll("#sub button")) btn.onclick = () => { SUB = btn.dataset.s; for (const b of document.querySelectorAll("#sub button")) b.classList.toggle("on", b === btn); };
 // adjacency toggle
-const adjBtn = document.createElement("button"); adjBtn.textContent = "fire: demand-driven"; adjBtn.style.marginTop = "6px";
-adjBtn.onclick = () => { ADJ = !ADJ; adjBtn.textContent = "fire: " + (ADJ ? "reel-to-adjacency (may jam)" : "demand-driven"); adjBtn.classList.toggle("on", ADJ); };
+const adjBtn = document.createElement("button"); adjBtn.textContent = "gate: reel-adjacent"; adjBtn.style.marginTop = "6px";
+adjBtn.onclick = () => { ADJ = !ADJ; adjBtn.textContent = "gate: " + (ADJ ? "strict dist-1 (may jam)" : "reel-adjacent"); adjBtn.classList.toggle("on", ADJ); };
 document.getElementById("sub").parentElement.after(adjBtn);
 
 // pan / zoom
