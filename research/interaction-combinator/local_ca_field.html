@@ -45,6 +45,7 @@
       <button data-s="d2" class="on">depth-2</button><button data-s="d3">3D (6-nbr)</button>
     </span></div>
     <div class="row"><span class="k">speed</span><input type="range" id="speed" min="1" max="500" value="90"></div>
+    <div class="row"><span class="k">temperature</span><input type="range" id="temp" min="0" max="100" value="6"><span id="tempv"></span></div>
     <h3>COST VECTOR (the ledger)</h3>
     <div id="stat"></div>
     <h3>RESULT vs ORACLE</h3>
@@ -191,6 +192,8 @@ const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
 const key = (x, y) => x + "," + y, KV = k => k.split(",").map(Number);
 const lkey = (a, b) => (a[0] * 8 + a[1]) < (b[0] * 8 + b[1]) ? `${a[0]}.${a[1]}|${b[0]}.${b[1]}` : `${b[0]}.${b[1]}|${a[0]}.${a[1]}`;
 const dirTo = (x0, y0, x1, y1) => { for (let d = 0; d < 4; d++) if (x0 + DX[d] === x1 && y0 + DY[d] === y1) return d; return -1; };
+// deterministic per-(cell,tick) PRNG, so thermal moves are bit-reproducible (the oracle stays exact)
+function rand(x, y, t, s) { let h = ((x * 73856093) ^ (y * 19349663) ^ (t * 83492791) ^ (s * 2654435761)) >>> 0; h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0; return ((h ^ (h >>> 13)) >>> 0) / 4294967296; }
 function eachLink(net, fn) {
   for (const a of net.agents.values()) for (let i = 0; i < a.p.length; i++) {
     const e = a.p[i]; if (!e) continue;
@@ -382,12 +385,14 @@ function wireWeight(net, w) {
   if (!spine) return 1;                                      // plumbing (aux–aux)
   return (net.dem && (net.dem.has(w.a[0]) || net.dem.has(w.b[0]))) ? 8 : 3;   // hot vs principal
 }
-// φ-DESCENT: an agent moves one cell only when it STRICTLY lowers weighted φ. Stepping in dir d
-// reels the wire departing in d (saves its weight) and bends the others (+1 each), so the move's
-// Δφ = total − 2·w(reeled). We take the best direction and move iff Δφ < 0 — so a heavy (hot)
-// wire reels while light plumbing yields, and no field move ever lengthens the potential.
+// φ-DESCENT with TEMPERATURE (heat-bath): stepping in dir d reels the wire departing in d
+// (saves its weight) and bends the others (+1 each), so Δφ_d = total − 2·w(reeled). The agent
+// picks among {stay, N, E, S, W} with probability ∝ e^(−Δφ/T). At T→0 this is greedy descent;
+// at T>0 it accepts neutral moves (the degree-2 Δφ=0 case that used to FREEZE) and occasional
+// uphill moves, so the layout anneals past the local minimum instead of stalling.
 function fieldStep(net) {
   buildOcc(net);
+  const T = Math.max(net.temp || 0, 0.05);
   for (const id of [...net.cell.keys()]) {
     const a = net.agents.get(id); if (!a || a.tag === "OUT") continue;   // OUT is the fixed I/O pad
     const c = net.cell.get(id), inc = []; let ok = true;
@@ -401,9 +406,12 @@ function fieldStep(net) {
     }
     if (!ok || !inc.length) continue;
     const total = inc.reduce((s, x) => s + x.wt, 0);
-    let bestD = -1, best = 0;
-    for (let d = 0; d < 4; d++) { const r = inc.find(x => x.dep === d); const dphi = total - 2 * (r ? r.wt : 0); if (dphi < best) { best = dphi; bestD = d; } }
-    if (bestD >= 0 && tryLocalMove(net, id, bestD) && net.dem && net.dem.has(id) && net.demCell) net.demCell.add(key(c.x, c.y));
+    const opts = [{ d: -1, dphi: 0.5 }];                                 // "stay" (small bias so a settled agent tends to rest)
+    for (let d = 0; d < 4; d++) { const r = inc.find(x => x.dep === d); opts.push({ d, dphi: total - 2 * (r ? r.wt : 0) }); }
+    let Z = 0; for (const o of opts) { o.w = Math.exp(-o.dphi / T); Z += o.w; }
+    let rr = rand(c.x, c.y, net.ticks, net.seed || 1) * Z, pick = opts[0];
+    for (const o of opts) { rr -= o.w; if (rr <= 0) { pick = o; break; } }
+    if (pick.d >= 0 && tryLocalMove(net, id, pick.d) && net.dem && net.dem.has(id) && net.demCell) net.demCell.add(key(c.x, c.y));
   }
 }
 // A rewrite is LOCAL: the two dying agents' external (aux) wires are PRESERVED — the fresh
@@ -589,7 +597,7 @@ function diffuse(net) {
 // (5) RENDERER — four view modes over the same depth-2 state.
 // ================================================================================
 const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
-let SIM = null, RUNNING = false, CUR = "chain (reel-in spine)", MODE = "flat", SUB = "d2", SELECTED = null;
+let SIM = null, RUNNING = false, CUR = "chain (reel-in spine)", MODE = "flat", SUB = "d2", SELECTED = null, TEMP = 0.12;
 let view = { x: 0, y: 0, scale: 20 };
 const COL = { L: "#3fbf7f", S: "#3fbf7f", F: "#3fbf7f", P: "#7ce38b", A: "#56c8ff", T1: "#56c8ff", T2: "#56c8ff", DN: "#c792ea", EPS: "#ff6b6b", NRM: "#ffd866", OUT: "#8595ad", BEAD: "#5a6b86", PIN: "#7ce38b" };
 
@@ -691,7 +699,7 @@ function drawAgents(CW, CH, s) {
 function boot() {
   const ex = EXAMPLES[CUR];
   SIM = ex.kind === "term" ? loadTerm(ex.term) : loadField(CUR);
-  SIM.ticks = 0; RUNNING = false; SELECTED = null;
+  SIM.ticks = 0; RUNNING = false; SELECTED = null; SIM.temp = TEMP; SIM.seed = 1;
   document.getElementById("play").innerHTML = "&#9654; play";
   fitView(); updateStat(); updateOracle();
   document.getElementById("explain").textContent = ex.note;
@@ -744,6 +752,8 @@ scenSel.value = CUR; scenSel.onchange = () => { CUR = scenSel.value; boot(); };
 document.getElementById("play").onclick = () => { RUNNING = !RUNNING; document.getElementById("play").innerHTML = RUNNING ? "&#10074;&#10074; pause" : "&#9654; play"; };
 document.getElementById("step").onclick = tickOnce;
 document.getElementById("reset").onclick = boot;
+document.getElementById("temp").oninput = e => { TEMP = e.target.value / 100 * 2; document.getElementById("tempv").textContent = TEMP.toFixed(2); if (SIM) SIM.temp = TEMP; };  // 0..2; higher = more thermal spread (worse compaction)
+document.getElementById("tempv").textContent = TEMP.toFixed(2);
 for (const btn of document.querySelectorAll("#mode button")) btn.onclick = () => { MODE = btn.dataset.m; for (const b of document.querySelectorAll("#mode button")) b.classList.toggle("on", b === btn); };
 for (const btn of document.querySelectorAll("#sub button")) btn.onclick = () => { SUB = btn.dataset.s; for (const b of document.querySelectorAll("#sub button")) b.classList.toggle("on", b === btn); };
 // adjacency toggle
