@@ -1,0 +1,110 @@
+//! The scheduler: rung 2 ships the sequential deterministic schedule. Rung 3 adds
+//! Margolus blocks and async-fuzz interleavings over the SAME transitions — a schedule
+//! here only ever chooses WHICH enabled transitions run and in what order; it can never
+//! affect what a transition does (footprints are the transition's own contract).
+
+use crate::lattice::{embed, Grid, Pos};
+use crate::net::Net;
+use crate::oracle::Term;
+use crate::transitions::{apply_fire, apply_reel, plan_fire, plan_reel};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CheckLevel {
+    /// Projection invariant asserted after EVERY transition (the per-step §10 check).
+    Every,
+    /// Asserted once per tick.
+    Tick,
+    /// Asserted at quiescence only.
+    End,
+}
+
+pub struct Sim {
+    pub grid: Grid,
+    pub shadow: Net,
+}
+
+impl Sim {
+    pub fn load(term: &Term) -> Sim {
+        let mut shadow = Net::new();
+        let root = shadow.build(term);
+        shadow.drive(root);
+        let grid = embed(&shadow);
+        Sim { grid, shadow }
+    }
+
+    /// One sequential tick: fire every enabled pair (rescanning after each, since a fire
+    /// invalidates positions), then give every producer/ε one reel step. Returns the
+    /// number of transitions applied. Fully deterministic (BTreeMap coordinate order).
+    pub fn tick(&mut self, check: CheckLevel) -> usize {
+        let mut applied = 0;
+        loop {
+            let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
+            let mut fired = false;
+            for p in positions {
+                if let Some(plan) = plan_fire(&self.grid, p) {
+                    apply_fire(&mut self.grid, &mut self.shadow, &plan);
+                    applied += 1;
+                    fired = true;
+                    if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                    break;
+                }
+            }
+            if !fired { break; }
+        }
+        let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
+        for p in positions {
+            if let Some(plan) = plan_reel(&self.grid, p) {
+                apply_reel(&mut self.grid, &plan);
+                applied += 1;
+                if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+            }
+        }
+        applied
+    }
+}
+
+pub struct Outcome {
+    pub done: bool,
+    pub stuck: bool,
+    pub ticks: u64,
+    pub ints: u64,
+    pub transport: u64,
+    pub peak_agents: usize,
+    pub result: Option<Term>,
+}
+
+/// Reduce a term on the lattice to quiescence (or a tick budget / a hard stall).
+/// `done` means the SHADOW has no active pairs left, i.e. normal form reached; readback
+/// works regardless of leftover wire slack. `stuck` means a full tick applied nothing
+/// while pairs remain — the deterministic schedule can then never progress (the honest
+/// liveness residue, reported, never asserted away).
+pub fn run_term(term: &Term, max_ticks: u64, check: CheckLevel) -> Outcome {
+    let mut sim = Sim::load(term);
+    let mut peak = sim.grid.agent_count();
+    let mut ticks = 0;
+    let (done, stuck) = loop {
+        if ticks >= max_ticks { break (false, false); }
+        if sim.shadow.all_active_pairs().is_empty() { break (true, false); }
+        let n = sim.tick(check);
+        ticks += 1;
+        peak = peak.max(sim.grid.agent_count());
+        if check == CheckLevel::Tick { sim.grid.check_projection(&sim.shadow); }
+        if n == 0 { break (false, true); }
+    };
+    if check != CheckLevel::Every || done { sim.grid.check_projection(&sim.shadow); }
+    let result = if done {
+        let lattice_rb = sim.grid.readback();
+        // The lattice and shadow readbacks must agree exactly; both feed the differential.
+        let out_sid = sim.shadow.agents.iter().enumerate()
+            .find(|(_, a)| a.as_ref().is_some_and(|a| a.tag == crate::rules::Tag::Out))
+            .map(|(i, _)| i as u32).expect("out lives");
+        let shadow_rb = sim.shadow.readback(sim.shadow.get(out_sid).ports[0]);
+        assert_eq!(
+            lattice_rb.as_ref().map(crate::oracle::show),
+            shadow_rb.as_ref().map(crate::oracle::show),
+            "lattice and shadow readbacks disagree"
+        );
+        lattice_rb
+    } else { None };
+    Outcome { done, stuck, ticks, ints: sim.shadow.ints, transport: sim.grid.transport, peak_agents: peak, result }
+}

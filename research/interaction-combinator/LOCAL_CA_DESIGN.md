@@ -384,8 +384,20 @@ Cheap-first, each rung gating the next:
    pressure).
 2. **The rewrite executor and template ROM** (§5.1) for the value and dispatch families, with
    `T2` split binary (§4.3) so cells stay uniform and depth stays crossings-only.
-   Prototyped in the rung-2 `local_ca_field.html`, but by a different route than the pure
-   microcoded executor this rung specifies: the file co-maintains an abstract interaction net
+   NOW BUILT FOR REAL in `evaluators/rust-ca-lattice/` (see its README): the ROM as
+   validated const data over the fully lowered ≤3-port alphabet (T1 lowered too, arms as
+   pairs; 13 tags, 26 interactions), per-cell state with NO ids in the dynamics,
+   footprint-atomic FIRE/REEL transitions with machine-checked footprints, a shadow net
+   asserting the projection invariant per transition, and the two-stage differential
+   (abstract 4000/0; lattice: 211/400 random terms to NF, zero wrong, zero invariant hits —
+   the stalls are §13 pocket congestion, measured, awaiting the policy rungs). Three
+   substrate lessons from that build, folded back into this doc: walkers move only when a
+   fire awaits (parked values on crossings otherwise deadlock the crossed wires); faces
+   carry TWO WIRE LAYERS (§2's layers are load-bearing — exclusive faces make vias
+   impassable to 3-port agents; §4.4's uniqueness is a preference, not an invariant); and
+   in-footprint place-and-route needs backtracking with most-constrained-first wires.
+   The earlier JS prototype of this rung remains in `local_ca_field.html`, by a different
+   route than the pure microcoded executor: the file co-maintains an abstract interaction net
    (authoritative for reduction, validated 3998/0 against an independent normalizer with full
    rule coverage over the value, `A`, `T1`, `T2`, `δ`, `ε` and `N` families) beside the spatial
    embedding. Each fire runs the abstract rule, then re-embeds its O(1) fresh agents locally with

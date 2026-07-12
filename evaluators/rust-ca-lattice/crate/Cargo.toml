@@ -1,0 +1,14 @@
+[package]
+name = "rust-ca-lattice"
+version = "0.0.0"
+edition = "2021"
+description = "rust-ca-lattice: the local CA substrate for disp tree-calculus interaction nets — rung 1 (rule ROM as data) + rung 2 (footprint-atomic lattice transitions), per research/interaction-combinator/LOCAL_CA_DESIGN.md"
+license = "MIT"
+
+# rlib only for now: rungs 1-3 are a native library + tests. The cdylib wasm build and the
+# Session ABI wrapper are rung 4 (see EVALUATOR.md for the backend registry contract).
+[lib]
+crate-type = ["rlib"]
+
+[profile.release]
+opt-level = 3
