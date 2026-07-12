@@ -3,7 +3,7 @@
 // the rust-style call-site coloring of application heads.
 
 const KEYWORDS = new Set(['use', 'open', 'match', 'if', 'then', 'else', 'raw', 'given'])
-const DECORATORS = new Set(['let', 'test', 'guard', 'guard_eq', 'freeze', 'license_guard', 'sig', 'base'])
+const DECORATORS = new Set(['let', 'test', 'guard', 'freeze', 'license_guard', 'sig', 'base'])
 const CONSTANTS = new Set(['true', 'false', 't', '_'])
 
 const esc = (s: string) =>

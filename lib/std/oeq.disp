@@ -1,5 +1,12 @@
 open use "../kernel/prelude.disp"
 
+// Legacy compatibility layer. Production optimizer clients use explicit
+// Relation objects from std/relation.disp. This file remains because its
+// metadata-normalized LinkedPi path currently certifies one coarse-relation
+// witness that the metadata-free first-class relation path cannot yet reproduce;
+// lib/tests/oeq.test.disp pins that checker difference. Delete only after that
+// last certification behavior has an explicit-relation replacement.
+//
 // Observational equivalence: a type's fourth face.
 //
 // A type already answers three questions through its wait-form: membership (the

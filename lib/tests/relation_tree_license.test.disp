@@ -1,0 +1,58 @@
+// The optimization loop, end to end, using an explicit pointwise relation plus
+// the elaborator's ordinary auto-verification — no equality-specific machinery:
+//
+//   spec         the honest definition (recursor-routed, so it can appear in motives)
+//   fast         the optimized tree (untrusted provenance: human, search, whatever)
+//   fast_license : Pointwise.rel spec fast := <induction>
+//
+// The relation is built explicitly: same TreeI input, Eq CheckerResult output.
+// Its CHECKING is the elaborator's auto-verification of the annotated export at
+// module load. The type mentions both endpoints by value, so editing `fast` into
+// something inequivalent makes this module fail to load. Applying the
+// optimization = using `fast`; nothing proof-shaped survives into it.
+//
+// The example: trees-as-a-full-inductive, and the recognizer optimization from
+// the Tree design discussion — the deep structural walk is provably Ok true.
+open use "../kernel/prelude.disp"
+open use "../std/relation.disp"
+
+// TreeI: raw trees as an honest inductive — leaf | stem child | fork left right.
+// The view is TOTAL (every tree is one of the three), which is why the
+// optimization below is available.
+let view_tree := {v} -> triage
+  (Ok (inj "leaf" t))
+  ({c} -> Ok (inj "stem" c))
+  ({l, r} -> Ok (inj "fork" (pair l r)))
+  v
+let encode_tree := {x} ->
+  if (tree_eq (pair_fst x) "stem") then (t (pair_snd x))
+  else (if (tree_eq (pair_fst x) "fork") then (t (pair_fst (pair_snd x)) (pair_snd (pair_snd x))) else t)
+let TreeI := Coproduct_viewed t (pair view_tree encode_tree) [pair "leaf" [], pair "stem" [Rec], pair "fork" [Rec, Rec]]
+test typecheck Type TreeI = Ok true
+test typecheck TreeI (t (t t) (t t t)) = Ok true
+
+// spec: the full structural check. rec_value computes every induction
+// hypothesis, so this genuinely visits every node: O(size).
+let deep := {v} -> rec_value TreeI ({_} -> CheckerResult)
+  { leaf := (Ok true); stem := ({c, ih} -> ih); fork := ({l, r, ihl, ihr} -> ihr) } v
+
+// fast: the optimization. O(1), and tree-distinct from deep.
+let fast := {v} -> Ok true
+
+// The relation unfolds to:
+//   Pi TreeI ({v} -> Eq CheckerResult (deep v) (Ok true))
+// and the proof is tree induction whose cases mirror the program.
+fast_license : (pointwise TreeI ({_v} -> eq_relation CheckerResult)).rel deep fast := {v} ->
+  rec_value TreeI ({v_} -> Eq CheckerResult (deep v_) (Ok true))
+    { leaf := refl; stem := ({c, ih} -> ih); fork := ({l, r, ihl, ihr} -> ihr) } v
+
+// Re-pin the auto-verified fact and the differential behavior on a sample.
+test param_apply ((pointwise TreeI ({_v} -> eq_relation CheckerResult)).rel deep fast) fast_license = Ok true
+test tree_eq (deep (t (t t) (t t t))) (Ok true) = true
+test tree_eq (fast (t (t t) (t t t))) (Ok true) = true
+test tree_eq deep fast = false
+
+// Endpoints remain part of the type: a wrong optimization and a lazy fake proof
+// are both rejected.
+test param_apply ((pointwise TreeI ({_v} -> eq_relation CheckerResult)).rel deep ({v} -> Err)) fast_license = Ok false
+test param_apply ((pointwise TreeI ({_v} -> eq_relation CheckerResult)).rel deep fast) ({v} -> refl) = Ok false

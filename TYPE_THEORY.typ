@@ -4497,16 +4497,16 @@ the effect system proper.
 
 = Cubical extensions <sec:cubical>
 
-*(Status note, 2026-07-05: the set-level fragment of this section's
-motivation landed as library code — `lib/std/oeq.disp`: a type's
-equivalence is a setoid derived from its cells by `setoid_of`
-(pointwise at Pi = funext by definition, componentwise at non-dependent
-records, `Eq` at data), overridable through `behavioral_specs` =
-quotients, with `LinkedPi` as the relational binder. Deliberately NO
-elimination of the equivalence into arbitrary motives — funext-with-J
-is inconsistent against `tree_eq` — so the coercion half of this
-section (per-type morphism actions computing transport) remains the
-planned route for dependent families.)*
+*(Status note, 2026-07-11: the set-level fragment of this section's
+motivation landed as explicit library structure in `lib/std/relation.disp`:
+heterogeneous relation objects, same-input pointwise and binary dependent
+Pi lifts, separate PER/equivalence/preorder laws, pullbacks, linked binders,
+and respectful morphisms. Types no longer acquire one privileged equality by
+reflecting over their metadata; clients choose and compose their relation.
+Deliberately NO elimination of an arbitrary relation into arbitrary motives —
+funext-with-J is inconsistent against `tree_eq` — so the coercion half of this
+section (per-type morphism actions computing transport) remains the planned
+route for dependent families.)*
 
 This section folds in the cubical proposal. Cubical operations live
 in each library type's `meta.functor` field (the *morphism-action*

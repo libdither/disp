@@ -60,11 +60,11 @@
       ]
     },
     "declarations": {
-      "comment": "Declarations are requests (COMPILATION.typ § Declarations as requests): `head? NAME (: T)? (:= v)?`. The heads — let / sig / base / given, guard <policy>, guard_eq — are LIBRARY VALUES (cut.disp, std/oeq.disp), not keywords. They are highlighted only in head position (member start followed by a declared name and ':'/':='), mirroring the parser's isDeclStart; mid-expression uses stay plain identifiers. Custom decorator heads exist but are not in this closed set, so they stay plain too.",
+      "comment": "Declarations are requests (COMPILATION.typ § Declarations as requests): `head? NAME (: T)? (:= v)?`. The heads — let / sig / base / given and guard <policy> — are LIBRARY VALUES (cut.disp, std/relation.disp), not keywords. They are highlighted only in head position (member start followed by a declared name and ':'/':='), mirroring the parser's isDeclStart; mid-expression uses stay plain identifiers. Custom decorator heads exist but are not in this closed set, so they stay plain too.",
       "patterns": [
         {
-          "comment": "guard <policy atoms…> NAME / guard_eq NAME — decorator head atoms are line-local (parser guarantee), so one line-rule is faithful. The gap excludes ':' (a top-level colon ends a head) plus comment/string starts, so `guard : T := v` — the definition of guard itself — falls through to the plain-declaration rule.",
-          "match": "(^|(?<=[{,;]))\\s*(guard_eq|guard)(?![A-Za-z0-9_'])\\s*((?:(?!//)[^:\"])*?)([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
+          "comment": "guard <policy atoms…> NAME — decorator head atoms are line-local (parser guarantee), so one line-rule is faithful. The gap excludes ':' (a top-level colon ends a head) plus comment/string starts, so `guard : T := v` — the definition of guard itself — falls through to the plain-declaration rule.",
+          "match": "(^|(?<=[{,;]))\\s*(guard)(?![A-Za-z0-9_'])\\s*((?:(?!//)[^:\"])*?)([A-Za-z_][A-Za-z0-9_']*)\\s*(?=:=|:[^=])",
           "captures": {
             "2": { "name": "storage.type.declaration.disp" },
             "3": {
@@ -123,7 +123,7 @@
     },
     "applications": {
       "comment": "Function-position identifiers — the Rust-like call-site yellow. In disp application is juxtaposition, so the head of an application spine is an identifier that STARTS an expression (line start, after an opening bracket, separator, ':='/':'/'='/arrows, or if/then/else) AND is applied to at least one atom. The exclusion list keeps keywords, decorator heads, literals, and the leaf out of head position; the starter prefix is re-scoped by the included rules so consumed operators/keywords keep their colors.",
-      "match": "((?::=|=>|->|→|[=:({\\[,;])|^|(?<![A-Za-z0-9_'])(?:if|then|else)(?![A-Za-z0-9_']))\\s*(?!(?:match|if|then|else|use|open|let|sig|base|given|guard|guard_eq|test|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[])",
+      "match": "((?::=|=>|->|→|[=:({\\[,;])|^|(?<![A-Za-z0-9_'])(?:if|then|else)(?![A-Za-z0-9_']))\\s*(?!(?:match|if|then|else|use|open|let|sig|base|given|guard|test|true|false|t)(?![A-Za-z0-9_']))([a-z_][A-Za-z0-9_']*)(?=\\s+[A-Za-z0-9_(\"△{\\[])",
       "captures": {
         "1": {
           "patterns": [
@@ -139,9 +139,9 @@
       "match": "(?<![A-Za-z0-9_'])(match|if|then|else)(?![A-Za-z0-9_'])"
     },
     "guard-policies": {
-      "comment": "std/oeq guard policies — colored only inside a guard head (included from the declarations rule), plain values elsewhere",
+      "comment": "std/relation guard policies — colored only inside a guard head (included from the declarations rule), plain values elsewhere",
       "name": "storage.modifier.policy.disp",
-      "match": "(?<![A-Za-z0-9_'])(freeze|license_guard|guard_eq)(?![A-Za-z0-9_'])"
+      "match": "(?<![A-Za-z0-9_'])(freeze|license_guard)(?![A-Za-z0-9_'])"
     },
     "constants": {
       "patterns": [

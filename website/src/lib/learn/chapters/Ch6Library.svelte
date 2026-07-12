@@ -117,11 +117,11 @@
       Propositional equality here is definitional: <code>Eq A x y</code> is inhabited iff x and
       y are convertible. The J eliminator and the usual lemmas (<code>eq_subst</code>,
       <code>eq_sym</code>, <code>eq_cong</code>, <code>eq_trans</code>) are library code in
-      <code>kernel/base.disp</code>. Beyond it, the standard library adds <em>observational
-      equivalence</em> (<code>std/oeq.disp</code>) as a type's fourth face — pointwise at
-      functions (function extensionality by definition), componentwise at records — which is the
-      equality the planned optimizer licenses rewrites with. The cubical path types of §7.2
-      would replace both with something stronger.
+      <code>kernel/base.disp</code>. Beyond it, <code>std/relation.disp</code> provides explicit
+      heterogeneous relations, same-input pointwise contracts, binary relational function
+      spaces, and respectful morphisms. Optimizer clients select and compose the relation they
+      need instead of deriving one privileged equality from a type's metadata. The cubical path
+      types of §7.2 would add stronger transport machinery.
     </p>
   </Aside>
 

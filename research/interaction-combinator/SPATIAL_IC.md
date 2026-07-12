@@ -347,7 +347,7 @@ lives instead is already built, in pieces, in this repo:
   `OPTIMIZER.typ` §5/§7 verified rewrite at the codegen corner of the staging axis, executed
   at a stage boundary (region quiescence / JIT pause), licensed by the certificate, checked
   by the trusted checker. The guard layer's licensed rebind (`license_guard` payload
-  `{ new := machine_ref; proof := oeq_witness }`) is the module-level rehearsal of the same
+  `{ new := machine_ref; proof := relation_witness }`) is the module-level rehearsal of the same
   act.
 - **Targeting is provenance.** The no-memo substrate attributes cost per region; a hot,
   recurring subnet is visible in the trace (on physical hardware: literally as a warm

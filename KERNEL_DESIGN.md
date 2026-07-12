@@ -258,12 +258,11 @@ marks the write private), and `default_guard` (unannotated — it
 branches on stem-option fields, the cell-op mode-branch wall; its disp
 definition is normative and the elaborator's fast path mirrors it,
 taken only while the ambient default is pristine; `let` and the `test`
-equation marker get the same pristine-capture treatment). Policies live in `lib/std/oeq.disp`: `license_guard R`
+equation marker get the same pristine-capture treatment). Policies live in `lib/std/relation.disp`: `license_guard R`
 (rebinds need `{ new; proof }` with `proof : R old new`; first bind of
 a contract-only name is licensed by its annotation alone; ownership is
-never surrendered), `guard_eq` (derives the license from the declared
-type — possible because the desugar fills the request's `ty` before the
-head applies), and `freeze`. Idiom notes: shadowing `default_guard`
+never surrendered) and `freeze`. Relations are explicit objects rather than
+being derived from declaration types. Idiom notes: shadowing `default_guard`
 opts a scope into ambient policy; `open` refuses to shadow an outer
 guarded name; Install-only (interface) entries are file-local until
 `Module` grows a guards slot.

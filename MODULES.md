@@ -462,9 +462,9 @@ order), and barrel re-exports carry guard+cert, so ownership and stamps
 survive re-export.
 
 This is what makes optimization a PARALLEL LIBRARY LAYER rather than an edit
-to the spec: `arith.disp` = pure spec (`guard_eq nat_rec` at an inline
-annotation, `guard_eq add`), `arith.opt.disp` opens the spec — the guards and
-contracts ride the names, so it needs no givens and no shared type aliases —
+to the spec: `nat.disp` = pure spec (explicit `NatRecRelation` and
+`AddRelation` guards), `nat.opt.disp` opens the spec — the guards and contracts
+ride the names, so it needs no givens —
 and rebinds both names under those licenses (each `{ new, proof }` checked at
 the overlay's own load; dependent bodies re-emitted, OPTIMIZER.typ's
 `(e', cert)` at the definition boundary); `std/prelude.opt.disp` is the
@@ -473,10 +473,7 @@ pick a face — the spec modules or the `.opt` layer — and mixed scopes
 reconcile via the stamps. One found edge: the kernel BARREL's re-exports are
 typeless (the bootstrap raw-loads first and the checked re-imports dedupe
 tree-identically, so annotations never land on the barrel's Defs) — hence the
-spec's guard_eq spells its type inline; adopting types on dedupe the way
-guards are adopted would enable annotation-free `guard_eq nat_rec := nat_rec`
-but makes the whole kernel surface typed (a verification-cost question), so
-it is left as a candidate follow-up. Rebinds without their own annotation
+spec spells the recursor type and its explicit relation locally. Rebinds without their own annotation
 inherit the incumbent's type (request + Def), which is what keeps the
 overlay's fast exports typed and re-verified at the spec contracts. The in-language Module-carries-requests form (and
 `Module` growing a guards field) remains the slice-3 destination; certs are

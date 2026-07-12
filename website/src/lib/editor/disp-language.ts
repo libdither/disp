@@ -8,7 +8,7 @@ import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 
 const KEYWORDS = new Set(['use', 'open', 'match', 'if', 'then', 'else', 'raw', 'given'])
-const DECORATORS = new Set(['let', 'test', 'guard', 'guard_eq', 'freeze', 'license_guard', 'sig', 'base'])
+const DECORATORS = new Set(['let', 'test', 'guard', 'freeze', 'license_guard', 'sig', 'base'])
 const CONSTANTS = new Set(['true', 'false', 't'])
 
 interface S {

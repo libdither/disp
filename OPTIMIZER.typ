@@ -324,18 +324,20 @@ the semantic relation that licenses rewrites):
   interval) — not full cubical — is the fit. (See §11: catalogue whether any target rewrite truly
   needs it.)
 
-*Landed (2026-07-05).* (A) and (C) have first implementations in `lib/std/oeq.disp`: `setoid_of`
-derives each type's equivalence from its cells (pointwise at Π = funext by definition,
-componentwise at non-dependent records, `Eq` at data; a declared setoid in `behavioral_specs`
-overrides = quotients) — it lives in the meta a type already carries rather than a new `eq` field.
-The pointwise licenses were intended as `~_T` restricted to applicative observers; as checked
-today they are neutral-face statements (the correction below). The
+*Landed (reworked 2026-07-11).* (A) and (C) have first implementations in
+`lib/std/relation.disp`: relation objects are explicit and compositional rather than derived as
+one privileged equality from a type's metadata. The library supplies same-input pointwise and
+binary dependent Π lifts, separate PER/equivalence/preorder law bundles, pullbacks, linked
+binders, and respectful `Morphism` carriers. `NatRecRelation`, `AddRelation`, and `CaseRelation`
+state their optimizer contracts at their owners. Pointwise licenses are intended as `~_T`
+restricted to applicative observers; as checked today they remain neutral-face statements (the
+correction below). The
 motive-extensionality obligation is operational: the `ext_walker` probe
 (`lib/tests/ext_gate_proto.test.disp`), a `param_walker` variant whose intensional carve-outs
 refuse neutrals — the per-motive residue of the fundamental lemma. The licensed-*replacement*
 mechanism exists as the elaborator's guard layer (the declaration protocol: SYNTAX.typ, `lib/kernel/cut.disp`):
 `license_guard R` makes redefinition of an owned name demand `proof : R old new`, re-verified at
-every load. End-to-end walkthrough pinned in `lib/tests/oeq_tree_license.test.disp` (the
+every load. End-to-end walkthrough pinned in `lib/tests/relation_tree_license.test.disp` (the
 deep-recognizer-to-`Ok true` rewrite, licensed by tree induction). Still open here: (B) `φ` as a
 term-level cast (replacement is definition-level today), cost-aware `⊵~ₛ`, dependent-family
 transport (the §13 coe rung), and the strict certification mode below.
@@ -345,12 +347,12 @@ transport (the §13 coe rung), and the strict certification mode below.
 *The gap (2026-07-10, pinned in `lib/tests/probe_license_sr.test.disp`).* License obligations are
 checked under the live walker, whose sanctioned root-signature reads let a candidate observe
 which face it is on. Four pinned consequences. (1) `{n} -> if (is_neutral n) then n else (succ n)`
-is licensed against `id` at `oeq (Arrow Nat Nat)` by `{n} -> refl`, because instantiating the
+is licensed against `id` at an explicit pointwise Nat relation by `{n} -> refl`, because instantiating the
 obligation's codomain at the minted hyp collapses it to `Eq Nat h h`; the `license_guard` rebind
 is accepted, and the replacement is type-preserving, so use-site re-checking never fires:
 downstream programs silently compute different numbers. (2) The unary pointwise lift demands no
-congruence, so a declared quotient (`image_setoid is_leaf Bool`) licenses a stem-to-fork
-replacement that the well-typed observer `is_fork` separates. (3) `case_equiv`'s concrete-face
+congruence, so a coarse pullback relation (`pullback_on Tree is_leaf EqBool`) licenses a stem-to-fork
+replacement that the well-typed observer `is_fork` separates. (3) `CaseRelation`'s concrete-face
 family is spoofable through its residual hyps: a candidate that delegates while an arm is neutral
 and junks when it is concrete passes all four obligations, as does one that dispatches on the two
 licensed instance types and junks on fresh coproducts. (4) Effect rows are not a reflection
@@ -360,7 +362,7 @@ boundary; `is_neutral` is ambient, not an op, so a row-empty computation reads t
 model). The licenses actually in tree survive on grounds the license itself does not check:
 delegating fast faces (`nat_rec_fast`, `case_fast`) are tree-identical to their spec at the hyp,
 with the concrete face covered by hand differential pins (`guard_opt.test.disp`,
-`case_opt.test.disp`); genuine replacements (`guards.test`'s `ident`, `oeq_tree_license`'s
+`case_opt.test.disp`); genuine replacements (`guards.test`'s `ident`, `relation_tree_license`'s
 `fast`) prove their Pi by induction, whose cases instantiate at constructor-rooted values where
 the face bit reads false. An induction proof of the attack is impossible (its zero case demands
 `Eq Nat 0 1`). The doors are exactly: top-level refl at a bare hyp, and reflection through a
@@ -391,7 +393,7 @@ independence:
   walk runs the one walker at a certification table: the canonical readers (`pair_fst`,
   `neutral_type`, `tree_eq` completion) answer `Err` on hyp-rooted subjects (`tree_eq` also on
   hyp-containing subjects unless hash-identical), while trusted machinery (the eliminators,
-  `setoid_of`, the responds) is reached through registered routes, so honest recursion on the
+  relation combinators, the responds) is reached through registered routes, so honest recursion on the
   hyps still walks and only free-form observation of them is refused. Membership checking keeps
   the ambient table; nothing outside license certification changes. The boundary must be
   operational rather than syntactic: hash-consing interns a structurally rebuilt tree to the
@@ -399,25 +401,25 @@ independence:
   at runtime and reach the carve-out, and no scan of a candidate's tree can define the fragment.
 + *Two-face rebinds: delegation by construction, glue built in-language.* A face-observing fast
   face is not certified by running it abstractly. Its rebind payload is parts,
-  `{ fast := e; proof := ... }`, and the guard (an object-language value, `oeq.disp`) applies
+  `{ fast := e; proof := ... }`, and the guard (an object-language value in `relation.disp`) applies
   the library combinator `two_face old e = {x} -> if (is_neutral x) then (old x) else (e x)`
   and answers `Bind` with the result, so neutral-face delegation holds by construction. The
   proof owes only the concrete face, which is the layer-one induction family. Trust invariant
   (a corollary of the core discipline): the elaborator relays guard answers; it never
   fabricates a bound tree, a proof, or glue. Every soundness-carrying tree is built by kernel
   or guard code in-language.
-+ *Quotients: respect is constitutive, not ambient.* `image_setoid` supplies an equivalence,
++ *Quotients: respect is constitutive, not ambient.* A pullback supplies an equivalence,
   never congruence, and no operational gate can police observation of concrete quotient members
   (both sides of `is_zero 2` vs `is_zero 4` are concrete). The observational lineage's rule
   applies instead: consumption demands the respect witness. A function out of a quotient-
-  carrying type is a morphism pair (the function with its `LinkedPi` respect witness), demanded
+  carrying type is a `Morphism` pair (the function with its `linked_pi` respect witness), demanded
   at the quotient's own boundary (its respond gate and its function-type membership), and a
-  declared setoid licenses replacement only against morphism consumers. The PER lift
+  coarse relation licenses replacement only against morphism consumers. The `rel_pi` PER lift
   (`∀ a₀ a₁. R_A(a₀, a₁) -> R_B(f a₀, g a₁)`) applies exactly where the domain setoid is
   coarser than the `Eq` base; at the base it is J-equivalent to the unary form, which stays.
 
 Layer one and the quotient layer need no kernel change and can land first. Layer two wants the
-§5.4 routing generalization. Until it lands, `license_guard`/`guard_eq`/`case_equiv` rebinds are
+§5.4 routing generalization. Until it lands, `license_guard`/`CaseRelation` rebinds are
 trusted on their differential pins, not on their proofs, and a rebind proof of the
 top-level-refl shape should be read as a delegation claim, not an equivalence proof.
 
@@ -431,9 +433,9 @@ architecture rather than offering an alternative to it.
 - *The equality target is right and reachable.* TTobs/CCobs deliver funext, propositional
   extensionality, definitional UIP, and quotients while keeping normalization, canonicity, and
   decidable conversion (machine-checked in Agda), so extensional replace-equals-by-equals
-  obligations are decidable certificate checks. `oeq`'s derivation is the same mechanism:
-  their observational equality is an eliminator that weak-head-normalizes the type and
-  pattern-matches its head former, which is `setoid_of`'s dispatch exactly.
+  obligations are decidable certificate checks. Their observational equality is an eliminator
+  that weak-head-normalizes the type and pattern-matches its head former. Disp now keeps that
+  possible interpretation explicit as relation combinators rather than ambient type metadata.
 - *The global respect metatheorem is constitutively closed-world.* Funext's justification is
   calibrated to a language whose only observation on functions is application; funext plus
   substitution plus an ambient structural-equality observer derives false (disp's own pin:
@@ -733,7 +735,7 @@ codebase; the *substrate* and *search* tracks run alongside.
 - *M1 — certificate checker + rule book (in-language).* `lib/opt/{rulebook,checker}.disp` (§7);
   rewrites carry certs the kernel validates. Soundness rests on rule-book soundness (Tier-0/1) +
   checker correctness + Howe congruence (assumed). *(Partially landed 2026-07-05: the license TYPE
-  (`oeq`, std/oeq.disp), Tier-2 witnesses (the Q1 proofs), a prototype cert checker
+  (explicit contracts in `std/relation.disp`), Tier-2 witnesses (the Q1 proofs), a prototype cert checker
   (`opt_q1_cert/m1real`), and the licensed-replacement mechanism (the guard layer — owned names
   whose redefinition demands equivalence proofs, enforced at every load) exist; the standing
   in-language rulebook/checker modules remain.)*
@@ -832,7 +834,7 @@ The genuinely unresolved core, ordered roughly by how load-bearing.
 #openq[
   *`~_T` concretely, and is it the Type:Type consistency relation?* Define the licensing logical
   relation over stripped trees so it (a) meshes with the walker's neutral/escape discipline, (b) is
-  sound for the applicative observer class, (c) hosts the `behavioral_specs` rule library. The
+  sound for the applicative observer class, (c) composes with the explicit relation rule library. The
   sealing-framework / step-indexed-LR conjecture (`TYPE_THEORY.typ` §11.6) suggests `~_T` and the
   Type:Type consistency argument may be *the same* logical relation — if so, soundness of the
   optimizer and consistency of the (semantic) kernel are one proof. *Direction:* build it as a

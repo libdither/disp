@@ -11,8 +11,8 @@ rather than lexical.
   `given` after `open`. Elsewhere they are plain identifiers, as in the tokenizer.
 - Declaration decorators are library values, highlighted only in head position
   (member start, followed by the declared name and `:`/`:=`): `let`, `sig`,
-  `base`, `given`, and guard chains `guard <policy> NAME` / `guard_eq NAME`
-  with the std policies (`freeze`, `license_guard`, `guard_eq`) colored inside
+  `base`, `given`, and guard chains `guard <policy> NAME`
+  with the std policies (`freeze`, `license_guard`) colored inside
   the head. Mid-expression uses, e.g. `default_guard t (guard freeze (base zero))`,
   stay plain, because there they are ordinary values. Custom decorator heads
   are possible in the language but not in this closed set, so they stay plain too.

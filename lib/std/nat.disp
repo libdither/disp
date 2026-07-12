@@ -1,13 +1,13 @@
 open use "../kernel/prelude.disp"
-open use "oeq.disp"
+open use "relation.disp"
 
 // ================================================================
 // Nat — the SPEC face: owned arithmetic, derived ops, proof terms.
 // ================================================================
-// Names are OWNED (guard_eq: license = oeq of the contract), and that is this
-// module's whole relationship to optimization: rebinding nat_rec or add,
-// anywhere downstream, takes a { new, proof } payload the license checks
-// in-language. The fast implementations live in the PARALLEL overlay
+// Names are OWNED at explicit relation objects, and that is this module's whole
+// relationship to optimization: rebinding nat_rec or add, anywhere downstream,
+// takes a { new, proof } payload the license checks in-language. The fast
+// implementations live in the PARALLEL overlay
 // nat.opt.disp, which opens this file (the guards and contracts ride the
 // names) and rebinds under these licenses; std/prelude.opt.disp is the
 // optimized barrel. Consumers pick a face: this module = the spec trees, the
@@ -20,22 +20,33 @@ open use "oeq.disp"
 // nat.opt.disp's licensed rebinds — proven-equivalent optimizations, whose
 // contracts land on the rebound Defs.
 
-// Own the kernel recursor at its honest dependent type — spelled INLINE (no
-// named type alias): guard_eq derives the license from the annotation, and the
-// overlay's rebind inherits this Def type, so the type never needs a name.
-// (An annotation-free `guard_eq nat_rec := nat_rec` would inherit the incumbent
-// type, but the kernel BARREL's re-exports are typeless — the bootstrap dedupes
-// raw-first — so the inline spelling is the honest one-copy form for now.)
-guard_eq nat_rec : {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n := nat_rec
+// State the replacement contracts directly. A pointwise relation gives old and
+// new the SAME public argument at each binder; the result relation may depend on
+// that argument. NatRecRelation therefore ends in Eq (P n), without inspecting
+// the recursor type's metadata or needing a special rule for the neutral type P n.
+NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
+NatRecRelation :=
+  pointwise (Pi Nat ({_} -> Type)) ({P} ->
+    pointwise (P zero) ({_z} ->
+      pointwise (Pi Nat ({n} -> Pi (P n) ({_} -> P (succ n)))) ({_step} ->
+        pointwise Nat ({n} -> eq_relation (P n)))))
+
+// Own the kernel recursor at its honest dependent type. The overlay's rebind
+// inherits this Def type, while the guard checks NatRecRelation.rel old new.
+guard (license_guard NatRecRelation.rel) nat_rec : NatRecT := nat_rec
 
 // add: Nat addition via nat_rec (kernel-routed eliminator) — the SPEC body.
 //   zero + m = m
 //   succ n + m = succ (add n m)
 // nat_rec's step receives (predecessor, recursive_result) Mendler-style, so
-// `succ ih` is `succ (add pred m)`. Declared with guard_eq: the name is owned
-// at `oeq (Nat -> Nat -> Nat)`, so rebinding it — including by the overlay —
-// needs a { new, proof } license.
-guard_eq add : Nat -> Nat -> Nat := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
+// `succ ih` is `succ (add pred m)`. The explicit contract says that old and new
+// return Eq Nat results at the same n and m.
+AddRelation :=
+  pointwise Nat ({_n} ->
+    pointwise Nat ({_m} -> eq_relation Nat))
+
+guard (license_guard AddRelation.rel) add : Nat -> Nat -> Nat :=
+  {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n
 
 // ── derived ops ──
 // pred/is_zero are ONE-LEVEL branches, so they ride case_value, not nat_rec:

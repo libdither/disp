@@ -1,0 +1,50 @@
+// Explicit, compositional relations: equality, same-input pointwise contracts,
+// binary congruence, pullback quotients, law lifts, and respectful morphisms.
+open use "../kernel/prelude.disp"
+open use "../std/relation.disp"
+
+// Relation objects expose both carriers and the witness family.
+let NatEq := eq_relation Nat
+test typecheck Relation NatEq = Ok true
+test tree_eq (NatEq.left) Nat = true
+test tree_eq (NatEq.right) Nat = true
+test typecheck (NatEq.rel 3 3) refl = Ok true
+test typecheck (NatEq.rel 3 4) refl = Ok false
+
+// Same-input pointwise comparison is the ordinary optimizer contract.
+let NatFnEq := pointwise Nat ({_n} -> eq_relation Nat)
+let id0 := {n} -> n
+test typecheck Relation NatFnEq = Ok true
+test param_apply (NatFnEq.rel id0 id0) ({n} -> refl) = Ok true
+
+// Binary rel_pi is stronger: related, independently chosen inputs must map to
+// related outputs.  The equality witness itself transports through identity.
+let is_even_r := {n} -> nat_rec ({_} -> Bool) true ({_p, ih} -> not ih) n
+let Parity := pullback_on Nat is_even_r (eq_relation Bool)
+let NatRelMap := rel_pi NatEq ({_} -> Nat) ({_} -> Nat)
+  ({_x0, _x1, _rho} -> eq_relation Nat)
+test tree_eq (NatRelMap.left) (Pi Nat ({_} -> Nat)) = true
+test tree_eq (NatRelMap.right) (Pi Nat ({_} -> Nat)) = true
+
+// Pullback gives a coarse relation without installing metadata on Nat.
+test typecheck (Parity.rel 2 4) refl = Ok true
+
+// Pullback inherits equivalence laws from its observation codomain.
+let ParityE := pullback_equivalence Nat is_even_r (eq_equivalence Bool)
+test tree_eq (ParityE.refl 2) refl = true
+test tree_eq (ParityE.sym 2 2 refl) refl = true
+test tree_eq (ParityE.trans 2 2 2 refl refl) refl = true
+
+// Pointwise laws are assembled from the codomain laws.
+test tree_eq ((pointwise_equivalence Nat ({_n} -> eq_equivalence Nat)).refl id0 3) refl = true
+
+// A Morphism packages a map with its congruence proof.
+let id_morphism := make_morphism id0 ({x0, x1, rho} -> rho)
+test param_apply (Morphism Nat Nat NatEq NatEq) id_morphism = Ok true
+test tree_eq (id_morphism.map 4) 4 = true
+
+// Basic relation combinators remain explicit values.
+let ParityBack := converse (converse Parity)
+test typecheck (ParityBack.rel 2 4) refl = Ok true
+let Both := meet NatEq (eq_relation Nat)
+test typecheck (Both.rel 2 2) { first := refl; second := refl } = Ok true

@@ -36,7 +36,7 @@ case_fast := {T} -> {
       else (case_value T motive cases target))
 }
 
-// The licensed rebind. Refl inhabits every case_equiv obligation (case.disp):
+// The licensed rebind. Refl inhabits every CaseRelation obligation (case.disp):
 // at_nat because case_fast delegates verbatim on the neutral path (both sides
 // walk to the same stuck elimination at shared hyps); at_cut0/1/2 because the
 // fast tag-cut spine and the spec's accessor walk apply the SAME projected arm

@@ -34,7 +34,7 @@ below are about subject reduction and canonicity, not consistency.
 | 2 | Coherence gate trusted an unchecked `view`/`encode` iso | `positive.disp` | Fixed (`iso_faithful` guard) |
 | 3 | Neutral application skips the domain check (result-shape-only) | `cells.disp:171` | Open (design mechanism) |
 | 4 | `Tree` respond with a non-function motive reduces case-dependently | `universe.disp` (`tree_app_or_elim`) | Open (minor) |
-| 5 | Intensional neutrality-branching: a body observes `is_neutral` and diverges on concrete values; oeq/case_equiv licenses are neutral-face statements | `engine.disp` (the `pair_fst` carve-out) | Open (design invariant; membership defended; behavioral licensing gap pinned in `probe_license_sr`) |
+| 5 | Intensional neutrality-branching: a body observes `is_neutral` and diverges on concrete values; pointwise/`CaseRelation` licenses are neutral-face statements | `engine.disp` (the `pair_fst` carve-out) | Open (design invariant; membership defended; behavioral licensing gap pinned in `probe_license_sr`) |
 
 Probe files live in `lib/tests/probe_*_sr.test.disp`. The item-1 and item-2 probes are now
 regression pins (they assert the gates close); the item-3 probe still asserts its
@@ -150,12 +150,12 @@ membership check (fact 1), and theorems cannot be faked, since the neutral branc
 genuinely inhabit the dependent codomain at the abstract point, where junk cannot help
 (pinned). What the defense model does not cover is behavior. A type-preserving variant
 (`shift := {n} -> if (is_neutral n) then n else (succ n)`) certifies at `Pi Nat (_ -> Nat)`,
-and because an oeq license obligation is itself checked at a minted hyp, the same branch
-collapses the license: `oeq (Arrow Nat Nat) id shift` normalizes its codomain to
-`Eq Nat h h`, `{n} -> refl` inhabits it, and `license_guard`/`guard_eq` accept a rebind
+and because a pointwise license obligation is itself checked at a minted hyp, the same branch
+collapses the license: `NatFnRelation.rel id shift` normalizes its codomain to
+`Eq Nat h h`, `{n} -> refl` inhabits it, and `license_guard` accepts a rebind
 from `id` to `shift` even though the two differ at every concrete point. Both outputs are
 Nats, so use-site re-checking catches nothing; the replacement silently changes what
-downstream programs compute. The hole reappears inside `case_equiv`'s concrete-face
+downstream programs compute. The hole reappears inside `CaseRelation`'s concrete-face
 family (`std/case.disp`): the at_cut obligations make the tag concrete, but arms,
 payloads and the type argument remain hyps, and a candidate can probe any of them
 (delegate while an arm is neutral, junk when it is concrete; or dispatch on the two
@@ -165,7 +165,7 @@ licensed instance types and junk on fresh coproducts). All of this is pinned in
 The licenses actually in tree survive on grounds the license does not check: delegating
 fast faces (`nat_rec_fast`, `case_fast`) are tree-identical to their spec at the hyp and
 carry hand differential pins for the concrete face (`guard_opt`, `case_opt`); genuine
-replacements (`guards.test`'s `ident`, `oeq_tree_license`'s `fast`) prove their Pi by
+replacements (`guards.test`'s `ident`, `relation_tree_license`'s `fast`) prove their Pi by
 induction, whose cases instantiate at constructor-rooted values where the face bit reads
 false (an induction proof of `id ~ shift` is impossible: its zero case demands
 `Eq Nat 0 1`). The attack's doors are top-level refl at a bare hyp, and reflection
@@ -200,7 +200,7 @@ certificates for anything it strips.
   deterministic; native `tree_eq` (`tree.ts:314-319`) is pure structural identity with no
   false positives. Function eta holds definitionally; eta-long checking of negative types
   is the walker. Record/Unit eta on neutrals and type-level funext are absent by design
-  (a completeness limit, offloaded to `oeq` / cubical `Path`), not soundness gaps.
+  (a completeness limit, offloaded to explicit relations / cubical `Path`), not soundness gaps.
 
 ## Priority
 
@@ -208,11 +208,11 @@ certificates for anything it strips.
    checking is wanted.
 2. Item 4 is a minor rough edge.
 3. Item 5 is a design invariant (the price of polarized application), and it is already
-   a blocker for proof-certified replacement, not only for §10 erasure: oeq licenses are
-   neutral-face statements, and the two-face discipline (`case_equiv`) is spoofable
+   a blocker for proof-certified replacement, not only for §10 erasure: pointwise licenses are
+   neutral-face statements, and the two-face discipline (`CaseRelation`) is spoofable
    through residual hyps (`probe_license_sr.test.disp`). Until certification gets the
    strict observer-restricted mode (OPTIMIZER.typ, "Certification is not yet
-   observer-restricted"), `license_guard`/`guard_eq`/`case_equiv` rebinds are trusted on
+   observer-restricted"), `license_guard`/`CaseRelation` rebinds are trusted on
    their differential pins, not on their proofs. Erasure additionally must not strip
    use-site checks behind a neutral-face-only certificate.
 4. Remaining from item 1: motive families for full mutual induction (the Coproduct_ctx

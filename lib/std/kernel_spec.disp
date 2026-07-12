@@ -37,7 +37,7 @@
 //
 // Bridge target (stage 6, written down and stopped, per the plan): the
 // spec-to-fused relation stays differential in this prototype. The target is
-//   guard (license_guard (oeq WalkerT)) param_walker
+//   guard (license_guard WalkerRelation.rel) param_walker
 // with proof a real equivalence certificate relating walk_spec2 to the fused
 // walker; the license machinery is the OPTIMIZER.typ arc. The pins here are
 // not that proof, and pretending otherwise would poison the ledger.

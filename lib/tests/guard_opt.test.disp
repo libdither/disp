@@ -1,11 +1,12 @@
 // The licensed-replacement ceremony end to end — the PARALLEL-OVERLAY form:
-// std/nat/arith is the pure spec (guard_eq owns nat_rec at the kernel's own
-// inherited annotation, add at its declared type); arith.opt.disp opens the spec
+// std/nat is the pure spec (explicit NatRecRelation and AddRelation own the
+// names at their declared types); nat.opt.disp opens the spec
 // and rebinds BOTH names under those licenses ({ new, proof } payloads checked at
 // its load); std/prelude.opt.disp is the optimized barrel. Certs are
 // driver-stamped and travel with exports, which is how this file's opens
 // reconcile the barrel's fast trees with the kernel originals bound first. Pins:
-//   (a) the license: pointwise refl inhabits `oeq NatRecT nat_rec_gen nat_rec_fast`
+//   (a) the license: pointwise refl inhabits
+//       `NatRecRelation.rel nat_rec_gen nat_rec_fast`
 //       (both sides reduce to the SAME stuck elimination at a minted target), and a
 //       replacement with a different abstract path is refused;
 //   (b) what the license does NOT cover: is_neutral is intensionally visible at a
@@ -15,33 +16,27 @@
 //   (c) reduction under binders: the fast route steps `succ n` to `step n <stuck at n>`
 //       tree-identically to the generic route — the conversion that type-level
 //       arithmetic (ops.disp's add_succ_r) rides on;
-//   (d) setoid_of at a NEUTRAL type takes the Eq base first, through the walker-safe
-//       is_neutral dispatch — the hardening that makes dependent license relations
-//       instantiable under the walker at all;
-//   (e) the overlay LANDED: this scope's nat_rec/add ARE the fast trees, and
+//   (d) the overlay LANDED: this scope's nat_rec/add ARE the fast trees, and
 //       ops.disp rides them with no local shadow.
 open use "../kernel/prelude.disp"
-open use "../std/oeq.disp"
+open use "../std/relation.disp"
 
 // The generic (kernel) recursor, captured before the optimized barrel replaces
-// the name; and the license's relation anchor, spelled ONCE here test-locally
-// (hash-cons-identical to the kernel annotation guard_eq inherited — the library
-// itself never names this type).
+// the name. The explicit relation anchor is exported by std/nat.disp.
 let nat_rec_gen := nat_rec
-NatRecT : Type := {P : Nat -> Type} -> P zero -> ({n : Nat} -> P n -> P (succ n)) -> {n : Nat} -> P n
 
 open use "../std/prelude.opt.disp"
 open use "../std/nat.disp"
 
-// ── (e) the overlay landed: the in-scope names are the fast trees
+// ── (d) the overlay landed: the in-scope names are the fast trees
 test tree_eq nat_rec nat_rec_fast = true
 test tree_eq nat_rec nat_rec_gen = false
 test tree_eq add ({n, m} -> nat_rec_fast ({_} -> Nat) m ({pred, ih} -> succ ih) n) = true
 
-// ── (a) the license, exactly as the guard checked it at arith load
-test param_apply (oeq NatRecT nat_rec_gen nat_rec_fast) ({P} -> {z} -> {s} -> {n} -> refl) = Ok true
+// ── (a) the license, exactly as the guard checked it at nat.opt load
+test param_apply (NatRecRelation.rel nat_rec_gen nat_rec_fast) ({P} -> {z} -> {s} -> {n} -> refl) = Ok true
 // a lying replacement (ignores the target; different abstract path) is refused
-test tree_eq (param_apply (oeq NatRecT nat_rec_gen ({motive, base, step, target} -> base)) ({P} -> {z} -> {s} -> {n} -> refl)) (Ok true) = false
+test tree_eq (param_apply (NatRecRelation.rel nat_rec_gen ({motive, base, step, target} -> base)) ({P} -> {z} -> {s} -> {n} -> refl)) (Ok true) = false
 
 // ── (b) differential: the fast path agrees with the generic route on concretes
 let add_gen := {n, m} -> nat_rec_gen ({_} -> Nat) m ({pred, ih} -> succ ih) n
@@ -66,12 +61,7 @@ routes_agree : {n : Nat} -> (Eq Nat
     (nat_rec_fast ({_} -> Nat) 0 ({k, ih} -> succ ih) n)
     (nat_rec_gen ({_} -> Nat) 0 ({k, ih} -> succ ih) n)) := {n} -> refl
 
-// ── (d) setoid_of at a neutral type: the Eq base, walker-usably
-let stuck := (make_hyp (Pi Nat ({_} -> Type)) 0) zero
-test tree_eq (setoid_of stuck) (eq_setoid stuck) = true
-test param_apply ((setoid_of stuck).rel zero zero) refl = Ok true
-
-// ── (e) ops rides the fast trees (its proofs re-verify at load; spot checks here)
+// ── (d) ops rides the fast trees (its proofs re-verify at load; spot checks here)
 test pred 5 = 4
 test is_zero 0 = true
 test is_zero 3 = false

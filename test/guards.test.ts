@@ -11,7 +11,7 @@ import type { Tree } from "../src/eval/eager.js"
 
 const HERE = join(process.cwd(), "lib/tests/_guards_host.disp")
 const K = `open use "../kernel/prelude.disp"
-open use "../std/oeq.disp"
+open use "../std/relation.disp"
 `
 // One shared native-backend session (the disp.test.ts pattern): the kernel is
 // elaborated once for all cases; the eager TS session would blow the worker heap.
@@ -26,22 +26,22 @@ describe("guard layer rejections", () => {
   }, 300000)
 
   it("a licensed name refuses a plain (credential-less) rebind", () => {
-    expect(() => run(K + `guard (license_guard (oeq Nat)) n : Nat := 3\nn : Nat := 4\n`))
+    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) n : Nat := 3\nn : Nat := 4\n`))
       .toThrow(/rejected by its guard/)
   }, 120000)
 
   it("a lying proof is rejected", () => {
-    expect(() => run(K + `guard (license_guard (oeq Nat)) m : Nat := 3\nm : Nat := { new := 4; proof := refl }\n`))
+    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) m : Nat := 3\nm : Nat := { new := 4; proof := refl }\n`))
       .toThrow(/rejected by its guard/)
   }, 120000)
 
   it("an honest payload rebind passes", () => {
-    expect(() => run(K + `guard (license_guard (oeq Nat)) k : Nat := 3\nk : Nat := { new := 3; proof := refl }\ntest k = 3\n`))
+    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) k : Nat := 3\nk : Nat := { new := 3; proof := refl }\ntest k = 3\n`))
       .not.toThrow()
   }, 120000)
 
   it("ownership is not surrendered (guard proposals refused)", () => {
-    expect(() => run(K + `guard (license_guard (oeq Nat)) p : Nat := 3\nguard freeze p : Nat := { new := 3; proof := refl }\n`))
+    expect(() => run(K + `guard (license_guard ((eq_relation Nat).rel)) p : Nat := 3\nguard freeze p : Nat := { new := 3; proof := refl }\n`))
       .toThrow(/rejected by its guard/)
   }, 120000)
 

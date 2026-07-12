@@ -17,7 +17,7 @@
 // pattern: per-constructor concrete obligations (case_equiv's at_cut family,
 // std/case.disp) force the concrete branch into a checked walk — the
 // difference between dispatch-to-DELEGATE (benign, refl-provable) and
-// dispatch-to-DIVERGE (this probe) is exactly an oeq obligation.
+// dispatch-to-DIVERGE (this probe) is exactly a pointwise relation obligation.
 open use "../kernel/prelude.disp"
 
 // honest on the checker's question, junk on real data:

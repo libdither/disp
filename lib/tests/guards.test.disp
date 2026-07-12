@@ -1,16 +1,16 @@
 // The guard layer end to end (the declaration protocol; SYNTAX.typ + cut.disp).
 // Pins: plain declarations are untouched (fast path); `guard <policy> NAME : T := v`
 // installs ownership and binds in one declaration; rebinding an owned name is an
-// ordinary-looking declaration whose payload carries credentials; guard_eq derives
-// the contract from the annotation; interface entries take a first implementation
+// ordinary-looking declaration whose payload carries credentials; explicit relation
+// objects supply the contract; interface entries take a first implementation
 // license-free; idempotent rebinds pass without consultation. Rejections (freeze,
 // lying proofs, plain rebinds of owned names) are LOAD failures, pinned host-side
 // in test/guards.test.ts.
 open use "../kernel/prelude.disp"
 open use "../std/list.disp"
-open use "../std/oeq.disp"
+open use "../std/relation.disp"
 
-// the license kit (the map-id license, as in oeq.test)
+// the license kit (the map-id license, as in relation.test)
 let mp := {f, xs} -> list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
 let idA := {xs} -> xs
 let idB := {xs} -> mp ({x} -> x) xs
@@ -20,6 +20,7 @@ let map_id_law := {a} -> list_rec
   ({h, tl, ih} -> eq_cong NatList NatList ({t_} -> cons h t_) tl (mp ({x} -> x) tl) ih)
   a
 let FnT := Arrow NatList NatList
+FnRelation := pointwise NatList ({_xs} -> eq_relation NatList)
 
 // ── the constructors and the default guard are ordinary, typed kernel values ──
 test typecheck GuardAction (Bind zero) = Ok true
@@ -32,7 +33,7 @@ test default_guard t (guard freeze (sig Nat)) = Ok (Install freeze)  // install 
 test default_guard t (sig Nat) = Err                                 // nothing to do
 
 // ── an owned name: install + bind in one declaration, rebind with credentials ──
-guard (license_guard (oeq FnT)) ident : Arrow NatList NatList := ({xs} -> xs)
+guard (license_guard FnRelation.rel) ident : Arrow NatList NatList := ({xs} -> xs)
 test tree_eq ident idA = true
 ident : Arrow NatList NatList := { new := ({xs} -> mp ({x} -> x) xs); proof := map_id_law }
 test tree_eq ident idB = true                       // the name now binds the licensed replacement
@@ -42,13 +43,13 @@ test ident (cons 2 nil) = cons 2 nil              // and still behaves
 ident : Arrow NatList NatList := ({xs} -> mp ({x} -> x) xs)
 test tree_eq ident idB = true
 
-// ── guard_eq: the ownership contract derived from the declared type ──
-guard_eq ident2 : Arrow NatList NatList := ({xs} -> xs)
+// ── the same explicit contract can own another declaration ──
+guard (license_guard FnRelation.rel) ident2 : Arrow NatList NatList := ({xs} -> xs)
 ident2 : Arrow NatList NatList := { new := ({xs} -> mp ({x} -> x) xs); proof := map_id_law }
 test tree_eq ident2 idB = true
 
 // ── interface entry: contract first, first implementation license-free ──
-guard (license_guard (oeq FnT)) iface : Arrow NatList NatList
+guard (license_guard FnRelation.rel) iface : Arrow NatList NatList
 iface : Arrow NatList NatList := ({xs} -> xs)
 test tree_eq iface idA = true
 

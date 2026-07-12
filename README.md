@@ -292,7 +292,7 @@ src/                        -- the host implementation (TypeScript; an accelerat
 lib/                        -- the language, written in itself
   prelude.disp              --   the raw substrate: booleans, pairs, wait/fix, triage, tree_eq
   kernel/                   --   the type system: seven fragments + a bootstrap barrel, around a 2-op trusted core
-  std/                      --   standard library (nat, list, option, result, pair, set, stream, oeq, effect, ...)
+  std/                      --   standard library (nat, list, option, result, pair, set, stream, relation, effect, ...)
   tests/                    --   ~1,200 object-language tests across ~60 files
 
 evaluators/                 -- alternative reduction backends (Rust: rust-eager, rust-ic-net; lambada peers)

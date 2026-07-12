@@ -18,7 +18,7 @@
 //       argument merely LOOKS like an elimination record is routed to elimination
 //       (over-rejection, never unsoundness).
 open use "../kernel/prelude.disp"
-open use "../std/oeq.disp"
+open use "../std/relation.disp"
 open use "../std/nat.disp"
 
 // ── (a) the recursor
@@ -46,9 +46,10 @@ test stem_child_t (t (t t t)) = stem_child (t (t t t))
 // the licensed fast twin (the nat_rec_fast pattern, one rung lower): delegate
 // neutrals to the TYPED twin, run concretes through the raw dispatcher
 let is_fork_fast := {v} -> if (is_neutral v) then (is_fork_t v) else (is_fork v)
-test param_apply (oeq (Arrow Tree Bool) is_fork_t is_fork_fast) ({v} -> refl) = Ok true
+let TreeBoolRelation := pointwise Tree ({_v} -> eq_relation Bool)
+test param_apply (TreeBoolRelation.rel is_fork_t is_fork_fast) ({v} -> refl) = Ok true
 // a lying twin is refused (constant true differs on the abstract path)
-test tree_eq (param_apply (oeq (Arrow Tree Bool) is_fork_t ({v} -> true)) ({v} -> refl)) (Ok true) = false
+test tree_eq (param_apply (TreeBoolRelation.rel is_fork_t ({v} -> true)) ({v} -> refl)) (Ok true) = false
 
 // ── (c) the application face (the annotations live in the prelude and verified at
 // kernel load; re-pinned here directly)

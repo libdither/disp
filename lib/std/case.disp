@@ -1,5 +1,5 @@
 open use "../kernel/prelude.disp"
-open use "oeq.disp"
+open use "relation.disp"
 
 // ================================================================
 // case_value — ownership (the SPEC face). The fast face is case.opt.disp.
@@ -21,11 +21,12 @@ open use "oeq.disp"
 // gate reads arms off a CONCRETE case record (built here from the bound
 // fields); an abstract case record cannot drive it, and a bare ∀-motive Pi
 // certificate is not standalone-decidable either (its codomain membership goes
-// stuck) — the pointwise oeq is exactly the form that avoids both, comparing
-// the two sides' WALKS at shared hyps instead of re-certifying at the Pi.
+// stuck) — an explicit pointwise relation is exactly the form that avoids both,
+// comparing the two sides' WALKS at shared hyps instead of re-certifying at the
+// Pi.
 //
 // The relation is a CONJUNCTION (a record type) because one obligation cannot
-// see both faces. The pointwise oeq mints a hyp for the target, so it only
+// see both faces. The pointwise relation mints a hyp for the target, so it only
 // ever exercises the NEUTRAL path — a rebind that delegates on neutrals but
 // breaks concrete dispatch would pass it. And no single hypothesis can stand
 // for "an arbitrary concrete member": a hyp IS the neutral face. The way to
@@ -48,23 +49,32 @@ open use "oeq.disp"
 // shape-encoded — exercises the functor-view decode, the arm pad, the gate).
 NatCaseT : Type := {P : Nat -> Type} -> P zero -> ({k : Nat} -> P (succ k)) -> {n : Nat} -> P n
 
+// Give both implementations the same motive, zero arm, successor arm and
+// target, then compare their results with Eq in the resulting fiber P n.
+NatCaseRelation :=
+  pointwise (Pi Nat ({_} -> Type)) ({P} ->
+    pointwise (P zero) ({_z} ->
+      pointwise (Pi Nat ({k} -> P (succ k))) ({_succ} ->
+        pointwise Nat ({n} -> eq_relation (P n)))))
+
 // The concrete-face instance: an inj-tagged (cut-class) sum with one variant
 // per spine arity 0/1/2 — the empty/last/cons cases of any argspec walk.
 LicSum : Type := Coproduct [pair "L0" [], pair "L1" [Tree], pair "L2" [Tree, Tree]]
 
-// The ownership relation: pointwise oeq at the field-bound Nat instance
+// The ownership relation: the explicit pointwise relation at the field-bound
+// Nat instance
 // (neutral face: both sides' walks tree-identical at shared hyps) AND a
 // per-constructor spine equality at LicSum for each arity (concrete face:
 // dispatch reaches the projected arm applied to the payload spine — for EVERY
 // arm and payload, since those are hyps). Proof shape: a record of refls.
-case_equiv := {old, new} -> {
-  at_nat : oeq NatCaseT ({P, z, s, n} -> old Nat P { zero := z; succ := s } n) ({P, z, s, n} -> new Nat P { zero := z; succ := s } n),
-  at_cut0 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> Eq Nat (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")),
-  at_cut1 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {c : Tree} -> Eq Nat (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)),
-  at_cut2 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {l : Tree} -> {r : Tree} -> Eq Nat (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r))
-}
+CaseRelation := relation_on Tree ({old, new} -> {
+  at_nat : NatCaseRelation.rel ({P, z, s, n} -> old Nat P { zero := z; succ := s } n) ({P, z, s, n} -> new Nat P { zero := z; succ := s } n),
+  at_cut0 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> (eq_relation Nat).rel (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj0 "L0")),
+  at_cut1 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {c : Tree} -> (eq_relation Nat).rel (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj1 "L1" c)),
+  at_cut2 : {z : Nat} -> {o : Tree -> Nat} -> {w : Tree -> Tree -> Nat} -> {l : Tree} -> {r : Tree} -> (eq_relation Nat).rel (old LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r)) (new LicSum ({_} -> Nat) { L0 := z; L1 := o; L2 := w } (inj2 "L2" l r))
+})
 
 // Own the name. The value is unchanged — this declaration only attaches the
 // guard (the kernel barrel's export is typeless, so no annotation is inherited
 // and none is declared): membership stays enforced by use, the license by rebind.
-guard (license_guard case_equiv) case_value := case_value
+guard (license_guard CaseRelation.rel) case_value := case_value

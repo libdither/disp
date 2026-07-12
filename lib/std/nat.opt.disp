@@ -38,8 +38,9 @@ nat_rec_fast := {motive, base, step, target} ->
 
 // ── The licensed rebinds. nat_rec first: after it, the spec name IS the fast
 // recursor, so add's fast body bakes it by its spec name. Pointwise refl
-// inhabits both relations because the fast forms delegate verbatim on the
-// neutral path (the abstract paths are untouched); the concrete paths are
+// inhabits the explicit NatRecRelation and AddRelation because the fast forms
+// delegate verbatim on the neutral path (the abstract paths are untouched);
+// the concrete paths are
 // pinned differentially in lib/tests/guard_opt.test.disp.
 nat_rec := { new := nat_rec_fast ; proof := {P} -> {z} -> {s} -> {n} -> refl }
 add := { new := {n, m} -> nat_rec ({_} -> Nat) m ({pred, ih} -> succ ih) n ; proof := {n} -> {m} -> refl }

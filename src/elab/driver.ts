@@ -651,10 +651,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
       typeTree = compileType(typeE, lookupEntry, resolveUse)
     }
     // Rebinds inherit the incumbent's contract: an un-annotated declaration on an
-    // already-bound name carries the existing type in its request — so guard_eq
-    // can derive the license from the name's OWN annotation (`guard_eq nat_rec :=
-    // nat_rec` owns the kernel recursor at the kernel's type) — and onto the new
-    // Def, which re-verifies the incoming tree at it.
+    // already-bound name carries the existing type in its request, and onto the new
+    // Def, which re-verifies the incoming tree at it. Custom request decorators may
+    // inspect that inherited annotation when choosing a policy.
     if (typeTree == null && existing?.type != null) typeTree = existing.type
     // Idempotence: a headless, tree-identical rebind changes nothing — no consultation.
     if (!headE && valueTree != null && existing?.tree != null && S.equal!(existing.tree, valueTree)) {

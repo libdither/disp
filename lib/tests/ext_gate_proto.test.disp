@@ -1,5 +1,5 @@
-// The motive-extensionality gate: the operational check behind eliminating oeq
-// (std/oeq.disp) into a motive. OTT and cubical get "every context respects
+// The motive-extensionality gate: the operational check behind transporting an
+// explicit extensional relation into a motive. OTT and cubical get "every context respects
 // equivalence" as a global metatheorem by banning intensional observation from the
 // whole language; disp keeps tree_eq (it IS conversion), so respect is checked per
 // motive instead — GoodRespond-style: probe the motive on a fresh hyp under a walker
