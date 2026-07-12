@@ -3,7 +3,9 @@
 Design doc. Companion to `SPATIAL_IC.md` (the theory note; this is its §13 "E4" expanded
 into a buildable specification), `EMBEDDING_THEOREM.md` (the simulation proof this relies
 on), `tc-net.typ` (the calculus), and `RUST_IC_NET_DESIGN.md` (the pointer machine whose
-§2/§5/§7 decisions transfer). Status: design, nothing built.
+§2/§5/§7 decisions transfer). Status: design, with rungs 1 through 2 prototyped in
+`local_ca_field.html` (a rung-2 evaluator: real reduction over the full agent alphabet, checked
+live against an independent normalizer, with four view modes; see §12).
 
 The existing `ca_substrate_viz.html` is a *shortcut* realization: it stores wires as
 segment data on cells, re-embeds them with a global A* route on every move, propagates wire
@@ -333,9 +335,10 @@ Cheap-first, each rung gating the next:
    the unified field with diffusion and Metropolis drift (§7), on a lattice of `ι` and `via`
    only (wires with no live agents). Watch straightening and reel-in relax a tangle. This rung
    alone tests the jamming threshold and the liveness watchdog, the riskiest unknowns, before
-   any reduction exists. Prototyped in `local_ca_field.html` (nodes as inert endpoints,
-   wires as forwarder chains, O(1) local reel-in and bend with no path search, the unified
-   tension-plus-pressure field). Findings so far: the local move is integrity-clean and
+   any reduction exists. Prototyped first in `local_ca_field.html` (since rebuilt as the rung-2
+   evaluator below; the wire-only version had nodes as inert endpoints, wires as forwarder
+   chains, O(1) local reel-in and bend with no path search, and the unified tension-plus-pressure
+   field, kept in the current file as the `bead box` and `slack tangle` scenarios). Findings so far: the local move is integrity-clean and
    contracts a slack tangle to zero wire; the bead-box demand test confirms pressure evicts a
    cell faster than random diffusion, the gap widening with fill (the liveness half). Two
    honest results from building it: degree-2 structures (rings, chains) are frustrated because
@@ -363,10 +366,28 @@ Cheap-first, each rung gating the next:
    pressure).
 2. **The rewrite executor and template ROM** (§5.1) for the value and dispatch families, with
    `T2` split binary (§4.3) so cells stay uniform and depth stays crossings-only.
+   Prototyped in the rung-2 `local_ca_field.html`, but by a different route than the pure
+   microcoded executor this rung specifies: the file co-maintains an abstract interaction net
+   (authoritative for reduction, validated 3998/0 against an independent normalizer with full
+   rule coverage over the value, `A`, `T1`, `T2`, `δ`, `ε` and `N` families) beside the spatial
+   embedding. Each fire runs the abstract rule, then re-embeds its O(1) fresh agents locally with
+   a bounded-window router rather than a global A*. `T2` is drawn as one agent with its depth-2
+   non-fit flagged (red box), cleared on the 3D-substrate toggle, so the split is shown rather
+   than structurally lowered. The pure Margolus microcoded executor with no co-maintained oracle,
+   and firing gated strictly on 4-neighbor adjacency, stays the target: the co-maintained net is
+   the scaffold that got real reduction running and checkable end to end first.
 3. **The commit handshake** (§6) across block boundaries.
-4. **Signals** (§9): demand waking, `ε` death pulses, the one-dead bit.
+4. **Signals** (§9): demand waking, `ε` death pulses, the one-dead bit. Demand is prototyped:
+   reduction is demand-driven from the root normalizer and undemanded agents render dim (the
+   laziness face). Death pulses and the one-dead bit are not yet spatial; erasure runs as an
+   abstract `ε` cascade.
 5. **The shadow harness** (§10): projection invariant per step, NF bit-equality vs
-   `rust-eager`.
+   `rust-eager`. Prototyped as a live differential oracle: every run's read-back is checked
+   in page against the independent normalizer. The default demand-driven schedule is embedding-
+   clean (50/50 random terms), and a `reel-to-adjacency` toggle reels each pair to a fire gate
+   and honestly jams on about 20 percent of random terms, the §7 jamming and §13 liveness
+   question made visible. Bit-equality against `rust-eager` specifically is still to wire, as is
+   the strict per-step projection assertion (the current check is at quiescence).
 
 Scope for v1: single-threaded simulation (it validates dynamics, it races nothing), one root
 pad at a fixed boundary cell (the loader unfolds a compiled tree H-tree-fashion, trees being
