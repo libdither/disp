@@ -1,0 +1,121 @@
+// Explicit-relation replacements for the useful behavioral coverage formerly
+// exercised through a type-selected equality.  Every relation below is chosen
+// by the client; none is discovered from type metadata.
+open use "../kernel/prelude.disp"
+open use "../std/list.disp"
+open use "../std/nat.disp"
+open use "../std/relation.disp"
+
+// ── Equality data and laws ──
+let NatE := eq_equivalence Nat
+test tree_eq (NatE.rel 3 3) (Eq Nat 3 3) = true
+test typecheck (NatE.rel 3 3) refl = Ok true
+test typecheck (NatE.rel 3 4) refl = Ok false
+test tree_eq (NatE.refl 3) refl = true
+test tree_eq (NatE.sym 3 3 refl) refl = true
+test tree_eq (NatE.trans 3 3 3 refl refl) refl = true
+
+// ── Explicit pointwise function equivalence ──
+// idA and idB are tree-distinct, but list induction proves them pointwise equal.
+let mp := {f, xs} -> list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+let idA := {xs} -> xs
+let idB := {xs} -> mp ({x} -> x) xs
+let map_id_law := {a} -> list_rec
+  ({xs_} -> Eq NatList xs_ (mp ({x} -> x) xs_))
+  refl
+  ({h, tl, ih} -> eq_cong NatList NatList ({t_} -> cons h t_) tl (mp ({x} -> x) tl) ih)
+  a
+let FnE := pointwise_equivalence NatList ({_xs} -> eq_equivalence NatList)
+let map_id_sym := FnE.sym idA idB map_id_law
+let map_id_trans := FnE.trans idA idA idB (FnE.refl idA) map_id_law
+
+test param_apply (FnE.rel idA idB) map_id_law = Ok true
+test param_apply (FnE.rel idA idA) (FnE.refl idA) = Ok true
+test param_apply (FnE.rel idB idA) map_id_sym = Ok true
+test param_apply (FnE.rel idA idB) map_id_trans = Ok true
+
+// ── Linked pairs and displayed motives ──
+// linked_pi binds two independently chosen related functions and their link.
+let P_good := {h} -> Eq NatList (h nil) nil
+let resp_good := {h0, h1, rho, x} ->
+  eq_subst NatList (h0 nil) (h1 nil) ({z} -> Eq NatList z nil) (rho nil) x
+
+test (param_apply
+  (linked_pi FnE ({h0} -> {h1} -> {_rho} -> Arrow (P_good h0) (P_good h1)))
+  resp_good) = Ok true
+test typecheck (P_good idA) refl = Ok true
+test typecheck (P_good idB) refl = Ok true
+test tree_eq (resp_good idA idB map_id_law refl) refl = true
+
+// This deliberately retains the old checker-limit pin: an intensional motive
+// collapses on minted hypotheses, while a concrete use-site check still rejects
+// the transported value in the unequal fiber.
+let P_bad := {h} -> if (tree_eq h idA) then Unit else False
+test (param_apply
+  (linked_pi FnE ({h0} -> {h1} -> {_rho} -> Arrow (P_bad h0) (P_bad h1)))
+  ({h0, h1, rho, x} -> x)) = Ok true
+test tree_eq (P_bad idA) Unit = true
+test tree_eq (P_bad idB) False = true
+test typecheck (P_bad idB) unit_val = Ok false
+
+// ── Explicit componentwise record equivalence ──
+// Record lifting is now ordinary client composition instead of reflective
+// type-shape inference.
+let PP := { f : (Arrow NatList NatList), g : (Arrow NatList NatList) }
+let PPRelation := relation_on PP ({r0, r1} -> {
+  f : (FnE.rel (r0.f) (r1.f)),
+  g : (FnE.rel (r0.g) (r1.g))
+})
+let PPE := make_equivalence
+  PP
+  (PPRelation.rel)
+  ({r} -> { f := FnE.refl (r.f); g := FnE.refl (r.g) })
+  ({r0, r1, p} -> {
+    f := FnE.sym (r0.f) (r1.f) (p.f);
+    g := FnE.sym (r0.g) (r1.g) (p.g)
+  })
+  ({r0, r1, r2, p, q} -> {
+    f := FnE.trans (r0.f) (r1.f) (r2.f) (p.f) (q.f);
+    g := FnE.trans (r0.g) (r1.g) (r2.g) (p.g) (q.g)
+  })
+let rA := { f := idA; g := idA }
+let rB := { f := idB; g := idB }
+let ppAB := { f := map_id_law; g := map_id_law }
+
+test param_apply (PPE.rel rA rB) ppAB = Ok true
+test param_apply (PPE.rel rA rA) (PPE.refl rA) = Ok true
+test param_apply (PPE.rel rB rA) (PPE.sym rA rB ppAB) = Ok true
+
+// A dependent record no longer receives an inferred fallback.  When structural
+// equality is the intended relation, the client says so directly.
+let DepT := { a : Nat, p : (Eq Nat a 3) }
+let DepEq := eq_relation DepT
+test (tree_eq
+  (DepEq.rel { a := 3; p := refl } { a := 3; p := refl })
+  (Eq DepT { a := 3; p := refl } { a := 3; p := refl })) = true
+
+// ── Explicit quotient-by-observation ──
+// ParityTy is a distinct Nat-recognizing carrier with no relation stored in its
+// behavioral metadata.  ParityR and its laws are explicit pullbacks of Bool Eq.
+let is_even := {n} -> nat_rec ({_} -> Bool) true ({_p, ih} -> not ih) n
+let ParityTy := wait (make_recognizer ({_m, v} -> param_apply Nat v))
+  { recognizer_params := unit_witness; functor := trivial_functor; respond := inert_respond;
+    behavioral_specs := t }
+let ParityR := pullback_on ParityTy is_even (eq_relation Bool)
+let ParityE := pullback_equivalence ParityTy is_even (eq_equivalence Bool)
+
+test typecheck Type ParityTy = Ok true
+test param_apply ParityTy 6 = Ok true
+test typecheck (ParityR.rel 2 4) refl = Ok true
+test typecheck (ParityR.rel 2 3) refl = Ok false
+test tree_eq (ParityE.sym 2 4 refl) refl = true
+test tree_eq (ParityE.trans 2 4 6 refl refl) refl = true
+
+// The defining observation respects the coarse relation by identity.  A
+// class-splitting observation cannot fake the corresponding linked witness.
+test (param_apply
+  (linked_pi ParityR ({q0} -> {q1} -> {_rho} -> Eq Bool (is_even q0) (is_even q1)))
+  ({q0, q1, rho} -> rho)) = Ok true
+test (param_apply
+  (linked_pi ParityR ({q0} -> {q1} -> {_rho} -> Eq Bool (is_zero q0) (is_zero q1)))
+  ({q0, q1, rho} -> refl)) = Ok false
