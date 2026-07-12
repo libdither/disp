@@ -322,10 +322,14 @@ Cheap-first, each rung gating the next:
    Margolus commit (the tick is now synchronous: every node proposes from the frozen pre-tick
    state, a conflict-free subset commits by rotating priority, footprints grown by one ring so
    no two committed moves share a cell or an edge; this both parallelizes and cuts the moves to
-   converge, e.g. the two-node case 600 -> 44). Still to add: reel-in THROUGH a via (a wire
-   contracting past a crossing, currently it stops adjacent), and a closed-region sweep for the
-   hard jamming transition (contraction alone frees space, so it never jams; only a demand
-   does).
+   converge, e.g. the two-node case 600 -> 44). Reel-in THROUGH a via also landed: a
+   degree-1 value does not rest on a crossing, it JUMPS to the cell beyond and the crossing
+   dissolves (its cell keeps only the other wire, becoming a plain forwarder); the value pays
+   -2 on its own wire and the crossed wire is untouched, so the two wires uncross as the value
+   passes (the crossing scenarios now contract fully, vias 1 -> 0, E -> 0). Still to add:
+   multi-wire through-via (a value with children stretches the other wires by two, so they need
+   more than a single bend), and a closed-region sweep for the hard jamming transition
+   (contraction alone frees space, so it never jams; only a demand does).
 2. **The rewrite executor and template ROM** (§5.1) for the value and dispatch families, with
    `T2` as a two-cell block (§4.3a).
 3. **The commit handshake** (§6) across block boundaries.
