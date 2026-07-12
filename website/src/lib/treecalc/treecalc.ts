@@ -360,7 +360,16 @@ export const DEFS: Record<string, T> = {
 
 // ---- parser: t, △, (), numbers, names ------------------------------------
 
-export function parseTree(input: string, defs: Record<string, T> = DEFS): T {
+// `lazyTop` keeps the OUTERMOST application from eager-constructing, so a bare
+// leaf- or stem-headed program shows its construction rule fire as a real step:
+// `t x` materializes as (△ · x) and fires the leaf rule (△) into a stem, and
+// `t x y` builds the stem `t x` eagerly then fires the fork rule on the last
+// application — the stem/fork rules on their own, no K needed to expose them.
+export function parseTree(
+  input: string,
+  defs: Record<string, T> = DEFS,
+  opts: { lazyTop?: boolean } = {}
+): T {
   const tokens: string[] = []
   for (let i = 0; i < input.length; i++) {
     const ch = input[i]
@@ -394,7 +403,7 @@ export function parseTree(input: string, defs: Record<string, T> = DEFS): T {
     const tok = tokens[p]
     if (tok === '(') {
       p++
-      const e = expr()
+      const e = expr(false) // parenthesized groups always construct eagerly
       if (tokens[p] !== ')') throw new Error('expected )')
       p++
       return e
@@ -417,7 +426,7 @@ export function parseTree(input: string, defs: Record<string, T> = DEFS): T {
     p++
     return varLeaf(tok)
   }
-  function expr(): T {
+  function expr(isTop: boolean): T {
     // Partial applications of S denote VALUES: `S a` is entered directly as
     // its normal form t (t a) — the same pre-assembly bracket abstraction
     // performs — so the widget shows ONE S firing at saturation instead of
@@ -434,16 +443,21 @@ export function parseTree(input: string, defs: Record<string, T> = DEFS): T {
     let sPending = sHead
     while (p < tokens.length && tokens[p] !== ')') {
       const arg = atom()
+      const isLast = p >= tokens.length || tokens[p] === ')'
       if (sPending) {
         e = stem(stem(arg))
         sPending = false
+      } else if (opts.lazyTop && isTop && isLast) {
+        // hold the last top-level application unreduced so its construction
+        // rule (leaf → stem, or stem → fork) fires as a visible step
+        e = { tag: 'apply', f: e, x: arg }
       } else {
         e = app(e, arg)
       }
     }
     return e
   }
-  const r = expr()
+  const r = expr(true)
   if (p !== tokens.length) throw new Error('extra tokens after expression')
   return r
 }

@@ -36,20 +36,28 @@
     stepMs?: number
     height?: number
   }
+
+  // The tree-calculus pieces — the ONE source shared by the cassette (symbol
+  // tape) AND the example list / ambient auto-cycle, so the two match precisely:
+  // stem (△), fork (s), K, S, the three triage variations (△ subscripted by the
+  // argument shape it reads — leaf t / stem s / fork f), then not / and / add.
+  const PIECES: { sym: string; sub?: string; expr: string; tip: string; sep?: boolean; stepMs?: number; lazyTop?: boolean }[] = [
+    { sym: '△', expr: 't x', tip: 'stem · a leaf applied builds a stem (△ x)', lazyTop: true },
+    { sym: 's', expr: 't x y', tip: 'fork · a stem applied builds a fork (△ x y)', lazyTop: true },
+    { sym: 'K', expr: 'K x y', tip: 'K · keep the first argument, discard the second' },
+    { sym: 'S', expr: 'S f g x', tip: 'S · share x between both sides: (f x) (g x)' },
+    { sym: '△', sub: 't', expr: 't (t a b) c t', tip: 'triage · argument is a leaf → take the first branch (a)' },
+    { sym: '△', sub: 's', expr: 't (t a b) c (t u)', tip: 'triage · argument is a stem → second branch on its child (b u)' },
+    { sym: '△', sub: 'f', expr: 't (t a b) c (t u v)', tip: 'triage · argument is a fork → third branch on its children (c u v)' },
+    { sym: '¬', expr: 'not true', tip: 'not · negation, built from triage', sep: true },
+    { sym: '∧', expr: 'and false true', tip: 'and · conjunction' },
+    { sym: '+', expr: 'add 2 3', tip: 'add · the recursion storm', stepMs: 90 }
+  ]
+
   let {
     variant = 'ambient',
-    // the ambient tour: one demo per rule (on named leaves, so the reductions
-    // read like they do on paper), then programs that mean something
-    exprs = [
-      'K x y', // K keeps x, discards y
-      'K t x y', // …after K resolves, the leaf rule (△) grows a stem: t y
-      'K (t t) x y', // …and fork-construction (f) finishes a triple: t t y
-      'S f g x', // S shares x between f and g: (f x)(g x)
-      't (t a b) c (t u)', // triage (stem arg): the F rule reads the argument's shape → b u
-      'not true',
-      'and false true',
-      { expr: 'add 2 3', stepMs: 90 } // the computation storm finale
-    ],
+    // the ambient tour rolls through the pieces above, in palette order
+    exprs = PIECES.map((p) => (p.stepMs ? { expr: p.expr, stepMs: p.stepMs } : p.expr)),
     presets = [],
     stepMs = 1050,
     height = 360
@@ -68,74 +76,86 @@
   let running = $state(variant === 'ambient')
   // svelte-ignore state_referenced_locally
   let autoCycle = $state(variant === 'ambient') // ambient rolls through exprs on its own
-  let parallel = $state(false)
+  let parallel = $state(true) // fire every ready redex per step — on by default
   let styled = $state(true) // nature styling vs plain diagram
   let motion = $state(true) // transitions + debris vs instant
   // svelte-ignore state_referenced_locally
   let labels = $state(variant === 'lab') // name badges on recognized subtrees
-  // svelte-ignore state_referenced_locally
-  let showControls = $state(variant === 'lab')
 
   // svelte-ignore state_referenced_locally
   let input = $state(exprOf(exprs[0] ?? 'not false'))
   // svelte-ignore state_referenced_locally
   let activeTip = $state(presets.find((p) => p.expr === input)?.tip ?? '')
-  // the dropdown offers the presets when there are any, else the cycle list
+  // the dropdown offers the presets when there are any, else the PIECES list —
+  // the same source the cassette tape uses, so the two match precisely
   const exampleOptions = $derived(
-    presets.length ? presets : exprs.map((e) => ({ expr: exprOf(e), tip: '' }))
+    presets.length ? presets : PIECES.map((p) => ({ expr: p.expr, tip: p.tip }))
   )
 
-  // ---- the example picker: a combobox panel under the input ---------------
-  const uid = $props.id()
-  let pickerOpen = $state(false)
-  let activeIdx = $state(-1) // keyboard/hover highlight in the open panel
-  let inputEl: HTMLInputElement | undefined = $state()
-  let wrapEl: HTMLDivElement | undefined = $state()
-  // the piece palette (ambient only): a chip on the left, at the ⚘ button's
-  // y-level, showing the symbol of the piece currently playing. Clicking it
-  // unrolls a little tape of every piece with the current one magnified;
-  // picking one loads and runs its canonical example. sub = a subscript badge;
-  // sep marks the divide between the raw rules and the named programs.
-  let paletteOpen = $state(false)
-  let paletteWrapEl: HTMLDivElement | undefined = $state()
-  let paletteChanged = $state(false) // a pick happened since the tape opened
-  let paletteLeaveTimer: ReturnType<typeof setTimeout> | undefined
-  const PALETTE: { sym: string; sub?: string; expr: string; tip: string; sep?: boolean }[] = [
-    { sym: '△', expr: 'K t x y', tip: 'stem · the leaf rule △ grows a stem (t y)' },
-    { sym: 's', expr: 'K (t t) x y', tip: 'fork · applying a stem builds a fork (t t y)' },
-    { sym: 'K', expr: 'K x y', tip: 'K · keep the first argument, discard the second' },
-    { sym: 'S', expr: 'S f g x', tip: 'S · share x between both sides: (f x) (g x)' },
-    { sym: '△', sub: 't', expr: 't (t a b) c t', tip: 'triage · argument is a leaf → take the first branch (a)' },
-    { sym: '△', sub: 's', expr: 't (t a b) c (t u)', tip: 'triage · argument is a stem → second branch on its child (b u)' },
-    { sym: '△', sub: 'f', expr: 't (t a b) c (t u v)', tip: 'triage · argument is a fork → third branch on its children (c u v)' },
-    { sym: '¬', expr: 'not true', tip: 'not · negation, built from triage', sep: true },
-    { sym: '∧', expr: 'and false true', tip: 'and · conjunction' },
-    { sym: '+', expr: 'add 2 3', tip: 'add · the recursion storm' }
-  ]
-  const matchPaletteIdx = (s: string) => PALETTE.findIndex((it) => it.expr === s)
-  // the chip tracks whatever is playing: the ambient cycle drives `input`, and
-  // a match lights the matching symbol; a non-palette input keeps the last one
+  // ---- the cassette: a chip that toggles open into a stationary tape; a
+  // draggable selector rides the tape and snaps to the nearest piece. Shares
+  // PIECES with the example list, so cassette and prev/next agree. -----------
+  const matchPaletteIdx = (s: string) => PIECES.findIndex((it) => it.expr === s)
   // svelte-ignore state_referenced_locally
   let selectedIdx = $state(Math.max(0, matchPaletteIdx(input)))
   $effect(() => {
     const i = matchPaletteIdx(input)
     if (i >= 0) selectedIdx = i
   })
+  const clampIdx = (i: number) => Math.max(0, Math.min(PIECES.length - 1, i))
+  const CELLW = 34 // px per tape cell (and the selector's width)
+  let cassetteOpen = $state(false) // chip ⇄ expanded tape
+  let showSelectors = $state(false) // the ⚘ tree toggle reveals the view selectors
+  let cassetteWrapEl: HTMLDivElement | undefined = $state()
+  let selectorsWrapEl: HTMLDivElement | undefined = $state()
+  // the selector drag along the (stationary) tape
+  let selDragging = $state(false)
+  let selDX = $state(0) // live px offset of the selector while dragging
+  let selStartX = 0
+  let selMoved = false
+  // the selector's live x: its resting slot plus the clamped drag offset
+  const selX = $derived(selectedIdx * CELLW + (selDragging ? selDX : 0))
+
+  // select a piece: load and run it (selector-drop, cell tap, and prev/next land here)
+  function pickPalette(i: number) {
+    const t = clampIdx(i)
+    selectedIdx = t
+    running = true
+    load(PIECES[t].expr)
+  }
+  // opening the tape freezes the ambient cycle so the selector holds still
+  // while you drag it (otherwise it auto-scrolls out from under the pointer)
+  function openCassette() {
+    cassetteOpen = true
+    autoCycle = false
+    running = false
+    clearTimeout(timer)
+  }
+  function selectorDown(e: PointerEvent) {
+    selDragging = true
+    selMoved = false
+    selDX = 0
+    selStartX = e.clientX
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+  function selectorMove(e: PointerEvent) {
+    if (!selDragging) return
+    // keep the selector on the tape
+    const lo = -selectedIdx * CELLW
+    const hi = (PIECES.length - 1 - selectedIdx) * CELLW
+    selDX = Math.max(lo, Math.min(hi, e.clientX - selStartX))
+    if (Math.abs(selDX) > 3) selMoved = true
+  }
+  function selectorUp() {
+    if (!selDragging) return
+    const target = clampIdx(Math.round((selectedIdx * CELLW + selDX) / CELLW))
+    selDragging = false
+    selDX = 0
+    if (selMoved) pickPalette(target)
+  }
+
   const matchIdx = () => exampleOptions.findIndex((o) => o.expr === input)
-  function openPicker() {
-    if (!exampleOptions.length) return
-    const m = matchIdx()
-    activeIdx = m >= 0 ? m : 0
-    pickerOpen = true
-  }
-  const closePicker = () => (pickerOpen = false)
-  function pickIdx(i: number) {
-    const o = exampleOptions[i]
-    closePicker()
-    if (o) load(o.expr)
-  }
-  // shift+←/→ hops through the examples (also bound in the widget's onKey);
-  // stops at the ends rather than wrapping
+  // prev/next switch trees; stop at the ends rather than wrapping
   function cyclePreset(dir: 1 | -1) {
     const opts = exampleOptions
     if (!opts.length) return
@@ -144,20 +164,13 @@
     if (next < 0 || next >= opts.length) return
     load(opts[next].expr)
   }
-  function onInputKey(e: KeyboardEvent) {
+  // the edit box is bare text: Enter loads it, Escape drops focus
+  function onEditKey(e: KeyboardEvent) {
     if (e.key === 'Enter') {
-      if (pickerOpen && activeIdx >= 0) pickIdx(activeIdx)
-      else load(input)
-    } else if (e.key === 'ArrowDown') {
       e.preventDefault()
-      if (!pickerOpen) openPicker()
-      else if (activeIdx < exampleOptions.length - 1) activeIdx++
-    } else if (e.key === 'ArrowUp' && pickerOpen) {
-      e.preventDefault()
-      if (activeIdx > 0) activeIdx--
-    } else if (e.key === 'Escape' && pickerOpen) {
-      e.stopPropagation()
-      closePicker()
+      load(input)
+    } else if (e.key === 'Escape') {
+      ;(e.target as HTMLElement).blur()
     }
   }
   let cur = $state<T | null>(null)
@@ -558,7 +571,6 @@
   function load(src: string, opts: { keepAuto?: boolean } = {}) {
     clearTimeout(timer)
     if (!opts.keepAuto) autoCycle = false
-    pickerOpen = false
     err = ''
     ruleMsg = ''
     stepCount = 0
@@ -571,7 +583,9 @@
     input = src
     activeTip = presets.find((p) => p.expr === src)?.tip ?? ''
     try {
-      cur = parseTree(src)
+      // the stem/fork pieces parse lazily so their construction rule fires visibly
+      const lazyTop = PIECES.find((p) => p.expr === src)?.lazyTop ?? false
+      cur = parseTree(src, undefined, { lazyTop })
       show(cur)
       if (running) schedule()
     } catch (e) {
@@ -690,81 +704,66 @@
     running = variant === 'ambient'
     load(input, { keepAuto: variant === 'ambient' })
   }
-  // opening the tape freezes the ambient cycle so the highlight holds still
-  // while you choose; the chip on its own stays a live indicator
-  function openPalette() {
-    paletteOpen = true
-    paletteChanged = false
-    // hard-freeze the scene so the magnified cell holds on whatever is playing:
-    // stop cycling AND cancel any already-scheduled step/next-expr timer
-    autoCycle = false
-    running = false
-    clearTimeout(timer)
-    clearTimeout(paletteLeaveTimer)
-  }
-  // a pick loads its example and runs it, and keeps the tape open — it only
-  // closes on a click-off or, once something has changed, 2s after the pointer
-  // leaves
-  function pickPalette(i: number) {
-    selectedIdx = i
-    paletteChanged = true
-    clearTimeout(paletteLeaveTimer)
-    running = true
-    load(PALETTE[i].expr)
-  }
-  const paletteEnter = () => clearTimeout(paletteLeaveTimer)
-  const paletteLeave = () => {
-    if (!paletteOpen || !paletteChanged) return
-    clearTimeout(paletteLeaveTimer)
-    paletteLeaveTimer = setTimeout(() => (paletteOpen = false), 2000)
-  }
-
-  // keyboard drive when the widget itself is focused (clicking it focuses it):
-  // space runs/pauses, ◀ steps back, ▶ steps forward, shift+◀/▶ hops through
-  // the examples. Keys landing on the input or buttons keep their normal
-  // meaning — except the shift-hop, which works anywhere but the text input
-  // (where shift+arrows select text).
+  // keyboard drive. The arrows work no matter which control inside the widget
+  // holds focus (so tabbing to a transport button doesn't strand them): ←/→
+  // step the reduction, shift+←/→ hop between trees. Only the text edit box is
+  // exempt — there the arrows move the caret and shift+arrows select. Space
+  // runs/pauses, but only when the widget itself (not a button) is focused, so
+  // it never hijacks a focused button's own activation.
   function onKey(e: KeyboardEvent) {
-    if (
-      e.shiftKey &&
-      (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
-      (e.target as HTMLElement).tagName !== 'INPUT'
-    ) {
+    const inEdit = (e.target as HTMLElement).tagName === 'INPUT'
+    if (!inEdit && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault()
-      cyclePreset(e.key === 'ArrowRight' ? 1 : -1)
+      if (e.shiftKey) cyclePreset(e.key === 'ArrowRight' ? 1 : -1)
+      else if (e.key === 'ArrowLeft') back()
+      else step()
       return
     }
-    if (e.target !== e.currentTarget) return
-    if (e.key === ' ') {
+    if (e.key === ' ' && e.target === e.currentTarget) {
       e.preventDefault()
       toggleRun()
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      back()
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      step()
     }
   }
 
   onMount(() => {
     load(input, { keepAuto: autoCycle })
   })
-  onDestroy(() => {
-    clearTimeout(timer)
-    clearTimeout(paletteLeaveTimer)
-  })
+  onDestroy(() => clearTimeout(timer))
 </script>
 
 <svelte:document
   onpointerdown={(e) => {
-    if (pickerOpen && wrapEl && !wrapEl.contains(e.target as Node)) closePicker()
-    if (paletteOpen && paletteWrapEl && !paletteWrapEl.contains(e.target as Node)) {
-      paletteOpen = false
-      clearTimeout(paletteLeaveTimer)
-    }
+    const t = e.target as Node
+    if (cassetteOpen && cassetteWrapEl && !cassetteWrapEl.contains(t)) cassetteOpen = false
+    if (showSelectors && selectorsWrapEl && !selectorsWrapEl.contains(t)) showSelectors = false
   }}
 />
+
+<!-- transport + selector icons (fill = triangles, .stroke = outlined) -->
+{#snippet icoPrev()}<svg class="ico" viewBox="0 0 24 24"><rect x="6" y="6" width="2.2" height="12" rx="0.6" /><path d="M18 6 L10 12 L18 18 Z" /></svg>{/snippet}
+{#snippet icoBack()}<svg class="ico" viewBox="0 0 24 24"><path d="M15.5 6 L8 12 L15.5 18 Z" /></svg>{/snippet}
+{#snippet icoPlay()}<svg class="ico" viewBox="0 0 24 24"><path d="M8 5.5 L18.5 12 L8 18.5 Z" /></svg>{/snippet}
+{#snippet icoPause()}<svg class="ico" viewBox="0 0 24 24"><rect x="7.5" y="5.5" width="3.2" height="13" rx="0.8" /><rect x="13.3" y="5.5" width="3.2" height="13" rx="0.8" /></svg>{/snippet}
+{#snippet icoFwd()}<svg class="ico" viewBox="0 0 24 24"><path d="M8.5 6 L16 12 L8.5 18 Z" /></svg>{/snippet}
+{#snippet icoNext()}<svg class="ico" viewBox="0 0 24 24"><path d="M6 6 L14 12 L6 18 Z" /><rect x="15.8" y="6" width="2.2" height="12" rx="0.6" /></svg>{/snippet}
+{#snippet icoReset()}<svg class="ico stroke" viewBox="0 0 24 24"><polyline points="3 5 3 10.5 8.5 10.5" /><path d="M5.2 15.5 a8 8 0 1 0 1.9 -8.4 L3 10.5" /></svg>{/snippet}
+{#snippet icoParallel()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M4 8.5 h9" /><path d="M10.5 5.5 L13.5 8.5 L10.5 11.5" /><path d="M4 15.5 h9" /><path d="M10.5 12.5 L13.5 15.5 L10.5 18.5" /></svg>{/snippet}
+{#snippet icoLeaf()}<svg class="ico" viewBox="0 0 24 24"><path d="M12 3.5 C6.5 7 6 15 11.6 20.6 C17.5 15 17.5 7 12 3.5 Z" /></svg>{/snippet}
+{#snippet icoMotion()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M9.6 4.6 A2 2 0 1 1 11 8 H2.5 M12.6 19.4 A2 2 0 1 0 14 16 H2.5 M17.7 7.7 A2.5 2.5 0 1 1 19.5 12 H2.5" /></svg>{/snippet}
+{#snippet icoLabels()}<svg class="ico stroke" viewBox="0 0 24 24"><path d="M20.4 13.4 l-7 7 a2 2 0 0 1 -2.8 0 L2.5 12 V2.5 h9.5 l8.4 8.4 a2 2 0 0 1 0 2.5 Z" /><circle cx="7.3" cy="7.3" r="1.15" fill="currentColor" stroke="none" /></svg>{/snippet}
+
+<!-- the four view selectors — shared by the lab's inline row and the ambient
+     ⚘ pop-out; each is an on/off icon toggle -->
+{#snippet selectorButtons()}
+  <button class="mpi sel" class:on={parallel} aria-pressed={parallel} title="parallel — fire every ready redex per step" aria-label="parallel reduction"
+    onclick={() => { parallel = !parallel; if (cur) show(cur) }}>{@render icoParallel()}</button>
+  <button class="mpi sel" class:on={styled} aria-pressed={styled} title="nature — styling vs plain diagram" aria-label="nature styling"
+    onclick={() => { styled = !styled; if (cur) show(cur) }}>{@render icoLeaf()}</button>
+  <button class="mpi sel" class:on={motion} aria-pressed={motion} title="motion — glide + falling leaves vs instant" aria-label="motion"
+    onclick={() => (motion = !motion)}>{@render icoMotion()}</button>
+  <button class="mpi sel" class:on={labels} aria-pressed={labels} title="labels — name badges on recognized subtrees" aria-label="labels"
+    onclick={() => { labels = !labels; if (cur) show(cur) }}>{@render icoLabels()}</button>
+{/snippet}
 
 <!-- the widget is a keyboard-drivable instrument: focus it, then space
   runs/pauses and the arrow keys step — hence the tabindex on a div -->
@@ -778,78 +777,37 @@
   aria-label="tree-calculus visualizer — space runs or pauses, arrow keys step back and forward"
   onkeydown={onKey}
 >
-  {#if showControls}
-    <div class="controls">
-      <!-- input and example picker are ONE control: the caret opens a panel
-           attached under the input; picking overrides the input, and whatever
-           you type highlights its own entry when it matches one -->
-      <div class="inputwrap" bind:this={wrapEl}>
-        <input
-          bind:this={inputEl}
-          type="text"
-          class:open={pickerOpen}
-          bind:value={input}
-          onkeydown={onInputKey}
-          spellcheck="false"
-          autocomplete="off"
-          role="combobox"
-          aria-expanded={pickerOpen}
-          aria-controls="{uid}-droplist"
-          aria-autocomplete="list"
-          aria-label="tree-calculus expression"
-        />
-        <button
-          type="button"
-          class="caretbtn"
-          class:open={pickerOpen}
-          onclick={() => {
-            if (pickerOpen) closePicker()
-            else openPicker()
-            inputEl?.focus()
-          }}
-          aria-label="show example expressions"
-          aria-expanded={pickerOpen}
-          title="examples — shift+←/→ cycles them"
-        >
-          ▾
-        </button>
-        {#if pickerOpen}
-          <div class="droplist" id="{uid}-droplist" role="listbox" tabindex="-1">
-            {#each exampleOptions as o, i}
-              <button
-                type="button"
-                class="dropitem"
-                class:active={i === activeIdx}
-                class:current={o.expr === input}
-                role="option"
-                aria-selected={o.expr === input}
-                onpointerenter={() => (activeIdx = i)}
-                onclick={() => pickIdx(i)}
-              >
-                <span class="dexpr">{o.expr}</span>
-                {#if o.tip}<span class="dtip">{o.tip}</span>{/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-      <button class="cbtn" onclick={back} disabled={historyLen === 0} title="step backwards (←)">◀</button>
-      <button class="cbtn primary" onclick={step} title="fire the next reduction (→)">Step</button>
-      <button class="cbtn" onclick={toggleRun} title="run/pause (space)">{running ? 'Pause' : 'Run'}</button>
-      <button class="cbtn" onclick={reset}>Reset</button>
+  <div class="topbar">
+    <!-- media transport: circular buttons, centred at the top, always on
+         (greyed in ambient until the pointer enters the widget) -->
+    <div class="transport">
+      <button class="mpi" onclick={() => cyclePreset(-1)} title="previous tree (shift+←)" aria-label="previous tree">{@render icoPrev()}</button>
+      <button class="mpi" onclick={back} disabled={historyLen === 0} title="step back (←)" aria-label="step back">{@render icoBack()}</button>
+      <button class="mpi play" onclick={toggleRun} title="run / pause (space)" aria-label={running ? 'pause' : 'play'}>{#if running}{@render icoPause()}{:else}{@render icoPlay()}{/if}</button>
+      <button class="mpi" onclick={step} title="step forward (→)" aria-label="step forward">{@render icoFwd()}</button>
+      <button class="mpi" onclick={() => cyclePreset(1)} title="next tree (shift+→)" aria-label="next tree">{@render icoNext()}</button>
+      <button class="mpi" onclick={reset} title="reset to the start" aria-label="reset">{@render icoReset()}</button>
+    </div>
+
+    <!-- the edit box: bare editable text, centred directly under the transport -->
+    <div class="editrow">
+      <input
+        class="editbox"
+        type="text"
+        bind:value={input}
+        onkeydown={onEditKey}
+        spellcheck="false"
+        autocomplete="off"
+        aria-label="tree-calculus expression — edit and press Enter"
+      />
     </div>
     {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
-    <div class="toggles">
-      <button class="tog" class:on={parallel} onclick={() => { parallel = !parallel; if (cur) show(cur) }}
-        title="fire every ready redex per step (confluence says the answer agrees)">parallel</button>
-      <button class="tog" class:on={styled} onclick={() => { styled = !styled; if (cur) show(cur) }}
-        title="nature styling vs plain diagram">nature</button>
-      <button class="tog" class:on={motion} onclick={() => (motion = !motion)}
-        title="glide + falling leaves vs instant updates">motion</button>
-      <button class="tog" class:on={labels} onclick={() => { labels = !labels; if (cur) show(cur) }}
-        title="name badges on recognized subtrees">labels</button>
-    </div>
-  {/if}
+
+    {#if variant === 'lab'}
+      <!-- the lab keeps its view selectors inline (no floating ⚘ toggle) -->
+      <div class="selectors">{@render selectorButtons()}</div>
+    {/if}
+  </div>
 
   {#if err}
     <p class="err">{err}</p>
@@ -981,7 +939,7 @@
     <div class="readout">
       <div class="rline">
         <span class="expr">{input}</span>
-        <span class="rule" class:nf={atNormalForm}>{ruleMsg || (variant === 'lab' ? 'press Step to fire the next reduction' : '')}</span>
+        <span class="rule" class:nf={atNormalForm}>{ruleMsg || (variant === 'lab' ? 'press ▶ (or →) to fire the next reduction' : '')}</span>
         <span class="count">{stepCount} step{stepCount === 1 ? '' : 's'}{parallel ? ' · parallel' : ''}</span>
       </div>
       {#if variant === 'lab' && cur}
@@ -992,56 +950,61 @@
   {/if}
 
   {#if variant === 'ambient'}
-    <!-- the piece palette: a chip that unrolls into a tape (see the palette
-         comment above the state). Same y as the ⚘ button, opposite side. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="palette-wrap"
-      bind:this={paletteWrapEl}
-      onmouseenter={paletteEnter}
-      onmouseleave={paletteLeave}
-    >
-      {#if paletteOpen}
-        <div class="palette-tape" role="menu" aria-label="tree pieces">
-          {#each PALETTE as it, i}
-            {#if it.sep}<span class="psep" aria-hidden="true"></span>{/if}
+    <!-- cassette: a chip that toggles open into a stationary tape; a draggable
+         selector rides the tape and snaps to the nearest piece. Bottom-left. -->
+    <div class="cassette-wrap" bind:this={cassetteWrapEl}>
+      {#if cassetteOpen}
+        <div class="cassette-tape">
+          {#each PIECES as it, i}
             <button
               type="button"
-              class="pcell"
-              class:mag={i === selectedIdx}
-              role="menuitemradio"
-              aria-checked={i === selectedIdx}
+              class="tcell"
+              class:on={i === selectedIdx}
+              style="width: {CELLW}px"
               title={it.tip}
               aria-label={it.tip}
               onclick={() => pickPalette(i)}
             >{it.sym}{#if it.sub}<sub>{it.sub}</sub>{/if}</button>
           {/each}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="selector"
+            class:grabbing={selDragging}
+            style="width: {CELLW}px; transform: translateX({selX}px)"
+            title="drag to choose a piece"
+            aria-hidden="true"
+            onpointerdown={selectorDown}
+            onpointermove={selectorMove}
+            onpointerup={selectorUp}
+            onpointercancel={selectorUp}
+          ></div>
         </div>
       {:else}
         <button
           type="button"
-          class="palette-chip"
-          onclick={openPalette}
-          aria-label={`tree pieces — now: ${PALETTE[selectedIdx].tip}. Click to choose.`}
-          aria-haspopup="menu"
-          title={`${PALETTE[selectedIdx].tip} — click to choose a piece`}
-        >{PALETTE[selectedIdx].sym}{#if PALETTE[selectedIdx].sub}<sub>{PALETTE[selectedIdx].sub}</sub>{/if}</button>
+          class="cassette-chip"
+          onclick={openCassette}
+          aria-haspopup="true"
+          aria-label={`tree pieces — now: ${PIECES[selectedIdx].tip}. Click to open the tape.`}
+          title={`${PIECES[selectedIdx].tip} — click to open the tape`}
+        >{PIECES[selectedIdx].sym}{#if PIECES[selectedIdx].sub}<sub>{PIECES[selectedIdx].sub}</sub>{/if}</button>
       {/if}
     </div>
-    <button
-      class="instrument"
-      onclick={() => {
-        showControls = !showControls
-        pickerOpen = false
-        if (showControls) {
-          autoCycle = false
-        }
-      }}
-      title={showControls ? 'put the instruments away' : 'instrument this tree'}
-      aria-expanded={showControls}
-    >
-      {showControls ? '×' : '⚘'}
-    </button>
+
+    <!-- the tree toggle (⚘) that originally controlled the whole thing — now it
+         reveals the view selectors. Bottom-right. -->
+    <div class="selectors-wrap" bind:this={selectorsWrapEl}>
+      {#if showSelectors}
+        <div class="selectors-pop">{@render selectorButtons()}</div>
+      {/if}
+      <button
+        class="tree-toggle"
+        onclick={() => (showSelectors = !showSelectors)}
+        aria-expanded={showSelectors}
+        aria-label={showSelectors ? 'hide view options' : 'view options'}
+        title={showSelectors ? 'hide view options' : 'view options'}
+      >{showSelectors ? '×' : '⚘'}</button>
+    </div>
   {/if}
 </div>
 
@@ -1070,140 +1033,90 @@
     display: block;
   }
 
-  /* ---- controls ---- */
-  .controls {
+  /* ---- controls: transport centred at the top, edit text centred below ---- */
+  .topbar {
     display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.5rem;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    margin-bottom: 0.4rem;
   }
-  .inputwrap {
-    position: relative;
-    flex: 1;
-    min-width: 170px;
+  .transport {
     display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
   }
-  input {
-    flex: 1;
+  /* the edit box: bare editable text, centred directly under the transport */
+  .editrow {
+    display: flex;
+    justify-content: center;
     width: 100%;
     min-width: 0;
-    background: var(--bg-code);
-    border: 1px solid var(--border-strong);
-    border-radius: 8px;
+  }
+  .editbox {
+    width: 100%;
+    max-width: 30rem;
+    min-width: 0;
+    background: none;
+    border: none;
+    outline: none;
     color: var(--fg);
     font-family: var(--font-mono);
     font-size: 0.85rem;
-    padding: 0.42em 2em 0.42em 0.7em;
-    outline: none;
+    text-align: center;
+    padding: 0.1em 0.3em;
+    caret-color: var(--accent);
   }
-  input:focus { border-color: var(--accent); }
-  /* open state: the input and the panel fuse into one combobox */
-  input.open {
-    border-color: var(--accent);
-    border-radius: 8px 8px 0 0;
+  .editbox::selection { background: color-mix(in oklab, var(--accent) 28%, transparent); }
+  /* the lab's inline selector row (ambient uses the ⚘ pop-out instead) */
+  .selectors {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
   }
-  .cbtn {
+  /* media + selector icon buttons — circular, dimmed like the corner buttons */
+  .mpi {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    display: inline-grid;
+    place-items: center;
     border: 1px solid var(--border-strong);
     background: var(--bg-elev);
-    color: var(--fg);
-    border-radius: 8px;
-    font: inherit;
-    font-size: 0.82rem;
-    font-weight: 550;
-    padding: 0.32em 0.9em;
+    color: var(--fg-muted);
+    border-radius: 50%;
+    padding: 0;
     cursor: pointer;
+    transition: opacity 0.18s ease, border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
   }
-  .cbtn:hover { border-color: var(--accent); }
-  .cbtn.primary {
-    background: linear-gradient(118deg, #4caf6d, #2f9e6e 70%);
-    color: #f7fcf5;
-    border: none;
+  /* ambient greys the whole control set out until the pointer enters the widget
+     (the lab instrument stays full); a direct hover always lifts a button */
+  .vis:not(.lab) .mpi { opacity: 0.45; }
+  .vis:not(.lab):hover .mpi { opacity: 1; }
+  .mpi:hover { opacity: 1; border-color: var(--accent); color: var(--accent); }
+  .mpi:disabled { opacity: 0.22; cursor: default; border-color: var(--border-strong); color: var(--fg-muted); }
+  .vis:not(.lab):hover .mpi:disabled { opacity: 0.3; }
+  .mpi .ico { width: 16px; height: 16px; display: block; fill: currentColor; }
+  .mpi .ico.stroke {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
-  /* the example picker: a caret button inside the input opens a panel
-     attached flush under it — input + dropdown as one control */
-  .caretbtn {
-    position: absolute;
-    top: 1px;
-    right: 1px;
-    bottom: 1px;
-    width: 2em;
-    border: none;
-    background: none;
-    color: var(--fg-faint);
-    font-size: 0.8rem;
-    cursor: pointer;
-    border-radius: 0 7px 7px 0;
-    transition: transform 0.15s ease, color 0.15s ease;
-  }
-  .caretbtn:hover { color: var(--accent); }
-  .caretbtn.open {
-    color: var(--accent);
-    transform: rotate(180deg);
-    border-radius: 7px 0 0 7px;
-  }
-  .droplist {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    z-index: 40;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-code);
-    border: 1px solid var(--accent);
-    border-top: none;
-    border-radius: 0 0 8px 8px;
-    box-shadow: 0 14px 28px -14px color-mix(in oklab, var(--fg) 35%, transparent);
-    max-height: 264px;
-    overflow-y: auto;
-  }
-  .dropitem {
-    display: flex;
-    align-items: baseline;
-    gap: 0.7em;
-    padding: 0.42em 0.75em;
-    border: none;
-    background: none;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    text-align: left;
-    cursor: pointer;
-    width: 100%;
-  }
-  .dropitem.active { background: color-mix(in oklab, var(--accent) 13%, transparent); }
-  .dropitem.current .dexpr { color: var(--accent); font-weight: 650; }
-  .dexpr { flex: none; white-space: nowrap; }
-  .dtip {
-    flex: 1;
-    min-width: 0;
-    color: var(--fg-faint);
-    font-size: 0.7rem;
-    font-style: italic;
-    font-family: var(--font-body);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.45rem 0 0; font-style: italic; }
-  .toggles { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.55rem; }
-  .tog {
-    background: none;
-    border: 1px dashed var(--border-strong);
-    border-radius: 999px;
-    color: var(--fg-faint);
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    padding: 0.22em 0.75em;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-  .tog.on {
-    border-style: solid;
+  /* play/pause is the primary — greener than the rest */
+  .mpi.play { color: var(--g2); }
+  .mpi.play:hover { color: var(--accent); }
+  /* a selector that is ON lights up like the old solid toggle pill */
+  .mpi.sel.on {
     border-color: var(--g2);
     color: var(--g2);
-    background: color-mix(in oklab, var(--g1) 10%, transparent);
+    background: color-mix(in oklab, var(--g1) 12%, var(--bg-elev));
   }
+
+  .tip-line { color: var(--fg-faint); font-size: 0.8rem; margin: 0.1rem 0 0; font-style: italic; }
 
   /* ---- scenery ---- */
   .hill.back { fill: color-mix(in oklab, var(--g1) 16%, var(--bg-elev)); }
@@ -1399,18 +1312,15 @@
   .forms code { white-space: nowrap; background: none; border: none; padding: 0; }
   .err { color: var(--err); font-family: var(--font-mono); font-size: 0.82rem; }
 
-  /* ---- the piece palette (ambient, left): chip ⇄ tape ---- */
-  .palette-wrap {
+  /* ---- the cassette (ambient): chip ⇄ tape, bottom-left ---- */
+  .cassette-wrap {
     position: absolute;
-    left: 0.4rem;
-    bottom: 2.2rem;
-    display: flex;
-    align-items: center;
+    left: 0.5rem;
+    bottom: 2.1rem;
     z-index: 20;
   }
-  /* collapsed: a chip wearing the symbol of whatever is playing */
-  .palette-chip {
-    flex: none;
+  /* the collapsed chip wears the current piece's symbol */
+  .cassette-chip {
     width: 32px;
     height: 32px;
     border-radius: 50%;
@@ -1420,97 +1330,107 @@
     font-family: var(--font-mono);
     font-size: 1rem;
     line-height: 1;
-    cursor: pointer;
-    opacity: 0.5;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0;
-    transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
   }
-  .vis:hover .palette-chip { opacity: 1; }
-  .palette-chip:hover { border-color: var(--accent); color: var(--accent); transform: scale(1.06); }
-  .palette-chip sub { font-size: 0.6em; margin-left: 0.03em; }
-
-  /* expanded: a little tape, faint ruler ticks, the current piece magnified */
-  .palette-tape {
+  .vis:hover .cassette-chip { opacity: 1; }
+  .cassette-chip:hover { border-color: var(--accent); color: var(--accent); transform: scale(1.06); }
+  .cassette-chip sub { font-size: 0.6em; margin-left: 0.03em; }
+  /* the expanded tape: a stationary row of every piece + a draggable selector */
+  .cassette-tape {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 0.05rem;
     height: 34px;
-    padding: 0 0.3rem;
+    padding: 0 3px;
     border-radius: 10px;
     border: 1px solid var(--border-strong);
-    background:
-      repeating-linear-gradient(
-        90deg,
-        transparent 0 15px,
-        color-mix(in oklab, var(--border-strong) 40%, transparent) 15px 16px
-      ),
-      var(--bg-elev);
-    box-shadow:
-      0 10px 24px -16px color-mix(in oklab, var(--fg) 45%, transparent),
-      inset 0 1px 0 color-mix(in oklab, var(--fg) 6%, transparent),
-      inset 0 -1px 0 color-mix(in oklab, var(--fg) 6%, transparent);
-    max-width: 360px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    transform-origin: left center;
-    animation: tapeIn 0.18s ease;
+    background: var(--bg-elev);
+    box-shadow: 0 10px 24px -16px color-mix(in oklab, var(--fg) 45%, transparent);
+    animation: popIn 0.16s ease;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
   }
-  .palette-tape::-webkit-scrollbar { display: none; }
-  @keyframes tapeIn {
-    from { opacity: 0; transform: translateX(-6px) scaleX(0.92); }
-  }
-  .pcell {
+  @keyframes popIn { from { opacity: 0; transform: translateY(4px) scale(0.97); } }
+  .tcell {
     flex: none;
-    min-width: 1.55em;
-    height: 1.7em;
+    height: 28px;
     border: none;
     background: none;
     color: var(--fg-muted);
     font-family: var(--font-mono);
-    font-size: 0.82rem;
+    font-size: 0.85rem;
     line-height: 1;
-    border-radius: 6px;
-    cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0 0.18em;
-    transition: color 0.12s ease, background 0.12s ease;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color 0.12s ease;
   }
-  .pcell sub { font-size: 0.62em; margin-left: 0.02em; }
-  .pcell:hover { color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
-  /* the current piece rides the tape magnified and accented */
-  .pcell.mag {
-    color: #f7fcf5;
-    font-size: 1.06rem;
-    font-weight: 650;
-    min-width: 1.95em;
-    background: linear-gradient(118deg, #4caf6d, #2f9e6e 70%);
-    box-shadow: 0 2px 8px -3px color-mix(in oklab, var(--g2) 70%, transparent);
-  }
-  .pcell.mag:hover { color: #fff; background: linear-gradient(118deg, #53b976, #35a877 70%); }
-  .psep { flex: none; width: 1px; height: 1.15em; background: var(--border-strong); margin: 0 0.2rem; }
-
-  /* ---- the ambient instrument button ---- */
-  .instrument {
+  .tcell sub { font-size: 0.62em; margin-left: 0.02em; }
+  .tcell:hover { color: var(--accent); }
+  .tcell.on { color: var(--g2); font-weight: 650; }
+  /* the draggable selector — grab it and slide it across the stationary tape */
+  .selector {
     position: absolute;
-    right: 0.4rem;
-    bottom: 2.2rem;
-    width: 30px;
-    height: 30px;
+    top: 3px;
+    left: 3px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1.5px solid var(--g2);
+    background: color-mix(in oklab, var(--g1) 16%, transparent);
+    box-shadow: 0 1px 6px -2px color-mix(in oklab, var(--g2) 70%, transparent);
+    cursor: grab;
+    touch-action: none;
+  }
+  .selector.grabbing { cursor: grabbing; }
+  .selector:not(.grabbing) { transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
+
+  /* ---- the tree toggle (⚘) + its view-selector pop-out, bottom-right ---- */
+  .selectors-wrap {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 2.1rem;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.32rem;
+  }
+  .selectors-pop {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.32rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elev);
+    box-shadow: 0 10px 24px -16px color-mix(in oklab, var(--fg) 45%, transparent);
+    animation: popIn 0.16s ease;
+  }
+  .tree-toggle {
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     border: 1px solid var(--border-strong);
     background: var(--bg-elev);
     color: var(--g2);
     font-size: 1rem;
+    line-height: 1;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
     cursor: pointer;
-    opacity: 0.45;
-    transition: opacity 0.2s ease, transform 0.2s ease;
+    opacity: 0.5;
+    transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
   }
-  .vis:hover .instrument { opacity: 1; }
-  .instrument:hover { transform: rotate(20deg); }
+  .vis:hover .tree-toggle { opacity: 1; }
+  .tree-toggle:hover { border-color: var(--accent); color: var(--accent); transform: rotate(20deg); }
 </style>

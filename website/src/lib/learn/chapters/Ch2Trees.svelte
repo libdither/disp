@@ -103,13 +103,13 @@
   <p>
     The lab below evaluates any expression you type. Names that aren't known definitions parse
     as <em>named leaves</em> — free variables with no shape of their own, drawn as fruit — so
-    <code>K x y</code> and <code>S f g x</code> reduce exactly as they do on paper. Press
-    <em>Step</em> to fire the next reduction and watch which rule carries it: the amber letter
+    <code>K x y</code> and <code>S f g x</code> reduce exactly as they do on paper. Step it
+    forward one reduction at a time and watch which rule carries it: the amber letter
     marks the next
     <Gloss tip="a reducible expression: an application whose function (and, for triage, argument) is in the right shape for a rule to fire">redex</Gloss>,
     and pruned leaves fall where all pruned leaves go. Click the grove and drive it from the
     keyboard — space runs and pauses, ←/→ step back and forward, shift+←/→ hop between the
-    examples. The toggles are worth a poke:
+    examples — or use the media-player controls above it. The selector icons are worth a poke:
     <em>parallel</em> fires every ready redex per round, which is legal because tree calculus is
     confluent, and <em>nature</em> off turns the grove back into a plain diagram.
   </p>
