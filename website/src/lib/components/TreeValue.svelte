@@ -17,6 +17,8 @@
     alive: boolean
     // unfold every occurrence of the subtree with this handle (one level)
     unfoldByHandle: (handle: number) => Promise<void>
+    // the current fold-state tree (what onVisualize would hand out)
+    snapshot: () => ValueNode
   }
 
   interface Props {
@@ -24,12 +26,16 @@
     expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
     // an unfold grew the content — the host may want to un-collapse
     onGrew?: () => void
-    // pop the current fold-state tree out (folded atoms stay symbolic there)
+    // pop the current fold-state tree out (folded atoms stay symbolic there).
+    // Renders the trailing tree button; hosts that draw their OWN button
+    // (the inline widgets) use ctlRef + ctl.snapshot instead.
     onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void
     // every fold/unfold (user click or controller) reports the new state
     onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
+    // hand the controller out at mount (for hosts composing their own chrome)
+    ctlRef?: (ctl: TreeValueCtl) => void
   }
-  let { node, expand, onGrew, onVisualize, onFoldChange }: Props = $props()
+  let { node, expand, onGrew, onVisualize, onFoldChange, ctlRef }: Props = $props()
 
   // an unfolded splice remembers what it replaced, so it can re-fold in place
   type UN = ValueNode & { _prev?: ValueNode }
@@ -108,9 +114,13 @@
       }
       onGrew?.()
       notify()
-    }
+    },
+    snapshot: () => $state.snapshot(tree) as ValueNode
   }
   onDestroy(() => (ctl.alive = false))
+  // hand the controller out once at init (hosts remount per result)
+  // svelte-ignore state_referenced_locally
+  ctlRef?.(ctl)
 
   function visualize(e: Event) {
     e.stopPropagation()

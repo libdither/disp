@@ -248,6 +248,47 @@ export const dispEditorTheme = EditorView.theme(
       background: 'rgba(201, 95, 109, 0.07)',
       color: '#a44f5c'
     },
+    // a def's value ON its line: [tree] → value, capped and ellipsized
+    '.disp-ival': {
+      display: 'inline-block',
+      verticalAlign: 'text-bottom',
+      maxWidth: '46ch',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      marginLeft: '1.1em',
+      padding: '0 0.55em',
+      borderRadius: '7px',
+      background: 'rgba(74, 104, 82, 0.08)',
+      fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
+      fontSize: '0.85em',
+      color: '#43584a',
+      transition: 'opacity 0.15s ease, max-width 0.15s ease'
+    },
+    '.disp-ival-arrow': {
+      opacity: '0.5',
+      margin: '0 0.4em 0 0.15em',
+      userSelect: 'none'
+    },
+    '.disp-ival-viz': {
+      background: 'none',
+      border: 'none',
+      padding: '0',
+      margin: '0',
+      font: 'inherit',
+      cursor: 'pointer',
+      color: '#8ea08b',
+      verticalAlign: '-0.15em'
+    },
+    '.disp-ival-viz:hover': { color: '#2f9e6e' },
+    '.disp-ival-viz svg': { width: '1.05em', height: '1.05em' },
+    '.disp-ival.away': {
+      opacity: '0.4',
+      maxWidth: '16ch'
+    },
+    '.disp-ival.away:hover': {
+      opacity: '0.85'
+    },
     // focus-collapse: a block whose def line the cursor is NOT on shrinks to
     // a quiet sliver; landing the cursor there (or hovering) brings it back
     '.disp-out.away': {

@@ -50,6 +50,83 @@
     }
   }
 
+  // A def's value, ON its line: [tree button] → value — an inline widget
+  // capped by max-width (CSS ellipsis), dimming away with the cursor like
+  // the blocks. Buttons (visualize + the TreeValue atoms) handle their own
+  // clicks; everywhere else CM's ordinary cursor placement applies.
+  class InlineValueWidget extends WidgetType {
+    node: ValueNode
+    lines: { from: number; to: number } | undefined
+    expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>
+    onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void
+    onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
+    #mounted: object | null = null
+    constructor(
+      node: ValueNode,
+      expand?: (handle: number, rawRoot: boolean) => Promise<ValueNode | null>,
+      onVisualize?: (tree: ValueNode, ctl: TreeValueCtl) => void,
+      onFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void,
+      lines?: { from: number; to: number }
+    ) {
+      super()
+      this.node = node
+      this.expand = expand
+      this.onVisualize = onVisualize
+      this.onFoldChange = onFoldChange
+      this.lines = lines
+    }
+    override eq(other: InlineValueWidget): boolean {
+      return (
+        other.node === this.node &&
+        other.lines?.from === this.lines?.from &&
+        other.lines?.to === this.lines?.to
+      )
+    }
+    override toDOM(): HTMLElement {
+      const s = document.createElement('span')
+      s.className = 'disp-ival'
+      if (this.lines) {
+        s.dataset.from = String(this.lines.from)
+        s.dataset.to = String(this.lines.to)
+        if (cursorLine < this.lines.from || cursorLine > this.lines.to) s.classList.add('away')
+      }
+      let ctl: TreeValueCtl | null = null
+      const btn = document.createElement('button')
+      btn.className = 'disp-ival-viz'
+      btn.title = 'visualize reduction (folded names stay symbolic)'
+      btn.setAttribute('aria-label', 'visualize reduction')
+      btn.innerHTML =
+        '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5 4.8 10.5M8 4.5l3.2 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><circle cx="8" cy="3.4" r="1.6" fill="currentColor"/><circle cx="4.8" cy="11.6" r="1.6" fill="currentColor"/><circle cx="11.2" cy="11.6" r="1.6" fill="currentColor"/></svg>'
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (ctl) this.onVisualize?.(ctl.snapshot(), ctl)
+      })
+      s.appendChild(btn)
+      const arrow = document.createElement('span')
+      arrow.className = 'disp-ival-arrow'
+      arrow.textContent = '→'
+      s.appendChild(arrow)
+      this.#mounted = mount(TreeValue, {
+        target: s,
+        props: {
+          node: this.node,
+          expand: this.expand,
+          onFoldChange: this.onFoldChange,
+          ctlRef: (c: TreeValueCtl) => (ctl = c)
+        }
+      })
+      return s
+    }
+    override destroy(): void {
+      if (this.#mounted) void unmount(this.#mounted)
+      this.#mounted = null
+    }
+    override ignoreEvent(e: Event): boolean {
+      // buttons are the widget's own; anything else is the editor's
+      return (e.target as HTMLElement).closest('button') != null
+    }
+  }
+
   // The notebook output cell: a block widget below its line. Collapsed to one
   // ellipsized line per row; clicking the background toggles full wrapped
   // text. Plain-text mode (`text`) or interactive mode (`values`: TreeValue
@@ -199,6 +276,14 @@
     // does this identifier resolve? (the hover underline only shows for
     // names that actually go somewhere — VS Code honesty)
     onResolveIdent?: (name: string) => Promise<boolean>
+    // select an expression and, when `validate` accepts it, a small action
+    // button appears at the selection's right edge — `run` receives the text
+    // (the playground's visualize-this-expression affordance)
+    selectionAction?: {
+      validate: (text: string) => boolean
+      run: (text: string) => void
+      title?: string
+    }
     api?: (a: EditorApi) => void
   }
 
@@ -210,7 +295,7 @@
     gotoLine(line: number): void
   }
 
-  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, onOpenPath, onJumpDef, onResolveIdent, api }: Props = $props()
+  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, onOpenPath, onJumpDef, onResolveIdent, selectionAction, api }: Props = $props()
 
   let host: HTMLDivElement
   let view: EditorView | undefined
@@ -226,7 +311,7 @@
     if (!view) return
     cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number
     queueMicrotask(() => {
-      host?.querySelectorAll<HTMLElement>('.disp-out[data-from]').forEach((el) => {
+      host?.querySelectorAll<HTMLElement>('.disp-out[data-from], .disp-ival[data-from]').forEach((el) => {
         const from = Number(el.dataset.from)
         const to = Number(el.dataset.to)
         el.classList.toggle('away', cursorLine < from || cursorLine > to)
@@ -235,6 +320,31 @@
   }
 
   const setMarksEffect = StateEffect.define<LineMark[]>()
+
+  // ---- highlight an expression → a floating action button -----------------
+  // Tracks the selection; when the host's validator accepts the selected
+  // text, a small button appears just past the selection's end.
+  let selBtn = $state<{ x: number; y: number; text: string } | null>(null)
+  function updateSelectionAction() {
+    if (!view || !selectionAction) return
+    const sel = view.state.selection.main
+    if (sel.empty || sel.to - sel.from > 300) {
+      selBtn = null
+      return
+    }
+    const text = view.state.doc.sliceString(sel.from, sel.to).trim()
+    if (!text || !selectionAction.validate(text)) {
+      selBtn = null
+      return
+    }
+    const coords = view.coordsAtPos(sel.to)
+    if (!coords) {
+      selBtn = null
+      return
+    }
+    const hostRect = host.getBoundingClientRect()
+    selBtn = { x: coords.right - hostRect.left + 6, y: coords.top - hostRect.top - 3, text }
+  }
 
   // ---- ctrl/cmd+hover link affordance (VS Code style) ----------------------
   // While the modifier is held, the clickable "….disp" string under the
@@ -358,7 +468,22 @@
                 from: l.to,
                 deco: Decoration.widget({ widget: new NoteWidget(m.note, m.kind), side: 1 })
               })
-            if (m.block || m.values)
+            if (m.kind === 'value' && m.values?.length === 1)
+              // a def's value rides ITS line: [tree] → value
+              builder.push({
+                from: l.to,
+                deco: Decoration.widget({
+                  widget: new InlineValueWidget(
+                    m.values[0].node,
+                    expandValue,
+                    onVisualizeValue,
+                    onValueFoldChange,
+                    { from: m.focusFrom ?? m.line, to: m.line }
+                  ),
+                  side: 2
+                })
+              })
+            else if (m.block || m.values)
               builder.push({
                 from: l.to,
                 deco: Decoration.widget({
@@ -460,7 +585,10 @@
               identKnown.clear() // resolvability follows the buffer's defs/opens
               onDocChange?.(u.state.doc.toString())
             }
-            if (u.selectionSet || u.docChanged) updateBlockFocus()
+            if (u.selectionSet || u.docChanged) {
+              updateBlockFocus()
+              updateSelectionAction()
+            }
           })
         ]
       })
@@ -511,12 +639,55 @@
   onDestroy(() => view?.destroy())
 </script>
 
-<div class="editor-host" class:marks-stale={stale} bind:this={host}></div>
+<div class="editor-host" class:marks-stale={stale} bind:this={host}>
+  {#if selBtn && selectionAction}
+    <button
+      class="sel-action"
+      style="left: {selBtn.x}px; top: {selBtn.y}px"
+      title={selectionAction.title ?? 'run on this selection'}
+      aria-label={selectionAction.title ?? 'run on this selection'}
+      onmousedown={(e) => e.preventDefault()}
+      onclick={() => {
+        if (selBtn) selectionAction.run(selBtn.text)
+      }}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 4.5 4.8 10.5M8 4.5l3.2 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none" />
+        <circle cx="8" cy="3.4" r="1.6" fill="currentColor" />
+        <circle cx="4.8" cy="11.6" r="1.6" fill="currentColor" />
+        <circle cx="11.2" cy="11.6" r="1.6" fill="currentColor" />
+      </svg>
+    </button>
+  {/if}
+</div>
 
 <style>
   .editor-host {
+    position: relative; /* anchors the floating selection-action button */
     height: 100%;
     overflow: clip; /* clip, not hidden: only .cm-scroller should ever scroll */
+  }
+  .sel-action {
+    position: absolute;
+    z-index: 6;
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: var(--bg-elev);
+    color: var(--accent);
+    cursor: pointer;
+    box-shadow: var(--shadow-soft);
+  }
+  .sel-action:hover {
+    background: #fff;
+  }
+  .sel-action svg {
+    width: 0.95rem;
+    height: 0.95rem;
   }
   .editor-host :global(.cm-editor) {
     height: 100%;
@@ -527,10 +698,12 @@
   /* stale results (buffer edited since the run): dim, don't clear — layout
      stays put and the next setMarks lifts the veil */
   .editor-host :global(.disp-out),
+  .editor-host :global(.disp-ival),
   .editor-host :global(.disp-note) {
     transition: opacity 0.18s ease;
   }
   .editor-host.marks-stale :global(.disp-out),
+  .editor-host.marks-stale :global(.disp-ival),
   .editor-host.marks-stale :global(.disp-note) {
     opacity: 0.3;
   }

@@ -385,6 +385,26 @@
     return rt === null ? null : rawToT(rt)
   }
 
+  // highlight an expression in the buffer → a floating tree button appears
+  // when it fits the visualizer's grammar; pressing it seeds the panel with
+  // the SELECTION (names resolve to pods / engine steps as usual)
+  const selectionAction = {
+    validate: (text: string) => {
+      if (text.length > 300) return false
+      try {
+        parseTree(text, {})
+        return true
+      } catch {
+        return false
+      }
+    },
+    run: (text: string) => {
+      vizCtl = null
+      applySeed(text, {}, new Map())
+    },
+    title: 'visualize the reduction of this expression'
+  }
+
   // engine macro-step: the panel is stuck on a name whose definition never
   // shipped (kernel-tier values explode as trees) — perform the application
   // on the real evaluator and hand back the (usually small) result. Fruit
@@ -1133,6 +1153,7 @@
         {onVisualizeValue}
         {onValueFoldChange}
         {onOpenPath}
+        {selectionAction}
         onJumpDef={(n) => void jumpDef(n)}
         onResolveIdent={resolveIdent}
         api={(a) => (editorApi = a)}
