@@ -1,12 +1,16 @@
-//! The scheduler: rung 2 ships the sequential deterministic schedule. Rung 3 adds
-//! Margolus blocks and async-fuzz interleavings over the SAME transitions — a schedule
-//! here only ever chooses WHICH enabled transitions run and in what order; it can never
-//! affect what a transition does (footprints are the transition's own contract).
+//! The scheduler: rung 2 ships the sequential deterministic schedule, now over four
+//! transitions (fire, reel, retract, kink-flip) and both topologies. Rung 3 adds parallel
+//! and async-fuzz schedules over the SAME transitions — a schedule only ever chooses WHICH
+//! enabled transitions run and in what order; it can never affect what a transition does
+//! (footprints are the transition's own contract).
 
-use crate::lattice::{embed, Grid, Pos};
+use crate::lattice::{embed, step, Grid, Pos, Topo};
 use crate::net::Net;
 use crate::oracle::Term;
-use crate::transitions::{apply_fire, apply_reel, plan_fire, plan_reel};
+use crate::transitions::{
+    apply_fire, apply_reel, apply_retract, apply_slide,
+    plan_fire, plan_reel, plan_retract, plan_slide, reel_blocked,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
@@ -24,6 +28,8 @@ pub enum CheckLevel {
 pub enum Event {
     Fire { cpos: Pos, ppos: Pos, rule: (&'static str, &'static str), fresh: Vec<Pos> },
     Reel { from: Pos, to: Pos, sid: u32 },
+    Retract { a: Pos, b: Pos },
+    Slide { at: Pos },
 }
 
 pub struct Sim {
@@ -34,17 +40,20 @@ pub struct Sim {
 }
 
 impl Sim {
-    pub fn load(term: &Term) -> Sim {
+    pub fn load(term: &Term, topo: Topo) -> Sim {
         let mut shadow = Net::new();
         let root = shadow.build(term);
         shadow.drive(root);
-        let grid = embed(&shadow);
+        let grid = embed(&shadow, topo);
         Sim { grid, shadow, events: vec![] }
     }
 
     /// One sequential tick: fire every enabled pair (rescanning after each, since a fire
-    /// invalidates positions), then give every producer/ε one reel step. Returns the
-    /// number of transitions applied. Fully deterministic (BTreeMap coordinate order).
+    /// invalidates positions); CLEAR one blocking strand for each demanded walker stuck at
+    /// a shared cell (the walker-demanded excluded-volume SLIDE); give every producer one
+    /// reel step; then run RETRACT to fixpoint (each strictly shortens wire, so this
+    /// terminates). Returns the number of transitions applied. Fully deterministic
+    /// (BTreeMap coordinate order).
     pub fn tick(&mut self, check: CheckLevel) -> usize {
         self.events.clear();
         let mut applied = 0;
@@ -68,6 +77,41 @@ impl Sim {
             if !fired { break; }
         }
         let positions: Vec<Pos> = self.grid.agents().map(|(p, _)| p).collect();
+        for apos in &positions {
+            let Some((npos, blockers)) = reel_blocked(&self.grid, *apos) else { continue };
+            let mut cleared = false;
+            for s in &blockers {
+                if let Some(plan) = plan_slide(&self.grid, npos, *s, &[]) {
+                    self.events.push(Event::Slide { at: plan.p });
+                    apply_slide(&mut self.grid, &plan);
+                    applied += 1;
+                    cleared = true;
+                    if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                    break;
+                }
+            }
+            if cleared { continue; }
+            // Loosen the knot one level: the blocker could not slide because its own
+            // endpoint cells are congested — slide a strand out of a SHARED endpoint cell
+            // instead (never into npos, which must stay passable). Restricting to shared
+            // cells keeps the excess-occupancy measure strictly decreasing, so loosening
+            // cannot churn forever.
+            'loosen: for s in &blockers {
+                for c in [step(npos, s.a), step(npos, s.b)] {
+                    let Some(wc) = self.grid.wire(c) else { continue };
+                    if wc.count() < 2 { continue; }
+                    for t in wc.iter().collect::<Vec<_>>() {
+                        if let Some(plan) = plan_slide(&self.grid, c, t, &[npos]) {
+                            self.events.push(Event::Slide { at: plan.p });
+                            apply_slide(&mut self.grid, &plan);
+                            applied += 1;
+                            if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                            break 'loosen;
+                        }
+                    }
+                }
+            }
+        }
         for p in positions {
             if let Some(plan) = plan_reel(&self.grid, p) {
                 let sid = self.grid.agent(plan.apos).map(|a| a.sid).unwrap_or(0);
@@ -76,6 +120,20 @@ impl Sim {
                 applied += 1;
                 if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
             }
+        }
+        loop {
+            let mut any = false;
+            for p in self.grid.wire_positions() {
+                if let Some(plan) = plan_retract(&self.grid, p) {
+                    self.events.push(Event::Retract { a: plan.c1, b: plan.c2 });
+                    apply_retract(&mut self.grid, &plan);
+                    applied += 1;
+                    any = true;
+                    if check == CheckLevel::Every { self.grid.check_projection(&self.shadow); }
+                    break; // the board changed: rescan
+                }
+            }
+            if !any { break; }
         }
         applied
     }
@@ -96,8 +154,8 @@ pub struct Outcome {
 /// works regardless of leftover wire slack. `stuck` means a full tick applied nothing
 /// while pairs remain — the deterministic schedule can then never progress (the honest
 /// liveness residue, reported, never asserted away).
-pub fn run_term(term: &Term, max_ticks: u64, check: CheckLevel) -> Outcome {
-    let mut sim = Sim::load(term);
+pub fn run_term(term: &Term, topo: Topo, max_ticks: u64, check: CheckLevel) -> Outcome {
+    let mut sim = Sim::load(term, topo);
     let mut peak = sim.grid.agent_count();
     let mut ticks = 0;
     let (done, stuck) = loop {

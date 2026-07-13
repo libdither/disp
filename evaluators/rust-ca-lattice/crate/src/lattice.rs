@@ -1,66 +1,100 @@
-//! Rung 2 state: the lattice. Cells hold EITHER an agent (≤3 ports, plus at most one
-//! tucked strand passing behind it) OR up to three wire strands. There are NO wire objects
-//! and NO ids in the dynamics: connectivity is purely positional (follow half-edges cell to
-//! cell), the cell-native lesson from ca_substrate_viz carried over. Each `AgentCell`
-//! carries a shadow-net id (`sid`) — OBSERVER state for the projection check and readback;
-//! no transition's enabledness or effect reads it.
+//! Rung 2 state, after the TOPO LIFT: cells live at (x, y, z) with SIX faces.
 //!
-//! WIRE LAYERS. Every face carries up to TWO wire layers (LOCAL_CA_DESIGN.md §2/§3: the
-//! face map stores "port index or wire layer A or B"), so a cell attachment is a HALF-EDGE
-//! `(Dir, layer)`, and an edge between neighbors carries up to two independent wires.
-//! This is load-bearing for liveness, found the hard way: a first cut made faces exclusive
-//! (one port OR one strand per face) and every 3-port walker deadlocked at the first via
-//! it met — 3 port faces + 2 tuck faces exceed 4 exclusive faces, so crossings were
-//! impassable. With per-edge layers a port and a passing strand share a face the way a
-//! standard cell's pin coexists with a routing track on the metal layer above it. The
-//! §4.4 face-uniqueness survives as a PREFERENCE in the planners (spread before stacking),
-//! not an invariant.
+//! The 2D prototype carried per-face wire layers, via cells, and strands tucked behind
+//! agents — three mechanisms all simulating a z-coordinate the cells were denied. Lifting
+//! z into the position deletes all three: a crossing is two wires at different z, a walker
+//! passes a crossing through ordinary cells, and an agent cell holds ONLY its agent. One
+//! attachment per face (exclusive faces) suffices in 3D — six faces cover ≤3 ports or up
+//! to `WIRE_CAP` strands. The 2D finding that exclusive faces deadlock walkers (3 ports +
+//! 2 tuck faces exceed 4) was a symptom of the missing dimension, not a case for layers.
+//! Where the old model tucked a crossing behind a mover, the lifted model has the mover
+//! WAIT at a shared cell instead; kink-flips (transitions.rs) and later the fields are
+//! the decongestants.
 //!
-//! State budget stays §3-honest: agent = tag(4b) + 3 half-edges(3b each) + tuck(6b);
-//! wire = ≤3 strands × 6b. A cell is a few tens of bits.
+//! Two topologies, selectable per Grid and validated differentially (tests/stage2.rs):
+//! - `Bilayer` (z ∈ {0,1}) — the 2.5D chip: a compute plane plus one routing plane above.
+//!   The honest worst case that maps onto today's metal-stack silicon.
+//! - `Full3D` (z unbounded) — the general substrate; crossings can always route around.
 //!
-//! The loader (`embed`) is host code and may be as global as it likes (§12 scope note);
-//! the SUBSTRATE transitions in transitions.rs are the ones bound by locality.
+//! Everything else keeps rung 2's contracts: NO ids in the dynamics (`sid` is observer
+//! state for the shadow projection and readback only), connectivity purely positional
+//! (follow half-edges cell to cell), the loader is host code (global routing allowed HERE
+//! and only here), and `check_projection` is the executable correctness spec
+//! (EMBEDDING_THEOREM.md §4).
 //!
-//! The projection invariant (EMBEDDING_THEOREM.md §4) is `check_projection`: trace every
-//! agent port along strands to its far agent port and compare with the shadow net's
-//! adjacency exactly, plus half-edge parity (every occupied half-edge pairs with its
-//! neighbor's opposite half-edge on the same layer).
+//! State budget stays §3-honest and got smaller: agent = tag(4b) + 3 faces(3b each);
+//! wire = ≤3 strands × 6b. No layer bits, no tuck slots.
 
 use crate::net::Net;
 use crate::rules::Tag;
 use std::collections::BTreeMap;
 
-pub type Pos = (i32, i32);
-pub type Layer = u8; // 0 | 1
+pub type Pos = (i32, i32, i32);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
-pub enum Dir { N, E, S, W }
-pub const DIRS: [Dir; 4] = [Dir::N, Dir::E, Dir::S, Dir::W];
+pub enum Dir { N, E, S, W, U, D }
+pub const DIRS: [Dir; 6] = [Dir::N, Dir::E, Dir::S, Dir::W, Dir::U, Dir::D];
 
 impl Dir {
-    pub fn delta(self) -> (i32, i32) {
-        match self { Dir::N => (0, -1), Dir::E => (1, 0), Dir::S => (0, 1), Dir::W => (-1, 0) }
+    pub fn delta(self) -> (i32, i32, i32) {
+        match self {
+            Dir::N => (0, -1, 0),
+            Dir::E => (1, 0, 0),
+            Dir::S => (0, 1, 0),
+            Dir::W => (-1, 0, 0),
+            Dir::U => (0, 0, 1),
+            Dir::D => (0, 0, -1),
+        }
     }
     pub fn opp(self) -> Dir {
-        match self { Dir::N => Dir::S, Dir::E => Dir::W, Dir::S => Dir::N, Dir::W => Dir::E }
+        match self {
+            Dir::N => Dir::S, Dir::S => Dir::N,
+            Dir::E => Dir::W, Dir::W => Dir::E,
+            Dir::U => Dir::D, Dir::D => Dir::U,
+        }
     }
-    pub fn perp(self) -> [Dir; 2] {
-        match self { Dir::N | Dir::S => [Dir::E, Dir::W], Dir::E | Dir::W => [Dir::N, Dir::S] }
+    /// The four directions orthogonal to this one.
+    pub fn perp(self) -> [Dir; 4] {
+        match self {
+            Dir::N | Dir::S => [Dir::E, Dir::W, Dir::U, Dir::D],
+            Dir::E | Dir::W => [Dir::N, Dir::S, Dir::U, Dir::D],
+            Dir::U | Dir::D => [Dir::N, Dir::E, Dir::S, Dir::W],
+        }
+    }
+    pub fn ch(self) -> char {
+        match self { Dir::N => 'N', Dir::E => 'E', Dir::S => 'S', Dir::W => 'W', Dir::U => 'U', Dir::D => 'D' }
     }
 }
-pub fn step(p: Pos, d: Dir) -> Pos { let (dx, dy) = d.delta(); (p.0 + dx, p.1 + dy) }
+
+pub fn step(p: Pos, d: Dir) -> Pos { let (dx, dy, dz) = d.delta(); (p.0 + dx, p.1 + dy, p.2 + dz) }
 pub fn dir_to(a: Pos, b: Pos) -> Option<Dir> { DIRS.into_iter().find(|d| step(a, *d) == b) }
+pub fn manhattan(a: Pos, b: Pos) -> i32 { (a.0 - b.0).abs() + (a.1 - b.1).abs() + (a.2 - b.2).abs() }
 
-/// A cell attachment point: a face plus a wire layer on that face.
-pub type He = (Dir, Layer);
-pub fn he_opp(h: He) -> He { (h.0.opp(), h.1) }
+/// A cell attachment point is simply a FACE. With six faces and no coexistence states,
+/// one attachment per face is enough; the wire-layer bit of the 2D model is gone.
+pub type He = Dir;
+pub fn he_opp(h: He) -> He { h.opp() }
 
-/// A wire element in one cell: passes through the cell between two distinct half-edges.
+/// The lattice topology. Dynamics are identical across topologies; only which cells exist
+/// differs, so the differential suite runs the same corpus on each.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Topo { Bilayer, Full3D }
+pub const TOPOS: [Topo; 2] = [Topo::Bilayer, Topo::Full3D];
+
+impl Topo {
+    pub fn in_bounds(self, p: Pos) -> bool {
+        match self { Topo::Bilayer => p.2 == 0 || p.2 == 1, Topo::Full3D => true }
+    }
+    pub fn name(self) -> &'static str {
+        match self { Topo::Bilayer => "bilayer", Topo::Full3D => "full3d" }
+    }
+}
+
+/// A wire element in one cell: passes through the cell between two distinct faces.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Strand { pub a: He, pub b: He }
 impl Strand {
-    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct half-edges"); Strand { a, b } }
+    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct faces"); Strand { a, b } }
     pub fn contains(self, h: He) -> bool { self.a == h || self.b == h }
     pub fn other(self, h: He) -> He { if self.a == h { self.b } else { self.a } }
     pub fn hes(self) -> [He; 2] { [self.a, self.b] }
@@ -69,35 +103,31 @@ impl Strand {
 #[derive(Clone, Debug)]
 pub struct AgentCell {
     pub tag: Tag,
-    /// Port i attaches at half-edge `faces[i]`. Distinct across live ports and the tuck.
+    /// Port i attaches at face `faces[i]`. Distinct across live ports.
     pub faces: [Option<He>; 3],
-    /// Up to two foreign strands passing behind the agent (a value sitting on crossings,
-    /// §4.4; 3 ports + 4 tuck half-edges = 7 of 8 half-edges, still §3-bounded).
-    pub tucks: [Option<Strand>; 2],
-    /// Shadow-net agent id. Observer state only.
+    /// Shadow-net agent id. Observer state only: no transition's enabledness or effect
+    /// reads it.
     pub sid: u32,
 }
 
 impl AgentCell {
-    pub fn face_of(&self, port: usize) -> He { self.faces[port].expect("live port has a half-edge") }
+    pub fn face_of(&self, port: usize) -> He { self.faces[port].expect("live port has a face") }
     pub fn port_at(&self, h: He) -> Option<usize> {
         (0..self.tag.arity()).find(|i| self.faces[*i] == Some(h))
     }
     pub fn used_hes(&self) -> Vec<He> {
-        let mut v: Vec<He> = (0..self.tag.arity()).filter_map(|i| self.faces[i]).collect();
-        for t in self.tucks.iter().flatten() { v.extend(t.hes()); }
-        v
+        (0..self.tag.arity()).filter_map(|i| self.faces[i]).collect()
     }
     fn assert_coherent(&self) {
         let f = self.used_hes();
         for i in 0..f.len() { for j in i + 1..f.len() {
-            assert!(f[i] != f[j], "agent {} half-edge clash: {:?}", self.tag.name(), self);
+            assert!(f[i] != f[j], "agent {} face clash: {:?}", self.tag.name(), self);
         }}
         for i in 0..self.tag.arity() { assert!(self.faces[i].is_some(), "unwired port {i} on {}", self.tag.name()); }
     }
 }
 
-pub const WIRE_CAP: usize = 3; // strands per cell (6 of 8 half-edges)
+pub const WIRE_CAP: usize = 3; // strands per cell (6 of 6 faces)
 
 #[derive(Clone, Debug, Default)]
 pub struct WireCell { pub strands: [Option<Strand>; WIRE_CAP] }
@@ -111,13 +141,15 @@ impl WireCell {
 #[derive(Clone, Debug)]
 pub enum Cell { Agent(AgentCell), Wire(WireCell) }
 
-#[derive(Default)]
 pub struct Grid {
     pub cells: BTreeMap<Pos, Cell>,
     pub transport: u64, // reel count (the transport grade of the ledger)
+    pub topo: Topo,
 }
 
 impl Grid {
+    pub fn new(topo: Topo) -> Grid { Grid { cells: BTreeMap::new(), transport: 0, topo } }
+
     pub fn agent(&self, p: Pos) -> Option<&AgentCell> {
         match self.cells.get(&p) { Some(Cell::Agent(a)) => Some(a), _ => None }
     }
@@ -126,7 +158,7 @@ impl Grid {
     }
     pub fn is_empty(&self, p: Pos) -> bool { !self.cells.contains_key(&p) }
 
-    /// All half-edges in use at a cell (agent ports + tuck + strands).
+    /// All faces in use at a cell (agent ports or strand ends).
     pub fn used_hes(&self, p: Pos) -> Vec<He> {
         match self.cells.get(&p) {
             None => vec![],
@@ -135,20 +167,17 @@ impl Grid {
         }
     }
     pub fn strand_count(&self, p: Pos) -> usize {
-        match self.cells.get(&p) {
-            Some(Cell::Wire(w)) => w.count(),
-            Some(Cell::Agent(a)) => a.tucks.iter().flatten().count(),
-            None => 0,
-        }
+        match self.cells.get(&p) { Some(Cell::Wire(w)) => w.count(), _ => 0 }
     }
 
     pub fn strand_fits(&self, p: Pos, s: Strand) -> bool {
+        if !self.topo.in_bounds(p) { return false; }
         match self.cells.get(&p) {
             None => true,
             Some(Cell::Wire(w)) => {
                 w.count() < WIRE_CAP && !w.used_hes().iter().any(|h| s.contains(*h))
             }
-            Some(Cell::Agent(_)) => false, // tucks arise only from a REEL stepping over a strand
+            Some(Cell::Agent(_)) => false, // no coexistence on the lifted lattice
         }
     }
     pub fn add_strand(&mut self, p: Pos, s: Strand) {
@@ -169,34 +198,28 @@ impl Grid {
     }
     pub fn put_agent(&mut self, p: Pos, a: AgentCell) {
         a.assert_coherent();
+        assert!(self.topo.in_bounds(p), "agent out of bounds at {p:?}");
         assert!(self.is_empty(p), "placing agent on non-empty cell {p:?}");
         self.cells.insert(p, Cell::Agent(a));
     }
 
-    /// Lowest free layer on the edge leaving `p` in direction `d` (both endpoints
-    /// consulted), or None when the edge already carries two wires.
-    pub fn edge_free_layer(&self, p: Pos, d: Dir) -> Option<Layer> {
+    /// Is the edge leaving `p` in direction `d` free on both faces (and in bounds)?
+    pub fn edge_free(&self, p: Pos, d: Dir) -> bool {
         let q = step(p, d);
-        'l: for l in 0..2u8 {
-            if self.used_hes(p).contains(&(d, l)) { continue 'l; }
-            if self.used_hes(q).contains(&(d.opp(), l)) { continue 'l; }
-            return Some(l);
-        }
-        None
+        self.topo.in_bounds(q)
+            && !self.used_hes(p).contains(&d)
+            && !self.used_hes(q).contains(&d.opp())
     }
 
-    /// Follow the wire leaving `pos` through half-edge `out` to the far agent port.
-    /// Strands (and tucks) pass through; an agent port terminates.
+    /// Follow the wire leaving `pos` through face `out` to the far agent port.
+    /// Strands pass through; an agent port terminates.
     pub fn trace(&self, pos: Pos, out: He) -> (Pos, usize) {
         let (mut cur, mut h) = (pos, out);
         for _ in 0..1_000_000 {
-            let next = step(cur, h.0);
+            let next = step(cur, h);
             let enter = he_opp(h);
             match self.cells.get(&next) {
                 Some(Cell::Agent(a)) => {
-                    if let Some(t) = a.tucks.iter().flatten().find(|t| t.contains(enter)) {
-                        cur = next; h = t.other(enter); continue;
-                    }
                     let port = a.port_at(enter)
                         .unwrap_or_else(|| panic!("wire enters {next:?} at {enter:?} but no port there"));
                     return (next, port);
@@ -219,17 +242,24 @@ impl Grid {
     pub fn find_tag(&self, tag: Tag) -> Option<Pos> {
         self.agents().find(|(_, a)| a.tag == tag).map(|(p, _)| p)
     }
+    pub fn wire_positions(&self) -> Vec<Pos> {
+        self.cells.iter().filter_map(|(p, c)| match c { Cell::Wire(_) => Some(*p), _ => None }).collect()
+    }
+    pub fn total_strands(&self) -> usize {
+        self.cells.values().map(|c| match c { Cell::Wire(w) => w.count(), _ => 0 }).sum()
+    }
 
     /// THE correctness spec, executable: the lattice projects exactly onto the shadow net.
     /// Every lattice agent's every port, traced along strands, lands where the shadow says;
-    /// agent multisets agree; every occupied half-edge pairs with its neighbor's.
+    /// agent multisets agree; every occupied face pairs with its neighbor's opposite face.
     pub fn check_projection(&self, shadow: &Net) {
-        // half-edge parity
+        // face parity
         for (p, _) in self.cells.iter() {
             for h in self.used_hes(*p) {
-                let q = step(*p, h.0);
+                let q = step(*p, h);
+                assert!(self.topo.in_bounds(q), "face {h:?} at {p:?} points out of bounds");
                 assert!(self.used_hes(q).contains(&he_opp(h)),
-                    "half-edge {h:?} at {p:?} has no partner at {q:?}");
+                    "face {h:?} at {p:?} has no partner at {q:?}");
             }
         }
         let mut seen = 0usize;
@@ -281,19 +311,20 @@ impl Grid {
 }
 
 // ---------------------------------------------------------------------------------------
-// The loader: place the shadow net's agents on the lattice and route every link.
-// Host code: global search is permitted HERE (and only here). The loader lays everything
-// on layer 0 through empty cells, so the initial embedding is via-free by construction.
+// The loader: place the shadow net's agents on the z=0 plane and route every link.
+// Host code: global search is permitted HERE (and only here). Routing may use z freely,
+// so plane crossings dip through the upper layer(s) and the initial embedding needs no
+// crossings-in-a-cell at all.
 // ---------------------------------------------------------------------------------------
 
-pub fn embed(shadow: &Net) -> Grid {
+pub fn embed(shadow: &Net, topo: Topo) -> Grid {
     for spacing in [4, 6, 8, 12] {
-        if let Some(g) = try_embed(shadow, spacing) { return g; }
+        if let Some(g) = try_embed(shadow, topo, spacing) { return g; }
     }
     panic!("embed failed at every spacing");
 }
 
-fn try_embed(shadow: &Net, spacing: i32) -> Option<Grid> {
+fn try_embed(shadow: &Net, topo: Topo, spacing: i32) -> Option<Grid> {
     // Positions: DFS from Out, children averaged, leaves on fresh columns (the JS layout).
     let out = shadow.agents.iter().enumerate()
         .find(|(_, a)| a.as_ref().is_some_and(|a| a.tag == Tag::Out)).map(|(i, _)| i as u32)?;
@@ -301,7 +332,7 @@ fn try_embed(shadow: &Net, spacing: i32) -> Option<Grid> {
     let mut col = 0i32;
     fn dfs(shadow: &Net, id: u32, depth: i32, spacing: i32, col: &mut i32, posn: &mut BTreeMap<u32, Pos>) -> i32 {
         if let Some(p) = posn.get(&id) { return p.0; }
-        posn.insert(id, (i32::MIN, depth * spacing)); // reserve to break cycles
+        posn.insert(id, (i32::MIN, depth * spacing, 0)); // reserve to break cycles
         let a = shadow.get(id);
         let kids: Vec<u32> = (0..a.tag.arity())
             .filter_map(|i| a.ports[i]).map(|(b, _)| b)
@@ -309,14 +340,14 @@ fn try_embed(shadow: &Net, spacing: i32) -> Option<Grid> {
         let mut sx = 0i32; let mut n = 0i32;
         for k in &kids { sx += dfs(shadow, *k, depth + 1, spacing, col, posn); n += 1; }
         let x = if n > 0 { sx / n } else { *col += spacing; *col };
-        posn.insert(id, (x, depth * spacing));
+        posn.insert(id, (x, depth * spacing, 0));
         x
     }
     dfs(shadow, out, 0, spacing, &mut col, &mut posn);
     for (id, a) in shadow.agents.iter().enumerate() {
         if a.is_some() && !posn.contains_key(&(id as u32)) {
             col += spacing;
-            posn.insert(id as u32, (col, -spacing));
+            posn.insert(id as u32, (col, -spacing, 0));
         }
     }
     // Nudge collisions apart deterministically.
@@ -329,10 +360,10 @@ fn try_embed(shadow: &Net, spacing: i32) -> Option<Grid> {
         posn.insert(id, q);
     }
 
-    let mut grid = Grid::default();
+    let mut grid = Grid::new(topo);
     for (id, p) in &posn {
         let tag = shadow.get(*id).tag;
-        grid.cells.insert(*p, Cell::Agent(AgentCell { tag, faces: [None; 3], tucks: [None; 2], sid: *id }));
+        grid.cells.insert(*p, Cell::Agent(AgentCell { tag, faces: [None; 3], sid: *id }));
     }
 
     // Route each abstract link once (canonical endpoint order).
@@ -355,17 +386,17 @@ fn try_embed(shadow: &Net, spacing: i32) -> Option<Grid> {
         let last = *path.last().unwrap_or(&pa);
         let fa = dir_to(pa, first)?;
         let fb = dir_to(pb, last)?;
-        if grid.used_hes(pa).iter().any(|h| h.0 == fa) || grid.used_hes(pb).iter().any(|h| h.0 == fb) {
+        if grid.used_hes(pa).contains(&fa) || grid.used_hes(pb).contains(&fb) {
             if dbg { eprintln!("embed: face clash {aid}.{ai}@{pa:?}({fa:?}) / {bid}.{bi}@{pb:?}({fb:?})"); }
             return None;
         }
-        set_face(&mut grid, pa, ai, (fa, 0));
-        set_face(&mut grid, pb, bi, (fb, 0));
+        set_face(&mut grid, pa, ai, fa);
+        set_face(&mut grid, pb, bi, fb);
         let chain: Vec<Pos> = [vec![pa], path.clone(), vec![pb]].concat();
         for w in 1..chain.len() - 1 {
             let din = dir_to(chain[w], chain[w - 1])?;
             let dout = dir_to(chain[w], chain[w + 1])?;
-            let s = Strand::new((din, 0), (dout, 0));
+            let s = Strand::new(din, dout);
             if !grid.strand_fits(chain[w], s) {
                 if dbg { eprintln!("embed: strand misfit at {:?} for link {aid}.{ai}->{bid}.{bi}", chain[w]); }
                 return None;
@@ -384,13 +415,13 @@ fn set_face(grid: &mut Grid, p: Pos, port: usize, h: He) {
     }
 }
 
-/// Route from a to b through empty cells only. Uniform-cost search with a heavy penalty
-/// for cells hugging OTHER agents' port rings — a shortest path that grazes an agent seals
-/// its faces and strands its later links. Deterministic (cost, pos) ordering. Returns
-/// interior cells (empty when adjacent).
+/// Route from a to b through empty in-bounds cells only. Uniform-cost search with a heavy
+/// penalty for cells hugging OTHER agents' port rings — a shortest path that grazes an
+/// agent seals its faces and strands its later links. Deterministic (cost, pos) ordering.
+/// Returns interior cells (empty when adjacent).
 fn route_bfs(grid: &Grid, a: Pos, b: Pos) -> Option<Vec<Pos>> {
-    let a_used: Vec<Dir> = grid.used_hes(a).iter().map(|h| h.0).collect();
-    let b_used: Vec<Dir> = grid.used_hes(b).iter().map(|h| h.0).collect();
+    let a_used = grid.used_hes(a);
+    let b_used = grid.used_hes(b);
     if let Some(d) = dir_to(a, b) {
         if !a_used.contains(&d) && !b_used.contains(&d.opp()) { return Some(vec![]); }
     }
@@ -410,7 +441,7 @@ fn route_bfs(grid: &Grid, a: Pos, b: Pos) -> Option<Vec<Pos>> {
     for d in DIRS {
         if a_used.contains(&d) { continue; }
         let n = step(a, d);
-        if n == b || !grid.is_empty(n) { continue; }
+        if n == b || !grid.topo.in_bounds(n) || !grid.is_empty(n) { continue; }
         let c = 1 + ring_penalty(n);
         if dist.get(&n).is_none_or(|old| c < *old) {
             dist.insert(n, c);
@@ -418,7 +449,7 @@ fn route_bfs(grid: &Grid, a: Pos, b: Pos) -> Option<Vec<Pos>> {
             heap.push(Reverse((c, n)));
         }
     }
-    let span = (a.0 - b.0).abs() + (a.1 - b.1).abs();
+    let span = manhattan(a, b);
     let mut expansions = 0u32;
     while let Some(Reverse((c, cur))) = heap.pop() {
         if dist.get(&cur) != Some(&c) { continue; }
@@ -434,8 +465,8 @@ fn route_bfs(grid: &Grid, a: Pos, b: Pos) -> Option<Vec<Pos>> {
                 path.reverse();
                 return Some(path);
             }
-            if !grid.is_empty(n) { continue; }
-            if (n.0 - a.0).abs() + (n.1 - a.1).abs() > 4 * (span + 8) { continue; }
+            if !grid.topo.in_bounds(n) || !grid.is_empty(n) { continue; }
+            if manhattan(n, a) > 4 * (span + 8) { continue; }
             let nc = c + 1 + ring_penalty(n);
             if dist.get(&n).is_none_or(|old| nc < *old) {
                 dist.insert(n, nc);

@@ -2,8 +2,9 @@
 
 The local CA substrate for disp's tree-calculus interaction nets: rungs 1 and 2 of
 `research/interaction-combinator/LOCAL_CA_DESIGN.md`, built as a Rust crate under the
-project's differential-oracle discipline. Not yet a `Session` backend (that is rung 4);
-today it is a library plus tests.
+project's differential-oracle discipline, now on the LIFTED lattice (the "topo lift":
+cells at (x, y, z) with six faces). Not yet a `Session` backend (that is rung 4); today it
+is a library plus tests.
 
 ## What is here
 
@@ -18,49 +19,68 @@ today it is a library plus tests.
   engines; the differential's power is that independence).
 - `crate/src/net.rs` — the table-driven abstract engine: one generic `fire` interprets the
   ROM; also the SHADOW net the lattice checks its projection against.
-- `crate/src/lattice.rs` (rung 2 state) — per-cell state, no ids in the dynamics: an agent
-  cell (≤3 ports on half-edges, ≤2 tucked strands behind it) or a wire cell (≤3 strands).
-  Connectivity is positional; every face carries up to two WIRE LAYERS, so a half-edge is
-  `(direction, layer)`. The loader (host code, global routing allowed) and the executable
-  projection invariant (`check_projection`) live here.
+- `crate/src/lattice.rs` (rung 2 state) — per-cell state on the lifted lattice, no ids in
+  the dynamics: an agent cell (≤3 ports, one attachment per face) or a wire cell (≤3
+  strands). Connectivity is positional. The 2D model's wire layers, via cells, and tucked
+  strands are DELETED — z is the capacity they were simulating; a crossing is two wires at
+  different z. Two topologies, dynamics identical: `Bilayer` (z ∈ {0,1}, the 2.5D chip,
+  the honest worst case) and `Full3D`. The loader (host code, global routing allowed) and
+  the executable projection invariant (`check_projection`) live here.
 - `crate/src/transitions.rs` (rung 2 dynamics) — footprint-atomic transitions: `plan_*`
   reads a bounded neighborhood and returns a Plan carrying its exact footprint; `apply_*`
   machine-checks every write against it. FIRE (dying cells become splice hubs; bounded
   in-board placement backtracking + wire router), REEL (walk one cell along the principal,
-  gated on "a fire awaits"; aux wires bend through the vacated cell, corner-detour
-  fallback; crossings tuck behind the mover).
-- `crate/src/scheduler.rs` — the sequential deterministic schedule. Rung 3 adds Margolus
-  blocks and async-fuzz interleavings over the SAME transitions.
+  gated on "a fire awaits"; aux wires re-anchored by the same bounded router — the
+  straight-behind bend and the corner detour are its 1-cell and 3-cell routes; a walker
+  at a shared cell WAITS, never tucks), and the two POLYMER MOVES, both projecting to
+  identity: RETRACT (a width-1 U-turn annihilates, wire −2, the discrete curve-shortening
+  step) and SLIDE (a strand relocates out of a shared cell through the shortest empty-cell
+  route — the excluded-volume move; the kink-flip is its 1-cell case).
+- `crate/src/scheduler.rs` — the sequential deterministic schedule over the four
+  transitions: fire · clear (walker-demanded slides) · reel · retract-to-fixpoint. Rung 3
+  adds parallel and async-fuzz schedules over the SAME transitions.
 - `crate/tests/stage1.rs` — abstract net vs oracle: 4000 random terms, zero mismatches,
   full 26-rule coverage enforced.
-- `crate/tests/stage2.rs` — lattice vs oracle: correctness gated absolutely (zero wrong
-  NFs, per-transition projection asserts, bit determinism); liveness measured.
-- `crate/src/bin/debug-stuck.rs`, `scan-pins.rs` — stall analyzers.
+- `crate/tests/stage2.rs` — lattice vs oracle on BOTH topologies: correctness gated
+  absolutely (zero wrong NFs, per-transition projection asserts, bit determinism);
+  liveness measured, with per-topology floors pinning the baselines.
+- `crate/src/bin/debug-stuck.rs`, `scan-pins.rs` — stall analyzers (topology-aware).
 - `crate/src/bin/dump-run.rs` — the instrumentation face: runs a term and emits one JSON
-  document (full grid snapshot + tick events per frame). The replay client is
-  `research/interaction-combinator/lattice_player.html` (embedded traces in
-  `lattice_traces.js`; drop any dump-run output onto it to view others). The engine is the
-  model; the visualization never simulates.
+  document (full grid snapshot + tick events per frame; v2 schema: [x,y,z] positions,
+  single-char faces, no tucks). The replay client is
+  `research/interaction-combinator/lattice_player.html` (upper planes render offset and
+  dimmer; embedded traces in `lattice_traces.js` cover both topologies; drop any dump-run
+  output onto it to view others). The engine is the model; the visualization never
+  simulates.
 
 ## Status (measured)
 
 `cargo test --release`: all green. Stage 1: 3998+/0. Stage 2 corpus (400 random terms,
-depths 3–5): 211 reach normal form, 189 stall, ZERO wrong results, zero invariant
-violations, zero tick-cap hits. Every stall is liveness, never correctness: the bare
-sequential schedule ships with no relaxation policies (no straighten, no drift, no
-pressure), and dense strand pockets around the reduction focus jam walks and the larger
-fire templates. That residue is LOCAL_CA_DESIGN.md §13's liveness question, now measurable
-against a sound substrate; policies compete on top of it without being able to break
-correctness (they only choose among enabled transitions, and every transition preserves
-the projection invariant).
+depths 3–5): full3d 201 reach normal form, bilayer 179; ZERO wrong results, zero invariant
+violations, zero tick-cap hits, on both topologies. Must-complete pins: stem application
+on both topologies; fork dispatch, K erasure, chain1, and the sharing S-rule on full3d.
+Every stall is liveness, never correctness: the bare sequential schedule still ships no
+fields, and the stalls concentrate where fire seams knot — splices and reel trails exhaust
+local capacity around the hub, and on bilayer the single overflow plane makes this bite
+almost immediately (the same terms complete on full3d). That residue is
+LOCAL_CA_DESIGN.md §13's liveness question, now measurable per topology against a sound
+substrate; policies compete on top without being able to break correctness.
 
-Liveness findings already folded into the design (each found by measurement here):
+Liveness findings folded into the design (each found by measurement here):
 
 1. Walk only when a fire awaits (far end of the principal is a consumer's principal):
    values that walked to their parent's aux port squatted on crossings and deadlocked the
    crossed wire's owners.
-2. Exclusive faces are over-strict: with one attachment per face, a 3-port walker cannot
-   pass any via (3 + 2 tuck faces > 4). Per-edge wire layers (2), which §2/§3 already
-   describe, dissolve the class; §4.4's face-uniqueness survives as a placement preference.
-3. Place-and-route inside a fire's footprint needs backtracking and most-constrained-first
-   wire ordering; greedy first-fit seals its own hubs.
+2. The topo lift deletes coexistence: with z a real coordinate, exclusive faces suffice
+   and tucks/vias/layers disappear. The old 2D "exclusive faces deadlock walkers" finding
+   was a symptom of the missing dimension.
+3. A walker blocked at a shared cell needs DISPLACEMENT, not coexistence: the SLIDE move
+   (walker-demanded, excluded-volume) replaces the old tuck-through. Fixed-shape moves
+   (kink-flip, one-direction bulge) are not enough — congested neighborhoods need the
+   general shortest-reroute, plus one level of knot-loosening at the blocker's endpoints.
+4. Slides must be strictly decongesting (empty-cell trails only, loosening only out of
+   shared cells): a permissive variant that threads through occupied cells lets the
+   scheduler shuffle strands forever, and stall detection dies with it.
+5. Reel's aux re-anchoring wants the router, not bespoke bend shapes: with exclusive faces
+   the second aux always needs a detour, and the fixed L-shape detour dead-ends where the
+   shared router finds five-cell routes.

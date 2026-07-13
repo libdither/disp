@@ -387,15 +387,36 @@ Cheap-first, each rung gating the next:
    NOW BUILT FOR REAL in `evaluators/rust-ca-lattice/` (see its README): the ROM as
    validated const data over the fully lowered ≤3-port alphabet (T1 lowered too, arms as
    pairs; 13 tags, 26 interactions), per-cell state with NO ids in the dynamics,
-   footprint-atomic FIRE/REEL transitions with machine-checked footprints, a shadow net
-   asserting the projection invariant per transition, and the two-stage differential
-   (abstract 4000/0; lattice: 211/400 random terms to NF, zero wrong, zero invariant hits —
-   the stalls are §13 pocket congestion, measured, awaiting the policy rungs). Three
-   substrate lessons from that build, folded back into this doc: walkers move only when a
-   fire awaits (parked values on crossings otherwise deadlock the crossed wires); faces
-   carry TWO WIRE LAYERS (§2's layers are load-bearing — exclusive faces make vias
-   impassable to 3-port agents; §4.4's uniqueness is a preference, not an invariant); and
-   in-footprint place-and-route needs backtracking with most-constrained-first wires.
+   footprint-atomic transitions with machine-checked footprints, a shadow net asserting
+   the projection invariant per transition, and the two-stage differential (abstract
+   4000/0; lattice: zero wrong, zero invariant hits, liveness measured per topology).
+   The crate has since taken the TOPO LIFT: cells live at (x, y, z) with six faces, and
+   §2's wire layers, via cells, and §4.4's tucked strands are DELETED — z is the capacity
+   those mechanisms were simulating; a crossing is two wires at different z, and an agent
+   cell holds only its agent. Two topologies run the same dynamics and the same
+   differential: `Bilayer` (z ∈ {0,1}, the 2.5D chip, the honest worst case) and `Full3D`.
+   Transitions are FIRE, REEL, and two polymer moves projecting to identity: RETRACT (a
+   width-1 U-turn annihilates, the discrete curve-shortening step) and SLIDE (a strand
+   relocates out of a shared cell through the shortest empty-cell route — the
+   excluded-volume move, scheduled when a demanded walker is blocked; the kink-flip is its
+   1-cell case). Measured on the 400-term corpus: full3d 201 to NF, bilayer 179; pins
+   verified per topology (stem application everywhere; fork dispatch, K erasure, chain1,
+   and the sharing S-rule on full3d).
+   Substrate lessons folded back into this doc, each found by measurement: walkers move
+   only when a fire awaits (parked values on crossings otherwise deadlock the crossed
+   wires); coexistence states were a symptom of the missing dimension (with real z,
+   exclusive faces suffice and the old "vias impassable to 3-port walkers" class
+   dissolves); a blocked walker needs DISPLACEMENT, not coexistence, and fixed-shape
+   displacement is not enough — the general shortest-reroute slide plus one level of
+   knot-loosening is; slides must be strictly decongesting (empty-cell trails only) or
+   the scheduler shuffles strands forever and stall detection dies; in-footprint
+   place-and-route needs backtracking with most-constrained-first wires, and reel's aux
+   re-anchoring wants that same router rather than bespoke bend shapes. The remaining
+   stalls concentrate where FIRE SEAMS knot: hub splices and reel trails exhaust local
+   capacity around the pair, and on bilayer the single overflow plane makes this bite
+   within a few interactions (the same terms complete on full3d). That is the §13
+   liveness residue in its current, sharpest form, and the pressure field (§7) plus the
+   geometric fire redesign are aimed exactly at it.
    The earlier JS prototype of this rung remains in `local_ca_field.html`, by a different
    route than the pure microcoded executor: the file co-maintains an abstract interaction net
    (authoritative for reduction, validated 3998/0 against an independent normalizer with full

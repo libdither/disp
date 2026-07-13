@@ -7,10 +7,14 @@
 //! - `oracle`  — the independent recursive normalizer (shares no code with the engines).
 //! - `net`     — the table-driven abstract engine; stage-1 differential subject AND the
 //!               shadow the lattice checks its projection against.
-//! - `lattice` — rung 2 state: cells, faces, strands, tucks; the loader; the projection.
-//! - `transitions` — the footprint-atomic transitions (FIRE, REEL); every transition
-//!               declares the cell set it may touch, and apply() machine-checks it.
-//! - `scheduler` — the sequential deterministic schedule (rung 3 adds Margolus + async
+//! - `lattice` — rung 2 state after the TOPO LIFT: (x, y, z) cells with six faces, over a
+//!               selectable topology (bilayer = the 2.5D chip, or full 3D). Wire layers,
+//!               vias, and tucks are GONE — z is the capacity they were simulating.
+//!               The loader and the projection live here.
+//! - `transitions` — the footprint-atomic transitions (FIRE, REEL, and the polymer moves
+//!               RETRACT + KINK-FLIP); every transition declares the cell set it may
+//!               touch, and apply() machine-checks it.
+//! - `scheduler` — the sequential deterministic schedule (rung 3 adds parallel + async
 //!               fuzz over the SAME transitions).
 //!
 //! The correctness spec is the projection invariant (EMBEDDING_THEOREM.md §4): at every
