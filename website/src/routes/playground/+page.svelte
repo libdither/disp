@@ -255,8 +255,8 @@
   let vizCtl: TreeValueCtl | null = null
   let vizApi: { setProgram: (expr: string, newDefs?: Record<string, T>) => void } | null = null
   // the panel is sized to FIT (no scrollbar): the drawing gets whatever the
-  // body height leaves after the instrument's own chrome (readout + edit +
-  // transport ≈ 235px)
+  // body height leaves after the instrument's own chrome (edit box +
+  // transport ≈ 115px — minimal mode shows no readout text)
   let vizBodyH = $state(0)
 
   // seed the panel: in place when it's already open (the tree animates from
@@ -1147,7 +1147,7 @@
             <TreeVis
               variant="lab"
               exprs={[viz.expr]}
-              height={Math.max(200, vizBodyH - 235)}
+              height={Math.max(200, vizBodyH - 120)}
               defs={viz.defs}
               resolveDef={resolveScopeDef}
               minimal

@@ -318,7 +318,9 @@
     return null
   }
   // reveal one budgeted level from a pod root: children beyond the budget
-  // (or shared already-folded regions) stay pods
+  // re-fold — but ONLY when they have a recognized name (a numeral, a
+  // string, a dictionary match). An unnameable subtree is not a pod: hiding
+  // structure behind an ellipsis reads as noise, so it draws instead.
   function reveal(root: T, budget: number) {
     let left = budget
     const visit = (t: T) => {
@@ -326,8 +328,13 @@
       left--
       for (const c of childrenOf(t)) {
         if (seen.has(c) || folded.has(c)) continue
-        if (left > 0 || sizeOf(c) <= 3) visit(c)
-        else folded.set(c, autoName(c))
+        if (left > 0 || sizeOf(c) <= 3) {
+          visit(c)
+          continue
+        }
+        const name = autoName(c)
+        if (name !== null) folded.set(c, name)
+        else visit(c)
       }
     }
     visit(root)
@@ -341,22 +348,29 @@
     reveal(t, UNFOLD_BUDGET)
     show(cur)
   }
-  // after a step: fold whatever big DATA the rewrite newly exposed (apply
-  // nodes — the computation's own machinery — always draw)
+  // after a step: fold big DATA the rewrite newly exposed — but only when it
+  // has a recognized NAME, and never at the root (the answer always draws;
+  // apply nodes — the computation's own machinery — always draw too)
   function refreshFolds(t: T) {
     if (!podMode) return
-    const visit = (n: T) => {
+    // a rewrite can SELECT an existing pod as the whole result (K keeping a
+    // folded branch) — the root always opens
+    folded.delete(t)
+    const visit = (n: T, isRoot: boolean) => {
       if (folded.has(n)) return
       if (!seen.has(n)) {
-        if (n.tag !== 'apply' && sizeOf(n) > AUTOFOLD_MIN) {
-          folded.set(n, autoName(n))
-          return
+        if (!isRoot && n.tag !== 'apply' && sizeOf(n) > AUTOFOLD_MIN) {
+          const name = autoName(n)
+          if (name !== null) {
+            folded.set(n, name)
+            return
+          }
         }
         seen.add(n)
       }
-      for (const c of childrenOf(n)) visit(c)
+      for (const c of childrenOf(n)) visit(c, false)
     }
-    visit(t)
+    visit(t, true)
   }
 
   // names outside activeDefs, asked of the host once each; a hit swaps the
@@ -811,6 +825,8 @@
         lazyAll: lazyParse,
         onDefSplice: podMode ? (node, name) => folded.set(node, name) : undefined
       })
+      // the root is never a pod — a program that IS one atom draws in full
+      folded.delete(cur)
       // everything visible at load is 'seen': later auto-folds only ever
       // apply to data a reduction newly exposes
       const markSeen = (t: T): void => {
@@ -1222,7 +1238,9 @@
       </g>
     </svg>
 
-    {#if variant === 'lab'}
+    {#if variant === 'lab' && !minimal}
+      <!-- minimal embeddings (the playground panel) show no readout text at
+           all — the term input below is the only prose -->
       <div class="readout">
         <div class="rline">
           <span class="expr">{input}</span>
@@ -1267,7 +1285,7 @@
       </span>
     </span>
   </div>
-  {#if activeTip}<p class="tip-line">{activeTip}</p>{/if}
+  {#if activeTip && !minimal}<p class="tip-line">{activeTip}</p>{/if}
 
   <!-- the bottom bar: play/pause dead-centre with prev/back and fwd/next/reset
        clustered tight around it (thin buttons, no circles); the cassette sits
