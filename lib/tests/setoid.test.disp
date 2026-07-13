@@ -1,0 +1,71 @@
+// The rich level (relation.disp's PER universe). Pins: s_arrow membership is
+// congruence (identity/succ pass, a class-splitting observer fails), the PER
+// laws inhabit their law types and compute on concrete instances, strict
+// equality embeds (strict_to_rich), pointwise witnesses bridge up to arrow
+// witnesses over discrete domains (pointwise_arrow), and compositionality
+// (s_comp_rel) makes pipelines of members members. The adequacy fact rides
+// the discrete base: rich equality at eq_per IS Eq, so a member consumer of a
+// licensed pair lands strict equality of results.
+open use "../kernel/prelude.disp"
+open use "../std/list.disp"
+open use "../std/nat.disp"
+open use "../std/relation.disp"
+
+// ── discrete base: the rich relation at eq_per IS Eq (adequacy) ──
+test tree_eq ((eq_per Nat).rel 3 3) (Eq Nat 3 3) = true
+test param_apply (s_member (eq_per Nat) 3) refl = Ok true
+
+// ── s_arrow: membership = congruence ──
+let NatFn := s_arrow (eq_per Nat) (eq_per Nat)
+test param_apply (NatFn.rel ({n} -> n) ({n} -> n)) ({x0, x1, rho} -> rho) = Ok true
+test param_apply (s_member NatFn ({n} -> succ n)) ({x0, x1, rho} -> eq_cong Nat Nat succ x0 x1 rho) = Ok true
+// the sym/trans laws inhabit their law types over the arrow relation
+test param_apply (Symmetric (NatFn.carrier) (NatFn.rel)) (NatFn.sym) = Ok true
+test param_apply (Transitive (NatFn.carrier) (NatFn.rel)) (NatFn.trans) = Ok true
+// and compute on concrete instances
+let inc := {n} -> succ n
+let inc_wit := {x0, x1, rho} -> eq_cong Nat Nat succ x0 x1 rho
+test NatFn.sym inc inc inc_wit 3 3 refl = refl
+test NatFn.trans inc inc inc inc_wit inc_wit 3 3 refl = refl
+
+// ── quotient fibrancy: the coarse domain admits only congruent observers ──
+let is_even := {n} -> nat_rec ({_} -> Bool) true ({_p, ih} -> not ih) n
+let ParityE := pullback_equivalence Nat is_even (eq_equivalence Bool)
+let ParityFn := s_arrow ParityE (eq_per Bool)
+test param_apply (s_member ParityFn is_even) ({q0, q1, rho} -> rho) = Ok true
+test param_apply (s_member ParityFn is_zero) ({q0, q1, rho} -> refl) = Ok false
+
+// ── strict equality embeds; the rich relation is genuinely coarser ──
+test strict_to_rich ParityE 2 2 refl refl = refl
+test param_apply (ParityE.rel 2 4) refl = Ok true
+test param_apply (Eq Nat 2 4) refl = Ok false
+
+// ── pointwise bridges up to the arrow witness over a discrete domain ──
+let mp := {f, xs} -> list_rec ({_} -> NatList) nil ({h, tl, ih} -> cons (f h) ih) xs
+let idA := {xs} -> xs
+let idB := {xs} -> mp ({x} -> x) xs
+let map_id_law := {a} -> list_rec
+  ({xs_} -> Eq NatList xs_ (mp ({x} -> x) xs_))
+  refl
+  ({h, tl, ih} -> eq_cong NatList NatList ({t_} -> cons h t_) tl (mp ({x} -> x) tl) ih)
+  a
+let ListFn := s_arrow (eq_per NatList) (eq_per NatList)
+test param_apply (ListFn.rel idA idB) (pointwise_arrow NatList (eq_per NatList) idA idB map_id_law) = Ok true
+
+// ── compositionality: members compose without a per-pipeline proof ──
+test s_comp_rel inc inc inc inc inc_wit inc_wit 3 3 refl = refl
+test param_apply (NatFn.rel ({n} -> succ (succ n)) ({n} -> succ (succ n))) (s_comp_rel inc inc inc inc inc_wit inc_wit) = Ok true
+
+// ── a consumer that only applies is a member; adequacy lands strict results ──
+let at2 := {f} -> f 2
+test param_apply ((s_arrow NatFn (eq_per Nat)).rel at2 at2) ({f0, f1, rf} -> rf 2 2 refl) = Ok true
+// the licensed-pair shape: a rel_pi witness applied by a member consumer's
+// respect yields Eq at the discrete endpoint (here: idA/idB through length)
+let len := {xs} -> list_rec ({_} -> Nat) 0 ({h, tl, ih} -> succ ih) xs
+let len_resp := {xs0, xs1, rho} -> eq_cong NatList Nat len xs0 xs1 rho
+test param_apply ((s_arrow (eq_per NatList) (eq_per Nat)).rel len len) len_resp = Ok true
+test param_apply (Eq Nat (len (idA (cons 5 nil))) (len (idB (cons 5 nil)))) (len_resp (idA (cons 5 nil)) (idB (cons 5 nil)) (map_id_law (cons 5 nil))) = Ok true
+
+// ── s_prop: irrelevance ──
+test param_apply ((s_prop Nat).rel 2 7) unit_val = Ok true
+test param_apply (Symmetric Nat ((s_prop Nat).rel)) ((s_prop Nat).sym) = Ok true

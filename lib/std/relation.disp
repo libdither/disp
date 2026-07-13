@@ -185,6 +185,63 @@ pullback_equivalence := {A, obs, E} -> make_equivalence
   ({x, y, p} -> E.sym (obs x) (obs y) p)
   ({x, y, z, p, q} -> E.trans (obs x) (obs y) (obs z) p q)
 
+// ── The rich level (the PER universe) ──
+// The 2LTT reading (OPTIMIZER.typ): strict equality is Eq, conversion's
+// propositional face, and never coarsens; every coarser observational equality
+// is a PER whose relation a former computes from its parts' relations. A rich
+// type is a PER over a raw carrier, and rich membership is self-relatedness
+// (the NuPRL/realizability reading): at function types the self-relation IS
+// the respect witness, so the PER's partiality is what carves the congruent
+// fragment out of the raw carrier. eq_per is the discrete embedding (rel :=
+// Eq, everything self-related); at a discrete carrier the rich relation
+// collapses back to Eq, which is the adequacy fact optimization licenses rest
+// on: a licensed swap is invisible to member (congruent) consumers, and at a
+// discrete endpoint "invisible" means tree-identical results. As with every
+// Pi the reflective walker checks, a witness verified at minted hyps is a
+// neutral-face statement (ACTIVE_BUGS item 5); the honest lanes for producing
+// witnesses are induction over positive codes and composition of the lemmas
+// below.
+
+// Rich membership: fibrancy = self-relatedness.
+s_member := {S, f} -> S.rel f f
+
+// s_arrow: the Reynolds arrow (the binary function lift as a PER). Unlike
+// pointwise, the two functions receive independently chosen related inputs,
+// so a MEMBER of s_arrow S T is exactly a congruent function. sym flips the
+// input link with S.sym; trans self-relates x1 by the PER zig-zag.
+s_arrow := {S, T} -> make_per
+  (Arrow (S.carrier) (T.carrier))
+  ({f, g} -> linked_rel (S.carrier) (S.carrier) (S.rel) ({x0, x1, _rho} -> T.rel (f x0) (g x1)))
+  ({f, g, p} -> {x0, x1, rho} -> T.sym (f x1) (g x0) (p x1 x0 (S.sym x0 x1 rho)))
+  ({f, g, h, p, q} -> {x0, x1, rho} -> (T.trans (f x0) (g x1) (h x1)
+    (p x0 x1 rho)
+    (q x1 x1 (S.trans x1 x0 x1 (S.sym x0 x1 rho) rho))))
+
+// s_prop: the proof-irrelevant rich type (every two inhabitants related).
+// Respect witnesses into s_prop are trivially unique; irrelevance is what
+// keeps the respect bookkeeping from becoming setoid bureaucracy.
+s_prop := {A} -> make_per A ({_x, _y} -> Unit)
+  ({_x, _y, _p} -> unit_val)
+  ({_x, _y, _z, _p, _q} -> unit_val)
+
+// Strict equality embeds into every rich relation along a self-relatedness
+// witness. The converse never holds: rich facts descend to Eq only at
+// discrete carriers (adequacy), never in general.
+strict_to_rich := {S, x, y, p, sx} -> eq_subst (S.carrier) x y ({z} -> S.rel x z) p sx
+
+// Over a DISCRETE domain a same-input pointwise witness lifts to the arrow
+// witness by transporting along the strict input link, so licenses for
+// functions out of ordinary data stay pointwise and bridge up on demand. Over
+// a coarse domain no such lift exists; that gap is the congruence obligation.
+pointwise_arrow := {A, T, f, g, w} -> {x0, x1, rho} ->
+  eq_subst A x0 x1 ({z} -> T.rel (f x0) (g z)) rho (w x0)
+
+// Compositionality: a rel_pi witness IS its own application rule, so the
+// respect of a composition is two nested applications. This is the
+// fundamental-theorem move for the constructed fragment: pipelines of members
+// are members, with no per-pipeline proof.
+s_comp_rel := {f0, f1, g0, g1, rf, rg} -> {x0, x1, rho} -> rg (f0 x0) (f1 x1) (rf x0 x1 rho)
+
 // Experimental dependent record packaging.  The checker currently replaces
 // `map` by a record-field hypothesis while checking `respect`; for a coarse
 // relation this loses the concrete map and can reject a valid package.  Use
