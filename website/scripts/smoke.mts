@@ -21,6 +21,7 @@ const out1 = runner.run(
   `open use "../kernel/prelude.disp"
 open use "../std/nat.disp"
 quadruple : Nat -> Nat := {n} -> double (double n)
+let dozen := double 6
 test quadruple 3 = 12
 test param_apply Type Nat = Ok true
 `,
@@ -28,8 +29,21 @@ test param_apply Type Nat = Ok true
   true,
   onItem
 )
-console.log(JSON.stringify({ ...out1, defs: out1.defs.map(d => d.name) }, null, 1))
+// defs must report BOTH the exported field and the private let, each with its
+// source line and (wantDefPretty) a value — the playground's inline outputs
+console.log(JSON.stringify({
+  ...out1,
+  defs: out1.defs.map(d => ({ name: d.name, line: d.line, endLine: d.endLine, pretty: d.pretty?.slice(0, 48) }))
+}, null, 1))
 console.log(`items streamed: ${items}, wall: ${Date.now() - t0}ms`)
+if (!out1.defs.some(d => d.name === 'dozen' && d.line === 4 && d.pretty === '12')) {
+  console.error('FAIL: private let missing from defs (want dozen @ line 4 = 12)')
+  process.exit(1)
+}
+if (!out1.defs.some(d => d.name === 'quadruple' && d.line === 3)) {
+  console.error('FAIL: exported def missing line attribution')
+  process.exit(1)
+}
 
 console.log('--- run 2: warm rerun (module cache) ---')
 const t1 = Date.now()

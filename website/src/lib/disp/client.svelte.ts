@@ -159,11 +159,11 @@ class DispClient {
     }
   }
 
-  async evalExpr(context: string, expr: string): Promise<RunOutcome> {
+  async evalExpr(context: string, expr: string, opts?: { wantDefPretty?: boolean }): Promise<RunOutcome> {
     await this.init()
     this.status = 'running'
     try {
-      return await this.#request({ type: 'eval', context, expr })
+      return await this.#request({ type: 'eval', context, expr, wantDefPretty: opts?.wantDefPretty })
     } finally {
       if (this.status === 'running') this.status = 'ready'
     }

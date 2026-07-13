@@ -17,7 +17,7 @@ export type WorkerRequest =
       // pretty-print top-level def values in the response (REPL cell mode)
       wantDefPretty?: boolean
     }
-  | { id: number; type: 'eval'; context: string; expr: string; path?: string }
+  | { id: number; type: 'eval'; context: string; expr: string; path?: string; wantDefPretty?: boolean }
   | { id: number; type: 'reset' }
 
 // Streaming progress: one per elaborated item (defs, tests, opens — including
@@ -29,12 +29,15 @@ export interface ItemEvent {
   testIndex?: number
   sourcePath?: string
   depth: number
+  // 1-based source line for depth-0 (root buffer) items, when known
+  line?: number
   steps: number
 }
 
 export interface TestResult {
   index: number
   line?: number
+  endLine?: number
   pass: boolean
   lhs?: string
   rhs?: string
@@ -44,7 +47,11 @@ export interface RunOutcome {
   ok: boolean
   error?: string
   errorLine?: number
-  defs: { name: string; pretty?: string }[]
+  // Every top-level binding of the run — exported fields AND private lets —
+  // in definition order, with its source extent and (when requested) the
+  // pretty-printed value. Survives a mid-file error: bindings elaborated
+  // before the failure are still reported.
+  defs: { name: string; pretty?: string; line?: number; endLine?: number }[]
   tests: TestResult[]
   // eval mode: the pretty-printed value of the requested expression
   value?: string

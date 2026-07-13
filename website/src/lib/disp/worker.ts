@@ -57,7 +57,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       case 'eval': {
         if (!runner) throw new Error('worker not initialized')
         const onItem = (ev: ItemEvent) => post(ev)
-        const outcome = runner.evalExpr(msg.context, msg.expr, onItem, msg.path)
+        const outcome = runner.evalExpr(msg.context, msg.expr, onItem, msg.path, msg.wantDefPretty ?? false)
         post({ type: 'result', id: msg.id, outcome })
         break
       }

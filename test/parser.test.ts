@@ -415,12 +415,15 @@ describe("parse: items", () => {
   })
 
   // `open given { … }` — the module-dependency header block (MODULES.md § Surface).
-  // Pure sugar: one member per entry, identical to the line form `given a : A (:= d)`.
+  // Pure sugar: one member per entry, identical to the line form `given a : A (:= d)`
+  // modulo `line` (source positions differ between the two spellings by nature).
   it("open given block desugars to per-name given declarations, in order", () => {
+    const stripLine = (ms: ReturnType<typeof parseItems>) =>
+      ms.map((m) => { const c = { ...m } as Record<string, unknown>; delete c.line; delete c.endLine; return c })
     const items = parseItems("open given {\n  a : A\n  b : B := d\n}\nx := t\n")
     expect(items).toHaveLength(3)
     const line = parseItems("given a : A\ngiven b : B := d\nx := t\n")
-    expect(items).toEqual(line)
+    expect(stripLine(items)).toEqual(stripLine(line))
     const [a, b] = items
     if (a.tag !== "field" || b.tag !== "field") throw new Error("expected fields")
     expect(a.head).toEqual(v("given"))

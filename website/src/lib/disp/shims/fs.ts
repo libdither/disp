@@ -9,11 +9,22 @@
 // lib/tests/ while it runs — never part of the library, and letting them into
 // the vfs would skew the kernel-snapshot lib hash whenever validation overlaps
 // a dev session or build.)
-const modules = import.meta.glob(['../../../../../lib/**/*.disp', '!**/__site_example_*'], {
-  query: '?raw',
-  import: 'default',
-  eager: true
-}) as Record<string, string>
+//
+// `import.meta.glob` is a compile-time Vite transform, so the call must stay
+// syntactically literal (aliasing it to a variable defeats the transform and
+// ships an empty vfs). Under plain node (scripts/smoke.mts via tsx) the call
+// throws — caught below — and nothing aliases node:fs here anyway, so the
+// elaborator reads the real repo lib/ while the vfs just stays empty.
+let modules: Record<string, string> = {}
+try {
+  modules = import.meta.glob(['../../../../../lib/**/*.disp', '!**/__site_example_*'], {
+    query: '?raw',
+    import: 'default',
+    eager: true
+  }) as Record<string, string>
+} catch {
+  /* not under Vite */
+}
 
 export const vfs = new Map<string, string>()
 for (const [key, text] of Object.entries(modules)) {

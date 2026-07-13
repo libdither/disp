@@ -97,6 +97,14 @@ export function tokLine(ts: Tok[], i: number): number | undefined {
   return ts[ts.length - 1]?.line
 }
 
+// Last consumed token's line BEFORE `pos` (skipping newlines) — the line an
+// item ends on. `pos` is a parser's resume position, i.e. first unconsumed.
+export function endTokLine(ts: Tok[], pos: number): number | undefined {
+  for (let k = Math.min(pos, ts.length) - 1; k >= 0; k--)
+    if (ts[k].t !== "nl" && ts[k].t !== "eof") return ts[k].line
+  return undefined
+}
+
 // ──────────────────────────── 2. AST types ───────────────────────────────
 
 export type Expr =
@@ -138,10 +146,10 @@ export type NamedField = { name: string; type: Expr | null; value: Expr }
 // Unified record body member — shared by file bodies and inline { ... } recValues.
 // "field" (name := expr) is exported; "let" is private; "test"/"open" are side-effects.
 export type RecMember =
-  | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr }
+  | { tag: "field"; name: string; type: Expr | null; value: Expr | null; pun?: boolean; head?: Expr; line?: number; endLine?: number }
   | { tag: "let"; name: string; type: Expr | null; body: Expr }
   | { tag: "bind"; name: string; expr: Expr }
-  | { tag: "test"; lhs: Expr; rhs: Expr; line?: number }
+  | { tag: "test"; lhs: Expr; rhs: Expr; line?: number; endLine?: number }
   | { tag: "open"; expr: Expr }
 // A "field" is a DECLARATION: `head? NAME (: T)? (:= v)?` (the declaration
 // protocol; SYNTAX.typ § record members). `head` is the optional request-decorator expression
@@ -719,15 +727,21 @@ const sumTypeP: P<Expr> = (ts, i) => {
 }
 
 // field = IDENT (":" expr)? ":=" valParser
-const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr }> =>
-  nl(map(
-    seq(idP,
+// Fields carry their 1-based source extent (line of the name token, line of
+// the last value token), so downstream tooling can attribute a declaration
+// to its source lines — like the equation items' `line`.
+const makeFieldP = (valParser: P<Expr>): P<{ tag: "field"; name: string; type: Expr | null; value: Expr; line?: number; endLine?: number }> =>
+  nl((ts, i) => {
+    const r = seq(idP,
       optional(seq(nl(punctP(":")), skipNl, lazy(() => expr))),
-      nl(punctP(":=")), skipNl, lazy(() => valParser)),
-    ([name, ann, , , value]) => ({
+      nl(punctP(":=")), skipNl, lazy(() => valParser))(ts, i)
+    if (!r.ok) return r
+    const [name, ann, , , value] = r.v
+    return ok({
       tag: "field" as const, name, type: ann ? ann[2] : null, value,
-    }),
-  ))
+      line: tokLine(ts, i), endLine: endTokLine(ts, r.pos),
+    }, r.pos)
+  })
 const bracedFieldP = makeFieldP(lineExpr)
 const topFieldP = makeFieldP(lazy(() => expr))
 
@@ -1144,7 +1158,7 @@ const equationItem: P<RecMember> = (ts, i) => {
   if (bad) return err(bad, lhsR.pos)
   const rhsR = seq(skipNl, lazy(() => expr))(ts, eqR.pos)
   if (!rhsR.ok) return rhsR
-  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: rhsR.v[1], line: tokLine(ts, i) }, rhsR.pos)
+  return ok({ tag: "test" as const, lhs: lhsR.v, rhs: rhsR.v[1], line: tokLine(ts, i), endLine: endTokLine(ts, rhsR.pos) }, rhsR.pos)
 }
 
 const openItem: P<RecMember> = map(
@@ -1170,6 +1184,7 @@ const openGivenItem: P<RecMember[]> = (ts, i) => {
   for (;;) {
     while (ts[pos].t === "nl" || (ts[pos].t === "punct" && (((ts[pos] as any).v === ",") || ((ts[pos] as any).v === ";")))) pos++
     if (ts[pos].t === "punct" && (ts[pos] as any).v === "}") { pos++; break }
+    const entryLine = tokLine(ts, pos)
     const n = idP(ts, pos)
     if (!n.ok) throw new Error(`open given: expected a dependency name or '}', got ${describe(ts[pos])}`)
     const c = punctP(":")(ts, n.pos)
@@ -1185,7 +1200,7 @@ const openGivenItem: P<RecMember[]> = (ts, i) => {
       value = dflt.v[1]
       pos = dflt.pos
     }
-    out.push({ tag: "field", name: n.v, type: ty.v[1], value, head })
+    out.push({ tag: "field", name: n.v, type: ty.v[1], value, head, line: entryLine })
   }
   if (out.length === 0) throw new Error(`open given: empty dependency block`)
   return ok(out, pos)
@@ -1218,7 +1233,7 @@ const headFieldP: P<RecMember> = (ts, i) => {
   const asn = optional(seq(nl(punctP(":=")), skipNl, lazy(() => expr)))(ts, pos)
   if (asn.ok && asn.v) { value = asn.v[2]; pos = asn.pos }
   if (type === null && value === null) return err(`decorated declaration: expected ':' or ':='`, pos)
-  return ok({ tag: "field" as const, name: last.name, type, value, head }, pos)
+  return ok({ tag: "field" as const, name: last.name, type, value, head, line: tokLine(ts, i), endLine: endTokLine(ts, pos) }, pos)
 }
 
 const itemP: P<RecMember | RecMember[]> = nl(alt<RecMember | RecMember[]>(openGivenItem, openItem, topFieldP, headFieldP, equationItem))

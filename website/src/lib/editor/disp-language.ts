@@ -174,7 +174,49 @@ export const dispEditorTheme = EditorView.theme(
     },
     '.disp-note-pass': { color: '#3a9d63' },
     '.disp-note-fail': { color: '#c95f6d' },
-    '.disp-note-error': { color: '#c95f6d' }
+    '.disp-note-error': { color: '#c95f6d' },
+    // notebook output cells (LineMark.block): a block widget under the line.
+    // Collapsed to one ellipsized line; `.open` (click) wraps the full text.
+    // `contain: inline-size` zeroes the widget's intrinsic width so a long
+    // nowrap value can't stretch .cm-content (a min-width:auto flex item)
+    // into a horizontal scroll — the text clips to the editor instead.
+    '.disp-out': {
+      contain: 'inline-size',
+      margin: '2px 14px 8px 2.2em',
+      padding: '4px 12px',
+      borderLeft: '2px solid rgba(74, 104, 82, 0.4)',
+      borderRadius: '0 8px 8px 0',
+      background: 'rgba(74, 104, 82, 0.07)',
+      fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace",
+      fontSize: '0.85em',
+      lineHeight: '1.55',
+      color: '#43584a',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      cursor: 'pointer'
+    },
+    '.disp-out.open': {
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-all'
+    },
+    '.disp-out::before': {
+      content: "'⟵ '",
+      opacity: '0.5',
+      userSelect: 'none'
+    },
+    '.disp-out-fail': {
+      borderLeftColor: 'rgba(201, 95, 109, 0.55)',
+      background: 'rgba(201, 95, 109, 0.07)',
+      color: '#a44f5c'
+    },
+    '.disp-out-fail::before': { content: "'✗ '" },
+    '.disp-out-error': {
+      borderLeftColor: 'rgba(201, 95, 109, 0.55)',
+      background: 'rgba(201, 95, 109, 0.07)',
+      color: '#a44f5c'
+    },
+    '.disp-out-error::before': { content: "'⚠ '" }
   },
   { dark: false }
 )

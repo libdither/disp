@@ -15,9 +15,9 @@ import { exprToCir, resolveExprRecord, compileExpr, compileType, isUniverseTree,
 
 export type Decl =
   | { kind: "Def"; name: string; tree: Tree; type?: Tree | null; guard?: Tree | null; cert?: LicenseCert | null }
-  // `line` is the equation's 1-based source line (absent for tests emitted by
-  // inline recValue blocks, which have no surface line of their own).
-  | { kind: "Test"; lhs: Tree; rhs: Tree; line?: number }
+  // `line`/`endLine` are the equation's 1-based source extent (absent for tests
+  // emitted by inline recValue blocks, which have no surface line of their own).
+  | { kind: "Test"; lhs: Tree; rhs: Tree; line?: number; endLine?: number }
 
 // The pristine `default_guard` tree per session, captured at its first definition
 // (cut.disp). The declaration fast path applies only while the ambient default is
@@ -201,6 +201,13 @@ export type ParseItemStats = {
   testIndex?: number
   sourcePath?: string
   depth: number
+  // 1-based source extent of the item (absent for synthesized items, e.g.
+  // sum-literal constructor auto-declarations) and, for bindings, the bound
+  // tree — lets stream here too, so observers see PRIVATE bindings that never
+  // become exported Defs (the playground's inline value display).
+  line?: number
+  endLine?: number
+  tree?: Tree
   stats: EvalStats
 }
 
@@ -469,13 +476,21 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
     return record
   }
 
-  function recordItem(kind: "let" | "test" | "open" | "field" | "given", name?: string, testIndex?: number): void {
+  function recordItem(
+    kind: "let" | "test" | "open" | "field" | "given",
+    name?: string,
+    testIndex?: number,
+    extra?: { line?: number; endLine?: number; tree?: Tree },
+  ): void {
     options.onItem?.({
       kind,
       name,
       testIndex,
       sourcePath: sourceStack[sourceStack.length - 1],
       depth: sourceStack.length - 1,
+      line: extra?.line,
+      endLine: extra?.endLine,
+      tree: extra?.tree,
       stats: elab.cs.stats!(),
     })
   }
@@ -841,7 +856,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           pristineTest.set(elab.cs, r.tree)
         if (it.name === "given" && r.tree != null && !pristineGiven.has(elab.cs))
           pristineGiven.set(elab.cs, r.tree)
-        recordItem(isLetHead(it.head) ? "let" : "field", it.name)
+        recordItem(isLetHead(it.head) ? "let" : "field", it.name, undefined, { line: it.line, endLine: it.endLine, tree: r.tree ?? undefined })
         // Constructor auto-declaration (SYNTAX.typ § sum types): a declaration whose
         // value is a sum-type literal — possibly under a binder chain, the
         // parameterized case (`{A} -> < some : A, none >`; constructors don't mention
@@ -861,7 +876,7 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
               const ctor: Expr = sv.type == null ? { tag: "app", f: injTag, x: { tag: "leaf" } } : injTag
               const cr = declareBinding(sv.name, null, ctor, undefined, sinks, raw)
               if (cr.pushDef && !cr.priv) target.push({ kind: "Def", name: sv.name, tree: cr.tree!, type: cr.type, guard: cr.guard ?? null })
-              recordItem("field", sv.name)
+              recordItem("field", sv.name, undefined, { tree: cr.tree ?? undefined })
             }
           }
         }
@@ -878,8 +893,9 @@ function parseProgramBody(src: string, sourcePath: string | undefined, options: 
           lhs: compileExpr(equationLhs(it.lhs, lookupEntry), lookupEntry, resolveUse, sinks),
           rhs: compileExpr(it.rhs, lookupEntry, resolveUse, sinks),
           line: it.line,
+          endLine: it.endLine,
         })
-        recordItem("test", undefined, compiledTestIndex)
+        recordItem("test", undefined, compiledTestIndex, { line: it.line, endLine: it.endLine })
         return
       }
       case "let": // the lexical (braced) form never reaches item level

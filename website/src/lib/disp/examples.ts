@@ -18,14 +18,19 @@ export const examples: Example[] = [
 // This is the real compiler — the same elaborator and kernel that run in CI —
 // compiled to WebAssembly, running entirely in your tab.
 //
-// ▶ Run file (Ctrl/⌘-Enter) runs everything. The kernel arrives precompiled
-//   (restored in seconds); "Verify from source" re-elaborates and SELF-VERIFIES
-//   it (~a minute) — you are watching the type system check itself.
+// ▶ Run file (Ctrl/⌘-Enter) runs everything; with "live" on, edits re-check
+//   as you type. The kernel arrives precompiled (restored in seconds);
+//   "Verify from source" re-elaborates and SELF-VERIFIES it (~a minute) —
+//   you are watching the type system check itself.
 // ▶ Run to cursor (Shift-Enter) elaborates the file up to the line you're on.
-// ▶ The prompt at the bottom right evaluates expressions against this file.
+// ▶ The ▸ prompt at the bottom evaluates expressions against this file.
 
 open use "../kernel/prelude.disp"   // the type system (checked + cached)
 open use "../std/nat.disp"      // double, pred, is_zero
+
+// Results render inline, notebook-style: a definition shows its reduced
+// value under its line, a test shows its verdict.
+let answer := double 21
 
 // A test passes when both sides reduce to the identical tree:
 test double 2 = 4

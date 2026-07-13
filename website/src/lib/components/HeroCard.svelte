@@ -124,21 +124,17 @@
       const out = await disp.run(editor.getDoc())
       const marks: LineMark[] = []
       for (const t of out.tests) {
-        if (!t.line) continue
+        const line = t.endLine ?? t.line
+        if (!line) continue
         marks.push(
           t.pass
-            ? { line: t.line, kind: 'pass', note: '✓' }
-            : { line: t.line, kind: 'fail', note: `✗ got ${t.lhs ?? '?'}, want ${t.rhs ?? '?'}` }
+            ? { line, kind: 'pass', note: '✓' }
+            : { line, kind: 'fail', note: '✗', block: `got  ${t.lhs ?? '?'}\nwant ${t.rhs ?? '?'}` }
         )
       }
       if (out.error) {
         runError = out.error
-        if (out.errorLine)
-          marks.push({
-            line: out.errorLine,
-            kind: 'error',
-            note: out.error.length > 90 ? out.error.slice(0, 90) + '…' : out.error
-          })
+        if (out.errorLine) marks.push({ line: out.errorLine, kind: 'error', block: out.error })
       }
       editor.setMarks(marks)
       summary = out.error

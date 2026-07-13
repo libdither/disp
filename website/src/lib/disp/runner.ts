@@ -82,10 +82,18 @@ export class DispRunner {
       steps: 0,
       memBytes: 0
     }
+    // Top-level bindings arrive on the item stream — exported fields AND
+    // private `let`s (which never become Decls) — keyed by name so a rebind
+    // keeps one entry. Captured incrementally, so a mid-file error still
+    // reports every binding elaborated before it.
+    const rootDefs = new Map<string, { handle: number; line?: number; endLine?: number }>()
+    let decls: Decl[] = []
     try {
-      const decls = parseProgram(source, path ?? PLAYGROUND_PATH, {
+      decls = parseProgram(source, path ?? PLAYGROUND_PATH, {
         session,
         onItem: (item: ParseItemStats) => {
+          if (item.depth === 0 && (item.kind === 'field' || item.kind === 'let') && item.name && item.tree != null)
+            rootDefs.set(item.name, { handle: item.tree as unknown as number, line: item.line, endLine: item.endLine })
           onItem({
             type: 'item',
             kind: item.kind,
@@ -93,38 +101,11 @@ export class DispRunner {
             testIndex: item.testIndex,
             sourcePath: item.sourcePath,
             depth: item.depth,
+            line: item.line,
             steps: item.stats.steps
           })
         }
       })
-      this.#collectNames(decls)
-      this.#lastDefs = new Map()
-      for (const d of decls) {
-        if (d.kind === 'Def') this.#lastDefs.set(d.name, d.tree as unknown as number)
-      }
-      let testIdx = 0
-      for (const d of decls) {
-        if (d.kind === 'Def') {
-          const h = d.tree as unknown as number
-          outcome.defs.push({
-            name: d.name,
-            pretty: wantDefPretty ? this.pretty(h, d.name) : undefined
-          })
-        } else {
-          testIdx++
-          const lhs = d.lhs as unknown as number
-          const rhs = d.rhs as unknown as number
-          const pass = this.#session.equal(lhs, rhs)
-          outcome.tests.push({
-            index: testIdx,
-            line: d.line,
-            pass,
-            lhs: pass ? undefined : this.pretty(lhs),
-            rhs: pass ? undefined : this.pretty(rhs)
-          })
-        }
-      }
-      outcome.ok = outcome.tests.every((t) => t.pass)
     } catch (e) {
       outcome.ok = false
       outcome.error = e instanceof Error ? e.message : String(e)
@@ -132,6 +113,35 @@ export class DispRunner {
       if (m) outcome.errorLine = Number(m[1])
       else outcome.errorLine = guessErrorLine(outcome.error, source)
     }
+    // Names before pretty (the printer is name-aware); `__`-prefixed
+    // scaffolding (the REPL's __it) stays out of the name table.
+    for (const [name, d] of rootDefs)
+      if (!name.startsWith('__') && !this.#names.has(d.handle)) this.#names.set(d.handle, name)
+    this.#lastDefs = new Map([...rootDefs].map(([n, d]) => [n, d.handle]))
+    for (const [name, d] of rootDefs)
+      outcome.defs.push({
+        name,
+        line: d.line,
+        endLine: d.endLine,
+        pretty: wantDefPretty ? this.pretty(d.handle, name) : undefined
+      })
+    let testIdx = 0
+    for (const d of decls) {
+      if (d.kind !== 'Test') continue
+      testIdx++
+      const lhs = d.lhs as unknown as number
+      const rhs = d.rhs as unknown as number
+      const pass = this.#session.equal(lhs, rhs)
+      outcome.tests.push({
+        index: testIdx,
+        line: d.line,
+        endLine: d.endLine,
+        pass,
+        lhs: pass ? undefined : this.pretty(lhs),
+        rhs: pass ? undefined : this.pretty(rhs)
+      })
+    }
+    if (!outcome.error) outcome.ok = outcome.tests.every((t) => t.pass)
     outcome.elapsedMs = performance.now() - t0
     outcome.steps = this.#session.stats().steps - steps0
     // Drop re-derivable caches (apply memo, susp WHNF memo) so the arena's
@@ -142,9 +152,15 @@ export class DispRunner {
     return outcome
   }
 
-  evalExpr(context: string, expr: string, onItem: (e: ItemEvent) => void, path?: string): RunOutcome {
+  evalExpr(
+    context: string,
+    expr: string,
+    onItem: (e: ItemEvent) => void,
+    path?: string,
+    wantDefPretty = false
+  ): RunOutcome {
     const source = `${context.trimEnd()}\n__it := (${expr.trim()})\n`
-    const outcome = this.run(source, path, false, onItem)
+    const outcome = this.run(source, path, wantDefPretty, onItem)
     const h = this.#lastDefs.get('__it')
     if (h !== undefined) {
       outcome.value = this.pretty(h, '__it')
@@ -152,15 +168,6 @@ export class DispRunner {
     }
     outcome.defs = outcome.defs.filter((d) => d.name !== '__it')
     return outcome
-  }
-
-  #collectNames(decls: Decl[]): void {
-    for (const d of decls) {
-      if (d.kind === 'Def' && !d.name.startsWith('__')) {
-        const h = d.tree as unknown as number
-        if (!this.#names.has(h)) this.#names.set(h, d.name)
-      }
-    }
   }
 
   // ---- value decoding ----------------------------------------------------

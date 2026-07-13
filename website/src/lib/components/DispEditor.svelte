@@ -11,10 +11,12 @@
 
   export interface LineMark {
     line: number
-    kind: 'pass' | 'fail' | 'error'
-    // inline evaluation note rendered after the line's text
-    // (e.g. '✓', '✗ got 13, want 12', an error message)
+    kind: 'pass' | 'fail' | 'error' | 'value'
+    // inline evaluation note rendered after the line's text (e.g. '✓', '✗')
     note?: string
+    // block output rendered UNDER the line, notebook-style: a def's value,
+    // a failing test's got/want, an error message. Click toggles wrapping.
+    block?: string
   }
 
   class NoteWidget extends WidgetType {
@@ -33,6 +35,38 @@
       s.className = `disp-note disp-note-${this.kind}`
       s.textContent = this.text
       return s
+    }
+    override ignoreEvent(): boolean {
+      return true
+    }
+  }
+
+  // The notebook output cell: a block widget below its line. Collapsed to one
+  // ellipsized line; clicking toggles full wrapped text.
+  class OutBlockWidget extends WidgetType {
+    text: string
+    kind: string
+    constructor(text: string, kind: string) {
+      super()
+      this.text = text
+      this.kind = kind
+    }
+    override eq(other: OutBlockWidget): boolean {
+      return other.text === this.text && other.kind === this.kind
+    }
+    override get estimatedHeight(): number {
+      return 26
+    }
+    override toDOM(): HTMLElement {
+      const d = document.createElement('div')
+      d.className = `disp-out disp-out-${this.kind}`
+      d.textContent = this.text
+      d.title = this.text
+      d.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        d.classList.toggle('open')
+      })
+      return d
     }
     override ignoreEvent(): boolean {
       return true
@@ -59,15 +93,19 @@
 
   let host: HTMLDivElement
   let view: EditorView | undefined
+  // marks describe a completed run; edits make them stale (dimmed) until the
+  // next setMarks delivers fresh results
+  let stale = $state(false)
 
   const setMarksEffect = StateEffect.define<LineMark[]>()
 
+  // Marks survive edits (mapped through changes) rather than clearing: the
+  // host dims them via the `marks-stale` class until fresh results arrive, so
+  // typing doesn't collapse the layout and re-run flicker stays gentle.
   const markField = StateField.define<DecorationSet>({
     create: () => Decoration.none,
     update(deco, tr) {
       deco = deco.map(tr.changes)
-      // any edit clears result marks (they describe a stale run)
-      if (tr.docChanged) deco = Decoration.none
       for (const e of tr.effects) {
         if (e.is(setMarksEffect)) {
           const builder: { from: number; to?: number; deco: Decoration }[] = []
@@ -87,13 +125,22 @@
                   deco: Decoration.mark({ class: 'disp-error-underline' })
                 })
               }
-            } else {
+            } else if (m.kind !== 'value') {
               builder.push({ from: l.from, deco: Decoration.line({ class: `disp-line-${m.kind}` }) })
             }
             if (m.note)
               builder.push({
                 from: l.to,
                 deco: Decoration.widget({ widget: new NoteWidget(m.note, m.kind), side: 1 })
+              })
+            if (m.block)
+              builder.push({
+                from: l.to,
+                deco: Decoration.widget({
+                  widget: new OutBlockWidget(m.block, m.kind),
+                  side: 2,
+                  block: true
+                })
               })
           }
           deco = Decoration.set(
@@ -144,7 +191,10 @@
           ]),
           ...dispLanguageExtensions,
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) onDocChange?.(u.state.doc.toString())
+            if (u.docChanged) {
+              stale = true
+              onDocChange?.(u.state.doc.toString())
+            }
           })
         ]
       })
@@ -158,10 +208,16 @@
         return view!.state.doc.sliceString(0, line.to)
       },
       setDoc: (d: string) => {
-        view!.dispatch({ changes: { from: 0, to: view!.state.doc.length, insert: d } })
+        // a wholesale replacement (example switch) invalidates all marks
+        view!.dispatch({
+          changes: { from: 0, to: view!.state.doc.length, insert: d },
+          effects: setMarksEffect.of([])
+        })
+        stale = false
       },
       setMarks: (marks) => {
         view!.dispatch({ effects: setMarksEffect.of(marks) })
+        stale = false
       },
       gotoLine: (n: number) => {
         if (n < 1 || n > view!.state.doc.lines) return
@@ -175,7 +231,7 @@
   onDestroy(() => view?.destroy())
 </script>
 
-<div class="editor-host" bind:this={host}></div>
+<div class="editor-host" class:marks-stale={stale} bind:this={host}></div>
 
 <style>
   .editor-host {
@@ -187,5 +243,22 @@
   }
   .editor-host :global(.cm-scroller) {
     overflow: auto;
+  }
+  /* stale results (buffer edited since the run): dim, don't clear — layout
+     stays put and the next setMarks lifts the veil */
+  .editor-host :global(.disp-out),
+  .editor-host :global(.disp-note) {
+    transition: opacity 0.18s ease;
+  }
+  .editor-host.marks-stale :global(.disp-out),
+  .editor-host.marks-stale :global(.disp-note) {
+    opacity: 0.3;
+  }
+  .editor-host.marks-stale :global(.cm-line.disp-line-pass),
+  .editor-host.marks-stale :global(.cm-line.disp-line-fail) {
+    background: transparent;
+  }
+  .editor-host.marks-stale :global(.disp-error-underline) {
+    text-decoration-color: transparent;
   }
 </style>
