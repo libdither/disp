@@ -40,15 +40,18 @@
     this page only draws). Cells live at (x,y,z): <b>bilayer</b> traces have two planes (the
     2.5D chip), <b>full3d</b> traces as many as the run used — upper planes draw offset
     up-right and dimmer. There are no vias and no tucks: a crossing is two wires at
-    different z. Each tick: a ψ heat sweep, then <b>fire</b> every enabled adjacent facing
-    pair, <b>slide</b> one blocking strand out of each stuck walker's way (the
-    excluded-volume move), <b>reel</b> every ψ-demanded producer one cell (eating its own
-    aux drag where it can), <b>shove</b> parked agents down the χ pressure gradient, thin
-    and evaporate crowded wire under χ, then <b>retract</b> U-turn slack to fixpoint.
-    Deterministic: the same term always produces this exact movie. Long traces are
-    stride-thinned (fire frames always kept, events merged). Regenerate or add traces
-    with <b>cargo run --release --bin dump-run &lt;name&gt; [ticks] [bilayer|full3d]
-    [stride]</b> and drop the JSON here.</div>
+    different z. Each tick: ψ heat and tension-survey sweeps, then <b>fire</b> every
+    enabled adjacent facing pair (blocked pairs evict one strand from their room — the
+    fire's right of way), <b>slide</b> one blocking strand out of each stuck walker's way
+    (the excluded-volume move), <b>reel</b> every ψ-demanded producer one cell (eating its
+    own aux drag where it can), <b>flip</b> bends one cell toward annihilating partners
+    the survey found (tension: wires tighten as bend pairs migrate together), <b>shove</b>
+    parked agents down the χ pressure gradient, thin and evaporate crowded wire under χ,
+    then <b>retract</b> U-turn slack to fixpoint — the only step that destroys wire
+    length, fed by the flips. Deterministic: the same term always produces this exact
+    movie. Long traces are stride-thinned (fire frames always kept, events merged).
+    Regenerate or add traces with <b>cargo run --release --bin dump-run &lt;name&gt;
+    [ticks] [bilayer|full3d] [stride]</b> and drop the JSON here.</div>
     <div style="margin:8px 0">
       <button id="play">&#9654; play</button>
       <button id="step">step</button>
@@ -88,13 +91,16 @@
     <div class="note">Correctness is schedule-independent by construction: every transition
     declares its cell footprint (writes machine-checked inside it) and preserves the
     projection onto the shadow interaction net. Liveness is measured, never assumed. The
-    schedule now carries two strictly neighbor-local fields: ψ demand (the gold hot bit,
-    one cell per tick; it replaced the unbounded wire trace as reel's gate) and χ
-    pressure (Jacobi-relaxed, pumped only by real frustration; it shoves parked agents
-    and evaporates wire mats). With the fields plus truncation reels (walks eat their own
-    drag), every embedded trace reaches NF, including selF and chain3, the old
-    fire-space and trail-mat wedges. The corpus residue (bilayer seam knots, the deepest
-    full3d spines) is LOCAL_CA_DESIGN.md §13's remaining liveness question.</div>
+    schedule carries three strictly neighbor-local signals: ψ demand (the gold hot bit,
+    one cell per tick; it replaced the unbounded wire trace as reel's gate), the tension
+    survey (each strand learns which directions its wire travels beyond each side; bends
+    flip toward annihilating partners and retract cashes them out, so wires finish near
+    chord length — the chain4 trace used to freeze holding 774 strands and now completes
+    holding 5), and χ pressure (Jacobi-relaxed, pumped only by real frustration; it
+    shoves parked agents, evaporates wire mats, and fences tension out of contested
+    rooms). Every embedded full3d trace reaches NF; the bilayer presets left STUCK on
+    purpose show the no-basement residue. The corpus residue is LOCAL_CA_DESIGN.md §13's
+    remaining liveness question.</div>
   </div>
 </div>
 <script>
@@ -377,6 +383,8 @@ function hud() {
     : e.t === "reel" ? `<div>reel sid ${e.sid}: (${e.from.join(",")}) → (${e.to.join(",")})</div>`
     : e.t === "retract" ? `<div>retract U-turn @ (${e.a.join(",")})·(${e.b.join(",")})</div>`
     : e.t === "slide" ? `<div>slide strand out of (${e.at.join(",")})</div>`
+    : e.t === "flip" ? `<div>flip bend (${e.from.join(",")}) → (${e.to.join(",")}) (tension)</div>`
+    : e.t === "shove" ? `<div>shove agent (${e.from.join(",")}) → (${e.to.join(",")}) (pressure)</div>`
     : `<div>${e.t}</div>`;
   ev.innerHTML = f.events.length === 0 ? '<div>(no transitions this tick)</div>' : f.events.map(fmt).join("");
   highlightRules(f);

@@ -22,8 +22,11 @@
 //! and only here), and `check_projection` is the executable correctness spec
 //! (EMBEDDING_THEOREM.md §4).
 //!
-//! State budget stays §3-honest and got smaller: agent = tag(4b) + 3 faces(3b each);
-//! wire = ≤3 strands × 6b. No layer bits, no tuck slots.
+//! State budget (§3-honest): agent = tag(4b) + 3 faces(3b each); strand = 6b faces +
+//! the signals riding on it — ψ hot (1b) and the tension survey (2 × 6b presence bits
+//! + 2 valid bits; the Option encodes validity here). No layer bits, no tuck slots.
+//! The survey is the fattest signal; its presence-bit form IS the compressed encoding
+//! (the rust prototype needs nothing richer).
 
 use crate::net::Net;
 use crate::rules::Tag;
@@ -92,17 +95,23 @@ impl Topo {
 
 /// A wire element in one cell: passes through the cell between two distinct faces.
 /// `hot` is ψ, the demand bit: true once the wire this strand belongs to is known to end
-/// at a live consumer's principal. Deliberately EXCLUDED from equality: a strand's
-/// identity is its geometry; heat is state riding on it.
+/// at a live consumer's principal. `survey` is the tension census: for each side (index
+/// 0 = beyond face `a`, 1 = beyond face `b`), the SET of travel directions (one bit per
+/// Dir, outbound orientation) used by the rest of this wire on that side — None until the
+/// sweep from that side's endpoint has reached us, and reset by every geometric write
+/// (`Strand::new`), so staleness dies with its cause. Both signals are deliberately
+/// EXCLUDED from equality: a strand's identity is its geometry; signals ride on it.
 #[derive(Clone, Copy, Debug)]
-pub struct Strand { pub a: He, pub b: He, pub hot: bool }
+pub struct Strand { pub a: He, pub b: He, pub hot: bool, pub survey: [Option<u8>; 2] }
 impl PartialEq for Strand { fn eq(&self, o: &Strand) -> bool { self.a == o.a && self.b == o.b } }
 impl Eq for Strand {}
 impl Strand {
-    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct faces"); Strand { a, b, hot: false } }
+    pub fn new(a: He, b: He) -> Strand { assert!(a != b, "strand needs two distinct faces"); Strand { a, b, hot: false, survey: [None; 2] } }
     pub fn contains(self, h: He) -> bool { self.a == h || self.b == h }
     pub fn other(self, h: He) -> He { if self.a == h { self.b } else { self.a } }
     pub fn hes(self) -> [He; 2] { [self.a, self.b] }
+    /// The survey slot for the side beyond face `h` (h must be one of the two faces).
+    pub fn side_of(self, h: He) -> usize { if self.a == h { 0 } else { 1 } }
 }
 
 #[derive(Clone, Debug)]
@@ -340,6 +349,45 @@ impl Grid {
         for (p, s) in newly {
             if let Some(Cell::Wire(w)) = self.cells.get_mut(&p) {
                 if let Some(slot) = w.strands.iter_mut().flatten().find(|t| **t == s) { slot.hot = true; }
+            }
+        }
+        n
+    }
+
+    /// The tension SURVEY, one sweep: each strand re-derives, per side, the set of travel
+    /// directions the rest of its wire uses beyond that side (a bit per Dir, outbound
+    /// orientation). An adjacent agent port is the base case (empty set, valid); a chain
+    /// neighbor contributes its far-side survey plus its own outbound step; anything else
+    /// (seed, dangling half mid-unfold) is invalid and blocks propagation. Strictly
+    /// neighbor-local, collect-then-apply, one cell per tick from each endpoint; on
+    /// static geometry it converges in wire-length steps and then reports zero changes
+    /// (so counting it as progress cannot mask a stall). Non-monotone by design: any
+    /// geometric write resets the written strands (Strand::new) and corrections simply
+    /// radiate outward on later sweeps.
+    pub fn survey_step(&mut self) -> usize {
+        let mut next: Vec<(Pos, Strand, [Option<u8>; 2])> = vec![];
+        for (p, c) in &self.cells {
+            let Cell::Wire(w) = c else { continue };
+            for s in w.iter() {
+                let mut sv = [None, None];
+                for (i, f) in [s.a, s.b].into_iter().enumerate() {
+                    let q = step(*p, f);
+                    sv[i] = match self.cells.get(&q) {
+                        Some(Cell::Agent(ag)) if ag.port_at(f.opp()).is_some() => Some(0),
+                        Some(Cell::Wire(wq)) => wq.with_he(f.opp()).and_then(|t| {
+                            let h = t.other(f.opp());
+                            t.survey[t.side_of(h)].map(|bits| bits | (1u8 << (h as u8)))
+                        }),
+                        _ => None,
+                    };
+                }
+                if sv != s.survey { next.push((*p, s, sv)); }
+            }
+        }
+        let n = next.len();
+        for (p, s, sv) in next {
+            if let Some(Cell::Wire(w)) = self.cells.get_mut(&p) {
+                if let Some(slot) = w.strands.iter_mut().flatten().find(|t| **t == s) { slot.survey = sv; }
             }
         }
         n

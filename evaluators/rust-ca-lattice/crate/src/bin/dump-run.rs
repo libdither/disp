@@ -79,7 +79,7 @@ fn named(which: &str) -> (Term, &'static str) {
         "chain3" => (oracle::chain_k(3),
             "a deeper K spine: several concurrent walkers. Completes on full3d only once walks eat their own drag (truncation re-anchors); before that fix, the walkers paved the basement with trail mats and froze. The trail-economy exhibit."),
         "chain4" => (oracle::chain_k(4),
-            "the residue frontier: a four-deep K spine. chain1 through chain3 complete on full3d; this one still pockets. Watch χ (red glow) build around the knot while slides and shoves churn without ever opening a fire; the shadow-progress drought calls the stall."),
+            "the deep-spine class, unlocked by TENSION: before the survey it froze holding 774 strands of slack; now bends migrate (flips), U-turns cancel (retract), and the run finishes holding 5. Watch wires visibly tighten behind the walkers."),
         "ksimple" => (ap(ap(oracle::k(), Term::L), s(Term::L)),
             "K discards an argument: T1·△ answers with b and mints an ε; watch the value walk INTO the eraser (Eps·S, Eps·△) — GC one cell at a time."),
         "kargs" => (ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
@@ -172,6 +172,9 @@ fn main() {
                 }
                 Event::Shove { from, to } => {
                     write!(ev, "{{\"t\":\"shove\",\"from\":{},\"to\":{}}}", pos_json(*from), pos_json(*to)).unwrap();
+                }
+                Event::Flip { from, to } => {
+                    write!(ev, "{{\"t\":\"flip\",\"from\":{},\"to\":{}}}", pos_json(*from), pos_json(*to)).unwrap();
                 }
             }
         }

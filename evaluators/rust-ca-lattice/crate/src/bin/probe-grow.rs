@@ -7,6 +7,7 @@ fn main() {
     let term = match which.as_str() {
         "chain2" => oracle::chain_k(2),
         "chain3" => oracle::chain_k(3),
+        "chain4" => oracle::chain_k(4),
         "kargs" => ap(ap(oracle::k(), f2(Term::L, s(Term::L))), s(s(Term::L))),
         "selF" => ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)),
         _ => panic!(),
@@ -17,9 +18,9 @@ fn main() {
         Some("grow") => FireMode::Grow,
         _ => FireMode::GrowThenSearch,
     };
-    let (mut fires, mut docks, mut grows, mut shoves, mut slides) = (0u32, 0u32, 0u32, 0u32, 0u32);
+    let (mut fires, mut docks, mut grows, mut shoves, mut slides, mut flips, mut retracts) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     let mut zero = 0;
-    for t in 0..3000 {
+    for t in 0..6000 {
         if sim.shadow.all_active_pairs().is_empty() && !sim.grid.has_seeds() { println!("DONE tick {t}"); break; }
         let n = sim.tick(CheckLevel::Tick);
         for e in &sim.events {
@@ -29,12 +30,15 @@ fn main() {
                 Event::Grow { .. } => grows += 1,
                 Event::Shove { .. } => shoves += 1,
                 Event::Slide { .. } => slides += 1,
+                Event::Flip { .. } => flips += 1,
+                Event::Retract { .. } => retracts += 1,
                 _ => {}
             }
         }
         if n == 0 { zero += 1; if zero > 60 { println!("STUCK tick {t}"); break; } } else { zero = 0; }
     }
-    println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides}");
+    println!("fires={fires} docks={docks} grow_steps={grows} shoves={shoves} slides={slides} flips={flips} retracts={retracts}");
+    println!("total strands now = {}", sim.grid.total_strands());
     println!("chi cells={} max={:?} reserved={} seeds={}",
         sim.grid.chi.len(), sim.grid.chi.values().max(), sim.grid.reserved.len(), sim.grid.seed_count);
     // autopsy: every hot-blocked producer and its neighborhood

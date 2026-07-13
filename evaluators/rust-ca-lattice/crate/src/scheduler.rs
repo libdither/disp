@@ -10,9 +10,10 @@ use crate::lattice::{embed, step, Grid, Pos, Topo};
 use crate::net::Net;
 use crate::oracle::Term;
 use crate::transitions::{
-    apply_fire, apply_grow_dock, apply_reel, apply_retract, apply_shove, apply_slide,
-    grow_step, plan_fire, plan_fire_stamp, plan_grow_dock, plan_reel, plan_retract,
-    plan_shove, plan_slide, plan_slide_ex, reel_blocked, DockPlan, FirePlan, GrowStep,
+    apply_fire, apply_flip, apply_grow_dock, apply_reel, apply_retract, apply_shove,
+    apply_slide, grow_step, plan_fire, plan_fire_stamp, plan_flip, plan_grow_dock,
+    plan_reel, plan_retract, plan_shove, plan_slide, plan_slide_ex, reel_blocked,
+    DockPlan, FirePlan, GrowStep,
 };
 
 /// Which fire planner the schedule uses. `Search` is the in-board backtracking planner;
@@ -64,6 +65,7 @@ pub enum Event {
     Grow { at: Pos },
     Abort { at: Pos },
     Shove { from: Pos, to: Pos },
+    Flip { from: Pos, to: Pos },
 }
 
 pub struct Sim {
@@ -114,6 +116,10 @@ impl Sim {
         // ψ: one demand sweep (monotone, so heated strands count as progress and the
         // phase provably quiesces once every live wire is hot)
         applied += self.grid.heat_step();
+        // the tension survey: converging sweeps count as progress (they quiesce on
+        // static geometry), which keeps the quiet-streak detector honest while fronts
+        // are still traveling long wires
+        applied += self.grid.survey_step();
         // χ sources collected as the tick runs; the field updates at the end
         let mut pumps: Vec<Pos> = vec![];
         loop {
@@ -147,6 +153,44 @@ impl Sim {
                 }
             }
             if !fired { break; }
+        }
+        // FIRE RIGHT OF WAY: an adjacent, facing, rule-licensed pair that no planner can
+        // place is the most demanded thing in the system, and it previously had no
+        // eviction mechanism at all (walkers did — the CLEAR phase). Each stuck pair
+        // gets one licensed eviction per tick: slide one strand out of the prime ring
+        // around the dying cells, hot strands included — a wire can be hot here purely
+        // because a consumer waits at one end for a value that only this fire creates
+        // (a circular wait no anonymous mechanism can break, since hot is immune to the
+        // field). The pair also pumps while unfireable, so χ keeps tension out of the
+        // room and thins the cold clutter.
+        for (cpos, a) in self.grid.agents().map(|(p, a)| (p, a.clone())).collect::<Vec<_>>() {
+            if !a.tag.is_consumer() || a.nascent { continue; }
+            let Some(d) = a.faces[0] else { continue };
+            let ppos = step(cpos, d);
+            let Some(b) = self.grid.agent(ppos) else { continue };
+            if !b.tag.is_producer() || b.nascent || b.faces[0] != Some(d.opp()) { continue; }
+            if self.plan_fire_mode(cpos).is_some() { continue; }
+            pumps.push(cpos);
+            pumps.push(ppos);
+            let mut ring: Vec<Pos> = vec![];
+            for base in [cpos, ppos] {
+                for dd in crate::lattice::DIRS {
+                    let c = step(base, dd);
+                    if c != cpos && c != ppos && !ring.contains(&c) { ring.push(c); }
+                }
+            }
+            'evict: for c in ring {
+                let Some(w) = self.grid.wire(c) else { continue };
+                for s in w.iter().collect::<Vec<_>>() {
+                    if let Some(plan) = plan_slide_ex(&self.grid, c, s, &[], false, true) {
+                        self.events.push(Event::Slide { at: plan.p });
+                        apply_slide(&mut self.grid, &plan);
+                        applied += 1;
+                        if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
+                        break 'evict;
+                    }
+                }
+            }
         }
         for d in self.grid.seed_drivers() {
             match grow_step(&mut self.grid, &mut self.shadow, d) {
@@ -247,6 +291,22 @@ impl Sim {
                             }
                         }
                     }
+                }
+            }
+        }
+        // TENSION: survey-guided bend-shifts — the bond's own upkeep, so it outranks the
+        // anonymous field below and yields to everything demanded above. Every wire is
+        // eligible, hot included: shortening the demanded wire is the most valuable
+        // shortening there is, and the demand-licensed phases already ran this tick.
+        for p in self.grid.wire_positions() {
+            let Some(w) = self.grid.wire(p) else { continue };
+            for s in w.iter().collect::<Vec<_>>() {
+                if let Some(plan) = plan_flip(&self.grid, p, s) {
+                    self.events.push(Event::Flip { from: plan.p, to: plan.npos });
+                    apply_flip(&mut self.grid, &plan);
+                    applied += 1;
+                    if check == CheckLevel::Every && !self.grid.has_seeds() { self.grid.check_projection(&self.shadow); }
+                    break; // one shift per cell per tick
                 }
             }
         }

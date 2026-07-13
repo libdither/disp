@@ -405,12 +405,21 @@ Cheap-first, each rung gating the next:
    principals and spread one cell per tick along wire continuations (it replaced the one
    unbounded read, the whole-wire trace, at zero measured liveness cost), and χ
    pressure is a per-cell scalar under a Jacobi relax with leak, pumped only by real
-   frustration (failed clears, hot-but-unplannable walkers, waiting seeds). Under χ,
-   parked agents shove downhill, crowded cells thin, and count-1 mats evaporate strictly
-   downhill. Measured on the 400-term corpus with the fields: full3d 326 to NF (201
-   before), bilayer 223 (179); every named pin completes on full3d, including selF,
-   disp, the chain class, and the deep-copy share; grow-only becomes bilayer's best mode
-   (238: patience wins on the congested topology once fields clear its squatters).
+   frustration (failed clears, hot-but-unplannable walkers, unfireable adjacent pairs,
+   waiting seeds). Under χ, parked agents shove downhill, crowded cells thin, and
+   count-1 mats evaporate strictly downhill. TENSION (§8.2's straighten made real) rides
+   the wires as a second bonded signal: each strand learns, one cell per tick per side,
+   which travel directions its wire uses beyond that side; bends flip toward annihilating
+   partners under a no-harm exclusive gate, U-turn retraction cashes the pairs out, and
+   wires finish at chord scale (the deep-spine stall that froze holding 774 strands now
+   completes holding 5). Two jurisdiction rules make the signals compose instead of
+   fight: tension never moves wire into χ-positive cells (a slide and a flip are inverse
+   operations; without the boundary they churn one-to-one forever), and blocked FIRES
+   get licensed eviction like blocked walkers (a wire can be hot purely for a value only
+   that fire creates — a circular wait nothing anonymous can break). Measured on the
+   400-term corpus with all of it: full3d 366 to NF (201 bare), bilayer 271 (179);
+   every named pin completes on full3d including chain4, and chain2 is the first chain
+   to complete on bilayer; transport falls 30 to 55 percent on the named set.
    Substrate lessons folded back into this doc, each found by measurement: walkers move
    only when a fire awaits (parked values on crossings otherwise deadlock the crossed
    wires); coexistence states were a symptom of the missing dimension (with real z,

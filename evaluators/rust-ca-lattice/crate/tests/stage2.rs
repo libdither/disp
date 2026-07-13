@@ -55,6 +55,11 @@ fn pins_must_complete() {
     check_pin(ap(f2(f2(Term::L, Term::L), Term::L), f2(Term::L, Term::L)), t3, true); // selF end to end
     check_pin(ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)), t3, true); // share: δ deep-copies a fork
     check_pin(oracle::disp_t(), t3, true); // A → T1 → Sel end to end
+    // the tension unlock: the deep-spine class (was the 774-strand frozen exhibit;
+    // finishes at chord scale once flips feed retract)
+    check_pin(oracle::chain_k(4), t3, true);
+    // and chain2 on BILAYER, the first chain to complete on the no-basement topology
+    check_pin(oracle::chain_k(2), Topo::Bilayer, true);
 }
 
 #[test]
@@ -112,12 +117,12 @@ fn differential(topo: Topo) {
     // must catch every non-completing run long before the budget binds.
     assert_eq!(cap, 0, "tick budget should never bind on this corpus (stall detection covers churn)");
     // Liveness is a measurement; only catastrophic regressions fail the suite. The floors
-    // pin the measured baselines with slack (bilayer 206/400, full3d 280/400 under the
-    // sequential schedule with the ψ/χ fields).
+    // pin the measured baselines with slack (bilayer 271/400, full3d 366/400 under the
+    // sequential schedule with ψ/χ and the tension survey).
     let denom = pass + stuck;
     let floor_ok = match topo {
-        Topo::Bilayer => pass * 20 >= denom * 9, // ≥45%
-        Topo::Full3D => pass * 5 >= denom * 3,   // ≥60%
+        Topo::Bilayer => pass * 5 >= denom * 3, // ≥60%
+        Topo::Full3D => pass * 5 >= denom * 4,  // ≥80%
     };
     assert!(denom > 0 && floor_ok, "liveness collapsed on {}: {pass}/{denom}", topo.name());
 }
@@ -151,6 +156,54 @@ fn differential_fire_modes() {
             println!("stage2 [{} · {label}]: {pass} pass, {stuck} stuck, {cap} tick-capped, {skip} skipped", topo.name());
             assert_eq!(cap, 0, "tick budget bound on {} ({label}) — stall detection should cover churn", topo.name());
             assert!(pass > 0, "no term completed on {} ({label})", topo.name());
+        }
+    }
+}
+
+#[test]
+fn survey_oracle() {
+    // The tension survey must converge, on static geometry, to the whole-wire truth:
+    // for each strand side, exactly the set of outbound travel directions between this
+    // strand and the far port (None where the chain does not reach a port). Checked at
+    // load and again mid-run, on both topologies — the flip rule's inputs are only as
+    // sound as this census.
+    use rust_ca_lattice::lattice::{step, Cell, Pos, Strand};
+    for topo in TOPOS {
+        for (label, term, ticks) in [
+            ("load", ap(f2(s(Term::L), Term::L), f2(Term::L, Term::L)), 0u32),
+            ("mid-run", oracle::chain_k(3), 60),
+        ] {
+            let mut sim = Sim::load(&term, topo);
+            for _ in 0..ticks {
+                if sim.shadow.all_active_pairs().is_empty() { break; }
+                sim.tick(CheckLevel::Tick);
+            }
+            for _ in 0..5_000 { if sim.grid.survey_step() == 0 { break; } }
+            assert_eq!(sim.grid.survey_step(), 0, "survey did not converge ({label}, {})", topo.name());
+            let strands: Vec<(Pos, Strand)> = sim.grid.cells.iter().filter_map(|(p, c)| match c {
+                Cell::Wire(w) => Some(w.iter().map(|s| (*p, s)).collect::<Vec<_>>()),
+                _ => None,
+            }).flatten().collect();
+            for (p, st) in strands {
+                for (i, f) in [st.a, st.b].into_iter().enumerate() {
+                    let (mut bits, mut cur, mut face) = (0u8, p, f);
+                    let mut ok = false;
+                    for _ in 0..100_000 {
+                        let q = step(cur, face);
+                        match sim.grid.cells.get(&q) {
+                            Some(Cell::Agent(ag)) => { ok = ag.port_at(face.opp()).is_some(); break; }
+                            Some(Cell::Wire(w)) => match w.with_he(face.opp()) {
+                                Some(t) => { let h = t.other(face.opp()); bits |= 1 << (h as u8); cur = q; face = h; }
+                                None => break,
+                            },
+                            _ => break,
+                        }
+                    }
+                    let want = if ok { Some(bits) } else { None };
+                    assert_eq!(st.survey[i], want,
+                        "survey mismatch at {p:?} side {i} ({label}, {})", topo.name());
+                }
+            }
         }
     }
 }

@@ -1124,6 +1124,120 @@ pub fn apply_slide(grid: &mut Grid, plan: &SlidePlan) {
     for (c, s) in &plan.strands { guard(*c); grid.add_strand(*c, *s); }
 }
 
+/// TENSION bend-shift: the survey-guided kink-flip, the transposition step of discrete
+/// curve shortening. A bend's two word-letters are opp(a) then b (reading across the
+/// cell); the flip relocates the corner to the rectangle's fourth cell, which swaps the
+/// letters — migrating each one cell toward an annihilating partner the survey shows
+/// beyond one side. When opposite letters become adjacent they are a U-turn and RETRACT
+/// destroys them: flips are length-neutral and feed retract, which is the only mover of
+/// length. Applies to every wire, hot included (the demanded wire is where shortening
+/// pays most); demand-licensed phases already ran this tick, so a flip never races a
+/// plan. Projects to identity. The moved strand and both repointed neighbors reset their
+/// surveys (Strand::new), which is the built-in cooldown: a fresh strand cannot flip
+/// until the sweeps re-reach it.
+#[derive(Debug)]
+pub struct FlipPlan {
+    pub p: Pos,
+    pub s: Strand,
+    pub npos: Pos,
+    pub qa: Pos,
+    pub qb: Pos,
+    pub footprint: BTreeSet<Pos>,
+}
+
+pub fn plan_flip(grid: &Grid, p: Pos, s0: Strand) -> Option<FlipPlan> {
+    // Re-read the live strand: the caller's copy may predate earlier flips this tick.
+    let s = grid.wire(p)?.iter().find(|t| *t == s0)?;
+    if s.b == s.a.opp() { return None; } // straight segment: nothing to shift
+    // The gate. My two word-letters are X = opp(a) (earlier) and Y = b (later); the swap
+    // moves X later and Y earlier. A letter WANTS a side when its annihilating partner
+    // exists on that side EXCLUSIVELY (partners on both sides are ambiguous, and chasing
+    // them oscillates); the swap fires only when it strictly helps one letter and does
+    // not hurt the other (two letters wanting the same side would trade places forever —
+    // the trailing one waits, convoy-style). This makes each letter's motion one-way
+    // between cancellation events, so total flips are bounded and the dance cannot cycle.
+    // Orientation note: stored sides read outbound, so earlier-presence of canonical
+    // direction d appears in `ba` as opp(d); later-presence in `bb` as d itself.
+    let (ba, bb) = (s.survey[0]?, s.survey[1]?);
+    let bit = |d: He| 1u8 << (d as u8);
+    let x_later = bb & bit(s.a) != 0 && ba & bit(s.a.opp()) == 0;
+    let x_earlier = ba & bit(s.a.opp()) != 0 && bb & bit(s.a) == 0;
+    let y_earlier = ba & bit(s.b) != 0 && bb & bit(s.b.opp()) == 0;
+    let y_later = bb & bit(s.b.opp()) != 0 && ba & bit(s.b) == 0;
+    if !((x_later && !y_later) || (y_earlier && !x_earlier)) { return None; }
+    let (qa, qb) = (step(p, s.a), step(p, s.b));
+    let npos = step(qa, s.b); // == step(qb, s.a): the rectangle's fourth corner
+    if !grid.topo.in_bounds(npos) { return None; }
+    if [p, npos, qa, qb].iter().any(|c| grid.reserved.contains_key(c)) { return None; }
+    // Jurisdiction: a slide and a flip are INVERSE operations (a demanded slide detours
+    // wire around a contested cell, adding the very bend pair tension deletes), so
+    // without a boundary the two churn forever — measured: 17k flips vs 17k slides,
+    // 1:1, around one frustrated pair. Pressure IS the boundary: while χ marks a region
+    // spoken for, tension never moves wire into it; when the jam resolves and the field
+    // decays, tension reclaims the leftover detours. Moving OUT of a pressurized cell
+    // stays legal (that direction agrees with the field).
+    if grid.chi_at(npos) != 0 { return None; }
+    // The target cell must take the strand (both its faces free, room under the cap).
+    let (nf_a, nf_b) = (s.b.opp(), s.a.opp()); // npos faces toward qa and qb
+    match grid.cells.get(&npos) {
+        None => {}
+        Some(Cell::Wire(wn)) => {
+            if wn.count() >= WIRE_CAP { return None; }
+            let used = wn.used_hes();
+            if used.contains(&nf_a) || used.contains(&nf_b) { return None; }
+        }
+        _ => return None, // agent or seed sits on the corner
+    }
+    // Both chain neighbors must accept the repoint: the new face free, no seeds, no
+    // half-built complexes, and (parity guard) the old attachment actually present.
+    for (q, from, to) in [(qa, s.a.opp(), s.b), (qb, s.b.opp(), s.a)] {
+        match grid.cells.get(&q) {
+            None | Some(Cell::Seed(_)) => return None,
+            Some(Cell::Agent(ag)) => {
+                if ag.nascent || ag.port_at(from).is_none() || ag.used_hes().contains(&to) { return None; }
+            }
+            Some(Cell::Wire(wq)) => {
+                if wq.with_he(from).is_none() || wq.used_hes().contains(&to) { return None; }
+            }
+        }
+    }
+    let footprint = [p, npos, qa, qb].into_iter().collect();
+    Some(FlipPlan { p, s, npos, qa, qb, footprint })
+}
+
+/// Repoint an attachment like `rewire_face`, but PRESERVE the ψ hot bit on a repointed
+/// strand (the survey still resets via Strand::new). Sound for moves that keep the
+/// wire's endpoints — a flip never changes whose wire this is, so cooling it would be a
+/// self-inflicted demand blackout: an oscillating bend on a demanded wire was measured
+/// to starve its own walker (fork-bilayer wedged) when flips reset heat.
+fn repoint_keep_hot(grid: &mut Grid, p: Pos, from: He, to: He) {
+    match grid.cells.get_mut(&p) {
+        Some(Cell::Agent(a)) => {
+            let i = a.port_at(from).unwrap_or_else(|| panic!("no port at {from:?} on {p:?}"));
+            a.faces[i] = Some(to);
+        }
+        Some(Cell::Wire(w)) => {
+            let slot = w.strands.iter_mut().flatten().find(|s| s.contains(from))
+                .unwrap_or_else(|| panic!("no strand half {from:?} at {p:?}"));
+            let hot = slot.hot;
+            *slot = if slot.a == from { Strand::new(to, slot.b) } else { Strand::new(slot.a, to) };
+            slot.hot = hot;
+        }
+        _ => panic!("repoint on non-attachment cell {p:?}"),
+    }
+}
+
+pub fn apply_flip(grid: &mut Grid, plan: &FlipPlan) {
+    let guard = |c: Pos| assert!(plan.footprint.contains(&c), "write outside footprint: {c:?}");
+    let s = plan.s;
+    guard(plan.p); grid.remove_strand(plan.p, s);
+    guard(plan.qa); repoint_keep_hot(grid, plan.qa, s.a.opp(), s.b);
+    guard(plan.qb); repoint_keep_hot(grid, plan.qb, s.b.opp(), s.a);
+    let mut ns = Strand::new(s.b.opp(), s.a.opp());
+    ns.hot = s.hot;
+    guard(plan.npos); grid.add_strand(plan.npos, ns);
+}
+
 /// Is this producer a demanded walker blocked by a shared cell on its principal?
 /// Returns the blocked cell and the foreign strands there (the CLEAR phase's targets).
 pub fn reel_blocked(grid: &Grid, apos: Pos) -> Option<(Pos, Vec<Strand>)> {
