@@ -52,6 +52,9 @@ export type WorkerRequest =
   | { id: number; type: 'read'; path: string }
   | { id: number; type: 'write'; path: string; text: string }
   | { id: number; type: 'rm'; path: string }
+  // jump-to-definition: where is `name` defined, as seen from fromPath?
+  // fromText is the (possibly unsaved) buffer content of fromPath.
+  | { id: number; type: 'def'; name: string; fromPath: string; fromText: string }
   | { id: number; type: 'reset' }
 
 // Streaming progress: one per elaborated item (defs, tests, opens — including
@@ -109,4 +112,5 @@ export type WorkerResponse =
   | { type: 'raw'; id: number; tree: RawTree | null }
   | { type: 'ls'; id: number; paths: string[] }
   | { type: 'read'; id: number; text: string | null }
+  | { type: 'def'; id: number; site: { path: string; line: number } | null }
   | { type: 'fatal'; id: number; error: string }

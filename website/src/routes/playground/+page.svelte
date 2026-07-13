@@ -114,6 +114,19 @@
   }
   const onOpenPath = (rel: string) => void openFile(resolvePath(rel, activeTab().path))
 
+  // jump-to-definition: the worker BFS-parses the buffer's open graph
+  async function jumpDef(name: string) {
+    const site = await disp.def(name, activeTab().path, editorApi?.getDoc() ?? currentDoc)
+    if (!site) {
+      toast(`no definition found for '${name}'`, 'warn')
+      return
+    }
+    if (site.path !== activeTab().path) await openFile(site.path)
+    editorApi?.gotoLine(site.line)
+  }
+  const resolveIdent = (name: string) =>
+    disp.def(name, activeTab().path, editorApi?.getDoc() ?? currentDoc).then((s) => s !== null)
+
   // ---- the file browser (the worker's library) -----------------------------
   // USER FILES are real library entries: created/edited files write through
   // to the worker's vfs (so `use "./name.disp"` works from any buffer) and
@@ -1090,6 +1103,8 @@
         {onVisualizeValue}
         {onValueFoldChange}
         {onOpenPath}
+        onJumpDef={(n) => void jumpDef(n)}
+        onResolveIdent={resolveIdent}
         api={(a) => (editorApi = a)}
       />
     </div>

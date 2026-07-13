@@ -145,6 +145,11 @@
     // ctrl/cmd-click on a "….disp" string literal reports it (jump-to-file);
     // the host resolves it against its notion of the current file
     onOpenPath?: (path: string) => void
+    // ctrl/cmd-click on an identifier: jump to its definition
+    onJumpDef?: (name: string) => void
+    // does this identifier resolve? (the hover underline only shows for
+    // names that actually go somewhere — VS Code honesty)
+    onResolveIdent?: (name: string) => Promise<boolean>
     api?: (a: EditorApi) => void
   }
 
@@ -156,7 +161,7 @@
     gotoLine(line: number): void
   }
 
-  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, onOpenPath, api }: Props = $props()
+  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, onOpenPath, onJumpDef, onResolveIdent, api }: Props = $props()
 
   let host: HTMLDivElement
   let view: EditorView | undefined
@@ -184,17 +189,35 @@
     provide: (f) => EditorView.decorations.from(f)
   })
 
-  // the one link detector, shared by hover and click
-  function linkAt(v: EditorView, x: number, y: number): { from: number; to: number; path: string } | null {
+  // the one link detector, shared by hover and click: import strings jump to
+  // files, identifiers jump to definitions
+  type LinkHit =
+    | { kind: 'path'; from: number; to: number; path: string }
+    | { kind: 'ident'; from: number; to: number; name: string }
+  const LINK_KEYWORDS = new Set(['use', 'open', 'match', 'if', 'then', 'else', 'raw', 'given', 'let', 'test', 't'])
+  function linkAt(v: EditorView, x: number, y: number): LinkHit | null {
     const pos = v.posAtCoords({ x, y })
     if (pos == null) return null
     const line = v.state.doc.lineAt(pos)
+    const text = line.text
+    // strings first (a hit inside a non-.disp string is NOT an identifier)
     const re = /"([^"]*)"/g
     let m: RegExpExecArray | null
-    while ((m = re.exec(line.text))) {
+    while ((m = re.exec(text))) {
       const from = line.from + m.index
       const to = from + m[0].length
-      if (pos >= from && pos <= to) return m[1].endsWith('.disp') ? { from, to, path: m[1] } : null
+      if (pos >= from && pos <= to) return m[1].endsWith('.disp') ? { kind: 'path', from, to, path: m[1] } : null
+    }
+    const cmt = text.indexOf('//')
+    const idRe = /[A-Za-z_][A-Za-z0-9_']*/g
+    while ((m = idRe.exec(text))) {
+      const s = m.index
+      const e = s + m[0].length
+      if (s > pos - line.from) break
+      if (pos - line.from < s || pos - line.from > e) continue
+      if (cmt >= 0 && s > cmt) return null // commented out
+      if (LINK_KEYWORDS.has(m[0])) return null
+      return { kind: 'ident', from: line.from + s, to: line.from + e, name: m[0] }
     }
     return null
   }
@@ -202,10 +225,26 @@
   let modHeld = false
   let lastMouse: { x: number; y: number } | null = null
   let shownLink: { from: number; to: number } | null = null
+  // identifier resolvability, probed once per name (cleared on any edit —
+  // the answer depends on the buffer's defs and opens)
+  const identKnown = new Map<string, boolean>()
   function refreshLink() {
-    if (!view || !onOpenPath) return
+    if (!view) return
     const l = modHeld && lastMouse ? linkAt(view, lastMouse.x, lastMouse.y) : null
-    const next = l ? { from: l.from, to: l.to } : null
+    let next: { from: number; to: number } | null = null
+    if (l?.kind === 'path' && onOpenPath) {
+      next = { from: l.from, to: l.to }
+    } else if (l?.kind === 'ident' && onJumpDef) {
+      const known = identKnown.get(l.name)
+      if (known === true) next = { from: l.from, to: l.to }
+      else if (known === undefined && onResolveIdent) {
+        identKnown.set(l.name, false) // pending — no repeat probes
+        void onResolveIdent(l.name).then((ok) => {
+          identKnown.set(l.name, ok)
+          if (ok) refreshLink()
+        })
+      }
+    }
     if (next?.from === shownLink?.from && next?.to === shownLink?.to) return
     shownLink = next
     view.dispatch({ effects: setLinkRange.of(next) })
@@ -315,12 +354,19 @@
           linkField,
           EditorView.domEventHandlers({
             mousedown: (e, v) => {
-              if (!(e.ctrlKey || e.metaKey) || e.button !== 0 || !onOpenPath) return false
+              if (!(e.ctrlKey || e.metaKey) || e.button !== 0) return false
               const l = linkAt(v, e.clientX, e.clientY)
-              if (!l) return false
-              e.preventDefault()
-              onOpenPath(l.path)
-              return true
+              if (l?.kind === 'path' && onOpenPath) {
+                e.preventDefault()
+                onOpenPath(l.path)
+                return true
+              }
+              if (l?.kind === 'ident' && onJumpDef) {
+                e.preventDefault()
+                onJumpDef(l.name)
+                return true
+              }
+              return false
             },
             mousemove: (e) => {
               lastMouse = { x: e.clientX, y: e.clientY }
@@ -338,6 +384,7 @@
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {
               stale = true
+              identKnown.clear() // resolvability follows the buffer's defs/opens
               onDocChange?.(u.state.doc.toString())
             }
           })

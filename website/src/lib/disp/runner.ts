@@ -4,6 +4,7 @@
 // per-item progress).
 
 import { parseProgram, type Decl, type ParseItemStats } from '../../../../src/compile.ts'
+import { parseItems, type RecMember, type Expr } from '../../../../src/parse.ts'
 import { moduleCacheBySession, verifiedModules, verifiedFilledBySession } from '../../../../src/elab/state.ts'
 import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
@@ -101,6 +102,74 @@ export class DispRunner {
     for (const k of [...verifiedModules]) if (stale(k)) verifiedModules.delete(k)
     const vf = verifiedFilledBySession.get(this.#session as unknown as Session<Tree>)
     if (vf) for (const k of [...vf]) if (stale(k)) vf.delete(k)
+  }
+
+  // Jump-to-definition, purely syntactic: parse the origin buffer, then BFS
+  // its `use` graph (each file's vfs text) looking for a top-level definition
+  // of `name`. Opens process in REVERSE order per file (a later open rebinds
+  // an earlier one's names, so the later one is the likelier target); private
+  // `let`s count only in the origin (they never export). A field whose value
+  // is a sum-type literal also defines its variants' constructors (the
+  // elaborator's auto-declaration). Approximate by design — no given-fills,
+  // no licensed-rebind modeling, binder params have no site — but exact
+  // enough for navigation, and it needs no elaboration at all.
+  findDef(name: string, fromPath: string, fromText: string): { path: string; line: number } | null {
+    const norm = (p: string) => (p.startsWith('/') ? p : '/' + p)
+    const resolve = (rel: string, from: string): string => {
+      if (rel.startsWith('/')) return rel
+      const parts = from.split('/').slice(0, -1)
+      for (const seg of rel.split('/')) {
+        if (seg === '..') parts.pop()
+        else if (seg !== '.') parts.push(seg)
+      }
+      return parts.join('/')
+    }
+    const defLine = (members: RecMember[], includePrivate: boolean): number | null => {
+      for (const it of members) {
+        if (it.tag !== 'field') continue
+        const head = it.head
+        const headName = head?.tag === 'var' ? head.name : null
+        if (headName === 'given') continue
+        if (!includePrivate && headName === 'let') continue
+        if (it.name === name) return it.line ?? 1
+        if (it.value) {
+          let b: Expr = it.value
+          while (b.tag === 'binder') b = b.body
+          if (b.tag === 'sumType' && b.variants.some((v) => v.name === name)) return it.line ?? 1
+        }
+      }
+      return null
+    }
+    const start = norm(fromPath)
+    const seen = new Set([start])
+    const queue: { path: string; text: string; origin: boolean }[] = [
+      { path: start, text: fromText, origin: true }
+    ]
+    while (queue.length > 0) {
+      const { path, text, origin } = queue.shift()!
+      let members: RecMember[]
+      try {
+        members = parseItems(text)
+      } catch {
+        continue // a mid-edit buffer that doesn't parse can still be BFS'd past via regex below
+      } finally {
+        // opens by regex (comment hits just add harmless branches), reversed
+        const opens: string[] = []
+        const re = /\buse\s+(?:raw\s+)?"([^"]+\.disp)"/g
+        let m: RegExpExecArray | null
+        while ((m = re.exec(text))) opens.push(resolve(m[1], path))
+        for (const p of opens.reverse()) {
+          const q = norm(p)
+          if (seen.has(q)) continue
+          seen.add(q)
+          const t = vfs.get(q)
+          if (t != null) queue.push({ path: q, text: t, origin: false })
+        }
+      }
+      const line = defLine(members, origin)
+      if (line != null) return { path, line }
+    }
+    return null
   }
 
   run(

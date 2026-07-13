@@ -95,6 +95,11 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'ready', id: msg.id })
         break
       }
+      case 'def': {
+        if (!runner) throw new Error('worker not initialized')
+        post({ type: 'def', id: msg.id, site: runner.findDef(msg.name, msg.fromPath, msg.fromText) })
+        break
+      }
       case 'reset': {
         runner?.reset()
         post({ type: 'ready', id: msg.id })

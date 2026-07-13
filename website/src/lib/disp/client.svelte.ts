@@ -71,6 +71,7 @@ class DispClient {
       else if (msg.type === 'raw') p.resolve(msg.tree)
       else if (msg.type === 'ls') p.resolve(msg.paths)
       else if (msg.type === 'read') p.resolve(msg.text)
+      else if (msg.type === 'def') p.resolve(msg.site)
       else p.resolve({ ok: true, defs: [], tests: [], elapsedMs: 0, steps: 0, memBytes: 0 })
     }
     w.onerror = (e) => {
@@ -214,6 +215,12 @@ class DispClient {
   async rm(path: string): Promise<void> {
     await this.init()
     await this.#request({ type: 'rm', path })
+  }
+
+  /** Where is `name` defined, as seen from fromPath (with its live text)? */
+  async def(name: string, fromPath: string, fromText: string): Promise<{ path: string; line: number } | null> {
+    await this.init()
+    return this.#request<{ path: string; line: number } | null>({ type: 'def', name, fromPath, fromText })
   }
 
   /**
