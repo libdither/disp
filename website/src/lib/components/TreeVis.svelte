@@ -533,9 +533,10 @@
     const nextSite = parallel ? null : nextApplyToFire(tree)
     const vnodes: VNode[] = out.map((n) => {
       const pod = folded.has(n.tree) ? (folded.get(n.tree) ?? '…') : null
-      const canFire =
-        n.tree.tag === 'apply' &&
-        (readyRule(n.tree) !== null || (engineStep != null && spineAt(n.tree) !== null))
+      // every application is clickable: ready ones fire directly, stuck
+      // named spines take an engine step, anything else runs the guided
+      // cascade (reduce what it needs first, then fire it)
+      const canFire = n.tree.tag === 'apply'
       return {
         path: n.path,
         tree: n.tree,
@@ -806,6 +807,7 @@
   }
 
   function load(src: string, opts: { keepAuto?: boolean } = {}) {
+    loadGen++ // aborts any guided cascade aimed at the old program
     clearTimeout(timer)
     if (!opts.keepAuto) autoCycle = false
     err = ''
@@ -953,7 +955,8 @@
     ruleMsg = rule
     show(cur, { spine, sitePaths })
   }
-  function clickApply(t: T) {
+  function clickApply(n: VNode) {
+    const t = n.tree
     if (t.tag !== 'apply') return
     if (readyRule(t)) {
       fireAt(t as T & { tag: 'apply' })
@@ -965,6 +968,61 @@
       autoCycle = false
       clearTimeout(timer)
       void engineAt(s)
+      return
+    }
+    // blocked: reduce whatever it needs first, then fire it
+    void reduceHere(n.path)
+  }
+
+  // Guided reduction: the clicked application isn't ready, so fire the
+  // redexes INSIDE its subtree (in the standard order, engine steps
+  // included) until it becomes ready, then fire it. Every prerequisite is an
+  // ordinary remembered step — step-back unwinds the cascade. The site is
+  // re-located BY PATH each tick: inner rewrites rebuild the spine objects
+  // but never move the clicked position.
+  let cascadeBusy = false
+  let loadGen = 0
+  function nodeAtPath(root: T, path: string): T | null {
+    let t: T = root
+    for (const ch of path.slice(1)) {
+      const kids = childrenOf(t)
+      const k = kids[Number(ch)]
+      if (!k) return null
+      t = k
+    }
+    return t
+  }
+  async function reduceHere(path: string) {
+    if (cascadeBusy || engineBusy || !cur) return
+    cascadeBusy = true
+    running = false
+    autoCycle = false
+    clearTimeout(timer)
+    const gen = loadGen
+    try {
+      for (let i = 0; i < 300; i++) {
+        if (gen !== loadGen || !cur) return // a new program loaded mid-cascade
+        const site = nodeAtPath(cur, path)
+        if (!site || site.tag !== 'apply') return
+        if (readyRule(site)) {
+          fireAt(site as T & { tag: 'apply' })
+          return
+        }
+        const inner = nextApplyToFire(site)
+        if (inner && inner !== site) {
+          fireAt(inner)
+          await new Promise((r) => setTimeout(r, 220))
+          continue
+        }
+        const s = engineStep ? stuckSpine(site) : null
+        if (s && (await engineAt(s))) {
+          await new Promise((r) => setTimeout(r, 220))
+          continue
+        }
+        return // genuinely stuck (free variables) — leave the tree honest
+      }
+    } finally {
+      cascadeBusy = false
     }
   }
   async function engineAt(s: { site: T & { tag: 'apply' }; name: string; args: T[] }): Promise<boolean> {
@@ -1213,7 +1271,7 @@
               class:growing={motion && styled && n.fresh !== false}
               class:fireable={n.canFire}
               style="--gd: {n.depth * 55}ms"
-              onclick={() => n.canFire && clickApply(n.tree)}
+              onclick={() => n.canFire && clickApply(n)}
             >
               {#if n.pod != null}
                 <!-- a seed pod: a real subtree folded shut. Reduction computes
