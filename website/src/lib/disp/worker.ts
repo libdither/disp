@@ -83,6 +83,18 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'read', id: msg.id, text: runner.readFile(msg.path) })
         break
       }
+      case 'write': {
+        if (!runner) throw new Error('worker not initialized')
+        runner.writeFile(msg.path, msg.text)
+        post({ type: 'ready', id: msg.id })
+        break
+      }
+      case 'rm': {
+        if (!runner) throw new Error('worker not initialized')
+        runner.removeFile(msg.path)
+        post({ type: 'ready', id: msg.id })
+        break
+      }
       case 'reset': {
         runner?.reset()
         post({ type: 'ready', id: msg.id })

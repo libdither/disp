@@ -89,12 +89,27 @@
   }
   const onOpenPath = (rel: string) => void openFile(resolvePath(rel, activeTab().path))
 
-  // ---- the Files list (the worker's bundled library) ----
-  let filesOpen = $state(false)
+  // ---- the file browser (the worker's library) -----------------------------
+  // USER FILES are real library entries: created/edited files write through
+  // to the worker's vfs (so `use "./name.disp"` works from any buffer) and
+  // persist in localStorage, replayed into the vfs on every boot. The
+  // bundled files can be edited too (session-only — the originals return
+  // with a fresh worker); stale module-cache entries drop on every write.
+  let browserOpen = $state(false)
   let filePaths = $state<string[] | null>(null)
-  async function toggleFiles() {
-    filesOpen = !filesOpen
-    if (filesOpen && filePaths == null) filePaths = await disp.ls()
+  let userFiles = $state<Record<string, string>>({})
+  let newFileOpen = $state(false)
+  let newFileName = $state('')
+
+  async function refreshFiles() {
+    filePaths = await disp.ls()
+  }
+  function toggleBrowser() {
+    browserOpen = !browserOpen
+    try {
+      localStorage.setItem(LS_BROWSER, browserOpen ? '1' : '0')
+    } catch {}
+    if (browserOpen && filePaths == null) void refreshFiles()
   }
   const fileGroups = $derived.by(() => {
     const groups = new Map<string, { path: string; name: string }[]>()
@@ -108,6 +123,47 @@
     }
     return [...groups.entries()]
   })
+
+  function persistUserFiles() {
+    try {
+      localStorage.setItem(LS_USER, JSON.stringify(userFiles))
+    } catch {}
+  }
+  // replay user files into the (fresh) worker vfs — boot and post-interrupt
+  async function restoreUserFiles() {
+    for (const [p, text] of Object.entries(userFiles)) await disp.write(p, text)
+  }
+
+  async function createFile(name: string) {
+    let n = name.trim()
+    if (!n) return
+    if (!n.endsWith('.disp')) n += '.disp'
+    const path = n.startsWith('/') ? n : `/lib/tests/${n}`
+    newFileOpen = false
+    newFileName = ''
+    if ((await disp.read(path)) != null) {
+      void openFile(path) // exists — just open it
+      return
+    }
+    const base = path.split('/').pop()
+    const text = `// ${base} — use "./${base}" reaches this file from the scratch buffer\n\nopen use raw "../prelude.disp" {}\n`
+    userFiles[path] = text
+    persistUserFiles()
+    await disp.write(path, text)
+    await refreshFiles()
+    void openFile(path)
+  }
+
+  async function deleteFile(path: string) {
+    if (!(path in userFiles)) return // only user-created files delete
+    const open = tabs.find((t) => t.path === path)
+    if (open) closeTab(open.id)
+    delete userFiles[path]
+    persistUserFiles()
+    await disp.rm(path)
+    await refreshFiles()
+    toast(`deleted ${path.split('/').pop()}`)
+  }
   let busy = $state(false)
   let live = $state(true)
   let summary = $state<{ defs: number; pass: number; total: number; ms: number; errorLine?: number; error?: string } | null>(null)
@@ -388,7 +444,16 @@
     const tab = activeTab()
     if (doc !== tab.doc) {
       tab.doc = doc
-      if (tab.kind === 'file') tab.dirty = true // local edit; the library is untouched
+      if (tab.kind === 'file') {
+        // write-through: the session library sees the edit immediately (its
+        // module cache invalidates), so dependents re-elaborate on next use
+        tab.dirty = true
+        void disp.write(tab.path, doc)
+        if (tab.path in userFiles) {
+          userFiles[tab.path] = doc
+          persistUserFiles()
+        }
+      }
     }
     if (tab.kind === 'scratch') persist()
     if (!live) return
@@ -515,6 +580,8 @@
     editorApi?.setMarks([])
     evalOut = null
     summary = null
+    // the fresh worker's vfs reverts to the bundle — replay user files
+    void restoreUserFiles()
     toast('interrupted — engine reset, kernel cache cleared', 'warn')
   }
 
@@ -591,6 +658,8 @@
   const LS_LIVE = 'disp-playground-live'
   const LS_WELCOME = 'disp-playground-welcomed'
   const LS_TABS = 'disp-playground-tabs'
+  const LS_USER = 'disp-playground-userfiles'
+  const LS_BROWSER = 'disp-playground-browser'
   function persist() {
     try {
       localStorage.setItem(LS_DOC, currentDoc)
@@ -617,6 +686,8 @@
       try {
         live = localStorage.getItem(LS_LIVE) !== '0'
         showWelcome = !localStorage.getItem(LS_WELCOME)
+        userFiles = JSON.parse(localStorage.getItem(LS_USER) ?? '{}') as Record<string, string>
+        browserOpen = localStorage.getItem(LS_BROWSER) === '1'
       } catch {}
       // doc precedence: #shared-code > ?example=<id> deep link > saved buffer
       const hash = location.hash.slice(1)
@@ -654,6 +725,9 @@
       } catch {
         return // status chip already says 'dead'
       }
+      // user files enter the session library before anything reads them
+      await restoreUserFiles()
+      if (browserOpen) void refreshFiles()
       // reopen last session's file tabs (scratch stays active)
       try {
         const saved = JSON.parse(localStorage.getItem(LS_TABS) ?? '[]') as string[]
@@ -707,7 +781,6 @@
 <svelte:window
   onpointerdown={(e) => {
     if (showWelcome && !(e.target as HTMLElement).closest('.info-wrap')) dismissWelcome()
-    if (filesOpen && !(e.target as HTMLElement).closest('.files-wrap')) filesOpen = false
   }}
 />
 
@@ -832,6 +905,15 @@
   </div>
 
   <div class="tabbar">
+    <button
+      class="fb-toggle"
+      class:on={browserOpen}
+      onclick={toggleBrowser}
+      aria-expanded={browserOpen}
+      title="file browser — every library file, plus your own (ctrl-click an import string jumps too)"
+    >
+      ❦
+    </button>
     {#each tabs as tb (tb.id)}
       <div
         class="tab"
@@ -859,12 +941,45 @@
       </div>
     {/each}
     <div class="tab-spacer"></div>
-    <div class="files-wrap">
-      <button class="files-btn" onclick={toggleFiles} aria-expanded={filesOpen} title="browse the bundled library — or ctrl-click any import string">
-        ❦ Files
-      </button>
-      {#if filesOpen}
-        <div class="files-pop">
+  </div>
+
+  <div class="stage">
+    {#if browserOpen}
+      <aside class="fb">
+        <div class="fb-head">
+          <span class="fb-title">library</span>
+          <button
+            class="fb-new"
+            onclick={() => {
+              newFileOpen = !newFileOpen
+              if (filePaths == null) void refreshFiles()
+            }}
+            title="new file (lands in lib/tests/ — reach it with use &quot;./name.disp&quot;)"
+            aria-label="new file"
+          >
+            ＋
+          </button>
+        </div>
+        {#if newFileOpen}
+          <form
+            class="fb-newform"
+            onsubmit={(e) => {
+              e.preventDefault()
+              void createFile(newFileName)
+            }}
+          >
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              bind:value={newFileName}
+              placeholder="name.disp"
+              spellcheck="false"
+              autocomplete="off"
+              autofocus
+              onkeydown={(e) => e.key === 'Escape' && ((newFileOpen = false), (newFileName = ''))}
+            />
+          </form>
+        {/if}
+        <div class="fb-list">
           {#if filePaths == null}
             <div class="files-loading">listing…</div>
           {:else}
@@ -872,25 +987,19 @@
               <div class="fgroup">
                 <div class="fdir">{dir}</div>
                 {#each files as f (f.path)}
-                  <button
-                    class="fitem"
-                    onclick={() => {
-                      filesOpen = false
-                      void openFile(f.path)
-                    }}
-                  >
-                    {f.name}
-                  </button>
+                  <div class="fitem-row" class:opened={tabs.some((t) => t.path === f.path)}>
+                    <button class="fitem" onclick={() => void openFile(f.path)}>{f.name}</button>
+                    {#if f.path in userFiles}
+                      <button class="f-del" onclick={() => void deleteFile(f.path)} title="delete (yours)" aria-label="delete {f.name}">×</button>
+                    {/if}
+                  </div>
                 {/each}
               </div>
             {/each}
           {/if}
         </div>
-      {/if}
-    </div>
-  </div>
-
-  <div class="stage">
+      </aside>
+    {/if}
     <div class="ed-wrap">
       <DispEditor
         doc={currentDoc || initialDoc}
@@ -1211,39 +1320,81 @@
   .tab-spacer {
     flex: 1;
   }
-  .files-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-  .files-btn {
+  .fb-toggle {
     background: none;
     border: none;
-    color: var(--fg-muted);
-    font: inherit;
-    font-size: 0.8rem;
+    color: var(--fg-faint);
+    font-size: 0.95rem;
     cursor: pointer;
-    padding: 0.25em 0.6em;
+    padding: 0 0.5em;
     border-radius: 6px;
+    align-self: center;
   }
-  .files-btn:hover {
+  .fb-toggle:hover {
     color: var(--fg);
     background: var(--bg-panel-hover);
   }
-  .files-pop {
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 30;
-    width: 15rem;
-    max-height: 24rem;
-    overflow-y: auto;
-    padding: 0.5rem 0.4rem;
+  .fb-toggle.on {
+    color: var(--accent);
+  }
+
+  /* ---- the file browser drawer (left of the buffer) ---- */
+  .fb {
+    width: 13.5rem;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-elev);
+  }
+  .fb-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.5rem 0.35rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .fb-title {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--fg-faint);
+  }
+  .fb-new {
+    background: none;
     border: 1px solid var(--border-strong);
-    border-radius: 10px;
-    background: color-mix(in oklab, var(--bg-elev) 97%, transparent);
-    backdrop-filter: blur(8px);
-    box-shadow: var(--shadow-lift);
+    border-radius: 6px;
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+    line-height: 1.2;
+    cursor: pointer;
+    padding: 0 0.35em;
+  }
+  .fb-new:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .fb-newform {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .fb-newform input {
+    width: 100%;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.25em 0.5em;
+    outline: none;
+  }
+  .fb-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.4rem 0.35rem;
+    scrollbar-width: thin;
   }
   .files-loading {
     color: var(--fg-faint);
@@ -1260,9 +1411,17 @@
     color: var(--fg-faint);
     padding: 0.2rem 0.6rem 0.1rem;
   }
+  .fitem-row {
+    display: flex;
+    align-items: center;
+  }
+  .fitem-row.opened .fitem {
+    color: var(--fg);
+    font-weight: 550;
+  }
   .fitem {
-    display: block;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     text-align: left;
     background: none;
     border: none;
@@ -1272,10 +1431,31 @@
     padding: 0.16rem 0.6rem;
     border-radius: 6px;
     cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .fitem:hover {
     color: var(--fg);
     background: var(--bg-panel-hover);
+  }
+  .f-del {
+    background: none;
+    border: none;
+    color: var(--fg-faint);
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0 0.35em;
+    border-radius: 4px;
+    flex: none;
+  }
+  .f-del:hover {
+    color: var(--err);
+  }
+  @media (max-width: 720px) {
+    .fb {
+      width: 11rem;
+    }
   }
 
   /* ---- stage: the buffer (+ the on-demand visualizer panel) + overlays ---- */

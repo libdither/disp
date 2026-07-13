@@ -45,9 +45,13 @@ export type WorkerRequest =
   // maxNodes or the name isn't bound.
   | { id: number; type: 'raw'; handle?: number; name?: string; maxNodes: number }
   // the bundled library (the worker's virtual filesystem): list + read, for
-  // the playground's file tabs and jump-to-import
+  // the playground's file tabs and jump-to-import. write/rm mutate the vfs —
+  // written files are immediately `use`-able (stale module-cache entries for
+  // the path are dropped); the bundled originals return on worker respawn.
   | { id: number; type: 'ls' }
   | { id: number; type: 'read'; path: string }
+  | { id: number; type: 'write'; path: string; text: string }
+  | { id: number; type: 'rm'; path: string }
   | { id: number; type: 'reset' }
 
 // Streaming progress: one per elaborated item (defs, tests, opens — including

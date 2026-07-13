@@ -204,6 +204,18 @@ class DispClient {
     return this.#request<string | null>({ type: 'read', path })
   }
 
+  /** Write into the session library — the file is immediately `use`-able. */
+  async write(path: string, text: string): Promise<void> {
+    await this.init()
+    await this.#request({ type: 'write', path, text })
+  }
+
+  /** Remove a file from the session library. */
+  async rm(path: string): Promise<void> {
+    await this.init()
+    await this.#request({ type: 'rm', path })
+  }
+
   /**
    * Re-render a subtree by handle (click-to-unfold): `rawRoot` skips the
    * nat/string/name decoding at the root, `budget` is a fresh node allowance.

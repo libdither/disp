@@ -4,7 +4,7 @@
 // per-item progress).
 
 import { parseProgram, type Decl, type ParseItemStats } from '../../../../src/compile.ts'
-import { moduleCacheBySession } from '../../../../src/elab/state.ts'
+import { moduleCacheBySession, verifiedModules, verifiedFilledBySession } from '../../../../src/elab/state.ts'
 import type { Session } from '../../../../src/eval/types.ts'
 import type { Tree } from '../../../../src/eval/eager.ts'
 import { RustEagerBrowserSession } from './rust-eager-browser.ts'
@@ -79,6 +79,28 @@ export class DispRunner {
   }
   readFile(path: string): string | null {
     return vfs.get(path.startsWith('/') ? path : '/' + path) ?? null
+  }
+
+  // Mutate the vfs: a written file is immediately `use`-able and an edited
+  // one re-elaborates on next use — every cached elaboration keyed by the
+  // path is dropped (cache keys are `abs` or `abs\0…`). Session-local: the
+  // bundled originals return with a fresh worker.
+  writeFile(path: string, text: string): void {
+    const p = path.startsWith('/') ? path : '/' + path
+    vfs.set(p, text)
+    this.#invalidatePath(p)
+  }
+  removeFile(path: string): void {
+    const p = path.startsWith('/') ? path : '/' + path
+    if (vfs.delete(p)) this.#invalidatePath(p)
+  }
+  #invalidatePath(abs: string): void {
+    const stale = (k: string) => k === abs || k.startsWith(abs + '\0')
+    const cache = moduleCacheBySession.get(this.#session as unknown as Session<Tree>)
+    if (cache) for (const k of [...cache.keys()]) if (stale(k)) cache.delete(k)
+    for (const k of [...verifiedModules]) if (stale(k)) verifiedModules.delete(k)
+    const vf = verifiedFilledBySession.get(this.#session as unknown as Session<Tree>)
+    if (vf) for (const k of [...vf]) if (stale(k)) vf.delete(k)
   }
 
   run(
