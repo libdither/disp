@@ -21,6 +21,93 @@
   let editorApi: EditorApi | undefined
   let currentDoc = $state('')
   let exampleId = $state('welcome')
+
+  // ---- tabs -----------------------------------------------------------------
+  // The scratch buffer (persistent, examples/share land here) plus any library
+  // files opened from the Files list or by ctrl-clicking a "….disp" import.
+  // Each tab runs with ITS OWN path, so a library file's relative opens
+  // resolve exactly as they do for the elaborator; edits to file tabs are
+  // local to the tab (the library the checker reads is untouched).
+  const SCRATCH_PATH = '/lib/tests/playground.disp'
+  type Tab = { id: string; title: string; path: string; doc: string; kind: 'scratch' | 'file'; dirty?: boolean }
+  let tabs = $state<Tab[]>([
+    { id: 'scratch', title: 'playground.disp', path: SCRATCH_PATH, doc: '', kind: 'scratch' }
+  ])
+  let activeTabId = $state('scratch')
+  const activeTab = () => tabs.find((t) => t.id === activeTabId) ?? tabs[0]
+
+  function switchTab(id: string) {
+    if (id === activeTabId) return
+    const cur = activeTab()
+    cur.doc = editorApi?.getDoc() ?? cur.doc
+    activeTabId = id
+    const next = activeTab()
+    currentDoc = next.doc
+    editorApi?.setDoc(next.doc)
+    summary = null
+    stripError = null
+    persistTabs()
+  }
+
+  function closeTab(id: string) {
+    const idx = tabs.findIndex((t) => t.id === id)
+    if (idx < 0 || tabs[idx].kind === 'scratch') return
+    const wasActive = id === activeTabId
+    tabs.splice(idx, 1)
+    if (wasActive) {
+      const next = tabs[Math.max(0, idx - 1)]
+      activeTabId = next.id
+      currentDoc = next.doc
+      editorApi?.setDoc(next.doc)
+      summary = null
+      stripError = null
+    }
+    persistTabs()
+  }
+
+  async function openFile(path: string) {
+    const existing = tabs.find((t) => t.path === path)
+    if (existing) return switchTab(existing.id)
+    const text = await disp.read(path)
+    if (text == null) {
+      toast(`no such file in the bundled library: ${path}`, 'warn')
+      return
+    }
+    tabs.push({ id: path, title: path.split('/').pop() ?? path, path, doc: text, kind: 'file' })
+    switchTab(path)
+  }
+
+  // "../kernel/prelude.disp" relative to the ACTIVE tab's path
+  function resolvePath(rel: string, fromPath: string): string {
+    if (rel.startsWith('/')) return rel
+    const parts = fromPath.split('/').slice(0, -1)
+    for (const seg of rel.split('/')) {
+      if (seg === '..') parts.pop()
+      else if (seg !== '.') parts.push(seg)
+    }
+    return parts.join('/')
+  }
+  const onOpenPath = (rel: string) => void openFile(resolvePath(rel, activeTab().path))
+
+  // ---- the Files list (the worker's bundled library) ----
+  let filesOpen = $state(false)
+  let filePaths = $state<string[] | null>(null)
+  async function toggleFiles() {
+    filesOpen = !filesOpen
+    if (filesOpen && filePaths == null) filePaths = await disp.ls()
+  }
+  const fileGroups = $derived.by(() => {
+    const groups = new Map<string, { path: string; name: string }[]>()
+    for (const p of filePaths ?? []) {
+      const rel = p.replace(/^\/lib\//, '')
+      const cut = rel.lastIndexOf('/')
+      const dir = cut < 0 ? 'lib' : rel.slice(0, cut)
+      const name = cut < 0 ? rel : rel.slice(cut + 1)
+      if (!groups.has(dir)) groups.set(dir, [])
+      groups.get(dir)!.push({ path: p, name })
+    }
+    return [...groups.entries()]
+  })
   let busy = $state(false)
   let live = $state(true)
   let summary = $state<{ defs: number; pass: number; total: number; ms: number; errorLine?: number; error?: string } | null>(null)
@@ -264,7 +351,9 @@
       current: ''
     }
     try {
-      const out = await disp.run(source, { wantDefPretty: true })
+      // each tab runs at its own path — library files resolve their opens
+      // exactly as the elaborator would
+      const out = await disp.run(source, { wantDefPretty: true, path: activeTab().path })
       // >100 module-depth items streamed = this run elaborated the kernel
       applyOutcome(out, { coldLoad: (progress?.count ?? 0) > 100 })
     } catch (e) {
@@ -296,7 +385,12 @@
   let editTimer: ReturnType<typeof setTimeout> | undefined
   function onEdit(doc: string) {
     currentDoc = doc
-    persist()
+    const tab = activeTab()
+    if (doc !== tab.doc) {
+      tab.doc = doc
+      if (tab.kind === 'file') tab.dirty = true // local edit; the library is untouched
+    }
+    if (tab.kind === 'scratch') persist()
     if (!live) return
     clearTimeout(editTimer)
     editTimer = setTimeout(() => {
@@ -330,7 +424,10 @@
     busy = true
     progress = { label: `▸ ${expr}`, count: 0, current: '' }
     try {
-      const out = await disp.evalExpr(editorApi?.getDoc() ?? currentDoc, expr, { wantDefPretty: true })
+      const out = await disp.evalExpr(editorApi?.getDoc() ?? currentDoc, expr, {
+        wantDefPretty: true,
+        path: activeTab().path
+      })
       if (out.error) {
         evalOut = { expr, error: out.error }
       } else {
@@ -439,6 +536,7 @@
     const ex = examples.find((x) => x.id === id)
     if (!ex) return
     exampleId = id
+    switchTab('scratch') // examples always land in the scratch buffer
     editorApi?.setDoc(ex.source)
     currentDoc = ex.source
     summary = null
@@ -492,10 +590,18 @@
   const LS_EX = 'disp-playground-example'
   const LS_LIVE = 'disp-playground-live'
   const LS_WELCOME = 'disp-playground-welcomed'
+  const LS_TABS = 'disp-playground-tabs'
   function persist() {
     try {
       localStorage.setItem(LS_DOC, currentDoc)
       localStorage.setItem(LS_EX, exampleId)
+    } catch {}
+  }
+  // open file tabs persist as paths (content re-reads from the bundled
+  // library — local edits to file tabs are session-only by design)
+  function persistTabs() {
+    try {
+      localStorage.setItem(LS_TABS, JSON.stringify(tabs.filter((t) => t.kind === 'file').map((t) => t.path)))
     } catch {}
   }
   function dismissWelcome() {
@@ -548,6 +654,15 @@
       } catch {
         return // status chip already says 'dead'
       }
+      // reopen last session's file tabs (scratch stays active)
+      try {
+        const saved = JSON.parse(localStorage.getItem(LS_TABS) ?? '[]') as string[]
+        for (const p of saved) {
+          if (tabs.some((t) => t.path === p)) continue
+          const text = await disp.read(p)
+          if (text != null) tabs.push({ id: p, title: p.split('/').pop() ?? p, path: p, doc: text, kind: 'file' })
+        }
+      } catch {}
       // greet with inline results when the precompiled kernel restored (or
       // the buffer is kernel-free) — never spend a visitor's minute uninvited
       const doc = editorApi?.getDoc() ?? currentDoc
@@ -592,6 +707,7 @@
 <svelte:window
   onpointerdown={(e) => {
     if (showWelcome && !(e.target as HTMLElement).closest('.info-wrap')) dismissWelcome()
+    if (filesOpen && !(e.target as HTMLElement).closest('.files-wrap')) filesOpen = false
   }}
 />
 
@@ -715,6 +831,65 @@
     </button>
   </div>
 
+  <div class="tabbar">
+    {#each tabs as tb (tb.id)}
+      <div
+        class="tab"
+        class:active={tb.id === activeTabId}
+        role="button"
+        tabindex="0"
+        title={tb.path}
+        onclick={() => switchTab(tb.id)}
+        onkeydown={(e) => e.key === 'Enter' && switchTab(tb.id)}
+      >
+        <span class="tab-title">{tb.title}</span>
+        {#if tb.dirty}<span class="tab-dirty" title="local edits — the library the checker reads is untouched">●</span>{/if}
+        {#if tb.kind === 'file'}
+          <button
+            class="tab-x"
+            onclick={(e) => {
+              e.stopPropagation()
+              closeTab(tb.id)
+            }}
+            aria-label="close {tb.title}"
+          >
+            ×
+          </button>
+        {/if}
+      </div>
+    {/each}
+    <div class="tab-spacer"></div>
+    <div class="files-wrap">
+      <button class="files-btn" onclick={toggleFiles} aria-expanded={filesOpen} title="browse the bundled library — or ctrl-click any import string">
+        ❦ Files
+      </button>
+      {#if filesOpen}
+        <div class="files-pop">
+          {#if filePaths == null}
+            <div class="files-loading">listing…</div>
+          {:else}
+            {#each fileGroups as [dir, files] (dir)}
+              <div class="fgroup">
+                <div class="fdir">{dir}</div>
+                {#each files as f (f.path)}
+                  <button
+                    class="fitem"
+                    onclick={() => {
+                      filesOpen = false
+                      void openFile(f.path)
+                    }}
+                  >
+                    {f.name}
+                  </button>
+                {/each}
+              </div>
+            {/each}
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </div>
+
   <div class="stage">
     <div class="ed-wrap">
       <DispEditor
@@ -725,6 +900,7 @@
         {expandValue}
         {onVisualizeValue}
         {onValueFoldChange}
+        {onOpenPath}
         api={(a) => (editorApi = a)}
       />
     </div>
@@ -976,6 +1152,130 @@
     border-radius: 5px;
     padding: 0.05em 0.4em;
     font-size: 0.82em;
+  }
+
+  /* ---- tabs: scratch + opened library files ---- */
+  .tabbar {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 0.25rem 0.6rem 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elev);
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.3em 0.7em;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--fg-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .tab:hover {
+    background: var(--bg-panel-hover);
+  }
+  .tab.active {
+    background: var(--bg-code);
+    border-color: var(--border);
+    color: var(--fg);
+    margin-bottom: -1px; /* merge into the editor surface */
+  }
+  .tab-dirty {
+    color: var(--warn, #a8770f);
+    font-size: 0.6rem;
+  }
+  .tab-x {
+    background: none;
+    border: none;
+    color: var(--fg-faint);
+    font-size: 0.95rem;
+    cursor: pointer;
+    padding: 0 0.1em;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .tab-x:hover {
+    color: var(--err);
+    background: var(--bg-panel-hover);
+  }
+  .tab-spacer {
+    flex: 1;
+  }
+  .files-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .files-btn {
+    background: none;
+    border: none;
+    color: var(--fg-muted);
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    padding: 0.25em 0.6em;
+    border-radius: 6px;
+  }
+  .files-btn:hover {
+    color: var(--fg);
+    background: var(--bg-panel-hover);
+  }
+  .files-pop {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 30;
+    width: 15rem;
+    max-height: 24rem;
+    overflow-y: auto;
+    padding: 0.5rem 0.4rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--bg-elev) 97%, transparent);
+    backdrop-filter: blur(8px);
+    box-shadow: var(--shadow-lift);
+  }
+  .files-loading {
+    color: var(--fg-faint);
+    font-size: 0.8rem;
+    padding: 0.3rem 0.6rem;
+  }
+  .fgroup {
+    margin-bottom: 0.35rem;
+  }
+  .fdir {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--fg-faint);
+    padding: 0.2rem 0.6rem 0.1rem;
+  }
+  .fitem {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.16rem 0.6rem;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .fitem:hover {
+    color: var(--fg);
+    background: var(--bg-panel-hover);
   }
 
   /* ---- stage: the buffer (+ the on-demand visualizer panel) + overlays ---- */

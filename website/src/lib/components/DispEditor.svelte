@@ -142,6 +142,9 @@
     onVisualizeValue?: (tree: ValueNode, ctl: TreeValueCtl) => void
     // fold-state changes stream out for two-way sync with the visualizer
     onValueFoldChange?: (tree: ValueNode, ctl: TreeValueCtl) => void
+    // ctrl/cmd-click on a "….disp" string literal reports it (jump-to-file);
+    // the host resolves it against its notion of the current file
+    onOpenPath?: (path: string) => void
     api?: (a: EditorApi) => void
   }
 
@@ -153,7 +156,7 @@
     gotoLine(line: number): void
   }
 
-  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, api }: Props = $props()
+  let { doc, onDocChange, onRunFile, onRunToCursor, expandValue, onVisualizeValue, onValueFoldChange, onOpenPath, api }: Props = $props()
 
   let host: HTMLDivElement
   let view: EditorView | undefined
@@ -253,6 +256,28 @@
             ...historyKeymap,
             ...searchKeymap
           ]),
+          // ctrl/cmd-click a "….disp" string → jump to that file
+          EditorView.domEventHandlers({
+            mousedown: (e, v) => {
+              if (!(e.ctrlKey || e.metaKey) || e.button !== 0 || !onOpenPath) return false
+              const pos = v.posAtCoords({ x: e.clientX, y: e.clientY })
+              if (pos == null) return false
+              const line = v.state.doc.lineAt(pos)
+              const re = /"([^"]*)"/g
+              let m: RegExpExecArray | null
+              while ((m = re.exec(line.text))) {
+                const from = line.from + m.index
+                const to = from + m[0].length
+                if (pos >= from && pos <= to) {
+                  if (!m[1].endsWith('.disp')) return false
+                  e.preventDefault()
+                  onOpenPath(m[1])
+                  return true
+                }
+              }
+              return false
+            }
+          }),
           ...dispLanguageExtensions,
           EditorView.updateListener.of((u) => {
             if (u.docChanged) {

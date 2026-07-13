@@ -73,6 +73,16 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         post({ type: 'raw', id: msg.id, tree })
         break
       }
+      case 'ls': {
+        if (!runner) throw new Error('worker not initialized')
+        post({ type: 'ls', id: msg.id, paths: runner.listFiles() })
+        break
+      }
+      case 'read': {
+        if (!runner) throw new Error('worker not initialized')
+        post({ type: 'read', id: msg.id, text: runner.readFile(msg.path) })
+        break
+      }
       case 'reset': {
         runner?.reset()
         post({ type: 'ready', id: msg.id })

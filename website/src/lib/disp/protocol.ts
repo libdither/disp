@@ -44,6 +44,10 @@ export type WorkerRequest =
   // reduction visualizer's real-context feed. null when the tree exceeds
   // maxNodes or the name isn't bound.
   | { id: number; type: 'raw'; handle?: number; name?: string; maxNodes: number }
+  // the bundled library (the worker's virtual filesystem): list + read, for
+  // the playground's file tabs and jump-to-import
+  | { id: number; type: 'ls' }
+  | { id: number; type: 'read'; path: string }
   | { id: number; type: 'reset' }
 
 // Streaming progress: one per elaborated item (defs, tests, opens — including
@@ -99,4 +103,6 @@ export type WorkerResponse =
   | { type: 'result'; id: number; outcome: RunOutcome }
   | { type: 'rendered'; id: number; node: ValueNode }
   | { type: 'raw'; id: number; tree: RawTree | null }
+  | { type: 'ls'; id: number; paths: string[] }
+  | { type: 'read'; id: number; text: string | null }
   | { type: 'fatal'; id: number; error: string }

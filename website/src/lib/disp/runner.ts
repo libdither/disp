@@ -73,6 +73,14 @@ export class DispRunner {
     return this.#session.memoryBytes()
   }
 
+  // the bundled library, for the playground's file tabs
+  listFiles(): string[] {
+    return [...vfs.keys()].sort()
+  }
+  readFile(path: string): string | null {
+    return vfs.get(path.startsWith('/') ? path : '/' + path) ?? null
+  }
+
   run(
     source: string,
     path: string | undefined,

@@ -69,6 +69,8 @@ class DispClient {
         p.resolve(msg.outcome)
       } else if (msg.type === 'rendered') p.resolve(msg.node)
       else if (msg.type === 'raw') p.resolve(msg.tree)
+      else if (msg.type === 'ls') p.resolve(msg.paths)
+      else if (msg.type === 'read') p.resolve(msg.text)
       else p.resolve({ ok: true, defs: [], tests: [], elapsedMs: 0, steps: 0, memBytes: 0 })
     }
     w.onerror = (e) => {
@@ -155,13 +157,14 @@ class DispClient {
     return this.#kernelPromise
   }
 
-  async run(source: string, opts?: { wantDefPretty?: boolean }): Promise<RunOutcome> {
+  async run(source: string, opts?: { wantDefPretty?: boolean; path?: string }): Promise<RunOutcome> {
     await this.init()
     this.status = 'running'
     try {
       return await this.#request({
         type: 'run',
         source,
+        path: opts?.path,
         wantDefPretty: opts?.wantDefPretty
       })
     } finally {
@@ -169,14 +172,36 @@ class DispClient {
     }
   }
 
-  async evalExpr(context: string, expr: string, opts?: { wantDefPretty?: boolean }): Promise<RunOutcome> {
+  async evalExpr(
+    context: string,
+    expr: string,
+    opts?: { wantDefPretty?: boolean; path?: string }
+  ): Promise<RunOutcome> {
     await this.init()
     this.status = 'running'
     try {
-      return await this.#request({ type: 'eval', context, expr, wantDefPretty: opts?.wantDefPretty })
+      return await this.#request({
+        type: 'eval',
+        context,
+        expr,
+        path: opts?.path,
+        wantDefPretty: opts?.wantDefPretty
+      })
     } finally {
       if (this.status === 'running') this.status = 'ready'
     }
+  }
+
+  /** List the bundled library files (the worker's virtual filesystem). */
+  async ls(): Promise<string[]> {
+    await this.init()
+    return this.#request<string[]>({ type: 'ls' })
+  }
+
+  /** Read a bundled library file; null when absent. */
+  async read(path: string): Promise<string | null> {
+    await this.init()
+    return this.#request<string | null>({ type: 'read', path })
   }
 
   /**

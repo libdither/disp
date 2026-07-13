@@ -79,6 +79,68 @@ test shape_of shape_of = "fork"
 `
   },
   {
+    id: 'typesystem',
+    label: 'Build a type system from scratch',
+    kernel: false,
+    source: `// Build a type system from scratch — on nothing but the five rewrite rules.
+// This is the real kernel's design in miniature: types are programs,
+// functions are checked with promises, and ONE walker routes every check.
+// (Ctrl-click the path below to read the prelude in a new tab.)
+
+open use raw "../prelude.disp" {}
+
+// ── 1. A type IS a program: apply it to a value, get true or false. ──
+// Booleans are the two smallest trees (true = t, false = t t):
+let is_bool := {v} -> triage true is_leaf ({l, r} -> false) v
+test is_bool true = true
+test is_bool false = true
+test is_bool (t t t) = false
+
+// Naturals are spines (zero = t, succ n = t t n) — recurse down the spine:
+let is_nat := fix ({self, v} ->
+  triage true ({u} -> false) ({l, r} -> and (is_leaf l) (self r)) v)
+test is_nat 3 = true
+test is_nat (t (t t) t) = false
+
+// ── 2. Function types need PROMISES. ──
+// To check f : A -> B without trying every A, hand f an inert token that
+// stands for "some A". A promise is just a recognizable fork carrying the
+// type it promises:
+let hyp_tag := t (t t t) t
+let mk_hyp := {T} -> pair hyp_tag T
+let is_hyp := {v} -> and (is_fork v) (tree_eq (pair_fst v) hyp_tag)
+let hyp_type := pair_snd
+
+// ── 3. THE WALKER: one function routes every check. ──
+// Concrete values run their type's program. A promise checks by its
+// RECORDED type — and hash-consing makes tree_eq an O(1) identity test
+// (same definition, same tree): the kernel's conversion rule in miniature.
+let check := {T, v} -> select (tree_eq (hyp_type v) T) (T v) (is_hyp v)
+
+// ── 4. The arrow former: feed f a promise of A, ask B of what comes out. ──
+let Arrow := {A, B} -> {f} -> check B (f (mk_hyp A))
+
+test check (Arrow is_bool is_bool) ({x} -> x) = true   // identity : Bool -> Bool
+test check (Arrow is_bool is_nat) ({x} -> x) = false   // promises don't lie
+test check (Arrow is_bool is_nat) ({x} -> 2) = true    // constants check fine
+
+// succ builds t t <promise> — nat-shaped around a hole. Our toy can't see
+// that, so it rejects a perfectly good function. The kernel's answer is
+// NEUTRALS: stuck values that carry their type through eliminations.
+test check (Arrow is_nat is_nat) succ = false          // a real design problem!
+
+// ── 5. THE LEAK — and why the kernel polices promises. ──
+// Nothing stops a function from PEEKING at a promise's shape:
+let leaker := {x} -> is_fork x
+test check (Arrow is_bool is_bool) leaker = true       // fooled: it saw the fork
+// leaker computes on the promise's ENCODING, not its meaning — so this
+// "Bool -> Bool" tells encodings apart and parametricity is gone. The real
+// kernel's hypotheses refuse the peek (try the Proofs example: the same
+// trick answers Err there). That policing, plus recursion in types,
+// records, and equality, is most of what lib/kernel is.
+`
+  },
+  {
     id: 'records',
     label: 'Records & derived fields',
     kernel: true,
