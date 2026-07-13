@@ -29,7 +29,10 @@
   // resolve exactly as they do for the elaborator; edits to file tabs are
   // local to the tab (the library the checker reads is untouched).
   const SCRATCH_PATH = '/lib/tests/playground.disp'
-  type Tab = { id: string; title: string; path: string; doc: string; kind: 'scratch' | 'file'; dirty?: boolean }
+  // `preview` is the VS Code convention: a single-click open lands in ONE
+  // reusable slot (italic title) so browsing doesn't spam tabs; editing the
+  // file or double-clicking (tab or list entry) makes it permanent.
+  type Tab = { id: string; title: string; path: string; doc: string; kind: 'scratch' | 'file'; dirty?: boolean; preview?: boolean }
   let tabs = $state<Tab[]>([
     { id: 'scratch', title: 'playground.disp', path: SCRATCH_PATH, doc: '', kind: 'scratch' }
   ])
@@ -65,15 +68,37 @@
     persistTabs()
   }
 
-  async function openFile(path: string) {
+  async function openFile(path: string, opts?: { permanent?: boolean }) {
     const existing = tabs.find((t) => t.path === path)
-    if (existing) return switchTab(existing.id)
+    if (existing) {
+      if (opts?.permanent) existing.preview = false
+      return switchTab(existing.id)
+    }
     const text = await disp.read(path)
     if (text == null) {
       toast(`no such file in the bundled library: ${path}`, 'warn')
       return
     }
-    tabs.push({ id: path, title: path.split('/').pop() ?? path, path, doc: text, kind: 'file' })
+    const title = path.split('/').pop() ?? path
+    const pv = tabs.find((t) => t.preview)
+    if (!opts?.permanent && pv) {
+      // reuse the preview slot in place
+      const cur = activeTab()
+      if (cur.id !== pv.id) cur.doc = editorApi?.getDoc() ?? cur.doc
+      pv.id = path
+      pv.path = path
+      pv.title = title
+      pv.doc = text
+      pv.dirty = false
+      activeTabId = path
+      currentDoc = text
+      editorApi?.setDoc(text)
+      summary = null
+      stripError = null
+      persistTabs()
+      return
+    }
+    tabs.push({ id: path, title, path, doc: text, kind: 'file', preview: !opts?.permanent })
     switchTab(path)
   }
 
@@ -111,18 +136,36 @@
     } catch {}
     if (browserOpen && filePaths == null) void refreshFiles()
   }
-  const fileGroups = $derived.by(() => {
-    const groups = new Map<string, { path: string; name: string }[]>()
+  // hierarchical view: nested collapsible folders (tests starts folded —
+  // it's long and mostly regression pins)
+  type DirNode = { name: string; path: string; dirs: DirNode[]; files: { path: string; name: string }[] }
+  const fileTree = $derived.by(() => {
+    const root: DirNode = { name: 'lib', path: 'lib', dirs: [], files: [] }
+    const byPath = new Map<string, DirNode>([['lib', root]])
     for (const p of filePaths ?? []) {
-      const rel = p.replace(/^\/lib\//, '')
-      const cut = rel.lastIndexOf('/')
-      const dir = cut < 0 ? 'lib' : rel.slice(0, cut)
-      const name = cut < 0 ? rel : rel.slice(cut + 1)
-      if (!groups.has(dir)) groups.set(dir, [])
-      groups.get(dir)!.push({ path: p, name })
+      const segs = p.replace(/^\/lib\//, '').split('/')
+      let node = root
+      for (let i = 0; i < segs.length - 1; i++) {
+        const dpath = `${node.path}/${segs[i]}`
+        let child = byPath.get(dpath)
+        if (!child) {
+          child = { name: segs[i], path: dpath, dirs: [], files: [] }
+          byPath.set(dpath, child)
+          node.dirs.push(child)
+        }
+        node = child
+      }
+      node.files.push({ path: p, name: segs[segs.length - 1] })
     }
-    return [...groups.entries()]
+    return root
   })
+  let collapsedDirs = $state(new Set(['lib/tests']))
+  function toggleDir(path: string) {
+    const next = new Set(collapsedDirs)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
+    collapsedDirs = next
+  }
 
   function persistUserFiles() {
     try {
@@ -448,6 +491,7 @@
         // write-through: the session library sees the edit immediately (its
         // module cache invalidates), so dependents re-elaborate on next use
         tab.dirty = true
+        tab.preview = false // an edited preview earns its keep
         void disp.write(tab.path, doc)
         if (tab.path in userFiles) {
           userFiles[tab.path] = doc
@@ -782,7 +826,52 @@
   onpointerdown={(e) => {
     if (showWelcome && !(e.target as HTMLElement).closest('.info-wrap')) dismissWelcome()
   }}
+  onkeydown={(e) => {
+    // close the active file tab: ctrl/cmd-w where the platform lets a page
+    // claim it (installed app / fullscreen); alt-w works everywhere
+    if ((e.key === 'w' || e.key === 'W') && !e.shiftKey && (e.ctrlKey || e.metaKey || e.altKey)) {
+      e.preventDefault()
+      const t = activeTab()
+      if (t.kind === 'file') closeTab(t.id)
+    }
+  }}
 />
+
+{#snippet dirNode(node: DirNode, depth: number)}
+  {#each node.dirs as d (d.path)}
+    <button
+      class="fdir-row"
+      style="padding-left: {0.35 + depth * 0.75}rem"
+      onclick={() => toggleDir(d.path)}
+      aria-expanded={!collapsedDirs.has(d.path)}
+    >
+      <span class="chev" class:closed={collapsedDirs.has(d.path)}>▾</span>
+      {d.name}
+    </button>
+    {#if !collapsedDirs.has(d.path)}
+      {@render dirNode(d, depth + 1)}
+    {/if}
+  {/each}
+  {#each node.files as f (f.path)}
+    <div
+      class="fitem-row"
+      class:opened={tabs.some((t) => t.path === f.path)}
+      style="padding-left: {0.55 + depth * 0.75}rem"
+    >
+      <button
+        class="fitem"
+        onclick={() => void openFile(f.path)}
+        ondblclick={() => void openFile(f.path, { permanent: true })}
+        title={f.path}
+      >
+        {f.name}
+      </button>
+      {#if f.path in userFiles}
+        <button class="f-del" onclick={() => void deleteFile(f.path)} title="delete (yours)" aria-label="delete {f.name}">×</button>
+      {/if}
+    </div>
+  {/each}
+{/snippet}
 
 <div class="pg">
   <div class="toolbar">
@@ -893,7 +982,8 @@
             about a minute of the type system genuinely re-checking itself, right here.
           </p>
           <p class="hint-row">
-            <kbd>⌘⏎</kbd> run file · <kbd>⇧⏎</kbd> run to cursor · the <kbd>▸</kbd> prompt below
+            <kbd>⌘⏎</kbd> run file · <kbd>⇧⏎</kbd> run to cursor · <kbd>⌥W</kbd> close tab
+            (<kbd>⌃W</kbd> too, where the browser allows) · the <kbd>▸</kbd> prompt below
             evaluates expressions against the buffer
           </p>
         </div>
@@ -920,8 +1010,10 @@
         class:active={tb.id === activeTabId}
         role="button"
         tabindex="0"
+        class:preview={tb.preview}
         title={tb.path}
         onclick={() => switchTab(tb.id)}
+        ondblclick={() => (tb.preview = false)}
         onkeydown={(e) => e.key === 'Enter' && switchTab(tb.id)}
       >
         <span class="tab-title">{tb.title}</span>
@@ -983,19 +1075,7 @@
           {#if filePaths == null}
             <div class="files-loading">listing…</div>
           {:else}
-            {#each fileGroups as [dir, files] (dir)}
-              <div class="fgroup">
-                <div class="fdir">{dir}</div>
-                {#each files as f (f.path)}
-                  <div class="fitem-row" class:opened={tabs.some((t) => t.path === f.path)}>
-                    <button class="fitem" onclick={() => void openFile(f.path)}>{f.name}</button>
-                    {#if f.path in userFiles}
-                      <button class="f-del" onclick={() => void deleteFile(f.path)} title="delete (yours)" aria-label="delete {f.name}">×</button>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/each}
+            {@render dirNode(fileTree, 0)}
           {/if}
         </div>
       </aside>
@@ -1299,6 +1379,9 @@
     color: var(--fg);
     margin-bottom: -1px; /* merge into the editor surface */
   }
+  .tab.preview .tab-title {
+    font-style: italic; /* a browsing stop, not a kept tab (VS Code style) */
+  }
   .tab-dirty {
     color: var(--warn, #a8770f);
     font-size: 0.6rem;
@@ -1401,15 +1484,34 @@
     font-size: 0.8rem;
     padding: 0.3rem 0.6rem;
   }
-  .fgroup {
-    margin-bottom: 0.35rem;
+  .fdir-row {
+    display: flex;
+    align-items: center;
+    gap: 0.3em;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--fg-muted);
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding-top: 0.18rem;
+    padding-bottom: 0.14rem;
+    border-radius: 6px;
+    cursor: pointer;
   }
-  .fdir {
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
+  .fdir-row:hover {
+    color: var(--fg);
+    background: var(--bg-panel-hover);
+  }
+  .chev {
+    display: inline-block;
+    font-size: 0.65rem;
     color: var(--fg-faint);
-    padding: 0.2rem 0.6rem 0.1rem;
+    transition: transform 0.15s ease;
+  }
+  .chev.closed {
+    transform: rotate(-90deg);
   }
   .fitem-row {
     display: flex;
@@ -1428,7 +1530,7 @@
     color: var(--fg-muted);
     font-family: var(--font-mono);
     font-size: 0.78rem;
-    padding: 0.16rem 0.6rem;
+    padding: 0.16rem 0.4rem 0.16rem 0.85em; /* left inset past the chevron column */
     border-radius: 6px;
     cursor: pointer;
     white-space: nowrap;
